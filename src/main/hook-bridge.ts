@@ -79,6 +79,12 @@ export interface HookBridgeOptions {
   readonly projectYolo?: (ptyId: string) => boolean;
   /** Is there a chat to show a pending? `false` answers `{}` at once and the terminal asks. Absent = yes. */
   readonly holdsPendings?: () => boolean;
+  /**
+   * Slack só com carta — asked on every `PreToolUse`: a reason refuses the call (the CLI does not run the tool
+   * and shows the reason to the model); `null` lets it go on as usual. A refused call is not dispatched: the
+   * tool never runs, so the semaphore and the chat never see it start.
+   */
+  readonly preToolUseGuard?: (ptyId: string, payload: HookPayload) => string | null;
 }
 
 export interface HookBridge {
@@ -138,6 +144,11 @@ function tripleKey(payload: HookPayload): string {
 }
 
 const asString = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+
+/** The `PreToolUse` answer that refuses the call; `reason` goes to the model. */
+export function preToolUseDenial(reason: string): string {
+  return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } });
+}
 
 function permissionAnswer(decision: PermissionDecision): string {
   return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision } });
@@ -350,6 +361,20 @@ export function createHookBridge(options: HookBridgeOptions = {}): HookBridge {
       res.end();
       emit({ type: 'statusline', ptyId: state.ptyId, payload });
       return;
+    }
+
+    if (event === 'PreToolUse' && options.preToolUseGuard) {
+      let reason: string | null;
+      try {
+        reason = options.preToolUseGuard(state.ptyId, payload);
+      } catch {
+        reason = null;
+      }
+      if (reason !== null) {
+        endJson(res, 200, preToolUseDenial(reason));
+        measure();
+        return;
+      }
     }
 
     endJson(res, 200, '{}'); // answer first: the CLI waits on this hook

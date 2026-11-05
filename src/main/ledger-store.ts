@@ -21,6 +21,7 @@ import {
   cannotDecide,
   isNewerLedger,
   lastDelivery,
+  slackLetterSent,
   ledgerStrip,
   MAX_PROOF_FILE_BYTES,
   parseLedgerDoc,
@@ -35,6 +36,7 @@ import {
 } from '../shared/ledger/contract';
 import type { LedgerApplyResult, LedgerSnapshot } from '../shared/ledger/channels';
 import type { LedgerToolCall, ProofInput } from '../shared/ledger/tools';
+import { detectSlackSend, slackGuard } from '../shared/ledger/slack-guard';
 
 /** Smoke/test override: isolates the ledger from the real one. */
 export const LEDGER_FILE_ENV_VAR = 'DONEL_LEDGER_FILE';
@@ -297,6 +299,18 @@ function taskView(task: LedgerTask, doc: LedgerDoc): Record<string, unknown> {
       : {}),
     ...(decision ? { decisao: { tipo: decision.kind, por: who(decision.by), ...(decision.text ? { motivo: decision.text } : {}) } } : {}),
     ...(waitsForOwner(doc, task) ? { esperandoDono: true } : {}),
+    ...(task.slack
+      ? {
+          cartaSlack: {
+            destino: task.slack.destination,
+            ...(task.slack.thread ? { thread: task.slack.thread } : {}),
+            texto: task.slack.text,
+            enviada: slackLetterSent(task),
+            ...(task.state === 'aceita' && !slackLetterSent(task) ? { proximo: 'Aceita: envie este texto exato a este destino, uma vez.' } : {}),
+            ...(task.state === 'rejeitada' ? { proximo: 'Rejeitada: não envie. Ajuste o texto pelo motivo e crie outra carta com carta_slack.' } : {}),
+          },
+        }
+      : {}),
   };
 }
 
@@ -338,6 +352,24 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
     }
     case 'tarefa_assumir':
       return answer(service.apply(actor, { op: 'assumir', id: call.id }), 'assumida');
+    case 'carta_slack': {
+      const result = service.apply(actor, {
+        op: 'carta-slack',
+        projectPath: caller.projectPath,
+        slack: { destination: call.destino, ...(call.destinoNome ? { destinationLabel: call.destinoNome } : {}), ...(call.thread ? { thread: call.thread } : {}), text: call.texto, reason: call.motivo },
+      });
+      if (!result.ok) return { ok: false, text: result.reason };
+      return {
+        ok: true,
+        text: JSON.stringify({
+          criada: true,
+          id: result.task.id,
+          estado: result.task.state,
+          esperandoDono: true,
+          proximo: `Não envie ainda. Diga que está esperando o dono decidir a carta e veja a decisão com tarefa_ver ${result.task.id}. Aceita: envie este texto exato a este destino, uma vez. Rejeitada: o motivo diz o ajuste; crie outra carta.`,
+        }),
+      };
+    }
     case 'tarefa_entregar': {
       const proofs: LedgerProof[] = [];
       for (const input of call.provas) {
@@ -401,4 +433,31 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       return { ok: true, text: JSON.stringify({ faixa: stripView(ledgerStrip(doc, scope)), tarefas: tasks.map((task) => taskView(task, doc)) }, null, 1) };
     }
   }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Slack só com carta — the hook bridge's `PreToolUse` guard (pure decision in `slack-guard.ts`).
+
+/**
+ * `null` = the call goes on (not a Slack post, or an accepted letter freed it and is now used); a string = the
+ * refusal the session reads. A ledger that cannot be read, or a letter that cannot be marked as used, refuses.
+ */
+export function guardSlackSend(service: LedgerService | null, toolName: string, toolInput: unknown): string | null {
+  if (detectSlackSend(toolName, toolInput).kind === 'none') return null;
+  let doc: LedgerDoc | null = null;
+  try {
+    const snapshot = service?.load();
+    doc = snapshot && !snapshot.readOnly ? snapshot.doc : null;
+  } catch {
+    doc = null;
+  }
+  const verdict = slackGuard(doc, toolName, toolInput);
+  if (verdict.kind === 'not-slack') return null;
+  if (verdict.kind === 'deny') return verdict.reason;
+  for (const id of verdict.letterIds) {
+    const task = doc!.tasks[id]!;
+    const marked = service!.apply({ kind: 'lugar', placeId: task.ownerPlaceId }, { op: 'slack-enviada', id });
+    if (!marked.ok) return `Envio ao Slack bloqueado pelo Donel Dev: não consegui marcar a carta ${id} como usada (${marked.reason}). Tente de novo.`;
+  }
+  return null;
 }

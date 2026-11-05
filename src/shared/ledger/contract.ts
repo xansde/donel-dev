@@ -23,8 +23,9 @@
 /**
  * Bump on any new field: the parse drops what it does not know and `userData` is shared by the channels.
  * 2 — `requestId` on a decision (the phone's request id: a retry after a restart never records twice).
+ * 3 — `slack` on a task (a letter "mensagem para o Slack") and the `enviada` event (`slack-guard.ts`).
  */
-export const LEDGER_SCHEMA_VERSION = 2;
+export const LEDGER_SCHEMA_VERSION = 3;
 
 export type LedgerTaskState = 'aberta' | 'em-execucao' | 'entregue' | 'aceita' | 'rejeitada';
 export type LedgerRisk = 'baixo' | 'alto';
@@ -40,7 +41,22 @@ export type LedgerProof =
   | { readonly kind: 'texto'; readonly text: string }
   | { readonly kind: 'link'; readonly url: string };
 
-export type LedgerEventKind = 'criada' | 'assumida' | 'entregue' | 'aceita' | 'rejeitada' | 'conferida';
+export type LedgerEventKind = 'criada' | 'assumida' | 'entregue' | 'aceita' | 'rejeitada' | 'conferida' | 'enviada';
+
+/**
+ * A letter "mensagem para o Slack" (owner, 05/11: every message sent to Slack in the owner's name is a letter in
+ * the Oráculo first). It is born delivered and high risk, so only the owner decides it: accept frees ONE send of
+ * exactly this text to exactly this destination (`slack-guard.ts`); reject sends nothing and its reason asks for
+ * the change. `destination`/`thread` are the values the sending tool gets (channel or user id, `thread_ts`).
+ */
+export interface SlackLetter {
+  readonly destination: string;
+  /** How the owner reads the destination ("#produto", "Fulana"); absent = the destination itself. */
+  readonly destinationLabel?: string;
+  readonly thread?: string;
+  readonly text: string;
+  readonly reason: string;
+}
 
 export interface LedgerEvent {
   readonly kind: LedgerEventKind;
@@ -71,6 +87,8 @@ export interface LedgerTask {
   readonly createdAt: number;
   /** Every step, oldest first; the current delivery and decision are the last ones of their kind. */
   readonly events: readonly LedgerEvent[];
+  /** v3 — a letter "mensagem para o Slack"; `enviada` in `events` = its one send already went out. */
+  readonly slack?: SlackLetter;
 }
 
 export interface LedgerDoc {
@@ -159,7 +177,11 @@ export type LedgerOp =
   | { readonly op: 'assumir'; readonly id: string }
   | { readonly op: 'entregar'; readonly id: string; readonly proofs: readonly LedgerProof[]; readonly note?: string }
   | { readonly op: 'aceitar'; readonly id: string; readonly requestId?: string }
-  | { readonly op: 'rejeitar'; readonly id: string; readonly reason: string; readonly requestId?: string };
+  | { readonly op: 'rejeitar'; readonly id: string; readonly reason: string; readonly requestId?: string }
+  /** v3 — a place asks the owner to send a Slack message (born `entregue`, high risk). */
+  | { readonly op: 'carta-slack'; readonly projectPath: string; readonly slack: SlackLetter }
+  /** v3 — the guard let the one send of an accepted letter through. */
+  | { readonly op: 'slack-enviada'; readonly id: string };
 
 export interface LedgerOpContext {
   readonly now: number;
@@ -216,6 +238,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
     };
     return { ok: true, doc: withTask(doc, task), task };
   }
+  if (op.op === 'carta-slack') return createSlackLetter(doc, actor, op, ctx);
 
   const task = doc.tasks[op.id];
   if (!task) return fail(`Não existe tarefa "${op.id}" (veja tarefa_listar).`);
@@ -224,6 +247,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
 
   switch (op.op) {
     case 'assumir':
+      if (task.slack) return fail('Carta de Slack não se retoma: crie outra com carta_slack, com o texto ajustado.');
       if (task.state !== 'aberta' && task.state !== 'rejeitada') return fail(`A tarefa está "${task.state}"; só se assume uma aberta ou rejeitada.`);
       if (!isOwnerPlace) return fail(`Só o lugar dono (${task.ownerPlaceId}) assume esta tarefa.`);
       return done(step(task, 'em-execucao', { kind: 'assumida', at: ctx.now, by: actor }));
@@ -257,7 +281,55 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       if (why) return fail(`Não rejeitei: ${why}`);
       return done(step(task, 'rejeitada', { kind: 'rejeitada', at: ctx.now, by: actor, text: op.reason.trim(), ...requestOf(op) }));
     }
+
+    case 'slack-enviada':
+      if (!task.slack || task.state !== 'aceita') return fail('Só uma carta de Slack aceita libera um envio.');
+      if (slackLetterSent(task)) return fail('Esta carta já foi usada num envio.');
+      return done(step(task, 'aceita', { kind: 'enviada', at: ctx.now, by: actor }));
   }
+}
+
+export const MAX_SLACK_TEXT_CHARS = 12_000;
+
+/** The one send of an accepted letter already went out. */
+export function slackLetterSent(task: LedgerTask): boolean {
+  return task.events.some((event) => event.kind === 'enviada');
+}
+
+export function slackDestinationLabel(slack: SlackLetter): string {
+  return slack.destinationLabel?.trim() || slack.destination;
+}
+
+function slackLetterProblem(slack: SlackLetter): string | null {
+  if (!slack.destination.trim()) return '"destino" é obrigatório: o canal ou a pessoa, como vai na ferramenta de envio.';
+  if (!slack.text.trim()) return '"texto" é obrigatório: a mensagem exata que vai ao Slack.';
+  if (slack.text.length > MAX_SLACK_TEXT_CHARS) return `"texto" longo demais (máximo ${MAX_SLACK_TEXT_CHARS} caracteres).`;
+  if (!slack.reason.trim()) return '"motivo" é obrigatório: por que a mensagem vai.';
+  return null;
+}
+
+function createSlackLetter(doc: LedgerDoc, actor: LedgerActor, op: Extract<LedgerOp, { op: 'carta-slack' }>, ctx: LedgerOpContext): LedgerOpResult {
+  if (actor.kind !== 'lugar') return { ok: false, reason: 'Carta de Slack é pedido de uma sessão ao dono.' };
+  const problem = slackLetterProblem(op.slack);
+  if (problem) return { ok: false, reason: problem };
+  const where = `${slackDestinationLabel(op.slack)}${op.slack.thread ? ' (na thread)' : ''}`;
+  const task: LedgerTask = {
+    id: ctx.newId(),
+    projectPath: op.projectPath,
+    request: `Mensagem no Slack para ${where}: ${op.slack.reason.trim()}`.slice(0, MAX_REQUEST_CHARS),
+    doneWhen: 'O dono aceita o texto exato antes do envio.',
+    due: new Date(ctx.now).toISOString().slice(0, 10),
+    ownerPlaceId: actor.placeId,
+    risk: 'alto',
+    state: 'entregue',
+    createdAt: ctx.now,
+    events: [
+      { kind: 'criada', at: ctx.now, by: actor },
+      { kind: 'entregue', at: ctx.now, by: actor, proofs: [{ kind: 'texto', text: op.slack.text }], text: op.slack.reason.trim() },
+    ],
+    slack: op.slack,
+  };
+  return { ok: true, doc: withTask(doc, task), task };
 }
 
 export function isRequestId(value: unknown): value is string {
@@ -392,7 +464,7 @@ function parseProof(raw: unknown): LedgerProof | null {
   return proof && validProof(proof) ? proof : null;
 }
 
-const EVENT_KINDS: readonly LedgerEventKind[] = ['criada', 'assumida', 'entregue', 'aceita', 'rejeitada', 'conferida'];
+const EVENT_KINDS: readonly LedgerEventKind[] = ['criada', 'assumida', 'entregue', 'aceita', 'rejeitada', 'conferida', 'enviada'];
 const STATES: readonly LedgerTaskState[] = ['aberta', 'em-execucao', 'entregue', 'aceita', 'rejeitada'];
 
 function parseEvent(raw: unknown): LedgerEvent | null {
@@ -417,7 +489,20 @@ function parseTask(id: string, raw: unknown): LedgerTask | null {
   if (!str(projectPath) || !str(request) || !str(doneWhen) || !str(due) || !isDueDate(due) || !str(ownerPlaceId)) return null;
   if ((risk !== 'baixo' && risk !== 'alto') || !STATES.includes(state as LedgerTaskState) || !num(createdAt)) return null;
   const events = Array.isArray(raw.events) ? raw.events.map(parseEvent).filter((event): event is LedgerEvent => event !== null) : [];
-  return { id, projectPath, request, doneWhen, due, ownerPlaceId, risk, state: state as LedgerTaskState, createdAt, events };
+  const slack = parseSlackLetter(raw.slack);
+  return { id, projectPath, request, doneWhen, due, ownerPlaceId, risk, state: state as LedgerTaskState, createdAt, events, ...(slack ? { slack } : {}) };
+}
+
+function parseSlackLetter(raw: unknown): SlackLetter | null {
+  if (!isRecord(raw) || !str(raw.destination) || !str(raw.text) || !str(raw.reason)) return null;
+  const slack: SlackLetter = {
+    destination: raw.destination,
+    ...(str(raw.destinationLabel) ? { destinationLabel: raw.destinationLabel } : {}),
+    ...(str(raw.thread) && raw.thread ? { thread: raw.thread } : {}),
+    text: raw.text,
+    reason: raw.reason,
+  };
+  return slackLetterProblem(slack) ? null : slack;
 }
 
 export function parseLedgerDoc(raw: unknown): LedgerDoc {

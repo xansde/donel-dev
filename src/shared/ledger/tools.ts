@@ -3,7 +3,7 @@
 // the board (the same answer as `sessao_quem_sou`), never from the arguments, so a session cannot pose as
 // the Revisor or as the owner.
 
-import { MAX_PROOFS, MAX_PROOF_TEXT_CHARS, MAX_REQUEST_CHARS, type LedgerRisk, type LedgerTaskState } from './contract';
+import { MAX_PROOFS, MAX_PROOF_TEXT_CHARS, MAX_REQUEST_CHARS, MAX_SLACK_TEXT_CHARS, type LedgerRisk, type LedgerTaskState } from './contract';
 
 /** A proof as the session sends it. A file is a path on the session's computer; the main copies it in. */
 export type ProofInput =
@@ -18,7 +18,8 @@ export type LedgerToolCall =
   | { readonly tool: 'tarefa_aceitar'; readonly id: string }
   | { readonly tool: 'tarefa_rejeitar'; readonly id: string; readonly motivo: string }
   | { readonly tool: 'tarefa_listar'; readonly estado?: LedgerTaskState; readonly todos?: boolean; readonly quadro?: string }
-  | { readonly tool: 'tarefa_ver'; readonly id: string };
+  | { readonly tool: 'tarefa_ver'; readonly id: string }
+  | { readonly tool: 'carta_slack'; readonly destino: string; readonly destinoNome?: string; readonly thread?: string; readonly texto: string; readonly motivo: string };
 
 export type LedgerToolName = LedgerToolCall['tool'];
 
@@ -124,6 +125,24 @@ export const LEDGER_TOOLS = [
     inputSchema: { type: 'object', properties: { id: ID }, required: ['id'], additionalProperties: false },
     annotations: { readOnlyHint: true },
   },
+  {
+    name: 'carta_slack',
+    title: 'Pedir ao dono para mandar mensagem no Slack',
+    description:
+      'Toda mensagem ao Slack em nome do dono (canal, pessoa ou thread; por MCP do Slack, Composio, curl ou script) precisa ANTES desta carta aceita pelo dono: sem ela o Donel Dev bloqueia o envio. A carta leva o destino, a thread, o texto EXATO e o motivo, e espera o dono no Oráculo Harrow (desktop e celular). Aceita: envie o mesmo texto ao mesmo destino e thread, uma vez só. Rejeitada: não envie; o motivo diz o ajuste; crie outra carta. Veja a decisão com tarefa_ver.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        destino: { type: 'string', description: 'O canal ou a pessoa EXATAMENTE como vai no campo da ferramenta de envio (ex.: o id C0123ABC, ou #produto se a ferramenta usa o nome).' },
+        destinoNome: { type: 'string', description: 'Como o dono reconhece o destino (ex.: #produto, Fulana). Opcional.' },
+        thread: { type: 'string', description: 'O thread_ts, quando a mensagem é resposta numa thread.' },
+        texto: { type: 'string', description: 'A mensagem exata, caractere por caractere, como vai ser enviada.' },
+        motivo: { type: 'string', description: 'Por que a mensagem vai, em uma frase para o dono.' },
+      },
+      required: ['destino', 'texto', 'motivo'],
+      additionalProperties: false,
+    },
+  },
 ] as const;
 
 const NAMES: ReadonlySet<string> = new Set(LEDGER_TOOLS.map((tool) => tool.name));
@@ -209,6 +228,25 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       if (args.estado !== undefined && !STATES.includes(args.estado as LedgerTaskState)) return fail(`"estado" tem de ser ${STATES.join(', ')}.`);
       if (args.todos !== undefined && typeof args.todos !== 'boolean') return fail('"todos" é true ou false.');
       return { ok: true, call: { tool: 'tarefa_listar', ...(args.estado ? { estado: args.estado as LedgerTaskState } : {}), ...(args.todos ? { todos: true } : {}), ...quadro } };
+    }
+    case 'carta_slack': {
+      const destino = text(args.destino, 'destino', 200, true);
+      const destinoNome = text(args.destinoNome, 'destinoNome', 200, false);
+      const thread = text(args.thread, 'thread', 120, false);
+      const texto = text(args.texto, 'texto', MAX_SLACK_TEXT_CHARS, true);
+      const motivo = text(args.motivo, 'motivo', MAX_REQUEST_CHARS, true);
+      for (const value of [destino, destinoNome, thread, texto, motivo]) if (typeof value === 'object') return fail(value.error);
+      return {
+        ok: true,
+        call: {
+          tool: 'carta_slack',
+          destino: (destino as string).trim(),
+          ...(typeof destinoNome === 'string' && destinoNome.trim() ? { destinoNome: destinoNome.trim() } : {}),
+          ...(typeof thread === 'string' && thread.trim() ? { thread: thread.trim() } : {}),
+          texto: texto as string,
+          motivo: (motivo as string).trim(),
+        },
+      };
     }
     default:
       return fail(`Ferramenta desconhecida: ${name}`);

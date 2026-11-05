@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-05',
     items: [
       {
+        title: 'Mensagem no Slack em seu nome só com a sua carta',
+        text: 'Antes de mandar qualquer mensagem no Slack em seu nome, a sessão agora cria uma carta no Oráculo Harrow com o destino, a thread, o texto exato e o motivo, e espera você. Aceitar libera aquele texto, para aquele destino, uma vez. Rejeitar não envia nada, e o motivo que você escreve diz à sessão o que ajustar. Sem carta aceita, o Donel bloqueia o envio por qualquer caminho: o Slack, o Composio, um comando ou um script.',
+      },
+      {
         title: 'Sessões na VPS conversam com o Donel',
         text: 'Uma sessão que você abre na VPS pelo Donel agora conecta nas ferramentas do Donel, como acontece no computador: ela lê o quadro, abre sessões e cria tarefas e cartas no Oráculo Harrow. Antes ela subia sem essas ferramentas.',
       },

@@ -21,7 +21,7 @@ import { LEADER_ROLE_ID, ROLES_CHANNELS, type RoleSaveResult, type SessionRole }
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
-import { createLedgerService, ledgerFilePath, ledgerProofsDir, nodeLedgerProofFs, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
+import { createLedgerService, guardSlackSend, ledgerFilePath, ledgerProofsDir, nodeLedgerProofFs, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerOwnerDecision, type LedgerSnapshot } from '../shared/ledger/channels';
 import { isHttpUrl, isProofFileName, type LedgerProof } from '../shared/ledger/contract';
 import type { LedgerToolCall } from '../shared/ledger/tools';
@@ -3551,6 +3551,8 @@ void app.whenReady().then(async () => {
         autoNeverAsks: () => appConfig.autoMode.neverAsks,
         projectYolo: isTabYolo,
         holdsPendings: () => chatHub !== null,
+        // Slack só com carta: a post to Slack passes only with an accepted letter of the Oráculo Harrow.
+        preToolUseGuard: (_ptyId, payload) => guardSlackSend(ledgerService, typeof payload.tool_name === 'string' ? payload.tool_name : '', payload.tool_input),
       });
       await bridge.start();
       semaphoreManager.attachBridge(bridge);
