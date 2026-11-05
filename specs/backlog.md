@@ -1378,6 +1378,18 @@ memória?); se o limite é por sessão ou por custo; se o dono pode vetar a troc
 **Status (03/11):** entregue no alfa (item 07 do PDA `mindscape-openrig`). Regras fechadas e
 os "em aberto" respondidos em `docs/refinamentos/sessao-renovada-em-voo.md`.
 
+**Regra do resumo pré-compactação (kit do Bill, absorvida em 04/11):** a passagem de bastão
+segue as regras do RECAP do kit "time de agentes", que custam só texto no pedido de passagem:
+- **leva:** as decisões tomadas e o porquê de cada uma; o que foi descartado e por quê; a
+  armadilha que custou tempo; os ids do trabalho em aberto, sem o estado deles;
+- **não leva:** o estado de tarefa (quando o ledger do item 19 existir, ele é a autoridade); a
+  lista do que foi feito; segredo;
+- **teto:** 1.500 caracteres;
+- **quando:** antes de cada renovação ou compactação e ao parar um lugar que trabalhou;
+- **prova:** a sessão nova lê a passagem e retoma sem perguntar o que estava fazendo. Depois
+  de renovar, a ordem de leitura é: quem sou (papel) → passagem → mensagens pendentes →
+  tarefas abertas.
+
 ### B37. Sessões desenham no Mindscape e abrem sessões a partir do desenho (pedido do dono, 04/11)
 
 **Pedido:** "O que precisa pôr no backlog é as sessões poderem desenhar no
