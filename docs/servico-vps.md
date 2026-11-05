@@ -118,6 +118,24 @@ gera `remote-blind-as-full` e é tratada como cheia.
 Troca à mão: `donel-servico contas trocar homologacoes <id da conta>` (os ids
 estão no `estado`).
 
+## 6. Oráculo na VPS (migração: só depois da fatia 02b)
+
+O serviço já hospeda um Oráculo vazio em `~/.donel/ledger.json`, com API em
+`http://<ip tailscale da VPS>:47816`. **Ainda não migre.** Enquanto o app do PC
+não for cliente dele (fatia 02b), o PC continuaria gravando no Oráculo dele, e
+os dois se separariam. Quando a 02b entrar:
+
+1. Na VPS: `donel-servico oraculo token`. O token aparece uma vez só, então
+   guarde-o. Rodar de novo invalida o anterior.
+2. No PC, feche o Donel e copie o Oráculo para a VPS:
+   `scp %APPDATA%\donel-dev\ledger.json vps-alexandrelentz:~/.donel/importar-ledger.json`
+   `scp -r %APPDATA%\donel-dev\ledger-provas vps-alexandrelentz:~/.donel/importar-provas`
+3. Na VPS: `donel-servico oraculo importar ~/.donel/importar-ledger.json ~/.donel/importar-provas`.
+   A importação recusa se alguma tarefa se perderia ou se faltar alguma prova.
+   No fim, ela mostra quantas tarefas, eventos e provas entraram.
+4. No PC, configure o cliente (passo da 02b) e abra o Donel. O `ledger.json`
+   do PC fica como cópia e não é apagado.
+
 ## Desfazer
 
 ```bash

@@ -32,7 +32,7 @@
 - **TaskDex**: — (ferramenta pessoal)
 - **Fatiado em**: 2026-11-05, à mão (as skills da esteira não estão instaladas na VPS)
 - **Gate**: pedido do dono em 05/11 ("O VPS pessoal também deve ser autonomo sem depender do meu pc ligado", "Pode puxar para ser feito amanhã mesmo"); ordem pelo dono: switcher primeiro, depois Oráculo e cartas
-- **Rodadas previstas**: 01 | 02 | 03 + 04 | 05 | 06
+- **Rodadas previstas**: 01 | 02 | 02b + 03 + 04 | 05 | 06
 
 Arquitetura curta: um processo Node sem Electron (`donel-servico`, systemd, `Restart=always`) na VPS
 pessoal. Bundle por `vite.servico.config.ts` em `out-servico/` (fora do instalador). Comandos do
@@ -48,13 +48,21 @@ quando está ligado. Nada do serviço depende de Electron. O que precisa de Elec
 - **Escopo**: `src/main/accounts/servico/` (cofre AES-GCM com chave do systemd, host do motor), `src/servico/` (entrada e socket), opção `remotePlacesFirst` e regra "carga cega 10 min = cheia" no motor, unidade systemd e `scripts/servico/instalar.sh`, ADR 0008, emenda no `CLAUDE.md`. NÃO entra: o PC como painel e o gesto "Entregar à VPS" (05), o aviso "todas cheias" (06).
 - **Como testar**: `tests/accountsRemotePlaces.test.ts` (PC escolhe antes do lugar; serviço escolhe o lugar antes; cega 10 min troca) e `tests/servicoContas.test.ts` (cofre cifrado, par some da pasta de login, nenhum token em resposta, config ou log; sem chave, recusa).
 
-### 02 — Oráculo mora na VPS
+### 02 — Oráculo mora na VPS (servidor e migração)
+
+- **Status**: implementada
+- **Branch**: `feat/donel-vps-oraculo` (empilhada na 01)
+- **Depende de**: 01 (o processo e a instalação)
+- **Propósito**: o Oráculo (`ledger.json` e `ledger-provas/`) passa a morar no serviço da VPS, com uma API para o PC usar como cliente.
+- **Escopo**: `src/servico/oraculo/`: o mesmo `LedgerService` do app sobre `~/.donel/ledger.json`; API HTTP só no endereço Tailscale (porta 47816), com token Bearer (só o hash fica no disco): ler, aplicar op, rodar `tarefa_*` com o chamador resolvido pelo PC, receber anexo de prova e servir prova. `donel-servico oraculo token` e `oraculo importar` (migração única; recusa se alguma tarefa se perderia, se faltar prova ou se o Oráculo da VPS já tiver tarefas sem `--substituir`, e faz cópia de segurança antes).
+- **Como testar**: `tests/servicoOraculo.test.ts`: a importação leva tarefas, eventos e provas; não atropela; tarefa malformada trava; a API recusa sem token.
+
+### 02b — O app do PC como cliente do Oráculo da VPS
 
 - **Status**: pendente
-- **Depende de**: 01 (o processo e a instalação)
-- **Propósito**: o ledger (`ledger.json`) passa a morar na VPS. O app do PC lê e escreve nele como cliente quando está ligado.
-- **Escopo**: o serviço hospeda o `LedgerStore` e o expõe por HTTP só na tailnet, com token. No PC, um `ledger-port` remoto troca o arquivo local pelo serviço quando `oraculo.servico` está na config. Migração única do `ledger.json` do PC, com cópia de segurança e conferência de contagem.
-- **Como testar**: migração não perde tarefa, prova nem decisão (contagem e ids iguais antes e depois); escrita concorrente PC + sessão da VPS não duplica nem some com tarefa.
+- **Depende de**: 02
+- **Propósito**: com `oraculo.servico` na config do PC, a faixa, o Jobu, a decisão do dono e as `tarefa_*` das sessões do PC leem e escrevem no Oráculo da VPS. Só depois disso a migração é feita: antes dela, os dois lados escreveriam em Oráculos diferentes.
+- **Escopo**: um cliente HTTP no main do PC atrás das mesmas portas de hoje (IPC `ledger:*`, `executeLedgerTool`, progresso do Jobu). O anexo de prova sobe antes do `tarefa_entregar`. O token fica num arquivo em `userData`, fora da config e da tela. Sem a VPS no ar, a faixa avisa e nada é gravado localmente.
 
 ### 03 — Cartas no celular servidas pela VPS
 
