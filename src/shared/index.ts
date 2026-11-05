@@ -11,6 +11,7 @@ import type { DonelDevModeApi } from './devMode';
 import type { DonelChatApi } from './chat/api';
 import type { DonelPetApi } from './pet/ipc';
 import type { DonelLiderApi } from './lider/ipc';
+import type { DonelCelularApi } from './celular';
 import type { DonelRotinasApi } from './rotinas/contract';
 import type { DonelEsteiraApi } from './esteira/ipc';
 import type { DonelGithubApi } from './github';
@@ -522,6 +523,8 @@ export interface DonelApi {
   pet: DonelPetApi;
   /** Item 18 — the conversation with the Jobu as Líder, in its own window. */
   lider: DonelLiderApi;
+  /** Ledger no celular — a PWA na Tailscale: ligar, parear e revogar celulares (Preferências). */
+  celular: DonelCelularApi;
   /** Saúde do computador — RAM, disco e processos que estão pesando, com a ação de encerrar um processo. */
   health: DonelHealthApi;
   /** B33 — versão nova do alfa: atualizar de dentro do app e reabrir as abas depois. */

@@ -1,0 +1,13 @@
+{
+  "name": "Ledger · Donel",
+  "short_name": "Ledger",
+  "description": "Entregas esperando você, uma carta por vez.",
+  "lang": "pt-BR",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#121019",
+  "theme_color": "#121019",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

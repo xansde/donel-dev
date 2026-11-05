@@ -15,11 +15,12 @@ import { createEsteiraService, type EsteiraService } from './esteira-service';
 import { esteiraStoreDir } from './esteira-store';
 import { createMindscapeStore, mindscapeFilePath } from './mindscape-store';
 import { createRolesStore, type RolesStore } from './roles-store';
+import { createCelularService, type CelularService } from './celular/service';
 import { roleOfSession } from '../shared/mindscape/model';
 import { ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
 import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
-import { createLedgerService, ledgerFilePath, nodeLedgerProofFs, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
+import { createLedgerService, ledgerFilePath, ledgerProofsDir, nodeLedgerProofFs, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerOwnerDecision, type LedgerSnapshot } from '../shared/ledger/channels';
 import { isHttpUrl, isProofFileName, type LedgerProof } from '../shared/ledger/contract';
 import type { LedgerToolCall } from '../shared/ledger/tools';
@@ -1124,6 +1125,9 @@ function getMainWindow(): BrowserWindow | null {
 
 /** Navegador interno — `null` until `app.whenReady()` (needs `userData`). */
 let browserService: BrowserService | null = null;
+
+/** Ledger no celular — `null` until `app.whenReady()` (needs `userData`). */
+let celularService: CelularService | null = null;
 
 /**
  * T020 (015-jobu-pet) — the Jobu service. `null` until the main window appears (R21: the pet window
@@ -3643,6 +3647,14 @@ void app.whenReady().then(async () => {
   registerRotinasIpcHandlers(); // Item 20 — rotinas em sombra
   registerAppUpdateIpcHandlers(); // B33 — atualizar de dentro do app
   registerWorkspaceIpcHandlers(); // Sidebar — abrir no editor + branch
+  celularService = createCelularService({
+    ipcMain,
+    userDataDir: app.getPath('userData'),
+    io: configIoDeps,
+    ledger: () => ledgerService,
+    provasRoot: ledgerProofsDir(ledgerFilePath(process.env, app.getPath('userData'))),
+    isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
+  }); // Ledger no celular (PWA só na Tailscale)
   // Quadro por MCP — the board and session tools of the same server go to the renderer (owner of the document).
   const boardBridge = createBoardBridge({
     ipcMain,
@@ -3695,6 +3707,8 @@ app.on('window-all-closed', () => {
   routineRunner?.stop();
   routineRunner = null;
   appUpdateService?.stop();
+  void celularService?.dispose();
+  celularService = null;
   // fix/renovacao-credencial (C6, research.md) — antes de descartar o motor,
   // guarda no cofre o par que o CLI deixou em `.credentials.json` para a
   // conta ativa. A gravação acontece dentro da chamada, sem esperar promessa.
