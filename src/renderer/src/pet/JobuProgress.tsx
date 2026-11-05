@@ -169,7 +169,7 @@ export function JobuProgressPanel({ state }: { readonly state: JobuProgressState
     <div className={styles.panel} data-testid="pet-progress">
       <div className={styles.head}>
         <span>Progresso</span>
-        <span className={styles.stamp}>{failed ? 'não consegui ler as tarefas' : `atualizado às ${clock(computedAt)}`}</span>
+        <span className={styles.stamp}>{failed ? 'não consegui ler o Oráculo' : `atualizado às ${clock(computedAt)}`}</span>
       </div>
       {progress.boards.length === 0 ? (
         <p className={styles.empty}>Nenhuma tarefa aberta. Quando o Líder criar uma, ela aparece aqui com a barra e a data estimada.</p>
