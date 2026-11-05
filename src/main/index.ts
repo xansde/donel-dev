@@ -196,6 +196,7 @@ import {
 import { createJsonRpcCallTool, createSystemHttpPostJson } from './taskdex-mcp-transport';
 import {
   buildSessionHooksSettings,
+  buildSlackOfflineGuardScript,
   cleanupStaleHookSettings,
   planStatusLineBridge,
   removeSessionHooksSettings,
@@ -211,6 +212,7 @@ import {
   findRemoteTranscript,
   parseRemoteSetupOutput,
   pickRemotePort,
+  REMOTE_SESSIONS_DIR,
   remoteDirFor,
   RemoteSessionRegistry,
   runRemoteScript,
@@ -1649,10 +1651,13 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
 
   const hooksOn = hookBridge !== null && hookBridge.port !== null;
   if (hooksOn) {
+    // Slack só com carta, fatia 4: the remote session outlives the app; with it down, a post to Slack is refused.
+    files.push({ name: 'slack-guard.sh', content: buildSlackOfflineGuardScript({ port: fresh.hookPort, token: fresh.hookToken }) });
     const settings = buildSessionHooksSettings({
       port: fresh.hookPort,
       token: fresh.hookToken,
       curlPath: 'curl',
+      slackOfflineGuardCommand: `sh "$HOME/${REMOTE_SESSIONS_DIR}/${correlationId}/slack-guard.sh"`,
       statusLine: planStatusLineBridge({ mode: statusLineBridgeModeSetting, userStatusLine: null, chatEnabled: appConfig.chat.enabled }),
     });
     files.push({ name: 'settings.json', content: `${JSON.stringify(settings, null, 2)}\n` });

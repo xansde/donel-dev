@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-05',
     items: [
       {
+        title: 'Sem o Donel, nada vai ao Slack',
+        text: 'Uma sessão na VPS continua rodando mesmo com o Donel fechado no computador. Agora, se ela tentar mandar mensagem no Slack nessa hora, o envio é recusado, porque não dá para conferir a sua carta. A sessão fica sabendo o motivo e espera o Donel voltar.',
+      },
+      {
         title: 'Aviso no celular quando uma carta espera você',
         text: 'O app do Oráculo no celular ganhou um sino. Toque nele e permita as notificações: quando uma carta passar a esperar você, o celular avisa com o título dela, mesmo com o app fechado, e o toque abre a carta. O aviso precisa do endereço https da Tailscale: o passo a passo está nas Preferências do celular, e depois você pareia de novo pelo QR. No iPhone, adicione o Oráculo à Tela de Início antes de tocar no sino.',
       },

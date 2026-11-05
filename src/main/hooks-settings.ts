@@ -117,10 +117,15 @@ export interface SessionHooksSettingsInput {
    * Only this session's file: the owner's `~/.claude/settings.json` is never touched.
    */
   readonly isolatedWorktree?: boolean;
+  /**
+   * Slack só com carta, fatia 4 — the command that runs `buildSlackOfflineGuardScript` (a remote session: it
+   * outlives the app). Absent = only the `http` hook, whose bridge lives and dies with a local session.
+   */
+  readonly slackOfflineGuardCommand?: string;
 }
 
 export interface SessionHooksSettingsContent {
-  readonly hooks: Record<string, ReadonlyArray<{ readonly hooks: ReadonlyArray<Record<string, unknown>> }>>;
+  readonly hooks: Record<string, ReadonlyArray<{ readonly matcher?: string; readonly hooks: ReadonlyArray<Record<string, unknown>> }>>;
   readonly statusLine?: StatusLineSetting;
   readonly worktree?: { readonly baseRef: 'head' };
 }
@@ -132,7 +137,7 @@ function bridgeUrl(port: number, event: string): string {
 /** Pure — the per-session `--settings` content. No `matcher` anywhere: every tool is observed. */
 export function buildSessionHooksSettings(input: SessionHooksSettingsInput): SessionHooksSettingsContent {
   const { port, token, curlPath, forwarderScriptPath } = input;
-  const hooks: Record<string, ReadonlyArray<{ hooks: ReadonlyArray<Record<string, unknown>> }>> = {};
+  const hooks: Record<string, ReadonlyArray<{ matcher?: string; hooks: ReadonlyArray<Record<string, unknown>> }>> = {};
 
   for (const { event, timeout } of BRIDGE_HTTP_EVENTS) {
     hooks[event] = [{ hooks: [{ type: 'http', url: bridgeUrl(port, event), headers: { 'X-Donel-Token': token }, timeout }] }];
@@ -147,6 +152,9 @@ export function buildSessionHooksSettings(input: SessionHooksSettingsInput): Ses
     command = `powershell -NoProfile -ExecutionPolicy Bypass -File "${forwarderScriptPath ?? ''}"`;
   }
   hooks.SessionStart = [{ hooks: [{ type: 'command', command, timeout: 10 }] }];
+  if (input.slackOfflineGuardCommand) {
+    hooks.PreToolUse = [...hooks.PreToolUse!, { matcher: SLACK_OFFLINE_GUARD_MATCHER, hooks: [{ type: 'command', command: input.slackOfflineGuardCommand, timeout: 10 }] }];
+  }
 
   const statusLine = input.statusLine ? buildStatusLineSetting(input.statusLine, input) : null;
   return {
@@ -154,6 +162,46 @@ export function buildSessionHooksSettings(input: SessionHooksSettingsInput): Ses
     ...(statusLine ? { statusLine } : {}),
     ...(input.isolatedWorktree ? { worktree: { baseRef: 'head' as const } } : {}),
   };
+}
+
+// --- Slack só com carta, fatia 4: falha fechada --------------------------------
+//
+// A post to Slack is decided by the bridge (`preToolUseGuard`, answering the `http` PreToolUse hook). But an
+// `http` hook that gets no answer does NOT block: with the app down, the post would go out unchecked. A local
+// session dies with the app (its PTY is the app's child); a remote one lives on in tmux. So the remote session
+// also gets this command hook: it asks the bridge `/h/Ping` (app up AND this token known); if yes, it says
+// nothing and the bridge decides as usual; if not, and the call looks like a post to Slack, it REFUSES. The
+// offline test is deliberately broad (it refuses a Slack draft, or any call to the Slack Web API, even a read,
+// while the app is down): the owner's rule is
+// "a carta antes de qualquer coisa", so what cannot be checked does not go out.
+
+export const SLACK_OFFLINE_GUARD_MATCHER = 'Bash|mcp__.*';
+
+/** ERE over the hook payload (tool name + input), case-insensitive: anything that may post to Slack. */
+export const SLACK_OFFLINE_PATTERN =
+  'mcp__[^"]*slack[^"]*__[^"]*(send|post|repl|schedul|updat|edit|upload|file|share)|slack_[a-z_]*(send|post|repl|schedul|updat|edit|upload|file|share)|chat[._](postMessage|post_message|update|scheduleMessage|postEphemeral|meMessage)|files[._](upload|completeUpload|complete_upload|share)|slack\\.com/api/|hooks\\.slack\\.com|canal-produto';
+
+export const SLACK_OFFLINE_REFUSAL =
+  'Envio ao Slack bloqueado pelo Donel Dev: o app do Donel está fora do ar (ou não reconhece esta sessão), então não dá para confirmar a carta no Oráculo Harrow. Toda mensagem ao Slack em nome do dono precisa antes de uma carta aceita, e o que não se confirma não sai. Não tente outro caminho de envio. Diga ao dono que a mensagem está esperando o Donel voltar; quando ele voltar, crie a carta com carta_slack e espere a decisão.';
+
+/** Pure — the POSIX `sh` script of the offline guard (stdin: the hook payload; stdout: a deny, or nothing). */
+export function buildSlackOfflineGuardScript(input: { readonly port: number; readonly token: string }): string {
+  const deny = JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: SLACK_OFFLINE_REFUSAL } });
+  return [
+    '#!/bin/sh',
+    '# Donel Dev — Slack só com carta: com o app fora do ar, envio ao Slack é recusado (falha fechada).',
+    'payload=$(cat)',
+    `if curl -s -f --noproxy 127.0.0.1 --connect-timeout 2 --max-time 4 -o /dev/null -X POST -H "X-Donel-Token: ${input.token}" ${bridgeUrl(input.port, 'Ping')} 2>/dev/null; then`,
+    '  exit 0',
+    'fi',
+    `if printf '%s' "$payload" | grep -Eqi '${SLACK_OFFLINE_PATTERN}'; then`,
+    "  cat <<'DONEL_DENY'",
+    deny,
+    'DONEL_DENY',
+    'fi',
+    'exit 0',
+    '',
+  ].join('\n');
 }
 
 // --- Ponte da statusline ------------------------------------------------------
