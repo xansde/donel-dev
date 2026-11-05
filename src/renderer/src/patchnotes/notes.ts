@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-05',
     items: [
       {
+        title: '"Esperando você" no Mindscape abre as cartas',
+        text: 'No Mindscape, o botão "esperando você" da faixa do Oráculo Harrow agora abre as cartas sobre o quadro: a mão de cartas à esquerda e a carta grande no centro, igual ao celular. Na frente, a pergunta, o print ou as checagens, a recomendação e os caminhos; clique num caminho e clique de novo para decidir. "↻ Virar" mostra o verso com o que aconteceu, o risco de cada caminho, quem fez pelo nome e, recolhidos, o seu pedido e os detalhes técnicos. Esc ou "Fechar" volta ao quadro.',
+      },
+      {
         title: 'Cartas do celular: a frente decide, o verso explica',
         text: 'No app do celular, a carta de uma entrega que espera você mostra na frente a pergunta, o print ou o quadro de checagens, a recomendação com o porquê e os caminhos com o efeito de cada um. Toque num caminho e toque de novo para decidir: a tarefa fecha do jeito que aquele caminho diz, e o nome dele fica no histórico. "↻ Virar" mostra o verso: o que aconteceu, o risco de cada caminho, quem fez (pelo nome no quadro), o seu pedido e os detalhes técnicos, recolhidos. Entrega sem pergunta para você continua na carta de antes.',
       },

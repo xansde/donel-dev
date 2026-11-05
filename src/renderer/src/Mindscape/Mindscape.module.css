@@ -1049,7 +1049,7 @@
   padding: 4px;
 }
 
-/* Ledger com prova (item 19) — the strip of numbers under the tabs; "esperando você" opens a short list. */
+/* Ledger com prova (item 19) — the strip of numbers under the tabs; "esperando você" opens the cards (LedgerCards). */
 .ledger {
   flex: none;
   border-bottom: var(--hairline);
@@ -1090,85 +1090,7 @@
   color: var(--text-primary);
 }
 
-.ledgerQueue {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-height: 40vh;
-  margin: 0;
-  padding: 4px 12px 10px;
-  overflow-y: auto;
-  list-style: none;
-}
-
-.ledgerItem {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px 10px;
-  border: var(--hairline);
-  border-left: 3px solid var(--state-permission);
-  border-radius: var(--radius-sm);
-  background: var(--bg-raised);
-  color: var(--text-primary);
-}
-
-.ledgerItemHead {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  gap: 4px 12px;
-}
-
 .ledgerMeta {
   color: var(--text-muted);
 }
 
-.ledgerProofs,
-.ledgerActions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-}
-
-.ledgerActions button,
-.ledgerLink {
-  padding: 2px 10px;
-  border: var(--hairline);
-  border-radius: var(--radius-sm);
-  background: var(--bg-panel);
-  color: var(--text-primary);
-  font: inherit;
-  cursor: pointer;
-}
-
-.ledgerLink {
-  max-width: 320px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.ledgerProofText pre {
-  max-height: 160px;
-  margin: 4px 0 0;
-  overflow: auto;
-  font-family: var(--font-mono);
-  white-space: pre-wrap;
-}
-
-.ledgerReason {
-  flex: 1;
-  min-width: 160px;
-  padding: 2px 6px;
-  border: var(--hairline);
-  border-radius: var(--radius-sm);
-  background: var(--bg-app);
-  color: var(--text-primary);
-  font: inherit;
-}
-
-.ledgerError {
-  color: var(--state-error);
-}

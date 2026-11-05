@@ -5,19 +5,18 @@
 
 import { basename } from 'node:path';
 import type { CartaCelular, DecisaoCelular, EntregaCelular, ProvaCelular, VisualCelular } from '../../shared/celular';
-import { naipeDoTipo } from '../../shared/celular';
 import {
   decisionOfRequest,
   lastDecision,
   lastDelivery,
   ownerQueue,
   waitsForOwner,
-  type LedgerActor,
   type LedgerForOwner,
   type LedgerProof,
   type LedgerTask,
   type LedgerVisual,
 } from '../../shared/ledger/contract';
+import { actorLabel, naipeDoPapel, type PlaceNameOf } from '../../shared/ledger/labels';
 import type { LedgerService } from '../ledger-store';
 import { maskSecrets, summarize } from './mask';
 
@@ -42,6 +41,8 @@ export type ProvaFonte =
   | { readonly mediaType: string; readonly filePath: string }
   | { readonly mediaType: string; readonly bytes: Uint8Array };
 
+export type { PlaceNameOf };
+
 export interface MobileLedgerPort {
   /** O que espera o dono: entregas de risco alto + a amostra do dia dos aceites do Revisor (D2). */
   pendentes(): EntregaCelular[];
@@ -49,30 +50,6 @@ export interface MobileLedgerPort {
   decidir(input: DecisaoInput): DecisaoOutcome;
   /** Print ou vídeo (o arquivo) ou a saída de comando inteira, mascarada (bytes de texto). */
   prova(itemId: string, provaId: string): ProvaFonte | null;
-}
-
-const ROLE_LABELS: Readonly<Record<string, string>> = {
-  dev: 'Dev',
-  revisor: 'Revisor',
-  pesquisa: 'Pesquisa',
-  lider: 'Líder',
-};
-
-/** O nome de um lugar no quadro (o nome da sessão), quando se sabe; `undefined` = sem nome, fica o papel. */
-export type PlaceNameOf = (projectPath: string, placeId: string) => string | undefined;
-
-function roleLabel(roleId: string | undefined): string {
-  const role = roleId ?? '';
-  return ROLE_LABELS[role] ?? ROLE_LABELS[role.split('-')[0] ?? ''] ?? (role || 'um lugar');
-}
-
-/** "Dev · painel do Jobu"; sem nome, só o papel ("Dev"). Nunca o id do lugar. */
-function actorLabel(actor: LedgerActor | undefined, projectPath: string, placeName: PlaceNameOf | undefined): string {
-  if (!actor) return 'alguém';
-  if (actor.kind === 'dono') return 'você';
-  const role = roleLabel(actor.roleId);
-  const name = placeName?.(projectPath, actor.placeId)?.trim();
-  return name ? `${role} · ${name}` : role;
 }
 
 function visualCelular(visual: LedgerVisual | undefined): VisualCelular | undefined {
@@ -103,17 +80,6 @@ function cartaCelular(forOwner: LedgerForOwner): CartaCelular {
     risco: forOwner.risk,
     ...(visual ? { visual } : {}),
   };
-}
-
-/** O contrato ainda não tem tipo de trabalho: o naipe sai do papel de quem entregou (decidido pelo Dev). */
-function naipeDoPapel(roleId: string | undefined): EntregaCelular['naipe'] {
-  const role = (roleId ?? '').split('-')[0];
-  if (role === 'pesquisa') return naipeDoTipo('pesquisa');
-  if (role === 'revisor') return naipeDoTipo('revisao');
-  if (role === 'lider') return naipeDoTipo('decisao');
-  if (role === 'seguranca') return naipeDoTipo('seguranca');
-  if (role === 'correcao' || role === 'fix') return naipeDoTipo('correcao');
-  return naipeDoTipo('construcao');
 }
 
 function provaCelular(proof: LedgerProof, index: number): ProvaCelular {

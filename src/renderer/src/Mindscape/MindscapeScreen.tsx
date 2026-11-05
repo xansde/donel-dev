@@ -324,6 +324,14 @@ export function MindscapeScreen({
   const resume = (sessionId: string): void => {
     if (board) onResume?.(sessionId, board.projectPath, dormantName(sessionId));
   };
+  /** A place by its name on the board (the shadow routines, the Oráculo's cards); never its id. */
+  const placeName = (projectPath: string, placeId: string): string | undefined => {
+    if (!board || board.projectPath !== projectPath) return undefined;
+    const card = board.cards[placeId];
+    if (card?.kind !== 'session' || !card.sessionId) return undefined;
+    const sessionId = card.sessionId;
+    return boardSessions.find((session) => session.sessionId === sessionId)?.name ?? dormantName(sessionId);
+  };
   // Item 12a — places that have not started yet: always drawn, a double click opens their session.
   const pendingPlaces: readonly SessionPlaceCard[] = board
     ? Object.values(board.cards).filter((card): card is SessionPlaceCard => card.kind === 'session' && card.sessionId === undefined)
@@ -623,7 +631,7 @@ export function MindscapeScreen({
           </button>
         ))}
       </div>
-      <LedgerStrip projectPath={activePath} />
+      <LedgerStrip projectPath={activePath} placeName={placeName} />
       <MindscapeToolbar
         enabled={Boolean(board)}
         tool={tool}
@@ -654,12 +662,7 @@ export function MindscapeScreen({
         shadow={
           <ShadowRoutines
             projectPath={board?.projectPath}
-            placeName={(placeId) => {
-              const card = board?.cards[placeId];
-              if (card?.kind !== 'session' || !card.sessionId) return undefined;
-              const sessionId = card.sessionId;
-              return boardSessions.find((session) => session.sessionId === sessionId)?.name ?? dormantName(sessionId);
-            }}
+            placeName={(placeId) => placeName(board?.projectPath ?? '', placeId)}
           />
         }
         reach={board?.reach ?? 'own'}
