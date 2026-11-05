@@ -215,7 +215,25 @@
     bloco.appendChild(el('div', 'prova-rotulo', prova.rotulo));
     var caminho = '/api/prova?item=' + encodeURIComponent(item.id) + '&prova=' + encodeURIComponent(prova.id);
     if (prova.tipo === 'comando') {
-      bloco.appendChild(el('pre', null, prova.texto || ''));
+      var saida = el('pre', null, prova.texto || '');
+      bloco.appendChild(saida);
+      if (prova.cortado) {
+        var inteira = el('button', 'prova-carregar', 'Ver a saída inteira');
+        inteira.type = 'button';
+        inteira.addEventListener('click', function () {
+          inteira.disabled = true;
+          inteira.textContent = 'Carregando…';
+          api(caminho)
+            .then(function (resposta) { return resposta.ok ? resposta.text() : null; })
+            .catch(function () { return null; })
+            .then(function (texto) {
+              if (texto === null) { inteira.disabled = false; inteira.textContent = 'Ver a saída inteira'; return; }
+              saida.textContent = texto;
+              bloco.removeChild(inteira);
+            });
+        });
+        bloco.appendChild(inteira);
+      }
     } else if (prova.tipo === 'link') {
       if (prova.url && /^https?:\/\//i.test(prova.url)) {
         var a = el('a', null, prova.url);

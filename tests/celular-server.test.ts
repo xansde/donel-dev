@@ -60,13 +60,16 @@ function setup() {
   const ledger = createLedgerService({ filePath: LEDGER, io, proofFs: noProofFs, newId: () => `t-${++seq}` });
   const first = deliveredTask(ledger, 'quero salvar sem fechar');
   const second = deliveredTask(ledger, 'a mensagem chegou duas vezes');
-  const port = createLedgerMobilePort(() => ledger);
-  const handle = createMobileHandler({ auth, ledger: () => port, assets: {}, provasRoot: null });
+  // A new handler over the same files is the app after a restart.
+  let handle = createMobileHandler({ auth, ledger: () => createLedgerMobilePort(() => ledger), assets: {}, provasRoot: null });
+  const restart = (): void => {
+    handle = createMobileHandler({ auth, ledger: () => createLedgerMobilePort(() => createLedgerService({ filePath: LEDGER, io, proofFs: noProofFs })), assets: {}, provasRoot: null });
+  };
   const call = (method: string, url: string, token?: string | null, body?: unknown): MobileResponse =>
     handle({ method, url, authorization: token ? `Bearer ${token}` : undefined, body: body === undefined ? '' : JSON.stringify(body) });
   const pairWith = (code: string): MobileResponse => call('POST', '/api/parear', null, { codigo: code, aparelho: 'iPhone' });
   const decisions = (id: string) => ledger.load().doc.tasks[id]!.events.filter((event) => event.kind === 'aceita' || event.kind === 'rejeitada');
-  return { io, auth, ledger, first, second, decisions, call, pairWith };
+  return { io, auth, ledger, first, second, decisions, call, pairWith, restart };
 }
 
 function bodyOf(response: MobileResponse): Record<string, unknown> {
@@ -123,7 +126,7 @@ describe('servidor do celular', () => {
   });
 
   it('aceitar pelo celular grava no ledger uma vez só, com autor dono', () => {
-    const { auth, ledger, first, decisions, call, pairWith } = setup();
+    const { auth, ledger, first, decisions, call, pairWith, restart } = setup();
     const token = bodyOf(pairWith(auth.createPairingCode().code)).token as string;
 
     const pedido = { pedidoId: 'pedido-0001', itemId: first, decisao: 'aceitar' };
@@ -132,6 +135,8 @@ describe('servidor do celular', () => {
     expect(firstCall.status).toBe(200);
     expect(retry.status).toBe(200);
     expect(bodyOf(retry)).toEqual(bodyOf(firstCall));
+    restart(); // o pedidoId está no ledger, não na memória do servidor
+    expect(bodyOf(call('POST', '/api/decidir', token, pedido))).toEqual(bodyOf(firstCall));
 
     // outro pedido para a mesma entrega (dois toques, outro celular): recusado, sem gravar
     expect(call('POST', '/api/decidir', token, { ...pedido, pedidoId: 'pedido-0002', decisao: 'rejeitar', motivo: 'não' }).status).toBe(409);
@@ -139,6 +144,31 @@ describe('servidor do celular', () => {
     expect(decisions(first)).toEqual([expect.objectContaining({ kind: 'aceita', by: { kind: 'dono' } })]);
     expect(ledger.load().doc.tasks[first]!.state).toBe('aceita');
     expect((bodyOf(call('GET', '/api/fila', token)).itens as { id: string }[]).some((item) => item.id === first)).toBe(false);
+  });
+
+  it('a fila leva só o começo da saída, sem segredo; a inteira vem mascarada ao abrir', () => {
+    const { auth, ledger, call, pairWith } = setup();
+    const token = bodyOf(pairWith(auth.createPairingCode().code)).token as string;
+    const secrets = ['sk-ant-api03-abcdefghijklmnopqrstuv', 'ghp_abcdefghijklmnopqrstuvwxyz0123', 'Bearer eyJhbGciOi.abcdefghijk.lmnopqrstuv', 'abcdef0123456789ABCDEF0123456789'];
+    const output = [`ANTHROPIC_API_KEY=${secrets[0]}`, `token: ${secrets[1]}`, `Authorization: ${secrets[2]}`, `DB_URL_X=${secrets[3]}`, ...Array.from({ length: 40 }, (_, i) => `linha ${i}`)].join('\n');
+    const created = ledger.apply(LIDER, { op: 'criar', projectPath: 'C:/proj/atlas', request: 'r', doneWhen: 'd', due: '2026-11-10', ownerPlaceId: 'p-dev', risk: 'alto' });
+    if (!created.ok) throw new Error(created.reason);
+    const id = created.task.id;
+    ledger.apply(DEV, { op: 'assumir', id });
+    ledger.apply(DEV, { op: 'entregar', id, proofs: [{ kind: 'texto', text: output }] });
+
+    const item = (bodyOf(call('GET', '/api/fila', token)).itens as { id: string; provas: { texto: string; cortado?: boolean }[] }[]).find((entry) => entry.id === id)!;
+    expect(item.provas[0]!.cortado).toBe(true);
+    expect(item.provas[0]!.texto.length).toBeLessThan(500);
+    const full = call('GET', `/api/prova?item=${id}&prova=0`, token);
+    expect(full.status).toBe(200);
+    const fullText = Buffer.from(full.body as Uint8Array).toString('utf8');
+    expect(fullText).toContain('linha 39');
+    for (const secret of secrets) {
+      const core = secret.replace(/^Bearer /, '').slice(4);
+      expect(item.provas[0]!.texto).not.toContain(core);
+      expect(fullText).not.toContain(core);
+    }
   });
 
   it('rejeitar sem motivo não grava; com motivo grava uma vez', () => {

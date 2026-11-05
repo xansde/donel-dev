@@ -46,6 +46,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'Em Preferências, Celular, ligue "App do celular para validar entregas" e toque em "Parear um celular": aponte a câmera do celular para o QR e adicione a página à tela inicial. Cada entrega que espera você vira uma carta, uma por tela: arraste para a direita para aceitar ou para a esquerda para rejeitar, contando o motivo (dá para ditar). Os botões embaixo fazem o mesmo, e o que você decide pelo celular conta como validação sua. Só funciona pela sua Tailscale, nada sai para a internet, e você revoga um celular na mesma tela.',
       },
       {
+        title: 'No celular, a saída de comando vem resumida e sem senhas',
+        text: 'A carta mostra só o começo da saída de um comando; toque em "Ver a saída inteira" para ler o resto. Chaves e tokens que aparecem nela (como sk-…, ghp_…, "Bearer …" ou API_KEY=…) chegam ao celular escondidos. E uma decisão que você mandou não grava duas vezes, nem se o app reiniciar no meio.',
+      },
+      {
         title: 'O time do Líder continua fora das abas depois de atualizar',
         text: 'As sessões que o Líder abriu voltavam para as abas depois de atualizar o app ou de reabri-lo com sessões vivas na VPS. Agora elas voltam como estavam: trabalhando, fora das abas, acompanhadas pelo lugar delas no Mindscape. Dois cliques no lugar continuam trazendo a sessão para as abas.',
       },

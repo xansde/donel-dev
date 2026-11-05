@@ -96,8 +96,10 @@ export interface ProvaCelular {
   readonly id: string;
   readonly tipo: ProvaTipo;
   readonly rotulo: string;
-  /** Saída de comando (`tipo: 'comando'`). */
+  /** Saída de comando (`tipo: 'comando'`): só o começo, com segredos mascarados. */
   readonly texto?: string;
+  /** A saída é maior que o resumo: a inteira (mascarada) vem por `/api/prova` ao abrir. */
+  readonly cortado?: true;
   /** Endereço `http(s)` (`tipo: 'link'`). Imagem e vídeo vêm por `/api/prova`. */
   readonly url?: string;
 }
