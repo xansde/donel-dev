@@ -10,6 +10,7 @@ import { createReadStream } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { isAbsolute, relative, resolve } from 'node:path';
 import type { DecisaoCelular } from '../../shared/celular';
+import { isRequestId } from '../../shared/ledger/contract';
 import type { CelularAuth } from './auth';
 import type { MobileLedgerPort } from './ledger-port';
 import { isTailscaleAddress } from './tailscale';
@@ -17,7 +18,6 @@ import { isTailscaleAddress } from './tailscale';
 export const MOBILE_PORT = 47815;
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_MOTIVO = 2000;
-const IDEMPOTENCY_CAP = 500;
 
 export interface MobileAsset {
   readonly contentType: string;
@@ -84,31 +84,26 @@ function isInside(root: string, filePath: string): boolean {
 }
 
 export function createMobileHandler(deps: MobileHandlerDeps): (request: MobileRequest) => MobileResponse {
-  /** Pedido de decisão já respondido (o celular reenvia quando a rede cai): mesma resposta, sem gravar de novo. */
-  const answered = new Map<string, MobileResponse>();
-
   function decide(body: string): MobileResponse {
     const input = parseJson(body);
     if (!input) return json(400, { erro: 'pedido-invalido' });
     const { pedidoId, itemId, decisao, motivo } = input;
-    if (typeof pedidoId !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(pedidoId)) return json(400, { erro: 'pedido-invalido' });
-    const previous = answered.get(pedidoId);
-    if (previous) return previous;
+    // O pedidoId vai gravado com a decisão no ledger: um reenvio (a rede caiu, o app reiniciou) recebe a mesma
+    // resposta sem gravar de novo. Recusa não fica guardada: uma falha passageira pode dar certo no reenvio.
+    if (!isRequestId(pedidoId)) return json(400, { erro: 'pedido-invalido' });
     if (typeof itemId !== 'string' || itemId.length === 0 || itemId.length > 200) return json(400, { erro: 'pedido-invalido' });
     if (decisao !== 'aceitar' && decisao !== 'rejeitar') return json(400, { erro: 'pedido-invalido' });
     const reason = typeof motivo === 'string' ? motivo.trim().slice(0, MAX_MOTIVO) : '';
     if (decisao === 'rejeitar' && reason.length === 0) return json(400, { erro: 'motivo-obrigatorio' });
     const outcome = deps.ledger().decidir({
+      pedidoId,
       itemId,
       decisao: decisao as DecisaoCelular,
       motivo: decisao === 'rejeitar' ? reason : null,
     });
-    const response = outcome.ok
+    return outcome.ok
       ? json(200, { ok: true, estado: outcome.estado })
       : json(outcome.reason === 'nao-encontrada' ? 404 : 409, { erro: outcome.reason, mensagem: outcome.message });
-    answered.set(pedidoId, response);
-    if (answered.size > IDEMPOTENCY_CAP) answered.delete(answered.keys().next().value as string);
-    return response;
   }
 
   function proof(query: URLSearchParams): MobileResponse {

@@ -20,8 +20,11 @@
 // Consumers (e.g. "Rotinas em sombra", item 20) read the document with `parseLedgerDoc` and the numbers with
 // `ledgerStrip`; they never write the file — a write goes through the main (`LedgerService.apply`).
 
-/** Bump on any new field: the parse drops what it does not know and `userData` is shared by the channels. */
-export const LEDGER_SCHEMA_VERSION = 1;
+/**
+ * Bump on any new field: the parse drops what it does not know and `userData` is shared by the channels.
+ * 2 — `requestId` on a decision (the phone's request id: a retry after a restart never records twice).
+ */
+export const LEDGER_SCHEMA_VERSION = 2;
 
 export type LedgerTaskState = 'aberta' | 'em-execucao' | 'entregue' | 'aceita' | 'rejeitada';
 export type LedgerRisk = 'baixo' | 'alto';
@@ -47,6 +50,8 @@ export interface LedgerEvent {
   readonly proofs?: readonly LedgerProof[];
   /** `entregue`: optional note of who delivered; `rejeitada`: the reason (required). */
   readonly text?: string;
+  /** v2 — a decision sent by a port that retries (the phone): its request id, to answer a retry from the ledger. */
+  readonly requestId?: string;
 }
 
 export interface LedgerTask {
@@ -153,8 +158,8 @@ export type LedgerOp =
     }
   | { readonly op: 'assumir'; readonly id: string }
   | { readonly op: 'entregar'; readonly id: string; readonly proofs: readonly LedgerProof[]; readonly note?: string }
-  | { readonly op: 'aceitar'; readonly id: string }
-  | { readonly op: 'rejeitar'; readonly id: string; readonly reason: string };
+  | { readonly op: 'aceitar'; readonly id: string; readonly requestId?: string }
+  | { readonly op: 'rejeitar'; readonly id: string; readonly reason: string; readonly requestId?: string };
 
 export interface LedgerOpContext {
   readonly now: number;
@@ -235,12 +240,12 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       // The owner confirming an accept the Revisor made (D2 sample) is recorded, not a second accept.
       if (task.state === 'aceita' && actor.kind === 'dono' && acceptedWithoutOwner(task)) {
         if (ownerChecked(task)) return fail('Você já conferiu este aceite.');
-        return done(step(task, 'aceita', { kind: 'conferida', at: ctx.now, by: actor }));
+        return done(step(task, 'aceita', { kind: 'conferida', at: ctx.now, by: actor, ...requestOf(op) }));
       }
       if (task.state !== 'entregue') return fail(`A tarefa está "${task.state}"; só se aceita uma entregue.`);
       const why = cannotDecide(task, actor);
       if (why) return fail(`Não aceitei: ${why}`);
-      return done(step(task, 'aceita', { kind: 'aceita', at: ctx.now, by: actor }));
+      return done(step(task, 'aceita', { kind: 'aceita', at: ctx.now, by: actor, ...requestOf(op) }));
     }
 
     case 'rejeitar': {
@@ -250,9 +255,22 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       if (task.state !== 'entregue' && !overturn) return fail(`A tarefa está "${task.state}"; só se rejeita uma entregue.`);
       const why = cannotDecide(task, actor);
       if (why) return fail(`Não rejeitei: ${why}`);
-      return done(step(task, 'rejeitada', { kind: 'rejeitada', at: ctx.now, by: actor, text: op.reason.trim() }));
+      return done(step(task, 'rejeitada', { kind: 'rejeitada', at: ctx.now, by: actor, text: op.reason.trim(), ...requestOf(op) }));
     }
   }
+}
+
+export function isRequestId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(value);
+}
+
+function requestOf(op: { readonly requestId?: string }): { requestId?: string } {
+  return isRequestId(op.requestId) ? { requestId: op.requestId } : {};
+}
+
+/** The decision a request already recorded on `task` (a retry), if any. */
+export function decisionOfRequest(task: LedgerTask, requestId: string): LedgerEvent | undefined {
+  return task.events.find((event) => event.requestId === requestId && (event.kind === 'aceita' || event.kind === 'rejeitada' || event.kind === 'conferida'));
 }
 
 function validProof(proof: LedgerProof): boolean {
@@ -389,6 +407,7 @@ function parseEvent(raw: unknown): LedgerEvent | null {
     by,
     ...(raw.kind === 'entregue' ? { proofs } : {}),
     ...(str(raw.text) ? { text: raw.text } : {}),
+    ...(isRequestId(raw.requestId) ? { requestId: raw.requestId } : {}),
   };
 }
 

@@ -6,10 +6,13 @@
 import { basename } from 'node:path';
 import type { DecisaoCelular, EntregaCelular, ProvaCelular } from '../../shared/celular';
 import { naipeDoTipo } from '../../shared/celular';
-import { lastDecision, lastDelivery, ownerQueue, waitsForOwner, type LedgerActor, type LedgerProof, type LedgerTask } from '../../shared/ledger/contract';
+import { decisionOfRequest, lastDecision, lastDelivery, ownerQueue, waitsForOwner, type LedgerActor, type LedgerProof, type LedgerTask } from '../../shared/ledger/contract';
 import type { LedgerService } from '../ledger-store';
+import { maskSecrets, summarize } from './mask';
 
 export interface DecisaoInput {
+  /** Id do pedido do celular: gravado com a decisão no ledger, então um reenvio (mesmo depois de reiniciar) não grava de novo. */
+  readonly pedidoId: string;
   readonly itemId: string;
   readonly decisao: DecisaoCelular;
   /** Obrigatório ao rejeitar. */
@@ -31,6 +34,7 @@ export interface MobileLedgerPort {
   pendentes(): EntregaCelular[];
   /** Grava a decisão do dono no ledger. Recusa (sem gravar) o que não está mais esperando o dono. */
   decidir(input: DecisaoInput): DecisaoOutcome;
+  /** Print ou vídeo (o arquivo) ou a saída de comando inteira, mascarada (bytes de texto). */
   prova(itemId: string, provaId: string): ProvaFonte | null;
 }
 
@@ -64,8 +68,11 @@ function provaCelular(proof: LedgerProof, index: number): ProvaCelular {
   switch (proof.kind) {
     case 'arquivo':
       return proof.mediaType.startsWith('video/') ? { id, tipo: 'video', rotulo: 'Vídeo' } : { id, tipo: 'imagem', rotulo: 'Print' };
-    case 'texto':
-      return { id, tipo: 'comando', rotulo: 'Saída', texto: proof.text };
+    case 'texto': {
+      // A fila leva só o começo, mascarado; o texto inteiro (também mascarado) vem por /api/prova ao abrir.
+      const { texto, cortado } = summarize(proof.text);
+      return { id, tipo: 'comando', rotulo: 'Saída', texto, ...(cortado ? { cortado: true } : {}) };
+    }
     case 'link':
       return { id, tipo: 'link', rotulo: 'Link', url: proof.url };
   }
@@ -117,12 +124,15 @@ export function createLedgerMobilePort(getService: () => LedgerService | null): 
       }
       const task = current.tasks[input.itemId];
       if (!task) return { ok: false, reason: 'nao-encontrada', message: 'Esta entrega não existe mais.' };
+      // Reenvio de um pedido que já entrou (a rede caiu, o app reiniciou): a mesma resposta, sem gravar de novo.
+      const previous = decisionOfRequest(task, input.pedidoId);
+      if (previous) return { ok: true, estado: previous.kind === 'rejeitada' ? 'rejeitada' : 'aceita' };
       // Pelo celular só se decide o que está na fila do dono (o mesmo que a faixa do Mindscape mostra).
       if (!waitsForOwner(current, task)) return { ok: false, reason: 'recusada', message: 'Esta entrega já não espera você.' };
       const result =
         input.decisao === 'aceitar'
-          ? service.apply({ kind: 'dono' }, { op: 'aceitar', id: task.id })
-          : service.apply({ kind: 'dono' }, { op: 'rejeitar', id: task.id, reason: input.motivo ?? '' });
+          ? service.apply({ kind: 'dono' }, { op: 'aceitar', id: task.id, requestId: input.pedidoId })
+          : service.apply({ kind: 'dono' }, { op: 'rejeitar', id: task.id, reason: input.motivo ?? '', requestId: input.pedidoId });
       if (!result.ok) return { ok: false, reason: 'recusada', message: result.reason };
       return { ok: true, estado: result.task.state === 'rejeitada' ? 'rejeitada' : 'aceita' };
     },
@@ -132,6 +142,7 @@ export function createLedgerMobilePort(getService: () => LedgerService | null): 
       const task = current?.tasks[itemId];
       if (!service || !task || !/^\d{1,2}$/.test(provaId)) return null;
       const proof = lastDelivery(task)?.proofs?.[Number(provaId)];
+      if (proof?.kind === 'texto') return { mediaType: 'text/plain; charset=utf-8', bytes: Buffer.from(maskSecrets(proof.text), 'utf8') };
       if (!proof || proof.kind !== 'arquivo') return null;
       const filePath = service.proofPath(proof);
       return filePath ? { mediaType: proof.mediaType, filePath } : null;
