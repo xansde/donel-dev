@@ -144,7 +144,8 @@ import { BackgroundIndicator, type BackgroundSession } from './chat/BackgroundTa
 import { revealRow } from './chat/revealRow';
 import { runningCount } from '../../shared/chat/backgroundTasks';
 import { effectiveTabView, hasChatView, nextTabView, shouldHandleViewShortcut } from './chat/tabView';
-import { disposeTabSend, getDraft, sendDriverFor, sendToTab } from './chat/composer/tabSend';
+import { disposeTabSend, sendDriverFor, sendToTab } from './chat/composer/tabSend';
+import { blockingScreen } from '../../shared/chat/screen';
 import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../shared/lider/ipc';
 import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
 import { TerminalPane } from './TerminalPane';
@@ -2492,7 +2493,10 @@ export function App(): React.JSX.Element {
       return tabId;
     },
     sendLine: (tabId, text) => sendRenewalLine(tabId, text),
-    ownerTyping: (tabId) => getDraft(tabId).trim().length > 0,
+    permissionOnScreen: (tabId) => {
+      const lines = terminalRefs.current[tabId]?.readScreen().lines;
+      return lines !== undefined && blockingScreen(lines)?.kind === 'permission';
+    },
     askOwner: (question) =>
       new Promise<boolean>((resolve) => {
         const id = crypto.randomUUID();

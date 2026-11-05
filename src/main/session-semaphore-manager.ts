@@ -92,6 +92,21 @@ export function mapHookEventName(name: unknown): SemaphoreEvent['type'] | null {
   }
 }
 
+/**
+ * B40 — the `Notification` types that mean the CLI is waiting for the owner (a dialog on its screen). The CLI also
+ * notifies `idle_prompt` about a minute after a clean `Stop` ("Claude is waiting for your input"), and `auth_success`:
+ * those are not pendings, and taking them as `permission` left stopped sessions "precisa do dono" forever, which
+ * held every message sent to them.
+ */
+const OWNER_NEEDED_NOTIFICATIONS: ReadonlySet<string> = new Set(['permission_prompt', 'worker_permission_prompt', 'elicitation_dialog', 'agent_needs_input']);
+
+/** Whether a `Notification` hook payload asks for the owner. Without a type (an old CLI), only a permission message counts. */
+export function notificationNeedsOwner(payload: Record<string, unknown>): boolean {
+  const type = payload.notification_type;
+  if (typeof type === 'string' && type !== '') return OWNER_NEEDED_NOTIFICATIONS.has(type);
+  return typeof payload.message === 'string' && /permission/i.test(payload.message);
+}
+
 export class SessionSemaphoreManager {
   private server: Server | null = null;
   private port = 0;
@@ -314,6 +329,9 @@ export class SessionSemaphoreManager {
     }
     const eventType = mapHookEventName(hookEventName);
     if (!eventType) return;
+    if (hookEventName === 'Notification' && !notificationNeedsOwner(payload)) return; // B40 — idle is not "precisa do dono"
+    // B40 — a sub-agent's end (it carries `agent_id`) is not the end of the session's turn: no state, no notice.
+    if ((hookEventName === 'Stop' || hookEventName === 'StopFailure') && typeof payload.agent_id === 'string' && payload.agent_id !== '') return;
     // Item 04 — from now on the state is a fact, not the guess of the birth; and the failure of the
     // last turn lasts until the session moves again.
     this.heardPtyIds.add(ptyId);
