@@ -26,6 +26,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'Antes de mandar qualquer mensagem no Slack em seu nome, a sessão agora cria uma carta no Oráculo Harrow com o destino, a thread, o texto exato e o motivo, e espera você. Aceitar libera aquele texto, para aquele destino, uma vez. Rejeitar não envia nada, e o motivo que você escreve diz à sessão o que ajustar. Sem carta aceita, o Donel bloqueia o envio por qualquer caminho: o Slack, o Composio, um comando ou um script.',
       },
       {
+        title: 'Sem limite de sessões abertas por um Líder',
+        text: 'Um Líder (ou o Líder único, em cada quadro) agora abre quantas sessões precisar sem pedir sua permissão. Se quiser um teto, escolha em Preferências, em "Limite de sessões abertas por um Líder": passando dele, volta a aparecer "Precisa de você" para permitir ou negar.',
+      },
+      {
         title: 'Sessões na VPS também anexam print e protótipo',
         text: 'Uma sessão que roda na VPS agora entrega print, vídeo ou protótipo como prova, e eles aparecem na carta como os das sessões do computador. O app busca o arquivo pela conexão com a VPS, recusa atalho e arquivo grande demais, e guarda uma cópia aqui.',
       },

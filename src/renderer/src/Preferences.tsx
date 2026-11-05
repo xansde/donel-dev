@@ -19,6 +19,14 @@ const SCAN_MODE_OPTIONS: SelectOption[] = [
 ];
 
 // B36 — sessão renovada em voo: the context budget of a session (the owner works with 250k).
+/** Limite de sessões abertas por um Líder: sem limite (padrão) ou um número. */
+const OPEN_CAP_CHOICES = [1, 2, 3, 4, 5, 6, 8, 10, 15, 20];
+
+function openCapOptions(current: number | null): SelectOption[] {
+  const numbers = current !== null && !OPEN_CAP_CHOICES.includes(current) ? [...OPEN_CAP_CHOICES, current].sort((a, b) => a - b) : OPEN_CAP_CHOICES;
+  return [{ value: 'sem', label: 'Sem limite' }, ...numbers.map((n) => ({ value: String(n), label: n === 1 ? '1 sessão' : `${n} sessões` }))];
+}
+
 const RENEWAL_LIMIT_OPTIONS: SelectOption[] = [150_000, 200_000, 250_000, 300_000, 400_000, 500_000].map((tokens) => ({
   value: String(tokens),
   label: `${tokens / 1000}k de contexto`,
@@ -60,6 +68,9 @@ export interface PreferencesProps {
   /** B36 — sessão renovada em voo (`sessionRenewal`); applies at once. */
   sessionRenewal: SessionRenewalPrefs;
   onChangeSessionRenewal: (prefs: Partial<SessionRenewalPrefs>) => void;
+  /** Limite de sessões abertas por um Líder (`team.openCap`, `null` = sem limite); applies at once. */
+  openCap: number | null;
+  onChangeOpenCap: (openCap: number | null) => void;
   /** "Modo auto nunca pede permissão" (`autoMode.neverAsks`); applies at once. */
   autoNeverAsks: boolean;
   onChangeAutoNeverAsks: (neverAsks: boolean) => void;
@@ -230,6 +241,20 @@ export function Preferences(props: PreferencesProps): React.JSX.Element | null {
             />
           ) : null}
         </>
+      ),
+    },
+    {
+      id: 'open-cap',
+      category: 'sessoes',
+      title: 'Limite de sessões abertas por um Líder',
+      keywords: 'limite sessões líder abrir time precisa de você mindscape',
+      hint: 'Quantas sessões uma mesma sessão (um Líder, ou o Líder único em cada quadro) pode ter abertas ao mesmo tempo antes de pedir sua permissão em "Precisa de você". Sem limite, ela abre quantas precisar.',
+      body: (
+        <Select
+          value={props.openCap === null ? 'sem' : String(props.openCap)}
+          options={openCapOptions(props.openCap)}
+          onChange={(value) => props.onChangeOpenCap(value === 'sem' ? null : Number(value))}
+        />
       ),
     },
     {

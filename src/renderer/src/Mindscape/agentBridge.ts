@@ -26,8 +26,6 @@ import { addLink, addPlace, placeCardId, placeOfSession, type MindscapeBoard, ty
 import type { SemaphoreState } from '../../../shared';
 import type { SessionRole } from '../../../shared/roles';
 
-/** Live sessions a caller may have opened with `sessao_abrir` before the owner is asked. */
-export const OPEN_CAP = 4;
 /**
  * A session opened by `sessao_abrir` that sent no hook in this long did not start: the gate waits up to 30 s for
  * the CLI and the first paste up to 45 s more on a machine short of RAM.
@@ -101,6 +99,11 @@ export interface AgentBridgePorts {
   unconfirmed(tabId: string): boolean;
   /** Why that session is not taking its first message, read from its process and screen (`null` = nothing to see). */
   startTrouble(tabId: string): string | null;
+  /**
+   * Live sessions one caller may have opened with `sessao_abrir` before the owner is asked (Preferências, "Limite de
+   * sessões abertas por um Líder"; the Líder único counts per board). `null` or absent = no limit.
+   */
+  openCap?(): number | null;
   /** The owner allows (true) or denies a session over the cap. */
   askOwner(question: { readonly caller: string; readonly role: string; readonly request: string; readonly open: number }): Promise<boolean>;
   remoteLabel(remoteId: string): string;
@@ -564,7 +567,8 @@ export class AgentBridge {
         }
         // The Líder único has a cap per board; a place, its own.
         const open = this.liveOpenedBy(opener, scope.leader ? projectPath : undefined);
-        if (open >= OPEN_CAP) {
+        const cap = this.ports.openCap?.() ?? null;
+        if (cap !== null && open >= cap) {
           const allowed = await this.ports.askOwner({ caller: caller.name, role: role.name, request: call.pedido, open });
           if (!allowed) return fail(`O dono negou abrir mais uma sessão (você já tem ${open} abertas${scope.leader ? ' neste quadro' : ''}). Use as que existem.`);
         }

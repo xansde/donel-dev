@@ -29,6 +29,7 @@ import type { BoardBridge } from './board-bridge';
 import type { BrowserToolOutcome } from '../shared/browser/mcp';
 // Sessão renovada em voo (B36).
 import { createSessionRenewalService, type SessionRenewalService } from './session-renewal';
+import { sanitizeTeamPrefs } from '../shared/teamPrefs';
 import { SESSION_RENEWAL_CHANNELS, sanitizeSessionRenewalPrefs, type HandoffStatus, type RenewalPrepared, type SessionRenewalPrefs } from '../shared/sessionRenewal';
 import { LEARNING_CHANNELS, parseRendererGesture, type GestureEvent } from '../shared/learning/gestures';
 import { createGestureDiary, type GestureDiary } from './gesture-diary';
@@ -2191,6 +2192,13 @@ function registerConfigIpcHandlers(): void {
     return toAppConfigDto(appConfig);
   });
 
+  /** Limite de sessões abertas por um Líder — `team.openCap`; an invalid value keeps the current one. */
+  ipcMain.handle(CONFIG_CHANNELS.setTeamPrefs, (_event, prefs: unknown): AppConfigDto => {
+    appConfig = { ...appConfig, team: sanitizeTeamPrefs(prefs, appConfig.team) };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
   /** T708 (007) — substitui a lista INTEIRA de projetos com o grupo "Favoritos" colapsado (CA-1). */
   ipcMain.handle(CONFIG_CHANNELS.setCollapsedFavorites, (_event, collapsed: string[]): AppConfigDto => {
     appConfig = { ...appConfig, collapsedFavorites: Array.isArray(collapsed) ? collapsed.filter((path) => typeof path === 'string') : [] };
@@ -3784,6 +3792,7 @@ void app.whenReady().then(async () => {
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
     appVersion: app.getVersion(),
     executeBoard: (ptyId, call) => boardBridge.execute(ptyId, call),
+    openCap: () => appConfig.team.openCap,
     uploadFolders: {
       get: () => appConfig.browserUploads.folders,
       set: (folders) => {
