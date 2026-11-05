@@ -26,6 +26,65 @@
      linha "Modo" no cabeçalho da seção; implementada = mergeada na integradora;
      aguardando-merge e concluida flipam em bloco (PR único da demanda). -->
 
+## Donel sem tela na VPS pessoal (`donel-vps`)
+
+- **Design**: [ADR 0008](docs/adr/0008-contas-das-vps-sem-o-pc.md) (contas) · passo a passo do dono em `docs/servico-vps.md` · estado em `docs/handoffs/2026-11-06-oraculo-vps.md`
+- **TaskDex**: — (ferramenta pessoal)
+- **Fatiado em**: 2026-11-05, à mão (as skills da esteira não estão instaladas na VPS)
+- **Gate**: pedido do dono em 05/11 ("O VPS pessoal também deve ser autonomo sem depender do meu pc ligado", "Pode puxar para ser feito amanhã mesmo"); ordem pelo dono: switcher primeiro, depois Oráculo e cartas
+- **Rodadas previstas**: 01 | 02 | 03 + 04 | 05 | 06
+
+Arquitetura curta: um processo Node sem Electron (`donel-servico`, systemd, `Restart=always`) na VPS
+pessoal. Bundle por `vite.servico.config.ts` em `out-servico/` (fora do instalador). Comandos do
+dono por socket Unix em `~/.donel/`. Cada fatia é um módulo do mesmo processo, e o PC vira cliente
+quando está ligado. Nada do serviço depende de Electron. O que precisa de Electron fica no app.
+
+### 01 — Switcher das VPS sem o PC
+
+- **Status**: implementada
+- **Branch**: `feat/donel-vps-switcher`
+- **Depende de**: —
+- **Propósito**: a VPS pessoal e Homologações trocam de conta a 90% com o PC desligado, com um conjunto de contas só delas. O PC tem a preferência.
+- **Escopo**: `src/main/accounts/servico/` (cofre AES-GCM com chave do systemd, host do motor), `src/servico/` (entrada e socket), opção `remotePlacesFirst` e regra "carga cega 10 min = cheia" no motor, unidade systemd e `scripts/servico/instalar.sh`, ADR 0008, emenda no `CLAUDE.md`. NÃO entra: o PC como painel e o gesto "Entregar à VPS" (05), o aviso "todas cheias" (06).
+- **Como testar**: `tests/accountsRemotePlaces.test.ts` (PC escolhe antes do lugar; serviço escolhe o lugar antes; cega 10 min troca) e `tests/servicoContas.test.ts` (cofre cifrado, par some da pasta de login, nenhum token em resposta, config ou log; sem chave, recusa).
+
+### 02 — Oráculo mora na VPS
+
+- **Status**: pendente
+- **Depende de**: 01 (o processo e a instalação)
+- **Propósito**: o ledger (`ledger.json`) passa a morar na VPS. O app do PC lê e escreve nele como cliente quando está ligado.
+- **Escopo**: o serviço hospeda o `LedgerStore` e o expõe por HTTP só na tailnet, com token. No PC, um `ledger-port` remoto troca o arquivo local pelo serviço quando `oraculo.servico` está na config. Migração única do `ledger.json` do PC, com cópia de segurança e conferência de contagem.
+- **Como testar**: migração não perde tarefa, prova nem decisão (contagem e ids iguais antes e depois); escrita concorrente PC + sessão da VPS não duplica nem some com tarefa.
+
+### 03 — Cartas no celular servidas pela VPS
+
+- **Status**: pendente
+- **Depende de**: 02
+- **Propósito**: o PWA das cartas e o aviso "Slack só com carta" (#243) funcionam com o PC desligado.
+- **Escopo**: `src/main/celular/` (servidor, auth, PWA) roda no serviço, sem Electron, sobre o Oráculo da 02, com HTTPS da tailnet (`tailscale cert`) e o mesmo token de pareamento.
+- **Como testar**: token errado é recusado; carta aceita no celular aparece no Oráculo.
+
+### 04 — MCP donel autenticado no serviço
+
+- **Status**: pendente
+- **Depende de**: 02
+- **Propósito**: as sessões das duas VPS usam `tarefa_*` (Oráculo) e `sessao_*` (sessões locais da VPS) sem o PC.
+- **Escopo**: o servidor MCP (`src/shared/browser/mcp.ts`) no serviço, só na tailnet, com token por sessão. `sessao_*` só enxerga sessões da própria VPS.
+- **Como testar**: chamada sem token é recusada; `tarefa_entregar` vinda de Homologações aparece no Oráculo.
+
+### 05 — PC como painel do serviço e "Entregar à VPS"
+
+- **Status**: pendente
+- **Depende de**: 01
+- **Propósito**: com o PC ligado, Contas mostra o conjunto das VPS (contas, carga e eventos) e passa uma conta ou um lugar do PC para a VPS num gesto, sem editar `config.json` à mão.
+- **Escopo**: o PC lê `donel-servico estado` por ssh. "Entregar à VPS" tira o lugar e a conta do PC e chama `adotar` lá. O par nunca cruza o ssh.
+
+### 06 — Aviso "todas cheias" no Oráculo
+
+- **Status**: pendente
+- **Depende de**: 01, 02
+- **Propósito**: quando todo o conjunto das VPS passa do limiar, o Líder e o celular sabem, em vez de a VPS parar calada.
+
 ## Mindscape — desenho, print, Ctrl+Z e zoom (`mindscape-desenho`)
 
 - **Design**: `docs/design/mindscape-desenho.md`

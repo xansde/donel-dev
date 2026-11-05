@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-05',
     items: [
       {
+        title: 'VPS sem sinal de carga troca de conta mesmo assim',
+        text: 'Quando a carga da conta de uma VPS fica desconhecida por 10 minutos (o login copiado de lá venceu e ninguém o renovou), a troca automática passa a tratá-la como cheia e a leva para uma conta com folga. Antes, a VPS podia ficar parada numa conta lotada. O computador continua escolhendo conta antes das VPS.',
+      },
+      {
         title: 'Progresso do Jobu só com o que está rolando',
         text: 'O painel de progresso do Jobu mostra só as tarefas abertas, em execução, entregues esperando decisão e rejeitadas. Uma tarefa aceita sai do painel na hora e deixa de contar nas barras. Quando não há nada em andamento, o painel diz "Nada rodando agora".',
       },
