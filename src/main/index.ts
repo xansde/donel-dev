@@ -19,6 +19,12 @@ import { roleOfSession } from '../shared/mindscape/model';
 import { ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
 import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
+import { createLedgerService, ledgerFilePath, nodeLedgerProofFs, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
+import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerOwnerDecision, type LedgerSnapshot } from '../shared/ledger/channels';
+import { isHttpUrl, isProofFileName, type LedgerProof } from '../shared/ledger/contract';
+import type { LedgerToolCall } from '../shared/ledger/tools';
+import type { BoardBridge } from './board-bridge';
+import type { BrowserToolOutcome } from '../shared/browser/mcp';
 // Sessão renovada em voo (B36).
 import { createSessionRenewalService, type SessionRenewalService } from './session-renewal';
 import { SESSION_RENEWAL_CHANNELS, sanitizeSessionRenewalPrefs, type HandoffStatus, type RenewalPrepared, type SessionRenewalPrefs } from '../shared/sessionRenewal';
@@ -1612,6 +1618,7 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     projectName: options.projectName ?? localCwd,
     name: options.tabName ?? options.projectName ?? localCwd,
     launchArgs: options.args ?? [],
+    ...(options.openedBy ? { openedBy: options.openedBy } : {}),
     createdAt: new Date().toISOString(),
   };
   const files: RemoteFile[] = [];
@@ -1724,6 +1731,7 @@ function registerPtyIpcHandlers(): void {
       projectName: meta.projectName,
       name: meta.name,
       launchArgs: meta.launchArgs,
+      ...(typeof meta.openedBy === 'string' && meta.openedBy !== '' ? { openedBy: meta.openedBy } : {}),
     }));
   });
 
@@ -2823,6 +2831,72 @@ function registerMindscapeIpcHandlers(): void {
   void images.sweepOrphans(configIoDeps.readFileText(filePath)).catch(() => undefined);
 }
 
+/**
+ * Ledger com prova (item 19, D1) — `<userData>/ledger.json` + `ledger-provas/`, written only here. The owner's
+ * IPC decides as `{ kind: 'dono' }`; every write is pushed to the renderer (the strip on top of the Mindscape).
+ */
+let ledgerService: LedgerService | null = null;
+
+function registerLedgerIpcHandlers(): void {
+  const service = createLedgerService({
+    filePath: ledgerFilePath(process.env, app.getPath('userData')),
+    io: configIoDeps,
+    proofFs: nodeLedgerProofFs,
+    onChange: (snapshot) => {
+      const window = getMainWindow();
+      if (window && !window.isDestroyed()) window.webContents.send(LEDGER_CHANNELS.changed, snapshot);
+    },
+  });
+  ledgerService = service;
+  const fromMain = (sender: Electron.WebContents): boolean => getMainWindow()?.webContents.id === sender.id;
+  ipcMain.handle(LEDGER_CHANNELS.load, (): LedgerSnapshot => service.load());
+  ipcMain.handle(LEDGER_CHANNELS.decide, (event, raw: unknown): LedgerApplyResult => {
+    if (!fromMain(event.sender)) return { ok: false, reason: 'Só a janela do app decide.' };
+    const decision = raw as Partial<LedgerOwnerDecision> | null;
+    if (!decision || typeof decision.id !== 'string') return { ok: false, reason: 'Pedido inválido.' };
+    if (decision.accept === true) return service.apply({ kind: 'dono' }, { op: 'aceitar', id: decision.id });
+    const reason = (decision as { reason?: unknown }).reason;
+    return service.apply({ kind: 'dono' }, { op: 'rejeitar', id: decision.id, reason: typeof reason === 'string' ? reason : '' });
+  });
+  ipcMain.handle(LEDGER_CHANNELS.openProof, async (event, raw: unknown): Promise<boolean> => {
+    if (!fromMain(event.sender)) return false;
+    const proof = raw as Partial<LedgerProof> | null;
+    if (proof?.kind === 'link' && typeof proof.url === 'string' && isHttpUrl(proof.url)) {
+      await shell.openExternal(proof.url);
+      return true;
+    }
+    if (proof?.kind === 'arquivo' && typeof proof.file === 'string' && isProofFileName(proof.file)) {
+      const path = service.proofPath({ kind: 'arquivo', file: proof.file, mediaType: '' });
+      return path !== null && (await shell.openPath(path)) === '';
+    }
+    return false;
+  });
+}
+
+/** The caller of a `tarefa_*` tool, from the board the renderer owns (the same answers the session would get). */
+async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string): Promise<LedgerCaller | string> {
+  const self = await boardBridge.execute(ptyId, { tool: 'sessao_quem_sou' });
+  if (self.kind !== 'text') return self.kind === 'error' ? self.text : 'Não consegui saber quem é esta sessão.';
+  const who = JSON.parse(self.text) as { lugar?: unknown; papel?: unknown; pasta?: unknown };
+  if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string') return 'Seu lugar ainda não está no quadro; espere o primeiro turno terminar.';
+  const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar' });
+  const places = list.kind === 'text' ? (JSON.parse(list.text) as { id?: unknown }[]) : [];
+  return {
+    projectPath: who.pasta,
+    placeId: who.lugar,
+    ...(typeof who.papel === 'string' ? { roleId: who.papel } : {}),
+    boardPlaceIds: places.map((place) => place.id).filter((id): id is string => typeof id === 'string'),
+  };
+}
+
+async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<BrowserToolOutcome> {
+  if (!ledgerService) return { kind: 'error', text: 'O ledger não abriu neste app.' };
+  const caller = await ledgerCallerOf(boardBridge, ptyId);
+  if (typeof caller === 'string') return { kind: 'error', text: caller };
+  const result = await runLedgerTool(ledgerService, caller, call);
+  return result.ok ? { kind: 'text', text: result.text } : { kind: 'error', text: result.text };
+}
+
 /** Papéis de sessão (item 12a) — list and save of `<userData>/papeis/<id>.md`. */
 function registerRolesIpcHandlers(): void {
   const store = createRolesStore(app.getPath('userData'));
@@ -3552,6 +3626,7 @@ void app.whenReady().then(async () => {
   registerDevModeIpcHandlers(); // T307 (003-modo-dev)
   registerTabIpcHandlers(); // CA-26/CA-27 (009-modo-dev-v3)
   registerMindscapeIpcHandlers(); // Mindscape V1
+  registerLedgerIpcHandlers(); // Ledger com prova (item 19)
   registerRolesIpcHandlers(); // Papéis de sessão (item 12a)
   registerMindscapeTurnEnded(); // Mindscape, fatia 03
   registerSessionRenewalIpcHandlers(); // Sessão renovada em voo (B36)
@@ -3581,6 +3656,19 @@ void app.whenReady().then(async () => {
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
     appVersion: app.getVersion(),
     executeBoard: (ptyId, call) => boardBridge.execute(ptyId, call),
+    uploadFolders: {
+      get: () => appConfig.browserUploads.folders,
+      set: (folders) => {
+        appConfig = { ...appConfig, browserUploads: { folders: [...folders] } };
+        try {
+          persistAppConfig();
+        } catch (error) {
+          // The change holds until the app closes; it is only not remembered.
+          console.error('[donel-dev] pastas de envio não foram gravadas:', error);
+        }
+      },
+    },
+    executeLedger: (ptyId, call) => executeLedgerTool(boardBridge, ptyId, call),
   }); // Navegador integrado
   // Servidor MCP `donel` (loopback, porta efêmera) ANTES da janela: a primeira sessão já nasce com as ferramentas
   // do navegador. Se não subir, as sessões nascem sem elas (nunca sem terminal).

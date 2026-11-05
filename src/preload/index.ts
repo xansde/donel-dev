@@ -149,6 +149,8 @@ import {
 } from '../shared/esteira/ipc';
 
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
+import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerOwnerDecision, type LedgerSnapshot } from '../shared/ledger/channels';
+import type { LedgerProof } from '../shared/ledger/contract';
 import { LEARNING_CHANNELS, type RendererGesture } from '../shared/learning/gestures';
 import type {
   MindscapeBoardRequest,
@@ -519,8 +521,11 @@ const donelApi: DonelApi = {
     },
     getRules: (ptyId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.getRules, ptyId) as Promise<BrowserAgentRules | null>,
     chooseUploadDir: (ptyId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.chooseUploadDir, ptyId) as Promise<BrowserRulesResult>,
-    clearUploadDir: (ptyId: string) => {
-      ipcRenderer.send(BROWSER_CHANNELS.clearUploadDir, ptyId);
+    removeUploadDir: (ptyId: string, folder: string) => {
+      ipcRenderer.send(BROWSER_CHANNELS.removeUploadDir, ptyId, folder);
+    },
+    answerUploadRequest: (ptyId: string, allow: boolean) => {
+      ipcRenderer.send(BROWSER_CHANNELS.answerUploadRequest, ptyId, allow);
     },
     setDomains: (ptyId: string, mode: DomainMode, typed: string) => ipcRenderer.invoke(BROWSER_CHANNELS.setDomains, ptyId, mode, typed) as Promise<BrowserRulesResult>,
     onRules: (listener: (rules: BrowserAgentRules) => void) => {
@@ -549,6 +554,17 @@ const donelApi: DonelApi = {
       return () => ipcRenderer.removeListener(MINDSCAPE_CHANNELS.boardRequest, handler);
     },
     respondBoard: (response: MindscapeBoardResponse) => ipcRenderer.send(MINDSCAPE_CHANNELS.boardRespond, response),
+  },
+
+  // Ledger com prova (item 19) — `<userData>/ledger.json` (main is the only writer); decisions go as the owner.
+  ledger: {
+    load: () => ipcRenderer.invoke(LEDGER_CHANNELS.load) as Promise<LedgerSnapshot>,
+    onChanged: (listener: (snapshot: LedgerSnapshot) => void) => {
+      const handler = (_event: unknown, snapshot: LedgerSnapshot): void => listener(snapshot);
+      return subscribeChannel(ipcRenderer, LEDGER_CHANNELS.changed, handler);
+    },
+    decide: (decision: LedgerOwnerDecision) => ipcRenderer.invoke(LEDGER_CHANNELS.decide, decision) as Promise<LedgerApplyResult>,
+    openProof: (proof: LedgerProof) => ipcRenderer.invoke(LEDGER_CHANNELS.openProof, proof) as Promise<boolean>,
   },
 
   // Papéis de sessão (item 12a) — `<userData>/papeis/` (main is the only writer).

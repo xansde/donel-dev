@@ -41,6 +41,7 @@ import { MindscapeLinkLayer, MindscapeOutlineLayer, useCardSizes } from './Minds
 import { MindscapeNoteCard, MindscapeOwnerCard, MindscapeSessionCard, STRIPE_BY_TOKEN, type PlaceRoleSeal } from './MindscapeCard';
 import { RoleMenu } from './RoleMenu';
 import { MindscapeSelectionLayer } from './MindscapeSelectionLayer';
+import { LedgerStrip } from './LedgerStrip';
 import { MindscapeToolbar, type DrawStyle } from './MindscapeToolbar';
 import { ShadowRoutines } from './ShadowRoutines';
 import { preparePrint, useMindscapeImages } from './useMindscapeImage';
@@ -622,6 +623,7 @@ export function MindscapeScreen({
           </button>
         ))}
       </div>
+      <LedgerStrip projectPath={activePath} />
       <MindscapeToolbar
         enabled={Boolean(board)}
         tool={tool}

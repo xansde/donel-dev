@@ -37,10 +37,12 @@ export const BROWSER_CHANNELS = {
   tab: 'browser:tab',
   /** invoke(ptyId) -> `BrowserAgentRules | null`. */
   getRules: 'browser:getRules',
-  /** invoke(ptyId) -> `BrowserRulesResult`. Native folder picker: the owner authorizes the upload folder (V2). */
+  /** invoke(ptyId) -> `BrowserRulesResult`. Native folder picker: the owner adds an upload folder (V2). */
   chooseUploadDir: 'browser:chooseUploadDir',
-  /** send(ptyId). The owner takes the authorization back. */
-  clearUploadDir: 'browser:clearUploadDir',
+  /** send(ptyId, folder). The owner takes one upload folder back (for every session). */
+  removeUploadDir: 'browser:removeUploadDir',
+  /** send(ptyId, allow). Permitir / Negar on the folder `navegador_enviar_arquivo` asked for (the main knows which). */
+  answerUploadRequest: 'browser:answerUploadRequest',
   /** invoke(ptyId, mode, typedDomains) -> `BrowserRulesResult`. The vigia de domínio of this session (V2). */
   setDomains: 'browser:setDomains',
   /** main -> renderer: `BrowserAgentRules` every time they change. */
@@ -65,11 +67,16 @@ export interface BrowserTabInfo {
 
 export type BrowserTabAction = 'switch' | 'close';
 
-/** What the owner allows the agent in the browser of one session. Dies with the session. */
+/**
+ * What the owner allows the agent in the browser of one session. The upload folders are the app's (every session,
+ * saved in the config); the domains die with the session.
+ */
 export interface BrowserAgentRules {
   readonly ptyId: string;
-  /** The only folder `navegador_enviar_arquivo` reads from (`null` = sending files is off). */
-  readonly uploadDir: string | null;
+  /** The only folders `navegador_enviar_arquivo` reads from (empty = sending files is off until he allows one). */
+  readonly uploadDirs: readonly string[];
+  /** The folder `navegador_enviar_arquivo` of this session is waiting for him to allow (Permitir / Negar). */
+  readonly uploadRequest: string | null;
   /** Where the agent may navigate. */
   readonly domainMode: DomainMode;
   readonly domains: readonly string[];
@@ -141,7 +148,8 @@ export interface DonelBrowserApi {
   tab(ptyId: string, action: BrowserTabAction, tabId: number): void;
   getRules(ptyId: string): Promise<BrowserAgentRules | null>;
   chooseUploadDir(ptyId: string): Promise<BrowserRulesResult>;
-  clearUploadDir(ptyId: string): void;
+  removeUploadDir(ptyId: string, folder: string): void;
+  answerUploadRequest(ptyId: string, allow: boolean): void;
   setDomains(ptyId: string, mode: DomainMode, typed: string): Promise<BrowserRulesResult>;
   onRules(listener: (rules: BrowserAgentRules) => void): () => void;
 }

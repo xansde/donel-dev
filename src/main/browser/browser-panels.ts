@@ -1,8 +1,8 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { WebContentsView, session as electronSession, type BrowserWindow, type Session, type WebContents } from 'electron';
+import { WebContentsView, net, session as electronSession, type BrowserWindow, type Session, type WebContents } from 'electron';
 import { guardBrowserPanelNavigation } from '../navigation-guard';
-import { isAllowedPanelUrl } from '../../shared/browser/url';
+import { canServeLocalFile, isAllowedLocalFileUrl, isAllowedPanelUrl } from '../../shared/browser/url';
 import type { BrowserPanelState, BrowserRect, BrowserTabInfo } from '../../shared/browser/ipc';
 import { cleanUserAgent, uniqueDownloadName } from './panel-helpers';
 
@@ -73,6 +73,8 @@ export interface BrowserPanelsDeps {
 export class BrowserPanels {
   private readonly entries = new Map<string, BrowserPanelEntry>();
   private sessionReady: Session | null = null;
+  /** Local files opened on purpose (`load`): the only ones the partition's `file:` handler serves. */
+  private readonly openedLocalFiles = new Set<string>();
   private sweepTimer: NodeJS.Timeout | null = null;
   private nextTabId = 1;
   private readonly now: () => number;
@@ -216,10 +218,15 @@ export class BrowserPanels {
     };
   }
 
-  /** Loads an already validated URL in the active tab. Resolves when the load finishes or fails (never rejects). */
+  /**
+   * Loads an already validated URL in the active tab. Resolves when the load finishes or fails (never rejects).
+   * The only door to a local file (page, image or PDF): a page never navigates to `file:` by itself.
+   */
   async load(ptyId: string, url: string): Promise<{ ok: true } | { ok: false; error: string }> {
     const entry = this.ensure(ptyId);
-    if (!isAllowedPanelUrl(url)) return { ok: false, error: 'Endereço não permitido.' };
+    const local = isAllowedLocalFileUrl(url);
+    if (!isAllowedPanelUrl(url) && !local) return { ok: false, error: 'Endereço não permitido.' };
+    if (local) this.openedLocalFiles.add(url);
     try {
       await entry.contents.loadURL(url);
       return { ok: true };
@@ -402,6 +409,12 @@ export class BrowserPanels {
     if (this.sessionReady) return this.sessionReady;
     const ses = electronSession.fromPartition(BROWSER_PARTITION);
     ses.setUserAgent(cleanUserAgent(ses.getUserAgent()));
+    // A local page runs script: without this handler it could fetch any file of the disk. Serve only what was opened.
+    ses.protocol.handle('file', (request) =>
+      canServeLocalFile(request.url, this.openedLocalFiles)
+        ? net.fetch(request.url, { bypassCustomProtocolHandlers: true })
+        : new Response('Arquivo não liberado pelo Donel Dev.', { status: 403 }),
+    );
     ses.setPermissionRequestHandler((_contents, permission, callback) => callback(GRANTED_PERMISSIONS.has(permission)));
     ses.setPermissionCheckHandler((_contents, permission) => GRANTED_PERMISSIONS.has(permission));
     ses.on('will-download', (_event, item, contents) => {

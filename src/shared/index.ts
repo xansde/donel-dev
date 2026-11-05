@@ -21,6 +21,7 @@ import type { DonelProvidersApi } from './providers';
 import type { DonelSessionsApi } from './sessions';
 import type { DonelTabsApi } from './tabChannels';
 import type { DonelMindscapeApi } from './mindscape/channels';
+import type { DonelLedgerApi } from './ledger/channels';
 import type { DonelRolesApi } from './roles';
 import type { DonelRenewalApi } from './sessionRenewal';
 import type { DonelLearningApi } from './learning/gestures';
@@ -317,6 +318,8 @@ export interface PtyCreateOptions {
   /** Sessões remotas — names kept on the remote, so the next boot reopens the tab as it was. */
   tabName?: string;
   projectName?: string;
+  /** Sessões remotas — place of the session that opened this one (`sessao_abrir`), kept so the next boot leaves it out of the tab bar. */
+  openedBy?: string;
 }
 
 /** Sessões remotas — a session still alive on a remote place, found at boot. */
@@ -327,6 +330,7 @@ export interface RemoteAliveSession {
   readonly projectName: string;
   readonly name: string;
   readonly launchArgs: readonly string[];
+  readonly openedBy?: string;
 }
 
 /**
@@ -508,6 +512,8 @@ export interface DonelApi {
   chat: DonelChatApi;
   /** Mindscape V1 — one board per project, persisted in `mindscape.json` by the main. */
   mindscape: DonelMindscapeApi;
+  /** Ledger com prova (item 19) — the tasks between places, in `ledger.json` (the main is the only writer). */
+  ledger: DonelLedgerApi;
   /** Papéis de sessão (item 12a) — the roles in `<userData>/papeis/` (the main is the only writer). */
   roles: DonelRolesApi;
   /** Diário de gestos — what the owner does, kept only on this machine as examples for a local model (B35). */

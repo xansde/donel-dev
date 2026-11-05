@@ -32,7 +32,7 @@ describe('arquivo de retomada', () => {
       view: 'chat',
       active: true,
     },
-    { sessionType: 'claude', name: 'Lugar novo', cwd: 'C:\\repos\\atlas', placeId: 'place-9', launchArgs: ['--model', 'sonnet'], providerId: 'meu-provider' },
+    { sessionType: 'claude', name: 'Lugar novo', cwd: 'C:\\repos\\atlas', placeId: 'place-9', openedBy: 'place-1', launchArgs: ['--model', 'sonnet'], providerId: 'meu-provider' },
     { sessionType: 'shell', name: 'Terminal', cwd: 'C:\\repos\\beacon', pinned: true },
   ];
 

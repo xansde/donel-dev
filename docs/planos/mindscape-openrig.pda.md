@@ -354,7 +354,7 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
 
 - **Tipo**: refinamento
 - **Prioridade**: alta
-- **Status**: pendente
+- **Status**: V1 implementada (PR em revisão, 05/11)
 - **Bloqueado por**: 13, 18
 - **Pergunta**: uma tarefa entre lugares nasce com a frase literal de quem pediu, critério de
   pronto, prazo e dono, e anda em aberta → em execução → entregue → aceita (ou rejeitada).
@@ -373,7 +373,20 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
 - **Teste**: dado persistido que um canal pode apagar, então vale um teste do caminho criar →
   entregar → aceitar. Nenhum smoke novo.
 - **Ordem**: depois do fix da mensagem direto para o CLI e do Líder único.
-- **Resolução**: —
+- **Resolução (V1, 05/11)**: contrato em `src/shared/ledger/contract.ts` (tipos, `schemaVersion` 1,
+  parse que descarta o desconhecido, regras em `applyLedgerOp`, faixa em `ledgerStrip`); ferramentas
+  `tarefa_criar|assumir|entregar|aceitar|rejeitar|listar` em `src/shared/ledger/tools.ts`; store e
+  porta MCP em `src/main/ledger-store.ts` (`<userData>/ledger.json`, provas copiadas para
+  `<userData>/ledger-provas/`). Quem chama é o lugar resolvido pelo quadro, nunca um argumento.
+  Faixa de números sob as abas do Mindscape; "esperando você" abre a lista com aceitar/rejeitar
+  como dono. **Pronto para o celular**: `LedgerService.apply(ator, op)` é a porta única (o
+  servidor HTTP na Tailscale chama a mesma função com `{ kind: 'dono' }`), prova é arquivo
+  dentro do `userData` ou texto/link, e todo evento grava o autor. Decidido pelo Dev: prazo
+  obrigatório (AAAA-MM-DD); rejeitada pode ser assumida de novo (retrabalho no histórico);
+  Revisor = papel `revisor` ou `revisor-*`; rejeitar segue a regra de aceitar; o dono pode
+  conferir ou derrubar um aceite do Revisor; amostra da 1ª semana = até 3 aceites do Revisor
+  por dia, contados a partir da primeira tarefa. Fora da V1: "outro motor que o do autor"
+  não é checado; prova de sessão remota só como texto ou link.
 
 ### 20 — Rotinas que acordam lugares, com filtro sem LLM
 

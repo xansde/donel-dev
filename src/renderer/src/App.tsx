@@ -144,8 +144,8 @@ import { BackgroundIndicator, type BackgroundSession } from './chat/BackgroundTa
 import { revealRow } from './chat/revealRow';
 import { runningCount } from '../../shared/chat/backgroundTasks';
 import { effectiveTabView, hasChatView, nextTabView, shouldHandleViewShortcut } from './chat/tabView';
-import { disposeTabSend, sendDriverFor, sendToTab } from './chat/composer/tabSend';
-import { blockingScreen } from '../../shared/chat/screen';
+import { disposeTabSend, sendDriverFor, sendToTab, sendToTabAndWait } from './chat/composer/tabSend';
+import { blockingScreen, readInputText } from '../../shared/chat/screen';
 import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../shared/lider/ipc';
 import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
 import { TerminalPane } from './TerminalPane';
@@ -224,6 +224,8 @@ interface TabState {
    * of the tab bar and the sidebar; the owner follows it through its place in the Mindscape.
    */
   openedBySession?: boolean;
+  /** Place of the session that opened this one: saved on an update (and on the remote), so it comes back out of the tab bar. */
+  openedBy?: string;
   /** The owner brought a tab of `openedBySession` to the tab bar (double click on its place, a notice); closing it hides it again. */
   shown?: boolean;
   /** Sessões remotas — remote place (`accounts.remotes`) where this tab's CLI runs; `undefined` = this computer. */
@@ -916,6 +918,11 @@ export function App(): React.JSX.Element {
   const openWhereItLives = (sessionId: string, projectPath: string, open: (remote: { remoteId?: string }) => void): void => {
     if (resumingRef.current.has(sessionId)) return;
     resumingRef.current.add(sessionId);
+    // The answer from this disk is instant; a slower one means the app is asking the remote places by ssh
+    // (up to 20 s each). Without a word the click looked dead.
+    const places = accountsView.remotes.map((remote) => `«${remote.label}»`).join(' e ');
+    const waiting = `Procurando a conversa em ${places || 'outro lugar'}… pode levar até 20 s.`;
+    const waitingTimer = places ? window.setTimeout(() => setDevModeToast(waiting), 600) : null;
     void window.donel.sessions
       .whereLives(sessionId, projectPath)
       .then(
@@ -932,7 +939,11 @@ export function App(): React.JSX.Element {
         },
         () => open({}),
       )
-      .finally(() => resumingRef.current.delete(sessionId));
+      .finally(() => {
+        resumingRef.current.delete(sessionId);
+        if (waitingTimer !== null) window.clearTimeout(waitingTimer);
+        setDevModeToast((current) => (current === waiting ? null : current));
+      });
   };
 
   // T013 — Retomar (ui-spec §5, primário): `-r <session-id>` via
@@ -2106,6 +2117,7 @@ export function App(): React.JSX.Element {
         ...(tab.roleId ? { roleId: tab.roleId } : {}),
         // A place binds to its conversation; only a session that never started still needs it.
         ...(tab.placeId && !sessionId ? { placeId: tab.placeId } : {}),
+        ...(tab.openedBySession && tab.openedBy ? { openedBy: tab.openedBy } : {}),
         ...(tab.customTitle !== undefined ? { customTitle: tab.customTitle } : {}),
         ...(tab.view ? { view: tab.view } : {}),
       },
@@ -2142,7 +2154,8 @@ export function App(): React.JSX.Element {
         if (boot.failure) setUpdateError(`${boot.failure}. Esta é a versão de antes.`);
         let activeId: string | null = null;
         for (const entry of boot.tabs) {
-          const id = addTab({
+          const id = addTab(
+            {
             name: entry.name,
             cwd: entry.cwd,
             projectName: entry.projectName,
@@ -2155,8 +2168,13 @@ export function App(): React.JSX.Element {
             ...(entry.color && isTabColorToken(entry.color) ? { color: entry.color } : {}),
             ...(entry.customTitle !== undefined ? { customTitle: entry.customTitle } : {}),
             ...(entry.view ? { view: entry.view } : {}),
-          });
-          if (entry.active) activeId = id;
+              ...(entry.openedBy ? { openedBySession: true, openedBy: entry.openedBy } : {}),
+            },
+            !entry.openedBy,
+          );
+          // Só os Líderes nas abas — the team comes back to the Mindscape, not to the tab bar.
+          if (entry.openedBy) agentBridgeRef.current.adoptOpened(id, entry.openedBy);
+          else if (entry.active) activeId = id;
         }
         if (activeId) setActiveTabId(activeId);
       })
@@ -2176,15 +2194,21 @@ export function App(): React.JSX.Element {
       .then((alive) => {
         for (const entry of alive) {
           if (tabsRef.current.some((tab) => tab.claudeSessionId === entry.sessionId)) continue;
-          addTab({
-            name: entry.name,
-            cwd: entry.cwd,
-            projectName: entry.projectName,
-            pinned: false,
-            sessionType: 'claude',
-            launchArgs: withResumeArgs(entry.launchArgs, entry.sessionId),
-            remoteId: entry.remoteId,
-          });
+          const id = addTab(
+            {
+              name: entry.name,
+              cwd: entry.cwd,
+              projectName: entry.projectName,
+              pinned: false,
+              sessionType: 'claude',
+              launchArgs: withResumeArgs(entry.launchArgs, entry.sessionId),
+              remoteId: entry.remoteId,
+              ...(entry.openedBy ? { openedBySession: true, openedBy: entry.openedBy } : {}),
+            },
+            !entry.openedBy,
+          );
+          // Só os Líderes nas abas — a session a Líder opened on the remote stays out of the tab bar after a restart.
+          if (entry.openedBy) agentBridgeRef.current.adoptOpened(id, entry.openedBy);
         }
       })
       .catch(() => undefined);
@@ -2568,6 +2592,7 @@ export function App(): React.JSX.Element {
           roleId: request.role.id,
           placeId: request.placeId,
           openedBySession: true,
+          openedBy: request.openedBy,
         },
         false,
       );
@@ -2576,9 +2601,28 @@ export function App(): React.JSX.Element {
     },
     closeTab: (tabId) => closeTabImmediatelyRef.current(tabId),
     sendLine: (tabId, text) => sendRenewalLine(tabId, text),
+    deliverLine: (tabId, text, waitMs) => {
+      const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
+      if (tab !== undefined && hasChatView(tab, chatEnabled)) return sendToTabAndWait(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text }, waitMs);
+      sendRenewalLine(tabId, text);
+      return Promise.resolve({ kind: 'enviando' as const });
+    },
     permissionOnScreen: (tabId) => {
       const lines = terminalRefs.current[tabId]?.readScreen().lines;
       return lines !== undefined && blockingScreen(lines)?.kind === 'permission';
+    },
+    unconfirmed: (tabId) => semaphoreStates[tabId]?.unconfirmed === true || semaphoreStates[tabId] === undefined,
+    startTrouble: (tabId) => {
+      if (tabExits[tabId] !== undefined) return 'o Claude de lá foi encerrado';
+      if (aliveTabs[tabId] !== true) return 'o terminal dela não chegou a abrir';
+      const lines = terminalRefs.current[tabId]?.readScreen().lines;
+      if (lines === undefined) return null;
+      const dialog = blockingScreen(lines);
+      if (dialog) return `a tela dela mostra «${dialog.title}» e espera alguém responder`;
+      const box = readInputText(lines);
+      if (box === null) return 'a caixa de entrada do Claude não apareceu na tela dela';
+      if (box !== '') return 'o pedido ficou na caixa do terminal dela sem ser enviado';
+      return null;
     },
     askOwner: (question) =>
       new Promise<boolean>((resolve) => {
@@ -3481,6 +3525,7 @@ export function App(): React.JSX.Element {
                   remoteId={tab.remoteId}
                   tabName={tab.name}
                   projectName={tab.projectName}
+                  openedBy={tab.openedBy}
                   accountLoginId={tab.accountLoginId}
                   roleId={tab.roleId}
                   onStateChange={(info) => handleSemaphoreChange(tab.id, info)}
