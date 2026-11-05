@@ -2605,7 +2605,7 @@ export function App(): React.JSX.Element {
       const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
       if (tab !== undefined && hasChatView(tab, chatEnabled)) return sendToTabAndWait(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text }, waitMs);
       sendRenewalLine(tabId, text);
-      return Promise.resolve({ kind: 'enviando' as const });
+      return Promise.resolve({ kind: 'pelo-terminal' as const });
     },
     permissionOnScreen: (tabId) => {
       const lines = terminalRefs.current[tabId]?.readScreen().lines;

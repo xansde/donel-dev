@@ -67,7 +67,9 @@ export type DeliveryOutcome =
   | { readonly kind: 'entrou' }
   | { readonly kind: 'na-fila' }
   | { readonly kind: 'nao-foi'; readonly reason: string }
-  | { readonly kind: 'enviando'; readonly reason?: string };
+  | { readonly kind: 'enviando'; readonly reason?: string }
+  /** A tab without the chat view: the line went to its terminal, and nothing reads back whether it entered. */
+  | { readonly kind: 'pelo-terminal' };
 
 export interface AgentBridgePorts {
   readonly loaded: boolean;
@@ -369,11 +371,14 @@ export class AgentBridge {
         if (outcome.kind === 'entrou') return { ok: true, text: 'Entregue: entrou no Claude de lá.' };
         if (outcome.kind === 'na-fila') return { ok: true, text: 'Entregue à fila do Claude de lá: ela está trabalhando e o próprio CLI a entrega no próximo passo.' };
         if (outcome.kind === 'nao-foi') return fail(`Não entrou: ${outcome.reason}. Veja a tela dela com sessao_ver_tela, ou peça ao dono.`);
+        if (outcome.kind === 'pelo-terminal') {
+          return { ok: true, text: 'Enviada pelo terminal dela (a aba não tem a visão de chat), sem confirmação de que entrou. NÃO mande de novo; confira com sessao_ver_tela.' };
+        }
         return {
           ok: true,
           text: this.ports.permissionOnScreen(target.id)
-            ? 'Ainda não entrou: há uma permissão aberta na tela dela. A mensagem entra sozinha assim que ela fechar.'
-            : `Ainda não entrou${outcome.reason ? ` (${outcome.reason})` : ''}; o app segue tentando. Confira com sessao_ver_tela.`,
+            ? 'Ainda não entrou: há uma permissão aberta na tela dela. A mensagem entra sozinha assim que ela fechar; NÃO mande de novo.'
+            : `Ainda não entrou${outcome.reason ? ` (${outcome.reason})` : ''}; o app segue tentando sozinho. NÃO mande de novo (sairia duas vezes quando a primeira entrar); confira com sessao_ver_tela.`,
         };
       }
 
