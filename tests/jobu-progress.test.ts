@@ -1,7 +1,7 @@
 // Painel de progresso do Jobu — the estimate the owner reads: the bar, the end date and where it came from.
 import { describe, expect, it } from 'vitest';
 import { applyLedgerOp, emptyLedgerDoc, type LedgerActor, type LedgerDoc, type LedgerOp } from '../src/shared/ledger/contract';
-import { dueEndsAt, jobuProgress, PROGRESS_DONE_KEEP_MS } from '../src/shared/pet/progress';
+import { dueEndsAt, jobuProgress } from '../src/shared/pet/progress';
 
 const H = 60 * 60 * 1000;
 const T0 = new Date(2026, 10, 5, 9, 0).getTime();
@@ -48,15 +48,25 @@ describe('jobuProgress', () => {
     expect(task.source).toMatch(/refazendo/);
   });
 
-  it('an accepted task is full, ends when accepted, and leaves the panel a day later', () => {
-    let doc = run(created('2026-11-07'), dev, { op: 'assumir', id: 't-1' }, T0 + H);
-    doc = run(doc, dev, { op: 'entregar', id: 't-1', proofs: [{ kind: 'texto', text: 'ok' }] }, T0 + 2 * H);
-    doc = run(doc, { kind: 'dono' }, { op: 'aceitar', id: 't-1' }, T0 + 3 * H);
-    const board = jobuProgress(doc, T0 + 4 * H).boards[0]!;
-    expect(board.tasks[0]!.steps).toBe(3);
-    expect(board.endsAt).toBe(T0 + 3 * H);
-    expect(board.done).toBe(1);
-    expect(jobuProgress(doc, T0 + 3 * H + PROGRESS_DONE_KEEP_MS).boards).toEqual([]);
+  it('shows only what is going on: an accepted task leaves at once and out of every sum', () => {
+    const proof = [{ kind: 'texto' as const, text: 'ok' }];
+    let doc = emptyLedgerDoc();
+    for (const id of ['aberta', 'em-execucao', 'entregue', 'rejeitada', 'aceita']) {
+      doc = run(doc, lider, { op: 'criar', projectPath: '/w/atlas', request: id, doneWhen: 'feito', due: '2026-11-07', ownerPlaceId: 'place:dev', risk: 'baixo' }, T0, id);
+    }
+    for (const id of ['em-execucao', 'entregue', 'rejeitada', 'aceita']) doc = run(doc, dev, { op: 'assumir', id }, T0 + H);
+    for (const id of ['entregue', 'rejeitada', 'aceita']) doc = run(doc, dev, { op: 'entregar', id, proofs: proof }, T0 + 2 * H);
+    doc = run(doc, { kind: 'dono' }, { op: 'rejeitar', id: 'rejeitada', reason: 'faltou Y' }, T0 + 3 * H);
+    doc = run(doc, { kind: 'dono' }, { op: 'aceitar', id: 'aceita' }, T0 + 3 * H);
+
+    // Accepted 1 minute ago: already gone.
+    const board = jobuProgress(doc, T0 + 3 * H + 60_000).boards[0]!;
+    expect(board.tasks.map((task) => task.state).sort()).toEqual(['aberta', 'em-execucao', 'entregue', 'rejeitada']);
+    expect([board.steps, board.totalSteps]).toEqual([0 + 1 + 2 + 1, 4 * 3]);
+
+    // Only accepted tasks left: nothing to show.
+    const onlyDone = run(run(run(created('2026-11-07'), dev, { op: 'assumir', id: 't-1' }, T0 + H), dev, { op: 'entregar', id: 't-1', proofs: proof }, T0 + 2 * H), { kind: 'dono' }, { op: 'aceitar', id: 't-1' }, T0 + 3 * H);
+    expect(jobuProgress(onlyDone, T0 + 3 * H + 60_000)).toEqual({ boards: [], changedAt: null });
   });
 
   it('a board sums its tasks and ends with the last task left', () => {

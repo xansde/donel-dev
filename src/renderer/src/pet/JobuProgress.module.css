@@ -113,10 +113,6 @@
   background: var(--state-permission);
 }
 
-.fill[data-state='aceita'] {
-  background: var(--state-done);
-}
-
 .meta,
 .source {
   color: var(--text-muted);
