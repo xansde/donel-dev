@@ -7,6 +7,7 @@ import { normalizeWheelDelta, wheelSteps } from '../../../shared/pet/gestures';
 import { PET_SIZE_DEFAULT } from '../../../shared/pet/placement';
 import { resolvePose } from '../../../shared/pet/poses';
 import type { PetView, PetViewBubble } from '../../../shared/pet/types';
+import { useJobuProgress } from './JobuProgress';
 import { LiderTalk, type TalkPose } from './LiderTalk';
 import styles from './PetApp.module.css';
 import { usePetDrag } from './usePetDrag';
@@ -127,10 +128,14 @@ export function PetApp(): React.JSX.Element {
   // While the Líder talks, his bubble says everything: the little bubble and the list stay out of the way.
   const bubble = talking ? null : (view?.bubble ?? null);
   const waiting = view?.waiting ?? [];
+  // The progress panel: recomputed on every ledger write and on every session event the Jobu hears (a new bubble).
+  const progress = useJobuProgress(String(view?.bubble?.id ?? ''));
+  // Something changed in the progress and the bubble is closed: a quiet dot on the Jobu, nothing more.
+  const progressDot = !talking && progress.unseen;
   // A list of one is no list: it needs two or more to be worth opening (FR-023), and it goes when they drop to one.
   const listVisible = !talking && listOpen && waiting.length >= 2;
   // What is under a pointer that does not move changes when the badge, the bubble or the list comes or goes (or says something else).
-  const refreshKey = `${view?.badge ?? ''}|${bubble?.id ?? ''}:${bubble?.text ?? ''}|${listVisible ? `list${waiting.length}` : ''}|talk${view?.talk ?? 0}`;
+  const refreshKey = `${view?.badge ?? ''}|${bubble?.id ?? ''}:${bubble?.text ?? ''}|${listVisible ? `list${waiting.length}` : ''}|talk${view?.talk ?? 0}|dot${String(progressDot)}`;
   const { interactive, isHit } = usePetHitTest({ figure: figureRef, arts: POSE_ART, art, size: view?.size ?? null, refreshKey, locked: dragging });
 
   // FR-030: one hop per bubble, keyed by its id: a bubble that grew into an aggregate keeps its id and does not hop twice.
@@ -226,6 +231,12 @@ export function PetApp(): React.JSX.Element {
     [view, isHit],
   );
   const closeTalk = useCallback((): void => window.donel.pet.setTalk(false), []);
+  /** The dot of the progress opens the bubble straight on the panel. */
+  const onProgressDotClick = (): void => {
+    setListOpen(false);
+    progress.setOpen(true);
+    window.donel.pet.setTalk(true);
+  };
   // The pose of the conversation is forgotten when the bubble closes: the Jobu goes back to what the sessions ask for.
   useEffect(() => {
     if (!talking) setTalkPose(null);
@@ -325,7 +336,18 @@ export function PetApp(): React.JSX.Element {
               {view.badge}
             </span>
           )}
-          {talking && <LiderTalk view={view} onClose={closeTalk} onPose={setTalkPose} />}
+          {progressDot && (
+            <button
+              type="button"
+              className={styles.progressDot}
+              data-hit
+              data-testid="pet-progress-dot"
+              aria-label="O progresso das tarefas mudou: abrir"
+              title="O progresso das tarefas mudou"
+              onClick={onProgressDotClick}
+            />
+          )}
+          {talking && <LiderTalk view={view} onClose={closeTalk} onPose={setTalkPose} progress={progress} />}
           {(bubble !== null || listVisible) && (
             // Above the head, anchored to the drawing like an alignment (`right` near the right edge of the screen, the default corner).
             <div className={styles.popups} data-align={view.align} data-testid="pet-popups" data-both={bubble !== null && listVisible ? '' : undefined}>

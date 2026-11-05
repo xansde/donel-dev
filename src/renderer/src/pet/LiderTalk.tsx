@@ -14,6 +14,7 @@ import type { PetView } from '../../../shared/pet/types';
 import { Markdown } from '../chat/markdown';
 import { PendingPanel } from '../chat/pending/PendingPanel';
 import { useChatSession } from '../chat/useChatSession';
+import { JobuProgressPanel, type JobuProgressState } from './JobuProgress';
 import styles from './LiderTalk.module.css';
 
 /** One line of the conversation as the bubble tells it: the owner's message or one whole answer of the Líder. */
@@ -72,9 +73,11 @@ export interface LiderTalkProps {
   readonly onClose: () => void;
   /** The pose the Jobu takes for what is being said. */
   readonly onPose: (pose: TalkPose) => void;
+  /** The progress panel (folded by default): it takes the body of the bubble while it is open. */
+  readonly progress: JobuProgressState;
 }
 
-export function LiderTalk({ view, onClose, onPose }: LiderTalkProps): React.JSX.Element {
+export function LiderTalk({ view, onClose, onPose, progress }: LiderTalkProps): React.JSX.Element {
   const [state, setState] = useState<LiderState | null>(null);
   const session = useChatSession(state?.ptyId ?? null);
   const [draft, setDraft] = useState('');
@@ -154,7 +157,30 @@ export function LiderTalk({ view, onClose, onPose }: LiderTalkProps): React.JSX.
         <span className={styles.title}>
           Líder<span className={styles.project}> · todos os quadros</span>
         </span>
-        <button type="button" className={styles.tool} aria-pressed={historyOpen} title="Histórico da conversa" onClick={() => setHistoryOpen((open) => !open)}>
+        <button
+          type="button"
+          className={styles.tool}
+          aria-pressed={progress.open}
+          data-testid="pet-progress-toggle"
+          data-unseen={progress.unseen && !progress.open ? 'true' : undefined}
+          title={progress.open ? 'Fechar o progresso' : progress.unseen ? 'Progresso das tarefas (mudou desde a última vez)' : 'Progresso das tarefas'}
+          onClick={() => {
+            progress.setOpen(!progress.open);
+            setHistoryOpen(false);
+          }}
+        >
+          ▤
+        </button>
+        <button
+          type="button"
+          className={styles.tool}
+          aria-pressed={historyOpen && !progress.open}
+          title="Histórico da conversa"
+          onClick={() => {
+            setHistoryOpen((open) => !(open && !progress.open));
+            progress.setOpen(false);
+          }}
+        >
           ≡
         </button>
         <button type="button" className={styles.tool} disabled={state?.tabId == null} title="Abrir a aba do Líder no Donel" onClick={() => window.donel.lider.showTab()}>
@@ -165,7 +191,11 @@ export function LiderTalk({ view, onClose, onPose }: LiderTalkProps): React.JSX.
         </button>
       </div>
 
-      {historyOpen ? (
+      {progress.open ? (
+        <div className={styles.body}>
+          <JobuProgressPanel state={progress} />
+        </div>
+      ) : historyOpen ? (
         <div className={styles.body} data-testid="pet-talk-history">
           {lines.length === 0 ? <p className={styles.muted}>Nada conversado ainda.</p> : null}
           {lines.map((line) => (

@@ -2850,6 +2850,10 @@ function registerLedgerIpcHandlers(): void {
     onChange: (snapshot) => {
       const window = getMainWindow();
       if (window && !window.isDestroyed()) window.webContents.send(LEDGER_CHANNELS.changed, snapshot);
+      // The progress panel of the Jobu reads the ledger too (it only reads: `decide` stays the main window's).
+      const petId = petService?.petWebContentsId() ?? null;
+      const pet = petId === null ? null : webContents.fromId(petId);
+      if (pet && !pet.isDestroyed()) pet.send(LEDGER_CHANNELS.changed, snapshot);
     },
   });
   ledgerService = service;
