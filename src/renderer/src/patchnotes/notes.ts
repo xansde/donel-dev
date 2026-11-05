@@ -22,6 +22,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'A mensagem que uma sessão manda para outra, e o aviso de que uma sessão terminou, agora entram na hora, mesmo com a outra trabalhando: vão para a fila do próprio Claude de lá, como quando você digita no terminal com ele ocupado. Nada fica mais "Retida" esperando você abrir a aba. Só uma permissão aberta na tela de lá segura a mensagem, e ela entra sozinha quando a permissão fecha. Sessão que terminou o turno sem pedir nada não aparece mais como "precisa de você", e cada aviso de término chega uma vez só.',
       },
       {
+        title: 'Só o Líder nas abas; o time fica no Mindscape',
+        text: 'As sessões que o Líder abre não aparecem mais nas abas nem na lista da barra lateral: continuam trabalhando e você acompanha cada uma pelo lugar dela no Mindscape. Dois cliques no lugar trazem a sessão para as abas; fechar a aba a esconde de novo, sem parar a sessão. Quando uma delas precisa de você, o aviso continua chegando pelo Jobu, e clicar nele também traz a sessão.',
+      },
+      {
         title: 'Régua de contexto vai até 500k',
         text: 'A barra de contexto da sessão agora mede até 500k (antes 300k): 250k usados aparecem como 50%. No Haiku a régua continua sendo a janela dele, 200k.',
       },

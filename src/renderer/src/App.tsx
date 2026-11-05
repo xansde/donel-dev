@@ -219,6 +219,13 @@ interface TabState {
   roleId?: string;
   /** Item 12a — the place of the Mindscape this tab was opened from, until its conversation binds to it. */
   placeId?: string;
+  /**
+   * Só os Líderes nas abas (04/11) — opened by another session (`sessao_abrir`). It runs normally but stays out
+   * of the tab bar and the sidebar; the owner follows it through its place in the Mindscape.
+   */
+  openedBySession?: boolean;
+  /** The owner brought a tab of `openedBySession` to the tab bar (double click on its place, a notice); closing it hides it again. */
+  shown?: boolean;
   /** Sessões remotas — remote place (`accounts.remotes`) where this tab's CLI runs; `undefined` = this computer. */
   remoteId?: string;
   /**
@@ -283,6 +290,18 @@ interface LastLaunch {
 // "todas as abas fechadas" (T010) — este caso deixa de ser um estado
 // alcançável só por fechamento manual e passa a ser também o estado INICIAL.
 const INITIAL_TABS: TabState[] = [];
+
+/** Só os Líderes nas abas — the tab is in the tab bar and the sidebar (a session opened by another one only after the owner opens it). */
+function isTabListed(tab: TabState): boolean {
+  return !tab.openedBySession || tab.shown === true;
+}
+
+/** The tab that takes the focus when `leavingId` leaves the tab bar: the listed neighbour before it, else the first listed one. */
+function listedFallback(tabs: readonly TabState[], leavingId: string): TabState | undefined {
+  const index = tabs.findIndex((tab) => tab.id === leavingId);
+  const before = tabs.slice(0, Math.max(0, index)).filter((tab) => tab.id !== leavingId && isTabListed(tab));
+  return before[before.length - 1] ?? tabs.find((tab) => tab.id !== leavingId && isTabListed(tab));
+}
 
 
 // 003-modo-dev/T312 — teto de espera pelo sinal de "pronto para receber
@@ -691,7 +710,8 @@ export function App(): React.JSX.Element {
     const remaining = tabs.filter((tab) => tab.id !== tabId);
     setTabs(remaining);
     if (activeTabId === tabId) {
-      const fallback = remaining[Math.max(0, index - 1)] ?? remaining[0];
+      // A hidden session (opened by another one) never takes the focus: it would come back to the tab bar.
+      const fallback = listedFallback(tabs, tabId);
       setActiveTabId(fallback ? fallback.id : '');
     }
     setSemaphoreStates((prev) => omitKey(prev, tabId));
@@ -760,6 +780,13 @@ export function App(): React.JSX.Element {
   // `activeTabId` direto do escopo do render, mesmo padrão de
   // `handleOpenProject`/`handleLaunch` logo acima.
   const handleRequestCloseTab = (tabId: string): void => {
+    // Só os Líderes nas abas — a live session opened by another one goes back to the Mindscape; it keeps running.
+    const tab = tabs.find((candidate) => candidate.id === tabId);
+    if (tab?.openedBySession && aliveTabs[tabId]) {
+      setTabs((prev) => prev.map((candidate) => (candidate.id === tabId ? { ...candidate, shown: false } : candidate)));
+      if (activeTabId === tabId) setActiveTabId(listedFallback(tabs, tabId)?.id ?? '');
+      return;
+    }
     if (aliveTabs[tabId]) {
       setPendingCloseTabId(tabId);
       return;
@@ -2198,6 +2225,15 @@ export function App(): React.JSX.Element {
     // Diário de gestos — a tab focused inside the Uso geral (coming from the Mindscape is recorded there).
     if (wasGeral && appMode === 'geral') window.donel.learning?.record({ type: 'sessao-aberta', sessionId, via: 'aba' });
   }, [appMode, activeTabId]);
+  // Só os Líderes nas abas — a hidden session that takes the focus (double click on its place, a notice of the Jobu,
+  // Ctrl+Tab) comes to the tab bar until the owner closes it.
+  useEffect(() => {
+    setTabs((prev) => {
+      const target = prev.find((tab) => tab.id === activeTabId);
+      if (!target || isTabListed(target)) return prev;
+      return prev.map((tab) => (tab.id === activeTabId ? { ...tab, shown: true } : tab));
+    });
+  }, [activeTabId]);
   // "Ir ao terminal" (rule 10) — the focus change above stamps `seenAt`.
   const handleMindscapeGoToTerminal = useCallback((tabId: string): void => {
     const sessionId = tabsRef.current.find((tab) => tab.id === tabId)?.claudeSessionId;
@@ -2486,6 +2522,7 @@ export function App(): React.JSX.Element {
           ...(request.remoteId ? { remoteId: request.remoteId } : {}),
           roleId: request.role.id,
           placeId: request.placeId,
+          openedBySession: true,
         },
         false,
       );
@@ -2551,7 +2588,9 @@ export function App(): React.JSX.Element {
     [applyMindscape],
   );
 
-  const sidebarSessions: SidebarSession[] = tabs
+  // Só os Líderes nas abas — the sessions opened by another one are out of the list (they live in the Mindscape),
+  // but Ctrl+Tab still reaches one that waits for the owner.
+  const allSidebarSessions: SidebarSession[] = tabs
     .filter((tab) => !(tab.claudeSessionId && registeredFavoriteIds.has(tab.claudeSessionId)))
     .map((tab) => ({
       id: tab.id,
@@ -2564,6 +2603,8 @@ export function App(): React.JSX.Element {
       active: tab.id === activeTabId,
       cwd: tab.cwd,
     }));
+  const listedTabIds = new Set(tabs.filter(isTabListed).map((tab) => tab.id));
+  const sidebarSessions = allSidebarSessions.filter((session) => listedTabIds.has(session.id));
 
   /**
    * T708/T709 (007) — grupo "Favoritos": um projeto por linha, colapsável
@@ -2648,6 +2689,7 @@ export function App(): React.JSX.Element {
   // ranqueada tanto pro Ctrl+1..9 (posição N) quanto pro Ctrl+Tab (próxima
   // sessão que precisa de atenção).
   const orderedSessions = useMemo(() => sortSessions(sidebarSessions), [sidebarSessions]);
+  const attentionSessions = useMemo(() => sortSessions(allSidebarSessions), [allSidebarSessions]);
 
   // FR-013 — Ctrl+1..9 foca a sessão na posição N da lista ranqueada;
   // Ctrl+Tab foca a próxima que precisa de atenção (permissão > aguardando).
@@ -2669,7 +2711,7 @@ export function App(): React.JSX.Element {
       }
 
       if (event.key === 'Tab') {
-        const target = nextAttentionSessionId(orderedSessions, activeTabIdRef.current);
+        const target = nextAttentionSessionId(attentionSessions, activeTabIdRef.current);
         if (!target) return;
         event.preventDefault();
         event.stopPropagation();
@@ -2689,7 +2731,7 @@ export function App(): React.JSX.Element {
 
     window.addEventListener('keydown', handleKeyDown, { capture: true });
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
-  }, [orderedSessions]);
+  }, [orderedSessions, attentionSessions]);
 
   // Notificação Windows de sessão (ui-spec §3, FR-010): desde notificacoes-completas (30/10) nasce no main, junto
   // do balão do Jobu, do piscar e do selo da barra de tarefas — uma regra só (src/shared/attention/rule.ts) que sabe
@@ -3175,7 +3217,8 @@ export function App(): React.JSX.Element {
           <div className={styles.tabBar}>
             <div className={styles.tabBarScroll}>
             {tabs.map((tab, index) => (
-              <TerminalTab
+              // Só os Líderes nas abas — a session opened by another one stays out until the owner opens it.
+              !isTabListed(tab) ? null : <TerminalTab
                 key={tab.id}
                 name={resolveTabName(tab)}
                 // T408 (004) — CA-3: duplo-clique no nome, ou F2 na aba em
@@ -3240,7 +3283,7 @@ export function App(): React.JSX.Element {
               o path cru do "consultar artefato" (Zona 2, acima) parecia ser
               o header. Uso geral mantém a condição antiga (nome+path só com
               aba aberta, lote 8). */}
-          {(devModeOn ? mapView.breadcrumb.length > 0 : tabs.length > 0) ? (
+          {(devModeOn ? mapView.breadcrumb.length > 0 : listedTabIds.size > 0) ? (
             <div className={styles.sessionHeader} data-testid="session-header">
               {/* Spec 010 / B6 — o breadcrumb passou a ser o dos nós novos:
                   discovery › plano › item. Ele vem pronto de `buildMapView`;
@@ -3331,7 +3374,7 @@ export function App(): React.JSX.Element {
                 esteira ("⌁ Preparar" na trilha do mapa), nunca de um atalho
                 ad-hoc — o botão nunca aparece lá (screenshot app-01/03
                 mostrava o contrário). */}
-            {tabs.length === 0 && !devModeOn ? (
+            {listedTabIds.size === 0 && !devModeOn ? (
               <div className={styles.emptyState} data-testid="empty-state">
                 <p className={styles.emptyStateTitle}>Nenhuma sessão aberta</p>
                 <p className={styles.emptyStateHint}>Escolha um projeto na barra lateral ou</p>
@@ -3350,7 +3393,7 @@ export function App(): React.JSX.Element {
                 (fundo + hairline do próprio `.terminal`); com etapa em foco,
                 um texto de condução que aponta pro mapa (nunca um narrativa
                 por etapa fabricada — não há fonte pra isso). */}
-            {tabs.length === 0 && devModeOn ? (
+            {listedTabIds.size === 0 && devModeOn ? (
               <div className={styles.devModeTerminalEmpty} data-testid="devmode-terminal-empty">
                 {mapView.detail ? (
                   <p className={styles.devModeHint}>
