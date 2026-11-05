@@ -45,6 +45,8 @@ export interface OpenSessionRequest {
   readonly role: SessionRole;
   readonly name: string;
   readonly remoteId?: string;
+  /** The caller's place: the new session is its team, out of the tab bar, also after an update or a restart. */
+  readonly openedBy: string;
   /** Sent as soon as the new tab exists (the chat's send driver waits for the session). */
   readonly firstMessage: string;
 }
@@ -99,6 +101,11 @@ export class AgentBridge {
 
   setPorts(ports: AgentBridgePorts): void {
     this.ports = ports;
+  }
+
+  /** A tab reopened after an update or a restart that had been opened by `opener` (counts for its cap again). */
+  adoptOpened(tabId: string, opener: string): void {
+    this.openedBy.set(tabId, opener);
   }
 
   dispose(): void {
@@ -346,6 +353,7 @@ export class AgentBridge {
           role,
           name,
           ...(remoteId ? { remoteId } : {}),
+          openedBy: self.id,
           firstMessage: call.pedido,
         });
         this.openedBy.set(tabId, self.id);

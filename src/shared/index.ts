@@ -316,6 +316,8 @@ export interface PtyCreateOptions {
   /** Sessões remotas — names kept on the remote, so the next boot reopens the tab as it was. */
   tabName?: string;
   projectName?: string;
+  /** Sessões remotas — place of the session that opened this one (`sessao_abrir`), kept so the next boot leaves it out of the tab bar. */
+  openedBy?: string;
 }
 
 /** Sessões remotas — a session still alive on a remote place, found at boot. */
@@ -326,6 +328,7 @@ export interface RemoteAliveSession {
   readonly projectName: string;
   readonly name: string;
   readonly launchArgs: readonly string[];
+  readonly openedBy?: string;
 }
 
 /**

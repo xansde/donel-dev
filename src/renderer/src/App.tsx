@@ -224,6 +224,8 @@ interface TabState {
    * of the tab bar and the sidebar; the owner follows it through its place in the Mindscape.
    */
   openedBySession?: boolean;
+  /** Place of the session that opened this one: saved on an update (and on the remote), so it comes back out of the tab bar. */
+  openedBy?: string;
   /** The owner brought a tab of `openedBySession` to the tab bar (double click on its place, a notice); closing it hides it again. */
   shown?: boolean;
   /** Sessões remotas — remote place (`accounts.remotes`) where this tab's CLI runs; `undefined` = this computer. */
@@ -2106,6 +2108,7 @@ export function App(): React.JSX.Element {
         ...(tab.roleId ? { roleId: tab.roleId } : {}),
         // A place binds to its conversation; only a session that never started still needs it.
         ...(tab.placeId && !sessionId ? { placeId: tab.placeId } : {}),
+        ...(tab.openedBySession && tab.openedBy ? { openedBy: tab.openedBy } : {}),
         ...(tab.customTitle !== undefined ? { customTitle: tab.customTitle } : {}),
         ...(tab.view ? { view: tab.view } : {}),
       },
@@ -2142,7 +2145,8 @@ export function App(): React.JSX.Element {
         if (boot.failure) setUpdateError(`${boot.failure}. Esta é a versão de antes.`);
         let activeId: string | null = null;
         for (const entry of boot.tabs) {
-          const id = addTab({
+          const id = addTab(
+            {
             name: entry.name,
             cwd: entry.cwd,
             projectName: entry.projectName,
@@ -2155,8 +2159,13 @@ export function App(): React.JSX.Element {
             ...(entry.color && isTabColorToken(entry.color) ? { color: entry.color } : {}),
             ...(entry.customTitle !== undefined ? { customTitle: entry.customTitle } : {}),
             ...(entry.view ? { view: entry.view } : {}),
-          });
-          if (entry.active) activeId = id;
+              ...(entry.openedBy ? { openedBySession: true, openedBy: entry.openedBy } : {}),
+            },
+            !entry.openedBy,
+          );
+          // Só os Líderes nas abas — the team comes back to the Mindscape, not to the tab bar.
+          if (entry.openedBy) agentBridgeRef.current.adoptOpened(id, entry.openedBy);
+          else if (entry.active) activeId = id;
         }
         if (activeId) setActiveTabId(activeId);
       })
@@ -2176,15 +2185,21 @@ export function App(): React.JSX.Element {
       .then((alive) => {
         for (const entry of alive) {
           if (tabsRef.current.some((tab) => tab.claudeSessionId === entry.sessionId)) continue;
-          addTab({
-            name: entry.name,
-            cwd: entry.cwd,
-            projectName: entry.projectName,
-            pinned: false,
-            sessionType: 'claude',
-            launchArgs: withResumeArgs(entry.launchArgs, entry.sessionId),
-            remoteId: entry.remoteId,
-          });
+          const id = addTab(
+            {
+              name: entry.name,
+              cwd: entry.cwd,
+              projectName: entry.projectName,
+              pinned: false,
+              sessionType: 'claude',
+              launchArgs: withResumeArgs(entry.launchArgs, entry.sessionId),
+              remoteId: entry.remoteId,
+              ...(entry.openedBy ? { openedBySession: true, openedBy: entry.openedBy } : {}),
+            },
+            !entry.openedBy,
+          );
+          // Só os Líderes nas abas — a session a Líder opened on the remote stays out of the tab bar after a restart.
+          if (entry.openedBy) agentBridgeRef.current.adoptOpened(id, entry.openedBy);
         }
       })
       .catch(() => undefined);
@@ -2568,6 +2583,7 @@ export function App(): React.JSX.Element {
           roleId: request.role.id,
           placeId: request.placeId,
           openedBySession: true,
+          openedBy: request.openedBy,
         },
         false,
       );
@@ -3480,6 +3496,7 @@ export function App(): React.JSX.Element {
                   remoteId={tab.remoteId}
                   tabName={tab.name}
                   projectName={tab.projectName}
+                  openedBy={tab.openedBy}
                   accountLoginId={tab.accountLoginId}
                   roleId={tab.roleId}
                   onStateChange={(info) => handleSemaphoreChange(tab.id, info)}

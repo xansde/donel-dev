@@ -1609,6 +1609,7 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     projectName: options.projectName ?? localCwd,
     name: options.tabName ?? options.projectName ?? localCwd,
     launchArgs: options.args ?? [],
+    ...(options.openedBy ? { openedBy: options.openedBy } : {}),
     createdAt: new Date().toISOString(),
   };
   const files: RemoteFile[] = [];
@@ -1721,6 +1722,7 @@ function registerPtyIpcHandlers(): void {
       projectName: meta.projectName,
       name: meta.name,
       launchArgs: meta.launchArgs,
+      ...(typeof meta.openedBy === 'string' && meta.openedBy !== '' ? { openedBy: meta.openedBy } : {}),
     }));
   });
 
