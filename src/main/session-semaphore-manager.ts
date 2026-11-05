@@ -97,8 +97,12 @@ export function mapHookEventName(name: unknown): SemaphoreEvent['type'] | null {
  * notifies `idle_prompt` about a minute after a clean `Stop` ("Claude is waiting for your input"), and `auth_success`:
  * those are not pendings, and taking them as `permission` left stopped sessions "precisa do dono" forever, which
  * held every message sent to them.
+ *
+ * t-45e87762 — `agent_needs_input` left out: the CLI raises it when a BACKGROUND agent job ("<label> needs your
+ * input", `tengu_bg_agent_notification` in the 2.1.3xx binary) gets blocked. The ask is in that other session, not on
+ * this one's screen, and nothing on this screen answers it, so the tab stayed "esperando você" until the owner typed.
  */
-const OWNER_NEEDED_NOTIFICATIONS: ReadonlySet<string> = new Set(['permission_prompt', 'worker_permission_prompt', 'elicitation_dialog', 'agent_needs_input']);
+const OWNER_NEEDED_NOTIFICATIONS: ReadonlySet<string> = new Set(['permission_prompt', 'worker_permission_prompt', 'elicitation_dialog', 'elicitation_url_dialog']);
 
 /** Whether a `Notification` hook payload asks for the owner. Without a type (an old CLI), only a permission message counts. */
 export function notificationNeedsOwner(payload: Record<string, unknown>): boolean {
@@ -346,7 +350,9 @@ export class SessionSemaphoreManager {
         ? { type: 'sessionEnd', at: this.now(), reason: typeof reason === 'string' ? reason : null }
         : eventType === 'stop'
           ? { type: 'stop', at: this.now(), backgroundAgents: countBackgroundSubagents(payload) }
-          : ({ type: eventType, at: this.now() } as SemaphoreEvent);
+          : eventType === 'preToolUse' || eventType === 'postToolUse'
+            ? { type: eventType, at: this.now(), fromSubagent: typeof payload.agent_id === 'string' && payload.agent_id !== '' }
+            : ({ type: eventType, at: this.now() } as SemaphoreEvent);
     const next = reduceSemaphoreState(current, event);
     this.ptyState.set(ptyId, next);
     this.emit(ptyId);

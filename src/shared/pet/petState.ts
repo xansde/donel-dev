@@ -91,11 +91,21 @@ export interface WaitingEntry {
   readonly waitingSince: number;
 }
 
-/** "Esperando": a wait that started and that the owner has not seen yet. The oldest first; ties keep the order of the tabs. */
+/**
+ * "Esperando você": a session that ASKS the owner something (a question, a permission, a dialog on its screen, i.e.
+ * the semaphore's `permission`) and that the owner has not seen yet. The oldest first; ties keep the order of the tabs.
+ *
+ * t-45e87762 — a turn that simply ended (`waiting`) is not in it any more: the dono opened those and found nothing
+ * waiting for him. The end of a turn is still news (the "terminou" bubble, the toast), just not a pending ask.
+ */
+function asksOwner(session: TrackedSession): boolean {
+  return session.semaphore === 'permission' && session.waitingSince !== null && !session.seen;
+}
+
 export function waitingSessions(state: PetState): readonly WaitingEntry[] {
   const entries: WaitingEntry[] = [];
   for (const [ptyId, session] of state.sessions) {
-    if (session.waitingSince !== null && !session.seen) entries.push({ ptyId, name: session.name, waitingSince: session.waitingSince });
+    if (asksOwner(session)) entries.push({ ptyId, name: session.name, waitingSince: session.waitingSince! });
   }
   return entries.sort((a, b) => a.waitingSince - b.waitingSince);
 }
@@ -103,7 +113,7 @@ export function waitingSessions(state: PetState): readonly WaitingEntry[] {
 export function waitingCount(state: PetState): number {
   let count = 0;
   for (const session of state.sessions.values()) {
-    if (session.waitingSince !== null && !session.seen) count += 1;
+    if (asksOwner(session)) count += 1;
   }
   return count;
 }
@@ -116,7 +126,7 @@ export function baseState(state: PetState, now: number): BaseState {
   let working = false;
   let alive = false;
   for (const session of state.sessions.values()) {
-    if (session.waitingSince !== null && !session.seen && (oldestWait === null || session.waitingSince < oldestWait)) oldestWait = session.waitingSince;
+    if (asksOwner(session) && (oldestWait === null || session.waitingSince! < oldestWait)) oldestWait = session.waitingSince;
     if (session.semaphore === 'working') working = true;
     if (session.semaphore !== 'done') alive = true;
   }

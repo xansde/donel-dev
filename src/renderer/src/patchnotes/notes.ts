@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-05',
     items: [
       {
+        title: '"Esperando você" só quando a sessão pede algo',
+        text: 'A lista "Esperando você" do Jobu (e o número na barra de tarefas) agora mostra só as sessões com pergunta, permissão ou diálogo aberto na tela. Sessão que só terminou o que fazia não entra mais nela; o aviso de "terminou" continua. E a marca some assim que a sessão volta a trabalhar depois de você responder, em vez de ficar até o próximo passo dela.',
+      },
+      {
         title: 'Um Líder só, para todos os quadros',
         text: 'O Jobu agora fala com um Líder único, que não pertence a nenhum quadro: ele lê e mexe no Donel Dev, na Homologação e no BizOps, abre sessões em qualquer um deles, manda mensagem, cria tarefas e fecha sessões. Ele fica acima do topo de cada quadro, então alcança quem está no topo e quem está abaixo pelas setas que você desenhou ou que nasceram quando uma sessão abriu outra; uma seta que uma sessão desenha sozinha não muda isso. Quem ele abre nasce ligado a ele, e ele é avisado quando essas sessões terminam. Só é Líder único a sessão aberta pelo Jobu: um Líder aberto pela VPS ou pelo Launcher continua sendo uma sessão comum. Os Líderes que cada quadro tinha viram lugares comuns: continuam no quadro com a conversa e as setas, mas o Jobu não fala mais com eles.',
       },

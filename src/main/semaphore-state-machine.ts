@@ -54,8 +54,12 @@ export const INITIAL_SEMAPHORE_STATE: SemaphoreMachineState = {
 
 export type SemaphoreEvent =
   | { readonly type: 'userPromptSubmit'; readonly at: number }
-  | { readonly type: 'preToolUse'; readonly at: number }
-  | { readonly type: 'postToolUse'; readonly at: number }
+  /**
+   * `fromSubagent`: the call came from a sub-agent (the payload carries `agent_id`). A sub-agent keeps running tools
+   * while the main thread holds a dialog, so its calls say nothing about that dialog (t-45e87762).
+   */
+  | { readonly type: 'preToolUse'; readonly at: number; readonly fromSubagent?: boolean }
+  | { readonly type: 'postToolUse'; readonly at: number; readonly fromSubagent?: boolean }
   /** `backgroundAgents`: subagentes em segundo plano ainda vivos no fim do turno (`countBackgroundSubagents`); ausente = 0. */
   | { readonly type: 'stop'; readonly at: number; readonly backgroundAgents?: number }
   | { readonly type: 'notification'; readonly at: number }
@@ -90,6 +94,8 @@ export function reduceSemaphoreState(current: SemaphoreMachineState, event: Sema
       return transition('working', event.at, current);
 
     case 'preToolUse': {
+      // t-45e87762 — a sub-agent's call does not answer the main thread's dialog: still waiting for the owner.
+      if (current.state === 'permission' && event.fromSubagent === true) return current;
       const base = transition('working', event.at, current);
       // Refresca a marca de "chamada de ferramenta pendente" a cada
       // PreToolUse (spike: `markPending` roda em toda chamada), mesmo quando
@@ -101,6 +107,10 @@ export function reduceSemaphoreState(current: SemaphoreMachineState, event: Sema
       // `clearPending` do spike — a ferramenta respondeu, não há mais nada
       // pendente pra heurística observar (fica em 'working' até o próximo
       // `Stop`).
+      // t-45e87762 — a ferramenta rodou, então a permissão já foi respondida: a sessão voltou a trabalhar. Sem
+      // isto a aba seguia "esperando você" durante a ferramenta aprovada inteira e o que viesse depois dela, até o
+      // próximo `PreToolUse` ou `Stop` (43 vezes no chat-diagnostics.log, até 49 s).
+      if (current.state === 'permission' && event.fromSubagent !== true) return transition('working', event.at, current);
       return current.pendingToolSince === null ? current : { ...current, pendingToolSince: null };
 
     case 'stop': {
