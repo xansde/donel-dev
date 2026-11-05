@@ -4,6 +4,7 @@
 // conversation, no path (FR-018). Pure, like the reducer: the instant is an argument.
 
 import { baseState, isSilenced, waitingSessions } from './petState';
+import { PET_TALK_WIDTH } from './placement';
 import type { Bubble, PetState, PetUi, PetView, PetViewBubble, PetViewWaiting, PoseName } from './types';
 
 const MINUTE_MS = 60_000;
@@ -74,5 +75,7 @@ export function toPetView(state: PetState, now: number, ui: PetUi): PetView {
     silenced: isSilenced(state, now),
     size: ui.size,
     talk: ui.talk ?? 0,
+    talkWidth: ui.talkWidth ?? PET_TALK_WIDTH,
+    talkExpanded: ui.talkExpanded ?? false,
   };
 }

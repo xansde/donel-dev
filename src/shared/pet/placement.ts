@@ -68,6 +68,9 @@ export const PET_TALK_WIDTH = 380;
 export const PET_TALK_MAX_HEIGHT = 520;
 /** Below this the bubble does not shrink: on a screen with no room above the Jobu, it goes past the top instead. */
 export const PET_TALK_MIN_HEIGHT = 260;
+/** t-29e1327b — how narrow and how wide the owner can make the bubble (it never gets wider than the screen). */
+export const PET_TALK_MIN_WIDTH = 300;
+export const PET_TALK_MAX_WIDTH = 960;
 /** Between the top of the bubble and the top of the work area. */
 const PET_TALK_TOP_MARGIN = 12;
 /** The gap between the head and the tail of the bubble. */
@@ -77,28 +80,41 @@ export const PET_TALK_GAP = 14;
  * How tall the bubble of the Líder can be with the Jobu at `anchor` on `display`: what is left above his head in the
  * work area, kept inside `PET_TALK_MIN_HEIGHT`-`PET_TALK_MAX_HEIGHT`.
  */
-export function talkHeightFor(anchor: PetPoint, size: number, display: PetDisplay): number {
+export function talkHeightFor(anchor: PetPoint, size: number, display: PetDisplay, chosen?: number): number {
   const above = anchor.y - size - PET_TALK_GAP - PET_TALK_TOP_MARGIN - display.workArea.y;
+  // t-29e1327b — a height the owner chose: anything from the minimum up to all the room above his head.
+  if (chosen !== undefined) return Math.round(Math.min(Math.max(PET_TALK_MIN_HEIGHT, above), Math.max(PET_TALK_MIN_HEIGHT, chosen)));
   return Math.round(Math.min(PET_TALK_MAX_HEIGHT, Math.max(PET_TALK_MIN_HEIGHT, above)));
+}
+
+/** t-29e1327b — the widest the bubble can be on `display`. */
+export function talkMaxWidthFor(display: PetDisplay): number {
+  return Math.round(Math.max(PET_TALK_MIN_WIDTH, Math.min(PET_TALK_MAX_WIDTH, display.workArea.width - 40)));
+}
+
+/** t-29e1327b — the width of the bubble: the one the owner chose, kept inside the limits and the screen; default 380. */
+export function talkWidthFor(display: PetDisplay, chosen?: number): number {
+  if (chosen === undefined) return PET_TALK_WIDTH;
+  return Math.round(Math.min(talkMaxWidthFor(display), Math.max(PET_TALK_MIN_WIDTH, chosen)));
 }
 
 /**
  * `max(480, 3.4 x size)` by `size + 200` (R9). With the bubble of the Líder open (`talkHeight` > 0) it is wide enough
  * for the bubble on either side of the drawing and tall enough for it above the head.
  */
-export function windowSizeFor(size: number, talkHeight = 0): { readonly width: number; readonly height: number } {
+export function windowSizeFor(size: number, talkHeight = 0, talkWidth = PET_TALK_WIDTH): { readonly width: number; readonly height: number } {
   const width = Math.max(PET_WINDOW_MIN_WIDTH, Math.round(PET_WINDOW_WIDTH_FACTOR * size));
   const height = Math.round(size) + PET_WINDOW_EXTRA_HEIGHT;
   if (talkHeight <= 0) return { width, height };
   return {
-    width: Math.max(width, 2 * PET_TALK_WIDTH + 40),
+    width: Math.max(width, 2 * talkWidth + 40),
     height: Math.max(height, Math.round(size) + PET_TALK_GAP + talkHeight + 8),
   };
 }
 
 /** The window with `anchor` at its bottom center. Whole numbers: `BrowserWindow` bounds are integers. */
-export function windowBoundsFor(anchor: PetPoint, size: number, talkHeight = 0): PetRect {
-  const { width, height } = windowSizeFor(size, talkHeight);
+export function windowBoundsFor(anchor: PetPoint, size: number, talkHeight = 0, talkWidth = PET_TALK_WIDTH): PetRect {
+  const { width, height } = windowSizeFor(size, talkHeight, talkWidth);
   return { x: Math.round(anchor.x - width / 2), y: Math.round(anchor.y - height), width, height };
 }
 

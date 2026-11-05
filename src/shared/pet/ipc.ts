@@ -25,6 +25,8 @@ export const PET_CHANNELS = {
   listOpen: 'pet:list-open',
   /** Item 18: the bubble of the conversation with the Líder opens or closes. */
   talk: 'pet:talk',
+  /** t-29e1327b: the owner resizes the bubble of the Líder (dragging its corner) or toggles it to the largest size. */
+  talkResize: 'pet:talk-resize',
   contextMenu: 'pet:context-menu',
   dragStart: 'pet:drag-start',
   dragMove: 'pet:drag-move',
@@ -139,6 +141,20 @@ export function isValidPetTalkPayload(input: unknown): input is PetTalkPayload {
   return isRecord(input) && typeof input.open === 'boolean';
 }
 
+/**
+ * t-29e1327b — `set`: the size the corner is dragged to, in DIP (`commit` on the release: then it is saved). `expand`: the
+ * button, which takes the bubble to the largest the screen allows, or back to the automatic size when it already is.
+ */
+export type PetTalkResizePayload =
+  | { readonly kind: 'set'; readonly width: number; readonly height: number; readonly commit: boolean }
+  | { readonly kind: 'expand' };
+
+export function isValidPetTalkResizePayload(input: unknown): input is PetTalkResizePayload {
+  if (!isRecord(input)) return false;
+  if (input.kind === 'expand') return true;
+  return input.kind === 'set' && Number.isFinite(input.width) && Number.isFinite(input.height) && typeof input.commit === 'boolean';
+}
+
 export function isValidPetDragPayload(input: unknown): input is PetDragPayload {
   return isRecord(input) && Number.isFinite(input.screenX) && Number.isFinite(input.screenY);
 }
@@ -196,6 +212,8 @@ export interface DonelPetApi {
   setListOpen(open: boolean): void;
   /** Item 18: opens (`true`) or closes the bubble of the conversation with the Líder; the main resizes the window. */
   setTalk(open: boolean): void;
+  /** t-29e1327b: resize the bubble of the Líder (see `PetTalkResizePayload`). */
+  talkResize(payload: PetTalkResizePayload): void;
   /** The right button: `point` is the click in screen coordinates, so the menu opens there; without it, at the pointer. */
   openContextMenu(point?: PetDragPayload): void;
   /** The pointer went down on the Jobu at (screenX, screenY). The three drag calls carry screen coordinates, in DIP. */
