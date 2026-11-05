@@ -529,6 +529,11 @@ export function applyBoardOps(doc: MindscapeDoc, projectPath: string, ops: reado
         const link = board().links.find((candidate) => candidate.id === id);
         if (link) {
           if (link.by !== 'session') return { ok: false, reason: notOwners(where, op.id) };
+          // The arrow of a `sessao_abrir` is the mother's reach over her daughter (`reach.ts`): only she (or the
+          // owner, by hand) takes it away, never a third session.
+          if (link.opened === true && link.from !== ctx.selfPlaceId) {
+            return { ok: false, reason: `${where}: essa seta é de abertura (${link.from} abriu ${link.to}); só quem abriu ou o dono a apaga.` };
+          }
           current = removeLink(current, projectPath, id);
           break;
         }

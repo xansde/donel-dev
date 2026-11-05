@@ -312,6 +312,11 @@ export interface PtyCreateOptions {
    */
   roleId?: string;
   /**
+   * Líder único — the tab carries the Jobu's `leaderOfAll` mark (`isLeaderOfAllTab`): with the `lider` role, the
+   * session reads the Líder único's guidance instead of the Líder of one board's.
+   */
+  leaderOfAll?: boolean;
+  /**
    * Sessões remotas — id of a remote place (`accounts.remotes`) where this session runs, inside a tmux
    * session that outlives the app. Absent = this computer. Only with `sessionType === 'claude'`.
    */

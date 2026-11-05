@@ -3510,6 +3510,7 @@ export function App(): React.JSX.Element {
                   openedBy={tab.openedBy}
                   accountLoginId={tab.accountLoginId}
                   roleId={tab.roleId}
+                  leaderOfAll={isLeaderOfAllTab(tab)}
                   onStateChange={(info) => handleSemaphoreChange(tab.id, info)}
                   onAliveChange={(alive) => handleAliveChange(tab.id, alive)}
                   onAccountResolved={(account) => handleAccountResolved(tab.id, account)}

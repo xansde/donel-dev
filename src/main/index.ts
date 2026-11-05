@@ -1630,7 +1630,7 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
   const claudeArgs: string[] = [...launcherArgs, ...extraArgs];
 
   const roleId = roleIdForSpawn(options.roleId, launcherArgs, options.renewalId);
-  const rolePromptPath = roleId ? (rolesStore?.promptFileFor(roleId) ?? null) : null;
+  const rolePromptPath = roleId ? (rolesStore?.promptFileFor(roleId, { leaderOfAll: options.leaderOfAll === true }) ?? null) : null;
   if (rolePromptPath) {
     try {
       files.push({ name: 'role.md', content: readFileSync(rolePromptPath, 'utf8') });
@@ -1889,7 +1889,7 @@ function registerPtyIpcHandlers(): void {
       // Papéis de sessão (item 12a) — the guidance of the role at every launch, resume and renewal
       // (`roleDeliveryFor`, one case per CLI). A missing role or file → the session opens without it.
       const roleId = roleIdForSpawn(options.roleId, launcherArgs, options.renewalId);
-      const rolePromptPath = roleId ? (rolesStore?.promptFileFor(roleId) ?? null) : null;
+      const rolePromptPath = roleId ? (rolesStore?.promptFileFor(roleId, { leaderOfAll: options.leaderOfAll === true }) ?? null) : null;
       const roleArgs = rolePromptPath ? roleDeliveryFor('claude-code', rolePromptPath).args : [];
       const finalArgs = [...launcherArgs, ...extraArgs, ...roleArgs, ...semaphoreArgs, ...browserMcpArgs];
       // (T018: o `--permission-mode` resolvido entra mais abaixo, quando o config dir da sessão é conhecido.)
