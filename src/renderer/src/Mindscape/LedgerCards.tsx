@@ -15,6 +15,7 @@ import {
   type LedgerTask,
   type LedgerVisual,
 } from '../../../shared/ledger/contract';
+import { proofUrl } from '../../../shared/ledger/channels';
 import { actorLabel, naipeDoPapel, type PlaceNameOf } from '../../../shared/ledger/labels';
 import type { Naipe } from '../../../shared/celular';
 import styles from './LedgerCards.module.css';
@@ -77,16 +78,30 @@ function ProofImage({ task, index, alt }: { readonly task: LedgerTask; readonly 
   );
 }
 
-/** A file proof on the front: a print inline; a video (and, until the prototype slice, anything else) opens outside. */
+/**
+ * The prototype (an agent's HTML) running INSIDE the card, isolated: `sandbox="allow-scripts"` without
+ * `allow-same-origin` (opaque origin: no `window.donel`, no storage of the app), and `donel-prova:` sends it with a
+ * CSP without network. No `allow-top-navigation`, no `allow-popups`.
+ */
+function Prototype({ file }: { readonly file: string }): React.JSX.Element {
+  const [full, setFull] = useState(false);
+  return (
+    <div className={full ? `${styles.prototype} ${styles.prototypeFull}` : styles.prototype}>
+      <iframe className={styles.prototypeFrame} sandbox="allow-scripts" src={proofUrl(file)} title="Protótipo anexado à entrega" referrerPolicy="no-referrer" />
+      <button type="button" className={styles.fullButton} onClick={() => setFull((value) => !value)}>
+        {full ? '✕ Fechar' : '⤢ Tela cheia'}
+      </button>
+    </div>
+  );
+}
+
+/** A file proof on the front: a print, a video or the prototype, all inside the card. */
 function ProofMedia({ task, index }: { readonly task: LedgerTask; readonly index: number }): React.JSX.Element | null {
   const proof = lastDelivery(task)?.proofs?.[index];
   if (proof?.kind !== 'arquivo') return null;
   if (proof.mediaType.startsWith('image/')) return <ProofImage task={task} index={index} alt="Print da entrega" />;
-  return (
-    <button type="button" className={styles.openOutside} onClick={() => void window.donel.ledger.openProof(proof)}>
-      ▶ Abrir o vídeo
-    </button>
-  );
+  if (proof.mediaType === 'text/html') return <Prototype file={proof.file} />;
+  return <video className={styles.media} controls src={proofUrl(proof.file)} />;
 }
 
 function Visual({ task, visual }: { readonly task: LedgerTask; readonly visual: LedgerVisual }): React.JSX.Element {
@@ -135,6 +150,7 @@ function Visual({ task, visual }: { readonly task: LedgerTask; readonly visual: 
 }
 
 function ProofDetail({ proof }: { readonly proof: LedgerProof }): React.JSX.Element {
+  if (proof.kind === 'arquivo' && proof.mediaType === 'text/html') return <Prototype file={proof.file} />;
   if (proof.kind === 'texto') {
     return (
       <details className={styles.proofText}>

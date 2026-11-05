@@ -7,6 +7,7 @@ import { basename } from 'node:path';
 import type { CartaCelular, DecisaoCelular, EntregaCelular, ProvaCelular, VisualCelular } from '../../shared/celular';
 import {
   decisionOfRequest,
+  HTML_MEDIA_TYPE,
   lastDecision,
   lastDelivery,
   ownerQueue,
@@ -86,6 +87,7 @@ function provaCelular(proof: LedgerProof, index: number): ProvaCelular {
   const id = String(index);
   switch (proof.kind) {
     case 'arquivo':
+      if (proof.mediaType === HTML_MEDIA_TYPE) return { id, tipo: 'prototipo', rotulo: 'Protótipo' };
       return proof.mediaType.startsWith('video/') ? { id, tipo: 'video', rotulo: 'Vídeo' } : { id, tipo: 'imagem', rotulo: 'Print' };
     case 'texto': {
       // A fila leva só o começo, mascarado; o texto inteiro (também mascarado) vem por /api/prova ao abrir.

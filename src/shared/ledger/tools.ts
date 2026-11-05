@@ -83,7 +83,8 @@ export const LEDGER_TOOLS = [
     name: 'tarefa_entregar',
     title: 'Entregar tarefa com prova',
     description:
-      `Marca a tarefa como entregue. Sem prova é recusada. Provas (1 a ${MAX_PROOFS}): {"tipo":"arquivo","caminho":"C:/…/print.png"} (print ou vídeo neste computador; o app copia para o Oráculo Harrow), {"tipo":"texto","texto":"saída do comando"} ou {"tipo":"link","url":"https://… (o CI)"}. Quem entrega não aceita a própria entrega. ` +
+      `Marca a tarefa como entregue. Sem prova é recusada. Provas (1 a ${MAX_PROOFS}): {"tipo":"arquivo","caminho":"C:/…/print.png"} (print, vídeo ou protótipo .html neste computador; o app copia para o Oráculo Harrow), {"tipo":"texto","texto":"saída do comando"} ou {"tipo":"link","url":"https://… (o CI)"}. Quem entrega não aceita a própria entrega. ` +
+      'Protótipo: um .html AUTOCONTIDO (CSS, JS e imagens dentro dele, até 2 MB), que roda isolado dentro da carta, sem rede; aponte-o como visual ({"prova": n}) quando a decisão muda algo que o dono vê. ' +
       `"paraODono" é a carta que o dono lê para decidir em 5 segundos, sem abrir link; obrigatório no risco alto. Traz a pergunta, um resumo, de ${MIN_OPTIONS} a ${MAX_OPTIONS} opções com nome e efeito (exatamente uma recomendada), o porquê dela, o risco e o visual (qual print mostrar). ` +
       'Escreva para um humano: o texto é recusado se tiver id de tarefa ou de lugar, branch, hash, número de PR, caminho, link ou crases. O técnico vai nas provas.',
     inputSchema: {
@@ -98,7 +99,7 @@ export const LEDGER_TOOLS = [
             type: 'object',
             properties: {
               tipo: { type: 'string', enum: ['arquivo', 'texto', 'link'] },
-              caminho: { type: 'string', description: 'arquivo: caminho absoluto do print ou vídeo (png, jpg, gif, webp, mp4, webm, mov).' },
+              caminho: { type: 'string', description: 'arquivo: caminho absoluto do print, vídeo ou protótipo (png, jpg, gif, webp, mp4, webm, mov, ou html autocontido de até 2 MB).' },
               texto: { type: 'string', description: 'texto: a saída do comando.' },
               url: { type: 'string', description: 'link: http(s), ex. a execução do CI.' },
             },
@@ -135,7 +136,7 @@ export const LEDGER_TOOLS = [
             risco: { type: 'string', description: `A frase do risco desta tarefa (até ${FOR_OWNER_LIMITS.risk}).` },
             visual: {
               type: 'object',
-              description: `Obrigatório quando há print ou vídeo. {"prova": n} (1 = a primeira prova), {"antes": n, "depois": m}, ou, sem tela, {"checagens": [{"nome", "ok", "frase"}]} (1 a ${MAX_CHECKS}).`,
+              description: `Obrigatório quando há print, vídeo ou protótipo. {"prova": n} (1 = a primeira prova), {"antes": n, "depois": m}, ou, sem tela, {"checagens": [{"nome", "ok", "frase"}]} (1 a ${MAX_CHECKS}).`,
               properties: {
                 prova: { type: 'integer', minimum: 1, maximum: MAX_PROOFS },
                 antes: { type: 'integer', minimum: 1, maximum: MAX_PROOFS },

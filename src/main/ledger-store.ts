@@ -22,7 +22,7 @@ import {
   isNewerLedger,
   lastDelivery,
   ledgerStrip,
-  MAX_PROOF_FILE_BYTES,
+  maxProofBytes,
   parseLedgerDoc,
   PROOF_FILE_TYPES,
   waitsForOwner,
@@ -171,16 +171,18 @@ export function createLedgerService(deps: LedgerServiceDeps): LedgerService {
       const ext = extname(source).slice(1).toLowerCase();
       const mediaType = PROOF_FILE_TYPES[ext];
       if (!isAbsolute(source)) return { error: `"${source}": use o caminho absoluto do arquivo.` };
-      if (!mediaType) return { error: `"${source}": a prova em arquivo é print ou vídeo (${Object.keys(PROOF_FILE_TYPES).join(', ')}). Saída de comando vai como texto.` };
+      if (!mediaType) return { error: `"${source}": a prova em arquivo é print, vídeo ou protótipo HTML (${Object.keys(PROOF_FILE_TYPES).join(', ')}). Saída de comando vai como texto.` };
       try {
         // A link with a print's name could point at anything (the proofs go to the phone): only a real file,
         // and the file it really is (a folder junction on the way) has to be a print or video too.
         if ((await deps.proofFs.lstat(source)).isSymbolicLink()) return { error: `"${source}" é um atalho (link simbólico); mande o arquivo de verdade.` };
         const real = await deps.proofFs.realpath(source);
-        if (extname(real).slice(1).toLowerCase() !== ext) return { error: `"${source}" leva a "${real}", que não é print nem vídeo.` };
+        if (extname(real).slice(1).toLowerCase() !== ext) return { error: `"${source}" leva a "${real}", que não é print, vídeo nem protótipo.` };
         const info = await deps.proofFs.stat(real);
         if (!info.isFile()) return { error: `"${source}" não é um arquivo.` };
-        if (info.size > MAX_PROOF_FILE_BYTES) return { error: `"${source}" passa de ${MAX_PROOF_FILE_BYTES / 1024 / 1024} MB.` };
+        const max = maxProofBytes(mediaType);
+        if (info.size > max)
+          return { error: `"${source}" passa de ${max / 1024 / 1024} MB${mediaType === 'text/html' ? ' (o protótipo é um HTML autocontido de até 2 MB)' : ''}.` };
         await deps.proofFs.mkdir(proofsDir);
         const file = `${new Date(now()).toISOString().slice(0, 10)}-${randomBytes(6).toString('hex')}.${ext}`;
         await deps.proofFs.copyFile(real, join(proofsDir, file));

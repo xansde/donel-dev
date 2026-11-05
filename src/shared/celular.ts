@@ -116,7 +116,8 @@ export function naipeDoTipo(tipo: string | null | undefined): Naipe {
   }
 }
 
-export type ProvaTipo = 'imagem' | 'video' | 'comando' | 'link';
+/** `prototipo`: um HTML autocontido que a carta roda isolado (iframe sandbox, por bilhete de uso único). */
+export type ProvaTipo = 'imagem' | 'video' | 'prototipo' | 'comando' | 'link';
 
 export interface ProvaCelular {
   readonly id: string;

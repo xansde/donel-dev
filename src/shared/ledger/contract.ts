@@ -146,6 +146,14 @@ export const MAX_REQUEST_CHARS = 4000;
 export const MAX_PROOF_TEXT_CHARS = 20_000;
 export const MAX_PROOFS = 5;
 export const MAX_PROOF_FILE_BYTES = 50 * 1024 * 1024;
+/** Cartas forma A — a prototype is a self-contained HTML (CSS, JS and images inside it): 2 MB at most. */
+export const MAX_PROOF_HTML_BYTES = 2 * 1024 * 1024;
+export const HTML_MEDIA_TYPE = 'text/html';
+
+/** The biggest file a proof of `mediaType` may be. */
+export function maxProofBytes(mediaType: string): number {
+  return mediaType === HTML_MEDIA_TYPE ? MAX_PROOF_HTML_BYTES : MAX_PROOF_FILE_BYTES;
+}
 export const MAX_TITLE_CHARS = 60;
 /** The limits of the "para o dono" block: the owner reads the front in 5 seconds. */
 export const FOR_OWNER_LIMITS = { question: 160, summary: 280, label: 40, effect: 200, optionRisk: 160, why: 200, risk: 200, checkName: 40, checkSentence: 200 } as const;
@@ -156,8 +164,9 @@ export const MAX_CHECKS = 10;
 export const SAMPLE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 export const SAMPLE_PER_DAY = 3;
 
-/** Extension → media type of a proof file (print or video). */
+/** Extension → media type of a proof file (print, video, or a prototype in HTML that the card runs isolated). */
 export const PROOF_FILE_TYPES: Readonly<Record<string, string>> = {
+  html: 'text/html',
   png: 'image/png',
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
@@ -426,7 +435,7 @@ export function forOwnerRefusal(forOwner: LedgerForOwner, proofs: readonly Ledge
   if (visual?.kind === 'prova' && !isFileProof(proofs[visual.proof])) return `"visual.prova": a prova ${visual.proof + 1} desta entrega não é um arquivo (print, vídeo ou protótipo).`;
   if (visual?.kind === 'antes-depois' && (!isFileProof(proofs[visual.before]) || !isFileProof(proofs[visual.after]) || visual.before === visual.after))
     return '"visual": "antes" e "depois" são dois arquivos diferentes desta entrega.';
-  if (!visual && proofs.some(isFileProof)) return '"visual" é obrigatório quando a entrega tem print ou vídeo: diga qual mostrar ({"prova": n}) ou o par {"antes": n, "depois": m}.';
+  if (!visual && proofs.some(isFileProof)) return '"visual" é obrigatório quando a entrega tem print, vídeo ou protótipo: diga qual mostrar ({"prova": n}) ou o par {"antes": n, "depois": m}.';
   return null;
 }
 
