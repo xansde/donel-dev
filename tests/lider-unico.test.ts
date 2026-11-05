@@ -10,6 +10,7 @@ const HOMOL = 'C:/proj/beacon';
 const OLD_LEADER = 'place:old-leader';
 const DALTON = 'place:dalton';
 
+/** The Homologação of 04/11: the former Líder of the board (placed by the owner) points to the Dalton. */
 function boardWithFormerLeader(): MindscapeDoc {
   let doc = addPlace(emptyMindscapeDoc(), HOMOL, { id: OLD_LEADER, roleId: 'lider' });
   doc = addPlace(doc, HOMOL, { id: DALTON, roleId: 'dev' });
@@ -20,7 +21,7 @@ function boardWithFormerLeader(): MindscapeDoc {
 function setup(): { bridge: AgentBridge; sent: { tabId: string; text: string }[] } {
   const sent: { tabId: string; text: string }[] = [];
   const tabs: BridgeTab[] = [
-    { id: 'tab-lider', name: 'Líder', cwd: 'C:/proj', roleId: 'lider', sessionType: 'claude' },
+    { id: 'tab-lider', name: 'Líder', cwd: 'C:/proj', roleId: 'lider', leaderOfAll: true, sessionType: 'claude' },
     { id: 'tab-dalton', name: 'Dalton', cwd: HOMOL, projectName: 'beacon', claudeSessionId: 'conv-dalton', sessionType: 'claude' },
   ];
   const doc = boardWithFormerLeader();
@@ -33,8 +34,15 @@ function setup(): { bridge: AgentBridge; sent: { tabId: string; text: string }[]
     stateOf: () => 'waiting',
     roles: () => FACTORY_ROLES,
     openSession: () => 'tab-new',
+    closeTab: () => undefined,
     sendLine: (tabId, text) => sent.push({ tabId, text }),
-    ownerTyping: () => false,
+    deliverLine: async (tabId, text) => {
+      sent.push({ tabId, text });
+      return { kind: 'entrou' };
+    },
+    permissionOnScreen: () => false,
+    unconfirmed: () => false,
+    startTrouble: () => null,
     askOwner: async () => true,
     remoteLabel: (id) => id,
     remotes: () => [],
@@ -44,7 +52,7 @@ function setup(): { bridge: AgentBridge; sent: { tabId: string; text: string }[]
 }
 
 describe('Líder único', () => {
-  it('sends to a place of another board that a former Líder pointed to, and hears when it ends its turn', async () => {
+  it('sends to a place below the top of another board and hears when it ends its turn', async () => {
     const { bridge, sent } = setup();
 
     const answer = await bridge.handle('lider', { tool: 'sessao_enviar', quadro: 'beacon', para: DALTON, texto: 'confere o app' });

@@ -314,6 +314,7 @@ aprovado, e tudo atrás de `chat.enabled` até a virada (Fase 7).
 - Vocabulário canônico: `docs/glossario.md` — use estes termos em código e conversa.
 - Decisões de domínio e arquitetura: `docs/adr/` — consulte antes de propor mudança.
 - Mindscape: quadro próprio em React + `roughjs`, não Excalidraw; o renderer é dono do estado e só `src/main/mindscape-store.ts` grava `<userData>/mindscape.json` ([ADR 0004](docs/adr/0004-base-do-quadro-mindscape.md), [design](docs/design/mindscape.md)).
+- **Alcance / hierarquia entre sessões** (dono, 04/11): dirigir outra sessão com poder de matar (hoje `sessao_fechar`) só com hierarquia — no quadro, abaixo pelas setas (direta ou em cadeia); entre quadros, só o Líder de um quadro com `reach: 'all'` (botão "Alcance" no Mindscape; ausente = só o próprio). A regra mora **só** em `src/shared/mindscape/reach.ts`; quem precisar de alcance reusa, não recria. O Líder único (aba marcada pelo Jobu, [ADR 0007](docs/adr/0007-lider-unico.md)) é um ramo dela: fica acima do topo de todo quadro, sem a marca "Alcance".
 - `mindscape.json`: campo novo no documento **sobe o `schemaVersion`**. O `parseMindscapeDoc` descarta o que não conhece e o `userData` é compartilhado entre canais, então um canal mais antigo gravaria por cima e apagaria o campo; com a versão maior ele fica read-only ([design do desenho](docs/design/mindscape-desenho.md)).
 
 ## Vault

@@ -1,9 +1,10 @@
 import { Button, Select, TextInput, Toggle } from '@donel-dev/design-system';
 import type { SelectOption } from '@donel-dev/design-system';
-import { Bell, FolderTree, MessagesSquare, PlayCircle, Search, Trash2, UserCog, X } from 'lucide-react';
+import { Bell, FolderTree, MessagesSquare, PlayCircle, Search, Smartphone, Trash2, UserCog, X } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { NotificationPreference, ProjectScanMode } from '../../shared/config';
 import type { SessionRenewalPrefs } from '../../shared/sessionRenewal';
+import { CelularSection } from './CelularSection';
 import styles from './Preferences.module.css';
 
 // Preferências — tela cheia com menu lateral (pedido do dono, 04/11: "como popup não está vingando").
@@ -71,7 +72,7 @@ export interface PreferencesProps {
   onManageRoles?: () => void;
 }
 
-type CategoryId = 'projetos' | 'sessoes' | 'chat' | 'avisos' | 'papeis';
+type CategoryId = 'projetos' | 'sessoes' | 'chat' | 'avisos' | 'celular' | 'papeis';
 
 interface SettingBlock {
   readonly id: string;
@@ -88,6 +89,7 @@ const CATEGORIES: ReadonlyArray<{ id: CategoryId; label: string; icon: ReactNode
   { id: 'sessoes', label: 'Sessões', icon: <PlayCircle size={16} strokeWidth={1.5} aria-hidden="true" /> },
   { id: 'chat', label: 'Chat', icon: <MessagesSquare size={16} strokeWidth={1.5} aria-hidden="true" /> },
   { id: 'avisos', label: 'Avisos e Jobu', icon: <Bell size={16} strokeWidth={1.5} aria-hidden="true" /> },
+  { id: 'celular', label: 'Celular', icon: <Smartphone size={16} strokeWidth={1.5} aria-hidden="true" /> },
   { id: 'papeis', label: 'Papéis', icon: <UserCog size={16} strokeWidth={1.5} aria-hidden="true" /> },
 ];
 
@@ -272,6 +274,14 @@ export function Preferences(props: PreferencesProps): React.JSX.Element | null {
           description="Avisa quando uma sessão termina ou espera você, e quando a conta muda."
         />
       ),
+    },
+    {
+      id: 'celular',
+      category: 'celular',
+      title: 'Ledger no celular',
+      keywords: 'celular telefone ledger entregas validar aceitar rejeitar tailscale parear qr pwa',
+      hint: 'Valide as entregas que esperam você pelo celular, uma carta por tela: arraste para a direita para aceitar e para a esquerda para rejeitar com motivo.',
+      body: <CelularSection />,
     },
     ...(props.onManageRoles
       ? [

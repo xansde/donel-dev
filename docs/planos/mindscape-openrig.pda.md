@@ -354,7 +354,7 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
 
 - **Tipo**: refinamento
 - **Prioridade**: alta
-- **Status**: pendente
+- **Status**: V1 implementada (PR em revisão, 05/11)
 - **Bloqueado por**: 13, 18
 - **Pergunta**: uma tarefa entre lugares nasce com a frase literal de quem pediu, critério de
   pronto, prazo e dono, e anda em aberta → em execução → entregue → aceita (ou rejeitada).
@@ -373,14 +373,27 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
 - **Teste**: dado persistido que um canal pode apagar, então vale um teste do caminho criar →
   entregar → aceitar. Nenhum smoke novo.
 - **Ordem**: depois do fix da mensagem direto para o CLI e do Líder único.
-- **Resolução**: —
+- **Resolução (V1, 05/11)**: contrato em `src/shared/ledger/contract.ts` (tipos, `schemaVersion` 1,
+  parse que descarta o desconhecido, regras em `applyLedgerOp`, faixa em `ledgerStrip`); ferramentas
+  `tarefa_criar|assumir|entregar|aceitar|rejeitar|listar` em `src/shared/ledger/tools.ts`; store e
+  porta MCP em `src/main/ledger-store.ts` (`<userData>/ledger.json`, provas copiadas para
+  `<userData>/ledger-provas/`). Quem chama é o lugar resolvido pelo quadro, nunca um argumento.
+  Faixa de números sob as abas do Mindscape; "esperando você" abre a lista com aceitar/rejeitar
+  como dono. **Pronto para o celular**: `LedgerService.apply(ator, op)` é a porta única (o
+  servidor HTTP na Tailscale chama a mesma função com `{ kind: 'dono' }`), prova é arquivo
+  dentro do `userData` ou texto/link, e todo evento grava o autor. Decidido pelo Dev: prazo
+  obrigatório (AAAA-MM-DD); rejeitada pode ser assumida de novo (retrabalho no histórico);
+  Revisor = papel `revisor` ou `revisor-*`; rejeitar segue a regra de aceitar; o dono pode
+  conferir ou derrubar um aceite do Revisor; amostra da 1ª semana = até 3 aceites do Revisor
+  por dia, contados a partir da primeira tarefa. Fora da V1: "outro motor que o do autor"
+  não é checado; prova de sessão remota só como texto ou link.
 
 ### 20 — Rotinas que acordam lugares, com filtro sem LLM
 
 - **Tipo**: refinamento
 - **Prioridade**: alta
-- **Status**: pendente
-- **Bloqueado por**: 19
+- **Status**: V1 em sombra entregue (PR para `staging`, 05/11), aguardando revisão
+- **Bloqueado por**: 19 (só para sair da sombra: o achado vira tarefa do ledger)
 - **Pergunta**: uma rotina tem um gerador só leitura que produz chaves de achado, um filtro
   **sem LLM** (dedup, histerese de 2 rodadas, teto por janela, desligar a fonte que passa de
   50% de descarte em 7 dias; números do kit, a recalibrar) e um lugar dono que ela acorda. O
@@ -392,4 +405,18 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
   VPS depois (B38/B39). A primeira é uma que **só observa**: "homologação parada" no quadro do
   Dalton.
 - **Ordem**: depois do fix da mensagem direto para o CLI e do Líder único.
+- **V1 (05/11, em sombra)**: contrato puro em `src/shared/rotinas/` (gerador → chaves → filtro sem LLM →
+  lugar dono), timer no main (`src/main/rotinas/routine-runner.ts`, 1ª rodada 1 min depois de abrir, depois a
+  cada 5 min, para quando o app fecha). Filtro: dedup enquanto a chave existir, histerese de 2 rodadas, teto de 5
+  por hora e 15 por dia (o excedente fica adiado), corte por ruído com mais de 50% descartado em 7 dias (mínimo
+  de 4 achados), que desliga a fonte por 7 dias. Em sombra, "descartado" = achado que teria acordado e sumiu na
+  rodada seguinte. Primeira rotina: **sessão parada e ninguém vê** (lugar com sessão aberta parado ou sem sinal há
+  mais de 8 h, ou precisando do dono há mais de 30 min; o lugar do Líder não conta); lugar dono = o Líder do
+  quadro. Só registra em `<userData>/rotinas/` (`config.json` com os números, `estado.json` do filtro com
+  `schemaVersion` próprio, `sombra.log` rotacionado em 256 KB). No quadro: "em sombra: N achados hoje" na barra,
+  lista ao clicar. Teste só do filtro.
+- **Próximo**: (1) sair da sombra: no `wakeInShadow` o achado vira tarefa do ledger (item 19, origem
+  `rotina:<id>:<chave>`) e a mensagem vai ao Líder pelo caminho do `sessao_enviar`; (2) segunda rotina,
+  "homologação parada" no quadro do Dalton (gerador que lê os comprovantes de `homologacao/` do repo da
+  Homologação e acha a etapa sem evento há mais de N dias); (3) levar o mesmo contrato para a VPS (B38/B39).
 - **Resolução**: —

@@ -15,10 +15,18 @@ import { createEsteiraService, type EsteiraService } from './esteira-service';
 import { esteiraStoreDir } from './esteira-store';
 import { createMindscapeStore, mindscapeFilePath } from './mindscape-store';
 import { createRolesStore, type RolesStore } from './roles-store';
+import { createCelularService, type CelularService } from './celular/service';
 import { roleOfSession } from '../shared/mindscape/model';
-import { ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
+import { LEADER_ROLE_ID, ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
+import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
+import { createLedgerService, ledgerFilePath, ledgerProofsDir, nodeLedgerProofFs, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
+import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerOwnerDecision, type LedgerSnapshot } from '../shared/ledger/channels';
+import { isHttpUrl, isProofFileName, type LedgerProof } from '../shared/ledger/contract';
+import type { LedgerToolCall } from '../shared/ledger/tools';
+import type { BoardBridge } from './board-bridge';
+import type { BrowserToolOutcome } from '../shared/browser/mcp';
 // Sessão renovada em voo (B36).
 import { createSessionRenewalService, type SessionRenewalService } from './session-renewal';
 import { SESSION_RENEWAL_CHANNELS, sanitizeSessionRenewalPrefs, type HandoffStatus, type RenewalPrepared, type SessionRenewalPrefs } from '../shared/sessionRenewal';
@@ -91,6 +99,7 @@ import type {
   ModId,
   SemaphoreUpdate,
   SessionSummaryDto,
+  SessionWhereLives,
   SwitchOutcome,
   TranscriptChangedPayload,
   SessionSwitchedPayload,
@@ -198,6 +207,7 @@ import {
   buildAttachSshArgs,
   buildRemoteSetupScript,
   discoverRemoteSessions,
+  findRemoteTranscript,
   parseRemoteSetupOutput,
   pickRemotePort,
   remoteDirFor,
@@ -292,6 +302,9 @@ import { createSweepRunner } from './sweep/sweep-service';
 import { collectHealthSnapshot, lookupProcessName } from './health/collector';
 import { createHealthService, type HealthService } from './health/health-service';
 import { HEALTH_CHANNELS, type KillProcessOutcome } from '../shared/health/ipc';
+import { createRoutineRunner, type RoutineRunner } from './rotinas/routine-runner';
+import { ROTINAS_CHANNELS, type ShadowEntry } from '../shared/rotinas/contract';
+import type { LiveSessionSignal } from '../shared/rotinas/stalledSessions';
 // B33 — atualizar para a versão nova de dentro do app.
 import { autoUpdater } from 'electron-updater';
 import { createAppUpdateService, type AppUpdateService } from './app-update';
@@ -1114,6 +1127,9 @@ function getMainWindow(): BrowserWindow | null {
 /** Navegador interno — `null` until `app.whenReady()` (needs `userData`). */
 let browserService: BrowserService | null = null;
 
+/** Ledger no celular — `null` until `app.whenReady()` (needs `userData`). */
+let celularService: CelularService | null = null;
+
 /**
  * T020 (015-jobu-pet) — the Jobu service. `null` until the main window appears (R21: the pet window
  * is only born AFTER the main one's `ready-to-show`, so `firstWindow()` of the smokes is still
@@ -1415,6 +1431,20 @@ function resolveTranscriptPath(sessionId: string, cwd: string | undefined, claud
 }
 
 /**
+ * B39 — the conversation is on this computer: in the project's folder of `~/.claude/projects` or in any other
+ * (a worktree session). The mirror of a remote session (`remote-transcripts/`) does not count.
+ */
+function localTranscriptExists(sessionId: string, projectPath: string): boolean {
+  if (existsSync(resolveTranscriptPath(sessionId, projectPath, undefined))) return true;
+  const projectsDir = join(defaultClaudeHome(), 'projects');
+  try {
+    return readdirSync(projectsDir).some((folder) => existsSync(join(projectsDir, folder, `${sessionId}.jsonl`)));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * T710/CA-11 (2º momento) — caminho do `.jsonl` de cada sessão spawnada NESTA
  * execução do app, gravado no momento do spawn.
  *
@@ -1593,6 +1623,7 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     projectName: options.projectName ?? localCwd,
     name: options.tabName ?? options.projectName ?? localCwd,
     launchArgs: options.args ?? [],
+    ...(options.openedBy ? { openedBy: options.openedBy } : {}),
     createdAt: new Date().toISOString(),
   };
   const files: RemoteFile[] = [];
@@ -1705,6 +1736,7 @@ function registerPtyIpcHandlers(): void {
       projectName: meta.projectName,
       name: meta.name,
       launchArgs: meta.launchArgs,
+      ...(typeof meta.openedBy === 'string' && meta.openedBy !== '' ? { openedBy: meta.openedBy } : {}),
     }));
   });
 
@@ -2582,6 +2614,24 @@ function registerSessionIpcHandlers(): void {
   });
 
   /**
+   * B39 — Retomar opens a conversation where it lives. Here when its transcript is on this disk; else each
+   * remote place is asked by ssh, and the one that has it runs the resume. A place that does not answer makes
+   * the answer `unreachable`: the renderer says so instead of opening an empty session on this computer.
+   */
+  ipcMain.handle(SESSION_CHANNELS.whereLives, async (_event, sessionId: unknown, projectPath: unknown): Promise<SessionWhereLives> => {
+    if (typeof sessionId !== 'string' || typeof projectPath !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(sessionId)) return { kind: 'local' };
+    if (localTranscriptExists(sessionId, projectPath)) return { kind: 'local' };
+    const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
+    if (places.length === 0) return { kind: 'local' };
+    const answers = await findRemoteTranscript(places, remoteDirFor(projectPath, appConfig.projectRoots), sessionId);
+    const found = answers.find((answer) => answer.answer === 'has');
+    if (found) return { kind: 'remote', remoteId: found.id };
+    const silent = answers.filter((answer) => answer.answer === 'unreachable');
+    if (silent.length > 0) return { kind: 'unreachable', labels: silent.map((answer) => places.find((place) => place.id === answer.id)?.label ?? answer.id) };
+    return { kind: 'local' };
+  });
+
+  /**
    * T710/CA-11 (2º momento) — o renderer viu a retomada morrer com código != 0
    * (`shouldForgetOnResumeFailure`, sinal medido em
    * `specs/008-fechar-pendencias/medicao-t710.md`) e pede o esquecimento. Aqui
@@ -2599,9 +2649,11 @@ function registerSessionIpcHandlers(): void {
     if (!entry) return toAppConfigDto(appConfig);
 
     const transcriptPath = spawnedTranscriptPaths.get(sessionId) ?? resolveTranscriptPath(sessionId, entry.projectPath, undefined);
+    // B39 — a conversation of a remote place leaves its mirror here: not on this disk is not "gone".
+    const mirrored = remoteSessions !== null && existsSync(remoteSessions.mirrorPathFor(sessionId));
     appConfig = {
       ...appConfig,
-      sessionRegistry: forgetIfOrphan(appConfig.sessionRegistry, sessionId, existsSync(transcriptPath)),
+      sessionRegistry: forgetIfOrphan(appConfig.sessionRegistry, sessionId, mirrored || existsSync(transcriptPath)),
     };
     persistAppConfig();
     return toAppConfigDto(appConfig);
@@ -2685,6 +2737,40 @@ function registerHealthIpcHandlers(): void {
   ipcMain.handle(HEALTH_CHANNELS.openTemp, (): Promise<string> => shell.openPath(app.getPath('temp')));
 }
 
+/** Item 20 — the routines in shadow; `null` until whenReady and after the app closes. */
+let routineRunner: RoutineRunner | null = null;
+
+/**
+ * Item 20 (PDA mindscape-openrig, D3) — the routines that wake places, IN SHADOW: a timer in the main reads the
+ * open sessions and the boards and only logs, in `<userData>/rotinas/`, what it would have woken.
+ */
+function registerRotinasIpcHandlers(): void {
+  const mindscapeFile = mindscapeFilePath(process.env, app.getPath('userData'));
+  routineRunner = createRoutineRunner({
+    dir: join(app.getPath('userData'), 'rotinas'),
+    listLive: () => {
+      const live: LiveSessionSignal[] = [];
+      for (const [ptyId, sessionId] of activeSessionByPty) {
+        const snapshot = semaphoreManager.getSnapshot(ptyId);
+        if (!snapshot) continue;
+        live.push({
+          sessionId,
+          state: snapshot.state,
+          stateEnteredAt: snapshot.stateEnteredAt,
+          ...(snapshot.unconfirmed ? { unconfirmed: true } : {}),
+          ...(snapshot.pendingKinds ? { pendingKinds: snapshot.pendingKinds } : {}),
+          ...(snapshot.turnFailure ? { turnFailure: snapshot.turnFailure } : {}),
+        });
+      }
+      return live;
+    },
+    loadDoc: () => createMindscapeStore(mindscapeFile, configIoDeps).load(),
+    onChanged: () => getMainWindow()?.webContents.send(ROTINAS_CHANNELS.changed),
+  });
+  routineRunner.start();
+  ipcMain.handle(ROTINAS_CHANNELS.today, (): ShadowEntry[] => routineRunner?.today() ?? []);
+}
+
 /** B33 — `null` until whenReady. */
 let appUpdateService: AppUpdateService | null = null;
 
@@ -2748,6 +2834,101 @@ function registerMindscapeIpcHandlers(): void {
   ipcMain.handle(MINDSCAPE_CHANNELS.readImage, (_event, imageId: unknown): Promise<MindscapeReadImageResult> => images.read(imageId));
   // After the handlers: the sweep reads the raw file and never runs on a missing, invalid or newer one.
   void images.sweepOrphans(configIoDeps.readFileText(filePath)).catch(() => undefined);
+}
+
+/**
+ * Ledger com prova (item 19, D1) — `<userData>/ledger.json` + `ledger-provas/`, written only here. The owner's
+ * IPC decides as `{ kind: 'dono' }`; every write is pushed to the renderer (the strip on top of the Mindscape).
+ */
+let ledgerService: LedgerService | null = null;
+
+function registerLedgerIpcHandlers(): void {
+  const service = createLedgerService({
+    filePath: ledgerFilePath(process.env, app.getPath('userData')),
+    io: configIoDeps,
+    proofFs: nodeLedgerProofFs,
+    onChange: (snapshot) => {
+      const window = getMainWindow();
+      if (window && !window.isDestroyed()) window.webContents.send(LEDGER_CHANNELS.changed, snapshot);
+    },
+  });
+  ledgerService = service;
+  const fromMain = (sender: Electron.WebContents): boolean => getMainWindow()?.webContents.id === sender.id;
+  ipcMain.handle(LEDGER_CHANNELS.load, (): LedgerSnapshot => service.load());
+  ipcMain.handle(LEDGER_CHANNELS.decide, (event, raw: unknown): LedgerApplyResult => {
+    if (!fromMain(event.sender)) return { ok: false, reason: 'Só a janela do app decide.' };
+    const decision = raw as Partial<LedgerOwnerDecision> | null;
+    if (!decision || typeof decision.id !== 'string') return { ok: false, reason: 'Pedido inválido.' };
+    if (decision.accept === true) return service.apply({ kind: 'dono' }, { op: 'aceitar', id: decision.id });
+    const reason = (decision as { reason?: unknown }).reason;
+    return service.apply({ kind: 'dono' }, { op: 'rejeitar', id: decision.id, reason: typeof reason === 'string' ? reason : '' });
+  });
+  ipcMain.handle(LEDGER_CHANNELS.openProof, async (event, raw: unknown): Promise<boolean> => {
+    if (!fromMain(event.sender)) return false;
+    const proof = raw as Partial<LedgerProof> | null;
+    if (proof?.kind === 'link' && typeof proof.url === 'string' && isHttpUrl(proof.url)) {
+      await shell.openExternal(proof.url);
+      return true;
+    }
+    if (proof?.kind === 'arquivo' && typeof proof.file === 'string' && isProofFileName(proof.file)) {
+      const path = service.proofPath({ kind: 'arquivo', file: proof.file, mediaType: '' });
+      return path !== null && (await shell.openPath(path)) === '';
+    }
+    return false;
+  });
+}
+
+/**
+ * Líder único (ADR 0007) — it has no place: it signs as `LEADER_OF_ALL`, names the board with `quadro`, and may
+ * give a task only to a place it reaches (`podeMandar` of its `sessao_listar`, which is reach.ts).
+ */
+async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<{ caller: LedgerCaller; call: LedgerToolCall } | string> {
+  const quadro = call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' ? call.quadro : undefined;
+  const base = { placeId: LEADER_OF_ALL, roleId: LEADER_ROLE_ID };
+  if (!quadro) {
+    if (call.tool === 'tarefa_criar') return 'Você é o Líder único e não tem quadro: diga qual em "quadro" (nome ou pasta).';
+    // No board: the list is of every board; the other tools act by the task id.
+    return { caller: { ...base, projectPath: '', boardPlaceIds: [] }, call: call.tool === 'tarefa_listar' ? { ...call, todos: true } : call };
+  }
+  const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar', quadro });
+  if (list.kind !== 'text') return list.kind === 'error' ? list.text : 'Não consegui ler o quadro.';
+  const board = JSON.parse(list.text) as { pasta?: unknown; lugares?: { id?: unknown; podeMandar?: unknown }[] };
+  if (typeof board.pasta !== 'string' || !Array.isArray(board.lugares)) return 'Não consegui ler o quadro.';
+  const reached = board.lugares.filter((place) => place.podeMandar === true).map((place) => place.id).filter((id): id is string => typeof id === 'string');
+  if (call.tool === 'tarefa_criar' && (!call.dono || !reached.includes(call.dono)))
+    return `O Líder único não faz a tarefa: diga em "dono" um lugar que você alcança neste quadro (${reached.join(', ') || 'nenhum'}).`;
+  return { caller: { ...base, projectPath: board.pasta, boardPlaceIds: reached }, call };
+}
+
+/** The caller of a `tarefa_*` tool, from the board the renderer owns (the same answers the session would get). */
+async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<{ caller: LedgerCaller; call: LedgerToolCall } | string> {
+  const self = await boardBridge.execute(ptyId, { tool: 'sessao_quem_sou' });
+  if (self.kind !== 'text') return self.kind === 'error' ? self.text : 'Não consegui saber quem é esta sessão.';
+  const who = JSON.parse(self.text) as { lugar?: unknown; papel?: unknown; pasta?: unknown; liderUnico?: unknown };
+  if (who.liderUnico === true) return leaderLedgerCallerOf(boardBridge, ptyId, call);
+  if (call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar') {
+    if (call.quadro) return 'Só o Líder único escolhe o quadro. Esta sessão usa sempre o próprio quadro (chame sem "quadro").';
+  }
+  if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string') return 'Seu lugar ainda não está no quadro; espere o primeiro turno terminar.';
+  const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar' });
+  const places = list.kind === 'text' ? (JSON.parse(list.text) as { id?: unknown }[]) : [];
+  return {
+    caller: {
+      projectPath: who.pasta,
+      placeId: who.lugar,
+      ...(typeof who.papel === 'string' ? { roleId: who.papel } : {}),
+      boardPlaceIds: places.map((place) => place.id).filter((id): id is string => typeof id === 'string'),
+    },
+    call,
+  };
+}
+
+async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<BrowserToolOutcome> {
+  if (!ledgerService) return { kind: 'error', text: 'O ledger não abriu neste app.' };
+  const resolved = await ledgerCallerOf(boardBridge, ptyId, call);
+  if (typeof resolved === 'string') return { kind: 'error', text: resolved };
+  const result = await runLedgerTool(ledgerService, resolved.caller, resolved.call);
+  return result.ok ? { kind: 'text', text: result.text } : { kind: 'error', text: result.text };
 }
 
 /** Papéis de sessão (item 12a) — list and save of `<userData>/papeis/<id>.md`. */
@@ -3479,6 +3660,7 @@ void app.whenReady().then(async () => {
   registerDevModeIpcHandlers(); // T307 (003-modo-dev)
   registerTabIpcHandlers(); // CA-26/CA-27 (009-modo-dev-v3)
   registerMindscapeIpcHandlers(); // Mindscape V1
+  registerLedgerIpcHandlers(); // Ledger com prova (item 19)
   registerRolesIpcHandlers(); // Papéis de sessão (item 12a)
   registerMindscapeTurnEnded(); // Mindscape, fatia 03
   registerSessionRenewalIpcHandlers(); // Sessão renovada em voo (B36)
@@ -3492,8 +3674,17 @@ void app.whenReady().then(async () => {
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
   }); // 015-jobu-pet
   registerHealthIpcHandlers(); // Saúde do computador
+  registerRotinasIpcHandlers(); // Item 20 — rotinas em sombra
   registerAppUpdateIpcHandlers(); // B33 — atualizar de dentro do app
   registerWorkspaceIpcHandlers(); // Sidebar — abrir no editor + branch
+  celularService = createCelularService({
+    ipcMain,
+    userDataDir: app.getPath('userData'),
+    io: configIoDeps,
+    ledger: () => ledgerService,
+    provasRoot: ledgerProofsDir(ledgerFilePath(process.env, app.getPath('userData'))),
+    isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
+  }); // Ledger no celular (PWA só na Tailscale)
   // Quadro por MCP — the board and session tools of the same server go to the renderer (owner of the document).
   const boardBridge = createBoardBridge({
     ipcMain,
@@ -3507,6 +3698,19 @@ void app.whenReady().then(async () => {
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
     appVersion: app.getVersion(),
     executeBoard: (ptyId, call) => boardBridge.execute(ptyId, call),
+    uploadFolders: {
+      get: () => appConfig.browserUploads.folders,
+      set: (folders) => {
+        appConfig = { ...appConfig, browserUploads: { folders: [...folders] } };
+        try {
+          persistAppConfig();
+        } catch (error) {
+          // The change holds until the app closes; it is only not remembered.
+          console.error('[donel-dev] pastas de envio não foram gravadas:', error);
+        }
+      },
+    },
+    executeLedger: (ptyId, call) => executeLedgerTool(boardBridge, ptyId, call),
   }); // Navegador integrado
   // Servidor MCP `donel` (loopback, porta efêmera) ANTES da janela: a primeira sessão já nasce com as ferramentas
   // do navegador. Se não subir, as sessões nascem sem elas (nunca sem terminal).
@@ -3530,7 +3734,11 @@ app.on('window-all-closed', () => {
   esteiraService = null;
   healthService?.stop();
   healthService = null;
+  routineRunner?.stop();
+  routineRunner = null;
   appUpdateService?.stop();
+  void celularService?.dispose();
+  celularService = null;
   // fix/renovacao-credencial (C6, research.md) — antes de descartar o motor,
   // guarda no cofre o par que o CLI deixou em `.credentials.json` para a
   // conta ativa. A gravação acontece dentro da chamada, sem esperar promessa.

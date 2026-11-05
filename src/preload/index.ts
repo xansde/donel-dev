@@ -53,6 +53,7 @@ import type {
   AccountsConfigDto,
   AccountsViewDto,
   AppConfigDto,
+  SessionWhereLives,
   ArchiveOutcome,
   BeginLoginOutcome,
   ConnectModInput,
@@ -148,6 +149,8 @@ import {
 } from '../shared/esteira/ipc';
 
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
+import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerOwnerDecision, type LedgerSnapshot } from '../shared/ledger/channels';
+import type { LedgerProof } from '../shared/ledger/contract';
 import { LEARNING_CHANNELS, type RendererGesture } from '../shared/learning/gestures';
 import type {
   MindscapeBoardRequest,
@@ -158,6 +161,8 @@ import type {
   MindscapeTurnEndedPayload,
 } from '../shared/mindscape/channels';
 import type { MindscapeDoc } from '../shared/mindscape/model';
+import { CELULAR_CHANNELS, type CelularPairResult, type CelularState } from '../shared/celular';
+import { ROTINAS_CHANNELS, type ShadowEntry } from '../shared/rotinas/contract';
 import { LIDER_CHANNELS, type LiderReport, type LiderSendPayload, type LiderSendResult, type LiderState } from '../shared/lider/ipc';
 import { ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
 import { SESSION_RENEWAL_CHANNELS, type HandoffStatus, type RenewalPrepareInput, type RenewalPrepared, type SessionRenewalPrefs } from '../shared/sessionRenewal';
@@ -297,6 +302,10 @@ const donelApi: DonelApi = {
 
     // T706/CA-8 — a única leitura de disco da feature, guardada no main.
     seedProject: (projectPath: string) => ipcRenderer.invoke(SESSION_CHANNELS.seedProject, projectPath) as Promise<AppConfigDto>,
+
+    // B39 — where a conversation to resume lives (this computer or a remote place).
+    whereLives: (sessionId: string, projectPath: string) =>
+      ipcRenderer.invoke(SESSION_CHANNELS.whereLives, sessionId, projectPath) as Promise<SessionWhereLives>,
   },
 
   // 011-contas-e-provedores (etapa 1) — motor de contas + mods (nasce inerte,
@@ -513,8 +522,11 @@ const donelApi: DonelApi = {
     },
     getRules: (ptyId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.getRules, ptyId) as Promise<BrowserAgentRules | null>,
     chooseUploadDir: (ptyId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.chooseUploadDir, ptyId) as Promise<BrowserRulesResult>,
-    clearUploadDir: (ptyId: string) => {
-      ipcRenderer.send(BROWSER_CHANNELS.clearUploadDir, ptyId);
+    removeUploadDir: (ptyId: string, folder: string) => {
+      ipcRenderer.send(BROWSER_CHANNELS.removeUploadDir, ptyId, folder);
+    },
+    answerUploadRequest: (ptyId: string, allow: boolean) => {
+      ipcRenderer.send(BROWSER_CHANNELS.answerUploadRequest, ptyId, allow);
     },
     setDomains: (ptyId: string, mode: DomainMode, typed: string) => ipcRenderer.invoke(BROWSER_CHANNELS.setDomains, ptyId, mode, typed) as Promise<BrowserRulesResult>,
     onRules: (listener: (rules: BrowserAgentRules) => void) => {
@@ -543,6 +555,17 @@ const donelApi: DonelApi = {
       return () => ipcRenderer.removeListener(MINDSCAPE_CHANNELS.boardRequest, handler);
     },
     respondBoard: (response: MindscapeBoardResponse) => ipcRenderer.send(MINDSCAPE_CHANNELS.boardRespond, response),
+  },
+
+  // Ledger com prova (item 19) — `<userData>/ledger.json` (main is the only writer); decisions go as the owner.
+  ledger: {
+    load: () => ipcRenderer.invoke(LEDGER_CHANNELS.load) as Promise<LedgerSnapshot>,
+    onChanged: (listener: (snapshot: LedgerSnapshot) => void) => {
+      const handler = (_event: unknown, snapshot: LedgerSnapshot): void => listener(snapshot);
+      return subscribeChannel(ipcRenderer, LEDGER_CHANNELS.changed, handler);
+    },
+    decide: (decision: LedgerOwnerDecision) => ipcRenderer.invoke(LEDGER_CHANNELS.decide, decision) as Promise<LedgerApplyResult>,
+    openProof: (proof: LedgerProof) => ipcRenderer.invoke(LEDGER_CHANNELS.openProof, proof) as Promise<boolean>,
   },
 
   // Papéis de sessão (item 12a) — `<userData>/papeis/` (main is the only writer).
@@ -834,6 +857,20 @@ const donelApi: DonelApi = {
     showTab: () => {
       ipcRenderer.send(LIDER_CHANNELS.showTab);
     },
+  },
+
+  // Ledger no celular — the PWA on the Tailscale interface (Preferências → Celular).
+  celular: {
+    getState: () => ipcRenderer.invoke(CELULAR_CHANNELS.getState) as Promise<CelularState>,
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke(CELULAR_CHANNELS.setEnabled, enabled) as Promise<CelularState>,
+    pair: () => ipcRenderer.invoke(CELULAR_CHANNELS.pair) as Promise<CelularPairResult>,
+    revoke: (deviceId: string) => ipcRenderer.invoke(CELULAR_CHANNELS.revoke, deviceId) as Promise<CelularState>,
+  },
+
+  // Item 20 — the routines in shadow: what they would have woken today (read only).
+  rotinas: {
+    today: () => ipcRenderer.invoke(ROTINAS_CHANNELS.today) as Promise<ShadowEntry[]>,
+    onChanged: (listener: () => void) => subscribeChannel(ipcRenderer, ROTINAS_CHANNELS.changed, () => listener()),
   },
 };
 

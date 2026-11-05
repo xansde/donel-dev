@@ -63,7 +63,7 @@ Número sobre o ícone do Donel na barra de tarefas do Windows com as sessões e
 _Evitar_: badge (no texto da UI), contador
 
 **Líder único**:
-A sessão com papel Líder que não pertence a nenhum quadro: o dono fala com ela pelo Jobu, e ela lê e age em
-todos os quadros, alcançando o topo de cada um e quem os Líderes antigos de quadro apontavam
+A sessão com papel Líder que o Jobu abre (marca na aba, nunca só o papel) e que não pertence a nenhum quadro: o
+dono fala com ela pelo Jobu, e ela lê e age em todos os quadros, acima do topo de cada um
 ([ADR 0007](adr/0007-lider-unico.md)).
 _Evitar_: Líder do projeto, Líder do quadro (o modelo antigo), coordenador

@@ -1,50 +1,28 @@
 // Líder único (ADR 0007, owner 04/11: "os líderes de cada mindscape deve ser apenas uma sessão única que se comunica
-// com todos os mindscapes. Essa eu acesso pelo jobu."). ONE session of the app, with the role `lider` and no project:
-// it belongs to no board, reads and acts on all of them, and the owner talks to it through the Jobu. Pure.
-//
-// The arrow rule holds: the Líder único sends only to places it is linked to. It has no card on any board, so its
-// links are DERIVED from what the owner draws, never stored (nothing invisible to undo):
-// - it stands above the top of every board: a place no other place points to with an arrow answers to it;
-// - the places that held the role `lider` before (one Líder per board) became ordinary places, and their arrows
-//   count as the Líder único's — whom they directed, it directs.
-// A session it opens has no arrow pointing to it, so it is born linked. Drawing an arrow from another place to one
-// of those puts it under that place, out of the Líder's direct reach — the owner decides by drawing.
+// com todos os mindscapes. Essa eu acesso pelo jobu."). ONE session of the app, opened by the Jobu: it belongs to no
+// board, reads and acts on all of them. Who it reaches is NOT here: it is the one rule of `reach.ts` (`canReach`
+// with `LEADER_OF_ALL_FROM`). Here: how its tab is recognized, where it runs, and how it names a board. Pure.
 
 import { LEADER_ROLE_ID } from '../roles';
-import type { MindscapeBoard, MindscapeDoc, SessionPlaceCard } from './model';
+import type { MindscapeDoc } from './model';
 
-/** The name the Líder único signs with (messages, notices) and the key of what it opened. */
+/** The name the Líder único signs with (messages, notices, the ledger) and the key of what it opened. */
 export const LEADER_OF_ALL = 'lider';
 
 /** The minimum of a tab the rule needs. */
 export interface LeaderTabLike {
   readonly sessionType: 'claude' | 'shell';
   readonly roleId?: string;
-  /** A tab of a project has it; the Líder único runs in no project. */
-  readonly projectName?: string;
+  /** Set ONLY by the Jobu's path when it opens the Líder único (App.tsx, `liderDeliverRef`), and kept on an update. */
+  readonly leaderOfAll?: boolean;
 }
 
-/** The tab is the Líder único: a `claude` session with the role `lider` that belongs to no project. */
+/**
+ * The tab is the Líder único: the explicit mark the Jobu puts on it, never the absence of a project. A Líder opened
+ * by the Launcher, on the VPS or in a folder out of the sidebar is an ordinary session of its board.
+ */
 export function isLeaderOfAllTab(tab: LeaderTabLike): boolean {
-  return tab.sessionType === 'claude' && tab.roleId === LEADER_ROLE_ID && !tab.projectName;
-}
-
-/** A place of a board that was its Líder before the Líder único (role `lider`): its arrows are the Líder único's. */
-export function isFormerLeaderPlace(card: SessionPlaceCard): boolean {
-  return card.roleId === LEADER_ROLE_ID;
-}
-
-/** The Líder único is linked to `placeId` on `board` (see the header). */
-export function leaderReaches(board: MindscapeBoard | undefined, placeId: string): boolean {
-  const target = board?.cards[placeId];
-  if (!board || target?.kind !== 'session') return false;
-  return !board.links.some((link) => {
-    if (!link.arrow || link.to !== placeId) return false;
-    const from = board.cards[link.from];
-    // A post-it pointing to a place is a note, not a boss; an arrow from a former Líder is the Líder único's own.
-    // Any other place pointing to it puts it under that place: the Líder goes through it.
-    return from?.kind === 'session' && !isFormerLeaderPlace(from);
-  });
+  return tab.sessionType === 'claude' && tab.leaderOfAll === true && tab.roleId === LEADER_ROLE_ID;
 }
 
 /**

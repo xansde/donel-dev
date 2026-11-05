@@ -1,7 +1,7 @@
-import { useCallback, useState, type CSSProperties } from 'react';
+import { useCallback, useState, type CSSProperties, type ReactNode } from 'react';
 import type { SessionRole } from '../../../shared/roles';
 import { RoleMenu } from './RoleMenu';
-import { DRAWING_STROKES, OWNER_COLORS, type DrawingColor, type DrawingStroke, type MindscapeLink } from '../../../shared/mindscape/model';
+import { DRAWING_STROKES, OWNER_COLORS, type BoardReach, type DrawingColor, type DrawingStroke, type MindscapeLink } from '../../../shared/mindscape/model';
 import { TOOL_KEYS, type MindscapeTool } from '../../../shared/mindscape/shortcuts';
 import { drawingInk } from './MindscapeDrawingLayer';
 import styles from './Mindscape.module.css';
@@ -62,6 +62,11 @@ export interface MindscapeToolbarProps {
   readonly oldCount: number;
   readonly showOld: boolean;
   readonly onToggleOld: () => void;
+  /** `sessao_fechar` (owner 04/11) — the Líder of this board reaches only it, or every board. */
+  readonly reach: BoardReach;
+  readonly onToggleReach: () => void;
+  /** Item 20 — the counter of the routines in shadow, before the hint. */
+  readonly shadow?: ReactNode;
   readonly hint: string;
 }
 
@@ -96,6 +101,9 @@ export function MindscapeToolbar({
   oldCount,
   showOld,
   onToggleOld,
+  reach,
+  onToggleReach,
+  shadow,
   hint,
 }: MindscapeToolbarProps): React.JSX.Element {
   const [placeMenuOpen, setPlaceMenuOpen] = useState(false);
@@ -230,6 +238,18 @@ export function MindscapeToolbar({
           {showOld ? `Recolher antigas (${oldCount})` : `${oldCount} ${oldCount === 1 ? 'antiga' : 'antigas'}`}
         </button>
       ) : null}
+      <button
+        type="button"
+        className={styles.toolButton}
+        disabled={!enabled}
+        aria-pressed={reach === 'all'}
+        title="Até onde o Líder deste quadro manda: só nas sessões deste quadro, ou nas de todos os quadros (por exemplo, para fechar as que ele abriu). Dentro do quadro vale sempre a hierarquia das setas."
+        onClick={onToggleReach}
+        data-testid="mindscape-reach"
+      >
+        {reach === 'all' ? 'Alcance: todos os quadros' : 'Alcance: este quadro'}
+      </button>
+      {shadow}
       <span className={styles.toolHint} data-testid="mindscape-hint">
         {hint}
       </span>

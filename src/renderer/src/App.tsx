@@ -144,7 +144,8 @@ import { BackgroundIndicator, type BackgroundSession } from './chat/BackgroundTa
 import { revealRow } from './chat/revealRow';
 import { runningCount } from '../../shared/chat/backgroundTasks';
 import { effectiveTabView, hasChatView, nextTabView, shouldHandleViewShortcut } from './chat/tabView';
-import { disposeTabSend, getDraft, sendDriverFor, sendToTab } from './chat/composer/tabSend';
+import { disposeTabSend, sendDriverFor, sendToTab, sendToTabAndWait } from './chat/composer/tabSend';
+import { blockingScreen, readInputText } from '../../shared/chat/screen';
 import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../shared/lider/ipc';
 import { isLeaderOfAllTab, leaderHome } from '../../shared/mindscape/leader';
 import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
@@ -219,6 +220,17 @@ interface TabState {
   roleId?: string;
   /** Item 12a — the place of the Mindscape this tab was opened from, until its conversation binds to it. */
   placeId?: string;
+  /**
+   * Só os Líderes nas abas (04/11) — opened by another session (`sessao_abrir`). It runs normally but stays out
+   * of the tab bar and the sidebar; the owner follows it through its place in the Mindscape.
+   */
+  openedBySession?: boolean;
+  /** Place of the session that opened this one: saved on an update (and on the remote), so it comes back out of the tab bar. */
+  openedBy?: string;
+  /** The owner brought a tab of `openedBySession` to the tab bar (double click on its place, a notice); closing it hides it again. */
+  shown?: boolean;
+  /** Líder único (ADR 0007) — set ONLY when the Jobu opens it (`liderDeliverRef`) and kept on an update (B33). */
+  leaderOfAll?: boolean;
   /** Sessões remotas — remote place (`accounts.remotes`) where this tab's CLI runs; `undefined` = this computer. */
   remoteId?: string;
   /**
@@ -283,6 +295,18 @@ interface LastLaunch {
 // "todas as abas fechadas" (T010) — este caso deixa de ser um estado
 // alcançável só por fechamento manual e passa a ser também o estado INICIAL.
 const INITIAL_TABS: TabState[] = [];
+
+/** Só os Líderes nas abas — the tab is in the tab bar and the sidebar (a session opened by another one only after the owner opens it). */
+function isTabListed(tab: TabState): boolean {
+  return !tab.openedBySession || tab.shown === true;
+}
+
+/** The tab that takes the focus when `leavingId` leaves the tab bar: the listed neighbour before it, else the first listed one. */
+function listedFallback(tabs: readonly TabState[], leavingId: string): TabState | undefined {
+  const index = tabs.findIndex((tab) => tab.id === leavingId);
+  const before = tabs.slice(0, Math.max(0, index)).filter((tab) => tab.id !== leavingId && isTabListed(tab));
+  return before[before.length - 1] ?? tabs.find((tab) => tab.id !== leavingId && isTabListed(tab));
+}
 
 
 // 003-modo-dev/T312 — teto de espera pelo sinal de "pronto para receber
@@ -691,7 +715,8 @@ export function App(): React.JSX.Element {
     const remaining = tabs.filter((tab) => tab.id !== tabId);
     setTabs(remaining);
     if (activeTabId === tabId) {
-      const fallback = remaining[Math.max(0, index - 1)] ?? remaining[0];
+      // A hidden session (opened by another one) never takes the focus: it would come back to the tab bar.
+      const fallback = listedFallback(tabs, tabId);
       setActiveTabId(fallback ? fallback.id : '');
     }
     setSemaphoreStates((prev) => omitKey(prev, tabId));
@@ -760,6 +785,13 @@ export function App(): React.JSX.Element {
   // `activeTabId` direto do escopo do render, mesmo padrão de
   // `handleOpenProject`/`handleLaunch` logo acima.
   const handleRequestCloseTab = (tabId: string): void => {
+    // Só os Líderes nas abas — a live session opened by another one goes back to the Mindscape; it keeps running.
+    const tab = tabs.find((candidate) => candidate.id === tabId);
+    if (tab?.openedBySession && aliveTabs[tabId]) {
+      setTabs((prev) => prev.map((candidate) => (candidate.id === tabId ? { ...candidate, shown: false } : candidate)));
+      if (activeTabId === tabId) setActiveTabId(listedFallback(tabs, tabId)?.id ?? '');
+      return;
+    }
     if (aliveTabs[tabId]) {
       setPendingCloseTabId(tabId);
       return;
@@ -880,6 +912,43 @@ export function App(): React.JSX.Element {
     };
   }, [previousSessionsProject]);
 
+  /**
+   * B39 — Retomar (and fork) opens the conversation where it lives: a session born on a remote place resumes
+   * there, without the owner choosing anything. When it is not here and a place does not answer, the app says
+   * so and opens nothing (an empty session on this computer would hide where the conversation is).
+   */
+  const resumingRef = useRef(new Set<string>());
+  const openWhereItLives = (sessionId: string, projectPath: string, open: (remote: { remoteId?: string }) => void): void => {
+    if (resumingRef.current.has(sessionId)) return;
+    resumingRef.current.add(sessionId);
+    // The answer from this disk is instant; a slower one means the app is asking the remote places by ssh
+    // (up to 20 s each). Without a word the click looked dead.
+    const places = accountsView.remotes.map((remote) => `«${remote.label}»`).join(' e ');
+    const waiting = `Procurando a conversa em ${places || 'outro lugar'}… pode levar até 20 s.`;
+    const waitingTimer = places ? window.setTimeout(() => setDevModeToast(waiting), 600) : null;
+    void window.donel.sessions
+      .whereLives(sessionId, projectPath)
+      .then(
+        (where) => {
+          if (where.kind === 'unreachable') {
+            const many = where.labels.length > 1;
+            const names = where.labels.map((label) => `«${label}»`).join(' e ');
+            setDevModeToast(
+              `Não consegui retomar: a conversa não está neste computador, e ${many ? 'os lugares remotos' : 'o lugar remoto'} ${names} não ${many ? 'responderam' : 'respondeu'}. Confira se está ligado e tente de novo.`,
+            );
+            return;
+          }
+          open(where.kind === 'remote' ? { remoteId: where.remoteId } : {});
+        },
+        () => open({}),
+      )
+      .finally(() => {
+        resumingRef.current.delete(sessionId);
+        if (waitingTimer !== null) window.clearTimeout(waitingTimer);
+        setDevModeToast((current) => (current === waiting ? null : current));
+      });
+  };
+
   // T013 — Retomar (ui-spec §5, primário): `-r <session-id>` via
   // CommandBuilder (já testado no T006/CommandBuilder.test.ts, tabela
   // FR-003) — CONTINUA a mesma sessão (mesmo id). Nome da aba vem do
@@ -887,20 +956,24 @@ export function App(): React.JSX.Element {
   // o uuid do arquivo.
   const handleResumeSession = (session: SessionSummaryDto): void => {
     if (!previousSessionsProject) return;
+    const project = previousSessionsProject;
     const args = buildClaudeArgs({ continuation: { type: 'resume', sessionId: session.id } });
-    addTab({
-      name: sessionTabName(session),
-      cwd: previousSessionsProject.path,
-      projectName: previousSessionsProject.name,
-      pinned: false,
-      launchArgs: args,
-      sessionType: 'claude',
-      // T403/T408 (004) — o `/rename` que esta sessão levou no CLI já veio no
-      // índice; semeado aqui, `resolveSessionName` prefere ele ao preview (CA-1).
-      customTitle: session.customTitle,
-    });
-    setSelectedProjectPath(previousSessionsProject.path);
     setPreviousSessionsProject(null);
+    openWhereItLives(session.id, project.path, (remote) => {
+      addTab({
+        name: sessionTabName(session),
+        cwd: project.path,
+        projectName: project.name,
+        pinned: false,
+        launchArgs: args,
+        sessionType: 'claude',
+        ...remote,
+        // T403/T408 (004) — o `/rename` que esta sessão levou no CLI já veio no
+        // índice; semeado aqui, `resolveSessionName` prefere ele ao preview (CA-1).
+        customTitle: session.customTitle,
+      });
+      setSelectedProjectPath(project.path);
+    });
   };
 
   // T013 — Fork (ui-spec §5, secundário, "nova sessão a partir desta"):
@@ -910,20 +983,24 @@ export function App(): React.JSX.Element {
   // NOVO a partir do histórico da original, que continua intacta.
   const handleForkSession = (session: SessionSummaryDto): void => {
     if (!previousSessionsProject) return;
+    const project = previousSessionsProject;
     const args = buildClaudeArgs({ continuation: { type: 'fork', sessionId: session.id } });
-    addTab({
-      name: sessionTabName(session),
-      cwd: previousSessionsProject.path,
-      projectName: previousSessionsProject.name,
-      pinned: false,
-      launchArgs: args,
-      sessionType: 'claude',
-      // T403/T408 (004) — o `/rename` que esta sessão levou no CLI já veio no
-      // índice; semeado aqui, `resolveSessionName` prefere ele ao preview (CA-1).
-      customTitle: session.customTitle,
-    });
-    setSelectedProjectPath(previousSessionsProject.path);
     setPreviousSessionsProject(null);
+    openWhereItLives(session.id, project.path, (remote) => {
+      addTab({
+        name: sessionTabName(session),
+        cwd: project.path,
+        projectName: project.name,
+        pinned: false,
+        launchArgs: args,
+        sessionType: 'claude',
+        ...remote,
+        // T403/T408 (004) — o `/rename` que esta sessão levou no CLI já veio no
+        // índice; semeado aqui, `resolveSessionName` prefere ele ao preview (CA-1).
+        customTitle: session.customTitle,
+      });
+      setSelectedProjectPath(project.path);
+    });
   };
 
   // T008 — Launcher (ui-spec §4, FR-003, CA-1): monta o argv via
@@ -1101,16 +1178,19 @@ export function App(): React.JSX.Element {
 
     const project = projects.find((candidate) => candidate.path === entry.projectPath);
     const args = buildClaudeArgs({ continuation: { type: 'resume', sessionId } });
-    addTab({
-      name: entry.label,
-      cwd: entry.projectPath,
-      projectName: project?.name,
-      pinned: false,
-      launchArgs: args,
-      sessionType: 'claude',
-      customTitle: null,
+    openWhereItLives(sessionId, entry.projectPath, (remote) => {
+      addTab({
+        name: entry.label,
+        cwd: entry.projectPath,
+        projectName: project?.name,
+        pinned: false,
+        launchArgs: args,
+        sessionType: 'claude',
+        ...remote,
+        customTitle: null,
+      });
+      setSelectedProjectPath(entry.projectPath);
     });
-    setSelectedProjectPath(entry.projectPath);
   };
 
   /**
@@ -1861,13 +1941,16 @@ export function App(): React.JSX.Element {
       return;
     }
     const discoveryTitle = mapView.breadcrumb[0] ?? step.phase;
-    addTab({
-      name: esteiraTabName(step.phase, discoveryTitle),
-      cwd,
-      projectName: projects.find((project) => project.path === cwd)?.name,
-      pinned: false,
-      launchArgs: buildClaudeArgs({ continuation: { type: 'resume', sessionId: cliSessionId } }),
-      sessionType: 'claude',
+    openWhereItLives(cliSessionId, cwd, (remote) => {
+      addTab({
+        name: esteiraTabName(step.phase, discoveryTitle),
+        cwd,
+        projectName: projects.find((project) => project.path === cwd)?.name,
+        pinned: false,
+        launchArgs: buildClaudeArgs({ continuation: { type: 'resume', sessionId: cliSessionId } }),
+        sessionType: 'claude',
+        ...remote,
+      });
     });
   };
 
@@ -2037,6 +2120,8 @@ export function App(): React.JSX.Element {
         ...(tab.roleId ? { roleId: tab.roleId } : {}),
         // A place binds to its conversation; only a session that never started still needs it.
         ...(tab.placeId && !sessionId ? { placeId: tab.placeId } : {}),
+        ...(tab.openedBySession && tab.openedBy ? { openedBy: tab.openedBy } : {}),
+        ...(tab.leaderOfAll ? { leaderOfAll: true } : {}),
         ...(tab.customTitle !== undefined ? { customTitle: tab.customTitle } : {}),
         ...(tab.view ? { view: tab.view } : {}),
       },
@@ -2073,7 +2158,8 @@ export function App(): React.JSX.Element {
         if (boot.failure) setUpdateError(`${boot.failure}. Esta é a versão de antes.`);
         let activeId: string | null = null;
         for (const entry of boot.tabs) {
-          const id = addTab({
+          const id = addTab(
+            {
             name: entry.name,
             cwd: entry.cwd,
             projectName: entry.projectName,
@@ -2086,8 +2172,14 @@ export function App(): React.JSX.Element {
             ...(entry.color && isTabColorToken(entry.color) ? { color: entry.color } : {}),
             ...(entry.customTitle !== undefined ? { customTitle: entry.customTitle } : {}),
             ...(entry.view ? { view: entry.view } : {}),
-          });
-          if (entry.active) activeId = id;
+            ...(entry.leaderOfAll ? { leaderOfAll: true } : {}),
+              ...(entry.openedBy ? { openedBySession: true, openedBy: entry.openedBy } : {}),
+            },
+            !entry.openedBy,
+          );
+          // Só os Líderes nas abas — the team comes back to the Mindscape, not to the tab bar.
+          if (entry.openedBy) agentBridgeRef.current.adoptOpened(id, entry.openedBy);
+          else if (entry.active) activeId = id;
         }
         if (activeId) setActiveTabId(activeId);
       })
@@ -2107,15 +2199,21 @@ export function App(): React.JSX.Element {
       .then((alive) => {
         for (const entry of alive) {
           if (tabsRef.current.some((tab) => tab.claudeSessionId === entry.sessionId)) continue;
-          addTab({
-            name: entry.name,
-            cwd: entry.cwd,
-            projectName: entry.projectName,
-            pinned: false,
-            sessionType: 'claude',
-            launchArgs: withResumeArgs(entry.launchArgs, entry.sessionId),
-            remoteId: entry.remoteId,
-          });
+          const id = addTab(
+            {
+              name: entry.name,
+              cwd: entry.cwd,
+              projectName: entry.projectName,
+              pinned: false,
+              sessionType: 'claude',
+              launchArgs: withResumeArgs(entry.launchArgs, entry.sessionId),
+              remoteId: entry.remoteId,
+              ...(entry.openedBy ? { openedBySession: true, openedBy: entry.openedBy } : {}),
+            },
+            !entry.openedBy,
+          );
+          // Só os Líderes nas abas — a session a Líder opened on the remote stays out of the tab bar after a restart.
+          if (entry.openedBy) agentBridgeRef.current.adoptOpened(id, entry.openedBy);
         }
       })
       .catch(() => undefined);
@@ -2198,6 +2296,15 @@ export function App(): React.JSX.Element {
     // Diário de gestos — a tab focused inside the Uso geral (coming from the Mindscape is recorded there).
     if (wasGeral && appMode === 'geral') window.donel.learning?.record({ type: 'sessao-aberta', sessionId, via: 'aba' });
   }, [appMode, activeTabId]);
+  // Só os Líderes nas abas — a hidden session that takes the focus (double click on its place, a notice of the Jobu,
+  // Ctrl+Tab) comes to the tab bar until the owner closes it.
+  useEffect(() => {
+    setTabs((prev) => {
+      const target = prev.find((tab) => tab.id === activeTabId);
+      if (!target || isTabListed(target)) return prev;
+      return prev.map((tab) => (tab.id === activeTabId ? { ...tab, shown: true } : tab));
+    });
+  }, [activeTabId]);
   // "Ir ao terminal" (rule 10) — the focus change above stamps `seenAt`.
   const handleMindscapeGoToTerminal = useCallback((tabId: string): void => {
     const sessionId = tabsRef.current.find((tab) => tab.id === tabId)?.claudeSessionId;
@@ -2214,18 +2321,21 @@ export function App(): React.JSX.Element {
       return;
     }
     const project = projects.find((candidate) => candidate.path === projectPath);
-    window.donel.learning?.record({ type: 'sessao-aberta', sessionId, via: 'retomar' });
-    addTab({
-      name,
-      cwd: projectPath,
-      projectName: project?.name ?? projectPath.split(/[\\/]/).filter(Boolean).pop(),
-      pinned: false,
-      launchArgs: buildClaudeArgs({ continuation: { type: 'resume', sessionId } }),
-      sessionType: 'claude',
-      customTitle: null,
+    openWhereItLives(sessionId, projectPath, (remote) => {
+      window.donel.learning?.record({ type: 'sessao-aberta', sessionId, via: 'retomar' });
+      addTab({
+        name,
+        cwd: projectPath,
+        projectName: project?.name ?? projectPath.split(/[\\/]/).filter(Boolean).pop(),
+        pinned: false,
+        launchArgs: buildClaudeArgs({ continuation: { type: 'resume', sessionId } }),
+        sessionType: 'claude',
+        ...remote,
+        customTitle: null,
+      });
+      setSelectedProjectPath(projectPath);
+      setAppMode('geral');
     });
-    setSelectedProjectPath(projectPath);
-    setAppMode('geral');
   };
   const mindscapeStoredNameOf = (sessionId: string): string | null => appConfig?.sessionNames[sessionId]?.name ?? null;
   const mindscapeProjectNames = useMemo(() => Object.fromEntries(projects.map((project) => [project.path, project.name])), [projects]);
@@ -2338,7 +2448,7 @@ export function App(): React.JSX.Element {
   };
 
   // Item 18 (PDA mindscape-openrig) + Líder único (ADR 0007) — the Jobu as the Líder of EVERY board, in a bubble that
-  // comes out of him. One session with the role `lider` and no project (`isLeaderOfAllTab`): this window owns the tabs,
+  // comes out of him. One session with the role `lider` and the Jobu's mark (`isLeaderOfAllTab`): this window owns the tabs,
   // so it says which one it is (`lider:report`) and delivers what the owner writes there (`lider:deliver`) through the
   // tab's own send machine; with no live Líder, the first message opens one, on this computer, in the folder that holds
   // the projects of the boards (`leaderHome`).
@@ -2368,14 +2478,14 @@ export function App(): React.JSX.Element {
     let tabId = findLiderTab()?.id;
     if (tabId === undefined) {
       const role = roles.find((candidate) => candidate.id === LIDER_ROLE_ID);
-      // Without the role there is no Líder único to recognize (it is the role + no project): say so instead of opening a plain session.
+      // Without the role there is no Líder único (it is the role + the mark below): say so instead of opening a plain session.
       if (!role) return { ok: false, reason: 'O papel Líder não existe nesta máquina.' };
       const providerId = role.engine && providers.some((provider) => provider.id === role.engine) ? role.engine : undefined;
       const defaults = appConfig?.launcherDefaults;
       const home = leaderHome(Object.keys(mindscape.doc.boards));
       tabId = addTab({
         name: role.name,
-        // No `projectName`: the Líder único belongs to no board (that is how it is recognized).
+        // No `projectName`: the Líder único belongs to no board.
         ...(home ? { cwd: home } : {}),
         pinned: false,
         launchArgs: buildLauncherArgs({
@@ -2388,6 +2498,8 @@ export function App(): React.JSX.Element {
         sessionType: 'claude',
         providerId,
         roleId: role.id,
+        // The mark that makes it the Líder único (never the role alone): only this path puts it.
+        leaderOfAll: true,
       });
       liderTabRef.current = tabId;
     }
@@ -2460,14 +2572,39 @@ export function App(): React.JSX.Element {
           ...(request.remoteId ? { remoteId: request.remoteId } : {}),
           roleId: request.role.id,
           placeId: request.placeId,
+          openedBySession: true,
+          openedBy: request.openedBy,
         },
         false,
       );
       pendingFirstMessagesRef.current[tabId] = request.firstMessage;
       return tabId;
     },
+    closeTab: (tabId) => closeTabImmediatelyRef.current(tabId),
     sendLine: (tabId, text) => sendRenewalLine(tabId, text),
-    ownerTyping: (tabId) => getDraft(tabId).trim().length > 0,
+    deliverLine: (tabId, text, waitMs) => {
+      const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
+      if (tab !== undefined && hasChatView(tab, chatEnabled)) return sendToTabAndWait(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text }, waitMs);
+      sendRenewalLine(tabId, text);
+      return Promise.resolve({ kind: 'enviando' as const });
+    },
+    permissionOnScreen: (tabId) => {
+      const lines = terminalRefs.current[tabId]?.readScreen().lines;
+      return lines !== undefined && blockingScreen(lines)?.kind === 'permission';
+    },
+    unconfirmed: (tabId) => semaphoreStates[tabId]?.unconfirmed === true || semaphoreStates[tabId] === undefined,
+    startTrouble: (tabId) => {
+      if (tabExits[tabId] !== undefined) return 'o Claude de lá foi encerrado';
+      if (aliveTabs[tabId] !== true) return 'o terminal dela não chegou a abrir';
+      const lines = terminalRefs.current[tabId]?.readScreen().lines;
+      if (lines === undefined) return null;
+      const dialog = blockingScreen(lines);
+      if (dialog) return `a tela dela mostra «${dialog.title}» e espera alguém responder`;
+      const box = readInputText(lines);
+      if (box === null) return 'a caixa de entrada do Claude não apareceu na tela dela';
+      if (box !== '') return 'o pedido ficou na caixa do terminal dela sem ser enviado';
+      return null;
+    },
     askOwner: (question) =>
       new Promise<boolean>((resolve) => {
         const id = crypto.randomUUID();
@@ -2523,7 +2660,9 @@ export function App(): React.JSX.Element {
     [applyMindscape],
   );
 
-  const sidebarSessions: SidebarSession[] = tabs
+  // Só os Líderes nas abas — the sessions opened by another one are out of the list (they live in the Mindscape),
+  // but Ctrl+Tab still reaches one that waits for the owner.
+  const allSidebarSessions: SidebarSession[] = tabs
     .filter((tab) => !(tab.claudeSessionId && registeredFavoriteIds.has(tab.claudeSessionId)))
     .map((tab) => ({
       id: tab.id,
@@ -2536,6 +2675,8 @@ export function App(): React.JSX.Element {
       active: tab.id === activeTabId,
       cwd: tab.cwd,
     }));
+  const listedTabIds = new Set(tabs.filter(isTabListed).map((tab) => tab.id));
+  const sidebarSessions = allSidebarSessions.filter((session) => listedTabIds.has(session.id));
 
   /**
    * T708/T709 (007) — grupo "Favoritos": um projeto por linha, colapsável
@@ -2620,6 +2761,7 @@ export function App(): React.JSX.Element {
   // ranqueada tanto pro Ctrl+1..9 (posição N) quanto pro Ctrl+Tab (próxima
   // sessão que precisa de atenção).
   const orderedSessions = useMemo(() => sortSessions(sidebarSessions), [sidebarSessions]);
+  const attentionSessions = useMemo(() => sortSessions(allSidebarSessions), [allSidebarSessions]);
 
   // FR-013 — Ctrl+1..9 foca a sessão na posição N da lista ranqueada;
   // Ctrl+Tab foca a próxima que precisa de atenção (permissão > aguardando).
@@ -2641,7 +2783,7 @@ export function App(): React.JSX.Element {
       }
 
       if (event.key === 'Tab') {
-        const target = nextAttentionSessionId(orderedSessions, activeTabIdRef.current);
+        const target = nextAttentionSessionId(attentionSessions, activeTabIdRef.current);
         if (!target) return;
         event.preventDefault();
         event.stopPropagation();
@@ -2661,7 +2803,7 @@ export function App(): React.JSX.Element {
 
     window.addEventListener('keydown', handleKeyDown, { capture: true });
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
-  }, [orderedSessions]);
+  }, [orderedSessions, attentionSessions]);
 
   // Notificação Windows de sessão (ui-spec §3, FR-010): desde notificacoes-completas (30/10) nasce no main, junto
   // do balão do Jobu, do piscar e do selo da barra de tarefas — uma regra só (src/shared/attention/rule.ts) que sabe
@@ -3147,7 +3289,8 @@ export function App(): React.JSX.Element {
           <div className={styles.tabBar}>
             <div className={styles.tabBarScroll}>
             {tabs.map((tab, index) => (
-              <TerminalTab
+              // Só os Líderes nas abas — a session opened by another one stays out until the owner opens it.
+              !isTabListed(tab) ? null : <TerminalTab
                 key={tab.id}
                 name={resolveTabName(tab)}
                 // T408 (004) — CA-3: duplo-clique no nome, ou F2 na aba em
@@ -3212,7 +3355,7 @@ export function App(): React.JSX.Element {
               o path cru do "consultar artefato" (Zona 2, acima) parecia ser
               o header. Uso geral mantém a condição antiga (nome+path só com
               aba aberta, lote 8). */}
-          {(devModeOn ? mapView.breadcrumb.length > 0 : tabs.length > 0) ? (
+          {(devModeOn ? mapView.breadcrumb.length > 0 : listedTabIds.size > 0) ? (
             <div className={styles.sessionHeader} data-testid="session-header">
               {/* Spec 010 / B6 — o breadcrumb passou a ser o dos nós novos:
                   discovery › plano › item. Ele vem pronto de `buildMapView`;
@@ -3303,7 +3446,7 @@ export function App(): React.JSX.Element {
                 esteira ("⌁ Preparar" na trilha do mapa), nunca de um atalho
                 ad-hoc — o botão nunca aparece lá (screenshot app-01/03
                 mostrava o contrário). */}
-            {tabs.length === 0 && !devModeOn ? (
+            {listedTabIds.size === 0 && !devModeOn ? (
               <div className={styles.emptyState} data-testid="empty-state">
                 <p className={styles.emptyStateTitle}>Nenhuma sessão aberta</p>
                 <p className={styles.emptyStateHint}>Escolha um projeto na barra lateral ou</p>
@@ -3322,7 +3465,7 @@ export function App(): React.JSX.Element {
                 (fundo + hairline do próprio `.terminal`); com etapa em foco,
                 um texto de condução que aponta pro mapa (nunca um narrativa
                 por etapa fabricada — não há fonte pra isso). */}
-            {tabs.length === 0 && devModeOn ? (
+            {listedTabIds.size === 0 && devModeOn ? (
               <div className={styles.devModeTerminalEmpty} data-testid="devmode-terminal-empty">
                 {mapView.detail ? (
                   <p className={styles.devModeHint}>
@@ -3364,6 +3507,7 @@ export function App(): React.JSX.Element {
                   remoteId={tab.remoteId}
                   tabName={tab.name}
                   projectName={tab.projectName}
+                  openedBy={tab.openedBy}
                   accountLoginId={tab.accountLoginId}
                   roleId={tab.roleId}
                   onStateChange={(info) => handleSemaphoreChange(tab.id, info)}

@@ -1484,6 +1484,106 @@ na VPS tem que ser tão capaz quanto uma no PC, ou dizer na cara o que não tem.
 aceita a porta de um túnel registrado e continua recusando qualquer outro
 `Host`.
 
+### B39. Retomar uma sessão que vive num lugar remoto (achado 04/11)
+
+**Feedback do dono:** "Não consegui retomar a outra sessão Líder. Talvez por
+ela ser na VPS e aqui ser no meu PC."
+
+**Causa (confirmada no código, 04/11):** todo Retomar montava a aba sem
+`remoteId` — `handleMindscapeResume` (dois cliques no lugar fechado),
+`handleFocusOrResumeFavoriteSession` (Favoritos), `handleResumeSession` e
+`handleForkSession` (Sessões anteriores) e `handleMapResume` (mapa da
+Esteira), em `src/renderer/src/App.tsx`. Sem `remoteId`, o `pty:create` cai no
+`claude -r <id>` local (`src/main/index.ts`, handler de `PTY_CHANNELS.create`),
+e o CLI do PC não acha a conversa, que está no `~/.claude/projects` da VPS. O
+app não guarda em lugar nenhum onde uma sessão rodou: o `~/.donel/s/<sid>` da
+VPS é apagado quando o dono fecha a aba (`buildEndScript`), e o espelho local
+(`<userData>/remote-transcripts/<sid>.jsonl`) não diz de qual lugar veio.
+Efeito colateral: como o retomar sai com código 1 em segundos, o CA-11
+(`sessions:forgetIfOrphan`) conferia o `.jsonl` no PC, não achava e **apagava a
+sessão do registro** (some dos Favoritos).
+
+**Corrigido (PR #205, `fix/retomar-sessao-remota`):** retomar abre a sessão onde ela
+vive, sem o dono escolher nada.
+- Novo canal `sessions:whereLives`: se o `.jsonl` está neste computador (na
+  pasta do projeto ou em qualquer outra de `~/.claude/projects`, caso de
+  worktree), retoma aqui. Senão pergunta a cada lugar remoto, por `ssh`, se a
+  conversa está na pasta do projeto lá (`findRemoteTranscript` em
+  `src/main/remote-session.ts`, só leitura). O que tem a conversa retoma
+  (`ssh` + `claude -r <id>` no tmux, pelo caminho normal da sessão remota).
+- Lugar que não responde nunca conta como "não tem": se a conversa não está
+  aqui e algum lugar ficou calado, o app avisa ("a conversa não está neste
+  computador, e o lugar remoto «VPS» não respondeu") e não abre nada.
+- `forgetIfOrphan` não apaga a entrada de uma sessão que tem espelho remoto.
+
+**Fica de fora (próximo passo):**
+- **Trazer a conversa para este computador.** Copiar o JSONL do lugar remoto
+  para o `~/.claude/projects` do PC, para retomar aqui. **Cuidado:** o
+  transcript pode carregar dado sensível (o que foi colado, lido ou respondido
+  na sessão); copiar é decisão do dono, por sessão, nunca automática.
+- **Sessões anteriores não listam as conversas remotas.** O índice lê só o
+  `~/.claude/projects` do PC. Hoje a sessão remota fechada se retoma pelo
+  Mindscape e pelos Favoritos.
+- **Fork de sessão remota com o tmux da original vivo** reataria a original
+  (o setup acha `donel-<sid>` vivo). Raro: a original viva já tem aba.
+
+**Pronto quando:** estando no PC, dois cliques na Líder fechada da VPS abrem a
+conversa dela na VPS, com o histórico; com a VPS desligada, aparece o aviso e
+nenhuma aba vazia.
+
+### B40. Mensagem entre sessões presa em "Retida" e sessão parada como "precisa do dono" (prioridade máxima do dono, 04/11)
+
+**Pedido:** "sempre que uma mensagem é enviada, eu PRECISO que ela seja enviada
+através desse modelo. Não que fique esperando no modo chat. É inviável eu ficar
+acessando as telas e apertando para tentar de novo." "Esse modelo" é a fila
+nativa do CLI ("Press up to edit queued messages").
+
+**O que acontecia:** `sessao_enviar` e o aviso "◆ … terminou" respondiam
+"Retida: o dono está digitando lá ou há uma permissão aberta" e não entravam.
+Sessões que fecharam o turno limpo apareciam "precisa do dono". Quando a fila
+soltava, avisos chegavam em dobro. A fila sumia num reinício.
+
+**Causa (confirmada no código):**
+1. **Estado falso.** `mapHookEventName` (`src/main/session-semaphore-manager.ts`)
+   levava **todo** `Notification` para `permission`. O CLI manda
+   `notification_type: idle_prompt` cerca de um minuto depois de um `Stop` limpo
+   ("Claude is waiting for your input"), e a sessão parada virava "precisa do
+   dono" até o próximo prompt. Agravante: uma pendência que o transcript nunca
+   respondia (sem `tool_use_id` para casar) ficava aberta no `chat-hub.ts` e o
+   `publicStateFor` (`session-semaphore-manager.ts`) mantinha `permission`.
+2. **Retenção própria.** `AgentBridge.deliver`/`isBlocked`
+   (`src/renderer/src/Mindscape/agentBridge.ts`) segurava numa fila em memória
+   do renderer por `ownerTyping` (rascunho do composer) ou por
+   `stateOf === 'permission'` (a marca falsa acima). Nunca soltava.
+3. **Aviso em dobro.** Nada impedia o mesmo fim de turno de virar dois avisos (um
+   `Stop` repetido, ou o `Stop` de um subagente com `agent_id`, que relia o fim
+   do transcript e trazia o texto do turno anterior).
+
+**O que mudou (PR #209, `fix/mensagem-direto-cli`):**
+- O semáforo só vira `permission` com `Notification` que pede o dono
+  (`permission_prompt`, `worker_permission_prompt`, `elicitation_dialog`,
+  `agent_needs_input`); `idle_prompt` e `auth_success` não contam. `Stop` de
+  subagente não é fim do turno da sessão (nem estado, nem aviso).
+- O `Stop` principal fecha as pendências principais abertas; o `SubagentStop`
+  fecha as daquele subagente.
+- O `AgentBridge` não retém mais nada: a mensagem e o aviso vão na hora para o
+  driver de envio do destino, que escreve na fila do próprio CLI mesmo no meio
+  do turno. O único "espera" é o do driver diante de um diálogo real desenhado
+  na tela (permissão, pergunta): ele espera sem relógio e envia sozinho quando
+  o diálogo fecha. A resposta do `sessao_enviar` diz isso quando a tela mostra
+  um prompt de permissão.
+- Cada fim de turno é anunciado uma vez (mesma sessão + mesmo texto = um aviso).
+
+**Próximo passo (fora deste PR):** a fila do driver de envio vive em memória do
+renderer; uma mensagem que espera um diálogo real se perde se o app reiniciar
+antes de ele fechar. Persistir essa fila por aba (no `userData`, com a ordem)
+exige mexer no driver do chat, que é compartilhado com o composer do dono.
+
+**Pronto quando:** no alfa, o Líder manda `sessao_enviar` para uma sessão
+trabalhando e para uma parada há mais de um minuto, e as duas recebem sem
+ninguém clicar; a parada não aparece "precisa do dono"; cada "terminou" chega
+uma vez.
+
 ## Decidido, aguardando spec
 
 - ~~**Restauração de sessões no restart**~~ — **CANCELADA em 2026-07-25 pelo

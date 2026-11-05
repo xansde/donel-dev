@@ -37,14 +37,11 @@ export type BoardToolCall =
   | { readonly tool: 'sessao_listar'; readonly quadro?: string }
   | { readonly tool: 'sessao_abrir'; readonly papel: string; readonly pedido: string; readonly nome?: string; readonly onde?: string; readonly quadro?: string }
   | { readonly tool: 'sessao_enviar'; readonly para: string; readonly texto: string; readonly quadro?: string }
-  | { readonly tool: 'sessao_ver_tela'; readonly quem: string; readonly quadro?: string };
+  | { readonly tool: 'sessao_ver_tela'; readonly quem: string; readonly quadro?: string }
+  | { readonly tool: 'sessao_fechar'; readonly quem: string; readonly quadro?: string };
 
 /** The tools that act on ONE board: the Líder único names it with `quadro` (ADR 0007); the other sessions use their own. */
 export type BoardScopedCall = Exclude<BoardToolCall, { readonly tool: 'papeis_listar' | 'sessao_quem_sou' }>;
-
-export function isBoardScoped(call: BoardToolCall): call is BoardScopedCall {
-  return call.tool !== 'papeis_listar' && call.tool !== 'sessao_quem_sou';
-}
 
 export type BoardToolName = BoardToolCall['tool'];
 
@@ -189,7 +186,7 @@ export const BOARD_TOOLS = [
     name: 'sessao_enviar',
     title: 'Mandar mensagem a outra sessão',
     description:
-      'Manda uma mensagem ao chat de outra sessão aberta. Só pela ligação: precisa existir uma seta do seu lugar para o dela (o Líder único alcança, em cada quadro, quem nenhum outro lugar aponta e quem os Líderes antigos apontavam; sessao_listar diz em "podeMandar"). Se o dono está digitando lá ou há uma permissão aberta, a mensagem fica retida e entra sozinha depois.',
+      'Manda uma mensagem ao chat de outra sessão aberta. Só pela ligação: precisa existir uma seta do seu lugar para o dela (o Líder único alcança, em cada quadro, o topo, onde nenhuma seta do dono nem de abertura aponta, e quem está abaixo dele pelas setas; sessao_listar diz em "podeMandar"). A mensagem vai direto para a fila do Claude de lá; com uma permissão aberta na tela dela, entra assim que ela fechar.',
     inputSchema: {
       type: 'object',
       properties: { para: PLACE_REF, texto: { type: 'string', description: 'A mensagem.' }, quadro: BOARD_REF },
@@ -203,6 +200,14 @@ export const BOARD_TOOLS = [
     description: 'O estado de uma sessão do quadro e o post-it do fim do último turno dela (o resumo do que fez).',
     inputSchema: { type: 'object', properties: { quem: PLACE_REF, quadro: BOARD_REF }, required: ['quem'], additionalProperties: false },
     annotations: { readOnlyHint: true },
+  },
+  {
+    name: 'sessao_fechar',
+    title: 'Fechar uma sessão que você dirige',
+    description:
+      'Fecha a aba de outra sessão e encerra o processo dela. Só com hierarquia: no seu quadro, quem está abaixo de você pelas setas (sua → dela, direta ou em cadeia); em outro quadro, só se você é o Líder de um quadro com alcance "todos" (o dono marca no quadro). O Líder único fecha em qualquer quadro (diga qual em "quadro") quem está no topo dele ou abaixo do topo pelas setas. Nunca a sua. Se ela estiver trabalhando, recebe antes um aviso para pausar e a ferramenta espera o turno acabar (até 20 s). Com um pedido de permissão aberto na tela dela, não fecha. O lugar fica no quadro como "fechada" e o dono retoma com dois cliques: nada se apaga (registro, conversa, worktree). Responde em uma linha: "Fechada." ou "Não fechei: …".',
+    inputSchema: { type: 'object', properties: { quem: PLACE_REF, quadro: BOARD_REF }, required: ['quem'], additionalProperties: false },
+    annotations: { destructiveHint: true },
   },
 ] as const;
 
@@ -344,6 +349,11 @@ export function parseBoardToolCall(name: string, rawArgs: unknown): ParsedBoardC
       const quem = requiredText(args.quem, 'quem', 120);
       if (typeof quem === 'object') return { ok: false, reason: quem.error };
       return { ok: true, call: { tool: 'sessao_ver_tela', quem, ...quadro } };
+    }
+    case 'sessao_fechar': {
+      const quem = requiredText(args.quem, 'quem', 120);
+      if (typeof quem === 'object') return { ok: false, reason: quem.error };
+      return { ok: true, call: { tool: 'sessao_fechar', quem, ...quadro } };
     }
     default:
       return { ok: false, reason: `Ferramenta desconhecida: ${name}` };
@@ -581,5 +591,6 @@ export function describeBoard(doc: MindscapeDoc, projectPath: string, ctx: Board
     }
   });
   const ligacoes = board.links.map((link) => ({ id: link.id, de: link.from, para: link.to, seta: link.arrow, autor: link.by === 'session' ? 'sessao' : 'dono' }));
-  return { projeto: projectPath, ...(ctx.selfPlaceId ? { seuLugar: ctx.selfPlaceId } : {}), lugares, postits, desenhos, ligacoes };
+  const alcance = board.reach === 'all' ? 'todos os quadros' : 'só este quadro';
+  return { projeto: projectPath, alcance, ...(ctx.selfPlaceId ? { seuLugar: ctx.selfPlaceId } : {}), lugares, postits, desenhos, ligacoes };
 }

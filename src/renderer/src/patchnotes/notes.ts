@@ -15,11 +15,64 @@ export interface PatchNoteDay {
 
 export const PATCH_NOTES: readonly PatchNoteDay[] = [
   {
-    date: '2026-11-04',
+    date: '2026-11-05',
     items: [
       {
         title: 'Um Líder só, para todos os quadros',
-        text: 'O Jobu agora fala com um Líder único, que não pertence a nenhum quadro: ele lê e mexe no Donel Dev, na Homologação e no BizOps, abre sessões em qualquer um deles e manda mensagem para quem está no topo de cada quadro (quem nenhum outro lugar aponta com seta) e para quem os Líderes antigos apontavam. Quem ele abre nasce ligado a ele, e ele é avisado quando essas sessões terminam. Os Líderes que cada quadro tinha viram lugares comuns: continuam no quadro com a conversa, mas o Jobu não fala mais com eles. As outras sessões seguem enxergando só o próprio quadro.',
+        text: 'O Jobu agora fala com um Líder único, que não pertence a nenhum quadro: ele lê e mexe no Donel Dev, na Homologação e no BizOps, abre sessões em qualquer um deles, manda mensagem, cria tarefas e fecha sessões. Ele fica acima do topo de cada quadro, então alcança quem está no topo e quem está abaixo pelas setas que você desenhou ou que nasceram quando uma sessão abriu outra; uma seta que uma sessão desenha sozinha não muda isso. Quem ele abre nasce ligado a ele, e ele é avisado quando essas sessões terminam. Só é Líder único a sessão aberta pelo Jobu: um Líder aberto pela VPS ou pelo Launcher continua sendo uma sessão comum. Os Líderes que cada quadro tinha viram lugares comuns: continuam no quadro com a conversa e as setas, mas o Jobu não fala mais com eles.',
+      },
+      {
+        title: 'Rotina em sombra: sessão parada e ninguém vê',
+        text: 'Com o app aberto, uma rotina olha os quadros a cada 5 minutos e anota quando uma sessão está parada (ou sem sinal) há mais de 8 horas, ou esperando você há mais de 30 minutos. Por enquanto ela só observa: ninguém é acordado e nada muda nas sessões. Na barra do Mindscape, "em sombra: N achados hoje" mostra quantas vezes ela teria chamado o Líder daquele quadro; um clique abre a lista. Ela só avisa a mesma sessão uma vez, espera confirmar em duas olhadas seguidas, chama no máximo 5 por hora e 15 por dia, e se desliga sozinha por uma semana quando a maior parte do que aponta se resolve sozinha.',
+      },
+      {
+        title: 'Pasta de envio do navegador: Permitir ou Negar, e fica lembrada',
+        text: 'Quando a sessão quer enviar um arquivo por uma página e a pasta dele ainda não está autorizada, o navegador abre mostrando qual é a pasta, com os botões Permitir e Negar. Antes ela não sabia como pedir e o aviso não dizia o que fazer. A pasta permitida fica guardada: vale para todas as sessões e não some mais quando o app reinicia. Para ver e remover as pastas, abra Regras no navegador, em Envio de arquivos.',
+      },
+      {
+        title: 'Tarefas com prova no topo do Mindscape',
+        text: 'As sessões agora registram as tarefas que passam entre elas: a frase de quem pediu, quando está pronto, o prazo, quem faz e o risco. Ninguém marca uma tarefa como entregue sem anexar prova (print, vídeo, a saída de um comando ou o link do CI), e quem entregou não pode aceitar a própria entrega. Um Revisor aceita as de risco baixo; as de risco alto esperam você. No topo de cada quadro aparece uma faixa com os números: abertas, em execução, entregues sem aceite, esperando você (com a mais velha) e quantas foram validadas sem você. Clique em "esperando você" para ver cada entrega com a prova e aceitar ou rejeitar com um motivo. Na primeira semana, até três aceites do Revisor por dia também aparecem ali, para você conferir.',
+      },
+      {
+        title: 'Validar entregas pelo celular',
+        text: 'Em Preferências, Celular, ligue "App do celular para validar entregas" e toque em "Parear um celular": aponte a câmera do celular para o QR e adicione a página à tela inicial. Cada entrega que espera você vira uma carta, uma por tela: arraste para a direita para aceitar ou para a esquerda para rejeitar, contando o motivo (dá para ditar). Os botões embaixo fazem o mesmo, e o que você decide pelo celular conta como validação sua. Só funciona pela sua Tailscale, nada sai para a internet, e você revoga um celular na mesma tela.',
+      },
+      {
+        title: 'O time do Líder continua fora das abas depois de atualizar',
+        text: 'As sessões que o Líder abriu voltavam para as abas depois de atualizar o app ou de reabri-lo com sessões vivas na VPS. Agora elas voltam como estavam: trabalhando, fora das abas, acompanhadas pelo lugar delas no Mindscape. Dois cliques no lugar continuam trazendo a sessão para as abas.',
+      },
+      {
+        title: 'Retomar avisa enquanto procura a conversa na VPS',
+        text: 'Ao retomar uma sessão cuja conversa não está neste computador, o app pergunta à VPS onde ela está, o que pode levar alguns segundos. Antes o clique parecia não fazer nada; agora aparece "Procurando a conversa…" até a resposta chegar.',
+      },
+      {
+        title: 'Mensagens entre sessões não ficam mais paradas na caixa',
+        text: 'Com o PC carregado, o pedido de uma sessão recém-aberta, e às vezes a mensagem para uma sessão parada, ficava na caixa do terminal (como "[Pasted text #1 …]" ou o próprio texto) e nunca era enviado, até você apertar Enter. Agora o app espera o Claude de lá mostrar a mensagem, aperta o Enter e confere se ela saiu, repetindo só o Enter se precisar (o texto nunca vai duas vezes). Quem mandou só ouve "Entregue" depois que entrou de verdade. E o estado fala a verdade: "começando" enquanto a sessão não pegou o pedido e, depois de um minuto e meio, "não começou" com o motivo, avisado também a quem a abriu.',
+      },
+    ],
+  },
+  {
+    date: '2026-11-04',
+    items: [
+      {
+        title: 'O navegador abre arquivo deste computador',
+        text: 'O HTML que uma sessão gerou agora abre direto no navegador ao lado da conversa, sem sair do app. Vale para página HTML, imagem e PDF: a sessão abre pelo caminho do arquivo, e você também pode colar o caminho (C:\\pasta\\relatorio.html) na barra de endereço. A página aberta não navega para outro arquivo nem mostra a pasta onde está.',
+      },
+      {
+        title: 'O Líder fecha as sessões que abriu',
+        text: 'Uma sessão agora fecha as sessões que estão abaixo dela no quadro (pelas setas, direto ou em cadeia), em vez de deixar as abas para você fechar. Nunca fecha a si mesma nem quem está acima ou ao lado. Só valem as setas que você desenhou e as que nascem quando uma sessão abre outra; uma seta que a própria sessão desenha não a põe acima de ninguém. Para fechar em outro quadro, só o Líder que você pôs num quadro marcado com "Alcance: todos os quadros", botão novo na barra do Mindscape; sem marcar, cada quadro só alcança a si mesmo. Se a outra está trabalhando, recebe antes um aviso para pausar e espera o turno acabar (até 20 segundos). Com um pedido de permissão aberto lá, não fecha. O lugar continua no quadro como "fechada" e dois cliques retomam a conversa. A cópia isolada (worktree) sem mudanças é recolhida como ao fechar a aba; com trabalho pendente, nada se apaga.',
+      },
+      {
+        title: 'Mensagem entre sessões chega sozinha',
+        text: 'A mensagem que uma sessão manda para outra, e o aviso de que uma sessão terminou, agora entram na hora, mesmo com a outra trabalhando: vão para a fila do próprio Claude de lá, como quando você digita no terminal com ele ocupado. Nada fica mais "Retida" esperando você abrir a aba. Só uma permissão aberta na tela de lá segura a mensagem, e ela entra sozinha quando a permissão fecha. Sessão que terminou o turno sem pedir nada não aparece mais como "precisa de você", e cada aviso de término chega uma vez só.',
+      },
+      {
+        title: 'Retomar abre a sessão onde ela vive',
+        text: 'Uma sessão que nasceu na VPS agora retoma na VPS, mesmo que você esteja retomando deste computador: dois cliques no lugar dela no Mindscape ou um clique nos Favoritos. Antes ela abria aqui e falhava, porque a conversa está gravada lá. Se a VPS não responder, o app avisa em vez de abrir uma sessão vazia.',
+      },
+      {
+        title: 'Só o Líder nas abas; o time fica no Mindscape',
+        text: 'As sessões que o Líder abre não aparecem mais nas abas nem na lista da barra lateral: continuam trabalhando e você acompanha cada uma pelo lugar dela no Mindscape. Dois cliques no lugar trazem a sessão para as abas; fechar a aba a esconde de novo, sem parar a sessão. Quando uma delas precisa de você, o aviso continua chegando pelo Jobu, e clicar nele também traz a sessão.',
       },
       {
         title: 'Régua de contexto vai até 500k',
@@ -39,7 +92,7 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
       },
       {
         title: 'Sessões montam o Mindscape e trabalham em time',
-        text: 'Uma sessão agora monta o quadro ao vivo, sem reabrir o app: põe lugares com papel, post-its, retângulos, setas e ligações, e cada leva entra como um gesto só, que o Ctrl+Z desfaz. Ela mexe só no que uma sessão criou, nunca no que é seu. Ela também abre outras sessões com papel (nascem ligadas a ela por uma seta, no mesmo lugar onde ela roda), manda mensagem pelas setas do quadro e é avisada quando cada uma termina. A mensagem entra direto no chat da outra, sem pedir aprovação, e só espera enquanto você digita lá ou há uma permissão aberta. Até 4 sessões abertas por uma mesma sessão; a partir da 5ª, aparece "Precisa de você" para permitir ou negar. Novo papel pronto: Líder, que reparte o trabalho e só traz a você o que o time não resolve.',
+        text: 'Uma sessão agora monta o quadro ao vivo, sem reabrir o app: põe lugares com papel, post-its, retângulos, setas e ligações, e cada leva entra como um gesto só, que o Ctrl+Z desfaz. Ela mexe só no que uma sessão criou, nunca no que é seu. Ela também abre outras sessões com papel (nascem ligadas a ela por uma seta, no mesmo lugar onde ela roda), manda mensagem pelas setas do quadro e é avisada quando cada uma termina. A mensagem entra direto no chat da outra, sem pedir aprovação, e só espera se houver uma permissão aberta na tela de lá. Até 4 sessões abertas por uma mesma sessão; a partir da 5ª, aparece "Precisa de você" para permitir ou negar. Novo papel pronto: Líder, que reparte o trabalho e só traz a você o que o time não resolve.',
       },
       {
         title: 'Sessão na VPS abre direto, sem tela de primeiro uso',

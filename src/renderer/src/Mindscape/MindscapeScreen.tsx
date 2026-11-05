@@ -18,6 +18,7 @@ import {
   archiveCard,
   editOwnerCard,
   placeCardId,
+  setBoardReach,
   placeOfSession,
   removeLink,
   setOwnerColor,
@@ -40,7 +41,9 @@ import { MindscapeLinkLayer, MindscapeOutlineLayer, useCardSizes } from './Minds
 import { MindscapeNoteCard, MindscapeOwnerCard, MindscapeSessionCard, STRIPE_BY_TOKEN, type PlaceRoleSeal } from './MindscapeCard';
 import { RoleMenu } from './RoleMenu';
 import { MindscapeSelectionLayer } from './MindscapeSelectionLayer';
+import { LedgerStrip } from './LedgerStrip';
 import { MindscapeToolbar, type DrawStyle } from './MindscapeToolbar';
+import { ShadowRoutines } from './ShadowRoutines';
 import { preparePrint, useMindscapeImages } from './useMindscapeImage';
 import styles from './Mindscape.module.css';
 
@@ -620,6 +623,7 @@ export function MindscapeScreen({
           </button>
         ))}
       </div>
+      <LedgerStrip projectPath={activePath} />
       <MindscapeToolbar
         enabled={Boolean(board)}
         tool={tool}
@@ -646,6 +650,24 @@ export function MindscapeScreen({
           const createdAt = Date.now();
           setCreatedCardId(id);
           onAction(projectPath, (current) => addOwnerCard(current, projectPath, { id, createdAt, origin }));
+        }}
+        shadow={
+          <ShadowRoutines
+            projectPath={board?.projectPath}
+            placeName={(placeId) => {
+              const card = board?.cards[placeId];
+              if (card?.kind !== 'session' || !card.sessionId) return undefined;
+              const sessionId = card.sessionId;
+              return boardSessions.find((session) => session.sessionId === sessionId)?.name ?? dormantName(sessionId);
+            }}
+          />
+        }
+        reach={board?.reach ?? 'own'}
+        onToggleReach={() => {
+          if (!board) return;
+          const { projectPath } = board;
+          const next = board.reach === 'all' ? 'own' : 'all';
+          onAction(projectPath, (current) => setBoardReach(current, projectPath, next));
         }}
         roles={roles}
         onNewPlace={(roleId) => {
