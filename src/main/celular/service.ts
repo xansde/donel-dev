@@ -17,7 +17,7 @@ import { PWA_ASSETS } from './assets';
 import { createCelularAuth, type CelularAuth } from './auth';
 import { allowFirewallRule, readFirewallRule, readTailnet } from './firewall';
 import type { LedgerService } from '../ledger-store';
-import { createLedgerMobilePort, type MobileLedgerPort } from './ledger-port';
+import { createLedgerMobilePort, type MobileLedgerPort, type PlaceNameOf } from './ledger-port';
 import { qrSvg } from './qr';
 import { createMobileHandler, MOBILE_PORT, startMobileServer, type MobileServer } from './server';
 import { pickTailscaleAddress } from './tailscale';
@@ -31,6 +31,8 @@ export interface CelularServiceDeps {
   readonly provasRoot: string;
   /** Só a janela principal mexe nisto. */
   readonly isMainSender: (sender: Electron.WebContents) => boolean;
+  /** O nome de um lugar no quadro, para a carta dizer quem fez (nunca o id). */
+  readonly placeName?: PlaceNameOf;
 }
 
 export interface CelularService {
@@ -39,7 +41,7 @@ export interface CelularService {
 
 export function createCelularService(deps: CelularServiceDeps): CelularService {
   const auth: CelularAuth = createCelularAuth({ filePath: join(deps.userDataDir, 'celular.json'), io: deps.io });
-  const ledger: MobileLedgerPort = createLedgerMobilePort(deps.ledger);
+  const ledger: MobileLedgerPort = createLedgerMobilePort(deps.ledger, deps.placeName);
   const handler = createMobileHandler({
     auth,
     ledger: () => ledger,

@@ -50,7 +50,8 @@ verde; um PR por fatia contra `staging`; patch note em toda fatia visível.
 
 ### 02 — Carta A no celular
 
-- **Status**: pronta
+- **Status**: implementada
+- **Branch**: `feat/cartas-forma-a-02-celular` (empilhada na 01)
 - **Depende de**: 01
 - **Propósito**: frente e verso lendo o bloco; opções com nome decidindo; quadro de checagens; verso
   único para entrega sem bloco; nenhum id fora de "Detalhes técnicos".

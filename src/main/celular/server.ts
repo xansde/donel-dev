@@ -18,6 +18,7 @@ import { isTailscaleAddress } from './tailscale';
 export const MOBILE_PORT = 47815;
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_MOTIVO = 2000;
+const MAX_OPCAO = 80;
 
 export interface MobileAsset {
   readonly contentType: string;
@@ -87,19 +88,22 @@ export function createMobileHandler(deps: MobileHandlerDeps): (request: MobileRe
   function decide(body: string): MobileResponse {
     const input = parseJson(body);
     if (!input) return json(400, { erro: 'pedido-invalido' });
-    const { pedidoId, itemId, decisao, motivo } = input;
+    const { pedidoId, itemId, decisao, motivo, opcao } = input;
     // O pedidoId vai gravado com a decisão no ledger: um reenvio (a rede caiu, o app reiniciou) recebe a mesma
     // resposta sem gravar de novo. Recusa não fica guardada: uma falha passageira pode dar certo no reenvio.
     if (!isRequestId(pedidoId)) return json(400, { erro: 'pedido-invalido' });
     if (typeof itemId !== 'string' || itemId.length === 0 || itemId.length > 200) return json(400, { erro: 'pedido-invalido' });
     if (decisao !== 'aceitar' && decisao !== 'rejeitar') return json(400, { erro: 'pedido-invalido' });
+    if (opcao !== undefined && (typeof opcao !== 'string' || opcao.trim().length === 0 || opcao.length > MAX_OPCAO)) return json(400, { erro: 'pedido-invalido' });
     const reason = typeof motivo === 'string' ? motivo.trim().slice(0, MAX_MOTIVO) : '';
-    if (decisao === 'rejeitar' && reason.length === 0) return json(400, { erro: 'motivo-obrigatorio' });
+    // Uma opção que fecha como rejeitada já é o motivo (o ledger confere que ela existe e fecha assim).
+    if (decisao === 'rejeitar' && reason.length === 0 && opcao === undefined) return json(400, { erro: 'motivo-obrigatorio' });
     const outcome = deps.ledger().decidir({
       pedidoId,
       itemId,
       decisao: decisao as DecisaoCelular,
       motivo: decisao === 'rejeitar' ? reason : null,
+      ...(typeof opcao === 'string' ? { opcao } : {}),
     });
     return outcome.ok
       ? json(200, { ok: true, estado: outcome.estado })

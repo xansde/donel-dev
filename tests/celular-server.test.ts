@@ -195,4 +195,24 @@ describe('servidor do celular', () => {
     expect(call('POST', '/api/decidir', token, pedido).status).toBe(200);
     expect(decisions(second)).toEqual([expect.objectContaining({ kind: 'rejeitada', by: { kind: 'dono' }, text: 'falta o teste' })]);
   });
+  it('a carta A leva o nome do lugar e não o id; escolher a opção que rejeita grava a opção uma vez, sem motivo digitado', () => {
+    const { auth, ledger, second, decisions, call, pairWith } = setup();
+    const token = bodyOf(pairWith(auth.createPairingCode().code)).token as string;
+    const port = createLedgerMobilePort(() => ledger, (projectPath, placeId) => (projectPath === 'C:/proj/atlas' && placeId === 'p-dev' ? 'painel do Jobu' : undefined));
+    const item = port.pendentes().find((entry) => entry.id === second)!;
+    expect(item.quemEntregou).toBe('Dev · painel do Jobu');
+    expect(item.carta).toMatchObject({ pergunta: FOR_OWNER.question, opcoes: [{ rotulo: 'Aceitar', recomendada: true }, { rotulo: 'Refazer', fecha: 'rejeitada' }] });
+    // `id` só endereça a API; `ids`, provas, pedido e critério ficam nos recolhidos do verso.
+    const { id, ids, provas, pedido, criterio, ...front } = item;
+    expect(id).toBe(second);
+    expect(JSON.stringify(front)).not.toMatch(/p-dev|t-\d/);
+    expect(ids.join(' ')).toContain('p-dev');
+
+    // Opção que não existe, ou que fecha do outro jeito: recusada sem gravar.
+    expect(call('POST', '/api/decidir', token, { pedidoId: 'pedido-0005', itemId: second, decisao: 'aceitar', opcao: 'Refazer' }).status).toBe(409);
+    const escolha = { pedidoId: 'pedido-0006', itemId: second, decisao: 'rejeitar', opcao: 'Refazer' };
+    expect(call('POST', '/api/decidir', token, escolha).status).toBe(200);
+    expect(call('POST', '/api/decidir', token, escolha).status).toBe(200);
+    expect(decisions(second)).toEqual([expect.objectContaining({ kind: 'rejeitada', by: { kind: 'dono' }, option: 'Refazer', text: 'Refazer' })]);
+  });
 });
