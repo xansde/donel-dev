@@ -24,7 +24,6 @@
 
   var baralho = document.getElementById('baralho');
   var contagem = document.getElementById('contagem');
-  var demo = document.getElementById('demo');
   var aviso = document.getElementById('aviso');
   var folha = document.getElementById('folha');
   var folhaForm = document.getElementById('folha-form');
@@ -194,7 +193,6 @@
       })
       .then(function (dados) {
         limparBaralho();
-        demo.hidden = !dados.demo;
         var itens = Array.isArray(dados.itens) ? dados.itens : [];
         total = itens.length;
         atualizarContagem();
@@ -290,7 +288,9 @@
     var indice = el('span', 'indice', romano(posicao) + ' · ' + romano(quantas));
     indice.setAttribute('aria-label', 'Carta ' + posicao + ' de ' + quantas);
     interna.appendChild(indice);
-    interna.appendChild(el('p', amostra ? 'faixa faixa-amostra' : 'faixa', amostra ? 'Amostra do dia · aceita por ' + (item.aceitoPor || 'Revisor') : 'Esperando você'));
+    interna.appendChild(
+      el('p', amostra ? 'faixa faixa-amostra' : 'faixa', amostra ? 'Amostra do dia · aceita por ' + (item.aceitoPor || 'Revisor') : item.risco === 'alto' ? 'Risco alto · esperando você' : 'Esperando você'),
+    );
 
     var corpo = el('div', 'carta-corpo');
     corpo.appendChild(el('h2', 'titulo', item.titulo));
@@ -302,6 +302,12 @@
     blocoCriterio.appendChild(el('h3', null, 'Pronto quando'));
     blocoCriterio.appendChild(el('p', null, item.criterio));
     corpo.appendChild(blocoCriterio);
+    if (item.nota) {
+      var blocoNota = el('section', 'bloco');
+      blocoNota.appendChild(el('h3', null, 'Nota de quem entregou'));
+      blocoNota.appendChild(el('p', null, item.nota));
+      corpo.appendChild(blocoNota);
+    }
     if (Array.isArray(item.provas) && item.provas.length > 0) {
       var provas = el('section', 'provas');
       provas.appendChild(el('h3', null, item.provas.length === 1 ? 'Prova' : 'Provas'));
@@ -433,11 +439,17 @@
     if (textoMotivo) corpo.motivo = textoMotivo;
     enviarDecisao(corpo, 0)
       .then(function (resposta) {
-        if (resposta.ok || resposta.status === 409 || resposta.status === 404) {
-          if (resposta.status === 409) avisar('Esta entrega já tinha sido decidida.');
-          else if (resposta.ok) avisar(decisao === 'aceitar' ? 'Aceita.' : 'Rejeitada. O motivo foi para quem entregou.');
+        if (resposta.ok || resposta.status === 404) {
+          if (resposta.ok) avisar(decisao === 'aceitar' ? 'Aceita.' : 'Rejeitada. O motivo foi para quem entregou.');
           remover(ctx);
           return;
+        }
+        if (resposta.status === 409) {
+          // O ledger recusou (já decidida, só leitura…): nada foi gravado. Mostra o motivo dele e refaz a fila.
+          return resposta.json().then(function (dados) {
+            avisar(dados && dados.mensagem ? 'Não gravou: ' + dados.mensagem : 'Não gravou.');
+            carregar();
+          });
         }
         throw new Error('falhou');
       })

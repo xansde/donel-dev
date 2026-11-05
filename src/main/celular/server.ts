@@ -102,12 +102,10 @@ export function createMobileHandler(deps: MobileHandlerDeps): (request: MobileRe
       itemId,
       decisao: decisao as DecisaoCelular,
       motivo: decisao === 'rejeitar' ? reason : null,
-      autor: 'dono',
-      via: 'celular',
     });
     const response = outcome.ok
       ? json(200, { ok: true, estado: outcome.estado })
-      : json(outcome.reason === 'nao-encontrada' ? 404 : 409, { erro: outcome.reason });
+      : json(outcome.reason === 'nao-encontrada' ? 404 : 409, { erro: outcome.reason, mensagem: outcome.message });
     answered.set(pedidoId, response);
     if (answered.size > IDEMPOTENCY_CAP) answered.delete(answered.keys().next().value as string);
     return response;
@@ -150,10 +148,7 @@ export function createMobileHandler(deps: MobileHandlerDeps): (request: MobileRe
 
     if (!deps.auth.verify(bearer(request.authorization))) return json(401, { erro: 'nao-pareado' });
 
-    if (path === '/api/fila' && method === 'GET') {
-      const ledger = deps.ledger();
-      return json(200, { demo: ledger.demo, itens: ledger.pendentes() });
-    }
+    if (path === '/api/fila' && method === 'GET') return json(200, { itens: deps.ledger().pendentes() });
     if (path === '/api/decidir' && method === 'POST') return decide(request.body);
     if (path === '/api/prova' && method === 'GET') return proof(parsed.searchParams);
     return json(404, { erro: 'nao-encontrada' });

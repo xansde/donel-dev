@@ -1,24 +1,25 @@
-// Ledger no celular — o que o servidor do celular precisa do ledger, e um adaptador de demonstração com a
-// mesma forma. O ledger V1 (`src/shared/ledger/`, ferramentas `tarefa_*`, provas em `<userData>/ledger-provas/`,
-// aceitar/rejeitar como função pura do main com autor registrado) chega em outro PR; quando chegar, um
-// adaptador real implementa esta interface e toma o lugar do de demonstração no `service.ts`.
+// Ledger no celular — o que o servidor do celular precisa do ledger, e o adaptador sobre o ledger V1
+// (`src/shared/ledger/contract.ts`, `src/main/ledger-store.ts`). Decidir passa pelo MESMO
+// `LedgerService.apply` da faixa do Mindscape, com autor `{ kind: 'dono' }`: o aceite pelo celular conta
+// como validação humana, e as regras (quem entregou não decide, risco, amostra do Revisor) são as do contrato.
 
-import type { DecisaoCelular, EntregaCelular } from '../../shared/celular';
+import { basename } from 'node:path';
+import type { DecisaoCelular, EntregaCelular, ProvaCelular } from '../../shared/celular';
+import { naipeDoTipo } from '../../shared/celular';
+import { lastDecision, lastDelivery, ownerQueue, waitsForOwner, type LedgerActor, type LedgerProof, type LedgerTask } from '../../shared/ledger/contract';
+import type { LedgerService } from '../ledger-store';
 
 export interface DecisaoInput {
   readonly itemId: string;
   readonly decisao: DecisaoCelular;
   /** Obrigatório ao rejeitar. */
   readonly motivo: string | null;
-  /** Quem decide pelo celular é sempre o dono: conta como validação humana. */
-  readonly autor: 'dono';
-  readonly via: 'celular';
 }
 
 export type DecisaoOutcome =
   | { readonly ok: true; readonly estado: 'aceita' | 'rejeitada' }
-  /** A entrega não existe ou já não espera o dono (outra pessoa decidiu antes, por exemplo). */
-  | { readonly ok: false; readonly reason: 'nao-encontrada' | 'ja-decidida' };
+  /** `nao-encontrada`: a entrega não existe; `recusada`: o ledger recusou (já decidida, só leitura…), com o motivo dele. */
+  | { readonly ok: false; readonly reason: 'nao-encontrada' | 'recusada'; readonly message: string };
 
 /** A prova como arquivo copiado pelo ledger (`filePath` dentro de `ledger-provas/`) ou bytes em memória. */
 export type ProvaFonte =
@@ -26,96 +27,114 @@ export type ProvaFonte =
   | { readonly mediaType: string; readonly bytes: Uint8Array };
 
 export interface MobileLedgerPort {
-  /** `true` enquanto o ledger real não chegou: o celular avisa que é demonstração. */
-  readonly demo: boolean;
-  /** O que espera o dono: entregues aguardando aceite humano + a amostra do dia dos aceites do Revisor. */
+  /** O que espera o dono: entregas de risco alto + a amostra do dia dos aceites do Revisor (D2). */
   pendentes(): EntregaCelular[];
-  /** Grava a decisão no ledger. Recusa (sem gravar) o que não está mais esperando o dono. */
+  /** Grava a decisão do dono no ledger. Recusa (sem gravar) o que não está mais esperando o dono. */
   decidir(input: DecisaoInput): DecisaoOutcome;
   prova(itemId: string, provaId: string): ProvaFonte | null;
 }
 
-// ---------------------------------------------------------------------------
-// Demonstração (em memória; volta ao começo quando o app reinicia)
+const ROLE_LABELS: Readonly<Record<string, string>> = {
+  dev: 'Dev',
+  revisor: 'Revisor',
+  pesquisa: 'Pesquisa',
+  lider: 'Líder',
+};
 
-const DEMO_PRINT = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 220"><rect width="360" height="220" rx="10" fill="#1d1b26"/><rect x="14" y="14" width="332" height="26" rx="6" fill="#2c2838"/><circle cx="30" cy="27" r="5" fill="#d46a5a"/><circle cx="46" cy="27" r="5" fill="#d9b44a"/><circle cx="62" cy="27" r="5" fill="#6aa86a"/><rect x="14" y="54" width="200" height="12" rx="4" fill="#8f86b0"/><rect x="14" y="76" width="300" height="10" rx="4" fill="#4b4560"/><rect x="14" y="94" width="260" height="10" rx="4" fill="#4b4560"/><rect x="14" y="128" width="140" height="64" rx="8" fill="#3d6b55"/><text x="84" y="166" text-anchor="middle" font-family="sans-serif" font-size="16" fill="#e8f2ec">Salvo</text></svg>`;
-
-export interface DemoLedger extends MobileLedgerPort {
-  /** Quantas decisões o "ledger" gravou (para o teste do grava-uma-vez). */
-  readonly gravacoes: readonly DecisaoInput[];
+function actorLabel(actor: LedgerActor | undefined): string {
+  if (!actor) return 'alguém';
+  if (actor.kind === 'dono') return 'você';
+  const role = actor.roleId ?? '';
+  return ROLE_LABELS[role] ?? ROLE_LABELS[role.split('-')[0] ?? ''] ?? (role || 'um lugar');
 }
 
-export function createDemoLedger(now: () => number = Date.now): DemoLedger {
-  const hoursAgo = (h: number): string => new Date(now() - h * 3_600_000).toISOString();
-  const itens: EntregaCelular[] = [
-    {
-      id: 'demo-1',
-      origem: 'esperando-voce',
-      naipe: 'martelos',
-      titulo: 'Botão de salvar no editor de papéis',
-      pedido: 'quero salvar o papel sem fechar a janela',
-      criterio: 'Salvar grava e a janela continua aberta, com "Salvo" visível por 2 segundos.',
-      quemEntregou: 'Dev (atlas)',
-      entregueEm: hoursAgo(1),
-      provas: [
-        { id: 'p1', tipo: 'imagem', rotulo: 'Print depois de salvar' },
-        { id: 'p2', tipo: 'comando', rotulo: 'npm test', texto: ' ✓ tests/roles.test.ts (4)\n\n Test Files  1 passed (1)\n      Tests  4 passed (4)' },
-      ],
-    },
-    {
-      id: 'demo-2',
-      origem: 'esperando-voce',
-      naipe: 'escudos',
-      titulo: 'Mensagem entre sessões não duplica',
-      pedido: 'a mensagem chegou duas vezes na outra sessão',
-      criterio: 'Uma mensagem enviada aparece uma vez só no chat de destino, mesmo com a sessão ocupada.',
-      quemEntregou: 'Dev (beacon)',
-      entregueEm: hoursAgo(3),
-      provas: [{ id: 'p1', tipo: 'link', rotulo: 'PR com o teste', url: 'https://github.com/' }],
-    },
-    {
-      id: 'demo-3',
-      origem: 'amostra-revisor',
-      naipe: 'livros',
-      titulo: 'Glossário ganha "lugar remoto"',
-      pedido: 'documenta o que é lugar remoto',
-      criterio: 'O termo está no glossário com uma frase e um exemplo.',
-      quemEntregou: 'Pesquisa (vega)',
-      entregueEm: hoursAgo(20),
-      aceitoPor: 'Revisor',
-      provas: [{ id: 'p1', tipo: 'comando', rotulo: 'git diff --stat', texto: ' docs/glossario.md | 6 ++++++\n 1 file changed, 6 insertions(+)' }],
-    },
-    {
-      id: 'demo-4',
-      origem: 'esperando-voce',
-      naipe: 'coroas',
-      titulo: 'Escolher a porta do app do celular',
-      pedido: 'decide você a porta, mas me mostra',
-      criterio: 'A porta fica fixa e aparece nas Preferências.',
-      quemEntregou: 'Dev (atlas)',
-      entregueEm: hoursAgo(26),
-      provas: [{ id: 'p1', tipo: 'comando', rotulo: 'Endereço', texto: 'http://100.x.y.z:47815' }],
-    },
-  ];
-  const decididas = new Map<string, 'aceita' | 'rejeitada'>();
-  const gravacoes: DecisaoInput[] = [];
+/** O contrato ainda não tem tipo de trabalho: o naipe sai do papel de quem entregou (decidido pelo Dev). */
+function naipeDoPapel(roleId: string | undefined): EntregaCelular['naipe'] {
+  const role = (roleId ?? '').split('-')[0];
+  if (role === 'pesquisa') return naipeDoTipo('pesquisa');
+  if (role === 'revisor') return naipeDoTipo('revisao');
+  if (role === 'lider') return naipeDoTipo('decisao');
+  if (role === 'seguranca') return naipeDoTipo('seguranca');
+  if (role === 'correcao' || role === 'fix') return naipeDoTipo('correcao');
+  return naipeDoTipo('construcao');
+}
 
+function provaCelular(proof: LedgerProof, index: number): ProvaCelular {
+  const id = String(index);
+  switch (proof.kind) {
+    case 'arquivo':
+      return proof.mediaType.startsWith('video/') ? { id, tipo: 'video', rotulo: 'Vídeo' } : { id, tipo: 'imagem', rotulo: 'Print' };
+    case 'texto':
+      return { id, tipo: 'comando', rotulo: 'Saída', texto: proof.text };
+    case 'link':
+      return { id, tipo: 'link', rotulo: 'Link', url: proof.url };
+  }
+}
+
+function entregaCelular(task: LedgerTask): EntregaCelular {
+  const delivery = lastDelivery(task);
+  const decision = lastDecision(task);
+  const sample = task.state === 'aceita';
+  const deliveredBy = delivery?.by;
   return {
-    demo: true,
-    gravacoes,
-    pendentes: () => itens.filter((item) => !decididas.has(item.id)),
+    id: task.id,
+    origem: sample ? 'amostra-revisor' : 'esperando-voce',
+    naipe: naipeDoPapel(deliveredBy?.kind === 'lugar' ? deliveredBy.roleId : undefined),
+    titulo: `${basename(task.projectPath) || task.projectPath} · prazo ${task.due.split('-').reverse().join('/')}`,
+    pedido: task.request,
+    criterio: task.doneWhen,
+    quemEntregou: actorLabel(deliveredBy),
+    entregueEm: new Date(delivery?.at ?? task.createdAt).toISOString(),
+    ...(delivery?.text ? { nota: delivery.text } : {}),
+    ...(sample && decision ? { aceitoPor: actorLabel(decision.by) } : {}),
+    risco: task.risk,
+    provas: (delivery?.proofs ?? []).map(provaCelular),
+  };
+}
+
+/** O adaptador sobre o ledger V1. `getService` é `null` enquanto o ledger não abriu. */
+export function createLedgerMobilePort(getService: () => LedgerService | null): MobileLedgerPort {
+  const doc = () => {
+    try {
+      return getService()?.load().doc ?? null;
+    } catch {
+      return null; // arquivo ilegível: o celular mostra a fila vazia, nunca uma fila inventada
+    }
+  };
+  return {
+    pendentes() {
+      const current = doc();
+      return current ? ownerQueue(current, null).map(entregaCelular) : [];
+    },
     decidir(input) {
-      const item = itens.find((i) => i.id === input.itemId);
-      if (!item) return { ok: false, reason: 'nao-encontrada' };
-      if (decididas.has(item.id)) return { ok: false, reason: 'ja-decidida' };
-      const estado = input.decisao === 'aceitar' ? 'aceita' : 'rejeitada';
-      decididas.set(item.id, estado);
-      gravacoes.push(input);
-      return { ok: true, estado };
+      const service = getService();
+      if (!service) return { ok: false, reason: 'recusada', message: 'O ledger não abriu neste app.' };
+      let current;
+      try {
+        current = service.load().doc;
+      } catch (error) {
+        return { ok: false, reason: 'recusada', message: `Não consegui ler o ledger (${error instanceof Error ? error.message : String(error)}).` };
+      }
+      const task = current.tasks[input.itemId];
+      if (!task) return { ok: false, reason: 'nao-encontrada', message: 'Esta entrega não existe mais.' };
+      // Pelo celular só se decide o que está na fila do dono (o mesmo que a faixa do Mindscape mostra).
+      if (!waitsForOwner(current, task)) return { ok: false, reason: 'recusada', message: 'Esta entrega já não espera você.' };
+      const result =
+        input.decisao === 'aceitar'
+          ? service.apply({ kind: 'dono' }, { op: 'aceitar', id: task.id })
+          : service.apply({ kind: 'dono' }, { op: 'rejeitar', id: task.id, reason: input.motivo ?? '' });
+      if (!result.ok) return { ok: false, reason: 'recusada', message: result.reason };
+      return { ok: true, estado: result.task.state === 'rejeitada' ? 'rejeitada' : 'aceita' };
     },
     prova(itemId, provaId) {
-      if (itemId === 'demo-1' && provaId === 'p1') return { mediaType: 'image/svg+xml', bytes: new TextEncoder().encode(DEMO_PRINT) };
-      return null;
+      const service = getService();
+      const current = doc();
+      const task = current?.tasks[itemId];
+      if (!service || !task || !/^\d{1,2}$/.test(provaId)) return null;
+      const proof = lastDelivery(task)?.proofs?.[Number(provaId)];
+      if (!proof || proof.kind !== 'arquivo') return null;
+      const filePath = service.proofPath(proof);
+      return filePath ? { mediaType: proof.mediaType, filePath } : null;
     },
   };
 }

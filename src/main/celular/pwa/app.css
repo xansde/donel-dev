@@ -128,16 +128,6 @@ svg {
   height: 20px;
 }
 
-.demo {
-  margin: 0 16px 6px;
-  padding: 8px 12px;
-  border-radius: 8px;
-  border: 1px dashed var(--ouro);
-  color: var(--tinta-suave);
-  font-size: 0.8rem;
-  line-height: 1.35;
-}
-
 /* ---- baralho: uma carta por tela, rolagem vertical que encaixa ---- */
 
 .baralho {

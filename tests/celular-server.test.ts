@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { ConfigIoDeps } from '../src/main/config-store';
 import { createCelularAuth } from '../src/main/celular/auth';
-import { createDemoLedger } from '../src/main/celular/ledger-port';
+import { createLedgerMobilePort } from '../src/main/celular/ledger-port';
+import { createLedgerService, type LedgerProofFs } from '../src/main/ledger-store';
+import type { LedgerActor } from '../src/shared/ledger/contract';
 import { createMobileHandler, startMobileServer, type MobileResponse } from '../src/main/celular/server';
 import { pickTailscaleAddress } from '../src/main/celular/tailscale';
 
@@ -9,6 +11,15 @@ import { pickTailscaleAddress } from '../src/main/celular/tailscale';
 // Tailscale, ou uma decisão do celular gravar duas vezes no ledger.
 
 const FILE = 'C:/data/celular.json';
+const LEDGER = 'C:/data/ledger.json';
+const LIDER: LedgerActor = { kind: 'lugar', placeId: 'p-lider', roleId: 'lider' };
+const DEV: LedgerActor = { kind: 'lugar', placeId: 'p-dev', roleId: 'dev' };
+const noProofFs: LedgerProofFs = {
+  stat: () => Promise.reject(new Error('sem arquivo')),
+  mkdir: () => Promise.resolve(),
+  copyFile: () => Promise.reject(new Error('sem arquivo')),
+  unlink: () => Promise.resolve(),
+};
 
 function memoryIo(): ConfigIoDeps {
   const files: Record<string, string> = {};
@@ -29,15 +40,30 @@ function memoryIo(): ConfigIoDeps {
   };
 }
 
+/** Uma entrega de risco alto, entregue pelo Dev com prova: espera o dono. */
+function deliveredTask(ledger: ReturnType<typeof createLedgerService>, request: string): string {
+  const created = ledger.apply(LIDER, { op: 'criar', projectPath: 'C:/proj/atlas', request, doneWhen: 'pronto', due: '2026-11-10', ownerPlaceId: 'p-dev', risk: 'alto' });
+  if (!created.ok) throw new Error(created.reason);
+  const id = created.task.id;
+  expect(ledger.apply(DEV, { op: 'assumir', id }).ok).toBe(true);
+  expect(ledger.apply(DEV, { op: 'entregar', id, proofs: [{ kind: 'texto', text: '4 passed' }] }).ok).toBe(true);
+  return id;
+}
+
 function setup() {
   const io = memoryIo();
   const auth = createCelularAuth({ filePath: FILE, io });
-  const ledger = createDemoLedger();
-  const handle = createMobileHandler({ auth, ledger: () => ledger, assets: {}, provasRoot: null });
+  let seq = 0;
+  const ledger = createLedgerService({ filePath: LEDGER, io, proofFs: noProofFs, newId: () => `t-${++seq}` });
+  const first = deliveredTask(ledger, 'quero salvar sem fechar');
+  const second = deliveredTask(ledger, 'a mensagem chegou duas vezes');
+  const port = createLedgerMobilePort(() => ledger);
+  const handle = createMobileHandler({ auth, ledger: () => port, assets: {}, provasRoot: null });
   const call = (method: string, url: string, token?: string | null, body?: unknown): MobileResponse =>
     handle({ method, url, authorization: token ? `Bearer ${token}` : undefined, body: body === undefined ? '' : JSON.stringify(body) });
   const pairWith = (code: string): MobileResponse => call('POST', '/api/parear', null, { codigo: code, aparelho: 'iPhone' });
-  return { io, auth, ledger, call, pairWith };
+  const decisions = (id: string) => ledger.load().doc.tasks[id]!.events.filter((event) => event.kind === 'aceita' || event.kind === 'rejeitada');
+  return { io, auth, ledger, first, second, decisions, call, pairWith };
 }
 
 function bodyOf(response: MobileResponse): Record<string, unknown> {
@@ -59,13 +85,13 @@ describe('servidor do celular', () => {
   });
 
   it('recusa /api sem token válido; o código de pareamento vale uma vez; token revogado para de valer', () => {
-    const { auth, ledger, call, pairWith } = setup();
+    const { auth, first, decisions, call, pairWith } = setup();
 
     expect(call('GET', '/api/fila').status).toBe(401);
     expect(call('GET', '/api/fila', 'inventado').status).toBe(401);
-    expect(call('POST', '/api/decidir', null, { pedidoId: 'abcdefgh1', itemId: 'demo-1', decisao: 'aceitar' }).status).toBe(401);
-    expect(call('GET', '/api/prova?item=demo-1&prova=p1').status).toBe(401);
-    expect(ledger.gravacoes).toHaveLength(0);
+    expect(call('POST', '/api/decidir', null, { pedidoId: 'abcdefgh1', itemId: first, decisao: 'aceitar' }).status).toBe(401);
+    expect(call('GET', `/api/prova?item=${first}&prova=0`).status).toBe(401);
+    expect(decisions(first)).toHaveLength(0);
 
     // sem convite aberto, nada pareia
     expect(pairWith('qualquer').status).toBe(403);
@@ -76,7 +102,9 @@ describe('servidor do celular', () => {
     const token = bodyOf(paired).token as string;
     expect(pairWith(code).status).toBe(403); // uso único
 
-    expect(call('GET', '/api/fila', token).status).toBe(200);
+    const fila = call('GET', '/api/fila', token);
+    expect(fila.status).toBe(200);
+    expect((bodyOf(fila).itens as { id: string }[]).map((item) => item.id)).toEqual([first, expect.any(String)]);
     const [device] = auth.devices();
     auth.revoke(device.id);
     expect(call('GET', '/api/fila', token).status).toBe(401);
@@ -92,33 +120,34 @@ describe('servidor do celular', () => {
   });
 
   it('aceitar pelo celular grava no ledger uma vez só, com autor dono', () => {
-    const { auth, ledger, call, pairWith } = setup();
+    const { auth, ledger, first, decisions, call, pairWith } = setup();
     const token = bodyOf(pairWith(auth.createPairingCode().code)).token as string;
 
-    const pedido = { pedidoId: 'pedido-0001', itemId: 'demo-1', decisao: 'aceitar' };
-    const first = call('POST', '/api/decidir', token, pedido);
+    const pedido = { pedidoId: 'pedido-0001', itemId: first, decisao: 'aceitar' };
+    const firstCall = call('POST', '/api/decidir', token, pedido);
     const retry = call('POST', '/api/decidir', token, pedido); // a rede caiu e o celular reenviou
-    expect(first.status).toBe(200);
+    expect(firstCall.status).toBe(200);
     expect(retry.status).toBe(200);
-    expect(bodyOf(retry)).toEqual(bodyOf(first));
+    expect(bodyOf(retry)).toEqual(bodyOf(firstCall));
 
     // outro pedido para a mesma entrega (dois toques, outro celular): recusado, sem gravar
     expect(call('POST', '/api/decidir', token, { ...pedido, pedidoId: 'pedido-0002', decisao: 'rejeitar', motivo: 'não' }).status).toBe(409);
 
-    expect(ledger.gravacoes).toEqual([{ itemId: 'demo-1', decisao: 'aceitar', motivo: null, autor: 'dono', via: 'celular' }]);
-    expect(ledger.pendentes().some((item) => item.id === 'demo-1')).toBe(false);
+    expect(decisions(first)).toEqual([expect.objectContaining({ kind: 'aceita', by: { kind: 'dono' } })]);
+    expect(ledger.load().doc.tasks[first]!.state).toBe('aceita');
+    expect((bodyOf(call('GET', '/api/fila', token)).itens as { id: string }[]).some((item) => item.id === first)).toBe(false);
   });
 
   it('rejeitar sem motivo não grava; com motivo grava uma vez', () => {
-    const { auth, ledger, call, pairWith } = setup();
+    const { auth, second, decisions, call, pairWith } = setup();
     const token = bodyOf(pairWith(auth.createPairingCode().code)).token as string;
 
-    expect(call('POST', '/api/decidir', token, { pedidoId: 'pedido-0003', itemId: 'demo-2', decisao: 'rejeitar', motivo: '   ' }).status).toBe(400);
-    expect(ledger.gravacoes).toHaveLength(0);
+    expect(call('POST', '/api/decidir', token, { pedidoId: 'pedido-0003', itemId: second, decisao: 'rejeitar', motivo: '   ' }).status).toBe(400);
+    expect(decisions(second)).toHaveLength(0);
 
-    const pedido = { pedidoId: 'pedido-0004', itemId: 'demo-2', decisao: 'rejeitar', motivo: 'falta o teste' };
+    const pedido = { pedidoId: 'pedido-0004', itemId: second, decisao: 'rejeitar', motivo: 'falta o teste' };
     expect(call('POST', '/api/decidir', token, pedido).status).toBe(200);
     expect(call('POST', '/api/decidir', token, pedido).status).toBe(200);
-    expect(ledger.gravacoes).toEqual([{ itemId: 'demo-2', decisao: 'rejeitar', motivo: 'falta o teste', autor: 'dono', via: 'celular' }]);
+    expect(decisions(second)).toEqual([expect.objectContaining({ kind: 'rejeitada', by: { kind: 'dono' }, text: 'falta o teste' })]);
   });
 });

@@ -20,7 +20,7 @@ import { roleOfSession } from '../shared/mindscape/model';
 import { ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
 import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
-import { createLedgerService, ledgerFilePath, nodeLedgerProofFs, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
+import { createLedgerService, ledgerFilePath, ledgerProofsDir, nodeLedgerProofFs, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerOwnerDecision, type LedgerSnapshot } from '../shared/ledger/channels';
 import { isHttpUrl, isProofFileName, type LedgerProof } from '../shared/ledger/contract';
 import type { LedgerToolCall } from '../shared/ledger/tools';
@@ -3611,6 +3611,8 @@ void app.whenReady().then(async () => {
     ipcMain,
     userDataDir: app.getPath('userData'),
     io: configIoDeps,
+    ledger: () => ledgerService,
+    provasRoot: ledgerProofsDir(ledgerFilePath(process.env, app.getPath('userData'))),
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
   }); // Ledger no celular (PWA só na Tailscale)
   // Quadro por MCP — the board and session tools of the same server go to the renderer (owner of the document).

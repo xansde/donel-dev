@@ -90,9 +90,6 @@ export function CelularSection(): React.JSX.Element {
         description="Só pela sua rede Tailscale: nada sai para a internet e o ledger continua neste PC."
       />
       {state.enabled ? <p className={state.status === 'listening' ? styles.status : styles.statusWarn}>{statusText(state)}</p> : null}
-      {state.enabled && state.demo ? (
-        <p className={styles.muted}>Por enquanto o celular mostra entregas de demonstração; as reais aparecem quando o ledger chegar.</p>
-      ) : null}
 
       {state.enabled ? (
         <div className={styles.pairBlock}>

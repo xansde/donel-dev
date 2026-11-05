@@ -1,7 +1,7 @@
 // Ledger no celular (item 19 do PDA mindscape-openrig, pedido do dono de 05/11) — a PWA que o main serve
 // só na interface Tailscale do PC, para o dono validar entregas no celular, uma por tela, com gesto de
 // arrastar. Este arquivo tem o que o main, o preload e a tela de Preferências compartilham: os canais das
-// Preferências e a forma da entrega que a PWA mostra (a mesma que o adaptador do ledger devolve).
+// Preferências e a forma da entrega que a PWA mostra (o adaptador sobre o ledger V1 a monta).
 
 export const CELULAR_CHANNELS = {
   getState: 'celular:get-state',
@@ -37,8 +37,6 @@ export interface CelularState {
   readonly url: string | null;
   readonly error: string | null;
   readonly devices: readonly CelularDevice[];
-  /** O ledger real ainda não chegou: o celular mostra entregas de demonstração. */
-  readonly demo: boolean;
 }
 
 /** Um convite de pareamento: link com código de uso único e o QR dele (SVG). */
@@ -119,6 +117,9 @@ export interface EntregaCelular {
   readonly entregueEm: string;
   /** Na amostra: quem aceitou (o Revisor). */
   readonly aceitoPor?: string;
+  /** Nota de quem entregou, se deixou. */
+  readonly nota?: string;
+  readonly risco: 'baixo' | 'alto';
   readonly provas: readonly ProvaCelular[];
 }
 

@@ -8,7 +8,8 @@ import { CELULAR_CHANNELS, type CelularPairResult, type CelularState } from '../
 import type { ConfigIoDeps } from '../config-store';
 import { PWA_ASSETS } from './assets';
 import { createCelularAuth, type CelularAuth } from './auth';
-import { createDemoLedger, type MobileLedgerPort } from './ledger-port';
+import type { LedgerService } from '../ledger-store';
+import { createLedgerMobilePort, type MobileLedgerPort } from './ledger-port';
 import { qrSvg } from './qr';
 import { createMobileHandler, MOBILE_PORT, startMobileServer, type MobileServer } from './server';
 import { pickTailscaleAddress } from './tailscale';
@@ -17,6 +18,9 @@ export interface CelularServiceDeps {
   readonly ipcMain: IpcMain;
   readonly userDataDir: string;
   readonly io: ConfigIoDeps;
+  /** O ledger V1 (`null` se não abriu) e a pasta das provas copiadas por ele. */
+  readonly ledger: () => LedgerService | null;
+  readonly provasRoot: string;
   /** Só a janela principal mexe nisto. */
   readonly isMainSender: (sender: Electron.WebContents) => boolean;
 }
@@ -27,13 +31,12 @@ export interface CelularService {
 
 export function createCelularService(deps: CelularServiceDeps): CelularService {
   const auth: CelularAuth = createCelularAuth({ filePath: join(deps.userDataDir, 'celular.json'), io: deps.io });
-  // Até o ledger V1 chegar, o celular mostra entregas de demonstração com a mesma forma.
-  const ledger: MobileLedgerPort = createDemoLedger();
+  const ledger: MobileLedgerPort = createLedgerMobilePort(deps.ledger);
   const handler = createMobileHandler({
     auth,
     ledger: () => ledger,
     assets: PWA_ASSETS,
-    provasRoot: join(deps.userDataDir, 'ledger-provas'),
+    provasRoot: deps.provasRoot,
   });
   let server: MobileServer | null = null;
   let status: CelularState['status'] = 'off';
@@ -46,7 +49,6 @@ export function createCelularService(deps: CelularServiceDeps): CelularService {
     url: server?.url ?? null,
     error,
     devices: auth.devices(),
-    demo: ledger.demo,
   });
 
   async function stop(): Promise<void> {
