@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-05',
     items: [
       {
+        title: 'Progresso do Jobu só com o que está rolando',
+        text: 'O painel de progresso do Jobu mostra só as tarefas abertas, em execução, entregues esperando decisão e rejeitadas. Uma tarefa aceita sai do painel na hora e deixa de contar nas barras. Quando não há nada em andamento, o painel diz "Nada rodando agora".',
+      },
+      {
         title: '"Esperando você" só quando a sessão pede algo',
         text: 'A lista "Esperando você" do Jobu (e o número na barra de tarefas) agora mostra só as sessões com pergunta, permissão ou diálogo aberto na tela. Sessão que só terminou o que fazia não entra mais nela; o aviso de "terminou" continua. E a marca some assim que a sessão volta a trabalhar depois de você responder, em vez de ficar até o próximo passo dela.',
       },
@@ -31,7 +35,7 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
       },
       {
         title: 'Progresso das tarefas no Jobu, quando você quiser',
-        text: 'O balão do Líder ganhou o botão ▤, que abre o progresso das tarefas: uma linha por quadro e, recuadas embaixo, as tarefas dele, cada uma com uma barra e uma data estimada de fim. A barra conta as etapas da tarefa (assumida, entregue, aceita), e cada linha diz de onde veio a data: do prazo enquanto ninguém assumiu, do ritmo das etapas depois, avisando quando passa do prazo. O painel fica fechado por padrão, sem som nem notificação, e o Jobu lembra se você o deixou aberto. Ele se atualiza a cada tarefa assumida, entregue, aceita ou rejeitada e a cada sessão que termina, e mostra a hora da última atualização. Quando algo muda e o balão está fechado, aparece só um pontinho no Jobu; um clique nele abre o progresso. Uma tarefa aceita some do painel um dia depois.',
+        text: 'O balão do Líder ganhou o botão ▤, que abre o progresso das tarefas: uma linha por quadro e, recuadas embaixo, as tarefas dele, cada uma com uma barra e uma data estimada de fim. A barra conta as etapas da tarefa (assumida, entregue, aceita), e cada linha diz de onde veio a data: do prazo enquanto ninguém assumiu, do ritmo das etapas depois, avisando quando passa do prazo. O painel fica fechado por padrão, sem som nem notificação, e o Jobu lembra se você o deixou aberto. Ele se atualiza a cada tarefa assumida, entregue, aceita ou rejeitada e a cada sessão que termina, e mostra a hora da última atualização. Quando algo muda e o balão está fechado, aparece só um pontinho no Jobu; um clique nele abre o progresso.',
       },
       {
         title: 'Um Líder só, para todos os quadros',

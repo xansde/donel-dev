@@ -121,7 +121,7 @@ function TaskLine({ task, now }: { readonly task: ProgressTask; readonly now: nu
           {task.title}
         </span>
         <span className={styles.end} data-late={task.late ? 'true' : undefined}>
-          {task.state === 'aceita' ? `fim ${endLabel(task.endsAt, now)}` : `~${endLabel(task.endsAt, now)}`}
+          ~{endLabel(task.endsAt, now)}
         </span>
       </div>
       <Bar steps={task.steps} total={PROGRESS_STEPS} state={task.state} />
@@ -135,8 +135,6 @@ function TaskLine({ task, now }: { readonly task: ProgressTask; readonly now: nu
 }
 
 function BoardLine({ board, now }: { readonly board: ProgressBoard; readonly now: number }): React.JSX.Element {
-  const left = board.tasks.length - board.done;
-  const state = left === 0 ? 'aceita' : 'em-execucao';
   return (
     <li className={styles.board} data-testid="pet-progress-board">
       <div className={styles.line}>
@@ -144,12 +142,12 @@ function BoardLine({ board, now }: { readonly board: ProgressBoard; readonly now
           {board.title}
         </span>
         <span className={styles.end} data-late={board.late ? 'true' : undefined}>
-          {left === 0 ? `fim ${endLabel(board.endsAt, now)}` : `~${endLabel(board.endsAt, now)}`}
+          ~{endLabel(board.endsAt, now)}
         </span>
       </div>
-      <Bar steps={board.steps} total={board.totalSteps} state={state} />
+      <Bar steps={board.steps} total={board.totalSteps} state="em-execucao" />
       <div className={styles.meta}>
-        {board.done} de {board.tasks.length} {board.tasks.length === 1 ? 'tarefa aceita' : 'tarefas aceitas'} · {board.steps} de {board.totalSteps} etapas · fim = a última tarefa
+        {board.tasks.length} {board.tasks.length === 1 ? 'tarefa rolando' : 'tarefas rolando'} · {board.steps} de {board.totalSteps} etapas · fim = a última tarefa
       </div>
       <ul className={styles.tasks}>
         {board.tasks.map((task) => (
@@ -172,7 +170,7 @@ export function JobuProgressPanel({ state }: { readonly state: JobuProgressState
         <span className={styles.stamp}>{failed ? 'não consegui ler o Oráculo' : `atualizado às ${clock(computedAt)}`}</span>
       </div>
       {progress.boards.length === 0 ? (
-        <p className={styles.empty}>Nenhuma tarefa aberta. Quando o Líder criar uma, ela aparece aqui com a barra e a data estimada.</p>
+        <p className={styles.empty}>Nada rodando agora.</p>
       ) : (
         <ul className={styles.boards}>
           {progress.boards.map((board) => (
@@ -180,7 +178,7 @@ export function JobuProgressPanel({ state }: { readonly state: JobuProgressState
           ))}
         </ul>
       )}
-      <p className={styles.how}>A barra conta as etapas da tarefa: assumida, entregue, aceita. A data vem do prazo enquanto ninguém assumiu, e do ritmo das etapas depois.</p>
+      <p className={styles.how}>Só o que está rolando: a tarefa aceita sai na hora. A barra conta as etapas da tarefa: assumida, entregue, aceita. A data vem do prazo enquanto ninguém assumiu, e do ritmo das etapas depois.</p>
     </div>
   );
 }
