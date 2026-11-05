@@ -30,6 +30,7 @@ function team(state: SemaphoreState) {
     openSession: () => 'unused',
     sendLine: (tabId, text) => sent.push({ tabId, text }),
     permissionOnScreen: () => false,
+    closeTab: () => undefined,
     askOwner: async () => false,
     remoteLabel: (id) => id,
     remotes: () => [],
