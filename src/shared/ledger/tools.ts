@@ -17,7 +17,8 @@ export type LedgerToolCall =
   | { readonly tool: 'tarefa_entregar'; readonly id: string; readonly provas: readonly ProofInput[]; readonly nota?: string }
   | { readonly tool: 'tarefa_aceitar'; readonly id: string }
   | { readonly tool: 'tarefa_rejeitar'; readonly id: string; readonly motivo: string }
-  | { readonly tool: 'tarefa_listar'; readonly estado?: LedgerTaskState; readonly todos?: boolean; readonly quadro?: string };
+  | { readonly tool: 'tarefa_listar'; readonly estado?: LedgerTaskState; readonly todos?: boolean; readonly quadro?: string }
+  | { readonly tool: 'tarefa_ver'; readonly id: string };
 
 export type LedgerToolName = LedgerToolCall['tool'];
 
@@ -30,7 +31,7 @@ export const LEDGER_TOOLS = [
     name: 'tarefa_criar',
     title: 'Criar tarefa no ledger',
     description:
-      'Registra uma tarefa entre lugares do quadro: a frase literal de quem pediu, o critério de pronto, o prazo, o lugar dono do trabalho e o risco. Nasce "aberta". Risco baixo pode ser aceito por um lugar com papel Revisor; risco alto espera o dono.',
+      'Registra uma tarefa entre lugares do quadro: a frase literal de quem pediu, o critério de pronto, o prazo, o lugar dono do trabalho e o risco. Nasce "aberta". Risco baixo pode ser aceito por um lugar com papel Revisor; risco alto espera o dono. Risco baixo só vale quando quem cria não é o dono do trabalho nem foi aberto por ele; senão a tarefa nasce em risco alto.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -85,13 +86,14 @@ export const LEDGER_TOOLS = [
   {
     name: 'tarefa_aceitar',
     title: 'Aceitar entrega',
-    description: 'Aceita uma entrega. Só um lugar com papel Revisor, e só risco baixo; quem entregou nunca aceita. O resto espera o dono.',
+    description:
+      'Aceita uma entrega. ANTES, leia a prova com tarefa_ver (sem isso o aceite é recusado) e confira que ela mostra o critério. Só um lugar com papel Revisor, só risco baixo, só do seu quadro e de fora da cadeia de quem entregou (não aberto por ele nem abaixo dele); quem entregou nunca aceita. O resto espera o dono.',
     inputSchema: { type: 'object', properties: { id: ID }, required: ['id'], additionalProperties: false },
   },
   {
     name: 'tarefa_rejeitar',
     title: 'Rejeitar entrega',
-    description: 'Rejeita uma entrega com motivo (mesma regra de quem aceita). O lugar dono pode assumir de novo.',
+    description: 'Rejeita uma entrega com motivo, depois de ler a prova com tarefa_ver (mesma regra de quem aceita). O lugar dono pode assumir de novo.',
     inputSchema: {
       type: 'object',
       properties: { id: ID, motivo: { type: 'string', description: 'O que falta ou está errado.' } },
@@ -102,7 +104,7 @@ export const LEDGER_TOOLS = [
   {
     name: 'tarefa_listar',
     title: 'Listar tarefas do ledger',
-    description: 'As tarefas do quadro deste projeto (ou de todos), com estado, dono, prazo, risco e a última entrega, e a faixa de números do quadro.',
+    description: 'As tarefas do quadro deste projeto (ou de todos), com estado, dono, prazo, risco e o resumo da última entrega, e a faixa de números do quadro. A prova inteira se lê com tarefa_ver.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -112,6 +114,14 @@ export const LEDGER_TOOLS = [
       },
       additionalProperties: false,
     },
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: 'tarefa_ver',
+    title: 'Ver tarefa e prova',
+    description:
+      'Uma tarefa inteira, com a prova da última entrega: o texto completo, o link e, para print ou vídeo, o caminho do arquivo copiado (o primeiro print vem também como imagem). Quem decide (tarefa_aceitar, tarefa_rejeitar) lê a prova aqui antes.',
+    inputSchema: { type: 'object', properties: { id: ID }, required: ['id'], additionalProperties: false },
     annotations: { readOnlyHint: true },
   },
 ] as const;
@@ -172,6 +182,7 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
     }
     case 'tarefa_assumir':
     case 'tarefa_aceitar':
+    case 'tarefa_ver':
       if (typeof id === 'object' || id === undefined) return fail('"id" é obrigatório.');
       return { ok: true, call: { tool: name, id: id.trim() } };
     case 'tarefa_entregar': {

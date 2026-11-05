@@ -27,21 +27,31 @@ function isHierarchyArrow(link: MindscapeLink): boolean {
   return link.arrow && (link.by !== 'session' || link.opened === true);
 }
 
-/** `to` is below `from`: a path of hierarchy arrows `from → … → to` on the board. */
-export function isBelow(board: MindscapeBoard | undefined, from: string, to: string): boolean {
+/** A path `from → … → to` on the board made only of links that `follows` accepts. */
+function hasPath(board: MindscapeBoard | undefined, from: string, to: string, follows: (link: MindscapeLink) => boolean): boolean {
   if (!board || from === to) return false;
   const seen = new Set([from]);
   const queue = [from];
   while (queue.length > 0) {
     const at = queue.shift()!;
     for (const link of board.links) {
-      if (!isHierarchyArrow(link) || link.from !== at || seen.has(link.to)) continue;
+      if (!follows(link) || link.from !== at || seen.has(link.to)) continue;
       if (link.to === to) return true;
       seen.add(link.to);
       queue.push(link.to);
     }
   }
   return false;
+}
+
+/** `to` is below `from`: a path of hierarchy arrows `from → … → to` on the board. */
+export function isBelow(board: MindscapeBoard | undefined, from: string, to: string): boolean {
+  return hasPath(board, from, to, isHierarchyArrow);
+}
+
+/** `to` was opened by `from`: a path of `sessao_abrir` arrows `from → … → to` (daughter, granddaughter…). */
+export function isOpenedBy(board: MindscapeBoard | undefined, from: string, to: string): boolean {
+  return hasPath(board, from, to, (link) => link.opened === true);
 }
 
 export interface ReachEnd {

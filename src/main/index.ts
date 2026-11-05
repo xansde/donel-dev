@@ -33,7 +33,7 @@ import { SESSION_RENEWAL_CHANNELS, sanitizeSessionRenewalPrefs, type HandoffStat
 import { LEARNING_CHANNELS, parseRendererGesture, type GestureEvent } from '../shared/learning/gestures';
 import { createGestureDiary, type GestureDiary } from './gesture-diary';
 import type { MindscapeReadImageResult, MindscapeSaveImageResult, MindscapeSaveResult, MindscapeTurnEndedPayload } from '../shared/mindscape/channels';
-import type { MindscapeDoc } from '../shared/mindscape/model';
+import type { MindscapeBoard, MindscapeDoc } from '../shared/mindscape/model';
 import { esteiraOutboxDir } from './esteira-ingest';
 import { esteiraInboxDir } from './esteira-dispatch';
 import { resolveBoardMirrorAdapter } from './esteira-mirror';
@@ -2882,6 +2882,15 @@ function registerLedgerIpcHandlers(): void {
  * Líder único (ADR 0007) — it has no place: it signs as `LEADER_OF_ALL`, names the board with `quadro`, and may
  * give a task only to a place it reaches (`podeMandar` of its `sessao_listar`, which is reach.ts).
  */
+/** Who opened whom and the arrows of a board (low risk and the Revisor's chain), as the renderer saved it. */
+function savedBoard(projectPath: string): MindscapeBoard | undefined {
+  try {
+    return createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load().boards[projectPath];
+  } catch {
+    return undefined;
+  }
+}
+
 async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<{ caller: LedgerCaller; call: LedgerToolCall } | string> {
   const quadro = call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' ? call.quadro : undefined;
   const base = { placeId: LEADER_OF_ALL, roleId: LEADER_ROLE_ID };
@@ -2897,7 +2906,8 @@ async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, cal
   const reached = board.lugares.filter((place) => place.podeMandar === true).map((place) => place.id).filter((id): id is string => typeof id === 'string');
   if (call.tool === 'tarefa_criar' && (!call.dono || !reached.includes(call.dono)))
     return `O Líder único não faz a tarefa: diga em "dono" um lugar que você alcança neste quadro (${reached.join(', ') || 'nenhum'}).`;
-  return { caller: { ...base, projectPath: board.pasta, boardPlaceIds: reached }, call };
+  const saved = savedBoard(board.pasta);
+  return { caller: { ...base, projectPath: board.pasta, boardPlaceIds: reached, ...(saved ? { board: saved } : {}) }, call };
 }
 
 /** The caller of a `tarefa_*` tool, from the board the renderer owns (the same answers the session would get). */
@@ -2912,12 +2922,14 @@ async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: Led
   if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string') return 'Seu lugar ainda não está no quadro; espere o primeiro turno terminar.';
   const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar' });
   const places = list.kind === 'text' ? (JSON.parse(list.text) as { id?: unknown }[]) : [];
+  const board = savedBoard(who.pasta);
   return {
     caller: {
       projectPath: who.pasta,
       placeId: who.lugar,
       ...(typeof who.papel === 'string' ? { roleId: who.papel } : {}),
       boardPlaceIds: places.map((place) => place.id).filter((id): id is string => typeof id === 'string'),
+      ...(board ? { board } : {}),
     },
     call,
   };
@@ -2928,7 +2940,8 @@ async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: 
   const resolved = await ledgerCallerOf(boardBridge, ptyId, call);
   if (typeof resolved === 'string') return { kind: 'error', text: resolved };
   const result = await runLedgerTool(ledgerService, resolved.caller, resolved.call);
-  return result.ok ? { kind: 'text', text: result.text } : { kind: 'error', text: result.text };
+  if (!result.ok) return { kind: 'error', text: result.text };
+  return result.image ? { kind: 'image', base64: result.image.base64, mimeType: result.image.mimeType, text: result.text } : { kind: 'text', text: result.text };
 }
 
 /** Papéis de sessão (item 12a) — list and save of `<userData>/papeis/<id>.md`. */
