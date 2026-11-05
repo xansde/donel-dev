@@ -6,11 +6,12 @@
 // O `createMobileHandler` é puro (pedido → resposta) para o teste não precisar de rede; o `startMobileServer`
 // só põe o socket em volta.
 
+import { randomBytes } from 'node:crypto';
 import { createReadStream } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { isAbsolute, relative, resolve } from 'node:path';
 import type { DecisaoCelular } from '../../shared/celular';
-import { isRequestId } from '../../shared/ledger/contract';
+import { HTML_MEDIA_TYPE, isRequestId } from '../../shared/ledger/contract';
 import type { CelularAuth } from './auth';
 import type { MobileLedgerPort } from './ledger-port';
 import { isTailscaleAddress } from './tailscale';
@@ -48,7 +49,19 @@ export interface MobileHandlerDeps {
   readonly assets: Readonly<Record<string, MobileAsset>>;
   /** Raiz das provas copiadas pelo ledger; prova em arquivo fora dela não sai. `null` = nenhuma em arquivo. */
   readonly provasRoot: string | null;
+  /** Relógio dos bilhetes do protótipo (o teste avança). */
+  readonly now?: () => number;
 }
+
+/** Bilhete do protótipo: uso único, preso a um item e uma prova, vence em 60 s. */
+export const TICKET_TTL_MS = 60_000;
+
+/**
+ * O protótipo (HTML do agente) roda isolado: `sandbox allow-scripts` SEM `allow-same-origin` (origem opaca: não lê
+ * o token do celular nem chama a API), sem rede, sem nada de fora, sem formulário, sem navegar a página de cima.
+ */
+export const PROTOTYPE_CSP =
+  "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'self'";
 
 const BASE_HEADERS = {
   'Cache-Control': 'no-store',
@@ -58,7 +71,7 @@ const BASE_HEADERS = {
 };
 
 const PAGE_CSP =
-  "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
+  "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; frame-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 
 function json(status: number, value: unknown): MobileResponse {
   return { status, headers: { ...BASE_HEADERS, 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(value) };
@@ -85,6 +98,42 @@ function isInside(root: string, filePath: string): boolean {
 }
 
 export function createMobileHandler(deps: MobileHandlerDeps): (request: MobileRequest) => MobileResponse {
+  const now = deps.now ?? Date.now;
+  const tickets = new Map<string, { readonly itemId: string; readonly provaId: string; readonly expiresAt: number }>();
+
+  /** O protótipo como arquivo dentro das provas, ou `null`. */
+  function prototypeFile(itemId: string, provaId: string): string | null {
+    const source = itemId && provaId ? deps.ledger().prova(itemId, provaId) : null;
+    if (!source || 'bytes' in source || source.mediaType !== HTML_MEDIA_TYPE) return null;
+    return deps.provasRoot && isInside(deps.provasRoot, source.filePath) ? source.filePath : null;
+  }
+
+  function ticket(query: URLSearchParams): MobileResponse {
+    const itemId = query.get('item') ?? '';
+    const provaId = query.get('prova') ?? '';
+    if (!prototypeFile(itemId, provaId)) return json(404, { erro: 'nao-encontrada' });
+    const at = now();
+    for (const [key, value] of tickets) if (value.expiresAt <= at) tickets.delete(key);
+    const bilhete = randomBytes(24).toString('base64url');
+    tickets.set(bilhete, { itemId, provaId, expiresAt: at + TICKET_TTL_MS });
+    return json(200, { bilhete });
+  }
+
+  /** O iframe não manda o token: o bilhete (de uso único) é a autorização. Usado ou vencido = 404. */
+  function prototype(query: URLSearchParams): MobileResponse {
+    const bilhete = query.get('b') ?? '';
+    const entry = tickets.get(bilhete);
+    tickets.delete(bilhete);
+    const filePath = entry && entry.expiresAt > now() ? prototypeFile(entry.itemId, entry.provaId) : null;
+    if (!filePath) return json(404, { erro: 'nao-encontrada' });
+    return {
+      status: 200,
+      // O mesmo cabeçalho base, menos o X-Frame-Options DENY: este documento existe para ir dentro da carta.
+      headers: { ...BASE_HEADERS, 'X-Frame-Options': 'SAMEORIGIN', 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': PROTOTYPE_CSP },
+      body: { filePath },
+    };
+  }
+
   function decide(body: string): MobileResponse {
     const input = parseJson(body);
     if (!input) return json(400, { erro: 'pedido-invalido' });
@@ -139,6 +188,8 @@ export function createMobileHandler(deps: MobileHandlerDeps): (request: MobileRe
       return { status: 200, headers, body: asset.body };
     }
 
+    if (path === '/api/prova-html' && method === 'GET') return prototype(parsed.searchParams);
+
     if (path === '/api/parear' && method === 'POST') {
       const input = parseJson(request.body);
       const paired = input ? deps.auth.pair(String(input.codigo ?? ''), String(input.aparelho ?? '')) : null;
@@ -150,6 +201,7 @@ export function createMobileHandler(deps: MobileHandlerDeps): (request: MobileRe
     if (path === '/api/fila' && method === 'GET') return json(200, { itens: deps.ledger().pendentes() });
     if (path === '/api/decidir' && method === 'POST') return decide(request.body);
     if (path === '/api/prova' && method === 'GET') return proof(parsed.searchParams);
+    if (path === '/api/prova-bilhete' && method === 'GET') return ticket(parsed.searchParams);
     return json(404, { erro: 'nao-encontrada' });
   };
 }

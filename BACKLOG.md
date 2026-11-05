@@ -74,7 +74,8 @@ verde; um PR por fatia contra `staging`; patch note em toda fatia visível.
 
 ### 04 — Protótipo dentro da carta (Parte A)
 
-- **Status**: pronta
+- **Status**: implementada
+- **Branch**: `feat/cartas-forma-a-04-prototipo` (empilhada na 03)
 - **Depende de**: 01 (depois da 02 e da 03)
 - **Propósito**: HTML como prova (2 MB); bilhete de uso único + CSP `sandbox allow-scripts` no
   celular; protocolo `donel-prova:` no desktop.

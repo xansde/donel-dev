@@ -14,6 +14,13 @@ export const LEDGER_CHANNELS = {
   proofImage: 'ledger:proof-image',
 } as const;
 
+/** Cartas forma A — the desktop card loads a proof file (prototype, video) by this scheme (`main/ledger-proof-protocol.ts`). */
+export const PROOF_SCHEME = 'donel-prova';
+
+export function proofUrl(fileName: string): string {
+  return `${PROOF_SCHEME}://prova/${encodeURIComponent(fileName)}`;
+}
+
 export interface LedgerSnapshot {
   readonly doc: LedgerDoc;
   /** A newer channel wrote the file: it is read, never written. */

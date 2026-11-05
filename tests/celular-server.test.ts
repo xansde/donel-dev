@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { ConfigIoDeps } from '../src/main/config-store';
 import { createCelularAuth } from '../src/main/celular/auth';
 import { createLedgerMobilePort } from '../src/main/celular/ledger-port';
-import { createLedgerService, type LedgerProofFs } from '../src/main/ledger-store';
+import { createLedgerService, ledgerProofsDir, type LedgerProofFs } from '../src/main/ledger-store';
+import { resolveProofUrl } from '../src/main/ledger-proof-protocol';
+import { proofUrl } from '../src/shared/ledger/channels';
 import type { LedgerActor, LedgerForOwner } from '../src/shared/ledger/contract';
-import { createMobileHandler, startMobileServer, type MobileResponse } from '../src/main/celular/server';
+import { createMobileHandler, startMobileServer, TICKET_TTL_MS, type MobileResponse } from '../src/main/celular/server';
 import { pickTailscaleAddress } from '../src/main/celular/tailscale';
 
 // Ledger no celular — o que quebraria sem o dono ver: o servidor aceitar quem não pareou, subir fora da
@@ -214,5 +216,41 @@ describe('servidor do celular', () => {
     expect(call('POST', '/api/decidir', token, escolha).status).toBe(200);
     expect(call('POST', '/api/decidir', token, escolha).status).toBe(200);
     expect(decisions(second)).toEqual([expect.objectContaining({ kind: 'rejeitada', by: { kind: 'dono' }, option: 'Refazer', text: 'Refazer' })]);
+  });
+  it('o protótipo sai com a CSP sandbox allow-scripts, por bilhete de uso único que vence; donel-prova só serve nome de dentro das provas', () => {
+    const io = memoryIo();
+    const auth = createCelularAuth({ filePath: FILE, io });
+    const ledger = createLedgerService({ filePath: LEDGER, io, proofFs: noProofFs, newId: () => 't-proto' });
+    const created = ledger.apply(LIDER, { op: 'criar', projectPath: 'C:/proj/atlas', request: 'r', doneWhen: 'd', due: '2026-11-10', ownerPlaceId: 'p-dev', risk: 'alto' });
+    if (!created.ok) throw new Error(created.reason);
+    const html = '2026-11-05-abcdef012345.html';
+    ledger.apply(DEV, { op: 'assumir', id: 't-proto' });
+    expect(ledger.apply(DEV, { op: 'entregar', id: 't-proto', proofs: [{ kind: 'arquivo', file: html, mediaType: 'text/html' }, { kind: 'texto', text: 'ok' }], forOwner: { ...FOR_OWNER, visual: { kind: 'prova', proof: 0 } } }).ok).toBe(true);
+    let now = 1_000_000;
+    const handle = createMobileHandler({ auth, ledger: () => createLedgerMobilePort(() => ledger), assets: {}, provasRoot: ledgerProofsDir(LEDGER), now: () => now });
+    const token = (JSON.parse(handle({ method: 'POST', url: '/api/parear', body: JSON.stringify({ codigo: auth.createPairingCode().code, aparelho: 'iPhone' }) }).body as string) as { token: string }).token;
+    const get = (url: string, withToken = true): MobileResponse => handle({ method: 'GET', url, authorization: withToken ? `Bearer ${token}` : undefined, body: '' });
+    const ticket = (prova: string): MobileResponse => get(`/api/prova-bilhete?item=t-proto&prova=${prova}`);
+
+    expect(get('/api/prova-bilhete?item=t-proto&prova=0', false).status).toBe(401);
+    expect(ticket('1').status).toBe(404); // a saída de comando não é protótipo
+    const bilhete = (JSON.parse(ticket('0').body as string) as { bilhete: string }).bilhete;
+    const page = get(`/api/prova-html?b=${bilhete}`, false);
+    expect(page.status).toBe(200);
+    const csp = page.headers['Content-Security-Policy']!;
+    expect(csp.startsWith('sandbox allow-scripts;')).toBe(true);
+    expect(csp).not.toContain('allow-same-origin');
+    expect(csp).toContain("connect-src 'none'");
+    expect(page.body).toEqual({ filePath: expect.stringContaining(html) });
+    expect(get(`/api/prova-html?b=${bilhete}`, false).status).toBe(404); // uso único
+
+    const late = (JSON.parse(ticket('0').body as string) as { bilhete: string }).bilhete;
+    now += TICKET_TTL_MS + 1;
+    expect(get(`/api/prova-html?b=${late}`, false).status).toBe(404); // venceu
+
+    // Desktop: donel-prova só serve um nome que o main deu, dentro de ledger-provas.
+    expect(resolveProofUrl(proofUrl(html), '/u/ledger-provas')).toMatchObject({ ok: true, path: `/u/ledger-provas/${html}`, csp: expect.stringMatching(/^sandbox allow-scripts;/) });
+    for (const bad of ['donel-prova://prova/..%2Fledger.json', 'donel-prova://prova/a%2Fb.html', 'donel-prova://prova/x.exe', 'donel-prova://outro/' + html, 'donel-asset://prova/' + html])
+      expect(resolveProofUrl(bad, '/u/ledger-provas').ok, bad).toBe(false);
   });
 });

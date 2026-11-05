@@ -965,6 +965,55 @@ img.A-midia.ampliada {
   line-height: 1.3;
 }
 
+.proto {
+  position: relative;
+}
+
+.proto-embutido {
+  display: block;
+  width: 100%;
+  height: 190px;
+  border: 1px solid var(--carta-borda);
+  border-radius: 8px;
+  background: #151a21;
+}
+
+.proto.cheia {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  padding: calc(env(safe-area-inset-top) + 8px) 8px calc(env(safe-area-inset-bottom) + 8px);
+  background: rgba(0, 0, 0, 0.88);
+}
+
+.proto.cheia .proto-embutido {
+  height: 100%;
+}
+
+.proto-cheia {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  border: 0;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  font: 0.7rem var(--sem-serifa);
+  padding: 4px 9px;
+}
+
+.proto.cheia .proto-cheia {
+  right: 16px;
+  bottom: calc(env(safe-area-inset-bottom) + 16px);
+}
+
+.proto-falhou {
+  margin: 0;
+  padding: 20px 8px;
+  text-align: center;
+  color: var(--tinta-suave);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .carta,
   .A-carta {

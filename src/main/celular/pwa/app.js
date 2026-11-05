@@ -249,6 +249,8 @@
       img.addEventListener('click', function () { img.classList.toggle('ampliada'); });
       bloco.appendChild(img);
       baixar(caminho).then(function (url) { if (url) img.src = url; });
+    } else if (prova.tipo === 'prototipo') {
+      bloco.appendChild(prototipo(item, prova));
     } else if (prova.tipo === 'video') {
       var botao = el('button', 'prova-carregar', 'Ver o vídeo');
       botao.type = 'button';
@@ -308,8 +310,38 @@
     return null;
   }
 
-  /** Print (amplia ao tocar) ou vídeo (toca dentro da carta). */
+  /**
+   * O protótipo (HTML de quem entregou) roda DENTRO da carta, isolado: iframe `sandbox="allow-scripts"` sem
+   * `allow-same-origin` (não lê o token deste celular nem chama a API), servido com CSP sem rede. O iframe não manda
+   * o token: pede-se um bilhete de uso único (60 s) e o HTML vem por ele.
+   */
+  function prototipo(item, prova) {
+    var caixa = el('div', 'proto');
+    var frame = el('iframe', 'proto-embutido');
+    frame.setAttribute('sandbox', 'allow-scripts');
+    frame.setAttribute('referrerpolicy', 'no-referrer');
+    frame.title = 'Protótipo anexado à entrega';
+    caixa.appendChild(frame);
+    var cheia = el('button', 'proto-cheia', '⤢ Tela cheia');
+    cheia.type = 'button';
+    cheia.addEventListener('click', function () {
+      var aberta = caixa.classList.toggle('cheia');
+      cheia.textContent = aberta ? '✕ Fechar' : '⤢ Tela cheia';
+    });
+    caixa.appendChild(cheia);
+    api('/api/prova-bilhete?item=' + encodeURIComponent(item.id) + '&prova=' + encodeURIComponent(prova.id))
+      .then(function (resposta) { return resposta.ok ? resposta.json() : null; })
+      .catch(function () { return null; })
+      .then(function (dados) {
+        if (dados && dados.bilhete) frame.src = '/api/prova-html?b=' + encodeURIComponent(dados.bilhete);
+        else caixa.replaceChild(el('p', 'proto-falhou', 'Não consegui abrir o protótipo. Toque em atualizar.'), frame);
+      });
+    return caixa;
+  }
+
+  /** Print (amplia ao tocar), vídeo (toca dentro da carta) ou protótipo (roda dentro da carta). */
   function midia(item, prova) {
+    if (prova.tipo === 'prototipo') return prototipo(item, prova);
     var caminho = '/api/prova?item=' + encodeURIComponent(item.id) + '&prova=' + encodeURIComponent(prova.id);
     if (prova.tipo === 'video') {
       var video = el('video', 'A-midia');
@@ -362,7 +394,7 @@
       return caixa;
     }
     var prova = provaPorId(item, visual.prova);
-    if (!prova || (prova.tipo !== 'imagem' && prova.tipo !== 'video')) return null;
+    if (!prova || (prova.tipo !== 'imagem' && prova.tipo !== 'video' && prova.tipo !== 'prototipo')) return null;
     caixa.appendChild(midia(item, prova));
     return caixa;
   }

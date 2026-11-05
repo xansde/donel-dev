@@ -228,6 +228,7 @@ import { createAttentionNotifier } from './attention/attention-notifier';
 import { createTaskbarAttention, type AttentionSmokeSnapshot } from './attention/taskbar';
 import { failureReasonText } from '../shared/attention/rule';
 import { registerAssetScheme, registerAssetsProtocol } from './chat/assets-protocol';
+import { proofSchemePrivileges, registerProofProtocol } from './ledger-proof-protocol';
 import { CHAT_CHANNELS } from '../shared/chat/ipc';
 // 011-contas-e-provedores (etapa 1) — motor de contas + mods. Nasce inerte
 // (accounts.mod = null); toda a mecânica mora em src/main/accounts/, este
@@ -626,8 +627,9 @@ let rolesStore: RolesStore | null = null;
 /** Conta ativa vista no último `accounts:changed` — a troca vira aviso `account-switch` no chat. */
 let lastBroadcastActiveAccountId: string | null | undefined;
 
-// T046 (014-chat) — o esquema `donel-asset:` precisa ser registrado ANTES do `ready`.
-registerAssetScheme(protocol);
+// T046 (014-chat) — o esquema `donel-asset:` precisa ser registrado ANTES do `ready` (junto com o `donel-prova:`
+// do Oráculo: o Electron aceita uma chamada só).
+registerAssetScheme(protocol, [proofSchemePrivileges()]);
 
 function broadcastChat(channel: string, payload: unknown): void {
   for (const window of BrowserWindow.getAllWindows()) {
@@ -2875,6 +2877,8 @@ function registerLedgerIpcHandlers(): void {
     },
   });
   ledgerService = service;
+  // Cartas forma A — the card shows the proofs (the HTML prototype, a video) by `donel-prova:`.
+  registerProofProtocol(protocol, ledgerProofsDir(ledgerFilePath(process.env, app.getPath('userData'))));
   const fromMain = (sender: Electron.WebContents): boolean => getMainWindow()?.webContents.id === sender.id;
   ipcMain.handle(LEDGER_CHANNELS.load, (): LedgerSnapshot => service.load());
   ipcMain.handle(LEDGER_CHANNELS.decide, (event, raw: unknown): LedgerApplyResult => {
@@ -2904,7 +2908,8 @@ function registerLedgerIpcHandlers(): void {
       await shell.openExternal(proof.url);
       return true;
     }
-    if (proof?.kind === 'arquivo' && typeof proof.file === 'string' && isProofFileName(proof.file)) {
+    // A prototype (HTML of an agent) never opens outside the card: in the system browser it would run with network.
+    if (proof?.kind === 'arquivo' && typeof proof.file === 'string' && isProofFileName(proof.file) && !proof.file.endsWith('.html')) {
       const path = service.proofPath({ kind: 'arquivo', file: proof.file, mediaType: '' });
       return path !== null && (await shell.openPath(path)) === '';
     }

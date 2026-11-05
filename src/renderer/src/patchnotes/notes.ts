@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-05',
     items: [
       {
+        title: 'Protótipos dentro da carta',
+        text: 'Quando quem fez a tarefa anexa um protótipo, ele roda dentro da carta, no celular e no Mindscape: dá para clicar nos botões dele ali mesmo, sem abrir link nenhum. "⤢ Tela cheia" amplia. O protótipo roda isolado: não acessa a internet, não vê os seus dados do app nem abre outra janela. Vídeos agora tocam dentro da carta também no Mindscape.',
+      },
+      {
         title: '"Esperando você" no Mindscape abre as cartas',
         text: 'No Mindscape, o botão "esperando você" da faixa do Oráculo Harrow agora abre as cartas sobre o quadro: a mão de cartas à esquerda e a carta grande no centro, igual ao celular. Na frente, a pergunta, o print ou as checagens, a recomendação e os caminhos; clique num caminho e clique de novo para decidir. "↻ Virar" mostra o verso com o que aconteceu, o risco de cada caminho, quem fez pelo nome e, recolhidos, o seu pedido e os detalhes técnicos. Esc ou "Fechar" volta ao quadro.',
       },
