@@ -56,6 +56,28 @@ export function refusedUploadFolder(folder: string, context: UploadFolderContext
   return null;
 }
 
+/** The usual wide folders of a user, by name: under the home and under a OneDrive folder of the home. */
+const WIDE_NAMES = ['desktop', 'área de trabalho', 'documents', 'documentos', 'downloads'];
+
+/**
+ * A folder the owner may authorize, but only after an explicit confirmation: Documentos, Área de Trabalho,
+ * Downloads (the system's own `known` paths and the usual names, also inside OneDrive), a OneDrive root, or a
+ * folder that holds one of them. Returns the warning to show; `null` = a narrow folder, one click is enough.
+ * (The disk root and the whole home are refused outright by `refusedUploadFolder`.)
+ */
+export function wideUploadFolder(folder: string, context: UploadFolderContext & { readonly known?: readonly string[] }): string | null {
+  const target = normalize(folder);
+  const home = normalize(context.home);
+  const first = target.startsWith(`${home}/`) ? target.slice(home.length + 1).split('/')[0]! : '';
+  const oneDrive = first.startsWith('onedrive') ? `${home}/${first}` : null;
+  const roots = oneDrive ? [home, oneDrive] : [home];
+  const wide = [...(context.known ?? []).map(normalize), ...roots.flatMap((root) => WIDE_NAMES.map((name) => `${root}/${name}`))];
+  if (target === oneDrive || wide.some((dir) => dir !== '' && isInsideOrEqual(dir, target))) {
+    return 'Essa é uma pasta larga do seu usuário: liberando, o agente poderá enviar por páginas QUALQUER arquivo dela e das subpastas, em todas as sessões, até você remover em Regras. Prefira uma pasta só de envios.';
+  }
+  return null;
+}
+
 /**
  * Why the file at `relativePath` (relative to the authorized folder, after `realpath` of both) cannot be sent;
  * `null` when it can. Anything that escapes the folder, a hidden file or folder and a secret-looking name are refused.
