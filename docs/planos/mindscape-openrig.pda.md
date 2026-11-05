@@ -46,6 +46,15 @@ ao alfa.
 - **11 — Estudo profundo do OpenRig** → seat como lugar, papel reinjetado, ligação que autoriza, mensagem sem atropelar, fluxo por desfecho declarado; CLI/TUI/MCP sobre uma API ([estudo](../pesquisas/openrig-estudo-profundo-2026-11.md))
 - **Pausa do dono (03/11)** → nada da ideia OpenRig (04, 05, 06, 12, 13) é desenvolvido antes de ele avaliar o protótipo do 14
 - **14 — Multitarefa: forma escolhida** → A + C, com o Jobu como Líder numa janela de conversa flutuante, móvel entre monitores ([decisão](../prototipos/mindscape-openrig/decisao.md))
+- **Kit do Bill (04/11)** → o dono deu OK em três decisões da absorção do kit "time de agentes" (Billverso): D1 ledger local no `userData`, D2 Revisor aceita baixo risco desde a V1, D3 rotinas primeiro dentro do app. Viraram os itens 19 e 20 e a continuação do 13. Fonte: `absorcao-kit-bill.html`, sessão de Pesquisa de 04/11 (material de terceiro, só lido, fora do repo)
+
+## Ordem (dono, 04/11)
+
+Os itens 19 e 20 e a continuação do 13 (fila durável) vêm **depois** de duas frentes que já
+estão em curso: (1) o fix da mensagem que vai direto para a fila do CLI, sem ficar "Retida"
+(memória `chat-envia-na-hora`), e (2) o Líder único para todos os quadros (memória
+`lider-unico-todos-quadros`). A fila durável se apoia na entrega direta, e o ledger e as
+rotinas se apoiam no Líder único.
 
 ## O centro do Mindscape (dono, 03/11)
 
@@ -248,6 +257,13 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
   mensagem para quem; mandar pelo quadro (ou pela própria sessão, via MCP do app) entrega no
   terminal da outra sem atropelar o que o dono digita; a ligação se anima quando algo passa.
   Absorve o item 10.
+- **Continuação (04/11, kit do Bill): fila durável entre lugares.** A mensagem do
+  `sessao_enviar` ganha id e desfecho, sobrevive ao restart do app (hoje "quem abriu quem" e as
+  mensagens pendentes vivem só na memória, ver `docs/refinamentos/time-de-sessoes-v1.md`, "Ficou
+  aberto"), acorda o lugar adormecido antes de entregar (o app faz isso, de forma
+  determinística; nenhuma sessão precisa lembrar) e é repassada por handoff em vez de fechar uma
+  e abrir outra. Regra do kit: "fila não é estado"; o estado da tarefa mora no ledger (19).
+  Vem depois do fix da entrega direta ao CLI (ver "Ordem").
 - **Resolução**: —
 
 ### 14 — Multitarefa: um time de sessões no quadro
@@ -332,4 +348,48 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
   continua seco. Em aberto: Jobu tem um Líder por projeto ou um só para todos os quadros; o que
   acontece com a janela quando o Jobu está desligado; se a conversa reaproveita o chat da 014
   inteiro.
+- **Resolução**: —
+
+### 19 — Ledger com prova
+
+- **Tipo**: refinamento
+- **Prioridade**: alta
+- **Status**: pendente
+- **Bloqueado por**: 13, 18
+- **Pergunta**: uma tarefa entre lugares nasce com a frase literal de quem pediu, critério de
+  pronto, prazo e dono, e anda em aberta → em execução → entregue → aceita (ou rejeitada).
+  Ninguém marca entregue sem anexar prova (print, saída de comando ou link do CI) e **quem
+  entrega não aceita**, regra no código, nunca no prompt. Quais comandos (criar, assumir,
+  entregar com prova, aceitar, rejeitar), que campos, como o "esperando você" e a métrica
+  "validadas sem você" saem dele, e onde ele aparece no Mindscape (faixa de números, sem painel
+  à parte).
+- **D1 (dono, 04/11)**: o ledger é um arquivo local no `userData`, gravado **só pelo main**
+  (como o `mindscape-store`), com `schemaVersion` próprio (o `userData` é compartilhado entre
+  canais). As sessões acessam pelo MCP `donel` (ferramentas `tarefa_*`). A nuvem fica para
+  depois, servida pelo mesmo contrato (ver "Persistência em nuvem" em Ainda não especificado).
+- **D2 (dono, 04/11)**: um lugar com papel Revisor (de preferência em outro motor que o do
+  autor) aceita entregas de **baixo risco** desde a V1. Na primeira semana, o dono recebe uma
+  **amostra diária** dos aceites; o resto aparece como "esperando você".
+- **Teste**: dado persistido que um canal pode apagar, então vale um teste do caminho criar →
+  entregar → aceitar. Nenhum smoke novo.
+- **Ordem**: depois do fix da mensagem direto para o CLI e do Líder único.
+- **Resolução**: —
+
+### 20 — Rotinas que acordam lugares, com filtro sem LLM
+
+- **Tipo**: refinamento
+- **Prioridade**: alta
+- **Status**: pendente
+- **Bloqueado por**: 19
+- **Pergunta**: uma rotina tem um gerador só leitura que produz chaves de achado, um filtro
+  **sem LLM** (dedup, histerese de 2 rodadas, teto por janela, desligar a fonte que passa de
+  50% de descarte em 7 dias; números do kit, a recalibrar) e um lugar dono que ela acorda. O
+  lugar age sozinho no que é interno, reversível e idempotente e só propõe o resto. Toda rotina
+  nasce **em sombra** (só observa e registra) antes de agir. Regra do kit: nenhum lugar nasce
+  sem um gatilho concreto. É a "faixa azul" do treinamento de 03/11.
+- **D3 (dono, 04/11)**: as rotinas rodam primeiro **dentro do app** (timer no main, param quando
+  o app fecha), num contrato gerador → chaves → filtro → acordar lugar que possa mudar para a
+  VPS depois (B38/B39). A primeira é uma que **só observa**: "homologação parada" no quadro do
+  Dalton.
+- **Ordem**: depois do fix da mensagem direto para o CLI e do Líder único.
 - **Resolução**: —
