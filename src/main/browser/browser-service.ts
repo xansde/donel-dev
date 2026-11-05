@@ -728,7 +728,7 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
     prepareRemoteSession: (ptyId, remotePort, knownToken) => {
       const port = mcp.port;
       if (port === null || !isPtyId(ptyId)) return null;
-      const token = mcp.registerSession(ptyId, knownToken);
+      const token = mcp.registerSession(ptyId, knownToken, remotePort);
       const endpoint = { name: MCP_SERVER_NAME, url: browserMcpUrl(remotePort), bearerToken: token };
       return { localPort: port, token, configFileContent: `${JSON.stringify(buildBrowserMcpConfig(endpoint), null, 2)}\n` };
     },
