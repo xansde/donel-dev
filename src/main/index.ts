@@ -301,6 +301,8 @@ import { createSweepRunner } from './sweep/sweep-service';
 // Saúde do computador — samples RAM, disk and processes every minute; ends a process on request.
 import { collectHealthSnapshot, lookupProcessName } from './health/collector';
 import { createHealthService, type HealthService } from './health/health-service';
+import { createRemoteHealthService, type RemoteHealthService } from './health/remote-health-service';
+import type { RemoteHealthReport } from '../shared/health/remote';
 import { HEALTH_CHANNELS, type KillProcessOutcome } from '../shared/health/ipc';
 import { createRoutineRunner, type RoutineRunner } from './rotinas/routine-runner';
 import { ROTINAS_CHANNELS, type ShadowEntry } from '../shared/rotinas/contract';
@@ -2707,6 +2709,8 @@ function registerTabIpcHandlers(): void {
 
 /** Saúde do computador — `null` until the handlers are registered (whenReady) and again after the app closes. */
 let healthService: HealthService | null = null;
+/** Saúde das VPS — same life as `healthService`. */
+let remoteHealthService: RemoteHealthService | null = null;
 
 /** The app's own pids: the main plus every helper Electron started (renderers, GPU, utility). */
 function ownAppPids(): number[] {
@@ -2735,6 +2739,20 @@ function registerHealthIpcHandlers(): void {
     healthService ? healthService.killProcess(pid) : { ok: false, reason: 'no-report' },
   );
   ipcMain.handle(HEALTH_CHANNELS.openTemp, (): Promise<string> => shell.openPath(app.getPath('temp')));
+
+  remoteHealthService = createRemoteHealthService({
+    places: () => (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes,
+    run: runRemoteScript,
+    onReports: (reports) => {
+      const window = getMainWindow();
+      if (window) window.webContents.send(HEALTH_CHANNELS.remoteChanged, reports);
+    },
+  });
+  remoteHealthService.start();
+  ipcMain.handle(HEALTH_CHANNELS.remoteGet, (): readonly RemoteHealthReport[] => remoteHealthService?.getReports() ?? []);
+  ipcMain.handle(HEALTH_CHANNELS.remoteRefresh, async (): Promise<readonly RemoteHealthReport[]> =>
+    remoteHealthService ? remoteHealthService.refresh() : [],
+  );
 }
 
 /** Item 20 — the routines in shadow; `null` until whenReady and after the app closes. */
@@ -2850,6 +2868,10 @@ function registerLedgerIpcHandlers(): void {
     onChange: (snapshot) => {
       const window = getMainWindow();
       if (window && !window.isDestroyed()) window.webContents.send(LEDGER_CHANNELS.changed, snapshot);
+      // The progress panel of the Jobu reads the ledger too (it only reads: `decide` stays the main window's).
+      const petId = petService?.petWebContentsId() ?? null;
+      const pet = petId === null ? null : webContents.fromId(petId);
+      if (pet && !pet.isDestroyed()) pet.send(LEDGER_CHANNELS.changed, snapshot);
     },
   });
   ledgerService = service;
@@ -2936,7 +2958,7 @@ async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: Led
 }
 
 async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<BrowserToolOutcome> {
-  if (!ledgerService) return { kind: 'error', text: 'O ledger não abriu neste app.' };
+  if (!ledgerService) return { kind: 'error', text: 'O Oráculo Harrow não abriu neste app.' };
   const resolved = await ledgerCallerOf(boardBridge, ptyId, call);
   if (typeof resolved === 'string') return { kind: 'error', text: resolved };
   const result = await runLedgerTool(ledgerService, resolved.caller, resolved.call);
@@ -3747,6 +3769,8 @@ app.on('window-all-closed', () => {
   esteiraService = null;
   healthService?.stop();
   healthService = null;
+  remoteHealthService?.stop();
+  remoteHealthService = null;
   routineRunner?.stop();
   routineRunner = null;
   appUpdateService?.stop();
