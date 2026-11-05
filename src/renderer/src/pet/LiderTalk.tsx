@@ -138,8 +138,6 @@ export function LiderTalk({ view, onClose, onPose }: LiderTalkProps): React.JSX.
     }
   };
 
-  const project = state?.projectName ?? null;
-  const noProject = state !== null && state.projectPath === null;
 
   return (
     <div
@@ -154,7 +152,7 @@ export function LiderTalk({ view, onClose, onPose }: LiderTalkProps): React.JSX.
     >
       <div className={styles.top}>
         <span className={styles.title}>
-          Líder{project ? <span className={styles.project}> · {project}</span> : null}
+          Líder<span className={styles.project}> · todos os quadros</span>
         </span>
         <button type="button" className={styles.tool} aria-pressed={historyOpen} title="Histórico da conversa" onClick={() => setHistoryOpen((open) => !open)}>
           ≡
@@ -182,12 +180,10 @@ export function LiderTalk({ view, onClose, onPose }: LiderTalkProps): React.JSX.
         <div className={styles.body} data-testid="pet-talk-last">
           {state === null ? (
             <p className={styles.muted}>Um instante…</p>
-          ) : noProject ? (
-            <p>Abra um projeto no Donel e eu cuido do time dele.</p>
           ) : lastLider === null ? (
             <p>
-              {state.ptyId === null ? `Me diga o que fazer em ${project ?? 'este projeto'}. Eu monto o time e te aviso do que precisar.` : working ? 'Pensando…' : 'Pronto. O que fazemos?'}
-              {!state.roleAvailable && state.ptyId === null ? <span className={styles.muted}> (O papel Líder não existe nesta máquina: a sessão abre sem papel.)</span> : null}
+              {state.ptyId === null ? 'Me diga o que fazer, em qualquer quadro. Eu monto o time e te aviso do que precisar.' : working ? 'Pensando…' : 'Pronto. O que fazemos?'}
+              {!state.roleAvailable && state.ptyId === null ? <span className={styles.muted}> (O papel Líder não existe nesta máquina.)</span> : null}
             </p>
           ) : (
             <Markdown source={typed} onOpenExternal={(url) => void session.openExternal(url)} />
@@ -227,7 +223,7 @@ export function LiderTalk({ view, onClose, onPose }: LiderTalkProps): React.JSX.
 
       <div className={styles.quick}>
         {QUICK_REPLIES.map((reply) => (
-          <button key={reply} type="button" className={styles.quickButton} disabled={sending || noProject || state === null} onClick={() => void send(reply)}>
+          <button key={reply} type="button" className={styles.quickButton} disabled={sending || state === null} onClick={() => void send(reply)}>
             {reply}
           </button>
         ))}
@@ -252,8 +248,7 @@ export function LiderTalk({ view, onClose, onPose }: LiderTalkProps): React.JSX.
           className={styles.input}
           value={draft}
           rows={2}
-          placeholder={noProject ? 'Abra um projeto no Donel' : 'Enter envia, Shift+Enter quebra a linha'}
-          disabled={noProject}
+          placeholder="Enter envia, Shift+Enter quebra a linha"
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {

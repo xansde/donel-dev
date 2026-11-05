@@ -61,3 +61,9 @@ _Evitar_: alerta, notificação (para a notícia em si; toast é só um dos cana
 Número sobre o ícone do Donel na barra de tarefas do Windows com as sessões esperando o dono
 (pendência ou terminou sem ver); some quando ele olha a aba.
 _Evitar_: badge (no texto da UI), contador
+
+**Líder único**:
+A sessão com papel Líder que não pertence a nenhum quadro: o dono fala com ela pelo Jobu, e ela lê e age em
+todos os quadros, alcançando o topo de cada um e quem os Líderes antigos de quadro apontavam
+([ADR 0007](adr/0007-lider-unico.md)).
+_Evitar_: Líder do projeto, Líder do quadro (o modelo antigo), coordenador

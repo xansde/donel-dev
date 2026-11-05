@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-04',
     items: [
       {
+        title: 'Um Líder só, para todos os quadros',
+        text: 'O Jobu agora fala com um Líder único, que não pertence a nenhum quadro: ele lê e mexe no Donel Dev, na Homologação e no BizOps, abre sessões em qualquer um deles e manda mensagem para quem está no topo de cada quadro (quem nenhum outro lugar aponta com seta) e para quem os Líderes antigos apontavam. Quem ele abre nasce ligado a ele, e ele é avisado quando essas sessões terminam. Os Líderes que cada quadro tinha viram lugares comuns: continuam no quadro com a conversa, mas o Jobu não fala mais com eles. As outras sessões seguem enxergando só o próprio quadro.',
+      },
+      {
         title: 'Régua de contexto vai até 500k',
         text: 'A barra de contexto da sessão agora mede até 500k (antes 300k): 250k usados aparecem como 50%. No Haiku a régua continua sendo a janela dele, 200k.',
       },
