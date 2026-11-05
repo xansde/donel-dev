@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-05',
     items: [
       {
+        title: 'O registro de tarefas agora se chama Oráculo Harrow',
+        text: 'A faixa de tarefas no topo do Mindscape, o progresso no balão do Jobu, a seção de Preferências e o app do celular passam a chamar o registro de tarefas entre sessões de Oráculo Harrow, para combinar com o resto do Donel. Nada muda no funcionamento: as tarefas, as provas e as decisões que já existiam continuam lá. Se o app do celular já estava na tela inicial, o nome novo aparece quando você adicioná-lo de novo.',
+      },
+      {
         title: 'Saúde das VPS ao lado da saúde do computador',
         text: 'Ao lado de "PC · RAM · disco", no rodapé, aparece agora uma linha para cada VPS configurada, com a memória em uso e o disco livre. O painel de saúde ganhou uma seção por VPS com memória, disco, carga do processador e quantas sessões do Donel rodam lá. As VPS são lidas a cada minuto e na hora em que você abre o painel. Quando uma não responde, ela aparece como "sem sinal", com a hora da última leitura boa, e o resto do app segue normal.',
       },
@@ -47,7 +51,7 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
       },
       {
         title: 'Tarefas com prova no topo do Mindscape',
-        text: 'As sessões agora registram as tarefas que passam entre elas: a frase de quem pediu, quando está pronto, o prazo, quem faz e o risco. Ninguém marca uma tarefa como entregue sem anexar prova (print, vídeo, a saída de um comando ou o link do CI), e quem entregou não pode aceitar a própria entrega. Um Revisor aceita as de risco baixo; as de risco alto esperam você. No topo de cada quadro aparece uma faixa com os números: abertas, em execução, entregues sem aceite, esperando você (com a mais velha) e quantas foram validadas sem você. Clique em "esperando você" para ver cada entrega com a prova e aceitar ou rejeitar com um motivo. Na primeira semana, até três aceites do Revisor por dia também aparecem ali, para você conferir.',
+        text: 'As sessões agora registram as tarefas que passam entre elas: a frase de quem pediu, quando está pronto, o prazo, quem faz e o risco. Ninguém marca uma tarefa como entregue sem anexar prova (print, vídeo, a saída de um comando ou o link do CI), e quem entregou não pode aceitar a própria entrega. Um Revisor aceita as de risco baixo; as de risco alto esperam você. No topo de cada quadro aparece uma faixa, o Oráculo Harrow, com os números: abertas, em execução, entregues sem aceite, esperando você (com a mais velha) e quantas foram validadas sem você. Clique em "esperando você" para ver cada entrega com a prova e aceitar ou rejeitar com um motivo. Na primeira semana, até três aceites do Revisor por dia também aparecem ali, para você conferir.',
       },
       {
         title: 'O Revisor só aceita depois de ver a prova, e de fora da cadeia',

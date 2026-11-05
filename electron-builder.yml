@@ -29,6 +29,15 @@ files:
   - "!src/**"
   - "!tests/**"
   - "!patches/**"
+  # Material de trabalho do repo (processo, rascunhos, protótipos, skills):
+  # não roda no app e traz caminhos da máquina de quem desenvolve.
+  - "!.claude/**"
+  - "!.esteira/**"
+  - "!.scratch/**"
+  - "!handoffs/**"
+  - "!prototypes/**"
+  - "!skills/**"
+  - "!tasks/**"
   - "!coverage/**"
   - "!test-results/**"
   - "!release/**"
