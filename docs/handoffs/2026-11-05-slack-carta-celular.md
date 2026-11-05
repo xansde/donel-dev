@@ -18,7 +18,7 @@ Três PRs contra `staging`, **empilhados**: cada um contém o anterior até ele 
 | 01 | #239 | `feat/slack-so-com-carta` | Sessão na VPS conecta no MCP `donel`: o gate aceita o `Host` da porta do túnel `ssh -R` só com o token da sessão daquele túnel (B38, primeiro item). Nenhuma porta nova. |
 | 02 | #241 | `feat/slack-so-com-carta-02` | Carta "mensagem para o Slack" (`carta_slack`: destino, thread, texto exato, motivo), nasce esperando o dono. A ponte de hooks recusa no `PreToolUse` todo envio ao Slack (MCP do Slack, Composio, curl `chat.postMessage`, webhook, `canal-produto.js postar/responder`) sem carta aceita de mesmo destino, thread e texto; cada carta libera um envio. |
 | 03 | #243 | `feat/slack-so-com-carta-03` | Web Push no PWA: service worker, sino para ligar, aviso com o título humano quando uma carta passa a esperar o dono, toque abre a carta. Criptografia RFC 8291 + VAPID feitas com `node:crypto` (bate com o vetor da RFC), sem dependência nova. |
-| 04 | (PR da fatia 4) | `feat/slack-so-com-carta-04` | Falha fechada (pedido do Líder, 05/11 à noite): a sessão remota ganha um hook de comando que, com o app fora do ar ou sem reconhecer a sessão, **recusa** o envio ao Slack e diz por quê. Com o app no ar, a ponte segue decidindo pela carta. |
+| 04 | #246 | `feat/slack-so-com-carta-04` | Falha fechada (pedido do Líder, 05/11 à noite): a sessão remota ganha um hook de comando que, com o app fora do ar ou sem reconhecer a sessão, **recusa** o envio ao Slack e diz por quê. Com o app no ar, a ponte segue decidindo pela carta. |
 
 Verificação em cada fatia, na VPS: typecheck verde, `npm test` com só as 2 falhas que já existem em
 `staging` no Linux (`config-store` e `remoteSessions`, caminho do Windows), `electron-vite build` verde.
