@@ -20,6 +20,7 @@ import type {
 } from '../shared/devMode';
 import { DEFAULT_PHASE_DEFAULTS } from '../shared/devModeDefaults';
 import { DEFAULT_SESSION_RENEWAL_PREFS, sanitizeSessionRenewalPrefs, type SessionRenewalPrefs } from '../shared/sessionRenewal';
+import { DEFAULT_TEAM_PREFS, sanitizeTeamPrefs, type TeamPrefs } from '../shared/teamPrefs';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
 import { defaultMigrationState, sanitizeMigrationState, type MigrationState } from './accounts/migration/migration-state';
 import { sanitizeProvidersConfig } from './providers/providers-config';
@@ -150,6 +151,8 @@ export interface AppConfig {
    * `unknownFields` and writes it back intact. Exposed in the DTO.
    */
   readonly sessionRenewal: SessionRenewalPrefs;
+  /** Limite de sessões abertas por um Líder — a TOP-LEVEL key (like `pet`): a channel without it keeps it in `unknownFields`. In the DTO. */
+  readonly team: TeamPrefs;
   /** Modo auto — a TOP-LEVEL key (like `pet`, R20): a channel without it keeps it in `unknownFields`. In the DTO. */
   readonly autoMode: AutoModePrefs;
   /** Modo YOLO — a TOP-LEVEL key (like `pet`, R20): a channel without it keeps it in `unknownFields`. In the DTO. */
@@ -197,6 +200,7 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     pet: defaultPetPrefs(),
     sweep: defaultSweepPrefs(),
     sessionRenewal: DEFAULT_SESSION_RENEWAL_PREFS,
+    team: DEFAULT_TEAM_PREFS,
     autoMode: defaultAutoModePrefs(),
     yolo: defaultYoloPrefs(),
     appUpdate: { installersDir: null },
@@ -348,6 +352,7 @@ export function toAppConfigDto(config: AppConfig): AppConfigDto {
     chat: config.chat,
     pet: config.pet,
     sessionRenewal: config.sessionRenewal,
+    team: config.team,
     autoMode: config.autoMode,
     yolo: config.yolo,
   };
@@ -773,6 +778,7 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     pet: sanitizePetPrefs(candidate.pet, defaults.pet),
     sweep: sanitizeSweepPrefs(candidate.sweep, defaults.sweep),
     sessionRenewal: sanitizeSessionRenewalPrefs(candidate.sessionRenewal, defaults.sessionRenewal),
+    team: sanitizeTeamPrefs(candidate.team, defaults.team),
     autoMode: sanitizeAutoModePrefs(candidate.autoMode, defaults.autoMode),
     yolo: sanitizeYoloPrefs(candidate.yolo),
     appUpdate: sanitizeAppUpdatePrefs(candidate.appUpdate),

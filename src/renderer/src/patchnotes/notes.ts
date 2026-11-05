@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-05',
     items: [
       {
+        title: 'Sem limite de sessões abertas por um Líder',
+        text: 'Um Líder (ou o Líder único, em cada quadro) agora abre quantas sessões precisar sem pedir sua permissão. Se quiser um teto, escolha em Preferências, em "Limite de sessões abertas por um Líder": passando dele, volta a aparecer "Precisa de você" para permitir ou negar.',
+      },
+      {
         title: 'Sessões na VPS também anexam print e protótipo',
         text: 'Uma sessão que roda na VPS agora entrega print, vídeo ou protótipo como prova, e eles aparecem na carta como os das sessões do computador. O app busca o arquivo pela conexão com a VPS, recusa atalho e arquivo grande demais, e guarda uma cópia aqui.',
       },
