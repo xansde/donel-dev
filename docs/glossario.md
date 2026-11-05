@@ -62,6 +62,14 @@ Número sobre o ícone do Donel na barra de tarefas do Windows com as sessões e
 (pendência ou terminou sem ver); some quando ele olha a aba.
 _Evitar_: badge (no texto da UI), contador
 
+**Oráculo Harrow**:
+O registro das tarefas entre lugares, com prova: a frase de quem pediu, o critério, o prazo, o dono e o
+risco, e cada entrega com print, vídeo, saída de comando ou link do CI. Aparece na faixa do topo do
+Mindscape, no progresso do Jobu e no app do celular; as sessões o usam pelas ferramentas `tarefa_*`.
+Em texto curto, "Oráculo". O nome casa com a dinâmica de PF2e do Donel; no código o módulo continua
+`ledger` (`src/shared/ledger/`, `<userData>/ledger.json`, `ledger-provas/`).
+_Evitar_: ledger (no texto da UI), livro de tarefas, board de tarefas
+
 **Líder único**:
 A sessão com papel Líder que o Jobu abre (marca na aba, nunca só o papel) e que não pertence a nenhum quadro: o
 dono fala com ela pelo Jobu, e ela lê e age em todos os quadros, acima do topo de cada um

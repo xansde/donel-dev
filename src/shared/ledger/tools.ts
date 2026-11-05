@@ -29,7 +29,7 @@ const STATES: readonly LedgerTaskState[] = ['aberta', 'em-execucao', 'entregue',
 export const LEDGER_TOOLS = [
   {
     name: 'tarefa_criar',
-    title: 'Criar tarefa no ledger',
+    title: 'Criar tarefa no Oráculo Harrow',
     description:
       'Registra uma tarefa entre lugares do quadro: a frase literal de quem pediu, o critério de pronto, o prazo, o lugar dono do trabalho e o risco. Nasce "aberta". Risco baixo pode ser aceito por um lugar com papel Revisor; risco alto espera o dono. Risco baixo só vale quando quem cria não é o dono do trabalho nem foi aberto por ele; senão a tarefa nasce em risco alto.',
     inputSchema: {
@@ -56,7 +56,7 @@ export const LEDGER_TOOLS = [
     name: 'tarefa_entregar',
     title: 'Entregar tarefa com prova',
     description:
-      `Marca a tarefa como entregue. Sem prova é recusada. Provas (1 a ${MAX_PROOFS}): {"tipo":"arquivo","caminho":"C:/…/print.png"} (print ou vídeo neste computador; o app copia para o ledger), {"tipo":"texto","texto":"saída do comando"} ou {"tipo":"link","url":"https://… (o CI)"}. Quem entrega não aceita a própria entrega.`,
+      `Marca a tarefa como entregue. Sem prova é recusada. Provas (1 a ${MAX_PROOFS}): {"tipo":"arquivo","caminho":"C:/…/print.png"} (print ou vídeo neste computador; o app copia para o Oráculo Harrow), {"tipo":"texto","texto":"saída do comando"} ou {"tipo":"link","url":"https://… (o CI)"}. Quem entrega não aceita a própria entrega.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -103,7 +103,7 @@ export const LEDGER_TOOLS = [
   },
   {
     name: 'tarefa_listar',
-    title: 'Listar tarefas do ledger',
+    title: 'Listar tarefas do Oráculo Harrow',
     description: 'As tarefas do quadro deste projeto (ou de todos), com estado, dono, prazo, risco e o resumo da última entrega, e a faixa de números do quadro. A prova inteira se lê com tarefa_ver.',
     inputSchema: {
       type: 'object',

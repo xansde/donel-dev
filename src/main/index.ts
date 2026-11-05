@@ -2958,7 +2958,7 @@ async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: Led
 }
 
 async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<BrowserToolOutcome> {
-  if (!ledgerService) return { kind: 'error', text: 'O ledger não abriu neste app.' };
+  if (!ledgerService) return { kind: 'error', text: 'O Oráculo Harrow não abriu neste app.' };
   const resolved = await ledgerCallerOf(boardBridge, ptyId, call);
   if (typeof resolved === 'string') return { kind: 'error', text: resolved };
   const result = await runLedgerTool(ledgerService, resolved.caller, resolved.call);
