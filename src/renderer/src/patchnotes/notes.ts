@@ -22,6 +22,18 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'Uma sessão agora fecha as sessões que estão abaixo dela no quadro (pelas setas, direto ou em cadeia), em vez de deixar as abas para você fechar. Nunca fecha a si mesma nem quem está acima ou ao lado. Só valem as setas que você desenhou e as que nascem quando uma sessão abre outra; uma seta que a própria sessão desenha não a põe acima de ninguém. Para fechar em outro quadro, só o Líder que você pôs num quadro marcado com "Alcance: todos os quadros", botão novo na barra do Mindscape; sem marcar, cada quadro só alcança a si mesmo. Se a outra está trabalhando, recebe antes um aviso para pausar e espera o turno acabar (até 20 segundos). Com um pedido de permissão aberto lá, não fecha. O lugar continua no quadro como "fechada" e dois cliques retomam a conversa. A cópia isolada (worktree) sem mudanças é recolhida como ao fechar a aba; com trabalho pendente, nada se apaga.',
       },
       {
+        title: 'Mensagem entre sessões chega sozinha',
+        text: 'A mensagem que uma sessão manda para outra, e o aviso de que uma sessão terminou, agora entram na hora, mesmo com a outra trabalhando: vão para a fila do próprio Claude de lá, como quando você digita no terminal com ele ocupado. Nada fica mais "Retida" esperando você abrir a aba. Só uma permissão aberta na tela de lá segura a mensagem, e ela entra sozinha quando a permissão fecha. Sessão que terminou o turno sem pedir nada não aparece mais como "precisa de você", e cada aviso de término chega uma vez só.',
+      },
+      {
+        title: 'Retomar abre a sessão onde ela vive',
+        text: 'Uma sessão que nasceu na VPS agora retoma na VPS, mesmo que você esteja retomando deste computador: dois cliques no lugar dela no Mindscape ou um clique nos Favoritos. Antes ela abria aqui e falhava, porque a conversa está gravada lá. Se a VPS não responder, o app avisa em vez de abrir uma sessão vazia.',
+      },
+      {
+        title: 'Só o Líder nas abas; o time fica no Mindscape',
+        text: 'As sessões que o Líder abre não aparecem mais nas abas nem na lista da barra lateral: continuam trabalhando e você acompanha cada uma pelo lugar dela no Mindscape. Dois cliques no lugar trazem a sessão para as abas; fechar a aba a esconde de novo, sem parar a sessão. Quando uma delas precisa de você, o aviso continua chegando pelo Jobu, e clicar nele também traz a sessão.',
+      },
+      {
         title: 'Régua de contexto vai até 500k',
         text: 'A barra de contexto da sessão agora mede até 500k (antes 300k): 250k usados aparecem como 50%. No Haiku a régua continua sendo a janela dele, 200k.',
       },
@@ -39,7 +51,7 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
       },
       {
         title: 'Sessões montam o Mindscape e trabalham em time',
-        text: 'Uma sessão agora monta o quadro ao vivo, sem reabrir o app: põe lugares com papel, post-its, retângulos, setas e ligações, e cada leva entra como um gesto só, que o Ctrl+Z desfaz. Ela mexe só no que uma sessão criou, nunca no que é seu. Ela também abre outras sessões com papel (nascem ligadas a ela por uma seta, no mesmo lugar onde ela roda), manda mensagem pelas setas do quadro e é avisada quando cada uma termina. A mensagem entra direto no chat da outra, sem pedir aprovação, e só espera enquanto você digita lá ou há uma permissão aberta. Até 4 sessões abertas por uma mesma sessão; a partir da 5ª, aparece "Precisa de você" para permitir ou negar. Novo papel pronto: Líder, que reparte o trabalho e só traz a você o que o time não resolve.',
+        text: 'Uma sessão agora monta o quadro ao vivo, sem reabrir o app: põe lugares com papel, post-its, retângulos, setas e ligações, e cada leva entra como um gesto só, que o Ctrl+Z desfaz. Ela mexe só no que uma sessão criou, nunca no que é seu. Ela também abre outras sessões com papel (nascem ligadas a ela por uma seta, no mesmo lugar onde ela roda), manda mensagem pelas setas do quadro e é avisada quando cada uma termina. A mensagem entra direto no chat da outra, sem pedir aprovação, e só espera se houver uma permissão aberta na tela de lá. Até 4 sessões abertas por uma mesma sessão; a partir da 5ª, aparece "Precisa de você" para permitir ou negar. Novo papel pronto: Líder, que reparte o trabalho e só traz a você o que o time não resolve.',
       },
       {
         title: 'Sessão na VPS abre direto, sem tela de primeiro uso',

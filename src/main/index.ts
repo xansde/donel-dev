@@ -91,6 +91,7 @@ import type {
   ModId,
   SemaphoreUpdate,
   SessionSummaryDto,
+  SessionWhereLives,
   SwitchOutcome,
   TranscriptChangedPayload,
   SessionSwitchedPayload,
@@ -198,6 +199,7 @@ import {
   buildAttachSshArgs,
   buildRemoteSetupScript,
   discoverRemoteSessions,
+  findRemoteTranscript,
   parseRemoteSetupOutput,
   pickRemotePort,
   remoteDirFor,
@@ -1415,6 +1417,20 @@ function resolveTranscriptPath(sessionId: string, cwd: string | undefined, claud
 }
 
 /**
+ * B39 — the conversation is on this computer: in the project's folder of `~/.claude/projects` or in any other
+ * (a worktree session). The mirror of a remote session (`remote-transcripts/`) does not count.
+ */
+function localTranscriptExists(sessionId: string, projectPath: string): boolean {
+  if (existsSync(resolveTranscriptPath(sessionId, projectPath, undefined))) return true;
+  const projectsDir = join(defaultClaudeHome(), 'projects');
+  try {
+    return readdirSync(projectsDir).some((folder) => existsSync(join(projectsDir, folder, `${sessionId}.jsonl`)));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * T710/CA-11 (2º momento) — caminho do `.jsonl` de cada sessão spawnada NESTA
  * execução do app, gravado no momento do spawn.
  *
@@ -2582,6 +2598,24 @@ function registerSessionIpcHandlers(): void {
   });
 
   /**
+   * B39 — Retomar opens a conversation where it lives. Here when its transcript is on this disk; else each
+   * remote place is asked by ssh, and the one that has it runs the resume. A place that does not answer makes
+   * the answer `unreachable`: the renderer says so instead of opening an empty session on this computer.
+   */
+  ipcMain.handle(SESSION_CHANNELS.whereLives, async (_event, sessionId: unknown, projectPath: unknown): Promise<SessionWhereLives> => {
+    if (typeof sessionId !== 'string' || typeof projectPath !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(sessionId)) return { kind: 'local' };
+    if (localTranscriptExists(sessionId, projectPath)) return { kind: 'local' };
+    const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
+    if (places.length === 0) return { kind: 'local' };
+    const answers = await findRemoteTranscript(places, remoteDirFor(projectPath, appConfig.projectRoots), sessionId);
+    const found = answers.find((answer) => answer.answer === 'has');
+    if (found) return { kind: 'remote', remoteId: found.id };
+    const silent = answers.filter((answer) => answer.answer === 'unreachable');
+    if (silent.length > 0) return { kind: 'unreachable', labels: silent.map((answer) => places.find((place) => place.id === answer.id)?.label ?? answer.id) };
+    return { kind: 'local' };
+  });
+
+  /**
    * T710/CA-11 (2º momento) — o renderer viu a retomada morrer com código != 0
    * (`shouldForgetOnResumeFailure`, sinal medido em
    * `specs/008-fechar-pendencias/medicao-t710.md`) e pede o esquecimento. Aqui
@@ -2599,9 +2633,11 @@ function registerSessionIpcHandlers(): void {
     if (!entry) return toAppConfigDto(appConfig);
 
     const transcriptPath = spawnedTranscriptPaths.get(sessionId) ?? resolveTranscriptPath(sessionId, entry.projectPath, undefined);
+    // B39 — a conversation of a remote place leaves its mirror here: not on this disk is not "gone".
+    const mirrored = remoteSessions !== null && existsSync(remoteSessions.mirrorPathFor(sessionId));
     appConfig = {
       ...appConfig,
-      sessionRegistry: forgetIfOrphan(appConfig.sessionRegistry, sessionId, existsSync(transcriptPath)),
+      sessionRegistry: forgetIfOrphan(appConfig.sessionRegistry, sessionId, mirrored || existsSync(transcriptPath)),
     };
     persistAppConfig();
     return toAppConfigDto(appConfig);

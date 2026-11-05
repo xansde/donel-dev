@@ -44,7 +44,18 @@ export const SESSION_CHANNELS = {
   forgetIfOrphan: 'sessions:forgetIfOrphan',
   /** T706/CA-8 — a única leitura de disco desta feature; só roda quando o projeto não tem NENHUMA entrada no registro (guarda dura no main). */
   seedProject: 'sessions:seedProject',
+  /** B39 — where a conversation to resume lives: this computer or a remote place (asked by ssh when it is not here). */
+  whereLives: 'sessions:whereLives',
 } as const;
+
+/**
+ * B39 — answer of `sessions:whereLives`. `unreachable`: the conversation is not on this computer and some
+ * remote place did not answer, so the app cannot say where it is (it never opens an empty session here).
+ */
+export type SessionWhereLives =
+  | { readonly kind: 'local' }
+  | { readonly kind: 'remote'; readonly remoteId: string }
+  | { readonly kind: 'unreachable'; readonly labels: readonly string[] };
 
 /**
  * T412 (004) + T608 (006) + Fix #19 — push do `main` quando o transcript de
@@ -159,6 +170,8 @@ export interface DonelSessionsApi {
   forgetIfOrphan(sessionId: string): Promise<AppConfigDto>;
   /** T706/CA-8 — semeadura única de um projeto sem NENHUMA entrada no registro. */
   seedProject(projectPath: string): Promise<AppConfigDto>;
+  /** B39 — where the conversation `sessionId` of `projectPath` lives, to resume it there. */
+  whereLives(sessionId: string, projectPath: string): Promise<SessionWhereLives>;
 }
 
 const TAB_NAME_MAX_LENGTH = 40;
