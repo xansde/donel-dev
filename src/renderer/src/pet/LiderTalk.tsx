@@ -70,10 +70,11 @@ const QUICK_REPLIES = ['Segue', 'Como está o time?', 'O que precisa de mim?'];
  * tail). Screen coordinates, because the window itself grows under the pointer while the corner is dragged; the main
  * fits the size to the screen and saves it on the release.
  */
-function useTalkResize(view: PetView): (event: React.PointerEvent<HTMLElement>) => void {
+function useTalkResize(view: PetView, onResizing: (active: boolean) => void): (event: React.PointerEvent<HTMLElement>) => void {
   return (event) => {
     if (event.button !== 0) return;
     event.preventDefault();
+    onResizing(true);
     const handle = event.currentTarget;
     handle.setPointerCapture(event.pointerId);
     const start = { x: event.screenX, y: event.screenY, width: view.talkWidth, height: view.talk };
@@ -99,6 +100,7 @@ function useTalkResize(view: PetView): (event: React.PointerEvent<HTMLElement>) 
       handle.removeEventListener('pointerup', end);
       handle.removeEventListener('pointercancel', end);
       window.donel.pet.talkResize({ kind: 'set', ...sizeAt(e), commit: true });
+      onResizing(false);
     };
     handle.addEventListener('pointermove', move);
     handle.addEventListener('pointerup', end);
@@ -116,9 +118,11 @@ export interface LiderTalkProps {
   readonly onPose: (pose: TalkPose) => void;
   /** The progress panel (folded by default): it takes the body of the bubble while it is open. */
   readonly progress: JobuProgressState;
+  /** t-29e1327b: the owner is dragging the corner of the bubble (the window must keep the mouse until the release). */
+  readonly onResizing: (active: boolean) => void;
 }
 
-export function LiderTalk({ view, onClose, onPose, progress }: LiderTalkProps): React.JSX.Element {
+export function LiderTalk({ view, onClose, onPose, progress, onResizing }: LiderTalkProps): React.JSX.Element {
   const [state, setState] = useState<LiderState | null>(null);
   const session = useChatSession(state?.ptyId ?? null);
   const [draft, setDraft] = useState('');
@@ -150,7 +154,7 @@ export function LiderTalk({ view, onClose, onPose, progress }: LiderTalkProps): 
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [onClose]);
 
-  const startResize = useTalkResize(view);
+  const startResize = useTalkResize(view, onResizing);
   const lines = useMemo(() => linesOf(session.rows), [session.rows]);
   const lastLider = [...lines].reverse().find((line) => line.who === 'lider') ?? null;
   const typed = useTypewriter(lastLider?.id ?? null, lastLider?.text ?? '');
