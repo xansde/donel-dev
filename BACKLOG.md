@@ -26,6 +26,75 @@
      linha "Modo" no cabeçalho da seção; implementada = mergeada na integradora;
      aguardando-merge e concluida flipam em bloco (PR único da demanda). -->
 
+## Cartas do Oráculo, forma A (`cartas-forma-a`)
+
+- **Spec**: `docs/specs/cartas-forma-a.md` (branch `proto/cartas`, commit 321c673); forma em
+  `docs/prototipos/carta-oraculo/final.html`, escolha do dono em `decisao.md`
+- **Pedido** (dono, 05/11): "A ideia é ser a forma A. Mas não existe suporte para eu ver os protótipos nas próprias cartas nem como escrever lá."
+- **Fatiado em**: 2026-11-05 (sessão Dev na VPS; sem MCP `donel`, o registro fica nos PRs). A ordem é a da spec.
+- **Rodadas previstas**: 01 | 02 | 03 | 04, 05, 06 <!-- 04-06 dependem da 01 e correm depois da 02 e da 03 (spec) -->
+
+Convenções: testes só os que a spec lista; tela sem teste (o dono vê no alfa); `npm run verify`
+verde; um PR por fatia contra `staging`; patch note em toda fatia visível.
+
+### 01 — Contrato (Parte C)
+
+- **Status**: implementada
+- **Branch**: `feat/cartas-forma-a`
+- **Depende de**: —
+- **Propósito**: `titulo` no `tarefa_criar`; bloco `paraODono` no `tarefa_entregar` (gravado como
+  `forOwner`), obrigatório no risco alto; `findCode` recusa código no texto do dono; decisão grava
+  `option`; evento `comentada` já no schema; `schemaVersion` 3; régua de quando sobe nas descrições.
+- **Como testar**: `tests/ledger.test.ts` (parse v2→v3 sem perda; `findCode`; risco alto sem bloco
+  recusado; decisão por opção grava `option`).
+
+### 02 — Carta A no celular
+
+- **Status**: implementada
+- **Branch**: `feat/cartas-forma-a-02-celular` (empilhada na 01)
+- **Depende de**: 01
+- **Propósito**: frente e verso lendo o bloco; opções com nome decidindo; quadro de checagens; verso
+  único para entrega sem bloco; nenhum id fora de "Detalhes técnicos".
+
+### 03 — Carta A no desktop
+
+- **Status**: implementada
+- **Branch**: `feat/cartas-forma-a-03-desktop` (empilhada na 02)
+- **Depende de**: 01
+- **Propósito**: o "esperando você" da faixa do Mindscape abre a mão de cartas (como no `final.html`).
+
+### Futura — amostra do Revisor em forma A (anotada, sem data)
+
+- **Status**: anotada
+- **Origem**: decisão do Líder único em 05/11, até o dono dizer o contrário: a carta da amostra do dia
+  (aceite do Revisor que o dono confere) segue na forma antiga por enquanto; vira forma A numa fatia futura.
+- Decididas na mesma conversa: dois toques para decidir (mantém); arrastar não escolhe o recomendado
+  (decidir pede gesto explícito); a mesa do desktop cobre só o quadro (ajuste no #238); o protótipo nunca
+  abre fora da carta.
+
+### 04 — Protótipo dentro da carta (Parte A)
+
+- **Status**: implementada
+- **Branch**: `feat/cartas-forma-a-04-prototipo` (empilhada na 03)
+- **Depende de**: 01 (depois da 02 e da 03)
+- **Propósito**: HTML como prova (2 MB); bilhete de uso único + CSP `sandbox allow-scripts` no
+  celular; protocolo `donel-prova:` no desktop.
+
+### 05 — Escrever na carta (Parte B)
+
+- **Status**: implementada
+- **Branch**: `feat/cartas-forma-a-05-escrever` (empilhada na 04)
+- **Depende de**: 01 (depois da 02 e da 03)
+- **Propósito**: op `comentar`; mensagem à sessão dona, ou ao Líder, ou guardada; recibo e conversa
+  no verso; reentrega depois de `comentada`.
+
+### 06 — Prova de arquivo vinda da VPS
+
+- **Status**: implementada
+- **Branch**: `feat/cartas-forma-a-06-vps` (empilhada na 05)
+- **Depende de**: 01 (depois da 02 e da 03)
+- **Propósito**: a cópia da prova pelo ssh do próprio lugar remoto, sem interpolar caminho em shell.
+
 ## Mindscape — desenho, print, Ctrl+Z e zoom (`mindscape-desenho`)
 
 - **Design**: `docs/design/mindscape-desenho.md`

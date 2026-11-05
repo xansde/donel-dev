@@ -18,7 +18,26 @@ export const MINDSCAPE_CHANNELS = {
   boardRequest: 'mindscape:board-request',
   /** Quadro por MCP — renderer → main: the answer to `boardRequest` (`MindscapeBoardResponse`). */
   boardRespond: 'mindscape:board-respond',
+  /** Cartas forma A — main → renderer: deliver what the owner wrote on a card (`MindscapeOwnerMessageRequest`). */
+  ownerMessage: 'mindscape:owner-message',
+  /** renderer → main: where it went (`MindscapeOwnerMessageResponse`). */
+  ownerMessageRespond: 'mindscape:owner-message-respond',
 } as const;
+
+/** What the owner wrote on a card: to the session of `placeId`, or (closed) to the Líder único with `leaderText`. */
+export interface MindscapeOwnerMessageRequest {
+  readonly requestId: string;
+  readonly projectPath: string;
+  readonly placeId: string;
+  readonly text: string;
+  readonly leaderText: string;
+}
+
+export interface MindscapeOwnerMessageResponse {
+  readonly requestId: string;
+  /** `{ placeId }` = the session that owns the task; `'lider'` = the Líder único; `null` = nobody open. */
+  readonly deliveredTo: { readonly placeId: string } | 'lider' | null;
+}
 
 /** A board tool call of the session of `ptyId`; the renderer answers with the same `requestId`. */
 export interface MindscapeBoardRequest {
@@ -67,4 +86,7 @@ export interface DonelMindscapeApi {
   onBoardRequest(listener: (request: MindscapeBoardRequest) => void): () => void;
   /** Quadro por MCP — the answer to one `onBoardRequest`. */
   respondBoard(response: MindscapeBoardResponse): void;
+  /** Cartas forma A — what the owner wrote on a card, to deliver; returns the unsubscribe function. */
+  onOwnerMessage(listener: (request: MindscapeOwnerMessageRequest) => void): () => void;
+  respondOwnerMessage(response: MindscapeOwnerMessageResponse): void;
 }

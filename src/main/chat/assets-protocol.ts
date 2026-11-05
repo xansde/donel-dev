@@ -104,9 +104,12 @@ export interface ProtocolLike {
   handle(scheme: string, handler: (request: { url: string }) => Promise<Response>): void;
 }
 
-/** Must run before `app.ready`: gives the scheme the privileges <img> needs. */
-export function registerAssetScheme(protocol: ProtocolLike): void {
-  protocol.registerSchemesAsPrivileged([{ scheme: ASSET_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
+/**
+ * Must run before `app.ready`: gives the scheme the privileges <img> needs. Electron takes ONE call for every
+ * privileged scheme, so the app's other schemes come in `others` (the Oráculo's `donel-prova:`).
+ */
+export function registerAssetScheme(protocol: ProtocolLike, others: readonly { scheme: string; privileges: Record<string, boolean> }[] = []): void {
+  protocol.registerSchemesAsPrivileged([{ scheme: ASSET_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }, ...others]);
 }
 
 /** After `app.ready`. Responses are never cached across sessions. */
