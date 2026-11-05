@@ -65,4 +65,22 @@ describe('browser MCP server', () => {
     expect(gate('evil.example:5000')).toMatchObject({ ok: false, status: 403 });
     expect(gate('127.0.0.1:1')).toMatchObject({ ok: false, status: 403 });
   });
+
+  it('B38: the remote end of a PTY tunnel is a valid Host only with that PTY token', () => {
+    const remote = 'r'.repeat(32);
+    const local = 'l'.repeat(32);
+    const tokens: Record<string, string> = { [remote]: 'pty-vps', [local]: 'pty-pc' };
+    const gate = (host: string, token: string | null) =>
+      checkMcpHttpRequest(
+        { method: 'POST', url: '/mcp', headers: { host, ...(token ? { authorization: `Bearer ${token}` } : {}) } },
+        5000,
+        (t) => tokens[t] ?? null,
+        (ptyId) => (ptyId === 'pty-vps' ? 30364 : null),
+      );
+    expect(gate('127.0.0.1:30364', remote)).toEqual({ ok: true, ptyId: 'pty-vps' });
+    expect(gate('localhost:30364', remote)).toEqual({ ok: true, ptyId: 'pty-vps' });
+    expect(gate('127.0.0.1:30364', local)).toMatchObject({ ok: false, status: 403 });
+    expect(gate('127.0.0.1:30364', null)).toMatchObject({ ok: false, status: 403 });
+    expect(gate('100.64.0.7:30364', remote)).toMatchObject({ ok: false, status: 403 });
+  });
 });

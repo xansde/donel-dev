@@ -1453,6 +1453,10 @@ que falta é ela conhecer as portas dos túneis que o próprio app abriu.
   mostrar um arquivo local dela (HTML, imagem, PDF), o app busca o arquivo pelo
   mesmo `ssh` e abre no navegador integrado. Nada de servidor improvisado na VPS.
 
+> ✅ **Primeiro item feito em 05/11 (`feat/slack-so-com-carta`)**: o gate aceita o `Host` da porta do
+> túnel só com o token da sessão daquele túnel. Os outros itens (falha visível, arquivo remoto no
+> painel, anexos) seguem abertos.
+
 **Pronto quando:** numa sessão aberta na VPS, `sessao_quem_sou` responde e um
 HTML gerado lá abre no painel do Donel Dev no PC, sem passo manual.
 
