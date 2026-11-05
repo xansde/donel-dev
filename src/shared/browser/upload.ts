@@ -1,8 +1,9 @@
 // Navegador integrado — what `navegador_enviar_arquivo` may send (V2, docs/design/navegador-interno.md). Pure: the
 // paths come already resolved; the caller does the `realpath` and the `stat`.
 //
-// The agent never names a folder: the owner authorizes ONE folder per session, by a gesture of his in the panel, and
-// only files inside it go up. The credentials rule of the app holds here too: a folder that is (or holds) the
+// Only files inside a folder the owner authorized go up. The list is the app's (config `browserUploads`, every
+// session, survives a restart) and grows only by a gesture of the owner: Permitir on the request the tool shows him
+// (the folder of the file the agent asked for), or the picker in Regras. The credentials rule of the app holds here too: a folder that is (or holds) the
 // agent's own config, the app's data or the usual key folders cannot be authorized, and a file that looks like a
 // secret is refused even inside an authorized folder.
 //
@@ -23,6 +24,18 @@ function normalize(path: string): string {
 
 function isInsideOrEqual(child: string, parent: string): boolean {
   return child === parent || child.startsWith(`${parent}/`);
+}
+
+/** `list` with `folder` once (an equal path in another case or with a trailing slash counts as the same). */
+export function withUploadFolder(list: readonly string[], folder: string): string[] {
+  const key = normalize(folder);
+  return list.some((item) => normalize(item) === key) ? [...list] : [...list, folder];
+}
+
+/** `list` without `folder` (compared like `withUploadFolder`). */
+export function withoutUploadFolder(list: readonly string[], folder: string): string[] {
+  const key = normalize(folder);
+  return list.filter((item) => normalize(item) !== key);
 }
 
 export interface UploadFolderContext {
