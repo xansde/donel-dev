@@ -22,6 +22,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'O painel de progresso do Jobu mostra só as tarefas abertas, em execução, entregues esperando decisão e rejeitadas. Uma tarefa aceita sai do painel na hora e deixa de contar nas barras. Quando não há nada em andamento, o painel diz "Nada rodando agora".',
       },
       {
+        title: 'Botão direito move o Mindscape',
+        text: 'No Mindscape, segurar o botão direito e arrastar move o quadro igual à ferramenta mão, com qualquer ferramenta escolhida, inclusive a de seleção. O botão esquerdo continua selecionando e desenhando como antes.',
+      },
+      {
         title: '"Esperando você" só quando a sessão pede algo',
         text: 'A lista "Esperando você" do Jobu (e o número na barra de tarefas) agora mostra só as sessões com pergunta, permissão ou diálogo aberto na tela. Sessão que só terminou o que fazia não entra mais nela; o aviso de "terminou" continua. E a marca some assim que a sessão volta a trabalhar depois de você responder, em vez de ficar até o próximo passo dela.',
       },

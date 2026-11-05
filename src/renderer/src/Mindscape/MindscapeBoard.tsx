@@ -4,13 +4,12 @@ import { eraseBoard } from '../../../shared/mindscape/eraser';
 import { cardAtPoint, hitTestDrawings, itemsInsideRect, resizeDrawing, type CardRect, type ItemIds, type Rect, type ResizeHandle } from '../../../shared/mindscape/geometry';
 import { isPrintInputType } from '../../../shared/mindscape/images';
 import type { MindscapeBoard as Board, MindscapeCard, MindscapeDrawing, MindscapeLink } from '../../../shared/mindscape/model';
+import { contextMenuAllowed, draggedPan, isDrag, pressActionFor, RIGHT_BUTTON } from '../../../shared/mindscape/pointer';
 import type { MindscapeTool } from '../../../shared/mindscape/shortcuts';
 import { MAX_ZOOM, MIN_ZOOM, screenToWorld, stepZoom, wheelPan, wheelZoomFactor, zoomAt, zoomPercent, type BoardView, type Point } from '../../../shared/mindscape/view';
 import { normalizeWheelDelta } from '../../../shared/pet/gestures';
 import styles from './Mindscape.module.css';
 
-/** Pointer travel (px) before a press becomes a drag — below it, click and double click stay intact; a shorter drawing is dropped. */
-const DRAG_THRESHOLD = 4;
 /** Hit-test slack of a drawing, in px of screen (design: `stroke/2 + 6 px de tela`). */
 const HIT_SLACK_PX = 6;
 /** Desenho, fatia 04 — radius of the eraser, in px of screen (`8 / zoom` on the board). */
@@ -105,8 +104,10 @@ interface Gesture {
   /** `erase`: the eraser path so far (flattened, board units) and the board with it applied (local preview). */
   path?: number[];
   erased?: Board;
-  /** `pan` started by H or space: the click that ends it reaches nobody. */
+  /** `pan` started by H, space or the right button: the click that ends it reaches nobody. */
   readonly swallow?: boolean;
+  /** `MouseEvent.button` of the press (a right-button pan that moved eats the context menu). */
+  readonly button: number;
   moved: boolean;
   lastX: number;
   lastY: number;
@@ -229,6 +230,8 @@ export function MindscapeBoard({
   const suppressClickRef = useRef(false);
   /** A drawing or a hand drag just ended: the click that follows it reaches nobody (no card selected, no link). */
   const swallowClickRef = useRef(false);
+  /** A right-button drag of the view just ended: the context menu that follows (Windows fires it on release) does not open. */
+  const rightDraggedRef = useRef(false);
   const boardRef = useRef(board);
   boardRef.current = board;
   const rectsRef = useRef(cardRects);
@@ -269,8 +272,10 @@ export function MindscapeBoard({
         }
         case 'resize':
           return { kind: 'resize', drawing: resizeDrawing(gesture.drawing!, gesture.handle!, worldAt(gesture, gesture.lastX, gesture.lastY)) };
-        case 'pan':
-          return { kind: 'pan', x: gesture.originX + dx, y: gesture.originY + dy };
+        case 'pan': {
+          const pan = draggedPan({ x: gesture.originX, y: gesture.originY }, { x: gesture.startX, y: gesture.startY }, { x: gesture.lastX, y: gesture.lastY });
+          return { kind: 'pan', x: pan.x, y: pan.y };
+        }
       }
     },
     [worldAt],
@@ -397,6 +402,7 @@ export function MindscapeBoard({
         break;
       case 'pan':
         if (gesture.swallow) swallowClickRef.current = true;
+        if (gesture.button === RIGHT_BUTTON) rightDraggedRef.current = true;
         callbacks.onViewChange((view) => ({ ...view, pan: { x: final.x, y: final.y } }));
         break;
       case 'lasso': {
@@ -435,7 +441,7 @@ export function MindscapeBoard({
           gesture.erased = eraseBoard(gesture.erased, [...last, point.x, point.y], radius, previewPieceId, sizesOf(rectsRef.current));
         }
       }
-      if (!gesture.moved && Math.abs(event.clientX - gesture.startX) + Math.abs(event.clientY - gesture.startY) <= DRAG_THRESHOLD) return;
+      if (!gesture.moved && !isDrag({ x: gesture.startX, y: gesture.startY }, { x: event.clientX, y: event.clientY })) return;
       gesture.moved = true;
       if (frameRef.current !== null) return;
       frameRef.current = requestAnimationFrame(() => {
@@ -462,10 +468,12 @@ export function MindscapeBoard({
   };
 
   const handlePointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
-    if (event.button !== 0 || gestureRef.current) return;
+    const action = pressActionFor(event.button, tool, panMode);
+    if (action === 'none' || gestureRef.current) return;
     const target = event.target as HTMLElement;
     suppressClickRef.current = false;
     swallowClickRef.current = false;
+    rightDraggedRef.current = false;
     const viewBox = event.currentTarget.getBoundingClientRect();
     const base = {
       startX: event.clientX,
@@ -477,8 +485,10 @@ export function MindscapeBoard({
       moved: false,
       lastX: event.clientX,
       lastY: event.clientY,
+      button: event.button,
     };
-    if (panMode || tool === 'hand') {
+    // H, space or the right button (any tool): the drag moves the view.
+    if (action === 'pan') {
       if (target.closest(EDITABLE)) return;
       gestureRef.current = { ...base, kind: 'pan', originX: boardRef.current.pan.x, originY: boardRef.current.pan.y, swallow: true };
       attachGesture();
@@ -584,6 +594,12 @@ export function MindscapeBoard({
       data-zoom={zoom}
       data-dragging={moving ? 'true' : undefined}
       onPointerDown={handlePointerDown}
+      onContextMenu={(event) => {
+        if (contextMenuAllowed(rightDraggedRef.current)) return;
+        rightDraggedRef.current = false;
+        event.preventDefault();
+        event.stopPropagation();
+      }}
       onPointerMove={(event) => {
         const box = event.currentTarget.getBoundingClientRect();
         lastPointerRef.current = { x: event.clientX - box.left, y: event.clientY - box.top };
