@@ -867,10 +867,13 @@ export class AccountEngine {
     if (this.disposed) return null;
     if (!this.mod || this.state !== 'ready' || !this.config.autoSwitch.enabled) return null;
 
-    const outcome = await this.evaluateLocalAutoSwitch();
-    // Lugares remotos — depois desta máquina, cada lugar com conta.
+    // Lugares remotos ANTES desta máquina: o lugar só usa o pool próprio,
+    // enquanto esta máquina ainda tem o pool Seazone de reserva. Com a ordem
+    // inversa, esta máquina (no pool, com folga) voltava para a única conta
+    // própria livre e o lugar ficava parado na conta cheia (05/11, VPS de
+    // Homologações na Conta 8 a 98%).
     await this.evaluateRemoteAutoSwitch();
-    return outcome;
+    return this.evaluateLocalAutoSwitch();
   }
 
   private async evaluateLocalAutoSwitch(): Promise<SwitchOutcome | null> {

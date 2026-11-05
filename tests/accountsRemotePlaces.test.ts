@@ -184,4 +184,16 @@ describe('motor com lugar remoto', () => {
 
     expect(outcome).toEqual({ kind: 'switched', from: 'a', to: 'c' });
   });
+
+  it('o lugar remoto cheio troca antes desta máquina e fica com a única conta livre', async () => {
+    const remote = new FakeRemote(pair('b'), 'fp-b');
+    const { engine, mod, savedRemotes } = makeEngine(remote, { activeAccountId: 'b' });
+    mod.loads = { a: 95, b: 98, c: 0 };
+    await engine.listAccounts();
+
+    await engine.evaluateAutoSwitch();
+
+    expect(savedRemotes.at(-1)?.[0].activeAccountId).toBe('c');
+    expect(engine.getSnapshot().activeAccountId).toBe('a');
+  });
 });

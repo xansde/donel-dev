@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-05',
     items: [
       {
+        title: 'A VPS troca de conta antes deste computador',
+        text: 'Quando a conta de uma VPS enche, a troca automática agora olha a VPS primeiro. Se só houver uma conta sua livre, ela vai para a VPS, e este computador continua no pool da Seazone. Antes, este computador podia pegar a conta livre e deixar a VPS parada na conta cheia.',
+      },
+      {
         title: 'Progresso do Jobu só com o que está rolando',
         text: 'O painel de progresso do Jobu mostra só as tarefas abertas, em execução, entregues esperando decisão e rejeitadas. Uma tarefa aceita sai do painel na hora e deixa de contar nas barras. Quando não há nada em andamento, o painel diz "Nada rodando agora".',
       },
