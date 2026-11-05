@@ -101,9 +101,16 @@ describe('sessao_fechar — a hierarquia', () => {
       askOwner: async () => false,
       remoteLabel: (id: string) => id,
       remotes: () => [],
+      projects: () => [],
     } as AgentBridgePorts;
     const bridge = new AgentBridge(ports);
-    return { closed, doc: () => doc, setDoc: (next: MindscapeDoc) => { doc = next; }, addTab: (tab: BridgeTab) => tabs.push(tab), close: (from: string, quem: string) => bridge.handle(from, { tool: 'sessao_fechar', quem }) };
+    return {
+      closed,
+      doc: () => doc,
+      setDoc: (next: MindscapeDoc) => { doc = next; },
+      addTab: (tab: BridgeTab) => tabs.push(tab),
+      close: (from: string, quem: string, quadro?: string) => bridge.handle(from, { tool: 'sessao_fechar', quem, ...(quadro ? { quadro } : {}) }),
+    };
   }
 
   it('without hierarchy closes nothing, and never the own session', async () => {
@@ -143,6 +150,30 @@ describe('sessao_fechar — a hierarquia', () => {
     expect(await tree.close('tab-lider2', 'place:outro')).toMatchObject({ ok: false });
     expect(tree.closed).toEqual([]);
     expect(parseMindscapeDoc(JSON.parse(JSON.stringify(addLink(tree.doc(), P, { id: 'l-open', from: 'place:lider', to: 'place:lider2', by: 'session', opened: true })))).boards[P]!.links.find((link) => link.id === 'l-open')?.opened).toBe(true);
+  });
+
+  // Líder único (ADR 0007) — owner: "o do Donel Dev deve ser capaz de fechar sessões em qualquer mindscape, mas o
+  // Dalton, apenas dentro do seu próprio". Only the tab the Jobu marked is it; never a Líder by its role alone.
+  it('the Líder único closes on any board without the "Alcance" mark; a Líder without the Jobu mark does not', async () => {
+    const tree = setup({ arrows: true }); // no reach: 'all' anywhere
+    tree.addTab({ id: 'tab-unico', name: 'Líder', cwd: 'C:/proj', roleId: 'lider', leaderOfAll: true, sessionType: 'claude' });
+    tree.addTab({ id: 'tab-vps', name: 'Líder', cwd: 'C:/proj', roleId: 'lider', remoteId: 'vps', sessionType: 'claude' });
+    expect(await tree.close('tab-vps', 'place:outro', 'beacon')).toMatchObject({ ok: false });
+    expect(await tree.close('tab-unico', 'place:outro', 'beacon')).toEqual({ ok: true, text: 'Fechada.' }); // the top of another board
+    expect(await tree.close('tab-unico', 'place:neto', 'atlas')).toEqual({ ok: true, text: 'Fechada.' }); // below the top, down a chain
+    expect(tree.closed).toEqual(['tab-outro', 'tab-neto']);
+  });
+
+  it('an arrow a session draws neither hides a place from the Líder único nor puts anyone above it', async () => {
+    const tree = setup({ arrows: false });
+    tree.addTab({ id: 'tab-unico', name: 'Líder', cwd: 'C:/proj', roleId: 'lider', leaderOfAll: true, sessionType: 'claude' });
+    // The dev draws an arrow to the neto: the neto stays at the top (reached), and the dev is not above it.
+    const drawn = applyBoardOps(tree.doc(), P, [{ op: 'ligacao', de: 'place:dev', para: 'place:neto' }], { newId: () => 'l-drawn', now: 0, roleIds: new Set(), selfPlaceId: 'place:dev' });
+    if (!drawn.ok) throw new Error(drawn.reason);
+    tree.setDoc(drawn.doc);
+    expect(await tree.close('tab-dev', 'place:neto')).toMatchObject({ ok: false });
+    expect(await tree.close('tab-unico', 'place:neto', 'atlas')).toEqual({ ok: true, text: 'Fechada.' });
+    expect(tree.closed).toEqual(['tab-neto']);
   });
 
   it('keeps the reach of a board through the disk guard', () => {

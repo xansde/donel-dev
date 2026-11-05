@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-05',
     items: [
       {
+        title: 'Um Líder só, para todos os quadros',
+        text: 'O Jobu agora fala com um Líder único, que não pertence a nenhum quadro: ele lê e mexe no Donel Dev, na Homologação e no BizOps, abre sessões em qualquer um deles, manda mensagem, cria tarefas e fecha sessões. Ele fica acima do topo de cada quadro, então alcança quem está no topo e quem está abaixo pelas setas que você desenhou ou que nasceram quando uma sessão abriu outra; uma seta que uma sessão desenha sozinha não muda isso. Quem ele abre nasce ligado a ele, e ele é avisado quando essas sessões terminam. Só é Líder único a sessão aberta pelo Jobu: um Líder aberto pela VPS ou pelo Launcher continua sendo uma sessão comum. Os Líderes que cada quadro tinha viram lugares comuns: continuam no quadro com a conversa e as setas, mas o Jobu não fala mais com eles.',
+      },
+      {
         title: 'Rotina em sombra: sessão parada e ninguém vê',
         text: 'Com o app aberto, uma rotina olha os quadros a cada 5 minutos e anota quando uma sessão está parada (ou sem sinal) há mais de 8 horas, ou esperando você há mais de 30 minutos. Por enquanto ela só observa: ninguém é acordado e nada muda nas sessões. Na barra do Mindscape, "em sombra: N achados hoje" mostra quantas vezes ela teria chamado o Líder daquele quadro; um clique abre a lista. Ela só avisa a mesma sessão uma vez, espera confirmar em duas olhadas seguidas, chama no máximo 5 por hora e 15 por dia, e se desliga sozinha por uma semana quando a maior parte do que aponta se resolve sozinha.',
       },

@@ -12,16 +12,17 @@ export type ProofInput =
   | { readonly tipo: 'link'; readonly url: string };
 
 export type LedgerToolCall =
-  | { readonly tool: 'tarefa_criar'; readonly pedido: string; readonly criterio: string; readonly prazo: string; readonly dono?: string; readonly risco: LedgerRisk }
+  | { readonly tool: 'tarefa_criar'; readonly pedido: string; readonly criterio: string; readonly prazo: string; readonly dono?: string; readonly risco: LedgerRisk; readonly quadro?: string }
   | { readonly tool: 'tarefa_assumir'; readonly id: string }
   | { readonly tool: 'tarefa_entregar'; readonly id: string; readonly provas: readonly ProofInput[]; readonly nota?: string }
   | { readonly tool: 'tarefa_aceitar'; readonly id: string }
   | { readonly tool: 'tarefa_rejeitar'; readonly id: string; readonly motivo: string }
-  | { readonly tool: 'tarefa_listar'; readonly estado?: LedgerTaskState; readonly todos?: boolean };
+  | { readonly tool: 'tarefa_listar'; readonly estado?: LedgerTaskState; readonly todos?: boolean; readonly quadro?: string };
 
 export type LedgerToolName = LedgerToolCall['tool'];
 
 const ID = { type: 'string', description: 'Id da tarefa (tarefa_listar).' };
+const BOARD = { type: 'string', description: 'Só o Líder único (que não tem quadro): o quadro, pelo nome ou pela pasta do projeto. As outras sessões usam sempre o próprio.' };
 const STATES: readonly LedgerTaskState[] = ['aberta', 'em-execucao', 'entregue', 'aceita', 'rejeitada'];
 
 export const LEDGER_TOOLS = [
@@ -38,6 +39,7 @@ export const LEDGER_TOOLS = [
         prazo: { type: 'string', description: 'Data AAAA-MM-DD.' },
         dono: { type: 'string', description: 'Id do lugar que faz o trabalho (sessao_listar); padrão: o seu.' },
         risco: { type: 'string', enum: ['baixo', 'alto'] },
+        quadro: BOARD,
       },
       required: ['pedido', 'criterio', 'prazo', 'risco'],
       additionalProperties: false,
@@ -106,6 +108,7 @@ export const LEDGER_TOOLS = [
       properties: {
         estado: { type: 'string', enum: STATES },
         todos: { type: 'boolean', description: 'true: de todos os quadros (padrão: só o deste projeto).' },
+        quadro: BOARD,
       },
       additionalProperties: false,
     },
@@ -151,6 +154,9 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
   if (typeof args !== 'object' || Array.isArray(args)) return { ok: false, reason: 'Argumentos têm de ser um objeto.' };
   const fail = (reason: string): ParsedLedgerCall => ({ ok: false, reason });
   const id = text(args.id, 'id', 120, true);
+  const board = text(args.quadro, 'quadro', 260, false);
+  if (typeof board === 'object') return fail(board.error);
+  const quadro = board?.trim() ? { quadro: board.trim() } : {};
   switch (name) {
     case 'tarefa_criar': {
       const pedido = text(args.pedido, 'pedido', MAX_REQUEST_CHARS, true);
@@ -161,7 +167,7 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       if (args.risco !== 'baixo' && args.risco !== 'alto') return fail('"risco" tem de ser baixo ou alto.');
       return {
         ok: true,
-        call: { tool: 'tarefa_criar', pedido: pedido as string, criterio: criterio as string, prazo: (prazo as string).trim(), ...(typeof dono === 'string' && dono.trim() ? { dono: dono.trim() } : {}), risco: args.risco },
+        call: { tool: 'tarefa_criar', pedido: pedido as string, criterio: criterio as string, prazo: (prazo as string).trim(), ...(typeof dono === 'string' && dono.trim() ? { dono: dono.trim() } : {}), risco: args.risco, ...quadro },
       };
     }
     case 'tarefa_assumir':
@@ -191,7 +197,7 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
     case 'tarefa_listar': {
       if (args.estado !== undefined && !STATES.includes(args.estado as LedgerTaskState)) return fail(`"estado" tem de ser ${STATES.join(', ')}.`);
       if (args.todos !== undefined && typeof args.todos !== 'boolean') return fail('"todos" é true ou false.');
-      return { ok: true, call: { tool: 'tarefa_listar', ...(args.estado ? { estado: args.estado as LedgerTaskState } : {}), ...(args.todos ? { todos: true } : {}) } };
+      return { ok: true, call: { tool: 'tarefa_listar', ...(args.estado ? { estado: args.estado as LedgerTaskState } : {}), ...(args.todos ? { todos: true } : {}), ...quadro } };
     }
     default:
       return fail(`Ferramenta desconhecida: ${name}`);

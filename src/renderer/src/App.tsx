@@ -147,6 +147,7 @@ import { effectiveTabView, hasChatView, nextTabView, shouldHandleViewShortcut } 
 import { disposeTabSend, sendDriverFor, sendToTab, sendToTabAndWait } from './chat/composer/tabSend';
 import { blockingScreen, readInputText } from '../../shared/chat/screen';
 import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../shared/lider/ipc';
+import { isLeaderOfAllTab, leaderHome } from '../../shared/mindscape/leader';
 import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
 import { TerminalPane } from './TerminalPane';
 import { PatchNotes } from './patchnotes/PatchNotes';
@@ -228,6 +229,8 @@ interface TabState {
   openedBy?: string;
   /** The owner brought a tab of `openedBySession` to the tab bar (double click on its place, a notice); closing it hides it again. */
   shown?: boolean;
+  /** Líder único (ADR 0007) — set ONLY when the Jobu opens it (`liderDeliverRef`) and kept on an update (B33). */
+  leaderOfAll?: boolean;
   /** Sessões remotas — remote place (`accounts.remotes`) where this tab's CLI runs; `undefined` = this computer. */
   remoteId?: string;
   /**
@@ -2118,6 +2121,7 @@ export function App(): React.JSX.Element {
         // A place binds to its conversation; only a session that never started still needs it.
         ...(tab.placeId && !sessionId ? { placeId: tab.placeId } : {}),
         ...(tab.openedBySession && tab.openedBy ? { openedBy: tab.openedBy } : {}),
+        ...(tab.leaderOfAll ? { leaderOfAll: true } : {}),
         ...(tab.customTitle !== undefined ? { customTitle: tab.customTitle } : {}),
         ...(tab.view ? { view: tab.view } : {}),
       },
@@ -2168,6 +2172,7 @@ export function App(): React.JSX.Element {
             ...(entry.color && isTabColorToken(entry.color) ? { color: entry.color } : {}),
             ...(entry.customTitle !== undefined ? { customTitle: entry.customTitle } : {}),
             ...(entry.view ? { view: entry.view } : {}),
+            ...(entry.leaderOfAll ? { leaderOfAll: true } : {}),
               ...(entry.openedBy ? { openedBySession: true, openedBy: entry.openedBy } : {}),
             },
             !entry.openedBy,
@@ -2442,39 +2447,22 @@ export function App(): React.JSX.Element {
     setAppMode('geral');
   };
 
-  // Item 18 (PDA mindscape-openrig) — the Jobu as Líder, in a bubble that comes out of him. This window owns the tabs,
-  // so it says which one is the Líder of the current project (`lider:report`) and delivers what the owner writes there
-  // (`lider:deliver`) through the tab's own send machine; with no live Líder, the first message opens one.
-  const liderTabsRef = useRef<Record<string, string>>({});
-  // The project of the Líder: the one selected in the sidebar; with none (the selector often says "Selecionar
-  // projeto" while a tab is open), the project of the active tab; with no tab, the last project something was opened in.
-  const lastLiderProjectRef = useRef<string | undefined>(undefined);
-  const activeTabCwd = tabs.find((tab) => tab.id === activeTabId)?.cwd;
-  const liderProjectPath = selectedProjectPath ?? activeTabCwd ?? lastLaunch?.cwd ?? lastLiderProjectRef.current;
-  if (liderProjectPath !== undefined) lastLiderProjectRef.current = liderProjectPath;
-  const findLiderTab = (projectPath: string | undefined): TabState | undefined => {
-    if (!projectPath) return undefined;
-    const alive = (tab: TabState): boolean => tab.sessionType === 'claude' && tab.cwd === projectPath && tabExits[tab.id] === undefined;
-    const remembered = liderTabsRef.current[projectPath];
-    const byRef = remembered ? tabs.find((tab) => tab.id === remembered && alive(tab)) : undefined;
-    if (byRef) return byRef;
-    const board = mindscape.doc.boards[projectPath];
-    return tabs.find((tab) => {
-      if (!alive(tab)) return false;
-      if (tab.roleId === LIDER_ROLE_ID) return true;
-      // After a restart the role lives on the place of the Mindscape that holds the conversation.
-      if (!board || !tab.claudeSessionId) return false;
-      return Object.values(board.cards).some((card) => card.kind === 'session' && card.roleId === LIDER_ROLE_ID && card.sessionId === tab.claudeSessionId);
-    });
+  // Item 18 (PDA mindscape-openrig) + Líder único (ADR 0007) — the Jobu as the Líder of EVERY board, in a bubble that
+  // comes out of him. One session with the role `lider` and the Jobu's mark (`isLeaderOfAllTab`): this window owns the tabs,
+  // so it says which one it is (`lider:report`) and delivers what the owner writes there (`lider:deliver`) through the
+  // tab's own send machine; with no live Líder, the first message opens one, on this computer, in the folder that holds
+  // the projects of the boards (`leaderHome`).
+  const liderTabRef = useRef<string | null>(null);
+  const findLiderTab = (): TabState | undefined => {
+    const alive = (tab: TabState): boolean => isLeaderOfAllTab(tab) && tabExits[tab.id] === undefined;
+    const remembered = liderTabRef.current ? tabs.find((tab) => tab.id === liderTabRef.current && alive(tab)) : undefined;
+    return remembered ?? tabs.find(alive);
   };
-  const liderTab = findLiderTab(liderProjectPath);
+  const liderTab = findLiderTab();
   const liderRoleAvailable = roles.some((role) => role.id === LIDER_ROLE_ID);
   const lastLiderReportRef = useRef<string | null>(null);
   useEffect(() => {
-    const project = projects.find((candidate) => candidate.path === liderProjectPath);
     const report: LiderReport = {
-      projectPath: liderProjectPath ?? null,
-      projectName: project?.name ?? (liderProjectPath ? (liderProjectPath.split(/[\\/]/).filter(Boolean).pop() ?? null) : null),
       tabId: liderTab?.id ?? null,
       ptyId: liderTab ? (chatPtyIds[liderTab.id] ?? null) : null,
       name: liderTab ? resolveTabName(liderTab) : null,
@@ -2487,40 +2475,33 @@ export function App(): React.JSX.Element {
   });
   const liderDeliverRef = useRef<(text: string) => LiderSendResult>(() => ({ ok: false, reason: 'O Donel ainda está abrindo.' }));
   liderDeliverRef.current = (text: string): LiderSendResult => {
-    const projectPath = liderProjectPath;
-    if (!projectPath) return { ok: false, reason: 'Abra um projeto no Donel.' };
-    let tabId = findLiderTab(projectPath)?.id;
+    let tabId = findLiderTab()?.id;
     if (tabId === undefined) {
       const role = roles.find((candidate) => candidate.id === LIDER_ROLE_ID);
-      const providerId = role?.engine && providers.some((provider) => provider.id === role.engine) ? role.engine : undefined;
+      // Without the role there is no Líder único (it is the role + the mark below): say so instead of opening a plain session.
+      if (!role) return { ok: false, reason: 'O papel Líder não existe nesta máquina.' };
+      const providerId = role.engine && providers.some((provider) => provider.id === role.engine) ? role.engine : undefined;
       const defaults = appConfig?.launcherDefaults;
-      const project = projects.find((candidate) => candidate.path === projectPath);
-      // "Onde roda" — the same default as the Launcher and the places of the Mindscape.
-      const savedWhere = defaults?.where;
-      const remoteId =
-        savedWhere === 'local'
-          ? undefined
-          : accountsView.remotes.some((remote) => remote.id === savedWhere)
-            ? savedWhere
-            : accountsView.remotes.find((remote) => remote.activeAccountId)?.id;
+      const home = leaderHome(Object.keys(mindscape.doc.boards));
       tabId = addTab({
-        name: role?.name ?? 'Líder',
-        cwd: projectPath,
-        projectName: project?.name ?? projectPath.split(/[\\/]/).filter(Boolean).pop(),
+        name: role.name,
+        // No `projectName`: the Líder único belongs to no board.
+        ...(home ? { cwd: home } : {}),
         pinned: false,
         launchArgs: buildLauncherArgs({
           providerId,
-          model: role?.model ?? defaults?.model ?? DEFAULT_MODEL_ALIAS,
-          effort: role?.effort ?? defaults?.effort ?? DEFAULT_EFFORT_LEVEL,
-          permissionMode: role?.permissionMode ?? defaults?.permissionMode ?? 'acceptEdits',
+          model: role.model ?? defaults?.model ?? DEFAULT_MODEL_ALIAS,
+          effort: role.effort ?? defaults?.effort ?? DEFAULT_EFFORT_LEVEL,
+          permissionMode: role.permissionMode ?? defaults?.permissionMode ?? 'acceptEdits',
           sessionName: '',
         }),
         sessionType: 'claude',
         providerId,
-        ...(remoteId ? { remoteId } : {}),
-        ...(role ? { roleId: role.id } : {}),
+        roleId: role.id,
+        // The mark that makes it the Líder único (never the role alone): only this path puts it.
+        leaderOfAll: true,
       });
-      liderTabsRef.current = { ...liderTabsRef.current, [projectPath]: tabId };
+      liderTabRef.current = tabId;
     }
     const target = tabId;
     sendToTab(target, { terminal: () => terminalRefs.current[target] ?? null }, { text });
@@ -2631,6 +2612,7 @@ export function App(): React.JSX.Element {
       }),
     remoteLabel: (remoteId) => accountsView.remotes.find((remote) => remote.id === remoteId)?.label ?? remoteId,
     remotes: () => accountsView.remotes.map((remote) => ({ id: remote.id, label: remote.label })),
+    projects: () => projects.map((project) => ({ path: project.path, name: project.name })),
   };
   const agentBridgeRef = useRef<AgentBridge>(null as unknown as AgentBridge);
   if (agentBridgeRef.current === null) agentBridgeRef.current = new AgentBridge(agentPorts);

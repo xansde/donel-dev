@@ -17,7 +17,8 @@ import { createMindscapeStore, mindscapeFilePath } from './mindscape-store';
 import { createRolesStore, type RolesStore } from './roles-store';
 import { createCelularService, type CelularService } from './celular/service';
 import { roleOfSession } from '../shared/mindscape/model';
-import { ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
+import { LEADER_ROLE_ID, ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
+import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { createLedgerService, ledgerFilePath, ledgerProofsDir, nodeLedgerProofFs, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
@@ -2877,27 +2878,56 @@ function registerLedgerIpcHandlers(): void {
   });
 }
 
+/**
+ * Líder único (ADR 0007) — it has no place: it signs as `LEADER_OF_ALL`, names the board with `quadro`, and may
+ * give a task only to a place it reaches (`podeMandar` of its `sessao_listar`, which is reach.ts).
+ */
+async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<{ caller: LedgerCaller; call: LedgerToolCall } | string> {
+  const quadro = call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' ? call.quadro : undefined;
+  const base = { placeId: LEADER_OF_ALL, roleId: LEADER_ROLE_ID };
+  if (!quadro) {
+    if (call.tool === 'tarefa_criar') return 'Você é o Líder único e não tem quadro: diga qual em "quadro" (nome ou pasta).';
+    // No board: the list is of every board; the other tools act by the task id.
+    return { caller: { ...base, projectPath: '', boardPlaceIds: [] }, call: call.tool === 'tarefa_listar' ? { ...call, todos: true } : call };
+  }
+  const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar', quadro });
+  if (list.kind !== 'text') return list.kind === 'error' ? list.text : 'Não consegui ler o quadro.';
+  const board = JSON.parse(list.text) as { pasta?: unknown; lugares?: { id?: unknown; podeMandar?: unknown }[] };
+  if (typeof board.pasta !== 'string' || !Array.isArray(board.lugares)) return 'Não consegui ler o quadro.';
+  const reached = board.lugares.filter((place) => place.podeMandar === true).map((place) => place.id).filter((id): id is string => typeof id === 'string');
+  if (call.tool === 'tarefa_criar' && (!call.dono || !reached.includes(call.dono)))
+    return `O Líder único não faz a tarefa: diga em "dono" um lugar que você alcança neste quadro (${reached.join(', ') || 'nenhum'}).`;
+  return { caller: { ...base, projectPath: board.pasta, boardPlaceIds: reached }, call };
+}
+
 /** The caller of a `tarefa_*` tool, from the board the renderer owns (the same answers the session would get). */
-async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string): Promise<LedgerCaller | string> {
+async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<{ caller: LedgerCaller; call: LedgerToolCall } | string> {
   const self = await boardBridge.execute(ptyId, { tool: 'sessao_quem_sou' });
   if (self.kind !== 'text') return self.kind === 'error' ? self.text : 'Não consegui saber quem é esta sessão.';
-  const who = JSON.parse(self.text) as { lugar?: unknown; papel?: unknown; pasta?: unknown };
+  const who = JSON.parse(self.text) as { lugar?: unknown; papel?: unknown; pasta?: unknown; liderUnico?: unknown };
+  if (who.liderUnico === true) return leaderLedgerCallerOf(boardBridge, ptyId, call);
+  if (call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar') {
+    if (call.quadro) return 'Só o Líder único escolhe o quadro. Esta sessão usa sempre o próprio quadro (chame sem "quadro").';
+  }
   if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string') return 'Seu lugar ainda não está no quadro; espere o primeiro turno terminar.';
   const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar' });
   const places = list.kind === 'text' ? (JSON.parse(list.text) as { id?: unknown }[]) : [];
   return {
-    projectPath: who.pasta,
-    placeId: who.lugar,
-    ...(typeof who.papel === 'string' ? { roleId: who.papel } : {}),
-    boardPlaceIds: places.map((place) => place.id).filter((id): id is string => typeof id === 'string'),
+    caller: {
+      projectPath: who.pasta,
+      placeId: who.lugar,
+      ...(typeof who.papel === 'string' ? { roleId: who.papel } : {}),
+      boardPlaceIds: places.map((place) => place.id).filter((id): id is string => typeof id === 'string'),
+    },
+    call,
   };
 }
 
 async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<BrowserToolOutcome> {
   if (!ledgerService) return { kind: 'error', text: 'O ledger não abriu neste app.' };
-  const caller = await ledgerCallerOf(boardBridge, ptyId);
-  if (typeof caller === 'string') return { kind: 'error', text: caller };
-  const result = await runLedgerTool(ledgerService, caller, call);
+  const resolved = await ledgerCallerOf(boardBridge, ptyId, call);
+  if (typeof resolved === 'string') return { kind: 'error', text: resolved };
+  const result = await runLedgerTool(ledgerService, resolved.caller, resolved.call);
   return result.ok ? { kind: 'text', text: result.text } : { kind: 'error', text: result.text };
 }
 

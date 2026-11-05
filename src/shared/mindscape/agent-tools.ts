@@ -30,15 +30,18 @@ import {
 } from './model';
 
 export type BoardToolCall =
-  | { readonly tool: 'quadro_ler' }
+  | { readonly tool: 'quadro_ler'; readonly quadro?: string }
   | { readonly tool: 'papeis_listar' }
-  | { readonly tool: 'quadro_aplicar'; readonly ops: readonly BoardOp[] }
+  | { readonly tool: 'quadro_aplicar'; readonly ops: readonly BoardOp[]; readonly quadro?: string }
   | { readonly tool: 'sessao_quem_sou' }
-  | { readonly tool: 'sessao_listar' }
-  | { readonly tool: 'sessao_abrir'; readonly papel: string; readonly pedido: string; readonly nome?: string; readonly onde?: string }
-  | { readonly tool: 'sessao_enviar'; readonly para: string; readonly texto: string }
-  | { readonly tool: 'sessao_ver_tela'; readonly quem: string }
-  | { readonly tool: 'sessao_fechar'; readonly quem: string };
+  | { readonly tool: 'sessao_listar'; readonly quadro?: string }
+  | { readonly tool: 'sessao_abrir'; readonly papel: string; readonly pedido: string; readonly nome?: string; readonly onde?: string; readonly quadro?: string }
+  | { readonly tool: 'sessao_enviar'; readonly para: string; readonly texto: string; readonly quadro?: string }
+  | { readonly tool: 'sessao_ver_tela'; readonly quem: string; readonly quadro?: string }
+  | { readonly tool: 'sessao_fechar'; readonly quem: string; readonly quadro?: string };
+
+/** The tools that act on ONE board: the Líder único names it with `quadro` (ADR 0007); the other sessions use their own. */
+export type BoardScopedCall = Exclude<BoardToolCall, { readonly tool: 'papeis_listar' | 'sessao_quem_sou' }>;
 
 export type BoardToolName = BoardToolCall['tool'];
 
@@ -76,14 +79,19 @@ const COLOR_SCHEMA = { type: 'string', enum: COLOR_NAMES, description: 'Cor (pad
 const STROKE_SCHEMA = { type: 'string', enum: STROKE_NAMES, description: 'Espessura (padrão: media).' };
 const NUM = { type: 'number' };
 const PLACE_REF = { type: 'string', description: 'Id do lugar (sessao_listar ou quadro_ler).' };
+const BOARD_REF = {
+  type: 'string',
+  description: 'Só o Líder único (que não tem quadro): o quadro, pelo nome ou pela pasta do projeto. Sem ele, o Líder recebe a lista de quadros. As outras sessões usam sempre o próprio quadro.',
+};
+const BOARD_ONLY = { type: 'object', properties: { quadro: BOARD_REF }, additionalProperties: false };
 
 export const BOARD_TOOLS = [
   {
     name: 'quadro_ler',
     title: 'Ler o quadro (Mindscape)',
     description:
-      'O Mindscape do projeto desta sessão, em JSON: lugares (sessões, com papel e estado), post-its, desenhos e ligações, cada item com "autor" (dono ou sessao), e qual lugar é o seu. Coordenadas em unidades do quadro (lugar 230×140, post-it 230×270).',
-    inputSchema: NO_ARGS,
+      'O Mindscape do projeto desta sessão (o Líder único diz qual com "quadro"), em JSON: lugares (sessões, com papel e estado), post-its, desenhos e ligações, cada item com "autor" (dono ou sessao), e qual lugar é o seu. Coordenadas em unidades do quadro (lugar 230×140, post-it 230×270).',
+    inputSchema: BOARD_ONLY,
     annotations: { readOnlyHint: true },
   },
   {
@@ -135,6 +143,7 @@ export const BOARD_TOOLS = [
             additionalProperties: false,
           },
         },
+        quadro: BOARD_REF,
       },
       required: ['operacoes'],
       additionalProperties: false,
@@ -143,7 +152,7 @@ export const BOARD_TOOLS = [
   {
     name: 'sessao_quem_sou',
     title: 'Quem sou eu no quadro',
-    description: 'Seu lugar no quadro, papel, nome, projeto e onde você roda (este computador ou um lugar remoto).',
+    description: 'Seu lugar no quadro, papel, nome, projeto e onde você roda (este computador ou um lugar remoto). Para o Líder único: a lista de quadros que ele alcança.',
     inputSchema: NO_ARGS,
     annotations: { readOnlyHint: true },
   },
@@ -152,7 +161,7 @@ export const BOARD_TOOLS = [
     title: 'Listar as sessões do quadro',
     description:
       'As sessões (lugares) do quadro do projeto: id, papel, nome, estado (trabalhando, parada, precisa do dono, não começou, fechada), se você pode mandar mensagem a ela (ligação com seta sua → dela) e quem a abriu.',
-    inputSchema: NO_ARGS,
+    inputSchema: BOARD_ONLY,
     annotations: { readOnlyHint: true },
   },
   {
@@ -167,6 +176,7 @@ export const BOARD_TOOLS = [
         pedido: { type: 'string', description: 'A primeira mensagem: o trabalho, completo e autossuficiente.' },
         nome: { type: 'string', description: 'Nome curto da aba (opcional).' },
         onde: { type: 'string', description: 'Onde ela roda (opcional): "aqui" (padrão, onde você roda), "este computador" ou o nome de um lugar remoto (ex.: a VPS; veja sessao_quem_sou).' },
+        quadro: BOARD_REF,
       },
       required: ['papel', 'pedido'],
       additionalProperties: false,
@@ -176,10 +186,10 @@ export const BOARD_TOOLS = [
     name: 'sessao_enviar',
     title: 'Mandar mensagem a outra sessão',
     description:
-      'Manda uma mensagem ao chat de outra sessão aberta. Só pela ligação: precisa existir uma seta do seu lugar para o dela. Se o dono está digitando lá ou há uma permissão aberta, a mensagem fica retida e entra sozinha depois.',
+      'Manda uma mensagem ao chat de outra sessão aberta. Só pela ligação: precisa existir uma seta do seu lugar para o dela (o Líder único alcança, em cada quadro, o topo, onde nenhuma seta do dono nem de abertura aponta, e quem está abaixo dele pelas setas; sessao_listar diz em "podeMandar"). A mensagem vai direto para a fila do Claude de lá; com uma permissão aberta na tela dela, entra assim que ela fechar.',
     inputSchema: {
       type: 'object',
-      properties: { para: PLACE_REF, texto: { type: 'string', description: 'A mensagem.' } },
+      properties: { para: PLACE_REF, texto: { type: 'string', description: 'A mensagem.' }, quadro: BOARD_REF },
       required: ['para', 'texto'],
       additionalProperties: false,
     },
@@ -188,15 +198,15 @@ export const BOARD_TOOLS = [
     name: 'sessao_ver_tela',
     title: 'Ver o que outra sessão fez',
     description: 'O estado de uma sessão do quadro e o post-it do fim do último turno dela (o resumo do que fez).',
-    inputSchema: { type: 'object', properties: { quem: PLACE_REF }, required: ['quem'], additionalProperties: false },
+    inputSchema: { type: 'object', properties: { quem: PLACE_REF, quadro: BOARD_REF }, required: ['quem'], additionalProperties: false },
     annotations: { readOnlyHint: true },
   },
   {
     name: 'sessao_fechar',
     title: 'Fechar uma sessão que você dirige',
     description:
-      'Fecha a aba de outra sessão e encerra o processo dela. Só com hierarquia: no seu quadro, quem está abaixo de você pelas setas (sua → dela, direta ou em cadeia); em outro quadro, só se você é o Líder de um quadro com alcance "todos" (o dono marca no quadro). Nunca a sua. Se ela estiver trabalhando, recebe antes um aviso para pausar e a ferramenta espera o turno acabar (até 20 s). Com um pedido de permissão aberto na tela dela, não fecha. O lugar fica no quadro como "fechada" e o dono retoma com dois cliques: nada se apaga (registro, conversa, worktree). Responde em uma linha: "Fechada." ou "Não fechei: …".',
-    inputSchema: { type: 'object', properties: { quem: PLACE_REF }, required: ['quem'], additionalProperties: false },
+      'Fecha a aba de outra sessão e encerra o processo dela. Só com hierarquia: no seu quadro, quem está abaixo de você pelas setas (sua → dela, direta ou em cadeia); em outro quadro, só se você é o Líder de um quadro com alcance "todos" (o dono marca no quadro). O Líder único fecha em qualquer quadro (diga qual em "quadro") quem está no topo dele ou abaixo do topo pelas setas. Nunca a sua. Se ela estiver trabalhando, recebe antes um aviso para pausar e a ferramenta espera o turno acabar (até 20 s). Com um pedido de permissão aberto na tela dela, não fecha. O lugar fica no quadro como "fechada" e o dono retoma com dois cliques: nada se apaga (registro, conversa, worktree). Responde em uma linha: "Fechada." ou "Não fechei: …".',
+    inputSchema: { type: 'object', properties: { quem: PLACE_REF, quadro: BOARD_REF }, required: ['quem'], additionalProperties: false },
     annotations: { destructiveHint: true },
   },
 ] as const;
@@ -295,12 +305,16 @@ function parseOp(raw: unknown, index: number): BoardOp | string {
 export function parseBoardToolCall(name: string, rawArgs: unknown): ParsedBoardCall {
   const args = (rawArgs ?? {}) as Record<string, unknown>;
   if (typeof args !== 'object' || Array.isArray(args)) return { ok: false, reason: 'Argumentos têm de ser um objeto.' };
+  const board = optionalText(args.quadro, 'quadro', 260);
+  if (typeof board === 'object') return { ok: false, reason: board.error };
+  const quadro = board?.trim() ? { quadro: board.trim() } : {};
   switch (name) {
-    case 'quadro_ler':
     case 'papeis_listar':
     case 'sessao_quem_sou':
-    case 'sessao_listar':
       return { ok: true, call: { tool: name } };
+    case 'quadro_ler':
+    case 'sessao_listar':
+      return { ok: true, call: { tool: name, ...quadro } };
     case 'quadro_aplicar': {
       const list = args.operacoes;
       if (!Array.isArray(list) || list.length === 0) return { ok: false, reason: '"operacoes" tem de ser uma lista com ao menos uma operação.' };
@@ -311,7 +325,7 @@ export function parseBoardToolCall(name: string, rawArgs: unknown): ParsedBoardC
         if (typeof op === 'string') return { ok: false, reason: op };
         ops.push(op);
       }
-      return { ok: true, call: { tool: 'quadro_aplicar', ops } };
+      return { ok: true, call: { tool: 'quadro_aplicar', ops, ...quadro } };
     }
     case 'sessao_abrir': {
       const papel = requiredText(args.papel, 'papel', 80);
@@ -322,24 +336,24 @@ export function parseBoardToolCall(name: string, rawArgs: unknown): ParsedBoardC
       if (typeof nome === 'object') return { ok: false, reason: nome.error };
       const onde = optionalText(args.onde, 'onde', 80);
       if (typeof onde === 'object') return { ok: false, reason: onde.error };
-      return { ok: true, call: { tool: 'sessao_abrir', papel, pedido, ...(nome?.trim() ? { nome: nome.trim() } : {}), ...(onde?.trim() ? { onde: onde.trim() } : {}) } };
+      return { ok: true, call: { tool: 'sessao_abrir', papel, pedido, ...(nome?.trim() ? { nome: nome.trim() } : {}), ...(onde?.trim() ? { onde: onde.trim() } : {}), ...quadro } };
     }
     case 'sessao_enviar': {
       const para = requiredText(args.para, 'para', 120);
       if (typeof para === 'object') return { ok: false, reason: para.error };
       const texto = requiredText(args.texto, 'texto', MAX_MESSAGE_CHARS);
       if (typeof texto === 'object') return { ok: false, reason: texto.error };
-      return { ok: true, call: { tool: 'sessao_enviar', para, texto } };
+      return { ok: true, call: { tool: 'sessao_enviar', para, texto, ...quadro } };
     }
     case 'sessao_ver_tela': {
       const quem = requiredText(args.quem, 'quem', 120);
       if (typeof quem === 'object') return { ok: false, reason: quem.error };
-      return { ok: true, call: { tool: 'sessao_ver_tela', quem } };
+      return { ok: true, call: { tool: 'sessao_ver_tela', quem, ...quadro } };
     }
     case 'sessao_fechar': {
       const quem = requiredText(args.quem, 'quem', 120);
       if (typeof quem === 'object') return { ok: false, reason: quem.error };
-      return { ok: true, call: { tool: 'sessao_fechar', quem } };
+      return { ok: true, call: { tool: 'sessao_fechar', quem, ...quadro } };
     }
     default:
       return { ok: false, reason: `Ferramenta desconhecida: ${name}` };

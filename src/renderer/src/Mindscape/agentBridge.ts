@@ -8,16 +8,20 @@
 // driver, which writes it into the CLI's own queue even mid-turn. The only wait is a real dialog drawn on that
 // screen (permission, question): the driver waits it out by itself and then sends, nobody clicks.
 // Decisions of the owner (04/11): docs/refinamentos/time-de-sessoes-v1.md.
+// Líder único (ADR 0007): the session the Jobu opened (the mark on its tab) acts on every board, naming it with
+// `quadro`; whom it reaches is the one rule of shared/mindscape/reach.ts. Every other session stays on its own board.
 
 import {
   applyBoardOps,
   describeBoard,
   hasArrowLink,
   placeState,
+  type BoardScopedCall,
   type BoardToolCall,
 } from '../../../shared/mindscape/agent-tools';
 import type { MindscapeBoardResponse } from '../../../shared/mindscape/channels';
-import { canReach, findPlace } from '../../../shared/mindscape/reach';
+import { LEADER_OF_ALL, isLeaderOfAllTab, knownBoards, resolveBoard, type KnownBoard } from '../../../shared/mindscape/leader';
+import { LEADER_OF_ALL_FROM, canReach, findPlace } from '../../../shared/mindscape/reach';
 import { addLink, addPlace, placeCardId, placeOfSession, type MindscapeBoard, type MindscapeDoc, type SessionPlaceCard } from '../../../shared/mindscape/model';
 import type { SemaphoreState } from '../../../shared';
 import type { SessionRole } from '../../../shared/roles';
@@ -47,6 +51,8 @@ export interface BridgeTab {
   readonly remoteId?: string;
   readonly claudeSessionId?: string;
   readonly sessionType: 'claude' | 'shell';
+  /** The Jobu's mark on the Líder único (ADR 0007). */
+  readonly leaderOfAll?: boolean;
 }
 
 export interface OpenSessionRequest {
@@ -98,6 +104,8 @@ export interface AgentBridgePorts {
   remoteLabel(remoteId: string): string;
   /** The remote places the app knows (id + label), for `onde` of `sessao_abrir`. */
   remotes(): readonly { readonly id: string; readonly label: string }[];
+  /** The projects of the sidebar (path + name): the Líder único may name one that has no board yet. */
+  projects(): readonly { readonly path: string; readonly name: string }[];
 }
 
 const STATE_NAMES: Readonly<Record<SemaphoreState, string>> = {
@@ -112,6 +120,20 @@ function json(value: unknown): string {
   return JSON.stringify(value, null, 1);
 }
 
+function lastSegment(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}
+
+type Answer = Omit<MindscapeBoardResponse, 'requestId'>;
+
+/** Who calls a board-scoped tool, on which board. `self` is the caller's place; the Líder único has none. */
+interface Scope {
+  readonly projectPath: string;
+  readonly projectName?: string;
+  readonly leader: boolean;
+  readonly self?: SessionPlaceCard;
+}
+
 export class AgentBridge {
   private ports: AgentBridgePorts;
   /** Tab opened by `sessao_abrir` → the caller's place. */
@@ -123,6 +145,8 @@ export class AgentBridge {
   /** Tab opened by `sessao_abrir` → when (its start is judged against START_GRACE_MS). */
   private readonly openedAt = new Map<string, number>();
   private readonly startChecks = new Set<ReturnType<typeof setTimeout>>();
+  /** Tabs the Líder único sent work to with `sessao_enviar`: their end-of-turn notices go to it, on any board. */
+  private readonly leaderHears = new Set<string>();
 
   constructor(ports: AgentBridgePorts) {
     this.ports = ports;
@@ -140,6 +164,7 @@ export class AgentBridge {
   dispose(): void {
     this.lastNoticeFrom.clear();
     this.lastNoticeText.clear();
+    this.leaderHears.clear();
     for (const timer of this.startChecks) clearTimeout(timer);
     this.startChecks.clear();
   }
@@ -195,14 +220,15 @@ export class AgentBridge {
     const timer = setTimeout(() => {
       this.startChecks.delete(timer);
       if (this.ports.stateOf(tabId) !== 'working' || !this.ports.unconfirmed(tabId)) return;
-      const opener = this.tabOfPlace(projectPath, openerPlace);
+      const opener = openerPlace === LEADER_OF_ALL ? this.leaderTab() : this.tabOfPlace(projectPath, openerPlace);
       if (!opener) return;
       this.ports.sendLine(opener.id, `◆ ${name} (${placeId}) ${this.startState(tabId)}. Veja a tela dela com sessao_ver_tela ou peça ao dono.`);
     }, START_GRACE_MS);
     this.startChecks.add(timer);
   }
 
-  private liveOpenedBy(placeId: string): number {
+  /** Live sessions `placeId` opened; for the Líder único, only those of `projectPath` (its cap is per board). */
+  private liveOpenedBy(placeId: string, projectPath?: string): number {
     let count = 0;
     for (const [tabId, opener] of this.openedBy) {
       if (opener !== placeId) continue;
@@ -210,9 +236,65 @@ export class AgentBridge {
         this.openedBy.delete(tabId);
         this.openedAt.delete(tabId);
       }
-      else count += 1;
+      else if (projectPath === undefined || this.ports.tabs().find((tab) => tab.id === tabId)?.cwd === projectPath) count += 1;
     }
     return count;
+  }
+
+  // ---- Líder único (ADR 0007) ---------------------------------------------------------------------------------
+
+  /** The open tab of the Líder único, if any. */
+  private leaderTab(): BridgeTab | undefined {
+    return this.ports.tabs().find((tab) => isLeaderOfAllTab(tab) && this.ports.stateOf(tab.id) !== undefined);
+  }
+
+  /** The Líder único reaches `placeId` of `projectPath` — the one rule (reach.ts). */
+  private leaderReaches(projectPath: string, placeId: string): boolean {
+    return canReach(this.ports.doc(), LEADER_OF_ALL_FROM, { projectPath, placeId }).ok;
+  }
+
+  /** May the caller send to `placeId`: the Líder único by its reach, the others by an arrow of theirs. */
+  private canSend(scope: Scope, board: MindscapeBoard | undefined, placeId: string): boolean {
+    if (scope.leader) return this.leaderReaches(scope.projectPath, placeId);
+    return scope.self ? hasArrowLink(board, scope.self.id, placeId) : false;
+  }
+
+  private boards(): KnownBoard[] {
+    return knownBoards(this.ports.doc(), this.ports.projects());
+  }
+
+  /** The boards as the Líder único sees them (the answer to a call without `quadro`). */
+  private boardList(): unknown[] {
+    return this.boards().map((known) => {
+      const board = this.board(known.projectPath);
+      const places = board ? Object.values(board.cards).filter((card): card is SessionPlaceCard => card.kind === 'session') : [];
+      return {
+        nome: known.name,
+        pasta: known.projectPath,
+        lugares: places.length,
+        abertas: places.filter((place) => this.tabOfPlace(known.projectPath, place.id) !== undefined).length,
+        voceAlcanca: places
+          .filter((place) => this.leaderReaches(known.projectPath, place.id))
+          .map((place) => ({ id: place.id, ...(place.roleId ? { papelNome: this.roleName(place.roleId) } : {}) })),
+      };
+    });
+  }
+
+  /** The board of a board-scoped call, or the answer when there is none to act on. */
+  private scopeOf(caller: BridgeTab, call: BoardScopedCall): Scope | Answer {
+    if (isLeaderOfAllTab(caller)) {
+      if (!call.quadro) return { ok: true, text: json({ aviso: 'Você é o Líder único e não tem quadro: diga qual em "quadro" (nome ou pasta).', quadros: this.boardList() }) };
+      const match = resolveBoard(this.boards(), call.quadro);
+      if (!match.ok) return { ok: false, text: match.reason };
+      return { projectPath: match.board.projectPath, projectName: match.board.name, leader: true };
+    }
+    if (!caller.cwd) return { ok: false, text: 'Esta sessão não é uma aba de projeto do Donel Dev.' };
+    if (call.quadro) {
+      const match = resolveBoard(this.boards(), call.quadro);
+      if (!match.ok || match.board.projectPath !== caller.cwd) return { ok: false, text: 'Só o Líder único escolhe o quadro. Esta sessão usa sempre o próprio quadro (chame sem "quadro").' };
+    }
+    const self = this.placeOfTab(caller);
+    return { projectPath: caller.cwd, ...(caller.projectName ? { projectName: caller.projectName } : {}), leader: false, ...(self ? { self } : {}) };
   }
 
   // ---- end-of-turn notice (D) --------------------------------------------------------------------------------
@@ -220,7 +302,7 @@ export class AgentBridge {
   /** A session ended a turn: each open session with an arrow to it (or that opened it) hears a short notice. */
   turnEnded(sessionId: string, text: string): void {
     const ended = this.ports.tabs().find((tab) => tab.claudeSessionId === sessionId);
-    if (!ended?.cwd) return;
+    if (!ended?.cwd || isLeaderOfAllTab(ended)) return;
     // B40 — the same end of turn arriving twice (a repeated or late hook) is announced once.
     if (this.lastNoticeText.get(sessionId) === text) return;
     this.lastNoticeText.set(sessionId, text);
@@ -231,18 +313,23 @@ export class AgentBridge {
     for (const link of board.links) if (link.arrow && link.to === place.id) listeners.add(link.from);
     const opener = this.openedBy.get(ended.id);
     if (opener) listeners.add(opener);
+    // Líder único — it has no arrow to hear by: it hears the sessions it opened (above) and the ones it sent work to.
+    if (this.leaderHears.has(ended.id)) listeners.add(LEADER_OF_ALL);
     const guard = this.lastNoticeFrom.get(ended.id);
     this.lastNoticeFrom.delete(ended.id);
     const role = this.roleName(place.roleId);
     const summary = text.trim().replace(/\s+/g, ' ');
     const cut = summary.length > NOTICE_CHARS ? `${summary.slice(0, NOTICE_CHARS)}…` : summary;
     const line = `◆ ${role ? `${role} ` : ''}${ended.name} (${place.id}) terminou: ${cut || '(sem resumo)'}`;
+    const boardName = ended.projectName ?? lastSegment(ended.cwd);
     for (const listenerPlace of listeners) {
       if (listenerPlace === place.id || listenerPlace === guard) continue;
-      const target = this.tabOfPlace(ended.cwd, listenerPlace);
+      const leader = listenerPlace === LEADER_OF_ALL;
+      const target = leader ? this.leaderTab() : this.tabOfPlace(ended.cwd, listenerPlace);
       if (!target) continue;
       this.lastNoticeFrom.set(target.id, place.id);
-      this.ports.sendLine(target.id, line);
+      // The Líder único hears every board: the notice says which one.
+      this.ports.sendLine(target.id, leader ? line.replace(`(${place.id})`, `(${place.id}, quadro ${boardName})`) : line);
     }
   }
 
@@ -256,34 +343,69 @@ export class AgentBridge {
     }
   }
 
-  private async run(ptyId: string, call: BoardToolCall): Promise<Omit<MindscapeBoardResponse, 'requestId'>> {
-    const fail = (text: string): Omit<MindscapeBoardResponse, 'requestId'> => ({ ok: false, text });
+  private async run(ptyId: string, call: BoardToolCall): Promise<Answer> {
+    const fail = (text: string): Answer => ({ ok: false, text });
     if (!this.ports.loaded) return fail('O quadro ainda não abriu no app (ou falhou ao abrir). Tente de novo em instantes.');
     const caller = this.ports.tabOfPty(ptyId);
-    if (!caller?.cwd) return fail('Esta sessão não é uma aba de projeto do Donel Dev.');
-    const projectPath = caller.cwd;
-    const self = this.placeOfTab(caller);
+    if (!caller) return fail('Esta sessão não é uma aba do Donel Dev.');
     const roleNames = new Map(this.ports.roles().map((role) => [role.id, role.name]));
 
-    switch (call.tool) {
-      case 'papeis_listar':
-        return { ok: true, text: json(this.ports.roles().map((role) => ({ id: role.id, nome: role.name }))) };
+    if (call.tool === 'papeis_listar') return { ok: true, text: json(this.ports.roles().map((role) => ({ id: role.id, nome: role.name }))) };
 
-      case 'quadro_ler':
+    if (call.tool === 'sessao_quem_sou') {
+      if (isLeaderOfAllTab(caller))
         return {
           ok: true,
-          text: json(
-            describeBoard(this.ports.doc(), projectPath, {
-              ...(self ? { selfPlaceId: self.id } : {}),
-              roleNames,
-              stateOf: (sessionId) => {
-                const tab = this.ports.tabs().find((candidate) => candidate.cwd === projectPath && candidate.claudeSessionId === sessionId);
-                const state = tab ? this.ports.stateOf(tab.id) : undefined;
-                return state ? STATE_NAMES[state] : undefined;
-              },
-            }),
-          ),
+          text: json({
+            nome: caller.name,
+            papel: caller.roleId,
+            papelNome: this.roleName(caller.roleId),
+            liderUnico: true,
+            lugar: null,
+            alcance: 'Todos os quadros, sem precisar da marca "Alcance": o topo de cada um e quem está abaixo dele pelas setas. Diga o quadro em "quadro" nas ferramentas de quadro, de sessão e de tarefa.',
+            roda: caller.remoteId ? this.ports.remoteLabel(caller.remoteId) : 'este computador',
+            lugaresRemotos: this.ports.remotes().map((remote) => remote.label),
+            quadros: this.boardList(),
+          }),
         };
+      if (!caller.cwd) return fail('Esta sessão não é uma aba de projeto do Donel Dev.');
+      const self = this.placeOfTab(caller);
+      return {
+        ok: true,
+        text: json({
+          nome: caller.name,
+          projeto: caller.projectName ?? caller.cwd,
+          pasta: caller.cwd,
+          ...(self ? { lugar: self.id } : { lugar: null, aviso: 'Seu lugar ainda não está no quadro (a sessão acabou de abrir).' }),
+          ...(self?.roleId ?? caller.roleId ? { papel: self?.roleId ?? caller.roleId, papelNome: this.roleName(self?.roleId ?? caller.roleId) } : {}),
+          roda: caller.remoteId ? this.ports.remoteLabel(caller.remoteId) : 'este computador',
+          lugaresRemotos: this.ports.remotes().map((remote) => remote.label),
+        }),
+      };
+    }
+
+    const scope = this.scopeOf(caller, call);
+    if ('ok' in scope) return scope;
+    const { projectPath, self } = scope;
+    /** How the caller signs a message: the Líder único has no place. */
+    const signature = scope.leader ? `Líder (${LEADER_OF_ALL})` : `${this.roleName(self?.roleId) ?? caller.name} (${self?.id})`;
+
+    switch (call.tool) {
+      case 'quadro_ler': {
+        const described = describeBoard(this.ports.doc(), projectPath, {
+          ...(self ? { selfPlaceId: self.id } : {}),
+          roleNames,
+          stateOf: (sessionId) => {
+            const tab = this.ports.tabs().find((candidate) => candidate.cwd === projectPath && candidate.claudeSessionId === sessionId);
+            const state = tab ? this.ports.stateOf(tab.id) : undefined;
+            return state ? STATE_NAMES[state] : undefined;
+          },
+        });
+        if (!scope.leader) return { ok: true, text: json(described) };
+        const board = this.board(projectPath);
+        const reached = board ? Object.keys(board.cards).filter((id) => this.leaderReaches(projectPath, id)) : [];
+        return { ok: true, text: json({ quadro: scope.projectName, pasta: projectPath, ...described, voceAlcanca: reached }) };
+      }
 
       case 'quadro_aplicar': {
         let result: ReturnType<typeof applyBoardOps> | undefined;
@@ -301,27 +423,10 @@ export class AgentBridge {
         return { ok: true, text: json({ aplicado: call.ops.length, ids: result.ids }) };
       }
 
-      case 'sessao_quem_sou':
-        return {
-          ok: true,
-          text: json({
-            nome: caller.name,
-            projeto: caller.projectName ?? projectPath,
-            pasta: projectPath,
-            ...(self ? { lugar: self.id } : { lugar: null, aviso: 'Seu lugar ainda não está no quadro (a sessão acabou de abrir).' }),
-            ...(self?.roleId ?? caller.roleId ? { papel: self?.roleId ?? caller.roleId, papelNome: this.roleName(self?.roleId ?? caller.roleId) } : {}),
-            roda: caller.remoteId ? this.ports.remoteLabel(caller.remoteId) : 'este computador',
-            lugaresRemotos: this.ports.remotes().map((remote) => remote.label),
-          }),
-        };
-
       case 'sessao_listar': {
         const board = this.board(projectPath);
         const places = board ? Object.values(board.cards).filter((card): card is SessionPlaceCard => card.kind === 'session') : [];
-        return {
-          ok: true,
-          text: json(
-            places.map((place) => {
+        const list = places.map((place) => {
               const tab = this.tabOfPlace(projectPath, place.id);
               const opener = tab ? this.openedBy.get(tab.id) : undefined;
               return {
@@ -330,12 +435,12 @@ export class AgentBridge {
                 ...(tab ? { nome: tab.name } : {}),
                 estado: this.stateName(projectPath, place),
                 ...(self && place.id === self.id ? { voce: true } : {}),
-                podeMandar: self ? hasArrowLink(board, self.id, place.id) : false,
+                podeMandar: this.canSend(scope, board, place.id),
                 ...(opener ? { abertaPor: opener } : {}),
               };
-            }),
-          ),
-        };
+            });
+        // The Líder único gets the board with the list, so it (and the ledger) knows where it is.
+        return { ok: true, text: json(scope.leader ? { quadro: scope.projectName, pasta: projectPath, lugares: list } : list) };
       }
 
       case 'sessao_ver_tela': {
@@ -356,16 +461,21 @@ export class AgentBridge {
       }
 
       case 'sessao_enviar': {
-        if (!self) return fail('Seu lugar ainda não está no quadro; espere o primeiro turno terminar.');
+        if (!scope.leader && !self) return fail('Seu lugar ainda não está no quadro; espere o primeiro turno terminar.');
         const board = this.board(projectPath);
         const place = board?.cards[call.para];
         if (place?.kind !== 'session') return fail(`"${call.para}" não é um lugar do quadro (veja sessao_listar).`);
-        if (!hasArrowLink(board, self.id, place.id)) return fail(`Sem ligação: não há seta do seu lugar (${self.id}) para "${place.id}". Peça ao dono, ou use sessao_abrir.`);
+        if (!this.canSend(scope, board, place.id))
+          return fail(
+            scope.leader
+              ? `Sem ligação: "${place.id}" não está no topo do quadro ${scope.projectName ?? projectPath} nem abaixo dele pelas setas do dono. Peça ao dono.`
+              : `Sem ligação: não há seta do seu lugar (${self?.id}) para "${place.id}". Peça ao dono, ou use sessao_abrir.`,
+          );
         const target = this.tabOfPlace(projectPath, place.id);
         if (!target) return fail(`"${place.id}" não está aberta agora.`);
-        const from = this.roleName(self.roleId) ?? caller.name;
+        if (scope.leader) this.leaderHears.add(target.id);
         // 05/11 — "Entregue" only once the CLI of there took it: the answer waits for the send to end.
-        const outcome = await this.ports.deliverLine(target.id, `◆ De ${from} (${self.id}): ${call.texto}`, DELIVERY_WAIT_MS);
+        const outcome = await this.ports.deliverLine(target.id, `◆ De ${signature}: ${call.texto}`, DELIVERY_WAIT_MS);
         if (outcome.kind === 'entrou') return { ok: true, text: 'Entregue: entrou no Claude de lá.' };
         if (outcome.kind === 'na-fila') return { ok: true, text: 'Entregue à fila do Claude de lá: ela está trabalhando e o próprio CLI a entrega no próximo passo.' };
         if (outcome.kind === 'nao-foi') return fail(`Não entrou: ${outcome.reason}. Veja a tela dela com sessao_ver_tela, ou peça ao dono.`);
@@ -379,13 +489,14 @@ export class AgentBridge {
 
       case 'sessao_fechar': {
         const no = (why: string): Omit<MindscapeBoardResponse, 'requestId'> => fail(`Não fechei: ${why}`);
-        if (!self) return no('seu lugar ainda não está no quadro; espere o primeiro turno terminar.');
+        const from = scope.leader ? LEADER_OF_ALL_FROM : self ? { projectPath, placeId: self.id } : undefined;
+        if (!from) return no('seu lugar ainda não está no quadro; espere o primeiro turno terminar.');
         // Hierarchy (owner 04/11): below me by arrows on this board, or any board when I am the Líder of a
-        // board with reach "all" — the rule lives in shared/mindscape/reach.ts.
+        // board with reach "all", or the Líder único on any board — the rule lives in shared/mindscape/reach.ts.
         const doc = this.ports.doc();
         const where = findPlace(doc, call.quem, projectPath);
         if (!where) return no(`"${call.quem}" não é um lugar de nenhum quadro (veja sessao_listar).`);
-        const reach = canReach(doc, { projectPath, placeId: self.id }, where);
+        const reach = canReach(doc, from, where);
         if (!reach.ok) return no(reach.reason);
         const target = this.tabOfPlace(where.projectPath, where.placeId);
         if (!target) return no(`"${where.placeId}" não está aberta agora.`);
@@ -394,8 +505,7 @@ export class AgentBridge {
         if (this.ports.permissionOnScreen(target.id)) return no(permission);
         let cut = false;
         if (this.ports.stateOf(target.id) === 'working') {
-          const from = this.roleName(self.roleId) ?? caller.name;
-          this.ports.sendLine(target.id, `◆ De ${from} (${self.id}): pause agora e não comece nada novo. Esta sessão vai ser fechada em instantes (o dono pode retomá-la depois).`);
+          this.ports.sendLine(target.id, `◆ De ${signature}: pause agora e não comece nada novo. Esta sessão vai ser fechada em instantes (o dono pode retomá-la depois).`);
           const deadline = Date.now() + CLOSE_WAIT_MS;
           while (this.ports.stateOf(target.id) === 'working' && Date.now() < deadline) {
             await new Promise((resolve) => setTimeout(resolve, CLOSE_POLL_MS));
@@ -407,11 +517,13 @@ export class AgentBridge {
         if (this.ports.permissionOnScreen(target.id)) return no(permission);
         this.ports.closeTab(target.id);
         this.openedBy.delete(target.id);
+        this.leaderHears.delete(target.id);
         return { ok: true, text: cut ? `Fechada (o turno não acabou em ${CLOSE_WAIT_MS / 1000} s; cortei).` : 'Fechada.' };
       }
 
       case 'sessao_abrir': {
-        if (!self) return fail('Seu lugar ainda não está no quadro; espere o primeiro turno terminar.');
+        const opener = scope.leader ? LEADER_OF_ALL : self?.id;
+        if (opener === undefined) return fail('Seu lugar ainda não está no quadro; espere o primeiro turno terminar.');
         const role = this.ports.roles().find((candidate) => candidate.id === call.papel);
         if (!role) return fail(`Papel "${call.papel}" não existe (veja papeis_listar).`);
         // `onde` — absent or "aqui": where the caller runs; "este computador": local; else a remote place by label or id.
@@ -426,37 +538,40 @@ export class AgentBridge {
             remoteId = found.id;
           }
         }
-        const open = this.liveOpenedBy(self.id);
+        // The Líder único has a cap per board; a place, its own.
+        const open = this.liveOpenedBy(opener, scope.leader ? projectPath : undefined);
         if (open >= OPEN_CAP) {
           const allowed = await this.ports.askOwner({ caller: caller.name, role: role.name, request: call.pedido, open });
-          if (!allowed) return fail(`O dono negou abrir mais uma sessão (você já tem ${open} abertas). Use as que existem.`);
+          if (!allowed) return fail(`O dono negou abrir mais uma sessão (você já tem ${open} abertas${scope.leader ? ' neste quadro' : ''}). Use as que existem.`);
         }
         const placeId = placeCardId(crypto.randomUUID());
         let made = false;
         this.ports.applyGesture(projectPath, (doc) => {
-          const withPlace = addPlace(doc, projectPath, { id: placeId, roleId: role.id, by: 'session', origin: { x: self.x + 260, y: self.y } });
+          // The Líder único has no card: the new place is born at the top of the board, right below it.
+          const withPlace = addPlace(doc, projectPath, { id: placeId, roleId: role.id, by: 'session', ...(self ? { origin: { x: self.x + 260, y: self.y } } : {}) });
           if (withPlace === doc) return doc;
           made = true;
-          return addLink(withPlace, projectPath, { id: crypto.randomUUID(), from: self.id, to: placeId, arrow: true, by: 'session', opened: true });
+          return self ? addLink(withPlace, projectPath, { id: crypto.randomUUID(), from: self.id, to: placeId, arrow: true, by: 'session', opened: true }) : withPlace;
         });
         if (!made) return fail('O quadro não aceitou o lugar novo.');
         const name = call.nome ?? role.name;
         const tabId = this.ports.openSession({
           projectPath,
-          ...(caller.projectName ? { projectName: caller.projectName } : {}),
+          ...(scope.projectName ? { projectName: scope.projectName } : {}),
           placeId,
           role,
           name,
           ...(remoteId ? { remoteId } : {}),
-          openedBy: self.id,
+          openedBy: opener,
           firstMessage: call.pedido,
         });
-        this.openedBy.set(tabId, self.id);
+        this.openedBy.set(tabId, opener);
         this.openedAt.set(tabId, Date.now());
-        this.watchStart(tabId, projectPath, self.id, placeId, name);
+        this.watchStart(tabId, projectPath, opener, placeId, name);
         return {
           ok: true,
           text: json({
+            ...(scope.leader ? { quadro: scope.projectName } : {}),
             lugar: placeId,
             nome: name,
             papel: role.id,
