@@ -331,3 +331,49 @@
   outline: none;
   border-color: var(--donel-accent);
 }
+
+/* t-29e1327b — the corner that resizes the bubble: the top corner away from the Jobu. */
+.resize {
+  position: absolute;
+  top: -4px;
+  width: 18px;
+  height: 18px;
+  z-index: 2;
+  touch-action: none;
+}
+
+.resize[data-corner='left'] {
+  left: -4px;
+  cursor: nwse-resize;
+}
+
+.resize[data-corner='right'] {
+  right: -4px;
+  cursor: nesw-resize;
+}
+
+.resize::before {
+  content: '';
+  position: absolute;
+  top: 7px;
+  width: 8px;
+  height: 8px;
+  border-top: 2px solid var(--talk-edge);
+  opacity: 0.7;
+}
+
+.resize[data-corner='left']::before {
+  left: 7px;
+  border-left: 2px solid var(--talk-edge);
+  border-top-left-radius: 4px;
+}
+
+.resize[data-corner='right']::before {
+  right: 7px;
+  border-right: 2px solid var(--talk-edge);
+  border-top-right-radius: 4px;
+}
+
+.resize:hover::before {
+  opacity: 1;
+}

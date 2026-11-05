@@ -17,6 +17,7 @@ import {
   isValidPetResizeStepPayload,
   isValidPetTabsPayload,
   isValidPetTalkPayload,
+  isValidPetTalkResizePayload,
 } from '../../shared/pet/ipc';
 import type { PetService } from './pet-service';
 
@@ -36,6 +37,7 @@ export type PetIpcService = Pick<
   | 'handleOpen'
   | 'handleListOpen'
   | 'handleTalk'
+  | 'handleTalkResize'
   | 'handleContextMenu'
   | 'handleDragStart'
   | 'handleDragMove'
@@ -105,6 +107,13 @@ export function registerPetIpcHandlers(deps: PetIpcDeps): void {
     if (service === null || !service.isPetSender(event.sender)) return;
     if (!isValidPetTalkPayload(payload)) return;
     guarded(PET_CHANNELS.talk, () => service.handleTalk(payload.open));
+  });
+
+  deps.ipcMain.on(PET_CHANNELS.talkResize, (event, payload) => {
+    const service = deps.getService();
+    if (service === null || !service.isPetSender(event.sender)) return;
+    if (!isValidPetTalkResizePayload(payload)) return;
+    guarded(PET_CHANNELS.talkResize, () => service.handleTalkResize(payload));
   });
 
   deps.ipcMain.on(PET_CHANNELS.contextMenu, (event, payload) => {

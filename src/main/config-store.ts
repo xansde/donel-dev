@@ -297,7 +297,19 @@ export function sanitizePetPrefs(value: unknown, fallback: PetPrefs = defaultPet
     enabled: typeof candidate.enabled === 'boolean' ? candidate.enabled : fallback.enabled,
     placement: sanitizePetPlacement(candidate.placement, fallback.placement),
     size: typeof candidate.size === 'number' && Number.isFinite(candidate.size) ? clampSize(candidate.size) : fallback.size,
+    ...sanitizePetTalkSize(candidate.talkSize, fallback.talkSize),
   };
+}
+
+/** t-29e1327b — the chosen bubble size: two positive finite numbers, or nothing (automatic). */
+function sanitizePetTalkSize(value: unknown, fallback: PetPrefs['talkSize']): Pick<PetPrefs, 'talkSize'> {
+  if (value === undefined) return fallback === undefined ? {} : { talkSize: fallback };
+  if (value === null) return { talkSize: null };
+  const keep: Pick<PetPrefs, 'talkSize'> = fallback === undefined ? {} : { talkSize: fallback };
+  if (typeof value !== 'object' || Array.isArray(value)) return keep;
+  const size = value as Record<string, unknown>;
+  const ok = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n > 0;
+  return ok(size.width) && ok(size.height) ? { talkSize: { width: Math.round(size.width), height: Math.round(size.height) } } : keep;
 }
 
 function sanitizePetPlacement(value: unknown, fallback: PetPrefs['placement']): PetPrefs['placement'] {

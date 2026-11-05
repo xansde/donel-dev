@@ -27,11 +27,11 @@
 // With `pet.enabled = false` (the default) the app is the one of before the pet: no window, no timer,
 // no message to anybody.
 
-import type { PetPrefs } from '../../shared/config';
+import type { PetPrefs, PetTalkSize } from '../../shared/config';
 import { blockCapture, captureAllowed, captureReleased, createCaptureState, releaseCapture, type CaptureState } from '../../shared/pet/capture';
 import { decideClick } from '../../shared/pet/click';
 import { dragAnchor, settleDrop } from '../../shared/pet/gestures';
-import { PET_CHANNELS, type PetOpenTarget, type PetTabsPayload } from '../../shared/pet/ipc';
+import { PET_CHANNELS, type PetOpenTarget, type PetTabsPayload, type PetTalkResizePayload } from '../../shared/pet/ipc';
 import { buildPetMenu, type PetMenuAction, type PetMenuEntry } from '../../shared/pet/menu';
 import { PET_SILENCE_MS, assertNever, createPetState, isSilenced, reducePet, toPetSemaphore, waitingCount } from '../../shared/pet/petState';
 import { toPetView } from '../../shared/pet/petView';
@@ -44,6 +44,8 @@ import {
   isPlacementVisible,
   stepSize,
   talkHeightFor,
+  talkMaxWidthFor,
+  talkWidthFor,
   windowBoundsFor,
 } from '../../shared/pet/placement';
 import type {
@@ -264,6 +266,8 @@ export interface PetService {
    * it (the base of the drawing stays put) and can take the keyboard while it is open, for the "você:" field.
    */
   handleTalk(open: boolean): void;
+  /** t-29e1327b — `pet:talk-resize`: the owner drags the corner of the bubble of the Líder, or presses its expand button. */
+  handleTalkResize(payload: PetTalkResizePayload): void;
   /** The web contents id of the pet window, or `null` with no Jobu: the bubble of the Líder lives there. */
   petWebContentsId(): number | null;
   /** `pet:context-menu`: the owner right-clicked. `at` is the click in screen DIP, or `null` for "where the pointer is". */
@@ -306,6 +310,8 @@ export function createPetService(deps: PetServiceDeps): PetService {
   let listOpen = false;
   /** Item 18: the bubble of the Líder is open. It does not close when the window loses the focus: Esc or a click on the Jobu does. */
   let talkOpen = false;
+  /** t-29e1327b — the size of the bubble while its corner is being dragged (saved on the release); `undefined` = the saved one. */
+  let talkDragSize: PetTalkSize | undefined;
   /** The last rectangle the window was asked to have, to leave it alone when nothing about it changed. */
   let appliedBounds: PetRect | null = null;
   let drag: DragGrab | null = null;
@@ -410,22 +416,35 @@ export function createPetService(deps: PetServiceDeps): PetService {
 
   /** The window and the ui for the Jobu at `anchor` on `display`: with the bubble of the Líder open, room for it above his head. */
   function layoutAt(anchor: PetPoint, size: number, display: PetDisplay): { bounds: PetRect; ui: PetUi } {
-    const talk = talkOpen ? talkHeightFor(anchor, size, display) : 0;
+    const talk = talkLayout(anchor, size, display);
     return {
-      bounds: windowBoundsFor(anchor, size, talk),
-      ui: { size, docked: isDocked(anchor, display), align: alignFor(anchor, display), talk },
+      bounds: windowBoundsFor(anchor, size, talk.height, talk.width),
+      ui: { size, docked: isDocked(anchor, display), align: alignFor(anchor, display), talk: talk.height, talkWidth: talk.width, talkExpanded: talk.expanded },
     };
   }
 
+  /**
+   * t-29e1327b — the bubble of the Líder at `anchor`: the size the owner chose (being dragged, or saved), fitted to that
+   * screen; automatic without one. `expanded` = as large as the screen allows there. Closed = height 0.
+   */
+  function talkLayout(anchor: PetPoint, size: number, display: PetDisplay): { height: number; width: number; expanded: boolean } {
+    if (!talkOpen) return { height: 0, width: talkWidthFor(anchor, size, display), expanded: false };
+    const chosen = talkDragSize ?? deps.config().talkSize ?? null;
+    const height = talkHeightFor(anchor, size, display, chosen?.height);
+    const width = talkWidthFor(anchor, size, display, chosen?.width);
+    const expanded = chosen !== null && width >= talkMaxWidthFor(anchor, size, display) && height >= talkHeightFor(anchor, size, display, Number.MAX_SAFE_INTEGER);
+    return { height, width, expanded };
+  }
+
   /** Where the pet sits and how it looks around there: the remembered anchor if it is still on a screen, else the corner. */
-  function resolvePlacement(prefs: PetPrefs): { anchor: PetPoint; bounds: PetRect; ui: PetUi } {
+  function resolvePlacement(prefs: PetPrefs): { anchor: PetPoint; display: PetDisplay; bounds: PetRect; ui: PetUi } {
     const primary = deps.getPrimaryDisplay();
     const displays = allDisplays();
     const size = clampSize(prefs.size);
     const remembered = prefs.placement !== null && isPlacementVisible(prefs.placement, size, displays) ? prefs.placement : null;
     const anchor = remembered ?? defaultPlacement(primary, size);
     const display = displayNearestPoint(displays, anchor) ?? primary;
-    return { anchor, ...layoutAt(anchor, size, display) };
+    return { anchor, display, ...layoutAt(anchor, size, display) };
   }
 
   /** What the window can do with the keyboard: it takes it while the list or the bubble is open, and only then. */
@@ -874,7 +893,39 @@ export function createPetService(deps: PetServiceDeps): PetService {
     },
 
     handleTalk(open) {
+      talkDragSize = undefined;
       setTalk(open);
+    },
+
+    handleTalkResize(payload) {
+      if (liveWindow() === null || !talkOpen || drag !== null) return;
+      const current = deps.config();
+      if (payload.kind === 'set') {
+        const placed = resolvePlacement(current);
+        // Fitted to the screen right away, so what is saved is what the owner saw at the release.
+        const next: PetTalkSize = {
+          width: talkWidthFor(placed.anchor, placed.ui.size, placed.display, payload.width),
+          height: talkHeightFor(placed.anchor, placed.ui.size, placed.display, payload.height),
+        };
+        if (payload.commit) {
+          talkDragSize = undefined;
+          deps.persist({ ...current, talkSize: next });
+        } else {
+          talkDragSize = next;
+        }
+        relayout();
+        return;
+      }
+      // The expand button: the largest the screen allows above the Jobu, or back to automatic when it already is.
+      talkDragSize = undefined;
+      const placed = resolvePlacement(current);
+      if (placed.ui.talkExpanded === true) {
+        deps.persist({ ...current, talkSize: null });
+      } else {
+        const height = talkHeightFor(placed.anchor, placed.ui.size, placed.display, Number.MAX_SAFE_INTEGER);
+        deps.persist({ ...current, talkSize: { width: talkMaxWidthFor(placed.anchor, placed.ui.size, placed.display), height } });
+      }
+      relayout();
     },
 
     petWebContentsId() {
@@ -913,9 +964,9 @@ export function createPetService(deps: PetServiceDeps): PetService {
       drag = null;
       const outcome = settleDrop(dragAnchor(grab.anchor, grab.pointer, point), grab.anchor, ui.size, grab.displays);
       const display = displayNearestPoint(grab.displays, outcome.anchor) ?? deps.getPrimaryDisplay();
-      const talk = talkOpen ? talkHeightFor(outcome.anchor, ui.size, display) : 0;
-      ui = { size: ui.size, docked: outcome.docked, align: outcome.align, talk };
-      place(windowBoundsFor(outcome.anchor, ui.size, talk));
+      const talk = talkLayout(outcome.anchor, ui.size, display);
+      ui = { size: ui.size, docked: outcome.docked, align: outcome.align, talk: talk.height, talkWidth: talk.width, talkExpanded: talk.expanded };
+      place(windowBoundsFor(outcome.anchor, ui.size, talk.height, talk.width));
       // A drop that left less than half of the drawing on a screen was refused: he is back where he was and nothing is saved.
       if (outcome.accepted) deps.persist({ ...deps.config(), placement: outcome.anchor });
       pushView(false);

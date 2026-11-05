@@ -5,7 +5,7 @@ import { subscribeChannel } from './subscribeChannel';
 import { CHAT_CHANNELS } from '../shared/chat/ipc';
 // 015-jobu-pet — the pet channels; same names as the contract (specs/015-jobu-pet/contracts/ipc-pet.md).
 import { PET_CHANNELS } from '../shared/pet/ipc';
-import type { PetActivateSessionPayload, PetDragPayload, PetOpenTarget, PetPrefsChangedPayload, PetTabsPayload } from '../shared/pet/ipc';
+import type { PetActivateSessionPayload, PetDragPayload, PetOpenTarget, PetPrefsChangedPayload, PetTabsPayload, PetTalkResizePayload } from '../shared/pet/ipc';
 import type { PetView } from '../shared/pet/types';
 // Saúde do computador — the health channels.
 import { HEALTH_CHANNELS } from '../shared/health/ipc';
@@ -828,6 +828,9 @@ const donelApi: DonelApi = {
     },
     setTalk: (open: boolean) => {
       ipcRenderer.send(PET_CHANNELS.talk, { open });
+    },
+    talkResize: (payload: PetTalkResizePayload) => {
+      ipcRenderer.send(PET_CHANNELS.talkResize, payload);
     },
     openContextMenu: (point?: PetDragPayload) => {
       ipcRenderer.send(PET_CHANNELS.contextMenu, point);

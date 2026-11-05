@@ -114,6 +114,16 @@ export interface PetPrefs {
   readonly enabled: boolean;
   readonly placement: PetPoint | null;
   readonly size: number;
+  /**
+   * t-29e1327b — the size the owner gave the bubble of the Líder (dragging its corner or the expand button), in DIP;
+   * absent/`null` = automatic (380 wide, what fits above the Jobu). The main fits it to the screen at each opening.
+   */
+  readonly talkSize?: PetTalkSize | null;
+}
+
+export interface PetTalkSize {
+  readonly width: number;
+  readonly height: number;
 }
 
 /** 016-jobu-faxina — the stamp of the last sweep that ended well (epoch ms), or `null` if none ever did. Main only; not in the DTO. */

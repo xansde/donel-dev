@@ -136,7 +136,9 @@ export function PetApp(): React.JSX.Element {
   const listVisible = !talking && listOpen && waiting.length >= 2;
   // What is under a pointer that does not move changes when the badge, the bubble or the list comes or goes (or says something else).
   const refreshKey = `${view?.badge ?? ''}|${bubble?.id ?? ''}:${bubble?.text ?? ''}|${listVisible ? `list${waiting.length}` : ''}|talk${view?.talk ?? 0}|dot${String(progressDot)}`;
-  const { interactive, isHit } = usePetHitTest({ figure: figureRef, arts: POSE_ART, art, size: view?.size ?? null, refreshKey, locked: dragging });
+  // t-29e1327b — the corner of the bubble being dragged holds the window interactive too, like a drag of the Jobu.
+  const [talkResizing, setTalkResizing] = useState(false);
+  const { interactive, isHit } = usePetHitTest({ figure: figureRef, arts: POSE_ART, art, size: view?.size ?? null, refreshKey, locked: dragging || talkResizing });
 
   // FR-030: one hop per bubble, keyed by its id: a bubble that grew into an aggregate keeps its id and does not hop twice.
   const bubbleId = bubble?.id ?? null;
@@ -347,7 +349,7 @@ export function PetApp(): React.JSX.Element {
               onClick={onProgressDotClick}
             />
           )}
-          {talking && <LiderTalk view={view} onClose={closeTalk} onPose={setTalkPose} progress={progress} />}
+          {talking && <LiderTalk view={view} onClose={closeTalk} onPose={setTalkPose} progress={progress} onResizing={setTalkResizing} />}
           {(bubble !== null || listVisible) && (
             // Above the head, anchored to the drawing like an alignment (`right` near the right edge of the screen, the default corner).
             <div className={styles.popups} data-align={view.align} data-testid="pet-popups" data-both={bubble !== null && listVisible ? '' : undefined}>

@@ -333,6 +333,10 @@ export interface PetView {
   readonly size: number;
   /** Item 18: how tall the bubble of the conversation with the Líder is, in DIP; `0` = closed. */
   readonly talk: number;
+  /** t-29e1327b: how wide that bubble is, in DIP. */
+  readonly talkWidth: number;
+  /** t-29e1327b: the bubble is at the largest the screen allows (the expand button then shrinks it back). */
+  readonly talkExpanded: boolean;
 }
 
 /** The window-side facts that complete a view: size, docking and alignment come from placement. */
@@ -342,4 +346,7 @@ export interface PetUi {
   readonly align: PetAlign;
   /** Item 18: the height of the open bubble of the Líder; `0` (or absent) = closed. */
   readonly talk?: number;
+  /** t-29e1327b: its width; absent = the default. */
+  readonly talkWidth?: number;
+  readonly talkExpanded?: boolean;
 }

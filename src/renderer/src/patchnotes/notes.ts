@@ -42,6 +42,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'Uma sessão com o papel Líder aberta num quadro (pelo Launcher, pela VPS ou por outra sessão) agora recebe a orientação de Líder daquele quadro; só a aba que o Jobu abriu recebe a de Líder único. E a seta que nasce quando uma sessão abre outra só pode ser apagada por quem abriu (ou por você): outra sessão não tira mais esse alcance.',
       },
       {
+        title: 'Conversa do Jobu do tamanho que você quiser',
+        text: 'O balão de conversa com o Líder no Jobu pode ser aumentado: arraste o canto de cima (o lado oposto ao Jobu) ou use o botão ⤢ para levá-lo ao maior tamanho que cabe na tela, e ⤡ para voltar ao normal. O tamanho escolhido fica guardado para as próximas vezes.',
+      },
+      {
         title: 'Celular: o que precisa antes do QR',
         text: 'Em Preferências → Celular, antes de parear, a tela explica que o celular precisa do app Tailscale instalado e logado na mesma conta deste PC, e mostra se já há algum celular na sua Tailscale (e se está conectado). Se o celular não abrir a página, "O celular não abriu a página?" confere o Firewall do Windows e, se faltar, oferece liberar só a porta do app para quem está na sua Tailscale, com a confirmação de administrador do Windows.',
       },

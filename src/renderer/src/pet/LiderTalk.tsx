@@ -65,6 +65,49 @@ function useTypewriter(key: string | null, text: string): string {
 
 const QUICK_REPLIES = ['Segue', 'Como está o time?', 'O que precisa de mim?'];
 
+/**
+ * t-29e1327b — the corner of the bubble that resizes it: the top corner away from the Jobu (the bottom is held by the
+ * tail). Screen coordinates, because the window itself grows under the pointer while the corner is dragged; the main
+ * fits the size to the screen and saves it on the release.
+ */
+function useTalkResize(view: PetView, onResizing: (active: boolean) => void): (event: React.PointerEvent<HTMLElement>) => void {
+  return (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    onResizing(true);
+    const handle = event.currentTarget;
+    handle.setPointerCapture(event.pointerId);
+    const start = { x: event.screenX, y: event.screenY, width: view.talkWidth, height: view.talk };
+    // Grows to the side away from the Jobu: leftwards when the bubble hangs to the left of him, and twice as fast when centered.
+    const factor = view.align === 'left' ? 1 : view.align === 'right' ? -1 : -2;
+    const sizeAt = (e: PointerEvent): { width: number; height: number } => ({
+      width: Math.round(start.width + factor * (e.screenX - start.x)),
+      height: Math.round(start.height - (e.screenY - start.y)),
+    });
+    let frame = 0;
+    let last: PointerEvent | null = null;
+    const move = (e: PointerEvent): void => {
+      last = e;
+      if (frame !== 0) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        if (last !== null) window.donel.pet.talkResize({ kind: 'set', ...sizeAt(last), commit: false });
+      });
+    };
+    const end = (e: PointerEvent): void => {
+      if (frame !== 0) window.cancelAnimationFrame(frame);
+      handle.removeEventListener('pointermove', move);
+      handle.removeEventListener('pointerup', end);
+      handle.removeEventListener('pointercancel', end);
+      window.donel.pet.talkResize({ kind: 'set', ...sizeAt(e), commit: true });
+      onResizing(false);
+    };
+    handle.addEventListener('pointermove', move);
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+  };
+}
+
 /** The pose of the Jobu while he talks: surprised when the owner is needed, reading while the Líder works, laughing when it went well. */
 export type TalkPose = 'surprised' | 'reading' | 'laughing' | 'talking' | 'sad' | 'neutral';
 
@@ -75,9 +118,11 @@ export interface LiderTalkProps {
   readonly onPose: (pose: TalkPose) => void;
   /** The progress panel (folded by default): it takes the body of the bubble while it is open. */
   readonly progress: JobuProgressState;
+  /** t-29e1327b: the owner is dragging the corner of the bubble (the window must keep the mouse until the release). */
+  readonly onResizing: (active: boolean) => void;
 }
 
-export function LiderTalk({ view, onClose, onPose, progress }: LiderTalkProps): React.JSX.Element {
+export function LiderTalk({ view, onClose, onPose, progress, onResizing }: LiderTalkProps): React.JSX.Element {
   const [state, setState] = useState<LiderState | null>(null);
   const session = useChatSession(state?.ptyId ?? null);
   const [draft, setDraft] = useState('');
@@ -109,6 +154,7 @@ export function LiderTalk({ view, onClose, onPose, progress }: LiderTalkProps): 
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [onClose]);
 
+  const startResize = useTalkResize(view, onResizing);
   const lines = useMemo(() => linesOf(session.rows), [session.rows]);
   const lastLider = [...lines].reverse().find((line) => line.who === 'lider') ?? null;
   const typed = useTypewriter(lastLider?.id ?? null, lastLider?.text ?? '');
@@ -151,8 +197,17 @@ export function LiderTalk({ view, onClose, onPose, progress }: LiderTalkProps): 
       data-urgent={urgent ? 'true' : 'false'}
       role="dialog"
       aria-label="Conversa com o Líder"
-      style={{ height: view.talk }}
+      style={{ height: view.talk, width: view.talkWidth }}
     >
+      <div
+        className={styles.resize}
+        data-corner={view.align === 'left' ? 'right' : 'left'}
+        role="separator"
+        aria-label="Arraste para mudar o tamanho da conversa"
+        title="Arraste para aumentar ou diminuir"
+        data-testid="pet-talk-resize"
+        onPointerDown={startResize}
+      />
       <div className={styles.top}>
         <span className={styles.title}>
           Líder<span className={styles.project}> · todos os quadros</span>
@@ -182,6 +237,16 @@ export function LiderTalk({ view, onClose, onPose, progress }: LiderTalkProps): 
           }}
         >
           ≡
+        </button>
+        <button
+          type="button"
+          className={styles.tool}
+          aria-pressed={view.talkExpanded}
+          title={view.talkExpanded ? 'Voltar ao tamanho normal' : 'Aumentar a conversa'}
+          data-testid="pet-talk-expand"
+          onClick={() => window.donel.pet.talkResize({ kind: 'expand' })}
+        >
+          {view.talkExpanded ? '⤡' : '⤢'}
         </button>
         <button type="button" className={styles.tool} disabled={state?.tabId == null} title="Abrir a aba do Líder no Donel" onClick={() => window.donel.lider.showTab()}>
           ↗
