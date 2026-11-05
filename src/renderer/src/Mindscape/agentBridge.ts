@@ -418,7 +418,7 @@ export class AgentBridge {
           const withPlace = addPlace(doc, projectPath, { id: placeId, roleId: role.id, by: 'session', origin: { x: self.x + 260, y: self.y } });
           if (withPlace === doc) return doc;
           made = true;
-          return addLink(withPlace, projectPath, { id: crypto.randomUUID(), from: self.id, to: placeId, arrow: true, by: 'session' });
+          return addLink(withPlace, projectPath, { id: crypto.randomUUID(), from: self.id, to: placeId, arrow: true, by: 'session', opened: true });
         });
         if (!made) return fail('O quadro não aceitou o lugar novo.');
         const name = call.nome ?? role.name;

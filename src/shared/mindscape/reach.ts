@@ -3,18 +3,25 @@
 // entre mindscapes"); the single Líder that talks to every board reuses it. Pure.
 //
 // - Inside a board: a session reaches the places below it by arrows (mine → hers, directly or down a
-//   chain). Never up, never sideways, never itself.
-// - Across boards: only the Líder of a board the owner marked `reach: 'all'` (the "Alcance" toggle of the
+//   chain). Never up, never sideways, never itself. Only the owner's arrows and the ones `sessao_abrir`
+//   makes (mother → daughter) count: an arrow a session draws itself would let it climb above anyone.
+// - Across boards: only the Líder the owner placed (not one a session opened or drew) on a board the
+//   owner marked `reach: 'all'` (the "Alcance" toggle of the
 //   board) reaches the sessions of the other boards. Without that mark, each board reaches only itself.
 
 import { LEADER_ROLE_ID } from '../roles';
-import type { BoardReach, MindscapeBoard, MindscapeDoc } from './model';
+import type { BoardReach, MindscapeBoard, MindscapeDoc, MindscapeLink } from './model';
 
 export function boardReach(board: MindscapeBoard | undefined): BoardReach {
   return board?.reach === 'all' ? 'all' : 'own';
 }
 
-/** `to` is below `from`: a path of arrow links `from → … → to` on the board. */
+/** An arrow that puts `from` above `to`: drawn by the owner, or made by `sessao_abrir`. */
+function isHierarchyArrow(link: MindscapeLink): boolean {
+  return link.arrow && (link.by !== 'session' || link.opened === true);
+}
+
+/** `to` is below `from`: a path of hierarchy arrows `from → … → to` on the board. */
 export function isBelow(board: MindscapeBoard | undefined, from: string, to: string): boolean {
   if (!board || from === to) return false;
   const seen = new Set([from]);
@@ -22,7 +29,7 @@ export function isBelow(board: MindscapeBoard | undefined, from: string, to: str
   while (queue.length > 0) {
     const at = queue.shift()!;
     for (const link of board.links) {
-      if (!link.arrow || link.from !== at || seen.has(link.to)) continue;
+      if (!isHierarchyArrow(link) || link.from !== at || seen.has(link.to)) continue;
       if (link.to === to) return true;
       seen.add(link.to);
       queue.push(link.to);
@@ -49,6 +56,7 @@ export function canReach(doc: MindscapeDoc, from: ReachEnd, to: ReachEnd): Reach
   }
   const self = fromBoard?.cards[from.placeId];
   if (self?.kind !== 'session' || self.roleId !== LEADER_ROLE_ID) return { ok: false, reason: 'ela está em outro quadro, e só o Líder alcança outros quadros.' };
+  if (self.by === 'session') return { ok: false, reason: 'ela está em outro quadro, e só o Líder que o dono pôs no quadro alcança outros quadros (você foi aberta por uma sessão).' };
   if (boardReach(fromBoard) !== 'all') return { ok: false, reason: 'ela está em outro quadro, e o alcance do seu quadro é só ele mesmo (o dono muda em "Alcance", no quadro).' };
   return { ok: true };
 }

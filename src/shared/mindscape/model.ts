@@ -32,7 +32,7 @@ export type MadeBy = 'session';
 /**
  * 5 since the reach of a board (`sessao_fechar`, owner 04/11): `reach: 'all'` lets the Líder of that board
  * direct sessions on every board. A v4 channel would drop it and shrink the Líder back to its own board.
- * The rule that reads it lives in `reach.ts`.
+ * The rule that reads it lives in `reach.ts`. Same version: the `opened` mark on the arrow `sessao_abrir` makes.
  */
 export type BoardReach = 'own' | 'all';
 
@@ -81,6 +81,10 @@ export interface MindscapeLink {
   to: string;
   arrow: boolean;
   by?: MadeBy;
+  /** v5 — the arrow `sessao_abrir` makes from the opener to the session it opened (mother → daughter). With
+   *  the owner's arrows, the only ones that count as hierarchy (`reach.ts`); an arrow a session draws with
+   *  `quadro_aplicar` authorizes `sessao_enviar` but never puts it above anyone. */
+  opened?: true;
 }
 
 /** Drawings use the owner's post-it palette (Sem cor / Azul / Dourado). */
@@ -540,6 +544,8 @@ export interface LinkInput {
   readonly arrow?: boolean;
   /** v4 — made by a session through the MCP. */
   readonly by?: MadeBy;
+  /** v5 — made by `sessao_abrir` (mother → daughter). */
+  readonly opened?: true;
 }
 
 /**
@@ -557,7 +563,7 @@ export function addLink(doc: MindscapeDoc, projectPath: string, input: LinkInput
       (link.from === input.to && link.to === input.from),
   );
   if (taken) return doc;
-  return replaceLinks(doc, board, [...board.links, { id: input.id, from: input.from, to: input.to, arrow: input.arrow ?? true, ...(input.by ? { by: input.by } : {}) }]);
+  return replaceLinks(doc, board, [...board.links, { id: input.id, from: input.from, to: input.to, arrow: input.arrow ?? true, ...(input.by ? { by: input.by } : {}), ...(input.opened ? { opened: true as const } : {}) }]);
 }
 
 /** Switches the arrow of the link on/off. Missing link → same document. */
@@ -649,7 +655,7 @@ function parseCard(key: string, raw: unknown): MindscapeCard | null {
 function parseLink(raw: unknown): MindscapeLink | null {
   if (!isRecord(raw) || !isNonEmptyString(raw.id) || !isNonEmptyString(raw.from) || !isNonEmptyString(raw.to)) return null;
   if (typeof raw.arrow !== 'boolean') return null;
-  return { id: raw.id, from: raw.from, to: raw.to, arrow: raw.arrow, ...(raw.by === 'session' ? { by: 'session' as const } : {}) };
+  return { id: raw.id, from: raw.from, to: raw.to, arrow: raw.arrow, ...(raw.by === 'session' ? { by: 'session' as const } : {}), ...(raw.opened === true ? { opened: true as const } : {}) };
 }
 
 /**

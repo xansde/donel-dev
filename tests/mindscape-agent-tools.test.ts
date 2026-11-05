@@ -100,7 +100,7 @@ describe('sessao_fechar — a hierarquia', () => {
       remotes: () => [],
     } as AgentBridgePorts;
     const bridge = new AgentBridge(ports);
-    return { closed, close: (from: string, quem: string) => bridge.handle(from, { tool: 'sessao_fechar', quem }) };
+    return { closed, doc: () => doc, setDoc: (next: MindscapeDoc) => { doc = next; }, addTab: (tab: BridgeTab) => tabs.push(tab), close: (from: string, quem: string) => bridge.handle(from, { tool: 'sessao_fechar', quem }) };
   }
 
   it('without hierarchy closes nothing, and never the own session', async () => {
@@ -126,6 +126,20 @@ describe('sessao_fechar — a hierarquia', () => {
     expect(await all.close('tab-dev', 'place:outro')).toMatchObject({ ok: false }); // not the Líder
     expect(await all.close('tab-lider', 'place:outro')).toEqual({ ok: true, text: 'Fechada.' });
     expect(all.closed).toEqual(['tab-outro']);
+  });
+
+  it('an arrow a session draws itself never puts it above anyone; nor does a Líder a session made cross boards', async () => {
+    const tree = setup({ arrows: true, reach: 'all' });
+    const drawn = applyBoardOps(tree.doc(), P, [{ op: 'ligacao', de: 'place:neto', para: 'place:lider' }], { newId: () => 'l-up', now: 0, roleIds: new Set(), selfPlaceId: 'place:neto' });
+    if (!drawn.ok) throw new Error(drawn.reason);
+    const doc = drawn.doc;
+    expect(doc.boards[P]!.links.some((link) => link.id === 'l-up')).toBe(true);
+    tree.setDoc(addPlace(doc, P, { id: 'place:lider2', roleId: 'lider', by: 'session' }));
+    tree.addTab({ id: 'tab-lider2', name: 'Líder 2', cwd: P, placeId: 'place:lider2', sessionType: 'claude' });
+    expect(await tree.close('tab-neto', 'place:lider')).toMatchObject({ ok: false });
+    expect(await tree.close('tab-lider2', 'place:outro')).toMatchObject({ ok: false });
+    expect(tree.closed).toEqual([]);
+    expect(parseMindscapeDoc(JSON.parse(JSON.stringify(addLink(tree.doc(), P, { id: 'l-open', from: 'place:lider', to: 'place:lider2', by: 'session', opened: true })))).boards[P]!.links.find((link) => link.id === 'l-open')?.opened).toBe(true);
   });
 
   it('keeps the reach of a board through the disk guard', () => {
