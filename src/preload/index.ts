@@ -159,6 +159,7 @@ import type {
   MindscapeTurnEndedPayload,
 } from '../shared/mindscape/channels';
 import type { MindscapeDoc } from '../shared/mindscape/model';
+import { ROTINAS_CHANNELS, type ShadowEntry } from '../shared/rotinas/contract';
 import { LIDER_CHANNELS, type LiderReport, type LiderSendPayload, type LiderSendResult, type LiderState } from '../shared/lider/ipc';
 import { ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
 import { SESSION_RENEWAL_CHANNELS, type HandoffStatus, type RenewalPrepareInput, type RenewalPrepared, type SessionRenewalPrefs } from '../shared/sessionRenewal';
@@ -839,6 +840,12 @@ const donelApi: DonelApi = {
     showTab: () => {
       ipcRenderer.send(LIDER_CHANNELS.showTab);
     },
+  },
+
+  // Item 20 — the routines in shadow: what they would have woken today (read only).
+  rotinas: {
+    today: () => ipcRenderer.invoke(ROTINAS_CHANNELS.today) as Promise<ShadowEntry[]>,
+    onChanged: (listener: () => void) => subscribeChannel(ipcRenderer, ROTINAS_CHANNELS.changed, () => listener()),
   },
 };
 

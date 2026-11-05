@@ -11,6 +11,7 @@ import type { DonelDevModeApi } from './devMode';
 import type { DonelChatApi } from './chat/api';
 import type { DonelPetApi } from './pet/ipc';
 import type { DonelLiderApi } from './lider/ipc';
+import type { DonelRotinasApi } from './rotinas/contract';
 import type { DonelEsteiraApi } from './esteira/ipc';
 import type { DonelGithubApi } from './github';
 import type { DonelProjectBindingApi } from './projectBinding';
@@ -525,4 +526,6 @@ export interface DonelApi {
   browser: DonelBrowserApi;
   /** Sessão renovada em voo (B36) — handoff instructions and reading the handoff header back. */
   renewal: DonelRenewalApi;
+  /** Item 20 — what the routines in shadow would have woken today. */
+  rotinas: DonelRotinasApi;
 }
