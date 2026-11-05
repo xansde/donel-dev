@@ -89,6 +89,15 @@
   font-weight: var(--weight-regular);
 }
 
+/* Cartas forma A — the board's area: the Oráculo's cards cover it (and only it). */
+.boardArea {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
 .view {
   position: relative;
   flex: 1;

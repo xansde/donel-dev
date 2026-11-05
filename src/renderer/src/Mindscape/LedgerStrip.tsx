@@ -4,6 +4,7 @@
 // shared/ledger/contract.ts); every decision goes to the main as the owner. Hidden while the board has no task.
 
 import { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ledgerStrip, ownerQueue } from '../../../shared/ledger/contract';
 import type { LedgerSnapshot } from '../../../shared/ledger/channels';
 import type { PlaceNameOf } from '../../../shared/ledger/labels';
@@ -17,7 +18,16 @@ function ago(since: number, now: number): string {
   return hours < 48 ? `${hours} h` : `${Math.round(hours / 24)} d`;
 }
 
-export function LedgerStrip({ projectPath, placeName }: { readonly projectPath: string | undefined; readonly placeName?: PlaceNameOf }): React.JSX.Element | null {
+export function LedgerStrip({
+  projectPath,
+  placeName,
+  cardsHost,
+}: {
+  readonly projectPath: string | undefined;
+  readonly placeName?: PlaceNameOf;
+  /** The board's area: the cards cover it, never the tabs nor the strip (as in the prototype). */
+  readonly cardsHost?: HTMLElement | null;
+}): React.JSX.Element | null {
   const [snapshot, setSnapshot] = useState<LedgerSnapshot | null>(null);
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
@@ -70,7 +80,7 @@ export function LedgerStrip({ projectPath, placeName }: { readonly projectPath: 
         <span>{strip.validatedWithoutOwnerPct === null ? 'nenhuma validada ainda' : `${strip.validatedWithoutOwnerPct}% validadas sem você`}</span>
         {snapshot.readOnly ? <span className={styles.ledgerMeta}>gravado por versão mais nova: só leitura</span> : null}
       </div>
-      {open && queue.length > 0 ? <LedgerCards queue={queue} placeName={placeName} onClose={close} /> : null}
+      {open && queue.length > 0 && cardsHost ? createPortal(<LedgerCards queue={queue} placeName={placeName} onClose={close} />, cardsHost) : null}
     </div>
   );
 }

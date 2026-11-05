@@ -63,6 +63,15 @@ verde; um PR por fatia contra `staging`; patch note em toda fatia visível.
 - **Depende de**: 01
 - **Propósito**: o "esperando você" da faixa do Mindscape abre a mão de cartas (como no `final.html`).
 
+### Futura — amostra do Revisor em forma A (anotada, sem data)
+
+- **Status**: anotada
+- **Origem**: decisão do Líder único em 05/11, até o dono dizer o contrário: a carta da amostra do dia
+  (aceite do Revisor que o dono confere) segue na forma antiga por enquanto; vira forma A numa fatia futura.
+- Decididas na mesma conversa: dois toques para decidir (mantém); arrastar não escolhe o recomendado
+  (decidir pede gesto explícito); a mesa do desktop cobre só o quadro (ajuste no #238); o protótipo nunca
+  abre fora da carta.
+
 ### 04 — Protótipo dentro da carta (Parte A)
 
 - **Status**: pronta
