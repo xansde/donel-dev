@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-05',
     items: [
       {
+        title: 'Sessões na VPS conversam com o Donel',
+        text: 'Uma sessão que você abre na VPS pelo Donel agora conecta nas ferramentas do Donel, como acontece no computador: ela lê o quadro, abre sessões e cria tarefas e cartas no Oráculo Harrow. Antes ela subia sem essas ferramentas.',
+      },
+      {
         title: 'Progresso do Jobu só com o que está rolando',
         text: 'O painel de progresso do Jobu mostra só as tarefas abertas, em execução, entregues esperando decisão e rejeitadas. Uma tarefa aceita sai do painel na hora e deixa de contar nas barras. Quando não há nada em andamento, o painel diz "Nada rodando agora".',
       },
