@@ -2,9 +2,9 @@
 demanda: carta-oraculo
 plano: invocação direta (tarefa do Oráculo Harrow, pedido do dono em 05/11)
 taskdex: []  # Donel Dev não usa TaskDex; o registro é a tarefa no Oráculo Harrow
-status: pendente-de-escolha
-decidido-por: —
-decidido-em: —
+status: decidido
+decidido-por: Alexandre (dono), repassado pelo Líder único
+decidido-em: 2026-11-05
 ---
 
 # Decisão de UI — Cartas do Oráculo que se entendem
@@ -34,11 +34,29 @@ Proposta de contrato e régua de quando sobe ao dono: `contrato.html`.
 
 ## Escolha
 
-<Preenchido com o feedback do dono.>
+**Forma A, Carta Harrow**: a frente decide e o verso explica, no celular e no desktop. Compilada em `final.html`.
+
+Nas palavras do dono (05/11): “A ideia é ser a forma A. Mas não existe suporte para eu ver os
+protótipos nas próprias cartas nem como escrever lá. É esse tipo de coisa que falta.” Antes,
+no mesmo dia: “Esse negócio de código das tarefas não me explica nada. Sou um humano, coopera
+comigo, por favor.” e “Podemos lançar uns protótipos interessantes das cartas para decidir.”
+
+Por isso o `final.html` traz, além da forma A, as duas lacunas que ele apontou:
+- **protótipo dentro da carta**: a carta 3 roda o HTML anexado pelo Dev, isolado
+  (`iframe sandbox="allow-scripts"`), com Antes e Depois clicáveis dentro dela;
+- **escrever na carta**: “✎ Escrever para <quem fez>”, texto livre que vai a quem fez a tarefa.
+
+Decisões em aberto que o Líder fechou com as recomendações desta etapa, até o dono dizer o
+contrário: decisão com **opções com nome** (não só aceitar ou rejeitar); **quadro de checagens
+desenhado** pelo app quando não há tela; protótipo sobe ao dono **só quando há 2 jeitos bons**.
+
+Spec para implementar: `docs/specs/cartas-forma-a.md`.
 
 ## Descartado
 
-<Preenchido com o feedback do dono.>
+- **B — Conversa com o Jobu**: o dono escolheu a carta; a conversa fica como ideia para o balão do Jobu, sem compromisso.
+- **C — Visual grande**: o visual grande cabe na frente da A; não precisou de forma própria.
+- **D — Escolha o caminho**: o risco por caminho foi para o verso da A.
 
 ## Limitações do mock
 
@@ -47,5 +65,6 @@ Proposta de contrato e régua de quando sobe ao dono: `contrato.html`.
 - A carta do painel de progresso é **simulada**: em 05/11 14h a tarefa ainda estava em
   execução. O antes/depois foi redesenhado com as tarefas reais do quadro, não é print do app.
 - As cartas da VPS e da conta já tinham sido aceitas pelo dono; aparecem como pendentes.
-- Nada grava: tocar numa opção só passa para a próxima carta.
+- Nada grava: tocar numa opção só passa para a próxima carta; “Enviar” do escrever só mostra o recibo.
+- O protótipo embutido do `final.html` usa `srcdoc`; no app ele vem como arquivo de prova servido com CSP própria (ver a spec).
 - O gesto de arrastar (aceita/rejeita) da PWA atual não foi reproduzido.
