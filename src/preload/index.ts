@@ -580,6 +580,7 @@ const donelApi: DonelApi = {
     },
     decide: (decision: LedgerOwnerDecision) => ipcRenderer.invoke(LEDGER_CHANNELS.decide, decision) as Promise<LedgerApplyResult>,
     openProof: (proof: LedgerProof) => ipcRenderer.invoke(LEDGER_CHANNELS.openProof, proof) as Promise<boolean>,
+    proofImage: (taskId: string, proofIndex: number) => ipcRenderer.invoke(LEDGER_CHANNELS.proofImage, taskId, proofIndex) as Promise<string | null>,
   },
 
   // Papéis de sessão (item 12a) — `<userData>/papeis/` (main is the only writer).

@@ -10,6 +10,8 @@ export const LEDGER_CHANNELS = {
   changed: 'ledger:changed',
   decide: 'ledger:decide',
   openProof: 'ledger:open-proof',
+  /** Cartas forma A — a print of a delivery as a `data:` URL, for the card's front. */
+  proofImage: 'ledger:proof-image',
 } as const;
 
 export interface LedgerSnapshot {
@@ -18,8 +20,13 @@ export interface LedgerSnapshot {
   readonly readOnly: boolean;
 }
 
-/** The owner accepts (or confirms a Revisor's accept), or rejects with a reason. */
-export type LedgerOwnerDecision = { readonly id: string; readonly accept: true } | { readonly id: string; readonly accept: false; readonly reason: string };
+/**
+ * The owner accepts (or confirms a Revisor's accept), or rejects with a reason. `option`: the named path the owner
+ * picked on the card (forma A); a rejecting option is its own reason.
+ */
+export type LedgerOwnerDecision =
+  | { readonly id: string; readonly accept: true; readonly option?: string }
+  | { readonly id: string; readonly accept: false; readonly reason: string; readonly option?: string };
 
 export type LedgerApplyResult = { readonly ok: true; readonly task: LedgerTask } | { readonly ok: false; readonly reason: string };
 
@@ -30,4 +37,6 @@ export interface DonelLedgerApi {
   decide(decision: LedgerOwnerDecision): Promise<LedgerApplyResult>;
   /** Opens a proof outside the app (file in the system viewer, link in the browser); false = refused. */
   openProof(proof: LedgerProof): Promise<boolean>;
+  /** A print of the CURRENT delivery of `taskId` (index in its proofs) as a `data:` URL; `null` = not a print, too big or gone. */
+  proofImage(taskId: string, proofIndex: number): Promise<string | null>;
 }

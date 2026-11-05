@@ -23,7 +23,7 @@ import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { createLedgerService, ledgerFilePath, ledgerProofsDir, nodeLedgerProofFs, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerOwnerDecision, type LedgerSnapshot } from '../shared/ledger/channels';
-import { isHttpUrl, isProofFileName, type LedgerProof } from '../shared/ledger/contract';
+import { isHttpUrl, isProofFileName, lastDelivery, type LedgerProof } from '../shared/ledger/contract';
 import type { LedgerToolCall } from '../shared/ledger/tools';
 import type { BoardBridge } from './board-bridge';
 import type { BrowserToolOutcome } from '../shared/browser/mcp';
@@ -2881,9 +2881,21 @@ function registerLedgerIpcHandlers(): void {
     if (!fromMain(event.sender)) return { ok: false, reason: 'Só a janela do app decide.' };
     const decision = raw as Partial<LedgerOwnerDecision> | null;
     if (!decision || typeof decision.id !== 'string') return { ok: false, reason: 'Pedido inválido.' };
-    if (decision.accept === true) return service.apply({ kind: 'dono' }, { op: 'aceitar', id: decision.id });
+    const option = typeof decision.option === 'string' && decision.option.trim() ? { option: decision.option } : {};
+    if (decision.accept === true) return service.apply({ kind: 'dono' }, { op: 'aceitar', id: decision.id, ...option });
     const reason = (decision as { reason?: unknown }).reason;
-    return service.apply({ kind: 'dono' }, { op: 'rejeitar', id: decision.id, reason: typeof reason === 'string' ? reason : '' });
+    return service.apply({ kind: 'dono' }, { op: 'rejeitar', id: decision.id, reason: typeof reason === 'string' ? reason : '', ...option });
+  });
+  ipcMain.handle(LEDGER_CHANNELS.proofImage, async (event, taskId: unknown, proofIndex: unknown): Promise<string | null> => {
+    if (!fromMain(event.sender) || typeof taskId !== 'string' || typeof proofIndex !== 'number') return null;
+    try {
+      const task = service.load().doc.tasks[taskId];
+      const proof = task ? lastDelivery(task)?.proofs?.[proofIndex] : undefined;
+      const image = proof ? await service.proofImage(proof) : null;
+      return image ? `data:${image.mimeType};base64,${image.base64}` : null;
+    } catch {
+      return null;
+    }
   });
   ipcMain.handle(LEDGER_CHANNELS.openProof, async (event, raw: unknown): Promise<boolean> => {
     if (!fromMain(event.sender)) return false;
