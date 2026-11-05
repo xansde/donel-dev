@@ -138,7 +138,10 @@ export type NoticeIcon =
   | 'account-switch'
   | 'conversation-switch'
   | 'informational'
-  | 'generated-file';
+  | 'generated-file'
+  // B36 — the divider above which the tab's chat keeps the conversation a renewal replaced.
+  | 'session-renewed'
+  | 'auto-approved';
 
 export interface NoticeContent {
   readonly icon: NoticeIcon;
@@ -188,6 +191,11 @@ export function noticeContent(kind: NoticeKind, params: Readonly<Record<string, 
       const safe = label !== undefined && !label.includes('@') ? label : undefined;
       return { icon: 'account-switch', tone: 'muted', text: safe ? `Conta trocada para ${safe}` : 'Conta trocada' };
     }
+    case 'auto-approved': {
+      const summary = asString(params.summary);
+      const lead = params.yolo === true ? 'Permitido automaticamente (YOLO)' : 'Permitido automaticamente';
+      return { icon: 'auto-approved', tone: 'muted', text: summary ? `${lead}: ${summary}` : lead };
+    }
     case 'conversation-switch': {
       const lead = params.reason === 'resume' ? 'Conversa retomada' : 'Conversa nova';
       return { icon: 'conversation-switch', tone: 'muted', text: `${lead} — ${PREVIOUS_CONVERSATION}` };
@@ -203,6 +211,15 @@ export function noticeContent(kind: NoticeKind, params: Readonly<Record<string, 
         icon: 'generated-file',
         tone: 'muted',
         text: 'Gerou',
+        ...(asString(params.name) ? { fileName: asString(params.name) } : {}),
+        ...(asString(params.path) ? { filePath: asString(params.path) } : {}),
+      };
+    case 'session-renewed':
+      // B36 — the conversation above is the one the renewal replaced; "abrir" opens the handoff.
+      return {
+        icon: 'session-renewed',
+        tone: 'muted',
+        text: 'Sessão renovada em voo (contexto cheio) · passagem:',
         ...(asString(params.name) ? { fileName: asString(params.name) } : {}),
         ...(asString(params.path) ? { filePath: asString(params.path) } : {}),
       };

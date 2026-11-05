@@ -10,13 +10,26 @@ import type { DonelConfigApi } from './config';
 import type { DonelDevModeApi } from './devMode';
 import type { DonelChatApi } from './chat/api';
 import type { DonelPetApi } from './pet/ipc';
+import type { DonelLiderApi } from './lider/ipc';
+import type { DonelCelularApi } from './celular';
+import type { DonelRotinasApi } from './rotinas/contract';
 import type { DonelEsteiraApi } from './esteira/ipc';
 import type { DonelGithubApi } from './github';
 import type { DonelProjectBindingApi } from './projectBinding';
 import type { DonelProjectsApi } from './projects';
+import type { DonelStatusLineApi } from './statusLine';
 import type { DonelProvidersApi } from './providers';
 import type { DonelSessionsApi } from './sessions';
 import type { DonelTabsApi } from './tabChannels';
+import type { DonelMindscapeApi } from './mindscape/channels';
+import type { DonelLedgerApi } from './ledger/channels';
+import type { DonelRolesApi } from './roles';
+import type { DonelRenewalApi } from './sessionRenewal';
+import type { DonelLearningApi } from './learning/gestures';
+import type { DonelHealthApi } from './health/ipc';
+import type { DonelAppUpdateApi } from './appUpdate';
+import type { DonelWorkspaceApi } from './workspace';
+import type { DonelBrowserApi } from './browser/ipc';
 
 // 015-jobu-pet — the Jobu contract (channels, payloads, validators) lives in ./pet/ipc.
 export type { DonelPetApi } from './pet/ipc';
@@ -45,7 +58,7 @@ export type {
 } from './newProject';
 
 export { SESSION_CHANNELS, TRANSCRIPT_CHANNELS } from './sessions';
-export type { DonelSessionsApi, SessionSummaryDto, SessionSwitchedPayload, TranscriptChangedPayload } from './sessions';
+export type { DonelSessionsApi, SessionSummaryDto, SessionSwitchedPayload, SessionWhereLives, TranscriptChangedPayload } from './sessions';
 
 // T710 (007/CA-11 2º momento) — decisão de esquecer a entrada órfã quando a
 // retomada falha. Puro; medição do sinal em specs/008-fechar-pendencias/.
@@ -53,7 +66,7 @@ export { RESUME_FAILURE_WINDOW_MS, forgetIfOrphan, resumedSessionIdFromArgs, sho
 export type { ResumeFailureSignal } from './resumeFailure';
 
 export { CONFIG_CHANNELS } from './config';
-export type { AppConfigDto, ChatPrefs, DonelConfigApi, LauncherDefaultsDto, NotificationPreference, PetPrefs, PetPrefsInput, ProjectScanMode, SessionNamesMap } from './config';
+export type { AppConfigDto, AutoModePrefs, ChatPrefs, DonelConfigApi, LauncherDefaultsDto, NotificationPreference, PetPrefs, PetPrefsInput, ProjectScanMode, SessionNamesMap, YoloPrefs } from './config';
 
 // CA-26/CA-27 (009-modo-dev-v3, lote 1) — aba v3: reordenar (CA-26) e cor por
 // aba (CA-27). Lógica pura em tabAppearance.ts; canais `tabs:*` em
@@ -182,6 +195,7 @@ export type {
   AccountLoad,
   AccountsConfig,
   AccountsConfigDto,
+  SeazonePoolConfig,
   AccountsViewDto,
   AccountSummary,
   AutoSwitchPolicy,
@@ -192,6 +206,9 @@ export type {
   LocalAccountMeta,
   LoginStatusDto,
   ModId,
+  RemotePlace,
+  RemotePlaceView,
+  RemoteSwitchOutcome,
   RemoveAccountOutcome,
   SwitchOutcome,
 } from './accounts';
@@ -239,6 +256,8 @@ export const PTY_CHANNELS = {
   data: 'pty:data',
   exit: 'pty:exit',
   preview: 'pty:preview',
+  /** Sessões remotas — sessions still alive on the remote places (boot reattach). */
+  remoteAlive: 'pty:remoteAlive',
 } as const;
 
 export interface PtyCreateOptions {
@@ -279,6 +298,45 @@ export interface PtyCreateOptions {
    * cru dentro de um diretório vazio, pro operador fazer `/login`.
    */
   accountLoginId?: string;
+  /**
+   * Sessão renovada em voo (B36) — this spawn replaces the session of a
+   * renewal (`renewal:prepare`). The main links the new conversation to the
+   * old one, so the tab's chat keeps showing the old history above a divider.
+   * It changes nothing in the argv (the renderer already sent the args).
+   */
+  renewalId?: string;
+  /**
+   * Papéis de sessão (item 12a) — role of this session (`<userData>/papeis/<id>.md`), sent when the
+   * renderer knows it (a place that had not started, the Launcher, a fork). Absent on a resume or a
+   * renewal: the main reads the role of the place that holds the conversation in `mindscape.json`.
+   */
+  roleId?: string;
+  /**
+   * Líder único — the tab carries the Jobu's `leaderOfAll` mark (`isLeaderOfAllTab`): with the `lider` role, the
+   * session reads the Líder único's guidance instead of the Líder of one board's.
+   */
+  leaderOfAll?: boolean;
+  /**
+   * Sessões remotas — id of a remote place (`accounts.remotes`) where this session runs, inside a tmux
+   * session that outlives the app. Absent = this computer. Only with `sessionType === 'claude'`.
+   */
+  remoteId?: string;
+  /** Sessões remotas — names kept on the remote, so the next boot reopens the tab as it was. */
+  tabName?: string;
+  projectName?: string;
+  /** Sessões remotas — place of the session that opened this one (`sessao_abrir`), kept so the next boot leaves it out of the tab bar. */
+  openedBy?: string;
+}
+
+/** Sessões remotas — a session still alive on a remote place, found at boot. */
+export interface RemoteAliveSession {
+  readonly remoteId: string;
+  readonly sessionId: string;
+  readonly cwd: string;
+  readonly projectName: string;
+  readonly name: string;
+  readonly launchArgs: readonly string[];
+  readonly openedBy?: string;
 }
 
 /**
@@ -351,6 +409,8 @@ export interface DonelPtyApi {
   kill(ptyId: string): void;
   /** Ring buffer de ~50 linhas (ANSI stripado) — plan.md ponto 8, hover-preview futuro. */
   getPreview(ptyId: string): Promise<string[]>;
+  /** Sessões remotas — sessions still alive on the remote places, to reopen at boot. */
+  remoteAlive(): Promise<RemoteAliveSession[]>;
   /** Retorna função de unsubscribe. */
   onData(ptyId: string, listener: (data: string) => void): () => void;
   /** Retorna função de unsubscribe. */
@@ -377,12 +437,28 @@ export interface SemaphoreUpdate {
   readonly state: SemaphoreState;
   /** Epoch ms de quando `state` passou a valer (ui-spec §3 "há Xmin"; FR-010/CA-6 desempate por idade em `permission`). */
   readonly stateEnteredAt: number;
+  /** #109 — see `SemaphoreStateInfo.awaitingBackgroundAgents`. */
+  readonly awaitingBackgroundAgents?: true;
+  /** Item 04 — see `SemaphoreStateInfo.unconfirmed`. */
+  readonly unconfirmed?: true;
+  /** Item 04 — see `SemaphoreStateInfo.pendingKinds`. */
+  readonly pendingKinds?: readonly string[];
+  /** Item 04 — see `SemaphoreStateInfo.turnFailure`. */
+  readonly turnFailure?: string;
 }
 
 /** Payload do listener FILTRADO por ptyId (mesmo padrão de `PtyExitInfo`/`pty.onExit` — o `ptyId` já é conhecido pelo chamador, não precisa vir de novo dentro do payload). */
 export interface SemaphoreStateInfo {
   readonly state: SemaphoreState;
   readonly stateEnteredAt: number;
+  /** #109 — `waiting` with background agents still alive (the CLI will wake the session). Read by the renewal (B36): never swap then. */
+  readonly awaitingBackgroundAgents?: boolean;
+  /** Item 04 (cartão rico) — no hook heard yet: the `working` of the birth is a guess ("desconhecido"). */
+  readonly unconfirmed?: boolean;
+  /** Item 04 — kinds of the open pendings (`question`, `permission`, `plan`), with `permission`. */
+  readonly pendingKinds?: readonly string[];
+  /** Item 04 — the last turn ended in `StopFailure` with this code (`rate_limit`…, or `unknown`). */
+  readonly turnFailure?: string;
 }
 
 /** API tipada exposta pelo preload em `window.donel.semaphore` (contextBridge). */
@@ -415,6 +491,8 @@ export interface DonelApi {
   pty: DonelPtyApi;
   projects: DonelProjectsApi;
   semaphore: DonelSemaphoreApi;
+  /** Ponte da statusline — o JSON oficial do `statusLine` do CLI, por aba (src/shared/statusLine.ts). */
+  statusLine: DonelStatusLineApi;
   sessions: DonelSessionsApi;
   /** 011-contas-e-provedores (etapa 1) — motor de contas + mods; nasce inerte (accounts.mod = null). */
   accounts: DonelAccountsApi;
@@ -438,6 +516,30 @@ export interface DonelApi {
   esteira: DonelEsteiraApi;
   /** 014-chat — conversa da aba `claude` como chat (ler, paginar, abrir links). Com `chat.enabled = false` os pedidos rejeitam: não há handler. */
   chat: DonelChatApi;
+  /** Mindscape V1 — one board per project, persisted in `mindscape.json` by the main. */
+  mindscape: DonelMindscapeApi;
+  /** Ledger com prova (item 19) — the tasks between places, in `ledger.json` (the main is the only writer). */
+  ledger: DonelLedgerApi;
+  /** Papéis de sessão (item 12a) — the roles in `<userData>/papeis/` (the main is the only writer). */
+  roles: DonelRolesApi;
+  /** Diário de gestos — what the owner does, kept only on this machine as examples for a local model (B35). */
+  learning: DonelLearningApi;
   /** 015-jobu-pet — the Jobu on the desktop. Exposed in both windows (the main one and the pet's); each one uses its own half. */
   pet: DonelPetApi;
+  /** Item 18 — the conversation with the Jobu as Líder, in its own window. */
+  lider: DonelLiderApi;
+  /** Ledger no celular — a PWA na Tailscale: ligar, parear e revogar celulares (Preferências). */
+  celular: DonelCelularApi;
+  /** Saúde do computador — RAM, disco e processos que estão pesando, com a ação de encerrar um processo. */
+  health: DonelHealthApi;
+  /** B33 — versão nova do alfa: atualizar de dentro do app e reabrir as abas depois. */
+  appUpdate: DonelAppUpdateApi;
+  /** Sidebar — "Abrir no editor" (VS Code/Cursor) e branch atual da pasta da sessão/projeto. */
+  workspace: DonelWorkspaceApi;
+  /** Navegador integrado — o painel de navegador de cada aba de sessão, que o agente da sessão controla e o dono assume. */
+  browser: DonelBrowserApi;
+  /** Sessão renovada em voo (B36) — handoff instructions and reading the handoff header back. */
+  renewal: DonelRenewalApi;
+  /** Item 20 — what the routines in shadow would have woken today. */
+  rotinas: DonelRotinasApi;
 }

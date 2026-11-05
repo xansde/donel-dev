@@ -7,6 +7,29 @@ import { CHAT_CHANNELS } from '../shared/chat/ipc';
 import { PET_CHANNELS } from '../shared/pet/ipc';
 import type { PetActivateSessionPayload, PetDragPayload, PetOpenTarget, PetPrefsChangedPayload, PetTabsPayload } from '../shared/pet/ipc';
 import type { PetView } from '../shared/pet/types';
+// Saúde do computador — the health channels.
+import { HEALTH_CHANNELS } from '../shared/health/ipc';
+import type { KillProcessOutcome } from '../shared/health/ipc';
+import type { HealthReport } from '../shared/health/types';
+import type { RemoteHealthReport } from '../shared/health/remote';
+// B33 — atualizar de dentro do app.
+import { APP_UPDATE_CHANNELS, type AppUpdateApplyResult, type AppUpdateBoot, type AppUpdateStatus, type ResumeTab } from '../shared/appUpdate';
+// Sidebar — abrir no editor + branch atual.
+import { WORKSPACE_CHANNELS } from '../shared/workspace';
+import type { EditorStatus, GitBranchResult, OpenInEditorResult, PullRequestRequestOptions, PullRequestStatusResult, WorktreeKeptPayload } from '../shared/workspace';
+// Navegador interno — the panel of each session tab.
+import { BROWSER_CHANNELS } from '../shared/browser/ipc';
+import type { BrowserAgentRules, BrowserRulesResult, BrowserTabAction } from '../shared/browser/ipc';
+import type { DomainMode } from '../shared/browser/guardrails';
+import type {
+  BrowserControlState,
+  BrowserHistoryAction,
+  BrowserLogEntry,
+  BrowserNavigateResult,
+  BrowserOpenRequest,
+  BrowserPanelState,
+  BrowserRect,
+} from '../shared/browser/ipc';
 import type {
   ChatAckLookupOutput,
   ChatAnswerOutput,
@@ -26,10 +49,12 @@ import type {
   RowDetail,
 } from '../shared/chat/ipc';
 import type { RowScope, TerminalNeededReason } from '../shared/chat/rows';
+import type { SendFailureDetail } from '../shared/chat/sendDiagnostics';
 import type {
   AccountsConfigDto,
   AccountsViewDto,
   AppConfigDto,
+  SessionWhereLives,
   ArchiveOutcome,
   BeginLoginOutcome,
   ConnectModInput,
@@ -47,6 +72,7 @@ import type {
   GhAvailabilityDto,
   GithubReadRequest,
   GithubReadResponse,
+  AutoModePrefs,
   ChatPrefs,
   LauncherDefaultsDto,
   LoginStatusDto,
@@ -60,7 +86,9 @@ import type {
   ProjectScanMode,
   PtyCreateOptions,
   PtyCreateResult,
+  RemoteAliveSession,
   PtyExitInfo,
+  RemoteSwitchOutcome,
   RemoveAccountOutcome,
   ResolveCardRepoIpcInput,
   ResolveCardReposIpcInput,
@@ -95,6 +123,9 @@ import type { ProviderId, ProviderSummaryDto, SetSecretResult, UpsertProviderInp
 // T504 (005-terminal-copy-paste) — canal do clipboard-bridge (main), aditivo
 // aos imports acima (não reordena o bloco existente).
 import { CLIPBOARD_CHANNELS } from '../shared';
+// Ponte da statusline — leituras oficiais do `statusLine` do CLI, por aba.
+import { STATUS_LINE_CHANNELS } from '../shared/statusLine';
+import type { StatusLineChangedPayload, StatusLineSnapshot } from '../shared/statusLine';
 // Spec 010 — canais e shapes da esteira nova.
 import {
   ESTEIRA_CHANNELS,
@@ -117,6 +148,25 @@ import {
   type SetStageOverrideIpcInput,
   type SetWorkItemStateIpcInput,
 } from '../shared/esteira/ipc';
+
+import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
+import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerOwnerDecision, type LedgerSnapshot } from '../shared/ledger/channels';
+import type { LedgerProof } from '../shared/ledger/contract';
+import { LEARNING_CHANNELS, type RendererGesture } from '../shared/learning/gestures';
+import type {
+  MindscapeBoardRequest,
+  MindscapeBoardResponse,
+  MindscapeReadImageResult,
+  MindscapeSaveImageResult,
+  MindscapeSaveResult,
+  MindscapeTurnEndedPayload,
+} from '../shared/mindscape/channels';
+import type { MindscapeDoc } from '../shared/mindscape/model';
+import { CELULAR_CHANNELS, type CelularPairResult, type CelularState } from '../shared/celular';
+import { ROTINAS_CHANNELS, type ShadowEntry } from '../shared/rotinas/contract';
+import { LIDER_CHANNELS, type LiderReport, type LiderSendPayload, type LiderSendResult, type LiderState } from '../shared/lider/ipc';
+import { ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
+import { SESSION_RENEWAL_CHANNELS, type HandoffStatus, type RenewalPrepareInput, type RenewalPrepared, type SessionRenewalPrefs } from '../shared/sessionRenewal';
 
 // contextIsolation: true + sem nodeIntegration (src/main/index.ts) — este
 // arquivo é o único ponto por onde o renderer alcança o main process, via
@@ -143,6 +193,8 @@ const donelApi: DonelApi = {
     },
 
     getPreview: (ptyId: string) => ipcRenderer.invoke(PTY_CHANNELS.preview, ptyId) as Promise<string[]>,
+
+    remoteAlive: () => ipcRenderer.invoke(PTY_CHANNELS.remoteAlive) as Promise<RemoteAliveSession[]>,
 
     // NÃO passa por `subscribeChannel` (G5): este canal é broadcast DE
     // PROPÓSITO — uma aba, um `TerminalPane`, um listener, todos no MESMO
@@ -173,6 +225,18 @@ const donelApi: DonelApi = {
 
     // CA-30 (009-modo-dev-v3, lote 9) — "lançar um projeto do zero" (US-15).
     create: (input: CreateProjectIpcInput) => ipcRenderer.invoke(PROJECT_CHANNELS.create, input) as Promise<CreateProjectResponse>,
+    tabFolders: (cwd: string) => ipcRenderer.invoke(PROJECT_CHANNELS.tabFolders, cwd) as Promise<string[]>,
+  },
+
+  statusLine: {
+    getAll: () => ipcRenderer.invoke(STATUS_LINE_CHANNELS.getAll) as Promise<Record<string, StatusLineSnapshot>>,
+    // UMA assinatura (no App) para todas as abas; quem despacha por aba é o renderer.
+    onChanged: (listener: (payload: StatusLineChangedPayload) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: StatusLineChangedPayload): void => {
+        listener(payload);
+      };
+      return subscribeChannel(ipcRenderer, STATUS_LINE_CHANNELS.changed, handler);
+    },
   },
 
   semaphore: {
@@ -180,7 +244,17 @@ const donelApi: DonelApi = {
     // aqui, mesmo padrão de pty.onData/pty.onExit acima.
     onUpdate: (ptyId: string, listener: (info: SemaphoreStateInfo) => void) => {
       const handler = (_event: Electron.IpcRendererEvent, update: SemaphoreUpdate): void => {
-        if (update.ptyId === ptyId) listener({ state: update.state, stateEnteredAt: update.stateEnteredAt });
+        if (update.ptyId !== ptyId) return;
+        // B36 — the renewal must know when a `waiting` still has background agents alive.
+        listener({
+          state: update.state,
+          stateEnteredAt: update.stateEnteredAt,
+          ...(update.awaitingBackgroundAgents === true ? { awaitingBackgroundAgents: true } : {}),
+          // Item 04 — the facts of the rich card on the Mindscape.
+          ...(update.unconfirmed === true ? { unconfirmed: true } : {}),
+          ...(update.pendingKinds && update.pendingKinds.length > 0 ? { pendingKinds: update.pendingKinds } : {}),
+          ...(update.turnFailure ? { turnFailure: update.turnFailure } : {}),
+        });
       };
       ipcRenderer.on(SEMAPHORE_CHANNELS.update, handler);
       return () => ipcRenderer.removeListener(SEMAPHORE_CHANNELS.update, handler);
@@ -229,6 +303,10 @@ const donelApi: DonelApi = {
 
     // T706/CA-8 — a única leitura de disco da feature, guardada no main.
     seedProject: (projectPath: string) => ipcRenderer.invoke(SESSION_CHANNELS.seedProject, projectPath) as Promise<AppConfigDto>,
+
+    // B39 — where a conversation to resume lives (this computer or a remote place).
+    whereLives: (sessionId: string, projectPath: string) =>
+      ipcRenderer.invoke(SESSION_CHANNELS.whereLives, sessionId, projectPath) as Promise<SessionWhereLives>,
   },
 
   // 011-contas-e-provedores (etapa 1) — motor de contas + mods (nasce inerte,
@@ -277,6 +355,10 @@ const donelApi: DonelApi = {
     // pra uma conta já cadastrada ("Reconectar"). O rótulo vem da conta, não
     // é digitado de novo.
     beginReconnect: (id: AccountId) => ipcRenderer.invoke(ACCOUNT_CHANNELS.beginReconnect, id) as Promise<BeginLoginOutcome>,
+
+    // Lugares remotos (VPS) — troca a conta de um lugar; `null` libera o lugar.
+    switchRemote: (placeId: string, accountId: AccountId | null) =>
+      ipcRenderer.invoke(ACCOUNT_CHANNELS.switchRemote, placeId, accountId) as Promise<RemoteSwitchOutcome>,
   },
 
   // T1214 (011-contas-e-provedores, etapa 2) — assistente de migração
@@ -332,6 +414,13 @@ const donelApi: DonelApi = {
 
     // T014 (015-jobu-pet) — the Jobu switch; the main applies it at once (creates/destroys the pet window).
     setPetPrefs: (prefs: PetPrefsInput) => ipcRenderer.invoke(CONFIG_CHANNELS.setPetPrefs, prefs) as Promise<AppConfigDto>,
+    // B36 — sessão renovada em voo: switch and context limit.
+    setSessionRenewalPrefs: (prefs: Partial<SessionRenewalPrefs>) =>
+      ipcRenderer.invoke(CONFIG_CHANNELS.setSessionRenewalPrefs, prefs) as Promise<AppConfigDto>,
+    setAutoModePrefs: (prefs: Partial<AutoModePrefs>) =>
+      ipcRenderer.invoke(CONFIG_CHANNELS.setAutoModePrefs, prefs) as Promise<AppConfigDto>,
+    setProjectYolo: (projectPath: string, enabled: boolean) =>
+      ipcRenderer.invoke(CONFIG_CHANNELS.setProjectYolo, projectPath, enabled) as Promise<AppConfigDto>,
     setCollapsedFavorites: (collapsed: string[]) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setCollapsedFavorites, collapsed) as Promise<AppConfigDto>,
   },
@@ -355,6 +444,154 @@ const donelApi: DonelApi = {
 
     setOrder: (sessionId: string, order: number) =>
       ipcRenderer.invoke(TAB_CHANNELS.setOrder, sessionId, order) as Promise<AppConfigDto>,
+  },
+
+  // Saúde do computador — the last report, its change event and the two actions.
+  health: {
+    get: () => ipcRenderer.invoke(HEALTH_CHANNELS.get) as Promise<HealthReport | null>,
+    refresh: () => ipcRenderer.invoke(HEALTH_CHANNELS.refresh) as Promise<HealthReport | null>,
+    onChanged: (listener: (report: HealthReport) => void) => {
+      const handler = (_event: unknown, report: HealthReport): void => listener(report);
+      return subscribeChannel(ipcRenderer, HEALTH_CHANNELS.changed, handler);
+    },
+    killProcess: (pid: number) => ipcRenderer.invoke(HEALTH_CHANNELS.killProcess, pid) as Promise<KillProcessOutcome>,
+    openTemp: () => ipcRenderer.invoke(HEALTH_CHANNELS.openTemp) as Promise<string>,
+    remoteGet: () => ipcRenderer.invoke(HEALTH_CHANNELS.remoteGet) as Promise<readonly RemoteHealthReport[]>,
+    remoteRefresh: () => ipcRenderer.invoke(HEALTH_CHANNELS.remoteRefresh) as Promise<readonly RemoteHealthReport[]>,
+    onRemoteChanged: (listener: (reports: readonly RemoteHealthReport[]) => void) => {
+      const handler = (_event: unknown, reports: readonly RemoteHealthReport[]): void => listener(reports);
+      return subscribeChannel(ipcRenderer, HEALTH_CHANNELS.remoteChanged, handler);
+    },
+  },
+
+  // B33 — versão nova do alfa: o estado da pasta dos instaladores, a troca e as abas a reabrir depois.
+  appUpdate: {
+    get: () => ipcRenderer.invoke(APP_UPDATE_CHANNELS.get) as Promise<AppUpdateStatus>,
+    onChanged: (listener: (status: AppUpdateStatus) => void) => {
+      const handler = (_event: unknown, status: AppUpdateStatus): void => listener(status);
+      return subscribeChannel(ipcRenderer, APP_UPDATE_CHANNELS.changed, handler);
+    },
+    apply: (tabs: readonly ResumeTab[]) => ipcRenderer.invoke(APP_UPDATE_CHANNELS.apply, tabs) as Promise<AppUpdateApplyResult>,
+    takeBoot: () => ipcRenderer.invoke(APP_UPDATE_CHANNELS.takeBoot) as Promise<AppUpdateBoot>,
+    check: () => ipcRenderer.invoke(APP_UPDATE_CHANNELS.check) as Promise<void>,
+  },
+
+  // Sidebar — abrir a pasta no VS Code/Cursor e ler a branch atual (cache curto no main).
+  workspace: {
+    editorStatus: () => ipcRenderer.invoke(WORKSPACE_CHANNELS.editorStatus) as Promise<EditorStatus>,
+    openInEditor: (path: string) => ipcRenderer.invoke(WORKSPACE_CHANNELS.openInEditor, path) as Promise<OpenInEditorResult>,
+    gitBranch: (path: string) => ipcRenderer.invoke(WORKSPACE_CHANNELS.gitBranch, path) as Promise<GitBranchResult>,
+    pullRequest: (path: string, options?: PullRequestRequestOptions) =>
+      ipcRenderer.invoke(WORKSPACE_CHANNELS.pullRequest, path, options) as Promise<PullRequestStatusResult>,
+    openPullRequestUrl: (url: string) => ipcRenderer.invoke(WORKSPACE_CHANNELS.openPullRequestUrl, url) as Promise<boolean>,
+    onWorktreeKept: (listener: (payload: WorktreeKeptPayload) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: WorktreeKeptPayload): void => listener(payload);
+      return subscribeChannel(ipcRenderer, WORKSPACE_CHANNELS.worktreeKept, handler);
+    },
+    openWorktreeFolder: (path: string) => ipcRenderer.invoke(WORKSPACE_CHANNELS.openWorktreeFolder, path) as Promise<boolean>,
+  },
+
+  // Navegador interno — the main owns the views; the renderer only says where the panel is and what to load.
+  browser: {
+    open: (ptyId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.open, ptyId) as Promise<BrowserPanelState>,
+    get: (ptyId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.get, ptyId) as Promise<BrowserPanelState | null>,
+    setBounds: (ptyId: string, rect: BrowserRect | null) => {
+      ipcRenderer.send(BROWSER_CHANNELS.setBounds, ptyId, rect);
+    },
+    navigate: (ptyId: string, typed: string) => ipcRenderer.invoke(BROWSER_CHANNELS.navigate, ptyId, typed) as Promise<BrowserNavigateResult>,
+    history: (ptyId: string, action: BrowserHistoryAction) => {
+      ipcRenderer.send(BROWSER_CHANNELS.history, ptyId, action);
+    },
+    snapshot: (ptyId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.snapshot, ptyId) as Promise<string | null>,
+    onState: (listener: (state: BrowserPanelState) => void) => {
+      const handler = (_event: unknown, state: BrowserPanelState): void => listener(state);
+      return subscribeChannel(ipcRenderer, BROWSER_CHANNELS.state, handler);
+    },
+    onOpenRequest: (listener: (request: BrowserOpenRequest) => void) => {
+      const handler = (_event: unknown, request: BrowserOpenRequest): void => listener(request);
+      return subscribeChannel(ipcRenderer, BROWSER_CHANNELS.openRequest, handler);
+    },
+    takeOver: (ptyId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.takeOver, ptyId) as Promise<number | null>,
+    handBack: (ptyId: string, generation: number) => {
+      ipcRenderer.send(BROWSER_CHANNELS.handBack, ptyId, generation);
+    },
+    getControl: (ptyId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.getControl, ptyId) as Promise<BrowserControlState | null>,
+    onControl: (listener: (state: BrowserControlState) => void) => {
+      const handler = (_event: unknown, state: BrowserControlState): void => listener(state);
+      return subscribeChannel(ipcRenderer, BROWSER_CHANNELS.control, handler);
+    },
+    onLog: (listener: (entry: BrowserLogEntry) => void) => {
+      const handler = (_event: unknown, entry: BrowserLogEntry): void => listener(entry);
+      return subscribeChannel(ipcRenderer, BROWSER_CHANNELS.log, handler);
+    },
+    tab: (ptyId: string, action: BrowserTabAction, tabId: number) => {
+      ipcRenderer.send(BROWSER_CHANNELS.tab, ptyId, action, tabId);
+    },
+    getRules: (ptyId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.getRules, ptyId) as Promise<BrowserAgentRules | null>,
+    chooseUploadDir: (ptyId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.chooseUploadDir, ptyId) as Promise<BrowserRulesResult>,
+    removeUploadDir: (ptyId: string, folder: string) => {
+      ipcRenderer.send(BROWSER_CHANNELS.removeUploadDir, ptyId, folder);
+    },
+    answerUploadRequest: (ptyId: string, allow: boolean, wideConfirmed?: boolean) => {
+      ipcRenderer.send(BROWSER_CHANNELS.answerUploadRequest, ptyId, allow, wideConfirmed === true);
+    },
+    setDomains: (ptyId: string, mode: DomainMode, typed: string) => ipcRenderer.invoke(BROWSER_CHANNELS.setDomains, ptyId, mode, typed) as Promise<BrowserRulesResult>,
+    onRules: (listener: (rules: BrowserAgentRules) => void) => {
+      const handler = (_event: unknown, rules: BrowserAgentRules): void => listener(rules);
+      return subscribeChannel(ipcRenderer, BROWSER_CHANNELS.rules, handler);
+    },
+  },
+
+  // Mindscape V1 — the board document (main is the only writer).
+  mindscape: {
+    load: () => ipcRenderer.invoke(MINDSCAPE_CHANNELS.load) as Promise<MindscapeDoc>,
+    save: (doc: MindscapeDoc) => ipcRenderer.invoke(MINDSCAPE_CHANNELS.save, doc) as Promise<MindscapeSaveResult>,
+    onTurnEnded: (listener: (payload: MindscapeTurnEndedPayload) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, payload: MindscapeTurnEndedPayload): void => listener(payload);
+      ipcRenderer.on(MINDSCAPE_CHANNELS.turnEnded, handler);
+      return () => ipcRenderer.removeListener(MINDSCAPE_CHANNELS.turnEnded, handler);
+    },
+    // Desenho, fatia 06 — the prints: bytes in, imageId out (the main names and checks the file).
+    saveImage: (bytes: ArrayBuffer, mediaType: string) =>
+      ipcRenderer.invoke(MINDSCAPE_CHANNELS.saveImage, { bytes, mediaType }) as Promise<MindscapeSaveImageResult>,
+    readImage: (imageId: string) => ipcRenderer.invoke(MINDSCAPE_CHANNELS.readImage, imageId) as Promise<MindscapeReadImageResult>,
+    // Quadro por MCP — a session's board tool call comes in; the renderer (owner of the document) answers.
+    onBoardRequest: (listener: (request: MindscapeBoardRequest) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, request: MindscapeBoardRequest): void => listener(request);
+      ipcRenderer.on(MINDSCAPE_CHANNELS.boardRequest, handler);
+      return () => ipcRenderer.removeListener(MINDSCAPE_CHANNELS.boardRequest, handler);
+    },
+    respondBoard: (response: MindscapeBoardResponse) => ipcRenderer.send(MINDSCAPE_CHANNELS.boardRespond, response),
+  },
+
+  // Ledger com prova (item 19) — `<userData>/ledger.json` (main is the only writer); decisions go as the owner.
+  ledger: {
+    load: () => ipcRenderer.invoke(LEDGER_CHANNELS.load) as Promise<LedgerSnapshot>,
+    onChanged: (listener: (snapshot: LedgerSnapshot) => void) => {
+      const handler = (_event: unknown, snapshot: LedgerSnapshot): void => listener(snapshot);
+      return subscribeChannel(ipcRenderer, LEDGER_CHANNELS.changed, handler);
+    },
+    decide: (decision: LedgerOwnerDecision) => ipcRenderer.invoke(LEDGER_CHANNELS.decide, decision) as Promise<LedgerApplyResult>,
+    openProof: (proof: LedgerProof) => ipcRenderer.invoke(LEDGER_CHANNELS.openProof, proof) as Promise<boolean>,
+  },
+
+  // Papéis de sessão (item 12a) — `<userData>/papeis/` (main is the only writer).
+  roles: {
+    list: () => ipcRenderer.invoke(ROLES_CHANNELS.list) as Promise<SessionRole[]>,
+    save: (role: SessionRole) => ipcRenderer.invoke(ROLES_CHANNELS.save, role) as Promise<RoleSaveResult>,
+  },
+
+  // Diário de gestos — fire and forget; the main validates and stamps the time.
+  learning: {
+    record: (gesture: RendererGesture) => {
+      void ipcRenderer.invoke(LEARNING_CHANNELS.record, gesture).catch(() => undefined);
+    },
+  },
+
+  // Sessão renovada em voo (B36) — the main writes the instructions and reads the handoff header.
+  renewal: {
+    prepare: (input: RenewalPrepareInput) => ipcRenderer.invoke(SESSION_RENEWAL_CHANNELS.prepare, input) as Promise<RenewalPrepared | null>,
+    status: (renewalId: string) => ipcRenderer.invoke(SESSION_RENEWAL_CHANNELS.status, renewalId) as Promise<HandoffStatus>,
   },
 
   devMode: {
@@ -506,6 +743,8 @@ const donelApi: DonelApi = {
       ipcRenderer.invoke(CHAT_CHANNELS.ackLookup, { ptyId, text, since }) as Promise<ChatAckLookupOutput>,
     screenState: (ptyId: string, terminalNeeded: TerminalNeededReason | null) =>
       ipcRenderer.invoke(CHAT_CHANNELS.screenState, { ptyId, terminalNeeded }) as Promise<void>,
+    sendFailed: (ptyId: string, detail: SendFailureDetail) =>
+      ipcRenderer.invoke(CHAT_CHANNELS.sendFailed, { ptyId, detail }) as Promise<void>,
 
     // T076/T079 - pendencias e foco
     answer: (ptyId: string, pendingId: string, answer: PendingAnswer) =>
@@ -580,6 +819,9 @@ const donelApi: DonelApi = {
     setListOpen: (open: boolean) => {
       ipcRenderer.send(PET_CHANNELS.listOpen, { open });
     },
+    setTalk: (open: boolean) => {
+      ipcRenderer.send(PET_CHANNELS.talk, { open });
+    },
     openContextMenu: (point?: PetDragPayload) => {
       ipcRenderer.send(PET_CHANNELS.contextMenu, point);
     },
@@ -595,6 +837,47 @@ const donelApi: DonelApi = {
     resizeStep: (direction: 1 | -1) => {
       ipcRenderer.send(PET_CHANNELS.resizeStep, { direction });
     },
+  },
+
+  // Item 18 (PDA mindscape-openrig) — the conversation with the Jobu as Líder, in a bubble of the Jobu. Each window uses its half.
+  lider: {
+    // --- main window ---
+    report: (report: LiderReport) => {
+      ipcRenderer.send(LIDER_CHANNELS.report, report);
+    },
+    onDeliver: (listener: (payload: LiderSendPayload, reply: (result: LiderSendResult) => void) => void) => {
+      const handler = (_event: unknown, payload: { id: string; text: string }): void =>
+        listener({ text: payload.text }, (result) => ipcRenderer.send(LIDER_CHANNELS.delivered, { id: payload.id, result }));
+      return subscribeChannel(ipcRenderer, LIDER_CHANNELS.deliver, handler);
+    },
+    onActivateTab: (listener: (payload: { readonly tabId: string }) => void) => {
+      const handler = (_event: unknown, payload: { readonly tabId: string }): void => listener(payload);
+      return subscribeChannel(ipcRenderer, LIDER_CHANNELS.activateTab, handler);
+    },
+    // --- pet window (the bubble of the Líder) ---
+    getState: () => ipcRenderer.invoke(LIDER_CHANNELS.getState) as Promise<LiderState>,
+    onState: (listener: (state: LiderState) => void) => {
+      const handler = (_event: unknown, state: LiderState): void => listener(state);
+      return subscribeChannel(ipcRenderer, LIDER_CHANNELS.state, handler);
+    },
+    send: (payload: LiderSendPayload) => ipcRenderer.invoke(LIDER_CHANNELS.send, payload) as Promise<LiderSendResult>,
+    showTab: () => {
+      ipcRenderer.send(LIDER_CHANNELS.showTab);
+    },
+  },
+
+  // Ledger no celular — the PWA on the Tailscale interface (Preferências → Celular).
+  celular: {
+    getState: () => ipcRenderer.invoke(CELULAR_CHANNELS.getState) as Promise<CelularState>,
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke(CELULAR_CHANNELS.setEnabled, enabled) as Promise<CelularState>,
+    pair: () => ipcRenderer.invoke(CELULAR_CHANNELS.pair) as Promise<CelularPairResult>,
+    revoke: (deviceId: string) => ipcRenderer.invoke(CELULAR_CHANNELS.revoke, deviceId) as Promise<CelularState>,
+  },
+
+  // Item 20 — the routines in shadow: what they would have woken today (read only).
+  rotinas: {
+    today: () => ipcRenderer.invoke(ROTINAS_CHANNELS.today) as Promise<ShadowEntry[]>,
+    onChanged: (listener: () => void) => subscribeChannel(ipcRenderer, ROTINAS_CHANNELS.changed, () => listener()),
   },
 };
 

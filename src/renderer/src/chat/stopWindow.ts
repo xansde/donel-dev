@@ -1,6 +1,7 @@
 // 014-chat (alfa-4) - the CLI fires no Stop hook when Esc cancels the round, so the chat would stay "trabalhando".
-// Right after a Parar/Esc that reached the terminal, the SCREEN may end the round: the "esc to interrupt" proof is
-// gone and the input box is back. Only inside that window; outside it nothing is inferred from the screen. Pure.
+// Right after a Parar/Esc that reached the terminal, the SCREEN may end the round: the proof of the turn
+// (`isWorking`: "esc to interrupt" or the spinner row) is gone and the input box is back. Only inside that window;
+// outside it nothing is inferred from the screen. Pure.
 
 /** How long after a stop request the screen may still end the round. */
 export const STOP_WINDOW_MS = 30_000;
@@ -17,7 +18,7 @@ export interface StopWindow {
 export const openStopWindow = (at: number): StopWindow => ({ at, confirmed: false, boxRead: false });
 
 export interface ScreenReading {
-  /** "esc to interrupt" in the footer. */
+  /** `isWorking`: "esc to interrupt" in the footer or the spinner row above the box. */
   readonly working: boolean;
   /** Input box back (empty or typed), no dialog on screen. */
   readonly ready: boolean;

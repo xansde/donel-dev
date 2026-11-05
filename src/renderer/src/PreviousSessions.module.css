@@ -48,6 +48,15 @@
   flex: 1;
 }
 
+.yoloMark {
+  flex: none;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: var(--weight-semibold);
+  color: var(--zone-warn);
+}
+
 .headerNote {
   font-size: 10.5px;
   color: var(--text-muted);

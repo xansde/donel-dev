@@ -8,10 +8,13 @@
 //     arrives twice (hook + transcript): the second copy is dropped (`dedupeSignal`).
 //   - Machine effects: write → PTY; wake-at → timer + fresh screen read; ack-lookup → IPC; status/leftover →
 //     the view the composer renders.
+//   - Every transition INTO `failed` goes once to `reportFailure` (the gate detail for `chat-diagnostics.log`,
+//     never the message text): a retry that fails again is a new report.
 
 import type { PromptSignalKind } from '../../../shared/chat/ipc';
 import { commandResolvesTo, matchOldestPending, matchesPrompt, normalizePrompt, oldestPending } from '../../../shared/chat/promptMatch';
 import type { SendKind, SendMode, SendState } from '../../../shared/chat/rows';
+import { describeSendFailure, type SendFailureDetail } from '../../../shared/chat/sendDiagnostics';
 import {
   createSend,
   step,
@@ -35,6 +38,8 @@ export interface SendDriverPorts {
   ackLookup(text: string, sinceIso: string): Promise<{ readonly matched: boolean }>;
   /** The Enter of a command marked `opensScreen` went out: the terminal-needed strip shows up (T070). */
   opensScreen?(): void;
+  /** A send has just ended in `failed`: the gate detail for the diagnostics log (no message or screen text). */
+  reportFailure?(detail: SendFailureDetail): void;
 }
 
 export interface SendRequest {
@@ -50,6 +55,8 @@ export interface SendEnv {
   readonly alive?: boolean;
   readonly pendingOpen?: boolean;
   readonly terminalNeeded?: boolean;
+  /** Mid-turn according to the hooks. */
+  readonly working?: boolean;
 }
 
 export interface DriverSignal {
@@ -111,6 +118,7 @@ function queuedCause(item: Item, activeReason: string | undefined): string {
   if (m.phase === 'queued') return CAUSE_WORKING;
   switch (m.failReason) {
     case 'esperando o Claude terminar a rodada':
+    case 'esperando o Claude terminar o que está fazendo':
       return CAUSE_WORKING;
     case 'há uma pergunta ou permissão esperando você':
       return CAUSE_PENDING;
@@ -172,7 +180,7 @@ export class SendDriver {
   private items: Item[] = [];
   private view: readonly SendItemView[] = [];
   private readonly listeners = new Set<() => void>();
-  private env: Required<SendEnv> = { alive: true, pendingOpen: false, terminalNeeded: false };
+  private env: Required<SendEnv> = { alive: true, pendingOpen: false, terminalNeeded: false, working: false };
   private seq = 0;
   private sentCount = 0;
   private disposed = false;
@@ -224,7 +232,13 @@ export class SendDriver {
 
   setEnv(env: SendEnv): void {
     const next = { ...this.env, ...stripUndefined(env) };
-    if (next.alive === this.env.alive && next.pendingOpen === this.env.pendingOpen && next.terminalNeeded === this.env.terminalNeeded) return;
+    if (
+      next.alive === this.env.alive &&
+      next.pendingOpen === this.env.pendingOpen &&
+      next.terminalNeeded === this.env.terminalNeeded &&
+      next.working === this.env.working
+    )
+      return;
     this.env = next;
     for (const item of this.items) {
       if (isActive(item) || item.machine?.phase === 'queued') this.dispatch(item, { type: 'env', now: this.ports.now(), ...env });
@@ -366,6 +380,7 @@ export class SendDriver {
       this.sentCount += 1;
       const created = createSend(input, this.ports.now());
       next.machine = created.state;
+      this.noteFailure(null, created.state);
       this.runEffects(next, created.effects);
       this.dispatch(next, { type: 'env', now: this.ports.now(), ...this.env });
       if (isActive(next)) this.feedScreen(next);
@@ -374,9 +389,21 @@ export class SendDriver {
 
   private dispatch(item: Item, event: SendEvent): void {
     if (item.machine === null || this.disposed || item.dismissed) return;
+    const before = item.machine.phase;
     const result = step(item.machine, event);
     item.machine = result.state;
+    this.noteFailure(before, result.state);
     this.runEffects(item, result.effects);
+  }
+
+  /** Reports the transition into `failed` (once per failure; a diagnostics port that throws never breaks the send). */
+  private noteFailure(before: SendState | null, after: SendMachineState): void {
+    if (after.phase !== 'failed' || before === 'failed' || this.ports.reportFailure === undefined) return;
+    try {
+      this.ports.reportFailure(describeSendFailure(after, this.ports.now()));
+    } catch {
+      // diagnostics must never break the send
+    }
   }
 
   private runEffects(item: Item, effects: readonly SendEffect[]): void {
@@ -456,9 +483,10 @@ export class SendDriver {
 }
 
 function stripUndefined(env: SendEnv): SendEnv {
-  const out: { alive?: boolean; pendingOpen?: boolean; terminalNeeded?: boolean } = {};
+  const out: { alive?: boolean; pendingOpen?: boolean; terminalNeeded?: boolean; working?: boolean } = {};
   if (env.alive !== undefined) out.alive = env.alive;
   if (env.pendingOpen !== undefined) out.pendingOpen = env.pendingOpen;
   if (env.terminalNeeded !== undefined) out.terminalNeeded = env.terminalNeeded;
+  if (env.working !== undefined) out.working = env.working;
   return out;
 }

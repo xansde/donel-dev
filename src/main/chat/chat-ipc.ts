@@ -4,7 +4,7 @@
 // preference at runtime takes effect on the next start of the app.
 //
 // Handlers here: attach, detach, load-older, row-detail, open-external,
-// open-generated, ack-lookup (T064), screen-state (T070), answer (T076), focus-state (T079), save-image
+// open-generated, ack-lookup (T064), screen-state (T070), send-failed, answer (T076), focus-state (T079), save-image
 // (T088), catalog (T084) and files (T086). The other contract channel (subagent-*) belongs to a later task.
 
 import { CHAT_CHANNELS } from '../../shared/chat/ipc';
@@ -29,8 +29,10 @@ import type {
   ChatSaveImageInput,
   ChatSaveImageOutput,
   ChatScreenStateInput,
+  ChatSendFailedInput,
   RowDetail,
 } from '../../shared/chat/ipc';
+import { sanitizeSendFailure, type SendFailureDetail } from '../../shared/chat/sendDiagnostics';
 import { isExternalUrlAllowed, isGeneratedFileOpenable } from '../../shared/chat/linkPolicy';
 import type { AttachmentStore } from './attachments';
 import type { ChatHub } from './chat-hub';
@@ -59,6 +61,8 @@ export interface ChatIpcDeps {
   readonly openPath: (path: string) => Promise<string>;
   /** T079 - `chat:focus-state`: the active tab (and tab names) for the notification rule. */
   readonly onFocusState?: (input: ChatFocusStateInput) => void;
+  /** `chat:send-failed`: a send ended in `failed`; the detail arrives already sanitized (goes to `chat-diagnostics.log`). */
+  readonly onSendFailed?: (entry: { ptyId: string; reason: string; detail: SendFailureDetail }) => void;
 }
 
 export interface ChatIpcRegistration {
@@ -76,6 +80,7 @@ const HANDLED: readonly string[] = [
   CHAT_CHANNELS.openGenerated,
   CHAT_CHANNELS.ackLookup,
   CHAT_CHANNELS.screenState,
+  CHAT_CHANNELS.sendFailed,
   CHAT_CHANNELS.answer,
   CHAT_CHANNELS.focusState,
   CHAT_CHANNELS.saveImage,
@@ -91,13 +96,40 @@ export function registerChatIpcHandlers(deps: ChatIpcDeps): ChatIpcRegistration 
   if (!deps.enabled) return { registered: false, dispose: () => undefined };
   const { ipcMain, hub } = deps;
 
-  ipcMain.handle(CHAT_CHANNELS.attach, (_e, input: ChatAttachInput): Promise<ChatAttachOutput> => {
+  // Item 18 — more than one window may follow the same conversation (the main window and the floating window of
+  // the Líder). The hub has one session per tab, so it is detached only when the LAST window lets go of it.
+  const holders = new Map<string, Set<number>>();
+  const release = (ptyId: string, senderId: number): void => {
+    const set = holders.get(ptyId);
+    if (set === undefined || !set.delete(senderId)) return;
+    if (set.size > 0) return;
+    holders.delete(ptyId);
+    hub.detach(ptyId);
+  };
+  const watched = new Set<number>();
+
+  ipcMain.handle(CHAT_CHANNELS.attach, (e, input: ChatAttachInput): Promise<ChatAttachOutput> => {
     if (!isString(input?.ptyId)) throw new Error('chat:attach: ptyId inválido');
+    const senderId = e.sender.id;
+    let set = holders.get(input.ptyId);
+    if (set === undefined) {
+      set = new Set();
+      holders.set(input.ptyId, set);
+    }
+    set.add(senderId);
+    if (!watched.has(senderId)) {
+      watched.add(senderId);
+      // A window that goes away lets go of everything it held.
+      e.sender.once('destroyed', () => {
+        watched.delete(senderId);
+        for (const ptyId of [...holders.keys()]) release(ptyId, senderId);
+      });
+    }
     return hub.attach(input.ptyId);
   });
 
-  ipcMain.handle(CHAT_CHANNELS.detach, (_e, input: ChatDetachInput): void => {
-    if (isString(input?.ptyId)) hub.detach(input.ptyId);
+  ipcMain.handle(CHAT_CHANNELS.detach, (e, input: ChatDetachInput): void => {
+    if (isString(input?.ptyId)) release(input.ptyId, e.sender.id);
   });
 
   ipcMain.handle(CHAT_CHANNELS.loadOlder, (_e, input: ChatLoadOlderInput): Promise<ChatLoadOlderOutput> => {
@@ -130,6 +162,13 @@ export function registerChatIpcHandlers(deps: ChatIpcDeps): ChatIpcRegistration 
     if (!isString(input?.ptyId)) return;
     const reason = input.terminalNeeded;
     if (reason === null || SCREEN_REASONS.has(reason)) hub.reportScreenState(input.ptyId, reason);
+  });
+
+  ipcMain.handle(CHAT_CHANNELS.sendFailed, (_e, input: ChatSendFailedInput): void => {
+    if (!isString(input?.ptyId)) return;
+    const detail = sanitizeSendFailure(input.detail);
+    if (detail === null) return;
+    deps.onSendFailed?.({ ptyId: input.ptyId, reason: detail.reason, detail });
   });
 
   ipcMain.handle(CHAT_CHANNELS.answer, (_e, input: ChatAnswerInput): ChatAnswerOutput => {

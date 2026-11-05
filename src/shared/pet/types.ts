@@ -90,6 +90,11 @@ export interface WatchedSession {
   readonly name: string;
   readonly semaphore: PetSemaphore;
   readonly blockedKind: BlockedKind | null;
+  /**
+   * notificacoes-completas: the short reason of a turn that ended in an API error (`StopFailure`), while the session
+   * waits after it; absent/`null` = a normal end. A wait born with it is a `failed` event instead of `finished`.
+   */
+  readonly failure?: string | null;
 }
 
 export interface FocusSignal {
@@ -243,7 +248,8 @@ export interface Bubble {
   readonly until: number;
 }
 
-export type BubbleEventKind = 'finished' | 'blocked' | 'ended';
+/** `failed` (notificacoes-completas): the turn ended in an API error (`StopFailure`: usage limit, overload, login). */
+export type BubbleEventKind = 'finished' | 'blocked' | 'failed' | 'ended';
 
 /** A session event waiting in the 1 s aggregation window before it becomes a bubble. */
 export interface BubbleEvent {
@@ -252,6 +258,8 @@ export interface BubbleEvent {
   readonly name: string;
   /** Only meaningful for `blocked`; `null` = type unknown (no chat), rendered as "quer permissão". */
   readonly blockedKind: BlockedKind | null;
+  /** Only meaningful for `failed`: the short reason (`failureReasonText`, src/shared/attention/rule.ts). */
+  readonly reason?: string | null;
   readonly at: number;
 }
 
@@ -282,6 +290,13 @@ export interface PetState {
   readonly silencedUntil: number | null;
   /** An app has the whole screen: no bubble is born (Q9). Set by the full-screen watcher; `resume` forgets it. */
   readonly fullscreen: boolean;
+  /**
+   * notificacoes-completas: grows every time an input gives session news, whether or not a bubble could say it
+   * (silence and full screen only hold the bubble back). `notices` are the events of that input. The service
+   * compares the number before and after a reduction to hand the news to the other channels (toast, flash).
+   */
+  readonly noticeSeq: number;
+  readonly notices: readonly BubbleEvent[];
 }
 
 // ---------------------------------------------------------------------------
@@ -316,6 +331,8 @@ export interface PetView {
   readonly silenced: boolean;
   /** Height of the drawing in DIP (FR-033). */
   readonly size: number;
+  /** Item 18: how tall the bubble of the conversation with the Líder is, in DIP; `0` = closed. */
+  readonly talk: number;
 }
 
 /** The window-side facts that complete a view: size, docking and alignment come from placement. */
@@ -323,4 +340,6 @@ export interface PetUi {
   readonly size: number;
   readonly docked: boolean;
   readonly align: PetAlign;
+  /** Item 18: the height of the open bubble of the Líder; `0` (or absent) = closed. */
+  readonly talk?: number;
 }

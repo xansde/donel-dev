@@ -7,7 +7,8 @@ import { basename, join, relative } from 'node:path';
 import type { ClaudeProjectFolder } from './claude-projects';
 import { isGone, mapLimit, measure, pathExists } from './fs-utils';
 import { firstLine, type GitRun } from './git';
-import { cherryIsClean, parseBranchList, parseWorktreeList, splitNul } from './git-parse';
+import { isProcessAlive } from '../process-alive';
+import { cherryIsClean, parseBranchList, parseClaudeSessionLock, parseWorktreeList, splitNul } from './git-parse';
 import { ownerRepo, repoSlugs } from './names';
 import type { BranchFact, InstallerFact, JunkFact, RepoFacts, ScratchEntryFact, SessionFolderFact, UntrackedFileFact, WorktreeFact } from './types';
 
@@ -19,6 +20,8 @@ export interface InventoryContext {
   readonly knownRepos: readonly string[];
   /** The result of `scanClaudeProjects`, shared by all repos of the sweep. */
   readonly claudeFolders: readonly ClaudeProjectFolder[];
+  /** Is the process of a CLI worktree lock still running? Default: `process.kill(pid, 0)`. */
+  readonly isProcessAlive?: (pid: number) => boolean;
 }
 
 const INTEGRATION_CANDIDATES = ['origin/staging', 'origin/dev', 'origin/main', 'origin/master'] as const;
@@ -100,9 +103,12 @@ async function inventoryWorktrees(ctx: InventoryContext, repoPath: string, integ
   const listed = await ctx.git(repoPath, ['worktree', 'list', '--porcelain']);
   if (listed.code !== 0) return [];
   return mapLimit(parseWorktreeList(listed.stdout), GIT_PARALLELISM, async (entry, index): Promise<WorktreeFact> => {
-    const base = { path: entry.path, branch: entry.branch, head: entry.head, isMain: index === 0 || entry.bare, locked: entry.locked };
-    if (base.isMain) return { ...base, missing: false, clean: true, headInIntegration: false, headEqualsRemote: false, lastActivityMs: 0, hasSubmodules: false, ignored: [] };
-    if (!(await pathExists(entry.path))) return { ...base, missing: true, clean: false, headInIntegration: false, headEqualsRemote: false, lastActivityMs: 0, hasSubmodules: false, ignored: [] };
+    const claudeLock = entry.locked ? parseClaudeSessionLock(entry.lockReason) : null;
+    const staleClaudeLock = claudeLock !== null && !(ctx.isProcessAlive ?? isProcessAlive)(claudeLock.pid);
+    const base = { path: entry.path, branch: entry.branch, head: entry.head, isMain: index === 0 || entry.bare, locked: entry.locked, staleClaudeLock };
+    const unread = { headInIntegration: false, headEqualsRemote: false, headOnRemote: false, lastActivityMs: 0, hasSubmodules: false, ignored: [] };
+    if (base.isMain) return { ...base, ...unread, missing: false, clean: true };
+    if (!(await pathExists(entry.path))) return { ...base, ...unread, missing: true, clean: false };
     const lastActivityMs = await worktreeLastActivity(ctx.git, entry.path);
     const hasSubmodules = await worktreeHasSubmodules(ctx.git, entry.path);
     // One status for both questions: `!!` lines are the ignored files, any other line makes the worktree dirty.
@@ -112,7 +118,15 @@ async function inventoryWorktrees(ctx: InventoryContext, repoPath: string, integ
     const clean = status.code === 0 && lines.every((line) => line.startsWith('!! '));
     const headInIntegration = integrationRef !== null && entry.head !== '' && (await isAncestor(ctx.git, repoPath, entry.head, integrationRef));
     const remoteSha = entry.branch === null ? null : await revParse(ctx.git, repoPath, `refs/remotes/origin/${entry.branch}`);
-    return { ...base, missing: false, clean, headInIntegration, headEqualsRemote: remoteSha !== null && remoteSha === entry.head, lastActivityMs, hasSubmodules, ignored };
+    const headEqualsRemote = remoteSha !== null && remoteSha === entry.head;
+    // A `--worktree` session of the CLI branches from the remote's default branch, which may not be the integration
+    // branch (`origin/main` vs `origin/staging`): HEAD is then on a remote without being "in integration".
+    let headOnRemote = false;
+    if (!headInIntegration && !headEqualsRemote && entry.head !== '') {
+      const counted = await ctx.git(repoPath, ['rev-list', '--count', entry.head, '--not', '--remotes']);
+      headOnRemote = counted.code === 0 && counted.stdout.trim() === '0';
+    }
+    return { ...base, missing: false, clean, headInIntegration, headEqualsRemote, headOnRemote, lastActivityMs, hasSubmodules, ignored };
   });
 }
 

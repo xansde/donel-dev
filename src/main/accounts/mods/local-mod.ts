@@ -101,6 +101,20 @@ export interface LocalModDeps {
    * (`read` = veio de `listAccounts`, `switch` = veio de `switchTo`).
    */
   readonly onPairRefreshed?: (id: AccountId, trigger: 'read' | 'switch') => void;
+  /**
+   * fix/renovacao-credencial — chamado quando uma renovação feita por
+   * `ensureFreshPair` NÃO deu certo, com o motivo. Antes só o sucesso ia pro
+   * log de manutenção, e uma conta caindo em "Reconectar" não deixava rastro
+   * nenhum de quando nem por quê. Nunca recebe o par — só id, origem e motivo.
+   */
+  readonly onPairRefreshFailed?: (id: AccountId, trigger: 'read' | 'switch', reason: 'rejected' | 'unavailable' | 'vault-write-failed') => void;
+  /**
+   * Lugares remotos — a conta está ativa num lugar remoto (VPS): o CLI de lá
+   * é quem renova o par dela, e o motor copia esse par para o cofre a cada
+   * leitura. Aqui ela NUNCA é renovada (seria o segundo refresh do mesmo
+   * token); a carga é lida com o access token do cofre enquanto ele valer.
+   */
+  readonly isHeldRemotely?: (id: AccountId) => boolean;
 }
 
 function parsePairFromVault(raw: string | null): CredentialPair | null {
@@ -162,6 +176,14 @@ export function createLocalMod(deps: LocalModDeps): AccountMod {
    * MESMA promessa — nunca dispara um segundo refresh com o mesmo token.
    */
   async function ensureFreshPair(id: AccountId, trigger: 'read' | 'switch'): Promise<EnsureFreshPairResult> {
+    const result = await renewIfExpired(id, trigger);
+    if (result.kind === 'rejected' || result.kind === 'unavailable' || result.kind === 'vault-write-failed') {
+      deps.onPairRefreshFailed?.(id, trigger, result.kind);
+    }
+    return result;
+  }
+
+  function renewIfExpired(id: AccountId, trigger: 'read' | 'switch'): Promise<EnsureFreshPairResult> {
     return coordinator.run(id, async (): Promise<EnsureFreshPairResult> => {
       const pair = readPair(id);
       if (!pair) return { kind: 'missing' };
@@ -243,6 +265,12 @@ export function createLocalMod(deps: LocalModDeps): AccountMod {
             const usage = await readAccountUsage(tokenPair.accessToken, { fetchImpl: deps.fetchImpl });
             if (usage) load = loadFromUsage(usage, now());
           }
+        } else if (deps.isHeldRemotely?.(meta.id)) {
+          // Lugar remoto — nunca renova; par vencido = carga desconhecida até a próxima cópia de lá.
+          if (vaultPair && vaultPair.expiresAt > now()) {
+            const usage = await readAccountUsage(vaultPair.accessToken, { fetchImpl: deps.fetchImpl });
+            if (usage) load = loadFromUsage(usage, now());
+          }
         } else if (livePair && vaultPair && vaultPair.refreshToken === livePair.refreshToken) {
           // R5 — mesma família de refresh token do CLI vivo: nunca renova
           // (renovar mataria o login dele). Lê com o access token VIVO.
@@ -287,9 +315,22 @@ export function createLocalMod(deps: LocalModDeps): AccountMod {
       return { kind: 'failed', reason: 'offline' };
     },
 
-    /** Grava o par rotacionado no cofre — a mesma escrita write-only de sempre, nada sai daqui. */
+    /**
+     * Grava o par rotacionado no cofre — a mesma escrita write-only de sempre,
+     * nada sai daqui.
+     *
+     * fix/renovacao-credencial — antes o resultado da escrita era ignorado: com
+     * o cofre recusando (`vault-unavailable`), a captura "dava certo" em
+     * silêncio, o switch seguia, sobrescrevia `.credentials.json` e o único
+     * lugar com o par vigente da conta que saía sumia — o cofre ficava com um
+     * refresh token já gasto pelo CLI. Agora rejeita: no switch, a exceção
+     * aborta a sequência invariante ANTES do passo 2 (claude-state.ts), e o
+     * par segue vivo em disco. A gravação é SÍNCRONA dentro desta chamada
+     * (nenhum `await` antes dela) — o encerramento do app depende disso.
+     */
     async captureRotatedPair(id, pair): Promise<void> {
-      deps.vault.write(id, JSON.stringify(pair));
+      const result = deps.vault.write(id, JSON.stringify(pair));
+      if (result.kind !== 'ok') throw new Error('vault refused to store the rotated pair');
     },
 
     // SEM `keepAlive` — switch-time-only é decisão fechada (D4). O motor

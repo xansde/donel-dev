@@ -17,6 +17,11 @@ export interface LaunchedApp {
 /** `claude.cmd` of the scripted fake CLI (fixtures/fake-claude-chat). */
 export const FAKE_CLAUDE_CMD = path.join(__dirname, '..', 'fixtures', 'fake-claude-chat', 'claude.cmd');
 
+/** Where the fake CLI keeps its transcripts when the spec does not pass `DONEL_FAKE_CLAUDE_HOME`. */
+export function fakeClaudeHome(userDataDir: string): string {
+  return path.join(userDataDir, 'fake-claude-home');
+}
+
 export interface LaunchOptions {
   /** Reuse an existing isolated dir (restart scenarios). Omit to create a fresh one named after `name`. */
   readonly userDataDir?: string;
@@ -46,7 +51,7 @@ export async function launchIsolatedApp(options: LaunchOptions = {}): Promise<La
   const baseEnv = options.env ?? (useFake ? process.env : undefined);
   const env =
     useFake && baseEnv && !baseEnv.DONEL_CLAUDE_EXECUTABLE_FIXTURE
-      ? { ...baseEnv, DONEL_CLAUDE_EXECUTABLE_FIXTURE: FAKE_CLAUDE_CMD, DONEL_FAKE_CLAUDE_HOME: baseEnv.DONEL_FAKE_CLAUDE_HOME ?? path.join(userDataDir, 'fake-claude-home'), DONEL_FAKE_CLAUDE_RESUME_STRICT: '1' }
+      ? { ...baseEnv, DONEL_CLAUDE_EXECUTABLE_FIXTURE: FAKE_CLAUDE_CMD, DONEL_FAKE_CLAUDE_HOME: baseEnv.DONEL_FAKE_CLAUDE_HOME ?? fakeClaudeHome(userDataDir), DONEL_FAKE_CLAUDE_RESUME_STRICT: '1' }
       : baseEnv;
   const app = await electron.launch({
     args: [APP_MAIN, `--user-data-dir=${userDataDir}`],
@@ -55,7 +60,21 @@ export async function launchIsolatedApp(options: LaunchOptions = {}): Promise<La
   });
   const window = await app.firstWindow();
   await window.waitForLoadState('domcontentloaded');
+  await dismissPatchNotes(window);
   return { app, window, userDataDir };
+}
+
+/**
+ * Novidades da versão: userData nova sempre abre a janela na estreia; fecha
+ * aqui para ela não cobrir a tela que o spec vai usar. Specs que abrem o app
+ * com `electron.launch` direto chamam isto também.
+ * A janela monta no mesmo render da casca: com o botão de Preferências na
+ * tela, ela já está lá ou não vem.
+ */
+export async function dismissPatchNotes(window: Page): Promise<void> {
+  await window.getByRole('button', { name: 'Preferências' }).waitFor({ timeout: 30_000 }).catch(() => undefined);
+  const notes = window.getByTestId('patch-notes');
+  if (await notes.isVisible()) await notes.getByRole('button', { name: 'Entendi' }).click();
 }
 
 /**

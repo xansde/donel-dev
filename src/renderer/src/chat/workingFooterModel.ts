@@ -18,6 +18,12 @@ export type FooterModel =
       readonly waitingSubagents: number;
       /** Set while a pending is open: the round is held on the owner ("esperando você — <what>"). */
       readonly waitingFor?: 'question' | 'permission' | 'plan';
+      /** When the current action started (ISO): the footer shows how long THIS tool has been running. */
+      readonly actionStartedAt?: string;
+      /** Subagents still running next to the current action ("+ N subagentes"). */
+      readonly alsoSubagents?: number;
+      /** No tool and no subagent running: the Claude is thinking or writing ("pensando"). */
+      readonly thinking?: true;
     }
   | { readonly kind: 'interrupted'; readonly after: FooterAction | null };
 
@@ -27,7 +33,7 @@ export interface FooterInput {
   /** The last action the footer saw while working (the "parou depois de" part of "Interrompido"). */
   readonly lastAction: LiveAction | null;
   /**
-   * The screen shows "esc to interrupt" (`null` = unknown). The CLI fires no Stop hook on a user interrupt, so
+   * The screen proves the turn (`isWorking`; `null` = unknown). The CLI fires no Stop hook on a user interrupt, so
    * `status` can stay `working`: the marker in the transcript plus a screen that stopped working is the proof.
    */
   readonly screenWorking?: boolean | null;
@@ -61,9 +67,18 @@ export function deriveFooter({ live, rows, lastAction, screenWorking = null, end
     const action = live.currentAction;
     if (action !== null) {
       const { verb, target } = action.summary;
-      return { kind: 'working', verb: toGerund(verb), ...(target !== undefined ? { target } : {}), waitingSubagents: 0 };
+      const subagents = live.activeSubagents.length;
+      return {
+        kind: 'working',
+        verb: toGerund(verb),
+        ...(target !== undefined ? { target } : {}),
+        waitingSubagents: 0,
+        actionStartedAt: action.startedAt,
+        ...(subagents > 0 ? { alsoSubagents: subagents } : {}),
+      };
     }
-    return { kind: 'working', waitingSubagents: live.activeSubagents.length };
+    if (live.activeSubagents.length > 0) return { kind: 'working', waitingSubagents: live.activeSubagents.length };
+    return { kind: 'working', waitingSubagents: 0, thinking: true };
   }
   // A pending is open (the status turned to waiting-for-you): the round is held, not over, and Parar must stay
   // reachable - it answers the pending with `interrupt` (T078/T081).
@@ -101,7 +116,7 @@ export function stopFeedback(requestedAt: number | null, now: number): StopFeedb
   return now - requestedAt < STOP_TIMEOUT_MS ? 'stopping' : 'stuck';
 }
 
-/** A press that reached nothing (the screen did not show "esc to interrupt"): no point waiting 5 s to say so. */
+/** A press that reached nothing (the screen did not prove the turn): no point waiting 5 s to say so. */
 export const expiredStopRequest = (now: number): number => now - STOP_TIMEOUT_MS;
 
 export const STOP_STUCK_HINT = 'o Claude não parou — tente de novo ou abra o terminal';

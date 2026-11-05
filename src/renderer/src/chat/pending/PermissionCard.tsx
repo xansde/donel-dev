@@ -34,6 +34,8 @@ export interface PermissionCardProps {
   waiting: number;
   onAnswer: (answer: PendingAnswer) => void;
   onOpenOrigin?: () => void;
+  /** Turns on Modo YOLO for the tab's project and approves this request. Absent = no project to turn it on for. */
+  onYolo?: () => void;
 }
 
 /** "sempre: `Bash(npm install:*)`" -> text with the rule in <code>. */
@@ -48,7 +50,7 @@ function RuleLabel({ label }: { label: string }): React.JSX.Element {
   );
 }
 
-export function PermissionCard({ pending, waiting, onAnswer, onOpenOrigin }: PermissionCardProps): React.JSX.Element {
+export function PermissionCard({ pending, waiting, onAnswer, onOpenOrigin, onYolo }: PermissionCardProps): React.JSX.Element {
   const payload = pending.payload;
   const sentence = permissionSentence(payload);
   const description = permissionDescription(payload);
@@ -97,6 +99,16 @@ export function PermissionCard({ pending, waiting, onAnswer, onOpenOrigin }: Per
             <Button variant="secondary" onClick={() => onAnswer({ kind: 'allow-always' })} data-testid="pending-allow-always">
               Permitir sempre neste projeto
             </Button>
+            {onYolo !== undefined ? (
+              <Button
+                variant="secondary"
+                onClick={onYolo}
+                title="Liga o Modo YOLO: neste projeto o agente passa a agir sem perguntar. Desliga na engrenagem do projeto."
+                data-testid="pending-yolo"
+              >
+                YOLO neste projeto
+              </Button>
+            ) : null}
             <Button
               variant="danger"
               aria-expanded={denying}

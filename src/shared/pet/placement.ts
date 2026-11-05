@@ -60,17 +60,45 @@ export const PET_WINDOW_WIDTH_FACTOR = 3.4;
 /** Room above the drawing for the bubble and the list. */
 export const PET_WINDOW_EXTRA_HEIGHT = 200;
 
-/** `max(480, 3.4 x size)` by `size + 200` (R9). */
-export function windowSizeFor(size: number): { readonly width: number; readonly height: number } {
+/**
+ * Item 18 — the bubble of the conversation with the Líder: this wide, and up to this tall above the head. While it is
+ * open the window grows upwards (the anchor never moves) to hold it, and shrinks back when it closes.
+ */
+export const PET_TALK_WIDTH = 380;
+export const PET_TALK_MAX_HEIGHT = 520;
+/** Below this the bubble does not shrink: on a screen with no room above the Jobu, it goes past the top instead. */
+export const PET_TALK_MIN_HEIGHT = 260;
+/** Between the top of the bubble and the top of the work area. */
+const PET_TALK_TOP_MARGIN = 12;
+/** The gap between the head and the tail of the bubble. */
+export const PET_TALK_GAP = 14;
+
+/**
+ * How tall the bubble of the Líder can be with the Jobu at `anchor` on `display`: what is left above his head in the
+ * work area, kept inside `PET_TALK_MIN_HEIGHT`-`PET_TALK_MAX_HEIGHT`.
+ */
+export function talkHeightFor(anchor: PetPoint, size: number, display: PetDisplay): number {
+  const above = anchor.y - size - PET_TALK_GAP - PET_TALK_TOP_MARGIN - display.workArea.y;
+  return Math.round(Math.min(PET_TALK_MAX_HEIGHT, Math.max(PET_TALK_MIN_HEIGHT, above)));
+}
+
+/**
+ * `max(480, 3.4 x size)` by `size + 200` (R9). With the bubble of the Líder open (`talkHeight` > 0) it is wide enough
+ * for the bubble on either side of the drawing and tall enough for it above the head.
+ */
+export function windowSizeFor(size: number, talkHeight = 0): { readonly width: number; readonly height: number } {
+  const width = Math.max(PET_WINDOW_MIN_WIDTH, Math.round(PET_WINDOW_WIDTH_FACTOR * size));
+  const height = Math.round(size) + PET_WINDOW_EXTRA_HEIGHT;
+  if (talkHeight <= 0) return { width, height };
   return {
-    width: Math.max(PET_WINDOW_MIN_WIDTH, Math.round(PET_WINDOW_WIDTH_FACTOR * size)),
-    height: Math.round(size) + PET_WINDOW_EXTRA_HEIGHT,
+    width: Math.max(width, 2 * PET_TALK_WIDTH + 40),
+    height: Math.max(height, Math.round(size) + PET_TALK_GAP + talkHeight + 8),
   };
 }
 
 /** The window with `anchor` at its bottom center. Whole numbers: `BrowserWindow` bounds are integers. */
-export function windowBoundsFor(anchor: PetPoint, size: number): PetRect {
-  const { width, height } = windowSizeFor(size);
+export function windowBoundsFor(anchor: PetPoint, size: number, talkHeight = 0): PetRect {
+  const { width, height } = windowSizeFor(size, talkHeight);
   return { x: Math.round(anchor.x - width / 2), y: Math.round(anchor.y - height), width, height };
 }
 
@@ -78,8 +106,8 @@ export function windowBoundsFor(anchor: PetPoint, size: number): PetRect {
  * The anchor of a window. Only the top-left corner of `bounds` is read: the dimensions come from
  * `size`, so a window whose real bounds are stale still gives the right anchor.
  */
-export function anchorOf(bounds: PetPoint, size: number): PetPoint {
-  const { width, height } = windowSizeFor(size);
+export function anchorOf(bounds: PetPoint, size: number, talkHeight = 0): PetPoint {
+  const { width, height } = windowSizeFor(size, talkHeight);
   return { x: bounds.x + width / 2, y: bounds.y + height };
 }
 

@@ -125,6 +125,13 @@ export interface TerminalPaneProps {
    * (comportamento de hoje). Fixo por aba, mesmo espírito de `args`/`cwd`.
    */
   providerId?: string;
+  /** Sessões remotas — remote place where the CLI runs (fixed per tab, read only at spawn). */
+  remoteId?: string;
+  /** Sessões remotas — kept on the remote so the next boot reopens the tab with its names. */
+  tabName?: string;
+  projectName?: string;
+  /** Sessões remotas — place of the session that opened this one, kept on the remote for the next boot. */
+  openedBy?: string;
   /**
    * 011-contas-e-provedores, etapa 3, Fase 1.2 — login isolado em andamento
    * nesta aba (`accounts:beginLogin`); `undefined` = aba normal (comportamento
@@ -132,6 +139,10 @@ export interface TerminalPaneProps {
    * spawn inicial, nunca muda no meio da sessão viva.
    */
   accountLoginId?: string;
+  /** Papéis de sessão (item 12a) — role the spawn carries when the renderer knows it (see `PtyCreateOptions.roleId`). */
+  roleId?: string;
+  /** Líder único — the Jobu's mark on the tab (see `PtyCreateOptions.leaderOfAll`). */
+  leaderOfAll?: boolean;
   /** Ação real de fechar a aba na barra de abas (T010): App.tsx remove a aba do array (unmount cuida do teardown do PTY). */
   onCloseTab?: () => void;
   /**
@@ -263,6 +274,12 @@ export interface TerminalPaneHandle {
   onScreenUpdate: (listener: () => void) => () => void;
   /** T039 — mata a PTY e sobe outra com os mesmos flags; `resume` acrescenta `-r <id>`. */
   respawn: (options?: { resume?: string }) => void;
+  /**
+   * B36 — sessão renovada em voo: ends the process and opens a NEW conversation in this same pane,
+   * with `args` (the launch flags minus the old conversation, see `renewalLaunchArgs`). `renewalId`
+   * goes to `pty:create` once, so the main links the new conversation to the old one.
+   */
+  renew: (options: { args: string[]; renewalId: string }) => void;
   /** T056 — devolve o foco do teclado ao terminal (ao alternar do chat para a vista Terminal). */
   focus: () => void;
   /** T039 — id da PTY viva (null sem processo). */
@@ -275,7 +292,13 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     cwd,
     args,
     providerId,
+    remoteId,
+    tabName,
+    projectName,
+    openedBy,
     accountLoginId,
+    roleId,
+    leaderOfAll,
     onCloseTab,
     onStateChange,
     onAliveChange,
@@ -317,6 +340,13 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   /** T039 — argv efetivo do próximo spawn (respawn com `-r` o substitui); `undefined` = prop `args`. */
   const spawnArgsRef = useRef<string[] | undefined>(undefined);
   const respawnRef = useRef<(options?: { resume?: string }) => void>(() => undefined);
+  /** B36 — the renewal of the NEXT spawn only (consumed by `spawnSession`). */
+  const renewalIdRef = useRef<string | null>(null);
+  // Papéis de sessão (item 12a) — read at each spawn (launch and renewal), never a reason to respawn.
+  const roleIdRef = useRef(roleId);
+  roleIdRef.current = roleId;
+  const leaderOfAllRef = useRef(leaderOfAll);
+  leaderOfAllRef.current = leaderOfAll;
   const [status, setStatus] = useState<PaneStatus>({ kind: 'connecting' });
 
   // Ref pra sempre chamar a versão mais recente do callback sem precisar
@@ -431,6 +461,11 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         };
       },
       respawn: (options?: { resume?: string }): void => respawnRef.current(options),
+      renew: (options: { args: string[]; renewalId: string }): void => {
+        spawnArgsRef.current = options.args;
+        renewalIdRef.current = options.renewalId;
+        respawnRef.current();
+      },
       focus: (): void => termRef.current?.focus(),
       get ptyId(): string | null {
         return ptyIdRef.current;
@@ -459,9 +494,11 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     // Snapshot da geração vigente NO MOMENTO da chamada — não lido de novo
     // depois (ver comentário de `mountEpochRef` acima).
     const requestEpoch = mountEpochRef.current;
+    const renewalId = renewalIdRef.current ?? undefined;
+    renewalIdRef.current = null;
 
     void window.donel.pty
-      .create({ cols: term.cols, rows: term.rows, cwd, sessionType, args: spawnArgsRef.current ?? args, providerId, accountLoginId })
+      .create({ cols: term.cols, rows: term.rows, cwd, sessionType, args: spawnArgsRef.current ?? args, providerId, accountLoginId, renewalId, roleId: roleIdRef.current, ...(leaderOfAllRef.current ? { leaderOfAll: true } : {}), ...(remoteId ? { remoteId, tabName, projectName, ...(openedBy ? { openedBy } : {}) } : {}) })
       .then((result) => {
         if (requestEpoch !== mountEpochRef.current) {
           // Geração já descartada (StrictMode double-invoke em dev, ou a aba
@@ -571,7 +608,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         term.write(`\r\n\x1b[31mFalha ao iniciar o terminal: ${message}\x1b[0m\r\n`);
         setStatus({ kind: 'ended', info: { exitCode: -1 } });
       });
-  }, [cwd, sessionType, args, providerId, accountLoginId]);
+  }, [cwd, sessionType, args, providerId, remoteId, accountLoginId]);
 
   useEffect(() => {
     const container = containerRef.current;

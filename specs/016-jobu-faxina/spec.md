@@ -62,8 +62,16 @@ no main process** (git + filesystem, testado com vitest), nunca por Claude headl
   integração OU igual ao SHA remoto da mesma branch; `node_modules`/`design-system` que sejam
   link simbólico/junction são desfeitos (`unlink`) antes; `git worktree remove` sem `--force`,
   depois `git worktree prune`; pasta-mãe vazia é removida.
+  **Emenda de 30/10 ("Isolar em worktree" do Launcher):** (a) HEAD com todos os commits em
+  alguma branch remota também conta (a worktree do `claude --worktree` nasce de `origin/main`,
+  que pode não estar na integração); (b) a trava que o CLI deixa numa sessão morta
+  (`claude session <nome> (pid N)`, com o processo N encerrado) não segura a worktree: é solta
+  (`git worktree unlock`) antes da remoção. Trava de outro dono, ou de processo vivo, segue
+  segurando.
 - **FR-005** Branch é candidata se ancestral da integração, ou `git cherry` sem `+`, ou publicada
   com o mesmo SHA; resto fica em "manter" ("N commits só aqui, último em <data>").
+  **Emenda de 30/10:** a branch `worktree-*` que o CLI cria para `--worktree` também é candidata
+  quando todos os commits dela estão num remoto ou na integração (o recibo guarda o SHA).
 - **FR-006** Regenerável: `test-results/`, `.e2e-visual/`, `.tutorial-shots/`, `.playwright-cli/`
   (qualquer profundidade), `prototypes/*/node_modules`, `prototypes/*/dist`, `Microsoft/` na raiz
   — só se não rastreado.

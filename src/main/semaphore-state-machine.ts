@@ -37,6 +37,13 @@ export interface SemaphoreMachineState {
    * Só é atualizado quando `state` MUDA de valor, não a cada evento.
    */
   readonly stateEnteredAt: number;
+  /**
+   * #109 — `true` só quando o `waiting` atual veio de um `Stop` cujo payload ainda listava subagente
+   * em segundo plano vivo (`background_tasks`): o CLI parou o turno, mas vai acordar a sessão quando
+   * o subagente terminar. A aba segue `waiting` (o dono pode digitar); quem AVISA o dono (o Jobu)
+   * lê isto para não anunciar "terminou" a cada subagente. Ausente/`false` = espera de verdade.
+   */
+  readonly awaitingBackgroundAgents?: boolean;
 }
 
 export const INITIAL_SEMAPHORE_STATE: SemaphoreMachineState = {
@@ -49,7 +56,8 @@ export type SemaphoreEvent =
   | { readonly type: 'userPromptSubmit'; readonly at: number }
   | { readonly type: 'preToolUse'; readonly at: number }
   | { readonly type: 'postToolUse'; readonly at: number }
-  | { readonly type: 'stop'; readonly at: number }
+  /** `backgroundAgents`: subagentes em segundo plano ainda vivos no fim do turno (`countBackgroundSubagents`); ausente = 0. */
+  | { readonly type: 'stop'; readonly at: number; readonly backgroundAgents?: number }
   | { readonly type: 'notification'; readonly at: number }
   /** `reason` do hook `SessionEnd`: `clear`/`resume` trocam a conversa da aba, não a encerram (FR-033, T014). */
   | { readonly type: 'sessionEnd'; readonly at: number; readonly reason?: string | null }
@@ -95,10 +103,16 @@ export function reduceSemaphoreState(current: SemaphoreMachineState, event: Sema
       // `Stop`).
       return current.pendingToolSince === null ? current : { ...current, pendingToolSince: null };
 
-    case 'stop':
+    case 'stop': {
       // Turno concluído — sempre volta pra 'waiting', mesmo vindo de
       // 'permission' (ex.: o usuário respondeu a aprovação e o turno fechou).
-      return transition('waiting', event.at, current);
+      const next = transition('waiting', event.at, current);
+      // #109 — com subagente em segundo plano vivo a espera é provisória (ver o campo). O estado da
+      // aba não muda; só a marca, que o próximo `Stop` sem subagente vivo apaga.
+      const awaiting = (event.backgroundAgents ?? 0) > 0;
+      if ((next.awaitingBackgroundAgents ?? false) === awaiting) return next;
+      return { ...next, awaitingBackgroundAgents: awaiting };
+    }
 
     case 'notification':
       // Sinal primário e confiável (addendum T009) de permissão pendente.
@@ -107,6 +121,30 @@ export function reduceSemaphoreState(current: SemaphoreMachineState, event: Sema
     default:
       return current;
   }
+}
+
+/** Status de tarefa que já não está em voo — defesa: o CLI só lista as em voo (running/pending). */
+const FINISHED_TASK_STATUSES: ReadonlySet<string> = new Set(['completed', 'failed', 'killed', 'stopped', 'cancelled']);
+
+/**
+ * #109 — quantos subagentes em segundo plano seguem vivos no fim do turno, lido de
+ * `background_tasks` do payload do `Stop` (CLI 2.1.3xx: "lets hooks distinguish 'session is done'
+ * from 'session is paused waiting for background work to wake it'"). Conta só `type: 'subagent'`:
+ * um shell ou monitor em segundo plano (um servidor de dev, um watch) pode viver para sempre e não
+ * pode calar o aviso. Sem o campo (CLI antigo) = 0, o comportamento de antes.
+ */
+export function countBackgroundSubagents(payload: Record<string, unknown>): number {
+  const tasks = payload.background_tasks;
+  if (!Array.isArray(tasks)) return 0;
+  let count = 0;
+  for (const task of tasks) {
+    if (typeof task !== 'object' || task === null) continue;
+    const { type, status } = task as Record<string, unknown>;
+    if (type !== 'subagent') continue;
+    if (typeof status === 'string' && FINISHED_TASK_STATUSES.has(status)) continue;
+    count += 1;
+  }
+  return count;
 }
 
 /**

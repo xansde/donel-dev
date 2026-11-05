@@ -1,0 +1,216 @@
+/* Navegador interno — the panel at the side of a session tab. The page itself is a native view placed by the
+   main over `.viewport`; nothing here is drawn on top of it. */
+
+.panel {
+  flex: 0 0 46%;
+  min-width: 320px;
+  max-width: 70%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: var(--hairline);
+  background: var(--bg-panel);
+}
+
+.toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-half);
+  height: 38px;
+  padding: 0 var(--space-1);
+  border-bottom: var(--hairline);
+}
+
+.address {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 var(--space-1);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption-size);
+}
+
+.address:focus {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Tab strip: only with two tabs or more. */
+.tabs {
+  flex: none;
+  display: flex;
+  gap: 1px;
+  overflow: hidden;
+  border-bottom: var(--hairline);
+}
+
+.tab {
+  flex: 0 1 180px;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  color: var(--text-muted);
+}
+
+.tabActive {
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+
+.tabTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding: var(--space-half) var(--space-1);
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: var(--text-caption-size);
+  text-align: left;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.tabClose {
+  flex: none;
+  padding: 0 var(--space-half);
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+/* What the owner allows the agent here. */
+.rules {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+  padding: var(--space-half) var(--space-1);
+  border-bottom: var(--hairline);
+  font-size: var(--text-caption-size);
+}
+
+.rulesRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.rulesLabel {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.rulesInput {
+  height: 24px;
+  min-width: 0;
+  padding: 0 var(--space-half);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-size: var(--text-caption-size);
+}
+
+.rulesInput:focus {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.rulesDomains {
+  flex: 1;
+  font-family: var(--font-mono);
+}
+
+.rulesValue {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-primary);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.error {
+  flex: none;
+  margin: 0;
+  padding: var(--space-half) var(--space-1);
+  border-bottom: var(--hairline);
+  color: var(--state-permission);
+  font-size: var(--text-caption-size);
+}
+
+.viewport {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: #ffffff;
+}
+
+.snapshot {
+  display: block;
+  width: 100%;
+  height: auto;
+  opacity: 0.55;
+}
+
+/* Owner in control (D11): orange frame + the bar with "Devolver ao agente". */
+.panelOwner {
+  box-shadow: inset 0 0 0 2px var(--state-permission);
+}
+
+.ownerBar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-half) var(--space-1);
+  border-bottom: var(--hairline);
+  background: color-mix(in srgb, var(--state-permission) 14%, var(--bg-panel));
+}
+
+.ownerText {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: var(--text-caption-size);
+}
+
+/* Footer log (D13): what the agent did, newest last. */
+.log {
+  flex: none;
+  margin: 0;
+  padding: var(--space-half) var(--space-1);
+  list-style: none;
+  border-top: var(--hairline);
+  max-height: 84px;
+  overflow-y: auto;
+}
+
+.logLine {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption-size);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.badge {
+  margin-left: var(--space-half);
+  padding: 0 5px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--bg-app);
+  font-size: var(--text-caption-size);
+  line-height: 16px;
+}

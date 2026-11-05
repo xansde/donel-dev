@@ -22,6 +22,8 @@ const PROTOTYPE_DIST = /^prototypes\/[^/]+\/dist$/;
 const NEVER_BRANCHES = new Set(['main', 'master', 'staging', 'dev']);
 /** The worktrees of the installed channels (`<repo>-alfa`, `<repo>-beta`) are what the owner runs. */
 const CHANNEL_WORKTREE = /-(alfa|beta)$/i;
+/** The branch the CLI creates for a `--worktree` session (`claude --worktree <name>` -> `worktree-<name>`). */
+const CLI_WORKTREE_BRANCH = /^worktree-/;
 
 // ---------------------------------------------------------------------------
 // Never touch
@@ -160,7 +162,9 @@ function worktreeBasename(path: string): string {
 function planWorktree(worktree: WorktreeFact, integrationRef: string | null, now: number): PlanItem | null {
   if (worktree.isMain) return null;
   const keep = (reason: string): PlanItem => ({ kind: 'keep', what: 'worktree', name: worktree.path, reason });
-  if (worktree.locked) return keep('travada (git worktree lock)');
+  // A lock of the CLI whose session process is gone (a killed tab) protects nothing: it is released before the removal.
+  if (worktree.locked && !worktree.staleClaudeLock) return keep('travada (git worktree lock)');
+  const unlock = worktree.locked && worktree.staleClaudeLock ? { unlock: true } : {};
   if (CHANNEL_WORKTREE.test(worktreeBasename(worktree.path))) return keep('canal instalado');
   if (worktree.missing) {
     return { kind: 'removeWorktree', path: worktree.path, branch: worktree.branch, missing: true, reason: 'a pasta já não existia (só registro no git)' };
@@ -168,17 +172,17 @@ function planWorktree(worktree: WorktreeFact, integrationRef: string | null, now
   // Git refuses to remove it, so it is not even attempted (the first real sweep logged 31 such failures).
   if (worktree.hasSubmodules) return keep('tem submódulo (o git não remove worktree com submódulo)');
   if (!worktree.clean) return keep('mudança não commitada');
-  if (!worktree.headInIntegration && !worktree.headEqualsRemote) return keep('commit que só existe aqui');
+  if (!worktree.headInIntegration && !worktree.headEqualsRemote && !worktree.headOnRemote) return keep('commit que só existe aqui');
   if (now - worktree.lastActivityMs < WORKTREE_FRESH_MS) return keep('usada nas últimas 24 h');
   const precious = worktree.ignored.filter((path) => !isRegenerableIgnored(path));
   if (precious.length > 0) {
     const shown = precious.slice(0, 3).join(', ');
     return keep(`arquivo ignorado que não se recria: ${precious.length > 3 ? `${shown} e mais ${precious.length - 3}` : shown}`);
   }
-  if (worktree.headInIntegration) {
-    return { kind: 'removeWorktree', path: worktree.path, branch: worktree.branch, missing: false, reason: integrationRef === null ? 'já incorporada' : `já em ${integrationRef}` };
-  }
-  return { kind: 'removeWorktree', path: worktree.path, branch: worktree.branch, missing: false, reason: 'publicada no remoto com o mesmo SHA' };
+  const remove = (reason: string): PlanItem => ({ kind: 'removeWorktree', path: worktree.path, branch: worktree.branch, missing: false, reason, ...unlock });
+  if (worktree.headInIntegration) return remove(integrationRef === null ? 'já incorporada' : `já em ${integrationRef}`);
+  if (worktree.headEqualsRemote) return remove('publicada no remoto com o mesmo SHA');
+  return remove('todos os commits já estão no remoto');
 }
 
 function onlyHereReason(branch: BranchFact): string {
@@ -195,6 +199,8 @@ function planBranch(branch: BranchFact, integrationRef: string | null): PlanItem
   if (integrationRef !== null && branch.ancestorOfIntegration) return deleteWith(`já incorporada em ${integrationRef}`);
   if (integrationRef !== null && branch.cherryClean) return deleteWith(`conteúdo já em ${integrationRef} (git cherry)`);
   if (branch.publishedSameSha) return deleteWith('publicada no remoto com o mesmo SHA');
+  // The CLI's branch of a `--worktree` session holds nothing of its own once every commit is on a remote (the receipt keeps its SHA).
+  if (CLI_WORKTREE_BRANCH.test(branch.name) && branch.onlyHereCount === 0) return deleteWith('branch de worktree do Claude sem commit só dela');
   return { kind: 'keep', what: 'branch', name: branch.name, reason: onlyHereReason(branch) };
 }
 

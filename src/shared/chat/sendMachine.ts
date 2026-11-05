@@ -8,7 +8,8 @@
 // Events (every one carries `now`, in ms; deadlines are compared against it):
 //   screen   { screen: { lines } }        fresh read of the hidden terminal (reuses ./screen.ts detectors)
 //   tick     {}                           the driver woke up (it should also re-read the screen)
-//   env      { alive?, pendingOpen?, terminalNeeded? }   process alive / `open` pending / "terminal needs you" banner
+//   env      { alive?, pendingOpen?, terminalNeeded?, working? }   process alive / `open` pending / "terminal needs
+//                                         you" banner / mid-turn by the hooks
 //   signal   { signal: PromptSignal }     acceptance signal (`chat:prompt-signal`, ipc-chat.md §2)
 //   ack-result { found }                  answer to the `ack-lookup` effect
 //   action   { action: 'retry' | 'discard-and-send' | 'interrupt-and-send' }   owner actions
@@ -24,7 +25,13 @@
 // Signals are only honoured after the Enter was written (`await-ack`) or while `queued`, and only when
 // `signal.at >= createdAt`; the driver picks WHICH pending send receives a signal with `oldestPending`
 // from ./promptMatch (identical messages are closed oldest first).
+//
+// Mid-turn (owner's decision, 30/10: "só envia, sem esperar ele finalizar, e acompanha se o próprio Claude
+// coleta"): a plain prompt is written into the CLI's own queue even when the screen cannot prove the box; a paste
+// that never shows up in the box still gets its Enter; and a `queued` send is checked (`verify`) once the turn is
+// over, so it never stays "na fila" forever.
 
+import { readInputBox } from '../cliInputBox';
 import { NATIVE_COMMAND_NAMES } from './commandCatalog';
 import { commandResolvesTo, matchesPrompt, normalizePrompt } from './promptMatch';
 import {
@@ -81,7 +88,7 @@ export interface SendInput {
   readonly customCommands?: ReadonlySet<string>;
 }
 
-export type SendStep = 'gate' | 'image' | 'text' | 'menu-esc' | 'enter-gap' | 'await-ack' | 'lookup' | 'done';
+export type SendStep = 'gate' | 'image' | 'text' | 'menu-esc' | 'enter-gap' | 'await-ack' | 'lookup' | 'verify' | 'done';
 
 export interface SendMachineState {
   readonly id: string;
@@ -98,20 +105,37 @@ export interface SendMachineState {
   readonly step: SendStep;
   readonly attempts: number;
   readonly failReason: string | null;
+  /** Last reason the gate waited for in this attempt (diagnostics: what it was waiting on before failing). */
+  readonly lastWaitReason: string | null;
+  /** Step the send was in when it failed (`step` itself becomes `done`). */
+  readonly failedStep: SendStep | null;
   readonly alive: boolean;
   readonly pendingOpen: boolean;
   readonly terminalNeeded: boolean;
+  /** Mid-turn according to the hooks: a plain prompt is written even if the screen cannot prove the box. */
+  readonly working: boolean;
   readonly lines: readonly LineInput[] | null;
   readonly waitSince: number;
   readonly reasonVisible: boolean;
   readonly interruptSent: boolean;
+  /** When the interrupt ESC went out: the paste waits for the turn to stop (or INTERRUPT_SETTLE_MS). */
+  readonly interruptAt: number | null;
   readonly imageIdx: number;
   readonly stepDeadline: number | null;
   readonly enterAt: number | null;
   readonly resendAt: number | null;
   readonly ackDeadline: number | null;
+  /** No more Enter resends (`MAX_ENTER_RESENDS` went out). */
   readonly resendDone: boolean;
+  /** Enters written again after the first one, while our text still sat in the box. */
+  readonly resends: number;
+  /** The gate read an empty box right before the paste: whatever placeholder shows up next is ours. */
+  readonly boxEmptyAtPaste: boolean;
+  /** Idle CLI, paste not drawn yet: when to give up on it (`TEXT_IDLE_EXTRA_MS` after the text deadline). */
+  readonly textGiveUpAt: number | null;
   readonly idleAtEnter: boolean;
+  /** `queued` and the turn is over: when to look the prompt up (`verify`) if no delivery signal came. */
+  readonly verifyAt: number | null;
   readonly leftoverShown: string | null;
   readonly lastStatusKey: string | null;
   readonly lastWake: number | null;
@@ -126,6 +150,7 @@ export type SendEvent =
       readonly alive?: boolean;
       readonly pendingOpen?: boolean;
       readonly terminalNeeded?: boolean;
+      readonly working?: boolean;
     }
   | { readonly type: 'signal'; readonly now: number; readonly signal: PromptSignal }
   | { readonly type: 'ack-result'; readonly now: number; readonly found: boolean }
@@ -152,9 +177,22 @@ const IMAGE_MS = 3_000;
 const TEXT_BASE_MS = 3_000;
 const TEXT_PER_15KB_MS = 1_000;
 const FIRST_PASTE_MS = 12_000;
+/**
+ * With the CLI idle and nothing on its screen, a paste not drawn yet is waited for this much longer before giving
+ * up. On a machine short of RAM (90 %+, 05/11) a CLI that had just booted drew the paste 20 s+ later; giving up at
+ * 12 s left `[Pasted text #1 …]` in the box, never submitted, and the session never started.
+ */
+const TEXT_IDLE_EXTRA_MS = 12_000;
+const FIRST_PASTE_IDLE_EXTRA_MS = 33_000;
+/** While waiting that extra time, the screen is looked at again on this beat. */
+const TEXT_RECHECK_MS = 1_000;
+/** Enter written again while our text still sits in the box, 3 s apart (an Enter a slow CLI swallowed). */
+const MAX_ENTER_RESENDS = 3;
 const ACK_MS = 15_000;
 const ENTER_GAP_MS = 80;
 const RESEND_ENTER_MS = 3_000;
+const VERIFY_MS = 15_000;
+const INTERRUPT_SETTLE_MS = 3_000;
 
 // ----------------------------------------------------------- text and class
 
@@ -187,6 +225,15 @@ function sendKindOf(cls: MessageClass): SendKind {
 
 const needsIdleKind = (cls: MessageClass) => cls.kind !== 'prompt';
 
+/**
+ * Mid-turn? A screen that proves the box and its footer answers (`isWorking`: "esc to interrupt" or the spinner row
+ * above the box); otherwise the hooks do (a long command can hide the box or its footer while the turn goes on).
+ */
+function midTurn(s: { readonly working: boolean }, lines: readonly LineInput[] | null): boolean {
+  if (lines !== null && isReadyForInput(lines)) return isWorking(lines);
+  return s.working;
+}
+
 const bracketedPaste = (data: string) => `\x1b[200~${data}\x1b[201~`;
 
 // -------------------------------------------------------------------- init
@@ -209,20 +256,28 @@ export function createSend(input: SendInput, now: number): StepResult {
     step: 'gate',
     attempts: 0,
     failReason: null,
+    lastWaitReason: null,
+    failedStep: null,
     alive: true,
     pendingOpen: false,
     terminalNeeded: false,
+    working: false,
     lines: null,
     waitSince: now,
     reasonVisible: false,
     interruptSent: false,
+    interruptAt: null,
     imageIdx: 0,
     stepDeadline: null,
     enterAt: null,
     resendAt: null,
     ackDeadline: null,
     resendDone: false,
+    resends: 0,
+    boxEmptyAtPaste: false,
+    textGiveUpAt: null,
     idleAtEnter: true,
+    verifyAt: null,
     leftoverShown: null,
     lastStatusKey: null,
     lastWake: null,
@@ -253,6 +308,7 @@ export function step(state: SendMachineState, event: SendEvent): StepResult {
       if (event.alive !== undefined) s.alive = event.alive;
       if (event.pendingOpen !== undefined) s.pendingOpen = event.pendingOpen;
       if (event.terminalNeeded !== undefined) s.terminalNeeded = event.terminalNeeded;
+      if (event.working !== undefined) s.working = event.working;
       break;
     case 'signal':
       applySignal(s, event.signal);
@@ -263,6 +319,11 @@ export function step(state: SendMachineState, event: SendEvent): StepResult {
           s.phase = 'accepted';
           s.step = 'done';
         } else resetForRetry(s, now);
+      } else if (s.step === 'verify' && s.phase === 'queued') {
+        if (event.found) {
+          s.phase = 'accepted';
+          s.step = 'done';
+        } else fail(s, 'o Claude não pegou a mensagem');
       }
       break;
     case 'action':
@@ -277,17 +338,24 @@ function resetForRetry(s: Draft, now: number): void {
   s.phase = 'waiting-cli';
   s.step = 'gate';
   s.failReason = null;
+  s.lastWaitReason = null;
+  s.failedStep = null;
   s.attempts += 1;
   s.lines = null; // wait for a fresh read: never paste on a stale screen
   s.waitSince = now;
   s.reasonVisible = false;
   s.interruptSent = false;
+  s.interruptAt = null;
   s.imageIdx = 0;
   s.stepDeadline = null;
   s.enterAt = null;
   s.resendAt = null;
   s.ackDeadline = null;
   s.resendDone = false;
+  s.resends = 0;
+  s.boxEmptyAtPaste = false;
+  s.textGiveUpAt = null;
+  s.verifyAt = null;
   s.leftoverShown = null;
 }
 
@@ -329,6 +397,7 @@ function applySignal(s: Draft, sig: PromptSignal): void {
   const queue = () => {
     s.phase = 'queued';
     s.step = 'done';
+    s.verifyAt = null;
   };
 
   if (sig.signal === 'unknown-command') {
@@ -376,6 +445,7 @@ function applySignal(s: Draft, sig: PromptSignal): void {
 // ---------------------------------------------------------------- evaluate
 
 function fail(s: Draft, reason: string): void {
+  s.failedStep = s.step;
   s.phase = 'failed';
   s.step = 'done';
   s.failReason = reason;
@@ -397,11 +467,36 @@ function textSeen(s: Draft, lines: readonly LineInput[]): boolean {
   const stripped = collapse(raw.replace(/\[Image #\d+\]/g, ''));
   if (squash(stripped) === squash(s.text)) return true;
   const placeholder = pastedPlaceholder(lines);
-  if (placeholder && /^\[Pasted text #\d+(?: \+\d+ lines?)?\]$/.test(stripped)) {
+  if (placeholder && /^(?:\[Pasted text #\d+(?: \+\d+ lines?)?\]\s*)+$/.test(stripped)) {
     const breaks = (s.text.match(/\n/g) ?? []).length;
-    return placeholder.lines === null || placeholder.lines === breaks;
+    if (placeholder.lines === null || placeholder.lines === breaks) return true;
+    // The box was empty right before our paste, so only our paste can have put a placeholder there: a count the
+    // CLI made differently (line endings, a paste it took in two parts) is still ours. Missing it left the
+    // placeholder sitting in the box, never submitted (05/11).
+    return s.boxEmptyAtPaste;
   }
-  return false;
+  return s.boxEmptyAtPaste && looksLikeOurs(stripped, s.text);
+}
+
+/** Letters and digits only: what survives a screen read that drops or doubles a glyph (◆, ambiguous widths, wraps). */
+const lettersOnly = (t: string): string => t.normalize('NFKC').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
+
+/**
+ * 05/11 — the box went from empty to holding text that is ours read loosely: about as long, and its start or end
+ * is in our text. A message to an idle session sat in the box unsubmitted because the screen read did not match it
+ * glyph for glyph; as the box was proven empty right before the paste, nobody else put it there — except the owner
+ * typing in that box right after it: then the box is longer than ours and an Enter would send his text with ours.
+ * So it may not be much longer (a glyph read twice, not a word typed), and when longer both ends must be ours.
+ */
+function looksLikeOurs(box: string, text: string): boolean {
+  const seen = lettersOnly(box);
+  const ours = lettersOnly(text);
+  if (seen === '' || ours === '' || seen.length < ours.length * 0.8) return false;
+  if (seen.length > ours.length + Math.max(2, Math.ceil(ours.length * 0.05))) return false;
+  const edge = Math.min(12, seen.length);
+  const startIsOurs = ours.includes(seen.slice(0, edge));
+  const endIsOurs = ours.includes(seen.slice(-edge));
+  return seen.length > ours.length ? startIsOurs && endIsOurs : startIsOurs || endIsOurs;
 }
 
 /** Text in the box is a prefix of ours (so a timeout may clean it without eating the owner's own typing). */
@@ -421,6 +516,7 @@ function textDeadlineMs(s: Draft): number {
 function startText(s: Draft, now: number, fx: SendEffect[]): void {
   s.step = 'text';
   s.stepDeadline = now + textDeadlineMs(s);
+  s.textGiveUpAt = s.stepDeadline + (s.firstPaste ? FIRST_PASTE_IDLE_EXTRA_MS : TEXT_IDLE_EXTRA_MS);
   fx.push({ type: 'write', data: bracketedPaste(s.text) });
 }
 
@@ -452,9 +548,37 @@ function evaluate(s: Draft, now: number, fx: SendEffect[]): void {
     case 'confirming':
       evaluateConfirming(s, now, fx);
       return;
+    case 'queued':
+      evaluateQueued(s, now, fx);
+      return;
     default:
-      return; // queued: no deadline, depends on the turn
+      return;
   }
+}
+
+/**
+ * `queued`: no deadline while the turn goes on (delivery depends on it). Once the turn is over (hooks), 15 s
+ * without `submit`/`deliver` → look the prompt up in the stored hooks/transcript (`verify`): found → accepted,
+ * not found → failed "o Claude não pegou a mensagem". A screen still showing the turn (`isWorking`) puts the check off.
+ */
+function evaluateQueued(s: Draft, now: number, fx: SendEffect[]): void {
+  if (s.step === 'verify') return;
+  if (s.working) {
+    s.verifyAt = null;
+    return;
+  }
+  if (s.verifyAt === null) {
+    s.verifyAt = now + VERIFY_MS;
+    return;
+  }
+  if (now < s.verifyAt) return;
+  if (s.lines !== null && isWorking(s.lines)) {
+    s.verifyAt = now + VERIFY_MS;
+    return;
+  }
+  s.step = 'verify';
+  s.verifyAt = null;
+  fx.push({ type: 'ack-lookup', text: s.text, since: s.createdAt });
 }
 
 function evaluateGate(s: Draft, now: number, fx: SendEffect[]): void {
@@ -480,6 +604,12 @@ function evaluateGate(s: Draft, now: number, fx: SendEffect[]): void {
     if (interrupting && isWorking(lines) && !s.interruptSent) {
       fx.push({ type: 'write', data: '\x1b' });
       s.interruptSent = true;
+      s.interruptAt = now;
+      reason = 'interrompendo o Claude';
+    } else if (interrupting && s.interruptAt !== null && isWorking(lines) && now - s.interruptAt < INTERRUPT_SETTLE_MS) {
+      // A paste right after the ESC read as one escape sequence (ESC ESC[200~) and the turn went on: wait for the
+      // screen to stop showing the turn (`isWorking`); if it never does, paste anyway (the CLI queues it).
+      reason = 'interrompendo o Claude';
     } else if (needsIdleKind(s.cls) && !interrupting && isWorking(lines)) {
       reason = 'esperando o Claude terminar a rodada';
       visible = true;
@@ -497,6 +627,25 @@ function evaluateGate(s: Draft, now: number, fx: SendEffect[]): void {
     }
   }
 
+  // The screen cannot prove the box, but the hooks say the CLI is mid-turn (a long command can hide the box or its
+  // footer). A plain prompt is written anyway: it goes into the CLI's own queue, which takes typed messages
+  // mid-turn (owner's decision, 30/10). Never without a screen read (a dialog must be ruled out), never into a
+  // menu, and not for images (each `[Image #N]` must be seen), `/`/`!` (need the CLI idle) or interrupt-first
+  // (its Esc needs the turn proven on screen): those keep waiting, with a visible reason and no clock.
+  if (reason !== null && !visible && s.alive && s.working && s.interruptAt === null) {
+    const blindOk =
+      lines !== null &&
+      s.cls.kind === 'prompt' &&
+      s.images.length === 0 &&
+      s.mode !== 'interrupt-first' &&
+      readInputBox(lines).kind !== 'menu';
+    if (blindOk) reason = null;
+    else {
+      reason = 'esperando o Claude terminar o que está fazendo';
+      visible = true;
+    }
+  }
+
   // The 30 s clock only runs while nothing visible explains the wait.
   if (visible) s.waitSince = now;
   else if (s.reasonVisible) s.waitSince = now;
@@ -510,6 +659,7 @@ function evaluateGate(s: Draft, now: number, fx: SendEffect[]): void {
   } else if (reason === null) s.leftoverShown = null;
 
   if (reason !== null) {
+    s.lastWaitReason = reason;
     if (!visible && now - s.waitSince >= WAIT_CLI_MS) fail(s, 'o Claude não ficou pronto');
     else s.failReason = reason; // reused as the current waiting reason for the status
     return;
@@ -517,6 +667,7 @@ function evaluateGate(s: Draft, now: number, fx: SendEffect[]): void {
   s.failReason = null;
 
   // Gate open: start pasting.
+  s.boxEmptyAtPaste = lines !== null && readInputText(lines) === '';
   s.phase = 'typing';
   s.attempts += 1;
   s.imageIdx = 0;
@@ -548,6 +699,20 @@ function evaluateTyping(s: Draft, now: number, fx: SendEffect[]): void {
       return;
     }
     if (s.stepDeadline !== null && now >= s.stepDeadline) {
+      // Mid-turn the box may be hidden or slow to redraw (a long command, a machine short of RAM) while the CLI did
+      // take the paste: send the Enter anyway and follow the acceptance signals. One paste only; no Esc Esc. Not
+      // with a dialog or a pending question up: there the Enter would answer it.
+      const dialogUp = s.pendingOpen || s.terminalNeeded || (lines !== null && blockingScreen(lines) !== null);
+      if (!dialogUp && midTurn(s, lines)) {
+        enterConfirming(s, lines ?? [], now, fx);
+        return;
+      }
+      // Idle, nothing on the screen in the way, the box still empty: a slow CLI may still draw the paste. Writing
+      // it again would duplicate it, so wait (looking again every second) and only then give up.
+      if (!dialogUp && s.textGiveUpAt !== null && now < s.textGiveUpAt && lines !== null && readInputText(lines) === '') {
+        s.stepDeadline = Math.min(now + TEXT_RECHECK_MS, s.textGiveUpAt);
+        return;
+      }
       // Clean the box only if what is there is ours and the CLI is idle (Esc would interrupt a turn).
       if (lines !== null && !isWorking(lines) && boxIsOurs(s, lines)) fx.push({ type: 'write', data: '\x1b\x1b' });
       fail(s, 'o texto não entrou na caixa');
@@ -570,10 +735,11 @@ function evaluateConfirming(s: Draft, now: number, fx: SendEffect[]): void {
     if (s.enterAt !== null && now >= s.enterAt) {
       fx.push({ type: 'write', data: '\r' });
       s.step = 'await-ack';
-      s.idleAtEnter = lines === null ? true : !isWorking(lines);
+      s.idleAtEnter = !midTurn(s, lines);
       s.resendAt = now + RESEND_ENTER_MS;
       s.ackDeadline = now + ACK_MS;
       s.resendDone = false;
+      s.resends = 0;
     }
     return;
   }
@@ -584,15 +750,26 @@ function evaluateConfirming(s: Draft, now: number, fx: SendEffect[]): void {
       s.step = 'done';
       return;
     }
+    // Enter written mid-turn and our text is not in the box once the Enter resend window is over: the CLI took it
+    // into its own queue (it only confirms on delivery; the signal may also just be late, as on a machine short
+    // of RAM). It waits there like any `queued` send, and is checked when the turn ends.
+    if (!s.idleAtEnter && s.resendAt !== null && now >= s.resendAt && lines !== null && !textSeen(s, lines)) {
+      s.phase = 'queued';
+      s.step = 'done';
+      s.verifyAt = null;
+      return;
+    }
     if (s.ackDeadline !== null && now >= s.ackDeadline) {
       fail(s, 'não foi');
       return;
     }
-    // Text still in the box 3 s after Enter: nothing was submitted. One more `\r`, once. An empty box
-    // without acceptance may already have been delivered: wait, never resend.
+    // Text still in the box 3 s after Enter: nothing was submitted. One more `\r` (never the text again), up to
+    // MAX_ENTER_RESENDS, 3 s apart. An empty box without acceptance may already have been delivered: wait, never resend.
     if (!s.resendDone && s.resendAt !== null && now >= s.resendAt && lines !== null && textSeen(s, lines)) {
       fx.push({ type: 'write', data: '\r' });
-      s.resendDone = true;
+      s.resends += 1;
+      s.resendDone = s.resends >= MAX_ENTER_RESENDS;
+      if (!s.resendDone) s.resendAt = now + RESEND_ENTER_MS;
       s.attempts += 1;
     }
   }
@@ -627,6 +804,7 @@ function nextWake(s: Draft, now: number): number | null {
   switch (s.phase) {
     case 'waiting-cli':
       if (!s.reasonVisible) candidates.push(s.waitSince + WAIT_CLI_MS);
+      if (s.interruptAt !== null) candidates.push(s.interruptAt + INTERRUPT_SETTLE_MS);
       break;
     case 'typing':
       if (s.stepDeadline !== null) candidates.push(s.stepDeadline);
@@ -636,8 +814,12 @@ function nextWake(s: Draft, now: number): number | null {
       if (s.step === 'enter-gap' && s.enterAt !== null) candidates.push(s.enterAt);
       if (s.step === 'await-ack') {
         if (s.ackDeadline !== null) candidates.push(s.ackDeadline);
-        if (!s.resendDone && s.resendAt !== null) candidates.push(s.resendAt);
+        // mid-turn the resend time is also when an empty box turns the send into `queued`
+        if (s.resendAt !== null && (!s.resendDone || !s.idleAtEnter)) candidates.push(s.resendAt);
       }
+      break;
+    case 'queued':
+      if (s.verifyAt !== null) candidates.push(s.verifyAt);
       break;
     default:
       break;

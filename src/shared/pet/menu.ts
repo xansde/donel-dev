@@ -16,7 +16,9 @@ export type PetMenuAction =
   | { readonly kind: 'sweep' }
   | { readonly kind: 'size'; readonly size: number }
   | { readonly kind: 'home' }
-  | { readonly kind: 'hide' };
+  | { readonly kind: 'hide' }
+  /** Item 18: opens or closes the floating window of the conversation with the Líder. */
+  | { readonly kind: 'lider' };
 
 /** An entry of the "Tamanho" submenu; `checked` marks the size in use. */
 export interface PetMenuCheckItem {
@@ -41,6 +43,8 @@ export interface PetMenuContext {
 
 export function buildPetMenu(context: PetMenuContext): readonly PetMenuEntry[] {
   return [
+    { type: 'item', label: 'Conversar com o Líder', action: { kind: 'lider' } },
+    { type: 'separator' },
     context.silenced
       ? { type: 'item', label: 'Retomar avisos', action: { kind: 'resume' } }
       : { type: 'item', label: 'Silenciar por 1 hora', action: { kind: 'silence' } },

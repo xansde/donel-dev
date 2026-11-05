@@ -5,9 +5,11 @@ import {
   Gauge,
   Info,
   MessageSquarePlus,
+  RefreshCw,
   Shrink,
   Square,
   TriangleAlert,
+  ShieldCheck,
 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { memo } from 'react';
@@ -25,6 +27,8 @@ const ICON: Readonly<Record<NoticeIcon, ReactNode>> = {
   'conversation-switch': <MessageSquarePlus size={14} strokeWidth={1.75} />,
   informational: <Info size={14} strokeWidth={1.75} />,
   'generated-file': <FileText size={14} strokeWidth={1.75} />,
+  'session-renewed': <RefreshCw size={14} strokeWidth={1.75} />,
+  'auto-approved': <ShieldCheck size={14} strokeWidth={1.75} />,
 };
 
 export interface NoticeProps {

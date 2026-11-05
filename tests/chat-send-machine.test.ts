@@ -165,6 +165,70 @@ describe('gate (§1)', () => {
     expect(sim.status?.reason).toBe('o Claude não ficou pronto');
   });
 
+  // 30/10: o dono revogou a espera do #125 ("Só envia, sem esperar ele finalizar, e acompanha se o próprio Claude
+  // coleta"). Com o turno em andamento pelos hooks, a caixa ilegível não segura mais o prompt comum.
+  it('Claude trabalhando (hooks) com a caixa ilegível: escreve na hora, para a fila do próprio CLI', () => {
+    const sim = new Sim({ text: 'oi' }, 1000);
+    sim.ev({ type: 'env', now: 1000, working: true });
+    sim.screen(['  ● Bash(npx vitest run)', '    ⎿  Running…'], 1000);
+    expect(sim.allWrites()).toEqual([paste('oi')]);
+    expect(sim.phase).toBe('typing');
+  });
+
+  it('caixa ilegível sem o turno em andamento: não escreve às cegas e o prazo de 30 s vale', () => {
+    const sim = new Sim({ text: 'oi' }, 0);
+    sim.ev({ type: 'env', now: 0, working: true });
+    // sem nenhuma leitura da tela ainda: nunca escreve (o portão precisa ver que não há diálogo)
+    expect(sim.allWrites()).toEqual([]);
+    sim.ev({ type: 'env', now: 10, working: false });
+    sim.screen(['carregando...'], 10);
+    sim.tick(30_009);
+    expect(sim.allWrites()).toEqual([]);
+    expect(sim.phase).toBe('waiting-cli');
+    sim.tick(30_010);
+    expect(sim.phase).toBe('failed');
+    expect(sim.status?.reason).toBe('o Claude não ficou pronto');
+  });
+
+  it('Claude trabalhando com a caixa ilegível, mas diálogo na tela: segura', () => {
+    const sim = new Sim({ text: 'oi' });
+    sim.ev({ type: 'env', now: 0, working: true });
+    sim.screen(dialog(), 0);
+    sim.tick(100_000);
+    expect(sim.allWrites()).toEqual([]);
+    expect(sim.phase).toBe('waiting-cli');
+  });
+
+  it('Claude trabalhando com a caixa ilegível e pergunta aberta: segura', () => {
+    const sim = new Sim({ text: 'oi' });
+    sim.ev({ type: 'env', now: 0, working: true, pendingOpen: true });
+    sim.screen(['  ● Bash(npx vitest run)'], 0);
+    sim.tick(100_000);
+    expect(sim.allWrites()).toEqual([]);
+    expect(sim.status?.reason).toBe('há uma pergunta ou permissão esperando você');
+  });
+
+  it.each(['/meu-skill x', '!ls'])('Claude trabalhando com a caixa ilegível: %s segue esperando o CLI parar, sem prazo', (text) => {
+    const sim = new Sim({ text });
+    sim.ev({ type: 'env', now: 0, working: true });
+    sim.screen(['  ● Bash(npx vitest run)'], 0);
+    sim.tick(200_000);
+    expect(sim.allWrites()).toEqual([]);
+    expect(sim.phase).toBe('waiting-cli');
+    expect(sim.status?.label).toBe('na fila');
+  });
+
+  it('Claude trabalhando com a caixa ilegível: mensagem com imagem espera a caixa (o [Image #N] precisa ser visto)', () => {
+    const sim = new Sim({ text: 'veja', imagePaths: ['C:\\a\\1.png'] });
+    sim.ev({ type: 'env', now: 0, working: true });
+    sim.screen(['  ● Bash(npx vitest run)'], 0);
+    sim.tick(200_000);
+    expect(sim.allWrites()).toEqual([]);
+    expect(sim.phase).toBe('waiting-cli');
+    sim.screen(workingEmpty(), 200_001);
+    expect(sim.allWrites()).toEqual([paste('C:\\a\\1.png')]);
+  });
+
   it('devolve wake-at para o prazo de 30 s', () => {
     const sim = new Sim({ text: 'oi' }, 1000);
     const wake = sim.log.find((e) => e.type === 'wake-at') as Extract<SendEffect, { type: 'wake-at' }>;
@@ -267,11 +331,29 @@ describe('sequência de bytes (§4)', () => {
     expect(sim.phase).toBe('confirming');
   });
 
-  it('placeholder com contagem de linhas errada não vale', () => {
+  it('mensagem a sessão parada: a caixa lida com um glifo a menos ainda é a nossa e leva o Enter; texto alheio não (05/11)', () => {
+    const sim = new Sim({ text: '◆ De Líder (place:abc): Revise o #211 de novo' });
+    sim.screen(idleEmpty(), 0);
+    sim.screen(screen('De Líder (place:abc): Revise o #211 de novo'), 100);
+    expect(sim.phase).toBe('confirming');
+    const other = new Sim({ text: '◆ De Líder (place:abc): Revise o #211 de novo' });
+    other.screen(idleEmpty(), 0);
+    other.screen(screen('rodar os testes agora mesmo, por favor, sem demora'), 100);
+    expect(other.phase).toBe('typing');
+    // O dono digitou na caixa logo depois da colagem: o Enter mandaria o texto dele junto. Nem no fim, nem no começo.
+    for (const typed of ['De Líder (place:abc): Revise o #211 de novo e me avisa', 'ok De Líder (place:abc): Revise o #211 de novo']) {
+      const mixed = new Sim({ text: '◆ De Líder (place:abc): Revise o #211 de novo' });
+      mixed.screen(idleEmpty(), 0);
+      mixed.screen(screen(typed), 100);
+      expect(mixed.phase, typed).toBe('typing');
+    }
+  });
+
+  it('placeholder com outra contagem de linhas ainda é a nossa colagem quando a caixa estava vazia (05/11)', () => {
     const sim = new Sim({ text: 'l1\nl2\nl3\nl4\nl5' });
     sim.screen(idleEmpty(), 0);
     sim.screen(screen('[Pasted text #1 +9 lines]'), 100);
-    expect(sim.phase).toBe('typing');
+    expect(sim.phase).toBe('confirming');
   });
 
   it('imagens: uma colagem por imagem, esperando [Image #N], e só depois o texto', () => {
@@ -318,10 +400,26 @@ describe('sequência de bytes (§4)', () => {
     expect(sim.allWrites()).not.toContain('\r');
   });
 
-  it('interrupt-first: ESC com "esc to interrupt" visível e a colagem logo em seguida', () => {
+  it('interrupt-first: ESC com "esc to interrupt" visível e a colagem só quando o turno para', () => {
+    // Colado no mesmo instante, o ESC virava prefixo da colagem (ESC ESC[200~) e o turno não parava.
     const sim = new Sim({ text: 'pare e faça', mode: 'interrupt-first' });
     sim.screen(workingEmpty(), 0);
-    expect(sim.writes()).toEqual(['\x1b', paste('pare e faça')]);
+    expect(sim.writes()).toEqual(['\x1b']);
+    sim.screen(workingEmpty(), 500);
+    expect(sim.allWrites()).toEqual(['\x1b']);
+    sim.screen(idleEmpty(), 900);
+    expect(sim.allWrites()).toEqual(['\x1b', paste('pare e faça')]);
+  });
+
+  it('interrupt-first: o turno não para em 3 s → cola assim mesmo (vai para a fila do CLI), um ESC só', () => {
+    const sim = new Sim({ text: 'pare e faça', mode: 'interrupt-first' });
+    sim.screen(workingEmpty(), 0);
+    const wakes = sim.log.filter((e) => e.type === 'wake-at').map((e) => (e as Extract<SendEffect, { type: 'wake-at' }>).at);
+    expect(wakes).toContain(3_000);
+    sim.screen(workingEmpty(), 2_999);
+    expect(sim.allWrites()).toEqual(['\x1b']);
+    sim.screen(workingEmpty(), 3_000);
+    expect(sim.allWrites()).toEqual(['\x1b', paste('pare e faça')]);
   });
 
   it('interrupt-first com o CLI já ocioso: sem ESC', () => {
@@ -334,7 +432,9 @@ describe('sequência de bytes (§4)', () => {
     const sim = new Sim({ text: '/meu-skill' });
     sim.screen(workingEmpty(), 0);
     sim.ev({ type: 'action', now: 5, action: 'interrupt-and-send' });
-    expect(sim.writes()).toEqual(['\x1b', paste('/meu-skill')]);
+    expect(sim.writes()).toEqual(['\x1b']);
+    sim.screen(idleEmpty(), 400);
+    expect(sim.allWrites()).toEqual(['\x1b', paste('/meu-skill')]);
   });
 });
 
@@ -402,30 +502,44 @@ describe('prazos (§6)', () => {
     expect(sim.status?.reason).toBe('a imagem não entrou');
   });
 
-  it('texto: 3 s', () => {
+  it('texto: 3 s, e com o Claude parado e a caixa vazia espera mais 12 s antes de desistir', () => {
     const sim = new Sim({ text: 'oi' });
     sim.screen(idleEmpty(), 0);
-    sim.tick(2999);
-    expect(sim.phase).toBe('typing');
     sim.tick(3000);
+    expect(sim.phase).toBe('typing');
+    sim.tick(14_999);
+    expect(sim.phase).toBe('typing');
+    sim.tick(15_000);
     expect(sim.phase).toBe('failed');
   });
 
   it('texto: +1 s a cada 15 KB', () => {
     const sim = new Sim({ text: 'a'.repeat(30_000) });
     sim.screen(idleEmpty(), 0);
-    sim.tick(4999);
+    sim.tick(16_999);
     expect(sim.phase).toBe('typing');
-    sim.tick(5000);
+    sim.tick(17_000);
     expect(sim.phase).toBe('failed');
   });
 
-  it('texto: 12 s na primeira colagem da sessão', () => {
+  it('primeira colagem que aparece tarde (PC sem RAM, 05/11): ainda leva o Enter, sem colar de novo', () => {
+    const sim = new Sim({ text: 'l1\nl2', firstPaste: true });
+    sim.screen(idleEmpty(), 0);
+    sim.tick(44_999);
+    expect(sim.phase).toBe('typing');
+    sim.screen(screen('[Pasted text #1 +1 lines]'), 44_999);
+    expect(sim.phase).toBe('confirming');
+    sim.tick(45_100);
+    expect(sim.allWrites().filter((w) => w === '\r')).toHaveLength(1);
+    expect(sim.allWrites().filter((w) => w.includes('l1'))).toHaveLength(1);
+  });
+
+  it('primeira colagem que nunca aparece: desiste aos 45 s', () => {
     const sim = new Sim({ text: 'oi', firstPaste: true });
     sim.screen(idleEmpty(), 0);
-    sim.tick(11_999);
+    sim.tick(44_999);
     expect(sim.phase).toBe('typing');
-    sim.tick(12_000);
+    sim.tick(45_000);
     expect(sim.phase).toBe('failed');
   });
 
@@ -462,16 +576,235 @@ describe('prazos (§6)', () => {
   });
 });
 
+describe('Enter no meio da rodada sem sinal (máquina carregada)', () => {
+  it('a caixa esvaziou: fica na fila do CLI, não "não foi"', () => {
+    const sim = new Sim({ text: 'oi tudo bem' }, 0);
+    sim.screen(workingEmpty(), 0);
+    sim.screen(screen('oi tudo bem', WORKING_FOOTER), 100);
+    sim.tick(180);
+    sim.screen(workingEmpty(), 15_180);
+    expect(sim.phase).toBe('queued');
+    expect(sim.status?.label).toBe('na fila');
+  });
+
+  it('o texto continua na caixa: falha como antes', () => {
+    const sim = new Sim({ text: 'oi tudo bem' }, 0);
+    sim.screen(workingEmpty(), 0);
+    sim.screen(screen('oi tudo bem', WORKING_FOOTER), 100);
+    sim.tick(180);
+    sim.screen(screen('oi tudo bem', WORKING_FOOTER), 15_180);
+    expect(sim.phase).toBe('failed');
+  });
+});
+
+/** Leva um prompt mandado no meio da rodada (hooks `working`, caixa visível) até o Enter. */
+function sendMidTurnUntilEnter(text = 'oi tudo bem') {
+  const sim = new Sim({ text }, 0);
+  sim.ev({ type: 'env', now: 0, working: true });
+  sim.screen(workingEmpty(), 0);
+  sim.screen(screen(text, WORKING_FOOTER), 100);
+  sim.tick(180);
+  return sim;
+}
+
+const hidden = (): LineInput[] => ['  ● Bash(npx vitest run)', '    ⎿  Running…'];
+
+describe('colagem que não aparece na caixa no meio da rodada (30/10)', () => {
+  it('prazo do texto estoura com o turno em andamento: manda o Enter mesmo assim, sem colar de novo nem Esc Esc', () => {
+    const sim = new Sim({ text: 'oi tudo bem' }, 0);
+    sim.ev({ type: 'env', now: 0, working: true });
+    sim.screen(hidden(), 0);
+    expect(sim.writes()).toEqual([paste('oi tudo bem')]);
+    sim.screen(hidden(), 2999);
+    expect(sim.phase).toBe('typing');
+    sim.tick(3000);
+    expect(sim.phase).toBe('confirming');
+    sim.tick(3080);
+    expect(sim.writes()).toEqual(['\r']);
+    expect(sim.allWrites().filter((w) => w.includes('oi tudo bem'))).toHaveLength(1);
+    expect(sim.allWrites()).not.toContain('\x1b\x1b');
+    expect(sim.state.failReason).toBeNull();
+  });
+
+  it('caixa visível com o rodapé de trabalho e o texto ainda sem aparecer: mesmo caminho (Enter, sem Esc Esc)', () => {
+    const sim = new Sim({ text: 'mensagem longa' }, 0);
+    sim.screen(workingEmpty(), 0);
+    sim.screen(screen('mensagem', WORKING_FOOTER), 1000);
+    sim.tick(3000);
+    expect(sim.phase).toBe('confirming');
+    sim.tick(3080);
+    expect(sim.writes()).toEqual(['\r']);
+    expect(sim.allWrites()).not.toContain('\x1b\x1b');
+  });
+
+  it('um diálogo apareceu durante a colagem: falha como antes, sem Enter (o Enter responderia o diálogo)', () => {
+    const sim = new Sim({ text: 'oi' }, 0);
+    sim.ev({ type: 'env', now: 0, working: true });
+    sim.screen(hidden(), 0);
+    sim.screen(dialog(), 1000);
+    sim.tick(3000);
+    expect(sim.phase).toBe('failed');
+    expect(sim.status?.reason).toBe('o texto não entrou na caixa');
+    expect(sim.allWrites()).not.toContain('\r');
+  });
+
+  it('uma pergunta abriu durante a colagem: falha, sem Enter', () => {
+    const sim = new Sim({ text: 'oi' }, 0);
+    sim.ev({ type: 'env', now: 0, working: true });
+    sim.screen(hidden(), 0);
+    sim.ev({ type: 'env', now: 1000, pendingOpen: true });
+    sim.tick(3000);
+    expect(sim.phase).toBe('failed');
+    expect(sim.allWrites()).not.toContain('\r');
+  });
+
+  it('depois do Enter às cegas, sem sinal e o texto fora da caixa: "na fila" (passado o prazo do reenvio)', () => {
+    const sim = new Sim({ text: 'oi tudo bem' }, 0);
+    sim.ev({ type: 'env', now: 0, working: true });
+    sim.screen(hidden(), 0);
+    sim.tick(3000);
+    sim.tick(3080);
+    sim.screen(hidden(), 6079);
+    expect(sim.phase).toBe('confirming');
+    sim.screen(hidden(), 6080);
+    expect(sim.phase).toBe('queued');
+    expect(sim.status?.label).toBe('na fila');
+    expect(sim.allWrites().filter((w) => w === '\r')).toHaveLength(1);
+  });
+
+  it('o enqueue do CLI depois do Enter às cegas: "na fila"; a entrega: "entrou"', () => {
+    const sim = new Sim({ text: 'oi tudo bem' }, 0);
+    sim.ev({ type: 'env', now: 0, working: true });
+    sim.screen(hidden(), 0);
+    sim.tick(3000);
+    sim.tick(3080);
+    sim.signal({ signal: 'enqueue', text: 'oi tudo bem', at: 3200 }, 3200);
+    expect(sim.phase).toBe('queued');
+    sim.signal({ signal: 'deliver', text: 'oi tudo bem', at: 60_000 }, 60_000);
+    expect(sim.phase).toBe('accepted');
+    expect(sim.status?.label).toBe('entrou');
+  });
+});
+
+describe('acompanhar se o CLI coletou a mensagem da fila (30/10)', () => {
+  /** Mandada no meio da rodada, sem sinal: vira "na fila" pela caixa vazia depois do Enter. */
+  function queuedWithoutSignal() {
+    const sim = sendMidTurnUntilEnter('oi tudo bem');
+    sim.screen(workingEmpty(), 3180);
+    expect(sim.phase).toBe('queued');
+    return sim;
+  }
+  const lookups = (sim: Sim) => sim.log.filter((e) => e.type === 'ack-lookup');
+
+  it('com o turno em andamento fica "na fila" sem prazo', () => {
+    const sim = queuedWithoutSignal();
+    sim.tick(600_000);
+    expect(sim.phase).toBe('queued');
+    expect(lookups(sim)).toEqual([]);
+  });
+
+  it('o turno acabou e passaram 15 s sem entrega: procura o prompt (ack-lookup); achou → "entrou"', () => {
+    const sim = queuedWithoutSignal();
+    const r = sim.ev({ type: 'env', now: 100_000, working: false });
+    expect(r.effects).toContainEqual({ type: 'wake-at', at: 115_000 });
+    sim.screen(idleEmpty(), 114_999);
+    expect(lookups(sim)).toEqual([]);
+    const v = sim.screen(idleEmpty(), 115_000);
+    expect(v.effects).toContainEqual({ type: 'ack-lookup', text: 'oi tudo bem', since: 0 });
+    expect(sim.status?.label).toBe('na fila');
+    const before = sim.allWrites().length;
+    sim.ev({ type: 'ack-result', now: 115_050, found: true });
+    expect(sim.phase).toBe('accepted');
+    expect(sim.allWrites()).toHaveLength(before);
+  });
+
+  it('não achou: "não foi" com o motivo honesto e "tentar de novo" procura antes de recolar', () => {
+    const sim = queuedWithoutSignal();
+    sim.ev({ type: 'env', now: 100_000, working: false });
+    sim.screen(idleEmpty(), 115_000);
+    const before = sim.allWrites().length;
+    sim.ev({ type: 'ack-result', now: 115_050, found: false });
+    expect(sim.phase).toBe('failed');
+    expect(sim.status?.label).toBe('não foi');
+    expect(sim.status?.reason).toBe('o Claude não pegou a mensagem');
+    expect(sim.allWrites()).toHaveLength(before);
+    const r = sim.ev({ type: 'action', now: 120_000, action: 'retry' });
+    expect(r.effects).toContainEqual({ type: 'ack-lookup', text: 'oi tudo bem', since: 0 });
+    expect(sim.writes(r.effects)).toEqual([]);
+  });
+
+  it('a entrega chega dentro dos 15 s: "entrou" sem procurar', () => {
+    const sim = queuedWithoutSignal();
+    sim.ev({ type: 'env', now: 100_000, working: false });
+    sim.signal({ signal: 'deliver', text: 'oi tudo bem', at: 101_000 }, 101_000);
+    expect(sim.phase).toBe('accepted');
+    sim.tick(120_000);
+    expect(lookups(sim)).toEqual([]);
+  });
+
+  it('o turno recomeça antes dos 15 s: o relógio para e recomeça do fim do novo turno', () => {
+    const sim = queuedWithoutSignal();
+    sim.ev({ type: 'env', now: 100_000, working: false });
+    sim.ev({ type: 'env', now: 105_000, working: true });
+    sim.screen(workingEmpty(), 115_000);
+    expect(lookups(sim)).toEqual([]);
+    sim.ev({ type: 'env', now: 200_000, working: false });
+    sim.screen(idleEmpty(), 214_999);
+    expect(lookups(sim)).toEqual([]);
+    sim.screen(idleEmpty(), 215_000);
+    expect(lookups(sim)).toHaveLength(1);
+  });
+
+  it('hooks parados mas o rodapé ainda diz "esc to interrupt": não procura e confere de novo depois', () => {
+    const sim = queuedWithoutSignal();
+    sim.ev({ type: 'env', now: 100_000, working: false });
+    const r = sim.screen(workingEmpty(), 115_000);
+    expect(lookups(sim)).toEqual([]);
+    expect(r.effects).toContainEqual({ type: 'wake-at', at: 130_000 });
+    sim.screen(idleEmpty(), 130_000);
+    expect(lookups(sim)).toHaveLength(1);
+  });
+
+  it('mensagem que o CLI pôs na fila (enqueue) também é conferida quando o turno acaba', () => {
+    const sim = sendMidTurnUntilEnter('oi');
+    sim.signal({ signal: 'enqueue', text: 'oi', at: 200 }, 200);
+    expect(sim.phase).toBe('queued');
+    sim.ev({ type: 'env', now: 50_000, working: false });
+    sim.screen(idleEmpty(), 65_000);
+    expect(lookups(sim)).toContainEqual({ type: 'ack-lookup', text: 'oi', since: 0 });
+  });
+
+  it('a entrega que chega durante a busca fecha em "entrou"; a resposta atrasada da busca não muda mais nada', () => {
+    const sim = queuedWithoutSignal();
+    sim.ev({ type: 'env', now: 100_000, working: false });
+    sim.screen(idleEmpty(), 115_000);
+    sim.signal({ signal: 'deliver', text: 'oi tudo bem', at: 115_010 }, 115_010);
+    expect(sim.phase).toBe('accepted');
+    sim.ev({ type: 'ack-result', now: 115_050, found: false });
+    expect(sim.phase).toBe('accepted');
+  });
+
+  it('processo encerrado com a mensagem na fila: "não foi"', () => {
+    const sim = queuedWithoutSignal();
+    sim.ev({ type: 'env', now: 100_000, alive: false });
+    expect(sim.phase).toBe('failed');
+    expect(sim.status?.reason).toBe('o Claude foi encerrado');
+  });
+});
+
 describe('reenvio e anti-duplicidade (§7)', () => {
-  it('texto ainda na caixa 3 s depois do Enter: reenvia só \\r, uma vez', () => {
+  it('texto ainda na caixa depois do Enter: reenvia só \\r, de 3 em 3 s, até 3 vezes; o texto nunca de novo', () => {
     const sim = sendUntilEnter('oi tudo bem');
     sim.screen(screen('oi tudo bem'), 3179);
     expect(sim.writes()).toEqual([]);
     sim.screen(screen('oi tudo bem'), 3180);
     expect(sim.writes()).toEqual(['\r']);
-    sim.screen(screen('oi tudo bem'), 6500);
+    sim.screen(screen('oi tudo bem'), 6000);
     expect(sim.writes()).toEqual([]);
-    expect(sim.allWrites().filter((w) => w === '\r')).toHaveLength(2);
+    sim.screen(screen('oi tudo bem'), 6180);
+    sim.screen(screen('oi tudo bem'), 9180);
+    sim.screen(screen('oi tudo bem'), 12_500);
+    expect(sim.allWrites().filter((w) => w === '\r')).toHaveLength(4);
     expect(sim.allWrites().filter((w) => w.includes('oi tudo bem'))).toHaveLength(1);
   });
 
@@ -694,5 +1027,104 @@ describe('status para a UI', () => {
     const r2 = step(before, { type: 'screen', now: 0, screen: { lines: idleEmpty() } });
     expect(r1).toEqual(r2);
     expect(a.state).toBe(before);
+  });
+});
+
+// Com qualquer `statusLine` configurada (a ponte da statusline do app, ou a do próprio usuário) o CLI 2.1.314
+// tira "esc to interrupt" e "? for shortcuts" do rodapé; sobram o modo e a saída da statusline. O turno em
+// andamento se prova pela linha do spinner acima da caixa (medido em 30/10). Os mesmos caminhos do envio,
+// com essa tela.
+describe('rodapé sem as dicas (statusLine configurada)', () => {
+  const MODE_ONLY = '  ⏵⏵ bypass permissions on (shift+tab to cycle)';
+  const SPINNER = '✻ Booping… (31s · ↓ 58 tokens)';
+  const quiet = (boxText = '', above: string[] = []) => screen(boxText, MODE_ONLY, ['✻ Worked for 26s · done 17:38', ...above]);
+  const busy = (boxText = '') => screen(boxText, MODE_ONLY, ['❯ rode os testes', SPINNER, '']);
+
+  it('ocioso: o gate abre e o Enter sai como ocioso', () => {
+    const sim = new Sim({ text: 'oi' });
+    sim.screen(quiet(), 0);
+    expect(sim.writes()).toEqual([paste('oi')]);
+    sim.screen(quiet('oi'), 100);
+    sim.tick(180);
+    expect(sim.writes()).toEqual(['\r']);
+    expect(sim.state.idleAtEnter).toBe(true);
+  });
+
+  it('trabalhando: o prompt vai na hora e o Enter sai como "no meio da rodada"', () => {
+    const sim = new Sim({ text: 'oi' });
+    sim.screen(busy(), 0);
+    expect(sim.writes()).toEqual([paste('oi')]);
+    sim.screen(busy('oi'), 100);
+    sim.tick(180);
+    expect(sim.state.idleAtEnter).toBe(false);
+    sim.screen(busy(), 3_180);
+    expect(sim.phase).toBe('queued');
+  });
+
+  it.each(['/meu-skill x', '!ls'])('%s espera o spinner sumir', (text) => {
+    const sim = new Sim({ text });
+    sim.screen(busy(), 0);
+    sim.tick(600_000);
+    expect(sim.allWrites()).toEqual([]);
+    expect(sim.status?.reason).toBe('esperando o Claude terminar a rodada');
+    sim.screen(quiet(), 600_001);
+    expect(sim.allWrites()).toEqual([paste(text)]);
+  });
+
+  it('interromper e mandar agora: ESC com o spinner e a colagem quando ele some', () => {
+    const sim = new Sim({ text: 'pare e faça', mode: 'interrupt-first' });
+    sim.screen(busy(), 0);
+    expect(sim.writes()).toEqual(['\x1b']);
+    sim.screen(busy(), 500);
+    expect(sim.allWrites()).toEqual(['\x1b']);
+    sim.screen(quiet(), 700);
+    expect(sim.allWrites()).toEqual(['\x1b', paste('pare e faça')]);
+  });
+
+  it('interromper e mandar agora: o spinner não some em 3 s → cola assim mesmo, um ESC só', () => {
+    const sim = new Sim({ text: 'pare e faça', mode: 'interrupt-first' });
+    sim.screen(busy(), 0);
+    sim.screen(busy(), 2_999);
+    expect(sim.allWrites()).toEqual(['\x1b']);
+    sim.screen(busy(), 3_000);
+    expect(sim.allWrites()).toEqual(['\x1b', paste('pare e faça')]);
+  });
+
+  it('interromper e mandar agora com o CLI ocioso: sem ESC', () => {
+    const sim = new Sim({ text: 'oi', mode: 'interrupt-first' });
+    sim.screen(quiet(), 0);
+    expect(sim.writes()).toEqual([paste('oi')]);
+  });
+
+  it('texto que sobrou na caixa com o spinner: sem "Descartar"', () => {
+    const sim = new Sim({ text: 'oi' });
+    sim.screen(busy('rascunho'), 0);
+    const left = sim.log.find((e) => e.type === 'leftover') as Extract<SendEffect, { type: 'leftover' }>;
+    expect(left.canDiscard).toBe(false);
+    sim.ev({ type: 'action', now: 10, action: 'discard-and-send' });
+    expect(sim.allWrites()).toEqual([]);
+  });
+
+  it('texto que sobrou na caixa sem o spinner: "Descartar" vale', () => {
+    const sim = new Sim({ text: 'oi' });
+    sim.screen(quiet('rascunho'), 0);
+    const left = sim.log.find((e) => e.type === 'leftover') as Extract<SendEffect, { type: 'leftover' }>;
+    expect(left.canDiscard).toBe(true);
+  });
+
+  it('"na fila": hooks parados mas o spinner ainda na tela adia a conferência', () => {
+    const sim = new Sim({ text: 'oi tudo bem' }, 0);
+    sim.ev({ type: 'env', now: 0, working: true });
+    sim.screen(busy(), 0);
+    sim.screen(busy('oi tudo bem'), 100);
+    sim.tick(180);
+    sim.screen(busy(), 3_180);
+    expect(sim.phase).toBe('queued');
+    sim.ev({ type: 'env', now: 100_000, working: false });
+    const r = sim.screen(busy(), 115_000);
+    expect(sim.log.filter((e) => e.type === 'ack-lookup')).toEqual([]);
+    expect(r.effects).toContainEqual({ type: 'wake-at', at: 130_000 });
+    sim.screen(quiet(), 130_000);
+    expect(sim.log.filter((e) => e.type === 'ack-lookup')).toHaveLength(1);
   });
 });

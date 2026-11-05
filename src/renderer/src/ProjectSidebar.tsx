@@ -1,10 +1,13 @@
 import type { ProjectInfo } from '../../shared';
 import type { EditableLabelHandle, SessionState } from '@donel-dev/design-system';
 import { EditableLabel, StateDot } from '@donel-dev/design-system';
-import { ChevronDown, ChevronRight, Pin, PinOff } from 'lucide-react';
+import { ChevronDown, ChevronRight, GitBranch, Pin, PinOff, SquareCode } from 'lucide-react';
 import { useMemo, useRef } from 'react';
 import { sortSessions } from '../../shared/sessionOrdering';
 import { SESSION_NAME_MAX_LENGTH } from '../../shared/sessionName';
+import type { EditorStatus } from '../../shared/workspace';
+import type { PullRequestStatus } from '../../shared/pullRequestStatus';
+import { PullRequestIndicator } from './PullRequestIndicator';
 import styles from './ProjectSidebar.module.css';
 
 // T007 — sidebar real (ui-spec §2, US-1, FR-001). `state` das sessões é
@@ -33,6 +36,60 @@ export interface SidebarSession {
   statusText?: string;
   pinned: boolean;
   active: boolean;
+  /** Pasta da sessão (projeto ou worktree) — alvo do "Abrir no editor" e da branch; ausente = aba sem pasta. */
+  cwd?: string;
+}
+
+/**
+ * "Abrir no editor" + branch atual. Opcional: sem ele a sidebar fica como
+ * antes (nem botão, nem branch).
+ */
+export interface SidebarWorkspace {
+  readonly editor: EditorStatus;
+  /** pasta → branch; ausente/`null` = nada a mostrar. */
+  readonly branches: Readonly<Record<string, string | null>>;
+  readonly onOpenInEditor: (path: string) => void;
+  /** B3 — PR aberto da branch de cada pasta; opcional: sem ele, nenhum indicador de PR. */
+  readonly pullRequests?: SidebarPullRequests;
+}
+
+/** B3 — indicador do PR por linha + o que o painel dele precisa. */
+export interface SidebarPullRequests {
+  /** pasta → PR aberto; ausente/`null` = sem indicador. */
+  readonly byPath: Readonly<Record<string, PullRequestStatus | null>>;
+  /** Aba do Claude que recebe o "consertar": a própria sessão da linha, se for Claude nessa pasta; senão outra aba do Claude no projeto; `null` = nenhuma. */
+  readonly fixTabFor: (path: string, preferredTabId?: string) => string | null;
+  readonly onLoadDetails: (path: string) => Promise<PullRequestStatus | null>;
+  readonly onOpenUrl: (url: string) => void;
+  readonly onSendFix: (tabId: string, text: string) => void;
+}
+
+/** Indicador do PR da pasta, quando há PR aberto; nada caso contrário. */
+function PullRequestSlot({
+  path,
+  label,
+  preferredTabId,
+  workspace,
+}: {
+  path: string;
+  label: string;
+  preferredTabId?: string;
+  workspace: SidebarWorkspace;
+}): React.JSX.Element | null {
+  const prs = workspace.pullRequests;
+  const pr = prs?.byPath[path];
+  if (!prs || !pr) return null;
+  return (
+    <PullRequestIndicator
+      path={path}
+      pr={pr}
+      label={label}
+      fixTabId={prs.fixTabFor(path, preferredTabId)}
+      onLoadDetails={prs.onLoadDetails}
+      onOpenUrl={prs.onOpenUrl}
+      onSendFix={prs.onSendFix}
+    />
+  );
 }
 
 export interface ProjectSidebarProps {
@@ -53,6 +110,7 @@ export interface ProjectSidebarProps {
   onFocusOrResumeFavoriteSession: (sessionId: string) => void;
   /** T710/CA-5 — pin da SESSÃO (persistido), gesto único que também alimenta o desempate da lista geral (C2). */
   onToggleFavoriteSessionPinned: (sessionId: string) => void;
+  workspace?: SidebarWorkspace;
 }
 
 /** Linha de sessão dentro de um grupo "Favoritos" (T708). */
@@ -79,6 +137,38 @@ export interface FavoriteProjectGroup {
   readonly liveCount: number;
 }
 
+const NO_EDITOR_HINT = 'Nenhum editor encontrado no PATH (code ou cursor)';
+
+/** Botão "Abrir no editor" de uma linha. Sem editor: continua focável, com a dica, mas não faz nada. */
+function OpenInEditorButton({ path, label, workspace }: { path: string; label: string; workspace: SidebarWorkspace }): React.JSX.Element {
+  const { editor } = workspace;
+  return (
+    <button
+      type="button"
+      className={styles.editorButton}
+      onClick={() => {
+        if (editor.available) workspace.onOpenInEditor(path);
+      }}
+      aria-disabled={!editor.available}
+      aria-label={editor.available ? `Abrir ${label} no ${editor.name}` : `Abrir ${label} no editor (indisponível)`}
+      title={editor.available ? `Abrir no ${editor.name}` : NO_EDITOR_HINT}
+    >
+      <SquareCode size={12} strokeWidth={1.5} aria-hidden="true" />
+    </button>
+  );
+}
+
+/** Branch atual da pasta, discreta; nada quando não é repositório (ou ainda não foi lida). */
+function BranchLabel({ branch }: { branch: string | null | undefined }): React.JSX.Element | null {
+  if (!branch) return null;
+  return (
+    <span className={styles.branch} title={`branch ${branch}`} data-testid="sidebar-branch">
+      <GitBranch size={10} strokeWidth={1.5} aria-hidden="true" />
+      <span className={styles.branchName}>{branch}</span>
+    </span>
+  );
+}
+
 /**
  * T407/T408 (004-nomear-sessoes) — a linha de sessão virou componente próprio
  * porque o gesto de renomear precisa de um `ref` por linha (F2 abre a edição
@@ -90,11 +180,13 @@ function SessionRow({
   onFocusSession,
   onTogglePin,
   onRenameSession,
+  workspace,
 }: {
   session: SidebarSession;
   onFocusSession: (id: string) => void;
   onTogglePin: (id: string) => void;
   onRenameSession: (id: string, name: string) => void;
+  workspace?: SidebarWorkspace;
 }): React.JSX.Element {
   const labelRef = useRef<EditableLabelHandle>(null);
 
@@ -122,7 +214,10 @@ function SessionRow({
         />
         {session.statusText ? <span className={styles.sessionStatus}>{session.statusText}</span> : null}
         {session.projectName ? <span className={styles.sessionProject}>{session.projectName}</span> : null}
+        {workspace && session.cwd ? <BranchLabel branch={workspace.branches[session.cwd]} /> : null}
       </button>
+      {workspace && session.cwd ? <PullRequestSlot path={session.cwd} label={session.name} preferredTabId={session.id} workspace={workspace} /> : null}
+      {workspace && session.cwd ? <OpenInEditorButton path={session.cwd} label={session.name} workspace={workspace} /> : null}
       <button
         type="button"
         className={styles.pinButton}
@@ -186,14 +281,17 @@ function FavoriteGroupView({
   onToggleCollapsed,
   onFocusSession,
   onTogglePinned,
+  workspace,
 }: {
   group: FavoriteProjectGroup;
   onToggleCollapsed: (projectPath: string) => void;
   onFocusSession: (sessionId: string) => void;
   onTogglePinned: (sessionId: string) => void;
+  workspace?: SidebarWorkspace;
 }): React.JSX.Element {
   return (
     <div className={styles.projectGroup} data-testid={`favorite-group-${group.project.name}`}>
+      <div className={styles.projectHeader}>
       <button
         type="button"
         className={styles.projectRootToggle}
@@ -210,7 +308,11 @@ function FavoriteGroupView({
         <span className={styles.projectRoot}>{group.project.name}</span>
         {group.liveCount > 0 ? <span className={styles.sessionProject}>{group.liveCount}</span> : null}
         {group.loading ? <span className={styles.hint}>carregando…</span> : null}
+        {workspace ? <BranchLabel branch={workspace.branches[group.project.path]} /> : null}
       </button>
+      {workspace ? <PullRequestSlot path={group.project.path} label={group.project.name} workspace={workspace} /> : null}
+      {workspace ? <OpenInEditorButton path={group.project.path} label={group.project.name} workspace={workspace} /> : null}
+      </div>
       {group.collapsed
         ? null
         : group.sessions.map((session) => (
@@ -229,6 +331,7 @@ export function ProjectSidebar({
   onToggleFavoriteGroupCollapsed,
   onFocusOrResumeFavoriteSession,
   onToggleFavoriteSessionPinned,
+  workspace,
 }: ProjectSidebarProps): React.JSX.Element {
   const orderedSessions = useMemo(() => sortSessions(sessions), [sessions]);
 
@@ -249,6 +352,7 @@ export function ProjectSidebar({
               onToggleCollapsed={onToggleFavoriteGroupCollapsed}
               onFocusSession={onFocusOrResumeFavoriteSession}
               onTogglePinned={onToggleFavoriteSessionPinned}
+              workspace={workspace}
             />
           ))}
         </section>
@@ -264,6 +368,7 @@ export function ProjectSidebar({
             onFocusSession={onFocusSession}
             onTogglePin={onTogglePin}
             onRenameSession={onRenameSession}
+            workspace={workspace}
           />
         ))}
       </section>

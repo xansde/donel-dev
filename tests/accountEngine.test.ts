@@ -86,6 +86,7 @@ function makeEngine(overrides: {
   raceCheckDelayMs?: number;
   setTimeoutFn?: typeof setTimeout;
   clearTimeoutFn?: typeof clearTimeout;
+  onLivePairCaptured?: (info: { account: string; trigger: 'switch' | 'sync' | 'quit'; believedActive: string | null }) => void;
 } = {}) {
   const applySwitch = overrides.applySwitch ?? vi.fn(async (_pair, onRotatedPairCaptured) => {
     await onRotatedPairCaptured({ accessToken: 'rotated', refreshToken: 'r', expiresAt: 1, scopes: [] });
@@ -106,6 +107,7 @@ function makeEngine(overrides: {
     onSwitchPairRotated: overrides.onSwitchPairRotated,
     onSwitchCheckInconclusive: overrides.onSwitchCheckInconclusive,
     raceCheckDelayMs: overrides.raceCheckDelayMs,
+    onLivePairCaptured: overrides.onLivePairCaptured,
     setTimeoutFn: overrides.setTimeoutFn,
     clearTimeoutFn: overrides.clearTimeoutFn,
   });
@@ -780,6 +782,9 @@ describe('AccountEngine — emenda 22/09 (revisão, item 5), checagem de corrida
     const { engine } = makeEngine({ mod, config: makeConfig({ activeAccountId: 'a' }), readCurrentPair: () => writtenPair, readCurrentAccountFingerprint, setTimeoutFn });
 
     await engine.switchTo('b');
+    // fix/renovacao-credencial — a captura do switch lê a identidade (para
+    // achar o dono do par em disco); o que este teste prova é só a checagem.
+    readCurrentAccountFingerprint.mockClear();
     await scheduled[0]?.();
 
     expect(engine.getSnapshot().lastSwitchOverwritten).toBeNull();
@@ -901,5 +906,151 @@ describe('AccountEngine — emenda 22/09 (revisão, item 5), checagem de corrida
 
     expect(scheduled).toHaveLength(1); // nenhum novo agendamento depois da checagem.
     expect(mod.switchToCalls).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+
+// fix/renovacao-credencial — o par que o CLI rotaciona para a conta ATIVA só
+// era guardado no cofre no instante de um switch feito por ESTE motor
+// (`performSwitch`). C6 (research.md) previa também a captura no encerramento
+// do app, e ela nunca existiu. Qualquer coisa que tirasse o par do
+// `~/.claude/.credentials.json` sem passar por esse switch (app fechado e
+// arquivo sobrescrito por fora, outra instância do app, `/login` no terminal)
+// deixava no cofre um refresh token que o CLI já tinha gasto, e a próxima
+// renovação da conta parada voltava recusada ("Reconectar"). Além disso, a
+// captura no switch gravava na conta que o motor ACHAVA ativa, sem conferir
+// de quem era o par em disco: com a crença velha, o par de uma conta ia parar
+// na vaga de outra (mata as duas).
+describe('AccountEngine — captura do par vivo da ativa (fix/renovacao-credencial)', () => {
+  const fpConfig = (activeAccountId: string | null = 'a') =>
+    makeConfig({
+      activeAccountId,
+      localAccounts: [
+        { id: 'a', label: 'a', plan: null, fingerprint: 'fp-a' },
+        { id: 'b', label: 'b', plan: null, fingerprint: 'fp-b' },
+        { id: 'c', label: 'c', plan: null, fingerprint: 'fp-c' },
+      ],
+    });
+  const livePair: CredentialPair = { accessToken: 'live-access', refreshToken: 'live-refresh', expiresAt: 10, scopes: [] };
+
+  it('listAccounts grava no cofre o par vivo da ativa quando a identidade em disco confere', async () => {
+    const mod = new FakeMod();
+    const onLivePairCaptured = vi.fn();
+    const { engine } = makeEngine({ mod, config: fpConfig('a'), readCurrentPair: () => livePair, readCurrentAccountFingerprint: () => 'fp-a', onLivePairCaptured });
+
+    await engine.listAccounts();
+
+    expect(mod.captureCalls).toEqual([{ id: 'a', pair: livePair }]);
+    expect(onLivePairCaptured).toHaveBeenCalledWith({ account: 'a', trigger: 'sync', believedActive: 'a' });
+  });
+
+  it('não regrava o mesmo par a cada leitura — só quando o CLI rotacionou', async () => {
+    const mod = new FakeMod();
+    let current = livePair;
+    const { engine } = makeEngine({ mod, config: fpConfig('a'), readCurrentPair: () => current, readCurrentAccountFingerprint: () => 'fp-a' });
+
+    await engine.listAccounts();
+    await engine.listAccounts();
+    expect(mod.captureCalls).toHaveLength(1);
+
+    current = { ...livePair, accessToken: 'rotated-access', refreshToken: 'rotated-refresh' };
+    await engine.listAccounts();
+    expect(mod.captureCalls.map((c) => c.pair.refreshToken)).toEqual(['live-refresh', 'rotated-refresh']);
+  });
+
+  it('sem identidade legível (oauthAccount ausente logo após o switch), a sincronização periódica não grava nada', async () => {
+    const mod = new FakeMod();
+    const { engine } = makeEngine({ mod, config: fpConfig('a'), readCurrentPair: () => livePair, readCurrentAccountFingerprint: () => null });
+
+    await engine.listAccounts();
+
+    expect(mod.captureCalls).toEqual([]);
+  });
+
+  it('identidade de conta fora do pool — nunca grava o par numa vaga do cofre', async () => {
+    const mod = new FakeMod();
+    const { engine } = makeEngine({ mod, config: fpConfig('a'), readCurrentPair: () => livePair, readCurrentAccountFingerprint: () => 'fp-desconhecido' });
+
+    await engine.listAccounts();
+
+    expect(mod.captureCalls).toEqual([]);
+  });
+
+  it('crença velha (motor acha que a ativa é a, disco é de c) — grava na vaga de c, nunca na de a', async () => {
+    const mod = new FakeMod();
+    const onLivePairCaptured = vi.fn();
+    const { engine } = makeEngine({ mod, config: fpConfig('a'), readCurrentPair: () => livePair, readCurrentAccountFingerprint: () => 'fp-c', onLivePairCaptured });
+
+    await engine.listAccounts();
+
+    expect(mod.captureCalls).toEqual([{ id: 'c', pair: livePair }]);
+    expect(onLivePairCaptured).toHaveBeenCalledWith({ account: 'c', trigger: 'sync', believedActive: 'a' });
+  });
+
+  it('falha ao gravar no cofre não derruba a leitura e é tentada de novo na próxima', async () => {
+    const mod = new FakeMod();
+    let fail = true;
+    const original = mod.captureRotatedPair.bind(mod);
+    mod.captureRotatedPair = async (id, pair) => {
+      if (fail) throw new Error('vault-unavailable');
+      return original(id, pair);
+    };
+    const { engine } = makeEngine({ mod, config: fpConfig('a'), readCurrentPair: () => livePair, readCurrentAccountFingerprint: () => 'fp-a' });
+
+    await expect(engine.listAccounts()).resolves.toMatchObject({ state: 'ready' });
+    fail = false;
+    await engine.listAccounts();
+
+    expect(mod.captureCalls).toEqual([{ id: 'a', pair: livePair }]);
+  });
+
+  it('captureLivePairNow("quit") grava de forma SÍNCRONA — o encerramento do app não espera promessa', async () => {
+    const mod = new FakeMod();
+    const onLivePairCaptured = vi.fn();
+    const { engine } = makeEngine({ mod, config: fpConfig('a'), readCurrentPair: () => livePair, readCurrentAccountFingerprint: () => 'fp-a', onLivePairCaptured });
+
+    const pending = engine.captureLivePairNow('quit');
+
+    expect(mod.captureCalls).toEqual([{ id: 'a', pair: livePair }]); // já gravou, antes de qualquer await.
+    await pending;
+    expect(onLivePairCaptured).toHaveBeenCalledWith({ account: 'a', trigger: 'quit', believedActive: 'a' });
+  });
+
+  it('switch: identidade em disco é de c, motor acha que é a — o par rotacionado vai para c', async () => {
+    const mod = new FakeMod();
+    const { engine } = makeEngine({ mod, config: fpConfig('a'), readCurrentAccountFingerprint: () => 'fp-c' });
+
+    await engine.switchTo('b');
+
+    expect(mod.captureCalls.map((c) => c.id)).toEqual(['c']);
+  });
+
+  it('switch: identidade em disco é de conta fora do pool — não grava o par em vaga nenhuma, mas troca', async () => {
+    const mod = new FakeMod();
+    const { engine } = makeEngine({ mod, config: fpConfig('a'), readCurrentAccountFingerprint: () => 'fp-desconhecido' });
+
+    const outcome = await engine.switchTo('b');
+
+    expect(outcome.kind).toBe('switched');
+    expect(mod.captureCalls).toEqual([]);
+  });
+
+  it('switch: sem identidade legível, segue capturando na conta que sai (comportamento de antes)', async () => {
+    const mod = new FakeMod();
+    const { engine } = makeEngine({ mod, config: fpConfig('a'), readCurrentAccountFingerprint: () => null });
+
+    await engine.switchTo('b');
+
+    expect(mod.captureCalls.map((c) => c.id)).toEqual(['a']);
+  });
+
+  it('switch: o par em disco já é da conta que ENTRA — não sobrescreve a vaga dela com ele', async () => {
+    const mod = new FakeMod();
+    const { engine } = makeEngine({ mod, config: fpConfig('a'), readCurrentAccountFingerprint: () => 'fp-b' });
+
+    await engine.switchTo('b');
+
+    expect(mod.captureCalls).toEqual([]);
   });
 });

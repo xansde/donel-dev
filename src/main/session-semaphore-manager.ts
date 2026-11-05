@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import {
   applyPermissionHeuristic,
+  countBackgroundSubagents,
   defaultMatchesPermissionPrompt,
   INITIAL_SEMAPHORE_STATE,
   reduceSemaphoreState,
@@ -29,7 +30,36 @@ export interface SemaphoreUpdate {
   readonly state: PublicSemaphoreState;
   /** Epoch ms de quando `state` passou a valer — ui-spec §3 (contador "há Xmin") e FR-010/CA-6 (desempate por idade entre permissões pendentes). */
   readonly stateEnteredAt: number;
+  /**
+   * #109 — presente (e `true`) só quando `state` é `waiting` e o turno fechou com subagente em
+   * segundo plano vivo: a sessão vai ser acordada, então ainda não terminou. A aba mostra `waiting`
+   * igual; o Jobu não anuncia "terminou" por isso. Ver `SemaphoreMachineState.awaitingBackgroundAgents`.
+   */
+  readonly awaitingBackgroundAgents?: true;
+  /**
+   * Item 04 (cartão rico) — no hook heard from this session yet: the `working` it was born with is a
+   * guess, and the card says "desconhecido" instead of "trabalhando".
+   */
+  readonly unconfirmed?: true;
+  /** Item 04 — what the open pendings of the chat are (`question`, `permission`, `plan`); only with `permission`. */
+  readonly pendingKinds?: readonly string[];
+  /**
+   * Item 04 — the last turn ended in `StopFailure`: its code (`rate_limit`, `overloaded`…), or
+   * `unknown`. Cleared by the next prompt or tool call.
+   */
+  readonly turnFailure?: string;
 }
+
+/**
+ * `error` é o código do payload do hook `StopFailure` (`rate_limit`, `overloaded`, `authentication_failed`...; schema
+ * do CLI 2.1.3xx), `null` quando falta. notificacoes-completas: vira o motivo curto do aviso "parou com erro".
+ */
+export type StopFailureListener = (ptyId: string, error: string | null) => void;
+
+/** Mindscape, fatia 03 — see `SessionSemaphoreManager.onTurnEnded`. */
+export type TurnEndedListener = (ptyId: string, lastAssistantMessage: string | null, transcriptPath: string | null) => void;
+/** Diário de gestos — see `SessionSemaphoreManager.onPromptSubmitted`. */
+export type PromptSubmittedListener = (ptyId: string, promptLength: number) => void;
 
 export interface SessionSemaphoreManagerOptions {
   /** Intervalo do tick da heurística de fallback (spike: "a cada ~500ms"). */
@@ -62,6 +92,21 @@ export function mapHookEventName(name: unknown): SemaphoreEvent['type'] | null {
   }
 }
 
+/**
+ * B40 — the `Notification` types that mean the CLI is waiting for the owner (a dialog on its screen). The CLI also
+ * notifies `idle_prompt` about a minute after a clean `Stop` ("Claude is waiting for your input"), and `auth_success`:
+ * those are not pendings, and taking them as `permission` left stopped sessions "precisa do dono" forever, which
+ * held every message sent to them.
+ */
+const OWNER_NEEDED_NOTIFICATIONS: ReadonlySet<string> = new Set(['permission_prompt', 'worker_permission_prompt', 'elicitation_dialog', 'agent_needs_input']);
+
+/** Whether a `Notification` hook payload asks for the owner. Without a type (an old CLI), only a permission message counts. */
+export function notificationNeedsOwner(payload: Record<string, unknown>): boolean {
+  const type = payload.notification_type;
+  if (typeof type === 'string' && type !== '') return OWNER_NEEDED_NOTIFICATIONS.has(type);
+  return typeof payload.message === 'string' && /permission/i.test(payload.message);
+}
+
 export class SessionSemaphoreManager {
   private server: Server | null = null;
   private port = 0;
@@ -72,6 +117,12 @@ export class SessionSemaphoreManager {
   private readonly erroredPtyIds = new Set<string>();
   /** T079 (014-chat) - abas com pendencia aberta (PermissionRequest): o estado publico e `permission` enquanto durar. */
   private readonly pendingOpenPtyIds = new Set<string>();
+  /** Item 04 — kinds of the open pendings, by pty (see `SemaphoreUpdate.pendingKinds`). */
+  private readonly pendingKindsByPty = new Map<string, readonly string[]>();
+  /** Item 04 — ptys from which at least one hook arrived (see `SemaphoreUpdate.unconfirmed`). */
+  private readonly heardPtyIds = new Set<string>();
+  /** Item 04 — `StopFailure` code of the last turn, by pty (see `SemaphoreUpdate.turnFailure`). */
+  private readonly turnFailureByPty = new Map<string, string>();
   private readonly listeners = new Set<(update: SemaphoreUpdate) => void>();
   /**
    * Emenda 22/09 (011-contas-e-provedores, etapa 3, Fase 2, item 4) —
@@ -82,7 +133,15 @@ export class SessionSemaphoreManager {
    * auto-switch (index.ts) precisa saber especificamente de `StopFailure`,
    * sem duplicar a máquina de estados pura.
    */
-  private readonly stopFailureListeners = new Set<(ptyId: string) => void>();
+  private readonly stopFailureListeners = new Set<StopFailureListener>();
+  /**
+   * Mindscape, fatia 03 — end of turn (`Stop` and `StopFailure`) with the payload's
+   * `last_assistant_message` (`null` when missing or empty) and `transcript_path`
+   * (`null` when missing) — the `.jsonl` the CLI itself names, for the tail fallback.
+   */
+  private readonly turnEndedListeners = new Set<TurnEndedListener>();
+  /** Diário de gestos — `UserPromptSubmit`, with the prompt length only (the text is never kept). */
+  private readonly promptSubmittedListeners = new Set<PromptSubmittedListener>();
   private tickTimer: ReturnType<typeof setInterval> | null = null;
 
   private readonly tickIntervalMs: number;
@@ -152,6 +211,9 @@ export class SessionSemaphoreManager {
     this.ptyState.delete(ptyId);
     this.erroredPtyIds.delete(ptyId);
     this.pendingOpenPtyIds.delete(ptyId);
+    this.pendingKindsByPty.delete(ptyId);
+    this.heardPtyIds.delete(ptyId);
+    this.turnFailureByPty.delete(ptyId);
     for (const [claudeSessionId, mappedPtyId] of this.sessionToPty) {
       if (mappedPtyId === ptyId) this.sessionToPty.delete(claudeSessionId);
     }
@@ -167,10 +229,16 @@ export class SessionSemaphoreManager {
   }
 
   /** T079 (014-chat) - o hub do chat avisa quando a aba ganha/perde pendencia aberta. */
-  setPendingOpen(ptyId: string, open: boolean): void {
-    if (this.pendingOpenPtyIds.has(ptyId) === open) return;
+  setPendingOpen(ptyId: string, open: boolean, kinds: readonly string[] = []): void {
+    // Item 04 — the kinds too (the card's "precisa de você" says why), in a stable order.
+    const nextKinds = open ? [...new Set(kinds)].sort() : [];
+    const prevKinds = this.pendingKindsByPty.get(ptyId) ?? [];
+    const kindsChanged = nextKinds.join(',') !== prevKinds.join(',');
+    if (this.pendingOpenPtyIds.has(ptyId) === open && !kindsChanged) return;
     if (open) this.pendingOpenPtyIds.add(ptyId);
     else this.pendingOpenPtyIds.delete(ptyId);
+    if (nextKinds.length > 0) this.pendingKindsByPty.set(ptyId, nextKinds);
+    else this.pendingKindsByPty.delete(ptyId);
     this.emit(ptyId);
   }
 
@@ -180,15 +248,27 @@ export class SessionSemaphoreManager {
   }
 
   /** Emenda 22/09 (item 4) — ver comentário do campo `stopFailureListeners`. Mesmo padrão de unsubscribe de `onUpdate`. */
-  onStopFailure(listener: (ptyId: string) => void): () => void {
+  onStopFailure(listener: StopFailureListener): () => void {
     this.stopFailureListeners.add(listener);
     return () => this.stopFailureListeners.delete(listener);
+  }
+
+  /** Mindscape, fatia 03 — feeds the post-it written by the session. Same unsubscribe pattern as `onUpdate`. */
+  onTurnEnded(listener: TurnEndedListener): () => void {
+    this.turnEndedListeners.add(listener);
+    return () => this.turnEndedListeners.delete(listener);
+  }
+
+  /** Diário de gestos — a prompt was sent in the session of `ptyId`. Same unsubscribe pattern as `onTurnEnded`. */
+  onPromptSubmitted(listener: PromptSubmittedListener): () => void {
+    this.promptSubmittedListeners.add(listener);
+    return () => this.promptSubmittedListeners.delete(listener);
   }
 
   getSnapshot(ptyId: string): SemaphoreUpdate | undefined {
     const state = this.ptyState.get(ptyId);
     if (!state) return undefined;
-    return { ptyId, state: this.publicStateFor(ptyId, state), stateEnteredAt: state.stateEnteredAt };
+    return this.updateFor(ptyId, state);
   }
 
   private handleRequest(req: IncomingMessage, res: ServerResponse): void {
@@ -225,37 +305,61 @@ export class SessionSemaphoreManager {
     if (!ptyId) return; // sessão claude não rastreada por este app (ex.: settings globais do usuário rodando outra sessão em paralelo).
 
     const rawHookEventName = (payload as Record<string, unknown>).hook_event_name;
-    this.applyHookEvent(ptyId, rawHookEventName, (payload as Record<string, unknown>).reason);
+    this.applyHookEvent(ptyId, rawHookEventName, (payload as Record<string, unknown>).reason, payload as Record<string, unknown>);
   }
 
   private handleBridgeEvent(event: BridgeEvent): void {
     if (!this.ptyState.has(event.ptyId)) return; // aba sem semáforo (ou já encerrada): nada a mover.
     if (event.type === 'hook') {
-      this.applyHookEvent(event.ptyId, event.event, undefined);
+      this.applyHookEvent(event.ptyId, event.event, undefined, event.payload);
     } else if (event.type === 'session-end') {
       // A ponte já filtra clear/resume; a máquina pura protege de novo (defesa em profundidade).
-      this.applyHookEvent(event.ptyId, 'SessionEnd', event.reason);
+      this.applyHookEvent(event.ptyId, 'SessionEnd', event.reason, event.payload);
     }
     // 'conversation-switched' não mexe no estado: o semáforo é por aba (ptyId), não por conversa.
   }
 
-  private applyHookEvent(ptyId: string, hookEventName: unknown, reason: unknown): void {
+  private applyHookEvent(ptyId: string, hookEventName: unknown, reason: unknown, payload: Record<string, unknown>): void {
     // Emenda 22/09 (item 4) — dispara ANTES do mapeamento genérico (que funde
     // StopFailure em 'stop'), pro gatilho imediato de auto-switch saber que este
     // fim de turno foi por erro de API.
     if (hookEventName === 'StopFailure') {
-      for (const listener of this.stopFailureListeners) listener(ptyId);
+      const error = typeof payload.error === 'string' && payload.error.length > 0 ? payload.error : null;
+      for (const listener of this.stopFailureListeners) listener(ptyId, error);
     }
     const eventType = mapHookEventName(hookEventName);
     if (!eventType) return;
+    if (hookEventName === 'Notification' && !notificationNeedsOwner(payload)) return; // B40 — idle is not "precisa do dono"
+    // B40 — a sub-agent's end (it carries `agent_id`) is not the end of the session's turn: no state, no notice.
+    if ((hookEventName === 'Stop' || hookEventName === 'StopFailure') && typeof payload.agent_id === 'string' && payload.agent_id !== '') return;
+    // Item 04 — from now on the state is a fact, not the guess of the birth; and the failure of the
+    // last turn lasts until the session moves again.
+    this.heardPtyIds.add(ptyId);
+    if (hookEventName === 'StopFailure') {
+      this.turnFailureByPty.set(ptyId, typeof payload.error === 'string' && payload.error.length > 0 ? payload.error : 'unknown');
+    } else if (eventType === 'userPromptSubmit' || eventType === 'preToolUse') {
+      this.turnFailureByPty.delete(ptyId);
+    }
     const current = this.ptyState.get(ptyId) ?? INITIAL_SEMAPHORE_STATE;
     const event: SemaphoreEvent =
       eventType === 'sessionEnd'
         ? { type: 'sessionEnd', at: this.now(), reason: typeof reason === 'string' ? reason : null }
-        : ({ type: eventType, at: this.now() } as SemaphoreEvent);
+        : eventType === 'stop'
+          ? { type: 'stop', at: this.now(), backgroundAgents: countBackgroundSubagents(payload) }
+          : ({ type: eventType, at: this.now() } as SemaphoreEvent);
     const next = reduceSemaphoreState(current, event);
     this.ptyState.set(ptyId, next);
     this.emit(ptyId);
+    if (hookEventName === 'UserPromptSubmit') {
+      const length = typeof payload.prompt === 'string' ? payload.prompt.length : 0;
+      for (const listener of this.promptSubmittedListeners) listener(ptyId, length);
+    }
+    if (hookEventName === 'Stop' || hookEventName === 'StopFailure') {
+      const raw = payload.last_assistant_message;
+      const text = typeof raw === 'string' && raw.trim().length > 0 ? raw : null;
+      const transcriptPath = typeof payload.transcript_path === 'string' && payload.transcript_path.length > 0 ? payload.transcript_path : null;
+      for (const listener of this.turnEndedListeners) listener(ptyId, text, transcriptPath);
+    }
   }
 
   private tick(): void {
@@ -277,10 +381,27 @@ export class SessionSemaphoreManager {
     return state.state;
   }
 
+  private updateFor(ptyId: string, state: SemaphoreMachineState): SemaphoreUpdate {
+    const publicState = this.publicStateFor(ptyId, state);
+    const kinds = this.pendingKindsByPty.get(ptyId);
+    const failure = this.turnFailureByPty.get(ptyId);
+    return {
+      ptyId,
+      state: publicState,
+      stateEnteredAt: state.stateEnteredAt,
+      // #109 — a marca só vale sobre `waiting`: com pendência aberta o estado público é `permission`, e isso precisa do dono.
+      ...(publicState === 'waiting' && state.awaitingBackgroundAgents === true ? { awaitingBackgroundAgents: true as const } : {}),
+      // Item 04 — the extra facts of the rich card; whoever does not read them sees the same update.
+      ...(publicState === 'working' && !this.heardPtyIds.has(ptyId) ? { unconfirmed: true as const } : {}),
+      ...(publicState === 'permission' && kinds && kinds.length > 0 ? { pendingKinds: kinds } : {}),
+      ...(failure && publicState !== 'working' ? { turnFailure: failure } : {}),
+    };
+  }
+
   private emit(ptyId: string): void {
     const state = this.ptyState.get(ptyId);
     if (!state) return;
-    const update: SemaphoreUpdate = { ptyId, state: this.publicStateFor(ptyId, state), stateEnteredAt: state.stateEnteredAt };
+    const update = this.updateFor(ptyId, state);
     for (const listener of this.listeners) listener(update);
   }
 }

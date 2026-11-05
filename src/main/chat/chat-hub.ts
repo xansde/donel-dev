@@ -10,7 +10,7 @@
 // `chat:row-detail` (part `content` on the group id -> `RowDetail.rows`).
 
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { adapt, expandGroup, initAdapterState, viewOf, type AdapterState } from '../../shared/chat/adapter';
 import type {
   ChatAckLookupOutput,
@@ -28,7 +28,9 @@ import type {
   RowDetail,
   RowPatch,
 } from '../../shared/chat/ipc';
+import { backgroundKey, deriveBackgroundTasks } from '../../shared/chat/backgroundTasks';
 import type {
+  BackgroundTask,
   ChatPermissionMode,
   ChatReception,
   ConversationRow,
@@ -46,7 +48,7 @@ import type {
 } from '../../shared/chat/rows';
 import { classifyLine } from '../../shared/chat/transcriptEntry';
 import type { BridgeEvent, PendingDecisionHandle } from '../hook-bridge';
-import { closePending, pendingFromRequest, toHookDecision } from '../../shared/chat/pendingQueue';
+import { autoApprovalVerdict, closePending, NO_CLASSIFIER_BLOCKS, pendingFromRequest, toHookDecision } from '../../shared/chat/pendingQueue';
 import { summarizeTool } from '../../shared/chat/toolSummary';
 import { createSubmitRing, lookupAck, signalsFromEntries, type PromptSignal } from './prompt-signals';
 import { buildRowDetail } from './row-detail';
@@ -61,6 +63,12 @@ export interface ChatSourceInfo {
   readonly sessionId: string;
   readonly transcriptPath: string;
   readonly cwd: string;
+  /**
+   * Sessão renovada em voo (B36) — the conversation this one replaced in the same tab. Its
+   * history is shown above a "Sessão renovada em voo" divider, read-only, paged backward
+   * after the new conversation's own start. One level: older renewals stay in Sessões anteriores.
+   */
+  readonly predecessor?: { readonly sessionId: string; readonly transcriptPath: string; readonly handoffPath: string };
 }
 
 export interface ChatHubEvents {
@@ -78,7 +86,10 @@ export interface ChatHubDeps {
   /** Where a tab's conversation lives when the hub first hears of it. `null` = not a chat tab. */
   getSource(ptyId: string): ChatSourceInfo | null;
   readonly events: ChatHubEvents;
-  readonly diagnostics?: { unknownEntry(entry: { ptyId: string; entryType: string }): void };
+  readonly diagnostics?: {
+    unknownEntry(entry: { ptyId: string; entryType: string }): void;
+    autoApproval?(entry: { ptyId: string; tool: string; outcome: 'yolo' }): void;
+  };
   readonly now?: () => number;
   /** Activity without a transcript file for this long -> `missing`. Default 10 s. */
   readonly missingMs?: number;
@@ -90,6 +101,10 @@ export interface ChatHubDeps {
   readonly receptionPollMs?: number;
   /** Folder of `chat:save-image` attachments; allowed for `chat:open-generated`. */
   readonly attachmentsRoot?: string;
+  /** B36 — folder of the renewal handoffs; allowed for `chat:open-generated` (the divider's "abrir"). */
+  readonly handoffsRoot?: string;
+  /** Sessões remotas — the CLI of a remote tab names a path on the remote; this gives the local mirror of it. */
+  readonly mapTranscriptPath?: (ptyId: string, sessionId: string, transcriptPath: string) => string;
   readonly follower?: { readonly debounceMs?: number; readonly pollMs?: number; readonly retryMs?: number };
 }
 
@@ -111,6 +126,8 @@ export interface ChatHub {
   reportScreenState(ptyId: string, terminalNeeded: TerminalNeededReason | null): void;
   /** T076 - the owner's answer to an open pending (chat:answer). */
   answer(ptyId: string, pendingId: string, answer: PendingAnswer): ChatAnswerOutput;
+  /** Modo YOLO was just turned on: the tab's open permission requests stop waiting. Questions and plans stay. */
+  approveOpenPermissions(ptyId: string): void;
   /** Folders the tab's transcript files (and sub-agent files) may be served from. */
   transcriptRoots(ptyId: string): readonly string[];
   /** Id of the conversation the tab is on now (`null` until its first hook). */
@@ -165,6 +182,15 @@ interface PendingEntry {
   handle: PendingDecisionHandle;
 }
 
+/** B36 — the conversation a renewal replaced (`ChatSourceInfo.predecessor`), read-only, above the divider. */
+interface Prelude {
+  readonly path: string;
+  readonly divider: NoticeRow;
+  state: AdapterState;
+  /** Start offset of its oldest loaded page; `null` = its start is loaded. */
+  olderOffset: number | null;
+}
+
 /** Closed pendings kept per tab so a late `chat:answer` gets `not-open`, not `unknown`. */
 const CLOSED_PENDINGS_KEPT = 30;
 
@@ -182,8 +208,13 @@ interface Rec {
   session: Session | null;
   /** `conversation-switch` notice that opens the timeline after a switch. */
   topNotice: NoticeRow | null;
-  /** App-born notices (`account-switch`): memory only, always at the end. */
+  /** App-born notices (`account-switch`, `auto-approved`): memory only, in order of time among the rows. */
   appNotices: NoticeRow[];
+  /**
+   * B36 — the replaced conversation, once in the view. It only enters after the current
+   * conversation is loaded back to its start, so it is always on top. `null` = none (or not yet).
+   */
+  prelude: Prelude | null;
   /** Ultimos UserPromptSubmit (contrato de envio §5: 20). */
   readonly submits: ReturnType<typeof createSubmitRing>;
   /** Sinais recentes lidos do transcript (para o aceite tardio). */
@@ -194,9 +225,27 @@ interface Rec {
   screenTerminalNeeded: TerminalNeededReason | null;
   currentAction: LiveAction | null;
   readonly activeSubagents: Set<string>;
+  /** When the hub first heard of this PTY (~ its CLI process start): background launches older than this belong to a dead process. */
+  readonly bornAt: number;
+  /** Last derivation of the background tasks, reused while the adapter state and the process state are the same. */
+  bgCache: { readonly state: AdapterState | null; readonly alive: boolean; readonly tasks: readonly BackgroundTask[] } | null;
   /** Serialises attach / switch / detach for this tab. */
   chain: Promise<unknown>;
 }
+
+/** Both lists come in order of time; a notice goes in right before the first row newer than it. */
+function mergeByTime(rows: readonly ConversationRow[], notices: readonly NoticeRow[]): ConversationRow[] {
+  const out: ConversationRow[] = [];
+  let next = 0;
+  for (const row of rows) {
+    while (next < notices.length && notices[next].at < row.at) out.push(notices[next++]);
+    out.push(row);
+  }
+  return [...out, ...notices.slice(next)];
+}
+
+/** The trail is one line, whatever the tool's summary brings. */
+const AUTO_APPROVED_SUMMARY_MAX = 140;
 
 function toEntries(lines: readonly (FollowedLine | PagedLine)[]): TranscriptEntry[] {
   const out: TranscriptEntry[] = [];
@@ -247,6 +296,7 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
         session: null,
         topNotice: null,
         appNotices: [],
+        prelude: null,
         submits: createSubmitRing(SUBMIT_RING),
         signals: [],
         pendings: new Map(),
@@ -254,6 +304,8 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
         screenTerminalNeeded: null,
         currentAction: null,
         activeSubagents: new Set(),
+        bornAt: now(),
+        bgCache: null,
         chain: Promise.resolve(),
       };
       recs.set(ptyId, rec);
@@ -280,6 +332,17 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     return out;
   }
 
+  /** Segundo plano visível — derived from the followed conversation; cached by adapter state + process state. */
+  function backgroundOf(rec: Rec): readonly BackgroundTask[] {
+    const state = rec.session?.state ?? null;
+    const alive = rec.base !== 'ended';
+    const cache = rec.bgCache;
+    if (cache !== null && cache.state === state && cache.alive === alive) return cache.tasks;
+    const tasks = state === null ? [] : deriveBackgroundTasks(state.rows, { processAlive: alive, processSince: rec.bornAt });
+    rec.bgCache = { state, alive, tasks };
+    return tasks;
+  }
+
   function liveOf(rec: Rec): LiveState {
     const reason = rec.hookTerminalNeeded ?? rec.screenTerminalNeeded;
     const pendings = openPendingsOf(rec);
@@ -300,12 +363,13 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
       sends: [],
       activeSubagents: [...rec.activeSubagents],
       terminalNeeded: reason === null ? null : { reason },
+      background: backgroundOf(rec),
     };
   }
 
   function emitLiveIfChanged(rec: Rec): void {
     const live = liveOf(rec);
-    const key = `${live.status}|${live.currentAction?.toolUseId ?? ''}|${live.activeSubagents.join(',')}|${live.terminalNeeded?.reason ?? ''}|${live.pendings.map((p) => p.id).join(',')}`;
+    const key = `${live.status}|${live.currentAction?.toolUseId ?? ''}|${live.activeSubagents.join(',')}|${live.terminalNeeded?.reason ?? ''}|${live.pendings.map((p) => p.id).join(',')}|${backgroundKey(live.background)}`;
     if (key === rec.lastLiveKey) return;
     rec.lastLiveKey = key;
     deps.events.live({ ptyId: rec.ptyId, live });
@@ -362,8 +426,47 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
 
   // ---- rows ----------------------------------------------------------------
 
+  function preludeView(prelude: Prelude | null): ConversationRow[] {
+    return prelude === null ? [] : [...viewOf(prelude.state), prelude.divider];
+  }
+
   function withNotices(rec: Rec, rows: readonly ConversationRow[]): ConversationRow[] {
-    return [...(rec.topNotice !== null ? [rec.topNotice] : []), ...rows, ...rec.appNotices];
+    return [...preludeView(rec.prelude), ...(rec.topNotice !== null ? [rec.topNotice] : []), ...mergeByTime(rows, rec.appNotices)];
+  }
+
+  /**
+   * B36 — once the current conversation is loaded back to its start, the replaced one enters on
+   * top: its newest page and the "Sessão renovada em voo" divider. Returns the rows that just
+   * entered (empty when there is no predecessor or it is already in). An unreadable old transcript
+   * still gets the divider.
+   */
+  async function enterPrelude(rec: Rec): Promise<ConversationRow[]> {
+    const source = sourceOf(rec);
+    const predecessor = source?.predecessor;
+    if (source === null || predecessor === undefined || rec.prelude !== null) return [];
+    const prelude: Prelude = {
+      path: predecessor.transcriptPath,
+      divider: noticeRow(`app:session-renewed:${source.sessionId}`, 'session-renewed', {
+        path: predecessor.handoffPath,
+        name: basename(predecessor.handoffPath),
+      }),
+      state: initAdapterState({ cwd: source.cwd }),
+      olderOffset: null,
+    };
+    try {
+      const page = await readPageBackward(prelude.path);
+      if (page.lines.length > 0) prelude.state = adapt(prelude.state, toEntries(page.lines), { direction: 'backward' }).state;
+      prelude.olderOffset = page.done || prelude.state.backward.rootReached ? null : page.startOffset;
+    } catch {
+      // the old transcript is gone: the divider alone still says what happened
+    }
+    rec.prelude = prelude;
+    return preludeView(prelude);
+  }
+
+  function cursorOf(rec: Rec, session: Session): string | null {
+    if (session.olderOffset !== null) return String(session.olderOffset);
+    return rec.prelude !== null && rec.prelude.olderOffset !== null ? `p${rec.prelude.olderOffset}` : null;
   }
 
   /** `reset` patches carry the whole view: the app-born notices must ride along. */
@@ -401,6 +504,7 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
       setReception(rec, 'ok');
     }
     emitRows(rec, batch.reset ? [{ op: 'reset', rows: withNotices(rec, viewOf(session.state)) }] : decoratePatches(rec, result.patches));
+    emitLiveIfChanged(rec); // a launch or an end notification changes what runs in the background
   }
 
   // ---- session (heavy part) --------------------------------------------------
@@ -441,6 +545,9 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     } catch {
       rec.fileSeen = false; // not born yet: the follower waits for it
     }
+    // B36 — a fresh view: the replaced conversation enters again only on top of a complete current one
+    rec.prelude = null;
+    if (session.olderOffset === null) await enterPrelude(rec);
     rec.session = session;
     startFollower(rec, session, source.transcriptPath, followFrom);
     return session;
@@ -476,7 +583,7 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     return {
       source: conv,
       rows: withNotices(rec, viewOf(session.state)),
-      cursor: session.olderOffset === null ? null : String(session.olderOffset),
+      cursor: cursorOf(rec, session),
       live: liveOf(rec),
       permissionMode,
       reception: rec.reception,
@@ -518,6 +625,21 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     deps.events.pendingOpened?.({ ptyId: rec.ptyId, pending });
   }
 
+  /** The trail of what the app approved alone: a discreet line in the conversation (the bridge wrote the log). */
+  function noteAutoApproval(rec: Rec, payload: Record<string, unknown>, yolo: boolean): void {
+    if (sourceOf(rec) === null) return;
+    const tool = typeof payload.tool_name === 'string' ? payload.tool_name : '';
+    const { summary } = summarizeTool({ name: tool, input: payload.tool_input, cwd: rec.source?.cwd ?? '' });
+    const line = [summary.verb, summary.target].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim() || tool;
+    noticeSeq += 1;
+    const notice = noticeRow(`app:auto-approved:${noticeSeq}`, 'auto-approved', {
+      summary: line.length > AUTO_APPROVED_SUMMARY_MAX ? `${line.slice(0, AUTO_APPROVED_SUMMARY_MAX)}…` : line,
+      yolo,
+    });
+    rec.appNotices.push(notice);
+    if (rec.session !== null) emitRows(rec, [{ op: 'append', rows: [notice] }]);
+  }
+
   function prunePendings(rec: Rec): void {
     const closed = [...rec.pendings.values()].filter((e) => e.pending.state !== 'open');
     for (const e of closed.slice(0, Math.max(0, closed.length - CLOSED_PENDINGS_KEPT))) rec.pendings.delete(e.pending.id);
@@ -531,6 +653,22 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     entry.pending = closePending(entry.pending, state);
     prunePendings(rec);
     return true;
+  }
+
+  /**
+   * B40 — a turn that ended cannot still be asking: the main `Stop` closes the main pendings, a `SubagentStop` the
+   * ones of that sub-agent. Without it a pending the transcript never answered (no `tool_use_id` to match) stayed
+   * open, and the tab stayed "precisa do dono" after a clean end.
+   */
+  function closeEndedPendings(rec: Rec, scope: 'main' | string): void {
+    let changed = false;
+    for (const entry of [...rec.pendings.values()]) {
+      const p = entry.pending;
+      if (p.state !== 'open') continue;
+      const mine = scope === 'main' ? p.scope === 'main' : p.scope !== 'main' && p.scope.agentId === scope;
+      if (mine) changed = closeOpenPending(rec, p.id, 'resolved-elsewhere', true) || changed;
+    }
+    if (changed) emitLiveIfChanged(rec);
   }
 
   function closeAllPendings(rec: Rec, state: Exclude<PendingState, 'open'>): void {
@@ -584,13 +722,15 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
       if (event.transcriptPath === null) return;
       const previous = sourceOf(rec);
       if (previous?.sessionId === event.sessionId) return;
-      const next: ChatSourceInfo = { sessionId: event.sessionId, transcriptPath: event.transcriptPath, cwd: previous?.cwd ?? '' };
+      const transcriptPath = deps.mapTranscriptPath?.(event.ptyId, event.sessionId, event.transcriptPath) ?? event.transcriptPath;
+      const next: ChatSourceInfo = { sessionId: event.sessionId, transcriptPath, cwd: previous?.cwd ?? '' };
       const hadSession = rec.session !== null;
       closeSession(rec);
       rec.source = next;
       const reason: ConversationSwitchReason = event.source === 'resume' || event.source === 'fork' ? event.source : 'clear';
       rec.topNotice = noticeRow(`app:conversation-switch:${event.sessionId}`, 'conversation-switch', { source: reason });
       rec.appNotices = [];
+      rec.prelude = null; // B36 — a /clear after a renewal leaves the replaced conversation in Sessões anteriores
       rec.fileSeen = false;
       rec.lastActivityAt = 0;
       rec.lastGrowthAt = 0;
@@ -663,6 +803,8 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
       setBase(rec, 'ended');
     } else if (event.type === 'pending') {
       openPending(rec, event);
+    } else if (event.type === 'auto-approved') {
+      noteAutoApproval(rec, event.payload, event.yolo);
     } else if (event.type === 'expired') {
       // the CLI gave up: nobody is waiting, the terminal must take over (FR-025)
       if (closeOpenPending(rec, event.requestId, 'expired', false)) {
@@ -672,9 +814,15 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     } else if (event.type === 'resolved-elsewhere' || event.type === 'cancelled') {
       if (closeOpenPending(rec, event.requestId, event.type, false)) emitLiveIfChanged(rec);
     } else if (event.type === 'hook') {
-      if (ACTIVITY_EVENTS.has(event.event)) rec.lastActivityAt = now();
-      if (WORKING_EVENTS.has(event.event)) setBase(rec, 'working');
-      else if (IDLE_EVENTS.has(event.event) || rec.base === 'starting') setBase(rec, 'idle');
+      // A sub-agent's hooks (they carry `agent_id`) say nothing about the main turn: a background agent keeps
+      // firing them after `Stop`, and it writes its own transcript, not the one followed here.
+      const fromSubagent = typeof event.payload.agent_id === 'string' && event.payload.agent_id !== '';
+      if (!fromSubagent) {
+        if (ACTIVITY_EVENTS.has(event.event)) rec.lastActivityAt = now();
+        if (WORKING_EVENTS.has(event.event)) setBase(rec, 'working');
+        else if (IDLE_EVENTS.has(event.event) || rec.base === 'starting') setBase(rec, 'idle');
+        if (event.event === 'Stop' || event.event === 'StopFailure') closeEndedPendings(rec, 'main');
+      } else if (event.event === 'SubagentStop') closeEndedPendings(rec, event.payload.agent_id as string);
       onHook(rec, event.event, event.payload);
     }
   }
@@ -709,9 +857,29 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
       if (rec === undefined || session === null || scope !== 'main') return Promise.resolve({ rows: [], cursor: null });
       const run = session.olderQueue.then(async (): Promise<ChatLoadOlderOutput> => {
         const gen = session.gen;
+        // B36 — `p<offset>`: a page of the conversation a renewal replaced (above the divider).
+        const prelude = rec.prelude;
+        if (cursor.startsWith('p') && prelude !== null) {
+          const beforePrelude = Number(cursor.slice(1));
+          if (!Number.isSafeInteger(beforePrelude) || beforePrelude < 0 || prelude.olderOffset === null) return { rows: [], cursor: cursorOf(rec, session) };
+          let older;
+          try {
+            older = await readPageBackward(prelude.path, { beforeOffset: beforePrelude });
+          } catch {
+            return { rows: [], cursor: cursorOf(rec, session) };
+          }
+          if (rec.session !== session || session.gen !== gen || rec.prelude !== prelude) return { rows: [], cursor: null };
+          const result = adapt(prelude.state, toEntries(older.lines), { direction: 'backward' });
+          prelude.state = result.state;
+          prelude.olderOffset = older.done || prelude.state.backward.rootReached ? null : older.startOffset;
+          // a reset of the old conversation must never replace the view: only rows that changed travel
+          emitRows(rec, result.patches.filter((p) => p.op === 'replace'));
+          const rows = result.patches.filter((p) => p.op === 'prepend' || p.op === 'append').flatMap((p) => [...p.rows]);
+          return { rows, cursor: cursorOf(rec, session) };
+        }
         const before = Number(cursor);
         if (!Number.isSafeInteger(before) || before < 0 || session.olderOffset === null) {
-          return { rows: [], cursor: session.olderOffset === null ? null : String(session.olderOffset) };
+          return { rows: [], cursor: cursorOf(rec, session) };
         }
         const path = sourceOf(rec)?.transcriptPath;
         if (path === undefined) return { rows: [], cursor: null };
@@ -729,7 +897,10 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
         // `prepend` rows answer this call; anything else (a rewind, a row that changed) goes as an event.
         const rows = result.patches.filter((p) => p.op === 'prepend' || p.op === 'append').flatMap((p) => [...p.rows]);
         emitRows(rec, decoratePatches(rec, result.patches.filter((p) => p.op !== 'prepend' && p.op !== 'append')));
-        return { rows, cursor: session.olderOffset === null ? null : String(session.olderOffset) };
+        emitLiveIfChanged(rec); // an older page may hold a launch still running
+        // B36 — the current conversation reached its start: the replaced one comes in on top of it
+        const entered = session.olderOffset === null ? await enterPrelude(rec) : [];
+        return { rows: [...entered, ...rows], cursor: cursorOf(rec, session) };
       });
       session.olderQueue = run.catch(() => undefined);
       return run;
@@ -738,9 +909,14 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
     async rowDetail(input) {
       const session = recs.get(input.ptyId)?.session ?? null;
       if (session === null || input.scope !== 'main') return { part: input.part, text: '', truncated: false };
-      const flat = session.state.rows.find((r) => r.id === input.rowId);
-      const row = flat ?? viewOf(session.state).find((r) => r.id === input.rowId);
-      const children = row?.kind === 'action-group' ? expandGroup(session.state, row.id) : [];
+      // B36 — a row above the "Sessão renovada em voo" divider belongs to the replaced conversation
+      const prelude = recs.get(input.ptyId)?.prelude ?? null;
+      const holds = (state: AdapterState): boolean =>
+        state.rows.some((r) => r.id === input.rowId) || viewOf(state).some((r) => r.id === input.rowId);
+      const owner = prelude !== null && !holds(session.state) && holds(prelude.state) ? prelude.state : session.state;
+      const flat = owner.rows.find((r) => r.id === input.rowId);
+      const row = flat ?? viewOf(owner).find((r) => r.id === input.rowId);
+      const children = row?.kind === 'action-group' ? expandGroup(owner, row.id) : [];
       return buildRowDetail(row, children, input.part, readLineRef);
     },
 
@@ -816,6 +992,21 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
       return { ok: true };
     },
 
+    approveOpenPermissions(ptyId) {
+      const rec = recs.get(ptyId);
+      if (rec === undefined) return;
+      for (const { pending, handle } of [...rec.pendings.values()]) {
+        if (pending.state !== 'open') continue;
+        const payload = { tool_name: pending.match.toolName, tool_input: pending.match.toolInput };
+        if (autoApprovalVerdict({ enabled: false, yolo: true, payload, blocks: NO_CLASSIFIER_BLOCKS }) !== 'yolo') continue;
+        if (!handle.respond({ behavior: 'allow' })) continue;
+        closeOpenPending(rec, pending.id, 'answered', false);
+        deps.diagnostics?.autoApproval?.({ ptyId, tool: pending.match.toolName, outcome: 'yolo' });
+        noteAutoApproval(rec, payload, true);
+      }
+      emitLiveIfChanged(rec);
+    },
+
     transcriptRoots(ptyId) {
       const path = recs.get(ptyId)?.source?.transcriptPath ?? deps.getSource(ptyId)?.transcriptPath;
       return path === undefined ? [] : [dirname(path)];
@@ -838,7 +1029,11 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
 
     generatedFileRoots(ptyId) {
       const cwd = recs.get(ptyId)?.source?.cwd ?? deps.getSource(ptyId)?.cwd;
-      return [...(cwd !== undefined && cwd !== '' ? [cwd] : []), ...(deps.attachmentsRoot !== undefined ? [deps.attachmentsRoot] : [])];
+      return [
+        ...(cwd !== undefined && cwd !== '' ? [cwd] : []),
+        ...(deps.attachmentsRoot !== undefined ? [deps.attachmentsRoot] : []),
+        ...(deps.handoffsRoot !== undefined ? [deps.handoffsRoot] : []),
+      ];
     },
 
     dispose() {

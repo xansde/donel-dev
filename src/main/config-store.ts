@@ -3,9 +3,10 @@ import { dirname } from 'node:path';
 import type { AccountsConfig } from '../shared/accounts';
 import { defaultAccountsConfig } from '../shared/accounts';
 import type { EffortLevel, ModelAlias, PermissionMode } from '../shared/commandBuilder';
-import type { AppConfigDto, ChatPrefs, LauncherDefaultsDto, NotificationPreference, PetPrefs, ProjectScanMode, SessionNamesMap, SweepPrefs } from '../shared/config';
+import type { AppConfigDto, AppUpdatePrefs, AutoModePrefs, BrowserUploadPrefs, ChatPrefs, LauncherDefaultsDto, NotificationPreference, PetPrefs, ProjectScanMode, SessionNamesMap, SweepPrefs, YoloPrefs } from '../shared/config';
 // T014 (015-jobu-pet) — limits of the pet size: the same rule the window uses (placement.ts).
 import { PET_SIZE_DEFAULT, clampSize } from '../shared/pet/placement';
+import { withUploadFolder } from '../shared/browser/upload';
 import type {
   ArchivedPhaseSession,
   ArchivedPhaseSessions,
@@ -18,6 +19,7 @@ import type {
   PhaseDefaultsTable,
 } from '../shared/devMode';
 import { DEFAULT_PHASE_DEFAULTS } from '../shared/devModeDefaults';
+import { DEFAULT_SESSION_RENEWAL_PREFS, sanitizeSessionRenewalPrefs, type SessionRenewalPrefs } from '../shared/sessionRenewal';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
 import { defaultMigrationState, sanitizeMigrationState, type MigrationState } from './accounts/migration/migration-state';
 import { sanitizeProvidersConfig } from './providers/providers-config';
@@ -144,6 +146,19 @@ export interface AppConfig {
    */
   readonly sweep: SweepPrefs;
   /**
+   * Sessão renovada em voo (B36) — a TOP-LEVEL key (like `pet`, R20): a channel without it keeps it in
+   * `unknownFields` and writes it back intact. Exposed in the DTO.
+   */
+  readonly sessionRenewal: SessionRenewalPrefs;
+  /** Modo auto — a TOP-LEVEL key (like `pet`, R20): a channel without it keeps it in `unknownFields`. In the DTO. */
+  readonly autoMode: AutoModePrefs;
+  /** Modo YOLO — a TOP-LEVEL key (like `pet`, R20): a channel without it keeps it in `unknownFields`. In the DTO. */
+  readonly yolo: YoloPrefs;
+  /** B33 — the installers folder of the in-app update. A TOP-LEVEL key (like `pet`, R20). Not in the DTO. */
+  readonly appUpdate: AppUpdatePrefs;
+  /** Navegador integrado — the authorized upload folders. A TOP-LEVEL key (like `pet`, R20). Not in the DTO. */
+  readonly browserUploads: BrowserUploadPrefs;
+  /**
    * G1 (011-contas-e-provedores, issue 08) — chaves de TOPO que este build
    * não reconhece (ex.: um campo que só um canal/versão mais nova entende).
    * `sanitizeAppConfig` NUNCA as descarta — guarda aqui em vez de jogar fora
@@ -181,6 +196,11 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     chat: defaultChatPrefs(),
     pet: defaultPetPrefs(),
     sweep: defaultSweepPrefs(),
+    sessionRenewal: DEFAULT_SESSION_RENEWAL_PREFS,
+    autoMode: defaultAutoModePrefs(),
+    yolo: defaultYoloPrefs(),
+    appUpdate: { installersDir: null },
+    browserUploads: { folders: [] },
     unknownFields: {},
   };
 }
@@ -210,6 +230,53 @@ export function sanitizeChatPrefs(value: unknown, fallback: ChatPrefs = defaultC
   return {
     enabled: typeof candidate.enabled === 'boolean' ? candidate.enabled : fallback.enabled,
     focusMode: typeof candidate.focusMode === 'boolean' ? candidate.focusMode : fallback.focusMode,
+  };
+}
+
+export function defaultAutoModePrefs(): AutoModePrefs {
+  return { neverAsks: true };
+}
+
+/** Anything that is not a boolean keeps the fallback: the switch is on unless the owner turned it off. */
+export function sanitizeAutoModePrefs(value: unknown, fallback: AutoModePrefs = defaultAutoModePrefs()): AutoModePrefs {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return fallback;
+  const { neverAsks } = value as Record<string, unknown>;
+  return { neverAsks: typeof neverAsks === 'boolean' ? neverAsks : fallback.neverAsks };
+}
+
+export function defaultYoloPrefs(): YoloPrefs {
+  return { projects: [] };
+}
+
+/** Errs towards asking: anything that is not a project path is dropped, never kept as "on". */
+export function sanitizeYoloPrefs(value: unknown): YoloPrefs {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return defaultYoloPrefs();
+  const { projects } = value as Record<string, unknown>;
+  if (!Array.isArray(projects)) return defaultYoloPrefs();
+  return { projects: [...new Set(projects.filter((path): path is string => typeof path === 'string' && path.trim() !== ''))] };
+}
+
+/** B33 — a non-empty path, or `null` (the default folder of the alpha). */
+export function sanitizeAppUpdatePrefs(value: unknown): AppUpdatePrefs {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return { installersDir: null };
+  const { installersDir } = value as Record<string, unknown>;
+  return { installersDir: typeof installersDir === 'string' && installersDir.trim() !== '' ? installersDir.trim() : null };
+}
+
+/**
+ * Navegador integrado — only non-empty paths, once each (paths compare like Windows does). Errs towards fewer
+ * folders: anything else is dropped, never kept as authorized. The browser service checks each one again with
+ * `refusedUploadFolder` before using it.
+ */
+export function sanitizeBrowserUploadPrefs(value: unknown): BrowserUploadPrefs {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return { folders: [] };
+  const { folders } = value as Record<string, unknown>;
+  if (!Array.isArray(folders)) return { folders: [] };
+  return {
+    folders: folders.reduce<string[]>(
+      (list, folder) => (typeof folder === 'string' && folder.trim() !== '' ? withUploadFolder(list, folder.trim()) : list),
+      [],
+    ),
   };
 }
 
@@ -268,6 +335,9 @@ export function toAppConfigDto(config: AppConfig): AppConfigDto {
     tabAppearance: config.tabAppearance,
     chat: config.chat,
     pet: config.pet,
+    sessionRenewal: config.sessionRenewal,
+    autoMode: config.autoMode,
+    yolo: config.yolo,
   };
 }
 
@@ -616,6 +686,10 @@ function sanitizeLauncherDefaults(value: unknown, fallback: LauncherDefaultsDto)
     model: isOneOf(candidate.model, KNOWN_MODEL_ALIASES) ? candidate.model : fallback.model,
     effort: isOneOf(candidate.effort, KNOWN_EFFORT_LEVELS) ? candidate.effort : fallback.effort,
     permissionMode: isOneOf(candidate.permissionMode, KNOWN_PERMISSION_MODES) ? candidate.permissionMode : fallback.permissionMode,
+    // `chrome` (toggle Claude in Chrome, removido em 03/11 pelo navegador integrado) não é mais lido:
+    // um config antigo que o tenha gravado é aceito e o campo simplesmente some aqui.
+    ...(candidate.worktree === true ? { worktree: true } : {}),
+    ...(typeof candidate.where === 'string' && candidate.where.length > 0 && candidate.where.length <= 128 ? { where: candidate.where } : {}),
   };
 }
 
@@ -686,6 +760,11 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     chat: sanitizeChatPrefs(candidate.chat, defaults.chat),
     pet: sanitizePetPrefs(candidate.pet, defaults.pet),
     sweep: sanitizeSweepPrefs(candidate.sweep, defaults.sweep),
+    sessionRenewal: sanitizeSessionRenewalPrefs(candidate.sessionRenewal, defaults.sessionRenewal),
+    autoMode: sanitizeAutoModePrefs(candidate.autoMode, defaults.autoMode),
+    yolo: sanitizeYoloPrefs(candidate.yolo),
+    appUpdate: sanitizeAppUpdatePrefs(candidate.appUpdate),
+    browserUploads: sanitizeBrowserUploadPrefs(candidate.browserUploads),
     unknownFields,
   };
 }

@@ -62,6 +62,28 @@ abertas dos repos dos projetos (autor, status de checks, reviews), via
 do Alexandre? do squad? por projeto favorito?), refresh, e ação ao clicar
 (abrir no browser × abrir sessão de review com a skill /spotsys-review).
 
+> ✅ **B3 construído em 30/10 (`feature/painel-prs-sidebar`)** — decisão do dono:
+> "Na sidebar, por projeto" (itens 5 e 6 de
+> `docs/produto/pesquisa-mercado-2026-10-30.md`). Os clarifys acima, **decididos
+> por delegação do dono (2026-10-30)**, sempre pela opção mais simples:
+> - **Escopo:** só o PR **aberto** da **branch atual** de cada pasta que já está
+>   na sidebar (sessões abertas e grupos de favoritos). Nada de lista de PRs do
+>   squad nem de todas as PRs do repo; PR de quem for, desde que seja da branch.
+> - **Refresh:** sob demanda — ao montar, ao trocar/abrir projeto (a lista de
+>   pastas ou a branch muda) e ao focar a janela; cache de 30 s no main
+>   (inclusive do "sem PR"). Polling de 90 s **só** para PR com check rodando e
+>   janela visível.
+> - **Ação ao clicar:** abre um painel (o `Modal` do design-system, mesma troca
+>   "popover → Modal" do `ProjectSwitcher`) com título, "Abrir no navegador",
+>   checks com link do job, reviews, conversas não resolvidas e **"Mandar pro
+>   Claude consertar"**, que manda um prompt pronto para a aba do Claude daquele
+>   projeto pelo `sendDriver`. Sessão de review com `/spotsys-review` fica de
+>   fora (é Seazone; aqui Seazone é só adaptador opcional).
+> - **Autor/"meu PR":** não filtra — a branch já diz de quem é o trabalho.
+> - **Leitura:** só `gh` (`github-reader.ts`, allowlist: `pr-view-branch` e
+>   `pr-review-threads`, GraphQL com consulta literal de leitura). Sem `gh` ou
+>   sem login: nada aparece.
+
 ### B4. Visualizador de widgets (novo — exige spike)
 
 "Visualizador de widgets, para continuarmos tendo essas funcionalidades."
@@ -789,7 +811,7 @@ Clarify futuro: é só indicador (qual conta está ativa) ou também switcher
 (trocar sem sair do app)? Por repo (cada projeto pode ter conta diferente,
 via `includeIf` do git) ou global? Onde na UI (status bar, preferências)?
 
-### B25. Priorizar contas específicas no pool Seazone (novo — dogfooding 04/08)
+### B25. Priorizar contas específicas no pool Seazone (novo — dogfooding 04/08) — **ENTREGUE em 28/10** (`accounts.seazone.preferredLabels` + botão Preferir no painel; lista vazia = todas, para não mudar quem já usa o pool)
 
 Pedido do Alexandre durante a validação da etapa 1 da 011, com o pool real na
 tela: *"gostaria que esse mod-seazone eu pudesse priorizar algumas contas
@@ -1089,6 +1111,478 @@ aparecem como cwd de transcript. Cada repo tem a sua subpasta
 (`_archive/faxina-<data>/<repo>/`). O resumo do balão e o `resumo.html`
 agregam todos: *"Faxina em 4 repos: …"*. Um repo sem nada a limpar não
 aparece no resumo.
+
+### B30. Jobu como ponte entre o computador e o Donel Dev (ideia do dono, 30/10)
+
+**Pedido, nas palavras dele:** "tornar o Jobu a ponte entre o computador e o
+donel dev, ou até uma forma de dar mais autonomia e conseguir falar mais com
+ele. Não sei exatamente o que eu quero, mas acho que ele poderia ser mais
+útil." **Ainda é névoa:** precisa de discovery (porta A) antes de virar spec.
+
+**Hoje o Jobu:** avisa quando uma sessão termina, pede você ou falha (balão e,
+desde o #136, número na barra de tarefas), faz a faxina de worktrees e
+sessões (B29) e leva à aba ao clicar.
+
+**Direções para o discovery (não decididas):**
+- **Falar com ele:** uma caixa de texto (ou voz) no próprio Jobu que manda a
+  frase para a sessão certa ("pergunta pro Donel Dev se o PR passou") ou abre
+  uma sessão nova; resposta curta no balão.
+- **Ponte com o computador:** ele vê o que acontece fora do app (downloads,
+  área de transferência, janela ativa, notificações do Windows) e oferece
+  levar para uma sessão ("quer mandar esse print para o Claude?").
+- **Mais autonomia:** rotinas que ele dispara sozinho (resumo da manhã, o que
+  terminou de noite, PRs esperando, cota das contas) e pequenas ações com
+  confirmação, no lugar de só avisar.
+- **Caixa de atenção:** o Jobu como a lista única de "quem está me esperando"
+  (item 1 da `docs/produto/pesquisa-mercado-2026-10-30.md`).
+
+**Riscos a discutir:** privacidade (ler área de transferência e janela
+ativa), barulho (um pet que fala demais), e a regra de credenciais (nada de
+ler senhas que passem pela área de transferência).
+
+### B31. A wiki dentro do Donel Dev, para aposentar o Obsidian (pedido do dono, 30/10 — "para rodar em outro dia")
+
+**Pedido:** "Fazer a wiki ser parte do donel dev, para aposentar o obsidian."
+**Ainda não começar:** o dono marcou para outro dia; precisa de discovery antes.
+
+**O que existe hoje (fora do app):** o vault Obsidian "Claude Seazone" é a
+documentação viva (contexto dos projetos, filas `PROXIMO.md` dos gatilhos do
+CLAUDE.md, feedbacks privados, insights) e é lido/escrito pelas skills
+`wiki-ingest`, `wiki-query`, `wiki-deposit`, `wiki-write` e `wiki-synthesize`
+(via o plugin Local REST API do Obsidian + Bitwarden) e pelo MCP `obsidian`.
+Neste PC o vault não tem `Projects/donel-dev/` (verificado em 30/10), então
+há pelo menos dois lugares com cópias diferentes.
+
+**Perguntas para o discovery:**
+- Onde moram os arquivos: continuar como pasta de `.md` no disco (o Obsidian
+  vira opcional e nada se perde) ou um banco do app? Recomendação inicial:
+  pasta de `.md`, com o app sendo leitor/editor e índice.
+- O que o app precisa ter para o Obsidian não fazer falta: navegação por
+  pastas e links `[[...]]`, busca, edição markdown com prévia, backlinks,
+  frontmatter, anexos, talvez o grafo (o Mindscape é parente).
+- Como as skills `wiki-*` e o MCP passam a falar com o app em vez do plugin
+  REST do Obsidian (um MCP local do Donel Dev, como o do navegador interno?).
+- Sincronização entre os dois PCs (hoje OneDrive no outro PC) e o que é
+  privado (feedbacks de liderados nunca saem da máquina).
+- Migração: importar o vault atual sem quebrar links nem os gatilhos
+  `PROXIMO.md` citados no CLAUDE.md.
+
+### B32. Hibernar e acordar abas para economizar RAM — porta de entrada da orquestração (pedido do dono, 30/10)
+
+**Pedido:** "Conseguir abrir/fechar abas, para economizar RAM sem deixar as
+sessões lá esperando. Isso acabará se tornando uma ferramenta de orquestração.
+Muitos falam do Herdr, mas existem várias ferramentas e quero que você seja
+autônomo nisso." **A escolha da ferramenta/abordagem é do Claude**, sem pedir
+aprovação de cada passo (mesma régua da autonomia de 28/10).
+
+**Contexto:** a máquina dele fica em 73–86% de RAM com várias abas do
+`claude` abertas; cada sessão parada segura um processo node do CLI (e o
+xterm do renderer). Hoje fechar a aba perde o lugar dela; reabrir é ir em
+Sessões anteriores e retomar.
+
+**V1 proposta (execução, sem decisão de produto pendente):**
+- "Hibernar" uma aba: encerra o processo do CLI só quando a sessão está parada
+  (nunca no meio de um turno, nem com pendência aberta), guarda o
+  `sessionId`, o nome, a cor, o projeto e o rascunho do chat, e deixa a aba
+  visível esmaecida ("hibernada · clique para acordar").
+- "Acordar": relança com `claude --resume <sessionId>` na mesma aba (o app já
+  sabe retomar; ver Sessões anteriores e o fork).
+- Hibernar sozinho, opcional: aba parada há N minutos e RAM acima de um
+  limite (o painel de saúde do PC já mede RAM).
+- O semáforo, o Jobu, o Mindscape e a caixa de atenção tratam "hibernada"
+  como estado próprio (não é "terminou", não é "trabalhando").
+
+**Depois (orquestração):** fila de sessões que acordam para trabalhar e
+voltam a dormir, sessão de fundo sem aba, despacho para vários repos. O B28
+(herdr) já mostrou por que não adotar um runtime que não entrega os bytes do
+PTY e ainda é beta no Windows; a escolha entre herdr, tmux-like próprio,
+Claude Agent View (`claude agents`, `/bg`) ou nada externo é do Claude, com
+spike curto quando precisar. Ver também `docs/produto/pesquisa-mercado-2026-10-30.md`
+(Agent View, Conductor, Superset).
+
+### B33. Botão "Atualizar versão" dentro do Donel Dev (pedido do dono, 31/10)
+
+**Status (03/11):** V1 entregue no alfa (`feature/atualizar-versao`): só o canal alfa, espera as
+sessões pararem e reabre as abas com `-r`. Regras em `docs/refinamentos/atualizar-versao.md`. Falta a
+validação do dono na primeira atualização de verdade.
+
+**Pedido:** um botão dentro do app para atualizar para a versão nova, sem sair
+procurando o instalador.
+
+**Como é hoje:** não existe atualização automática (`publish: null` no
+`electron-builder.yml`, sem `electron-updater`). O alfa novo nasce toda manhã
+pela tarefa "Donel Dev Alfa diario" (06:30) como
+`Donel Dev Alfa-Setup-AAAA-MM-DD.exe` em `%USERPROFILE%\Donel Dev Alfa - diario\`;
+beta e stable são buildados à mão no checkout de cada canal. A janela "O que
+mudou" já aparece na primeira abertura de cada versão.
+
+**V1 proposta (alfa):** o app compara a própria versão/data com o instalador
+mais novo daquela pasta e, quando houver um mais novo, mostra "Versão nova
+disponível · Atualizar" (rodapé ou menu). O clique fecha o app de forma limpa e
+roda o instalador; ao reabrir, a janela "O que mudou" mostra a novidade.
+Falha da build da manhã (`FALHOU.txt`) aparece no lugar do botão, com o log.
+
+**Em aberto (decidir na spec):**
+- Beta e stable: o botão só existe no alfa, ou o app também builda o canal a
+  partir do checkout dele (mais lento, pode quebrar)?
+- Sessões abertas na hora de atualizar: pedir confirmação, esperar os turnos
+  terminarem ou hibernar e acordar depois (casa com o **B32**).
+- Pasta e nomes vêm da config, nada fixo no código (vale também para o repo
+  público, que não tem a tarefa agendada).
+- Atualização automática de verdade (`electron-updater` + GitHub Release
+  privado) é outro tamanho de feature; ver **B17**.
+
+### B34. Mindscape organizado + agente do Mindscape (pedido do dono, 31/10)
+
+**Pedido:** "Só aparece uma sessão. Como podemos organizar isso melhor?" e, em
+seguida: "Adicionar uma funcionalidade de agente do Mindscape, que organize as
+ideias e entenda o contexto completo. Pode ser algo relacionado com a wiki do
+Donel Dev" (**B31**).
+
+**O que está acontecendo (medido no `mindscape.json` dele, 31/10):** o quadro
+do Donel Dev guarda 10 posições de sessão e 8 post-its escritos por sessão, mas
+só 1 aba está aberta. Pela regra 11 da V1, sessão sem aba não é desenhada; o
+post-it dela fica, solto, sem o cartão ao lado. Somando os projetos, são ~44
+post-its órfãos (BizOps 12, Homologação 11, Donel Dev 8...). Metade se chama só
+pelo nome do projeto ("Donel Dev", "BizOps"), então não dá para saber de qual
+conversa é cada um. Nada sai do quadro sozinho.
+
+**Parte 1, sem agente (pode ir direto ao alfa):**
+- Sessão fechada aparece como cartão **adormecido** (apagado, com a data), com o
+  post-it dela colado embaixo; duplo clique retoma com `claude --resume`. Muda a
+  regra 11 da V1 e casa com o **B32** (hibernar).
+- Sessão e post-it se movem juntos.
+- Botão **"Organizar"**: colunas por situação (precisa de você · trabalhando ·
+  parada · fechadas por data); fechadas há mais de 7 dias vão para uma pilha
+  "Antigas", recolhida.
+- Quando o nome da sessão é o do projeto, o cartão mostra o primeiro pedido da
+  conversa e a data no lugar.
+- **Sessões favoritas são fixas (decisão do dono, 31/10):** o dono favorita
+  quantas quiser, sem teto (mesma regra C4 da 007), e nada as muda: o
+  "Organizar" não as move, elas nunca vão para "Antigas" e o agente da Parte 2
+  não mexe nelas.
+- **Direção do casco (dono, 31/10):** a barra lateral esquerda do Uso geral
+  fica cada vez mais recessiva; o Mindscape passa a ser o lugar principal de
+  achar e retomar sessões. Cada leva que dá ao Mindscape algo que hoje só a
+  barra faz (favoritas, recentes, retomar) é uma chance de recolher a barra
+  por padrão.
+
+**Parte 2, o agente do Mindscape (precisa de discovery, porta A):**
+- **Não é "do Claude" (decisão do dono, 31/10):** o motor do agente é
+  escolhido pelo dono entre qualquer LLM conectado, inclusive a conta ativa.
+  Nada fixo a uma IA: o agente fala com um contrato próprio do app, e cada
+  motor é um adaptador. Ponto de partida: o registro de **Provedores** que já
+  existe (011: classe A = compatível com Claude via env, classe B = CLI
+  terceiro, hoje recusada no lançamento) e as **contas** do motor de contas.
+  Provavelmente falta um adaptador de API HTTP genérica (formato OpenAI-
+  compatível cobre a maioria dos LLMs e modelos locais); decidir no discovery.
+- Sob demanda, o motor escolhido roda em segundo plano e lê os post-its do
+  quadro, os do dono e, quando precisar, os transcripts das sessões.
+- Propõe **temas** (ex.: "instalador alfa", "contas Seazone"), agrupa os
+  cartões, sugere ligações e um título para cada grupo. O dono aceita ou desfaz:
+  o agente nunca arquiva nem apaga sozinho.
+- Cada tema vira (ou atualiza) uma **página da wiki do B31**, com o que foi
+  decidido, o que está pendente e de quais sessões veio. O quadro é a vista
+  rápida; a wiki é a memória.
+- Em aberto: contrato mínimo do motor (só texto? precisa ler arquivo, ou o app
+  entrega o contexto pronto?); custo por organização; se roda sozinho
+  (ex.: ao fechar o dia) ou só quando o dono pede; formato da wiki (depende do
+  B31).
+
+### B35. Laya como "Sistema 1" do Donel Dev, aprendendo com o uso (ideia do dono, 31/10 — avaliar)
+
+**Pedido:** "Pensar na possibilidade de instaurar a Laya aqui para ir aprendendo
+e melhorando sempre."
+
+**O que é a Laya** (`NandhaKishorM/laya`, Apache-2.0, já testada pelo dono no
+BizOps em 09–11/10): um modelo pequeno e local que responde decisões tipadas
+(`choice`, `score` em níveis, `noul` sim/não) e melhora com fine-tune nos
+exemplos do próprio dono. Não é um LLM de conversa: é o "reflexo" rápido e
+barato; o LLM (qualquer motor, ver B34) fica para os casos de baixa confiança.
+
+**O que o BizOps já mediu (`BizOps/handoffs/laya-decisoes-2026-10-09.md`):**
+- Sem treino, perde do palpite trivial (prioridade: 0,22 de acerto contra 0,54
+  do "sempre MEDIUM"). Com ~400 exemplos rotulados e 3 h de treino em CPU,
+  passa (0,60) e o sim/não chega a 0,875 de precisão.
+- Peso: venv de ~950 MB + pesos de ~650 MB + checkpoint de 1,26 GB; resposta
+  ~2 s por item em CPU. Precisa de Python.
+- O modo sombra parou: 22 demandas registradas, **0** sugestões do Claude e
+  **0** decisões do dono preenchidas. O registro dependia de um ritual à parte e
+  não aconteceu.
+
+**Como caberia aqui:**
+- **Aprender com gestos que o dono já faz**, nunca com formulário: abriu a
+  sessão logo depois do aviso, desfez o agrupamento do agente, dispensou o aviso
+  do Jobu. Cada gesto vira um exemplo rotulado, guardado só na máquina.
+- **Primeira decisão candidata:** "este fim de turno precisa de você?" (`noul`),
+  lendo o post-it que a sessão escreveu (ex.: "Antes de gravar, preciso do seu
+  sim" = sim). Alimenta o destaque do Mindscape, o aviso do Jobu (ver issue #109)
+  e o "Organizar".
+- **Depois:** em qual tema um post-it entra (`choice`), barateando o agente do
+  B34: a Laya agrupa o óbvio, o LLM só vê o que ela não tem certeza.
+- Retreino local periódico, e só troca o modelo se o novo vencer o atual nos
+  mesmos exemplos de teste.
+
+**Restrições:** adaptador opcional, desligado por padrão e fora do instalador
+(roda como serviço local, `laya-serve`/`laya-mcp-server`); nenhum dado sai da
+máquina (decisão do dono de 09/10); nada de Laya no repo público além do
+contrato do adaptador. A Laya é um motor entre outros do contrato de decisão,
+não uma dependência do app.
+
+**Em aberto:** quantos exemplos os gestos geram por semana (medir antes de
+treinar: sem volume, não vale a pena); se o primeiro modelo parte do checkpoint
+do BizOps ou do zero.
+
+### B36. Sessão nova em voo ao chegar no limite de contexto (pedido do dono, 03/11)
+
+**Pedido:** "Quando chegar no limite de contexto proposto, abrir uma sessão nova no
+background e fazer todo esse processo que acabou de fazer, de maneira que se o
+usuário estiver na versão 'chat' nem perceba o que aconteceu (claro, pode deixar
+avisado, como fica o 'Trocou em voo (era a {nome da conta})')."
+
+**De onde veio:** sessão longa de homologação (03/11) que passou do orçamento de
+contexto (~250k por sessão, ver memória "Sessões por orçamento de 250k"). O dono
+pediu para "organizar tudo no vault" e recriar a sessão; o Claude então:
+1. escreveu a passagem de bastão no vault (`Projects/<projeto>/handoff-<data>.md`):
+   prioridade, estado de cada frente, comandos prontos, decisões do dia,
+   rascunhos esperando OK, o que está agendado;
+2. atualizou `context.md`, `todo.md` e o `log.md` do vault, e a memória do projeto;
+3. transformou em pendência tudo que dependia da sessão viva (agendamentos de
+   cron da sessão, agentes em background), porque a sessão nova não herda nada disso.
+Hoje isso é manual e o dono precisa pedir, esperar e abrir a sessão nova à mão.
+
+**Como deveria ser no Donel Dev:**
+- **Gatilho:** o app mede o contexto da sessão (já mostra uso/limite na statusbar)
+  e, ao cruzar o limite proposto (configurável; padrão ~250k), dispara a troca no
+  fim do turno corrente — nunca no meio de uma ferramenta.
+- **Passagem de bastão automática:** a sessão que sai roda o mesmo processo acima
+  (handoff no vault + memória + pendências), num formato fixo que a sessão nova lê
+  primeiro.
+- **Sessão nova em background**, mesma pasta e mesma conta, aberta já com o handoff
+  como primeira leitura; a aba/conversa do chat continua a mesma para o dono — o
+  histórico visível não some, só o motor por trás muda.
+- **Aviso discreto**, no mesmo padrão do "Trocou em voo (era a {conta})" da
+  statusbar: ex. "Sessão renovada em voo (contexto cheio) — passagem de bastão:
+  {link do handoff}".
+- **O que NÃO pode se perder:** agendamentos (cron/loop) e agentes em background da
+  sessão velha. Ou a troca espera eles terminarem, ou o handoff os lista e a sessão
+  nova os recria/acompanha. Nunca matar o `claude.exe` velho com trabalho vivo.
+- **Escrita a terceiros e produção:** a sessão nova herda as aprovações só pelo
+  que está escrito no handoff (rascunhos aprovados × esperando OK), nunca por
+  suposição.
+
+**Em aberto:** onde fica o handoff quando o projeto não tem vault (pasta do projeto?
+memória?); se o limite é por sessão ou por custo; se o dono pode vetar a troca
+("agora não") e quanto tempo o app espera.
+
+**Status (03/11):** entregue no alfa (item 07 do PDA `mindscape-openrig`). Regras fechadas e
+os "em aberto" respondidos em `docs/refinamentos/sessao-renovada-em-voo.md`.
+
+**Regra do resumo pré-compactação (kit do Bill, absorvida em 04/11):** a passagem de bastão
+segue as regras do RECAP do kit "time de agentes", que custam só texto no pedido de passagem:
+- **leva:** as decisões tomadas e o porquê de cada uma; o que foi descartado e por quê; a
+  armadilha que custou tempo; os ids do trabalho em aberto, sem o estado deles;
+- **não leva:** o estado de tarefa (quando o ledger do item 19 existir, ele é a autoridade); a
+  lista do que foi feito; segredo;
+- **teto:** 1.500 caracteres;
+- **quando:** antes de cada renovação ou compactação e ao parar um lugar que trabalhou;
+- **prova:** a sessão nova lê a passagem e retoma sem perguntar o que estava fazendo. Depois
+  de renovar, a ordem de leitura é: quem sou (papel) → passagem → mensagens pendentes →
+  tarefas abertas.
+
+### B37. Sessões desenham no Mindscape e abrem sessões a partir do desenho (pedido do dono, 04/11)
+
+**Pedido:** "O que precisa pôr no backlog é as sessões poderem desenhar no
+mindscape e gerar as sessões. Esperava que isso funcionasse."
+
+**Hoje:** a sessão só escreve o post-it dela; o MCP `donel` que ela enxerga só
+tem o navegador. Ela não cria forma, seta nem texto no quadro, e não abre outra
+sessão a partir do que está desenhado. O desenho é o canal do dono com o agente
+(ele pensa graficamente), então hoje o canal só anda num sentido.
+
+**Como deveria ser:**
+- **Desenhar:** ferramentas no MCP `donel` para a sessão ler o quadro do projeto
+  e criar ou editar formas, setas, textos e grupos (ex.: devolver um fluxo
+  desenhado em vez de um texto longo). O renderer continua dono do estado e só
+  `mindscape-store.ts` grava (ADR 0004); a sessão pede, o app aplica, e o gesto
+  é desfazível pelo dono como qualquer outro.
+- **Gerar sessões:** a partir de um desenho (um cartão, um grupo, um fluxo), a
+  sessão, ou o dono num gesto, abre sessões novas com o pedido tirado do desenho,
+  e cada uma aparece no quadro ligada à forma de onde veio. Casa com o molde de
+  fluxo da Esteira no Mindscape (terminais pré-definidos, caminhos pelo output).
+- **Limites:** a sessão não apaga o que o dono desenhou, nem as favoritas (B34);
+  abrir sessão segue o launcher (conta, modelo, permissões), sem argv novo
+  escondido. Nada preso ao Claude: o contrato é do app (B34, LLM agnóstico).
+
+**Em aberto:** quantas sessões uma sessão pode abrir sem o dono confirmar; se o
+desenho da sessão ganha marca visual (autor) para o dono distinguir do dele.
+
+### B38. Sessão em lugar remoto (VPS) fica capada: sem o MCP `donel`, sem anexos, sem as ferramentas do PC (achado 04/11)
+
+**Pedido:** "Salva esse problema como algo a ser corrigido nas próximas versões
+do donel."
+
+**O que aconteceu (04/11):** uma sessão Líder aberta pelo Donel Dev na VPS
+(`vps-alexandrelentz`, via Tailscale SSH) subiu sem o servidor `donel`. O CLI
+recebeu `HTTP 403 — Host not allowed`. Sem ele, a sessão:
+- não leu o quadro nem abriu sessões (`sessao_*`, `quadro_*`), então o papel de
+  Líder ficou inútil;
+- não conseguiu mostrar um HTML que ela mesma gerou: o arquivo ficou no disco da
+  VPS, o navegador do dono está no PC, e o painel do navegador integrado
+  (`navegador_*`) era justamente o caminho que faltava. O contorno foi subir um
+  `http.server` no IP do Tailscale, e o dono perguntou, com razão, por que
+  precisava de servidor para abrir uma página.
+
+**Causa (confirmada no código, 04/11):** a aba remota abre o `ssh` com
+`-R 127.0.0.1:<porta remota>:127.0.0.1:<porta do app>` (`buildAttachSshArgs` em
+`src/main/remote-session.ts`). A porta remota é sorteada (`pickRemotePort`) e o
+`mcp.json` da sessão aponta para ela (na VPS, `127.0.0.1:30364`). O CLI manda
+`Host: 127.0.0.1:<porta remota>`, mas o `checkMcpHttpRequest`
+(`src/shared/browser/mcp.ts`) só aceita `127.0.0.1:<porta do app>` ou
+`localhost:<porta do app>`. As duas portas nunca coincidem, então **toda**
+sessão remota leva 403. A trava existe contra DNS rebinding e deve continuar; o
+que falta é ela conhecer as portas dos túneis que o próprio app abriu.
+
+**Como deveria ser:**
+- **MCP `donel` funciona em lugar remoto.** Ou o túnel usa na VPS a mesma porta
+  do app, ou o app aceita o `Host` da porta do túnel que ele mesmo abriu (lista
+  explícita, nunca qualquer host). O token por sessão continua obrigatório.
+- **Falha visível.** Se o `donel` não conectar, o cartão da sessão mostra isso
+  (hoje só a própria sessão descobre, no meio da conversa).
+- **Abrir arquivo do lugar remoto no painel.** Quando a sessão remota pede para
+  mostrar um arquivo local dela (HTML, imagem, PDF), o app busca o arquivo pelo
+  mesmo `ssh` e abre no navegador integrado. Nada de servidor improvisado na VPS.
+
+**Pronto quando:** numa sessão aberta na VPS, `sessao_quem_sou` responde e um
+HTML gerado lá abre no painel do Donel Dev no PC, sem passo manual.
+
+**Mais furos do lugar remoto, achados na mesma sessão (04/11).** O dono resumiu:
+"Porcaria hein, vou te ligar como este computador. To muito capado." Uma sessão
+na VPS tem que ser tão capaz quanto uma no PC, ou dizer na cara o que não tem.
+1. **Anexo do chat não chega.** O print colado no chat virou só o caminho
+   `C:\Users\compu\AppData\Roaming\donel-dev\chat-attachments\…`, que não existe
+   na VPS. O dono teve que mandar por `scp` à mão (e errou o usuário na primeira
+   tentativa: `compu` em vez de `alexandrelentz`). O app tem que copiar o anexo
+   para o lugar remoto pelo mesmo `ssh` e passar o caminho remoto à sessão.
+2. **Ferramentas do PC não vão junto.** A sessão remota não tinha o Slack, então
+   não leu um post do canal das lideranças. O lançamento num lugar remoto deve
+   mostrar antes quais MCPs e skills a sessão vai ter lá, comparado com o PC, e
+   oferecer levar a configuração. **Cuidado:** config de MCP pode carregar token;
+   levar segredo para outra máquina é tocar credencial, que só
+   `src/main/accounts/` pode. Sem decidir isso, a sessão só avisa o que falta.
+3. **Não fica claro onde a sessão roda.** O dono colou no chat um comando que era
+   para o terminal do PC. O cartão e a aba de uma sessão remota precisam dizer
+   "rodando na VPS" sem ambiguidade, e o que a sessão manda o dono rodar deve
+   dizer em qual máquina.
+4. **Lugar remoto sem preparo.** Na VPS faltava identidade do git (o commit
+   falhou até passar `-c user.name/-c user.email`) e o clone estava atrasado 15
+   PRs (a sessão concluiu errado que um código não existia). Ao registrar um
+   lugar, e a cada lançamento, o app confere identidade do git, `gh` logado e
+   `git fetch` do projeto, e avisa o que falta.
+
+**Teste:** entra na regra de testes enxutos (guard de rede do MCP): a trava
+aceita a porta de um túnel registrado e continua recusando qualquer outro
+`Host`.
+
+### B39. Retomar uma sessão que vive num lugar remoto (achado 04/11)
+
+**Feedback do dono:** "Não consegui retomar a outra sessão Líder. Talvez por
+ela ser na VPS e aqui ser no meu PC."
+
+**Causa (confirmada no código, 04/11):** todo Retomar montava a aba sem
+`remoteId` — `handleMindscapeResume` (dois cliques no lugar fechado),
+`handleFocusOrResumeFavoriteSession` (Favoritos), `handleResumeSession` e
+`handleForkSession` (Sessões anteriores) e `handleMapResume` (mapa da
+Esteira), em `src/renderer/src/App.tsx`. Sem `remoteId`, o `pty:create` cai no
+`claude -r <id>` local (`src/main/index.ts`, handler de `PTY_CHANNELS.create`),
+e o CLI do PC não acha a conversa, que está no `~/.claude/projects` da VPS. O
+app não guarda em lugar nenhum onde uma sessão rodou: o `~/.donel/s/<sid>` da
+VPS é apagado quando o dono fecha a aba (`buildEndScript`), e o espelho local
+(`<userData>/remote-transcripts/<sid>.jsonl`) não diz de qual lugar veio.
+Efeito colateral: como o retomar sai com código 1 em segundos, o CA-11
+(`sessions:forgetIfOrphan`) conferia o `.jsonl` no PC, não achava e **apagava a
+sessão do registro** (some dos Favoritos).
+
+**Corrigido (PR #205, `fix/retomar-sessao-remota`):** retomar abre a sessão onde ela
+vive, sem o dono escolher nada.
+- Novo canal `sessions:whereLives`: se o `.jsonl` está neste computador (na
+  pasta do projeto ou em qualquer outra de `~/.claude/projects`, caso de
+  worktree), retoma aqui. Senão pergunta a cada lugar remoto, por `ssh`, se a
+  conversa está na pasta do projeto lá (`findRemoteTranscript` em
+  `src/main/remote-session.ts`, só leitura). O que tem a conversa retoma
+  (`ssh` + `claude -r <id>` no tmux, pelo caminho normal da sessão remota).
+- Lugar que não responde nunca conta como "não tem": se a conversa não está
+  aqui e algum lugar ficou calado, o app avisa ("a conversa não está neste
+  computador, e o lugar remoto «VPS» não respondeu") e não abre nada.
+- `forgetIfOrphan` não apaga a entrada de uma sessão que tem espelho remoto.
+
+**Fica de fora (próximo passo):**
+- **Trazer a conversa para este computador.** Copiar o JSONL do lugar remoto
+  para o `~/.claude/projects` do PC, para retomar aqui. **Cuidado:** o
+  transcript pode carregar dado sensível (o que foi colado, lido ou respondido
+  na sessão); copiar é decisão do dono, por sessão, nunca automática.
+- **Sessões anteriores não listam as conversas remotas.** O índice lê só o
+  `~/.claude/projects` do PC. Hoje a sessão remota fechada se retoma pelo
+  Mindscape e pelos Favoritos.
+- **Fork de sessão remota com o tmux da original vivo** reataria a original
+  (o setup acha `donel-<sid>` vivo). Raro: a original viva já tem aba.
+
+**Pronto quando:** estando no PC, dois cliques na Líder fechada da VPS abrem a
+conversa dela na VPS, com o histórico; com a VPS desligada, aparece o aviso e
+nenhuma aba vazia.
+
+### B40. Mensagem entre sessões presa em "Retida" e sessão parada como "precisa do dono" (prioridade máxima do dono, 04/11)
+
+**Pedido:** "sempre que uma mensagem é enviada, eu PRECISO que ela seja enviada
+através desse modelo. Não que fique esperando no modo chat. É inviável eu ficar
+acessando as telas e apertando para tentar de novo." "Esse modelo" é a fila
+nativa do CLI ("Press up to edit queued messages").
+
+**O que acontecia:** `sessao_enviar` e o aviso "◆ … terminou" respondiam
+"Retida: o dono está digitando lá ou há uma permissão aberta" e não entravam.
+Sessões que fecharam o turno limpo apareciam "precisa do dono". Quando a fila
+soltava, avisos chegavam em dobro. A fila sumia num reinício.
+
+**Causa (confirmada no código):**
+1. **Estado falso.** `mapHookEventName` (`src/main/session-semaphore-manager.ts`)
+   levava **todo** `Notification` para `permission`. O CLI manda
+   `notification_type: idle_prompt` cerca de um minuto depois de um `Stop` limpo
+   ("Claude is waiting for your input"), e a sessão parada virava "precisa do
+   dono" até o próximo prompt. Agravante: uma pendência que o transcript nunca
+   respondia (sem `tool_use_id` para casar) ficava aberta no `chat-hub.ts` e o
+   `publicStateFor` (`session-semaphore-manager.ts`) mantinha `permission`.
+2. **Retenção própria.** `AgentBridge.deliver`/`isBlocked`
+   (`src/renderer/src/Mindscape/agentBridge.ts`) segurava numa fila em memória
+   do renderer por `ownerTyping` (rascunho do composer) ou por
+   `stateOf === 'permission'` (a marca falsa acima). Nunca soltava.
+3. **Aviso em dobro.** Nada impedia o mesmo fim de turno de virar dois avisos (um
+   `Stop` repetido, ou o `Stop` de um subagente com `agent_id`, que relia o fim
+   do transcript e trazia o texto do turno anterior).
+
+**O que mudou (PR #209, `fix/mensagem-direto-cli`):**
+- O semáforo só vira `permission` com `Notification` que pede o dono
+  (`permission_prompt`, `worker_permission_prompt`, `elicitation_dialog`,
+  `agent_needs_input`); `idle_prompt` e `auth_success` não contam. `Stop` de
+  subagente não é fim do turno da sessão (nem estado, nem aviso).
+- O `Stop` principal fecha as pendências principais abertas; o `SubagentStop`
+  fecha as daquele subagente.
+- O `AgentBridge` não retém mais nada: a mensagem e o aviso vão na hora para o
+  driver de envio do destino, que escreve na fila do próprio CLI mesmo no meio
+  do turno. O único "espera" é o do driver diante de um diálogo real desenhado
+  na tela (permissão, pergunta): ele espera sem relógio e envia sozinho quando
+  o diálogo fecha. A resposta do `sessao_enviar` diz isso quando a tela mostra
+  um prompt de permissão.
+- Cada fim de turno é anunciado uma vez (mesma sessão + mesmo texto = um aviso).
+
+**Próximo passo (fora deste PR):** a fila do driver de envio vive em memória do
+renderer; uma mensagem que espera um diálogo real se perde se o app reiniciar
+antes de ele fechar. Persistir essa fila por aba (no `userData`, com a ordem)
+exige mexer no driver do chat, que é compartilhado com o composer do dono.
+
+**Pronto quando:** no alfa, o Líder manda `sessao_enviar` para uma sessão
+trabalhando e para uma parada há mais de um minuto, e as duas recebem sem
+ninguém clicar; a parada não aparece "precisa do dono"; cada "terminou" chega
+uma vez.
 
 ## Decidido, aguardando spec
 

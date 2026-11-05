@@ -27,7 +27,7 @@ via `CLAUDE_CONFIG_DIR`.
   ato humano") **caiu**, aqui e no baseline do squad.
 - **Merge em `staging` (redefinido pelo dono em 2026-10-08)**: **o Claude
   mergeia** os PRs contra `staging` assim que a verificação automática
-  (vitest, typecheck, build, smokes da camada pertinente) estiver verde, sem
+  (`npm run verify` = typecheck + test + build; ver "Testes enxutos" abaixo) estiver verde, sem
   esperar o dono ("mergeie você. Não fica me esperando para mergear nada").
   A bateria manual no alfa passa a ser validação **depois** do merge, não
   pré-requisito. Sempre `gh pr merge --merge`, nunca `--admin`. `main` e o
@@ -45,6 +45,23 @@ via `CLAUDE_CONFIG_DIR`.
   só — notificações e agrupamento de taskbar tratam os três como o mesmo app.
   O isolamento COMPLETO (userData por canal) continua sendo o **B10** do
   `specs/backlog.md`, agora opcional.
+
+## Alfa diário e novidades da versão (pedido do dono, 28/10)
+
+- O dono quer um instalador novo do alfa pronto quando pedir e uma janela "O que
+  mudou" na primeira abertura de cada versão.
+- **Todo PR mergeado em `staging` que muda algo visível acrescenta um item em
+  `src/renderer/src/patchnotes/notes.ts`**, no dia do merge (cria o dia se não
+  existir). Texto de usuário: o que muda para ele, sem arquivo, PR ou jargão.
+- Build **sob demanda** (dono, 03/11: "Desliga essa automação. Eu vou falar quando eu
+  quiser"; antes houve 06:30 diário e, por uma hora, a cada 10 min — os dois
+  derrubados). A tarefa agendada "Donel Dev Alfa diario" fica **desativada**. O
+  instalador sai só quando o dono pede, ou uma vez ao fim de uma leva de trabalho,
+  rodando `scripts/build-alfa-diario.ps1` à mão (checar RAM livre antes). O app
+  mostra "Versão nova · Atualizar" (B33) quando o instalador aparece. O script
+  builda `origin/staging` na worktree `.claude/worktrees/alfa-diario` e deixa
+  `Donel Dev Alfa-Setup-AAAA-MM-DD-HHMM.exe` em `%USERPROFILE%\Donel Dev Alfa -
+  diario\` (guarda os 8 últimos). Falha deixa `FALHOU.txt` e o `build.log` lá.
 
 ## Repo público (canal stable) — aberto em 2026-07-27
 
@@ -114,9 +131,37 @@ sensível.
   `src/main/accounts/migration/` já mora dentro de `src/main/accounts/`, é o
   mesmo perímetro — o par migrado do `.credentials.json` de um perfil vai
   direto pro cofre, nunca passa por variável de retorno exposta.
-- **TDD com escopo**: CommandBuilder, SessionIndexer e os módulos de
-  `src/main/accounts/` (motor, mods, migração) são puros com vitest; PTY/UI
-  validam por smoke roteirizado (T014).
+  **Lugares remotos — emenda do dono (04/11, "manda bala para controlar as
+  contas da VPS também")**: o mesmo perímetro grava o par da conta escolhida no
+  `~/.claude` de um lugar remoto (VPS) por `ssh`, em
+  `src/main/accounts/remote-claude-state.ts`. O par só viaja pelo stdin do ssh
+  (nunca argv, log ou erro); a escrita é compare-and-swap; uma conta nunca fica
+  ativa em dois lugares (refresh token de uso único). Desenho no
+  [ADR 0005](docs/adr/0005-contas-em-lugares-remotos.md). Continua proibido
+  qualquer outro módulo tocar credencial.
+  **Navegador interno não é exceção** (30/10): login no painel é o dono
+  digitando; o Chromium guarda os cookies da partição `persist:donel-browser`
+  e o código do app não os lê nem grava (`docs/design/navegador-interno.md`).
+- **Testes enxutos (decisão do dono, 03/11 — substitui o "TDD com escopo" e
+  as camadas de teste de 08/10)**: "o mais próximo de zero, focando no que
+  realmente é importante". A suíte tem ~17 arquivos vitest e **um** smoke.
+  Teste só entra para guardar o que quebraria **sem o dono perceber usando o
+  app**: credencial (`src/main/accounts/`), argv de lançamento, dado
+  persistido que um canal pode apagar (config, `mindscape.json`, registro de
+  sessões), apagar/matar coisa (faxina, worktree, kill guard), guard de
+  navegação e mensagem do chat que some ou duplica. Tela, layout, texto,
+  fluxo de UI e "renderiza" **não** ganham teste; se quebrar, o dono vê no
+  alfa. Nada de teste por ID de spec, nem dois testes da mesma coisa.
+  - Verificação padrão: `npm run verify` (typecheck + `npm test` + `electron-vite
+    build`). O build entrou em 05/11: um merge deixou uma chave aberta no CSS,
+    typecheck e testes passaram e o instalador quebrou.
+  - **Conflito com `staging` é do Dev, nunca do Revisor**: o Dev mescla a base,
+    resolve e roda `npm run verify` de novo; PR com conflito volta ao Dev, e o
+    Revisor só aprova e mergeia PR limpo.
+  - `npm run test:smoke` (abre o app UMA vez, CLI falso) só quando mexer em
+    main/preload/PTY ou em dependência nativa. **Nunca** rodar smokes em
+    lote nem criar smoke novo sem o dono pedir: abrir instâncias do app
+    atrapalha o trabalho dele.
 - UI em pt-BR; código, comentários e identificadores em inglês.
 
 ## Issue tracker (para skills que precisam de um)
@@ -207,8 +252,14 @@ fase `⬜` da fila
 prontos, um por fase (+ retomada), em `prompt.md`, na mesma pasta.
 
 **Escopo:** 4 contas próprias no alfa, trocando entre elas **durante** sessões
-vivas. **Pool/mod Seazone fora por decisão do dono (13/09)** — sai da UI na
-Fase 1; remover o código espera instrução dele.
+vivas. O pool Seazone saiu da UI em 13/09 e **voltou em 28/10 como opção**:
+só entra quando `accounts.seazone` está na config, e as contas dele aparecem
+no fim da lista, ao lado das locais (`local-with-pool-mod.ts`).
+
+**Ferramentas da Seazone (decisão do dono, 28/10):** o Donel Dev pode aceitá-las
+para facilitar a vida dele, mas **nunca fixo à Seazone**: toda integração é
+adaptador opcional, desligado por padrão, com URL e nomes vindos da config,
+nada hardcoded no core nem default que vaze para o repo público.
 
 A ordem é **estritamente sequencial**. A **Fase 0 era o gate** da promessa
 central da 011 — "trocar de conta sem reiniciar sessão" — e **passou com CLI
@@ -262,6 +313,14 @@ aprovado, e tudo atrás de `chat.enabled` até a virada (Fase 7).
   a leitura de carga renova o par vencido de conta **parada** (emenda da D4,
   decisão do dono). Nunca renovar a ativa pelo cofre: o refresh token dela lá já
   foi consumido pelo CLI, e a recusa marcaria "Reconectar" à toa.
+
+## Domínio (mantido pelo /refinamento)
+
+- Vocabulário canônico: `docs/glossario.md` — use estes termos em código e conversa.
+- Decisões de domínio e arquitetura: `docs/adr/` — consulte antes de propor mudança.
+- Mindscape: quadro próprio em React + `roughjs`, não Excalidraw; o renderer é dono do estado e só `src/main/mindscape-store.ts` grava `<userData>/mindscape.json` ([ADR 0004](docs/adr/0004-base-do-quadro-mindscape.md), [design](docs/design/mindscape.md)).
+- **Alcance / hierarquia entre sessões** (dono, 04/11): dirigir outra sessão com poder de matar (hoje `sessao_fechar`) só com hierarquia — no quadro, abaixo pelas setas (direta ou em cadeia); entre quadros, só o Líder de um quadro com `reach: 'all'` (botão "Alcance" no Mindscape; ausente = só o próprio). A regra mora **só** em `src/shared/mindscape/reach.ts`; quem precisar de alcance reusa, não recria. O Líder único (aba marcada pelo Jobu, [ADR 0007](docs/adr/0007-lider-unico.md)) é um ramo dela: fica acima do topo de todo quadro, sem a marca "Alcance".
+- `mindscape.json`: campo novo no documento **sobe o `schemaVersion`**. O `parseMindscapeDoc` descarta o que não conhece e o `userData` é compartilhado entre canais, então um canal mais antigo gravaria por cima e apagaria o campo; com a versão maior ele fica read-only ([design do desenho](docs/design/mindscape-desenho.md)).
 
 ## Vault
 

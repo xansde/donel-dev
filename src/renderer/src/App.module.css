@@ -184,6 +184,23 @@
   color: var(--text-muted);
 }
 
+.sessionHeaderWorktree {
+  flex: none;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--accent);
+}
+
+.sessionHeaderYolo {
+  flex: none;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: var(--weight-semibold);
+  color: var(--zone-warn);
+}
+
 .sessionHeaderFase {
   flex: none;
   white-space: nowrap;
@@ -204,6 +221,12 @@
 /* T056 (014-chat, D-C22) — controles que o chat soma ao cabeçalho: Modo Foco, Chat | Terminal. */
 .sessionHeaderControl {
   flex: none;
+}
+
+/* B36 — sessão renovada em voo: the strip between the session header and the session. */
+.renewalStrip {
+  flex: none;
+  margin: var(--panel-padding) var(--panel-padding) 0;
 }
 
 .terminal {
@@ -388,4 +411,18 @@
 .devModeArtifactHint {
   composes: devModeHint;
   cursor: default;
+}
+
+/* Saúde do computador — the status row: the design-system StatusBar fills it, the health indicator
+   sits at the right end with the same height. */
+.statusRow {
+  display: flex;
+  min-width: 0;
+  height: var(--statusbar-height);
+}
+
+.statusBarFill {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
 }

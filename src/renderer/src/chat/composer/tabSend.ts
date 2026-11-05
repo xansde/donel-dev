@@ -8,7 +8,7 @@
 import type { TerminalPaneHandle } from '../../TerminalPane';
 import { getChatStore, type ChatStore } from '../ChatStore';
 import { markOpensScreen } from '../useTerminalNeededReporter';
-import { SendDriver, type SendDriverPorts, type SendRequest } from '../sendDriver';
+import { SendDriver, type SendDriverPorts, type SendItemView, type SendRequest } from '../sendDriver';
 import type { DraftImage } from './attachmentsModel';
 import type { DraftPaste } from './pastedText';
 
@@ -43,6 +43,10 @@ function buildPorts(w: () => Wired, store: ChatStore): SendDriverPorts {
     opensScreen: () => {
       const ptyId = w().source.terminal()?.ptyId ?? w().ptyId;
       if (ptyId !== null) markOpensScreen(ptyId);
+    },
+    reportFailure: (detail) => {
+      const ptyId = w().source.terminal()?.ptyId ?? w().ptyId;
+      if (ptyId !== null) store.reportSendFailure(ptyId, detail);
     },
   };
 }
@@ -105,6 +109,52 @@ export function rewireTab(tabId: string, store: ChatStore = getChatStore()): voi
 export function sendToTab(tabId: string, source: TabTerminalSource, request: SendRequest, store?: ChatStore): string {
   const driver = sendDriverFor(tabId, source, store);
   return driver.enqueue(request);
+}
+
+/** How a send to another session ended, for the one that sent it (`sessao_enviar`). */
+export type SendOutcome =
+  | { readonly kind: 'entrou' }
+  | { readonly kind: 'na-fila' }
+  | { readonly kind: 'nao-foi'; readonly reason: string }
+  | { readonly kind: 'enviando'; readonly reason?: string };
+
+/**
+ * 05/11 — sends and waits for the destination's CLI to take it: `entrou` (submitted), `na-fila` (the CLI queued it
+ * mid-turn), `nao-foi` (the machine gave up, with its reason) or, past `waitMs`, `enviando` (still trying). Before,
+ * the sender heard "Entregue" while the message sat unsubmitted in the box.
+ */
+export function sendToTabAndWait(tabId: string, source: TabTerminalSource, request: SendRequest, waitMs: number, store?: ChatStore): Promise<SendOutcome> {
+  const driver = sendDriverFor(tabId, source, store);
+  return new Promise<SendOutcome>((resolve) => {
+    let last: SendItemView | undefined;
+    let off: () => void = () => undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const done = (outcome: SendOutcome): void => {
+      off();
+      if (timer !== undefined) clearTimeout(timer);
+      resolve(outcome);
+    };
+    const check = (): boolean => {
+      const item = driver.getItems().find((candidate) => candidate.id === id);
+      if (item === undefined) {
+        // A finished send leaves the list once the transcript row takes over: it went in.
+        if (last !== undefined && last.state !== 'failed') done({ kind: 'entrou' });
+        return last !== undefined;
+      }
+      last = item;
+      if (item.state === 'accepted') done({ kind: 'entrou' });
+      else if (item.state === 'queued') done({ kind: 'na-fila' });
+      else if (item.state === 'failed') done({ kind: 'nao-foi', reason: item.reason ?? 'não foi' });
+      else return false;
+      return true;
+    };
+    const id = driver.enqueue(request);
+    if (check()) return;
+    off = driver.subscribe(() => {
+      check();
+    });
+    timer = setTimeout(() => done({ kind: 'enviando', ...(last?.reason ? { reason: last.reason } : {}) }), waitMs);
+  });
 }
 
 export function disposeTabSend(tabId: string): void {

@@ -1,0 +1,136 @@
+/*
+ * Painel de progresso do Jobu — lives in the body of the bubble of the Líder, in place of the last line, like the
+ * history. Color only says state (design-system.md): the fill of a bar is the state of the task, the rest is text.
+ */
+.panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.stamp {
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.boards,
+.tasks {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The tasks of a board are its sub-items: indented under it, with a thin rule that ties them to the board. */
+.tasks {
+  gap: 8px;
+  margin-top: 8px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+}
+
+.board,
+.task {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.boardTitle,
+.taskTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.boardTitle {
+  font-family: var(--font-mono);
+  font-weight: var(--weight-semibold);
+}
+
+.end {
+  flex: none;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+/* After the deadline: said in words in the source line; here only a quiet mark. */
+.end[data-late='true']::after {
+  content: ' · atrasa';
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+}
+
+/* The bar: 4px, like the meter of the smart zone. */
+.bar {
+  display: block;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+
+.fill {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--state-working);
+}
+
+.fill[data-state='entregue'] {
+  background: var(--state-waiting);
+}
+
+.fill[data-state='rejeitada'] {
+  background: var(--state-permission);
+}
+
+.fill[data-state='aceita'] {
+  background: var(--state-done);
+}
+
+.meta,
+.source {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.source {
+  font-style: italic;
+}
+
+.empty,
+.how {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}

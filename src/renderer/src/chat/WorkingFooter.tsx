@@ -21,7 +21,7 @@ export interface FooterTerminal extends StoppableTerminal {
 export interface WorkingFooterProps {
   live: LiveState | null;
   rows: readonly ConversationRow[];
-  /** The tab's terminal: its screen proves "esc to interrupt" and Parar writes Esc to it. `null` before it mounts. */
+  /** The tab's terminal: its screen proves the turn (`isWorking`) and Parar writes Esc to it. `null` before it mounts. */
   terminal: FooterTerminal | null;
   /** A pending is open: Parar answers it with `interrupt` instead of writing Esc to the terminal (T078). */
   onInterruptPending?: () => void;
@@ -33,7 +33,7 @@ export interface WorkingFooterProps {
   endedByScreen?: boolean;
 }
 
-/** `true` while the screen footer says "esc to interrupt"; `null` without a terminal. Re-renders only on change. */
+/** `true` while the screen proves the turn (`isWorking`); `null` without a terminal. Re-renders only on change. */
 function useScreenWorking(terminal: FooterTerminal | null): boolean | null {
   const [working, setWorking] = useState<boolean | null>(null);
   useEffect(() => {
@@ -121,11 +121,23 @@ export function WorkingFooter({ live, rows, terminal, onInterruptPending, stopRe
             {model.waitingFor !== undefined ? (
               <span className={styles.verb}>{WAITING_FOR_LABEL[model.waitingFor]}</span>
             ) : model.verb !== undefined ? (
-              <ActionText action={{ verb: model.verb, ...(model.target !== undefined ? { target: model.target } : {}) }} />
+              <>
+                <ActionText action={{ verb: model.verb, ...(model.target !== undefined ? { target: model.target } : {}) }} />
+                {model.actionStartedAt !== undefined ? (
+                  <span className={styles.hint}>há {formatElapsed(Date.now() - Date.parse(model.actionStartedAt))}</span>
+                ) : null}
+                {model.alsoSubagents !== undefined ? (
+                  <span className={styles.hint}>
+                    + {model.alsoSubagents} {model.alsoSubagents === 1 ? 'subagente' : 'subagentes'}
+                  </span>
+                ) : null}
+              </>
             ) : model.waitingSubagents > 0 ? (
               <span className={styles.verb}>
                 Aguardando {model.waitingSubagents} {model.waitingSubagents === 1 ? 'subagente' : 'subagentes'}
               </span>
+            ) : model.thinking ? (
+              <span className={styles.verb}>pensando</span>
             ) : null}
             <span className={styles.elapsed}>{elapsed}</span>
           </span>

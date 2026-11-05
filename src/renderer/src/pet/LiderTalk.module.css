@@ -1,0 +1,333 @@
+/*
+ * Item 18 — the comic bubble of the conversation with the Líder, coming out of the Jobu. It sits above the head inside
+ * the stage, anchored to the drawing like the little bubble (`right`: its right edge on the right edge of the drawing,
+ * growing to the left; `left` is the mirror; `center` is centered), with the tail pointing down at him. Its height is
+ * `view.talk` (set inline): what fits above his head on that screen.
+ */
+.talk {
+  --talk-edge: color-mix(in srgb, var(--donel-accent) 55%, transparent);
+
+  position: absolute;
+  bottom: calc(100% + 14px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 380px;
+  max-width: calc(100vw - 16px);
+  box-sizing: border-box;
+  padding: 10px 12px 12px;
+  border: 1.5px solid var(--talk-edge);
+  border-radius: 18px;
+  background: var(--bg-raised);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-modal);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.45;
+  user-select: text;
+  pointer-events: auto;
+}
+
+.talk[data-urgent='true'] {
+  --talk-edge: var(--state-error);
+
+  border-width: 2px;
+}
+
+.talk[data-align='right'] {
+  right: 0;
+}
+
+.talk[data-align='left'] {
+  left: 0;
+}
+
+.talk[data-align='center'] {
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+/* The tail: a rotated square under the bubble, pointing at the head. */
+.talk::after {
+  content: '';
+  position: absolute;
+  bottom: -9px;
+  width: 16px;
+  height: 16px;
+  border-right: inherit;
+  border-bottom: inherit;
+  border-right-color: var(--talk-edge);
+  border-bottom-color: var(--talk-edge);
+  background: var(--bg-raised);
+  transform: rotate(45deg);
+}
+
+.talk[data-align='right']::after {
+  right: clamp(16px, calc(var(--stage-w) / 2 - 8px), calc(100% - 32px));
+}
+
+.talk[data-align='left']::after {
+  left: clamp(16px, calc(var(--stage-w) / 2 - 8px), calc(100% - 32px));
+}
+
+.talk[data-align='center']::after {
+  left: calc(50% - 8px);
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--donel-accent);
+  font-size: 12px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project {
+  color: var(--text-muted);
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.tool {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 13px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.tool:hover:not(:disabled),
+.tool[aria-pressed='true'] {
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  color: var(--text-primary);
+}
+
+/* Something changed in the progress since the owner last looked: a quiet dot, never a sound or a notification. */
+.tool[data-unseen='true'] {
+  position: relative;
+}
+
+.tool[data-unseen='true']::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-primary);
+}
+
+.tool:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* The last line of the Líder, in focus; the history replaces it when ≡ is on. */
+.body {
+  flex: 1;
+  min-height: 60px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  padding-right: 4px;
+  font-size: 14.5px;
+  scrollbar-width: thin;
+}
+
+.body p {
+  margin: 0 0 6px;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.working {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-style: italic;
+}
+
+.histYou,
+.histLider {
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+
+.histYou {
+  padding-left: 18px;
+  color: var(--text-secondary, var(--text-muted));
+}
+
+.who {
+  display: block;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: var(--weight-semibold);
+  text-transform: uppercase;
+}
+
+.plain {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+/* Who waits for the owner, each with a way to its tab. */
+.waiting {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 120px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  padding: 6px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--state-error) 10%, transparent);
+}
+
+.waitingTitle {
+  margin: 0 4px 2px;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.waitingItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.waitingItem:hover {
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+}
+
+.dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--state-permission);
+}
+
+.waitingName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.waitingAge {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.go {
+  flex: none;
+  color: var(--text-muted);
+}
+
+.pendings {
+  max-height: 160px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+.quick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.quickButton {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.quickButton:hover:not(:disabled) {
+  border-color: var(--donel-accent);
+}
+
+.quickButton:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.error {
+  margin: 0;
+  color: var(--state-error);
+  font-size: 12px;
+}
+
+.composer {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.you {
+  flex: none;
+  padding-top: 6px;
+  color: var(--donel-accent);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: var(--weight-semibold);
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  resize: none;
+}
+
+.input:focus {
+  outline: none;
+  border-color: var(--donel-accent);
+}

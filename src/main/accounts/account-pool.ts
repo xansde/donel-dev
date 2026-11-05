@@ -88,6 +88,18 @@ export function planDisconnect(config: AccountsConfig): DisconnectPlan {
   };
 }
 
+/**
+ * Pool Seazone ao lado das locais — conectar o switcher NÃO troca o mod: só
+ * grava `accounts.seazone = { baseUrl }` (aparada). `mod`, `localAccounts` e
+ * `activeAccountId` ficam como estão; com `mod: 'local'`, a reconstrução do
+ * motor (baseUrl mudou -> `needsEngineRebuild`) monta o mod composto. O
+ * segredo (`seazone:session`) é gravado no cofre por quem chama, antes.
+ */
+export function planConnectSeazonePool(config: AccountsConfig, baseUrl: string): AccountsConfig {
+  // B25 — reconectar o switcher não apaga as preferidas já marcadas.
+  return { ...config, seazone: { ...config.seazone, baseUrl: baseUrl.trim() } };
+}
+
 // ---------------------------------------------------------------------------
 // 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — o que o login isolado
 // (isolated-login.ts) usa pra decidir "esta conta já existe?" e o que index.ts

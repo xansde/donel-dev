@@ -11,6 +11,8 @@ import { pendingQueueView } from '../../../shared/chat/pendingQueue';
 import type { ConversationRow } from '../../../shared/chat/rows';
 import type { TerminalPaneHandle } from '../TerminalPane';
 import styles from './ChatView.module.css';
+import { BackgroundStrip } from './BackgroundTasks';
+import { onRevealRow, revealRow } from './revealRow';
 import { ChatComposer } from './composer/ChatComposer';
 import { mergeOptimistic } from './composer/optimistic';
 import { getDraft, rewireTab, sendDriverFor, setDraft } from './composer/tabSend';
@@ -42,6 +44,8 @@ export interface ChatViewActions {
   closeTab(tabId: string): void;
   /** "abrir" on the new-conversation notice. */
   openPreviousSessions(tabId: string): void;
+  /** "YOLO neste projeto": turns on Modo YOLO for the tab's project. */
+  turnOnYolo(tabId: string): Promise<void>;
   /** Hidden terminal of the tab: the send driver writes to it and reads its screen (T065); screen detectors and Parar use it too (T068/T070). `null` before it mounts. */
   terminal(tabId: string): TerminalPaneHandle | null;
 }
@@ -60,6 +64,8 @@ export interface ChatViewProps {
   footer?: ReactNode;
   /** Folder of the tab (a file picked inside it is mentioned as `@relative`). */
   cwd?: string;
+  /** The tab has a project and it is not in Modo YOLO yet: the permission card offers it. */
+  offerYolo: boolean;
 }
 
 /**
@@ -98,6 +104,7 @@ export const ChatView = memo(function ChatView({
   ended,
   footer,
   cwd,
+  offerYolo,
 }: ChatViewProps): React.JSX.Element {
   const session = useChatSession(ptyId);
   const onOpenTerminal = useCallback(() => actions.openTerminal(tabId), [actions, tabId]);
@@ -122,6 +129,8 @@ export const ChatView = memo(function ChatView({
   const alive = effectiveEnded === null;
   const pendingOpen = (session.live?.pendings.length ?? 0) > 0;
   const terminalNeeded = session.live?.terminalNeeded != null;
+  // "not-receiving" only happens mid-turn (activity newer than the transcript).
+  const working = session.live?.status === 'working' || session.live?.status === 'not-receiving';
   const pendings = session.live?.pendings;
   const head = useMemo(() => pendingQueueView(pendings ?? []).head, [pendings]);
   const headId = head?.id ?? null;
@@ -136,6 +145,14 @@ export const ChatView = memo(function ChatView({
       void session.answer(pendingId, answer).catch(() => undefined);
     },
     [session.answer],
+  );
+  // Turning it on approves what the tab has waiting; the `allow` after it only matters for a card that YOLO leaves
+  // to the owner, which he has just answered here, and it is a harmless "not-open" for the rest.
+  const onYolo = useCallback(
+    (pendingId: string) => {
+      void actions.turnOnYolo(tabId).then(() => onAnswer(pendingId, { kind: 'allow' })).catch(() => undefined);
+    },
+    [actions, tabId, onAnswer],
   );
   const onAdjustSubmit = useCallback(
     (text: string) => {
@@ -159,8 +176,8 @@ export const ChatView = memo(function ChatView({
     rewireTab(tabId);
   }, [tabId, ptyId]);
   useEffect(() => {
-    driver.setEnv({ alive, pendingOpen, terminalNeeded });
-  }, [driver, alive, pendingOpen, terminalNeeded]);
+    driver.setEnv({ alive, pendingOpen, terminalNeeded, working });
+  }, [driver, alive, pendingOpen, terminalNeeded, working]);
 
   // Parar / Esc feedback ("parando…" until the round ends or a short timeout); both entry points stamp it.
   const [stopRequestedAt, setStopRequestedAt] = useState<number | null>(null);
@@ -232,6 +249,16 @@ export const ChatView = memo(function ChatView({
   );
 
 
+  // Segundo plano visível: "mostrar na conversa" from the strip below or from the status bar (via the bus).
+  const [reveal, setReveal] = useState<{ readonly rowId: string; readonly seq: number } | null>(null);
+  useEffect(() => {
+    if (ptyId === null) return undefined;
+    return onRevealRow(ptyId, (rowId) => setReveal((prev) => ({ rowId, seq: (prev?.seq ?? 0) + 1 })));
+  }, [ptyId]);
+  const onRevealBackground = useCallback((rowId: string) => {
+    if (ptyId !== null) revealRow(ptyId, rowId);
+  }, [ptyId]);
+
   const answers = useMemo(() => buildAnswerInfo(allRows), [allRows]);
   const ctx = useMemo<RowRenderContext>(
     () => ({
@@ -277,7 +304,7 @@ export const ChatView = memo(function ChatView({
           ) : null}
         </div>
       ) : null}
-      <Timeline rows={rows} session={session} focusMode={focusMode} active={active} ctx={ctx} foldToggleTick={foldToggleTick} />
+      <Timeline rows={rows} session={session} focusMode={focusMode} active={active} ctx={ctx} foldToggleTick={foldToggleTick} reveal={reveal} />
       {effectiveEnded !== null ? (
         <SessionEndedBar exitCode={effectiveEnded.exitCode} onResume={onResume} onCloseTab={onCloseTab} />
       ) : (
@@ -289,6 +316,7 @@ export const ChatView = memo(function ChatView({
             onAnswer={onAnswer}
             onAdjustStart={setAdjustingPlanId}
             onOpenExternal={ctx.onOpenExternal}
+            onYolo={offerYolo ? onYolo : undefined}
           />
           <WorkingFooter live={session.live} rows={session.rows} terminal={terminal}
             onInterruptPending={onInterruptPending}
@@ -296,6 +324,7 @@ export const ChatView = memo(function ChatView({
             onStopRequestedAt={onStopRequestedAt}
             endedByScreen={endedByScreen}
           />
+          <BackgroundStrip tasks={session.live?.background ?? []} onReveal={onRevealBackground} />
           {footer ?? null}
           <ChatComposer
             tabId={tabId}

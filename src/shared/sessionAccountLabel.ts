@@ -49,6 +49,26 @@ export interface CurrentAccountContext {
   load: AccountLoad | null;
   /** Estado do auto-switch neste instante — acrescenta o sufixo de aviso quando travado (`saturated` D6, `blind` D8). */
   autoSwitchState: AutoSwitchState;
+  /**
+   * Ponte da statusline — % das janelas de 5h/7d que o PRÓPRIO CLI da aba em
+   * foco leu na última resposta da API (`rate_limits`). Quem chama só passa
+   * leitura posterior à última troca de conta (senão seria a cota da conta de
+   * antes). Janela a janela, vale na frente da `load` do motor (que é lida a
+   * cada 5 min); a janela `sonnet`, que a statusline não traz, segue do motor.
+   */
+  liveLoad?: { fiveHour: number | null; sevenDay: number | null } | null;
+}
+
+/** `overallLoad` da conta ativa com a leitura viva da sessão na frente, janela a janela. */
+function currentPercent(current: CurrentAccountContext): number | null {
+  const live = current.liveLoad;
+  if (!live) return overallLoad(current.load);
+  return overallLoad({
+    fiveHour: live.fiveHour ?? current.load?.fiveHour ?? null,
+    sevenDay: live.sevenDay ?? current.load?.sevenDay ?? null,
+    sonnet: current.load?.sonnet ?? null,
+    readAt: current.load?.readAt ?? '',
+  });
 }
 
 /**
@@ -85,7 +105,7 @@ export function computeSessionAccountLabel(
   if (credentialSource === 'provider') return `Sessão: ${input.providerLabel ?? 'provedor'} · provedor`;
 
   if (current.active) {
-    const percent = overallLoad(current.load);
+    const percent = currentPercent(current);
     const percentText = percent === null ? '—' : `${percent}% usado`;
     let label = `Sessão: ${current.active.label} · ${percentText}`;
     if (input.account && input.account.id !== current.active.id) {
@@ -99,7 +119,10 @@ export function computeSessionAccountLabel(
     return label;
   }
 
-  if (input.account) return `Sessão: ${input.account.label} · —`;
+  // Sem conta ativa no motor, a única cota conhecida é a que o CLI da aba leu.
+  const livePercent = current.liveLoad ? currentPercent({ ...current, load: null }) : null;
+  if (input.account) return `Sessão: ${input.account.label} · ${livePercent === null ? '—' : `${livePercent}% usado`}`;
+  if (livePercent !== null) return `Sessão: conta do CLI · ${livePercent}% usado`;
 
   return fallbackGlobalLabel;
 }

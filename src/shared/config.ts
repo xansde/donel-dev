@@ -17,6 +17,8 @@ import type { StoredSessionName } from './sessionName';
 import type { SessionRegistry } from './sessionRegistry';
 // 015-jobu-pet — the anchor point of the pet's remembered position (src/shared/pet/types.ts).
 import type { PetPoint } from './pet/types';
+// Sessão renovada em voo (B36) — `sessionRenewal`, top-level key like `pet`.
+import type { SessionRenewalPrefs } from './sessionRenewal';
 // CA-26/CA-27 (009-modo-dev-v3) — cor+ordem da aba v3 por sessão claude, ver
 // src/shared/tabAppearance.ts (lógica pura) e src/shared/tabChannels.ts
 // (canais `tabs:*`).
@@ -35,6 +37,12 @@ export const CONFIG_CHANNELS = {
   setChatPrefs: 'config:setChatPrefs',
   /** T014 (015-jobu-pet) — `pet.enabled`; position and size are only written by the main, from the pet's gestures. */
   setPetPrefs: 'config:setPetPrefs',
+  /** Sessão renovada em voo (B36) — `sessionRenewal.enabled` / `sessionRenewal.limitTokens`. */
+  setSessionRenewalPrefs: 'config:setSessionRenewalPrefs',
+  /** Modo auto — `autoMode.neverAsks`; applies at once. */
+  setAutoModePrefs: 'config:setAutoModePrefs',
+  /** Modo YOLO — one project on or off; applies at once. */
+  setProjectYolo: 'config:setProjectYolo',
 } as const;
 
 /**
@@ -58,6 +66,18 @@ export interface LauncherDefaultsDto {
   readonly model: ModelAlias;
   readonly effort: EffortLevel;
   readonly permissionMode: PermissionMode;
+  /**
+   * "Isolar em worktree" (`--worktree`). Opcional e só gravado quando ligado:
+   * configs antigos (e canais mais antigos lendo este) seguem com a forma de
+   * sempre. (O antigo `chrome` — Claude in Chrome — saiu em 03/11; o sanitize
+   * o descarta.)
+   */
+  readonly worktree?: boolean;
+  /**
+   * Sessões remotas — last "Onde roda": `'local'` = this computer, otherwise the id of a remote place.
+   * Absent = the first remote place that holds an account (owner, 04/11: VPS by default).
+   */
+  readonly where?: string;
 }
 
 /**
@@ -75,6 +95,16 @@ export interface ChatPrefs {
   readonly focusMode: boolean;
 }
 
+/** "Modo auto nunca pede permissão" — on by default: it is what the Launcher promises for `auto`. */
+export interface AutoModePrefs {
+  readonly neverAsks: boolean;
+}
+
+/** Modo YOLO — the projects where every permission request is approved alone. A project not listed is off. */
+export interface YoloPrefs {
+  readonly projects: readonly string[];
+}
+
 /**
  * T014 (015-jobu-pet) — the Jobu on the desktop. `enabled` is the Preferences switch
  * (off by default); `placement` is the base point, at the center of the drawing (`null` = default
@@ -89,6 +119,23 @@ export interface PetPrefs {
 /** 016-jobu-faxina — the stamp of the last sweep that ended well (epoch ms), or `null` if none ever did. Main only; not in the DTO. */
 export interface SweepPrefs {
   readonly lastSweepAt: number | null;
+}
+
+/**
+ * B33 — where the alpha installers are built (`Donel Dev Alfa-Setup-AAAA-MM-DD.exe`, `ultimo-commit.txt`,
+ * `FALHOU.txt`). `null` = the default folder of the alpha channel. Main only; not in the DTO.
+ */
+export interface AppUpdatePrefs {
+  readonly installersDir: string | null;
+}
+
+/**
+ * Navegador integrado — the folders the owner authorized for `navegador_enviar_arquivo`, for every session (owner's
+ * request, 04/11: the authorization vanished on every restart). Written only by the main, from a gesture of the
+ * owner (Permitir on the agent's request, or the picker in Regras). Main only; not in the DTO.
+ */
+export interface BrowserUploadPrefs {
+  readonly folders: readonly string[];
 }
 
 /** What the renderer may ask of the main: only the switch. */
@@ -138,6 +185,10 @@ export interface AppConfigDto {
   readonly chat: ChatPrefs;
   /** T014 (015-jobu-pet) — the Jobu's preferences on the desktop. */
   readonly pet: PetPrefs;
+  /** Sessão renovada em voo (B36) — on by default, 250k of context. */
+  readonly sessionRenewal: SessionRenewalPrefs;
+  readonly autoMode: AutoModePrefs;
+  readonly yolo: YoloPrefs;
 }
 
 /** API tipada exposta pelo preload em `window.donel.config`. */
@@ -156,4 +207,10 @@ export interface DonelConfigApi {
   setChatPrefs(prefs: Partial<ChatPrefs>): Promise<AppConfigDto>;
   /** T014 (015-jobu-pet) — turns the Jobu on/off; applies at once, without a restart. */
   setPetPrefs(prefs: PetPrefsInput): Promise<AppConfigDto>;
+  /** Sessão renovada em voo (B36) — partial update; an invalid field is ignored. */
+  setSessionRenewalPrefs(prefs: Partial<SessionRenewalPrefs>): Promise<AppConfigDto>;
+  /** Modo auto — partial update; an invalid field is ignored. */
+  setAutoModePrefs(prefs: Partial<AutoModePrefs>): Promise<AppConfigDto>;
+  /** Modo YOLO — turns one project on or off. Turning on also approves what its tabs have waiting. */
+  setProjectYolo(projectPath: string, enabled: boolean): Promise<AppConfigDto>;
 }

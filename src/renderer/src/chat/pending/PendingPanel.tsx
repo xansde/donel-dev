@@ -22,6 +22,8 @@ export interface PendingPanelProps {
   onOpenExternal: (url: string) => void;
   /** Opens the side panel of a subagent (wired when the panel exists - phase 6). */
   onOpenSubagent?: (agentId: string) => void;
+  /** "YOLO neste projeto" on a permission card. Absent = the button does not show. */
+  onYolo?: (pendingId: string) => void;
 }
 
 function announcement(head: Pending | null): string {
@@ -40,6 +42,7 @@ export function PendingPanel({
   onAdjustStart,
   onOpenExternal,
   onOpenSubagent,
+  onYolo,
 }: PendingPanelProps): React.JSX.Element {
   const { head, waiting } = useMemo(() => pendingQueueView(pendings), [pendings]);
   const openOrigin =
@@ -71,7 +74,14 @@ export function PendingPanel({
           {head.kind === 'question' ? (
             <QuestionCard key={head.id} pending={head} waiting={waiting} onAnswer={answer} onOpenOrigin={openOrigin} />
           ) : head.kind === 'permission' ? (
-            <PermissionCard key={head.id} pending={head} waiting={waiting} onAnswer={answer} onOpenOrigin={openOrigin} />
+            <PermissionCard
+              key={head.id}
+              pending={head}
+              waiting={waiting}
+              onAnswer={answer}
+              onOpenOrigin={openOrigin}
+              onYolo={onYolo !== undefined ? () => onYolo(head.id) : undefined}
+            />
           ) : (
             <PlanCard
               key={head.id}

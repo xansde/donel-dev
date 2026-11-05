@@ -62,6 +62,7 @@ describe('defaultAppConfig (puro)', () => {
         seazone: null,
         localAccounts: [],
         activeAccountId: null,
+        remotes: [],
       },
       migration: { startedAt: null, completedAt: null, profiles: {}, archivedTo: null },
       providers: { version: 1, entries: [] },
@@ -69,6 +70,12 @@ describe('defaultAppConfig (puro)', () => {
       // T014 (015-jobu-pet) — desligado, sem posição lembrada, tamanho Médio.
       pet: { enabled: false, placement: null, size: 140 },
       sweep: { lastSweepAt: null },
+      // B36 — sessão renovada em voo: ligada, 250k de contexto.
+      sessionRenewal: { enabled: true, limitTokens: 250_000 },
+      autoMode: { neverAsks: true },
+      yolo: { projects: [] },
+      appUpdate: { installersDir: null },
+      browserUploads: { folders: [] },
       unknownFields: {},
     });
   });
@@ -100,6 +107,9 @@ describe('toAppConfigDto (puro)', () => {
       tabAppearance: {},
       chat: { enabled: false, focusMode: true },
       pet: { enabled: false, placement: null, size: 140 },
+      sessionRenewal: { enabled: true, limitTokens: 250_000 },
+      autoMode: { neverAsks: true },
+      yolo: { projects: [] },
     });
   });
 
@@ -215,6 +225,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
         seazone: { baseUrl: 'https://switcher.seazone.dev' },
         localAccounts: [{ id: 'acc-1', label: 'Conta 1', plan: 'pro' }],
         activeAccountId: 'acc-1',
+        remotes: [{ id: 'vps', label: 'VPS', sshTarget: 'dev@vps-atlas', activeAccountId: null }],
       },
       migration: {
         startedAt: 1000,
@@ -231,6 +242,11 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       chat: { enabled: true, focusMode: false },
       pet: { enabled: true, placement: { x: 1830, y: 1040 }, size: 200 },
       sweep: { lastSweepAt: null },
+      sessionRenewal: { enabled: false, limitTokens: 180_000 },
+      autoMode: { neverAsks: false },
+      yolo: { projects: ['C:\\repos\\app'] },
+      appUpdate: { installersDir: 'D:\\instaladores' },
+      browserUploads: { folders: [] },
       unknownFields: {},
     };
     expect(sanitizeAppConfig(valid, baseDefaults())).toEqual(valid);
@@ -299,6 +315,8 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       launcherDefaults: { model: 'sonnet', effort: 'high', permissionMode: 'plan' }, // bom
       notificationPreference: 'not-a-real-value', // corrompido
       theme: 'dark',
+      autoMode: { neverAsks: 'sim' },
+      yolo: { projects: ['C:\\ok', 42, ''] },
     };
     expect(sanitizeAppConfig(partiallyCorrupted, defaults)).toEqual({
       version: 1,
@@ -320,6 +338,11 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       chat: defaults.chat, // ausente no objeto → default
       pet: defaults.pet, // ausente no objeto → default
       sweep: defaults.sweep,
+      sessionRenewal: defaults.sessionRenewal,
+      autoMode: defaults.autoMode,
+      yolo: { projects: ['C:\\ok'] },
+      appUpdate: { installersDir: null },
+      browserUploads: { folders: [] },
       unknownFields: {}, // nenhuma chave desconhecida no objeto de entrada
     });
   });
@@ -393,6 +416,30 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       effort: 'high',
       permissionMode: 'bypassPermissions',
     });
+  });
+
+  it('launcherDefaults.chrome legado (Claude in Chrome, removido em 03/11) é aceito sem erro e descartado', () => {
+    const defaults = baseDefaults();
+    const base = { model: 'opus', effort: 'max', permissionMode: 'auto' };
+    expect(sanitizeAppConfig({ ...defaults, launcherDefaults: { ...base, chrome: true } }, defaults).launcherDefaults).toEqual(base);
+    expect(sanitizeAppConfig({ ...defaults, launcherDefaults: { ...base, chrome: false } }, defaults).launcherDefaults).toEqual(base);
+    expect(sanitizeAppConfig({ ...defaults, launcherDefaults: { ...base, chrome: 'sim' } }, defaults).launcherDefaults).toEqual(base);
+    expect(sanitizeAppConfig({ ...defaults, launcherDefaults: base }, defaults).launcherDefaults).toEqual(base);
+  });
+
+  it('launcherDefaults.worktree: true é preservado; ausente, false ou tipo errado some (opcional, só existe ligado)', () => {
+    const defaults = baseDefaults();
+    const base = { model: 'opus', effort: 'max', permissionMode: 'auto' };
+    expect(sanitizeAppConfig({ ...defaults, launcherDefaults: { ...base, worktree: true } }, defaults).launcherDefaults).toEqual({
+      ...base,
+      worktree: true,
+    });
+    expect(sanitizeAppConfig({ ...defaults, launcherDefaults: { ...base, chrome: true, worktree: true } }, defaults).launcherDefaults).toEqual({
+      ...base,
+      worktree: true,
+    });
+    expect(sanitizeAppConfig({ ...defaults, launcherDefaults: { ...base, worktree: false } }, defaults).launcherDefaults).toEqual(base);
+    expect(sanitizeAppConfig({ ...defaults, launcherDefaults: { ...base, worktree: 'sim' } }, defaults).launcherDefaults).toEqual(base);
   });
 
   it('activeProfileSlug vazio/só espaço cai no default (mesma regra de readActiveProfileConfig)', () => {

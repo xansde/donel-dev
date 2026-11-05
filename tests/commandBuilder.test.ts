@@ -9,7 +9,15 @@
 // just human-readable shorthand for "the flag followed by the value as one
 // argv token" — adding real quote chars would corrupt the session name.
 import { describe, expect, it } from 'vitest';
-import { buildClaudeArgs, parseModelEffortFromArgs, resolvePermissionMode, withResolvedPermissionMode, type BuildClaudeArgsOptions } from '../src/shared/commandBuilder';
+import {
+  buildClaudeArgs,
+  mcpDeliveryFor,
+  APP_MCP_PREAUTHORIZED_TOOLS,
+  parseModelEffortFromArgs,
+  resolvePermissionMode,
+  withResolvedPermissionMode,
+  type BuildClaudeArgsOptions,
+} from '../src/shared/commandBuilder';
 
 describe('buildClaudeArgs', () => {
   it('returns an empty argv when no option is provided (all flags omitted, CLI uses user default)', () => {
@@ -106,6 +114,33 @@ describe('buildClaudeArgs', () => {
     it('maps a continueLast continuation to -c', () => {
       const opts: BuildClaudeArgsOptions = { continuation: { type: 'continueLast' } };
       expect(buildClaudeArgs(opts)).toEqual(['-c']);
+    });
+  });
+
+  describe('Claude in Chrome removido (03/11) — o navegador é o integrado do app', () => {
+    it('never emits --chrome, even if an old caller still passes `chrome`', () => {
+      const legacy = { model: 'sonnet', chrome: true } as unknown as BuildClaudeArgsOptions;
+      const args = buildClaudeArgs(legacy);
+      expect(args).toEqual(['--model', 'sonnet']);
+      expect(args).not.toContain('--chrome');
+      expect(args).not.toContain('--no-chrome');
+    });
+  });
+
+  describe('Isolar em worktree — --worktree <nome>', () => {
+    it('maps worktree to --worktree <name> as two tokens, no quotes', () => {
+      expect(buildClaudeArgs({ worktree: 'radar-1030-1752' })).toEqual(['--worktree', 'radar-1030-1752']);
+    });
+
+    it('omits --worktree when absent or empty', () => {
+      expect(buildClaudeArgs({})).not.toContain('--worktree');
+      expect(buildClaudeArgs({ worktree: '' })).not.toContain('--worktree');
+    });
+
+    it('comes last, keeping the existing argv order stable', () => {
+      expect(
+        buildClaudeArgs({ model: 'fable', effort: 'high', permissionMode: 'acceptEdits', sessionName: 'radar', worktree: 'radar-1030-1752' }),
+      ).toEqual(['--model', 'fable', '--effort', 'high', '--permission-mode', 'acceptEdits', '-n', 'radar', '--worktree', 'radar-1030-1752']);
     });
   });
 
@@ -254,5 +289,20 @@ describe('withResolvedPermissionMode', () => {
   it('não altera o argv quando já tem --permission-mode (nem a forma com =)', () => {
     expect(withResolvedPermissionMode(['--permission-mode', 'auto'], 'plan')).toEqual(['--permission-mode', 'auto']);
     expect(withResolvedPermissionMode(['--permission-mode=auto'], 'plan')).toEqual(['--permission-mode=auto']);
+  });
+});
+
+describe('Navegador integrado — entrega do MCP `donel` ao CLI da sessão', () => {
+  const endpoint = { name: 'donel', url: 'http://127.0.0.1:51234/mcp', bearerToken: 'f'.repeat(32) };
+
+  it('mcpDeliveryFor(claude-code): --mcp-config <path> as two tokens and one HTTP server named donel with the bearer header', () => {
+    const path = 'C:\\Users\\x y\\browser-mcp\\pty-1.json';
+    const delivery = mcpDeliveryFor('claude-code', endpoint, path);
+    expect(delivery.args).toEqual(['--allowedTools', APP_MCP_PREAUTHORIZED_TOOLS.join(','), '--mcp-config', path]);
+    // Only the board and session tools are pre-authorized; the browser keeps the CLI's permission flow.
+    expect(APP_MCP_PREAUTHORIZED_TOOLS.some((tool) => tool.includes('navegador'))).toBe(false);
+    expect(JSON.parse(delivery.configFileContent ?? 'null')).toEqual({
+      mcpServers: { donel: { type: 'http', url: 'http://127.0.0.1:51234/mcp', headers: { Authorization: `Bearer ${'f'.repeat(32)}` } } },
+    });
   });
 });

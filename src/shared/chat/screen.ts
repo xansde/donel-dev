@@ -50,9 +50,31 @@ function boxAndAbove(lines: readonly LineInput[], above: number): string[] {
   return lines.slice(Math.max(0, box.top - above), box.bottom).map(lineText);
 }
 
-/** The CLI is mid-turn: the footer says "esc to interrupt". */
+/**
+ * Spinner row the CLI draws above the box while a turn runs: a spinner glyph at column 0, the verb, then "…" and
+ * maybe a parenthesis ("✻ Booping… (31s · ↓ 58 tokens)", "· Crystallizing… (running UserPromptSubmit hooks… 0/2)").
+ * The row of a finished turn ("✻ Worked for 26s · done 17:38") has no "…". Indented rows with "…" (dialog
+ * lists, `⎿  Running…`) and the answer rows (`● ...`) never start with a glyph at column 0.
+ */
+const SPINNER_PATTERN = /^[·✢✳✶✻✽*]\s+[^\s…][^…]*…/u;
+/** How far above the top ruler the spinner may sit (a wrapped "⎿ Tip:" or a short notice can come between them). */
+const SPINNER_ROWS_ABOVE = 8;
+
+function spinnerAboveBox(lines: readonly LineInput[]): boolean {
+  const box = locateInputBox(lines);
+  if (!box) return false;
+  return lines.slice(Math.max(0, box.top - SPINNER_ROWS_ABOVE), box.top).some((line) => SPINNER_PATTERN.test(lineText(line)));
+}
+
+/**
+ * The CLI is mid-turn: the footer says "esc to interrupt", or the spinner row sits right above the box. The footer
+ * hint is not always there (CLI 2.1.314, measured on 30/10): ANY `statusLine` configured drops it (and "? for
+ * shortcuts"), and text in the box drops it even without one. The spinner row stays in every case, appearing and
+ * disappearing in the same frames as the hint (Enter, Esc, end of turn). Either one proves the turn; without the box
+ * there is no proof (the caller falls back to the hooks).
+ */
 export function isWorking(lines: readonly LineInput[]): boolean {
-  return footerLines(lines).some((line) => /esc to interrupt/i.test(line));
+  return footerLines(lines).some((line) => /esc to interrupt/i.test(line)) || spinnerAboveBox(lines);
 }
 
 export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'bypass';
@@ -223,7 +245,7 @@ export function blockingScreen(lines: readonly LineInput[]): BlockingScreen | nu
 }
 
 /** Footer present: the CLI printed something under the box (mode, hints). Typed text hides "? for shortcuts", so any text counts. */
-function hasFooter(lines: readonly LineInput[]): boolean {
+export function hasFooter(lines: readonly LineInput[]): boolean {
   return footerLines(lines).some((line) => line.trim() !== '');
 }
 

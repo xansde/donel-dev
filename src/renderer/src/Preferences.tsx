@@ -1,20 +1,15 @@
-import { Button, Modal, Select, TextInput, Toggle } from '@donel-dev/design-system';
+import { Button, Select, TextInput, Toggle } from '@donel-dev/design-system';
 import type { SelectOption } from '@donel-dev/design-system';
-import { Trash2 } from 'lucide-react';
-import { useState } from 'react';
+import { Bell, FolderTree, MessagesSquare, PlayCircle, Search, Smartphone, Trash2, UserCog, X } from 'lucide-react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { NotificationPreference, ProjectScanMode } from '../../shared/config';
+import type { SessionRenewalPrefs } from '../../shared/sessionRenewal';
+import { CelularSection } from './CelularSection';
 import styles from './Preferences.module.css';
 
-// T015 — UI de Preferências (FR-007, feedback E2E rodada 3 "roots de
-// projetos precisam ser configuráveis pela UI" + rodada 4 "notificação
-// configurável"). Tela mínima (ui-spec §2 já previa isso pro P1; puxado pro
-// P0 pelo feedback humano) — sem instrumento de tema (P1, "Fora deste
-// ciclo" em tasks.md) nem defaults do launcher (esses são semeados
-// automaticamente a cada "▶ Iniciar", App.tsx `handleLaunch`, sem precisar
-// de um campo editável aqui). Mudanças aplicam IMEDIATAMENTE (add/remove de
-// root já dispara re-scan; troca de notificação já persiste) — sem botão
-// "Salvar" separado, mesmo espírito instantâneo do resto do app (favoritar
-// projeto, trocar perfil).
+// Preferências — tela cheia com menu lateral (pedido do dono, 04/11: "como popup não está vingando").
+// Cada categoria mostra só os seus ajustes; a busca procura em todas. Mudanças aplicam IMEDIATAMENTE,
+// sem botão "Salvar" (mesmo espírito do resto do app).
 
 // FIX ambiente genérico (28/07, teste do colega) — o critério "só pasta com
 // .git/CLAUDE.md" parecia bug pra quem não organiza o disco por repositório.
@@ -23,11 +18,26 @@ const SCAN_MODE_OPTIONS: SelectOption[] = [
   { value: 'all', label: 'Todas as pastas', description: 'toda pasta no 1º nível das raízes, com ou sem marcador de projeto' },
 ];
 
+// B36 — sessão renovada em voo: the context budget of a session (the owner works with 250k).
+const RENEWAL_LIMIT_OPTIONS: SelectOption[] = [150_000, 200_000, 250_000, 300_000, 400_000, 500_000].map((tokens) => ({
+  value: String(tokens),
+  label: `${tokens / 1000}k de contexto`,
+  ...(tokens === 250_000 ? { description: 'padrão' } : {}),
+}));
+
 const NOTIFICATION_OPTIONS: SelectOption[] = [
-  { value: 'all', label: 'Todas as transições', description: 'notifica sempre que uma sessão em background passa a aguardar ou pedir permissão' },
-  { value: 'permission-only', label: 'Só permissão pendente', description: 'padrão — só quando uma sessão trava esperando sua aprovação' },
+  { value: 'all', label: 'Todas as transições', description: 'avisa quando uma sessão termina, precisa de você, para com erro ou encerra sozinha' },
+  { value: 'permission-only', label: 'Só permissão pendente', description: 'padrão — só quando uma sessão precisa de você ou para com erro (ex.: limite de uso)' },
   { value: 'none', label: 'Nenhuma', description: 'desativa notificações do Windows' },
 ];
+
+/** Sessões remotas — "Onde roda" padrão: the last choice, this computer or a remote place. */
+const WHERE_LAST = '';
+
+export interface PreferencesRemotePlace {
+  readonly id: string;
+  readonly label: string;
+}
 
 export interface PreferencesProps {
   open: boolean;
@@ -47,132 +57,321 @@ export interface PreferencesProps {
   /** T022 (015-jobu-pet) — "Jobu na área de trabalho" switch (`pet.enabled`); applies at once. */
   petEnabled: boolean;
   onChangePetEnabled: (enabled: boolean) => void;
+  /** B36 — sessão renovada em voo (`sessionRenewal`); applies at once. */
+  sessionRenewal: SessionRenewalPrefs;
+  onChangeSessionRenewal: (prefs: Partial<SessionRenewalPrefs>) => void;
+  /** "Modo auto nunca pede permissão" (`autoMode.neverAsks`); applies at once. */
+  autoNeverAsks: boolean;
+  onChangeAutoNeverAsks: (neverAsks: boolean) => void;
+  /** Sessões remotas — places for the "Onde roda" default; `[]` hides the setting. */
+  remotes?: readonly PreferencesRemotePlace[];
+  /** `launcherDefaults.where`: `undefined` = last choice / first place with an account, `'local'` = this computer. */
+  launcherWhere?: string;
+  onChangeLauncherWhere?: (where: string | undefined) => void;
+  /** Papéis de sessão — opens the roles editor. */
+  onManageRoles?: () => void;
 }
 
-export function Preferences({
-  open,
-  onClose,
-  projectRoots,
-  projectScanMode,
-  notificationPreference,
-  onAddRoot,
-  onRemoveRoot,
-  onChangeProjectScanMode,
-  onChangeNotificationPreference,
-  chatEnabled,
-  chatRestartPending,
-  onChangeChatEnabled,
-  petEnabled,
-  onChangePetEnabled,
-}: PreferencesProps): React.JSX.Element {
+type CategoryId = 'projetos' | 'sessoes' | 'chat' | 'avisos' | 'celular' | 'papeis';
+
+interface SettingBlock {
+  readonly id: string;
+  readonly category: CategoryId;
+  readonly title: string;
+  /** Extra words the search matches (the hint text is matched too). */
+  readonly keywords: string;
+  readonly hint?: string;
+  readonly body: ReactNode;
+}
+
+const CATEGORIES: ReadonlyArray<{ id: CategoryId; label: string; icon: ReactNode }> = [
+  { id: 'projetos', label: 'Projetos', icon: <FolderTree size={16} strokeWidth={1.5} aria-hidden="true" /> },
+  { id: 'sessoes', label: 'Sessões', icon: <PlayCircle size={16} strokeWidth={1.5} aria-hidden="true" /> },
+  { id: 'chat', label: 'Chat', icon: <MessagesSquare size={16} strokeWidth={1.5} aria-hidden="true" /> },
+  { id: 'avisos', label: 'Avisos e Jobu', icon: <Bell size={16} strokeWidth={1.5} aria-hidden="true" /> },
+  { id: 'celular', label: 'Celular', icon: <Smartphone size={16} strokeWidth={1.5} aria-hidden="true" /> },
+  { id: 'papeis', label: 'Papéis', icon: <UserCog size={16} strokeWidth={1.5} aria-hidden="true" /> },
+];
+
+function normalize(text: string): string {
+  return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+}
+
+export function Preferences(props: PreferencesProps): React.JSX.Element | null {
+  const { open, onClose, remotes = [] } = props;
+  const [category, setCategory] = useState<CategoryId>('projetos');
+  const [query, setQuery] = useState('');
   const [newRoot, setNewRoot] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    searchRef.current?.focus();
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
 
   const handleAdd = (): void => {
     const trimmed = newRoot.trim();
     if (!trimmed) return;
-    onAddRoot(trimmed);
+    props.onAddRoot(trimmed);
     setNewRoot('');
   };
 
+  const whereOptions: SelectOption[] = [
+    { value: WHERE_LAST, label: 'A última escolha', description: 'sem escolha ainda: o primeiro lugar remoto com conta' },
+    { value: 'local', label: 'Este computador' },
+    ...remotes.map((place) => ({ value: place.id, label: place.label })),
+  ];
+
+  const blocks: SettingBlock[] = [
+    {
+      id: 'roots',
+      category: 'projetos',
+      title: 'Pastas-raiz de projetos',
+      keywords: 'pasta raiz root sidebar adicionar remover',
+      hint: 'Onde a barra lateral procura projetos.',
+      body: (
+        <>
+          <ul className={styles.rootList}>
+            {props.projectRoots.length === 0 ? <li className={styles.hint}>Nenhuma pasta-raiz configurada.</li> : null}
+            {props.projectRoots.map((root) => (
+              <li key={root} className={styles.rootRow}>
+                <span className={styles.rootPath} title={root}>
+                  {root}
+                </span>
+                <button type="button" className={styles.removeRootButton} onClick={() => props.onRemoveRoot(root)} aria-label={`Remover pasta ${root}`}>
+                  <Trash2 size={14} strokeWidth={1.5} aria-hidden="true" />
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className={styles.addRootRow}>
+            <TextInput
+              className={styles.addRootInput}
+              placeholder="C:\Users\voce\pasta"
+              aria-label="Nova pasta-raiz"
+              value={newRoot}
+              onChange={(event) => setNewRoot(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault();
+                  handleAdd();
+                }
+              }}
+            />
+            <Button variant="secondary" onClick={handleAdd} disabled={!newRoot.trim()}>
+              Adicionar
+            </Button>
+          </div>
+        </>
+      ),
+    },
+    {
+      id: 'scan',
+      category: 'projetos',
+      title: 'O que aparece como projeto',
+      keywords: 'projeto pasta git claude.md sidebar',
+      hint: 'Se uma pasta sua não aparece na barra lateral, o critério provavelmente é este.',
+      body: <Select value={props.projectScanMode} options={SCAN_MODE_OPTIONS} onChange={(value) => props.onChangeProjectScanMode(value as ProjectScanMode)} />,
+    },
+    ...(remotes.length > 0 && props.onChangeLauncherWhere
+      ? [
+          {
+            id: 'where',
+            category: 'sessoes' as const,
+            title: 'Onde a sessão nova roda',
+            keywords: 'onde roda vps remoto servidor launcher padrão ram',
+            hint: 'O valor que o campo "Onde roda" do Launcher já traz. Num lugar remoto a sessão continua trabalhando com o app fechado.',
+            body: (
+              <Select
+                value={props.launcherWhere ?? WHERE_LAST}
+                options={whereOptions}
+                onChange={(value) => props.onChangeLauncherWhere?.(value === WHERE_LAST ? undefined : value)}
+              />
+            ),
+          },
+        ]
+      : []),
+    {
+      id: 'auto',
+      category: 'sessoes',
+      title: 'Modo auto',
+      keywords: 'permissão aprovar automático auto',
+      body: (
+        <Toggle
+          checked={props.autoNeverAsks}
+          onChange={props.onChangeAutoNeverAsks}
+          label="Modo auto nunca pede permissão"
+          description="O Donel aprova o pedido na hora e deixa uma linha no chat. Perguntas e planos continuam chegando para você."
+        />
+      ),
+    },
+    {
+      id: 'renewal',
+      category: 'sessoes',
+      title: 'Sessão renovada em voo',
+      keywords: 'contexto limite renovar passagem de bastão handoff',
+      hint: 'Quando o contexto passa do limite, no fim de um turno a sessão escreve uma passagem de bastão e uma sessão nova continua na mesma aba. Nunca no meio de uma tarefa nem com trabalho em segundo plano.',
+      body: (
+        <>
+          <Toggle checked={props.sessionRenewal.enabled} onChange={(enabled) => props.onChangeSessionRenewal({ enabled })} label="Renovar a sessão ao chegar no limite" />
+          {props.sessionRenewal.enabled ? (
+            <Select
+              value={RENEWAL_LIMIT_OPTIONS.some((option) => option.value === String(props.sessionRenewal.limitTokens)) ? String(props.sessionRenewal.limitTokens) : '250000'}
+              options={RENEWAL_LIMIT_OPTIONS}
+              onChange={(value) => props.onChangeSessionRenewal({ limitTokens: Number(value) })}
+            />
+          ) : null}
+        </>
+      ),
+    },
+    {
+      id: 'chat',
+      category: 'chat',
+      title: 'Chat',
+      keywords: 'chat conversa terminal experimental',
+      hint: 'Mostra a conversa de cada sessão como um chat, com o terminal a um atalho de distância (Ctrl+`).',
+      body: (
+        <Toggle
+          checked={props.chatEnabled}
+          onChange={props.onChangeChatEnabled}
+          label="Chat (experimental)"
+          description={props.chatRestartPending ? 'Reinicie o app para aplicar.' : 'Vale a partir da próxima vez que o app abrir.'}
+        />
+      ),
+    },
+    {
+      id: 'notifications',
+      category: 'avisos',
+      title: 'Notificação do Windows',
+      keywords: 'notificação aviso windows barra de tarefas',
+      hint: 'Quando uma sessão fora da sua vista precisa de você. Com o Jobu ligado, quem avisa é ele. O número no ícone da barra de tarefas conta as sessões esperando você.',
+      body: (
+        <Select
+          value={props.notificationPreference}
+          options={NOTIFICATION_OPTIONS}
+          onChange={(value) => props.onChangeNotificationPreference(value as NotificationPreference)}
+        />
+      ),
+    },
+    {
+      id: 'pet',
+      category: 'avisos',
+      title: 'Jobu Donel',
+      keywords: 'jobu pet mascote área de trabalho',
+      body: (
+        <Toggle
+          checked={props.petEnabled}
+          onChange={props.onChangePetEnabled}
+          label="Jobu na área de trabalho"
+          description="Avisa quando uma sessão termina ou espera você, e quando a conta muda."
+        />
+      ),
+    },
+    {
+      id: 'celular',
+      category: 'celular',
+      title: 'Ledger no celular',
+      keywords: 'celular telefone ledger entregas validar aceitar rejeitar tailscale parear qr pwa',
+      hint: 'Valide as entregas que esperam você pelo celular, uma carta por tela: arraste para a direita para aceitar e para a esquerda para rejeitar com motivo.',
+      body: <CelularSection />,
+    },
+    ...(props.onManageRoles
+      ? [
+          {
+            id: 'roles',
+            category: 'papeis' as const,
+            title: 'Papéis de sessão',
+            keywords: 'papel dev revisor pesquisa prompt',
+            hint: 'Dev, Revisor, Pesquisa e os seus. Texto, cor e sugestões de modelo, esforço e permissão de cada um.',
+            body: (
+              <div>
+                <Button variant="secondary" onClick={props.onManageRoles}>
+                  Editar papéis…
+                </Button>
+              </div>
+            ),
+          },
+        ]
+      : []),
+  ];
+
+  const searching = query.trim().length > 0;
+  const visible = ((): SettingBlock[] => {
+    if (!searching) return blocks.filter((block) => block.category === category);
+    const words = normalize(query).split(/\s+/).filter(Boolean);
+    return blocks.filter((block) => {
+      const haystack = normalize(`${block.title} ${block.hint ?? ''} ${block.keywords} ${CATEGORIES.find((c) => c.id === block.category)?.label ?? ''}`);
+      return words.every((word) => haystack.includes(word));
+    });
+  })();
+
+  if (!open) return null;
+  const countOf = (id: CategoryId): number => blocks.filter((block) => block.category === id).length;
+
   return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="Preferências"
-      actions={
-        <Button variant="primary" onClick={onClose}>
-          Fechar
-        </Button>
-      }
-    >
-      <div className={styles.section} data-testid="preferences-roots-section">
-        <h3 className={styles.sectionTitle}>Pastas-raiz de projetos</h3>
-        <p className={styles.sectionHint}>Onde a sidebar procura projetos — o critério do que aparece é a seção abaixo.</p>
-        <ul className={styles.rootList}>
-          {projectRoots.length === 0 ? <li className={styles.hint}>Nenhuma pasta-raiz configurada.</li> : null}
-          {projectRoots.map((root) => (
-            <li key={root} className={styles.rootRow}>
-              <span className={styles.rootPath} title={root}>
-                {root}
-              </span>
+    <div className={styles.screen} role="dialog" aria-modal="true" aria-label="Preferências" data-testid="preferences">
+      <nav className={styles.nav} aria-label="Categorias das preferências">
+        <div className={styles.navHeader}>Preferências</div>
+        <label className={styles.search}>
+          <Search size={14} strokeWidth={1.5} aria-hidden="true" />
+          <input
+            ref={searchRef}
+            className={styles.searchInput}
+            placeholder="Buscar ajuste"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            aria-label="Buscar ajuste"
+          />
+        </label>
+        <ul className={styles.navList}>
+          {CATEGORIES.filter((entry) => countOf(entry.id) > 0).map((entry) => (
+            <li key={entry.id}>
               <button
                 type="button"
-                className={styles.removeRootButton}
-                onClick={() => onRemoveRoot(root)}
-                aria-label={`Remover pasta ${root}`}
+                className={!searching && category === entry.id ? styles.navItemActive : styles.navItem}
+                onClick={() => {
+                  setQuery('');
+                  setCategory(entry.id);
+                }}
               >
-                <Trash2 size={12} strokeWidth={1.5} aria-hidden="true" />
+                {entry.icon}
+                <span>{entry.label}</span>
               </button>
             </li>
           ))}
         </ul>
-        <div className={styles.addRootRow}>
-          <TextInput
-            className={styles.addRootInput}
-            placeholder="C:\Users\voce\pasta"
-            aria-label="Nova pasta-raiz"
-            value={newRoot}
-            onChange={(event) => setNewRoot(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                event.preventDefault();
-                handleAdd();
-              }
-            }}
-          />
-          <Button variant="secondary" onClick={handleAdd} disabled={!newRoot.trim()}>
-            Adicionar
-          </Button>
-        </div>
-      </div>
+        <p className={styles.navFoot}>Contas e Provedores ficam nos botões do topo.</p>
+      </nav>
 
-      <div className={styles.section} data-testid="preferences-scan-mode-section">
-        <h3 className={styles.sectionTitle}>O que aparece como projeto</h3>
-        <p className={styles.sectionHint}>Se uma pasta sua não aparece na sidebar, o critério provavelmente é este.</p>
-        <div data-testid="project-scan-mode-select">
-          <Select
-            value={projectScanMode}
-            options={SCAN_MODE_OPTIONS}
-            onChange={(value) => onChangeProjectScanMode(value as ProjectScanMode)}
-          />
+      <main className={styles.content}>
+        <header className={styles.contentHeader}>
+          <h2 className={styles.contentTitle}>{searching ? `Busca: “${query.trim()}”` : CATEGORIES.find((entry) => entry.id === category)?.label}</h2>
+          <button type="button" className={styles.closeButton} onClick={onClose} aria-label="Fechar preferências" title="Fechar (Esc)">
+            <X size={18} strokeWidth={1.5} aria-hidden="true" />
+          </button>
+        </header>
+        <div className={styles.cards}>
+          {visible.length === 0 ? <p className={styles.hint}>Nenhum ajuste com esse nome.</p> : null}
+          {visible.map((block) => (
+            <section key={block.id} className={styles.card} data-testid={`preferences-${block.id}`}>
+              <div className={styles.cardHead}>
+                <h3 className={styles.sectionTitle}>{block.title}</h3>
+                {searching ? <span className={styles.badge}>{CATEGORIES.find((entry) => entry.id === block.category)?.label}</span> : null}
+              </div>
+              {block.hint ? <p className={styles.sectionHint}>{block.hint}</p> : null}
+              <div className={styles.cardBody}>{block.body}</div>
+            </section>
+          ))}
         </div>
-      </div>
-
-      <div className={styles.section} data-testid="preferences-notification-section">
-        <h3 className={styles.sectionTitle}>Notificação do Windows</h3>
-        <p className={styles.sectionHint}>Quando uma sessão em background precisa da sua atenção.</p>
-        <div data-testid="notification-preference-select">
-          <Select
-            value={notificationPreference}
-            options={NOTIFICATION_OPTIONS}
-            onChange={(value) => onChangeNotificationPreference(value as NotificationPreference)}
-          />
-        </div>
-      </div>
-      <div className={styles.section} data-testid="preferences-chat-section">
-        <h3 className={styles.sectionTitle}>Chat (experimental)</h3>
-        <p className={styles.sectionHint}>
-          Mostra a conversa de cada sessão do Claude como um chat, com o terminal a um atalho de distância (Ctrl+`).
-          Vale a partir da próxima vez que o app abrir.
-        </p>
-        <Toggle
-          checked={chatEnabled}
-          onChange={onChangeChatEnabled}
-          label="Chat (experimental)"
-          description={chatRestartPending ? 'Reinicie o app para aplicar.' : undefined}
-        />
-      </div>
-      <div className={styles.section} data-testid="preferences-pet-section">
-        <h3 className={styles.sectionTitle}>Jobu Donel</h3>
-        <div data-testid="preferences-pet-toggle">
-          <Toggle
-            checked={petEnabled}
-            onChange={onChangePetEnabled}
-            label="Jobu na área de trabalho"
-            description="Avisa quando uma sessão termina ou espera você, e quando a conta muda."
-          />
-        </div>
-      </div>
-    </Modal>
+      </main>
+    </div>
   );
 }

@@ -1,16 +1,39 @@
-import { app, BrowserWindow, ipcMain, Notification, protocol, safeStorage, screen, shell } from 'electron';
-import { randomUUID } from 'node:crypto';
+import { app, BrowserWindow, ipcMain, Notification, protocol, safeStorage, screen, shell, webContents } from 'electron';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import { readUserDefaultPermissionMode } from './cli-user-settings';
-import { withResolvedPermissionMode } from '../shared/commandBuilder';
+import { readUserDefaultPermissionMode, readUserStatusLine } from './cli-user-settings';
+import { createStatusLineStore } from './statusline-store';
+import { STATUS_LINE_CHANNELS, type StatusLineChangedPayload, type StatusLineSnapshot } from '../shared/statusLine';
+import { appMcpAllowArgs, roleDeliveryFor, withResolvedPermissionMode } from '../shared/commandBuilder';
 import type { DevModeBoardConfig } from '../shared/devMode';
 // Spec 010 — esteira nova: serviço (store + ingestão + disparo) e a fronteira IPC.
 import { createEsteiraService, type EsteiraService } from './esteira-service';
 import { esteiraStoreDir } from './esteira-store';
+import { createMindscapeStore, mindscapeFilePath } from './mindscape-store';
+import { createRolesStore, type RolesStore } from './roles-store';
+import { createCelularService, type CelularService } from './celular/service';
+import { roleOfSession } from '../shared/mindscape/model';
+import { LEADER_ROLE_ID, ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
+import { LEADER_OF_ALL } from '../shared/mindscape/leader';
+import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
+import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
+import { createLedgerService, ledgerFilePath, ledgerProofsDir, nodeLedgerProofFs, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
+import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerOwnerDecision, type LedgerSnapshot } from '../shared/ledger/channels';
+import { isHttpUrl, isProofFileName, type LedgerProof } from '../shared/ledger/contract';
+import type { LedgerToolCall } from '../shared/ledger/tools';
+import type { BoardBridge } from './board-bridge';
+import type { BrowserToolOutcome } from '../shared/browser/mcp';
+// Sessão renovada em voo (B36).
+import { createSessionRenewalService, type SessionRenewalService } from './session-renewal';
+import { SESSION_RENEWAL_CHANNELS, sanitizeSessionRenewalPrefs, type HandoffStatus, type RenewalPrepared, type SessionRenewalPrefs } from '../shared/sessionRenewal';
+import { LEARNING_CHANNELS, parseRendererGesture, type GestureEvent } from '../shared/learning/gestures';
+import { createGestureDiary, type GestureDiary } from './gesture-diary';
+import type { MindscapeReadImageResult, MindscapeSaveImageResult, MindscapeSaveResult, MindscapeTurnEndedPayload } from '../shared/mindscape/channels';
+import type { MindscapeBoard, MindscapeDoc } from '../shared/mindscape/model';
 import { esteiraOutboxDir } from './esteira-ingest';
 import { esteiraInboxDir } from './esteira-dispatch';
 import { resolveBoardMirrorAdapter } from './esteira-mirror';
@@ -53,6 +76,7 @@ import type {
   GhAvailabilityDto,
   GithubReadRequest,
   GithubReadResponse,
+  AutoModePrefs,
   ChatPrefs,
   LauncherDefaultsDto,
   NotificationPreference,
@@ -63,8 +87,10 @@ import type {
   ProjectScanMode,
   PtyCreateOptions,
   PtyCreateResult,
+  RemoteAliveSession,
   PhaseArchivedPayload,
   PtyExitInfo,
+  RemoteSwitchOutcome,
   RemoveAccountOutcome,
   ResolveCardRepoIpcInput,
   ResolveCardReposIpcInput,
@@ -73,6 +99,7 @@ import type {
   ModId,
   SemaphoreUpdate,
   SessionSummaryDto,
+  SessionWhereLives,
   SwitchOutcome,
   TranscriptChangedPayload,
   SessionSwitchedPayload,
@@ -126,6 +153,7 @@ import {
   LEGACY_ACTIVE_PROFILE_FILE_NAME,
   LEGACY_PROJECT_CONFIG_FILE_NAME,
   readAppConfig,
+  sanitizeAutoModePrefs,
   sanitizeChatPrefs,
   sanitizePhaseDefaultsTable,
   setSessionName,
@@ -165,15 +193,40 @@ import {
   type EntryColumnCard,
 } from './taskdex-board-client';
 import { createJsonRpcCallTool, createSystemHttpPostJson } from './taskdex-mcp-transport';
-import { cleanupStaleHookSettings, removeSessionHooksSettings, writeHooksSettingsFile, writeSessionHooksSettings } from './hooks-settings';
+import {
+  buildSessionHooksSettings,
+  cleanupStaleHookSettings,
+  planStatusLineBridge,
+  removeSessionHooksSettings,
+  statusLineBridgeMode,
+  writeHooksSettingsFile,
+  writeSessionHooksSettings,
+} from './hooks-settings';
 import { createHookBridge, type BridgeEvent, type HookBridge } from './hook-bridge';
+import {
+  buildAttachSshArgs,
+  buildRemoteSetupScript,
+  discoverRemoteSessions,
+  findRemoteTranscript,
+  parseRemoteSetupOutput,
+  pickRemotePort,
+  remoteDirFor,
+  RemoteSessionRegistry,
+  runRemoteScript,
+  type RemoteFile,
+  type RemoteSessionMeta,
+} from './remote-session';
 import { createDiagnosticsLog } from './chat/diagnostics-log';
+import { resolveMainRepoRootSync } from './session-worktree';
 import { ATTACHMENT_MAX_AGE_MS, AttachmentStore } from './chat/attachments';
 import { createChatHub, type ChatHub, type ChatSourceInfo } from './chat/chat-hub';
 import { registerChatIpcHandlers } from './chat/chat-ipc';
 import { createCommandCatalogScanner } from './chat/command-catalog-scanner';
 import { createProjectFiles } from './chat/project-files';
-import { createPendingNotifier } from './chat/notifications';
+import { createPendingNotifier, type NotificationLike } from './chat/notifications';
+import { createAttentionNotifier } from './attention/attention-notifier';
+import { createTaskbarAttention, type AttentionSmokeSnapshot } from './attention/taskbar';
+import { failureReasonText } from '../shared/attention/rule';
 import { registerAssetScheme, registerAssetsProtocol } from './chat/assets-protocol';
 import { CHAT_CHANNELS } from '../shared/chat/ipc';
 // 011-contas-e-provedores (etapa 1) — motor de contas + mods. Nasce inerte
@@ -193,17 +246,19 @@ import { createRefreshCoordinator } from './accounts/refresh-coordinator';
 // 2 — o que o login isolado grava em `appConfig.accounts` depois de colher.
 // Fase 2 (D3) — `planReconnect` decide se um `id` pode reconectar
 // (`accounts:beginReconnect`, item 4 do Bloco 3).
-import { applyHarvestedAccount, findAccountByFingerprint, findAccountById, planDisconnect, planReconnect, planRemoveAccount } from './accounts/account-pool';
+import { applyHarvestedAccount, findAccountByFingerprint, findAccountById, planConnectSeazonePool, planDisconnect, planReconnect, planRemoveAccount } from './accounts/account-pool';
 import type { AccountMod } from './accounts/account-mod';
 // 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — colhedor do login
 // isolado (plan-etapa-3.md §4.2): `<userData>/accounts-login-<uuid>/`, poll
 // do diretório, cofre, e a limpeza obrigatória no fim (sucesso ou falha).
 import { IsolatedLoginManager, type IsolatedLoginFsDeps } from './accounts/isolated-login';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
-import { applyAccountSwitch, createSystemClaudeStateIoDeps, readCurrentCredentialPair } from './accounts/claude-state';
+import { adoptRefreshedActivePair, applyAccountSwitch, createSystemClaudeStateIoDeps, readCurrentCredentialPair } from './accounts/claude-state';
 import { accountFingerprintFromClaudeJsonText } from './accounts/credentials-file';
 import { createLocalMod } from './accounts/mods/local-mod';
+import { createRemoteClaudeState } from './accounts/remote-claude-state';
 import { createSeazoneMod } from './accounts/mods/seazone-mod';
+import { createLocalWithPoolMod } from './accounts/mods/local-with-pool-mod';
 // 011-contas-e-provedores, etapa 3, Fase 1 (F2) — valida o par colado à mão (fallback do "conectar conta"; login isolado é a Fase 1.2).
 import { buildPastedPair } from './accounts/pasted-pair';
 import { createSystemVaultIoDeps, decryptVaultEntry, deleteVaultEntries, writeVaultEntry, type VaultLike } from './accounts/vault';
@@ -235,6 +290,7 @@ import { consumeKillRequested, markKillRequested } from './pty-kill-intent';
 // 015-jobu-pet — the Jobu on the desktop: service (core + window + tick), the window and the `pet:*` handlers.
 import { guardNavigation } from './navigation-guard';
 import { registerPetIpcHandlers } from './pet/pet-ipc';
+import { createLiderService, type LiderService } from './lider/lider-service';
 import { createPetService, type PetService } from './pet/pet-service';
 import { createPetWindow } from './pet/pet-window';
 import { createFullscreenWatcher } from './pet/fullscreen-watcher';
@@ -242,6 +298,20 @@ import { readPetSeams, type PetSmokeGlobal } from './pet/pet-seams';
 // 016-jobu-faxina — "Fazer faxina": the sweep of repos, worktrees, branches and old sessions the Jobu runs from his menu.
 import { createGitRunner } from './sweep/git';
 import { createSweepRunner } from './sweep/sweep-service';
+// Saúde do computador — samples RAM, disk and processes every minute; ends a process on request.
+import { collectHealthSnapshot, lookupProcessName } from './health/collector';
+import { createHealthService, type HealthService } from './health/health-service';
+import { createRemoteHealthService, type RemoteHealthService } from './health/remote-health-service';
+import type { RemoteHealthReport } from '../shared/health/remote';
+import { HEALTH_CHANNELS, type KillProcessOutcome } from '../shared/health/ipc';
+import { createRoutineRunner, type RoutineRunner } from './rotinas/routine-runner';
+import { ROTINAS_CHANNELS, type ShadowEntry } from '../shared/rotinas/contract';
+import type { LiveSessionSignal } from '../shared/rotinas/stalledSessions';
+// B33 — atualizar para a versão nova de dentro do app.
+import { autoUpdater } from 'electron-updater';
+import { createAppUpdateService, type AppUpdateService } from './app-update';
+import { APP_UPDATE_CHANNELS, type AppUpdateApplyResult, type AppUpdateBoot, type AppUpdateStatus } from '../shared/appUpdate';
+import type { HealthReport } from '../shared/health/types';
 import { isValidPetPrefsInput } from '../shared/pet/ipc';
 import type { PetDisplay } from '../shared/pet/types';
 // T504 (005-terminal-copy-paste) — clipboard-bridge (T503), aditivo aos
@@ -252,11 +322,21 @@ import { resolveClaudeCorrelation } from './session-correlation';
 import { defaultClaudeHome, indexProjectSessions, resolveProjectSessionsDir } from './session-indexer';
 import { seedProject } from './session-seed';
 import { SessionSemaphoreManager } from './session-semaphore-manager';
-import { TranscriptWatcherRegistry } from './transcript-watcher';
+import { readTranscriptLastAssistantText, TranscriptWatcherRegistry } from './transcript-watcher';
 import { forgetIfOrphan } from '../shared/resumeFailure';
 import { removeSession, setPinned, upsertVisit } from '../shared/sessionRegistry';
 // CA-26/CA-27 (009-modo-dev-v3, lote 1) — cor + ordem da aba v3, por sessão claude.
 import { isTabColorToken, setTabColor, setTabOrder } from '../shared/tabAppearance';
+import { WORKSPACE_CHANNELS } from '../shared/workspace';
+import { createSystemWorkspaceToolsDeps, createWorkspaceTools } from './workspace-tools';
+import { createSessionWorktreeService } from './session-worktree-service';
+import { worktreeNameFromArgs } from '../shared/sessionWorktree';
+import { projectOfFolders, tabFolders, withProjectYolo } from '../shared/projectYolo';
+import { isProcessAlive } from './process-alive';
+import { createPullRequestStatusService, createSystemPullRequestStatusDeps, openPullRequestUrl } from './pull-request-status';
+// Navegador interno — painel com WebContentsView por sessão (docs/design/navegador-interno.md).
+import { createBrowserService, type BrowserService } from './browser/browser-service';
+import { createBoardBridge } from './board-bridge';
 
 // Scaffold T003 — janela única com o layout do shell (ui-spec §2).
 // PtyManager chega em T004 (este arquivo). ProjectScanner chega no T007
@@ -477,8 +557,33 @@ const hooksTransport: 'bridge' | 'legacy' = process.env.DONEL_HOOKS_TRANSPORT ==
 let hooksSettingsPath: string | null = null;
 /** Ponte de hooks (transporte novo). `null` até o boot — ou se ela não subiu: sessões nascem sem semáforo, como no legado. */
 let hookBridge: HookBridge | null = null;
+/** Sessões remotas — live remote tabs of this run (transcript mirrors, end of the remote session). */
+let remoteSessions: RemoteSessionRegistry | null = null;
 /** `curl.exe` achado no boot (`where.exe curl`); `null` = fallback no encaminhador PowerShell que lê bytes. */
 let curlPath: string | null = null;
+/**
+ * Ponte da statusline — o JSON oficial que o CLI entrega ao comando de `statusLine`, por aba
+ * (cota 5h/7d, custo, contexto, modelo, PR...). `DONEL_STATUSLINE_BRIDGE=off` desliga;
+ * por padrão é injetada sempre, com o chat ligado ou não (hooks-settings.ts).
+ */
+const statusLineBridgeModeSetting = statusLineBridgeMode(process.env.DONEL_STATUSLINE_BRIDGE);
+const statusLineStore = createStatusLineStore();
+/**
+ * "Isolar em worktree" — qual aba roda em qual worktree do CLI; ao fechar a aba, remove a worktree sem trabalho
+ * pendente e avisa quando ela fica (session-worktree.ts).
+ */
+const sessionWorktrees = createSessionWorktreeService({
+  git: createGitRunner(),
+  isProcessAlive,
+  sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+  notifyKept: (payload) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(WORKSPACE_CHANNELS.worktreeKept, payload);
+    }
+  },
+  openPath: (path) => shell.openPath(path),
+  log: (line) => console.log(line),
+});
 /** Conversa ativa de cada aba (ptyId -> session id); muda com `/clear` e `/resume` (FR-033). */
 const activeSessionByPty = new Map<string, string>();
 
@@ -492,6 +597,32 @@ let chatHub: ChatHub | null = null;
 let chatAttachments: AttachmentStore | null = null;
 /** Fonte INICIAL da conversa de cada aba `claude` (a troca de conversa é do hub, não daqui). */
 const initialChatSourceByPty = new Map<string, ChatSourceInfo>();
+/** Modo YOLO — the folder each claude tab was opened on: the CLI's own `cwd` moves, the tab's project does not. */
+const tabCwdByPty = new Map<string, string>();
+/** One `git rev-parse` per folder: the answer does not change while the app runs, and the hooks read it. */
+const tabFoldersCache = new Map<string, readonly string[]>();
+
+function tabFoldersOf(cwd: string): readonly string[] {
+  let folders = tabFoldersCache.get(cwd);
+  if (folders === undefined) {
+    folders = tabFolders(cwd, resolveMainRepoRootSync(cwd));
+    tabFoldersCache.set(cwd, folders);
+  }
+  return folders;
+}
+
+function isTabYolo(ptyId: string): boolean {
+  const cwd = tabCwdByPty.get(ptyId);
+  const { projects } = appConfig.yolo;
+  return cwd !== undefined && projects.length > 0 && projectOfFolders(tabFoldersOf(cwd), projects) !== null;
+}
+/**
+ * Sessão renovada em voo (B36) — the handoffs live in `<userData>/handoffs/`, never in the
+ * project. Born at boot (needs `app.getPath`); `null` before it.
+ */
+let sessionRenewal: SessionRenewalService | null = null;
+/** Papéis de sessão (item 12a) — `<userData>/papeis/`. Born at boot (needs `app.getPath`); `null` before it. */
+let rolesStore: RolesStore | null = null;
 /** Conta ativa vista no último `accounts:changed` — a troca vira aviso `account-switch` no chat. */
 let lastBroadcastActiveAccountId: string | null | undefined;
 
@@ -735,7 +866,7 @@ function resolveAccountMod(modId: ModId): AccountMod {
   if (modId === 'seazone') {
     return createSeazoneMod({ baseUrl: appConfig.accounts.seazone?.baseUrl ?? '', vault });
   }
-  return createLocalMod({
+  const localMod = createLocalMod({
     accounts: appConfig.accounts.localAccounts,
     vault,
     // 011-contas-e-provedores, etapa 3, Fase 2 (D7) — a carga da conta ATIVA
@@ -753,7 +884,20 @@ function resolveAccountMod(modId: ModId): AccountMod {
     // pode ser repetida pelo mod do motor novo (refresh token de uso único).
     refreshCoordinator: accountsRefreshCoordinator,
     onPairRefreshed: (id, trigger) => appendAccountsMaintenanceLog({ event: 'account-pair-refreshed', account: id, trigger }),
+    // fix/renovacao-credencial — a falha também vai pro log (antes só o
+    // sucesso ia, e uma conta caída em "Reconectar" não deixava rastro).
+    onPairRefreshFailed: (id, trigger, reason) => appendAccountsMaintenanceLog({ event: 'account-pair-refresh-failed', account: id, trigger, reason }),
+    // Lugares remotos — conta ativa numa VPS nunca é renovada por esta máquina (o CLI de lá renova).
+    isHeldRemotely: (id) => (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes.some((place) => place.activeAccountId === id),
   });
+  // Pool Seazone AO LADO das locais (sem trocar o mod): com o switcher
+  // configurado, as contas dele entram no fim da lista como `seazone:<label>`
+  // e o mod composto roteia switch/captura/keepAlive pelo dono do id. Sem
+  // `seazone:session` no cofre, 401 ou switcher fora do ar, o pool só não
+  // aparece — as locais seguem.
+  const seazone = appConfig.accounts.seazone;
+  if (!seazone) return localMod;
+  return createLocalWithPoolMod({ local: localMod, pool: createSeazoneMod({ baseUrl: seazone.baseUrl, vault }) });
 }
 
 /**
@@ -830,6 +974,9 @@ function broadcastAccountsChanged(view: AccountsViewDto): void {
  */
 const accountsReconnectRegistry = createReconnectRegistry();
 
+/** Lugares remotos — `ssh` do sistema, sem senha (a rede da pessoa autentica: Tailscale, chave). */
+const accountsRemoteClaudeState = createRemoteClaudeState();
+
 /**
  * Dono do ciclo de vida do motor (F6, 011-contas-e-provedores etapa 3 Fase 1)
  * — substitui o antigo `rebuildAccountEngine()`, que reconstruía (dispose +
@@ -863,6 +1010,21 @@ const accountEngineHost = new AccountEngineHost({
       onSwitchOverwritten: (info) => appendAccountsMaintenanceLog({ event: 'switch-overwritten', account: info.to }),
       onSwitchPairRotated: (info) => appendAccountsMaintenanceLog({ event: 'switch-pair-rotated', account: info.to }),
       onSwitchCheckInconclusive: (info) => appendAccountsMaintenanceLog({ event: 'switch-check-inconclusive', account: info.to }),
+      // fix/renovacao-credencial — cada vez que o par em disco foi guardado no
+      // cofre (switch, leitura de carga ou encerramento), só ids.
+      onLivePairCaptured: (info) => appendAccountsMaintenanceLog({ event: 'live-pair-captured', account: info.account, trigger: info.trigger, believedActive: info.believedActive }),
+      // Pool Seazone (patch local v3) — o heartbeat da conta ativa do pool adota o par mais novo do switcher (só se o disco ainda tiver o enviado) e registra, só com ids, o que aconteceu.
+      writeRefreshedActivePair: (expected, next) =>
+        adoptRefreshedActivePair({ io: accountsClaudeStateIo, claudeHome: appConfig.accounts.claudeHome ?? claudeHomeDirFor(homedir()) }, expected, next),
+      onPoolHeartbeatEvent: (event) => appendAccountsMaintenanceLog({ ...event }),
+      // Lugares remotos (VPS) — o `~/.claude` de cada lugar por ssh; a conta de
+      // cada lugar vai para o `config.json` assim que muda (como a ativa daqui).
+      remoteState: accountsRemoteClaudeState,
+      onRemotesChanged: (remotes) => {
+        appConfig = { ...appConfig, accounts: { ...appConfig.accounts, remotes } };
+        persistAppConfig();
+      },
+      onRemoteEvent: (event) => appendAccountsMaintenanceLog({ ...event }),
     });
     engine.onChanged(broadcastAccountsChanged);
     engine.start();
@@ -964,6 +1126,12 @@ function getMainWindow(): BrowserWindow | null {
   return mainWindowRef !== null && !mainWindowRef.isDestroyed() ? mainWindowRef : null;
 }
 
+/** Navegador interno — `null` until `app.whenReady()` (needs `userData`). */
+let browserService: BrowserService | null = null;
+
+/** Ledger no celular — `null` until `app.whenReady()` (needs `userData`). */
+let celularService: CelularService | null = null;
+
 /**
  * T020 (015-jobu-pet) — the Jobu service. `null` until the main window appears (R21: the pet window
  * is only born AFTER the main one's `ready-to-show`, so `firstWindow()` of the smokes is still
@@ -971,6 +1139,49 @@ function getMainWindow(): BrowserWindow | null {
  * but holds no window and no timer: the app is the one from before the pet.
  */
 let petService: PetService | null = null;
+
+/**
+ * A system notification (Windows toast). Smoke-only seam (T081): with `DONEL_SMOKE_NOTIFICATIONS_LOG` it records
+ * `{ title, body }` in that file instead of showing anything — the chat's pending toast and the session toasts alike.
+ */
+const smokeNotificationsLog = process.env.DONEL_SMOKE_NOTIFICATIONS_LOG || undefined;
+function createSystemNotification(options: { title: string; body: string }): NotificationLike {
+  if (smokeNotificationsLog !== undefined) {
+    appendFileSync(smokeNotificationsLog, `${JSON.stringify(options)}\n`, 'utf8');
+    return { on: () => undefined, show: () => undefined };
+  }
+  return new Notification(options);
+}
+function systemNotificationsSupported(): boolean {
+  return smokeNotificationsLog !== undefined || Notification.isSupported();
+}
+
+/** With the notifications stub on, the smokes read the taskbar badge and flash from here (`electronApp.evaluate`). */
+const attentionSmoke: AttentionSmokeSnapshot | null = smokeNotificationsLog === undefined ? null : { overlayCount: 0, flashing: false };
+if (attentionSmoke !== null) (globalThis as typeof globalThis & { __donelAttentionSmoke?: AttentionSmokeSnapshot }).__donelAttentionSmoke = attentionSmoke;
+
+/**
+ * notificacoes-completas (30/10) — who finished, who needs the owner and who stopped with an error, without hunting
+ * tabs: the Windows toast (when the Jobu is not on screen), the flash of the taskbar button and the badge over it
+ * with the count of sessions waiting. The news is the pet core's, fed with or without the Jobu (`onNotices`); the
+ * rule of which channel says what is src/shared/attention/rule.ts.
+ */
+const taskbarAttention = createTaskbarAttention(getMainWindow, attentionSmoke);
+const attentionNotifier = createAttentionNotifier({
+  preference: () => appConfig.notificationPreference,
+  isPetEnabled: () => petService?.isEnabled() ?? false,
+  // the chat raises its own toast for each pending, with what it is (T079): a `blocked` here would repeat it
+  chatCoversPending: () => chatHub !== null,
+  isWindowInFront: () => {
+    const window = getMainWindow();
+    return window !== null && window.isFocused() && window.isVisible() && !window.isMinimized();
+  },
+  isSupported: systemNotificationsSupported,
+  createNotification: createSystemNotification,
+  openSession: (ptyId) => petService?.openSession(ptyId),
+  flashFrame: (flag) => taskbarAttention.flashFrame(flag),
+  setOverlay: (count) => taskbarAttention.setOverlay(count),
+});
 
 function toPetDisplay(display: Electron.Display): PetDisplay {
   return { id: display.id, bounds: display.bounds, workArea: display.workArea, scaleFactor: display.scaleFactor };
@@ -1003,6 +1214,9 @@ function startPetService(): void {
       log: (line) => appendFile(join(app.getPath('userData'), 'sweep.log'), `${new Date().toISOString()} ${line}\n`, 'utf8'),
     }),
     openFolder: (path) => void shell.openPath(path),
+    // notificacoes-completas — the news and the waiting count also go to the toast and the taskbar.
+    onNotices: (events) => attentionNotifier.onNotices(events),
+    onWaitingCountChanged: (count) => attentionNotifier.onWaitingCount(count),
     getDisplays: () => screen.getAllDisplays().map(toPetDisplay),
     getPrimaryDisplay: () => toPetDisplay(screen.getPrimaryDisplay()),
     now: () => Date.now(),
@@ -1042,6 +1256,24 @@ function startPetService(): void {
 function onMainWindowClosed(): void {
   petService?.dispose();
   petService = null;
+  // Item 18 — the link of the bubble of the Líder goes with the main window too.
+  liderService?.dispose();
+  liderService = null;
+}
+
+/** Item 18 (PDA mindscape-openrig) — the link between the main window and the bubble of the Líder on the Jobu. */
+let liderService: LiderService | null = null;
+
+function ensureLiderService(): LiderService {
+  if (liderService !== null) return liderService;
+  liderService = createLiderService({
+    getMainWindow,
+    petWebContents: () => {
+      const id = petService?.petWebContentsId() ?? null;
+      return id === null ? null : (webContents.fromId(id) ?? null);
+    },
+  });
+  return liderService;
 }
 
 /**
@@ -1078,6 +1310,7 @@ function createMainWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show();
+    ensureLiderService(); // item 18 — the IPC of the Líder exists as soon as the main window reports
     startPetService(); // 015 (R21): the Jobu is only born after the main window appears
   });
 
@@ -1090,6 +1323,7 @@ function createMainWindow(): void {
     petService?.onMainFocusChanged(mainWindow.isFocused() && mainWindow.isVisible() && !mainWindow.isMinimized());
   };
   mainWindow.on('focus', reportPetFocus);
+  mainWindow.on('focus', () => attentionNotifier.onWindowFocused()); // notificacoes-completas: the flash has served
   mainWindow.on('blur', reportPetFocus);
   mainWindow.on('minimize', reportPetFocus);
   mainWindow.on('restore', reportPetFocus);
@@ -1109,7 +1343,12 @@ function createMainWindow(): void {
     // C3 (015-jobu-pet) — the exit consumes the intent that `pty:kill` marked: `true` = the owner closed
     // the tab (or Resume/Reopen killed it), `false` = the process left by itself. Consuming here, on every
     // exit, is what keeps the mark from staying forever; the Jobu gets the result (`byUser`).
-    petService?.onSessionExited(ptyId, consumeKillRequested(ptyId));
+    const closedByOwner = consumeKillRequested(ptyId);
+    petService?.onSessionExited(ptyId, closedByOwner);
+    void sessionWorktrees.onExit(ptyId, closedByOwner); // "Isolar em worktree": a aba fechou -> worktree sem trabalho sai
+    // Sessões remotas — the owner closed the tab: the remote session ends too. App quitting or ssh dropping leaves it alive.
+    if (closedByOwner) remoteSessions?.endRemote(ptyId);
+    remoteSessions?.onPtyExit(ptyId);
 
     // T009 — onExit do node-pty (evento do SO) é a fonte de verdade pra
     // "encerrada"/"falha" (spike: kill forçado nunca dispara SessionEnd).
@@ -1129,7 +1368,9 @@ function createMainWindow(): void {
     // No-op para aba sem hooks (terminal livre, login isolado, transporte legado).
     hookBridge?.unregisterSession(ptyId);
     removeSessionHooksSettings(app.getPath('userData'), ptyId);
+    statusLineStore.remove(ptyId);
     activeSessionByPty.delete(ptyId);
+    tabCwdByPty.delete(ptyId);
     chatHub?.markEnded(ptyId);
     void chatAttachments?.releasePty(ptyId);
     // T1125 (011-contas-e-provedores, etapa 1, C4) — mesma baixa, pro poll de
@@ -1138,6 +1379,7 @@ function createMainWindow(): void {
     // adiado se esta era a última sessão ocupada.
     releaseAccountsBusyPty(ptyId);
     accountsLiveSessionPtyIds.delete(ptyId);
+    browserService?.releasePty(ptyId); // navegador interno: the session's browser dies with it
   });
   const unsubscribeSemaphore = semaphoreManager.onUpdate((update: SemaphoreUpdate) => {
     mainWindow.webContents.send(SEMAPHORE_CHANNELS.update, update);
@@ -1158,6 +1400,7 @@ function createMainWindow(): void {
     // T315 (003-modo-dev) — mesma higiene do registry de transcript: nenhum
     // `fs.watch` sobrevive ao fechamento da janela.
     disposeAllEsteiraResultWatchers();
+    browserService?.destroyAll(); // navegador interno
     ptyManager.killAll();
   });
 
@@ -1187,6 +1430,20 @@ const transcriptWatchers = new TranscriptWatcherRegistry();
 function resolveTranscriptPath(sessionId: string, cwd: string | undefined, claudeConfigDir: string | undefined): string {
   const claudeHome = claudeConfigDir ?? defaultClaudeHome();
   return join(resolveProjectSessionsDir(cwd ?? homedir(), claudeHome), `${sessionId}.jsonl`);
+}
+
+/**
+ * B39 — the conversation is on this computer: in the project's folder of `~/.claude/projects` or in any other
+ * (a worktree session). The mirror of a remote session (`remote-transcripts/`) does not count.
+ */
+function localTranscriptExists(sessionId: string, projectPath: string): boolean {
+  if (existsSync(resolveTranscriptPath(sessionId, projectPath, undefined))) return true;
+  const projectsDir = join(defaultClaudeHome(), 'projects');
+  try {
+    return readdirSync(projectsDir).some((folder) => existsSync(join(projectsDir, folder, `${sessionId}.jsonl`)));
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -1223,7 +1480,9 @@ function startTranscriptWatcher(ptyId: string, filePath: string, sessionId: stri
  * `claudeSessionId` da aba. O semáforo é por aba e não precisa de nada.
  */
 function handleConversationSwitched(event: Extract<BridgeEvent, { type: 'conversation-switched' }>): void {
-  const { ptyId, sessionId, transcriptPath, source } = event;
+  const { ptyId, sessionId, source } = event;
+  // Sessões remotas — the CLI names a path on the remote; the tab follows its local mirror.
+  const transcriptPath = event.transcriptPath && remoteSessions?.has(ptyId) ? remoteSessions.repoint(ptyId, sessionId, event.transcriptPath) : event.transcriptPath;
   if (!transcriptPath) return; // sem caminho não há o que seguir; o payload do CLI sempre o traz.
   const previousSessionId = activeSessionByPty.get(ptyId) ?? null;
   if (previousSessionId === sessionId) return;
@@ -1242,7 +1501,6 @@ function handleConversationSwitched(event: Extract<BridgeEvent, { type: 'convers
  * protocolo `donel-asset:` também não: o app é o de antes do chat.
  */
 function registerChatDomain(): void {
-  const smokeNotificationsLog = process.env.DONEL_SMOKE_NOTIFICATIONS_LOG || undefined;
   if (!appConfig.chat.enabled || hookBridge === null) return;
   const attachmentsRoot = join(app.getPath('userData'), 'chat-attachments');
   // T079 - notificacao do sistema quando uma pendencia abre (janela sem foco ou aba nao ativa).
@@ -1252,15 +1510,8 @@ function registerChatDomain(): void {
     isPetEnabled: () => petService?.isEnabled() ?? false,
     // C1 (015-jobu-pet) — the MAIN window in focus, not "some window": the Jobu is another window of the app.
     isWindowFocused: () => getMainWindow()?.isFocused() ?? false,
-    isSupported: () => smokeNotificationsLog !== undefined || Notification.isSupported(),
-    create: (options) => {
-      // Smoke-only hook (T081): records instead of showing a system notification.
-      if (smokeNotificationsLog !== undefined) {
-        appendFileSync(smokeNotificationsLog, `${JSON.stringify(options)}\n`, 'utf8');
-        return { on: () => undefined, show: () => undefined };
-      }
-      return new Notification(options);
-    },
+    isSupported: systemNotificationsSupported,
+    create: createSystemNotification, // smoke-only seam (T081) inside: records instead of showing
     onClick: (ptyId) => {
       const window = getMainWindow(); // C1 (015-jobu-pet) — the main one, not "the first live window"
       if (window === null) return;
@@ -1270,6 +1521,7 @@ function registerChatDomain(): void {
       window.webContents.send(CHAT_CHANNELS.focusPending, { ptyId });
     },
   });
+  const chatDiagnostics = createDiagnosticsLog(app.getPath('userData'));
   const hub = createChatHub({
     bridge: hookBridge,
     getSource: (ptyId) => initialChatSourceByPty.get(ptyId) ?? null,
@@ -1277,7 +1529,11 @@ function registerChatDomain(): void {
       rows: (event) => broadcastChat(CHAT_CHANNELS.rows, event),
       live: (event) => {
         // o semaforo da aba fica em `permission` ("esperando voce") enquanto houver pendencia aberta
-        semaphoreManager.setPendingOpen(event.ptyId, event.live.pendings.length > 0);
+        semaphoreManager.setPendingOpen(
+          event.ptyId,
+          event.live.pendings.length > 0,
+          event.live.pendings.map((pending) => pending.kind),
+        );
         broadcastChat(CHAT_CHANNELS.live, event);
       },
       pendingOpened: ({ ptyId, pending }) => {
@@ -1289,8 +1545,11 @@ function registerChatDomain(): void {
       reception: (event) => broadcastChat(CHAT_CHANNELS.reception, event),
       promptSignal: (event) => broadcastChat(CHAT_CHANNELS.promptSignal, event),
     },
-    diagnostics: createDiagnosticsLog(app.getPath('userData')),
+    diagnostics: chatDiagnostics,
     attachmentsRoot,
+    // B36 — the "abrir" of the "Sessão renovada em voo" divider opens the handoff.
+    handoffsRoot: join(app.getPath('userData'), 'handoffs'),
+    mapTranscriptPath: (ptyId, sessionId, transcriptPath) => (remoteSessions?.has(ptyId) ? (remoteSessions.repoint(ptyId, sessionId, transcriptPath) ?? transcriptPath) : transcriptPath),
   });
   chatHub = hub;
   chatAttachments = new AttachmentStore({ root: attachmentsRoot });
@@ -1307,12 +1566,184 @@ function registerChatDomain(): void {
     openExternal: (url) => shell.openExternal(url),
     openPath: (path) => shell.openPath(path),
     onFocusState: (input) => notifier.setFocusState(input.activePtyId, input.tabNames),
+    onSendFailed: (entry) => chatDiagnostics.sendFailed(entry),
   });
   registerAssetsProtocol(protocol, { transcriptRoots: (ptyId) => hub.transcriptRoots(ptyId), attachmentsRoot });
 }
 
+/** Sessões remotas — origin URL and branch of the local project, so the remote clones the same repo. */
+function localGitInfo(cwd: string): { repoUrl: string | null; branch: string | null } {
+  const read = (args: string[]): string | null => {
+    try {
+      const out = execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', timeout: 5_000, windowsHide: true }).trim();
+      return out.length > 0 ? out : null;
+    } catch {
+      return null;
+    }
+  };
+  return { repoUrl: read(['remote', 'get-url', 'origin']), branch: read(['branch', '--show-current']) };
+}
+
+/** Drops `--worktree <name>` (the remote session runs in the project folder; the mirror follows that transcript). */
+function withoutWorktreeArgs(args: readonly string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--worktree' || args[i] === '-w') {
+      if (args[i + 1] !== undefined && !args[i + 1].startsWith('-')) i++;
+      continue;
+    }
+    out.push(args[i]);
+  }
+  return out;
+}
+
+/**
+ * Sessões remotas — `pty:create` of a `claude` tab that runs on a remote place (docs/adr/0006). The CLI runs in
+ * a tmux session there; the PTY here is the ssh that shows it. Hooks and the browser MCP come back through
+ * reverse tunnels; the transcript is mirrored into a local file the chat reads.
+ */
+async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<PtyCreateResult> {
+  const accountsConfig = accountEngineHost.current()?.getConfig() ?? appConfig.accounts;
+  const place = accountsConfig.remotes.find((candidate) => candidate.id === options.remoteId);
+  if (!place) throw new Error('Lugar remoto não encontrado — pode ter sido removido no painel Contas.');
+  if (options.providerId) throw new Error('Provedor de terceiro ainda não roda em lugar remoto.');
+  if (!remoteSessions) throw new Error('Sessões remotas ainda não estão prontas.');
+  const localCwd = options.cwd ?? homedir();
+
+  const launcherArgs = withoutWorktreeArgs(options.args ?? []);
+  const { correlationId, extraArgs } = resolveClaudeCorrelation(launcherArgs, randomUUID);
+  const ptyId = randomUUID();
+
+  // Fresh tokens and ports; a live remote session answers with the ones its CLI already holds.
+  const fresh: RemoteSessionMeta = {
+    sid: correlationId,
+    hookToken: randomBytes(16).toString('hex'),
+    hookPort: pickRemotePort(),
+    mcpToken: null,
+    mcpPort: pickRemotePort(),
+    localCwd,
+    projectName: options.projectName ?? localCwd,
+    name: options.tabName ?? options.projectName ?? localCwd,
+    launchArgs: options.args ?? [],
+    ...(options.openedBy ? { openedBy: options.openedBy } : {}),
+    createdAt: new Date().toISOString(),
+  };
+  const files: RemoteFile[] = [];
+  const claudeArgs: string[] = [...launcherArgs, ...extraArgs];
+
+  const roleId = roleIdForSpawn(options.roleId, launcherArgs, options.renewalId);
+  const rolePromptPath = roleId ? (rolesStore?.promptFileFor(roleId, { leaderOfAll: options.leaderOfAll === true }) ?? null) : null;
+  if (rolePromptPath) {
+    try {
+      files.push({ name: 'role.md', content: readFileSync(rolePromptPath, 'utf8') });
+      claudeArgs.push(...roleDeliveryFor('claude-code', '@S/role.md').args);
+    } catch {
+      // the session opens without the role, as a local one would
+    }
+  }
+
+  const hooksOn = hookBridge !== null && hookBridge.port !== null;
+  if (hooksOn) {
+    const settings = buildSessionHooksSettings({
+      port: fresh.hookPort,
+      token: fresh.hookToken,
+      curlPath: 'curl',
+      statusLine: planStatusLineBridge({ mode: statusLineBridgeModeSetting, userStatusLine: null, chatEnabled: appConfig.chat.enabled }),
+    });
+    files.push({ name: 'settings.json', content: `${JSON.stringify(settings, null, 2)}\n` });
+    claudeArgs.push('--settings', '@S/settings.json');
+  }
+  const mcp = fresh.mcpPort !== null ? (browserService?.prepareRemoteSession(ptyId, fresh.mcpPort) ?? null) : null;
+  const meta: RemoteSessionMeta = { ...fresh, mcpToken: mcp?.token ?? null, mcpPort: mcp ? fresh.mcpPort : null };
+  if (mcp) {
+    files.push({ name: 'mcp.json', content: mcp.configFileContent });
+    claudeArgs.push(...appMcpAllowArgs(), '--mcp-config', '@S/mcp.json');
+  }
+  const finalClaudeArgs = withResolvedPermissionMode(claudeArgs, readUserDefaultPermissionMode(undefined));
+
+  await remoteSessions.waitEnded(correlationId);
+  const git = localGitInfo(localCwd);
+  const script = buildRemoteSetupScript({
+    sid: correlationId,
+    homeRelativeDir: remoteDirFor(localCwd, appConfig.projectRoots),
+    repoUrl: git.repoUrl,
+    branch: git.branch,
+    files,
+    claudeArgs: finalClaudeArgs,
+    meta,
+  });
+  const setup = await runRemoteScript(place.sshTarget, script);
+  const answer = parseRemoteSetupOutput(setup.stdout, setup.code);
+  if (answer.kind === 'error') {
+    browserService?.releasePty(ptyId);
+    throw new Error(`${place.label}: ${answer.message}`);
+  }
+  const live = answer.kind === 'alive' ? answer.meta : meta;
+
+  // The bridge and the MCP know this tab by the tokens the remote CLI holds.
+  if (hooksOn && hookBridge) hookBridge.registerSession(ptyId, live.hookToken);
+  if (answer.kind === 'alive') {
+    browserService?.releasePty(ptyId);
+    if (live.mcpPort !== null && live.mcpToken !== null) browserService?.prepareRemoteSession(ptyId, live.mcpPort, live.mcpToken);
+  }
+  const tunnels = [
+    ...(hooksOn && hookBridge?.port ? [{ remotePort: live.hookPort, localPort: hookBridge.port }] : []),
+    ...(live.mcpPort !== null && mcp ? [{ remotePort: live.mcpPort, localPort: mcp.localPort }] : []),
+  ];
+
+  try {
+    ptyManager.create({
+      id: ptyId,
+      cols: options.cols,
+      rows: options.rows,
+      cwd: localCwd,
+      command: process.platform === 'win32' ? 'ssh.exe' : 'ssh',
+      args: buildAttachSshArgs({ sshTarget: place.sshTarget, sid: correlationId, tunnels }),
+    });
+  } catch (error) {
+    hookBridge?.unregisterSession(ptyId);
+    browserService?.releasePty(ptyId);
+    throw error;
+  }
+
+  tabCwdByPty.set(ptyId, localCwd);
+  activeSessionByPty.set(ptyId, correlationId);
+  if (hooksOn) {
+    semaphoreManager.registerSession(ptyId, correlationId);
+    petService?.onSessionRegistered(ptyId);
+    accountsBusyPtyIds.delete(ptyId);
+  }
+  accountsLiveSessionPtyIds.add(ptyId);
+  browserService?.registerPty(ptyId);
+
+  const mirror = remoteSessions.attach(ptyId, place.sshTarget, correlationId, answer.remoteDir);
+  spawnedTranscriptPaths.set(correlationId, mirror);
+  initialChatSourceByPty.set(ptyId, { sessionId: correlationId, transcriptPath: mirror, cwd: localCwd });
+  startTranscriptWatcher(ptyId, mirror, correlationId);
+
+  const accountId = place.activeAccountId;
+  const accountLabel = accountId ? (accountEngineHost.current()?.getSnapshot().accounts.find((account) => account.id === accountId)?.label ?? accountId) : null;
+  return { ptyId, claudeSessionId: correlationId, ...(accountId && accountLabel ? { account: { id: accountId, label: accountLabel } } : {}) };
+}
+
 function registerPtyIpcHandlers(): void {
-  ipcMain.handle(PTY_CHANNELS.create, (_event, options: PtyCreateOptions): PtyCreateResult => {
+  remoteSessions = new RemoteSessionRegistry(join(app.getPath('userData'), 'remote-transcripts'));
+  ipcMain.handle(PTY_CHANNELS.remoteAlive, async (): Promise<RemoteAliveSession[]> => {
+    const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
+    const found = await discoverRemoteSessions(places);
+    return found.map(({ remoteId, meta }) => ({
+      remoteId,
+      sessionId: meta.sid,
+      cwd: meta.localCwd,
+      projectName: meta.projectName,
+      name: meta.name,
+      launchArgs: meta.launchArgs,
+      ...(typeof meta.openedBy === 'string' && meta.openedBy !== '' ? { openedBy: meta.openedBy } : {}),
+    }));
+  });
+
+  ipcMain.handle(PTY_CHANNELS.create, (_event, options: PtyCreateOptions): PtyCreateResult | Promise<PtyCreateResult> => {
+    if (options.sessionType === 'claude' && options.remoteId && !options.accountLoginId) return createRemoteClaudeSession(options);
     if (options.sessionType === 'claude') {
       // T005 — spawna o `claude` CLI direto no PTY (plan.md ponto 1), não
       // dentro de um shell. Sem resolução → CA-5: o renderer reconhece o
@@ -1361,35 +1792,6 @@ function registerPtyIpcHandlers(): void {
       // graça se o servidor do semáforo não subiu no boot (app.whenReady):
       // a sessão continua funcionando, só sem os indicadores de estado.
       const { correlationId, extraArgs } = resolveClaudeCorrelation(launcherArgs, randomUUID);
-      // T015 (014-chat) — ponte: id da aba escolhido AQUI (o arquivo `--settings` leva o ptyId
-      // no nome) e token registrado ANTES do spawn. Legado: arquivo único, sem token.
-      const plannedPtyId = randomUUID();
-      let sessionHooksSettingsPath: string | null = null;
-      if (hooksTransport === 'bridge') {
-        if (hookBridge && hookBridge.port !== null) {
-          try {
-            const token = hookBridge.registerSession(plannedPtyId);
-            sessionHooksSettingsPath = writeSessionHooksSettings({
-              userDataDir: app.getPath('userData'),
-              ptyId: plannedPtyId,
-              port: hookBridge.port,
-              token,
-              chatEnabled: appConfig.chat.enabled,
-              curlPath,
-            });
-          } catch (error) {
-            // Degrada como o boot sem servidor: a sessão nasce sem semáforo, nunca sem terminal.
-            console.error('[donel-dev] --settings da sessão não gravou — sessão sem hooks:', error);
-            hookBridge.unregisterSession(plannedPtyId);
-            sessionHooksSettingsPath = null;
-          }
-        }
-      } else {
-        sessionHooksSettingsPath = hooksSettingsPath;
-      }
-      const semaphoreArgs = sessionHooksSettingsPath ? ['--settings', sessionHooksSettingsPath] : [];
-      const finalArgs = [...launcherArgs, ...extraArgs, ...semaphoreArgs];
-      // (T018: o `--permission-mode` resolvido entra mais abaixo, quando o config dir da sessão é conhecido.)
 
       // T1222 (011-contas-e-provedores, etapa 2, D8/entregável) — com os
       // perfis demolidos, sessões SEM provider nunca mais recebem override de
@@ -1445,6 +1847,55 @@ function registerPtyIpcHandlers(): void {
         activeProfileConfigDir: undefined,
       });
 
+      // T015 (014-chat) — ponte: id da aba escolhido AQUI (o arquivo `--settings` leva o ptyId
+      // no nome) e token registrado ANTES do spawn. Legado: arquivo único, sem token.
+      // (Ponte da statusline: depois do config dir da sessão, que diz de onde ler a statusline do usuário.)
+      const plannedPtyId = randomUUID();
+      let sessionHooksSettingsPath: string | null = null;
+      if (hooksTransport === 'bridge') {
+        if (hookBridge && hookBridge.port !== null) {
+          try {
+            const token = hookBridge.registerSession(plannedPtyId);
+            if (options.cwd) tabCwdByPty.set(plannedPtyId, options.cwd);
+            sessionHooksSettingsPath = writeSessionHooksSettings({
+              userDataDir: app.getPath('userData'),
+              ptyId: plannedPtyId,
+              port: hookBridge.port,
+              token,
+              curlPath,
+              // Ponte da statusline — encadeia a do usuário (lida no config dir DESTA sessão
+              // e no projeto); sem a dele, só com o chat desligado (hooks-settings.ts).
+              statusLine: planStatusLineBridge({
+                mode: statusLineBridgeModeSetting,
+                userStatusLine: readUserStatusLine(claudeConfigDirForSession, options.cwd),
+                chatEnabled: appConfig.chat.enabled,
+              }),
+              // "Isolar em worktree" — a worktree parte da branch ATUAL da pasta, não de origin/HEAD.
+              isolatedWorktree: worktreeNameFromArgs(launcherArgs) !== null,
+            });
+          } catch (error) {
+            // Degrada como o boot sem servidor: a sessão nasce sem semáforo, nunca sem terminal.
+            console.error('[donel-dev] --settings da sessão não gravou — sessão sem hooks:', error);
+            hookBridge.unregisterSession(plannedPtyId);
+            tabCwdByPty.delete(plannedPtyId);
+            sessionHooksSettingsPath = null;
+          }
+        }
+      } else {
+        sessionHooksSettingsPath = hooksSettingsPath;
+      }
+      const semaphoreArgs = sessionHooksSettingsPath ? ['--settings', sessionHooksSettingsPath] : [];
+      // Navegador integrado — o MCP do app (`donel`) entregue ao CLI da sessão pela função por CLI
+      // (`mcpDeliveryFor`, emenda agnóstica). Por último: `--mcp-config` é variádico e só opções podem vir depois.
+      const browserMcpArgs = browserService?.prepareSession(plannedPtyId, 'claude-code') ?? [];
+      // Papéis de sessão (item 12a) — the guidance of the role at every launch, resume and renewal
+      // (`roleDeliveryFor`, one case per CLI). A missing role or file → the session opens without it.
+      const roleId = roleIdForSpawn(options.roleId, launcherArgs, options.renewalId);
+      const rolePromptPath = roleId ? (rolesStore?.promptFileFor(roleId, { leaderOfAll: options.leaderOfAll === true }) ?? null) : null;
+      const roleArgs = rolePromptPath ? roleDeliveryFor('claude-code', rolePromptPath).args : [];
+      const finalArgs = [...launcherArgs, ...extraArgs, ...roleArgs, ...semaphoreArgs, ...browserMcpArgs];
+      // (T018: o `--permission-mode` resolvido entra mais abaixo, quando o config dir da sessão é conhecido.)
+
       let ptyId: string;
       try {
         ptyId = ptyManager.create({
@@ -1469,6 +1920,8 @@ function registerPtyIpcHandlers(): void {
         // O spawn falhou: nada de token nem arquivo órfão.
         hookBridge?.unregisterSession(plannedPtyId);
         removeSessionHooksSettings(app.getPath('userData'), plannedPtyId);
+        browserService?.releasePty(plannedPtyId);
+        tabCwdByPty.delete(plannedPtyId);
         throw error;
       }
 
@@ -1491,17 +1944,36 @@ function registerPtyIpcHandlers(): void {
       }
       // C4 — poll de 5 min do motor de contas só enquanto houver sessão viva.
       accountsLiveSessionPtyIds.add(ptyId);
+      browserService?.registerPty(ptyId); // navegador interno: this session may open its panel
+
+      // "Isolar em worktree" — o CLI roda a sessão DENTRO da worktree, e é sob ela que grava o `.jsonl`.
+      const sessionCwd = sessionWorktrees.onSpawn(ptyId, options.cwd, options.args)?.path ?? options.cwd;
 
       // T412 (004) — reflexo AO VIVO do `/rename` (CA-4). O path do `.jsonl` já
       // é conhecido aqui: o id da sessão foi IMPOSTO no spawn logo acima.
       // T1319/C17 — com provider, o home consultado é o config dir DELE (mesmo
       // padrão de sempre com perfil/motor).
-      const transcriptPath = resolveTranscriptPath(correlationId, options.cwd, claudeConfigDirForSession);
+      const transcriptPath = resolveTranscriptPath(correlationId, sessionCwd, claudeConfigDirForSession);
       // T710 — guardado ANTES de qualquer coisa poder falhar: é o caminho que o
       // `forgetIfOrphan` vai conferir se esta retomada morrer (ver comentário de
       // `spawnedTranscriptPaths`).
       spawnedTranscriptPaths.set(correlationId, transcriptPath);
-      initialChatSourceByPty.set(ptyId, { sessionId: correlationId, transcriptPath, cwd: options.cwd ?? homedir() });
+      // B36 — a renewed session carries the conversation it replaces: the tab's chat keeps it above a divider.
+      const renewed = options.renewalId ? sessionRenewal?.get(options.renewalId) : undefined;
+      initialChatSourceByPty.set(ptyId, {
+        sessionId: correlationId,
+        transcriptPath,
+        cwd: sessionCwd ?? homedir(),
+        ...(renewed && renewed.previousTranscriptPath
+          ? {
+              predecessor: {
+                sessionId: renewed.previousSessionId,
+                transcriptPath: renewed.previousTranscriptPath,
+                handoffPath: renewed.handoffPath,
+              },
+            }
+          : {}),
+      });
       startTranscriptWatcher(ptyId, transcriptPath, correlationId);
 
       // T404 (004) — `correlationId` é o id da sessão do Claude (imposto no
@@ -1596,6 +2068,9 @@ function listProjectsWithFavorites(): ProjectInfo[] {
 
 function registerProjectIpcHandlers(): void {
   ipcMain.handle(PROJECT_CHANNELS.list, (): ProjectInfo[] => listProjectsWithFavorites());
+  ipcMain.handle(PROJECT_CHANNELS.tabFolders, (_event, cwd: unknown): readonly string[] =>
+    typeof cwd === 'string' && cwd !== '' ? tabFoldersOf(cwd) : [],
+  );
 
   ipcMain.handle(PROJECT_CHANNELS.favorite, (_event, path: string, favorite: boolean): ProjectInfo[] => {
     appConfig = { ...appConfig, favorites: toggleFavorite(appConfig.favorites, path, favorite) };
@@ -1677,6 +2152,23 @@ function registerConfigIpcHandlers(): void {
     return toAppConfigDto(appConfig);
   });
 
+  /** Modo auto — atualização parcial; vale já, a ponte lê a preferência a cada pedido. */
+  ipcMain.handle(CONFIG_CHANNELS.setAutoModePrefs, (_event, prefs: Partial<AutoModePrefs>): AppConfigDto => {
+    const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
+    appConfig = { ...appConfig, autoMode: sanitizeAutoModePrefs({ ...appConfig.autoMode, ...patch }, appConfig.autoMode) };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
+  /** Modo YOLO — vale já: a ponte lê a lista a cada pedido, e o que os pedidos abertos do projeto esperavam é aprovado aqui. */
+  ipcMain.handle(CONFIG_CHANNELS.setProjectYolo, (_event, projectPath: unknown, enabled: unknown): AppConfigDto => {
+    if (typeof projectPath !== 'string' || projectPath === '' || typeof enabled !== 'boolean') return toAppConfigDto(appConfig);
+    appConfig = { ...appConfig, yolo: { projects: withProjectYolo(appConfig.yolo.projects, projectPath, enabled) } };
+    persistAppConfig();
+    if (enabled) for (const ptyId of [...tabCwdByPty.keys()].filter(isTabYolo)) chatHub?.approveOpenPermissions(ptyId);
+    return toAppConfigDto(appConfig);
+  });
+
   /**
    * T020 (015-jobu-pet) — the Jobu switch. Only `enabled` comes from the renderer (position and size
    * are saved by the main, from the pet's gestures) and it applies at once, without a restart. An invalid
@@ -1684,6 +2176,14 @@ function registerConfigIpcHandlers(): void {
    */
   ipcMain.handle(CONFIG_CHANNELS.setPetPrefs, (_event, input: unknown): AppConfigDto => {
     if (isValidPetPrefsInput(input) && input.enabled !== undefined) setPetEnabled(input.enabled);
+    return toAppConfigDto(appConfig);
+  });
+
+  /** B36 — sessão renovada em voo: partial update; an invalid field keeps its value. */
+  ipcMain.handle(CONFIG_CHANNELS.setSessionRenewalPrefs, (_event, prefs: Partial<SessionRenewalPrefs>): AppConfigDto => {
+    const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
+    appConfig = { ...appConfig, sessionRenewal: sanitizeSessionRenewalPrefs({ ...appConfig.sessionRenewal, ...patch }, appConfig.sessionRenewal) };
+    persistAppConfig();
     return toAppConfigDto(appConfig);
   });
 
@@ -2041,6 +2541,8 @@ function registerEsteiraIpcHandlers(): void {
  * espera a Promise antes de responder o `invoke` do renderer.
  */
 function registerSessionIpcHandlers(): void {
+  // Ponte da statusline — leituras vivas por aba, para quem monta depois do primeiro push.
+  ipcMain.handle(STATUS_LINE_CHANNELS.getAll, (): Record<string, StatusLineSnapshot> => statusLineStore.all());
   ipcMain.handle(SESSION_CHANNELS.list, async (_event, projectPath: string): Promise<SessionSummaryDto[]> => {
     return indexProjectSessions(projectPath);
   });
@@ -2114,6 +2616,24 @@ function registerSessionIpcHandlers(): void {
   });
 
   /**
+   * B39 — Retomar opens a conversation where it lives. Here when its transcript is on this disk; else each
+   * remote place is asked by ssh, and the one that has it runs the resume. A place that does not answer makes
+   * the answer `unreachable`: the renderer says so instead of opening an empty session on this computer.
+   */
+  ipcMain.handle(SESSION_CHANNELS.whereLives, async (_event, sessionId: unknown, projectPath: unknown): Promise<SessionWhereLives> => {
+    if (typeof sessionId !== 'string' || typeof projectPath !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(sessionId)) return { kind: 'local' };
+    if (localTranscriptExists(sessionId, projectPath)) return { kind: 'local' };
+    const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
+    if (places.length === 0) return { kind: 'local' };
+    const answers = await findRemoteTranscript(places, remoteDirFor(projectPath, appConfig.projectRoots), sessionId);
+    const found = answers.find((answer) => answer.answer === 'has');
+    if (found) return { kind: 'remote', remoteId: found.id };
+    const silent = answers.filter((answer) => answer.answer === 'unreachable');
+    if (silent.length > 0) return { kind: 'unreachable', labels: silent.map((answer) => places.find((place) => place.id === answer.id)?.label ?? answer.id) };
+    return { kind: 'local' };
+  });
+
+  /**
    * T710/CA-11 (2º momento) — o renderer viu a retomada morrer com código != 0
    * (`shouldForgetOnResumeFailure`, sinal medido em
    * `specs/008-fechar-pendencias/medicao-t710.md`) e pede o esquecimento. Aqui
@@ -2131,9 +2651,11 @@ function registerSessionIpcHandlers(): void {
     if (!entry) return toAppConfigDto(appConfig);
 
     const transcriptPath = spawnedTranscriptPaths.get(sessionId) ?? resolveTranscriptPath(sessionId, entry.projectPath, undefined);
+    // B39 — a conversation of a remote place leaves its mirror here: not on this disk is not "gone".
+    const mirrored = remoteSessions !== null && existsSync(remoteSessions.mirrorPathFor(sessionId));
     appConfig = {
       ...appConfig,
-      sessionRegistry: forgetIfOrphan(appConfig.sessionRegistry, sessionId, existsSync(transcriptPath)),
+      sessionRegistry: forgetIfOrphan(appConfig.sessionRegistry, sessionId, mirrored || existsSync(transcriptPath)),
     };
     persistAppConfig();
     return toAppConfigDto(appConfig);
@@ -2153,7 +2675,8 @@ function registerSessionIpcHandlers(): void {
       appConfig.sessionRegistry,
       projectPath,
       appConfig.sessionNames,
-      { indexProjectSessions },
+      // Re-read after the disk read: a visit written meanwhile must not be lost.
+      { indexProjectSessions, readLatestRegistry: () => appConfig.sessionRegistry },
       undefined,
     );
     appConfig = { ...appConfig, sessionRegistry };
@@ -2181,6 +2704,383 @@ function registerTabIpcHandlers(): void {
     appConfig = { ...appConfig, tabAppearance: setTabOrder(appConfig.tabAppearance, sessionId, order) };
     persistAppConfig();
     return toAppConfigDto(appConfig);
+  });
+}
+
+/** Saúde do computador — `null` until the handlers are registered (whenReady) and again after the app closes. */
+let healthService: HealthService | null = null;
+/** Saúde das VPS — same life as `healthService`. */
+let remoteHealthService: RemoteHealthService | null = null;
+
+/** The app's own pids: the main plus every helper Electron started (renderers, GPU, utility). */
+function ownAppPids(): number[] {
+  const pids = new Set<number>([process.pid]);
+  for (const metric of app.getAppMetrics()) pids.add(metric.pid);
+  return [...pids];
+}
+
+function registerHealthIpcHandlers(): void {
+  healthService = createHealthService({
+    collect: () => collectHealthSnapshot({ ownPids: ownAppPids }),
+    onReport: (report) => {
+      const window = getMainWindow();
+      if (window) window.webContents.send(HEALTH_CHANNELS.changed, report);
+    },
+    ownPids: ownAppPids,
+    lookupProcessName,
+    terminate: (pid) => {
+      process.kill(pid);
+    },
+  });
+  healthService.start();
+  ipcMain.handle(HEALTH_CHANNELS.get, (): HealthReport | null => healthService?.getReport() ?? null);
+  ipcMain.handle(HEALTH_CHANNELS.refresh, async (): Promise<HealthReport | null> => (healthService ? healthService.refresh() : null));
+  ipcMain.handle(HEALTH_CHANNELS.killProcess, async (_event, pid: unknown): Promise<KillProcessOutcome> =>
+    healthService ? healthService.killProcess(pid) : { ok: false, reason: 'no-report' },
+  );
+  ipcMain.handle(HEALTH_CHANNELS.openTemp, (): Promise<string> => shell.openPath(app.getPath('temp')));
+
+  remoteHealthService = createRemoteHealthService({
+    places: () => (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes,
+    run: runRemoteScript,
+    onReports: (reports) => {
+      const window = getMainWindow();
+      if (window) window.webContents.send(HEALTH_CHANNELS.remoteChanged, reports);
+    },
+  });
+  remoteHealthService.start();
+  ipcMain.handle(HEALTH_CHANNELS.remoteGet, (): readonly RemoteHealthReport[] => remoteHealthService?.getReports() ?? []);
+  ipcMain.handle(HEALTH_CHANNELS.remoteRefresh, async (): Promise<readonly RemoteHealthReport[]> =>
+    remoteHealthService ? remoteHealthService.refresh() : [],
+  );
+}
+
+/** Item 20 — the routines in shadow; `null` until whenReady and after the app closes. */
+let routineRunner: RoutineRunner | null = null;
+
+/**
+ * Item 20 (PDA mindscape-openrig, D3) — the routines that wake places, IN SHADOW: a timer in the main reads the
+ * open sessions and the boards and only logs, in `<userData>/rotinas/`, what it would have woken.
+ */
+function registerRotinasIpcHandlers(): void {
+  const mindscapeFile = mindscapeFilePath(process.env, app.getPath('userData'));
+  routineRunner = createRoutineRunner({
+    dir: join(app.getPath('userData'), 'rotinas'),
+    listLive: () => {
+      const live: LiveSessionSignal[] = [];
+      for (const [ptyId, sessionId] of activeSessionByPty) {
+        const snapshot = semaphoreManager.getSnapshot(ptyId);
+        if (!snapshot) continue;
+        live.push({
+          sessionId,
+          state: snapshot.state,
+          stateEnteredAt: snapshot.stateEnteredAt,
+          ...(snapshot.unconfirmed ? { unconfirmed: true } : {}),
+          ...(snapshot.pendingKinds ? { pendingKinds: snapshot.pendingKinds } : {}),
+          ...(snapshot.turnFailure ? { turnFailure: snapshot.turnFailure } : {}),
+        });
+      }
+      return live;
+    },
+    loadDoc: () => createMindscapeStore(mindscapeFile, configIoDeps).load(),
+    onChanged: () => getMainWindow()?.webContents.send(ROTINAS_CHANNELS.changed),
+  });
+  routineRunner.start();
+  ipcMain.handle(ROTINAS_CHANNELS.today, (): ShadowEntry[] => routineRunner?.today() ?? []);
+}
+
+/** B33 — `null` until whenReady. */
+let appUpdateService: AppUpdateService | null = null;
+
+/**
+ * B33 — the in-app update. Only the packaged alpha: electron-updater on the GitHub releases feed the alpha build
+ * publishes (`app-update.yml`, written by the build), token from the `gh` of this PC.
+ */
+function registerAppUpdateIpcHandlers(): void {
+  const channel = appChannelName();
+  const applies = app.isPackaged && channel === 'alfa';
+  appUpdateService = createAppUpdateService({
+    enabled: applies,
+    currentVersion: app.getVersion(),
+    updater: () => autoUpdater,
+    stateDir: join(app.getPath('userData'), 'app-update', channel),
+    channel,
+    onChanged: (status) => {
+      const window = getMainWindow();
+      if (window && !window.isDestroyed()) window.webContents.send(APP_UPDATE_CHANNELS.changed, status);
+    },
+  });
+  appUpdateService.start();
+  const disabled: AppUpdateStatus = { enabled: false, currentVersion: app.getVersion(), available: null, failure: null };
+  ipcMain.handle(APP_UPDATE_CHANNELS.get, (): AppUpdateStatus => appUpdateService?.status() ?? disabled);
+  ipcMain.handle(APP_UPDATE_CHANNELS.apply, (_event, tabs: unknown): AppUpdateApplyResult =>
+    appUpdateService ? appUpdateService.apply(tabs) : { ok: false, message: 'Atualização indisponível.' },
+  );
+  ipcMain.handle(APP_UPDATE_CHANNELS.takeBoot, (): AppUpdateBoot => appUpdateService?.takeBoot() ?? { tabs: [], failure: null });
+  ipcMain.handle(APP_UPDATE_CHANNELS.check, async (): Promise<void> => {
+    await appUpdateService?.check();
+  });
+}
+/** Sidebar — "Abrir no editor" + branch atual. Spawn sem shell, argumentos em array (workspace-tools.ts). */
+function registerWorkspaceIpcHandlers(): void {
+  const tools = createWorkspaceTools(createSystemWorkspaceToolsDeps());
+  ipcMain.handle(WORKSPACE_CHANNELS.editorStatus, () => tools.editorStatus());
+  ipcMain.handle(WORKSPACE_CHANNELS.openInEditor, (_event, path: unknown) => tools.openInEditor(path));
+  ipcMain.handle(WORKSPACE_CHANNELS.gitBranch, (_event, path: unknown) => tools.gitBranch(path));
+  // B3 — PR da branch + checks/reviews, só leitura pelo `gh` (pull-request-status.ts).
+  const pullRequests = createPullRequestStatusService(createSystemPullRequestStatusDeps(async (path) => (await tools.gitBranch(path)).branch));
+  ipcMain.handle(WORKSPACE_CHANNELS.pullRequest, (_event, path: unknown, options: unknown) =>
+    pullRequests.get(path, { details: (options as { details?: unknown } | undefined)?.details === true }),
+  );
+  ipcMain.handle(WORKSPACE_CHANNELS.openPullRequestUrl, (_event, url: unknown) => openPullRequestUrl(url, (safe) => shell.openExternal(safe)));
+  ipcMain.handle(WORKSPACE_CHANNELS.openWorktreeFolder, (_event, path: unknown) => sessionWorktrees.openFolder(path));
+}
+
+/**
+ * Mindscape (V1) — load/save of `mindscape.json`. The main is the only writer
+ * and validates the payload (`parseMindscapeDoc`) before writing.
+ * Desenho, fatia 06 — the prints in `mindscape-images/` beside it (save/read by
+ * imageId), and the boot sweep of the orphans (never during the run).
+ */
+function registerMindscapeIpcHandlers(): void {
+  const filePath = mindscapeFilePath(process.env, app.getPath('userData'));
+  const store = createMindscapeStore(filePath, configIoDeps);
+  ipcMain.handle(MINDSCAPE_CHANNELS.load, (): MindscapeDoc => store.load());
+  ipcMain.handle(MINDSCAPE_CHANNELS.save, (_event, doc: unknown): MindscapeSaveResult => store.save(doc));
+  const images = createMindscapeImages({ dir: mindscapeImagesDir(filePath) });
+  ipcMain.handle(MINDSCAPE_CHANNELS.saveImage, (_event, payload: unknown): Promise<MindscapeSaveImageResult> => images.save(payload));
+  ipcMain.handle(MINDSCAPE_CHANNELS.readImage, (_event, imageId: unknown): Promise<MindscapeReadImageResult> => images.read(imageId));
+  // After the handlers: the sweep reads the raw file and never runs on a missing, invalid or newer one.
+  void images.sweepOrphans(configIoDeps.readFileText(filePath)).catch(() => undefined);
+}
+
+/**
+ * Ledger com prova (item 19, D1) — `<userData>/ledger.json` + `ledger-provas/`, written only here. The owner's
+ * IPC decides as `{ kind: 'dono' }`; every write is pushed to the renderer (the strip on top of the Mindscape).
+ */
+let ledgerService: LedgerService | null = null;
+
+function registerLedgerIpcHandlers(): void {
+  const service = createLedgerService({
+    filePath: ledgerFilePath(process.env, app.getPath('userData')),
+    io: configIoDeps,
+    proofFs: nodeLedgerProofFs,
+    onChange: (snapshot) => {
+      const window = getMainWindow();
+      if (window && !window.isDestroyed()) window.webContents.send(LEDGER_CHANNELS.changed, snapshot);
+      // The progress panel of the Jobu reads the ledger too (it only reads: `decide` stays the main window's).
+      const petId = petService?.petWebContentsId() ?? null;
+      const pet = petId === null ? null : webContents.fromId(petId);
+      if (pet && !pet.isDestroyed()) pet.send(LEDGER_CHANNELS.changed, snapshot);
+    },
+  });
+  ledgerService = service;
+  const fromMain = (sender: Electron.WebContents): boolean => getMainWindow()?.webContents.id === sender.id;
+  ipcMain.handle(LEDGER_CHANNELS.load, (): LedgerSnapshot => service.load());
+  ipcMain.handle(LEDGER_CHANNELS.decide, (event, raw: unknown): LedgerApplyResult => {
+    if (!fromMain(event.sender)) return { ok: false, reason: 'Só a janela do app decide.' };
+    const decision = raw as Partial<LedgerOwnerDecision> | null;
+    if (!decision || typeof decision.id !== 'string') return { ok: false, reason: 'Pedido inválido.' };
+    if (decision.accept === true) return service.apply({ kind: 'dono' }, { op: 'aceitar', id: decision.id });
+    const reason = (decision as { reason?: unknown }).reason;
+    return service.apply({ kind: 'dono' }, { op: 'rejeitar', id: decision.id, reason: typeof reason === 'string' ? reason : '' });
+  });
+  ipcMain.handle(LEDGER_CHANNELS.openProof, async (event, raw: unknown): Promise<boolean> => {
+    if (!fromMain(event.sender)) return false;
+    const proof = raw as Partial<LedgerProof> | null;
+    if (proof?.kind === 'link' && typeof proof.url === 'string' && isHttpUrl(proof.url)) {
+      await shell.openExternal(proof.url);
+      return true;
+    }
+    if (proof?.kind === 'arquivo' && typeof proof.file === 'string' && isProofFileName(proof.file)) {
+      const path = service.proofPath({ kind: 'arquivo', file: proof.file, mediaType: '' });
+      return path !== null && (await shell.openPath(path)) === '';
+    }
+    return false;
+  });
+}
+
+/**
+ * Líder único (ADR 0007) — it has no place: it signs as `LEADER_OF_ALL`, names the board with `quadro`, and may
+ * give a task only to a place it reaches (`podeMandar` of its `sessao_listar`, which is reach.ts).
+ */
+/** Who opened whom and the arrows of a board (low risk and the Revisor's chain), as the renderer saved it. */
+function savedBoard(projectPath: string): MindscapeBoard | undefined {
+  try {
+    return createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load().boards[projectPath];
+  } catch {
+    return undefined;
+  }
+}
+
+async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<{ caller: LedgerCaller; call: LedgerToolCall } | string> {
+  const quadro = call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' ? call.quadro : undefined;
+  const base = { placeId: LEADER_OF_ALL, roleId: LEADER_ROLE_ID };
+  if (!quadro) {
+    if (call.tool === 'tarefa_criar') return 'Você é o Líder único e não tem quadro: diga qual em "quadro" (nome ou pasta).';
+    // No board: the list is of every board; the other tools act by the task id.
+    return { caller: { ...base, projectPath: '', boardPlaceIds: [] }, call: call.tool === 'tarefa_listar' ? { ...call, todos: true } : call };
+  }
+  const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar', quadro });
+  if (list.kind !== 'text') return list.kind === 'error' ? list.text : 'Não consegui ler o quadro.';
+  const board = JSON.parse(list.text) as { pasta?: unknown; lugares?: { id?: unknown; podeMandar?: unknown }[] };
+  if (typeof board.pasta !== 'string' || !Array.isArray(board.lugares)) return 'Não consegui ler o quadro.';
+  const reached = board.lugares.filter((place) => place.podeMandar === true).map((place) => place.id).filter((id): id is string => typeof id === 'string');
+  if (call.tool === 'tarefa_criar' && (!call.dono || !reached.includes(call.dono)))
+    return `O Líder único não faz a tarefa: diga em "dono" um lugar que você alcança neste quadro (${reached.join(', ') || 'nenhum'}).`;
+  const saved = savedBoard(board.pasta);
+  return { caller: { ...base, projectPath: board.pasta, boardPlaceIds: reached, ...(saved ? { board: saved } : {}) }, call };
+}
+
+/** The caller of a `tarefa_*` tool, from the board the renderer owns (the same answers the session would get). */
+async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<{ caller: LedgerCaller; call: LedgerToolCall } | string> {
+  const self = await boardBridge.execute(ptyId, { tool: 'sessao_quem_sou' });
+  if (self.kind !== 'text') return self.kind === 'error' ? self.text : 'Não consegui saber quem é esta sessão.';
+  const who = JSON.parse(self.text) as { lugar?: unknown; papel?: unknown; pasta?: unknown; liderUnico?: unknown };
+  if (who.liderUnico === true) return leaderLedgerCallerOf(boardBridge, ptyId, call);
+  if (call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar') {
+    if (call.quadro) return 'Só o Líder único escolhe o quadro. Esta sessão usa sempre o próprio quadro (chame sem "quadro").';
+  }
+  if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string') return 'Seu lugar ainda não está no quadro; espere o primeiro turno terminar.';
+  const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar' });
+  const places = list.kind === 'text' ? (JSON.parse(list.text) as { id?: unknown }[]) : [];
+  const board = savedBoard(who.pasta);
+  return {
+    caller: {
+      projectPath: who.pasta,
+      placeId: who.lugar,
+      ...(typeof who.papel === 'string' ? { roleId: who.papel } : {}),
+      boardPlaceIds: places.map((place) => place.id).filter((id): id is string => typeof id === 'string'),
+      ...(board ? { board } : {}),
+    },
+    call,
+  };
+}
+
+async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<BrowserToolOutcome> {
+  if (!ledgerService) return { kind: 'error', text: 'O ledger não abriu neste app.' };
+  const resolved = await ledgerCallerOf(boardBridge, ptyId, call);
+  if (typeof resolved === 'string') return { kind: 'error', text: resolved };
+  const result = await runLedgerTool(ledgerService, resolved.caller, resolved.call);
+  if (!result.ok) return { kind: 'error', text: result.text };
+  return result.image ? { kind: 'image', base64: result.image.base64, mimeType: result.image.mimeType, text: result.text } : { kind: 'text', text: result.text };
+}
+
+/** Papéis de sessão (item 12a) — list and save of `<userData>/papeis/<id>.md`. */
+function registerRolesIpcHandlers(): void {
+  const store = createRolesStore(app.getPath('userData'));
+  rolesStore = store;
+  ipcMain.handle(ROLES_CHANNELS.list, (): SessionRole[] => store.list());
+  ipcMain.handle(ROLES_CHANNELS.save, (_event, role: unknown): RoleSaveResult => store.save(role));
+}
+
+/**
+ * Papéis de sessão (item 12a) — the role a `claude` spawn carries. Explicit from the renderer (a
+ * place that had not started, the Launcher, a fork); else the role of the place that holds the
+ * resumed conversation, or the conversation a renewal replaces. Read from `mindscape.json`, which
+ * the renderer keeps saved; any failure → no role (the session still opens).
+ */
+function roleIdForSpawn(explicit: string | undefined, launcherArgs: readonly string[], renewalId: string | undefined): string | undefined {
+  if (explicit) return explicit;
+  const resumeIndex = launcherArgs.indexOf('-r');
+  const resumed = resumeIndex !== -1 && !launcherArgs.includes('--fork-session') ? launcherArgs[resumeIndex + 1] : undefined;
+  const predecessor = renewalId ? sessionRenewal?.get(renewalId)?.previousSessionId : undefined;
+  const sessionId = resumed ?? predecessor;
+  if (!sessionId) return undefined;
+  try {
+    const doc = createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load();
+    return roleOfSession(doc, sessionId);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Sessão renovada em voo (B36) — `renewal:prepare` writes the handoff instructions for the session
+ * running in `ptyId` (its CURRENT conversation: `/clear` and `/resume` move it) and names the
+ * handoff file; `renewal:status` reads the handoff header back. The turn, the context and the swap
+ * are followed by the renderer; the decisions are pure (`shared/sessionRenewal.ts`).
+ */
+function registerSessionRenewalIpcHandlers(): void {
+  const service = createSessionRenewalService({ handoffsDir: join(app.getPath('userData'), 'handoffs'), randomId: randomUUID });
+  sessionRenewal = service;
+  ipcMain.handle(SESSION_RENEWAL_CHANNELS.prepare, (_event, input: unknown): RenewalPrepared | null => {
+    if (typeof input !== 'object' || input === null) return null;
+    const { ptyId, contextTokens, limitTokens } = input as Record<string, unknown>;
+    if (typeof ptyId !== 'string' || typeof contextTokens !== 'number' || typeof limitTokens !== 'number') return null;
+    const sessionId = activeSessionByPty.get(ptyId);
+    const initial = initialChatSourceByPty.get(ptyId);
+    if (!sessionId || !initial) return null;
+    const transcriptPath = chatHub?.transcriptPathOf(ptyId) ?? spawnedTranscriptPaths.get(sessionId) ?? null;
+    try {
+      const record = service.prepare({ sessionId, transcriptPath, cwd: chatHub?.cwdOf(ptyId) ?? initial.cwd, contextTokens, limitTokens });
+      return {
+        renewalId: record.id,
+        previousSessionId: record.previousSessionId,
+        handoffPath: record.handoffPath,
+        requestPrompt: record.requestPrompt,
+        firstPrompt: record.firstPrompt,
+      };
+    } catch (error) {
+      console.error('[donel-dev] renovação: as instruções da passagem não gravaram:', error);
+      return null;
+    }
+  });
+  ipcMain.handle(SESSION_RENEWAL_CHANNELS.status, (_event, renewalId: unknown): HandoffStatus =>
+    typeof renewalId === 'string' ? service.status(renewalId) : { kind: 'missing' },
+  );
+}
+
+/**
+ * Mindscape, fatia 03 — end of turn → post-it written by the session. The text
+ * is the hook's `last_assistant_message`; when it is missing, the last
+ * assistant message of the `.jsonl` tail (`transcript_path` of the hook, else
+ * the path derived at spawn); neither → nothing is sent (the
+ * post-it keeps the previous text). The main only forwards: the renderer
+ * applies `writeSessionNote` and saves (single writer).
+ */
+/** Diário de gestos (B35) — created at boot (needs `app.getPath`); `null` before it. */
+let gestureDiary: GestureDiary | null = null;
+function recordGesture(event: GestureEvent): void {
+  void gestureDiary?.record(event);
+}
+
+/**
+ * Diário de gestos — the single writer of `<userData>/aprendizado/`. The session events come from
+ * the hooks here in the main; the screen gestures come from the renderer, validated, and the main
+ * stamps the time. Only on this machine: nothing is sent anywhere.
+ */
+function registerGestureDiary(): void {
+  gestureDiary = createGestureDiary({ dir: join(app.getPath('userData'), 'aprendizado') });
+  ipcMain.handle(LEARNING_CHANNELS.record, (_event, raw: unknown): void => {
+    const gesture = parseRendererGesture(raw);
+    if (gesture) recordGesture({ ...gesture, at: Date.now() });
+  });
+  semaphoreManager.onPromptSubmitted((ptyId, promptLength) => {
+    const sessionId = activeSessionByPty.get(ptyId);
+    if (sessionId) recordGesture({ type: 'pedido-enviado', sessionId, promptLength, at: Date.now() });
+  });
+}
+
+function registerMindscapeTurnEnded(): void {
+  semaphoreManager.onTurnEnded((ptyId, lastAssistantMessage, hookTranscriptPath) => {
+    const sessionId = activeSessionByPty.get(ptyId);
+    if (!sessionId) return;
+    const at = Date.now();
+    void (async () => {
+      let text = lastAssistantMessage;
+      if (text === null) {
+        // The path the CLI names in the hook wins; the one derived at spawn is the backup.
+        const transcriptPath = hookTranscriptPath ?? spawnedTranscriptPaths.get(sessionId);
+        text = transcriptPath ? await readTranscriptLastAssistantText(transcriptPath) : null;
+      }
+      if (text === null) return;
+      recordGesture({ type: 'turno-terminou', sessionId, text, at });
+      const payload: MindscapeTurnEndedPayload = { sessionId, text, at };
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) window.webContents.send(MINDSCAPE_CHANNELS.turnEnded, payload);
+      }
+    })().catch(() => undefined);
   });
 }
 
@@ -2286,6 +3186,7 @@ function registerAccountsIpcHandlers(): void {
         autoSwitchState: 'idle',
         lastAutoSwitch: null,
         lastSwitchOverwritten: null,
+        remotes: [],
       };
     }
     // 011-contas-e-provedores, etapa 3, Fase 2 (D5, item 3 do Bloco 3) —
@@ -2312,7 +3213,12 @@ function registerAccountsIpcHandlers(): void {
   ipcMain.handle(ACCOUNT_CHANNELS.switch, async (_event, id: AccountId): Promise<SwitchOutcome> => {
     const engine = accountEngineHost.current();
     if (!engine) return { kind: 'failed', reason: 'io' };
+    const from = engine.getActiveAccountId();
     const result = await engine.switchTo(id);
+    // fix/renovacao-credencial — a troca manual não deixava rastro no log de
+    // manutenção (só a automática), e a linha do tempo de uma conta ficava
+    // com buracos. Só ids e o desfecho.
+    appendAccountsMaintenanceLog({ event: 'manual-switch', outcome: result.kind, from, to: id, ...(result.kind === 'failed' ? { reason: result.reason } : {}) });
     if (result.kind === 'switched') {
       appConfig = { ...appConfig, accounts: { ...appConfig.accounts, activeAccountId: result.to } };
       persistAppConfig();
@@ -2322,9 +3228,30 @@ function registerAccountsIpcHandlers(): void {
 
   ipcMain.handle(ACCOUNT_CHANNELS.getConfig, (): AccountsConfigDto => appConfig.accounts);
 
+  // Lugares remotos (VPS) — troca a conta de um lugar; `null` libera. Só ids no log.
+  ipcMain.handle(ACCOUNT_CHANNELS.switchRemote, async (_event, placeId: unknown, accountId: unknown): Promise<RemoteSwitchOutcome> => {
+    if (typeof placeId !== 'string' || !placeId) return { kind: 'failed', reason: 'unknown-place' };
+    if (accountId !== null && (typeof accountId !== 'string' || !accountId)) return { kind: 'failed', reason: 'unknown-account' };
+    const engine = accountEngineHost.current();
+    if (!engine) return { kind: 'failed', reason: 'io' };
+    return engine.switchRemote(placeId, accountId, 'manual');
+  });
+
   ipcMain.handle(ACCOUNT_CHANNELS.setConfig, (_event, patch: unknown): AccountsConfigDto => {
     const merged = typeof patch === 'object' && patch !== null ? { ...appConfig.accounts, ...(patch as Partial<AccountsConfigDto>) } : appConfig.accounts;
-    appConfig = { ...appConfig, accounts: sanitizeAccountsConfig(merged, appConfig.accounts) };
+    // Lugares remotos — o renderer adiciona, renomeia e remove lugares, mas a
+    // conta de cada um só o motor muda (`switchRemote`). Um lugar com conta não
+    // sai da lista: sumir com ele deixaria a conta livre para esta máquina
+    // enquanto o CLI de lá ainda a renova.
+    const currentRemotes = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
+    const requestedRemotes = Array.isArray(merged.remotes) ? merged.remotes : currentRemotes;
+    const keptRemotes = requestedRemotes.map((place) => {
+      const current = typeof place === 'object' && place !== null ? currentRemotes.find((candidate) => candidate.id === place.id) : undefined;
+      return { ...place, activeAccountId: current?.activeAccountId ?? null };
+    });
+    const missingHeld = currentRemotes.filter((place) => place.activeAccountId !== null && !keptRemotes.some((candidate) => candidate.id === place.id));
+    const mergedWithRemotes = { ...merged, remotes: [...keptRemotes, ...missingHeld] };
+    appConfig = { ...appConfig, accounts: sanitizeAccountsConfig(mergedWithRemotes, appConfig.accounts) };
     persistAppConfig();
     applyAccountsEngineConfig(); // F6 — decide construir/reconstruir/atualizar, nunca mais "na mão" aqui.
     return appConfig.accounts;
@@ -2339,7 +3266,10 @@ function registerAccountsIpcHandlers(): void {
       if (!input.baseUrl?.trim() || !input.sessionRefreshToken?.trim()) return { kind: 'failed', reason: 'invalid-input' };
       const writeResult = writeVaultEntry(accountsVaultPath, safeStorage, accountsVaultIo, 'seazone:session', input.sessionRefreshToken);
       if (writeResult.kind !== 'ok') return { kind: 'failed', reason: 'vault-unavailable' };
-      appConfig = { ...appConfig, accounts: { ...appConfig.accounts, mod: 'seazone', seazone: { baseUrl: input.baseUrl.trim() } } };
+      // Pool Seazone ao lado das locais — NÃO troca o mod nem toca
+      // `localAccounts`/`activeAccountId`: só registra o switcher. A
+      // reconstrução abaixo (F6) monta o mod composto quando o mod é `local`.
+      appConfig = { ...appConfig, accounts: planConnectSeazonePool(appConfig.accounts, input.baseUrl) };
     } else {
       const label = input.label?.trim();
       if (!label) return { kind: 'failed', reason: 'invalid-input' };
@@ -2398,6 +3328,8 @@ function registerAccountsIpcHandlers(): void {
   ipcMain.handle(ACCOUNT_CHANNELS.removeAccount, (_event, id: unknown): RemoveAccountOutcome => {
     if (typeof id !== 'string' || !id) return { kind: 'failed', reason: 'unknown-account' };
 
+    // Conta ativa num lugar remoto: o par vivo dela está lá. Remover aqui perderia a conta igual à ativa desta máquina.
+    if (appConfig.accounts.remotes.some((place) => place.activeAccountId === id)) return { kind: 'blocked', reason: 'active-account' };
     const plan = planRemoveAccount(appConfig.accounts, id);
     if (plan.kind === 'blocked') return { kind: 'blocked', reason: 'active-account' };
     if (plan.kind === 'unknown-account') return { kind: 'failed', reason: 'unknown-account' };
@@ -2614,12 +3546,20 @@ void app.whenReady().then(async () => {
     } else {
       cleanupStaleHookSettings(userDataDir);
       curlPath = detectCurlPath();
-      const bridge = createHookBridge({ diagnostics: createDiagnosticsLog(userDataDir) });
+      const bridge = createHookBridge({
+        diagnostics: createDiagnosticsLog(userDataDir),
+        autoNeverAsks: () => appConfig.autoMode.neverAsks,
+        projectYolo: isTabYolo,
+        holdsPendings: () => chatHub !== null,
+      });
       await bridge.start();
       semaphoreManager.attachBridge(bridge);
       bridge.onAny((event) => {
         if (event.type === 'conversation-switched') handleConversationSwitched(event);
+        else if (event.type === 'statusline') statusLineStore.update(event.ptyId, event.payload);
       });
+      // Só leituras que MUDARAM chegam aqui (o store compara por valor).
+      statusLineStore.onChange((ptyId, snapshot) => broadcastChat(STATUS_LINE_CHANNELS.changed, { ptyId, snapshot } satisfies StatusLineChangedPayload));
       hookBridge = bridge;
     }
   } catch (error) {
@@ -2738,6 +3678,9 @@ void app.whenReady().then(async () => {
   // Emenda 22/09 (item 4) — StopFailure (limite da conta ou outro erro de
   // API) reavalia o auto-switch imediatamente, sem esperar o poll.
   semaphoreManager.onStopFailure(() => triggerAccountsAutoSwitchOnStopFailure());
+  // notificacoes-completas — the reason of the failure reaches the Jobu's core BEFORE the `waiting` it causes, so that
+  // wait is announced as "parou com erro: <motivo>" (bubble and toast) instead of "terminou".
+  semaphoreManager.onStopFailure((ptyId, error) => petService?.onStopFailure(ptyId, failureReasonText(error)));
   applyAccountsEngineConfig(); // F6 — 1ª chamada sempre 'built' (motor inerte se mod === null, C2).
 
   registerChatDomain();
@@ -2751,6 +3694,12 @@ void app.whenReady().then(async () => {
   registerClipboardIpcHandlers(); // T504 (005-terminal-copy-paste)
   registerDevModeIpcHandlers(); // T307 (003-modo-dev)
   registerTabIpcHandlers(); // CA-26/CA-27 (009-modo-dev-v3)
+  registerMindscapeIpcHandlers(); // Mindscape V1
+  registerLedgerIpcHandlers(); // Ledger com prova (item 19)
+  registerRolesIpcHandlers(); // Papéis de sessão (item 12a)
+  registerMindscapeTurnEnded(); // Mindscape, fatia 03
+  registerSessionRenewalIpcHandlers(); // Sessão renovada em voo (B36)
+  registerGestureDiary(); // Diário de gestos (B35)
   registerProjectBindingIpcHandlers(); // CA-23 (009-modo-dev-v3, lote 3)
   registerGithubIpcHandlers(); // CA-3/CA-5 (009-modo-dev-v3, lote 4)
   registerEsteiraIpcHandlers(); // Spec 010 — esteira nova (store + contrato), ao LADO do mapa atual
@@ -2759,6 +3708,48 @@ void app.whenReady().then(async () => {
     getService: () => petService,
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
   }); // 015-jobu-pet
+  registerHealthIpcHandlers(); // Saúde do computador
+  registerRotinasIpcHandlers(); // Item 20 — rotinas em sombra
+  registerAppUpdateIpcHandlers(); // B33 — atualizar de dentro do app
+  registerWorkspaceIpcHandlers(); // Sidebar — abrir no editor + branch
+  celularService = createCelularService({
+    ipcMain,
+    userDataDir: app.getPath('userData'),
+    io: configIoDeps,
+    ledger: () => ledgerService,
+    provasRoot: ledgerProofsDir(ledgerFilePath(process.env, app.getPath('userData'))),
+    isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
+  }); // Ledger no celular (PWA só na Tailscale)
+  // Quadro por MCP — the board and session tools of the same server go to the renderer (owner of the document).
+  const boardBridge = createBoardBridge({
+    ipcMain,
+    getWindow: getMainWindow,
+    isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
+  });
+  browserService = createBrowserService({
+    ipcMain,
+    getWindow: getMainWindow,
+    userDataDir: app.getPath('userData'),
+    isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
+    appVersion: app.getVersion(),
+    executeBoard: (ptyId, call) => boardBridge.execute(ptyId, call),
+    uploadFolders: {
+      get: () => appConfig.browserUploads.folders,
+      set: (folders) => {
+        appConfig = { ...appConfig, browserUploads: { folders: [...folders] } };
+        try {
+          persistAppConfig();
+        } catch (error) {
+          // The change holds until the app closes; it is only not remembered.
+          console.error('[donel-dev] pastas de envio não foram gravadas:', error);
+        }
+      },
+    },
+    executeLedger: (ptyId, call) => executeLedgerTool(boardBridge, ptyId, call),
+  }); // Navegador integrado
+  // Servidor MCP `donel` (loopback, porta efêmera) ANTES da janela: a primeira sessão já nasce com as ferramentas
+  // do navegador. Se não subir, as sessões nascem sem elas (nunca sem terminal).
+  await browserService.startMcp().catch((error: unknown) => console.error('[donel-dev] MCP do navegador não subiu:', error));
   createMainWindow();
 
   app.on('activate', () => {
@@ -2776,6 +3767,19 @@ app.on('window-all-closed', () => {
   void hookBridge?.close();
   esteiraService?.dispose();
   esteiraService = null;
+  healthService?.stop();
+  healthService = null;
+  remoteHealthService?.stop();
+  remoteHealthService = null;
+  routineRunner?.stop();
+  routineRunner = null;
+  appUpdateService?.stop();
+  void celularService?.dispose();
+  celularService = null;
+  // fix/renovacao-credencial (C6, research.md) — antes de descartar o motor,
+  // guarda no cofre o par que o CLI deixou em `.credentials.json` para a
+  // conta ativa. A gravação acontece dentro da chamada, sem esperar promessa.
+  void accountEngineHost.current()?.captureLivePairNow('quit');
   accountEngineHost.dispose(); // T1125 — nenhum timer (keepAlive/poll) sobrevive ao fechamento do app.
   if (process.platform !== 'darwin') {
     app.quit();

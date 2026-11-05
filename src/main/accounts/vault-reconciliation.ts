@@ -21,15 +21,20 @@ const SEAZONE_SESSION_KEY = 'seazone:session';
  * boas em vez de só as órfãs.
  *
  * Regras: (b) remove chave SEM ':' que não esteja em `localAccounts[].id`;
- * (c) remove `seazone:session`; (d) NUNCA remove outra chave com ':' —
+ * (c) remove `seazone:session`, exceto com `accounts.seazone` configurado
+ * (pool ao lado das locais); (d) NUNCA remove outra chave com ':' —
  * `provider:*` e qualquer namespace desconhecido sobrevivem sempre.
  */
 export function planVaultReconciliation(keys: readonly string[], config: AccountsConfig): string[] {
   if (config.mod !== 'local' || config.localAccounts.length === 0) return [];
 
   const referencedIds = new Set(config.localAccounts.map((account) => account.id));
+  // Pool Seazone ao lado das locais — com `accounts.seazone` configurado,
+  // `seazone:session` é a sessão VIVA do switcher (mod composto,
+  // mods/local-with-pool-mod.ts), não órfã.
+  const keepSeazoneSession = config.seazone !== null;
   return keys.filter((key) => {
-    if (key === SEAZONE_SESSION_KEY) return true;
+    if (key === SEAZONE_SESSION_KEY) return !keepSeazoneSession;
     if (key.includes(':')) return false; // provider:* e qualquer namespace desconhecido sobrevivem (regra d).
     return !referencedIds.has(key);
   });

@@ -1,0 +1,588 @@
+/* Ledger no celular — cada entrega é uma carta de um baralho de tarô (moldura, naipe pelo tipo do
+   trabalho). Arte própria, só inspirada no clima de baralho de adivinhação de mesa. Claro e escuro. */
+
+:root {
+  --fundo: #e9dfc8;
+  --fundo-veio: #e1d4b8;
+  --carta: #f8f1e1;
+  --carta-borda: #c9b48a;
+  --tinta: #2a2118;
+  --tinta-suave: #6b5a45;
+  --ouro: #9c7428;
+  --sim: #2f7a4d;
+  --nao: #a8362e;
+  --pre-fundo: #efe5cf;
+  --sombra: 0 10px 30px rgba(60, 40, 10, 0.18), 0 2px 6px rgba(60, 40, 10, 0.12);
+  --serifa: 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+  --sem-serifa: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --martelos: #a4552f;
+  --escudos: #3f6687;
+  --chaves: #2f7564;
+  --livros: #7a2c40;
+  --estrelas: #4e3f8f;
+  --coroas: #8a6a1c;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fundo: #121019;
+    --fundo-veio: #17141f;
+    --carta: #1d1a27;
+    --carta-borda: #4a4030;
+    --tinta: #efe6d2;
+    --tinta-suave: #b3a78f;
+    --ouro: #d2a44c;
+    --sim: #5fbf86;
+    --nao: #e0736a;
+    --pre-fundo: #15131d;
+    --sombra: 0 10px 30px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.4);
+    --martelos: #d98a5f;
+    --escudos: #7fa6c9;
+    --chaves: #6cbfa8;
+    --livros: #cf7d93;
+    --estrelas: #a495e0;
+    --coroas: #e0bb5a;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--fundo);
+  color: var(--tinta);
+  font-family: var(--sem-serifa);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background-image: radial-gradient(circle at 50% 0%, var(--fundo-veio), var(--fundo) 70%);
+}
+
+svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ---- topo ---- */
+
+.topo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: calc(env(safe-area-inset-top) + 10px) 16px 8px;
+}
+
+.marca {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.marca-glifo {
+  width: 30px;
+  height: 30px;
+  color: var(--ouro);
+}
+
+.topo h1 {
+  margin: 0;
+  font-family: var(--serifa);
+  font-size: 1.25rem;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+
+.contagem {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--tinta-suave);
+}
+
+.botao-icone {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1px solid var(--carta-borda);
+  background: var(--carta);
+  color: var(--tinta);
+  display: grid;
+  place-items: center;
+}
+
+.botao-icone svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* ---- baralho: uma carta por tela, rolagem vertical que encaixa ---- */
+
+.baralho {
+  flex: 1;
+  overflow-y: auto;
+  scroll-snap-type: y mandatory;
+  overscroll-behavior-y: contain;
+}
+
+.slot {
+  height: 100%;
+  min-height: 100%;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 6px 16px calc(env(safe-area-inset-bottom) + 14px);
+}
+
+.carta {
+  --naipe: var(--martelos);
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  border-radius: 18px;
+  background: var(--carta);
+  box-shadow: var(--sombra);
+  padding: 10px;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: transform 0.25s ease;
+  will-change: transform;
+}
+
+.carta.arrastando {
+  transition: none;
+}
+
+.naipe-martelos { --naipe: var(--martelos); }
+.naipe-escudos { --naipe: var(--escudos); }
+.naipe-chaves { --naipe: var(--chaves); }
+.naipe-livros { --naipe: var(--livros); }
+.naipe-estrelas { --naipe: var(--estrelas); }
+.naipe-coroas { --naipe: var(--coroas); }
+
+/* moldura dupla: filete do naipe por fora, ouro por dentro */
+.moldura {
+  position: relative;
+  height: 100%;
+  border: 2px solid var(--naipe);
+  border-radius: 12px;
+  padding: 4px;
+}
+
+.moldura-interna {
+  position: relative;
+  height: 100%;
+  border: 1px solid var(--ouro);
+  border-radius: 9px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.canto {
+  position: absolute;
+  width: 26px;
+  height: 26px;
+  color: var(--ouro);
+  pointer-events: none;
+}
+
+.canto svg {
+  width: 100%;
+  height: 100%;
+  stroke-width: 1.3;
+}
+
+.canto-se { top: 3px; left: 3px; }
+.canto-sd { top: 3px; right: 3px; transform: scaleX(-1); }
+.canto-ie { bottom: 3px; left: 3px; transform: scaleY(-1); }
+.canto-id { bottom: 3px; right: 3px; transform: scale(-1, -1); }
+
+.carta-topo {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 16px 32px 6px;
+  color: var(--naipe);
+  text-align: center;
+}
+
+.glifo {
+  width: 44px;
+  height: 44px;
+}
+
+.glifo svg {
+  width: 100%;
+  height: 100%;
+  stroke-width: 1.4;
+}
+
+.naipe-nome {
+  margin-top: 2px;
+  font-family: var(--serifa);
+  font-size: 0.78rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.indice {
+  position: absolute;
+  top: 12px;
+  right: 34px;
+  font-family: var(--serifa);
+  font-size: 0.8rem;
+  color: var(--tinta-suave);
+}
+
+.faixa {
+  align-self: center;
+  margin: 6px 0 0;
+  padding: 3px 12px;
+  border-top: 1px solid var(--ouro);
+  border-bottom: 1px solid var(--ouro);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--tinta-suave);
+}
+
+.faixa-amostra {
+  color: var(--naipe);
+}
+
+.carta-corpo {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 18px 12px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.titulo {
+  margin: 4px 0 12px;
+  font-family: var(--serifa);
+  font-size: 1.35rem;
+  line-height: 1.2;
+  text-align: center;
+  font-weight: 600;
+}
+
+.bloco h3,
+.provas h3 {
+  margin: 14px 0 4px;
+  font-family: var(--serifa);
+  font-size: 0.75rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--naipe);
+  font-weight: 600;
+}
+
+.bloco p {
+  margin: 0;
+  line-height: 1.45;
+}
+
+.pedido {
+  margin: 0;
+  padding: 6px 0 6px 12px;
+  border-left: 3px solid var(--naipe);
+  font-family: var(--serifa);
+  font-size: 1.08rem;
+  font-style: italic;
+  line-height: 1.4;
+}
+
+.prova {
+  margin-top: 8px;
+}
+
+.prova-rotulo {
+  font-size: 0.78rem;
+  color: var(--tinta-suave);
+  margin-bottom: 4px;
+}
+
+.prova img,
+.prova video {
+  display: block;
+  width: 100%;
+  max-height: 46vh;
+  object-fit: contain;
+  border-radius: 8px;
+  border: 1px solid var(--carta-borda);
+  background: var(--pre-fundo);
+}
+
+.prova img.ampliada {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  max-height: none;
+  height: 100%;
+  border-radius: 0;
+  border: 0;
+  background: rgba(0, 0, 0, 0.92);
+}
+
+.prova pre {
+  margin: 0;
+  padding: 10px;
+  max-height: 32vh;
+  overflow: auto;
+  border-radius: 8px;
+  border: 1px solid var(--carta-borda);
+  background: var(--pre-fundo);
+  font-family: var(--mono);
+  font-size: 0.75rem;
+  line-height: 1.4;
+  white-space: pre;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.prova a {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--naipe);
+  color: var(--naipe);
+  text-decoration: none;
+  word-break: break-all;
+}
+
+.prova-carregar {
+  min-height: 44px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--naipe);
+  background: transparent;
+  color: var(--naipe);
+  font: inherit;
+}
+
+.carta-pe {
+  padding: 8px 18px 14px;
+  border-top: 1px solid var(--carta-borda);
+  font-size: 0.8rem;
+  color: var(--tinta-suave);
+  text-align: center;
+}
+
+/* carimbo que aparece ao arrastar */
+.carimbo {
+  position: absolute;
+  top: 30%;
+  padding: 6px 14px;
+  border: 3px solid currentColor;
+  border-radius: 8px;
+  font-family: var(--serifa);
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  opacity: 0;
+  pointer-events: none;
+  background: var(--carta);
+}
+
+.carimbo-sim {
+  left: 22px;
+  color: var(--sim);
+  transform: rotate(-14deg);
+  opacity: var(--forca-sim, 0);
+}
+
+.carimbo-nao {
+  right: 22px;
+  color: var(--nao);
+  transform: rotate(14deg);
+  opacity: var(--forca-nao, 0);
+}
+
+/* ---- botões (o mesmo que o gesto, para quem não arrasta) ---- */
+
+.acoes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.botao {
+  min-height: 52px;
+  border-radius: 14px;
+  border: 2px solid currentColor;
+  background: var(--carta);
+  font: 600 1rem var(--sem-serifa);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.botao svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 2.2;
+}
+
+.botao-sim { color: var(--sim); }
+.botao-nao { color: var(--nao); }
+.botao-neutro { color: var(--tinta-suave); }
+
+.botao:disabled {
+  opacity: 0.5;
+}
+
+button:focus-visible,
+a:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid var(--ouro);
+  outline-offset: 2px;
+}
+
+/* ---- vazio, pareamento, erro ---- */
+
+.vazio {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+}
+
+.vazio .carta-verso {
+  width: 150px;
+  height: 230px;
+  border-radius: 14px;
+  border: 2px solid var(--ouro);
+  background: var(--carta);
+  box-shadow: var(--sombra);
+  display: grid;
+  place-items: center;
+  color: var(--ouro);
+}
+
+.vazio .carta-verso svg {
+  width: 70px;
+  height: 70px;
+  stroke-width: 1.1;
+}
+
+.vazio h2 {
+  margin: 0;
+  font-family: var(--serifa);
+  font-size: 1.25rem;
+}
+
+.vazio p {
+  margin: 0;
+  max-width: 30ch;
+  line-height: 1.45;
+  color: var(--tinta-suave);
+}
+
+.vazio ol {
+  margin: 0;
+  padding-left: 1.2em;
+  text-align: left;
+  line-height: 1.6;
+  color: var(--tinta-suave);
+}
+
+/* ---- aviso e folha do motivo ---- */
+
+.aviso {
+  position: fixed;
+  left: 16px;
+  right: 16px;
+  bottom: calc(env(safe-area-inset-bottom) + 84px);
+  z-index: 20;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--tinta);
+  color: var(--carta);
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.folha-fundo {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: flex-end;
+}
+
+.folha-fundo[hidden] {
+  display: none;
+}
+
+.folha {
+  width: 100%;
+  padding: 18px 16px calc(env(safe-area-inset-bottom) + 16px);
+  border-radius: 18px 18px 0 0;
+  background: var(--carta);
+  border-top: 2px solid var(--nao);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.folha h2 {
+  margin: 0;
+  font-family: var(--serifa);
+  font-size: 1.2rem;
+}
+
+.folha-dica {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--tinta-suave);
+}
+
+.folha textarea {
+  width: 100%;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid var(--carta-borda);
+  background: var(--pre-fundo);
+  color: var(--tinta);
+  font: 1rem var(--sem-serifa);
+  resize: vertical;
+}
+
+.folha-acoes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .carta {
+    transition: none;
+  }
+}

@@ -23,6 +23,8 @@ export const PET_CHANNELS = {
   click: 'pet:click',
   open: 'pet:open',
   listOpen: 'pet:list-open',
+  /** Item 18: the bubble of the conversation with the Líder opens or closes. */
+  talk: 'pet:talk',
   contextMenu: 'pet:context-menu',
   dragStart: 'pet:drag-start',
   dragMove: 'pet:drag-move',
@@ -128,6 +130,15 @@ export function isValidPetListOpenPayload(input: unknown): input is PetListOpenP
   return isRecord(input) && typeof input.open === 'boolean';
 }
 
+/** `pet:talk`: the bubble of the Líder opened (`true`) or closed. */
+export interface PetTalkPayload {
+  readonly open: boolean;
+}
+
+export function isValidPetTalkPayload(input: unknown): input is PetTalkPayload {
+  return isRecord(input) && typeof input.open === 'boolean';
+}
+
 export function isValidPetDragPayload(input: unknown): input is PetDragPayload {
   return isRecord(input) && Number.isFinite(input.screenX) && Number.isFinite(input.screenY);
 }
@@ -183,6 +194,8 @@ export interface DonelPetApi {
   click(): void;
   open(target: PetOpenTarget): void;
   setListOpen(open: boolean): void;
+  /** Item 18: opens (`true`) or closes the bubble of the conversation with the Líder; the main resizes the window. */
+  setTalk(open: boolean): void;
   /** The right button: `point` is the click in screen coordinates, so the menu opens there; without it, at the pointer. */
   openContextMenu(point?: PetDragPayload): void;
   /** The pointer went down on the Jobu at (screenX, screenY). The three drag calls carry screen coordinates, in DIP. */

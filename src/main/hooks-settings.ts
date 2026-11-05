@@ -1,5 +1,6 @@
 import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { UserStatusLine } from './cli-user-settings';
 
 // T009 — arquivo `--settings` adicional (spike: "soma hooks aos hooks
 // globais do usuário sem substituí-los" — validado byte-a-byte que
@@ -75,32 +76,51 @@ export function writeHooksSettingsFile(userDataDir: string, port: number, writeF
 const HOOK_SETTINGS_DIR_NAME = 'hook-settings';
 const STALE_HOOK_SETTINGS_MS = 24 * 60 * 60 * 1000;
 
-/** Events delivered as `http` hooks, with their `timeout` in seconds. `PermissionRequest` is gated by `chatEnabled`. */
-export const BRIDGE_HTTP_EVENTS: ReadonlyArray<{ readonly event: string; readonly timeout: number; readonly chatOnly: boolean }> = [
-  { event: 'PermissionRequest', timeout: 86400, chatOnly: true },
-  { event: 'PreToolUse', timeout: 10, chatOnly: false },
-  { event: 'PostToolUse', timeout: 10, chatOnly: false },
-  { event: 'UserPromptSubmit', timeout: 10, chatOnly: false },
-  { event: 'Stop', timeout: 10, chatOnly: false },
-  { event: 'StopFailure', timeout: 10, chatOnly: false },
-  { event: 'Notification', timeout: 10, chatOnly: false },
-  { event: 'SubagentStart', timeout: 10, chatOnly: false },
-  { event: 'SubagentStop', timeout: 10, chatOnly: false },
-  { event: 'SessionEnd', timeout: 2, chatOnly: false },
+/**
+ * Events delivered as `http` hooks, with their `timeout` in seconds. `PermissionRequest` goes in even with the chat
+ * off: the settings of a live session are fixed at spawn, and Modo YOLO must reach it. With nobody to answer, the
+ * bridge says `{}` at once and the terminal asks as usual. `PermissionDenied` counts the auto mode classifier's blocks
+ * (`autoApprovalVerdict`).
+ */
+export const BRIDGE_HTTP_EVENTS: ReadonlyArray<{ readonly event: string; readonly timeout: number }> = [
+  { event: 'PermissionRequest', timeout: 86400 },
+  { event: 'PermissionDenied', timeout: 10 },
+  { event: 'PreToolUse', timeout: 10 },
+  { event: 'PostToolUse', timeout: 10 },
+  { event: 'UserPromptSubmit', timeout: 10 },
+  { event: 'Stop', timeout: 10 },
+  { event: 'StopFailure', timeout: 10 },
+  { event: 'Notification', timeout: 10 },
+  { event: 'SubagentStart', timeout: 10 },
+  { event: 'SubagentStop', timeout: 10 },
+  { event: 'SessionEnd', timeout: 2 },
 ];
 
 export interface SessionHooksSettingsInput {
   readonly port: number;
   readonly token: string;
-  readonly chatEnabled: boolean;
   /** Path (or bare name) of `curl.exe`; `null` when the boot did not find it — falls back to the PowerShell forwarder. */
   readonly curlPath: string | null;
   /** Required when `curlPath` is null: the `.ps1` written by `writeSessionHooksSettings`. */
   readonly forwarderScriptPath?: string;
+  /** Ponte da statusline: what to inject (see `planStatusLineBridge`). Absent = no `statusLine` key at all. */
+  readonly statusLine?: StatusLineBridgePlan | null;
+  /** The `.ps1` the statusLine command runs (tee or silent forwarder); written by `writeSessionHooksSettings`. */
+  readonly statusLineScriptPath?: string;
+  /**
+   * "Isolar em worktree": the tab runs `claude --worktree`. Then the file also carries `worktree.baseRef: "head"`,
+   * so the worktree starts from the CURRENT branch of the project folder instead of the remote's default branch
+   * (CLI 2.1.314 default `"fresh"` = `origin/HEAD`, which here is `main`, the beta). Measured with the real CLI on
+   * 30/10: through this same `--settings` file the worktree is born at the local HEAD; without it, at `origin/HEAD`.
+   * Only this session's file: the owner's `~/.claude/settings.json` is never touched.
+   */
+  readonly isolatedWorktree?: boolean;
 }
 
 export interface SessionHooksSettingsContent {
   readonly hooks: Record<string, ReadonlyArray<{ readonly hooks: ReadonlyArray<Record<string, unknown>> }>>;
+  readonly statusLine?: StatusLineSetting;
+  readonly worktree?: { readonly baseRef: 'head' };
 }
 
 function bridgeUrl(port: number, event: string): string {
@@ -109,11 +129,10 @@ function bridgeUrl(port: number, event: string): string {
 
 /** Pure — the per-session `--settings` content. No `matcher` anywhere: every tool is observed. */
 export function buildSessionHooksSettings(input: SessionHooksSettingsInput): SessionHooksSettingsContent {
-  const { port, token, chatEnabled, curlPath, forwarderScriptPath } = input;
+  const { port, token, curlPath, forwarderScriptPath } = input;
   const hooks: Record<string, ReadonlyArray<{ hooks: ReadonlyArray<Record<string, unknown>> }>> = {};
 
-  for (const { event, timeout, chatOnly } of BRIDGE_HTTP_EVENTS) {
-    if (chatOnly && !chatEnabled) continue;
+  for (const { event, timeout } of BRIDGE_HTTP_EVENTS) {
     hooks[event] = [{ hooks: [{ type: 'http', url: bridgeUrl(port, event), headers: { 'X-Donel-Token': token }, timeout }] }];
   }
 
@@ -127,7 +146,182 @@ export function buildSessionHooksSettings(input: SessionHooksSettingsInput): Ses
   }
   hooks.SessionStart = [{ hooks: [{ type: 'command', command, timeout: 10 }] }];
 
-  return { hooks };
+  const statusLine = input.statusLine ? buildStatusLineSetting(input.statusLine, input) : null;
+  return {
+    hooks,
+    ...(statusLine ? { statusLine } : {}),
+    ...(input.isolatedWorktree ? { worktree: { baseRef: 'head' as const } } : {}),
+  };
+}
+
+// --- Ponte da statusline ------------------------------------------------------
+//
+// O CLI roda o comando de `statusLine` com o JSON da sessão no stdin (cota de
+// 5h/7d, custo, janela de contexto, modelo, PR...) e mostra o que ele imprime.
+// O app injeta um `statusLine` no MESMO `--settings` da sessão para receber
+// esse JSON na ponte (`/h/StatusLine`, hook-bridge.ts). Fatos que moldam isto
+// (CLI 2.1.314, conferidos no binário e na prática em 2026-10-30):
+//
+// 1. O `--settings` é a camada "flag", acima de user/project/local: a nossa
+//    `statusLine` ESCONDE a do usuário. Por isso, quando ele tem uma, a nossa
+//    ENCADEIA: `<tee> | <comando dele>` — o tee devolve o mesmo stdin ao
+//    comando original (que roda no MESMO shell em que rodaria, com a mesma
+//    saída e o mesmo código de saída) e posta uma cópia na ponte.
+// 2. Com QUALQUER `statusLine` configurada, o CLI some com as dicas do rodapé
+//    ("esc to interrupt", "? for shortcuts") — mesmo quando ela não imprime
+//    nada (e uma que não imprime nada não deixa linha em branco: o rodapé fica
+//    só com o modo de permissão). O chat NÃO depende dessas dicas: prova o
+//    turno pela linha do spinner acima da caixa (`shared/chat/screen.ts`,
+//    `isWorking`), que fica nos dois modos — medido no CLI real em 30/10. Por
+//    isso a ponte é injetada sempre (chat ligado ou não);
+//    `DONEL_STATUSLINE_BRIDGE=off` desliga tudo, e `always` vale o mesmo que
+//    o padrão (ficou por compatibilidade).
+// 3. No Windows o comando roda no Git Bash quando ele existe, senão no
+//    PowerShell (o mesmo executor dos hooks de comando, sem campo `shell`). O
+//    comando gerado vale nos dois: `powershell ... -File "<ps1>"`, `curl` e o
+//    pipe. Comando do usuário com `&&`, `||`, `;`, `&` ou quebra de linha fora
+//    de aspas não é encadeável com segurança — aí a sessão fica SEM a ponte e
+//    a statusline dele intacta.
+// 4. O CLI cancela a execução em voo quando vem outra atualização, e uma
+//    statusline lenta atrasa a tela: o POST tem timeout curto e falha calado.
+
+export interface StatusLineSetting {
+  readonly type: 'command';
+  readonly command: string;
+  readonly padding?: number;
+  readonly refreshInterval?: number;
+  readonly hideVimModeIndicator?: boolean;
+}
+
+/** O que a sessão recebe: encadear a statusline do usuário ou só encaminhar (sem saída). */
+export type StatusLineBridgePlan = { readonly kind: 'chain'; readonly user: UserStatusLine } | { readonly kind: 'forward' };
+
+export type StatusLineBridgeMode = 'auto' | 'always' | 'off';
+
+/** `DONEL_STATUSLINE_BRIDGE` → modo; qualquer outro valor é `auto`. */
+export function statusLineBridgeMode(raw: string | undefined): StatusLineBridgeMode {
+  return raw === 'always' || raw === 'off' ? raw : 'auto';
+}
+
+/**
+ * Puro — decide a ponte da sessão. `null` = não injetar nada (a statusline do
+ * usuário, se houver, segue exatamente como era).
+ */
+export function planStatusLineBridge(input: {
+  readonly mode: StatusLineBridgeMode;
+  readonly userStatusLine: UserStatusLine | null;
+  /** Não muda mais a decisão: o chat não lê as dicas do rodapé que a statusline esconde (fato 2 acima). */
+  readonly chatEnabled?: boolean;
+}): StatusLineBridgePlan | null {
+  if (input.mode === 'off') return null;
+  if (input.userStatusLine) {
+    return isChainableStatusLineCommand(input.userStatusLine.command) ? { kind: 'chain', user: input.userStatusLine } : null;
+  }
+  return { kind: 'forward' };
+}
+
+/**
+ * Puro — o comando do usuário pode ir à direita de um pipe sem mudar de
+ * sentido (em bash e em PowerShell)? Recusa, fora de aspas: `;`, `&` (e
+ * `&&`), `||`, quebra de linha. `|` simples passa: `tee | a | b` continua
+ * entregando o stdin a `a`. Na dúvida, recusa — recusar só deixa a sessão
+ * sem a ponte.
+ */
+export function isChainableStatusLineCommand(command: string): boolean {
+  let quote: '"' | "'" | null = null;
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i];
+    if (quote) {
+      if (c === quote) quote = null;
+      else if (c === '\\' && quote === '"') i++;
+      continue;
+    }
+    if (c === '"' || c === "'") quote = c;
+    else if (c === '\\') i++;
+    else if (c === ';' || c === '&' || c === '\n' || c === '\r') return false;
+    else if (c === '|' && command[i + 1] === '|') return false;
+  }
+  return quote === null && command.trim() !== '';
+}
+
+/** Rota da ponte para a statusline (mesmo nome que `STATUS_LINE_EVENT` em hook-bridge.ts). */
+const STATUS_LINE_ROUTE = 'StatusLine';
+
+function powershellFile(scriptPath: string): string {
+  return `powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${scriptPath}"`;
+}
+
+/** Puro — o bloco `statusLine` do `--settings` da sessão. */
+export function buildStatusLineSetting(
+  plan: StatusLineBridgePlan,
+  input: { readonly port: number; readonly token: string; readonly curlPath: string | null; readonly statusLineScriptPath?: string },
+): StatusLineSetting {
+  if (plan.kind === 'chain') {
+    // `padding`, `refreshInterval` e `hideVimModeIndicator` do usuário viajam junto: a nossa substitui a dele.
+    const { command, ...rest } = plan.user;
+    return { ...rest, type: 'command', command: `${powershellFile(input.statusLineScriptPath ?? '')} | ${command}` };
+  }
+  if (input.curlPath !== null) {
+    // Barras normais e `"@-"` entre aspas: o mesmo texto vale no Git Bash (que come `\` sem aspas —
+    // visto num transcript real do 2.1.295, `C:WindowsSystem32curl.exe: command not found`), no
+    // PowerShell (onde `@-` sem aspas é erro de sintaxe) e no cmd.
+    const path = input.curlPath.replaceAll('\\', '/');
+    const exe = /\s/.test(path) ? `"${path}"` : path;
+    // A ponte responde com corpo vazio: o curl não imprime nada.
+    return {
+      type: 'command',
+      command: `${exe} -s --noproxy 127.0.0.1 --connect-timeout 1 --max-time 2 --data-binary "@-" -H "X-Donel-Token: ${input.token}" ${bridgeUrl(input.port, STATUS_LINE_ROUTE)}`,
+    };
+  }
+  return { type: 'command', command: powershellFile(input.statusLineScriptPath ?? '') };
+}
+
+/**
+ * Puro — o `.ps1` da statusline. `echo: true` é o TEE do encadeamento: lê o
+ * stdin em bytes, devolve-o no stdout (todo caractere não-ASCII escapado como
+ * `\uXXXX` — o MESMO JSON para qualquer leitor, e que nenhuma página de código
+ * do PowerShell estraga no pipe) e FECHA o stdout antes de postar, para o
+ * comando do usuário não esperar a ponte. `echo: false` só posta, calado.
+ * Nunca lança, termina com 0; o POST tem timeout de 1,5 s e ignora proxy.
+ */
+export function buildStatusLineScript(input: { readonly port: number; readonly token: string; readonly echo: boolean }): string {
+  const lines = [
+    '$ErrorActionPreference = "SilentlyContinue"',
+    '$stdin = [Console]::OpenStandardInput()',
+    '$ms = New-Object System.IO.MemoryStream',
+    '$stdin.CopyTo($ms)',
+    '$bytes = $ms.ToArray()',
+  ];
+  if (input.echo) {
+    lines.push(
+      '$text = [System.Text.Encoding]::UTF8.GetString($bytes)',
+      "$ascii = [regex]::Replace($text, '[^\\u0000-\\u007F]', { param($m) '\\u{0:x4}' -f [int][char]$m.Value })",
+      '$outBytes = [System.Text.Encoding]::ASCII.GetBytes($ascii)',
+      '$stdout = [Console]::OpenStandardOutput()',
+      '$stdout.Write($outBytes, 0, $outBytes.Length)',
+      '$stdout.Flush()',
+      '$stdout.Close()',
+    );
+  }
+  lines.push(
+    'try {',
+    `  $req = [System.Net.HttpWebRequest]::Create("${bridgeUrl(input.port, STATUS_LINE_ROUTE)}")`,
+    '  $req.Method = "POST"',
+    '  $req.Proxy = $null',
+    '  $req.Timeout = 1500',
+    '  $req.ReadWriteTimeout = 1500',
+    '  $req.ContentType = "application/json"',
+    `  $req.Headers.Add("X-Donel-Token", "${input.token}")`,
+    '  $req.ContentLength = $bytes.Length',
+    '  $rs = $req.GetRequestStream()',
+    '  $rs.Write($bytes, 0, $bytes.Length)',
+    '  $rs.Close()',
+    '  $req.GetResponse().Close()',
+    '} catch {}',
+    'exit 0',
+    '',
+  );
+  return lines.join('\r\n');
 }
 
 /** Pure — PowerShell fallback for SessionStart: reads stdin and posts the raw bytes (no text decoding, so accents in paths survive). */
@@ -156,6 +350,10 @@ function sessionForwarderScriptPath(userDataDir: string, ptyId: string): string 
   return join(userDataDir, HOOK_SETTINGS_DIR_NAME, `${ptyId}.forward.ps1`);
 }
 
+function sessionStatusLineScriptPath(userDataDir: string, ptyId: string): string {
+  return join(userDataDir, HOOK_SETTINGS_DIR_NAME, `${ptyId}.statusline.ps1`);
+}
+
 /** I/O — writes `userData/hook-settings/<ptyId>.json` (plus the forwarder script when there is no curl) and returns the settings path. */
 export function writeSessionHooksSettings(input: SessionHooksSettingsInput & { readonly userDataDir: string; readonly ptyId: string }): string {
   const { userDataDir, ptyId, port, token } = input;
@@ -167,14 +365,22 @@ export function writeSessionHooksSettings(input: SessionHooksSettingsInput & { r
     writeFileSync(forwarderScriptPath, buildByteSafeForwarderScript({ port, token }), 'utf8');
   }
 
+  // Ponte da statusline: o tee (encadeamento) sempre; o encaminhador calado só quando não há curl.
+  let statusLineScriptPath = input.statusLineScriptPath;
+  const plan = input.statusLine;
+  if (plan && (plan.kind === 'chain' || input.curlPath === null)) {
+    statusLineScriptPath = sessionStatusLineScriptPath(userDataDir, ptyId);
+    writeFileSync(statusLineScriptPath, buildStatusLineScript({ port, token, echo: plan.kind === 'chain' }), 'utf8');
+  }
+
   const path = sessionHookSettingsPath(userDataDir, ptyId);
-  writeFileSync(path, JSON.stringify(buildSessionHooksSettings({ ...input, forwarderScriptPath }), null, 2), 'utf8');
+  writeFileSync(path, JSON.stringify(buildSessionHooksSettings({ ...input, forwarderScriptPath, statusLineScriptPath }), null, 2), 'utf8');
   return path;
 }
 
 /** I/O — removes the session's settings file and forwarder script; missing files are fine. */
 export function removeSessionHooksSettings(userDataDir: string, ptyId: string): void {
-  for (const path of [sessionHookSettingsPath(userDataDir, ptyId), sessionForwarderScriptPath(userDataDir, ptyId)]) {
+  for (const path of [sessionHookSettingsPath(userDataDir, ptyId), sessionForwarderScriptPath(userDataDir, ptyId), sessionStatusLineScriptPath(userDataDir, ptyId)]) {
     try {
       unlinkSync(path);
     } catch {

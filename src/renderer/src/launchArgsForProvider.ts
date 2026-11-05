@@ -19,6 +19,8 @@ export interface BuildLauncherArgsOptions {
   /** Já trim()ado; string vazia = flag `-n` omitida. */
   readonly sessionName: string;
   readonly continuation?: SessionContinuation;
+  /** "Isolar em worktree" — nome já escolhido (`worktreeNameFor`); ausente = sessão no checkout do projeto. */
+  readonly worktree?: string;
 }
 
 export function buildLauncherArgs(options: BuildLauncherArgsOptions): string[] {
@@ -33,5 +35,6 @@ export function buildLauncherArgs(options: BuildLauncherArgsOptions): string[] {
     permissionMode: options.permissionMode,
     sessionName: options.sessionName || undefined,
     continuation: options.continuation,
+    worktree: options.worktree,
   });
 }

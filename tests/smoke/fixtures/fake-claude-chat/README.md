@@ -9,7 +9,11 @@ para `fake-claude-chat.mjs`). Node puro, sem dependencias; funciona com qualquer
 `--session-id <id>`, `--settings <arquivo>` (o JSON por sessao do app: entradas `http`
 e o `command` do `SessionStart`), `-r|--resume <id>` (usa o id e dispara `SessionStart`
 com `source: resume`), `--permission-mode <modo>` (com `acceptEdits` o rodape mostra
-`accept edits on`, o sinal de "pronto" que `waitForClaudeBooted(until: 'prompt')` espera). Os demais sao ignorados.
+`accept edits on`, o sinal de "pronto" que `waitForClaudeBooted(until: 'prompt')` espera), `--worktree <nome>`
+(como o CLI 2.1.314: cria ou reabre `<repo principal>/.claude/worktrees/<nome>` na branch `worktree-<nome>`, a partir
+de `origin/HEAD` ou, com `worktree.baseRef: "head"` no `--settings`, do HEAD da pasta; trava
+com `claude session <nome> (pid <pid>)`, roda a sessao dentro dela; fora de repo git imprime o erro do CLI e sai com 1).
+Os demais sao ignorados.
 
 Os smokes que abrem aba `claude` usam este falso por padrao (`launchIsolatedApp`, opcao
 `fakeClaude`, `tests/smoke/helpers/launch.ts`); so os `@real` passam `fakeClaude: false`.
@@ -28,11 +32,17 @@ Os transcripts do falso ficam em `<userData>/fake-claude-home` quando o helper o
 | `DONEL_FAKE_CLAUDE_SLOW_MS` | Duracao extra (padrao 3000) de uma rodada cujo prompt contem `demorar`; Esc a encerra antes |
 | `DONEL_SMOKE_SHOTS_DIR` | (do `chatHelpers.shot`, nao do falso) copia extra dos prints dos smokes de chat para esta pasta |
 | `DONEL_FAKE_CLAUDE_DROP_FIRST_ENTER` | `1`: o primeiro Enter com texto na caixa e engolido (Enter perdido), para testar o reenvio de `\r` |
+| `DONEL_FAKE_CLAUDE_FOOTER_HINTS` | `0`: rodape SEM as dicas (`? for shortcuts`, `! for shell mode`, `esc to interrupt`), como o CLI 2.1.314 com qualquer `statusLine`. Padrao: com as dicas (varios smokes esperam "shortcuts" como sinal de que o falso subiu) |
+| `DONEL_FAKE_CLAUDE_HIDE_BOX_WHILE_WORKING` | `1`: durante a rodada a caixa e o rodape somem (so `● Bash(...) Running…`), como o CLI real num comando longo; o que e digitado continua indo para a caixa e o Enter para a fila |
 
 ## Comportamento
 
 - Liga bracketed paste (`ESC[?2004h`); desenha banner, caixa entre reguas (`❯ ...`) e
   rodape: `? for shortcuts` ocioso, `! for shell mode` com texto digitado, `esc to interrupt` trabalhando.
+  Durante a rodada desenha tambem a linha do spinner acima da caixa (`✻ Pondering… (Ns)`), como o CLI real.
+- **Rodape sem as dicas** (o CLI 2.1.314 com qualquer `statusLine`): com `DONEL_FAKE_CLAUDE_FOOTER_HINTS=0` o
+  rodape nao tem `? for shortcuts`, `! for shell mode` nem `esc to interrupt`; so o modo (`⏸ manual mode on`, ou
+  `accept edits on`), sempre. A rodada se prova pelo spinner. Os smokes do chat rodam nos dois modos.
 - Colagem com 5+ linhas ou 1000+ caracteres vira `[Pasted text #N +M lines]` (M = quebras
   de linha); no Enter o texto completo volta no `prompt`. Colagem menor fica literal na caixa.
   Colagem de um caminho absoluto de imagem (`.png/.jpg/.jpeg/.gif/.webp`) vira `[Image #N]` - tambem
@@ -48,6 +58,10 @@ Os transcripts do falso ficam em `<userData>/fake-claude-home` quando o helper o
 - LF (`\n`) insere quebra de linha na caixa; so CR (`\r`) envia. No Windows o ConPTY descarta os marcadores de bracketed paste antes de um filho Node, entao uma colagem de varias linhas chega como texto puro com LF (como o Ctrl+J do CLI real).
 - Inicio: cria o transcript e roda o `command` do `SessionStart` (JSON no stdin) com `session_id`,
   `transcript_path`, `source`, `cwd`, `hook_event_name`.
+- **Statusline** (ponte da statusline): com `statusLine` (`type: command`) no `--settings`, roda o comando como o CLI
+  (shell, JSON no stdin) no inicio da sessao e em cada passo `{ "type": "statusline", "payload": {...} }`. O JSON e
+  `session_id`/`transcript_path`/`cwd`/`version` + `scenario.statusLine` + o `payload` do passo. A saida so vai
+  para o `DONEL_FAKE_CLAUDE_LOG` (`{ statusLine: "ran", code, stdout }`); o falso nao desenha a linha.
 - Enter: `POST UserPromptSubmit` (header de token do settings) e linha `user` (`turnOrigin: human`,
   `promptSource: typed`) no transcript; depois executa o turno do roteiro. Prompt com `demorar` segura a
   rodada por `DONEL_FAKE_CLAUDE_SLOW_MS`.
@@ -105,7 +119,7 @@ Campos comuns (todos opcionais): `id` (tool_use_id), `result` (texto do `tool_re
 - `{"type":"bash_permission","command":"npm install left-pad","description":"Install","rule":"npm install:*"}` - Bash; sugestao
   `addRules` `Bash(<rule>)` (`rule` padrao: duas primeiras palavras do comando + `:*`).
 - `{"type":"edit_permission","file_path":"a.ts","old_string":"a","new_string":"b"}` - Edit (sem sugestao de regra).
-- `{"type":"ask","questions":[{"question":"Which db?","header":"DB","options":[{"label":"Postgres"},{"label":"SQLite"}],"multiSelect":false}]}` - `AskUserQuestion`.
+- `{"type":"ask","questions":[{"question":"Which db?","header":"DB","options":[{"label":"Postgres"},{"label":"SQLite"}],"multiSelect":false}]}` - `AskUserQuestion`. O `tool_result` segue o CLI real (2.1.314): uma observacao em `updatedInput.annotations[pergunta].notes` entra como `"pergunta"="resposta" notes: ...`.
 - `{"type":"plan","plan":"# Plan\n- a","planFilePath":"C:/x/plan.md"}` - `ExitPlanMode`.
 - `{"type":"permission","name":"WebFetch","input":{...},"suggestions":[...]}` - qualquer ferramenta.
 - `{"type":"subagent_permissions","requests":[{"type":"bash_permission","command":"npm test","agentType":"tester"},{"type":"edit_permission",...}]}` -

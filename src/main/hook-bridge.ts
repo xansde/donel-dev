@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { autoApprovalVerdict, nextClassifierBlocks, NO_CLASSIFIER_BLOCKS, type ClassifierBlocks } from '../shared/chat/pendingQueue';
 
 // T013 — HTTP hook bridge (contracts/hook-bridge.md). The claude CLI posts
 // hook events to 127.0.0.1:<ephemeral port>/h/<Event> with a per-tab token in
@@ -10,6 +11,8 @@ import type { AddressInfo } from 'node:net';
 
 export const MAX_BODY_BYTES = 32 * 1024 * 1024;
 export const PRE_TOOL_USE_TTL_MS = 10_000;
+/** Rota `/h/StatusLine` — o comando `statusLine` injetado no `--settings` da sessão posta aqui (hooks-settings.ts). */
+export const STATUS_LINE_EVENT = 'StatusLine';
 
 export type HookPayload = Record<string, unknown>;
 
@@ -28,18 +31,31 @@ export interface PendingDecisionHandle {
 export type BridgeEvent =
   | { readonly type: 'hook'; readonly ptyId: string; readonly event: string; readonly payload: HookPayload }
   | { readonly type: 'pending'; readonly ptyId: string; readonly handle: PendingDecisionHandle; readonly payload: HookPayload; readonly toolUseId: string | null }
+  /** Modo auto or Modo YOLO: the bridge already answered `allow`; nobody decides anything, this is only the trail. */
+  | { readonly type: 'auto-approved'; readonly ptyId: string; readonly payload: HookPayload; readonly yolo: boolean }
   | { readonly type: 'expired'; readonly ptyId: string; readonly requestId: string }
   | { readonly type: 'resolved-elsewhere'; readonly ptyId: string; readonly requestId: string }
   | { readonly type: 'cancelled'; readonly ptyId: string; readonly requestId: string }
   | { readonly type: 'conversation-switched'; readonly ptyId: string; readonly sessionId: string; readonly transcriptPath: string | null; readonly source: string }
-  | { readonly type: 'session-end'; readonly ptyId: string; readonly reason: string | null; readonly payload: HookPayload };
+  | { readonly type: 'session-end'; readonly ptyId: string; readonly reason: string | null; readonly payload: HookPayload }
+  /** Ponte da statusline: o JSON do stdin do comando `statusLine` (não é hook — semáforo e chat ignoram). */
+  | { readonly type: 'statusline'; readonly ptyId: string; readonly payload: HookPayload };
 
 export type BridgeListener = (event: BridgeEvent) => void;
 
 export interface HookBridgeOptions {
   readonly now?: () => number;
   /** Receives measurements only: event name, ptyId and duration. */
-  readonly diagnostics?: { hook(entry: { event: string; ptyId: string; durationMs: number }): void };
+  readonly diagnostics?: {
+    hook(entry: { event: string; ptyId: string; durationMs: number }): void;
+    autoApproval?(entry: { ptyId: string; tool: string; outcome: 'approved' | 'yolo' | 'after-blocks' }): void;
+  };
+  /** "Modo auto nunca pede permissão" (Preferências); read at each request. Absent = off. */
+  readonly autoNeverAsks?: () => boolean;
+  /** Is this tab's project in Modo YOLO? Read at each request, so it reaches sessions already open. Absent = no. */
+  readonly projectYolo?: (ptyId: string) => boolean;
+  /** Is there a chat to show a pending? `false` answers `{}` at once and the terminal asks. Absent = yes. */
+  readonly holdsPendings?: () => boolean;
 }
 
 export interface HookBridge {
@@ -47,7 +63,8 @@ export interface HookBridge {
   close(): Promise<void>;
   readonly port: number | null;
   /** Returns the new 128-bit token for this tab (re-registering replaces the old one). */
-  registerSession(ptyId: string): string;
+  /** `token` = reuse a known token (a remote session reattached after a restart keeps the one its CLI holds). */
+  registerSession(ptyId: string, token?: string): string;
   /** Forgets the token and cancels the tab's open decisions (each is answered `{}`). */
   unregisterSession(ptyId: string): void;
   /** Subscribes to a tab's events. Returns the unsubscribe function. */
@@ -77,6 +94,7 @@ interface SessionState {
   readonly preToolUse: PreToolUseRecord[];
   readonly open: Map<string, OpenDecision>;
   sessionId: string | null;
+  classifierBlocks: ClassifierBlocks;
 }
 
 /** Key-order independent serialization, so `tool_input` compares structurally. */
@@ -97,6 +115,10 @@ function tripleKey(payload: HookPayload): string {
 }
 
 const asString = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+
+function permissionAnswer(decision: PermissionDecision): string {
+  return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision } });
+}
 
 export function createHookBridge(options: HookBridgeOptions = {}): HookBridge {
   const now = options.now ?? Date.now;
@@ -183,7 +205,7 @@ export function createHookBridge(options: HookBridgeOptions = {}): HookBridge {
     const handle: PendingDecisionHandle = {
       id,
       ptyId: state.ptyId,
-      respond: (d) => decision.settle(JSON.stringify({ hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: d } })),
+      respond: (d) => decision.settle(permissionAnswer(d)),
       release: () => decision.settle('{}'),
     };
     emit({ type: 'pending', ptyId: state.ptyId, handle, payload, toolUseId: recentPreToolUse(state, key) });
@@ -191,6 +213,7 @@ export function createHookBridge(options: HookBridgeOptions = {}): HookBridge {
 
   function dispatch(state: SessionState, event: string, payload: HookPayload): void {
     const sessionId = asString(payload.session_id);
+    state.classifierBlocks = nextClassifierBlocks(state.classifierBlocks, event, payload);
 
     switch (event) {
       case 'PreToolUse':
@@ -271,7 +294,37 @@ export function createHookBridge(options: HookBridgeOptions = {}): HookBridge {
     };
 
     if (event === 'PermissionRequest') {
+      const verdict = autoApprovalVerdict({
+        enabled: options.autoNeverAsks?.() ?? false,
+        yolo: options.projectYolo?.(state.ptyId) ?? false,
+        payload,
+        blocks: state.classifierBlocks,
+      });
+      const tool = asString(payload.tool_name) ?? '';
+      if (verdict === 'approve' || verdict === 'yolo') {
+        endJson(res, 200, permissionAnswer({ behavior: 'allow' }));
+        measure();
+        options.diagnostics?.autoApproval?.({ ptyId: state.ptyId, tool, outcome: verdict === 'yolo' ? 'yolo' : 'approved' });
+        emit({ type: 'auto-approved', ptyId: state.ptyId, payload, yolo: verdict === 'yolo' });
+        return;
+      }
+      if (verdict === 'after-blocks') options.diagnostics?.autoApproval?.({ ptyId: state.ptyId, tool, outcome: 'after-blocks' });
+      if (options.holdsPendings?.() === false) {
+        endJson(res, 200, '{}');
+        measure();
+        return;
+      }
       openDecision(state, payload, res, measure);
+      return;
+    }
+
+    // Ponte da statusline: o corpo da resposta é o que o `curl` do comando
+    // imprime na statusline do CLI, então vai VAZIO. Sem diagnóstico: o CLI
+    // roda a statusline a cada resposta e o log é dos hooks.
+    if (event === STATUS_LINE_EVENT) {
+      res.writeHead(200, { 'Content-Length': 0 });
+      res.end();
+      emit({ type: 'statusline', ptyId: state.ptyId, payload });
       return;
     }
 
@@ -315,11 +368,11 @@ export function createHookBridge(options: HookBridgeOptions = {}): HookBridge {
       });
     },
 
-    registerSession(ptyId) {
+    registerSession(ptyId, knownToken) {
       const previous = byPty.get(ptyId);
       if (previous) byToken.delete(previous.token);
-      const token = randomBytes(16).toString('hex');
-      const state: SessionState = previous ?? { ptyId, token, preToolUse: [], open: new Map(), sessionId: null };
+      const token = knownToken ?? randomBytes(16).toString('hex');
+      const state: SessionState = previous ?? { ptyId, token, preToolUse: [], open: new Map(), sessionId: null, classifierBlocks: NO_CLASSIFIER_BLOCKS };
       state.token = token;
       byToken.set(token, state);
       byPty.set(ptyId, state);

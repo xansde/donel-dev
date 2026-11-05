@@ -1,0 +1,620 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mindscape — versão final (Canvas livre)</title>
+<style>
+/* =====================================================================
+   TOKENS — copiados literalmente do repo. Nada aqui foi inventado.
+   ===================================================================== */
+:root {
+  /* Superfícies e texto — design-system/src/tokens.css ("Superfícies e texto") */
+  --bg-app: #0e1116;
+  --bg-panel: #151a21;
+  --bg-raised: #1c232c;
+  --border: #28303b;
+  --text-primary: #d7dde5;
+  --text-muted: #828d9c;
+  --accent: #4c9cf0;
+
+  /* Estados do semáforo — design-system/src/tokens.css ("Estados do semáforo de sessões") */
+  --state-working: #4c9cf0;
+  --state-waiting: #e8b44c;
+  --state-permission: #f0684c;
+  --state-done: #5e6873;
+  --state-error: #b678f0;
+
+  /* Smart zone — design-system/src/tokens.css */
+  --zone-ok: #3dce8f;
+  --zone-warn: #e8b44c;
+  --zone-over: #f0684c;
+
+  /* Identidade do Donel / post-it — design-system/src/tokens.css ("Cor de identidade do Donel")
+     + design/design-system.md §6 "Cartas (post-its): cartões #3A3526" */
+  --donel-accent: #e8b44c;
+  --postit-bg: #3a3526;
+
+  /* Chips de fase da Esteira — design-system/src/tokens.css ("Chips de fase da Esteira") */
+  --phase-discovery: #8896b3;
+  --phase-plano: #9b8fd9;
+  --phase-implementar: #5fb0a8;
+  --phase-validar: #d9a05f;
+  --phase-concluir: #7fbf83;
+  --phase-documentar: var(--donel-accent);
+  --phase-design: #c97fa8;
+
+  /* Tipografia — design-system/src/tokens.css (§3). Inter/JetBrains Mono são
+     self-hosted via @fontsource no app (design-system/src/index.ts); aqui não
+     há embed de fonte, então vale o fallback da própria pilha. */
+  --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;
+  --text-body-size: 13px;
+  --text-body-line-height: 1.5;
+  --text-caption-size: 11px;
+  --text-heading-size: 15px;
+  --text-mono-size: 12.5px;
+  --weight-regular: 400;
+  --weight-semibold: 600;
+
+  /* Espaçamento, raio, densidade — design-system/src/tokens.css (§4) */
+  --space-half: 4px;
+  --space-1: 8px;
+  --space-2: 16px;
+  --space-3: 24px;
+  --space-4: 32px;
+  --space-5: 40px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --list-row-height: 32px;
+  --list-row-height-min: 30px;
+  --control-height: 30px;
+  --panel-padding: 12px;
+  --sidebar-width: 240px;
+  --right-panel-width: 260px;
+  --statusbar-height: 28px;
+  --hairline: 1px solid var(--border);
+  --shadow-modal: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --overlay-modal: rgba(0, 0, 0, 0.5);
+
+  /* Motion e foco — design-system/src/tokens.css (§7, §9) */
+  --duration-micro: 120ms;
+  --duration-panel: 200ms;
+  --ease-standard: cubic-bezier(0, 0, 0.2, 1);
+  --focus-ring: 0 0 0 1px var(--accent);
+
+  /* Paleta de cor de aba (CA-27) — src/shared/tabAppearance.ts (TAB_COLOR_TOKENS:
+     none | accent | donel-accent | permission) com os valores CSS de
+     design-system/src/components/TerminalTab/TerminalTab.module.css
+     (.swatch-none = --border, .swatch-accent = --accent,
+     .swatch-donel-accent = --donel-accent, .swatch-permission = --state-permission).
+     Rótulos "Sem cor/Azul/Dourado/Vermelho" = TAB_COLOR_LABEL_PT (TerminalTab.tsx).
+     É a base do código de cores dos post-its neste protótipo. */
+  --tabc-none: var(--border);
+  --tabc-accent: var(--accent);
+  --tabc-donel-accent: var(--donel-accent);
+  --tabc-permission: var(--state-permission);
+}
+/* Glifos de estado: SESSION_STATE_ICON em TerminalTab.tsx (▶ ◐ ! ■ ✕, shell ❯).
+   Rótulos: SESSION_STATE_LABEL_PT em design-system/src/components/StateDot/StateDot.tsx.
+   Pulso working 2000ms / permission 1000ms + halo 30%: StateDot.module.css.
+   Estados vindos de src/main/semaphore-state-machine.ts (working/waiting/permission/done)
+   + "error" derivado do exit code (session-semaphore-manager.ts). */
+
+/* ===================== Reset (src/renderer/src/global.css) ===================== */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; padding: 0; }
+body { overflow: hidden; background: var(--bg-app); color: var(--text-primary);
+  font-family: var(--font-ui); font-size: var(--text-body-size); line-height: var(--text-body-line-height); }
+button { font: inherit; color: inherit; }
+
+/* ===================== Casco do app (App.module.css, ProjectSidebar.module.css) ===================== */
+.app { display: grid; grid-template-rows: 34px 1fr var(--statusbar-height); height: 100vh; }
+.titlebar { display: flex; align-items: center; gap: var(--space-1); height: 34px; padding: 0 var(--space-1);
+  background: var(--bg-panel); border-bottom: var(--hairline); }
+.brand { font-weight: var(--weight-semibold); padding: 0 6px; }
+.pill { font-family: var(--font-mono); font-size: var(--text-caption-size); color: var(--text-muted);
+  border: var(--hairline); border-radius: var(--radius-sm); padding: 2px 8px; }
+.spacer { flex: 1; }
+.seg { display: inline-flex; gap: 2px; padding: 2px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.seg button { height: calc(var(--control-height) - 6px); padding: 0 10px; border: none; border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent; color: var(--text-muted); cursor: pointer; font-size: var(--text-body-size); }
+.seg button.on { background: var(--bg-raised); color: var(--text-primary); font-weight: var(--weight-semibold); }
+.badge { display: inline-flex; gap: 6px; align-items: center; padding: 4px 10px; background: var(--bg-panel); border: var(--hairline); border-radius: 999px; line-height: 1; }
+.badge b { color: var(--zone-ok); font-weight: var(--weight-semibold); }
+.body { display: grid; grid-template-columns: var(--sidebar-width) 1fr; min-height: 0; }
+.sidebar { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--panel-padding); background: var(--bg-panel);
+  border-right: var(--hairline); overflow-y: auto; }
+.section-title { font-size: var(--text-caption-size); font-weight: var(--weight-semibold); color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 var(--space-1); }
+.proj-root { font-size: var(--text-caption-size); color: var(--text-muted); padding: var(--space-half); }
+.srow { display: flex; align-items: center; gap: var(--space-1); height: var(--list-row-height-min); padding: 0 var(--space-half);
+  border-radius: var(--radius-sm); }
+.srow:hover { background: var(--bg-raised); }
+.srow .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srow .ago { font-size: var(--text-caption-size); color: var(--text-muted); }
+.center { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.tabbar { display: flex; align-items: flex-end; gap: 2px; height: 36px; padding: 0 var(--space-1); border-bottom: var(--hairline); flex: none; overflow: hidden; }
+.tab { display: inline-flex; align-items: center; gap: 7px; height: 32px; padding: 0 10px 0 7px; background: var(--bg-app);
+  border-top: 2px solid var(--stripe, var(--border)); border-right: var(--hairline); border-radius: 6px 6px 0 0; white-space: nowrap; }
+.tab .tn { font-family: var(--font-mono); font-size: var(--text-mono-size); color: var(--text-muted); max-width: 22ch; overflow: hidden; text-overflow: ellipsis; }
+.tab .tm { font-family: var(--font-mono); font-size: var(--text-caption-size); color: var(--text-muted); }
+.tabhint { margin-left: auto; align-self: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; font-size: var(--text-caption-size); color: var(--text-muted); }
+.slot { position: relative; flex: 1; min-height: 0; }
+.slot > .canvas-main { position: absolute; inset: 0; overflow: hidden; }
+.statusbar { display: flex; align-items: center; gap: 8px; height: var(--statusbar-height); padding: 0 var(--panel-padding);
+  background: var(--bg-panel); border-top: var(--hairline); font-size: var(--text-caption-size); color: var(--text-muted); white-space: nowrap; }
+.statusbar .sep { color: var(--border); }
+.mono { font-family: var(--font-mono); }
+
+/* ===================== Vocabulário compartilhado: estado, chip, sessão, post-it ===================== */
+.st-working { --st: var(--state-working); }
+.st-waiting { --st: var(--state-waiting); }
+.st-permission { --st: var(--state-permission); }
+.st-done { --st: var(--state-done); }
+.st-error { --st: var(--state-error); }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--st); flex-shrink: 0; }
+.st-working .dot, .dot.st-working { animation: pulse 2000ms ease-in-out infinite; }
+.st-permission .dot, .dot.st-permission { animation: pulse 1000ms ease-in-out infinite;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--state-permission) 30%, transparent); }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+.glyph { width: 12px; text-align: center; font-size: 10px; line-height: 1; color: var(--st); flex-shrink: 0; }
+.st-working .glyph { animation: pulse 2000ms ease-in-out infinite; }
+.st-permission .glyph { animation: pulse 1000ms ease-in-out infinite; font-weight: 700; }
+@media (prefers-reduced-motion: reduce) { .dot, .glyph { animation: none !important; } }
+
+/* PhaseChip.module.css */
+.chip { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: var(--radius-sm);
+  border: 1px solid color-mix(in srgb, var(--phase-color) 45%, transparent);
+  background: color-mix(in srgb, var(--phase-color) 16%, transparent);
+  color: var(--phase-color); font-size: var(--text-caption-size); font-weight: var(--weight-semibold); line-height: 1.4; white-space: nowrap; }
+
+/* Post-it de SESSÃO (a sessão em si): selo "Sessão", glifo de estado, nome mono, faixa de cor da aba */
+.sess { position: relative; width: 230px; background: var(--bg-raised); border: 1px solid var(--border);
+  border-top: 3px solid var(--stripe); border-radius: var(--radius-md); padding: 10px 10px 8px; display: flex;
+  flex-direction: column; gap: 6px; cursor: pointer; transition: box-shadow var(--duration-micro) var(--ease-standard); }
+.sess .seal { position: absolute; top: -10px; left: 8px; font-size: 10px; font-weight: var(--weight-semibold); letter-spacing: .06em;
+  text-transform: uppercase; color: var(--text-muted); background: var(--bg-app); border: var(--hairline); border-radius: var(--radius-sm); padding: 0 5px; line-height: 16px; }
+.sess-head { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.sess-name { flex: 1; min-width: 0; font-family: var(--font-mono); font-size: var(--text-mono-size); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sess-model { font-family: var(--font-mono); font-size: var(--text-caption-size); color: var(--text-muted); }
+.sess-row { display: flex; align-items: center; gap: 6px; font-size: var(--text-caption-size); }
+.sess-state { color: var(--st); font-weight: var(--weight-semibold); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.sess-ago { white-space: nowrap; }
+.sess-ago { color: var(--text-muted); margin-left: auto; }
+.sess.st-permission { box-shadow: 0 0 0 1px var(--state-permission), 0 0 0 4px color-mix(in srgb, var(--state-permission) 30%, transparent); }
+.sess.st-waiting { box-shadow: 0 0 0 1px var(--state-waiting); }
+.sess.st-error { box-shadow: 0 0 0 1px var(--state-error); }
+.sess.st-done { background: var(--bg-panel); }
+.sess.st-done .sess-name { color: var(--text-muted); }
+
+/* Post-it escrito (pela sessão ou por você) — PostItCard.module.css (#3A3526, 220px, meta 65%) */
+.note { position: relative; width: 220px; background: var(--postit-bg); border-radius: var(--radius-sm); border-top: 3px solid var(--stripe);
+  padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 8px; color: var(--text-primary); cursor: pointer; }
+.note p { margin: 0; font-size: var(--text-body-size); line-height: var(--text-body-line-height); }
+.note-meta { display: flex; justify-content: space-between; gap: 8px; font-size: var(--text-caption-size);
+  color: color-mix(in srgb, var(--text-primary) 65%, transparent); }
+.note-author { display: inline-flex; align-self: flex-start; align-items: center; gap: 6px; max-width: 100%; padding: 1px 6px; border-radius: 4px;
+  background: rgba(0, 0, 0, 0.15); font-family: var(--font-mono); font-size: var(--text-caption-size);
+  color: color-mix(in srgb, var(--text-primary) 80%, transparent); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.note.by-user { clip-path: polygon(0 0, 100% 0, 100% calc(100% - 14px), calc(100% - 14px) 100%, 0 100%); }
+.note.by-user::after { content: ''; position: absolute; right: 0; bottom: 0; width: 14px; height: 14px;
+  background: linear-gradient(315deg, transparent 50%, color-mix(in srgb, var(--text-primary) 18%, var(--postit-bg)) 50%); }
+.note .you { font-weight: var(--weight-semibold); color: var(--donel-accent); }
+
+.flash { animation: flash 1.4s ease-out 1; }
+@keyframes flash { 0%, 40% { outline: 2px solid var(--accent); outline-offset: 4px; } 100% { outline: 2px solid transparent; outline-offset: 10px; } }
+
+.legend { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: var(--text-caption-size); color: var(--text-muted); }
+.legend .sw { display: inline-block; width: 14px; height: 4px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
+.tb-btn { height: 26px; padding: 0 10px; white-space: nowrap; background: var(--bg-raised); border: var(--hairline); border-radius: var(--radius-sm);
+  color: var(--text-primary); cursor: pointer; font-size: var(--text-body-size); }
+.tb-btn:hover { border-color: var(--text-muted); }
+.tb-btn.ghost { background: none; color: var(--text-muted); }
+.count { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--bg-raised); border: var(--hairline);
+  font-size: var(--text-caption-size); text-align: center; color: var(--text-muted); line-height: 16px; }
+.count.hot { color: var(--state-permission); border-color: color-mix(in srgb, var(--state-permission) 50%, transparent); }
+
+/* Gaveta de detalhe (compartilhada) + toast */
+.drawer { position: absolute; top: 0; right: 0; bottom: 0; width: 340px; background: var(--bg-panel); border-left: var(--hairline);
+  box-shadow: var(--shadow-modal); transform: translateX(105%); transition: transform var(--duration-panel) var(--ease-standard);
+  z-index: 50; display: flex; flex-direction: column; }
+.drawer.open { transform: none; }
+.drawer-head { display: flex; align-items: center; gap: 8px; padding: var(--panel-padding); border-bottom: var(--hairline); }
+.drawer-body { padding: var(--panel-padding); overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+.drawer-body .note, .drawer-body .sess { width: 100%; }
+.x { margin-left: auto; width: 24px; height: 24px; border: none; background: none; color: var(--text-muted); cursor: pointer; border-radius: 4px; }
+.x:hover { background: var(--bg-raised); color: var(--text-primary); }
+.kv { display: grid; grid-template-columns: 90px 1fr; gap: 6px 8px; font-size: var(--text-caption-size); }
+.kv dt { color: var(--text-muted); }
+.kv dd { margin: 0; }
+.actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.toast { position: absolute; right: 16px; bottom: 16px; background: var(--bg-raised); border: var(--hairline); border-radius: var(--radius-md);
+  padding: 8px 12px; box-shadow: var(--shadow-modal); font-size: var(--text-body-size); z-index: 60; opacity: 0; transform: translateY(8px);
+  transition: opacity var(--duration-panel), transform var(--duration-panel); pointer-events: none; }
+.toast.show { opacity: 1; transform: none; }
+
+/* ===================== Variante A — Canvas livre ===================== */
+.a-wrap { display: flex; flex-direction: column; height: 100%; }
+.a-tabs { display: flex; align-items: flex-end; gap: 2px; padding: 6px var(--space-1) 0; border-bottom: var(--hairline); background: var(--bg-panel); flex: none; }
+.a-tab { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border: var(--hairline); border-bottom: none;
+  border-radius: 6px 6px 0 0; background: var(--bg-app); color: var(--text-muted); cursor: pointer; }
+.a-tab.on { background: var(--bg-raised); color: var(--text-primary); font-weight: var(--weight-semibold); }
+.a-tab .kind { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-muted); font-weight: var(--weight-regular); }
+.a-tab.new { border-style: dashed; }
+.a-tools { display: flex; align-items: center; gap: 8px; padding: 6px var(--space-1); border-bottom: var(--hairline); flex: none; }
+.a-view { position: relative; flex: 1; overflow: hidden; cursor: grab;
+  background-color: var(--bg-app); background-image: radial-gradient(var(--border) 1px, transparent 1px); background-size: 22px 22px; }
+.a-view.panning { cursor: grabbing; }
+.a-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.a-group { position: absolute; border: 1px dashed var(--border); border-radius: var(--radius-md); background: color-mix(in srgb, var(--bg-panel) 55%, transparent); }
+.a-group-label { position: absolute; top: 10px; left: 14px; right: 14px; display: flex; align-items: center; gap: 8px; font-weight: var(--weight-semibold); }
+.a-group-label .sub { font-weight: var(--weight-regular); color: var(--text-muted); font-size: var(--text-caption-size); }
+.a-item { position: absolute; touch-action: none; user-select: none; }
+.a-item.dragging { z-index: 999 !important; filter: drop-shadow(0 8px 16px rgba(0,0,0,.4)); }
+.a-mini { position: absolute; right: 12px; bottom: 12px; width: 220px; height: 130px; background: var(--bg-panel); border: var(--hairline);
+  border-radius: var(--radius-sm); overflow: hidden; cursor: pointer; box-shadow: var(--shadow-modal); }
+.a-mini .m { position: absolute; border-radius: 1px; }
+.a-mini .mv { position: absolute; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.a-mini-label { position: absolute; left: 6px; top: 3px; font-size: 10px; color: var(--text-muted); }
+.a-zoom { position: absolute; left: 12px; bottom: 12px; display: flex; gap: 4px; }
+
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="titlebar">
+    <span class="brand">Donel Dev</span>
+    <span class="pill">~/seazone/atlas ▾</span>
+    <span class="spacer"></span>
+    <div class="seg"><button type="button">Uso geral</button><button type="button" class="on">Mindscape</button></div>
+    <span class="spacer"></span>
+    <span class="badge">Tecnologia Claude 3 · <b>62%</b></span>
+  </header>
+  <div class="body">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="center">
+      <div class="tabbar" id="tabbar"></div>
+      <div class="slot" id="slot">
+
+        <section class="canvas-main">
+          <div class="a-wrap">
+            <div class="a-tabs" id="a-tabs"></div>
+            <div class="a-tools">
+              <button type="button" class="tb-btn">＋ Post-it</button>
+              <button type="button" class="tb-btn ghost">＋ Grupo</button>
+              <span class="legend" id="a-legend"></span>
+              <span class="spacer"></span>
+              <span class="legend">arraste os post-its · arraste o fundo para mover · roda do mouse = zoom</span>
+            </div>
+            <div class="a-view" id="a-view">
+              <div class="a-world" id="a-world"></div>
+              <div class="a-zoom">
+                <button type="button" class="tb-btn" data-zoom="-1">−</button>
+                <button type="button" class="tb-btn" data-zoom="0" id="a-zl">85%</button>
+                <button type="button" class="tb-btn" data-zoom="1">＋</button>
+              </div>
+              <div class="a-mini" id="a-mini"></div>
+            </div>
+          </div>
+        </section>
+
+
+        <div class="drawer" id="drawer">
+          <div class="drawer-head"><strong id="drawer-title"></strong><button type="button" class="x" id="drawer-x" aria-label="Fechar">✕</button></div>
+          <div class="drawer-body" id="drawer-body"></div>
+        </div>
+        <div class="toast" id="toast"></div>
+      </div>
+    </main>
+  </div>
+  <footer class="statusbar">
+    <span>Tecnologia Claude 3 · 62%</span><span class="sep">|</span>
+    <span class="mono">fable/high</span><span class="sep">|</span>
+    <span id="sb-count"></span>
+  </footer>
+</div>
+
+<script>
+/* ============================ Dados mockados ============================ */
+var STATE = {
+  working:    { label: 'Trabalhando',            icon: '▶' },
+  waiting:    { label: 'Aguardando resposta',    icon: '◐' },
+  permission: { label: 'Permissão pendente',     icon: '!' },
+  done:       { label: 'Encerrada',              icon: '■' },
+  error:      { label: 'Falha ou quota esgotada', icon: '✕' }
+};
+var TABCOLOR = { none: 'Sem cor', accent: 'Azul', 'donel-accent': 'Dourado', permission: 'Vermelho' };
+var ESTEIRAS = {
+  dev: { name: 'Esteira dev', phases: [
+    { id: 'discovery', label: 'Discovery', tok: '--phase-discovery' },
+    { id: 'plano', label: 'Plano', tok: '--phase-plano' },
+    { id: 'design', label: 'Design', tok: '--phase-design' },
+    { id: 'implementar', label: 'Implementar', tok: '--phase-implementar' },
+    { id: 'validar', label: 'Validar', tok: '--phase-validar' },
+    { id: 'concluir', label: 'Concluir', tok: '--phase-concluir' } ] },
+  hom: { name: 'Esteira de homologação', phases: [
+    { id: 'triagem', label: 'Triagem' },
+    { id: 'preparar', label: 'Preparar repo' },
+    { id: 'conferir', label: 'Conferir técnico' },
+    { id: 'atesto', label: 'Atesto do dono' },
+    { id: 'subir', label: 'Subir pra produção' } ] }
+};
+var PROJECTS = ['atlas', 'beacon', 'vega'];
+var FLOWS = {
+  'atlas-rel':     { project: 'atlas',  esteira: 'dev', name: 'relatórios mensais' },
+  'beacon-login':  { project: 'beacon', esteira: 'dev', name: 'login social' },
+  'beacon-hotfix': { project: 'beacon', esteira: 'dev', name: 'hotfix do token' },
+  'beacon-hom':    { project: 'beacon', esteira: 'hom', name: 'homologação' },
+  'vega-painel':   { project: 'vega',   esteira: 'dev', name: 'painel de aprovações' },
+  'vega-hom':      { project: 'vega',   esteira: 'hom', name: 'homologação' }
+};
+var SESSIONS = [
+  { id: 's1',  name: 'atlas/discovery-relatorios', flow: 'atlas-rel', phase: 'discovery', state: 'done', model: 'fable', ago: 'há 2 dias', mins: 2880, color: 'accent' },
+  { id: 's2',  name: 'atlas/plano-relatorios', flow: 'atlas-rel', phase: 'plano', state: 'done', model: 'fable', ago: 'ontem, 17:40', mins: 1260, color: 'accent', after: ['s1'] },
+  { id: 's3',  name: 'atlas/revisao-fatia-2', flow: 'atlas-rel', phase: 'validar', state: 'done', model: 'opus', ago: 'hoje, 11:05', mins: 220, color: 'accent', after: ['s2'] },
+  { id: 's4',  name: 'atlas/fatia-3-exportar-csv', flow: 'atlas-rel', phase: 'implementar', state: 'working', model: 'sonnet', ago: 'há 14 min', mins: 14, color: 'accent', after: ['s2'] },
+  { id: 's5',  name: 'atlas/fatia-4-filtros', flow: 'atlas-rel', phase: 'implementar', state: 'permission', model: 'sonnet', ago: 'há 6 min', mins: 6, color: 'accent', after: ['s2'] },
+  { id: 's6',  name: 'beacon/discovery-login-social', flow: 'beacon-login', phase: 'discovery', state: 'waiting', model: 'fable', ago: 'há 22 min', mins: 22, color: 'donel-accent' },
+  { id: 's7',  name: 'beacon/hotfix-token', flow: 'beacon-hotfix', phase: 'implementar', state: 'error', model: 'sonnet', ago: 'há 48 min', mins: 48, color: 'permission' },
+  { id: 's8',  name: 'beacon/validar-pr-77', flow: 'beacon-hotfix', phase: 'validar', state: 'waiting', model: 'opus', ago: 'há 1h10', mins: 70, color: 'permission', after: ['s7'] },
+  { id: 's9',  name: 'beacon/triagem', flow: 'beacon-hom', phase: 'triagem', state: 'working', model: 'sonnet', ago: 'há 3 min', mins: 3, color: 'donel-accent' },
+  { id: 's10', name: 'vega/preparar-repo', flow: 'vega-hom', phase: 'preparar', state: 'done', model: 'sonnet', ago: 'hoje, 09:20', mins: 330, color: 'none' },
+  { id: 's11', name: 'vega/conferir-tecnico', flow: 'vega-hom', phase: 'conferir', state: 'permission', model: 'opus', ago: 'há 2 min', mins: 2, color: 'none', after: ['s10'] },
+  { id: 's12', name: 'vega/plano-painel', flow: 'vega-painel', phase: 'plano', state: 'working', model: 'fable', ago: 'há 31 min', mins: 31, color: 'none', after: ['s13'] },
+  { id: 's13', name: 'vega/discovery-painel', flow: 'vega-painel', phase: 'discovery', state: 'done', model: 'fable', ago: 'ontem, 15:12', mins: 1380, color: 'none' }
+];
+var NOTES = [
+  { id: 'n1',  by: 's4',  when: 'hoje, 14:32', text: 'Fatia 3 pronta: exportar CSV. Testes verdes (42/42). PR #81 aberto contra staging; agora escrevendo o teste de ponta a ponta.' },
+  { id: 'n2',  by: 's1',  when: 'há 2 dias', text: 'Spec de produto fechada: relatórios mensais por projeto. 3 pendências viraram itens do plano.' },
+  { id: 'n3',  by: 's2',  when: 'ontem, 17:38', text: 'Plano com 5 fatias. A 3 e a 4 podem rodar em paralelo; a 5 depende das duas.' },
+  { id: 'n4',  by: 's3',  when: 'hoje, 11:04', text: 'Fatia 2 validada no produto real. 1 achado menor: rótulo do filtro truncado. PR #79 pronto para merge.' },
+  { id: 'n5',  by: 's5',  when: 'hoje, 14:40', text: 'Parei antes da migração local: pedi permissão para rodar npm run db:migrate.' },
+  { id: 'n6',  by: 's7',  when: 'hoje, 13:58', text: 'Quota esgotada no meio do fix. Último commit: teste de regressão do token expirado (ainda vermelho).' },
+  { id: 'n7',  by: 's8',  when: 'hoje, 13:36', text: 'Roteiro de validação do PR #77 pronto: 6 passos. Falta você rodar o passo 4 (login com conta nova).' },
+  { id: 'n8',  by: 's6',  when: 'hoje, 14:24', text: 'Três hipóteses de dor levantadas. Preciso que você escolha uma antes de seguir.' },
+  { id: 'n9',  by: 's10', when: 'hoje, 09:18', text: 'Branch protection e sast-caller configurados. PR #12 aberto no repo do vega.' },
+  { id: 'n10', by: 's11', when: 'hoje, 14:44', text: 'RLS conferida em 9 de 11 tabelas. Pedi permissão para consultar o catálogo das 2 restantes.' },
+  { id: 'n11', by: 's13', when: 'ontem, 15:10', text: 'Discovery fechado: a dor é acompanhar a fila de aprovações. Spec em docs/produto/painel.spec.md.' },
+  { id: 'u1', by: 'user', link: 's3',  color: 'permission',   when: 'hoje, 12:10', text: 'Falta revisar o PR #79 antes de sexta.' },
+  { id: 'u2', by: 'user', project: 'atlas', color: 'none',    when: 'ontem', text: 'Ideia: o relatório mensal podia sair também em PDF.' },
+  { id: 'u3', by: 'user', link: 's6',  color: 'donel-accent', when: 'hoje, 10:02', text: 'Perguntar se o login social entra na V1.' },
+  { id: 'u4', by: 'user', color: 'accent',                    when: 'hoje, 13:45', text: 'Trocar de conta antes do lote noturno.' },
+  { id: 'u5', by: 'user', link: 's11', color: 'donel-accent', when: 'ontem', text: 'O atesto do dono no vega depende da reunião de quinta.' },
+  { id: 'u6', by: 'user', link: 's5',  color: 'permission',   when: 'hoje, 14:05', text: 'Bug no teste manual: o filtro some ao voltar da aba.' },
+  { id: 'u7', by: 'user', link: 's8',  color: 'accent',       when: 'hoje, 13:20', text: 'Quero o roteiro de teste mais curto desta vez.' },
+  { id: 'u8', by: 'user', color: 'none',                      when: 'há 3 dias', text: 'Depois: comparar o tempo de CI entre atlas e beacon.' }
+];
+
+/* Derivações */
+var S = {}; SESSIONS.forEach(function (s) { S[s.id] = s; s.project = FLOWS[s.flow].project; s.esteira = FLOWS[s.flow].esteira; });
+NOTES.forEach(function (n) {
+  n.session = n.by !== 'user' ? n.by : (n.link || null);
+  var s = n.session ? S[n.session] : null;
+  n.flow = s ? s.flow : null;
+  n.project = s ? s.project : (n.project || null);
+  n.esteira = s ? s.esteira : null;
+  n.phase = s ? s.phase : null;
+  if (n.by !== 'user') n.color = S[n.by].color;
+});
+var STOPPED = ['permission', 'error', 'waiting'];
+function isStopped(s) { return STOPPED.indexOf(s.state) >= 0; }
+function notesOf(sid) { return NOTES.filter(function (n) { return n.session === sid; }); }
+function esc(t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;'); }
+function phaseOf(est, pid) { return ESTEIRAS[est].phases.filter(function (p) { return p.id === pid; })[0]; }
+
+/* ============================ Peças compartilhadas ============================ */
+function chip(est, pid) {
+  var p = phaseOf(est, pid);
+  var c = p.tok ? 'var(' + p.tok + ')' : 'var(--text-muted)';
+  return '<span class="chip" style="--phase-color:' + c + '">' + p.label + '</span>';
+}
+function sessCard(s, opt) {
+  opt = opt || {};
+  return '<div class="sess st-' + s.state + '" data-open="s:' + s.id + '" data-sid="' + s.id + '" style="--stripe:var(--tabc-' + s.color + ')">' +
+    '<span class="seal">Sessão</span>' +
+    '<div class="sess-head"><span class="glyph">' + STATE[s.state].icon + '</span><span class="sess-name" title="' + s.name + '">' + (opt.short ? s.name.split('/')[1] : s.name) + '</span><span class="sess-model">' + s.model + '</span></div>' +
+    '<div class="sess-row"><span class="dot"></span><span class="sess-state">' + STATE[s.state].label + '</span><span class="sess-ago">' + s.ago + '</span></div>' +
+    (opt.noChip ? '' : '<div class="sess-row">' + chip(s.esteira, s.phase) + '<span class="sess-ago">' + notesOf(s.id).length + ' post-its</span></div>') +
+    '</div>';
+}
+function noteCard(n, opt) {
+  opt = opt || {};
+  var rot = opt.tilt && n.by === 'user' ? ' style="--stripe:var(--tabc-' + n.color + ');transform:rotate(' + ((n.id.charCodeAt(1) % 5) - 2) * 0.7 + 'deg)"' : ' style="--stripe:var(--tabc-' + n.color + ')"';
+  var head = n.by === 'user' ? '' :
+    '<span class="note-author st-' + S[n.by].state + '"><span class="glyph">' + STATE[S[n.by].state].icon + '</span>' + (opt.short ? S[n.by].name.split('/')[1] : S[n.by].name) + '</span>';
+  var who = n.by === 'user' ? '<span class="you">✎ você</span>' : '<span>escrito pela sessão</span>';
+  return '<div class="note ' + (n.by === 'user' ? 'by-user' : 'by-session') + '" data-open="n:' + n.id + '"' + rot + '>' +
+    head + '<p>' + esc(n.text) + '</p><div class="note-meta">' + who + '<span>' + n.when + (n.project && opt.showProject ? ' · ' + n.project : '') + '</span></div></div>';
+}
+function legendHTML() {
+  return '<span>Cor (paleta da aba):</span>' + Object.keys(TABCOLOR).map(function (k) {
+    return '<span><span class="sw" style="background:var(--tabc-' + k + ')"></span>' + TABCOLOR[k] + '</span>';
+  }).join('') + '<span>· <b style="color:var(--text-primary)">SESSÃO</b> = a sessão · <span style="font-family:var(--font-mono)">▶ nome</span> = escrito pela sessão · <span style="color:var(--donel-accent)">✎ você</span> = seu</span>';
+}
+
+/* Casco: sidebar + abas + statusbar */
+(function shell() {
+  var h = '<div><p class="section-title">Projetos</p>';
+  PROJECTS.forEach(function (p) {
+    h += '<div class="proj-root">▾ ~/seazone/' + p + '</div>';
+    SESSIONS.filter(function (s) { return s.project === p && s.state !== 'done'; }).forEach(function (s) {
+      h += '<div class="srow st-' + s.state + '"><span class="dot"></span><span class="nm">' + s.name.split('/')[1] + '</span><span class="ago">' + s.ago.replace('há ', '') + '</span></div>';
+    });
+  });
+  h += '</div><div><p class="section-title">Encerradas hoje</p>';
+  SESSIONS.filter(function (s) { return s.state === 'done'; }).slice(0, 3).forEach(function (s) {
+    h += '<div class="srow st-done"><span class="dot"></span><span class="nm">' + s.name + '</span></div>';
+  });
+  document.getElementById('sidebar').innerHTML = h + '</div>';
+  var tabs = ['s4', 's5', 's11', 's8'].map(function (id) {
+    var s = S[id];
+    return '<div class="tab st-' + s.state + '" style="--stripe:var(--tabc-' + s.color + ')"><span class="glyph">' + STATE[s.state].icon + '</span><span class="tn">' + s.name + '</span><span class="tm">' + s.model + '</span></div>';
+  }).join('') + '<div class="tab"><span class="glyph" style="color:var(--text-muted)">❯</span><span class="tn">zsh</span></div>';
+  document.getElementById('tabbar').innerHTML = tabs + '<span class="tabhint">o Mindscape ocupa o lugar do terminal</span>';
+  var nStop = SESSIONS.filter(isStopped).length;
+  document.getElementById('sb-count').textContent = SESSIONS.filter(function (s) { return s.state !== 'done'; }).length + ' sessões vivas · ' + nStop + ' paradas · ' + NOTES.length + ' post-its';
+})();
+
+/* Gaveta de detalhe + toast */
+var drawer = document.getElementById('drawer');
+function toast(msg) { var t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast._h); toast._h = setTimeout(function () { t.classList.remove('show'); }, 2200); }
+function detailHTML(key) {
+  var kind = key[0], id = key.slice(2), h = '';
+  if (kind === 's') {
+    var s = S[id], f = FLOWS[s.flow];
+    h += sessCard(s);
+    h += '<dl class="kv"><dt>Projeto</dt><dd class="mono">' + s.project + '</dd><dt>Esteira</dt><dd>' + ESTEIRAS[s.esteira].name + ' · ' + f.name + '</dd><dt>Fase</dt><dd>' + chip(s.esteira, s.phase) + '</dd><dt>Estado</dt><dd>' + STATE[s.state].label + ' · ' + s.ago + '</dd></dl>';
+    h += '<div class="actions"><button type="button" class="tb-btn" data-toast="Abriria a aba ' + s.name + '">Abrir aba</button><button type="button" class="tb-btn ghost" data-toast="Abriria um post-it ligado a esta sessão">＋ Post-it nesta sessão</button></div>';
+    var ns = notesOf(id);
+    h += '<p class="section-title">Post-its desta sessão (' + ns.length + ')</p>' + ns.map(function (n) { return noteCard(n); }).join('');
+    return { title: 'Sessão', html: h };
+  }
+  var n = NOTES.filter(function (x) { return x.id === id; })[0];
+  h += noteCard(n, { showProject: true });
+  h += '<dl class="kv"><dt>Autor</dt><dd>' + (n.by === 'user' ? 'você' : '<span class="mono">' + S[n.by].name + '</span>') + '</dd><dt>Projeto</dt><dd class="mono">' + (n.project || '— (geral)') + '</dd><dt>Ligado a</dt><dd class="mono">' + (n.session ? S[n.session].name : '— (solto)') + '</dd><dt>Cor</dt><dd>' + TABCOLOR[n.color] + (n.by === 'user' ? '' : ' (herdada da aba da sessão)') + '</dd></dl>';
+  h += '<div class="actions"><button type="button" class="tb-btn" data-toast="Abriria o seletor de sessão">Enviar para sessão…</button><button type="button" class="tb-btn ghost" data-toast="Copiado (de mentira)">Copiar</button><button type="button" class="tb-btn ghost" data-toast="Arquivado (de mentira)">Arquivar</button></div>';
+  if (n.session) h += '<p class="section-title">Sessão</p>' + sessCard(S[n.session]);
+  return { title: n.by === 'user' ? 'Post-it seu' : 'Post-it da sessão', html: h };
+}
+function openDetail(key) {
+  var d = detailHTML(key);
+  document.getElementById('drawer-title').textContent = d.title;
+  document.getElementById('drawer-body').innerHTML = d.html;
+  drawer.classList.add('open');
+}
+document.getElementById('drawer-x').addEventListener('click', function () { drawer.classList.remove('open'); });
+document.addEventListener('click', function (e) {
+  var t = e.target.closest('[data-toast]'); if (t) { toast(t.getAttribute('data-toast')); return; }
+  var o = e.target.closest('[data-open]');
+  if (o && !e.target.closest('#a-view') && !e.target.closest('.drawer')) openDetail(o.getAttribute('data-open'));
+});
+document.addEventListener('keydown', function (e) { if (e.key === 'Escape') drawer.classList.remove('open'); });
+
+/* ============================ A — Canvas livre ============================ */
+(function variantA() {
+  var MS = [
+    { id: 'atlas', kind: 'projeto', label: 'atlas' },
+    { id: 'beacon', kind: 'projeto', label: 'beacon' },
+    { id: 'vega', kind: 'projeto', label: 'vega' },
+    { id: 'dev', kind: 'esteira', label: 'Esteira dev' },
+    { id: 'hom', kind: 'esteira', label: 'Homologação' }
+  ];
+  var cur = 'atlas', pos = {}, view = { x: 20, y: 10, z: 0.85 }, worldSize = { w: 0, h: 0 }, groupsCache = [];
+  var vEl = document.getElementById('a-view'), wEl = document.getElementById('a-world'), mini = document.getElementById('a-mini');
+  document.getElementById('a-legend').innerHTML = legendHTML();
+
+  function tabs() {
+    document.getElementById('a-tabs').innerHTML = MS.map(function (m) {
+      var n = SESSIONS.filter(function (s) { return (m.kind === 'projeto' ? s.project : s.esteira) === m.id && isStopped(s); }).length;
+      return '<button type="button" class="a-tab' + (m.id === cur ? ' on' : '') + '" data-ms="' + m.id + '"><span class="kind">' + m.kind + '</span>' + m.label + (n ? ' <span class="count hot">' + n + '</span>' : '') + '</button>';
+    }).join('') + '<button type="button" class="a-tab new" data-toast="Criaria um mindscape novo (por projeto ou por esteira)">＋ Mindscape</button>';
+  }
+  function layout() {
+    var m = MS.filter(function (x) { return x.id === cur; })[0];
+    var flows = Object.keys(FLOWS).filter(function (f) { return m.kind === 'projeto' ? FLOWS[f].project === cur : FLOWS[f].esteira === cur; });
+    var groups = [], items = [], x = 40;
+    flows.forEach(function (f) {
+      var ss = SESSIONS.filter(function (s) { return s.flow === f; });
+      var gx = x, gy = 40, rowH = 168, w = 760, h = 56 + ss.length * rowH;
+      groups.push({ x: gx, y: gy, w: w, h: h, label: m.kind === 'projeto' ? FLOWS[f].name : FLOWS[f].project + ' · ' + FLOWS[f].name, sub: ESTEIRAS[FLOWS[f].esteira].name });
+      ss.forEach(function (s, i) {
+        var ry = gy + 60 + i * rowH;
+        items.push({ key: 's:' + s.id, x: gx + 20, y: ry, html: sessCard(s) });
+        notesOf(s.id).forEach(function (n, j) { items.push({ key: 'n:' + n.id, x: gx + 280 + j * 236, y: ry - 6 + (j % 2) * 10, html: noteCard(n, { tilt: true }) }); });
+      });
+      x += w + 60;
+    });
+    var loose = NOTES.filter(function (n) { return !n.session && (m.kind === 'projeto' ? (n.project === cur || !n.project) : false); });
+    if (loose.length) {
+      groups.push({ x: x, y: 40, w: 520, h: 56 + Math.ceil(loose.length / 2) * 150, label: 'Soltos', sub: 'post-its sem sessão' });
+      loose.forEach(function (n, i) { items.push({ key: 'n:' + n.id, x: x + 20 + (i % 2) * 245, y: 100 + Math.floor(i / 2) * 150, html: noteCard(n, { tilt: true, showProject: true }) }); });
+      x += 580;
+    }
+    groupsCache = groups;
+    var maxH = groups.reduce(function (a, g) { return Math.max(a, g.y + g.h); }, 0);
+    worldSize = { w: x + 200, h: maxH + 200 };
+    pos[cur] = pos[cur] || {};
+    wEl.style.width = worldSize.w + 'px'; wEl.style.height = worldSize.h + 'px';
+    wEl.innerHTML = groups.map(function (g) {
+      return '<div class="a-group" style="left:' + g.x + 'px;top:' + g.y + 'px;width:' + g.w + 'px;height:' + g.h + 'px"><div class="a-group-label">' + esc(g.label) + ' <span class="sub">' + g.sub + '</span></div></div>';
+    }).join('') + items.map(function (it, i) {
+      var p = pos[cur][it.key] || { x: it.x, y: it.y };
+      return '<div class="a-item" data-key="' + it.key + '" style="left:' + p.x + 'px;top:' + p.y + 'px;z-index:' + (i + 1) + '">' + it.html + '</div>';
+    }).join('');
+    apply(); drawMini();
+  }
+  function apply() {
+    wEl.style.transform = 'translate(' + view.x + 'px,' + view.y + 'px) scale(' + view.z + ')';
+    vEl.style.backgroundPosition = view.x + 'px ' + view.y + 'px';
+    vEl.style.backgroundSize = (22 * view.z) + 'px ' + (22 * view.z) + 'px';
+    document.getElementById('a-zl').textContent = Math.round(view.z * 100) + '%';
+    drawMini();
+  }
+  function drawMini() {
+    var mw = 220, mh = 130, k = Math.min(mw / worldSize.w, (mh - 14) / worldSize.h);
+    var h = '<span class="a-mini-label">minimapa</span>';
+    groupsCache.forEach(function (g) { h += '<span class="m" style="left:' + g.x * k + 'px;top:' + (14 + g.y * k) + 'px;width:' + g.w * k + 'px;height:' + g.h * k + 'px;border:1px dashed var(--border)"></span>'; });
+    Array.prototype.forEach.call(wEl.querySelectorAll('.a-item'), function (el) {
+      var key = el.getAttribute('data-key'), isS = key[0] === 's';
+      var bg = isS ? 'var(--state-' + S[key.slice(2)].state + ')' : 'var(--postit-bg)';
+      h += '<span class="m" style="left:' + parseFloat(el.style.left) * k + 'px;top:' + (14 + parseFloat(el.style.top) * k) + 'px;width:' + (isS ? 230 : 220) * k + 'px;height:' + (isS ? 86 : 110) * k + 'px;background:' + bg + '"></span>';
+    });
+    var vw = vEl.clientWidth || 900, vh = vEl.clientHeight || 600;
+    h += '<span class="mv" style="left:' + (-view.x / view.z) * k + 'px;top:' + (14 + (-view.y / view.z) * k) + 'px;width:' + (vw / view.z) * k + 'px;height:' + (vh / view.z) * k + 'px"></span>';
+    mini.innerHTML = h; mini._k = k;
+  }
+  document.getElementById('a-tabs').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-ms]'); if (!b) return;
+    cur = b.getAttribute('data-ms'); view = { x: 20, y: 10, z: 0.85 }; tabs(); layout();
+  });
+  document.querySelector('.a-zoom').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-zoom]'); if (!b) return;
+    var d = +b.getAttribute('data-zoom'); view.z = d === 0 ? 1 : Math.max(0.35, Math.min(1.6, view.z + d * 0.15)); apply();
+  });
+  mini.addEventListener('pointerdown', function (e) {
+    e.stopPropagation();
+    var r = mini.getBoundingClientRect(), k = mini._k;
+    var wx = (e.clientX - r.left) / k, wy = (e.clientY - r.top - 14) / k;
+    view.x = -(wx * view.z) + vEl.clientWidth / 2; view.y = -(wy * view.z) + vEl.clientHeight / 2; apply();
+  });
+  vEl.addEventListener('wheel', function (e) {
+    e.preventDefault();
+    var r = vEl.getBoundingClientRect(), mx = e.clientX - r.left, my = e.clientY - r.top;
+    var nz = Math.max(0.35, Math.min(1.6, view.z * (e.deltaY < 0 ? 1.1 : 0.9)));
+    view.x = mx - (mx - view.x) * nz / view.z; view.y = my - (my - view.y) * nz / view.z; view.z = nz; apply();
+  }, { passive: false });
+  var st = null, zTop = 1000;
+  vEl.addEventListener('pointerdown', function (e) {
+    if (e.target.closest('.a-zoom') || e.target.closest('.a-mini')) return;
+    var it = e.target.closest('.a-item');
+    st = { x: e.clientX, y: e.clientY, moved: false, it: it };
+    if (it) { st.ox = parseFloat(it.style.left); st.oy = parseFloat(it.style.top); it.style.zIndex = ++zTop; }
+    else { st.vx = view.x; st.vy = view.y; vEl.classList.add('panning'); }
+    vEl.setPointerCapture(e.pointerId);
+  });
+  vEl.addEventListener('pointermove', function (e) {
+    if (!st) return;
+    var dx = e.clientX - st.x, dy = e.clientY - st.y;
+    if (Math.abs(dx) + Math.abs(dy) > 4) st.moved = true;
+    if (st.it) { if (st.moved) { st.it.classList.add('dragging'); st.it.style.left = (st.ox + dx / view.z) + 'px'; st.it.style.top = (st.oy + dy / view.z) + 'px'; } }
+    else { view.x = st.vx + dx; view.y = st.vy + dy; apply(); }
+  });
+  vEl.addEventListener('pointerup', function () {
+    if (!st) return;
+    vEl.classList.remove('panning');
+    if (st.it) {
+      st.it.classList.remove('dragging');
+      var key = st.it.getAttribute('data-key');
+      if (st.moved) { pos[cur][key] = { x: parseFloat(st.it.style.left), y: parseFloat(st.it.style.top) }; drawMini(); }
+      else openDetail(key);
+    }
+    st = null;
+  });
+  window.addEventListener('resize', drawMini);
+  tabs(); layout();
+})();
+
+</script>
+</body>
+</html>

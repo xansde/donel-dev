@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { parsePullRequestStatus, parseUnresolvedThreadCount, isSafeRepoPart, type PullRequestStatus } from '../shared/pullRequestStatus';
 import {
   parsePullRequest,
   parsePullRequestList,
@@ -20,22 +21,41 @@ import {
 //
 // NENHUMA ESCRITA, em nenhuma circunstância (CA-3): os únicos dois lugares
 // que montam argv de `gh` são o `switch` exaustivo de `buildGhArgs` (só os 4
-// kinds abaixo) e o literal fixo `['auth', 'status']` do probe de
+// kinds abaixo, 6 desde o B3) e o literal fixo `['auth', 'status']` do probe de
 // disponibilidade — não existe caminho de código que aceite argv livre.
+//
+// B3 (painel de PRs na sidebar) acrescentou dois kinds, no mesmo molde:
+// `pr-view-branch` (o PR da branch atual de uma pasta, com checks e reviews;
+// roda com `cwd` na pasta para o `gh` achar o repo pelo remote) e
+// `pr-review-threads` (`gh api graphql` com uma consulta LITERAL fixa —
+// `REVIEW_THREADS_QUERY`, só `query`, nunca `mutation` — e só dono/nome/número
+// como variáveis).
 
 /** União de literais — o allowlist em si (mesmo espírito de `BoardReadTool`). */
-export type GhReadCommandKind = 'issue-view' | 'issue-sub-issues' | 'pr-view' | 'pr-list-by-head';
+export type GhReadCommandKind = 'issue-view' | 'issue-sub-issues' | 'pr-view' | 'pr-list-by-head' | 'pr-view-branch' | 'pr-review-threads';
 
 /** Cada `kind` carrega só os parâmetros que o comando real precisa — discriminação por `kind`, união de literais no discriminante. */
 export type GhReadCommand =
   | { readonly kind: 'issue-view'; readonly repo: string; readonly number: number }
   | { readonly kind: 'issue-sub-issues'; readonly repo: string; readonly number: number }
   | { readonly kind: 'pr-view'; readonly repo: string; readonly number: number }
-  | { readonly kind: 'pr-list-by-head'; readonly repo: string; readonly head: string };
+  | { readonly kind: 'pr-list-by-head'; readonly repo: string; readonly head: string }
+  | { readonly kind: 'pr-view-branch'; readonly cwd: string; readonly branch: string }
+  | { readonly kind: 'pr-review-threads'; readonly owner: string; readonly name: string; readonly number: number };
 
 /** Os mesmos campos que o contrato v3 §F/§D documenta (spec-issue e PR) — fixos, nunca compostos a partir de entrada externa. */
 const ISSUE_VIEW_FIELDS = 'number,title,state,url,labels';
 const PR_FIELDS = 'number,url,state,mergedAt,baseRefName,labels';
+/** B3 — o que o indicador e o painel da sidebar mostram (`parsePullRequestStatus`). */
+export const PR_STATUS_FIELDS = 'number,title,url,state,isDraft,headRefName,statusCheckRollup,reviewDecision,latestReviews';
+/**
+ * B3 — conversas de review do PR. Literal fixo: só leitura (`query`), e as
+ * únicas entradas são as variáveis tipadas abaixo. `first: 100` cobre PR de
+ * repo pessoal com folga; passou disso, a contagem para nas 100 primeiras
+ * conversas (raro o bastante para não valer paginação).
+ */
+export const REVIEW_THREADS_QUERY =
+  'query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved}}}}}';
 
 /** Único lugar que monta argv a partir de `GhReadCommand` — switch exaustivo sobre a união (TS recusa compilar um `kind` novo sem um `case`). */
 function buildGhArgs(command: GhReadCommand): readonly string[] {
@@ -54,7 +74,29 @@ function buildGhArgs(command: GhReadCommand): readonly string[] {
       // aberto/fechado/mergeado; `--limit 1` porque uma branch tem no máximo
       // um PR aberto contra o repo.
       return ['pr', 'list', '--repo', command.repo, '--head', command.head, '--state', 'all', '--json', PR_FIELDS, '--limit', '1'];
+    case 'pr-view-branch':
+      // O `--` impede que a branch vire flag mesmo se a validação de cima falhar um dia.
+      return ['pr', 'view', '--json', PR_STATUS_FIELDS, '--', command.branch];
+    case 'pr-review-threads':
+      // `-f` = string crua (dono numérico não vira Int); `-F` só no número, que É Int.
+      return [
+        'api',
+        'graphql',
+        '-f',
+        `query=${REVIEW_THREADS_QUERY}`,
+        '-f',
+        `owner=${command.owner}`,
+        '-f',
+        `name=${command.name}`,
+        '-F',
+        `number=${command.number}`,
+      ];
   }
+}
+
+/** Pasta de trabalho do spawn: só o `pr-view-branch` roda dentro do projeto (o `gh` acha o repo pelo remote). */
+function cwdFor(command: GhReadCommand): string | undefined {
+  return command.kind === 'pr-view-branch' ? command.cwd : undefined;
 }
 
 export type GhSpawnResult = { readonly ok: true; readonly stdout: string } | { readonly ok: false; readonly reason: 'not_found' | 'failed' | 'timeout' };
@@ -73,11 +115,11 @@ export interface RunGhReadCommandOptions {
  * ENOENT síncrono, evento `error` do child, timeout e exit != 0 viram
  * `ok:false` com o motivo — o chamador decide como degradar (CA-6).
  */
-function spawnGhRaw(args: readonly string[], spawnFn: typeof spawn, timeoutMs: number): Promise<GhSpawnResult> {
+function spawnGhRaw(args: readonly string[], spawnFn: typeof spawn, timeoutMs: number, cwd?: string): Promise<GhSpawnResult> {
   return new Promise((resolve) => {
     let child: ReturnType<typeof spawn>;
     try {
-      child = spawnFn('gh', args, { windowsHide: true });
+      child = spawnFn('gh', args, cwd === undefined ? { windowsHide: true } : { windowsHide: true, cwd });
     } catch {
       resolve({ ok: false, reason: 'not_found' });
       return;
@@ -107,9 +149,9 @@ function spawnGhRaw(args: readonly string[], spawnFn: typeof spawn, timeoutMs: n
   });
 }
 
-/** CA-3 — spawna um dos 4 comandos de leitura permitidos. Fora da união `GhReadCommand`, não compila (achado 13). */
+/** CA-3 — spawna um dos comandos de leitura permitidos. Fora da união `GhReadCommand`, não compila (achado 13). */
 export function runGhReadCommand(command: GhReadCommand, options?: RunGhReadCommandOptions): Promise<GhSpawnResult> {
-  return spawnGhRaw(buildGhArgs(command), options?.spawnFn ?? spawn, options?.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  return spawnGhRaw(buildGhArgs(command), options?.spawnFn ?? spawn, options?.timeoutMs ?? DEFAULT_TIMEOUT_MS, cwdFor(command));
 }
 
 // ---------------------------------------------------------------------------
@@ -252,4 +294,37 @@ export function readPhasePullRequestFacts(ref: PhasePullRequestRef, options?: Gi
   }
 
   return Promise.resolve(null);
+}
+
+// ---------------------------------------------------------------------------
+// B3 — PR da branch atual de uma pasta (sidebar). Sem cache aqui: quem decide
+// a validade é `src/main/pull-request-status.ts`, que guarda também o "não tem
+// PR" (negativo) para não respawnar a cada foco da janela.
+// ---------------------------------------------------------------------------
+
+/** Nome de branch que pode ir para o argv: não vazio, sem espaço/controle, nunca começando por `-`. */
+export function isSafeBranchName(branch: string): boolean {
+  if (branch.length === 0 || branch.length > 255 || branch.startsWith('-')) return false;
+  if ([...branch].some((ch) => ch.charCodeAt(0) < 0x20 || ch.charCodeAt(0) === 0x7f)) return false;
+  return !/[\s~^:?*[\]\\]/.test(branch);
+}
+
+/** PR **aberto** da `branch` no repo da pasta `cwd`; `null` = sem PR aberto, `gh` indisponível ou resposta estranha. */
+export async function readBranchPullRequestStatus(cwd: string, branch: string, options?: RunGhReadCommandOptions): Promise<PullRequestStatus | null> {
+  if (!isSafeBranchName(branch)) return null;
+  const result = await runGhReadCommand({ kind: 'pr-view-branch', cwd, branch }, options);
+  if (!result.ok) return null;
+  return parsePullRequestStatus(parseJsonSafe(result.stdout));
+}
+
+/** Conversas de review abertas do PR; `null` = não consegui ler (nunca "0" inventado). */
+export async function readUnresolvedThreadCount(
+  repo: { readonly owner: string; readonly name: string },
+  number: number,
+  options?: RunGhReadCommandOptions,
+): Promise<number | null> {
+  if (!isSafeRepoPart(repo.owner) || !isSafeRepoPart(repo.name) || !Number.isInteger(number) || number <= 0) return null;
+  const result = await runGhReadCommand({ kind: 'pr-review-threads', owner: repo.owner, name: repo.name, number }, options);
+  if (!result.ok) return null;
+  return parseUnresolvedThreadCount(parseJsonSafe(result.stdout));
 }

@@ -115,6 +115,41 @@ export function readCurrentCredentialPair(deps: { readonly io: ClaudeStateIoDeps
   return extractPair(credentialsJson);
 }
 
+/** `disk-changed` = o par em disco não é mais o `expected` (o CLI rotacionou, outra conta entrou, arquivo sumiu): nada foi escrito. */
+export type AdoptRefreshedPairResult = 'written' | 'disk-changed';
+
+/**
+ * Pool Seazone (patch local v3) — a segunda escrita de credencial do sistema,
+ * e a única fora do switch: adota o par que o switcher devolveu no heartbeat
+ * da conta ATIVA do pool, quando o servidor tem um mais novo. Só escreve se o
+ * par em disco ainda for EXATAMENTE o que foi enviado (`expected`) — se o CLI
+ * rotacionou nesse meio-tempo, o par dele vence e o próximo heartbeat o leva
+ * ao servidor. Mesma conta, então `oauthAccount` de `.claude.json` não é
+ * tocado. Escreve por merge: `scopes` e chaves desconhecidas do bloco
+ * `claudeAiOauth` (`subscriptionType`, ...) e do arquivo ficam como estão.
+ */
+export function adoptRefreshedActivePair(
+  deps: { readonly io: ClaudeStateIoDeps; readonly claudeHome: string },
+  expected: CredentialPair,
+  next: CredentialPair,
+): AdoptRefreshedPairResult {
+  const credentialsPath = credentialsFilePath(deps.claudeHome);
+  const currentCredentials = readJsonObject(credentialsPath, deps.io);
+  const currentPair = extractPair(currentCredentials);
+  if (!currentPair || currentPair.accessToken !== expected.accessToken || currentPair.refreshToken !== expected.refreshToken) {
+    return 'disk-changed';
+  }
+  const currentOauth = currentCredentials.claudeAiOauth as Record<string, unknown>;
+  const nextOauth: Record<string, unknown> = {
+    ...currentOauth,
+    accessToken: next.accessToken,
+    refreshToken: next.refreshToken,
+    expiresAt: next.expiresAt,
+  };
+  writeJsonObjectAtomic(credentialsPath, { ...currentCredentials, claudeAiOauth: nextOauth }, deps.io);
+  return 'written';
+}
+
 export interface ApplySwitchDeps {
   readonly io: ClaudeStateIoDeps;
   readonly claudeHome: string;

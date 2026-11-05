@@ -1,8 +1,9 @@
-import { Button, Select, SegmentedControl, TextInput } from '@donel-dev/design-system';
+import { Button, Select, SegmentedControl, TextInput, Toggle } from '@donel-dev/design-system';
 import type { SegmentedControlOption, SelectOption } from '@donel-dev/design-system';
 import { useEffect, useState } from 'react';
 import type { ProjectInfo, ProviderSummaryDto } from '../../shared';
 import type { EffortLevel, ModelAlias, PermissionMode } from '../../shared/commandBuilder';
+import type { SessionRole } from '../../shared/roles';
 import { ProviderPicker } from './ProviderPicker';
 import styles from './Launcher.module.css';
 
@@ -64,7 +65,23 @@ export interface LauncherLaunchOptions {
    * hoje). Mutuamente exclusivo com o motor de contas (D2).
    */
   providerId: string | null;
+  /** "Isolar em worktree" → `--worktree <nome>` (o nome é escolhido por quem lança, no App). */
+  worktree: boolean;
+  /** Papéis de sessão (item 12a) — role of the session; `null` = no role. */
+  roleId: string | null;
+  /** Sessões remotas — remote place where the session runs; `null` = this computer. */
+  remoteId: string | null;
 }
+
+/** Sessões remotas — a place the Launcher can run a session on. */
+export interface LauncherRemotePlace {
+  readonly id: string;
+  readonly label: string;
+  /** Label of the account the place holds; `null` = no account (the CLI there is not logged in). */
+  readonly accountLabel: string | null;
+}
+
+const HERE = '';
 
 export interface LauncherProps {
   /** Lista de projetos conhecidos (sidebar) — alimenta o seletor "Projeto-alvo". */
@@ -72,16 +89,38 @@ export interface LauncherProps {
   /** Herdado da seleção da sidebar (ui-spec §4); o campo abaixo continua editável depois. */
   defaultProjectPath?: string;
   /** T015 (FR-007 "defaults do launcher") — última escolha persistida no ConfigStore; `undefined` até `config:get` resolver (cai nos `DEFAULT_*` locais). */
-  launcherDefaults?: { model: ModelAlias; effort: EffortLevel; permissionMode: PermissionMode };
+  launcherDefaults?: { model: ModelAlias; effort: EffortLevel; permissionMode: PermissionMode; worktree?: boolean; where?: string };
   /** T1320 — registry de providers classe A; `[]` = campo "Provedor" nem aparece (C14/D6). */
   providers?: readonly ProviderSummaryDto[];
+  /** Papéis de sessão (item 12a) — `[]` = the "Papel" field does not show. */
+  roles?: readonly SessionRole[];
+  /** Item 12b — "Papéis…": the screen to create and edit roles. */
+  onManageRoles?: () => void;
+  /** Sessões remotas — `[]` = the "Onde roda" field does not show. */
+  remotes?: readonly LauncherRemotePlace[];
   onLaunch: (options: LauncherLaunchOptions) => void;
 }
 
-export function Launcher({ projects, defaultProjectPath, launcherDefaults, providers = [], onLaunch }: LauncherProps): React.JSX.Element {
+const NO_ROLE = '';
+
+export function Launcher({ projects, defaultProjectPath, launcherDefaults, providers = [], roles = [], onManageRoles, remotes = [], onLaunch }: LauncherProps): React.JSX.Element {
+  const [roleId, setRoleId] = useState<string>(NO_ROLE);
+  const [remoteId, setRemoteId] = useState<string>(HERE);
+  // "Onde roda" — the last choice; without one, the first remote place that holds an account (owner, 04/11).
+  const savedWhere = launcherDefaults?.where;
+  const defaultWhere =
+    savedWhere === 'local'
+      ? HERE
+      : remotes.some((place) => place.id === savedWhere)
+        ? (savedWhere as string)
+        : (remotes.find((place) => place.accountLabel !== null)?.id ?? HERE);
+  useEffect(() => {
+    setRemoteId(defaultWhere);
+  }, [defaultWhere]);
   const [model, setModel] = useState<ModelAlias>(launcherDefaults?.model ?? DEFAULT_MODEL);
   const [effort, setEffort] = useState<EffortLevel>(launcherDefaults?.effort ?? DEFAULT_EFFORT);
   const [permissionMode, setPermissionMode] = useState<PermissionMode>(launcherDefaults?.permissionMode ?? DEFAULT_PERMISSION);
+  const [worktree, setWorktree] = useState<boolean>(launcherDefaults?.worktree === true);
   const [sessionName, setSessionName] = useState('');
   const [projectPath, setProjectPath] = useState(defaultProjectPath ?? '');
   // T1320 (C13) — `null` = "Claude (conta)"; provider selecionado desabilita
@@ -113,12 +152,55 @@ export function Launcher({ projects, defaultProjectPath, launcherDefaults, provi
       projectPath,
       projectName: selectedProject?.name ?? projectPath,
       providerId,
+      worktree,
+      roleId: roleId === NO_ROLE ? null : roleId,
+      remoteId: remoteId === HERE || !remotes.some((place) => place.id === remoteId) ? null : remoteId,
     });
   };
+  const whereOptions: SelectOption[] = [
+    { value: HERE, label: 'Este computador' },
+    ...remotes.map((place) => ({
+      value: place.id,
+      label: place.label,
+      description: place.accountLabel ? `conta ${place.accountLabel} · continua rodando com o app fechado` : 'sem conta — escolha uma no painel Contas',
+    })),
+  ];
+
+  // Item 12a — picking a role fills its suggestions in; every field stays editable afterwards.
+  const pickRole = (next: string): void => {
+    setRoleId(next);
+    const role = roles.find((candidate) => candidate.id === next);
+    if (!role) return;
+    if (role.model) setModel(role.model);
+    if (role.effort) setEffort(role.effort);
+    if (role.permissionMode) setPermissionMode(role.permissionMode);
+    setProviderId(role.engine && providers.some((provider) => provider.id === role.engine) ? role.engine : null);
+  };
+  const roleOptions: SelectOption[] = [
+    { value: NO_ROLE, label: 'Sem papel' },
+    ...roles.map((role) => ({ value: role.id, label: role.name })),
+  ];
 
   return (
     <div className={styles.launcher} data-testid="launcher">
       <h2 className={styles.sectionTitle}>Lançar sessão</h2>
+
+      {roles.length > 0 ? (
+        <div className={styles.field}>
+          <Select label="Papel" value={roleId} options={roleOptions} onChange={pickRole} />
+          {onManageRoles ? (
+            <Button variant="ghost" onClick={onManageRoles}>
+              Papéis…
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
+
+      {remotes.length > 0 ? (
+        <div className={styles.field}>
+          <Select label="Onde roda" value={remoteId} options={whereOptions} onChange={setRemoteId} />
+        </div>
+      ) : null}
 
       <ProviderPicker providers={providers} value={providerId} onChange={setProviderId} />
 
@@ -150,6 +232,13 @@ export function Launcher({ projects, defaultProjectPath, launcherDefaults, provi
         value={permissionMode}
         options={PERMISSION_OPTIONS}
         onChange={(value) => setPermissionMode(value as PermissionMode)}
+      />
+
+      <Toggle
+        label="Isolar em worktree"
+        description="Cópia própria do repositório em .claude/worktrees (--worktree). Ao fechar a aba, some sozinha se não tiver trabalho pendente."
+        checked={worktree}
+        onChange={setWorktree}
       />
 
       <TextInput

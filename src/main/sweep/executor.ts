@@ -92,6 +92,11 @@ export async function undoLink(path: string): Promise<void> {
 
 async function removeWorktree(ctx: ExecutorContext, repoPath: string, item: Extract<PlanItem, { kind: 'removeWorktree' }>): Promise<void> {
   if (item.missing) return; // only the registration is left: the prune at the end of the plan clears it
+  if (item.unlock) {
+    // The stale lock of a killed `--worktree` session (the plan checked that its process is gone).
+    const unlocked = await ctx.git(repoPath, ['worktree', 'unlock', item.path]);
+    if (unlocked.code !== 0) throw new Error(`git worktree unlock falhou: ${firstLine(unlocked.stderr) || `código ${unlocked.code}`}`);
+  }
   for (const link of await findLinks(item.path)) await undoLink(link);
   const removed = await ctx.git(repoPath, ['worktree', 'remove', item.path]);
   if (removed.code !== 0) throw new Error(`git worktree remove falhou: ${firstLine(removed.stderr) || `código ${removed.code}`}`);

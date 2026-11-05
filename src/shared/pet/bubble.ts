@@ -41,18 +41,22 @@ export function eventText(event: BubbleEvent): string {
       return `${name} · terminou`;
     case 'blocked':
       return `${name} · ${BLOCKED_TEXT[event.blockedKind ?? 'permission']}`;
+    case 'failed':
+      // notificacoes-completas: a turn that ended in an API error, with the short reason when the hook said it.
+      return event.reason ? `${name} · erro: ${event.reason}` : `${name} · parou com erro`;
     case 'ended':
       return `${name} · encerrou`;
   }
 }
 
-/** FR-016: calling (finished), surprised (blocked), sad (ended). */
+/** FR-016: calling (finished), surprised (blocked), sad (ended, failed). */
 export function eventPose(event: BubbleEvent): PoseName {
   switch (event.kind) {
     case 'finished':
       return 'calling';
     case 'blocked':
       return 'surprised';
+    case 'failed':
     case 'ended':
       return 'sad';
   }

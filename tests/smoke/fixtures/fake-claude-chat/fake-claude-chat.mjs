@@ -2,11 +2,11 @@
 // See README.md in this folder for args, env vars and the scenario format.
 // Plain Node, no dependencies. Works with any cwd.
 
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 
 // ---------------------------------------------------------------- arguments
 function parseArgs(argv) {
@@ -17,6 +17,7 @@ function parseArgs(argv) {
     else if (a === '--settings') out.settings = argv[++i] ?? null;
     else if (a === '-r' || a === '--resume') out.resume = argv[++i] ?? null;
     else if (a === '--permission-mode') out.permissionMode = argv[++i] ?? null;
+    else if (a === '--worktree' || a === '-w') out.worktree = argv[++i] ?? null;
   }
   return out;
 }
@@ -53,6 +54,44 @@ const permissionTimeoutMs = Number(process.env.DONEL_FAKE_CLAUDE_PERMISSION_TIME
 const slowMs = Number(process.env.DONEL_FAKE_CLAUDE_SLOW_MS || 3000);
 // Swallows the first Enter that has text in the box (a lost Enter), to exercise the driver's single `\r` resend.
 let dropFirstEnter = process.env.DONEL_FAKE_CLAUDE_DROP_FIRST_ENTER === '1';
+// `1`: while a round runs the box and footer are not drawn (a long tool call, as the real CLI 2.1.314 sometimes does).
+const hideBoxWhileWorking = process.env.DONEL_FAKE_CLAUDE_HIDE_BOX_WHILE_WORKING === '1';
+
+// ----------------------------------------------------------------- worktree
+// `--worktree <name>` as the real CLI 2.1.314 does it: `<main repo>/.claude/worktrees/<name>` on a new branch
+// (from `origin/HEAD`, or from HEAD with `worktree.baseRef: "head"` in `--settings`)
+// `worktree-<name>` (an existing one is reopened), locked as `claude session <name> (pid <pid>)`, and the session runs
+// inside it. The lock stays when the process is killed, like the real one.
+function enterWorktree(name) {
+  const gitOut = (cwdForGit, gitArgs) => execFileSync('git', gitArgs, { cwd: cwdForGit, encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  let root;
+  try {
+    const common = resolve(process.cwd(), gitOut(process.cwd(), ['rev-parse', '--path-format=absolute', '--git-common-dir']));
+    if (basename(common).toLowerCase() !== '.git') throw new Error('layout');
+    root = dirname(common);
+  } catch {
+    process.stdout.write('Error creating worktree: Can only use --worktree in a git repository\r\n');
+    process.exit(1);
+  }
+  const path = join(root, '.claude', 'worktrees', name);
+  // Base like the CLI: `worktree.baseRef` "fresh" (default) = `origin/HEAD` (falls back to HEAD without it); "head" = HEAD.
+  let base = 'HEAD';
+  if (settings?.worktree?.baseRef !== 'head') {
+    try {
+      base = gitOut(root, ['rev-parse', '--verify', '--quiet', 'refs/remotes/origin/HEAD']) || 'HEAD';
+    } catch {
+      base = 'HEAD';
+    }
+  }
+  if (!existsSync(path)) gitOut(root, ['worktree', 'add', '-q', '-b', `worktree-${name}`, path, base]);
+  try {
+    gitOut(root, ['worktree', 'lock', '--reason', `claude session ${name} (pid ${process.pid})`, path]);
+  } catch {
+    // already locked (a reopened worktree): the real CLI keeps going too
+  }
+  process.chdir(path);
+}
+if (args.worktree) enterWorktree(args.worktree);
 
 // ------------------------------------------------------------------ session
 const cwd = process.cwd();
@@ -153,10 +192,41 @@ async function fireHook(event, extra = {}, options = {}) {
 async function startSession(source) {
   openTranscript();
   await fireHook('SessionStart', { source });
+  await runStatusLine();
+}
+
+// --------------------------------------------------------------- statusline
+/**
+ * Ponte da statusline: like the CLI, runs `settings.statusLine.command` (shell) with the session JSON on stdin -
+ * at session start and on each `statusline` step. The payload is `scenario.statusLine` (plus `extra`) on top of
+ * the ids. Its stdout is only logged (the fake does not draw a status row).
+ */
+function runStatusLine(extra = {}) {
+  const entry = settings.statusLine;
+  if (!entry || entry.type !== 'command' || typeof entry.command !== 'string') return Promise.resolve();
+  const payload = { session_id: sessionId, transcript_path: transcriptPath, cwd, version: 'fake', ...(scenario.statusLine ?? {}), ...extra };
+  return new Promise((done) => {
+    const proc = spawn(entry.command, { shell: true, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
+    let stdout = '';
+    const timer = setTimeout(() => proc.kill(), 10_000);
+    proc.stdout.on('data', (chunk) => (stdout += chunk));
+    proc.on('error', () => done());
+    proc.on('exit', (code) => {
+      clearTimeout(timer);
+      logCall({ statusLine: 'ran', code, stdout: stdout.trim() });
+      done();
+    });
+    proc.stdin.on('error', () => {});
+    proc.stdin.end(JSON.stringify(payload));
+  });
 }
 
 // ------------------------------------------------------------------- screen
-const state = { dialog: false, working: false, input: '', pastes: [], history: [], menuClosed: false, images: 0 };
+const state = { dialog: false, working: false, workingSince: 0, input: '', pastes: [], history: [], menuClosed: false, images: 0 };
+// `0`: the footer WITHOUT "esc to interrupt" / "? for shortcuts" / "! for shell mode", only the permission mode - what
+// the real CLI 2.1.314 draws with ANY `statusLine` configured. Off by default: many smokes wait for "shortcuts" as the
+// "fake is up" signal; the chat smokes run once more with it set.
+const footerHints = process.env.DONEL_FAKE_CLAUDE_FOOTER_HINTS !== '0';
 const pending = []; // messages submitted during a round, waiting in the CLI's queue
 const NATIVE_COMMANDS = ['/clear', '/compact', '/config', '/cost', '/exit', '/help', '/mcp', '/memory', '/model', '/status'];
 const LOCAL_COMMANDS = new Set(['/config', '/cost', '/help', '/mcp', '/memory', '/model', '/status']);
@@ -187,12 +257,24 @@ function render() {
   const lines = [' ▐▛███▜▌   Claude Code v2.1.293', `▝▜█████▛▘  Fake Model · fake-claude-chat`, ` ▘▘ ▝▝    ${cwd}`, ''];
   lines.push(...state.history.slice(-12));
   for (const queued of pending) lines.push(`  ⎿ queued: ${queued.replace(/\n/g, ' ').slice(0, 60)}`);
+  if (hideBoxWhileWorking && state.working) {
+    lines.push('  ● Bash(npx vitest run)', '    ⎿  Running…');
+    out(`\x1b[2J\x1b[H${lines.join('\r\n')}`);
+    return;
+  }
+  // The spinner row the real CLI draws above the box while a turn runs (with or without footer hints).
+  if (state.working) lines.push('', `✻ Pondering… (${Math.max(0, Math.round((Date.now() - state.workingSince) / 1000))}s)`, '');
   menuMatches().slice(0, 6).forEach((c, i) => lines.push(i === 0 ? `  ❯ ${c}` : `    ${c}`));
   const [firstRow, ...nextRows] = inputRows();
   lines.push(ruler(), `❯ ${firstRow}`, ...nextRows.map((row) => `  ${row}`), ruler());
-  lines.push(state.working ? '  esc to interrupt' : state.input === '' ? '  ? for shortcuts' : '  ! for shell mode');
-  // The real CLI shows the permission mode in the footer; the smokes use it as the "ready for keys" signal.
-  if (args.permissionMode === 'acceptEdits' && !state.working) lines.push('  ⏵⏵ accept edits on (shift+tab to cycle)');
+  if (footerHints) {
+    lines.push(state.working ? '  esc to interrupt' : state.input === '' ? '  ? for shortcuts' : '  ! for shell mode');
+    // The real CLI shows the permission mode in the footer; the smokes use it as the "ready for keys" signal.
+    if (args.permissionMode === 'acceptEdits' && !state.working) lines.push('  ⏵⏵ accept edits on (shift+tab to cycle)');
+  } else {
+    // With a `statusLine` the real CLI 2.1.314 drops the hints; the permission mode stays, always.
+    lines.push(args.permissionMode === 'acceptEdits' ? '  ⏵⏵ accept edits on (shift+tab to cycle)' : '  ⏸ manual mode on');
+  }
   out(`\x1b[2J\x1b[H${lines.join('\r\n')}`);
 }
 
@@ -267,6 +349,9 @@ async function runStep(step) {
       break;
     case 'hook':
       await fireHook(step.event, step.payload ?? {});
+      break;
+    case 'statusline':
+      await runStatusLine(step.payload ?? {});
       break;
     case 'tool': {
       const id = step.id ?? `toolu_${randomUUID().slice(0, 12)}`;
@@ -413,7 +498,15 @@ function writeLocalRules(permissions) {
 function defaultResult(spec, input) {
   if (spec.result !== undefined) return spec.result;
   if (spec.name === 'AskUserQuestion') {
-    const pairs = Object.entries(input.answers ?? {}).map(([q, a]) => `"${q}"="${a}"`).join(', ');
+    // Like the real CLI (2.1.314): a note in `annotations[question].notes` is appended as ` notes: ...`, and with
+    // any note the model is asked to read the answers carefully instead of the plain "answered" sentence.
+    const annotations = input.annotations ?? {};
+    const pairs = Object.entries(input.answers ?? {})
+      .map(([q, a]) => (annotations[q]?.notes ? `"${q}"="${a}" notes: ${annotations[q].notes}` : `"${q}"="${a}"`))
+      .join(', ');
+    if (Object.values(annotations).some((x) => x?.notes)) {
+      return `The user answered: ${pairs}. Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.`;
+    }
     return `User has answered your questions: ${pairs}. You can now continue with the user's answers in mind.`;
   }
   if (spec.name === 'ExitPlanMode') return 'User has approved your plan. You can now start coding.';
@@ -478,6 +571,7 @@ async function handlePermission(spec) {
 
 async function runTurn(text, queued = false) {
   state.working = true;
+  state.workingSince = Date.now();
   turnState.interrupted = false;
   render();
   const startedAt = Date.now();

@@ -36,14 +36,14 @@ export const MODEL_CONTEXT_WINDOWS: Record<ModelAlias, number> = {
  * sessão nova". Se ele recalibrar, é esta linha (constante no código, não
  * configuração — decisão de 24/07 para não inflar o escopo).
  */
-export const SMART_ZONE_TOKENS = 300_000;
+export const SMART_ZONE_TOKENS = 500_000; // 300k até 04/11/2026, quando o dono subiu para 500k
 
 const KNOWN_ALIASES = Object.keys(MODEL_CONTEXT_WINDOWS) as ModelAlias[];
 
 /**
  * `min(smart zone, janela do modelo)`.
  *
- * O `min` não é decoração: uma zona de 300k num modelo de janela 200k seria
+ * O `min` não é decoração: uma zona de 500k num modelo de janela 200k seria
  * mentira — a sessão morre na janela antes de chegar ao fim da zona. Em `haiku`
  * a régua é a janela real (200k).
  */
@@ -71,6 +71,72 @@ export function normalizeModelAlias(raw: string): ModelAlias | null {
     .trim();
 
   return (KNOWN_ALIASES as readonly string[]).includes(candidate) ? (candidate as ModelAlias) : null;
+}
+
+/**
+ * Issue #21 — janela do modelo pelo **id real** que o CLI grava no transcript
+ * (`message.model`, ex. `claude-opus-5-5`, `claude-haiku-4-5-20251001`), não
+ * pelo alias do launch. Um `/model` digitado no CLI muda o id sem mudar o
+ * alias, e o alias `haiku` sozinho não diz se a sessão roda Haiku 4.5 (200k)
+ * ou Haiku 5.5 (1M).
+ *
+ * ⚠️ Regra CONFERIDA na skill `claude-api` em **2026-10-30** (tabela de modelos
+ * atuais + legados), não de memória: toda a família fable/mythos e toda geração
+ * **4.6 em diante** têm janela de 1M; 4.5 e anteriores (Haiku 4.5, Sonnet/Opus
+ * 4.5, 4.1, 4, e a nomenclatura `claude-3-*`) têm 200k. Regra por geração em vez
+ * de lista fechada de ids para um modelo novo da mesma linha não cair em `null`.
+ *
+ * Tolera o que aparece em volta do id: sufixo de data (`-20251001`), `[1m]`,
+ * prefixo de provedor (`us.anthropic.`), versão do Bedrock (`-v1:0`) e snapshot
+ * do Vertex (`@20251101`). O próprio alias (`opus`) também é aceito.
+ *
+ * Desconhecido (modelo de provedor de terceiros, lixo) → `null`, nunca um
+ * palpite: quem chama decide o fallback.
+ */
+export function contextWindowForModelId(modelId: string): number | null {
+  if (typeof modelId !== 'string') return null;
+  const alias = normalizeModelAlias(modelId);
+  if (alias !== null) return MODEL_CONTEXT_WINDOWS[alias];
+
+  const id = normalizeModelId(modelId);
+  if (!id) return null;
+
+  const modern = MODERN_MODEL_ID.exec(id);
+  if (modern) {
+    const [, family, major, minor] = modern;
+    if (family === 'fable' || family === 'mythos') return ONE_MILLION;
+    const version = Number(major) + Number(minor ?? 0) / 10;
+    return version >= 4.6 ? ONE_MILLION : TWO_HUNDRED_K;
+  }
+  if (/^claude-(fable|mythos)-[a-z0-9-]+$/.test(id)) return ONE_MILLION; // ex. `claude-mythos-preview`
+  if (LEGACY_MODEL_ID.test(id)) return TWO_HUNDRED_K;
+  return null;
+}
+
+/** `min(smart zone, janela)` pelo id real; `null` quando o id é desconhecido. */
+export function contextZoneForModelId(modelId: string): number | null {
+  const window = contextWindowForModelId(modelId);
+  return window === null ? null : Math.min(SMART_ZONE_TOKENS, window);
+}
+
+const ONE_MILLION = 1_000_000;
+const TWO_HUNDRED_K = 200_000;
+/** `claude-<família>-<major>[-<minor>]` — nomenclatura de 4.x em diante. */
+export const MODERN_MODEL_ID = /^claude-(fable|mythos|opus|sonnet|haiku)-(\d+)(?:-(\d))?$/;
+/** `claude-<major>[-<minor>]-<família>` — nomenclatura `claude-3-*`. */
+export const LEGACY_MODEL_ID = /^claude-(\d+)(?:-(\d))?-(opus|sonnet|haiku)$/;
+
+/** Tira o que cerca o id (provedor, data, `[1m]`, versão do Bedrock, snapshot do Vertex). */
+export function normalizeModelId(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/\[[^\]]*\]$/, '')
+    .replace(/^(?:[a-z]{2,4}\.)?anthropic\./, '')
+    .replace(/-v\d+(?::\d+)?$/, '')
+    .replace(/@\d{8}$/, '')
+    .replace(/-\d{8}$/, '')
+    .trim();
 }
 
 /** Os três campos da `usage` que compõem o contexto de ENTRADA do turn (C1). */
