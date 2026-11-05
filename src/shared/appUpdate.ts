@@ -111,6 +111,8 @@ export interface ResumeTab {
   readonly roleId?: string;
   /** The place of the Mindscape a session that had not started was opened from. */
   readonly placeId?: string;
+  /** Só os Líderes nas abas — place of the session that opened this one (`sessao_abrir`): it comes back out of the tab bar. */
+  readonly openedBy?: string;
   readonly color?: string;
   readonly customTitle?: string | null;
   readonly pinned?: boolean;
@@ -153,6 +155,7 @@ function parseResumeTab(value: unknown): ResumeTab | null {
     ...(optionalString(raw.providerId) ? { providerId: optionalString(raw.providerId) } : {}),
     ...(optionalString(raw.roleId) ? { roleId: optionalString(raw.roleId) } : {}),
     ...(optionalString(raw.placeId) ? { placeId: optionalString(raw.placeId) } : {}),
+    ...(optionalString(raw.openedBy) ? { openedBy: optionalString(raw.openedBy) } : {}),
     ...(optionalString(raw.color) ? { color: optionalString(raw.color) } : {}),
     ...(typeof raw.customTitle === 'string' || raw.customTitle === null ? { customTitle: raw.customTitle } : {}),
     ...(raw.pinned === true ? { pinned: true } : {}),

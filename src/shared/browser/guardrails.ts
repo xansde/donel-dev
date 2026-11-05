@@ -14,6 +14,7 @@
 
 import type { CdpKeyEvent } from './keys';
 import { MODIFIER_BITS } from './keys';
+import { isAllowedLocalFileUrl } from './url';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Vigia de domínio
@@ -56,9 +57,13 @@ function matches(host: string, domain: string): boolean {
   return host === domain || host.endsWith(`.${domain}`);
 }
 
-/** Whether the agent may be on `url` under these rules. Anything that is not a readable http(s) URL fails closed. */
+/**
+ * Whether the agent may be on `url` under these rules. A local file of this computer is not a site, so the domain
+ * list does not cover it (the panel only gets one by an explicit load, see shared/browser/url.ts). Anything else
+ * that is not a readable http(s) URL fails closed.
+ */
 export function agentMayNavigate(rules: DomainRules, url: string): boolean {
-  if (rules.mode === 'all' || url === 'about:blank') return true;
+  if (rules.mode === 'all' || url === 'about:blank' || isAllowedLocalFileUrl(url)) return true;
   const host = /^https?:/i.test(url) ? hostname(url) : null;
   if (host === null) return false;
   const listed = rules.domains.some((domain) => matches(host, domain));

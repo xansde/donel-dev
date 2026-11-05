@@ -1,7 +1,7 @@
 // The navigation guard of the windows that expose `window.donel`: only the page itself passes, new windows never do.
 import { describe, expect, it } from 'vitest';
 import { guardBrowserPanelNavigation, guardNavigation, isSameDocument } from '../src/main/navigation-guard';
-import { isAllowedPanelUrl } from '../src/shared/browser/url';
+import { isAllowedLocalFileUrl, isAllowedPanelUrl, normalizeBrowserUrl } from '../src/shared/browser/url';
 
 describe('isSameDocument', () => {
   it('the same page, with or without a fragment, is the same document', () => {
@@ -78,7 +78,13 @@ describe('guardBrowserPanelNavigation (named exception: the internal browser vie
       listeners.get(channel)?.({ preventDefault: () => (prevented = true) }, url);
       return prevented;
     };
-    return { fire, open: (url: string) => openHandler?.({ url }), opened, blocked };
+    const fireFrame = (url: string, isMainFrame: boolean): boolean => {
+      let prevented = false;
+      const listener = listeners.get('will-frame-navigate') as unknown as (details: { url: string; isMainFrame: boolean; preventDefault(): void }) => void;
+      listener({ url, isMainFrame, preventDefault: () => (prevented = true) });
+      return prevented;
+    };
+    return { fire, fireFrame, open: (url: string) => openHandler?.({ url }), opened, blocked };
   }
 
   it('lets http and https navigations through and blocks file:// and other schemes', () => {
@@ -99,6 +105,28 @@ describe('guardBrowserPanelNavigation (named exception: the internal browser vie
     expect(panel.open('file:///C:/x')).toEqual({ action: 'deny' });
     expect(panel.opened).toEqual(['https://example.com/popup']);
     expect(panel.blocked).toEqual(['file:///C:/x']);
+  });
+
+  it('opens one local page, image or PDF by explicit load, and a local page never reaches another file or a folder', () => {
+    // The door: what the address bar and navegador_abrir accept.
+    const page = normalizeBrowserUrl('C:\\Users\\x\\relatório final.html');
+    expect(page).toEqual({ ok: true, url: 'file:///C:/Users/x/relat%C3%B3rio%20final.html' });
+    expect(page.ok && isAllowedLocalFileUrl(page.url)).toBe(true);
+    expect(normalizeBrowserUrl('file:///C:/x/print.PNG').ok).toBe(true);
+    expect(normalizeBrowserUrl('/home/x/doc.pdf')).toEqual({ ok: true, url: 'file:///home/x/doc.pdf' });
+    for (const refused of ['C:\\Users\\x', 'C:\\Users\\x\\', 'file:///C:/Users/x/', 'C:\\x\\.env', 'C:\\x\\notas.txt', '\\\\servidor\\pasta\\a.html', 'file://servidor/pasta/a.html']) {
+      expect(normalizeBrowserUrl(refused).ok, refused).toBe(false);
+    }
+    // Inside a local page: no link, redirect, popup or frame into file:, so no other file and no folder listing.
+    const panel = fakePanel();
+    expect(panel.fire('will-navigate', 'file:///C:/Users/x/outro.html')).toBe(true);
+    expect(panel.fire('will-redirect', 'file:///C:/Users/x/')).toBe(true);
+    expect(panel.open('file:///C:/Users/x/outro.html')).toEqual({ action: 'deny' });
+    expect(panel.opened).toEqual([]);
+    expect(panel.fireFrame('file:///C:/Users/x/', false)).toBe(true);
+    expect(panel.fireFrame('file:///C:/Users/x/segredo.html', false)).toBe(true);
+    expect(panel.fireFrame('https://www.youtube.com/embed/x', false)).toBe(false);
+    expect(panel.fireFrame('file:///C:/Users/x/relatorio.html', true)).toBe(false);
   });
 
   it('refuses <webview> inside a panel page', () => {

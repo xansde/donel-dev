@@ -35,6 +35,7 @@ import {
 import { parseKeyCombo } from '../../shared/browser/keys';
 import { MCP_SERVER_NAME, type BrowserToolCall, type BrowserToolOutcome } from '../../shared/browser/mcp';
 import type { BoardToolCall } from '../../shared/mindscape/agent-tools';
+import type { LedgerToolCall } from '../../shared/ledger/tools';
 import { refusedUploadFile, refusedUploadFolder, withUploadFolder, withoutUploadFolder } from '../../shared/browser/upload';
 import { normalizeBrowserUrl } from '../../shared/browser/url';
 import { BrowserPanels } from './browser-panels';
@@ -58,6 +59,8 @@ export interface BrowserServiceDeps {
   executeBoard?(ptyId: string, call: BoardToolCall): Promise<BrowserToolOutcome>;
   /** The upload folders the owner authorized, kept in the app's config (`browserUploads`): they survive a restart. */
   readonly uploadFolders: { get(): readonly string[]; set(folders: readonly string[]): void };
+  /** Ledger com prova (item 19) — the `tarefa_*` tools of the same server (main/ledger-store.ts). */
+  executeLedger?(ptyId: string, call: LedgerToolCall): Promise<BrowserToolOutcome>;
 }
 
 export interface BrowserService {
@@ -546,6 +549,7 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
   const mcp = createBrowserMcpServer({
     execute: enqueue,
     ...(deps.executeBoard ? { executeBoard: deps.executeBoard } : {}),
+    ...(deps.executeLedger ? { executeLedger: deps.executeLedger } : {}),
     serverVersion: deps.appVersion,
   });
 

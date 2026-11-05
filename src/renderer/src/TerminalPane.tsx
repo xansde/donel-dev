@@ -130,6 +130,8 @@ export interface TerminalPaneProps {
   /** Sessões remotas — kept on the remote so the next boot reopens the tab with its names. */
   tabName?: string;
   projectName?: string;
+  /** Sessões remotas — place of the session that opened this one, kept on the remote for the next boot. */
+  openedBy?: string;
   /**
    * 011-contas-e-provedores, etapa 3, Fase 1.2 — login isolado em andamento
    * nesta aba (`accounts:beginLogin`); `undefined` = aba normal (comportamento
@@ -291,6 +293,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     remoteId,
     tabName,
     projectName,
+    openedBy,
     accountLoginId,
     roleId,
     onCloseTab,
@@ -490,7 +493,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     renewalIdRef.current = null;
 
     void window.donel.pty
-      .create({ cols: term.cols, rows: term.rows, cwd, sessionType, args: spawnArgsRef.current ?? args, providerId, accountLoginId, renewalId, roleId: roleIdRef.current, ...(remoteId ? { remoteId, tabName, projectName } : {}) })
+      .create({ cols: term.cols, rows: term.rows, cwd, sessionType, args: spawnArgsRef.current ?? args, providerId, accountLoginId, renewalId, roleId: roleIdRef.current, ...(remoteId ? { remoteId, tabName, projectName, ...(openedBy ? { openedBy } : {}) } : {}) })
       .then((result) => {
         if (requestEpoch !== mountEpochRef.current) {
           // Geração já descartada (StrictMode double-invoke em dev, ou a aba
