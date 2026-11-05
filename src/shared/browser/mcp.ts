@@ -504,15 +504,27 @@ function header(info: McpHttpRequestInfo, name: string): string | undefined {
  * Decides whether a request may reach the JSON-RPC handler. Any `Origin` is refused (a web page, including one
  * open in the panel itself, must never reach the server), the `Host` must be the loopback with our port
  * (DNS rebinding), and the bearer token names the PTY whose browser the call drives.
+ *
+ * B38 — a session on a remote place (VPS) reaches us through the reverse tunnel the app itself opened
+ * (`ssh -R 127.0.0.1:<remote>:127.0.0.1:<port>`), so its CLI sends `Host: 127.0.0.1:<remote>`. That port is
+ * accepted only together with the token of the PTY it was opened for (`tunnelPortOf`): no new listener, no port
+ * on the tailnet, and the loopback-only Host rule still stands against DNS rebinding.
  */
-export function checkMcpHttpRequest(info: McpHttpRequestInfo, port: number, resolveToken: (token: string) => string | null): McpHttpGate {
+export function checkMcpHttpRequest(
+  info: McpHttpRequestInfo,
+  port: number,
+  resolveToken: (token: string) => string | null,
+  tunnelPortOf: (ptyId: string) => number | null = () => null,
+): McpHttpGate {
   const path = info.url.split('?', 1)[0];
   if (path !== MCP_ENDPOINT_PATH) return { ok: false, status: 404, message: 'Not found' };
   if (header(info, 'origin') !== undefined) return { ok: false, status: 403, message: 'Origin not allowed' };
-  const host = header(info, 'host')?.toLowerCase();
-  if (host !== `127.0.0.1:${port}` && host !== `localhost:${port}`) return { ok: false, status: 403, message: 'Host not allowed' };
   const auth = /^Bearer\s+([A-Za-z0-9_-]{16,256})$/.exec(header(info, 'authorization') ?? '');
   const ptyId = auth ? resolveToken(auth[1]) : null;
+  const tunnelPort = ptyId ? tunnelPortOf(ptyId) : null;
+  const host = header(info, 'host')?.toLowerCase();
+  const allowedHost = (p: number): boolean => host === `127.0.0.1:${p}` || host === `localhost:${p}`;
+  if (!allowedHost(port) && (tunnelPort === null || !allowedHost(tunnelPort))) return { ok: false, status: 403, message: 'Host not allowed' };
   if (!ptyId) return { ok: false, status: 401, message: 'Unauthorized' };
   if (info.method !== 'POST') return { ok: false, status: 405, message: 'Method not allowed', headers: { Allow: 'POST' } };
   return { ok: true, ptyId };
