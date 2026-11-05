@@ -1,6 +1,6 @@
 // Item 18 (PDA mindscape-openrig) — the conversation with the Jobu as Líder, in a comic bubble that comes out of the
-// Jobu on the desktop (the pet window). The Líder is an ordinary session of the app (a tab with the role `lider`) of
-// the current project. The main window knows the tabs, so it REPORTS which one is the Líder; the pet window reads that
+// Jobu on the desktop (the pet window). The Líder is ONE session of the app for every board (ADR 0007): a tab with the
+// role `lider` and no project. The main window knows the tabs, so it REPORTS which one is the Líder; the pet window reads that
 // conversation through the chat of the 014 (the hub broadcasts to every window) and SENDS through the main window,
 // which owns the hidden terminal and the send machine of the tab. Channel names, payloads and validators.
 
@@ -24,12 +24,9 @@ export const LIDER_CHANNELS = {
 /** Id of the ready role of the Líder (the ready role of src/shared/roles.ts). */
 export { LEADER_ROLE_ID as LIDER_ROLE_ID } from '../roles';
 
-/** What the main window says about the Líder of the current project. */
+/** What the main window says about the Líder único. */
 export interface LiderReport {
-  /** The project of the Líder: the selected one, else the one of the active tab, else the last one used; `null` = none. */
-  readonly projectPath: string | null;
-  readonly projectName: string | null;
-  /** The live tab of the Líder in that project, if any. */
+  /** The live tab of the Líder, if any. */
   readonly tabId: string | null;
   readonly ptyId: string | null;
   /** The name the tab shows. */
@@ -48,7 +45,7 @@ export interface LiderSendPayload {
 
 export type LiderSendResult = { readonly ok: true } | { readonly ok: false; readonly reason: string };
 
-export const EMPTY_LIDER_REPORT: LiderReport = { projectPath: null, projectName: null, tabId: null, ptyId: null, name: null, roleAvailable: false };
+export const EMPTY_LIDER_REPORT: LiderReport = { tabId: null, ptyId: null, name: null, roleAvailable: false };
 
 const MAX_TEXT = 100_000;
 
@@ -63,8 +60,6 @@ function isNullableString(value: unknown): value is string | null {
 export function isValidLiderReport(value: unknown): value is LiderReport {
   if (!isRecord(value)) return false;
   return (
-    isNullableString(value.projectPath) &&
-    isNullableString(value.projectName) &&
     isNullableString(value.tabId) &&
     isNullableString(value.ptyId) &&
     isNullableString(value.name) &&

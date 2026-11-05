@@ -8,6 +8,12 @@
 // - Across boards: only the Líder the owner placed (not one a session opened or drew) on a board the
 //   owner marked `reach: 'all'` (the "Alcance" toggle of the
 //   board) reaches the sessions of the other boards. Without that mark, each board reaches only itself.
+// - The Líder único (ADR 0007: the session the Jobu opens, recognized by a mark on its tab — never by the role
+//   alone) has no place on any board. It stands above the top of EVERY board (owner: "o do Donel Dev deve ser
+//   capaz de fechar sessões em qualquer mindscape"), so it reaches the top places (no hierarchy arrow points to
+//   them) and everything below them, on any board, without the "Alcance" mark. The same hierarchy arrows count:
+//   an arrow a session draws neither hides a place from it nor puts anyone above it. A former Líder of a board
+//   is an ordinary place: its owner's arrows are ordinary hierarchy.
 
 import { LEADER_ROLE_ID } from '../roles';
 import type { BoardReach, MindscapeBoard, MindscapeDoc, MindscapeLink } from './model';
@@ -53,10 +59,32 @@ export interface ReachEnd {
   readonly placeId: string;
 }
 
+/** The Líder único as the one who directs: it has no place, so it is not a `ReachEnd`. */
+export const LEADER_OF_ALL_FROM = { leaderOfAll: true } as const;
+export type ReachFrom = ReachEnd | typeof LEADER_OF_ALL_FROM;
+
+/** A place at the top of its board: a session place no hierarchy arrow points to. The Líder único is right above it. */
+export function isTop(board: MindscapeBoard | undefined, placeId: string): boolean {
+  if (board?.cards[placeId]?.kind !== 'session') return false;
+  return !board.links.some((link) => link.to === placeId && isHierarchyArrow(link) && board.cards[link.from]?.kind === 'session');
+}
+
+/** The Líder único reaches `placeId`: a top place, or one below a top place by hierarchy arrows. */
+function leaderOfAllReaches(board: MindscapeBoard | undefined, placeId: string): boolean {
+  if (!board || board.cards[placeId]?.kind !== 'session') return false;
+  if (isTop(board, placeId)) return true;
+  return Object.keys(board.cards).some((id) => isTop(board, id) && isBelow(board, id, placeId));
+}
+
 export type ReachVerdict = { readonly ok: true } | { readonly ok: false; readonly reason: string };
 
 /** May the session at `from` direct the one at `to`? The reason is a pt-BR clause for the agent. */
-export function canReach(doc: MindscapeDoc, from: ReachEnd, to: ReachEnd): ReachVerdict {
+export function canReach(doc: MindscapeDoc, from: ReachFrom, to: ReachEnd): ReachVerdict {
+  if ('leaderOfAll' in from) {
+    return leaderOfAllReaches(doc.boards[to.projectPath], to.placeId)
+      ? { ok: true }
+      : { ok: false, reason: `"${to.placeId}" não está no topo do quadro nem abaixo dele pelas setas do dono ou de abertura.` };
+  }
   if (from.projectPath === to.projectPath && from.placeId === to.placeId) return { ok: false, reason: 'esta é a sua própria sessão.' };
   const fromBoard = doc.boards[from.projectPath];
   if (from.projectPath === to.projectPath) {

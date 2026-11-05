@@ -249,10 +249,10 @@ function lowRiskRefusal(caller: LedgerCaller, owner: string): string | null {
 
 /** Why the place `caller` may not decide this delivery, beyond the contract's rules; `null` = may. */
 function decideRefusal(caller: LedgerCaller, task: LedgerTask, seen: boolean): string | null {
-  if (task.projectPath !== caller.projectPath) return 'a tarefa é de outro quadro; só se decide tarefa do próprio quadro.';
   const delivery = lastDelivery(task);
   // State, role, risk and self-decision: the contract answers those.
   if (task.state !== 'entregue' || !delivery || delivery.by.kind !== 'lugar' || cannotDecide(task, callerActor(caller))) return null;
+  if (task.projectPath !== caller.projectPath) return 'a tarefa é de outro quadro; só se decide tarefa do próprio quadro.';
   if (!seen) return 'leia a prova antes com tarefa_ver.';
   const from = delivery.by.placeId;
   if (!caller.board) return 'não consegui ler o quadro para conferir a cadeia de quem entregou; um Revisor de fora dela ou o dono decide.';

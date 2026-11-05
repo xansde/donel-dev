@@ -40,6 +40,7 @@ function team(state: SemaphoreState) {
     askOwner: async () => false,
     remoteLabel: (id) => id,
     remotes: () => [],
+    projects: () => [],
   };
   return { bridge: new AgentBridge(ports), sent };
 }
