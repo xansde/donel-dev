@@ -16,7 +16,8 @@ import type { LedgerToolCall } from '../../shared/ledger/tools';
 //
 // Streamable HTTP done by hand (no SDK, no new dependency): `127.0.0.1` on an ephemeral port, one POST per
 // JSON-RPC message, answer `application/json`. Who may call and which browser a call drives is decided by
-// `checkMcpHttpRequest` (shared/browser/mcp.ts): loopback Host, no Origin, bearer token of 128 bits per PTY.
+// `checkMcpHttpRequest` (shared/browser/mcp.ts): loopback Host (ours, or the remote end of the PTY's own tunnel),
+// no Origin, bearer token of 128 bits per PTY.
 // The protocol itself (initialize, tools/list, tools/call, ping) lives in `handleMcpPayload`.
 
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -35,8 +36,11 @@ export interface BrowserMcpServer {
   /** `null` until `start()` resolves (or after it failed). */
   readonly port: number | null;
   start(): Promise<number>;
-  /** A new 128-bit token for this PTY (replaces any previous one). */
-  registerSession(ptyId: string, token?: string): string;
+  /**
+   * A new 128-bit token for this PTY (replaces any previous one). `tunnelPort`: the remote end of the reverse
+   * tunnel of a session on a remote place (B38) — its CLI calls with that port in the `Host`.
+   */
+  registerSession(ptyId: string, token?: string, tunnelPort?: number): string;
   unregisterSession(ptyId: string): void;
   stop(): Promise<void>;
 }
@@ -68,12 +72,18 @@ function readBody(req: IncomingMessage): Promise<string | null> {
 export function createBrowserMcpServer(deps: BrowserMcpServerDeps): BrowserMcpServer {
   const ptyByToken = new Map<string, string>();
   const tokenByPty = new Map<string, string>();
+  const tunnelPortByPty = new Map<string, number>();
   let server: Server | null = null;
   let port: number | null = null;
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
     if (port === null) return reply(res, 503, 'Not ready');
-    const gate = checkMcpHttpRequest({ method: req.method ?? '', url: req.url ?? '', headers: req.headers }, port, (token) => ptyByToken.get(token) ?? null);
+    const gate = checkMcpHttpRequest(
+      { method: req.method ?? '', url: req.url ?? '', headers: req.headers },
+      port,
+      (token) => ptyByToken.get(token) ?? null,
+      (ptyId) => tunnelPortByPty.get(ptyId) ?? null,
+    );
     if (!gate.ok) {
       // Drain whatever was sent so the socket can be reused, then refuse.
       req.resume();
@@ -122,23 +132,27 @@ export function createBrowserMcpServer(deps: BrowserMcpServerDeps): BrowserMcpSe
           resolve(port);
         });
       }),
-    registerSession: (ptyId, knownToken) => {
+    registerSession: (ptyId, knownToken, tunnelPort) => {
       const previous = tokenByPty.get(ptyId);
       if (previous) ptyByToken.delete(previous);
       const token = knownToken ?? randomBytes(16).toString('hex');
       ptyByToken.set(token, ptyId);
       tokenByPty.set(ptyId, token);
+      if (tunnelPort !== undefined) tunnelPortByPty.set(ptyId, tunnelPort);
+      else tunnelPortByPty.delete(ptyId);
       return token;
     },
     unregisterSession: (ptyId) => {
       const token = tokenByPty.get(ptyId);
       if (token) ptyByToken.delete(token);
       tokenByPty.delete(ptyId);
+      tunnelPortByPty.delete(ptyId);
     },
     stop: () =>
       new Promise<void>((resolve) => {
         ptyByToken.clear();
         tokenByPty.clear();
+        tunnelPortByPty.clear();
         const current = server;
         server = null;
         port = null;
