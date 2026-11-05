@@ -323,6 +323,11 @@ export class RemoteSessionRegistry {
     return this.live.has(ptyId);
   }
 
+  /** The ssh target of a live remote tab (the Oráculo reads its proof files there). */
+  sshTargetOf(ptyId: string): string | undefined {
+    return this.live.get(ptyId)?.sshTarget;
+  }
+
   mirrorPathFor(sid: string): string {
     return join(this.mirrorRoot, `${sid}.jsonl`);
   }

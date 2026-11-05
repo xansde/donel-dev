@@ -16,8 +16,9 @@ import type { ConfigIoDeps } from '../config-store';
 import { PWA_ASSETS } from './assets';
 import { createCelularAuth, type CelularAuth } from './auth';
 import { allowFirewallRule, readFirewallRule, readServeHttpsUrl, readTailnet } from './firewall';
+import type { CardWriter } from '../ledger-card-writer';
 import type { LedgerService } from '../ledger-store';
-import { createLedgerMobilePort, type MobileLedgerPort } from './ledger-port';
+import { createLedgerMobilePort, type MobileLedgerPort, type PlaceNameOf } from './ledger-port';
 import { qrSvg } from './qr';
 import { createMobileHandler, MOBILE_PORT, startMobileServer, type MobileServer } from './server';
 import { pickTailscaleAddress } from './tailscale';
@@ -33,6 +34,10 @@ export interface CelularServiceDeps {
   readonly provasRoot: string;
   /** Só a janela principal mexe nisto. */
   readonly isMainSender: (sender: Electron.WebContents) => boolean;
+  /** O nome de um lugar no quadro, para a carta dizer quem fez (nunca o id). */
+  readonly placeName?: PlaceNameOf;
+  /** Escrever na carta (nasce com a ponte do quadro; `null` antes). */
+  readonly cardWriter?: () => CardWriter | null;
   /** Aviso no celular: o POST ao serviço de push (padrão: `fetch` do Node). */
   readonly pushFetch?: PushFetch;
 }
@@ -45,7 +50,7 @@ export interface CelularService {
 
 export function createCelularService(deps: CelularServiceDeps): CelularService {
   const auth: CelularAuth = createCelularAuth({ filePath: join(deps.userDataDir, 'celular.json'), io: deps.io });
-  const ledger: MobileLedgerPort = createLedgerMobilePort(deps.ledger);
+  const ledger: MobileLedgerPort = createLedgerMobilePort(deps.ledger, deps.placeName, deps.cardWriter);
   const push = createPushStore(join(deps.userDataDir, 'celular-push.json'), deps.io);
   const pushFetch: PushFetch = deps.pushFetch ?? ((url, init) => fetch(url, init));
   const handler = createMobileHandler({

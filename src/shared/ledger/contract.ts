@@ -17,15 +17,21 @@
 // - every decision records its author (`LedgerActor`), so an accept by the owner on the phone counts as human
 //   validation and "validadas sem você" can be measured.
 //
+// - cartas forma A (spec `docs/specs/cartas-forma-a.md`, Parte C): a delivery carries the "para o dono" block
+//   (`forOwner`), required on high risk; every text the owner reads is refused when it has code (`findCode`);
+//   a decision by the owner records the named option it picked.
+//
 // Consumers (e.g. "Rotinas em sombra", item 20) read the document with `parseLedgerDoc` and the numbers with
 // `ledgerStrip`; they never write the file — a write goes through the main (`LedgerService.apply`).
 
 /**
  * Bump on any new field: the parse drops what it does not know and `userData` is shared by the channels.
  * 2 — `requestId` on a decision (the phone's request id: a retry after a restart never records twice).
- * 3 — `slack` on a task (a letter "mensagem para o Slack") and the `enviada` event (`slack-guard.ts`).
+ * 3 — cartas forma A: `title` on a task; `forOwner` on a delivery; `option` on a decision; the `comentada` event
+ *     (the owner writing on the card) with `deliveredTo`.
+ * 4 — `slack` on a task (a letter "mensagem para o Slack") and the `enviada` event (`slack-guard.ts`).
  */
-export const LEDGER_SCHEMA_VERSION = 3;
+export const LEDGER_SCHEMA_VERSION = 4;
 
 export type LedgerTaskState = 'aberta' | 'em-execucao' | 'entregue' | 'aceita' | 'rejeitada';
 export type LedgerRisk = 'baixo' | 'alto';
@@ -41,7 +47,48 @@ export type LedgerProof =
   | { readonly kind: 'texto'; readonly text: string }
   | { readonly kind: 'link'; readonly url: string };
 
-export type LedgerEventKind = 'criada' | 'assumida' | 'entregue' | 'aceita' | 'rejeitada' | 'conferida' | 'enviada';
+export type LedgerEventKind = 'criada' | 'assumida' | 'entregue' | 'aceita' | 'rejeitada' | 'conferida' | 'comentada' | 'enviada';
+
+/** v3 — one named path of the owner's decision. */
+export interface LedgerOption {
+  /** The option's name, the owner's button ("Aceitar com ressalva", "Esperar o limite voltar"). */
+  readonly label: string;
+  /** What happens if the owner picks it. */
+  readonly effect: string;
+  /** What can go wrong on this path. */
+  readonly risk?: string;
+  /** How the task closes when the owner picks it. */
+  readonly closes: 'aceita' | 'rejeitada';
+  readonly recommended?: true;
+}
+
+export interface LedgerCheck {
+  readonly name: string;
+  readonly ok: boolean;
+  readonly sentence: string;
+}
+
+/** v3 — the visual on the front of the card. Proof indexes are 0-based positions in the same delivery's proofs. */
+export type LedgerVisual =
+  | { readonly kind: 'prova'; readonly proof: number }
+  | { readonly kind: 'antes-depois'; readonly before: number; readonly after: number }
+  | { readonly kind: 'checagens'; readonly checks: readonly LedgerCheck[] };
+
+/** v3 — the "para o dono" block of a delivery: what the card shows so the owner decides without opening a link. */
+export interface LedgerForOwner {
+  /** Overrides the task's title on this card. */
+  readonly title?: string;
+  readonly question: string;
+  readonly summary: string;
+  readonly options: readonly LedgerOption[];
+  /** Why the recommended option. */
+  readonly why: string;
+  readonly risk: string;
+  readonly visual?: LedgerVisual;
+}
+
+/** v3 — where the owner's writing on a card went: the place that owns the task, the Líder único, or nobody open. */
+export type LedgerDeliveredTo = { readonly placeId: string } | 'lider' | null;
 
 /**
  * A letter "mensagem para o Slack" (owner, 05/11: every message sent to Slack in the owner's name is a letter in
@@ -68,12 +115,20 @@ export interface LedgerEvent {
   readonly text?: string;
   /** v2 — a decision sent by a port that retries (the phone): its request id, to answer a retry from the ledger. */
   readonly requestId?: string;
+  /** v3 — `entregue`: the "para o dono" block; missing = the old card (low risk, or an older delivery). */
+  readonly forOwner?: LedgerForOwner;
+  /** v3 — `aceita` / `rejeitada` by the owner: the label of the option picked. */
+  readonly option?: string;
+  /** v3 — `comentada`: where the message went. */
+  readonly deliveredTo?: LedgerDeliveredTo;
 }
 
 export interface LedgerTask {
   readonly id: string;
   /** The board (project folder) where the task was born; the strip of that board counts it. */
   readonly projectPath: string;
+  /** v3 — a human name for the task (up to 60 characters). */
+  readonly title?: string;
   /** The literal sentence of who asked. */
   readonly request: string;
   /** Done when… */
@@ -87,7 +142,7 @@ export interface LedgerTask {
   readonly createdAt: number;
   /** Every step, oldest first; the current delivery and decision are the last ones of their kind. */
   readonly events: readonly LedgerEvent[];
-  /** v3 — a letter "mensagem para o Slack"; `enviada` in `events` = its one send already went out. */
+  /** v4 — a letter "mensagem para o Slack"; `enviada` in `events` = its one send already went out. */
   readonly slack?: SlackLetter;
 }
 
@@ -109,12 +164,29 @@ export const MAX_REQUEST_CHARS = 4000;
 export const MAX_PROOF_TEXT_CHARS = 20_000;
 export const MAX_PROOFS = 5;
 export const MAX_PROOF_FILE_BYTES = 50 * 1024 * 1024;
+/** Cartas forma A — a prototype is a self-contained HTML (CSS, JS and images inside it): 2 MB at most. */
+export const MAX_PROOF_HTML_BYTES = 2 * 1024 * 1024;
+export const HTML_MEDIA_TYPE = 'text/html';
+
+/** The biggest file a proof of `mediaType` may be. */
+export function maxProofBytes(mediaType: string): number {
+  return mediaType === HTML_MEDIA_TYPE ? MAX_PROOF_HTML_BYTES : MAX_PROOF_FILE_BYTES;
+}
+export const MAX_TITLE_CHARS = 60;
+/** The limits of the "para o dono" block: the owner reads the front in 5 seconds. */
+export const FOR_OWNER_LIMITS = { question: 160, summary: 280, label: 40, effect: 200, optionRisk: 160, why: 200, risk: 200, checkName: 40, checkSentence: 200 } as const;
+/** What the owner writes on a card (dictation included). */
+export const MAX_COMMENT_CHARS = 2000;
+export const MIN_OPTIONS = 2;
+export const MAX_OPTIONS = 4;
+export const MAX_CHECKS = 10;
 /** D2 — the owner gets a daily sample of the Revisor's accepts during the first week. */
 export const SAMPLE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 export const SAMPLE_PER_DAY = 3;
 
-/** Extension → media type of a proof file (print or video). */
+/** Extension → media type of a proof file (print, video, or a prototype in HTML that the card runs isolated). */
 export const PROOF_FILE_TYPES: Readonly<Record<string, string>> = {
+  html: 'text/html',
   png: 'image/png',
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
@@ -168,6 +240,7 @@ export type LedgerOp =
   | {
       readonly op: 'criar';
       readonly projectPath: string;
+      readonly title?: string;
       readonly request: string;
       readonly doneWhen: string;
       readonly due: string;
@@ -175,12 +248,16 @@ export type LedgerOp =
       readonly risk: LedgerRisk;
     }
   | { readonly op: 'assumir'; readonly id: string }
-  | { readonly op: 'entregar'; readonly id: string; readonly proofs: readonly LedgerProof[]; readonly note?: string }
-  | { readonly op: 'aceitar'; readonly id: string; readonly requestId?: string }
-  | { readonly op: 'rejeitar'; readonly id: string; readonly reason: string; readonly requestId?: string }
-  /** v3 — a place asks the owner to send a Slack message (born `entregue`, high risk). */
+  | { readonly op: 'entregar'; readonly id: string; readonly proofs: readonly LedgerProof[]; readonly note?: string; readonly forOwner?: LedgerForOwner }
+  /** `option`: the label of an option of the current delivery's block, closing as `aceita`; `text`: the owner's words with it. */
+  | { readonly op: 'aceitar'; readonly id: string; readonly requestId?: string; readonly option?: string; readonly text?: string }
+  /** The owner writes on the card (forma A, Parte B): recorded, and sent by the main to whoever reads it (`deliveredTo`). */
+  | { readonly op: 'comentar'; readonly id: string; readonly text: string; readonly requestId?: string; readonly deliveredTo: LedgerDeliveredTo }
+  /** `option`: the label of an option closing as `rejeitada`; then `reason` may be empty (the option is a reason). */
+  | { readonly op: 'rejeitar'; readonly id: string; readonly reason: string; readonly requestId?: string; readonly option?: string }
+  /** v4 — a place asks the owner to send a Slack message (born `entregue`, high risk). */
   | { readonly op: 'carta-slack'; readonly projectPath: string; readonly slack: SlackLetter }
-  /** v3 — the guard let the one send of an accepted letter through. */
+  /** v4 — the guard let the one send of an accepted letter through. */
   | { readonly op: 'slack-enviada'; readonly id: string };
 
 export interface LedgerOpContext {
@@ -224,9 +301,15 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
     if (!op.doneWhen.trim()) return fail('"criterio" é obrigatório: quando a tarefa está pronta.');
     if (!isDueDate(op.due)) return fail('"prazo" tem de ser uma data AAAA-MM-DD.');
     if (!op.ownerPlaceId.trim()) return fail('"dono" é obrigatório: o lugar que faz o trabalho.');
+    const title = op.title?.trim();
+    if (title) {
+      const why = textRefusal('titulo', title, MAX_TITLE_CHARS);
+      if (why) return fail(why);
+    }
     const task: LedgerTask = {
       id: ctx.newId(),
       projectPath: op.projectPath,
+      ...(title ? { title } : {}),
       request: op.request,
       doneWhen: op.doneWhen,
       due: op.due,
@@ -253,12 +336,33 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       return done(step(task, 'em-execucao', { kind: 'assumida', at: ctx.now, by: actor }));
 
     case 'entregar':
-      if (task.state !== 'em-execucao') return fail(`A tarefa está "${task.state}"; assuma antes de entregar.`);
+      // Answering what the owner wrote on the card is a new delivery (a new card), without taking the task again.
+      if (task.state !== 'em-execucao' && !(task.state === 'entregue' && ownerWroteSinceDelivery(task)))
+        return fail(
+          task.state === 'entregue'
+            ? 'A tarefa já está entregue; só se entrega de novo para responder ao que o dono escreveu na carta.'
+            : `A tarefa está "${task.state}"; assuma antes de entregar.`,
+        );
       if (!isOwnerPlace) return fail(`Só o lugar dono (${task.ownerPlaceId}) entrega esta tarefa.`);
       if (op.proofs.length === 0) return fail('Entrega sem prova é recusada: anexe um print, a saída de um comando ou o link do CI.');
       if (op.proofs.length > MAX_PROOFS) return fail(`No máximo ${MAX_PROOFS} provas por entrega.`);
       for (const proof of op.proofs) if (!validProof(proof)) return fail('Prova inválida: arquivo copiado pelo app, texto não vazio ou link http(s).');
-      return done(step(task, 'entregue', { kind: 'entregue', at: ctx.now, by: actor, proofs: op.proofs, ...(op.note?.trim() ? { text: op.note.trim() } : {}) }));
+      if (!op.forOwner && task.risk === 'alto')
+        return fail('Risco alto espera o dono: a entrega precisa do bloco "paraODono" (pergunta, 2 a 4 opções com efeito, uma recomendada, porquê e risco).');
+      if (op.forOwner) {
+        const why = forOwnerRefusal(op.forOwner, op.proofs);
+        if (why) return fail(`"paraODono" recusado: ${why}`);
+      }
+      return done(
+        step(task, 'entregue', {
+          kind: 'entregue',
+          at: ctx.now,
+          by: actor,
+          proofs: op.proofs,
+          ...(op.note?.trim() ? { text: op.note.trim() } : {}),
+          ...(op.forOwner ? { forOwner: op.forOwner } : {}),
+        }),
+      );
 
     case 'aceitar': {
       // The owner confirming an accept the Revisor made (D2 sample) is recorded, not a second accept.
@@ -267,19 +371,31 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
         return done(step(task, 'aceita', { kind: 'conferida', at: ctx.now, by: actor, ...requestOf(op) }));
       }
       if (task.state !== 'entregue') return fail(`A tarefa está "${task.state}"; só se aceita uma entregue.`);
-      const why = cannotDecide(task, actor);
+      const why = cannotDecide(task, actor) ?? optionRefusal(task, op.option, 'aceita');
       if (why) return fail(`Não aceitei: ${why}`);
-      return done(step(task, 'aceita', { kind: 'aceita', at: ctx.now, by: actor, ...requestOf(op) }));
+      return done(
+        step(task, 'aceita', { kind: 'aceita', at: ctx.now, by: actor, ...requestOf(op), ...(op.option ? { option: op.option } : {}), ...(op.text?.trim() ? { text: op.text.trim() } : {}) }),
+      );
+    }
+
+    case 'comentar': {
+      const why = commentRefusal(task, actor, op.text);
+      if (why) return fail(why);
+      // A retry of the same request (the phone resent it) records nothing new.
+      if (op.requestId && task.events.some((event) => event.kind === 'comentada' && event.requestId === op.requestId)) return { ok: true, doc, task };
+      return done(step(task, task.state, { kind: 'comentada', at: ctx.now, by: actor, text: op.text.trim(), ...requestOf(op), deliveredTo: op.deliveredTo }));
     }
 
     case 'rejeitar': {
-      if (!op.reason.trim()) return fail('"motivo" é obrigatório para rejeitar.');
+      // An option closing as `rejeitada` is already a reason: "<label>", plus the owner's words if any.
+      const reason = op.option ? [op.option, op.reason.trim()].filter(Boolean).join(': ') : op.reason.trim();
+      if (!reason) return fail('"motivo" é obrigatório para rejeitar.');
       // The owner may overturn an accept the owner did not make (D2 sample).
       const overturn = task.state === 'aceita' && actor.kind === 'dono' && acceptedWithoutOwner(task);
       if (task.state !== 'entregue' && !overturn) return fail(`A tarefa está "${task.state}"; só se rejeita uma entregue.`);
-      const why = cannotDecide(task, actor);
+      const why = cannotDecide(task, actor) ?? (op.option ? optionRefusal(task, op.option, 'rejeitada') : null);
       if (why) return fail(`Não rejeitei: ${why}`);
-      return done(step(task, 'rejeitada', { kind: 'rejeitada', at: ctx.now, by: actor, text: op.reason.trim(), ...requestOf(op) }));
+      return done(step(task, 'rejeitada', { kind: 'rejeitada', at: ctx.now, by: actor, text: reason, ...requestOf(op), ...(op.option ? { option: op.option } : {}) }));
     }
 
     case 'slack-enviada':
@@ -308,14 +424,36 @@ function slackLetterProblem(slack: SlackLetter): string | null {
   return null;
 }
 
+const clip = (text: string, max: number): string => {
+  const line = text.replace(/\s+/g, ' ').trim();
+  return line.length > max ? `${line.slice(0, max - 1).trimEnd()}…` : line;
+};
+
+/** The card A of a Slack letter, built by the app (a session never writes it): the owner sends it or not. */
+function slackForOwner(where: string, reason: string): LedgerForOwner {
+  const L = FOR_OWNER_LIMITS;
+  return {
+    question: 'Posso mandar esta mensagem no Slack em seu nome?',
+    summary: clip(`Para ${where}. Motivo: ${reason}`, L.summary),
+    options: [
+      { label: 'Enviar', effect: 'Sai exatamente o texto da carta, para este destino, uma vez só.', closes: 'aceita', recommended: true },
+      { label: 'Não enviar', effect: 'Nada sai. O que você escrever na carta vai para a sessão ajustar o texto.', closes: 'rejeitada' },
+    ],
+    why: 'A sessão pediu para mandar; o texto da carta é o que vai sair, letra por letra.',
+    risk: 'Depois de enviada, a mensagem fica no Slack em seu nome.',
+  };
+}
+
 function createSlackLetter(doc: LedgerDoc, actor: LedgerActor, op: Extract<LedgerOp, { op: 'carta-slack' }>, ctx: LedgerOpContext): LedgerOpResult {
   if (actor.kind !== 'lugar') return { ok: false, reason: 'Carta de Slack é pedido de uma sessão ao dono.' };
   const problem = slackLetterProblem(op.slack);
   if (problem) return { ok: false, reason: problem };
   const where = `${slackDestinationLabel(op.slack)}${op.slack.thread ? ' (na thread)' : ''}`;
+  const title = `Mensagem no Slack para ${slackDestinationLabel(op.slack)}`;
   const task: LedgerTask = {
     id: ctx.newId(),
     projectPath: op.projectPath,
+    title: title.length > MAX_TITLE_CHARS ? `${title.slice(0, MAX_TITLE_CHARS - 1)}…` : title,
     request: `Mensagem no Slack para ${where}: ${op.slack.reason.trim()}`.slice(0, MAX_REQUEST_CHARS),
     doneWhen: 'O dono aceita o texto exato antes do envio.',
     due: new Date(ctx.now).toISOString().slice(0, 10),
@@ -325,11 +463,119 @@ function createSlackLetter(doc: LedgerDoc, actor: LedgerActor, op: Extract<Ledge
     createdAt: ctx.now,
     events: [
       { kind: 'criada', at: ctx.now, by: actor },
-      { kind: 'entregue', at: ctx.now, by: actor, proofs: [{ kind: 'texto', text: op.slack.text }], text: op.slack.reason.trim() },
+      { kind: 'entregue', at: ctx.now, by: actor, proofs: [{ kind: 'texto', text: op.slack.text }], text: op.slack.reason.trim(), forOwner: slackForOwner(where, op.slack.reason) },
     ],
     slack: op.slack,
   };
   return { ok: true, doc: withTask(doc, task), task };
+}
+
+/** The owner wrote on the card after the current delivery: the owner place may deliver again (its answer). */
+export function ownerWroteSinceDelivery(task: LedgerTask): boolean {
+  const deliveredAt = lastDelivery(task)?.at ?? -Infinity;
+  return task.events.some((event) => event.kind === 'comentada' && event.by.kind === 'dono' && event.at >= deliveredAt);
+}
+
+/** Why `actor` may not write `text` on the card of `task`; `null` = may. Only the owner, and not on a closed task. */
+export function commentRefusal(task: LedgerTask, actor: LedgerActor, text: string): string | null {
+  if (actor.kind !== 'dono') return 'só o dono escreve na carta.';
+  if (!text.trim()) return 'escreva alguma coisa antes de enviar.';
+  if (text.length > MAX_COMMENT_CHARS) return `texto longo demais (máximo ${MAX_COMMENT_CHARS} caracteres).`;
+  if (task.state === 'aceita' && !(acceptedWithoutOwner(task) && !ownerChecked(task))) return 'a tarefa já foi aceita e fechada.';
+  return null;
+}
+
+/** The note the owner wrote on the card with a given request id (a retry), if any. */
+export function commentOfRequest(task: LedgerTask, requestId: string): LedgerEvent | undefined {
+  return task.events.find((event) => event.kind === 'comentada' && event.requestId === requestId);
+}
+
+/** Why the owner may not pick `option` (closing as `closes`) on the current delivery; `null` = may (or no option). */
+function optionRefusal(task: LedgerTask, option: string | undefined, closes: LedgerOption['closes']): string | null {
+  if (option === undefined) return null;
+  const found = lastDelivery(task)?.forOwner?.options.find((candidate) => candidate.label === option);
+  if (!found) return `a entrega não tem a opção "${option}".`;
+  if (found.closes !== closes) return `a opção "${option}" fecha a tarefa como ${found.closes}.`;
+  return null;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// For the owner — plain language and the rules of a complete "para o dono" block
+
+const CODE_PATTERNS: readonly RegExp[] = [
+  /`[^`]*`?/,
+  /\bhttps?:\/\/\S+/i,
+  /\bt-[0-9a-f]{6,}\b/i,
+  /\b(?:place|session|lugar|pty):[0-9a-z-]{6,}/i,
+  /\b(?:feature|feat|fix|hotfix|proto|docs|chore|refactor|release|origin)\/[\w.-]+(?:\/[\w.-]+)*/i,
+  /\/pull\/\d+|(?:\bPR\s*)?#\d+\b/i,
+  /\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b/i,
+  /\b[A-Z]:\\[^\s]*|[\w-]+\/[\w./-]+\.\w{1,5}\b|(?:^|\s)(?:~|\/(?:home|usr|tmp|etc|var|Users|opt|mnt))\/[^\s]*/,
+];
+
+/** The first piece of code in a text meant for the owner (id, branch, hash, PR, path, backticks, link), or `null`. */
+export function findCode(text: string): string | null {
+  for (const pattern of CODE_PATTERNS) {
+    const match = pattern.exec(text);
+    if (match) return match[0].trim();
+  }
+  return null;
+}
+
+/** Why `field` cannot go to the owner: empty, too long, or code (the message says what to write instead). */
+function textRefusal(field: string, value: string, max: number): string | null {
+  if (!value.trim()) return `"${field}" é obrigatório.`;
+  if (value.length > max) return `"${field}" longo demais (máximo ${max} caracteres): o dono lê a frente em 5 segundos.`;
+  const code = findCode(value);
+  if (code)
+    return `"${field}": Escreva para um humano: "${code.slice(0, 60)}" é código. Chame pelo nome (ex.: "a fase 2 da VPS", "o Dev do painel"). O código vai nas provas, que ficam em "Detalhes técnicos".`;
+  return null;
+}
+
+function isFileProof(proof: LedgerProof | undefined): boolean {
+  return proof?.kind === 'arquivo';
+}
+
+/** Why `forOwner` cannot go with a delivery of `proofs`; `null` = it can. Every message names the field (pt-BR). */
+export function forOwnerRefusal(forOwner: LedgerForOwner, proofs: readonly LedgerProof[]): string | null {
+  const L = FOR_OWNER_LIMITS;
+  if (forOwner.options.length < MIN_OPTIONS || forOwner.options.length > MAX_OPTIONS)
+    return `"opcoes": de ${MIN_OPTIONS} a ${MAX_OPTIONS} caminhos com nome e efeito. Se só um é defensável, decida você e registre o porquê na nota.`;
+  const texts: [string, string, number][] = [
+    ['pergunta', forOwner.question, L.question],
+    ['resumo', forOwner.summary, L.summary],
+    ['porque', forOwner.why, L.why],
+    ['risco', forOwner.risk, L.risk],
+  ];
+  if (forOwner.title !== undefined) texts.unshift(['titulo', forOwner.title, MAX_TITLE_CHARS]);
+  forOwner.options.forEach((option, i) => {
+    texts.push([`opcoes[${i + 1}].rotulo`, option.label, L.label], [`opcoes[${i + 1}].efeito`, option.effect, L.effect]);
+    if (option.risk !== undefined) texts.push([`opcoes[${i + 1}].risco`, option.risk, L.optionRisk]);
+  });
+  const visual = forOwner.visual;
+  if (visual?.kind === 'checagens') {
+    if (visual.checks.length === 0 || visual.checks.length > MAX_CHECKS) return `"visual.checagens": de 1 a ${MAX_CHECKS} itens.`;
+    visual.checks.forEach((check, i) => {
+      texts.push([`visual.checagens[${i + 1}].nome`, check.name, L.checkName], [`visual.checagens[${i + 1}].frase`, check.sentence, L.checkSentence]);
+    });
+  }
+  for (const [field, value, max] of texts) {
+    const why = textRefusal(field, value, max);
+    if (why) return why;
+  }
+  const recommended = forOwner.options.filter((option) => option.recommended).length;
+  if (recommended !== 1) return `"opcoes": exatamente 1 recomendada (veio ${recommended}).`;
+  if (new Set(forOwner.options.map((option) => option.label)).size !== forOwner.options.length) return '"opcoes": dois caminhos com o mesmo nome.';
+  if (visual?.kind === 'prova' && !isFileProof(proofs[visual.proof])) return `"visual.prova": a prova ${visual.proof + 1} desta entrega não é um arquivo (print, vídeo ou protótipo).`;
+  if (visual?.kind === 'antes-depois' && (!isFileProof(proofs[visual.before]) || !isFileProof(proofs[visual.after]) || visual.before === visual.after))
+    return '"visual": "antes" e "depois" são dois arquivos diferentes desta entrega.';
+  if (!visual && proofs.some(isFileProof)) return '"visual" é obrigatório quando a entrega tem print, vídeo ou protótipo: diga qual mostrar ({"prova": n}) ou o par {"antes": n, "depois": m}.';
+  return null;
+}
+
+/** The recommended option of a block (a complete block has exactly one). */
+export function recommendedOption(forOwner: LedgerForOwner): LedgerOption | undefined {
+  return forOwner.options.find((option) => option.recommended);
 }
 
 export function isRequestId(value: unknown): value is string {
@@ -464,7 +710,50 @@ function parseProof(raw: unknown): LedgerProof | null {
   return proof && validProof(proof) ? proof : null;
 }
 
-const EVENT_KINDS: readonly LedgerEventKind[] = ['criada', 'assumida', 'entregue', 'aceita', 'rejeitada', 'conferida', 'enviada'];
+const EVENT_KINDS: readonly LedgerEventKind[] = ['criada', 'assumida', 'entregue', 'aceita', 'rejeitada', 'conferida', 'comentada', 'enviada'];
+
+function parseVisual(raw: unknown): LedgerVisual | null {
+  const index = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value < MAX_PROOFS;
+  if (!isRecord(raw)) return null;
+  if (raw.kind === 'prova' && index(raw.proof)) return { kind: 'prova', proof: raw.proof };
+  if (raw.kind === 'antes-depois' && index(raw.before) && index(raw.after)) return { kind: 'antes-depois', before: raw.before, after: raw.after };
+  if (raw.kind === 'checagens' && Array.isArray(raw.checks)) {
+    const checks = raw.checks.filter(isRecord).filter((check) => str(check.name) && typeof check.ok === 'boolean' && str(check.sentence));
+    return checks.length ? { kind: 'checagens', checks: checks.map((check) => ({ name: check.name as string, ok: check.ok as boolean, sentence: check.sentence as string })) } : null;
+  }
+  return null;
+}
+
+/**
+ * The block as stored. A broken field is dropped, never the delivery: a broken visual or option risk goes away;
+ * without question, summary, why, risk or 2+ valid options the whole block goes (the card falls back to the old one).
+ */
+function parseForOwner(raw: unknown, proofs: readonly LedgerProof[]): LedgerForOwner | null {
+  if (!isRecord(raw) || !Array.isArray(raw.options)) return null;
+  const { title, question, summary, why, risk } = raw;
+  if (!str(question) || !str(summary) || !str(why) || !str(risk)) return null;
+  const options: LedgerOption[] = [];
+  for (const option of raw.options) {
+    if (!isRecord(option) || !str(option.label) || !str(option.effect) || (option.closes !== 'aceita' && option.closes !== 'rejeitada')) continue;
+    options.push({
+      label: option.label,
+      effect: option.effect,
+      ...(str(option.risk) ? { risk: option.risk } : {}),
+      closes: option.closes,
+      ...(option.recommended === true ? { recommended: true as const } : {}),
+    });
+  }
+  if (options.length < MIN_OPTIONS) return null;
+  const visual = parseVisual(raw.visual);
+  const usableVisual = visual && (visual.kind === 'checagens' || (visual.kind === 'prova' ? proofs[visual.proof] : proofs[visual.before] && proofs[visual.after])) ? visual : null;
+  return { ...(str(title) ? { title } : {}), question, summary, options, why, risk, ...(usableVisual ? { visual: usableVisual } : {}) };
+}
+
+function parseDeliveredTo(raw: unknown): LedgerDeliveredTo | undefined {
+  if (raw === null || raw === 'lider') return raw;
+  if (isRecord(raw) && str(raw.placeId) && raw.placeId) return { placeId: raw.placeId };
+  return undefined;
+}
 const STATES: readonly LedgerTaskState[] = ['aberta', 'em-execucao', 'entregue', 'aceita', 'rejeitada'];
 
 function parseEvent(raw: unknown): LedgerEvent | null {
@@ -473,6 +762,8 @@ function parseEvent(raw: unknown): LedgerEvent | null {
   if (!by) return null;
   const proofs = Array.isArray(raw.proofs) ? raw.proofs.map(parseProof).filter((proof): proof is LedgerProof => proof !== null) : undefined;
   if (raw.kind === 'entregue' && !proofs?.length) return null;
+  const forOwner = raw.kind === 'entregue' ? parseForOwner(raw.forOwner, proofs ?? []) : null;
+  const deliveredTo = raw.kind === 'comentada' ? parseDeliveredTo(raw.deliveredTo) : undefined;
   return {
     kind: raw.kind as LedgerEventKind,
     at: raw.at,
@@ -480,6 +771,9 @@ function parseEvent(raw: unknown): LedgerEvent | null {
     ...(raw.kind === 'entregue' ? { proofs } : {}),
     ...(str(raw.text) ? { text: raw.text } : {}),
     ...(isRequestId(raw.requestId) ? { requestId: raw.requestId } : {}),
+    ...(forOwner ? { forOwner } : {}),
+    ...((raw.kind === 'aceita' || raw.kind === 'rejeitada') && str(raw.option) ? { option: raw.option } : {}),
+    ...(deliveredTo !== undefined ? { deliveredTo } : {}),
   };
 }
 
@@ -489,8 +783,9 @@ function parseTask(id: string, raw: unknown): LedgerTask | null {
   if (!str(projectPath) || !str(request) || !str(doneWhen) || !str(due) || !isDueDate(due) || !str(ownerPlaceId)) return null;
   if ((risk !== 'baixo' && risk !== 'alto') || !STATES.includes(state as LedgerTaskState) || !num(createdAt)) return null;
   const events = Array.isArray(raw.events) ? raw.events.map(parseEvent).filter((event): event is LedgerEvent => event !== null) : [];
+  const title = str(raw.title) && raw.title.trim() ? { title: raw.title } : {};
   const slack = parseSlackLetter(raw.slack);
-  return { id, projectPath, request, doneWhen, due, ownerPlaceId, risk, state: state as LedgerTaskState, createdAt, events, ...(slack ? { slack } : {}) };
+  return { id, projectPath, ...title, request, doneWhen, due, ownerPlaceId, risk, state: state as LedgerTaskState, createdAt, events, ...(slack ? { slack } : {}) };
 }
 
 function parseSlackLetter(raw: unknown): SlackLetter | null {
