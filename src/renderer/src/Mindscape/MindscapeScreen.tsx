@@ -325,6 +325,7 @@ export function MindscapeScreen({
     if (board) onResume?.(sessionId, board.projectPath, dormantName(sessionId));
   };
   /** A place by its name on the board (the shadow routines, the Oráculo's cards); never its id. */
+  const [boardArea, setBoardArea] = useState<HTMLDivElement | null>(null);
   const placeName = (projectPath: string, placeId: string): string | undefined => {
     if (!board || board.projectPath !== projectPath) return undefined;
     const card = board.cards[placeId];
@@ -631,7 +632,7 @@ export function MindscapeScreen({
           </button>
         ))}
       </div>
-      <LedgerStrip projectPath={activePath} placeName={placeName} />
+      <LedgerStrip projectPath={activePath} placeName={placeName} cardsHost={boardArea} />
       <MindscapeToolbar
         enabled={Boolean(board)}
         tool={tool}
@@ -699,6 +700,8 @@ export function MindscapeScreen({
         }}
         hint={hint}
       />
+      {/* Cartas forma A — the Oráculo's cards open over the board only (LedgerStrip portals them here). */}
+      <div ref={setBoardArea} className={styles.boardArea}>
       {!board ? (
         <div className={styles.view} data-testid="mindscape-board">
           <p className={styles.empty}>Abra uma sessão claude num projeto: o quadro dele aparece aqui.</p>
@@ -915,6 +918,7 @@ export function MindscapeScreen({
           }}
         </MindscapeBoard>
       )}
+      </div>
     </section>
   );
 }
