@@ -15,6 +15,19 @@ export interface PatchNoteDay {
 
 export const PATCH_NOTES: readonly PatchNoteDay[] = [
   {
+    date: '2026-11-05',
+    items: [
+      {
+        title: 'O time do Líder continua fora das abas depois de atualizar',
+        text: 'As sessões que o Líder abriu voltavam para as abas depois de atualizar o app ou de reabri-lo com sessões vivas na VPS. Agora elas voltam como estavam: trabalhando, fora das abas, acompanhadas pelo lugar delas no Mindscape. Dois cliques no lugar continuam trazendo a sessão para as abas.',
+      },
+      {
+        title: 'Retomar avisa enquanto procura a conversa na VPS',
+        text: 'Ao retomar uma sessão cuja conversa não está neste computador, o app pergunta à VPS onde ela está, o que pode levar alguns segundos. Antes o clique parecia não fazer nada; agora aparece "Procurando a conversa…" até a resposta chegar.',
+      },
+    ],
+  },
+  {
     date: '2026-11-04',
     items: [
       {

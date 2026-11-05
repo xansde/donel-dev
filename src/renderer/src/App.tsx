@@ -918,6 +918,11 @@ export function App(): React.JSX.Element {
   const openWhereItLives = (sessionId: string, projectPath: string, open: (remote: { remoteId?: string }) => void): void => {
     if (resumingRef.current.has(sessionId)) return;
     resumingRef.current.add(sessionId);
+    // The answer from this disk is instant; a slower one means the app is asking the remote places by ssh
+    // (up to 20 s each). Without a word the click looked dead.
+    const places = accountsView.remotes.map((remote) => `«${remote.label}»`).join(' e ');
+    const waiting = `Procurando a conversa em ${places || 'outro lugar'}… pode levar até 20 s.`;
+    const waitingTimer = places ? window.setTimeout(() => setDevModeToast(waiting), 600) : null;
     void window.donel.sessions
       .whereLives(sessionId, projectPath)
       .then(
@@ -934,7 +939,11 @@ export function App(): React.JSX.Element {
         },
         () => open({}),
       )
-      .finally(() => resumingRef.current.delete(sessionId));
+      .finally(() => {
+        resumingRef.current.delete(sessionId);
+        if (waitingTimer !== null) window.clearTimeout(waitingTimer);
+        setDevModeToast((current) => (current === waiting ? null : current));
+      });
   };
 
   // T013 — Retomar (ui-spec §5, primário): `-r <session-id>` via
