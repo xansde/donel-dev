@@ -27,7 +27,7 @@ via `CLAUDE_CONFIG_DIR`.
   ato humano") **caiu**, aqui e no baseline do squad.
 - **Merge em `staging` (redefinido pelo dono em 2026-10-08)**: **o Claude
   mergeia** os PRs contra `staging` assim que a verificação automática
-  (`npm run typecheck` + `npm test`; ver "Testes enxutos" abaixo) estiver verde, sem
+  (`npm run verify` = typecheck + test + build; ver "Testes enxutos" abaixo) estiver verde, sem
   esperar o dono ("mergeie você. Não fica me esperando para mergear nada").
   A bateria manual no alfa passa a ser validação **depois** do merge, não
   pré-requisito. Sempre `gh pr merge --merge`, nunca `--admin`. `main` e o
@@ -152,7 +152,12 @@ sensível.
   navegação e mensagem do chat que some ou duplica. Tela, layout, texto,
   fluxo de UI e "renderiza" **não** ganham teste; se quebrar, o dono vê no
   alfa. Nada de teste por ID de spec, nem dois testes da mesma coisa.
-  - Verificação padrão: `npm run typecheck` + `npm test` (segundos).
+  - Verificação padrão: `npm run verify` (typecheck + `npm test` + `electron-vite
+    build`). O build entrou em 05/11: um merge deixou uma chave aberta no CSS,
+    typecheck e testes passaram e o instalador quebrou.
+  - **Conflito com `staging` é do Dev, nunca do Revisor**: o Dev mescla a base,
+    resolve e roda `npm run verify` de novo; PR com conflito volta ao Dev, e o
+    Revisor só aprova e mergeia PR limpo.
   - `npm run test:smoke` (abre o app UMA vez, CLI falso) só quando mexer em
     main/preload/PTY ou em dependência nativa. **Nunca** rodar smokes em
     lote nem criar smoke novo sem o dono pedir: abrir instâncias do app
