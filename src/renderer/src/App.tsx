@@ -2605,6 +2605,7 @@ export function App(): React.JSX.Element {
       if (box !== '') return 'o pedido ficou na caixa do terminal dela sem ser enviado';
       return null;
     },
+    openCap: () => appConfig?.team.openCap ?? null,
     askOwner: (question) =>
       new Promise<boolean>((resolve) => {
         const id = crypto.randomUUID();
@@ -3817,6 +3818,10 @@ export function App(): React.JSX.Element {
         sessionRenewal={renewalPrefs}
         onChangeSessionRenewal={(prefs) => {
           void window.donel.config.setSessionRenewalPrefs(prefs).then(setAppConfig).catch(() => undefined);
+        }}
+        openCap={appConfig?.team.openCap ?? null}
+        onChangeOpenCap={(openCap) => {
+          void window.donel.config.setTeamPrefs({ openCap }).then(setAppConfig).catch(() => undefined);
         }}
         remotes={accountsView.remotes.map((place) => ({ id: place.id, label: place.label }))}
         launcherWhere={appConfig?.launcherDefaults.where}
