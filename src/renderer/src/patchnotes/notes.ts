@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-05',
     items: [
       {
+        title: 'Sem limite de sessões abertas por um Líder',
+        text: 'Um Líder (ou o Líder único, em cada quadro) agora abre quantas sessões precisar sem pedir sua permissão. Se quiser um teto, escolha em Preferências, em "Limite de sessões abertas por um Líder": passando dele, volta a aparecer "Precisa de você" para permitir ou negar.',
+      },
+      {
         title: 'Sessões na VPS conversam com o Donel',
         text: 'Uma sessão que você abre na VPS pelo Donel agora conecta nas ferramentas do Donel, como acontece no computador: ela lê o quadro, abre sessões e cria tarefas e cartas no Oráculo Harrow. Antes ela subia sem essas ferramentas.',
       },

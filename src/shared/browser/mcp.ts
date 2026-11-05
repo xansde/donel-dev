@@ -6,7 +6,7 @@
 // Streamable HTTP done by hand (D9): POST with one JSON-RPC message (or a batch), answer `application/json`,
 // no SSE, no session id. Notifications get `202` with no body.
 
-import { BOARD_TOOLS, isBoardToolName, parseBoardToolCall, type BoardToolCall } from '../mindscape/agent-tools';
+import { boardTools, isBoardToolName, parseBoardToolCall, type BoardToolCall } from '../mindscape/agent-tools';
 import { isLedgerToolName, LEDGER_TOOLS, parseLedgerToolCall, type LedgerToolCall } from '../ledger/tools';
 
 export const MCP_SERVER_NAME = 'donel';
@@ -360,6 +360,8 @@ export interface McpHandlerContext {
   readonly executor: BrowserToolExecutor;
   /** Quadro por MCP — the Mindscape tools; absent = the server offers only the browser. */
   readonly boardExecutor?: (call: BoardToolCall) => Promise<BrowserToolOutcome>;
+  /** The owner's cap of sessions one session may open (`teamPrefs.ts`); `null`/absent = no limit. */
+  readonly openCap?: () => number | null;
   /** Ledger com prova (item 19) — the `tarefa_*` tools; absent = no ledger tools. */
   readonly ledgerExecutor?: (call: LedgerToolCall) => Promise<BrowserToolOutcome>;
   readonly serverVersion: string;
@@ -417,7 +419,7 @@ async function handleOne(message: unknown, ctx: McpHandlerContext): Promise<Json
       return {
         jsonrpc: '2.0',
         id,
-        result: { tools: [...(ctx.boardExecutor ? BOARD_TOOLS : []), ...(ctx.ledgerExecutor ? LEDGER_TOOLS : []), ...BROWSER_TOOLS] },
+        result: { tools: [...(ctx.boardExecutor ? boardTools(ctx.openCap?.() ?? null) : []), ...(ctx.ledgerExecutor ? LEDGER_TOOLS : []), ...BROWSER_TOOLS] },
       };
     case 'tools/call': {
       const name = p.name;

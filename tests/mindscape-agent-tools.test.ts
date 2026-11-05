@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyBoardOps, type BoardOpsContext } from '../src/shared/mindscape/agent-tools';
+import { applyBoardOps, boardTools, type BoardOpsContext } from '../src/shared/mindscape/agent-tools';
 import { addLink, addOwnerCard, addPlace, editOwnerCard, emptyMindscapeDoc, parseMindscapeDoc, setBoardReach, type MindscapeDoc } from '../src/shared/mindscape/model';
 import { AgentBridge, type AgentBridgePorts, type BridgeTab } from '../src/renderer/src/Mindscape/agentBridge';
 
@@ -190,5 +190,68 @@ describe('sessao_fechar — a hierarquia', () => {
   it('keeps the reach of a board through the disk guard', () => {
     const doc = setBoardReach(addPlace(emptyMindscapeDoc(), P, { id: 'place:lider' }), P, 'all');
     expect(parseMindscapeDoc(JSON.parse(JSON.stringify(doc))).boards[P]!.reach).toBe('all');
+  });
+});
+
+// Limite de sessões abertas por um Líder (dono, 05/11: "Quero tirar o limite") — Preferências, padrão sem limite.
+describe('limite de sessões abertas por um Líder', () => {
+  function leader(openCap: number | null) {
+    let doc = addPlace(emptyMindscapeDoc(), P, { id: 'place:lider' });
+    const tabs: BridgeTab[] = [{ id: 'tab-lider', name: 'Líder', cwd: P, placeId: 'place:lider', sessionType: 'claude' }];
+    let asked = 0;
+    let opened = 0;
+    const ports = {
+      loaded: true,
+      doc: () => doc,
+      applyGesture: (_path: string, reducer: (current: MindscapeDoc) => MindscapeDoc) => {
+        doc = reducer(doc);
+      },
+      tabs: () => tabs,
+      tabOfPty: (ptyId: string) => tabs.find((tab) => tab.id === ptyId),
+      stateOf: () => 'working' as const,
+      roles: () => [{ id: 'dev', name: 'Dev', color: 'accent', guidance: '' }],
+      openSession: () => `tab-aberta-${(opened += 1)}`,
+      closeTab: () => undefined,
+      sendLine: () => undefined,
+      permissionOnScreen: () => false,
+      deliverLine: async () => ({ kind: 'entrou' as const }),
+      unconfirmed: () => false,
+      startTrouble: () => null,
+      openCap: () => openCap,
+      askOwner: async () => {
+        asked += 1;
+        return true;
+      },
+      remoteLabel: (id: string) => id,
+      remotes: () => [],
+      projects: () => [],
+    } as unknown as AgentBridgePorts;
+    const bridge = new AgentBridge(ports);
+    return {
+      open: () => bridge.handle('tab-lider', { tool: 'sessao_abrir', papel: 'dev', pedido: 'faz a parte X' }),
+      asked: () => asked,
+      dispose: () => bridge.dispose(),
+    };
+  }
+
+  it('sem limite, a 5ª abre sem pedir; com limite 2, a 3ª pede ao dono', async () => {
+    const free = leader(null);
+    for (let i = 0; i < 5; i += 1) expect(await free.open()).toMatchObject({ ok: true });
+    expect(free.asked()).toBe(0);
+    free.dispose();
+
+    const two = leader(2);
+    await two.open();
+    await two.open();
+    expect(two.asked()).toBe(0);
+    expect(await two.open()).toMatchObject({ ok: true }); // the owner allowed it
+    expect(two.asked()).toBe(1);
+    two.dispose();
+
+    // The tool tells the agent the cap the owner set.
+    const text = (cap: number | null) => boardTools(cap).find((tool) => tool.name === 'sessao_abrir')!.description;
+    expect(text(null)).toContain('Sem limite');
+    expect(text(2)).toContain('Até 2 abertas');
+    expect(text(2)).toContain('a partir da 3ª');
   });
 });

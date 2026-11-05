@@ -8,6 +8,7 @@
 // may move, edit or remove ONLY that (and the post-it written by a session). Never the owner's post-its,
 // places, drawings or links.
 
+import { openCapSentence } from '../teamPrefs';
 import { addDrawing, removeItems, translateDrawing } from './drawings';
 import {
   addLink,
@@ -84,6 +85,9 @@ const BOARD_REF = {
   description: 'Só o Líder único (que não tem quadro): o quadro, pelo nome ou pela pasta do projeto. Sem ele, o Líder recebe a lista de quadros. As outras sessões usam sempre o próprio quadro.',
 };
 const BOARD_ONLY = { type: 'object', properties: { quadro: BOARD_REF }, additionalProperties: false };
+
+/** Where `sessao_abrir` says the cap; `boardTools` puts the owner's setting there (`teamPrefs.ts`). */
+const OPEN_CAP_PLACEHOLDER = '{limite}';
 
 export const BOARD_TOOLS = [
   {
@@ -168,7 +172,7 @@ export const BOARD_TOOLS = [
     name: 'sessao_abrir',
     title: 'Abrir uma sessão com papel',
     description:
-      'Abre uma sessão nova com papel, no mesmo projeto e (salvo `onde`) no mesmo lugar onde você roda, com o pedido como primeira mensagem. Ela nasce no quadro ligada por uma seta sua → dela (então você pode mandar mensagens com sessao_enviar), e você é avisado quando ela terminar cada turno. Até 4 abertas por você ao mesmo tempo; a partir da 5ª o dono precisa permitir, e esta ferramenta espera a resposta dele.',
+      'Abre uma sessão nova com papel, no mesmo projeto e (salvo `onde`) no mesmo lugar onde você roda, com o pedido como primeira mensagem. Ela nasce no quadro ligada por uma seta sua → dela (então você pode mandar mensagens com sessao_enviar), e você é avisado quando ela terminar cada turno. ' + OPEN_CAP_PLACEHOLDER,
     inputSchema: {
       type: 'object',
       properties: {
@@ -210,6 +214,13 @@ export const BOARD_TOOLS = [
     annotations: { destructiveHint: true },
   },
 ] as const;
+
+/** The board tools with the cap of `sessao_abrir` as the owner set it in Preferências. */
+export function boardTools(openCap: number | null): typeof BOARD_TOOLS {
+  return BOARD_TOOLS.map((tool) =>
+    tool.name === 'sessao_abrir' ? { ...tool, description: tool.description.replace(OPEN_CAP_PLACEHOLDER, openCapSentence(openCap)) } : tool,
+  ) as unknown as typeof BOARD_TOOLS;
+}
 
 const BOARD_TOOL_NAMES: ReadonlySet<string> = new Set(BOARD_TOOLS.map((tool) => tool.name));
 

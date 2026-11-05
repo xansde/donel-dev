@@ -173,6 +173,7 @@ import {
 import { ROTINAS_CHANNELS, type ShadowEntry } from '../shared/rotinas/contract';
 import { LIDER_CHANNELS, type LiderReport, type LiderSendPayload, type LiderSendResult, type LiderState } from '../shared/lider/ipc';
 import { ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
+import type { TeamPrefs } from '../shared/teamPrefs';
 import { SESSION_RENEWAL_CHANNELS, type HandoffStatus, type RenewalPrepareInput, type RenewalPrepared, type SessionRenewalPrefs } from '../shared/sessionRenewal';
 
 // contextIsolation: true + sem nodeIntegration (src/main/index.ts) — este
@@ -424,6 +425,7 @@ const donelApi: DonelApi = {
     // B36 — sessão renovada em voo: switch and context limit.
     setSessionRenewalPrefs: (prefs: Partial<SessionRenewalPrefs>) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setSessionRenewalPrefs, prefs) as Promise<AppConfigDto>,
+    setTeamPrefs: (prefs: TeamPrefs) => ipcRenderer.invoke(CONFIG_CHANNELS.setTeamPrefs, prefs) as Promise<AppConfigDto>,
     setAutoModePrefs: (prefs: Partial<AutoModePrefs>) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setAutoModePrefs, prefs) as Promise<AppConfigDto>,
     setProjectYolo: (projectPath: string, enabled: boolean) =>
