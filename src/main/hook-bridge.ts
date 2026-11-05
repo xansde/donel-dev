@@ -13,6 +13,8 @@ export const MAX_BODY_BYTES = 32 * 1024 * 1024;
 export const PRE_TOOL_USE_TTL_MS = 10_000;
 /** Rota `/h/StatusLine` — o comando `statusLine` injetado no `--settings` da sessão posta aqui (hooks-settings.ts). */
 export const STATUS_LINE_EVENT = 'StatusLine';
+/** Rota `/h/Ping` — a trava do Slack da sessão remota confere que o app está no ar e conhece o token. */
+export const SLACK_GUARD_PING_EVENT = 'Ping';
 
 export type HookPayload = Record<string, unknown>;
 
@@ -298,6 +300,15 @@ export function createHookBridge(options: HookBridgeOptions = {}): HookBridge {
     if (!state) {
       req.resume();
       res.writeHead(401, { 'Content-Length': 0 });
+      res.end();
+      return;
+    }
+
+    // Slack só com carta, fatia 4: the remote session's command hook asks "is the app here and does it know me?"
+    // before trusting the `http` hook. Nothing is dispatched (it is not a hook event).
+    if (event === SLACK_GUARD_PING_EVENT) {
+      req.resume();
+      res.writeHead(204);
       res.end();
       return;
     }

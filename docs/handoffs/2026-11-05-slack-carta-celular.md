@@ -11,13 +11,14 @@
 ## O que está pronto
 
 Três PRs contra `staging`, **empilhados**: cada um contém o anterior até ele entrar. A ordem de merge é
-01 → 02 → 03.
+01 → 02 → 03 → 04.
 
 | Fatia | PR | Branch | O que faz |
 |---|---|---|---|
 | 01 | #239 | `feat/slack-so-com-carta` | Sessão na VPS conecta no MCP `donel`: o gate aceita o `Host` da porta do túnel `ssh -R` só com o token da sessão daquele túnel (B38, primeiro item). Nenhuma porta nova. |
 | 02 | #241 | `feat/slack-so-com-carta-02` | Carta "mensagem para o Slack" (`carta_slack`: destino, thread, texto exato, motivo), nasce esperando o dono. A ponte de hooks recusa no `PreToolUse` todo envio ao Slack (MCP do Slack, Composio, curl `chat.postMessage`, webhook, `canal-produto.js postar/responder`) sem carta aceita de mesmo destino, thread e texto; cada carta libera um envio. |
 | 03 | #243 | `feat/slack-so-com-carta-03` | Web Push no PWA: service worker, sino para ligar, aviso com o título humano quando uma carta passa a esperar o dono, toque abre a carta. Criptografia RFC 8291 + VAPID feitas com `node:crypto` (bate com o vetor da RFC), sem dependência nova. |
+| 04 | (PR da fatia 4) | `feat/slack-so-com-carta-04` | Falha fechada (pedido do Líder, 05/11 à noite): a sessão remota ganha um hook de comando que, com o app fora do ar ou sem reconhecer a sessão, **recusa** o envio ao Slack e diz por quê. Com o app no ar, a ponte segue decidindo pela carta. |
 
 Verificação em cada fatia, na VPS: typecheck verde, `npm test` com só as 2 falhas que já existem em
 `staging` no Linux (`config-store` e `remoteSessions`, caminho do Windows), `electron-vite build` verde.
@@ -50,10 +51,15 @@ gerou (RFC 8291), então eles não leem o título. Todo o resto (inscrição, fi
   - dá à carta de Slack um bloco `forOwner` automático ("Enviar"/"Não enviar");
   - passa a usar o `titulo` da forma A no aviso (`pushTitle` já lê `title` quando existir);
   - roda o verify de novo.
-- **Trava só nas sessões abertas pelo Donel.** Ela vem no `--settings` da sessão. Um `claude` aberto à mão
-  fica fora, porque o `~/.claude/settings.json` do dono não é tocado.
-- **Se a ponte de hooks cair, o envio passa sem trava.** Hook `http` sem resposta não bloqueia. Fechar isso
-  pede um hook de comando que bloqueie quando o app não responde.
+- **Decisão pendente do dono: trava para um `claude` aberto à mão.** Hoje a trava vem no `--settings` das
+  sessões que o Donel abre. Um `claude` aberto à mão num terminal fica fora, porque o `~/.claude/settings.json`
+  do dono não é tocado (regra do projeto). Fechar isso exige o dono autorizar um hook no settings global dele
+  (no PC e na VPS). Decisão do Líder (05/11): fica de fora por enquanto.
+- **Falha fechada (fatia 4)**: vale para a sessão remota, que é quem sobrevive ao app. A sessão local é filha
+  do app e morre com ele, por isso fica só com o hook `http`. Com o app no ar, o hook de comando confia na
+  ponte. Se a ponte responder ao `/h/Ping` e falhar no hook `http` no mesmo instante, o envio passaria; essa
+  janela é estreita e está aceita. Sem o app, a recusa é ampla de propósito: recusa até rascunho do Slack.
+  Sessões remotas abertas antes desta versão continuam sem o hook até serem reabertas.
 - **A sessão não é avisada da decisão da carta**: ela confere com `tarefa_ver`. A entrega à sessão é a
   fatia 5 da forma A.
 - **O aviso usa o pedido como título** até a forma A trazer o `titulo` humano. A carta de Slack já tem título

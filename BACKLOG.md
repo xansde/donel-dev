@@ -300,7 +300,7 @@ no alfa.
 - **TaskDex**: — (sem card: ferramenta pessoal)
 - **Fatiado em**: 2026-11-05 (à mão, na VPS: a skill `esteira:fatiamento` não está instalada aqui; formato desta seção copiado das demandas anteriores)
 - **Gate**: pedido literal do dono com as três fatias e a ordem; sem passo extra de aprovação
-- **Rodadas previstas**: 01 | 02 | 03 <!-- serial: 02 só funciona na VPS com a 01; 03 avisa da carta que a 02 cria -->
+- **Rodadas previstas**: 01 | 02 | 03 | 04 <!-- serial: 02 só funciona na VPS com a 01; 03 avisa da carta que a 02 cria; 04 (pedido do Líder, 05/11 noite) fecha a 02 com o app fora do ar -->
 
 Convenções: lógica pura com vitest; uma PR contra `staging` por fatia; `npm run verify` na VPS. Convive
 com a demanda `cartas-forma-a` (outro Dev, mesmas áreas: `src/shared/ledger/contract.ts`, `tools.ts`,
@@ -347,3 +347,17 @@ com a demanda `cartas-forma-a` (outro Dev, mesmas áreas: `src/shared/ledger/con
 - **Escopo**: service worker + inscrição no PWA, chaves VAPID geradas e guardadas pelo main, envio
   ao mudar para "esperando você". Se exigir HTTPS: `tailscale serve`/cert da tailnet, com o passo
   do dono descrito no handoff.
+
+### 04 — Com o app fora do ar, envio ao Slack é recusado (falha fechada)
+
+- **Status**: implementada
+- **Branch**: `feat/slack-so-com-carta-04` (empilhada sobre a 03, mesma worktree)
+- **Depende de**: 02
+- **Conflita com**: —
+- **Propósito**: a regra do dono é "a carta antes de qualquer coisa": o que não se confirma não sai. Uma
+  sessão remota sobrevive ao app (tmux na VPS) e o hook `http` sem resposta não bloqueia; agora, sem o app
+  (ou com um app que não conhece a sessão), envio ao Slack é recusado, e a recusa diz por quê.
+- **Escopo**: hook de comando `sh` no `PreToolUse` das sessões remotas (matcher `Bash|mcp__.*`): pergunta à
+  ponte `/h/Ping`; no ar e com o token conhecido, não diz nada (a ponte decide pela carta); fora do ar, recusa
+  o que pareça envio ao Slack. Sessão local fica só com o `http`: ela é filha do app e morre com ele. Fica de
+  fora, como decisão pendente do dono: trava para um `claude` aberto à mão.
