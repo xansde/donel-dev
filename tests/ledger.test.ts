@@ -7,6 +7,7 @@ import { createLedgerService, ledgerProofsDir, nodeLedgerProofFs, runLedgerTool,
 import type { MindscapeBoard } from '../src/shared/mindscape/model';
 import { findCode, LEDGER_SCHEMA_VERSION } from '../src/shared/ledger/contract';
 import { createCardWriter, type OwnerMessage } from '../src/main/ledger-card-writer';
+import { buildRemoteProofCommand, fetchRemoteProof } from '../src/main/ledger-remote-proof';
 import { parseLedgerToolCall, type LedgerToolCall } from '../src/shared/ledger/tools';
 
 // Ledger com prova (item 19) — persisted data a channel could erase, and the two rules that live in code:
@@ -215,6 +216,30 @@ describe('ledger com prova', () => {
 
     expect(await deliver()).toMatchObject({ ok: true });
     expect(service().load().doc.tasks[id]!.state).toBe('entregue');
+  });
+
+  it('a proof file of a session on the VPS is read through its ssh with the path as a quoted argument, and lands in the proofs', async () => {
+    const hostile = "/home/x/a'; rm -rf ~; echo '.html";
+    const command = buildRemoteProofCommand(hostile, 2 * 1024 * 1024);
+    // The agent's path is never part of the script: it goes as one single-quoted argument at the end.
+    expect(command.endsWith(` donel-prova '/home/x/a'\\''; rm -rf ~; echo '\\''.html' 2097152`)).toBe(true);
+    const asked: string[] = [];
+    const run = (code: number, out = '') => async (_target: string, line: string) => (asked.push(line), { code, stdout: Buffer.from(out) });
+    expect(await fetchRemoteProof('vps', 'relativo.html', run(0))).toMatchObject({ ok: false, error: expect.stringContaining('absoluto') });
+    expect(await fetchRemoteProof('vps', '/x/segredo.txt', run(0))).toMatchObject({ ok: false });
+    expect(asked).toHaveLength(0); // refused before any ssh
+    expect(await fetchRemoteProof('vps', '/x/a.html', run(3))).toMatchObject({ ok: false, error: expect.stringContaining('link simbólico') });
+    expect(await fetchRemoteProof('vps', '/x/a.html', run(5))).toMatchObject({ ok: false, error: expect.stringContaining('2 MB') });
+
+    const { dir, service } = setup();
+    const created = await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco: 'baixo' }));
+    const id = (JSON.parse(created.text) as { id: string }).id;
+    await runLedgerTool(service(), dev, call('tarefa_assumir', { id }));
+    const remote = (path: string) => fetchRemoteProof('vps', path, run(0, '<p>protótipo</p>'));
+    expect(await runLedgerTool(service(), dev, call('tarefa_entregar', { id, provas: [{ tipo: 'arquivo', caminho: '/home/dev/proto.html' }] }), remote)).toMatchObject({ ok: true });
+    const proof = service().load().doc.tasks[id]!.events.at(-1)!.proofs![0]!;
+    expect(proof).toMatchObject({ kind: 'arquivo', mediaType: 'text/html' });
+    if (proof.kind === 'arquivo') expect(readFileSync(join(ledgerProofsDir(join(dir, 'ledger.json')), proof.file), 'utf8')).toBe('<p>protótipo</p>');
   });
 
   it('reads a ledger written by a newer channel and never writes over it', async () => {

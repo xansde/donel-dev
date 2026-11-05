@@ -23,6 +23,7 @@ const noProofFs: LedgerProofFs = {
   readFile: () => Promise.reject(new Error('sem arquivo')),
   mkdir: () => Promise.resolve(),
   copyFile: () => Promise.reject(new Error('sem arquivo')),
+  writeFile: () => Promise.reject(new Error('sem arquivo')),
   unlink: () => Promise.resolve(),
 };
 

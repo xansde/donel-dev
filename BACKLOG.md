@@ -81,7 +81,8 @@ verde; um PR por fatia contra `staging`; patch note em toda fatia visível.
 
 ### 06 — Prova de arquivo vinda da VPS
 
-- **Status**: pronta
+- **Status**: implementada
+- **Branch**: `feat/cartas-forma-a-06-vps` (empilhada na 05)
 - **Depende de**: 01 (depois da 02 e da 03)
 - **Propósito**: a cópia da prova pelo ssh do próprio lugar remoto, sem interpolar caminho em shell.
 

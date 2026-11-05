@@ -58,8 +58,13 @@ export interface LedgerProofFs {
   readFile(path: string): Promise<Buffer>;
   mkdir(dir: string): Promise<void>;
   copyFile(from: string, to: string): Promise<void>;
+  /** A proof read from a remote place: written once, never over an existing file. */
+  writeFile(path: string, bytes: Buffer): Promise<void>;
   unlink(path: string): Promise<void>;
 }
+
+/** Fatia 6 — reads a proof file on the remote place of the calling session (`ledger-remote-proof.ts`). */
+export type RemoteProofFetch = (path: string) => Promise<{ readonly ok: true; readonly bytes: Buffer; readonly ext: string; readonly mediaType: string } | { readonly ok: false; readonly error: string }>;
 
 export const nodeLedgerProofFs: LedgerProofFs = {
   stat: (path) => fs.stat(path),
@@ -70,6 +75,7 @@ export const nodeLedgerProofFs: LedgerProofFs = {
     await fs.mkdir(dir, { recursive: true });
   },
   copyFile: (from, to) => fs.copyFile(from, to, fsConstants.COPYFILE_EXCL),
+  writeFile: (path, bytes) => fs.writeFile(path, bytes, { flag: 'wx' }),
   unlink: (path) => fs.unlink(path),
 };
 
@@ -87,8 +93,11 @@ export interface LedgerService {
   /** Missing file → empty ledger. Throws when the file exists but is unreadable or not a ledger. */
   load(): LedgerSnapshot;
   apply(actor: LedgerActor, op: LedgerOp): LedgerApplyResult;
-  /** Copies a print/video into `ledger-provas/` and returns the proof; text and link are only checked. */
-  importProof(input: ProofInput): Promise<LedgerProof | { error: string }>;
+  /**
+   * Copies a print/video/prototype into `ledger-provas/` and returns the proof; text and link are only checked. With
+   * `remote`, the file is on the calling session's remote place (the VPS) and is read through its ssh.
+   */
+  importProof(input: ProofInput, remote?: RemoteProofFetch): Promise<LedgerProof | { error: string }>;
   /** Removes copied proof files a refused delivery left behind. */
   discardProofs(proofs: readonly LedgerProof[]): Promise<void>;
   proofPath(proof: LedgerProof): string | null;
@@ -164,10 +173,23 @@ export function createLedgerService(deps: LedgerServiceDeps): LedgerService {
       deps.onChange?.({ doc: result.doc, readOnly: false });
       return { ok: true, task: result.task };
     },
-    async importProof(input) {
+    async importProof(input, remote) {
       if (input.tipo === 'texto') return { kind: 'texto', text: input.texto };
       if (input.tipo === 'link') return isHttpUrl(input.url) ? { kind: 'link', url: input.url } : { error: `"${input.url}" não é um link http(s).` };
       const source = input.caminho;
+      const newName = (ext: string): string => `${new Date(now()).toISOString().slice(0, 10)}-${randomBytes(6).toString('hex')}.${ext}`;
+      if (remote) {
+        const fetched = await remote(source);
+        if (!fetched.ok) return { error: fetched.error };
+        try {
+          await deps.proofFs.mkdir(proofsDir);
+          const file = newName(fetched.ext);
+          await deps.proofFs.writeFile(join(proofsDir, file), fetched.bytes);
+          return { kind: 'arquivo', file, mediaType: fetched.mediaType };
+        } catch {
+          return { error: `Li "${source}" na VPS, mas não consegui guardar a cópia neste computador.` };
+        }
+      }
       const ext = extname(source).slice(1).toLowerCase();
       const mediaType = PROOF_FILE_TYPES[ext];
       if (!isAbsolute(source)) return { error: `"${source}": use o caminho absoluto do arquivo.` };
@@ -184,7 +206,7 @@ export function createLedgerService(deps: LedgerServiceDeps): LedgerService {
         if (info.size > max)
           return { error: `"${source}" passa de ${max / 1024 / 1024} MB${mediaType === 'text/html' ? ' (o protótipo é um HTML autocontido de até 2 MB)' : ''}.` };
         await deps.proofFs.mkdir(proofsDir);
-        const file = `${new Date(now()).toISOString().slice(0, 10)}-${randomBytes(6).toString('hex')}.${ext}`;
+        const file = newName(ext);
         await deps.proofFs.copyFile(real, join(proofsDir, file));
         return { kind: 'arquivo', file, mediaType };
       } catch {
@@ -338,7 +360,8 @@ function callerActor(caller: LedgerCaller): LedgerActor {
   return { kind: 'lugar', placeId: caller.placeId, ...(caller.roleId ? { roleId: caller.roleId } : {}) };
 }
 
-export async function runLedgerTool(service: LedgerService, caller: LedgerCaller, call: LedgerToolCall): Promise<LedgerToolAnswer> {
+/** `remote`: the calling session runs on a remote place; its proof files are read there (fatia 6). */
+export async function runLedgerTool(service: LedgerService, caller: LedgerCaller, call: LedgerToolCall, remote?: RemoteProofFetch): Promise<LedgerToolAnswer> {
   const actor = callerActor(caller);
   const answer = (result: LedgerApplyResult, what: string): { ok: boolean; text: string } =>
     result.ok ? { ok: true, text: JSON.stringify({ [what]: true, id: result.task.id, estado: result.task.state }) } : { ok: false, text: result.reason };
@@ -369,7 +392,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
     case 'tarefa_entregar': {
       const proofs: LedgerProof[] = [];
       for (const input of call.provas) {
-        const proof = await service.importProof(input);
+        const proof = await service.importProof(input, remote);
         if ('error' in proof) {
           await service.discardProofs(proofs);
           return { ok: false, text: `Nada foi entregue. ${proof.error}` };
