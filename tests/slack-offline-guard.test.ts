@@ -48,7 +48,12 @@ const script = pre('Bash', { command: 'node scripts/canal-produto.js postar C012
 describe.skipIf(process.platform === 'win32')('Slack só com carta — app fora do ar', () => {
   it('app down: every way of posting to Slack is refused, saying why; the rest goes on', async () => {
     const port = await closedPort();
-    for (const payload of [slackMcp, composio, curl, script]) {
+    const assembled = pre('Bash', { command: 'M=postMessage; curl https://slack.com/api/chat.$M -d x' });
+    const upload = pre('Bash', { command: "curl https://slack.com/api/files.completeUploadExternal -d 'channel_id=geral&initial_comment=x'" });
+    const workbench = pre('mcp__composio__COMPOSIO_REMOTE_WORKBENCH', { code_to_execute: "run_composio_tool('SLACK_SEND_MESSAGE', {'channel':'geral'})" });
+    const quoted = pre('Bash', { command: 'C=postar; node canal-produto.js $C geral "x"' });
+    const composioUpload = pre('mcp__composio__SLACK_UPLOAD_OR_CREATE_A_FILE_IN_SLACK', { channels: 'geral', initial_comment: 'x' });
+    for (const payload of [slackMcp, composio, curl, script, assembled, upload, workbench, quoted, composioUpload]) {
       const out = JSON.parse((await runGuard(port, 'a'.repeat(32), payload))) as { hookSpecificOutput: Record<string, string> };
       expect(out.hookSpecificOutput.permissionDecision, payload.tool_name).toBe('deny');
       expect(out.hookSpecificOutput.permissionDecisionReason).toMatch(/fora do ar.*carta/);

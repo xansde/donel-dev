@@ -42,6 +42,27 @@ Sobre "sem serviço de terceiros": o aviso com o app fechado só existe pelo ser
 navegador (Google no Android, Apple no iPhone). O que passa por ele vai cifrado com as chaves que o celular
 gerou (RFC 8291), então eles não leem o título. Todo o resto (inscrição, fila, decisão) fica na tailnet.
 
+## Revisão do #241 (05/11 à noite) e o que mudou
+
+O Revisor furou a trava com 11 sondas, e todas viraram teste (`tests/slack-guard-furos.test.ts`). A regra agora é:
+
+- **Só envio estruturado é aprovado.** Vale a ferramenta MCP do Slack ou a ação `SLACK_*` do Composio, lida
+  campo a campo. Ela só passa com destino, thread e texto da carta, mais opções que não mudam o que o dono lê
+  (`unfurl_*`, `mrkdwn`, `link_names`, `parse`). Recusa: `blocks`, `attachments`, broadcast, agendamento, dois
+  campos de texto diferentes e upload de arquivo.
+- **Terminal, script e código nunca aprovam.** Isso vale para curl, `canal-produto`, o workbench do Composio e
+  qualquer ferramenta com um envio dentro de código, mesmo com a carta aceita. Assim saem a isca, o destino por
+  prefixo e o laço.
+  - **Atenção:** o `canal-produto.js postar/responder` passa a ser sempre recusado. Se o dono quiser esse
+    caminho com carta, é preciso o formato exato dos argumentos dele, para um leitor estrito.
+- **Reconhecimento largo**: qualquer método de escrita da API do Slack (inclusive montado, `chat.$M`), webhook,
+  upload e qualquer menção ao `canal-produto`.
+- **Limite nomeado (caso D)**: o hook vê a chamada, não o que um script escrito antes faz ao rodar
+  (`bash /tmp/posta.sh`). A garantia vale contra engano, não contra uma sessão decidida a contornar.
+- **Merge da forma A**: schema 4. A carta de Slack ganha título ("Mensagem no Slack para #canal") e um bloco
+  para o dono montado pelo app (Enviar / Não enviar). Escrever na carta chega à sessão pelo `comentar` da
+  forma A, e é assim que o dono pede ajuste.
+
 ## O que falta / ficou de fora
 
 - **Merge**: os 3 PRs esperam o Revisor · Donel (VPS).

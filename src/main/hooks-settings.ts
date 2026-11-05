@@ -171,14 +171,15 @@ export function buildSessionHooksSettings(input: SessionHooksSettingsInput): Ses
 // session dies with the app (its PTY is the app's child); a remote one lives on in tmux. So the remote session
 // also gets this command hook: it asks the bridge `/h/Ping` (app up AND this token known); if yes, it says
 // nothing and the bridge decides as usual; if not, and the call looks like a post to Slack, it REFUSES. The
-// offline test is deliberately broad (it may refuse a Slack draft while the app is down): the owner's rule is
+// offline test is deliberately broad (it refuses a Slack draft, or any call to the Slack Web API, even a read,
+// while the app is down): the owner's rule is
 // "a carta antes de qualquer coisa", so what cannot be checked does not go out.
 
 export const SLACK_OFFLINE_GUARD_MATCHER = 'Bash|mcp__.*';
 
 /** ERE over the hook payload (tool name + input), case-insensitive: anything that may post to Slack. */
 export const SLACK_OFFLINE_PATTERN =
-  'mcp__[^"]*slack[^"]*__[^"]*(send|post|repl|schedul|updat|edit)|slack_[a-z_]*(send|post|repl|schedul|updat|edit)|chat\\.(postMessage|update|scheduleMessage|postEphemeral|meMessage)|hooks\\.slack\\.com|canal-produto';
+  'mcp__[^"]*slack[^"]*__[^"]*(send|post|repl|schedul|updat|edit|upload|file|share)|slack_[a-z_]*(send|post|repl|schedul|updat|edit|upload|file|share)|chat[._](postMessage|post_message|update|scheduleMessage|postEphemeral|meMessage)|files[._](upload|completeUpload|complete_upload|share)|slack\\.com/api/|hooks\\.slack\\.com|canal-produto';
 
 export const SLACK_OFFLINE_REFUSAL =
   'Envio ao Slack bloqueado pelo Donel Dev: o app do Donel está fora do ar (ou não reconhece esta sessão), então não dá para confirmar a carta no Oráculo Harrow. Toda mensagem ao Slack em nome do dono precisa antes de uma carta aceita, e o que não se confirma não sai. Não tente outro caminho de envio. Diga ao dono que a mensagem está esperando o Donel voltar; quando ele voltar, crie a carta com carta_slack e espere a decisão.';
