@@ -87,15 +87,34 @@ export function talkHeightFor(anchor: PetPoint, size: number, display: PetDispla
   return Math.round(Math.min(PET_TALK_MAX_HEIGHT, Math.max(PET_TALK_MIN_HEIGHT, above)));
 }
 
-/** t-29e1327b — the widest the bubble can be on `display`. */
-export function talkMaxWidthFor(display: PetDisplay): number {
-  return Math.round(Math.max(PET_TALK_MIN_WIDTH, Math.min(PET_TALK_MAX_WIDTH, display.workArea.width - 40)));
+/** Between the bubble and the side edges of the work area. */
+const PET_TALK_SIDE_MARGIN = 8;
+
+/**
+ * t-29e1327b — the widest the bubble can be with the Jobu at `anchor`, so that it stays on the screen. It depends on the
+ * side it grows to (`alignFor`, the same rule as the screen's CSS): `right` keeps its right edge on the right edge of the
+ * drawing and grows leftwards, `left` is the mirror, and `center` is centered on the Jobu, so half of it must fit on each
+ * side. Never narrower than the minimum (on a screen with no room it goes past the edge instead).
+ */
+export function talkMaxWidthFor(anchor: PetPoint, size: number, display: PetDisplay): number {
+  const work = display.workArea;
+  const half = (size * PET_DRAWING_ASPECT) / 2;
+  const toLeft = anchor.x - work.x;
+  const toRight = work.x + work.width - anchor.x;
+  const align = alignFor(anchor, display);
+  const room =
+    align === 'right'
+      ? toLeft + half - PET_TALK_SIDE_MARGIN
+      : align === 'left'
+        ? toRight + half - PET_TALK_SIDE_MARGIN
+        : 2 * (Math.min(toLeft, toRight) - PET_TALK_SIDE_MARGIN);
+  return Math.round(Math.max(PET_TALK_MIN_WIDTH, Math.min(PET_TALK_MAX_WIDTH, room)));
 }
 
-/** t-29e1327b — the width of the bubble: the one the owner chose, kept inside the limits and the screen; default 380. */
-export function talkWidthFor(display: PetDisplay, chosen?: number): number {
-  if (chosen === undefined) return PET_TALK_WIDTH;
-  return Math.round(Math.min(talkMaxWidthFor(display), Math.max(PET_TALK_MIN_WIDTH, chosen)));
+/** t-29e1327b — the width of the bubble: the one the owner chose (default 380), kept inside the limits and the screen. */
+export function talkWidthFor(anchor: PetPoint, size: number, display: PetDisplay, chosen?: number): number {
+  const wanted = chosen === undefined ? PET_TALK_WIDTH : Math.max(PET_TALK_MIN_WIDTH, chosen);
+  return Math.round(Math.min(talkMaxWidthFor(anchor, size, display), wanted));
 }
 
 /**

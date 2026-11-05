@@ -305,10 +305,11 @@ export function sanitizePetPrefs(value: unknown, fallback: PetPrefs = defaultPet
 function sanitizePetTalkSize(value: unknown, fallback: PetPrefs['talkSize']): Pick<PetPrefs, 'talkSize'> {
   if (value === undefined) return fallback === undefined ? {} : { talkSize: fallback };
   if (value === null) return { talkSize: null };
-  if (typeof value !== 'object' || Array.isArray(value)) return {};
+  const keep: Pick<PetPrefs, 'talkSize'> = fallback === undefined ? {} : { talkSize: fallback };
+  if (typeof value !== 'object' || Array.isArray(value)) return keep;
   const size = value as Record<string, unknown>;
   const ok = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n > 0;
-  return ok(size.width) && ok(size.height) ? { talkSize: { width: Math.round(size.width), height: Math.round(size.height) } } : {};
+  return ok(size.width) && ok(size.height) ? { talkSize: { width: Math.round(size.width), height: Math.round(size.height) } } : keep;
 }
 
 function sanitizePetPlacement(value: unknown, fallback: PetPrefs['placement']): PetPrefs['placement'] {

@@ -428,11 +428,11 @@ export function createPetService(deps: PetServiceDeps): PetService {
    * screen; automatic without one. `expanded` = as large as the screen allows there. Closed = height 0.
    */
   function talkLayout(anchor: PetPoint, size: number, display: PetDisplay): { height: number; width: number; expanded: boolean } {
-    if (!talkOpen) return { height: 0, width: talkWidthFor(display), expanded: false };
+    if (!talkOpen) return { height: 0, width: talkWidthFor(anchor, size, display), expanded: false };
     const chosen = talkDragSize ?? deps.config().talkSize ?? null;
     const height = talkHeightFor(anchor, size, display, chosen?.height);
-    const width = talkWidthFor(display, chosen?.width);
-    const expanded = chosen !== null && width >= talkMaxWidthFor(display) && height >= talkHeightFor(anchor, size, display, Number.MAX_SAFE_INTEGER);
+    const width = talkWidthFor(anchor, size, display, chosen?.width);
+    const expanded = chosen !== null && width >= talkMaxWidthFor(anchor, size, display) && height >= talkHeightFor(anchor, size, display, Number.MAX_SAFE_INTEGER);
     return { height, width, expanded };
   }
 
@@ -904,7 +904,7 @@ export function createPetService(deps: PetServiceDeps): PetService {
         const placed = resolvePlacement(current);
         // Fitted to the screen right away, so what is saved is what the owner saw at the release.
         const next: PetTalkSize = {
-          width: talkWidthFor(placed.display, payload.width),
+          width: talkWidthFor(placed.anchor, placed.ui.size, placed.display, payload.width),
           height: talkHeightFor(placed.anchor, placed.ui.size, placed.display, payload.height),
         };
         if (payload.commit) {
@@ -923,7 +923,7 @@ export function createPetService(deps: PetServiceDeps): PetService {
         deps.persist({ ...current, talkSize: null });
       } else {
         const height = talkHeightFor(placed.anchor, placed.ui.size, placed.display, Number.MAX_SAFE_INTEGER);
-        deps.persist({ ...current, talkSize: { width: talkMaxWidthFor(placed.display), height } });
+        deps.persist({ ...current, talkSize: { width: talkMaxWidthFor(placed.anchor, placed.ui.size, placed.display), height } });
       }
       relayout();
     },
