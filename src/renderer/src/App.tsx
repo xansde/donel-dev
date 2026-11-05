@@ -2491,6 +2491,7 @@ export function App(): React.JSX.Element {
       pendingFirstMessagesRef.current[tabId] = request.firstMessage;
       return tabId;
     },
+    closeTab: (tabId) => closeTabImmediatelyRef.current(tabId),
     sendLine: (tabId, text) => sendRenewalLine(tabId, text),
     ownerTyping: (tabId) => getDraft(tabId).trim().length > 0,
     askOwner: (question) =>

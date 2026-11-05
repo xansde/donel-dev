@@ -20,7 +20,7 @@ import { clampZoom } from './view';
  * of the moment, the previous ones and a role. A v2 channel would drop a place
  * that has not started yet and every conversation after a renewal.
  */
-export const MINDSCAPE_SCHEMA_VERSION = 4;
+export const MINDSCAPE_SCHEMA_VERSION = 5;
 
 /**
  * 4 since the board by MCP (item 08 + B37): what a session made on the board carries `by: 'session'`
@@ -28,6 +28,13 @@ export const MINDSCAPE_SCHEMA_VERSION = 4;
  * A v3 channel would drop the mark and hand the session's items to the owner.
  */
 export type MadeBy = 'session';
+
+/**
+ * 5 since the reach of a board (`sessao_fechar`, owner 04/11): `reach: 'all'` lets the Líder of that board
+ * direct sessions on every board. A v4 channel would drop it and shrink the Líder back to its own board.
+ * The rule that reads it lives in `reach.ts`.
+ */
+export type BoardReach = 'own' | 'all';
 
 export type OwnerCardColor = Exclude<TabColorToken, 'permission'>;
 
@@ -108,10 +115,12 @@ export interface MindscapeBoard {
   links: MindscapeLink[];
   /** Array order = layer (0 = at the back). All drawings stay under the links and the cards. */
   drawings: MindscapeDrawing[];
+  /** v5 — absent = `'own'`: its sessions reach only this board. Only the owner changes it. */
+  reach?: 'all';
 }
 
 export interface MindscapeDoc {
-  schemaVersion: 4;
+  schemaVersion: 5;
   boards: Record<string, MindscapeBoard>;
 }
 
@@ -695,11 +704,19 @@ function parseBoard(key: string, raw: unknown): MindscapeBoard | null {
   // v1 has neither: no drawings, 100%.
   const zoom = isFiniteNumber(raw.zoom) ? clampZoom(raw.zoom) : 1;
   const drawings = Array.isArray(raw.drawings) ? raw.drawings.map(parseDrawing).filter((drawing): drawing is MindscapeDrawing => drawing !== null) : [];
-  return { projectPath: key, pan, zoom, cards, links, drawings };
+  return { projectPath: key, pan, zoom, cards, links, drawings, ...(raw.reach === 'all' ? { reach: 'all' as const } : {}) };
+}
+
+/** The owner's toggle "Alcance" of a board. No board → same document. */
+export function setBoardReach(doc: MindscapeDoc, projectPath: string, reach: BoardReach): MindscapeDoc {
+  const board = doc.boards[projectPath];
+  if (!board || (board.reach ?? 'own') === reach) return doc;
+  const { reach: _old, ...rest } = board;
+  return withBoardReplaced(doc, reach === 'all' ? { ...rest, reach: 'all' } : rest);
 }
 
 /**
- * Sanitizes an untrusted document, v1 to v4; always comes out as v4. Garbage
+ * Sanitizes an untrusted document, v1 to v5; always comes out as v5. Garbage
  * or absence → empty document; bad boards, cards, links and drawings are
  * dropped one by one (an owner card colored `permission` is not accepted — rule 6).
  */

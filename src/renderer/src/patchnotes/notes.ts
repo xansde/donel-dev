@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-04',
     items: [
       {
+        title: 'O Líder fecha as sessões que abriu',
+        text: 'Uma sessão agora fecha as sessões que estão abaixo dela no quadro (pelas setas, direto ou em cadeia), em vez de deixar as abas para você fechar. Nunca fecha a si mesma nem quem está acima ou ao lado. Para fechar em outro quadro, só o Líder de um quadro marcado com "Alcance: todos os quadros", botão novo na barra do Mindscape; sem marcar, cada quadro só alcança a si mesmo. Se a outra está trabalhando, recebe antes um aviso para pausar e espera o turno acabar (até 20 segundos). Com um pedido de permissão aberto lá, não fecha. O lugar continua no quadro como "fechada" e dois cliques retomam a conversa; nada se apaga.',
+      },
+      {
         title: 'Régua de contexto vai até 500k',
         text: 'A barra de contexto da sessão agora mede até 500k (antes 300k): 250k usados aparecem como 50%. No Haiku a régua continua sendo a janela dele, 200k.',
       },

@@ -15,6 +15,7 @@ import {
   type BoardToolCall,
 } from '../../../shared/mindscape/agent-tools';
 import type { MindscapeBoardResponse } from '../../../shared/mindscape/channels';
+import { canReach, findPlace } from '../../../shared/mindscape/reach';
 import { addLink, addPlace, placeCardId, placeOfSession, type MindscapeBoard, type MindscapeDoc, type SessionPlaceCard } from '../../../shared/mindscape/model';
 import type { SemaphoreState } from '../../../shared';
 import type { SessionRole } from '../../../shared/roles';
@@ -25,6 +26,9 @@ export const OPEN_CAP = 4;
 const NOTICE_CHARS = 600;
 /** A held message is tried again on this beat. */
 const RETRY_MS = 1500;
+/** `sessao_fechar` waits at most this long for the destination's turn to end, then closes anyway. */
+export const CLOSE_WAIT_MS = 20_000;
+const CLOSE_POLL_MS = 500;
 
 export interface BridgeTab {
   readonly id: string;
@@ -61,6 +65,8 @@ export interface AgentBridgePorts {
   roles(): readonly SessionRole[];
   /** Opens the tab of a place without stealing the focus and sends its first message; returns the tab id. */
   openSession(request: OpenSessionRequest): string;
+  /** Closes the tab the way the app does (kills the process through `pty:kill`); the place stays, "fechada". */
+  closeTab(tabId: string): void;
   /** One line to the session of `tabId` through the chat's send driver (or typed into the terminal). */
   sendLine(tabId: string, text: string): void;
   /** The owner is typing in that tab's composer. */
@@ -350,6 +356,39 @@ export class AgentBridge {
         const from = this.roleName(self.roleId) ?? caller.name;
         const status = this.deliver(target.id, `◆ De ${from} (${self.id}): ${call.texto}`);
         return { ok: true, text: status === 'entregue' ? 'Entregue.' : 'Retida: o dono está digitando lá ou há uma permissão aberta; entra sozinha depois.' };
+      }
+
+      case 'sessao_fechar': {
+        const no = (why: string): Omit<MindscapeBoardResponse, 'requestId'> => fail(`Não fechei: ${why}`);
+        if (!self) return no('seu lugar ainda não está no quadro; espere o primeiro turno terminar.');
+        // Hierarchy (owner 04/11): below me by arrows on this board, or any board when I am the Líder of a
+        // board with reach "all" — the rule lives in shared/mindscape/reach.ts.
+        const doc = this.ports.doc();
+        const where = findPlace(doc, call.quem, projectPath);
+        if (!where) return no(`"${call.quem}" não é um lugar de nenhum quadro (veja sessao_listar).`);
+        const reach = canReach(doc, { projectPath, placeId: self.id }, where);
+        if (!reach.ok) return no(reach.reason);
+        const target = this.tabOfPlace(where.projectPath, where.placeId);
+        if (!target) return no(`"${where.placeId}" não está aberta agora.`);
+        if (target.id === caller.id) return no('esta é a sua própria sessão.');
+        const permission = 'ela tem um pedido de permissão aberto na tela; o dono responde antes.';
+        if (this.ports.stateOf(target.id) === 'permission') return no(permission);
+        let cut = false;
+        if (this.ports.stateOf(target.id) === 'working') {
+          const from = this.roleName(self.roleId) ?? caller.name;
+          this.deliver(target.id, `◆ De ${from} (${self.id}): pause agora e não comece nada novo. Esta sessão vai ser fechada em instantes (o dono pode retomá-la depois).`);
+          const deadline = Date.now() + CLOSE_WAIT_MS;
+          while (this.ports.stateOf(target.id) === 'working' && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, CLOSE_POLL_MS));
+          }
+          cut = this.ports.stateOf(target.id) === 'working';
+        }
+        const state = this.ports.stateOf(target.id);
+        if (state === undefined) return { ok: true, text: 'Fechada.' }; // it left on its own meanwhile
+        if (state === 'permission') return no(permission);
+        this.ports.closeTab(target.id);
+        this.openedBy.delete(target.id);
+        return { ok: true, text: cut ? `Fechada (o turno não acabou em ${CLOSE_WAIT_MS / 1000} s; cortei).` : 'Fechada.' };
       }
 
       case 'sessao_abrir': {
