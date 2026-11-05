@@ -230,6 +230,7 @@ import { failureReasonText } from '../shared/attention/rule';
 import { registerAssetScheme, registerAssetsProtocol } from './chat/assets-protocol';
 import { proofSchemePrivileges, registerProofProtocol } from './ledger-proof-protocol';
 import { createCardWriter, type CardWriter } from './ledger-card-writer';
+import { fetchRemoteProof } from './ledger-remote-proof';
 import { CHAT_CHANNELS } from '../shared/chat/ipc';
 // 011-contas-e-provedores (etapa 1) — motor de contas + mods. Nasce inerte
 // (accounts.mod = null); toda a mecânica mora em src/main/accounts/, este
@@ -3001,7 +3002,10 @@ async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: 
   if (!ledgerService) return { kind: 'error', text: 'O Oráculo Harrow não abriu neste app.' };
   const resolved = await ledgerCallerOf(boardBridge, ptyId, call);
   if (typeof resolved === 'string') return { kind: 'error', text: resolved };
-  const result = await runLedgerTool(ledgerService, resolved.caller, resolved.call);
+  // Fatia 6 — a session on a remote place (VPS) names files there: read through that place's own ssh.
+  const sshTarget = remoteSessions?.sshTargetOf(ptyId);
+  const remote = sshTarget ? (path: string) => fetchRemoteProof(sshTarget, path) : undefined;
+  const result = await runLedgerTool(ledgerService, resolved.caller, resolved.call, remote);
   if (!result.ok) return { kind: 'error', text: result.text };
   return result.image ? { kind: 'image', base64: result.image.base64, mimeType: result.image.mimeType, text: result.text } : { kind: 'text', text: result.text };
 }

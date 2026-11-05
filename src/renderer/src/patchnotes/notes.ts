@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-05',
     items: [
       {
+        title: 'Sessões na VPS também anexam print e protótipo',
+        text: 'Uma sessão que roda na VPS agora entrega print, vídeo ou protótipo como prova, e eles aparecem na carta como os das sessões do computador. O app busca o arquivo pela conexão com a VPS, recusa atalho e arquivo grande demais, e guarda uma cópia aqui.',
+      },
+      {
         title: 'Escreva na carta para quem fez',
         text: 'Na frente da carta, "✎ Escrever para…" abre uma caixa de texto (no celular, dá para ditar). "Enviar" manda na hora para a sessão que fez a tarefa; se ela estiver fechada, vai para o Líder; se ninguém estiver aberto, fica guardado na carta. A carta mostra para onde foi e continua esperando você, e a resposta chega como uma carta nova. Se você escolher um caminho com algo escrito, o texto vai junto da decisão. O verso mostra a conversa em ordem.',
       },
