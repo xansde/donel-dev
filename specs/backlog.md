@@ -1531,6 +1531,59 @@ vive, sem o dono escolher nada.
 conversa dela na VPS, com o histórico; com a VPS desligada, aparece o aviso e
 nenhuma aba vazia.
 
+### B40. Mensagem entre sessões presa em "Retida" e sessão parada como "precisa do dono" (prioridade máxima do dono, 04/11)
+
+**Pedido:** "sempre que uma mensagem é enviada, eu PRECISO que ela seja enviada
+através desse modelo. Não que fique esperando no modo chat. É inviável eu ficar
+acessando as telas e apertando para tentar de novo." "Esse modelo" é a fila
+nativa do CLI ("Press up to edit queued messages").
+
+**O que acontecia:** `sessao_enviar` e o aviso "◆ … terminou" respondiam
+"Retida: o dono está digitando lá ou há uma permissão aberta" e não entravam.
+Sessões que fecharam o turno limpo apareciam "precisa do dono". Quando a fila
+soltava, avisos chegavam em dobro. A fila sumia num reinício.
+
+**Causa (confirmada no código):**
+1. **Estado falso.** `mapHookEventName` (`src/main/session-semaphore-manager.ts`)
+   levava **todo** `Notification` para `permission`. O CLI manda
+   `notification_type: idle_prompt` cerca de um minuto depois de um `Stop` limpo
+   ("Claude is waiting for your input"), e a sessão parada virava "precisa do
+   dono" até o próximo prompt. Agravante: uma pendência que o transcript nunca
+   respondia (sem `tool_use_id` para casar) ficava aberta no `chat-hub.ts` e o
+   `publicStateFor` (`session-semaphore-manager.ts`) mantinha `permission`.
+2. **Retenção própria.** `AgentBridge.deliver`/`isBlocked`
+   (`src/renderer/src/Mindscape/agentBridge.ts`) segurava numa fila em memória
+   do renderer por `ownerTyping` (rascunho do composer) ou por
+   `stateOf === 'permission'` (a marca falsa acima). Nunca soltava.
+3. **Aviso em dobro.** Nada impedia o mesmo fim de turno de virar dois avisos (um
+   `Stop` repetido, ou o `Stop` de um subagente com `agent_id`, que relia o fim
+   do transcript e trazia o texto do turno anterior).
+
+**O que mudou (PR #209, `fix/mensagem-direto-cli`):**
+- O semáforo só vira `permission` com `Notification` que pede o dono
+  (`permission_prompt`, `worker_permission_prompt`, `elicitation_dialog`,
+  `agent_needs_input`); `idle_prompt` e `auth_success` não contam. `Stop` de
+  subagente não é fim do turno da sessão (nem estado, nem aviso).
+- O `Stop` principal fecha as pendências principais abertas; o `SubagentStop`
+  fecha as daquele subagente.
+- O `AgentBridge` não retém mais nada: a mensagem e o aviso vão na hora para o
+  driver de envio do destino, que escreve na fila do próprio CLI mesmo no meio
+  do turno. O único "espera" é o do driver diante de um diálogo real desenhado
+  na tela (permissão, pergunta): ele espera sem relógio e envia sozinho quando
+  o diálogo fecha. A resposta do `sessao_enviar` diz isso quando a tela mostra
+  um prompt de permissão.
+- Cada fim de turno é anunciado uma vez (mesma sessão + mesmo texto = um aviso).
+
+**Próximo passo (fora deste PR):** a fila do driver de envio vive em memória do
+renderer; uma mensagem que espera um diálogo real se perde se o app reiniciar
+antes de ele fechar. Persistir essa fila por aba (no `userData`, com a ordem)
+exige mexer no driver do chat, que é compartilhado com o composer do dono.
+
+**Pronto quando:** no alfa, o Líder manda `sessao_enviar` para uma sessão
+trabalhando e para uma parada há mais de um minuto, e as duas recebem sem
+ninguém clicar; a parada não aparece "precisa do dono"; cada "terminou" chega
+uma vez.
+
 ## Decidido, aguardando spec
 
 - ~~**Restauração de sessões no restart**~~ — **CANCELADA em 2026-07-25 pelo

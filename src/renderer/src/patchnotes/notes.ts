@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-04',
     items: [
       {
+        title: 'Mensagem entre sessões chega sozinha',
+        text: 'A mensagem que uma sessão manda para outra, e o aviso de que uma sessão terminou, agora entram na hora, mesmo com a outra trabalhando: vão para a fila do próprio Claude de lá, como quando você digita no terminal com ele ocupado. Nada fica mais "Retida" esperando você abrir a aba. Só uma permissão aberta na tela de lá segura a mensagem, e ela entra sozinha quando a permissão fecha. Sessão que terminou o turno sem pedir nada não aparece mais como "precisa de você", e cada aviso de término chega uma vez só.',
+      },
+      {
         title: 'Retomar abre a sessão onde ela vive',
         text: 'Uma sessão que nasceu na VPS agora retoma na VPS, mesmo que você esteja retomando deste computador: dois cliques no lugar dela no Mindscape ou um clique nos Favoritos. Antes ela abria aqui e falhava, porque a conversa está gravada lá. Se a VPS não responder, o app avisa em vez de abrir uma sessão vazia.',
       },
@@ -43,7 +47,7 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
       },
       {
         title: 'Sessões montam o Mindscape e trabalham em time',
-        text: 'Uma sessão agora monta o quadro ao vivo, sem reabrir o app: põe lugares com papel, post-its, retângulos, setas e ligações, e cada leva entra como um gesto só, que o Ctrl+Z desfaz. Ela mexe só no que uma sessão criou, nunca no que é seu. Ela também abre outras sessões com papel (nascem ligadas a ela por uma seta, no mesmo lugar onde ela roda), manda mensagem pelas setas do quadro e é avisada quando cada uma termina. A mensagem entra direto no chat da outra, sem pedir aprovação, e só espera enquanto você digita lá ou há uma permissão aberta. Até 4 sessões abertas por uma mesma sessão; a partir da 5ª, aparece "Precisa de você" para permitir ou negar. Novo papel pronto: Líder, que reparte o trabalho e só traz a você o que o time não resolve.',
+        text: 'Uma sessão agora monta o quadro ao vivo, sem reabrir o app: põe lugares com papel, post-its, retângulos, setas e ligações, e cada leva entra como um gesto só, que o Ctrl+Z desfaz. Ela mexe só no que uma sessão criou, nunca no que é seu. Ela também abre outras sessões com papel (nascem ligadas a ela por uma seta, no mesmo lugar onde ela roda), manda mensagem pelas setas do quadro e é avisada quando cada uma termina. A mensagem entra direto no chat da outra, sem pedir aprovação, e só espera se houver uma permissão aberta na tela de lá. Até 4 sessões abertas por uma mesma sessão; a partir da 5ª, aparece "Precisa de você" para permitir ou negar. Novo papel pronto: Líder, que reparte o trabalho e só traz a você o que o time não resolve.',
       },
       {
         title: 'Sessão na VPS abre direto, sem tela de primeiro uso',
