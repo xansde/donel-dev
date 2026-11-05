@@ -161,6 +161,7 @@ import type {
   MindscapeTurnEndedPayload,
 } from '../shared/mindscape/channels';
 import type { MindscapeDoc } from '../shared/mindscape/model';
+import { CELULAR_CHANNELS, type CelularPairResult, type CelularState } from '../shared/celular';
 import { LIDER_CHANNELS, type LiderReport, type LiderSendPayload, type LiderSendResult, type LiderState } from '../shared/lider/ipc';
 import { ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
 import { SESSION_RENEWAL_CHANNELS, type HandoffStatus, type RenewalPrepareInput, type RenewalPrepared, type SessionRenewalPrefs } from '../shared/sessionRenewal';
@@ -852,6 +853,14 @@ const donelApi: DonelApi = {
     showTab: () => {
       ipcRenderer.send(LIDER_CHANNELS.showTab);
     },
+  },
+
+  // Ledger no celular — the PWA on the Tailscale interface (Preferências → Celular).
+  celular: {
+    getState: () => ipcRenderer.invoke(CELULAR_CHANNELS.getState) as Promise<CelularState>,
+    setEnabled: (enabled: boolean) => ipcRenderer.invoke(CELULAR_CHANNELS.setEnabled, enabled) as Promise<CelularState>,
+    pair: () => ipcRenderer.invoke(CELULAR_CHANNELS.pair) as Promise<CelularPairResult>,
+    revoke: (deviceId: string) => ipcRenderer.invoke(CELULAR_CHANNELS.revoke, deviceId) as Promise<CelularState>,
   },
 };
 

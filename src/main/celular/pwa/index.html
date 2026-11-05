@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#e9dfc8" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#121019" media="(prefers-color-scheme: dark)" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Ledger" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <title>Ledger · Donel</title>
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icon.svg" />
+    <link rel="stylesheet" href="/app.css" />
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topo">
+      <div class="marca">
+        <span class="marca-glifo" aria-hidden="true"></span>
+        <div>
+          <h1>Ledger</h1>
+          <p id="contagem" class="contagem" aria-live="polite"></p>
+        </div>
+      </div>
+      <button id="atualizar" class="botao-icone" type="button" aria-label="Atualizar">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5" /></svg>
+      </button>
+    </header>
+    <p id="demo" class="demo" hidden>Demonstração: o ledger ainda não chegou ao Donel Dev. Estas cartas são exemplo e nada aqui vale de verdade.</p>
+    <main id="baralho" class="baralho" aria-label="Entregas esperando você"></main>
+    <div id="aviso" class="aviso" role="status" aria-live="polite" hidden></div>
+
+    <div id="folha" class="folha-fundo" hidden>
+      <form id="folha-form" class="folha" aria-labelledby="folha-titulo">
+        <h2 id="folha-titulo">Por que rejeitar?</h2>
+        <p class="folha-dica">Escreva ou dite pelo microfone do teclado. Quem entregou recebe este motivo.</p>
+        <textarea id="motivo" rows="4" maxlength="2000" required placeholder="O que falta para ficar pronto"></textarea>
+        <div class="folha-acoes">
+          <button type="button" id="folha-cancelar" class="botao botao-neutro">Cancelar</button>
+          <button type="submit" class="botao botao-nao">Rejeitar</button>
+        </div>
+      </form>
+    </div>
+  </body>
+</html>
