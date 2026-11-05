@@ -32,7 +32,7 @@ import { SESSION_RENEWAL_CHANNELS, sanitizeSessionRenewalPrefs, type HandoffStat
 import { LEARNING_CHANNELS, parseRendererGesture, type GestureEvent } from '../shared/learning/gestures';
 import { createGestureDiary, type GestureDiary } from './gesture-diary';
 import type { MindscapeReadImageResult, MindscapeSaveImageResult, MindscapeSaveResult, MindscapeTurnEndedPayload } from '../shared/mindscape/channels';
-import type { MindscapeDoc } from '../shared/mindscape/model';
+import type { MindscapeBoard, MindscapeDoc } from '../shared/mindscape/model';
 import { esteiraOutboxDir } from './esteira-ingest';
 import { esteiraInboxDir } from './esteira-dispatch';
 import { resolveBoardMirrorAdapter } from './esteira-mirror';
@@ -2885,11 +2885,19 @@ async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string): Promise<
   if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string') return 'Seu lugar ainda não está no quadro; espere o primeiro turno terminar.';
   const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar' });
   const places = list.kind === 'text' ? (JSON.parse(list.text) as { id?: unknown }[]) : [];
+  // Who opened whom and the arrows (low risk and the Revisor's chain): as the renderer saved the board.
+  let board: MindscapeBoard | undefined;
+  try {
+    board = createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load().boards[who.pasta];
+  } catch {
+    board = undefined;
+  }
   return {
     projectPath: who.pasta,
     placeId: who.lugar,
     ...(typeof who.papel === 'string' ? { roleId: who.papel } : {}),
     boardPlaceIds: places.map((place) => place.id).filter((id): id is string => typeof id === 'string'),
+    ...(board ? { board } : {}),
   };
 }
 
@@ -2898,7 +2906,8 @@ async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: 
   const caller = await ledgerCallerOf(boardBridge, ptyId);
   if (typeof caller === 'string') return { kind: 'error', text: caller };
   const result = await runLedgerTool(ledgerService, caller, call);
-  return result.ok ? { kind: 'text', text: result.text } : { kind: 'error', text: result.text };
+  if (!result.ok) return { kind: 'error', text: result.text };
+  return result.image ? { kind: 'image', base64: result.image.base64, mimeType: result.image.mimeType, text: result.text } : { kind: 'text', text: result.text };
 }
 
 /** Papéis de sessão (item 12a) — list and save of `<userData>/papeis/<id>.md`. */

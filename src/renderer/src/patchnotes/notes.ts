@@ -30,6 +30,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'As sessões agora registram as tarefas que passam entre elas: a frase de quem pediu, quando está pronto, o prazo, quem faz e o risco. Ninguém marca uma tarefa como entregue sem anexar prova (print, vídeo, a saída de um comando ou o link do CI), e quem entregou não pode aceitar a própria entrega. Um Revisor aceita as de risco baixo; as de risco alto esperam você. No topo de cada quadro aparece uma faixa com os números: abertas, em execução, entregues sem aceite, esperando você (com a mais velha) e quantas foram validadas sem você. Clique em "esperando você" para ver cada entrega com a prova e aceitar ou rejeitar com um motivo. Na primeira semana, até três aceites do Revisor por dia também aparecem ali, para você conferir.',
       },
       {
+        title: 'O Revisor só aceita depois de ver a prova, e de fora da cadeia',
+        text: 'O Revisor agora lê a prova inteira (o texto, o link e o print) antes de aceitar ou rejeitar; sem isso o aceite é recusado. Ele só decide tarefas do próprio quadro e nunca as de quem o abriu. E uma tarefa criada em risco baixo pelo próprio dono do trabalho, ou por uma sessão que ele abriu, passa a esperar você.',
+      },
+      {
         title: 'Validar entregas pelo celular',
         text: 'Em Preferências, Celular, ligue "App do celular para validar entregas" e toque em "Parear um celular": aponte a câmera do celular para o QR e adicione a página à tela inicial. Cada entrega que espera você vira uma carta, uma por tela: arraste para a direita para aceitar ou para a esquerda para rejeitar, contando o motivo (dá para ditar). Os botões embaixo fazem o mesmo, e o que você decide pelo celular conta como validação sua. Só funciona pela sua Tailscale, nada sai para a internet, e você revoga um celular na mesma tela.',
       },
