@@ -30,6 +30,11 @@ export function guardNavigation(contents: Pick<WebContents, 'on' | 'getURL' | 's
 // `main/browser/browser-panels.ts`. It lets http/https/about:blank through, blocks every other scheme
 // (`file://` included), sends popups (`window.open`, `target=_blank`) to the panel (a new tab, since the V2) and
 // refuses `<webview>`.
+//
+// Local file (04/11): the panel opens a page, image or PDF of this computer, but only through an explicit load
+// (address bar or `navegador_abrir`, which never cross this guard). From inside, the page stays put: a link,
+// redirect or popup to `file:` is blocked here, and so is a frame (`<iframe>`, `<object>`) pointing at a file or a
+// folder, which would otherwise read the disk next to it or list a folder.
 
 export interface BrowserPanelGuardDeps {
   /** Which URLs the panel may show (`isAllowedPanelUrl` of shared/browser/url.ts). */
@@ -49,6 +54,13 @@ export function guardBrowserPanelNavigation(contents: Pick<WebContents, 'on' | '
   };
   contents.on('will-navigate', filter);
   contents.on('will-redirect', filter);
+  // Subframes: `will-navigate` only covers the main frame. A web page cannot frame `file:` (Chromium refuses), but a
+  // local page can, so a frame into `file:` is always blocked; web frames stay free (embeds, logins).
+  contents.on('will-frame-navigate', (details) => {
+    if (details.isMainFrame || !/^file:/i.test(details.url)) return;
+    details.preventDefault();
+    deps.onBlocked?.(details.url);
+  });
   contents.on('will-attach-webview', (event) => event.preventDefault());
   contents.setWindowOpenHandler(({ url }) => {
     if (deps.isAllowed(url)) deps.openInPanel(url);

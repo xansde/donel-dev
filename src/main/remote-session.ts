@@ -52,6 +52,8 @@ export interface RemoteSessionMeta {
   readonly projectName: string;
   readonly name: string;
   readonly launchArgs: readonly string[];
+  /** Place of the session that opened this one (`sessao_abrir`); absent when the owner opened it. */
+  readonly openedBy?: string;
   readonly createdAt: string;
 }
 

@@ -21,11 +21,27 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         title: 'Tarefas com prova no topo do Mindscape',
         text: 'As sessões agora registram as tarefas que passam entre elas: a frase de quem pediu, quando está pronto, o prazo, quem faz e o risco. Ninguém marca uma tarefa como entregue sem anexar prova (print, vídeo, a saída de um comando ou o link do CI), e quem entregou não pode aceitar a própria entrega. Um Revisor aceita as de risco baixo; as de risco alto esperam você. No topo de cada quadro aparece uma faixa com os números: abertas, em execução, entregues sem aceite, esperando você (com a mais velha) e quantas foram validadas sem você. Clique em "esperando você" para ver cada entrega com a prova e aceitar ou rejeitar com um motivo. Na primeira semana, até três aceites do Revisor por dia também aparecem ali, para você conferir.',
       },
+      {
+        title: 'O time do Líder continua fora das abas depois de atualizar',
+        text: 'As sessões que o Líder abriu voltavam para as abas depois de atualizar o app ou de reabri-lo com sessões vivas na VPS. Agora elas voltam como estavam: trabalhando, fora das abas, acompanhadas pelo lugar delas no Mindscape. Dois cliques no lugar continuam trazendo a sessão para as abas.',
+      },
+      {
+        title: 'Retomar avisa enquanto procura a conversa na VPS',
+        text: 'Ao retomar uma sessão cuja conversa não está neste computador, o app pergunta à VPS onde ela está, o que pode levar alguns segundos. Antes o clique parecia não fazer nada; agora aparece "Procurando a conversa…" até a resposta chegar.',
+      },
+      {
+        title: 'Mensagens entre sessões não ficam mais paradas na caixa',
+        text: 'Com o PC carregado, o pedido de uma sessão recém-aberta, e às vezes a mensagem para uma sessão parada, ficava na caixa do terminal (como "[Pasted text #1 …]" ou o próprio texto) e nunca era enviado, até você apertar Enter. Agora o app espera o Claude de lá mostrar a mensagem, aperta o Enter e confere se ela saiu, repetindo só o Enter se precisar (o texto nunca vai duas vezes). Quem mandou só ouve "Entregue" depois que entrou de verdade. E o estado fala a verdade: "começando" enquanto a sessão não pegou o pedido e, depois de um minuto e meio, "não começou" com o motivo, avisado também a quem a abriu.',
+      },
     ],
   },
   {
     date: '2026-11-04',
     items: [
+      {
+        title: 'O navegador abre arquivo deste computador',
+        text: 'O HTML que uma sessão gerou agora abre direto no navegador ao lado da conversa, sem sair do app. Vale para página HTML, imagem e PDF: a sessão abre pelo caminho do arquivo, e você também pode colar o caminho (C:\\pasta\\relatorio.html) na barra de endereço. A página aberta não navega para outro arquivo nem mostra a pasta onde está.',
+      },
       {
         title: 'O Líder fecha as sessões que abriu',
         text: 'Uma sessão agora fecha as sessões que estão abaixo dela no quadro (pelas setas, direto ou em cadeia), em vez de deixar as abas para você fechar. Nunca fecha a si mesma nem quem está acima ou ao lado. Só valem as setas que você desenhou e as que nascem quando uma sessão abre outra; uma seta que a própria sessão desenha não a põe acima de ninguém. Para fechar em outro quadro, só o Líder que você pôs num quadro marcado com "Alcance: todos os quadros", botão novo na barra do Mindscape; sem marcar, cada quadro só alcança a si mesmo. Se a outra está trabalhando, recebe antes um aviso para pausar e espera o turno acabar (até 20 segundos). Com um pedido de permissão aberto lá, não fecha. O lugar continua no quadro como "fechada" e dois cliques retomam a conversa. A cópia isolada (worktree) sem mudanças é recolhida como ao fechar a aba; com trabalho pendente, nada se apaga.',

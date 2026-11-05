@@ -5,7 +5,7 @@
 // "never conversation content": no message text, no screen text. Reasons are the machine's own fixed pt-BR
 // strings, checked against `KNOWN_SEND_REASONS`; anything else becomes `'outro'`.
 
-import { hasFooter, isWorking, readInputText } from './screen';
+import { hasFooter, isWorking, pastedPlaceholder, readInputText } from './screen';
 import type { SendMachineState, SendStep } from './sendMachine';
 import type { SendKind, SendMode } from './rows';
 
@@ -66,6 +66,13 @@ export interface SendFailureDetail {
   readonly terminalNeeded: boolean;
   /** From the creation of the send to the failure. */
   readonly elapsedMs: number;
+  /** 05/11 — sizes only, never the text: how many characters the box held at the end, and the message had. */
+  readonly boxChars: number;
+  readonly textChars: number;
+  /** Last screen: the box held a `[Pasted text #N]` placeholder. */
+  readonly boxPlaceholder: boolean;
+  /** The gate read an empty box right before the paste. */
+  readonly boxEmptyAtPaste: boolean;
 }
 
 /** The detail of a failed send, from its machine state. Reads the last screen only through boolean detectors. */
@@ -89,6 +96,10 @@ export function describeSendFailure(state: SendMachineState, now: number): SendF
     pendingOpen: state.pendingOpen,
     terminalNeeded: state.terminalNeeded,
     elapsedMs: Math.max(0, now - state.createdAt),
+    boxChars: lines === null ? 0 : (readInputText(lines)?.length ?? 0),
+    textChars: state.text.length,
+    boxPlaceholder: lines !== null && pastedPlaceholder(lines) !== null,
+    boxEmptyAtPaste: state.boxEmptyAtPaste,
   };
 }
 
@@ -120,5 +131,9 @@ export function sanitizeSendFailure(input: unknown): SendFailureDetail | null {
     pendingOpen: flag(d.pendingOpen),
     terminalNeeded: flag(d.terminalNeeded),
     elapsedMs: count(d.elapsedMs),
+    boxChars: count(d.boxChars),
+    textChars: count(d.textChars),
+    boxPlaceholder: flag(d.boxPlaceholder),
+    boxEmptyAtPaste: flag(d.boxEmptyAtPaste),
   };
 }

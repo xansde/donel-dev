@@ -75,8 +75,8 @@ export const BROWSER_TOOLS: readonly ToolDefinition[] = [
     name: 'navegador_abrir',
     title: 'Abrir endereço',
     description:
-      'Abre um endereço http(s) no navegador integrado desta sessão (o dono vê a mesma página no painel do Donel). Endereço sem esquema vira https; localhost vira http. Depois, use navegador_ler para ver a página.',
-    inputSchema: { type: 'object', properties: { url: { type: 'string', description: 'Endereço http ou https.' } }, required: ['url'], additionalProperties: false },
+      'Abre um endereço http(s) no navegador integrado desta sessão (o dono vê a mesma página no painel do Donel). Endereço sem esquema vira https; localhost vira http. Também abre um arquivo deste computador que seja página HTML, imagem ou PDF, pelo caminho completo (C:\\pasta\\relatorio.html) ou file:///: use para mostrar ao dono um HTML que você gerou. Pasta, outro tipo de arquivo e pasta de rede são recusados. Depois, use navegador_ler para ver a página.',
+    inputSchema: { type: 'object', properties: { url: { type: 'string', description: 'Endereço http ou https, ou caminho completo de um arquivo HTML, imagem ou PDF deste computador.' } }, required: ['url'], additionalProperties: false },
   },
   {
     name: 'navegador_ler',
