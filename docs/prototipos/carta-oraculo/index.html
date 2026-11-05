@@ -1,0 +1,695 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cartas do Oráculo · protótipos</title>
+<style>
+/* ===================================================================================================
+   PROTÓTIPO DESCARTÁVEL (skill /prototipo). Nada aqui vai para produção.
+   Tokens copiados literalmente de:
+   - Carta (Harrow): src/main/celular/pwa/app.css (origin/staging) — :root e o bloco escuro
+   - Moldura do app (desktop): design-system/src/tokens.css (origin/staging)
+   =================================================================================================== */
+
+/* --- src/main/celular/pwa/app.css, :root (claro) --- */
+:root {
+  --fundo: #e9dfc8;
+  --fundo-veio: #e1d4b8;
+  --carta: #f8f1e1;
+  --carta-borda: #c9b48a;
+  --tinta: #2a2118;
+  --tinta-suave: #6b5a45;
+  --ouro: #9c7428;
+  --sim: #2f7a4d;
+  --nao: #a8362e;
+  --pre-fundo: #efe5cf;
+  --sombra: 0 10px 30px rgba(60, 40, 10, 0.18), 0 2px 6px rgba(60, 40, 10, 0.12);
+  --serifa: 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+  --sem-serifa: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --martelos: #a4552f;
+  --escudos: #3f6687;
+  --chaves: #2f7564;
+  --livros: #7a2c40;
+  --estrelas: #4e3f8f;
+  --coroas: #8a6a1c;
+  /* --- design-system/src/tokens.css --- */
+  --bg-app: #0e1116;
+  --bg-panel: #151a21;
+  --bg-raised: #1c232c;
+  --border: #28303b;
+  --text-primary: #d7dde5;
+  --text-muted: #828d9c;
+  --accent: #4c9cf0;
+  --state-waiting: #e8b44c;
+  --state-permission: #f0684c;
+  --zone-ok: #3dce8f;
+  --donel-accent: #e8b44c;
+  --postit-bg: #3a3526;
+  --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+}
+/* --- src/main/celular/pwa/app.css, bloco escuro (o celular segue o tema do aparelho, como a PWA) --- */
+@media (prefers-color-scheme: dark) {
+  .phone {
+    --fundo: #121019; --fundo-veio: #17141f; --carta: #1d1a27; --carta-borda: #4a4030; --tinta: #efe6d2;
+    --tinta-suave: #b3a78f; --ouro: #d2a44c; --sim: #5fbf86; --nao: #e0736a; --pre-fundo: #15131d;
+    --sombra: 0 10px 30px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.4);
+    --martelos: #d98a5f; --escudos: #7fa6c9; --chaves: #6cbfa8; --livros: #cf7d93; --estrelas: #a495e0; --coroas: #e0bb5a;
+  }
+}
+/* O desktop é dark-only (tokens.css §1.4): a carta usa o bloco escuro da PWA. */
+.desk {
+  --fundo: #121019; --fundo-veio: #17141f; --carta: #1d1a27; --carta-borda: #4a4030; --tinta: #efe6d2;
+  --tinta-suave: #b3a78f; --ouro: #d2a44c; --sim: #5fbf86; --nao: #e0736a; --pre-fundo: #15131d;
+  --sombra: 0 10px 30px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.4);
+  --martelos: #d98a5f; --escudos: #7fa6c9; --chaves: #6cbfa8; --livros: #cf7d93; --estrelas: #a495e0; --coroas: #e0bb5a;
+}
+/* Cor "aviso" das checagens: reaproveita --state-waiting (tokens.css), sem hex novo. */
+
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg-app); color: var(--text-primary); font-family: var(--font-ui); }
+svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+button { font: inherit; cursor: pointer; }
+details > summary { cursor: pointer; }
+
+/* ---------------- barra do índice ---------------- */
+.barra { position: sticky; top: 0; z-index: 50; background: var(--bg-panel); border-bottom: 1px solid var(--border); padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; }
+.barra h1 { margin: 0; font-size: 15px; font-weight: 600; }
+.barra h1 small { display: block; font-weight: 400; font-size: 11px; color: var(--text-muted); }
+.grupo { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.grupo > span { font-size: 11px; color: var(--text-muted); margin-right: 4px; }
+.grupo button { background: var(--bg-raised); color: var(--text-primary); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 5px 10px; font-size: 12px; }
+.grupo button[aria-pressed="true"] { border-color: var(--donel-accent); color: var(--donel-accent); }
+.barra a { color: var(--donel-accent); font-size: 12px; }
+.sobre { padding: 10px 16px 0; font-size: 13px; color: var(--text-muted); max-width: 1100px; }
+.sobre b { color: var(--text-primary); }
+.palco { display: flex; flex-wrap: wrap; gap: 28px; justify-content: center; align-items: flex-start; padding: 18px 16px 60px; }
+.rotulo-tela { font-size: 11px; color: var(--text-muted); text-align: center; margin-bottom: 6px; letter-spacing: .08em; text-transform: uppercase; }
+
+/* ---------------- moldura do celular ---------------- */
+.phone { width: 390px; height: 820px; border-radius: 44px; padding: 12px; background: #000; box-shadow: 0 0 0 2px #333, 0 20px 50px rgba(0,0,0,.5); }
+.phone-tela { position: relative; width: 100%; height: 100%; border-radius: 34px; overflow: hidden; background: var(--fundo); background-image: radial-gradient(circle at 50% 0%, var(--fundo-veio), var(--fundo) 70%); color: var(--tinta); font-family: var(--sem-serifa); display: flex; flex-direction: column; }
+.phone-status { height: 34px; flex: none; display: flex; justify-content: space-between; align-items: center; padding: 6px 26px 0; font-size: 12px; font-weight: 600; }
+.phone-topo { flex: none; display: flex; align-items: center; justify-content: space-between; padding: 2px 16px 8px; }
+.phone-topo .marca { display: flex; gap: 8px; align-items: center; }
+.phone-topo .marca svg { width: 26px; height: 26px; color: var(--ouro); }
+.phone-topo h2 { margin: 0; font-family: var(--serifa); font-size: 1.1rem; letter-spacing: .05em; }
+.phone-topo p { margin: 0; font-size: .75rem; color: var(--tinta-suave); }
+.phone-corpo { flex: 1; min-height: 0; position: relative; display: flex; flex-direction: column; }
+
+/* ---------------- moldura do desktop (Donel Dev + Mindscape) ---------------- */
+.desk { width: 1200px; height: 760px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--bg-app); display: flex; flex-direction: column; box-shadow: 0 20px 50px rgba(0,0,0,.5); font-family: var(--font-ui); color: var(--text-primary); font-size: 13px; }
+.desk-titulo { height: 30px; flex: none; background: var(--bg-panel); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; padding: 0 12px; font-size: 12px; color: var(--text-muted); }
+.desk-titulo i { width: 10px; height: 10px; border-radius: 50%; background: var(--border); display: inline-block; }
+.desk-meio { flex: 1; min-height: 0; display: flex; }
+.desk-lateral { width: 190px; flex: none; background: var(--bg-panel); border-right: 1px solid var(--border); padding: 12px; font-size: 12px; color: var(--text-muted); display: flex; flex-direction: column; gap: 6px; }
+.desk-lateral b { color: var(--text-primary); font-weight: 600; }
+.desk-lateral .ponto { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; }
+.desk-quadro { flex: 1; min-width: 0; position: relative; display: flex; flex-direction: column; }
+.faixa-oraculo { flex: none; display: flex; gap: 14px; align-items: center; padding: 6px 12px; background: var(--bg-panel); border-bottom: 1px solid var(--border); font-size: 11px; color: var(--text-muted); }
+.faixa-oraculo b { color: var(--text-primary); }
+.faixa-oraculo .esperando { color: var(--bg-app); background: var(--state-waiting); border-radius: var(--radius-sm); padding: 2px 8px; font-weight: 600; }
+.lousa { flex: 1; min-height: 0; position: relative; background-color: var(--bg-app); background-image: radial-gradient(var(--border) 1px, transparent 1px); background-size: 22px 22px; overflow: hidden; }
+.postit { position: absolute; background: var(--postit-bg); color: var(--text-primary); border-radius: var(--radius-sm); padding: 10px; width: 150px; font-size: 12px; box-shadow: 0 4px 10px rgba(0,0,0,.3); }
+.lugar { position: absolute; border: 1px solid var(--border); background: var(--bg-raised); border-radius: var(--radius-md); padding: 8px 10px; font-size: 12px; width: 170px; }
+.lugar small { display: block; color: var(--text-muted); }
+.veu { position: absolute; inset: 0; background: rgba(8,10,14,.62); backdrop-filter: blur(2px); }
+
+/* ---------------- peças comuns da carta ---------------- */
+.naipe-martelos { --naipe: var(--martelos); } .naipe-escudos { --naipe: var(--escudos); } .naipe-chaves { --naipe: var(--chaves); }
+.naipe-livros { --naipe: var(--livros); } .naipe-estrelas { --naipe: var(--estrelas); } .naipe-coroas { --naipe: var(--coroas); }
+.tag { display: inline-flex; gap: 6px; align-items: center; font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; color: var(--tinta-suave); }
+.tag .alto { color: var(--nao); font-weight: 700; }
+.tag .baixo { color: var(--sim); font-weight: 700; }
+.recolhido { margin-top: 10px; border-top: 1px solid var(--carta-borda); padding-top: 8px; font-size: .8rem; color: var(--tinta-suave); }
+.recolhido summary { padding: 4px 0; }
+.recolhido blockquote { margin: 6px 0; padding: 4px 0 4px 10px; border-left: 3px solid var(--naipe, var(--ouro)); font-family: var(--serifa); font-style: italic; color: var(--tinta); }
+.recolhido pre { white-space: pre-wrap; word-break: break-word; font-family: var(--mono); font-size: .68rem; background: var(--pre-fundo); border: 1px solid var(--carta-borda); border-radius: 6px; padding: 8px; max-height: 220px; overflow: auto; color: var(--tinta); }
+.recolhido a { color: var(--naipe, var(--ouro)); word-break: break-all; }
+
+/* Opção: botão grande com o efeito embaixo */
+.opcoes { display: flex; flex-direction: column; gap: 8px; }
+.opcao { text-align: left; width: 100%; border: 1.5px solid var(--carta-borda); background: var(--carta); color: var(--tinta); border-radius: 12px; padding: 9px 12px; display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: center; }
+.opcao b { font-size: .95rem; }
+.opcao span { grid-column: 1 / -1; font-size: .78rem; color: var(--tinta-suave); line-height: 1.35; }
+.opcao em { font-style: normal; font-size: .65rem; letter-spacing: .08em; text-transform: uppercase; color: var(--carta); background: var(--ouro); border-radius: 999px; padding: 2px 8px; }
+.opcao.rec { border-color: var(--ouro); box-shadow: inset 0 0 0 1px var(--ouro); }
+.opcao.feita { opacity: .45; }
+
+/* ---------------- os visuais ---------------- */
+.vis { border: 1px solid var(--carta-borda); background: var(--pre-fundo); border-radius: 10px; padding: 10px; color: var(--tinta); font-size: .8rem; }
+.vis h5 { margin: 0 0 6px; font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; color: var(--tinta-suave); font-weight: 600; display: flex; justify-content: space-between; }
+.vis .simulado { color: var(--nao); letter-spacing: .04em; }
+/* checagens (painel de luzes) */
+.luzes { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+.luzes li { display: grid; grid-template-columns: 18px 1fr; gap: 1px 8px; align-items: start; }
+.luzes li i { width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center; margin-top: 1px; color: #fff; }
+.luzes li i svg { width: 11px; height: 11px; stroke-width: 3; }
+.luzes li.ok i { background: var(--sim); }
+.luzes li.aviso i { background: var(--state-waiting); color: #2a2118; }
+.luzes b { font-size: .8rem; }
+.luzes span { grid-column: 2; font-size: .72rem; color: var(--tinta-suave); line-height: 1.3; }
+.luzes.compacta { grid-template-columns: 1fr 1fr; gap: 4px 10px; }
+.luzes.compacta li.aviso { grid-column: 1 / -1; }
+.vis.grande .luzes { gap: 12px; }
+.vis.grande .luzes b { font-size: 1.05rem; }
+.vis.grande .luzes span { font-size: .9rem; }
+.vis.grande .luzes li { grid-template-columns: 26px 1fr; }
+.vis.grande .luzes li i { width: 24px; height: 24px; }
+.vis.grande .luzes li i svg { width: 15px; height: 15px; }
+/* limite da conta */
+.limite .barra-limite { height: 14px; border-radius: 7px; background: var(--carta-borda); overflow: hidden; margin: 4px 0 2px; }
+.limite .barra-limite div { height: 100%; width: 100%; background: var(--nao); }
+.limite .linha { display: flex; justify-content: space-between; font-size: .72rem; color: var(--tinta-suave); }
+.limite .tempo { position: relative; margin: 14px 4px 4px; height: 40px; }
+.limite .tempo .trilho { position: absolute; left: 0; right: 0; top: 14px; height: 6px; border-radius: 3px; background: repeating-linear-gradient(45deg, var(--nao), var(--nao) 6px, transparent 6px, transparent 11px); opacity: .7; }
+.limite .tempo .marco { position: absolute; top: 0; font-size: .68rem; color: var(--tinta-suave); }
+.limite .tempo .marco::before { content: ''; display: block; width: 12px; height: 12px; border-radius: 50%; background: var(--tinta); margin: 11px 0 3px; }
+.limite .tempo .marco.fim { right: 0; text-align: right; }
+.limite .tempo .marco.fim::before { margin-left: auto; background: var(--sim); }
+.limite .tempo .meio { position: absolute; left: 50%; transform: translateX(-50%); top: -2px; font-weight: 700; color: var(--nao); font-size: .8rem; white-space: nowrap; }
+.limite ul { margin: 8px 0 0; padding-left: 16px; font-size: .74rem; color: var(--tinta-suave); }
+.vis.grande.limite { font-size: 1rem; padding: 22px; }
+.vis.grande.limite .barra-limite { height: 26px; border-radius: 13px; }
+.vis.grande.limite .linha, .vis.grande.limite ul, .vis.grande.limite .tempo .marco { font-size: .95rem; }
+.vis.grande.limite .tempo { height: 60px; margin-top: 30px; }
+.vis.grande.limite .tempo .meio { font-size: 1.2rem; top: -10px; }
+/* antes/depois do painel de progresso */
+.ad { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.painel { background: #151a21; color: #d7dde5; border-radius: 8px; padding: 7px; font-family: var(--font-ui); border: 1px solid #28303b; }
+.painel header { display: flex; justify-content: space-between; font-size: .62rem; color: #828d9c; margin-bottom: 5px; }
+.painel header b { color: #d7dde5; }
+.painel .lin { display: grid; grid-template-columns: 1fr 34px; gap: 4px; align-items: center; font-size: .58rem; padding: 2px 0; }
+.painel .lin .nome { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.painel .lin .b { height: 4px; border-radius: 2px; background: #28303b; overflow: hidden; }
+.painel .lin .b div { height: 100%; background: #4c9cf0; }
+.painel .lin.feita { color: #5e6873; text-decoration: line-through; }
+.painel .lin.feita .b div { background: #5e6873; }
+.painel .lin.entregue .b div { background: #e8b44c; }
+.painel .mais { font-size: .58rem; color: #828d9c; margin-top: 3px; }
+.ad .leg { font-size: .66rem; letter-spacing: .1em; text-transform: uppercase; color: var(--tinta-suave); margin-bottom: 3px; display: flex; justify-content: space-between; }
+.ad .leg b { color: var(--tinta); }
+.vis.grande .ad { gap: 22px; }
+.vis.grande .painel { padding: 14px; }
+.vis.grande .painel header { font-size: .85rem; margin-bottom: 10px; }
+.vis.grande .painel .lin { font-size: .82rem; grid-template-columns: 1fr 70px; padding: 4px 0; }
+.vis.grande .painel .lin .b { height: 6px; }
+.vis.grande .painel .mais { font-size: .8rem; }
+.vis.grande .ad .leg { font-size: .85rem; }
+
+/* =================================================================================================
+   A — CARTA HARROW (frente decide, verso explica)
+   ================================================================================================= */
+.A-mesa { flex: 1; min-height: 0; padding: 4px 14px 14px; perspective: 1600px; display: flex; flex-direction: column; }
+.A-carta { position: relative; flex: 1; min-height: 0; transform-style: preserve-3d; transition: transform .6s ease; }
+.A-carta.virada { transform: rotateY(180deg); }
+.A-face { position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; border-radius: 18px; background: var(--carta); box-shadow: var(--sombra); padding: 9px; }
+.A-verso { transform: rotateY(180deg); }
+.A-moldura { height: 100%; border: 2px solid var(--naipe); border-radius: 12px; padding: 4px; }
+.A-interna { position: relative; height: 100%; border: 1px solid var(--ouro); border-radius: 9px; display: flex; flex-direction: column; overflow: hidden; }
+.A-cabeca { flex: none; display: flex; justify-content: space-between; align-items: center; padding: 8px 12px 0; color: var(--naipe); }
+.A-cabeca .glifo { width: 26px; height: 26px; }
+.A-cabeca .nome { font-family: var(--serifa); font-size: .7rem; letter-spacing: .22em; text-transform: uppercase; }
+.A-cabeca .idx { font-family: var(--serifa); font-size: .75rem; color: var(--tinta-suave); }
+.A-titulo { flex: none; text-align: center; padding: 2px 16px 6px; }
+.A-titulo .quadro { font-size: .66rem; letter-spacing: .14em; text-transform: uppercase; color: var(--tinta-suave); }
+.A-titulo h3 { margin: 3px 0 0; font-family: var(--serifa); font-size: 1.22rem; line-height: 1.18; font-weight: 600; }
+.A-ilustra { flex: none; margin: 0 12px; }
+.A-rec { flex: none; margin: 8px 12px 6px; padding: 6px 10px; border-top: 1px solid var(--ouro); border-bottom: 1px solid var(--ouro); text-align: center; font-size: .8rem; line-height: 1.35; }
+.A-rec b { color: var(--naipe); font-family: var(--serifa); font-size: .95rem; }
+.A-opcoes { flex: 1; min-height: 0; overflow: auto; padding: 0 12px; }
+.A-pe { flex: none; display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 12px 9px; font-size: .72rem; color: var(--tinta-suave); }
+.A-selo { display: flex; gap: 6px; align-items: flex-start; line-height: 1.3; }
+.A-selo i { flex: none; font-style: normal; font-size: .62rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; border: 1.5px solid currentColor; border-radius: 999px; padding: 1px 6px; transform: rotate(-4deg); }
+.A-selo.alto i { color: var(--nao); } .A-selo.baixo i { color: var(--sim); }
+.A-virar { flex: none; border: 1px solid var(--naipe); color: var(--naipe); background: transparent; border-radius: 999px; padding: 4px 10px; font-size: .72rem; }
+.A-verso-corpo { flex: 1; min-height: 0; overflow: auto; padding: 4px 16px 10px; font-size: .84rem; line-height: 1.45; }
+.A-verso-corpo h4 { margin: 12px 0 3px; font-family: var(--serifa); font-size: .72rem; letter-spacing: .16em; text-transform: uppercase; color: var(--naipe); }
+.A-verso-corpo p { margin: 0; }
+.A-verso-corpo dl { margin: 0; } .A-verso-corpo dt { font-weight: 700; margin-top: 6px; } .A-verso-corpo dd { margin: 0; color: var(--tinta-suave); }
+.A-verso-corpo dd.r { color: var(--nao); font-size: .78rem; }
+/* desktop: mão de cartas à esquerda, carta grande ao centro */
+.desk .A-palco { position: absolute; inset: 0; display: flex; gap: 30px; align-items: center; justify-content: center; padding: 20px; }
+.desk .A-mao { display: flex; flex-direction: column; gap: 12px; width: 190px; }
+.desk .A-mini { border-radius: 10px; background: var(--carta); border: 2px solid var(--naipe); color: var(--tinta); padding: 10px; text-align: left; box-shadow: var(--sombra); }
+.desk .A-mini small { display: block; font-size: .62rem; letter-spacing: .14em; text-transform: uppercase; color: var(--naipe); }
+.desk .A-mini b { font-family: var(--serifa); font-size: .85rem; }
+.desk .A-mini[aria-current="true"] { outline: 2px solid var(--ouro); outline-offset: 3px; }
+.desk .A-mesa { width: 470px; height: 700px; flex: none; padding: 0; }
+
+/* =================================================================================================
+   B — CONVERSA COM O JOBU
+   ================================================================================================= */
+.B-chat { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--carta); }
+.B-topo { flex: none; display: flex; gap: 10px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--carta-borda); }
+.B-topo img { width: 38px; height: 38px; object-fit: contain; border-radius: 50%; background: var(--pre-fundo); border: 1px solid var(--carta-borda); }
+.B-topo b { display: block; font-size: .9rem; }
+.B-topo small { color: var(--tinta-suave); font-size: .72rem; }
+.B-fio { flex: 1; min-height: 0; overflow: auto; padding: 12px 12px 6px; display: flex; flex-direction: column; gap: 8px; }
+.B-msg { max-width: 88%; align-self: flex-start; background: var(--pre-fundo); border: 1px solid var(--carta-borda); border-radius: 4px 14px 14px 14px; padding: 8px 11px; font-size: .86rem; line-height: 1.4; }
+.B-msg.meta { background: transparent; border: 0; padding: 0 4px; font-size: .7rem; color: var(--tinta-suave); }
+.B-msg.forte { font-family: var(--serifa); font-size: 1.05rem; font-weight: 600; }
+.B-msg.rec { border-color: var(--ouro); }
+.B-msg.rec b { color: var(--ouro); }
+.B-msg.risco { border-left: 3px solid var(--nao); }
+.B-msg.risco.baixo { border-left-color: var(--sim); }
+.B-msg.vis-msg { max-width: 96%; padding: 6px; background: var(--carta); }
+.B-msg.eu { align-self: flex-end; background: var(--ouro); color: var(--carta); border: 0; border-radius: 14px 4px 14px 14px; font-weight: 600; }
+.B-respostas { flex: none; border-top: 1px solid var(--carta-borda); padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 7px; background: var(--fundo); }
+.B-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.B-chips button { border: 1px solid var(--carta-borda); background: var(--carta); color: var(--tinta-suave); border-radius: 999px; padding: 4px 10px; font-size: .74rem; }
+.B-respostas .opcao { padding: 7px 11px; }
+.B-respostas .opcao b { font-size: .88rem; }
+.B-respostas .opcao span { font-size: .72rem; }
+.desk .B-jobu { position: absolute; right: 24px; bottom: 16px; width: 120px; }
+.desk .B-jobu img { width: 120px; display: block; filter: drop-shadow(0 6px 10px rgba(0,0,0,.5)); }
+.desk .B-jobu .badge { position: absolute; top: 4px; right: 6px; background: var(--state-permission); color: #fff; font-weight: 700; font-size: 12px; border-radius: 999px; padding: 1px 7px; }
+.desk .B-balao { position: absolute; right: 150px; bottom: 30px; width: 500px; height: 620px; border-radius: 16px; overflow: hidden; display: flex; flex-direction: column; box-shadow: var(--sombra); border: 1px solid var(--carta-borda); font-family: var(--sem-serifa); color: var(--tinta); }
+.desk .B-balao::after { content: ''; position: absolute; right: -10px; bottom: 60px; width: 20px; height: 20px; background: var(--fundo); transform: rotate(45deg); }
+
+/* =================================================================================================
+   C — VISUAL GRANDE (lado a lado)
+   ================================================================================================= */
+.C-vis { flex: none; height: 50%; background: #0e1116; padding: 12px; display: flex; flex-direction: column; justify-content: center; position: relative; }
+.C-vis .vis { max-height: 100%; overflow: hidden; }
+.C-vis .ampliar { position: absolute; right: 18px; bottom: 18px; background: rgba(0,0,0,.6); color: #fff; border: 0; border-radius: 999px; font-size: .7rem; padding: 4px 9px; }
+.C-folha { flex: 1; min-height: 0; overflow: auto; background: var(--carta); border-radius: 18px 18px 0 0; margin-top: -14px; position: relative; padding: 8px 14px 12px; box-shadow: 0 -6px 18px rgba(0,0,0,.18); }
+.C-folha .pega { width: 40px; height: 4px; border-radius: 2px; background: var(--carta-borda); margin: 0 auto 8px; }
+.C-folha h3 { margin: 4px 0 6px; font-family: var(--serifa); font-size: 1.1rem; line-height: 1.22; }
+.C-rec { font-size: .8rem; line-height: 1.38; margin-bottom: 8px; color: var(--tinta-suave); }
+.C-rec b { color: var(--ouro); }
+.C-risco { margin-top: 8px; font-size: .76rem; line-height: 1.35; padding: 6px 9px; border-radius: 8px; background: var(--pre-fundo); border-left: 3px solid var(--nao); }
+.C-risco.baixo { border-left-color: var(--sim); }
+.desk .C-palco { position: absolute; inset: 0; display: grid; grid-template-columns: 1fr 360px; background: var(--fundo); color: var(--tinta); font-family: var(--sem-serifa); }
+.desk .C-esq { padding: 18px 22px; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.desk .C-fila { display: flex; gap: 8px; }
+.desk .C-fila button { flex: 1; text-align: left; background: var(--carta); color: var(--tinta-suave); border: 1px solid var(--carta-borda); border-radius: 8px; padding: 6px 10px; font-size: .74rem; }
+.desk .C-fila button[aria-current="true"] { border-color: var(--ouro); color: var(--tinta); }
+.desk .C-grande { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; }
+.desk .C-grande .vis { width: 100%; }
+.desk .C-dir { background: var(--carta); border-left: 1px solid var(--carta-borda); padding: 18px; overflow: auto; }
+.desk .C-dir h3 { margin: 6px 0 10px; font-family: var(--serifa); font-size: 1.3rem; line-height: 1.2; }
+
+/* =================================================================================================
+   D — ESCOLHA O CAMINHO (as opções são a tela)
+   ================================================================================================= */
+.D-tela { flex: 1; min-height: 0; overflow: auto; padding: 4px 14px 14px; }
+.D-tela h3 { margin: 6px 0 4px; font-family: var(--serifa); font-size: 1.18rem; line-height: 1.2; }
+.D-prova { display: grid; grid-template-columns: 1fr; gap: 6px; margin: 8px 0 12px; }
+.D-prova > small { font-size: .66rem; letter-spacing: .1em; text-transform: uppercase; color: var(--tinta-suave); }
+.D-caminhos { display: flex; flex-direction: column; gap: 10px; }
+.D-caminho { background: var(--carta); border: 1.5px solid var(--carta-borda); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; }
+.D-caminho.rec { border-color: var(--ouro); box-shadow: 0 0 0 1px var(--ouro), var(--sombra); }
+.D-faixa-rec { background: var(--ouro); color: var(--carta); font-size: .72rem; font-weight: 700; padding: 4px 12px; letter-spacing: .02em; }
+.D-faixa-rec span { font-weight: 400; }
+.D-futuro { display: flex; align-items: center; gap: 10px; padding: 10px 12px 6px; }
+.D-futuro .sinal { flex: none; width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; color: #fff; }
+.D-futuro .sinal svg { width: 18px; height: 18px; stroke-width: 2.4; }
+.D-futuro.ok .sinal { background: var(--sim); } .D-futuro.aviso .sinal { background: var(--state-waiting); color: #2a2118; } .D-futuro.ruim .sinal { background: var(--nao); }
+.D-futuro b { display: block; font-size: .95rem; }
+.D-futuro small { color: var(--tinta-suave); font-size: .74rem; }
+.D-caminho p { margin: 0; padding: 0 12px; font-size: .8rem; line-height: 1.4; }
+.D-caminho .r { margin: 6px 12px 0; font-size: .74rem; color: var(--tinta-suave); border-top: 1px dashed var(--carta-borda); padding-top: 6px; }
+.D-caminho .r b { color: var(--nao); }
+.D-caminho .mini { padding: 6px 12px 0; }
+.D-caminho button.escolher { margin: 10px 12px 12px; border-radius: 10px; border: 0; padding: 10px; background: var(--tinta); color: var(--carta); font-weight: 700; }
+.D-caminho.rec button.escolher { background: var(--ouro); }
+.desk .D-tela { position: absolute; inset: 0; padding: 18px 26px; background: var(--fundo); color: var(--tinta); font-family: var(--sem-serifa); }
+.desk .D-tela h3 { font-size: 1.5rem; }
+.desk .D-cab { display: grid; grid-template-columns: 1fr 380px; gap: 22px; align-items: start; }
+.desk .D-caminhos { flex-direction: row; align-items: stretch; }
+.desk .D-caminho { flex: 1; }
+</style>
+</head>
+<body>
+<header class="barra">
+  <h1>Cartas do Oráculo · protótipos<small>As mesmas 3 cartas reais, em 4 formas. Nada aqui grava nada.</small></h1>
+  <div class="grupo" id="g-variante"><span>Forma</span></div>
+  <div class="grupo" id="g-tela"><span>Tela</span></div>
+  <div class="grupo" id="g-carta"><span>Carta</span></div>
+  <a href="contrato.html">A proposta do contrato →</a>
+</header>
+<p class="sobre" id="sobre"></p>
+<main class="palco" id="palco"></main>
+
+<script>
+'use strict';
+/* PROTÓTIPO: JS só de navegação e estado visual. Sem fetch, sem backend, sem formulário que funciona. */
+
+// ---------- glifos (copiados de src/main/celular/pwa/app.js) ----------
+var GLIFOS = {
+  martelos: '<svg viewBox="0 0 24 24"><path d="M5.5 3.5l5 5-2.8 2.8-5-5z"/><path d="M8.2 6.2l3.3-3.3 2.6 2.6-3.3 3.3"/><path d="M10.4 11.2L20 20.8"/><path d="M14 4.5l1.5-1.5"/></svg>',
+  chaves: '<svg viewBox="0 0 24 24"><circle cx="7" cy="12" r="3.6"/><circle cx="7" cy="12" r="1.1"/><path d="M10.6 12H21.5M17.5 12v3.2M20.5 12v2.3"/></svg>',
+  coroas: '<svg viewBox="0 0 24 24"><path d="M3 8.2l4.6 4.1L12 4.8l4.4 7.5L21 8.2l-2 10.6H5z"/><path d="M5.6 15.6h12.8"/><circle cx="12" cy="4" r=".6"/></svg>',
+  estrelas: '<svg viewBox="0 0 24 24"><path d="M12 2.2l1.9 6.3 6.2-2.2-3.6 5.7 3.6 5.7-6.2-2.2L12 21.8l-1.9-6.3-6.2 2.2 3.6-5.7-3.6-5.7 6.2 2.2z"/><circle cx="12" cy="12" r="1.6"/></svg>'
+};
+var NOMES_NAIPE = { martelos: 'Martelos · construção', chaves: 'Chaves · acesso', coroas: 'Coroas · decisão' };
+var OK = '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+var EXCL = '<svg viewBox="0 0 24 24"><path d="M12 5v9M12 18.5v.5"/></svg>';
+var PARADO = '<svg viewBox="0 0 24 24"><path d="M8 6v12M16 6v12"/></svg>';
+
+// ---------- as 3 cartas, montadas do %APPDATA%\donel-dev\ledger.json (05/11) ----------
+// Os textos "para o dono" foram reescritos a partir do critério, da nota e das provas reais; é isso que o
+// contrato novo pediria a quem entrega. Ids, links e saídas brutas só em "tecnico".
+var ANTES = [
+  ['Cartas que você entende', 'run', 35], ['Líder único para todos os quadros', 'feita'], ['Painel só com o que está rolando', 'entregue', 100],
+  ['Portão de merge com build', 'feita'], ['Faxina de worktrees velhas', 'aberta', 0], ['Beta para compartilhar', 'feita'],
+  ['Teto de sessões pela RAM', 'aberta', 0], ['Nome "Oráculo Harrow"', 'feita'], ['Atualizar o app reabre o time', 'aberta', 0],
+  ['Balão do Jobu maior', 'feita'], ['"Esperando você" que não esperava', 'feita']
+];
+var DEPOIS = [
+  ['Cartas que você entende', 'run', 35], ['Painel só com o que está rolando', 'entregue', 100], ['Faxina de worktrees velhas', 'aberta', 0],
+  ['Teto de sessões pela RAM', 'aberta', 0], ['Atualizar o app reabre o time', 'aberta', 0], ['Rotinas saem da sombra', 'aberta', 0],
+  ['Senha dentro de link escapa da máscara', 'aberta', 0], ['Sessão na VPS não começa', 'aberta', 0], ['Sessões da VPS dividem a pasta', 'aberta', 0]
+];
+
+var CARTAS = [
+  {
+    titulo: 'Fase 2 da VPS: senhas e logins',
+    quadro: 'Homologação', quem: 'Dev · VPS Homologações', quando: 'hoje, 13:05', prazo: 'hoje', naipe: 'chaves',
+    tipo: 'Entrega para conferir', risco: 'alto',
+    pergunta: 'A VPS de homologação já tem todos os acessos. Aceito a fase 2?',
+    resumo: 'As 6 checagens passaram dentro da própria VPS. Sobrou uma ponta solta: o plugin de homologação de lá é uma versão de trabalho, não a oficial.',
+    rec: 'Aceitar com ressalva',
+    porque: 'tudo o que a fase pedia funcionou na VPS; a ponta solta não trava nada hoje, mas pode mudar sem aviso.',
+    opcoes: [
+      { rotulo: 'Aceitar com ressalva', rec: true, efeito: 'A VPS fica pronta para a primeira rodada de homologação. Abro uma tarefa: trocar o plugin pela versão oficial quando ela sair.',
+        risco: 'Nenhum novo: a troca do plugin fica anotada.', futuro: ['ok', 'Fase 3 começa hoje', 'com a troca do plugin na fila'] },
+      { rotulo: 'Aceitar', efeito: 'A VPS fica pronta para a primeira rodada. O plugin fica como está, sem tarefa.',
+        risco: 'Se a versão de trabalho mudar, a VPS passa a rodar algo diferente do PC sem ninguém ver.', futuro: ['aviso', 'Fase 3 começa hoje', 'plugin solto, sem dono'] },
+      { rotulo: 'Rejeitar', efeito: 'O Dev refaz o que você apontar. A VPS continua sem rodar homologação.',
+        risco: 'A fase 3 atrasa, e hoje não há nada errado para refazer.', futuro: ['ruim', 'VPS segue parada', 'até o Dev refazer'] }
+    ],
+    riscoFrase: 'Senhas de verdade numa máquina na nuvem. Só você e o Bill entram; cada senha ficou trancada na própria ferramenta, nenhuma em arquivo solto.',
+    visual: { tipo: 'luzes', titulo: 'Checagens feitas dentro da VPS', itens: [
+      ['ok', 'GitHub', 'Entra com a conta do time e administra o repositório da auditoria'],
+      ['ok', 'Cofre de senhas', 'Destrava sem senha guardada em arquivo'],
+      ['ok', 'Slack', 'Leu 3 conversas do canal do produto, sem postar nada'],
+      ['ok', 'Google do agente', 'Entrou sozinho, sem tela, em 18 s'],
+      ['ok', 'Ferramentas da Seazone', '5 de 5 respondem'],
+      ['ok', 'Claude', 'Abre e responde na VPS'],
+      ['aviso', 'Plugin de homologação', 'Versão de trabalho: a oficial está atrasada']
+    ] },
+    pedido: 'Preciso rodar esse processo na nossa nova VPs que o Bill nos concedeu e não no olímpo',
+    tecnico: { linhas: ['Tarefa t-1b6c1a95 · lugar place:4fd365dd-9dcf-4275-8ed5-298a59a374f4 (dev) · risco alto', 'Máquina: vps-time-homologacoes', 'Plugin: homologacao 1.13.4 da branch feat/homologacao-agentica-v1-13-fechamento (main em 1.8.2)'],
+      link: 'https://github.com/seazone-tech/esteira-homologacao/pull/105',
+      saida: 'gh: ✓ Logged in to github.com account xansde-seazone | scopes: gist, read:org, repo, workflow\ngh api repos/seazone-tech/auditor-rm --jq .permissions.admin -> true\nbw status -> unlocked | ~/.bw_master: não existe\nnode canal-produto.js thread ... -> itens: 3\nclaude --version -> 2.1.318 (Claude Code)\nlogin-google.js: abertura -> senha -> totp -> myaccount | 17,6 s\nclaude mcp list -> seazone-hub ✔ Connected (5 leituras ok)' }
+  },
+  {
+    titulo: 'Conta do Claude da VPS sem limite até sexta',
+    quadro: 'Homologação', quem: 'Líder', quando: 'hoje, 11:19', prazo: 'hoje', naipe: 'coroas',
+    tipo: 'Decisão sua', risco: 'alto',
+    pergunta: 'A conta do Claude na VPS gastou o limite da semana. Troco por outra conta ou esperamos até sexta?',
+    resumo: 'Sem conta com limite, nada roda na VPS: param os testes das permissões, a fase 2 e as rodadas de homologação.',
+    rec: 'Trocar a conta agora',
+    porque: 'esperar deixa a VPS parada por quase 2 dias; trocar leva 1 minuto no painel Contas.',
+    opcoes: [
+      { rotulo: 'Trocar a conta agora', rec: true, efeito: 'Você escolhe outra conta para o lugar Homologações no painel Contas. A VPS volta a rodar em minutos.',
+        risco: 'Gasta o limite da outra conta. Escolha uma que não esteja aberta no PC.', futuro: ['ok', 'VPS rodando hoje', 'em minutos, com outra conta'] },
+      { rotulo: 'Esperar até sexta', efeito: 'Nada roda na VPS até sexta, 07/11, às 10h. As tarefas de lá ficam paradas.',
+        risco: 'Cerca de 44 h sem homologação; o prazo de hoje da fase 2 escorrega.', futuro: ['ruim', 'VPS parada 44 h', 'volta sexta, 10h'] }
+    ],
+    riscoFrase: 'Uma conta do Claude não fica ativa em dois lugares. Se a escolhida estiver em uso no PC, as sessões daqui trocam de conta.',
+    visual: { tipo: 'limite', titulo: 'Limite da semana da conta na VPS', uso: 100, de: 'agora · qua 05/11, 11h', ate: 'volta · sex 07/11, 10h', parado: ['Testes das permissões', 'Fase 2: senhas e logins', 'Rodadas de homologação'] },
+    pedido: 'Preciso rodar esse processo na nossa nova VPs que o Bill nos concedeu e não no olímpo',
+    tecnico: { linhas: ['Tarefa t-4ef9feb7 · lugar session:1a6d1677-c96c-4c53-bb9f-23f6c28562b6 (lider)', 'Hoje ACEITAR/REJEITAR foram usados como "troquei a conta" / "esperamos": as opções não existem no contrato.'],
+      saida: 'claude -p na vps-time-homologacoes (05/11): "You\'ve hit your weekly limit · resets Nov 7, 10am"' }
+  },
+  {
+    titulo: 'Painel de progresso só com o que está rolando',
+    quadro: 'Donel Dev', quem: 'Dev · painel do Jobu', quando: 'simulada', prazo: 'hoje', naipe: 'martelos',
+    tipo: 'Entrega para conferir', risco: 'baixo', simulada: true,
+    pergunta: 'O painel de progresso do Jobu agora esconde o que já foi aceito. Ficou como você queria?',
+    resumo: 'Antes: 21 linhas, 8 delas já concluídas. Agora: 13, só o que está aberto, rodando, entregue ou voltou para refazer.',
+    rec: 'Aceitar',
+    porque: 'faz o que você pediu, e um teste garante que o aceito some e os outros 4 estados ficam.',
+    opcoes: [
+      { rotulo: 'Aceitar', rec: true, efeito: 'Entra no próximo instalador do alfa. O que você aceitar some do painel na hora.',
+        risco: 'Quem você acabou de aceitar some: para rever, abra o Oráculo.', futuro: ['ok', '13 linhas, só o que roda', 'concluídas saem na hora'], mini: 'depois' },
+      { rotulo: 'Rejeitar', efeito: 'Volta para o Dev com o seu motivo. O painel segue mostrando as concluídas.',
+        risco: 'Nenhum: só adia.', futuro: ['aviso', '21 linhas, 8 já concluídas', 'como está hoje'], mini: 'antes' }
+    ],
+    riscoFrase: 'O que você acabou de aceitar some do painel na hora. Para rever, está no Oráculo.',
+    visual: { tipo: 'antesdepois', titulo: 'O painel do Jobu, antes e depois' },
+    pedido: 'Tira as tarefas concluídas dessa tela de progresso também. Quero ver o que está rolando agora para não me confundir',
+    tecnico: { linhas: ['Tarefa t-87c78604 · lugar place:614ee988-df04-4fec-838d-6cc05b471a2a (dev) · ainda em execução em 05/11 14h', 'Neste protótipo a entrega e o print são SIMULADOS: o painel foi redesenhado com as tarefas reais do quadro Donel Dev.'],
+      saida: 'npm run verify -> (virá na entrega real)\nvitest: aceita oculta; aberta, em-execucao, entregue e rejeitada visíveis' }
+  }
+];
+
+var VARIANTES = [
+  { id: 'A', nome: 'A · Carta Harrow', sobre: '<b>Carta de baralho de verdade.</b> A frente decide: pergunta, ilustração (o visual), a recomendação na faixa dourada, as opções com o efeito embaixo e o selo de risco. Toque em “Virar” e o verso explica: por quê, cada caminho com o seu risco, quem fez, o seu pedido e os detalhes técnicos recolhidos. No desktop, a mão de cartas fica à esquerda.' },
+  { id: 'B', nome: 'B · Conversa com o Jobu', sobre: '<b>O Jobu conta a história e você só toca num botão.</b> Ele diz o que aconteceu, mostra o visual, faz a pergunta, recomenda e avisa o risco, nessa ordem. As opções ficam fixas embaixo, com o efeito de cada uma. “Por quê?”, “O que eu pedi?” e “Detalhes técnicos” viram novas falas dele. No desktop é o balão do Jobu sobre o Mindscape.' },
+  { id: 'C', nome: 'C · Visual grande', sobre: '<b>Primeiro você vê, depois decide.</b> O visual ocupa metade da tela do celular (no desktop, a coluna larga); a decisão fica numa folha embaixo (no desktop, a coluna estreita à direita): pergunta, recomendação, opções e risco.' },
+  { id: 'D', nome: 'D · Escolha o caminho', sobre: '<b>As opções são a tela.</b> Cada caminho é um bloco que mostra como fica o mundo depois dele (o futuro, com sinal verde, amarelo ou vermelho), o efeito e o risco daquele caminho. O recomendado vem primeiro, com o porquê na faixa dourada. A prova vira uma tira pequena no topo.' }
+];
+
+// ---------- estado (no endereço, para dar para abrir direto: #v=A&d=celular&c=1) ----------
+var estado = { v: 'A', d: 'celular', c: 0 };
+(function lerHash() {
+  var h = location.hash.replace(/^#/, '');
+  h.split('&').forEach(function (par) {
+    var kv = par.split('='); if (kv.length !== 2) return;
+    if (kv[0] === 'v' && /^[ABCD]$/.test(kv[1])) estado.v = kv[1];
+    if (kv[0] === 'd' && /^(celular|desktop|ambos)$/.test(kv[1])) estado.d = kv[1];
+    if (kv[0] === 'c' && /^[123]$/.test(kv[1])) estado.c = Number(kv[1]) - 1;
+  });
+})();
+function gravarHash() { history.replaceState(null, '', '#v=' + estado.v + '&d=' + estado.d + '&c=' + (estado.c + 1)); }
+
+// ---------- peças ----------
+function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function tagRisco(c) { return '<span class="tag">' + esc(c.tipo) + ' · risco <span class="' + c.risco + '">' + c.risco + '</span></span>'; }
+
+function painel(lista, total, extra) {
+  var linhas = lista.map(function (l) {
+    var cls = l[1] === 'feita' ? 'feita' : l[1] === 'entregue' ? 'entregue' : '';
+    var pct = l[1] === 'feita' ? 100 : (l[2] || 0);
+    var fim = l[1] === 'feita' ? 'aceita' : l[1] === 'entregue' ? 'entregue' : l[1] === 'run' ? '~18h' : 'aberta';
+    return '<div class="lin ' + cls + '"><span class="nome">' + esc(l[0]) + '</span><span class="b" title="' + fim + '"><div style="width:' + Math.max(pct, 3) + '%"></div></span></div>';
+  }).join('');
+  return '<div class="painel"><header><b>Progresso</b><span>' + total + ' frentes</span></header>' + linhas + '<div class="mais">+ ' + extra + ' abaixo</div></div>';
+}
+
+function visual(c, grande) {
+  var v = c.visual, cls = 'vis' + (grande ? ' grande' : '');
+  var sim = c.simulada ? '<span class="simulado">simulado no protótipo</span>' : '';
+  if (v.tipo === 'luzes') {
+    // Compacto (celular e frentes pequenas): só o nome de cada luz; a explicação aparece só no que não passou.
+    var ok = v.itens.filter(function (i) { return i[0] === 'ok'; }).length;
+    return '<div class="' + cls + '"><h5>' + esc(v.titulo) + '<span>' + ok + ' de ' + v.itens.length + ' ok</span>' + sim + '</h5><ul class="luzes' + (grande ? '' : ' compacta') + '">' + v.itens.map(function (i) {
+      var mostra = grande || i[0] !== 'ok';
+      return '<li class="' + i[0] + '" title="' + esc(i[2]) + '"><i>' + (i[0] === 'ok' ? OK : EXCL) + '</i><b>' + esc(i[1]) + '</b>' + (mostra ? '<span>' + esc(i[2]) + '</span>' : '') + '</li>';
+    }).join('') + '</ul></div>';
+  }
+  if (v.tipo === 'limite') {
+    return '<div class="' + cls + ' limite"><h5>' + esc(v.titulo) + '</h5><div class="barra-limite"><div></div></div>' +
+      '<div class="linha"><span>usado: <b>100%</b></span><span>sobrou: 0</span></div>' +
+      '<div class="tempo"><div class="trilho"></div><span class="meio">≈ 44 h parada</span><span class="marco">' + esc(v.de) + '</span><span class="marco fim">' + esc(v.ate) + '</span></div>' +
+      '<ul>' + v.parado.map(function (p) { return '<li>' + esc(p) + ' · parado</li>'; }).join('') + '</ul></div>';
+  }
+  return '<div class="' + cls + '"><h5>' + esc(v.titulo) + sim + '</h5><div class="ad">' +
+    '<div><div class="leg"><span>Antes</span><b>21 linhas</b></div>' + painel(ANTES, 21, 10) + '</div>' +
+    '<div><div class="leg"><span>Depois</span><b>13 linhas</b></div>' + painel(DEPOIS, 13, 4) + '</div></div></div>';
+}
+
+function miniVisual(c, qual) {
+  if (qual === 'antes') return painel(ANTES.slice(0, 6), 21, 15);
+  if (qual === 'depois') return painel(DEPOIS.slice(0, 6), 13, 7);
+  return '';
+}
+
+function opcoes(c) {
+  return '<div class="opcoes">' + c.opcoes.map(function (o, i) {
+    return '<button class="opcao' + (o.rec ? ' rec' : '') + '" data-op="' + i + '"><b>' + esc(o.rotulo) + '</b>' + (o.rec ? '<em>recomendo</em>' : '<i></i>') + '<span>' + esc(o.efeito) + '</span></button>';
+  }).join('') + '</div>';
+}
+
+function recolhidos(c) {
+  var t = c.tecnico;
+  return '<details class="recolhido"><summary>O que você pediu, nas suas palavras</summary><blockquote>“' + esc(c.pedido) + '”</blockquote></details>' +
+    '<details class="recolhido"><summary>Detalhes técnicos</summary>' + t.linhas.map(function (l) { return '<div>' + esc(l) + '</div>'; }).join('') +
+    (t.link ? '<div><a href="' + esc(t.link) + '" target="_blank" rel="noopener">' + esc(t.link) + '</a></div>' : '') +
+    (t.saida ? '<pre>' + esc(t.saida) + '</pre>' : '') + '</details>';
+}
+
+function cabecaFila(c) {
+  return '<span class="tag">' + esc(c.quadro) + ' · ' + esc(c.quem) + ' · ' + esc(c.quando) + '</span>';
+}
+
+// ---------- A — Carta Harrow ----------
+function A(c, dev) {
+  var g = GLIFOS[c.naipe];
+  var frente = '<div class="A-face naipe-' + c.naipe + '"><div class="A-moldura"><div class="A-interna">' +
+    '<div class="A-cabeca"><span class="glifo">' + g + '</span><span class="nome">' + esc(NOMES_NAIPE[c.naipe]) + '</span><span class="idx">' + ['I', 'II', 'III'][estado.c] + ' · III</span></div>' +
+    '<div class="A-titulo"><div class="quadro">' + esc(c.titulo) + '</div><h3>' + esc(c.pergunta) + '</h3></div>' +
+    '<div class="A-ilustra">' + visual(c, false) + '</div>' +
+    '<div class="A-rec">Recomendo <b>' + esc(c.rec) + '</b>: ' + esc(c.porque) + '</div>' +
+    '<div class="A-opcoes">' + opcoes(c) + '</div>' +
+    '<div class="A-pe"><span class="A-selo ' + c.risco + '"><i>risco ' + c.risco + '</i><span>' + esc(c.riscoFrase.split('. ')[0]) + '.</span></span><button class="A-virar" data-virar>↻ Virar</button></div>' +
+    '</div></div></div>';
+  var verso = '<div class="A-face A-verso naipe-' + c.naipe + '"><div class="A-moldura"><div class="A-interna">' +
+    '<div class="A-cabeca"><span class="glifo">' + g + '</span><span class="nome">O verso</span><button class="A-virar" data-virar>↻ Frente</button></div>' +
+    '<div class="A-verso-corpo">' +
+    '<h4>O que aconteceu</h4><p>' + esc(c.resumo) + '</p>' +
+    '<h4>Por que eu recomendo ' + esc(c.rec.toLowerCase()) + '</h4><p>' + esc(c.porque.charAt(0).toUpperCase() + c.porque.slice(1)) + '</p>' +
+    '<h4>Cada caminho</h4><dl>' + c.opcoes.map(function (o) { return '<dt>' + esc(o.rotulo) + '</dt><dd>' + esc(o.efeito) + '</dd><dd class="r">Risco: ' + esc(o.risco) + '</dd>'; }).join('') + '</dl>' +
+    '<h4>Risco ' + c.risco + '</h4><p>' + esc(c.riscoFrase) + '</p>' +
+    '<h4>Quem fez</h4><p>' + esc(c.quem) + ', no quadro ' + esc(c.quadro) + ' · ' + esc(c.quando) + ' · prazo ' + esc(c.prazo) + '</p>' +
+    recolhidos(c) + '</div></div></div></div>';
+  var mesa = '<div class="A-mesa"><div class="A-carta">' + frente + verso + '</div></div>';
+  if (dev === 'celular') return mesa;
+  var mao = '<div class="A-mao">' + CARTAS.map(function (k, i) {
+    return '<button class="A-mini naipe-' + k.naipe + '" data-carta="' + i + '" aria-current="' + (i === estado.c) + '"><small>' + esc(k.tipo) + '</small><b>' + esc(k.titulo) + '</b></button>';
+  }).join('') + '</div>';
+  return '<div class="A-palco">' + mao + mesa + '</div>';
+}
+
+// ---------- B — Conversa com o Jobu ----------
+function falasB(c) {
+  return [
+    '<div class="B-msg meta">' + esc(c.quem) + ' · ' + esc(c.quadro) + ' · ' + esc(c.quando) + '</div>',
+    '<div class="B-msg">' + esc(c.titulo) + '. ' + esc(c.resumo) + '</div>',
+    '<div class="B-msg vis-msg">' + visual(c, false) + '</div>',
+    '<div class="B-msg forte">' + esc(c.pergunta) + '</div>',
+    '<div class="B-msg rec">Eu iria de <b>' + esc(c.rec.toLowerCase()) + '</b>: ' + esc(c.porque) + '</div>',
+    '<div class="B-msg risco ' + c.risco + '">Risco ' + c.risco + ': ' + esc(c.riscoFrase) + '</div>'
+  ].join('');
+}
+function B(c, dev) {
+  var chat = '<div class="B-chat"><div class="B-topo"><img src="jobu.png" alt=""><div><b>Jobu</b><small>' + (estado.c + 1) + ' de 3 esperando você</small></div></div>' +
+    '<div class="B-fio" data-fio>' + falasB(c) + '</div>' +
+    '<div class="B-respostas"><div class="B-chips"><button data-chip="porque">Por quê?</button><button data-chip="caminhos">Risco de cada um</button><button data-chip="pedido">O que eu pedi?</button><button data-chip="tecnico">Detalhes técnicos</button></div>' +
+    opcoes(c) + '</div></div>';
+  if (dev === 'celular') return chat;
+  return '<div class="B-balao">' + chat + '</div><div class="B-jobu"><img src="jobu.png" alt="Jobu"><span class="badge">3</span></div>';
+}
+
+// ---------- C — Visual grande ----------
+function decisaoC(c) {
+  return tagRisco(c) + '<h3>' + esc(c.pergunta) + '</h3>' +
+    '<div class="C-rec">Recomendo <b>' + esc(c.rec.toLowerCase()) + '</b>: ' + esc(c.porque) + '</div>' + opcoes(c) +
+    '<div class="C-risco ' + c.risco + '"><b>Risco ' + c.risco + ':</b> ' + esc(c.riscoFrase) + '</div>' +
+    '<div style="margin-top:8px;font-size:.72rem;color:var(--tinta-suave)">' + esc(c.quem) + ' · ' + esc(c.quadro) + ' · ' + esc(c.quando) + '</div>' + recolhidos(c);
+}
+function C(c, dev) {
+  if (dev === 'celular') {
+    return '<div class="C-vis">' + visual(c, false) + '<button class="ampliar">⤢ ampliar</button></div><div class="C-folha"><div class="pega"></div>' + decisaoC(c) + '</div>';
+  }
+  var fila = '<div class="C-fila">' + CARTAS.map(function (k, i) { return '<button data-carta="' + i + '" aria-current="' + (i === estado.c) + '">' + (i + 1) + ' · ' + esc(k.titulo) + '</button>'; }).join('') + '</div>';
+  return '<div class="C-palco"><div class="C-esq">' + fila + '<div class="C-grande">' + visual(c, true) + '</div></div><div class="C-dir">' + decisaoC(c) + '</div></div>';
+}
+
+// ---------- D — Escolha o caminho ----------
+function D(c, dev) {
+  var ordem = c.opcoes.slice().sort(function (a, b) { return (b.rec ? 1 : 0) - (a.rec ? 1 : 0); });
+  var caminhos = '<div class="D-caminhos">' + ordem.map(function (o) {
+    var i = c.opcoes.indexOf(o), f = o.futuro;
+    return '<div class="D-caminho' + (o.rec ? ' rec' : '') + '">' +
+      (o.rec ? '<div class="D-faixa-rec">Recomendo <span>· ' + esc(c.porque) + '</span></div>' : '') +
+      '<div class="D-futuro ' + f[0] + '"><span class="sinal">' + (f[0] === 'ok' ? OK : f[0] === 'ruim' ? PARADO : EXCL) + '</span><div><b>' + esc(f[1]) + '</b><small>' + esc(f[2]) + '</small></div></div>' +
+      (o.mini ? '<div class="mini">' + miniVisual(c, o.mini) + '</div>' : '') +
+      '<p>' + esc(o.efeito) + '</p><div class="r"><b>Risco deste caminho:</b> ' + esc(o.risco) + '</div>' +
+      '<button class="escolher" data-op="' + i + '">' + esc(o.rotulo) + '</button></div>';
+  }).join('') + '</div>';
+  var prova = '<div class="D-prova"><small>O que aconteceu · ' + esc(c.quem) + ' · ' + esc(c.quando) + '</small>' + visual(c, false) + '</div>';
+  var topo = tagRisco(c) + '<h3>' + esc(c.pergunta) + '</h3><div style="font-size:.78rem;color:var(--tinta-suave)">Risco ' + c.risco + ': ' + esc(c.riscoFrase) + '</div>';
+  if (dev === 'celular') return '<div class="D-tela">' + topo + prova + caminhos + recolhidos(c) + '</div>';
+  return '<div class="D-tela"><div class="D-cab"><div>' + topo + '<div style="margin-top:14px">' + caminhos + '</div>' + recolhidos(c) + '</div>' + prova + '</div></div>';
+}
+
+var RENDER = { A: A, B: B, C: C, D: D };
+
+// ---------- molduras ----------
+function moldCelular(conteudo) {
+  return '<div><div class="rotulo-tela">Celular</div><div class="phone"><div class="phone-tela">' +
+    '<div class="phone-status"><span>14:10</span><span>Tailscale ● 87%</span></div>' +
+    '<div class="phone-topo"><div class="marca">' + GLIFOS.estrelas + '<div><h2>Oráculo Harrow</h2><p>3 esperando você</p></div></div></div>' +
+    '<div class="phone-corpo">' + conteudo + '</div></div></div></div>';
+}
+function moldDesktop(conteudo) {
+  return '<div><div class="rotulo-tela">Desktop · Donel Dev, Mindscape</div><div class="desk"><div class="desk-titulo"><i></i><i></i><i></i>&nbsp;Donel Dev Alfa · Mindscape · Donel Dev</div>' +
+    '<div class="desk-meio"><div class="desk-lateral"><b>Projetos</b><span><i class="ponto" style="background:var(--state-waiting)"></i>Donel Dev</span><span><i class="ponto" style="background:var(--accent)"></i>Homologação</span><span><i class="ponto" style="background:var(--zone-ok)"></i>BizOps</span><br><b>Sessões</b><span>Dev · painel do Jobu</span><span>Dev · cartas do Oráculo</span><span>Revisor</span></div>' +
+    '<div class="desk-quadro"><div class="faixa-oraculo"><b>Oráculo Harrow</b><span>13 abertas</span><span>2 em execução</span><span>1 entregue sem aceite</span><span class="esperando">3 esperando você</span><span>62% validadas sem você</span></div>' +
+    '<div class="lousa"><div class="lugar" style="left:40px;top:40px">Líder<small>todos os quadros</small></div><div class="lugar" style="left:300px;top:90px">Dev · cartas do Oráculo<small>trabalhando</small></div><div class="lugar" style="left:300px;top:200px">Dev · painel do Jobu<small>trabalhando</small></div><div class="postit" style="left:620px;top:60px">Cartas que se entendem sem abrir link</div><div class="postit" style="left:640px;top:220px">Só o que está rolando no painel</div>' +
+    '<div class="veu"></div>' + conteudo + '</div></div></div></div></div>';
+}
+
+// ---------- montar ----------
+function montarBarra() {
+  var gv = document.getElementById('g-variante'), gt = document.getElementById('g-tela'), gc = document.getElementById('g-carta');
+  VARIANTES.forEach(function (v) { gv.insertAdjacentHTML('beforeend', '<button data-v="' + v.id + '">' + esc(v.nome) + '</button>'); });
+  [['celular', 'Celular'], ['desktop', 'Desktop'], ['ambos', 'Os dois']].forEach(function (d) { gt.insertAdjacentHTML('beforeend', '<button data-d="' + d[0] + '">' + d[1] + '</button>'); });
+  CARTAS.forEach(function (c, i) { gc.insertAdjacentHTML('beforeend', '<button data-c="' + i + '">' + (i + 1) + ' · ' + esc(c.titulo) + '</button>'); });
+}
+
+function desenhar() {
+  gravarHash();
+  document.querySelectorAll('[data-v]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.v === estado.v)); });
+  document.querySelectorAll('[data-d]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.d === estado.d)); });
+  document.querySelectorAll('[data-c]').forEach(function (b) { b.setAttribute('aria-pressed', String(Number(b.dataset.c) === estado.c)); });
+  document.getElementById('sobre').innerHTML = VARIANTES.filter(function (v) { return v.id === estado.v; })[0].sobre +
+    ' <span style="opacity:.8">· ←/→ troca a forma.</span>';
+  var c = CARTAS[estado.c], r = RENDER[estado.v], html = '';
+  if (estado.d !== 'desktop') html += moldCelular(r(c, 'celular'));
+  if (estado.d !== 'celular') html += moldDesktop(r(c, 'desktop'));
+  document.getElementById('palco').innerHTML = html;
+  ajustar();
+}
+
+// Encolhe a moldura que não cabe na largura (o painel do navegador integrado é estreito).
+function ajustar() {
+  var largura = document.getElementById('palco').clientWidth - 32;
+  document.querySelectorAll('.phone, .desk').forEach(function (m) {
+    m.style.zoom = '';
+    var w = m.offsetWidth;
+    if (estado.d === 'ambos' && largura > 1700) return;
+    if (w > largura) m.style.zoom = String(Math.max(0.35, largura / w));
+  });
+}
+window.addEventListener('resize', ajustar);
+
+document.addEventListener('click', function (e) {
+  var t = e.target.closest('button, [data-carta]'); if (!t) return;
+  if (t.dataset.v) { estado.v = t.dataset.v; desenhar(); return; }
+  if (t.dataset.d) { estado.d = t.dataset.d; desenhar(); return; }
+  if (t.dataset.c !== undefined) { estado.c = Number(t.dataset.c); desenhar(); return; }
+  if (t.dataset.carta !== undefined) { estado.c = Number(t.dataset.carta); desenhar(); return; }
+  if (t.hasAttribute('data-virar')) { t.closest('.A-carta').classList.toggle('virada'); return; }
+  var c = CARTAS[estado.c];
+  if (t.dataset.chip) {
+    var fio = t.closest('.B-chat').querySelector('[data-fio]'), fala = '';
+    if (t.dataset.chip === 'porque') fala = '<div class="B-msg">' + esc(c.porque.charAt(0).toUpperCase() + c.porque.slice(1)) + '</div>';
+    if (t.dataset.chip === 'caminhos') fala = c.opcoes.map(function (o) { return '<div class="B-msg"><b>' + esc(o.rotulo) + ':</b> ' + esc(o.risco) + '</div>'; }).join('');
+    if (t.dataset.chip === 'pedido') fala = '<div class="B-msg">Você pediu: <i>“' + esc(c.pedido) + '”</i></div>';
+    if (t.dataset.chip === 'tecnico') fala = '<div class="B-msg">' + recolhidos(c).replace('<details class="recolhido">', '<details class="recolhido" open>').split('</details>')[1].replace('<details class="recolhido">', '<details class="recolhido" open>') + '</details></div>';
+    fio.insertAdjacentHTML('beforeend', fala); fio.scrollTop = fio.scrollHeight; return;
+  }
+  if (t.dataset.op !== undefined) {
+    var o = c.opcoes[Number(t.dataset.op)];
+    var fioB = t.closest('.B-chat') && t.closest('.B-chat').querySelector('[data-fio]');
+    if (fioB) {
+      fioB.insertAdjacentHTML('beforeend', '<div class="B-msg eu">' + esc(o.rotulo) + '</div><div class="B-msg">Anotado (no protótipo nada é gravado). ' + esc(o.efeito) + ' Vamos para a próxima?</div>');
+      fioB.scrollTop = fioB.scrollHeight;
+      setTimeout(function () { estado.c = (estado.c + 1) % 3; desenhar(); }, 1600);
+      return;
+    }
+    t.classList.add('feita');
+    setTimeout(function () { estado.c = (estado.c + 1) % 3; desenhar(); }, 450);
+  }
+});
+document.addEventListener('keydown', function (e) {
+  if (e.target.closest && e.target.closest('input, textarea')) return;
+  var ids = VARIANTES.map(function (v) { return v.id; }), i = ids.indexOf(estado.v);
+  if (e.key === 'ArrowRight') { estado.v = ids[(i + 1) % ids.length]; desenhar(); }
+  if (e.key === 'ArrowLeft') { estado.v = ids[(i + ids.length - 1) % ids.length]; desenhar(); }
+});
+
+montarBarra();
+desenhar();
+</script>
+</body>
+</html>

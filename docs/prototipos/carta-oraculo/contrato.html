@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Contrato da carta</title>
+<style>
+/* Tokens de design-system/src/tokens.css (origin/staging). Protótipo descartável. */
+:root { --bg-app: #0e1116; --bg-panel: #151a21; --bg-raised: #1c232c; --border: #28303b; --text-primary: #d7dde5; --text-muted: #828d9c;
+  --donel-accent: #e8b44c; --zone-ok: #3dce8f; --state-permission: #f0684c; --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace; }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg-app); color: var(--text-primary); font: 14px/1.55 var(--font-ui); }
+main { max-width: 980px; margin: 0 auto; padding: 22px 16px 60px; }
+a { color: var(--donel-accent); }
+h1 { font-size: 20px; margin: 0 0 4px; }
+h2 { font-size: 15px; margin: 26px 0 8px; color: var(--donel-accent); }
+p.sub { color: var(--text-muted); margin: 0 0 14px; }
+.grade { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 760px) { .grade { grid-template-columns: 1fr; } }
+.caixa { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+.caixa h3 { margin: 0 0 6px; font-size: 13px; }
+pre { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 8px; padding: 12px; overflow: auto; font: 12px/1.5 var(--font-mono); }
+ol, ul { margin: 6px 0; padding-left: 20px; }
+li { margin: 3px 0; }
+.sim { color: var(--zone-ok); } .nao { color: var(--state-permission); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+td, th { border-bottom: 1px solid var(--border); padding: 6px 8px; text-align: left; vertical-align: top; }
+th { color: var(--text-muted); font-weight: 600; }
+code { font-family: var(--font-mono); font-size: 12px; background: var(--bg-raised); padding: 1px 4px; border-radius: 4px; }
+</style>
+</head>
+<body>
+<main>
+<p><a href="index.html">← os protótipos</a></p>
+<h1>Toda entrega já chega como carta que se entende</h1>
+<p class="sub">Proposta de mudança no <code>tarefa_entregar</code> e a régua de quando uma decisão sobe a você. Uma página; a implementação é outra tarefa, depois da sua escolha.</p>
+
+<h2>1. O problema de hoje</h2>
+<p>A carta mostra o que a tarefa guarda: o seu pedido no topo, o critério técnico, a nota de quem entregou e as provas cruas (saída de comando, link do GitHub). Nenhum desses campos foi escrito para você decidir. Por isso o pedido é ignorado, o link não explica, e decisões de verdade (trocar a conta ou esperar) viram “aceitar = troquei, rejeitar = esperamos”.</p>
+
+<h2>2. O que muda na entrega: um bloco “para o dono”</h2>
+<div class="grade">
+<div class="caixa">
+<h3>Campos novos no <code>tarefa_entregar</code></h3>
+<pre>paraODono: {
+  titulo:   "Fase 2 da VPS: senhas e logins",   // nome humano, até 60 letras
+  pergunta: "A VPS já tem todos os acessos. Aceito a fase 2?",
+  resumo:   "As 6 checagens passaram. Sobrou uma ponta solta: …",
+  opcoes: [                                     // 2 a 4
+    { rotulo: "Aceitar com ressalva", efeito: "…", risco: "…",
+      fecha: "aceita", recomendada: true },
+    { rotulo: "Rejeitar", efeito: "…", risco: "…", fecha: "rejeitada" }
+  ],
+  porque: "tudo o que a fase pedia funcionou; …", // por que a recomendada
+  risco:  "Senhas de verdade numa máquina na nuvem. …",
+  visual: { prova: 1 }                          // ou { antes: 1, depois: 2 }
+}</pre>
+</div>
+<div class="caixa">
+<h3>Como a carta usa cada campo (em qualquer forma)</h3>
+<table>
+<tr><th>Você vê primeiro</th><th>Vem de</th></tr>
+<tr><td>O que eu decido</td><td><code>pergunta</code></td></tr>
+<tr><td>O visual</td><td><code>visual</code> → um print das provas, ou o par antes/depois</td></tr>
+<tr><td>Recomendação e por quê</td><td>a opção <code>recomendada</code> + <code>porque</code></td></tr>
+<tr><td>O que acontece em cada opção</td><td><code>opcoes[].efeito</code> (e <code>risco</code> de cada uma)</td></tr>
+<tr><td>O risco</td><td><code>risco</code> + o nível alto/baixo que a tarefa já tem</td></tr>
+<tr><th>Recolhido, embaixo</th><th></th></tr>
+<tr><td>O que você pediu</td><td>o pedido literal (sem mudança)</td></tr>
+<tr><td>Detalhes técnicos</td><td>critério, provas de texto e link, ids</td></tr>
+</table>
+</div>
+</div>
+<ul>
+<li><b>Uma decisão vira opções com nome.</b> Escolher grava a opção (rótulo) no histórico, e a tarefa fecha como <code>aceita</code> ou <code>rejeitada</code> conforme o <code>fecha</code> da opção. Rejeitar continua pedindo motivo; uma opção de rejeitar pode já trazer o motivo pronto (“esperamos o limite voltar”).</li>
+<li><b>Visual obrigatório quando muda algo que você vê</b> (tela, fluxo, texto): print, ou antes e depois. Sem tela (VPS, conta), o visual pode ser um quadro de checagens desenhado pelo app a partir de uma lista curta (<code>visual: { checagens: [{ nome, ok, frase }] }</code>), como na carta da VPS.</li>
+<li><b>Obrigatório só no que sobe a você</b> (risco alto e a amostra do dia). No risco baixo que o Revisor aceita, o bloco é opcional; sem ele, a carta antiga continua valendo.</li>
+<li><b>Guarda no código, não no prompt:</b> o contrato recusa a entrega que sobe a você sem <code>pergunta</code>, sem ao menos 2 <code>opcoes</code> com <code>efeito</code>, sem exatamente 1 <code>recomendada</code>, ou sem <code>visual</code> quando há print. O campo novo no documento sobe o <code>schemaVersion</code> do ledger (o canal mais velho fica só lendo, como na regra do <code>mindscape.json</code>).</li>
+</ul>
+
+<h2>3. Nada de código à vista</h2>
+<p>Você é humano: cada coisa aparece pelo nome. O texto “para o dono” é <b>recusado</b> quando traz código, com a mensagem dizendo o que trocar:</p>
+<table>
+<tr><th>Recusado no texto para você</th><th>Escreva assim</th></tr>
+<tr><td class="nao">t-1b6c1a95, place:4fd3…, session:1a6d…</td><td class="sim">“Fase 2 da VPS: senhas e logins”, “Dev · VPS Homologações”</td></tr>
+<tr><td class="nao">feat/homologacao-agentica-v1-13, hash 2a98f2f, PR #105</td><td class="sim">“a versão de trabalho do plugin”, “a mudança que liberou o login do Google”</td></tr>
+<tr><td class="nao">src/main/…/arquivo.ts, <code>crases</code>, saída de comando</td><td class="sim">o efeito para você; a saída vai para a prova</td></tr>
+</table>
+<p>Tudo isso continua existindo, só que dentro de “Detalhes técnicos”, recolhido. Para os lugares, o app passa a mostrar o nome do lugar no quadro (ex.: “Dev · painel do Jobu”), nunca o id. Junto vem um <code>titulo</code> já no <code>tarefa_criar</code>, para a tarefa ter nome desde que nasce.</p>
+
+<h2>4. Quando uma decisão sobe a você, e quando não</h2>
+<div class="grade">
+<div class="caixa">
+<h3 class="sim">Sobe (vira carta “Decisão sua”)</h3>
+<ol>
+<li><b>Difícil de desfazer:</b> <code>main</code>, repo público, apagar algo, credencial, conta, dinheiro.</li>
+<li><b>Toca outra pessoa ou algo de fora:</b> o Bill, a Marta, Slack, um cliente, a Seazone.</li>
+<li><b>Gasta o que é seu:</b> limite de conta, VPS, a sua hora.</li>
+<li><b>Muda a forma do que você vê e há 2 jeitos bons:</b> sobe com protótipo, nunca com descrição.</li>
+<li><b>Contradiz o que você disse</b> (pedido, CLAUDE.md, memória) ou fica fora do que você pediu.</li>
+<li><b>Risco alto</b> pelo contrato (já é assim hoje).</li>
+</ol>
+</div>
+<div class="caixa">
+<h3 class="nao">Não sobe (o agente decide e registra)</h3>
+<ol>
+<li>Só uma opção é defensável: decide e escreve o porquê na nota.</li>
+<li>Escolha técnica que se desfaz fácil e está dentro do pedido (nome, ordem, biblioteca já aprovada).</li>
+<li>A resposta já existe em CLAUDE.md, ADR, memória ou decisão sua anterior.</li>
+<li>Correção de bug com teste guardando.</li>
+<li>Risco baixo aceito pelo Revisor (você vê só a amostra do dia).</li>
+</ol>
+</div>
+</div>
+<p><b>Teste antes de subir:</b> se o agente não consegue escrever a pergunta numa frase, com 2 opções reais e uma recomendação, a decisão ainda não está pronta para você: ele volta e pensa mais.</p>
+</main>
+</body>
+</html>
