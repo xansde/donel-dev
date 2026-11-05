@@ -22,7 +22,7 @@ function run(file: string, args: readonly string[], timeoutMs: number): Promise<
 
 function tailscaleExe(): string {
   if (process.platform === 'win32') {
-    const installed = 'C:\Program Files\Tailscale\tailscale.exe';
+    const installed = String.raw`C:\Program Files\Tailscale\tailscale.exe`;
     if (existsSync(installed)) return installed;
   }
   return 'tailscale';

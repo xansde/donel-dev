@@ -11,6 +11,7 @@ import type { PetView } from '../shared/pet/types';
 import { HEALTH_CHANNELS } from '../shared/health/ipc';
 import type { KillProcessOutcome } from '../shared/health/ipc';
 import type { HealthReport } from '../shared/health/types';
+import type { RemoteHealthReport } from '../shared/health/remote';
 // B33 — atualizar de dentro do app.
 import { APP_UPDATE_CHANNELS, type AppUpdateApplyResult, type AppUpdateBoot, type AppUpdateStatus, type ResumeTab } from '../shared/appUpdate';
 // Sidebar — abrir no editor + branch atual.
@@ -462,6 +463,12 @@ const donelApi: DonelApi = {
     },
     killProcess: (pid: number) => ipcRenderer.invoke(HEALTH_CHANNELS.killProcess, pid) as Promise<KillProcessOutcome>,
     openTemp: () => ipcRenderer.invoke(HEALTH_CHANNELS.openTemp) as Promise<string>,
+    remoteGet: () => ipcRenderer.invoke(HEALTH_CHANNELS.remoteGet) as Promise<readonly RemoteHealthReport[]>,
+    remoteRefresh: () => ipcRenderer.invoke(HEALTH_CHANNELS.remoteRefresh) as Promise<readonly RemoteHealthReport[]>,
+    onRemoteChanged: (listener: (reports: readonly RemoteHealthReport[]) => void) => {
+      const handler = (_event: unknown, reports: readonly RemoteHealthReport[]): void => listener(reports);
+      return subscribeChannel(ipcRenderer, HEALTH_CHANNELS.remoteChanged, handler);
+    },
   },
 
   // B33 — versão nova do alfa: o estado da pasta dos instaladores, a troca e as abas a reabrir depois.

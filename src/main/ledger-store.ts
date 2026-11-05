@@ -154,12 +154,12 @@ export function createLedgerService(deps: LedgerServiceDeps): LedgerService {
       try {
         snapshot = load();
       } catch (error) {
-        return { ok: false, reason: `Não consegui ler o ledger (${error instanceof Error ? error.message : String(error)}); nada foi gravado.` };
+        return { ok: false, reason: `Não consegui ler o Oráculo Harrow (${error instanceof Error ? error.message : String(error)}); nada foi gravado.` };
       }
-      if (snapshot.readOnly) return { ok: false, reason: 'O ledger foi gravado por uma versão mais nova do Donel Dev; esta só lê.' };
+      if (snapshot.readOnly) return { ok: false, reason: 'O Oráculo Harrow foi gravado por uma versão mais nova do Donel Dev; esta só lê.' };
       const result = applyLedgerOp(snapshot.doc, actor, op, { now: now(), newId });
       if (!result.ok) return result;
-      if (!write(result.doc)) return { ok: false, reason: 'Não consegui gravar o ledger; nada mudou.' };
+      if (!write(result.doc)) return { ok: false, reason: 'Não consegui gravar o Oráculo Harrow; nada mudou.' };
       deps.onChange?.({ doc: result.doc, readOnly: false });
       return { ok: true, task: result.task };
     },
@@ -358,7 +358,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       try {
         doc = service.load().doc;
       } catch (error) {
-        return { ok: false, text: `Não consegui ler o ledger: ${error instanceof Error ? error.message : String(error)}` };
+        return { ok: false, text: `Não consegui ler o Oráculo Harrow: ${error instanceof Error ? error.message : String(error)}` };
       }
       const task = doc.tasks[call.id];
       const deliveredAt = task ? lastDelivery(task)?.at : undefined;
@@ -373,7 +373,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       try {
         doc = service.load().doc;
       } catch (error) {
-        return { ok: false, text: `Não consegui ler o ledger: ${error instanceof Error ? error.message : String(error)}` };
+        return { ok: false, text: `Não consegui ler o Oráculo Harrow: ${error instanceof Error ? error.message : String(error)}` };
       }
       const task = doc.tasks[call.id];
       if (!task) return { ok: false, text: `Não existe tarefa "${call.id}" (veja tarefa_listar).` };
@@ -392,7 +392,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       try {
         doc = service.load().doc;
       } catch (error) {
-        return { ok: false, text: `Não consegui ler o ledger: ${error instanceof Error ? error.message : String(error)}` };
+        return { ok: false, text: `Não consegui ler o Oráculo Harrow: ${error instanceof Error ? error.message : String(error)}` };
       }
       const scope = call.todos ? null : caller.projectPath;
       const tasks = Object.values(doc.tasks)

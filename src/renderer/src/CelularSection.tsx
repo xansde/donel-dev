@@ -143,7 +143,7 @@ export function CelularSection(): React.JSX.Element {
         disabled={busy}
         onChange={toggle}
         label="App do celular para validar entregas"
-        description="Só pela sua rede Tailscale: nada sai para a internet e o ledger continua neste PC."
+        description="Só pela sua rede Tailscale: nada sai para a internet e o Oráculo continua neste PC."
       />
       {state.enabled ? <p className={state.status === 'listening' ? styles.status : styles.statusWarn}>{statusText(state)}</p> : null}
 

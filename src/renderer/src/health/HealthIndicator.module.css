@@ -160,3 +160,21 @@
   flex-direction: column;
   gap: var(--space-1);
 }
+
+/* Saúde das VPS — one card per remote place, same left stripe as a finding. */
+.remotes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.remote {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+  padding: var(--space-1);
+  border: var(--hairline);
+  border-left: 3px solid var(--health-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+}

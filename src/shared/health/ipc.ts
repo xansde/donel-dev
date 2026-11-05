@@ -1,6 +1,7 @@
 // Saúde do computador - the IPC contract: channel names, the outcomes and the `window.donel.health` API.
 // Same `'<domain>:<action>'` pattern as the other domains.
 
+import type { RemoteHealthReport } from './remote';
 import type { HealthReport } from './types';
 
 export const HEALTH_CHANNELS = {
@@ -14,6 +15,12 @@ export const HEALTH_CHANNELS = {
   killProcess: 'health:killProcess',
   /** invoke -> opens %TEMP% in the Explorer; resolves with `''` or the error message. */
   openTemp: 'health:openTemp',
+  /** invoke -> the last report of each remote place (VPS), in the order of the config. */
+  remoteGet: 'health:remoteGet',
+  /** invoke -> reads every remote place now (unless a round is running) and resolves with the reports. */
+  remoteRefresh: 'health:remoteRefresh',
+  /** main -> renderer, after every round of remote reads. */
+  remoteChanged: 'health:remoteChanged',
 } as const;
 
 export type KillRefusal =
@@ -41,4 +48,7 @@ export interface DonelHealthApi {
   onChanged(listener: (report: HealthReport) => void): () => void;
   killProcess(pid: number): Promise<KillProcessOutcome>;
   openTemp(): Promise<string>;
+  remoteGet(): Promise<readonly RemoteHealthReport[]>;
+  remoteRefresh(): Promise<readonly RemoteHealthReport[]>;
+  onRemoteChanged(listener: (reports: readonly RemoteHealthReport[]) => void): () => void;
 }

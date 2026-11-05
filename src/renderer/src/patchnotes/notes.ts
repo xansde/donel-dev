@@ -18,6 +18,18 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-05',
     items: [
       {
+        title: 'O registro de tarefas agora se chama Oráculo Harrow',
+        text: 'A faixa de tarefas no topo do Mindscape, o progresso no balão do Jobu, a seção de Preferências e o app do celular passam a chamar o registro de tarefas entre sessões de Oráculo Harrow, para combinar com o resto do Donel. Nada muda no funcionamento: as tarefas, as provas e as decisões que já existiam continuam lá. Se o app do celular já estava na tela inicial, o nome novo aparece quando você adicioná-lo de novo.',
+      },
+      {
+        title: 'Saúde das VPS ao lado da saúde do computador',
+        text: 'Ao lado de "PC · RAM · disco", no rodapé, aparece agora uma linha para cada VPS configurada, com a memória em uso e o disco livre. O painel de saúde ganhou uma seção por VPS com memória, disco, carga do processador e quantas sessões do Donel rodam lá. As VPS são lidas a cada minuto e na hora em que você abre o painel. Quando uma não responde, ela aparece como "sem sinal", com a hora da última leitura boa, e o resto do app segue normal.',
+      },
+      {
+        title: 'Progresso das tarefas no Jobu, quando você quiser',
+        text: 'O balão do Líder ganhou o botão ▤, que abre o progresso das tarefas: uma linha por quadro e, recuadas embaixo, as tarefas dele, cada uma com uma barra e uma data estimada de fim. A barra conta as etapas da tarefa (assumida, entregue, aceita), e cada linha diz de onde veio a data: do prazo enquanto ninguém assumiu, do ritmo das etapas depois, avisando quando passa do prazo. O painel fica fechado por padrão, sem som nem notificação, e o Jobu lembra se você o deixou aberto. Ele se atualiza a cada tarefa assumida, entregue, aceita ou rejeitada e a cada sessão que termina, e mostra a hora da última atualização. Quando algo muda e o balão está fechado, aparece só um pontinho no Jobu; um clique nele abre o progresso. Uma tarefa aceita some do painel um dia depois.',
+      },
+      {
         title: 'Um Líder só, para todos os quadros',
         text: 'O Jobu agora fala com um Líder único, que não pertence a nenhum quadro: ele lê e mexe no Donel Dev, na Homologação e no BizOps, abre sessões em qualquer um deles, manda mensagem, cria tarefas e fecha sessões. Ele fica acima do topo de cada quadro, então alcança quem está no topo e quem está abaixo pelas setas que você desenhou ou que nasceram quando uma sessão abriu outra; uma seta que uma sessão desenha sozinha não muda isso. Quem ele abre nasce ligado a ele, e ele é avisado quando essas sessões terminam. Só é Líder único a sessão aberta pelo Jobu: um Líder aberto pela VPS ou pelo Launcher continua sendo uma sessão comum. Os Líderes que cada quadro tinha viram lugares comuns: continuam no quadro com a conversa e as setas, mas o Jobu não fala mais com eles.',
       },
@@ -43,7 +55,7 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
       },
       {
         title: 'Tarefas com prova no topo do Mindscape',
-        text: 'As sessões agora registram as tarefas que passam entre elas: a frase de quem pediu, quando está pronto, o prazo, quem faz e o risco. Ninguém marca uma tarefa como entregue sem anexar prova (print, vídeo, a saída de um comando ou o link do CI), e quem entregou não pode aceitar a própria entrega. Um Revisor aceita as de risco baixo; as de risco alto esperam você. No topo de cada quadro aparece uma faixa com os números: abertas, em execução, entregues sem aceite, esperando você (com a mais velha) e quantas foram validadas sem você. Clique em "esperando você" para ver cada entrega com a prova e aceitar ou rejeitar com um motivo. Na primeira semana, até três aceites do Revisor por dia também aparecem ali, para você conferir.',
+        text: 'As sessões agora registram as tarefas que passam entre elas: a frase de quem pediu, quando está pronto, o prazo, quem faz e o risco. Ninguém marca uma tarefa como entregue sem anexar prova (print, vídeo, a saída de um comando ou o link do CI), e quem entregou não pode aceitar a própria entrega. Um Revisor aceita as de risco baixo; as de risco alto esperam você. No topo de cada quadro aparece uma faixa, o Oráculo Harrow, com os números: abertas, em execução, entregues sem aceite, esperando você (com a mais velha) e quantas foram validadas sem você. Clique em "esperando você" para ver cada entrega com a prova e aceitar ou rejeitar com um motivo. Na primeira semana, até três aceites do Revisor por dia também aparecem ali, para você conferir.',
       },
       {
         title: 'O Revisor só aceita depois de ver a prova, e de fora da cadeia',
