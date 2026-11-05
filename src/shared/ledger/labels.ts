@@ -2,7 +2,7 @@
 // ("Dev · painel do Jobu"; without a name, the role: "Dev"). Shared by the phone and the desktop cards.
 
 import { naipeDoTipo, type Naipe } from '../celular';
-import type { LedgerActor } from './contract';
+import type { LedgerActor, LedgerDeliveredTo } from './contract';
 
 const ROLE_LABELS: Readonly<Record<string, string>> = {
   dev: 'Dev',
@@ -37,4 +37,12 @@ export function naipeDoPapel(roleId: string | undefined): Naipe {
   if (role === 'seguranca') return naipeDoTipo('seguranca');
   if (role === 'correcao' || role === 'fix') return naipeDoTipo('correcao');
   return naipeDoTipo('construcao');
+}
+
+/** The receipt of what the owner wrote on a card, by where it went (`deliveredTo`). */
+export function reciboDe(deliveredTo: LedgerDeliveredTo | undefined, quem: string, at: number): string {
+  const hora = new Date(at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  if (deliveredTo === 'lider') return `A sessão de ${quem} estava fechada: foi ao Líder, às ${hora}.`;
+  if (deliveredTo) return `Enviado a ${quem}, às ${hora}.`;
+  return 'Ninguém aberto para ler agora; fica guardado na carta.';
 }

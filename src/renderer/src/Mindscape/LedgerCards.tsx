@@ -16,7 +16,7 @@ import {
   type LedgerVisual,
 } from '../../../shared/ledger/contract';
 import { proofUrl } from '../../../shared/ledger/channels';
-import { actorLabel, naipeDoPapel, type PlaceNameOf } from '../../../shared/ledger/labels';
+import { actorLabel, naipeDoPapel, reciboDe, type PlaceNameOf } from '../../../shared/ledger/labels';
 import type { Naipe } from '../../../shared/celular';
 import styles from './LedgerCards.module.css';
 
@@ -49,7 +49,96 @@ function folder(projectPath: string): string {
   return projectPath.split(/[\\/]/).filter(Boolean).pop() ?? projectPath;
 }
 
-type Decide = (decision: { accept: true; option?: string } | { accept: false; reason: string; option?: string }) => Promise<string | null>;
+type Decide = (decision: { accept: true; option?: string; text?: string } | { accept: false; reason: string; option?: string; text?: string }) => Promise<string | null>;
+
+function newRequestId(): string {
+  return crypto.randomUUID().replace(/-/g, '');
+}
+
+/**
+ * "✎ Escrever para <quem fez>" (Parte B): free text. "Enviar" sends it at once to the session that owns the task (or
+ * the Líder) and the card keeps waiting; picking a path with it written takes it along with the decision.
+ */
+function WriteBox({ task, who, draft, onDraft }: { readonly task: LedgerTask; readonly who: string; readonly draft: string; readonly onDraft: (text: string) => void }): React.JSX.Element {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [sent, setSent] = useState<{ text: string; receipt: string }[]>([]);
+  // The same request id while the text does not change: a second click joins the first send.
+  const [requestId, setRequestId] = useState(newRequestId);
+  const send = async (): Promise<void> => {
+    const text = draft.trim();
+    if (!text || busy) return;
+    setBusy(true);
+    setError(null);
+    const result = await window.donel.ledger.comment({ id: task.id, text, requestId }).catch(() => null);
+    setBusy(false);
+    if (!result) return setError('O app não respondeu.');
+    if (!result.ok) return setError(result.reason);
+    setSent((list) => [...list, { text, receipt: reciboDe(result.deliveredTo, who, result.at) }]);
+    onDraft('');
+    setRequestId(newRequestId());
+    setOpen(false);
+  };
+  return (
+    <div>
+      <button type="button" className={styles.write} onClick={() => setOpen((value) => !value)}>
+        ✎ Escrever para {who} (pergunta, ajuste, outra opção)
+      </button>
+      {open ? (
+        <div className={styles.writeBox}>
+          <textarea
+            value={draft}
+            maxLength={2000}
+            onChange={(event) => {
+              onDraft(event.target.value);
+              setRequestId(newRequestId());
+            }}
+            placeholder="O que você quer dizer a quem fez"
+            autoFocus
+          />
+          <small>Enviar manda agora. Se você escolher um caminho com isto escrito, vai junto da decisão.</small>
+          <button type="button" disabled={busy || !draft.trim()} onClick={() => void send()}>
+            {busy ? 'Enviando…' : 'Enviar'}
+          </button>
+        </div>
+      ) : null}
+      {error ? <div className={styles.error}>{error}</div> : null}
+      {sent.map((item, i) => (
+        <div key={i} className={styles.sent}>
+          <p>“{item.text}”</p>
+          <small>{item.receipt}</small>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** What the owner wrote on the card and the answers (re-deliveries), in order. */
+function Conversation({ task, who }: { readonly task: LedgerTask; readonly who: string }): React.JSX.Element | null {
+  const first = task.events.find((event) => event.kind === 'entregue');
+  const lines = task.events.flatMap((event): { at: number; mine: boolean; text: string; receipt?: string }[] => {
+    if (event.kind === 'comentada' && event.text) return [{ at: event.at, mine: true, text: event.text, receipt: reciboDe(event.deliveredTo, who, event.at) }];
+    if (event.kind === 'entregue' && event !== first && task.events.some((other) => other.kind === 'comentada' && other.at <= event.at)) {
+      const text = event.forOwner?.summary ?? event.text;
+      return text ? [{ at: event.at, mine: false, text }] : [];
+    }
+    return [];
+  });
+  if (lines.length === 0) return null;
+  return (
+    <>
+      <h4>A conversa</h4>
+      {lines.map((line, i) => (
+        <div key={i} className={line.mine ? `${styles.line} ${styles.lineMine}` : styles.line}>
+          <b>{line.mine ? 'Você' : who}</b>
+          <p>{line.text}</p>
+          {line.receipt ? <small>{line.receipt}</small> : null}
+        </div>
+      ))}
+    </>
+  );
+}
 
 function Glyph({ naipe }: { readonly naipe: Naipe }): React.JSX.Element {
   return <span className={styles.glyph} aria-hidden="true" dangerouslySetInnerHTML={{ __html: GLYPHS[naipe] }} />;
@@ -226,6 +315,7 @@ function CardA({
   const [marked, setMarked] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
   const recommended = recommendedOption(forOwner);
   const delivery = lastDelivery(task);
   const title = forOwner.title ?? task.title ?? folder(task.projectPath);
@@ -239,7 +329,8 @@ function CardA({
       return;
     }
     setBusy(true);
-    const why = await decide(option.closes === 'aceita' ? { accept: true, option: option.label } : { accept: false, reason: '', option: option.label });
+    const text = draft.trim() ? { text: draft.trim() } : {};
+    const why = await decide(option.closes === 'aceita' ? { accept: true, option: option.label, ...text } : { accept: false, reason: '', option: option.label, ...text });
     setBusy(false);
     if (why) setError(why);
   };
@@ -284,6 +375,7 @@ function CardA({
                   ))}
                 </div>
                 {error ? <div className={styles.error}>{error}</div> : null}
+                <WriteBox task={task} who={who} draft={draft} onDraft={setDraft} />
               </div>
               <footer className={styles.foot}>
                 <span className={task.risk === 'alto' ? `${styles.seal} ${styles.sealHigh}` : `${styles.seal} ${styles.sealLow}`}>
@@ -328,6 +420,7 @@ function CardA({
                 </dl>
                 <h4>Risco {task.risk}</h4>
                 <p>{forOwner.risk}</p>
+                <Conversation task={task} who={who} />
                 <h4>Quem fez</h4>
                 <p>
                   {who}, no quadro {folder(task.projectPath)} · {when(delivery?.at ?? task.createdAt)} · prazo {task.due.split('-').reverse().join('/')}

@@ -97,7 +97,10 @@ function isInside(root: string, filePath: string): boolean {
   return rel.length > 0 && !rel.startsWith('..') && !isAbsolute(rel);
 }
 
-export function createMobileHandler(deps: MobileHandlerDeps): (request: MobileRequest) => MobileResponse {
+/** Quase tudo responde na hora; escrever na carta espera a entrega da mensagem (a sessão dona ou o Líder). */
+export type MobileHandler = (request: MobileRequest) => MobileResponse | Promise<MobileResponse>;
+
+export function createMobileHandler(deps: MobileHandlerDeps): MobileHandler {
   const now = deps.now ?? Date.now;
   const tickets = new Map<string, { readonly itemId: string; readonly provaId: string; readonly expiresAt: number }>();
 
@@ -137,7 +140,7 @@ export function createMobileHandler(deps: MobileHandlerDeps): (request: MobileRe
   function decide(body: string): MobileResponse {
     const input = parseJson(body);
     if (!input) return json(400, { erro: 'pedido-invalido' });
-    const { pedidoId, itemId, decisao, motivo, opcao } = input;
+    const { pedidoId, itemId, decisao, motivo, opcao, texto } = input;
     // O pedidoId vai gravado com a decisão no ledger: um reenvio (a rede caiu, o app reiniciou) recebe a mesma
     // resposta sem gravar de novo. Recusa não fica guardada: uma falha passageira pode dar certo no reenvio.
     if (!isRequestId(pedidoId)) return json(400, { erro: 'pedido-invalido' });
@@ -153,10 +156,23 @@ export function createMobileHandler(deps: MobileHandlerDeps): (request: MobileRe
       decisao: decisao as DecisaoCelular,
       motivo: decisao === 'rejeitar' ? reason : null,
       ...(typeof opcao === 'string' ? { opcao } : {}),
+      ...(typeof texto === 'string' && texto.trim() ? { texto: texto.trim().slice(0, MAX_MOTIVO) } : {}),
     });
     return outcome.ok
       ? json(200, { ok: true, estado: outcome.estado })
       : json(outcome.reason === 'nao-encontrada' ? 404 : 409, { erro: outcome.reason, mensagem: outcome.message });
+  }
+
+  async function comment(body: string): Promise<MobileResponse> {
+    const input = parseJson(body);
+    if (!input) return json(400, { erro: 'pedido-invalido' });
+    const { pedidoId, itemId, texto } = input;
+    // O pedidoId vai gravado com o que o dono escreveu: um reenvio responde o mesmo recibo, sem mandar de novo.
+    if (!isRequestId(pedidoId)) return json(400, { erro: 'pedido-invalido' });
+    if (typeof itemId !== 'string' || itemId.length === 0 || itemId.length > 200) return json(400, { erro: 'pedido-invalido' });
+    if (typeof texto !== 'string' || !texto.trim() || texto.length > MAX_MOTIVO) return json(400, { erro: 'texto-obrigatorio' });
+    const outcome = await deps.ledger().comentar({ pedidoId, itemId, texto });
+    return outcome.ok ? json(200, { ok: true, recibo: outcome.recibo }) : json(409, { erro: 'recusada', mensagem: outcome.mensagem });
   }
 
   function proof(query: URLSearchParams): MobileResponse {
@@ -200,6 +216,7 @@ export function createMobileHandler(deps: MobileHandlerDeps): (request: MobileRe
 
     if (path === '/api/fila' && method === 'GET') return json(200, { itens: deps.ledger().pendentes() });
     if (path === '/api/decidir' && method === 'POST') return decide(request.body);
+    if (path === '/api/comentar' && method === 'POST') return comment(request.body);
     if (path === '/api/prova' && method === 'GET') return proof(parsed.searchParams);
     if (path === '/api/prova-bilhete' && method === 'GET') return ticket(parsed.searchParams);
     return json(404, { erro: 'nao-encontrada' });
@@ -218,7 +235,7 @@ export interface MobileServer {
 export function startMobileServer(options: {
   readonly host: string;
   readonly port: number;
-  readonly handler: (request: MobileRequest) => MobileResponse;
+  readonly handler: MobileHandler;
 }): Promise<MobileServer> {
   const { host, port, handler } = options;
   if (!isTailscaleAddress(host)) return Promise.reject(new Error(`recusado: ${host} não é um endereço da Tailscale`));
@@ -241,11 +258,11 @@ export function startMobileServer(options: {
       }
       chunks.push(chunk);
     });
-    req.on('end', () => {
+    req.on('end', async () => {
       if (tooBig) return;
       let response: MobileResponse;
       try {
-        response = handler({
+        response = await handler({
           method: req.method ?? 'GET',
           url: req.url ?? '/',
           authorization: req.headers.authorization,
@@ -253,7 +270,8 @@ export function startMobileServer(options: {
         });
       } catch (error) {
         console.error('[donel-dev] celular: erro no pedido:', error);
-        res.writeHead(500, BASE_HEADERS).end();
+        if (!res.headersSent) res.writeHead(500, BASE_HEADERS);
+        res.end();
         return;
       }
       const { body } = response;

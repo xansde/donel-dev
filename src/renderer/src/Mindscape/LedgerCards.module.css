@@ -656,6 +656,90 @@
   font-size: 0.8rem;
 }
 
+.write {
+  width: 100%;
+  margin-top: 8px;
+  border: 1.5px dashed var(--carta-borda);
+  background: transparent;
+  color: var(--tinta-suave);
+  border-radius: 12px;
+  padding: 8px 12px;
+  text-align: left;
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.writeBox {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.writeBox textarea {
+  width: 100%;
+  min-height: 64px;
+  border-radius: 10px;
+  border: 1px solid var(--carta-borda);
+  background: var(--pre-fundo);
+  color: var(--tinta);
+  font: inherit;
+  font-size: 0.85rem;
+  padding: 8px;
+  resize: vertical;
+}
+
+.writeBox small {
+  color: var(--tinta-suave);
+  font-size: 0.7rem;
+}
+
+.writeBox button {
+  align-self: flex-end;
+  border: 0;
+  border-radius: 10px;
+  background: var(--ouro);
+  color: var(--carta);
+  font: inherit;
+  font-weight: 700;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+
+.writeBox button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.sent,
+.line {
+  margin-top: 8px;
+  font-size: 0.78rem;
+  border-left: 3px solid var(--sim);
+  padding: 4px 8px;
+  background: var(--pre-fundo);
+  border-radius: 6px;
+}
+
+.line {
+  border-left-color: var(--carta-borda);
+}
+
+.lineMine {
+  border-left-color: var(--ouro);
+}
+
+.sent p,
+.line p {
+  margin: 2px 0 !important;
+}
+
+.sent small,
+.line small {
+  color: var(--tinta-suave);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .card {
     transition: none;

@@ -1014,6 +1014,90 @@ img.A-midia.ampliada {
   color: var(--tinta-suave);
 }
 
+.A-escrever {
+  width: 100%;
+  margin-top: 8px;
+  border: 1.5px dashed var(--carta-borda);
+  background: transparent;
+  color: var(--tinta-suave);
+  border-radius: 12px;
+  padding: 8px 12px;
+  text-align: left;
+  font: 0.82rem var(--sem-serifa);
+}
+
+.A-caixa {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.A-caixa[hidden] {
+  display: none;
+}
+
+.A-caixa textarea {
+  width: 100%;
+  min-height: 64px;
+  border-radius: 10px;
+  border: 1px solid var(--carta-borda);
+  background: var(--pre-fundo);
+  color: var(--tinta);
+  font: 0.85rem var(--sem-serifa);
+  padding: 8px;
+  resize: vertical;
+}
+
+.A-caixa small {
+  color: var(--tinta-suave);
+  font-size: 0.7rem;
+}
+
+.A-caixa button {
+  align-self: flex-end;
+  border: 0;
+  border-radius: 10px;
+  background: var(--ouro);
+  color: var(--carta);
+  font: 700 0.85rem var(--sem-serifa);
+  padding: 7px 14px;
+}
+
+.A-enviado {
+  margin-top: 8px;
+  font-size: 0.78rem;
+  border-left: 3px solid var(--sim);
+  padding: 4px 8px;
+  background: var(--pre-fundo);
+  border-radius: 6px;
+}
+
+.A-enviado p {
+  margin: 0 0 2px;
+}
+
+.A-enviado small,
+.fala small {
+  color: var(--tinta-suave);
+}
+
+.fala {
+  margin-top: 6px;
+  padding: 4px 8px;
+  border-left: 3px solid var(--carta-borda);
+  border-radius: 6px;
+  background: var(--pre-fundo);
+}
+
+.fala-voce {
+  border-left-color: var(--ouro);
+}
+
+.fala p {
+  margin: 2px 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .carta,
   .A-carta {
