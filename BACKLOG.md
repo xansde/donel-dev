@@ -85,6 +85,75 @@ quando está ligado. Nada do serviço depende de Electron. O que precisa de Elec
 - **Depende de**: 01, 02
 - **Propósito**: quando todo o conjunto das VPS passa do limiar, o Líder e o celular sabem, em vez de a VPS parar calada.
 
+## Cartas do Oráculo, forma A (`cartas-forma-a`)
+
+- **Spec**: `docs/specs/cartas-forma-a.md` (branch `proto/cartas`, commit 321c673); forma em
+  `docs/prototipos/carta-oraculo/final.html`, escolha do dono em `decisao.md`
+- **Pedido** (dono, 05/11): "A ideia é ser a forma A. Mas não existe suporte para eu ver os protótipos nas próprias cartas nem como escrever lá."
+- **Fatiado em**: 2026-11-05 (sessão Dev na VPS; sem MCP `donel`, o registro fica nos PRs). A ordem é a da spec.
+- **Rodadas previstas**: 01 | 02 | 03 | 04, 05, 06 <!-- 04-06 dependem da 01 e correm depois da 02 e da 03 (spec) -->
+
+Convenções: testes só os que a spec lista; tela sem teste (o dono vê no alfa); `npm run verify`
+verde; um PR por fatia contra `staging`; patch note em toda fatia visível.
+
+### 01 — Contrato (Parte C)
+
+- **Status**: implementada
+- **Branch**: `feat/cartas-forma-a`
+- **Depende de**: —
+- **Propósito**: `titulo` no `tarefa_criar`; bloco `paraODono` no `tarefa_entregar` (gravado como
+  `forOwner`), obrigatório no risco alto; `findCode` recusa código no texto do dono; decisão grava
+  `option`; evento `comentada` já no schema; `schemaVersion` 3; régua de quando sobe nas descrições.
+- **Como testar**: `tests/ledger.test.ts` (parse v2→v3 sem perda; `findCode`; risco alto sem bloco
+  recusado; decisão por opção grava `option`).
+
+### 02 — Carta A no celular
+
+- **Status**: implementada
+- **Branch**: `feat/cartas-forma-a-02-celular` (empilhada na 01)
+- **Depende de**: 01
+- **Propósito**: frente e verso lendo o bloco; opções com nome decidindo; quadro de checagens; verso
+  único para entrega sem bloco; nenhum id fora de "Detalhes técnicos".
+
+### 03 — Carta A no desktop
+
+- **Status**: implementada
+- **Branch**: `feat/cartas-forma-a-03-desktop` (empilhada na 02)
+- **Depende de**: 01
+- **Propósito**: o "esperando você" da faixa do Mindscape abre a mão de cartas (como no `final.html`).
+
+### Futura — amostra do Revisor em forma A (anotada, sem data)
+
+- **Status**: anotada
+- **Origem**: decisão do Líder único em 05/11, até o dono dizer o contrário: a carta da amostra do dia
+  (aceite do Revisor que o dono confere) segue na forma antiga por enquanto; vira forma A numa fatia futura.
+- Decididas na mesma conversa: dois toques para decidir (mantém); arrastar não escolhe o recomendado
+  (decidir pede gesto explícito); a mesa do desktop cobre só o quadro (ajuste no #238); o protótipo nunca
+  abre fora da carta.
+
+### 04 — Protótipo dentro da carta (Parte A)
+
+- **Status**: implementada
+- **Branch**: `feat/cartas-forma-a-04-prototipo` (empilhada na 03)
+- **Depende de**: 01 (depois da 02 e da 03)
+- **Propósito**: HTML como prova (2 MB); bilhete de uso único + CSP `sandbox allow-scripts` no
+  celular; protocolo `donel-prova:` no desktop.
+
+### 05 — Escrever na carta (Parte B)
+
+- **Status**: implementada
+- **Branch**: `feat/cartas-forma-a-05-escrever` (empilhada na 04)
+- **Depende de**: 01 (depois da 02 e da 03)
+- **Propósito**: op `comentar`; mensagem à sessão dona, ou ao Líder, ou guardada; recibo e conversa
+  no verso; reentrega depois de `comentada`.
+
+### 06 — Prova de arquivo vinda da VPS
+
+- **Status**: implementada
+- **Branch**: `feat/cartas-forma-a-06-vps` (empilhada na 05)
+- **Depende de**: 01 (depois da 02 e da 03)
+- **Propósito**: a cópia da prova pelo ssh do próprio lugar remoto, sem interpolar caminho em shell.
+
 ## Mindscape — desenho, print, Ctrl+Z e zoom (`mindscape-desenho`)
 
 - **Design**: `docs/design/mindscape-desenho.md`
@@ -351,3 +420,56 @@ no alfa.
     volta (arquivo ainda lá); relançar → o print continua, o órfão antigo plantado sumiu e o recente
     ficou; arrastar a alça → a proporção se mantém. A recusa de mais de 10 MB e o `drop` de arquivo
     ficam no vitest e no alfa se o Playwright não conseguir gerar o evento (registrar no relato).
+
+## Slack só com carta do Oráculo, e aviso no celular (`slack-carta`)
+
+- **Design**: — (pedido direto do dono, 05/11 ~14h50: "Preciso que toda mensagem que for enviada para o slack em meu nome seja uma carta no oráculo antes de qualquer coisa. Também preciso que ele tenha notificação no meu celular." Prazo: 06/11)
+- **Versão**: — (demanda própria)
+- **TaskDex**: — (sem card: ferramenta pessoal)
+- **Fatiado em**: 2026-11-05 (à mão, na VPS: a skill `esteira:fatiamento` não está instalada aqui; formato desta seção copiado das demandas anteriores)
+- **Gate**: pedido literal do dono com as três fatias e a ordem; sem passo extra de aprovação
+- **Rodadas previstas**: 01 | 02 | 03 <!-- serial: 02 só funciona na VPS com a 01; 03 avisa da carta que a 02 cria -->
+
+Convenções: lógica pura com vitest; uma PR contra `staging` por fatia; `npm run verify` na VPS. Convive
+com a demanda `cartas-forma-a` (outro Dev, mesmas áreas: `src/shared/ledger/contract.ts`, `tools.ts`,
+`src/main/celular/pwa/`): a branch desta demanda se mantém em dia com `staging`, e o conflito é desta.
+
+### 01 — A sessão na VPS fala com o Oráculo (B38, primeiro item)
+
+- **Status**: implementada
+- **Branch**: `feat/slack-so-com-carta` (worktree `../donel-wt/slack-carta`)
+- **Depende de**: —
+- **Conflita com**: —
+- **Propósito**: uma sessão aberta pelo Donel num lugar remoto conecta no MCP `donel` (hoje leva 403
+  "Host not allowed") e passa a criar e ler cartas, ler o quadro e abrir sessões.
+- **Escopo**: o gate HTTP do MCP aceita `Host: 127.0.0.1:<porta remota do túnel>` só junto com o
+  token da sessão para a qual aquele túnel foi aberto. Nenhuma porta nova: a sessão já chega pelo
+  `ssh -R` que o app abre, com token de 128 bits por sessão. Fica de fora: anexos e arquivos da VPS
+  no painel (os outros itens do B38).
+
+### 02 — Mensagem ao Slack só sai com carta aceita
+
+- **Status**: pendente
+- **Depende de**: 01
+- **Conflita com**: `cartas-forma-a` 01 (contract.ts, tools.ts)
+- **Propósito**: toda mensagem que uma sessão do Donel mandaria ao Slack em nome do dono vira antes
+  uma carta "mensagem para o Slack" (destino, thread, texto exato, motivo). Aceitar libera o envio
+  daquele texto para aquele destino; rejeitar não envia; o motivo da rejeição pede o ajuste.
+- **Escopo**: tipo de carta no contrato do Oráculo + ferramenta MCP para criar; a ponte de hooks
+  responde ao `PreToolUse` de toda ferramenta que posta no Slack (MCP do Slack, Composio
+  `SLACK_SEND_MESSAGE` e afins, `chat.postMessage` por curl, `canal-produto.js postar|responder`)
+  com recusa, a menos que exista carta ACEITA cujo hash de texto e destino bata com o envio. A
+  recusa ensina a sessão a criar a carta e esperar. Teste: sem carta recusa; carta aceita do mesmo
+  texto passa; texto diferente recusa.
+
+### 03 — Aviso no celular quando uma carta espera o dono
+
+- **Status**: pendente
+- **Depende de**: 02
+- **Conflita com**: `cartas-forma-a` 02 (`src/main/celular/pwa/`)
+- **Propósito**: quando uma carta passa a esperar o dono, o celular recebe notificação de verdade
+  (Web Push no PWA, com service worker), mesmo com o app fechado; o texto é o título humano da
+  carta, sem código; o toque abre a carta. Só pela tailnet, sem serviço de terceiros com dado do dono.
+- **Escopo**: service worker + inscrição no PWA, chaves VAPID geradas e guardadas pelo main, envio
+  ao mudar para "esperando você". Se exigir HTTPS: `tailscale serve`/cert da tailnet, com o passo
+  do dono descrito no handoff.

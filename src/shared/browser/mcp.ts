@@ -6,7 +6,7 @@
 // Streamable HTTP done by hand (D9): POST with one JSON-RPC message (or a batch), answer `application/json`,
 // no SSE, no session id. Notifications get `202` with no body.
 
-import { BOARD_TOOLS, isBoardToolName, parseBoardToolCall, type BoardToolCall } from '../mindscape/agent-tools';
+import { boardTools, isBoardToolName, parseBoardToolCall, type BoardToolCall } from '../mindscape/agent-tools';
 import { isLedgerToolName, LEDGER_TOOLS, parseLedgerToolCall, type LedgerToolCall } from '../ledger/tools';
 
 export const MCP_SERVER_NAME = 'donel';
@@ -14,7 +14,7 @@ export const MCP_SERVER_NAME = 'donel';
 const BOARD_INSTRUCTIONS =
   'Quadro (Mindscape) do projeto desta sessão, que o dono vê e usa para falar com você desenhando: quadro_ler mostra lugares (sessões com papel), post-its, desenhos e ligações; quadro_aplicar monta o quadro ao vivo num gesto que o dono desfaz com Ctrl+Z (lugares com papel e pedido, post-its, ligações, retângulos, elipses, linhas, mover); papeis_listar dá os papéis. Mover, editar e apagar só no que uma sessão criou; nunca no que o dono fez (a ferramenta recusa). Prefira mostrar um fluxo no quadro a um texto longo. Time de sessões: sessao_quem_sou, sessao_listar, sessao_abrir (papel + pedido; nasce ligada a você por uma seta), sessao_enviar (só pelas setas do quadro) e sessao_ver_tela. Para falar com outra sessão do Donel use sessao_enviar, nunca um recurso de mensagens do próprio agente: o app entrega direto no chat dela, sem pedir aprovação. ';
 const LEDGER_INSTRUCTIONS =
-  'Oráculo Harrow (o registro de tarefas entre lugares): tarefa_criar (frase literal de quem pediu, critério, prazo, dono, risco), tarefa_assumir, tarefa_entregar (sempre com prova: print ou vídeo, saída de comando ou link do CI), tarefa_ver (a prova inteira: leia antes de decidir), tarefa_aceitar e tarefa_rejeitar (Revisor só no risco baixo, no próprio quadro e de fora da cadeia de quem entregou; quem entregou nunca aceita), tarefa_listar. ';
+  'Oráculo Harrow (o registro de tarefas entre lugares): tarefa_criar (frase literal de quem pediu, critério, prazo, dono, risco), tarefa_assumir, tarefa_entregar (sempre com prova: print, vídeo, protótipo .html autocontido, saída de comando ou link do CI; no risco alto, com o bloco paraODono: a carta que o dono lê, em texto de gente, sem código), tarefa_ver (a prova inteira: leia antes de decidir), tarefa_aceitar e tarefa_rejeitar (Revisor só no risco baixo, no próprio quadro e de fora da cadeia de quem entregou; quem entregou nunca aceita), tarefa_listar. ';
 export const MCP_ENDPOINT_PATH = '/mcp';
 /** Protocol versions this server answers with; a client asking for another one gets the newest of these. */
 export const SUPPORTED_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'] as const;
@@ -360,6 +360,8 @@ export interface McpHandlerContext {
   readonly executor: BrowserToolExecutor;
   /** Quadro por MCP — the Mindscape tools; absent = the server offers only the browser. */
   readonly boardExecutor?: (call: BoardToolCall) => Promise<BrowserToolOutcome>;
+  /** The owner's cap of sessions one session may open (`teamPrefs.ts`); `null`/absent = no limit. */
+  readonly openCap?: () => number | null;
   /** Ledger com prova (item 19) — the `tarefa_*` tools; absent = no ledger tools. */
   readonly ledgerExecutor?: (call: LedgerToolCall) => Promise<BrowserToolOutcome>;
   readonly serverVersion: string;
@@ -417,7 +419,7 @@ async function handleOne(message: unknown, ctx: McpHandlerContext): Promise<Json
       return {
         jsonrpc: '2.0',
         id,
-        result: { tools: [...(ctx.boardExecutor ? BOARD_TOOLS : []), ...(ctx.ledgerExecutor ? LEDGER_TOOLS : []), ...BROWSER_TOOLS] },
+        result: { tools: [...(ctx.boardExecutor ? boardTools(ctx.openCap?.() ?? null) : []), ...(ctx.ledgerExecutor ? LEDGER_TOOLS : []), ...BROWSER_TOOLS] },
       };
     case 'tools/call': {
       const name = p.name;
@@ -504,15 +506,27 @@ function header(info: McpHttpRequestInfo, name: string): string | undefined {
  * Decides whether a request may reach the JSON-RPC handler. Any `Origin` is refused (a web page, including one
  * open in the panel itself, must never reach the server), the `Host` must be the loopback with our port
  * (DNS rebinding), and the bearer token names the PTY whose browser the call drives.
+ *
+ * B38 — a session on a remote place (VPS) reaches us through the reverse tunnel the app itself opened
+ * (`ssh -R 127.0.0.1:<remote>:127.0.0.1:<port>`), so its CLI sends `Host: 127.0.0.1:<remote>`. That port is
+ * accepted only together with the token of the PTY it was opened for (`tunnelPortOf`): no new listener, no port
+ * on the tailnet, and the loopback-only Host rule still stands against DNS rebinding.
  */
-export function checkMcpHttpRequest(info: McpHttpRequestInfo, port: number, resolveToken: (token: string) => string | null): McpHttpGate {
+export function checkMcpHttpRequest(
+  info: McpHttpRequestInfo,
+  port: number,
+  resolveToken: (token: string) => string | null,
+  tunnelPortOf: (ptyId: string) => number | null = () => null,
+): McpHttpGate {
   const path = info.url.split('?', 1)[0];
   if (path !== MCP_ENDPOINT_PATH) return { ok: false, status: 404, message: 'Not found' };
   if (header(info, 'origin') !== undefined) return { ok: false, status: 403, message: 'Origin not allowed' };
-  const host = header(info, 'host')?.toLowerCase();
-  if (host !== `127.0.0.1:${port}` && host !== `localhost:${port}`) return { ok: false, status: 403, message: 'Host not allowed' };
   const auth = /^Bearer\s+([A-Za-z0-9_-]{16,256})$/.exec(header(info, 'authorization') ?? '');
   const ptyId = auth ? resolveToken(auth[1]) : null;
+  const tunnelPort = ptyId ? tunnelPortOf(ptyId) : null;
+  const host = header(info, 'host')?.toLowerCase();
+  const allowedHost = (p: number): boolean => host === `127.0.0.1:${p}` || host === `localhost:${p}`;
+  if (!allowedHost(port) && (tunnelPort === null || !allowedHost(tunnelPort))) return { ok: false, status: 403, message: 'Host not allowed' };
   if (!ptyId) return { ok: false, status: 401, message: 'Unauthorized' };
   if (info.method !== 'POST') return { ok: false, status: 405, message: 'Method not allowed', headers: { Allow: 'POST' } };
   return { ok: true, ptyId };

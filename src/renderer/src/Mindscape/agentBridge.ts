@@ -26,8 +26,6 @@ import { addLink, addPlace, placeCardId, placeOfSession, type MindscapeBoard, ty
 import type { SemaphoreState } from '../../../shared';
 import type { SessionRole } from '../../../shared/roles';
 
-/** Live sessions a caller may have opened with `sessao_abrir` before the owner is asked. */
-export const OPEN_CAP = 4;
 /**
  * A session opened by `sessao_abrir` that sent no hook in this long did not start: the gate waits up to 30 s for
  * the CLI and the first paste up to 45 s more on a machine short of RAM.
@@ -101,6 +99,11 @@ export interface AgentBridgePorts {
   unconfirmed(tabId: string): boolean;
   /** Why that session is not taking its first message, read from its process and screen (`null` = nothing to see). */
   startTrouble(tabId: string): string | null;
+  /**
+   * Live sessions one caller may have opened with `sessao_abrir` before the owner is asked (Preferências, "Limite de
+   * sessões abertas por um Líder"; the Líder único counts per board). `null` or absent = no limit.
+   */
+  openCap?(): number | null;
   /** The owner allows (true) or denies a session over the cap. */
   askOwner(question: { readonly caller: string; readonly role: string; readonly request: string; readonly open: number }): Promise<boolean>;
   remoteLabel(remoteId: string): string;
@@ -156,6 +159,25 @@ export class AgentBridge {
 
   setPorts(ports: AgentBridgePorts): void {
     this.ports = ports;
+  }
+
+  /**
+   * Cartas forma A (Parte B) — what the owner wrote on a card: to the session of the place that owns the task, at
+   * once (the same send driver as `sessao_enviar`); when it is closed, never started, or the message did not go in,
+   * to the Líder único; with nobody open, nowhere (the card keeps it).
+   */
+  async deliverOwnerMessage(message: { readonly projectPath: string; readonly placeId: string; readonly text: string; readonly leaderText: string }): Promise<{ readonly placeId: string } | 'lider' | null> {
+    const target = this.tabOfPlace(message.projectPath, message.placeId);
+    if (target && !this.ports.unconfirmed(target.id)) {
+      const outcome = await this.ports.deliverLine(target.id, message.text, DELIVERY_WAIT_MS);
+      if (outcome.kind !== 'nao-foi') return { placeId: message.placeId };
+    }
+    const leader = this.leaderTab();
+    if (leader) {
+      const outcome = await this.ports.deliverLine(leader.id, message.leaderText, DELIVERY_WAIT_MS);
+      if (outcome.kind !== 'nao-foi') return 'lider';
+    }
+    return null;
   }
 
   /** A tab reopened after an update or a restart that had been opened by `opener` (counts for its cap again). */
@@ -545,7 +567,8 @@ export class AgentBridge {
         }
         // The Líder único has a cap per board; a place, its own.
         const open = this.liveOpenedBy(opener, scope.leader ? projectPath : undefined);
-        if (open >= OPEN_CAP) {
+        const cap = this.ports.openCap?.() ?? null;
+        if (cap !== null && open >= cap) {
           const allowed = await this.ports.askOwner({ caller: caller.name, role: role.name, request: call.pedido, open });
           if (!allowed) return fail(`O dono negou abrir mais uma sessão (você já tem ${open} abertas${scope.leader ? ' neste quadro' : ''}). Use as que existem.`);
         }

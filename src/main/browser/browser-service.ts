@@ -57,6 +57,7 @@ export interface BrowserServiceDeps {
   readonly appVersion: string;
   /** Quadro por MCP — the Mindscape tools of the same server (main/board-bridge.ts). */
   executeBoard?(ptyId: string, call: BoardToolCall): Promise<BrowserToolOutcome>;
+  openCap?(): number | null;
   /** The upload folders the owner authorized, kept in the app's config (`browserUploads`): they survive a restart. */
   readonly uploadFolders: { get(): readonly string[]; set(folders: readonly string[]): void };
   /** Ledger com prova (item 19) — the `tarefa_*` tools of the same server (main/ledger-store.ts). */
@@ -568,6 +569,7 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
   const mcp = createBrowserMcpServer({
     execute: enqueue,
     ...(deps.executeBoard ? { executeBoard: deps.executeBoard } : {}),
+    ...(deps.openCap ? { openCap: deps.openCap } : {}),
     ...(deps.executeLedger ? { executeLedger: deps.executeLedger } : {}),
     serverVersion: deps.appVersion,
   });
@@ -728,7 +730,7 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
     prepareRemoteSession: (ptyId, remotePort, knownToken) => {
       const port = mcp.port;
       if (port === null || !isPtyId(ptyId)) return null;
-      const token = mcp.registerSession(ptyId, knownToken);
+      const token = mcp.registerSession(ptyId, knownToken, remotePort);
       const endpoint = { name: MCP_SERVER_NAME, url: browserMcpUrl(remotePort), bearerToken: token };
       return { localPort: port, token, configFileContent: `${JSON.stringify(buildBrowserMcpConfig(endpoint), null, 2)}\n` };
     },

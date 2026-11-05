@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { ConfigIoDeps } from '../src/main/config-store';
 import { createCelularAuth } from '../src/main/celular/auth';
 import { createLedgerMobilePort } from '../src/main/celular/ledger-port';
-import { createLedgerService, type LedgerProofFs } from '../src/main/ledger-store';
-import type { LedgerActor } from '../src/shared/ledger/contract';
-import { createMobileHandler, startMobileServer, type MobileResponse } from '../src/main/celular/server';
+import { createLedgerService, ledgerProofsDir, type LedgerProofFs } from '../src/main/ledger-store';
+import { resolveProofUrl } from '../src/main/ledger-proof-protocol';
+import { proofUrl } from '../src/shared/ledger/channels';
+import type { LedgerActor, LedgerForOwner } from '../src/shared/ledger/contract';
+import { createMobileHandler, startMobileServer, TICKET_TTL_MS, type MobileResponse } from '../src/main/celular/server';
 import { pickTailscaleAddress } from '../src/main/celular/tailscale';
 
 // Ledger no celular — o que quebraria sem o dono ver: o servidor aceitar quem não pareou, subir fora da
@@ -21,6 +23,7 @@ const noProofFs: LedgerProofFs = {
   readFile: () => Promise.reject(new Error('sem arquivo')),
   mkdir: () => Promise.resolve(),
   copyFile: () => Promise.reject(new Error('sem arquivo')),
+  writeFile: () => Promise.reject(new Error('sem arquivo')),
   unlink: () => Promise.resolve(),
 };
 
@@ -43,13 +46,25 @@ function memoryIo(): ConfigIoDeps {
   };
 }
 
+/** The owner block a high-risk delivery needs (cartas forma A). */
+const FOR_OWNER: LedgerForOwner = {
+  question: 'Aceito assim?',
+  summary: 'Feito e testado.',
+  options: [
+    { label: 'Aceitar', effect: 'Vai para o alfa.', closes: 'aceita', recommended: true },
+    { label: 'Refazer', effect: 'Volta para quem fez.', closes: 'rejeitada' },
+  ],
+  why: 'Os testes passaram.',
+  risk: 'Baixo.',
+};
+
 /** Uma entrega de risco alto, entregue pelo Dev com prova: espera o dono. */
 function deliveredTask(ledger: ReturnType<typeof createLedgerService>, request: string): string {
   const created = ledger.apply(LIDER, { op: 'criar', projectPath: 'C:/proj/atlas', request, doneWhen: 'pronto', due: '2026-11-10', ownerPlaceId: 'p-dev', risk: 'alto' });
   if (!created.ok) throw new Error(created.reason);
   const id = created.task.id;
   expect(ledger.apply(DEV, { op: 'assumir', id }).ok).toBe(true);
-  expect(ledger.apply(DEV, { op: 'entregar', id, proofs: [{ kind: 'texto', text: '4 passed' }] }).ok).toBe(true);
+  expect(ledger.apply(DEV, { op: 'entregar', id, proofs: [{ kind: 'texto', text: '4 passed' }], forOwner: FOR_OWNER }).ok).toBe(true);
   return id;
 }
 
@@ -66,10 +81,16 @@ function setup() {
     handle = createMobileHandler({ auth, ledger: () => createLedgerMobilePort(() => createLedgerService({ filePath: LEDGER, io, proofFs: noProofFs })), assets: {}, provasRoot: null });
   };
   const call = (method: string, url: string, token?: string | null, body?: unknown): MobileResponse =>
-    handle({ method, url, authorization: token ? `Bearer ${token}` : undefined, body: body === undefined ? '' : JSON.stringify(body) });
+    atOnce(handle({ method, url, authorization: token ? `Bearer ${token}` : undefined, body: body === undefined ? '' : JSON.stringify(body) }));
   const pairWith = (code: string): MobileResponse => call('POST', '/api/parear', null, { codigo: code, aparelho: 'iPhone' });
   const decisions = (id: string) => ledger.load().doc.tasks[id]!.events.filter((event) => event.kind === 'aceita' || event.kind === 'rejeitada');
   return { io, auth, ledger, first, second, decisions, call, pairWith, restart };
+}
+
+/** Every route but writing on the card answers at once. */
+function atOnce(response: MobileResponse | Promise<MobileResponse>): MobileResponse {
+  if (response instanceof Promise) throw new Error('resposta assíncrona onde se esperava na hora');
+  return response;
 }
 
 function bodyOf(response: MobileResponse): Record<string, unknown> {
@@ -155,7 +176,7 @@ describe('servidor do celular', () => {
     if (!created.ok) throw new Error(created.reason);
     const id = created.task.id;
     ledger.apply(DEV, { op: 'assumir', id });
-    ledger.apply(DEV, { op: 'entregar', id, proofs: [{ kind: 'texto', text: output }] });
+    ledger.apply(DEV, { op: 'entregar', id, proofs: [{ kind: 'texto', text: output }], forOwner: FOR_OWNER });
 
     const item = (bodyOf(call('GET', '/api/fila', token)).itens as { id: string; provas: { texto: string; cortado?: boolean }[] }[]).find((entry) => entry.id === id)!;
     expect(item.provas[0]!.cortado).toBe(true);
@@ -182,5 +203,61 @@ describe('servidor do celular', () => {
     expect(call('POST', '/api/decidir', token, pedido).status).toBe(200);
     expect(call('POST', '/api/decidir', token, pedido).status).toBe(200);
     expect(decisions(second)).toEqual([expect.objectContaining({ kind: 'rejeitada', by: { kind: 'dono' }, text: 'falta o teste' })]);
+  });
+  it('a carta A leva o nome do lugar e não o id; escolher a opção que rejeita grava a opção uma vez, sem motivo digitado', () => {
+    const { auth, ledger, second, decisions, call, pairWith } = setup();
+    const token = bodyOf(pairWith(auth.createPairingCode().code)).token as string;
+    const port = createLedgerMobilePort(() => ledger, (projectPath, placeId) => (projectPath === 'C:/proj/atlas' && placeId === 'p-dev' ? 'painel do Jobu' : undefined));
+    const item = port.pendentes().find((entry) => entry.id === second)!;
+    expect(item.quemEntregou).toBe('Dev · painel do Jobu');
+    expect(item.carta).toMatchObject({ pergunta: FOR_OWNER.question, opcoes: [{ rotulo: 'Aceitar', recomendada: true }, { rotulo: 'Refazer', fecha: 'rejeitada' }] });
+    // `id` só endereça a API; `ids`, provas, pedido e critério ficam nos recolhidos do verso.
+    const { id, ids, provas, pedido, criterio, ...front } = item;
+    expect(id).toBe(second);
+    expect(JSON.stringify(front)).not.toMatch(/p-dev|t-\d/);
+    expect(ids.join(' ')).toContain('p-dev');
+
+    // Opção que não existe, ou que fecha do outro jeito: recusada sem gravar.
+    expect(call('POST', '/api/decidir', token, { pedidoId: 'pedido-0005', itemId: second, decisao: 'aceitar', opcao: 'Refazer' }).status).toBe(409);
+    const escolha = { pedidoId: 'pedido-0006', itemId: second, decisao: 'rejeitar', opcao: 'Refazer' };
+    expect(call('POST', '/api/decidir', token, escolha).status).toBe(200);
+    expect(call('POST', '/api/decidir', token, escolha).status).toBe(200);
+    expect(decisions(second)).toEqual([expect.objectContaining({ kind: 'rejeitada', by: { kind: 'dono' }, option: 'Refazer', text: 'Refazer' })]);
+  });
+  it('o protótipo sai com a CSP sandbox allow-scripts, por bilhete de uso único que vence; donel-prova só serve nome de dentro das provas', () => {
+    const io = memoryIo();
+    const auth = createCelularAuth({ filePath: FILE, io });
+    const ledger = createLedgerService({ filePath: LEDGER, io, proofFs: noProofFs, newId: () => 't-proto' });
+    const created = ledger.apply(LIDER, { op: 'criar', projectPath: 'C:/proj/atlas', request: 'r', doneWhen: 'd', due: '2026-11-10', ownerPlaceId: 'p-dev', risk: 'alto' });
+    if (!created.ok) throw new Error(created.reason);
+    const html = '2026-11-05-abcdef012345.html';
+    ledger.apply(DEV, { op: 'assumir', id: 't-proto' });
+    expect(ledger.apply(DEV, { op: 'entregar', id: 't-proto', proofs: [{ kind: 'arquivo', file: html, mediaType: 'text/html' }, { kind: 'texto', text: 'ok' }], forOwner: { ...FOR_OWNER, visual: { kind: 'prova', proof: 0 } } }).ok).toBe(true);
+    let now = 1_000_000;
+    const handle = createMobileHandler({ auth, ledger: () => createLedgerMobilePort(() => ledger), assets: {}, provasRoot: ledgerProofsDir(LEDGER), now: () => now });
+    const token = (JSON.parse(atOnce(handle({ method: 'POST', url: '/api/parear', body: JSON.stringify({ codigo: auth.createPairingCode().code, aparelho: 'iPhone' }) })).body as string) as { token: string }).token;
+    const get = (url: string, withToken = true): MobileResponse => atOnce(handle({ method: 'GET', url, authorization: withToken ? `Bearer ${token}` : undefined, body: '' }));
+    const ticket = (prova: string): MobileResponse => get(`/api/prova-bilhete?item=t-proto&prova=${prova}`);
+
+    expect(get('/api/prova-bilhete?item=t-proto&prova=0', false).status).toBe(401);
+    expect(ticket('1').status).toBe(404); // a saída de comando não é protótipo
+    const bilhete = (JSON.parse(ticket('0').body as string) as { bilhete: string }).bilhete;
+    const page = get(`/api/prova-html?b=${bilhete}`, false);
+    expect(page.status).toBe(200);
+    const csp = page.headers['Content-Security-Policy']!;
+    expect(csp.startsWith('sandbox allow-scripts;')).toBe(true);
+    expect(csp).not.toContain('allow-same-origin');
+    expect(csp).toContain("connect-src 'none'");
+    expect(page.body).toEqual({ filePath: expect.stringContaining(html) });
+    expect(get(`/api/prova-html?b=${bilhete}`, false).status).toBe(404); // uso único
+
+    const late = (JSON.parse(ticket('0').body as string) as { bilhete: string }).bilhete;
+    now += TICKET_TTL_MS + 1;
+    expect(get(`/api/prova-html?b=${late}`, false).status).toBe(404); // venceu
+
+    // Desktop: donel-prova só serve um nome que o main deu, dentro de ledger-provas.
+    expect(resolveProofUrl(proofUrl(html), '/u/ledger-provas')).toMatchObject({ ok: true, path: `/u/ledger-provas/${html}`, csp: expect.stringMatching(/^sandbox allow-scripts;/) });
+    for (const bad of ['donel-prova://prova/..%2Fledger.json', 'donel-prova://prova/a%2Fb.html', 'donel-prova://prova/x.exe', 'donel-prova://outro/' + html, 'donel-asset://prova/' + html])
+      expect(resolveProofUrl(bad, '/u/ledger-provas').ok, bad).toBe(false);
   });
 });

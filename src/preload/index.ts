@@ -150,12 +150,14 @@ import {
 } from '../shared/esteira/ipc';
 
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
-import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerOwnerDecision, type LedgerSnapshot } from '../shared/ledger/channels';
+import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerSnapshot } from '../shared/ledger/channels';
 import type { LedgerProof } from '../shared/ledger/contract';
 import { LEARNING_CHANNELS, type RendererGesture } from '../shared/learning/gestures';
 import type {
   MindscapeBoardRequest,
   MindscapeBoardResponse,
+  MindscapeOwnerMessageRequest,
+  MindscapeOwnerMessageResponse,
   MindscapeReadImageResult,
   MindscapeSaveImageResult,
   MindscapeSaveResult,
@@ -173,6 +175,7 @@ import {
 import { ROTINAS_CHANNELS, type ShadowEntry } from '../shared/rotinas/contract';
 import { LIDER_CHANNELS, type LiderReport, type LiderSendPayload, type LiderSendResult, type LiderState } from '../shared/lider/ipc';
 import { ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
+import type { TeamPrefs } from '../shared/teamPrefs';
 import { SESSION_RENEWAL_CHANNELS, type HandoffStatus, type RenewalPrepareInput, type RenewalPrepared, type SessionRenewalPrefs } from '../shared/sessionRenewal';
 
 // contextIsolation: true + sem nodeIntegration (src/main/index.ts) — este
@@ -424,6 +427,7 @@ const donelApi: DonelApi = {
     // B36 — sessão renovada em voo: switch and context limit.
     setSessionRenewalPrefs: (prefs: Partial<SessionRenewalPrefs>) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setSessionRenewalPrefs, prefs) as Promise<AppConfigDto>,
+    setTeamPrefs: (prefs: TeamPrefs) => ipcRenderer.invoke(CONFIG_CHANNELS.setTeamPrefs, prefs) as Promise<AppConfigDto>,
     setAutoModePrefs: (prefs: Partial<AutoModePrefs>) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setAutoModePrefs, prefs) as Promise<AppConfigDto>,
     setProjectYolo: (projectPath: string, enabled: boolean) =>
@@ -569,6 +573,11 @@ const donelApi: DonelApi = {
       return () => ipcRenderer.removeListener(MINDSCAPE_CHANNELS.boardRequest, handler);
     },
     respondBoard: (response: MindscapeBoardResponse) => ipcRenderer.send(MINDSCAPE_CHANNELS.boardRespond, response),
+    onOwnerMessage: (listener: (request: MindscapeOwnerMessageRequest) => void) => {
+      const handler = (_event: unknown, request: MindscapeOwnerMessageRequest): void => listener(request);
+      return subscribeChannel(ipcRenderer, MINDSCAPE_CHANNELS.ownerMessage, handler);
+    },
+    respondOwnerMessage: (response: MindscapeOwnerMessageResponse) => ipcRenderer.send(MINDSCAPE_CHANNELS.ownerMessageRespond, response),
   },
 
   // Ledger com prova (item 19) — `<userData>/ledger.json` (main is the only writer); decisions go as the owner.
@@ -580,6 +589,8 @@ const donelApi: DonelApi = {
     },
     decide: (decision: LedgerOwnerDecision) => ipcRenderer.invoke(LEDGER_CHANNELS.decide, decision) as Promise<LedgerApplyResult>,
     openProof: (proof: LedgerProof) => ipcRenderer.invoke(LEDGER_CHANNELS.openProof, proof) as Promise<boolean>,
+    proofImage: (taskId: string, proofIndex: number) => ipcRenderer.invoke(LEDGER_CHANNELS.proofImage, taskId, proofIndex) as Promise<string | null>,
+    comment: (comment: LedgerComment) => ipcRenderer.invoke(LEDGER_CHANNELS.comment, comment) as Promise<LedgerCommentResult>,
   },
 
   // Papéis de sessão (item 12a) — `<userData>/papeis/` (main is the only writer).
