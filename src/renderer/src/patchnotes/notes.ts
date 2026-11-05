@@ -30,6 +30,30 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'Antes de mandar qualquer mensagem no Slack em seu nome, a sessão agora cria uma carta no Oráculo Harrow com o destino, a thread, o texto exato e o motivo, e espera você. Aceitar libera aquele texto, para aquele destino, uma vez. Rejeitar não envia nada, e o motivo que você escreve diz à sessão o que ajustar. Sem carta aceita, o Donel bloqueia o envio por qualquer caminho: o Slack, o Composio, um comando ou um script.',
       },
       {
+        title: 'Sessões na VPS também anexam print e protótipo',
+        text: 'Uma sessão que roda na VPS agora entrega print, vídeo ou protótipo como prova, e eles aparecem na carta como os das sessões do computador. O app busca o arquivo pela conexão com a VPS, recusa atalho e arquivo grande demais, e guarda uma cópia aqui.',
+      },
+      {
+        title: 'Escreva na carta para quem fez',
+        text: 'Na frente da carta, "✎ Escrever para…" abre uma caixa de texto (no celular, dá para ditar). "Enviar" manda na hora para a sessão que fez a tarefa; se ela estiver fechada, vai para o Líder; se ninguém estiver aberto, fica guardado na carta. A carta mostra para onde foi e continua esperando você, e a resposta chega como uma carta nova. Se você escolher um caminho com algo escrito, o texto vai junto da decisão. O verso mostra a conversa em ordem.',
+      },
+      {
+        title: 'Protótipos dentro da carta',
+        text: 'Quando quem fez a tarefa anexa um protótipo, ele roda dentro da carta, no celular e no Mindscape: dá para clicar nos botões dele ali mesmo, sem abrir link nenhum. "⤢ Tela cheia" amplia. O protótipo roda isolado: não acessa a internet, não vê os seus dados do app nem abre outra janela. Vídeos agora tocam dentro da carta também no Mindscape.',
+      },
+      {
+        title: '"Esperando você" no Mindscape abre as cartas',
+        text: 'No Mindscape, o botão "esperando você" da faixa do Oráculo Harrow agora abre as cartas sobre o quadro: a mão de cartas à esquerda e a carta grande no centro, igual ao celular. Na frente, a pergunta, o print ou as checagens, a recomendação e os caminhos; clique num caminho e clique de novo para decidir. "↻ Virar" mostra o verso com o que aconteceu, o risco de cada caminho, quem fez pelo nome e, recolhidos, o seu pedido e os detalhes técnicos. Esc ou "Fechar" volta ao quadro.',
+      },
+      {
+        title: 'Cartas do celular: a frente decide, o verso explica',
+        text: 'No app do celular, a carta de uma entrega que espera você mostra na frente a pergunta, o print ou o quadro de checagens, a recomendação com o porquê e os caminhos com o efeito de cada um. Toque num caminho e toque de novo para decidir: a tarefa fecha do jeito que aquele caminho diz, e o nome dele fica no histórico. "↻ Virar" mostra o verso: o que aconteceu, o risco de cada caminho, quem fez (pelo nome no quadro), o seu pedido e os detalhes técnicos, recolhidos. Entrega sem pergunta para você continua na carta de antes.',
+      },
+      {
+        title: 'Entregas que esperam você chegam com pergunta e opções',
+        text: 'Toda entrega de risco alto agora traz, para você, a pergunta que você decide, de 2 a 4 caminhos com o efeito de cada um, a recomendação com o porquê e o risco. Um texto com código (número de tarefa, branch, PR, caminho de arquivo, link) volta para quem entregou reescrever. As cartas que mostram isso chegam nas próximas versões. Atenção: depois desta versão, um Donel Dev mais antigo aberto ao mesmo tempo só consegue ler o Oráculo Harrow, sem decidir nada, até ser atualizado.',
+      },
+      {
         title: 'Sessões na VPS conversam com o Donel',
         text: 'Uma sessão que você abre na VPS pelo Donel agora conecta nas ferramentas do Donel, como acontece no computador: ela lê o quadro, abre sessões e cria tarefas e cartas no Oráculo Harrow. Antes ela subia sem essas ferramentas.',
       },

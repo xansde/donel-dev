@@ -23,12 +23,13 @@ import {
   lastDelivery,
   slackLetterSent,
   ledgerStrip,
-  MAX_PROOF_FILE_BYTES,
+  maxProofBytes,
   parseLedgerDoc,
   PROOF_FILE_TYPES,
   waitsForOwner,
   type LedgerActor,
   type LedgerDoc,
+  type LedgerForOwner,
   type LedgerOp,
   type LedgerProof,
   type LedgerStrip,
@@ -59,8 +60,13 @@ export interface LedgerProofFs {
   readFile(path: string): Promise<Buffer>;
   mkdir(dir: string): Promise<void>;
   copyFile(from: string, to: string): Promise<void>;
+  /** A proof read from a remote place: written once, never over an existing file. */
+  writeFile(path: string, bytes: Buffer): Promise<void>;
   unlink(path: string): Promise<void>;
 }
+
+/** Fatia 6 — reads a proof file on the remote place of the calling session (`ledger-remote-proof.ts`). */
+export type RemoteProofFetch = (path: string) => Promise<{ readonly ok: true; readonly bytes: Buffer; readonly ext: string; readonly mediaType: string } | { readonly ok: false; readonly error: string }>;
 
 export const nodeLedgerProofFs: LedgerProofFs = {
   stat: (path) => fs.stat(path),
@@ -71,6 +77,7 @@ export const nodeLedgerProofFs: LedgerProofFs = {
     await fs.mkdir(dir, { recursive: true });
   },
   copyFile: (from, to) => fs.copyFile(from, to, fsConstants.COPYFILE_EXCL),
+  writeFile: (path, bytes) => fs.writeFile(path, bytes, { flag: 'wx' }),
   unlink: (path) => fs.unlink(path),
 };
 
@@ -88,8 +95,11 @@ export interface LedgerService {
   /** Missing file → empty ledger. Throws when the file exists but is unreadable or not a ledger. */
   load(): LedgerSnapshot;
   apply(actor: LedgerActor, op: LedgerOp): LedgerApplyResult;
-  /** Copies a print/video into `ledger-provas/` and returns the proof; text and link are only checked. */
-  importProof(input: ProofInput): Promise<LedgerProof | { error: string }>;
+  /**
+   * Copies a print/video/prototype into `ledger-provas/` and returns the proof; text and link are only checked. With
+   * `remote`, the file is on the calling session's remote place (the VPS) and is read through its ssh.
+   */
+  importProof(input: ProofInput, remote?: RemoteProofFetch): Promise<LedgerProof | { error: string }>;
   /** Removes copied proof files a refused delivery left behind. */
   discardProofs(proofs: readonly LedgerProof[]): Promise<void>;
   proofPath(proof: LedgerProof): string | null;
@@ -165,25 +175,40 @@ export function createLedgerService(deps: LedgerServiceDeps): LedgerService {
       deps.onChange?.({ doc: result.doc, readOnly: false });
       return { ok: true, task: result.task };
     },
-    async importProof(input) {
+    async importProof(input, remote) {
       if (input.tipo === 'texto') return { kind: 'texto', text: input.texto };
       if (input.tipo === 'link') return isHttpUrl(input.url) ? { kind: 'link', url: input.url } : { error: `"${input.url}" não é um link http(s).` };
       const source = input.caminho;
+      const newName = (ext: string): string => `${new Date(now()).toISOString().slice(0, 10)}-${randomBytes(6).toString('hex')}.${ext}`;
+      if (remote) {
+        const fetched = await remote(source);
+        if (!fetched.ok) return { error: fetched.error };
+        try {
+          await deps.proofFs.mkdir(proofsDir);
+          const file = newName(fetched.ext);
+          await deps.proofFs.writeFile(join(proofsDir, file), fetched.bytes);
+          return { kind: 'arquivo', file, mediaType: fetched.mediaType };
+        } catch {
+          return { error: `Li "${source}" na VPS, mas não consegui guardar a cópia neste computador.` };
+        }
+      }
       const ext = extname(source).slice(1).toLowerCase();
       const mediaType = PROOF_FILE_TYPES[ext];
       if (!isAbsolute(source)) return { error: `"${source}": use o caminho absoluto do arquivo.` };
-      if (!mediaType) return { error: `"${source}": a prova em arquivo é print ou vídeo (${Object.keys(PROOF_FILE_TYPES).join(', ')}). Saída de comando vai como texto.` };
+      if (!mediaType) return { error: `"${source}": a prova em arquivo é print, vídeo ou protótipo HTML (${Object.keys(PROOF_FILE_TYPES).join(', ')}). Saída de comando vai como texto.` };
       try {
         // A link with a print's name could point at anything (the proofs go to the phone): only a real file,
         // and the file it really is (a folder junction on the way) has to be a print or video too.
         if ((await deps.proofFs.lstat(source)).isSymbolicLink()) return { error: `"${source}" é um atalho (link simbólico); mande o arquivo de verdade.` };
         const real = await deps.proofFs.realpath(source);
-        if (extname(real).slice(1).toLowerCase() !== ext) return { error: `"${source}" leva a "${real}", que não é print nem vídeo.` };
+        if (extname(real).slice(1).toLowerCase() !== ext) return { error: `"${source}" leva a "${real}", que não é print, vídeo nem protótipo.` };
         const info = await deps.proofFs.stat(real);
         if (!info.isFile()) return { error: `"${source}" não é um arquivo.` };
-        if (info.size > MAX_PROOF_FILE_BYTES) return { error: `"${source}" passa de ${MAX_PROOF_FILE_BYTES / 1024 / 1024} MB.` };
+        const max = maxProofBytes(mediaType);
+        if (info.size > max)
+          return { error: `"${source}" passa de ${max / 1024 / 1024} MB${mediaType === 'text/html' ? ' (o protótipo é um HTML autocontido de até 2 MB)' : ''}.` };
         await deps.proofFs.mkdir(proofsDir);
-        const file = `${new Date(now()).toISOString().slice(0, 10)}-${randomBytes(6).toString('hex')}.${ext}`;
+        const file = newName(ext);
         await deps.proofFs.copyFile(real, join(proofsDir, file));
         return { kind: 'arquivo', file, mediaType };
       } catch {
@@ -275,12 +300,35 @@ function proofView(service: LedgerService, proof: LedgerProof): Record<string, u
   }
 }
 
+/** The "para o dono" block back in the tool's pt-BR words (1-based proof numbers, as it was sent). */
+function forOwnerView(forOwner: LedgerForOwner): Record<string, unknown> {
+  const visual = forOwner.visual;
+  return {
+    ...(forOwner.title ? { titulo: forOwner.title } : {}),
+    pergunta: forOwner.question,
+    resumo: forOwner.summary,
+    opcoes: forOwner.options.map((option) => ({
+      rotulo: option.label,
+      efeito: option.effect,
+      ...(option.risk ? { risco: option.risk } : {}),
+      fecha: option.closes,
+      ...(option.recommended ? { recomendada: true } : {}),
+    })),
+    porque: forOwner.why,
+    risco: forOwner.risk,
+    ...(visual?.kind === 'prova' ? { visual: { prova: visual.proof + 1 } } : {}),
+    ...(visual?.kind === 'antes-depois' ? { visual: { antes: visual.before + 1, depois: visual.after + 1 } } : {}),
+    ...(visual?.kind === 'checagens' ? { visual: { checagens: visual.checks.map((check) => ({ nome: check.name, ok: check.ok, frase: check.sentence })) } } : {}),
+  };
+}
+
 function taskView(task: LedgerTask, doc: LedgerDoc): Record<string, unknown> {
   const delivery = lastDelivery(task);
   const decision = [...task.events].reverse().find((event) => event.kind === 'aceita' || event.kind === 'rejeitada');
   const who = (actor: LedgerActor): string => (actor.kind === 'dono' ? 'dono' : actor.placeId);
   return {
     id: task.id,
+    ...(task.title ? { titulo: task.title } : {}),
     estado: task.state,
     pedido: task.request,
     criterio: task.doneWhen,
@@ -294,10 +342,11 @@ function taskView(task: LedgerTask, doc: LedgerDoc): Record<string, unknown> {
             em: new Date(delivery.at).toISOString(),
             provas: delivery.proofs?.map((proof) => (proof.kind === 'arquivo' ? `arquivo ${proof.file}` : proof.kind === 'link' ? proof.url : `texto (${proof.text.length} caracteres; leia com tarefa_ver)`)),
             ...(delivery.text ? { nota: delivery.text } : {}),
+            ...(delivery.forOwner ? { paraODono: forOwnerView(delivery.forOwner) } : {}),
           },
         }
       : {}),
-    ...(decision ? { decisao: { tipo: decision.kind, por: who(decision.by), ...(decision.text ? { motivo: decision.text } : {}) } } : {}),
+    ...(decision ? { decisao: { tipo: decision.kind, por: who(decision.by), ...(decision.option ? { opcao: decision.option } : {}), ...(decision.text ? { motivo: decision.text } : {}) } } : {}),
     ...(waitsForOwner(doc, task) ? { esperandoDono: true } : {}),
     ...(task.slack
       ? {
@@ -325,7 +374,8 @@ function callerActor(caller: LedgerCaller): LedgerActor {
   return { kind: 'lugar', placeId: caller.placeId, ...(caller.roleId ? { roleId: caller.roleId } : {}) };
 }
 
-export async function runLedgerTool(service: LedgerService, caller: LedgerCaller, call: LedgerToolCall): Promise<LedgerToolAnswer> {
+/** `remote`: the calling session runs on a remote place; its proof files are read there (fatia 6). */
+export async function runLedgerTool(service: LedgerService, caller: LedgerCaller, call: LedgerToolCall, remote?: RemoteProofFetch): Promise<LedgerToolAnswer> {
   const actor = callerActor(caller);
   const answer = (result: LedgerApplyResult, what: string): { ok: boolean; text: string } =>
     result.ok ? { ok: true, text: JSON.stringify({ [what]: true, id: result.task.id, estado: result.task.state }) } : { ok: false, text: result.reason };
@@ -343,6 +393,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         due: call.prazo,
         ownerPlaceId: owner,
         risk: lowRefused ? 'alto' : call.risco,
+        ...(call.titulo ? { title: call.titulo } : {}),
       });
       if (!result.ok || !lowRefused) return answer(result, 'criada');
       return {
@@ -373,14 +424,14 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
     case 'tarefa_entregar': {
       const proofs: LedgerProof[] = [];
       for (const input of call.provas) {
-        const proof = await service.importProof(input);
+        const proof = await service.importProof(input, remote);
         if ('error' in proof) {
           await service.discardProofs(proofs);
           return { ok: false, text: `Nada foi entregue. ${proof.error}` };
         }
         proofs.push(proof);
       }
-      const result = service.apply(actor, { op: 'entregar', id: call.id, proofs, ...(call.nota ? { note: call.nota } : {}) });
+      const result = service.apply(actor, { op: 'entregar', id: call.id, proofs, ...(call.nota ? { note: call.nota } : {}), ...(call.paraODono ? { forOwner: call.paraODono } : {}) });
       if (!result.ok) await service.discardProofs(proofs);
       return answer(result, 'entregue');
     }

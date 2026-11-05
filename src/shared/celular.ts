@@ -116,7 +116,8 @@ export function naipeDoTipo(tipo: string | null | undefined): Naipe {
   }
 }
 
-export type ProvaTipo = 'imagem' | 'video' | 'comando' | 'link';
+/** `prototipo`: um HTML autocontido que a carta roda isolado (iframe sandbox, por bilhete de uso único). */
+export type ProvaTipo = 'imagem' | 'video' | 'prototipo' | 'comando' | 'link';
 
 export interface ProvaCelular {
   readonly id: string;
@@ -128,6 +129,32 @@ export interface ProvaCelular {
   readonly cortado?: true;
   /** Endereço `http(s)` (`tipo: 'link'`). Imagem e vídeo vêm por `/api/prova`. */
   readonly url?: string;
+}
+
+/** Um caminho da decisão do dono (cartas forma A): o nome vira o botão. */
+export interface OpcaoCelular {
+  readonly rotulo: string;
+  readonly efeito: string;
+  readonly risco?: string;
+  readonly fecha: 'aceita' | 'rejeitada';
+  readonly recomendada?: true;
+}
+
+export type VisualCelular =
+  /** Uma prova da entrega (`ProvaCelular.id`). */
+  | { readonly tipo: 'prova'; readonly prova: string }
+  | { readonly tipo: 'antes-depois'; readonly antes: string; readonly depois: string }
+  /** Quadro de checagens desenhado pela PWA. */
+  | { readonly tipo: 'checagens'; readonly itens: readonly { readonly nome: string; readonly ok: boolean; readonly frase: string }[] };
+
+/** A carta forma A: o bloco "para o dono" da entrega. Sem ela, a PWA mostra a carta antiga. */
+export interface CartaCelular {
+  readonly pergunta: string;
+  readonly resumo: string;
+  readonly opcoes: readonly OpcaoCelular[];
+  readonly porque: string;
+  readonly risco: string;
+  readonly visual?: VisualCelular;
 }
 
 export interface EntregaCelular {
@@ -149,6 +176,30 @@ export interface EntregaCelular {
   readonly nota?: string;
   readonly risco: 'baixo' | 'alto';
   readonly provas: readonly ProvaCelular[];
+  /** O quadro (nome da pasta do projeto). */
+  readonly quadro: string;
+  /** `DD/MM/AAAA`. */
+  readonly prazo: string;
+  /** Detalhes técnicos, recolhidos no verso: o id da tarefa e de quem entregou. */
+  readonly ids: readonly string[];
+  /** Forma A: frente decide, verso explica. Ausente = entrega sem o bloco (a carta antiga). */
+  readonly carta?: CartaCelular;
+  /** O que o dono escreveu na carta e as reentregas de quem fez, em ordem (o verso mostra). */
+  readonly conversa: readonly FalaCelular[];
 }
+
+/** Uma fala da conversa da carta. */
+export interface FalaCelular {
+  /** `voce` = o dono escreveu; `entrega` = quem fez entregou de novo. */
+  readonly de: 'voce' | 'entrega';
+  readonly texto: string;
+  /** ISO. */
+  readonly em: string;
+  /** Só do dono: para onde foi ("Enviado a Dev · painel", "Foi ao Líder", "Ninguém aberto…"). */
+  readonly recibo?: string;
+}
+
+/** O resultado de escrever na carta, com o recibo para mostrar. */
+export type ComentarCelular = { readonly ok: true; readonly recibo: string } | { readonly ok: false; readonly mensagem: string };
 
 export type DecisaoCelular = 'aceitar' | 'rejeitar';
