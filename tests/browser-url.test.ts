@@ -1,6 +1,6 @@
 // Navegador interno — what the panel may open (address bar and `navegador_abrir`).
 import { describe, expect, it } from 'vitest';
-import { isAllowedPanelUrl, normalizeBrowserUrl } from '../src/shared/browser/url';
+import { canServeLocalFile, isAllowedPanelUrl, normalizeBrowserUrl } from '../src/shared/browser/url';
 
 describe('normalizeBrowserUrl', () => {
   it('keeps http and https URLs', () => {
@@ -21,12 +21,12 @@ describe('normalizeBrowserUrl', () => {
     expect(normalizeBrowserUrl('about:blank')).toEqual({ ok: true, url: 'about:blank' });
   });
 
-  it('refuses file:// and every scheme other than http/https', () => {
+  it('refuses a local file that is not a page, image or PDF, and every scheme other than http/https', () => {
     for (const input of ['file:///C:/Users/x/a.txt', 'javascript:alert(1)', 'data:text/html,<b>x</b>', 'chrome://settings', 'view-source:https://a.com', 'devtools://x']) {
       const result = normalizeBrowserUrl(input);
       expect(result.ok, input).toBe(false);
     }
-    expect(normalizeBrowserUrl('file:///C:/x')).toEqual({ ok: false, reason: 'O navegador do Donel só abre endereços http e https (recebi "file:").' });
+    expect(normalizeBrowserUrl('file:///C:/x')).toEqual({ ok: false, reason: 'O navegador do Donel abre arquivo local só de página (HTML), imagem ou PDF, nunca uma pasta.' });
   });
 
   it('refuses a user or password embedded in the URL', () => {
@@ -52,5 +52,27 @@ describe('isAllowedPanelUrl', () => {
     expect(isAllowedPanelUrl('blob:https://example.com/123')).toBe(false);
     expect(isAllowedPanelUrl('https://u:p@example.com/')).toBe(false);
     expect(isAllowedPanelUrl('not a url')).toBe(false);
+  });
+});
+
+describe('canServeLocalFile — a local page never reads the disk', () => {
+  it('serves the file opened on purpose and the static assets under its folder, nothing else', () => {
+    const opened = ['file:///C:/Users/x/relatorio/index.html'];
+    expect(canServeLocalFile('file:///c:/Users/x/relatorio/index.html', opened)).toBe(true);
+    expect(canServeLocalFile('file:///C:/Users/x/relatorio/img/grafico.png', opened)).toBe(true);
+    expect(canServeLocalFile('file:///C:/Users/x/relatorio/estilo.css', opened)).toBe(true);
+    for (const refused of [
+      'file:///C:/Users/x/.claude/.credentials.json',
+      'file:///C:/Windows/win.ini',
+      'file:///C:/Users/x/relatorio/dados.json',
+      'file:///C:/Users/x/relatorio/outra.html',
+      'file:///C:/Users/x/relatorio/../segredo.png',
+      'file:///C:/Users/x/foto.png',
+      'file://servidor/pasta/a.png',
+    ]) {
+      expect(canServeLocalFile(refused, opened), refused).toBe(false);
+    }
+    // An image opened on purpose frees only itself.
+    expect(canServeLocalFile('file:///C:/Users/x/vizinha.png', ['file:///C:/Users/x/foto.png'])).toBe(false);
   });
 });

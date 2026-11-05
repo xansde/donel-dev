@@ -125,7 +125,14 @@ export interface SendMachineState {
   readonly enterAt: number | null;
   readonly resendAt: number | null;
   readonly ackDeadline: number | null;
+  /** No more Enter resends (`MAX_ENTER_RESENDS` went out). */
   readonly resendDone: boolean;
+  /** Enters written again after the first one, while our text still sat in the box. */
+  readonly resends: number;
+  /** The gate read an empty box right before the paste: whatever placeholder shows up next is ours. */
+  readonly boxEmptyAtPaste: boolean;
+  /** Idle CLI, paste not drawn yet: when to give up on it (`TEXT_IDLE_EXTRA_MS` after the text deadline). */
+  readonly textGiveUpAt: number | null;
   readonly idleAtEnter: boolean;
   /** `queued` and the turn is over: when to look the prompt up (`verify`) if no delivery signal came. */
   readonly verifyAt: number | null;
@@ -170,6 +177,17 @@ const IMAGE_MS = 3_000;
 const TEXT_BASE_MS = 3_000;
 const TEXT_PER_15KB_MS = 1_000;
 const FIRST_PASTE_MS = 12_000;
+/**
+ * With the CLI idle and nothing on its screen, a paste not drawn yet is waited for this much longer before giving
+ * up. On a machine short of RAM (90 %+, 05/11) a CLI that had just booted drew the paste 20 s+ later; giving up at
+ * 12 s left `[Pasted text #1 …]` in the box, never submitted, and the session never started.
+ */
+const TEXT_IDLE_EXTRA_MS = 12_000;
+const FIRST_PASTE_IDLE_EXTRA_MS = 33_000;
+/** While waiting that extra time, the screen is looked at again on this beat. */
+const TEXT_RECHECK_MS = 1_000;
+/** Enter written again while our text still sits in the box, 3 s apart (an Enter a slow CLI swallowed). */
+const MAX_ENTER_RESENDS = 3;
 const ACK_MS = 15_000;
 const ENTER_GAP_MS = 80;
 const RESEND_ENTER_MS = 3_000;
@@ -255,6 +273,9 @@ export function createSend(input: SendInput, now: number): StepResult {
     resendAt: null,
     ackDeadline: null,
     resendDone: false,
+    resends: 0,
+    boxEmptyAtPaste: false,
+    textGiveUpAt: null,
     idleAtEnter: true,
     verifyAt: null,
     leftoverShown: null,
@@ -331,6 +352,9 @@ function resetForRetry(s: Draft, now: number): void {
   s.resendAt = null;
   s.ackDeadline = null;
   s.resendDone = false;
+  s.resends = 0;
+  s.boxEmptyAtPaste = false;
+  s.textGiveUpAt = null;
   s.verifyAt = null;
   s.leftoverShown = null;
 }
@@ -443,11 +467,31 @@ function textSeen(s: Draft, lines: readonly LineInput[]): boolean {
   const stripped = collapse(raw.replace(/\[Image #\d+\]/g, ''));
   if (squash(stripped) === squash(s.text)) return true;
   const placeholder = pastedPlaceholder(lines);
-  if (placeholder && /^\[Pasted text #\d+(?: \+\d+ lines?)?\]$/.test(stripped)) {
+  if (placeholder && /^(?:\[Pasted text #\d+(?: \+\d+ lines?)?\]\s*)+$/.test(stripped)) {
     const breaks = (s.text.match(/\n/g) ?? []).length;
-    return placeholder.lines === null || placeholder.lines === breaks;
+    if (placeholder.lines === null || placeholder.lines === breaks) return true;
+    // The box was empty right before our paste, so only our paste can have put a placeholder there: a count the
+    // CLI made differently (line endings, a paste it took in two parts) is still ours. Missing it left the
+    // placeholder sitting in the box, never submitted (05/11).
+    return s.boxEmptyAtPaste;
   }
-  return false;
+  return s.boxEmptyAtPaste && looksLikeOurs(stripped, s.text);
+}
+
+/** Letters and digits only: what survives a screen read that drops or doubles a glyph (◆, ambiguous widths, wraps). */
+const lettersOnly = (t: string): string => t.normalize('NFKC').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
+
+/**
+ * 05/11 — the box went from empty to holding text that is ours read loosely: nearly as long, and its start or end
+ * is in our text. A message to an idle session sat in the box unsubmitted because the screen read did not match it
+ * glyph for glyph; as the box was proven empty right before the paste, nobody else put it there.
+ */
+function looksLikeOurs(box: string, text: string): boolean {
+  const seen = lettersOnly(box);
+  const ours = lettersOnly(text);
+  if (seen === '' || ours === '' || seen.length < ours.length * 0.8) return false;
+  const edge = Math.min(12, seen.length);
+  return ours.includes(seen.slice(0, edge)) || ours.includes(seen.slice(-edge));
 }
 
 /** Text in the box is a prefix of ours (so a timeout may clean it without eating the owner's own typing). */
@@ -467,6 +511,7 @@ function textDeadlineMs(s: Draft): number {
 function startText(s: Draft, now: number, fx: SendEffect[]): void {
   s.step = 'text';
   s.stepDeadline = now + textDeadlineMs(s);
+  s.textGiveUpAt = s.stepDeadline + (s.firstPaste ? FIRST_PASTE_IDLE_EXTRA_MS : TEXT_IDLE_EXTRA_MS);
   fx.push({ type: 'write', data: bracketedPaste(s.text) });
 }
 
@@ -617,6 +662,7 @@ function evaluateGate(s: Draft, now: number, fx: SendEffect[]): void {
   s.failReason = null;
 
   // Gate open: start pasting.
+  s.boxEmptyAtPaste = lines !== null && readInputText(lines) === '';
   s.phase = 'typing';
   s.attempts += 1;
   s.imageIdx = 0;
@@ -656,6 +702,12 @@ function evaluateTyping(s: Draft, now: number, fx: SendEffect[]): void {
         enterConfirming(s, lines ?? [], now, fx);
         return;
       }
+      // Idle, nothing on the screen in the way, the box still empty: a slow CLI may still draw the paste. Writing
+      // it again would duplicate it, so wait (looking again every second) and only then give up.
+      if (!dialogUp && s.textGiveUpAt !== null && now < s.textGiveUpAt && lines !== null && readInputText(lines) === '') {
+        s.stepDeadline = Math.min(now + TEXT_RECHECK_MS, s.textGiveUpAt);
+        return;
+      }
       // Clean the box only if what is there is ours and the CLI is idle (Esc would interrupt a turn).
       if (lines !== null && !isWorking(lines) && boxIsOurs(s, lines)) fx.push({ type: 'write', data: '\x1b\x1b' });
       fail(s, 'o texto não entrou na caixa');
@@ -682,6 +734,7 @@ function evaluateConfirming(s: Draft, now: number, fx: SendEffect[]): void {
       s.resendAt = now + RESEND_ENTER_MS;
       s.ackDeadline = now + ACK_MS;
       s.resendDone = false;
+      s.resends = 0;
     }
     return;
   }
@@ -705,11 +758,13 @@ function evaluateConfirming(s: Draft, now: number, fx: SendEffect[]): void {
       fail(s, 'não foi');
       return;
     }
-    // Text still in the box 3 s after Enter: nothing was submitted. One more `\r`, once. An empty box
-    // without acceptance may already have been delivered: wait, never resend.
+    // Text still in the box 3 s after Enter: nothing was submitted. One more `\r` (never the text again), up to
+    // MAX_ENTER_RESENDS, 3 s apart. An empty box without acceptance may already have been delivered: wait, never resend.
     if (!s.resendDone && s.resendAt !== null && now >= s.resendAt && lines !== null && textSeen(s, lines)) {
       fx.push({ type: 'write', data: '\r' });
-      s.resendDone = true;
+      s.resends += 1;
+      s.resendDone = s.resends >= MAX_ENTER_RESENDS;
+      if (!s.resendDone) s.resendAt = now + RESEND_ENTER_MS;
       s.attempts += 1;
     }
   }

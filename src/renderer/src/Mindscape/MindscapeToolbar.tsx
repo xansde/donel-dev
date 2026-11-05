@@ -1,4 +1,4 @@
-import { useCallback, useState, type CSSProperties } from 'react';
+import { useCallback, useState, type CSSProperties, type ReactNode } from 'react';
 import type { SessionRole } from '../../../shared/roles';
 import { RoleMenu } from './RoleMenu';
 import { DRAWING_STROKES, OWNER_COLORS, type BoardReach, type DrawingColor, type DrawingStroke, type MindscapeLink } from '../../../shared/mindscape/model';
@@ -65,6 +65,8 @@ export interface MindscapeToolbarProps {
   /** `sessao_fechar` (owner 04/11) — the Líder of this board reaches only it, or every board. */
   readonly reach: BoardReach;
   readonly onToggleReach: () => void;
+  /** Item 20 — the counter of the routines in shadow, before the hint. */
+  readonly shadow?: ReactNode;
   readonly hint: string;
 }
 
@@ -101,6 +103,7 @@ export function MindscapeToolbar({
   onToggleOld,
   reach,
   onToggleReach,
+  shadow,
   hint,
 }: MindscapeToolbarProps): React.JSX.Element {
   const [placeMenuOpen, setPlaceMenuOpen] = useState(false);
@@ -246,6 +249,7 @@ export function MindscapeToolbar({
       >
         {reach === 'all' ? 'Alcance: todos os quadros' : 'Alcance: este quadro'}
       </button>
+      {shadow}
       <span className={styles.toolHint} data-testid="mindscape-hint">
         {hint}
       </span>

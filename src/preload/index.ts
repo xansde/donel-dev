@@ -162,6 +162,7 @@ import type {
 } from '../shared/mindscape/channels';
 import type { MindscapeDoc } from '../shared/mindscape/model';
 import { CELULAR_CHANNELS, type CelularPairResult, type CelularState } from '../shared/celular';
+import { ROTINAS_CHANNELS, type ShadowEntry } from '../shared/rotinas/contract';
 import { LIDER_CHANNELS, type LiderReport, type LiderSendPayload, type LiderSendResult, type LiderState } from '../shared/lider/ipc';
 import { ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
 import { SESSION_RENEWAL_CHANNELS, type HandoffStatus, type RenewalPrepareInput, type RenewalPrepared, type SessionRenewalPrefs } from '../shared/sessionRenewal';
@@ -521,8 +522,11 @@ const donelApi: DonelApi = {
     },
     getRules: (ptyId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.getRules, ptyId) as Promise<BrowserAgentRules | null>,
     chooseUploadDir: (ptyId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.chooseUploadDir, ptyId) as Promise<BrowserRulesResult>,
-    clearUploadDir: (ptyId: string) => {
-      ipcRenderer.send(BROWSER_CHANNELS.clearUploadDir, ptyId);
+    removeUploadDir: (ptyId: string, folder: string) => {
+      ipcRenderer.send(BROWSER_CHANNELS.removeUploadDir, ptyId, folder);
+    },
+    answerUploadRequest: (ptyId: string, allow: boolean) => {
+      ipcRenderer.send(BROWSER_CHANNELS.answerUploadRequest, ptyId, allow);
     },
     setDomains: (ptyId: string, mode: DomainMode, typed: string) => ipcRenderer.invoke(BROWSER_CHANNELS.setDomains, ptyId, mode, typed) as Promise<BrowserRulesResult>,
     onRules: (listener: (rules: BrowserAgentRules) => void) => {
@@ -861,6 +865,12 @@ const donelApi: DonelApi = {
     setEnabled: (enabled: boolean) => ipcRenderer.invoke(CELULAR_CHANNELS.setEnabled, enabled) as Promise<CelularState>,
     pair: () => ipcRenderer.invoke(CELULAR_CHANNELS.pair) as Promise<CelularPairResult>,
     revoke: (deviceId: string) => ipcRenderer.invoke(CELULAR_CHANNELS.revoke, deviceId) as Promise<CelularState>,
+  },
+
+  // Item 20 — the routines in shadow: what they would have woken today (read only).
+  rotinas: {
+    today: () => ipcRenderer.invoke(ROTINAS_CHANNELS.today) as Promise<ShadowEntry[]>,
+    onChanged: (listener: () => void) => subscribeChannel(ipcRenderer, ROTINAS_CHANNELS.changed, () => listener()),
   },
 };
 

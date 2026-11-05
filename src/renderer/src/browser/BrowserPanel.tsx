@@ -99,7 +99,8 @@ export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
   const shownAddress = address ?? (state && state.url !== 'about:blank' ? state.url : '');
 
   const tabs = state?.tabs ?? [];
-  const uploadDir = browser.rules?.uploadDir ?? null;
+  const uploadDirs = browser.rules?.uploadDirs ?? [];
+  const uploadRequest = browser.rules?.uploadRequest ?? null;
 
   const domainMode = domainDraft?.mode ?? browser.rules?.domainMode ?? 'all';
   const domainsTyped = domainDraft?.typed ?? (browser.rules?.domains ?? []).join(', ');
@@ -240,18 +241,22 @@ export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
           </div>
           <div className={styles.rulesRow}>
             <span className={styles.rulesLabel}>Envio de arquivos</span>
-            <span className={styles.rulesValue} title={uploadDir ?? undefined}>
-              {uploadDir ?? 'desligado: nenhuma pasta autorizada'}
-            </span>
+            {uploadDirs.length === 0 ? <span className={styles.rulesValue}>desligado: nenhuma pasta autorizada</span> : null}
             <Button type="button" variant="ghost" data-testid="browser-upload-choose" onClick={chooseUploadDir}>
-              {uploadDir ? 'Trocar pasta' : 'Autorizar pasta'}
+              Autorizar pasta
             </Button>
-            {uploadDir ? (
-              <Button type="button" variant="ghost" onClick={() => window.donel.browser.clearUploadDir(ptyId)}>
-                Tirar
-              </Button>
-            ) : null}
           </div>
+          {uploadDirs.map((folder) => (
+            <div key={folder} className={styles.rulesRow} data-testid="browser-upload-folder">
+              <span className={styles.rulesLabel} />
+              <span className={styles.rulesValue} title={folder}>
+                {folder}
+              </span>
+              <Button type="button" variant="ghost" onClick={() => window.donel.browser.removeUploadDir(ptyId, folder)}>
+                Remover
+              </Button>
+            </div>
+          ))}
         </div>
       ) : null}
       {error ? (
@@ -259,11 +264,29 @@ export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
           {error}
         </p>
       ) : null}
+      {uploadRequest ? (
+        <div className={styles.ownerBar} role="alert" data-testid="browser-upload-request">
+          <span className={styles.ownerText} title={uploadRequest}>
+            O agente quer enviar arquivos da pasta {uploadRequest}. Permitindo, ela fica autorizada para as próximas vezes (dá para remover em Regras).
+          </span>
+          <Button type="button" variant="secondary" data-testid="browser-upload-allow" onClick={() => window.donel.browser.answerUploadRequest(ptyId, true)}>
+            Permitir
+          </Button>
+          <Button type="button" variant="ghost" data-testid="browser-upload-deny" onClick={() => window.donel.browser.answerUploadRequest(ptyId, false)}>
+            Negar
+          </Button>
+        </div>
+      ) : null}
       {ownerDriving ? (
         <div className={styles.ownerBar} role="status" data-testid="browser-owner-bar">
           <span className={styles.ownerText}>
             {browser.control?.requestedByAgent && browser.control.reason ? agentAskedHelpLine(browser.control.reason) : 'Você está no controle'}
           </span>
+          {browser.control?.requestedByAgent && uploadDirs.length === 0 ? (
+            <Button type="button" variant="ghost" data-testid="browser-owner-upload-choose" onClick={chooseUploadDir}>
+              Autorizar pasta de envio
+            </Button>
+          ) : null}
           <Button type="button" variant="secondary" data-testid="browser-hand-back" onClick={() => browserStore.handBack(ptyId)}>
             Devolver ao agente
           </Button>

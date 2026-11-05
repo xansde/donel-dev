@@ -75,8 +75,8 @@ export const BROWSER_TOOLS: readonly ToolDefinition[] = [
     name: 'navegador_abrir',
     title: 'Abrir endereço',
     description:
-      'Abre um endereço http(s) no navegador integrado desta sessão (o dono vê a mesma página no painel do Donel). Endereço sem esquema vira https; localhost vira http. Depois, use navegador_ler para ver a página.',
-    inputSchema: { type: 'object', properties: { url: { type: 'string', description: 'Endereço http ou https.' } }, required: ['url'], additionalProperties: false },
+      'Abre um endereço http(s) no navegador integrado desta sessão (o dono vê a mesma página no painel do Donel). Endereço sem esquema vira https; localhost vira http. Também abre um arquivo deste computador que seja página HTML, imagem ou PDF, pelo caminho completo (C:\\pasta\\relatorio.html) ou file:///: use para mostrar ao dono um HTML que você gerou. Pasta, outro tipo de arquivo e pasta de rede são recusados. Depois, use navegador_ler para ver a página.',
+    inputSchema: { type: 'object', properties: { url: { type: 'string', description: 'Endereço http ou https, ou caminho completo de um arquivo HTML, imagem ou PDF deste computador.' } }, required: ['url'], additionalProperties: false },
   },
   {
     name: 'navegador_ler',
@@ -163,10 +163,10 @@ export const BROWSER_TOOLS: readonly ToolDefinition[] = [
     name: 'navegador_enviar_arquivo',
     title: 'Enviar um arquivo',
     description:
-      'Coloca um arquivo no campo de envio [N] (ou no campo de arquivo ligado a esse botão). Só aceita arquivo de dentro da pasta que o dono autorizou no painel do navegador; sem pasta autorizada, peça a ele com navegador_pedir_humano. Caminho relativo vale a partir dessa pasta.',
+      'Coloca um arquivo no campo de envio [N] (ou no campo de arquivo ligado a esse botão). Passe o caminho COMPLETO do arquivo. Só sai arquivo de uma pasta que o dono autorizou; se a pasta do arquivo ainda não está autorizada, esta ferramenta mesma mostra essa pasta ao dono no painel, com Permitir / Negar, e espera a resposta (até 30 min). Permitida, a pasta fica autorizada para as próximas vezes. Não use navegador_pedir_humano para pedir pasta.',
     inputSchema: {
       type: 'object',
-      properties: { n: ELEMENT_NUMBER, caminho: { type: 'string', description: 'Arquivo dentro da pasta autorizada.' } },
+      properties: { n: ELEMENT_NUMBER, caminho: { type: 'string', description: 'Caminho completo do arquivo (relativo só vale dentro de uma pasta já autorizada).' } },
       required: ['n', 'caminho'],
       additionalProperties: false,
     },
@@ -216,7 +216,7 @@ export const BROWSER_TOOLS: readonly ToolDefinition[] = [
     name: 'navegador_pedir_humano',
     title: 'Pedir ajuda ao dono',
     description:
-      'Pede ao dono que assuma o navegador (login, 2FA, captcha, uma decisão dele). O painel abre com o motivo e esta ferramenta só volta quando ele devolver o controle (até 30 min). Nunca peça senha ao dono pelo chat: ele digita na própria página.',
+      'Pede ao dono que assuma o navegador (login, 2FA, captcha, uma decisão dele). O painel abre com o motivo e esta ferramenta só volta quando ele devolver o controle (até 30 min). Nunca peça senha ao dono pelo chat: ele digita na própria página. Para enviar arquivo não use esta: navegador_enviar_arquivo com o caminho completo já pede a pasta ao dono.',
     inputSchema: {
       type: 'object',
       properties: { motivo: { type: 'string', description: 'O que o dono precisa fazer, em uma frase.' } },

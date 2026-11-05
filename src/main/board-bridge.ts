@@ -14,6 +14,8 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 const OWNER_DECISION_TIMEOUT_MS = 30 * 60_000;
 /** `sessao_fechar` may wait up to 20 s for the destination's turn to end. */
 const CLOSE_TIMEOUT_MS = 45_000;
+/** `sessao_enviar` waits up to 40 s for the destination's CLI to take the message (`agentBridge.ts`). */
+const SEND_TIMEOUT_MS = 50_000;
 
 export interface BoardBridgeDeps {
   readonly ipcMain: IpcMain;
@@ -48,7 +50,7 @@ export function createBoardBridge(deps: BoardBridgeDeps): BoardBridge {
           return;
         }
         const requestId = randomUUID();
-        const timeoutMs = call.tool === 'sessao_abrir' ? OWNER_DECISION_TIMEOUT_MS : call.tool === 'sessao_fechar' ? CLOSE_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
+        const timeoutMs = call.tool === 'sessao_abrir' ? OWNER_DECISION_TIMEOUT_MS : call.tool === 'sessao_fechar' ? CLOSE_TIMEOUT_MS : call.tool === 'sessao_enviar' ? SEND_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
         const timer = setTimeout(() => {
           pending.delete(requestId);
           resolve({ kind: 'error', text: 'O app não respondeu a tempo. Tente de novo.' });

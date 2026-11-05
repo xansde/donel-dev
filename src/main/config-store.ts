@@ -3,9 +3,10 @@ import { dirname } from 'node:path';
 import type { AccountsConfig } from '../shared/accounts';
 import { defaultAccountsConfig } from '../shared/accounts';
 import type { EffortLevel, ModelAlias, PermissionMode } from '../shared/commandBuilder';
-import type { AppConfigDto, AppUpdatePrefs, AutoModePrefs, ChatPrefs, LauncherDefaultsDto, NotificationPreference, PetPrefs, ProjectScanMode, SessionNamesMap, SweepPrefs, YoloPrefs } from '../shared/config';
+import type { AppConfigDto, AppUpdatePrefs, AutoModePrefs, BrowserUploadPrefs, ChatPrefs, LauncherDefaultsDto, NotificationPreference, PetPrefs, ProjectScanMode, SessionNamesMap, SweepPrefs, YoloPrefs } from '../shared/config';
 // T014 (015-jobu-pet) — limits of the pet size: the same rule the window uses (placement.ts).
 import { PET_SIZE_DEFAULT, clampSize } from '../shared/pet/placement';
+import { withUploadFolder } from '../shared/browser/upload';
 import type {
   ArchivedPhaseSession,
   ArchivedPhaseSessions,
@@ -155,6 +156,8 @@ export interface AppConfig {
   readonly yolo: YoloPrefs;
   /** B33 — the installers folder of the in-app update. A TOP-LEVEL key (like `pet`, R20). Not in the DTO. */
   readonly appUpdate: AppUpdatePrefs;
+  /** Navegador integrado — the authorized upload folders. A TOP-LEVEL key (like `pet`, R20). Not in the DTO. */
+  readonly browserUploads: BrowserUploadPrefs;
   /**
    * G1 (011-contas-e-provedores, issue 08) — chaves de TOPO que este build
    * não reconhece (ex.: um campo que só um canal/versão mais nova entende).
@@ -197,6 +200,7 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     autoMode: defaultAutoModePrefs(),
     yolo: defaultYoloPrefs(),
     appUpdate: { installersDir: null },
+    browserUploads: { folders: [] },
     unknownFields: {},
   };
 }
@@ -257,6 +261,23 @@ export function sanitizeAppUpdatePrefs(value: unknown): AppUpdatePrefs {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return { installersDir: null };
   const { installersDir } = value as Record<string, unknown>;
   return { installersDir: typeof installersDir === 'string' && installersDir.trim() !== '' ? installersDir.trim() : null };
+}
+
+/**
+ * Navegador integrado — only non-empty paths, once each (paths compare like Windows does). Errs towards fewer
+ * folders: anything else is dropped, never kept as authorized. The browser service checks each one again with
+ * `refusedUploadFolder` before using it.
+ */
+export function sanitizeBrowserUploadPrefs(value: unknown): BrowserUploadPrefs {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return { folders: [] };
+  const { folders } = value as Record<string, unknown>;
+  if (!Array.isArray(folders)) return { folders: [] };
+  return {
+    folders: folders.reduce<string[]>(
+      (list, folder) => (typeof folder === 'string' && folder.trim() !== '' ? withUploadFolder(list, folder.trim()) : list),
+      [],
+    ),
+  };
 }
 
 /** T014 (015-jobu-pet) — off, no remembered position (= default corner), Medium size. */
@@ -743,6 +764,7 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     autoMode: sanitizeAutoModePrefs(candidate.autoMode, defaults.autoMode),
     yolo: sanitizeYoloPrefs(candidate.yolo),
     appUpdate: sanitizeAppUpdatePrefs(candidate.appUpdate),
+    browserUploads: sanitizeBrowserUploadPrefs(candidate.browserUploads),
     unknownFields,
   };
 }
