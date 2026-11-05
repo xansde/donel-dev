@@ -43,6 +43,7 @@ import { RoleMenu } from './RoleMenu';
 import { MindscapeSelectionLayer } from './MindscapeSelectionLayer';
 import { LedgerStrip } from './LedgerStrip';
 import { MindscapeToolbar, type DrawStyle } from './MindscapeToolbar';
+import { ShadowRoutines } from './ShadowRoutines';
 import { preparePrint, useMindscapeImages } from './useMindscapeImage';
 import styles from './Mindscape.module.css';
 
@@ -650,6 +651,17 @@ export function MindscapeScreen({
           setCreatedCardId(id);
           onAction(projectPath, (current) => addOwnerCard(current, projectPath, { id, createdAt, origin }));
         }}
+        shadow={
+          <ShadowRoutines
+            projectPath={board?.projectPath}
+            placeName={(placeId) => {
+              const card = board?.cards[placeId];
+              if (card?.kind !== 'session' || !card.sessionId) return undefined;
+              const sessionId = card.sessionId;
+              return boardSessions.find((session) => session.sessionId === sessionId)?.name ?? dormantName(sessionId);
+            }}
+          />
+        }
         reach={board?.reach ?? 'own'}
         onToggleReach={() => {
           if (!board) return;

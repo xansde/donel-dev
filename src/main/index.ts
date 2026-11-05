@@ -300,6 +300,9 @@ import { createSweepRunner } from './sweep/sweep-service';
 import { collectHealthSnapshot, lookupProcessName } from './health/collector';
 import { createHealthService, type HealthService } from './health/health-service';
 import { HEALTH_CHANNELS, type KillProcessOutcome } from '../shared/health/ipc';
+import { createRoutineRunner, type RoutineRunner } from './rotinas/routine-runner';
+import { ROTINAS_CHANNELS, type ShadowEntry } from '../shared/rotinas/contract';
+import type { LiveSessionSignal } from '../shared/rotinas/stalledSessions';
 // B33 — atualizar para a versão nova de dentro do app.
 import { autoUpdater } from 'electron-updater';
 import { createAppUpdateService, type AppUpdateService } from './app-update';
@@ -2729,6 +2732,40 @@ function registerHealthIpcHandlers(): void {
   ipcMain.handle(HEALTH_CHANNELS.openTemp, (): Promise<string> => shell.openPath(app.getPath('temp')));
 }
 
+/** Item 20 — the routines in shadow; `null` until whenReady and after the app closes. */
+let routineRunner: RoutineRunner | null = null;
+
+/**
+ * Item 20 (PDA mindscape-openrig, D3) — the routines that wake places, IN SHADOW: a timer in the main reads the
+ * open sessions and the boards and only logs, in `<userData>/rotinas/`, what it would have woken.
+ */
+function registerRotinasIpcHandlers(): void {
+  const mindscapeFile = mindscapeFilePath(process.env, app.getPath('userData'));
+  routineRunner = createRoutineRunner({
+    dir: join(app.getPath('userData'), 'rotinas'),
+    listLive: () => {
+      const live: LiveSessionSignal[] = [];
+      for (const [ptyId, sessionId] of activeSessionByPty) {
+        const snapshot = semaphoreManager.getSnapshot(ptyId);
+        if (!snapshot) continue;
+        live.push({
+          sessionId,
+          state: snapshot.state,
+          stateEnteredAt: snapshot.stateEnteredAt,
+          ...(snapshot.unconfirmed ? { unconfirmed: true } : {}),
+          ...(snapshot.pendingKinds ? { pendingKinds: snapshot.pendingKinds } : {}),
+          ...(snapshot.turnFailure ? { turnFailure: snapshot.turnFailure } : {}),
+        });
+      }
+      return live;
+    },
+    loadDoc: () => createMindscapeStore(mindscapeFile, configIoDeps).load(),
+    onChanged: () => getMainWindow()?.webContents.send(ROTINAS_CHANNELS.changed),
+  });
+  routineRunner.start();
+  ipcMain.handle(ROTINAS_CHANNELS.today, (): ShadowEntry[] => routineRunner?.today() ?? []);
+}
+
 /** B33 — `null` until whenReady. */
 let appUpdateService: AppUpdateService | null = null;
 
@@ -3603,6 +3640,7 @@ void app.whenReady().then(async () => {
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
   }); // 015-jobu-pet
   registerHealthIpcHandlers(); // Saúde do computador
+  registerRotinasIpcHandlers(); // Item 20 — rotinas em sombra
   registerAppUpdateIpcHandlers(); // B33 — atualizar de dentro do app
   registerWorkspaceIpcHandlers(); // Sidebar — abrir no editor + branch
   // Quadro por MCP — the board and session tools of the same server go to the renderer (owner of the document).
@@ -3654,6 +3692,8 @@ app.on('window-all-closed', () => {
   esteiraService = null;
   healthService?.stop();
   healthService = null;
+  routineRunner?.stop();
+  routineRunner = null;
   appUpdateService?.stop();
   // fix/renovacao-credencial (C6, research.md) — antes de descartar o motor,
   // guarda no cofre o par que o CLI deixou em `.credentials.json` para a

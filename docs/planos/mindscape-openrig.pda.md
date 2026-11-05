@@ -392,8 +392,8 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
 
 - **Tipo**: refinamento
 - **Prioridade**: alta
-- **Status**: pendente
-- **Bloqueado por**: 19
+- **Status**: V1 em sombra entregue (PR para `staging`, 05/11), aguardando revisão
+- **Bloqueado por**: 19 (só para sair da sombra: o achado vira tarefa do ledger)
 - **Pergunta**: uma rotina tem um gerador só leitura que produz chaves de achado, um filtro
   **sem LLM** (dedup, histerese de 2 rodadas, teto por janela, desligar a fonte que passa de
   50% de descarte em 7 dias; números do kit, a recalibrar) e um lugar dono que ela acorda. O
@@ -405,4 +405,18 @@ PODENDO EXISTIR e será o próximo passo." Nenhuma decisão deste plano pode fec
   VPS depois (B38/B39). A primeira é uma que **só observa**: "homologação parada" no quadro do
   Dalton.
 - **Ordem**: depois do fix da mensagem direto para o CLI e do Líder único.
+- **V1 (05/11, em sombra)**: contrato puro em `src/shared/rotinas/` (gerador → chaves → filtro sem LLM →
+  lugar dono), timer no main (`src/main/rotinas/routine-runner.ts`, 1ª rodada 1 min depois de abrir, depois a
+  cada 5 min, para quando o app fecha). Filtro: dedup enquanto a chave existir, histerese de 2 rodadas, teto de 5
+  por hora e 15 por dia (o excedente fica adiado), corte por ruído com mais de 50% descartado em 7 dias (mínimo
+  de 4 achados), que desliga a fonte por 7 dias. Em sombra, "descartado" = achado que teria acordado e sumiu na
+  rodada seguinte. Primeira rotina: **sessão parada e ninguém vê** (lugar com sessão aberta parado ou sem sinal há
+  mais de 8 h, ou precisando do dono há mais de 30 min; o lugar do Líder não conta); lugar dono = o Líder do
+  quadro. Só registra em `<userData>/rotinas/` (`config.json` com os números, `estado.json` do filtro com
+  `schemaVersion` próprio, `sombra.log` rotacionado em 256 KB). No quadro: "em sombra: N achados hoje" na barra,
+  lista ao clicar. Teste só do filtro.
+- **Próximo**: (1) sair da sombra: no `wakeInShadow` o achado vira tarefa do ledger (item 19, origem
+  `rotina:<id>:<chave>`) e a mensagem vai ao Líder pelo caminho do `sessao_enviar`; (2) segunda rotina,
+  "homologação parada" no quadro do Dalton (gerador que lê os comprovantes de `homologacao/` do repo da
+  Homologação e acha a etapa sem evento há mais de N dias); (3) levar o mesmo contrato para a VPS (B38/B39).
 - **Resolução**: —
