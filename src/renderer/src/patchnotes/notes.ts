@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-05',
     items: [
       {
+        title: 'Cartas do celular: a frente decide, o verso explica',
+        text: 'No app do celular, a carta de uma entrega que espera você mostra na frente a pergunta, o print ou o quadro de checagens, a recomendação com o porquê e os caminhos com o efeito de cada um. Toque num caminho e toque de novo para decidir: a tarefa fecha do jeito que aquele caminho diz, e o nome dele fica no histórico. "↻ Virar" mostra o verso: o que aconteceu, o risco de cada caminho, quem fez (pelo nome no quadro), o seu pedido e os detalhes técnicos, recolhidos. Entrega sem pergunta para você continua na carta de antes.',
+      },
+      {
         title: 'Entregas que esperam você chegam com pergunta e opções',
         text: 'Toda entrega de risco alto agora traz, para você, a pergunta que você decide, de 2 a 4 caminhos com o efeito de cada um, a recomendação com o porquê e o risco. Um texto com código (número de tarefa, branch, PR, caminho de arquivo, link) volta para quem entregou reescrever. As cartas que mostram isso chegam nas próximas versões. Atenção: depois desta versão, um Donel Dev mais antigo aberto ao mesmo tempo só consegue ler o Oráculo Harrow, sem decidir nada, até ser atualizado.',
       },

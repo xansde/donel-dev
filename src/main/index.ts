@@ -2913,6 +2913,13 @@ function savedBoard(projectPath: string): MindscapeBoard | undefined {
   }
 }
 
+/** Cartas forma A — the name of a place on its board (the name of its session), for "who did it"; never the id. */
+function placeNameOf(projectPath: string, placeId: string): string | undefined {
+  const card = savedBoard(projectPath)?.cards[placeId];
+  if (card?.kind !== 'session' || !card.sessionId) return undefined;
+  return appConfig.sessionRegistry[card.sessionId]?.label;
+}
+
 async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<{ caller: LedgerCaller; call: LedgerToolCall } | string> {
   const quadro = call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' ? call.quadro : undefined;
   const base = { placeId: LEADER_OF_ALL, roleId: LEADER_ROLE_ID };
@@ -3719,6 +3726,7 @@ void app.whenReady().then(async () => {
     ledger: () => ledgerService,
     provasRoot: ledgerProofsDir(ledgerFilePath(process.env, app.getPath('userData'))),
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
+    placeName: placeNameOf,
   }); // Ledger no celular (PWA só na Tailscale)
   // Quadro por MCP — the board and session tools of the same server go to the renderer (owner of the document).
   const boardBridge = createBoardBridge({

@@ -21,6 +21,7 @@
   var VERSO = '<svg viewBox="0 0 70 70"><circle cx="35" cy="35" r="30"/><circle cx="35" cy="35" r="20"/><path d="M35 5v60M5 35h60M14 14l42 42M56 14L14 56"/><circle cx="35" cy="35" r="5"/></svg>';
   var ICONE_SIM = '<svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
   var ICONE_NAO = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+  var ICONE_ALERTA = '<svg viewBox="0 0 24 24"><path d="M12 5v9M12 18.5v.5"/></svg>';
 
   var baralho = document.getElementById('baralho');
   var contagem = document.getElementById('contagem');
@@ -280,7 +281,213 @@
       .catch(function () { return null; });
   }
 
+  // ---- carta forma A: a frente decide, o verso explica ----
+
+  function cabecaCarta(naipe, nome, extra) {
+    var topo = el('header', 'carta-topo');
+    var glifo = el('span', 'glifo');
+    glifo.innerHTML = GLIFOS[naipe];
+    glifo.setAttribute('aria-hidden', 'true');
+    topo.appendChild(glifo);
+    topo.appendChild(el('span', 'naipe-nome', nome));
+    if (extra) topo.appendChild(extra);
+    return topo;
+  }
+
+  function face(classe, naipe) {
+    var f = el('div', 'A-face ' + classe);
+    var moldura = el('div', 'moldura');
+    var interna = el('div', 'moldura-interna');
+    moldura.appendChild(interna);
+    f.appendChild(moldura);
+    return { face: f, interna: interna };
+  }
+
+  function provaPorId(item, id) {
+    for (var i = 0; i < item.provas.length; i++) if (item.provas[i].id === id) return item.provas[i];
+    return null;
+  }
+
+  /** Print (amplia ao tocar) ou vídeo (toca dentro da carta). */
+  function midia(item, prova) {
+    var caminho = '/api/prova?item=' + encodeURIComponent(item.id) + '&prova=' + encodeURIComponent(prova.id);
+    if (prova.tipo === 'video') {
+      var video = el('video', 'A-midia');
+      video.controls = true;
+      video.setAttribute('playsinline', '');
+      baixar(caminho).then(function (url) { if (url) video.src = url; });
+      return video;
+    }
+    var img = el('img', 'A-midia');
+    img.alt = prova.rotulo;
+    img.addEventListener('click', function () { img.classList.toggle('ampliada'); });
+    baixar(caminho).then(function (url) { if (url) img.src = url; });
+    return img;
+  }
+
+  function montarVisual(item, visual) {
+    var caixa = el('div', 'vis');
+    if (visual.tipo === 'checagens') {
+      var ok = visual.itens.filter(function (i) { return i.ok; }).length;
+      var h = el('h5');
+      h.appendChild(el('span', null, 'Checagens'));
+      h.appendChild(el('span', null, ok + ' de ' + visual.itens.length + ' ok'));
+      caixa.appendChild(h);
+      var lista = el('ul', 'luzes');
+      visual.itens.forEach(function (i) {
+        var li = el('li', i.ok ? 'ok' : 'aviso');
+        var luz = el('i');
+        luz.innerHTML = i.ok ? ICONE_SIM : ICONE_ALERTA;
+        li.appendChild(luz);
+        li.appendChild(el('b', null, i.nome));
+        // A frase só aparece no que não passou: o que está ok não pede leitura.
+        if (!i.ok) li.appendChild(el('span', null, i.frase));
+        lista.appendChild(li);
+      });
+      caixa.appendChild(lista);
+      return caixa;
+    }
+    if (visual.tipo === 'antes-depois') {
+      var antes = provaPorId(item, visual.antes);
+      var depois = provaPorId(item, visual.depois);
+      if (!antes || !depois) return null;
+      var par = el('div', 'ad');
+      [['Antes', antes], ['Depois', depois]].forEach(function (lado) {
+        var col = el('div');
+        col.appendChild(el('div', 'leg', lado[0]));
+        col.appendChild(midia(item, lado[1]));
+        par.appendChild(col);
+      });
+      caixa.appendChild(par);
+      return caixa;
+    }
+    var prova = provaPorId(item, visual.prova);
+    if (!prova || (prova.tipo !== 'imagem' && prova.tipo !== 'video')) return null;
+    caixa.appendChild(midia(item, prova));
+    return caixa;
+  }
+
+  function recolhido(titulo, conteudo) {
+    var d = el('details', 'recolhido');
+    d.appendChild(el('summary', null, titulo));
+    conteudo.forEach(function (c) { d.appendChild(c); });
+    return d;
+  }
+
+  function montarCartaA(item, posicao, quantas) {
+    var naipe = GLIFOS[item.naipe] ? item.naipe : 'martelos';
+    var c = item.carta;
+    var rec = null;
+    c.opcoes.forEach(function (o) { if (o.recomendada) rec = o; });
+    var slot = el('section', 'slot');
+    slot.setAttribute('aria-label', item.titulo);
+    var carta = el('article', 'A-carta naipe-' + naipe);
+    var ctx = { item: item, slot: slot, carta: carta, botoes: [] };
+
+    // Frente
+    var frente = face('A-frente', naipe);
+    var indice = el('span', 'indice', romano(posicao) + ' · ' + romano(quantas));
+    indice.setAttribute('aria-label', 'Carta ' + posicao + ' de ' + quantas);
+    frente.interna.appendChild(cabecaCarta(naipe, NOMES[naipe], indice));
+    var titulo = el('div', 'A-titulo');
+    titulo.appendChild(el('div', 'A-nome', item.titulo));
+    titulo.appendChild(el('h2', null, c.pergunta));
+    frente.interna.appendChild(titulo);
+    var rolagem = el('div', 'A-rola');
+    var visual = c.visual ? montarVisual(item, c.visual) : null;
+    if (visual) rolagem.appendChild(visual);
+    if (rec) {
+      var faixa = el('p', 'A-rec');
+      faixa.appendChild(document.createTextNode('Recomendo '));
+      faixa.appendChild(el('b', null, rec.rotulo));
+      faixa.appendChild(document.createTextNode(': ' + c.porque));
+      rolagem.appendChild(faixa);
+    }
+    var opcoes = el('div', 'opcoes');
+    c.opcoes.forEach(function (o) {
+      var b = el('button', 'opcao' + (o.recomendada ? ' rec' : ''));
+      b.type = 'button';
+      b.appendChild(el('b', null, o.rotulo));
+      if (o.recomendada) b.appendChild(el('em', null, 'recomendo'));
+      b.appendChild(el('span', 'efeito', o.efeito));
+      b.addEventListener('click', function () { escolher(ctx, o, b); });
+      ctx.botoes.push(b);
+      opcoes.appendChild(b);
+    });
+    rolagem.appendChild(opcoes);
+    frente.interna.appendChild(rolagem);
+    var pe = el('footer', 'A-pe');
+    var selo = el('span', 'A-selo ' + item.risco);
+    selo.appendChild(el('i', null, 'risco ' + item.risco));
+    selo.appendChild(el('span', null, c.risco));
+    pe.appendChild(selo);
+    var virar = el('button', 'A-virar', '↻ Virar');
+    virar.type = 'button';
+    pe.appendChild(virar);
+    frente.interna.appendChild(pe);
+
+    // Verso
+    var verso = face('A-verso', naipe);
+    var botaoFrente = el('button', 'A-virar', '↻ Frente');
+    botaoFrente.type = 'button';
+    verso.interna.appendChild(cabecaCarta(naipe, 'O verso', botaoFrente));
+    var corpo = el('div', 'A-verso-corpo');
+    corpo.appendChild(el('h4', null, 'O que aconteceu'));
+    corpo.appendChild(el('p', null, c.resumo));
+    if (rec) {
+      corpo.appendChild(el('h4', null, 'Por que eu recomendo ' + rec.rotulo.toLowerCase()));
+      corpo.appendChild(el('p', null, c.porque));
+    }
+    corpo.appendChild(el('h4', null, 'Cada caminho'));
+    var dl = el('dl');
+    c.opcoes.forEach(function (o) {
+      dl.appendChild(el('dt', null, o.rotulo));
+      dl.appendChild(el('dd', null, o.efeito));
+      if (o.risco) dl.appendChild(el('dd', 'r', 'Risco: ' + o.risco));
+    });
+    corpo.appendChild(dl);
+    corpo.appendChild(el('h4', null, 'Risco ' + item.risco));
+    corpo.appendChild(el('p', null, c.risco));
+    corpo.appendChild(el('h4', null, 'Quem fez'));
+    corpo.appendChild(el('p', null, item.quemEntregou + ', no quadro ' + item.quadro + ' · ' + haQuanto(item.entregueEm) + ' · prazo ' + item.prazo));
+    corpo.appendChild(recolhido('O que você pediu, nas suas palavras', [el('blockquote', null, '“' + item.pedido + '”')]));
+    var tecnico = [el('h3', null, 'Pronto quando'), el('p', null, item.criterio)];
+    if (item.nota) tecnico.push(el('h3', null, 'Nota de quem entregou'), el('p', null, item.nota));
+    if (Array.isArray(item.provas) && item.provas.length > 0) {
+      tecnico.push(el('h3', null, item.provas.length === 1 ? 'Prova' : 'Provas'));
+      item.provas.forEach(function (prova) { tecnico.push(montarProva(item, prova)); });
+    }
+    (item.ids || []).forEach(function (id) { tecnico.push(el('div', 'id', id)); });
+    corpo.appendChild(recolhido('Detalhes técnicos', tecnico));
+    verso.interna.appendChild(corpo);
+
+    function alternar() { carta.classList.toggle('virada'); }
+    virar.addEventListener('click', alternar);
+    botaoFrente.addEventListener('click', alternar);
+
+    carta.appendChild(frente.face);
+    carta.appendChild(verso.face);
+    var mesa = el('div', 'A-mesa');
+    mesa.appendChild(carta);
+    slot.appendChild(mesa);
+    return slot;
+  }
+
+  /** Um toque marca a opção; o segundo, na mesma, decide (um esbarrão não fecha tarefa). */
+  function escolher(ctx, opcao, botao) {
+    if (ctx.ocupado) return;
+    if (ctx.marcada !== botao) {
+      ctx.botoes.forEach(function (b) { b.classList.remove('marcada'); });
+      ctx.marcada = botao;
+      botao.classList.add('marcada');
+      avisar('Toque de novo em "' + opcao.rotulo + '" para confirmar.');
+      return;
+    }
+    decidir(ctx, opcao.fecha === 'rejeitada' ? 'rejeitar' : 'aceitar', null, opcao.rotulo);
+  }
+
   function montarSlot(item, posicao, quantas) {
+    if (item.carta && item.origem !== 'amostra-revisor') return montarCartaA(item, posicao, quantas);
     var naipe = GLIFOS[item.naipe] ? item.naipe : 'martelos';
     var amostra = item.origem === 'amostra-revisor';
     var slot = el('section', 'slot');
@@ -450,15 +657,16 @@
     });
   }
 
-  function decidir(ctx, decisao, textoMotivo) {
+  function decidir(ctx, decisao, textoMotivo, opcao) {
     travar(ctx, true);
     voar(ctx.carta, decisao === 'aceitar' ? 1 : -1);
     var corpo = { pedidoId: idAleatorio(), itemId: ctx.item.id, decisao: decisao };
     if (textoMotivo) corpo.motivo = textoMotivo;
+    if (opcao) corpo.opcao = opcao;
     enviarDecisao(corpo, 0)
       .then(function (resposta) {
         if (resposta.ok || resposta.status === 404) {
-          if (resposta.ok) avisar(decisao === 'aceitar' ? 'Aceita.' : 'Rejeitada. O motivo foi para quem entregou.');
+          if (resposta.ok) avisar(opcao ? 'Decidido: ' + opcao + '.' : decisao === 'aceitar' ? 'Aceita.' : 'Rejeitada. O motivo foi para quem entregou.');
           remover(ctx);
           return;
         }
