@@ -42,6 +42,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'Toda entrega de risco alto agora traz, para você, a pergunta que você decide, de 2 a 4 caminhos com o efeito de cada um, a recomendação com o porquê e o risco. Um texto com código (número de tarefa, branch, PR, caminho de arquivo, link) volta para quem entregou reescrever. As cartas que mostram isso chegam nas próximas versões. Atenção: depois desta versão, um Donel Dev mais antigo aberto ao mesmo tempo só consegue ler o Oráculo Harrow, sem decidir nada, até ser atualizado.',
       },
       {
+        title: 'Sessões na VPS conversam com o Donel',
+        text: 'Uma sessão que você abre na VPS pelo Donel agora conecta nas ferramentas do Donel, como acontece no computador: ela lê o quadro, abre sessões e cria tarefas e cartas no Oráculo Harrow. Antes ela subia sem essas ferramentas.',
+      },
+      {
         title: 'Progresso do Jobu só com o que está rolando',
         text: 'O painel de progresso do Jobu mostra só as tarefas abertas, em execução, entregues esperando decisão e rejeitadas. Uma tarefa aceita sai do painel na hora e deixa de contar nas barras. Quando não há nada em andamento, o painel diz "Nada rodando agora".',
       },
