@@ -139,6 +139,15 @@ sensível.
   ativa em dois lugares (refresh token de uso único). Desenho no
   [ADR 0005](docs/adr/0005-contas-em-lugares-remotos.md). Continua proibido
   qualquer outro módulo tocar credencial.
+  **Serviço das VPS — emenda do dono (05/11, "O VPS pessoal também deve ser
+  autonomo sem depender do meu pc ligado")**: o mesmo perímetro roda num
+  **segundo processo**, o `donel-servico` (systemd, na VPS pessoal), com um
+  conjunto de contas só das VPS, em cofre próprio (`~/.donel/`, AES-GCM com
+  chave cifrada pelo systemd). O código mora em `src/main/accounts/servico/`;
+  a entrada `src/servico/` só transporta comandos sem segredo. Uma conta
+  pertence a um só conjunto, e o **PC tem a preferência** ("Prefiro preferência
+  no meu pc"). Desenho no [ADR 0008](docs/adr/0008-contas-das-vps-sem-o-pc.md);
+  instalação e passagem de contas em `docs/servico-vps.md`.
   **Navegador interno não é exceção** (30/10): login no painel é o dono
   digitando; o Chromium guarda os cookies da partição `persist:donel-browser`
   e o código do app não os lê nem grava (`docs/design/navegador-interno.md`).

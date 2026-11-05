@@ -90,7 +90,8 @@ class FakeLocalMod implements AccountMod {
     ['c', pair('c')],
   ]);
   captures: { id: string; pair: CredentialPair }[] = [];
-  loads: Record<string, number> = { a: 0, b: 0, c: 0 };
+  /** `null` = carga desconhecida (o par copiado do lugar venceu). */
+  loads: Record<string, number | null> = { a: 0, b: 0, c: 0 };
   async listAccounts(): Promise<ListAccountsResult> {
     return {
       kind: 'ok',
@@ -100,7 +101,7 @@ class FakeLocalMod implements AccountMod {
         plan: null,
         active: false,
         available: true,
-        load: { fiveHour: this.loads[id] ?? 0, sevenDay: 0, sonnet: 0, readAt: '2026-11-04T00:00:00.000Z' },
+        load: this.loads[id] === null ? null : { fiveHour: this.loads[id] ?? 0, sevenDay: 0, sonnet: 0, readAt: '2026-11-04T00:00:00.000Z' },
       })),
     };
   }
@@ -114,7 +115,12 @@ class FakeLocalMod implements AccountMod {
   }
 }
 
-function makeEngine(remote: FakeRemote, place: Partial<RemotePlace> = {}, overrides: Partial<AccountsConfig> = {}) {
+function makeEngine(
+  remote: FakeRemote,
+  place: Partial<RemotePlace> = {},
+  overrides: Partial<AccountsConfig> = {},
+  engineOptions: { remotePlacesFirst?: boolean; now?: () => number } = {},
+) {
   const mod = new FakeLocalMod();
   const savedRemotes: (readonly RemotePlace[])[] = [];
   const config: AccountsConfig = {
@@ -138,6 +144,7 @@ function makeEngine(remote: FakeRemote, place: Partial<RemotePlace> = {}, overri
     isSessionBusy: () => false,
     remoteState: remote,
     onRemotesChanged: (remotes) => savedRemotes.push(remotes),
+    ...engineOptions,
   });
   return { engine, mod, savedRemotes };
 }
@@ -183,5 +190,45 @@ describe('motor com lugar remoto', () => {
     const outcome = await engine.evaluateAutoSwitch();
 
     expect(outcome).toEqual({ kind: 'switched', from: 'a', to: 'c' });
+  });
+
+  it('com uma só conta livre, o PC escolhe antes do lugar (preferência do dono, 05/11)', async () => {
+    const remote = new FakeRemote(pair('b'), 'fp-b');
+    const { engine, mod } = makeEngine(remote, { activeAccountId: 'b' });
+    mod.loads = { a: 95, b: 98, c: 0 };
+    await engine.listAccounts();
+
+    expect(await engine.evaluateAutoSwitch()).toEqual({ kind: 'switched', from: 'a', to: 'c' });
+    expect(remote.writes).toEqual([]);
+  });
+
+  it('no serviço da VPS, o lugar remoto escolhe primeiro', async () => {
+    const remote = new FakeRemote(pair('b'), 'fp-b');
+    const { engine, mod } = makeEngine(remote, { activeAccountId: 'b' }, {}, { remotePlacesFirst: true });
+    mod.loads = { a: 95, b: 98, c: 0 };
+    await engine.listAccounts();
+
+    expect(await engine.evaluateAutoSwitch()).toBeNull();
+    expect(remote.writes).toEqual([pair('c')]);
+  });
+
+  it('a conta do lugar com carga desconhecida por 10 min conta como cheia e sai', async () => {
+    let clock = 1_000_000;
+    const remote = new FakeRemote(pair('b'), 'fp-b');
+    const { engine, mod } = makeEngine(remote, { activeAccountId: 'b' }, {}, { now: () => clock });
+    mod.loads = { a: 10, b: null, c: 0 };
+    await engine.listAccounts();
+    await engine.evaluateAutoSwitch();
+    expect(remote.writes).toEqual([]);
+
+    clock += 9 * 60 * 1000;
+    await engine.listAccounts();
+    await engine.evaluateAutoSwitch();
+    expect(remote.writes).toEqual([]);
+
+    clock += 2 * 60 * 1000;
+    await engine.listAccounts();
+    await engine.evaluateAutoSwitch();
+    expect(remote.writes).toEqual([pair('c')]);
   });
 });

@@ -87,7 +87,15 @@ import {
 export type RemotePlaceLogEvent =
   | { readonly event: 'remote-switch'; readonly place: string; readonly origin: 'manual' | 'auto'; readonly outcome: RemoteSwitchOutcome['kind']; readonly from: AccountId | null; readonly to: AccountId | null; readonly reason?: string }
   | { readonly event: 'remote-pair-captured'; readonly place: string; readonly account: AccountId; readonly trigger: 'switch' | 'sync' }
-  | { readonly event: 'remote-write-uncertain'; readonly place: string; readonly account: AccountId | null };
+  | { readonly event: 'remote-write-uncertain'; readonly place: string; readonly account: AccountId | null }
+  | { readonly event: 'remote-blind-as-full'; readonly place: string; readonly account: AccountId; readonly blindForMs: number };
+
+/**
+ * Carga desconhecida da conta de um lugar por este tempo (o par copiado de lá
+ * venceu e ninguém o renova) passa a contar como cheia para a troca automática
+ * daquele lugar. Só troca se houver candidata com carga conhecida.
+ */
+export const REMOTE_BLIND_AS_FULL_AFTER_MS = 10 * 60 * 1000;
 
 const KEEP_ALIVE_INTERVAL_MS = 15 * 60 * 1000;
 /**
@@ -213,6 +221,15 @@ export interface AccountEngineDeps {
   readonly onRemotesChanged?: (remotes: readonly RemotePlace[]) => void;
   /** index.ts grava em `accounts-maintenance.log`. Nunca recebe o par. */
   readonly onRemoteEvent?: (event: RemotePlaceLogEvent) => void;
+  /**
+   * Serviço da VPS (ADR 0008) — avalia os lugares remotos ANTES desta máquina.
+   * No PC fica desligado: o dono quer o PC com a preferência (05/11). No serviço
+   * da VPS, "esta máquina" é a VPS pessoal e o lugar remoto é Homologações, a que
+   * menos pode ficar parada.
+   */
+  readonly remotePlacesFirst?: boolean;
+  /** Injetável para teste — default `REMOTE_BLIND_AS_FULL_AFTER_MS`. */
+  readonly remoteBlindAsFullAfterMs?: number;
 }
 
 /**
@@ -244,6 +261,10 @@ export class AccountEngine {
   private readonly remoteState: RemoteClaudeState | null;
   private readonly onRemotesChanged: AccountEngineDeps['onRemotesChanged'];
   private readonly onRemoteEvent: AccountEngineDeps['onRemoteEvent'];
+  private readonly remotePlacesFirst: boolean;
+  private readonly remoteBlindAsFullAfterMs: number;
+  /** Desde quando a carga da conta de cada lugar está desconhecida, por lugar. Em memória. */
+  private readonly remoteBlindSince = new Map<string, { readonly account: AccountId; readonly since: number; logged: boolean }>();
   /** Último resultado de ssh por lugar, para o painel. Em memória. */
   private readonly remoteReach = new Map<string, 'ok' | 'unreachable'>();
   /** Último refresh token guardado no cofre a partir de cada lugar, por conta (mesma régua de `lastCapturedRefreshToken`). */
@@ -308,6 +329,8 @@ export class AccountEngine {
     this.remoteState = deps.remoteState ?? null;
     this.onRemotesChanged = deps.onRemotesChanged;
     this.onRemoteEvent = deps.onRemoteEvent;
+    this.remotePlacesFirst = deps.remotePlacesFirst ?? false;
+    this.remoteBlindAsFullAfterMs = deps.remoteBlindAsFullAfterMs ?? REMOTE_BLIND_AS_FULL_AFTER_MS;
 
     // Estado inicial segue o diagrama do data-model.md §3: `mod === null` é
     // SEMPRE `inert`; qualquer mod configurado nasce `ready` até prova em
@@ -831,13 +854,46 @@ export class AccountEngine {
     if (!this.remoteState || this.disposed || !this.config.autoSwitch.enabled) return;
     for (const place of this.remotes()) {
       if (!place.activeAccountId || this.disposed) continue;
-      const accounts = this.decoratedAccounts()
-        .filter((account) => !isPoolAccountId(account.id))
-        .map((account) => (account.id !== place.activeAccountId && this.isHeld(account) ? { ...account, available: false } : account));
+      const accounts = this.withBlindAsFull(
+        place,
+        this.decoratedAccounts()
+          .filter((account) => !isPoolAccountId(account.id))
+          .map((account) => (account.id !== place.activeAccountId && this.isHeld(account) ? { ...account, available: false } : account)),
+      );
       const target = selectAutoSwitchTarget(accounts, place.activeAccountId, this.config.autoSwitch);
       if (!target) continue;
       await this.switchRemote(place.id, target, 'auto');
     }
+  }
+
+  /**
+   * Causa 2 do handoff de 05/11: a carga da conta de um lugar só é lida enquanto
+   * o par copiado de lá vale. Se o CLI de lá parou (a conta encheu) e o par
+   * venceu, a carga fica desconhecida e a troca nunca aconteceria. Depois de
+   * `remoteBlindAsFullAfterMs` assim, a conta conta como cheia (100) só para a
+   * decisão deste lugar. Lugar sem ssh não entra: a troca falharia de todo jeito.
+   */
+  private withBlindAsFull(place: RemotePlace, accounts: readonly AccountSummary[]): readonly AccountSummary[] {
+    const activeId = place.activeAccountId;
+    const active = accounts.find((account) => account.id === activeId);
+    if (!activeId || !active || overallLoad(active.load) !== null || this.remoteReach.get(place.id) === 'unreachable') {
+      this.remoteBlindSince.delete(place.id);
+      return accounts;
+    }
+    const now = this.now();
+    const blind = this.remoteBlindSince.get(place.id);
+    if (!blind || blind.account !== activeId) {
+      this.remoteBlindSince.set(place.id, { account: activeId, since: now, logged: false });
+      return accounts;
+    }
+    const blindForMs = now - blind.since;
+    if (blindForMs < this.remoteBlindAsFullAfterMs) return accounts;
+    if (!blind.logged) {
+      blind.logged = true;
+      this.onRemoteEvent?.({ event: 'remote-blind-as-full', place: place.id, account: activeId, blindForMs });
+    }
+    const full = { fiveHour: null, sevenDay: 100, sonnet: null, readAt: new Date(now).toISOString() };
+    return accounts.map((account) => (account.id === activeId ? { ...account, load: full } : account));
   }
 
   /** A conta está ativa nesta máquina ou em algum lugar remoto. */
@@ -867,8 +923,14 @@ export class AccountEngine {
     if (this.disposed) return null;
     if (!this.mod || this.state !== 'ready' || !this.config.autoSwitch.enabled) return null;
 
+    // PC: esta máquina primeiro (o dono quer a preferência no PC, 05/11).
+    // Serviço da VPS: os lugares primeiro (`remotePlacesFirst`, ADR 0008).
+    if (this.remotePlacesFirst) {
+      await this.evaluateRemoteAutoSwitch();
+      if (this.disposed) return null;
+      return this.evaluateLocalAutoSwitch();
+    }
     const outcome = await this.evaluateLocalAutoSwitch();
-    // Lugares remotos — depois desta máquina, cada lugar com conta.
     await this.evaluateRemoteAutoSwitch();
     return outcome;
   }

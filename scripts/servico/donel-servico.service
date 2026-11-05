@@ -1,0 +1,21 @@
+# Serviço Donel sem tela (ADR 0008). Instalado por scripts/servico/instalar.sh,
+# que troca @USER@ e @NODE@. Unidade de sistema com User= porque o systemd 255
+# do Ubuntu 24.04 só decifra credencial (LoadCredentialEncrypted) em unidade de
+# sistema; o processo roda como o usuário, com o ~/.claude e o ssh dele.
+[Unit]
+Description=Donel sem tela (contas das VPS)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+ExecStart=@NODE@ /opt/donel-servico/donel-servico.mjs rodar
+Restart=always
+RestartSec=10
+LoadCredentialEncrypted=donel-vault-key:/etc/donel/vault-key.cred
+UMask=0077
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
