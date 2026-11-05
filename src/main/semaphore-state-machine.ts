@@ -44,6 +44,18 @@ export interface SemaphoreMachineState {
    * lê isto para não anunciar "terminou" a cada subagente. Ausente/`false` = espera de verdade.
    */
   readonly awaitingBackgroundAgents?: boolean;
+  /**
+   * t-45e87762 — tool calls still running, by origin (`''` = the main thread, otherwise the sub-agent's `agent_id`).
+   * Calls of the Agent tool are not counted: they wait for a sub-agent, they never ask the owner themselves.
+   */
+  readonly openCalls?: Readonly<Record<string, number>>;
+  /**
+   * t-45e87762 — while `permission`: who may be asking (the origins with calls running when the dialog came up) and
+   * how many of their calls were running then. The dialog belongs to one of them; it is answered when an asker
+   * moves on (a new call) or when every call open at that moment has finished. A call from anyone else (a sibling
+   * sub-agent, a background job) says nothing about the dialog. Empty = unknown asker: any move of the session ends it.
+   */
+  readonly askers?: Readonly<Record<string, number>>;
 }
 
 export const INITIAL_SEMAPHORE_STATE: SemaphoreMachineState = {
@@ -52,10 +64,43 @@ export const INITIAL_SEMAPHORE_STATE: SemaphoreMachineState = {
   stateEnteredAt: 0,
 };
 
+/** The Agent tool (`Task` in older CLIs) waits for a sub-agent: it is never the call that asks. */
+const SUBAGENT_TOOLS: ReadonlySet<string> = new Set(['Agent', 'Task']);
+
+function originOf(agentId: string | undefined): string {
+  return agentId ?? '';
+}
+
+function countsCall(toolName: string | undefined): boolean {
+  return toolName === undefined || !SUBAGENT_TOOLS.has(toolName);
+}
+
+function withOpenCalls(current: SemaphoreMachineState, origin: string, delta: number): Readonly<Record<string, number>> {
+  const open = { ...(current.openCalls ?? {}) };
+  const next = Math.max(0, (open[origin] ?? 0) + delta);
+  if (next === 0) delete open[origin];
+  else open[origin] = next;
+  return open;
+}
+
+/** Leaves `permission` for `working`, keeping the running calls (the askers go with the dialog). */
+function answered(at: number, openCalls: Readonly<Record<string, number>>): SemaphoreMachineState {
+  return { state: 'working', pendingToolSince: null, stateEnteredAt: at, openCalls };
+}
+
+/** `permission` with the askers taken from the calls running now. */
+function asking(current: SemaphoreMachineState, at: number): SemaphoreMachineState {
+  return { state: 'permission', pendingToolSince: null, stateEnteredAt: at, openCalls: current.openCalls ?? {}, askers: { ...(current.openCalls ?? {}) } };
+}
+
 export type SemaphoreEvent =
   | { readonly type: 'userPromptSubmit'; readonly at: number }
-  | { readonly type: 'preToolUse'; readonly at: number }
-  | { readonly type: 'postToolUse'; readonly at: number }
+  /**
+   * `agentId`: the call came from that sub-agent (the payload's `agent_id`); absent = the main thread. `toolName`:
+   * the payload's `tool_name`. Together they say whose dialog a call can answer (t-45e87762).
+   */
+  | { readonly type: 'preToolUse'; readonly at: number; readonly agentId?: string; readonly toolName?: string }
+  | { readonly type: 'postToolUse'; readonly at: number; readonly agentId?: string; readonly toolName?: string }
   /** `backgroundAgents`: subagentes em segundo plano ainda vivos no fim do turno (`countBackgroundSubagents`); ausente = 0. */
   | { readonly type: 'stop'; readonly at: number; readonly backgroundAgents?: number }
   | { readonly type: 'notification'; readonly at: number }
@@ -69,7 +114,7 @@ export type SemaphoreEvent =
 
 function transition(state: SemaphoreState, at: number, current: SemaphoreMachineState): SemaphoreMachineState {
   if (state === current.state) return current;
-  return { state, pendingToolSince: null, stateEnteredAt: at };
+  return { state, pendingToolSince: null, stateEnteredAt: at, ...(current.openCalls !== undefined ? { openCalls: current.openCalls } : {}) };
 }
 
 /** Reducer puro: `(estado atual, evento) => novo estado`. Terminal em `done` — nenhum evento tira uma sessão encerrada desse estado (uma sessão "reaberta" nasce como uma máquina nova). */
@@ -86,27 +131,60 @@ export function reduceSemaphoreState(current: SemaphoreMachineState, event: Sema
     case 'processExit':
       return transition('done', event.at, current);
 
-    case 'userPromptSubmit':
-      return transition('working', event.at, current);
+    case 'userPromptSubmit': {
+      // A new prompt: the main thread starts from nothing (sub-agents in the background keep their calls).
+      const openCalls = withOpenCalls(current, '', -Infinity);
+      if (current.state === 'working') return { ...current, openCalls };
+      return { state: 'working', pendingToolSince: null, stateEnteredAt: event.at, openCalls };
+    }
 
     case 'preToolUse': {
+      const origin = originOf(event.agentId);
+      const counted = countsCall(event.toolName);
+      const openCalls = counted ? withOpenCalls(current, origin, 1) : (current.openCalls ?? {});
+      if (current.state === 'permission') {
+        // t-45e87762 — a new call from someone who may be asking means the dialog was answered (an agent issues no
+        // new call while one of its own waits). From anyone else (a sibling sub-agent) it says nothing.
+        const askers = current.askers ?? {};
+        if (Object.keys(askers).length > 0 && !(origin in askers)) return { ...current, openCalls };
+        return { ...answered(event.at, openCalls), pendingToolSince: event.at };
+      }
       const base = transition('working', event.at, current);
       // Refresca a marca de "chamada de ferramenta pendente" a cada
       // PreToolUse (spike: `markPending` roda em toda chamada), mesmo quando
       // o estado em si já era 'working' e `transition` não mudou nada.
-      return { ...base, state: 'working', pendingToolSince: event.at };
+      return { ...base, state: 'working', pendingToolSince: event.at, openCalls };
     }
 
-    case 'postToolUse':
+    case 'postToolUse': {
       // `clearPending` do spike — a ferramenta respondeu, não há mais nada
       // pendente pra heurística observar (fica em 'working' até o próximo
       // `Stop`).
-      return current.pendingToolSince === null ? current : { ...current, pendingToolSince: null };
+      const origin = originOf(event.agentId);
+      const counted = countsCall(event.toolName);
+      const openCalls = counted ? withOpenCalls(current, origin, -1) : (current.openCalls ?? {});
+      if (current.state === 'permission') {
+        // t-45e87762 — the asked tool ran, so the dialog was answered. Which call is the asked one is not known: the
+        // dialog ends when one asker has finished every call it had open at that moment (a sibling of a parallel batch
+        // finishing first leaves the ask on screen). Without askers, the first finished call of the main thread ends it.
+        const askers = current.askers ?? {};
+        if (Object.keys(askers).length === 0) return origin === '' ? answered(event.at, openCalls) : { ...current, openCalls };
+        if (!counted || !(origin in askers)) return { ...current, openCalls };
+        const left = { ...askers };
+        left[origin] = (left[origin] ?? 0) - 1;
+        if (left[origin]! <= 0) return answered(event.at, openCalls);
+        return { ...current, openCalls, askers: left };
+      }
+      const cleared = current.pendingToolSince === null ? current : { ...current, pendingToolSince: null };
+      return counted ? { ...cleared, openCalls } : cleared;
+    }
 
     case 'stop': {
       // Turno concluído — sempre volta pra 'waiting', mesmo vindo de
       // 'permission' (ex.: o usuário respondeu a aprovação e o turno fechou).
-      const next = transition('waiting', event.at, current);
+      // The main thread ended its turn: none of its calls is running (sub-agents in the background keep theirs).
+      const ended: SemaphoreMachineState = { ...current, openCalls: withOpenCalls(current, '', -Infinity) };
+      const next = current.state === 'waiting' ? ended : { ...transition('waiting', event.at, current), openCalls: ended.openCalls };
       // #109 — com subagente em segundo plano vivo a espera é provisória (ver o campo). O estado da
       // aba não muda; só a marca, que o próximo `Stop` sem subagente vivo apaga.
       const awaiting = (event.backgroundAgents ?? 0) > 0;
@@ -116,7 +194,8 @@ export function reduceSemaphoreState(current: SemaphoreMachineState, event: Sema
 
     case 'notification':
       // Sinal primário e confiável (addendum T009) de permissão pendente.
-      return transition('permission', event.at, current);
+      if (current.state === 'permission') return current;
+      return asking(current, event.at);
 
     default:
       return current;
@@ -166,7 +245,7 @@ export function applyPermissionHeuristic(
   if (current.state !== 'working' || current.pendingToolSince === null) return current;
   if (now - current.pendingToolSince <= timeoutMs) return current;
   if (!matchesPermissionPrompt(recentLines)) return current;
-  return { state: 'permission', pendingToolSince: null, stateEnteredAt: now };
+  return asking(current, now);
 }
 
 /**

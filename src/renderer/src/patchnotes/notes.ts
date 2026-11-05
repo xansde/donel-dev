@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-05',
     items: [
       {
+        title: '"Esperando você" só quando a sessão pede algo',
+        text: 'A lista "Esperando você" do Jobu (e o número na barra de tarefas) agora mostra só as sessões com pergunta, permissão ou diálogo aberto na tela. Sessão que só terminou o que fazia não entra mais nela; o aviso de "terminou" continua. E a marca some assim que a sessão volta a trabalhar depois de você responder, em vez de ficar até o próximo passo dela.',
+      },
+      {
         title: 'O registro de tarefas agora se chama Oráculo Harrow',
         text: 'A faixa de tarefas no topo do Mindscape, o progresso no balão do Jobu, a seção de Preferências e o app do celular passam a chamar o registro de tarefas entre sessões de Oráculo Harrow, para combinar com o resto do Donel. Nada muda no funcionamento: as tarefas, as provas e as decisões que já existiam continuam lá. Se o app do celular já estava na tela inicial, o nome novo aparece quando você adicioná-lo de novo.',
       },

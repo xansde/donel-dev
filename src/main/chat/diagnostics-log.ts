@@ -13,7 +13,7 @@ import { sanitizeSendFailure, type SendFailureDetail } from '../../shared/chat/s
 export const DIAGNOSTICS_LOG_FILE_NAME = 'chat-diagnostics.log';
 
 export interface DiagnosticsLog {
-  hook(entry: { event: string; ptyId: string; durationMs: number }): void;
+  hook(entry: { event: string; ptyId: string; durationMs: number; notificationType?: string }): void;
   unknownEntry(entry: { ptyId: string; entryType: string }): void;
   sendFailed(entry: { ptyId: string; reason: string; detail?: SendFailureDetail }): void;
   /** Modo auto and Modo YOLO: the tool name and the outcome, never its input. */
@@ -34,7 +34,8 @@ export function createDiagnosticsLog(dir: string, now: () => number = Date.now):
   }
 
   return {
-    hook: ({ event, ptyId, durationMs }) => write({ kind: 'hook', event, ptyId, durationMs }),
+    hook: ({ event, ptyId, durationMs, notificationType }) =>
+      write({ kind: 'hook', event, ptyId, durationMs, ...(notificationType !== undefined ? { notificationType } : {}) }),
     autoApproval: ({ ptyId, tool, outcome }) => write({ kind: 'auto-approval', ptyId, tool, outcome }),
     unknownEntry: ({ ptyId, entryType }) => {
       const key = `${ptyId}\u0000${entryType}`;
