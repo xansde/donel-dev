@@ -3,7 +3,22 @@
 // the board (the same answer as `sessao_quem_sou`), never from the arguments, so a session cannot pose as
 // the Revisor or as the owner.
 
-import { MAX_PROOFS, MAX_PROOF_TEXT_CHARS, MAX_REQUEST_CHARS, type LedgerRisk, type LedgerTaskState } from './contract';
+import {
+  FOR_OWNER_LIMITS,
+  MAX_CHECKS,
+  MAX_OPTIONS,
+  MAX_PROOFS,
+  MAX_PROOF_TEXT_CHARS,
+  MAX_REQUEST_CHARS,
+  MAX_TITLE_CHARS,
+  MIN_OPTIONS,
+  type LedgerCheck,
+  type LedgerForOwner,
+  type LedgerOption,
+  type LedgerRisk,
+  type LedgerTaskState,
+  type LedgerVisual,
+} from './contract';
 
 /** A proof as the session sends it. A file is a path on the session's computer; the main copies it in. */
 export type ProofInput =
@@ -12,9 +27,18 @@ export type ProofInput =
   | { readonly tipo: 'link'; readonly url: string };
 
 export type LedgerToolCall =
-  | { readonly tool: 'tarefa_criar'; readonly pedido: string; readonly criterio: string; readonly prazo: string; readonly dono?: string; readonly risco: LedgerRisk; readonly quadro?: string }
+  | {
+      readonly tool: 'tarefa_criar';
+      readonly pedido: string;
+      readonly criterio: string;
+      readonly prazo: string;
+      readonly dono?: string;
+      readonly risco: LedgerRisk;
+      readonly quadro?: string;
+      readonly titulo?: string;
+    }
   | { readonly tool: 'tarefa_assumir'; readonly id: string }
-  | { readonly tool: 'tarefa_entregar'; readonly id: string; readonly provas: readonly ProofInput[]; readonly nota?: string }
+  | { readonly tool: 'tarefa_entregar'; readonly id: string; readonly provas: readonly ProofInput[]; readonly nota?: string; readonly paraODono?: LedgerForOwner }
   | { readonly tool: 'tarefa_aceitar'; readonly id: string }
   | { readonly tool: 'tarefa_rejeitar'; readonly id: string; readonly motivo: string }
   | { readonly tool: 'tarefa_listar'; readonly estado?: LedgerTaskState; readonly todos?: boolean; readonly quadro?: string }
@@ -31,10 +55,13 @@ export const LEDGER_TOOLS = [
     name: 'tarefa_criar',
     title: 'Criar tarefa no Oráculo Harrow',
     description:
-      'Registra uma tarefa entre lugares do quadro: a frase literal de quem pediu, o critério de pronto, o prazo, o lugar dono do trabalho e o risco. Nasce "aberta". Risco baixo pode ser aceito por um lugar com papel Revisor; risco alto espera o dono. Risco baixo só vale quando quem cria não é o dono do trabalho nem foi aberto por ele; senão a tarefa nasce em risco alto.',
+      'Registra uma tarefa entre lugares do quadro: um título humano, a frase literal de quem pediu, o critério de pronto, o prazo, o lugar dono do trabalho e o risco. Nasce "aberta". Risco baixo pode ser aceito por um lugar com papel Revisor; risco alto espera o dono. Risco baixo só vale quando quem cria não é o dono do trabalho nem foi aberto por ele; senão a tarefa nasce em risco alto. ' +
+      'Quando sobe ao dono (risco alto): difícil de desfazer (main, repo público, apagar, credencial, conta, dinheiro); toca outra pessoa ou algo de fora; gasta o que é do dono (limite de conta, VPS, a hora dele); muda a forma do que ele vê e há 2 jeitos bons (sobe com protótipo, nunca com descrição); contradiz o que ele disse ou sai do pedido. ' +
+      'Não sobe: só uma opção defensável (decida e registre o porquê); escolha técnica reversível dentro do pedido; resposta já escrita em CLAUDE.md, ADR, memória ou decisão anterior; bug corrigido com teste; risco baixo que o Revisor aceita. Teste: sem uma pergunta numa frase, 2 opções reais e uma recomendação, a decisão não está pronta para subir.',
     inputSchema: {
       type: 'object',
       properties: {
+        titulo: { type: 'string', description: `Nome humano da tarefa, até ${MAX_TITLE_CHARS} caracteres, sem código. Ex.: "Fase 2 da VPS: senhas e logins".` },
         pedido: { type: 'string', description: 'A frase LITERAL de quem pediu, sem resumir.' },
         criterio: { type: 'string', description: 'Pronto quando… (o que a prova tem de mostrar).' },
         prazo: { type: 'string', description: 'Data AAAA-MM-DD.' },
@@ -56,7 +83,11 @@ export const LEDGER_TOOLS = [
     name: 'tarefa_entregar',
     title: 'Entregar tarefa com prova',
     description:
-      `Marca a tarefa como entregue. Sem prova é recusada. Provas (1 a ${MAX_PROOFS}): {"tipo":"arquivo","caminho":"C:/…/print.png"} (print ou vídeo neste computador; o app copia para o Oráculo Harrow), {"tipo":"texto","texto":"saída do comando"} ou {"tipo":"link","url":"https://… (o CI)"}. Quem entrega não aceita a própria entrega.`,
+      `Marca a tarefa como entregue. Sem prova é recusada. Provas (1 a ${MAX_PROOFS}): {"tipo":"arquivo","caminho":"C:/…/print.png"} (print, vídeo ou protótipo .html neste computador; o app copia para o Oráculo Harrow), {"tipo":"texto","texto":"saída do comando"} ou {"tipo":"link","url":"https://… (o CI)"}. Quem entrega não aceita a própria entrega. ` +
+      'Protótipo: um .html AUTOCONTIDO (CSS, JS e imagens dentro dele, até 2 MB), que roda isolado dentro da carta, sem rede; aponte-o como visual ({"prova": n}) quando a decisão muda algo que o dono vê. ' +
+      `"paraODono" é a carta que o dono lê para decidir em 5 segundos, sem abrir link; obrigatório no risco alto. Traz a pergunta, um resumo, de ${MIN_OPTIONS} a ${MAX_OPTIONS} opções com nome e efeito (exatamente uma recomendada), o porquê dela, o risco e o visual (qual print mostrar). ` +
+      'Escreva para um humano: o texto é recusado se tiver id de tarefa ou de lugar, branch, hash, número de PR, caminho, link ou crases. O técnico vai nas provas. ' +
+      'Quando o dono escreve na carta ("◆ Do dono, na carta…"), responda entregando a mesma tarefa de novo, com a carta atualizada: ela continua esperando o dono.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -69,7 +100,7 @@ export const LEDGER_TOOLS = [
             type: 'object',
             properties: {
               tipo: { type: 'string', enum: ['arquivo', 'texto', 'link'] },
-              caminho: { type: 'string', description: 'arquivo: caminho absoluto do print ou vídeo (png, jpg, gif, webp, mp4, webm, mov).' },
+              caminho: { type: 'string', description: 'arquivo: caminho absoluto do print, vídeo ou protótipo (png, jpg, gif, webp, mp4, webm, mov, ou html autocontido de até 2 MB).' },
               texto: { type: 'string', description: 'texto: a saída do comando.' },
               url: { type: 'string', description: 'link: http(s), ex. a execução do CI.' },
             },
@@ -78,6 +109,55 @@ export const LEDGER_TOOLS = [
           },
         },
         nota: { type: 'string', description: 'O que foi feito, em uma ou duas frases (opcional).' },
+        paraODono: {
+          type: 'object',
+          description: 'A carta do dono: a frente decide, o verso explica. Texto de gente, sem código.',
+          properties: {
+            titulo: { type: 'string', description: `Sobrescreve o título da tarefa nesta carta (até ${MAX_TITLE_CHARS}).` },
+            pergunta: { type: 'string', description: `O que o dono decide, numa frase (até ${FOR_OWNER_LIMITS.question}). Ex.: "A VPS já tem todos os acessos. Aceito a fase 2?"` },
+            resumo: { type: 'string', description: `O que aconteceu (até ${FOR_OWNER_LIMITS.summary}).` },
+            opcoes: {
+              type: 'array',
+              minItems: MIN_OPTIONS,
+              maxItems: MAX_OPTIONS,
+              items: {
+                type: 'object',
+                properties: {
+                  rotulo: { type: 'string', description: `Nome do caminho, vira o botão (até ${FOR_OWNER_LIMITS.label}). Ex.: "Aceitar com ressalva".` },
+                  efeito: { type: 'string', description: `O que acontece se o dono escolher (até ${FOR_OWNER_LIMITS.effect}).` },
+                  risco: { type: 'string', description: `O risco deste caminho (até ${FOR_OWNER_LIMITS.optionRisk}).` },
+                  fecha: { type: 'string', enum: ['aceita', 'rejeitada'], description: 'Como a tarefa fecha com este caminho.' },
+                  recomendada: { type: 'boolean', description: 'Exatamente uma opção é a recomendada.' },
+                },
+                required: ['rotulo', 'efeito', 'fecha'],
+                additionalProperties: false,
+              },
+            },
+            porque: { type: 'string', description: `Por que a recomendada (até ${FOR_OWNER_LIMITS.why}).` },
+            risco: { type: 'string', description: `A frase do risco desta tarefa (até ${FOR_OWNER_LIMITS.risk}).` },
+            visual: {
+              type: 'object',
+              description: `Obrigatório quando há print, vídeo ou protótipo. {"prova": n} (1 = a primeira prova), {"antes": n, "depois": m}, ou, sem tela, {"checagens": [{"nome", "ok", "frase"}]} (1 a ${MAX_CHECKS}).`,
+              properties: {
+                prova: { type: 'integer', minimum: 1, maximum: MAX_PROOFS },
+                antes: { type: 'integer', minimum: 1, maximum: MAX_PROOFS },
+                depois: { type: 'integer', minimum: 1, maximum: MAX_PROOFS },
+                checagens: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    properties: { nome: { type: 'string' }, ok: { type: 'boolean' }, frase: { type: 'string' } },
+                    required: ['nome', 'ok', 'frase'],
+                    additionalProperties: false,
+                  },
+                },
+              },
+              additionalProperties: false,
+            },
+          },
+          required: ['pergunta', 'resumo', 'opcoes', 'porque', 'risco'],
+          additionalProperties: false,
+        },
       },
       required: ['id', 'provas'],
       additionalProperties: false,
@@ -159,6 +239,78 @@ function parseProofInput(raw: unknown, index: number): ProofInput | string {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function proofNumber(value: unknown, field: string): number | string {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= MAX_PROOFS ? value - 1 : `"paraODono.visual.${field}" é o número de uma prova (1 a ${MAX_PROOFS}).`;
+}
+
+function parseVisualInput(raw: unknown): LedgerVisual | string {
+  if (!isRecord(raw)) return '"paraODono.visual" tem de ser um objeto.';
+  if (raw.checagens !== undefined) {
+    if (!Array.isArray(raw.checagens)) return '"paraODono.visual.checagens" é uma lista.';
+    const checks: LedgerCheck[] = [];
+    for (const [i, check] of raw.checagens.entries()) {
+      if (!isRecord(check) || typeof check.nome !== 'string' || typeof check.ok !== 'boolean' || typeof check.frase !== 'string')
+        return `"paraODono.visual.checagens[${i + 1}]" precisa de nome, ok (true/false) e frase.`;
+      checks.push({ name: check.nome.trim(), ok: check.ok, sentence: check.frase.trim() });
+    }
+    return { kind: 'checagens', checks };
+  }
+  if (raw.antes !== undefined || raw.depois !== undefined) {
+    const before = proofNumber(raw.antes, 'antes');
+    const after = proofNumber(raw.depois, 'depois');
+    if (typeof before === 'string') return before;
+    return typeof after === 'string' ? after : { kind: 'antes-depois', before, after };
+  }
+  const proof = proofNumber(raw.prova, 'prova');
+  return typeof proof === 'string' ? proof : { kind: 'prova', proof };
+}
+
+/** The shape of "paraODono" (types and required keys). Its rules (counts, limits, plain language, visual) are the contract's. */
+function parseForOwnerInput(raw: unknown): LedgerForOwner | string {
+  if (!isRecord(raw)) return '"paraODono" tem de ser um objeto.';
+  const texts: Record<string, string> = {};
+  for (const key of ['pergunta', 'resumo', 'porque', 'risco']) {
+    if (typeof raw[key] !== 'string') return `"paraODono.${key}" é obrigatório (texto).`;
+    texts[key] = (raw[key] as string).trim();
+  }
+  if (raw.titulo !== undefined && typeof raw.titulo !== 'string') return '"paraODono.titulo" é texto.';
+  if (!Array.isArray(raw.opcoes)) return `"paraODono.opcoes" é uma lista de ${MIN_OPTIONS} a ${MAX_OPTIONS} caminhos.`;
+  const options: LedgerOption[] = [];
+  for (const [i, option] of raw.opcoes.entries()) {
+    const where = `"paraODono.opcoes[${i + 1}]"`;
+    if (!isRecord(option) || typeof option.rotulo !== 'string' || typeof option.efeito !== 'string') return `${where} precisa de rotulo e efeito (texto).`;
+    if (option.risco !== undefined && typeof option.risco !== 'string') return `${where}: "risco" é texto.`;
+    if (option.fecha !== 'aceita' && option.fecha !== 'rejeitada') return `${where}: "fecha" é aceita ou rejeitada.`;
+    if (option.recomendada !== undefined && typeof option.recomendada !== 'boolean') return `${where}: "recomendada" é true ou false.`;
+    options.push({
+      label: option.rotulo.trim(),
+      effect: option.efeito.trim(),
+      ...(typeof option.risco === 'string' && option.risco.trim() ? { risk: option.risco.trim() } : {}),
+      closes: option.fecha,
+      ...(option.recomendada ? { recommended: true as const } : {}),
+    });
+  }
+  let visual: LedgerVisual | undefined;
+  if (raw.visual !== undefined) {
+    const parsed = parseVisualInput(raw.visual);
+    if (typeof parsed === 'string') return parsed;
+    visual = parsed;
+  }
+  return {
+    ...(typeof raw.titulo === 'string' && raw.titulo.trim() ? { title: raw.titulo.trim() } : {}),
+    question: texts.pergunta!,
+    summary: texts.resumo!,
+    options,
+    why: texts.porque!,
+    risk: texts.risco!,
+    ...(visual ? { visual } : {}),
+  };
+}
+
 export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedgerCall {
   const args = (rawArgs ?? {}) as Record<string, unknown>;
   if (typeof args !== 'object' || Array.isArray(args)) return { ok: false, reason: 'Argumentos têm de ser um objeto.' };
@@ -173,11 +325,12 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       const criterio = text(args.criterio, 'criterio', MAX_REQUEST_CHARS, true);
       const prazo = text(args.prazo, 'prazo', 40, true);
       const dono = text(args.dono, 'dono', 120, false);
-      for (const value of [pedido, criterio, prazo, dono]) if (typeof value === 'object') return fail(value.error);
+      const titulo = text(args.titulo, 'titulo', MAX_TITLE_CHARS, false);
+      for (const value of [pedido, criterio, prazo, dono, titulo]) if (typeof value === 'object') return fail(value.error);
       if (args.risco !== 'baixo' && args.risco !== 'alto') return fail('"risco" tem de ser baixo ou alto.');
       return {
         ok: true,
-        call: { tool: 'tarefa_criar', pedido: pedido as string, criterio: criterio as string, prazo: (prazo as string).trim(), ...(typeof dono === 'string' && dono.trim() ? { dono: dono.trim() } : {}), risco: args.risco, ...quadro },
+        call: { tool: 'tarefa_criar', pedido: pedido as string, criterio: criterio as string, prazo: (prazo as string).trim(), ...(typeof dono === 'string' && dono.trim() ? { dono: dono.trim() } : {}), risco: args.risco, ...quadro, ...(typeof titulo === 'string' && titulo.trim() ? { titulo: titulo.trim() } : {}) },
       };
     }
     case 'tarefa_assumir':
@@ -197,7 +350,9 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       }
       const nota = text(args.nota, 'nota', MAX_REQUEST_CHARS, false);
       if (typeof nota === 'object') return fail(nota.error);
-      return { ok: true, call: { tool: 'tarefa_entregar', id: id.trim(), provas, ...(nota?.trim() ? { nota } : {}) } };
+      const paraODono = args.paraODono === undefined ? undefined : parseForOwnerInput(args.paraODono);
+      if (typeof paraODono === 'string') return fail(paraODono);
+      return { ok: true, call: { tool: 'tarefa_entregar', id: id.trim(), provas, ...(nota?.trim() ? { nota } : {}), ...(paraODono ? { paraODono } : {}) } };
     }
     case 'tarefa_rejeitar': {
       if (typeof id === 'object' || id === undefined) return fail('"id" é obrigatório.');

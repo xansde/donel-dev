@@ -161,6 +161,25 @@ export class AgentBridge {
     this.ports = ports;
   }
 
+  /**
+   * Cartas forma A (Parte B) — what the owner wrote on a card: to the session of the place that owns the task, at
+   * once (the same send driver as `sessao_enviar`); when it is closed, never started, or the message did not go in,
+   * to the Líder único; with nobody open, nowhere (the card keeps it).
+   */
+  async deliverOwnerMessage(message: { readonly projectPath: string; readonly placeId: string; readonly text: string; readonly leaderText: string }): Promise<{ readonly placeId: string } | 'lider' | null> {
+    const target = this.tabOfPlace(message.projectPath, message.placeId);
+    if (target && !this.ports.unconfirmed(target.id)) {
+      const outcome = await this.ports.deliverLine(target.id, message.text, DELIVERY_WAIT_MS);
+      if (outcome.kind !== 'nao-foi') return { placeId: message.placeId };
+    }
+    const leader = this.leaderTab();
+    if (leader) {
+      const outcome = await this.ports.deliverLine(leader.id, message.leaderText, DELIVERY_WAIT_MS);
+      if (outcome.kind !== 'nao-foi') return 'lider';
+    }
+    return null;
+  }
+
   /** A tab reopened after an update or a restart that had been opened by `opener` (counts for its cap again). */
   adoptOpened(tabId: string, opener: string): void {
     this.openedBy.set(tabId, opener);

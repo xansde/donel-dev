@@ -80,4 +80,34 @@ describe('mensagem entre sessões vai na hora para o CLI', () => {
     expect(manager.getSnapshot('pty-1')?.state).toBe('permission');
     manager.dispose();
   });
+
+  it('o que o dono escreve na carta vai à sessão dona; fechada, ao Líder único; sem ninguém, a nenhum lugar', async () => {
+    const message = { projectPath: ATLAS, placeId: 'place:dev', text: 'para o dev', leaderText: 'para o líder' };
+    const open = team('waiting');
+    expect(await open.bridge.deliverOwnerMessage(message)).toEqual({ placeId: 'place:dev' });
+    expect(open.sent).toEqual([{ tabId: 'tab-dev', text: 'para o dev' }]);
+
+    // The Dev's tab is gone; the Jobu's Líder único is open.
+    let doc = addPlace(emptyMindscapeDoc(), ATLAS, { id: 'place:dev' });
+    const tabs: BridgeTab[] = [{ id: 'tab-unico', name: 'Líder', cwd: 'C:/home', roleId: 'lider', leaderOfAll: true, claudeSessionId: 's-u', sessionType: 'claude' }];
+    const sent: { tabId: string; text: string }[] = [];
+    const ports = {
+      loaded: true,
+      doc: () => doc,
+      tabs: () => tabs,
+      stateOf: () => 'waiting' as const,
+      unconfirmed: () => false,
+      deliverLine: async (tabId: string, text: string) => {
+        sent.push({ tabId, text });
+        return { kind: 'entrou' as const };
+      },
+    } as unknown as AgentBridgePorts;
+    expect(await new AgentBridge(ports).deliverOwnerMessage(message)).toBe('lider');
+    expect(sent).toEqual([{ tabId: 'tab-unico', text: 'para o líder' }]);
+
+    tabs.length = 0;
+    doc = addPlace(doc, ATLAS, { id: 'place:outro' });
+    expect(await new AgentBridge(ports).deliverOwnerMessage(message)).toBeNull();
+    expect(sent).toHaveLength(1);
+  });
 });
