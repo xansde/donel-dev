@@ -28,6 +28,7 @@ import {
   waitsForOwner,
   type LedgerActor,
   type LedgerDoc,
+  type LedgerForOwner,
   type LedgerOp,
   type LedgerProof,
   type LedgerStrip,
@@ -273,12 +274,35 @@ function proofView(service: LedgerService, proof: LedgerProof): Record<string, u
   }
 }
 
+/** The "para o dono" block back in the tool's pt-BR words (1-based proof numbers, as it was sent). */
+function forOwnerView(forOwner: LedgerForOwner): Record<string, unknown> {
+  const visual = forOwner.visual;
+  return {
+    ...(forOwner.title ? { titulo: forOwner.title } : {}),
+    pergunta: forOwner.question,
+    resumo: forOwner.summary,
+    opcoes: forOwner.options.map((option) => ({
+      rotulo: option.label,
+      efeito: option.effect,
+      ...(option.risk ? { risco: option.risk } : {}),
+      fecha: option.closes,
+      ...(option.recommended ? { recomendada: true } : {}),
+    })),
+    porque: forOwner.why,
+    risco: forOwner.risk,
+    ...(visual?.kind === 'prova' ? { visual: { prova: visual.proof + 1 } } : {}),
+    ...(visual?.kind === 'antes-depois' ? { visual: { antes: visual.before + 1, depois: visual.after + 1 } } : {}),
+    ...(visual?.kind === 'checagens' ? { visual: { checagens: visual.checks.map((check) => ({ nome: check.name, ok: check.ok, frase: check.sentence })) } } : {}),
+  };
+}
+
 function taskView(task: LedgerTask, doc: LedgerDoc): Record<string, unknown> {
   const delivery = lastDelivery(task);
   const decision = [...task.events].reverse().find((event) => event.kind === 'aceita' || event.kind === 'rejeitada');
   const who = (actor: LedgerActor): string => (actor.kind === 'dono' ? 'dono' : actor.placeId);
   return {
     id: task.id,
+    ...(task.title ? { titulo: task.title } : {}),
     estado: task.state,
     pedido: task.request,
     criterio: task.doneWhen,
@@ -292,10 +316,11 @@ function taskView(task: LedgerTask, doc: LedgerDoc): Record<string, unknown> {
             em: new Date(delivery.at).toISOString(),
             provas: delivery.proofs?.map((proof) => (proof.kind === 'arquivo' ? `arquivo ${proof.file}` : proof.kind === 'link' ? proof.url : `texto (${proof.text.length} caracteres; leia com tarefa_ver)`)),
             ...(delivery.text ? { nota: delivery.text } : {}),
+            ...(delivery.forOwner ? { paraODono: forOwnerView(delivery.forOwner) } : {}),
           },
         }
       : {}),
-    ...(decision ? { decisao: { tipo: decision.kind, por: who(decision.by), ...(decision.text ? { motivo: decision.text } : {}) } } : {}),
+    ...(decision ? { decisao: { tipo: decision.kind, por: who(decision.by), ...(decision.option ? { opcao: decision.option } : {}), ...(decision.text ? { motivo: decision.text } : {}) } } : {}),
     ...(waitsForOwner(doc, task) ? { esperandoDono: true } : {}),
   };
 }
@@ -329,6 +354,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         due: call.prazo,
         ownerPlaceId: owner,
         risk: lowRefused ? 'alto' : call.risco,
+        ...(call.titulo ? { title: call.titulo } : {}),
       });
       if (!result.ok || !lowRefused) return answer(result, 'criada');
       return {
@@ -348,7 +374,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         }
         proofs.push(proof);
       }
-      const result = service.apply(actor, { op: 'entregar', id: call.id, proofs, ...(call.nota ? { note: call.nota } : {}) });
+      const result = service.apply(actor, { op: 'entregar', id: call.id, proofs, ...(call.nota ? { note: call.nota } : {}), ...(call.paraODono ? { forOwner: call.paraODono } : {}) });
       if (!result.ok) await service.discardProofs(proofs);
       return answer(result, 'entregue');
     }
