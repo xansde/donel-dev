@@ -29,7 +29,14 @@ function team(state: SemaphoreState) {
     roles: () => [],
     openSession: () => 'unused',
     sendLine: (tabId, text) => sent.push({ tabId, text }),
+    deliverLine: async (tabId, text) => {
+      sent.push({ tabId, text });
+      return { kind: 'entrou' };
+    },
     permissionOnScreen: () => false,
+    unconfirmed: () => false,
+    startTrouble: () => null,
+    closeTab: () => undefined,
     askOwner: async () => false,
     remoteLabel: (id) => id,
     remotes: () => [],

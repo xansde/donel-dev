@@ -18,6 +18,7 @@ import {
   archiveCard,
   editOwnerCard,
   placeCardId,
+  setBoardReach,
   placeOfSession,
   removeLink,
   setOwnerColor,
@@ -646,6 +647,13 @@ export function MindscapeScreen({
           const createdAt = Date.now();
           setCreatedCardId(id);
           onAction(projectPath, (current) => addOwnerCard(current, projectPath, { id, createdAt, origin }));
+        }}
+        reach={board?.reach ?? 'own'}
+        onToggleReach={() => {
+          if (!board) return;
+          const { projectPath } = board;
+          const next = board.reach === 'all' ? 'own' : 'all';
+          onAction(projectPath, (current) => setBoardReach(current, projectPath, next));
         }}
         roles={roles}
         onNewPlace={(roleId) => {

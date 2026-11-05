@@ -144,8 +144,8 @@ import { BackgroundIndicator, type BackgroundSession } from './chat/BackgroundTa
 import { revealRow } from './chat/revealRow';
 import { runningCount } from '../../shared/chat/backgroundTasks';
 import { effectiveTabView, hasChatView, nextTabView, shouldHandleViewShortcut } from './chat/tabView';
-import { disposeTabSend, sendDriverFor, sendToTab } from './chat/composer/tabSend';
-import { blockingScreen } from '../../shared/chat/screen';
+import { disposeTabSend, sendDriverFor, sendToTab, sendToTabAndWait } from './chat/composer/tabSend';
+import { blockingScreen, readInputText } from '../../shared/chat/screen';
 import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../shared/lider/ipc';
 import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
 import { TerminalPane } from './TerminalPane';
@@ -2599,10 +2599,30 @@ export function App(): React.JSX.Element {
       pendingFirstMessagesRef.current[tabId] = request.firstMessage;
       return tabId;
     },
+    closeTab: (tabId) => closeTabImmediatelyRef.current(tabId),
     sendLine: (tabId, text) => sendRenewalLine(tabId, text),
+    deliverLine: (tabId, text, waitMs) => {
+      const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
+      if (tab !== undefined && hasChatView(tab, chatEnabled)) return sendToTabAndWait(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text }, waitMs);
+      sendRenewalLine(tabId, text);
+      return Promise.resolve({ kind: 'enviando' as const });
+    },
     permissionOnScreen: (tabId) => {
       const lines = terminalRefs.current[tabId]?.readScreen().lines;
       return lines !== undefined && blockingScreen(lines)?.kind === 'permission';
+    },
+    unconfirmed: (tabId) => semaphoreStates[tabId]?.unconfirmed === true || semaphoreStates[tabId] === undefined,
+    startTrouble: (tabId) => {
+      if (tabExits[tabId] !== undefined) return 'o Claude de lá foi encerrado';
+      if (aliveTabs[tabId] !== true) return 'o terminal dela não chegou a abrir';
+      const lines = terminalRefs.current[tabId]?.readScreen().lines;
+      if (lines === undefined) return null;
+      const dialog = blockingScreen(lines);
+      if (dialog) return `a tela dela mostra «${dialog.title}» e espera alguém responder`;
+      const box = readInputText(lines);
+      if (box === null) return 'a caixa de entrada do Claude não apareceu na tela dela';
+      if (box !== '') return 'o pedido ficou na caixa do terminal dela sem ser enviado';
+      return null;
     },
     askOwner: (question) =>
       new Promise<boolean>((resolve) => {
