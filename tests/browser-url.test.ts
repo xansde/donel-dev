@@ -21,12 +21,12 @@ describe('normalizeBrowserUrl', () => {
     expect(normalizeBrowserUrl('about:blank')).toEqual({ ok: true, url: 'about:blank' });
   });
 
-  it('refuses file:// and every scheme other than http/https', () => {
+  it('refuses a local file that is not a page, image or PDF, and every scheme other than http/https', () => {
     for (const input of ['file:///C:/Users/x/a.txt', 'javascript:alert(1)', 'data:text/html,<b>x</b>', 'chrome://settings', 'view-source:https://a.com', 'devtools://x']) {
       const result = normalizeBrowserUrl(input);
       expect(result.ok, input).toBe(false);
     }
-    expect(normalizeBrowserUrl('file:///C:/x')).toEqual({ ok: false, reason: 'O navegador do Donel só abre endereços http e https (recebi "file:").' });
+    expect(normalizeBrowserUrl('file:///C:/x')).toEqual({ ok: false, reason: 'O navegador do Donel abre arquivo local só de página (HTML), imagem ou PDF, nunca uma pasta.' });
   });
 
   it('refuses a user or password embedded in the URL', () => {

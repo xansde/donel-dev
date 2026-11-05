@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { WebContentsView, session as electronSession, type BrowserWindow, type Session, type WebContents } from 'electron';
 import { guardBrowserPanelNavigation } from '../navigation-guard';
-import { isAllowedPanelUrl } from '../../shared/browser/url';
+import { isAllowedLocalFileUrl, isAllowedPanelUrl } from '../../shared/browser/url';
 import type { BrowserPanelState, BrowserRect, BrowserTabInfo } from '../../shared/browser/ipc';
 import { cleanUserAgent, uniqueDownloadName } from './panel-helpers';
 
@@ -216,10 +216,13 @@ export class BrowserPanels {
     };
   }
 
-  /** Loads an already validated URL in the active tab. Resolves when the load finishes or fails (never rejects). */
+  /**
+   * Loads an already validated URL in the active tab. Resolves when the load finishes or fails (never rejects).
+   * The only door to a local file (page, image or PDF): a page never navigates to `file:` by itself.
+   */
   async load(ptyId: string, url: string): Promise<{ ok: true } | { ok: false; error: string }> {
     const entry = this.ensure(ptyId);
-    if (!isAllowedPanelUrl(url)) return { ok: false, error: 'Endereço não permitido.' };
+    if (!isAllowedPanelUrl(url) && !isAllowedLocalFileUrl(url)) return { ok: false, error: 'Endereço não permitido.' };
     try {
       await entry.contents.loadURL(url);
       return { ok: true };

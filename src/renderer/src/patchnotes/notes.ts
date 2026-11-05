@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-04',
     items: [
       {
+        title: 'O navegador abre arquivo deste computador',
+        text: 'O HTML que uma sessão gerou agora abre direto no navegador ao lado da conversa, sem sair do app. Vale para página HTML, imagem e PDF: a sessão abre pelo caminho do arquivo, e você também pode colar o caminho (C:\\pasta\\relatorio.html) na barra de endereço. A página aberta não navega para outro arquivo nem mostra a pasta onde está.',
+      },
+      {
         title: 'Só o Líder nas abas; o time fica no Mindscape',
         text: 'As sessões que o Líder abre não aparecem mais nas abas nem na lista da barra lateral: continuam trabalhando e você acompanha cada uma pelo lugar dela no Mindscape. Dois cliques no lugar trazem a sessão para as abas; fechar a aba a esconde de novo, sem parar a sessão. Quando uma delas precisa de você, o aviso continua chegando pelo Jobu, e clicar nele também traz a sessão.',
       },
