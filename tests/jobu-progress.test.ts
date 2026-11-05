@@ -1,12 +1,24 @@
 // Painel de progresso do Jobu — the estimate the owner reads: the bar, the end date and where it came from.
 import { describe, expect, it } from 'vitest';
-import { applyLedgerOp, emptyLedgerDoc, type LedgerActor, type LedgerDoc, type LedgerOp } from '../src/shared/ledger/contract';
+import { applyLedgerOp, emptyLedgerDoc, type LedgerActor, type LedgerDoc, type LedgerForOwner, type LedgerOp } from '../src/shared/ledger/contract';
 import { dueEndsAt, jobuProgress } from '../src/shared/pet/progress';
 
 const H = 60 * 60 * 1000;
 const T0 = new Date(2026, 10, 5, 9, 0).getTime();
 const lider: LedgerActor = { kind: 'lugar', placeId: 'lider', roleId: 'lider' };
 const dev: LedgerActor = { kind: 'lugar', placeId: 'place:dev', roleId: 'dev' };
+
+/** The owner block a high-risk delivery needs (cartas forma A). */
+const FOR_OWNER: LedgerForOwner = {
+  question: 'Aceito assim?',
+  summary: 'Feito e testado.',
+  options: [
+    { label: 'Aceitar', effect: 'Vai para o alfa.', closes: 'aceita', recommended: true },
+    { label: 'Refazer', effect: 'Volta para quem fez.', closes: 'rejeitada' },
+  ],
+  why: 'Os testes passaram.',
+  risk: 'Baixo.',
+};
 
 function run(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, now: number, id = 't-1'): LedgerDoc {
   const result = applyLedgerOp(doc, actor, op, { now, newId: () => id });
@@ -40,7 +52,7 @@ describe('jobuProgress', () => {
     expect(task.late).toBe(true);
     expect(task.source).toMatch(/passa do prazo/);
 
-    doc = run(doc, dev, { op: 'entregar', id: 't-1', proofs: [{ kind: 'texto', text: 'ok' }] }, T0 + 9 * H);
+    doc = run(doc, dev, { op: 'entregar', id: 't-1', proofs: [{ kind: 'texto', text: 'ok' }], forOwner: FOR_OWNER }, T0 + 9 * H);
     doc = run(doc, { kind: 'dono' }, { op: 'rejeitar', id: 't-1', reason: 'faltou Y' }, T0 + 10 * H);
     task = jobuProgress(doc, T0 + 10 * H).boards[0]!.tasks[0]!;
     // A rejected delivery goes back to 1 of 3: the work has to be redone.
@@ -55,7 +67,7 @@ describe('jobuProgress', () => {
       doc = run(doc, lider, { op: 'criar', projectPath: '/w/atlas', request: id, doneWhen: 'feito', due: '2026-11-07', ownerPlaceId: 'place:dev', risk: 'baixo' }, T0, id);
     }
     for (const id of ['em-execucao', 'entregue', 'rejeitada', 'aceita']) doc = run(doc, dev, { op: 'assumir', id }, T0 + H);
-    for (const id of ['entregue', 'rejeitada', 'aceita']) doc = run(doc, dev, { op: 'entregar', id, proofs: proof }, T0 + 2 * H);
+    for (const id of ['entregue', 'rejeitada', 'aceita']) doc = run(doc, dev, { op: 'entregar', id, proofs: proof, forOwner: FOR_OWNER }, T0 + 2 * H);
     doc = run(doc, { kind: 'dono' }, { op: 'rejeitar', id: 'rejeitada', reason: 'faltou Y' }, T0 + 3 * H);
     doc = run(doc, { kind: 'dono' }, { op: 'aceitar', id: 'aceita' }, T0 + 3 * H);
 
@@ -65,7 +77,7 @@ describe('jobuProgress', () => {
     expect([board.steps, board.totalSteps]).toEqual([0 + 1 + 2 + 1, 4 * 3]);
 
     // Only accepted tasks left: nothing to show.
-    const onlyDone = run(run(run(created('2026-11-07'), dev, { op: 'assumir', id: 't-1' }, T0 + H), dev, { op: 'entregar', id: 't-1', proofs: proof }, T0 + 2 * H), { kind: 'dono' }, { op: 'aceitar', id: 't-1' }, T0 + 3 * H);
+    const onlyDone = run(run(run(created('2026-11-07'), dev, { op: 'assumir', id: 't-1' }, T0 + H), dev, { op: 'entregar', id: 't-1', proofs: proof, forOwner: FOR_OWNER }, T0 + 2 * H), { kind: 'dono' }, { op: 'aceitar', id: 't-1' }, T0 + 3 * H);
     expect(jobuProgress(onlyDone, T0 + 3 * H + 60_000)).toEqual({ boards: [], changedAt: null });
   });
 

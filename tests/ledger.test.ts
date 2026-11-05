@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, ledgerProofsDir, nodeLedgerProofFs, runLedgerTool, type LedgerCaller, type LedgerProofFs } from '../src/main/ledger-store';
 import type { MindscapeBoard } from '../src/shared/mindscape/model';
-import { LEDGER_SCHEMA_VERSION } from '../src/shared/ledger/contract';
+import { findCode, LEDGER_SCHEMA_VERSION } from '../src/shared/ledger/contract';
 import { parseLedgerToolCall, type LedgerToolCall } from '../src/shared/ledger/tools';
 
 // Ledger com prova (item 19) — persisted data a channel could erase, and the two rules that live in code:
@@ -111,6 +111,69 @@ describe('ledger com prova', () => {
     writeFileSync(link, 'x');
     expect(await runLedgerTool(service(), dev, call('tarefa_entregar', { id, provas: [{ tipo: 'arquivo', caminho: link }] }))).toMatchObject({ ok: false, text: expect.stringContaining('link simbólico') });
     expect(existsSync(ledgerProofsDir(join(dir, 'ledger.json')))).toBe(false);
+  });
+
+  it('opens a v2 ledger without losing anything and writes it back as v3', async () => {
+    const { file, service } = setup();
+    const v2 = {
+      schemaVersion: 2,
+      startedAt: 1,
+      tasks: {
+        't-0000aaaa': {
+          projectPath: 'C:/p', request: 'Põe o botão verde', doneWhen: 'print', due: '2026-11-06', ownerPlaceId: 'place:dev', risk: 'alto', state: 'aceita', createdAt: 1,
+          events: [
+            { kind: 'criada', at: 1, by: { kind: 'lugar', placeId: 'place:lider' } },
+            { kind: 'assumida', at: 2, by: { kind: 'lugar', placeId: 'place:dev', roleId: 'dev' } },
+            { kind: 'entregue', at: 3, by: { kind: 'lugar', placeId: 'place:dev', roleId: 'dev' }, proofs: [{ kind: 'texto', text: '4 passed' }], text: 'feito' },
+            { kind: 'aceita', at: 4, by: { kind: 'dono' }, requestId: 'pedido-12345678' },
+          ],
+        },
+      },
+    };
+    writeFileSync(file, JSON.stringify(v2));
+    const task = { ...v2.tasks['t-0000aaaa'], id: 't-0000aaaa' };
+    expect(service().load()).toEqual({ doc: { ...v2, schemaVersion: LEDGER_SCHEMA_VERSION, tasks: { 't-0000aaaa': task } }, readOnly: false });
+    await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', risco: 'alto', titulo: 'Outra tarefa' }));
+    const written = JSON.parse(readFileSync(file, 'utf8')) as { schemaVersion: number; tasks: Record<string, unknown> };
+    expect(written.schemaVersion).toBe(3);
+    expect(written.tasks['t-0000aaaa']).toEqual(task);
+  });
+
+  it('finds code in the owner text, and not in plain Portuguese with numbers', () => {
+    for (const code of ['t-1b6c1a95', 'place:4fd365dd-77', '2a98f2f', 'PR #105', 'o #12', '/pull/7', 'feat/homologacao-v1', 'src/main/x.ts', 'C:\\Users\\x', '`npm test`', 'https://github.com/x'])
+      expect(findCode(`Veja ${code} aqui`), code).not.toBeNull();
+    for (const plain of ['Faltam 44 h', '5 de 5 checagens passaram', 'Até 07/11.', 'Aceito a fase 2 e/ou a 3?', 'A VPS já tem os acessos.']) expect(findCode(plain), plain).toBeNull();
+  });
+
+  it('refuses a high-risk delivery without the owner block or with code in it, and records the option the owner picks', async () => {
+    const { dir, service } = setup();
+    const created = await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'Põe o botão verde', criterio: 'print do botão', prazo: '2026-11-06', dono: 'place:dev', risco: 'alto' }));
+    const id = (JSON.parse(created.text) as { id: string }).id;
+    await runLedgerTool(service(), dev, call('tarefa_assumir', { id }));
+    const print = join(dir, 'print.png');
+    writeFileSync(print, 'png-bytes');
+    const paraODono = {
+      pergunta: 'O botão ficou verde. Aceito assim?',
+      resumo: 'Troquei a cor do botão de salvar; o resto da tela não mudou.',
+      opcoes: [
+        { rotulo: 'Aceitar', efeito: 'O botão verde vai para o alfa hoje.', fecha: 'aceita', recomendada: true },
+        { rotulo: 'Voltar ao azul', efeito: 'Desfaço a troca.', risco: 'O pedido fica sem atender.', fecha: 'rejeitada' },
+      ],
+      porque: 'É exatamente o que você pediu e o print mostra.',
+      risco: 'Baixo: só cor.',
+      visual: { prova: 1 },
+    };
+    const deliver = (block?: unknown) => runLedgerTool(service(), dev, call('tarefa_entregar', { id, provas: [{ tipo: 'arquivo', caminho: print }], ...(block ? { paraODono: block } : {}) }));
+    expect(await deliver()).toMatchObject({ ok: false, text: expect.stringContaining('paraODono') });
+    expect(await deliver({ ...paraODono, pergunta: `Aceito a ${id}?` })).toMatchObject({ ok: false, text: expect.stringContaining('Escreva para um humano') });
+    expect(service().load().doc.tasks[id]!.state).toBe('em-execucao');
+
+    expect(await deliver(paraODono)).toMatchObject({ ok: true });
+    expect(JSON.parse((await runLedgerTool(service(), revisor, call('tarefa_ver', { id }))).text).entrega.paraODono).toMatchObject({ pergunta: paraODono.pergunta, visual: { prova: 1 } });
+    // The option must exist and close the way the owner's decision does; a rejecting option is its own reason.
+    expect(service().apply({ kind: 'dono' }, { op: 'aceitar', id, option: 'Voltar ao azul' })).toMatchObject({ ok: false });
+    expect(service().apply({ kind: 'dono' }, { op: 'rejeitar', id, reason: '', option: 'Voltar ao azul' })).toMatchObject({ ok: true });
+    expect(service().load().doc.tasks[id]!.events.at(-1)).toMatchObject({ kind: 'rejeitada', option: 'Voltar ao azul', text: 'Voltar ao azul' });
   });
 
   it('reads a ledger written by a newer channel and never writes over it', async () => {

@@ -3,7 +3,7 @@ import type { ConfigIoDeps } from '../src/main/config-store';
 import { createCelularAuth } from '../src/main/celular/auth';
 import { createLedgerMobilePort } from '../src/main/celular/ledger-port';
 import { createLedgerService, type LedgerProofFs } from '../src/main/ledger-store';
-import type { LedgerActor } from '../src/shared/ledger/contract';
+import type { LedgerActor, LedgerForOwner } from '../src/shared/ledger/contract';
 import { createMobileHandler, startMobileServer, type MobileResponse } from '../src/main/celular/server';
 import { pickTailscaleAddress } from '../src/main/celular/tailscale';
 
@@ -43,13 +43,25 @@ function memoryIo(): ConfigIoDeps {
   };
 }
 
+/** The owner block a high-risk delivery needs (cartas forma A). */
+const FOR_OWNER: LedgerForOwner = {
+  question: 'Aceito assim?',
+  summary: 'Feito e testado.',
+  options: [
+    { label: 'Aceitar', effect: 'Vai para o alfa.', closes: 'aceita', recommended: true },
+    { label: 'Refazer', effect: 'Volta para quem fez.', closes: 'rejeitada' },
+  ],
+  why: 'Os testes passaram.',
+  risk: 'Baixo.',
+};
+
 /** Uma entrega de risco alto, entregue pelo Dev com prova: espera o dono. */
 function deliveredTask(ledger: ReturnType<typeof createLedgerService>, request: string): string {
   const created = ledger.apply(LIDER, { op: 'criar', projectPath: 'C:/proj/atlas', request, doneWhen: 'pronto', due: '2026-11-10', ownerPlaceId: 'p-dev', risk: 'alto' });
   if (!created.ok) throw new Error(created.reason);
   const id = created.task.id;
   expect(ledger.apply(DEV, { op: 'assumir', id }).ok).toBe(true);
-  expect(ledger.apply(DEV, { op: 'entregar', id, proofs: [{ kind: 'texto', text: '4 passed' }] }).ok).toBe(true);
+  expect(ledger.apply(DEV, { op: 'entregar', id, proofs: [{ kind: 'texto', text: '4 passed' }], forOwner: FOR_OWNER }).ok).toBe(true);
   return id;
 }
 
@@ -155,7 +167,7 @@ describe('servidor do celular', () => {
     if (!created.ok) throw new Error(created.reason);
     const id = created.task.id;
     ledger.apply(DEV, { op: 'assumir', id });
-    ledger.apply(DEV, { op: 'entregar', id, proofs: [{ kind: 'texto', text: output }] });
+    ledger.apply(DEV, { op: 'entregar', id, proofs: [{ kind: 'texto', text: output }], forOwner: FOR_OWNER });
 
     const item = (bodyOf(call('GET', '/api/fila', token)).itens as { id: string; provas: { texto: string; cortado?: boolean }[] }[]).find((entry) => entry.id === id)!;
     expect(item.provas[0]!.cortado).toBe(true);
