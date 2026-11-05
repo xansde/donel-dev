@@ -482,16 +482,21 @@ function textSeen(s: Draft, lines: readonly LineInput[]): boolean {
 const lettersOnly = (t: string): string => t.normalize('NFKC').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
 
 /**
- * 05/11 — the box went from empty to holding text that is ours read loosely: nearly as long, and its start or end
+ * 05/11 — the box went from empty to holding text that is ours read loosely: about as long, and its start or end
  * is in our text. A message to an idle session sat in the box unsubmitted because the screen read did not match it
- * glyph for glyph; as the box was proven empty right before the paste, nobody else put it there.
+ * glyph for glyph; as the box was proven empty right before the paste, nobody else put it there — except the owner
+ * typing in that box right after it: then the box is longer than ours and an Enter would send his text with ours.
+ * So it may not be much longer (a glyph read twice, not a word typed), and when longer both ends must be ours.
  */
 function looksLikeOurs(box: string, text: string): boolean {
   const seen = lettersOnly(box);
   const ours = lettersOnly(text);
   if (seen === '' || ours === '' || seen.length < ours.length * 0.8) return false;
+  if (seen.length > ours.length + Math.max(2, Math.ceil(ours.length * 0.05))) return false;
   const edge = Math.min(12, seen.length);
-  return ours.includes(seen.slice(0, edge)) || ours.includes(seen.slice(-edge));
+  const startIsOurs = ours.includes(seen.slice(0, edge));
+  const endIsOurs = ours.includes(seen.slice(-edge));
+  return seen.length > ours.length ? startIsOurs && endIsOurs : startIsOurs || endIsOurs;
 }
 
 /** Text in the box is a prefix of ours (so a timeout may clean it without eating the owner's own typing). */

@@ -49,6 +49,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         title: 'Mensagens entre sessões não ficam mais paradas na caixa',
         text: 'Com o PC carregado, o pedido de uma sessão recém-aberta, e às vezes a mensagem para uma sessão parada, ficava na caixa do terminal (como "[Pasted text #1 …]" ou o próprio texto) e nunca era enviado, até você apertar Enter. Agora o app espera o Claude de lá mostrar a mensagem, aperta o Enter e confere se ela saiu, repetindo só o Enter se precisar (o texto nunca vai duas vezes). Quem mandou só ouve "Entregue" depois que entrou de verdade. E o estado fala a verdade: "começando" enquanto a sessão não pegou o pedido e, depois de um minuto e meio, "não começou" com o motivo, avisado também a quem a abriu.',
       },
+      {
+        title: 'O Enter do app não leva o que você digitou junto',
+        text: 'Se você escrever na caixa de uma sessão logo depois que chegou uma mensagem de outra sessão, o app não aperta mais o Enter por ela: sua digitação não sai misturada com a mensagem. E a sessão que mandou ouve que não deve repetir enquanto a primeira ainda não entrou, para nada chegar duas vezes.',
+      },
     ],
   },
   {

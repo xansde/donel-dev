@@ -340,6 +340,13 @@ describe('sequência de bytes (§4)', () => {
     other.screen(idleEmpty(), 0);
     other.screen(screen('rodar os testes agora mesmo, por favor, sem demora'), 100);
     expect(other.phase).toBe('typing');
+    // O dono digitou na caixa logo depois da colagem: o Enter mandaria o texto dele junto. Nem no fim, nem no começo.
+    for (const typed of ['De Líder (place:abc): Revise o #211 de novo e me avisa', 'ok De Líder (place:abc): Revise o #211 de novo']) {
+      const mixed = new Sim({ text: '◆ De Líder (place:abc): Revise o #211 de novo' });
+      mixed.screen(idleEmpty(), 0);
+      mixed.screen(screen(typed), 100);
+      expect(mixed.phase, typed).toBe('typing');
+    }
   });
 
   it('placeholder com outra contagem de linhas ainda é a nossa colagem quando a caixa estava vazia (05/11)', () => {
