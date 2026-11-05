@@ -203,6 +203,7 @@
         itens.forEach(function (item, i) {
           baralho.appendChild(montarSlot(item, i + 1, itens.length));
         });
+        abrirCartaDoAviso();
       })
       .catch(function (erro) {
         if (erro && erro.message === 'nao-pareado') return;
@@ -285,6 +286,7 @@
     var amostra = item.origem === 'amostra-revisor';
     var slot = el('section', 'slot');
     slot.setAttribute('aria-label', item.titulo);
+    slot.id = 'carta-' + item.id;
 
     var carta = el('article', 'carta naipe-' + naipe);
     var moldura = el('div', 'moldura');
@@ -525,10 +527,81 @@
     if (ctx) decidir(ctx, 'rejeitar', texto);
   });
 
+  // Aviso no celular: o toque numa notificação abre o app em `#carta=<id>`; a carta vem para a tela.
+  function abrirCartaDoAviso() {
+    var m = /[#&]carta=([^&]+)/.exec(location.hash);
+    if (!m) return;
+    var alvo = document.getElementById('carta-' + decodeURIComponent(m[1]));
+    try {
+      history.replaceState(null, '', location.pathname);
+    } catch (e) {
+      /* sem history: fica o hash */
+    }
+    if (alvo) alvo.scrollIntoView({ block: 'start' });
+    else avisar('Essa carta já foi decidida.');
+  }
+
+  // Aviso no celular (Web Push). Só existe no endereço https da Tailscale: no http o navegador não deixa
+  // registrar o service worker. O botão do sino pede a permissão (o iPhone exige um toque) e inscreve.
+  var botaoAvisos = document.getElementById('avisos');
+  var avisosPossiveis = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+
+  function chaveBytes(chave) {
+    var base = chave.replace(/-/g, '+').replace(/_/g, '/');
+    var bruto = atob(base + '==='.slice((base.length + 3) % 4));
+    var bytes = new Uint8Array(bruto.length);
+    for (var i = 0; i < bruto.length; i++) bytes[i] = bruto.charCodeAt(i);
+    return bytes;
+  }
+
+  function inscreverAvisos(pedirPermissao) {
+    if (!token()) return Promise.resolve(false);
+    if (!window.isSecureContext || !avisosPossiveis) {
+      if (pedirPermissao) avisar('Os avisos só funcionam no endereço https do Oráculo. Pareie de novo pelo QR das Preferências depois de ligar o https.');
+      return Promise.resolve(false);
+    }
+    var permissao = pedirPermissao ? Notification.requestPermission() : Promise.resolve(Notification.permission);
+    return Promise.resolve(permissao)
+      .then(function (estado) {
+        if (estado !== 'granted') throw new Error('sem-permissao');
+        return Promise.all([navigator.serviceWorker.register('/sw.js').then(function () { return navigator.serviceWorker.ready; }), api('/api/avisos/chave').then(function (r) { return r.json(); })]);
+      })
+      .then(function (pronto) {
+        var registro = pronto[0];
+        var chave = pronto[1] && pronto[1].chave;
+        if (!chave) throw new Error('sem-chave');
+        return registro.pushManager.getSubscription().then(function (atual) {
+          return atual || registro.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: chaveBytes(chave) });
+        });
+      })
+      .then(function (inscricao) {
+        return api('/api/avisos/inscrever', { method: 'POST', body: JSON.stringify(inscricao.toJSON()) });
+      })
+      .then(function (resposta) {
+        if (!resposta.ok) throw new Error('falhou');
+        botaoAvisos.hidden = true;
+        if (pedirPermissao) avisar('Pronto: este celular avisa quando uma carta esperar você.');
+        return true;
+      })
+      .catch(function (erro) {
+        if (pedirPermissao) avisar(erro && erro.message === 'sem-permissao' ? 'Sem permissão de notificação. Libere nas configurações do navegador.' : 'Não consegui ligar os avisos agora.');
+        return false;
+      });
+  }
+
+  botaoAvisos.addEventListener('click', function () { inscreverAvisos(true); });
+
+  function prepararAvisos() {
+    if (!token() || !avisosPossiveis || !window.isSecureContext) return;
+    // Já permitido: renova a inscrição em silêncio (ela pode ter mudado); senão mostra o sino.
+    if (Notification.permission === 'granted') inscreverAvisos(false).then(function (ok) { botaoAvisos.hidden = ok; });
+    else if (Notification.permission !== 'denied') botaoAvisos.hidden = false;
+  }
+
   document.getElementById('atualizar').addEventListener('click', function () { carregar(); });
   document.addEventListener('visibilitychange', function () {
     if (document.visibilityState === 'visible' && !folhaPendente) carregar();
   });
 
-  parearPeloLink().then(carregar);
+  parearPeloLink().then(carregar).then(prepararAvisos);
 })();

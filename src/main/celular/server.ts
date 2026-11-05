@@ -47,6 +47,13 @@ export interface MobileHandlerDeps {
   readonly assets: Readonly<Record<string, MobileAsset>>;
   /** Raiz das provas copiadas pelo ledger; prova em arquivo fora dela não sai. `null` = nenhuma em arquivo. */
   readonly provasRoot: string | null;
+  /** Aviso no celular (Web Push). Ausente = sem avisos. */
+  readonly push?: {
+    /** A chave pública VAPID (base64url) que o celular passa ao se inscrever. */
+    publicKey(): string;
+    /** Guarda a inscrição deste aparelho; `false` = inscrição inválida (endereço fora dos serviços de push). */
+    subscribe(deviceId: string, subscription: unknown): boolean;
+  };
 }
 
 const BASE_HEADERS = {
@@ -141,7 +148,16 @@ export function createMobileHandler(deps: MobileHandlerDeps): (request: MobileRe
       return paired ? json(200, { token: paired.token }) : json(403, { erro: 'codigo-invalido' });
     }
 
-    if (!deps.auth.verify(bearer(request.authorization))) return json(401, { erro: 'nao-pareado' });
+    const device = deps.auth.verify(bearer(request.authorization));
+    if (!device) return json(401, { erro: 'nao-pareado' });
+
+    if (path === '/api/avisos/chave' && method === 'GET') return deps.push ? json(200, { chave: deps.push.publicKey() }) : json(404, { erro: 'sem-avisos' });
+    if (path === '/api/avisos/inscrever' && method === 'POST') {
+      if (!deps.push) return json(404, { erro: 'sem-avisos' });
+      const input = parseJson(request.body);
+      const keys = input && typeof input.keys === 'object' && input.keys !== null ? (input.keys as Record<string, unknown>) : {};
+      return deps.push.subscribe(device.id, { endpoint: input?.endpoint, p256dh: keys.p256dh, auth: keys.auth }) ? json(200, { ok: true }) : json(400, { erro: 'inscricao-invalida' });
+    }
 
     if (path === '/api/fila' && method === 'GET') return json(200, { itens: deps.ledger().pendentes() });
     if (path === '/api/decidir' && method === 'POST') return decide(request.body);

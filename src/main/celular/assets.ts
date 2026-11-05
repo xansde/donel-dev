@@ -7,6 +7,7 @@ import appJs from './pwa/app.js?raw';
 import appCss from './pwa/app.css?raw';
 import manifest from './pwa/manifest.webmanifest?raw';
 import icon from './pwa/icon.svg?raw';
+import serviceWorker from './pwa/sw.js?raw';
 
 export const PWA_ASSETS: Readonly<Record<string, MobileAsset>> = {
   '/index.html': { contentType: 'text/html; charset=utf-8', body: indexHtml },
@@ -14,4 +15,6 @@ export const PWA_ASSETS: Readonly<Record<string, MobileAsset>> = {
   '/app.css': { contentType: 'text/css; charset=utf-8', body: appCss },
   '/manifest.webmanifest': { contentType: 'application/manifest+json; charset=utf-8', body: manifest },
   '/icon.svg': { contentType: 'image/svg+xml', body: icon },
+  // Aviso no celular: o service worker mostra o aviso com o app fechado (só funciona no endereço https).
+  '/sw.js': { contentType: 'text/javascript; charset=utf-8', body: serviceWorker },
 };
