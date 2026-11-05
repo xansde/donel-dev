@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-04',
     items: [
       {
+        title: 'O navegador abre arquivo deste computador',
+        text: 'O HTML que uma sessão gerou agora abre direto no navegador ao lado da conversa, sem sair do app. Vale para página HTML, imagem e PDF: a sessão abre pelo caminho do arquivo, e você também pode colar o caminho (C:\\pasta\\relatorio.html) na barra de endereço. A página aberta não navega para outro arquivo nem mostra a pasta onde está.',
+      },
+      {
         title: 'O Líder fecha as sessões que abriu',
         text: 'Uma sessão agora fecha as sessões que estão abaixo dela no quadro (pelas setas, direto ou em cadeia), em vez de deixar as abas para você fechar. Nunca fecha a si mesma nem quem está acima ou ao lado. Só valem as setas que você desenhou e as que nascem quando uma sessão abre outra; uma seta que a própria sessão desenha não a põe acima de ninguém. Para fechar em outro quadro, só o Líder que você pôs num quadro marcado com "Alcance: todos os quadros", botão novo na barra do Mindscape; sem marcar, cada quadro só alcança a si mesmo. Se a outra está trabalhando, recebe antes um aviso para pausar e espera o turno acabar (até 20 segundos). Com um pedido de permissão aberto lá, não fecha. O lugar continua no quadro como "fechada" e dois cliques retomam a conversa. A cópia isolada (worktree) sem mudanças é recolhida como ao fechar a aba; com trabalho pendente, nada se apaga.',
       },
