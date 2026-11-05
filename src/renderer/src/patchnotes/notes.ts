@@ -26,6 +26,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'Uma sessão com o papel Líder aberta num quadro (pelo Launcher, pela VPS ou por outra sessão) agora recebe a orientação de Líder daquele quadro; só a aba que o Jobu abriu recebe a de Líder único. E a seta que nasce quando uma sessão abre outra só pode ser apagada por quem abriu (ou por você): outra sessão não tira mais esse alcance.',
       },
       {
+        title: 'Celular: o que precisa antes do QR',
+        text: 'Em Preferências → Celular, antes de parear, a tela explica que o celular precisa do app Tailscale instalado e logado na mesma conta deste PC, e mostra se já há algum celular na sua Tailscale (e se está conectado). Se o celular não abrir a página, "O celular não abriu a página?" confere o Firewall do Windows e, se faltar, oferece liberar só a porta do app para quem está na sua Tailscale, com a confirmação de administrador do Windows.',
+      },
+      {
         title: 'Rotina em sombra: sessão parada e ninguém vê',
         text: 'Com o app aberto, uma rotina olha os quadros a cada 5 minutos e anota quando uma sessão está parada (ou sem sinal) há mais de 8 horas, ou esperando você há mais de 30 minutos. Por enquanto ela só observa: ninguém é acordado e nada muda nas sessões. Na barra do Mindscape, "em sombra: N achados hoje" mostra quantas vezes ela teria chamado o Líder daquele quadro; um clique abre a lista. Ela só avisa a mesma sessão uma vez, espera confirmar em duas olhadas seguidas, chama no máximo 5 por hora e 15 por dia, e se desliga sozinha por uma semana quando a maior parte do que aponta se resolve sozinha.',
       },

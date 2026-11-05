@@ -8,7 +8,27 @@ export const CELULAR_CHANNELS = {
   setEnabled: 'celular:set-enabled',
   pair: 'celular:pair',
   revoke: 'celular:revoke',
+  tailnet: 'celular:tailnet',
+  firewall: 'celular:firewall',
+  allowFirewall: 'celular:allow-firewall',
 } as const;
+
+/** Um celular (Android ou iPhone) que a Tailscale deste PC enxerga na mesma rede (tailnet). */
+export interface TailnetPhone {
+  readonly name: string;
+  readonly online: boolean;
+}
+
+/** O que `tailscale status` diz dos celulares; `readable: false` = não deu para perguntar à Tailscale. */
+export interface CelularTailnet {
+  readonly readable: boolean;
+  readonly phones: readonly TailnetPhone[];
+}
+
+/** A regra de entrada do Firewall do Windows para o celular: só a porta do app, só da faixa da Tailscale. */
+export type CelularFirewallRule = 'present' | 'absent' | 'unknown';
+
+export type CelularAllowFirewallResult = { readonly ok: true } | { readonly ok: false; readonly reason: string };
 
 /** Um celular pareado, como as Preferências mostram (o token nunca sai do main). */
 export interface CelularDevice {
@@ -55,6 +75,12 @@ export interface DonelCelularApi {
   setEnabled: (enabled: boolean) => Promise<CelularState>;
   pair: () => Promise<CelularPairResult>;
   revoke: (deviceId: string) => Promise<CelularState>;
+  /** Os celulares na Tailscale deste PC (lê `tailscale status`). */
+  tailnet: () => Promise<CelularTailnet>;
+  /** Só quando a conexão do celular falha: a regra de entrada existe? */
+  firewall: () => Promise<CelularFirewallRule>;
+  /** Cria a regra, com o pedido de administrador do Windows (nunca em silêncio). */
+  allowFirewall: () => Promise<CelularAllowFirewallResult>;
 }
 
 // ---------------------------------------------------------------------------

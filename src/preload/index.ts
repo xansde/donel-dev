@@ -161,7 +161,14 @@ import type {
   MindscapeTurnEndedPayload,
 } from '../shared/mindscape/channels';
 import type { MindscapeDoc } from '../shared/mindscape/model';
-import { CELULAR_CHANNELS, type CelularPairResult, type CelularState } from '../shared/celular';
+import {
+  CELULAR_CHANNELS,
+  type CelularAllowFirewallResult,
+  type CelularFirewallRule,
+  type CelularPairResult,
+  type CelularState,
+  type CelularTailnet,
+} from '../shared/celular';
 import { ROTINAS_CHANNELS, type ShadowEntry } from '../shared/rotinas/contract';
 import { LIDER_CHANNELS, type LiderReport, type LiderSendPayload, type LiderSendResult, type LiderState } from '../shared/lider/ipc';
 import { ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
@@ -865,6 +872,9 @@ const donelApi: DonelApi = {
     setEnabled: (enabled: boolean) => ipcRenderer.invoke(CELULAR_CHANNELS.setEnabled, enabled) as Promise<CelularState>,
     pair: () => ipcRenderer.invoke(CELULAR_CHANNELS.pair) as Promise<CelularPairResult>,
     revoke: (deviceId: string) => ipcRenderer.invoke(CELULAR_CHANNELS.revoke, deviceId) as Promise<CelularState>,
+    tailnet: () => ipcRenderer.invoke(CELULAR_CHANNELS.tailnet) as Promise<CelularTailnet>,
+    firewall: () => ipcRenderer.invoke(CELULAR_CHANNELS.firewall) as Promise<CelularFirewallRule>,
+    allowFirewall: () => ipcRenderer.invoke(CELULAR_CHANNELS.allowFirewall) as Promise<CelularAllowFirewallResult>,
   },
 
   // Item 20 — the routines in shadow: what they would have woken today (read only).
