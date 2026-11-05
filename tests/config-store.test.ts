@@ -75,6 +75,7 @@ describe('defaultAppConfig (puro)', () => {
       autoMode: { neverAsks: true },
       yolo: { projects: [] },
       appUpdate: { installersDir: null },
+      browserUploads: { folders: [] },
       unknownFields: {},
     });
   });
@@ -245,6 +246,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       autoMode: { neverAsks: false },
       yolo: { projects: ['C:\\repos\\app'] },
       appUpdate: { installersDir: 'D:\\instaladores' },
+      browserUploads: { folders: [] },
       unknownFields: {},
     };
     expect(sanitizeAppConfig(valid, baseDefaults())).toEqual(valid);
@@ -340,6 +342,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       autoMode: defaults.autoMode,
       yolo: { projects: ['C:\\ok'] },
       appUpdate: { installersDir: null },
+      browserUploads: { folders: [] },
       unknownFields: {}, // nenhuma chave desconhecida no objeto de entrada
     });
   });

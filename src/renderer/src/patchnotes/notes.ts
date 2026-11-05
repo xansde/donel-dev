@@ -15,6 +15,15 @@ export interface PatchNoteDay {
 
 export const PATCH_NOTES: readonly PatchNoteDay[] = [
   {
+    date: '2026-11-05',
+    items: [
+      {
+        title: 'Pasta de envio do navegador: Permitir ou Negar, e fica lembrada',
+        text: 'Quando a sessão quer enviar um arquivo por uma página e a pasta dele ainda não está autorizada, o navegador abre mostrando qual é a pasta, com os botões Permitir e Negar. Antes ela não sabia como pedir e o aviso não dizia o que fazer. A pasta permitida fica guardada: vale para todas as sessões e não some mais quando o app reinicia. Para ver e remover as pastas, abra Regras no navegador, em Envio de arquivos.',
+      },
+    ],
+  },
+  {
     date: '2026-11-04',
     items: [
       {

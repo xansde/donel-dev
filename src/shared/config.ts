@@ -129,6 +129,15 @@ export interface AppUpdatePrefs {
   readonly installersDir: string | null;
 }
 
+/**
+ * Navegador integrado — the folders the owner authorized for `navegador_enviar_arquivo`, for every session (owner's
+ * request, 04/11: the authorization vanished on every restart). Written only by the main, from a gesture of the
+ * owner (Permitir on the agent's request, or the picker in Regras). Main only; not in the DTO.
+ */
+export interface BrowserUploadPrefs {
+  readonly folders: readonly string[];
+}
+
 /** What the renderer may ask of the main: only the switch. */
 export interface PetPrefsInput {
   readonly enabled?: boolean;

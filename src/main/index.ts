@@ -3543,6 +3543,18 @@ void app.whenReady().then(async () => {
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
     appVersion: app.getVersion(),
     executeBoard: (ptyId, call) => boardBridge.execute(ptyId, call),
+    uploadFolders: {
+      get: () => appConfig.browserUploads.folders,
+      set: (folders) => {
+        appConfig = { ...appConfig, browserUploads: { folders: [...folders] } };
+        try {
+          persistAppConfig();
+        } catch (error) {
+          // The change holds until the app closes; it is only not remembered.
+          console.error('[donel-dev] pastas de envio não foram gravadas:', error);
+        }
+      },
+    },
   }); // Navegador integrado
   // Servidor MCP `donel` (loopback, porta efêmera) ANTES da janela: a primeira sessão já nasce com as ferramentas
   // do navegador. Se não subir, as sessões nascem sem elas (nunca sem terminal).

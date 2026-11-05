@@ -518,8 +518,11 @@ const donelApi: DonelApi = {
     },
     getRules: (ptyId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.getRules, ptyId) as Promise<BrowserAgentRules | null>,
     chooseUploadDir: (ptyId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.chooseUploadDir, ptyId) as Promise<BrowserRulesResult>,
-    clearUploadDir: (ptyId: string) => {
-      ipcRenderer.send(BROWSER_CHANNELS.clearUploadDir, ptyId);
+    removeUploadDir: (ptyId: string, folder: string) => {
+      ipcRenderer.send(BROWSER_CHANNELS.removeUploadDir, ptyId, folder);
+    },
+    answerUploadRequest: (ptyId: string, allow: boolean) => {
+      ipcRenderer.send(BROWSER_CHANNELS.answerUploadRequest, ptyId, allow);
     },
     setDomains: (ptyId: string, mode: DomainMode, typed: string) => ipcRenderer.invoke(BROWSER_CHANNELS.setDomains, ptyId, mode, typed) as Promise<BrowserRulesResult>,
     onRules: (listener: (rules: BrowserAgentRules) => void) => {
