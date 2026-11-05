@@ -278,8 +278,8 @@ export function Preferences(props: PreferencesProps): React.JSX.Element | null {
     {
       id: 'celular',
       category: 'celular',
-      title: 'Ledger no celular',
-      keywords: 'celular telefone ledger entregas validar aceitar rejeitar tailscale parear qr pwa',
+      title: 'Oráculo Harrow no celular',
+      keywords: 'celular telefone oráculo harrow ledger entregas validar aceitar rejeitar tailscale parear qr pwa',
       hint: 'Valide as entregas que esperam você pelo celular, uma carta por tela: arraste para a direita para aceitar e para a esquerda para rejeitar com motivo.',
       body: <CelularSection />,
     },

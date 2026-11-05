@@ -123,7 +123,7 @@ export function LedgerStrip({ projectPath }: { readonly projectPath: string | un
   return (
     <div className={styles.ledger} data-testid="ledger-strip">
       <div className={styles.ledgerNumbers}>
-        <span className={styles.ledgerTitle}>Tarefas</span>
+        <span className={styles.ledgerTitle}>Oráculo Harrow</span>
         <span>{strip.open} abertas</span>
         <span>{strip.running} em execução</span>
         <span>{strip.deliveredUnaccepted} entregues sem aceite</span>

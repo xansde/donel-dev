@@ -115,12 +115,12 @@ export function createLedgerMobilePort(getService: () => LedgerService | null): 
     },
     decidir(input) {
       const service = getService();
-      if (!service) return { ok: false, reason: 'recusada', message: 'O ledger não abriu neste app.' };
+      if (!service) return { ok: false, reason: 'recusada', message: 'O Oráculo Harrow não abriu neste app.' };
       let current;
       try {
         current = service.load().doc;
       } catch (error) {
-        return { ok: false, reason: 'recusada', message: `Não consegui ler o ledger (${error instanceof Error ? error.message : String(error)}).` };
+        return { ok: false, reason: 'recusada', message: `Não consegui ler o Oráculo Harrow (${error instanceof Error ? error.message : String(error)}).` };
       }
       const task = current.tasks[input.itemId];
       if (!task) return { ok: false, reason: 'nao-encontrada', message: 'Esta entrega não existe mais.' };
