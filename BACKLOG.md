@@ -406,7 +406,8 @@ com a demanda `cartas-forma-a` (outro Dev, mesmas áreas: `src/shared/ledger/con
 
 ### 03 — Aviso no celular quando uma carta espera o dono
 
-- **Status**: pendente
+- **Status**: implementada
+- **Branch**: `feat/slack-so-com-carta-03` (empilhada sobre a 02, mesma worktree)
 - **Depende de**: 02
 - **Conflita com**: `cartas-forma-a` 02 (`src/main/celular/pwa/`)
 - **Propósito**: quando uma carta passa a esperar o dono, o celular recebe notificação de verdade

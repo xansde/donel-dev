@@ -15,13 +15,15 @@ import {
 import type { ConfigIoDeps } from '../config-store';
 import { PWA_ASSETS } from './assets';
 import { createCelularAuth, type CelularAuth } from './auth';
-import { allowFirewallRule, readFirewallRule, readTailnet } from './firewall';
+import { allowFirewallRule, readFirewallRule, readServeHttpsUrl, readTailnet } from './firewall';
 import type { CardWriter } from '../ledger-card-writer';
 import type { LedgerService } from '../ledger-store';
 import { createLedgerMobilePort, type MobileLedgerPort, type PlaceNameOf } from './ledger-port';
 import { qrSvg } from './qr';
 import { createMobileHandler, MOBILE_PORT, startMobileServer, type MobileServer } from './server';
 import { pickTailscaleAddress } from './tailscale';
+import { createPushStore, isPushSubscription, newlyWaiting, pushMessageFor, sendPush, type PushFetch } from './webpush';
+import type { LedgerDoc } from '../../shared/ledger/contract';
 
 export interface CelularServiceDeps {
   readonly ipcMain: IpcMain;
@@ -36,21 +38,43 @@ export interface CelularServiceDeps {
   readonly placeName?: PlaceNameOf;
   /** Escrever na carta (nasce com a ponte do quadro; `null` antes). */
   readonly cardWriter?: () => CardWriter | null;
+  /** Aviso no celular: o POST ao serviço de push (padrão: `fetch` do Node). */
+  readonly pushFetch?: PushFetch;
 }
 
 export interface CelularService {
+  /** O Oráculo mudou: avisa os celulares inscritos de cada carta que passou a esperar o dono. */
+  ledgerChanged(doc: LedgerDoc): void;
   dispose(): Promise<void>;
 }
 
 export function createCelularService(deps: CelularServiceDeps): CelularService {
   const auth: CelularAuth = createCelularAuth({ filePath: join(deps.userDataDir, 'celular.json'), io: deps.io });
   const ledger: MobileLedgerPort = createLedgerMobilePort(deps.ledger, deps.placeName, deps.cardWriter);
+  const push = createPushStore(join(deps.userDataDir, 'celular-push.json'), deps.io);
+  const pushFetch: PushFetch = deps.pushFetch ?? ((url, init) => fetch(url, init));
   const handler = createMobileHandler({
     auth,
     ledger: () => ledger,
     assets: PWA_ASSETS,
     provasRoot: deps.provasRoot,
+    push: {
+      publicKey: () => push.keys().publicKey,
+      subscribe: (deviceId, subscription) => {
+        if (!isPushSubscription(subscription)) return false;
+        push.subscribe(deviceId, subscription);
+        return true;
+      },
+    },
   });
+  // O que já esperava o dono quando o app abriu não avisa de novo; só o que passar a esperar daqui em diante.
+  let waiting = new Map<string, number>();
+  try {
+    const doc = deps.ledger()?.load().doc;
+    if (doc) waiting = newlyWaiting(new Map(), doc).next;
+  } catch {
+    // ledger ilegível: a primeira mudança avisa o que estiver na fila
+  }
   let server: MobileServer | null = null;
   let status: CelularState['status'] = 'off';
   let error: string | null = null;
@@ -120,12 +144,17 @@ export function createCelularService(deps: CelularServiceDeps): CelularService {
     await reconcile();
     if (!server) return { ok: false, reason: status === 'no-tailscale' ? 'Ligue a Tailscale neste PC para parear.' : (error ?? 'Ligue o app do celular primeiro.') };
     const { code, expiresAt } = auth.createPairingCode();
-    const url = `${server.url}/#parear=${code}`;
+    // Com `tailscale serve` no ar, o celular pareia no endereço https: só nele há avisos (service worker).
+    const base = (await readServeHttpsUrl()) ?? server.url;
+    const url = `${base}/#parear=${code}`;
     return { ok: true, pairing: { url, qrSvg: qrSvg(url), expiresAt: new Date(expiresAt).toISOString() } };
   });
   deps.ipcMain.handle(CELULAR_CHANNELS.revoke, (event, deviceId: unknown): CelularState => {
     if (!deps.isMainSender(event.sender)) throw new Error('forbidden');
-    if (typeof deviceId === 'string') auth.revoke(deviceId);
+    if (typeof deviceId === 'string') {
+      auth.revoke(deviceId);
+      push.remove(deviceId);
+    }
     return state();
   });
 
@@ -150,6 +179,31 @@ export function createCelularService(deps: CelularServiceDeps): CelularService {
   timer.unref?.();
 
   return {
+    ledgerChanged(doc) {
+      const { fresh, next } = newlyWaiting(waiting, doc);
+      waiting = next;
+      if (!auth.enabled || fresh.length === 0) return;
+      const paired = new Set(auth.devices().map((device) => device.id));
+      let keys;
+      try {
+        keys = push.keys();
+      } catch (error) {
+        console.error('[donel-dev] celular: sem chave de aviso:', error);
+        return;
+      }
+      for (const { deviceId, subscription } of push.subscriptions()) {
+        if (!paired.has(deviceId)) {
+          push.remove(deviceId); // aparelho revogado: não recebe mais nada
+          continue;
+        }
+        for (const task of fresh) {
+          void sendPush(subscription, pushMessageFor(task), keys, pushFetch).then((outcome) => {
+            if (outcome === 'gone') push.remove(deviceId);
+            else if (outcome === 'failed') console.error('[donel-dev] celular: o aviso não saiu para um aparelho.');
+          });
+        }
+      }
+    },
     dispose: async () => {
       clearInterval(timer);
       transition = transition.then(stop);

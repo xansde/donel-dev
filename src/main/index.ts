@@ -2886,6 +2886,8 @@ function registerLedgerIpcHandlers(): void {
       const petId = petService?.petWebContentsId() ?? null;
       const pet = petId === null ? null : webContents.fromId(petId);
       if (pet && !pet.isDestroyed()) pet.send(LEDGER_CHANNELS.changed, snapshot);
+      // Aviso no celular: uma carta que passou a esperar o dono.
+      celularService?.ledgerChanged(snapshot.doc);
     },
   });
   ledgerService = service;

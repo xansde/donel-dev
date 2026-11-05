@@ -158,6 +158,13 @@ export function CelularSection(): React.JSX.Element {
             <p className={tailnetText(tailnet).ok ? styles.status : styles.statusWarn} data-testid="celular-tailnet">
               {tailnetText(tailnet).text}
             </p>
+            <p className={styles.beforeTitle}>Avisos no celular</p>
+            <p className={styles.muted}>
+              Para o celular avisar quando uma carta esperar você, o app precisa do endereço https da Tailscale. Uma vez só: no painel da
+              Tailscale, em DNS, ligue MagicDNS e HTTPS Certificates; depois rode no PowerShell deste PC{' '}
+              <span className={styles.url}>tailscale serve --bg --https=443 {state.url ?? 'http://<IP da Tailscale>:47815'}</span> e pareie de
+              novo. No celular, toque no sino (no iPhone, primeiro adicione à Tela de Início).
+            </p>
           </div>
           <div>
             <Button variant="secondary" onClick={pair} disabled={busy || state.status !== 'listening'}>

@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-05',
     items: [
       {
+        title: 'Aviso no celular quando uma carta espera você',
+        text: 'O app do Oráculo no celular ganhou um sino. Toque nele e permita as notificações: quando uma carta passar a esperar você, o celular avisa com o título dela, mesmo com o app fechado, e o toque abre a carta. O aviso precisa do endereço https da Tailscale: o passo a passo está nas Preferências do celular, e depois você pareia de novo pelo QR. No iPhone, adicione o Oráculo à Tela de Início antes de tocar no sino.',
+      },
+      {
         title: 'Mensagem no Slack em seu nome só com a sua carta',
         text: 'Antes de mandar qualquer mensagem no Slack em seu nome, a sessão agora cria uma carta no Oráculo Harrow com o destino, a thread, o texto exato e o motivo, e espera você. Aceitar libera aquele texto, para aquele destino, uma vez. Rejeitar não envia nada, e o motivo que você escreve diz à sessão o que ajustar. Sem carta aceita, o Donel bloqueia o envio por qualquer caminho: o Slack, o Composio, um comando ou um script.',
       },

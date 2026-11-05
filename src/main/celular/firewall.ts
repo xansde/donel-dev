@@ -8,6 +8,7 @@ import { existsSync } from 'node:fs';
 import type { CelularAllowFirewallResult, CelularFirewallRule, CelularTailnet } from '../../shared/celular';
 import { MOBILE_PORT } from './server';
 import { phonesInTailnet } from './tailscale';
+import { httpsServeUrl } from './webpush';
 
 export const FIREWALL_RULE_NAME = 'Donel Dev - celular (Tailscale)';
 const TAILSCALE_RANGE = '100.64.0.0/10';
@@ -36,6 +37,17 @@ export async function readTailnet(): Promise<CelularTailnet> {
     return phones === null ? { readable: false, phones: [] } : { readable: true, phones };
   } catch {
     return { readable: false, phones: [] };
+  }
+}
+
+/** Aviso no celular — o endereço https que `tailscale serve` publica para este PC (`null` = não configurado). */
+export async function readServeHttpsUrl(): Promise<string | null> {
+  const result = await run(tailscaleExe(), ['serve', 'status', '--json'], 5000);
+  if (!result.ok) return null;
+  try {
+    return httpsServeUrl(JSON.parse(result.stdout));
+  } catch {
+    return null;
   }
 }
 
