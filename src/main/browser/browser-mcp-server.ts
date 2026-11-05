@@ -10,6 +10,7 @@ import {
   type BrowserToolOutcome,
 } from '../../shared/browser/mcp';
 import type { BoardToolCall } from '../../shared/mindscape/agent-tools';
+import type { LedgerToolCall } from '../../shared/ledger/tools';
 
 // Navegador integrado — the app's local MCP server `donel` (docs/design/navegador-interno.md, D9).
 //
@@ -25,6 +26,8 @@ export interface BrowserMcpServerDeps {
   execute(ptyId: string, call: BrowserToolCall): Promise<BrowserToolOutcome>;
   /** Quadro por MCP — runs one Mindscape tool for the tab of `ptyId`; absent = no board tools. */
   executeBoard?(ptyId: string, call: BoardToolCall): Promise<BrowserToolOutcome>;
+  /** Ledger com prova (item 19) — runs one `tarefa_*` tool for the session of `ptyId`; absent = no ledger tools. */
+  executeLedger?(ptyId: string, call: LedgerToolCall): Promise<BrowserToolOutcome>;
   readonly serverVersion: string;
 }
 
@@ -83,6 +86,7 @@ export function createBrowserMcpServer(deps: BrowserMcpServerDeps): BrowserMcpSe
       ? await handleMcpPayload(parsed.payload, {
           executor: (call) => deps.execute(gate.ptyId, call),
           ...(deps.executeBoard ? { boardExecutor: (call: BoardToolCall) => deps.executeBoard!(gate.ptyId, call) } : {}),
+          ...(deps.executeLedger ? { ledgerExecutor: (call: LedgerToolCall) => deps.executeLedger!(gate.ptyId, call) } : {}),
           serverVersion: deps.serverVersion,
         })
       : parsed.response;

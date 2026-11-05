@@ -20,6 +20,7 @@ import type { DonelProvidersApi } from './providers';
 import type { DonelSessionsApi } from './sessions';
 import type { DonelTabsApi } from './tabChannels';
 import type { DonelMindscapeApi } from './mindscape/channels';
+import type { DonelLedgerApi } from './ledger/channels';
 import type { DonelRolesApi } from './roles';
 import type { DonelRenewalApi } from './sessionRenewal';
 import type { DonelLearningApi } from './learning/gestures';
@@ -510,6 +511,8 @@ export interface DonelApi {
   chat: DonelChatApi;
   /** Mindscape V1 — one board per project, persisted in `mindscape.json` by the main. */
   mindscape: DonelMindscapeApi;
+  /** Ledger com prova (item 19) — the tasks between places, in `ledger.json` (the main is the only writer). */
+  ledger: DonelLedgerApi;
   /** Papéis de sessão (item 12a) — the roles in `<userData>/papeis/` (the main is the only writer). */
   roles: DonelRolesApi;
   /** Diário de gestos — what the owner does, kept only on this machine as examples for a local model (B35). */

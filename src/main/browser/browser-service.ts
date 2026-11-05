@@ -35,6 +35,7 @@ import {
 import { parseKeyCombo } from '../../shared/browser/keys';
 import { MCP_SERVER_NAME, type BrowserToolCall, type BrowserToolOutcome } from '../../shared/browser/mcp';
 import type { BoardToolCall } from '../../shared/mindscape/agent-tools';
+import type { LedgerToolCall } from '../../shared/ledger/tools';
 import { refusedUploadFolder } from '../../shared/browser/upload';
 import { normalizeBrowserUrl } from '../../shared/browser/url';
 import { BrowserPanels } from './browser-panels';
@@ -56,6 +57,8 @@ export interface BrowserServiceDeps {
   readonly appVersion: string;
   /** Quadro por MCP — the Mindscape tools of the same server (main/board-bridge.ts). */
   executeBoard?(ptyId: string, call: BoardToolCall): Promise<BrowserToolOutcome>;
+  /** Ledger com prova (item 19) — the `tarefa_*` tools of the same server (main/ledger-store.ts). */
+  executeLedger?(ptyId: string, call: LedgerToolCall): Promise<BrowserToolOutcome>;
 }
 
 export interface BrowserService {
@@ -412,6 +415,7 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
   const mcp = createBrowserMcpServer({
     execute: enqueue,
     ...(deps.executeBoard ? { executeBoard: deps.executeBoard } : {}),
+    ...(deps.executeLedger ? { executeLedger: deps.executeLedger } : {}),
     serverVersion: deps.appVersion,
   });
 
