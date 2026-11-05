@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-04',
     items: [
       {
+        title: 'Retomar abre a sessão onde ela vive',
+        text: 'Uma sessão que nasceu na VPS agora retoma na VPS, mesmo que você esteja retomando deste computador: dois cliques no lugar dela no Mindscape ou um clique nos Favoritos. Antes ela abria aqui e falhava, porque a conversa está gravada lá. Se a VPS não responder, o app avisa em vez de abrir uma sessão vazia.',
+      },
+      {
         title: 'Só o Líder nas abas; o time fica no Mindscape',
         text: 'As sessões que o Líder abre não aparecem mais nas abas nem na lista da barra lateral: continuam trabalhando e você acompanha cada uma pelo lugar dela no Mindscape. Dois cliques no lugar trazem a sessão para as abas; fechar a aba a esconde de novo, sem parar a sessão. Quando uma delas precisa de você, o aviso continua chegando pelo Jobu, e clicar nele também traz a sessão.',
       },

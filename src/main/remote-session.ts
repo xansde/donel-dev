@@ -394,6 +394,45 @@ export class RemoteSessionRegistry {
   }
 }
 
+/**
+ * Pure — answers `DONEL_HAS` when the transcript of `sid` exists for the project folder (`homeRelativeDir`, as
+ * `remoteDirFor` gives it). The CLI names the transcript folder after the absolute path, so the slug is taken there.
+ */
+export function buildHasTranscriptScript(homeRelativeDir: string, sid: string): string {
+  assertSessionId(sid);
+  return [
+    `D=$(cd "$HOME"/${shQuote(homeRelativeDir)} 2>/dev/null && pwd) || { echo DONEL_HASNT; exit 0; }`,
+    'SLUG=$(printf %s "$D" | sed "s/[^a-zA-Z0-9]/-/g")',
+    `if [ -f "$HOME/.claude/projects/$SLUG/${sid}.jsonl" ]; then echo DONEL_HAS; else echo DONEL_HASNT; fi`,
+    '',
+  ].join('\n');
+}
+
+export type RemoteTranscriptAnswer = 'has' | 'hasnt' | 'unreachable';
+
+/** Pure — a place that did not print either marker (ssh failed, timeout) is unreachable, never "has not". */
+export function parseHasTranscriptOutput(stdout: string): RemoteTranscriptAnswer {
+  const lines = stdout.split(/\r?\n/).map((line) => line.trim());
+  if (lines.includes('DONEL_HAS')) return 'has';
+  if (lines.includes('DONEL_HASNT')) return 'hasnt';
+  return 'unreachable';
+}
+
+/** B39 — asks each place whether the conversation `sid` of the project folder `homeRelativeDir` lives there. */
+export async function findRemoteTranscript(
+  places: ReadonlyArray<{ readonly id: string; readonly sshTarget: string }>,
+  homeRelativeDir: string,
+  sid: string,
+): Promise<Array<{ readonly id: string; readonly answer: RemoteTranscriptAnswer }>> {
+  const script = buildHasTranscriptScript(homeRelativeDir, sid);
+  return Promise.all(
+    places.map(async (place) => {
+      const { stdout } = await runRemoteScript(place.sshTarget, script, 20_000);
+      return { id: place.id, answer: parseHasTranscriptOutput(stdout) };
+    }),
+  );
+}
+
 /** Live sessions of each place. A place that does not answer is left out. */
 export async function discoverRemoteSessions(places: ReadonlyArray<{ readonly id: string; readonly sshTarget: string }>): Promise<RemoteDiscovered[]> {
   const found = await Promise.all(
