@@ -35,3 +35,27 @@ export function pickTailscaleAddress(interfaces: NodeJS.Dict<NetworkInterfaceInf
   const named = candidates.find((candidate) => /tailscale/i.test(candidate.name));
   return (named ?? candidates[0])?.address ?? null;
 }
+
+/** Sistemas da Tailscale que são celular (o `OS` de cada máquina em `tailscale status --json`). */
+const PHONE_OS: ReadonlySet<string> = new Set(['android', 'ios']);
+
+/**
+ * Os celulares em `tailscale status --json`: as máquinas (`Peer`) com `OS` android/iOS, online primeiro.
+ * `null` quando a saída não tem a forma esperada.
+ */
+export function phonesInTailnet(status: unknown): { name: string; online: boolean }[] | null {
+  if (typeof status !== 'object' || status === null) return null;
+  const peers = (status as Record<string, unknown>).Peer;
+  if (peers === undefined || peers === null) return [];
+  if (typeof peers !== 'object') return null;
+  const phones: { name: string; online: boolean }[] = [];
+  for (const peer of Object.values(peers as Record<string, unknown>)) {
+    if (typeof peer !== 'object' || peer === null) continue;
+    const { OS, HostName, DNSName, Online } = peer as Record<string, unknown>;
+    if (typeof OS !== 'string' || !PHONE_OS.has(OS.toLowerCase())) continue;
+    const dnsHost = typeof DNSName === 'string' ? DNSName.split('.')[0] : '';
+    const name = typeof HostName === 'string' && HostName !== '' ? HostName : dnsHost || 'celular';
+    phones.push({ name, online: Online === true });
+  }
+  return phones.sort((a, b) => Number(b.online) - Number(a.online));
+}

@@ -43,11 +43,34 @@ export type BridgeEvent =
 
 export type BridgeListener = (event: BridgeEvent) => void;
 
+/** The `notification_type` values of the CLI (2.1.3xx): the only ones that reach the diagnostics log. */
+const LOGGED_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
+  'permission_prompt',
+  'idle_prompt',
+  'auth_success',
+  'elicitation_dialog',
+  'elicitation_url_dialog',
+  'agent_needs_input',
+  'agent_completed',
+  'worker_permission_prompt',
+  'push_notification',
+  'computer_use_enter',
+  'computer_use_exit',
+  'quota_auto_resume',
+]);
+
+/** t-45e87762 — which kind of `Notification` arrived, so a wrong "esperando você" can be traced in the log. */
+function notificationTypeForLog(value: unknown): string {
+  if (typeof value !== 'string' || value === '') return 'none';
+  return LOGGED_NOTIFICATION_TYPES.has(value) ? value : 'other';
+}
+
 export interface HookBridgeOptions {
   readonly now?: () => number;
   /** Receives measurements only: event name, ptyId and duration. */
   readonly diagnostics?: {
-    hook(entry: { event: string; ptyId: string; durationMs: number }): void;
+    /** `notificationType`: only on `Notification`, and only a value of the CLI's fixed list (never message text). */
+    hook(entry: { event: string; ptyId: string; durationMs: number; notificationType?: string }): void;
     autoApproval?(entry: { ptyId: string; tool: string; outcome: 'approved' | 'yolo' | 'after-blocks' }): void;
   };
   /** "Modo auto nunca pede permissão" (Preferências); read at each request. Absent = off. */
@@ -290,7 +313,8 @@ export function createHookBridge(options: HookBridgeOptions = {}): HookBridge {
     }
 
     const measure = (): void => {
-      options.diagnostics?.hook({ event, ptyId: state.ptyId, durationMs: Math.max(0, now() - startedAt) });
+      const type = event === 'Notification' ? notificationTypeForLog(payload.notification_type) : undefined;
+      options.diagnostics?.hook({ event, ptyId: state.ptyId, durationMs: Math.max(0, now() - startedAt), ...(type !== undefined ? { notificationType: type } : {}) });
     };
 
     if (event === 'PermissionRequest') {

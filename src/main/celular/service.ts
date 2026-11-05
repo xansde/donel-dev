@@ -4,10 +4,18 @@
 import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import type { IpcMain } from 'electron';
-import { CELULAR_CHANNELS, type CelularPairResult, type CelularState } from '../../shared/celular';
+import {
+  CELULAR_CHANNELS,
+  type CelularAllowFirewallResult,
+  type CelularFirewallRule,
+  type CelularPairResult,
+  type CelularState,
+  type CelularTailnet,
+} from '../../shared/celular';
 import type { ConfigIoDeps } from '../config-store';
 import { PWA_ASSETS } from './assets';
 import { createCelularAuth, type CelularAuth } from './auth';
+import { allowFirewallRule, readFirewallRule, readTailnet } from './firewall';
 import type { LedgerService } from '../ledger-store';
 import { createLedgerMobilePort, type MobileLedgerPort } from './ledger-port';
 import { qrSvg } from './qr';
@@ -114,6 +122,19 @@ export function createCelularService(deps: CelularServiceDeps): CelularService {
     if (!deps.isMainSender(event.sender)) throw new Error('forbidden');
     if (typeof deviceId === 'string') auth.revoke(deviceId);
     return state();
+  });
+
+  deps.ipcMain.handle(CELULAR_CHANNELS.tailnet, async (event): Promise<CelularTailnet> => {
+    if (!deps.isMainSender(event.sender)) throw new Error('forbidden');
+    return readTailnet();
+  });
+  deps.ipcMain.handle(CELULAR_CHANNELS.firewall, async (event): Promise<CelularFirewallRule> => {
+    if (!deps.isMainSender(event.sender)) throw new Error('forbidden');
+    return readFirewallRule();
+  });
+  deps.ipcMain.handle(CELULAR_CHANNELS.allowFirewall, async (event): Promise<CelularAllowFirewallResult> => {
+    if (!deps.isMainSender(event.sender)) throw new Error('forbidden');
+    return allowFirewallRule();
   });
 
   if (auth.enabled) void reconcile();

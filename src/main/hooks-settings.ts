@@ -87,6 +87,8 @@ export const BRIDGE_HTTP_EVENTS: ReadonlyArray<{ readonly event: string; readonl
   { event: 'PermissionDenied', timeout: 10 },
   { event: 'PreToolUse', timeout: 10 },
   { event: 'PostToolUse', timeout: 10 },
+  // t-45e87762 — a call that ended in error gives no `PostToolUse`; the semaphore counts running calls by both.
+  { event: 'PostToolUseFailure', timeout: 10 },
   { event: 'UserPromptSubmit', timeout: 10 },
   { event: 'Stop', timeout: 10 },
   { event: 'StopFailure', timeout: 10 },
