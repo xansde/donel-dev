@@ -1523,6 +1523,43 @@ textarea:focus-visible {
   color: var(--ouro);
 }
 
+/* Ouvir antes de usar: a gravação (ou o arquivo) toca aqui; o dono usa ou descarta. */
+.pedir-ouvir {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 14px;
+  background: var(--pre-fundo);
+}
+
+.pedir-ouvir[hidden] { display: none; }
+
+.pedir-ouvir audio {
+  width: 100%;
+}
+
+.pedir-ouvir-acoes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.botao-usar { color: var(--sim); }
+
+/* Arquivo é o plano B: um link discreto, não um botão do mesmo peso do Gravar. */
+.pedir-anexar {
+  justify-self: start;
+  align-self: start;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  color: var(--tinta-suave);
+  font: 0.9rem var(--sem-serifa);
+  text-decoration: underline;
+}
+
+.pedir-anexar:disabled { opacity: 0.5; }
+
 .pedir-subtitulo {
   margin: 8px 0 0;
   font-family: var(--serifa);
