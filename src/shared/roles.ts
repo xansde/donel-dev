@@ -39,8 +39,68 @@ export interface SessionRole {
   readonly model?: ModelAlias;
   readonly effort?: EffortLevel;
   readonly permissionMode?: PermissionMode;
+  /**
+   * What the session loads besides the app's own MCP (role-scope.ts). Absent = everything global, as before; each
+   * axis absent = that axis as before.
+   */
+  readonly scope?: RoleScope;
   /** The guidance, Markdown. */
   readonly guidance: string;
+}
+
+/**
+ * Escopo do papel (dono, 05/11: "parte do problema é todas as sessões terem todos os MCPs, mesmo sem precisar. O
+ * mesmo vale para skills e hooks."). Each list keeps only what it names; an empty list keeps nothing; an absent
+ * axis keeps everything. Hooks have no axis: a plugin's hooks go with the plugin, and the hooks of the user's
+ * settings cannot be dropped per session (docs/design/papel-escopo.md).
+ */
+export interface RoleScope {
+  /** MCP server names (`github`, `kb`). The app's own (`donel`) is always kept. */
+  readonly mcps?: ScopeList;
+  /** Plugin names (`dev`) or ids (`dev@seazone-skills`). */
+  readonly plugins?: ScopeList;
+  /** The user's own skills and commands (`~/.claude/skills`, `~/.claude/commands`), by name. */
+  readonly skills?: ScopeList;
+}
+
+/** The names to keep, or `'*'`: written in the file to keep everything (and not inherit a factory role's list). */
+export type ScopeList = readonly string[] | '*';
+
+const SCOPE_AXES = ['mcps', 'plugins', 'skills'] as const;
+type ScopeAxis = (typeof SCOPE_AXES)[number];
+const SCOPE_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9 ._:@-]{0,79}$/;
+const MAX_SCOPE_NAMES = 100;
+
+/** `github, kb` → the names; `*` → everything; empty → `[]` (nothing). Bad names are dropped. */
+function parseScopeList(value: string): ScopeList {
+  const trimmed = value.trim();
+  if (trimmed === '*') return '*';
+  const names = trimmed
+    .split(',')
+    .map((name) => name.trim())
+    .filter((name) => SCOPE_NAME_PATTERN.test(name));
+  return [...new Set(names)].slice(0, MAX_SCOPE_NAMES);
+}
+
+function scopeFromHeader(header: Readonly<Record<string, string>>): RoleScope | undefined {
+  const scope: { -readonly [K in ScopeAxis]?: ScopeList } = {};
+  for (const axis of SCOPE_AXES) {
+    if (axis in header) scope[axis] = parseScopeList(header[axis]!);
+  }
+  return Object.keys(scope).length > 0 ? scope : undefined;
+}
+
+/** Guard of a scope from the renderer. */
+function sanitizeScope(raw: unknown): RoleScope | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined;
+  const value = raw as Record<string, unknown>;
+  const header: Record<string, string> = {};
+  for (const axis of SCOPE_AXES) {
+    const list = value[axis];
+    if (list === '*') header[axis] = '*';
+    else if (Array.isArray(list)) header[axis] = list.filter((name): name is string => typeof name === 'string').join(',');
+  }
+  return scopeFromHeader(header);
 }
 
 export const MAX_ROLE_NAME_CHARS = 40;
@@ -73,6 +133,7 @@ export function parseRoleFile(id: string, text: string): SessionRole | null {
   const model = oneOf(header[KEYS.model], MODELS);
   const effort = oneOf(header[KEYS.effort], EFFORTS);
   const permissionMode = oneOf(header[KEYS.permissionMode], PERMISSIONS);
+  const scope = scopeFromHeader(header);
   return {
     id,
     name,
@@ -81,6 +142,7 @@ export function parseRoleFile(id: string, text: string): SessionRole | null {
     ...(model ? { model } : {}),
     ...(effort ? { effort } : {}),
     ...(permissionMode ? { permissionMode } : {}),
+    ...(scope ? { scope } : {}),
     guidance: match[2]!.trim().slice(0, MAX_ROLE_GUIDANCE_CHARS),
   };
 }
@@ -96,6 +158,11 @@ export function serializeRole(role: SessionRole): string {
     ...(role.model ? [`${KEYS.model}: ${role.model}`] : []),
     ...(role.effort ? [`${KEYS.effort}: ${role.effort}`] : []),
     ...(role.permissionMode ? [`${KEYS.permissionMode}: ${role.permissionMode}`] : []),
+    ...SCOPE_AXES.flatMap((axis) => {
+      const list = role.scope?.[axis];
+      if (list === undefined) return [];
+      return [`${axis}: ${list === '*' ? '*' : list.map(flat).join(', ')}`.trimEnd()];
+    }),
     '---',
     '',
   ];
@@ -159,11 +226,15 @@ export const LEADER_ROLE_ID = 'lider';
 const TEAM_LINE =
   '- Para falar com outra sessão do Donel Dev, use a ferramenta `sessao_enviar` do servidor `donel` (só pelas ligações do quadro), nunca um recurso de mensagens do próprio agente: o app entrega direto no chat dela, sem pedir aprovação.';
 
+/** Escopo de fábrica (dono, 05/11): Dev e Revisor só com o GitHub; nenhum com as skills soltas do usuário. */
+const CODE_SCOPE: RoleScope = { mcps: ['github'], plugins: ['dev', 'esteira'], skills: [] };
+
 export const FACTORY_ROLES: readonly SessionRole[] = [
   {
     id: 'dev',
     name: 'Dev',
     color: 'implementar',
+    scope: CODE_SCOPE,
     guidance: [
       'Você faz a mudança pedida, do começo ao fim, e pede revisão.',
       '',
@@ -179,6 +250,7 @@ export const FACTORY_ROLES: readonly SessionRole[] = [
     id: 'revisor',
     name: 'Revisor',
     color: 'validar',
+    scope: CODE_SCOPE,
     guidance: [
       'Você confere se o efeito prometido aconteceu de verdade. Você não é o autor do que revisa.',
       '',
@@ -194,6 +266,7 @@ export const FACTORY_ROLES: readonly SessionRole[] = [
     id: 'pesquisa',
     name: 'Pesquisa',
     color: 'discovery',
+    scope: { mcps: ['kb', 'nekt', 'google-workspace'], plugins: ['esteira'], skills: [] },
     guidance: [
       'Você lê e resume. Não altera código nem arquivos do projeto.',
       '',
@@ -208,6 +281,7 @@ export const FACTORY_ROLES: readonly SessionRole[] = [
     id: LEADER_ROLE_ID,
     name: 'Líder',
     color: 'plano',
+    // No scope: the Líder routes, so it keeps everything.
     // The Líder of ONE board (a place on it). The Líder único of the Jobu reads `LEADER_OF_ALL_GUIDANCE` instead.
     guidance: [
       'Você coordena um time de sessões no quadro (Mindscape) e conversa com o dono. Você reparte o trabalho; quem executa são as sessões com papel.',
@@ -253,6 +327,7 @@ export function sanitizeRole(raw: unknown): SessionRole | null {
   const model = oneOf(text('model'), MODELS);
   const effort = oneOf(text('effort'), EFFORTS);
   const permissionMode = oneOf(text('permissionMode'), PERMISSIONS);
+  const scope = sanitizeScope(value.scope);
   return parseRoleFile(
     value.id,
     serializeRole({
@@ -263,6 +338,7 @@ export function sanitizeRole(raw: unknown): SessionRole | null {
       ...(model ? { model } : {}),
       ...(effort ? { effort } : {}),
       ...(permissionMode ? { permissionMode } : {}),
+      ...(scope ? { scope } : {}),
       guidance: value.guidance,
     }),
   );

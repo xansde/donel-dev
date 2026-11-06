@@ -1,6 +1,7 @@
 import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { UserStatusLine } from './cli-user-settings';
+import type { RoleScopeSettings } from '../shared/role-scope';
 
 // T009 — arquivo `--settings` adicional (spike: "soma hooks aos hooks
 // globais do usuário sem substituí-los" — validado byte-a-byte que
@@ -122,9 +123,11 @@ export interface SessionHooksSettingsInput {
    * outlives the app). Absent = only the `http` hook, whose bridge lives and dies with a local session.
    */
   readonly slackOfflineGuardCommand?: string;
+  /** Escopo do papel: the MCPs, plugins and skills this session keeps (role-scope.ts). Absent = everything. */
+  readonly roleScope?: RoleScopeSettings | null;
 }
 
-export interface SessionHooksSettingsContent {
+export interface SessionHooksSettingsContent extends RoleScopeSettings {
   readonly hooks: Record<string, ReadonlyArray<{ readonly matcher?: string; readonly hooks: ReadonlyArray<Record<string, unknown>> }>>;
   readonly statusLine?: StatusLineSetting;
   readonly worktree?: { readonly baseRef: 'head' };
@@ -161,6 +164,7 @@ export function buildSessionHooksSettings(input: SessionHooksSettingsInput): Ses
     hooks,
     ...(statusLine ? { statusLine } : {}),
     ...(input.isolatedWorktree ? { worktree: { baseRef: 'head' as const } } : {}),
+    ...(input.roleScope ?? {}),
   };
 }
 
@@ -425,6 +429,17 @@ export function writeSessionHooksSettings(input: SessionHooksSettingsInput & { r
 
   const path = sessionHookSettingsPath(userDataDir, ptyId);
   writeFileSync(path, JSON.stringify(buildSessionHooksSettings({ ...input, forwarderScriptPath, statusLineScriptPath }), null, 2), 'utf8');
+  return path;
+}
+
+/**
+ * I/O — the session's `--settings` with only the role scope, for a session whose hooks file could not be written
+ * (same path, so `removeSessionHooksSettings` and the boot cleanup take it too).
+ */
+export function writeSessionScopeOnlySettings(userDataDir: string, ptyId: string, roleScope: RoleScopeSettings): string {
+  mkdirSync(join(userDataDir, HOOK_SETTINGS_DIR_NAME), { recursive: true });
+  const path = sessionHookSettingsPath(userDataDir, ptyId);
+  writeFileSync(path, JSON.stringify(roleScope, null, 2), 'utf8');
   return path;
 }
 
