@@ -2,6 +2,7 @@ import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'nod
 import { join } from 'node:path';
 import type { UserStatusLine } from './cli-user-settings';
 import type { RoleScopeSettings } from '../shared/role-scope';
+import { AGENT_BOT_SERVERS, isAgentBotServerName } from '../shared/ledger/slack-guard';
 
 // T009 — arquivo `--settings` adicional (spike: "soma hooks aos hooks
 // globais do usuário sem substituí-los" — validado byte-a-byte que
@@ -188,8 +189,19 @@ export const SLACK_OFFLINE_PATTERN =
 export const SLACK_OFFLINE_REFUSAL =
   'Envio ao Slack bloqueado pelo Donel Dev: o app do Donel está fora do ar (ou não reconhece esta sessão), então não dá para confirmar a carta no Oráculo Harrow. Toda mensagem ao Slack em nome do dono precisa antes de uma carta aceita, e o que não se confirma não sai. Não tente outro caminho de envio. Diga ao dono que a mensagem está esperando o Donel voltar; quando ele voltar, crie a carta com carta_slack e espere a decisão.';
 
+/**
+ * ERE that recognises a call to one of the agents' own bots (`slackAgentBots`): their posts need no letter, so the
+ * offline guard lets them through too. It reads the `tool_name` field itself (inside `tool_input` the quotes come
+ * escaped, so a command cannot fake it). `null` = no bot listed.
+ */
+export function agentBotToolPattern(servers: readonly string[]): string | null {
+  const names = servers.filter(isAgentBotServerName);
+  return names.length ? `"tool_name"[[:space:]]*:[[:space:]]*"mcp__(${names.join('|')})__` : null;
+}
+
 /** Pure — the POSIX `sh` script of the offline guard (stdin: the hook payload; stdout: a deny, or nothing). */
-export function buildSlackOfflineGuardScript(input: { readonly port: number; readonly token: string }): string {
+export function buildSlackOfflineGuardScript(input: { readonly port: number; readonly token: string; readonly agentBotServers?: readonly string[] }): string {
+  const bots = agentBotToolPattern(input.agentBotServers ?? AGENT_BOT_SERVERS);
   const deny = JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: SLACK_OFFLINE_REFUSAL } });
   return [
     '#!/bin/sh',
@@ -198,6 +210,7 @@ export function buildSlackOfflineGuardScript(input: { readonly port: number; rea
     `if curl -s -f --noproxy 127.0.0.1 --connect-timeout 2 --max-time 4 -o /dev/null -X POST -H "X-Donel-Token: ${input.token}" ${bridgeUrl(input.port, 'Ping')} 2>/dev/null; then`,
     '  exit 0',
     'fi',
+    ...(bots ? ['# O bot do próprio agente não fala em nome do dono: passa sem carta.', `if printf '%s' "$payload" | grep -Eqi '${bots}'; then`, '  exit 0', 'fi'] : []),
     `if printf '%s' "$payload" | grep -Eqi '${SLACK_OFFLINE_PATTERN}'; then`,
     "  cat <<'DONEL_DENY'",
     deny,

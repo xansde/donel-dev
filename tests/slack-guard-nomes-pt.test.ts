@@ -15,7 +15,9 @@ function run(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp): LedgerDoc {
 }
 const none = emptyLedgerDoc();
 const accepted = run(run(none, sess, { op: 'carta-slack', projectPath: '/w/bizops', slack: { destination: 'C0CGE4DSGCQ', thread: '1793.24', text: 'Segue o print.', reason: 'x' } }), { kind: 'dono' }, { op: 'aceitar', id: 'c-1' });
-const theo = (name: string) => `mcp__theo-slack__${name}`;
+// A Slack MCP with Portuguese names that is NOT an agent's own bot (those pass without a letter, owner 06/11:
+// tests/slack-guard-bot-do-agente.test.ts): what posts in the owner's name still needs the letter.
+const theo = (name: string) => `mcp__slack-do-dono__${name}`;
 
 describe('nomes em português na trava do app', () => {
   it('mensagem sem carta é recusada; com a carta aceita, passa uma vez', () => {

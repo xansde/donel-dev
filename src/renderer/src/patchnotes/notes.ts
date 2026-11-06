@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-06',
     items: [
       {
+        title: 'O bot do próprio agente manda no Slack sem carta',
+        text: 'A carta de Slack volta a ser só para o que sai em seu nome. Quando um agente fala pelo bot dele (como o Theo West, no PC ou na VPS), a mensagem ou o arquivo sai sem esperar você, e fica anotado no Oráculo como "enviado pelo bot do agente", com destino, texto e link para você ver depois. O que sai pela sua conta (Composio, o Slack do seu usuário, terminal) continua pedindo carta.',
+      },
+      {
         title: 'Slack com nome em português também pede carta',
         text: 'Uma ferramenta de Slack com nome em português, como "enviar mensagem" ou "enviar arquivo", passava sem carta, porque a trava só conhecia os nomes em inglês. Agora a mensagem só sai com carta aceita, e o arquivo é barrado como qualquer outro, também com o app fechado. Ler e baixar arquivo continuam livres.',
       },

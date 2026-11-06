@@ -1694,7 +1694,7 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
   const hooksOn = hookBridge !== null && hookBridge.port !== null;
   if (hooksOn) {
     // Slack só com carta, fatia 4: the remote session outlives the app; with it down, a post to Slack is refused.
-    files.push({ name: 'slack-guard.sh', content: buildSlackOfflineGuardScript({ port: fresh.hookPort, token: fresh.hookToken }) });
+    files.push({ name: 'slack-guard.sh', content: buildSlackOfflineGuardScript({ port: fresh.hookPort, token: fresh.hookToken, agentBotServers: appConfig.slackAgentBots.servers }) });
     const settings = buildSessionHooksSettings({
       port: fresh.hookPort,
       token: fresh.hookToken,
@@ -3067,6 +3067,9 @@ async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, cal
   return { caller: { ...base, projectPath: board.pasta, boardPlaceIds: reached, ...(saved ? { board: saved } : {}) }, call };
 }
 
+/** The board and place of a session, for the record of its agent's bot post (set once the board bridge is up). */
+let slackPlaceOf: ((ptyId: string) => Promise<{ projectPath: string; placeId: string } | null>) | null = null;
+
 /** The caller of a `tarefa_*` tool, from the board the renderer owns (the same answers the session would get). */
 async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<{ caller: LedgerCaller; call: LedgerToolCall } | string> {
   const self = await boardBridge.execute(ptyId, { tool: 'sessao_quem_sou' });
@@ -3689,7 +3692,11 @@ void app.whenReady().then(async () => {
     } else {
       cleanupStaleHookSettings(userDataDir);
       curlPath = detectCurlPath();
-      const slackLetters = createSlackLetterGuard(() => ledgerService);
+      const slackLetters = createSlackLetterGuard(() => ledgerService, {
+        // The agents' own bots post without a letter; each post is recorded on the board and place of its session.
+        agentBotServers: () => appConfig.slackAgentBots.servers,
+        placeOf: (ptyId) => slackPlaceOf?.(ptyId) ?? Promise.resolve(null),
+      });
       const bridge = createHookBridge({
         diagnostics: createDiagnosticsLog(userDataDir),
         autoNeverAsks: () => appConfig.autoMode.neverAsks,
@@ -3876,6 +3883,12 @@ void app.whenReady().then(async () => {
     getWindow: getMainWindow,
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
   });
+  slackPlaceOf = async (ptyId) => {
+    const self = await boardBridge.execute(ptyId, { tool: 'sessao_quem_sou' });
+    if (self.kind !== 'text') return null;
+    const who = JSON.parse(self.text) as { lugar?: unknown; pasta?: unknown };
+    return typeof who.lugar === 'string' && typeof who.pasta === 'string' ? { projectPath: who.pasta, placeId: who.lugar } : null;
+  };
   cardWriter = createCardWriter({ service: () => ledgerService, deliver: (message) => boardBridge.deliverOwnerMessage(message), placeName: placeNameOf });
   // No place: the renderer sends it straight to the Líder único (or answers `null`: closed, the request waits).
   deliverPedidoToLeader = (text) => boardBridge.deliverOwnerMessage({ projectPath: '', placeId: '', text, leaderText: text }).then((to) => to === 'lider');

@@ -263,7 +263,9 @@ export type LedgerOp =
   /** v4 — the guard let the one send of an accepted letter through. */
   | { readonly op: 'slack-enviada'; readonly id: string }
   /** The answer of the send in flight: Slack took it, or it failed EXPLICITLY (`why`). An `enviada` with `SEND_ANSWER` text. */
-  | { readonly op: 'slack-resultado'; readonly id: string; readonly outcome: 'confirmado' | 'falhou'; readonly why?: string };
+  | { readonly op: 'slack-resultado'; readonly id: string; readonly outcome: 'confirmado' | 'falhou'; readonly why?: string }
+  /** The record of a post by an agent's OWN bot, which needs no letter (`AGENT_BOT_MARK`). Written by the guard. */
+  | { readonly op: 'slack-bot'; readonly projectPath: string; readonly bot: AgentBotRecord };
 
 export interface LedgerOpContext {
   readonly now: number;
@@ -327,6 +329,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
     return { ok: true, doc: withTask(doc, task), task };
   }
   if (op.op === 'carta-slack') return createSlackLetter(doc, actor, op, ctx);
+  if (op.op === 'slack-bot') return createAgentBotRecord(doc, actor, op, ctx);
 
   const task = doc.tasks[op.id];
   if (!task) return fail(`Não existe tarefa "${op.id}" (veja tarefa_listar).`);
@@ -531,6 +534,70 @@ function createSlackLetter(doc: LedgerDoc, actor: LedgerActor, op: Extract<Ledge
   return { ok: true, doc: withTask(doc, task), task };
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// Posts by an agent's own bot (owner, 06/11: the letter is for what goes out in HIS name). No letter: a record.
+
+/**
+ * The mark that opens the `request` and the delivery `text` of the record of a bot post. The record uses only what
+ * a v4 app knows (a task born `aceita`, events `criada` + `entregue`, proofs `texto` and `link`), so the installed
+ * Alfa reads and rewrites it intact: no new version. No decision event: it never waits for the owner nor counts in
+ * the daily sample, and a closed task takes no step.
+ */
+export const AGENT_BOT_MARK = '⟦enviado pelo bot do agente⟧';
+
+export interface AgentBotRecord {
+  /** The MCP server and tool that posted (`theo-west-slack`, `slack_post_message`). */
+  readonly server: string;
+  readonly tool: string;
+  readonly destination: string;
+  readonly thread?: string;
+  readonly text: string;
+  readonly file?: string;
+  readonly outcome: 'confirmado' | 'falhou' | 'sem-confirmacao';
+  readonly why?: string;
+  readonly link?: string;
+}
+
+export function isAgentBotRecord(task: LedgerTask): boolean {
+  return task.slack === undefined && task.request.startsWith(AGENT_BOT_MARK);
+}
+
+const BOT_OUTCOME: Record<AgentBotRecord['outcome'], string> = {
+  confirmado: 'o Slack confirmou',
+  falhou: 'o envio falhou',
+  'sem-confirmacao': 'sem confirmação do Slack',
+};
+
+function createAgentBotRecord(doc: LedgerDoc, actor: LedgerActor, op: Extract<LedgerOp, { op: 'slack-bot' }>, ctx: LedgerOpContext): LedgerOpResult {
+  if (actor.kind !== 'lugar') return { ok: false, reason: 'O registro do bot é do lugar que enviou.' };
+  const bot = op.bot;
+  const where = `${bot.destination}${bot.thread ? ` (na thread ${bot.thread})` : ''}`;
+  const title = `Slack pelo bot: ${bot.destination}`;
+  const outcome = `${BOT_OUTCOME[bot.outcome]}${bot.outcome === 'falhou' && bot.why?.trim() ? `: ${bot.why.trim().slice(0, 300)}` : ''}`;
+  const proofs: LedgerProof[] = [];
+  if (bot.text.trim()) proofs.push({ kind: 'texto', text: bot.text.slice(0, MAX_PROOF_TEXT_CHARS) });
+  if (bot.file?.trim()) proofs.push({ kind: 'texto', text: `Arquivo: ${bot.file.trim()}`.slice(0, MAX_PROOF_TEXT_CHARS) });
+  if (bot.link && isHttpUrl(bot.link)) proofs.push({ kind: 'link', url: bot.link });
+  if (proofs.length === 0) proofs.push({ kind: 'texto', text: '(sem texto)' });
+  const task: LedgerTask = {
+    id: ctx.newId(),
+    projectPath: op.projectPath,
+    title: title.length > MAX_TITLE_CHARS ? `${title.slice(0, MAX_TITLE_CHARS - 1)}…` : title,
+    request: `${AGENT_BOT_MARK} ${bot.file ? 'Arquivo' : 'Mensagem'} no Slack para ${where}, por ${bot.server} (${bot.tool}), sem carta.`.slice(0, MAX_REQUEST_CHARS),
+    doneWhen: 'Só registro: o bot do próprio agente não fala em nome do dono.',
+    due: new Date(ctx.now).toISOString().slice(0, 10),
+    ownerPlaceId: actor.placeId,
+    risk: 'baixo',
+    state: 'aceita',
+    createdAt: ctx.now,
+    events: [
+      { kind: 'criada', at: ctx.now, by: actor },
+      { kind: 'entregue', at: ctx.now, by: actor, proofs, text: `${AGENT_BOT_MARK} ${outcome}.` },
+    ],
+  };
+  return { ok: true, doc: withTask(doc, task), task };
+}
+
 /** The owner wrote on the card after the current delivery: the owner place may deliver again (its answer). */
 export function ownerWroteSinceDelivery(task: LedgerTask): boolean {
   const deliveredAt = lastDelivery(task)?.at ?? -Infinity;
@@ -717,7 +784,7 @@ export interface LedgerStrip {
 export function ledgerStrip(doc: LedgerDoc, projectPath: string | null): LedgerStrip {
   const tasks = Object.values(doc.tasks).filter((task) => projectPath === null || task.projectPath === projectPath);
   const waiting = tasks.filter((task) => waitsForOwner(doc, task));
-  const accepted = tasks.filter((task) => task.state === 'aceita');
+  const accepted = tasks.filter((task) => task.state === 'aceita' && !isAgentBotRecord(task));
   return {
     total: tasks.length,
     open: tasks.filter((task) => task.state === 'aberta').length,
