@@ -215,12 +215,12 @@ export const LEDGER_TOOLS = [
     title: 'Passar a tarefa a outro lugar',
     description:
       'Troca o lugar dono de uma tarefa (aberta, em execução, rejeitada ou entregue), com motivo; o registro guarda quem passou, de quem e para quem. Em execução, ela volta a "aberta" e o novo dono assume com tarefa_assumir. ' +
-      'Quem pode: o Líder, o lugar dono atual ou, quando o lugar dono está fechado, saiu do quadro ou não começou, a sessão que vai fazer o trabalho, passando a si mesma ("para": "seu"). O destino é um lugar deste quadro (sessao_listar); o Líder único, um lugar que ele alcança no quadro da tarefa.',
+      'Quem pode: o Líder, o lugar dono atual ou, quando o lugar dono está fechado, saiu do quadro ou não começou, a sessão que vai fazer o trabalho, passando a si mesma ("para": "seu"). O destino é um lugar deste quadro (sessao_listar) ou "lider" (o Líder único, que fica dono dela); o Líder único passa a um lugar que ele alcança no quadro da tarefa, ou a si mesmo ("seu"). Um lugar que fecha com tarefa aberta, em execução ou rejeitada passa-a sozinho a quem está acima dele, ou ao Líder único.',
     inputSchema: {
       type: 'object',
       properties: {
         id: ID,
-        para: { type: 'string', description: 'Id do lugar que fica com a tarefa (sessao_listar), ou "seu".' },
+        para: { type: 'string', description: 'Id do lugar que fica com a tarefa (sessao_listar), "lider" (o Líder único) ou "seu".' },
         motivo: { type: 'string', description: 'Por que a tarefa muda de dono (ex.: o lugar dono fechou).' },
       },
       required: ['id', 'para', 'motivo'],

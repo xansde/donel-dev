@@ -151,7 +151,7 @@ import {
 } from '../shared/esteira/ipc';
 
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
-import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerSnapshot } from '../shared/ledger/channels';
+import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerSnapshot } from '../shared/ledger/channels';
 import type { LedgerProof } from '../shared/ledger/contract';
 import { LEARNING_CHANNELS, type RendererGesture } from '../shared/learning/gestures';
 import type {
@@ -594,6 +594,7 @@ const donelApi: DonelApi = {
     openProof: (proof: LedgerProof) => ipcRenderer.invoke(LEDGER_CHANNELS.openProof, proof) as Promise<boolean>,
     proofImage: (taskId: string, proofIndex: number) => ipcRenderer.invoke(LEDGER_CHANNELS.proofImage, taskId, proofIndex) as Promise<string | null>,
     comment: (comment: LedgerComment) => ipcRenderer.invoke(LEDGER_CHANNELS.comment, comment) as Promise<LedgerCommentResult>,
+    passOn: (requests: readonly LedgerPassOnRequest[]) => ipcRenderer.invoke(LEDGER_CHANNELS.passOn, requests) as Promise<readonly LedgerPassedOn[]>,
   },
 
   // Papéis de sessão (item 12a) — `<userData>/papeis/` (main is the only writer).
