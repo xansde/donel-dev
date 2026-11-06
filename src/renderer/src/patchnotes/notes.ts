@@ -26,6 +26,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'Quando uma sessão aberta num lugar remoto sobe no modo bypassPermissions, o lugar agora recebe o que o claude precisa para aceitar esse modo sem pedir confirmação, inclusive quando a VPS roda como root. Antes, o claude de lá podia recusar o bypass.',
       },
       {
+        title: 'Carta de Slack que falhou pode ser reenviada uma vez',
+        text: 'Se o envio de uma carta de Slack aceita falha de forma clara (o Slack recusou, a conexão caiu), a carta continua valendo e a sessão pode mandar o mesmo texto, para o mesmo lugar, mais uma vez, sem você aceitar uma carta nova. É um reenvio só. Quando não dá para saber se a mensagem saiu, a carta conta como usada e fica marcada "envio sem confirmação".',
+      },
+      {
         title: 'O aviso "◆ … terminou" chega inteiro',
         text: 'Quando uma sessão termina o turno, o aviso que entra no chat de quem a abriu ou lhe mandou trabalho agora traz o que ela escreveu inteiro, com as quebras de linha e as listas, e não mais as primeiras linhas emendadas numa só e cortadas em "…". Só uma resposta muito longa é cortada, e o próprio aviso diz quanto ficou de fora e que o resto está na tela da sessão.',
       },
