@@ -14,6 +14,8 @@ import type { DecisaoCelular } from '../../shared/celular';
 import { HTML_MEDIA_TYPE, isRequestId } from '../../shared/ledger/contract';
 import type { CelularAuth } from './auth';
 import type { MobileLedgerPort } from './ledger-port';
+import { MAX_PEDIDO_CHARS, type MobilePedidosPort } from './pedidos';
+import { isAudioId, MAX_AUDIO_BYTES } from './transcrever';
 import { isTailscaleAddress } from './tailscale';
 
 export const MOBILE_PORT = 47815;
@@ -32,7 +34,12 @@ export interface MobileRequest {
   readonly url: string;
   readonly authorization?: string;
   readonly body: string;
+  /** Só no envio do áudio do pedido (`POST /api/pedidos/audio`): o corpo cru. */
+  readonly bytes?: Uint8Array;
 }
+
+/** O único caminho que recebe corpo binário (e maior que 64 KB). */
+export const AUDIO_PATH = '/api/pedidos/audio';
 
 export type MobileBody = string | Uint8Array | { readonly filePath: string };
 
@@ -58,6 +65,8 @@ export interface MobileHandlerDeps {
     /** Guarda a inscrição deste aparelho; `false` = inscrição inválida (endereço fora dos serviços de push). */
     subscribe(deviceId: string, subscription: unknown): boolean;
   };
+  /** Pedir pelo Oráculo (pedido solto ao Líder único). Ausente = sem o botão Pedir. */
+  readonly pedidos?: MobilePedidosPort;
 }
 
 /** Bilhete do protótipo: uso único, preso a um item e uma prova, vence em 60 s. */
@@ -182,6 +191,19 @@ export function createMobileHandler(deps: MobileHandlerDeps): MobileHandler {
     return outcome.ok ? json(200, { ok: true, recibo: outcome.recibo }) : json(409, { erro: 'recusada', mensagem: outcome.mensagem });
   }
 
+  function createPedido(pedidos: MobilePedidosPort, body: string): MobileResponse {
+    const input = parseJson(body);
+    if (!input) return json(400, { erro: 'pedido-invalido' });
+    const { pedidoId, texto, audioId } = input;
+    // O pedidoId é do celular: um reenvio (a rede caiu) recebe o mesmo pedido, sem entrar duas vezes na fila.
+    if (!isRequestId(pedidoId)) return json(400, { erro: 'pedido-invalido' });
+    if (typeof texto !== 'string' || !texto.trim()) return json(400, { erro: 'texto-obrigatorio' });
+    if (texto.length > MAX_PEDIDO_CHARS) return json(400, { erro: 'texto-longo', mensagem: `Até ${MAX_PEDIDO_CHARS} caracteres.` });
+    if (audioId !== undefined && !isAudioId(audioId)) return json(400, { erro: 'pedido-invalido' });
+    const outcome = pedidos.criar({ pedidoId, texto, ...(typeof audioId === 'string' ? { audioId } : {}) });
+    return outcome.ok ? json(200, { ok: true, pedido: outcome.pedido }) : json(409, { erro: 'recusado', mensagem: outcome.mensagem });
+  }
+
   function proof(query: URLSearchParams): MobileResponse {
     const itemId = query.get('item') ?? '';
     const provaId = query.get('prova') ?? '';
@@ -235,6 +257,19 @@ export function createMobileHandler(deps: MobileHandlerDeps): MobileHandler {
     if (path === '/api/comentar' && method === 'POST') return comment(request.body);
     if (path === '/api/prova' && method === 'GET') return proof(parsed.searchParams);
     if (path === '/api/prova-bilhete' && method === 'GET') return ticket(parsed.searchParams);
+
+    const pedidos = deps.pedidos;
+    if (pedidos && path === '/api/pedidos' && method === 'GET') return json(200, { itens: pedidos.listar() });
+    if (pedidos && path === '/api/pedidos' && method === 'POST') return createPedido(pedidos, request.body);
+    if (pedidos && path === AUDIO_PATH && method === 'POST') {
+      const started = pedidos.transcrever(request.bytes ?? new Uint8Array());
+      return started.ok ? json(200, { audioId: started.audioId }) : json(400, { erro: 'audio-invalido', mensagem: started.mensagem });
+    }
+    if (pedidos && path === AUDIO_PATH && method === 'GET') {
+      const audioId = parsed.searchParams.get('id') ?? '';
+      const status = isAudioId(audioId) ? pedidos.transcricao(audioId) : null;
+      return status ? json(200, status) : json(404, { erro: 'nao-encontrada' });
+    }
     return json(404, { erro: 'nao-encontrada' });
   };
 }
@@ -264,10 +299,12 @@ export function startMobileServer(options: {
     }
     const chunks: Buffer[] = [];
     let size = 0;
+    const isAudio = req.method === 'POST' && (req.url ?? '').split('?')[0] === AUDIO_PATH;
+    const maxBytes = isAudio ? MAX_AUDIO_BYTES : MAX_BODY_BYTES;
     let tooBig = false;
     req.on('data', (chunk: Buffer) => {
       size += chunk.length;
-      if (size > MAX_BODY_BYTES) {
+      if (size > maxBytes) {
         tooBig = true;
         req.destroy();
         return;
@@ -277,12 +314,14 @@ export function startMobileServer(options: {
     req.on('end', async () => {
       if (tooBig) return;
       let response: MobileResponse;
+      const raw = Buffer.concat(chunks);
       try {
         response = await handler({
           method: req.method ?? 'GET',
           url: req.url ?? '/',
           authorization: req.headers.authorization,
-          body: Buffer.concat(chunks).toString('utf8'),
+          body: isAudio ? '' : raw.toString('utf8'),
+          ...(isAudio ? { bytes: new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength) } : {}),
         });
       } catch (error) {
         console.error('[donel-dev] celular: erro no pedido:', error);

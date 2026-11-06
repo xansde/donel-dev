@@ -2945,6 +2945,8 @@ function registerMindscapeIpcHandlers(): void {
 let ledgerService: LedgerService | null = null;
 /** Cartas forma A — what the owner writes on a card; born with the board bridge (it delivers through it). */
 let cardWriter: CardWriter | null = null;
+/** Pedir pelo Oráculo — a entrega ao Líder único, ligada quando a ponte do quadro nasce. */
+let deliverPedidoToLeader: ((text: string) => Promise<boolean>) | null = null;
 
 function registerLedgerIpcHandlers(): void {
   const service = createLedgerService({
@@ -3089,6 +3091,11 @@ async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: 
   const remote = sshTarget ? (path: string) => fetchRemoteProof(sshTarget, path) : undefined;
   const result = await runLedgerTool(ledgerService, resolved.caller, resolved.call, remote);
   if (!result.ok) return { kind: 'error', text: result.text };
+  // Pedir pelo Oráculo — the task born of an owner's request: his phone shows "virou tarefa" with its name.
+  if (call.tool === 'tarefa_criar' && call.pedidoDoDono) {
+    const created = JSON.parse(result.text) as { id?: unknown };
+    if (typeof created.id === 'string') celularService?.linkPedido(call.pedidoDoDono, { id: created.id, titulo: call.titulo ?? call.pedido.slice(0, 80) });
+  }
   return result.image ? { kind: 'image', base64: result.image.base64, mimeType: result.image.mimeType, text: result.text } : { kind: 'text', text: result.text };
 }
 
@@ -3849,6 +3856,7 @@ void app.whenReady().then(async () => {
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
     placeName: placeNameOf,
     cardWriter: () => cardWriter,
+    deliverToLeader: () => deliverPedidoToLeader,
   }); // Ledger no celular (PWA só na Tailscale)
   // Quadro por MCP — the board and session tools of the same server go to the renderer (owner of the document).
   const boardBridge = createBoardBridge({
@@ -3857,6 +3865,8 @@ void app.whenReady().then(async () => {
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
   });
   cardWriter = createCardWriter({ service: () => ledgerService, deliver: (message) => boardBridge.deliverOwnerMessage(message), placeName: placeNameOf });
+  // No place: the renderer sends it straight to the Líder único (or answers `null`: closed, the request waits).
+  deliverPedidoToLeader = (text) => boardBridge.deliverOwnerMessage({ projectPath: '', placeId: '', text, leaderText: text }).then((to) => to === 'lider');
   browserService = createBrowserService({
     ipcMain,
     getWindow: getMainWindow,

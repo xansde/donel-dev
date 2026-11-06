@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-06',
     items: [
       {
+        title: 'Pedir ao Líder pelo celular, escrevendo ou falando',
+        text: 'O Oráculo no celular ganhou o botão "Pedir", no topo. Escreva ou grave o que você quer: o áudio é transcrito no seu computador, pelo OpenWhispr, e você confere e corrige o texto antes de enviar. O pedido vai direto para o chat do Líder. Se ele estiver fechado, o computador guarda o pedido e entrega quando o Líder abrir, mesmo que o Donel reinicie no meio. Em "Seus pedidos" você vê cada um: na fila, entregue, ou a tarefa que ele virou. Para gravar direto na página, use o endereço https do Oráculo; no http, o botão abre o gravador do celular.',
+      },
+      {
         title: 'O Oráculo no lugar da conversa do Líder',
         text: 'Você fala com o Líder pelo Jobu, então a janela do Donel não repete mais essa conversa. No lugar dela, o centro mostra o Oráculo Harrow com as cartas que esperam você, de todos os quadros. As sessões continuam a um clique: "Terminais", no alto (ou Ctrl+Shift+O), e "Conversa do Líder" quando quiser ver a dele. Abrir uma sessão, clicar numa aba ou numa notificação já leva aos terminais, e o Donel lembra onde você parou. Para voltar ao jeito antigo, desligue "Mostrar o Oráculo no centro" em Preferências, em Avisos e Jobu.',
       },
