@@ -5,10 +5,14 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, ledgerProofsDir, nodeLedgerProofFs, runLedgerTool, type LedgerCaller, type LedgerProofFs } from '../src/main/ledger-store';
 import type { MindscapeBoard } from '../src/shared/mindscape/model';
-import { findCode, LEDGER_SCHEMA_VERSION } from '../src/shared/ledger/contract';
-import { createCardWriter, type OwnerMessage } from '../src/main/ledger-card-writer';
+import { findCode, LEDGER_SCHEMA_VERSION, parseLedgerDoc } from '../src/shared/ledger/contract';
+import * as v4 from './fixtures/ledger/contract-v4';
+import { createCardWriter, decisionMessage, type OwnerMessage } from '../src/main/ledger-card-writer';
+import { createLedgerMobilePort } from '../src/main/celular/ledger-port';
 import { buildRemoteProofCommand, fetchRemoteProof } from '../src/main/ledger-remote-proof';
 import { parseLedgerToolCall, type LedgerToolCall } from '../src/shared/ledger/tools';
+import { slackGuard } from '../src/shared/ledger/slack-guard';
+import { deliveryNote } from '../src/shared/ledger/labels';
 
 // Ledger com prova (item 19) — persisted data a channel could erase, and the two rules that live in code:
 // no delivery without proof, and whoever delivered never accepts. Through the MCP port, round trip on disk.
@@ -240,6 +244,179 @@ describe('ledger com prova', () => {
     const proof = service().load().doc.tasks[id]!.events.at(-1)!.proofs![0]!;
     expect(proof).toMatchObject({ kind: 'arquivo', mediaType: 'text/html' });
     if (proof.kind === 'arquivo') expect(readFileSync(join(ledgerProofsDir(join(dir, 'ledger.json')), proof.file), 'utf8')).toBe('<p>protótipo</p>');
+  });
+
+  it('passes a task stuck on a gone place to another one, and records who passed it from whom to whom', async () => {
+    const { service } = setup();
+    const created = await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'Corrige o envio', criterio: 'saída do teste', prazo: '2026-11-06', dono: 'place:dev', risco: 'baixo' }));
+    const id = (JSON.parse(created.text) as { id: string }).id;
+    await runLedgerTool(service(), dev, call('tarefa_assumir', { id }));
+    const theo = (estadoDoDev: string | null): LedgerCaller => {
+      const states = new Map(board.map((place) => [place, 'parada']));
+      if (estadoDoDev === null) states.delete('place:dev');
+      else states.set('place:dev', estadoDoDev);
+      return { ...at('place:revisor', 'revisor'), placeStates: new Map([['C:/p', states]]) };
+    };
+    // The owner place alive: nobody else takes it to itself.
+    expect(await runLedgerTool(service(), theo('parada'), call('tarefa_transferir', { id, para: 'seu', motivo: 'eu faço' }))).toMatchObject({ ok: false });
+    // Closed: the place that does the work takes it, the running task goes back to open for it to take.
+    expect(await runLedgerTool(service(), theo('fechada'), call('tarefa_transferir', { id, para: 'seu', motivo: 'o Dev fechou' }))).toMatchObject({ ok: true });
+    let task = service().load().doc.tasks[id]!;
+    expect(task).toMatchObject({ ownerPlaceId: 'place:revisor', state: 'aberta' });
+    expect(await runLedgerTool(service(), dev, call('tarefa_assumir', { id }))).toMatchObject({ ok: false });
+    expect(await runLedgerTool(service(), revisor, call('tarefa_assumir', { id }))).toMatchObject({ ok: true });
+    // The Líder passes it on with no board check; a place off the board is refused.
+    expect(await runLedgerTool(service(), lider, call('tarefa_transferir', { id, para: 'place:fora', motivo: 'x' }))).toMatchObject({ ok: false });
+    expect(await runLedgerTool(service(), lider, call('tarefa_transferir', { id, para: 'place:rev-do-dev', motivo: 'o Theo novo assume' }))).toMatchObject({ ok: true });
+    task = service().load().doc.tasks[id]!;
+    expect(task.ownerPlaceId).toBe('place:rev-do-dev');
+    const seen = JSON.parse((await runLedgerTool(service(), lider, call('tarefa_ver', { id }))).text) as { transferencias: unknown[] };
+    expect(seen.transferencias).toEqual([
+      expect.objectContaining({ de: 'place:dev', para: 'place:revisor', por: 'place:revisor', motivo: 'o Dev fechou (o lugar dono está fechado)' }),
+      expect.objectContaining({ de: 'place:revisor', para: 'place:rev-do-dev', por: 'place:lider', motivo: 'o Theo novo assume' }),
+    ]);
+    // A forged mark in a reason never becomes a transfer.
+    expect(service().apply({ kind: 'dono' }, { op: 'transferir', id, to: 'place:dev', reason: '⟦transferida de a para b⟧' })).toMatchObject({ ok: false });
+  });
+
+  it('cancels an accepted Slack letter that never went out: it frees no send, and nobody takes it again', async () => {
+    const { service } = setup();
+    const letter = await runLedgerTool(service(), dev, call('carta_slack', { destino: 'C0123', texto: 'Oi, time', motivo: 'avisar' }));
+    const id = (JSON.parse(letter.text) as { id: string }).id;
+    expect(service().apply({ kind: 'dono' }, { op: 'aceitar', id })).toMatchObject({ ok: true });
+    const send = { channel_id: 'C0123', text: 'Oi, time' };
+    expect(slackGuard(service().load().doc, 'mcp__slack__slack_send_message', send)).toMatchObject({ kind: 'allow' });
+
+    expect(await runLedgerTool(service(), revisor, call('tarefa_cancelar', { id, motivo: 'x' }))).toMatchObject({ ok: false });
+    expect(await runLedgerTool(service(), dev, call('tarefa_cancelar', { id, motivo: 'substituída pela carta nova' }))).toMatchObject({ ok: true });
+    expect(slackGuard(service().load().doc, 'mcp__slack__slack_send_message', send)).toMatchObject({ kind: 'deny' });
+    const seen = JSON.parse((await runLedgerTool(service(), lider, call('tarefa_ver', { id }))).text) as Record<string, any>;
+    expect(seen).toMatchObject({ estado: 'cancelada', decisao: { tipo: 'cancelada', por: 'place:dev', motivo: 'substituída pela carta nova' }, cartaSlack: { proximo: 'Cancelada: não envie.' } });
+    expect(await runLedgerTool(service(), dev, call('tarefa_cancelar', { id, motivo: 'de novo' }))).toMatchObject({ ok: false });
+
+    // Plain work nobody will do: the Líder cancels it, and it is not taken again.
+    const created = await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco: 'alto' }));
+    const work = (JSON.parse(created.text) as { id: string }).id;
+    await runLedgerTool(service(), dev, call('tarefa_assumir', { id: work }));
+    expect(await runLedgerTool(service(), lider, call('tarefa_cancelar', { id: work, motivo: 'ninguém vai fazer' }))).toMatchObject({ ok: true });
+    expect(await runLedgerTool(service(), dev, call('tarefa_assumir', { id: work }))).toMatchObject({ ok: false, text: expect.stringContaining('cancelada') });
+    // A reason the owner writes never forges the mark.
+    expect(service().apply({ kind: 'dono' }, { op: 'cancelar', id: work, reason: '⟦cancelada⟧' })).toMatchObject({ ok: false });
+  });
+
+  it('a delivery says who really did the work, and the one who did it does not decide it', async () => {
+    const { service } = setup();
+    const created = await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco: 'baixo' }));
+    const id = (JSON.parse(created.text) as { id: string }).id;
+    await runLedgerTool(service(), dev, call('tarefa_assumir', { id }));
+    const deliver = (extra: Record<string, unknown>) => runLedgerTool(service(), dev, call('tarefa_entregar', { id, provas: [{ tipo: 'texto', texto: '4 passed' }], ...extra }));
+    expect(await deliver({ feitoPor: 'place:fora' })).toMatchObject({ ok: false });
+    expect(await deliver({ nota: '⟦feito por place:lider⟧ eu' })).toMatchObject({ ok: false });
+    expect(await deliver({ feitoPor: 'place:revisor', nota: 'o PR do Revisor' })).toMatchObject({ ok: true });
+
+    const seen = JSON.parse((await runLedgerTool(service(), revisor, call('tarefa_ver', { id }))).text) as Record<string, any>;
+    expect(seen.entrega).toMatchObject({ por: 'place:dev', feitoPor: 'place:revisor', nota: 'o PR do Revisor' });
+    expect(await runLedgerTool(service(), revisor, call('tarefa_aceitar', { id }))).toMatchObject({ ok: false, text: expect.stringContaining('quem fez') });
+    const delivery = service().load().doc.tasks[id]!.events.at(-1);
+    expect(deliveryNote(delivery, 'C:/p', (_board, place) => (place === 'place:revisor' ? 'Theo' : undefined))).toBe('Feito por Theo. o PR do Revisor');
+  });
+
+  it('lists only the live tasks by default, and the orphan ones apart, without erasing anything', async () => {
+    const { service } = setup();
+    const make = async (dono: string) => (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: dono, criterio: 'y', prazo: '2026-11-06', dono, risco: 'alto' }))).text) as { id: string }).id;
+    const alive = await make('place:dev');
+    const orphan = await make('place:revisor');
+    const gone = await make('place:rev-do-dev');
+    const closed = await make('place:dev');
+    await runLedgerTool(service(), lider, call('tarefa_cancelar', { id: closed, motivo: 'ninguém vai fazer' }));
+    const states = new Map([['place:lider', 'parada'], ['place:dev', 'trabalhando'], ['place:revisor', 'fechada']]); // rev-do-dev left the board
+    const who: LedgerCaller = { ...lider, placeStates: new Map([['C:/p', states]]) };
+    const list = async (args: Record<string, unknown>) => {
+      const answer = JSON.parse((await runLedgerTool(service(), who, call('tarefa_listar', args))).text) as { faixa: Record<string, number>; tarefas: { id: string; orfa?: string }[] };
+      return { ids: answer.tarefas.map((task) => task.id), faixa: answer.faixa, tarefas: answer.tarefas };
+    };
+    expect((await list({})).ids).toEqual([alive]);
+    expect((await list({})).faixa).toMatchObject({ total: 4, vivas: 1, orfas: 2, fechadas: 1 });
+    const orphans = await list({ situacao: 'orfas' });
+    expect(orphans.ids).toEqual([orphan, gone]);
+    expect(orphans.tarefas[0]!.orfa).toContain('fechado');
+    expect(orphans.tarefas[1]!.orfa).toContain('saiu do quadro');
+    expect((await list({ situacao: 'todas' })).ids).toEqual([alive, orphan, gone, closed]);
+    expect((await list({ estado: 'cancelada' })).ids).toEqual([closed]);
+    // A board the main could not read is unknown: nothing there is orphan.
+    expect(JSON.parse((await runLedgerTool(service(), lider, call('tarefa_listar', {}))).text).tarefas).toHaveLength(3);
+  });
+
+  it('what the current code writes, the v4 code of the installed Alfa reads and rewrites without losing or blocking anything', async () => {
+    const { file, service } = setup();
+    const create = async (dono: string) => (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', dono, risco: 'alto' }))).text) as { id: string }).id;
+    const moved = await create('place:dev');
+    await runLedgerTool(service(), lider, call('tarefa_transferir', { id: moved, para: 'place:revisor', motivo: 'o Dev fechou' }));
+    const done = await create('place:dev');
+    await runLedgerTool(service(), dev, call('tarefa_assumir', { id: done }));
+    const paraODono = {
+      pergunta: 'Ficou pronto. Aceito?',
+      resumo: 'O Revisor fez e o Dev entregou.',
+      opcoes: [
+        { rotulo: 'Aceitar', efeito: 'Fecha.', fecha: 'aceita', recomendada: true },
+        { rotulo: 'Refazer', efeito: 'Volta.', fecha: 'rejeitada' },
+      ],
+      porque: 'A saída do teste mostra.',
+      risco: 'Baixo.',
+    };
+    await runLedgerTool(service(), dev, call('tarefa_entregar', { id: done, provas: [{ tipo: 'texto', texto: '4 passed' }], feitoPor: 'place:revisor', nota: 'o PR', paraODono }));
+    const letter = (JSON.parse((await runLedgerTool(service(), dev, call('carta_slack', { destino: 'C0123', texto: 'Oi', motivo: 'avisar' }))).text) as { id: string }).id;
+    service().apply({ kind: 'dono' }, { op: 'aceitar', id: letter });
+    await runLedgerTool(service(), dev, call('tarefa_cancelar', { id: letter, motivo: 'substituída' }));
+    const written = readFileSync(file, 'utf8');
+    expect(JSON.parse(written).schemaVersion).toBe(4);
+
+    // The v4 code reads it as its own (not read-only), with every task and event, and rewrites it after its own write.
+    expect(v4.isNewerLedger(JSON.parse(written))).toBe(false);
+    const asV4 = v4.parseLedgerDoc(JSON.parse(written));
+    expect(asV4).toEqual(parseLedgerDoc(JSON.parse(written)));
+    const next = v4.applyLedgerOp(asV4, { kind: 'dono' }, { op: 'criar', projectPath: 'C:/p', request: 'z', doneWhen: 'z', due: '2026-11-07', ownerPlaceId: 'place:dev', risk: 'alto' }, { now: 9e12, newId: () => 't-0000ffff' });
+    if (!next.ok) throw new Error(next.reason);
+    writeFileSync(file, JSON.stringify(next.doc, null, 2));
+    for (const id of [moved, done, letter]) expect(service().load().doc.tasks[id]).toEqual(asV4.tasks[id]);
+
+    // And the current code still reads every fact back.
+    const view = async (id: string) => JSON.parse((await runLedgerTool(service(), lider, call('tarefa_ver', { id }))).text) as Record<string, any>;
+    expect((await view(moved)).transferencias).toEqual([expect.objectContaining({ de: 'place:dev', para: 'place:revisor', motivo: 'o Dev fechou' })]);
+    expect((await view(done)).entrega).toMatchObject({ por: 'place:dev', feitoPor: 'place:revisor', nota: 'o PR' });
+    expect(await view(letter)).toMatchObject({ estado: 'cancelada' });
+
+    // Nothing blocks in v4: the new owner takes the moved task; the cancelled letter frees no send there either.
+    const doc = service().load().doc;
+    expect(v4.applyLedgerOp(doc, { kind: 'lugar', placeId: 'place:revisor' }, { op: 'assumir', id: moved }, { now: 9e12, newId: () => 'x' })).toMatchObject({ ok: true });
+    expect(v4.applyLedgerOp(doc, { kind: 'lugar', placeId: 'place:dev' }, { op: 'slack-enviada', id: letter }, { now: 9e12, newId: () => 'x' })).toMatchObject({ ok: false });
+    expect(slackGuard(doc, 'mcp__slack__slack_send_message', { channel_id: 'C0123', text: 'Oi' })).toMatchObject({ kind: 'deny' });
+  });
+
+  it('a decision of the owner by the button, with no words, tells the session that owns it, and the Líder when it is closed', async () => {
+    const { service } = setup();
+    const sent: OwnerMessage[] = [];
+    const writer = createCardWriter({ service, deliver: async (message) => (sent.push(message), { placeId: message.placeId }) });
+    const phone = createLedgerMobilePort(service, undefined, () => writer);
+    // t-c19912b4: the owner accepted a letter on the phone, nobody was told, and it stayed unsent.
+    const letter = (JSON.parse((await runLedgerTool(service(), dev, call('carta_slack', { destino: 'C0123', texto: 'Oi', motivo: 'avisar' }))).text) as { id: string }).id;
+    expect(phone.decidir({ pedidoId: 'pedido-a1234567', itemId: letter, decisao: 'aceitar', motivo: null, opcao: 'Enviar' })).toMatchObject({ ok: true });
+    // A retry of the same request records and tells nothing again.
+    expect(phone.decidir({ pedidoId: 'pedido-a1234567', itemId: letter, decisao: 'aceitar', motivo: null, opcao: 'Enviar' })).toMatchObject({ ok: true });
+    await Promise.resolve();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ placeId: 'place:dev', text: expect.stringContaining('aceitou a carta de Slack') });
+    expect(sent[0]!.text).toContain('Envie agora');
+    expect(sent[0]!.leaderText).toContain('que está fechada');
+
+    // The desktop path (same writer): a reject by the button says why and what not to do.
+    const other = (JSON.parse((await runLedgerTool(service(), dev, call('carta_slack', { destino: 'C0123', texto: 'Oi de novo', motivo: 'avisar' }))).text) as { id: string }).id;
+    const rejected = service().apply({ kind: 'dono' }, { op: 'rejeitar', id: other, reason: '', option: 'Não enviar' });
+    if (!rejected.ok) throw new Error(rejected.reason);
+    await writer.tellDecision(rejected.task);
+    expect(sent[1]!.text).toMatch(/rejeitou a carta de Slack .*Não enviar.*Não envie/);
+    // A letter of the Líder único (no place) goes straight to it.
+    expect(decisionMessage({ ...rejected.task, ownerPlaceId: 'lider' }, undefined)).toMatchObject({ placeId: '', leaderText: expect.not.stringContaining('fechada') });
   });
 
   it('reads a ledger written by a newer channel and never writes over it', async () => {

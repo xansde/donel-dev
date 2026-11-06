@@ -26,6 +26,12 @@ import {
   slackSendState,
   type SlackSendState,
   ledgerStrip,
+  transfersOf,
+  eventNote,
+  doneByOf,
+  isCancelled,
+  isClosed,
+  viewState,
   maxProofBytes,
   parseLedgerDoc,
   PROOF_FILE_TYPES,
@@ -111,6 +117,8 @@ export interface LedgerService {
   /** `tarefa_ver` by `placeId` of the delivery made at `deliveredAt` (memory only: after a restart, look again). */
   noteProofSeen(placeId: string, taskId: string, deliveredAt: number): void;
   proofSeen(placeId: string, taskId: string, deliveredAt: number): boolean;
+  /** The service's clock (the vitest moves it). */
+  now(): number;
 }
 
 /** The biggest print `tarefa_ver` sends inline (the path goes in any case). */
@@ -240,6 +248,7 @@ export function createLedgerService(deps: LedgerServiceDeps): LedgerService {
     proofSeen(placeId, taskId, deliveredAt) {
       return seen.has(seenKey(placeId, taskId, deliveredAt));
     },
+    now,
   };
 }
 
@@ -254,6 +263,31 @@ export interface LedgerCaller {
   readonly boardPlaceIds: readonly string[];
   /** The caller's board as saved in `mindscape.json` (who opened whom, the arrows). Missing = the strict answer. */
   readonly board?: MindscapeBoard;
+  /**
+   * 06/11 — the places of the boards the main could read (project folder → place id → `estado` of `sessao_listar`:
+   * trabalhando, parada, fechada, nao-comecou…). A board missing here is unknown: none of its tasks counts as orphan.
+   */
+  readonly placeStates?: ReadonlyMap<string, ReadonlyMap<string, string>>;
+}
+
+/** Why a task is orphan (not closed, its owner place gone); `null` = alive, closed or unknown. A delivered task waits for whoever decides, not for its owner place. */
+export function orphanReason(caller: LedgerCaller, task: LedgerTask, now: number): string | null {
+  return isClosed(task) || task.state === 'entregue' ? null : ownerGone(caller, task, now);
+}
+
+/** A place that has not started is gone only after this long (a place made a moment ago is still opening). */
+export const NOT_STARTED_GRACE_MS = 30 * 60 * 1000;
+
+/** Why the owner place of `task` can no longer do the work (closed, out of the board, never started); `null` = alive or unknown. */
+export function ownerGone(caller: LedgerCaller, task: LedgerTask, now: number): string | null {
+  const states = caller.placeStates?.get(task.projectPath);
+  if (!states) return null;
+  const state = states.get(task.ownerPlaceId);
+  if (state === undefined) return 'o lugar dono saiu do quadro';
+  if (state === 'fechada') return 'o lugar dono está fechado';
+  const since = task.events.at(-1)?.at ?? task.createdAt;
+  if (state === 'nao-comecou' && now - since >= NOT_STARTED_GRACE_MS) return 'o lugar dono não começou';
+  return null;
 }
 
 /** The strip with the same pt-BR words as the rest of the tool (`aberta`, `em-execucao`, `esperandoDono`…). */
@@ -284,10 +318,12 @@ function decideRefusal(caller: LedgerCaller, task: LedgerTask, seen: boolean): s
   if (task.state !== 'entregue' || !delivery || delivery.by.kind !== 'lugar' || cannotDecide(task, callerActor(caller))) return null;
   if (task.projectPath !== caller.projectPath) return 'a tarefa é de outro quadro; só se decide tarefa do próprio quadro.';
   if (!seen) return 'leia a prova antes com tarefa_ver.';
-  const from = delivery.by.placeId;
   if (!caller.board) return 'não consegui ler o quadro para conferir a cadeia de quem entregou; um Revisor de fora dela ou o dono decide.';
-  if (isOpenedBy(caller.board, from, caller.placeId) || isBelow(caller.board, from, caller.placeId)) {
-    return `você está na cadeia de quem entregou (${from}): um Revisor de fora dela ou o dono decide.`;
+  // Who delivered and, when another place did the work, who did it: a Revisor of neither chain decides.
+  for (const from of [delivery.by.placeId, doneByOf(delivery)].filter((id): id is string => id !== undefined)) {
+    if (isOpenedBy(caller.board, from, caller.placeId) || isBelow(caller.board, from, caller.placeId)) {
+      return `você está na cadeia de quem entregou ou fez o trabalho (${from}): um Revisor de fora dela ou o dono decide.`;
+    }
   }
   return null;
 }
@@ -325,32 +361,38 @@ function forOwnerView(forOwner: LedgerForOwner): Record<string, unknown> {
   };
 }
 
-function taskView(task: LedgerTask, doc: LedgerDoc): Record<string, unknown> {
+function taskView(task: LedgerTask, doc: LedgerDoc, orphan: string | null = null): Record<string, unknown> {
   const delivery = lastDelivery(task);
   const decision = [...task.events].reverse().find((event) => event.kind === 'aceita' || event.kind === 'rejeitada');
   const who = (actor: LedgerActor): string => (actor.kind === 'dono' ? 'dono' : actor.placeId);
+  const transfers = transfersOf(task);
   return {
     id: task.id,
     ...(task.title ? { titulo: task.title } : {}),
-    estado: task.state,
+    estado: viewState(task),
     pedido: task.request,
     criterio: task.doneWhen,
     prazo: task.due,
     dono: task.ownerPlaceId,
     risco: task.risk,
+    ...(transfers.length ? { transferencias: transfers.map((t) => ({ de: t.from, para: t.to, por: who(t.by), em: new Date(t.at).toISOString(), motivo: t.reason })) } : {}),
     ...(delivery
       ? {
           entrega: {
             por: who(delivery.by),
+            ...(doneByOf(delivery) ? { feitoPor: doneByOf(delivery) } : {}),
             em: new Date(delivery.at).toISOString(),
             provas: delivery.proofs?.map((proof) => (proof.kind === 'arquivo' ? `arquivo ${proof.file}` : proof.kind === 'link' ? proof.url : `texto (${proof.text.length} caracteres; leia com tarefa_ver)`)),
-            ...(delivery.text ? { nota: delivery.text } : {}),
+            ...(eventNote(delivery) ? { nota: eventNote(delivery) } : {}),
             ...(delivery.forOwner ? { paraODono: forOwnerView(delivery.forOwner) } : {}),
           },
         }
       : {}),
-    ...(decision ? { decisao: { tipo: decision.kind, por: who(decision.by), ...(decision.option ? { opcao: decision.option } : {}), ...(decision.text ? { motivo: decision.text } : {}) } } : {}),
+    ...(decision
+      ? { decisao: { tipo: isCancelled(task) ? 'cancelada' : decision.kind, por: who(decision.by), ...(decision.option ? { opcao: decision.option } : {}), ...(eventNote(decision) ? { motivo: eventNote(decision) } : {}) } }
+      : {}),
     ...(waitsForOwner(doc, task) ? { esperandoDono: true } : {}),
+    ...(orphan ? { orfa: `${orphan}: passe adiante com tarefa_transferir ou encerre com tarefa_cancelar.` } : {}),
     ...(task.slack
       ? {
           cartaSlack: {
@@ -364,7 +406,8 @@ function taskView(task: LedgerTask, doc: LedgerDoc): Record<string, unknown> {
             ...(task.state === 'aceita' && slackSendState(task) === 'falhou'
               ? { proximo: 'O envio falhou e não chegou ao Slack: pode mandar o mesmo texto ao mesmo destino mais uma vez, uma só. Se falhar de novo, a carta se esgota.' }
               : {}),
-            ...(task.state === 'rejeitada' ? { proximo: 'Rejeitada: não envie. Ajuste o texto pelo motivo e crie outra carta com carta_slack.' } : {}),
+            ...(task.state === 'rejeitada' && !isCancelled(task) ? { proximo: 'Rejeitada: não envie. Ajuste o texto pelo motivo e crie outra carta com carta_slack.' } : {}),
+            ...(isCancelled(task) ? { proximo: 'Cancelada: não envie.' } : {}),
           },
         }
       : {}),
@@ -420,6 +463,28 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
     }
     case 'tarefa_assumir':
       return answer(service.apply(actor, { op: 'assumir', id: call.id }), 'assumida');
+    case 'tarefa_cancelar':
+    case 'tarefa_transferir': {
+      let doc: LedgerDoc;
+      try {
+        doc = service.load().doc;
+      } catch (error) {
+        return { ok: false, text: `Não consegui ler o Oráculo Harrow: ${error instanceof Error ? error.message : String(error)}` };
+      }
+      const task = doc.tasks[call.id];
+      if (!task) return { ok: false, text: `Não existe tarefa "${call.id}" (veja tarefa_listar).` };
+      if (task.projectPath !== caller.projectPath) return { ok: false, text: 'A tarefa é de outro quadro; só se mexe em tarefa do próprio quadro.' };
+      if (call.tool === 'tarefa_cancelar') return answer(service.apply(actor, { op: 'cancelar', id: task.id, reason: call.motivo }), 'cancelada');
+      const to = call.para === 'seu' ? caller.placeId : call.para;
+      if (!caller.boardPlaceIds.includes(to)) return { ok: false, text: `"${to}" não é um lugar deste quadro que você alcança (veja sessao_listar).` };
+      const gone = ownerGone(caller, task, service.now());
+      const result = service.apply(actor, { op: 'transferir', id: task.id, to, reason: gone && !call.motivo.includes(gone) ? `${call.motivo} (${gone})` : call.motivo, ...(gone ? { ownerGone: true } : {}) });
+      if (!result.ok) return { ok: false, text: result.reason };
+      return {
+        ok: true,
+        text: JSON.stringify({ transferida: true, id: result.task.id, estado: result.task.state, dono: result.task.ownerPlaceId, ...(result.task.state === 'aberta' ? { proximo: 'O novo dono assume com tarefa_assumir.' } : {}) }),
+      };
+    }
     case 'carta_slack': {
       const result = service.apply(actor, {
         op: 'carta-slack',
@@ -448,6 +513,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       };
     }
     case 'tarefa_entregar': {
+      if (call.feitoPor && !caller.boardPlaceIds.includes(call.feitoPor)) return { ok: false, text: `Nada foi entregue. "feitoPor": "${call.feitoPor}" não é um lugar deste quadro (veja sessao_listar).` };
       const proofs: LedgerProof[] = [];
       for (const input of call.provas) {
         const proof = await service.importProof(input, remote);
@@ -457,7 +523,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         }
         proofs.push(proof);
       }
-      const result = service.apply(actor, { op: 'entregar', id: call.id, proofs, ...(call.nota ? { note: call.nota } : {}), ...(call.paraODono ? { forOwner: call.paraODono } : {}) });
+      const result = service.apply(actor, { op: 'entregar', id: call.id, proofs, ...(call.nota ? { note: call.nota } : {}), ...(call.paraODono ? { forOwner: call.paraODono } : {}), ...(call.feitoPor ? { doneBy: call.feitoPor } : {}) });
       if (!result.ok) await service.discardProofs(proofs);
       return answer(result, 'entregue');
     }
@@ -489,7 +555,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       const delivery = lastDelivery(task);
       if (delivery) service.noteProofSeen(caller.placeId, task.id, delivery.at);
       const proofs = delivery?.proofs ?? [];
-      const text = JSON.stringify({ ...taskView(task, doc), ...(proofs.length ? { provas: proofs.map((proof) => proofView(service, proof)) } : {}) }, null, 1);
+      const text = JSON.stringify({ ...taskView(task, doc, orphanReason(caller, task, service.now())), ...(proofs.length ? { provas: proofs.map((proof) => proofView(service, proof)) } : {}) }, null, 1);
       for (const proof of proofs) {
         const image = await service.proofImage(proof);
         if (image) return { ok: true, text, image };
@@ -504,10 +570,30 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         return { ok: false, text: `Não consegui ler o Oráculo Harrow: ${error instanceof Error ? error.message : String(error)}` };
       }
       const scope = call.todos ? null : caller.projectPath;
-      const tasks = Object.values(doc.tasks)
-        .filter((task) => (scope === null || task.projectPath === scope) && (!call.estado || task.state === call.estado))
+      const situacao = call.situacao ?? (call.estado ? 'todas' : 'vivas');
+      const now = service.now();
+      const orphanOf = (task: LedgerTask): string | null => orphanReason(caller, task, now);
+      const inScope = Object.values(doc.tasks).filter((task) => scope === null || task.projectPath === scope);
+      const counts = { vivas: 0, orfas: 0, fechadas: 0 };
+      for (const task of inScope) counts[isClosed(task) ? 'fechadas' : orphanOf(task) ? 'orfas' : 'vivas'] += 1;
+      const tasks = inScope
+        .filter((task) => !call.estado || viewState(task) === call.estado)
+        .filter((task) => situacao === 'todas' || (situacao === 'orfas' ? orphanOf(task) !== null : !isClosed(task) && orphanOf(task) === null))
         .sort((a, b) => a.createdAt - b.createdAt);
-      return { ok: true, text: JSON.stringify({ faixa: stripView(ledgerStrip(doc, scope)), tarefas: tasks.map((task) => taskView(task, doc)) }, null, 1) };
+      const hidden = situacao === 'todas' ? 0 : inScope.length - tasks.length;
+      return {
+        ok: true,
+        text: JSON.stringify(
+          {
+            faixa: { ...stripView(ledgerStrip(doc, scope)), ...counts },
+            situacao,
+            ...(hidden ? { fora: `${hidden} tarefa(s) fora desta lista; "situacao": "todas" mostra o histórico inteiro, "orfas" as que ficaram sem lugar.` } : {}),
+            tarefas: tasks.map((task) => taskView(task, doc, orphanOf(task))),
+          },
+          null,
+          1,
+        ),
+      };
     }
   }
 }
