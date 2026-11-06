@@ -243,7 +243,11 @@ import { createTaskbarAttention, type AttentionSmokeSnapshot } from './attention
 import { failureReasonText } from '../shared/attention/rule';
 import { registerAssetScheme, registerAssetsProtocol } from './chat/assets-protocol';
 import { proofSchemePrivileges, registerProofProtocol } from './ledger-proof-protocol';
-import { createCardWriter, type CardWriter } from './ledger-card-writer';
+import { createCardWriter, type CardWriter, type OwnerMessage } from './ledger-card-writer';
+import { createHillClimbService, hillClimbFilePath, resolveCouncil, type HillClimbService } from './hill-climb-store';
+import { HILL_CLIMB_CHANNELS, type HillClimbGestureRequest, type HillClimbGestureResult, type HillClimbSnapshot } from '../shared/hillClimb/channels';
+import { FAKE_JUDGES_ENV_VAR } from '../shared/hillClimb/council';
+import type { HillClimbToolCall } from '../shared/hillClimb/tools';
 import { fetchRemoteProof } from './ledger-remote-proof';
 import { CHAT_CHANNELS } from '../shared/chat/ipc';
 // 011-contas-e-provedores (etapa 1) — motor de contas + mods. Nasce inerte
@@ -2951,6 +2955,8 @@ function registerLedgerIpcHandlers(): void {
       if (pet && !pet.isDestroyed()) pet.send(LEDGER_CHANNELS.changed, snapshot);
       // Aviso no celular: uma carta que passou a esperar o dono.
       celularService?.ledgerChanged(snapshot.doc);
+      // Hill climbing: a proposal card the owner decided starts (or ends) its mission.
+      hillClimbService?.syncLedger(snapshot.doc);
     },
   });
   ledgerService = service;
@@ -3081,6 +3087,58 @@ async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: 
   const result = await runLedgerTool(ledgerService, resolved.caller, resolved.call, remote);
   if (!result.ok) return { kind: 'error', text: result.text };
   return result.image ? { kind: 'image', base64: result.image.base64, mimeType: result.image.mimeType, text: result.text } : { kind: 'text', text: result.text };
+}
+
+/**
+ * Hill climbing — `<userData>/hill-climb.json`, written only here. The loop runs in the main (the Escalador's
+ * `hillclimb_*` tools); the owner's gestures come from the main window; a proposal starts only when the owner
+ * accepts its card in the Oráculo (`syncLedger`, also called by the ledger's `onChange`).
+ */
+let hillClimbService: HillClimbService | null = null;
+/** Set once the board bridge exists: tells the Escalador's session what the owner decided. */
+let hillClimbNotify: ((message: OwnerMessage) => void) | null = null;
+
+function registerHillClimbIpcHandlers(): void {
+  const service = createHillClimbService({
+    filePath: hillClimbFilePath(process.env, app.getPath('userData')),
+    io: configIoDeps,
+    council: () => resolveCouncil(process.env),
+    fakeCouncil: process.env[FAKE_JUDGES_ENV_VAR] === '1',
+    notify: (message) => hillClimbNotify?.(message),
+    onChange: (snapshot) => {
+      const window = getMainWindow();
+      if (window && !window.isDestroyed()) window.webContents.send(HILL_CLIMB_CHANNELS.changed, snapshot);
+    },
+  });
+  hillClimbService = service;
+  try {
+    const ledger = ledgerService?.load();
+    if (ledger) service.syncLedger(ledger.doc);
+  } catch {
+    // An unreadable ledger settles nothing; the next ledger write tries again.
+  }
+  const fromMain = (sender: Electron.WebContents): boolean => getMainWindow()?.webContents.id === sender.id;
+  ipcMain.handle(HILL_CLIMB_CHANNELS.load, (): HillClimbSnapshot => service.load());
+  ipcMain.handle(HILL_CLIMB_CHANNELS.gesture, (event, raw: unknown): HillClimbGestureResult => {
+    if (!fromMain(event.sender)) return { ok: false, reason: 'Só a janela do app decide.' };
+    const request = raw as Partial<HillClimbGestureRequest> | null;
+    const gesture = request?.gesture;
+    if (!request || typeof request.missionId !== 'string' || !gesture) return { ok: false, reason: 'Pedido inválido.' };
+    if (gesture.kind === 'aceitar' || gesture.kind === 'mais-uma') return service.gesture(request.missionId, { kind: gesture.kind });
+    if (gesture.kind === 'redirecionar' && typeof gesture.text === 'string') return service.gesture(request.missionId, { kind: 'redirecionar', text: gesture.text });
+    return { ok: false, reason: 'Gesto desconhecido.' };
+  });
+}
+
+async function executeHillClimbTool(boardBridge: BoardBridge, ptyId: string, call: HillClimbToolCall): Promise<BrowserToolOutcome> {
+  if (!hillClimbService || !ledgerService) return { kind: 'error', text: 'O hill climbing não abriu neste app.' };
+  const self = await boardBridge.execute(ptyId, { tool: 'sessao_quem_sou' });
+  if (self.kind !== 'text') return { kind: 'error', text: self.kind === 'error' ? self.text : 'Não consegui saber quem é esta sessão.' };
+  const who = JSON.parse(self.text) as { lugar?: unknown; pasta?: unknown; liderUnico?: unknown };
+  if (who.liderUnico === true) return { kind: 'error', text: 'O Escalador é uma cadeira do quadro: abra um lugar para a missão e proponha de lá.' };
+  if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string') return { kind: 'error', text: 'Seu lugar ainda não está no quadro; espere o primeiro turno terminar.' };
+  const result = await hillClimbService.runTool({ projectPath: who.pasta, placeId: who.lugar }, call, ledgerService);
+  return result.ok ? { kind: 'text', text: result.text } : { kind: 'error', text: result.text };
 }
 
 /** Papéis de sessão (item 12a) — list and save of `<userData>/papeis/<id>.md`. */
@@ -3815,6 +3873,7 @@ void app.whenReady().then(async () => {
   registerTabIpcHandlers(); // CA-26/CA-27 (009-modo-dev-v3)
   registerMindscapeIpcHandlers(); // Mindscape V1
   registerLedgerIpcHandlers(); // Ledger com prova (item 19)
+  registerHillClimbIpcHandlers(); // Hill climbing (no lugar do Modo Dev)
   registerRolesIpcHandlers(); // Papéis de sessão (item 12a)
   registerMindscapeTurnEnded(); // Mindscape, fatia 03
   registerSessionRenewalIpcHandlers(); // Sessão renovada em voo (B36)
@@ -3848,6 +3907,7 @@ void app.whenReady().then(async () => {
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
   });
   cardWriter = createCardWriter({ service: () => ledgerService, deliver: (message) => boardBridge.deliverOwnerMessage(message), placeName: placeNameOf });
+  hillClimbNotify = (message) => void boardBridge.deliverOwnerMessage(message).catch(() => null);
   browserService = createBrowserService({
     ipcMain,
     getWindow: getMainWindow,
@@ -3869,6 +3929,7 @@ void app.whenReady().then(async () => {
       },
     },
     executeLedger: (ptyId, call) => executeLedgerTool(boardBridge, ptyId, call),
+    executeHillClimb: (ptyId, call) => executeHillClimbTool(boardBridge, ptyId, call),
   }); // Navegador integrado
   // Servidor MCP `donel` (loopback, porta efêmera) ANTES da janela: a primeira sessão já nasce com as ferramentas
   // do navegador. Se não subir, as sessões nascem sem elas (nunca sem terminal).

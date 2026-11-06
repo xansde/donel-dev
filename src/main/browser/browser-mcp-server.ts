@@ -11,6 +11,7 @@ import {
 } from '../../shared/browser/mcp';
 import type { BoardToolCall } from '../../shared/mindscape/agent-tools';
 import type { LedgerToolCall } from '../../shared/ledger/tools';
+import type { HillClimbToolCall } from '../../shared/hillClimb/tools';
 
 // Navegador integrado — the app's local MCP server `donel` (docs/design/navegador-interno.md, D9).
 //
@@ -31,6 +32,8 @@ export interface BrowserMcpServerDeps {
   openCap?(): number | null;
   /** Ledger com prova (item 19) — runs one `tarefa_*` tool for the session of `ptyId`; absent = no ledger tools. */
   executeLedger?(ptyId: string, call: LedgerToolCall): Promise<BrowserToolOutcome>;
+  /** Hill climbing — the Escalador's `hillclimb_*` tools; absent = not offered. */
+  executeHillClimb?(ptyId: string, call: HillClimbToolCall): Promise<BrowserToolOutcome>;
   readonly serverVersion: string;
 }
 
@@ -100,6 +103,7 @@ export function createBrowserMcpServer(deps: BrowserMcpServerDeps): BrowserMcpSe
           ...(deps.executeBoard ? { boardExecutor: (call: BoardToolCall) => deps.executeBoard!(gate.ptyId, call) } : {}),
           ...(deps.openCap ? { openCap: () => deps.openCap!() } : {}),
           ...(deps.executeLedger ? { ledgerExecutor: (call: LedgerToolCall) => deps.executeLedger!(gate.ptyId, call) } : {}),
+          ...(deps.executeHillClimb ? { hillClimbExecutor: (call: HillClimbToolCall) => deps.executeHillClimb!(gate.ptyId, call) } : {}),
           serverVersion: deps.serverVersion,
         })
       : parsed.response;
