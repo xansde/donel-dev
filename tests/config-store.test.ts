@@ -79,6 +79,7 @@ describe('defaultAppConfig (puro)', () => {
       layout: { oracleCenter: true, centerView: 'oracle' },
       appUpdate: { installersDir: null },
       browserUploads: { folders: [] },
+      slackAgentBots: { servers: [] },
       unknownFields: {},
     });
   });
@@ -254,6 +255,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       layout: { oracleCenter: false, centerView: 'terminals' },
       appUpdate: { installersDir: 'D:\\instaladores' },
       browserUploads: { folders: [] },
+      slackAgentBots: { servers: ['theo-west-slack', 'theo-slack'] },
       unknownFields: {},
     };
     expect(sanitizeAppConfig(valid, baseDefaults())).toEqual(valid);
@@ -354,6 +356,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       layout: { oracleCenter: true, centerView: 'terminals' },
       appUpdate: { installersDir: null },
       browserUploads: { folders: [] },
+      slackAgentBots: { servers: [] },
       unknownFields: {}, // nenhuma chave desconhecida no objeto de entrada
     });
   });

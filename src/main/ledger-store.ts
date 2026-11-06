@@ -46,7 +46,7 @@ import {
 } from '../shared/ledger/contract';
 import type { LedgerApplyResult, LedgerSnapshot } from '../shared/ledger/channels';
 import type { LedgerToolCall, ProofInput } from '../shared/ledger/tools';
-import { detectSlackSend, fileNameOf, slackGuard, slackSendOutcome } from '../shared/ledger/slack-guard';
+import { AGENT_BOT_SERVERS, detectAgentBotSend, detectSlackSend, fileNameOf, slackGuard, slackMessageLink, slackSendOutcome, type AgentBotSend } from '../shared/ledger/slack-guard';
 
 /** Smoke/test override: isolates the ledger from the real one. */
 export const LEDGER_FILE_ENV_VAR = 'DONEL_LEDGER_FILE';
@@ -606,6 +606,10 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
 // EXPLICIT failure ("fetch failed", `isError`, `ok: false`) → an `enviada` "falhou" (`SEND_ANSWER`), and the letter frees ONE resend of the same
 // text (t-8119864a); a doubt, or no answer within `LETTER_IN_FLIGHT_MS`, writes nothing: the letter stays spent,
 // "envio sem confirmação".
+//
+// A post by an agent's OWN bot (`agentBotServers`) passes with no letter. At its answer the guard writes the record
+// "enviado pelo bot do agente" (op `slack-bot`: destination, text, file, link and outcome), on the board and place
+// of the session (`placeOf`), for the owner to see later. An answer that never comes (the app closed) leaves no record.
 
 export const LETTER_IN_FLIGHT_MS = 15 * 60 * 1000;
 
@@ -614,14 +618,30 @@ interface LetterInFlight {
   readonly toolUseId: string | null;
   readonly callKey: string;
   readonly letterIds: readonly string[];
+  /** A post by an agent's own bot: recorded at the answer, no letter. */
+  readonly bot?: AgentBotSend;
+  readonly cwd?: string;
   readonly at: number;
+}
+
+/** The board and place of a session, for the record of its bot's post; `null` = unknown (the record keeps the folder). */
+export type SlackSessionPlace = (ptyId: string) => Promise<{ readonly projectPath: string; readonly placeId: string } | null>;
+
+export interface SlackLetterGuardOptions {
+  readonly now?: () => number;
+  /** The MCP servers of the agents' own bots (from the config); default `AGENT_BOT_SERVERS`. */
+  readonly agentBotServers?: () => readonly string[];
+  readonly placeOf?: SlackSessionPlace;
 }
 
 export interface SlackLetterGuard {
   /** `PreToolUse`: `null` = the call goes on (its letters are now spent); a string = the refusal the session reads. */
   before(ptyId: string, payload: Record<string, unknown>): string | null;
-  /** `PostToolUse` / `PostToolUseFailure` of the same call: records the answer; only an explicit failure reopens. */
-  after(ptyId: string, event: string, payload: Record<string, unknown>): void;
+  /**
+   * `PostToolUse` / `PostToolUseFailure` of the same call: records the answer; only an explicit failure reopens. A
+   * bot's post is recorded asynchronously (the promise ends when it is on disk).
+   */
+  after(ptyId: string, event: string, payload: Record<string, unknown>): Promise<void> | void;
 }
 
 const toolNameOf = (payload: Record<string, unknown>): string => (typeof payload.tool_name === 'string' ? payload.tool_name : '');
@@ -636,8 +656,47 @@ function callKeyOf(payload: Record<string, unknown>): string {
   return `${typeof payload.agent_id === 'string' ? payload.agent_id : ''}\u0000${toolNameOf(payload)}\u0000${input}`;
 }
 
-export function createSlackLetterGuard(service: () => LedgerService | null, now: () => number = Date.now): SlackLetterGuard {
+export function createSlackLetterGuard(service: () => LedgerService | null, options: SlackLetterGuardOptions | (() => number) = {}): SlackLetterGuard {
+  const opts: SlackLetterGuardOptions = typeof options === 'function' ? { now: options } : options;
+  const now = opts.now ?? Date.now;
+  const botServers = (): readonly string[] => opts.agentBotServers?.() ?? AGENT_BOT_SERVERS;
   const inFlight: LetterInFlight[] = [];
+
+  async function recordBot(ptyId: string, entry: LetterInFlight, event: string, payload: Record<string, unknown>): Promise<void> {
+    const bot = entry.bot!;
+    const outcome = slackSendOutcome(event, payload.tool_response, payload.error);
+    let place: { projectPath: string; placeId: string } | null = null;
+    try {
+      place = (await opts.placeOf?.(ptyId)) ?? null;
+    } catch {
+      place = null;
+    }
+    const ledger = service();
+    if (!ledger) return;
+    const link = outcome.kind === 'falhou' ? null : slackMessageLink(payload.tool_response, bot);
+    try {
+      ledger.apply(
+        { kind: 'lugar', placeId: place?.placeId ?? `sessao:${ptyId}` },
+        {
+          op: 'slack-bot',
+          projectPath: place?.projectPath ?? entry.cwd ?? '',
+          bot: {
+            server: bot.server,
+            tool: bot.tool,
+            destination: bot.destination,
+            ...(bot.thread ? { thread: bot.thread } : {}),
+            text: bot.text,
+            ...(bot.file ? { file: bot.file } : {}),
+            outcome: outcome.kind,
+            ...(outcome.kind === 'falhou' ? { why: outcome.why } : {}),
+            ...(link ? { link } : {}),
+          },
+        },
+      );
+    } catch {
+      // the record is for the owner to see later; failing to write it never touches the send
+    }
+  }
 
   function prune(): void {
     const cutoff = now() - LETTER_IN_FLIGHT_MS;
@@ -647,7 +706,7 @@ export function createSlackLetterGuard(service: () => LedgerService | null, now:
   return {
     before(ptyId, payload) {
       const toolName = toolNameOf(payload);
-      if (detectSlackSend(toolName, payload.tool_input).kind === 'none') return null;
+      if (detectSlackSend(toolName, payload.tool_input).kind === 'none' && !detectAgentBotSend(toolName, payload.tool_input, botServers())) return null;
       prune();
       const ledger = service();
       let doc: LedgerDoc | null = null;
@@ -657,9 +716,15 @@ export function createSlackLetterGuard(service: () => LedgerService | null, now:
       } catch {
         doc = null;
       }
-      const verdict = slackGuard(doc, toolName, payload.tool_input);
+      const verdict = slackGuard(doc, toolName, payload.tool_input, botServers());
       if (verdict.kind === 'not-slack') return null;
       if (verdict.kind === 'deny') return verdict.reason;
+      if (verdict.kind === 'agent-bot') {
+        const toolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : null;
+        const cwd = typeof payload.cwd === 'string' ? payload.cwd : undefined;
+        inFlight.push({ ptyId, toolUseId, callKey: callKeyOf(payload), letterIds: [], bot: verdict.send, ...(cwd ? { cwd } : {}), at: now() });
+        return null;
+      }
       for (const id of verdict.letterIds) {
         const task = doc!.tasks[id]!;
         const marked = ledger!.apply({ kind: 'lugar', placeId: task.ownerPlaceId }, { op: 'slack-enviada', id });
@@ -679,6 +744,7 @@ export function createSlackLetterGuard(service: () => LedgerService | null, now:
       );
       if (index < 0) return;
       const [entry] = inFlight.splice(index, 1);
+      if (entry!.bot) return recordBot(ptyId, entry!, event, payload);
       const outcome = slackSendOutcome(event, payload.tool_response, payload.error);
       if (outcome.kind === 'sem-confirmacao') return; // spent, "envio sem confirmação"
       const ledger = service();

@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-06',
     items: [
       {
+        title: 'O bot do próprio agente manda no Slack sem carta',
+        text: 'A carta de Slack volta a ser só para o que sai em seu nome. Quando um agente fala pelo bot dele (como o Theo West, no PC ou na VPS) e esse bot está na lista de bots dos agentes da sua configuração, a mensagem ou o arquivo sai sem esperar você, e fica anotado no Oráculo como "enviado pelo bot do agente", com destino, texto e link para você ver depois. O que sai pela sua conta (Composio, o Slack do seu usuário, terminal) continua pedindo carta.',
+      },
+      {
         title: 'Carta de Slack que leva um arquivo',
         text: 'Uma sessão que precisa mandar um arquivo no Slack, como um print ou um PDF, agora pede numa carta, como já pedia para mensagem. A carta diz "Posso mandar este arquivo no Slack em seu nome?" e mostra o nome do arquivo, onde ele está e o comentário que vai junto. O arquivo só sai depois que você aceita, uma vez, para aquele canal ou thread. A carta confere o nome e o lugar do arquivo, não o que tem dentro: veja o arquivo antes de aceitar. Numa versão anterior do Donel aberta no mesmo computador, essa carta não aparece como carta de Slack e não libera nada.',
       },

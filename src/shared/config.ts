@@ -155,6 +155,14 @@ export interface BrowserUploadPrefs {
   readonly folders: readonly string[];
 }
 
+/**
+ * Slack só com carta — the MCP servers that post with an agent's OWN bot (owner, 06/11: the letter is for what goes
+ * out in his name). Their posts need no letter and are recorded in the Oráculo. Main only; not in the DTO.
+ */
+export interface SlackAgentBotPrefs {
+  readonly servers: readonly string[];
+}
+
 /** What the renderer may ask of the main: only the switch. */
 export interface PetPrefsInput {
   readonly enabled?: boolean;

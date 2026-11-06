@@ -2,6 +2,7 @@ import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'nod
 import { join } from 'node:path';
 import type { UserStatusLine } from './cli-user-settings';
 import type { RoleScopeSettings } from '../shared/role-scope';
+import { AGENT_BOT_SERVERS, isAgentBotServerName } from '../shared/ledger/slack-guard';
 
 // T009 — arquivo `--settings` adicional (spike: "soma hooks aos hooks
 // globais do usuário sem substituí-los" — validado byte-a-byte que
@@ -191,8 +192,46 @@ export const SLACK_OFFLINE_PATTERN =
 export const SLACK_OFFLINE_REFUSAL =
   'Envio ao Slack bloqueado pelo Donel Dev: o app do Donel está fora do ar (ou não reconhece esta sessão), então não dá para confirmar a carta no Oráculo Harrow. Toda mensagem ao Slack em nome do dono precisa antes de uma carta aceita, e o que não se confirma não sai. Não tente outro caminho de envio. Diga ao dono que a mensagem está esperando o Donel voltar; quando ele voltar, crie a carta com carta_slack e espere a decisão.';
 
+/**
+ * The `sh` lines that let a call by one of the agents' own bots (`slackAgentBots`) through the offline guard: their
+ * posts need no letter. They read ONLY the top-level `tool_name` of the hook payload, with a real JSON parser
+ * (`node`, else `python3`): a text match over the payload would also find a `"tool_name"` planted inside the
+ * call's input. With no parser on the machine (or a payload it cannot read) nothing passes here: the guard stays
+ * closed. `[]` = no bot listed (the default).
+ */
+export function agentBotOfflineLines(servers: readonly string[]): string[] {
+  const names = servers.filter(isAgentBotServerName);
+  if (names.length === 0) return [];
+  // Plain names ([A-Za-z0-9_-]): safe inside the regex and inside the single-quoted `sh` strings.
+  const re = `^mcp__(${names.join('|')})__`;
+  const node = `let s="";process.stdin.on("data",(d)=>{s+=d}).on("end",()=>{try{const v=JSON.parse(s);if(v&&typeof v==="object"&&!Array.isArray(v)&&typeof v.tool_name==="string"&&/${re}/i.test(v.tool_name))process.stdout.write("bot")}catch(e){}})`;
+  const python = [
+    'import sys, json, re',
+    'try:',
+    '    v = json.loads(sys.stdin.read())',
+    'except Exception:',
+    '    sys.exit(0)',
+    't = v.get("tool_name") if isinstance(v, dict) else None',
+    `if isinstance(t, str) and re.match(r"${re}", t, re.I):`,
+    '    sys.stdout.write("bot")',
+  ].join('\n');
+  return [
+    '# O bot do próprio agente não fala em nome do dono: passa sem carta. Só o tool_name do topo do JSON decide;',
+    '# sem node nem python3 para ler o JSON, nada passa por aqui (a trava fica fechada).',
+    "bot=''",
+    'if command -v node >/dev/null 2>&1; then',
+    `  bot=$(printf '%s' "$payload" | node -e '${node}' 2>/dev/null)`,
+    'elif command -v python3 >/dev/null 2>&1; then',
+    `  bot=$(printf '%s' "$payload" | python3 -I -c '${python}' 2>/dev/null)`,
+    'fi',
+    'if [ "$bot" = bot ]; then',
+    '  exit 0',
+    'fi',
+  ];
+}
+
 /** Pure — the POSIX `sh` script of the offline guard (stdin: the hook payload; stdout: a deny, or nothing). */
-export function buildSlackOfflineGuardScript(input: { readonly port: number; readonly token: string }): string {
+export function buildSlackOfflineGuardScript(input: { readonly port: number; readonly token: string; readonly agentBotServers?: readonly string[] }): string {
   const deny = JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: SLACK_OFFLINE_REFUSAL } });
   return [
     '#!/bin/sh',
@@ -203,6 +242,7 @@ export function buildSlackOfflineGuardScript(input: { readonly port: number; rea
     `if curl -s -f --noproxy 127.0.0.1 --connect-timeout 2 --max-time 4 -o /dev/null -X POST -H "X-Donel-Token: ${input.token}" ${bridgeUrl(input.port, 'Ping')} 2>/dev/null; then`,
     '  exit 0',
     'fi',
+    ...agentBotOfflineLines(input.agentBotServers ?? AGENT_BOT_SERVERS),
     `if printf '%s' "$payload" | grep -Eqi '${SLACK_OFFLINE_PATTERN}'; then`,
     "  cat <<'DONEL_DENY'",
     deny,
