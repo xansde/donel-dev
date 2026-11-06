@@ -30,8 +30,10 @@
  * 3 — cartas forma A: `title` on a task; `forOwner` on a delivery; `option` on a decision; the `comentada` event
  *     (the owner writing on the card) with `deliveredTo`.
  * 4 — `slack` on a task (a letter "mensagem para o Slack") and the `enviada` event (`slack-guard.ts`).
+ * 5 — a letter replaces decision cards (`slack.replaces`, `slack.sourceLink`), and a decision closed together with
+ *     its letter records it (`viaLetter` on the `aceita` / `rejeitada` event).
  */
-export const LEDGER_SCHEMA_VERSION = 4;
+export const LEDGER_SCHEMA_VERSION = 5;
 
 export type LedgerTaskState = 'aberta' | 'em-execucao' | 'entregue' | 'aceita' | 'rejeitada';
 export type LedgerRisk = 'baixo' | 'alto';
@@ -103,6 +105,14 @@ export interface SlackLetter {
   readonly thread?: string;
   readonly text: string;
   readonly reason: string;
+  /**
+   * v5 — the decision cards ("Mandar o rascunho / Eu respondo / Não responder") this letter replaces (owner, 06/11:
+   * one card, one touch). While the letter waits, they leave "esperando você"; when the owner decides the letter,
+   * they close with it (`viaLetter`). Nothing is deleted.
+   */
+  readonly replaces?: readonly string[];
+  /** v5 — the permanent link of the Slack message this letter answers, when the session gave it. */
+  readonly sourceLink?: string;
 }
 
 export interface LedgerEvent {
@@ -121,6 +131,8 @@ export interface LedgerEvent {
   readonly option?: string;
   /** v3 — `comentada`: where the message went. */
   readonly deliveredTo?: LedgerDeliveredTo;
+  /** v5 — `aceita` / `rejeitada` of a decision card closed together with the Slack letter that replaced it. */
+  readonly viaLetter?: string;
 }
 
 export interface LedgerTask {
@@ -255,8 +267,12 @@ export type LedgerOp =
   | { readonly op: 'comentar'; readonly id: string; readonly text: string; readonly requestId?: string; readonly deliveredTo: LedgerDeliveredTo }
   /** `option`: the label of an option closing as `rejeitada`; then `reason` may be empty (the option is a reason). */
   | { readonly op: 'rejeitar'; readonly id: string; readonly reason: string; readonly requestId?: string; readonly option?: string }
-  /** v4 — a place asks the owner to send a Slack message (born `entregue`, high risk). */
-  | { readonly op: 'carta-slack'; readonly projectPath: string; readonly slack: SlackLetter }
+  /**
+   * v4 — a place asks the owner to send a Slack message (born `entregue`, high risk). v5 — `replaces`: the id of the
+   * decision card it replaces, or the permanent link of the Slack message it answers; absent = linked by itself
+   * when its destination and thread match the link of a waiting decision card (`matchDecisions`).
+   */
+  | { readonly op: 'carta-slack'; readonly projectPath: string; readonly slack: SlackLetter; readonly replaces?: string }
   /** v4 — the guard let the one send of an accepted letter through. */
   | { readonly op: 'slack-enviada'; readonly id: string };
 
@@ -373,9 +389,8 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       if (task.state !== 'entregue') return fail(`A tarefa está "${task.state}"; só se aceita uma entregue.`);
       const why = cannotDecide(task, actor) ?? optionRefusal(task, op.option, 'aceita');
       if (why) return fail(`Não aceitei: ${why}`);
-      return done(
-        step(task, 'aceita', { kind: 'aceita', at: ctx.now, by: actor, ...requestOf(op), ...(op.option ? { option: op.option } : {}), ...(op.text?.trim() ? { text: op.text.trim() } : {}) }),
-      );
+      const next = step(task, 'aceita', { kind: 'aceita', at: ctx.now, by: actor, ...requestOf(op), ...(op.option ? { option: op.option } : {}), ...(op.text?.trim() ? { text: op.text.trim() } : {}) });
+      return closeReplaced(withTask(doc, next), next, actor, ctx.now, 'aceita', 'O dono aceitou a mensagem no Slack que substitui esta carta.');
     }
 
     case 'comentar': {
@@ -395,7 +410,8 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       if (task.state !== 'entregue' && !overturn) return fail(`A tarefa está "${task.state}"; só se rejeita uma entregue.`);
       const why = cannotDecide(task, actor) ?? (op.option ? optionRefusal(task, op.option, 'rejeitada') : null);
       if (why) return fail(`Não rejeitei: ${why}`);
-      return done(step(task, 'rejeitada', { kind: 'rejeitada', at: ctx.now, by: actor, text: reason, ...requestOf(op), ...(op.option ? { option: op.option } : {}) }));
+      const next = step(task, 'rejeitada', { kind: 'rejeitada', at: ctx.now, by: actor, text: reason, ...requestOf(op), ...(op.option ? { option: op.option } : {}) });
+      return overturn ? done(next) : closeReplaced(withTask(doc, next), next, actor, ctx.now, 'rejeitada', `O dono não aceitou a mensagem no Slack que substitui esta carta: ${reason}`);
     }
 
     case 'slack-enviada':
@@ -448,6 +464,8 @@ function createSlackLetter(doc: LedgerDoc, actor: LedgerActor, op: Extract<Ledge
   if (actor.kind !== 'lugar') return { ok: false, reason: 'Carta de Slack é pedido de uma sessão ao dono.' };
   const problem = slackLetterProblem(op.slack);
   if (problem) return { ok: false, reason: problem };
+  const link = resolveReplaces(doc, op.projectPath, op.slack, op.replaces?.trim());
+  if ('error' in link) return { ok: false, reason: link.error };
   const where = `${slackDestinationLabel(op.slack)}${op.slack.thread ? ' (na thread)' : ''}`;
   const title = `Mensagem no Slack para ${slackDestinationLabel(op.slack)}`;
   const task: LedgerTask = {
@@ -465,9 +483,123 @@ function createSlackLetter(doc: LedgerDoc, actor: LedgerActor, op: Extract<Ledge
       { kind: 'criada', at: ctx.now, by: actor },
       { kind: 'entregue', at: ctx.now, by: actor, proofs: [{ kind: 'texto', text: op.slack.text }], text: op.slack.reason.trim(), forOwner: slackForOwner(where, op.slack.reason) },
     ],
-    slack: op.slack,
+    slack: { ...op.slack, ...(link.ids.length ? { replaces: link.ids } : {}), ...(link.sourceLink ? { sourceLink: link.sourceLink } : {}) },
   };
   return { ok: true, doc: withTask(doc, task), task };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// v5 — a Slack letter replaces the decision card of the same message (owner, 06/11: one card, one touch)
+
+/** One Slack message, read from its permanent link (`…slack.com/archives/<channel>/p<ts>[?thread_ts=…]`). */
+export interface SlackMessageRef {
+  readonly channel: string;
+  /** The message's `ts` (`1793229369.456279`). */
+  readonly ts: string;
+  /** Set when the message is a reply inside a thread: the thread's root `ts`. */
+  readonly threadTs?: string;
+}
+
+const PERMALINK = /https?:\/\/[\w-]+\.slack\.com\/archives\/([A-Z0-9]{6,})\/p(\d{16})(\?[^\s"'<>)\]]*)?/g;
+
+/** Every Slack message link in a text, in order. */
+export function slackMessageRefs(text: string): SlackMessageRef[] {
+  const refs: SlackMessageRef[] = [];
+  for (const match of text.matchAll(PERMALINK)) {
+    const digits = match[2]!;
+    const thread = /[?&]thread_ts=(\d{10}\.\d{6})/.exec(match[3] ?? '')?.[1];
+    refs.push({ channel: match[1]!, ts: `${digits.slice(0, 10)}.${digits.slice(10)}`, ...(thread ? { threadTs: thread } : {}) });
+  }
+  return refs;
+}
+
+/** The conversation a message belongs to: the thread it is in, or the message itself (a reply starts there). */
+const conversationOf = (ref: SlackMessageRef): string => ref.threadTs ?? ref.ts;
+
+/** What a decision card says about the Slack messages it is about: the request, the criterion and its delivery. */
+function decisionText(task: LedgerTask): string {
+  const delivery = lastDelivery(task);
+  const proofs = (delivery?.proofs ?? []).map((proof) => (proof.kind === 'texto' ? proof.text : proof.kind === 'link' ? proof.url : ''));
+  return [task.title ?? '', task.request, task.doneWhen, delivery?.text ?? '', delivery?.forOwner?.summary ?? '', ...proofs].join('\n');
+}
+
+/** A decision card still waiting for the owner, which a letter may replace. */
+function isWaitingDecision(task: LedgerTask): boolean {
+  return !task.slack && task.state === 'entregue' && task.risk === 'alto';
+}
+
+/**
+ * The waiting decision cards of `projectPath` a letter replaces. With the message's link (`source`): every card that
+ * links a message of the same conversation. Without it, by the letter's destination and thread: inside a thread,
+ * every card linking a message of that thread; outside one (a direct message), only when exactly one card links a
+ * message of that conversation outside a thread — two questions of the same person are not the same answer.
+ */
+export function matchDecisions(doc: LedgerDoc, projectPath: string, slack: Pick<SlackLetter, 'destination' | 'thread'>, source?: SlackMessageRef): string[] {
+  const matches = (ref: SlackMessageRef): boolean => {
+    if (source) return ref.channel === source.channel && conversationOf(ref) === conversationOf(source);
+    if (ref.channel !== slack.destination) return false;
+    return slack.thread ? conversationOf(ref) === slack.thread : ref.threadTs === undefined;
+  };
+  const ids = Object.values(doc.tasks)
+    .filter((task) => task.projectPath === projectPath && isWaitingDecision(task) && slackMessageRefs(decisionText(task)).some(matches))
+    .map((task) => task.id);
+  return source || slack.thread || ids.length === 1 ? ids : [];
+}
+
+/** What `carta_slack`'s `substitui` names: a decision card (`t-…`), a message link, or nothing (matched by itself). */
+function resolveReplaces(doc: LedgerDoc, projectPath: string, slack: SlackLetter, replaces: string | undefined): { ids: string[]; sourceLink?: string } | { error: string } {
+  if (!replaces) return { ids: matchDecisions(doc, projectPath, slack) };
+  if (/^t-[0-9a-z-]+$/i.test(replaces)) {
+    const target = doc.tasks[replaces];
+    if (!target) return { error: `"substitui": não existe tarefa "${replaces}" (veja tarefa_listar).` };
+    if (target.slack) return { error: '"substitui": essa tarefa já é uma carta de Slack; uma carta nova não substitui outra.' };
+    if (target.projectPath !== projectPath) return { error: '"substitui": essa tarefa é de outro quadro.' };
+    if (target.state === 'aceita') return { error: '"substitui": essa carta de decisão já foi aceita e fechada.' };
+    return { ids: [replaces] };
+  }
+  const [source] = slackMessageRefs(replaces);
+  if (!source) return { error: '"substitui" é o id da carta de decisão (t-…) ou o link permanente da mensagem do Slack (…slack.com/archives/…).' };
+  return { ids: matchDecisions(doc, projectPath, slack, source), sourceLink: replaces };
+}
+
+/** The waiting letters that replace `task` (a decision card). */
+function replacingLetters(doc: LedgerDoc, task: LedgerTask): LedgerTask[] {
+  if (task.slack) return [];
+  return Object.values(doc.tasks).filter((other) => other.state === 'entregue' && (other.slack?.replaces?.includes(task.id) ?? false));
+}
+
+/** The waiting Slack letter that hides `task` from "esperando você", if any. */
+export function replacedBy(doc: LedgerDoc, task: LedgerTask): LedgerTask | undefined {
+  return replacingLetters(doc, task)[0];
+}
+
+/** The letter's decision closes, with the same outcome, the decision cards it replaces that still wait. */
+function closeReplaced(doc: LedgerDoc, letter: LedgerTask, actor: LedgerActor, now: number, closes: 'aceita' | 'rejeitada', text: string): LedgerOpResult {
+  let next = doc;
+  for (const id of letter.slack?.replaces ?? []) {
+    const target = next.tasks[id];
+    if (!target || target.slack || target.state !== 'entregue') continue;
+    next = withTask(next, step(target, closes, { kind: closes, at: now, by: actor, text, viaLetter: letter.id }));
+  }
+  return { ok: true, doc: next, task: letter };
+}
+
+/**
+ * The sweep of what exists (owner, 06/11): a waiting letter written before v5 gets linked to the waiting decision
+ * cards of the same message. Only the link is written; nothing closes, nothing is deleted. `linked`: letter → cards.
+ */
+export function linkWaitingLetters(doc: LedgerDoc): { readonly doc: LedgerDoc; readonly linked: Readonly<Record<string, readonly string[]>> } {
+  let next = doc;
+  const linked: Record<string, string[]> = {};
+  for (const letter of Object.values(doc.tasks)) {
+    if (!letter.slack || letter.state !== 'entregue' || letter.slack.replaces?.length) continue;
+    const source = letter.slack.sourceLink ? slackMessageRefs(letter.slack.sourceLink)[0] : undefined;
+    const ids = matchDecisions(doc, letter.projectPath, letter.slack, source);
+    if (!ids.length) continue;
+    linked[letter.id] = ids;
+    next = withTask(next, { ...letter, slack: { ...letter.slack, replaces: ids } });
+  }
+  return { doc: next, linked };
 }
 
 /** The owner wrote on the card after the current delivery: the owner place may deliver again (its answer). */
@@ -629,9 +761,13 @@ export function inDailySample(doc: LedgerDoc, task: LedgerTask): boolean {
   return sameDay.some((other) => other.id === task.id);
 }
 
-/** "Esperando você": high-risk deliveries, and the daily sample of the Revisor's accepts. */
+/**
+ * "Esperando você": high-risk deliveries, and the daily sample of the Revisor's accepts. A decision card that a
+ * waiting Slack letter replaces is left out: the owner sees only the letter (v5).
+ */
 export function waitsForOwner(doc: LedgerDoc, task: LedgerTask): boolean {
-  return (task.state === 'entregue' && task.risk === 'alto') || inDailySample(doc, task);
+  if (task.state === 'entregue' && task.risk === 'alto') return replacedBy(doc, task) === undefined;
+  return inDailySample(doc, task);
 }
 
 /** Since when the task waits for the owner (the delivery, or the accept under sample). */
@@ -773,6 +909,7 @@ function parseEvent(raw: unknown): LedgerEvent | null {
     ...(isRequestId(raw.requestId) ? { requestId: raw.requestId } : {}),
     ...(forOwner ? { forOwner } : {}),
     ...((raw.kind === 'aceita' || raw.kind === 'rejeitada') && str(raw.option) ? { option: raw.option } : {}),
+    ...((raw.kind === 'aceita' || raw.kind === 'rejeitada') && str(raw.viaLetter) && raw.viaLetter ? { viaLetter: raw.viaLetter } : {}),
     ...(deliveredTo !== undefined ? { deliveredTo } : {}),
   };
 }
@@ -796,6 +933,8 @@ function parseSlackLetter(raw: unknown): SlackLetter | null {
     ...(str(raw.thread) && raw.thread ? { thread: raw.thread } : {}),
     text: raw.text,
     reason: raw.reason,
+    ...(Array.isArray(raw.replaces) ? { replaces: raw.replaces.filter((id): id is string => str(id) && id.length > 0) } : {}),
+    ...(str(raw.sourceLink) && raw.sourceLink ? { sourceLink: raw.sourceLink } : {}),
   };
   return slackLetterProblem(slack) ? null : slack;
 }

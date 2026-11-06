@@ -46,7 +46,7 @@ export type LedgerToolCall =
   | { readonly tool: 'tarefa_rejeitar'; readonly id: string; readonly motivo: string }
   | { readonly tool: 'tarefa_listar'; readonly estado?: LedgerTaskState; readonly todos?: boolean; readonly quadro?: string }
   | { readonly tool: 'tarefa_ver'; readonly id: string }
-  | { readonly tool: 'carta_slack'; readonly destino: string; readonly destinoNome?: string; readonly thread?: string; readonly texto: string; readonly motivo: string };
+  | { readonly tool: 'carta_slack'; readonly destino: string; readonly destinoNome?: string; readonly thread?: string; readonly texto: string; readonly motivo: string; readonly substitui?: string };
 
 export type LedgerToolName = LedgerToolCall['tool'];
 
@@ -213,7 +213,8 @@ export const LEDGER_TOOLS = [
     name: 'carta_slack',
     title: 'Pedir ao dono para mandar mensagem no Slack',
     description:
-      'Toda mensagem ao Slack em nome do dono (canal, pessoa ou thread; por MCP do Slack, Composio, curl ou script) precisa ANTES desta carta aceita pelo dono: sem ela o Donel Dev bloqueia o envio. A carta leva o destino, a thread, o texto EXATO e o motivo, e espera o dono no Oráculo Harrow (desktop e celular). Aceita: envie o mesmo texto ao mesmo destino e thread, uma vez só. Rejeitada: não envie; o motivo diz o ajuste; crie outra carta. Veja a decisão com tarefa_ver.',
+      'Toda mensagem ao Slack em nome do dono (canal, pessoa ou thread; por MCP do Slack, Composio, curl ou script) precisa ANTES desta carta aceita pelo dono: sem ela o Donel Dev bloqueia o envio. A carta leva o destino, a thread, o texto EXATO e o motivo, e espera o dono no Oráculo Harrow (desktop e celular). Aceita: envie o mesmo texto ao mesmo destino e thread, uma vez só. Rejeitada: não envie; o motivo diz o ajuste; crie outra carta. Veja a decisão com tarefa_ver. ' +
+      'Para responder alguém, crie SÓ esta carta, com o rascunho pronto como texto: o dono decide e envia num toque. Não crie antes uma tarefa de decisão (mandar o rascunho, eu respondo, não responder) para a mesma mensagem. Se ela já existe, passe-a em "substitui": o dono vê só esta carta e, quando decidir, a de decisão fecha junto.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -222,6 +223,11 @@ export const LEDGER_TOOLS = [
         thread: { type: 'string', description: 'O thread_ts, quando a mensagem é resposta numa thread.' },
         texto: { type: 'string', description: 'A mensagem exata, caractere por caractere, como vai ser enviada.' },
         motivo: { type: 'string', description: 'Por que a mensagem vai, em uma frase para o dono.' },
+        substitui: {
+          type: 'string',
+          description:
+            'Opcional: a carta de decisão que esta substitui, pelo id (t-…), ou o link permanente da mensagem do Slack que você está respondendo. Sem ele, o app liga sozinho quando o destino e a thread batem com o link de uma carta de decisão que espera o dono.',
+        },
       },
       required: ['destino', 'texto', 'motivo'],
       additionalProperties: false,
@@ -396,7 +402,8 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       const thread = text(args.thread, 'thread', 120, false);
       const texto = text(args.texto, 'texto', MAX_SLACK_TEXT_CHARS, true);
       const motivo = text(args.motivo, 'motivo', MAX_REQUEST_CHARS, true);
-      for (const value of [destino, destinoNome, thread, texto, motivo]) if (typeof value === 'object') return fail(value.error);
+      const substitui = text(args.substitui, 'substitui', 500, false);
+      for (const value of [destino, destinoNome, thread, texto, motivo, substitui]) if (typeof value === 'object') return fail(value.error);
       return {
         ok: true,
         call: {
@@ -406,6 +413,7 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
           ...(typeof thread === 'string' && thread.trim() ? { thread: thread.trim() } : {}),
           texto: texto as string,
           motivo: (motivo as string).trim(),
+          ...(typeof substitui === 'string' && substitui.trim() ? { substitui: substitui.trim() } : {}),
         },
       };
     }

@@ -2,7 +2,7 @@
 // ("Dev · painel do Jobu"; without a name, the role: "Dev"). Shared by the phone and the desktop cards.
 
 import { naipeDoTipo, type Naipe } from '../celular';
-import type { LedgerActor, LedgerDeliveredTo } from './contract';
+import type { LedgerActor, LedgerDeliveredTo, SlackLetter } from './contract';
 
 const ROLE_LABELS: Readonly<Record<string, string>> = {
   dev: 'Dev',
@@ -45,4 +45,31 @@ export function reciboDe(deliveredTo: LedgerDeliveredTo | undefined, quem: strin
   if (deliveredTo === 'lider') return `A sessão de ${quem} estava fechada: foi ao Líder, às ${hora}.`;
   if (deliveredTo) return `Enviado a ${quem}, às ${hora}.`;
   return 'Ninguém aberto para ler agora; fica guardado na carta.';
+}
+
+/** Where a Slack letter goes, in the owner's words (no "DM", no "thread"): the card's first line. */
+export interface SlackRecipient {
+  /** The person or the channel, as the session named it. */
+  readonly name: string;
+  readonly kind: 'pessoa' | 'canal' | 'grupo';
+  /** "Conversa particular", "Canal", "Conversa em grupo". */
+  readonly kindLabel: string;
+  /** An answer inside a conversation that already exists (a thread), or a new message. */
+  readonly inConversation: boolean;
+  readonly conversationLabel: string;
+}
+
+export function slackRecipient(slack: SlackLetter): SlackRecipient {
+  const raw = slack.destinationLabel?.trim() || slack.destination;
+  const id = slack.destination.trim();
+  const kind = /^[DUW][A-Z0-9]{6,}$/.test(id) || /\(DM\)\s*$/i.test(raw) ? 'pessoa' : /^G[A-Z0-9]{6,}$/.test(id) ? 'grupo' : 'canal';
+  const name = raw.replace(/\s*\(DM\)\s*$/i, '').trim() || raw;
+  const inConversation = Boolean(slack.thread);
+  return {
+    name,
+    kind,
+    kindLabel: kind === 'pessoa' ? 'Conversa particular' : kind === 'grupo' ? 'Conversa em grupo' : 'Canal',
+    inConversation,
+    conversationLabel: inConversation ? 'Resposta dentro de uma conversa que já existe' : 'Mensagem nova',
+  };
 }

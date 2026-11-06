@@ -444,6 +444,79 @@ svg {
   opacity: 0.5;
 }
 
+/* ---- carta de Slack: para quem, o texto, Enviar / Não enviar ---- */
+
+.slack-para {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--pre-fundo);
+}
+
+.slack-para small {
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--tinta-suave);
+}
+
+.slack-para b {
+  font-family: var(--serifa);
+  font-size: 1.25rem;
+  line-height: 1.2;
+}
+
+.slack-para span {
+  font-size: 0.85rem;
+  color: var(--tinta-suave);
+}
+
+.slack-msg {
+  padding: 10px 12px;
+  border-left: 3px solid var(--naipe);
+  font-size: 1.02rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.slack-motivo {
+  margin: 12px 0 0;
+  font-size: 0.85rem;
+  color: var(--tinta-suave);
+}
+
+.botao.marcada {
+  background: var(--sim);
+  color: var(--carta);
+  border-color: var(--sim);
+}
+
+.slack-nao {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.slack-nao[hidden] {
+  display: none;
+}
+
+.slack-nao textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--carta-borda);
+  background: var(--carta);
+  color: var(--tinta);
+  font: 1rem var(--sem-serifa);
+}
+
 button:focus-visible,
 a:focus-visible,
 textarea:focus-visible {

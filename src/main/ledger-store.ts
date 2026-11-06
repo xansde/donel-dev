@@ -21,6 +21,8 @@ import {
   cannotDecide,
   isNewerLedger,
   lastDelivery,
+  linkWaitingLetters,
+  replacedBy,
   slackLetterSent,
   ledgerStrip,
   maxProofBytes,
@@ -105,6 +107,12 @@ export interface LedgerService {
   proofPath(proof: LedgerProof): string | null;
   /** A print small enough to go inline in `tarefa_ver`; `null` = not a print, too big or unreadable. */
   proofImage(proof: LedgerProof): Promise<{ base64: string; mimeType: string } | null>;
+  /**
+   * The sweep of what exists (owner, 06/11): links the waiting Slack letters to the waiting decision cards of the same
+   * message (`linkWaitingLetters`). Writes only when there is something to link, and copies the file first to
+   * `ledger.antes-ligar-cartas-slack-<AAAA-MM-DD>.json` next to it. A ledger of a newer channel is left alone.
+   */
+  linkSlackLetters(): { readonly linked: Readonly<Record<string, readonly string[]>>; readonly backup: string | null } | { readonly error: string };
   /** `tarefa_ver` by `placeId` of the delivery made at `deliveredAt` (memory only: after a restart, look again). */
   noteProofSeen(placeId: string, taskId: string, deliveredAt: number): void;
   proofSeen(placeId: string, taskId: string, deliveredAt: number): boolean;
@@ -174,6 +182,28 @@ export function createLedgerService(deps: LedgerServiceDeps): LedgerService {
       if (!write(result.doc)) return { ok: false, reason: 'Não consegui gravar o Oráculo Harrow; nada mudou.' };
       deps.onChange?.({ doc: result.doc, readOnly: false });
       return { ok: true, task: result.task };
+    },
+    linkSlackLetters() {
+      let snapshot: LedgerSnapshot;
+      try {
+        snapshot = load();
+      } catch (error) {
+        return { error: error instanceof Error ? error.message : String(error) };
+      }
+      if (snapshot.readOnly) return { linked: {}, backup: null };
+      const result = linkWaitingLetters(snapshot.doc);
+      if (Object.keys(result.linked).length === 0) return { linked: {}, backup: null };
+      const original = io.readFileText(filePath);
+      if (original === null) return { error: 'ledger.json sumiu antes da cópia de segurança' };
+      const backup = join(dirname(filePath), `ledger.antes-ligar-cartas-slack-${new Date(now()).toISOString().slice(0, 10)}.json`);
+      try {
+        if (!io.existsSync(backup)) io.writeFileText(backup, original);
+      } catch {
+        return { error: 'não consegui gravar a cópia de segurança; nada foi ligado' };
+      }
+      if (!write(result.doc)) return { error: 'não consegui gravar o Oráculo Harrow; nada foi ligado' };
+      deps.onChange?.({ doc: result.doc, readOnly: false });
+      return { linked: result.linked, backup };
     },
     async importProof(input, remote) {
       if (input.tipo === 'texto') return { kind: 'texto', text: input.texto };
@@ -324,6 +354,7 @@ function forOwnerView(forOwner: LedgerForOwner): Record<string, unknown> {
 
 function taskView(task: LedgerTask, doc: LedgerDoc): Record<string, unknown> {
   const delivery = lastDelivery(task);
+  const replacing = task.state === 'entregue' ? replacedBy(doc, task) : undefined;
   const decision = [...task.events].reverse().find((event) => event.kind === 'aceita' || event.kind === 'rejeitada');
   const who = (actor: LedgerActor): string => (actor.kind === 'dono' ? 'dono' : actor.placeId);
   return {
@@ -346,14 +377,26 @@ function taskView(task: LedgerTask, doc: LedgerDoc): Record<string, unknown> {
           },
         }
       : {}),
-    ...(decision ? { decisao: { tipo: decision.kind, por: who(decision.by), ...(decision.option ? { opcao: decision.option } : {}), ...(decision.text ? { motivo: decision.text } : {}) } } : {}),
+    ...(decision
+      ? {
+          decisao: {
+            tipo: decision.kind,
+            por: who(decision.by),
+            ...(decision.option ? { opcao: decision.option } : {}),
+            ...(decision.text ? { motivo: decision.text } : {}),
+            ...(decision.viaLetter ? { pelaCartaDeSlack: decision.viaLetter } : {}),
+          },
+        }
+      : {}),
     ...(waitsForOwner(doc, task) ? { esperandoDono: true } : {}),
+    ...(replacing ? { substituidaPor: replacing.id, aviso: `O dono vê só a carta de Slack ${replacing.id}; esta fecha junto quando ele decidir aquela.` } : {}),
     ...(task.slack
       ? {
           cartaSlack: {
             destino: task.slack.destination,
             ...(task.slack.thread ? { thread: task.slack.thread } : {}),
             texto: task.slack.text,
+            ...(task.slack.replaces?.length ? { substitui: task.slack.replaces } : {}),
             enviada: slackLetterSent(task),
             ...(task.state === 'aceita' && !slackLetterSent(task) ? { proximo: 'Aceita: envie este texto exato a este destino, uma vez.' } : {}),
             ...(task.state === 'rejeitada' ? { proximo: 'Rejeitada: não envie. Ajuste o texto pelo motivo e crie outra carta com carta_slack.' } : {}),
@@ -408,6 +451,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         op: 'carta-slack',
         projectPath: caller.projectPath,
         slack: { destination: call.destino, ...(call.destinoNome ? { destinationLabel: call.destinoNome } : {}), ...(call.thread ? { thread: call.thread } : {}), text: call.texto, reason: call.motivo },
+        ...(call.substitui ? { replaces: call.substitui } : {}),
       });
       if (!result.ok) return { ok: false, text: result.reason };
       return {
@@ -417,6 +461,9 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
           id: result.task.id,
           estado: result.task.state,
           esperandoDono: true,
+          ...(result.task.slack?.replaces?.length
+            ? { substitui: result.task.slack.replaces, aviso: 'O dono vê só esta carta; a de decisão sai da fila dele e fecha junto quando ele decidir esta.' }
+            : {}),
           proximo: `Não envie ainda. Diga que está esperando o dono decidir a carta e veja a decisão com tarefa_ver ${result.task.id}. Aceita: envie este texto exato a este destino, uma vez. Rejeitada: o motivo diz o ajuste; crie outra carta.`,
         }),
       };

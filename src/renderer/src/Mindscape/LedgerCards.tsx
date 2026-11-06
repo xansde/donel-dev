@@ -14,9 +14,10 @@ import {
   type LedgerProof,
   type LedgerTask,
   type LedgerVisual,
+  type SlackLetter,
 } from '../../../shared/ledger/contract';
 import { proofUrl } from '../../../shared/ledger/channels';
-import { actorLabel, naipeDoPapel, reciboDe, type PlaceNameOf } from '../../../shared/ledger/labels';
+import { actorLabel, naipeDoPapel, reciboDe, slackRecipient, type PlaceNameOf } from '../../../shared/ledger/labels';
 import type { Naipe } from '../../../shared/celular';
 import styles from './LedgerCards.module.css';
 
@@ -435,6 +436,80 @@ function CardA({
   );
 }
 
+/**
+ * A Slack letter (06/11, "um toque só"): first who it goes to, then the exact text, then "Enviar" and "Não enviar"
+ * (with the reason). "Enviar" asks for a second click: the message leaves in the owner's name.
+ */
+function SlackCard({ task, slack, naipe, index, count, who, decide }: { readonly task: LedgerTask; readonly slack: SlackLetter; readonly naipe: Naipe; readonly index: number; readonly count: number; readonly who: string; readonly decide: Decide }): React.JSX.Element {
+  const [armed, setArmed] = useState(false);
+  const [refusing, setRefusing] = useState(false);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const recipient = slackRecipient(slack);
+  const run = async (send: boolean): Promise<void> => {
+    if (busy) return;
+    if (send && !armed) return setArmed(true);
+    setBusy(true);
+    const why = await decide(send ? { accept: true, option: 'Enviar' } : { accept: false, reason: reason.trim(), option: 'Não enviar' });
+    setBusy(false);
+    if (why) setError(why);
+  };
+  return (
+    <div className={styles.table}>
+      <div className={styles.card} data-naipe={naipe} data-testid="ledger-card">
+        <div className={styles.face}>
+          <div className={styles.frame}>
+            <div className={styles.inner}>
+              <header className={styles.head}>
+                <Glyph naipe={naipe} />
+                <span className={styles.suit}>Mensagem no Slack</span>
+                <span className={styles.index}>
+                  {roman(index + 1)} · {roman(count)}
+                </span>
+              </header>
+              <div className={styles.scroll}>
+                <div className={styles.slackTo}>
+                  <small>Para</small>
+                  <b>{recipient.name}</b>
+                  <span>
+                    {recipient.kindLabel} · {recipient.conversationLabel}
+                  </span>
+                </div>
+                <h4 className={styles.slackLabel}>O texto, exatamente como sai</h4>
+                <div className={styles.slackText}>{slack.text}</div>
+                <div className={styles.slackActions}>
+                  <button type="button" disabled={busy} className={styles.slackNo} onClick={() => setRefusing((value) => !value)}>
+                    Não enviar
+                  </button>
+                  <button type="button" disabled={busy} className={armed ? `${styles.slackSend} ${styles.slackArmed}` : styles.slackSend} onClick={() => void run(true)}>
+                    {armed ? 'Clique de novo para enviar' : 'Enviar'}
+                  </button>
+                </div>
+                {refusing ? (
+                  <div className={styles.slackRefuse}>
+                    <textarea value={reason} maxLength={2000} onChange={(event) => setReason(event.target.value)} placeholder="O que mudar no texto (opcional). Vai para quem escreveu." autoFocus />
+                    <button type="button" disabled={busy} className={styles.slackNo} onClick={() => void run(false)}>
+                      Confirmar: não enviar
+                    </button>
+                  </div>
+                ) : null}
+                {error ? <div className={styles.error}>{error}</div> : null}
+                <p className={styles.slackWhy}>Por quê: {slack.reason}</p>
+              </div>
+              <footer className={styles.foot}>
+                <span>
+                  Pedido por {who} · {when(lastDelivery(task)?.at ?? task.createdAt)}
+                </span>
+              </footer>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** The old card: one face, as the list under the strip showed it (no owner block, or the Revisor's sample). */
 function OldCard({ task, naipe, index, count, who, decide }: { readonly task: LedgerTask; readonly naipe: Naipe; readonly index: number; readonly count: number; readonly who: string; readonly decide: Decide }): React.JSX.Element {
   const [rejecting, setRejecting] = useState(false);
@@ -570,8 +645,8 @@ export function LedgerCards({
             const block = item.state === 'aceita' ? undefined : itemDelivery?.forOwner;
             return (
               <button key={item.id} type="button" className={styles.mini} data-naipe={itemNaipe} aria-current={item.id === task.id} onClick={() => setSelected(item.id)}>
-                <small>{item.state === 'aceita' ? 'Amostra do dia' : block ? 'Decisão sua' : 'Entrega para conferir'}</small>
-                <b>{block?.title ?? item.title ?? block?.question ?? item.request}</b>
+                <small>{item.state === 'aceita' ? 'Amostra do dia' : item.slack ? 'Mensagem no Slack' : block ? 'Decisão sua' : 'Entrega para conferir'}</small>
+                <b>{item.slack ? `Para ${slackRecipient(item.slack).name}` : (block?.title ?? item.title ?? block?.question ?? item.request)}</b>
               </button>
             );
           })}
@@ -581,7 +656,9 @@ export function LedgerCards({
             </button>
           ) : null}
         </div>
-        {forOwner ? (
+        {task.slack && task.state === 'entregue' ? (
+          <SlackCard key={`${task.id}:${task.events.length}`} task={task} slack={task.slack} naipe={naipe} index={index} count={queue.length} who={who} decide={decide} />
+        ) : forOwner ? (
           <CardA key={`${task.id}:${task.events.length}`} task={task} forOwner={forOwner} naipe={naipe} index={index} count={queue.length} who={who} decide={decide} />
         ) : (
           <OldCard key={`${task.id}:${task.events.length}`} task={task} naipe={naipe} index={index} count={queue.length} who={who} decide={decide} />
