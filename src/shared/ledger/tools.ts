@@ -46,6 +46,7 @@ export type LedgerToolCall =
   | { readonly tool: 'tarefa_rejeitar'; readonly id: string; readonly motivo: string }
   | { readonly tool: 'tarefa_listar'; readonly estado?: LedgerTaskState; readonly todos?: boolean; readonly quadro?: string }
   | { readonly tool: 'tarefa_ver'; readonly id: string }
+  | { readonly tool: 'tarefa_transferir'; readonly id: string; readonly para: string; readonly motivo: string }
   | { readonly tool: 'carta_slack'; readonly destino: string; readonly destinoNome?: string; readonly thread?: string; readonly texto: string; readonly motivo: string };
 
 export type LedgerToolName = LedgerToolCall['tool'];
@@ -183,6 +184,23 @@ export const LEDGER_TOOLS = [
       type: 'object',
       properties: { id: ID, motivo: { type: 'string', description: 'O que falta ou está errado.' } },
       required: ['id', 'motivo'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'tarefa_transferir',
+    title: 'Passar a tarefa a outro lugar',
+    description:
+      'Troca o lugar dono de uma tarefa (aberta, em execução, rejeitada ou entregue), com motivo; o registro guarda quem passou, de quem e para quem. Em execução, ela volta a "aberta" e o novo dono assume com tarefa_assumir. ' +
+      'Quem pode: o Líder, o lugar dono atual ou, quando o lugar dono está fechado, saiu do quadro ou não começou, a sessão que vai fazer o trabalho, passando a si mesma ("para": "seu"). O destino é um lugar deste quadro (sessao_listar); o Líder único, um lugar que ele alcança no quadro da tarefa.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: ID,
+        para: { type: 'string', description: 'Id do lugar que fica com a tarefa (sessao_listar), ou "seu".' },
+        motivo: { type: 'string', description: 'Por que a tarefa muda de dono (ex.: o lugar dono fechou).' },
+      },
+      required: ['id', 'para', 'motivo'],
       additionalProperties: false,
     },
   },
@@ -384,6 +402,14 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       const motivo = text(args.motivo, 'motivo', MAX_REQUEST_CHARS, true);
       if (typeof motivo === 'object' || motivo === undefined) return fail('"motivo" é obrigatório para rejeitar.');
       return { ok: true, call: { tool: 'tarefa_rejeitar', id: id.trim(), motivo } };
+    }
+    case 'tarefa_transferir': {
+      if (typeof id === 'object' || id === undefined) return fail('"id" é obrigatório.');
+      const para = text(args.para, 'para', 120, true);
+      const motivo = text(args.motivo, 'motivo', MAX_REQUEST_CHARS, true);
+      if (typeof para === 'object' || para === undefined) return fail('"para" é obrigatório: o lugar que fica com a tarefa, ou "seu".');
+      if (typeof motivo === 'object' || motivo === undefined) return fail('"motivo" é obrigatório: por que a tarefa muda de dono.');
+      return { ok: true, call: { tool: 'tarefa_transferir', id: id.trim(), para: para.trim(), motivo: motivo.trim() } };
     }
     case 'tarefa_listar': {
       if (args.estado !== undefined && !STATES.includes(args.estado as LedgerTaskState)) return fail(`"estado" tem de ser ${STATES.join(', ')}.`);

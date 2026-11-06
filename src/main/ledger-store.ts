@@ -23,6 +23,7 @@ import {
   lastDelivery,
   slackLetterSent,
   ledgerStrip,
+  transfersOf,
   maxProofBytes,
   parseLedgerDoc,
   PROOF_FILE_TYPES,
@@ -108,6 +109,8 @@ export interface LedgerService {
   /** `tarefa_ver` by `placeId` of the delivery made at `deliveredAt` (memory only: after a restart, look again). */
   noteProofSeen(placeId: string, taskId: string, deliveredAt: number): void;
   proofSeen(placeId: string, taskId: string, deliveredAt: number): boolean;
+  /** The service's clock (the vitest moves it). */
+  now(): number;
 }
 
 /** The biggest print `tarefa_ver` sends inline (the path goes in any case). */
@@ -237,6 +240,7 @@ export function createLedgerService(deps: LedgerServiceDeps): LedgerService {
     proofSeen(placeId, taskId, deliveredAt) {
       return seen.has(seenKey(placeId, taskId, deliveredAt));
     },
+    now,
   };
 }
 
@@ -251,6 +255,26 @@ export interface LedgerCaller {
   readonly boardPlaceIds: readonly string[];
   /** The caller's board as saved in `mindscape.json` (who opened whom, the arrows). Missing = the strict answer. */
   readonly board?: MindscapeBoard;
+  /**
+   * 06/11 — the places of the boards the main could read (project folder → place id → `estado` of `sessao_listar`:
+   * trabalhando, parada, fechada, nao-comecou…). A board missing here is unknown: none of its tasks counts as orphan.
+   */
+  readonly placeStates?: ReadonlyMap<string, ReadonlyMap<string, string>>;
+}
+
+/** A place that has not started is gone only after this long (a place made a moment ago is still opening). */
+export const NOT_STARTED_GRACE_MS = 30 * 60 * 1000;
+
+/** Why the owner place of `task` can no longer do the work (closed, out of the board, never started); `null` = alive or unknown. */
+export function ownerGone(caller: LedgerCaller, task: LedgerTask, now: number): string | null {
+  const states = caller.placeStates?.get(task.projectPath);
+  if (!states) return null;
+  const state = states.get(task.ownerPlaceId);
+  if (state === undefined) return 'o lugar dono saiu do quadro';
+  if (state === 'fechada') return 'o lugar dono está fechado';
+  const since = task.events.at(-1)?.at ?? task.createdAt;
+  if (state === 'nao-comecou' && now - since >= NOT_STARTED_GRACE_MS) return 'o lugar dono não começou';
+  return null;
 }
 
 /** The strip with the same pt-BR words as the rest of the tool (`aberta`, `em-execucao`, `esperandoDono`…). */
@@ -326,6 +350,7 @@ function taskView(task: LedgerTask, doc: LedgerDoc): Record<string, unknown> {
   const delivery = lastDelivery(task);
   const decision = [...task.events].reverse().find((event) => event.kind === 'aceita' || event.kind === 'rejeitada');
   const who = (actor: LedgerActor): string => (actor.kind === 'dono' ? 'dono' : actor.placeId);
+  const transfers = transfersOf(task);
   return {
     id: task.id,
     ...(task.title ? { titulo: task.title } : {}),
@@ -335,6 +360,7 @@ function taskView(task: LedgerTask, doc: LedgerDoc): Record<string, unknown> {
     prazo: task.due,
     dono: task.ownerPlaceId,
     risco: task.risk,
+    ...(transfers.length ? { transferencias: transfers.map((t) => ({ de: t.from, para: t.to, por: who(t.by), em: new Date(t.at).toISOString(), motivo: t.reason })) } : {}),
     ...(delivery
       ? {
           entrega: {
@@ -403,6 +429,26 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
     }
     case 'tarefa_assumir':
       return answer(service.apply(actor, { op: 'assumir', id: call.id }), 'assumida');
+    case 'tarefa_transferir': {
+      let doc: LedgerDoc;
+      try {
+        doc = service.load().doc;
+      } catch (error) {
+        return { ok: false, text: `Não consegui ler o Oráculo Harrow: ${error instanceof Error ? error.message : String(error)}` };
+      }
+      const task = doc.tasks[call.id];
+      if (!task) return { ok: false, text: `Não existe tarefa "${call.id}" (veja tarefa_listar).` };
+      if (task.projectPath !== caller.projectPath) return { ok: false, text: 'A tarefa é de outro quadro; só se passa adiante tarefa do próprio quadro.' };
+      const to = call.para === 'seu' ? caller.placeId : call.para;
+      if (!caller.boardPlaceIds.includes(to)) return { ok: false, text: `"${to}" não é um lugar deste quadro que você alcança (veja sessao_listar).` };
+      const gone = ownerGone(caller, task, service.now());
+      const result = service.apply(actor, { op: 'transferir', id: task.id, to, reason: gone && !call.motivo.includes(gone) ? `${call.motivo} (${gone})` : call.motivo, ...(gone ? { ownerGone: true } : {}) });
+      if (!result.ok) return { ok: false, text: result.reason };
+      return {
+        ok: true,
+        text: JSON.stringify({ transferida: true, id: result.task.id, estado: result.task.state, dono: result.task.ownerPlaceId, ...(result.task.state === 'aberta' ? { proximo: 'O novo dono assume com tarefa_assumir.' } : {}) }),
+      };
+    }
     case 'carta_slack': {
       const result = service.apply(actor, {
         op: 'carta-slack',

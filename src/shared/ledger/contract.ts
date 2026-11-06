@@ -234,6 +234,60 @@ export function lastDecision(task: LedgerTask): LedgerEvent | undefined {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Marks — facts newer than v4, written in fields v4 already keeps (owner's Líder, 06/11: no schema bump, the Alfa
+// installed reads and rewrites the same `ledger.json`). The v4 parse drops an unknown event kind and an unknown
+// field when it rewrites the file, so a new fact rides on a known kind with a mark at the start of its `text`:
+//   transfer  → a `criada` event  "⟦transferida de <from> para <to>⟧ <reason>"  (+ `ownerPlaceId` changed)
+//   cancel    → a `rejeitada` event "⟦cancelada⟧ <reason>"                      (state `rejeitada`: v4 bars it too)
+//   doer      → the `entregue` event "⟦feito por <placeId>⟧ <note>"
+// A text the sessions or the owner write never starts with the mark (`startsWithMark`), so a mark is never forged.
+
+const MARK_OPEN = '⟦';
+const MARK = /^⟦([^⟧\n]{1,240})⟧ ?/;
+
+function withMark(tag: string, rest: string): string {
+  return `${MARK_OPEN}${tag}⟧${rest.trim() ? ` ${rest.trim()}` : ''}`;
+}
+
+function markOf(text: string | undefined): { tag: string; rest: string } | null {
+  const match = text ? MARK.exec(text) : null;
+  return match ? { tag: match[1]!, rest: text!.slice(match[0].length) } : null;
+}
+
+export function startsWithMark(text: string | undefined): boolean {
+  return (text ?? '').trimStart().startsWith(MARK_OPEN);
+}
+
+/** An event's text without its mark (what a person wrote). */
+export function eventNote(event: LedgerEvent): string | undefined {
+  const mark = markOf(event.text);
+  const note = mark ? mark.rest : event.text;
+  return note?.trim() ? note : undefined;
+}
+
+export interface LedgerTransfer {
+  readonly at: number;
+  readonly by: LedgerActor;
+  readonly from: string;
+  readonly to: string;
+  readonly reason: string;
+}
+
+/** The transfers of a task, oldest first. */
+export function transfersOf(task: LedgerTask): LedgerTransfer[] {
+  return task.events.flatMap((event) => {
+    const mark = event.kind === 'criada' ? markOf(event.text) : null;
+    const places = mark ? /^transferida de (\S+) para (\S+)$/.exec(mark.tag) : null;
+    return places ? [{ at: event.at, by: event.by, from: places[1]!, to: places[2]!, reason: mark!.rest.trim() }] : [];
+  });
+}
+
+/** The Líder of a board, or the Líder único (both carry the role `lider`). */
+export function isLeaderRole(roleId: string | undefined): boolean {
+  return roleId === 'lider';
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // Operations — the ONE place the rules live. Pure: the caller gives the clock and the new id.
 
 export type LedgerOp =
@@ -258,7 +312,13 @@ export type LedgerOp =
   /** v4 — a place asks the owner to send a Slack message (born `entregue`, high risk). */
   | { readonly op: 'carta-slack'; readonly projectPath: string; readonly slack: SlackLetter }
   /** v4 — the guard let the one send of an accepted letter through. */
-  | { readonly op: 'slack-enviada'; readonly id: string };
+  | { readonly op: 'slack-enviada'; readonly id: string }
+  /**
+   * 06/11 — passes the task to another place (`to`): the Líder, the owner, or the owner place itself; or, when the
+   * main saw that the owner place is gone (`ownerGone`: closed, out of the board, never started), the place that
+   * takes the work over passing it to itself. A running task goes back to `aberta`, so the new owner takes it.
+   */
+  | { readonly op: 'transferir'; readonly id: string; readonly to: string; readonly reason: string; readonly ownerGone?: boolean };
 
 export interface LedgerOpContext {
   readonly now: number;
@@ -396,6 +456,22 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       const why = cannotDecide(task, actor) ?? (op.option ? optionRefusal(task, op.option, 'rejeitada') : null);
       if (why) return fail(`Não rejeitei: ${why}`);
       return done(step(task, 'rejeitada', { kind: 'rejeitada', at: ctx.now, by: actor, text: reason, ...requestOf(op), ...(op.option ? { option: op.option } : {}) }));
+    }
+
+    case 'transferir': {
+      const to = op.to.trim();
+      const reason = op.reason.trim();
+      if (task.slack) return fail('Carta de Slack não se transfere: o envio não depende de quem a escreveu.');
+      if (task.state === 'aceita') return fail('A tarefa já foi aceita e fechada; não há o que passar adiante.');
+      if (!to) return fail('"para" é obrigatório: o lugar que fica com a tarefa.');
+      if (to === task.ownerPlaceId) return fail(`A tarefa já é de ${to}.`);
+      if (!reason) return fail('"motivo" é obrigatório: por que a tarefa muda de dono.');
+      if (startsWithMark(reason)) return fail(`"motivo" não pode começar com "${MARK_OPEN}".`);
+      const may = actor.kind === 'dono' || isOwnerPlace || isLeaderRole(actor.roleId) || (op.ownerGone === true && actor.placeId === to);
+      if (!may)
+        return fail(`Só o Líder, o dono, o lugar dono (${task.ownerPlaceId}) ou, com o lugar dono fechado ou fora do quadro, quem assume o trabalho passa a tarefa adiante.`);
+      const state: LedgerTaskState = task.state === 'em-execucao' ? 'aberta' : task.state;
+      return done({ ...step(task, state, { kind: 'criada', at: ctx.now, by: actor, text: withMark(`transferida de ${task.ownerPlaceId} para ${to}`, reason) }), ownerPlaceId: to });
     }
 
     case 'slack-enviada':

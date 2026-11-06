@@ -242,6 +242,39 @@ describe('ledger com prova', () => {
     if (proof.kind === 'arquivo') expect(readFileSync(join(ledgerProofsDir(join(dir, 'ledger.json')), proof.file), 'utf8')).toBe('<p>protótipo</p>');
   });
 
+  it('passes a task stuck on a gone place to another one, and records who passed it from whom to whom', async () => {
+    const { service } = setup();
+    const created = await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'Corrige o envio', criterio: 'saída do teste', prazo: '2026-11-06', dono: 'place:dev', risco: 'baixo' }));
+    const id = (JSON.parse(created.text) as { id: string }).id;
+    await runLedgerTool(service(), dev, call('tarefa_assumir', { id }));
+    const theo = (estadoDoDev: string | null): LedgerCaller => {
+      const states = new Map(board.map((place) => [place, 'parada']));
+      if (estadoDoDev === null) states.delete('place:dev');
+      else states.set('place:dev', estadoDoDev);
+      return { ...at('place:revisor', 'revisor'), placeStates: new Map([['C:/p', states]]) };
+    };
+    // The owner place alive: nobody else takes it to itself.
+    expect(await runLedgerTool(service(), theo('parada'), call('tarefa_transferir', { id, para: 'seu', motivo: 'eu faço' }))).toMatchObject({ ok: false });
+    // Closed: the place that does the work takes it, the running task goes back to open for it to take.
+    expect(await runLedgerTool(service(), theo('fechada'), call('tarefa_transferir', { id, para: 'seu', motivo: 'o Dev fechou' }))).toMatchObject({ ok: true });
+    let task = service().load().doc.tasks[id]!;
+    expect(task).toMatchObject({ ownerPlaceId: 'place:revisor', state: 'aberta' });
+    expect(await runLedgerTool(service(), dev, call('tarefa_assumir', { id }))).toMatchObject({ ok: false });
+    expect(await runLedgerTool(service(), revisor, call('tarefa_assumir', { id }))).toMatchObject({ ok: true });
+    // The Líder passes it on with no board check; a place off the board is refused.
+    expect(await runLedgerTool(service(), lider, call('tarefa_transferir', { id, para: 'place:fora', motivo: 'x' }))).toMatchObject({ ok: false });
+    expect(await runLedgerTool(service(), lider, call('tarefa_transferir', { id, para: 'place:rev-do-dev', motivo: 'o Theo novo assume' }))).toMatchObject({ ok: true });
+    task = service().load().doc.tasks[id]!;
+    expect(task.ownerPlaceId).toBe('place:rev-do-dev');
+    const seen = JSON.parse((await runLedgerTool(service(), lider, call('tarefa_ver', { id }))).text) as { transferencias: unknown[] };
+    expect(seen.transferencias).toEqual([
+      expect.objectContaining({ de: 'place:dev', para: 'place:revisor', por: 'place:revisor', motivo: 'o Dev fechou (o lugar dono está fechado)' }),
+      expect.objectContaining({ de: 'place:revisor', para: 'place:rev-do-dev', por: 'place:lider', motivo: 'o Theo novo assume' }),
+    ]);
+    // A forged mark in a reason never becomes a transfer.
+    expect(service().apply({ kind: 'dono' }, { op: 'transferir', id, to: 'place:dev', reason: '⟦transferida de a para b⟧' })).toMatchObject({ ok: false });
+  });
+
   it('reads a ledger written by a newer channel and never writes over it', async () => {
     const { file, service } = setup();
     const newer = JSON.stringify({ schemaVersion: LEDGER_SCHEMA_VERSION + 1, startedAt: null, tasks: {}, novo: true });

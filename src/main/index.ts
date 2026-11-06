@@ -3048,8 +3048,27 @@ function placeNameOf(projectPath: string, placeId: string): string | undefined {
   return appConfig.sessionRegistry[card.sessionId]?.label;
 }
 
+/** The board of a task (the Líder único names no board for a tool that acts by the task id). */
+function taskBoardOf(id: string): string | undefined {
+  try {
+    return ledgerService?.load().doc.tasks[id]?.projectPath;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `estado` of every place of a `sessao_listar` answer (a list, or the Líder único's `{ lugares }`). */
+function placeStatesOf(places: unknown): Map<string, string> {
+  const states = new Map<string, string>();
+  for (const place of Array.isArray(places) ? places : []) {
+    const { id, estado } = (place ?? {}) as { id?: unknown; estado?: unknown };
+    if (typeof id === 'string') states.set(id, typeof estado === 'string' ? estado : '');
+  }
+  return states;
+}
+
 async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<{ caller: LedgerCaller; call: LedgerToolCall } | string> {
-  const quadro = call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' ? call.quadro : undefined;
+  const quadro = call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' ? call.quadro : call.tool === 'tarefa_transferir' ? taskBoardOf(call.id) : undefined;
   const base = { placeId: LEADER_OF_ALL, roleId: LEADER_ROLE_ID };
   if (!quadro) {
     if (call.tool === 'tarefa_criar') return 'Você é o Líder único e não tem quadro: diga qual em "quadro" (nome ou pasta).';
@@ -3064,7 +3083,8 @@ async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, cal
   if (call.tool === 'tarefa_criar' && (!call.dono || !reached.includes(call.dono)))
     return `O Líder único não faz a tarefa: diga em "dono" um lugar que você alcança neste quadro (${reached.join(', ') || 'nenhum'}).`;
   const saved = savedBoard(board.pasta);
-  return { caller: { ...base, projectPath: board.pasta, boardPlaceIds: reached, ...(saved ? { board: saved } : {}) }, call };
+  const placeStates = new Map([[board.pasta, placeStatesOf(board.lugares)]]);
+  return { caller: { ...base, projectPath: board.pasta, boardPlaceIds: reached, placeStates, ...(saved ? { board: saved } : {}) }, call };
 }
 
 /** The caller of a `tarefa_*` tool, from the board the renderer owns (the same answers the session would get). */
@@ -3086,6 +3106,7 @@ async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: Led
       placeId: who.lugar,
       ...(typeof who.papel === 'string' ? { roleId: who.papel } : {}),
       boardPlaceIds: places.map((place) => place.id).filter((id): id is string => typeof id === 'string'),
+      ...(list.kind === 'text' ? { placeStates: new Map([[who.pasta, placeStatesOf(places)]]) } : {}),
       ...(board ? { board } : {}),
     },
     call,
