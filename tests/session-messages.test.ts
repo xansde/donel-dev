@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { AgentBridge, type AgentBridgePorts, type BridgeTab } from '../src/renderer/src/Mindscape/agentBridge';
+import { AgentBridge, NOTICE_CHARS, type AgentBridgePorts, type BridgeTab } from '../src/renderer/src/Mindscape/agentBridge';
 import { SessionSemaphoreManager } from '../src/main/session-semaphore-manager';
 import type { HookBridge } from '../src/main/hook-bridge';
 import { addLink, addPlace, emptyMindscapeDoc } from '../src/shared/mindscape/model';
@@ -62,6 +62,21 @@ describe('mensagem entre sessões vai na hora para o CLI', () => {
     expect(sent.map((item) => item.tabId)).toEqual(['tab-lider', 'tab-lider']);
     expect(sent[0]!.text).toMatch(/terminou: turno 1$/);
     expect(sent[1]!.text).toMatch(/terminou: turno 2$/);
+  });
+
+  it('o aviso "terminou" leva o turno inteiro, com as linhas, e só corta acima do teto dizendo quanto', () => {
+    const { bridge, sent } = team('waiting');
+    const lines = Array.from({ length: 60 }, (_, i) => `- item ${i + 1}: o script de instalação ficou pronto e a tarefa foi registrada`);
+    const long = `Resumo do turno:\n\n${lines.join('\n')}\n\nFim.`;
+    expect(long.length).toBeGreaterThan(4_000);
+    expect(long.length).toBeLessThan(NOTICE_CHARS);
+    bridge.turnEnded('s-dev', long);
+    expect(sent[0]!.text).toBe(`◆ Dev (place:dev) terminou: ${long}`);
+
+    const huge = 'x'.repeat(NOTICE_CHARS + 500);
+    bridge.turnEnded('s-dev', huge);
+    expect(sent[1]!.text).toBe(`◆ Dev (place:dev) terminou: ${'x'.repeat(NOTICE_CHARS)}\n[cortado: ${NOTICE_CHARS} de ${NOTICE_CHARS + 500} letras; o resto em sessao_ver_tela]`);
+    expect(sent[1]!.text).not.toContain('…');
   });
 
   it('sessão parada depois de um Stop limpo não vira "precisa do dono" com o aviso de ociosidade', () => {
