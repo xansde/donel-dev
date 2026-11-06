@@ -2965,6 +2965,10 @@ function registerLedgerIpcHandlers(): void {
     },
   });
   ledgerService = service;
+  // Carta de Slack num toque (06/11): the letters written before this version replace their decision cards too.
+  const sweep = service.linkSlackLetters();
+  if ('error' in sweep) console.error('[donel-dev] ligar cartas de Slack às de decisão falhou (segue sem ligar):', sweep.error);
+  else if (sweep.backup) console.log(`[donel-dev] cartas de Slack ligadas às de decisão: ${JSON.stringify(sweep.linked)} (cópia em ${sweep.backup})`);
   // Cartas forma A — the card shows the proofs (the HTML prototype, a video) by `donel-prova:`.
   registerProofProtocol(protocol, ledgerProofsDir(ledgerFilePath(process.env, app.getPath('userData'))));
   const fromMain = (sender: Electron.WebContents): boolean => getMainWindow()?.webContents.id === sender.id;

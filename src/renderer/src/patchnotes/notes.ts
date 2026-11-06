@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-06',
     items: [
       {
+        title: 'Responder no Slack com uma carta só',
+        text: 'Para responder alguém no Slack, as sessões agora criam só a carta da mensagem, com o rascunho pronto, e não mais uma carta de decisão antes. A carta mostra primeiro para quem vai (a pessoa ou o canal, e se é resposta numa conversa que já existe), depois o texto exatamente como sai, e embaixo "Enviar" e "Não enviar", com um campo para dizer o que mudar. Quando já existia uma carta de decisão sobre a mesma mensagem, ela sai da sua fila enquanto a da mensagem espera, e fecha junto quando você decidir. Nada se apaga.',
+      },
+      {
         title: 'Pedir ao Líder pelo celular, escrevendo ou falando',
         text: 'O Oráculo no celular ganhou o botão "Pedir", no topo. Escreva ou grave o que você quer: o áudio é transcrito no seu computador, pelo OpenWhispr, e você confere e corrige o texto antes de enviar. O pedido vai direto para o chat do Líder. Se ele estiver fechado, o computador guarda o pedido e entrega quando o Líder abrir, mesmo que o Donel reinicie no meio. Em "Seus pedidos" você vê cada um: na fila, entregue, ou a tarefa que ele virou. Para gravar direto na página, use o endereço https do Oráculo; no http, o botão abre o gravador do celular.',
       },

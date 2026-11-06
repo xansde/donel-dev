@@ -4,7 +4,7 @@
 // como validação humana, e as regras (quem entregou não decide, risco, amostra do Revisor) são as do contrato.
 
 import { basename } from 'node:path';
-import type { CartaCelular, ComentarCelular, DecisaoCelular, EntregaCelular, FalaCelular, ProvaCelular, VisualCelular } from '../../shared/celular';
+import type { CartaCelular, ComentarCelular, DecisaoCelular, EntregaCelular, FalaCelular, ProvaCelular, SlackCelular, VisualCelular } from '../../shared/celular';
 import {
   decisionOfRequest,
   HTML_MEDIA_TYPE,
@@ -16,8 +16,9 @@ import {
   type LedgerProof,
   type LedgerTask,
   type LedgerVisual,
+  type SlackLetter,
 } from '../../shared/ledger/contract';
-import { actorLabel, naipeDoPapel, reciboDe, type PlaceNameOf } from '../../shared/ledger/labels';
+import { actorLabel, naipeDoPapel, reciboDe, slackRecipient, type PlaceNameOf } from '../../shared/ledger/labels';
 import type { CardWriter } from '../ledger-card-writer';
 import type { LedgerService } from '../ledger-store';
 import { maskSecrets, summarize } from './mask';
@@ -125,6 +126,11 @@ function conversaDe(task: LedgerTask, quem: string): FalaCelular[] {
   });
 }
 
+function slackCelular(slack: SlackLetter): SlackCelular {
+  const recipient = slackRecipient(slack);
+  return { para: recipient.name, onde: recipient.kindLabel, conversa: recipient.conversationLabel, texto: slack.text, motivo: slack.reason };
+}
+
 function entregaCelular(task: LedgerTask, placeName: PlaceNameOf | undefined): EntregaCelular {
   const delivery = lastDelivery(task);
   const decision = lastDecision(task);
@@ -152,6 +158,7 @@ function entregaCelular(task: LedgerTask, placeName: PlaceNameOf | undefined): E
     ids: [`tarefa ${task.id}`, ...(deliveredBy?.kind === 'lugar' ? [`lugar ${deliveredBy.placeId}`] : [])],
     ...(forOwner ? { carta: cartaCelular(forOwner) } : {}),
     conversa: conversaDe(task, actorLabel(deliveredBy, task.projectPath, placeName)),
+    ...(task.slack && task.state === 'entregue' ? { slack: slackCelular(task.slack) } : {}),
   };
 }
 

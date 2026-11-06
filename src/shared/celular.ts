@@ -186,6 +186,22 @@ export interface EntregaCelular {
   readonly carta?: CartaCelular;
   /** O que o dono escreveu na carta e as reentregas de quem fez, em ordem (o verso mostra). */
   readonly conversa: readonly FalaCelular[];
+  /** Carta de Slack: a frente mostra para quem vai, o texto exato e "Enviar" / "Não enviar". */
+  readonly slack?: SlackCelular;
+}
+
+/** Uma mensagem no Slack em nome do dono, como a carta mostra (sem "DM", sem "thread"). */
+export interface SlackCelular {
+  /** A pessoa ou o canal. */
+  readonly para: string;
+  /** "Conversa particular", "Canal", "Conversa em grupo". */
+  readonly onde: string;
+  /** "Resposta dentro de uma conversa que já existe" ou "Mensagem nova". */
+  readonly conversa: string;
+  /** O texto exato que sai. */
+  readonly texto: string;
+  /** Por que a sessão quer mandar. */
+  readonly motivo: string;
 }
 
 /** Uma fala da conversa da carta. */

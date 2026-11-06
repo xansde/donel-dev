@@ -745,3 +745,108 @@
     transition: none;
   }
 }
+
+/* Carta de Slack: para quem, o texto exato, Enviar / Não enviar. */
+.slackTo {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--pre-fundo);
+}
+
+.slackTo small {
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--tinta-suave);
+}
+
+.slackTo b {
+  font-family: var(--serifa);
+  font-size: 1.25rem;
+  line-height: 1.2;
+}
+
+.slackTo span {
+  font-size: 0.8rem;
+  color: var(--tinta-suave);
+}
+
+.slackLabel {
+  margin: 14px 0 6px;
+  font-family: var(--serifa);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--naipe);
+  font-weight: 600;
+}
+
+.slackText {
+  padding: 8px 12px;
+  border-left: 3px solid var(--naipe);
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.slackActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.slackSend,
+.slackNo {
+  min-height: 42px;
+  border-radius: 12px;
+  border: 2px solid currentColor;
+  background: var(--carta);
+  font-family: inherit;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.slackSend { color: var(--sim); }
+.slackNo { color: var(--nao); }
+
+.slackArmed {
+  background: var(--sim);
+  border-color: var(--sim);
+  color: var(--carta);
+}
+
+.slackSend:disabled,
+.slackNo:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.slackRefuse {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.slackRefuse textarea {
+  min-height: 60px;
+  padding: 8px 10px;
+  border: 1px solid var(--carta-borda);
+  border-radius: 10px;
+  background: var(--pre-fundo);
+  color: var(--tinta);
+  font: inherit;
+  resize: vertical;
+}
+
+.slackWhy {
+  margin: 14px 0 0;
+  font-size: 0.8rem;
+  color: var(--tinta-suave);
+}

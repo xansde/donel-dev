@@ -677,7 +677,100 @@
     decidir(ctx, opcao.fecha === 'rejeitada' ? 'rejeitar' : 'aceitar', null, opcao.rotulo, ctx.texto ? ctx.texto.value.trim() : '');
   }
 
+  /**
+   * Carta de Slack (06/11, "um toque só"): primeiro para quem vai, depois o texto exato, depois "Enviar" e
+   * "Não enviar". Enviar pede um segundo toque (sai em nome do dono); "Não enviar" abre o campo do motivo.
+   */
+  function montarCartaSlack(item, posicao, quantas) {
+    var naipe = GLIFOS[item.naipe] ? item.naipe : 'martelos';
+    var s = item.slack;
+    var slot = el('section', 'slot');
+    slot.setAttribute('aria-label', 'Mensagem no Slack para ' + s.para);
+    slot.id = 'carta-' + item.id;
+
+    var carta = el('article', 'carta carta-slack naipe-' + naipe);
+    var moldura = el('div', 'moldura');
+    var interna = el('div', 'moldura-interna');
+    var topo = el('header', 'carta-topo');
+    var glifo = el('span', 'glifo');
+    glifo.innerHTML = GLIFOS[naipe];
+    glifo.setAttribute('aria-hidden', 'true');
+    topo.appendChild(glifo);
+    topo.appendChild(el('span', 'naipe-nome', 'Mensagem no Slack'));
+    interna.appendChild(topo);
+    var indice = el('span', 'indice', romano(posicao) + ' · ' + romano(quantas));
+    indice.setAttribute('aria-label', 'Carta ' + posicao + ' de ' + quantas);
+    interna.appendChild(indice);
+    interna.appendChild(el('p', 'faixa', 'Sai em seu nome · esperando você'));
+
+    var corpo = el('div', 'carta-corpo');
+    var para = el('section', 'slack-para');
+    para.appendChild(el('small', null, 'Para'));
+    para.appendChild(el('b', null, s.para));
+    para.appendChild(el('span', null, s.onde + ' · ' + s.conversa));
+    corpo.appendChild(para);
+    var bloco = el('section', 'bloco');
+    bloco.appendChild(el('h3', null, 'O texto, exatamente como sai'));
+    bloco.appendChild(el('div', 'slack-msg', s.texto));
+    corpo.appendChild(bloco);
+    corpo.appendChild(el('p', 'slack-motivo', 'Por quê: ' + s.motivo));
+    interna.appendChild(corpo);
+    interna.appendChild(el('footer', 'carta-pe', 'Pedido por ' + item.quemEntregou + ' · ' + haQuanto(item.entregueEm)));
+    moldura.appendChild(interna);
+    carta.appendChild(moldura);
+    slot.appendChild(carta);
+
+    var acoes = el('div', 'acoes');
+    var nao = el('button', 'botao botao-nao');
+    nao.type = 'button';
+    nao.innerHTML = ICONE_NAO;
+    nao.appendChild(document.createTextNode('Não enviar'));
+    var sim = el('button', 'botao botao-sim');
+    sim.type = 'button';
+    sim.innerHTML = ICONE_SIM;
+    var rotuloSim = document.createTextNode('Enviar');
+    sim.appendChild(rotuloSim);
+    acoes.appendChild(nao);
+    acoes.appendChild(sim);
+    slot.appendChild(acoes);
+
+    var naoCaixa = el('div', 'slack-nao');
+    naoCaixa.hidden = true;
+    var porque = el('textarea');
+    porque.rows = 2;
+    porque.maxLength = 2000;
+    porque.placeholder = 'O que mudar no texto (opcional). Vai para quem escreveu.';
+    var confirmarNao = el('button', 'botao botao-nao', 'Confirmar: não enviar');
+    confirmarNao.type = 'button';
+    naoCaixa.appendChild(porque);
+    naoCaixa.appendChild(confirmarNao);
+    slot.appendChild(naoCaixa);
+
+    var ctx = { item: item, slot: slot, carta: carta, botoes: [nao, sim, confirmarNao] };
+    var marcado = false;
+    sim.addEventListener('click', function () {
+      if (ctx.ocupado) return;
+      if (!marcado) {
+        marcado = true;
+        sim.classList.add('marcada');
+        rotuloSim.textContent = 'Toque de novo para enviar';
+        return;
+      }
+      decidir(ctx, 'aceitar', null, 'Enviar');
+    });
+    nao.addEventListener('click', function () {
+      naoCaixa.hidden = !naoCaixa.hidden;
+      if (!naoCaixa.hidden) setTimeout(function () { porque.focus(); }, 50);
+    });
+    confirmarNao.addEventListener('click', function () {
+      if (ctx.ocupado) return;
+      decidir(ctx, 'rejeitar', porque.value.trim(), 'Não enviar');
+    });
+    return slot;
+  }
+
   function montarSlot(item, posicao, quantas) {
+    if (item.slack && item.origem !== 'amostra-revisor') return montarCartaSlack(item, posicao, quantas);
     if (item.carta && item.origem !== 'amostra-revisor') {
       var cartaA = montarCartaA(item, posicao, quantas);
       cartaA.id = 'carta-' + item.id; // o toque do aviso abre esta carta
