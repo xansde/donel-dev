@@ -30,9 +30,11 @@
  * 3 — cartas forma A: `title` on a task; `forOwner` on a delivery; `option` on a decision; the `comentada` event
  *     (the owner writing on the card) with `deliveredTo`.
  * 4 — `slack` on a task (a letter "mensagem para o Slack") and the `enviada` event (`slack-guard.ts`).
- * 5 — the answer of a letter's send: the `envio-confirmado` and `envio-falhou` events (t-8119864a).
+ *   The answer of a send (t-8119864a) is also an `enviada` event, told apart by its `text` (`SEND_ANSWER`): a v4
+ *   app reads and rewrites it as is and counts the letter as spent, so it needed no new version (Alfa 0.4.0 and the
+ *   newer builds share one ledger.json).
  */
-export const LEDGER_SCHEMA_VERSION = 5;
+export const LEDGER_SCHEMA_VERSION = 4;
 
 export type LedgerTaskState = 'aberta' | 'em-execucao' | 'entregue' | 'aceita' | 'rejeitada';
 export type LedgerRisk = 'baixo' | 'alto';
@@ -48,7 +50,7 @@ export type LedgerProof =
   | { readonly kind: 'texto'; readonly text: string }
   | { readonly kind: 'link'; readonly url: string };
 
-export type LedgerEventKind = 'criada' | 'assumida' | 'entregue' | 'aceita' | 'rejeitada' | 'conferida' | 'comentada' | 'enviada' | 'envio-confirmado' | 'envio-falhou';
+export type LedgerEventKind = 'criada' | 'assumida' | 'entregue' | 'aceita' | 'rejeitada' | 'conferida' | 'comentada' | 'enviada';
 
 /** v3 — one named path of the owner's decision. */
 export interface LedgerOption {
@@ -260,7 +262,7 @@ export type LedgerOp =
   | { readonly op: 'carta-slack'; readonly projectPath: string; readonly slack: SlackLetter }
   /** v4 — the guard let the one send of an accepted letter through. */
   | { readonly op: 'slack-enviada'; readonly id: string }
-  /** v5 — the answer of the send in flight: Slack took it, or it failed EXPLICITLY (`why`). */
+  /** The answer of the send in flight: Slack took it, or it failed EXPLICITLY (`why`). An `enviada` with `SEND_ANSWER` text. */
   | { readonly op: 'slack-resultado'; readonly id: string; readonly outcome: 'confirmado' | 'falhou'; readonly why?: string };
 
 export interface LedgerOpContext {
@@ -412,9 +414,12 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
         step(
           task,
           'aceita',
-          op.outcome === 'confirmado'
-            ? { kind: 'envio-confirmado', at: ctx.now, by: actor }
-            : { kind: 'envio-falhou', at: ctx.now, by: actor, ...(op.why?.trim() ? { text: op.why.trim().slice(0, 300) } : {}) },
+          {
+            kind: 'enviada',
+            at: ctx.now,
+            by: actor,
+            text: op.outcome === 'confirmado' ? SEND_ANSWER.confirmed : `${SEND_ANSWER.failed}${op.why?.trim() ? `: ${op.why.trim().slice(0, 300)}` : ''}`,
+          },
         ),
       );
   }
@@ -426,8 +431,21 @@ export const MAX_SLACK_TEXT_CHARS = 12_000;
 export const MAX_LETTER_SENDS = 2;
 
 /**
+ * The `text` of an `enviada` event that is the ANSWER of a send, not a send. Kept in an existing kind and field on
+ * purpose: a v4 app drops unknown kinds and fields when it rewrites the ledger, but keeps these, and its rule (any
+ * `enviada` = spent) reads them on the safe side.
+ */
+export const SEND_ANSWER = { confirmed: 'resposta do envio: confirmado', failed: 'resposta do envio: falhou' } as const;
+
+function sendAnswer(event: LedgerEvent): 'confirmado' | 'falhou' | null {
+  if (event.kind !== 'enviada' || !event.text) return null;
+  if (event.text === SEND_ANSWER.confirmed) return 'confirmado';
+  return event.text === SEND_ANSWER.failed || event.text.startsWith(`${SEND_ANSWER.failed}:`) ? 'falhou' : null;
+}
+
+/**
  * Where a letter's send stands. `enviada` is written when the guard frees the call, so a send is spent from that
- * moment, even if the app closes before the answer; only an explicit failure (`envio-falhou`) gives one more.
+ * moment, even if the app closes before the answer; only an explicit failure (`SEND_ANSWER.failed`) gives one more.
  * - `nenhum`: never sent. `falhou`: the last send failed and the letter still frees the one resend.
  * - `confirmado`: Slack took it. `sem-confirmacao`: no answer, or one that shows neither success nor failure.
  * - `esgotada`: the last send failed, and it was already the resend.
@@ -436,14 +454,16 @@ export type SlackSendState = 'nenhum' | 'sem-confirmacao' | 'confirmado' | 'falh
 
 export function slackSendState(task: LedgerTask): SlackSendState {
   let sends = 0;
-  let last: LedgerEventKind | null = null;
+  let last: 'enviada' | 'confirmado' | 'falhou' | null = null;
   for (const event of task.events) {
-    if (event.kind === 'enviada') sends += 1;
-    if (event.kind === 'enviada' || event.kind === 'envio-confirmado' || event.kind === 'envio-falhou') last = event.kind;
+    if (event.kind !== 'enviada') continue;
+    const answer = sendAnswer(event);
+    if (answer === null) sends += 1;
+    last = answer ?? 'enviada';
   }
   if (last === null) return 'nenhum';
   if (last === 'enviada') return 'sem-confirmacao';
-  if (last === 'envio-confirmado') return 'confirmado';
+  if (last === 'confirmado') return 'confirmado';
   return sends < MAX_LETTER_SENDS ? 'falhou' : 'esgotada';
 }
 
@@ -751,7 +771,7 @@ function parseProof(raw: unknown): LedgerProof | null {
   return proof && validProof(proof) ? proof : null;
 }
 
-const EVENT_KINDS: readonly LedgerEventKind[] = ['criada', 'assumida', 'entregue', 'aceita', 'rejeitada', 'conferida', 'comentada', 'enviada', 'envio-confirmado', 'envio-falhou'];
+const EVENT_KINDS: readonly LedgerEventKind[] = ['criada', 'assumida', 'entregue', 'aceita', 'rejeitada', 'conferida', 'comentada', 'enviada'];
 
 function parseVisual(raw: unknown): LedgerVisual | null {
   const index = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value < MAX_PROOFS;

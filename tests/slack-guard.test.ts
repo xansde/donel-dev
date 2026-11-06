@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -180,6 +180,45 @@ describe('Slack só com carta', () => {
     restarted.after('pty-1', 'PostToolUseFailure', payload);
     for (let i = 0; i < 4; i++) expect(restarted.before('pty-1', { ...payload, tool_use_id: `toolu_again_${i}` })).toMatch(/bloqueado/);
     expect(await view(ledger, id)).toMatchObject({ enviada: true, envio: expect.stringMatching(/sem confirmação/) });
+  });
+
+  it('the answers of a send stay in the v4 format: an Alfa 0.4.0 on the same ledger.json reads, rewrites and keeps them', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'slack-guard-v4-'));
+    dirs.push(dir);
+    const filePath = join(dir, 'ledger.json');
+    let clock = Date.UTC(2026, 10, 6, 15);
+    const open = () => createLedgerService({ filePath, io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs, now: () => (clock += 1000) });
+    const ledger = open();
+    const confirmed = await letter(ledger, 'aceitar'); // failed, resent, confirmed
+    const failed = await letter(ledger, 'aceitar', `${TEXT}!`); // failed once: frees the resend here
+    const unconfirmed = await letter(ledger, 'aceitar', `${TEXT}?`); // a doubt
+    const first = attempt(ledger, ...slackMcp(TEXT));
+    first.answer('PostToolUse', [{ type: 'text', text: 'Error: fetch failed' }]);
+    attempt(ledger, ...slackMcp(TEXT)).answer('PostToolUse', SENT);
+    attempt(ledger, ...slackMcp(`${TEXT}!`)).answer('PostToolUseFailure');
+    attempt(ledger, ...slackMcp(`${TEXT}?`)).answer('PostToolUse', [{ type: 'text', text: 'Message sent.' }]);
+
+    // What v4 knows (staging before this PR, Alfa 0.4.0): the version, the event kinds, the event fields.
+    const V4_KINDS = ['criada', 'assumida', 'entregue', 'aceita', 'rejeitada', 'conferida', 'comentada', 'enviada'];
+    const V4_FIELDS = ['kind', 'at', 'by', 'proofs', 'text', 'requestId', 'forOwner', 'option', 'deliveredTo'];
+    const written = JSON.parse(readFileSync(filePath, 'utf8')) as { schemaVersion: number; tasks: Record<string, { events: Array<Record<string, unknown>> }> };
+    expect(written.schemaVersion).toBe(4);
+    for (const task of Object.values(written.tasks))
+      for (const event of task.events) {
+        expect(V4_KINDS).toContain(event.kind);
+        for (const field of Object.keys(event)) expect(V4_FIELDS).toContain(field);
+      }
+    // The v4 rule (any `enviada` = spent) never frees a send this code would not: an Alfa can only be stricter.
+    for (const id of [confirmed, failed, unconfirmed]) expect(written.tasks[id]!.events.some((event) => event.kind === 'enviada')).toBe(true);
+
+    // Another app reads and rewrites the file (any write: here a new letter); nothing of the letters is lost.
+    await runLedgerTool(open(), dev, call('carta_slack', { destino: 'C0123ABC', texto: 'outra', motivo: 'reescrever o arquivo' }));
+    const rewritten = JSON.parse(readFileSync(filePath, 'utf8')) as typeof written;
+    for (const id of [confirmed, failed, unconfirmed]) expect(rewritten.tasks[id]).toEqual(written.tasks[id]);
+    const reread = open();
+    expect(await view(reread, confirmed)).toMatchObject({ enviada: true, envio: expect.stringMatching(/confirmado/) });
+    expect(await view(reread, failed)).toMatchObject({ enviada: false, envio: expect.stringMatching(/falhou/) });
+    expect(await view(reread, unconfirmed)).toMatchObject({ enviada: true, envio: expect.stringMatching(/sem confirmação/) });
   });
 
   it('the letter of a Slack message is a card A the owner sends or not', async () => {

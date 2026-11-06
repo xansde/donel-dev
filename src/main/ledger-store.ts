@@ -505,8 +505,8 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
 //
 // `PreToolUse` frees the call and writes `enviada` on its letters right away, on disk: from that moment the letter
 // is spent, even if the app closes before the answer, and a second call finds nothing to free. At `PostToolUse` /
-// `PostToolUseFailure` the answer is read (`slackSendOutcome`): Slack took it → `envio-confirmado`; an EXPLICIT
-// failure ("fetch failed", `isError`, `ok: false`) → `envio-falhou`, and the letter frees ONE resend of the same
+// `PostToolUseFailure` the answer is read (`slackSendOutcome`): Slack took it → an `enviada` "confirmado"; an
+// EXPLICIT failure ("fetch failed", `isError`, `ok: false`) → an `enviada` "falhou" (`SEND_ANSWER`), and the letter frees ONE resend of the same
 // text (t-8119864a); a doubt, or no answer within `LETTER_IN_FLIGHT_MS`, writes nothing: the letter stays spent,
 // "envio sem confirmação".
 
