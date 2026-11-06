@@ -1185,12 +1185,16 @@ textarea:focus-visible {
   color: var(--ouro);
 }
 
+/* o nome da opção quebra em até duas linhas: cortado com reticências ele perdia o sentido */
 .opcao-atalho b {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
   max-width: 100%;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 1.08rem;
+  font-size: 1.05rem;
+  line-height: 1.2;
 }
 
 .opcao-atalho.marcada {
