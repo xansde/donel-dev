@@ -6,7 +6,8 @@ const sid = '11111111-2222-4333-8444-555555555555';
 const meta = { sid, hookToken: 'tok', hookPort: 21000, mcpToken: null, mcpPort: null, localCwd: 'C:\\p', projectName: 'p', name: 'p', launchArgs: [], createdAt: '' };
 
 describe('sessões remotas', () => {
-  it('leva o claude à pasta certa, com aspas que sobrevivem a apóstrofo e arquivos da sessão', () => {
+  // Pasta do PC em caminho do Windows (o app roda no PC): fora do Windows o `path` não a entende.
+  it.skipIf(process.platform !== 'win32')('leva o claude à pasta certa, com aspas que sobrevivem a apóstrofo e arquivos da sessão', () => {
     const script = buildRemoteSetupScript({
       sid,
       homeRelativeDir: remoteDirFor('C:\\Users\\a\\seazone\\Donel Dev', ['C:\\Users\\a\\seazone']),

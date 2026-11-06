@@ -1,5 +1,10 @@
 # Donel sem tela na VPS pessoal: estado ao fim de 05/11 (para 06/11)
 
+> **Desatualizado na parte das contas (06/11):** o dono decidiu um motor por
+> VPS ([ADR 0009](../adr/0009-um-motor-de-contas-por-vps.md)). Não há mais
+> "Homologações escolhe primeiro" nem ssh da VPS pessoal até Homologações. O
+> estado e os passos novos estão em `2026-11-06-motor-por-vps.md`.
+
 Pedido do dono (05/11): a VPS pessoal autônoma, sem depender do PC, com o
 switcher de contas, o Oráculo, as cartas no celular e o MCP donel morando lá.
 Prazo: 06/11. Fatias em `BACKLOG.md`, demanda `donel-vps`. Desenho de contas no

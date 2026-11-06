@@ -2,7 +2,7 @@
 // dono (`donel-servico contas ...`). Socket Unix em `~/.donel/servico.sock`,
 // numa pasta 0700: só o usuário do serviço fala com ele. Uma linha JSON de
 // pedido, uma linha JSON de resposta. Nenhum pedido nem resposta carrega par
-// de credencial (os comandos levam pasta, rótulo, lugar e id).
+// de credencial (os comandos levam pasta, rótulo e id).
 
 import { createConnection, createServer, type Server } from 'node:net';
 import { chmodSync, existsSync, unlinkSync } from 'node:fs';

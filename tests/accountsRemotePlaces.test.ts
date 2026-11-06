@@ -119,7 +119,7 @@ function makeEngine(
   remote: FakeRemote,
   place: Partial<RemotePlace> = {},
   overrides: Partial<AccountsConfig> = {},
-  engineOptions: { remotePlacesFirst?: boolean; now?: () => number } = {},
+  engineOptions: { now?: () => number } = {},
 ) {
   const mod = new FakeLocalMod();
   const savedRemotes: (readonly RemotePlace[])[] = [];
@@ -200,16 +200,6 @@ describe('motor com lugar remoto', () => {
 
     expect(await engine.evaluateAutoSwitch()).toEqual({ kind: 'switched', from: 'a', to: 'c' });
     expect(remote.writes).toEqual([]);
-  });
-
-  it('no serviço da VPS, o lugar remoto escolhe primeiro', async () => {
-    const remote = new FakeRemote(pair('b'), 'fp-b');
-    const { engine, mod } = makeEngine(remote, { activeAccountId: 'b' }, {}, { remotePlacesFirst: true });
-    mod.loads = { a: 95, b: 98, c: 0 };
-    await engine.listAccounts();
-
-    expect(await engine.evaluateAutoSwitch()).toBeNull();
-    expect(remote.writes).toEqual([pair('c')]);
   });
 
   it('a conta do lugar com carga desconhecida por 10 min conta como cheia e sai', async () => {

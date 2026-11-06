@@ -221,13 +221,6 @@ export interface AccountEngineDeps {
   readonly onRemotesChanged?: (remotes: readonly RemotePlace[]) => void;
   /** index.ts grava em `accounts-maintenance.log`. Nunca recebe o par. */
   readonly onRemoteEvent?: (event: RemotePlaceLogEvent) => void;
-  /**
-   * Serviço da VPS (ADR 0008) — avalia os lugares remotos ANTES desta máquina.
-   * No PC fica desligado: o dono quer o PC com a preferência (05/11). No serviço
-   * da VPS, "esta máquina" é a VPS pessoal e o lugar remoto é Homologações, a que
-   * menos pode ficar parada.
-   */
-  readonly remotePlacesFirst?: boolean;
   /** Injetável para teste — default `REMOTE_BLIND_AS_FULL_AFTER_MS`. */
   readonly remoteBlindAsFullAfterMs?: number;
 }
@@ -261,7 +254,6 @@ export class AccountEngine {
   private readonly remoteState: RemoteClaudeState | null;
   private readonly onRemotesChanged: AccountEngineDeps['onRemotesChanged'];
   private readonly onRemoteEvent: AccountEngineDeps['onRemoteEvent'];
-  private readonly remotePlacesFirst: boolean;
   private readonly remoteBlindAsFullAfterMs: number;
   /** Desde quando a carga da conta de cada lugar está desconhecida, por lugar. Em memória. */
   private readonly remoteBlindSince = new Map<string, { readonly account: AccountId; readonly since: number; logged: boolean }>();
@@ -329,7 +321,6 @@ export class AccountEngine {
     this.remoteState = deps.remoteState ?? null;
     this.onRemotesChanged = deps.onRemotesChanged;
     this.onRemoteEvent = deps.onRemoteEvent;
-    this.remotePlacesFirst = deps.remotePlacesFirst ?? false;
     this.remoteBlindAsFullAfterMs = deps.remoteBlindAsFullAfterMs ?? REMOTE_BLIND_AS_FULL_AFTER_MS;
 
     // Estado inicial segue o diagrama do data-model.md §3: `mod === null` é
@@ -923,14 +914,9 @@ export class AccountEngine {
     if (this.disposed) return null;
     if (!this.mod || this.state !== 'ready' || !this.config.autoSwitch.enabled) return null;
 
-    // PC: esta máquina primeiro (o dono quer a preferência no PC, 05/11).
-    // Serviço da VPS: os lugares primeiro (`remotePlacesFirst`, ADR 0008).
-    if (this.remotePlacesFirst) {
-      await this.evaluateRemoteAutoSwitch();
-      if (this.disposed) return null;
-      return this.evaluateLocalAutoSwitch();
-    }
+    // Esta máquina primeiro (o dono quer a preferência no PC, 05/11).
     const outcome = await this.evaluateLocalAutoSwitch();
+    // Lugares remotos — depois desta máquina, cada lugar com conta.
     await this.evaluateRemoteAutoSwitch();
     return outcome;
   }

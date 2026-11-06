@@ -1,97 +1,89 @@
-# Serviço Donel na VPS pessoal: instalação e passagem das contas
+# Motor de contas em cada VPS: instalação e passagem das contas
 
-Desenho e decisões no [ADR 0008](adr/0008-contas-das-vps-sem-o-pc.md). Este
-arquivo é o passo a passo do dono.
+Desenho e decisões no [ADR 0008](adr/0008-contas-das-vps-sem-o-pc.md), emendado
+pelo [ADR 0009](adr/0009-um-motor-de-contas-por-vps.md) ("cada VPS deve ter sua
+própria ferramenta de troca de conta"). Este arquivo é o passo a passo do dono.
 
-O serviço `donel-servico` roda na VPS pessoal por systemd e reinicia sozinho.
-Ele troca a conta da **VPS pessoal** ("aqui") e de **Homologações** a 90%, com
-o PC desligado. As VPS usam um **conjunto de contas próprio**, e o PC continua
-com as dele, com preferência.
+O serviço `donel-servico` roda **em cada VPS** por systemd e reinicia sozinho.
+Cada um troca **só a conta da própria VPS** a 90%, com o PC desligado e sem
+depender da outra VPS. São três conjuntos de contas: o do PC, o da VPS pessoal
+e o de Homologações. O PC continua com as dele, com preferência.
 
-Regra de ouro: **uma conta, um conjunto.** A conta que vai para as VPS sai do
-PC antes (ou no mesmo passo). Nunca rode `/logout`, porque ele revoga o token
-no servidor.
+Regra de ouro: **uma conta, um conjunto.** A conta que vai para uma VPS sai do
+PC (ou da outra VPS) antes, ou no mesmo passo. Nunca rode `/logout`, porque ele
+revoga o token no servidor.
+
+Repita os passos 0 a 4 **em cada VPS**.
 
 ## 0. Instalar (uma vez; a cada atualização, rode de novo)
 
-Na VPS pessoal, num checkout de `staging`:
+Num checkout de `staging` da própria VPS. Na VPS pessoal (usuário comum, com
+sudo):
 
 ```bash
 cd ~/seazone/"Donel Dev" && git fetch origin
-git worktree add ../donel-wt/servico origin/staging 2>/dev/null || git -C ../donel-wt/servico checkout --detach origin/staging
-cd ../donel-wt/servico && npm ci
+git worktree add --detach .claude/worktrees/servico origin/staging 2>/dev/null || git -C .claude/worktrees/servico checkout --detach origin/staging
+cd .claude/worktrees/servico && npm ci
 sudo bash scripts/servico/instalar.sh
+```
+
+Em Homologações, tudo roda como `root`, e o `~/.claude` do rig é o
+`/root/.claude`. Por isso o usuário do serviço é `root`:
+
+```bash
+cd /root/seazone/"Donel Dev" && git fetch origin
+git worktree add --detach .claude/worktrees/servico origin/staging 2>/dev/null || git -C .claude/worktrees/servico checkout --detach origin/staging
+cd .claude/worktrees/servico && npm ci
+DONEL_SERVICO_USER=root bash scripts/servico/instalar.sh
 ```
 
 O script cria a chave do cofre uma vez, cifrada pelo systemd deste host
 (`/etc/donel/vault-key.cred`). **Não apague esse arquivo**: sem ele, o cofre
-fica ilegível e as contas precisam de login de novo. Para ver se o serviço está
-de pé, use `systemctl status donel-servico` e `donel-servico estado`.
+fica ilegível e as contas precisam de login de novo. A chave só abre neste
+host. Para ver se o serviço está de pé, use `systemctl status donel-servico` e
+`donel-servico estado`.
 
-## 1. Liberar o ssh da VPS pessoal até Homologações (painel da Tailscale)
+## 1. Tirar a VPS do PC (o PC continua com as contas dele)
 
-Hoje a política da tailnet recusa esse ssh, então o serviço não alcança
-Homologações. No painel da Tailscale (Access controls), na regra `ssh`, permita
-a origem `vps-alexandrelentz` no destino `vps-time-homologacoes`, como o
-**mesmo usuário** que o PC usa hoje em Contas › Lugares (o `usuario@host` de
-Homologações). A regra precisa ser `"action": "accept"`. Com `check`, a
-Tailscale pede login no navegador, e o serviço não tem navegador.
+Um lugar, um motor. Se o PC ainda controla esta VPS em Contas › Lugares, os dois
+motores mexem no mesmo `~/.claude`. No PC:
 
-Teste na VPS pessoal:
-
-```bash
-ssh -o BatchMode=yes <usuario>@vps-time-homologacoes 'node -v'
-```
-
-Depois cadastre o lugar no serviço:
-
-```bash
-donel-servico lugar definir homologacoes "Homologações" <usuario>@vps-time-homologacoes
-```
-
-## 2. Tirar as VPS do PC (o PC continua com as contas dele)
-
-Hoje o PC controla os lugares das VPS. Se os dois motores mexerem no mesmo
-lugar, um renova o token do outro. No PC:
-
-1. Em Contas › Lugares, anote a conta de cada VPS (Homologações estava na
-   Conta 8).
+1. Em Contas › Lugares, anote a conta desta VPS (Homologações estava na Conta 8).
 2. Feche **todos** os canais do Donel (Alfa, Beta e o estável usam os mesmos
    dados).
 3. Faça uma cópia: `copy %APPDATA%\donel-dev\config.json %APPDATA%\donel-dev\config.json.bak-0611`.
 4. Abra `config.json` e, dentro de `"accounts"`:
-   - em `"remotes"`, apague as entradas das VPS (Homologações e a VPS pessoal);
-   - em `"localAccounts"`, apague as entradas das contas que estavam nelas
-     (pelo `id` anotado; o `label` ajuda a achar).
+   - em `"remotes"`, apague a entrada desta VPS;
+   - em `"localAccounts"`, apague a entrada da conta que estava nela (pelo `id`
+     anotado; o `label` ajuda a achar).
    Não mexa em mais nada.
-5. Abra o Donel. A faxina da abertura tira do cofre do PC o par dessas contas.
-   Em Contas, confira se as VPS sumiram dos lugares e se as contas do PC estão
-   lá.
+5. Abra o Donel. A faxina da abertura tira do cofre do PC o par dessa conta. Em
+   Contas, confira se a VPS sumiu dos lugares e se as contas do PC estão lá.
 
 O app do PC não tem botão para isso: o painel bloqueia tirar um lugar que tem
 conta, de propósito. Esse botão ("Entregar à VPS") é uma fatia seguinte.
 
-## 3. Adotar as contas que já estão logadas nas VPS (sem login novo)
+## 2. Adotar a conta que já está logada nesta VPS (sem login novo)
 
-Na VPS pessoal:
+Na VPS:
 
 ```bash
-donel-servico contas adotar homologacoes "Conta 8"
-donel-servico contas adotar aqui "<rótulo da conta da VPS pessoal>"
+donel-servico contas adotar "Conta 8"
 ```
 
-O par vivo de cada lugar vai para o cofre da VPS, e o lugar fica com a conta.
-Nenhum token passa pelo PC.
+O par vivo do `~/.claude` desta VPS vai para o cofre dela, e a VPS fica com a
+conta. Nenhum token passa pelo PC.
 
-## 4. Dar contas de reserva para as VPS trocarem
+## 3. Dar contas de reserva para esta VPS
 
-Sem reserva, não há para onde trocar. Sugestão: as 7 contas que o PC marcou
-"Reconectar" em 05/11 (Conta 1, 2, 3, 5, 7, Orca e Tech 89). No PC elas já
-estão mortas, e logar de novo na VPS custa o mesmo que reconectar no PC. Para
-cada uma:
+Sem reserva, não há para onde trocar. Cada VPS precisa das suas. Sugestão:
+dividir entre as duas VPS as 7 contas que o PC marcou "Reconectar" em 05/11
+(Conta 1, 2, 3, 5, 7, Orca e Tech 89). No PC elas já estão mortas, e logar de
+novo na VPS custa o mesmo que reconectar no PC. **Cada conta vai para uma VPS
+só.** Para cada uma:
 
 1. **No PC:** Contas › a conta › Remover.
-2. **Na VPS pessoal** (terminal do Donel na VPS):
+2. **Na VPS** que vai ficar com ela:
 
    ```bash
    mkdir -m 700 ~/.donel/login-conta1
@@ -103,24 +95,31 @@ cada uma:
 
    O `colher` guarda o par no cofre e apaga o `.credentials.json` da pasta.
 
-## 5. Conferir
+Mudar uma conta de uma VPS para a outra é o mesmo gesto: `donel-servico contas
+remover <id>` na de origem (a conta não pode estar ativa nela) e login isolado
++ `colher` na de destino.
+
+## 4. Conferir
 
 ```bash
-donel-servico estado        # cada conta com carga, o lugar de cada uma, motor "ready"
+donel-servico estado        # cada conta com carga, qual está "aqui", motor "ready"
 tail ~/.donel/accounts-maintenance.log
 journalctl -u donel-servico -n 50
 ```
 
-A troca automática aparece no log como `remote-switch` (Homologações) ou
-`auto-switch` (aqui). Uma conta de lugar com carga desconhecida por 10 minutos
-gera `remote-blind-as-full` e é tratada como cheia.
+A troca automática aparece no log como `auto-switch`. Uma conta com
+`reconectar: true` no `estado` (ou `account-pair-refresh-failed` no log) pode
+estar em dois conjuntos ao mesmo tempo. Tire-a de um deles e faça login de novo
+no outro.
 
-Troca à mão: `donel-servico contas trocar homologacoes <id da conta>` (os ids
-estão no `estado`).
+Troca à mão: `donel-servico contas trocar <id da conta>` (os ids estão no
+`estado`).
 
-## 6. Oráculo na VPS (migração: só depois da fatia 02b)
+## 5. Oráculo na VPS pessoal (migração: só depois da fatia 02b)
 
-O serviço já hospeda um Oráculo vazio em `~/.donel/ledger.json`, com API em
+O Oráculo é um só e mora na VPS pessoal (o motor de contas é um por VPS, mas o
+registro de tarefas não). O serviço de lá já hospeda um Oráculo vazio em
+`~/.donel/ledger.json`, com API em
 `http://<ip tailscale da VPS>:47816`. **Ainda não migre.** Enquanto o app do PC
 não for cliente dele (fatia 02b), o PC continuaria gravando no Oráculo dele, e
 os dois se separariam. Quando a 02b entrar:
@@ -140,9 +139,13 @@ os dois se separariam. Quando a 02b entrar:
 
 ```bash
 sudo systemctl disable --now donel-servico
+sudo rm -f /etc/systemd/system/donel-servico.service /usr/local/bin/donel-servico
+sudo systemctl daemon-reload
+sudo rm -rf /opt/donel-servico
 ```
 
-No PC, feche o Donel, volte `config.json.bak-0611` para `config.json` e abra de
-novo. As contas adotadas continuam logadas onde estavam. As contas colhidas na
-VPS ficam no cofre da VPS (`~/.donel/accounts-vault.json`) até um novo login no
-PC.
+A conta ativa continua logada no `~/.claude` desta VPS, e o CLI segue usando
+ela. O cofre (`~/.donel/`) e a chave (`/etc/donel/vault-key.cred`) ficam. Não
+apague os dois se for reinstalar. Para o PC voltar a controlar a VPS, feche o
+Donel no PC, volte `config.json.bak-0611` para `config.json` e abra de novo.
+As contas colhidas nesta VPS só voltam ao PC com um login novo lá.

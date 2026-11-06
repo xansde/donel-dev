@@ -1,14 +1,19 @@
 ---
 name: Contas das VPS sem o PC
 type: adr
-status: accepted
+status: accepted (itens 1 e 4 substituídos pelo ADR 0009)
 created: 2026-11-05
-updated: 2026-11-05
+updated: 2026-11-06
 tags: [adr, contas, credenciais, vps, servico, 011-contas-e-provedores]
 aliases: [ADR-0008, serviço da VPS, conjunto de contas das VPS, switcher sem o PC]
 ---
 
 # ADR 0008: Contas das VPS sem o PC
+
+> **Emendado em 06/11 pelo [ADR 0009](0009-um-motor-de-contas-por-vps.md):**
+> "cada VPS deve ter sua própria ferramenta de troca de conta". O motor deixa
+> de ser um só, na VPS pessoal, e passa a rodar em cada VPS, só com a conta
+> dela. Nos itens 1 e 4 abaixo, vale o que está no 0009.
 
 Sucede em parte o [ADR 0005](0005-contas-em-lugares-remotos.md). O contrato do
 lugar remoto continua o mesmo. O que muda é **quem** o chama.
