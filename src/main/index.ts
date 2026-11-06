@@ -2982,8 +2982,8 @@ function registerLedgerMirror(): void {
     return mirror.state();
   });
   ipcMain.handle(LEDGER_MIRROR_CHANNELS.syncNow, (): Promise<LedgerMirrorState> => mirror.syncNow());
-  // The first registry of this run: an inbox left by an agent, then the whole ledger (it may have changed while the
-  // app was closed, or a push may have failed before quitting).
+  // The first registry of this run: the whole ledger (it may have changed while the app was closed, or a push may
+  // have failed before quitting). The key only comes in through the screen — never a file on disk.
   void mirror.syncNow().catch(() => undefined);
 }
 

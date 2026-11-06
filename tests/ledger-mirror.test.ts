@@ -126,7 +126,36 @@ describe('espelho do Oráculo', () => {
     expect(masked.text).toContain('senha: [segredo]');
     expect(masked.hits.map((hit) => hit.kind)).toEqual(expect.arrayContaining(['token GitHub', 'senha', 'e-mail', 'Bearer']));
     expect(maskSecrets('Põe o botão verde no painel').hits).toEqual([]);
+  });
 
+  // What a text proof usually is: command output, JSON, a `.env`. Secrets built by concatenation so the repo's own
+  // secret scanners do not take the fixtures for real keys.
+  it.each([
+    ['senha em JSON', '{"password": "hunter2222"}', 'hunter2222', '{"password": "[segredo]"}'],
+    ['chave de API em JSON (camelCase)', `"apiKey": "${'ab12'.repeat(4)}"`, 'ab12ab12', '"apiKey": "[segredo]"'],
+    ['chave de API em JSON (snake_case)', `{'api_key': '${'ab12'.repeat(4)}'}`, 'ab12ab12', "{'api_key': '[segredo]'}"],
+    ['PGPASSWORD no ambiente', 'PGPASSWORD=s3nh4F0rte psql -h db', 's3nh4F0rte', 'PGPASSWORD=[segredo] psql'],
+    ['DB_PASSWORD no .env', 'DB_HOST=db\nDB_PASSWORD=s3nh4F0rte\n', 's3nh4F0rte', 'DB_PASSWORD=[segredo]'],
+    ['Stripe sk_live', `chave ${'sk_' + 'live_'}${'a1B2'.repeat(6)}`, 'a1B2a1B2a1B2', 'chave [segredo]'],
+    ['Stripe sk_test', `${'sk_' + 'test_'}${'a1B2'.repeat(6)}`, 'a1B2a1B2a1B2', '[segredo]'],
+    ['Stripe rk_live', `${'rk_' + 'live_'}${'a1B2'.repeat(6)}`, 'a1B2a1B2a1B2', '[segredo]'],
+    ['webhook do Slack', `POST ${'https://hooks.' + 'slack.com/services/'}T0ABCDEF/B0ABCDEF/${'x1Y2'.repeat(6)} ok`, 'x1Y2x1Y2', 'POST https://hooks.slack.com/[segredo] ok'],
+    ['senha em conexão com host IP', 'postgres://app:p4ss!word@10.0.0.5/db', 'p4ss!word', 'postgres://app:[segredo]@10.0.0.5/db'],
+    ['senha em conexão com host nome', 'mysql://root:hunter22@db.interno.com:3306/x', 'hunter22', 'mysql://root:[segredo]@db.interno.com:3306/x'],
+    ['CPF sem pontos', 'cliente 12345678900 ok', '12345678900', 'cliente [cpf] ok'],
+    ['CPF com pontos', 'cliente 123.456.789-00 ok', '123.456.789-00', 'cliente [cpf] ok'],
+  ])('masks %s', (_name, input, secret, expected) => {
+    const masked = maskSecrets(input);
+    expect(masked.text).not.toContain(secret);
+    expect(masked.text).toContain(expected);
+    expect(masked.hits.length).toBeGreaterThan(0);
+  });
+
+  it('keeps an ordinary link and port as they are', () => {
+    expect(maskSecrets('https://github.com/xansde/donel-dev/pull/260 e http://localhost:5173/').hits).toEqual([]);
+  });
+
+  it('sends a masked proof and logs where', async () => {
     const delivered = task('t-1', {
       state: 'entregue',
       events: [

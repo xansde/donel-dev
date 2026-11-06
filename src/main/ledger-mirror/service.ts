@@ -51,8 +51,6 @@ export interface LedgerMirrorService {
   configure(url: unknown, key: unknown): Promise<LedgerMirrorConfigureResult>;
   disable(): void;
   syncNow(): Promise<LedgerMirrorState>;
-  /** Reads the agent's inbox file, if any (see `takeInbox`). */
-  takeInbox(): Promise<void>;
   dispose(): void;
 }
 
@@ -133,35 +131,15 @@ export function createLedgerMirrorService(deps: LedgerMirrorServiceDeps): Ledger
     return { ok: true };
   }
 
-  /**
-   * An agent configures without the screen: it writes `ledger-espelho-entrada.json` ({ url, key }, straight from the
-   * password manager), and the main moves the key into the vault and deletes the file — at start and on "Enviar agora".
-   */
-  const inboxPath = join(deps.userDataPath, 'ledger-espelho-entrada.json');
-  async function takeInbox(): Promise<void> {
-    const text = deps.io.readFileText(inboxPath);
-    if (text === null) return;
-    deps.io.unlinkFile(inboxPath);
-    try {
-      const raw = JSON.parse(text) as { url?: unknown; key?: unknown };
-      const result = await configure(raw.url, raw.key);
-      log(result.ok ? 'configurado pela entrada' : `entrada recusada: ${result.reason}`);
-    } catch {
-      log('entrada recusada: não é JSON');
-    }
-  }
-
   return {
     changed: (doc) => mirror.changed(doc),
     state,
     configure,
-    takeInbox,
     disable() {
       if (settings) writeSettings({ ...settings, enabled: false });
       log('desligado');
     },
     async syncNow() {
-      await takeInbox();
       await syncAll();
       return state();
     },

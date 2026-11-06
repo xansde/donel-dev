@@ -30,12 +30,15 @@ export interface DemandaRow {
   readonly prova_link: string | null;
 }
 
-const STATE_LABELS: Readonly<Record<LedgerTaskState, string>> = {
+// `substituida` comes with PR #259 (a repeated card closed in favour of another). Naming it in the key type keeps
+// this map complete whichever of the two PRs lands first: before #259 it is an extra key, after it, a required one.
+const STATE_LABELS: Readonly<Record<LedgerTaskState | 'substituida', string>> = {
   aberta: 'aberta',
   'em-execucao': 'em execução',
   entregue: 'entregue',
   aceita: 'aceita',
   rejeitada: 'rejeitada',
+  substituida: 'substituída',
 };
 
 /** A proof text in a table cell: the gist, not a 20 000-character log. */
@@ -48,23 +51,38 @@ export interface MaskHit {
   readonly kind: string;
 }
 
+// Order matters: whole-token shapes first, then the connection string (before the e-mail, which would eat
+// `senha@host`), then a secret-looking name with its value, then personal data.
 const SECRET_PATTERNS: ReadonlyArray<{ kind: string; re: RegExp; keep?: (match: string, ...groups: string[]) => string }> = [
   { kind: 'chave privada', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g },
   { kind: 'token GitHub', re: /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g },
   { kind: 'chave Anthropic/OpenAI', re: /\bsk-(?:ant-)?[A-Za-z0-9_-]{16,}/g },
   { kind: 'token Supabase', re: /\b(?:sbp_[A-Za-z0-9]{20,}|sb_secret_[A-Za-z0-9_-]{10,})/g },
+  { kind: 'chave Stripe', re: /\b(?:(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{10,}|whsec_[A-Za-z0-9]{16,})/g },
   { kind: 'token Slack', re: /\bxox[abposr]-[A-Za-z0-9-]{10,}/g },
+  {
+    kind: 'webhook Slack',
+    re: /\b(https?:\/\/hooks\.slack\.com\/)(?:services|workflows|triggers)\/[A-Za-z0-9_/-]+/g,
+    keep: (_m, base) => `${base}[segredo]`,
+  },
   { kind: 'chave AWS', re: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g },
   { kind: 'chave Google', re: /\bAIza[A-Za-z0-9_-]{30,}/g },
   { kind: 'JWT', re: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g },
   { kind: 'Bearer', re: /\b(Bearer)\s+[A-Za-z0-9._~+/=-]{16,}/gi, keep: (_m, word) => `${word} [segredo]` },
+  // `postgres://app:p4ss!word@10.0.0.5/db` — any host (IP or name), any character but `@`, `/` and space.
+  { kind: 'senha', re: /\b([a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)[^\s@/]+@/gi, keep: (_m, head) => `${head}[segredo]@` },
+  // `PGPASSWORD=…`, `DB_PASSWORD=…`, `"password": "…"`, `"apiKey": "…"`, `senha: …`: the name stays, the value goes.
   {
     kind: 'senha',
-    re: /\b(password|passwd|senha|secret|token|api[_-]?key)(\s*[:=]\s*)(["']?)[^\s"',;]{4,}\3/gi,
-    keep: (_m, word, sep) => `${word}${sep}[segredo]`,
+    re: /\b([A-Za-z0-9_.-]*(?:password|passwd|senha|secret|token|api[_-]?key)[A-Za-z0-9_.-]*)(["']?\s*[:=]\s*)(?!["']?\[segredo\])("[^"\n]+"|'[^'\n]+'|[^\s"',;&]{4,})/gi,
+    keep: (_m, name, sep, value) => {
+      const quote = value!.startsWith('"') || value!.startsWith("'") ? value![0] : '';
+      return `${name}${sep}${quote}[segredo]${quote}`;
+    },
   },
   { kind: 'e-mail', re: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, keep: () => '[e-mail]' },
-  { kind: 'CPF', re: /\b\d{3}\.\d{3}\.\d{3}-\d{2}\b/g, keep: () => '[cpf]' },
+  // With or without the dots: `123.456.789-00` and `12345678900`.
+  { kind: 'CPF', re: /\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g, keep: () => '[cpf]' },
 ];
 
 /** Replaces every secret-looking piece of `text`; `hits` says what was found (never the value). */
