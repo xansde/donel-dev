@@ -14,6 +14,10 @@
 // C). Recognising one is deliberately broad: any write method of the Slack Web API (also assembled, `chat.$M`),
 // an incoming webhook, a Composio `SLACK_*` posting slug, the SDK post calls, and any mention of `canal-produto`.
 //
+// Tool names in Portuguese are sends too (owner, 06/11: the Theo West MCP has `slack_enviar_arquivo`): a message
+// (`slack_enviar_mensagem`, `responder_thread`) needs a letter; a file (`slack_enviar_arquivo`) is refused, like
+// any upload, because a letter carries no file. Reading (`slack_baixar_arquivo`) is not a send.
+//
 // Limit, named on purpose: a hook only sees the call, not what a script written earlier does when it runs
 // (`bash /tmp/posta.sh`). The guarantee is against a mistake, not against a session set on going around it.
 
@@ -94,13 +98,14 @@ function isPostingAction(name: string): boolean {
   if (n.includes('draft')) return false;
   return (
     /(sends?|posts?|repl(y|ies)|schedules?|updates?|edits?)[_-]?(an?[_-]?)?(slack[_-]?)?(ephemeral[_-]?|direct[_-]?)?(message|msg|reply|thread|to[_-]?(an?[_-]?)?(channel|thread|user|dm|slack))|chat[_.-]?(post|update|schedule|me)|send[_-]?dm|(message|msg)[_-]?(send|post)/.test(n) ||
+    /(enviar|mandar|postar|publicar|responder|agendar|editar|atualizar)[_-]?((a|o|um|uma|no|na|em)[_-]?)?(mensagem|msg|resposta|thread|fio|canal|dm)/.test(n) ||
     isUploadAction(n)
   );
 }
 
 /** A file to Slack: it posts in the channel (with a comment or not), and a letter carries no file. */
 function isUploadAction(name: string): boolean {
-  return /upload|create[_-]?a?[_-]?file|share[_-]?file|file[_-]?(share|send|post)|remote[_-]?file[_-]?share/i.test(name);
+  return /upload|create[_-]?a?[_-]?file|share[_-]?file|file[_-]?(share|send|post)|remote[_-]?file[_-]?share|(enviar|mandar|subir|postar|publicar|compartilhar|anexar)[_-]?((o|um)[_-]?)?(arquivo|anexo|imagem|print)/i.test(name);
 }
 
 const COMPOSIO_SLACK = /^SLACK_/i;
