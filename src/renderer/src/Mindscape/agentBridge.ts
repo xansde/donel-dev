@@ -25,6 +25,7 @@ import { LEADER_OF_ALL_FROM, canReach, findPlace } from '../../../shared/mindsca
 import { addLink, addPlace, placeCardId, placeOfSession, type MindscapeBoard, type MindscapeDoc, type SessionPlaceCard } from '../../../shared/mindscape/model';
 import type { SemaphoreState } from '../../../shared';
 import type { SessionRole } from '../../../shared/roles';
+import type { SendFrom } from '../chat/sendDriver';
 
 /**
  * A session opened by `sessao_abrir` that sent no hook in this long did not start: the gate waits up to 30 s for
@@ -89,10 +90,14 @@ export interface AgentBridgePorts {
   openSession(request: OpenSessionRequest): string;
   /** Closes the tab the way the app does (kills the process through `pty:kill`); the place stays, "fechada". */
   closeTab(tabId: string): void;
-  /** One line to the session of `tabId` through the chat's send driver (or typed into the terminal). */
+  /** One notice of the app (another session ended, started, must pause) to the session of `tabId`: a `session` send. */
   sendLine(tabId: string, text: string): void;
-  /** The same, waiting (up to `waitMs`) for the CLI of there to take it or give up. */
-  deliverLine(tabId: string, text: string, waitMs: number): Promise<DeliveryOutcome>;
+  /**
+   * One line to the session of `tabId`, waiting (up to `waitMs`) for the CLI of there to take it or give up. `from`
+   * says whose it is (06/11): `owner` (what he wrote on a card or in "Pedir") goes first and is never glued to a
+   * notice; `session` (`sessao_enviar`) waits for the owner and may go in with the other notices.
+   */
+  deliverLine(tabId: string, text: string, waitMs: number, from: SendFrom): Promise<DeliveryOutcome>;
   /** A permission prompt is drawn on that tab's screen right now (read from the screen, never from a mark). */
   permissionOnScreen(tabId: string): boolean;
   /** No hook came from that session yet (no prompt submitted, no tool): its "working" is the birth guess, not a fact. */
@@ -170,14 +175,14 @@ export class AgentBridge {
   async deliverOwnerMessage(message: { readonly projectPath: string; readonly placeId: string; readonly text: string; readonly leaderText: string }): Promise<{ readonly placeId: string } | 'lider' | null> {
     const target = message.placeId ? this.tabOfPlace(message.projectPath, message.placeId) : undefined;
     if (target && !this.ports.unconfirmed(target.id)) {
-      const outcome = await this.ports.deliverLine(target.id, message.text, DELIVERY_WAIT_MS);
+      const outcome = await this.ports.deliverLine(target.id, message.text, DELIVERY_WAIT_MS, 'owner');
       if (outcome.kind !== 'nao-foi') return { placeId: message.placeId };
     }
     const leader = this.leaderTab();
     // A request with no card waits on the PC (its queue retries) while the Líder is still starting: sent to a CLI
     // that never sent a hook, it can fail half-way, stay in the box and go in twice with the retry (e2e 06/11).
     if (leader && (message.placeId || !this.ports.unconfirmed(leader.id))) {
-      const outcome = await this.ports.deliverLine(leader.id, message.leaderText, DELIVERY_WAIT_MS);
+      const outcome = await this.ports.deliverLine(leader.id, message.leaderText, DELIVERY_WAIT_MS, 'owner');
       if (outcome.kind !== 'nao-foi') return 'lider';
     }
     return null;
@@ -502,7 +507,7 @@ export class AgentBridge {
         if (!target) return fail(`"${place.id}" não está aberta agora.`);
         if (scope.leader) this.leaderHears.add(target.id);
         // 05/11 — "Entregue" only once the CLI of there took it: the answer waits for the send to end.
-        const outcome = await this.ports.deliverLine(target.id, `◆ De ${signature}: ${call.texto}`, DELIVERY_WAIT_MS);
+        const outcome = await this.ports.deliverLine(target.id, `◆ De ${signature}: ${call.texto}`, DELIVERY_WAIT_MS, 'session');
         if (outcome.kind === 'entrou') return { ok: true, text: 'Entregue: entrou no Claude de lá.' };
         if (outcome.kind === 'na-fila') return { ok: true, text: 'Entregue à fila do Claude de lá: ela está trabalhando e o próprio CLI a entrega no próximo passo.' };
         if (outcome.kind === 'nao-foi') return fail(`Não entrou: ${outcome.reason}. Veja a tela dela com sessao_ver_tela, ou peça ao dono.`);
