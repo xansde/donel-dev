@@ -2615,11 +2615,11 @@ export function App(): React.JSX.Element {
     },
     closeTab: (tabId) => closeTabImmediatelyRef.current(tabId),
     sendLine: (tabId, text) => sendRenewalLine(tabId, text, 'session'),
-    deliverLine: (tabId, text, waitMs) => {
+    deliverLine: (tabId, text, waitMs, from) => {
       const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
       if (tab !== undefined && hasChatView(tab, chatEnabled))
-        return sendToTabAndWait(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text, from: 'session' }, waitMs);
-      sendRenewalLine(tabId, text, 'session');
+        return sendToTabAndWait(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text, from }, waitMs);
+      sendRenewalLine(tabId, text, from === 'session' ? 'session' : undefined);
       return Promise.resolve({ kind: 'pelo-terminal' as const });
     },
     permissionOnScreen: (tabId) => {

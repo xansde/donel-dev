@@ -15,6 +15,9 @@
 //     held meanwhile go in as ONE message. While a notice is being written (paste → Enter), the owner's keystrokes
 //     are held and written right after its Enter, never in the middle of it. Before, a notice's Enter submitted
 //     what the owner was typing, cut ("trava não fi"), and his message waited behind every notice.
+//     An Enter of a notice that looks lost (the notice still in the box) is written again BEFORE his held keys go
+//     in: released into that box, they would ride along with the notice on his next Enter (Revisor, #257).
+//     Only `session` sends merge with each other; an `owner` send (chat, Jobu, a card, "Pedir") never does.
 
 import type { PromptSignalKind } from '../../../shared/chat/ipc';
 import { commandResolvesTo, matchOldestPending, matchesPrompt, normalizePrompt, oldestPending } from '../../../shared/chat/promptMatch';
@@ -107,6 +110,8 @@ interface Item {
   text: string;
   /** When the first Enter of this attempt went out (session messages: the owner's keys are held until then). */
   enterWrittenAt: number | null;
+  /** When the last Enter of this attempt went out (the first, a resend of the machine, or one written for the owner). */
+  lastEnterAt: number | null;
   readonly createdAt: number;
   mode: SendMode;
   machine: SendMachineState | null;
@@ -125,8 +130,11 @@ const SIGNAL_TTL_MS = 30_000;
 export const OWNER_QUIET_MS = 2_000;
 /** After a session message's Enter, the owner's held keys wait at most this long for the box to clear. */
 const OWNER_HOLD_AFTER_ENTER_MS = 1_500;
-/** The owner's keys are never held longer than this, whatever the notice is doing. */
-const OWNER_HOLD_MAX_MS = 3_000;
+/**
+ * The owner's keys are never held longer than this, whatever the notice is doing: room for the paste, its Enter and
+ * two more Enters `OWNER_HOLD_AFTER_ENTER_MS` apart when the box still shows the notice.
+ */
+const OWNER_HOLD_MAX_MS = 5_000;
 const MAX_ALIASES = 500;
 
 /**
@@ -228,6 +236,8 @@ export class SendDriver {
   private readonly seen = new Map<string, { hook: number; transcript: number; at: number }>();
   /** Last time the owner typed in the terminal (`null`: never). */
   private ownerTypedAt: number | null = null;
+  /** Last time a key of the owner actually reached the PTY (typed through, or released after being held). */
+  private ownerWrittenAt: number | null = null;
   /** The owner typed and the box has not been seen empty since: his text may be in it. */
   private ownerBoxDirty = false;
   /** The owner's keys held while a session message was being written, in order. */
@@ -251,6 +261,7 @@ export class SendDriver {
       from,
       text: request.text,
       enterWrittenAt: null,
+      lastEnterAt: null,
       createdAt: this.ports.now(),
       mode: request.mode ?? 'normal',
       machine: null,
@@ -297,7 +308,7 @@ export class SendDriver {
       this.held.push({ data, forward });
       this.heldSince ??= now;
       this.armHoldTimer();
-    } else forward(data);
+    } else this.writeOwner(data, forward);
     this.demoteWaitingSession();
     this.armOwnerTimer(now);
     this.pump();
@@ -467,6 +478,7 @@ export class SendDriver {
         next = this.mergeWaiting(waiting);
       }
       next.enterWrittenAt = null;
+      next.lastEnterAt = null;
       const input: SendInput = {
         id: next.id,
         text: next.text,
@@ -510,9 +522,11 @@ export class SendDriver {
       switch (effect.type) {
         case 'write':
           if (effect.data === '\r' && item.from === 'session') {
-            // An Enter written again (the first one looked lost) after the owner typed would submit HIS text.
-            if (item.enterWrittenAt !== null && this.ownerTypedAt !== null && this.ownerTypedAt >= item.enterWrittenAt) break;
+            // An Enter written again (the first one looked lost) once a key of the owner reached the box would submit
+            // HIS text with it. Keys still held never reached it: then the Enter is safe, and wanted.
+            if (item.enterWrittenAt !== null && this.ownerWrittenAt !== null && this.ownerWrittenAt >= item.enterWrittenAt) break;
             item.enterWrittenAt ??= this.ports.now();
+            item.lastEnterAt = this.ports.now();
           }
           this.ports.write(effect.data);
           if (effect.data === '\r' && item.request.opensScreen === true) this.ports.opensScreen?.();
@@ -596,7 +610,9 @@ export class SendDriver {
 
   /**
    * A session message is in the middle of its write (paste written and Enter not yet, or Enter written and the box
-   * not cleared yet): a key of the owner now would land inside it, or be submitted with it.
+   * not cleared yet): a key of the owner now would land inside it, or be submitted with it. When the box still shows
+   * the notice `OWNER_HOLD_AFTER_ENTER_MS` after its last Enter, that Enter looks lost: it is written again here,
+   * while his keys are still held (the box holds only the notice), and they keep waiting for the box to clear.
    */
   private sessionWriting(now: number): boolean {
     if (this.heldSince !== null && now - this.heldSince >= OWNER_HOLD_MAX_MS) return false;
@@ -605,10 +621,21 @@ export class SendDriver {
     if (item === undefined || m == null) return false;
     if (m.phase === 'typing') return true;
     if (m.phase !== 'confirming') return false;
-    if (m.step !== 'await-ack' || item.enterWrittenAt === null) return true;
-    if (now - item.enterWrittenAt >= OWNER_HOLD_AFTER_ENTER_MS) return false;
+    if (m.step !== 'await-ack' || item.enterWrittenAt === null || item.lastEnterAt === null) return true;
     const box = readInputText(this.ports.readLines());
-    return box !== null && box !== '';
+    if (box === null || box === '') return false;
+    if (now - item.lastEnterAt < OWNER_HOLD_AFTER_ENTER_MS) return true;
+    // A key of his already in the box: an Enter now would submit it too (the same rule as the machine's resend).
+    if (this.ownerWrittenAt !== null && this.ownerWrittenAt >= item.enterWrittenAt) return false;
+    this.ports.write('\r');
+    item.lastEnterAt = now;
+    return true;
+  }
+
+  /** Writes one key of the owner to the PTY now. */
+  private writeOwner(data: string, forward: (data: string) => void): void {
+    this.ownerWrittenAt = this.ports.now();
+    forward(data);
   }
 
   /** Writes the owner's held keys, in order. */
@@ -618,7 +645,7 @@ export class SendDriver {
     this.heldSince = null;
     this.ports.clearTimeout(this.holdTimer);
     this.holdTimer = undefined;
-    for (const key of held) key.forward(key.data);
+    for (const key of held) this.writeOwner(key.data, key.forward);
   }
 
   /** A session message that has not written anything yet goes back to waiting (the owner comes first). */

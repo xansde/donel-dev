@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { SendDriver, type SendRequest } from '../src/renderer/src/chat/sendDriver';
 import type { LineInput } from '../src/shared/screenLine';
+import { AgentBridge, type AgentBridgePorts, type BridgeTab } from '../src/renderer/src/Mindscape/agentBridge';
+import { addPlace, emptyMindscapeDoc } from '../src/shared/mindscape/model';
 
 // 06/11 — "◆ … terminou" chegando enquanto o dono digita no terminal do Líder: o Enter do aviso levou junto o que
 // ele digitava, cortado ("trava não fi"), e a mensagem dele esperava atrás de todos os avisos. Aqui o terminal é
@@ -14,6 +16,8 @@ const IDLE_FOOTER = '  ⏸ manual mode on · ? for shortcuts · ← for agents';
 class FakeCli {
   box = '';
   readonly submitted: string[] = [];
+  /** How many of the next Enters the CLI swallows (a lost Enter: busy, short of RAM). */
+  dropEnters = 0;
   constructor(
     private readonly clock: Clock,
     public working: boolean,
@@ -32,7 +36,8 @@ class FakeCli {
       }
       const ch = rest[0];
       rest = rest.slice(1);
-      if (ch === '\r') {
+      if (ch === '\r' && this.dropEnters > 0) this.dropEnters -= 1;
+      else if (ch === '\r') {
         const text = this.box;
         this.box = '';
         if (text.trim() !== '') {
@@ -109,7 +114,7 @@ function setup(working: boolean) {
     return enterAt;
   };
   const notice = (text: string): string => driver.enqueue({ text, from: 'session' } as SendRequest);
-  return { clock, cli, driver, typeAt, notice };
+  return { clock, cli, driver, typeAt, notice, ownerKey };
 }
 
 const NOTICES = [
@@ -184,5 +189,60 @@ describe('aviso de sessão chegando enquanto o dono digita (06/11)', () => {
       const view = driver.getItems().find((item) => item.id === carrierOf(id));
       expect(view?.state ?? 'accepted').toBe('accepted');
     }
+  });
+
+  it('o Enter do aviso se perde enquanto o dono digita: o app reenvia o Enter antes de soltar as teclas dele', () => {
+    const { clock, cli, notice, typeAt } = setup(false);
+    clock.advanceTo(1_000);
+    cli.dropEnters = 1;
+    notice(NOTICES[0]);
+    const enterAt = typeAt(1_005, OWNER);
+    clock.advanceTo(enterAt + 30_000);
+    expect(cli.dropEnters).toBe(0);
+    expect(cli.submitted).toEqual([NOTICES[0], OWNER]);
+  });
+
+  it('"Pedir" e "Escrever para…" do dono chegando no meio de avisos: entram sozinhos, na frente, nunca grudados', async () => {
+    const { clock, cli, driver, notice, typeAt } = setup(true);
+    const ATLAS = 'C:/atlas';
+    const doc = addPlace(emptyMindscapeDoc(), ATLAS, { id: 'place:lider' });
+    const tabs: BridgeTab[] = [
+      { id: 'tab-lider', name: 'Líder', cwd: ATLAS, placeId: 'place:lider', roleId: 'lider', leaderOfAll: true, claudeSessionId: 's-l', sessionType: 'claude' },
+    ];
+    // As the app wires the port: the line goes to the tab's send driver, as `session` unless the bridge says whose.
+    const ports = {
+      loaded: true,
+      doc: () => doc,
+      tabs: () => tabs,
+      stateOf: () => 'working' as const,
+      unconfirmed: () => false,
+      deliverLine: async (_tab: string, text: string, _wait: number, from?: 'owner' | 'session') => {
+        driver.enqueue({ text, from: from ?? 'session' });
+        return { kind: 'entrou' as const };
+      },
+    } as unknown as AgentBridgePorts;
+    const bridge = new AgentBridge(ports);
+    const PEDIR = 'Líder, para tudo e me chama';
+    const ESCREVER = 'pode mesclar o #254';
+
+    clock.advanceTo(1_000);
+    notice(NOTICES[0]);
+    // The owner types in the Líder's terminal; notices pile up; his "Pedir" and "Escrever" arrive in the middle.
+    const enterAt = typeAt(1_005, OWNER);
+    clock.after(600, () => notice(NOTICES[1]));
+    clock.after(900, () => void bridge.deliverOwnerMessage({ projectPath: '', placeId: '', text: PEDIR, leaderText: PEDIR }));
+    clock.after(1_200, () => notice(NOTICES[2]));
+    clock.after(1_500, () => void bridge.deliverOwnerMessage({ projectPath: ATLAS, placeId: 'place:lider', text: ESCREVER, leaderText: ESCREVER }));
+    await Promise.resolve();
+    clock.advanceTo(enterAt + 60_000);
+
+    const mine = [OWNER, PEDIR, ESCREVER];
+    // Each message of the owner went in alone, whole; every other submission is only notices.
+    for (const text of mine) expect(cli.submitted.filter((s) => s.includes(text))).toEqual([text]);
+    for (const s of cli.submitted.filter((x) => !mine.includes(x))) expect(s.split('\n').every((line) => line.startsWith('◆ '))).toBe(true);
+    expectNoNoticeLost(cli.submitted);
+    // His messages go before the notices that were still waiting.
+    expect(cli.submitted.indexOf(PEDIR)).toBeLessThan(cli.submitted.indexOf(`${NOTICES[1]}\n${NOTICES[2]}`));
+    expect(cli.submitted.indexOf(ESCREVER)).toBeLessThan(cli.submitted.indexOf(`${NOTICES[1]}\n${NOTICES[2]}`));
   });
 });
