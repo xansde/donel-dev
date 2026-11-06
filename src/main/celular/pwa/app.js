@@ -656,14 +656,14 @@
     texto.maxLength = 2000;
     texto.rows = 3;
     texto.placeholder = 'Escreva ou dite pelo microfone do teclado.';
-    var dica = el('small', null, 'Enviar manda agora. Se você escolher um caminho com isto escrito, vai junto da decisão.');
+    var dica = el('small', null, 'Mandar à sessão entrega o texto agora a ' + ctx.item.quemEntregou + ' (fechada, vai ao Líder). Não decide a carta; se você escolher um caminho com isto escrito, vai junto.');
     var falha = el('div', 'A-falhou');
     falha.hidden = true;
     falha.setAttribute('role', 'alert');
     var estado = el('p', 'A-estado');
     estado.hidden = true;
     estado.setAttribute('aria-live', 'polite');
-    var enviar = el('button', null, 'Enviar');
+    var enviar = el('button', null, 'Mandar à sessão');
     enviar.type = 'button';
     caixa.appendChild(texto);
     caixa.appendChild(dica);
@@ -698,7 +698,7 @@
       falha.textContent = '';
       if (!motivo) {
         falha.hidden = true;
-        enviar.textContent = 'Enviar';
+        enviar.textContent = 'Mandar à sessão';
         return;
       }
       falha.appendChild(el('b', null, 'Não saiu: ' + motivo));
@@ -752,7 +752,7 @@
       guardar(null);
       mostrarFalha(null);
       enviar.disabled = true;
-      enviar.textContent = 'Enviando…';
+      enviar.textContent = 'Mandando…';
       estado.textContent = 'Enviando para ' + ctx.item.quemEntregou + '…';
       estado.hidden = false;
       var demora = setTimeout(function () {
@@ -796,7 +796,7 @@
           enviando--;
           estado.hidden = true;
           enviar.disabled = false;
-          if (falha.hidden) enviar.textContent = 'Enviar';
+          if (falha.hidden) enviar.textContent = 'Mandar à sessão';
         });
     });
     return bloco;

@@ -2968,6 +2968,7 @@ function registerLedgerIpcHandlers(): void {
   // Cartas forma A — the card shows the proofs (the HTML prototype, a video) by `donel-prova:`.
   registerProofProtocol(protocol, ledgerProofsDir(ledgerFilePath(process.env, app.getPath('userData'))));
   const fromMain = (sender: Electron.WebContents): boolean => getMainWindow()?.webContents.id === sender.id;
+  const cardDiagnostics = createDiagnosticsLog(app.getPath('userData'));
   ipcMain.handle(LEDGER_CHANNELS.load, (): LedgerSnapshot => service.load());
   ipcMain.handle(LEDGER_CHANNELS.decide, (event, raw: unknown): LedgerApplyResult => {
     if (!fromMain(event.sender)) return { ok: false, reason: 'Só a janela do app decide.' };
@@ -2989,7 +2990,16 @@ function registerLedgerIpcHandlers(): void {
     const comment = raw as Partial<LedgerComment> | null;
     if (!comment || typeof comment.id !== 'string' || typeof comment.text !== 'string' || !isRequestId(comment.requestId)) return { ok: false, reason: 'Pedido inválido.' };
     if (!cardWriter) return { ok: false, reason: 'O app ainda está abrindo; tente de novo em instantes.' };
-    return cardWriter.write({ id: comment.id, text: comment.text, requestId: comment.requestId });
+    // t-8fed1d77: a write that "did nothing" left no trace anywhere; now each one leaves a line (never the text).
+    const startedAt = Date.now();
+    const result = await cardWriter.write({ id: comment.id, text: comment.text, requestId: comment.requestId });
+    cardDiagnostics.cardWrite({
+      taskId: comment.id,
+      outcome: !result.ok ? 'refused' : result.deliveredTo === 'lider' ? 'lider' : result.deliveredTo ? 'place' : 'nowhere',
+      durationMs: Date.now() - startedAt,
+      ...(result.ok ? {} : { reason: result.reason }),
+    });
+    return result;
   });
   ipcMain.handle(LEDGER_CHANNELS.proofImage, async (event, taskId: unknown, proofIndex: unknown): Promise<string | null> => {
     if (!fromMain(event.sender) || typeof taskId !== 'string' || typeof proofIndex !== 'number') return null;
