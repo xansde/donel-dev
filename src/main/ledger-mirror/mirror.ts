@@ -22,7 +22,8 @@ export interface MirrorTimers {
 export interface LedgerMirrorDeps {
   /** `null` = mirror off (not configured): changes are ignored. Read at every push (the owner may configure later). */
   readonly sink: () => MirrorSink | null;
-  readonly placeName?: PlaceNameOf;
+  /** Called once per push: the place names as they are now (one read of the boards, not one per task). */
+  readonly placeNames?: () => PlaceNameOf;
   /** The wait that joins a burst of changes (default 45 s). */
   readonly delayMs?: number;
   /** First retry after a failure; doubles up to `maxRetryMs`. */
@@ -102,7 +103,7 @@ export function createLedgerMirror(deps: LedgerMirrorDeps): LedgerMirror {
     pendingDoc = null;
     inFlight = (async () => {
       try {
-        const { rows, masked } = demandaRows(doc, deps.placeName);
+        const { rows, masked } = demandaRows(doc, deps.placeNames?.());
         for (const note of masked) log(logMasked(note));
         await sink.push(rows);
         failures = 0;

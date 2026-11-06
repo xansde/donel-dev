@@ -247,6 +247,7 @@ import { createCardWriter, type CardWriter } from './ledger-card-writer';
 import { fetchRemoteProof } from './ledger-remote-proof';
 import { createLedgerMirrorService, type LedgerMirrorService } from './ledger-mirror/service';
 import { LEDGER_MIRROR_CHANNELS, type LedgerMirrorConfigureResult, type LedgerMirrorState } from '../shared/ledger/mirror';
+import type { PlaceNameOf } from '../shared/ledger/labels';
 import { CHAT_CHANNELS } from '../shared/chat/ipc';
 // 011-contas-e-provedores (etapa 1) — motor de contas + mods. Nasce inerte
 // (accounts.mod = null); toda a mecânica mora em src/main/accounts/, este
@@ -2960,7 +2961,7 @@ function registerLedgerMirror(): void {
     vaultPath: () => accountsVaultPath,
     safeStorage,
     vaultIo: accountsVaultIo,
-    placeName: placeNameOf,
+    placeNames: placeNamesSnapshot,
     loadDoc: () => {
       try {
         return ledgerService?.load().doc ?? null;
@@ -3076,6 +3077,23 @@ function placeNameOf(projectPath: string, placeId: string): string | undefined {
   const card = savedBoard(projectPath)?.cards[placeId];
   if (card?.kind !== 'session' || !card.sessionId) return undefined;
   return appConfig.sessionRegistry[card.sessionId]?.label;
+}
+
+/** `placeNameOf` for many lookups in a row (the mirror's push): the boards are read once. */
+function placeNamesSnapshot(): PlaceNameOf {
+  let boards: Readonly<Record<string, MindscapeBoard>> | null = null;
+  return (projectPath, placeId) => {
+    if (boards === null) {
+      try {
+        boards = createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load().boards;
+      } catch {
+        boards = {};
+      }
+    }
+    const card = boards[projectPath]?.cards[placeId];
+    if (card?.kind !== 'session' || !card.sessionId) return undefined;
+    return appConfig.sessionRegistry[card.sessionId]?.label;
+  };
 }
 
 async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<{ caller: LedgerCaller; call: LedgerToolCall } | string> {

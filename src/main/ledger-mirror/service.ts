@@ -40,7 +40,7 @@ export interface LedgerMirrorServiceDeps {
   readonly vaultPath: () => string | null;
   readonly safeStorage: SafeStorageLike;
   readonly vaultIo: VaultIoDeps;
-  readonly placeName?: PlaceNameOf;
+  readonly placeNames?: () => PlaceNameOf;
   /** The current ledger, for the first sync after configuring. */
   readonly loadDoc: () => LedgerDoc | null;
 }
@@ -90,7 +90,7 @@ export function createLedgerMirrorService(deps: LedgerMirrorServiceDeps): Ledger
     return sink;
   };
 
-  const mirror: LedgerMirror = createLedgerMirror({ sink: currentSink, placeName: deps.placeName, log });
+  const mirror: LedgerMirror = createLedgerMirror({ sink: currentSink, placeNames: deps.placeNames, log });
 
   const writeSettings = (next: MirrorSettings): void => {
     const tmp = `${settingsPath}.tmp`;
