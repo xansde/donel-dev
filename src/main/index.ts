@@ -21,7 +21,7 @@ import { LEADER_ROLE_ID, ROLES_CHANNELS, type RoleSaveResult, type SessionRole }
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
-import { createLedgerService, guardSlackSend, ledgerFilePath, ledgerProofsDir, nodeLedgerProofFs, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
+import { createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, nodeLedgerProofFs, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerSnapshot } from '../shared/ledger/channels';
 import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
 import type { LedgerToolCall } from '../shared/ledger/tools';
@@ -3734,17 +3734,19 @@ void app.whenReady().then(async () => {
     } else {
       cleanupStaleHookSettings(userDataDir);
       curlPath = detectCurlPath();
+      const slackLetters = createSlackLetterGuard(() => ledgerService);
       const bridge = createHookBridge({
         diagnostics: createDiagnosticsLog(userDataDir),
         autoNeverAsks: () => appConfig.autoMode.neverAsks,
         projectYolo: isTabYolo,
         holdsPendings: () => chatHub !== null,
         // Slack só com carta: a post to Slack passes only with an accepted letter of the Oráculo Harrow.
-        preToolUseGuard: (_ptyId, payload) => guardSlackSend(ledgerService, typeof payload.tool_name === 'string' ? payload.tool_name : '', payload.tool_input),
+        preToolUseGuard: (ptyId, payload) => slackLetters.before(ptyId, payload),
       });
       await bridge.start();
       semaphoreManager.attachBridge(bridge);
       bridge.onAny((event) => {
+        if (event.type === 'hook') slackLetters.after(event.ptyId, event.event, event.payload); // spent only on a confirmed send
         if (event.type === 'conversation-switched') handleConversationSwitched(event);
         else if (event.type === 'statusline') statusLineStore.update(event.ptyId, event.payload);
       });

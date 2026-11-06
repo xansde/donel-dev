@@ -22,6 +22,8 @@ import {
   isNewerLedger,
   lastDelivery,
   slackLetterSent,
+  slackSendState,
+  type SlackSendState,
   ledgerStrip,
   transfersOf,
   eventNote,
@@ -43,7 +45,7 @@ import {
 } from '../shared/ledger/contract';
 import type { LedgerApplyResult, LedgerSnapshot } from '../shared/ledger/channels';
 import type { LedgerToolCall, ProofInput } from '../shared/ledger/tools';
-import { detectSlackSend, slackGuard } from '../shared/ledger/slack-guard';
+import { detectSlackSend, slackGuard, slackSendOutcome } from '../shared/ledger/slack-guard';
 
 /** Smoke/test override: isolates the ledger from the real one. */
 export const LEDGER_FILE_ENV_VAR = 'DONEL_LEDGER_FILE';
@@ -397,7 +399,11 @@ function taskView(task: LedgerTask, doc: LedgerDoc, orphan: string | null = null
             ...(task.slack.thread ? { thread: task.slack.thread } : {}),
             texto: task.slack.text,
             enviada: slackLetterSent(task),
-            ...(task.state === 'aceita' && !slackLetterSent(task) ? { proximo: 'Aceita: envie este texto exato a este destino, uma vez.' } : {}),
+            ...(SEND_LABEL[slackSendState(task)] ? { envio: SEND_LABEL[slackSendState(task)] } : {}),
+            ...(task.state === 'aceita' && slackSendState(task) === 'nenhum' ? { proximo: 'Aceita: envie este texto exato a este destino, uma vez.' } : {}),
+            ...(task.state === 'aceita' && slackSendState(task) === 'falhou'
+              ? { proximo: 'O envio falhou e não chegou ao Slack: pode mandar o mesmo texto ao mesmo destino mais uma vez, uma só. Se falhar de novo, a carta se esgota.' }
+              : {}),
             ...(task.state === 'rejeitada' && !isCancelled(task) ? { proximo: 'Rejeitada: não envie. Ajuste o texto pelo motivo e crie outra carta com carta_slack.' } : {}),
             ...(isCancelled(task) ? { proximo: 'Cancelada: não envie.' } : {}),
           },
@@ -405,6 +411,15 @@ function taskView(task: LedgerTask, doc: LedgerDoc, orphan: string | null = null
       : {}),
   };
 }
+
+/** What `tarefa_ver` says of a letter's send (`nenhum` says nothing). */
+const SEND_LABEL: Record<SlackSendState, string | null> = {
+  nenhum: null,
+  'sem-confirmacao': 'envio sem confirmação: a carta conta como usada',
+  confirmado: 'envio confirmado pelo Slack',
+  falhou: 'envio falhou; resta um reenvio',
+  esgotada: 'o reenvio também falhou; a carta se esgotou',
+};
 
 export interface LedgerToolAnswer {
   readonly ok: boolean;
@@ -572,29 +587,105 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
   }
 }
 
-// ---------------------------------------------------------------------------------------------------------------
-// Slack só com carta — the hook bridge's `PreToolUse` guard (pure decision in `slack-guard.ts`).
+// Slack só com carta — the hook bridge's guard (pure decision in `slack-guard.ts`).
+//
+// `PreToolUse` frees the call and writes `enviada` on its letters right away, on disk: from that moment the letter
+// is spent, even if the app closes before the answer, and a second call finds nothing to free. At `PostToolUse` /
+// `PostToolUseFailure` the answer is read (`slackSendOutcome`): Slack took it → an `enviada` "confirmado"; an
+// EXPLICIT failure ("fetch failed", `isError`, `ok: false`) → an `enviada` "falhou" (`SEND_ANSWER`), and the letter frees ONE resend of the same
+// text (t-8119864a); a doubt, or no answer within `LETTER_IN_FLIGHT_MS`, writes nothing: the letter stays spent,
+// "envio sem confirmação".
 
-/**
- * `null` = the call goes on (not a Slack post, or an accepted letter freed it and is now used); a string = the
- * refusal the session reads. A ledger that cannot be read, or a letter that cannot be marked as used, refuses.
- */
-export function guardSlackSend(service: LedgerService | null, toolName: string, toolInput: unknown): string | null {
-  if (detectSlackSend(toolName, toolInput).kind === 'none') return null;
-  let doc: LedgerDoc | null = null;
+export const LETTER_IN_FLIGHT_MS = 15 * 60 * 1000;
+
+interface LetterInFlight {
+  readonly ptyId: string;
+  readonly toolUseId: string | null;
+  readonly callKey: string;
+  readonly letterIds: readonly string[];
+  readonly at: number;
+}
+
+export interface SlackLetterGuard {
+  /** `PreToolUse`: `null` = the call goes on (its letters are now spent); a string = the refusal the session reads. */
+  before(ptyId: string, payload: Record<string, unknown>): string | null;
+  /** `PostToolUse` / `PostToolUseFailure` of the same call: records the answer; only an explicit failure reopens. */
+  after(ptyId: string, event: string, payload: Record<string, unknown>): void;
+}
+
+const toolNameOf = (payload: Record<string, unknown>): string => (typeof payload.tool_name === 'string' ? payload.tool_name : '');
+
+function callKeyOf(payload: Record<string, unknown>): string {
+  let input = '';
   try {
-    const snapshot = service?.load();
-    doc = snapshot && !snapshot.readOnly ? snapshot.doc : null;
+    input = JSON.stringify(payload.tool_input) ?? '';
   } catch {
-    doc = null;
+    input = '';
   }
-  const verdict = slackGuard(doc, toolName, toolInput);
-  if (verdict.kind === 'not-slack') return null;
-  if (verdict.kind === 'deny') return verdict.reason;
-  for (const id of verdict.letterIds) {
-    const task = doc!.tasks[id]!;
-    const marked = service!.apply({ kind: 'lugar', placeId: task.ownerPlaceId }, { op: 'slack-enviada', id });
-    if (!marked.ok) return `Envio ao Slack bloqueado pelo Donel Dev: não consegui marcar a carta ${id} como usada (${marked.reason}). Tente de novo.`;
+  return `${typeof payload.agent_id === 'string' ? payload.agent_id : ''}\u0000${toolNameOf(payload)}\u0000${input}`;
+}
+
+export function createSlackLetterGuard(service: () => LedgerService | null, now: () => number = Date.now): SlackLetterGuard {
+  const inFlight: LetterInFlight[] = [];
+
+  function prune(): void {
+    const cutoff = now() - LETTER_IN_FLIGHT_MS;
+    for (let i = inFlight.length - 1; i >= 0; i--) if (inFlight[i]!.at < cutoff) inFlight.splice(i, 1);
   }
-  return null;
+
+  return {
+    before(ptyId, payload) {
+      const toolName = toolNameOf(payload);
+      if (detectSlackSend(toolName, payload.tool_input).kind === 'none') return null;
+      prune();
+      const ledger = service();
+      let doc: LedgerDoc | null = null;
+      try {
+        const snapshot = ledger?.load();
+        doc = snapshot && !snapshot.readOnly ? snapshot.doc : null;
+      } catch {
+        doc = null;
+      }
+      const verdict = slackGuard(doc, toolName, payload.tool_input);
+      if (verdict.kind === 'not-slack') return null;
+      if (verdict.kind === 'deny') return verdict.reason;
+      for (const id of verdict.letterIds) {
+        const task = doc!.tasks[id]!;
+        const marked = ledger!.apply({ kind: 'lugar', placeId: task.ownerPlaceId }, { op: 'slack-enviada', id });
+        if (!marked.ok) return `Envio ao Slack bloqueado pelo Donel Dev: não consegui marcar a carta ${id} como usada (${marked.reason}). Tente de novo.`;
+      }
+      const toolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : null;
+      inFlight.push({ ptyId, toolUseId, callKey: callKeyOf(payload), letterIds: verdict.letterIds, at: now() });
+      return null;
+    },
+    after(ptyId, event, payload) {
+      if (event !== 'PostToolUse' && event !== 'PostToolUseFailure') return;
+      prune(); // an answer after the deadline finds nothing: the letter stays spent
+      const toolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : null;
+      const callKey = callKeyOf(payload);
+      const index = inFlight.findIndex(
+        (entry) => entry.ptyId === ptyId && (entry.toolUseId !== null && toolUseId !== null ? entry.toolUseId === toolUseId : entry.callKey === callKey),
+      );
+      if (index < 0) return;
+      const [entry] = inFlight.splice(index, 1);
+      const outcome = slackSendOutcome(event, payload.tool_response, payload.error);
+      if (outcome.kind === 'sem-confirmacao') return; // spent, "envio sem confirmação"
+      const ledger = service();
+      if (!ledger) return;
+      let doc: LedgerDoc;
+      try {
+        doc = ledger.load().doc;
+      } catch {
+        return;
+      }
+      for (const id of entry!.letterIds) {
+        const task = doc.tasks[id];
+        if (!task) continue;
+        ledger.apply(
+          { kind: 'lugar', placeId: task.ownerPlaceId },
+          outcome.kind === 'confirmado' ? { op: 'slack-resultado', id, outcome: 'confirmado' } : { op: 'slack-resultado', id, outcome: 'falhou', why: outcome.why },
+        );
+      }
+    },
+  };
 }

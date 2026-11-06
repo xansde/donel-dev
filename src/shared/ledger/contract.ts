@@ -30,6 +30,9 @@
  * 3 — cartas forma A: `title` on a task; `forOwner` on a delivery; `option` on a decision; the `comentada` event
  *     (the owner writing on the card) with `deliveredTo`.
  * 4 — `slack` on a task (a letter "mensagem para o Slack") and the `enviada` event (`slack-guard.ts`).
+ *   The answer of a send (t-8119864a) is also an `enviada` event, told apart by its `text` (`SEND_ANSWER`): a v4
+ *   app reads and rewrites it as is and counts the letter as spent, so it needed no new version (Alfa 0.4.0 and the
+ *   newer builds share one ledger.json).
  */
 export const LEDGER_SCHEMA_VERSION = 4;
 
@@ -354,7 +357,9 @@ export type LedgerOp =
    * owner place; any task not closed, and an accepted Slack letter never sent. It ends `rejeitada` (v4 reads it and a
    * letter there frees no send) with the mark `cancelada`; nobody takes it again.
    */
-  | { readonly op: 'cancelar'; readonly id: string; readonly reason: string };
+  | { readonly op: 'cancelar'; readonly id: string; readonly reason: string }
+  /** The answer of the send in flight: Slack took it, or it failed EXPLICITLY (`why`). An `enviada` with `SEND_ANSWER` text. */
+  | { readonly op: 'slack-resultado'; readonly id: string; readonly outcome: 'confirmado' | 'falhou'; readonly why?: string };
 
 export interface LedgerOpContext {
   readonly now: number;
@@ -530,14 +535,70 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       if (!task.slack || task.state !== 'aceita') return fail('Só uma carta de Slack aceita libera um envio.');
       if (slackLetterSent(task)) return fail('Esta carta já foi usada num envio.');
       return done(step(task, 'aceita', { kind: 'enviada', at: ctx.now, by: actor }));
+
+    case 'slack-resultado':
+      if (!task.slack || slackSendState(task) !== 'sem-confirmacao') return fail('Esta carta não tem envio esperando resposta.');
+      return done(
+        step(
+          task,
+          'aceita',
+          {
+            kind: 'enviada',
+            at: ctx.now,
+            by: actor,
+            text: op.outcome === 'confirmado' ? SEND_ANSWER.confirmed : `${SEND_ANSWER.failed}${op.why?.trim() ? `: ${op.why.trim().slice(0, 300)}` : ''}`,
+          },
+        ),
+      );
   }
 }
 
 export const MAX_SLACK_TEXT_CHARS = 12_000;
 
-/** The one send of an accepted letter already went out. */
+/** How many sends a letter frees: the send, plus ONE resend after a send that failed explicitly. */
+export const MAX_LETTER_SENDS = 2;
+
+/**
+ * The `text` of an `enviada` event that is the ANSWER of a send, not a send. Kept in an existing kind and field on
+ * purpose: a v4 app drops unknown kinds and fields when it rewrites the ledger, but keeps these, and its rule (any
+ * `enviada` = spent) reads them on the safe side.
+ */
+export const SEND_ANSWER = { confirmed: 'resposta do envio: confirmado', failed: 'resposta do envio: falhou' } as const;
+
+function sendAnswer(event: LedgerEvent): 'confirmado' | 'falhou' | null {
+  if (event.kind !== 'enviada' || !event.text) return null;
+  if (event.text === SEND_ANSWER.confirmed) return 'confirmado';
+  return event.text === SEND_ANSWER.failed || event.text.startsWith(`${SEND_ANSWER.failed}:`) ? 'falhou' : null;
+}
+
+/**
+ * Where a letter's send stands. `enviada` is written when the guard frees the call, so a send is spent from that
+ * moment, even if the app closes before the answer; only an explicit failure (`SEND_ANSWER.failed`) gives one more.
+ * - `nenhum`: never sent. `falhou`: the last send failed and the letter still frees the one resend.
+ * - `confirmado`: Slack took it. `sem-confirmacao`: no answer, or one that shows neither success nor failure.
+ * - `esgotada`: the last send failed, and it was already the resend.
+ */
+export type SlackSendState = 'nenhum' | 'sem-confirmacao' | 'confirmado' | 'falhou' | 'esgotada';
+
+export function slackSendState(task: LedgerTask): SlackSendState {
+  let sends = 0;
+  let last: 'enviada' | 'confirmado' | 'falhou' | null = null;
+  for (const event of task.events) {
+    if (event.kind !== 'enviada') continue;
+    const answer = sendAnswer(event);
+    if (answer === null) sends += 1;
+    last = answer ?? 'enviada';
+  }
+  if (last === null) return 'nenhum';
+  if (last === 'enviada') return 'sem-confirmacao';
+  if (last === 'confirmado') return 'confirmado';
+  return sends < MAX_LETTER_SENDS ? 'falhou' : 'esgotada';
+}
+
+/** The letter frees no more sends: it went out (confirmed or not), or the one resend was used. */
 export function slackLetterSent(task: LedgerTask): boolean {
-  return task.events.some((event) => event.kind === 'enviada');
+  const state = slackSendState(task);
+  return state !== 'nenhum' && state !== 'falhou';
 }
 
 export function slackDestinationLabel(slack: SlackLetter): string {
