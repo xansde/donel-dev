@@ -47,6 +47,7 @@ export type LedgerToolCall =
   | { readonly tool: 'tarefa_listar'; readonly estado?: LedgerTaskState; readonly todos?: boolean; readonly quadro?: string }
   | { readonly tool: 'tarefa_ver'; readonly id: string }
   | { readonly tool: 'tarefa_transferir'; readonly id: string; readonly para: string; readonly motivo: string }
+  | { readonly tool: 'tarefa_cancelar'; readonly id: string; readonly motivo: string }
   | { readonly tool: 'carta_slack'; readonly destino: string; readonly destinoNome?: string; readonly thread?: string; readonly texto: string; readonly motivo: string };
 
 export type LedgerToolName = LedgerToolCall['tool'];
@@ -201,6 +202,18 @@ export const LEDGER_TOOLS = [
         motivo: { type: 'string', description: 'Por que a tarefa muda de dono (ex.: o lugar dono fechou).' },
       },
       required: ['id', 'para', 'motivo'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'tarefa_cancelar',
+    title: 'Cancelar tarefa ou carta',
+    description:
+      'Encerra de vez uma tarefa que não vai mais acontecer, com motivo: uma carta de Slack substituída por outra (aceita e nunca enviada, ou ainda esperando o dono), um trabalho que ninguém vai fazer. Cancelada, a carta não libera envio e a tarefa não se assume de novo; o histórico fica. Quem pode: o Líder, o lugar dono ou o dono. Tarefa aceita (fora carta não enviada) não se cancela.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: ID, motivo: { type: 'string', description: 'Por que acaba (ex.: substituída pela carta nova).' } },
+      required: ['id', 'motivo'],
       additionalProperties: false,
     },
   },
@@ -397,11 +410,12 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       if (typeof paraODono === 'string') return fail(paraODono);
       return { ok: true, call: { tool: 'tarefa_entregar', id: id.trim(), provas, ...(nota?.trim() ? { nota } : {}), ...(paraODono ? { paraODono } : {}) } };
     }
+    case 'tarefa_cancelar':
     case 'tarefa_rejeitar': {
       if (typeof id === 'object' || id === undefined) return fail('"id" é obrigatório.');
       const motivo = text(args.motivo, 'motivo', MAX_REQUEST_CHARS, true);
-      if (typeof motivo === 'object' || motivo === undefined) return fail('"motivo" é obrigatório para rejeitar.');
-      return { ok: true, call: { tool: 'tarefa_rejeitar', id: id.trim(), motivo } };
+      if (typeof motivo === 'object' || motivo === undefined) return fail(`"motivo" é obrigatório para ${name === 'tarefa_cancelar' ? 'cancelar' : 'rejeitar'}.`);
+      return { ok: true, call: { tool: name, id: id.trim(), motivo } };
     }
     case 'tarefa_transferir': {
       if (typeof id === 'object' || id === undefined) return fail('"id" é obrigatório.');

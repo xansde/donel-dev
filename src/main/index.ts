@@ -3068,7 +3068,7 @@ function placeStatesOf(places: unknown): Map<string, string> {
 }
 
 async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<{ caller: LedgerCaller; call: LedgerToolCall } | string> {
-  const quadro = call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' ? call.quadro : call.tool === 'tarefa_transferir' ? taskBoardOf(call.id) : undefined;
+  const quadro = call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' ? call.quadro : call.tool === 'tarefa_transferir' || call.tool === 'tarefa_cancelar' ? taskBoardOf(call.id) : undefined;
   const base = { placeId: LEADER_OF_ALL, roleId: LEADER_ROLE_ID };
   if (!quadro) {
     if (call.tool === 'tarefa_criar') return 'Você é o Líder único e não tem quadro: diga qual em "quadro" (nome ou pasta).';

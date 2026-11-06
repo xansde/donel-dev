@@ -282,6 +282,29 @@ export function transfersOf(task: LedgerTask): LedgerTransfer[] {
   });
 }
 
+/** The task was cancelled: it ends `rejeitada` with the mark, and nobody took it again since. */
+export function isCancelled(task: LedgerTask): boolean {
+  const decision = lastDecision(task);
+  return task.state === 'rejeitada' && decision?.kind === 'rejeitada' && markOf(decision.text)?.tag === 'cancelada';
+}
+
+/** The state a person reads: `cancelada` for a cancelled task, else the stored one. */
+export type LedgerViewState = LedgerTaskState | 'cancelada';
+
+export function viewState(task: LedgerTask): LedgerViewState {
+  return isCancelled(task) ? 'cancelada' : task.state;
+}
+
+/**
+ * Nothing more happens to the task: accepted (an accepted Slack letter still to be sent is not), cancelled, or a
+ * rejected Slack letter (never taken again: a new letter replaces it).
+ */
+export function isClosed(task: LedgerTask): boolean {
+  if (isCancelled(task)) return true;
+  if (task.state === 'aceita') return !(task.slack && !slackLetterSent(task));
+  return task.state === 'rejeitada' && task.slack !== undefined;
+}
+
 /** The Líder of a board, or the Líder único (both carry the role `lider`). */
 export function isLeaderRole(roleId: string | undefined): boolean {
   return roleId === 'lider';
@@ -318,7 +341,13 @@ export type LedgerOp =
    * main saw that the owner place is gone (`ownerGone`: closed, out of the board, never started), the place that
    * takes the work over passing it to itself. A running task goes back to `aberta`, so the new owner takes it.
    */
-  | { readonly op: 'transferir'; readonly id: string; readonly to: string; readonly reason: string; readonly ownerGone?: boolean };
+  | { readonly op: 'transferir'; readonly id: string; readonly to: string; readonly reason: string; readonly ownerGone?: boolean }
+  /**
+   * 06/11 — the task stops for good (a letter replaced by a new one, work nobody will do). The Líder, the owner or the
+   * owner place; any task not closed, and an accepted Slack letter never sent. It ends `rejeitada` (v4 reads it and a
+   * letter there frees no send) with the mark `cancelada`; nobody takes it again.
+   */
+  | { readonly op: 'cancelar'; readonly id: string; readonly reason: string };
 
 export interface LedgerOpContext {
   readonly now: number;
@@ -391,6 +420,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
   switch (op.op) {
     case 'assumir':
       if (task.slack) return fail('Carta de Slack não se retoma: crie outra com carta_slack, com o texto ajustado.');
+      if (isCancelled(task)) return fail(`A tarefa foi cancelada (${eventNote(lastDecision(task)!) ?? 'sem motivo'}); crie outra se o trabalho voltar.`);
       if (task.state !== 'aberta' && task.state !== 'rejeitada') return fail(`A tarefa está "${task.state}"; só se assume uma aberta ou rejeitada.`);
       if (!isOwnerPlace) return fail(`Só o lugar dono (${task.ownerPlaceId}) assume esta tarefa.`);
       return done(step(task, 'em-execucao', { kind: 'assumida', at: ctx.now, by: actor }));
@@ -450,6 +480,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       // An option closing as `rejeitada` is already a reason: "<label>", plus the owner's words if any.
       const reason = op.option ? [op.option, op.reason.trim()].filter(Boolean).join(': ') : op.reason.trim();
       if (!reason) return fail('"motivo" é obrigatório para rejeitar.');
+      if (startsWithMark(reason)) return fail(`"motivo" não pode começar com "${MARK_OPEN}".`);
       // The owner may overturn an accept the owner did not make (D2 sample).
       const overturn = task.state === 'aceita' && actor.kind === 'dono' && acceptedWithoutOwner(task);
       if (task.state !== 'entregue' && !overturn) return fail(`A tarefa está "${task.state}"; só se rejeita uma entregue.`);
@@ -462,7 +493,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       const to = op.to.trim();
       const reason = op.reason.trim();
       if (task.slack) return fail('Carta de Slack não se transfere: o envio não depende de quem a escreveu.');
-      if (task.state === 'aceita') return fail('A tarefa já foi aceita e fechada; não há o que passar adiante.');
+      if (task.state === 'aceita' || isCancelled(task)) return fail(`A tarefa está "${viewState(task)}"; não há o que passar adiante.`);
       if (!to) return fail('"para" é obrigatório: o lugar que fica com a tarefa.');
       if (to === task.ownerPlaceId) return fail(`A tarefa já é de ${to}.`);
       if (!reason) return fail('"motivo" é obrigatório: por que a tarefa muda de dono.');
@@ -472,6 +503,15 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
         return fail(`Só o Líder, o dono, o lugar dono (${task.ownerPlaceId}) ou, com o lugar dono fechado ou fora do quadro, quem assume o trabalho passa a tarefa adiante.`);
       const state: LedgerTaskState = task.state === 'em-execucao' ? 'aberta' : task.state;
       return done({ ...step(task, state, { kind: 'criada', at: ctx.now, by: actor, text: withMark(`transferida de ${task.ownerPlaceId} para ${to}`, reason) }), ownerPlaceId: to });
+    }
+
+    case 'cancelar': {
+      const reason = op.reason.trim();
+      if (!reason) return fail('"motivo" é obrigatório para cancelar (ex.: substituída por outra carta).');
+      if (startsWithMark(reason)) return fail(`"motivo" não pode começar com "${MARK_OPEN}".`);
+      if (isClosed(task)) return fail(`A tarefa já está "${viewState(task)}" e fechada; não há o que cancelar.`);
+      if (!(actor.kind === 'dono' || isOwnerPlace || isLeaderRole(actor.roleId))) return fail(`Só o Líder, o dono ou o lugar dono (${task.ownerPlaceId}) cancela esta tarefa.`);
+      return done(step(task, 'rejeitada', { kind: 'rejeitada', at: ctx.now, by: actor, text: withMark('cancelada', reason) }));
     }
 
     case 'slack-enviada':
@@ -558,6 +598,7 @@ export function commentRefusal(task: LedgerTask, actor: LedgerActor, text: strin
   if (!text.trim()) return 'escreva alguma coisa antes de enviar.';
   if (text.length > MAX_COMMENT_CHARS) return `texto longo demais (máximo ${MAX_COMMENT_CHARS} caracteres).`;
   if (task.state === 'aceita' && !(acceptedWithoutOwner(task) && !ownerChecked(task))) return 'a tarefa já foi aceita e fechada.';
+  if (isCancelled(task)) return 'a tarefa foi cancelada.';
   return null;
 }
 

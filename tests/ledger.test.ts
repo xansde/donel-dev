@@ -9,6 +9,7 @@ import { findCode, LEDGER_SCHEMA_VERSION } from '../src/shared/ledger/contract';
 import { createCardWriter, type OwnerMessage } from '../src/main/ledger-card-writer';
 import { buildRemoteProofCommand, fetchRemoteProof } from '../src/main/ledger-remote-proof';
 import { parseLedgerToolCall, type LedgerToolCall } from '../src/shared/ledger/tools';
+import { slackGuard } from '../src/shared/ledger/slack-guard';
 
 // Ledger com prova (item 19) — persisted data a channel could erase, and the two rules that live in code:
 // no delivery without proof, and whoever delivered never accepts. Through the MCP port, round trip on disk.
@@ -273,6 +274,31 @@ describe('ledger com prova', () => {
     ]);
     // A forged mark in a reason never becomes a transfer.
     expect(service().apply({ kind: 'dono' }, { op: 'transferir', id, to: 'place:dev', reason: '⟦transferida de a para b⟧' })).toMatchObject({ ok: false });
+  });
+
+  it('cancels an accepted Slack letter that never went out: it frees no send, and nobody takes it again', async () => {
+    const { service } = setup();
+    const letter = await runLedgerTool(service(), dev, call('carta_slack', { destino: 'C0123', texto: 'Oi, time', motivo: 'avisar' }));
+    const id = (JSON.parse(letter.text) as { id: string }).id;
+    expect(service().apply({ kind: 'dono' }, { op: 'aceitar', id })).toMatchObject({ ok: true });
+    const send = { channel_id: 'C0123', text: 'Oi, time' };
+    expect(slackGuard(service().load().doc, 'mcp__slack__slack_send_message', send)).toMatchObject({ kind: 'allow' });
+
+    expect(await runLedgerTool(service(), revisor, call('tarefa_cancelar', { id, motivo: 'x' }))).toMatchObject({ ok: false });
+    expect(await runLedgerTool(service(), dev, call('tarefa_cancelar', { id, motivo: 'substituída pela carta nova' }))).toMatchObject({ ok: true });
+    expect(slackGuard(service().load().doc, 'mcp__slack__slack_send_message', send)).toMatchObject({ kind: 'deny' });
+    const seen = JSON.parse((await runLedgerTool(service(), lider, call('tarefa_ver', { id }))).text) as Record<string, any>;
+    expect(seen).toMatchObject({ estado: 'cancelada', decisao: { tipo: 'cancelada', por: 'place:dev', motivo: 'substituída pela carta nova' }, cartaSlack: { proximo: 'Cancelada: não envie.' } });
+    expect(await runLedgerTool(service(), dev, call('tarefa_cancelar', { id, motivo: 'de novo' }))).toMatchObject({ ok: false });
+
+    // Plain work nobody will do: the Líder cancels it, and it is not taken again.
+    const created = await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco: 'alto' }));
+    const work = (JSON.parse(created.text) as { id: string }).id;
+    await runLedgerTool(service(), dev, call('tarefa_assumir', { id: work }));
+    expect(await runLedgerTool(service(), lider, call('tarefa_cancelar', { id: work, motivo: 'ninguém vai fazer' }))).toMatchObject({ ok: true });
+    expect(await runLedgerTool(service(), dev, call('tarefa_assumir', { id: work }))).toMatchObject({ ok: false, text: expect.stringContaining('cancelada') });
+    // A reason the owner writes never forges the mark.
+    expect(service().apply({ kind: 'dono' }, { op: 'cancelar', id: work, reason: '⟦cancelada⟧' })).toMatchObject({ ok: false });
   });
 
   it('reads a ledger written by a newer channel and never writes over it', async () => {

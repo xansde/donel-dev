@@ -24,6 +24,9 @@ import {
   slackLetterSent,
   ledgerStrip,
   transfersOf,
+  eventNote,
+  isCancelled,
+  viewState,
   maxProofBytes,
   parseLedgerDoc,
   PROOF_FILE_TYPES,
@@ -354,7 +357,7 @@ function taskView(task: LedgerTask, doc: LedgerDoc): Record<string, unknown> {
   return {
     id: task.id,
     ...(task.title ? { titulo: task.title } : {}),
-    estado: task.state,
+    estado: viewState(task),
     pedido: task.request,
     criterio: task.doneWhen,
     prazo: task.due,
@@ -367,12 +370,14 @@ function taskView(task: LedgerTask, doc: LedgerDoc): Record<string, unknown> {
             por: who(delivery.by),
             em: new Date(delivery.at).toISOString(),
             provas: delivery.proofs?.map((proof) => (proof.kind === 'arquivo' ? `arquivo ${proof.file}` : proof.kind === 'link' ? proof.url : `texto (${proof.text.length} caracteres; leia com tarefa_ver)`)),
-            ...(delivery.text ? { nota: delivery.text } : {}),
+            ...(eventNote(delivery) ? { nota: eventNote(delivery) } : {}),
             ...(delivery.forOwner ? { paraODono: forOwnerView(delivery.forOwner) } : {}),
           },
         }
       : {}),
-    ...(decision ? { decisao: { tipo: decision.kind, por: who(decision.by), ...(decision.option ? { opcao: decision.option } : {}), ...(decision.text ? { motivo: decision.text } : {}) } } : {}),
+    ...(decision
+      ? { decisao: { tipo: isCancelled(task) ? 'cancelada' : decision.kind, por: who(decision.by), ...(decision.option ? { opcao: decision.option } : {}), ...(eventNote(decision) ? { motivo: eventNote(decision) } : {}) } }
+      : {}),
     ...(waitsForOwner(doc, task) ? { esperandoDono: true } : {}),
     ...(task.slack
       ? {
@@ -382,7 +387,8 @@ function taskView(task: LedgerTask, doc: LedgerDoc): Record<string, unknown> {
             texto: task.slack.text,
             enviada: slackLetterSent(task),
             ...(task.state === 'aceita' && !slackLetterSent(task) ? { proximo: 'Aceita: envie este texto exato a este destino, uma vez.' } : {}),
-            ...(task.state === 'rejeitada' ? { proximo: 'Rejeitada: não envie. Ajuste o texto pelo motivo e crie outra carta com carta_slack.' } : {}),
+            ...(task.state === 'rejeitada' && !isCancelled(task) ? { proximo: 'Rejeitada: não envie. Ajuste o texto pelo motivo e crie outra carta com carta_slack.' } : {}),
+            ...(isCancelled(task) ? { proximo: 'Cancelada: não envie.' } : {}),
           },
         }
       : {}),
@@ -429,6 +435,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
     }
     case 'tarefa_assumir':
       return answer(service.apply(actor, { op: 'assumir', id: call.id }), 'assumida');
+    case 'tarefa_cancelar':
     case 'tarefa_transferir': {
       let doc: LedgerDoc;
       try {
@@ -438,7 +445,8 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       }
       const task = doc.tasks[call.id];
       if (!task) return { ok: false, text: `Não existe tarefa "${call.id}" (veja tarefa_listar).` };
-      if (task.projectPath !== caller.projectPath) return { ok: false, text: 'A tarefa é de outro quadro; só se passa adiante tarefa do próprio quadro.' };
+      if (task.projectPath !== caller.projectPath) return { ok: false, text: 'A tarefa é de outro quadro; só se mexe em tarefa do próprio quadro.' };
+      if (call.tool === 'tarefa_cancelar') return answer(service.apply(actor, { op: 'cancelar', id: task.id, reason: call.motivo }), 'cancelada');
       const to = call.para === 'seu' ? caller.placeId : call.para;
       if (!caller.boardPlaceIds.includes(to)) return { ok: false, text: `"${to}" não é um lugar deste quadro que você alcança (veja sessao_listar).` };
       const gone = ownerGone(caller, task, service.now());
