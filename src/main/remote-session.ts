@@ -148,6 +148,8 @@ export function buildRemoteSetupScript(input: RemoteSetupInput): string {
     'export CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1',
     'export LANG="${LANG:-C.UTF-8}" LC_ALL="${LC_ALL:-C.UTF-8}"',
     'export COLORTERM=truecolor',
+    // Proxy de saída (scripts/proxy-saida): written by its VPS installer; only sessions started after the install pick it up.
+    'if [ -r "$HOME/.donel/proxy-saida.env" ]; then . "$HOME/.donel/proxy-saida.env"; fi',
     `exec claude ${input.claudeArgs.map(renderArg).join(' ')}`,
     '',
   ].join('\n');

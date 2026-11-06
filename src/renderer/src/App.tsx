@@ -144,7 +144,7 @@ import { BackgroundIndicator, type BackgroundSession } from './chat/BackgroundTa
 import { revealRow } from './chat/revealRow';
 import { runningCount } from '../../shared/chat/backgroundTasks';
 import { effectiveTabView, hasChatView, nextTabView, shouldHandleViewShortcut } from './chat/tabView';
-import { disposeTabSend, sendDriverFor, sendToTab, sendToTabAndWait } from './chat/composer/tabSend';
+import { disposeTabSend, ownerTerminalInput, sendDriverFor, sendToTab, sendToTabAndWait } from './chat/composer/tabSend';
 import { blockingScreen, readInputText } from '../../shared/chat/screen';
 import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../shared/lider/ipc';
 import { isLeaderOfAllTab, leaderHome } from '../../shared/mindscape/leader';
@@ -1865,10 +1865,11 @@ export function App(): React.JSX.Element {
     };
   });
   /** One line to the session of `tabId` — same doors as the Esteira auto-start: the chat's send driver, or typed into the terminal. */
-  const sendRenewalLine = (tabId: string, text: string): void => {
+  /** `from: 'session'` — a notice or a message from another session: it waits for the owner (sendDriver, 06/11). */
+  const sendRenewalLine = (tabId: string, text: string, from?: 'session'): void => {
     const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
     if (tab === undefined) return;
-    if (hasChatView(tab, chatEnabled)) sendToTab(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text });
+    if (hasChatView(tab, chatEnabled)) sendToTab(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text, ...(from ? { from } : {}) });
     else armEsteiraAutoStart(tabId, text);
   };
   const sessionRenewal = useSessionRenewal(renewalInputs, renewalPrefs, {
@@ -2613,11 +2614,12 @@ export function App(): React.JSX.Element {
       return tabId;
     },
     closeTab: (tabId) => closeTabImmediatelyRef.current(tabId),
-    sendLine: (tabId, text) => sendRenewalLine(tabId, text),
-    deliverLine: (tabId, text, waitMs) => {
+    sendLine: (tabId, text) => sendRenewalLine(tabId, text, 'session'),
+    deliverLine: (tabId, text, waitMs, from) => {
       const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
-      if (tab !== undefined && hasChatView(tab, chatEnabled)) return sendToTabAndWait(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text }, waitMs);
-      sendRenewalLine(tabId, text);
+      if (tab !== undefined && hasChatView(tab, chatEnabled))
+        return sendToTabAndWait(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text, from }, waitMs);
+      sendRenewalLine(tabId, text, from === 'session' ? 'session' : undefined);
       return Promise.resolve({ kind: 'pelo-terminal' as const });
     },
     permissionOnScreen: (tabId) => {
@@ -3606,6 +3608,7 @@ export function App(): React.JSX.Element {
                   accountLoginId={tab.accountLoginId}
                   roleId={tab.roleId}
                   leaderOfAll={isLeaderOfAllTab(tab)}
+                  ownerInputGate={(data, forward) => ownerTerminalInput(tab.id, data, forward)}
                   onStateChange={(info) => handleSemaphoreChange(tab.id, info)}
                   onAliveChange={(alive) => handleAliveChange(tab.id, alive)}
                   onAccountResolved={(account) => handleAccountResolved(tab.id, account)}

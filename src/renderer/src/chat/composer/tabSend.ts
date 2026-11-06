@@ -135,7 +135,9 @@ export function sendToTabAndWait(tabId: string, source: TabTerminalSource, reque
       resolve(outcome);
     };
     const check = (): boolean => {
-      const item = driver.getItems().find((candidate) => candidate.id === id);
+      // A notice merged into another while the owner typed is answered for by the one that carries it.
+      const carrier = driver.carrierOf(id);
+      const item = driver.getItems().find((candidate) => candidate.id === carrier);
       if (item === undefined) {
         // A finished send leaves the list once the transcript row takes over: it went in.
         if (last !== undefined && last.state !== 'failed') done({ kind: 'entrou' });
@@ -155,6 +157,17 @@ export function sendToTabAndWait(tabId: string, source: TabTerminalSource, reque
     });
     timer = setTimeout(() => done({ kind: 'enviando', ...(last?.reason ? { reason: last.reason } : {}) }), waitMs);
   });
+}
+
+/**
+ * 06/11 - a key (or paste) of the owner in the tab's terminal, on its way to the PTY: the tab's driver writes it now,
+ * or right after the Enter of a notice from another session that is being written at this moment, and holds the
+ * notices while he types. A tab with no driver yet just writes it.
+ */
+export function ownerTerminalInput(tabId: string, data: string, forward: (data: string) => void): void {
+  const w = wired.get(tabId);
+  if (w === undefined) forward(data);
+  else w.driver.ownerInput(data, forward);
 }
 
 export function disposeTabSend(tabId: string): void {

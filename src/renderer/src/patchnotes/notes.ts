@@ -22,6 +22,14 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'Cada tarefa do Oráculo agora pode ir, em até um minuto depois de mudar, para uma tabela no seu Supabase pessoal: quadro, título, o pedido como foi feito, quem pediu, estado, risco, dono, prazo, datas, decisão e motivo. Abre no navegador ou no celular, e o histórico sobrevive se o PC morrer. Há também a visão do que ainda não fechou. Prints e vídeos ficam só aqui; senhas, chaves e e-mails que aparecerem num texto saem mascarados. Sem internet, o Donel guarda e manda quando a rede voltar. Liga em Preferências, Celular.',
       },
       {
+        title: 'Os avisos das sessões não atropelam mais o que você digita',
+        text: 'Quando você digita no terminal de uma sessão, os avisos das outras ("◆ … terminou") e as mensagens entre sessões esperam você enviar. Os que chegarem nesse meio-tempo entram juntos, num aviso só, logo depois da sua mensagem. Se um aviso estiver sendo escrito no exato momento em que você começa a digitar, as suas teclas entram logo depois do Enter dele, nunca no meio. E o que você manda pelo chat, pelo Jobu, pelo "Pedir" do celular ou escrevendo numa carta passa na frente dos avisos que ainda não começaram e nunca entra grudado a eles. Nenhum aviso se perde.',
+      },
+      {
+        title: 'Escrever na carta pelo celular não perde mais o texto',
+        text: 'Quando o que você escreve numa carta não sai (a Tailscale caiu, o computador demorou a responder), a carta mostra em vermelho o motivo e guarda o texto no celular, mesmo se você fechar o Oráculo ou a lista recarregar. O botão vira "Tentar de novo", e tentar de novo nunca manda duas vezes. Quando sai, aparece o aviso "Saiu" e o texto fica na carta com para quem foi; na próxima vez que você abrir, ele continua lá. Ao abrir "Escrever", o botão Enviar aparece na tela, sem ficar escondido embaixo.',
+      },
+      {
         title: 'Pedir ao Líder pelo celular, escrevendo ou falando',
         text: 'O Oráculo no celular ganhou o botão "Pedir", no topo. Escreva ou grave o que você quer: o áudio é transcrito no seu computador, pelo OpenWhispr, e você confere e corrige o texto antes de enviar. O pedido vai direto para o chat do Líder. Se ele estiver fechado, o computador guarda o pedido e entrega quando o Líder abrir, mesmo que o Donel reinicie no meio. Em "Seus pedidos" você vê cada um: na fila, entregue, ou a tarefa que ele virou. Para gravar direto na página, use o endereço https do Oráculo; no http, o botão abre o gravador do celular.',
       },

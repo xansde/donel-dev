@@ -114,7 +114,8 @@ function conversaDe(task: LedgerTask, quem: string): FalaCelular[] {
   const firstDelivery = task.events.find((event) => event.kind === 'entregue');
   return task.events.flatMap((event): FalaCelular[] => {
     if (event.kind === 'comentada' && event.text) {
-      return [{ de: 'voce', texto: event.text, em: new Date(event.at).toISOString(), recibo: reciboDe(event.deliveredTo, quem, event.at) }];
+      const fala: FalaCelular = { de: 'voce', texto: event.text, em: new Date(event.at).toISOString(), recibo: reciboDe(event.deliveredTo, quem, event.at) };
+      return [event.requestId ? { ...fala, pedidoId: event.requestId } : fala];
     }
     // A reentrega (depois do que o dono escreveu) é a resposta de quem fez.
     if (event.kind === 'entregue' && event !== firstDelivery && task.events.some((other) => other.kind === 'comentada' && other.at <= event.at)) {
