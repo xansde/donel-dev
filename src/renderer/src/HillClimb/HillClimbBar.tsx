@@ -5,6 +5,7 @@ import {
   extraRodadasLeft,
   HILL_CLIMB_RULES,
   lowestScore,
+  openingRounds,
   rodadaSample,
   roundsOf,
   type HillClimbMission,
@@ -18,12 +19,14 @@ import styles from './HillClimbBar.module.css';
 // Hill climbing — the left bar that took the place of the Modo Dev (owner, 05/11). Only the visual of the old
 // bar stays: the trail (here: the rounds, with a divider at each rodada) and the two-axis carousel (here:
 // rodadas × versions, with the judge × criterion scores inside the focused card). No right bar.
+// The first rodada shows its inventory and the 3 directions it opened; a closed rodada ends in a decision card
+// (the directions with their worst score, the recommended one and the three gestures).
 // The loop itself runs in the main; this bar only shows the snapshot and sends the owner's three gestures.
 
 const STATE_LABEL: Readonly<Record<MissionState, string>> = {
   proposta: 'proposta · esperando você no Oráculo',
   rodando: 'rodando',
-  pausada: 'rodada fechada · esperando você',
+  pausada: 'rodada fechada · carta de decisão esperando você',
   aceita: 'aceita',
   recusada: 'recusada',
 };
@@ -151,7 +154,7 @@ function MissionView({ mission, readOnly, onGesture }: MissionViewProps): React.
         };
         return {
           key: `rodada-${rodada.index}`,
-          label: `Rodada ${rodada.index + 1}${rodada.direction ? ' · redirecionada' : ''}`,
+          label: `Rodada ${rodada.index + 1}${rodada.index === 0 ? ' · direções do zero' : ' · sobe a melhor'}${rodada.redirect ? ' · redirecionada' : ''}`,
           tall: true,
           focusedCardIndex: Math.max(0, focusedCardIndex),
           cards: rounds.map((round) => ({ id: `round-${round.index}`, accent: scoreColor(lowestScore(round, mission.criteria)), content: round })),
@@ -176,7 +179,10 @@ function MissionView({ mission, readOnly, onGesture }: MissionViewProps): React.
           </span>
         </div>
         <p className={styles.target} title={mission.target}>
-          <span className={styles.label}>Alvo</span> {excerpt(mission.target, 200)}
+          <span className={styles.label}>Alvo</span> {excerpt(mission.target, 200)} <span className={styles.aside}>(os juízes não veem)</span>
+        </p>
+        <p className={styles.criteria} title={mission.reader}>
+          <span className={styles.label}>Quem vai ler</span> {excerpt(mission.reader, 120)}
         </p>
         <p className={styles.criteria}>
           <span className={styles.label}>Critérios</span> {mission.criteria.join(' · ')}
@@ -207,13 +213,22 @@ interface TrailProps {
   onFocusRound: (round: MissionRound) => void;
 }
 
-/** The rounds, oldest first, with a divider where a rodada closed (the pause) and a new one opened. */
+/** What a round not sent yet will be: open direction k of 3 (first rodada only) or climb the best. */
+function pendingLabel(rodada: number, position: number): string {
+  return position < openingRounds(rodada) ? `abrir direção ${position + 1} de ${HILL_CLIMB_RULES.firstDirections}` : 'subir a melhor';
+}
+
+/**
+ * The rounds, oldest first, with a divider where a rodada closed (the pause) and a new one opened. The first
+ * rodada starts with the inventory and lists the directions it opened, each with its best lowest score.
+ */
 function Trail({ mission, focusedRound, onFocusRound }: TrailProps): React.JSX.Element {
   return (
     <div className={styles.trilha} data-testid="hillclimb-trilha">
       {mission.rodadas.map((rodada) => {
         const rounds = roundsOf(mission, rodada.index);
         const pending = rodada.closed ? 0 : Math.max(0, rodada.maxRounds - rounds.length);
+        const directions = rodada.index === 0 ? directionScores(mission, rounds) : [];
         return (
           <div key={rodada.index}>
             <div className={styles.divider} data-testid="hillclimb-divisor">
@@ -222,7 +237,32 @@ function Trail({ mission, focusedRound, onFocusRound }: TrailProps): React.JSX.E
                 {rodada.maxRounds} rounds{rodada.closed ? ` · ${CLOSE_REASON_LABEL[rodada.closed.reason]}` : ''}
               </span>
             </div>
-            {rodada.direction ? <p className={styles.direction}>Novo rumo: {rodada.direction}</p> : null}
+            {rodada.redirect ? <p className={styles.direction}>Novo rumo: {rodada.redirect}</p> : null}
+            {rodada.index === 0 ? (
+              <div className={[styles.trilhaRow, mission.inventory ? '' : styles.trilhaRowPending].filter(Boolean).join(' ')} data-testid="hillclimb-inventario" title={mission.inventory?.join('\n') ?? ''}>
+                <span className={styles.trilhaRail} aria-hidden="true">
+                  ├
+                </span>
+                <span className={styles.trilhaGlyph} aria-hidden="true">
+                  {mission.inventory ? '≡' : '○'}
+                </span>
+                <span className={styles.trilhaFase}>inventário</span>
+                <span className={styles.trilhaNote}>{mission.inventory ? mission.inventory.join(' · ') : 'o que já existe, antes das direções'}</span>
+                <span className={styles.trilhaState}>{mission.inventory ? `${mission.inventory.length} item(ns)` : ''}</span>
+              </div>
+            ) : null}
+            {directions.length > 0 ? (
+              <div className={styles.directions} data-testid="hillclimb-direcoes">
+                <span className={styles.label}>
+                  {directions.length} de {HILL_CLIMB_RULES.firstDirections} direções do zero
+                </span>
+                {directions.map((item) => (
+                  <button key={item.name} type="button" className={styles.directionChip} onClick={() => onFocusRound(item.round)} style={{ borderColor: scoreColor(item.low) }}>
+                    {item.name} <b style={{ color: scoreColor(item.low) }}>{item.low}</b>
+                  </button>
+                ))}
+              </div>
+            ) : null}
             {rounds.map((round, i) => {
               const low = lowestScore(round, mission.criteria);
               const last = i === rounds.length - 1 && pending === 0;
@@ -241,7 +281,9 @@ function Trail({ mission, focusedRound, onFocusRound }: TrailProps): React.JSX.E
                     {low >= HILL_CLIMB_RULES.cut ? '✓' : '●'}
                   </span>
                   <span className={styles.trilhaFase}>round {round.index}</span>
-                  <span className={styles.trilhaNote}>{round.note ?? excerpt(round.version, 60)}</span>
+                  <span className={styles.trilhaNote}>
+                    <b>{i < openingRounds(rodada.index) ? `abre «${round.direction}»` : `sobe «${round.direction}»`}</b> · {round.note ?? excerpt(round.version, 60)}
+                  </span>
                   <span className={styles.trilhaState}>menor {low}</span>
                 </div>
               );
@@ -255,6 +297,7 @@ function Trail({ mission, focusedRound, onFocusRound }: TrailProps): React.JSX.E
                   ○
                 </span>
                 <span className={styles.trilhaFase}>round {rounds.length + i + 1 + mission.rounds.filter((r) => r.rodada < rodada.index).length}</span>
+                <span className={styles.trilhaNote}>{pendingLabel(rodada.index, rounds.length + i)}</span>
                 <span className={styles.trilhaState}>{i === 0 && mission.state === 'rodando' ? 'esperando a versão' : ''}</span>
               </div>
             ))}
@@ -264,12 +307,22 @@ function Trail({ mission, focusedRound, onFocusRound }: TrailProps): React.JSX.E
       {mission.rodadas.length === 0 ? (
         <p className={styles.emptyTrail}>
           {mission.state === 'proposta'
-            ? `A primeira rodada (${HILL_CLIMB_RULES.firstRounds} rounds) começa quando você aceitar a carta no Oráculo.`
+            ? `A primeira rodada (${HILL_CLIMB_RULES.firstRounds} rounds: inventário e ${HILL_CLIMB_RULES.firstDirections} direções do zero) começa quando você aceitar a carta no Oráculo.`
             : 'A missão não rodou.'}
         </p>
       ) : null}
     </div>
   );
+}
+
+/** Each direction among `rounds` with its best lowest score, best first. */
+function directionScores(mission: HillClimbMission, rounds: readonly MissionRound[]): { name: string; low: number; round: MissionRound }[] {
+  const byName = new Map<string, MissionRound>();
+  for (const round of rounds) {
+    const seen = byName.get(round.direction);
+    if (!seen || lowestScore(round, mission.criteria) >= lowestScore(seen, mission.criteria)) byName.set(round.direction, round);
+  }
+  return [...byName.entries()].map(([name, round]) => ({ name, low: lowestScore(round, mission.criteria), round })).sort((a, b) => b.low - a.low);
 }
 
 function RoundCard({ mission, round, focused }: { mission: HillClimbMission; round: MissionRound; focused: boolean }): React.JSX.Element {
@@ -278,7 +331,9 @@ function RoundCard({ mission, round, focused }: { mission: HillClimbMission; rou
     <div className={styles.cardBody} data-testid="hillclimb-card" data-round={round.index} data-focused={focused ? 'true' : 'false'}>
       <div className={styles.cardTop}>
         <span className={styles.cardIcon}>◆</span>
-        <span className={styles.cardTitle}>Round {round.index}</span>
+        <span className={styles.cardTitle}>
+          Round {round.index} · {round.direction}
+        </span>
         <span className={styles.cardStatus} style={{ color: scoreColor(low) }}>
           menor nota {low}
         </span>
@@ -332,7 +387,11 @@ interface SampleProps {
   onFocusRound: (round: MissionRound) => void;
 }
 
-/** The end-of-rodada sample: best version, the lowest-score curve, 2–3 in-between versions, why it closed, three gestures. */
+/**
+ * The end-of-rodada sample, as a decision card: why it closed (a stall says so plainly: the loop does not go on
+ * by itself), the directions with their worst score and the recommended one, the best version, the lowest-score
+ * curve, 2–3 in-between versions and the three gestures. Bill's rodadas end like this: 5,5 → 6,5, never 9.
+ */
 function Sample({ mission, readOnly, onGesture, onFocusRound }: SampleProps): React.JSX.Element | null {
   const sample = rodadaSample(mission, mission.rodadas.length - 1);
   const [redirecting, setRedirecting] = useState(false);
@@ -341,6 +400,13 @@ function Sample({ mission, readOnly, onGesture, onFocusRound }: SampleProps): Re
   const [error, setError] = useState<string | null>(null);
   if (!sample) return null;
   const extras = extraRodadasLeft(mission);
+  const bestLow = lowestScore(sample.best, mission.criteria);
+  const lead =
+    sample.reason === 'estacionou'
+      ? `Estacionou: ${HILL_CLIMB_RULES.stallRounds} rounds seguidos sem subir a menor nota, que parou em ${bestLow}. O laço não segue sozinho: esta carta é a sua decisão.`
+      : sample.reason === 'corte'
+        ? `Passou do corte: os ${HILL_CLIMB_RULES.judges} juízes deram ${HILL_CLIMB_RULES.cut} ou mais em todos os critérios.`
+        : `Acabaram os rounds sem chegar ao corte; a melhor menor nota foi ${bestLow}.`;
   const send = (gesture: OwnerGesture): void => {
     setBusy(true);
     setError(null);
@@ -359,13 +425,29 @@ function Sample({ mission, readOnly, onGesture, onFocusRound }: SampleProps): Re
   const cutY = height - (HILL_CLIMB_RULES.cut / max) * height;
 
   return (
-    <section className={styles.sample} data-testid="hillclimb-amostra" aria-label="Amostra da rodada">
+    <section className={styles.sample} data-testid="hillclimb-amostra" data-reason={sample.reason} aria-label="Carta de decisão da rodada">
       <div className={styles.sampleHead}>
-        <span className={styles.label}>Amostra da rodada {sample.rodada + 1}</span>
+        <span className={styles.label}>Carta de decisão · rodada {sample.rodada + 1}</span>
         <AnnotationTag tone={sample.reason === 'corte' ? 'ok' : 'warn'}>{CLOSE_REASON_LABEL[sample.reason]}</AnnotationTag>
       </div>
+      <p className={styles.cartaLead}>{lead}</p>
+      {sample.directions.length > 1 ? (
+        <ul className={styles.cartaDirections} data-testid="hillclimb-carta-direcoes">
+          {sample.directions.map((item) => (
+            <li key={item.name}>
+              <button type="button" onClick={() => onFocusRound(item.round)}>
+                <span className={styles.cartaDirectionName}>{item.name}</span>
+                <span style={{ color: scoreColor(item.low) }}>pior nota {item.low}</span>
+                {item.name === sample.recommended ? <AnnotationTag tone="accent">recomendada</AnnotationTag> : null}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       <button type="button" className={styles.best} onClick={() => onFocusRound(sample.best)}>
-        <span className={styles.label}>Melhor versão · round {sample.best.index} · menor nota {lowestScore(sample.best, mission.criteria)}</span>
+        <span className={styles.label}>
+          Recomendo «{sample.recommended}» · round {sample.best.index} · menor nota {bestLow}
+        </span>
         <span className={styles.bestText}>{excerpt(sample.best.version, 240)}</span>
       </button>
       <div className={styles.curveRow}>
@@ -395,9 +477,9 @@ function Sample({ mission, readOnly, onGesture, onFocusRound }: SampleProps): Re
             className={styles.redirectInput}
             value={direction}
             onChange={(event) => setDirection(event.target.value)}
-            placeholder="Para onde a próxima rodada vai? O Escalador recebe este texto."
+            placeholder="Me dê uma referência ou o novo rumo (ex.: menos técnico, mais cultura nerd). O Escalador recebe este texto."
             rows={3}
-            aria-label="Novo rumo"
+            aria-label="Referência ou novo rumo"
           />
           <div className={styles.gestures}>
             <Button variant="primary" disabled={busy || readOnly || !direction.trim()} onClick={() => send({ kind: 'redirecionar', text: direction })}>
@@ -417,7 +499,7 @@ function Sample({ mission, readOnly, onGesture, onFocusRound }: SampleProps): Re
             Mais uma rodada
           </Button>
           <Button variant="secondary" disabled={busy || readOnly || extras === 0} onClick={() => setRedirecting(true)}>
-            Redirecionar
+            Redirecionar · dar uma referência
           </Button>
         </div>
       )}

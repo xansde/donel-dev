@@ -444,10 +444,12 @@ com a demanda `cartas-forma-a` (outro Dev, mesmas áreas: `src/shared/ledger/con
   dormindo ("Implementação decidida, não precisa perguntar nada"). Não é aprovação do dono.
 - **Rodadas previstas**: 01 | 02 | 03 | 04
 
-Regras fixas da seção m): laço em código (conta rounds, chama juízes, junta notas, fecha rodada);
-conselho de 3 juízes por chamada direta à chave de LLM, às cegas (só alvo, critérios e versão
-atual); corte ≥ 9 em todos os critérios por todos os juízes; X = 5, Y = 3, N = 2; "estacionou" =
-2 rounds seguidos sem subir a menor nota; nunca começa sozinho (proposta no Oráculo, roda só com
+Regras fixas da seção m), com o ajuste da seção n) (gravação do Bill, 06/11): laço em código (conta
+rounds, chama juízes, junta notas, fecha rodada); conselho de 3 juízes por chamada direta à chave de
+LLM, às cegas (só critérios, versão atual e quem vai ler o resultado; **nunca o alvo**); a 1ª rodada
+começa pelo inventário do que já existe e abre 3 direções do zero, e daí em diante se sobe a melhor;
+corte ≥ 9 em todos os critérios por todos os juízes; X = 5, Y = 3, N = 2; "estacionou" = 2 rounds de
+subida seguidos sem subir a menor nota, fechando com uma carta de decisão; nunca começa sozinho (proposta no Oráculo, roda só com
 aceite do dono; rodada extra pede o gesto do dono). A chave de LLM não existe: o conselho fica atrás
 de uma interface de provedor, com juiz falso nos testes e "falta a chave" na tela. Nunca chamar API paga.
 
@@ -494,14 +496,16 @@ de uma interface de provedor, com juiz falso nos testes e "falta a chave" na tel
 - **Depende de**: 02
 - **Conflita com**: 01, 02, 04
 - **Propósito**: o Escalador envia cada versão por `hillclimb_versao`; o laço chama os 3 juízes,
-  cada um vendo só alvo, critérios e a versão; junta as notas, devolve ao Escalador e fecha a
+  cada um vendo só critérios, a versão e quem vai ler (nunca o alvo); junta as notas, devolve ao Escalador e fecha a
   rodada ao passar do corte, ao estacionar ou no fim dos rounds. A barra mostra a trilha (rounds,
   com divisor de rodada), o carrossel (rodadas × variantes) e as notas juiz × critério no cartão em foco.
 - **Escopo**: motor puro, conselho atrás de `JudgeProvider`, juiz falso (testes e
   `DONEL_HILL_CLIMB_FAKE_JUDGES=1` para demonstração). Sem chave, o envio é recusado com "falta a chave".
 - **Dados necessários**: juiz falso determinístico
-- **Como testar**: testes: o juiz nunca recebe notas nem versões anteriores; corte exige ≥ 9 de
-  todos em tudo; 2 rounds sem subir a menor nota fecha com "estacionou"; a 1ª rodada fecha em 5 rounds.
+- **Como testar**: testes: o juiz nunca recebe o alvo, notas nem versões anteriores; a 1ª versão
+  exige o inventário e as 3 primeiras abrem direções distintas, depois a versão sobe a melhor; corte
+  exige ≥ 9 de todos em tudo; as 3 direções nunca contam como "estacionou", mas 2 rounds de subida
+  sem passar da melhor nota fecham a rodada com "estacionou"; a 1ª rodada fecha em 5 rounds.
 
 ### 04 — Amostra de fim de rodada com os três gestos
 
@@ -509,9 +513,10 @@ de uma interface de provedor, com juiz falso nos testes e "falta a chave" na tel
 - **Branch**: `feature/hill-climbing` (modo demanda, worktree `.claude/worktrees/hill-climbing`)
 - **Depende de**: 03
 - **Conflita com**: 01, 02, 03
-- **Propósito**: rodada fechada mostra a amostra (melhor versão, curva da menor nota por round,
-  2–3 intermediárias, motivo do fechamento) com os gestos parar e aceitar · mais uma rodada ·
-  redirecionar. Rodada extra tem 3 rounds; no máximo 2 extras.
+- **Propósito**: rodada fechada mostra a amostra como carta de decisão (motivo do fechamento, as
+  direções com a pior nota de cada uma e a recomendada, melhor versão, curva da menor nota por round,
+  2–3 intermediárias) com os gestos parar e aceitar · mais uma rodada · redirecionar (dar uma
+  referência). Rodada extra tem 3 rounds; no máximo 2 extras.
 - **Escopo**: gestos só do dono, pela barra; redirecionar leva o texto ao Escalador na próxima
   resposta da ferramenta. Item em `patchnotes/notes.ts`.
 - **Dados necessários**: missão de exemplo com juiz falso

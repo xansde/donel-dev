@@ -2,7 +2,15 @@
 // The main runs them (`src/main/hill-climb-store.ts`); the caller's place comes from the board, never from the
 // arguments, so only the Escalador that proposed a mission sends its versions.
 
-import { MAX_CRITERIA, MAX_TEXT_CHARS, MAX_VERSION_CHARS, type MissionMeasure } from './contract';
+import {
+  MAX_CRITERIA,
+  MAX_DIRECTION_CHARS,
+  MAX_INVENTORY_ITEM_CHARS,
+  MAX_INVENTORY_ITEMS,
+  MAX_TEXT_CHARS,
+  MAX_VERSION_CHARS,
+  type MissionMeasure,
+} from './contract';
 
 export type HillClimbToolCall =
   | {
@@ -10,10 +18,19 @@ export type HillClimbToolCall =
       readonly titulo: string;
       readonly pedido: string;
       readonly alvo: string;
+      readonly leitor: string;
       readonly criterios: readonly string[];
       readonly medida?: MissionMeasure;
     }
-  | { readonly tool: 'hillclimb_versao'; readonly missao: string; readonly versao: string; readonly nota?: string; readonly medido?: number }
+  | {
+      readonly tool: 'hillclimb_versao';
+      readonly missao: string;
+      readonly versao: string;
+      readonly direcao?: string;
+      readonly inventario?: readonly string[];
+      readonly nota?: string;
+      readonly medido?: number;
+    }
   | { readonly tool: 'hillclimb_ver'; readonly missao?: string };
 
 export type HillClimbToolName = HillClimbToolCall['tool'];
@@ -26,13 +43,17 @@ export const HILL_CLIMB_TOOLS = [
     name: 'hillclimb_propor',
     title: 'Propor missão de hill climbing',
     description:
-      'Propõe uma missão de hill climbing em que você é o Escalador: um alvo, de 1 a 6 critérios e, se houver, uma medida com alvo numérico. A missão NUNCA começa sozinha: nasce como carta de risco alto no Oráculo e só roda depois que o dono aceitar. Regras fixas: conselho de 3 juízes às cegas, corte 9 em todos os critérios por todos os juízes, 1ª rodada de 5 rounds, até 2 rodadas extras de 3 (cada uma pedida pelo dono), rodada fecha antes se 2 rounds seguidos não subirem a menor nota.',
+      'Propõe uma missão de hill climbing em que você é o Escalador: um alvo, quem vai ler ou usar o resultado, de 1 a 6 critérios e, se houver, uma medida com alvo numérico. A missão NUNCA começa sozinha: nasce como carta de risco alto no Oráculo e só roda depois que o dono aceitar. Regras fixas: conselho de 3 juízes às cegas (veem só os critérios, a versão e o leitor; nunca o alvo), corte 9 em todos os critérios por todos os juízes; a 1ª rodada (5 rounds) começa pelo inventário do que já existe e abre 3 direções do zero, e daí em diante se sobe a melhor; até 2 rodadas extras de 3 (cada uma pedida pelo dono); a rodada fecha antes se 2 rounds seguidos não subirem a menor nota ("estacionou"), com uma carta de decisão para o dono.',
     inputSchema: {
       type: 'object',
       properties: {
         titulo: { type: 'string', description: `Nome humano da missão (até ${MAX_MISSION_TITLE_CHARS} caracteres, sem código).` },
         pedido: { type: 'string', description: 'A frase literal de quem pediu.' },
-        alvo: { type: 'string', description: 'O que é "melhor" nesta missão, em texto de gente. É tudo o que os juízes leem além da versão.' },
+        alvo: { type: 'string', description: 'O que é "melhor" nesta missão, em texto de gente. O dono e você leem; os juízes NÃO (só o laço compara com o corte).' },
+        leitor: {
+          type: 'string',
+          description: 'Quem vai ler ou usar o resultado ("o CTO", "o dono no celular"). Os juízes leem a versão como essa pessoa.',
+        },
         criterios: { type: 'array', items: { type: 'string' }, description: `De 1 a ${MAX_CRITERIA} critérios, cada um julgado de 0 a 10.` },
         medida: {
           type: 'object',
@@ -41,19 +62,28 @@ export const HILL_CLIMB_TOOLS = [
           required: ['rotulo', 'alvo', 'sentido'],
         },
       },
-      required: ['titulo', 'pedido', 'alvo', 'criterios'],
+      required: ['titulo', 'pedido', 'alvo', 'leitor', 'criterios'],
     },
   },
   {
     name: 'hillclimb_versao',
     title: 'Enviar versão para o conselho',
     description:
-      'Manda a versão atual da missão (o texto do artefato, ou o que os juízes precisam ler dele). O laço conta o round, chama os 3 juízes às cegas e devolve as notas por juiz e critério. Quando a rodada fecha (passou do corte, estacionou ou acabaram os rounds), PARE: o dono vê a amostra e decide. Recusa enquanto a missão for proposta, com a rodada fechada ou sem a chave de LLM.',
+      'Manda a versão atual da missão (o texto do artefato, ou o que os juízes precisam ler dele). O laço conta o round, chama os 3 juízes às cegas e devolve as notas por juiz e critério. A 1ª versão leva o "inventario" (o que já existe e não pode se perder); as 3 primeiras abrem 3 direções do zero, cada uma com um nome em "direcao"; depois disso cada versão sobe a melhor direção (a resposta diz qual). Quando a rodada fecha (passou do corte, estacionou ou acabaram os rounds), PARE: o dono recebe a carta de decisão e escolhe. Recusa enquanto a missão for proposta, com a rodada fechada ou sem a chave de LLM.',
     inputSchema: {
       type: 'object',
       properties: {
         missao: { type: 'string', description: 'Id da missão (hillclimb_ver).' },
         versao: { type: 'string', description: `A versão, até ${MAX_VERSION_CHARS} caracteres.` },
+        direcao: {
+          type: 'string',
+          description: `Nas 3 primeiras versões: o nome curto da direção nova que esta versão abre (até ${MAX_DIRECTION_CHARS} caracteres). Depois, omita: o laço sobe a melhor.`,
+        },
+        inventario: {
+          type: 'array',
+          items: { type: 'string' },
+          description: `Só na 1ª versão: o que já existe e não pode se perder, um item por linha (até ${MAX_INVENTORY_ITEMS}).`,
+        },
         nota: { type: 'string', description: 'O que mudou desde a anterior (só o dono e você leem; os juízes não).' },
         medido: { type: 'number', description: 'O valor medido desta versão, quando a missão tem medida.' },
       },
@@ -76,7 +106,7 @@ export function isHillClimbToolName(name: string): name is HillClimbToolName {
 }
 
 export const HILL_CLIMB_INSTRUCTIONS =
-  'Hill climbing: hillclimb_propor (vira carta no Oráculo; só roda com aceite do dono), hillclimb_versao (um round: 3 juízes às cegas dão nota por critério) e hillclimb_ver. Quando a rodada fechar, pare e espere o dono. ';
+  'Hill climbing: hillclimb_propor (vira carta no Oráculo; só roda com aceite do dono), hillclimb_versao (um round: 3 juízes às cegas, sem ver o alvo, dão nota por critério; a 1ª rodada começa pelo inventário e abre 3 direções) e hillclimb_ver. Quando a rodada fechar, pare e espere o dono. ';
 
 type Parsed = { readonly ok: true; readonly call: HillClimbToolCall } | { readonly ok: false; readonly reason: string };
 
@@ -105,18 +135,35 @@ export function parseHillClimbToolCall(name: HillClimbToolName, raw: unknown): P
     const missao = text(args, 'missao', 64, true);
     const versao = text(args, 'versao', MAX_VERSION_CHARS, true);
     const nota = text(args, 'nota', MAX_TEXT_CHARS, false);
-    for (const value of [missao, versao, nota]) if (isError(value)) return fail(value.error);
+    const direcao = text(args, 'direcao', MAX_DIRECTION_CHARS, false);
+    for (const value of [missao, versao, nota, direcao]) if (isError(value)) return fail(value.error);
     const medido = args.medido;
     if (medido !== undefined && (typeof medido !== 'number' || !Number.isFinite(medido))) return fail('"medido" tem de ser um número.');
+    let inventario: string[] | undefined;
+    if (args.inventario !== undefined) {
+      const items = args.inventario;
+      if (!Array.isArray(items) || items.length > MAX_INVENTORY_ITEMS) return fail(`"inventario": uma lista de até ${MAX_INVENTORY_ITEMS} itens.`);
+      inventario = items.map((item) => (typeof item === 'string' ? item.trim() : ''));
+      if (inventario.some((item) => !item || item.length > MAX_INVENTORY_ITEM_CHARS)) return fail(`"inventario": cada item é um texto de até ${MAX_INVENTORY_ITEM_CHARS} caracteres.`);
+    }
     return {
       ok: true,
-      call: { tool: name, missao: missao as string, versao: versao as string, ...(nota ? { nota: nota as string } : {}), ...(typeof medido === 'number' ? { medido } : {}) },
+      call: {
+        tool: name,
+        missao: missao as string,
+        versao: versao as string,
+        ...(direcao ? { direcao: direcao as string } : {}),
+        ...(inventario ? { inventario } : {}),
+        ...(nota ? { nota: nota as string } : {}),
+        ...(typeof medido === 'number' ? { medido } : {}),
+      },
     };
   }
   const titulo = text(args, 'titulo', MAX_MISSION_TITLE_CHARS, true);
   const pedido = text(args, 'pedido', MAX_TEXT_CHARS, true);
   const alvo = text(args, 'alvo', MAX_TEXT_CHARS, true);
-  for (const value of [titulo, pedido, alvo]) if (isError(value)) return fail(value.error);
+  const leitor = text(args, 'leitor', 200, true);
+  for (const value of [titulo, pedido, alvo, leitor]) if (isError(value)) return fail(value.error);
   const criterios = args.criterios;
   if (!Array.isArray(criterios) || criterios.length === 0 || criterios.length > MAX_CRITERIA) return fail(`"criterios": de 1 a ${MAX_CRITERIA}.`);
   const names = criterios.map((c) => (typeof c === 'string' ? c.trim() : ''));
@@ -132,6 +179,14 @@ export function parseHillClimbToolCall(name: HillClimbToolName, raw: unknown): P
   }
   return {
     ok: true,
-    call: { tool: name, titulo: titulo as string, pedido: pedido as string, alvo: alvo as string, criterios: names, ...(medida ? { medida } : {}) },
+    call: {
+      tool: name,
+      titulo: titulo as string,
+      pedido: pedido as string,
+      alvo: alvo as string,
+      leitor: leitor as string,
+      criterios: names,
+      ...(medida ? { medida } : {}),
+    },
   };
 }

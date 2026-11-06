@@ -584,3 +584,66 @@
   flex: none;
   max-height: 280px;
 }
+
+.aside {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+/* The 3 directions the first rodada opened, each with its best lowest score. */
+.directions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 12px 6px 28px;
+}
+
+.directionChip {
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  font-size: 11px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+/* The decision card at the end of a rodada. */
+.cartaLead {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-primary);
+}
+
+.cartaDirections {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cartaDirections button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 4px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font-size: 11.5px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.cartaDirectionName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

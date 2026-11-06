@@ -3,7 +3,8 @@
 // whole document goes temp → rename, a newer `schemaVersion` is read and never written, and a file that cannot
 // be read is shown as read-only instead of coming back empty (it would be written over).
 //
-// The loop in code lives here: a version comes in → the council judges it blind → `recordRound` counts the
+// The loop in code lives here: a version comes in → it is checked against the loop's shape (inventory first,
+// 3 directions from scratch, then climb the best) → the council judges it blind → `recordRound` counts the
 // round and closes the rodada when it should. The proposal is a high-risk card in the Oráculo; the mission runs
 // only after the owner accepts that card (`syncLedger`).
 
@@ -20,15 +21,18 @@ import {
   HILL_CLIMB_RULES,
   isNewerHillClimbDoc,
   lowestScore,
+  nextStep,
   parseHillClimbDoc,
   proposeMission,
   recordRound,
   settleProposal,
   cannotSubmit,
+  versionProblem,
   type HillClimbDoc,
   type HillClimbMission,
   type MissionRound,
   type OwnerGesture,
+  type SubmittedVersion,
 } from '../shared/hillClimb/contract';
 import { convene, councilStatus, FAKE_JUDGES_ENV_VAR, fakeCouncil, type CouncilStatus, type JudgeProvider } from '../shared/hillClimb/council';
 import type { HillClimbGestureResult, HillClimbSnapshot } from '../shared/hillClimb/channels';
@@ -175,7 +179,11 @@ export function createHillClimbService(deps: HillClimbServiceDeps): HillClimbSer
         }
         return next === doc ? null : { doc: next };
       });
-      for (const mission of started) tell(mission, `o dono aceitou rodar. A rodada 1 tem ${HILL_CLIMB_RULES.firstRounds} rounds: mande a primeira versão com hillclimb_versao.`);
+      for (const mission of started)
+        tell(
+          mission,
+          `o dono aceitou rodar. A rodada 1 tem ${HILL_CLIMB_RULES.firstRounds} rounds e começa pelo inventário do que já existe: mande a primeira versão com hillclimb_versao, com "inventario" e "direcao" (a 1ª de ${HILL_CLIMB_RULES.firstDirections} direções feitas do zero).`,
+        );
     },
 
     gesture(missionId, gesture) {
@@ -237,6 +245,7 @@ export function createHillClimbService(deps: HillClimbServiceDeps): HillClimbSer
           placeId: caller.placeId,
           title: call.titulo,
           target: call.alvo,
+          reader: call.leitor,
           criteria: call.criterios,
           ...(call.medida ? { measure: call.medida } : {}),
           estimatedCost: estimatedCost(),
@@ -260,6 +269,16 @@ export function createHillClimbService(deps: HillClimbServiceDeps): HillClimbSer
       const refusal = cannotSubmit(mission);
       if (refusal) return { ok: false, text: refusal };
       if (mission.measure && call.medido === undefined) return { ok: false, text: `Esta missão é medida: mande "medido" (${mission.measure.label}).` };
+      const submitted: SubmittedVersion = {
+        version: call.versao,
+        ...(call.direcao ? { direction: call.direcao } : {}),
+        ...(call.inventario ? { inventory: call.inventario } : {}),
+        ...(call.nota ? { note: call.nota } : {}),
+        ...(call.medido !== undefined ? { measured: call.medido } : {}),
+      };
+      // Before the judges: a version that does not fit the loop never spends a call.
+      const misfit = versionProblem(mission, submitted);
+      if (misfit) return { ok: false, text: misfit };
       const judges = deps.council();
       const council = councilStatus(judges, deps.fakeCouncil === true);
       if (!council.ready || !judges) return { ok: false, text: council.ready ? 'O conselho não está pronto.' : council.reason };
@@ -273,7 +292,7 @@ export function createHillClimbService(deps: HillClimbServiceDeps): HillClimbSer
       const error = update((latest) => {
         const fresh = latest.missions[mission.id];
         if (!fresh) return { error: 'A missão sumiu enquanto os juízes liam.' };
-        const result = recordRound(fresh, { version: call.versao, ...(call.nota ? { note: call.nota } : {}), ...(call.medido !== undefined ? { measured: call.medido } : {}) }, verdicts, now());
+        const result = recordRound(fresh, submitted, verdicts, now());
         if (!result.ok) return { error: result.reason };
         recorded = result.mission;
         return { doc: withMission(latest, result.mission) };
@@ -296,11 +315,16 @@ function estimatedCost(): string {
 function proposalText(call: Extract<HillClimbToolCall, { tool: 'hillclimb_propor' }>): string {
   const lines = [
     `Alvo: ${call.alvo}`,
+    `Quem vai ler ou usar: ${call.leitor}`,
     `Critérios: ${call.criterios.join('; ')}`,
-    `Corte: ${HILL_CLIMB_RULES.cut} ou mais em todos os critérios, por todos os ${HILL_CLIMB_RULES.judges} juízes (às cegas).`,
+    `Corte: ${HILL_CLIMB_RULES.cut} ou mais em todos os critérios, por todos os ${HILL_CLIMB_RULES.judges} juízes. Às cegas: os juízes veem os critérios, a versão e quem vai ler; nunca o alvo.`,
+    `Rodada 1: começa pelo inventário do que já existe e abre ${HILL_CLIMB_RULES.firstDirections} direções do zero; depois, cada round sobe a melhor.`,
   ];
   if (call.medida) lines.push(`Medida: ${call.medida.label}, ${call.medida.direction === 'menor' ? 'no máximo' : 'no mínimo'} ${call.medida.target}.`);
-  lines.push(`Gasto: ${estimatedCost()}.`, `Fecha a rodada antes se ${HILL_CLIMB_RULES.stallRounds} rounds seguidos não subirem a menor nota.`);
+  lines.push(
+    `Gasto: ${estimatedCost()}.`,
+    `Fecha a rodada antes se ${HILL_CLIMB_RULES.stallRounds} rounds seguidos não subirem a menor nota ("estacionou"): aí chega uma carta de decisão para você.`,
+  );
   return lines.join('\n');
 }
 
@@ -308,9 +332,9 @@ function proposalCard(criteria: number, measured: boolean): LedgerForOwner {
   const { firstRounds, extraRounds, maxExtraRodadas, judges, cut } = HILL_CLIMB_RULES;
   return {
     question: 'Rodar esta missão de hill climbing?',
-    summary: `${criteria} critério(s)${measured ? ' e uma medida' : ''}, ${judges} juízes às cegas, corte ${cut} em tudo. Primeira rodada de ${firstRounds} rounds; até ${maxExtraRodadas} extras de ${extraRounds}, cada uma só com o seu gesto.`,
+    summary: `${criteria} critério(s)${measured ? ' e uma medida' : ''}, ${judges} juízes às cegas, corte ${cut} em tudo. Primeira rodada de ${firstRounds} rounds: inventário e ${HILL_CLIMB_RULES.firstDirections} direções do zero. Até ${maxExtraRodadas} extras de ${extraRounds}, cada uma só com o seu gesto.`,
     options: [
-      { label: 'Rodar', effect: 'A primeira rodada começa; ao fechar, você vê a amostra e decide se segue.', closes: 'aceita', recommended: true },
+      { label: 'Rodar', effect: 'A primeira rodada começa; ao fechar, chega uma carta de decisão e você escolhe se segue.', closes: 'aceita', recommended: true },
       { label: 'Não rodar', effect: 'A missão é encerrada sem gastar nenhuma chamada de juiz.', closes: 'rejeitada' },
     ],
     why: 'O alvo e os critérios estão nas provas; o teto de rounds limita o gasto.',
@@ -321,9 +345,11 @@ function proposalCard(criteria: number, measured: boolean): LedgerForOwner {
 function gestureMessage(mission: HillClimbMission, gesture: OwnerGesture): string {
   if (gesture.kind === 'aceitar') return 'o dono parou e aceitou a melhor versão. A missão terminou; não mande mais versões.';
   const rodada = currentRodada(mission);
+  const step = nextStep(mission);
+  const climb = step.kind === 'subir' && step.direction ? `suba a melhor direção, «${step.direction}»` : 'siga de onde parou';
   const rounds = `A rodada ${(rodada?.index ?? 0) + 1} tem ${rodada?.maxRounds ?? HILL_CLIMB_RULES.extraRounds} rounds`;
-  if (gesture.kind === 'mais-uma') return `o dono pediu mais uma rodada. ${rounds}: siga de onde parou.`;
-  return `o dono redirecionou: "${gesture.text.trim()}". ${rounds}: siga por esse rumo.`;
+  if (gesture.kind === 'mais-uma') return `o dono pediu mais uma rodada. ${rounds}: ${climb}.`;
+  return `o dono redirecionou: "${gesture.text.trim()}". ${rounds}: ${climb}, por esse rumo.`;
 }
 
 function councilView(council: CouncilStatus): Record<string, unknown> {
@@ -334,6 +360,7 @@ function roundView(mission: HillClimbMission, round: MissionRound): Record<strin
   return {
     round: round.index,
     rodada: round.rodada + 1,
+    direcao: round.direction,
     menorNota: lowestScore(round, mission.criteria),
     ...(round.measured !== undefined ? { medido: round.measured } : {}),
     notas: round.verdicts.map((verdict) => ({ juiz: verdict.judge, notas: verdict.scores, comentario: verdict.comment })),
@@ -347,12 +374,14 @@ function missionView(mission: HillClimbMission, full: boolean): Record<string, u
   return {
     ...base,
     alvo: mission.target,
+    leitor: mission.reader,
     criterios: mission.criteria,
+    ...(mission.inventory ? { inventario: mission.inventory } : {}),
     ...(mission.measure ? { medida: mission.measure } : {}),
     rodadas: mission.rodadas.map((item) => ({
       rodada: item.index + 1,
       roundsMax: item.maxRounds,
-      ...(item.direction ? { novoRumo: item.direction } : {}),
+      ...(item.redirect ? { novoRumo: item.redirect } : {}),
       ...(item.closed ? { fechou: CLOSE_REASON_LABEL[item.closed.reason] } : {}),
     })),
     historico: mission.rounds.map((round) => roundView(mission, round)),
@@ -363,10 +392,16 @@ function roundAnswer(mission: HillClimbMission): string {
   const round = mission.rounds[mission.rounds.length - 1]!;
   const rodada = mission.rodadas[round.rodada]!;
   const view: Record<string, unknown> = { ...roundView(mission, round), roundsNaRodada: `${mission.rounds.filter((r) => r.rodada === round.rodada).length}/${rodada.maxRounds}` };
-  if (rodada.direction) view.novoRumo = rodada.direction;
+  if (rodada.redirect) view.novoRumo = rodada.redirect;
   if (rodada.closed) {
     view.rodadaFechou = CLOSE_REASON_LABEL[rodada.closed.reason];
-    view.proximoPasso = `PARE. O dono vê a amostra e decide: parar e aceitar${extraRodadasLeft(mission) > 0 ? ', mais uma rodada ou redirecionar' : ''}. Consulte hillclimb_ver depois.`;
+    view.proximoPasso = `PARE. O dono recebe a carta de decisão e escolhe: parar e aceitar${extraRodadasLeft(mission) > 0 ? ', mais uma rodada ou redirecionar (com uma referência)' : ''}. Consulte hillclimb_ver depois.`;
+  } else {
+    const step = nextStep(mission);
+    view.proximoPasso =
+      step.kind === 'abrir'
+        ? `Abra a direção ${step.nth} de ${HILL_CLIMB_RULES.firstDirections}, do zero, com um nome novo em "direcao".`
+        : `Suba a melhor direção, «${step.kind === 'subir' ? step.direction : ''}»: mande a próxima versão sem "direcao".`;
   }
   return JSON.stringify(view, null, 2);
 }

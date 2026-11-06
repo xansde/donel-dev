@@ -10,8 +10,9 @@ import { MISSING_KEY_REASON, type JudgeProvider } from '../src/shared/hillClimb/
 import { parseHillClimbToolCall, type HillClimbToolCall, type HillClimbToolName } from '../src/shared/hillClimb/tools';
 
 // Hill climbing — what would break without the owner noticing: the missions file a channel could erase, a
-// mission that runs without the owner's yes, a judge that sees other scores, and the closing rules (cut,
-// stall, rounds, extra rodadas). Real ledger and real files, fake judges: no paid API.
+// mission that runs without the owner's yes, a judge that sees the target or other scores, the shape of the
+// first rodada (inventory, 3 directions, then climb the best) and the closing rules (cut, stall, rounds, extra
+// rodadas). Real ledger and real files, fake judges: no paid API.
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -55,7 +56,13 @@ function call(name: HillClimbToolName, args: unknown): HillClimbToolCall {
 }
 
 const escalador: HillClimbCaller = { projectPath: 'C:/p', placeId: 'place:escalador' };
-const proposal = { titulo: 'Tela de entrada', pedido: 'Quero a tela de entrada nota 9', alvo: 'Uma tela de entrada clara', criterios: ['clareza', 'beleza'] };
+const proposal = {
+  titulo: 'Tela de entrada',
+  pedido: 'Quero a tela de entrada nota 9',
+  alvo: 'Uma tela de entrada clara em cinco segundos',
+  leitor: 'o dono, no celular',
+  criterios: ['clareza', 'beleza'],
+};
 
 async function proposeAndAccept(env: ReturnType<typeof setup>): Promise<string> {
   const proposed = await env.service.runTool(escalador, call('hillclimb_propor', proposal), env.ledger);
@@ -68,7 +75,16 @@ async function proposeAndAccept(env: ReturnType<typeof setup>): Promise<string> 
   return id;
 }
 
-const send = (env: ReturnType<typeof setup>, missao: string, versao: string) => env.service.runTool(escalador, call('hillclimb_versao', { missao, versao }), env.ledger);
+const send = (env: ReturnType<typeof setup>, missao: string, versao: string, extra: Record<string, unknown> = {}) =>
+  env.service.runTool(escalador, call('hillclimb_versao', { missao, versao, ...extra }), env.ledger);
+
+/** The first versions: the inventory with the first one, each opening a direction from scratch. */
+async function openDirections(env: ReturnType<typeof setup>, missao: string, names = ['A', 'B', 'C']): Promise<void> {
+  for (const [i, direcao] of names.entries()) {
+    const sent = await send(env, missao, `versão ${direcao}`, { direcao, ...(i === 0 ? { inventario: ['o cabeçalho de hoje'] } : {}) });
+    expect(sent.ok, sent.text).toBe(true);
+  }
+}
 
 describe('hill climbing — the missions file', () => {
   it('reads a missing file as empty and never writes over an unreadable or newer one', async () => {
@@ -91,7 +107,7 @@ describe('hill climbing — the missions file', () => {
     const env = setup(null);
     expect(env.service.load().council).toEqual({ ready: false, reason: MISSING_KEY_REASON });
     const id = await proposeAndAccept(env);
-    const sent = await send(env, id, 'versão 1');
+    const sent = await send(env, id, 'versão 1', { direcao: 'A', inventario: ['o que existe'] });
     expect(sent).toEqual({ ok: false, text: MISSING_KEY_REASON });
     expect(env.service.load().doc.missions[id]!.rounds).toHaveLength(0);
   });
@@ -123,51 +139,91 @@ describe('hill climbing — never starts by itself', () => {
     expect(env.told.at(-1)).toContain('aceitou');
     const intruder = await env.service.runTool({ ...escalador, placeId: 'place:outro' }, call('hillclimb_versao', { missao: id, versao: 'x' }), env.ledger);
     expect(intruder.ok).toBe(false);
-    expect((await send(env, id, 'versão 1')).ok).toBe(true);
+    expect((await send(env, id, 'versão 1', { direcao: 'A', inventario: ['o que existe'] })).ok).toBe(true);
   });
 });
 
 describe('hill climbing — the loop', () => {
-  it('judges blind: every call carries only the target, the criteria and the current version', async () => {
+  it('judges blind: every call carries only the reader, the criteria and the current version, never the target', async () => {
     const seen: BlindJudgeInput[] = [];
     const env = setup(scriptedJudges([[5, 6, 7]], seen));
     const id = await proposeAndAccept(env);
-    await send(env, id, 'versão 1');
-    await send(env, id, 'versão 2');
+    await openDirections(env, id, ['A', 'B']);
     expect(seen).toHaveLength(6);
-    for (const input of seen) expect(Object.keys(input).sort()).toEqual(['criteria', 'target', 'version']);
-    expect(seen.slice(3).every((input) => input.version === 'versão 2')).toBe(true);
+    for (const input of seen) {
+      expect(Object.keys(input).sort()).toEqual(['criteria', 'reader', 'version']);
+      expect(input.reader).toBe(proposal.leitor);
+      expect(JSON.stringify(input)).not.toContain(proposal.alvo);
+    }
+    expect(seen.slice(3).every((input) => input.version === 'versão B')).toBe(true);
+  });
+
+  it('starts the first rodada with the inventory, opens 3 directions from scratch and then climbs the best one', async () => {
+    const seen: BlindJudgeInput[] = [];
+    const env = setup(scriptedJudges([[5, 5, 5], [7, 7, 7], [6, 6, 6], [7.5, 7.5, 7.5]], seen));
+    const id = await proposeAndAccept(env);
+    expect((await send(env, id, 'v', { direcao: 'A' })).text).toContain('inventário');
+    expect((await send(env, id, 'v', { inventario: ['o cabeçalho de hoje'] })).text).toContain('direção 1 de 3');
+    expect(seen).toHaveLength(0);
+
+    expect((await send(env, id, 'versão A', { direcao: 'A', inventario: ['o cabeçalho de hoje'] })).ok).toBe(true);
+    expect((await send(env, id, 'de novo', { direcao: 'a' })).text).toContain('já foi aberta');
+    expect((await send(env, id, 'versão B', { direcao: 'B' })).ok).toBe(true);
+    const third = await send(env, id, 'versão C', { direcao: 'C' });
+    expect(third.text).toContain('«B»');
+
+    expect((await send(env, id, 'versão D', { direcao: 'D' })).ok).toBe(false);
+    expect((await send(env, id, 'B melhorada')).ok).toBe(true);
+    const mission = env.service.load().doc.missions[id]!;
+    expect(mission.inventory).toEqual(['o cabeçalho de hoje']);
+    expect(mission.rounds.map((round) => round.direction)).toEqual(['A', 'B', 'C', 'B']);
+    expect(seen).toHaveLength(12);
   });
 
   it('closes on the cut only when every judge gives ≥ 9 in every criterion', async () => {
     const env = setup(scriptedJudges([[9, 9, 8], [9, 10, 9]]));
     const id = await proposeAndAccept(env);
-    await send(env, id, 'v1');
+    await send(env, id, 'v1', { direcao: 'A', inventario: ['o que existe'] });
     expect(env.service.load().doc.missions[id]!.state).toBe('rodando');
-    const second = await send(env, id, 'v2');
+    const second = await send(env, id, 'v2', { direcao: 'B' });
     expect(second.text).toContain('passou do corte');
     const mission = env.service.load().doc.missions[id]!;
     expect(mission.state).toBe('pausada');
     expect(mission.rodadas[0]!.closed?.reason).toBe('corte');
   });
 
-  it('closes as "estacionou" after 2 rounds that do not raise the lowest score', async () => {
-    const env = setup(scriptedJudges([[5, 6, 6], [5, 7, 7], [4, 8, 8]]));
+  it('never calls the 3 opening directions a stall, and closes an extra rodada early as "estacionou" with a decision card', async () => {
+    const env = setup(scriptedJudges([[6, 6, 6], [5, 5, 5], [4, 4, 4], [6.5, 7, 7], [7, 7, 7], [6, 6, 6], [7, 7, 7]]));
     const id = await proposeAndAccept(env);
-    for (const v of ['v1', 'v2', 'v3']) await send(env, id, v);
+    await openDirections(env, id);
+    expect(env.service.load().doc.missions[id]!.state).toBe('rodando');
+    await send(env, id, 'v4');
+    await send(env, id, 'v5');
+    expect(env.service.load().doc.missions[id]!.rodadas[0]!.closed?.reason).toBe('fim');
+
+    expect(env.service.gesture(id, { kind: 'mais-uma' }).ok).toBe(true);
+    await send(env, id, 'v6');
+    const stalledAnswer = await send(env, id, 'v7');
+    expect(stalledAnswer.text).toContain('estacionou');
+    expect(stalledAnswer.text).toContain('carta de decisão');
     const mission = env.service.load().doc.missions[id]!;
-    expect(mission.rounds).toHaveLength(3);
-    expect(mission.rodadas[0]!.closed?.reason).toBe('estacionou');
+    expect(mission.rounds).toHaveLength(7);
+    expect(mission.rodadas[1]!.closed?.reason).toBe('estacionou');
+    expect(mission.state).toBe('pausada');
   });
 
   it('closes the first rodada at 5 rounds, refuses versions until a gesture, and allows only 2 extra rodadas of 3', async () => {
-    const env = setup(scriptedJudges([[1, 1, 1], [2, 2, 2], [3, 3, 3], [4, 4, 4], [5, 5, 5], [6, 6, 6], [7, 7, 7], [8, 8, 8], [8.5, 8.5, 8.5], [8.6, 8.6, 8.6], [8.7, 8.7, 8.7], [8.8, 8.8, 8.8]]));
+    const env = setup(
+      scriptedJudges([[1, 1, 1], [2, 2, 2], [3, 3, 3], [4, 4, 4], [5, 5, 5], [6, 6, 6], [7, 7, 7], [8, 8, 8], [8.5, 8.5, 8.5], [8.6, 8.6, 8.6], [8.7, 8.7, 8.7], [8.8, 8.8, 8.8]]),
+    );
     const id = await proposeAndAccept(env);
-    for (let i = 1; i <= 5; i += 1) await send(env, id, `v${i}`);
+    await openDirections(env, id);
+    for (let i = 4; i <= 5; i += 1) await send(env, id, `v${i}`);
     expect(env.service.load().doc.missions[id]!.rodadas[0]!.closed?.reason).toBe('fim');
     expect((await send(env, id, 'v6')).ok).toBe(false);
 
     expect(env.service.gesture(id, { kind: 'mais-uma' }).ok).toBe(true);
+    expect(env.told.at(-1)).toContain('«C»');
     for (let i = 6; i <= 8; i += 1) await send(env, id, `v${i}`);
     expect(env.service.gesture(id, { kind: 'redirecionar', text: 'Mais contraste no título' }).ok).toBe(true);
     expect(env.told.at(-1)).toContain('Mais contraste no título');

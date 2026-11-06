@@ -15,7 +15,7 @@ export interface JudgeProvider {
   readonly label: string;
   /** The model behind it, for the owner's eyes (never shown to another judge). */
   readonly model: string;
-  /** Only `BlindJudgeInput` crosses: the type is the guarantee that a judge never sees scores or older versions. */
+  /** Only `BlindJudgeInput` crosses: the type is the guarantee that a judge never sees the target, scores or older versions. */
   judge(input: BlindJudgeInput): Promise<JudgeAnswer>;
 }
 
@@ -73,5 +73,5 @@ function checkedAnswer(judge: JudgeProvider, answer: JudgeAnswer, criteria: read
 
 /** Every judge at once, each with the same blind input. A judge that fails fails the round (nothing is recorded). */
 export async function convene(judges: readonly JudgeProvider[], input: BlindJudgeInput): Promise<JudgeVerdict[]> {
-  return Promise.all(judges.map(async (judge) => checkedAnswer(judge, await judge.judge({ target: input.target, criteria: [...input.criteria], version: input.version }), input.criteria)));
+  return Promise.all(judges.map(async (judge) => checkedAnswer(judge, await judge.judge({ reader: input.reader, criteria: [...input.criteria], version: input.version }), input.criteria)));
 }
