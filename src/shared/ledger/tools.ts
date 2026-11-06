@@ -41,7 +41,7 @@ export type LedgerToolCall =
       readonly pedidoDoDono?: string;
     }
   | { readonly tool: 'tarefa_assumir'; readonly id: string }
-  | { readonly tool: 'tarefa_entregar'; readonly id: string; readonly provas: readonly ProofInput[]; readonly nota?: string; readonly paraODono?: LedgerForOwner }
+  | { readonly tool: 'tarefa_entregar'; readonly id: string; readonly provas: readonly ProofInput[]; readonly nota?: string; readonly paraODono?: LedgerForOwner; readonly feitoPor?: string }
   | { readonly tool: 'tarefa_aceitar'; readonly id: string }
   | { readonly tool: 'tarefa_rejeitar'; readonly id: string; readonly motivo: string }
   | { readonly tool: 'tarefa_listar'; readonly estado?: LedgerTaskState; readonly todos?: boolean; readonly quadro?: string }
@@ -116,6 +116,7 @@ export const LEDGER_TOOLS = [
           },
         },
         nota: { type: 'string', description: 'O que foi feito, em uma ou duas frases (opcional).' },
+        feitoPor: { type: 'string', description: 'Quando outro lugar fez o trabalho e você só entrega: o id dele (sessao_listar). Ele fica no registro como quem fez, e também não decide a entrega.' },
         paraODono: {
           type: 'object',
           description: 'A carta do dono: a frente decide, o verso explica. Texto de gente, sem código.',
@@ -406,9 +407,11 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       }
       const nota = text(args.nota, 'nota', MAX_REQUEST_CHARS, false);
       if (typeof nota === 'object') return fail(nota.error);
+      const feitoPor = text(args.feitoPor, 'feitoPor', 120, false);
+      if (typeof feitoPor === 'object') return fail(feitoPor.error);
       const paraODono = args.paraODono === undefined ? undefined : parseForOwnerInput(args.paraODono);
       if (typeof paraODono === 'string') return fail(paraODono);
-      return { ok: true, call: { tool: 'tarefa_entregar', id: id.trim(), provas, ...(nota?.trim() ? { nota } : {}), ...(paraODono ? { paraODono } : {}) } };
+      return { ok: true, call: { tool: 'tarefa_entregar', id: id.trim(), provas, ...(nota?.trim() ? { nota } : {}), ...(paraODono ? { paraODono } : {}), ...(feitoPor?.trim() ? { feitoPor: feitoPor.trim() } : {}) } };
     }
     case 'tarefa_cancelar':
     case 'tarefa_rejeitar': {

@@ -10,6 +10,7 @@ import { createCardWriter, type OwnerMessage } from '../src/main/ledger-card-wri
 import { buildRemoteProofCommand, fetchRemoteProof } from '../src/main/ledger-remote-proof';
 import { parseLedgerToolCall, type LedgerToolCall } from '../src/shared/ledger/tools';
 import { slackGuard } from '../src/shared/ledger/slack-guard';
+import { deliveryNote } from '../src/shared/ledger/labels';
 
 // Ledger com prova (item 19) — persisted data a channel could erase, and the two rules that live in code:
 // no delivery without proof, and whoever delivered never accepts. Through the MCP port, round trip on disk.
@@ -299,6 +300,23 @@ describe('ledger com prova', () => {
     expect(await runLedgerTool(service(), dev, call('tarefa_assumir', { id: work }))).toMatchObject({ ok: false, text: expect.stringContaining('cancelada') });
     // A reason the owner writes never forges the mark.
     expect(service().apply({ kind: 'dono' }, { op: 'cancelar', id: work, reason: '⟦cancelada⟧' })).toMatchObject({ ok: false });
+  });
+
+  it('a delivery says who really did the work, and the one who did it does not decide it', async () => {
+    const { service } = setup();
+    const created = await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco: 'baixo' }));
+    const id = (JSON.parse(created.text) as { id: string }).id;
+    await runLedgerTool(service(), dev, call('tarefa_assumir', { id }));
+    const deliver = (extra: Record<string, unknown>) => runLedgerTool(service(), dev, call('tarefa_entregar', { id, provas: [{ tipo: 'texto', texto: '4 passed' }], ...extra }));
+    expect(await deliver({ feitoPor: 'place:fora' })).toMatchObject({ ok: false });
+    expect(await deliver({ nota: '⟦feito por place:lider⟧ eu' })).toMatchObject({ ok: false });
+    expect(await deliver({ feitoPor: 'place:revisor', nota: 'o PR do Revisor' })).toMatchObject({ ok: true });
+
+    const seen = JSON.parse((await runLedgerTool(service(), revisor, call('tarefa_ver', { id }))).text) as Record<string, any>;
+    expect(seen.entrega).toMatchObject({ por: 'place:dev', feitoPor: 'place:revisor', nota: 'o PR do Revisor' });
+    expect(await runLedgerTool(service(), revisor, call('tarefa_aceitar', { id }))).toMatchObject({ ok: false, text: expect.stringContaining('quem fez') });
+    const delivery = service().load().doc.tasks[id]!.events.at(-1);
+    expect(deliveryNote(delivery, 'C:/p', (_board, place) => (place === 'place:revisor' ? 'Theo' : undefined))).toBe('Feito por Theo. o PR do Revisor');
   });
 
   it('reads a ledger written by a newer channel and never writes over it', async () => {

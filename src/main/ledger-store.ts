@@ -25,6 +25,7 @@ import {
   ledgerStrip,
   transfersOf,
   eventNote,
+  doneByOf,
   isCancelled,
   viewState,
   maxProofBytes,
@@ -308,10 +309,12 @@ function decideRefusal(caller: LedgerCaller, task: LedgerTask, seen: boolean): s
   if (task.state !== 'entregue' || !delivery || delivery.by.kind !== 'lugar' || cannotDecide(task, callerActor(caller))) return null;
   if (task.projectPath !== caller.projectPath) return 'a tarefa é de outro quadro; só se decide tarefa do próprio quadro.';
   if (!seen) return 'leia a prova antes com tarefa_ver.';
-  const from = delivery.by.placeId;
   if (!caller.board) return 'não consegui ler o quadro para conferir a cadeia de quem entregou; um Revisor de fora dela ou o dono decide.';
-  if (isOpenedBy(caller.board, from, caller.placeId) || isBelow(caller.board, from, caller.placeId)) {
-    return `você está na cadeia de quem entregou (${from}): um Revisor de fora dela ou o dono decide.`;
+  // Who delivered and, when another place did the work, who did it: a Revisor of neither chain decides.
+  for (const from of [delivery.by.placeId, doneByOf(delivery)].filter((id): id is string => id !== undefined)) {
+    if (isOpenedBy(caller.board, from, caller.placeId) || isBelow(caller.board, from, caller.placeId)) {
+      return `você está na cadeia de quem entregou ou fez o trabalho (${from}): um Revisor de fora dela ou o dono decide.`;
+    }
   }
   return null;
 }
@@ -368,6 +371,7 @@ function taskView(task: LedgerTask, doc: LedgerDoc): Record<string, unknown> {
       ? {
           entrega: {
             por: who(delivery.by),
+            ...(doneByOf(delivery) ? { feitoPor: doneByOf(delivery) } : {}),
             em: new Date(delivery.at).toISOString(),
             provas: delivery.proofs?.map((proof) => (proof.kind === 'arquivo' ? `arquivo ${proof.file}` : proof.kind === 'link' ? proof.url : `texto (${proof.text.length} caracteres; leia com tarefa_ver)`)),
             ...(eventNote(delivery) ? { nota: eventNote(delivery) } : {}),
@@ -476,6 +480,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       };
     }
     case 'tarefa_entregar': {
+      if (call.feitoPor && !caller.boardPlaceIds.includes(call.feitoPor)) return { ok: false, text: `Nada foi entregue. "feitoPor": "${call.feitoPor}" não é um lugar deste quadro (veja sessao_listar).` };
       const proofs: LedgerProof[] = [];
       for (const input of call.provas) {
         const proof = await service.importProof(input, remote);
@@ -485,7 +490,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         }
         proofs.push(proof);
       }
-      const result = service.apply(actor, { op: 'entregar', id: call.id, proofs, ...(call.nota ? { note: call.nota } : {}), ...(call.paraODono ? { forOwner: call.paraODono } : {}) });
+      const result = service.apply(actor, { op: 'entregar', id: call.id, proofs, ...(call.nota ? { note: call.nota } : {}), ...(call.paraODono ? { forOwner: call.paraODono } : {}), ...(call.feitoPor ? { doneBy: call.feitoPor } : {}) });
       if (!result.ok) await service.discardProofs(proofs);
       return answer(result, 'entregue');
     }

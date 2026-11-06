@@ -7,6 +7,7 @@ import { basename } from 'node:path';
 import type { CartaCelular, ComentarCelular, DecisaoCelular, EntregaCelular, FalaCelular, ProvaCelular, VisualCelular } from '../../shared/celular';
 import {
   decisionOfRequest,
+  eventNote,
   HTML_MEDIA_TYPE,
   lastDecision,
   lastDelivery,
@@ -17,7 +18,7 @@ import {
   type LedgerTask,
   type LedgerVisual,
 } from '../../shared/ledger/contract';
-import { actorLabel, naipeDoPapel, reciboDe, type PlaceNameOf } from '../../shared/ledger/labels';
+import { actorLabel, deliveryNote, naipeDoPapel, reciboDe, type PlaceNameOf } from '../../shared/ledger/labels';
 import type { CardWriter } from '../ledger-card-writer';
 import type { LedgerService } from '../ledger-store';
 import { maskSecrets, summarize } from './mask';
@@ -119,7 +120,7 @@ function conversaDe(task: LedgerTask, quem: string): FalaCelular[] {
     }
     // A reentrega (depois do que o dono escreveu) é a resposta de quem fez.
     if (event.kind === 'entregue' && event !== firstDelivery && task.events.some((other) => other.kind === 'comentada' && other.at <= event.at)) {
-      const texto = event.forOwner?.summary ?? event.text;
+      const texto = event.forOwner?.summary ?? eventNote(event);
       return texto ? [{ de: 'entrega', texto, em: new Date(event.at).toISOString() }] : [];
     }
     return [];
@@ -144,7 +145,7 @@ function entregaCelular(task: LedgerTask, placeName: PlaceNameOf | undefined): E
     criterio: task.doneWhen,
     quemEntregou: actorLabel(deliveredBy, task.projectPath, placeName),
     entregueEm: new Date(delivery?.at ?? task.createdAt).toISOString(),
-    ...(delivery?.text ? { nota: delivery.text } : {}),
+    ...(deliveryNote(delivery, task.projectPath, placeName) ? { nota: deliveryNote(delivery, task.projectPath, placeName) } : {}),
     ...(sample && decision ? { aceitoPor: actorLabel(decision.by, task.projectPath, placeName) } : {}),
     risco: task.risk,
     provas: (delivery?.proofs ?? []).map(provaCelular),

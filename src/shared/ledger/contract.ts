@@ -305,6 +305,12 @@ export function isClosed(task: LedgerTask): boolean {
   return task.state === 'rejeitada' && task.slack !== undefined;
 }
 
+/** The place that really did the work of a delivery (`⟦feito por …⟧`); absent = whoever delivered. */
+export function doneByOf(event: LedgerEvent | undefined): string | undefined {
+  const mark = event?.kind === 'entregue' ? markOf(event.text) : null;
+  return mark ? /^feito por (\S+)$/.exec(mark.tag)?.[1] : undefined;
+}
+
 /** The Líder of a board, or the Líder único (both carry the role `lider`). */
 export function isLeaderRole(roleId: string | undefined): boolean {
   return roleId === 'lider';
@@ -325,7 +331,8 @@ export type LedgerOp =
       readonly risk: LedgerRisk;
     }
   | { readonly op: 'assumir'; readonly id: string }
-  | { readonly op: 'entregar'; readonly id: string; readonly proofs: readonly LedgerProof[]; readonly note?: string; readonly forOwner?: LedgerForOwner }
+  /** `doneBy` (06/11): the place that really did the work, when it is not the owner place that delivers. */
+  | { readonly op: 'entregar'; readonly id: string; readonly proofs: readonly LedgerProof[]; readonly note?: string; readonly forOwner?: LedgerForOwner; readonly doneBy?: string }
   /** `option`: the label of an option of the current delivery's block, closing as `aceita`; `text`: the owner's words with it. */
   | { readonly op: 'aceitar'; readonly id: string; readonly requestId?: string; readonly option?: string; readonly text?: string }
   /** The owner writes on the card (forma A, Parte B): recorded, and sent by the main to whoever reads it (`deliveredTo`). */
@@ -367,6 +374,7 @@ function step(task: LedgerTask, state: LedgerTaskState, event: LedgerEvent): Led
 /** Why `actor` may not decide (accept / reject) the current delivery of `task`; `null` = may. */
 export function cannotDecide(task: LedgerTask, actor: LedgerActor): string | null {
   if (sameActor(lastDelivery(task)?.by, actor)) return 'quem entregou não aceita nem rejeita a própria entrega.';
+  if (actor.kind === 'lugar' && doneByOf(lastDelivery(task)) === actor.placeId) return 'quem fez o trabalho não aceita nem rejeita a própria entrega.';
   if (actor.kind === 'dono') return null;
   if (!isReviewerRole(actor.roleId)) return 'só o dono ou um lugar com papel Revisor decide uma entrega.';
   if (task.risk !== 'baixo') return 'risco alto: só o dono decide (fica em "esperando você").';
@@ -435,6 +443,10 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
         );
       if (!isOwnerPlace) return fail(`Só o lugar dono (${task.ownerPlaceId}) entrega esta tarefa.`);
       if (op.proofs.length === 0) return fail('Entrega sem prova é recusada: anexe um print, a saída de um comando ou o link do CI.');
+      if (startsWithMark(op.note)) return fail(`"nota" não pode começar com "${MARK_OPEN}".`);
+      const doneBy = op.doneBy?.trim();
+      if (doneBy && /\s/.test(doneBy)) return fail('"feitoPor" é o id de um lugar (sessao_listar).');
+      const note = doneBy && doneBy !== actor.placeId ? withMark(`feito por ${doneBy}`, op.note ?? '') : op.note?.trim();
       if (op.proofs.length > MAX_PROOFS) return fail(`No máximo ${MAX_PROOFS} provas por entrega.`);
       for (const proof of op.proofs) if (!validProof(proof)) return fail('Prova inválida: arquivo copiado pelo app, texto não vazio ou link http(s).');
       if (!op.forOwner && task.risk === 'alto')
@@ -449,7 +461,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
           at: ctx.now,
           by: actor,
           proofs: op.proofs,
-          ...(op.note?.trim() ? { text: op.note.trim() } : {}),
+          ...(note ? { text: note } : {}),
           ...(op.forOwner ? { forOwner: op.forOwner } : {}),
         }),
       );
