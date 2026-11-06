@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from 'react';
 import {
+  eventNote,
   lastDelivery,
   recommendedOption,
   type LedgerForOwner,
@@ -16,7 +17,7 @@ import {
   type LedgerVisual,
 } from '../../../shared/ledger/contract';
 import { proofUrl } from '../../../shared/ledger/channels';
-import { actorLabel, mandarDaCarta, naipeDoPapel, notasDaFrente, reciboDe, type PlaceNameOf } from '../../../shared/ledger/labels';
+import { actorLabel, deliveryNote, mandarDaCarta, naipeDoPapel, notasDaFrente, reciboDe, type PlaceNameOf } from '../../../shared/ledger/labels';
 import type { Naipe } from '../../../shared/celular';
 import styles from './LedgerCards.module.css';
 
@@ -132,7 +133,7 @@ function Conversation({ task, who }: { readonly task: LedgerTask; readonly who: 
   const lines = task.events.flatMap((event): { at: number; mine: boolean; text: string; receipt?: string }[] => {
     if (event.kind === 'comentada' && event.text) return [{ at: event.at, mine: true, text: event.text, receipt: reciboDe(event.deliveredTo, who, event.at) }];
     if (event.kind === 'entregue' && event !== first && task.events.some((other) => other.kind === 'comentada' && other.at <= event.at)) {
-      const text = event.forOwner?.summary ?? event.text;
+      const text = event.forOwner?.summary ?? eventNote(event);
       return text ? [{ at: event.at, mine: false, text }] : [];
     }
     return [];
@@ -269,7 +270,7 @@ function ProofDetail({ proof }: { readonly proof: LedgerProof }): React.JSX.Elem
 }
 
 /** Request + technical details, folded away (the back of the card A, the body of the old card). */
-function Folded({ task, open }: { readonly task: LedgerTask; readonly open?: boolean }): React.JSX.Element {
+function Folded({ task, note, open }: { readonly task: LedgerTask; readonly note: string | undefined; readonly open?: boolean }): React.JSX.Element {
   const delivery = lastDelivery(task);
   return (
     <>
@@ -281,10 +282,10 @@ function Folded({ task, open }: { readonly task: LedgerTask; readonly open?: boo
         <summary>Detalhes técnicos</summary>
         <h6>Pronto quando</h6>
         <p>{task.doneWhen}</p>
-        {delivery?.text ? (
+        {note ? (
           <>
             <h6>Nota de quem entregou</h6>
-            <p>{delivery.text}</p>
+            <p>{note}</p>
           </>
         ) : null}
         {delivery?.proofs?.length ? (
@@ -313,6 +314,7 @@ function CardA({
   index,
   count,
   who,
+  note,
   decide,
   draft,
   setDraft,
@@ -323,6 +325,7 @@ function CardA({
   readonly index: number;
   readonly count: number;
   readonly who: string;
+  readonly note: string | undefined;
   readonly decide: Decide;
   readonly draft: string;
   readonly setDraft: (text: string) => void;
@@ -440,7 +443,7 @@ function CardA({
                 <p>
                   {who}, no quadro {folder(task.projectPath)} · {when(delivery?.at ?? task.createdAt)} · prazo {task.due.split('-').reverse().join('/')}
                 </p>
-                <Folded task={task} />
+                <Folded task={task} note={note} />
               </div>
             </div>
           </div>
@@ -451,7 +454,7 @@ function CardA({
 }
 
 /** The old card: one face, as the list under the strip showed it (no owner block, or the Revisor's sample). */
-function OldCard({ task, naipe, index, count, who, decide }: { readonly task: LedgerTask; readonly naipe: Naipe; readonly index: number; readonly count: number; readonly who: string; readonly decide: Decide }): React.JSX.Element {
+function OldCard({ task, naipe, index, count, who, note, decide }: { readonly task: LedgerTask; readonly naipe: Naipe; readonly index: number; readonly count: number; readonly who: string; readonly note: string | undefined; readonly decide: Decide }): React.JSX.Element {
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -483,10 +486,10 @@ function OldCard({ task, naipe, index, count, who, decide }: { readonly task: Le
                 <blockquote className={styles.request}>“{task.request}”</blockquote>
                 <h4>Pronto quando</h4>
                 <p>{task.doneWhen}</p>
-                {delivery?.text ? (
+                {note ? (
                   <>
                     <h4>Nota de quem entregou</h4>
-                    <p>{delivery.text}</p>
+                    <p>{note}</p>
                   </>
                 ) : null}
                 {delivery?.proofs?.length ? (
@@ -567,6 +570,7 @@ export function LedgerCards({
   const delivery = lastDelivery(task);
   const naipe = naipeDoPapel(delivery?.by.kind === 'lugar' ? delivery.by.roleId : undefined);
   const who = actorLabel(delivery?.by, task.projectPath, placeName);
+  const note = deliveryNote(delivery, task.projectPath, placeName);
   const forOwner = task.state === 'aceita' ? undefined : delivery?.forOwner;
 
   const decide: Decide = async (decision) => {
@@ -599,13 +603,13 @@ export function LedgerCards({
           ) : null}
         </div>
         {forOwner ? (
-          <CardA key={`${task.id}:${task.events.length}`} task={task} forOwner={forOwner} naipe={naipe} index={index} count={queue.length} who={who}
+          <CardA key={`${task.id}:${task.events.length}`} task={task} forOwner={forOwner} naipe={naipe} index={index} count={queue.length} who={who} note={note}
             decide={decide}
             draft={drafts[task.id] ?? ''}
             setDraft={(text) => setDrafts((all) => ({ ...all, [task.id]: text }))}
           />
         ) : (
-          <OldCard key={`${task.id}:${task.events.length}`} task={task} naipe={naipe} index={index} count={queue.length} who={who} decide={decide} />
+          <OldCard key={`${task.id}:${task.events.length}`} task={task} naipe={naipe} index={index} count={queue.length} who={who} note={note} decide={decide} />
         )}
       </div>
     </div>

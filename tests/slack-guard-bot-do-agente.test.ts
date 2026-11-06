@@ -92,6 +92,11 @@ describe('o bot do próprio agente posta sem carta', () => {
     for (const [tool, input] of owner) expect(await send(guard, tool, input), tool).toMatch(/carta_slack/);
     expect(Object.keys(ledger.load().doc.tasks)).toHaveLength(0);
 
+    // The mark is never forged: a task a session creates cannot pass for a bot record (hidden from the strip).
+    const forged = ledger.apply({ kind: 'lugar', placeId: 'place:theo' }, { op: 'criar', projectPath: '/w/bizops', request: `${AGENT_BOT_MARK} Mensagem no Slack`, doneWhen: 'x', due: '2026-11-07', ownerPlaceId: 'place:theo', risk: 'baixo' });
+    expect(forged.ok).toBe(false);
+    expect(Object.keys(ledger.load().doc.tasks)).toHaveLength(0);
+
     // The list is the owner's, only from the config: by default (empty), the Theo West bot needs a letter too.
     const strict = createSlackLetterGuard(() => ledger, { placeOf: place });
     expect(await send(strict, 'mcp__theo-west-slack__slack_post_message', { channel_id: 'C0CGE4DSGCQ', text: 'Oi.' })).toMatch(/carta_slack/);

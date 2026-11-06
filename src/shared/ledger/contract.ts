@@ -33,6 +33,9 @@
  *   The answer of a send (t-8119864a) is also an `enviada` event, told apart by its `text` (`SEND_ANSWER`): a v4
  *   app reads and rewrites it as is and counts the letter as spent, so it needed no new version (Alfa 0.4.0 and the
  *   newer builds share one ledger.json).
+ *   A letter with a file (`SlackLetter.file`) has no new version either, on purpose: the Alfa 0.4.0 and the beta
+ *   share this file, and a bump would leave them read-only (tasks, letters and the Slack guard stopped). See
+ *   `SlackLetter.file` for why a v4 app is safe with it.
  */
 export const LEDGER_SCHEMA_VERSION = 4;
 
@@ -104,8 +107,29 @@ export interface SlackLetter {
   /** How the owner reads the destination ("#produto", "Fulana"); absent = the destination itself. */
   readonly destinationLabel?: string;
   readonly thread?: string;
+  /** The exact message. A letter with a file has `''` here: its comment is `file.comment` (see `file`). */
   readonly text: string;
   readonly reason: string;
+  /**
+   * A file that goes with it (an upload, no schema bump): accept frees ONE upload of this path, with this name and
+   * this comment. Written with `text: ''` on purpose: a v4 app (Alfa 0.4.0) refuses a letter with an empty text, so
+   * it reads the whole letter as absent. Its guard frees nothing for it (neither the upload it does not know, nor
+   * the comment as a message), and if it rewrites the ledger the letter is gone for every app: the task stays, with
+   * no letter, and the session asks a new one. Never a letter that degrades into a text letter.
+   */
+  readonly file?: SlackLetterFile;
+}
+
+/** The file of a letter: the path as the sending tool gets it (the session's machine), the name in Slack, the comment. */
+export interface SlackLetterFile {
+  readonly path: string;
+  readonly name: string;
+  readonly comment: string;
+}
+
+/** What the letter puts in Slack as text: the message, or the file's comment. */
+export function slackLetterText(slack: SlackLetter): string {
+  return slack.file ? slack.file.comment : slack.text;
 }
 
 export interface LedgerEvent {
@@ -237,6 +261,89 @@ export function lastDecision(task: LedgerTask): LedgerEvent | undefined {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Marks — facts newer than v4, written in fields v4 already keeps (owner's Líder, 06/11: no schema bump, the Alfa
+// installed reads and rewrites the same `ledger.json`). The v4 parse drops an unknown event kind and an unknown
+// field when it rewrites the file, so a new fact rides on a known kind with a mark at the start of its `text`:
+//   transfer  → a `criada` event  "⟦transferida de <from> para <to>⟧ <reason>"  (+ `ownerPlaceId` changed)
+//   cancel    → a `rejeitada` event "⟦cancelada⟧ <reason>"                      (state `rejeitada`: v4 bars it too)
+//   doer      → the `entregue` event "⟦feito por <placeId>⟧ <note>"
+// A text the sessions or the owner write never starts with the mark (`startsWithMark`), so a mark is never forged.
+
+const MARK_OPEN = '⟦';
+const MARK = /^⟦([^⟧\n]{1,240})⟧ ?/;
+
+function withMark(tag: string, rest: string): string {
+  return `${MARK_OPEN}${tag}⟧${rest.trim() ? ` ${rest.trim()}` : ''}`;
+}
+
+function markOf(text: string | undefined): { tag: string; rest: string } | null {
+  const match = text ? MARK.exec(text) : null;
+  return match ? { tag: match[1]!, rest: text!.slice(match[0].length) } : null;
+}
+
+export function startsWithMark(text: string | undefined): boolean {
+  return (text ?? '').trimStart().startsWith(MARK_OPEN);
+}
+
+/** An event's text without its mark (what a person wrote). */
+export function eventNote(event: LedgerEvent): string | undefined {
+  const mark = markOf(event.text);
+  const note = mark ? mark.rest : event.text;
+  return note?.trim() ? note : undefined;
+}
+
+export interface LedgerTransfer {
+  readonly at: number;
+  readonly by: LedgerActor;
+  readonly from: string;
+  readonly to: string;
+  readonly reason: string;
+}
+
+/** The transfers of a task, oldest first. */
+export function transfersOf(task: LedgerTask): LedgerTransfer[] {
+  return task.events.flatMap((event) => {
+    const mark = event.kind === 'criada' ? markOf(event.text) : null;
+    const places = mark ? /^transferida de (\S+) para (\S+)$/.exec(mark.tag) : null;
+    return places ? [{ at: event.at, by: event.by, from: places[1]!, to: places[2]!, reason: mark!.rest.trim() }] : [];
+  });
+}
+
+/** The task was cancelled: it ends `rejeitada` with the mark, and nobody took it again since. */
+export function isCancelled(task: LedgerTask): boolean {
+  const decision = lastDecision(task);
+  return task.state === 'rejeitada' && decision?.kind === 'rejeitada' && markOf(decision.text)?.tag === 'cancelada';
+}
+
+/** The state a person reads: `cancelada` for a cancelled task, else the stored one. */
+export type LedgerViewState = LedgerTaskState | 'cancelada';
+
+export function viewState(task: LedgerTask): LedgerViewState {
+  return isCancelled(task) ? 'cancelada' : task.state;
+}
+
+/**
+ * Nothing more happens to the task: accepted (an accepted Slack letter still to be sent is not), cancelled, or a
+ * rejected Slack letter (never taken again: a new letter replaces it).
+ */
+export function isClosed(task: LedgerTask): boolean {
+  if (isCancelled(task)) return true;
+  if (task.state === 'aceita') return !(task.slack && !slackLetterSent(task));
+  return task.state === 'rejeitada' && task.slack !== undefined;
+}
+
+/** The place that really did the work of a delivery (`⟦feito por …⟧`); absent = whoever delivered. */
+export function doneByOf(event: LedgerEvent | undefined): string | undefined {
+  const mark = event?.kind === 'entregue' ? markOf(event.text) : null;
+  return mark ? /^feito por (\S+)$/.exec(mark.tag)?.[1] : undefined;
+}
+
+/** The Líder of a board, or the Líder único (both carry the role `lider`). */
+export function isLeaderRole(roleId: string | undefined): boolean {
+  return roleId === 'lider';
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // Operations — the ONE place the rules live. Pure: the caller gives the clock and the new id.
 
 export type LedgerOp =
@@ -251,7 +358,8 @@ export type LedgerOp =
       readonly risk: LedgerRisk;
     }
   | { readonly op: 'assumir'; readonly id: string }
-  | { readonly op: 'entregar'; readonly id: string; readonly proofs: readonly LedgerProof[]; readonly note?: string; readonly forOwner?: LedgerForOwner }
+  /** `doneBy` (06/11): the place that really did the work, when it is not the owner place that delivers. */
+  | { readonly op: 'entregar'; readonly id: string; readonly proofs: readonly LedgerProof[]; readonly note?: string; readonly forOwner?: LedgerForOwner; readonly doneBy?: string }
   /** `option`: the label of an option of the current delivery's block, closing as `aceita`; `text`: the owner's words with it. */
   | { readonly op: 'aceitar'; readonly id: string; readonly requestId?: string; readonly option?: string; readonly text?: string }
   /** The owner writes on the card (forma A, Parte B): recorded, and sent by the main to whoever reads it (`deliveredTo`). */
@@ -262,6 +370,18 @@ export type LedgerOp =
   | { readonly op: 'carta-slack'; readonly projectPath: string; readonly slack: SlackLetter }
   /** v4 — the guard let the one send of an accepted letter through. */
   | { readonly op: 'slack-enviada'; readonly id: string }
+  /**
+   * 06/11 — passes the task to another place (`to`): the Líder, the owner, or the owner place itself; or, when the
+   * main saw that the owner place is gone (`ownerGone`: closed, out of the board, never started), the place that
+   * takes the work over passing it to itself. A running task goes back to `aberta`, so the new owner takes it.
+   */
+  | { readonly op: 'transferir'; readonly id: string; readonly to: string; readonly reason: string; readonly ownerGone?: boolean }
+  /**
+   * 06/11 — the task stops for good (a letter replaced by a new one, work nobody will do). The Líder, the owner or the
+   * owner place; any task not closed, and an accepted Slack letter never sent. It ends `rejeitada` (v4 reads it and a
+   * letter there frees no send) with the mark `cancelada`; nobody takes it again.
+   */
+  | { readonly op: 'cancelar'; readonly id: string; readonly reason: string }
   /** The answer of the send in flight: Slack took it, or it failed EXPLICITLY (`why`). An `enviada` with `SEND_ANSWER` text. */
   | { readonly op: 'slack-resultado'; readonly id: string; readonly outcome: 'confirmado' | 'falhou'; readonly why?: string }
   /** The record of a post by an agent's OWN bot, which needs no letter (`AGENT_BOT_MARK`). Written by the guard. */
@@ -285,6 +405,7 @@ function step(task: LedgerTask, state: LedgerTaskState, event: LedgerEvent): Led
 /** Why `actor` may not decide (accept / reject) the current delivery of `task`; `null` = may. */
 export function cannotDecide(task: LedgerTask, actor: LedgerActor): string | null {
   if (sameActor(lastDelivery(task)?.by, actor)) return 'quem entregou não aceita nem rejeita a própria entrega.';
+  if (actor.kind === 'lugar' && doneByOf(lastDelivery(task)) === actor.placeId) return 'quem fez o trabalho não aceita nem rejeita a própria entrega.';
   if (actor.kind === 'dono') return null;
   if (!isReviewerRole(actor.roleId)) return 'só o dono ou um lugar com papel Revisor decide uma entrega.';
   if (task.risk !== 'baixo') return 'risco alto: só o dono decide (fica em "esperando você").';
@@ -305,6 +426,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
   const fail = (reason: string): LedgerOpResult => ({ ok: false, reason });
   if (op.op === 'criar') {
     if (!op.request.trim()) return fail('"pedido" é obrigatório: a frase literal de quem pediu.');
+    if (startsWithMark(op.request)) return fail(`"pedido" não pode começar com "${MARK_OPEN}".`);
     if (!op.doneWhen.trim()) return fail('"criterio" é obrigatório: quando a tarefa está pronta.');
     if (!isDueDate(op.due)) return fail('"prazo" tem de ser uma data AAAA-MM-DD.');
     if (!op.ownerPlaceId.trim()) return fail('"dono" é obrigatório: o lugar que faz o trabalho.');
@@ -339,6 +461,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
   switch (op.op) {
     case 'assumir':
       if (task.slack) return fail('Carta de Slack não se retoma: crie outra com carta_slack, com o texto ajustado.');
+      if (isCancelled(task)) return fail(`A tarefa foi cancelada (${eventNote(lastDecision(task)!) ?? 'sem motivo'}); crie outra se o trabalho voltar.`);
       if (task.state !== 'aberta' && task.state !== 'rejeitada') return fail(`A tarefa está "${task.state}"; só se assume uma aberta ou rejeitada.`);
       if (!isOwnerPlace) return fail(`Só o lugar dono (${task.ownerPlaceId}) assume esta tarefa.`);
       return done(step(task, 'em-execucao', { kind: 'assumida', at: ctx.now, by: actor }));
@@ -353,6 +476,10 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
         );
       if (!isOwnerPlace) return fail(`Só o lugar dono (${task.ownerPlaceId}) entrega esta tarefa.`);
       if (op.proofs.length === 0) return fail('Entrega sem prova é recusada: anexe um print, a saída de um comando ou o link do CI.');
+      if (startsWithMark(op.note)) return fail(`"nota" não pode começar com "${MARK_OPEN}".`);
+      const doneBy = op.doneBy?.trim();
+      if (doneBy && /\s/.test(doneBy)) return fail('"feitoPor" é o id de um lugar (sessao_listar).');
+      const note = doneBy && doneBy !== actor.placeId ? withMark(`feito por ${doneBy}`, op.note ?? '') : op.note?.trim();
       if (op.proofs.length > MAX_PROOFS) return fail(`No máximo ${MAX_PROOFS} provas por entrega.`);
       for (const proof of op.proofs) if (!validProof(proof)) return fail('Prova inválida: arquivo copiado pelo app, texto não vazio ou link http(s).');
       if (!op.forOwner && task.risk === 'alto')
@@ -367,7 +494,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
           at: ctx.now,
           by: actor,
           proofs: op.proofs,
-          ...(op.note?.trim() ? { text: op.note.trim() } : {}),
+          ...(note ? { text: note } : {}),
           ...(op.forOwner ? { forOwner: op.forOwner } : {}),
         }),
       );
@@ -398,12 +525,38 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       // An option closing as `rejeitada` is already a reason: "<label>", plus the owner's words if any.
       const reason = op.option ? [op.option, op.reason.trim()].filter(Boolean).join(': ') : op.reason.trim();
       if (!reason) return fail('"motivo" é obrigatório para rejeitar.');
+      if (startsWithMark(reason)) return fail(`"motivo" não pode começar com "${MARK_OPEN}".`);
       // The owner may overturn an accept the owner did not make (D2 sample).
       const overturn = task.state === 'aceita' && actor.kind === 'dono' && acceptedWithoutOwner(task);
       if (task.state !== 'entregue' && !overturn) return fail(`A tarefa está "${task.state}"; só se rejeita uma entregue.`);
       const why = cannotDecide(task, actor) ?? (op.option ? optionRefusal(task, op.option, 'rejeitada') : null);
       if (why) return fail(`Não rejeitei: ${why}`);
       return done(step(task, 'rejeitada', { kind: 'rejeitada', at: ctx.now, by: actor, text: reason, ...requestOf(op), ...(op.option ? { option: op.option } : {}) }));
+    }
+
+    case 'transferir': {
+      const to = op.to.trim();
+      const reason = op.reason.trim();
+      if (task.slack) return fail('Carta de Slack não se transfere: o envio não depende de quem a escreveu.');
+      if (task.state === 'aceita' || isCancelled(task)) return fail(`A tarefa está "${viewState(task)}"; não há o que passar adiante.`);
+      if (!to) return fail('"para" é obrigatório: o lugar que fica com a tarefa.');
+      if (to === task.ownerPlaceId) return fail(`A tarefa já é de ${to}.`);
+      if (!reason) return fail('"motivo" é obrigatório: por que a tarefa muda de dono.');
+      if (startsWithMark(reason)) return fail(`"motivo" não pode começar com "${MARK_OPEN}".`);
+      const may = actor.kind === 'dono' || isOwnerPlace || isLeaderRole(actor.roleId) || (op.ownerGone === true && actor.placeId === to);
+      if (!may)
+        return fail(`Só o Líder, o dono, o lugar dono (${task.ownerPlaceId}) ou, com o lugar dono fechado ou fora do quadro, quem assume o trabalho passa a tarefa adiante.`);
+      const state: LedgerTaskState = task.state === 'em-execucao' ? 'aberta' : task.state;
+      return done({ ...step(task, state, { kind: 'criada', at: ctx.now, by: actor, text: withMark(`transferida de ${task.ownerPlaceId} para ${to}`, reason) }), ownerPlaceId: to });
+    }
+
+    case 'cancelar': {
+      const reason = op.reason.trim();
+      if (!reason) return fail('"motivo" é obrigatório para cancelar (ex.: substituída por outra carta).');
+      if (startsWithMark(reason)) return fail(`"motivo" não pode começar com "${MARK_OPEN}".`);
+      if (isClosed(task)) return fail(`A tarefa já está "${viewState(task)}" e fechada; não há o que cancelar.`);
+      if (!(actor.kind === 'dono' || isOwnerPlace || isLeaderRole(actor.roleId))) return fail(`Só o Líder, o dono ou o lugar dono (${task.ownerPlaceId}) cancela esta tarefa.`);
+      return done(step(task, 'rejeitada', { kind: 'rejeitada', at: ctx.now, by: actor, text: withMark('cancelada', reason) }));
     }
 
     case 'slack-enviada':
@@ -429,6 +582,8 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
 }
 
 export const MAX_SLACK_TEXT_CHARS = 12_000;
+export const MAX_SLACK_FILE_PATH_CHARS = 1_000;
+export const MAX_SLACK_FILE_NAME_CHARS = 200;
 
 /** How many sends a letter frees: the send, plus ONE resend after a send that failed explicitly. */
 export const MAX_LETTER_SENDS = 2;
@@ -482,8 +637,19 @@ export function slackDestinationLabel(slack: SlackLetter): string {
 
 function slackLetterProblem(slack: SlackLetter): string | null {
   if (!slack.destination.trim()) return '"destino" é obrigatório: o canal ou a pessoa, como vai na ferramenta de envio.';
-  if (!slack.text.trim()) return '"texto" é obrigatório: a mensagem exata que vai ao Slack.';
-  if (slack.text.length > MAX_SLACK_TEXT_CHARS) return `"texto" longo demais (máximo ${MAX_SLACK_TEXT_CHARS} caracteres).`;
+  if (slack.file) {
+    // `text` stays '' (see `SlackLetter.file`): a v4 app reads the letter as absent, never as a text letter.
+    if (slack.text !== '') return 'Carta com arquivo leva o comentário no arquivo, não no texto.';
+    const { path, name, comment } = slack.file;
+    if (!path.trim()) return '"arquivo" é o caminho do arquivo, como vai na ferramenta de envio.';
+    if (path.length > MAX_SLACK_FILE_PATH_CHARS || /[\r\n]/.test(path)) return `"arquivo" tem de ser um caminho numa linha (até ${MAX_SLACK_FILE_PATH_CHARS} caracteres).`;
+    if (!name.trim() || name.length > MAX_SLACK_FILE_NAME_CHARS || /[\r\n]/.test(name)) return `"arquivoNome" tem de ser um nome numa linha (até ${MAX_SLACK_FILE_NAME_CHARS} caracteres).`;
+    if (!comment.trim()) return '"texto" é obrigatório: o comentário exato que vai com o arquivo.';
+    if (comment.length > MAX_SLACK_TEXT_CHARS) return `"texto" longo demais (máximo ${MAX_SLACK_TEXT_CHARS} caracteres).`;
+  } else {
+    if (!slack.text.trim()) return '"texto" é obrigatório: a mensagem exata que vai ao Slack.';
+    if (slack.text.length > MAX_SLACK_TEXT_CHARS) return `"texto" longo demais (máximo ${MAX_SLACK_TEXT_CHARS} caracteres).`;
+  }
   if (!slack.reason.trim()) return '"motivo" é obrigatório: por que a mensagem vai.';
   return null;
 }
@@ -494,18 +660,30 @@ const clip = (text: string, max: number): string => {
 };
 
 /** The card A of a Slack letter, built by the app (a session never writes it): the owner sends it or not. */
-function slackForOwner(where: string, reason: string): LedgerForOwner {
+function slackForOwner(where: string, reason: string, file?: SlackLetterFile): LedgerForOwner {
   const L = FOR_OWNER_LIMITS;
   return {
-    question: 'Posso mandar esta mensagem no Slack em seu nome?',
-    summary: clip(`Para ${where}. Motivo: ${reason}`, L.summary),
+    question: file ? 'Posso mandar este arquivo no Slack em seu nome?' : 'Posso mandar esta mensagem no Slack em seu nome?',
+    summary: clip(file ? `Para ${where}. Arquivo ${file.name}, com o texto da carta como comentário. Motivo: ${reason}` : `Para ${where}. Motivo: ${reason}`, L.summary),
     options: [
-      { label: 'Enviar', effect: 'Sai exatamente o texto da carta, para este destino, uma vez só.', closes: 'aceita', recommended: true },
+      {
+        label: 'Enviar',
+        effect: file ? 'Sai este arquivo, com exatamente o texto da carta, para este destino, uma vez só.' : 'Sai exatamente o texto da carta, para este destino, uma vez só.',
+        closes: 'aceita',
+        recommended: true,
+      },
       { label: 'Não enviar', effect: 'Nada sai. O que você escrever na carta vai para a sessão ajustar o texto.', closes: 'rejeitada' },
     ],
     why: 'A sessão pediu para mandar; o texto da carta é o que vai sair, letra por letra.',
-    risk: 'Depois de enviada, a mensagem fica no Slack em seu nome.',
+    risk: file
+      ? 'Depois de enviado, o arquivo fica no Slack em seu nome. A carta confere o caminho e o nome, não o conteúdo: veja o arquivo antes.'
+      : 'Depois de enviada, a mensagem fica no Slack em seu nome.',
   };
+}
+
+/** What the owner reads about the file of a letter (a proof of the card: the name and where it is). */
+export function slackFileProofText(file: SlackLetterFile): string {
+  return `Arquivo que vai junto: ${file.name}\nOnde está, no computador da sessão: ${file.path}`;
 }
 
 function createSlackLetter(doc: LedgerDoc, actor: LedgerActor, op: Extract<LedgerOp, { op: 'carta-slack' }>, ctx: LedgerOpContext): LedgerOpResult {
@@ -513,12 +691,12 @@ function createSlackLetter(doc: LedgerDoc, actor: LedgerActor, op: Extract<Ledge
   const problem = slackLetterProblem(op.slack);
   if (problem) return { ok: false, reason: problem };
   const where = `${slackDestinationLabel(op.slack)}${op.slack.thread ? ' (na thread)' : ''}`;
-  const title = `Mensagem no Slack para ${slackDestinationLabel(op.slack)}`;
+  const title = `${op.slack.file ? 'Arquivo' : 'Mensagem'} no Slack para ${slackDestinationLabel(op.slack)}`;
   const task: LedgerTask = {
     id: ctx.newId(),
     projectPath: op.projectPath,
     title: title.length > MAX_TITLE_CHARS ? `${title.slice(0, MAX_TITLE_CHARS - 1)}…` : title,
-    request: `Mensagem no Slack para ${where}: ${op.slack.reason.trim()}`.slice(0, MAX_REQUEST_CHARS),
+    request: `${op.slack.file ? `Arquivo ${op.slack.file.name}` : 'Mensagem'} no Slack para ${where}: ${op.slack.reason.trim()}`.slice(0, MAX_REQUEST_CHARS),
     doneWhen: 'O dono aceita o texto exato antes do envio.',
     due: new Date(ctx.now).toISOString().slice(0, 10),
     ownerPlaceId: actor.placeId,
@@ -527,7 +705,14 @@ function createSlackLetter(doc: LedgerDoc, actor: LedgerActor, op: Extract<Ledge
     createdAt: ctx.now,
     events: [
       { kind: 'criada', at: ctx.now, by: actor },
-      { kind: 'entregue', at: ctx.now, by: actor, proofs: [{ kind: 'texto', text: op.slack.text }], text: op.slack.reason.trim(), forOwner: slackForOwner(where, op.slack.reason) },
+      {
+        kind: 'entregue',
+        at: ctx.now,
+        by: actor,
+        proofs: [{ kind: 'texto', text: slackLetterText(op.slack) }, ...(op.slack.file ? [{ kind: 'texto' as const, text: slackFileProofText(op.slack.file) }] : [])],
+        text: op.slack.reason.trim(),
+        forOwner: slackForOwner(where, op.slack.reason, op.slack.file),
+      },
     ],
     slack: op.slack,
   };
@@ -543,7 +728,8 @@ function createSlackLetter(doc: LedgerDoc, actor: LedgerActor, op: Extract<Ledge
  * Alfa reads and rewrites it intact: no new version. No decision event: it never waits for the owner nor counts in
  * the daily sample, and a closed task takes no step.
  */
-export const AGENT_BOT_MARK = '⟦enviado pelo bot do agente⟧';
+const AGENT_BOT_TAG = 'enviado pelo bot do agente';
+export const AGENT_BOT_MARK = withMark(AGENT_BOT_TAG, '');
 
 export interface AgentBotRecord {
   /** The MCP server and tool that posted (`theo-west-slack`, `slack_post_message`). */
@@ -559,7 +745,7 @@ export interface AgentBotRecord {
 }
 
 export function isAgentBotRecord(task: LedgerTask): boolean {
-  return task.slack === undefined && task.request.startsWith(AGENT_BOT_MARK);
+  return task.slack === undefined && markOf(task.request)?.tag === AGENT_BOT_TAG;
 }
 
 const BOT_OUTCOME: Record<AgentBotRecord['outcome'], string> = {
@@ -583,7 +769,7 @@ function createAgentBotRecord(doc: LedgerDoc, actor: LedgerActor, op: Extract<Le
     id: ctx.newId(),
     projectPath: op.projectPath,
     title: title.length > MAX_TITLE_CHARS ? `${title.slice(0, MAX_TITLE_CHARS - 1)}…` : title,
-    request: `${AGENT_BOT_MARK} ${bot.file ? 'Arquivo' : 'Mensagem'} no Slack para ${where}, por ${bot.server} (${bot.tool}), sem carta.`.slice(0, MAX_REQUEST_CHARS),
+    request: withMark(AGENT_BOT_TAG, `${bot.file ? 'Arquivo' : 'Mensagem'} no Slack para ${where}, por ${bot.server} (${bot.tool}), sem carta.`).slice(0, MAX_REQUEST_CHARS),
     doneWhen: 'Só registro: o bot do próprio agente não fala em nome do dono.',
     due: new Date(ctx.now).toISOString().slice(0, 10),
     ownerPlaceId: actor.placeId,
@@ -592,7 +778,7 @@ function createAgentBotRecord(doc: LedgerDoc, actor: LedgerActor, op: Extract<Le
     createdAt: ctx.now,
     events: [
       { kind: 'criada', at: ctx.now, by: actor },
-      { kind: 'entregue', at: ctx.now, by: actor, proofs, text: `${AGENT_BOT_MARK} ${outcome}.` },
+      { kind: 'entregue', at: ctx.now, by: actor, proofs, text: withMark(AGENT_BOT_TAG, `${outcome}.`) },
     ],
   };
   return { ok: true, doc: withTask(doc, task), task };
@@ -610,6 +796,7 @@ export function commentRefusal(task: LedgerTask, actor: LedgerActor, text: strin
   if (!text.trim()) return 'escreva alguma coisa antes de enviar.';
   if (text.length > MAX_COMMENT_CHARS) return `texto longo demais (máximo ${MAX_COMMENT_CHARS} caracteres).`;
   if (task.state === 'aceita' && !(acceptedWithoutOwner(task) && !ownerChecked(task))) return 'a tarefa já foi aceita e fechada.';
+  if (isCancelled(task)) return 'a tarefa foi cancelada.';
   return null;
 }
 
@@ -918,12 +1105,16 @@ function parseTask(id: string, raw: unknown): LedgerTask | null {
 
 function parseSlackLetter(raw: unknown): SlackLetter | null {
   if (!isRecord(raw) || !str(raw.destination) || !str(raw.text) || !str(raw.reason)) return null;
+  // A file that cannot be read drops the whole letter: never a text letter the owner did not see alone.
+  if (raw.file !== undefined && !(isRecord(raw.file) && str(raw.file.path) && str(raw.file.name) && str(raw.file.comment))) return null;
+  const file = isRecord(raw.file) ? { file: { path: raw.file.path as string, name: raw.file.name as string, comment: raw.file.comment as string } } : {};
   const slack: SlackLetter = {
     destination: raw.destination,
     ...(str(raw.destinationLabel) ? { destinationLabel: raw.destinationLabel } : {}),
     ...(str(raw.thread) && raw.thread ? { thread: raw.thread } : {}),
     text: raw.text,
     reason: raw.reason,
+    ...file,
   };
   return slackLetterProblem(slack) ? null : slack;
 }

@@ -10,7 +10,7 @@
 //   walked (time since it was created ÷ steps done) times the steps left. It says when that pace ends after the deadline;
 // - a board is the sum of its tasks: its bar counts every step of every task, its end is the latest end of a task.
 
-import { type LedgerDoc, type LedgerTask, type LedgerTaskState } from '../ledger/contract';
+import { isCancelled, type LedgerDoc, type LedgerTask, type LedgerTaskState } from '../ledger/contract';
 
 /** Assumed, delivered, accepted. */
 export const PROGRESS_STEPS = 3;
@@ -150,7 +150,7 @@ function taskProgress(task: ActiveTask, now: number): ProgressTask {
 }
 
 function isActive(task: LedgerTask): task is ActiveTask {
-  return task.state !== 'aceita';
+  return task.state !== 'aceita' && !isCancelled(task);
 }
 
 /** The panel at `now`: one board per front with a task going on, its tasks under it (the nearest end first). */

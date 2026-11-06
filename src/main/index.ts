@@ -23,7 +23,7 @@ import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, nodeLedgerProofFs, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerSnapshot } from '../shared/ledger/channels';
-import { isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, type LedgerProof } from '../shared/ledger/contract';
+import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
 import type { LedgerToolCall } from '../shared/ledger/tools';
 import type { BoardBridge } from './board-bridge';
 import { MCP_SERVER_NAME, type BrowserToolOutcome } from '../shared/browser/mcp';
@@ -2982,7 +2982,8 @@ function registerLedgerIpcHandlers(): void {
       decision.accept === true
         ? service.apply({ kind: 'dono' }, { op: 'aceitar', id: decision.id, ...option, ...(text ? { text } : {}) })
         : service.apply({ kind: 'dono' }, { op: 'rejeitar', id: decision.id, reason: [typeof reason === 'string' ? reason.trim() : '', text].filter(Boolean).join('\n'), ...option });
-    if (result.ok && text) void cardWriter?.tell(result.task, text);
+    // Every decision of the owner, by a button or with words, tells the session that owns it (closed: the Líder).
+    if (result.ok) void cardWriter?.tellDecision(result.task, text);
     return result;
   });
   ipcMain.handle(LEDGER_CHANNELS.comment, async (event, raw: unknown): Promise<LedgerCommentResult> => {
@@ -3048,13 +3049,55 @@ function placeNameOf(projectPath: string, placeId: string): string | undefined {
   return appConfig.sessionRegistry[card.sessionId]?.label;
 }
 
+/** The board of a task (the Líder único names no board for a tool that acts by the task id). */
+function taskBoardOf(id: string): string | undefined {
+  try {
+    return ledgerService?.load().doc.tasks[id]?.projectPath;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `estado` of every place of a `sessao_listar` answer (a list, or the Líder único's `{ lugares }`). */
+function placeStatesOf(places: unknown): Map<string, string> {
+  const states = new Map<string, string>();
+  for (const place of Array.isArray(places) ? places : []) {
+    const { id, estado } = (place ?? {}) as { id?: unknown; estado?: unknown };
+    if (typeof id === 'string') states.set(id, typeof estado === 'string' ? estado : '');
+  }
+  return states;
+}
+
+/** The Líder único's list of every board: the places of each board with a task not closed (orphans need them). */
+async function everyBoardPlaceStates(boardBridge: BoardBridge, ptyId: string): Promise<Map<string, Map<string, string>>> {
+  const states = new Map<string, Map<string, string>>();
+  let tasks: LedgerTask[] = [];
+  try {
+    tasks = Object.values(ledgerService?.load().doc.tasks ?? {});
+  } catch {
+    return states;
+  }
+  for (const projectPath of new Set(tasks.filter((task) => !isClosed(task)).map((task) => task.projectPath))) {
+    const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar', quadro: projectPath }).catch(() => null);
+    if (list?.kind !== 'text') continue; // a board that did not answer stays unknown: none of its tasks is orphan
+    try {
+      const board = JSON.parse(list.text) as { lugares?: unknown };
+      if (Array.isArray(board.lugares)) states.set(projectPath, placeStatesOf(board.lugares));
+    } catch {
+      // unknown board
+    }
+  }
+  return states;
+}
+
 async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<{ caller: LedgerCaller; call: LedgerToolCall } | string> {
-  const quadro = call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' ? call.quadro : undefined;
+  const quadro = call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' ? call.quadro : call.tool === 'tarefa_transferir' || call.tool === 'tarefa_cancelar' ? taskBoardOf(call.id) : undefined;
   const base = { placeId: LEADER_OF_ALL, roleId: LEADER_ROLE_ID };
   if (!quadro) {
     if (call.tool === 'tarefa_criar') return 'Você é o Líder único e não tem quadro: diga qual em "quadro" (nome ou pasta).';
     // No board: the list is of every board; the other tools act by the task id.
-    return { caller: { ...base, projectPath: '', boardPlaceIds: [] }, call: call.tool === 'tarefa_listar' ? { ...call, todos: true } : call };
+    if (call.tool !== 'tarefa_listar') return { caller: { ...base, projectPath: '', boardPlaceIds: [] }, call };
+    return { caller: { ...base, projectPath: '', boardPlaceIds: [], placeStates: await everyBoardPlaceStates(boardBridge, ptyId) }, call: { ...call, todos: true } };
   }
   const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar', quadro });
   if (list.kind !== 'text') return list.kind === 'error' ? list.text : 'Não consegui ler o quadro.';
@@ -3064,7 +3107,8 @@ async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, cal
   if (call.tool === 'tarefa_criar' && (!call.dono || !reached.includes(call.dono)))
     return `O Líder único não faz a tarefa: diga em "dono" um lugar que você alcança neste quadro (${reached.join(', ') || 'nenhum'}).`;
   const saved = savedBoard(board.pasta);
-  return { caller: { ...base, projectPath: board.pasta, boardPlaceIds: reached, ...(saved ? { board: saved } : {}) }, call };
+  const placeStates = new Map([[board.pasta, placeStatesOf(board.lugares)]]);
+  return { caller: { ...base, projectPath: board.pasta, boardPlaceIds: reached, placeStates, ...(saved ? { board: saved } : {}) }, call };
 }
 
 /** The board and place of a session, for the record of its agent's bot post (set once the board bridge is up). */
@@ -3089,6 +3133,7 @@ async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: Led
       placeId: who.lugar,
       ...(typeof who.papel === 'string' ? { roleId: who.papel } : {}),
       boardPlaceIds: places.map((place) => place.id).filter((id): id is string => typeof id === 'string'),
+      ...(list.kind === 'text' ? { placeStates: new Map([[who.pasta, placeStatesOf(places)]]) } : {}),
       ...(board ? { board } : {}),
     },
     call,

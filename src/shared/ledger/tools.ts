@@ -10,6 +10,8 @@ import {
   MAX_PROOFS,
   MAX_PROOF_TEXT_CHARS,
   MAX_REQUEST_CHARS,
+  MAX_SLACK_FILE_NAME_CHARS,
+  MAX_SLACK_FILE_PATH_CHARS,
   MAX_SLACK_TEXT_CHARS,
   MAX_TITLE_CHARS,
   MIN_OPTIONS,
@@ -17,7 +19,7 @@ import {
   type LedgerForOwner,
   type LedgerOption,
   type LedgerRisk,
-  type LedgerTaskState,
+  type LedgerViewState,
   type LedgerVisual,
 } from './contract';
 
@@ -41,18 +43,39 @@ export type LedgerToolCall =
       readonly pedidoDoDono?: string;
     }
   | { readonly tool: 'tarefa_assumir'; readonly id: string }
-  | { readonly tool: 'tarefa_entregar'; readonly id: string; readonly provas: readonly ProofInput[]; readonly nota?: string; readonly paraODono?: LedgerForOwner }
+  | { readonly tool: 'tarefa_entregar'; readonly id: string; readonly provas: readonly ProofInput[]; readonly nota?: string; readonly paraODono?: LedgerForOwner; readonly feitoPor?: string }
   | { readonly tool: 'tarefa_aceitar'; readonly id: string }
   | { readonly tool: 'tarefa_rejeitar'; readonly id: string; readonly motivo: string }
-  | { readonly tool: 'tarefa_listar'; readonly estado?: LedgerTaskState; readonly todos?: boolean; readonly quadro?: string }
+  | { readonly tool: 'tarefa_listar'; readonly estado?: LedgerViewState; readonly todos?: boolean; readonly quadro?: string; readonly situacao?: LedgerListScope }
   | { readonly tool: 'tarefa_ver'; readonly id: string }
-  | { readonly tool: 'carta_slack'; readonly destino: string; readonly destinoNome?: string; readonly thread?: string; readonly texto: string; readonly motivo: string };
+  | { readonly tool: 'tarefa_transferir'; readonly id: string; readonly para: string; readonly motivo: string }
+  | { readonly tool: 'tarefa_cancelar'; readonly id: string; readonly motivo: string }
+  | {
+      readonly tool: 'carta_slack';
+      readonly destino: string;
+      readonly destinoNome?: string;
+      readonly thread?: string;
+      /** The message, or (with `arquivo`) the file's comment. */
+      readonly texto: string;
+      readonly motivo: string;
+      /** An upload: the local path and the name in Slack. */
+      readonly arquivo?: string;
+      readonly arquivoNome?: string;
+    };
 
 export type LedgerToolName = LedgerToolCall['tool'];
 
 const ID = { type: 'string', description: 'Id da tarefa (tarefa_listar).' };
 const BOARD = { type: 'string', description: 'Só o Líder único (que não tem quadro): o quadro, pelo nome ou pela pasta do projeto. As outras sessões usam sempre o próprio.' };
-const STATES: readonly LedgerTaskState[] = ['aberta', 'em-execucao', 'entregue', 'aceita', 'rejeitada'];
+const STATES: readonly LedgerViewState[] = ['aberta', 'em-execucao', 'entregue', 'aceita', 'rejeitada', 'cancelada'];
+
+/**
+ * 06/11 — which tasks `tarefa_listar` shows. `vivas` (the default without `estado`): not closed and with an owner
+ * place that can still work; `orfas`: not closed, the owner place closed, out of the board or never started;
+ * `todas`: the whole history (the default with `estado`).
+ */
+export type LedgerListScope = 'vivas' | 'orfas' | 'todas';
+const LIST_SCOPES: readonly LedgerListScope[] = ['vivas', 'orfas', 'todas'];
 
 export const LEDGER_TOOLS = [
   {
@@ -114,6 +137,7 @@ export const LEDGER_TOOLS = [
           },
         },
         nota: { type: 'string', description: 'O que foi feito, em uma ou duas frases (opcional).' },
+        feitoPor: { type: 'string', description: 'Quando outro lugar fez o trabalho e você só entrega: o id dele (sessao_listar). Ele fica no registro como quem fez, e também não decide a entrega.' },
         paraODono: {
           type: 'object',
           description: 'A carta do dono: a frente decide, o verso explica. Texto de gente, sem código.',
@@ -187,13 +211,45 @@ export const LEDGER_TOOLS = [
     },
   },
   {
+    name: 'tarefa_transferir',
+    title: 'Passar a tarefa a outro lugar',
+    description:
+      'Troca o lugar dono de uma tarefa (aberta, em execução, rejeitada ou entregue), com motivo; o registro guarda quem passou, de quem e para quem. Em execução, ela volta a "aberta" e o novo dono assume com tarefa_assumir. ' +
+      'Quem pode: o Líder, o lugar dono atual ou, quando o lugar dono está fechado, saiu do quadro ou não começou, a sessão que vai fazer o trabalho, passando a si mesma ("para": "seu"). O destino é um lugar deste quadro (sessao_listar); o Líder único, um lugar que ele alcança no quadro da tarefa.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: ID,
+        para: { type: 'string', description: 'Id do lugar que fica com a tarefa (sessao_listar), ou "seu".' },
+        motivo: { type: 'string', description: 'Por que a tarefa muda de dono (ex.: o lugar dono fechou).' },
+      },
+      required: ['id', 'para', 'motivo'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'tarefa_cancelar',
+    title: 'Cancelar tarefa ou carta',
+    description:
+      'Encerra de vez uma tarefa que não vai mais acontecer, com motivo: uma carta de Slack substituída por outra (aceita e nunca enviada, ou ainda esperando o dono), um trabalho que ninguém vai fazer. Cancelada, a carta não libera envio e a tarefa não se assume de novo; o histórico fica. Quem pode: o Líder, o lugar dono ou o dono. Tarefa aceita (fora carta não enviada) não se cancela.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: ID, motivo: { type: 'string', description: 'Por que acaba (ex.: substituída pela carta nova).' } },
+      required: ['id', 'motivo'],
+      additionalProperties: false,
+    },
+  },
+  {
     name: 'tarefa_listar',
     title: 'Listar tarefas do Oráculo Harrow',
-    description: 'As tarefas do quadro deste projeto (ou de todos), com estado, dono, prazo, risco e o resumo da última entrega, e a faixa de números do quadro. A prova inteira se lê com tarefa_ver.',
+    description:
+      'As tarefas do quadro deste projeto (ou de todos), com estado, dono, prazo, risco e o resumo da última entrega, e a faixa de números do quadro. A prova inteira se lê com tarefa_ver. ' +
+      'Por padrão, só as vivas: nem fechadas (aceitas, canceladas, cartas rejeitadas) nem órfãs. Órfã é a tarefa não fechada cujo lugar dono fechou, saiu do quadro ou não começou: passe-a adiante com tarefa_transferir ou encerre com tarefa_cancelar. Nada se apaga: "situacao" "todas" mostra o histórico inteiro.',
     inputSchema: {
       type: 'object',
       properties: {
         estado: { type: 'string', enum: STATES },
+        situacao: { type: 'string', enum: LIST_SCOPES, description: 'vivas (padrão sem estado), orfas ou todas (padrão com estado).' },
         todos: { type: 'boolean', description: 'true: de todos os quadros (padrão: só o deste projeto).' },
         quadro: BOARD,
       },
@@ -213,7 +269,7 @@ export const LEDGER_TOOLS = [
     name: 'carta_slack',
     title: 'Pedir ao dono para mandar mensagem no Slack',
     description:
-      'Toda mensagem ao Slack em nome do dono (canal, pessoa ou thread; por MCP do Slack, Composio, curl ou script) precisa ANTES desta carta aceita pelo dono: sem ela o Donel Dev bloqueia o envio. A carta leva o destino, a thread, o texto EXATO e o motivo, e espera o dono no Oráculo Harrow (desktop e celular). Aceita: envie o mesmo texto ao mesmo destino e thread, uma vez só. Rejeitada: não envie; o motivo diz o ajuste; crie outra carta. Veja a decisão com tarefa_ver.',
+      'Toda mensagem ao Slack em nome do dono (canal, pessoa ou thread; por MCP do Slack, Composio, curl ou script) precisa ANTES desta carta aceita pelo dono: sem ela o Donel Dev bloqueia o envio. A carta leva o destino, a thread, o texto EXATO e o motivo, e espera o dono no Oráculo Harrow (desktop e celular). Aceita: envie o mesmo texto ao mesmo destino e thread, uma vez só. Rejeitada: não envie; o motivo diz o ajuste; crie outra carta. Veja a decisão com tarefa_ver. Para mandar um ARQUIVO, a carta leva também "arquivo" (o caminho local, exatamente como vai na ferramenta de upload do MCP do Slack) e o texto é o comentário do arquivo; aceita, libera um upload só desse arquivo.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -222,6 +278,8 @@ export const LEDGER_TOOLS = [
         thread: { type: 'string', description: 'O thread_ts, quando a mensagem é resposta numa thread.' },
         texto: { type: 'string', description: 'A mensagem exata, caractere por caractere, como vai ser enviada.' },
         motivo: { type: 'string', description: 'Por que a mensagem vai, em uma frase para o dono.' },
+        arquivo: { type: 'string', description: 'Só para mandar arquivo: o caminho local, EXATAMENTE como vai no campo de caminho da ferramenta de upload. Com ele, "texto" é o comentário do arquivo.' },
+        arquivoNome: { type: 'string', description: 'Só com "arquivo": o nome que aparece no Slack, se for outro que não o fim do caminho. Opcional.' },
       },
       required: ['destino', 'texto', 'motivo'],
       additionalProperties: false,
@@ -375,20 +433,32 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       }
       const nota = text(args.nota, 'nota', MAX_REQUEST_CHARS, false);
       if (typeof nota === 'object') return fail(nota.error);
+      const feitoPor = text(args.feitoPor, 'feitoPor', 120, false);
+      if (typeof feitoPor === 'object') return fail(feitoPor.error);
       const paraODono = args.paraODono === undefined ? undefined : parseForOwnerInput(args.paraODono);
       if (typeof paraODono === 'string') return fail(paraODono);
-      return { ok: true, call: { tool: 'tarefa_entregar', id: id.trim(), provas, ...(nota?.trim() ? { nota } : {}), ...(paraODono ? { paraODono } : {}) } };
+      return { ok: true, call: { tool: 'tarefa_entregar', id: id.trim(), provas, ...(nota?.trim() ? { nota } : {}), ...(paraODono ? { paraODono } : {}), ...(feitoPor?.trim() ? { feitoPor: feitoPor.trim() } : {}) } };
     }
+    case 'tarefa_cancelar':
     case 'tarefa_rejeitar': {
       if (typeof id === 'object' || id === undefined) return fail('"id" é obrigatório.');
       const motivo = text(args.motivo, 'motivo', MAX_REQUEST_CHARS, true);
-      if (typeof motivo === 'object' || motivo === undefined) return fail('"motivo" é obrigatório para rejeitar.');
-      return { ok: true, call: { tool: 'tarefa_rejeitar', id: id.trim(), motivo } };
+      if (typeof motivo === 'object' || motivo === undefined) return fail(`"motivo" é obrigatório para ${name === 'tarefa_cancelar' ? 'cancelar' : 'rejeitar'}.`);
+      return { ok: true, call: { tool: name, id: id.trim(), motivo } };
+    }
+    case 'tarefa_transferir': {
+      if (typeof id === 'object' || id === undefined) return fail('"id" é obrigatório.');
+      const para = text(args.para, 'para', 120, true);
+      const motivo = text(args.motivo, 'motivo', MAX_REQUEST_CHARS, true);
+      if (typeof para === 'object' || para === undefined) return fail('"para" é obrigatório: o lugar que fica com a tarefa, ou "seu".');
+      if (typeof motivo === 'object' || motivo === undefined) return fail('"motivo" é obrigatório: por que a tarefa muda de dono.');
+      return { ok: true, call: { tool: 'tarefa_transferir', id: id.trim(), para: para.trim(), motivo: motivo.trim() } };
     }
     case 'tarefa_listar': {
-      if (args.estado !== undefined && !STATES.includes(args.estado as LedgerTaskState)) return fail(`"estado" tem de ser ${STATES.join(', ')}.`);
+      if (args.estado !== undefined && !STATES.includes(args.estado as LedgerViewState)) return fail(`"estado" tem de ser ${STATES.join(', ')}.`);
+      if (args.situacao !== undefined && !LIST_SCOPES.includes(args.situacao as LedgerListScope)) return fail(`"situacao" tem de ser ${LIST_SCOPES.join(', ')}.`);
       if (args.todos !== undefined && typeof args.todos !== 'boolean') return fail('"todos" é true ou false.');
-      return { ok: true, call: { tool: 'tarefa_listar', ...(args.estado ? { estado: args.estado as LedgerTaskState } : {}), ...(args.todos ? { todos: true } : {}), ...quadro } };
+      return { ok: true, call: { tool: 'tarefa_listar', ...(args.estado ? { estado: args.estado as LedgerViewState } : {}), ...(args.situacao ? { situacao: args.situacao as LedgerListScope } : {}), ...(args.todos ? { todos: true } : {}), ...quadro } };
     }
     case 'carta_slack': {
       const destino = text(args.destino, 'destino', 200, true);
@@ -396,7 +466,11 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       const thread = text(args.thread, 'thread', 120, false);
       const texto = text(args.texto, 'texto', MAX_SLACK_TEXT_CHARS, true);
       const motivo = text(args.motivo, 'motivo', MAX_REQUEST_CHARS, true);
-      for (const value of [destino, destinoNome, thread, texto, motivo]) if (typeof value === 'object') return fail(value.error);
+      const arquivo = text(args.arquivo, 'arquivo', MAX_SLACK_FILE_PATH_CHARS, false);
+      const arquivoNome = text(args.arquivoNome, 'arquivoNome', MAX_SLACK_FILE_NAME_CHARS, false);
+      for (const value of [destino, destinoNome, thread, texto, motivo, arquivo, arquivoNome]) if (typeof value === 'object') return fail(value.error);
+      const caminho = typeof arquivo === 'string' ? arquivo.trim() : '';
+      if (!caminho && typeof arquivoNome === 'string' && arquivoNome.trim()) return fail('"arquivoNome" só vai junto com "arquivo" (o caminho).');
       return {
         ok: true,
         call: {
@@ -406,6 +480,7 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
           ...(typeof thread === 'string' && thread.trim() ? { thread: thread.trim() } : {}),
           texto: texto as string,
           motivo: (motivo as string).trim(),
+          ...(caminho ? { arquivo: caminho, ...(typeof arquivoNome === 'string' && arquivoNome.trim() ? { arquivoNome: arquivoNome.trim() } : {}) } : {}),
         },
       };
     }

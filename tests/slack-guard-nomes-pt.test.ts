@@ -5,7 +5,7 @@ import { slackGuard } from '../src/shared/ledger/slack-guard';
 
 // Slack só com carta — tool names in Portuguese (owner, 06/11: the Theo West MCP has `slack_enviar_arquivo`).
 // Before, `slack_enviar_mensagem` and `slack_enviar_arquivo` went out WITHOUT a letter: the guard knew only
-// English verbs. A message now needs the letter; a file is refused (a letter carries no file); reading is free.
+// English verbs. A message now needs the letter; a file is refused without a letter that carries it (a text letter never frees one); reading is free.
 
 const sess: LedgerActor = { kind: 'lugar', placeId: 'place:theo', roleId: 'theo-west' };
 function run(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp): LedgerDoc {
@@ -25,7 +25,7 @@ describe('nomes em português na trava do app', () => {
       expect(slackGuard(none, theo(name), { channel_id: 'C0CGE4DSGCQ', thread_ts: '1793.24', text: 'Segue o print.' }).kind, name).toBe('deny');
     expect(slackGuard(accepted, theo('slack_enviar_mensagem'), { channel_id: 'C0CGE4DSGCQ', thread_ts: '1793.24', text: 'Segue o print.' }).kind).toBe('allow');
   });
-  it('arquivo é sempre recusado, mesmo com carta aceita do mesmo texto', () => {
+  it('arquivo é recusado com carta de texto, mesmo do mesmo comentário', () => {
     for (const name of ['slack_enviar_arquivo', 'slack_mandar_arquivo', 'slack_subir_arquivo', 'slack_enviar_imagem']) {
       const verdict = slackGuard(accepted, theo(name), { channel_id: 'C0CGE4DSGCQ', thread_ts: '1793.24', comentario: 'Segue o print.', caminho: '/tmp/p.png' });
       expect(verdict.kind, name).toBe('deny');

@@ -2,7 +2,7 @@
 // ("Dev · painel do Jobu"; without a name, the role: "Dev"). Shared by the phone and the desktop cards.
 
 import { naipeDoTipo, type Naipe } from '../celular';
-import { lastDelivery, type LedgerActor, type LedgerDeliveredTo, type LedgerTask } from './contract';
+import { doneByOf, eventNote, lastDelivery, type LedgerActor, type LedgerDeliveredTo, type LedgerEvent, type LedgerTask } from './contract';
 import type { LedgerCommentResult } from './channels';
 
 const ROLE_LABELS: Readonly<Record<string, string>> = {
@@ -19,6 +19,18 @@ export function roleLabel(roleId: string | undefined): string {
 
 /** The name of a place on its board (its session's name), when known. */
 export type PlaceNameOf = (projectPath: string, placeId: string) => string | undefined;
+
+/**
+ * The note of a delivery as the owner reads it: what the place wrote, and who really did the work when it was not
+ * whoever delivered ("Feito por Dev · painel. …"). `undefined` = nothing to show.
+ */
+export function deliveryNote(delivery: LedgerEvent | undefined, projectPath: string, placeName: PlaceNameOf | undefined): string | undefined {
+  if (!delivery) return undefined;
+  const note = eventNote(delivery);
+  const doer = doneByOf(delivery);
+  const by = doer ? `Feito por ${placeName?.(projectPath, doer)?.trim() || 'outro lugar'}.` : '';
+  return [by, note ?? ''].filter(Boolean).join(' ') || undefined;
+}
 
 /** "você", "Dev · painel do Jobu" or "Dev". */
 export function actorLabel(actor: LedgerActor | undefined, projectPath: string, placeName: PlaceNameOf | undefined): string {

@@ -19,7 +19,11 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     items: [
       {
         title: 'O bot do próprio agente manda no Slack sem carta',
-        text: 'A carta de Slack volta a ser só para o que sai em seu nome. Quando um agente fala pelo bot dele (como o Theo West, no PC ou na VPS), a mensagem ou o arquivo sai sem esperar você, e fica anotado no Oráculo como "enviado pelo bot do agente", com destino, texto e link para você ver depois. O que sai pela sua conta (Composio, o Slack do seu usuário, terminal) continua pedindo carta.',
+        text: 'A carta de Slack volta a ser só para o que sai em seu nome. Quando um agente fala pelo bot dele (como o Theo West, no PC ou na VPS) e esse bot está na lista de bots dos agentes da sua configuração, a mensagem ou o arquivo sai sem esperar você, e fica anotado no Oráculo como "enviado pelo bot do agente", com destino, texto e link para você ver depois. O que sai pela sua conta (Composio, o Slack do seu usuário, terminal) continua pedindo carta.',
+      },
+      {
+        title: 'Carta de Slack que leva um arquivo',
+        text: 'Uma sessão que precisa mandar um arquivo no Slack, como um print ou um PDF, agora pede numa carta, como já pedia para mensagem. A carta diz "Posso mandar este arquivo no Slack em seu nome?" e mostra o nome do arquivo, onde ele está e o comentário que vai junto. O arquivo só sai depois que você aceita, uma vez, para aquele canal ou thread. A carta confere o nome e o lugar do arquivo, não o que tem dentro: veja o arquivo antes de aceitar. Numa versão anterior do Donel aberta no mesmo computador, essa carta não aparece como carta de Slack e não libera nada.',
       },
       {
         title: 'Slack com nome em português também pede carta',
@@ -60,6 +64,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
       {
         title: 'Cartas do Oráculo grandes no celular, com zoom',
         text: 'No Oráculo pelo celular, o print ou o protótipo agora ocupa quase a carta toda, e a letra ficou maior. Embaixo fica a opção recomendada, a um toque, e "caminhos" abre as outras com o porquê. "⤢ Tela cheia" abre a prova na tela inteira: no print dá zoom com a pinça ou a roda do mouse e dá para arrastar; o protótipo fica navegável. Para sair, o ✕, o voltar do celular, o Esc ou, no print, arrastar para baixo. No computador, a prova fica à esquerda e a decisão num painel à direita.',
+      },
+      {
+        title: 'Tarefas do Oráculo que ficavam presas agora andam',
+        text: 'Quando a sessão dona de uma tarefa fecha ou nem chega a abrir, o Líder passa a tarefa para outra, ou a sessão que vai fazer o trabalho a assume, e o registro guarda quem passou para quem. Carta de Slack substituída por outra pode ser cancelada com motivo, e a carta cancelada nunca é enviada. Quando uma sessão faz o trabalho e outra entrega, a carta mostra "Feito por" com o nome de quem fez. As sessões passam a ver só as tarefas vivas, e as que ficaram sem dono aparecem à parte. Nada do histórico é apagado. E toda decisão sua numa carta, pelo botão ou com texto, no computador ou no celular, avisa na hora a sessão dona (ou o Líder, se ela estiver fechada): uma carta de Slack aceita não fica mais parada sem ninguém saber.',
       },
     ],
   },
