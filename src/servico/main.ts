@@ -1,17 +1,13 @@
-// Serviço Donel sem tela (ADR 0008) — roda na VPS pessoal por systemd e mantém
-// o Donel vivo com o PC desligado. Fatia 1: o motor de contas das VPS
-// (troca automática a 90% da VPS pessoal e de Homologações).
+// Serviço Donel sem tela (ADR 0008 e 0009) — roda em CADA VPS por systemd e
+// mantém a conta dela trocando sozinha com o PC desligado. Fatia 1: o motor de
+// contas da própria VPS (troca automática a 90%), sem ssh para outra máquina.
 //
 //   donel-servico rodar                         processo do systemd
-//   donel-servico estado                        contas, carga e lugares (sem segredo)
+//   donel-servico estado                        contas e carga (sem segredo)
 //   donel-servico contas colher <pasta> <rótulo>
-//   donel-servico contas adotar <lugar> <rótulo>
-//   donel-servico contas trocar <lugar> <conta|nenhuma>
+//   donel-servico contas adotar <rótulo>
+//   donel-servico contas trocar <conta>
 //   donel-servico contas remover <conta>
-//   donel-servico lugar definir <id> <rótulo> <usuario@host>
-//   donel-servico lugar remover <id>
-//
-// O lugar `aqui` é a própria VPS pessoal.
 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -23,22 +19,18 @@ const paths = servicoPathsFor(homedir(), process.env.DONEL_SERVICO_DIR || undefi
 const socketPath = join(paths.dir, 'servico.sock');
 
 async function dispatch(contas: ServicoContas, request: SocketRequest): Promise<unknown> {
-  const [a, b, c] = request.args;
+  const [a, b] = request.args;
   switch (request.cmd) {
     case 'estado':
       return contas.estado();
     case 'contas.colher':
       return contas.colher(a ?? '', b ?? '');
     case 'contas.adotar':
-      return contas.adotar(a ?? '', b ?? '');
+      return contas.adotar(a ?? '');
     case 'contas.trocar':
-      return contas.trocar(a ?? '', !b || b === 'nenhuma' ? null : b);
+      return contas.trocar(a ?? '');
     case 'contas.remover':
       return contas.remover(a ?? '');
-    case 'lugar.definir':
-      return contas.definirLugar(a ?? '', b ?? '', c ?? '');
-    case 'lugar.remover':
-      return contas.removerLugar(a ?? '');
     default:
       return { ok: false, reason: 'comando-desconhecido' };
   }
@@ -71,7 +63,7 @@ async function run(): Promise<void> {
 function requestFromArgv(argv: readonly string[]): SocketRequest | null {
   const [group, action, ...rest] = argv;
   if (group === 'estado') return { cmd: 'estado', args: [] };
-  if ((group === 'contas' || group === 'lugar') && action) return { cmd: `${group}.${action}`, args: rest };
+  if (group === 'contas' && action) return { cmd: `${group}.${action}`, args: rest };
   return null;
 }
 
@@ -80,7 +72,7 @@ async function main(): Promise<void> {
   if (argv[0] === 'rodar') return run();
   const request = requestFromArgv(argv);
   if (!request) {
-    console.error('uso: donel-servico rodar | estado | contas colher|adotar|trocar|remover ... | lugar definir|remover ...');
+    console.error('uso: donel-servico rodar | estado | contas colher|adotar|trocar|remover ...');
     process.exit(64);
   }
   try {

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# Instala (ou atualiza) o serviço Donel sem tela na VPS pessoal — ADR 0008.
-# Uso, da raiz de um checkout de staging:  sudo bash scripts/servico/instalar.sh
+# Instala (ou atualiza) o motor de contas desta VPS — ADR 0008 e 0009 (um motor
+# por VPS). Roda em cada VPS, com o usuário dono do ~/.claude que o motor troca.
+# Uso, da raiz de um checkout de staging:
+#   sudo bash scripts/servico/instalar.sh            (usuário = quem chamou o sudo)
+#   sudo DONEL_SERVICO_USER=root bash scripts/servico/instalar.sh   (VPS que roda tudo como root)
 #
 # - builda o bundle (npm run build:servico) como o usuário dono do checkout;
 # - copia para /opt/donel-servico e cria /usr/local/bin/donel-servico;
@@ -10,8 +13,9 @@
 set -euo pipefail
 
 if [[ $EUID -ne 0 ]]; then echo "rode com sudo" >&2; exit 1; fi
-SERVICE_USER="${SUDO_USER:-}"
-if [[ -z "$SERVICE_USER" || "$SERVICE_USER" == root ]]; then echo "rode com sudo a partir do seu usuário (não como root direto)" >&2; exit 1; fi
+SERVICE_USER="${DONEL_SERVICO_USER:-${SUDO_USER:-}}"
+if [[ -z "$SERVICE_USER" ]]; then echo "diga de quem é o ~/.claude: sudo a partir do seu usuário, ou DONEL_SERVICO_USER=<usuário>" >&2; exit 1; fi
+if ! id "$SERVICE_USER" >/dev/null 2>&1; then echo "usuário desconhecido: $SERVICE_USER" >&2; exit 1; fi
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 NODE_BIN="$(sudo -u "$SERVICE_USER" bash -lc 'command -v node')"
 

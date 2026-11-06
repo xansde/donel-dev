@@ -26,16 +26,17 @@
      linha "Modo" no cabeçalho da seção; implementada = mergeada na integradora;
      aguardando-merge e concluida flipam em bloco (PR único da demanda). -->
 
-## Donel sem tela na VPS pessoal (`donel-vps`)
+## Donel sem tela nas VPS (`donel-vps`)
 
-- **Design**: [ADR 0008](docs/adr/0008-contas-das-vps-sem-o-pc.md) (contas) · passo a passo do dono em `docs/servico-vps.md` · estado em `docs/handoffs/2026-11-06-oraculo-vps.md`
+- **Design**: [ADR 0008](docs/adr/0008-contas-das-vps-sem-o-pc.md) e [ADR 0009](docs/adr/0009-um-motor-de-contas-por-vps.md) (contas: um motor por VPS) · passo a passo do dono em `docs/servico-vps.md` · estado em `docs/handoffs/2026-11-06-oraculo-vps.md`
 - **TaskDex**: — (ferramenta pessoal)
 - **Fatiado em**: 2026-11-05, à mão (as skills da esteira não estão instaladas na VPS)
 - **Gate**: pedido do dono em 05/11 ("O VPS pessoal também deve ser autonomo sem depender do meu pc ligado", "Pode puxar para ser feito amanhã mesmo"); ordem pelo dono: switcher primeiro, depois Oráculo e cartas
 - **Rodadas previstas**: 01 | 02 | 03 + 04 | 05 | 06
 
-Arquitetura curta: um processo Node sem Electron (`donel-servico`, systemd, `Restart=always`) na VPS
-pessoal. Bundle por `vite.servico.config.ts` em `out-servico/` (fora do instalador). Comandos do
+Arquitetura curta: um processo Node sem Electron (`donel-servico`, systemd, `Restart=always`). O motor
+de contas roda em cada VPS, só com a conta dela (ADR 0009). O Oráculo, as cartas e o MCP moram só na
+VPS pessoal. Bundle por `vite.servico.config.ts` em `out-servico/` (fora do instalador). Comandos do
 dono por socket Unix em `~/.donel/`. Cada fatia é um módulo do mesmo processo, e o PC vira cliente
 quando está ligado. Nada do serviço depende de Electron. O que precisa de Electron fica no app.
 
@@ -44,9 +45,9 @@ quando está ligado. Nada do serviço depende de Electron. O que precisa de Elec
 - **Status**: implementada
 - **Branch**: `feat/donel-vps-switcher`
 - **Depende de**: —
-- **Propósito**: a VPS pessoal e Homologações trocam de conta a 90% com o PC desligado, com um conjunto de contas só delas. O PC tem a preferência.
-- **Escopo**: `src/main/accounts/servico/` (cofre AES-GCM com chave do systemd, host do motor), `src/servico/` (entrada e socket), opção `remotePlacesFirst` e regra "carga cega 10 min = cheia" no motor, unidade systemd e `scripts/servico/instalar.sh`, ADR 0008, emenda no `CLAUDE.md`. NÃO entra: o PC como painel e o gesto "Entregar à VPS" (05), o aviso "todas cheias" (06).
-- **Como testar**: `tests/accountsRemotePlaces.test.ts` (PC escolhe antes do lugar; serviço escolhe o lugar antes; cega 10 min troca) e `tests/servicoContas.test.ts` (cofre cifrado, par some da pasta de login, nenhum token em resposta, config ou log; sem chave, recusa).
+- **Propósito**: cada VPS (a pessoal e Homologações) troca a própria conta a 90% com o PC desligado, com um conjunto de contas só dela, sem depender da outra VPS. O PC tem a preferência.
+- **Escopo**: `src/main/accounts/servico/` (cofre AES-GCM com chave do systemd, host do motor, só "aqui"), `src/servico/` (entrada e socket), regra "carga cega 10 min = cheia" no motor (lugares do PC), unidade systemd e `scripts/servico/instalar.sh` (aceita `DONEL_SERVICO_USER=root`), ADR 0008 + 0009, emenda no `CLAUDE.md`. NÃO entra: o PC como painel e o gesto "Entregar à VPS" (05), o aviso "todas cheias" (06).
+- **Como testar**: `tests/accountsRemotePlaces.test.ts` (PC escolhe antes do lugar; cega 10 min troca) e `tests/servicoContas.test.ts` (cofre cifrado, par some da pasta de login, nenhum token em resposta, config ou log; sem o PC, troca a conta da VPS acima de 90%; sem chave, recusa).
 
 ### 02 — Oráculo mora na VPS
 
@@ -77,13 +78,13 @@ quando está ligado. Nada do serviço depende de Electron. O que precisa de Elec
 - **Status**: pendente
 - **Depende de**: 01
 - **Propósito**: com o PC ligado, Contas mostra o conjunto das VPS (contas, carga e eventos) e passa uma conta ou um lugar do PC para a VPS num gesto, sem editar `config.json` à mão.
-- **Escopo**: o PC lê `donel-servico estado` por ssh. "Entregar à VPS" tira o lugar e a conta do PC e chama `adotar` lá. O par nunca cruza o ssh.
+- **Escopo**: o PC lê `donel-servico estado` de cada VPS por ssh. "Entregar à VPS" tira o lugar e a conta do PC e chama `adotar` lá. O par nunca cruza o ssh.
 
 ### 06 — Aviso "todas cheias" no Oráculo
 
 - **Status**: pendente
 - **Depende de**: 01, 02
-- **Propósito**: quando todo o conjunto das VPS passa do limiar, o Líder e o celular sabem, em vez de a VPS parar calada.
+- **Propósito**: quando todo o conjunto de uma VPS passa do limiar, o Líder e o celular sabem, em vez de a VPS parar calada.
 
 ## Cartas do Oráculo, forma A (`cartas-forma-a`)
 

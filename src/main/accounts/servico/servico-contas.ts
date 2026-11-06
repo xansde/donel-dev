@@ -1,38 +1,35 @@
-// Serviço da VPS (ADR 0008) — o motor de contas sem tela, rodando na própria
-// VPS pessoal, para as VPS não dependerem do PC ligado. Mora em
-// src/main/accounts/ de propósito: é o mesmo perímetro de credencial (CLAUDE.md,
-// "Credenciais"), agora num segundo processo. Nada aqui é novo em regra:
+// Serviço da VPS (ADR 0008, emendado pelo ADR 0009) — o motor de contas sem
+// tela, rodando em CADA VPS, para nenhuma depender do PC ligado nem da outra
+// VPS. Mora em src/main/accounts/ de propósito: é o mesmo perímetro de
+// credencial (CLAUDE.md, "Credenciais"), agora num segundo processo. Nada aqui
+// é novo em regra:
 //
 // - o motor é o mesmo `AccountEngine`, com o mesmo mod local, a mesma política
 //   (90/20) e a mesma ordem invariante de troca (`claude-state.ts`);
-// - "esta máquina" é a VPS pessoal (o `~/.claude` do usuário do serviço) e os
-//   lugares remotos (Homologações) são alcançados por ssh, como no PC;
-// - o cofre é só das VPS: conjunto de contas separado do PC (uma conta pertence
-//   a um só conjunto). A cifra é AES-GCM com chave fora do repo
-//   (vault-key-cipher.ts) em vez de `safeStorage`;
+// - o único lugar é "esta máquina" (o `~/.claude` do usuário do serviço). Sem
+//   lugar remoto, sem ssh: cada VPS troca só a própria conta (ADR 0009);
+// - o cofre é só desta VPS: conjunto de contas separado do PC e da outra VPS
+//   (uma conta pertence a um só conjunto). A cifra é AES-GCM com chave fora do
+//   repo (vault-key-cipher.ts) em vez de `safeStorage`;
 // - nada que sai daqui (resposta de comando, log) carrega par de credencial.
-//
-// Diferença deliberada do PC: os lugares remotos são avaliados ANTES desta
-// máquina (`remotePlacesFirst`) — Homologações é a que menos pode parar.
 
 import { randomUUID } from 'node:crypto';
 import { appendFileSync, closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { defaultAccountsConfig, type AccountId, type AccountsConfig, type AccountsViewDto, type LocalAccountMeta, type RemotePlace } from '../../../shared/accounts';
+import { defaultAccountsConfig, type AccountId, type AccountsConfig, type AccountsViewDto, type LocalAccountMeta } from '../../../shared/accounts';
 import { AccountEngine } from '../account-engine';
 import { AccountEngineHost } from '../account-engine-host';
 import type { CredentialPair } from '../account-mod';
-import { sanitizeAccountsConfig, isValidSshTarget } from '../accounts-config';
+import { sanitizeAccountsConfig } from '../accounts-config';
 import { applyAccountSwitch, createSystemClaudeStateIoDeps, readCurrentCredentialPair, type ClaudeStateIoDeps } from '../claude-state';
 import { accountFingerprintFromClaudeJsonText, readCredentialsPairFromText } from '../credentials-file';
 import { createLocalMod } from '../mods/local-mod';
 import { createReconnectRegistry } from '../reconnect-registry';
 import { createRefreshCoordinator } from '../refresh-coordinator';
-import { createRemoteClaudeState, type RemoteClaudeState } from '../remote-claude-state';
 import type { HttpFetchLike } from '../usage-client';
 import { createSystemVaultIoDeps, decryptVaultEntry, deleteVaultEntry, writeVaultEntry, type SafeStorageLike, type VaultLike } from '../vault';
 
-/** Lugar "esta máquina" nos comandos: a VPS pessoal, onde o serviço roda. */
+/** Lugar "esta máquina" no estado e no log: a VPS onde o serviço roda. */
 export const HERE_PLACE_ID = 'aqui';
 
 export interface ServicoPaths {
@@ -63,7 +60,6 @@ export type ServicoResult =
 export interface ServicoContasDeps {
   readonly paths: ServicoPaths;
   readonly cipher: SafeStorageLike;
-  readonly remoteState?: RemoteClaudeState;
   readonly fetchImpl?: HttpFetchLike;
   readonly claudeIo?: ClaudeStateIoDeps;
   readonly now?: () => number;
@@ -76,11 +72,9 @@ export interface ServicoContas {
   dispose(): void;
   estado(): Promise<ServicoResult>;
   colher(pasta: string, rotulo: string): Promise<ServicoResult>;
-  adotar(lugar: string, rotulo: string): Promise<ServicoResult>;
-  trocar(lugar: string, conta: AccountId | null): Promise<ServicoResult>;
+  adotar(rotulo: string): Promise<ServicoResult>;
+  trocar(conta: AccountId): Promise<ServicoResult>;
   remover(conta: AccountId): Promise<ServicoResult>;
-  definirLugar(id: string, rotulo: string, sshTarget: string): Promise<ServicoResult>;
-  removerLugar(id: string): Promise<ServicoResult>;
 }
 
 interface ServicoFile {
@@ -98,7 +92,8 @@ function readServicoConfig(path: string): AccountsConfig {
   }
   const accounts = typeof parsed === 'object' && parsed !== null ? (parsed as { accounts?: unknown }).accounts : undefined;
   // Só o pool próprio na VPS: o pool Seazone tem posse e heartbeat por máquina (ADR 0005, item 6).
-  return { ...sanitizeAccountsConfig(accounts, base), mod: 'local', seazone: null, claudeHome: null };
+  // Sem lugares remotos: cada VPS tem o seu motor e não dirige outra (ADR 0009).
+  return { ...sanitizeAccountsConfig(accounts, base), mod: 'local', seazone: null, claudeHome: null, remotes: [] };
 }
 
 function writeFileAtomic(path: string, content: string): void {
@@ -136,7 +131,6 @@ export function createServicoContas(deps: ServicoContasDeps): ServicoContas {
   const now = deps.now ?? Date.now;
   const claudeIo = deps.claudeIo ?? createSystemClaudeStateIoDeps();
   const vaultIo = createSystemVaultIoDeps();
-  const remoteState = deps.remoteState ?? createRemoteClaudeState();
   const reconnectRegistry = createReconnectRegistry();
   const refreshCoordinator = createRefreshCoordinator();
   let config = readServicoConfig(paths.configPath);
@@ -180,7 +174,7 @@ export function createServicoContas(deps: ServicoContasDeps): ServicoContas {
             now,
             onPairRefreshed: (id, trigger) => log({ event: 'account-pair-refreshed', account: id, trigger }),
             onPairRefreshFailed: (id, trigger, reason) => log({ event: 'account-pair-refresh-failed', account: id, trigger, reason }),
-            isHeldRemotely: (id) => (host.current()?.getConfig() ?? config).remotes.some((place) => place.activeAccountId === id),
+            isHeldRemotely: () => false,
           }),
         applySwitch: (pair, onRotatedPairCaptured) =>
           applyAccountSwitch({ io: claudeIo, claudeHome: paths.claudeHome, claudeJsonPath: paths.claudeJsonPath, onRotatedPairCaptured }, pair),
@@ -192,13 +186,6 @@ export function createServicoContas(deps: ServicoContasDeps): ServicoContas {
         readCurrentAccountFingerprint: () => accountFingerprintFromClaudeJsonText(claudeIo.readFileText(paths.claudeJsonPath)),
         onSwitchOverwritten: (info) => log({ event: 'switch-overwritten', account: info.to }),
         onLivePairCaptured: (info) => log({ event: 'live-pair-captured', account: info.account, trigger: info.trigger, believedActive: info.believedActive }),
-        remoteState,
-        onRemotesChanged: (remotes) => {
-          config = { ...config, remotes };
-          persist();
-        },
-        onRemoteEvent: (event) => log({ ...event }),
-        remotePlacesFirst: true,
       });
       engine.start();
       if (deps.polling !== false) engine.startPolling(() => true);
@@ -220,8 +207,7 @@ export function createServicoContas(deps: ServicoContasDeps): ServicoContas {
   }
 
   function holderOf(id: AccountId): string | null {
-    if (config.activeAccountId === id) return HERE_PLACE_ID;
-    return config.remotes.find((place) => place.activeAccountId === id)?.id ?? null;
+    return config.activeAccountId === id ? HERE_PLACE_ID : null;
   }
 
   /** Grava o par no cofre e devolve a config com a conta (nova ou a mesma, pelo fingerprint). */
@@ -250,7 +236,7 @@ export function createServicoContas(deps: ServicoContasDeps): ServicoContas {
     async start() {
       mkdirSync(paths.dir, { recursive: true, mode: 0o700 });
       host.apply(config);
-      log({ event: 'servico-started', accounts: config.localAccounts.length, places: config.remotes.map((place) => place.id), encryption: deps.cipher.isEncryptionAvailable() });
+      log({ event: 'servico-started', accounts: config.localAccounts.length, encryption: deps.cipher.isEncryptionAvailable() });
       await host.current()?.listAccounts();
       await host.current()?.evaluateAutoSwitch();
     },
@@ -265,7 +251,6 @@ export function createServicoContas(deps: ServicoContasDeps): ServicoContas {
       return {
         ok: true,
         aqui: config.activeAccountId,
-        lugares: config.remotes,
         politica: config.autoSwitch,
         contas: (view?.accounts ?? []).map((account) => ({
           id: account.id,
@@ -304,51 +289,30 @@ export function createServicoContas(deps: ServicoContasDeps): ServicoContas {
     },
 
     /**
-     * A conta que já está logada num lugar passa a ser do conjunto da VPS, sem
-     * login novo: o par vivo de lá vai para o cofre e o lugar fica com ela. O
-     * lugar não pode ter conta do conjunto ainda.
+     * A conta que já está logada nesta VPS passa a ser do conjunto dela, sem
+     * login novo: o par vivo do `~/.claude` vai para o cofre e a VPS fica com
+     * ela. A VPS não pode ter conta do conjunto ativa ainda.
      */
-    async adotar(lugar, rotulo) {
+    async adotar(rotulo) {
       if (!validLabel(rotulo)) return { ok: false, reason: 'rotulo-invalido' };
-      let pair: CredentialPair | null;
-      let fingerprint: string | null;
-      if (lugar === HERE_PLACE_ID) {
-        if (config.activeAccountId) return { ok: false, reason: 'lugar-ja-tem-conta' };
-        pair = readLivePair();
-        fingerprint = accountFingerprintFromClaudeJsonText(claudeIo.readFileText(paths.claudeJsonPath));
-      } else {
-        const place = config.remotes.find((candidate) => candidate.id === lugar);
-        if (!place) return { ok: false, reason: 'lugar-desconhecido' };
-        if (place.activeAccountId) return { ok: false, reason: 'lugar-ja-tem-conta' };
-        const read = await remoteState.read(place.sshTarget);
-        if (read.kind === 'unreachable') return { ok: false, reason: 'ssh-falhou' };
-        if (read.kind !== 'ok') return { ok: false, reason: 'leitura-falhou' };
-        pair = read.pair;
-        fingerprint = read.fingerprint;
-      }
-      if (!pair) return { ok: false, reason: 'lugar-sem-login' };
-      if (!fingerprint) return { ok: false, reason: 'sem-identidade-no-lugar' };
+      if (config.activeAccountId) return { ok: false, reason: 'ja-tem-conta' };
+      const pair = readLivePair();
+      if (!pair) return { ok: false, reason: 'sem-login-aqui' };
+      const fingerprint = accountFingerprintFromClaudeJsonText(claudeIo.readFileText(paths.claudeJsonPath));
+      if (!fingerprint) return { ok: false, reason: 'sem-identidade-aqui' };
       const stored = storeAccount(pair, fingerprint, rotulo.trim());
       if ('error' in stored) return { ok: false, reason: stored.error };
-      const next: AccountsConfig =
-        lugar === HERE_PLACE_ID
-          ? { ...stored.config, activeAccountId: stored.id }
-          : { ...stored.config, remotes: stored.config.remotes.map((place) => (place.id === lugar ? { ...place, activeAccountId: stored.id } : place)) };
-      log({ event: 'account-adopted', account: stored.id, place: lugar });
-      await applyConfig(next);
-      return { ok: true, conta: stored.id, rotulo: rotulo.trim(), lugar };
+      log({ event: 'account-adopted', account: stored.id, place: HERE_PLACE_ID });
+      await applyConfig({ ...stored.config, activeAccountId: stored.id });
+      return { ok: true, conta: stored.id, rotulo: rotulo.trim() };
     },
 
-    async trocar(lugar, conta) {
+    async trocar(conta) {
       const engine = host.current();
       if (!engine) return { ok: false, reason: 'motor-parado' };
-      if (lugar === HERE_PLACE_ID) {
-        if (!conta) return { ok: false, reason: 'conta-obrigatoria' };
-        const outcome = await engine.switchTo(conta);
-        log({ event: 'switch', place: lugar, origin: 'manual', outcome: outcome.kind, to: conta });
-        return outcome.kind === 'switched' || outcome.kind === 'already-active' ? { ok: true, resultado: outcome.kind } : { ok: false, reason: outcome.reason };
-      }
-      const outcome = await engine.switchRemote(lugar, conta, 'manual');
+      if (!conta) return { ok: false, reason: 'conta-obrigatoria' };
+      const outcome = await engine.switchTo(conta);
+      log({ event: 'switch', place: HERE_PLACE_ID, origin: 'manual', outcome: outcome.kind, to: conta });
       return outcome.kind === 'switched' || outcome.kind === 'already-active' ? { ok: true, resultado: outcome.kind } : { ok: false, reason: outcome.reason };
     },
 
@@ -359,28 +323,6 @@ export function createServicoContas(deps: ServicoContasDeps): ServicoContas {
       log({ event: 'account-removed', account: conta });
       await applyConfig({ ...config, localAccounts: config.localAccounts.filter((account) => account.id !== conta) });
       return { ok: true, conta };
-    },
-
-    async definirLugar(id, rotulo, sshTarget) {
-      if (!/^[a-z0-9][a-z0-9-]{0,39}$/.test(id) || id === HERE_PLACE_ID) return { ok: false, reason: 'id-invalido' };
-      if (!validLabel(rotulo)) return { ok: false, reason: 'rotulo-invalido' };
-      if (!isValidSshTarget(sshTarget)) return { ok: false, reason: 'ssh-invalido' };
-      const existing = config.remotes.find((place) => place.id === id);
-      const place: RemotePlace = { id, label: rotulo.trim(), sshTarget, activeAccountId: existing?.activeAccountId ?? null };
-      const remotes = existing ? config.remotes.map((candidate) => (candidate.id === id ? place : candidate)) : [...config.remotes, place];
-      log({ event: 'place-set', place: id });
-      await applyConfig({ ...config, remotes });
-      return { ok: true, lugar: id };
-    },
-
-    async removerLugar(id) {
-      const place = config.remotes.find((candidate) => candidate.id === id);
-      if (!place) return { ok: false, reason: 'lugar-desconhecido' };
-      // Conta ainda logada lá: tirar o lugar do motor deixaria o CLI de lá com um par que o cofre também renova.
-      if (place.activeAccountId) return { ok: false, reason: 'lugar-com-conta' };
-      log({ event: 'place-removed', place: id });
-      await applyConfig({ ...config, remotes: config.remotes.filter((candidate) => candidate.id !== id) });
-      return { ok: true, lugar: id };
     },
   };
 }
