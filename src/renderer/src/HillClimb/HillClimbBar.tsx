@@ -28,6 +28,9 @@ const STATE_LABEL: Readonly<Record<MissionState, string>> = {
   recusada: 'recusada',
 };
 
+/** What waits for the owner comes first: a closed rodada, then a running one, then a proposal. */
+const STATE_ORDER: Readonly<Record<MissionState, number>> = { pausada: 0, rodando: 1, proposta: 2, aceita: 3, recusada: 4 };
+
 const STATE_TONE: Readonly<Record<MissionState, AnnotationTone>> = {
   proposta: 'warn',
   rodando: 'accent',
@@ -62,7 +65,7 @@ function excerpt(text: string, max = 140): string {
 
 export function HillClimbBar({ snapshot, onGesture }: HillClimbBarProps): React.JSX.Element {
   const missions = useMemo(
-    () => Object.values(snapshot?.doc.missions ?? {}).sort((a, b) => b.createdAt - a.createdAt),
+    () => Object.values(snapshot?.doc.missions ?? {}).sort((a, b) => STATE_ORDER[a.state] - STATE_ORDER[b.state] || b.createdAt - a.createdAt),
     [snapshot],
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);

@@ -453,7 +453,10 @@ de uma interface de provedor, com juiz falso nos testes e "falta a chave" na tel
 
 ### 01 — A barra do hill climbing no lugar do Modo Dev
 
-- **Status**: pendente
+- **Caminho**: teste-depois (UI; o teste cobre o store)
+
+- **Status**: implementada
+- **Branch**: `feature/hill-climbing` (modo demanda, worktree `.claude/worktrees/hill-climbing`)
 - **Depende de**: —
 - **Conflita com**: 02, 03, 04 (`App.tsx`, `HillClimb/`)
 - **Propósito**: a aba "Dev" do seletor de modo vira "Hill climbing": a barra esquerda (trilha +
@@ -471,7 +474,8 @@ de uma interface de provedor, com juiz falso nos testes e "falta a chave" na tel
 
 ### 02 — Missão nasce proposta no Oráculo e só roda com aceite do dono
 
-- **Status**: pendente
+- **Status**: implementada
+- **Branch**: `feature/hill-climbing` (modo demanda, worktree `.claude/worktrees/hill-climbing`)
 - **Depende de**: 01
 - **Conflita com**: 01, 03, 04
 - **Propósito**: uma sessão (o Escalador) propõe a missão pela ferramenta `hillclimb_propor` (alvo,
@@ -485,7 +489,8 @@ de uma interface de provedor, com juiz falso nos testes e "falta a chave" na tel
 
 ### 03 — Rounds julgados às cegas por um conselho de 3
 
-- **Status**: pendente
+- **Status**: implementada
+- **Branch**: `feature/hill-climbing` (modo demanda, worktree `.claude/worktrees/hill-climbing`)
 - **Depende de**: 02
 - **Conflita com**: 01, 02, 04
 - **Propósito**: o Escalador envia cada versão por `hillclimb_versao`; o laço chama os 3 juízes,
@@ -500,7 +505,8 @@ de uma interface de provedor, com juiz falso nos testes e "falta a chave" na tel
 
 ### 04 — Amostra de fim de rodada com os três gestos
 
-- **Status**: pendente
+- **Status**: implementada
+- **Branch**: `feature/hill-climbing` (modo demanda, worktree `.claude/worktrees/hill-climbing`)
 - **Depende de**: 03
 - **Conflita com**: 01, 02, 03
 - **Propósito**: rodada fechada mostra a amostra (melhor versão, curva da menor nota por round,
