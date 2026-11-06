@@ -16,7 +16,7 @@ import {
   type LedgerVisual,
 } from '../../../shared/ledger/contract';
 import { proofUrl } from '../../../shared/ledger/channels';
-import { actorLabel, naipeDoPapel, reciboDe, type PlaceNameOf } from '../../../shared/ledger/labels';
+import { actorLabel, mandarDaCarta, naipeDoPapel, notasDaFrente, reciboDe, type PlaceNameOf } from '../../../shared/ledger/labels';
 import type { Naipe } from '../../../shared/celular';
 import styles from './LedgerCards.module.css';
 
@@ -55,15 +55,22 @@ function newRequestId(): string {
   return crypto.randomUUID().replace(/-/g, '');
 }
 
+/** The main answers within ~100 s (two 40 s tries, then "guardado"); past this the card says so instead of waiting. */
+const WRITE_DEADLINE_MS = 120_000;
+
 /**
- * "✎ Escrever para <quem fez>" (Parte B): free text. "Enviar" sends it at once to the session that owns the task (or
- * the Líder) and the card keeps waiting; picking a path with it written takes it along with the decision.
+ * "✎ Escrever para <quem fez>" (Parte B): free text. "Mandar à sessão" sends it at once to the session that owns the
+ * task (or the Líder) and the card keeps waiting; picking a path with it written takes it along with the decision.
+ * The button is not called "Enviar": on a Slack letter that is the big option that posts to Slack (t-8fed1d77).
+ * What was sent is read from the card's own events (a new event redraws the card: local state would vanish with
+ * it), and the draft lives above the card for the same reason.
  */
 function WriteBox({ task, who, draft, onDraft }: { readonly task: LedgerTask; readonly who: string; readonly draft: string; readonly onDraft: (text: string) => void }): React.JSX.Element {
-  const [open, setOpen] = useState(false);
+  const notes = notasDaFrente(task, who);
+  // Reopened with what he was writing, unless that is the note that just went (its event is what redrew the card).
+  const [open, setOpen] = useState(() => draft.trim() !== '' && !notes.some((note) => note.text === draft.trim()));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [sent, setSent] = useState<{ text: string; receipt: string }[]>([]);
   // The same request id while the text does not change: a second click joins the first send.
   const [requestId, setRequestId] = useState(newRequestId);
   const send = async (): Promise<void> => {
@@ -71,11 +78,9 @@ function WriteBox({ task, who, draft, onDraft }: { readonly task: LedgerTask; re
     if (!text || busy) return;
     setBusy(true);
     setError(null);
-    const result = await window.donel.ledger.comment({ id: task.id, text, requestId }).catch(() => null);
+    const result = await mandarDaCarta(() => window.donel.ledger.comment({ id: task.id, text, requestId }), WRITE_DEADLINE_MS);
     setBusy(false);
-    if (!result) return setError('O app não respondeu.');
-    if (!result.ok) return setError(result.reason);
-    setSent((list) => [...list, { text, receipt: reciboDe(result.deliveredTo, who, result.at) }]);
+    if (!result.ok) return setError(/^não /i.test(result.reason) ? result.reason : `Não saiu: ${result.reason}`);
     onDraft('');
     setRequestId(newRequestId());
     setOpen(false);
@@ -93,21 +98,28 @@ function WriteBox({ task, who, draft, onDraft }: { readonly task: LedgerTask; re
             onChange={(event) => {
               onDraft(event.target.value);
               setRequestId(newRequestId());
+              setError(null);
             }}
             placeholder="O que você quer dizer a quem fez"
             autoFocus
           />
-          <small>Enviar manda agora. Se você escolher um caminho com isto escrito, vai junto da decisão.</small>
+          <small>
+            Mandar à sessão entrega o texto agora a {who} (fechada, vai ao Líder). Não decide a carta; se você escolher um caminho com isto escrito, vai junto.
+          </small>
+          {error ? (
+            <div className={styles.error} role="alert">
+              {error}
+            </div>
+          ) : null}
           <button type="button" disabled={busy || !draft.trim()} onClick={() => void send()}>
-            {busy ? 'Enviando…' : 'Enviar'}
+            {busy ? `Mandando a ${who}…` : error ? 'Tentar de novo' : 'Mandar à sessão'}
           </button>
         </div>
       ) : null}
-      {error ? <div className={styles.error}>{error}</div> : null}
-      {sent.map((item, i) => (
-        <div key={i} className={styles.sent}>
-          <p>“{item.text}”</p>
-          <small>{item.receipt}</small>
+      {notes.map((note, i) => (
+        <div key={i} className={note.delivered ? styles.sent : `${styles.sent} ${styles.sentNowhere}`}>
+          <p>“{note.text}”</p>
+          <small>{note.receipt}</small>
         </div>
       ))}
     </div>
@@ -302,6 +314,8 @@ function CardA({
   count,
   who,
   decide,
+  draft,
+  setDraft,
 }: {
   readonly task: LedgerTask;
   readonly forOwner: LedgerForOwner;
@@ -310,12 +324,13 @@ function CardA({
   readonly count: number;
   readonly who: string;
   readonly decide: Decide;
+  readonly draft: string;
+  readonly setDraft: (text: string) => void;
 }): React.JSX.Element {
   const [flipped, setFlipped] = useState(false);
   const [marked, setMarked] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [draft, setDraft] = useState('');
   const recommended = recommendedOption(forOwner);
   const delivery = lastDelivery(task);
   const title = forOwner.title ?? task.title ?? folder(task.projectPath);
@@ -530,6 +545,8 @@ export function LedgerCards({
   readonly onClose?: () => void;
 }): React.JSX.Element | null {
   const [selected, setSelected] = useState<string | null>(queue[0]?.id ?? null);
+  // What the owner is writing on each card, above the card: a new event (his own note, an answer) redraws it.
+  const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>({});
 
   useEffect(() => {
     if (!onClose) return undefined;
@@ -582,7 +599,11 @@ export function LedgerCards({
           ) : null}
         </div>
         {forOwner ? (
-          <CardA key={`${task.id}:${task.events.length}`} task={task} forOwner={forOwner} naipe={naipe} index={index} count={queue.length} who={who} decide={decide} />
+          <CardA key={`${task.id}:${task.events.length}`} task={task} forOwner={forOwner} naipe={naipe} index={index} count={queue.length} who={who}
+            decide={decide}
+            draft={drafts[task.id] ?? ''}
+            setDraft={(text) => setDrafts((all) => ({ ...all, [task.id]: text }))}
+          />
         ) : (
           <OldCard key={`${task.id}:${task.events.length}`} task={task} naipe={naipe} index={index} count={queue.length} who={who} decide={decide} />
         )}

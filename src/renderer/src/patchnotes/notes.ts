@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-06',
     items: [
       {
+        title: 'Escrever na carta: "Mandar à sessão" mostra o que aconteceu',
+        text: 'O botão embaixo da caixa "✎ Escrever para…" agora se chama "Mandar à sessão", para não se confundir com o "Enviar" das cartas de Slack, que publica a mensagem. Ao mandar, o que você escreveu fica na frente da carta com para onde foi: para a sessão, para o Líder (se ela estava fechada) ou, se os dois estavam fechados, um aviso em vermelho de que ficou guardado na carta. Se não sair, a carta diz o motivo, o texto continua na caixa e o botão vira "Tentar de novo", que nunca manda duas vezes.',
+      },
+      {
         title: 'Os avisos das sessões não atropelam mais o que você digita',
         text: 'Quando você digita no terminal de uma sessão, os avisos das outras ("◆ … terminou") e as mensagens entre sessões esperam você enviar. Os que chegarem nesse meio-tempo entram juntos, num aviso só, logo depois da sua mensagem. Se um aviso estiver sendo escrito no exato momento em que você começa a digitar, as suas teclas entram logo depois do Enter dele, nunca no meio. E o que você manda pelo chat, pelo Jobu, pelo "Pedir" do celular ou escrevendo numa carta passa na frente dos avisos que ainda não começaram e nunca entra grudado a eles. Nenhum aviso se perde.',
       },
