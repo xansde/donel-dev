@@ -270,6 +270,7 @@ import type { AccountMod } from './accounts/account-mod';
 // do diretório, cofre, e a limpeza obrigatória no fim (sucesso ou falha).
 import { IsolatedLoginManager, type IsolatedLoginFsDeps } from './accounts/isolated-login';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
+import { sanitizeLayoutPrefs, type LayoutPrefs } from '../shared/layoutPrefs';
 import { adoptRefreshedActivePair, applyAccountSwitch, createSystemClaudeStateIoDeps, readCurrentCredentialPair } from './accounts/claude-state';
 import { accountFingerprintFromClaudeJsonText } from './accounts/credentials-file';
 import { createLocalMod } from './accounts/mods/local-mod';
@@ -2224,6 +2225,14 @@ function registerConfigIpcHandlers(): void {
   ipcMain.handle(CONFIG_CHANNELS.setAutoModePrefs, (_event, prefs: Partial<AutoModePrefs>): AppConfigDto => {
     const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
     appConfig = { ...appConfig, autoMode: sanitizeAutoModePrefs({ ...appConfig.autoMode, ...patch }, appConfig.autoMode) };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
+  /** Oráculo no centro — atualização parcial; o renderer aplica na hora e isto só lembra. */
+  ipcMain.handle(CONFIG_CHANNELS.setLayoutPrefs, (_event, prefs: Partial<LayoutPrefs>): AppConfigDto => {
+    const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
+    appConfig = { ...appConfig, layout: sanitizeLayoutPrefs({ ...appConfig.layout, ...patch }, appConfig.layout) };
     persistAppConfig();
     return toAppConfigDto(appConfig);
   });

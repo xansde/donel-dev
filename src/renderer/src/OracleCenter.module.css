@@ -1,0 +1,38 @@
+/* Oráculo no centro — the cards take the whole area; LedgerCards' veil is absolute, so this is its box. */
+.oracle {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  margin: var(--panel-padding);
+  border: var(--hairline);
+  border-radius: var(--radius-md);
+  background: #121019;
+  overflow: hidden;
+  /* The cards' veil has z-index 60 (it covers the board in the Mindscape): kept inside this box, so the menus of
+     the window ("＋ Nova sessão", the project picker) still open above it. */
+  isolation: isolate;
+}
+
+.empty {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  padding: var(--space-3);
+  text-align: center;
+}
+
+.title {
+  margin: 0;
+  color: #efe6d2;
+  font-family: 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+  font-size: 1.4rem;
+}
+
+.hint {
+  margin: 0;
+  color: #b3a78f;
+  font-size: 0.85rem;
+}

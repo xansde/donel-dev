@@ -253,6 +253,21 @@
   display: none;
 }
 
+/* Oráculo no centro (06/11) — the terminals stay mounted behind the Oráculo, out of sight. */
+.terminalHidden {
+  display: none;
+}
+
+/* Oráculo no centro — the "Oráculo | Terminais" switch and "Conversa do Líder", at the start of the tab bar. */
+.centerSwitch {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding-right: var(--space-1);
+  border-right: var(--hairline);
+}
+
 /* FIX (decisão A, 2026-07-23) — estado "zero abas abertas" (ui-spec §2 "sem
    sessões abertas"): agora tanto o estado INICIAL do app (INITIAL_TABS
    vazio, App.tsx) quanto "fechou a última aba" (T010) caem aqui. Versão

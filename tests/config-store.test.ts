@@ -75,6 +75,8 @@ describe('defaultAppConfig (puro)', () => {
       team: { openCap: null },
       autoMode: { neverAsks: true },
       yolo: { projects: [] },
+      // Oráculo no centro (06/11) — o layout novo é o padrão, com o Oráculo à vista.
+      layout: { oracleCenter: true, centerView: 'oracle' },
       appUpdate: { installersDir: null },
       browserUploads: { folders: [] },
       unknownFields: {},
@@ -112,6 +114,7 @@ describe('toAppConfigDto (puro)', () => {
       team: { openCap: null },
       autoMode: { neverAsks: true },
       yolo: { projects: [] },
+      layout: { oracleCenter: true, centerView: 'oracle' },
     });
   });
 
@@ -248,6 +251,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       team: { openCap: 3 },
       autoMode: { neverAsks: false },
       yolo: { projects: ['C:\\repos\\app'] },
+      layout: { oracleCenter: false, centerView: 'terminals' },
       appUpdate: { installersDir: 'D:\\instaladores' },
       browserUploads: { folders: [] },
       unknownFields: {},
@@ -320,6 +324,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       theme: 'dark',
       autoMode: { neverAsks: 'sim' },
       yolo: { projects: ['C:\\ok', 42, ''] },
+      layout: { oracleCenter: 'sim', centerView: 'terminals' },
     };
     expect(sanitizeAppConfig(partiallyCorrupted, defaults)).toEqual({
       version: 1,
@@ -345,6 +350,8 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       team: defaults.team,
       autoMode: defaults.autoMode,
       yolo: { projects: ['C:\\ok'] },
+      // Oráculo no centro — o campo ruim cai no default só dele; a vista escolhida fica.
+      layout: { oracleCenter: true, centerView: 'terminals' },
       appUpdate: { installersDir: null },
       browserUploads: { folders: [] },
       unknownFields: {}, // nenhuma chave desconhecida no objeto de entrada

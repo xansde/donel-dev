@@ -15,6 +15,15 @@ export interface PatchNoteDay {
 
 export const PATCH_NOTES: readonly PatchNoteDay[] = [
   {
+    date: '2026-11-06',
+    items: [
+      {
+        title: 'O Oráculo no lugar da conversa do Líder',
+        text: 'Você fala com o Líder pelo Jobu, então a janela do Donel não repete mais essa conversa. No lugar dela, o centro mostra o Oráculo Harrow com as cartas que esperam você, de todos os quadros. As sessões continuam a um clique: "Terminais", no alto (ou Ctrl+Shift+O), e "Conversa do Líder" quando quiser ver a dele. Abrir uma sessão, clicar numa aba ou numa notificação já leva aos terminais, e o Donel lembra onde você parou. Para voltar ao jeito antigo, desligue "Mostrar o Oráculo no centro" em Preferências, em Avisos e Jobu.',
+      },
+    ],
+  },
+  {
     date: '2026-11-05',
     items: [
       {
