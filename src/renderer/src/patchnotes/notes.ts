@@ -18,8 +18,12 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-06',
     items: [
       {
-        title: 'Carta de Slack que não saiu continua valendo',
-        text: 'Uma carta de Slack aceita só conta como enviada quando o Slack confirma que recebeu a mensagem. Se o envio falha (o Slack fora do ar, a conexão caiu), a carta continua aceita e a sessão pode mandar o mesmo texto, para o mesmo lugar, mais uma vez, sem você ter de aceitar uma carta nova. Depois que a mensagem sai, um segundo envio continua bloqueado.',
+        title: 'Sessão numa VPS em bypass abre em bypass de verdade',
+        text: 'Quando uma sessão aberta num lugar remoto sobe no modo bypassPermissions, o lugar agora recebe o que o claude precisa para aceitar esse modo sem pedir confirmação, inclusive quando a VPS roda como root. Antes, o claude de lá podia recusar o bypass.',
+      },
+      {
+        title: 'Carta de Slack que falhou pode ser reenviada uma vez',
+        text: 'Se o envio de uma carta de Slack aceita falha de forma clara (o Slack recusou, a conexão caiu), a carta continua valendo e a sessão pode mandar o mesmo texto, para o mesmo lugar, mais uma vez, sem você aceitar uma carta nova. É um reenvio só. Quando não dá para saber se a mensagem saiu, a carta conta como usada e fica marcada "envio sem confirmação".',
       },
       {
         title: 'O aviso "◆ … terminou" chega inteiro',
