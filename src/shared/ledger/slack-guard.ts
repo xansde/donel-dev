@@ -191,10 +191,10 @@ export function normalizeText(value: string): string {
   return value.replace(/\r\n?/g, '\n');
 }
 
-/** Letters that may still free a send: accepted, never used. */
-export function openSlackLetters(doc: LedgerDoc): LedgerTask[] {
+/** Letters that may still free a send: accepted, never sent, and no send of it in flight (`busy`). */
+export function openSlackLetters(doc: LedgerDoc, busy: ReadonlySet<string> = new Set()): LedgerTask[] {
   return Object.values(doc.tasks)
-    .filter((task) => task.slack !== undefined && task.state === 'aceita' && !slackLetterSent(task))
+    .filter((task) => task.slack !== undefined && task.state === 'aceita' && !slackLetterSent(task) && !busy.has(task.id))
     .sort((a, b) => a.createdAt - b.createdAt);
 }
 
@@ -215,14 +215,17 @@ export const SLACK_GUARD_HOW_TO =
   '(4) rejeitada: não envie; o motivo (ou o que o dono escreveu na carta) diz o ajuste; crie outra carta com o texto ajustado. ' +
   'Não tente outro caminho de envio: todos passam por esta trava.';
 
-/** The decision on one tool call, given the ledger. `doc` null = the ledger could not be read (refuse). Pure. */
-export function slackGuard(doc: LedgerDoc | null, toolName: string, toolInput: unknown): SlackGuardVerdict {
+/**
+ * The decision on one tool call, given the ledger. `doc` null = the ledger could not be read (refuse). `busy` =
+ * letters whose send is in flight (freed by an earlier call, no answer yet): they free nothing else. Pure.
+ */
+export function slackGuard(doc: LedgerDoc | null, toolName: string, toolInput: unknown, busy: ReadonlySet<string> = new Set()): SlackGuardVerdict {
   const detection = detectSlackSend(toolName, toolInput);
   if (detection.kind === 'none') return { kind: 'not-slack' };
   const deny = (why: string): SlackGuardVerdict => ({ kind: 'deny', reason: `Envio ao Slack bloqueado pelo Donel Dev: ${why} ${SLACK_GUARD_HOW_TO}` });
   if (detection.kind === 'unreadable') return deny(`${detection.why}.`);
   if (doc === null) return deny('não consegui ler o Oráculo Harrow para conferir a carta.');
-  const letters = openSlackLetters(doc);
+  const letters = openSlackLetters(doc, busy);
 
   const used = new Set<string>();
   for (const send of detection.sends) {
@@ -232,4 +235,34 @@ export function slackGuard(doc: LedgerDoc | null, toolName: string, toolInput: u
     used.add(letter.id);
   }
   return { kind: 'allow', letterIds: [...used] };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Did the send go out? (t-8119864a: the MCP answered "fetch failed", nothing reached Slack, and the letter was
+// already marked as sent at the call.) A letter is spent only when the tool's answer shows Slack took the
+// message: `ok: true` or a message `ts`. An error, `ok: false`, or an answer that shows neither keeps it unsent.
+
+const SLACK_TS = /^\d{6,}\.\d+$/;
+const TS_KEYS = ['ts', 'message_ts', 'messageTs'];
+
+/** Does this `tool_response` (MCP content, Composio result, raw Slack API JSON) confirm the message went out? Pure. */
+export function slackSendConfirmed(response: unknown, depth = 0): boolean {
+  if (depth > 8) return false;
+  if (typeof response === 'string') {
+    const text = response.trim();
+    if (/^[[{]/.test(text)) {
+      try {
+        return slackSendConfirmed(JSON.parse(text), depth + 1);
+      } catch {
+        // not JSON: read it as text below
+      }
+    }
+    return /["']?\bok["']?\s*[:=]\s*true\b/i.test(text) || /["']?\b(message_)?ts["']?\s*[:=]\s*["']?\d{6,}\.\d+/i.test(text);
+  }
+  if (Array.isArray(response)) return response.some((item) => slackSendConfirmed(item, depth + 1));
+  if (!isRecord(response)) return false;
+  if (response.isError === true || response.ok === false || response.successful === false) return false;
+  if (response.ok === true) return true;
+  if (TS_KEYS.some((key) => typeof response[key] === 'string' && SLACK_TS.test((response[key] as string).trim()))) return true;
+  return Object.entries(response).some(([key, value]) => key !== 'error' && (typeof value === 'string' || typeof value === 'object') && slackSendConfirmed(value, depth + 1));
 }

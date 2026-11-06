@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-06',
     items: [
       {
+        title: 'Carta de Slack que não saiu continua valendo',
+        text: 'Uma carta de Slack aceita só conta como enviada quando o Slack confirma que recebeu a mensagem. Se o envio falha (o Slack fora do ar, a conexão caiu), a carta continua aceita e a sessão pode mandar o mesmo texto, para o mesmo lugar, mais uma vez, sem você ter de aceitar uma carta nova. Depois que a mensagem sai, um segundo envio continua bloqueado.',
+      },
+      {
         title: 'O aviso "◆ … terminou" chega inteiro',
         text: 'Quando uma sessão termina o turno, o aviso que entra no chat de quem a abriu ou lhe mandou trabalho agora traz o que ela escreveu inteiro, com as quebras de linha e as listas, e não mais as primeiras linhas emendadas numa só e cortadas em "…". Só uma resposta muito longa é cortada, e o próprio aviso diz quanto ficou de fora e que o resto está na tela da sessão.',
       },

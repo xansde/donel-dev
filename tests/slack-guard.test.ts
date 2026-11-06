@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createHookBridge } from '../src/main/hook-bridge';
-import { createLedgerService, guardSlackSend, nodeLedgerProofFs, runLedgerTool, type LedgerCaller } from '../src/main/ledger-store';
+import { createLedgerService, createSlackLetterGuard, nodeLedgerProofFs, runLedgerTool, type LedgerCaller } from '../src/main/ledger-store';
 import { parseLedgerToolCall, type LedgerToolCall } from '../src/shared/ledger/tools';
 
 // Slack só com carta (owner, 05/11) — a message to Slack in the owner's name leaves only with an accepted letter
@@ -28,7 +28,27 @@ function call(name: string, args: unknown): LedgerToolCall {
   return parsed.call;
 }
 
-const dev: LedgerCaller = { projectPath: 'C:/p', placeId: 'place:dev', roleId: 'dev', boardPlaceIds: ['place:dev'] };
+// The bridge's two sides: `PreToolUse` frees (or refuses) the call, `PostToolUse` spends the letter only when the
+// tool's answer confirms the send. `guardSlackSend` = a call whose send went through (both sides).
+const guards = new WeakMap<object, ReturnType<typeof createSlackLetterGuard>>();
+const guardOf = (ledger: ReturnType<typeof createLedgerService>) => {
+  if (!guards.has(ledger)) guards.set(ledger, createSlackLetterGuard(() => ledger));
+  return guards.get(ledger)!;
+};
+let nextUse = 0;
+function attempt(ledger: ReturnType<typeof createLedgerService>, tool: string, input: unknown): { refusal: string | null; answer(event: string, response?: unknown): void } {
+  const payload = { tool_name: tool, tool_input: input, tool_use_id: `toolu_${++nextUse}` };
+  const refusal = guardOf(ledger).before('pty-1', payload);
+  return { refusal, answer: (event, response) => guardOf(ledger).after('pty-1', event, { ...payload, tool_response: response }) };
+}
+const SENT = [{ type: 'text', text: JSON.stringify({ ok: true, channel: 'C0123ABC', ts: '1730900000.123456' }) }];
+function guardSlackSend(ledger: ReturnType<typeof createLedgerService>, tool: string, input: unknown): string | null {
+  const call = attempt(ledger, tool, input);
+  if (call.refusal === null) call.answer('PostToolUse', SENT);
+  return call.refusal;
+}
+
+const dev: LedgerCaller ={ projectPath: 'C:/p', placeId: 'place:dev', roleId: 'dev', boardPlaceIds: ['place:dev'] };
 const TEXT = 'Deploy do "atlas" saiu.\nQualquer coisa me chamem — é só responder aqui.';
 
 async function letter(ledger: ReturnType<typeof createLedgerService>, decide: 'aceitar' | 'rejeitar' | null, text = TEXT): Promise<string> {
@@ -85,6 +105,35 @@ describe('Slack só com carta', () => {
     expect(guardSlackSend(ledger, ...curl(TEXT))).toMatch(/terminal/);
     expect(guardSlackSend(ledger, ...script(TEXT))).toMatch(/canal-produto/);
     expect(guardSlackSend(ledger, ...slackMcp(TEXT)), 'the letter is still unused').toBeNull();
+  });
+
+  it('t-8119864a: a send that fails keeps the letter open; the resend passes once, and the third is refused', async () => {
+    const ledger = service();
+    const id = await letter(ledger, 'aceitar');
+    const sent = () => ledger.load().doc.tasks[id]!.events.some((event) => event.kind === 'enviada');
+
+    // The bot's MCP answers "fetch failed": nothing reached Slack, the letter is not spent.
+    const failed = attempt(ledger, ...slackMcp(TEXT));
+    expect(failed.refusal).toBeNull();
+    expect(attempt(ledger, ...slackMcp(TEXT)).refusal, 'a second send while the first is in flight').toMatch(/bloqueado/);
+    failed.answer('PostToolUse', [{ type: 'text', text: 'Error: fetch failed' }]);
+    expect(sent()).toBe(false);
+    // Same for a call that ended in error, and for Slack's own `ok: false`.
+    const errored = attempt(ledger, ...slackMcp(TEXT));
+    expect(errored.refusal).toBeNull();
+    errored.answer('PostToolUseFailure');
+    const refusedBySlack = attempt(ledger, ...slackMcp(TEXT));
+    expect(refusedBySlack.refusal).toBeNull();
+    refusedBySlack.answer('PostToolUse', { ok: false, error: 'channel_not_found' });
+    expect(sent()).toBe(false);
+    expect((await runLedgerTool(ledger, dev, call('tarefa_ver', { id }))).text).toContain('"enviada": false');
+
+    // The resend goes out (Slack answers with the message ts): now the letter is spent.
+    const resend = attempt(ledger, ...slackMcp(TEXT));
+    expect(resend.refusal).toBeNull();
+    resend.answer('PostToolUse', SENT);
+    expect(sent()).toBe(true);
+    expect(attempt(ledger, ...slackMcp(TEXT)).refusal, 'third send').toMatch(/bloqueado/);
   });
 
   it('the letter of a Slack message is a card A the owner sends or not', async () => {
