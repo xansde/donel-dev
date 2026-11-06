@@ -334,8 +334,8 @@ describe('ledger com prova', () => {
       const answer = JSON.parse((await runLedgerTool(service(), who, call('tarefa_listar', args))).text) as { faixa: Record<string, number>; tarefas: { id: string; orfa?: string }[] };
       return { ids: answer.tarefas.map((task) => task.id), faixa: answer.faixa, tarefas: answer.tarefas };
     };
-    expect((await list({ situacao: 'vivas' })).ids).toEqual([alive]);
-    expect((await list({ situacao: 'vivas' })).faixa).toMatchObject({ total: 4, vivas: 1, orfas: 2, fechadas: 1 });
+    expect((await list({})).ids).toEqual([alive]);
+    expect((await list({})).faixa).toMatchObject({ total: 4, vivas: 1, orfas: 2, fechadas: 1 });
     const orphans = await list({ situacao: 'orfas' });
     expect(orphans.ids).toEqual([orphan, gone]);
     expect(orphans.tarefas[0]!.orfa).toContain('fechado');
@@ -343,7 +343,7 @@ describe('ledger com prova', () => {
     expect((await list({ situacao: 'todas' })).ids).toEqual([alive, orphan, gone, closed]);
     expect((await list({ estado: 'cancelada' })).ids).toEqual([closed]);
     // A board the main could not read is unknown: nothing there is orphan.
-    expect(JSON.parse((await runLedgerTool(service(), lider, call('tarefa_listar', { situacao: 'vivas' }))).text).tarefas).toHaveLength(3);
+    expect(JSON.parse((await runLedgerTool(service(), lider, call('tarefa_listar', {}))).text).tarefas).toHaveLength(3);
   });
 
   it('what the current code writes, the v4 code of the installed Alfa reads and rewrites without losing or blocking anything', async () => {

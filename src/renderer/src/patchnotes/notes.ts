@@ -49,6 +49,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         title: 'Cartas do Oráculo grandes no celular, com zoom',
         text: 'No Oráculo pelo celular, o print ou o protótipo agora ocupa quase a carta toda, e a letra ficou maior. Embaixo fica a opção recomendada, a um toque, e "caminhos" abre as outras com o porquê. "⤢ Tela cheia" abre a prova na tela inteira: no print dá zoom com a pinça ou a roda do mouse e dá para arrastar; o protótipo fica navegável. Para sair, o ✕, o voltar do celular, o Esc ou, no print, arrastar para baixo. No computador, a prova fica à esquerda e a decisão num painel à direita.',
       },
+      {
+        title: 'Tarefas do Oráculo que ficavam presas agora andam',
+        text: 'Quando a sessão dona de uma tarefa fecha ou nem chega a abrir, o Líder passa a tarefa para outra, ou a sessão que vai fazer o trabalho a assume, e o registro guarda quem passou para quem. Carta de Slack substituída por outra pode ser cancelada com motivo, e a carta cancelada nunca é enviada. Quando uma sessão faz o trabalho e outra entrega, a carta mostra "Feito por" com o nome de quem fez. As sessões passam a ver só as tarefas vivas, e as que ficaram sem dono aparecem à parte. Nada do histórico é apagado.',
+      },
     ],
   },
   {

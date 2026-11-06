@@ -75,7 +75,7 @@ describe('Slack só com carta', () => {
       expect(guardSlackSend(ledger, ...send(`${TEXT} `)), 'different text').toMatch(/bloqueado/);
       expect(guardSlackSend(ledger, ...send(TEXT)), 'same text').toBeNull();
       expect(guardSlackSend(ledger, ...send(TEXT)), 'second send').toMatch(/bloqueado/);
-      const seen = await runLedgerTool(ledger, dev, call('tarefa_listar', {}));
+      const seen = await runLedgerTool(ledger, dev, call('tarefa_listar', { situacao: 'todas' }));
       expect(seen.text).toContain('"enviada": true');
     }
     const ledger = service();

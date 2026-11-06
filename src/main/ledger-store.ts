@@ -544,7 +544,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         return { ok: false, text: `Não consegui ler o Oráculo Harrow: ${error instanceof Error ? error.message : String(error)}` };
       }
       const scope = call.todos ? null : caller.projectPath;
-      const situacao = call.situacao ?? 'todas';
+      const situacao = call.situacao ?? (call.estado ? 'todas' : 'vivas');
       const now = service.now();
       const orphanOf = (task: LedgerTask): string | null => orphanReason(caller, task, now);
       const inScope = Object.values(doc.tasks).filter((task) => scope === null || task.projectPath === scope);

@@ -231,12 +231,12 @@ export const LEDGER_TOOLS = [
     title: 'Listar tarefas do Oráculo Harrow',
     description:
       'As tarefas do quadro deste projeto (ou de todos), com estado, dono, prazo, risco e o resumo da última entrega, e a faixa de números do quadro. A prova inteira se lê com tarefa_ver. ' +
-      '"situacao" "vivas": nem fechadas (aceitas, canceladas, cartas rejeitadas) nem órfãs. Órfã é a tarefa não fechada cujo lugar dono fechou, saiu do quadro ou não começou: passe-a adiante com tarefa_transferir ou encerre com tarefa_cancelar. Nada se apaga: "situacao" "todas" mostra o histórico inteiro.',
+      'Por padrão, só as vivas: nem fechadas (aceitas, canceladas, cartas rejeitadas) nem órfãs. Órfã é a tarefa não fechada cujo lugar dono fechou, saiu do quadro ou não começou: passe-a adiante com tarefa_transferir ou encerre com tarefa_cancelar. Nada se apaga: "situacao" "todas" mostra o histórico inteiro.',
     inputSchema: {
       type: 'object',
       properties: {
         estado: { type: 'string', enum: STATES },
-        situacao: { type: 'string', enum: LIST_SCOPES, description: 'vivas, orfas ou todas (padrão).' },
+        situacao: { type: 'string', enum: LIST_SCOPES, description: 'vivas (padrão sem estado), orfas ou todas (padrão com estado).' },
         todos: { type: 'boolean', description: 'true: de todos os quadros (padrão: só o deste projeto).' },
         quadro: BOARD,
       },
