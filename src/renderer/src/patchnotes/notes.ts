@@ -15,6 +15,15 @@ export interface PatchNoteDay {
 
 export const PATCH_NOTES: readonly PatchNoteDay[] = [
   {
+    date: '2026-11-06',
+    items: [
+      {
+        title: 'Cartas do Oráculo grandes no celular, com zoom',
+        text: 'No Oráculo pelo celular, o print ou o protótipo agora ocupa quase a carta toda, e a letra ficou maior. Embaixo fica a opção recomendada, a um toque, e "caminhos" abre as outras com o porquê. "⤢ Tela cheia" abre a prova na tela inteira: no print dá zoom com a pinça ou a roda do mouse e dá para arrastar; o protótipo fica navegável. Para sair, o ✕, o voltar do celular, o Esc ou, no print, arrastar para baixo. No computador, a prova fica à esquerda e a decisão num painel à direita.',
+      },
+    ],
+  },
+  {
     date: '2026-11-05',
     items: [
       {
