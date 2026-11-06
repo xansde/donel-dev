@@ -6,6 +6,7 @@
 (function () {
   var CHAVE_TOKEN = 'donel-ledger-token';
   var LIMIAR = 0.28; // fração da largura que confirma o gesto
+  var PRAZO_ESCREVER_MS = 30000; // escrever na carta: sem resposta nisso, mostra que não confirmou (o texto fica)
 
   // Glifos próprios (traço simples, sem copiar arte de baralho nenhum).
   var GLIFOS = {
@@ -96,19 +97,55 @@
     avisoTimer = setTimeout(function () { aviso.hidden = true; }, 3500);
   }
 
+  /** `opcoes.prazoMs`: sem resposta nesse tempo, desiste com o erro `prazo` (a rede caiu no meio e o pedido ficou pendurado). */
   function api(caminho, opcoes) {
     opcoes = opcoes || {};
     var headers = { Authorization: 'Bearer ' + (token() || '') };
     if (opcoes.body) headers['Content-Type'] = 'application/json';
-    return fetch(caminho, { method: opcoes.method || 'GET', headers: headers, body: opcoes.body, cache: 'no-store' }).then(function (resposta) {
-      if (resposta.status === 401) {
-        guardarToken(null);
-        mostrarPareamento();
-        throw new Error('nao-pareado');
-      }
-      return resposta;
-    });
+    var controle = opcoes.prazoMs && typeof AbortController === 'function' ? new AbortController() : null;
+    var relogio = controle ? setTimeout(function () { controle.abort(); }, opcoes.prazoMs) : null;
+    return fetch(caminho, { method: opcoes.method || 'GET', headers: headers, body: opcoes.body, cache: 'no-store', signal: controle ? controle.signal : undefined }).then(
+      function (resposta) {
+        clearTimeout(relogio);
+        if (resposta.status === 401) {
+          guardarToken(null);
+          mostrarPareamento();
+          throw new Error('nao-pareado');
+        }
+        return resposta;
+      },
+      function (erro) {
+        clearTimeout(relogio);
+        throw controle && controle.signal.aborted ? new Error('prazo') : erro;
+      },
+    );
   }
+
+  // ---- rascunho do que o dono escreve na carta ----
+  // Fica neste celular até o PC confirmar que recebeu: sobrevive a recarregar a fila, fechar o app e a rede cair.
+
+  var CHAVE_RASCUNHO = 'donel-escrever:';
+
+  function lerRascunho(itemId) {
+    try {
+      var valor = JSON.parse(localStorage.getItem(CHAVE_RASCUNHO + itemId) || 'null');
+      return valor && typeof valor.texto === 'string' && valor.texto ? valor : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function guardarRascunho(itemId, rascunho) {
+    try {
+      if (rascunho && rascunho.texto) localStorage.setItem(CHAVE_RASCUNHO + itemId, JSON.stringify(rascunho));
+      else localStorage.removeItem(CHAVE_RASCUNHO + itemId);
+    } catch (e) {
+      /* sem armazenamento: o texto fica só na tela */
+    }
+  }
+
+  /** Envios em andamento: recarregar a fila agora trocaria a carta que espera a resposta. */
+  var enviando = 0;
 
   // ---- pareamento ----
 
@@ -519,6 +556,8 @@
       };
       caminhos.addEventListener('click', function () { alternarGaveta(!corpoFrente.classList.contains('aberta')); });
       fecharGaveta.addEventListener('click', function () { alternarGaveta(false); });
+      // Um texto que não saiu (ou que ainda não foi enviado) abre a gaveta: o dono vê o que escreveu e o Enviar.
+      if (ctx.temRascunho) alternarGaveta(true);
     } else {
       corpoFrente = el('div', 'A-rola');
       if (visual) corpoFrente.appendChild(visual);
@@ -607,6 +646,7 @@
    * para quem fez (ou ao Líder) e a carta continua esperando; escolher uma opção com o texto escrito leva o texto junto.
    */
   function montarEscrever(ctx) {
+    var itemId = ctx.item.id;
     var bloco = el('div', 'escrever');
     var abrir = el('button', 'A-escrever', '✎ Escrever para ' + ctx.item.quemEntregou + ' (pergunta, ajuste, outra opção)');
     abrir.type = 'button';
@@ -617,48 +657,146 @@
     texto.rows = 3;
     texto.placeholder = 'Escreva ou dite pelo microfone do teclado.';
     var dica = el('small', null, 'Enviar manda agora. Se você escolher um caminho com isto escrito, vai junto da decisão.');
+    var falha = el('div', 'A-falhou');
+    falha.hidden = true;
+    falha.setAttribute('role', 'alert');
+    var estado = el('p', 'A-estado');
+    estado.hidden = true;
+    estado.setAttribute('aria-live', 'polite');
     var enviar = el('button', null, 'Enviar');
     enviar.type = 'button';
     caixa.appendChild(texto);
     caixa.appendChild(dica);
+    caixa.appendChild(falha);
+    caixa.appendChild(estado);
     caixa.appendChild(enviar);
-    var recibos = el('div');
+    var recibos = el('div', 'A-recibos');
     bloco.appendChild(abrir);
     bloco.appendChild(caixa);
     bloco.appendChild(recibos);
     ctx.texto = texto;
-    // O mesmo pedidoId enquanto o texto não muda: um reenvio (rede caiu, dois toques) não manda duas vezes.
+
+    function mostrarRecibo(valor, recibo) {
+      var linha = el('div', 'A-enviado');
+      linha.appendChild(el('p', null, '“' + valor + '”'));
+      linha.appendChild(el('small', null, recibo));
+      recibos.appendChild(linha);
+      return linha;
+    }
+
+    // O que o dono já escreveu nesta carta fica nela (gravado no Oráculo, não só neste celular).
+    var recebidos = {};
+    (ctx.item.conversa || []).forEach(function (fala) {
+      if (fala.de !== 'voce') return;
+      if (fala.pedidoId) recebidos[fala.pedidoId] = true;
+      mostrarRecibo(fala.texto, fala.recibo || '');
+    });
+
+    // O mesmo pedidoId enquanto o texto não muda: um reenvio (rede caiu, dois toques, app reaberto) não manda duas vezes.
     var pedido = null;
-    texto.addEventListener('input', function () { pedido = null; });
+    function mostrarFalha(motivo) {
+      falha.textContent = '';
+      if (!motivo) {
+        falha.hidden = true;
+        enviar.textContent = 'Enviar';
+        return;
+      }
+      falha.appendChild(el('b', null, 'Não saiu: ' + motivo));
+      falha.appendChild(el('span', null, 'O texto continua guardado aqui, mesmo se você fechar o app.'));
+      falha.hidden = false;
+      enviar.textContent = 'Tentar de novo';
+    }
+    function guardar(motivo) {
+      guardarRascunho(itemId, { texto: texto.value, pedidoId: pedido, falha: motivo || null });
+    }
+    function abrirCaixa(focar) {
+      caixa.hidden = false;
+      setTimeout(function () {
+        if (focar) texto.focus({ preventScroll: true });
+        // Na gaveta do celular o Enviar fica embaixo do texto: traz o botão para a vista, acima da barra.
+        enviar.scrollIntoView({ block: 'nearest' });
+      }, 60);
+    }
+
+    var guardado = lerRascunho(itemId);
+    if (guardado && guardado.pedidoId && recebidos[guardado.pedidoId]) {
+      // O PC recebeu, mas a resposta se perdeu no caminho: já está na carta, o rascunho sai.
+      guardarRascunho(itemId, null);
+      guardado = null;
+    }
+    if (guardado) {
+      texto.value = guardado.texto;
+      pedido = guardado.pedidoId || null;
+      caixa.hidden = false;
+      mostrarFalha(guardado.falha);
+      ctx.temRascunho = true;
+    }
+
+    texto.addEventListener('input', function () {
+      pedido = null;
+      mostrarFalha(null);
+      guardar(null);
+    });
+    texto.addEventListener('focus', function () {
+      // O teclado do celular sobe e encolhe a tela: o Enviar volta para a vista depois.
+      setTimeout(function () { enviar.scrollIntoView({ block: 'nearest' }); }, 350);
+    });
     abrir.addEventListener('click', function () {
-      caixa.hidden = !caixa.hidden;
-      if (!caixa.hidden) setTimeout(function () { texto.focus(); }, 50);
+      if (caixa.hidden) abrirCaixa(true);
+      else caixa.hidden = true;
     });
     enviar.addEventListener('click', function () {
       var valor = texto.value.trim();
       if (!valor) { texto.focus(); return; }
       if (!pedido) pedido = idAleatorio();
+      guardar(null);
+      mostrarFalha(null);
       enviar.disabled = true;
       enviar.textContent = 'Enviando…';
-      api('/api/comentar', { method: 'POST', body: JSON.stringify({ pedidoId: pedido, itemId: ctx.item.id, texto: valor }) })
-        .then(function (resposta) { return resposta.json().then(function (dados) { return { ok: resposta.ok, dados: dados }; }); })
+      estado.textContent = 'Enviando para ' + ctx.item.quemEntregou + '…';
+      estado.hidden = false;
+      var demora = setTimeout(function () {
+        estado.textContent = 'Ainda enviando: esperando a sessão receber. Pode sair do app, o texto fica guardado.';
+      }, 5000);
+      enviando++;
+      api('/api/comentar', { method: 'POST', body: JSON.stringify({ pedidoId: pedido, itemId: itemId, texto: valor }), prazoMs: PRAZO_ESCREVER_MS })
+        .then(function (resposta) {
+          return resposta.json().catch(function () { return null; }).then(function (dados) { return { status: resposta.status, ok: resposta.ok, dados: dados }; });
+        })
         .then(function (r) {
-          if (!r.ok) { avisar('Não enviou: ' + ((r.dados && r.dados.mensagem) || 'tente de novo.')); return; }
-          var recibo = el('div', 'A-enviado');
-          recibo.appendChild(el('p', null, '“' + valor + '”'));
-          recibo.appendChild(el('small', null, r.dados.recibo));
-          recibos.appendChild(recibo);
+          if (!r.ok || !r.dados || typeof r.dados.recibo !== 'string') {
+            var motivo = r.dados && r.dados.mensagem ? r.dados.mensagem : 'o PC respondeu com erro (' + r.status + '). Tente de novo.';
+            guardar(motivo);
+            mostrarFalha(motivo);
+            avisar('Não saiu: ' + motivo);
+            return;
+          }
+          guardarRascunho(itemId, null);
+          var recibo = mostrarRecibo(valor, r.dados.recibo);
+          recibo.classList.add('novo');
           texto.value = '';
           pedido = null;
           caixa.hidden = true;
+          avisar('Saiu. ' + r.dados.recibo);
+          setTimeout(function () { recibo.scrollIntoView({ block: 'nearest' }); }, 60);
         })
         .catch(function (erro) {
           if (erro && erro.message === 'nao-pareado') return;
-          avisar('Não enviou: sem conexão com o PC. Tente de novo (não sai duas vezes).');
+          var motivo =
+            erro && erro.message === 'prazo'
+              ? 'o PC não confirmou em ' + PRAZO_ESCREVER_MS / 1000 + ' s (a rede pode ter caído no meio). Pode ter chegado: tentar de novo não manda duas vezes.'
+              : 'sem conexão com o PC. A Tailscale está ligada neste celular?';
+          guardar(motivo);
+          mostrarFalha(motivo);
+          avisar('Não saiu: ' + motivo);
+          setTimeout(function () { enviar.scrollIntoView({ block: 'nearest' }); }, 60);
         })
         .then(function () {
+          clearTimeout(demora);
+          enviando--;
+          estado.hidden = true;
           enviar.disabled = false;
-          enviar.textContent = 'Enviar';
+          if (falha.hidden) enviar.textContent = 'Enviar';
         });
     });
     return bloco;
@@ -863,6 +1001,7 @@
     enviarDecisao(corpo, 0)
       .then(function (resposta) {
         if (resposta.ok || resposta.status === 404) {
+          guardarRascunho(ctx.item.id, null);
           if (resposta.ok) avisar(opcao ? 'Decidido: ' + opcao + '.' : decisao === 'aceitar' ? 'Aceita.' : 'Rejeitada. O motivo foi para quem entregou.');
           remover(ctx);
           return;
@@ -1004,7 +1143,8 @@
   document.getElementById('atualizar').addEventListener('click', function () { carregar(); });
   document.addEventListener('visibilitychange', function () {
     // Com uma prova em tela cheia aberta, recarregar revogaria o print que está na tela.
-    if (document.visibilityState === 'visible' && !folhaPendente && !(window.DonelZoom && window.DonelZoom.aberto())) carregar();
+    // Com um envio no meio, recarregar trocaria a carta que espera a resposta (o rascunho guardado volta na próxima).
+    if (document.visibilityState === 'visible' && !folhaPendente && enviando === 0 && !(window.DonelZoom && window.DonelZoom.aberto())) carregar();
   });
 
   parearPeloLink().then(carregar).then(prepararAvisos);

@@ -19,7 +19,11 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     items: [
       {
         title: 'Os avisos das sessões não atropelam mais o que você digita',
-        text: 'Quando você digita no terminal de uma sessão, os avisos das outras ("◆ … terminou") e as mensagens entre sessões esperam você enviar. Os que chegarem nesse meio-tempo entram juntos, num aviso só, logo depois da sua mensagem. Se um aviso estiver sendo escrito no exato momento em que você começa a digitar, as suas teclas entram logo depois do Enter dele, nunca no meio. E o que você manda pelo chat ou pelo Jobu passa na frente dos avisos que ainda não começaram. Nenhum aviso se perde.',
+        text: 'Quando você digita no terminal de uma sessão, os avisos das outras ("◆ … terminou") e as mensagens entre sessões esperam você enviar. Os que chegarem nesse meio-tempo entram juntos, num aviso só, logo depois da sua mensagem. Se um aviso estiver sendo escrito no exato momento em que você começa a digitar, as suas teclas entram logo depois do Enter dele, nunca no meio. E o que você manda pelo chat, pelo Jobu, pelo "Pedir" do celular ou escrevendo numa carta passa na frente dos avisos que ainda não começaram e nunca entra grudado a eles. Nenhum aviso se perde.',
+      },
+      {
+        title: 'Escrever na carta pelo celular não perde mais o texto',
+        text: 'Quando o que você escreve numa carta não sai (a Tailscale caiu, o computador demorou a responder), a carta mostra em vermelho o motivo e guarda o texto no celular, mesmo se você fechar o Oráculo ou a lista recarregar. O botão vira "Tentar de novo", e tentar de novo nunca manda duas vezes. Quando sai, aparece o aviso "Saiu" e o texto fica na carta com para quem foi; na próxima vez que você abrir, ele continua lá. Ao abrir "Escrever", o botão Enviar aparece na tela, sem ficar escondido embaixo.',
       },
       {
         title: 'Pedir ao Líder pelo celular, escrevendo ou falando',
