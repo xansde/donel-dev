@@ -20,6 +20,8 @@ import type { PetPoint } from './pet/types';
 // Sessão renovada em voo (B36) — `sessionRenewal`, top-level key like `pet`.
 import type { SessionRenewalPrefs } from './sessionRenewal';
 import type { TeamPrefs } from './teamPrefs';
+// Oráculo no centro (06/11) — `layout`, top-level key like `pet`.
+import type { LayoutPrefs } from './layoutPrefs';
 // CA-26/CA-27 (009-modo-dev-v3) — cor+ordem da aba v3 por sessão claude, ver
 // src/shared/tabAppearance.ts (lógica pura) e src/shared/tabChannels.ts
 // (canais `tabs:*`).
@@ -46,6 +48,8 @@ export const CONFIG_CHANNELS = {
   setAutoModePrefs: 'config:setAutoModePrefs',
   /** Modo YOLO — one project on or off; applies at once. */
   setProjectYolo: 'config:setProjectYolo',
+  /** Oráculo no centro — `layout.oracleCenter` / `layout.centerView`; applies at once. */
+  setLayoutPrefs: 'config:setLayoutPrefs',
 } as const;
 
 /**
@@ -204,6 +208,8 @@ export interface AppConfigDto {
   readonly team: TeamPrefs;
   readonly autoMode: AutoModePrefs;
   readonly yolo: YoloPrefs;
+  /** Oráculo no centro (`layoutPrefs.ts`). */
+  readonly layout: LayoutPrefs;
 }
 
 /** API tipada exposta pelo preload em `window.donel.config`. */
@@ -230,4 +236,6 @@ export interface DonelConfigApi {
   setAutoModePrefs(prefs: Partial<AutoModePrefs>): Promise<AppConfigDto>;
   /** Modo YOLO — turns one project on or off. Turning on also approves what its tabs have waiting. */
   setProjectYolo(projectPath: string, enabled: boolean): Promise<AppConfigDto>;
+  /** Oráculo no centro — partial update; an invalid field is ignored. */
+  setLayoutPrefs(prefs: Partial<LayoutPrefs>): Promise<AppConfigDto>;
 }

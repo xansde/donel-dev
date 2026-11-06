@@ -153,6 +153,9 @@ import { TerminalPane } from './TerminalPane';
 import { PatchNotes } from './patchnotes/PatchNotes';
 import { HealthIndicator } from './health/HealthIndicator';
 import { BrowserPanel, BrowserToggleButton } from './browser/BrowserPanel'; // navegador interno
+import { OracleCenter } from './OracleCenter';
+import { DEFAULT_LAYOUT_PREFS, showsOracle, toggleCenterView, type LayoutPrefs } from '../../shared/layoutPrefs';
+import type { PlaceNameOf } from '../../shared/ledger/labels';
 import type { TerminalPaneHandle } from './TerminalPane';
 
 // FIX (feedback E2E, batch 3 achado "notificar toda transição vira spam") —
@@ -423,6 +426,27 @@ export function App(): React.JSX.Element {
   // só; sem esta ref ela leria o `appConfig` do primeiro render pra sempre.
   const appConfigRef = useRef(appConfig);
   appConfigRef.current = appConfig;
+  // Oráculo no centro (owner, 06/11) — the center of "Uso geral" shows the Oráculo, and the terminals are one click
+  // away. Applied here at once and remembered by the main (`layout`, config.json). `revealTerminals` is what every
+  // gesture of the owner that brings a session to the front calls (tab, sidebar, notification, Jobu, new session):
+  // he asked for that session, so it shows. It reads a ref, so the listeners registered once can call it.
+  const layoutPrefs: LayoutPrefs = appConfig?.layout ?? DEFAULT_LAYOUT_PREFS;
+  const layoutPrefsRef = useRef(layoutPrefs);
+  layoutPrefsRef.current = layoutPrefs;
+  const changeLayoutPrefs = (patch: Partial<LayoutPrefs>): void => {
+    setAppConfig((prev) => (prev ? { ...prev, layout: { ...prev.layout, ...patch } } : prev));
+    void window.donel.config.setLayoutPrefs(patch).then(setAppConfig).catch(() => undefined);
+  };
+  const revealTerminals = (): void => {
+    if (showsOracle(layoutPrefsRef.current)) changeLayoutPrefs({ centerView: 'terminals' });
+  };
+  /** Ctrl+Shift+O — Oráculo ⇄ Terminais; `false` where the switch does not exist (old layout, Modo Dev). Set below. */
+  const toggleCenterViewRef = useRef<() => boolean>(() => false);
+  /** The owner brings a session to the front: activate it and, in the Oráculo, show the terminals. */
+  const focusTab = (tabId: string): void => {
+    setActiveTabId(tabId);
+    revealTerminals();
+  };
   // T707 (007) — mesma razão da ref acima: a assinatura de onTranscriptChanged
   // (gatilho 3 da visita, deps vazias) precisa do `tabs` ATUAL pra achar o cwd
   // da sessão que mudou, não o do primeiro render.
@@ -676,7 +700,7 @@ export function App(): React.JSX.Element {
     const id = `tab-${tabIdCounter.current}`;
     setTabs((prev) => [...prev, { id, ...partial }]);
     // Quadro por MCP — a session opened by another session does not take the owner's focus.
-    if (focus) setActiveTabId(id);
+    if (focus) focusTab(id);
     // T011 — semeia o valor inicial da toolbar de Modelo/Esforço só pra
     // abas claude (terminal livre não tem os dois campos): lê de volta
     // `launchArgs` (Launcher, T008) quando a aba nasceu configurada; sem
@@ -866,7 +890,7 @@ export function App(): React.JSX.Element {
     setSelectedProjectPath(project.path);
     const existing = tabs.find((tab) => tab.cwd === project.path);
     if (existing) {
-      setActiveTabId(existing.id);
+      focusTab(existing.id);
       return;
     }
     addTab({ name: project.name, cwd: project.path, projectName: project.name, pinned: false, sessionType: 'claude' });
@@ -1169,7 +1193,7 @@ export function App(): React.JSX.Element {
   const handleFocusOrResumeFavoriteSession = (sessionId: string): void => {
     const existingTab = tabs.find((tab) => tab.claudeSessionId === sessionId);
     if (existingTab) {
-      setActiveTabId(existingTab.id);
+      focusTab(existingTab.id);
       return;
     }
 
@@ -2157,6 +2181,8 @@ export function App(): React.JSX.Element {
       .then((boot) => {
         if (boot.failure) setUpdateError(`${boot.failure}. Esta é a versão de antes.`);
         let activeId: string | null = null;
+        // A restore is not a gesture of the owner: it focuses as before, without leaving the Oráculo (`focus` false).
+        let lastListedId: string | null = null;
         for (const entry of boot.tabs) {
           const id = addTab(
             {
@@ -2175,13 +2201,16 @@ export function App(): React.JSX.Element {
             ...(entry.leaderOfAll ? { leaderOfAll: true } : {}),
               ...(entry.openedBy ? { openedBySession: true, openedBy: entry.openedBy } : {}),
             },
-            !entry.openedBy,
+            false,
           );
           // Só os Líderes nas abas — the team comes back to the Mindscape, not to the tab bar.
           if (entry.openedBy) agentBridgeRef.current.adoptOpened(id, entry.openedBy);
-          else if (entry.active) activeId = id;
+          else {
+            lastListedId = id;
+            if (entry.active) activeId = id;
+          }
         }
-        if (activeId) setActiveTabId(activeId);
+        if (activeId ?? lastListedId) setActiveTabId((activeId ?? lastListedId)!);
       })
       .catch(() => undefined);
     // `addTab` is recreated every render; this runs once, when the config (model defaults) is in.
@@ -2210,10 +2239,12 @@ export function App(): React.JSX.Element {
               remoteId: entry.remoteId,
               ...(entry.openedBy ? { openedBySession: true, openedBy: entry.openedBy } : {}),
             },
-            !entry.openedBy,
+            false,
           );
           // Só os Líderes nas abas — a session a Líder opened on the remote stays out of the tab bar after a restart.
           if (entry.openedBy) agentBridgeRef.current.adoptOpened(id, entry.openedBy);
+          // A restore, not a gesture: it takes the focus as before, without leaving the Oráculo.
+          else setActiveTabId(id);
         }
       })
       .catch(() => undefined);
@@ -2310,7 +2341,7 @@ export function App(): React.JSX.Element {
     const sessionId = tabsRef.current.find((tab) => tab.id === tabId)?.claudeSessionId;
     if (sessionId) window.donel.learning?.record({ type: 'sessao-aberta', sessionId, via: 'mindscape' });
     setAppMode('geral');
-    setActiveTabId(tabId);
+    focusTab(tabId);
   }, []);
   // Lugar principal, rule 5 — a dormant session is resumed (`-r <id>`) in a new tab of the
   // board's project; a session already open in a tab is only focused (never opened twice).
@@ -2500,7 +2531,8 @@ export function App(): React.JSX.Element {
         roleId: role.id,
         // The mark that makes it the Líder único (never the role alone): only this path puts it.
         leaderOfAll: true,
-      });
+        // Oráculo no centro — the owner talks to it through the Jobu: it opens without taking the front.
+      }, !layoutPrefsRef.current.oracleCenter);
       liderTabRef.current = tabId;
     }
     const target = tabId;
@@ -2511,7 +2543,7 @@ export function App(): React.JSX.Element {
   useEffect(
     () =>
       window.donel.lider.onActivateTab(({ tabId }) => {
-        setActiveTabId(tabId);
+        focusTab(tabId);
         setAppMode('geral');
       }),
     [],
@@ -2736,7 +2768,7 @@ export function App(): React.JSX.Element {
     [tabs, activeTabId],
   );
   const handleSendPullRequestFix = useCallback((tabId: string, text: string): void => {
-    setActiveTabId(tabId);
+    focusTab(tabId);
     // Mesmo caminho da caixa do chat (fila única, espera o CLI, confirma o aceite): nunca escrita direta no PTY.
     const source = { terminal: () => terminalRefs.current[tabId] ?? null };
     const id = sendToTab(tabId, source, { text });
@@ -2791,12 +2823,21 @@ export function App(): React.JSX.Element {
         return;
       }
 
+      // Oráculo no centro — Ctrl+Shift+O alternates Oráculo | Terminais (physical key: any layout).
+      if (event.shiftKey && event.code === 'KeyO') {
+        if (toggleCenterViewRef.current()) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+        return;
+      }
+
       if (event.key === 'Tab') {
         const target = nextAttentionSessionId(attentionSessions, activeTabIdRef.current);
         if (!target) return;
         event.preventDefault();
         event.stopPropagation();
-        setActiveTabId(target);
+        focusTab(target);
         return;
       }
 
@@ -2806,7 +2847,7 @@ export function App(): React.JSX.Element {
         if (!target) return;
         event.preventDefault();
         event.stopPropagation();
-        setActiveTabId(target);
+        focusTab(target);
       }
     }
 
@@ -2846,7 +2887,7 @@ export function App(): React.JSX.Element {
     return window.donel.chat.onFocusPending(({ ptyId }) => {
       const tabId = ptyActivationMapRef.current.tabIdOf(ptyId);
       if (tabId === null) return; // the tab closed on the way
-      setActiveTabId(tabId);
+      focusTab(tabId);
       setTabView(tabId, 'chat');
       window.dispatchEvent(new CustomEvent('donel:chat-focus-pending', { detail: { ptyId } }));
     });
@@ -2876,7 +2917,7 @@ export function App(): React.JSX.Element {
   useEffect(() => {
     return window.donel.pet.onActivateSession(({ ptyId }) => {
       const tabId = ptyActivationMapRef.current.tabIdOf(ptyId);
-      if (tabId !== null) setActiveTabId(tabId);
+      if (tabId !== null) focusTab(tabId);
     });
   }, []);
 
@@ -2915,7 +2956,7 @@ export function App(): React.JSX.Element {
   });
   const handleOpenBackground = (session: BackgroundSession, task: { readonly rowId: string } | null): void => {
     setAppMode('geral');
-    setActiveTabId(session.tabId);
+    focusTab(session.tabId);
     const tab = tabs.find((candidate) => candidate.id === session.tabId);
     if (tab && hasChatView(tab, chatEnabled)) setTabView(tab.id, 'chat');
     if (task) revealRow(session.ptyId, task.rowId);
@@ -2943,6 +2984,31 @@ export function App(): React.JSX.Element {
   // modelo REAL da sessão (`resolveSessionModel`), não a do alias do launch.
   const activeContextTokens = activeTab?.claudeSessionId ? (contextTokens[activeTab.claudeSessionId] ?? null) : null;
   const activeClaudeTab = activeTab && activeTab.sessionType === 'claude' ? activeTab : null;
+  // Oráculo no centro — the switch exists in "Uso geral" with the new layout; the Oráculo shows when chosen. The
+  // Líder único leaves the tab bar (the owner talks to it through the Jobu): "Conversa do Líder" brings it, and while
+  // it is the tab in front it stays in the bar.
+  const oracleLayoutOn = layoutPrefs.oracleCenter && appMode === 'geral';
+  const oracleShown = oracleLayoutOn && showsOracle(layoutPrefs);
+  /** The center shows `view`. Going to the terminals with no tab in front brings one (the Líder if it is the only one). */
+  const setCenterView = (view: LayoutPrefs['centerView']): void => {
+    if (view === 'terminals' && !tabs.some((tab) => tab.id === activeTabId && isTabListed(tab))) {
+      const first = tabs.find((tab) => isTabListed(tab) && !isLeaderOfAllTab(tab)) ?? tabs.find(isTabListed);
+      if (first) setActiveTabId(first.id);
+    }
+    changeLayoutPrefs({ centerView: view });
+  };
+  toggleCenterViewRef.current = (): boolean => {
+    if (!oracleLayoutOn) return false;
+    setCenterView(toggleCenterView(layoutPrefs).centerView);
+    return true;
+  };
+  const hiddenFromTabBar = (tab: TabState): boolean => oracleLayoutOn && isLeaderOfAllTab(tab) && (oracleShown || tab.id !== activeTabId);
+  const oraclePlaceName: PlaceNameOf = (projectPath, placeId) => {
+    const card = mindscape.doc.boards[projectPath]?.cards[placeId];
+    if (card?.kind !== 'session' || !card.sessionId) return undefined;
+    const sessionId = card.sessionId;
+    return mindscapeSessions.find((session) => session.sessionId === sessionId)?.name ?? mindscapeStoredNameOf(sessionId) ?? undefined;
+  };
   // T056 — a aba ativa tem vista de chat? (D-C22: o chat só ACRESCENTA controles ao cabeçalho, e só em aba claude.)
   const activeChatTab = activeTab && hasChatView(activeTab, chatEnabled) ? activeTab : null;
   const activeChatView = activeChatTab ? effectiveTabView(activeChatTab, chatEnabled) : null;
@@ -3276,7 +3342,7 @@ export function App(): React.JSX.Element {
         >
         <ProjectSidebar
           sessions={sidebarSessions}
-          onFocusSession={setActiveTabId}
+          onFocusSession={focusTab}
           onTogglePin={handleTogglePin}
           onRenameSession={handleRenameTab}
           favoriteGroups={favoriteGroups}
@@ -3296,10 +3362,28 @@ export function App(): React.JSX.Element {
 
         <main className={styles.center}>
           <div className={styles.tabBar}>
+            {oracleLayoutOn ? (
+              <div className={styles.centerSwitch} data-testid="center-view-switch" title="Oráculo ou Terminais. Atalho Ctrl+Shift+O.">
+                <SegmentedControl
+                  ariaLabel="O que o centro mostra"
+                  options={[
+                    { value: 'oracle', label: 'Oráculo' },
+                    { value: 'terminals', label: 'Terminais' },
+                  ]}
+                  value={layoutPrefs.centerView}
+                  onChange={(value) => setCenterView(value === 'terminals' ? 'terminals' : 'oracle')}
+                />
+                {liderTab ? (
+                  <Button variant="secondary" onClick={() => focusTab(liderTab.id)} data-testid="lider-conversation">
+                    Conversa do Líder
+                  </Button>
+                ) : null}
+              </div>
+            ) : null}
             <div className={styles.tabBarScroll}>
             {tabs.map((tab, index) => (
               // Só os Líderes nas abas — a session opened by another one stays out until the owner opens it.
-              !isTabListed(tab) ? null : <TerminalTab
+              !isTabListed(tab) || hiddenFromTabBar(tab) ? null : <TerminalTab
                 key={tab.id}
                 name={resolveTabName(tab)}
                 // T408 (004) — CA-3: duplo-clique no nome, ou F2 na aba em
@@ -3315,8 +3399,8 @@ export function App(): React.JSX.Element {
                 statusText={chatEnabled && tab.sessionType === 'claude' && semaphoreStates[tab.id]?.state === 'permission' ? 'esperando você' : undefined}
                 // "Isolar em worktree" — a marca ⎇ no slot curto ao lado do nome (a branch vai no cabeçalho da sessão).
                 model={tabMarks(roleOfTab(tab)?.name, tabWorktreeBranch(tab) ? WORKTREE_TAB_MARK : undefined, backgroundRunningOf(tab.id))}
-                active={tab.id === activeTabId}
-                onClick={() => setActiveTabId(tab.id)}
+                active={tab.id === activeTabId && !oracleShown}
+                onClick={() => focusTab(tab.id)}
                 onClose={() => handleRequestCloseTab(tab.id)}
                 // CA-27 — faixa de cor definida pelo operador (clique direito na aba).
                 color={tab.color ?? 'none'}
@@ -3364,7 +3448,8 @@ export function App(): React.JSX.Element {
               o path cru do "consultar artefato" (Zona 2, acima) parecia ser
               o header. Uso geral mantém a condição antiga (nome+path só com
               aba aberta, lote 8). */}
-          {(devModeOn ? mapView.breadcrumb.length > 0 : listedTabIds.size > 0) ? (
+          {oracleShown ? <OracleCenter placeName={oraclePlaceName} /> : null}
+          {!oracleShown && (devModeOn ? mapView.breadcrumb.length > 0 : listedTabIds.size > 0) ? (
             <div className={styles.sessionHeader} data-testid="session-header">
               {/* Spec 010 / B6 — o breadcrumb passou a ser o dos nós novos:
                   discovery › plano › item. Ele vem pronto de `buildMapView`;
@@ -3436,12 +3521,13 @@ export function App(): React.JSX.Element {
             </div>
           ) : null}
           {/* B36 — sessão renovada em voo: the discreet strip of the active session (close, due, in progress). */}
-          {activeTab && sessionRenewal.banners[activeTab.id] ? (
+          {!oracleShown && activeTab && sessionRenewal.banners[activeTab.id] ? (
             <div className={styles.renewalStrip} data-testid="renewal-strip">
               <RenewalStrip banner={sessionRenewal.banners[activeTab.id]!} onSnooze={() => sessionRenewal.snooze(activeTab.id)} />
             </div>
           ) : null}
-          <div className={styles.terminal}>
+          {/* Oráculo no centro — the terminals stay mounted (the PTYs live on), only out of sight. */}
+          <div className={oracleShown ? styles.terminalHidden : styles.terminal}>
             {/* FIX (decisão A, 2026-07-23) — mesmo empty state pros dois
                 caminhos que levam a "zero abas": boot do app (INITIAL_TABS
                 vazio, ver comentário lá) e fechar a última aba restante
@@ -3841,6 +3927,9 @@ export function App(): React.JSX.Element {
         onChangeAutoNeverAsks={(neverAsks) => {
           void window.donel.config.setAutoModePrefs({ neverAsks }).then(setAppConfig).catch(() => undefined);
         }}
+        oracleCenter={layoutPrefs.oracleCenter}
+        // Turning it on shows the Oráculo (not a "Terminais" left from before): that is what the switch promises.
+        onChangeOracleCenter={(oracleCenter) => changeLayoutPrefs(oracleCenter ? { oracleCenter, centerView: 'oracle' } : { oracleCenter })}
       />
 
       {/* Spec 010 / N7→F25 (D1) — o mapa de nós. Renderizado condicionalmente

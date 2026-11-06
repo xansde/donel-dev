@@ -526,11 +526,13 @@ export function LedgerCards({
 }: {
   readonly queue: readonly LedgerTask[];
   readonly placeName?: PlaceNameOf;
-  readonly onClose: () => void;
+  /** Absent = the cards ARE the screen (the Oráculo in the center of the main window): no "Fechar", no Esc. */
+  readonly onClose?: () => void;
 }): React.JSX.Element | null {
   const [selected, setSelected] = useState<string | null>(queue[0]?.id ?? null);
 
   useEffect(() => {
+    if (!onClose) return undefined;
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') onClose();
     };
@@ -540,7 +542,7 @@ export function LedgerCards({
 
   // A decided card leaves the queue: the next one comes up; nothing left closes the table.
   useEffect(() => {
-    if (queue.length === 0) onClose();
+    if (queue.length === 0) onClose?.();
   }, [queue.length, onClose]);
   if (queue.length === 0) return null;
   const index = Math.max(0, queue.findIndex((task) => task.id === selected));
@@ -559,7 +561,7 @@ export function LedgerCards({
   };
 
   return (
-    <div className={styles.veil} role="dialog" aria-label="Esperando você" data-testid="ledger-cards" onClick={(event) => event.target === event.currentTarget && onClose()}>
+    <div className={styles.veil} role="dialog" aria-label="Esperando você" data-testid="ledger-cards" onClick={(event) => event.target === event.currentTarget && onClose?.()}>
       <div className={styles.stage}>
         <div className={styles.hand}>
           {queue.map((item) => {
@@ -573,9 +575,11 @@ export function LedgerCards({
               </button>
             );
           })}
-          <button type="button" className={styles.close} onClick={onClose}>
-            Fechar (Esc)
-          </button>
+          {onClose ? (
+            <button type="button" className={styles.close} onClick={onClose}>
+              Fechar (Esc)
+            </button>
+          ) : null}
         </div>
         {forOwner ? (
           <CardA key={`${task.id}:${task.events.length}`} task={task} forOwner={forOwner} naipe={naipe} index={index} count={queue.length} who={who} decide={decide} />

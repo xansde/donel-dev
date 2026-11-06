@@ -4,6 +4,7 @@ import type { AccountsConfig } from '../shared/accounts';
 import { defaultAccountsConfig } from '../shared/accounts';
 import type { EffortLevel, ModelAlias, PermissionMode } from '../shared/commandBuilder';
 import type { AppConfigDto, AppUpdatePrefs, AutoModePrefs, BrowserUploadPrefs, ChatPrefs, LauncherDefaultsDto, NotificationPreference, PetPrefs, ProjectScanMode, SessionNamesMap, SweepPrefs, YoloPrefs } from '../shared/config';
+import { DEFAULT_LAYOUT_PREFS, sanitizeLayoutPrefs, type LayoutPrefs } from '../shared/layoutPrefs';
 // T014 (015-jobu-pet) — limits of the pet size: the same rule the window uses (placement.ts).
 import { PET_SIZE_DEFAULT, clampSize } from '../shared/pet/placement';
 import { withUploadFolder } from '../shared/browser/upload';
@@ -157,6 +158,8 @@ export interface AppConfig {
   readonly autoMode: AutoModePrefs;
   /** Modo YOLO — a TOP-LEVEL key (like `pet`, R20): a channel without it keeps it in `unknownFields`. In the DTO. */
   readonly yolo: YoloPrefs;
+  /** Oráculo no centro — a TOP-LEVEL key (like `pet`, R20): a channel without it keeps it in `unknownFields`. In the DTO. */
+  readonly layout: LayoutPrefs;
   /** B33 — the installers folder of the in-app update. A TOP-LEVEL key (like `pet`, R20). Not in the DTO. */
   readonly appUpdate: AppUpdatePrefs;
   /** Navegador integrado — the authorized upload folders. A TOP-LEVEL key (like `pet`, R20). Not in the DTO. */
@@ -203,6 +206,7 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     team: DEFAULT_TEAM_PREFS,
     autoMode: defaultAutoModePrefs(),
     yolo: defaultYoloPrefs(),
+    layout: DEFAULT_LAYOUT_PREFS,
     appUpdate: { installersDir: null },
     browserUploads: { folders: [] },
     unknownFields: {},
@@ -355,6 +359,7 @@ export function toAppConfigDto(config: AppConfig): AppConfigDto {
     team: config.team,
     autoMode: config.autoMode,
     yolo: config.yolo,
+    layout: config.layout,
   };
 }
 
@@ -781,6 +786,7 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     team: sanitizeTeamPrefs(candidate.team, defaults.team),
     autoMode: sanitizeAutoModePrefs(candidate.autoMode, defaults.autoMode),
     yolo: sanitizeYoloPrefs(candidate.yolo),
+    layout: sanitizeLayoutPrefs(candidate.layout, defaults.layout),
     appUpdate: sanitizeAppUpdatePrefs(candidate.appUpdate),
     browserUploads: sanitizeBrowserUploadPrefs(candidate.browserUploads),
     unknownFields,
