@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-06',
     items: [
       {
+        title: 'Slack com nome em português também pede carta',
+        text: 'Uma ferramenta de Slack com nome em português, como "enviar mensagem" ou "enviar arquivo", passava sem carta, porque a trava só conhecia os nomes em inglês. Agora a mensagem só sai com carta aceita, e o arquivo é barrado como qualquer outro, também com o app fechado. Ler e baixar arquivo continuam livres.',
+      },
+      {
         title: 'Sessão numa VPS em bypass abre em bypass de verdade',
         text: 'Quando uma sessão aberta num lugar remoto sobe no modo bypassPermissions, o lugar agora recebe o que o claude precisa para aceitar esse modo sem pedir confirmação, inclusive quando a VPS roda como root. Antes, o claude de lá podia recusar o bypass.',
       },
