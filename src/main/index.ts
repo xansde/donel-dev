@@ -23,7 +23,7 @@ import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { createLedgerService, guardSlackSend, ledgerFilePath, ledgerProofsDir, nodeLedgerProofFs, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerSnapshot } from '../shared/ledger/channels';
-import { isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, type LedgerProof } from '../shared/ledger/contract';
+import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
 import type { LedgerToolCall } from '../shared/ledger/tools';
 import type { BoardBridge } from './board-bridge';
 import { MCP_SERVER_NAME, type BrowserToolOutcome } from '../shared/browser/mcp';
@@ -3067,13 +3067,36 @@ function placeStatesOf(places: unknown): Map<string, string> {
   return states;
 }
 
+/** The Líder único's list of every board: the places of each board with a task not closed (orphans need them). */
+async function everyBoardPlaceStates(boardBridge: BoardBridge, ptyId: string): Promise<Map<string, Map<string, string>>> {
+  const states = new Map<string, Map<string, string>>();
+  let tasks: LedgerTask[] = [];
+  try {
+    tasks = Object.values(ledgerService?.load().doc.tasks ?? {});
+  } catch {
+    return states;
+  }
+  for (const projectPath of new Set(tasks.filter((task) => !isClosed(task)).map((task) => task.projectPath))) {
+    const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar', quadro: projectPath }).catch(() => null);
+    if (list?.kind !== 'text') continue; // a board that did not answer stays unknown: none of its tasks is orphan
+    try {
+      const board = JSON.parse(list.text) as { lugares?: unknown };
+      if (Array.isArray(board.lugares)) states.set(projectPath, placeStatesOf(board.lugares));
+    } catch {
+      // unknown board
+    }
+  }
+  return states;
+}
+
 async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<{ caller: LedgerCaller; call: LedgerToolCall } | string> {
   const quadro = call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' ? call.quadro : call.tool === 'tarefa_transferir' || call.tool === 'tarefa_cancelar' ? taskBoardOf(call.id) : undefined;
   const base = { placeId: LEADER_OF_ALL, roleId: LEADER_ROLE_ID };
   if (!quadro) {
     if (call.tool === 'tarefa_criar') return 'Você é o Líder único e não tem quadro: diga qual em "quadro" (nome ou pasta).';
     // No board: the list is of every board; the other tools act by the task id.
-    return { caller: { ...base, projectPath: '', boardPlaceIds: [] }, call: call.tool === 'tarefa_listar' ? { ...call, todos: true } : call };
+    if (call.tool !== 'tarefa_listar') return { caller: { ...base, projectPath: '', boardPlaceIds: [] }, call };
+    return { caller: { ...base, projectPath: '', boardPlaceIds: [], placeStates: await everyBoardPlaceStates(boardBridge, ptyId) }, call: { ...call, todos: true } };
   }
   const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar', quadro });
   if (list.kind !== 'text') return list.kind === 'error' ? list.text : 'Não consegui ler o quadro.';

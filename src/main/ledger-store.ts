@@ -27,6 +27,7 @@ import {
   eventNote,
   doneByOf,
   isCancelled,
+  isClosed,
   viewState,
   maxProofBytes,
   parseLedgerDoc,
@@ -266,6 +267,11 @@ export interface LedgerCaller {
   readonly placeStates?: ReadonlyMap<string, ReadonlyMap<string, string>>;
 }
 
+/** Why a task is orphan (not closed, its owner place gone); `null` = alive, closed or unknown. A delivered task waits for whoever decides, not for its owner place. */
+export function orphanReason(caller: LedgerCaller, task: LedgerTask, now: number): string | null {
+  return isClosed(task) || task.state === 'entregue' ? null : ownerGone(caller, task, now);
+}
+
 /** A place that has not started is gone only after this long (a place made a moment ago is still opening). */
 export const NOT_STARTED_GRACE_MS = 30 * 60 * 1000;
 
@@ -352,7 +358,7 @@ function forOwnerView(forOwner: LedgerForOwner): Record<string, unknown> {
   };
 }
 
-function taskView(task: LedgerTask, doc: LedgerDoc): Record<string, unknown> {
+function taskView(task: LedgerTask, doc: LedgerDoc, orphan: string | null = null): Record<string, unknown> {
   const delivery = lastDelivery(task);
   const decision = [...task.events].reverse().find((event) => event.kind === 'aceita' || event.kind === 'rejeitada');
   const who = (actor: LedgerActor): string => (actor.kind === 'dono' ? 'dono' : actor.placeId);
@@ -383,6 +389,7 @@ function taskView(task: LedgerTask, doc: LedgerDoc): Record<string, unknown> {
       ? { decisao: { tipo: isCancelled(task) ? 'cancelada' : decision.kind, por: who(decision.by), ...(decision.option ? { opcao: decision.option } : {}), ...(eventNote(decision) ? { motivo: eventNote(decision) } : {}) } }
       : {}),
     ...(waitsForOwner(doc, task) ? { esperandoDono: true } : {}),
+    ...(orphan ? { orfa: `${orphan}: passe adiante com tarefa_transferir ou encerre com tarefa_cancelar.` } : {}),
     ...(task.slack
       ? {
           cartaSlack: {
@@ -522,7 +529,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       const delivery = lastDelivery(task);
       if (delivery) service.noteProofSeen(caller.placeId, task.id, delivery.at);
       const proofs = delivery?.proofs ?? [];
-      const text = JSON.stringify({ ...taskView(task, doc), ...(proofs.length ? { provas: proofs.map((proof) => proofView(service, proof)) } : {}) }, null, 1);
+      const text = JSON.stringify({ ...taskView(task, doc, orphanReason(caller, task, service.now())), ...(proofs.length ? { provas: proofs.map((proof) => proofView(service, proof)) } : {}) }, null, 1);
       for (const proof of proofs) {
         const image = await service.proofImage(proof);
         if (image) return { ok: true, text, image };
@@ -537,10 +544,30 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         return { ok: false, text: `Não consegui ler o Oráculo Harrow: ${error instanceof Error ? error.message : String(error)}` };
       }
       const scope = call.todos ? null : caller.projectPath;
-      const tasks = Object.values(doc.tasks)
-        .filter((task) => (scope === null || task.projectPath === scope) && (!call.estado || task.state === call.estado))
+      const situacao = call.situacao ?? 'todas';
+      const now = service.now();
+      const orphanOf = (task: LedgerTask): string | null => orphanReason(caller, task, now);
+      const inScope = Object.values(doc.tasks).filter((task) => scope === null || task.projectPath === scope);
+      const counts = { vivas: 0, orfas: 0, fechadas: 0 };
+      for (const task of inScope) counts[isClosed(task) ? 'fechadas' : orphanOf(task) ? 'orfas' : 'vivas'] += 1;
+      const tasks = inScope
+        .filter((task) => !call.estado || viewState(task) === call.estado)
+        .filter((task) => situacao === 'todas' || (situacao === 'orfas' ? orphanOf(task) !== null : !isClosed(task) && orphanOf(task) === null))
         .sort((a, b) => a.createdAt - b.createdAt);
-      return { ok: true, text: JSON.stringify({ faixa: stripView(ledgerStrip(doc, scope)), tarefas: tasks.map((task) => taskView(task, doc)) }, null, 1) };
+      const hidden = situacao === 'todas' ? 0 : inScope.length - tasks.length;
+      return {
+        ok: true,
+        text: JSON.stringify(
+          {
+            faixa: { ...stripView(ledgerStrip(doc, scope)), ...counts },
+            situacao,
+            ...(hidden ? { fora: `${hidden} tarefa(s) fora desta lista; "situacao": "todas" mostra o histórico inteiro, "orfas" as que ficaram sem lugar.` } : {}),
+            tarefas: tasks.map((task) => taskView(task, doc, orphanOf(task))),
+          },
+          null,
+          1,
+        ),
+      };
     }
   }
 }

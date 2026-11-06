@@ -17,7 +17,7 @@ import {
   type LedgerForOwner,
   type LedgerOption,
   type LedgerRisk,
-  type LedgerTaskState,
+  type LedgerViewState,
   type LedgerVisual,
 } from './contract';
 
@@ -44,7 +44,7 @@ export type LedgerToolCall =
   | { readonly tool: 'tarefa_entregar'; readonly id: string; readonly provas: readonly ProofInput[]; readonly nota?: string; readonly paraODono?: LedgerForOwner; readonly feitoPor?: string }
   | { readonly tool: 'tarefa_aceitar'; readonly id: string }
   | { readonly tool: 'tarefa_rejeitar'; readonly id: string; readonly motivo: string }
-  | { readonly tool: 'tarefa_listar'; readonly estado?: LedgerTaskState; readonly todos?: boolean; readonly quadro?: string }
+  | { readonly tool: 'tarefa_listar'; readonly estado?: LedgerViewState; readonly todos?: boolean; readonly quadro?: string; readonly situacao?: LedgerListScope }
   | { readonly tool: 'tarefa_ver'; readonly id: string }
   | { readonly tool: 'tarefa_transferir'; readonly id: string; readonly para: string; readonly motivo: string }
   | { readonly tool: 'tarefa_cancelar'; readonly id: string; readonly motivo: string }
@@ -54,7 +54,15 @@ export type LedgerToolName = LedgerToolCall['tool'];
 
 const ID = { type: 'string', description: 'Id da tarefa (tarefa_listar).' };
 const BOARD = { type: 'string', description: 'Só o Líder único (que não tem quadro): o quadro, pelo nome ou pela pasta do projeto. As outras sessões usam sempre o próprio.' };
-const STATES: readonly LedgerTaskState[] = ['aberta', 'em-execucao', 'entregue', 'aceita', 'rejeitada'];
+const STATES: readonly LedgerViewState[] = ['aberta', 'em-execucao', 'entregue', 'aceita', 'rejeitada', 'cancelada'];
+
+/**
+ * 06/11 — which tasks `tarefa_listar` shows. `vivas` (the default without `estado`): not closed and with an owner
+ * place that can still work; `orfas`: not closed, the owner place closed, out of the board or never started;
+ * `todas`: the whole history (the default with `estado`).
+ */
+export type LedgerListScope = 'vivas' | 'orfas' | 'todas';
+const LIST_SCOPES: readonly LedgerListScope[] = ['vivas', 'orfas', 'todas'];
 
 export const LEDGER_TOOLS = [
   {
@@ -221,11 +229,14 @@ export const LEDGER_TOOLS = [
   {
     name: 'tarefa_listar',
     title: 'Listar tarefas do Oráculo Harrow',
-    description: 'As tarefas do quadro deste projeto (ou de todos), com estado, dono, prazo, risco e o resumo da última entrega, e a faixa de números do quadro. A prova inteira se lê com tarefa_ver.',
+    description:
+      'As tarefas do quadro deste projeto (ou de todos), com estado, dono, prazo, risco e o resumo da última entrega, e a faixa de números do quadro. A prova inteira se lê com tarefa_ver. ' +
+      '"situacao" "vivas": nem fechadas (aceitas, canceladas, cartas rejeitadas) nem órfãs. Órfã é a tarefa não fechada cujo lugar dono fechou, saiu do quadro ou não começou: passe-a adiante com tarefa_transferir ou encerre com tarefa_cancelar. Nada se apaga: "situacao" "todas" mostra o histórico inteiro.',
     inputSchema: {
       type: 'object',
       properties: {
         estado: { type: 'string', enum: STATES },
+        situacao: { type: 'string', enum: LIST_SCOPES, description: 'vivas, orfas ou todas (padrão).' },
         todos: { type: 'boolean', description: 'true: de todos os quadros (padrão: só o deste projeto).' },
         quadro: BOARD,
       },
@@ -429,9 +440,10 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       return { ok: true, call: { tool: 'tarefa_transferir', id: id.trim(), para: para.trim(), motivo: motivo.trim() } };
     }
     case 'tarefa_listar': {
-      if (args.estado !== undefined && !STATES.includes(args.estado as LedgerTaskState)) return fail(`"estado" tem de ser ${STATES.join(', ')}.`);
+      if (args.estado !== undefined && !STATES.includes(args.estado as LedgerViewState)) return fail(`"estado" tem de ser ${STATES.join(', ')}.`);
+      if (args.situacao !== undefined && !LIST_SCOPES.includes(args.situacao as LedgerListScope)) return fail(`"situacao" tem de ser ${LIST_SCOPES.join(', ')}.`);
       if (args.todos !== undefined && typeof args.todos !== 'boolean') return fail('"todos" é true ou false.');
-      return { ok: true, call: { tool: 'tarefa_listar', ...(args.estado ? { estado: args.estado as LedgerTaskState } : {}), ...(args.todos ? { todos: true } : {}), ...quadro } };
+      return { ok: true, call: { tool: 'tarefa_listar', ...(args.estado ? { estado: args.estado as LedgerViewState } : {}), ...(args.situacao ? { situacao: args.situacao as LedgerListScope } : {}), ...(args.todos ? { todos: true } : {}), ...quadro } };
     }
     case 'carta_slack': {
       const destino = text(args.destino, 'destino', 200, true);

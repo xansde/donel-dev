@@ -5,7 +5,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, ledgerProofsDir, nodeLedgerProofFs, runLedgerTool, type LedgerCaller, type LedgerProofFs } from '../src/main/ledger-store';
 import type { MindscapeBoard } from '../src/shared/mindscape/model';
-import { findCode, LEDGER_SCHEMA_VERSION } from '../src/shared/ledger/contract';
+import { findCode, LEDGER_SCHEMA_VERSION, parseLedgerDoc } from '../src/shared/ledger/contract';
+import * as v4 from './fixtures/ledger/contract-v4';
 import { createCardWriter, type OwnerMessage } from '../src/main/ledger-card-writer';
 import { buildRemoteProofCommand, fetchRemoteProof } from '../src/main/ledger-remote-proof';
 import { parseLedgerToolCall, type LedgerToolCall } from '../src/shared/ledger/tools';
@@ -317,6 +318,78 @@ describe('ledger com prova', () => {
     expect(await runLedgerTool(service(), revisor, call('tarefa_aceitar', { id }))).toMatchObject({ ok: false, text: expect.stringContaining('quem fez') });
     const delivery = service().load().doc.tasks[id]!.events.at(-1);
     expect(deliveryNote(delivery, 'C:/p', (_board, place) => (place === 'place:revisor' ? 'Theo' : undefined))).toBe('Feito por Theo. o PR do Revisor');
+  });
+
+  it('lists only the live tasks by default, and the orphan ones apart, without erasing anything', async () => {
+    const { service } = setup();
+    const make = async (dono: string) => (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: dono, criterio: 'y', prazo: '2026-11-06', dono, risco: 'alto' }))).text) as { id: string }).id;
+    const alive = await make('place:dev');
+    const orphan = await make('place:revisor');
+    const gone = await make('place:rev-do-dev');
+    const closed = await make('place:dev');
+    await runLedgerTool(service(), lider, call('tarefa_cancelar', { id: closed, motivo: 'ninguém vai fazer' }));
+    const states = new Map([['place:lider', 'parada'], ['place:dev', 'trabalhando'], ['place:revisor', 'fechada']]); // rev-do-dev left the board
+    const who: LedgerCaller = { ...lider, placeStates: new Map([['C:/p', states]]) };
+    const list = async (args: Record<string, unknown>) => {
+      const answer = JSON.parse((await runLedgerTool(service(), who, call('tarefa_listar', args))).text) as { faixa: Record<string, number>; tarefas: { id: string; orfa?: string }[] };
+      return { ids: answer.tarefas.map((task) => task.id), faixa: answer.faixa, tarefas: answer.tarefas };
+    };
+    expect((await list({ situacao: 'vivas' })).ids).toEqual([alive]);
+    expect((await list({ situacao: 'vivas' })).faixa).toMatchObject({ total: 4, vivas: 1, orfas: 2, fechadas: 1 });
+    const orphans = await list({ situacao: 'orfas' });
+    expect(orphans.ids).toEqual([orphan, gone]);
+    expect(orphans.tarefas[0]!.orfa).toContain('fechado');
+    expect(orphans.tarefas[1]!.orfa).toContain('saiu do quadro');
+    expect((await list({ situacao: 'todas' })).ids).toEqual([alive, orphan, gone, closed]);
+    expect((await list({ estado: 'cancelada' })).ids).toEqual([closed]);
+    // A board the main could not read is unknown: nothing there is orphan.
+    expect(JSON.parse((await runLedgerTool(service(), lider, call('tarefa_listar', { situacao: 'vivas' }))).text).tarefas).toHaveLength(3);
+  });
+
+  it('what the current code writes, the v4 code of the installed Alfa reads and rewrites without losing or blocking anything', async () => {
+    const { file, service } = setup();
+    const create = async (dono: string) => (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', dono, risco: 'alto' }))).text) as { id: string }).id;
+    const moved = await create('place:dev');
+    await runLedgerTool(service(), lider, call('tarefa_transferir', { id: moved, para: 'place:revisor', motivo: 'o Dev fechou' }));
+    const done = await create('place:dev');
+    await runLedgerTool(service(), dev, call('tarefa_assumir', { id: done }));
+    const paraODono = {
+      pergunta: 'Ficou pronto. Aceito?',
+      resumo: 'O Revisor fez e o Dev entregou.',
+      opcoes: [
+        { rotulo: 'Aceitar', efeito: 'Fecha.', fecha: 'aceita', recomendada: true },
+        { rotulo: 'Refazer', efeito: 'Volta.', fecha: 'rejeitada' },
+      ],
+      porque: 'A saída do teste mostra.',
+      risco: 'Baixo.',
+    };
+    await runLedgerTool(service(), dev, call('tarefa_entregar', { id: done, provas: [{ tipo: 'texto', texto: '4 passed' }], feitoPor: 'place:revisor', nota: 'o PR', paraODono }));
+    const letter = (JSON.parse((await runLedgerTool(service(), dev, call('carta_slack', { destino: 'C0123', texto: 'Oi', motivo: 'avisar' }))).text) as { id: string }).id;
+    service().apply({ kind: 'dono' }, { op: 'aceitar', id: letter });
+    await runLedgerTool(service(), dev, call('tarefa_cancelar', { id: letter, motivo: 'substituída' }));
+    const written = readFileSync(file, 'utf8');
+    expect(JSON.parse(written).schemaVersion).toBe(4);
+
+    // The v4 code reads it as its own (not read-only), with every task and event, and rewrites it after its own write.
+    expect(v4.isNewerLedger(JSON.parse(written))).toBe(false);
+    const asV4 = v4.parseLedgerDoc(JSON.parse(written));
+    expect(asV4).toEqual(parseLedgerDoc(JSON.parse(written)));
+    const next = v4.applyLedgerOp(asV4, { kind: 'dono' }, { op: 'criar', projectPath: 'C:/p', request: 'z', doneWhen: 'z', due: '2026-11-07', ownerPlaceId: 'place:dev', risk: 'alto' }, { now: 9e12, newId: () => 't-0000ffff' });
+    if (!next.ok) throw new Error(next.reason);
+    writeFileSync(file, JSON.stringify(next.doc, null, 2));
+    for (const id of [moved, done, letter]) expect(service().load().doc.tasks[id]).toEqual(asV4.tasks[id]);
+
+    // And the current code still reads every fact back.
+    const view = async (id: string) => JSON.parse((await runLedgerTool(service(), lider, call('tarefa_ver', { id }))).text) as Record<string, any>;
+    expect((await view(moved)).transferencias).toEqual([expect.objectContaining({ de: 'place:dev', para: 'place:revisor', motivo: 'o Dev fechou' })]);
+    expect((await view(done)).entrega).toMatchObject({ por: 'place:dev', feitoPor: 'place:revisor', nota: 'o PR' });
+    expect(await view(letter)).toMatchObject({ estado: 'cancelada' });
+
+    // Nothing blocks in v4: the new owner takes the moved task; the cancelled letter frees no send there either.
+    const doc = service().load().doc;
+    expect(v4.applyLedgerOp(doc, { kind: 'lugar', placeId: 'place:revisor' }, { op: 'assumir', id: moved }, { now: 9e12, newId: () => 'x' })).toMatchObject({ ok: true });
+    expect(v4.applyLedgerOp(doc, { kind: 'lugar', placeId: 'place:dev' }, { op: 'slack-enviada', id: letter }, { now: 9e12, newId: () => 'x' })).toMatchObject({ ok: false });
+    expect(slackGuard(doc, 'mcp__slack__slack_send_message', { channel_id: 'C0123', text: 'Oi' })).toMatchObject({ kind: 'deny' });
   });
 
   it('reads a ledger written by a newer channel and never writes over it', async () => {
