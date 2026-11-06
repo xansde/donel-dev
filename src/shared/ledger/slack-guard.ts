@@ -191,10 +191,10 @@ export function normalizeText(value: string): string {
   return value.replace(/\r\n?/g, '\n');
 }
 
-/** Letters that may still free a send: accepted, never sent, and no send of it in flight (`busy`). */
-export function openSlackLetters(doc: LedgerDoc, busy: ReadonlySet<string> = new Set()): LedgerTask[] {
+/** Letters that may still free a send: accepted, and never sent (or only sent once, and that send failed). */
+export function openSlackLetters(doc: LedgerDoc): LedgerTask[] {
   return Object.values(doc.tasks)
-    .filter((task) => task.slack !== undefined && task.state === 'aceita' && !slackLetterSent(task) && !busy.has(task.id))
+    .filter((task) => task.slack !== undefined && task.state === 'aceita' && !slackLetterSent(task))
     .sort((a, b) => a.createdAt - b.createdAt);
 }
 
@@ -215,17 +215,14 @@ export const SLACK_GUARD_HOW_TO =
   '(4) rejeitada: não envie; o motivo (ou o que o dono escreveu na carta) diz o ajuste; crie outra carta com o texto ajustado. ' +
   'Não tente outro caminho de envio: todos passam por esta trava.';
 
-/**
- * The decision on one tool call, given the ledger. `doc` null = the ledger could not be read (refuse). `busy` =
- * letters whose send is in flight (freed by an earlier call, no answer yet): they free nothing else. Pure.
- */
-export function slackGuard(doc: LedgerDoc | null, toolName: string, toolInput: unknown, busy: ReadonlySet<string> = new Set()): SlackGuardVerdict {
+/** The decision on one tool call, given the ledger. `doc` null = the ledger could not be read (refuse). Pure. */
+export function slackGuard(doc: LedgerDoc | null, toolName: string, toolInput: unknown): SlackGuardVerdict {
   const detection = detectSlackSend(toolName, toolInput);
   if (detection.kind === 'none') return { kind: 'not-slack' };
   const deny = (why: string): SlackGuardVerdict => ({ kind: 'deny', reason: `Envio ao Slack bloqueado pelo Donel Dev: ${why} ${SLACK_GUARD_HOW_TO}` });
   if (detection.kind === 'unreadable') return deny(`${detection.why}.`);
   if (doc === null) return deny('não consegui ler o Oráculo Harrow para conferir a carta.');
-  const letters = openSlackLetters(doc, busy);
+  const letters = openSlackLetters(doc);
 
   const used = new Set<string>();
   for (const send of detection.sends) {
@@ -238,31 +235,75 @@ export function slackGuard(doc: LedgerDoc | null, toolName: string, toolInput: u
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Did the send go out? (t-8119864a: the MCP answered "fetch failed", nothing reached Slack, and the letter was
-// already marked as sent at the call.) A letter is spent only when the tool's answer shows Slack took the
-// message: `ok: true` or a message `ts`. An error, `ok: false`, or an answer that shows neither keeps it unsent.
+// What did the send answer? (t-8119864a: the MCP answered "fetch failed", nothing reached Slack, and the letter
+// was spent.) The letter is spent when the guard frees the call; only an EXPLICIT failure gives it back, once.
+// An answer that shows neither (a plain "Message sent", or no answer at all) keeps it spent: "envio sem
+// confirmação". The owner was promised one send, so a doubt never frees another.
+
+export type SlackSendOutcome = { readonly kind: 'confirmado' } | { readonly kind: 'falhou'; readonly why: string } | { readonly kind: 'sem-confirmacao' };
 
 const SLACK_TS = /^\d{6,}\.\d+$/;
 const TS_KEYS = ['ts', 'message_ts', 'messageTs'];
+/** Success in a text: `ok: true`, a message `ts`, or a Slack message link (`…/archives/C…/p1730900000123456`). */
+const TEXT_SUCCESS = [/["']?\bok["']?\s*[:=]\s*true\b/i, /["']?\b(message_)?ts["']?\s*[:=]\s*["']?\d{6,}\.\d+/i, /\/p\d{10,}\b/, /(?<![\d.])\d{10}\.\d{6}(?![\d.])/];
+/** Failure in a text: Slack's `ok: false`, and network errors that leave no doubt nothing went out. */
+const TEXT_FAILURE = [
+  /["']?\bok["']?\s*[:=]\s*false\b/i,
+  /["']?\bisError["']?\s*[:=]\s*true\b|["']?\bsuccess(ful)?["']?\s*[:=]\s*false\b/i,
+  /fetch failed|socket hang up|network error|getaddrinfo|\b(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|ECONNABORTED)\b/i,
+];
 
-/** Does this `tool_response` (MCP content, Composio result, raw Slack API JSON) confirm the message went out? Pure. */
-export function slackSendConfirmed(response: unknown, depth = 0): boolean {
-  if (depth > 8) return false;
+interface Signals {
+  success: boolean;
+  failure: string | null;
+}
+
+function short(text: string): string {
+  const line = text.trim().replace(/\s+/g, ' ');
+  return line.length > 200 ? `${line.slice(0, 199)}…` : line;
+}
+
+function scan(response: unknown, out: Signals, depth: number): void {
+  if (depth > 8) return;
   if (typeof response === 'string') {
     const text = response.trim();
     if (/^[[{]/.test(text)) {
       try {
-        return slackSendConfirmed(JSON.parse(text), depth + 1);
+        scan(JSON.parse(text), out, depth + 1);
+        return;
       } catch {
         // not JSON: read it as text below
       }
     }
-    return /["']?\bok["']?\s*[:=]\s*true\b/i.test(text) || /["']?\b(message_)?ts["']?\s*[:=]\s*["']?\d{6,}\.\d+/i.test(text);
+    if (TEXT_SUCCESS.some((pattern) => pattern.test(text))) out.success = true;
+    if (TEXT_FAILURE.some((pattern) => pattern.test(text))) out.failure ??= short(text);
+    return;
   }
-  if (Array.isArray(response)) return response.some((item) => slackSendConfirmed(item, depth + 1));
-  if (!isRecord(response)) return false;
-  if (response.isError === true || response.ok === false || response.successful === false) return false;
-  if (response.ok === true) return true;
-  if (TS_KEYS.some((key) => typeof response[key] === 'string' && SLACK_TS.test((response[key] as string).trim()))) return true;
-  return Object.entries(response).some(([key, value]) => key !== 'error' && (typeof value === 'string' || typeof value === 'object') && slackSendConfirmed(value, depth + 1));
+  if (Array.isArray(response)) {
+    for (const item of response) scan(item, out, depth + 1);
+    return;
+  }
+  if (!isRecord(response)) return;
+  if (response.isError === true || response.ok === false || response.successful === false || response.success === false) {
+    const error = response.error ?? response.message ?? response.content;
+    out.failure ??= typeof error === 'string' && error.trim() ? short(error) : 'a ferramenta respondeu com erro';
+  }
+  if (response.ok === true) out.success = true;
+  if (TS_KEYS.some((key) => typeof response[key] === 'string' && SLACK_TS.test((response[key] as string).trim()))) out.success = true;
+  for (const value of Object.values(response)) if (typeof value === 'string' || typeof value === 'object') scan(value, out, depth + 1);
 }
+
+/**
+ * The answer of a freed send. `event` is the hook (`PostToolUse`, `PostToolUseFailure`); `response` its
+ * `tool_response` (MCP content, Composio result, raw Slack API JSON) and `error` its error text, if any. A signal of
+ * success and one of failure in the same answer is a doubt, and a doubt spends the letter. Pure.
+ */
+export function slackSendOutcome(event: string, response: unknown, error?: unknown): SlackSendOutcome {
+  const signals: Signals = { success: false, failure: null };
+  scan(response, signals, 0);
+  if (event === 'PostToolUseFailure') signals.failure ??= typeof error === 'string' && error.trim() ? short(error) : 'a chamada terminou em erro';
+  if (signals.failure !== null && !signals.success) return { kind: 'falhou', why: signals.failure };
+  if (signals.success && signals.failure === null) return { kind: 'confirmado' };
+  return { kind: 'sem-confirmacao' };
+}
+
