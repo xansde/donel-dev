@@ -23,6 +23,7 @@ import type { DonelSessionsApi } from './sessions';
 import type { DonelTabsApi } from './tabChannels';
 import type { DonelMindscapeApi } from './mindscape/channels';
 import type { DonelLedgerApi } from './ledger/channels';
+import type { DonelLedgerMirrorApi } from './ledger/mirror';
 import type { DonelRolesApi } from './roles';
 import type { DonelRenewalApi } from './sessionRenewal';
 import type { DonelLearningApi } from './learning/gestures';
@@ -520,6 +521,8 @@ export interface DonelApi {
   mindscape: DonelMindscapeApi;
   /** Ledger com prova (item 19) — the tasks between places, in `ledger.json` (the main is the only writer). */
   ledger: DonelLedgerApi;
+  /** Espelho do Oráculo — the tasks copied to the owner's personal Supabase (Preferências → Celular). */
+  ledgerMirror: DonelLedgerMirrorApi;
   /** Papéis de sessão (item 12a) — the roles in `<userData>/papeis/` (the main is the only writer). */
   roles: DonelRolesApi;
   /** Diário de gestos — what the owner does, kept only on this machine as examples for a local model (B35). */

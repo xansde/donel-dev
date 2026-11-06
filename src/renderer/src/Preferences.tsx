@@ -5,6 +5,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { NotificationPreference, ProjectScanMode } from '../../shared/config';
 import type { SessionRenewalPrefs } from '../../shared/sessionRenewal';
 import { CelularSection } from './CelularSection';
+import { EspelhoSection } from './EspelhoSection';
 import styles from './Preferences.module.css';
 
 // Preferências — tela cheia com menu lateral (pedido do dono, 04/11: "como popup não está vingando").
@@ -325,6 +326,14 @@ export function Preferences(props: PreferencesProps): React.JSX.Element | null {
       keywords: 'celular telefone oráculo harrow ledger entregas validar aceitar rejeitar tailscale parear qr pwa firewall',
       hint: 'Valide as entregas que esperam você pelo celular, uma carta por tela: arraste para a direita para aceitar e para a esquerda para rejeitar com motivo.',
       body: <CelularSection />,
+    },
+    {
+      id: 'espelho',
+      category: 'celular',
+      title: 'Registro das tarefas fora do PC',
+      keywords: 'oráculo harrow tarefas registro histórico supabase espelho backup demandas planilha',
+      hint: 'Cada mudança no Oráculo vai, em até um minuto, para uma tabela no seu Supabase pessoal: o histórico sobrevive ao PC e abre no navegador ou no celular. Prints e vídeos ficam só aqui.',
+      body: <EspelhoSection />,
     },
     ...(props.onManageRoles
       ? [

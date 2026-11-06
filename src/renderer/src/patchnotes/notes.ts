@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-06',
     items: [
       {
+        title: 'As tarefas do Oráculo registradas fora do PC',
+        text: 'Cada tarefa do Oráculo agora pode ir, em até um minuto depois de mudar, para uma tabela no seu Supabase pessoal: quadro, título, o pedido como foi feito, quem pediu, estado, risco, dono, prazo, datas, decisão e motivo. Abre no navegador ou no celular, e o histórico sobrevive se o PC morrer. Há também a visão do que ainda não fechou. Prints e vídeos ficam só aqui; senhas, chaves e e-mails que aparecerem num texto saem mascarados. Sem internet, o Donel guarda e manda quando a rede voltar. Liga em Preferências, Celular.',
+      },
+      {
         title: 'Pedir ao Líder pelo celular, escrevendo ou falando',
         text: 'O Oráculo no celular ganhou o botão "Pedir", no topo. Escreva ou grave o que você quer: o áudio é transcrito no seu computador, pelo OpenWhispr, e você confere e corrige o texto antes de enviar. O pedido vai direto para o chat do Líder. Se ele estiver fechado, o computador guarda o pedido e entrega quando o Líder abrir, mesmo que o Donel reinicie no meio. Em "Seus pedidos" você vê cada um: na fila, entregue, ou a tarefa que ele virou. Para gravar direto na página, use o endereço https do Oráculo; no http, o botão abre o gravador do celular.',
       },

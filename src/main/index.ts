@@ -245,6 +245,8 @@ import { registerAssetScheme, registerAssetsProtocol } from './chat/assets-proto
 import { proofSchemePrivileges, registerProofProtocol } from './ledger-proof-protocol';
 import { createCardWriter, type CardWriter } from './ledger-card-writer';
 import { fetchRemoteProof } from './ledger-remote-proof';
+import { createLedgerMirrorService, type LedgerMirrorService } from './ledger-mirror/service';
+import { LEDGER_MIRROR_CHANNELS, type LedgerMirrorConfigureResult, type LedgerMirrorState } from '../shared/ledger/mirror';
 import { CHAT_CHANNELS } from '../shared/chat/ipc';
 // 011-contas-e-provedores (etapa 1) — motor de contas + mods. Nasce inerte
 // (accounts.mod = null); toda a mecânica mora em src/main/accounts/, este
@@ -2948,6 +2950,42 @@ let cardWriter: CardWriter | null = null;
 /** Pedir pelo Oráculo — a entrega ao Líder único, ligada quando a ponte do quadro nasce. */
 let deliverPedidoToLeader: ((text: string) => Promise<boolean>) | null = null;
 
+/** Espelho do Oráculo — the ledger mirrored to the owner's personal registry (Supabase), off until configured. */
+let ledgerMirrorService: LedgerMirrorService | null = null;
+
+function registerLedgerMirror(): void {
+  const mirror = createLedgerMirrorService({
+    userDataPath: app.getPath('userData'),
+    io: configIoDeps,
+    vaultPath: () => accountsVaultPath,
+    safeStorage,
+    vaultIo: accountsVaultIo,
+    placeName: placeNameOf,
+    loadDoc: () => {
+      try {
+        return ledgerService?.load().doc ?? null;
+      } catch {
+        return null;
+      }
+    },
+  });
+  ledgerMirrorService = mirror;
+  const fromMain = (sender: Electron.WebContents): boolean => getMainWindow()?.webContents.id === sender.id;
+  ipcMain.handle(LEDGER_MIRROR_CHANNELS.getState, (): LedgerMirrorState => mirror.state());
+  ipcMain.handle(LEDGER_MIRROR_CHANNELS.configure, async (event, url: unknown, key: unknown): Promise<LedgerMirrorConfigureResult> => {
+    if (!fromMain(event.sender)) return { ok: false, reason: 'Só a janela do app configura.' };
+    return mirror.configure(url, key);
+  });
+  ipcMain.handle(LEDGER_MIRROR_CHANNELS.disable, (event): LedgerMirrorState => {
+    if (fromMain(event.sender)) mirror.disable();
+    return mirror.state();
+  });
+  ipcMain.handle(LEDGER_MIRROR_CHANNELS.syncNow, (): Promise<LedgerMirrorState> => mirror.syncNow());
+  // The first registry of this run: an inbox left by an agent, then the whole ledger (it may have changed while the
+  // app was closed, or a push may have failed before quitting).
+  void mirror.syncNow().catch(() => undefined);
+}
+
 function registerLedgerIpcHandlers(): void {
   const service = createLedgerService({
     filePath: ledgerFilePath(process.env, app.getPath('userData')),
@@ -2962,6 +3000,8 @@ function registerLedgerIpcHandlers(): void {
       if (pet && !pet.isDestroyed()) pet.send(LEDGER_CHANNELS.changed, snapshot);
       // Aviso no celular: uma carta que passou a esperar o dono.
       celularService?.ledgerChanged(snapshot.doc);
+      // Espelho do Oráculo: the registry outside this PC (it only watches; never writes the ledger).
+      ledgerMirrorService?.changed(snapshot.doc);
     },
   });
   ledgerService = service;
@@ -3831,6 +3871,7 @@ void app.whenReady().then(async () => {
   registerTabIpcHandlers(); // CA-26/CA-27 (009-modo-dev-v3)
   registerMindscapeIpcHandlers(); // Mindscape V1
   registerLedgerIpcHandlers(); // Ledger com prova (item 19)
+  registerLedgerMirror(); // Espelho do Oráculo (06/11)
   registerRolesIpcHandlers(); // Papéis de sessão (item 12a)
   registerMindscapeTurnEnded(); // Mindscape, fatia 03
   registerSessionRenewalIpcHandlers(); // Sessão renovada em voo (B36)
