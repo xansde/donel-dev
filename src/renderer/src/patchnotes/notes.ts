@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-05',
     items: [
       {
+        title: 'Hill climbing no lugar do Modo Dev',
+        text: 'O modo "Dev" virou "Hill climbing". A barra da direita saiu; a da esquerda ficou com a mesma cara (trilha e carrossel), agora para missões de melhoria: uma sessão propõe o alvo e os critérios, a proposta chega como carta no Oráculo e nada roda sem o seu "Rodar". Cada versão é julgada por três juízes que não se veem, e a rodada fecha quando todos dão 9 ou mais em tudo, quando a nota para de subir ou quando acabam os 5 rounds. Aí aparece a amostra (a melhor versão, a curva da menor nota e algumas do meio) com três gestos: parar e aceitar, mais uma rodada (3 rounds, até 2 vezes) ou redirecionar com um texto seu. Por enquanto a barra avisa que falta a chave de LLM dos juízes: até você dizer onde ela fica, nenhuma missão roda.',
+      },
+      {
         title: 'Cada sessão só com as ferramentas do papel',
         text: 'Uma sessão aberta com papel agora carrega só os conectores (MCPs), plugins e skills que o papel usa, e não tudo o que está instalado. Dev e Revisor veem só o GitHub e o Donel; Pesquisa, a base de conhecimento, a Nekt e o Google Workspace; o Líder continua com tudo. A sessão sobe mais rápido e gasta bem menos memória. Um papel seu que não diga nada continua como antes; o que ele usa se escreve no topo do arquivo do papel (veja "mcps", "plugins" e "skills").',
       },
