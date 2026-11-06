@@ -37,7 +37,7 @@ import {
 } from '../shared/ledger/contract';
 import type { LedgerApplyResult, LedgerSnapshot } from '../shared/ledger/channels';
 import type { LedgerToolCall, ProofInput } from '../shared/ledger/tools';
-import { detectSlackSend, slackGuard } from '../shared/ledger/slack-guard';
+import { detectSlackSend, fileNameOf, slackGuard } from '../shared/ledger/slack-guard';
 
 /** Smoke/test override: isolates the ledger from the real one. */
 export const LEDGER_FILE_ENV_VAR = 'DONEL_LEDGER_FILE';
@@ -354,8 +354,11 @@ function taskView(task: LedgerTask, doc: LedgerDoc): Record<string, unknown> {
             destino: task.slack.destination,
             ...(task.slack.thread ? { thread: task.slack.thread } : {}),
             texto: task.slack.text,
+            ...(task.slack.file ? { arquivo: task.slack.file.path, arquivoNome: task.slack.file.name } : {}),
             enviada: slackLetterSent(task),
-            ...(task.state === 'aceita' && !slackLetterSent(task) ? { proximo: 'Aceita: envie este texto exato a este destino, uma vez.' } : {}),
+            ...(task.state === 'aceita' && !slackLetterSent(task)
+              ? { proximo: task.slack.file ? 'Aceita: envie este arquivo, com este texto exato de comentário, a este destino, uma vez.' : 'Aceita: envie este texto exato a este destino, uma vez.' }
+              : {}),
             ...(task.state === 'rejeitada' ? { proximo: 'Rejeitada: não envie. Ajuste o texto pelo motivo e crie outra carta com carta_slack.' } : {}),
           },
         }
@@ -407,7 +410,14 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       const result = service.apply(actor, {
         op: 'carta-slack',
         projectPath: caller.projectPath,
-        slack: { destination: call.destino, ...(call.destinoNome ? { destinationLabel: call.destinoNome } : {}), ...(call.thread ? { thread: call.thread } : {}), text: call.texto, reason: call.motivo },
+        slack: {
+          destination: call.destino,
+          ...(call.destinoNome ? { destinationLabel: call.destinoNome } : {}),
+          ...(call.thread ? { thread: call.thread } : {}),
+          text: call.texto,
+          reason: call.motivo,
+          ...(call.arquivo ? { file: { path: call.arquivo, name: call.arquivoNome ?? fileNameOf(call.arquivo) } } : {}),
+        },
       });
       if (!result.ok) return { ok: false, text: result.reason };
       return {

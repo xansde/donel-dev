@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-06',
     items: [
       {
+        title: 'Carta de Slack que leva um arquivo',
+        text: 'Uma sessão que precisa mandar um arquivo no Slack (um print, um PDF) agora pede numa carta, como já pedia para mensagem. A carta diz "Posso mandar este arquivo no Slack em seu nome?" e mostra o nome do arquivo, onde ele está e o comentário que vai junto. Só depois de você aceitar o arquivo sai, uma vez, para aquele canal ou thread. A carta confere o nome e o lugar do arquivo, não o que tem dentro, então veja o arquivo antes de aceitar. Antes, mandar arquivo era sempre barrado, e uma ferramenta com nome em português (como "enviar arquivo") podia passar sem carta.',
+      },
+      {
         title: 'Sessão numa VPS em bypass abre em bypass de verdade',
         text: 'Quando uma sessão aberta num lugar remoto sobe no modo bypassPermissions, o lugar agora recebe o que o claude precisa para aceitar esse modo sem pedir confirmação, inclusive quando a VPS roda como root. Antes, o claude de lá podia recusar o bypass.',
       },

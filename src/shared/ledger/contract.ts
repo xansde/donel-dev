@@ -30,8 +30,9 @@
  * 3 — cartas forma A: `title` on a task; `forOwner` on a delivery; `option` on a decision; the `comentada` event
  *     (the owner writing on the card) with `deliveredTo`.
  * 4 — `slack` on a task (a letter "mensagem para o Slack") and the `enviada` event (`slack-guard.ts`).
+ * 5 — `file` on a Slack letter (the file an upload carries: local path and name).
  */
-export const LEDGER_SCHEMA_VERSION = 4;
+export const LEDGER_SCHEMA_VERSION = 5;
 
 export type LedgerTaskState = 'aberta' | 'em-execucao' | 'entregue' | 'aceita' | 'rejeitada';
 export type LedgerRisk = 'baixo' | 'alto';
@@ -101,8 +102,17 @@ export interface SlackLetter {
   /** How the owner reads the destination ("#produto", "Fulana"); absent = the destination itself. */
   readonly destinationLabel?: string;
   readonly thread?: string;
+  /** With a file, `text` is its comment. */
   readonly text: string;
   readonly reason: string;
+  /** v5 — a file that goes with it (an upload): accept frees ONE upload of this path, with this name. */
+  readonly file?: SlackLetterFile;
+}
+
+/** v5 — the file of a letter: the path as the sending tool gets it (the session's machine) and the name in Slack. */
+export interface SlackLetterFile {
+  readonly path: string;
+  readonly name: string;
 }
 
 export interface LedgerEvent {
@@ -406,6 +416,8 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
 }
 
 export const MAX_SLACK_TEXT_CHARS = 12_000;
+export const MAX_SLACK_FILE_PATH_CHARS = 1_000;
+export const MAX_SLACK_FILE_NAME_CHARS = 200;
 
 /** The one send of an accepted letter already went out. */
 export function slackLetterSent(task: LedgerTask): boolean {
@@ -421,6 +433,12 @@ function slackLetterProblem(slack: SlackLetter): string | null {
   if (!slack.text.trim()) return '"texto" é obrigatório: a mensagem exata que vai ao Slack.';
   if (slack.text.length > MAX_SLACK_TEXT_CHARS) return `"texto" longo demais (máximo ${MAX_SLACK_TEXT_CHARS} caracteres).`;
   if (!slack.reason.trim()) return '"motivo" é obrigatório: por que a mensagem vai.';
+  if (slack.file) {
+    const { path, name } = slack.file;
+    if (!path.trim()) return '"arquivo" é o caminho do arquivo, como vai na ferramenta de envio.';
+    if (path.length > MAX_SLACK_FILE_PATH_CHARS || /[\r\n]/.test(path)) return `"arquivo" tem de ser um caminho numa linha (até ${MAX_SLACK_FILE_PATH_CHARS} caracteres).`;
+    if (!name.trim() || name.length > MAX_SLACK_FILE_NAME_CHARS || /[\r\n]/.test(name)) return `"arquivoNome" tem de ser um nome numa linha (até ${MAX_SLACK_FILE_NAME_CHARS} caracteres).`;
+  }
   return null;
 }
 
@@ -430,18 +448,30 @@ const clip = (text: string, max: number): string => {
 };
 
 /** The card A of a Slack letter, built by the app (a session never writes it): the owner sends it or not. */
-function slackForOwner(where: string, reason: string): LedgerForOwner {
+function slackForOwner(where: string, reason: string, file?: SlackLetterFile): LedgerForOwner {
   const L = FOR_OWNER_LIMITS;
   return {
-    question: 'Posso mandar esta mensagem no Slack em seu nome?',
-    summary: clip(`Para ${where}. Motivo: ${reason}`, L.summary),
+    question: file ? 'Posso mandar este arquivo no Slack em seu nome?' : 'Posso mandar esta mensagem no Slack em seu nome?',
+    summary: clip(file ? `Para ${where}. Arquivo ${file.name}, com o texto da carta como comentário. Motivo: ${reason}` : `Para ${where}. Motivo: ${reason}`, L.summary),
     options: [
-      { label: 'Enviar', effect: 'Sai exatamente o texto da carta, para este destino, uma vez só.', closes: 'aceita', recommended: true },
+      {
+        label: 'Enviar',
+        effect: file ? 'Sai este arquivo, com exatamente o texto da carta, para este destino, uma vez só.' : 'Sai exatamente o texto da carta, para este destino, uma vez só.',
+        closes: 'aceita',
+        recommended: true,
+      },
       { label: 'Não enviar', effect: 'Nada sai. O que você escrever na carta vai para a sessão ajustar o texto.', closes: 'rejeitada' },
     ],
     why: 'A sessão pediu para mandar; o texto da carta é o que vai sair, letra por letra.',
-    risk: 'Depois de enviada, a mensagem fica no Slack em seu nome.',
+    risk: file
+      ? 'Depois de enviado, o arquivo fica no Slack em seu nome. A carta confere o caminho e o nome, não o conteúdo: veja o arquivo antes.'
+      : 'Depois de enviada, a mensagem fica no Slack em seu nome.',
   };
+}
+
+/** What the owner reads about the file of a letter (a proof of the card: the name and where it is). */
+export function slackFileProofText(file: SlackLetterFile): string {
+  return `Arquivo que vai junto: ${file.name}\nOnde está, no computador da sessão: ${file.path}`;
 }
 
 function createSlackLetter(doc: LedgerDoc, actor: LedgerActor, op: Extract<LedgerOp, { op: 'carta-slack' }>, ctx: LedgerOpContext): LedgerOpResult {
@@ -449,12 +479,12 @@ function createSlackLetter(doc: LedgerDoc, actor: LedgerActor, op: Extract<Ledge
   const problem = slackLetterProblem(op.slack);
   if (problem) return { ok: false, reason: problem };
   const where = `${slackDestinationLabel(op.slack)}${op.slack.thread ? ' (na thread)' : ''}`;
-  const title = `Mensagem no Slack para ${slackDestinationLabel(op.slack)}`;
+  const title = `${op.slack.file ? 'Arquivo' : 'Mensagem'} no Slack para ${slackDestinationLabel(op.slack)}`;
   const task: LedgerTask = {
     id: ctx.newId(),
     projectPath: op.projectPath,
     title: title.length > MAX_TITLE_CHARS ? `${title.slice(0, MAX_TITLE_CHARS - 1)}…` : title,
-    request: `Mensagem no Slack para ${where}: ${op.slack.reason.trim()}`.slice(0, MAX_REQUEST_CHARS),
+    request: `${op.slack.file ? `Arquivo ${op.slack.file.name}` : 'Mensagem'} no Slack para ${where}: ${op.slack.reason.trim()}`.slice(0, MAX_REQUEST_CHARS),
     doneWhen: 'O dono aceita o texto exato antes do envio.',
     due: new Date(ctx.now).toISOString().slice(0, 10),
     ownerPlaceId: actor.placeId,
@@ -463,7 +493,14 @@ function createSlackLetter(doc: LedgerDoc, actor: LedgerActor, op: Extract<Ledge
     createdAt: ctx.now,
     events: [
       { kind: 'criada', at: ctx.now, by: actor },
-      { kind: 'entregue', at: ctx.now, by: actor, proofs: [{ kind: 'texto', text: op.slack.text }], text: op.slack.reason.trim(), forOwner: slackForOwner(where, op.slack.reason) },
+      {
+        kind: 'entregue',
+        at: ctx.now,
+        by: actor,
+        proofs: [{ kind: 'texto', text: op.slack.text }, ...(op.slack.file ? [{ kind: 'texto' as const, text: slackFileProofText(op.slack.file) }] : [])],
+        text: op.slack.reason.trim(),
+        forOwner: slackForOwner(where, op.slack.reason, op.slack.file),
+      },
     ],
     slack: op.slack,
   };
@@ -790,12 +827,16 @@ function parseTask(id: string, raw: unknown): LedgerTask | null {
 
 function parseSlackLetter(raw: unknown): SlackLetter | null {
   if (!isRecord(raw) || !str(raw.destination) || !str(raw.text) || !str(raw.reason)) return null;
+  // A file that cannot be read drops the whole letter: read without it, it would free a message the owner never saw alone.
+  if (raw.file !== undefined && !(isRecord(raw.file) && str(raw.file.path) && str(raw.file.name))) return null;
+  const file = isRecord(raw.file) ? { file: { path: raw.file.path as string, name: raw.file.name as string } } : {};
   const slack: SlackLetter = {
     destination: raw.destination,
     ...(str(raw.destinationLabel) ? { destinationLabel: raw.destinationLabel } : {}),
     ...(str(raw.thread) && raw.thread ? { thread: raw.thread } : {}),
     text: raw.text,
     reason: raw.reason,
+    ...file,
   };
   return slackLetterProblem(slack) ? null : slack;
 }
