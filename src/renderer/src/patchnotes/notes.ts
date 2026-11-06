@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-06',
     items: [
       {
+        title: 'O endereço https do Oráculo abre no celular',
+        text: 'O QR de Preferências → Celular, com o https da Tailscale ligado, agora abre o Oráculo no celular, em vez de ficar carregando até dar erro. O comando mostrado ali para ligar o https mudou: rode o novo uma vez e pareie o celular de novo. Pelo https o Oráculo grava áudio pelo microfone e avisa quando uma carta espera você.',
+      },
+      {
         title: 'Pedido falado: ouça antes de mandar',
         text: 'No "Pedir" do Oráculo pelo celular, depois de parar a gravação o áudio aparece para você ouvir. Aí você escolhe "Usar este áudio", e ele vira texto para você conferir, ou "Descartar" e grava de novo. Anexar um áudio que já está no celular continua possível, pelo link discreto embaixo do Gravar, e passa pelo mesmo ouvir antes de usar. Se a página estiver no endereço sem https, o Gravar explica que precisa do endereço https em vez de abrir a pasta de arquivos. E o texto ditado pelo teclado não chega mais cortado: ao tocar em Enviar, o Oráculo espera o teclado terminar de escrever antes de mandar.',
       },

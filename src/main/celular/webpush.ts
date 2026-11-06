@@ -241,11 +241,22 @@ export function createPushStore(filePath: string, io: ConfigIoDeps): PushStore {
   };
 }
 
-/** `tailscale serve status --json` → o endereço https que a Tailscale serve na porta 443, se houver. */
-export function httpsServeUrl(status: unknown): string | null {
+/**
+ * `tailscale serve status --json` → o endereço https que a Tailscale serve na porta 443, se houver e se ele
+ * repassa ao servidor do celular em 127.0.0.1:`port`. Apontado para o IP Tailscale do próprio PC, o serve do
+ * Windows não chega (502): esse endereço não vai no QR.
+ */
+export function httpsServeUrl(status: unknown, port: number): string | null {
   if (typeof status !== 'object' || status === null) return null;
   const web = (status as Record<string, unknown>).Web;
   if (typeof web !== 'object' || web === null) return null;
-  const host = Object.keys(web).find((key) => /^[a-z0-9.-]+\.ts\.net:443$/i.test(key));
-  return host ? `https://${host.slice(0, -':443'.length)}` : null;
+  const target = new Set([`http://127.0.0.1:${port}`, `http://localhost:${port}`]);
+  for (const [key, value] of Object.entries(web as Record<string, unknown>)) {
+    if (!/^[a-z0-9.-]+\.ts\.net:443$/i.test(key)) continue;
+    const handlers = typeof value === 'object' && value !== null ? (value as Record<string, unknown>).Handlers : null;
+    const root = typeof handlers === 'object' && handlers !== null ? (handlers as Record<string, unknown>)['/'] : null;
+    const proxy = typeof root === 'object' && root !== null ? (root as Record<string, unknown>).Proxy : null;
+    if (typeof proxy === 'string' && target.has(proxy.replace(/\/$/, ''))) return `https://${key.slice(0, -':443'.length)}`;
+  }
+  return null;
 }

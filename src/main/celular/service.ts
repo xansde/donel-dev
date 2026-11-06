@@ -183,7 +183,7 @@ export function createCelularService(deps: CelularServiceDeps): CelularService {
     if (!server) return { ok: false, reason: status === 'no-tailscale' ? 'Ligue a Tailscale neste PC para parear.' : (error ?? 'Ligue o app do celular primeiro.') };
     const { code, expiresAt } = auth.createPairingCode();
     // Com `tailscale serve` no ar, o celular pareia no endereço https: só nele há avisos (service worker).
-    const base = (await readServeHttpsUrl()) ?? server.url;
+    const base = (await readServeHttpsUrl(port)) ?? server.url;
     const url = `${base}/#parear=${code}`;
     return { ok: true, pairing: { url, qrSvg: qrSvg(url), expiresAt: new Date(expiresAt).toISOString() } };
   });
