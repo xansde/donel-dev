@@ -43,7 +43,10 @@ export function createSupabaseSink(deps: SupabaseSinkDeps): MirrorSink {
             signal: controller.signal,
           });
         } catch (error) {
-          throw new Error(controller.signal.aborted ? 'sem resposta do Supabase em 20 s' : `sem rede (${error instanceof Error ? error.name : 'erro'})`);
+          // undici hides the reason in `cause` (a connect timeout, DNS, a reset); only its code goes out, never a secret.
+          const code = (error as { cause?: { code?: unknown } } | null)?.cause?.code;
+          const reason = typeof code === 'string' ? code : error instanceof Error ? error.name : 'erro';
+          throw new Error(controller.signal.aborted ? 'sem resposta do Supabase em 20 s' : `sem rede (${reason})`);
         } finally {
           clearTimeout(timeout);
         }
