@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { join } from 'node:path';
 import type { ConfigIoDeps } from '../src/main/config-store';
 import { createCelularAuth } from '../src/main/celular/auth';
 import { createLedgerMobilePort } from '../src/main/celular/ledger-port';
@@ -256,7 +257,7 @@ describe('servidor do celular', () => {
     expect(get(`/api/prova-html?b=${late}`, false).status).toBe(404); // venceu
 
     // Desktop: donel-prova só serve um nome que o main deu, dentro de ledger-provas.
-    expect(resolveProofUrl(proofUrl(html), '/u/ledger-provas')).toMatchObject({ ok: true, path: `/u/ledger-provas/${html}`, csp: expect.stringMatching(/^sandbox allow-scripts;/) });
+    expect(resolveProofUrl(proofUrl(html), '/u/ledger-provas')).toMatchObject({ ok: true, path: join('/u/ledger-provas', html), csp: expect.stringMatching(/^sandbox allow-scripts;/) });
     for (const bad of ['donel-prova://prova/..%2Fledger.json', 'donel-prova://prova/a%2Fb.html', 'donel-prova://prova/x.exe', 'donel-prova://outro/' + html, 'donel-asset://prova/' + html])
       expect(resolveProofUrl(bad, '/u/ledger-provas').ok, bad).toBe(false);
   });
