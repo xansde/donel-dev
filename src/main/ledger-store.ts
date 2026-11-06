@@ -22,6 +22,7 @@ import {
   isNewerLedger,
   lastDelivery,
   slackLetterSent,
+  slackLetterText,
   slackSendState,
   type SlackSendState,
   ledgerStrip,
@@ -39,7 +40,7 @@ import {
 } from '../shared/ledger/contract';
 import type { LedgerApplyResult, LedgerSnapshot } from '../shared/ledger/channels';
 import type { LedgerToolCall, ProofInput } from '../shared/ledger/tools';
-import { detectSlackSend, slackGuard, slackSendOutcome } from '../shared/ledger/slack-guard';
+import { detectSlackSend, fileNameOf, slackGuard, slackSendOutcome } from '../shared/ledger/slack-guard';
 
 /** Smoke/test override: isolates the ledger from the real one. */
 export const LEDGER_FILE_ENV_VAR = 'DONEL_LEDGER_FILE';
@@ -355,7 +356,8 @@ function taskView(task: LedgerTask, doc: LedgerDoc): Record<string, unknown> {
           cartaSlack: {
             destino: task.slack.destination,
             ...(task.slack.thread ? { thread: task.slack.thread } : {}),
-            texto: task.slack.text,
+            texto: slackLetterText(task.slack),
+            ...(task.slack.file ? { arquivo: task.slack.file.path, arquivoNome: task.slack.file.name } : {}),
             enviada: slackLetterSent(task),
             ...(SEND_LABEL[slackSendState(task)] ? { envio: SEND_LABEL[slackSendState(task)] } : {}),
             ...(task.state === 'aceita' && slackSendState(task) === 'nenhum' ? { proximo: 'Aceita: envie este texto exato a este destino, uma vez.' } : {}),
@@ -422,7 +424,16 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       const result = service.apply(actor, {
         op: 'carta-slack',
         projectPath: caller.projectPath,
-        slack: { destination: call.destino, ...(call.destinoNome ? { destinationLabel: call.destinoNome } : {}), ...(call.thread ? { thread: call.thread } : {}), text: call.texto, reason: call.motivo },
+        slack: {
+          destination: call.destino,
+          ...(call.destinoNome ? { destinationLabel: call.destinoNome } : {}),
+          ...(call.thread ? { thread: call.thread } : {}),
+          // With a file, the comment lives in the file and `text` stays '' (`SlackLetter.file`: safe for a v4 app).
+          ...(call.arquivo
+            ? { text: '', file: { path: call.arquivo, name: call.arquivoNome ?? fileNameOf(call.arquivo), comment: call.texto } }
+            : { text: call.texto }),
+          reason: call.motivo,
+        },
       });
       if (!result.ok) return { ok: false, text: result.reason };
       return {
