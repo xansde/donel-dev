@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-06',
     items: [
       {
+        title: 'O Oráculo conta as órfãs igual para todo mundo',
+        text: 'Quando uma sessão pede a lista de tarefas de todos os quadros, ela agora vê os mesmos números que o Líder único: vivas, órfãs e fechadas. Um quadro que não respondeu na hora aparece num número à parte, "desconhecidas", em vez de inflar as vivas. Uma tarefa nova pode dizer qual tarefa ela substitui, e a antiga é cancelada na mesma hora. Líder, Curador e Pesquisa sempre dizem quem vai fazer o trabalho, para a tarefa não ficar sem dono quando a sessão deles fecha.',
+      },
+      {
         title: 'O bot do próprio agente manda no Slack sem carta',
         text: 'A carta de Slack volta a ser só para o que sai em seu nome. Quando um agente fala pelo bot dele (como o Theo West, no PC ou na VPS) e esse bot está na lista de bots dos agentes da sua configuração, a mensagem ou o arquivo sai sem esperar você, e fica anotado no Oráculo como "enviado pelo bot do agente", com destino, texto e link para você ver depois. O que sai pela sua conta (Composio, o Slack do seu usuário, terminal) continua pedindo carta.',
       },
