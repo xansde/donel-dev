@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-06',
     items: [
       {
+        title: 'Escrever na carta pelo celular não perde mais o texto',
+        text: 'Quando o que você escreve numa carta não sai (a Tailscale caiu, o computador demorou a responder), a carta mostra em vermelho o motivo e guarda o texto no celular, mesmo se você fechar o Oráculo ou a lista recarregar. O botão vira "Tentar de novo", e tentar de novo nunca manda duas vezes. Quando sai, aparece o aviso "Saiu" e o texto fica na carta com para quem foi; na próxima vez que você abrir, ele continua lá. Ao abrir "Escrever", o botão Enviar aparece na tela, sem ficar escondido embaixo.',
+      },
+      {
         title: 'Pedir ao Líder pelo celular, escrevendo ou falando',
         text: 'O Oráculo no celular ganhou o botão "Pedir", no topo. Escreva ou grave o que você quer: o áudio é transcrito no seu computador, pelo OpenWhispr, e você confere e corrige o texto antes de enviar. O pedido vai direto para o chat do Líder. Se ele estiver fechado, o computador guarda o pedido e entrega quando o Líder abrir, mesmo que o Donel reinicie no meio. Em "Seus pedidos" você vê cada um: na fila, entregue, ou a tarefa que ele virou. Para gravar direto na página, use o endereço https do Oráculo; no http, o botão abre o gravador do celular.',
       },
