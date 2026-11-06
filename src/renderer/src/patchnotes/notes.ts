@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-06',
     items: [
       {
+        title: 'Entrar com o Google pelo navegador do Donel',
+        text: 'O login do Google ("Esse navegador ou app pode não ser seguro") agora passa no navegador ao lado da conversa, e com ele os sites que usam "Entrar com o Google", como o painel da Tailscale. E o navegador não abre mais sozinho a janela do Windows "Escolher uma chave de acesso": a chave de acesso só aparece quando você clica para usá-la na página.',
+      },
+      {
         title: 'Os avisos das sessões não atropelam mais o que você digita',
         text: 'Quando você digita no terminal de uma sessão, os avisos das outras ("◆ … terminou") e as mensagens entre sessões esperam você enviar. Os que chegarem nesse meio-tempo entram juntos, num aviso só, logo depois da sua mensagem. Se um aviso estiver sendo escrito no exato momento em que você começa a digitar, as suas teclas entram logo depois do Enter dele, nunca no meio. E o que você manda pelo chat, pelo Jobu, pelo "Pedir" do celular ou escrevendo numa carta passa na frente dos avisos que ainda não começaram e nunca entra grudado a eles. Nenhum aviso se perde.',
       },

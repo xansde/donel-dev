@@ -1,9 +1,10 @@
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { WebContentsView, net, session as electronSession, type BrowserWindow, type Session, type WebContents } from 'electron';
+import { WebContentsView, app, net, session as electronSession, type BrowserWindow, type Session, type WebContents } from 'electron';
 import { guardBrowserPanelNavigation } from '../navigation-guard';
 import { canServeLocalFile, isAllowedLocalFileUrl, isAllowedPanelUrl } from '../../shared/browser/url';
 import type { BrowserPanelState, BrowserRect, BrowserTabInfo } from '../../shared/browser/ipc';
+import { PAGE_GUARD_PRELOAD } from './page-guard';
 import { cleanUserAgent, uniqueDownloadName } from './panel-helpers';
 
 // Navegador interno — the `WebContentsView`s of the panel (docs/design/navegador-interno.md).
@@ -409,6 +410,15 @@ export class BrowserPanels {
     if (this.sessionReady) return this.sessionReady;
     const ses = electronSession.fromPartition(BROWSER_PARTITION);
     ses.setUserAgent(cleanUserAgent(ses.getUserAgent()));
+    // Passkeys only by the owner's hand and the `window.chrome` Google's login checks (page-guard.ts). The preload
+    // exposes nothing to the page; without the file the pages just run as before.
+    try {
+      const guard = join(app.getPath('userData'), 'browser-page-guard.js');
+      writeFileSync(guard, PAGE_GUARD_PRELOAD);
+      ses.registerPreloadScript({ type: 'frame', filePath: guard });
+    } catch {
+      // userData not writable: no guard
+    }
     // A local page runs script: without this handler it could fetch any file of the disk. Serve only what was opened.
     ses.protocol.handle('file', (request) =>
       canServeLocalFile(request.url, this.openedLocalFiles)
