@@ -1240,7 +1240,7 @@ img.A-midia.ampliada {
   gap: 8px;
 }
 
-.pedido {
+.meu-pedido {
   padding: 10px 12px;
   border-radius: 10px;
   border: 1px solid var(--carta-borda);
@@ -1248,11 +1248,11 @@ img.A-midia.ampliada {
   background: var(--pre-fundo);
 }
 
-.pedido-na-fila { border-left-color: var(--aviso); }
-.pedido-entregue { border-left-color: var(--sim); }
-.pedido-tarefa { border-left-color: var(--ouro); }
+.meu-pedido-na-fila { border-left-color: var(--aviso); }
+.meu-pedido-entregue { border-left-color: var(--sim); }
+.meu-pedido-tarefa { border-left-color: var(--ouro); }
 
-.pedido-texto {
+.meu-pedido-texto {
   margin: 0 0 6px;
   font-size: 0.92rem;
   display: -webkit-box;
@@ -1262,7 +1262,7 @@ img.A-midia.ampliada {
   overflow-wrap: anywhere;
 }
 
-.pedido-pe {
+.meu-pedido-pe {
   display: flex;
   justify-content: space-between;
   gap: 8px;
@@ -1270,18 +1270,18 @@ img.A-midia.ampliada {
   color: var(--tinta-suave);
 }
 
-.pedido-estado {
+.meu-pedido-estado {
   font-weight: 600;
   color: var(--tinta);
 }
 
-.pedido-tarefa {
+.meu-pedido-nome-tarefa {
   margin: 4px 0 0;
   font-size: 0.85rem;
   font-family: var(--serifa);
 }
 
-.pedido-vazio {
+.meu-pedido-vazio {
   font-size: 0.9rem;
   color: var(--tinta-suave);
 }

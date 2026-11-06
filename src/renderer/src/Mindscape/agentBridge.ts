@@ -174,7 +174,9 @@ export class AgentBridge {
       if (outcome.kind !== 'nao-foi') return { placeId: message.placeId };
     }
     const leader = this.leaderTab();
-    if (leader) {
+    // A request with no card waits on the PC (its queue retries) while the Líder is still starting: sent to a CLI
+    // that never sent a hook, it can fail half-way, stay in the box and go in twice with the retry (e2e 06/11).
+    if (leader && (message.placeId || !this.ports.unconfirmed(leader.id))) {
       const outcome = await this.ports.deliverLine(leader.id, message.leaderText, DELIVERY_WAIT_MS);
       if (outcome.kind !== 'nao-foi') return 'lider';
     }

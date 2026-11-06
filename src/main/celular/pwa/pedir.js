@@ -134,15 +134,15 @@
   var ESTADOS_TAREFA = { aberta: 'aberta', 'em-execucao': 'em execução', entregue: 'entregue', aceita: 'aceita', rejeitada: 'rejeitada' };
 
   function linhaDoPedido(p) {
-    var li = el('li', 'pedido pedido-' + p.estado);
-    li.appendChild(el('p', 'pedido-texto', p.texto));
-    var pe = el('div', 'pedido-pe');
-    var selo = el('span', 'pedido-estado', ROTULOS[p.estado] || p.estado);
+    var li = el('li', 'meu-pedido meu-pedido-' + p.estado);
+    li.appendChild(el('p', 'meu-pedido-texto', p.texto));
+    var pe = el('div', 'meu-pedido-pe');
+    var selo = el('span', 'meu-pedido-estado', ROTULOS[p.estado] || p.estado);
     pe.appendChild(selo);
-    pe.appendChild(el('span', 'pedido-hora', (p.falado ? '🎙 ' : '') + haQuanto(p.criadoEm)));
+    pe.appendChild(el('span', 'meu-pedido-hora', (p.falado ? 'falado · ' : '') + haQuanto(p.criadoEm)));
     li.appendChild(pe);
     if (p.tarefa) {
-      var t = el('p', 'pedido-tarefa', '« ' + p.tarefa.titulo + ' »');
+      var t = el('p', 'meu-pedido-nome-tarefa', '« ' + p.tarefa.titulo + ' »');
       if (p.tarefa.estado) t.appendChild(el('span', null, ' · ' + (ESTADOS_TAREFA[p.tarefa.estado] || p.tarefa.estado)));
       li.appendChild(t);
     }
@@ -155,7 +155,7 @@
         lista.textContent = '';
         var itens = r.ok && Array.isArray(r.dados.itens) ? r.dados.itens : [];
         if (itens.length === 0) {
-          lista.appendChild(el('li', 'pedido-vazio', 'Nenhum pedido ainda.'));
+          lista.appendChild(el('li', 'meu-pedido-vazio', 'Nenhum pedido ainda.'));
           return;
         }
         itens.forEach(function (p) { lista.appendChild(linhaDoPedido(p)); });
@@ -184,6 +184,7 @@
         pedidoId = null;
         audioId = null;
         guardarRascunho();
+        mostrarVoz('');
         avisar(r.dados.pedido && r.dados.pedido.estado === 'na-fila' ? 'Guardado no PC: o Líder recebe quando abrir.' : 'Pedido enviado ao Líder.');
         carregarLista();
       })
