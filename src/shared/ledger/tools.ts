@@ -37,6 +37,8 @@ export type LedgerToolCall =
       readonly risco: LedgerRisk;
       readonly quadro?: string;
       readonly titulo?: string;
+      /** Pedir pelo Oráculo: o pedido do dono de onde a tarefa nasceu (`pd-…`). */
+      readonly pedidoDoDono?: string;
     }
   | { readonly tool: 'tarefa_assumir'; readonly id: string }
   | { readonly tool: 'tarefa_entregar'; readonly id: string; readonly provas: readonly ProofInput[]; readonly nota?: string; readonly paraODono?: LedgerForOwner }
@@ -70,6 +72,7 @@ export const LEDGER_TOOLS = [
         dono: { type: 'string', description: 'Id do lugar que faz o trabalho (sessao_listar); padrão: o seu.' },
         risco: { type: 'string', enum: ['baixo', 'alto'] },
         quadro: BOARD,
+        pedidoDoDono: { type: 'string', description: 'Quando a tarefa nasce de um "◆ Pedido do dono pelo Oráculo", o id que veio nele (pd-…): o dono vê no celular que o pedido virou esta tarefa.' },
       },
       required: ['pedido', 'criterio', 'prazo', 'risco'],
       additionalProperties: false,
@@ -348,9 +351,11 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       const titulo = text(args.titulo, 'titulo', MAX_TITLE_CHARS, false);
       for (const value of [pedido, criterio, prazo, dono, titulo]) if (typeof value === 'object') return fail(value.error);
       if (args.risco !== 'baixo' && args.risco !== 'alto') return fail('"risco" tem de ser baixo ou alto.');
+      if (args.pedidoDoDono !== undefined && (typeof args.pedidoDoDono !== 'string' || !/^pd-[0-9a-f]{12}$/.test(args.pedidoDoDono))) return fail('"pedidoDoDono" é o id que veio no pedido do dono (pd-…).');
+      const fromOwner = typeof args.pedidoDoDono === 'string' ? { pedidoDoDono: args.pedidoDoDono } : {};
       return {
         ok: true,
-        call: { tool: 'tarefa_criar', pedido: pedido as string, criterio: criterio as string, prazo: (prazo as string).trim(), ...(typeof dono === 'string' && dono.trim() ? { dono: dono.trim() } : {}), risco: args.risco, ...quadro, ...(typeof titulo === 'string' && titulo.trim() ? { titulo: titulo.trim() } : {}) },
+        call: { tool: 'tarefa_criar', pedido: pedido as string, criterio: criterio as string, prazo: (prazo as string).trim(), ...(typeof dono === 'string' && dono.trim() ? { dono: dono.trim() } : {}), risco: args.risco, ...quadro, ...(typeof titulo === 'string' && titulo.trim() ? { titulo: titulo.trim() } : {}), ...fromOwner },
       };
     }
     case 'tarefa_assumir':

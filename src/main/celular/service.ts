@@ -1,6 +1,7 @@
 // Ledger no celular — liga as peças: o arquivo `celular.json` (ligado + celulares pareados), o servidor
 // na Tailscale e os canais das Preferências. Desligado por padrão; o dono liga em Preferências → Celular.
 
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import type { IpcMain } from 'electron';
@@ -22,6 +23,8 @@ import { createLedgerMobilePort, type MobileLedgerPort, type PlaceNameOf } from 
 import { qrSvg } from './qr';
 import { createMobileHandler, MOBILE_PORT, startMobileServer, type MobileServer } from './server';
 import { pickTailscaleAddress } from './tailscale';
+import { cleanPedidoText, createPedidoRouter, createPedidosStore, pedidoCelular, type MobilePedidosPort, type PedidoTarefa } from './pedidos';
+import { createTranscriptionJobs, DEFAULT_WHISPER_URL, whisperServerTranscriber } from './transcrever';
 import { createPushStore, isPushSubscription, newlyWaiting, pushMessageFor, sendPush, type PushFetch } from './webpush';
 import type { LedgerDoc } from '../../shared/ledger/contract';
 
@@ -40,11 +43,18 @@ export interface CelularServiceDeps {
   readonly cardWriter?: () => CardWriter | null;
   /** Aviso no celular: o POST ao serviço de push (padrão: `fetch` do Node). */
   readonly pushFetch?: PushFetch;
+  /**
+   * Pedir pelo Oráculo — entrega um texto no chat do Líder único (o motor do `sessao_enviar`); `true` = entrou.
+   * Nasce com a ponte do quadro (`null` antes): até lá, o pedido espera na fila.
+   */
+  readonly deliverToLeader?: () => ((text: string) => Promise<boolean>) | null;
 }
 
 export interface CelularService {
   /** O Oráculo mudou: avisa os celulares inscritos de cada carta que passou a esperar o dono. */
   ledgerChanged(doc: LedgerDoc): void;
+  /** O Líder criou uma tarefa a partir de um pedido do dono (`pedidoDoDono` do `tarefa_criar`). */
+  linkPedido(pedidoId: string, tarefa: PedidoTarefa): boolean;
   dispose(): Promise<void>;
 }
 
@@ -53,6 +63,47 @@ export function createCelularService(deps: CelularServiceDeps): CelularService {
   const ledger: MobileLedgerPort = createLedgerMobilePort(deps.ledger, deps.placeName, deps.cardWriter);
   const push = createPushStore(join(deps.userDataDir, 'celular-push.json'), deps.io);
   const pushFetch: PushFetch = deps.pushFetch ?? ((url, init) => fetch(url, init));
+  // Pedir pelo Oráculo: a fila no disco, o áudio numa pasta, a transcrição pelo whisper.cpp local do OpenWhispr.
+  const audioDir = join(deps.userDataDir, 'pedidos-audio');
+  const pedidosStore = createPedidosStore({ filePath: join(deps.userDataDir, 'pedidos-do-dono.json'), io: deps.io });
+  const audioJobs = createTranscriptionJobs({
+    dir: audioDir,
+    writeFile: (path, bytes) => {
+      mkdirSync(audioDir, { recursive: true });
+      writeFileSync(path, bytes);
+    },
+    exists: existsSync,
+    transcribe: whisperServerTranscriber({ url: process.env.DONEL_WHISPER_URL || DEFAULT_WHISPER_URL }),
+  });
+  const router = createPedidoRouter({
+    store: pedidosStore,
+    deliver: (text) => deps.deliverToLeader?.()?.(text) ?? Promise.resolve(false),
+    audioPath: (file) => join(audioDir, file),
+  });
+  const taskState = (taskId: string): string | undefined => {
+    try {
+      return deps.ledger()?.load().doc.tasks[taskId]?.state;
+    } catch {
+      return undefined;
+    }
+  };
+  const pedidos: MobilePedidosPort = {
+    listar: () => pedidosStore.list(20).map((pedido) => pedidoCelular(pedido, taskState)),
+    criar(input) {
+      const texto = cleanPedidoText(input.texto);
+      if (!texto) return { ok: false, mensagem: 'O pedido está vazio.' };
+      if (input.audioId && !audioJobs.has(input.audioId)) return { ok: false, mensagem: 'O áudio deste pedido não está no PC.' };
+      try {
+        const pedido = router.submit({ requestId: input.pedidoId, texto, ...(input.audioId ? { audio: `${input.audioId}.wav` } : {}) });
+        return { ok: true, pedido: pedidoCelular(pedido, taskState) };
+      } catch (error) {
+        console.error('[donel-dev] pedidos: não gravou:', error);
+        return { ok: false, mensagem: 'O PC não conseguiu guardar o pedido. Tente de novo.' };
+      }
+    },
+    transcrever: (wav) => audioJobs.start(wav),
+    transcricao: (audioId) => audioJobs.status(audioId),
+  };
   const handler = createMobileHandler({
     auth,
     ledger: () => ledger,
@@ -66,6 +117,7 @@ export function createCelularService(deps: CelularServiceDeps): CelularService {
         return true;
       },
     },
+    pedidos,
   });
   // O que já esperava o dono quando o app abriu não avisa de novo; só o que passar a esperar daqui em diante.
   let waiting = new Map<string, number>();
@@ -75,6 +127,8 @@ export function createCelularService(deps: CelularServiceDeps): CelularService {
   } catch {
     // ledger ilegível: a primeira mudança avisa o que estiver na fila
   }
+  // Outra porta só para uma instância de teste ao lado do app aberto (as duas não dividem a 47815).
+  const port = Number(process.env.DONEL_CELULAR_PORT) || MOBILE_PORT;
   let server: MobileServer | null = null;
   let status: CelularState['status'] = 'off';
   let error: string | null = null;
@@ -113,14 +167,14 @@ export function createCelularService(deps: CelularServiceDeps): CelularService {
       if (server && server.url.includes(`//${host}:`)) return; // já no ar no endereço certo
       await stop();
       try {
-        server = await startMobileServer({ host, port: MOBILE_PORT, handler });
+        server = await startMobileServer({ host, port, handler });
         status = 'listening';
         error = null;
       } catch (cause) {
         server = null;
         status = 'error';
         const code = (cause as NodeJS.ErrnoException | undefined)?.code;
-        error = code === 'EADDRINUSE' ? `A porta ${MOBILE_PORT} já está em uso neste PC.` : 'O servidor do celular não subiu.';
+        error = code === 'EADDRINUSE' ? `A porta ${port} já está em uso neste PC.` : 'O servidor do celular não subiu.';
         console.error('[donel-dev] celular: servidor não subiu:', cause);
       }
     });
@@ -204,8 +258,10 @@ export function createCelularService(deps: CelularServiceDeps): CelularService {
         }
       }
     },
+    linkPedido: (pedidoId, tarefa) => pedidosStore.linkTask(pedidoId, tarefa),
     dispose: async () => {
       clearInterval(timer);
+      router.dispose();
       transition = transition.then(stop);
       await transition;
     },

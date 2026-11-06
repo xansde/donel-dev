@@ -1370,6 +1370,201 @@ textarea:focus-visible {
   }
 }
 
+/* ---- Pedir: pedido solto ao Líder (pedir.js). Só o topo e a folha própria; nada da carta. ---- */
+
+.topo .marca {
+  flex: 1;
+  min-width: 0;
+}
+
+.topo .marca > div {
+  min-width: 0;
+}
+
+.topo h1 {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.botao-pedir {
+  flex: none;
+  height: 44px;
+  padding: 0 16px 0 12px;
+  border-radius: 22px;
+  border: 2px solid var(--ouro);
+  background: var(--ouro);
+  color: var(--carta);
+  font: 700 0.95rem var(--sem-serifa);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  box-shadow: 0 2px 8px rgba(60, 40, 10, 0.18);
+}
+
+.botao-pedir svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 2;
+}
+
+.pedir-fundo .pedir {
+  max-height: calc(100% - env(safe-area-inset-top) - 24px);
+  overflow-y: auto;
+  border-top-color: var(--ouro);
+}
+
+.pedir-topo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pedir textarea {
+  min-height: 150px;
+  font-size: 1.05rem;
+  line-height: 1.4;
+}
+
+.pedir-linha {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.botao-microfone {
+  min-height: 52px;
+  padding: 0 20px 0 16px;
+  border-radius: 26px;
+  border: 2px solid var(--tinta-suave);
+  background: var(--pre-fundo);
+  color: var(--tinta);
+  font: 600 1rem var(--sem-serifa);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.botao-microfone svg {
+  width: 22px;
+  height: 22px;
+  stroke-width: 2;
+}
+
+.botao-microfone.gravando {
+  border-color: var(--nao);
+  background: var(--nao);
+  color: var(--carta);
+}
+
+.botao-microfone:disabled {
+  opacity: 0.5;
+}
+
+.pedir-contador {
+  font-size: 0.8rem;
+  color: var(--tinta-suave);
+  font-variant-numeric: tabular-nums;
+}
+
+.pedir-voz {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--pre-fundo);
+  font-size: 0.9rem;
+}
+
+.pedir-voz.gravando { color: var(--nao); font-weight: 600; }
+.pedir-voz.ocupado { color: var(--tinta-suave); }
+.pedir-voz.pronto { color: var(--sim); }
+.pedir-voz.erro { color: var(--nao); }
+
+.botao-pedir-enviar {
+  color: var(--ouro);
+}
+
+.pedir-subtitulo {
+  margin: 8px 0 0;
+  font-family: var(--serifa);
+  font-size: 1rem;
+  color: var(--tinta-suave);
+}
+
+.pedir-lista {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.meu-pedido {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--carta-borda);
+  border-left: 4px solid var(--tinta-suave);
+  background: var(--pre-fundo);
+}
+
+.meu-pedido-na-fila { border-left-color: var(--aviso); }
+.meu-pedido-entregue { border-left-color: var(--sim); }
+.meu-pedido-tarefa { border-left-color: var(--ouro); }
+
+.meu-pedido-texto {
+  margin: 0 0 6px;
+  font-size: 0.92rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.meu-pedido-pe {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.8rem;
+  color: var(--tinta-suave);
+}
+
+.meu-pedido-estado {
+  font-weight: 600;
+  color: var(--tinta);
+}
+
+.meu-pedido-nome-tarefa {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  font-family: var(--serifa);
+}
+
+.meu-pedido-vazio {
+  font-size: 0.9rem;
+  color: var(--tinta-suave);
+}
+
+@media (min-width: 720px) {
+  .pedir-fundo {
+    align-items: center;
+    justify-content: center;
+  }
+
+  .pedir-fundo .pedir {
+    width: 560px;
+    max-height: 86vh;
+    border-radius: 18px;
+    border-top-width: 4px;
+  }
+}
+
 /* ---- prova em tela cheia (zoom.js): fora da carta, por cima de tudo ---- */
 
 img.ampliavel {
