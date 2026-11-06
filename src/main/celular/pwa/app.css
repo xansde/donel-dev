@@ -1045,6 +1045,40 @@ textarea:focus-visible {
   margin: 0 0 2px;
 }
 
+/* o recibo que acabou de chegar: a confirmação de que saiu */
+.A-enviado.novo {
+  outline: 2px solid var(--sim);
+  outline-offset: 1px;
+}
+
+/* não saiu: o motivo fica na carta, ao lado do texto guardado, até ele tentar de novo */
+.A-falhou {
+  border-left: 3px solid var(--nao);
+  border-radius: 6px;
+  background: var(--pre-fundo);
+  padding: 6px 10px;
+  font-size: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.A-falhou[hidden],
+.A-estado[hidden] {
+  display: none;
+}
+
+.A-falhou b {
+  color: var(--nao);
+}
+
+.A-falhou span,
+.A-estado {
+  color: var(--tinta-suave);
+  font-size: 0.85rem;
+  margin: 0;
+}
+
 .A-enviado small,
 .fala small {
   color: var(--tinta-suave);
