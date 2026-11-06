@@ -580,7 +580,8 @@ describe('writeAppConfig (escrita atômica — fs mockado, DoD explícito da tas
     expect(JSON.parse(written[tmpPath])).toEqual(expectedRaw);
   });
 
-  it('cria o diretório pai quando ele não existe', () => {
+  // Caminho do Windows (o app roda no PC): o `dirname` do Linux não o entende.
+  it.skipIf(process.platform !== 'win32')('cria o diretório pai quando ele não existe', () => {
     const { io, calls } = makeMockIo({ existsSync: vi.fn(() => false) });
     writeAppConfig('C:\\fake\\nested\\config.json', baseDefaults(), io, null);
 
