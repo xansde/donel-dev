@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-06',
     items: [
       {
+        title: 'O aviso "◆ … terminou" chega inteiro',
+        text: 'Quando uma sessão termina o turno, o aviso que entra no chat de quem a abriu ou lhe mandou trabalho agora traz o que ela escreveu inteiro, com as quebras de linha e as listas, e não mais as primeiras linhas emendadas numa só e cortadas em "…". Só uma resposta muito longa é cortada, e o próprio aviso diz quanto ficou de fora e que o resto está na tela da sessão.',
+      },
+      {
         title: 'Escrever na carta: "Mandar à sessão" mostra o que aconteceu',
         text: 'O botão embaixo da caixa "✎ Escrever para…" agora se chama "Mandar à sessão", para não se confundir com o "Enviar" das cartas de Slack, que publica a mensagem. Ao mandar, o que você escreveu fica na frente da carta com para onde foi: para a sessão, para o Líder (se ela estava fechada) ou, se os dois estavam fechados, um aviso em vermelho de que ficou guardado na carta. Se não sair, a carta diz o motivo, o texto continua na caixa e o botão vira "Tentar de novo", que nunca manda duas vezes.',
       },

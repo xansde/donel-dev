@@ -34,8 +34,20 @@ import type { SendFrom } from '../chat/sendDriver';
 const START_GRACE_MS = 90_000;
 /** `sessao_enviar` answers once the message went in, was queued, or failed; past this it says "ainda não entrou". */
 const DELIVERY_WAIT_MS = 40_000;
-/** The end-of-turn notice carries at most this much of the summary. */
-const NOTICE_CHARS = 600;
+/**
+ * The end-of-turn notice carries the whole last turn up to this ceiling (06/11: at 600, squashed into one line, the
+ * Líder acted on half of it). Past it, the cut is said in the notice, never a silent "…".
+ */
+export const NOTICE_CHARS = 8_000;
+
+/** The body of the end-of-turn notice: the turn as written (lines and lists kept), cut only past `NOTICE_CHARS`, and then out loud. */
+export function noticeBody(text: string): string {
+  const body = text.replace(/\r\n?/g, '\n').replace(/[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n').trim();
+  const chars = Array.from(body);
+  if (chars.length <= NOTICE_CHARS) return body;
+  const kept = chars.slice(0, NOTICE_CHARS).join('').trimEnd();
+  return `${kept}\n[cortado: ${Array.from(kept).length} de ${chars.length} letras; o resto em sessao_ver_tela]`;
+}
 /** `sessao_fechar` waits at most this long for the destination's turn to end, then closes anyway. */
 export const CLOSE_WAIT_MS = 20_000;
 const CLOSE_POLL_MS = 500;
@@ -350,9 +362,7 @@ export class AgentBridge {
     const guard = this.lastNoticeFrom.get(ended.id);
     this.lastNoticeFrom.delete(ended.id);
     const role = this.roleName(place.roleId);
-    const summary = text.trim().replace(/\s+/g, ' ');
-    const cut = summary.length > NOTICE_CHARS ? `${summary.slice(0, NOTICE_CHARS)}…` : summary;
-    const line = `◆ ${role ? `${role} ` : ''}${ended.name} (${place.id}) terminou: ${cut || '(sem resumo)'}`;
+    const line = `◆ ${role ? `${role} ` : ''}${ended.name} (${place.id}) terminou: ${noticeBody(text) || '(sem resumo)'}`;
     const boardName = ended.projectName ?? lastSegment(ended.cwd);
     for (const listenerPlace of listeners) {
       if (listenerPlace === place.id || listenerPlace === guard) continue;
