@@ -181,6 +181,9 @@ export function buildSessionHooksSettings(input: SessionHooksSettingsInput): Ses
 
 export const SLACK_OFFLINE_GUARD_MATCHER = 'Bash|mcp__.*';
 
+/** A line of the offline guard script that says this app checks a letter with a file (`SlackLetter.file`). */
+export const SLACK_GUARD_FILE_LETTER_MARK = 'carta-com-arquivo: esta trava confere carta com arquivo';
+
 /** ERE over the hook payload (tool name + input), case-insensitive: anything that may post to Slack. */
 export const SLACK_OFFLINE_PATTERN =
   'mcp__[^"]*slack[^"]*__[^"]*(send|post|repl|schedul|updat|edit|upload|file|share|enviar|mandar|postar|publicar|respond|agendar|editar|atualizar|subir|compartilh|anexar)|slack_[a-z_]*(send|post|repl|schedul|updat|edit|upload|file|share|enviar|mandar|postar|publicar|respond|agendar|editar|atualizar|subir|compartilh|anexar)|chat[._](postMessage|post_message|update|scheduleMessage|postEphemeral|meMessage)|files[._](upload|completeUpload|complete_upload|share)|slack\\.com/api/|hooks\\.slack\\.com|canal-produto';
@@ -194,6 +197,8 @@ export function buildSlackOfflineGuardScript(input: { readonly port: number; rea
   return [
     '#!/bin/sh',
     '# Donel Dev — Slack só com carta: com o app fora do ar, envio ao Slack é recusado (falha fechada).',
+    // Read by the Theo West MCP (VPS): only an app that checks a letter with a file offers the file upload.
+    `# ${SLACK_GUARD_FILE_LETTER_MARK}`,
     'payload=$(cat)',
     `if curl -s -f --noproxy 127.0.0.1 --connect-timeout 2 --max-time 4 -o /dev/null -X POST -H "X-Donel-Token: ${input.token}" ${bridgeUrl(input.port, 'Ping')} 2>/dev/null; then`,
     '  exit 0',

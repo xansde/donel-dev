@@ -10,6 +10,8 @@ import {
   MAX_PROOFS,
   MAX_PROOF_TEXT_CHARS,
   MAX_REQUEST_CHARS,
+  MAX_SLACK_FILE_NAME_CHARS,
+  MAX_SLACK_FILE_PATH_CHARS,
   MAX_SLACK_TEXT_CHARS,
   MAX_TITLE_CHARS,
   MIN_OPTIONS,
@@ -48,7 +50,18 @@ export type LedgerToolCall =
   | { readonly tool: 'tarefa_ver'; readonly id: string }
   | { readonly tool: 'tarefa_transferir'; readonly id: string; readonly para: string; readonly motivo: string }
   | { readonly tool: 'tarefa_cancelar'; readonly id: string; readonly motivo: string }
-  | { readonly tool: 'carta_slack'; readonly destino: string; readonly destinoNome?: string; readonly thread?: string; readonly texto: string; readonly motivo: string };
+  | {
+      readonly tool: 'carta_slack';
+      readonly destino: string;
+      readonly destinoNome?: string;
+      readonly thread?: string;
+      /** The message, or (with `arquivo`) the file's comment. */
+      readonly texto: string;
+      readonly motivo: string;
+      /** An upload: the local path and the name in Slack. */
+      readonly arquivo?: string;
+      readonly arquivoNome?: string;
+    };
 
 export type LedgerToolName = LedgerToolCall['tool'];
 
@@ -256,7 +269,7 @@ export const LEDGER_TOOLS = [
     name: 'carta_slack',
     title: 'Pedir ao dono para mandar mensagem no Slack',
     description:
-      'Toda mensagem ao Slack em nome do dono (canal, pessoa ou thread; por MCP do Slack, Composio, curl ou script) precisa ANTES desta carta aceita pelo dono: sem ela o Donel Dev bloqueia o envio. A carta leva o destino, a thread, o texto EXATO e o motivo, e espera o dono no Oráculo Harrow (desktop e celular). Aceita: envie o mesmo texto ao mesmo destino e thread, uma vez só. Rejeitada: não envie; o motivo diz o ajuste; crie outra carta. Veja a decisão com tarefa_ver.',
+      'Toda mensagem ao Slack em nome do dono (canal, pessoa ou thread; por MCP do Slack, Composio, curl ou script) precisa ANTES desta carta aceita pelo dono: sem ela o Donel Dev bloqueia o envio. A carta leva o destino, a thread, o texto EXATO e o motivo, e espera o dono no Oráculo Harrow (desktop e celular). Aceita: envie o mesmo texto ao mesmo destino e thread, uma vez só. Rejeitada: não envie; o motivo diz o ajuste; crie outra carta. Veja a decisão com tarefa_ver. Para mandar um ARQUIVO, a carta leva também "arquivo" (o caminho local, exatamente como vai na ferramenta de upload do MCP do Slack) e o texto é o comentário do arquivo; aceita, libera um upload só desse arquivo.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -265,6 +278,8 @@ export const LEDGER_TOOLS = [
         thread: { type: 'string', description: 'O thread_ts, quando a mensagem é resposta numa thread.' },
         texto: { type: 'string', description: 'A mensagem exata, caractere por caractere, como vai ser enviada.' },
         motivo: { type: 'string', description: 'Por que a mensagem vai, em uma frase para o dono.' },
+        arquivo: { type: 'string', description: 'Só para mandar arquivo: o caminho local, EXATAMENTE como vai no campo de caminho da ferramenta de upload. Com ele, "texto" é o comentário do arquivo.' },
+        arquivoNome: { type: 'string', description: 'Só com "arquivo": o nome que aparece no Slack, se for outro que não o fim do caminho. Opcional.' },
       },
       required: ['destino', 'texto', 'motivo'],
       additionalProperties: false,
@@ -451,7 +466,11 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       const thread = text(args.thread, 'thread', 120, false);
       const texto = text(args.texto, 'texto', MAX_SLACK_TEXT_CHARS, true);
       const motivo = text(args.motivo, 'motivo', MAX_REQUEST_CHARS, true);
-      for (const value of [destino, destinoNome, thread, texto, motivo]) if (typeof value === 'object') return fail(value.error);
+      const arquivo = text(args.arquivo, 'arquivo', MAX_SLACK_FILE_PATH_CHARS, false);
+      const arquivoNome = text(args.arquivoNome, 'arquivoNome', MAX_SLACK_FILE_NAME_CHARS, false);
+      for (const value of [destino, destinoNome, thread, texto, motivo, arquivo, arquivoNome]) if (typeof value === 'object') return fail(value.error);
+      const caminho = typeof arquivo === 'string' ? arquivo.trim() : '';
+      if (!caminho && typeof arquivoNome === 'string' && arquivoNome.trim()) return fail('"arquivoNome" só vai junto com "arquivo" (o caminho).');
       return {
         ok: true,
         call: {
@@ -461,6 +480,7 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
           ...(typeof thread === 'string' && thread.trim() ? { thread: thread.trim() } : {}),
           texto: texto as string,
           motivo: (motivo as string).trim(),
+          ...(caminho ? { arquivo: caminho, ...(typeof arquivoNome === 'string' && arquivoNome.trim() ? { arquivoNome: arquivoNome.trim() } : {}) } : {}),
         },
       };
     }

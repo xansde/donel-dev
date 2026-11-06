@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-06',
     items: [
       {
+        title: 'Carta de Slack que leva um arquivo',
+        text: 'Uma sessão que precisa mandar um arquivo no Slack, como um print ou um PDF, agora pede numa carta, como já pedia para mensagem. A carta diz "Posso mandar este arquivo no Slack em seu nome?" e mostra o nome do arquivo, onde ele está e o comentário que vai junto. O arquivo só sai depois que você aceita, uma vez, para aquele canal ou thread. A carta confere o nome e o lugar do arquivo, não o que tem dentro: veja o arquivo antes de aceitar. Numa versão anterior do Donel aberta no mesmo computador, essa carta não aparece como carta de Slack e não libera nada.',
+      },
+      {
         title: 'Slack com nome em português também pede carta',
         text: 'Uma ferramenta de Slack com nome em português, como "enviar mensagem" ou "enviar arquivo", passava sem carta, porque a trava só conhecia os nomes em inglês. Agora a mensagem só sai com carta aceita, e o arquivo é barrado como qualquer outro, também com o app fechado. Ler e baixar arquivo continuam livres.',
       },
