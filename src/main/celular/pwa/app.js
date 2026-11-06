@@ -247,11 +247,11 @@
     } else if (prova.tipo === 'imagem') {
       var img = el('img');
       img.alt = prova.rotulo;
-      img.addEventListener('click', function () { img.classList.toggle('ampliada'); });
+      ampliarAoTocar(img, prova.rotulo);
       bloco.appendChild(img);
       baixar(caminho).then(function (url) { if (url) img.src = url; });
     } else if (prova.tipo === 'prototipo') {
-      bloco.appendChild(prototipo(item, prova));
+      bloco.appendChild(prototipoComBotao(item, prova));
     } else if (prova.tipo === 'video') {
       var botao = el('button', 'prova-carregar', 'Ver o vídeo');
       botao.type = 'button';
@@ -270,6 +270,17 @@
       bloco.appendChild(botao);
     }
     return bloco;
+  }
+
+  /** Tocar no print abre a tela cheia com zoom (zoom.js), fora da carta. */
+  function ampliarAoTocar(img, rotulo) {
+    img.classList.add('ampliavel');
+    img.title = 'Toque para ampliar';
+    img.addEventListener('click', function (e) {
+      if (!img.src || !window.DonelZoom) return;
+      e.stopPropagation();
+      window.DonelZoom.abrirImagem(img.src, rotulo);
+    });
   }
 
   function baixar(caminho) {
@@ -323,24 +334,37 @@
     frame.setAttribute('referrerpolicy', 'no-referrer');
     frame.title = 'Protótipo anexado à entrega';
     caixa.appendChild(frame);
-    var cheia = el('button', 'proto-cheia', '⤢ Tela cheia');
-    cheia.type = 'button';
-    cheia.addEventListener('click', function () {
-      var aberta = caixa.classList.toggle('cheia');
-      cheia.textContent = aberta ? '✕ Fechar' : '⤢ Tela cheia';
+    // Cada iframe pede o seu bilhete (é de uso único): a tela cheia abre um quadro novo, do tamanho da tela.
+    function enderecoNovo() {
+      return api('/api/prova-bilhete?item=' + encodeURIComponent(item.id) + '&prova=' + encodeURIComponent(prova.id))
+        .then(function (resposta) { return resposta.ok ? resposta.json() : null; })
+        .catch(function () { return null; })
+        .then(function (dados) { return dados && dados.bilhete ? '/api/prova-html?b=' + encodeURIComponent(dados.bilhete) : null; });
+    }
+    caixa.abrirCheia = function () {
+      if (window.DonelZoom) window.DonelZoom.abrirPrototipo(enderecoNovo, item.titulo);
+    };
+    enderecoNovo().then(function (url) {
+      if (url) frame.src = url;
+      else caixa.replaceChild(el('p', 'proto-falhou', 'Não consegui abrir o protótipo. Toque em atualizar.'), frame);
     });
-    caixa.appendChild(cheia);
-    api('/api/prova-bilhete?item=' + encodeURIComponent(item.id) + '&prova=' + encodeURIComponent(prova.id))
-      .then(function (resposta) { return resposta.ok ? resposta.json() : null; })
-      .catch(function () { return null; })
-      .then(function (dados) {
-        if (dados && dados.bilhete) frame.src = '/api/prova-html?b=' + encodeURIComponent(dados.bilhete);
-        else caixa.replaceChild(el('p', 'proto-falhou', 'Não consegui abrir o protótipo. Toque em atualizar.'), frame);
-      });
     return caixa;
   }
 
-  /** Print (amplia ao tocar), vídeo (toca dentro da carta) ou protótipo (roda dentro da carta). */
+  /** O protótipo do verso: o botão de tela cheia fica embaixo do quadro, nunca por cima dos controles dele. */
+  function prototipoComBotao(item, prova) {
+    var caixa = prototipo(item, prova);
+    var cheia = el('button', 'proto-cheia', '⤢ Tela cheia');
+    cheia.type = 'button';
+    cheia.addEventListener('click', caixa.abrirCheia);
+    caixa.appendChild(cheia);
+    return caixa;
+  }
+
+  /**
+   * Print (toque abre em tela cheia com zoom), vídeo (toca dentro da carta) ou protótipo (roda dentro da carta).
+   * O elemento leva `abrirCheia`: o "⤢ Tela cheia" do pé da carta abre a prova principal por ele.
+   */
   function midia(item, prova) {
     if (prova.tipo === 'prototipo') return prototipo(item, prova);
     var caminho = '/api/prova?item=' + encodeURIComponent(item.id) + '&prova=' + encodeURIComponent(prova.id);
@@ -349,12 +373,19 @@
       video.controls = true;
       video.setAttribute('playsinline', '');
       baixar(caminho).then(function (url) { if (url) video.src = url; });
+      video.abrirCheia = function () {
+        var pedir = video.requestFullscreen || video.webkitEnterFullscreen;
+        if (pedir) pedir.call(video);
+      };
       return video;
     }
     var img = el('img', 'A-midia');
     img.alt = prova.rotulo;
-    img.addEventListener('click', function () { img.classList.toggle('ampliada'); });
+    ampliarAoTocar(img, prova.rotulo);
     baixar(caminho).then(function (url) { if (url) img.src = url; });
+    img.abrirCheia = function () {
+      if (img.src && window.DonelZoom) window.DonelZoom.abrirImagem(img.src, prova.rotulo);
+    };
     return img;
   }
 
@@ -380,6 +411,8 @@
       caixa.appendChild(lista);
       return caixa;
     }
+    // Print, vídeo ou protótipo: a prova é o palco da carta (`abrirCheia` abre a principal em tela cheia).
+    caixa.className = 'vis vis-midia';
     if (visual.tipo === 'antes-depois') {
       var antes = provaPorId(item, visual.antes);
       var depois = provaPorId(item, visual.depois);
@@ -388,15 +421,19 @@
       [['Antes', antes], ['Depois', depois]].forEach(function (lado) {
         var col = el('div');
         col.appendChild(el('div', 'leg', lado[0]));
-        col.appendChild(midia(item, lado[1]));
+        var m = midia(item, lado[1]);
+        col.appendChild(m);
         par.appendChild(col);
+        caixa.abrirCheia = m.abrirCheia; // fica a do "depois"
       });
       caixa.appendChild(par);
       return caixa;
     }
     var prova = provaPorId(item, visual.prova);
     if (!prova || (prova.tipo !== 'imagem' && prova.tipo !== 'video' && prova.tipo !== 'prototipo')) return null;
-    caixa.appendChild(midia(item, prova));
+    var principal = midia(item, prova);
+    caixa.appendChild(principal);
+    caixa.abrirCheia = principal.abrirCheia;
     return caixa;
   }
 
@@ -426,15 +463,17 @@
     titulo.appendChild(el('div', 'A-nome', item.titulo));
     titulo.appendChild(el('h2', null, c.pergunta));
     frente.interna.appendChild(titulo);
-    var rolagem = el('div', 'A-rola');
     var visual = c.visual ? montarVisual(item, c.visual) : null;
-    if (visual) rolagem.appendChild(visual);
+    // Com print, vídeo ou protótipo, a prova é o palco: ocupa a carta, e o que decidir fica ao lado (tela larga)
+    // ou numa gaveta recolhida embaixo (celular), aberta pela barra de decisão. Sem eles, a frente rola como antes.
+    var palco = !!(visual && visual.classList.contains('vis-midia'));
+    var decide = el('div', 'A-decide');
     if (rec) {
       var faixa = el('p', 'A-rec');
       faixa.appendChild(document.createTextNode('Recomendo '));
       faixa.appendChild(el('b', null, rec.rotulo));
       faixa.appendChild(document.createTextNode(': ' + c.porque));
-      rolagem.appendChild(faixa);
+      decide.appendChild(faixa);
     }
     var opcoes = el('div', 'opcoes');
     c.opcoes.forEach(function (o) {
@@ -447,14 +486,60 @@
       ctx.botoes.push(b);
       opcoes.appendChild(b);
     });
-    rolagem.appendChild(opcoes);
-    rolagem.appendChild(montarEscrever(ctx));
-    frente.interna.appendChild(rolagem);
+    decide.appendChild(opcoes);
+    decide.appendChild(montarEscrever(ctx));
+    if (palco) decide.appendChild(el('p', 'A-risco', c.risco));
+    var corpoFrente;
+    if (palco) {
+      corpoFrente = el('div', 'A-palco');
+      corpoFrente.appendChild(visual);
+      var gaveta = el('div', 'A-gaveta');
+      var fecharGaveta = el('button', 'A-gaveta-fechar', '▾ Recolher');
+      fecharGaveta.type = 'button';
+      gaveta.appendChild(fecharGaveta);
+      gaveta.appendChild(decide);
+      corpoFrente.appendChild(gaveta);
+      var barra = el('div', 'A-barra');
+      if (rec) {
+        var atalho = el('button', 'opcao-atalho');
+        atalho.type = 'button';
+        atalho.appendChild(el('small', null, 'Recomendo'));
+        atalho.appendChild(el('b', null, rec.rotulo));
+        atalho.addEventListener('click', function () { escolher(ctx, rec, atalho); });
+        ctx.botoes.push(atalho);
+        barra.appendChild(atalho);
+      }
+      var caminhos = el('button', 'A-caminhos', c.opcoes.length + ' caminhos ▴');
+      caminhos.type = 'button';
+      caminhos.setAttribute('aria-expanded', 'false');
+      barra.appendChild(caminhos);
+      var alternarGaveta = function (aberta) {
+        corpoFrente.classList.toggle('aberta', aberta);
+        caminhos.setAttribute('aria-expanded', aberta ? 'true' : 'false');
+      };
+      caminhos.addEventListener('click', function () { alternarGaveta(!corpoFrente.classList.contains('aberta')); });
+      fecharGaveta.addEventListener('click', function () { alternarGaveta(false); });
+    } else {
+      corpoFrente = el('div', 'A-rola');
+      if (visual) corpoFrente.appendChild(visual);
+      corpoFrente.appendChild(decide);
+    }
+    frente.interna.appendChild(corpoFrente);
+    if (palco) {
+      frente.face.classList.add('com-palco');
+      frente.interna.appendChild(barra);
+    }
     var pe = el('footer', 'A-pe');
     var selo = el('span', 'A-selo ' + item.risco);
     selo.appendChild(el('i', null, 'risco ' + item.risco));
     selo.appendChild(el('span', null, c.risco));
     pe.appendChild(selo);
+    if (palco && visual.abrirCheia) {
+      var cheia = el('button', 'A-virar A-cheia', '⤢ Tela cheia');
+      cheia.type = 'button';
+      cheia.addEventListener('click', visual.abrirCheia);
+      pe.appendChild(cheia);
+    }
     var virar = el('button', 'A-virar', '↻ Virar');
     virar.type = 'button';
     pe.appendChild(virar);
@@ -713,7 +798,7 @@
     carta.addEventListener('pointerdown', function (e) {
       if (ctx.ocupado) return;
       if (e.pointerType === 'mouse' && e.button !== 0) return;
-      if (e.target.closest && e.target.closest('a, button, pre, video, img.ampliada')) return;
+      if (e.target.closest && e.target.closest('a, button, pre, video')) return;
       inicio = { x: e.clientX, y: e.clientY, id: e.pointerId };
       modo = null;
       dx = 0;
@@ -918,7 +1003,8 @@
 
   document.getElementById('atualizar').addEventListener('click', function () { carregar(); });
   document.addEventListener('visibilitychange', function () {
-    if (document.visibilityState === 'visible' && !folhaPendente) carregar();
+    // Com uma prova em tela cheia aberta, recarregar revogaria o print que está na tela.
+    if (document.visibilityState === 'visible' && !folhaPendente && !(window.DonelZoom && window.DonelZoom.aberto())) carregar();
   });
 
   parearPeloLink().then(carregar).then(prepararAvisos);
