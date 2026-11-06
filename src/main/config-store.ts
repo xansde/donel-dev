@@ -280,7 +280,7 @@ export function sanitizeAppUpdatePrefs(value: unknown): AppUpdatePrefs {
  * folders: anything else is dropped, never kept as authorized. The browser service checks each one again with
  * `refusedUploadFolder` before using it.
  */
-/** Slack só com carta — plain server names, once each; absent or broken = the default list (an empty list is kept). */
+/** Slack só com carta — plain server names, once each; absent or broken = the default (empty: every post needs a letter). */
 export function sanitizeSlackAgentBotPrefs(value: unknown): SlackAgentBotPrefs {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return { servers: [...AGENT_BOT_SERVERS] };
   const { servers } = value as Record<string, unknown>;

@@ -20,7 +20,7 @@
 //
 // The letter is for what goes out in the OWNER's name (owner, 06/11: "o envio de cartas era para eu validar as
 // mensagens, agora ele me tornou gargalo"). An agent's OWN bot (the Theo West MCP, its own bot token) does not speak
-// for the owner: a call to one of `AGENT_BOT_SERVERS` (or the list in the config) passes without a letter, upload
+// for the owner: a call to one of the servers listed in the config (`slackAgentBots.servers`, empty by default) passes without a letter, upload
 // included, and is recorded in the Oráculo as "enviado pelo bot do agente" for the owner to see later. The decision
 // is by WHO sends (the MCP server), never by the verb: Composio, the user-token `slack` MCP, curl and any upload by
 // the owner's account still need a letter, and an unknown server is still refused.
@@ -169,8 +169,12 @@ export function freeTextSlackPost(text: string): string | null {
 // ---------------------------------------------------------------------------------------------------------------
 // The agents' own bots
 
-/** MCP servers that post with an agent's OWN bot (not the owner's account): the Theo West, on the PC and on the VPS. */
-export const AGENT_BOT_SERVERS: readonly string[] = ['theo-west-slack', 'theo-slack'];
+/**
+ * MCP servers that post with an agent's OWN bot (not the owner's account). EMPTY on purpose: the names come only
+ * from the config (`slackAgentBots.servers`), never hardcoded (a Seazone integration is off by default). Empty =
+ * every Slack post needs a letter.
+ */
+export const AGENT_BOT_SERVERS: readonly string[] = [];
 
 /** A server name the guards accept in the list: plain, so it goes as is into the offline `grep` too. */
 export function isAgentBotServerName(name: string): boolean {

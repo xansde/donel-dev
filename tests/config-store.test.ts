@@ -79,7 +79,7 @@ describe('defaultAppConfig (puro)', () => {
       layout: { oracleCenter: true, centerView: 'oracle' },
       appUpdate: { installersDir: null },
       browserUploads: { folders: [] },
-      slackAgentBots: { servers: ['theo-west-slack', 'theo-slack'] },
+      slackAgentBots: { servers: [] },
       unknownFields: {},
     });
   });
@@ -356,7 +356,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       layout: { oracleCenter: true, centerView: 'terminals' },
       appUpdate: { installersDir: null },
       browserUploads: { folders: [] },
-      slackAgentBots: { servers: ['theo-west-slack', 'theo-slack'] },
+      slackAgentBots: { servers: [] },
       unknownFields: {}, // nenhuma chave desconhecida no objeto de entrada
     });
   });
