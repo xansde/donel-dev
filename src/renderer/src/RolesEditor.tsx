@@ -3,7 +3,7 @@ import type { SelectOption } from '@donel-dev/design-system';
 import { useEffect, useState, type CSSProperties } from 'react';
 import type { ProviderSummaryDto } from '../../shared';
 import type { EffortLevel, ModelAlias, PermissionMode } from '../../shared/commandBuilder';
-import { MAX_ROLE_GUIDANCE_CHARS, MAX_ROLE_NAME_CHARS, ROLE_COLORS, roleColorVar, roleIdFromName, type RoleColor, type SessionRole } from '../../shared/roles';
+import { MAX_ROLE_GUIDANCE_CHARS, MAX_ROLE_NAME_CHARS, ROLE_COLORS, roleColorVar, roleIdFromName, type RoleColor, type RoleScope, type SessionRole } from '../../shared/roles';
 import styles from './RolesEditor.module.css';
 
 // Item 12b — the simple screen to create and edit roles: the text (guidance) and the suggestions.
@@ -33,6 +33,8 @@ interface Draft {
   readonly model: string;
   readonly effort: string;
   readonly permissionMode: string;
+  /** Not edited on this screen (it lives in the file's header); carried so a save keeps it. */
+  readonly scope: RoleScope | undefined;
   readonly guidance: string;
 }
 
@@ -45,6 +47,7 @@ function draftOf(role: SessionRole | undefined): Draft {
     model: role?.model ?? NONE,
     effort: role?.effort ?? NONE,
     permissionMode: role?.permissionMode ?? NONE,
+    scope: role?.scope,
     guidance: role?.guidance ?? '',
   };
 }
@@ -86,6 +89,7 @@ export function RolesEditor({ open, roles, providers, onClose, onSaved }: RolesE
       ...(draft.model ? { model: draft.model as ModelAlias } : {}),
       ...(draft.effort ? { effort: draft.effort as EffortLevel } : {}),
       ...(draft.permissionMode ? { permissionMode: draft.permissionMode as PermissionMode } : {}),
+      ...(draft.scope ? { scope: draft.scope } : {}),
       guidance: draft.guidance,
     };
     setSaving(true);

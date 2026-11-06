@@ -26,7 +26,7 @@ import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type Ledge
 import { isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, type LedgerProof } from '../shared/ledger/contract';
 import type { LedgerToolCall } from '../shared/ledger/tools';
 import type { BoardBridge } from './board-bridge';
-import type { BrowserToolOutcome } from '../shared/browser/mcp';
+import { MCP_SERVER_NAME, type BrowserToolOutcome } from '../shared/browser/mcp';
 // Sessão renovada em voo (B36).
 import { createSessionRenewalService, type SessionRenewalService } from './session-renewal';
 import { sanitizeTeamPrefs } from '../shared/teamPrefs';
@@ -203,7 +203,18 @@ import {
   statusLineBridgeMode,
   writeHooksSettingsFile,
   writeSessionHooksSettings,
+  writeSessionScopeOnlySettings,
 } from './hooks-settings';
+import { readClaudeInventory } from './role-scope-inventory';
+import {
+  buildRemoteInventoryScript,
+  buildRoleScopeSettings,
+  EMPTY_INVENTORY,
+  parseRemoteInventoryOutput,
+  roleScopeNeedsInventory,
+  type ClaudeInventory,
+  type RoleScopeSettings,
+} from '../shared/role-scope';
 import { createHookBridge, type BridgeEvent, type HookBridge } from './hook-bridge';
 import {
   buildAttachSshArgs,
@@ -622,6 +633,27 @@ function isTabYolo(ptyId: string): boolean {
   const { projects } = appConfig.yolo;
   return cwd !== undefined && projects.length > 0 && projectOfFolders(tabFoldersOf(cwd), projects) !== null;
 }
+/** The CLI's config dir when the session gets none of its own (the app's own env, else `~/.claude`). */
+function defaultClaudeConfigDir(): string {
+  return process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
+}
+
+/**
+ * Escopo do papel (dono, 05/11) — the `--settings` keys that keep only what the role declares. No role, no scope,
+ * or a role that cannot be read → `null` (everything, as before). The inventory is read only when the scope turns
+ * plugins or skills off.
+ */
+function roleScopeSettingsFor(roleId: string | undefined, readInventory: () => ClaudeInventory): RoleScopeSettings | null {
+  const scope = roleId ? rolesStore?.get(roleId)?.scope : undefined;
+  if (!scope) return null;
+  try {
+    return buildRoleScopeSettings(scope, roleScopeNeedsInventory(scope) ? readInventory() : EMPTY_INVENTORY, MCP_SERVER_NAME);
+  } catch (error) {
+    console.error('[donel-dev] escopo do papel não montou — sessão com tudo:', error);
+    return null;
+  }
+}
+
 /**
  * Sessão renovada em voo (B36) — the handoffs live in `<userData>/handoffs/`, never in the
  * project. Born at boot (needs `app.getPath`); `null` before it.
@@ -1649,6 +1681,15 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     }
   }
 
+  // Escopo do papel — the same as a local session, with the remote place's own plugins and skills.
+  const scope = roleId ? rolesStore?.get(roleId)?.scope : undefined;
+  let remoteInventory: ClaudeInventory = EMPTY_INVENTORY;
+  if (roleScopeNeedsInventory(scope)) {
+    const listed = await runRemoteScript(place.sshTarget, buildRemoteInventoryScript(), 20_000);
+    remoteInventory = parseRemoteInventoryOutput(listed.stdout) ?? EMPTY_INVENTORY;
+  }
+  const roleScope = roleScopeSettingsFor(roleId, () => remoteInventory);
+
   const hooksOn = hookBridge !== null && hookBridge.port !== null;
   if (hooksOn) {
     // Slack só com carta, fatia 4: the remote session outlives the app; with it down, a post to Slack is refused.
@@ -1659,8 +1700,12 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
       curlPath: 'curl',
       slackOfflineGuardCommand: `sh "$HOME/${REMOTE_SESSIONS_DIR}/${correlationId}/slack-guard.sh"`,
       statusLine: planStatusLineBridge({ mode: statusLineBridgeModeSetting, userStatusLine: null, chatEnabled: appConfig.chat.enabled }),
+      roleScope,
     });
     files.push({ name: 'settings.json', content: `${JSON.stringify(settings, null, 2)}\n` });
+    claudeArgs.push('--settings', '@S/settings.json');
+  } else if (roleScope) {
+    files.push({ name: 'settings.json', content: `${JSON.stringify(roleScope, null, 2)}\n` });
     claudeArgs.push('--settings', '@S/settings.json');
   }
   const mcp = fresh.mcpPort !== null ? (browserService?.prepareRemoteSession(ptyId, fresh.mcpPort) ?? null) : null;
@@ -1861,6 +1906,11 @@ function registerPtyIpcHandlers(): void {
       // no nome) e token registrado ANTES do spawn. Legado: arquivo único, sem token.
       // (Ponte da statusline: depois do config dir da sessão, que diz de onde ler a statusline do usuário.)
       const plannedPtyId = randomUUID();
+      // Papéis de sessão (item 12a) — the guidance of the role at every launch, resume and renewal
+      // (`roleDeliveryFor`, one case per CLI). A missing role or file → the session opens without it.
+      const roleId = roleIdForSpawn(options.roleId, launcherArgs, options.renewalId);
+      // Escopo do papel — only the MCPs, plugins and skills the role declares; no declaration = everything.
+      const roleScope = roleScopeSettingsFor(roleId, () => readClaudeInventory(claudeConfigDirForSession ?? defaultClaudeConfigDir(), options.cwd));
       let sessionHooksSettingsPath: string | null = null;
       if (hooksTransport === 'bridge') {
         if (hookBridge && hookBridge.port !== null) {
@@ -1882,6 +1932,7 @@ function registerPtyIpcHandlers(): void {
               }),
               // "Isolar em worktree" — a worktree parte da branch ATUAL da pasta, não de origin/HEAD.
               isolatedWorktree: worktreeNameFromArgs(launcherArgs) !== null,
+              roleScope,
             });
           } catch (error) {
             // Degrada como o boot sem servidor: a sessão nasce sem semáforo, nunca sem terminal.
@@ -1894,13 +1945,20 @@ function registerPtyIpcHandlers(): void {
       } else {
         sessionHooksSettingsPath = hooksSettingsPath;
       }
-      const semaphoreArgs = sessionHooksSettingsPath ? ['--settings', sessionHooksSettingsPath] : [];
+      // Escopo do papel sem o arquivo dos hooks (ponte fora): the scope alone. The legacy single file is shared by
+      // every session, so a scope never goes there.
+      let settingsPathForSession = sessionHooksSettingsPath;
+      if (settingsPathForSession === null && roleScope) {
+        try {
+          settingsPathForSession = writeSessionScopeOnlySettings(app.getPath('userData'), plannedPtyId, roleScope);
+        } catch (error) {
+          console.error('[donel-dev] escopo do papel não gravou — sessão com tudo:', error);
+        }
+      }
+      const semaphoreArgs = settingsPathForSession ? ['--settings', settingsPathForSession] : [];
       // Navegador integrado — o MCP do app (`donel`) entregue ao CLI da sessão pela função por CLI
       // (`mcpDeliveryFor`, emenda agnóstica). Por último: `--mcp-config` é variádico e só opções podem vir depois.
       const browserMcpArgs = browserService?.prepareSession(plannedPtyId, 'claude-code') ?? [];
-      // Papéis de sessão (item 12a) — the guidance of the role at every launch, resume and renewal
-      // (`roleDeliveryFor`, one case per CLI). A missing role or file → the session opens without it.
-      const roleId = roleIdForSpawn(options.roleId, launcherArgs, options.renewalId);
       const rolePromptPath = roleId ? (rolesStore?.promptFileFor(roleId, { leaderOfAll: options.leaderOfAll === true }) ?? null) : null;
       const roleArgs = rolePromptPath ? roleDeliveryFor('claude-code', rolePromptPath).args : [];
       const finalArgs = [...launcherArgs, ...extraArgs, ...roleArgs, ...semaphoreArgs, ...browserMcpArgs];

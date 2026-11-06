@@ -41,7 +41,9 @@ export function createRolesStore(userDataDir: string): RolesStore {
     if (!isRoleId(id)) return undefined;
     try {
       const fromFile = parseRoleFile(id, readFileSync(join(dir, `${id}.md`), 'utf8'));
-      if (fromFile) return fromFile;
+      // An edited factory role written before the scope existed keeps the factory scope (`mcps: *` lifts it).
+      const factoryScope = factoryRole(id)?.scope;
+      if (fromFile) return fromFile.scope === undefined && factoryScope ? { ...fromFile, scope: factoryScope } : fromFile;
     } catch {
       // no file (or unreadable): the factory one, if any
     }
