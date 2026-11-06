@@ -7,7 +7,8 @@ import { createLedgerService, ledgerProofsDir, nodeLedgerProofFs, runLedgerTool,
 import type { MindscapeBoard } from '../src/shared/mindscape/model';
 import { findCode, LEDGER_SCHEMA_VERSION, parseLedgerDoc } from '../src/shared/ledger/contract';
 import * as v4 from './fixtures/ledger/contract-v4';
-import { createCardWriter, type OwnerMessage } from '../src/main/ledger-card-writer';
+import { createCardWriter, decisionMessage, type OwnerMessage } from '../src/main/ledger-card-writer';
+import { createLedgerMobilePort } from '../src/main/celular/ledger-port';
 import { buildRemoteProofCommand, fetchRemoteProof } from '../src/main/ledger-remote-proof';
 import { parseLedgerToolCall, type LedgerToolCall } from '../src/shared/ledger/tools';
 import { slackGuard } from '../src/shared/ledger/slack-guard';
@@ -390,6 +391,32 @@ describe('ledger com prova', () => {
     expect(v4.applyLedgerOp(doc, { kind: 'lugar', placeId: 'place:revisor' }, { op: 'assumir', id: moved }, { now: 9e12, newId: () => 'x' })).toMatchObject({ ok: true });
     expect(v4.applyLedgerOp(doc, { kind: 'lugar', placeId: 'place:dev' }, { op: 'slack-enviada', id: letter }, { now: 9e12, newId: () => 'x' })).toMatchObject({ ok: false });
     expect(slackGuard(doc, 'mcp__slack__slack_send_message', { channel_id: 'C0123', text: 'Oi' })).toMatchObject({ kind: 'deny' });
+  });
+
+  it('a decision of the owner by the button, with no words, tells the session that owns it, and the Líder when it is closed', async () => {
+    const { service } = setup();
+    const sent: OwnerMessage[] = [];
+    const writer = createCardWriter({ service, deliver: async (message) => (sent.push(message), { placeId: message.placeId }) });
+    const phone = createLedgerMobilePort(service, undefined, () => writer);
+    // t-c19912b4: the owner accepted a letter on the phone, nobody was told, and it stayed unsent.
+    const letter = (JSON.parse((await runLedgerTool(service(), dev, call('carta_slack', { destino: 'C0123', texto: 'Oi', motivo: 'avisar' }))).text) as { id: string }).id;
+    expect(phone.decidir({ pedidoId: 'pedido-a1234567', itemId: letter, decisao: 'aceitar', motivo: null, opcao: 'Enviar' })).toMatchObject({ ok: true });
+    // A retry of the same request records and tells nothing again.
+    expect(phone.decidir({ pedidoId: 'pedido-a1234567', itemId: letter, decisao: 'aceitar', motivo: null, opcao: 'Enviar' })).toMatchObject({ ok: true });
+    await Promise.resolve();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ placeId: 'place:dev', text: expect.stringContaining('aceitou a carta de Slack') });
+    expect(sent[0]!.text).toContain('Envie agora');
+    expect(sent[0]!.leaderText).toContain('que está fechada');
+
+    // The desktop path (same writer): a reject by the button says why and what not to do.
+    const other = (JSON.parse((await runLedgerTool(service(), dev, call('carta_slack', { destino: 'C0123', texto: 'Oi de novo', motivo: 'avisar' }))).text) as { id: string }).id;
+    const rejected = service().apply({ kind: 'dono' }, { op: 'rejeitar', id: other, reason: '', option: 'Não enviar' });
+    if (!rejected.ok) throw new Error(rejected.reason);
+    await writer.tellDecision(rejected.task);
+    expect(sent[1]!.text).toMatch(/rejeitou a carta de Slack .*Não enviar.*Não envie/);
+    // A letter of the Líder único (no place) goes straight to it.
+    expect(decisionMessage({ ...rejected.task, ownerPlaceId: 'lider' }, undefined)).toMatchObject({ placeId: '', leaderText: expect.not.stringContaining('fechada') });
   });
 
   it('reads a ledger written by a newer channel and never writes over it', async () => {

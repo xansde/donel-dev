@@ -194,8 +194,8 @@ export function createLedgerMobilePort(getService: () => LedgerService | null, p
           ? service.apply({ kind: 'dono' }, { op: 'aceitar', id: task.id, requestId: input.pedidoId, ...option, ...(texto ? { text: texto } : {}) })
           : service.apply({ kind: 'dono' }, { op: 'rejeitar', id: task.id, reason: [input.motivo ?? '', texto].filter((part) => part.trim()).join('\n'), requestId: input.pedidoId, ...option });
       if (!result.ok) return { ok: false, reason: 'recusada', message: result.reason };
-      // Só na primeira gravação (o reenvio voltou acima): as palavras do dono vão também a quem fez.
-      if (texto) void getWriter?.()?.tell(result.task, texto);
+      // Só na primeira gravação (o reenvio voltou acima): a decisão, com ou sem palavras, vai a quem fez.
+      void getWriter?.()?.tellDecision(result.task, texto);
       return { ok: true, estado: result.task.state === 'rejeitada' ? 'rejeitada' : 'aceita' };
     },
     async comentar(input) {

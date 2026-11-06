@@ -55,7 +55,7 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
       },
       {
         title: 'Tarefas do Oráculo que ficavam presas agora andam',
-        text: 'Quando a sessão dona de uma tarefa fecha ou nem chega a abrir, o Líder passa a tarefa para outra, ou a sessão que vai fazer o trabalho a assume, e o registro guarda quem passou para quem. Carta de Slack substituída por outra pode ser cancelada com motivo, e a carta cancelada nunca é enviada. Quando uma sessão faz o trabalho e outra entrega, a carta mostra "Feito por" com o nome de quem fez. As sessões passam a ver só as tarefas vivas, e as que ficaram sem dono aparecem à parte. Nada do histórico é apagado.',
+        text: 'Quando a sessão dona de uma tarefa fecha ou nem chega a abrir, o Líder passa a tarefa para outra, ou a sessão que vai fazer o trabalho a assume, e o registro guarda quem passou para quem. Carta de Slack substituída por outra pode ser cancelada com motivo, e a carta cancelada nunca é enviada. Quando uma sessão faz o trabalho e outra entrega, a carta mostra "Feito por" com o nome de quem fez. As sessões passam a ver só as tarefas vivas, e as que ficaram sem dono aparecem à parte. Nada do histórico é apagado. E toda decisão sua numa carta, pelo botão ou com texto, no computador ou no celular, avisa na hora a sessão dona (ou o Líder, se ela estiver fechada): uma carta de Slack aceita não fica mais parada sem ninguém saber.',
       },
     ],
   },

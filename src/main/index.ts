@@ -2982,7 +2982,8 @@ function registerLedgerIpcHandlers(): void {
       decision.accept === true
         ? service.apply({ kind: 'dono' }, { op: 'aceitar', id: decision.id, ...option, ...(text ? { text } : {}) })
         : service.apply({ kind: 'dono' }, { op: 'rejeitar', id: decision.id, reason: [typeof reason === 'string' ? reason.trim() : '', text].filter(Boolean).join('\n'), ...option });
-    if (result.ok && text) void cardWriter?.tell(result.task, text);
+    // Every decision of the owner, by a button or with words, tells the session that owns it (closed: the Líder).
+    if (result.ok) void cardWriter?.tellDecision(result.task, text);
     return result;
   });
   ipcMain.handle(LEDGER_CHANNELS.comment, async (event, raw: unknown): Promise<LedgerCommentResult> => {
