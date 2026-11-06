@@ -2,7 +2,7 @@
 // the renderer reads the document (the strip on top of the Mindscape) and decides as the OWNER: every
 // decision that comes through here is recorded with the author `{ kind: 'dono' }`.
 
-import type { LedgerDoc, LedgerProof, LedgerTask } from './contract';
+import type { LedgerDoc, LedgerProof, LedgerReuse, LedgerTask } from './contract';
 
 export const LEDGER_CHANNELS = {
   load: 'ledger:load',
@@ -49,7 +49,9 @@ export type LedgerOwnerDecision =
   | { readonly id: string; readonly accept: true; readonly option?: string; readonly text?: string }
   | { readonly id: string; readonly accept: false; readonly reason: string; readonly option?: string; readonly text?: string };
 
-export type LedgerApplyResult = { readonly ok: true; readonly task: LedgerTask } | { readonly ok: false; readonly reason: string };
+export type LedgerApplyResult =
+  | { readonly ok: true; readonly task: LedgerTask; readonly reused?: LedgerReuse }
+  | { readonly ok: false; readonly reason: string };
 
 export interface DonelLedgerApi {
   /** Missing file → empty ledger; rejects when the file exists but cannot be read. */

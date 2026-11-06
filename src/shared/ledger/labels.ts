@@ -9,6 +9,7 @@ const ROLE_LABELS: Readonly<Record<string, string>> = {
   revisor: 'Revisor',
   pesquisa: 'Pesquisa',
   lider: 'Líder',
+  donel: 'Donel',
 };
 
 export function roleLabel(roleId: string | undefined): string {

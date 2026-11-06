@@ -16,7 +16,7 @@ import { type LedgerDoc, type LedgerTask, type LedgerTaskState } from '../ledger
 export const PROGRESS_STEPS = 3;
 
 /** The states the panel shows: everything but `aceita`. */
-export type ProgressTaskState = Exclude<LedgerTaskState, 'aceita'>;
+export type ProgressTaskState = Exclude<LedgerTaskState, 'aceita' | 'substituida'>;
 type ActiveTask = LedgerTask & { readonly state: ProgressTaskState };
 
 export interface ProgressTask {
@@ -150,7 +150,7 @@ function taskProgress(task: ActiveTask, now: number): ProgressTask {
 }
 
 function isActive(task: LedgerTask): task is ActiveTask {
-  return task.state !== 'aceita';
+  return task.state !== 'aceita' && task.state !== 'substituida';
 }
 
 /** The panel at `now`: one board per front with a task going on, its tasks under it (the nearest end first). */

@@ -20,6 +20,7 @@ import {
   isHttpUrl,
   cannotDecide,
   isNewerLedger,
+  dedupLedger,
   lastDelivery,
   linkWaitingLetters,
   replacedBy,
@@ -34,6 +35,7 @@ import {
   type LedgerForOwner,
   type LedgerOp,
   type LedgerProof,
+  type LedgerReuse,
   type LedgerStrip,
   type LedgerTask,
 } from '../shared/ledger/contract';
@@ -108,14 +110,26 @@ export interface LedgerService {
   /** A print small enough to go inline in `tarefa_ver`; `null` = not a print, too big or unreadable. */
   proofImage(proof: LedgerProof): Promise<{ base64: string; mimeType: string } | null>;
   /**
-   * The sweep of what exists (owner, 06/11): links the waiting Slack letters to the waiting decision cards of the same
-   * message (`linkWaitingLetters`). Writes only when there is something to link, and copies the file first to
-   * `ledger.antes-ligar-cartas-slack-<AAAA-MM-DD>.json` next to it. A ledger of a newer channel is left alone.
+   * The tidy-up of what exists (owner, 06/11): joins the repeated cards (`dedupLedger`: one stays, the others close as
+   * `substituida`) and links the waiting Slack letters to the waiting decision cards of the same message
+   * (`linkWaitingLetters`). Writes only when there is something to do, and copies the file first to
+   * `ledger.antes-juntar-repetidas-<AAAA-MM-DD-HHMMSS>.json` next to it. A ledger of a newer channel is left alone.
    */
-  linkSlackLetters(): { readonly linked: Readonly<Record<string, readonly string[]>>; readonly backup: string | null } | { readonly error: string };
+  tidy(): LedgerTidyResult | { readonly error: string };
   /** `tarefa_ver` by `placeId` of the delivery made at `deliveredAt` (memory only: after a restart, look again). */
   noteProofSeen(placeId: string, taskId: string, deliveredAt: number): void;
   proofSeen(placeId: string, taskId: string, deliveredAt: number): boolean;
+}
+
+export interface LedgerTidyResult {
+  /** Closed card → the card that stays in its place. */
+  readonly replaced: Readonly<Record<string, string>>;
+  /** Slack letter → the decision cards it now replaces. */
+  readonly linked: Readonly<Record<string, readonly string[]>>;
+  /** Cards waiting for the owner before and after. */
+  readonly waitingBefore: number;
+  readonly waitingAfter: number;
+  readonly backup: string | null;
 }
 
 /** The biggest print `tarefa_ver` sends inline (the path goes in any case). */
@@ -181,29 +195,34 @@ export function createLedgerService(deps: LedgerServiceDeps): LedgerService {
       if (!result.ok) return result;
       if (!write(result.doc)) return { ok: false, reason: 'Não consegui gravar o Oráculo Harrow; nada mudou.' };
       deps.onChange?.({ doc: result.doc, readOnly: false });
-      return { ok: true, task: result.task };
+      return { ok: true, task: result.task, ...(result.reused ? { reused: result.reused } : {}) };
     },
-    linkSlackLetters() {
+    tidy() {
       let snapshot: LedgerSnapshot;
       try {
         snapshot = load();
       } catch (error) {
         return { error: error instanceof Error ? error.message : String(error) };
       }
-      if (snapshot.readOnly) return { linked: {}, backup: null };
-      const result = linkWaitingLetters(snapshot.doc);
-      if (Object.keys(result.linked).length === 0) return { linked: {}, backup: null };
+      const waiting = (doc: LedgerDoc): number => ledgerStrip(doc, null).waitingForOwner;
+      const before = waiting(snapshot.doc);
+      const nothing = { replaced: {}, linked: {}, waitingBefore: before, waitingAfter: before, backup: null };
+      if (snapshot.readOnly) return nothing;
+      const deduped = dedupLedger(snapshot.doc, now());
+      const linked = linkWaitingLetters(deduped.doc);
+      if (Object.keys(deduped.replaced).length === 0 && Object.keys(linked.linked).length === 0) return nothing;
       const original = io.readFileText(filePath);
       if (original === null) return { error: 'ledger.json sumiu antes da cópia de segurança' };
-      const backup = join(dirname(filePath), `ledger.antes-ligar-cartas-slack-${new Date(now()).toISOString().slice(0, 10)}.json`);
+      const stamp = new Date(now()).toISOString().slice(0, 19).replace('T', '-').replace(/:/g, '');
+      const backup = join(dirname(filePath), `ledger.antes-juntar-repetidas-${stamp}.json`);
       try {
         if (!io.existsSync(backup)) io.writeFileText(backup, original);
       } catch {
-        return { error: 'não consegui gravar a cópia de segurança; nada foi ligado' };
+        return { error: 'não consegui gravar a cópia de segurança; nada mudou' };
       }
-      if (!write(result.doc)) return { error: 'não consegui gravar o Oráculo Harrow; nada foi ligado' };
-      deps.onChange?.({ doc: result.doc, readOnly: false });
-      return { linked: result.linked, backup };
+      if (!write(linked.doc)) return { error: 'não consegui gravar o Oráculo Harrow; nada mudou' };
+      deps.onChange?.({ doc: linked.doc, readOnly: false });
+      return { replaced: deduped.replaced, linked: linked.linked, waitingBefore: before, waitingAfter: waiting(linked.doc), backup };
     },
     async importProof(input, remote) {
       if (input.tipo === 'texto') return { kind: 'texto', text: input.texto };
@@ -281,6 +300,8 @@ export interface LedgerCaller {
   readonly boardPlaceIds: readonly string[];
   /** The caller's board as saved in `mindscape.json` (who opened whom, the arrows). Missing = the strict answer. */
   readonly board?: MindscapeBoard;
+  /** The places of the board with a session open now: a repeated task stuck in a closed one is reused. Missing = unknown. */
+  readonly openPlaceIds?: readonly string[];
 }
 
 /** The strip with the same pt-BR words as the rest of the tool (`aberta`, `em-execucao`, `esperandoDono`…). */
@@ -390,6 +411,7 @@ function taskView(task: LedgerTask, doc: LedgerDoc): Record<string, unknown> {
       : {}),
     ...(waitsForOwner(doc, task) ? { esperandoDono: true } : {}),
     ...(replacing ? { substituidaPor: replacing.id, aviso: `O dono vê só a carta de Slack ${replacing.id}; esta fecha junto quando ele decidir aquela.` } : {}),
+    ...(task.state === 'substituida' ? { substituidaPor: [...task.events].reverse().find((event) => event.kind === 'substituida')?.replacedBy } : {}),
     ...(task.slack
       ? {
           cartaSlack: {
@@ -403,6 +425,21 @@ function taskView(task: LedgerTask, doc: LedgerDoc): Record<string, unknown> {
           },
         }
       : {}),
+  };
+}
+
+/** A creation that found its card (idempotent): the same card comes back, never a second one. */
+function reusedView(task: LedgerTask, reused: LedgerReuse): Record<string, unknown> {
+  return {
+    criada: false,
+    jaExistia: true,
+    id: task.id,
+    estado: task.state,
+    dono: task.ownerPlaceId,
+    aviso:
+      reused === 'reatribuida'
+        ? 'Já existia esta tarefa, presa num lugar fechado: ela passou para você em vez de nascer outra. Assuma com tarefa_assumir.'
+        : 'Já existia esta carta (mesma chave): devolvi ela em vez de criar outra.',
   };
 }
 
@@ -429,6 +466,8 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       if (!caller.boardPlaceIds.includes(owner)) return { ok: false, text: `"${owner}" não é um lugar deste quadro (veja sessao_listar).` };
       const lowRefused = call.risco === 'baixo' ? lowRiskRefusal(caller, owner) : null;
       const result = service.apply(actor, {
+        ...(call.chave ? { key: call.chave } : {}),
+        ...(caller.openPlaceIds ? { openPlaceIds: caller.openPlaceIds } : {}),
         op: 'criar',
         projectPath: caller.projectPath,
         request: call.pedido,
@@ -438,6 +477,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         risk: lowRefused ? 'alto' : call.risco,
         ...(call.titulo ? { title: call.titulo } : {}),
       });
+      if (result.ok && result.reused) return { ok: true, text: JSON.stringify(reusedView(result.task, result.reused)) };
       if (!result.ok || !lowRefused) return answer(result, 'criada');
       return {
         ok: true,
@@ -452,8 +492,19 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         projectPath: caller.projectPath,
         slack: { destination: call.destino, ...(call.destinoNome ? { destinationLabel: call.destinoNome } : {}), ...(call.thread ? { thread: call.thread } : {}), text: call.texto, reason: call.motivo },
         ...(call.substitui ? { replaces: call.substitui } : {}),
+        ...(call.chave ? { key: call.chave } : {}),
       });
       if (!result.ok) return { ok: false, text: result.reason };
+      if (result.reused) {
+        const sent = slackLetterSent(result.task);
+        const next =
+          result.task.state === 'entregue'
+            ? `Não envie ainda: esta carta já espera o dono. Veja a decisão com tarefa_ver ${result.task.id}.`
+            : sent
+              ? 'Esta mensagem já foi enviada; não mande de novo.'
+              : 'O dono já aceitou esta carta: envie este texto exato a este destino, uma vez.';
+        return { ok: true, text: JSON.stringify({ ...reusedView(result.task, result.reused), proximo: next }) };
+      }
       return {
         ok: true,
         text: JSON.stringify({

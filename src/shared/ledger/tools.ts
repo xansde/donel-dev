@@ -39,6 +39,8 @@ export type LedgerToolCall =
       readonly titulo?: string;
       /** Pedir pelo Oráculo: o pedido do dono de onde a tarefa nasceu (`pd-…`). */
       readonly pedidoDoDono?: string;
+      /** Chave de idempotência; sem ela, o app deriva uma (link da mensagem do Slack de origem, ou quadro + título + pedido). */
+      readonly chave?: string;
     }
   | { readonly tool: 'tarefa_assumir'; readonly id: string }
   | { readonly tool: 'tarefa_entregar'; readonly id: string; readonly provas: readonly ProofInput[]; readonly nota?: string; readonly paraODono?: LedgerForOwner }
@@ -46,13 +48,13 @@ export type LedgerToolCall =
   | { readonly tool: 'tarefa_rejeitar'; readonly id: string; readonly motivo: string }
   | { readonly tool: 'tarefa_listar'; readonly estado?: LedgerTaskState; readonly todos?: boolean; readonly quadro?: string }
   | { readonly tool: 'tarefa_ver'; readonly id: string }
-  | { readonly tool: 'carta_slack'; readonly destino: string; readonly destinoNome?: string; readonly thread?: string; readonly texto: string; readonly motivo: string; readonly substitui?: string };
+  | { readonly tool: 'carta_slack'; readonly destino: string; readonly destinoNome?: string; readonly thread?: string; readonly texto: string; readonly motivo: string; readonly substitui?: string; readonly chave?: string };
 
 export type LedgerToolName = LedgerToolCall['tool'];
 
 const ID = { type: 'string', description: 'Id da tarefa (tarefa_listar).' };
 const BOARD = { type: 'string', description: 'Só o Líder único (que não tem quadro): o quadro, pelo nome ou pela pasta do projeto. As outras sessões usam sempre o próprio.' };
-const STATES: readonly LedgerTaskState[] = ['aberta', 'em-execucao', 'entregue', 'aceita', 'rejeitada'];
+const STATES: readonly LedgerTaskState[] = ['aberta', 'em-execucao', 'entregue', 'aceita', 'rejeitada', 'substituida'];
 
 export const LEDGER_TOOLS = [
   {
@@ -73,6 +75,11 @@ export const LEDGER_TOOLS = [
         risco: { type: 'string', enum: ['baixo', 'alto'] },
         quadro: BOARD,
         pedidoDoDono: { type: 'string', description: 'Quando a tarefa nasce de um "◆ Pedido do dono pelo Oráculo", o id que veio nele (pd-…): o dono vê no celular que o pedido virou esta tarefa.' },
+        chave: {
+          type: 'string',
+          description:
+            'Opcional: chave de idempotência. Criar de novo com a mesma chave devolve a tarefa que já existe, em vez de outra; se ela está presa num lugar fechado, passa para o dono pedido aqui. Sem ela, o app usa o link da mensagem do Slack de origem (na primeira linha do pedido) ou quadro + título + pedido.',
+        },
       },
       required: ['pedido', 'criterio', 'prazo', 'risco'],
       additionalProperties: false,
@@ -228,6 +235,10 @@ export const LEDGER_TOOLS = [
           description:
             'Opcional: a carta de decisão que esta substitui, pelo id (t-…), ou o link permanente da mensagem do Slack que você está respondendo. Sem ele, o app liga sozinho quando o destino e a thread batem com o link de uma carta de decisão que espera o dono.',
         },
+        chave: {
+          type: 'string',
+          description: 'Opcional: chave de idempotência. Criar de novo com a mesma chave devolve a carta que já existe, em vez de outra (também se ela estiver noutro lugar ou num lugar fechado). Sem ela, o app usa destino + thread + texto.',
+        },
       },
       required: ['destino', 'texto', 'motivo'],
       additionalProperties: false,
@@ -358,10 +369,12 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       for (const value of [pedido, criterio, prazo, dono, titulo]) if (typeof value === 'object') return fail(value.error);
       if (args.risco !== 'baixo' && args.risco !== 'alto') return fail('"risco" tem de ser baixo ou alto.');
       if (args.pedidoDoDono !== undefined && (typeof args.pedidoDoDono !== 'string' || !/^pd-[0-9a-f]{12}$/.test(args.pedidoDoDono))) return fail('"pedidoDoDono" é o id que veio no pedido do dono (pd-…).');
+      const chave = text(args.chave, 'chave', 200, false);
+      if (typeof chave === 'object') return fail(chave.error);
       const fromOwner = typeof args.pedidoDoDono === 'string' ? { pedidoDoDono: args.pedidoDoDono } : {};
       return {
         ok: true,
-        call: { tool: 'tarefa_criar', pedido: pedido as string, criterio: criterio as string, prazo: (prazo as string).trim(), ...(typeof dono === 'string' && dono.trim() ? { dono: dono.trim() } : {}), risco: args.risco, ...quadro, ...(typeof titulo === 'string' && titulo.trim() ? { titulo: titulo.trim() } : {}), ...fromOwner },
+        call: { tool: 'tarefa_criar', pedido: pedido as string, criterio: criterio as string, prazo: (prazo as string).trim(), ...(typeof dono === 'string' && dono.trim() ? { dono: dono.trim() } : {}), risco: args.risco, ...quadro, ...(typeof titulo === 'string' && titulo.trim() ? { titulo: titulo.trim() } : {}), ...fromOwner, ...(chave?.trim() ? { chave: chave.trim() } : {}) },
       };
     }
     case 'tarefa_assumir':
@@ -403,7 +416,8 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       const texto = text(args.texto, 'texto', MAX_SLACK_TEXT_CHARS, true);
       const motivo = text(args.motivo, 'motivo', MAX_REQUEST_CHARS, true);
       const substitui = text(args.substitui, 'substitui', 500, false);
-      for (const value of [destino, destinoNome, thread, texto, motivo, substitui]) if (typeof value === 'object') return fail(value.error);
+      const chave = text(args.chave, 'chave', 200, false);
+      for (const value of [destino, destinoNome, thread, texto, motivo, substitui, chave]) if (typeof value === 'object') return fail(value.error);
       return {
         ok: true,
         call: {
@@ -414,6 +428,7 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
           texto: texto as string,
           motivo: (motivo as string).trim(),
           ...(typeof substitui === 'string' && substitui.trim() ? { substitui: substitui.trim() } : {}),
+          ...(typeof chave === 'string' && chave.trim() ? { chave: chave.trim() } : {}),
         },
       };
     }

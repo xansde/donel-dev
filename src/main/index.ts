@@ -2965,10 +2965,11 @@ function registerLedgerIpcHandlers(): void {
     },
   });
   ledgerService = service;
-  // Carta de Slack num toque (06/11): the letters written before this version replace their decision cards too.
-  const sweep = service.linkSlackLetters();
-  if ('error' in sweep) console.error('[donel-dev] ligar cartas de Slack às de decisão falhou (segue sem ligar):', sweep.error);
-  else if (sweep.backup) console.log(`[donel-dev] cartas de Slack ligadas às de decisão: ${JSON.stringify(sweep.linked)} (cópia em ${sweep.backup})`);
+  // Cartas repetidas (06/11): one card per pending matter, and the Slack letters replace their decision cards.
+  const tidy = service.tidy();
+  if ('error' in tidy) console.error('[donel-dev] juntar cartas repetidas falhou (segue como estava):', tidy.error);
+  else if (tidy.backup)
+    console.log(`[donel-dev] cartas repetidas juntadas: esperando você ${tidy.waitingBefore} → ${tidy.waitingAfter}; substituídas ${JSON.stringify(tidy.replaced)}; ligadas ${JSON.stringify(tidy.linked)} (cópia em ${tidy.backup})`);
   // Cartas forma A — the card shows the proofs (the HTML prototype, a video) by `donel-prova:`.
   registerProofProtocol(protocol, ledgerProofsDir(ledgerFilePath(process.env, app.getPath('userData'))));
   const fromMain = (sender: Electron.WebContents): boolean => getMainWindow()?.webContents.id === sender.id;
@@ -3042,6 +3043,11 @@ function placeNameOf(projectPath: string, placeId: string): string | undefined {
   return appConfig.sessionRegistry[card.sessionId]?.label;
 }
 
+/** The places of a board with a session open now (`sessao_listar`): a repeated task stuck in another one is reused. */
+function openPlaces(places: readonly { id?: unknown; estado?: unknown }[]): string[] {
+  return places.filter((place) => typeof place.id === 'string' && place.estado !== 'fechada').map((place) => place.id as string);
+}
+
 async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<{ caller: LedgerCaller; call: LedgerToolCall } | string> {
   const quadro = call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' ? call.quadro : undefined;
   const base = { placeId: LEADER_OF_ALL, roleId: LEADER_ROLE_ID };
@@ -3052,13 +3058,13 @@ async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, cal
   }
   const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar', quadro });
   if (list.kind !== 'text') return list.kind === 'error' ? list.text : 'Não consegui ler o quadro.';
-  const board = JSON.parse(list.text) as { pasta?: unknown; lugares?: { id?: unknown; podeMandar?: unknown }[] };
+  const board = JSON.parse(list.text) as { pasta?: unknown; lugares?: { id?: unknown; podeMandar?: unknown; estado?: unknown }[] };
   if (typeof board.pasta !== 'string' || !Array.isArray(board.lugares)) return 'Não consegui ler o quadro.';
   const reached = board.lugares.filter((place) => place.podeMandar === true).map((place) => place.id).filter((id): id is string => typeof id === 'string');
   if (call.tool === 'tarefa_criar' && (!call.dono || !reached.includes(call.dono)))
     return `O Líder único não faz a tarefa: diga em "dono" um lugar que você alcança neste quadro (${reached.join(', ') || 'nenhum'}).`;
   const saved = savedBoard(board.pasta);
-  return { caller: { ...base, projectPath: board.pasta, boardPlaceIds: reached, ...(saved ? { board: saved } : {}) }, call };
+  return { caller: { ...base, projectPath: board.pasta, boardPlaceIds: reached, openPlaceIds: openPlaces(board.lugares), ...(saved ? { board: saved } : {}) }, call };
 }
 
 /** The caller of a `tarefa_*` tool, from the board the renderer owns (the same answers the session would get). */
@@ -3072,7 +3078,7 @@ async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: Led
   }
   if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string') return 'Seu lugar ainda não está no quadro; espere o primeiro turno terminar.';
   const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar' });
-  const places = list.kind === 'text' ? (JSON.parse(list.text) as { id?: unknown }[]) : [];
+  const places = list.kind === 'text' ? (JSON.parse(list.text) as { id?: unknown; estado?: unknown }[]) : [];
   const board = savedBoard(who.pasta);
   return {
     caller: {
@@ -3080,6 +3086,7 @@ async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: Led
       placeId: who.lugar,
       ...(typeof who.papel === 'string' ? { roleId: who.papel } : {}),
       boardPlaceIds: places.map((place) => place.id).filter((id): id is string => typeof id === 'string'),
+      ...(list.kind === 'text' ? { openPlaceIds: openPlaces(places) } : {}),
       ...(board ? { board } : {}),
     },
     call,

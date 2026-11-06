@@ -22,6 +22,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'Para responder alguém no Slack, as sessões agora criam só a carta da mensagem, com o rascunho pronto, e não mais uma carta de decisão antes. A carta mostra primeiro para quem vai (a pessoa ou o canal, e se é resposta numa conversa que já existe), depois o texto exatamente como sai, e embaixo "Enviar" e "Não enviar", com um campo para dizer o que mudar. Quando já existia uma carta de decisão sobre a mesma mensagem, ela sai da sua fila enquanto a da mensagem espera, e fecha junto quando você decidir. Nada se apaga.',
       },
       {
+        title: 'Sem cartas repetidas no Oráculo',
+        text: 'Pedir a mesma carta duas vezes agora devolve a que já existe, em vez de criar outra: a mesma mensagem do Slack, o mesmo texto para o mesmo destino, ou a mesma tarefa no mesmo quadro. Se a carta antiga ficou presa numa sessão que já fechou, ela passa para a sessão que pediu de novo. Na primeira abertura desta versão, o Donel junta as repetidas que já existiam: fica uma por assunto, e as outras fecham como substituídas, com o nome da que ficou. Antes disso ele guarda uma cópia do Oráculo.',
+      },
+      {
         title: 'Pedir ao Líder pelo celular, escrevendo ou falando',
         text: 'O Oráculo no celular ganhou o botão "Pedir", no topo. Escreva ou grave o que você quer: o áudio é transcrito no seu computador, pelo OpenWhispr, e você confere e corrige o texto antes de enviar. O pedido vai direto para o chat do Líder. Se ele estiver fechado, o computador guarda o pedido e entrega quando o Líder abrir, mesmo que o Donel reinicie no meio. Em "Seus pedidos" você vê cada um: na fila, entregue, ou a tarefa que ele virou. Para gravar direto na página, use o endereço https do Oráculo; no http, o botão abre o gravador do celular.',
       },

@@ -31,11 +31,13 @@
  *     (the owner writing on the card) with `deliveredTo`.
  * 4 — `slack` on a task (a letter "mensagem para o Slack") and the `enviada` event (`slack-guard.ts`).
  * 5 — a letter replaces decision cards (`slack.replaces`, `slack.sourceLink`), and a decision closed together with
- *     its letter records it (`viaLetter` on the `aceita` / `rejeitada` event).
+ *     its letter records it (`viaLetter` on the `aceita` / `rejeitada` event). Idempotent creation (owner, 06/11):
+ *     `key` on a task, the state and event `substituida` (`replacedBy`), the event `reatribuida` (`fromPlaceId`).
  */
 export const LEDGER_SCHEMA_VERSION = 5;
 
-export type LedgerTaskState = 'aberta' | 'em-execucao' | 'entregue' | 'aceita' | 'rejeitada';
+/** v5 — `substituida`: a repeated card closed in favour of another one (`replacedBy`); terminal, nothing deleted. */
+export type LedgerTaskState = 'aberta' | 'em-execucao' | 'entregue' | 'aceita' | 'rejeitada' | 'substituida';
 export type LedgerRisk = 'baixo' | 'alto';
 
 /** Who did something: the owner (any port the owner uses: the app, the phone) or a place of a board. */
@@ -49,7 +51,7 @@ export type LedgerProof =
   | { readonly kind: 'texto'; readonly text: string }
   | { readonly kind: 'link'; readonly url: string };
 
-export type LedgerEventKind = 'criada' | 'assumida' | 'entregue' | 'aceita' | 'rejeitada' | 'conferida' | 'comentada' | 'enviada';
+export type LedgerEventKind = 'criada' | 'assumida' | 'entregue' | 'aceita' | 'rejeitada' | 'conferida' | 'comentada' | 'enviada' | 'substituida' | 'reatribuida';
 
 /** v3 — one named path of the owner's decision. */
 export interface LedgerOption {
@@ -133,6 +135,10 @@ export interface LedgerEvent {
   readonly deliveredTo?: LedgerDeliveredTo;
   /** v5 — `aceita` / `rejeitada` of a decision card closed together with the Slack letter that replaced it. */
   readonly viaLetter?: string;
+  /** v5 — `substituida`: the card that stays in its place. */
+  readonly replacedBy?: string;
+  /** v5 — `reatribuida`: the place that owned the task before (closed); the new owner is the task's `ownerPlaceId`. */
+  readonly fromPlaceId?: string;
 }
 
 export interface LedgerTask {
@@ -156,6 +162,8 @@ export interface LedgerTask {
   readonly events: readonly LedgerEvent[];
   /** v4 — a letter "mensagem para o Slack"; `enviada` in `events` = its one send already went out. */
   readonly slack?: SlackLetter;
+  /** v5 — the idempotency key the session gave; absent = derived (`taskKey`). */
+  readonly key?: string;
 }
 
 export interface LedgerDoc {
@@ -258,6 +266,10 @@ export type LedgerOp =
       readonly due: string;
       readonly ownerPlaceId: string;
       readonly risk: LedgerRisk;
+      /** v5 — idempotency key; absent = derived from the task (`taskKey`). */
+      readonly key?: string;
+      /** v5 — the places open right now: a repeated task stuck in a closed place passes to `ownerPlaceId`. Absent = unknown. */
+      readonly openPlaceIds?: readonly string[];
     }
   | { readonly op: 'assumir'; readonly id: string }
   | { readonly op: 'entregar'; readonly id: string; readonly proofs: readonly LedgerProof[]; readonly note?: string; readonly forOwner?: LedgerForOwner }
@@ -272,7 +284,7 @@ export type LedgerOp =
    * decision card it replaces, or the permanent link of the Slack message it answers; absent = linked by itself
    * when its destination and thread match the link of a waiting decision card (`matchDecisions`).
    */
-  | { readonly op: 'carta-slack'; readonly projectPath: string; readonly slack: SlackLetter; readonly replaces?: string }
+  | { readonly op: 'carta-slack'; readonly projectPath: string; readonly slack: SlackLetter; readonly replaces?: string; readonly key?: string }
   /** v4 — the guard let the one send of an accepted letter through. */
   | { readonly op: 'slack-enviada'; readonly id: string };
 
@@ -281,7 +293,11 @@ export interface LedgerOpContext {
   readonly newId: () => string;
 }
 
-export type LedgerOpResult = { readonly ok: true; readonly doc: LedgerDoc; readonly task: LedgerTask } | { readonly ok: false; readonly reason: string };
+/** `reused` (v5, creation only): the same card already existed and came back instead of a new one; `reatribuida` = it was stuck in a closed place and passed to the new owner. */
+export type LedgerReuse = 'existente' | 'reatribuida';
+export type LedgerOpResult =
+  | { readonly ok: true; readonly doc: LedgerDoc; readonly task: LedgerTask; readonly reused?: LedgerReuse }
+  | { readonly ok: false; readonly reason: string };
 
 function withTask(doc: LedgerDoc, task: LedgerTask): LedgerDoc {
   return { ...doc, startedAt: doc.startedAt ?? task.createdAt, tasks: { ...doc.tasks, [task.id]: task } };
@@ -322,6 +338,9 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       const why = textRefusal('titulo', title, MAX_TITLE_CHARS);
       if (why) return fail(why);
     }
+    const key = op.key?.trim() || undefined;
+    const same = findSame(doc, key ?? deriveKey({ projectPath: op.projectPath, request: op.request, ...(title ? { title } : {}) }), false);
+    if (same) return reuse(doc, same, actor, op, ctx.now);
     const task: LedgerTask = {
       id: ctx.newId(),
       projectPath: op.projectPath,
@@ -334,6 +353,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       state: 'aberta',
       createdAt: ctx.now,
       events: [{ kind: 'criada', at: ctx.now, by: actor }],
+      ...(key ? { key } : {}),
     };
     return { ok: true, doc: withTask(doc, task), task };
   }
@@ -464,6 +484,10 @@ function createSlackLetter(doc: LedgerDoc, actor: LedgerActor, op: Extract<Ledge
   if (actor.kind !== 'lugar') return { ok: false, reason: 'Carta de Slack é pedido de uma sessão ao dono.' };
   const problem = slackLetterProblem(op.slack);
   if (problem) return { ok: false, reason: problem };
+  // Idempotent (owner, 06/11): the same letter (same key) comes back instead of a second one.
+  const key = op.key?.trim() || undefined;
+  const same = findSame(doc, key ?? slackLetterKey(op.slack), true);
+  if (same) return { ok: true, doc, task: same, reused: 'existente' };
   const link = resolveReplaces(doc, op.projectPath, op.slack, op.replaces?.trim());
   if ('error' in link) return { ok: false, reason: link.error };
   const where = `${slackDestinationLabel(op.slack)}${op.slack.thread ? ' (na thread)' : ''}`;
@@ -484,6 +508,7 @@ function createSlackLetter(doc: LedgerDoc, actor: LedgerActor, op: Extract<Ledge
       { kind: 'entregue', at: ctx.now, by: actor, proofs: [{ kind: 'texto', text: op.slack.text }], text: op.slack.reason.trim(), forOwner: slackForOwner(where, op.slack.reason) },
     ],
     slack: { ...op.slack, ...(link.ids.length ? { replaces: link.ids } : {}), ...(link.sourceLink ? { sourceLink: link.sourceLink } : {}) },
+    ...(key ? { key } : {}),
   };
   return { ok: true, doc: withTask(doc, task), task };
 }
@@ -529,21 +554,31 @@ function isWaitingDecision(task: LedgerTask): boolean {
 }
 
 /**
- * The waiting decision cards of `projectPath` a letter replaces. With the message's link (`source`): every card that
- * links a message of the same conversation. Without it, by the letter's destination and thread: inside a thread,
- * every card linking a message of that thread; outside one (a direct message), only when exactly one card links a
- * message of that conversation outside a thread — two questions of the same person are not the same answer.
+ * The decision cards of `projectPath` a letter replaces (by default the ones waiting for the owner; `eligible` widens
+ * it). With the message's link (`source`): every card that links a message of the same conversation. Without it, by
+ * the letter's destination and thread: inside a thread, every card linking a message of that thread; outside one (a
+ * direct message), only one card — the one whose origin (first link) is that conversation, or the only one linking
+ * it; two questions of the same person are not the same answer.
  */
-export function matchDecisions(doc: LedgerDoc, projectPath: string, slack: Pick<SlackLetter, 'destination' | 'thread'>, source?: SlackMessageRef): string[] {
+export function matchDecisions(
+  doc: LedgerDoc,
+  projectPath: string,
+  slack: Pick<SlackLetter, 'destination' | 'thread'>,
+  source?: SlackMessageRef,
+  eligible: (task: LedgerTask) => boolean = isWaitingDecision,
+): string[] {
   const matches = (ref: SlackMessageRef): boolean => {
     if (source) return ref.channel === source.channel && conversationOf(ref) === conversationOf(source);
     if (ref.channel !== slack.destination) return false;
     return slack.thread ? conversationOf(ref) === slack.thread : ref.threadTs === undefined;
   };
-  const ids = Object.values(doc.tasks)
-    .filter((task) => task.projectPath === projectPath && isWaitingDecision(task) && slackMessageRefs(decisionText(task)).some(matches))
-    .map((task) => task.id);
-  return source || slack.thread || ids.length === 1 ? ids : [];
+  const found = Object.values(doc.tasks).filter((task) => task.projectPath === projectPath && eligible(task) && slackMessageRefs(decisionText(task)).some(matches));
+  if (source || slack.thread || found.length === 1) return found.map((task) => task.id);
+  const byOrigin = found.filter((task) => {
+    const [origin] = slackMessageRefs(task.request);
+    return origin !== undefined && matches(origin);
+  });
+  return byOrigin.length === 1 ? [byOrigin[0]!.id] : [];
 }
 
 /** What `carta_slack`'s `substitui` names: a decision card (`t-…`), a message link, or nothing (matched by itself). */
@@ -582,6 +617,108 @@ function closeReplaced(doc: LedgerDoc, letter: LedgerTask, actor: LedgerActor, n
     next = withTask(next, step(target, closes, { kind: closes, at: now, by: actor, text, viaLetter: letter.id }));
   }
   return { ok: true, doc: next, task: letter };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// v5 — idempotent creation and the dedup of what repeats (owner, 06/11: "Tem muita carta repetida. Precisa ser idempotente")
+
+const normalize = (text: string): string => text.normalize('NFC').replace(/\s+/g, ' ').trim();
+
+/** The key of a Slack letter: destination + thread + the normalized text. */
+export function slackLetterKey(slack: Pick<SlackLetter, 'destination' | 'thread' | 'text'>): string {
+  return `slack:${slack.destination.trim()}|${slack.thread?.trim() ?? ''}|${normalize(slack.text)}`;
+}
+
+/**
+ * The derived key of a task: a task born of a Slack message (its link on the request's first line) is that message;
+ * any other is board + title + request.
+ */
+export function deriveKey(task: { readonly projectPath: string; readonly title?: string; readonly request: string }): string {
+  const firstLine = task.request.split('\n', 1)[0] ?? '';
+  const [origin] = slackMessageRefs(firstLine);
+  if (origin) return `slack-msg:${origin.channel}:${origin.ts}`;
+  const lower = (text: string): string => normalize(text).toLowerCase();
+  return `tarefa:${lower(task.projectPath)}|${lower(task.title ?? '')}|${lower(task.request)}`;
+}
+
+/** The key two creations of the same card share: the one the session gave, or the derived one. */
+export function taskKey(task: LedgerTask): string {
+  return task.key ?? (task.slack ? slackLetterKey(task.slack) : deriveKey(task));
+}
+
+/** A card still in course: a second one with its key is a repeat that can close. */
+function inCourse(task: LedgerTask): boolean {
+  return task.state === 'aberta' || task.state === 'em-execucao' || task.state === 'entregue';
+}
+
+/** Waiting for the owner first, then decided (the matter is settled), then in work, then open. */
+const STATE_RANK: Readonly<Partial<Record<LedgerTaskState, number>>> = { entregue: 4, aceita: 3, rejeitada: 3, 'em-execucao': 2, aberta: 1 };
+
+/** The card that stays among repeats: by `STATE_RANK`, then the newest. */
+function preferred(a: LedgerTask, b: LedgerTask): number {
+  return (STATE_RANK[b.state] ?? 0) - (STATE_RANK[a.state] ?? 0) || b.createdAt - a.createdAt || b.id.localeCompare(a.id);
+}
+
+/** The card a creation with `key` already has (a letter for a letter, a task for a task); a replaced one never comes back. */
+function findSame(doc: LedgerDoc, key: string, letter: boolean): LedgerTask | undefined {
+  return Object.values(doc.tasks)
+    .filter((task) => task.state !== 'substituida' && (task.slack !== undefined) === letter && taskKey(task) === key)
+    .sort(preferred)[0];
+}
+
+/** A creation that found its card: it comes back; stuck in a closed place (not delivered yet), it passes to the new owner. */
+function reuse(doc: LedgerDoc, task: LedgerTask, actor: LedgerActor, op: Extract<LedgerOp, { op: 'criar' }>, now: number): LedgerOpResult {
+  const stuck =
+    (task.state === 'aberta' || task.state === 'em-execucao') &&
+    op.openPlaceIds !== undefined &&
+    !op.openPlaceIds.includes(task.ownerPlaceId) &&
+    task.ownerPlaceId !== op.ownerPlaceId;
+  if (!stuck) return { ok: true, doc, task, reused: 'existente' };
+  const next: LedgerTask = { ...task, ownerPlaceId: op.ownerPlaceId, state: 'aberta', events: [...task.events, { kind: 'reatribuida', at: now, by: actor, fromPlaceId: task.ownerPlaceId }] };
+  return { ok: true, doc: withTask(doc, next), task: next, reused: 'reatribuida' };
+}
+
+/** Who closes a repeat in the dedup: the app itself (not a decision of the owner nor of a place). */
+export const DEDUP_ACTOR: LedgerActor = { kind: 'lugar', placeId: 'donel', roleId: 'donel' };
+
+function replaced(task: LedgerTask, by: string, now: number): LedgerTask {
+  return step(task, 'substituida', { kind: 'substituida', at: now, by: DEDUP_ACTOR, replacedBy: by, text: `Substituída por ${by}.` });
+}
+
+/**
+ * The dedup of what exists (owner, 06/11): one card per pending matter. (1) Cards with the same key: the one waiting
+ * for the owner stays, else the decided one, else the newest; the others still in course close (a decided card is
+ * never touched). (2) A Slack letter waiting for the owner replaces the not-yet-delivered decision
+ * cards of the same message (the delivered ones it links, `linkWaitingLetters`). The others close as `substituida`
+ * with the id that stays; nothing is deleted. `replaced`: closed card → the card that stays.
+ */
+export function dedupLedger(doc: LedgerDoc, now: number): { readonly doc: LedgerDoc; readonly replaced: Readonly<Record<string, string>> } {
+  let next = doc;
+  const closed: Record<string, string> = {};
+  const groups = new Map<string, LedgerTask[]>();
+  for (const task of Object.values(doc.tasks)) {
+    if (task.state === 'substituida') continue;
+    const key = `${task.slack ? 'carta' : 'tarefa'}|${taskKey(task)}`;
+    groups.set(key, [...(groups.get(key) ?? []), task]);
+  }
+  for (const group of groups.values()) {
+    const [keep, ...rest] = [...group].sort(preferred);
+    for (const task of rest) {
+      if (!inCourse(task)) continue;
+      next = withTask(next, replaced(task, keep!.id, now));
+      closed[task.id] = keep!.id;
+    }
+  }
+  const notDelivered = (task: LedgerTask): boolean => !task.slack && (task.state === 'aberta' || task.state === 'em-execucao');
+  for (const letter of Object.values(next.tasks)) {
+    if (!letter.slack || letter.state !== 'entregue') continue;
+    const source = letter.slack.sourceLink ? slackMessageRefs(letter.slack.sourceLink)[0] : undefined;
+    for (const id of matchDecisions(next, letter.projectPath, letter.slack, source, notDelivered)) {
+      next = withTask(next, replaced(next.tasks[id]!, letter.id, now));
+      closed[id] = letter.id;
+    }
+  }
+  return { doc: next, replaced: closed };
 }
 
 /**
@@ -846,7 +983,7 @@ function parseProof(raw: unknown): LedgerProof | null {
   return proof && validProof(proof) ? proof : null;
 }
 
-const EVENT_KINDS: readonly LedgerEventKind[] = ['criada', 'assumida', 'entregue', 'aceita', 'rejeitada', 'conferida', 'comentada', 'enviada'];
+const EVENT_KINDS: readonly LedgerEventKind[] = ['criada', 'assumida', 'entregue', 'aceita', 'rejeitada', 'conferida', 'comentada', 'enviada', 'substituida', 'reatribuida'];
 
 function parseVisual(raw: unknown): LedgerVisual | null {
   const index = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value < MAX_PROOFS;
@@ -890,7 +1027,7 @@ function parseDeliveredTo(raw: unknown): LedgerDeliveredTo | undefined {
   if (isRecord(raw) && str(raw.placeId) && raw.placeId) return { placeId: raw.placeId };
   return undefined;
 }
-const STATES: readonly LedgerTaskState[] = ['aberta', 'em-execucao', 'entregue', 'aceita', 'rejeitada'];
+const STATES: readonly LedgerTaskState[] = ['aberta', 'em-execucao', 'entregue', 'aceita', 'rejeitada', 'substituida'];
 
 function parseEvent(raw: unknown): LedgerEvent | null {
   if (!isRecord(raw) || !EVENT_KINDS.includes(raw.kind as LedgerEventKind) || !num(raw.at)) return null;
@@ -910,6 +1047,8 @@ function parseEvent(raw: unknown): LedgerEvent | null {
     ...(forOwner ? { forOwner } : {}),
     ...((raw.kind === 'aceita' || raw.kind === 'rejeitada') && str(raw.option) ? { option: raw.option } : {}),
     ...((raw.kind === 'aceita' || raw.kind === 'rejeitada') && str(raw.viaLetter) && raw.viaLetter ? { viaLetter: raw.viaLetter } : {}),
+    ...(raw.kind === 'substituida' && str(raw.replacedBy) && raw.replacedBy ? { replacedBy: raw.replacedBy } : {}),
+    ...(raw.kind === 'reatribuida' && str(raw.fromPlaceId) && raw.fromPlaceId ? { fromPlaceId: raw.fromPlaceId } : {}),
     ...(deliveredTo !== undefined ? { deliveredTo } : {}),
   };
 }
@@ -922,7 +1061,8 @@ function parseTask(id: string, raw: unknown): LedgerTask | null {
   const events = Array.isArray(raw.events) ? raw.events.map(parseEvent).filter((event): event is LedgerEvent => event !== null) : [];
   const title = str(raw.title) && raw.title.trim() ? { title: raw.title } : {};
   const slack = parseSlackLetter(raw.slack);
-  return { id, projectPath, ...title, request, doneWhen, due, ownerPlaceId, risk, state: state as LedgerTaskState, createdAt, events, ...(slack ? { slack } : {}) };
+  const key = str(raw.key) && raw.key.trim() ? { key: raw.key } : {};
+  return { id, projectPath, ...title, request, doneWhen, due, ownerPlaceId, risk, state: state as LedgerTaskState, createdAt, events, ...(slack ? { slack } : {}), ...key };
 }
 
 function parseSlackLetter(raw: unknown): SlackLetter | null {

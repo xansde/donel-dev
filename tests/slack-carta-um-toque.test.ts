@@ -151,14 +151,89 @@ describe('carta de Slack num toque', () => {
     const ledger = service(filePath);
     expect(waitingIds(ledger)).toEqual([card, untouched, id]);
 
-    const swept = ledger.linkSlackLetters();
-    expect(swept).toMatchObject({ linked: { [id]: [card] } });
-    const backups = readdirSync(join(filePath, '..')).filter((name) => name.startsWith('ledger.antes-ligar-cartas-slack-'));
+    const swept = ledger.tidy();
+    expect(swept).toMatchObject({ replaced: {}, linked: { [id]: [card] }, waitingBefore: 3, waitingAfter: 2 });
+    const backups = readdirSync(join(filePath, '..')).filter((name) => name.startsWith('ledger.antes-juntar-repetidas-'));
     expect(backups).toHaveLength(1);
     expect(readFileSync(join(filePath, '..', backups[0]!), 'utf8')).toBe(v4);
     expect(waitingIds(ledger)).toEqual([untouched, id]);
     expect(Object.keys(ledger.load().doc.tasks).sort()).toEqual(Object.keys(raw.tasks).sort());
     expect(ledger.load().doc.tasks[card]!.state).toBe('entregue');
-    expect(ledger.linkSlackLetters()).toEqual({ linked: {}, backup: null });
+    expect(ledger.tidy()).toMatchObject({ replaced: {}, linked: {}, backup: null });
+  });
+});
+
+describe('criar é idempotente (06/11: "Tem muita carta repetida")', () => {
+  const create = (caller: LedgerCaller, args: Record<string, unknown>) =>
+    runLedgerTool(holder.current!, caller, call('tarefa_criar', { pedido: 'Zoom nas imagens da carta', criterio: 'zoom funciona', prazo: '2026-11-07', risco: 'alto', titulo: 'Zoom nas imagens', ...args }));
+  const holder = { current: null as ReturnType<typeof createLedgerService> | null };
+  const closedDev: LedgerCaller = { projectPath: BOARD, placeId: 'place:dev-velho', roleId: 'dev', boardPlaceIds: ['place:dev-velho', 'place:dev-novo'], openPlaceIds: ['place:dev-novo'] };
+  const newDev: LedgerCaller = { projectPath: BOARD, placeId: 'place:dev-novo', roleId: 'dev', boardPlaceIds: ['place:dev-velho', 'place:dev-novo'], openPlaceIds: ['place:dev-novo'] };
+
+  it('creating twice with the same key returns the card that exists, in any place, and the letter too', async () => {
+    const ledger = (holder.current = service());
+    const first = JSON.parse((await create(theo, {})).text) as { id: string };
+    const again = JSON.parse((await create({ ...theo, placeId: 'place:outro', boardPlaceIds: ['place:outro', 'place:theo'] }, { dono: 'place:outro', pedido: '  Zoom  nas imagens da carta ' })).text) as Record<string, unknown>;
+    expect(again).toMatchObject({ criada: false, jaExistia: true, id: first.id });
+    // The same Slack message (its link on the first line), and the same explicit key.
+    const bySlack = JSON.parse((await create(theo, { pedido: `Filipe — ${IN_THREAD}\n\n«pronto»`, titulo: 'Filipe' })).text) as { id: string };
+    expect(JSON.parse((await create(theo, { pedido: `Filipe, de novo — ${IN_THREAD}\n\n«pronto!»`, titulo: 'Filipe 2' })).text)).toMatchObject({ id: bySlack.id, jaExistia: true });
+    const byKey = JSON.parse((await create(theo, { chave: 'zoom-1', pedido: 'outra coisa' })).text) as { id: string };
+    expect(JSON.parse((await create(theo, { chave: 'zoom-1', pedido: 'outra coisa ainda' })).text)).toMatchObject({ id: byKey.id, jaExistia: true });
+    // carta_slack: destination + thread + normalized text.
+    const sent = await letter(ledger, { thread: '1793229369.456279' });
+    const twice = JSON.parse((await runLedgerTool(ledger, theo, call('carta_slack', { destino: 'C0CBY1FRERM', thread: '1793229369.456279', texto: ' Filipe,  valeu! ', motivo: 'de novo' }))).text) as Record<string, unknown>;
+    expect(twice).toMatchObject({ jaExistia: true, id: sent.id });
+    expect(Object.keys(ledger.load().doc.tasks)).toHaveLength(4);
+  });
+
+  it('a card stuck in a closed place is reused: it passes to whoever creates it again', async () => {
+    const ledger = (holder.current = service());
+    const stuck = JSON.parse((await create(closedDev, {})).text) as { id: string };
+    expect((await runLedgerTool(ledger, closedDev, call('tarefa_assumir', { id: stuck.id }))).ok).toBe(true);
+    const reused = JSON.parse((await create(newDev, {})).text) as Record<string, unknown>;
+    expect(reused).toMatchObject({ id: stuck.id, jaExistia: true, dono: 'place:dev-novo', estado: 'aberta' });
+    const task = ledger.load().doc.tasks[stuck.id]!;
+    expect(task.events.at(-1)).toMatchObject({ kind: 'reatribuida', fromPlaceId: 'place:dev-velho', by: { placeId: 'place:dev-novo' } });
+    expect((await runLedgerTool(ledger, newDev, call('tarefa_assumir', { id: stuck.id }))).ok).toBe(true);
+    expect(Object.keys(ledger.load().doc.tasks)).toHaveLength(1);
+  });
+
+  it('the dedup keeps one card per pending matter and loses nothing', async () => {
+    const filePath = ledgerFile();
+    const build = service(filePath);
+    const old = decision(build, IN_THREAD);
+    const newer = 't-newer';
+    const openOld = build.apply(theoActor, { op: 'criar', projectPath: BOARD, request: `Lucas, DM — ${dm(1)}\n\n«valida?»`, doneWhen: 'o dono decide', due: '2026-11-07', ownerPlaceId: 'place:theo', risk: 'alto' });
+    const sendLucas = await letter(build, { destino: 'D08R86FB4PM' });
+    // A card the owner already decided, and its open twin left behind in a closed place.
+    const decided = decision(build, 'https://acme.slack.com/archives/C0DDDDDDDD/p1793000000000001');
+    expect(build.apply(dono, { op: 'aceitar', id: decided, option: 'Mandar o rascunho' }).ok).toBe(true);
+    // Repeats as the v4 app let them be born: the same card twice, and the letters' links undone.
+    const raw = JSON.parse(readFileSync(filePath, 'utf8')) as { schemaVersion: number; tasks: Record<string, Record<string, unknown>> };
+    raw.tasks['t-dup'] = { ...raw.tasks[old]!, id: 't-dup', createdAt: (raw.tasks[old]!.createdAt as number) - 1 };
+    raw.tasks[newer] = { ...raw.tasks[old]!, id: newer, createdAt: (raw.tasks[old]!.createdAt as number) + 1 };
+    raw.tasks['t-gemea'] = { ...raw.tasks[decided]!, id: 't-gemea', state: 'aberta', events: (raw.tasks[decided]!.events as unknown[]).slice(0, 1) };
+    for (const task of Object.values(raw.tasks)) delete (task.slack as Record<string, unknown> | undefined)?.replaces;
+    writeFileSync(filePath, JSON.stringify(raw, null, 2));
+    const ledger = service(filePath);
+    const before = ledger.load().doc;
+    expect(openOld.ok).toBe(true);
+
+    const result = ledger.tidy();
+    if ('error' in result) throw new Error(result.error);
+    const after = ledger.load().doc;
+    // Same message, two delivered cards (+ the copy): the newest stays; the open card of the DM goes to the letter.
+    expect(result.replaced).toEqual({ [old]: newer, 't-dup': newer, 't-gemea': decided, [openOld.ok ? openOld.task.id : '']: sendLucas.id });
+    expect(after.tasks[decided]!.events).toEqual(before.tasks[decided]!.events);
+    expect(Object.keys(after.tasks).sort()).toEqual(Object.keys(before.tasks).sort());
+    for (const [id, keep] of Object.entries(result.replaced)) {
+      expect(after.tasks[id]!.state).toBe('substituida');
+      expect(after.tasks[id]!.events.slice(0, -1)).toEqual(before.tasks[id]!.events);
+      expect(after.tasks[id]!.events.at(-1)).toMatchObject({ kind: 'substituida', replacedBy: keep });
+      expect(after.tasks[keep]!.state).not.toBe('substituida');
+    }
+    expect(result.waitingBefore).toBeGreaterThan(result.waitingAfter);
+    expect(ledger.tidy()).toMatchObject({ replaced: {}, backup: null });
   });
 });
