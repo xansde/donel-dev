@@ -154,7 +154,7 @@ export function createFaxinaRunner(deps: FaxinaDeps): FaxinaRunner {
         log({ ...base, acao: 'cancelaria', motivo: decision.reason });
         continue;
       }
-      const result = service.apply({ kind: 'lugar', placeId: decision.task.ownerPlaceId }, { op: 'cancelar', id: decision.task.id, reason: decision.reason });
+      const result = await service.apply({ kind: 'lugar', placeId: decision.task.ownerPlaceId }, { op: 'cancelar', id: decision.task.id, reason: decision.reason });
       log({ ...base, acao: result.ok ? 'cancelada' : 'erro', motivo: result.ok ? decision.reason : result.reason });
     }
 
@@ -180,7 +180,7 @@ export function createFaxinaRunner(deps: FaxinaDeps): FaxinaRunner {
           log({ ...base, acao: 'passaria', motivo: reason });
           continue;
         }
-        const result = service.apply({ kind: 'lugar', placeId: orphan.task.ownerPlaceId }, { op: 'transferir', id: orphan.task.id, to: orphan.to, reason });
+        const result = await service.apply({ kind: 'lugar', placeId: orphan.task.ownerPlaceId }, { op: 'transferir', id: orphan.task.id, to: orphan.to, reason });
         log({ ...base, acao: result.ok ? 'passada' : 'erro', motivo: result.ok ? reason : result.reason });
         if (!result.ok) continue;
         const key = orphan.to === LEADER_OF_ALL ? LEADER_OF_ALL : `${orphan.task.projectPath}\n${orphan.to}`;

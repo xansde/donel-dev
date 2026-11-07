@@ -56,7 +56,7 @@ export function resolveCouncil(env: Record<string, string | undefined>): JudgePr
 
 /** What the Oráculo port needs: the same `apply` every other port uses. */
 export interface HillClimbLedgerPort {
-  apply(actor: LedgerActor, op: LedgerOp): LedgerApplyResult;
+  apply(actor: LedgerActor, op: LedgerOp): Promise<LedgerApplyResult>;
 }
 
 export interface HillClimbCaller {
@@ -218,7 +218,7 @@ export function createHillClimbService(deps: HillClimbServiceDeps): HillClimbSer
         if (current.readOnly) return { ok: false, text: current.warning ?? 'As missões estão só para leitura.' };
         const id = newId();
         const actor: LedgerActor = { kind: 'lugar', placeId: caller.placeId };
-        const created = ledger.apply(actor, {
+        const created = await ledger.apply(actor, {
           op: 'criar',
           projectPath: caller.projectPath,
           title: `Hill climbing: ${call.titulo}`,
@@ -230,9 +230,9 @@ export function createHillClimbService(deps: HillClimbServiceDeps): HillClimbSer
         });
         if (!created.ok) return { ok: false, text: `O Oráculo recusou a carta: ${created.reason}` };
         const taskId = created.task.id;
-        const taken = ledger.apply(actor, { op: 'assumir', id: taskId });
+        const taken = await ledger.apply(actor, { op: 'assumir', id: taskId });
         if (!taken.ok) return { ok: false, text: `O Oráculo recusou a carta: ${taken.reason}` };
-        const delivered = ledger.apply(actor, {
+        const delivered = await ledger.apply(actor, {
           op: 'entregar',
           id: taskId,
           proofs: [{ kind: 'texto', text: proposalText(call) }],
