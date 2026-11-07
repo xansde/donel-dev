@@ -63,6 +63,12 @@ export interface SendRequest {
    * a message from another session). The owner always goes first; a `session` message waits for him (see the top).
    */
   readonly from?: SendFrom;
+  /**
+   * 07/11 — the same text sent again within `DEDUPE_MS` answers for the first send instead of going in twice, unless
+   * that one failed. For `sessao_enviar`: a sender that heard "não entrou" or a timeout while the message did go in
+   * sent it again, and the destination got it twice.
+   */
+  readonly dedupe?: boolean;
 }
 
 export type SendFrom = 'owner' | 'session';
@@ -136,6 +142,8 @@ const OWNER_HOLD_AFTER_ENTER_MS = 1_500;
  */
 const OWNER_HOLD_MAX_MS = 5_000;
 const MAX_ALIASES = 500;
+/** How long a deduped send answers for a resend of the same text. */
+const DEDUPE_MS = 10 * 60_000;
 
 /**
  * Bytes the terminal emits on its own (focus in/out, cursor and device reports, mouse): not the owner typing.
@@ -247,13 +255,22 @@ export class SendDriver {
   private holdTimer: unknown = undefined;
   /** A session message merged into another: its id answers for the one that carries it (`carrierOf`). */
   private readonly aliases = new Map<string, string>();
+  /** Deduped sends by normalized text: the first id and when it was sent. */
+  private readonly recent = new Map<string, { readonly id: string; readonly at: number }>();
+  /** Ids that reached `accepted` or `queued` (they answer for a resend after leaving the list). */
+  private readonly delivered = new Set<string>();
+  /** Some send of this tab was taken by the CLI. */
+  private took = false;
 
   constructor(private readonly ports: SendDriverPorts) {}
 
   // ------------------------------------------------------------------ public
 
   enqueue(request: SendRequest): string {
+    const resent = this.resendOf(request);
+    if (resent !== null) return resent;
     const id = `send-${++this.seq}-${this.ports.now().toString(36)}`;
+    if (request.dedupe === true) this.remember(request.text, id);
     const from = request.from ?? 'owner';
     this.items.push({
       id,
@@ -290,6 +307,35 @@ export class SendDriver {
   /** The send that carries `id`: itself, or the notice it was merged into while waiting for the owner. */
   carrierOf(id: string): string {
     return this.aliases.get(id) ?? id;
+  }
+
+  /** The CLI took some send of this tab (an acceptance signal, from a hook or the transcript, or a lookup). */
+  tookMessage(): boolean {
+    return this.took;
+  }
+
+  /** `id` (or its carrier) was taken by the CLI, even if it already left the list. */
+  wasDelivered(id: string): boolean {
+    return this.delivered.has(this.carrierOf(id));
+  }
+
+  /** A deduped send of the same text, recent and not failed: the id that answers for this one. */
+  private resendOf(request: SendRequest): string | null {
+    if (request.dedupe !== true) return null;
+    const key = normalizePrompt(request.text);
+    const prev = this.recent.get(key);
+    if (prev === undefined || this.ports.now() - prev.at >= DEDUPE_MS) return null;
+    const carrier = this.carrierOf(prev.id);
+    const item = this.items.find((i) => i.id === carrier);
+    if (item !== undefined ? item.machine?.phase !== 'failed' : this.delivered.has(carrier)) return prev.id;
+    return null;
+  }
+
+  private remember(text: string, id: string): void {
+    const now = this.ports.now();
+    for (const [key, rec] of this.recent) if (now - rec.at >= DEDUPE_MS) this.recent.delete(key);
+    this.recent.set(normalizePrompt(text), { id, at: now });
+    while (this.recent.size > MAX_ALIASES) this.recent.delete(this.recent.keys().next().value as string);
   }
 
   /**
@@ -363,7 +409,7 @@ export class SendDriver {
     if (this.dedupeSignal(sig)) return;
     const at = Date.parse(sig.at);
     const now = this.ports.now();
-    const awaiting = this.items.filter((i) => i.machine !== null && (i.machine.step === 'await-ack' || i.machine.phase === 'queued'));
+    const awaiting = this.items.filter((i) => i.machine !== null && (i.machine.step === 'await-ack' || i.machine.step === 'verify' || i.machine.phase === 'queued'));
     if (awaiting.length === 0) return;
     const candidates = awaiting.map((i) => ({ item: i, text: i.machine!.text, cls: i.machine!.cls, createdAt: i.machine!.createdAt }));
     const textual = sig.signal === 'submit' || sig.signal === 'enqueue' || sig.signal === 'deliver';
@@ -503,6 +549,13 @@ export class SendDriver {
     const before = item.machine.phase;
     const result = step(item.machine, event);
     item.machine = result.state;
+    if (result.state.phase === 'accepted' || result.state.phase === 'queued') {
+      this.took = true;
+      if (!this.delivered.has(item.id)) {
+        this.delivered.add(item.id);
+        while (this.delivered.size > MAX_ALIASES) this.delivered.delete(this.delivered.values().next().value as string);
+      }
+    }
     this.noteFailure(before, result.state);
     this.runEffects(item, result.effects);
   }

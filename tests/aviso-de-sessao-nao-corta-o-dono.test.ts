@@ -79,14 +79,15 @@ class Clock {
   }
 }
 
-function setup(working: boolean) {
+function setup(working: boolean, signals = true) {
   const clock = new Clock();
   let driver: SendDriver;
   const cli: FakeCli = new FakeCli(
     clock,
     working,
-    (text) =>
-      driver.handleSignal({ signal: working ? 'enqueue' : 'submit', text, at: new Date(clock.now).toISOString(), origin: 'hook' }),
+    (text) => {
+      if (signals) driver.handleSignal({ signal: working ? 'enqueue' : 'submit', text, at: new Date(clock.now).toISOString(), origin: 'hook' });
+    },
     () => driver.onScreen(),
   );
   driver = new SendDriver({
@@ -244,5 +245,44 @@ describe('aviso de sessão chegando enquanto o dono digita (06/11)', () => {
     // His messages go before the notices that were still waiting.
     expect(cli.submitted.indexOf(PEDIR)).toBeLessThan(cli.submitted.indexOf(`${NOTICES[1]}\n${NOTICES[2]}`));
     expect(cli.submitted.indexOf(ESCREVER)).toBeLessThan(cli.submitted.indexOf(`${NOTICES[1]}\n${NOTICES[2]}`));
+  });
+});
+
+// t-116a8521 / t-1cf1ed54 (07/11) — sessão na VPS com o app a 100 % de CPU: o hook de aceite não chega, quem mandou ouve
+// "não entrou" ou "o app não respondeu a tempo" e manda de novo; a mensagem chegava duplicada. E a sessão que já tinha
+// pego o pedido era dada como "não começou" por nunca ter mandado um hook.
+describe('mensagem de outra sessão sem sinal de aceite (07/11)', () => {
+  const TEXT = '◆ De Revisor (place:r1): aprovei, pode mesclar.';
+
+  it('entra uma vez só: o reenvio do mesmo texto responde pela primeira, e a sessão conta como tendo pego a mensagem', async () => {
+    const { clock, cli, driver } = setup(false, false);
+    clock.advanceTo(1_000);
+    expect(driver.tookMessage()).toBe(false);
+    const first = driver.enqueue({ text: TEXT, from: 'session', dedupe: true });
+    clock.advanceTo(47_000); // a tab's first send waits 45 s for the acceptance, then asks the transcript
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    clock.advanceTo(47_100);
+    expect(cli.submitted).toEqual([TEXT]);
+    expect(driver.getItems().find((i) => i.id === first)?.state).toBe('accepted');
+    expect(driver.tookMessage()).toBe(true);
+
+    const again = driver.enqueue({ text: TEXT, from: 'session', dedupe: true });
+    clock.advanceTo(60_000);
+    expect(driver.carrierOf(again)).toBe(first);
+    expect(cli.submitted).toEqual([TEXT]);
+  });
+
+  it('o reenvio de uma mensagem que de fato não entrou vai de novo', () => {
+    const { clock, cli, driver } = setup(false);
+    clock.advanceTo(1_000);
+    driver.setEnv({ alive: false });
+    const first = driver.enqueue({ text: TEXT, from: 'session', dedupe: true });
+    clock.advanceTo(300_000);
+    expect(driver.getItems().find((i) => i.id === first)?.state).toBe('failed');
+    driver.setEnv({ alive: true });
+    const again = driver.enqueue({ text: TEXT, from: 'session', dedupe: true });
+    clock.advanceTo(330_000);
+    expect(driver.carrierOf(again)).toBe(again);
+    expect(cli.submitted).toEqual([TEXT]);
   });
 });

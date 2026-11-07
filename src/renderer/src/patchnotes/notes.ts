@@ -21,6 +21,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         title: 'Sessão na VPS que não abre diz por quê',
         text: 'Quando uma sessão aberta numa VPS não consegue entrar lá, quem a abriu fica sabendo na hora e com o motivo que a conexão deu, como um pedido de verificação do Tailscale, em vez de ouvir só "o terminal não chegou a abrir" minuto e meio depois.',
       },
+      {
+        title: 'O primeiro pedido chega à sessão na VPS',
+        text: 'Uma sessão aberta numa VPS agora espera o Claude de lá ficar pronto, mesmo quando a conexão e a subida demoram alguns minutos, e só então recebe o pedido. Se aparecer lixo do terminal na caixa dela, o app apaga antes de mandar. Uma mensagem que entrou, mas cuja confirmação atrasou, não é mais dada como perdida, e mandar o mesmo texto de novo não faz ele chegar duas vezes. Uma sessão que já respondeu não aparece mais como "não começou".',
+      },
     ],
   },
   {

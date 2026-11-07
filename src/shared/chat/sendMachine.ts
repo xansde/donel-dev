@@ -114,6 +114,8 @@ export interface SendMachineState {
   readonly terminalNeeded: boolean;
   /** Mid-turn according to the hooks: a plain prompt is written even if the screen cannot prove the box. */
   readonly working: boolean;
+  /** Times this send erased a terminal report that leaked into the box (capped: `MAX_JUNK_CLEANS`). */
+  readonly junkCleans: number;
   readonly lines: readonly LineInput[] | null;
   readonly waitSince: number;
   readonly reasonVisible: boolean;
@@ -173,6 +175,12 @@ export interface StepResult {
 // ------------------------------------------------------------------ timings
 
 const WAIT_CLI_MS = 30_000;
+/**
+ * The first send of a tab waits this long for the CLI to come up. A session opened on a remote place only shows the
+ * CLI after the setup by ssh (up to 180 s), the attach and the boot there; with 30 s the first message gave up before
+ * it existed, nothing was written, and the session "não começou" (07/11).
+ */
+const FIRST_WAIT_CLI_MS = 240_000;
 const IMAGE_MS = 3_000;
 const TEXT_BASE_MS = 3_000;
 const TEXT_PER_15KB_MS = 1_000;
@@ -189,6 +197,11 @@ const TEXT_RECHECK_MS = 1_000;
 /** Enter written again while our text still sits in the box, 3 s apart (an Enter a slow CLI swallowed). */
 const MAX_ENTER_RESENDS = 3;
 const ACK_MS = 15_000;
+/** The first send of a tab: a CLI that just came up may draw the box before it takes an Enter (07/11). */
+const FIRST_MAX_ENTER_RESENDS = 14;
+const FIRST_ACK_MS = 45_000;
+/** Terminal reports erased from the box per send, at most. */
+const MAX_JUNK_CLEANS = 3;
 const ENTER_GAP_MS = 80;
 const RESEND_ENTER_MS = 3_000;
 const VERIFY_MS = 15_000;
@@ -262,6 +275,7 @@ export function createSend(input: SendInput, now: number): StepResult {
     pendingOpen: false,
     terminalNeeded: false,
     working: false,
+    junkCleans: 0,
     lines: null,
     waitSince: now,
     reasonVisible: false,
@@ -319,6 +333,12 @@ export function step(state: SendMachineState, event: SendEvent): StepResult {
           s.phase = 'accepted';
           s.step = 'done';
         } else resetForRetry(s, now);
+      } else if (s.step === 'verify' && s.phase === 'confirming') {
+        // The Enter went and the box emptied, but no acceptance signal came: the transcript decides, never a new paste.
+        if (event.found) {
+          s.phase = 'accepted';
+          s.step = 'done';
+        } else fail(s, 'não foi');
       } else if (s.step === 'verify' && s.phase === 'queued') {
         if (event.found) {
           s.phase = 'accepted';
@@ -386,7 +406,7 @@ function applyAction(s: Draft, action: 'retry' | 'discard-and-send' | 'interrupt
 // ----------------------------------------------------------------- signals
 
 function applySignal(s: Draft, sig: PromptSignal): void {
-  if (s.step !== 'await-ack' && s.phase !== 'queued') return;
+  if (s.step !== 'await-ack' && s.step !== 'verify' && s.phase !== 'queued') return;
   if (sig.at < s.createdAt) return;
   const cls = s.cls;
   const textOk = sig.text === undefined || matchesPrompt(s.text, sig.text);
@@ -507,6 +527,31 @@ function boxIsOurs(s: Draft, lines: readonly LineInput[]): boolean {
   return stripped !== '' && squash(s.text).startsWith(stripped);
 }
 
+/**
+ * 07/11 — what a terminal writes back on its own (device attributes `ESC[?61;…c`, cursor position `ESC[12;40R`) can
+ * reach a remote CLI split in two (ssh + tmux, a busy machine): its tail lands in the box as text (`;23;24;28;32;42c`).
+ * Never something a person types: digits joined by `;`, ending in the report's letter.
+ */
+const REPORT = String.raw`\[?[?>]?\d*(?:;\d+)+[cRt]`;
+const JUNK_ONLY = new RegExp(`^(?:${REPORT})+$`);
+const JUNK_TAIL = new RegExp(`(?:${REPORT})+$`);
+const JUNK_HEAD = new RegExp(`^(?:${REPORT})+`);
+
+const ONLY_PLACEHOLDERS = /^(?:\[Pasted text #\d+(?: \+\d+ lines?)?\]\s*)+$/;
+
+/** The box holds a leaked terminal report next to our text (literal, or its `[Pasted text #N]`): where, how long. */
+function junkAroundOurs(s: Draft, raw: string): { readonly where: 'head' | 'tail'; readonly length: number } | null {
+  const ours = squash(s.text);
+  const isOurs = (rest: string): boolean => squash(rest) === ours || (s.boxEmptyAtPaste && ONLY_PLACEHOLDERS.test(rest.trim()));
+  const tail = JUNK_TAIL.exec(raw);
+  if (tail !== null && isOurs(raw.slice(0, tail.index))) return { where: 'tail', length: tail[0].length };
+  const head = JUNK_HEAD.exec(raw);
+  if (head !== null && isOurs(raw.slice(head[0].length))) return { where: 'head', length: head[0].length };
+  return null;
+}
+
+const backspaces = (n: number): string => '\x7f'.repeat(n);
+
 function textDeadlineMs(s: Draft): number {
   const bytes = new TextEncoder().encode(s.text).length;
   const ms = TEXT_BASE_MS + Math.floor(bytes / 15_000) * TEXT_PER_15KB_MS;
@@ -581,6 +626,8 @@ function evaluateQueued(s: Draft, now: number, fx: SendEffect[]): void {
   fx.push({ type: 'ack-lookup', text: s.text, since: s.createdAt });
 }
 
+const waitCliMs = (s: Draft): number => (s.firstPaste ? FIRST_WAIT_CLI_MS : WAIT_CLI_MS);
+
 function evaluateGate(s: Draft, now: number, fx: SendEffect[]): void {
   const lines = s.lines;
   let reason: string | null = null;
@@ -620,7 +667,15 @@ function evaluateGate(s: Draft, now: number, fx: SendEffect[]): void {
   if (reason === null && lines !== null) {
     const boxText = readInputText(lines);
     if (boxText === null) reason = 'esperando a caixa de entrada';
-    else if (boxText !== '') {
+    else if (boxText !== '' && JUNK_ONLY.test(boxText) && s.junkCleans < MAX_JUNK_CLEANS) {
+      // Only a leaked terminal report: Backspace erases it (never Esc: Esc Esc on a box just emptied opens Rewind).
+      fx.push({ type: 'write', data: backspaces(boxText.length) });
+      s.junkCleans += 1;
+      s.lines = null; // read again before pasting: never paste on the screen that still shows it
+      s.lastWaitReason = 'lendo a tela do Claude';
+      s.failReason = s.lastWaitReason;
+      return;
+    } else if (boxText !== '') {
       leftover = boxText;
       reason = 'sobrou texto na caixa do terminal';
       visible = true;
@@ -660,7 +715,7 @@ function evaluateGate(s: Draft, now: number, fx: SendEffect[]): void {
 
   if (reason !== null) {
     s.lastWaitReason = reason;
-    if (!visible && now - s.waitSince >= WAIT_CLI_MS) fail(s, 'o Claude não ficou pronto');
+    if (!visible && now - s.waitSince >= waitCliMs(s)) fail(s, 'o Claude não ficou pronto');
     else s.failReason = reason; // reused as the current waiting reason for the status
     return;
   }
@@ -694,6 +749,22 @@ function evaluateTyping(s: Draft, now: number, fx: SendEffect[]): void {
     return;
   }
   if (s.step === 'text') {
+    const raw = lines === null ? null : readInputText(lines);
+    const junk = raw === null || s.junkCleans >= MAX_JUNK_CLEANS ? null : junkAroundOurs(s, raw);
+    if (junk !== null && lines !== null) {
+      s.junkCleans += 1;
+      if (junk.where === 'tail') {
+        // The cursor sits after it: Backspace takes only the report, our text stays for its Enter.
+        fx.push({ type: 'write', data: backspaces(junk.length) });
+        s.lines = null;
+        return;
+      }
+      // Before our text: an Enter would submit it too. Clean the box (CLI idle: Esc would interrupt a turn) and paste
+      // again only once the gate sees it empty; mid-turn the box is left as is and the gate waits on it.
+      if (!isWorking(lines)) fx.push({ type: 'write', data: '\x1b\x1b' });
+      resetForRetry(s, now);
+      return;
+    }
     if (lines !== null && textSeen(s, lines)) {
       enterConfirming(s, lines, now, fx);
       return;
@@ -737,7 +808,7 @@ function evaluateConfirming(s: Draft, now: number, fx: SendEffect[]): void {
       s.step = 'await-ack';
       s.idleAtEnter = !midTurn(s, lines);
       s.resendAt = now + RESEND_ENTER_MS;
-      s.ackDeadline = now + ACK_MS;
+      s.ackDeadline = now + (s.firstPaste ? FIRST_ACK_MS : ACK_MS);
       s.resendDone = false;
       s.resends = 0;
     }
@@ -760,6 +831,21 @@ function evaluateConfirming(s: Draft, now: number, fx: SendEffect[]): void {
       return;
     }
     if (s.ackDeadline !== null && now >= s.ackDeadline) {
+      // Our text left the box after the Enter: the CLI took it and only the signal is missing (a late hook or
+      // transcript, a machine at 100 %). Mid-turn on screen it waits like a queued send, checked when the turn ends;
+      // idle, the transcript is asked now. Either way, never a new paste: a sender told "não foi" sent it twice.
+      if (lines !== null && readInputText(lines) === '') {
+        if (isWorking(lines) || s.working) {
+          s.phase = 'queued';
+          s.step = 'done';
+          s.verifyAt = null;
+        } else {
+          s.step = 'verify';
+          s.ackDeadline = null;
+          fx.push({ type: 'ack-lookup', text: s.text, since: s.createdAt });
+        }
+        return;
+      }
       fail(s, 'não foi');
       return;
     }
@@ -768,7 +854,7 @@ function evaluateConfirming(s: Draft, now: number, fx: SendEffect[]): void {
     if (!s.resendDone && s.resendAt !== null && now >= s.resendAt && lines !== null && textSeen(s, lines)) {
       fx.push({ type: 'write', data: '\r' });
       s.resends += 1;
-      s.resendDone = s.resends >= MAX_ENTER_RESENDS;
+      s.resendDone = s.resends >= (s.firstPaste ? FIRST_MAX_ENTER_RESENDS : MAX_ENTER_RESENDS);
       if (!s.resendDone) s.resendAt = now + RESEND_ENTER_MS;
       s.attempts += 1;
     }
@@ -803,7 +889,7 @@ function nextWake(s: Draft, now: number): number | null {
   const candidates: number[] = [];
   switch (s.phase) {
     case 'waiting-cli':
-      if (!s.reasonVisible) candidates.push(s.waitSince + WAIT_CLI_MS);
+      if (!s.reasonVisible) candidates.push(s.waitSince + waitCliMs(s));
       if (s.interruptAt !== null) candidates.push(s.interruptAt + INTERRUPT_SETTLE_MS);
       break;
     case 'typing':

@@ -566,9 +566,9 @@ describe('prazos (§6)', () => {
     expect(sim.writes()).toEqual([]);
   });
 
-  it('aceite: 15 s depois do Enter, senão "não foi"', () => {
+  it('aceite: 15 s depois do Enter, senão "não foi" (o texto continua na caixa)', () => {
     const sim = sendUntilEnter();
-    sim.screen(idleEmpty(), 14_999 + 180);
+    sim.screen(screen('oi tudo bem'), 14_999 + 180);
     expect(sim.phase).toBe('confirming');
     sim.tick(15_180);
     expect(sim.phase).toBe('failed');
@@ -1126,5 +1126,124 @@ describe('rodapé sem as dicas (statusLine configurada)', () => {
     expect(r.effects).toContainEqual({ type: 'wake-at', at: 130_000 });
     sim.screen(quiet(), 130_000);
     expect(sim.log.filter((e) => e.type === 'ack-lookup')).toHaveLength(1);
+  });
+});
+
+// 07/11 — sessão aberta por `sessao_abrir` num lugar remoto (VPS): o primeiro pedido não entrava. O relógio de 30 s
+// do gate corria desde a criação da aba, mas o setup por ssh + attach + boot do Claude lá passa disso; e a resposta
+// de atributos do terminal (DA, `;23;24;28;32;42c`) que vaza na caixa fazia o texto "não bater" e ficar lá parado.
+describe('primeiro pedido de uma sessão que está nascendo (07/11)', () => {
+  const JUNK = ';23;24;28;32;42c';
+  const booting = (): LineInput[] => ['Conectando ao lugar remoto…'];
+
+  it('o primeiro envio espera o Claude nascer além de 30 s (setup remoto) e cola quando a caixa aparece', () => {
+    const sim = new Sim({ text: 'faça a tarefa', firstPaste: true }, 0);
+    sim.screen(booting(), 0);
+    sim.tick(30_000);
+    sim.tick(90_000);
+    expect(sim.phase).toBe('waiting-cli');
+    expect(sim.allWrites()).toEqual([]);
+    sim.screen(idleEmpty(), 95_000);
+    expect(sim.allWrites()).toEqual([paste('faça a tarefa')]);
+  });
+
+  it('o primeiro envio ainda desiste se o Claude nunca ficar pronto', () => {
+    const sim = new Sim({ text: 'faça a tarefa', firstPaste: true }, 0);
+    sim.screen(booting(), 0);
+    sim.tick(300_000);
+    expect(sim.phase).toBe('failed');
+    expect(sim.status?.reason).toBe('o Claude não ficou pronto');
+  });
+
+  it('caixa só com lixo de resposta do terminal: apaga com Backspace (nunca Esc) e cola depois', () => {
+    const sim = new Sim({ text: 'faça a tarefa', firstPaste: true }, 0);
+    sim.screen(screen(JUNK), 0);
+    expect(sim.allWrites()).toEqual(['\x7f'.repeat(JUNK.length)]);
+    sim.screen(idleEmpty(), 200);
+    expect(sim.allWrites()).toEqual(['\x7f'.repeat(JUNK.length), paste('faça a tarefa')]);
+  });
+
+  it('lixo do terminal grudado depois do pedido: apaga só o lixo e dá o Enter, sem colar de novo', () => {
+    const sim = new Sim({ text: 'faça a tarefa', firstPaste: true }, 0);
+    sim.screen(idleEmpty(), 0);
+    sim.screen(screen(`faça a tarefa${JUNK}`), 500);
+    expect(sim.writes()).toEqual(['\x7f'.repeat(JUNK.length)]);
+    sim.screen(screen('faça a tarefa'), 700);
+    sim.tick(800);
+    expect(sim.allWrites().filter((w) => w === '\r')).toHaveLength(1);
+    expect(sim.allWrites().filter((w) => w.includes('faça a tarefa'))).toHaveLength(1);
+  });
+
+  it('pedido longo (vira [Pasted text #1]) com lixo do terminal grudado: apaga o lixo e dá o Enter', () => {
+    const text = 'linha 1\nlinha 2\nlinha 3';
+    const sim = new Sim({ text, firstPaste: true }, 0);
+    sim.screen(idleEmpty(), 0);
+    sim.screen(screen(`[Pasted text #1 +2 lines]${JUNK}`), 500);
+    expect(sim.writes()).toEqual(['\x7f'.repeat(JUNK.length)]);
+    sim.screen(screen('[Pasted text #1 +2 lines]'), 700);
+    sim.tick(800);
+    expect(sim.allWrites().filter((w) => w === '\r')).toHaveLength(1);
+  });
+
+  it('Claude trabalhando com lixo na caixa: apaga e só cola depois de ler a tela de novo', () => {
+    const sim = new Sim({ text: 'faça a tarefa', firstPaste: true }, 0);
+    sim.ev({ type: 'env', now: 0, working: true });
+    sim.screen(screen(JUNK, WORKING_FOOTER), 0);
+    expect(sim.allWrites()).toEqual(['\x7f'.repeat(JUNK.length)]);
+    sim.screen(workingEmpty(), 200);
+    expect(sim.writes()).toEqual([paste('faça a tarefa')]);
+  });
+
+  it('lixo do terminal antes do pedido: limpa a caixa e cola de novo só com ela vazia, sem Enter no lixo', () => {
+    const sim = new Sim({ text: 'faça a tarefa', firstPaste: true }, 0);
+    sim.screen(idleEmpty(), 0);
+    sim.screen(screen(`${JUNK}faça a tarefa`), 500);
+    expect(sim.writes()).toEqual(['\x1b\x1b']);
+    expect(sim.allWrites()).not.toContain('\r');
+    sim.screen(idleEmpty(), 700);
+    expect(sim.writes()).toEqual([paste('faça a tarefa')]);
+  });
+
+  it('o primeiro pedido parado na caixa leva Enter de novo por mais tempo (CLI que acabou de nascer), nunca o texto', () => {
+    const sim = sendUntilEnter('faça a tarefa', { firstPaste: true });
+    for (let t = 3180; t <= 40_000; t += 3000) sim.screen(screen('faça a tarefa'), t);
+    expect(sim.phase).toBe('confirming');
+    expect(sim.allWrites().filter((w) => w === '\r').length).toBeGreaterThan(4);
+    expect(sim.allWrites().filter((w) => w.includes('faça a tarefa'))).toHaveLength(1);
+    sim.signal({ signal: 'submit', text: 'faça a tarefa', at: 40_100 }, 40_100);
+    expect(sim.phase).toBe('accepted');
+  });
+});
+
+// t-547be518 / t-116a8521 — `send-failed` com `boxChars: 0` e `screenWorking: true`: o Enter foi, a caixa esvaziou e o
+// Claude começou a rodada, mas o sinal de aceite não chegou em 15 s (hook ou transcript atrasado, máquina a 100 %).
+// Quem mandou ouvia "não foi" e mandava de novo: a mensagem chegava duplicada.
+describe('Enter que entrou sem sinal de aceite (07/11)', () => {
+  it('caixa vazia e o Claude trabalhando no prazo do aceite: fica na fila do CLI (confere no fim do turno), não "não foi"', () => {
+    const sim = sendUntilEnter('oi tudo bem');
+    sim.screen(workingEmpty(), 3180);
+    sim.screen(workingEmpty(), 15_180);
+    expect(sim.phase).toBe('queued');
+    expect(sim.allWrites().filter((w) => w === '\r')).toHaveLength(1);
+  });
+
+  it('caixa vazia e o Claude parado no prazo do aceite: procura no transcript antes de dizer "não foi"', () => {
+    const sim = sendUntilEnter('oi tudo bem');
+    sim.screen(idleEmpty(), 3180);
+    const r = sim.screen(idleEmpty(), 15_180);
+    expect(r.effects).toContainEqual({ type: 'ack-lookup', text: 'oi tudo bem', since: 0 });
+    expect(sim.phase).toBe('confirming');
+    sim.ev({ type: 'ack-result', now: 15_300, found: true });
+    expect(sim.phase).toBe('accepted');
+    expect(sim.allWrites().filter((w) => w.includes('oi tudo bem'))).toHaveLength(1);
+  });
+
+  it('caixa vazia, parado e nada no transcript: "não foi", sem colar de novo', () => {
+    const sim = sendUntilEnter('oi tudo bem');
+    sim.screen(idleEmpty(), 15_180);
+    sim.ev({ type: 'ack-result', now: 15_300, found: false });
+    expect(sim.phase).toBe('failed');
+    expect(sim.status?.reason).toBe('não foi');
+    expect(sim.allWrites().filter((w) => w.includes('oi tudo bem'))).toHaveLength(1);
   });
 });
