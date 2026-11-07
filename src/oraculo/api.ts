@@ -87,6 +87,8 @@ export interface OracleApiDeps {
   readonly tokenHash: () => string | null;
   /** The ledger changed outside `apply` (the move): the events stream hears it. */
   readonly changed?: () => void;
+  /** More routes behind the same token (src/oraculo/admin.ts); `null` = not one of them. */
+  readonly extra?: (request: OracleRequest, path: string) => Promise<OracleResponse | null>;
   /** The way back's mark (src/oraculo/devolvido.ts): set, every writer of the daemon refuses. */
   readonly returned?: { returned(): boolean; set(returned: boolean): void };
 }
@@ -254,6 +256,7 @@ export function createOracleApiHandler(deps: OracleApiDeps): OracleApiHandler {
       }
     }
 
-    return json(404, { error: 'rota' });
+    const extra = await deps.extra?.(request, path);
+    return extra ?? json(404, { error: 'rota' });
   };
 }
