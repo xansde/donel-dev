@@ -46,7 +46,19 @@ Consequências:
 Código: `src/shared/mindscape/chairs.ts` (derivação e layout, puro), `src/renderer/src/Mindscape/MindscapeChairs.tsx`
 (rig, nós, setas, faixa e gaveta), integração em `MindscapeScreen.tsx`.
 
-## Decisão 2: o que exige subir o `schemaVersion` fica para as fatias que guardam cadeira
+## Decisão 2: pods guardados no `mindscape.json` v6 (fatia 4, decidida pelo dono em 07/11)
+
+O dono escolheu, em 07/11, **cadeira = papel no quadro** e **o pod arruma as próprias cadeiras** (ele só move o pod).
+A v6 guarda no quadro `pods: [{ id, name, mission?, roleIds, x, y }]`, com `x` e `y` em unidades do quadro, como um
+cartão. Um papel fica em um pod só. A cadeira não ganha posição própria: o pod a arruma em colunas, seguindo o
+caminho do trabalho. As cadeiras sem pod ficam à esquerda dos pods, e o rig é a moldura em volta de tudo. O layout
+(`layoutChairs`) recebe pods genéricos (`PodShape`), então outra fonte, como o `rigs.json` da homologação, usa o
+mesmo desenho. Teste em `tests/mindscape-pods.test.ts`: a v5 sobe inteira, a v6 volta igual e um pod ruim cai
+sozinho. Um canal v5 que leia um arquivo v6 fica só leitura (a guarda do store).
+
+### Texto anterior desta decisão, de antes da escolha do dono
+
+**O que exige subir o `schemaVersion` fica para as fatias que guardam cadeira.**
 
 Pods, missão, paradigma, posição própria da cadeira, endereço `papel@rig` estável e a cadeira com teto (elástica)
 precisam de campo novo no `mindscape.json`, e campo novo sobe a versão (CLAUDE.md). Isso entra numa fatia própria,
