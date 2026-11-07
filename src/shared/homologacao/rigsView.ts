@@ -3,7 +3,7 @@
 // reads them); code and queue chairs take it from the file, and turn "sem sinal" when the file stops.
 // Pure: no React, no Electron. Nothing here writes anything.
 
-import { CHAIR_HEALTHS, type Chair, type ChairHealth } from '../mindscape/chairs';
+import { CHAIR_HEALTHS, NO_ROLE_CHAIR, type Chair, type ChairHealth } from '../mindscape/chairs';
 import type { SessionAxes } from '../mindscape/sessionAxes';
 import { RIGS_STALE_MS, type RigChairKind, type RigsShape } from './rigs';
 
@@ -90,14 +90,15 @@ export function deriveRigsView(shape: RigsShape, live?: RigsLiveInput): RigsView
 
   const outside: string[] = [];
   for (const roleChair of live?.roleChairs ?? []) {
-    if (!roleChair.roleId || drawnRoles.has(roleChair.roleId)) continue;
-    const id = `${OUTSIDE_DRAWING_PREFIX}${roleChair.roleId}`;
+    // The places with no role are their own chair too: no file draws them, and they must not vanish.
+    if (roleChair.roleId && drawnRoles.has(roleChair.roleId)) continue;
+    const id = `${OUTSIDE_DRAWING_PREFIX}${roleChair.roleId ?? NO_ROLE_CHAIR}`;
     outside.push(id);
     chairs.push({
       id,
-      nome: live!.roleName(roleChair.roleId),
+      nome: roleChair.roleId ? live!.roleName(roleChair.roleId) : 'Sem papel',
       tipo: 'agente',
-      papel: roleChair.roleId,
+      ...(roleChair.roleId ? { papel: roleChair.roleId } : {}),
       health: roleChair.health,
       seated: roleChair.seated,
       line: agentLine(roleChair.seated, live!.axesOf) ?? 'fora do desenho',

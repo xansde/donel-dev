@@ -224,8 +224,10 @@ function writeLens(lens: BoardLens): void {
 const RIG_SCREEN_MARGIN = 40;
 
 /** The band's line on the factory's board: where the drawing comes from. */
-function rigsDetail(shape: { readonly rigs: readonly unknown[]; readonly geradoEmMs: number }, chairCount: number): string {
-  return `${shape.rigs.length} rig${shape.rigs.length === 1 ? '' : 's'} → ${chairCount} cadeira${chairCount === 1 ? '' : 's'}, como a factory se descreve no rigs.json (gerado às ${clockOf(shape.geradoEmMs)}). Para mudar o desenho, peça à factory.`;
+function rigsDetail(shape: { readonly rigs: readonly unknown[]; readonly cadeiras: readonly unknown[]; readonly geradoEmMs: number }, outsideDrawing: number): string {
+  const chairCount = shape.cadeiras.length;
+  const outside = outsideDrawing > 0 ? ` e ${outsideDrawing} fora do desenho` : '';
+  return `${shape.rigs.length} rig${shape.rigs.length === 1 ? '' : 's'} → ${chairCount} cadeira${chairCount === 1 ? '' : 's'}, como a factory se descreve no rigs.json (gerado às ${clockOf(shape.geradoEmMs)})${outside}. Para mudar o desenho, peça à factory.`;
 }
 
 /** The Oráculo's task states in words, in the factory chair's drawer. */
@@ -604,7 +606,9 @@ export function MindscapeScreen({
     const sends = shape.ligacoes.filter((link) => link.de === chair.id).map((link) => ({ name: nameOf(link.para), kind: link.tipo, ...(link.rotulo ? { label: link.rotulo } : {}) }));
     const fileChair = shape.cadeiras.find((candidate) => candidate.id === chair.id);
     const since = fileChair?.estado?.desde ? Date.parse(fileChair.estado.desde) : NaN;
-    const roleDetails = chair.papel ? chairDetails(chair.papel) : null;
+    // The lens's chair of the role (or of the places with no role, for "Sem papel").
+    const roleKey = chair.papel ?? (chair.outsideDrawing ? NO_ROLE_CHAIR : undefined);
+    const roleDetails = roleKey ? chairDetails(roleKey) : null;
     const role = chair.papel ? roles.find((candidate) => candidate.id === chair.papel) : undefined;
     const role_ = roleDetails && 'chair' in roleDetails ? roleDetails : null;
     return {
@@ -1086,7 +1090,7 @@ export function MindscapeScreen({
           placeCount={allPlaces.length}
           chairCount={rigsBoard ? rigsBoard.view.chairs.length : chairsView.chairs.length}
           counts={rigsBoard ? rigsBoard.view.counts : chairsView.counts}
-          detail={rigsBoard ? rigsDetail(rigsBoard.shape, rigsBoard.view.chairs.length) : undefined}
+          detail={rigsBoard ? rigsDetail(rigsBoard.shape, rigsBoard.view.outsideDrawing.length) : undefined}
           highlight={highlight}
           onHighlight={setHighlight}
           ownerMode={ownerMode}

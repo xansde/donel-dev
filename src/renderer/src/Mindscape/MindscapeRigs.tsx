@@ -33,9 +33,8 @@ const RADIUS = CHAIR_NODE / 2;
 /** What a chair says under its name: "N sentados", "vaga", "código" or "fila". */
 export function rigChairCount(chair: RigChairView): string {
   if (chair.tipo !== 'agente') return KIND_WORD[chair.tipo];
-  if (!chair.papel) return 'vaga';
   if (chair.seated.length > 0) return `${chair.seated.length} sentado${chair.seated.length > 1 ? 's' : ''}`;
-  return 'ninguém sentado';
+  return chair.papel || chair.outsideDrawing ? 'ninguém sentado' : 'vaga';
 }
 
 export interface RigsLayerProps {
@@ -349,7 +348,7 @@ function FactoryChairBody({ details, onClose }: { details: FactoryChairDetails; 
             <ul className={chairStyles.list}>
               {details.seated.length === 0 ? (
                 <li className={chairStyles.rowEmpty}>
-                  <span>{chair.papel ? 'Ninguém sentado agora.' : 'Vaga: o arquivo não diz que papel senta aqui.'}</span>
+                  <span>{chair.papel || chair.outsideDrawing ? 'Ninguém sentado agora.' : 'Vaga: o arquivo não diz que papel senta aqui.'}</span>
                 </li>
               ) : null}
               {details.seated.map((row) => (
