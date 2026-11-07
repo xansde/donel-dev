@@ -1,6 +1,6 @@
 import { mkdirSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { basename, dirname, isAbsolute, join, relative } from 'node:path';
+import { join } from 'node:path';
 import { app, dialog, type BrowserWindow, type IpcMain, type WebContents } from 'electron';
 import { buildBrowserMcpConfig, mcpDeliveryFor, type AgentCli } from '../../shared/commandBuilder';
 import { BrowserControl, HELP_WAIT_MS, OWNER_WAIT_MS } from '../../shared/browser/control';
@@ -37,12 +37,23 @@ import { MCP_SERVER_NAME, type BrowserToolCall, type BrowserToolOutcome } from '
 import type { BoardToolCall } from '../../shared/mindscape/agent-tools';
 import type { LedgerToolCall } from '../../shared/ledger/tools';
 import type { HillClimbToolCall } from '../../shared/hillClimb/tools';
-import { refusedUploadFile, refusedUploadFolder, wideUploadFolder, withUploadFolder, withoutUploadFolder } from '../../shared/browser/upload';
+import {
+  refusedUploadFolder,
+  uploadFoldersFor,
+  uploadGrantAuthority,
+  wideUploadFolder,
+  withUploadFolder,
+  withUploadGrant,
+  withoutUploadFolder,
+  withoutUploadGrantFolder,
+  type UploadCaller,
+  type UploadGrant,
+} from '../../shared/browser/upload';
 import { normalizeBrowserUrl } from '../../shared/browser/url';
 import { BrowserPanels } from './browser-panels';
 import { browserMcpUrl, createBrowserMcpServer } from './browser-mcp-server';
 import { CdpDriver, type ListRead } from './cdp-driver';
-import { resolveUploadFile, type UploadFile } from './panel-helpers';
+import { findUploadFile } from './panel-helpers';
 
 // Navegador integrado — the main-side service: the views (browser-panels.ts), the IPC of the panel, and the
 // agent's side: one MCP token per PTY, the control (agent x owner, with generation), the CDP driver of each
@@ -61,6 +72,8 @@ export interface BrowserServiceDeps {
   openCap?(): number | null;
   /** The upload folders the owner authorized, kept in the app's config (`browserUploads`): they survive a restart. */
   readonly uploadFolders: { get(): readonly string[]; set(folders: readonly string[]): void };
+  /** The folders the orchestrators liberated per board, with who and when (config `browserUploadGrants`). */
+  readonly uploadGrants: { get(): readonly UploadGrant[]; set(grants: readonly UploadGrant[]): void };
   /** Ledger com prova (item 19) — the `tarefa_*` tools of the same server (main/ledger-store.ts). */
   executeLedger?(ptyId: string, call: LedgerToolCall): Promise<BrowserToolOutcome>;
   /** Hill climbing — the Escalador's `hillclimb_*` tools. */
@@ -144,8 +157,6 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
   const controls = new Map<string, BrowserControl>();
   /** One driver per tab, for as long as the tab lives: its `[N]` numbers survive a trip to another tab. */
   const drivers = new WeakMap<WebContents, CdpDriver>();
-  /** `navegador_enviar_arquivo` waiting for Permitir / Negar on the folder of its file, per session. */
-  const uploadRequests = new Map<string, { readonly folder: string; readonly file: string; readonly wide: string | null; readonly answer: (allow: boolean) => void }>();
   /** Where the agent may navigate, per session (no entry = anywhere). */
   const domainRules = new Map<string, DomainRules>();
   /** The address the vigia refused while the current tool ran: the tool answers with it. */
@@ -229,10 +240,7 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
     return {
       ptyId,
       uploadDirs: uploadFolders(),
-      uploadRequest: (() => {
-        const request = uploadRequests.get(ptyId);
-        return request ? { folder: request.folder, file: request.file, wide: request.wide } : null;
-      })(),
+      uploadGrants: deps.uploadGrants.get().map((grant) => ({ folder: grant.folder, board: grant.board, by: grant.by, at: grant.at })),
       domainMode: domains.mode,
       domains: domains.domains,
     };
@@ -243,7 +251,7 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
     for (const ptyId of livePtys) emitRules(ptyId);
   };
 
-  /** A folder to authorize passes the same checks whether it came from the picker or from the agent's request. */
+  /** A folder to authorize passes the same checks whether it came from the owner's picker or from an orchestrator. */
   const checkedUploadDir = (picked: string): { ok: true; folder: string } | { ok: false; reason: string } => {
     let folder: string;
     try {
@@ -260,104 +268,63 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
     emitAllRules();
   };
 
+  /** "Remover" in Regras takes the folder back from the owner's list and from every board that had it liberated. */
   const removeUploadFolder = (folder: string): void => {
     deps.uploadFolders.set(withoutUploadFolder(deps.uploadFolders.get(), folder));
+    deps.uploadGrants.set(withoutUploadGrantFolder(deps.uploadGrants.get(), folder));
     emitAllRules();
   };
 
-  /** How the agent gets a folder: said in every refusal and in the tool's description (shared/browser/mcp.ts). */
-  const HOW_TO_ASK =
-    'Chame navegador_enviar_arquivo de novo com o caminho COMPLETO do arquivo: a própria ferramenta mostra ao dono a pasta dele, com Permitir / Negar, e espera a resposta (até 30 min). Não use navegador_pedir_humano para isso.';
-
-  type UploadLookup = UploadFile | { readonly ok: false; readonly reason: string; readonly askFolder?: string };
-
-  /**
-   * The file the agent asked for, inside one of the authorized folders. A file that exists outside all of them
-   * comes back with `askFolder`: its own folder, which the tool asks the owner for.
-   */
-  const lookupUploadFile = (requested: string): UploadLookup => {
-    const folders = uploadFolders();
-    if (!isAbsolute(requested)) {
-      if (folders.length === 0) return { ok: false, reason: `Nenhuma pasta de envio autorizada ainda. ${HOW_TO_ASK}` };
-      const tries = folders.map((folder) => resolveUploadFile(folder, requested));
-      const found = tries.find((file) => file.ok);
-      if (found) return found;
-      if (tries.length === 1) return tries[0];
-      return { ok: false, reason: `Não achei "${requested}" nas pastas autorizadas (${folders.join('; ')}). ${HOW_TO_ASK}` };
-    }
-    let real: string;
+  /** Who calls, as the board tools see it (`sessao_quem_sou`); `null` when the board is not up (no grant counts then). */
+  const callerOf = async (ptyId: string): Promise<UploadCaller | null> => {
+    if (!deps.executeBoard) return null;
     try {
-      real = realpathSync.native(requested);
+      const who = await deps.executeBoard(ptyId, { tool: 'sessao_quem_sou' });
+      return who.kind === 'text' ? (JSON.parse(who.text) as UploadCaller) : null;
     } catch {
-      return { ok: false, reason: `Não achei esse arquivo: ${requested}.` };
+      return null;
     }
-    for (const folder of folders) {
-      let realFolder: string;
-      try {
-        realFolder = realpathSync.native(folder);
-      } catch {
-        continue; // the folder is gone: it simply covers nothing
-      }
-      const inside = relative(realFolder, real);
-      if (inside !== '' && !inside.startsWith('..') && !isAbsolute(inside)) return resolveUploadFile(realFolder, real);
-    }
-    return { ok: false, reason: `O arquivo está fora das pastas de envio autorizadas. ${HOW_TO_ASK}`, askFolder: dirname(real) };
+  };
+
+  /** The folders the session of `ptyId` sends from: the owner's, the chat attachments, and its board's grants. */
+  const uploadFoldersOf = async (ptyId: string): Promise<string[]> => {
+    const caller = await callerOf(ptyId);
+    const board = caller?.liderUnico === true ? 'all' : typeof caller?.pasta === 'string' ? caller.pasta : null;
+    return uploadFoldersFor({ owner: uploadFolders(), grants: deps.uploadGrants.get(), board, userData: deps.userDataDir }).filter(
+      (folder) => refusedUploadFolder(folder, uploadContext) === null,
+    );
   };
 
   /**
-   * The agent asked for a file outside the authorized folders: the panel opens with its folder and Permitir / Negar.
-   * `null` = allowed (the folder is saved for every session); otherwise the refusal the tool answers with.
+   * `navegador_liberar_pasta` (owner, 07/11): the orchestrator of a board liberates a folder for it, in his place. The
+   * Líder único names the board; a Líder of a board liberates on its own. Recorded with who and when.
    */
-  const askUploadFolder = async (ptyId: string, file: string, wanted: string): Promise<BrowserToolOutcome | null> => {
-    const secret = refusedUploadFile(basename(file));
-    if (secret) return fail(secret);
-    // One request at a time per session: a second one would take the place of the first on the bar.
-    if (uploadRequests.has(ptyId)) {
-      return fail(`Já há um pedido de pasta (${uploadRequests.get(ptyId)!.folder}) esperando o dono nesta sessão. Espere a resposta dele antes de pedir outro arquivo.`);
+  const grantUploadFolder = async (ptyId: string, wanted: string, quadro: string | undefined): Promise<BrowserToolOutcome> => {
+    const caller = await callerOf(ptyId);
+    if (!caller) return fail('O quadro ainda não abriu no app; tente de novo em instantes.');
+    const authority = uploadGrantAuthority(caller, quadro);
+    if (!authority.ok) return fail(authority.reason);
+    let board: string;
+    let by: string;
+    if ('leaderOfAll' in authority) {
+      const listed = await deps.executeBoard!(ptyId, { tool: 'sessao_listar', ...(quadro ? { quadro } : {}) });
+      if (listed.kind !== 'text') return fail(listed.kind === 'error' ? listed.text : 'Não achei esse quadro.');
+      const pasta = (JSON.parse(listed.text) as { pasta?: unknown }).pasta;
+      if (typeof pasta !== 'string') return fail('Não achei esse quadro: diga o nome ou a pasta do projeto em "quadro".');
+      board = pasta;
+      by = 'Líder único';
+    } else {
+      board = authority.board;
+      by = authority.by;
     }
     const checked = checkedUploadDir(wanted);
-    if (!checked.ok) {
-      return fail(
-        `${checked.reason} (o arquivo está em ${wanted}). Copie o arquivo para uma pasta só de envios e chame navegador_enviar_arquivo com o caminho novo; o dono vai ver o pedido dessa pasta.`,
-      );
-    }
-    const { folder } = checked;
-    try {
-      panels.ensure(ptyId);
-    } catch (error) {
-      return fail(errorText(error));
-    }
-    log(ptyId, `O agente pediu para enviar arquivos da pasta ${folder}`);
-    send(BROWSER_CHANNELS.openRequest, { ptyId });
-    const answer = await new Promise<'allow' | 'deny' | 'timeout'>((resolve) => {
-      const request = {
-        folder,
-        file: basename(file),
-        wide: wideWarning(folder),
-        answer: (allow: boolean) => {
-          clearTimeout(timer);
-          if (uploadRequests.get(ptyId) === request) uploadRequests.delete(ptyId);
-          resolve(allow ? 'allow' : 'deny');
-        },
-      };
-      const timer = setTimeout(() => {
-        if (uploadRequests.get(ptyId) === request) uploadRequests.delete(ptyId);
-        emitRules(ptyId);
-        resolve('timeout');
-      }, HELP_WAIT_MS);
-      uploadRequests.set(ptyId, request);
-      emitRules(ptyId);
-    });
-    if (!livePtys.has(ptyId)) return fail('A sessão deste navegador terminou.');
-    if (answer === 'timeout') return fail(`O dono não respondeu em 30 min ao pedido da pasta ${folder}.`);
-    if (answer === 'deny') {
-      emitRules(ptyId);
-      log(ptyId, `Você negou a pasta ${folder}`);
-      return fail(`O dono negou o envio de arquivos da pasta ${folder}. Não tente enviar esse arquivo por outro caminho; se for preciso, explique a ele por quê.`);
-    }
-    addUploadFolder(folder);
-    log(ptyId, `Você permitiu a pasta ${folder}`);
-    return null;
+    if (!checked.ok) return fail(`${checked.reason} (${wanted})`);
+    deps.uploadGrants.set(withUploadGrant(deps.uploadGrants.get(), { board, folder: checked.folder, by, at: new Date().toISOString() }));
+    emitAllRules();
+    const wide = wideWarning(checked.folder);
+    return text(
+      `Liberada para as sessões do quadro ${board}: ${checked.folder} (registrado: ${by}). Arquivo de segredo dentro dela continua recusado.${wide ? ` Atenção: ${wide}` : ''}`,
+    );
   };
 
   const tabLine = (i: number, tab: { title: string; url: string; active: boolean }): string => `${i}. ${tab.title || '(sem título)'} — ${tab.url}${tab.active ? ' (ativa)' : ''}`;
@@ -456,7 +423,7 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
         return text(`Fechou a aba ${call.i}.\n${where(ptyId)}`);
       }
       case 'navegador_enviar_arquivo': {
-        const file = lookupUploadFile(call.caminho);
+        const file = findUploadFile(await uploadFoldersOf(ptyId), call.caminho, uploadContext);
         if (!file.ok) return fail(file.reason);
         await driverFor(ptyId).upload(call.n, file.path);
         log(ptyId, `Agente enviou o arquivo: ${file.name}`);
@@ -501,7 +468,8 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
           ? text(`"${call.texto}" apareceu.`)
           : fail(`"${call.texto}" não apareceu em 30 s.`);
       case 'navegador_pedir_humano':
-        return fail('navegador_pedir_humano é tratado à parte.');
+      case 'navegador_liberar_pasta':
+        return fail(`${call.tool} é tratado à parte.`);
     }
   };
 
@@ -523,15 +491,8 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
       return fail('A sessão deste navegador terminou.');
     }
 
-    // A file outside the authorized folders: the owner answers Permitir / Negar first, outside the agent's turn on
-    // the page (he may use the browser meanwhile).
-    if (call.tool === 'navegador_enviar_arquivo') {
-      const lookup = lookupUploadFile(call.caminho);
-      if (!lookup.ok && 'askFolder' in lookup && lookup.askFolder !== undefined) {
-        const refused = await askUploadFolder(ptyId, call.caminho, lookup.askFolder);
-        if (refused) return refused;
-      }
-    }
+    // No page involved: the orchestrator liberates a folder without waiting for the browser.
+    if (call.tool === 'navegador_liberar_pasta') return grantUploadFolder(ptyId, call.pasta, call.quadro);
 
     const turn = await control.waitForAgentTurn(OWNER_WAIT_MS);
     if (turn === 'timeout') return fail('O dono ainda está usando o navegador. Tente de novo mais tarde ou peça com navegador_pedir_humano.');
@@ -642,8 +603,8 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
 
   deps.ipcMain.handle(BROWSER_CHANNELS.getRules, (event, ptyId: unknown): BrowserAgentRules | null => (known(event.sender, ptyId) ? rulesOf(ptyId) : null));
 
-  // An upload folder comes from a gesture of the owner: the native picker here, or Permitir on the agent's request
-  // (whose folder the main holds). No path to authorize travels from the renderer, and no tool of the agent reaches this.
+  // The owner's upload folder comes from his gesture on the native picker. No path to authorize travels from the
+  // renderer; an orchestrator liberates for its board through `navegador_liberar_pasta`, never through this.
   deps.ipcMain.handle(BROWSER_CHANNELS.chooseUploadDir, async (event, ptyId: unknown): Promise<BrowserRulesResult> => {
     if (!known(event.sender, ptyId)) return { ok: false, reason: 'Sessão desconhecida para o navegador.' };
     const window = deps.getWindow();
@@ -677,14 +638,6 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
     removeUploadFolder(folder);
   });
 
-  deps.ipcMain.on(BROWSER_CHANNELS.answerUploadRequest, (event, ptyId: unknown, allow: unknown, wideConfirmed: unknown) => {
-    if (!known(event.sender, ptyId)) return;
-    const request = uploadRequests.get(ptyId);
-    // A wide folder is allowed only with the warning confirmed; a bare Permitir is ignored (the bar stays).
-    if (request && allow === true && request.wide && wideConfirmed !== true) return;
-    request?.answer(allow === true);
-  });
-
   deps.ipcMain.handle(BROWSER_CHANNELS.setDomains, (event, ptyId: unknown, mode: unknown, typed: unknown): BrowserRulesResult => {
     if (!known(event.sender, ptyId)) return { ok: false, reason: 'Sessão desconhecida para o navegador.' };
     if (mode !== 'all' && mode !== 'only' && mode !== 'except') return { ok: false, reason: 'Opção desconhecida.' };
@@ -699,7 +652,6 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
 
   const releasePty = (ptyId: string): void => {
     livePtys.delete(ptyId);
-    uploadRequests.get(ptyId)?.answer(false);
     domainRules.delete(ptyId);
     blockedDuringTool.delete(ptyId);
     controls.get(ptyId)?.dispose();

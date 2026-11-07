@@ -22,6 +22,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'O painel Progresso, no balão do Líder, agora mostra só o que você pediu, agrupado por frente (por exemplo "Ledger" ou "Oráculo e Líder na VPS"), e não mais por quadro. Cada pedido aparece com um título curto e um estado claro: esperando você, travado, tocando (com quem está) ou parado (ninguém assumiu, ninguém deu notícia em um dia, ou a entrega espera conferência há 12 horas). Cada frente tem a sua barra e recolhe num clique. O que terminou sai da lista: fica só "N concluídas hoje", recolhido no fim. A frente é o Líder que diz, ao registrar o pedido; o que ainda não tem frente aparece em "Sem frente".',
       },
       {
+        title: 'Sessões na VPS seguem com o PC desligado',
+        text: 'Com o Oráculo na VPS, uma sessão aberta lá depois desta versão continua criando, entregando e listando tarefas quando o PC desliga, e sabe quem é no quadro (do jeito que o quadro estava quando o PC desligou). O resto (navegador, desenhar no quadro, falar com outras sessões) volta quando o PC liga.',
+      },
+      {
         title: 'Com o Oráculo na VPS, o celular fala com ela',
         text: 'Quando o Oráculo mora na VPS, o app do celular passa a abrir no endereço dela: as cartas chegam com aviso e você responde com o PC desligado. Pareie o celular de novo uma vez, em Preferências, Celular (o endereço mudou). O que você escreve numa carta, ou pede pelo botão Pedir, espera na VPS e chega à sessão assim que o PC liga, uma vez só. Pedido por áudio continua precisando do PC ligado.',
       },
@@ -32,6 +36,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
       {
         title: 'O Faxineiro acorda sozinho',
         text: 'Cada quadro ganhou uma cadeira Faxineiro, que o Donel acorda sozinho quando uma máquina aperta, sem você nem o Líder precisarem chamar. Os gatilhos: RAM livre abaixo de 15%, swap acima de 10%, carga da VPS acima de duas vezes o número de processadores, disco acima de 85%, uma VPS sem sinal, sessões paradas há meia hora e uma ronda por dia, depois das 6h. O Faxineiro roda numa máquina que não é a apertada e fecha só as sessões do próprio quadro que terminaram. O Donel não deixa ele fechar o Líder, uma sessão trabalhando, uma que espera você ou uma aba que você abriu à mão. Quando ele termina a ronda e fica parado, o Donel fecha o Faxineiro também. Para não juntar Faxineiros, uma máquina cheia acorda um quadro de cada vez, e o Donel acorda no máximo quatro por hora. Os limites ficam na seção "faxineiro" do arquivo de configuração das rotinas, que também registra cada fechamento.',
+      },
+      {
+        title: 'O Líder do quadro libera as pastas de envio, não você',
+        text: 'Quando um agente precisa enviar por uma página um arquivo de uma pasta nova, quem libera agora é o Líder do quadro dele (ou o Líder único, em qualquer quadro), sem pedir a você. Fica registrado quem liberou, quando e para qual quadro, e você vê e remove em Regras, no navegador. Os anexos do chat saem sem pedido nenhum. O que continua sempre recusado são os arquivos de segredo: chaves, tokens, senhas, a configuração e o cofre de contas do Donel, os cookies do navegador e as pastas de chaves do sistema. A raiz do disco e a sua pasta de usuário inteira também não podem ser liberadas.',
       },
       {
         title: 'O Oráculo pode morar na sua VPS',
@@ -76,6 +84,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
       {
         title: 'O primeiro pedido chega à sessão na VPS',
         text: 'Uma sessão aberta numa VPS agora espera o Claude de lá ficar pronto, mesmo quando a conexão e a subida demoram alguns minutos, e só então recebe o pedido. Se aparecer lixo do terminal na caixa dela, o app apaga antes de mandar. Uma mensagem que entrou, mas cuja confirmação atrasou, não é mais dada como perdida, e mandar o mesmo texto de novo não faz ele chegar duas vezes. Uma sessão que já respondeu não aparece mais como "não começou".',
+      },
+      {
+        title: 'Escrever a sua opção fecha a carta',
+        text: 'Na carta do Oráculo, depois de escrever em "Escrever para…", o botão principal agora é "Decidir assim": o que você escreveu vira a sua decisão, a carta sai da pilha na hora e a sessão recebe o texto para seguir a partir dele. Se for só uma pergunta, use "Só perguntar (a carta fica)": o texto vai à sessão e a carta continua esperando você. Numa carta de Slack, decidir com as suas palavras nunca manda a mensagem; a sessão fica sabendo que você não aprovou aquele texto. Vale no app e no celular.',
       },
     ],
   },
