@@ -42,6 +42,36 @@ describe('furar a trava (tem de recusar)', () => {
   });
 });
 
+// The Revisor's probe on #285: holes that were there before it, closed here.
+describe('furos antigos (revisão do #285)', () => {
+  const wb = (code: string) => v('mcp__composio__COMPOSIO_REMOTE_WORKBENCH', { code_to_execute: code });
+  it('M envio chamado pelo nome direto da ferramenta do Composio', () => {
+    expect(v('mcp__composio__SLACK_SHARE_A_REMOTE_FILE', { channels: 'geral', file: 'F1' })).toBe('deny');
+    expect(v('mcp__composio__SLACK_SEND_ME_MESSAGE', { channel: 'geral', text: 'x' })).toBe('deny');
+  });
+  it('N nome da ação montado em código no workbench', () => {
+    expect(wb(`run_composio_tool("SLACK_" + "SEND_MESSAGE", {"channel": "geral", "text": "x"})`)).toBe('deny');
+    expect(wb(`run_composio_tool(f"SLACK_{'SEND'}_MESSAGE", {"channel": "geral", "text": "x"})`)).toBe('deny');
+    expect(wb(`run_composio_tool("slack_send_message".upper(), {"channel": "geral", "text": "x"})`)).toBe('deny');
+    expect(wb(`s = pick()\nrun_composio_tool(s, {"channel": "geral", "text": "x"})`)).toBe('deny');
+    expect(wb(`import base64\nrun_composio_tool(base64.b64decode("U0xBQ0tfU0VORF9NRVNTQUdF").decode(), {"channel": "geral"})`)).toBe('deny');
+  });
+  it('O nome da ação montado num comando que executa o Composio', () => {
+    expect(bash(`python3 -c 'from composio import Composio; s=input(); Composio().tools.execute(s, {"channel": "geral"})'`)).toBe('deny');
+  });
+  it('P tornar arquivo do Slack público é publicação', () => {
+    const slug = 'SLACK_ENABLE_PUBLIC_SHARING_OF_A_FILE';
+    expect(v('mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL', { tools: [{ tool_slug: slug, arguments: { file: 'F1' } }] })).toBe('deny');
+    expect(v(`mcp__composio__${slug}`, { file: 'F1' })).toBe('deny');
+    expect(wb(`run_composio_tool('${slug}', {'file': 'F1'})`)).toBe('deny');
+    expect(bash(`python run.py ${slug} F1`)).toBe('deny');
+  });
+  it('Q ação de leitura com nome literal no workbench continua passando', () => {
+    expect(wb(`run_composio_tool("GMAIL_FETCH_EMAILS", {"max_results": 5})`)).toBe('not-slack');
+    expect(wb(`run_composio_tool('SLACK_FETCH_CONVERSATION_HISTORY', {'channel': 'geral'})`)).toBe('not-slack');
+  });
+});
+
 describe('o que a trava promete (controle)', () => {
   it('H um caractere diferente recusa', () => expect(v(slack, { channel_id: 'produto', message: 'oi!' })).toBe('deny'));
   it('H2 mesmo texto passa', () => expect(v(slack, { channel_id: 'produto', message: 'oi' })).toBe('allow'));
