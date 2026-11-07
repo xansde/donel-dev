@@ -21,12 +21,12 @@ afterEach(() => {
 
 const theo = { kind: 'lugar' as const, placeId: 'place:00000000-0000-4000-8000-00000000f01a', roleId: 'theo-west' };
 
-function slackLetter(): { service: ReturnType<typeof createLedgerService>; id: string } {
+async function slackLetter(): Promise<{ service: ReturnType<typeof createLedgerService>; id: string }> {
   const dir = mkdtempSync(join(tmpdir(), 'carta-mandar-'));
   dirs.push(dir);
   let clock = Date.UTC(2026, 10, 6, 17);
   const service = createLedgerService({ filePath: join(dir, 'ledger.json'), io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs, now: () => (clock += 1000) });
-  const created = service.apply(theo, {
+  const created = await service.apply(theo, {
     op: 'carta-slack',
     projectPath: 'C:\\fake\\atlas',
     slack: { destination: 'DESTINO-FALSO', destinationLabel: 'Destino Falso (DM)', text: 'Texto que nunca sai.', reason: 'Teste do botão da caixa.' },
@@ -37,7 +37,7 @@ function slackLetter(): { service: ReturnType<typeof createLedgerService>; id: s
 
 describe('Mandar à sessão, na carta de Slack', () => {
   it('sucesso: vai uma vez à sessão dona, fica na frente da carta com o recibo e não decide nem libera o Slack', async () => {
-    const { service, id } = slackLetter();
+    const { service, id } = await slackLetter();
     const sent: OwnerMessage[] = [];
     let answer: LedgerDeliveredTo = { placeId: theo.placeId };
     const writer = createCardWriter({ service: () => service, deliver: async (message) => (sent.push(message), answer) });
@@ -67,7 +67,7 @@ describe('Mandar à sessão, na carta de Slack', () => {
   });
 
   it('falha: recusa, erro, exceção e falta de resposta voltam sempre com motivo, sem gravar', async () => {
-    const { service, id } = slackLetter();
+    const { service, id } = await slackLetter();
     const deliver = vi.fn(async (): Promise<LedgerDeliveredTo> => ({ placeId: theo.placeId }));
     const writer = createCardWriter({ service: () => service, deliver });
 

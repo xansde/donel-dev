@@ -24,6 +24,7 @@ import type { DonelTabsApi } from './tabChannels';
 import type { DonelMindscapeApi } from './mindscape/channels';
 import type { DonelLedgerApi } from './ledger/channels';
 import type { DonelLedgerMirrorApi } from './ledger/mirror';
+import type { DonelLedgerRemoteApi } from './ledger/remote';
 import type { DonelHillClimbApi } from './hillClimb/channels';
 import type { DonelRolesApi } from './roles';
 import type { DonelRenewalApi } from './sessionRenewal';
@@ -525,6 +526,8 @@ export interface DonelApi {
   ledger: DonelLedgerApi;
   /** Espelho do Oráculo — the tasks copied to the owner's personal Supabase (Preferências → Celular). */
   ledgerMirror: DonelLedgerMirrorApi;
+  /** Oráculo na VPS — where the ledger lives (docs/planos/oraculo-na-vps.md). */
+  ledgerRemote: DonelLedgerRemoteApi;
   /** Hill climbing — the missions in `<userData>/hill-climb.json` (the main is the only writer) and the owner's gestures. */
   hillClimb: DonelHillClimbApi;
   /** Papéis de sessão (item 12a) — the roles in `<userData>/papeis/` (the main is the only writer). */
