@@ -259,6 +259,16 @@ describe('espelho do Oráculo', () => {
     ['replaced by two letters', 'Substituída pelas cartas t-3401231c (reenvio da coleta) e t-c6964cbb', 'substituída', 'substituída pela t-3401231c · fechada por Alexandre'],
     ['covered by another task', 'Coberta pela t-121da54c (aceita pelo dono 06/11 20:36)', 'substituída', 'substituída pela t-121da54c · fechada por Alexandre'],
     ['it will not happen', 'O dono mandou não pedir ao Fernando', 'cancelada', 'cancelada por Alexandre'],
+    // In doubt it stays "cancelada" (Revisor, PR #308): the first word is not proof; the reason must carry it.
+    ['a question, not a fact', 'Concluída? Não: o dono desistiu', 'cancelada', 'cancelada por Alexandre'],
+    ['a denial', 'concluída não, cancelada', 'cancelada', 'cancelada por Alexandre'],
+    ['half done', 'Concluída parcialmente; o resto não vai sair', 'cancelada', 'cancelada por Alexandre'],
+    ['done somewhere unnamed', 'Concluída em outra tarefa, não sei qual', 'cancelada', 'cancelada por Alexandre'],
+    ['done, with no evidence after the colon', 'concluída: deu certo', 'cancelada', 'cancelada por Alexandre'],
+    ['a send that did not happen', 'Enviada? não chegou a sair', 'cancelada', 'cancelada por Alexandre'],
+    ['covered by a person', 'Coberta pelo Fernando', 'cancelada', 'cancelada por Alexandre'],
+    ['covered by the rain', 'Coberta pela chuva', 'cancelada', 'cancelada por Alexandre'],
+    ['replaced, with no task named', 'substituída pela nova versão do pedido', 'cancelada', 'cancelada por Alexandre'],
   ])('a cancel that was really %s says so', (_case, reason, estado, decisao) => {
     const closed = task('t-2', {
       state: 'rejeitada',

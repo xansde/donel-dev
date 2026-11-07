@@ -16,25 +16,28 @@ export interface Closing {
   readonly replacedBy?: string;
 }
 
+// In doubt, "cancelada" (Revisor, PR #308): the first word is not proof. Each closing needs the shape the real
+// reasons have AND the evidence in the reason itself — otherwise "Concluída? Não: o dono desistiu" or "Coberta pelo
+// Fernando" would read as done or replaced.
 const TASK_ID = /\bt-[0-9a-f]+\b/i;
-/** "concluída: …", "Concluída pelas t-…" — the work was done; the cancel only closed it. */
-const DONE = /^conclu[ií]da\b/i;
-/** "Enviada: …" — a message that went out. */
-const SENT = /^enviada\b/i;
-/** "substituída pela t-…", "Carta substituída pela…", "Substituída pelas cartas t-…", "Coberta pela t-…". */
-const REPLACED = /^(?:carta\s+)?(?:substitu[ií]da|coberta)\s+pel[ao]s?\b/i;
+/** A PR number, a link or a task id: what the done reasons point to. */
+const EVIDENCE = /#\d+|https?:\/\/|\bt-[0-9a-f]+\b/i;
+/** "concluída: <evidence>…" or "Concluída pelas t-…": the work was done; the cancel only closed it. */
+const DONE = /^conclu[ií]da(?::|\s+pel[ao]s?\s+t-[0-9a-f]+\b)/i;
+/** "Enviada: …" (with the colon): a message that went out. */
+const SENT = /^enviada:/i;
+/** "substituída pela t-…", "Carta substituída pela t-…", "Substituída pelas cartas t-…", "Coberta pela t-…": the id must follow. */
+const REPLACED = /^(?:carta\s+)?(?:substitu[ií]da|coberta)\s+pel[ao]s?\s+(?:cartas?\s+)?(t-[0-9a-f]+)\b/i;
 
 /** How a cancelled task closed; `null` = not cancelled (open, delivered, accepted, or rejected to be redone). */
 export function closingOf(task: LedgerTask): Closing | null {
   if (!isCancelled(task)) return null;
   const decision = lastDecision(task);
   const reason = (decision && eventNote(decision))?.trim() ?? '';
-  if (DONE.test(reason)) return { kind: 'concluida-por-prova' };
+  if (DONE.test(reason) && EVIDENCE.test(reason)) return { kind: 'concluida-por-prova' };
   if (SENT.test(reason)) return { kind: 'enviada' };
-  if (REPLACED.test(reason)) {
-    const replacedBy = TASK_ID.exec(reason)?.[0];
-    return replacedBy ? { kind: 'substituida', replacedBy } : { kind: 'substituida' };
-  }
+  const replaced = REPLACED.exec(reason);
+  if (replaced) return { kind: 'substituida', replacedBy: replaced[1]! };
   return { kind: 'cancelada' };
 }
 
