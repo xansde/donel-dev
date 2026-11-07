@@ -57,12 +57,13 @@ import { FactoryNumbersButton, FactoryNumbersPanel, useFactoryMetrics } from './
 import { sameBoardName } from '../../../shared/homologacao/config';
 import chairStyles from './Chairs.module.css';
 // Mindscape de homologação — the factory's rigs, drawn from its own `rigs.json` on the factory's board.
-import { RigsLayer, RigsNotice } from './MindscapeRigs';
+import { FactoryChairDrawer, RigsLayer, RigsNotice, type FactoryChairDetails } from './MindscapeRigs';
 import { useFactoryRigs } from './useFactoryRigs';
 import type { FactoryRigsView } from '../../../shared/homologacao/ipc';
 import { RIGS_STALE_MS, type RigsShape } from '../../../shared/homologacao/rigs';
 import { layoutRigs } from '../../../shared/homologacao/rigsLayout';
 import { deriveRigsView } from '../../../shared/homologacao/rigsView';
+import { OWNER_TARGET } from '../../../shared/homologacao/rigs';
 import { preparePrint, useMindscapeImages } from './useMindscapeImage';
 import styles from './Mindscape.module.css';
 
@@ -226,6 +227,16 @@ const RIG_SCREEN_MARGIN = 40;
 function rigsDetail(shape: { readonly rigs: readonly unknown[]; readonly geradoEmMs: number }, chairCount: number): string {
   return `${shape.rigs.length} rig${shape.rigs.length === 1 ? '' : 's'} → ${chairCount} cadeira${chairCount === 1 ? '' : 's'}, como a factory se descreve no rigs.json (gerado às ${clockOf(shape.geradoEmMs)}). Para mudar o desenho, peça à factory.`;
 }
+
+/** The Oráculo's task states in words, in the factory chair's drawer. */
+const TASK_STATE_LABEL: Readonly<Record<string, string>> = {
+  aberta: 'aberta',
+  'em-execucao': 'em execução',
+  entregue: 'entregue',
+  aceita: 'aceita',
+  rejeitada: 'rejeitada',
+  cancelada: 'cancelada',
+};
 
 /** Room above the rigs for the arrows' legend (board units). */
 const RIGS_LEGEND_ROOM = 56;
@@ -550,13 +561,73 @@ export function MindscapeScreen({
     chairsOn && board && factoryRigs && (sameBoardName(factoryRigs.board, boardName) || sameBoardName(factoryRigs.board, folderName(board.projectPath)))
       ? factoryRigs
       : null;
+  // Fatia 3 — the code and queue chairs turn "sem sinal" when the file stops: the clock moves once a minute.
+  const [rigsClock, setRigsClock] = useState(() => Date.now());
+  const rigsOn = rigsHere !== null;
+  useEffect(() => {
+    if (!rigsOn) return undefined;
+    const timer = window.setInterval(() => setRigsClock(Date.now()), 60_000);
+    return () => window.clearInterval(timer);
+  }, [rigsOn]);
   const rigsBoard = useMemo(() => {
     const shape = rigsHere ? rigsShapeOf(rigsHere) : null;
     if (!shape || !board) return undefined;
-    return { shape, view: deriveRigsView(shape), layout: layoutRigs(shape, boardContentOrigin(board)) };
-    // The board changes identity on every update; the rigs follow the file and where the owner's drawing starts.
-  }, [rigsHere, board]);
+    // Fatia 3 — agent chairs sit with the board's places of their role (the lens's chairs), live.
+    const view = deriveRigsView(shape, {
+      roleChairs: chairsView?.chairs ?? [],
+      axesOf: (placeId) => {
+        const session = liveByPlace.get(placeId);
+        return session ? axesOfLive(session) : undefined;
+      },
+      roleName: (roleId) => roleSealOf(roleId)?.name ?? roleId,
+      now: Math.max(rigsClock, Date.now()),
+    });
+    return { shape, view, layout: layoutRigs(shape, boardContentOrigin(board), view.outsideDrawing) };
+    // The board and the sessions change identity on every update; the rigs follow them, the file and the clock.
+  }, [rigsHere, board, chairsView, rigsClock, roles]);
   const rigsNotice = rigsHere ? rigsNoticeText(rigsHere) : null;
+  /** Fatia 3 — the drawer of a factory chair: the file's place and links, and, for an agent, the role chair's live details. */
+  const factoryChairDetails = (chairId: string): FactoryChairDetails | null => {
+    if (!rigsBoard) return null;
+    const chair = rigsBoard.view.chairs.find((candidate) => candidate.id === chairId);
+    if (!chair) return null;
+    const { shape } = rigsBoard;
+    const rigIndex = shape.rigs.findIndex((rig) => rig.pods.some((pod) => pod.cadeiras.includes(chair.id)));
+    const pod = rigIndex >= 0 ? shape.rigs[rigIndex]!.pods.find((candidate) => candidate.cadeiras.includes(chair.id)) : undefined;
+    const where = chair.outsideDrawing
+      ? 'Fora do desenho: um papel deste quadro que o rigs.json não põe em nenhuma cadeira'
+      : rigIndex >= 0
+        ? `Rig ${rigIndex + 1} · ${shape.rigs[rigIndex]!.nome}${pod ? ` · Pod ${pod.nome}` : ''}`
+        : 'Fora das duas cadeias';
+    const nameOf = (id: string): string => (id === OWNER_TARGET ? 'Você' : (rigsBoard.view.chairs.find((candidate) => candidate.id === id)?.nome ?? id));
+    const receives = shape.ligacoes.filter((link) => link.para === chair.id).map((link) => ({ name: nameOf(link.de), kind: link.tipo, ...(link.rotulo ? { label: link.rotulo } : {}) }));
+    const sends = shape.ligacoes.filter((link) => link.de === chair.id).map((link) => ({ name: nameOf(link.para), kind: link.tipo, ...(link.rotulo ? { label: link.rotulo } : {}) }));
+    const fileChair = shape.cadeiras.find((candidate) => candidate.id === chair.id);
+    const since = fileChair?.estado?.desde ? Date.parse(fileChair.estado.desde) : NaN;
+    const roleDetails = chair.papel ? chairDetails(chair.papel) : null;
+    const role = chair.papel ? roles.find((candidate) => candidate.id === chair.papel) : undefined;
+    const role_ = roleDetails && 'chair' in roleDetails ? roleDetails : null;
+    return {
+      chair,
+      where,
+      ...(Number.isFinite(since) ? { since } : {}),
+      seated: (role_?.seated ?? []).map((row) => ({
+        placeId: row.placeId,
+        name: row.name,
+        label: row.label.startsWith('precisa') ? 'precisa de você' : row.label,
+        ...(liveByPlace.get(row.placeId)?.engine ? { model: liveByPlace.get(row.placeId)!.engine! } : {}),
+        ...(role?.effort ? { effort: role.effort } : {}),
+        onOpen: row.onOpen,
+      })),
+      ...((fileChair?.modelo ?? role?.model) ? { agreedModel: (fileChair?.modelo ?? role?.model)! } : {}),
+      ...(role?.effort ? { agreedEffort: role.effort } : {}),
+      ...(role_?.lastNote ? { lastNote: role_.lastNote } : {}),
+      tasks: (role_?.liveTasks ?? []).map((task) => ({ id: task.id, title: task.title, state: TASK_STATE_LABEL[task.state] ?? task.state })),
+      closedTasks: role_?.closedTasks ?? 0,
+      receives,
+      sends,
+    };
+  };
   const faceOf = (chair: Chair): ChairFace => {
     if (chair.id === NO_ROLE_CHAIR) return { name: 'Sem papel', color: 'var(--text-muted)' };
     const seal = roleSealOf(chair.roleId)!;
@@ -605,8 +676,6 @@ export function MindscapeScreen({
   };
   const chairDetails = (chairId: string): ChairDetails | RigDetails | PodDetails | null => {
     if (!board || !chairsView) return null;
-    // The factory's chairs get their own drawer with the live state (fatia 3 of the homologation board).
-    if (rigsBoard) return null;
     const pod = board.pods?.find((candidate) => podSelection(candidate.id) === chairId);
     if (pod) {
       const { projectPath } = board;
@@ -1327,7 +1396,9 @@ export function MindscapeScreen({
           }}
         </MindscapeBoard>
       )}
-      {chairsOn ? (
+      {chairsOn && rigsBoard ? (
+        <FactoryChairDrawer details={openDetail ? factoryChairDetails(openDetail) : null} onClose={() => setOpenDetail(null)} />
+      ) : chairsOn ? (
         <ChairDrawer
           details={openDetail ? chairDetails(openDetail) : null}
           onClose={() => setOpenDetail(null)}

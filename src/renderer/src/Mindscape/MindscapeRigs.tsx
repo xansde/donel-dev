@@ -220,3 +220,183 @@ export function RigsNotice({ text }: { text: string }): React.JSX.Element {
     </div>
   );
 }
+
+// ---------------------------------------------------------------------------
+// Fatia 3 — the drawer of a factory chair (prototype 1b-topologia-gaveta): state and where it stopped, who sits
+// (model and effort), the Oráculo's tasks held by the chair, and who it receives from and sends to.
+// ---------------------------------------------------------------------------
+
+export interface FactorySeatRow {
+  readonly placeId: string;
+  readonly name: string;
+  readonly label: string;
+  readonly model?: string;
+  readonly effort?: string;
+  readonly onOpen?: () => void;
+}
+
+export interface FactoryLinkRow {
+  readonly name: string;
+  readonly kind: RigLinkKind;
+  readonly label?: string;
+}
+
+export interface FactoryChairDetails {
+  readonly chair: RigChairView;
+  /** "Rig 1 · Pod Rodada", "Fora das duas cadeias" or "Fora do desenho". */
+  readonly where: string;
+  /** When the state began (code and queue, from the file). */
+  readonly since?: number;
+  readonly seated: readonly FactorySeatRow[];
+  /** "combinado": the file's `modelo`, or the role's. */
+  readonly agreedModel?: string;
+  readonly agreedEffort?: string;
+  readonly lastNote?: { readonly text: string; readonly by: string; readonly at: number };
+  readonly tasks: readonly { readonly id: string; readonly title: string; readonly state: string }[];
+  readonly closedTasks: number;
+  readonly receives: readonly FactoryLinkRow[];
+  readonly sends: readonly FactoryLinkRow[];
+}
+
+function clockLabel(at: number): string {
+  const date = new Date(at);
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function LinkList({ rows, empty }: { rows: readonly FactoryLinkRow[]; empty: string }): React.JSX.Element {
+  return (
+    <ul className={chairStyles.list}>
+      {rows.length === 0 ? (
+        <li className={chairStyles.rowEmpty}>
+          <span>{empty}</span>
+        </li>
+      ) : null}
+      {rows.map((row, index) => (
+        <li key={`${row.name}-${index}`}>
+          <span className={chairStyles.mono}>{LINK_LABEL[row.kind]}</span>
+          <span>
+            {row.name}
+            {row.label ? <span className={chairStyles.muted}> · {row.label}</span> : null}
+          </span>
+          <span />
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export function FactoryChairDrawer({ details, onClose }: { details: FactoryChairDetails | null; onClose: () => void }): React.JSX.Element {
+  return (
+    <aside className={details ? `${chairStyles.drawer} ${chairStyles.drawerOpen}` : chairStyles.drawer} aria-hidden={!details} data-testid="factory-chair-drawer">
+      {details ? <FactoryChairBody details={details} onClose={onClose} /> : null}
+    </aside>
+  );
+}
+
+function FactoryChairBody({ details, onClose }: { details: FactoryChairDetails; onClose: () => void }): React.JSX.Element {
+  const { chair } = details;
+  const kind = chair.tipo === 'agente' ? (chair.outsideDrawing ? 'Cadeira · fora do desenho' : 'Cadeira') : `Cadeira · ${KIND_WORD[chair.tipo]}`;
+  return (
+    <>
+      <header className={chairStyles.drawerHead}>
+        <button type="button" className={chairStyles.close} aria-label="Fechar" onClick={onClose}>
+          ✕
+        </button>
+        <div className={chairStyles.headRow}>
+          <b className={chairStyles.drawerTitle}>{chair.nome}</b>
+          <span className={chairStyles.kind}>{kind}</span>
+        </div>
+        <div className={chairStyles.caption}>{details.where}</div>
+        <div className={chairStyles.kv}>
+          <span>Estado</span>
+          <span>
+            <span className={`${chairStyles.healthDot} ${chairStyles[`d-${chair.health}`]}`} /> {HEALTH_LABEL[chair.health]}
+            {chair.line ? ` · ${chair.line}` : ''}
+          </span>
+          {details.since ? (
+            <>
+              <span>Desde</span>
+              <span>{clockLabel(details.since)}</span>
+            </>
+          ) : null}
+          {chair.papel ? (
+            <>
+              <span>Papel</span>
+              <span className={chairStyles.mono}>{chair.papel}</span>
+            </>
+          ) : null}
+        </div>
+      </header>
+      <div className={chairStyles.drawerBody}>
+        <h4>Onde parou</h4>
+        <div className={chairStyles.stop}>
+          {details.lastNote ? (
+            <>
+              <div className={chairStyles.stopText}>{details.lastNote.text.replace(/\*\*|__|`/g, '').replace(/^#+\s*/gm, '')}</div>
+              <div className={chairStyles.caption}>
+                nota de {details.lastNote.by} · {clockLabel(details.lastNote.at)}
+              </div>
+            </>
+          ) : (
+            <span className={chairStyles.muted}>{chair.tipo === 'agente' ? 'Nenhuma nota escrita por quem sentou aqui.' : (chair.line ?? 'A factory não escreveu o estado desta cadeira.')}</span>
+          )}
+        </div>
+
+        {chair.tipo === 'agente' ? (
+          <>
+            <h4>Quem está sentado ({details.seated.length})</h4>
+            <ul className={chairStyles.list}>
+              {details.seated.length === 0 ? (
+                <li className={chairStyles.rowEmpty}>
+                  <span>{chair.papel ? 'Ninguém sentado agora.' : 'Vaga: o arquivo não diz que papel senta aqui.'}</span>
+                </li>
+              ) : null}
+              {details.seated.map((row) => (
+                <li key={row.placeId} className={row.onOpen ? chairStyles.rowGo : undefined} onClick={row.onOpen} title={row.onOpen ? 'Ir ao terminal' : undefined}>
+                  <span className={chairStyles.stateDot} style={{ background: 'var(--state-working)' }} />
+                  <span>
+                    {row.name}
+                    <br />
+                    <span className={chairStyles.caption}>{[row.model ?? 'modelo sem leitura', row.effort ? `esforço ${row.effort}` : null].filter(Boolean).join(' · ')}</span>
+                  </span>
+                  <span className={chairStyles.chip}>{row.label}</span>
+                </li>
+              ))}
+            </ul>
+
+            <h4>Combinado</h4>
+            <div className={chairStyles.kv}>
+              <span>Modelo</span>
+              <span>{details.agreedModel ?? 'conta ativa'}</span>
+              <span>Esforço</span>
+              <span>{details.agreedEffort ?? '—'}</span>
+            </div>
+
+            <h4>Tarefas presas à cadeira</h4>
+            <ul className={chairStyles.list}>
+              {details.tasks.length === 0 ? (
+                <li className={chairStyles.rowEmpty}>
+                  <span>Nenhuma tarefa viva.</span>
+                </li>
+              ) : null}
+              {details.tasks.map((task) => (
+                <li key={task.id}>
+                  <span className={chairStyles.mono}>{task.id}</span>
+                  <span>{task.title}</span>
+                  <span className={chairStyles.chip}>{task.state}</span>
+                </li>
+              ))}
+            </ul>
+            {details.closedTasks > 0 ? <div className={chairStyles.caption}>e {details.closedTasks} fechada{details.closedTasks > 1 ? 's' : ''}</div> : null}
+          </>
+        ) : null}
+
+        <h4>Recebe de</h4>
+        <LinkList rows={details.receives} empty="Ninguém passa trabalho para cá." />
+        <h4>Manda para</h4>
+        <LinkList rows={details.sends} empty="Não passa trabalho adiante." />
+      </div>
+    </>
+  );
+}

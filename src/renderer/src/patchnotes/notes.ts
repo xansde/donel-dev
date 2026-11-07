@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-07',
     items: [
       {
+        title: 'As cadeiras da factory mostram o que acontece agora',
+        text: 'No desenho dos rigs, cada cadeira de agente mostra quantas sessões estão sentadas nela e a saúde pela borda: bem quando alguém está sentado e quieto, atenção quando alguém precisa de você, problema com erro ou limite de uso, e sem sinal quando ninguém está sentado. Embaixo do nó vem o que ela faz agora. As cadeiras de código e de fila mostram o que a factory escreveu e passam a sem sinal quando o arquivo dela fica parado por mais de 15 minutos. Um clique abre a gaveta: estado e onde parou, quem está sentado com modelo e esforço, as tarefas do Oráculo presas à cadeira e de quem ela recebe e para quem manda trabalho. Uma sessão com um papel que a factory não desenhou aparece no meio, como fora do desenho, para nada que roda sumir da tela.',
+      },
+      {
         title: 'Os dois rigs da factory no quadro da homologação',
         text: 'No quadro da homologação, a vista Cadeiras desenha a factory como ela mesma se descreve: os dois rigs lado a lado, cada um com os seus pods e as suas cadeiras, e, no meio, as cadeiras que ficam fora das duas cadeias e "Você", que só recebe. Cada seta diz o que é (delega, verifica, escala a você, rotina acorda) na legenda e no rótulo, e nenhuma sai de você. Cadeira de código e fila têm o tipo escrito no círculo, além da borda. O rig que ainda não rodou aparece vazio, dizendo isso. Para mudar o desenho, peça à factory: o Donel só espelha. Sem o arquivo da factory, o quadro volta às cadeiras de sempre, com um aviso dizendo por quê. Os outros quadros não mudam.',
       },

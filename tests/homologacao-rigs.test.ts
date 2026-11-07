@@ -80,6 +80,19 @@ describe('parseRigsFile', () => {
     expect(result.shape.foraDoContrato).toEqual(['vega', 'revisor', 'ligação vega → portao']);
   });
 
+  it('warns about a pod (or the middle) that names a chair the file does not have', () => {
+    const result = parseRigsFile(
+      file({
+        rigs: [{ id: 'rig1', nome: 'Fábrica', pods: [{ id: 'rodada', nome: 'Rodada', cadeiras: ['vega', 'fantasma'] }] }],
+        foraDosRigs: ['revisor', 'sumida'],
+      }),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.shape.rigs[0]!.pods[0]!.cadeiras).toEqual(['vega']);
+    expect(result.shape.foraDoContrato).toEqual(['cadeira fantasma do pod Rodada não existe no arquivo', 'cadeira sumida de foraDosRigs não existe no arquivo']);
+  });
+
   it('refuses an unknown major version and shows nothing of it', () => {
     const result = parseRigsFile(file({ formato: 'rigs-factory@2' }));
     expect(result).toEqual({ ok: false, reason: 'formato', message: 'formato rigs-factory@2: este Donel lê até @1' });
