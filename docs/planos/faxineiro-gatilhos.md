@@ -45,8 +45,8 @@ máquina (RAM, carga, swap, disco, sem sinal) acorda só os quadros com sessões
 começando pelo que tem mais sessões lá; o próximo só se o gatilho continuar depois que o primeiro terminar. Assim
 uma VPS cheia não ganha quatro Faxineiros de uma vez.
 
-**3. Onde o Faxineiro roda.** Numa máquina que não é a que está em apuros: padrão "este computador" para gatilho de
-VPS e a VPS para gatilho do PC (`faxineiro.onde` na config). Ao terminar o turno da ronda e ficar 10 min parado, o
+**3. Onde o Faxineiro roda.** Numa máquina que não é a que está em apuros: "este computador" para gatilho de VPS e
+uma VPS saudável para gatilho do PC (sem VPS saudável, no próprio PC). Ao terminar o turno da ronda e ficar 10 min parado, o
 app fecha a própria sessão do Faxineiro, para ele não virar mais uma sessão pendurada.
 
 **4. O que o Faxineiro pode fechar (garantido no código, não só no texto do papel).** `sessao_fechar` vindo de um

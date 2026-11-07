@@ -177,6 +177,8 @@ import {
   type CelularTailnet,
 } from '../shared/celular';
 import { ROTINAS_CHANNELS, type ShadowEntry } from '../shared/rotinas/contract';
+import { FAXINEIRO_CHANNELS, type FaxineiroRoundAnswer } from '../shared/faxineiro/ipc';
+import type { FaxineiroLogEntry, SessionView } from '../shared/faxineiro/triggers';
 import { LIDER_CHANNELS, type LiderReport, type LiderSendPayload, type LiderSendResult, type LiderState } from '../shared/lider/ipc';
 import { ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
 import type { ClaudeInventory } from '../shared/role-scope';
@@ -939,6 +941,12 @@ const donelApi: DonelApi = {
   rotinas: {
     today: () => ipcRenderer.invoke(ROTINAS_CHANNELS.today) as Promise<ShadowEntry[]>,
     onChanged: (listener: () => void) => subscribeChannel(ipcRenderer, ROTINAS_CHANNELS.changed, () => listener()),
+  },
+
+  // t-b3b26e60 — Faxineiro com gatilhos: one round a minute, and what the bridge did with it.
+  faxineiro: {
+    round: (sessions: readonly SessionView[]) => ipcRenderer.invoke(FAXINEIRO_CHANNELS.round, sessions) as Promise<FaxineiroRoundAnswer>,
+    log: (entries: readonly FaxineiroLogEntry[]) => ipcRenderer.send(FAXINEIRO_CHANNELS.log, entries),
   },
 };
 
