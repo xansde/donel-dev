@@ -9,6 +9,7 @@ import { useEffect, useState } from 'react';
 import {
   eventNote,
   lastDelivery,
+  OWN_OPTION,
   recommendedOption,
   type LedgerForOwner,
   type LedgerOption,
@@ -60,13 +61,15 @@ function newRequestId(): string {
 const WRITE_DEADLINE_MS = 120_000;
 
 /**
- * "✎ Escrever para <quem fez>" (Parte B): free text. "Mandar à sessão" sends it at once to the session that owns the
- * task (or the Líder) and the card keeps waiting; picking a path with it written takes it along with the decision.
- * The button is not called "Enviar": on a Slack letter that is the big option that posts to Slack (t-8fed1d77).
+ * "✎ Escrever para <quem fez>" (Parte B): free text. 07/11 ("eu escrevo minha própria opção e não some o cartão"):
+ * "Decidir assim", the default, decides the card with these words as the owner's own option and the card leaves
+ * the pile; "Só perguntar" sends them at once to the session that owns the task (or the Líder) and the card keeps
+ * waiting. Picking a path with it written takes it along with the decision.
+ * No button is called "Enviar": on a Slack letter that is the big option that posts to Slack (t-8fed1d77).
  * What was sent is read from the card's own events (a new event redraws the card: local state would vanish with
  * it), and the draft lives above the card for the same reason.
  */
-function WriteBox({ task, who, draft, onDraft }: { readonly task: LedgerTask; readonly who: string; readonly draft: string; readonly onDraft: (text: string) => void }): React.JSX.Element {
+function WriteBox({ task, who, draft, onDraft, decide }: { readonly task: LedgerTask; readonly who: string; readonly draft: string; readonly onDraft: (text: string) => void; readonly decide: Decide }): React.JSX.Element {
   const notes = notasDaFrente(task, who);
   // Reopened with what he was writing, unless that is the note that just went (its event is what redrew the card).
   const [open, setOpen] = useState(() => draft.trim() !== '' && !notes.some((note) => note.text === draft.trim()));
@@ -85,6 +88,17 @@ function WriteBox({ task, who, draft, onDraft }: { readonly task: LedgerTask; re
     onDraft('');
     setRequestId(newRequestId());
     setOpen(false);
+  };
+  // The ledger says how his own option closes (a Slack letter: not sent); the card leaves the pile on success.
+  const decideAsWritten = async (): Promise<void> => {
+    const text = draft.trim();
+    if (!text || busy) return;
+    setBusy(true);
+    setError(null);
+    const why = await decide({ accept: true, option: OWN_OPTION, text });
+    setBusy(false);
+    if (why) return setError(`Não decidiu: ${why}`);
+    onDraft('');
   };
   return (
     <div>
@@ -105,16 +119,21 @@ function WriteBox({ task, who, draft, onDraft }: { readonly task: LedgerTask; re
             autoFocus
           />
           <small>
-            Mandar à sessão entrega o texto agora a {who} (fechada, vai ao Líder). Não decide a carta; se você escolher um caminho com isto escrito, vai junto.
+            Decidir assim fecha a carta com o que você escreveu como sua decisão e manda a {who} (fechada, vai ao Líder). Só perguntar manda sem fechar a carta. Escolher um caminho acima com isto escrito leva o texto junto.
           </small>
           {error ? (
             <div className={styles.error} role="alert">
               {error}
             </div>
           ) : null}
-          <button type="button" disabled={busy || !draft.trim()} onClick={() => void send()}>
-            {busy ? `Mandando a ${who}…` : error ? 'Tentar de novo' : 'Mandar à sessão'}
-          </button>
+          <div className={styles.writeActions}>
+            <button type="button" disabled={busy || !draft.trim()} onClick={() => void decideAsWritten()}>
+              {busy ? `Mandando a ${who}…` : 'Decidir assim'}
+            </button>
+            <button type="button" className={styles.writeAsk} disabled={busy || !draft.trim()} onClick={() => void send()}>
+              {error && !error.startsWith('Não decidiu') ? 'Tentar de novo' : 'Só perguntar (a carta fica)'}
+            </button>
+          </div>
         </div>
       ) : null}
       {notes.map((note, i) => (
@@ -393,7 +412,7 @@ function CardA({
                   ))}
                 </div>
                 {error ? <div className={styles.error}>{error}</div> : null}
-                <WriteBox task={task} who={who} draft={draft} onDraft={setDraft} />
+                <WriteBox task={task} who={who} draft={draft} onDraft={setDraft} decide={decide} />
               </div>
               <footer className={styles.foot}>
                 <span className={task.risk === 'alto' ? `${styles.seal} ${styles.sealHigh}` : `${styles.seal} ${styles.sealLow}`}>
