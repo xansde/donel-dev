@@ -366,8 +366,8 @@ export interface ChairDrawerProps {
   readonly details: ChairDetails | RigDetails | null;
   readonly onClose: () => void;
   readonly onOpenChair: (chairId: string) => void;
-  /** "Definir cadeira ▸" — for now, the roles screen (the chair screen is the next slice). */
-  readonly onDefine?: () => void;
+  /** "Definir cadeira ▸" — the chair screen (B1) of the chair's role. */
+  readonly onDefine?: (roleId: string) => void;
 }
 
 function isRig(details: ChairDetails | RigDetails): details is RigDetails {
@@ -425,7 +425,7 @@ export function ChairDrawer({ details, onClose, onOpenChair, onDefine }: ChairDr
   );
 }
 
-function ChairBody({ details, close, now, onDefine }: { details: ChairDetails; close: React.ReactNode; now: number; onDefine?: () => void }): React.JSX.Element {
+function ChairBody({ details, close, now, onDefine }: { details: ChairDetails; close: React.ReactNode; now: number; onDefine?: (roleId: string) => void }): React.JSX.Element {
   const { chair, face } = details;
   const observed = details.observedEngines.length > 0 ? details.observedEngines.join(', ') : '—';
   const pastShown = details.past.slice(0, MAX_PAST_ROWS);
@@ -457,7 +457,7 @@ function ChairBody({ details, close, now, onDefine }: { details: ChairDetails; c
         </div>
         {onDefine && chair.roleId ? (
           <div className={styles.actions}>
-            <button type="button" className={styles.button} onClick={onDefine}>
+            <button type="button" className={styles.button} onClick={() => chair.roleId && onDefine(chair.roleId)}>
               Definir cadeira ▸
             </button>
           </div>

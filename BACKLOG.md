@@ -40,8 +40,9 @@ print lado a lado com o protótipo em `docs/prototipos/cadeiras/`.
 
 ### 01 — Lente "Cadeiras" (F2a) com dados reais, sem gravar nada
 
-- **Status**: implementada
+- **Status**: concluida
 - **Branch**: `feat/cadeiras-f2a-fatia1`
+- **PR**: #278 (mergeado em `staging`, fb74fcc)
 - **Depende de**: —
 - **Propósito**: "Lugares | Cadeiras" nas abas do Mindscape; rig = quadro; uma cadeira por papel (nome grande,
   N sentados, borda = saúde); setas do caminho do trabalho; faixa problema/atenção/bem/sem sinal que destaca;
@@ -51,12 +52,14 @@ print lado a lado com o protótipo em `docs/prototipos/cadeiras/`.
 
 ### 02 — Tela de cadeira B1, lendo o papel
 
-- **Status**: pendente
+- **Status**: implementada
+- **Branch**: `feat/cadeiras-b1-leitura`
 - **Depende de**: 01
 - **Propósito**: "Definir cadeira ▸" abre a B1 da cadeira: seções (instruções, skills, MCPs, plugins, modelo e
   esforço, permissão) com selo de origem ("seu ~/.claude" ou "Papel"), lendo o papel e o escopo do #250; a coluna
   lateral de custo é recolhível e lembrada, e recolhida vira uma faixa com o total (estimativa, marcada como tal).
-  Só leitura nesta fatia.
+  Só leitura nesta fatia. Os MCPs vêm só do que o papel nomeia: ler a lista do `~/.claude.json` encosta em
+  segredo e é a pergunta do item 09 do PDA. O custo é estimativa, com as constantes em `src/shared/chair-sheet.ts`.
 
 ### 03 — B1 grava no papel
 

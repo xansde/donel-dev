@@ -361,6 +361,7 @@ export function sanitizeRole(raw: unknown): SessionRole | null {
 export const ROLES_CHANNELS = {
   list: 'roles:list',
   save: 'roles:save',
+  inventory: 'roles:inventory',
 } as const;
 
 export type RoleSaveResult = { ok: true; roles: SessionRole[] } | { ok: false; reason: 'invalid' | 'write-failed' };
@@ -370,4 +371,6 @@ export interface DonelRolesApi {
   list(): Promise<SessionRole[]>;
   /** Creates or overwrites `<id>.md`; answers with the new list. */
   save(role: SessionRole): Promise<RoleSaveResult>;
+  /** Cadeiras, fatia 2 — names of the skills and plugins of this PC (and of the project at `cwd`) a scope can turn off. */
+  inventory(cwd?: string): Promise<import('./role-scope').ClaudeInventory>;
 }

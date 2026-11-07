@@ -59,15 +59,19 @@ export interface RolesEditorProps {
   readonly onClose: () => void;
   /** The list after a save. */
   readonly onSaved: (roles: SessionRole[]) => void;
+  /** Cadeiras, fatia 2 — the role shown when the screen opens (else the first). */
+  readonly initialRoleId?: string;
+  /** Cadeiras, fatia 2 — "Ver como cadeira ▸": the chair screen of the role in the editor. */
+  readonly onOpenChair?: (roleId: string) => void;
 }
 
-export function RolesEditor({ open, roles, providers, onClose, onSaved }: RolesEditorProps): React.JSX.Element | null {
+export function RolesEditor({ open, roles, providers, onClose, onSaved, initialRoleId, onOpenChair }: RolesEditorProps): React.JSX.Element | null {
   const [draft, setDraft] = useState<Draft>(() => draftOf(roles[0]));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   useEffect(() => {
     if (open) {
-      setDraft(draftOf(roles[0]));
+      setDraft(draftOf(roles.find((role) => role.id === initialRoleId) ?? roles[0]));
       setError(null);
     }
     // Only when the screen opens: the list changing under an edit must not drop the draft.
@@ -112,6 +116,17 @@ export function RolesEditor({ open, roles, providers, onClose, onSaved }: RolesE
       className={styles.dialog}
       actions={
         <>
+          {onOpenChair && draft.id !== null ? (
+            <Button
+              variant="secondary"
+              onClick={() => {
+                const id = draft.id;
+                if (id) onOpenChair(id);
+              }}
+            >
+              Ver como cadeira ▸
+            </Button>
+          ) : null}
           <Button variant="secondary" onClick={onClose}>
             Fechar
           </Button>

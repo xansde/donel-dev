@@ -81,6 +81,7 @@ import { buildChatFocusState, buildPetTabsPayload, tabPtyMap, type TabPtyMap } f
 import styles from './App.module.css';
 import { Launcher } from './Launcher';
 import { RolesEditor } from './RolesEditor';
+import { ChairScreen } from './ChairScreen';
 import type { LauncherLaunchOptions } from './Launcher';
 import { HillClimbBar } from './HillClimb/HillClimbBar';
 import { useHillClimb } from './HillClimb/useHillClimb';
@@ -121,7 +122,7 @@ import { BackgroundIndicator, type BackgroundSession } from './chat/BackgroundTa
 import { revealRow } from './chat/revealRow';
 import { runningCount } from '../../shared/chat/backgroundTasks';
 import { effectiveTabView, hasChatView, nextTabView, shouldHandleViewShortcut } from './chat/tabView';
-import { disposeTabSend, ownerTerminalInput, sendDriverFor, sendToTab, sendToTabAndWait } from './chat/composer/tabSend';
+import { disposeTabSend, ownerTerminalInput, sendDriverFor, sendToTab, pendingSendReason, sendToTabAndWait, tabTookMessage } from './chat/composer/tabSend';
 import { blockingScreen, readInputText } from '../../shared/chat/screen';
 import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../shared/lider/ipc';
 import { isLeaderOfAllTab, leaderHome } from '../../shared/mindscape/leader';
@@ -2168,6 +2169,9 @@ export function App(): React.JSX.Element {
   const [roles, setRoles] = useState<SessionRole[]>([]);
   // Item 12b — the screen to create and edit roles ("Papéis…" in the Mindscape and in the Launcher).
   const [rolesEditorOpen, setRolesEditorOpen] = useState(false);
+  /** Cadeiras, fatia 2 — the role whose chair screen (B1) is open, and the role the Papéis editor opens on. */
+  const [chairRoleId, setChairRoleId] = useState<string | null>(null);
+  const [rolesEditorRoleId, setRolesEditorRoleId] = useState<string | undefined>(undefined);
   useEffect(() => {
     void window.donel.roles
       ?.list()
@@ -2377,12 +2381,16 @@ export function App(): React.JSX.Element {
       const lines = terminalRefs.current[tabId]?.readScreen().lines;
       return lines !== undefined && blockingScreen(lines)?.kind === 'permission';
     },
-    unconfirmed: (tabId) => semaphoreStates[tabId]?.unconfirmed === true || semaphoreStates[tabId] === undefined,
+    // No hook yet is not "never started" when the CLI already took a message (the transcript showed it): a session on a
+    // remote place whose hooks do not come back was told "não começou" with five answers in its transcript (07/11).
+    unconfirmed: (tabId) => (semaphoreStates[tabId]?.unconfirmed === true || semaphoreStates[tabId] === undefined) && !tabTookMessage(tabId),
     startTrouble: (tabId) => {
       if (tabExits[tabId] !== undefined) return 'o Claude de lá foi encerrado';
       const failed = startFailuresRef.current[tabId];
       if (failed !== undefined) return `o terminal dela não abriu (${failed})`;
-      if (aliveTabs[tabId] !== true) return 'o terminal dela não chegou a abrir';
+      const sending = pendingSendReason(tabId);
+      if (aliveTabs[tabId] !== true) return `o terminal dela não chegou a abrir${sending !== null ? '; o pedido espera por ele' : ''}`;
+      if (sending !== null) return `o pedido ainda está a caminho (${sending})`;
       const lines = terminalRefs.current[tabId]?.readScreen().lines;
       if (lines === undefined) return null;
       const dialog = blockingScreen(lines);
@@ -3018,8 +3026,31 @@ export function App(): React.JSX.Element {
             roles={roles}
             onStartPlace={handleMindscapeStartPlace}
             onManageRoles={() => setRolesEditorOpen(true)}
+            onDefineChair={setChairRoleId}
           />
         ) : null}
+
+        {chairRoleId !== null
+          ? (() => {
+              // Cadeiras, fatia 2 — the chair screen (B1, read-only) over the middle, like the Mindscape.
+              const projectPath = tabs.find((tab) => tab.id === activeTabId)?.cwd;
+              return (
+                <ChairScreen
+                  roles={roles}
+                  roleId={chairRoleId}
+                  projectPath={projectPath}
+                  projectName={projectPath ? (mindscapeProjectNames[projectPath] ?? projectPath.split(/[\\/]/).filter(Boolean).pop()) : undefined}
+                  board={projectPath ? mindscape.doc.boards[projectPath] : undefined}
+                  onPick={setChairRoleId}
+                  onEditRole={(roleId) => {
+                    setRolesEditorRoleId(roleId);
+                    setRolesEditorOpen(true);
+                  }}
+                  onClose={() => setChairRoleId(null)}
+                />
+              );
+            })()
+          : null}
 
         {/* CA-20 — a tela de hoje continua MONTADA quando o Modo Dev liga
             (só oculta por CSS): nada de remontar sidebar/abas, nada de PTY
@@ -3432,7 +3463,22 @@ export function App(): React.JSX.Element {
       </div>
 
       {/* Item 12b — the roles: create and edit (text + suggestions). */}
-      <RolesEditor open={rolesEditorOpen} roles={roles} providers={providers} onClose={() => setRolesEditorOpen(false)} onSaved={setRoles} />
+      <RolesEditor
+        open={rolesEditorOpen}
+        roles={roles}
+        providers={providers}
+        initialRoleId={rolesEditorRoleId}
+        onClose={() => {
+          setRolesEditorOpen(false);
+          setRolesEditorRoleId(undefined);
+        }}
+        onSaved={setRoles}
+        onOpenChair={(roleId) => {
+          setRolesEditorOpen(false);
+          setRolesEditorRoleId(undefined);
+          setChairRoleId(roleId);
+        }}
+      />
 
       {/* T010 — FR-006, ui-spec §2 "fechar aba com sessão ativa": confirmação destrutiva antes de matar um PTY vivo. */}
       <Modal
