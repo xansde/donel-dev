@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-07',
     items: [
       {
+        title: 'A tela da cadeira salva o papel',
+        text: 'A tela da cadeira deixou de ser só leitura. Agora dá para escrever a orientação do papel, ligar ou desligar cada skill e plugin, desligar um MCP ou ligar outro pelo nome, e escolher modelo, esforço e permissão. O custo à direita muda na hora, a cada mudança. "Salvar" grava o papel, e vale para todo lugar com aquele papel que abrir ou continuar depois; "Descartar" volta ao que estava salvo. Desligar uma skill quando o papel usava todas deixa o papel com as outras, nunca com nenhuma. "Usar todos os seus" desfaz a lista. Sair da tela ou trocar de cadeira com mudanças não salvas pergunta antes. Nome, cor e motor continuam em Papéis.',
+      },
+      {
         title: 'A tela da cadeira',
         text: 'Na gaveta de uma cadeira, "Definir cadeira ▸" agora abre a tela da cadeira (também em Papéis, por "Ver como cadeira ▸"). Ela mostra o que uma sessão recebe ao sentar ali: as instruções na ordem em que chegam (a moldura do Donel e o texto do papel) e as suas skills, MCPs e plugins, ligados ou fora, com um selo dizendo de onde cada linha vem (Donel, Papel ou o seu ~/.claude). Também mostra o modelo e o esforço sugeridos. À direita fica o custo estimado de uma sessão, em tokens e memória, com o detalhe de onde vem. A coluna de custo recolhe num clique, vira uma faixa estreita com os dois totais e continua recolhida na próxima vez. Nesta versão a tela só mostra; para mudar, use "Editar em Papéis ▸". Os números de custo são estimativas.',
       },

@@ -107,3 +107,45 @@ export interface ChairScreenKey {
 export function escapeClosesChairScreen(input: ChairScreenKey): boolean {
   return input.key === 'Escape' && !input.defaultPrevented && (input.focusInScreen || input.focusOnPage);
 }
+
+// ---------------------------------------------------------------------------
+// Cadeiras, fatia 3 — editing the chair writes into its role. Every change keeps the other items and axes: an axis
+// that kept everything becomes the full list minus what was turned off, never an empty one.
+// ---------------------------------------------------------------------------
+
+export type ScopeAxisName = 'skills' | 'plugins' | 'mcps';
+
+function withAxis(role: SessionRole, axis: ScopeAxisName, list: ScopeList): SessionRole {
+  return { ...role, scope: { ...role.scope, [axis]: list } };
+}
+
+/** Turns one item of an axis on or off. The app's MCP never leaves; with every MCP of the user kept, nothing changes (the app does not know that list). */
+export function setScopeItem(role: SessionRole, axis: ScopeAxisName, name: string, on: boolean, inventory: ClaudeInventory): SessionRole {
+  const current = role.scope?.[axis];
+  if (axis === 'mcps') {
+    if (name === APP_MCP_NAME || !isList(current)) return role;
+    const has = current.includes(name);
+    if (has === on) return role;
+    return withAxis(role, axis, on ? [...current, name] : current.filter((entry) => entry !== name));
+  }
+  const names = axis === 'skills' ? inventory.skillNames : inventory.pluginIds;
+  const kept = axis === 'skills' ? sameName : pluginKept;
+  const list = isList(current) ? current : [...new Set(names)];
+  if (kept(name, list) === on) return role;
+  // Off: drop every entry that keeps it (a plugin kept by its short name too). On: add it by its full name.
+  const next = on ? [...list, name] : list.filter((entry) => !kept(name, [entry]));
+  return withAxis(role, axis, next);
+}
+
+/** Adds an MCP by name to a role that names its MCPs (never to one that keeps them all: that would drop the rest). */
+export function addScopeMcp(role: SessionRole, name: string): SessionRole {
+  const trimmed = name.trim();
+  const current = role.scope?.mcps;
+  if (!trimmed || trimmed === APP_MCP_NAME || !isList(current) || current.includes(trimmed)) return role;
+  return withAxis(role, 'mcps', [...current, trimmed]);
+}
+
+/** "Usar todos": the axis keeps everything of the user again (written as `*`, so a factory list is not inherited). */
+export function setScopeAll(role: SessionRole, axis: ScopeAxisName): SessionRole {
+  return role.scope?.[axis] === '*' ? role : withAxis(role, axis, '*');
+}
