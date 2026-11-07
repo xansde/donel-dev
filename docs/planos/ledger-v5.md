@@ -83,7 +83,7 @@ lugar não depende mais de o card ainda estar no quadro):
 | **Com quem está** | derivado | a próxima ação, em texto de gente | "você decide", "Revisor confere", "ninguém — falta executor" | não existe |
 
 `pedidoPor` é **obrigatório** em `tarefa_criar` e tem forma fixa `{ tipo: pessoa | sinal |
-rotina, nome, canal }`. Se a sessão não sabe, grava `não informado` — e a linha aparece marcada em
+rotina, nome, canal }`. Se a sessão não sabe, grava `não registrado` (o mesmo texto do PR #279) — e a linha aparece marcada em
 vermelho, nunca preenchida com o papel. Quando a frase veio do dono no chat da própria sessão, o
 app preenche sozinho (`Alexandre · chat`), porque ele sabe de onde chegou a mensagem.
 
@@ -154,6 +154,8 @@ rodada + 1) e `recusar` (fecha, não sai). Hoje "rejeitar" quer dizer as duas ú
 - **Qualquer lugar com Slack** (ou o app) envia uma carta aprovada, não só a sessão autora: a
   carta pertence ao responsável, como toda tarefa.
 - O registro do bot deixa de nascer `aceita`: um envio que falhou é `falhou`.
+- Na tela e no espelho, `aprovada` aparece com o texto que o PR #279 já usa: **"aceita, esperando
+  envio"**. O nome interno muda; o que o dono lê, não.
 
 ### 1.4 Idempotência
 
@@ -239,6 +241,9 @@ Cada prova ganha um **nível**: `verificada` (o app conferiu) ou `declarada` (o 
   valendo), obrigatório para o Revisor aceitar sozinho (ver D3).
 - `gh` indisponível (sem rede, sem login) → a prova fica `declarada` com o motivo, nunca bloqueia
   a entrega.
+- **Rastro carimbado** (prática 8 da pesquisa de orquestração): no `entregar`, o app grava no
+  evento a sessão, a branch e o commit da cabeça da worktree do executor, sem depender do que o
+  agente escreveu. Entra na fatia 12.
 
 ### 1.7 Limite de retrabalho
 
@@ -271,6 +276,8 @@ verbo**, derivada da projeção (nunca gravada à parte):
 - **Adiar** (*snooze*, Linear Inbox): some até a hora escolhida e volta sozinha.
 - A faixa mostra o número total e o mais antigo ("7 esperando você · a mais antiga há 2 dias").
 - A mesma lista alimenta o celular e a vista `esperando_voce` do espelho.
+- **Aviso para fora** (a outra metade da prática 10 da pesquisa de orquestração): cada item novo
+  da caixa dispara o aviso do celular que hoje só existe para carta. Entra na fatia 2.
 
 ### 1.9 Migração v4 → v5 sem perder dado e sem o Alfa antigo apagar nada
 
@@ -285,13 +292,13 @@ verbo**, derivada da projeção (nunca gravada à parte):
    `⟦feito por X⟧` → `executor` da entrega; `⟦substitui id⟧` → `substituida`; `⟦pedido por X⟧`
    (do PR do Dev das colunas) → `pedidoPor`; texto da faxina "concluída: PR #n" →
    `concluida-por-prova` com o link; registro do bot com "o envio falhou" → `falhou`.
-   Sem `pedidoPor` na origem → `não informado` (nunca o papel).
+   Sem `pedidoPor` na origem → `não registrado` (nunca o papel).
 4. **Conferência antes de ativar**: mesma quantidade de tarefas e de eventos, todo id presente,
    e a projeção reconvertida para o formato v4 bate com o original nas tarefas sem marca. Se não
    bater, a migração não ativa, o v4 segue gravando e a caixa mostra "migração recusada" com o
    motivo.
 5. O `ledger.json` passa a ser **regravado como projeção**, com `schemaVersion: 5`, tarefas no
-   formato v4 + campos novos. Um app v4 (Alfa 0.4.0, beta atual) que abre esse arquivo vê a
+   formato v4 + campos novos. Um app v4 (o Alfa 0.4.0) que abre esse arquivo vê a
    versão maior e **fica só-leitura** — mecanismo que já existe (`isNewerLedger`): ele lê as
    tarefas, não consegue gravar, e portanto **não apaga nada**. A fonte de verdade
    (`eventos.jsonl`) ele nem conhece. Para o parse v4 não descartar tarefas com estado novo, o
@@ -301,9 +308,10 @@ verbo**, derivada da projeção (nunca gravada à parte):
 6. A partir do v5 não há mais "subir versão": tipo e versão são por evento, e o leitor tolerante
    preserva o que não conhece (1.5).
 
-**Custo assumido (D1):** depois da migração, o Alfa 0.4.0 e o beta atual só leem o Oráculo — não
-criam tarefa nem liberam carta de Slack. Para trabalhar, o dono abre um Donel Dev v5. É a decisão
-explícita que o diagnóstico pede para sair do congelamento.
+**Custo assumido (D1):** depois da migração, o Alfa 0.4.0 só lê o Oráculo — não cria tarefa nem
+libera carta de Slack. Para trabalhar, o dono abre um Donel Dev v5. É a decisão explícita que o
+diagnóstico pede para sair do congelamento. O beta (`main`) **não muda nada**: ele tem
+`LEDGER_SCHEMA_VERSION = 2` e, pelo `isNewerLedger`, já é só-leitura com o ledger v4 de hoje.
 
 ---
 
@@ -342,7 +350,16 @@ navegador, sem rede). Três variantes, com dados no formato do snapshot real de 
 Na tela, o nível `verificada` aparece como "✔ conferida" (pelo app) e `declarada` como
 "◌ declarada". Os dados do protótipo são de exemplo, montados a partir das tarefas reais de 07/11.
 
-**Recomendação: B com a caixa da A no topo** (a caixa recolhe quando está vazia). A tabela é o
+**No celular** (390 px) as três variantes cabem sem rolagem lateral: a grade vira uma coluna, o
+seletor de variante ocupa a largura toda, o painel da B desce para baixo da tabela, a caixa da C
+sobe para o topo, e a tabela da B esconde Responsável, Decide e Rodadas e rola só dentro do próprio
+cartão. Prints: [A](ledger-v5/celular-a-caixa.png), [B](ledger-v5/celular-b-tabela.png),
+[C](ledger-v5/celular-c-pedidos.png). Conferido no Chromium em 390×844 e 1920×1080: largura da
+página igual à da tela nas três, os três botões do seletor dentro da tela, painel da B sem cruzar a
+tabela, nenhum erro de console e nenhuma requisição de rede.
+
+**Recomendação: B com a caixa da A no topo** (a caixa recolhe quando está vazia). A escolha é
+do dono: é a **D5** (seção 6). A tabela é o
 que ele já abriu no Supabase e criticou; a B responde direto às duas falas ("quem pediu",
 "top de linha"), e a caixa no topo garante que nada que espera por ele fique escondido. A C é a
 mais bonita para pedidos grandes, mas esconde o que não veio dele (sinais do Curador, rotinas).
@@ -355,9 +372,9 @@ dele e só acrescenta.** Nenhuma renomeação depois que o PR dele entrar.
 | Coluna (dele) | No v5 passa a vir de | Coluna nova do v5 | O que mostra |
 |---|---|---|---|
 | `quadro`, `titulo`, `pedido`, `risco`, `prazo`, `id` | igual | `codigo` | chave curta "H-142" |
-| `estado` | estado v5 em português (aberta, em execução, bloqueada, esperando você, entregue, concluída, cancelada, duplicada; carta: aprovada, enviando, enviada, falhou, sem confirmação) | `pai_id` | a tarefa-raiz |
+| `estado` | estado v5 em português (aberta, em execução, bloqueada, esperando você, entregue, concluída, cancelada, duplicada; carta: **aceita, esperando envio** — o mesmo texto do #279, que no v5 vem do estado `aprovada` —, enviando, enviada, falhou, sem confirmação) | `pai_id` | a tarefa-raiz |
 | `esperando_dono` | "está na caixa Esperando você" (qualquer tipo da 1.8) | `com_quem_esta` | "você decide", "Revisor confere", "ninguém — falta executor" |
-| `quem_pediu` | `pedidoPor` (campo, não mais a marca `⟦pedido por⟧`) | `responsavel` | papel · quadro |
+| `quem_pediu` | `pedidoPor` (campo, não mais a marca `⟦pedido por⟧`); sem ele, **"não registrado"**, como no #279 | `responsavel` | papel · quadro |
 | `quem_criou` | `registradaPor`, nome congelado | `quem_decide` | você / Revisor |
 | `quem_faz_agora` | `executor` (a sessão), nome congelado | `prazo_status` | no prazo · em risco · vencido · cumprido |
 | `ultima_entrega`, `link_da_prova`, `prova_texto` | igual | `prova_nivel` | verificada · declarada |
@@ -367,39 +384,80 @@ dele e só acrescenta.** Nenhuma renomeação depois que o PR dele entrar.
 Mais a tabela `tarefas_eventos` (uma linha por evento do log: `id`, `seq`, `tarefa_id`, `tipo`,
 `em`, `por_nome`, `via`, `canal`, `texto`, `hash`) e a vista `esperando_voce`.
 
+**As duas vistas convivem.** A `tarefas_em_aberto` do #279 **fica, com o mesmo nome**: é "tudo o
+que ainda não fechou". No v5 o filtro dela passa a incluir os estados novos que também não fecharam
+(bloqueada, esperando você, enviando, falhou, sem confirmação), além dos quatro de hoje (aberta, em
+execução, entregue, aceita, esperando envio). A `esperando_voce` é nova e mais estreita: só o que
+está na caixa, um item por linha, com o tipo e o verbo da 1.8.
+
 ## 5. Fatiamento em PRs pequenos
 
 Ordem pensada para o dono **sentir a diferença na primeira fatia**, antes de qualquer mudança de
-schema. Cada PR < 50 arquivos, contra `staging`, com `npm run verify`. Testes só onde a regra do
-projeto manda (dado persistido que um canal pode apagar, mensagem que some ou duplica).
+schema. Cada fatia é **vertical**: muda algo que o dono vê na tela, no celular ou no Supabase, e
+tem um **"pronto quando"** que o Revisor confere sem precisar perguntar ao Dev. Cada PR fica abaixo
+de 50 arquivos, vai contra `staging` e passa no `npm run verify`. Teste só onde a regra do projeto
+manda (dado persistido que um canal pode apagar, mensagem que some ou duplica, apagar coisa).
 
-| # | PR | O que o dono sente | Schema | Risco |
+**Base de conferência:** "o snapshot" é uma cópia do `ledger.json` de 07/11 (as 270 tarefas do
+diagnóstico), aberta num `userData` de teste e nunca no do dono. Os números esperados abaixo vêm
+do [diagnóstico](../pesquisas/ledger-diagnostico-2026-11-07.md).
+
+### Sem mexer no schema (v4)
+
+| # | Fatia | O dono vê | Pronto quando (o Revisor confere) | Risco |
 |---|---|---|---|---|
-| 1 | **Caixa "Esperando você" completa, sobre o v4** — derivada do que já existe: cartas aceitas não enviadas, envios "sem confirmação" e "falhou" (lendo o texto de hoje), entregues de risco baixo paradas há 24 h, órfãs para repassar, amostra do Revisor. Faixa com total e o mais antigo. Celular usa a mesma lista. | "Agora eu vejo tudo o que espera por mim." O 0 vira o número de verdade. | não muda | baixo |
-| 2 | **Tabela legível no app (variante B)** — vista "Tudo" do Oráculo com as colunas da seção 4 derivadas do v4, busca, filtros prontos, painel com linha do tempo. | "Dá para entender de quem é cada coisa." | não muda | baixo |
-| 3 | **Contrato v5 puro + upcaster v4→v5** — tipos, envelope, estados, regras novas em `applyLedgerOp`, upcaster das marcas. Sem gravar nada. Teste: importar um v4 de amostra não perde tarefa nem evento e reconverte igual. | nada visível (base) | define o v5 | médio |
-| 4 | **Log só de acréscimo + trava + hash + migração** — `eventos.jsonl`, `oraculo.lock`, conferência da cadeia, backups, projeção `ledger.json` v5; migração com conferência e recusa. Teste: migração, dois escritores, cadeia quebrada vira alerta. | Alfa antigo fica só-leitura (avisado antes). | **sobe para 5** | **alto** (D1) |
-| 5 | **Papéis e fim da órfã** — `pedidoPor` obrigatório (preenchido sozinho no chat do dono), executor separado, nomes congelados, sessão fechada → "aberta, sem executor" na caixa do Líder. | "Quem pediu: Alexandre", nunca "Dev". Órfãs zeram. | v5 | médio |
-| 6 | **Estados de verdade + idempotência + tarefa-pai** — bloqueada, esperando você (com pergunta), concluída, cancelada tipada, duplicada; `chave`; `paiId`/`dependeDe`; título obrigatório. Faxina fecha `concluida-por-prova`. | Um pedido = uma linha com filhas; sem 5 cópias; "cancelada" quer dizer cancelada. | v5 | médio |
-| 7 | **Carta com recibo** — estados de envio, `ts` + permalink, reenvio pela mesma chave, envio por qualquer lugar com Slack ou pelo app, conferência do "sem confirmação". | "Cadê a mensagem do Slack?" tem resposta com link. | v5 | médio (Slack em nome dele) |
-| 8 | **Prova verificada + Revisor + teto de retrabalho** — `sha256`, `gh` no entregar, nível da prova, checklist do critério, regra do Revisor (D3), 3 rodadas → caixa, "parada" em 4 h. | Prova com selo "conferida pelo app"; nada aceito no escuro. | v5 | médio |
-| 9 | **Espelho v5** — `tarefas` com as colunas novas + `tarefas_eventos` + vista `esperando_voce`, por outbox. Depende do PR do Dev das colunas ter entrado. | O Supabase conta a mesma história que o app. | v5 | baixo |
+| 1 | **Caixa "Esperando você" completa** — lista derivada do que já existe: cartas aceitas não enviadas, envios "sem confirmação" e "falhou" (lendo o texto de hoje), entregues de risco baixo paradas há 24 h, órfãs para repassar, amostra do Revisor. Faixa com total e o item mais antigo. | "Agora eu vejo tudo o que espera por mim." O 0 vira o número de verdade. | Sobre o snapshot, a caixa mostra **as 7 cartas aceitas e não enviadas** (os 7 ids do diagnóstico), **os 17 envios sem confirmação** e **as 8 entregues de risco baixo**, em vez de 0. A faixa mostra o total e "a mais antiga há N dias". Prints da faixa e da caixa. | baixo |
+| 2 | **Aviso no celular para todo item da caixa** — o sino do celular, que hoje só avisa de carta, passa a avisar de cada item novo da caixa da fatia 1. É a metade "avisar quando nasce um item" da prática 10 da pesquisa de orquestração. | O celular toca quando alguma coisa passa a esperar por ele, não só carta. | Com o celular pareado e o sino ligado, uma entrega de risco alto e um envio "sem confirmação" criados no `userData` de teste geram **um aviso cada**, com o título do item. Reabrir o app não repete o aviso, e o toque abre o item. Print do celular com os dois avisos. | baixo |
+| 3 | **Tabela legível no app (variante B com a caixa da A no topo, se o D5 confirmar)** — vista "Tudo" do Oráculo com as colunas da seção 4 derivadas do v4, busca, filtros prontos e painel com a linha do tempo. | "Dá para entender de quem é cada coisa." | Sobre o snapshot, **nenhuma linha mostra um papel ("Dev", "Líder") em "Quem pediu"**: aparece a pessoa ou a fonte, ou "não registrado" em vermelho. Os filtros "Esperando você" e "Tudo" dão o mesmo total da caixa e 270. Prints em 1920 px e em 390 px (no celular, sem rolagem lateral). | baixo |
+| 4 | **As marcas viram leitura de verdade** — contrato v5 e upcaster v4→v5, só para leitura: a tabela da fatia 3 passa a mostrar o estado e o motivo reais em vez de "cancelada ⟦…⟧". Nada é gravado. | "Cancelada" passa a querer dizer cancelada. As feitas aparecem como feitas. | Sobre o snapshot, **nenhuma célula mostra `⟦`**. **As 12 "canceladas" que foram feitas** aparecem como "concluída por prova" ou "enviada", e as 7 substituídas como "substituída por H-n". Teste: o upcaster lê o snapshot sem perder tarefa, e reconvertê-lo para v4 dá o mesmo arquivo nas tarefas sem marca. | médio |
 
-As fatias 1 e 2 podem sair **em paralelo** e já amanhã; a 3 pode andar junto delas (não grava
-nada). A 4 só entra com o D1 decidido. Da 5 à 8, sequência (mexem no mesmo contrato). Se o PR #249
-(Oráculo na VPS) entrar antes da 4, o log nasce no serviço da VPS — o formato é o mesmo.
+Nenhuma fatia é só base. O contrato e o upcaster, que antes eram "nada visível", entram na 4,
+junto com um efeito na tela: as marcas somem. O log e a migração entram na 5, com o cartão
+"Integridade" e o aviso do Alfa antigo como o que se vê.
+
+### A subida para o v5 (depende do D1)
+
+| # | Fatia | O dono vê | Pronto quando | Risco |
+|---|---|---|---|---|
+| 5 | **Log com trava, hash e migração** — `eventos.jsonl`, `oraculo.lock`, cadeia de hash conferida ao abrir, backups, projeção `ledger.json` v5; migração com conferência e recusa (1.9). | O cartão "Integridade" na caixa ("cadeia de N eventos conferida às hh:mm"). Um Alfa 0.4.0 aberto ao lado avisa "este Donel Dev só lê o Oráculo". | Migrar o snapshot dá **270 tarefas e 270 eventos de importação**, e a conferência passa. Com o Alfa 0.4.0 aberto sobre o arquivo migrado, criar tarefa falha com o aviso, e o `sha256` do `eventos.jsonl` é **igual antes e depois**. Editar uma linha do log à mão faz aparecer um item "Integridade" na caixa. Testes: migração, dois escritores, cadeia quebrada. | **alto** (D1) |
+| 6 | **Papéis e fim da órfã** — `pedidoPor` obrigatório (o app preenche sozinho quando a frase veio do dono no chat), executor separado, nomes congelados; sessão fechada → "aberta, sem executor" na caixa do Líder. | "Quem pediu: Alexandre", nunca "Dev". As órfãs zeram. | **Nenhuma tarefa nova mostra um papel em "Quem pediu"**. `tarefa_criar` sem `pedidoPor` grava "não registrado", em vermelho. Fechar uma sessão de teste com uma tarefa em execução põe a tarefa em "aberta, sem executor" na caixa do Líder, e **o contador de órfãs vai a 0**. | médio |
+
+### Dentro do v5 (cada uma confere sozinha)
+
+| # | Fatia | O dono vê | Pronto quando | Risco |
+|---|---|---|---|---|
+| 7 | **Estados de espera** — `bloqueada` (por tarefa ou por fato, com motivo) e `esperando você` com pergunta ou pedido de aprovação; destravar sozinho. | Itens "Responder" e "Aprovar" na caixa; a tarefa bloqueada diz por quê. | Uma sessão de teste faz uma pergunta → aparece um item "Responder" na caixa; a resposta chega no chat dela, e a tarefa volta a "em execução". Uma tarefa que depende de outra fica "bloqueada · espera H-n" e **destrava sozinha** quando a outra fecha. | médio |
+| 8 | **Fechamento tipado e três verbos** — concluída, cancelada com motivo, duplicada e substituída; aceitar · pedir ajustes · recusar; a faxina fecha como "concluída por prova". | O botão "Pedir ajustes" separado de "Recusar"; a contagem de rodadas na linha. | Rodar a faxina sobre o snapshot **não cria nenhuma "cancelada" nova com PR mesclado**: elas saem como "concluída por prova", com o link. "Pedir ajustes" numa tarefa de teste mostra "2ª rodada"; "Recusar" fecha com o motivo. | médio |
+| 9 | **Sem cópias do mesmo pedido** — `chave` de idempotência em toda escrita; sem chave, hash de pedido + responsável + quadro + pai em 24 h. | "Já existia: H-142" em vez da 5ª cópia. | Chamar `tarefa_criar` duas vezes com o mesmo pedido cria **uma** tarefa só, e a segunda chamada responde "já existia: H-n". A mesma chave com outro conteúdo é recusada. Teste: chave repetida não duplica. | médio |
+| 10 | **Tarefa-pai e título obrigatório** — `paiId`, `dependeDe`, progresso na raiz, título até 60. | Um pedido = uma linha com as filhas embaixo e "3 de 5 prontas". | Um pedido de teste com 3 filhas aparece como **uma linha com "0 de 3 prontas"**, e o número sobe quando uma filha fecha. `tarefa_criar` sem título é recusada. **As 75 tarefas sem título do snapshot** aparecem com um título marcado "título gerado". | médio |
+| 11 | **Carta com recibo** — estados de envio, `ts` + permalink, reenvio pela mesma chave, envio por qualquer lugar com Slack ou pelo app, conferência do "sem confirmação". | "Cadê a mensagem do Slack?" tem resposta com link. | Uma carta de teste (com `carta_slack` aceita pelo dono) num canal de teste dele vira "enviada" com um **link que abre a mensagem**. Uma falha simulada vira "falhou", e reenviar com a mesma chave deixa **uma** mensagem no canal. Uma carta de uma sessão já fechada sai pelo botão "Enviar pelo app". | médio (Slack em nome dele) |
+| 12 | **Prova conferida pelo app e rastro carimbado** — `sha256` dos arquivos, `gh` no entregar (PR e CI), nível conferida/declarada. O app carimba **sessão, branch e commit** na entrega sem depender do agente: é a prática 8 da pesquisa de orquestração. | O selo "✔ conferida" e, na linha do tempo, de onde a entrega saiu. | Entregar com o link de um PR mostra "✔ conferida" com o SHA e o estado dos checks; entregar só com texto mostra "◌ declarada". Trocar o arquivo de prova depois da entrega faz a carta dizer "a prova mudou". A entrega de uma sessão de teste mostra a sessão, a branch e o commit **sem que o agente os tenha escrito**. | médio |
+| 13 | **Revisor mais exigente (D3) e "pronto quando" em checklist** | Item sem prova aparece vazio na carta; o que o Revisor não pode aceitar sobe para a caixa. | Um Revisor de teste tenta aceitar uma entrega de risco baixo com prova só declarada → **o aceite é recusado** e a decisão aparece na caixa do dono. Com uma prova conferida e o checklist completo, o aceite passa. | médio |
+| 14 | **Teto de 3 rodadas** | O item "Travou" na caixa, com as três provas e os três motivos. | Na 3ª vez que alguém pede ajustes numa tarefa de teste, ela **não volta à sessão**: aparece em "Travou", com os verbos trocar executor, mudar critério e cancelar. | baixo |
+| 15 | **"Parada" em 4 h** | A linha diz "parada há N h", e o Líder recebe um aviso. | Uma tarefa em execução sem nenhum sinal da sessão por 4 h (com o relógio adiantado no teste) aparece como **"parada"** na tabela, e o Líder recebe **uma** mensagem. Um sinal novo tira a marca. | baixo |
+| 16 | **Espelho v5** — `tarefas` com as colunas novas, `tarefas_eventos`, `tarefas_em_aberto` com o filtro novo e a vista `esperando_voce`, por outbox. Depende do #279 ter entrado. | O Supabase conta a mesma história que o app. | No Supabase do dono, `select count(*) from tarefas` dá o total do app, `esperando_voce` tem **o mesmo número da faixa**, e `tarefas_eventos` tem uma linha por evento do log. Desligar a rede e religar não perde nem duplica linha. | baixo |
+
+As fatias 1 a 4 podem sair **já**, em paralelo duas a duas (1 e 3 primeiro; a 2 depende da lista
+da 1, e a 4 depende da tabela da 3). A 5 só entra com o D1 decidido. A 6 vem logo depois dela;
+da 7 à 15 a ordem é a da tabela, porque todas mexem no mesmo contrato (a 13 depende da 12). Se o
+PR #249 (Oráculo na VPS) entrar antes da 5, o log nasce no serviço da VPS: o formato é o mesmo.
 
 ## 6. Decisões que são do dono
 
-- **D1 — Alfa antigo só-leitura.** Depois da fatia 4, o Alfa 0.4.0 e o beta atual só leem o
-  Oráculo (não criam tarefa nem liberam carta). Recomendo **aceitar**: é o único jeito de parar a
-  perda de campo; o custo é abrir sempre um app v5.
+- **D1 — Alfa antigo só-leitura.** Depois da fatia 5, o Alfa 0.4.0 só lê o Oráculo (não cria
+  tarefa nem libera carta). O beta não muda: ele já só lê o ledger de hoje. Recomendo **aceitar**:
+  é o único jeito de parar a perda de campo; o custo é abrir sempre um app novo.
 - **D2 — Responsável = papel no quadro.** A tarefa deixa de ser da sessão. Recomendo **aceitar**
   (V1).
 - **D3 — Revisor mais exigente.** Só aceita sozinho com prova verificada e checklist completo;
   senão sobe para você. Recomendo **aceitar**, sabendo que a caixa enche mais na primeira semana.
-- **D4 — Ordem.** Começar pelas fatias 1 e 2 (sem schema) antes de decidir o D1. Recomendo
+- **D4 — Ordem.** Começar pelas fatias 1 a 4 (sem schema) antes de decidir o D1. Recomendo
   **aceitar**: você sente a diferença sem risco, e decide o D1 vendo a caixa funcionando.
+- **D5 — Qual tela.** Das três variantes do protótipo (A caixa primeiro, B tabela, C pedidos seus),
+  qual vira o Oráculo. Recomendo **B com a caixa da A no topo**: a tabela responde ao "quem pediu"
+  e ao "top de linha", e a caixa no topo garante que nada que espera por você fique escondido. A C
+  esconde o que não veio de você (sinais do Curador, rotinas). A fatia 3 só começa com o D5
+  respondido.
 
 ## Fora de escopo
 
@@ -412,7 +470,7 @@ nada). A 4 só entra com o D1 decidido. Da 5 à 8, sequência (mexem no mesmo co
 
 ## Ainda não especificado
 
-- Texto exato de cada verbo na caixa e no celular (sai do protótipo escolhido).
+- Texto exato de cada verbo na caixa e no celular (sai da variante escolhida no D5).
 - Prazo para "carta parada" (30 min proposto) e "parada" (4 h proposto): ajustar com uso.
 - Como a sessão sem Slack pede que outra envie uma carta aprovada (provável: tarefa filha
   automática para o lugar com Slack do quadro).

@@ -103,12 +103,43 @@ tr.child td.titlecell{padding-left:22px}
 .kids li{display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px solid #1e252e;font-size:13px}
 .c-side{padding:14px;align-self:start}
 .c-side .item .t{font-size:13px}
+.tablewrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+
+/* ---------- larguras menores: nada de rolagem lateral na página ---------- */
+@media (max-width:1180px){
+  .a-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .b-wrap,.c-wrap{grid-template-columns:minmax(0,1fr)}
+  .drawer{position:static}
+  .c-side{order:-1}
+}
+@media (max-width:720px){
+  .topbar{height:auto;flex-wrap:wrap;gap:6px 12px;padding:10px 16px}
+  .topbar .sub{font-size:12px}
+  .proto{order:3;width:100%}
+  .switch{order:4;margin-left:0;width:100%}
+  .switch button{flex:1;padding:6px 4px;font-size:12px}
+  main{padding:14px 16px 20px}
+  .a-head{flex-wrap:wrap;gap:10px}
+  .a-head .grow{flex-basis:100%}
+  .a-grid,.c-list{grid-template-columns:minmax(0,1fr)}
+  .a-all{flex-wrap:wrap;gap:12px 18px}
+  .b-inbox,.filters{flex-wrap:wrap}
+  .b-inbox .grow{display:none}
+  .search{margin-left:0;width:100%}
+  th.opt,td.opt{display:none}
+  .roles{grid-template-columns:86px minmax(0,1fr)}
+  .c-head{flex-wrap:wrap}
+  .code{white-space:nowrap}
+  .kids li{flex-wrap:wrap;row-gap:2px}
+  .kids li .who{max-width:100%!important;flex-basis:100%;padding-left:2px}
+  #view-b .titlecell .ellipsis{max-width:150px!important}
+}
 </style>
 </head>
 <body>
 <div class="topbar">
   <span class="brand">◆ Oráculo <b>Harrow</b></span>
-  <span class="sub">Quadro Donel Dev · 97 tarefas</span>
+  <span class="sub">Quadro Donel Dev · 97&nbsp;tarefas</span>
   <span class="proto">protótipo v5 · dados de exemplo no formato de 07/11</span>
   <div class="switch" id="switch">
     <button data-v="a">A · Caixa primeiro</button>
@@ -127,7 +158,7 @@ tr.child td.titlecell{padding-left:22px}
 const ST = {
   aberta:['aberta','s-aberta'], exec:['em execução','s-exec'], bloq:['bloqueada','s-bloq'], voce:['esperando você','s-voce'],
   entregue:['entregue','s-entregue'], ok:['concluída','s-ok'], cancel:['cancelada','s-cancel'], dup:['duplicada','s-cancel'],
-  aprovada:['aprovada · sem envio','s-voce'], semconf:['sem confirmação','s-bad'], falhou:['falhou','s-bad'], enviada:['enviada','s-ok'],
+  aprovada:['aceita, esperando envio','s-voce'], semconf:['sem confirmação','s-bad'], falhou:['falhou','s-bad'], enviada:['enviada','s-ok'],
 };
 const T = [
   {c:'H-201',t:'Ledger em padrão top de linha',st:'exec',pai:null,ped:'Alexandre · chat',reg:'Líder · Donel Dev',resp:'Líder · Donel Dev',exe:'—',dec:'você',risco:'alto',prazo:'08/11',ps:'no prazo',rod:0,prova:'',kids:6,done:4,
@@ -231,9 +262,9 @@ function rowB(x,child){
   return `<tr class="${child?'child':''} ${x.c==='H-206'?'sel':''}">
     <td class="code">${x.c}</td><td class="titlecell"><div class="ellipsis" style="max-width:250px">${title}</div></td>
     <td>${pill(x.st)}</td><td class="ellipsis" style="max-width:150px">${comQuem(x)}</td>
-    <td class="ellipsis" style="max-width:140px">${ped}</td><td class="ellipsis" style="max-width:115px">${x.resp}</td>
-    <td class="ellipsis" style="max-width:140px">${x.exe}</td><td>${x.dec}</td>
-    <td>${x.prazo} · ${ps(x.ps)}</td><td style="text-align:center">${x.rod||'—'}</td><td>${proof(x.prova)}</td></tr>`;
+    <td class="ellipsis" style="max-width:140px">${ped}</td><td class="ellipsis opt" style="max-width:115px">${x.resp}</td>
+    <td class="ellipsis" style="max-width:140px">${x.exe}</td><td class="opt">${x.dec}</td>
+    <td>${x.prazo} · ${ps(x.ps)}</td><td class="opt" style="text-align:center">${x.rod||'—'}</td><td>${proof(x.prova)}</td></tr>`;
 }
 document.getElementById('view-b').innerHTML = `
   <div class="card b-inbox"><span class="lbl">◆ ${inboxTotal} esperando você</span>
@@ -246,8 +277,8 @@ document.getElementById('view-b').innerHTML = `
         <span class="chip">Cartas <b>4</b></span><span class="chip">Travadas <b>1</b></span><span class="chip on">Vivas e de hoje</span><span class="chip">Tudo · 97</span>
         <span class="search">Buscar por frase, pessoa, lugar, código…</span>
       </div>
-      <div class="card" style="overflow:hidden"><table>
-        <thead><tr><th>Código</th><th>Título</th><th>Estado</th><th>Com quem está</th><th>Quem pediu</th><th>Responsável</th><th>Quem faz agora</th><th>Decide</th><th>Prazo</th><th>Rod.</th><th>Prova</th></tr></thead>
+      <div class="card tablewrap"><table>
+        <thead><tr><th>Código</th><th>Título</th><th>Estado</th><th>Com quem está</th><th>Quem pediu</th><th class="opt">Responsável</th><th>Quem faz agora</th><th class="opt">Decide</th><th>Prazo</th><th class="opt">Rod.</th><th>Prova</th></tr></thead>
         <tbody>${rowsB()}</tbody></table></div>
     </div>
     <aside class="card drawer">
@@ -293,7 +324,7 @@ const asks = [
   {root:{c:'H-209',q:'Resumo da semana para as lideranças.',ped:'Bill · Slack #liderancas',prazo:'08/11'},kids:[byCode['H-209']]},
 ];
 document.getElementById('view-c').innerHTML = `
-  <div class="row" style="margin-bottom:12px"><h1>Pedidos</h1><span class="sub">cada cartão é uma frase de alguém; as filhas são o trabalho que ela gerou</span>
+  <div class="row c-head" style="margin-bottom:12px"><h1>Pedidos</h1><span class="sub">cada cartão é uma frase de alguém; as filhas são o trabalho que ela gerou</span>
     <span class="grow"></span><span class="chip on">De você · 5</span><span class="chip">De outras pessoas · 2</span><span class="chip">Sinais e rotinas · 3</span></div>
   <div class="c-wrap">
     <div class="c-list">
