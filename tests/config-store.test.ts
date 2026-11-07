@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearSessionName,
@@ -592,9 +592,11 @@ describe('writeAppConfig (escrita atômica — fs mockado, DoD explícito da tas
 
   it('cria o diretório pai quando ele não existe', () => {
     const { io, calls } = makeMockIo({ existsSync: vi.fn(() => false) });
-    writeAppConfig('C:\\fake\\nested\\config.json', baseDefaults(), io, null);
+    // Caminho do sistema em que o teste roda: `dirname` de um `C:\\` fixo dá "." no Linux.
+    const nested = join(resolve('/fake'), 'nested');
+    writeAppConfig(join(nested, 'config.json'), baseDefaults(), io, null);
 
-    expect(calls[0]).toBe('mkdir:C:\\fake\\nested');
+    expect(calls[0]).toBe(`mkdir:${nested}`);
   });
 
   it('não cria diretório quando ele já existe', () => {

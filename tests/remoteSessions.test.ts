@@ -1,3 +1,4 @@
+import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildAttachSshArgs, buildRemoteSetupScript, parseRemoteSetupOutput, remoteDirFor } from '../src/main/remote-session';
 
@@ -9,7 +10,8 @@ describe('sessões remotas', () => {
   it('leva o claude à pasta certa, com aspas que sobrevivem a apóstrofo e arquivos da sessão', () => {
     const script = buildRemoteSetupScript({
       sid,
-      homeRelativeDir: remoteDirFor('C:\\Users\\a\\seazone\\Donel Dev', ['C:\\Users\\a\\seazone']),
+      // Pasta local no formato do sistema em que o teste roda (o app roda no Windows e numa VPS Linux).
+      homeRelativeDir: remoteDirFor(join(resolve('/Users/a'), 'seazone', 'Donel Dev'), [join(resolve('/Users/a'), 'seazone')]),
       repoUrl: null,
       branch: null,
       files: [],
