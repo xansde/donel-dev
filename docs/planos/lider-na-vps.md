@@ -26,14 +26,20 @@ O resto já funciona numa sessão remota: chat pelo transcript espelhado, hooks 
   Líder único de novo (sem projeto, fora da barra de abas como hoje). Versões antigas ignoram os campos extras.
 - **Troca com a conversa junto (retomada, não resumo):** quando chega uma mensagem pelo Jobu e o Líder vivo está num
   lugar diferente do escolhido, e ele **não** está trabalhando:
-  1. o app pega o transcript dele (o do CLI, no PC; ou o espelho local, se ele está na VPS);
-  2. fecha a aba antiga (encerra o CLI de lá);
-  3. abre o Líder no lugar novo com `-r <mesmo id>`, levando o transcript junto, antes de o CLI subir. Ele vai para
-     `~/.claude/projects/<pasta>/<id>.jsonl` de lá. Como transcript só cresce, a cópia maior é a mais nova: ela
-     substitui a que estiver lá, que fica guardada como `<id>.jsonl.bak-<hora>`. Uma cópia menor nunca sobrescreve.
-     (A primeira versão deste plano dizia "só se não existir", mas isso perdia a conversa na volta, PC → VPS → PC,
-     porque a cópia antiga do PC já existe.)
-  4. entrega a mensagem a ele.
+  1. **copia a conversa antes de mexer no Líder** (`lider:carry`, `src/main/lider/transfer.ts`): por stream no ssh
+     (`cat` de um lado, arquivo do outro), nunca embutida num script. Na ida, o maior transcript daqui sobe e o
+     outro lado confere tamanho e sha256; antes, encerra o tmux de um Líder velho da mesma conversa que tenha ficado
+     vivo lá (uma volta que não conseguiu encerrá-lo), para o novo nunca se ligar a ele. Na volta, desce o arquivo
+     da VPS (não o espelho que foi chegando), conferido pelo mesmo hash. Nos dois lados fica a cópia maior, e a
+     outra vira `<id>.jsonl.bak-<hora>`; uma cópia menor nunca sobrescreve;
+  2. abre o Líder no lugar novo com `-r <mesmo id>` e entrega a mensagem a ele;
+  3. **só quando o novo aceitou a mensagem** (`shared/lider/move.ts`), fecha o antigo. Se a cópia falha, o novo não
+     sobe ou não aceita em 4 min, o novo fecha e o antigo segue onde estava, com a conversa, e recebe a mensagem e
+     as que chegaram no meio, na ordem (aviso numa linha na tela).
+  Medido: 19 MB por stream, 0,3 s sem rede (o script antigo levava 27 s a 460 s e o app desistia em 120 s).
+- **Ligação caída (PC dormiu > ~1 min):** a aba do Líder fica com o processo encerrado; a próxima mensagem religa a
+  mesma aba com `-r` do mesmo id, no lugar onde ele estava (na VPS, reanexa ao mesmo CLI no tmux). Só sem id de
+  conversa abre um Líder novo.
   Mesmo id de conversa: o mesmo nome, o mesmo histórico, o mesmo chat no Jobu. Com o Líder trabalhando, a mensagem
   vai para ele onde está, e a troca espera a próxima.
 
