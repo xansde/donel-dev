@@ -8,7 +8,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, ledgerProofsDir, nodeLedgerProofFs } from '../src/main/ledger-store';
-import { createGateHandler, type GateForward } from '../src/oraculo/portao';
+import { createServer, type AddressInfo, type Socket } from 'node:net';
+import { createGateHandler, mergePicture, tunnelForward, type GateForward } from '../src/oraculo/portao';
 
 const io = createSystemConfigIoDeps();
 const dirs: string[] = [];
@@ -125,5 +126,47 @@ describe('Portão MCP das sessões da VPS', () => {
     expect(result.isError).toBe(true);
     expect(result.content[0]!.text).toMatch(/retrato/);
     expect(Object.keys(g.ledger.load().doc.tasks)).toHaveLength(0);
+  });
+
+  // Revisão do #302: only "nobody listens on the tunnel" is the PC off. A call that reached the PC and then lost the
+  // tunnel must never run again here (a task or a delivery would come out twice).
+  it('túnel que recebe o pedido e cai: 502, e a ferramenta não roda de novo na VPS', async () => {
+    let received = '';
+    const sockets: Socket[] = [];
+    const tunnel = createServer((socket) => {
+      sockets.push(socket);
+      socket.on('data', (chunk) => {
+        received += chunk.toString('utf8');
+        if (received.includes('tarefa_criar')) socket.destroy();
+      });
+    });
+    await new Promise<void>((resolve) => tunnel.listen(0, '127.0.0.1', resolve));
+    const port = (tunnel.address() as AddressInfo).port;
+    try {
+      const g = setup((_port, request) => tunnelForward(port, request));
+      const answer = await g.rpc('tools/call', { name: 'tarefa_criar', arguments: { pedido: 'uma vez só', criterio: 'x', prazo: '2026-11-10', risco: 'baixo' } });
+      expect(received).toContain('tarefa_criar');
+      expect(answer.status).toBe(502);
+      expect(Object.keys(g.ledger.load().doc.tasks)).toHaveLength(0);
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await new Promise((resolve) => tunnel.close(resolve));
+    }
+  });
+
+  it('ninguém escutando no túnel (ECONNREFUSED) é o PC desligado', async () => {
+    const probe = createServer();
+    await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve));
+    const closedPort = (probe.address() as AddressInfo).port;
+    await new Promise((resolve) => probe.close(resolve));
+    expect(await tunnelForward(closedPort, { method: 'POST', path: '/s/x/mcp', headers: {}, body: '{}' })).toBe('desligado');
+  });
+
+  it('o retrato novo soma ao anterior, mas solta a sessão cuja pasta sumiu', () => {
+    const previous = { at: 1, sessoes: { a: { quemSou: { lugar: 'a' }, listar: [] }, b: { quemSou: { lugar: 'b' }, listar: [] } } };
+    const next = { at: 2, sessoes: { c: { quemSou: { lugar: 'c' }, listar: [] } } };
+    const merged = mergePicture(previous, next, (folder) => folder !== 'b');
+    expect(merged.at).toBe(2);
+    expect(Object.keys(merged.sessoes).sort()).toEqual(['a', 'c']);
   });
 });

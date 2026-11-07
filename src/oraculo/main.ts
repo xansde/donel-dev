@@ -20,7 +20,7 @@ import { createRelay } from './relay';
 import { pickTailscaleAddress } from '../main/celular/tailscale';
 import { createOracleApiHandler } from './api';
 import { createReturnGuard } from './devolvido';
-import { createGateHandler, GATE_PORT, startGateServer, tunnelForward, type BoardPicture } from './portao';
+import { createGateHandler, GATE_PORT, mergePicture, startGateServer, tunnelForward, type BoardPicture } from './portao';
 import { ORACLE_PORT, startOracleServer, type OracleServer } from './server';
 
 export const TOKEN_HASH_FILE = 'pc.token.sha256';
@@ -94,8 +94,8 @@ async function main(): Promise<void> {
     picture = null;
   }
   const setPicture = (next: BoardPicture): void => {
-    // Merged: a session the PC could not read this round keeps its last picture.
-    picture = { at: next.at, sessoes: { ...(picture?.sessoes ?? {}), ...next.sessoes } };
+    const sessionsDir = join(homedir(), '.donel', 's');
+    picture = mergePicture(picture, next, (folder) => /^[A-Za-z0-9-]{1,64}$/.test(folder) && existsSync(join(sessionsDir, folder)));
     writeFileSync(`${pictureFile}.tmp`, JSON.stringify(picture), { mode: 0o600 });
     renameSync(`${pictureFile}.tmp`, pictureFile);
   };

@@ -40,6 +40,15 @@ export interface BoardPicture {
   readonly sessoes: Readonly<Record<string, PictureSession>>;
 }
 
+/**
+ * The PC's new picture over the last one: a session the PC could not read this round keeps its last picture, and a
+ * session whose folder is gone (`~/.donel/s/<folder>`, closed) leaves it, so the file does not grow forever.
+ */
+export function mergePicture(previous: BoardPicture | null, next: BoardPicture, folderExists: (folder: string) => boolean): BoardPicture {
+  const sessoes = Object.fromEntries(Object.entries({ ...(previous?.sessoes ?? {}), ...next.sessoes }).filter(([folder]) => folderExists(folder)));
+  return { at: next.at, sessoes };
+}
+
 export interface GateRequest {
   readonly method: string;
   readonly path: string;
@@ -184,9 +193,10 @@ export const tunnelForward: GateForward = (port, request) =>
       res.on('error', () => resolve({ status: 502, headers: {}, body: '' }));
     });
     outgoing.on('timeout', () => outgoing.destroy(new Error('timeout')));
-    // Nothing answered before the error: the tunnel is down (the PC is off). After an answer started, a broken
-    // pipe is a 502, never a local answer (the call may have run on the PC).
-    outgoing.on('error', () => resolve(answered ? { status: 502, headers: {}, body: '' } : 'desligado'));
+    // Only "nobody listens on the tunnel" (ECONNREFUSED: nothing was sent) is the PC off. Any other failure (a reset
+    // after the call went out, a timeout, a pipe broken mid-answer) is a 502: the call may have run on the PC, and
+    // running it again here would make a task or a delivery twice (revisão do #302).
+    outgoing.on('error', (error: NodeJS.ErrnoException) => resolve(!answered && error.code === 'ECONNREFUSED' ? 'desligado' : { status: 502, headers: {}, body: '' }));
     outgoing.end(request.body);
   });
 
