@@ -89,6 +89,7 @@ import { useHillClimb } from './HillClimb/useHillClimb';
 import { MindscapeScreen, type MindscapeLiveSession } from './Mindscape/MindscapeScreen';
 import { useMindscapeDoc } from './Mindscape/useMindscapeDoc';
 import { AgentBridge, type AgentBridgePorts } from './Mindscape/agentBridge';
+import type { FaxineiroLogEntry } from '../../shared/faxineiro/triggers';
 import { SpawnAskPanel, type SpawnAsk } from './Mindscape/SpawnAskPanel';
 import { appendConversation, findSessionBoard, placeSessionCards, roleOfSession, setBoardView, setPlaceConversation, writeSessionNote, type MindscapeDoc } from '../../shared/mindscape/model';
 import type { SessionRole } from '../../shared/roles';
@@ -2410,6 +2411,8 @@ export function App(): React.JSX.Element {
     remotes: () => accountsView.remotes.map((remote) => ({ id: remote.id, label: remote.label })),
     projects: () => projects.map((project) => ({ path: project.path, name: project.name })),
     passOn: (requests) => window.donel.ledger.passOn(requests),
+    stateEnteredAt: (tabId) => semaphoreStates[tabId]?.stateEnteredAt,
+    logFaxineiro: (entries) => window.donel.faxineiro.log(entries),
   };
   const agentBridgeRef = useRef<AgentBridge>(null as unknown as AgentBridge);
   if (agentBridgeRef.current === null) agentBridgeRef.current = new AgentBridge(agentPorts);
@@ -2417,6 +2420,33 @@ export function App(): React.JSX.Element {
   // t-e753b554 — a place that never started passes its live tasks on (the main waits 30 min after the last event).
   useEffect(() => {
     const timer = setInterval(() => void agentBridgeRef.current.checkNotStarted(), 5 * 60_000);
+    return () => clearInterval(timer);
+  }, []);
+  // t-b3b26e60 — Faxineiro com gatilhos: once a minute the main judges the machines and the open sessions, and the
+  // bridge wakes the Faxineiro of a board (or closes one that finished its round). One round at a time.
+  useEffect(() => {
+    let running = false;
+    const round = async (): Promise<void> => {
+      if (running) return;
+      running = true;
+      try {
+        const bridge = agentBridgeRef.current;
+        const answer = await window.donel.faxineiro.round(bridge.faxineiroSessions());
+        bridge.setFullMachines(answer.fullMachines);
+        const entries: FaxineiroLogEntry[] = [...bridge.drainQueue()];
+        for (const close of answer.closeIdle) {
+          const closed = bridge.closeIdleFaxineiro(close.projectPath, close.placeId);
+          if (closed) entries.push(closed);
+        }
+        for (const wake of answer.wakes) entries.push(await bridge.wakeFaxineiro(wake));
+        if (entries.length > 0) window.donel.faxineiro.log(entries);
+      } catch (error) {
+        console.error('[donel-dev] faxineiro: rodada falhou', error);
+      } finally {
+        running = false;
+      }
+    };
+    const timer = setInterval(() => void round(), 60_000);
     return () => clearInterval(timer);
   }, []);
   useEffect(() => {
