@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-07',
     items: [
       {
+        title: 'O Líder pode rodar na VPS',
+        text: 'Em Preferências, Avisos e Jobu, "Onde o Líder roda" escolhe entre este computador e a VPS. O Líder com quem você fala pelo Jobu muda de lugar na mensagem seguinte e continua a mesma conversa, com tudo o que já sabia. Se ele estiver trabalhando, muda quando terminar. O antigo só fecha depois que o novo respondeu; se algo falhar no caminho, ele continua onde estava, com a conversa, e recebe a mensagem. Se o computador dormir e a ligação com a VPS cair, a próxima mensagem religa o mesmo Líder. Na VPS ele deixa de ocupar memória do computador; o navegador integrado continua aqui, e ele o usa como antes. Ele só lê arquivos de projetos que já estão no GitHub. Para voltar, escolha "Este computador".',
+      },
+      {
         title: 'O Oráculo mostra tudo o que espera por você',
         text: 'O topo do Oráculo agora é a caixa "Esperando você", com tudo o que depende de você, e não só as entregas de risco alto: entregas para decidir, cartas de Slack para aprovar, cartas que você aceitou e não saíram, envios ao Slack sem confirmação ou que falharam, entregas de risco baixo paradas há um dia sem ninguém decidir, tarefas cujo lugar fechou e precisam ir para outro, e a amostra do dia do Revisor. Cada coisa aparece no seu grupo, com o botão do que fazer: decidir abre a carta, e o que ainda não tem botão próprio mostra o pedido ou a mensagem e diz o que fazer. Vem primeiro o que trava alguém, depois o prazo, depois a idade. A faixa do Mindscape mostra o total e há quanto tempo espera a mais antiga, e abre a mesma caixa. Com nada esperando, a caixa some.',
       },
