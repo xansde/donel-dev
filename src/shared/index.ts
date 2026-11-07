@@ -339,10 +339,14 @@ export interface RemoteAliveSession {
   readonly remoteId: string;
   readonly sessionId: string;
   readonly cwd: string;
-  readonly projectName: string;
+  /** Absent for the Líder único, which belongs to no board. */
+  readonly projectName?: string;
   readonly name: string;
   readonly launchArgs: readonly string[];
   readonly openedBy?: string;
+  /** Líder único na VPS — the role and the Jobu's mark of the session. */
+  readonly roleId?: string;
+  readonly leaderOfAll?: boolean;
 }
 
 /**

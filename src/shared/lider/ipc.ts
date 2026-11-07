@@ -9,6 +9,8 @@ export const LIDER_CHANNELS = {
   report: 'lider:report',
   /** Answer of the main window to a `lider:deliver` (by request id). */
   delivered: 'lider:delivered',
+  /** Main window -> main: copy the Líder's conversation to the place it moves to, checked there (Líder na VPS). */
+  carry: 'lider:carry',
   // Main -> main window
   deliver: 'lider:deliver',
   // Pet window (the bubble of the Líder) -> main
@@ -45,6 +47,15 @@ export interface LiderSendPayload {
 
 export type LiderSendResult = { readonly ok: true } | { readonly ok: false; readonly reason: string };
 
+/** `lider:carry` — the conversation `sessionId` of the folder `cwd`, from a place to another (`undefined` = this computer). */
+export interface LiderCarryPayload {
+  readonly sessionId: string;
+  /** Absent = the home folder (as the PTY does). */
+  readonly cwd?: string;
+  readonly from?: string;
+  readonly to?: string;
+}
+
 export const EMPTY_LIDER_REPORT: LiderReport = { tabId: null, ptyId: null, name: null, roleAvailable: false };
 
 const MAX_TEXT = 100_000;
@@ -71,12 +82,26 @@ export function isValidLiderSendPayload(value: unknown): value is LiderSendPaylo
   return isRecord(value) && typeof value.text === 'string' && value.text.trim().length > 0 && value.text.length <= MAX_TEXT;
 }
 
+export function isValidLiderCarryPayload(value: unknown): value is LiderCarryPayload {
+  if (!isRecord(value)) return false;
+  const optionalId = (field: unknown): boolean => field === undefined || (typeof field === 'string' && field.length > 0 && field.length <= 200);
+  return (
+    typeof value.sessionId === 'string' &&
+    /^[A-Za-z0-9-]{1,64}$/.test(value.sessionId) &&
+    (value.cwd === undefined || (typeof value.cwd === 'string' && value.cwd.length > 0 && value.cwd.length <= 4096)) &&
+    optionalId(value.from) &&
+    optionalId(value.to)
+  );
+}
+
 /** `window.donel.lider` — each window uses its half. */
 export interface DonelLiderApi {
   // --- main window ---
   report(report: LiderReport): void;
   onDeliver(listener: (payload: LiderSendPayload, reply: (result: LiderSendResult) => void) => void): () => void;
   onActivateTab(listener: (payload: { readonly tabId: string }) => void): () => void;
+  /** Líder na VPS — copies the conversation to the place the Líder moves to; `ok` only when it checked out there. */
+  carry(payload: LiderCarryPayload): Promise<LiderSendResult>;
   // --- pet window (the bubble) ---
   getState(): Promise<LiderState>;
   onState(listener: (state: LiderState) => void): () => void;
