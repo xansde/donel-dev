@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-07',
     items: [
       {
+        title: 'A tela da cadeira',
+        text: 'Na gaveta de uma cadeira, "Definir cadeira ▸" agora abre a tela da cadeira (também em Papéis, por "Ver como cadeira ▸"). Ela mostra o que uma sessão recebe ao sentar ali: as instruções na ordem em que chegam (a moldura do Donel e o texto do papel) e as suas skills, MCPs e plugins, ligados ou fora, com um selo dizendo de onde cada linha vem (Donel, Papel ou o seu ~/.claude). Também mostra o modelo e o esforço sugeridos. À direita fica o custo estimado de uma sessão, em tokens e memória, com o detalhe de onde vem. A coluna de custo recolhe num clique, vira uma faixa estreita com os dois totais e continua recolhida na próxima vez. Nesta versão a tela só mostra; para mudar, use "Editar em Papéis ▸". Os números de custo são estimativas.',
+      },
+      {
         title: 'As tarefas do Oráculo numa tabela que se lê sem decifrar',
         text: 'Cada tarefa do Oráculo agora pode ir, em até um minuto depois de mudar, para uma tabela no seu Supabase pessoal, uma linha por tarefa e na ordem em que se lê: quadro, título, estado, quem pediu, a frase do pedido, quem faz agora, quem criou, risco, prazo, a última entrega com o link da prova, quem aceitou ou rejeitou e o motivo, e as datas. "Quem pediu" é a pessoa: você, alguém do Slack pelo nome ou a fonte de um sinal, e não mais "Dev"; quando ninguém disse quem pediu, a tabela mostra "não registrado" em vez de adivinhar. As sessões aparecem pelo nome, como "Dev · Mindscape de cadeiras", e continuam com o nome depois de fechadas. Há também a visão do que ainda não fechou. Prints e vídeos ficam só aqui; senhas, chaves e e-mails que aparecerem num texto saem mascarados. Sem internet, o Donel guarda e manda quando a rede voltar. Liga em Preferências, Celular, onde você também diz o seu nome para a tabela.',
       },

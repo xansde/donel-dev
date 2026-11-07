@@ -3328,6 +3328,8 @@ function registerRolesIpcHandlers(): void {
   rolesStore = store;
   ipcMain.handle(ROLES_CHANNELS.list, (): SessionRole[] => store.list());
   ipcMain.handle(ROLES_CHANNELS.save, (_event, role: unknown): RoleSaveResult => store.save(role));
+  // Cadeiras, fatia 2 — only names (role-scope-inventory.ts); the chair screen counts what the role keeps.
+  ipcMain.handle(ROLES_CHANNELS.inventory, (_event, cwd: unknown) => readClaudeInventory(defaultClaudeConfigDir(), typeof cwd === 'string' && cwd ? cwd : undefined));
 }
 
 /**
