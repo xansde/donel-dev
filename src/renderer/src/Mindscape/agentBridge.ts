@@ -179,7 +179,8 @@ export class AgentBridge {
   private readonly lastNoticeText = new Map<string, string>();
   /** Tab opened by `sessao_abrir` → when (its start is judged against START_GRACE_MS). */
   private readonly openedAt = new Map<string, number>();
-  private readonly startChecks = new Set<ReturnType<typeof setTimeout>>();
+  /** Tab opened by `sessao_abrir` → the pending check of its start (and the report it makes). */
+  private readonly startChecks = new Map<string, { readonly timer: ReturnType<typeof setTimeout>; readonly report: () => void }>();
   /** Tabs the Líder único sent work to with `sessao_enviar`: their end-of-turn notices go to it, on any board. */
   private readonly leaderHears = new Set<string>();
   /** Places the Líder único opened in this run (`projectPath\nplaceId`); the tabs' `openedBy` covers a restart. */
@@ -226,7 +227,7 @@ export class AgentBridge {
     this.lastNoticeFrom.clear();
     this.lastNoticeText.clear();
     this.leaderHears.clear();
-    for (const timer of this.startChecks) clearTimeout(timer);
+    for (const check of this.startChecks.values()) clearTimeout(check.timer);
     this.startChecks.clear();
     for (const timer of this.passOnTimers.values()) clearTimeout(timer);
     this.passOnTimers.clear();
@@ -348,14 +349,23 @@ export class AgentBridge {
 
   /** Once START_GRACE_MS is over, a session that still took nothing is reported to whoever opened it, once. */
   private watchStart(tabId: string, projectPath: string, openerPlace: string, placeId: string, name: string): void {
-    const timer = setTimeout(() => {
-      this.startChecks.delete(timer);
+    const report = (): void => {
+      this.startChecks.delete(tabId);
       if (this.ports.stateOf(tabId) !== 'working' || !this.ports.unconfirmed(tabId)) return;
       const opener = openerPlace === LEADER_OF_ALL ? this.leaderTab() : this.tabOfPlace(projectPath, openerPlace);
       if (!opener) return;
       this.ports.sendLine(opener.id, `◆ ${name} (${placeId}) ${this.startState(tabId)}. Veja a tela dela com sessao_ver_tela ou peça ao dono.`);
-    }, START_GRACE_MS);
-    this.startChecks.add(timer);
+    };
+    this.startChecks.set(tabId, { timer: setTimeout(report, START_GRACE_MS), report });
+  }
+
+  /** 07/11 — the terminal of a tab failed to start: whoever opened it hears why now, not after the grace. */
+  startFailed(tabId: string): void {
+    const check = this.startChecks.get(tabId);
+    if (!check) return;
+    clearTimeout(check.timer);
+    this.openedAt.set(tabId, 0); // past the grace: `startState` gives the cause
+    check.report();
   }
 
   /** Live sessions `placeId` opened; for the Líder único, only those of `projectPath` (its cap is per board). */

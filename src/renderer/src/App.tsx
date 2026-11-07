@@ -437,6 +437,8 @@ export function App(): React.JSX.Element {
   // confirmação (true) ou fecha direto (false/ausente — connecting sem PTY
   // ainda, ou já 'ended'/'claude-not-found').
   const [aliveTabs, setAliveTabs] = useState<Record<string, boolean>>({});
+  /** 07/11 — why a tab's terminal never started (read by the board's `startTrouble`). */
+  const startFailuresRef = useRef<Record<string, string>>({});
   // FIX (feedback E2E rodada 5) — epoch ms de quando cada aba ficou `alive`
   // pela ÚLTIMA vez (ref, não state — só alimenta o diagnóstico abaixo,
   // nunca o gate real de injeção). Usado por `possiblyBlockedOnPrompt` pra
@@ -693,6 +695,7 @@ export function App(): React.JSX.Element {
     }
     setSemaphoreStates((prev) => omitKey(prev, tabId));
     setAliveTabs((prev) => omitKey(prev, tabId));
+    delete startFailuresRef.current[tabId];
     delete aliveSinceRef.current[tabId]; // FIX (feedback E2E rodada 5) — mesmo padrão de limpeza dos maps acima.
     setSessionAccounts((prev) => omitKey(prev, tabId)); // FIX (feedback E2E rodada 5) — idem.
     setSessionModelEffort((prev) => omitKey(prev, tabId));
@@ -2377,6 +2380,8 @@ export function App(): React.JSX.Element {
     unconfirmed: (tabId) => semaphoreStates[tabId]?.unconfirmed === true || semaphoreStates[tabId] === undefined,
     startTrouble: (tabId) => {
       if (tabExits[tabId] !== undefined) return 'o Claude de lá foi encerrado';
+      const failed = startFailuresRef.current[tabId];
+      if (failed !== undefined) return `o terminal dela não abriu (${failed})`;
       if (aliveTabs[tabId] !== true) return 'o terminal dela não chegou a abrir';
       const lines = terminalRefs.current[tabId]?.readScreen().lines;
       if (lines === undefined) return null;
@@ -3319,6 +3324,10 @@ export function App(): React.JSX.Element {
                   // T710 (CA-11, 2º momento) — retomada que morre logo depois do
                   // spawn faz a entrada órfã sair da lista.
                   onProcessExit={(info) => handleTabProcessExit(tab, info)}
+                  onStartFailed={(message) => {
+                    startFailuresRef.current[tab.id] = message;
+                    agentBridgeRef.current?.startFailed(tab.id);
+                  }}
                   onCloseTab={() => handleRequestCloseTab(tab.id)}
                   onPtyChange={(ptyId) => {
                     setChatPtyIds((prev) => (prev[tab.id] === ptyId ? prev : { ...prev, [tab.id]: ptyId }));

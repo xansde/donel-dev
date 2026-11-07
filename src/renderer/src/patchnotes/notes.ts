@@ -15,6 +15,15 @@ export interface PatchNoteDay {
 
 export const PATCH_NOTES: readonly PatchNoteDay[] = [
   {
+    date: '2026-11-07',
+    items: [
+      {
+        title: 'Sessão na VPS que não abre diz por quê',
+        text: 'Quando uma sessão aberta numa VPS não consegue entrar lá, quem a abriu fica sabendo na hora e com o motivo que a conexão deu, como um pedido de verificação do Tailscale, em vez de ouvir só "o terminal não chegou a abrir" minuto e meio depois.',
+      },
+    ],
+  },
+  {
     date: '2026-11-06',
     items: [
       {

@@ -208,6 +208,8 @@ export interface TerminalPaneProps {
    * assunto, e tem estado próprio na vista).
    */
   onProcessExit?: (info: { exitCode: number | undefined; signal: number | undefined; msSinceSpawn: number }) => void;
+  /** 07/11 — the terminal never started (e.g. the ssh of a remote place failed): the literal reason. */
+  onStartFailed?: (message: string) => void;
   /**
    * T056 (014-chat) — o `ptyId` de cada geração, no instante em que nasce. O chat
    * da aba se liga ao PTY por ele (`useChatSession(ptyId)`) e PRECISA mantê-lo
@@ -312,6 +314,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     onProviderResolved,
     onClaudeSessionIdResolved,
     onProcessExit,
+    onStartFailed,
     onPtyChange,
     resumeSessionId,
   },
@@ -382,6 +385,8 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   onClaudeSessionIdResolvedRef.current = onClaudeSessionIdResolved;
   const onProcessExitRef = useRef(onProcessExit);
   onProcessExitRef.current = onProcessExit;
+  const onStartFailedRef = useRef(onStartFailed);
+  onStartFailedRef.current = onStartFailed;
   const onPtyChangeRef = useRef(onPtyChange);
   onPtyChangeRef.current = onPtyChange;
   const resumeSessionIdRef = useRef(resumeSessionId);
@@ -624,6 +629,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         const message = error instanceof Error ? error.message : String(error);
         term.write(`\r\n\x1b[31mFalha ao iniciar o terminal: ${message}\x1b[0m\r\n`);
         setStatus({ kind: 'ended', info: { exitCode: -1 } });
+        onStartFailedRef.current?.(message.replace(/^Error invoking remote method '[^']*': (Error: )?/, ''));
       });
   }, [cwd, sessionType, args, providerId, remoteId, accountLoginId]);
 

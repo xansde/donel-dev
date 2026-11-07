@@ -216,7 +216,7 @@ export function buildRemoteSetupScript(input: RemoteSetupInput): string {
 }
 
 /** Pure — reads the answer of the setup script. */
-export function parseRemoteSetupOutput(stdout: string, code: number | null): RemoteSetupResult {
+export function parseRemoteSetupOutput(stdout: string, code: number | null, stderr = '', timedOut = false): RemoteSetupResult {
   const lines = stdout.split(/\r?\n/);
   const errLine = lines.find((line) => line.startsWith('DONEL_ERR'));
   if (errLine) return { kind: 'error', message: errLine.slice('DONEL_ERR'.length).trim() };
@@ -231,7 +231,17 @@ export function parseRemoteSetupOutput(stdout: string, code: number | null): Rem
       return { kind: 'error', message: 'O lugar remoto devolveu uma sessão ilegível.' };
     }
   }
-  return { kind: 'error', message: code === 255 ? 'Não consegui entrar no lugar remoto por ssh.' : 'O lugar remoto não respondeu como esperado.' };
+  // 07/11 — the ssh's own words (e.g. Tailscale SSH asking for an extra check) are the cause the owner needs.
+  const said = lastLine(stderr);
+  if (timedOut) return { kind: 'error', message: `O lugar remoto não respondeu em ${Math.round(SETUP_TIMEOUT_MS / 1000)} s${said ? ` (o ssh disse: ${said})` : ' (o ssh ficou esperando, sem dizer por quê)'}.` };
+  if (code === 255) return { kind: 'error', message: `Não consegui entrar no lugar remoto por ssh${said ? `: ${said}` : '.'}` };
+  return { kind: 'error', message: `O lugar remoto não respondeu como esperado${said ? `: ${said}` : '.'}` };
+}
+
+function lastLine(text: string): string {
+  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
+  const last = lines[lines.length - 1] ?? '';
+  return last.length > 300 ? `${last.slice(0, 300)}…` : last;
 }
 
 /** Pure — lists the live sessions with their meta. */
@@ -270,29 +280,42 @@ export function buildEndScript(sid: string): string {
   ].join('\n');
 }
 
-/** Runs a script on the remote through stdin. */
-export function runRemoteScript(sshTarget: string, script: string, timeoutMs = SETUP_TIMEOUT_MS): Promise<{ code: number | null; stdout: string }> {
+/** Runs a script on the remote through stdin. `stderr` keeps the ssh's last words; `timedOut` when it was killed. */
+export function runRemoteScript(
+  sshTarget: string,
+  script: string,
+  timeoutMs = SETUP_TIMEOUT_MS,
+): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }> {
   return new Promise((resolve) => {
     let child: ChildProcess;
     try {
-      child = spawn('ssh', [...SSH_OPTIONS, '-T', '--', sshTarget, 'bash -l -s'], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
-    } catch {
-      resolve({ code: null, stdout: '' });
+      child = spawn('ssh', [...SSH_OPTIONS, '-T', '--', sshTarget, 'bash -l -s'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch (error) {
+      resolve({ code: null, stdout: '', stderr: error instanceof Error ? error.message : String(error), timedOut: false });
       return;
     }
     let stdout = '';
-    const timer = setTimeout(() => child.kill(), timeoutMs);
+    let stderr = '';
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, timeoutMs);
     child.stdout?.setEncoding('utf8');
     child.stdout?.on('data', (chunk: string) => {
       stdout += chunk;
     });
-    child.on('error', () => {
+    child.stderr?.setEncoding('utf8');
+    child.stderr?.on('data', (chunk: string) => {
+      stderr = (stderr + chunk).slice(-4096);
+    });
+    child.on('error', (error) => {
       clearTimeout(timer);
-      resolve({ code: null, stdout });
+      resolve({ code: null, stdout, stderr: stderr || error.message, timedOut });
     });
     child.on('close', (code) => {
       clearTimeout(timer);
-      resolve({ code, stdout });
+      resolve({ code, stdout, stderr, timedOut });
     });
     child.stdin?.end(script);
   });
