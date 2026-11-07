@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, Notification, protocol, safeStorage, screen, shell, webContents } from 'electron';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
@@ -21,7 +21,7 @@ import { LEADER_ROLE_ID, ROLES_CHANNELS, type RoleSaveResult, type SessionRole }
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
-import { createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, nodeLedgerProofFs, passOnTasks, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
+import { createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerSnapshot } from '../shared/ledger/channels';
 import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
 import type { LedgerToolCall } from '../shared/ledger/tools';
@@ -323,6 +323,8 @@ import { createRemoteHealthService, type RemoteHealthService } from './health/re
 import type { RemoteHealthReport } from '../shared/health/remote';
 import { HEALTH_CHANNELS, type KillProcessOutcome } from '../shared/health/ipc';
 import { createRoutineRunner, type RoutineRunner } from './rotinas/routine-runner';
+import { createFaxinaRunner, type FaxinaRunner } from './rotinas/oraculo-faxina';
+import type { PrRef, PrState } from '../shared/ledger/faxina';
 import { ROTINAS_CHANNELS, type ShadowEntry } from '../shared/rotinas/contract';
 import type { LiveSessionSignal } from '../shared/rotinas/stalledSessions';
 // B33 — atualizar para a versão nova de dentro do app.
@@ -2947,6 +2949,23 @@ let ledgerService: LedgerService | null = null;
 let cardWriter: CardWriter | null = null;
 /** Pedir pelo Oráculo — a entrega ao Líder único, ligada quando a ponte do quadro nasce. */
 let deliverPedidoToLeader: ((text: string) => Promise<boolean>) | null = null;
+/** Faxina noturna do Oráculo (t-2c18d666); `null` until the board bridge is up and after the app closes. */
+let faxinaRunner: FaxinaRunner | null = null;
+
+/** What `gh` says of a PR: merged (with when), not merged, or why it could not say. */
+function ghPrState(pr: PrRef): Promise<PrState> {
+  return new Promise((resolve) => {
+    execFile('gh', ['pr', 'view', String(pr.number), '--repo', `${pr.owner}/${pr.repo}`, '--json', 'state,mergedAt'], { timeout: 30_000, windowsHide: true }, (error, stdout) => {
+      if (error) return resolve({ error: error.message.split('\n')[0]!.slice(0, 200) });
+      try {
+        const answer = JSON.parse(stdout) as { state?: unknown; mergedAt?: unknown };
+        resolve(answer.state === 'MERGED' && typeof answer.mergedAt === 'string' ? { merged: true, mergedAt: answer.mergedAt } : { merged: false });
+      } catch {
+        resolve({ error: 'resposta do gh ilegível' });
+      }
+    });
+  });
+}
 
 function registerLedgerIpcHandlers(): void {
   const service = createLedgerService({
@@ -3171,6 +3190,11 @@ async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: 
   const remote = sshTarget ? (path: string) => fetchRemoteProof(sshTarget, path) : undefined;
   const result = await runLedgerTool(ledgerService, resolved.caller, resolved.call, remote);
   if (!result.ok) return { kind: 'error', text: result.text };
+  // A task passed to the Líder único by hand: it hears it, as when a place that closes passes one (t-2c18d666).
+  if (call.tool === 'tarefa_transferir' && resolved.caller.placeId !== LEADER_OF_ALL) {
+    const notice = leaderTransferNotice(ledgerService, resolved.caller.placeId, result.text, call.motivo);
+    if (notice) void deliverPedidoToLeader?.(notice);
+  }
   // Pedir pelo Oráculo — the task born of an owner's request: his phone shows "virou tarefa" with its name.
   if (call.tool === 'tarefa_criar' && call.pedidoDoDono) {
     const created = JSON.parse(result.text) as { id?: unknown };
@@ -3959,6 +3983,18 @@ void app.whenReady().then(async () => {
   cardWriter = createCardWriter({ service: () => ledgerService, deliver: (message) => boardBridge.deliverOwnerMessage(message), placeName: placeNameOf });
   // No place: the renderer sends it straight to the Líder único (or answers `null`: closed, the request waits).
   deliverPedidoToLeader = (text) => boardBridge.deliverOwnerMessage({ projectPath: '', placeId: '', text, leaderText: text }).then((to) => to === 'lider');
+  // Faxina noturna do Oráculo (t-2c18d666) — in shadow for its first nights; who gets a task hears it here.
+  faxinaRunner = createFaxinaRunner({
+    dir: join(app.getPath('userData'), 'rotinas'),
+    ledger: () => ledgerService,
+    loadBoards: () => createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load(),
+    liveSessionIds: () => new Set(activeSessionByPty.values()),
+    prState: ghPrState,
+    tell: (projectPath, to, text) => {
+      void boardBridge.deliverOwnerMessage({ projectPath, placeId: to === LEADER_OF_ALL ? '' : to, text, leaderText: text }).catch(() => null);
+    },
+  });
+  faxinaRunner.start();
   browserService = createBrowserService({
     ipcMain,
     getWindow: getMainWindow,
@@ -4007,6 +4043,8 @@ app.on('window-all-closed', () => {
   remoteHealthService = null;
   routineRunner?.stop();
   routineRunner = null;
+  faxinaRunner?.stop();
+  faxinaRunner = null;
   appUpdateService?.stop();
   void celularService?.dispose();
   celularService = null;

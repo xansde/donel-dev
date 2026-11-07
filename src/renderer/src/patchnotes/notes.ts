@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-06',
     items: [
       {
+        title: 'Faxina do Oráculo toda noite',
+        text: 'Uma vez por noite, o Oráculo faz uma faxina sozinho, sem usar modelo. Uma tarefa de risco baixo que foi entregue ou rejeitada e cujo PR já entrou é encerrada como concluída, com o número do PR e o dia. Uma tarefa de risco alto nunca se encerra sozinha. Uma tarefa sem dono há mais de um dia passa para quem está acima no quadro, ou para o Líder, e quem recebe é avisado. Nas três primeiras noites, a faxina só anota o que faria, sem mudar nada. O Líder também passa a ser avisado quando uma sessão lhe passa uma tarefa à mão.',
+      },
+      {
         title: 'Quem o Líder abriu fala com ele, e tarefa não fica sem dono',
         text: 'Uma sessão que o Líder abriu, ou que está abaixo dela no quadro, agora manda mensagem ao Líder e recebe resposta, em vez de travar esperando. O Líder também pode ficar com uma tarefa: quem passa a tarefa para ele vê o Líder como dono, e ela não aparece como órfã. Quando você fecha uma sessão que tinha tarefa aberta, em andamento ou rejeitada, a tarefa passa sozinha, um minuto depois, para quem está acima dela no quadro, ou para o Líder se não houver ninguém aberto, e quem recebe é avisado no chat. Tarefa entregue fica onde está, esperando a sua decisão. Fechar ou atualizar o Donel não mexe em nada. Uma sessão que nunca começou passa as tarefas depois de meia hora.',
       },
