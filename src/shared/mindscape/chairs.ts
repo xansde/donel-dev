@@ -7,6 +7,7 @@
 // Pure: no React, no Electron.
 
 import type { SessionAxes } from './sessionAxes';
+import type { MindscapeShortcut } from './shortcuts';
 import type { MindscapeBoard, MindscapeLink, SessionPlaceCard } from './model';
 
 /** Health of a chair, the four numbers of the band (prototype: problema · atenção · bem · sem sinal). */
@@ -213,4 +214,26 @@ export function boardContentOrigin(board: MindscapeBoard): { x: number; y: numbe
     else take(drawing.x, drawing.y);
   }
   return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+}
+
+// ---------------------------------------------------------------------------
+// The lens never touches what the owner cannot see (Revisor, #278): with "Seu desenho: Oculto" the board only moves.
+// ---------------------------------------------------------------------------
+
+export type LensOwnerMode = 'over' | 'dim' | 'hidden';
+
+/** The chairs lens with the owner's layer hidden: nothing on the board may change (he would not see it happen). */
+export function lensLocksBoard(chairsOn: boolean, ownerMode: LensOwnerMode): boolean {
+  return chairsOn && ownerMode === 'hidden';
+}
+
+/** With the board locked, only Esc passes: select-all, delete, undo, redo and the layer keys are dropped. */
+export function shortcutInLens(shortcut: MindscapeShortcut | null, locked: boolean): MindscapeShortcut | null {
+  if (!shortcut || !locked) return shortcut;
+  return shortcut.type === 'escape' ? shortcut : null;
+}
+
+/** The one door of the owner's actions in the lens: locked → the reducer never reaches the document. */
+export function guardBoardAction<T>(locked: boolean, reducer: (doc: T) => T): ((doc: T) => T) | null {
+  return locked ? null : reducer;
 }

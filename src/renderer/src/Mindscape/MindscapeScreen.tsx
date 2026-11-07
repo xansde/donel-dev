@@ -4,7 +4,7 @@ import { addDrawing, bringToFront, moveItems, removeItems, sendToBack, setDrawin
 import { eraseDoc } from '../../../shared/mindscape/eraser';
 import type { CardRect, ItemIds } from '../../../shared/mindscape/geometry';
 import { sessionHighlight } from '../../../shared/mindscape/highlight';
-import { boardContentOrigin, deriveChairs, layoutChairs, NO_ROLE_CHAIR, type Chair, type ChairHealth } from '../../../shared/mindscape/chairs';
+import { boardContentOrigin, deriveChairs, guardBoardAction, layoutChairs, lensLocksBoard, NO_ROLE_CHAIR, shortcutInLens, type Chair, type ChairHealth } from '../../../shared/mindscape/chairs';
 import { isClosed, viewState } from '../../../shared/ledger/contract';
 import { classifyBoardSessions, closedLabel, dormantSessionName, type DormantSession } from '../../../shared/mindscape/dormant';
 import { organizeBoard, organizeColumnOf, type OrganizeEntry } from '../../../shared/mindscape/organize';
@@ -239,8 +239,8 @@ export function MindscapeScreen({
   initialProjectPath,
   seenAt,
   onGoToTerminal,
-  onView,
-  onAction,
+  onView: applyView,
+  onAction: applyAction,
   onUndo,
   onRedo,
   alert,
@@ -290,6 +290,17 @@ export function MindscapeScreen({
     setHighlight(null);
   };
   const ledger = useLedgerSnapshot(chairsOn);
+  /** "Seu desenho: Oculto" — the board only moves: no key, paste or button may change what the owner cannot see. */
+  const boardLocked = lensLocksBoard(chairsOn, ownerMode);
+  const onAction = (projectPath: string, reducer: (doc: MindscapeDoc) => MindscapeDoc): void => {
+    const guarded = guardBoardAction(boardLocked, reducer);
+    if (guarded) applyAction(projectPath, guarded);
+  };
+  /**
+   * The lens has its own view (pan and zoom), in memory only: moving or zooming in the lens never writes the board's
+   * view, so the places come back exactly where they were, even after the app closes with the lens open.
+   */
+  const [lensViews, setLensViews] = useState<Readonly<Record<string, BoardView>>>({});
   /** A gesture is in flight on the board (pointer down): Ctrl+Z and the keys that change the board wait for it to end. */
   const gestureActiveRef = useRef(false);
   const sectionRef = useRef<HTMLElement>(null);
@@ -471,26 +482,24 @@ export function MindscapeScreen({
     const seal = roleSealOf(chair.roleId)!;
     return { name: seal.name, color: seal.color };
   };
-  // Pan the rig into view when the lens opens on a board; the places' view comes back when it closes.
-  const placesPanRef = useRef(new Map<string, { x: number; y: number }>());
-  const rigOrigin = chairsView ? `${chairsView.layout.rig.x},${chairsView.layout.rig.y}` : undefined;
-  useEffect(() => {
-    if (!board) return;
-    const { projectPath } = board;
-    const saved = placesPanRef.current;
-    if (chairsOn && chairsView) {
-      if (saved.has(projectPath)) return;
-      saved.set(projectPath, board.pan);
-      const { rig } = chairsView.layout;
-      onView(projectPath, (view) => ({ ...view, pan: { x: RIG_SCREEN_MARGIN - rig.x * view.zoom, y: RIG_SCREEN_MARGIN - rig.y * view.zoom } }));
-    } else if (!chairsOn) {
-      const pan = saved.get(projectPath);
-      if (!pan) return;
-      saved.delete(projectPath);
-      onView(projectPath, (view) => ({ ...view, pan }));
+  // The lens opens with the rig at the top-left of the board, at the board's zoom.
+  const lensView: BoardView | undefined =
+    board && chairsView
+      ? (lensViews[board.projectPath] ?? {
+          zoom: board.zoom,
+          pan: { x: RIG_SCREEN_MARGIN - chairsView.layout.rig.x * board.zoom, y: RIG_SCREEN_MARGIN - chairsView.layout.rig.y * board.zoom },
+        })
+      : undefined;
+  /** The board as shown: in the lens, with the lens's own view. */
+  const shownBoard = board && lensView ? { ...board, pan: lensView.pan, zoom: lensView.zoom } : board;
+  const onView = (projectPath: string, change: (view: BoardView) => BoardView): void => {
+    if (chairsOn && lensView && board?.projectPath === projectPath) {
+      const current = lensView;
+      setLensViews((views) => ({ ...views, [projectPath]: change(views[projectPath] ?? current) }));
+      return;
     }
-    // Only the lens and the board decide; the pan itself must not re-run this.
-  }, [chairsOn, board?.projectPath, rigOrigin]);
+    applyView(projectPath, change);
+  };
 
   const chairDetails = (chairId: string): ChairDetails | RigDetails | null => {
     if (!board || !chairsView) return null;
@@ -609,7 +618,7 @@ export function MindscapeScreen({
   const handleErase = (path: number[]): void => {
     if (!board) return;
     const { projectPath } = board;
-    const radius = ERASER_RADIUS_PX / board.zoom;
+    const radius = ERASER_RADIUS_PX / (shownBoard ?? board).zoom;
     const cardSizes = sizesOf(cardRects);
     onAction(projectPath, (current) => eraseDoc(current, projectPath, path, radius, () => crypto.randomUUID(), cardSizes));
   };
@@ -621,7 +630,7 @@ export function MindscapeScreen({
    * all again), then added as one history entry. More than 10 MB → the warning.
    */
   const handleImageFile = async (file: File, at: Point): Promise<void> => {
-    if (!board || !isPrintInputType(file.type)) return;
+    if (!board || boardLocked || !isPrintInputType(file.type)) return;
     const { projectPath } = board;
     if (file.size > MAX_PRINT_BYTES) {
       showNotice(PRINT_TOO_BIG);
@@ -688,7 +697,7 @@ export function MindscapeScreen({
       if (!event.repeat) setSpaceHeld(true);
       return;
     }
-    const shortcut = mindscapeShortcut({ key: event.key, ctrl: event.ctrlKey, shift: event.shiftKey, alt: event.altKey, meta: event.metaKey, editable });
+    const shortcut = shortcutInLens(mindscapeShortcut({ key: event.key, ctrl: event.ctrlKey, shift: event.shiftKey, alt: event.altKey, meta: event.metaKey, editable }), boardLocked);
     if (!shortcut || !board) return;
     event.preventDefault();
     switch (shortcut.type) {
@@ -799,7 +808,7 @@ export function MindscapeScreen({
       </div>
       <LedgerStrip projectPath={activePath} placeName={placeName} cardsHost={boardArea} />
       <MindscapeToolbar
-        enabled={Boolean(board)}
+        enabled={Boolean(board) && !boardLocked}
         tool={tool}
         onTool={changeTool}
         style={drawStyle}
@@ -820,7 +829,7 @@ export function MindscapeScreen({
           if (!board) return;
           const { projectPath } = board;
           const id = crypto.randomUUID();
-          const origin = screenToWorld({ x: NEW_CARD_MARGIN, y: NEW_CARD_MARGIN }, { pan: board.pan, zoom: board.zoom });
+          const origin = screenToWorld({ x: NEW_CARD_MARGIN, y: NEW_CARD_MARGIN }, { pan: (shownBoard ?? board).pan, zoom: (shownBoard ?? board).zoom });
           const createdAt = Date.now();
           setCreatedCardId(id);
           onAction(projectPath, (current) => addOwnerCard(current, projectPath, { id, createdAt, origin }));
@@ -843,7 +852,7 @@ export function MindscapeScreen({
           if (!board) return;
           const { projectPath } = board;
           const id = placeCardId(crypto.randomUUID());
-          const origin = screenToWorld({ x: NEW_CARD_MARGIN, y: NEW_CARD_MARGIN }, { pan: board.pan, zoom: board.zoom });
+          const origin = screenToWorld({ x: NEW_CARD_MARGIN, y: NEW_CARD_MARGIN }, { pan: (shownBoard ?? board).pan, zoom: (shownBoard ?? board).zoom });
           onAction(projectPath, (current) => addPlace(current, projectPath, { id, origin, ...(roleId ? { roleId } : {}) }));
           setTool('select');
           select({ cards: [id], drawings: [] });
@@ -863,7 +872,13 @@ export function MindscapeScreen({
           if (!showOld && board) onGesture?.({ type: 'mindscape', acao: 'mostrar-antigas', projectPath: board.projectPath });
           setShowOld((current) => !current);
         }}
-        hint={chairsOn && tool === 'select' && !notice ? 'Clique numa cadeira ou no nome do rig para ver os detalhes; Esc fecha. Seu desenho segue editável.' : hint}
+        hint={
+          boardLocked
+            ? 'Seu desenho está oculto: o quadro só se move. Volte a "Por cima" para editar.'
+            : chairsOn && tool === 'select' && !notice
+              ? 'Clique numa cadeira ou no nome do rig para ver os detalhes; Esc fecha. Seu desenho segue editável.'
+              : hint
+        }
       />
       {chairsOn && chairsView ? (
         <ChairsBand
@@ -889,7 +904,7 @@ export function MindscapeScreen({
         </div>
       ) : (
         <MindscapeBoard
-          board={board}
+          board={shownBoard ?? board}
           tool={chairsOn && ownerMode === 'hidden' ? 'hand' : tool}
           panMode={spaceHeld}
           cancelSignal={cancelSignal}
@@ -1004,7 +1019,7 @@ export function MindscapeScreen({
                 drawings={shownSelected}
                 withHandles={tool === 'select' && live.cards.length === 0 && selectedDrawings.length === 1}
                 lasso={lasso}
-                zoom={board.zoom}
+                zoom={(shownBoard ?? board).zoom}
               />
               </>
             );
