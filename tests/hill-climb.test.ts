@@ -69,7 +69,7 @@ async function proposeAndAccept(env: ReturnType<typeof setup>): Promise<string> 
   expect(proposed.ok).toBe(true);
   const id = Object.keys(env.service.load().doc.missions)[0]!;
   const card = env.service.load().doc.missions[id]!.ledgerTaskId;
-  const accepted = env.ledger.apply({ kind: 'dono' }, { op: 'aceitar', id: card, option: 'Rodar' });
+  const accepted = await env.ledger.apply({ kind: 'dono' }, { op: 'aceitar', id: card, option: 'Rodar' });
   expect(accepted.ok).toBe(true);
   env.service.syncLedger(env.ledger.load().doc);
   return id;
@@ -139,7 +139,7 @@ describe('hill climbing — never starts by itself', () => {
     expect(early.ok).toBe(false);
     expect(early.text).toContain('proposta');
 
-    env.ledger.apply({ kind: 'dono' }, { op: 'rejeitar', id: card.id, reason: '', option: 'Não rodar' });
+    await env.ledger.apply({ kind: 'dono' }, { op: 'rejeitar', id: card.id, reason: '', option: 'Não rodar' });
     env.service.syncLedger(env.ledger.load().doc);
     expect(env.service.load().doc.missions[mission.id]!.state).toBe('recusada');
     expect((await send(env, mission.id, 'versão 1')).ok).toBe(false);

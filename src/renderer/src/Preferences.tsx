@@ -6,6 +6,7 @@ import type { NotificationPreference, ProjectScanMode } from '../../shared/confi
 import type { SessionRenewalPrefs } from '../../shared/sessionRenewal';
 import { CelularSection } from './CelularSection';
 import { EspelhoSection } from './EspelhoSection';
+import { OraculoVpsSection } from './OraculoVpsSection';
 import styles from './Preferences.module.css';
 
 // Preferências — tela cheia com menu lateral (pedido do dono, 04/11: "como popup não está vingando").
@@ -334,6 +335,14 @@ export function Preferences(props: PreferencesProps): React.JSX.Element | null {
       keywords: 'oráculo harrow tarefas registro histórico supabase espelho backup demandas planilha',
       hint: 'Cada mudança no Oráculo vai, em até um minuto, para uma tabela no seu Supabase pessoal: o histórico sobrevive ao PC e abre no navegador ou no celular. Prints e vídeos ficam só aqui.',
       body: <EspelhoSection />,
+    },
+    {
+      id: 'oraculo-vps',
+      category: 'celular',
+      title: 'Onde mora o Oráculo',
+      keywords: 'oráculo harrow vps servidor pc desligado registro tarefas remoto tailscale',
+      hint: 'Leve o Oráculo para a sua VPS: as cartas chegam ao celular e as sessões de lá seguem criando e entregando tarefas com o PC desligado.',
+      body: <OraculoVpsSection />,
     },
     ...(props.onManageRoles
       ? [
