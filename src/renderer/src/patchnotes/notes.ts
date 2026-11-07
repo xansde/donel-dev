@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-07',
     items: [
       {
+        title: 'Sessão "trabalhando" sem sinal há muito tempo não engana mais a rotina',
+        text: 'Se uma sessão fica marcada como trabalhando, sem nenhuma ferramenta rodando e sem dar sinal há mais de meia hora, a rotina "sessão parada e ninguém vê" passa a tratá-la como sem sinal, em vez de acreditar que ela ainda trabalha. Assim um fim de turno que se perdeu não esconde mais uma sessão parada do Líder.',
+      },
+      {
         title: 'Sessões na VPS seguem com o PC desligado',
         text: 'Com o Oráculo na VPS, uma sessão aberta lá depois desta versão continua criando, entregando e listando tarefas quando o PC desliga, e sabe quem é no quadro (do jeito que o quadro estava quando o PC desligou). O resto (navegador, desenhar no quadro, falar com outras sessões) volta quando o PC liga.',
       },
