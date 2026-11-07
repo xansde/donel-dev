@@ -3,6 +3,7 @@
 // the board (the same answer as `sessao_quem_sou`), never from the arguments, so a session cannot pose as
 // the Revisor or as the owner.
 
+import { FACTORY_ROLES } from '../roles';
 import {
   FOR_OWNER_LIMITS,
   MAX_CHECKS,
@@ -14,6 +15,7 @@ import {
   MAX_SLACK_FILE_PATH_CHARS,
   MAX_SLACK_TEXT_CHARS,
   MAX_TITLE_CHARS,
+  MAX_ASKED_BY_CHARS,
   MIN_OPTIONS,
   type LedgerCheck,
   type LedgerForOwner,
@@ -43,6 +45,8 @@ export type LedgerToolCall =
       readonly pedidoDoDono?: string;
       /** 06/11 — a tarefa que esta substitui: cancelada na mesma hora. */
       readonly substitui?: string;
+      /** 07/11 — a pessoa de quem veio o pedido ("dono", "Gabriel Horst (Slack)", "sinal do Curador: PR #219"). */
+      readonly quemPediu?: string;
     }
   | { readonly tool: 'tarefa_assumir'; readonly id: string }
   | { readonly tool: 'tarefa_entregar'; readonly id: string; readonly provas: readonly ProofInput[]; readonly nota?: string; readonly paraODono?: LedgerForOwner; readonly feitoPor?: string }
@@ -99,6 +103,10 @@ export const LEDGER_TOOLS = [
         risco: { type: 'string', enum: ['baixo', 'alto'] },
         quadro: BOARD,
         pedidoDoDono: { type: 'string', description: 'Quando a tarefa nasce de um "◆ Pedido do dono pelo Oráculo", o id que veio nele (pd-…): o dono vê no celular que o pedido virou esta tarefa.' },
+        quemPediu: {
+          type: 'string',
+          description: `A PESSOA de quem veio o pedido, nunca um papel: "dono" (o dono do Donel), alguém do Slack pelo nome ("Gabriel Horst (Slack)") ou a fonte de um sinal ("sinal do Curador: PR #219"). Até ${MAX_ASKED_BY_CHARS} caracteres. É o que o registro mostra em "quem pediu"; sem ele, a coluna fica "não registrado" (nada é deduzido de quem criou).`,
+        },
       },
       required: ['pedido', 'criterio', 'prazo', 'risco'],
       additionalProperties: false,
@@ -395,6 +403,29 @@ function parseForOwnerInput(raw: unknown): LedgerForOwner | string {
   };
 }
 
+/** A role, never a person: the factory ones, the Curador and the Líder único (the main adds the owner's own roles). */
+const BUILT_IN_ROLES: ReadonlyArray<{ readonly id: string; readonly name: string }> = [
+  ...FACTORY_ROLES.map((role) => ({ id: role.id, name: role.name })),
+  { id: 'curador', name: 'Curador' },
+  { id: 'lider-unico', name: 'Líder único' },
+];
+
+/** "Líder único" → "lider unico"; "theo-west" → "theo west". */
+function roleKey(value: string): string {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[-_\s]+/g, ' ').trim();
+}
+
+/**
+ * 07/11, owner: "quem pediu" is the person. Refuses a place id and a bare role ("Dev", "Revisor", one of `roles`);
+ * `null` = it may be a person ("dono", "Gabriel Horst (Slack)", "sinal do Curador: PR #219").
+ */
+export function askedByRefusal(value: string, roles: ReadonlyArray<{ readonly id: string; readonly name: string }> = []): string | null {
+  const refusal = '"quemPediu" é a pessoa que pediu ("dono", "Fulano (Slack)"), nunca o id de um lugar nem um papel.';
+  if (/place:/i.test(value)) return refusal;
+  const key = roleKey(value);
+  return [...BUILT_IN_ROLES, ...roles].some((role) => roleKey(role.id) === key || roleKey(role.name) === key) ? refusal : null;
+}
+
 export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedgerCall {
   const args = (rawArgs ?? {}) as Record<string, unknown>;
   if (typeof args !== 'object' || Array.isArray(args)) return { ok: false, reason: 'Argumentos têm de ser um objeto.' };
@@ -411,13 +442,16 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       const dono = text(args.dono, 'dono', 120, false);
       const titulo = text(args.titulo, 'titulo', MAX_TITLE_CHARS, false);
       const substitui = text(args.substitui, 'substitui', 120, false);
-      for (const value of [pedido, criterio, prazo, dono, titulo, substitui]) if (typeof value === 'object') return fail(value.error);
+      const quemPediu = text(args.quemPediu, 'quemPediu', MAX_ASKED_BY_CHARS, false);
+      for (const value of [pedido, criterio, prazo, dono, titulo, substitui, quemPediu]) if (typeof value === 'object') return fail(value.error);
+      const askedRefused = typeof quemPediu === 'string' ? askedByRefusal(quemPediu) : null;
+      if (askedRefused) return fail(askedRefused);
       if (args.risco !== 'baixo' && args.risco !== 'alto') return fail('"risco" tem de ser baixo ou alto.');
       if (args.pedidoDoDono !== undefined && (typeof args.pedidoDoDono !== 'string' || !/^pd-[0-9a-f]{12}$/.test(args.pedidoDoDono))) return fail('"pedidoDoDono" é o id que veio no pedido do dono (pd-…).');
       const fromOwner = typeof args.pedidoDoDono === 'string' ? { pedidoDoDono: args.pedidoDoDono } : {};
       return {
         ok: true,
-        call: { tool: 'tarefa_criar', pedido: pedido as string, criterio: criterio as string, prazo: (prazo as string).trim(), ...(typeof dono === 'string' && dono.trim() ? { dono: dono.trim() } : {}), risco: args.risco, ...quadro, ...(typeof titulo === 'string' && titulo.trim() ? { titulo: titulo.trim() } : {}), ...(typeof substitui === 'string' && substitui.trim() ? { substitui: substitui.trim() } : {}), ...fromOwner },
+        call: { tool: 'tarefa_criar', pedido: pedido as string, criterio: criterio as string, prazo: (prazo as string).trim(), ...(typeof dono === 'string' && dono.trim() ? { dono: dono.trim() } : {}), risco: args.risco, ...quadro, ...(typeof titulo === 'string' && titulo.trim() ? { titulo: titulo.trim() } : {}), ...(typeof substitui === 'string' && substitui.trim() ? { substitui: substitui.trim() } : {}), ...(typeof quemPediu === 'string' && quemPediu.trim() ? { quemPediu: quemPediu.trim() } : {}), ...fromOwner },
       };
     }
     case 'tarefa_assumir':
