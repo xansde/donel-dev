@@ -1,4 +1,5 @@
 import type { LayoutPrefs } from '../shared/layoutPrefs';
+import type { LeaderPrefs } from '../shared/leaderPrefs';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 // G5 (batch N5) — guarda contra segundo assinante silencioso de canal IPC:
 // todo `onX` abaixo passa por aqui em vez de `ipcRenderer.on` direto.
@@ -180,7 +181,7 @@ import {
 import { ROTINAS_CHANNELS, type ShadowEntry } from '../shared/rotinas/contract';
 import { FAXINEIRO_CHANNELS, type FaxineiroRoundAnswer } from '../shared/faxineiro/ipc';
 import type { FaxineiroLogEntry, SessionView } from '../shared/faxineiro/triggers';
-import { LIDER_CHANNELS, type LiderReport, type LiderSendPayload, type LiderSendResult, type LiderState } from '../shared/lider/ipc';
+import { LIDER_CHANNELS, type LiderCarryPayload, type LiderReport, type LiderSendPayload, type LiderSendResult, type LiderState } from '../shared/lider/ipc';
 import { ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
 import type { ClaudeInventory } from '../shared/role-scope';
 import type { TeamPrefs } from '../shared/teamPrefs';
@@ -442,6 +443,8 @@ const donelApi: DonelApi = {
       ipcRenderer.invoke(CONFIG_CHANNELS.setProjectYolo, projectPath, enabled) as Promise<AppConfigDto>,
     // Oráculo no centro — the new layout switch and the view the center shows.
     setLayoutPrefs: (prefs: Partial<LayoutPrefs>) => ipcRenderer.invoke(CONFIG_CHANNELS.setLayoutPrefs, prefs) as Promise<AppConfigDto>,
+    // Líder único na VPS — onde o Líder roda.
+    setLeaderPrefs: (prefs: Partial<LeaderPrefs>) => ipcRenderer.invoke(CONFIG_CHANNELS.setLeaderPrefs, prefs) as Promise<AppConfigDto>,
     setCollapsedFavorites: (collapsed: string[]) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setCollapsedFavorites, collapsed) as Promise<AppConfigDto>,
   },
@@ -924,6 +927,7 @@ const donelApi: DonelApi = {
       const handler = (_event: unknown, payload: { readonly tabId: string }): void => listener(payload);
       return subscribeChannel(ipcRenderer, LIDER_CHANNELS.activateTab, handler);
     },
+    carry: (payload: LiderCarryPayload) => ipcRenderer.invoke(LIDER_CHANNELS.carry, payload) as Promise<LiderSendResult>,
     // --- pet window (the bubble of the Líder) ---
     getState: () => ipcRenderer.invoke(LIDER_CHANNELS.getState) as Promise<LiderState>,
     onState: (listener: (state: LiderState) => void) => {

@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-07',
     items: [
       {
+        title: 'O Líder pode rodar na VPS',
+        text: 'Em Preferências, Avisos e Jobu, "Onde o Líder roda" escolhe entre este computador e a VPS. O Líder com quem você fala pelo Jobu muda de lugar na mensagem seguinte e continua a mesma conversa, com tudo o que já sabia. Se ele estiver trabalhando, muda quando terminar. O antigo só fecha depois que o novo respondeu; se algo falhar no caminho, ele continua onde estava, com a conversa, e recebe a mensagem. Se o computador dormir e a ligação com a VPS cair, a próxima mensagem religa o mesmo Líder. Na VPS ele deixa de ocupar memória do computador; o navegador integrado continua aqui, e ele o usa como antes. Ele só lê arquivos de projetos que já estão no GitHub. Para voltar, escolha "Este computador".',
+      },
+      {
         title: 'O Oráculo virou uma tabela de quem é cada coisa',
         text: 'No centro, o Oráculo agora mostra todas as tarefas numa tabela: título, estado, com quem está agora (você decide, o Revisor confere, falta alguém assumir), quem pediu, quem faz, quem criou, risco, prazo, a última entrega e a decisão. "Quem pediu" é sempre uma pessoa ou uma fonte, nunca "Dev"; quando ninguém disse, aparece "não registrado" em vermelho. Em cima, os filtros prontos (Esperando você, Sem executor, Cartas, Tudo) com o número de cada um, e uma busca por frase, pessoa, lugar ou código. Clicar numa linha abre ao lado a frase do pedido, os papéis, o "pronto quando", as provas da última entrega e a linha do tempo da tarefa. As cartas que esperam você continuam lá: "Abrir as cartas" no alto, ou "Abrir a carta para decidir" no detalhe. Os nomes são os mesmos da tabela do Supabase. Numa janela estreita, a tabela mostra só as colunas principais e o detalhe desce para baixo dela.',
       },

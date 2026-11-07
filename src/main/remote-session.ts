@@ -17,6 +17,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createWriteStream, mkdirSync, type WriteStream } from 'node:fs';
 import { basename, join, relative, sep, isAbsolute } from 'node:path';
 import { resolvePermissionMode } from '../shared/commandBuilder';
+import type { RemoteAliveSession } from '../shared';
 
 export const REMOTE_TMUX_SOCKET = 'donel';
 export const REMOTE_SESSIONS_DIR = '.donel/s';
@@ -55,6 +56,9 @@ export interface RemoteSessionMeta {
   readonly launchArgs: readonly string[];
   /** Place of the session that opened this one (`sessao_abrir`); absent when the owner opened it. */
   readonly openedBy?: string;
+  /** Líder único na VPS — the role and the Jobu's mark, so the tab that comes back after a restart is the Líder again. */
+  readonly roleId?: string;
+  readonly leaderOfAll?: boolean;
   readonly createdAt: string;
 }
 
@@ -283,6 +287,27 @@ export function parseDiscoverOutput(stdout: string): RemoteSessionMeta[] {
     }
   }
   return metas;
+}
+
+/** Pure — the tab a live remote session comes back as. The Líder único comes back with its mark and no project. */
+export function remoteAliveFromMeta(remoteId: string, meta: RemoteSessionMeta): RemoteAliveSession {
+  const leaderOfAll = meta.leaderOfAll === true;
+  return {
+    remoteId,
+    sessionId: meta.sid,
+    cwd: meta.localCwd,
+    ...(leaderOfAll ? {} : { projectName: meta.projectName }),
+    name: meta.name,
+    launchArgs: meta.launchArgs,
+    ...(typeof meta.openedBy === 'string' && meta.openedBy !== '' ? { openedBy: meta.openedBy } : {}),
+    ...(typeof meta.roleId === 'string' && meta.roleId !== '' ? { roleId: meta.roleId } : {}),
+    ...(leaderOfAll ? { leaderOfAll: true } : {}),
+  };
+}
+
+/** Líder único na VPS — runs one command line on the place over ssh, with stdin and stdout piped (`lider/transfer.ts`). */
+export function sshRemoteCommand(sshTarget: string): (command: string) => ChildProcess {
+  return (command) => spawn('ssh', [...SSH_OPTIONS, '-T', '--', sshTarget, command], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
 }
 
 export function buildEndScript(sid: string): string {
