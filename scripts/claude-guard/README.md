@@ -11,8 +11,12 @@ repo público.
 1. **Sem inventário**, ou com arquivos que o usuário do Claude pode gravar
    (modo sistema, POSIX), nada de MCP roda.
 2. **Fora do inventário** (servidor novo, renomeado, ferramenta nova): barra.
-3. **Descrição mudada** desde o selo, vista pela reconferência periódica: barra
-   até reselar.
+3. **Descrição ou config mudada** desde o selo, vistas pela reconferência
+   periódica: barra até reselar. O selo guarda também o hash da config de cada
+   servidor (comando e argumentos, ou URL sem a porta de loopback). Outro
+   servidor com o nome de um selado não herda a regra: o servidor inteiro fica
+   barrado. A reconferência olha todos os projetos do `~/.claude.json`, qualquer
+   que seja a pasta dela, e `status` diz o que ela não conseguiu reconferir.
 4. **A regra da ferramenta**, fixada no selo pelo nome e pela descrição. É uma
    lista de permitidos: o que não se reconhece com certeza fica `blocked`.
 
@@ -20,12 +24,12 @@ repo público.
 |---|---|---|
 | `trusted` | servidor em `trustedServers` (donel, bot do Theo) | sempre |
 | `read` | verbo de leitura (get, list, fetch, search…) e nenhuma ação de risco no nome | sempre |
-| `write` | verbo de escrita comum (create, add, update, comment…) sem ação nem objeto de risco | sem `private:false`, `visibility` ≠ private, `force` |
+| `write` | verbo de escrita comum (create, add, update, comment…) sem ação nem objeto de risco, por palavra e por raiz (`sharing`, `deployment`, `archived`) | nenhum parâmetro muda o efeito (público, `type: anyone`, lixeira/arquivar/`TRASH`, produção, `force`, convidado ou destinatário fora de `ownerDomains`), `project_id` só do staging, fora de `protectedRepos` |
 | `slack-send` | envio/upload ao Slack | o servidor está em `letterGated.slack` (Composio, onde a carta do Donel decide) |
-| `git-write` | push/commit/escrita de arquivo num repo | `branch` presente, ≠ main/master, e nenhuma outra chave de branch (`ref`, `base`…) |
+| `git-write` | push/commit/escrita de arquivo num repo | `branch` presente e fora de `protectedBranches` (main, master, staging), nenhuma outra chave de branch (`ref`, `base`…), repo fora de `protectedRepos` (`xansde/donel`) |
 | `repo-create` | criar repositório | `private === true` |
 | `sql`, `target-op` | SQL, migration, deploy | `project_id` está em `nonProdTargets` e nenhuma outra chave de alvo aponta para outro lugar. **Todo SQL fora do staging é barrado, leitura inclusive.** |
-| `dispatch` | `COMPOSIO_MULTI_EXECUTE_TOOL` e afins | cada `tool_slug` passa pelas mesmas regras (`slugRules` sobrepõe) |
+| `dispatch` | `COMPOSIO_MULTI_EXECUTE_TOOL` e afins | cada `tool_slug` está na **lista explícita** (`DEFAULT_SLUG_RULES`, só leituras e o envio ao Slack com carta, ou `slugRules` do dono) e passa pela regra dela. Slug nunca é liberado por inferência |
 | `code` | workbench, bash remoto, execute/run | nunca: código não se julga antes de rodar |
 | `blocked` | apagar, lixeira, merge, force, referência, segredo, permissão… ou não reconhecido | nunca (o dono pode reclassificar em `toolRules`) |
 
@@ -85,6 +89,41 @@ listar (conectores do claude.ai). `list` imprime o dump.
 - O `pretooluse-safety-check.ps1` do PC não está neste repo. A sessão do PC traz
   o arquivo para `scripts/claude-guard/windows/` num PR, antes de tirar dele a
   lista de MCP por nome.
+
+## Limite estrutural: o agente pode falar direto com o servidor MCP
+
+A trava é um hook do Claude Code: ela só vê o que passa pelo canal de ferramentas.
+O usuário que roda o Claude também **lê** a config dos MCPs (`~/.claude.json`, os
+`mcp.json` das sessões do Donel), com o comando, a URL e os tokens. Com isso ele
+pode subir o servidor stdio sozinho, ou fazer `curl` na URL, e mandar
+`tools/call` sem passar pelo Claude. O próprio `list` desta trava, rodado por
+ele, faz isso. Vale o mesmo para o `gh` e qualquer token no ambiente do Bash.
+
+O que a trava segura: erro do agente e prompt injection pelo canal de
+ferramenta (MCP novo, renomeado, com descrição trocada, ou ação de risco). O que
+ela **não** segura: um agente decidido a contornar, com acesso às credenciais.
+
+### Proposta: credenciais dos MCPs fora do alcance do agente (decisão do dono)
+
+1. **Um usuário de sistema `mcp`**, com home `0700`, guarda as credenciais e roda
+   os servidores MCP (Composio, GitHub, Supabase). Os tokens saem do
+   `~/.claude.json` do agente.
+2. **Um gateway local, como serviço do `mcp`**, expõe cada servidor num socket
+   em `/run/mcp-gateway/`, que o usuário do Claude só alcança pelo grupo. O
+   gateway roda a **mesma decisão desta trava** (`decide()`) em cada
+   `tools/call` antes de repassar. Assim a regra vale para qualquer cliente:
+   Claude, `curl` ou script.
+3. **A config do agente aponta só para o gateway**, sem token. O hook continua
+   como segunda camada, e é o único lugar que vê a descrição ao vivo.
+4. **`gh` e git**: o agente fica com um token fine-grained só dos repos de
+   trabalho (sem admin, sem `xansde/donel`). Credencial de banco de produção
+   nunca entra no ambiente dele.
+5. **Pré-requisito**: o mesmo desta trava. O usuário do Claude não pode virar
+   root: sem `sudo` sem senha e fora de `docker`/`lxd`/`libvirt`/`disk`. Senão
+   ele lê os arquivos do `mcp`.
+
+O donel não entra no gateway: o token dele é por sessão e o próprio app decide
+hierarquia e carta.
 
 ## Limites conhecidos
 
