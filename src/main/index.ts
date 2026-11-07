@@ -24,7 +24,7 @@ import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerSnapshot } from '../shared/ledger/channels';
 import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
-import type { LedgerToolCall } from '../shared/ledger/tools';
+import { askedByRefusal, type LedgerToolCall } from '../shared/ledger/tools';
 import type { BoardBridge } from './board-bridge';
 import { MCP_SERVER_NAME, type BrowserToolOutcome } from '../shared/browser/mcp';
 // Sessão renovada em voo (B36).
@@ -249,6 +249,8 @@ import { HILL_CLIMB_CHANNELS, type HillClimbGestureRequest, type HillClimbGestur
 import { FAKE_JUDGES_ENV_VAR } from '../shared/hillClimb/council';
 import type { HillClimbToolCall } from '../shared/hillClimb/tools';
 import { fetchRemoteProof } from './ledger-remote-proof';
+import { createLedgerMirrorService, type LedgerMirrorService } from './ledger-mirror/service';
+import { LEDGER_MIRROR_CHANNELS, type LedgerMirrorConfigureResult, type LedgerMirrorState, type PlaceInfoOf } from '../shared/ledger/mirror';
 import { CHAT_CHANNELS } from '../shared/chat/ipc';
 // 011-contas-e-provedores (etapa 1) — motor de contas + mods. Nasce inerte
 // (accounts.mod = null); toda a mecânica mora em src/main/accounts/, este
@@ -2971,6 +2973,42 @@ function ghPrState(pr: PrRef): Promise<PrState> {
   });
 }
 
+/** Espelho do Oráculo — the ledger mirrored to the owner's personal registry (Supabase), off until configured. */
+let ledgerMirrorService: LedgerMirrorService | null = null;
+
+function registerLedgerMirror(): void {
+  const mirror = createLedgerMirrorService({
+    userDataPath: app.getPath('userData'),
+    io: configIoDeps,
+    vaultPath: () => accountsVaultPath,
+    safeStorage,
+    vaultIo: accountsVaultIo,
+    places: placesSnapshot,
+    loadDoc: () => {
+      try {
+        return ledgerService?.load().doc ?? null;
+      } catch {
+        return null;
+      }
+    },
+  });
+  ledgerMirrorService = mirror;
+  const fromMain = (sender: Electron.WebContents): boolean => getMainWindow()?.webContents.id === sender.id;
+  ipcMain.handle(LEDGER_MIRROR_CHANNELS.getState, (): LedgerMirrorState => mirror.state());
+  ipcMain.handle(LEDGER_MIRROR_CHANNELS.configure, async (event, url: unknown, key: unknown, ownerName: unknown): Promise<LedgerMirrorConfigureResult> => {
+    if (!fromMain(event.sender)) return { ok: false, reason: 'Só a janela do app configura.' };
+    return mirror.configure(url, key, ownerName);
+  });
+  ipcMain.handle(LEDGER_MIRROR_CHANNELS.disable, (event): LedgerMirrorState => {
+    if (fromMain(event.sender)) mirror.disable();
+    return mirror.state();
+  });
+  ipcMain.handle(LEDGER_MIRROR_CHANNELS.syncNow, (): Promise<LedgerMirrorState> => mirror.syncNow());
+  // The first registry of this run: the whole ledger (it may have changed while the app was closed, or a push may
+  // have failed before quitting). The key only comes in through the screen — never a file on disk.
+  void mirror.syncNow().catch(() => undefined);
+}
+
 function registerLedgerIpcHandlers(): void {
   const service = createLedgerService({
     filePath: ledgerFilePath(process.env, app.getPath('userData')),
@@ -2985,6 +3023,8 @@ function registerLedgerIpcHandlers(): void {
       if (pet && !pet.isDestroyed()) pet.send(LEDGER_CHANNELS.changed, snapshot);
       // Aviso no celular: uma carta que passou a esperar o dono.
       celularService?.ledgerChanged(snapshot.doc);
+      // Espelho do Oráculo: the registry outside this PC (it only watches; never writes the ledger).
+      ledgerMirrorService?.changed(snapshot.doc);
       // Hill climbing: a proposal card the owner decided starts (or ends) its mission.
       hillClimbService?.syncLedger(snapshot.doc);
     },
@@ -3084,6 +3124,24 @@ function placeNameOf(projectPath: string, placeId: string): string | undefined {
   const card = savedBoard(projectPath)?.cards[placeId];
   if (card?.kind !== 'session' || !card.sessionId) return undefined;
   return appConfig.sessionRegistry[card.sessionId]?.label;
+}
+
+/** The places for many lookups in a row (the mirror's push): the boards are read once; the card gives the role. */
+function placesSnapshot(): PlaceInfoOf {
+  let boards: Readonly<Record<string, MindscapeBoard>> | null = null;
+  return (projectPath, placeId) => {
+    if (boards === null) {
+      try {
+        boards = createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load().boards;
+      } catch {
+        boards = {};
+      }
+    }
+    const card = boards[projectPath]?.cards[placeId];
+    if (card?.kind !== 'session') return undefined;
+    const name = card.sessionId ? appConfig.sessionRegistry[card.sessionId]?.label : undefined;
+    return { ...(card.roleId ? { roleId: card.roleId } : {}), ...(name ? { name } : {}) };
+  };
 }
 
 /** The board of a task (the Líder único names no board for a tool that acts by the task id). */
@@ -3189,6 +3247,9 @@ async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: Led
 
 async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<BrowserToolOutcome> {
   if (!ledgerService) return { kind: 'error', text: 'O Oráculo Harrow não abriu neste app.' };
+  // 07/11, owner: "quem pediu" is a person, never a role; the parse knows the factory roles, this app's own here.
+  const askedRefused = call.tool === 'tarefa_criar' && call.quemPediu ? askedByRefusal(call.quemPediu, rolesStore?.list() ?? []) : null;
+  if (askedRefused) return { kind: 'error', text: askedRefused };
   const resolved = await ledgerCallerOf(boardBridge, ptyId, call);
   if (typeof resolved === 'string') return { kind: 'error', text: resolved };
   // Fatia 6 — a session on a remote place (VPS) names files there: read through that place's own ssh.
@@ -4001,6 +4062,7 @@ void app.whenReady().then(async () => {
   registerTabIpcHandlers(); // CA-26/CA-27 (009-modo-dev-v3)
   registerMindscapeIpcHandlers(); // Mindscape V1
   registerLedgerIpcHandlers(); // Ledger com prova (item 19)
+  registerLedgerMirror(); // Espelho do Oráculo (06/11)
   registerHillClimbIpcHandlers(); // Hill climbing (no lugar do Modo Dev)
   registerRolesIpcHandlers(); // Papéis de sessão (item 12a)
   registerMindscapeTurnEnded(); // Mindscape, fatia 03

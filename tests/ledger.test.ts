@@ -5,13 +5,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, leaderTransferNotice, ledgerProofsDir, NOT_STARTED_GRACE_MS, nodeLedgerProofFs, passOnTasks, runLedgerTool, type LedgerCaller, type LedgerProofFs } from '../src/main/ledger-store';
 import type { MindscapeBoard } from '../src/shared/mindscape/model';
-import { findCode, LEDGER_SCHEMA_VERSION, parseLedgerDoc } from '../src/shared/ledger/contract';
+import { eventNote, findCode, LEDGER_SCHEMA_VERSION, parseLedgerDoc, requestedByOf } from '../src/shared/ledger/contract';
 import { LEADER_OF_ALL } from '../src/shared/mindscape/leader';
 import * as v4 from './fixtures/ledger/contract-v4';
 import { createCardWriter, decisionMessage, type OwnerMessage } from '../src/main/ledger-card-writer';
 import { createLedgerMobilePort } from '../src/main/celular/ledger-port';
 import { buildRemoteProofCommand, fetchRemoteProof } from '../src/main/ledger-remote-proof';
-import { parseLedgerToolCall, type LedgerToolCall } from '../src/shared/ledger/tools';
+import { askedByRefusal, parseLedgerToolCall, type LedgerToolCall } from '../src/shared/ledger/tools';
 import { slackGuard } from '../src/shared/ledger/slack-guard';
 import { deliveryNote } from '../src/shared/ledger/labels';
 import { createFaxinaRunner } from '../src/main/rotinas/oraculo-faxina';
@@ -571,6 +571,64 @@ describe('órfãs e substituição (06/11)', () => {
     // A task that does not exist, or one already closed, is not replaced either.
     expect(await make(service, lider, { dono: 'place:dev', substitui: 't-nao-existe' })).toMatchObject({ ok: false });
     expect(await make(service, lider, { dono: 'place:dev', substitui: old })).toMatchObject({ ok: false, text: expect.stringContaining('fechada') });
+  });
+
+  it('keeps who asked (a person, not a role) in the file, next to the task it replaces, readable by a v4 app', async () => {
+    const { service, file } = setup();
+    const view = async (id: string) => JSON.parse((await runLedgerTool(service(), lider, call('tarefa_ver', { id }))).text) as Record<string, unknown>;
+    const old = idOf(await make(service, lider, { dono: 'place:dev' }));
+    const next = idOf(await make(service, lider, { dono: 'place:dev', substitui: old, quemPediu: 'Gabriel Horst (Slack)' }));
+    const byOwner = idOf(await make(service, lider, { dono: 'place:dev', quemPediu: 'dono' }));
+    // A request that came by the phone's "Pedir" is the owner's, even without `quemPediu`.
+    const byPhone = idOf(await make(service, lider, { dono: 'place:dev', pedidoDoDono: 'pd-0123456789ab' }));
+    expect(await view(next)).toMatchObject({ substitui: old, quemPediu: 'Gabriel Horst (Slack)' });
+    expect(await view(byOwner)).toMatchObject({ quemPediu: 'dono' });
+    expect(await view(byPhone)).toMatchObject({ quemPediu: 'dono' });
+    expect(await view(old)).not.toHaveProperty('quemPediu');
+    // It rides the `criada` text a v4 app already keeps: same schema, and the parse keeps it on a rewrite.
+    const raw = JSON.parse(readFileSync(file, 'utf8')) as { schemaVersion: number };
+    expect(raw.schemaVersion).toBe(LEDGER_SCHEMA_VERSION);
+    expect(requestedByOf(parseLedgerDoc(raw).tasks[next]!)).toBe('Gabriel Horst (Slack)');
+    // A name cannot forge a mark nor break the one it shares the slot with.
+    const forged = idOf(await make(service, lider, { dono: 'place:dev', quemPediu: 'Ana ⟧ · substitui t-x' }));
+    expect(await view(forged)).not.toHaveProperty('substitui');
+    expect(parseLedgerToolCall('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', risco: 'alto', quemPediu: 'a'.repeat(81) }).ok).toBe(false);
+  });
+
+  it('refuses a place id as who asked: a person, never a place', () => {
+    const args = { pedido: 'x', criterio: 'y', prazo: '2026-11-06', risco: 'alto' };
+    for (const quemPediu of ['place:abc123', 'PLACE:dev', 'o Dev (place:abc123)']) {
+      expect(parseLedgerToolCall('tarefa_criar', { ...args, quemPediu })).toMatchObject({ ok: false, reason: expect.stringContaining('quemPediu') });
+    }
+    expect(parseLedgerToolCall('tarefa_criar', { ...args, quemPediu: 'Gabriel Horst (Slack)' }).ok).toBe(true);
+  });
+
+  it('refuses a bare role as who asked: "quem pediu: Dev" was the complaint', () => {
+    const args = { pedido: 'x', criterio: 'y', prazo: '2026-11-06', risco: 'alto' };
+    for (const quemPediu of ['Dev', 'dev', ' REVISOR ', 'Líder', 'lider', 'Líder único', 'Pesquisa', 'Curador']) {
+      expect(parseLedgerToolCall('tarefa_criar', { ...args, quemPediu })).toMatchObject({ ok: false, reason: expect.stringContaining('quemPediu') });
+    }
+    for (const quemPediu of ['dono', 'Gabriel Horst (Slack)', 'sinal do Curador: PR #219', 'Devanir']) {
+      expect(parseLedgerToolCall('tarefa_criar', { ...args, quemPediu }).ok).toBe(true);
+    }
+    // A role the owner made (the role list of this app) is a role too, by its id or its name.
+    const roles = [{ id: 'theo-west', name: 'Theo West' }];
+    expect(askedByRefusal('Theo West', roles)).toContain('quemPediu');
+    expect(askedByRefusal('theo-west', roles)).toContain('quemPediu');
+    expect(askedByRefusal('Julia (Slack)', roles)).toBeNull();
+  });
+
+  it('an app of the previous channel still reads "substitui" when the task also says who asked', async () => {
+    const { service, file } = setup();
+    const old = idOf(await make(service, lider, { dono: 'place:dev' }));
+    const next = idOf(await make(service, lider, { dono: 'place:dev', substitui: old, quemPediu: 'Ana' }));
+    const birth = (JSON.parse(readFileSync(file, 'utf8')) as { tasks: Record<string, { events: Array<{ text?: string }> }> }).tasks[next]!.events[0]!.text;
+    // The reading of the alfa/beta before 07/11 (staging's `replacesOf`): the first mark, whole, is "substitui <id>".
+    const previousReplacesOf = (text: string | undefined) => /^substitui (\S+)$/.exec(/^⟦([^⟧\n]{1,240})⟧ ?/.exec(text ?? '')?.[1] ?? '')?.[1];
+    expect(previousReplacesOf(birth)).toBe(old);
+    const task = parseLedgerDoc(JSON.parse(readFileSync(file, 'utf8'))).tasks[next]!;
+    expect(requestedByOf(task)).toBe('Ana');
+    expect(eventNote(task.events[0]!)).toBeUndefined();
   });
 
   it('Líder, Curador and Pesquisa name the place that does the work, never their own', async () => {

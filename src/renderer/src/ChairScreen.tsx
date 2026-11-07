@@ -4,7 +4,7 @@
 // (remembered on this machine). Saving through this screen is the next slice; for now "Editar em Papéis ▸".
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { chairSheet, COST_PER_MCP_MB, COST_PER_MCP_TOKENS, COST_PER_PLUGIN_TOKENS, COST_PER_SKILL_TOKENS, BASE_SESSION_MB, type SheetAxis, type SheetItem, type SheetOrigin } from '../../shared/chair-sheet';
+import { chairSheet, escapeClosesChairScreen, COST_PER_MCP_MB, COST_PER_MCP_TOKENS, COST_PER_PLUGIN_TOKENS, COST_PER_SKILL_TOKENS, BASE_SESSION_MB, type SheetAxis, type SheetItem, type SheetOrigin } from '../../shared/chair-sheet';
 import { EMPTY_INVENTORY, type ClaudeInventory } from '../../shared/role-scope';
 import { roleColorVar, type SessionRole } from '../../shared/roles';
 import type { MindscapeBoard } from '../../shared/mindscape/model';
@@ -95,6 +95,26 @@ export function ChairScreen({ roles, roleId, projectPath, projectName, board, on
   useEffect(() => {
     sectionRef.current?.focus({ preventScroll: true });
   }, []);
+  // Esc is heard on the window: a button that folds away ("Recolher ›", "mostrar os N desligados") drops the focus on
+  // the page, out of the screen. A dialog over it (Papéis) keeps its own Esc.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent): void => {
+      const active = document.activeElement;
+      const close = escapeClosesChairScreen({
+        key: event.key,
+        defaultPrevented: event.defaultPrevented,
+        focusInScreen: Boolean(active && sectionRef.current?.contains(active)),
+        focusOnPage: !active || active === document.body,
+      });
+      if (!close) return;
+      event.preventDefault();
+      closeRef.current();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const role = roles.find((candidate) => candidate.id === roleId);
   const rigName = projectName ?? 'Sem projeto';
@@ -138,12 +158,6 @@ export function ChairScreen({ roles, roleId, projectPath, projectName, board, on
       aria-label="Cadeira"
       data-testid="chair-screen"
       tabIndex={-1}
-      onKeyDown={(event) => {
-        if (event.key === 'Escape') {
-          event.preventDefault();
-          onClose();
-        }
-      }}
     >
       <header className={styles.crumbs}>
         <span>

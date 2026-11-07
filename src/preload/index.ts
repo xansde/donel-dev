@@ -153,6 +153,7 @@ import {
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerSnapshot } from '../shared/ledger/channels';
 import type { LedgerProof } from '../shared/ledger/contract';
+import { LEDGER_MIRROR_CHANNELS, type LedgerMirrorConfigureResult, type LedgerMirrorState } from '../shared/ledger/mirror';
 import { HILL_CLIMB_CHANNELS, type HillClimbGestureRequest, type HillClimbGestureResult, type HillClimbSnapshot } from '../shared/hillClimb/channels';
 import { LEARNING_CHANNELS, type RendererGesture } from '../shared/learning/gestures';
 import type {
@@ -607,6 +608,14 @@ const donelApi: DonelApi = {
       return subscribeChannel(ipcRenderer, HILL_CLIMB_CHANNELS.changed, handler);
     },
     gesture: (request: HillClimbGestureRequest) => ipcRenderer.invoke(HILL_CLIMB_CHANNELS.gesture, request) as Promise<HillClimbGestureResult>,
+  },
+
+  // Espelho do Oráculo — the registry outside this PC. The key goes in (write-only); only "configured" comes back.
+  ledgerMirror: {
+    getState: () => ipcRenderer.invoke(LEDGER_MIRROR_CHANNELS.getState) as Promise<LedgerMirrorState>,
+    configure: (url: string, key: string, ownerName?: string) => ipcRenderer.invoke(LEDGER_MIRROR_CHANNELS.configure, url, key, ownerName) as Promise<LedgerMirrorConfigureResult>,
+    disable: () => ipcRenderer.invoke(LEDGER_MIRROR_CHANNELS.disable) as Promise<LedgerMirrorState>,
+    syncNow: () => ipcRenderer.invoke(LEDGER_MIRROR_CHANNELS.syncNow) as Promise<LedgerMirrorState>,
   },
 
   // Papéis de sessão (item 12a) — `<userData>/papeis/` (main is the only writer).

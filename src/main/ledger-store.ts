@@ -31,6 +31,8 @@ import {
   eventNote,
   doneByOf,
   replacesOf,
+  requestedByOf,
+  ASKED_BY_OWNER,
   isCancelled,
   awaitsSend,
   isClosed,
@@ -452,6 +454,7 @@ function taskView(task: LedgerTask, doc: LedgerDoc, orphan: string | null = null
     dono: task.ownerPlaceId,
     risco: task.risk,
     ...(replacesOf(task) ? { substitui: replacesOf(task) } : {}),
+    ...(requestedByOf(task) ? { quemPediu: requestedByOf(task) } : {}),
     ...(transfers.length ? { transferencias: transfers.map((t) => ({ de: t.from, para: t.to, por: who(t.by), em: new Date(t.at).toISOString(), motivo: t.reason })) } : {}),
     ...(delivery
       ? {
@@ -532,6 +535,8 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         risk: lowRefused ? 'alto' : call.risco,
         ...(call.titulo ? { title: call.titulo } : {}),
         ...(call.substitui ? { replaces: call.substitui } : {}),
+        // Who asked: what the creator said, or the owner when the task came from his phone's "Pedir".
+        ...(call.quemPediu ? { requestedBy: call.quemPediu } : call.pedidoDoDono ? { requestedBy: ASKED_BY_OWNER } : {}),
       });
       if (!result.ok || !lowRefused) return answer(result, 'criada');
       return {

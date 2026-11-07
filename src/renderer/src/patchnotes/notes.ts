@@ -22,12 +22,20 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'Na gaveta de uma cadeira, "Definir cadeira ▸" agora abre a tela da cadeira (também em Papéis, por "Ver como cadeira ▸"). Ela mostra o que uma sessão recebe ao sentar ali: as instruções na ordem em que chegam (a moldura do Donel e o texto do papel) e as suas skills, MCPs e plugins, ligados ou fora, com um selo dizendo de onde cada linha vem (Donel, Papel ou o seu ~/.claude). Também mostra o modelo e o esforço sugeridos. À direita fica o custo estimado de uma sessão, em tokens e memória, com o detalhe de onde vem. A coluna de custo recolhe num clique, vira uma faixa estreita com os dois totais e continua recolhida na próxima vez. Nesta versão a tela só mostra; para mudar, use "Editar em Papéis ▸". Os números de custo são estimativas.',
       },
       {
+        title: 'As tarefas do Oráculo numa tabela que se lê sem decifrar',
+        text: 'Cada tarefa do Oráculo agora pode ir, em até um minuto depois de mudar, para uma tabela no seu Supabase pessoal, uma linha por tarefa e na ordem em que se lê: quadro, título, estado, quem pediu, a frase do pedido, quem faz agora, quem criou, risco, prazo, a última entrega com o link da prova, quem aceitou ou rejeitou e o motivo, e as datas. "Quem pediu" é a pessoa: você, alguém do Slack pelo nome ou a fonte de um sinal, e não mais "Dev"; quando ninguém disse quem pediu, a tabela mostra "não registrado" em vez de adivinhar. As sessões aparecem pelo nome, como "Dev · Mindscape de cadeiras", e continuam com o nome depois de fechadas. Há também a visão do que ainda não fechou. Prints e vídeos ficam só aqui; senhas, chaves e e-mails que aparecerem num texto saem mascarados. Sem internet, o Donel guarda e manda quando a rede voltar. Liga em Preferências, Celular, onde você também diz o seu nome para a tabela.',
+      },
+      {
         title: 'O Mindscape mostra as cadeiras',
         text: 'No canto direito das abas do Mindscape há agora "Lugares | Cadeiras". Em Cadeiras, o quadro vira o esquema que você aprovou: o rig com o nome do projeto, uma cadeira redonda por papel com o nome grande e quantos estão sentados, setas mostrando por onde o trabalho passa (quem abriu quem) e, no topo, quantas cadeiras estão com problema, atenção, bem ou sem sinal; clicar num número destaca essas cadeiras. Clicar numa cadeira abre a gaveta com quem está sentado agora, quem já sentou (um clique retoma a conversa), a última nota escrita ali, as tarefas do Oráculo dela e o modelo configurado ao lado do usado. Esc, o ✕ ou um clique no quadro fecham. Seu desenho e seus post-its ficam onde estão, por cima, esmaecidos ou ocultos, e continuam editáveis. Nada é gravado: voltar a Lugares devolve o quadro como estava. Pods e a tela de definir cadeira vêm nas próximas versões.',
       },
       {
         title: 'Sessão na VPS que não abre diz por quê',
         text: 'Quando uma sessão aberta numa VPS não consegue entrar lá, quem a abriu fica sabendo na hora e com o motivo que a conexão deu, como um pedido de verificação do Tailscale, em vez de ouvir só "o terminal não chegou a abrir" minuto e meio depois.',
+      },
+      {
+        title: 'O primeiro pedido chega à sessão na VPS',
+        text: 'Uma sessão aberta numa VPS agora espera o Claude de lá ficar pronto, mesmo quando a conexão e a subida demoram alguns minutos, e só então recebe o pedido. Se aparecer lixo do terminal na caixa dela, o app apaga antes de mandar. Uma mensagem que entrou, mas cuja confirmação atrasou, não é mais dada como perdida, e mandar o mesmo texto de novo não faz ele chegar duas vezes. Uma sessão que já respondeu não aparece mais como "não começou".',
       },
     ],
   },

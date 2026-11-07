@@ -122,7 +122,7 @@ import { BackgroundIndicator, type BackgroundSession } from './chat/BackgroundTa
 import { revealRow } from './chat/revealRow';
 import { runningCount } from '../../shared/chat/backgroundTasks';
 import { effectiveTabView, hasChatView, nextTabView, shouldHandleViewShortcut } from './chat/tabView';
-import { disposeTabSend, ownerTerminalInput, sendDriverFor, sendToTab, sendToTabAndWait } from './chat/composer/tabSend';
+import { disposeTabSend, ownerTerminalInput, sendDriverFor, sendToTab, pendingSendReason, sendToTabAndWait, tabTookMessage } from './chat/composer/tabSend';
 import { blockingScreen, readInputText } from '../../shared/chat/screen';
 import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../shared/lider/ipc';
 import { isLeaderOfAllTab, leaderHome } from '../../shared/mindscape/leader';
@@ -2381,12 +2381,16 @@ export function App(): React.JSX.Element {
       const lines = terminalRefs.current[tabId]?.readScreen().lines;
       return lines !== undefined && blockingScreen(lines)?.kind === 'permission';
     },
-    unconfirmed: (tabId) => semaphoreStates[tabId]?.unconfirmed === true || semaphoreStates[tabId] === undefined,
+    // No hook yet is not "never started" when the CLI already took a message (the transcript showed it): a session on a
+    // remote place whose hooks do not come back was told "não começou" with five answers in its transcript (07/11).
+    unconfirmed: (tabId) => (semaphoreStates[tabId]?.unconfirmed === true || semaphoreStates[tabId] === undefined) && !tabTookMessage(tabId),
     startTrouble: (tabId) => {
       if (tabExits[tabId] !== undefined) return 'o Claude de lá foi encerrado';
       const failed = startFailuresRef.current[tabId];
       if (failed !== undefined) return `o terminal dela não abriu (${failed})`;
-      if (aliveTabs[tabId] !== true) return 'o terminal dela não chegou a abrir';
+      const sending = pendingSendReason(tabId);
+      if (aliveTabs[tabId] !== true) return `o terminal dela não chegou a abrir${sending !== null ? '; o pedido espera por ele' : ''}`;
+      if (sending !== null) return `o pedido ainda está a caminho (${sending})`;
       const lines = terminalRefs.current[tabId]?.readScreen().lines;
       if (lines === undefined) return null;
       const dialog = blockingScreen(lines);

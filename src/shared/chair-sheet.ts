@@ -93,3 +93,17 @@ export function chairSheet(role: SessionRole, inventory: ClaudeInventory): Chair
   const memoryMb = BASE_SESSION_MB + (named?.length ?? 0) * COST_PER_MCP_MB;
   return { frame, guidance, frameTokens, guidanceTokens, skills, plugins, mcps, cost: { tokens, memoryMb, mcpsUncounted: named === null } };
 }
+
+export interface ChairScreenKey {
+  readonly key: string;
+  readonly defaultPrevented: boolean;
+  /** The focus is inside the chair screen. */
+  readonly focusInScreen: boolean;
+  /** Nothing has the focus (it fell on the page when the focused button went away, as "Recolher ›" does). */
+  readonly focusOnPage: boolean;
+}
+
+/** Esc closes the chair screen with the focus in it or dropped on the page; never from a dialog over it (Papéis). */
+export function escapeClosesChairScreen(input: ChairScreenKey): boolean {
+  return input.key === 'Escape' && !input.defaultPrevented && (input.focusInScreen || input.focusOnPage);
+}
