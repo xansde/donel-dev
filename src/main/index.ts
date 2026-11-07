@@ -26,7 +26,7 @@ import { createSwitchableLedger, type SwitchableLedger } from './ledger-remote';
 import { LEDGER_REMOTE_CHANNELS, type LedgerRemoteResult, type LedgerRemoteState } from '../shared/ledger/remote';
 import { createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerSnapshot } from '../shared/ledger/channels';
-import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, type LedgerDoc, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
+import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, type LedgerDeliveredTo, type LedgerDoc, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
 import { askedByRefusal, type LedgerToolCall } from '../shared/ledger/tools';
 import type { BoardBridge } from './board-bridge';
 import { MCP_SERVER_NAME, type BrowserToolOutcome } from '../shared/browser/mcp';
@@ -3088,6 +3088,11 @@ function registerLedgerMirror(): void {
   void mirror.syncNow().catch(() => undefined);
 }
 
+/** Oráculo na VPS — the remote-mode host (`null` until the ledger handlers register). */
+let remoteOracleHost: ReturnType<typeof createRemoteOracleHost> | null = null;
+/** The board bridge's send driver, for what the VPS's relay holds (set once the bridge is up). */
+let deliverOwnerMessageViaBoard: ((message: OwnerMessage) => Promise<LedgerDeliveredTo>) | null = null;
+
 function registerLedgerIpcHandlers(): void {
   const onChange = (snapshot: LedgerSnapshot): void => {
       const window = getMainWindow();
@@ -3119,7 +3124,9 @@ function registerLedgerIpcHandlers(): void {
     setService: (next) => switchable?.set(next),
     freeze: (reason) => switchable?.freeze(reason) ?? Promise.resolve(),
     onChange,
+    deliver: () => deliverOwnerMessageViaBoard,
   });
+  remoteOracleHost = remoteHost;
   const service = createSwitchableLedger(remoteHost.boot());
   switchable = service;
   ledgerService = service;
@@ -4201,6 +4208,8 @@ void app.whenReady().then(async () => {
     placeName: placeNameOf,
     cardWriter: () => cardWriter,
     deliverToLeader: () => deliverPedidoToLeader,
+    // Oráculo na VPS: the phone talks to the daemon there; this PC's server stays down.
+    remote: () => remoteOracleHost?.celular() ?? null,
   }); // Ledger no celular (PWA só na Tailscale)
   // Quadro por MCP — the board and session tools of the same server go to the renderer (owner of the document).
   const boardBridge = createBoardBridge({
@@ -4215,6 +4224,32 @@ void app.whenReady().then(async () => {
     return typeof who.lugar === 'string' && typeof who.pasta === 'string' ? { projectPath: who.pasta, placeId: who.lugar } : null;
   };
   cardWriter = createCardWriter({ service: () => ledgerService, deliver: (message) => boardBridge.deliverOwnerMessage(message), placeName: placeNameOf });
+  // Oráculo na VPS: what waits in the VPS's relay goes by the same driver, now that it exists.
+  deliverOwnerMessageViaBoard = (message) => boardBridge.deliverOwnerMessage(message);
+  void remoteOracleHost?.drain();
+  // Fatia 4: the picture of each VPS session on its board (who it is, the places, the saved board), for the MCP gate
+  // that answers it when this PC is off. The board does not change while the PC is off, so the last one is right.
+  const pushBoardPicture = async (): Promise<void> => {
+    const host = remoteOracleHost;
+    const registry = remoteSessions;
+    if (!host || !registry || host.state().mode !== 'remoto') return;
+    const sessoes: Record<string, unknown> = {};
+    for (const { ptyId, folder } of registry.liveSessions()) {
+      try {
+        const who = await boardBridge.execute(ptyId, { tool: 'sessao_quem_sou' });
+        if (who.kind !== 'text') continue;
+        const quemSou = JSON.parse(who.text) as Record<string, unknown>;
+        const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar' });
+        const listar = list.kind === 'text' ? (JSON.parse(list.text) as unknown) : [];
+        const board = typeof quemSou.pasta === 'string' ? savedBoard(quemSou.pasta) : undefined;
+        sessoes[folder] = { quemSou, listar: Array.isArray(listar) ? listar : [], ...(board ? { board } : {}) };
+      } catch {
+        // this one stays as the VPS last had it
+      }
+    }
+    if (Object.keys(sessoes).length) await host.pushPicture({ at: Date.now(), sessoes });
+  };
+  setInterval(() => void pushBoardPicture(), 30_000).unref();
   hillClimbNotify = (message) => void boardBridge.deliverOwnerMessage(message).catch(() => null);
   // No place: the renderer sends it straight to the Líder único (or answers `null`: closed, the request waits).
   deliverPedidoToLeader = (text) => boardBridge.deliverOwnerMessage({ projectPath: '', placeId: '', text, leaderText: text }).then((to) => to === 'lider');
@@ -4247,6 +4282,17 @@ void app.whenReady().then(async () => {
         } catch (error) {
           // The change holds until the app closes; it is only not remembered.
           console.error('[donel-dev] pastas de envio não foram gravadas:', error);
+        }
+      },
+    },
+    uploadGrants: {
+      get: () => appConfig.browserUploadGrants.grants,
+      set: (grants) => {
+        appConfig = { ...appConfig, browserUploadGrants: { grants: [...grants] } };
+        try {
+          persistAppConfig();
+        } catch (error) {
+          console.error('[donel-dev] pastas liberadas pelo orquestrador não foram gravadas:', error);
         }
       },
     },
