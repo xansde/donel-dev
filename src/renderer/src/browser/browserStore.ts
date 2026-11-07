@@ -1,4 +1,6 @@
 import { useSyncExternalStore } from 'react';
+import { nextBrowserFullscreen } from '../../../shared/browser/fullscreen';
+import type { BrowserFullscreenAction } from '../../../shared/browser/fullscreen';
 import type { BrowserAgentRules, BrowserControlState, BrowserLogEntry, BrowserPanelState } from '../../../shared/browser/ipc';
 
 // Navegador integrado — renderer-side state of each session's browser, keyed by `ptyId` (the same key the main
@@ -20,9 +22,11 @@ export interface PtyBrowserView {
   readonly unseen: number;
   /** What the owner allows the agent here; `null` until the panel first asks. */
   readonly rules: BrowserAgentRules | null;
+  /** The panel takes the whole window (navegador em tela cheia); only while it is open. */
+  readonly fullscreen: boolean;
 }
 
-const EMPTY: PtyBrowserView = { open: false, state: null, control: null, log: [], unseen: 0, rules: null };
+const EMPTY: PtyBrowserView = { open: false, state: null, control: null, log: [], unseen: 0, rules: null, fullscreen: false };
 
 class BrowserStore {
   private readonly byPty = new Map<string, PtyBrowserView>();
@@ -40,7 +44,7 @@ class BrowserStore {
   }
 
   setOpen(ptyId: string, open: boolean): void {
-    this.patch(ptyId, open ? { open, unseen: 0 } : { open });
+    this.patch(ptyId, open ? { open, unseen: 0 } : { open, fullscreen: false });
     if (!open) return;
     void window.donel.browser
       .open(ptyId)
@@ -53,6 +57,13 @@ class BrowserStore {
 
   toggle(ptyId: string): void {
     this.setOpen(ptyId, !this.get(ptyId).open);
+  }
+
+  /** Navegador em tela cheia: the button, F11 or Esc. */
+  fullscreen(ptyId: string, action: BrowserFullscreenAction): void {
+    const current = this.get(ptyId);
+    const fullscreen = nextBrowserFullscreen(current, action);
+    if (fullscreen !== current.fullscreen) this.patch(ptyId, { fullscreen });
   }
 
   /** "Assumir": the main answers with the new generation and broadcasts the control state. */
@@ -85,6 +96,7 @@ class BrowserStore {
     window.donel.browser.onControl((control) => this.patch(control.ptyId, { control }));
     window.donel.browser.onLog((entry) => this.appendLog(entry));
     window.donel.browser.onRules((rules) => this.patch(rules.ptyId, { rules }));
+    window.donel.browser.onFullscreenKey((request) => this.fullscreen(request.ptyId, 'toggle'));
   }
 }
 
