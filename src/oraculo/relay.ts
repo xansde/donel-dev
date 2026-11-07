@@ -3,11 +3,12 @@
 // which live on the PC's board. The daemon writes the message here (`<dir>/fila.json`, temp → rename) and tells the
 // PC (`notify` → an events-stream `fila`); the PC delivers through today's driver and acks with where it went.
 //
-// Nothing vanishes: a message waits on disk until an ack that went somewhere ("nobody open" keeps it). Nothing
-// arrives twice: the same message (same place, same words) joins the pending item, and one already delivered
-// answers where it went without a second send (the phone's queue retries).
+// Nothing vanishes: a message waits on disk until an ack that went somewhere ("nobody open" keeps it), and an
+// unreadable `fila.json` is set aside, never written over. Nothing arrives twice: a retry of the same request (the
+// message's `key`: the decision event, the phone's request id) joins the pending item, and one already delivered
+// answers where it went. Two messages of the same words but different events are two messages (revisão do #299).
 
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 import type { LedgerDeliveredTo } from '../shared/ledger/contract';
 import type { OwnerMessage } from '../main/ledger-card-writer';
@@ -39,10 +40,6 @@ const DELIVERED_DAYS = 7;
 const PENDING_DAYS = 14;
 const DAY = 24 * 60 * 60 * 1000;
 
-function keyOf(message: OwnerMessage): string {
-  return createHash('sha256').update(`${message.projectPath}\n${message.placeId}\n${message.text}\n${message.leaderText}`).digest('hex');
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -69,11 +66,18 @@ export function createRelay(deps: { readonly filePath: string; readonly io: Conf
 
   function read(): RelayItem[] {
     const text = io.readFileText(filePath);
-    if (text === null) return [];
+    if (text === null) {
+      if (io.existsSync(filePath)) throw new Error('fila.json existe mas não pôde ser lida');
+      return [];
+    }
     try {
       const raw = JSON.parse(text) as { items?: unknown };
-      return Array.isArray(raw.items) ? raw.items.map(parseItem).filter((item): item is RelayItem => item !== null) : [];
+      if (!Array.isArray(raw.items)) throw new Error('sem itens');
+      return raw.items.map(parseItem).filter((item): item is RelayItem => item !== null);
     } catch {
+      // Kept aside for a human, so the next write does not erase what was waiting in it.
+      io.renameFile(filePath, filePath.replace(/\.json$/, `.ilegivel-${new Date(now()).toISOString().replace(/[:.]/g, '-')}.json`));
+      console.error('[oraculo] fila.json ilegível: guardada à parte.');
       return [];
     }
   }
@@ -94,9 +98,9 @@ export function createRelay(deps: { readonly filePath: string; readonly io: Conf
 
   return {
     async send(message, waitMs) {
-      const key = keyOf(message);
+      const key = message.key ?? `unico:${randomUUID()}`;
       const items = read();
-      const same = items.find((item) => item.key === key);
+      const same = message.key ? items.find((item) => item.key === key) : undefined;
       if (same?.deliveredTo) return same.deliveredTo;
       let item = same;
       if (!item) {

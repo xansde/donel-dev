@@ -82,7 +82,8 @@ async function main(): Promise<void> {
     ledger: () => ledger,
     provasRoot: ledgerProofsDir(ledgerFile),
     cardWriter: () => cardWriter,
-    deliverToLeader: () => async (text) => (await relay.send({ projectPath: '', placeId: '', text, leaderText: text }, RELAY_WAIT_MS)) === 'lider',
+    deliverToLeader: () => async (text, pedidoId) =>
+      (await relay.send({ projectPath: '', placeId: '', text, leaderText: text, ...(pedidoId ? { key: `pedido:${pedidoId}` } : {}) }, RELAY_WAIT_MS)) === 'lider',
   });
   // Fatia 4: the last picture of the board the PC left (kept across a restart), for the MCP gate of the VPS's sessions.
   const pictureFile = join(dir, 'retrato.json');

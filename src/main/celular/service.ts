@@ -45,7 +45,7 @@ export interface CelularCoreDeps {
    * Pedir pelo Oráculo — entrega um texto no chat do Líder único (o motor do `sessao_enviar`); `true` = entrou.
    * Nasce com a ponte do quadro (`null` antes): até lá, o pedido espera na fila.
    */
-  readonly deliverToLeader?: () => ((text: string) => Promise<boolean>) | null;
+  readonly deliverToLeader?: () => ((text: string, pedidoId?: string) => Promise<boolean>) | null;
   /** Oráculo na VPS: `true` = the phone talks to the VPS; this server stays down (no double notices). */
   readonly suspended?: () => boolean;
   /** Pedido por áudio: o whisper do PC (ausente = sem transcrição, o celular manda texto). */
@@ -105,7 +105,7 @@ export function createCelularCore(deps: CelularCoreDeps): CelularCore {
   });
   const router = createPedidoRouter({
     store: pedidosStore,
-    deliver: (text) => deps.deliverToLeader?.()?.(text) ?? Promise.resolve(false),
+    deliver: (text, pedidoId) => deps.deliverToLeader?.()?.(text, pedidoId) ?? Promise.resolve(false),
     audioPath: (file) => join(audioDir, file),
   });
   const taskState = (taskId: string): string | undefined => {
