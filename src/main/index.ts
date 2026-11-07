@@ -27,7 +27,7 @@ import { createSwitchableLedger, type SwitchableLedger } from './ledger-remote';
 import { LEDGER_REMOTE_CHANNELS, type LedgerRemoteResult, type LedgerRemoteState } from '../shared/ledger/remote';
 import { createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerSnapshot } from '../shared/ledger/channels';
-import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, type LedgerDeliveredTo, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
+import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, OWN_OPTION, type LedgerDeliveredTo, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
 import { askedByRefusal, type LedgerToolCall } from '../shared/ledger/tools';
 import type { BoardBridge } from './board-bridge';
 import { MCP_SERVER_NAME, type BrowserToolOutcome } from '../shared/browser/mcp';
@@ -3176,8 +3176,11 @@ function registerLedgerIpcHandlers(): void {
     // The owner's words with a named option go with the decision (its text) AND to whoever did it (Parte B).
     const text = typeof decision.text === 'string' ? decision.text.trim().slice(0, MAX_COMMENT_CHARS) : '';
     const reason = (decision as { reason?: unknown }).reason;
+    // 07/11 — "Decidir assim": the owner's own option (his words); the ledger says how it closes.
     const result =
-      decision.accept === true
+      decision.option === OWN_OPTION
+        ? await service.apply({ kind: 'dono' }, { op: 'decidir-outra', id: decision.id, text })
+        : decision.accept === true
         ? await service.apply({ kind: 'dono' }, { op: 'aceitar', id: decision.id, ...option, ...(text ? { text } : {}) })
         : await service.apply({ kind: 'dono' }, { op: 'rejeitar', id: decision.id, reason: [typeof reason === 'string' ? reason.trim() : '', text].filter(Boolean).join('\n'), ...option });
     // Every decision of the owner, by a button or with words, tells the session that owns it (closed: the Líder).
