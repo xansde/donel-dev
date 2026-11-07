@@ -13,6 +13,7 @@ import { HEALTH_CHANNELS } from '../shared/health/ipc';
 import type { KillProcessOutcome } from '../shared/health/ipc';
 import type { HealthReport } from '../shared/health/types';
 import type { RemoteHealthReport } from '../shared/health/remote';
+import { HOMOLOGACAO_CHANNELS, type FactoryMetricsView } from '../shared/homologacao/ipc';
 // B33 — atualizar de dentro do app.
 import { APP_UPDATE_CHANNELS, type AppUpdateApplyResult, type AppUpdateBoot, type AppUpdateStatus, type ResumeTab } from '../shared/appUpdate';
 // Sidebar — abrir no editor + branch atual.
@@ -153,7 +154,7 @@ import {
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerSnapshot } from '../shared/ledger/channels';
 import type { LedgerProof } from '../shared/ledger/contract';
-import { LEDGER_MIRROR_CHANNELS, type LedgerMirrorConfigureResult, type LedgerMirrorState } from '../shared/ledger/mirror';
+import { LEDGER_MIRROR_CHANNELS, type LedgerMirrorConfigureResult, type LedgerMirrorState, type LedgerPlacesSnapshot } from '../shared/ledger/mirror';
 import { HILL_CLIMB_CHANNELS, type HillClimbGestureRequest, type HillClimbGestureResult, type HillClimbSnapshot } from '../shared/hillClimb/channels';
 import { LEARNING_CHANNELS, type RendererGesture } from '../shared/learning/gestures';
 import type {
@@ -481,6 +482,16 @@ const donelApi: DonelApi = {
     },
   },
 
+  // Mindscape de homologação V1 — the factory's numbers, read-only.
+  homologacao: {
+    metricsGet: () => ipcRenderer.invoke(HOMOLOGACAO_CHANNELS.metricsGet) as Promise<FactoryMetricsView | null>,
+    metricsRefresh: () => ipcRenderer.invoke(HOMOLOGACAO_CHANNELS.metricsRefresh) as Promise<FactoryMetricsView | null>,
+    onMetricsChanged: (listener: (view: FactoryMetricsView | null) => void) => {
+      const handler = (_event: unknown, view: FactoryMetricsView | null): void => listener(view);
+      return subscribeChannel(ipcRenderer, HOMOLOGACAO_CHANNELS.metricsChanged, handler);
+    },
+  },
+
   // B33 — versão nova do alfa: o estado da pasta dos instaladores, a troca e as abas a reabrir depois.
   appUpdate: {
     get: () => ipcRenderer.invoke(APP_UPDATE_CHANNELS.get) as Promise<AppUpdateStatus>,
@@ -616,6 +627,7 @@ const donelApi: DonelApi = {
     configure: (url: string, key: string, ownerName?: string) => ipcRenderer.invoke(LEDGER_MIRROR_CHANNELS.configure, url, key, ownerName) as Promise<LedgerMirrorConfigureResult>,
     disable: () => ipcRenderer.invoke(LEDGER_MIRROR_CHANNELS.disable) as Promise<LedgerMirrorState>,
     syncNow: () => ipcRenderer.invoke(LEDGER_MIRROR_CHANNELS.syncNow) as Promise<LedgerMirrorState>,
+    places: () => ipcRenderer.invoke(LEDGER_MIRROR_CHANNELS.places) as Promise<LedgerPlacesSnapshot>,
   },
 
   // Papéis de sessão (item 12a) — `<userData>/papeis/` (main is the only writer).

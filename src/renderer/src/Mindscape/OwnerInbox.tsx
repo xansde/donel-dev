@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from 'react';
 import { lastDelivery, slackDestinationLabel, slackLetterText, slackSendState, type LedgerTask } from '../../../shared/ledger/contract';
-import type { OwnerInboxItem, OwnerInboxKind } from '../../../shared/ledger/inbox';
+import { CARD_KINDS, type OwnerInboxItem, type OwnerInboxKind } from '../../../shared/ledger/inbox';
 import { actorLabel, type PlaceNameOf } from '../../../shared/ledger/labels';
 import { LedgerCards } from './LedgerCards';
 import styles from './OwnerInbox.module.css';
@@ -47,9 +47,6 @@ const KINDS: Readonly<Record<OwnerInboxKind, KindView>> = {
   'conferir-envio': { label: 'Conferir envio', glyph: '⚠', verb: 'Ver o envio', hint: 'Confira no Slack se a mensagem chegou.' },
   'amostra-revisor': { label: 'Amostra do Revisor', glyph: '✓', verb: 'Conferir' },
 };
-
-/** The kinds whose verb is on the card: the box opens the cards on them. */
-const CARD_KINDS: ReadonlySet<OwnerInboxKind> = new Set(['decidir-entrega', 'aprovar-carta', 'entrega-parada', 'amostra-revisor']);
 
 function folder(projectPath: string): string {
   return projectPath.split(/[\\/]/).filter(Boolean).pop() ?? projectPath;

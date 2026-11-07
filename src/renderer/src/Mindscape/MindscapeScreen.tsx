@@ -49,6 +49,8 @@ import { MindscapeToolbar, type DrawStyle } from './MindscapeToolbar';
 import { ShadowRoutines } from './ShadowRoutines';
 import { ChairDrawer, ChairsBand, ChairsLayer, RIG_SELECTION, type ChairDetails, type ChairFace, type OwnerLayerMode, type RigDetails } from './MindscapeChairs';
 import { useLedgerSnapshot } from './useLedgerSnapshot';
+import { FactoryNumbersButton, FactoryNumbersPanel, useFactoryMetrics } from './FactoryNumbers';
+import { sameBoardName } from '../../../shared/homologacao/config';
 import chairStyles from './Chairs.module.css';
 import { preparePrint, useMindscapeImages } from './useMindscapeImage';
 import styles from './Mindscape.module.css';
@@ -297,6 +299,9 @@ export function MindscapeScreen({
     setHighlight(null);
   };
   const ledger = useLedgerSnapshot(chairsOn);
+  // Mindscape de homologação V1, fatia 1 — the factory's numbers (`homologacao` key), on its board, in the lens.
+  const factoryMetrics = useFactoryMetrics();
+  const [factoryNumbersOpen, setFactoryNumbersOpen] = useState(false);
   /** "Seu desenho: Oculto" — the board only moves: no key, paste or button may change what the owner cannot see. */
   const boardLocked = lensLocksBoard(chairsOn, ownerMode);
   const onAction = (projectPath: string, reducer: (doc: MindscapeDoc) => MindscapeDoc): void => {
@@ -469,6 +474,10 @@ export function MindscapeScreen({
 
   // Cadeiras, fatia 1 — the chairs of the board (one per role), read from its places; nothing is written.
   const boardName = board ? (projectNames[board.projectPath] ?? folderName(board.projectPath)) : '';
+  const factoryHere =
+    chairsOn && board && factoryMetrics && (sameBoardName(factoryMetrics.board, boardName) || sameBoardName(factoryMetrics.board, folderName(board.projectPath)))
+      ? factoryMetrics
+      : null;
   const allPlaces: readonly SessionPlaceCard[] = board ? Object.values(board.cards).filter((card): card is SessionPlaceCard => card.kind === 'session') : [];
   const liveByPlace = new Map<string, MindscapeLiveSession>();
   if (board) {
@@ -812,6 +821,7 @@ export function MindscapeScreen({
             </button>
           </span>
         ) : null}
+        {factoryHere ? <FactoryNumbersButton open={factoryNumbersOpen} onToggle={() => setFactoryNumbersOpen((open) => !open)} /> : null}
       </div>
       <LedgerStrip projectPath={activePath} placeName={placeName} cardsHost={boardArea} placeStatesOf={ledgerPlaceStatesOf} />
       <MindscapeToolbar
@@ -1178,6 +1188,7 @@ export function MindscapeScreen({
           onDefine={onDefineChair ?? (onManageRoles ? () => onManageRoles() : undefined)}
         />
       ) : null}
+      {factoryHere && factoryNumbersOpen ? <FactoryNumbersPanel view={factoryHere} onClose={() => setFactoryNumbersOpen(false)} /> : null}
       </div>
     </section>
   );

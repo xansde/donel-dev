@@ -78,6 +78,9 @@ export const STUCK_LETTER_MS = 30 * 60 * 1000;
 /** The answer of a send comes in seconds; no answer after this long means nobody knows if it arrived. */
 export const SEND_ANSWER_GRACE_MS = 10 * 60 * 1000;
 
+/** The kinds decided on the card (`LedgerCards`): the box and the table open the card on them. */
+export const CARD_KINDS: ReadonlySet<OwnerInboxKind> = new Set<OwnerInboxKind>(['decidir-entrega', 'aprovar-carta', 'entrega-parada', 'amostra-revisor']);
+
 export interface OwnerInboxItem {
   readonly kind: OwnerInboxKind;
   readonly task: LedgerTask;
