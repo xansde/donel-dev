@@ -1,61 +1,70 @@
-// Painel de progresso do Jobu (owner's ask, 05/11) — what each front of work has done and when it should end, from the
-// ledger (`src/shared/ledger/`). Pure: the clock comes in, nothing is read or written. The screen is
-// `src/renderer/src/pet/JobuProgress.tsx`.
+// Painel de progresso do Jobu — the owner's asks, by front of work (owner, 07/11: "Não consigo saber quais demandas
+// que eu solicitei você está tocando ou não. [...] Essas coisas deveriam ser compiladas por frentes"). Pure: the
+// clock comes in, nothing is read or written. The screen is `src/renderer/src/pet/JobuProgress.tsx`.
 //
-// The estimate is honest and simple, and every line says where it came from:
-// - only what is going on now is shown (owner, 05/11): an accepted task leaves the panel at once, and every sum;
-// - the bar is the lifecycle of a task in the ledger, in 3 steps: assumed, delivered, accepted. Nothing else is counted,
-//   so no percentage exists that the ledger cannot back. A rejected task goes back to 1 of 3 (it has to be redone);
-// - the end date of a task nobody took is its deadline (`due`); of a task under way, the pace of the steps it already
-//   walked (time since it was created ÷ steps done) times the steps left. It says when that pace ends after the deadline;
-// - a board is the sum of its tasks: its bar counts every step of every task, its end is the latest end of a task.
+// - only the asks of the owner (`quem pediu` = dono, or a task the owner made himself); Slack letters, signals and
+//   asks of other people stay out;
+// - grouped by the front the Líder named (`frenteOf`); a task with none goes to "Sem frente", always last;
+// - four states, each with who has it: esperando você (a high-risk delivery: his card), travado (rejected, nobody
+//   took it again), tocando (under way, or delivered and waiting for the Revisor), parado (nobody took it, nobody
+//   said a word for a day, or delivered and nobody checked for 12 h);
+// - what ended leaves the list: an accepted task only counts in "concluídas hoje", a cancelled one vanishes, and a
+//   front with nothing alive leaves too;
+// - the bar of a front counts the steps of its asks alive and accepted today, 3 each: assumed, delivered, accepted.
 
-import { isCancelled, type LedgerDoc, type LedgerTask, type LedgerTaskState } from '../ledger/contract';
+import { ASKED_BY_OWNER, frenteOf, isCancelled, lastDelivery, lastWorkAt, requestedByOf, type LedgerDoc, type LedgerTask } from '../ledger/contract';
+import { LEADER_OF_ALL } from '../mindscape/leader';
 
 /** Assumed, delivered, accepted. */
 export const PROGRESS_STEPS = 3;
+/** Under way with no event for this long: "sem notícia", not "tocando". */
+export const SILENT_MS = 24 * 60 * 60 * 1000;
+/** Delivered (low risk) and nobody decided for this long: "parado". */
+export const UNCHECKED_MS = 12 * 60 * 60 * 1000;
 
-/** The states the panel shows: everything but `aceita`. */
-export type ProgressTaskState = Exclude<LedgerTaskState, 'aceita'>;
-type ActiveTask = LedgerTask & { readonly state: ProgressTaskState };
+export type FrontTaskState = 'esperando' | 'travado' | 'tocando' | 'parado';
+const STATE_ORDER: Readonly<Record<FrontTaskState, number>> = { esperando: 0, travado: 1, tocando: 2, parado: 3 };
 
-export interface ProgressTask {
+export interface FrontTask {
   readonly id: string;
+  /** The task's title, or the first sentence of the request. */
   readonly title: string;
-  readonly state: ProgressTaskState;
-  /** Steps done, 0..2 (the third, the accept, takes the task off the panel). */
-  readonly steps: number;
-  /** What the step means, in words: `entregue, esperando decisão`. */
-  readonly stepLabel: string;
-  /** The estimated end (ms). */
-  readonly endsAt: number;
-  /** The estimate ends after the deadline (or the deadline has passed). */
+  readonly state: FrontTaskState;
+  /** Who has it, in words: "Dev", "você decide na carta", "ninguém assumiu". */
+  readonly who: string;
+  /** `AAAA-MM-DD`. */
+  readonly due: string;
+  /** The deadline day is over. */
   readonly late: boolean;
-  /** Where the estimate came from, said to the owner. */
-  readonly source: string;
-  /** The sessions (roles of the places) that acted on the task, in order: `lider · dev · revisor`. */
-  readonly places: readonly string[];
-  /** Deliveries made so far (a second one is a rework). */
-  readonly deliveries: number;
   /** The newest event of the task (ms). */
   readonly changedAt: number;
 }
 
-export interface ProgressBoard {
-  readonly projectPath: string;
-  readonly title: string;
+export interface Front {
+  /** The front's name; `''` = "Sem frente". */
+  readonly name: string;
+  /** The asks alive, what needs the owner first. */
+  readonly tasks: readonly FrontTask[];
+  readonly counts: Readonly<Record<FrontTaskState, number>>;
+  /** Asks of this front accepted today. */
+  readonly doneToday: number;
   readonly steps: number;
   readonly totalSteps: number;
-  /** The latest end of a task. */
-  readonly endsAt: number;
-  readonly late: boolean;
-  readonly tasks: readonly ProgressTask[];
   readonly changedAt: number;
 }
 
+export interface DoneTask {
+  readonly id: string;
+  readonly title: string;
+  readonly front: string;
+}
+
 export interface JobuProgress {
-  readonly boards: readonly ProgressBoard[];
-  /** The newest event of any task shown (ms); `null` = nothing to show. Drives the "something changed" dot. */
+  readonly fronts: readonly Front[];
+  readonly counts: Readonly<Record<FrontTaskState, number>>;
+  /** The owner's asks accepted today (local day of `now`). */
+  readonly doneToday: readonly DoneTask[];
+  /** The newest event of anything shown (ms); `null` = nothing to show. Drives the "something changed" dot. */
   readonly changedAt: number | null;
 }
 
@@ -65,8 +74,46 @@ export function dueEndsAt(due: string): number {
   return new Date(year, month - 1, day, 23, 59, 59, 999).getTime();
 }
 
-function stepsOf(state: ProgressTaskState): number {
-  switch (state) {
+/** `hoje`, `amanhã`, `ontem`, `09/11`. */
+export function dueLabel(due: string, now: number): string {
+  const [year, month, day] = due.split('-').map(Number) as [number, number, number];
+  const today = new Date(now);
+  const diff = Math.round((new Date(year, month - 1, day).getTime() - new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime()) / 86_400_000);
+  if (diff === 0) return 'hoje';
+  if (diff === 1) return 'amanhã';
+  if (diff === -1) return 'ontem';
+  return `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}`;
+}
+
+/** The owner asked for it: he said so (`quemPediu`), or he made the task himself. */
+function askedByOwner(task: LedgerTask): boolean {
+  const said = requestedByOf(task);
+  return said ? said === ASKED_BY_OWNER : task.events[0]?.by.kind === 'dono';
+}
+
+/** A short name: the title, else the first sentence of the request (up to 60 characters). */
+function shortTitle(task: LedgerTask): string {
+  if (task.title) return task.title;
+  const line = task.request.trim().replace(/^["“]/, '').split('\n')[0]!;
+  const sentence = /^(.{8,60}?[?.!])(\s|$)/.exec(line)?.[1] ?? line;
+  return sentence.length > 60 ? `${sentence.slice(0, 59)}…` : sentence;
+}
+
+const ROLE_NAMES: Readonly<Record<string, string>> = { dev: 'Dev', revisor: 'Revisor', pesquisa: 'Pesquisa', curador: 'Curador', lider: 'Líder' };
+
+/** The role of the owner place, from what it did in the task. */
+function ownerRole(task: LedgerTask): string {
+  const roleId = task.events.find((event) => event.by.kind === 'lugar' && event.by.placeId === task.ownerPlaceId && event.by.roleId)?.by;
+  const role = roleId?.kind === 'lugar' ? roleId.roleId?.split('-')[0] : undefined;
+  return (role && ROLE_NAMES[role]) ?? 'quem assumiu';
+}
+
+function ago(ms: number, unit: 'h' | 'd'): string {
+  return unit === 'h' ? `${Math.max(1, Math.round(ms / 3_600_000))} h` : `${Math.max(1, Math.floor(ms / 86_400_000))} d`;
+}
+
+function stepsOf(task: LedgerTask): number {
+  switch (task.state) {
     case 'aberta':
       return 0;
     case 'em-execucao':
@@ -74,107 +121,84 @@ function stepsOf(state: ProgressTaskState): number {
       return 1;
     case 'entregue':
       return 2;
+    case 'aceita':
+      return 3;
   }
 }
 
-const STEP_LABEL: Readonly<Record<ProgressTaskState, string>> = {
-  aberta: 'aberta, ninguém assumiu',
-  'em-execucao': 'em execução',
-  rejeitada: 'rejeitada, volta para refazer',
-  entregue: 'entregue, esperando decisão',
-};
-
-/** `40 min`, `3 h`, `2 d`. */
-export function durationLabel(ms: number): string {
-  const minutes = Math.max(1, Math.round(ms / 60_000));
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.round(minutes / 60);
-  return hours < 48 ? `${hours} h` : `${Math.round(hours / 24)} d`;
-}
-
-function dayLabel(at: number): string {
-  const date = new Date(at);
-  return `${String(date.getDate()).padStart(2, '0')}/${String(date.getMonth() + 1).padStart(2, '0')}`;
-}
-
-/** `hoje 18:40`, `amanhã 09:10`, `07/11` — the date of an estimate, as near as it is worth saying. */
-export function endLabel(at: number, now: number): string {
-  const date = new Date(at);
-  const today = new Date(now);
-  const time = `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-  const dayIndex = (d: Date): number => Math.floor(new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime() / 86_400_000);
-  const diff = dayIndex(date) - dayIndex(today);
-  if (diff === 0) return `hoje ${time}`;
-  if (diff === 1) return `amanhã ${time}`;
-  if (diff === -1) return `ontem ${time}`;
-  return dayLabel(at);
-}
-
-function placesOf(task: LedgerTask): string[] {
-  const places: string[] = [];
-  for (const event of task.events) {
-    if (event.by.kind !== 'lugar') continue;
-    const name = event.by.roleId ?? 'lugar';
-    if (places[places.length - 1] !== name) places.push(name);
+/** The state the owner reads, and who has the task. */
+function stateOf(task: LedgerTask, changedAt: number, now: number): { state: FrontTaskState; who: string } {
+  if (task.state === 'entregue') {
+    if (task.risk === 'alto') return { state: 'esperando', who: 'você decide na carta' };
+    const quiet = now - (lastDelivery(task)?.at ?? changedAt);
+    return quiet >= UNCHECKED_MS ? { state: 'parado', who: `entregue há ${ago(quiet, 'h')}; ninguém conferiu` } : { state: 'tocando', who: 'entregue; o Revisor confere' };
   }
-  return places;
+  if (task.state === 'rejeitada') return { state: 'travado', who: 'voltou da revisão; ninguém retomou' };
+  if (task.ownerPlaceId === LEADER_OF_ALL) return { state: 'parado', who: 'com o Líder; ninguém assumiu' };
+  if (task.state === 'aberta') return { state: 'parado', who: 'ninguém assumiu' };
+  const quiet = now - changedAt;
+  return quiet >= SILENT_MS ? { state: 'parado', who: `${ownerRole(task)}, sem notícia há ${ago(quiet, 'd')}` } : { state: 'tocando', who: ownerRole(task) };
 }
 
-function boardTitle(projectPath: string): string {
-  const name = projectPath.split(/[\\/]/).filter(Boolean).pop();
-  return name ?? 'sem quadro';
+function startOfDay(now: number): number {
+  const date = new Date(now);
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
 }
 
-/** The progress of one task at `now`. */
-function taskProgress(task: ActiveTask, now: number): ProgressTask {
-  const steps = stepsOf(task.state);
-  const dueAt = dueEndsAt(task.due);
-  const deliveries = task.events.filter((event) => event.kind === 'entregue').length;
-  const changedAt = task.events.reduce((latest, event) => Math.max(latest, event.at), task.createdAt);
-  const base = { id: task.id, title: task.request, state: task.state, steps, stepLabel: STEP_LABEL[task.state], places: placesOf(task), deliveries, changedAt };
+const zeroCounts = (): Record<FrontTaskState, number> => ({ esperando: 0, travado: 0, tocando: 0, parado: 0 });
 
-  if (steps === 0) {
-    const overdue = now > dueAt;
-    return { ...base, endsAt: dueAt, late: overdue, source: overdue ? 'pelo prazo, que já venceu; ninguém assumiu' : 'pelo prazo; ninguém assumiu ainda' };
-  }
-  const elapsed = Math.max(0, now - task.createdAt);
-  const endsAt = now + (elapsed / steps) * (PROGRESS_STEPS - steps);
-  const rework = deliveries > 1 ? ` · ${deliveries}ª entrega` : task.state === 'rejeitada' || (task.state === 'em-execucao' && deliveries > 0) ? ' · refazendo' : '';
-  const versusDue = now > dueAt ? `prazo ${dayLabel(dueAt)} já venceu` : endsAt > dueAt ? `passa do prazo ${dayLabel(dueAt)}` : `prazo ${dayLabel(dueAt)}`;
-  return {
-    ...base,
-    endsAt,
-    late: endsAt > dueAt,
-    source: `pelo ritmo: ${steps} de ${PROGRESS_STEPS} etapas em ${durationLabel(elapsed)}${rework}; ${versusDue}`,
-  };
-}
-
-function isActive(task: LedgerTask): task is ActiveTask {
-  return task.state !== 'aceita' && !isCancelled(task);
-}
-
-/** The panel at `now`: one board per front with a task going on, its tasks under it (the nearest end first). */
+/** The panel at `now`. */
 export function jobuProgress(doc: LedgerDoc, now: number): JobuProgress {
-  const byBoard = new Map<string, ProgressTask[]>();
+  const today = startOfDay(now);
+  const byFront = new Map<string, { tasks: FrontTask[]; done: LedgerTask[] }>();
+  const doneToday: DoneTask[] = [];
+  const counts = zeroCounts();
+  let changed: number | null = null;
+
   for (const task of Object.values(doc.tasks)) {
-    if (!isActive(task)) continue;
-    const list = byBoard.get(task.projectPath) ?? [];
-    list.push(taskProgress(task, now));
-    byBoard.set(task.projectPath, list);
+    if (task.slack || isCancelled(task) || !askedByOwner(task)) continue;
+    const front = frenteOf(task) ?? '';
+    // A front mark is no work: a silent task stays silent after the Líder names its front.
+    const changedAt = lastWorkAt(task);
+    const group = byFront.get(front) ?? { tasks: [], done: [] };
+    if (task.state === 'aceita') {
+      if (changedAt < today) continue;
+      group.done.push(task);
+      doneToday.push({ id: task.id, title: shortTitle(task), front });
+    } else {
+      const { state, who } = stateOf(task, changedAt, now);
+      group.tasks.push({ id: task.id, title: shortTitle(task), state, who, due: task.due, late: now > dueEndsAt(task.due), changedAt });
+      counts[state] += 1;
+    }
+    byFront.set(front, group);
+    changed = Math.max(changed ?? 0, changedAt);
   }
-  const boards: ProgressBoard[] = [...byBoard].map(([projectPath, tasks]) => {
-    tasks.sort((a, b) => a.endsAt - b.endsAt || a.id.localeCompare(b.id));
-    return {
-      projectPath,
-      title: boardTitle(projectPath),
-      steps: tasks.reduce((sum, task) => sum + task.steps, 0),
-      totalSteps: tasks.length * PROGRESS_STEPS,
-      endsAt: Math.max(...tasks.map((task) => task.endsAt)),
-      late: tasks.some((task) => task.late),
-      tasks,
-      changedAt: Math.max(...tasks.map((task) => task.changedAt)),
-    };
-  });
-  boards.sort((a, b) => b.changedAt - a.changedAt || a.projectPath.localeCompare(b.projectPath));
-  return { boards, changedAt: boards.length ? Math.max(...boards.map((board) => board.changedAt)) : null };
+
+  const fronts: Front[] = [...byFront]
+    .filter(([, group]) => group.tasks.length > 0)
+    .map(([name, group]) => {
+      const tasks = [...group.tasks].sort((a, b) => STATE_ORDER[a.state] - STATE_ORDER[b.state] || a.due.localeCompare(b.due) || a.id.localeCompare(b.id));
+      const frontCounts = zeroCounts();
+      for (const task of tasks) frontCounts[task.state] += 1;
+      const alive = tasks.map((task) => doc.tasks[task.id]!);
+      return {
+        name,
+        tasks,
+        counts: frontCounts,
+        doneToday: group.done.length,
+        steps: [...alive, ...group.done].reduce((sum, task) => sum + stepsOf(task), 0),
+        totalSteps: (alive.length + group.done.length) * PROGRESS_STEPS,
+        changedAt: Math.max(...tasks.map((task) => task.changedAt)),
+      };
+    });
+  // What needs the owner first, then the newest; "Sem frente" always last.
+  fronts.sort(
+    (a, b) =>
+      Number(a.name === '') - Number(b.name === '') ||
+      Number(b.counts.esperando > 0) - Number(a.counts.esperando > 0) ||
+      Number(b.counts.travado > 0) - Number(a.counts.travado > 0) ||
+      b.changedAt - a.changedAt ||
+      a.name.localeCompare(b.name),
+  );
+  return { fronts, counts, doneToday, changedAt: changed };
 }

@@ -210,6 +210,8 @@ describe('espelho do Oráculo', () => {
     expect(rows[0]).toEqual({
       quadro: 'Donel Dev',
       titulo: 'Cadeiras no Mindscape',
+      // No front said: null, the table reads "sem frente".
+      frente: null,
       estado: 'aceita',
       // The first week's daily sample: a Revisor's accept goes to the owner too.
       esperando_dono: true,
@@ -232,6 +234,16 @@ describe('espelho do Oráculo', () => {
     });
     // Nothing in a row is an id but the id itself.
     for (const [column, value] of Object.entries(rows[0]!)) if (column !== 'id') expect(String(value)).not.toMatch(/place:|session:|t-1\b/);
+  });
+
+  it('sends the front of a task, the last one the Líder marked', () => {
+    const marked = task('t-3', {
+      events: [
+        { kind: 'criada', at: T0, by: { kind: 'dono' }, text: '⟦pedido por dono⟧ ⟦frente Ledger⟧' },
+        { kind: 'criada', at: T0 + 1000, by: { kind: 'lugar', placeId: LEADER_OF_ALL, roleId: 'lider' }, text: '⟦frente Oráculo na VPS⟧' },
+      ],
+    });
+    expect(tarefaRows(doc(marked, task('t-4'))).rows.map((row) => row.frente)).toEqual(['Oráculo na VPS', null]);
   });
 
   it('the owner decides by name, a cancel says so, and a waiting delivery is flagged', () => {

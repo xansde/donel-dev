@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-07',
     items: [
       {
+        title: 'O progresso do Jobu mostra os seus pedidos, por frente',
+        text: 'O painel Progresso, no balão do Líder, agora mostra só o que você pediu, agrupado por frente (por exemplo "Ledger" ou "Oráculo e Líder na VPS"), e não mais por quadro. Cada pedido aparece com um título curto e um estado claro: esperando você, travado, tocando (com quem está) ou parado (ninguém assumiu, ninguém deu notícia em um dia, ou a entrega espera conferência há 12 horas). Cada frente tem a sua barra e recolhe num clique. O que terminou sai da lista: fica só "N concluídas hoje", recolhido no fim. A frente é o Líder que diz, ao registrar o pedido; o que ainda não tem frente aparece em "Sem frente".',
+      },
+      {
         title: 'Os números da factory no Mindscape',
         text: 'No quadro da homologação, na vista Cadeiras, o botão "Números da factory" abre um painel com os números que a factory grava na VPS dela: um cartão por número, com o valor exatamente como ela escreveu, a pergunta que ele responde e de onde veio (medido, estimado ou sem fonte). Os números que têm de ficar em zero ou subir levam a marca trava, e os que não têm meta dizem "só mostrado". No topo aparece a hora em que foram gerados ("atualizado às" ou, depois de duas horas, "parado desde"); se a VPS não responde ou o arquivo some, "sem sinal desde", mantendo a última leitura. O painel só lê: nada nele muda a factory. Liga com a chave "homologacao" na configuração; sem ela, nada aparece e nada é lido.',
       },

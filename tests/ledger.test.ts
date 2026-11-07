@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, leaderTransferNotice, ledgerProofsDir, NOT_STARTED_GRACE_MS, nodeLedgerProofFs, passOnTasks, runLedgerTool, type LedgerCaller, type LedgerProofFs } from '../src/main/ledger-store';
 import type { MindscapeBoard } from '../src/shared/mindscape/model';
-import { eventNote, findCode, LEDGER_SCHEMA_VERSION, parseLedgerDoc, requestedByOf } from '../src/shared/ledger/contract';
+import { eventNote, findCode, frenteOf, LEDGER_SCHEMA_VERSION, MAX_FRENTE_CHARS, parseLedgerDoc, requestedByOf } from '../src/shared/ledger/contract';
 import { LEADER_OF_ALL } from '../src/shared/mindscape/leader';
 import * as v4 from './fixtures/ledger/contract-v4';
 import { createCardWriter, decisionMessage, type OwnerMessage } from '../src/main/ledger-card-writer';
@@ -724,5 +724,61 @@ describe('órfãs e substituição (06/11)', () => {
     // To another place: no line to the Líder.
     const back = await runLedgerTool(service(), lider, call('tarefa_transferir', { id, para: 'place:revisor', motivo: 'x' }));
     expect(leaderTransferNotice(service(), 'lider', back.text, 'x')).toBeNull();
+  });
+});
+
+describe('frente da tarefa (07/11)', () => {
+  const idOf = (answer: { text: string }): string => (JSON.parse(answer.text) as { id: string }).id;
+  const make = async (service: () => ReturnType<typeof createLedgerService>, who: LedgerCaller, args: Record<string, unknown>) =>
+    runLedgerTool(service(), who, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', risco: 'alto', dono: 'place:dev', ...args }));
+  const view = async (service: () => ReturnType<typeof createLedgerService>, id: string) =>
+    JSON.parse((await runLedgerTool(service(), lider, call('tarefa_ver', { id }))).text) as Record<string, unknown>;
+
+  it('keeps the front a task was born with in the file, a replacement inherits it, and the previous channel still reads the other marks', async () => {
+    const { service, file } = setup();
+    const old = idOf(await make(service, lider, { frente: 'Ledger', quemPediu: 'dono' }));
+    const inherited = idOf(await make(service, lider, { substitui: old, quemPediu: 'dono' }));
+    const own = idOf(await make(service, lider, { substitui: inherited, frente: 'Oráculo na VPS' }));
+    const none = idOf(await make(service, lider, {}));
+    expect(await view(service, old)).toMatchObject({ frente: 'Ledger', quemPediu: 'dono' });
+    expect(await view(service, inherited)).toMatchObject({ frente: 'Ledger', substitui: old });
+    expect(await view(service, own)).toMatchObject({ frente: 'Oráculo na VPS', substitui: inherited });
+    expect(await view(service, none)).not.toHaveProperty('frente');
+
+    // Same schema: it rides the `criada` text, after the marks the alfa/beta before it read.
+    const raw = JSON.parse(readFileSync(file, 'utf8')) as { schemaVersion: number; tasks: Record<string, { events: Array<{ text?: string }> }> };
+    expect(raw.schemaVersion).toBe(LEDGER_SCHEMA_VERSION);
+    const previousReplacesOf = (text: string | undefined) => /^substitui (\S+)$/.exec(/^⟦([^⟧\n]{1,240})⟧ ?/.exec(text ?? '')?.[1] ?? '')?.[1];
+    expect(previousReplacesOf(raw.tasks[inherited]!.events[0]!.text)).toBe(old);
+    const task = parseLedgerDoc(raw).tasks[inherited]!;
+    expect([frenteOf(task), requestedByOf(task), eventNote(task.events[0]!)]).toEqual(['Ledger', 'dono', undefined]);
+  });
+
+  it('a front cannot forge a mark, and a long one is refused', async () => {
+    const { service } = setup();
+    const forged = idOf(await make(service, lider, { frente: 'Ledger ⟧ ⟦substitui t-x' }));
+    expect(await view(service, forged)).not.toHaveProperty('substitui');
+    expect(parseLedgerToolCall('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', risco: 'alto', frente: 'a'.repeat(MAX_FRENTE_CHARS + 1) }).ok).toBe(false);
+  });
+
+  it('tarefa_frente: only the Líder (or the owner) marks a task already made, with who asked; the last mark wins', async () => {
+    const { service, file } = setup();
+    const id = idOf(await make(service, lider, {}));
+    expect(await runLedgerTool(service(), dev, call('tarefa_frente', { id, frente: 'Ledger' }))).toMatchObject({ ok: false, text: expect.stringContaining('Líder') });
+    expect((await runLedgerTool(service(), lider, call('tarefa_frente', { id, frente: 'Ledger', quemPediu: 'dono' }))).ok).toBe(true);
+    expect(await view(service, id)).toMatchObject({ frente: 'Ledger', quemPediu: 'dono', estado: 'aberta' });
+    // A second mark changes the front and keeps who asked.
+    expect((await runLedgerTool(service(), lider, call('tarefa_frente', { id, frente: 'Oráculo na VPS' }))).ok).toBe(true);
+    expect(await view(service, id)).toMatchObject({ frente: 'Oráculo na VPS', quemPediu: 'dono', estado: 'aberta' });
+    // It is no transfer, and it survives a rewrite by the parse.
+    expect(await view(service, id)).not.toHaveProperty('transferencias');
+    const task = parseLedgerDoc(JSON.parse(readFileSync(file, 'utf8'))).tasks[id]!;
+    expect([frenteOf(task), requestedByOf(task)]).toEqual(['Oráculo na VPS', 'dono']);
+    // The Líder único acts by the task id (the main resolves its board).
+    const leaderOfAll: LedgerCaller = { projectPath: 'C:/p', placeId: LEADER_OF_ALL, roleId: 'lider', boardPlaceIds: [] };
+    expect((await runLedgerTool(service(), leaderOfAll, call('tarefa_frente', { id, frente: 'Ledger' }))).ok).toBe(true);
+    // Who asked is a person here too, and the front is required.
+    expect(parseLedgerToolCall('tarefa_frente', { id, frente: 'Ledger', quemPediu: 'Dev' }).ok).toBe(false);
+    expect(parseLedgerToolCall('tarefa_frente', { id }).ok).toBe(false);
   });
 });
