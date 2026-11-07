@@ -50,7 +50,8 @@ export type LiderSendResult = { readonly ok: true } | { readonly ok: false; read
 /** `lider:carry` — the conversation `sessionId` of the folder `cwd`, from a place to another (`undefined` = this computer). */
 export interface LiderCarryPayload {
   readonly sessionId: string;
-  readonly cwd: string;
+  /** Absent = the home folder (as the PTY does). */
+  readonly cwd?: string;
   readonly from?: string;
   readonly to?: string;
 }
@@ -87,9 +88,7 @@ export function isValidLiderCarryPayload(value: unknown): value is LiderCarryPay
   return (
     typeof value.sessionId === 'string' &&
     /^[A-Za-z0-9-]{1,64}$/.test(value.sessionId) &&
-    typeof value.cwd === 'string' &&
-    value.cwd.length > 0 &&
-    value.cwd.length <= 4096 &&
+    (value.cwd === undefined || (typeof value.cwd === 'string' && value.cwd.length > 0 && value.cwd.length <= 4096)) &&
     optionalId(value.from) &&
     optionalId(value.to)
   );

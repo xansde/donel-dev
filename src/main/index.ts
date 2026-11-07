@@ -1813,8 +1813,9 @@ async function carryLeaderConversation(payload: LiderCarryPayload): Promise<Lide
     return place;
   };
   const sid = payload.sessionId;
-  const homeRelativeDir = remoteDirFor(payload.cwd, appConfig.projectRoots);
-  const localTranscript = resolveTranscriptPath(sid, payload.cwd, undefined);
+  const cwd = payload.cwd ?? homedir();
+  const homeRelativeDir = remoteDirFor(cwd, appConfig.projectRoots);
+  const localTranscript = resolveTranscriptPath(sid, cwd, undefined);
 
   if (payload.from !== undefined) {
     const from = placeOf(payload.from);
