@@ -80,6 +80,7 @@ describe('defaultAppConfig (puro)', () => {
       appUpdate: { installersDir: null },
       browserUploads: { folders: [] },
       slackAgentBots: { servers: [] },
+      homologacao: null,
       unknownFields: {},
     });
   });
@@ -256,6 +257,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       appUpdate: { installersDir: 'D:\\instaladores' },
       browserUploads: { folders: [] },
       slackAgentBots: { servers: ['theo-west-slack', 'theo-slack'] },
+      homologacao: { lugar: 'factory-vps', metricas: '/srv/factory/metricas.json', rigs: null, quadro: 'atlas' },
       unknownFields: {},
     };
     expect(sanitizeAppConfig(valid, baseDefaults())).toEqual(valid);
@@ -357,6 +359,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       appUpdate: { installersDir: null },
       browserUploads: { folders: [] },
       slackAgentBots: { servers: [] },
+      homologacao: null,
       unknownFields: {}, // nenhuma chave desconhecida no objeto de entrada
     });
   });
