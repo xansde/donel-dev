@@ -19,7 +19,6 @@ export interface Closing {
 // In doubt, "cancelada" (Revisor, PR #308): the first word is not proof. Each closing needs the shape the real
 // reasons have AND the evidence in the reason itself — otherwise "Concluída? Não: o dono desistiu" or "Coberta pelo
 // Fernando" would read as done or replaced.
-const TASK_ID = /\bt-[0-9a-f]+\b/i;
 /** A PR number, a link or a task id: what the done reasons point to. */
 const EVIDENCE = /#\d+|https?:\/\/|\bt-[0-9a-f]+\b/i;
 /** "concluída: <evidence>…" or "Concluída pelas t-…": the work was done; the cancel only closed it. */
