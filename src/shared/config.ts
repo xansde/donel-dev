@@ -22,6 +22,8 @@ import type { SessionRenewalPrefs } from './sessionRenewal';
 import type { TeamPrefs } from './teamPrefs';
 // Oráculo no centro (06/11) — `layout`, top-level key like `pet`.
 import type { LayoutPrefs } from './layoutPrefs';
+// Líder único na VPS (07/11) — `leader`, top-level key like `pet`.
+import type { LeaderPrefs } from './leaderPrefs';
 // CA-26/CA-27 (009-modo-dev-v3) — cor+ordem da aba v3 por sessão claude, ver
 // src/shared/tabAppearance.ts (lógica pura) e src/shared/tabChannels.ts
 // (canais `tabs:*`).
@@ -50,6 +52,8 @@ export const CONFIG_CHANNELS = {
   setProjectYolo: 'config:setProjectYolo',
   /** Oráculo no centro — `layout.oracleCenter` / `layout.centerView`; applies at once. */
   setLayoutPrefs: 'config:setLayoutPrefs',
+  /** Líder único na VPS — `leader.where`; the next message through the Jobu moves the Líder. */
+  setLeaderPrefs: 'config:setLeaderPrefs',
 } as const;
 
 /**
@@ -218,6 +222,8 @@ export interface AppConfigDto {
   readonly yolo: YoloPrefs;
   /** Oráculo no centro (`layoutPrefs.ts`). */
   readonly layout: LayoutPrefs;
+  /** Onde o Líder roda (`leaderPrefs.ts`). */
+  readonly leader: LeaderPrefs;
 }
 
 /** API tipada exposta pelo preload em `window.donel.config`. */
@@ -246,4 +252,6 @@ export interface DonelConfigApi {
   setProjectYolo(projectPath: string, enabled: boolean): Promise<AppConfigDto>;
   /** Oráculo no centro — partial update; an invalid field is ignored. */
   setLayoutPrefs(prefs: Partial<LayoutPrefs>): Promise<AppConfigDto>;
+  /** Onde o Líder roda — an invalid value keeps the current one. */
+  setLeaderPrefs(prefs: Partial<LeaderPrefs>): Promise<AppConfigDto>;
 }
