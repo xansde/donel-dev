@@ -59,7 +59,7 @@ export interface MobileLedgerPort {
   /** O que espera o dono: entregas de risco alto + a amostra do dia dos aceites do Revisor (D2). */
   pendentes(): EntregaCelular[];
   /** Grava a decisão do dono no ledger. Recusa (sem gravar) o que não está mais esperando o dono. */
-  decidir(input: DecisaoInput): DecisaoOutcome;
+  decidir(input: DecisaoInput): Promise<DecisaoOutcome>;
   /** Print ou vídeo (o arquivo) ou a saída de comando inteira, mascarada (bytes de texto). */
   prova(itemId: string, provaId: string): ProvaFonte | null;
   /** O dono escreve na carta: grava e manda na hora a quem fez (ou ao Líder); um reenvio não manda de novo. */
@@ -172,7 +172,7 @@ export function createLedgerMobilePort(getService: () => LedgerService | null, p
       const current = doc();
       return current ? ownerQueue(current, null).map((task) => entregaCelular(task, placeName)) : [];
     },
-    decidir(input) {
+    async decidir(input) {
       const service = getService();
       if (!service) return { ok: false, reason: 'recusada', message: 'O Oráculo Harrow não abriu neste app.' };
       let current;
@@ -193,10 +193,10 @@ export function createLedgerMobilePort(getService: () => LedgerService | null, p
       // 07/11 — "Decidir assim": his own option; the ledger says how it closes (the phone's `decisao` does not).
       const result =
         input.opcao === OWN_OPTION
-          ? service.apply({ kind: 'dono' }, { op: 'decidir-outra', id: task.id, text: texto, requestId: input.pedidoId })
+          ? await service.apply({ kind: 'dono' }, { op: 'decidir-outra', id: task.id, text: texto, requestId: input.pedidoId })
           : input.decisao === 'aceitar'
-          ? service.apply({ kind: 'dono' }, { op: 'aceitar', id: task.id, requestId: input.pedidoId, ...option, ...(texto ? { text: texto } : {}) })
-          : service.apply({ kind: 'dono' }, { op: 'rejeitar', id: task.id, reason: [input.motivo ?? '', texto].filter((part) => part.trim()).join('\n'), requestId: input.pedidoId, ...option });
+          ? await service.apply({ kind: 'dono' }, { op: 'aceitar', id: task.id, requestId: input.pedidoId, ...option, ...(texto ? { text: texto } : {}) })
+          : await service.apply({ kind: 'dono' }, { op: 'rejeitar', id: task.id, reason: [input.motivo ?? '', texto].filter((part) => part.trim()).join('\n'), requestId: input.pedidoId, ...option });
       if (!result.ok) return { ok: false, reason: 'recusada', message: result.reason };
       // Só na primeira gravação (o reenvio voltou acima): a decisão, com ou sem palavras, vai a quem fez.
       void getWriter?.()?.tellDecision(result.task, texto);

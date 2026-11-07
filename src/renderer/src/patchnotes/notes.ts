@@ -22,6 +22,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'Na carta do Oráculo, depois de escrever em "Escrever para…", o botão principal agora é "Decidir assim": o que você escreveu vira a sua decisão, a carta sai da pilha na hora e a sessão recebe o texto para seguir a partir dele. Se for só uma pergunta, use "Só perguntar (a carta fica)": o texto vai à sessão e a carta continua esperando você. Numa carta de Slack, decidir com as suas palavras nunca manda a mensagem; a sessão fica sabendo que você não aprovou aquele texto. Vale no app e no celular.',
       },
       {
+        title: 'O Oráculo pode morar na sua VPS',
+        text: 'Em Preferências, Celular, "Onde mora o Oráculo" leva o registro de tarefas para a sua VPS, inteiro e como está, e este PC passa a ler e gravar nele. A diferença aparece quando o PC desliga: o registro continua lá. Se a VPS sumir da rede, o PC mostra o último retrato só para ler e não grava nada até ela voltar, para nunca haver dois registros diferentes. "Trazer de volta para este PC" desfaz, também sem perder nada. As cartas no celular e as sessões da VPS sem o PC chegam nas próximas versões.',
+      },
+      {
         title: 'O navegador em tela cheia',
         text: 'O navegador ao lado da conversa agora pode ocupar a janela inteira: o botão ⤢ na barra dele, ou F11, mesmo com o cursor dentro da página. Para voltar ao lado da conversa, o mesmo botão, F11 de novo ou Esc. O Esc só tira da tela cheia quando você não está dentro da página nem digitando no endereço, para não atrapalhar o Esc do próprio site. A sessão continua trabalhando, e o agente segue controlando a mesma página. Fechar o navegador também sai da tela cheia.',
       },

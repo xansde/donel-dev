@@ -21,6 +21,9 @@ import { LEADER_ROLE_ID, ROLES_CHANNELS, type RoleSaveResult, type SessionRole }
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
+import { createRemoteOracleHost } from './ledger-remote-host';
+import { createSwitchableLedger, type SwitchableLedger } from './ledger-remote';
+import { LEDGER_REMOTE_CHANNELS, type LedgerRemoteResult, type LedgerRemoteState } from '../shared/ledger/remote';
 import { createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerSnapshot } from '../shared/ledger/channels';
 import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, OWN_OPTION, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
@@ -3048,11 +3051,7 @@ function registerLedgerMirror(): void {
 }
 
 function registerLedgerIpcHandlers(): void {
-  const service = createLedgerService({
-    filePath: ledgerFilePath(process.env, app.getPath('userData')),
-    io: configIoDeps,
-    proofFs: nodeLedgerProofFs,
-    onChange: (snapshot) => {
+  const onChange = (snapshot: LedgerSnapshot): void => {
       const window = getMainWindow();
       if (window && !window.isDestroyed()) window.webContents.send(LEDGER_CHANNELS.changed, snapshot);
       // The progress panel of the Jobu reads the ledger too (it only reads: `decide` stays the main window's).
@@ -3065,15 +3064,49 @@ function registerLedgerIpcHandlers(): void {
       ledgerMirrorService?.changed(snapshot.doc);
       // Hill climbing: a proposal card the owner decided starts (or ends) its mission.
       hillClimbService?.syncLedger(snapshot.doc);
-    },
+  };
+  const ledgerFile = ledgerFilePath(process.env, app.getPath('userData'));
+  const localLedger = (): LedgerService => createLedgerService({ filePath: ledgerFile, io: configIoDeps, proofFs: nodeLedgerProofFs, onChange });
+  // Oráculo na VPS (docs/planos/oraculo-na-vps.md): the ledger may live on a remote place; the app holds a
+  // switchable service, so taking it there (or back) never restarts the app.
+  let switchable: SwitchableLedger | undefined;
+  const remoteHost = createRemoteOracleHost({
+    userDataDir: app.getPath('userData'),
+    ledgerFile,
+    io: configIoDeps,
+    proofFs: nodeLedgerProofFs,
+    remotes: () => appConfig.accounts.remotes,
+    runScript: (sshTarget, script, timeoutMs) => runRemoteScript(sshTarget, script, timeoutMs),
+    localService: localLedger,
+    setService: (next) => switchable?.set(next),
+    freeze: (reason) => switchable?.freeze(reason) ?? Promise.resolve(),
+    onChange,
   });
+  const service = createSwitchableLedger(remoteHost.boot());
+  switchable = service;
   ledgerService = service;
+  app.on('will-quit', () => remoteHost.dispose());
+  const remoteState = (event: Electron.IpcMainInvokeEvent): void => {
+    if (getMainWindow()?.webContents.id !== event.sender.id) throw new Error('forbidden');
+  };
+  ipcMain.handle(LEDGER_REMOTE_CHANNELS.getState, (event): LedgerRemoteState => {
+    remoteState(event);
+    return remoteHost.state();
+  });
+  ipcMain.handle(LEDGER_REMOTE_CHANNELS.move, (event, lugar: unknown): Promise<LedgerRemoteResult> => {
+    remoteState(event);
+    return typeof lugar === 'string' ? remoteHost.move(lugar) : Promise.resolve({ ok: false, reason: 'Escolha o lugar.', state: remoteHost.state() });
+  });
+  ipcMain.handle(LEDGER_REMOTE_CHANNELS.back, (event): Promise<LedgerRemoteResult> => {
+    remoteState(event);
+    return remoteHost.back();
+  });
   // Cartas forma A — the card shows the proofs (the HTML prototype, a video) by `donel-prova:`.
   registerProofProtocol(protocol, ledgerProofsDir(ledgerFilePath(process.env, app.getPath('userData'))));
   const fromMain = (sender: Electron.WebContents): boolean => getMainWindow()?.webContents.id === sender.id;
   const cardDiagnostics = createDiagnosticsLog(app.getPath('userData'));
   ipcMain.handle(LEDGER_CHANNELS.load, (): LedgerSnapshot => service.load());
-  ipcMain.handle(LEDGER_CHANNELS.decide, (event, raw: unknown): LedgerApplyResult => {
+  ipcMain.handle(LEDGER_CHANNELS.decide, async (event, raw: unknown): Promise<LedgerApplyResult> => {
     if (!fromMain(event.sender)) return { ok: false, reason: 'Só a janela do app decide.' };
     const decision = raw as Partial<LedgerOwnerDecision> | null;
     if (!decision || typeof decision.id !== 'string') return { ok: false, reason: 'Pedido inválido.' };
@@ -3084,17 +3117,17 @@ function registerLedgerIpcHandlers(): void {
     // 07/11 — "Decidir assim": the owner's own option (his words); the ledger says how it closes.
     const result =
       decision.option === OWN_OPTION
-        ? service.apply({ kind: 'dono' }, { op: 'decidir-outra', id: decision.id, text })
+        ? await service.apply({ kind: 'dono' }, { op: 'decidir-outra', id: decision.id, text })
         : decision.accept === true
-        ? service.apply({ kind: 'dono' }, { op: 'aceitar', id: decision.id, ...option, ...(text ? { text } : {}) })
-        : service.apply({ kind: 'dono' }, { op: 'rejeitar', id: decision.id, reason: [typeof reason === 'string' ? reason.trim() : '', text].filter(Boolean).join('\n'), ...option });
+        ? await service.apply({ kind: 'dono' }, { op: 'aceitar', id: decision.id, ...option, ...(text ? { text } : {}) })
+        : await service.apply({ kind: 'dono' }, { op: 'rejeitar', id: decision.id, reason: [typeof reason === 'string' ? reason.trim() : '', text].filter(Boolean).join('\n'), ...option });
     // Every decision of the owner, by a button or with words, tells the session that owns it (closed: the Líder).
     if (result.ok) void cardWriter?.tellDecision(result.task, text);
     return result;
   });
   // 06/11 (t-e753b554) — a place gone for good (its tab closed and did not come back, or it never started): the
   // renderer names who takes the work (reach.ts), the main moves the live tasks with the record.
-  ipcMain.handle(LEDGER_CHANNELS.passOn, (event, raw: unknown): LedgerPassedOn[] => {
+  ipcMain.handle(LEDGER_CHANNELS.passOn, async (event, raw: unknown): Promise<LedgerPassedOn[]> => {
     if (!fromMain(event.sender) || !Array.isArray(raw)) return [];
     const requests = raw.filter(
       (item): item is LedgerPassOnRequest =>

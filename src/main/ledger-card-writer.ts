@@ -120,7 +120,7 @@ export function createCardWriter(deps: CardWriterDeps): CardWriter {
     if (why) return { ok: false, reason: `Não enviei: ${why}` };
     const text = input.text.trim();
     const deliveredTo = await send(ownerMessage(task, text, deps.placeName));
-    const result = service.apply({ kind: 'dono' }, { op: 'comentar', id: task.id, text, ...(input.requestId ? { requestId: input.requestId } : {}), deliveredTo });
+    const result = await service.apply({ kind: 'dono' }, { op: 'comentar', id: task.id, text, ...(input.requestId ? { requestId: input.requestId } : {}), deliveredTo });
     if (!result.ok) return { ok: false, reason: deliveredTo ? `Enviado, mas não gravou na carta: ${result.reason}` : `Não gravou: ${result.reason}` };
     const recorded = input.requestId ? commentOfRequest(result.task, input.requestId) : result.task.events.at(-1);
     return { ok: true, deliveredTo, at: recorded?.at ?? Date.now() };
