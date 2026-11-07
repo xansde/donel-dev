@@ -27,6 +27,15 @@ export interface SessionAxesInput {
   readonly turnFailure?: string;
   /** For a session whose process is gone: its conversation is in the project folder. `undefined` = not read. */
   readonly transcriptFound?: boolean;
+  /**
+   * Epoch ms of the last hook heard from the session, and the time of the reading. With both, a `working` that has
+   * heard nothing for longer than `STALE_SIGNAL_MS` and has no call running reads "desconhecido": the `Stop` may
+   * have been lost, and an old sample no longer decides (idea from OpenRig 80e568e9).
+   */
+  readonly lastEventAt?: number;
+  readonly now?: number;
+  /** Tool calls still running (any origin); a long build keeps the session "trabalhando". Absent = none. */
+  readonly openCalls?: number;
 }
 
 export interface SessionAxes {
@@ -35,6 +44,14 @@ export interface SessionAxes {
   readonly resume: ResumeAxis;
   /** "Precisa de você": the reasons, in a stable order; `needs.length` is the count. */
   readonly needs: readonly NeedReason[];
+}
+
+/** A `working` with no hook for longer than this (and no call running) is no longer trusted. */
+export const STALE_SIGNAL_MS = 30 * 60_000;
+
+function signalIsStale(input: SessionAxesInput): boolean {
+  if (input.lastEventAt === undefined || input.now === undefined) return false;
+  return (input.openCalls ?? 0) === 0 && input.now - input.lastEventAt > STALE_SIGNAL_MS;
 }
 
 const REASON_ORDER: readonly NeedReason[] = ['permissão', 'pergunta', 'plano', 'limite de uso', 'erro'];
@@ -48,7 +65,7 @@ export function deriveSessionAxes(input: SessionAxesInput): SessionAxes {
   let activity: ActivityAxis;
   if (process === 'fechada') activity = 'parada';
   else if (input.state === undefined) activity = 'desconhecido';
-  else if (input.state === 'working') activity = input.unconfirmed ? 'desconhecido' : 'trabalhando';
+  else if (input.state === 'working') activity = input.unconfirmed || signalIsStale(input) ? 'desconhecido' : 'trabalhando';
   else activity = 'parada';
 
   const resume: ResumeAxis =
