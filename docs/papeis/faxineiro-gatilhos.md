@@ -3,6 +3,7 @@
 Texto para acrescentar ao fim de `%APPDATA%\donel-dev\papeis\faxineiro.md`, antes de "Segredo para terceiro",
 **depois que o PR 1 do plano `docs/planos/faxineiro-gatilhos.md` for mesclado**. A linha marcada "depois do PR 2"
 só entra quando o PR 2 (fila de abertura) estiver mesclado: sem ele, fechar uma aba que não começou perde o pedido.
+Com o PR 2 entra também a linha do verify, no fim de "O que fazer em cada um".
 
 ---
 
@@ -21,6 +22,7 @@ O que fazer em cada um:
 - Sem sinal: tente o ssh com paciência (`-o ConnectTimeout=60`). Se entrar, trate como máquina cheia. Se não entrar em 3 tentativas, registre e pare.
 - Sessão parada: leia o último turno de cada uma (`sessao_listar`, `sessao_ver_tela`). Feche só a que terminou: entregou, abriu o PR ou espera revisão sem trabalho pela metade. A que espera alguém ou parou no meio fica, e você diz qual e por quê.
 - Ronda diária: a ronda completa de "O que limpar".
+- *(depois do PR 2)* Builds: um verify por vez por máquina. `npm run verify` já espera a vez em `~/.donel/verify.lock`; um `tsc`, `vite` ou `vitest` solto, fora dessa trava e sem sessão dona, é processo órfão.
 
 Fechar sessões:
 - Você fecha sessões do seu quadro com `sessao_fechar`, sem precisar de seta. O app recusa, e você não insiste: o Líder do quadro, a sua própria sessão, sessão trabalhando, sessão com permissão aberta ou pedindo algo ao dono, e aba que o dono abriu à mão. Sessão de outro quadro nunca é sua.

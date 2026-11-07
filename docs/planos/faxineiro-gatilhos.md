@@ -78,8 +78,11 @@ que papel editado funciona). A seção nova "Gatilhos" vai para os dois: no cód
 1. **Cadeira + gatilhos + fechar com guarda + registro**: swap na leitura da VPS; avaliador puro com testes; acordar
    pelo bridge; ramo do Faxineiro em `reach.ts` e as recusas no `sessao_fechar`; log; papel de fábrica; nota em
    `patchnotes/notes.ts`.
-2. **Fila de abertura**: fila no `sessao_abrir`, marca "na fila" no lugar, troca de VPS quando o papel deixa, e o
-   "não começou volta à fila".
+2. **Fila de abertura**: fila no `sessao_abrir` (o lugar nasce no quadro e a sessão abre quando a máquina passar 2
+   leituras seguidas abaixo dos limites, uma por minuto por máquina), troca de VPS quando o papel tem `lugar: qualquer`,
+   o "não começou volta à fila" e **um verify por vez por máquina** (pedido do Líder na ronda de 07/11):
+   `npm run verify` espera a vez com `flock ~/.donel/verify.lock`, o mesmo arquivo que as sessões já usam à mão, sem
+   pedir a trava de novo quando quem chamou já a segura. Sem `flock` (Windows, macOS), roda direto.
 
 Testes (regra de testes enxutos: só o que fecha sessão, abre sessão sozinho ou perde pedido): avaliador dos gatilhos
 e freios; a regra de quem o Faxineiro pode fechar; a fila não perde nem duplica pedido.
