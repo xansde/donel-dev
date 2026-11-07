@@ -201,8 +201,16 @@ export function freeTextSlackPost(text: string): string | null {
   if (/canal-produto/i.test(text)) return 'usa o canal-produto';
   if (/\bchat[._](postMessage|post_message|update|scheduleMessage|schedule_message|postEphemeral|post_ephemeral|meMessage|me_message)\b/i.test(text)) return 'chama um envio do Slack';
   if (/\bfiles[._](upload|upload_v2|uploadV2|completeUploadExternal|complete_upload_external|getUploadURLExternal|get_upload_url_external|share)/i.test(text)) return 'manda arquivo ao Slack';
-  if (/SLACK_[A-Z0-9_]*(SEND|POST|REPL|SCHEDULE|UPDATE|EDIT|UPLOAD|FILE|SHARE)/.test(text)) return 'chama uma ação de envio do Slack do Composio';
+  for (const [slug] of text.matchAll(/SLACK_[A-Z0-9_]+/g)) if (isPostingSlug(slug)) return 'chama uma ação de envio do Slack do Composio';
   return null;
+}
+
+/**
+ * A Composio Slack slug named in free text that sends or uploads: the same test as a structured call, plus any
+ * slug with a send verb as a word (SHARE_A_REMOTE_FILE). A slug that only names a file (RETRIEVE_..._FILE) reads.
+ */
+function isPostingSlug(slug: string): boolean {
+  return isPostingAction(slug) || /(^|_)(SENDS?|POSTS?|REPL(Y|IES)|SCHEDULES?|UPLOADS?|SHARES?)(_|$)/.test(slug);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
