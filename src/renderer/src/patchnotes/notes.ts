@@ -22,6 +22,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'Quando um agente precisa enviar por uma página um arquivo de uma pasta nova, quem libera agora é o Líder do quadro dele (ou o Líder único, em qualquer quadro), sem pedir a você. Fica registrado quem liberou, quando e para qual quadro, e você vê e remove em Regras, no navegador. Os anexos do chat saem sem pedido nenhum. O que continua sempre recusado são os arquivos de segredo: chaves, tokens, senhas, a configuração e o cofre de contas do Donel, os cookies do navegador e as pastas de chaves do sistema. A raiz do disco e a sua pasta de usuário inteira também não podem ser liberadas.',
       },
       {
+        title: 'O navegador em tela cheia',
+        text: 'O navegador ao lado da conversa agora pode ocupar a janela inteira: o botão ⤢ na barra dele, ou F11, mesmo com o cursor dentro da página. Para voltar ao lado da conversa, o mesmo botão, F11 de novo ou Esc. O Esc só tira da tela cheia quando você não está dentro da página nem digitando no endereço, para não atrapalhar o Esc do próprio site. A sessão continua trabalhando, e o agente segue controlando a mesma página. Fechar o navegador também sai da tela cheia.',
+      },
+      {
         title: 'Os números da factory no Mindscape',
         text: 'No quadro da homologação, na vista Cadeiras, o botão "Números da factory" abre um painel com os números que a factory grava na VPS dela: um cartão por número, com o valor exatamente como ela escreveu, a pergunta que ele responde e de onde veio (medido, estimado ou sem fonte). Os números que têm de ficar em zero ou subir levam a marca trava, e os que não têm meta dizem "só mostrado". No topo aparece a hora em que foram gerados ("atualizado às" ou, depois de duas horas, "parado desde"); se a VPS não responde ou o arquivo some, "sem sinal desde", mantendo a última leitura. O painel só lê: nada nele muda a factory. Liga com a chave "homologacao" na configuração; sem ela, nada aparece e nada é lido.',
       },

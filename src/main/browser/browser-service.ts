@@ -181,6 +181,7 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
     getWindow: deps.getWindow,
     downloadsDir: () => join(deps.userDataDir, 'browser-downloads'),
     onState: (state) => send(BROWSER_CHANNELS.state, state),
+    onFullscreenKey: (ptyId) => send(BROWSER_CHANNELS.fullscreenKey, { ptyId }),
     onNavigated: (ptyId, url) => {
       if (agentBusy.has(ptyId) && url !== 'about:blank') log(ptyId, agentOpenedLine(url.length > MAX_LOG_URL ? `${url.slice(0, MAX_LOG_URL)}…` : url));
     },
