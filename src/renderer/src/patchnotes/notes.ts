@@ -22,6 +22,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'O painel Progresso, no balão do Líder, agora mostra só o que você pediu, agrupado por frente (por exemplo "Ledger" ou "Oráculo e Líder na VPS"), e não mais por quadro. Cada pedido aparece com um título curto e um estado claro: esperando você, travado, tocando (com quem está) ou parado (ninguém assumiu, ninguém deu notícia em um dia, ou a entrega espera conferência há 12 horas). Cada frente tem a sua barra e recolhe num clique. O que terminou sai da lista: fica só "N concluídas hoje", recolhido no fim. A frente é o Líder que diz, ao registrar o pedido; o que ainda não tem frente aparece em "Sem frente".',
       },
       {
+        title: 'Com o Oráculo na VPS, o celular fala com ela',
+        text: 'Quando o Oráculo mora na VPS, o app do celular passa a abrir no endereço dela: as cartas chegam com aviso e você responde com o PC desligado. Pareie o celular de novo uma vez, em Preferências, Celular (o endereço mudou). O que você escreve numa carta, ou pede pelo botão Pedir, espera na VPS e chega à sessão assim que o PC liga, uma vez só. Pedido por áudio continua precisando do PC ligado.',
+      },
+      {
         title: 'Sessão nova espera vaga quando a máquina está cheia',
         text: 'Quando uma VPS (ou o PC) está com pouca RAM, swap alto, carga alta ou sem sinal, uma sessão que outra sessão pede para abrir lá entra numa fila em vez de afundar a máquina. O lugar já aparece no quadro, e a sessão abre sozinha, com o pedido original, quando a máquina passa duas leituras seguidas abaixo dos limites, uma por minuto em cada máquina. Um papel marcado com "lugar: qualquer" vai para a outra VPS em vez de esperar. Uma aba que foi aberta mas nunca começou, se o Faxineiro a fechar com a máquina cheia, volta para a fila sem perder o pedido.',
       },
