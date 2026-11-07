@@ -3068,7 +3068,11 @@ function placeStatesOf(places: unknown): Map<string, string> {
   return states;
 }
 
-/** The Líder único's list of every board: the places of each board with a task not closed (orphans need them). */
+/**
+ * The places of every board with a task not closed (orphans need them), for `tarefa_listar` with `todos`. The same
+ * internal call for the Líder único and for any session (t-04099af0: each used to see only what it reaches, so the
+ * counts differed). A board that did not answer stays out: its tasks count apart, as `desconhecidas`.
+ */
 async function everyBoardPlaceStates(boardBridge: BoardBridge, ptyId: string): Promise<Map<string, Map<string, string>>> {
   const states = new Map<string, Map<string, string>>();
   let tasks: LedgerTask[] = [];
@@ -3077,17 +3081,25 @@ async function everyBoardPlaceStates(boardBridge: BoardBridge, ptyId: string): P
   } catch {
     return states;
   }
-  for (const projectPath of new Set(tasks.filter((task) => !isClosed(task)).map((task) => task.projectPath))) {
-    const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar', quadro: projectPath }).catch(() => null);
-    if (list?.kind !== 'text') continue; // a board that did not answer stays unknown: none of its tasks is orphan
-    try {
-      const board = JSON.parse(list.text) as { lugares?: unknown };
-      if (Array.isArray(board.lugares)) states.set(projectPath, placeStatesOf(board.lugares));
-    } catch {
-      // unknown board
-    }
+  const pastas = [...new Set(tasks.filter((task) => !isClosed(task)).map((task) => task.projectPath))];
+  if (!pastas.length) return states;
+  const answer = await boardBridge.execute(ptyId, { tool: 'estados_dos_lugares', pastas }).catch(() => null);
+  if (answer?.kind !== 'text') return states;
+  try {
+    const boards = JSON.parse(answer.text) as Record<string, unknown>;
+    for (const pasta of pastas) if (Array.isArray(boards[pasta])) states.set(pasta, placeStatesOf(boards[pasta]));
+  } catch {
+    // every board unknown
   }
   return states;
+}
+
+/** `tarefa_listar` with `todos`: the caller's board answer, plus every other board's, from the same call for all. */
+async function withEveryBoard(boardBridge: BoardBridge, ptyId: string, caller: LedgerCaller, call: LedgerToolCall): Promise<LedgerCaller> {
+  if (call.tool !== 'tarefa_listar' || !call.todos) return caller;
+  const states = await everyBoardPlaceStates(boardBridge, ptyId);
+  for (const [pasta, own] of caller.placeStates ?? []) if (!states.has(pasta)) states.set(pasta, new Map(own));
+  return { ...caller, placeStates: states };
 }
 
 async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<{ caller: LedgerCaller; call: LedgerToolCall } | string> {
@@ -3097,7 +3109,7 @@ async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, cal
     if (call.tool === 'tarefa_criar') return 'Você é o Líder único e não tem quadro: diga qual em "quadro" (nome ou pasta).';
     // No board: the list is of every board; the other tools act by the task id.
     if (call.tool !== 'tarefa_listar') return { caller: { ...base, projectPath: '', boardPlaceIds: [] }, call };
-    return { caller: { ...base, projectPath: '', boardPlaceIds: [], placeStates: await everyBoardPlaceStates(boardBridge, ptyId) }, call: { ...call, todos: true } };
+    return { caller: await withEveryBoard(boardBridge, ptyId, { ...base, projectPath: '', boardPlaceIds: [] }, { ...call, todos: true }), call: { ...call, todos: true } };
   }
   const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar', quadro });
   if (list.kind !== 'text') return list.kind === 'error' ? list.text : 'Não consegui ler o quadro.';
@@ -3108,7 +3120,7 @@ async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, cal
     return `O Líder único não faz a tarefa: diga em "dono" um lugar que você alcança neste quadro (${reached.join(', ') || 'nenhum'}).`;
   const saved = savedBoard(board.pasta);
   const placeStates = new Map([[board.pasta, placeStatesOf(board.lugares)]]);
-  return { caller: { ...base, projectPath: board.pasta, boardPlaceIds: reached, placeStates, ...(saved ? { board: saved } : {}) }, call };
+  return { caller: await withEveryBoard(boardBridge, ptyId, { ...base, projectPath: board.pasta, boardPlaceIds: reached, placeStates, ...(saved ? { board: saved } : {}) }, call), call };
 }
 
 /** The board and place of a session, for the record of its agent's bot post (set once the board bridge is up). */
@@ -3127,17 +3139,15 @@ async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: Led
   const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar' });
   const places = list.kind === 'text' ? (JSON.parse(list.text) as { id?: unknown }[]) : [];
   const board = savedBoard(who.pasta);
-  return {
-    caller: {
-      projectPath: who.pasta,
-      placeId: who.lugar,
-      ...(typeof who.papel === 'string' ? { roleId: who.papel } : {}),
-      boardPlaceIds: places.map((place) => place.id).filter((id): id is string => typeof id === 'string'),
-      ...(list.kind === 'text' ? { placeStates: new Map([[who.pasta, placeStatesOf(places)]]) } : {}),
-      ...(board ? { board } : {}),
-    },
-    call,
+  const caller: LedgerCaller = {
+    projectPath: who.pasta,
+    placeId: who.lugar,
+    ...(typeof who.papel === 'string' ? { roleId: who.papel } : {}),
+    boardPlaceIds: places.map((place) => place.id).filter((id): id is string => typeof id === 'string'),
+    ...(list.kind === 'text' ? { placeStates: new Map([[who.pasta, placeStatesOf(places)]]) } : {}),
+    ...(board ? { board } : {}),
   };
+  return { caller: await withEveryBoard(boardBridge, ptyId, caller, call), call };
 }
 
 async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<BrowserToolOutcome> {

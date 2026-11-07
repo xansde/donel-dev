@@ -267,6 +267,7 @@ export function lastDecision(task: LedgerTask): LedgerEvent | undefined {
 //   transfer  → a `criada` event  "⟦transferida de <from> para <to>⟧ <reason>"  (+ `ownerPlaceId` changed)
 //   cancel    → a `rejeitada` event "⟦cancelada⟧ <reason>"                      (state `rejeitada`: v4 bars it too)
 //   doer      → the `entregue` event "⟦feito por <placeId>⟧ <note>"
+//   replaces  → the new task's `criada` event "⟦substitui <id>⟧" (the old one is cancelled "substituída pela <id>")
 // A text the sessions or the owner write never starts with the mark (`startsWithMark`), so a mark is never forged.
 
 const MARK_OPEN = '⟦';
@@ -298,6 +299,13 @@ export interface LedgerTransfer {
   readonly from: string;
   readonly to: string;
   readonly reason: string;
+}
+
+/** The task this one replaced (`tarefa_criar` with `substitui`), if any. */
+export function replacesOf(task: LedgerTask): string | undefined {
+  const first = task.events[0];
+  const mark = first?.kind === 'criada' ? markOf(first.text) : null;
+  return mark ? /^substitui (\S+)$/.exec(mark.tag)?.[1] : undefined;
 }
 
 /** The transfers of a task, oldest first. */
@@ -343,6 +351,14 @@ export function isLeaderRole(roleId: string | undefined): boolean {
   return roleId === 'lider';
 }
 
+/**
+ * 06/11 — the roles that register work for others (Líder, Líder único, Curador, Pesquisa). A task they own themselves
+ * is orphaned the moment they close (t-620b43fa: 11 orphans of a Pesquisa place), so they always name the owner place.
+ */
+export function registersForOthers(roleId: string | undefined): boolean {
+  return isLeaderRole(roleId) || roleId === 'curador' || roleId === 'pesquisa';
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Operations — the ONE place the rules live. Pure: the caller gives the clock and the new id.
 
@@ -356,6 +372,8 @@ export type LedgerOp =
       readonly due: string;
       readonly ownerPlaceId: string;
       readonly risk: LedgerRisk;
+      /** 06/11 — the task this one replaces: cancelled in the same write ("substituída pela <id>"), with the cancel rule. */
+      readonly replaces?: string;
     }
   | { readonly op: 'assumir'; readonly id: string }
   /** `doneBy` (06/11): the place that really did the work, when it is not the owner place that delivers. */
@@ -430,6 +448,11 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
     if (!op.doneWhen.trim()) return fail('"criterio" é obrigatório: quando a tarefa está pronta.');
     if (!isDueDate(op.due)) return fail('"prazo" tem de ser uma data AAAA-MM-DD.');
     if (!op.ownerPlaceId.trim()) return fail('"dono" é obrigatório: o lugar que faz o trabalho.');
+    if (actor.kind === 'lugar' && op.ownerPlaceId === actor.placeId && registersForOthers(actor.roleId))
+      return fail('Quem é Líder, Curador ou Pesquisa registra o trabalho para outro lugar: diga em "dono" o lugar que faz o trabalho (sessao_listar), nunca o seu.');
+    const replaced = op.replaces?.trim() ? doc.tasks[op.replaces.trim()] : undefined;
+    if (op.replaces?.trim() && !replaced) return fail(`Não criei: "substitui" aponta para "${op.replaces.trim()}", que não existe (veja tarefa_listar).`);
+    if (replaced && replaced.projectPath !== op.projectPath) return fail(`Não criei: a ${replaced.id} é de outro quadro; uma tarefa só substitui outra do mesmo quadro.`);
     const title = op.title?.trim();
     if (title) {
       const why = textRefusal('titulo', title, MAX_TITLE_CHARS);
@@ -446,9 +469,13 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       risk: op.risk,
       state: 'aberta',
       createdAt: ctx.now,
-      events: [{ kind: 'criada', at: ctx.now, by: actor }],
+      events: [{ kind: 'criada', at: ctx.now, by: actor, ...(replaced ? { text: withMark(`substitui ${replaced.id}`, '') } : {}) }],
     };
-    return { ok: true, doc: withTask(doc, task), task };
+    if (!replaced) return { ok: true, doc: withTask(doc, task), task };
+    // One write: the new task and the old one cancelled, or neither.
+    const cancelled = applyLedgerOp(withTask(doc, task), actor, { op: 'cancelar', id: replaced.id, reason: `substituída pela ${task.id}` }, ctx);
+    if (!cancelled.ok) return fail(`Não criei: ela substitui a ${replaced.id}, que não pude cancelar. ${cancelled.reason}`);
+    return { ok: true, doc: cancelled.doc, task };
   }
   if (op.op === 'carta-slack') return createSlackLetter(doc, actor, op, ctx);
   if (op.op === 'slack-bot') return createAgentBotRecord(doc, actor, op, ctx);

@@ -41,6 +41,8 @@ export type LedgerToolCall =
       readonly titulo?: string;
       /** Pedir pelo Oráculo: o pedido do dono de onde a tarefa nasceu (`pd-…`). */
       readonly pedidoDoDono?: string;
+      /** 06/11 — a tarefa que esta substitui: cancelada na mesma hora. */
+      readonly substitui?: string;
     }
   | { readonly tool: 'tarefa_assumir'; readonly id: string }
   | { readonly tool: 'tarefa_entregar'; readonly id: string; readonly provas: readonly ProofInput[]; readonly nota?: string; readonly paraODono?: LedgerForOwner; readonly feitoPor?: string }
@@ -92,7 +94,8 @@ export const LEDGER_TOOLS = [
         pedido: { type: 'string', description: 'A frase LITERAL de quem pediu, sem resumir.' },
         criterio: { type: 'string', description: 'Pronto quando… (o que a prova tem de mostrar).' },
         prazo: { type: 'string', description: 'Data AAAA-MM-DD.' },
-        dono: { type: 'string', description: 'Id do lugar que faz o trabalho (sessao_listar); padrão: o seu.' },
+        dono: { type: 'string', description: 'Id do lugar que faz o trabalho (sessao_listar); padrão: o seu. Líder, Curador e Pesquisa dizem sempre o lugar que faz o trabalho, nunca o próprio.' },
+        substitui: { type: 'string', description: 'Id da tarefa que esta substitui (tarefa_listar): ela é cancelada na hora, com o motivo "substituída pela" nova. Vale a regra de quem cancela; sem ela, nada é criado.' },
         risco: { type: 'string', enum: ['baixo', 'alto'] },
         quadro: BOARD,
         pedidoDoDono: { type: 'string', description: 'Quando a tarefa nasce de um "◆ Pedido do dono pelo Oráculo", o id que veio nele (pd-…): o dono vê no celular que o pedido virou esta tarefa.' },
@@ -407,13 +410,14 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       const prazo = text(args.prazo, 'prazo', 40, true);
       const dono = text(args.dono, 'dono', 120, false);
       const titulo = text(args.titulo, 'titulo', MAX_TITLE_CHARS, false);
-      for (const value of [pedido, criterio, prazo, dono, titulo]) if (typeof value === 'object') return fail(value.error);
+      const substitui = text(args.substitui, 'substitui', 120, false);
+      for (const value of [pedido, criterio, prazo, dono, titulo, substitui]) if (typeof value === 'object') return fail(value.error);
       if (args.risco !== 'baixo' && args.risco !== 'alto') return fail('"risco" tem de ser baixo ou alto.');
       if (args.pedidoDoDono !== undefined && (typeof args.pedidoDoDono !== 'string' || !/^pd-[0-9a-f]{12}$/.test(args.pedidoDoDono))) return fail('"pedidoDoDono" é o id que veio no pedido do dono (pd-…).');
       const fromOwner = typeof args.pedidoDoDono === 'string' ? { pedidoDoDono: args.pedidoDoDono } : {};
       return {
         ok: true,
-        call: { tool: 'tarefa_criar', pedido: pedido as string, criterio: criterio as string, prazo: (prazo as string).trim(), ...(typeof dono === 'string' && dono.trim() ? { dono: dono.trim() } : {}), risco: args.risco, ...quadro, ...(typeof titulo === 'string' && titulo.trim() ? { titulo: titulo.trim() } : {}), ...fromOwner },
+        call: { tool: 'tarefa_criar', pedido: pedido as string, criterio: criterio as string, prazo: (prazo as string).trim(), ...(typeof dono === 'string' && dono.trim() ? { dono: dono.trim() } : {}), risco: args.risco, ...quadro, ...(typeof titulo === 'string' && titulo.trim() ? { titulo: titulo.trim() } : {}), ...(typeof substitui === 'string' && substitui.trim() ? { substitui: substitui.trim() } : {}), ...fromOwner },
       };
     }
     case 'tarefa_assumir':

@@ -6,6 +6,7 @@ import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, ledgerProofsDir, nodeLedgerProofFs, runLedgerTool, type LedgerCaller, type LedgerProofFs } from '../src/main/ledger-store';
 import type { MindscapeBoard } from '../src/shared/mindscape/model';
 import { findCode, LEDGER_SCHEMA_VERSION, parseLedgerDoc } from '../src/shared/ledger/contract';
+import { LEADER_OF_ALL } from '../src/shared/mindscape/leader';
 import * as v4 from './fixtures/ledger/contract-v4';
 import { createCardWriter, decisionMessage, type OwnerMessage } from '../src/main/ledger-card-writer';
 import { createLedgerMobilePort } from '../src/main/celular/ledger-port';
@@ -139,7 +140,7 @@ describe('ledger com prova', () => {
     writeFileSync(file, JSON.stringify(v2));
     const task = { ...v2.tasks['t-0000aaaa'], id: 't-0000aaaa' };
     expect(service().load()).toEqual({ doc: { ...v2, schemaVersion: LEDGER_SCHEMA_VERSION, tasks: { 't-0000aaaa': task } }, readOnly: false });
-    await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', risco: 'alto', titulo: 'Outra tarefa' }));
+    await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco: 'alto', titulo: 'Outra tarefa' }));
     const written = JSON.parse(readFileSync(file, 'utf8')) as { schemaVersion: number; tasks: Record<string, unknown> };
     expect(written.schemaVersion).toBe(LEDGER_SCHEMA_VERSION);
     expect(written.tasks['t-0000aaaa']).toEqual(task);
@@ -368,6 +369,8 @@ describe('ledger com prova', () => {
     const letter = (JSON.parse((await runLedgerTool(service(), dev, call('carta_slack', { destino: 'C0123', texto: 'Oi', motivo: 'avisar' }))).text) as { id: string }).id;
     service().apply({ kind: 'dono' }, { op: 'aceitar', id: letter });
     await runLedgerTool(service(), dev, call('tarefa_cancelar', { id: letter, motivo: 'substituída' }));
+    const replaced = await create('place:dev');
+    const replacer = (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x2', criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco: 'alto', substitui: replaced }))).text) as { id: string }).id;
     const written = readFileSync(file, 'utf8');
     expect(JSON.parse(written).schemaVersion).toBe(4);
 
@@ -378,13 +381,15 @@ describe('ledger com prova', () => {
     const next = v4.applyLedgerOp(asV4, { kind: 'dono' }, { op: 'criar', projectPath: 'C:/p', request: 'z', doneWhen: 'z', due: '2026-11-07', ownerPlaceId: 'place:dev', risk: 'alto' }, { now: 9e12, newId: () => 't-0000ffff' });
     if (!next.ok) throw new Error(next.reason);
     writeFileSync(file, JSON.stringify(next.doc, null, 2));
-    for (const id of [moved, done, letter]) expect(service().load().doc.tasks[id]).toEqual(asV4.tasks[id]);
+    for (const id of [moved, done, letter, replaced, replacer]) expect(service().load().doc.tasks[id]).toEqual(asV4.tasks[id]);
 
     // And the current code still reads every fact back.
     const view = async (id: string) => JSON.parse((await runLedgerTool(service(), lider, call('tarefa_ver', { id }))).text) as Record<string, any>;
     expect((await view(moved)).transferencias).toEqual([expect.objectContaining({ de: 'place:dev', para: 'place:revisor', motivo: 'o Dev fechou' })]);
     expect((await view(done)).entrega).toMatchObject({ por: 'place:dev', feitoPor: 'place:revisor', nota: 'o PR' });
     expect(await view(letter)).toMatchObject({ estado: 'cancelada' });
+    expect(await view(replaced)).toMatchObject({ estado: 'cancelada', decisao: { motivo: `substituída pela ${replacer}` } });
+    expect(await view(replacer)).toMatchObject({ estado: 'aberta', substitui: replaced });
 
     // Nothing blocks in v4: the new owner takes the moved task; the cancelled letter frees no send there either.
     const doc = service().load().doc;
@@ -427,5 +432,69 @@ describe('ledger com prova', () => {
     expect(await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', risco: 'alto' }))).toMatchObject({ ok: false });
     expect(readFileSync(file, 'utf8')).toBe(newer);
     expect(existsSync(`${file}.tmp`)).toBe(false);
+  });
+});
+
+describe('órfãs e substituição (06/11)', () => {
+  const idOf = (answer: { text: string }): string => (JSON.parse(answer.text) as { id: string }).id;
+  const make = async (service: () => ReturnType<typeof createLedgerService>, who: LedgerCaller, args: Record<string, unknown>) =>
+    runLedgerTool(service(), who, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', risco: 'alto', ...args }));
+
+  it('counts the same for a session and for the Líder único, and a board that did not answer apart, never as alive', async () => {
+    const { service } = setup();
+    const outroLider: LedgerCaller = { projectPath: 'C:/q', placeId: 'place:q-lider', roleId: 'lider', boardPlaceIds: ['place:q-lider', 'place:q-dev'] };
+    const alive = idOf(await make(service, lider, { dono: 'place:dev' }));
+    const orphan = idOf(await make(service, lider, { dono: 'place:revisor' }));
+    const unknown = idOf(await make(service, outroLider, { dono: 'place:q-dev' }));
+    // C:/p answered; C:/q did not. The main hands every caller of `todos` the same states (index.ts, `withEveryBoard`).
+    const states = new Map([['C:/p', new Map([['place:lider', 'parada'], ['place:dev', 'trabalhando'], ['place:revisor', 'fechada']])]]);
+    const session: LedgerCaller = { ...dev, placeStates: states };
+    const leaderOfAll: LedgerCaller = { projectPath: '', placeId: LEADER_OF_ALL, roleId: 'lider', boardPlaceIds: [], placeStates: states };
+    const list = async (who: LedgerCaller) => JSON.parse((await runLedgerTool(service(), who, call('tarefa_listar', { todos: true }))).text) as { faixa: Record<string, number>; tarefas: Record<string, unknown>[] };
+    const fromSession = await list(session);
+    const fromLeader = await list(leaderOfAll);
+    expect(fromSession.faixa).toMatchObject({ total: 3, vivas: 1, orfas: 1, fechadas: 0, desconhecidas: 1 });
+    expect(fromLeader.faixa).toEqual(fromSession.faixa);
+    // The unknown one stays visible, marked, so nothing vanishes from the list.
+    expect(fromSession.tarefas.map((task) => task.id)).toEqual([alive, unknown]);
+    expect(fromSession.tarefas[1]).toMatchObject({ desconhecida: expect.stringContaining('não respondeu') });
+    expect(fromSession.tarefas[0]).not.toHaveProperty('desconhecida');
+    expect((await list(session)).tarefas.map((task) => task.id)).not.toContain(orphan);
+  });
+
+  it('a new task cancels the one it replaces in the same write, and with no right to cancel nothing is created', async () => {
+    const { service } = setup();
+    const old = idOf(await make(service, lider, { dono: 'place:dev' }));
+    const created = await make(service, lider, { dono: 'place:dev', substitui: old });
+    expect(created.ok).toBe(true);
+    const next = idOf(created);
+    const view = async (id: string) => JSON.parse((await runLedgerTool(service(), lider, call('tarefa_ver', { id }))).text) as Record<string, any>;
+    expect(await view(old)).toMatchObject({ estado: 'cancelada', decisao: { tipo: 'cancelada', por: 'place:lider', motivo: `substituída pela ${next}` } });
+    expect(await view(next)).toMatchObject({ estado: 'aberta', substitui: old });
+
+    // The Revisor may not cancel the Dev's task: refused, it says why, and no task is born.
+    const mine = idOf(await make(service, dev, { dono: 'place:dev' }));
+    const before = Object.keys(service().load().doc.tasks).length;
+    const refused = await make(service, revisor, { dono: 'place:dev', substitui: mine });
+    expect(refused).toMatchObject({ ok: false, text: expect.stringContaining('Não criei') });
+    expect(refused.text).toContain('Só o Líder, o dono ou o lugar dono');
+    expect(Object.keys(service().load().doc.tasks)).toHaveLength(before);
+    expect(service().load().doc.tasks[mine]!.state).toBe('aberta');
+    // A task that does not exist, or one already closed, is not replaced either.
+    expect(await make(service, lider, { dono: 'place:dev', substitui: 't-nao-existe' })).toMatchObject({ ok: false });
+    expect(await make(service, lider, { dono: 'place:dev', substitui: old })).toMatchObject({ ok: false, text: expect.stringContaining('fechada') });
+  });
+
+  it('Líder, Curador and Pesquisa name the place that does the work, never their own', async () => {
+    const { service } = setup();
+    const curador = at('place:rev-do-dev', 'curador');
+    const pesquisa = at('place:revisor', 'pesquisa');
+    for (const [who, args] of [[curador, {}], [pesquisa, { dono: 'place:revisor' }], [lider, { dono: 'seu' }]] as const) {
+      expect(await make(service, who, args)).toMatchObject({ ok: false, text: expect.stringContaining('diga em "dono" o lugar que faz o trabalho') });
+    }
+    expect(Object.keys(service().load().doc.tasks)).toHaveLength(0);
+    expect(await make(service, pesquisa, { dono: 'place:dev' })).toMatchObject({ ok: true });
+    // Every other role keeps the default: the task is its own.
+    expect(await make(service, dev, {})).toMatchObject({ ok: true });
   });
 });

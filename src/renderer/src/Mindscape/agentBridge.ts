@@ -394,6 +394,20 @@ export class AgentBridge {
 
     if (call.tool === 'papeis_listar') return { ok: true, text: json(this.ports.roles().map((role) => ({ id: role.id, nome: role.name }))) };
 
+    if (call.tool === 'estados_dos_lugares') {
+      // Only ids and states, for the ledger's orphan count: the same for every caller (no reach in it). A folder that is
+      // no board stays out (unknown).
+      const states: Record<string, { id: string; estado: string }[]> = {};
+      for (const pasta of call.pastas) {
+        const match = resolveBoard(this.boards(), pasta);
+        if (!match.ok) continue;
+        const board = this.board(match.board.projectPath);
+        const places = board ? Object.values(board.cards).filter((card): card is SessionPlaceCard => card.kind === 'session') : [];
+        states[pasta] = places.map((place) => ({ id: place.id, estado: this.stateName(match.board.projectPath, place) }));
+      }
+      return { ok: true, text: json(states) };
+    }
+
     if (call.tool === 'sessao_quem_sou') {
       if (isLeaderOfAllTab(caller))
         return {
