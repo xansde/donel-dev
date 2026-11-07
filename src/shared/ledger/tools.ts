@@ -3,6 +3,7 @@
 // the board (the same answer as `sessao_quem_sou`), never from the arguments, so a session cannot pose as
 // the Revisor or as the owner.
 
+import { FACTORY_ROLES } from '../roles';
 import {
   FOR_OWNER_LIMITS,
   MAX_CHECKS,
@@ -402,6 +403,29 @@ function parseForOwnerInput(raw: unknown): LedgerForOwner | string {
   };
 }
 
+/** A role, never a person: the factory ones, the Curador and the Líder único (the main adds the owner's own roles). */
+const BUILT_IN_ROLES: ReadonlyArray<{ readonly id: string; readonly name: string }> = [
+  ...FACTORY_ROLES.map((role) => ({ id: role.id, name: role.name })),
+  { id: 'curador', name: 'Curador' },
+  { id: 'lider-unico', name: 'Líder único' },
+];
+
+/** "Líder único" → "lider unico"; "theo-west" → "theo west". */
+function roleKey(value: string): string {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[-_\s]+/g, ' ').trim();
+}
+
+/**
+ * 07/11, owner: "quem pediu" is the person. Refuses a place id and a bare role ("Dev", "Revisor", one of `roles`);
+ * `null` = it may be a person ("dono", "Gabriel Horst (Slack)", "sinal do Curador: PR #219").
+ */
+export function askedByRefusal(value: string, roles: ReadonlyArray<{ readonly id: string; readonly name: string }> = []): string | null {
+  const refusal = '"quemPediu" é a pessoa que pediu ("dono", "Fulano (Slack)"), nunca o id de um lugar nem um papel.';
+  if (/place:/i.test(value)) return refusal;
+  const key = roleKey(value);
+  return [...BUILT_IN_ROLES, ...roles].some((role) => roleKey(role.id) === key || roleKey(role.name) === key) ? refusal : null;
+}
+
 export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedgerCall {
   const args = (rawArgs ?? {}) as Record<string, unknown>;
   if (typeof args !== 'object' || Array.isArray(args)) return { ok: false, reason: 'Argumentos têm de ser um objeto.' };
@@ -420,7 +444,8 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       const substitui = text(args.substitui, 'substitui', 120, false);
       const quemPediu = text(args.quemPediu, 'quemPediu', MAX_ASKED_BY_CHARS, false);
       for (const value of [pedido, criterio, prazo, dono, titulo, substitui, quemPediu]) if (typeof value === 'object') return fail(value.error);
-      if (typeof quemPediu === 'string' && /place:/i.test(quemPediu)) return fail('"quemPediu" é a pessoa que pediu ("dono", "Fulano (Slack)"), nunca o id de um lugar.');
+      const askedRefused = typeof quemPediu === 'string' ? askedByRefusal(quemPediu) : null;
+      if (askedRefused) return fail(askedRefused);
       if (args.risco !== 'baixo' && args.risco !== 'alto') return fail('"risco" tem de ser baixo ou alto.');
       if (args.pedidoDoDono !== undefined && (typeof args.pedidoDoDono !== 'string' || !/^pd-[0-9a-f]{12}$/.test(args.pedidoDoDono))) return fail('"pedidoDoDono" é o id que veio no pedido do dono (pd-…).');
       const fromOwner = typeof args.pedidoDoDono === 'string' ? { pedidoDoDono: args.pedidoDoDono } : {};

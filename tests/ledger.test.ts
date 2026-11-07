@@ -11,7 +11,7 @@ import * as v4 from './fixtures/ledger/contract-v4';
 import { createCardWriter, decisionMessage, type OwnerMessage } from '../src/main/ledger-card-writer';
 import { createLedgerMobilePort } from '../src/main/celular/ledger-port';
 import { buildRemoteProofCommand, fetchRemoteProof } from '../src/main/ledger-remote-proof';
-import { parseLedgerToolCall, type LedgerToolCall } from '../src/shared/ledger/tools';
+import { askedByRefusal, parseLedgerToolCall, type LedgerToolCall } from '../src/shared/ledger/tools';
 import { slackGuard } from '../src/shared/ledger/slack-guard';
 import { deliveryNote } from '../src/shared/ledger/labels';
 import { createFaxinaRunner } from '../src/main/rotinas/oraculo-faxina';
@@ -601,6 +601,21 @@ describe('órfãs e substituição (06/11)', () => {
       expect(parseLedgerToolCall('tarefa_criar', { ...args, quemPediu })).toMatchObject({ ok: false, reason: expect.stringContaining('quemPediu') });
     }
     expect(parseLedgerToolCall('tarefa_criar', { ...args, quemPediu: 'Gabriel Horst (Slack)' }).ok).toBe(true);
+  });
+
+  it('refuses a bare role as who asked: "quem pediu: Dev" was the complaint', () => {
+    const args = { pedido: 'x', criterio: 'y', prazo: '2026-11-06', risco: 'alto' };
+    for (const quemPediu of ['Dev', 'dev', ' REVISOR ', 'Líder', 'lider', 'Líder único', 'Pesquisa', 'Curador']) {
+      expect(parseLedgerToolCall('tarefa_criar', { ...args, quemPediu })).toMatchObject({ ok: false, reason: expect.stringContaining('quemPediu') });
+    }
+    for (const quemPediu of ['dono', 'Gabriel Horst (Slack)', 'sinal do Curador: PR #219', 'Devanir']) {
+      expect(parseLedgerToolCall('tarefa_criar', { ...args, quemPediu }).ok).toBe(true);
+    }
+    // A role the owner made (the role list of this app) is a role too, by its id or its name.
+    const roles = [{ id: 'theo-west', name: 'Theo West' }];
+    expect(askedByRefusal('Theo West', roles)).toContain('quemPediu');
+    expect(askedByRefusal('theo-west', roles)).toContain('quemPediu');
+    expect(askedByRefusal('Julia (Slack)', roles)).toBeNull();
   });
 
   it('an app of the previous channel still reads "substitui" when the task also says who asked', async () => {

@@ -24,7 +24,7 @@ import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerSnapshot } from '../shared/ledger/channels';
 import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
-import type { LedgerToolCall } from '../shared/ledger/tools';
+import { askedByRefusal, type LedgerToolCall } from '../shared/ledger/tools';
 import type { BoardBridge } from './board-bridge';
 import { MCP_SERVER_NAME, type BrowserToolOutcome } from '../shared/browser/mcp';
 // Sessão renovada em voo (B36).
@@ -3247,6 +3247,9 @@ async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: Led
 
 async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<BrowserToolOutcome> {
   if (!ledgerService) return { kind: 'error', text: 'O Oráculo Harrow não abriu neste app.' };
+  // 07/11, owner: "quem pediu" is a person, never a role; the parse knows the factory roles, this app's own here.
+  const askedRefused = call.tool === 'tarefa_criar' && call.quemPediu ? askedByRefusal(call.quemPediu, rolesStore?.list() ?? []) : null;
+  if (askedRefused) return { kind: 'error', text: askedRefused };
   const resolved = await ledgerCallerOf(boardBridge, ptyId, call);
   if (typeof resolved === 'string') return { kind: 'error', text: resolved };
   // Fatia 6 — a session on a remote place (VPS) names files there: read through that place's own ssh.
