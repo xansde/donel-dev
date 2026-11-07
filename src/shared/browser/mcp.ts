@@ -8,6 +8,7 @@
 
 import { boardTools, isBoardToolName, parseBoardToolCall, type BoardToolCall } from '../mindscape/agent-tools';
 import { isLedgerToolName, LEDGER_TOOLS, parseLedgerToolCall, type LedgerToolCall } from '../ledger/tools';
+import { HILL_CLIMB_INSTRUCTIONS, HILL_CLIMB_TOOLS, isHillClimbToolName, parseHillClimbToolCall, type HillClimbToolCall } from '../hillClimb/tools';
 
 export const MCP_SERVER_NAME = 'donel';
 
@@ -364,6 +365,8 @@ export interface McpHandlerContext {
   readonly openCap?: () => number | null;
   /** Ledger com prova (item 19) — the `tarefa_*` tools; absent = no ledger tools. */
   readonly ledgerExecutor?: (call: LedgerToolCall) => Promise<BrowserToolOutcome>;
+  /** Hill climbing — the `hillclimb_*` tools of the Escalador; absent = no hill climbing tools. */
+  readonly hillClimbExecutor?: (call: HillClimbToolCall) => Promise<BrowserToolOutcome>;
   readonly serverVersion: string;
 }
 
@@ -410,6 +413,7 @@ async function handleOne(message: unknown, ctx: McpHandlerContext): Promise<Json
           instructions:
             (ctx.boardExecutor ? BOARD_INSTRUCTIONS : '') +
             (ctx.ledgerExecutor ? LEDGER_INSTRUCTIONS : '') +
+            (ctx.hillClimbExecutor ? HILL_CLIMB_INSTRUCTIONS : '') +
             'Navegador integrado do Donel Dev, um por sessão, que o dono vê ao lado da conversa. Fluxo: navegador_abrir, navegador_ler (o que está na tela, elementos numerados [N]), navegador_clicar/navegador_digitar/navegador_teclar, e navegador_ler de novo. Para ler o conteúdo todo da página: navegador_extrair. Login, 2FA, captcha, campo de senha ou cartão e botão de comprar, pagar ou excluir são do dono: navegador_pedir_humano. O dono também pode limitar os domínios que o agente abre.',
         },
       };
@@ -419,7 +423,7 @@ async function handleOne(message: unknown, ctx: McpHandlerContext): Promise<Json
       return {
         jsonrpc: '2.0',
         id,
-        result: { tools: [...(ctx.boardExecutor ? boardTools(ctx.openCap?.() ?? null) : []), ...(ctx.ledgerExecutor ? LEDGER_TOOLS : []), ...BROWSER_TOOLS] },
+        result: { tools: [...(ctx.boardExecutor ? boardTools(ctx.openCap?.() ?? null) : []), ...(ctx.ledgerExecutor ? LEDGER_TOOLS : []), ...(ctx.hillClimbExecutor ? HILL_CLIMB_TOOLS : []), ...BROWSER_TOOLS] },
       };
     case 'tools/call': {
       const name = p.name;
@@ -444,6 +448,17 @@ async function handleOne(message: unknown, ctx: McpHandlerContext): Promise<Json
           ledgerOutcome = { kind: 'error', text: error instanceof Error ? error.message : String(error) };
         }
         return { jsonrpc: '2.0', id, result: toolResult(ledgerOutcome) };
+      }
+      if (typeof name === 'string' && ctx.hillClimbExecutor && isHillClimbToolName(name)) {
+        const climb = parseHillClimbToolCall(name, p.arguments);
+        if (!climb.ok) return { jsonrpc: '2.0', id, result: toolResult({ kind: 'error', text: climb.reason }) };
+        let climbOutcome: BrowserToolOutcome;
+        try {
+          climbOutcome = await ctx.hillClimbExecutor(climb.call);
+        } catch (error) {
+          climbOutcome = { kind: 'error', text: error instanceof Error ? error.message : String(error) };
+        }
+        return { jsonrpc: '2.0', id, result: toolResult(climbOutcome) };
       }
       if (typeof name !== 'string' || !TOOL_NAMES.has(name)) return errorResponse(id, JSON_RPC_ERRORS.invalidParams, `Unknown tool: ${String(name)}`);
       const parsed = parseToolCall(name, p.arguments);

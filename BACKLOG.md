@@ -430,3 +430,95 @@ com a demanda `cartas-forma-a` (outro Dev, mesmas áreas: `src/shared/ledger/con
   ponte `/h/Ping`; no ar e com o token conhecido, não diz nada (a ponte decide pela carta); fora do ar, recusa
   o que pareça envio ao Slack. Sessão local fica só com o `http`: ela é filha do app e morre com ele. Fica de
   fora, como decisão pendente do dono: trava para um `claude` aberto à mão.
+
+## Hill climbing no lugar do Modo Dev (`hill-climbing`)
+
+- **Fonte**: dossiê `estudo-treinamento-bill.md`, seção m) (decidido no brainstorm de 05/11; pontos
+  abertos decididos pela Pesquisa por delegação do dono)
+- **Pedido** (dono, 05/11, via Líder único): o Modo Dev sai ("absurdamente datado"); fica só o visual
+  da barra esquerda (trilha + carrossel); a direita sai ("terrível e só me atrapalhava"). Hill climbing
+  entra como jeito de rodar uma missão.
+- **Fatiado em**: 2026-11-05 (modo avulso; sessão Dev aberta pelo Líder único)
+- **Modo**: demanda — PR único `feature/hill-climbing` → `staging`, sem merge (Revisor confere)
+- **Gate**: gatilho 3 (dependências encadeadas) disparado; dispensado pelo Líder único com o dono
+  dormindo ("Implementação decidida, não precisa perguntar nada"). Não é aprovação do dono.
+- **Rodadas previstas**: 01 | 02 | 03 | 04
+
+Regras fixas da seção m), com o ajuste da seção n) (gravação do Bill, 06/11): laço em código (conta
+rounds, chama juízes, junta notas, fecha rodada); conselho de 3 juízes por chamada direta à chave de
+LLM, às cegas (só critérios, versão atual e quem vai ler o resultado; **nunca o alvo**); a 1ª rodada
+começa pelo inventário do que já existe e abre 3 direções do zero, e daí em diante se sobe a melhor;
+corte ≥ 9 em todos os critérios por todos os juízes; X = 5, Y = 3, N = 2; "estacionou" = 2 rounds de
+subida seguidos sem subir a menor nota, fechando com uma carta de decisão; nunca começa sozinho (proposta no Oráculo, roda só com
+aceite do dono; rodada extra pede o gesto do dono). A chave de LLM não existe: o conselho fica atrás
+de uma interface de provedor, com juiz falso nos testes e "falta a chave" na tela. Nunca chamar API paga.
+
+### 01 — A barra do hill climbing no lugar do Modo Dev
+
+- **Caminho**: teste-depois (UI; o teste cobre o store)
+
+- **Status**: implementada
+- **Branch**: `feature/hill-climbing` (modo demanda, worktree `.claude/worktrees/hill-climbing`)
+- **Depende de**: —
+- **Conflita com**: 02, 03, 04 (`App.tsx`, `HillClimb/`)
+- **Propósito**: a aba "Dev" do seletor de modo vira "Hill climbing": a barra esquerda (trilha +
+  carrossel, mesma forma) lista as missões; a barra direita, a esteira nova e o mapa de nós somem.
+  Sem chave de LLM, a barra diz "falta a chave" sem quebrar.
+- **Escopo**: entra o store `<userData>/hill-climb.json` (só leitura nesta fatia), o canal de
+  snapshot e o estado do conselho; sai o fluxo antigo do Modo Dev no renderer (DiscoveryMap,
+  PhaseDetailsPanel, EsteiraScreen, NodeGraphOverlay e o encanamento só deles). NÃO entra: apagar
+  o lado main da esteira 010 (fica para depois, sem tela que o chame) nem nada em `userData`.
+- **Dados necessários**: —
+- **Como testar**: abrir o app → seletor mostra "Uso geral · Hill climbing · Mindscape"; no Hill
+  climbing aparece a barra esquerda com "Nenhuma missão ainda" e "Falta a chave de LLM"; não há
+  barra direita nem botões da esteira/mapa de nós no titlebar. Teste: store lê arquivo ausente,
+  ilegível e de versão maior sem apagar nada.
+
+### 02 — Missão nasce proposta no Oráculo e só roda com aceite do dono
+
+- **Status**: implementada
+- **Branch**: `feature/hill-climbing` (modo demanda, worktree `.claude/worktrees/hill-climbing`)
+- **Depende de**: 01
+- **Conflita com**: 01, 03, 04
+- **Propósito**: uma sessão (o Escalador) propõe a missão pela ferramenta `hillclimb_propor` (alvo,
+  critérios, corte, X/Y/N, gasto estimado); nasce uma carta de risco alto no Oráculo ("Rodar esta
+  missão?"); a barra mostra "proposta · esperando você"; com o aceite do dono vira "pronta".
+- **Escopo**: ferramenta MCP, gravação no store, carta no ledger sem subir o schema dele. NÃO
+  entra: rodar rounds (03).
+- **Dados necessários**: —
+- **Como testar**: teste: proposta cria carta de risco alto; versão enviada antes do aceite é
+  recusada; aceite do dono libera; rejeição encerra a missão.
+
+### 03 — Rounds julgados às cegas por um conselho de 3
+
+- **Status**: implementada
+- **Branch**: `feature/hill-climbing` (modo demanda, worktree `.claude/worktrees/hill-climbing`)
+- **Depende de**: 02
+- **Conflita com**: 01, 02, 04
+- **Propósito**: o Escalador envia cada versão por `hillclimb_versao`; o laço chama os 3 juízes,
+  cada um vendo só critérios, a versão e quem vai ler (nunca o alvo); junta as notas, devolve ao Escalador e fecha a
+  rodada ao passar do corte, ao estacionar ou no fim dos rounds. A barra mostra a trilha (rounds,
+  com divisor de rodada), o carrossel (rodadas × variantes) e as notas juiz × critério no cartão em foco.
+- **Escopo**: motor puro, conselho atrás de `JudgeProvider`, juiz falso (testes e
+  `DONEL_HILL_CLIMB_FAKE_JUDGES=1` para demonstração). Sem chave, o envio é recusado com "falta a chave".
+- **Dados necessários**: juiz falso determinístico
+- **Como testar**: testes: o juiz nunca recebe o alvo, notas nem versões anteriores; a 1ª versão
+  exige o inventário e as 3 primeiras abrem direções distintas, depois a versão sobe a melhor; corte
+  exige ≥ 9 de todos em tudo; as 3 direções nunca contam como "estacionou", mas 2 rounds de subida
+  sem passar da melhor nota fecham a rodada com "estacionou"; a 1ª rodada fecha em 5 rounds.
+
+### 04 — Amostra de fim de rodada com os três gestos
+
+- **Status**: implementada
+- **Branch**: `feature/hill-climbing` (modo demanda, worktree `.claude/worktrees/hill-climbing`)
+- **Depende de**: 03
+- **Conflita com**: 01, 02, 03
+- **Propósito**: rodada fechada mostra a amostra como carta de decisão (motivo do fechamento, as
+  direções com a pior nota de cada uma e a recomendada, melhor versão, curva da menor nota por round,
+  2–3 intermediárias) com os gestos parar e aceitar · mais uma rodada · redirecionar (dar uma
+  referência). Rodada extra tem 3 rounds; no máximo 2 extras.
+- **Escopo**: gestos só do dono, pela barra; redirecionar leva o texto ao Escalador na próxima
+  resposta da ferramenta. Item em `patchnotes/notes.ts`.
+- **Dados necessários**: missão de exemplo com juiz falso
+- **Como testar**: teste: "mais uma rodada" depois de 2 extras é recusado; versão enviada com a
+  rodada fechada é recusada até o gesto. Print da barra com a missão de exemplo.

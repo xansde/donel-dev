@@ -12,7 +12,7 @@ import {
   Toast,
   Toggle,
 } from '@donel-dev/design-system';
-import { Network, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Route, Settings } from 'lucide-react';
+import { PanelLeftClose, PanelLeftOpen, PanelRightClose, Settings } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type {
   AccountsViewDto,
@@ -78,21 +78,12 @@ import {
 import { sessionTabName } from '../../shared/sessions';
 // T021 (015-jobu-pet) — tab <-> PTY map and the `pet:tabs` payload (pure, tested in tests/pet-tab-pty-map.test.ts).
 import { buildChatFocusState, buildPetTabsPayload, tabPtyMap, type TabPtyMap } from '../../shared/pet/tabPtyMap';
-// Spec 010 / batch B6 — o Modo Dev continua sendo o mapa; a fonte dele passou
-// a ser o STORE (`esteiraMapView.ts`, puro e testado). Aqui fica só o
-// encanamento com PTY/IPC — nenhuma decisão de domínio, nenhuma frase de estado.
-import { DiscoveryMap } from './DevMode/DiscoveryMap';
-import { PhaseDetailsPanel } from './DevMode/PhaseDetailsPanel';
-import { buildMapView, parseEntityKey, tabToFocusFor, tasksArtifactFor, type MapSelection, type MapTrailStep } from './DevMode/esteiraMapView';
-import type { TasksRunningTogetherView } from './DevMode/PhaseDetailsPanel';
 import styles from './App.module.css';
 import { Launcher } from './Launcher';
 import { RolesEditor } from './RolesEditor';
 import type { LauncherLaunchOptions } from './Launcher';
-// Spec 010 — a esteira nova, AO LADO do mapa atual (`[P-5]`): nada aqui
-// desmonta ou altera o Modo Dev de hoje; a tela entra por cima, atrás de um
-// gesto interno, para dar para comparar as duas com o mesmo dado.
-import { EsteiraScreen } from './Esteira/EsteiraScreen';
+import { HillClimbBar } from './HillClimb/HillClimbBar';
+import { useHillClimb } from './HillClimb/useHillClimb';
 // Mindscape V1 — third mode of the shell (docs/design/mindscape.md).
 import { MindscapeScreen, type MindscapeLiveSession } from './Mindscape/MindscapeScreen';
 import { useMindscapeDoc } from './Mindscape/useMindscapeDoc';
@@ -105,30 +96,16 @@ import { DEFAULT_SESSION_RENEWAL_PREFS, renewalLaunchArgs, type SessionRenewalPr
 import { useSessionRenewal, type RenewalTabInput } from './sessionRenewal/useSessionRenewal';
 import { RenewalStrip } from './sessionRenewal/RenewalStrip';
 import type { BoardView } from '../../shared/mindscape/view';
-import { cardView, dispatchView, STORE_COMPATIBILITY_WARNING } from './Esteira/esteiraView';
 import {
   AUTO_START_NOT_READY_MESSAGE,
   autoStartGiveUpMessage,
   autoStartWriteSteps,
   classifyAutoStartSubmission,
-  esteiraTabName,
   isReadyForAutoStart,
   isSafeToSendEnter,
   nextAutoStartEnterAction,
-  resolveSessionCwd,
-  type EsteiraSessionRequest,
 } from './Esteira/esteiraSession';
-import { preparePhase } from './Esteira/preparePhase';
 import type { EsteiraSnapshotDto } from '../../shared/esteira/ipc';
-import type { EntityId } from '../../shared/esteira/store/storeFormat';
-// C3 — o parser do tasks.md (puro, testado) fica fora do domínio da esteira
-// de propósito: é interpretação de TEXTO de um artefato, não fato do store.
-import { parseTasksDoc, taskScope } from '../../shared/tasksDoc';
-// N7 (010, D1) — o mapa de nós em tela cheia: outra projeção do MESMO
-// snapshot da esteira (`esteiraState` acima), isolada de propósito na sua
-// própria pasta (nenhuma edição em EsteiraScreen/esteiraMapView) — ver o
-// comentário do estado `nodeGraphOpen` mais abaixo.
-import { NodeGraphOverlay } from './DevMode/NodeGraphOverlay';
 import { Preferences } from './Preferences';
 import { PreviousSessions } from './PreviousSessions';
 import { AccountsPanel } from './AccountsPanel';
@@ -373,7 +350,6 @@ export function App(): React.JSX.Element {
   // (projetos/porta de entrada) e, no Modo Dev, o mapa da direita. Estado de
   // UI puro (não persiste no config de propósito).
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [rightCollapsed, setRightCollapsed] = useState(false);
   // CA-26 (009-modo-dev-v3) — índice de origem do arraste em andamento na
   // barra de abas; `null` fora de um arraste. Estado de UI puro (mesmo
   // espírito de `sidebarCollapsed` acima), a reordenação de verdade é
@@ -529,52 +505,22 @@ export function App(): React.JSX.Element {
   // arquivadas, defaults) vive no ConfigStore via `devMode:*` (CA-21). O que
   // está abaixo é só estado de TELA (modo ligado, o que está expandido, o
   // comando armado) — some no restart, e deve mesmo.
-  // Mindscape V1 — the mode selector has three values; `devModeOn` stays as a
-  // derived flag so the Modo Dev reads exactly as before.
-  const [appMode, setAppMode] = useState<'geral' | 'dev' | 'mindscape'>('geral');
-  const devModeOn = appMode === 'dev';
+  // Mindscape V1 — the mode selector has three values. Hill climbing took the place of the Modo Dev (05/11):
+  // only the left bar's look stayed; the right bar and the old flow left.
+  const [appMode, setAppMode] = useState<'geral' | 'hill' | 'mindscape'>('geral');
+  const hillOn = appMode === 'hill';
+  const hillClimb = useHillClimb();
   const mindscape = useMindscapeDoc();
-  /** Spec 010 — tela da esteira nova (gesto interno: botão no titlebar do Modo Dev). */
-  const [esteiraOpen, setEsteiraOpen] = useState(false);
-  /**
-   * Spec 010 / N7 (D1) — o mapa de nós, em tela cheia. Estado de TELA isolado
-   * de propósito (só este booleano + o botão do titlebar + o overlay
-   * condicional lá embaixo): o componente e a projeção pura moram inteiros em
-   * `DevMode/NodeGraphOverlay.tsx`/`DevMode/nodeGraphView.ts` e não editam
-   * `EsteiraScreen`/`esteiraMapView` — a mesma casca de UI que outro batch
-   * (mapa de carrossel) também mexe.
-   */
-  const [nodeGraphOpen, setNodeGraphOpen] = useState(false);
   /**
    * Spec 010 / B6 — o mapa é PROJEÇÃO do store: o snapshot chega pronto do main
    * (macro etapa já derivada, D-13) e é empurrado a cada mudança. O renderer
    * nunca lê disco nem calcula etapa.
    */
   const [esteiraState, setEsteiraState] = useState<EsteiraSnapshotDto | null>(null);
-  /**
-   * O que está em foco em cada eixo do carrossel e qual nó/etapa o painel de
-   * detalhe mostra. Estado de TELA — nada aqui é domínio.
-   */
-  const [mapSelection, setMapSelection] = useState<MapSelection>({
-    discoveryId: null,
-    planId: null,
-    itemId: null,
-    nodeKey: null,
-    phase: null,
-  });
   /** D4 — Toast informativo (o que o gesto fez, por que foi recusado); nunca tem desfazer. */
   const [devModeToast, setDevModeToast] = useState<string | null>(null);
   // "Isolar em worktree" — a aba fechou e a worktree ficou por ter trabalho não enviado: aviso discreto com "Abrir pasta".
   const [worktreeKept, setWorktreeKept] = useState<WorktreeKeptPayload | null>(null);
-  /**
-   * C3 — cache do texto de tasks.md já lido, por caminho ABSOLUTO. `null` =
-   * já tentou e não achou/não leu (não refaz o IPC); ausente = ainda não
-   * tentou. `buildMapView` é síncrona e não lê disco (D-13 continua valendo
-   * pro resto do snapshot) — este cache vive fora dela de propósito.
-   */
-  const [taskDocByPath, setTaskDocByPath] = useState<Record<string, string | null>>({});
-  /** Evita reler o mesmo caminho enquanto o fetch está em voo (guard por ref, mesmo padrão de `armWatchersRef`). */
-  const taskDocFetchingRef = useRef<Set<string>>(new Set());
   /** Cleanup do watcher de prontidão em voo por aba (mesmo padrão de `pendingInjectionWatchersRef`). */
   const armWatchersRef = useRef<Record<string, (() => void) | undefined>>({});
   /**
@@ -1654,18 +1600,6 @@ export function App(): React.JSX.Element {
   // =========================================================================
 
   /**
-   * Spec 010 / B6 — a projeção do store para o carrossel. Tudo que o mapa
-   * mostra sai daqui: níveis, cards, trilha, detalhe, breadcrumb e a frase do
-   * vazio. Nenhuma decisão de domínio acontece neste arquivo.
-   */
-  const mapView = useMemo(
-    () => buildMapView(esteiraState?.snapshot ?? null, mapSelection),
-    [esteiraState, mapSelection],
-  );
-  const storeWarning = esteiraState === null ? null : STORE_COMPATIBILITY_WARNING[esteiraState.compatibility];
-  const storeReadOnly = esteiraState !== null && esteiraState.compatibility !== 'read-write';
-
-  /**
    * B3 — os `cliSessionId` que o store da Esteira reconhece como sessão de
    * FASE (o disparo, não a sessão livre em que alguém orquestra várias
    * fases). É este conjunto que `PreviousSessions` usa para ocultá-las por
@@ -1820,26 +1754,6 @@ export function App(): React.JSX.Element {
     check();
   }, []);
 
-  /**
-   * 014-chat / T071 (FR-020) — auto-start da Esteira com o chat ligado: o comando da fase entra pelo MESMO
-   * `sendDriver` da caixa do chat (fila única, espera o CLI ficar pronto, confirma por sinal de aceite e
-   * reenvia o Enter perdido sem duplicar). Com `chat.enabled` desligado, `armEsteiraAutoStart` (acima)
-   * segue intacto. Falha vira aviso: a mensagem fica visível no chat com "tentar de novo".
-   */
-  const armEsteiraDriverSend = useCallback((tabId: string, command: string): void => {
-    const source = { terminal: () => terminalRefs.current[tabId] ?? null };
-    const id = sendToTab(tabId, source, { text: command });
-    const driver = sendDriverFor(tabId, source);
-    const off = driver.subscribe(() => {
-      const item = driver.getItems().find((candidate) => candidate.id === id);
-      if (item === undefined || item.state === 'accepted' || item.state === 'queued') return off();
-      if (item.state === 'failed') {
-        off();
-        setDevModeToast(`Não consegui enviar o comando da fase (${item.reason ?? 'sem motivo'}). Use «tentar de novo» no chat da aba.`);
-      }
-    });
-  }, []);
-
   // =========================================================================
   // Sessão renovada em voo (B36, docs/refinamentos/sessao-renovada-em-voo.md).
   // The decisions are pure (`shared/sessionRenewal.ts`); the per-tab machine is
@@ -1889,174 +1803,6 @@ export function App(): React.JSX.Element {
     },
     toast: (message) => setDevModeToast(message),
   });
-
-  /**
-   * Spec 010 / batch B1 — o "Preparar" da esteira nova abre a sessão de
-   * verdade. Mesma divisão do Modo Dev: a DECISÃO (onde abrir, com que comando)
-   * é pura e vive em `Esteira/esteiraSession.ts`; aqui só o encanamento —
-   * criar a aba e amarrá-la à sessão registrada no histórico.
-   *
-   * Batch B5 — o comando não fica só pré-digitado: `armEsteiraAutoStart`
-   * também aperta o Enter, sozinho, assim que o CLI prova que está pronto.
-   */
-  const handleOpenEsteiraSession = (request: EsteiraSessionRequest): void => {
-    const tabId = addTab({
-      name: request.tabName,
-      cwd: request.cwd,
-      projectName: projects.find((project) => project.path === request.cwd)?.name,
-      pinned: false,
-      // Sem `--model`/`--effort`: a fase da esteira nova não tem tabela de
-      // defaults (`run.phase` é string livre, `[P-4]`), e inventar um modelo
-      // aqui seria o app decidindo o que ninguém declarou.
-      launchArgs: [],
-      sessionType: 'claude',
-      // A fase pré-digita o comando e o auto-start aperta o Enter: quem acompanha precisa ver o terminal.
-      // Com o chat ligado a aba abre no chat: o comando aparece como mensagem enviada (T071).
-      ...(chatEnabled ? {} : { view: 'terminal' as const }),
-    });
-    esteiraTabSessionsRef.current[tabId] = request.sessionId;
-    if (chatEnabled) armEsteiraDriverSend(tabId, request.command);
-    else armEsteiraAutoStart(tabId, request.command);
-  };
-
-  /**
-   * Spec 010 / B6 — "⌁ Preparar" na trilha do mapa. É o MESMO gesto do painel
-   * do store: a orquestração inteira mora em `preparePhase` (resolver o cwd,
-   * disparar, abrir a aba com o comando escrito, dizer o que aconteceu). Duas
-   * orquestrações do mesmo disparo divergiriam no primeiro conserto — e
-   * divergir aqui significa uma tela abrindo sessão onde a outra recusa.
-   */
-  const handleMapPrepare = (step: MapTrailStep): void => {
-    const snapshot = esteiraState?.snapshot;
-    if (!snapshot) return;
-    const card = cardView(snapshot, mapView.focused.discoveryId ?? '');
-    if (card === null) return;
-    // Quem diz se esta fase pode rodar sobre este assunto é `dispatchView` (B2)
-    // — o mapa pergunta, nunca recalcula.
-    const oferta = dispatchView(card, { phase: step.phase, targetKey: `${step.subject.entity}:${step.subject.id}` });
-    if (oferta.target === null) return;
-    if (!oferta.canDispatch) {
-      setDevModeToast(oferta.blocked ?? oferta.hint);
-      return;
-    }
-    void preparePhase(
-      { card, phase: step.phase, target: oferta.target, projects },
-      { dispatch: (payload) => window.donel.esteira.dispatch(payload), openSession: handleOpenEsteiraSession },
-    ).then((result) => {
-      // `state: null` = recusa que nao gravou nada; manter o estado que ja esta
-      // na tela, em vez de zera-la para anunciar que nada aconteceu.
-      if (result.state !== null) setEsteiraState(result.state);
-      setDevModeToast(result.message);
-    });
-  };
-
-  /**
-   * B1 (batch N5) — "↺ Retomar" na trilha do mapa: reabre a ÚLTIMA sessão da
-   * cadeia daquele passo já FECHADO (`claude -r <cliSessionId>` no `cwd`
-   * dela — `step.resume` já vem resolvido de `esteiraMapView.trailFor`,
-   * pura). SEM dispatch novo, SEM mudar estado do card: quem muda estado é
-   * fato declarado por skill, nunca o gesto de abrir. Mesmo padrão de
-   * `handleFocusOrResumeFavoriteSession` (007): aba já aberta com essa
-   * sessão ganha foco, em vez de abrir outra.
-   */
-  const handleMapResume = (step: MapTrailStep): void => {
-    if (step.resume === null) return;
-    const { cliSessionId, cwd } = step.resume;
-    const existingTab = tabs.find((tab) => tab.claudeSessionId === cliSessionId);
-    if (existingTab) {
-      setActiveTabId(existingTab.id);
-      return;
-    }
-    const discoveryTitle = mapView.breadcrumb[0] ?? step.phase;
-    openWhereItLives(cliSessionId, cwd, (remote) => {
-      addTab({
-        name: esteiraTabName(step.phase, discoveryTitle),
-        cwd,
-        projectName: projects.find((project) => project.path === cwd)?.name,
-        pinned: false,
-        launchArgs: buildClaudeArgs({ continuation: { type: 'resume', sessionId: cliSessionId } }),
-        sessionType: 'claude',
-        ...remote,
-      });
-    });
-  };
-
-  /**
-   * B2 (batch N5) — navegar o mapa até um nó alterna para a aba da sessão
-   * VIVA dele, quando existe. `tabToFocusFor` (esteiraMapView, pura) é quem
-   * decide o FATO — `SessionSnapshot.endedAt === null` cruzado com as abas
-   * abertas; esta função só aplica o resultado. Nó sem sessão viva não rouba
-   * foco (`tabId` vem `null`, nada muda) — sessão fechada nunca é alvo de
-   * alternância; para isso existe o retomar explícito do B1.
-   */
-  const focusLiveSessionOf = (discoveryId: string, subject: EntityId): void => {
-    const tabId = tabToFocusFor(esteiraState?.snapshot ?? null, discoveryId, subject, tabs);
-    if (tabId !== null) setActiveTabId(tabId);
-  };
-
-  /**
-   * C3 — o artefato de tasks.md do nó em foco no detalhe, e o caminho
-   * ABSOLUTO resolvido pra lê-lo. `resolveSessionCwd` é a MESMA resolução
-   * repo→caminho local que já decide onde a sessão de terminal abre (D-6) —
-   * reusada aqui, não recalculada: um repo que o app não conhece não vira
-   * leitura silenciosa por palpite, do mesmo jeito que não vira sessão.
-   */
-  const tasksTarget = useMemo(() => {
-    const snapshot = esteiraState?.snapshot;
-    if (!snapshot || mapView.focused.discoveryId === null || mapView.detail === null) return null;
-    const card = cardView(snapshot, mapView.focused.discoveryId);
-    if (card === null) return null;
-    const artifact = tasksArtifactFor(card, mapView.detail.subject);
-    if (artifact === null || artifact.location !== 'repo' || artifact.repo === null) return null;
-    const resolved = resolveSessionCwd(artifact.repo, projects);
-    if (!resolved.ok) return null;
-    const separator = resolved.cwd.endsWith('/') || resolved.cwd.endsWith('\\') ? '' : '/';
-    return { path: `${resolved.cwd}${separator}${artifact.path}` };
-  }, [esteiraState, mapView.focused.discoveryId, mapView.detail, projects]);
-
-  useEffect(() => {
-    if (tasksTarget === null) return;
-    if (taskDocFetchingRef.current.has(tasksTarget.path)) return;
-    taskDocFetchingRef.current.add(tasksTarget.path);
-    void window.donel.esteira.readArtifactText({ path: tasksTarget.path }).then((result) => {
-      setTaskDocByPath((prev) => ({ ...prev, [tasksTarget.path]: result.ok ? result.text : null }));
-    });
-  }, [tasksTarget]);
-
-  /** C3 — o texto já lido (se houver) interpretado por `shared/tasksDoc` (puro): o painel de detalhe só desenha o que sai daqui. */
-  const tasksView = useMemo((): TasksRunningTogetherView | null => {
-    if (tasksTarget === null) return null;
-    const text = taskDocByPath[tasksTarget.path];
-    if (text === undefined || text === null) return null;
-    const tasks = parseTasksDoc(text);
-    const scope = taskScope(tasks);
-    return scope === null ? null : { scope, tasks };
-  }, [tasksTarget, taskDocByPath]);
-
-  /** D-11 — a trava é fato local, e sai num gesto. Nada de etiqueta órfã no board. */
-  const handleMapReleaseLock = (): void => {
-    const lock = mapView.detail?.lock;
-    const snapshot = esteiraState?.snapshot;
-    if (!lock || !snapshot) return;
-    const card = cardView(snapshot, mapView.focused.discoveryId ?? '');
-    if (card?.lock == null) return;
-    void window.donel.esteira
-      .releaseLock({ subject: card.lock.subject, phase: card.lock.phase })
-      .then(setEsteiraState)
-      .catch(() => undefined);
-  };
-
-  /** D-12 — reenviar o espelho é cortesia: não desbloqueia nada local, e a frase fala do board. */
-  const handleMapRetryMirror = (): void => {
-    void window.donel.esteira
-      .retryMirror()
-      .then((state) => {
-        setEsteiraState(state);
-        const pendente = state.snapshot.mirrorQueue.length;
-        setDevModeToast(pendente === 0 ? 'O board recebeu o que faltava.' : `${pendente} operação(ões) ainda não foram aceitas pelo board.`);
-      })
-      .catch(() => undefined);
-  };
 
   // T009 — antes do primeiro evento de hook chegar pra uma aba recém-criada,
   // assume 'working' (spike: estado inicial otimista) com stateEnteredAt=0
@@ -3168,10 +2914,10 @@ export function App(): React.JSX.Element {
           <SegmentedControl
             ariaLabel="Modo"
             value={appMode}
-            onChange={(next) => setAppMode(next === 'dev' || next === 'mindscape' ? next : 'geral')}
+            onChange={(next) => setAppMode(next === 'hill' || next === 'mindscape' ? next : 'geral')}
             options={[
               { value: 'geral', label: 'Uso geral' },
-              { value: 'dev', label: 'Dev' },
+              { value: 'hill', label: 'Hill climbing' },
               { value: 'mindscape', label: 'Mindscape' },
             ]}
           />
@@ -3204,58 +2950,6 @@ export function App(): React.JSX.Element {
             <PanelLeftClose size={16} strokeWidth={1.5} aria-hidden="true" />
           )}
         </button>
-        {devModeOn ? (
-          // FIX (feedback e2e 05/08, C4) — a versão de 30/07 deste comentário
-          // dizia que `rightCollapsed` devia zerar mapa E painel de detalhe
-          // juntos; era o próprio bug. "Recolher a barra direita" só pode
-          // recolher a barra direita: este botão agora afeta SÓ
-          // `PhaseDetailsPanel` (coluna direita, 316px) — o mapa
-          // (`DiscoveryMap`, coluna esquerda) nunca mais reage a este estado.
-          <button
-            type="button"
-            className={styles.preferencesButton}
-            onClick={() => setRightCollapsed((prev) => !prev)}
-            aria-label={rightCollapsed ? 'Mostrar painel de detalhes' : 'Recolher painel de detalhes'}
-            title={rightCollapsed ? 'Mostrar painel de detalhes' : 'Recolher painel de detalhes'}
-          >
-            {rightCollapsed ? (
-              <PanelRightOpen size={16} strokeWidth={1.5} aria-hidden="true" />
-            ) : (
-              <PanelRightClose size={16} strokeWidth={1.5} aria-hidden="true" />
-            )}
-          </button>
-        ) : null}
-        {/* Spec 010 — gesto interno para a esteira nova. Fica só no Modo Dev e
-            NÃO substitui o mapa: os dois convivem até o vertical fechar. */}
-        {devModeOn ? (
-          <button
-            type="button"
-            className={styles.preferencesButton}
-            onClick={() => setEsteiraOpen((prev) => !prev)}
-            aria-label={esteiraOpen ? 'Voltar ao mapa atual' : 'Abrir a esteira nova'}
-            title={esteiraOpen ? 'Voltar ao mapa atual' : 'Abrir a esteira nova (spec 010)'}
-            data-testid="esteira-toggle"
-          >
-            <Route size={16} strokeWidth={1.5} aria-hidden="true" />
-          </button>
-        ) : null}
-        {/* Spec 010 / N7 (D1) — navegação rápida: o mapa de nós, em tela
-            cheia, para acompanhar o trabalho de ponta a ponta (todos os
-            discoveries, não um card por vez). Só abre — fechar é gesto do
-            próprio overlay (botão "Fechar" ou Esc), porque ele cobre a
-            titlebar inteira enquanto está aberto. */}
-        {devModeOn ? (
-          <button
-            type="button"
-            className={styles.preferencesButton}
-            onClick={() => setNodeGraphOpen(true)}
-            aria-label="Abrir o mapa de nós"
-            title="Mapa de nós — visão geral e navegação rápida (spec 010, D1)"
-            data-testid="node-graph-toggle"
-          >
-            <Network size={16} strokeWidth={1.5} aria-hidden="true" />
-          </button>
-        ) : null}
         <button
           type="button"
           className={styles.preferencesButton}
@@ -3265,42 +2959,32 @@ export function App(): React.JSX.Element {
         >
           <Settings size={16} strokeWidth={1.5} aria-hidden="true" />
         </button>
-        {/* D11/CA-15 (009-modo-dev-v3) — "＋ Nova sessão" não pertence ao Modo
-            Dev: lá as sessões nascem da esteira (trilha do mapa, "⌁
-            Preparar"), nunca de um atalho ad-hoc. O modo clássico preserva o
-            gesto por inteiro. */}
-        {!devModeOn ? (
-          <SplitButton
-            label="＋ Nova sessão"
-            // FIX (teste manual 27/07) — o corpo do botão passa a ABRIR o
-            // Launcher (escolher modelo/esforço/projeto) em vez do quick-launch
-            // cego: pedido do dono ("sempre que eu aperte em Nova sessão
-            // apareça a barra lateral para escolher o modelo e afins"). O
-            // atalho rápido com a última config vira item do dropdown.
-            onClick={() => setLauncherOpen(true)}
-            items={[
-              { label: 'Rápida (última config)', onSelect: handleQuickNewClaudeSession },
-              // FIX (feedback E2E rodada 1, "terminal livre confuso") — rótulo
-              // explícito no dropdown; "Terminal" sozinho não deixava claro
-              // que era um shell livre (sem sessão claude nenhuma).
-              { label: 'Terminal (shell livre)', onSelect: handleNewFreeTerminal },
-            ]}
-          />
-        ) : null}
+        {/* "＋ Nova sessão" vale em todos os modos: o Escalador de uma missão é uma sessão comum. */}
+        <SplitButton
+          label="＋ Nova sessão"
+          // FIX (teste manual 27/07) — o corpo do botão passa a ABRIR o
+          // Launcher (escolher modelo/esforço/projeto) em vez do quick-launch
+          // cego: pedido do dono ("sempre que eu aperte em Nova sessão
+          // apareça a barra lateral para escolher o modelo e afins"). O
+          // atalho rápido com a última config vira item do dropdown.
+          onClick={() => setLauncherOpen(true)}
+          items={[
+            { label: 'Rápida (última config)', onSelect: handleQuickNewClaudeSession },
+            // FIX (feedback E2E rodada 1, "terminal livre confuso") — rótulo
+            // explícito no dropdown; "Terminal" sozinho não deixava claro
+            // que era um shell livre (sem sessão claude nenhuma).
+            { label: 'Terminal (shell livre)', onSelect: handleNewFreeTerminal },
+          ]}
+        />
       </header>
 
       <div
         className={[
           styles.body,
-          devModeOn ? styles.bodyDevMode : '',
+          hillOn ? styles.bodyDevMode : '',
           sidebarCollapsed ? styles.bodySidebarCollapsed : '',
           // Clássico sem Launcher: coluna direita (320px, Launcher) zerada.
-          !devModeOn && !launcherOpen ? styles.bodyRightCollapsed : '',
-          // FIX (feedback e2e 05/08, C4) — Modo Dev com painel de detalhe
-          // recolhido: só a coluna DIREITA zera (mesma classe do modo
-          // clássico). O mapa (coluna ESQUERDA, 480px) nunca depende deste
-          // estado — `.bodyMapCollapsed`, que zerava as duas, morreu.
-          devModeOn && rightCollapsed ? styles.bodyRightCollapsed : '',
+          !launcherOpen ? styles.bodyRightCollapsed : '',
         ]
           .filter(Boolean)
           .join(' ')}
@@ -3331,9 +3015,6 @@ export function App(): React.JSX.Element {
             onManageRoles={() => setRolesEditorOpen(true)}
           />
         ) : null}
-        {devModeOn && esteiraOpen ? (
-          <EsteiraScreen onClose={() => setEsteiraOpen(false)} projects={projects} onOpenSession={handleOpenEsteiraSession} />
-        ) : null}
 
         {/* CA-20 — a tela de hoje continua MONTADA quando o Modo Dev liga
             (só oculta por CSS): nada de remontar sidebar/abas, nada de PTY
@@ -3344,10 +3025,10 @@ export function App(): React.JSX.Element {
             `Modal` portalizado: sem esconder esta zona também, o rótulo
             "PROJETOS" e a scrollbar da sidebar continuavam vivos por baixo
             e vazavam na borda inferior do print — mesmo princípio de
-            `devModeOn`, mais um caso que reorganiza o miolo por cima da
+            `hillOn`, mais um caso que reorganiza o miolo por cima da
             tela de hoje. */}
         <div
-          className={devModeOn || sidebarCollapsed || previousSessionsProject !== null ? styles.zoneHidden : styles.zone}
+          className={hillOn || sidebarCollapsed || previousSessionsProject !== null ? styles.zoneHidden : styles.zone}
           data-testid="today-sidebar"
         >
         <ProjectSidebar
@@ -3459,22 +3140,11 @@ export function App(): React.JSX.Element {
               o header. Uso geral mantém a condição antiga (nome+path só com
               aba aberta, lote 8). */}
           {oracleShown ? <OracleCenter placeName={oraclePlaceName} /> : null}
-          {!oracleShown && (devModeOn ? mapView.breadcrumb.length > 0 : listedTabIds.size > 0) ? (
+          {!oracleShown && listedTabIds.size > 0 ? (
             <div className={styles.sessionHeader} data-testid="session-header">
               {/* Spec 010 / B6 — o breadcrumb passou a ser o dos nós novos:
                   discovery › plano › item. Ele vem pronto de `buildMapView`;
                   montá-lo aqui seria a terceira redação da mesma navegação. */}
-              {devModeOn && mapView.breadcrumb.length > 0 ? (
-                <>
-                  {mapView.breadcrumb.map((step, index) => (
-                    <span key={step} className={index === 0 ? styles.sessionHeaderId : styles.sessionHeaderTitle}>
-                      {index > 0 ? '› ' : ''}
-                      {step}
-                    </span>
-                  ))}
-                  {mapView.detail?.phase ? <span className={styles.sessionHeaderFase}>{mapView.detail.phase}</span> : null}
-                </>
-              ) : (
                 <>
                   <span className={styles.sessionHeaderTitle}>{activeTab ? resolveTabName(activeTab) : ''}</span>
                   {activeTab?.cwd ? <span className={styles.sessionHeaderPath}>{activeTab.cwd}</span> : null}
@@ -3493,7 +3163,6 @@ export function App(): React.JSX.Element {
                     </span>
                   ) : null}
                 </>
-              )}
               <div className={styles.sessionHeaderSpacer} />
               {activeChatTab && activeChatView ? (
                 <>
@@ -3551,7 +3220,7 @@ export function App(): React.JSX.Element {
                 esteira ("⌁ Preparar" na trilha do mapa), nunca de um atalho
                 ad-hoc — o botão nunca aparece lá (screenshot app-01/03
                 mostrava o contrário). */}
-            {listedTabIds.size === 0 && !devModeOn ? (
+            {listedTabIds.size === 0 && !hillOn ? (
               <div className={styles.emptyState} data-testid="empty-state">
                 <p className={styles.emptyStateTitle}>Nenhuma sessão aberta</p>
                 <p className={styles.emptyStateHint}>Escolha um projeto na barra lateral ou</p>
@@ -3564,19 +3233,6 @@ export function App(): React.JSX.Element {
                 <Button variant="primary" onClick={handleQuickNewClaudeSession}>
                   Nova sessão
                 </Button>
-              </div>
-            ) : null}
-            {/* Item 2 — vazio NEUTRO do Modo Dev sem sessão: só a moldura
-                (fundo + hairline do próprio `.terminal`); com etapa em foco,
-                um texto de condução que aponta pro mapa (nunca um narrativa
-                por etapa fabricada — não há fonte pra isso). */}
-            {listedTabIds.size === 0 && devModeOn ? (
-              <div className={styles.devModeTerminalEmpty} data-testid="devmode-terminal-empty">
-                {mapView.detail ? (
-                  <p className={styles.devModeHint}>
-                    — nenhuma sessão para esta etapa ainda — use "⌁ Preparar" na trilha do mapa.
-                  </p>
-                ) : null}
               </div>
             ) : null}
             {tabs.map((tab) => {
@@ -3684,64 +3340,9 @@ export function App(): React.JSX.Element {
             Claude" do menu do "＋ Nova sessão", ou fechado ao lançar/Esc);
             fechado, o espaço vai pro `.center` (terminal), ver
             `styles.bodyPanelClosed` acima. */}
-        {/* Zona 3 — o mapa do discovery em foco (CA-7..CA-16). Lote 7: agora
-            na coluna ESQUERDA de 480px (a compressão da v2 saiu — o mapa não
-            divide coluna com o Launcher nunca mais). "Recolher mapa" (botão
-            do titlebar) zera essa coluna. */}
-        {/* FIX #15 (e2e 30/07, reincidente em 31/07) — "recolher a barra
-            lateral deixa o mapa desenhado POR CIMA do terminal": recolher só
-            zerava a COLUNA (`--col-left: 0px`) e o mapa continuava montado,
-            transbordando de uma caixa de largura zero. Colapsar a lateral
-            agora desmonta o mapa — preservado abaixo (`!sidebarCollapsed`).
-            FIX (feedback e2e 05/08, C4) — a versão anterior deste comentário
-            (batch N5) fazia `rightCollapsed` também encolher o mapa via prop
-            `collapsed` (largura 0 via CSS); era exatamente o bug relatado
-            ("ocultar a barra direita derruba o mapa"). O mapa não recebe mais
-            essa prop e não reage a `rightCollapsed` de forma alguma — só
-            `sidebarCollapsed` (acima) controla se ele está montado. */}
-        {devModeOn && !sidebarCollapsed ? (
-          <DiscoveryMap
-            view={mapView}
-            selection={mapSelection}
-            warning={storeWarning}
-            onFocusDiscovery={(discoveryId) => {
-              // Trocar de card zera o que pertence ao card: o plano, o item e o
-              // nó do detalhe apontariam para algo que não está mais na tela.
-              setMapSelection({ discoveryId, planId: null, itemId: null, nodeKey: null, phase: null });
-              // B2 — navegar até o discovery alterna para a aba da sessão viva
-              // DELE, quando existe (nó sem sessão viva não rouba foco).
-              focusLiveSessionOf(discoveryId, { entity: 'discovery', id: discoveryId });
-            }}
-            onFocusPlan={(planId) => {
-              setMapSelection((prev) => ({ ...prev, planId, itemId: null, nodeKey: null, phase: null }));
-              if (mapView.focused.discoveryId) focusLiveSessionOf(mapView.focused.discoveryId, { entity: 'plan', id: planId });
-            }}
-            onFocusItem={(itemId) => {
-              setMapSelection((prev) => ({ ...prev, itemId, nodeKey: `work_item:${itemId}`, phase: null }));
-              if (mapView.focused.discoveryId) focusLiveSessionOf(mapView.focused.discoveryId, { entity: 'work_item', id: itemId });
-            }}
-            onSelectNode={(nodeKey, phase) => setMapSelection((prev) => ({ ...prev, nodeKey, phase }))}
-            onPrepare={handleMapPrepare}
-            onResume={handleMapResume}
-            onNewDiscovery={() => setEsteiraOpen(true)}
-          />
-        ) : null}
-
-        {/* Painel de 316px à direita (CA-7) — o mapa NUNCA carrega o detalhe
-            dentro de si; esqueleto aqui, conteúdo rico no lote 8. Quando o
-            Launcher está aberto, ele ocupa esta mesma coluna (mesmo padrão
-            de antes). `!rightCollapsed`: o botão "Recolher painel de
-            detalhes" do titlebar desmonta só este painel — desde a correção
-            de 05/08 (C4) o mapa não é mais afetado por este estado. */}
-        {devModeOn && !launcherOpen && !rightCollapsed ? (
-          <PhaseDetailsPanel
-            detail={mapView.detail}
-            onReleaseLock={handleMapReleaseLock}
-            onRetryMirror={handleMapRetryMirror}
-            readOnly={storeReadOnly}
-            tasks={tasksView}
-          />
-        ) : null}
+        {/* Hill climbing — a barra esquerda (trilha + carrossel) que ficou do Modo Dev; não há barra direita.
+            Recolher a lateral desmonta a barra, como desmontava o mapa. */}
+        {hillOn && !sidebarCollapsed ? <HillClimbBar snapshot={hillClimb.snapshot} onGesture={hillClimb.gesture} /> : null}
 
         {launcherOpen ? (
           <aside className={styles.rightPanel} aria-label="Lançar sessão">
@@ -3943,31 +3544,6 @@ export function App(): React.JSX.Element {
         onChangeOracleCenter={(oracleCenter) => changeLayoutPrefs(oracleCenter ? { oracleCenter, centerView: 'oracle' } : { oracleCenter })}
       />
 
-      {/* Spec 010 / N7→F25 (D1) — o mapa de nós. Renderizado condicionalmente
-          (monta/desmonta com `nodeGraphOpen`) para que o Esc do próprio
-          overlay só exista enquanto ele está na tela. `onNavigate` entrega o
-          MESMO alvo de seleção que o carrossel já consome (`mapSelection`) —
-          o grafo é controle de navegação, não só visualização — e fecha
-          qualquer tela que estivesse por cima do carrossel para o destino
-          ficar visível. F25 — o clique também alterna para a aba da sessão
-          VIVA do alvo, a mesma semântica de `onFocusDiscovery`/`onFocusPlan`
-          /`onFocusItem` logo acima: navegar pelo grafo não pode deixar o
-          usuário olhando pra aba errada enquanto o card certo aparece. */}
-      {nodeGraphOpen ? (
-        <NodeGraphOverlay
-          snapshot={esteiraState?.snapshot ?? null}
-          onClose={() => setNodeGraphOpen(false)}
-          onNavigate={(target) => {
-            setMapSelection(target);
-            setEsteiraOpen(false);
-            setNodeGraphOpen(false);
-            const subject = parseEntityKey(target.nodeKey);
-            if (target.discoveryId !== null && subject !== null) {
-              focusLiveSessionOf(target.discoveryId, subject);
-            }
-          }}
-        />
-      ) : null}
     </div>
   );
 }

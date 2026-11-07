@@ -153,6 +153,7 @@ import {
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerSnapshot } from '../shared/ledger/channels';
 import type { LedgerProof } from '../shared/ledger/contract';
+import { HILL_CLIMB_CHANNELS, type HillClimbGestureRequest, type HillClimbGestureResult, type HillClimbSnapshot } from '../shared/hillClimb/channels';
 import { LEARNING_CHANNELS, type RendererGesture } from '../shared/learning/gestures';
 import type {
   MindscapeBoardRequest,
@@ -595,6 +596,16 @@ const donelApi: DonelApi = {
     proofImage: (taskId: string, proofIndex: number) => ipcRenderer.invoke(LEDGER_CHANNELS.proofImage, taskId, proofIndex) as Promise<string | null>,
     comment: (comment: LedgerComment) => ipcRenderer.invoke(LEDGER_CHANNELS.comment, comment) as Promise<LedgerCommentResult>,
     passOn: (requests: readonly LedgerPassOnRequest[]) => ipcRenderer.invoke(LEDGER_CHANNELS.passOn, requests) as Promise<readonly LedgerPassedOn[]>,
+  },
+
+  // Hill climbing — `<userData>/hill-climb.json` (main is the only writer); gestures go as the owner.
+  hillClimb: {
+    load: () => ipcRenderer.invoke(HILL_CLIMB_CHANNELS.load) as Promise<HillClimbSnapshot>,
+    onChanged: (listener: (snapshot: HillClimbSnapshot) => void) => {
+      const handler = (_event: unknown, snapshot: HillClimbSnapshot): void => listener(snapshot);
+      return subscribeChannel(ipcRenderer, HILL_CLIMB_CHANNELS.changed, handler);
+    },
+    gesture: (request: HillClimbGestureRequest) => ipcRenderer.invoke(HILL_CLIMB_CHANNELS.gesture, request) as Promise<HillClimbGestureResult>,
   },
 
   // Papéis de sessão (item 12a) — `<userData>/papeis/` (main is the only writer).
