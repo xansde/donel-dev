@@ -3007,6 +3007,8 @@ function registerRotinasIpcHandlers(): void {
           ...(snapshot.unconfirmed ? { unconfirmed: true } : {}),
           ...(snapshot.pendingKinds ? { pendingKinds: snapshot.pendingKinds } : {}),
           ...(snapshot.turnFailure ? { turnFailure: snapshot.turnFailure } : {}),
+          ...(snapshot.lastEventAt !== undefined ? { lastEventAt: snapshot.lastEventAt } : {}),
+          ...(snapshot.openCalls !== undefined ? { openCalls: snapshot.openCalls } : {}),
         });
       }
       return live;
