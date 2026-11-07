@@ -22,6 +22,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'Muita tarefa feita aparecia como "cancelada": era o único jeito de fechar o que não passava pelo aceite. Agora o Oráculo e a tabela do Supabase leem o motivo e dizem o que foi de verdade: "concluída por prova" quando o trabalho saiu (um PR mesclado, por exemplo), "enviada" quando a mensagem foi, e "substituída pela" outra tarefa quando ela tomou o lugar. "Cancelada" fica só para o que não vai acontecer. Nada muda no registro: é só a leitura. O pedido dos posts do bot do agente também deixou de mostrar a marca interna.',
       },
       {
+        title: 'Sessões na VPS seguem com o PC desligado',
+        text: 'Com o Oráculo na VPS, uma sessão aberta lá depois desta versão continua criando, entregando e listando tarefas quando o PC desliga, e sabe quem é no quadro (do jeito que o quadro estava quando o PC desligou). O resto (navegador, desenhar no quadro, falar com outras sessões) volta quando o PC liga.',
+      },
+      {
         title: 'Com o Oráculo na VPS, o celular fala com ela',
         text: 'Quando o Oráculo mora na VPS, o app do celular passa a abrir no endereço dela: as cartas chegam com aviso e você responde com o PC desligado. Pareie o celular de novo uma vez, em Preferências, Celular (o endereço mudou). O que você escreve numa carta, ou pede pelo botão Pedir, espera na VPS e chega à sessão assim que o PC liga, uma vez só. Pedido por áudio continua precisando do PC ligado.',
       },
@@ -32,6 +36,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
       {
         title: 'O Faxineiro acorda sozinho',
         text: 'Cada quadro ganhou uma cadeira Faxineiro, que o Donel acorda sozinho quando uma máquina aperta, sem você nem o Líder precisarem chamar. Os gatilhos: RAM livre abaixo de 15%, swap acima de 10%, carga da VPS acima de duas vezes o número de processadores, disco acima de 85%, uma VPS sem sinal, sessões paradas há meia hora e uma ronda por dia, depois das 6h. O Faxineiro roda numa máquina que não é a apertada e fecha só as sessões do próprio quadro que terminaram. O Donel não deixa ele fechar o Líder, uma sessão trabalhando, uma que espera você ou uma aba que você abriu à mão. Quando ele termina a ronda e fica parado, o Donel fecha o Faxineiro também. Para não juntar Faxineiros, uma máquina cheia acorda um quadro de cada vez, e o Donel acorda no máximo quatro por hora. Os limites ficam na seção "faxineiro" do arquivo de configuração das rotinas, que também registra cada fechamento.',
+      },
+      {
+        title: 'O Líder do quadro libera as pastas de envio, não você',
+        text: 'Quando um agente precisa enviar por uma página um arquivo de uma pasta nova, quem libera agora é o Líder do quadro dele (ou o Líder único, em qualquer quadro), sem pedir a você. Fica registrado quem liberou, quando e para qual quadro, e você vê e remove em Regras, no navegador. Os anexos do chat saem sem pedido nenhum. O que continua sempre recusado são os arquivos de segredo: chaves, tokens, senhas, a configuração e o cofre de contas do Donel, os cookies do navegador e as pastas de chaves do sistema. A raiz do disco e a sua pasta de usuário inteira também não podem ser liberadas.',
       },
       {
         title: 'O Oráculo pode morar na sua VPS',
