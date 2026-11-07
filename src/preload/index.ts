@@ -178,7 +178,7 @@ import {
   type CelularTailnet,
 } from '../shared/celular';
 import { ROTINAS_CHANNELS, type ShadowEntry } from '../shared/rotinas/contract';
-import { LIDER_CHANNELS, type LiderReport, type LiderSendPayload, type LiderSendResult, type LiderState } from '../shared/lider/ipc';
+import { LIDER_CHANNELS, type LiderCarryPayload, type LiderReport, type LiderSendPayload, type LiderSendResult, type LiderState } from '../shared/lider/ipc';
 import { ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
 import type { ClaudeInventory } from '../shared/role-scope';
 import type { TeamPrefs } from '../shared/teamPrefs';
@@ -919,6 +919,7 @@ const donelApi: DonelApi = {
       const handler = (_event: unknown, payload: { readonly tabId: string }): void => listener(payload);
       return subscribeChannel(ipcRenderer, LIDER_CHANNELS.activateTab, handler);
     },
+    carry: (payload: LiderCarryPayload) => ipcRenderer.invoke(LIDER_CHANNELS.carry, payload) as Promise<LiderSendResult>,
     // --- pet window (the bubble of the Líder) ---
     getState: () => ipcRenderer.invoke(LIDER_CHANNELS.getState) as Promise<LiderState>,
     onState: (listener: (state: LiderState) => void) => {

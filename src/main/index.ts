@@ -220,7 +220,7 @@ import {
   buildAttachSshArgs,
   buildRemoteSetupScript,
   discoverRemoteSessions,
-  buildCarryTranscriptScript,
+  sshRemoteCommand,
   remoteAliveFromMeta,
   findRemoteTranscript,
   parseRemoteSetupOutput,
@@ -352,6 +352,8 @@ import { hasImage, readText, writeText } from './clipboard-bridge';
 import { CLIPBOARD_CHANNELS } from '../shared';
 import { resolveClaudeCorrelation } from './session-correlation';
 import { carryTranscriptLocally, largestTranscript } from './lider/carry-transcript';
+import { fetchTranscriptFromRemote, sendTranscriptToRemote } from './lider/transfer';
+import { LIDER_CHANNELS, isValidLiderCarryPayload, type LiderCarryPayload, type LiderSendResult } from '../shared/lider/ipc';
 import { defaultClaudeHome, indexProjectSessions, resolveProjectSessionsDir } from './session-indexer';
 import { seedProject } from './session-seed';
 import { SessionSemaphoreManager } from './session-semaphore-manager';
@@ -1733,10 +1735,9 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
 
   await remoteSessions.waitEnded(correlationId);
   const git = localGitInfo(localCwd);
-  const homeRelativeDir = remoteDirFor(localCwd, appConfig.projectRoots);
   const script = buildRemoteSetupScript({
     sid: correlationId,
-    homeRelativeDir,
+    homeRelativeDir: remoteDirFor(localCwd, appConfig.projectRoots),
     repoUrl: git.repoUrl,
     branch: git.branch,
     files,
@@ -1750,19 +1751,6 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     throw new Error(`${place.label}: ${answer.message}`);
   }
   const live = answer.kind === 'alive' ? answer.meta : meta;
-
-  // Líder único na VPS — the Líder that changes place resumes (`-r`) the conversation it had here: it goes before the
-  // CLI starts (the tmux starts when the PTY attaches, below). The largest local copy is the newest one.
-  if (answer.kind !== 'alive' && options.leaderOfAll === true && launcherArgs.includes('-r')) {
-    const source = largestTranscript([spawnedTranscriptPaths.get(correlationId), resolveTranscriptPath(correlationId, localCwd, undefined), remoteSessions.mirrorPathFor(correlationId)]);
-    if (source) {
-      const carried = await runRemoteScript(place.sshTarget, buildCarryTranscriptScript(homeRelativeDir, correlationId, readFileSync(source.path, 'utf8')), 120_000);
-      if (!/DONEL_(CARRIED|KEPT)/.test(carried.stdout)) {
-        browserService?.releasePty(ptyId);
-        throw new Error(`${place.label}: não consegui levar a conversa do Líder para lá. Ela continua neste computador.`);
-      }
-    }
-  }
 
   // The bridge and the MCP know this tab by the tokens the remote CLI holds.
   if (hooksOn && hookBridge) hookBridge.registerSession(ptyId, live.hookToken);
@@ -1810,12 +1798,64 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
   return { ptyId, claudeSessionId: correlationId, ...(accountId && accountLabel ? { account: { id: accountId, label: accountLabel } } : {}) };
 }
 
+/**
+ * Líder único na VPS — copies the Líder's conversation from where it runs (`from`) to where it goes (`to`);
+ * `undefined` = this computer. Coming from a place, the place's own file comes down (never only the mirror that
+ * arrived here), checked by hash, and the larger of it and the copy here stays. Going to a place, the largest copy
+ * here goes up, checked there. Nothing is closed here: a failure leaves the Líder where it is.
+ */
+async function carryLeaderConversation(payload: LiderCarryPayload): Promise<LiderSendResult> {
+  if (payload.from === payload.to) return { ok: true };
+  const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
+  const placeOf = (id: string): { readonly sshTarget: string; readonly label: string } => {
+    const place = places.find((candidate) => candidate.id === id);
+    if (!place) throw new Error('o lugar remoto não existe mais (painel Contas).');
+    return place;
+  };
+  const sid = payload.sessionId;
+  const homeRelativeDir = remoteDirFor(payload.cwd, appConfig.projectRoots);
+  const localTranscript = resolveTranscriptPath(sid, payload.cwd, undefined);
+
+  if (payload.from !== undefined) {
+    const from = placeOf(payload.from);
+    mkdirSync(dirname(localTranscript), { recursive: true });
+    const arriving = `${localTranscript}.chegando-${randomUUID()}`;
+    const fetched = await fetchTranscriptFromRemote(sshRemoteCommand(from.sshTarget), homeRelativeDir, sid, arriving);
+    if (!fetched.ok) return { ok: false, reason: `${from.label}: ${fetched.reason}` };
+    try {
+      if (fetched.size > 0) carryTranscriptLocally(arriving, localTranscript);
+    } finally {
+      rmSync(arriving, { force: true });
+    }
+  }
+
+  if (payload.to !== undefined) {
+    const to = placeOf(payload.to);
+    const source = largestTranscript([localTranscript, spawnedTranscriptPaths.get(sid), remoteSessions?.mirrorPathFor(sid)]);
+    if (!source) return { ok: false, reason: 'a conversa do Líder não está neste computador.' };
+    const sent = await sendTranscriptToRemote(sshRemoteCommand(to.sshTarget), homeRelativeDir, sid, source.path);
+    if (!sent.ok) return { ok: false, reason: `${to.label}: ${sent.reason}` };
+  }
+  return { ok: true };
+}
+
 function registerPtyIpcHandlers(): void {
   remoteSessions = new RemoteSessionRegistry(join(app.getPath('userData'), 'remote-transcripts'));
   ipcMain.handle(PTY_CHANNELS.remoteAlive, async (): Promise<RemoteAliveSession[]> => {
     const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
     const found = await discoverRemoteSessions(places);
     return found.map(({ remoteId, meta }) => remoteAliveFromMeta(remoteId, meta));
+  });
+
+  // Líder único na VPS — the conversation goes to the place the Líder moves to BEFORE it opens there, by stream and
+  // checked there; the renderer closes the old Líder only after the new one took a message (shared/lider/move.ts).
+  ipcMain.handle(LIDER_CHANNELS.carry, async (_event, payload: unknown): Promise<LiderSendResult> => {
+    if (!isValidLiderCarryPayload(payload)) return { ok: false, reason: 'pedido de cópia inválido.' };
+    try {
+      return await carryLeaderConversation(payload);
+    } catch (error) {
+      return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+    }
   });
 
   ipcMain.handle(PTY_CHANNELS.create, (_event, options: PtyCreateOptions): PtyCreateResult | Promise<PtyCreateResult> => {
@@ -1868,16 +1908,6 @@ function registerPtyIpcHandlers(): void {
       // graça se o servidor do semáforo não subiu no boot (app.whenReady):
       // a sessão continua funcionando, só sem os indicadores de estado.
       const { correlationId, extraArgs } = resolveClaudeCorrelation(launcherArgs, randomUUID);
-
-      // Líder único na VPS — back on this computer, the Líder resumes (`-r`) the conversation it had on the remote
-      // place: its mirror becomes the CLI's transcript here before the CLI starts (only when it is the larger copy).
-      if (options.leaderOfAll === true && launcherArgs.includes('-r') && !options.providerId && remoteSessions) {
-        try {
-          carryTranscriptLocally(remoteSessions.mirrorPathFor(correlationId), resolveTranscriptPath(correlationId, options.cwd, undefined));
-        } catch {
-          // it resumes the copy that is already here
-        }
-      }
 
       // T1222 (011-contas-e-provedores, etapa 2, D8/entregável) — com os
       // perfis demolidos, sessões SEM provider nunca mais recebem override de

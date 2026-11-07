@@ -302,31 +302,9 @@ export function remoteAliveFromMeta(remoteId: string, meta: RemoteSessionMeta): 
   };
 }
 
-/**
- * Pure — Líder único na VPS: writes the conversation `sid` the app carries into the CLI's transcript folder of the
- * project folder (`homeRelativeDir`, as `remoteDirFor` gives it), so `claude -r <sid>` finds it there. Same rule as
- * `carryTranscriptLocally`: only a larger copy replaces the one there, which stays as `.bak-<time>`. Answers
- * `DONEL_CARRIED` or `DONEL_KEPT`.
- */
-export function buildCarryTranscriptScript(homeRelativeDir: string, sid: string, content: string): string {
-  assertSessionId(sid);
-  const size = Buffer.byteLength(content, 'utf8');
-  const encoded = (Buffer.from(content, 'utf8').toString('base64').match(/.{1,76}/g) ?? []).join('\n');
-  return [
-    'set -u',
-    `D=$(cd "$HOME"/${shQuote(homeRelativeDir)} 2>/dev/null && pwd) || { echo "DONEL_ERR A pasta do Líder não existe no lugar remoto."; exit 3; }`,
-    'SLUG=$(printf %s "$D" | sed "s/[^a-zA-Z0-9]/-/g")',
-    'P="$HOME/.claude/projects/$SLUG"',
-    `T="$P/${sid}.jsonl"`,
-    `if [ -f "$T" ] && [ "$(wc -c < "$T")" -ge ${size} ]; then echo DONEL_KEPT; exit 0; fi`,
-    'mkdir -p "$P" || exit 4',
-    "base64 -d > \"$T.chegando\" <<'DONEL_EOF' || exit 4",
-    encoded,
-    'DONEL_EOF',
-    'if [ -f "$T" ]; then mv "$T" "$T.bak-$(date +%s)"; fi',
-    'mv "$T.chegando" "$T" && echo DONEL_CARRIED',
-    '',
-  ].join('\n');
+/** Líder único na VPS — runs one command line on the place over ssh, with stdin and stdout piped (`lider/transfer.ts`). */
+export function sshRemoteCommand(sshTarget: string): (command: string) => ChildProcess {
+  return (command) => spawn('ssh', [...SSH_OPTIONS, '-T', '--', sshTarget, command], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
 }
 
 export function buildEndScript(sid: string): string {
