@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
-import { createLedgerService, ledgerProofsDir, NOT_STARTED_GRACE_MS, nodeLedgerProofFs, passOnTasks, runLedgerTool, type LedgerCaller, type LedgerProofFs } from '../src/main/ledger-store';
+import { createLedgerService, leaderTransferNotice, ledgerProofsDir, NOT_STARTED_GRACE_MS, nodeLedgerProofFs, passOnTasks, runLedgerTool, type LedgerCaller, type LedgerProofFs } from '../src/main/ledger-store';
 import type { MindscapeBoard } from '../src/shared/mindscape/model';
 import { findCode, LEDGER_SCHEMA_VERSION, parseLedgerDoc } from '../src/shared/ledger/contract';
 import { LEADER_OF_ALL } from '../src/shared/mindscape/leader';
@@ -14,6 +14,9 @@ import { buildRemoteProofCommand, fetchRemoteProof } from '../src/main/ledger-re
 import { parseLedgerToolCall, type LedgerToolCall } from '../src/shared/ledger/tools';
 import { slackGuard } from '../src/shared/ledger/slack-guard';
 import { deliveryNote } from '../src/shared/ledger/labels';
+import { createFaxinaRunner } from '../src/main/rotinas/oraculo-faxina';
+import { ORPHAN_AGE_MS, type PrRef } from '../src/shared/ledger/faxina';
+import { addLink, addPlace, emptyMindscapeDoc, setPlaceConversation } from '../src/shared/mindscape/model';
 
 // Ledger com prova (item 19) — persisted data a channel could erase, and the two rules that live in code:
 // no delivery without proof, and whoever delivered never accepts. Through the MCP port, round trip on disk.
@@ -568,5 +571,87 @@ describe('órfãs e substituição (06/11)', () => {
     expect(await make(service, pesquisa, { dono: 'place:dev' })).toMatchObject({ ok: true });
     // Every other role keeps the default: the task is its own.
     expect(await make(service, dev, {})).toMatchObject({ ok: true });
+  });
+
+  it('the nightly cleanup: low risk with a merged PR ends done, high risk and no PR stay; 3 nights in shadow, then it acts', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ledger-'));
+    dirs.push(dir);
+    let clock = new Date(2026, 10, 7, 10).getTime(); // 10:00 local: past the night's hour
+    const service = createLedgerService({ filePath: join(dir, 'ledger.json'), io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs, now: () => clock });
+    const deliver = async (risco: 'baixo' | 'alto', provas: unknown[], reject: boolean) => {
+      const id = (JSON.parse((await runLedgerTool(service, lider, call('tarefa_criar', { pedido: risco, criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco }))).text) as { id: string }).id;
+      await runLedgerTool(service, dev, call('tarefa_assumir', { id }));
+      const paraODono = { pergunta: 'Aceito?', resumo: 'Feito.', opcoes: [{ rotulo: 'Aceitar', efeito: 'Fecha.', fecha: 'aceita', recomendada: true }, { rotulo: 'Refazer', efeito: 'Volta.', fecha: 'rejeitada' }], porque: 'Testes.', risco: 'Baixo.' };
+      expect(await runLedgerTool(service, dev, call('tarefa_entregar', { id, provas, ...(risco === 'alto' ? { paraODono } : {}) }))).toMatchObject({ ok: true });
+      if (reject) service.apply({ kind: 'dono' }, { op: 'rejeitar', id, reason: 'falta o print' });
+      return id;
+    };
+    const lowMerged = await deliver('baixo', [{ tipo: 'link', url: 'https://github.com/acme/atlas/pull/255' }], true);
+    const highMerged = await deliver('alto', [{ tipo: 'texto', texto: 'PR https://github.com/acme/atlas/pull/257 e 4 passed' }], true);
+    const lowOpenPr = await deliver('baixo', [{ tipo: 'link', url: 'https://github.com/acme/atlas/pull/258' }], false);
+    const noPr = await deliver('baixo', [{ tipo: 'texto', texto: '4 passed' }], true);
+    // A PR only cited in a text (the base of a stacked PR) is not the delivery's: its own PR is still open.
+    const stacked = await deliver('baixo', [{ tipo: 'link', url: 'https://github.com/acme/atlas/pull/258' }, { tipo: 'texto', texto: 'Empilhado no https://github.com/acme/atlas/pull/255' }], true);
+    const citedOnly = await deliver('baixo', [{ tipo: 'texto', texto: 'Base https://github.com/acme/atlas/pull/255, este https://github.com/acme/atlas/pull/258' }], true);
+    // An old orphan: its place closed (started, no live session), nobody touched it for more than a day.
+    const orphan = (JSON.parse((await runLedgerTool(service, lider, call('tarefa_criar', { pedido: 'velha', criterio: 'y', prazo: '2026-11-06', dono: 'place:revisor', risco: 'alto' }))).text) as { id: string }).id;
+    let boards = addPlace(emptyMindscapeDoc(), 'C:/p', { id: 'place:lider', roleId: 'lider' });
+    for (const id of ['place:dev', 'place:revisor']) boards = addPlace(boards, 'C:/p', { id, roleId: 'dev' });
+    boards = setPlaceConversation(boards, 'C:/p', 'place:revisor', 'conv-revisor');
+    boards = addLink(boards, 'C:/p', { id: 'l1', from: 'place:dev', to: 'place:revisor', arrow: true, by: 'session', opened: true });
+    boards = setPlaceConversation(boards, 'C:/p', 'place:dev', 'conv-dev');
+    const asked: string[] = [];
+    const told: { to: string; text: string }[] = [];
+    const runner = createFaxinaRunner({
+      dir: join(dir, 'rotinas'),
+      ledger: () => service,
+      loadBoards: () => boards,
+      liveSessionIds: () => new Set(['conv-dev']),
+      prState: async (pr: PrRef) => (asked.push(pr.url), pr.number === 258 ? { merged: false } : { merged: true, mergedAt: '2026-11-05T18:00:00Z' }),
+      tell: (_board, to, text) => told.push({ to, text }),
+      now: () => clock,
+    });
+    clock += ORPHAN_AGE_MS + 60_000;
+
+    // Three nights in shadow: everything written, nothing changed.
+    for (let night = 1; night <= 3; night += 1) {
+      const entries = await runner.runNight();
+      expect(entries.find((entry) => entry.tarefa === lowMerged)).toMatchObject({ acao: 'cancelaria', sombra: true, motivo: 'concluída: PR #255 mesclado em 2026-11-05' });
+      expect(entries.find((entry) => entry.tarefa === highMerged)).toMatchObject({ acao: 'fica-risco-alto' });
+      expect(entries.find((entry) => entry.tarefa === orphan)).toMatchObject({ acao: 'passaria', de: 'place:revisor', para: 'place:dev' });
+      expect(entries.some((entry) => [lowOpenPr, noPr, stacked, citedOnly].includes(entry.tarefa ?? ''))).toBe(false);
+      expect(await runner.runNight()).toEqual([]); // once a night
+      clock += 24 * 60 * 60 * 1000;
+    }
+    expect(service.load().doc.tasks[lowMerged]).toMatchObject({ state: 'rejeitada', ownerPlaceId: 'place:dev' });
+    expect(service.load().doc.tasks[orphan]).toMatchObject({ ownerPlaceId: 'place:revisor' });
+    expect(told).toEqual([]);
+    expect(readFileSync(join(dir, 'rotinas', 'faxina.log'), 'utf8').trim().split('\n').filter((line) => line.includes('"resumo"'))).toHaveLength(3);
+
+    // The fourth night acts.
+    const entries = await runner.runNight();
+    expect(entries.find((entry) => entry.tarefa === lowMerged)).toMatchObject({ acao: 'cancelada', sombra: false });
+    const view = async (id: string) => JSON.parse((await runLedgerTool(service, lider, call('tarefa_ver', { id }))).text) as Record<string, any>;
+    expect(await view(lowMerged)).toMatchObject({ estado: 'cancelada', decisao: { tipo: 'cancelada', motivo: 'concluída: PR #255 mesclado em 2026-11-05' } });
+    expect((await view(highMerged)).estado).toBe('rejeitada');
+    expect((await view(lowOpenPr)).estado).toBe('entregue');
+    expect((await view(noPr)).estado).toBe('rejeitada');
+    expect((await view(stacked)).estado).toBe('rejeitada');
+    expect((await view(citedOnly)).estado).toBe('rejeitada');
+    expect(await view(orphan)).toMatchObject({ dono: 'place:dev', transferencias: [expect.objectContaining({ de: 'place:revisor', para: 'place:dev', motivo: expect.stringContaining('passada sozinha pela faxina') })] });
+    expect(told).toEqual([{ to: 'place:dev', text: expect.stringContaining(orphan) }]);
+    expect(new Set(asked)).toEqual(new Set(['https://github.com/acme/atlas/pull/255', 'https://github.com/acme/atlas/pull/257', 'https://github.com/acme/atlas/pull/258']));
+  });
+
+  it('a task passed to the Líder único by hand tells it who passed what and why', async () => {
+    const { service } = setup();
+    const id = (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { titulo: 'Corrige o envio', pedido: 'x', criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco: 'alto' }))).text) as { id: string }).id;
+    const moved = await runLedgerTool(service(), dev, call('tarefa_transferir', { id, para: 'lider', motivo: 'precisa de decisão' }));
+    const notice = leaderTransferNotice(service(), 'place:dev', moved.text, 'precisa de decisão');
+    expect(notice).toContain(`place:dev passou para você a tarefa ${id} «Corrige o envio» (quadro p)`);
+    expect(notice).toContain('precisa de decisão');
+    // To another place: no line to the Líder.
+    const back = await runLedgerTool(service(), lider, call('tarefa_transferir', { id, para: 'place:revisor', motivo: 'x' }));
+    expect(leaderTransferNotice(service(), 'lider', back.text, 'x')).toBeNull();
   });
 });

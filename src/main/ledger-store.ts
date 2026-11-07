@@ -340,6 +340,28 @@ export function passOnTasks(service: LedgerService, requests: readonly LedgerPas
   return passed;
 }
 
+/**
+ * t-2c18d666 — the line the Líder único reads when a place passed it a task by hand (`tarefa_transferir` with
+ * "lider"); `null` when the answer is not a transfer to it.
+ */
+export function leaderTransferNotice(service: LedgerService, fromPlaceId: string, answerText: string, reason: string): string | null {
+  let answer: { transferida?: unknown; id?: unknown; dono?: unknown };
+  try {
+    answer = JSON.parse(answerText) as typeof answer;
+  } catch {
+    return null;
+  }
+  if (answer.transferida !== true || answer.dono !== LEADER_OF_ALL || typeof answer.id !== 'string') return null;
+  let task: LedgerTask | undefined;
+  try {
+    task = service.load().doc.tasks[answer.id];
+  } catch {
+    task = undefined;
+  }
+  const board = task?.projectPath.split(/[\\/]/).filter(Boolean).pop();
+  return `◆ Oráculo: ${fromPlaceId} passou para você a tarefa ${answer.id}${task?.title ? ` «${task.title}»` : ''}${board ? ` (quadro ${board})` : ''}. Motivo: ${reason}. Leia com tarefa_ver e assuma com tarefa_assumir, ou passe adiante com tarefa_transferir.`;
+}
+
 /** The strip with the same pt-BR words as the rest of the tool (`aberta`, `em-execucao`, `esperandoDono`…). */
 function stripView(strip: LedgerStrip): Record<string, unknown> {
   return {
