@@ -736,6 +736,8 @@ export function App(): React.JSX.Element {
   const closeTabImmediately = (tabId: string): void => {
     const index = tabs.findIndex((tab) => tab.id === tabId);
     if (index === -1) return;
+    // t-e753b554 — the place of this tab, if it does not come back, passes its live tasks on (read before it leaves).
+    agentBridgeRef.current?.placeClosed(tabId);
     const remaining = tabs.filter((tab) => tab.id !== tabId);
     setTabs(remaining);
     if (activeTabId === tabId) {
@@ -2648,10 +2650,16 @@ export function App(): React.JSX.Element {
     remoteLabel: (remoteId) => accountsView.remotes.find((remote) => remote.id === remoteId)?.label ?? remoteId,
     remotes: () => accountsView.remotes.map((remote) => ({ id: remote.id, label: remote.label })),
     projects: () => projects.map((project) => ({ path: project.path, name: project.name })),
+    passOn: (requests) => window.donel.ledger.passOn(requests),
   };
   const agentBridgeRef = useRef<AgentBridge>(null as unknown as AgentBridge);
   if (agentBridgeRef.current === null) agentBridgeRef.current = new AgentBridge(agentPorts);
   agentBridgeRef.current.setPorts(agentPorts);
+  // t-e753b554 — a place that never started passes its live tasks on (the main waits 30 min after the last event).
+  useEffect(() => {
+    const timer = setInterval(() => void agentBridgeRef.current.checkNotStarted(), 5 * 60_000);
+    return () => clearInterval(timer);
+  }, []);
   useEffect(() => {
     const bridge = agentBridgeRef.current;
     const off = window.donel.mindscape.onBoardRequest(({ requestId, ptyId, call }) => {

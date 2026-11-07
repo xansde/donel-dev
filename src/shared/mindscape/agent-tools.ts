@@ -195,7 +195,7 @@ export const BOARD_TOOLS = [
     name: 'sessao_enviar',
     title: 'Mandar mensagem a outra sessão',
     description:
-      'Manda uma mensagem ao chat de outra sessão aberta. Só pela ligação: precisa existir uma seta do seu lugar para o dela (o Líder único alcança, em cada quadro, o topo, onde nenhuma seta do dono nem de abertura aponta, e quem está abaixo dele pelas setas; sessao_listar diz em "podeMandar"). A mensagem vai direto para a fila do Claude de lá; com uma permissão aberta na tela dela, entra assim que ela fechar.',
+      'Manda uma mensagem ao chat de outra sessão aberta. Só pela ligação: precisa existir uma seta do seu lugar para o dela (o Líder único alcança, em cada quadro, o topo, onde nenhuma seta do dono nem de abertura aponta, e quem está abaixo dele pelas setas; sessao_listar diz em "podeMandar"). Para falar com o Líder único, "para": "lider": vale para quem ele abriu e para quem está abaixo dela pelas setas. A mensagem vai direto para a fila do Claude de lá; com uma permissão aberta na tela dela, entra assim que ela fechar.',
     inputSchema: {
       type: 'object',
       properties: { para: PLACE_REF, texto: { type: 'string', description: 'A mensagem.' }, quadro: BOARD_REF },

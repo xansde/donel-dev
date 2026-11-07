@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { AgentBridge, type AgentBridgePorts, type BridgeTab } from '../src/renderer/src/Mindscape/agentBridge';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AgentBridge, PASS_ON_GRACE_MS, type AgentBridgePorts, type BridgeTab } from '../src/renderer/src/Mindscape/agentBridge';
+import type { LedgerPassOnRequest } from '../src/shared/ledger/channels';
 import { addLink, addPlace, emptyMindscapeDoc, setPlaceConversation, type MindscapeDoc } from '../src/shared/mindscape/model';
 import { FACTORY_ROLES, leaderOfAllPromptText, LEADER_ROLE_ID, rolePromptText } from '../src/shared/roles';
 
@@ -75,5 +76,110 @@ describe('Líder único', () => {
     expect(rolePromptText(lider)).not.toContain('Líder único');
     expect(leaderOfAllPromptText(lider)).toContain('Você é o Líder único');
     expect(leaderOfAllPromptText({ ...lider, guidance: 'Fale curto.' })).toContain('Fale curto.');
+  });
+});
+
+// t-52b31719 / t-e753b554 — a session the Líder único opened must reach it (or it stalls waiting), and a place that
+// closes must pass its tasks on (or they stay orphan). Board: the Líder único opened the Theo; the Theo opened the Dev;
+// the Outro was drawn by the owner, out of that chain.
+const ATLAS = 'C:/proj/atlas';
+const THEO = 'place:theo';
+const DEV = 'place:dev';
+const OUTRO = 'place:outro';
+
+function team(): { bridge: AgentBridge; sent: { tabId: string; text: string }[]; tabs: BridgeTab[]; passOns: LedgerPassOnRequest[][] } {
+  let doc = addPlace(emptyMindscapeDoc(), ATLAS, { id: THEO, roleId: 'dev', by: 'session' });
+  doc = addPlace(doc, ATLAS, { id: DEV, roleId: 'dev', by: 'session' });
+  doc = addPlace(doc, ATLAS, { id: OUTRO, roleId: 'dev' });
+  for (const [place, conv] of [[THEO, 'conv-theo'], [DEV, 'conv-dev'], [OUTRO, 'conv-outro']] as const) doc = setPlaceConversation(doc, ATLAS, place, conv);
+  doc = addLink(doc, ATLAS, { id: 'l1', from: THEO, to: DEV, arrow: true, by: 'session', opened: true });
+  const sent: { tabId: string; text: string }[] = [];
+  const passOns: LedgerPassOnRequest[][] = [];
+  const tabs: BridgeTab[] = [
+    { id: 'tab-lider', name: 'Líder', cwd: 'C:/proj', roleId: 'lider', leaderOfAll: true, sessionType: 'claude' },
+    { id: 'tab-theo', name: 'Theo', cwd: ATLAS, projectName: 'atlas', claudeSessionId: 'conv-theo', openedBy: 'lider', sessionType: 'claude' },
+    { id: 'tab-dev', name: 'Dev', cwd: ATLAS, projectName: 'atlas', claudeSessionId: 'conv-dev', openedBy: THEO, sessionType: 'claude' },
+    { id: 'tab-outro', name: 'Outro', cwd: ATLAS, projectName: 'atlas', claudeSessionId: 'conv-outro', sessionType: 'claude' },
+  ];
+  const ports: AgentBridgePorts = {
+    loaded: true,
+    doc: () => doc,
+    applyGesture: () => undefined,
+    tabs: () => tabs,
+    tabOfPty: (ptyId) => tabs.find((tab) => tab.id === `tab-${ptyId}`),
+    stateOf: (tabId) => (tabs.some((tab) => tab.id === tabId) ? 'waiting' : undefined),
+    roles: () => FACTORY_ROLES,
+    openSession: () => 'tab-new',
+    closeTab: () => undefined,
+    sendLine: (tabId, text) => sent.push({ tabId, text }),
+    deliverLine: async (tabId, text) => {
+      sent.push({ tabId, text });
+      return { kind: 'entrou' };
+    },
+    permissionOnScreen: () => false,
+    unconfirmed: () => false,
+    startTrouble: () => null,
+    askOwner: async () => true,
+    remoteLabel: (id) => id,
+    remotes: () => [],
+    projects: () => [{ path: ATLAS, name: 'atlas' }],
+    passOn: async (requests) => {
+      passOns.push([...requests]);
+      return requests.map((request) => ({ ...request, tasks: [{ id: `t-${request.placeId.slice(6)}`, title: 'Corrige o envio' }] }));
+    },
+  };
+  return { bridge: new AgentBridge(ports), sent, tabs, passOns };
+}
+
+/** Closes a tab the way the app does: the bridge hears it first, then it leaves the list. */
+function close(tabs: BridgeTab[], bridge: AgentBridge, tabId: string): void {
+  bridge.placeClosed(tabId);
+  tabs.splice(tabs.findIndex((tab) => tab.id === tabId), 1);
+}
+
+describe('Líder único recebe e lugar fechado passa adiante', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('a session the Líder único opened, or one below it, sends to "lider"; one out of that chain is refused', async () => {
+    const { bridge, sent } = team();
+    expect(await bridge.handle('theo', { tool: 'sessao_enviar', para: 'lider', texto: 'terminei a parte 1' })).toMatchObject({ ok: true });
+    expect(await bridge.handle('dev', { tool: 'sessao_enviar', para: 'lider', texto: 'travei no build' })).toMatchObject({ ok: true });
+    expect(sent).toEqual([
+      { tabId: 'tab-lider', text: `◆ De Dev (${THEO}), quadro atlas: terminei a parte 1` },
+      { tabId: 'tab-lider', text: `◆ De Dev (${DEV}), quadro atlas: travei no build` },
+    ]);
+    const refused = await bridge.handle('outro', { tool: 'sessao_enviar', para: 'lider', texto: 'oi' });
+    expect(refused).toMatchObject({ ok: false, text: expect.stringContaining('Sem ligação com o Líder único') });
+    expect(sent).toHaveLength(2);
+  });
+
+  it('a closed place passes its tasks to the first live one above, else to the Líder único, and whoever gets them hears it', async () => {
+    vi.useFakeTimers();
+    const { bridge, sent, tabs, passOns } = team();
+    close(tabs, bridge, 'tab-dev');
+    await vi.advanceTimersByTimeAsync(PASS_ON_GRACE_MS);
+    expect(passOns).toEqual([[{ projectPath: ATLAS, placeId: DEV, gone: 'fechada', to: THEO }]]);
+    expect(sent).toEqual([{ tabId: 'tab-theo', text: expect.stringContaining('t-dev «Corrige o envio»') }]);
+    expect(sent[0]!.text).toContain('fechou');
+
+    close(tabs, bridge, 'tab-theo');
+    await vi.advanceTimersByTimeAsync(PASS_ON_GRACE_MS);
+    expect(passOns[1]).toEqual([{ projectPath: ATLAS, placeId: THEO, gone: 'fechada', to: 'lider' }]);
+    expect(sent[1]).toEqual({ tabId: 'tab-lider', text: expect.stringContaining('quadro atlas') });
+  });
+
+  it('closing the app before the grace, or a place that comes back, moves nothing', async () => {
+    vi.useFakeTimers();
+    const { bridge, tabs, passOns } = team();
+    // The tab is closed and comes back (reopened) within the grace.
+    bridge.placeClosed('tab-outro');
+    await vi.advanceTimersByTimeAsync(PASS_ON_GRACE_MS);
+    // The app closes (the window goes, the bridge is disposed) right after a close.
+    close(tabs, bridge, 'tab-dev');
+    bridge.dispose();
+    await vi.advanceTimersByTimeAsync(PASS_ON_GRACE_MS * 2);
+    expect(passOns).toEqual([]);
   });
 });

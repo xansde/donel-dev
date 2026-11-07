@@ -21,8 +21,8 @@ import { LEADER_ROLE_ID, ROLES_CHANNELS, type RoleSaveResult, type SessionRole }
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
-import { createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, nodeLedgerProofFs, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
-import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerSnapshot } from '../shared/ledger/channels';
+import { createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, nodeLedgerProofFs, passOnTasks, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
+import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerSnapshot } from '../shared/ledger/channels';
 import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
 import type { LedgerToolCall } from '../shared/ledger/tools';
 import type { BoardBridge } from './board-bridge';
@@ -2985,6 +2985,18 @@ function registerLedgerIpcHandlers(): void {
     // Every decision of the owner, by a button or with words, tells the session that owns it (closed: the Líder).
     if (result.ok) void cardWriter?.tellDecision(result.task, text);
     return result;
+  });
+  // 06/11 (t-e753b554) — a place gone for good (its tab closed and did not come back, or it never started): the
+  // renderer names who takes the work (reach.ts), the main moves the live tasks with the record.
+  ipcMain.handle(LEDGER_CHANNELS.passOn, (event, raw: unknown): LedgerPassedOn[] => {
+    if (!fromMain(event.sender) || !Array.isArray(raw)) return [];
+    const requests = raw.filter(
+      (item): item is LedgerPassOnRequest =>
+        typeof item === 'object' && item !== null &&
+        typeof item.projectPath === 'string' && typeof item.placeId === 'string' && typeof item.to === 'string' &&
+        (item.gone === 'fechada' || item.gone === 'nao-comecou'),
+    );
+    return passOnTasks(service, requests);
   });
   ipcMain.handle(LEDGER_CHANNELS.comment, async (event, raw: unknown): Promise<LedgerCommentResult> => {
     if (!fromMain(event.sender)) return { ok: false, reason: 'Só a janela do app escreve na carta.' };

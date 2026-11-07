@@ -11,6 +11,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { constants as fsConstants, promises as fs } from 'node:fs';
 import { dirname, extname, isAbsolute, join } from 'node:path';
+import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { isBelow, isOpenedBy } from '../shared/mindscape/reach';
 import type { MindscapeBoard } from '../shared/mindscape/model';
 import type { ConfigIoDeps } from './config-store';
@@ -45,7 +46,7 @@ import {
   type LedgerStrip,
   type LedgerTask,
 } from '../shared/ledger/contract';
-import type { LedgerApplyResult, LedgerSnapshot } from '../shared/ledger/channels';
+import type { LedgerApplyResult, LedgerPassedOn, LedgerPassOnRequest, LedgerSnapshot } from '../shared/ledger/channels';
 import type { LedgerToolCall, ProofInput } from '../shared/ledger/tools';
 import { AGENT_BOT_SERVERS, detectAgentBotSend, detectSlackSend, fileNameOf, slackGuard, slackMessageLink, slackSendOutcome, type AgentBotSend } from '../shared/ledger/slack-guard';
 
@@ -279,6 +280,8 @@ export function orphanReason(caller: LedgerCaller, task: LedgerTask, now: number
 
 /** The owner place of `task` could not be checked: its board did not answer. Closed and delivered tasks do not depend on it. */
 export function ownerUnknown(caller: LedgerCaller, task: LedgerTask): boolean {
+  // The Líder único is no place of any board: whether the board answered says nothing of it (t-52b31719).
+  if (task.ownerPlaceId === LEADER_OF_ALL) return false;
   return !isClosed(task) && task.state !== 'entregue' && !caller.placeStates?.has(task.projectPath);
 }
 
@@ -287,6 +290,8 @@ export const NOT_STARTED_GRACE_MS = 30 * 60 * 1000;
 
 /** Why the owner place of `task` can no longer do the work (closed, out of the board, never started); `null` = alive or unknown. */
 export function ownerGone(caller: LedgerCaller, task: LedgerTask, now: number): string | null {
+  // The Líder único has no place on any board (t-52b31719): a task it owns is alive, never orphan.
+  if (task.ownerPlaceId === LEADER_OF_ALL) return null;
   const states = caller.placeStates?.get(task.projectPath);
   if (!states) return null;
   const state = states.get(task.ownerPlaceId);
@@ -295,6 +300,44 @@ export function ownerGone(caller: LedgerCaller, task: LedgerTask, now: number): 
   const since = task.events.at(-1)?.at ?? task.createdAt;
   if (state === 'nao-comecou' && now - since >= NOT_STARTED_GRACE_MS) return 'o lugar dono não começou';
   return null;
+}
+
+/** The words of the record of a passage: "passada sozinha: o lugar X fechou". */
+export function passOnReason(placeId: string, gone: LedgerPassOnRequest['gone']): string {
+  return `passada sozinha: o lugar ${placeId} ${gone === 'fechada' ? 'fechou' : 'não começou'}`;
+}
+
+/**
+ * 06/11 (t-e753b554) — a place is gone: each task it owns that is aberta, em execução or rejeitada passes to `to`,
+ * signed by the gone place itself (the owner place may pass its task on), with the reason "passada sozinha…" in the
+ * `criada` event the transfer already writes (v4: no new kind, no new field). A delivered task stays: it waits for
+ * whoever decides. A never-started place passes only past `NOT_STARTED_GRACE_MS` (`ownerGone`).
+ */
+export function passOnTasks(service: LedgerService, requests: readonly LedgerPassOnRequest[]): LedgerPassedOn[] {
+  let doc: LedgerDoc;
+  try {
+    const snapshot = service.load();
+    if (snapshot.readOnly) return [];
+    doc = snapshot.doc;
+  } catch {
+    return [];
+  }
+  const now = service.now();
+  const passed: LedgerPassedOn[] = [];
+  for (const request of requests) {
+    if (!request.to || request.to === request.placeId) continue;
+    const caller: LedgerCaller = { projectPath: request.projectPath, placeId: request.placeId, boardPlaceIds: [], placeStates: new Map([[request.projectPath, new Map([[request.placeId, request.gone]])]]) };
+    const tasks: { id: string; title?: string }[] = [];
+    for (const task of Object.values(doc.tasks)) {
+      if (task.projectPath !== request.projectPath || task.ownerPlaceId !== request.placeId || task.slack) continue;
+      if (isClosed(task) || (task.state !== 'aberta' && task.state !== 'em-execucao' && task.state !== 'rejeitada')) continue;
+      if (!ownerGone(caller, task, now)) continue;
+      const result = service.apply({ kind: 'lugar', placeId: request.placeId }, { op: 'transferir', id: task.id, to: request.to, reason: passOnReason(request.placeId, request.gone) });
+      if (result.ok) tasks.push({ id: task.id, ...(task.title ? { title: task.title } : {}) });
+    }
+    if (tasks.length) passed.push({ projectPath: request.projectPath, placeId: request.placeId, to: request.to, tasks });
+  }
+  return passed;
 }
 
 /** The strip with the same pt-BR words as the rest of the tool (`aberta`, `em-execucao`, `esperandoDono`…). */
@@ -485,7 +528,8 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       if (task.projectPath !== caller.projectPath) return { ok: false, text: 'A tarefa é de outro quadro; só se mexe em tarefa do próprio quadro.' };
       if (call.tool === 'tarefa_cancelar') return answer(service.apply(actor, { op: 'cancelar', id: task.id, reason: call.motivo }), 'cancelada');
       const to = call.para === 'seu' ? caller.placeId : call.para;
-      if (!caller.boardPlaceIds.includes(to)) return { ok: false, text: `"${to}" não é um lugar deste quadro que você alcança (veja sessao_listar).` };
+      // The Líder único has no place, but owns tasks too (t-52b31719): "lider" is a destination of every board.
+      if (to !== LEADER_OF_ALL && !caller.boardPlaceIds.includes(to)) return { ok: false, text: `"${to}" não é um lugar deste quadro que você alcança (veja sessao_listar), nem "lider" (o Líder único).` };
       const gone = ownerGone(caller, task, service.now());
       const result = service.apply(actor, { op: 'transferir', id: task.id, to, reason: gone && !call.motivo.includes(gone) ? `${call.motivo} (${gone})` : call.motivo, ...(gone ? { ownerGone: true } : {}) });
       if (!result.ok) return { ok: false, text: result.reason };
