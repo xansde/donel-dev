@@ -11,6 +11,10 @@ import type { LedgerRemoteResult, LedgerRemoteState } from '../shared/ledger/rem
 import type { ConfigIoDeps } from './config-store';
 import { bringLedgerBack, createRemoteLedgerService, fetchOracleHttp, MOVING_REASON, moveLedgerToRemote, readRemoteMarker, type OracleHttp, type RemoteLedgerService, type RemoteMarker } from './ledger-remote';
 import type { LedgerProofFs, LedgerService } from './ledger-store';
+import type { LedgerDeliveredTo } from '../shared/ledger/contract';
+import type { CelularPairResult, CelularState } from '../shared/celular';
+import type { CelularRemote } from './celular/service';
+import type { OwnerMessage } from './ledger-card-writer';
 
 export const REMOTE_CONFIG_FILE = 'oraculo-remoto.json';
 
@@ -30,6 +34,8 @@ export interface RemoteOracleHostDeps {
   readonly freeze: (reason: string | null) => Promise<void>;
   readonly onChange: (snapshot: LedgerSnapshot) => void;
   readonly fetchImpl?: typeof fetch;
+  /** Today's send driver (the board bridge; `null` before it is up): delivers what waits in the VPS's relay. */
+  readonly deliver?: () => ((message: OwnerMessage) => Promise<LedgerDeliveredTo>) | null;
 }
 
 export interface RemoteOracleHost {
@@ -39,6 +45,10 @@ export interface RemoteOracleHost {
   move(lugar: string): Promise<LedgerRemoteResult>;
   back(): Promise<LedgerRemoteResult>;
   dispose(): void;
+  /** Remote mode: the phone that lives on the VPS (Preferences → Celular forward to it). `null` = local mode. */
+  celular(): CelularRemote | null;
+  /** Delivers what waits in the VPS's relay (also on each `fila` event and once a minute). */
+  drain(): Promise<void>;
 }
 
 /** The script that leaves the token's hash on the place and answers where the daemon listens. */
@@ -168,6 +178,7 @@ export function createRemoteOracleHost(deps: RemoteOracleHostDeps): RemoteOracle
                   const ok = await remote?.refresh();
                   erro = ok ? null : 'o Oráculo da VPS não respondeu';
                 }
+                if (/^event: fila$/m.test(block)) void drain();
               }
             }
           }
@@ -183,6 +194,68 @@ export function createRemoteOracleHost(deps: RemoteOracleHostDeps): RemoteOracle
       await new Promise((resolve) => setTimeout(resolve, RETRY_MS[Math.min(attempt++, RETRY_MS.length - 1)]));
     }
   }
+
+  let draining: Promise<void> | null = null;
+  /** Each item: today's driver, then the ack. "Nobody open" (null) is not acked: it stays for the next drain. */
+  function drain(): Promise<void> {
+    if (draining) return draining;
+    draining = (async () => {
+      const http = httpOf(link);
+      const deliver = deps.deliver?.();
+      if (!http || !deliver || !remote) return;
+      let items: { id: string; message: OwnerMessage }[] = [];
+      try {
+        const response = await http('GET', '/v1/fila');
+        if (response.status !== 200) return;
+        const body = JSON.parse(await response.text()) as { itens?: unknown };
+        items = Array.isArray(body.itens) ? (body.itens as { id: string; message: OwnerMessage }[]) : [];
+      } catch {
+        return;
+      }
+      for (const item of items) {
+        if (typeof item?.id !== 'string' || typeof item.message?.text !== 'string') continue;
+        let to: LedgerDeliveredTo = null;
+        try {
+          to = await deliver(item.message);
+        } catch {
+          to = null;
+        }
+        if (to === null) continue;
+        try {
+          await http('POST', '/v1/fila/ack', JSON.stringify({ id: item.id, deliveredTo: to }));
+        } catch {
+          // delivered but not acked: the VPS asks again, and the driver's own dedup is the last guard
+          return;
+        }
+      }
+    })().finally(() => {
+      draining = null;
+    });
+    return draining;
+  }
+  const drainTimer = setInterval(() => {
+    if (remote && link) void drain();
+  }, 60_000);
+  drainTimer.unref?.();
+
+  async function celularCall<T>(method: string, path: string, body: unknown, fallback: T): Promise<T> {
+    const http = httpOf(link);
+    if (!http) return fallback;
+    try {
+      const response = await http(method, path, body === undefined ? undefined : JSON.stringify(body));
+      return response.status === 200 ? (JSON.parse(await response.text()) as T) : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+  const offline = (): CelularState => ({ enabled: false, status: 'error', url: null, error: `O celular agora fala com ${placeOf(lugar)?.label ?? 'a VPS'}, que não respondeu.`, devices: [] });
+  const celularRemote: CelularRemote = {
+    getState: () => celularCall('GET', '/v1/celular', undefined, offline()),
+    setEnabled: (enabled) => celularCall('POST', '/v1/celular/ligar', { enabled }, offline()),
+    pair: () => celularCall<CelularPairResult>('POST', '/v1/celular/parear', {}, { ok: false, reason: 'A VPS não respondeu.' }),
+    revoke: (deviceId) => celularCall('POST', '/v1/celular/revogar', { deviceId }, offline()),
+    linkPedido: (pedidoId, tarefa) => celularCall('POST', '/v1/celular/pedido-tarefa', { pedidoId, tarefa }, { ok: false }).then((answer) => answer.ok === true),
+  };
 
   function startRemote(id: string, marker: RemoteMarker, linked: { url: string; token: string } | null = null): RemoteLedgerService {
     generation++;
@@ -284,7 +357,10 @@ export function createRemoteOracleHost(deps: RemoteOracleHostDeps): RemoteOracle
     },
     dispose() {
       disposed = true;
+      clearInterval(drainTimer);
       stopRemote();
     },
+    celular: () => (remote ? celularRemote : null),
+    drain,
   };
 }
