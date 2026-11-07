@@ -5,7 +5,7 @@
 import { createReadStream } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { isTailscaleAddress } from '../main/celular/tailscale';
-import { bearerMatches, MAX_JSON_BYTES, MAX_UPLOAD_BYTES, PROOF_UPLOAD_PATH, type OracleApiHandler } from './api';
+import { bearerMatches, isBinaryRoute, MAX_JSON_BYTES, MAX_UPLOAD_BYTES, type OracleApiHandler } from './api';
 
 export const ORACLE_PORT = 47816;
 export const EVENTS_PATH = '/v1/eventos';
@@ -18,8 +18,8 @@ export interface OracleServer {
   close(): Promise<void>;
 }
 
-export function startOracleServer(options: { readonly host: string; readonly port: number; readonly token: string; readonly handler: OracleApiHandler }): Promise<OracleServer> {
-  const { host, port, handler, token } = options;
+export function startOracleServer(options: { readonly host: string; readonly port: number; readonly tokenHash: () => string | null; readonly handler: OracleApiHandler }): Promise<OracleServer> {
+  const { host, port, handler, tokenHash } = options;
   if (!isTailscaleAddress(host)) return Promise.reject(new Error(`recusado: ${host} não é um endereço da Tailscale`));
   const streams = new Set<ServerResponse>();
 
@@ -29,19 +29,21 @@ export function startOracleServer(options: { readonly host: string; readonly por
       req.socket.destroy();
       return;
     }
-    const path = (req.url ?? '/').split('?')[0];
+    const path = (req.url ?? '/').split('?')[0] ?? '/';
+    // The token before the body: a caller without it never gets to send 50 MB into memory.
+    if (!bearerMatches(req.headers.authorization, tokenHash())) {
+      res.writeHead(401).end();
+      req.socket.destroy();
+      return;
+    }
     if (req.method === 'GET' && path === EVENTS_PATH) {
-      if (!bearerMatches(req.headers.authorization, token)) {
-        res.writeHead(401).end();
-        return;
-      }
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
       res.write('event: ledger\ndata: {}\n\n');
       streams.add(res);
       req.on('close', () => streams.delete(res));
       return;
     }
-    const isUpload = req.method === 'PUT' && path === PROOF_UPLOAD_PATH;
+    const isUpload = isBinaryRoute(req.method ?? 'GET', path);
     const maxBytes = isUpload ? MAX_UPLOAD_BYTES : MAX_JSON_BYTES;
     const chunks: Buffer[] = [];
     let size = 0;
