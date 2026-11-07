@@ -8,13 +8,14 @@
 
 import { boardTools, isBoardToolName, parseBoardToolCall, type BoardToolCall } from '../mindscape/agent-tools';
 import { isLedgerToolName, LEDGER_TOOLS, parseLedgerToolCall, type LedgerToolCall } from '../ledger/tools';
+import { HILL_CLIMB_INSTRUCTIONS, HILL_CLIMB_TOOLS, isHillClimbToolName, parseHillClimbToolCall, type HillClimbToolCall } from '../hillClimb/tools';
 
 export const MCP_SERVER_NAME = 'donel';
 
 const BOARD_INSTRUCTIONS =
   'Quadro (Mindscape) do projeto desta sessão, que o dono vê e usa para falar com você desenhando: quadro_ler mostra lugares (sessões com papel), post-its, desenhos e ligações; quadro_aplicar monta o quadro ao vivo num gesto que o dono desfaz com Ctrl+Z (lugares com papel e pedido, post-its, ligações, retângulos, elipses, linhas, mover); papeis_listar dá os papéis. Mover, editar e apagar só no que uma sessão criou; nunca no que o dono fez (a ferramenta recusa). Prefira mostrar um fluxo no quadro a um texto longo. Time de sessões: sessao_quem_sou, sessao_listar, sessao_abrir (papel + pedido; nasce ligada a você por uma seta), sessao_enviar (só pelas setas do quadro) e sessao_ver_tela. Para falar com outra sessão do Donel use sessao_enviar, nunca um recurso de mensagens do próprio agente: o app entrega direto no chat dela, sem pedir aprovação. ';
 const LEDGER_INSTRUCTIONS =
-  'Oráculo Harrow (o registro de tarefas entre lugares): tarefa_criar (frase literal de quem pediu, critério, prazo, dono, risco), tarefa_assumir, tarefa_entregar (sempre com prova: print, vídeo, protótipo .html autocontido, saída de comando ou link do CI; no risco alto, com o bloco paraODono: a carta que o dono lê, em texto de gente, sem código), tarefa_ver (a prova inteira: leia antes de decidir), tarefa_aceitar e tarefa_rejeitar (Revisor só no risco baixo, no próprio quadro e de fora da cadeia de quem entregou; quem entregou nunca aceita), tarefa_listar. Mensagem ao Slack em nome do dono: SEMPRE antes uma carta_slack (destino, thread, texto exato, motivo) aceita pelo dono; sem ela o envio é bloqueado. ';
+  'Oráculo Harrow (o registro de tarefas entre lugares): tarefa_criar (frase literal de quem pediu, critério, prazo, dono, risco), tarefa_assumir, tarefa_entregar (sempre com prova: print, vídeo, protótipo .html autocontido, saída de comando ou link do CI; no risco alto, com o bloco paraODono: a carta que o dono lê, em texto de gente, sem código), tarefa_ver (a prova inteira: leia antes de decidir), tarefa_aceitar e tarefa_rejeitar (Revisor só no risco baixo, no próprio quadro e de fora da cadeia de quem entregou; quem entregou nunca aceita), tarefa_listar (por padrão só as vivas), tarefa_transferir (passa a tarefa adiante quando o lugar dono fechou ou outro vai fazer) e tarefa_cancelar (encerra com motivo o que não vai sair, como a carta substituída). Mensagem ao Slack em nome do dono: SEMPRE antes uma carta_slack (destino, thread, texto exato, motivo) aceita pelo dono; sem ela o envio é bloqueado. ';
 export const MCP_ENDPOINT_PATH = '/mcp';
 /** Protocol versions this server answers with; a client asking for another one gets the newest of these. */
 export const SUPPORTED_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'] as const;
@@ -364,6 +365,8 @@ export interface McpHandlerContext {
   readonly openCap?: () => number | null;
   /** Ledger com prova (item 19) — the `tarefa_*` tools; absent = no ledger tools. */
   readonly ledgerExecutor?: (call: LedgerToolCall) => Promise<BrowserToolOutcome>;
+  /** Hill climbing — the `hillclimb_*` tools of the Escalador; absent = no hill climbing tools. */
+  readonly hillClimbExecutor?: (call: HillClimbToolCall) => Promise<BrowserToolOutcome>;
   readonly serverVersion: string;
 }
 
@@ -410,6 +413,7 @@ async function handleOne(message: unknown, ctx: McpHandlerContext): Promise<Json
           instructions:
             (ctx.boardExecutor ? BOARD_INSTRUCTIONS : '') +
             (ctx.ledgerExecutor ? LEDGER_INSTRUCTIONS : '') +
+            (ctx.hillClimbExecutor ? HILL_CLIMB_INSTRUCTIONS : '') +
             'Navegador integrado do Donel Dev, um por sessão, que o dono vê ao lado da conversa. Fluxo: navegador_abrir, navegador_ler (o que está na tela, elementos numerados [N]), navegador_clicar/navegador_digitar/navegador_teclar, e navegador_ler de novo. Para ler o conteúdo todo da página: navegador_extrair. Login, 2FA, captcha, campo de senha ou cartão e botão de comprar, pagar ou excluir são do dono: navegador_pedir_humano. O dono também pode limitar os domínios que o agente abre.',
         },
       };
@@ -419,7 +423,7 @@ async function handleOne(message: unknown, ctx: McpHandlerContext): Promise<Json
       return {
         jsonrpc: '2.0',
         id,
-        result: { tools: [...(ctx.boardExecutor ? boardTools(ctx.openCap?.() ?? null) : []), ...(ctx.ledgerExecutor ? LEDGER_TOOLS : []), ...BROWSER_TOOLS] },
+        result: { tools: [...(ctx.boardExecutor ? boardTools(ctx.openCap?.() ?? null) : []), ...(ctx.ledgerExecutor ? LEDGER_TOOLS : []), ...(ctx.hillClimbExecutor ? HILL_CLIMB_TOOLS : []), ...BROWSER_TOOLS] },
       };
     case 'tools/call': {
       const name = p.name;
@@ -444,6 +448,17 @@ async function handleOne(message: unknown, ctx: McpHandlerContext): Promise<Json
           ledgerOutcome = { kind: 'error', text: error instanceof Error ? error.message : String(error) };
         }
         return { jsonrpc: '2.0', id, result: toolResult(ledgerOutcome) };
+      }
+      if (typeof name === 'string' && ctx.hillClimbExecutor && isHillClimbToolName(name)) {
+        const climb = parseHillClimbToolCall(name, p.arguments);
+        if (!climb.ok) return { jsonrpc: '2.0', id, result: toolResult({ kind: 'error', text: climb.reason }) };
+        let climbOutcome: BrowserToolOutcome;
+        try {
+          climbOutcome = await ctx.hillClimbExecutor(climb.call);
+        } catch (error) {
+          climbOutcome = { kind: 'error', text: error instanceof Error ? error.message : String(error) };
+        }
+        return { jsonrpc: '2.0', id, result: toolResult(climbOutcome) };
       }
       if (typeof name !== 'string' || !TOOL_NAMES.has(name)) return errorResponse(id, JSON_RPC_ERRORS.invalidParams, `Unknown tool: ${String(name)}`);
       const parsed = parseToolCall(name, p.arguments);

@@ -726,6 +726,11 @@
   border-left-color: var(--carta-borda);
 }
 
+/* escrito na carta que não chegou a ninguém (sessão e Líder fechados): fica guardado, e a carta diz */
+.sentNowhere {
+  border-left-color: var(--nao);
+}
+
 .lineMine {
   border-left-color: var(--ouro);
 }

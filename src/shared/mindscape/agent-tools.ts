@@ -39,10 +39,15 @@ export type BoardToolCall =
   | { readonly tool: 'sessao_abrir'; readonly papel: string; readonly pedido: string; readonly nome?: string; readonly onde?: string; readonly quadro?: string }
   | { readonly tool: 'sessao_enviar'; readonly para: string; readonly texto: string; readonly quadro?: string }
   | { readonly tool: 'sessao_ver_tela'; readonly quem: string; readonly quadro?: string }
-  | { readonly tool: 'sessao_fechar'; readonly quem: string; readonly quadro?: string };
+  | { readonly tool: 'sessao_fechar'; readonly quem: string; readonly quadro?: string }
+  /**
+   * Internal, never an MCP tool (not in `BOARD_TOOLS`): the `estado` of every place of these boards (folders), the same
+   * answer for whoever asks. The ledger's orphan count must not depend on who asks (t-04099af0).
+   */
+  | { readonly tool: 'estados_dos_lugares'; readonly pastas: readonly string[] };
 
 /** The tools that act on ONE board: the Líder único names it with `quadro` (ADR 0007); the other sessions use their own. */
-export type BoardScopedCall = Exclude<BoardToolCall, { readonly tool: 'papeis_listar' | 'sessao_quem_sou' }>;
+export type BoardScopedCall = Exclude<BoardToolCall, { readonly tool: 'papeis_listar' | 'sessao_quem_sou' | 'estados_dos_lugares' }>;
 
 export type BoardToolName = BoardToolCall['tool'];
 
@@ -190,7 +195,7 @@ export const BOARD_TOOLS = [
     name: 'sessao_enviar',
     title: 'Mandar mensagem a outra sessão',
     description:
-      'Manda uma mensagem ao chat de outra sessão aberta. Só pela ligação: precisa existir uma seta do seu lugar para o dela (o Líder único alcança, em cada quadro, o topo, onde nenhuma seta do dono nem de abertura aponta, e quem está abaixo dele pelas setas; sessao_listar diz em "podeMandar"). A mensagem vai direto para a fila do Claude de lá; com uma permissão aberta na tela dela, entra assim que ela fechar.',
+      'Manda uma mensagem ao chat de outra sessão aberta. Só pela ligação: precisa existir uma seta do seu lugar para o dela (o Líder único alcança, em cada quadro, o topo, onde nenhuma seta do dono nem de abertura aponta, e quem está abaixo dele pelas setas; sessao_listar diz em "podeMandar"). Para falar com o Líder único, "para": "lider": vale para quem ele abriu e para quem está abaixo dela pelas setas. A mensagem vai direto para a fila do Claude de lá; com uma permissão aberta na tela dela, entra assim que ela fechar.',
     inputSchema: {
       type: 'object',
       properties: { para: PLACE_REF, texto: { type: 'string', description: 'A mensagem.' }, quadro: BOARD_REF },

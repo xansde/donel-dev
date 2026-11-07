@@ -36,6 +36,7 @@ import { parseKeyCombo } from '../../shared/browser/keys';
 import { MCP_SERVER_NAME, type BrowserToolCall, type BrowserToolOutcome } from '../../shared/browser/mcp';
 import type { BoardToolCall } from '../../shared/mindscape/agent-tools';
 import type { LedgerToolCall } from '../../shared/ledger/tools';
+import type { HillClimbToolCall } from '../../shared/hillClimb/tools';
 import { refusedUploadFile, refusedUploadFolder, wideUploadFolder, withUploadFolder, withoutUploadFolder } from '../../shared/browser/upload';
 import { normalizeBrowserUrl } from '../../shared/browser/url';
 import { BrowserPanels } from './browser-panels';
@@ -62,6 +63,8 @@ export interface BrowserServiceDeps {
   readonly uploadFolders: { get(): readonly string[]; set(folders: readonly string[]): void };
   /** Ledger com prova (item 19) — the `tarefa_*` tools of the same server (main/ledger-store.ts). */
   executeLedger?(ptyId: string, call: LedgerToolCall): Promise<BrowserToolOutcome>;
+  /** Hill climbing — the Escalador's `hillclimb_*` tools. */
+  executeHillClimb?(ptyId: string, call: HillClimbToolCall): Promise<BrowserToolOutcome>;
 }
 
 export interface BrowserService {
@@ -571,6 +574,7 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
     ...(deps.executeBoard ? { executeBoard: deps.executeBoard } : {}),
     ...(deps.openCap ? { openCap: deps.openCap } : {}),
     ...(deps.executeLedger ? { executeLedger: deps.executeLedger } : {}),
+    ...(deps.executeHillClimb ? { executeHillClimb: deps.executeHillClimb } : {}),
     serverVersion: deps.appVersion,
   });
 

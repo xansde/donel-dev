@@ -14,6 +14,11 @@
 //   them) and everything below them, on any board, without the "Alcance" mark. The same hierarchy arrows count:
 //   an arrow a session draws neither hides a place from it nor puts anyone above it. A former Líder of a board
 //   is an ordinary place: its owner's arrows are ordinary hierarchy.
+// - Back up to the Líder único (06/11, t-52b31719): a session the Líder único opened, or one below it by the
+//   arrows, reaches the Líder único (a message, a task passed to it). Nobody else does: a place out of that chain
+//   talks to whoever is above it on its board.
+// - Who takes the work of a place that is gone (06/11, t-e753b554): the first live place above it by the
+//   hierarchy arrows, the one that opened it first; none → the Líder único.
 
 import { LEADER_ROLE_ID } from '../roles';
 import type { BoardReach, MindscapeBoard, MindscapeDoc, MindscapeLink } from './model';
@@ -97,6 +102,48 @@ export function canReach(doc: MindscapeDoc, from: ReachFrom, to: ReachEnd): Reac
   if (self.by === 'session') return { ok: false, reason: 'ela está em outro quadro, e só o Líder que o dono pôs no quadro alcança outros quadros (você foi aberta por uma sessão).' };
   if (boardReach(fromBoard) !== 'all') return { ok: false, reason: 'ela está em outro quadro, e o alcance do seu quadro é só ele mesmo (o dono muda em "Alcance", no quadro).' };
   return { ok: true };
+}
+
+/**
+ * May the session at `from` reach the Líder único: it was opened by the Líder único, or is below one that was (by
+ * hierarchy arrows). `openedByLeader` says which places of the board the Líder único opened (the board does not
+ * keep it: the tabs and the bridge do).
+ */
+export function canReachLeader(doc: MindscapeDoc, from: ReachEnd, openedByLeader: (placeId: string) => boolean): ReachVerdict {
+  const board = doc.boards[from.projectPath];
+  if (board?.cards[from.placeId]?.kind !== 'session') return { ok: false, reason: `"${from.placeId}" não é um lugar do quadro.` };
+  if (openedByLeader(from.placeId)) return { ok: true };
+  const above = Object.keys(board.cards).some((id) => board.cards[id]?.kind === 'session' && openedByLeader(id) && isBelow(board, id, from.placeId));
+  return above
+    ? { ok: true }
+    : { ok: false, reason: 'você não foi aberta pelo Líder único nem está abaixo, pelas setas, de uma sessão que ele abriu. Fale com quem está acima de você no quadro.' };
+}
+
+/**
+ * The first live place above `placeId` by hierarchy arrows, nearest first and, at the same distance, the one that
+ * opened it before an arrow of the owner; `undefined` = nobody live above (the work goes to the Líder único).
+ */
+export function firstLiveAbove(board: MindscapeBoard | undefined, placeId: string, isLive: (placeId: string) => boolean): string | undefined {
+  if (!board) return undefined;
+  const seen = new Set([placeId]);
+  let level = [placeId];
+  while (level.length > 0) {
+    const next: string[] = [];
+    for (const at of level) {
+      const up = board.links
+        .filter((link) => link.to === at && isHierarchyArrow(link) && board.cards[link.from]?.kind === 'session' && !seen.has(link.from))
+        .sort((a, b) => Number(b.opened === true) - Number(a.opened === true));
+      for (const link of up) {
+        if (seen.has(link.from)) continue;
+        seen.add(link.from);
+        next.push(link.from);
+      }
+    }
+    const live = next.find(isLive);
+    if (live) return live;
+    level = next;
+  }
+  return undefined;
 }
 
 /** The board and place of a place id: the caller's board first, then every other one. */

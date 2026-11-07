@@ -2,7 +2,8 @@
 // ("Dev · painel do Jobu"; without a name, the role: "Dev"). Shared by the phone and the desktop cards.
 
 import { naipeDoTipo, type Naipe } from '../celular';
-import type { LedgerActor, LedgerDeliveredTo } from './contract';
+import { doneByOf, eventNote, lastDelivery, type LedgerActor, type LedgerDeliveredTo, type LedgerEvent, type LedgerTask } from './contract';
+import type { LedgerCommentResult } from './channels';
 
 const ROLE_LABELS: Readonly<Record<string, string>> = {
   dev: 'Dev',
@@ -18,6 +19,18 @@ export function roleLabel(roleId: string | undefined): string {
 
 /** The name of a place on its board (its session's name), when known. */
 export type PlaceNameOf = (projectPath: string, placeId: string) => string | undefined;
+
+/**
+ * The note of a delivery as the owner reads it: what the place wrote, and who really did the work when it was not
+ * whoever delivered ("Feito por Dev · painel. …"). `undefined` = nothing to show.
+ */
+export function deliveryNote(delivery: LedgerEvent | undefined, projectPath: string, placeName: PlaceNameOf | undefined): string | undefined {
+  if (!delivery) return undefined;
+  const note = eventNote(delivery);
+  const doer = doneByOf(delivery);
+  const by = doer ? `Feito por ${placeName?.(projectPath, doer)?.trim() || 'outro lugar'}.` : '';
+  return [by, note ?? ''].filter(Boolean).join(' ') || undefined;
+}
 
 /** "você", "Dev · painel do Jobu" or "Dev". */
 export function actorLabel(actor: LedgerActor | undefined, projectPath: string, placeName: PlaceNameOf | undefined): string {
@@ -44,5 +57,39 @@ export function reciboDe(deliveredTo: LedgerDeliveredTo | undefined, quem: strin
   const hora = new Date(at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
   if (deliveredTo === 'lider') return `A sessão de ${quem} estava fechada: foi ao Líder, às ${hora}.`;
   if (deliveredTo) return `Enviado a ${quem}, às ${hora}.`;
-  return 'Ninguém aberto para ler agora; fica guardado na carta.';
+  return `Não chegou a ninguém: a sessão de ${quem} e o Líder estão fechados; fica guardado na carta até um deles abrir.`;
+}
+
+/** What the owner wrote on the card since its last delivery, on the FRONT of the card, with where each one went. */
+export function notasDaFrente(task: LedgerTask, quem: string): { readonly text: string; readonly receipt: string; readonly delivered: boolean }[] {
+  const since = lastDelivery(task)?.at ?? 0;
+  return task.events.flatMap((event) =>
+    event.kind === 'comentada' && event.by.kind === 'dono' && event.text && event.at >= since
+      ? [{ text: event.text, receipt: reciboDe(event.deliveredTo, quem, event.at), delivered: Boolean(event.deliveredTo) }]
+      : [],
+  );
+}
+
+/**
+ * One "Mandar à sessão" from the card, never silent (t-8fed1d77): a call that throws, rejects, answers nothing or
+ * does not answer within `deadlineMs` comes back as a reason the card shows, with the text kept.
+ */
+export async function mandarDaCarta(
+  call: () => Promise<LedgerCommentResult>,
+  deadlineMs: number,
+): Promise<{ readonly ok: true } | { readonly ok: false; readonly reason: string }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<'prazo'>((resolve) => {
+    timer = setTimeout(() => resolve('prazo'), deadlineMs);
+  });
+  try {
+    const result = await Promise.race([Promise.resolve().then(call), late]);
+    if (result === 'prazo') return { ok: false, reason: `o app não confirmou em ${Math.round(deadlineMs / 1000)} s. O texto continua aqui; mandar de novo não duplica.` };
+    if (!result || typeof result !== 'object') return { ok: false, reason: 'o app não respondeu. O texto continua aqui.' };
+    return result.ok ? { ok: true } : { ok: false, reason: result.reason };
+  } catch (error) {
+    return { ok: false, reason: `o app recusou (${error instanceof Error ? error.message : String(error)}). O texto continua aqui.` };
+  } finally {
+    clearTimeout(timer);
+  }
 }

@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { commentOfRequest, commentRefusal, lastDelivery, type LedgerDeliveredTo, type LedgerTask } from '../shared/ledger/contract';
 import type { PlaceNameOf } from '../shared/ledger/labels';
 import type { LedgerService } from './ledger-store';
+import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 
 /** What the main asks the renderer to deliver: to the place, or (closed) to the Líder único. */
 export interface OwnerMessage {
@@ -36,8 +37,11 @@ export interface CardWriterDeps {
 export interface CardWriter {
   /** The owner writes on the card (no decision): recorded as `comentada`, sent at once. */
   write(input: { readonly id: string; readonly text: string; readonly requestId?: string }): Promise<CardWriteResult>;
-  /** The owner's words that went WITH a decision (already recorded as its text): only sent. */
-  tell(task: LedgerTask, text: string): Promise<LedgerDeliveredTo>;
+  /**
+   * 06/11 — the owner decided `task` (already recorded): the session that owns it is told at once, by a button or
+   * with words, from the desktop or the phone; closed, the Líder único is. `words`: what the owner wrote with it.
+   */
+  tellDecision(task: LedgerTask, words?: string): Promise<LedgerDeliveredTo>;
 }
 
 function folder(projectPath: string): string {
@@ -58,6 +62,35 @@ export function ownerMessage(task: LedgerTask, text: string, placeName?: PlaceNa
     placeId: task.ownerPlaceId,
     text: `◆ Do dono, na carta «${cardTitle(task)}»: ${text}\n${answer}`,
     leaderText: `◆ Do dono, na carta «${cardTitle(task)}», para ${owner} (${task.ownerPlaceId}) do quadro ${folder(task.projectPath)}, que está fechada: ${text}\n${answer}`,
+  };
+}
+
+/**
+ * The notice of the owner's decision (t-c19912b4: an accepted letter nobody was told about stayed unsent). It says
+ * what to do next: send the letter, redo the work, or nothing.
+ */
+export function decisionMessage(task: LedgerTask, words: string | undefined, placeName?: PlaceNameOf): OwnerMessage | null {
+  const last = task.events.at(-1);
+  if (!last || last.by.kind !== 'dono' || (last.kind !== 'aceita' && last.kind !== 'rejeitada' && last.kind !== 'conferida')) return null;
+  const what = task.slack ? 'a carta de Slack' : 'a tarefa';
+  const option = last.option ? ` (escolheu «${last.option}»)` : '';
+  const said = words?.trim() && last.kind !== 'rejeitada' ? ` Palavras do dono: ${words.trim()}` : '';
+  const verdict =
+    last.kind === 'conferida'
+      ? `conferiu o aceite ${task.slack ? 'da carta de Slack' : 'da tarefa'} «${cardTitle(task)}».`
+      : last.kind === 'aceita'
+        ? `aceitou ${what} «${cardTitle(task)}»${option}.${task.slack ? ' Envie agora o texto exato da carta, ao mesmo destino e thread, uma vez só.' : ''}`
+        : `rejeitou ${what} «${cardTitle(task)}»${option}: ${last.text ?? 'sem motivo'}.${task.slack ? ' Não envie; ajuste o texto e crie outra carta com carta_slack.' : ' Assuma de novo com tarefa_assumir e refaça.'}`;
+  const line = `(tarefa ${task.id}; tarefa_ver para reler)`;
+  const text = `◆ O dono ${verdict}${said}\n${line}`;
+  // The Líder único has no place: its own letter goes straight to it.
+  if (task.ownerPlaceId === LEADER_OF_ALL) return { projectPath: task.projectPath, placeId: '', text, leaderText: text };
+  const owner = placeName?.(task.projectPath, task.ownerPlaceId)?.trim() || 'o lugar dono';
+  return {
+    projectPath: task.projectPath,
+    placeId: task.ownerPlaceId,
+    text,
+    leaderText: `◆ O dono ${verdict}${said} Era para ${owner} (${task.ownerPlaceId}) do quadro ${folder(task.projectPath)}, que está fechada.\n${line}`,
   };
 }
 
@@ -97,8 +130,9 @@ export function createCardWriter(deps: CardWriterDeps): CardWriter {
       inFlight.set(key, promise);
       return promise;
     },
-    tell(task, text) {
-      return text.trim() ? send(ownerMessage(task, text.trim(), deps.placeName)) : Promise.resolve(null);
+    tellDecision(task, words) {
+      const message = decisionMessage(task, words, deps.placeName);
+      return message ? send(message) : Promise.resolve(null);
     },
   };
 }

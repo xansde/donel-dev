@@ -1,0 +1,649 @@
+/* Hill climbing — a barra esquerda que ficou do Modo Dev (dono, 05/11): o MESMO visual de trilha e carrossel
+   (as regras de card e trilha abaixo vieram de DevMode/DiscoveryMap.module.css, sem mudança), agora com rounds e
+   rodadas. 480px exatos na coluna esquerda do .body. */
+
+.bar {
+  width: 480px;
+  min-width: 480px;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden auto;
+  background: var(--bg-panel);
+  border-right: var(--hairline);
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 10px 12px 6px;
+}
+
+.headerLabel {
+  font-size: var(--text-caption-size);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.headerTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-caption-size);
+  color: var(--accent);
+}
+
+.headerSpacer {
+  flex: 1;
+}
+
+.notice {
+  margin: 0 12px 8px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--state-waiting) 45%, transparent);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--state-waiting) 10%, transparent);
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-primary);
+}
+
+.empty {
+  padding: 0 var(--panel-padding) var(--panel-padding);
+  font-size: var(--text-caption-size);
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
+.missionTabs {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 12px 8px;
+}
+
+.missionTab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 8px;
+  border: var(--hairline);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.missionTabActive {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.missionDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.mission {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.summary {
+  flex: none;
+  padding: 0 12px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.summaryTop {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.summaryCount {
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.target,
+.criteria {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-primary);
+}
+
+.label {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-right: 4px;
+}
+
+.divider {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 10px 2px;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  border-top: 1px dashed var(--border);
+}
+
+.divider:first-child {
+  border-top: none;
+}
+
+.dividerMeta {
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.direction {
+  margin: 0;
+  padding: 2px 12px 4px 28px;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-primary);
+}
+
+.emptyTrail {
+  margin: 0;
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.trilhaRowPending {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.trilhaNote {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--text-primary);
+}
+
+.carousel {
+  flex: none;
+  min-height: 440px;
+  display: flex;
+  flex-direction: column;
+  border-top: var(--hairline);
+}
+
+.scores {
+  margin: 4px 11px 8px;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.scores th,
+.scores td {
+  padding: 3px 8px;
+  border-bottom: var(--hairline);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.scores th[scope='row'] {
+  text-align: left;
+  font-weight: normal;
+  color: var(--text-primary);
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scores thead th {
+  font-weight: normal;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.sample {
+  flex: none;
+  margin: 8px 12px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sampleHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.best {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid color-mix(in srgb, var(--zone-ok) 45%, transparent);
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+
+.bestText {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-primary);
+}
+
+.curveRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.curve {
+  width: 188px;
+  height: 48px;
+  flex: none;
+}
+
+.curveLine {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+
+.curveDot {
+  fill: var(--accent);
+}
+
+.cutLine {
+  stroke: var(--zone-ok);
+  stroke-dasharray: 3 3;
+  stroke-width: 1;
+}
+
+.curveLegend {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.intermediates {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.intermediates button {
+  width: 100%;
+  padding: 3px 4px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font-size: 11px;
+  color: var(--text-primary);
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gestures {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.redirect {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.redirectInput {
+  width: 100%;
+  resize: vertical;
+  padding: 6px 8px;
+  border: var(--hairline);
+  border-radius: 6px;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+}
+
+.error {
+  margin: 0;
+  font-size: 11px;
+  color: var(--state-permission);
+}
+
+/* === Card e trilha: o visual da barra esquerda do Modo Dev, intocado === */
+
+.cardBody {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+
+.cardTop {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 11px 0;
+}
+
+.cardIcon {
+  flex: none;
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.cardId {
+  flex: none;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--accent);
+}
+
+.cardTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: var(--weight-semibold);
+}
+
+.cardStatus {
+  flex: none;
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.cardPlain {
+  margin: 0;
+  padding: 6px 11px 9px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.cardTags {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+}
+
+/* Itens 5/6/8 (rodada de forma) — a faixa "worktree <path>" no início da
+   linha de etiquetas (mesma linha do mockup, metaLabel+metaValue+tags) e o
+   rodapé "N planos"/"garantia <tipo> · merge <relativo>" dos cards de
+   discovery/plano/fase.
+   #27b — `.cardMeta` empacota o par label+valor num item ÚNICO de
+   `.cardTags` (flex-wrap): ele pode ENCOLHER (`min-width: 0`, sem o qual o
+   valor nunca trunca — o default `min-width: auto` do flexbox trava no
+   tamanho do conteúdo e o path inteiro força o item pra baixo, "quebrando em
+   duas linhas"). `flex-shrink` sem `flex-grow` mantém o comportamento de
+   antes pra paths curtos (nunca ocupa espaço à toa). */
+.cardMeta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.cardMetaLabel {
+  flex: none;
+  font-size: 10px;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.cardMetaValue {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-primary);
+}
+
+.cardFooterMeta {
+  flex: none;
+  padding: 0 11px 9px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+}
+
+.cardAction {
+  flex: none;
+  display: flex;
+  padding: 0 11px 9px;
+}
+
+.cardClock {
+  flex: none;
+  margin: 9px 11px;
+}
+
+/* === Trilha do card de plano em FOCO (CA-13) — geometria da verificação §2:
+   linha de 24px (32px na "é a próxima"), rail ├/└, glifo quadrado de 16px. === */
+
+.trilha {
+  flex: 1;
+  min-height: 0;
+  /* Vertical rola; horizontal NUNCA (achado da captura do B6): com
+     `overflow-y: auto` sozinho o texto de estado longo — "interrompida: a
+     sessão terminou sem concluir" — empurrava a linha para fora do card e
+     virava barra de rolagem horizontal, cortando justamente a parte que
+     distingue "interrompida" de "falhou". */
+  overflow: hidden auto;
+  border-top: var(--hairline);
+  padding: 4px 0 6px;
+}
+
+.trilhaRow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 24px;
+  padding: 4px 10px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+}
+
+.trilhaRowNext {
+  min-height: 32px;
+}
+
+.trilhaRowSelected {
+  background: var(--bg-raised);
+  border-left-color: var(--accent);
+}
+
+.trilhaRail {
+  width: 9px;
+  flex: none;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.trilhaGlyph {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  background: transparent;
+}
+
+.trilhaGlyph.state-running {
+  color: var(--bg-app);
+  background: var(--state-working);
+  border-color: var(--state-working);
+}
+
+.trilhaGlyph.state-done {
+  color: var(--zone-ok);
+  background: color-mix(in srgb, var(--zone-ok) 16%, transparent);
+  border-color: color-mix(in srgb, var(--zone-ok) 45%, transparent);
+}
+
+.trilhaGlyph.state-failed {
+  color: var(--bg-app);
+  background: var(--state-permission);
+  border-color: var(--state-permission);
+}
+
+.trilhaGlyph.state-stuck {
+  color: var(--bg-app);
+  background: var(--state-error);
+  border-color: var(--state-error);
+}
+
+.trilhaFase {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.trilhaSpacer {
+  flex: 1;
+}
+
+.trilhaState {
+  /* Encolhe e quebra em vez de vazar: a frase de estado é a informação da
+     linha, e frase cortada no meio é a tela dizendo menos do que sabe. */
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: 10px;
+  line-height: 1.35;
+  text-align: right;
+  color: var(--text-muted);
+}
+
+/* Na barra do hill climbing a trilha não estica: o carrossel vem logo abaixo e a barra inteira rola. */
+.mission .trilha {
+  flex: none;
+  max-height: 280px;
+}
+
+.aside {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+/* The 3 directions the first rodada opened, each with its best lowest score. */
+.directions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 12px 6px 28px;
+}
+
+.directionChip {
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  font-size: 11px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+/* The decision card at the end of a rodada. */
+.cartaLead {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--text-primary);
+}
+
+.cartaDirections {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.cartaDirections button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 4px;
+  border: none;
+  background: transparent;
+  text-align: left;
+  font-size: 11.5px;
+  color: var(--text-primary);
+  cursor: pointer;
+}
+
+.cartaDirectionName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

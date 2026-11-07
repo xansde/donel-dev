@@ -21,6 +21,21 @@ describe('sessões remotas', () => {
     expect(claudeSh).toContain(`exec claude '-n' 'it'\\''s' '--settings' "$S"/'settings.json'`);
   });
 
+  it('em bypass, o claude.sh libera o bypass (e o IS_SANDBOX quando roda como root); fora dele, não', () => {
+    const claudeShOf = (claudeArgs: string[]): string => {
+      const script = buildRemoteSetupScript({ sid, homeRelativeDir: 'p', repoUrl: null, branch: null, files: [], claudeArgs, meta });
+      return Buffer.from(/printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d > "\$S"\/'claude\.sh'/.exec(script)![1], 'base64').toString('utf8');
+    };
+    const bypass = claudeShOf(['--model', 'opus', '--permission-mode', 'bypassPermissions']);
+    const exports = bypass.indexOf('export CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1');
+    expect(exports).toBeGreaterThan(-1);
+    expect(bypass).toContain('if [ "$(id -u)" = 0 ]; then export IS_SANDBOX=1; fi');
+    expect(exports).toBeLessThan(bypass.indexOf('exec claude'));
+    expect(bypass).toContain(`exec claude '--model' 'opus' '--permission-mode' 'bypassPermissions'`);
+    expect(claudeShOf(['--permission-mode', 'auto'])).not.toContain('SKIP_PERMISSIONS');
+    expect(claudeShOf(['--permission-mode', 'auto'])).not.toContain('IS_SANDBOX');
+  });
+
   it('abre o ssh com terminal e um túnel reverso por porta, só no loopback', () => {
     expect(buildAttachSshArgs({ sshTarget: 'u@vps', sid, tunnels: [{ remotePort: 21000, localPort: 5555 }] })).toEqual([
       '-t',
