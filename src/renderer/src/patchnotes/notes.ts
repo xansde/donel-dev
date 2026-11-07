@@ -22,6 +22,22 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'Na lente Cadeiras, "+ Pod" cria um pod dentro do rig. Dê nome e missão na gaveta dele e escolha as cadeiras que sentam ali, pela gaveta do pod ou pela da cadeira (cada cadeira fica em um pod só). O pod arruma as próprias cadeiras; você só move o pod, arrastando pelo nome. As cadeiras sem pod ficam à esquerda dos pods, longe do seu desenho. Apagar um pod deixa as cadeiras no quadro, sem pod, e Ctrl+Z desfaz qualquer passo. Atenção: depois que esta versão gravar o quadro (por você ou por uma sessão, ao renovar a conversa ou mexer no quadro), o Donel Beta aberto no mesmo computador passa a mostrar o Mindscape só para leitura, até ser atualizado.',
       },
       {
+        title: 'Sessão nova espera vaga quando a máquina está cheia',
+        text: 'Quando uma VPS (ou o PC) está com pouca RAM, swap alto, carga alta ou sem sinal, uma sessão que outra sessão pede para abrir lá entra numa fila em vez de afundar a máquina. O lugar já aparece no quadro, e a sessão abre sozinha, com o pedido original, quando a máquina passa duas leituras seguidas abaixo dos limites, uma por minuto em cada máquina. Um papel marcado com "lugar: qualquer" vai para a outra VPS em vez de esperar. Uma aba que foi aberta mas nunca começou, se o Faxineiro a fechar com a máquina cheia, volta para a fila sem perder o pedido.',
+      },
+      {
+        title: 'O Faxineiro acorda sozinho',
+        text: 'Cada quadro ganhou uma cadeira Faxineiro, que o Donel acorda sozinho quando uma máquina aperta, sem você nem o Líder precisarem chamar. Os gatilhos: RAM livre abaixo de 15%, swap acima de 10%, carga da VPS acima de duas vezes o número de processadores, disco acima de 85%, uma VPS sem sinal, sessões paradas há meia hora e uma ronda por dia, depois das 6h. O Faxineiro roda numa máquina que não é a apertada e fecha só as sessões do próprio quadro que terminaram. O Donel não deixa ele fechar o Líder, uma sessão trabalhando, uma que espera você ou uma aba que você abriu à mão. Quando ele termina a ronda e fica parado, o Donel fecha o Faxineiro também. Para não juntar Faxineiros, uma máquina cheia acorda um quadro de cada vez, e o Donel acorda no máximo quatro por hora. Os limites ficam na seção "faxineiro" do arquivo de configuração das rotinas, que também registra cada fechamento.',
+      },
+      {
+        title: 'O Oráculo pode morar na sua VPS',
+        text: 'Em Preferências, Celular, "Onde mora o Oráculo" leva o registro de tarefas para a sua VPS, inteiro e como está, e este PC passa a ler e gravar nele. A diferença aparece quando o PC desliga: o registro continua lá. Se a VPS sumir da rede, o PC mostra o último retrato só para ler e não grava nada até ela voltar, para nunca haver dois registros diferentes. "Trazer de volta para este PC" desfaz, também sem perder nada. As cartas no celular e as sessões da VPS sem o PC chegam nas próximas versões.',
+      },
+      {
+        title: 'O navegador em tela cheia',
+        text: 'O navegador ao lado da conversa agora pode ocupar a janela inteira: o botão ⤢ na barra dele, ou F11, mesmo com o cursor dentro da página. Para voltar ao lado da conversa, o mesmo botão, F11 de novo ou Esc. O Esc só tira da tela cheia quando você não está dentro da página nem digitando no endereço, para não atrapalhar o Esc do próprio site. A sessão continua trabalhando, e o agente segue controlando a mesma página. Fechar o navegador também sai da tela cheia.',
+      },
+      {
         title: 'Os números da factory no Mindscape',
         text: 'No quadro da homologação, na vista Cadeiras, o botão "Números da factory" abre um painel com os números que a factory grava na VPS dela: um cartão por número, com o valor exatamente como ela escreveu, a pergunta que ele responde e de onde veio (medido, estimado ou sem fonte). Os números que têm de ficar em zero ou subir levam a marca trava, e os que não têm meta dizem "só mostrado". No topo aparece a hora em que foram gerados ("atualizado às" ou, depois de duas horas, "parado desde"); se a VPS não responde ou o arquivo some, "sem sinal desde", mantendo a última leitura. O painel só lê: nada nele muda a factory. Liga com a chave "homologacao" na configuração; sem ela, nada aparece e nada é lido.',
       },
