@@ -89,24 +89,42 @@ export interface OracleApiDeps {
   readonly changed?: () => void;
   /** More routes behind the same token (src/oraculo/admin.ts); `null` = not one of them. */
   readonly extra?: (request: OracleRequest, path: string) => Promise<OracleResponse | null>;
+  /** The way back's mark (src/oraculo/devolvido.ts): set, every writer of the daemon refuses. */
+  readonly returned?: { returned(): boolean; set(returned: boolean): void };
 }
 
 export function createOracleApiHandler(deps: OracleApiDeps): OracleApiHandler {
   const { ledger, ledgerFile } = deps;
   const proofsDir = ledgerProofsDir(ledgerFile);
 
-  function importLedger(bytes: Uint8Array): OracleResponse {
+  /**
+   * The move. The VPS takes the PC's file when it has no task, when its copy was returned (the dead copy is kept as
+   * `ledger.devolvido-<hora>.json`), or when `se` is the sha256 of what is there now (the PC re-copying after its
+   * own file changed during the copy).
+   */
+  function importLedger(bytes: Uint8Array, se: string | null): OracleResponse {
     let current;
     try {
       current = ledger.load();
     } catch (error) {
       return json(500, { error: error instanceof Error ? error.message : String(error) });
     }
-    if (Object.keys(current.doc.tasks).length > 0) return json(409, { error: 'o Oráculo da VPS já tem tarefas; nada foi trocado' });
+    const onDisk = existsSync(ledgerFile) ? readFileSync(ledgerFile) : null;
+    const isReturned = deps.returned?.returned() ?? false;
+    const casMatches = se !== null && onDisk !== null && createHash('sha256').update(onDisk).digest('hex') === se;
+    if (Object.keys(current.doc.tasks).length > 0 && !isReturned && !casMatches) return json(409, { error: 'o Oráculo da VPS já tem tarefas; nada foi trocado' });
+    if (se !== null && !casMatches) return json(409, { error: 'o Oráculo da VPS mudou desde a última cópia; nada foi trocado' });
     const text = Buffer.from(bytes).toString('utf8');
     const check = checkLedgerImport(text, (file) => existsSync(join(proofsDir, file)));
     if (!check.ok) return json(409, { error: check.reason });
-    const previous = existsSync(ledgerFile) ? readFileSync(ledgerFile) : null;
+    const previous = onDisk;
+    if (isReturned && previous && !casMatches) {
+      try {
+        writeFileSync(`${ledgerFile.replace(/\.json$/, '')}.devolvido-${new Date().toISOString().replace(/[:.]/g, '-')}.json`, previous, { mode: 0o600, flag: 'wx' });
+      } catch {
+        return json(500, { error: 'não consegui guardar a cópia devolvida da VPS; nada foi trocado' });
+      }
+    }
     const tmp = `${ledgerFile}.tmp-import-${process.pid}`;
     try {
       writeFileSync(tmp, bytes, { mode: 0o600 });
@@ -127,6 +145,7 @@ export function createOracleApiHandler(deps: OracleApiDeps): OracleApiHandler {
       else unlinkSync(ledgerFile);
       return json(500, { error: 'a releitura na VPS não bateu; voltei ao que estava' });
     }
+    deps.returned?.set(false);
     deps.changed?.();
     const count = ledgerCount(reread.doc);
     return json(200, { ok: true, tarefas: count.tasks, eventos: count.events, provas: check.proofFiles.length });
@@ -173,7 +192,17 @@ export function createOracleApiHandler(deps: OracleApiDeps): OracleApiHandler {
 
     if (method === 'POST' && path === IMPORT_PATH) {
       if (!request.bytes) return json(400, { error: 'sem corpo' });
-      return importLedger(request.bytes);
+      const se = url.searchParams.get('se');
+      return importLedger(request.bytes, se && /^[0-9a-f]{64}$/.test(se) ? se : null);
+    }
+
+    // The way back: from here on every writer of the VPS refuses (the PC takes the ledger); `retomar` undoes it
+    // when the way back failed half way.
+    if (method === 'POST' && (path === '/v1/devolver' || path === '/v1/retomar')) {
+      if (!deps.returned) return json(404, { error: 'rota' });
+      deps.returned.set(path === '/v1/devolver');
+      deps.changed?.();
+      return json(200, { ok: true, devolvido: deps.returned.returned() });
     }
 
     // A new proof: the VPS names it (as the local ledger does).

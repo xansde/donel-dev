@@ -8,6 +8,7 @@ import styles from './CelularSection.module.css';
 
 function statusText(state: LedgerRemoteState): { text: string; ok: boolean } {
   if (state.mode === 'local') {
+    if (state.erro) return { text: state.erro, ok: false };
     if (state.espelhoSemModo) return { text: `O registro está em ${state.espelhoSemModo}, mas este PC não está ligado a ele: o Oráculo está só para ler. Traga de volta ou ligue de novo.`, ok: false };
     return { text: 'Neste PC: o Oráculo para quando o PC desliga.', ok: true };
   }

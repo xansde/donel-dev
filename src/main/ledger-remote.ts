@@ -11,7 +11,7 @@
 //
 // Also here: the move of the PC's ledger to the VPS (`moveLedgerToRemote`) and the way back (`bringLedgerBack`).
 
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { emptyLedgerDoc, isHttpUrl, parseLedgerDoc, type LedgerActor, type LedgerDoc, type LedgerOp, type LedgerProof } from '../shared/ledger/contract';
 import type { LedgerApplyResult, LedgerSnapshot } from '../shared/ledger/channels';
@@ -314,17 +314,38 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
 /** What the app holds: the local or the remote ledger behind it, swapped by the move and the way back. */
 export interface SwitchableLedger extends LedgerService {
   set(next: LedgerService): void;
+  /**
+   * The move and the way back (one writer at a time): with a reason, every write of this app is refused with it
+   * (read-only, never a false "ok") and the promise ends when the writes already in flight ended; `null` thaws.
+   */
+  freeze(reason: string | null): Promise<void>;
 }
+
+export const MOVING_REASON = 'O Oráculo está mudando de lugar (entre este PC e a VPS); nada foi gravado. Tente de novo em instantes.';
 
 export function createSwitchableLedger(initial: LedgerService): SwitchableLedger {
   let current = initial;
+  let frozen: string | null = null;
+  const inFlight = new Set<Promise<unknown>>();
+  const track = <T>(promise: Promise<T>): Promise<T> => {
+    inFlight.add(promise);
+    void promise.finally(() => inFlight.delete(promise)).catch(() => undefined);
+    return promise;
+  };
   return {
     set: (next) => {
       current = next;
     },
-    load: () => current.load(),
-    apply: (actor, op) => current.apply(actor, op),
-    importProof: (input, remote) => current.importProof(input, remote),
+    async freeze(reason) {
+      frozen = reason;
+      if (reason !== null) await Promise.allSettled([...inFlight]);
+    },
+    load: () => {
+      const snapshot = current.load();
+      return frozen === null ? snapshot : { doc: snapshot.doc, readOnly: true };
+    },
+    apply: (actor, op) => (frozen !== null ? Promise.resolve({ ok: false as const, reason: frozen }) : track(current.apply(actor, op))),
+    importProof: (input, remote) => (frozen !== null ? Promise.resolve({ error: frozen }) : track(current.importProof(input, remote))),
     discardProofs: (proofs) => current.discardProofs(proofs),
     proofPath: (proof) => current.proofPath(proof),
     proofImage: (proof) => current.proofImage(proof),
@@ -361,94 +382,139 @@ function freeName(io: ConfigIoDeps, dir: string, name: string): string {
   return join(dir, name.replace(/\.json$/, `-${new Date().toISOString().replace(/[:.]/g, '-')}-${randomBytes(2).toString('hex')}.json`));
 }
 
+const sha256 = (text: string): string => createHash('sha256').update(text, 'utf8').digest('hex');
+
+/** How many times the move re-copies when the PC's file changed during the copy (another channel wrote it). */
+const MOVE_ATTEMPTS = 3;
+
+async function readText(response: OracleResponseLike): Promise<string> {
+  return Buffer.from(await response.bytes()).toString('utf8');
+}
+
 /**
  * The PC's `ledger.json` goes to the VPS byte for byte (checked on both ends), and only THEN the PC's file becomes
- * `ledger.antes-da-vps.json` and the mirror takes its place. Nothing changes on the PC when any step fails.
+ * `ledger.antes-da-vps.json` and the mirror takes its place. The caller freezes this app's writers first (the
+ * switchable ledger); another channel on the same userData may still write the file, so right before the rename the
+ * PC's bytes must still be the ones copied, or the copy starts again over the VPS's (by its hash). Nothing changes
+ * on the PC when a step fails.
  */
 export async function moveLedgerToRemote(deps: MoveDeps): Promise<MoveResult> {
   const { http, io, ledgerFile, proofFs } = deps;
   const proofsDir = ledgerProofsDir(ledgerFile);
-  const text = io.readFileText(ledgerFile);
-  if (text === null && io.existsSync(ledgerFile)) return { ok: false, reason: 'não consegui ler o ledger.json deste PC' };
-  const onVps = await vpsLedger(http);
-  if (!onVps) return { ok: false, reason: 'o Oráculo da VPS não respondeu' };
+  let copied: string | null = null;
+  for (let attempt = 0; attempt < MOVE_ATTEMPTS; attempt++) {
+    const text = io.readFileText(ledgerFile);
+    if (text === null && io.existsSync(ledgerFile)) return { ok: false, reason: 'não consegui ler o ledger.json deste PC' };
+    const onVps = await vpsLedger(http);
+    if (!onVps) return { ok: false, reason: 'o Oráculo da VPS não respondeu' };
 
-  let local: LedgerDoc = emptyLedgerDoc();
-  if (text !== null) {
-    const check = checkLedgerImport(text, (file) => io.existsSync(join(proofsDir, file)));
-    if (!check.ok) return { ok: false, reason: check.reason };
-    local = check.doc;
-    const vpsTasks = Object.keys(onVps.doc.tasks).length;
-    // A move cut in the middle (the import went through, the PC did not finish): the same ledger is fine.
-    const alreadyThere = vpsTasks > 0 && sameLedger(local, onVps.doc);
-    if (vpsTasks > 0 && !alreadyThere) return { ok: false, reason: `o Oráculo da VPS já tem ${vpsTasks} tarefa(s); nada foi trocado` };
-    if (!alreadyThere && Object.keys(local.tasks).length > 0) {
-      for (const file of check.proofFiles) {
-        let bytes: Buffer;
-        try {
-          bytes = await proofFs.readFile(join(proofsDir, file));
-        } catch {
-          return { ok: false, reason: `não consegui ler a prova ${file} neste PC` };
+    let local: LedgerDoc = emptyLedgerDoc();
+    if (text !== null) {
+      const check = checkLedgerImport(text, (file) => io.existsSync(join(proofsDir, file)));
+      if (!check.ok) return { ok: false, reason: check.reason };
+      local = check.doc;
+      const vpsTasks = Object.keys(onVps.doc.tasks).length;
+      // A move cut in the middle (the import went through, the PC did not finish): the same ledger is fine.
+      const alreadyThere = vpsTasks > 0 && sameLedger(local, onVps.doc);
+      // `readOnly` on the VPS = a returned (dead) copy: the daemon replaces it, keeping it.
+      if (vpsTasks > 0 && !alreadyThere && copied === null && !onVps.readOnly) return { ok: false, reason: `o Oráculo da VPS já tem ${vpsTasks} tarefa(s); nada foi trocado` };
+      if (!alreadyThere && Object.keys(local.tasks).length > 0) {
+        for (const file of check.proofFiles) {
+          let bytes: Buffer;
+          try {
+            bytes = await proofFs.readFile(join(proofsDir, file));
+          } catch {
+            return { ok: false, reason: `não consegui ler a prova ${file} neste PC` };
+          }
+          let response: OracleResponseLike;
+          try {
+            response = await http('PUT', `/v1/provas/${encodeURIComponent(file)}`, new Uint8Array(bytes));
+          } catch {
+            return { ok: false, reason: 'o Oráculo da VPS parou de responder no meio das provas; nada foi trocado' };
+          }
+          if (response.status !== 200) return { ok: false, reason: `a VPS recusou a prova ${file} (${response.status})` };
         }
         let response: OracleResponseLike;
         try {
-          response = await http('PUT', `/v1/provas/${encodeURIComponent(file)}`, new Uint8Array(bytes));
+          response = await http('POST', `/v1/importar${copied !== null ? `?se=${sha256(copied)}` : ''}`, new Uint8Array(Buffer.from(text, 'utf8')));
         } catch {
-          return { ok: false, reason: 'o Oráculo da VPS parou de responder no meio das provas; nada foi trocado' };
+          return { ok: false, reason: 'o Oráculo da VPS parou de responder na cópia; nada foi trocado' };
         }
-        if (response.status !== 200) return { ok: false, reason: `a VPS recusou a prova ${file} (${response.status})` };
+        const body = await readJson(response);
+        if (response.status !== 200) return { ok: false, reason: `a VPS recusou a cópia: ${isRecord(body) && typeof body.error === 'string' ? body.error : response.status}` };
+        copied = text;
       }
-      let response: OracleResponseLike;
-      try {
-        response = await http('POST', '/v1/importar', new Uint8Array(Buffer.from(text, 'utf8')));
-      } catch {
-        return { ok: false, reason: 'o Oráculo da VPS parou de responder na cópia; nada foi trocado' };
-      }
-      const body = await readJson(response);
-      if (response.status !== 200) return { ok: false, reason: `a VPS recusou a cópia: ${isRecord(body) && typeof body.error === 'string' ? body.error : response.status}` };
     }
-  }
 
-  const now = await vpsLedger(http);
-  if (!now || !sameLedger(local, now.doc)) return { ok: false, reason: 'a VPS não confirmou o mesmo registro; nada foi trocado neste PC' };
-  if (text !== null) {
-    try {
-      io.renameFile(ledgerFile, freeName(io, dirname(ledgerFile), LEDGER_BEFORE_REMOTE));
-    } catch {
-      return { ok: false, reason: 'a cópia está na VPS, mas não consegui guardar o ledger.json deste PC; nada mudou aqui' };
+    const now = await vpsLedger(http);
+    if (!now || !sameLedger(local, now.doc)) return { ok: false, reason: 'a VPS não confirmou o mesmo registro; nada foi trocado neste PC' };
+    // The two sides, one last time: the PC's file is still what the VPS has.
+    if (io.readFileText(ledgerFile) !== text) continue;
+    if (text !== null) {
+      try {
+        io.renameFile(ledgerFile, freeName(io, dirname(ledgerFile), LEDGER_BEFORE_REMOTE));
+      } catch {
+        return { ok: false, reason: 'a cópia está na VPS, mas não consegui guardar o ledger.json deste PC; nada mudou aqui' };
+      }
     }
+    if (!writeRemoteMirror(io, ledgerFile, now.doc, deps.marker)) return { ok: false, reason: 'não consegui gravar o espelho neste PC' };
+    return { ok: true, tarefas: Object.keys(now.doc.tasks).length };
   }
-  if (!writeRemoteMirror(io, ledgerFile, now.doc, deps.marker)) return { ok: false, reason: 'não consegui gravar o espelho neste PC' };
-  return { ok: true, tarefas: Object.keys(now.doc.tasks).length };
+  return { ok: false, reason: 'o ledger.json deste PC mudou durante a cópia três vezes (outro canal do Donel aberto?); feche os outros e tente de novo' };
 }
 
-/** The way back: the VPS's `ledger.json`, byte for byte, replaces the mirror; the proofs the PC lacks come too. */
+/**
+ * The way back. First the VPS is told the ledger leaves (`devolver`: every writer there refuses from now on), then
+ * its file comes byte for byte, with the proofs the PC lacks, and only if the VPS's file did not change in between it
+ * replaces the mirror. A failure half way gives the VPS its ledger back (`retomar`): the PC is still in remote mode.
+ */
 export async function bringLedgerBack(deps: { readonly http: OracleHttp; readonly ledgerFile: string; readonly io: ConfigIoDeps; readonly proofFs: LedgerProofFs }): Promise<MoveResult> {
   const { http, io, ledgerFile, proofFs } = deps;
   const proofsDir = ledgerProofsDir(ledgerFile);
-  let text: string;
   try {
-    const response = await http('GET', '/v1/ledger/arquivo');
-    if (response.status === 404) text = JSON.stringify(emptyLedgerDoc(), null, 2);
-    else if (response.status !== 200) return { ok: false, reason: `a VPS não entregou o registro (${response.status})` };
-    else text = Buffer.from(await response.bytes()).toString('utf8');
+    const returned = await http('POST', '/v1/devolver', '{}');
+    if (returned.status !== 200) return { ok: false, reason: `a VPS não aceitou devolver o registro (${returned.status})` };
   } catch {
     return { ok: false, reason: 'o Oráculo da VPS não respondeu; use o caminho manual do plano (docs/planos/oraculo-na-vps.md, "Volta atrás")' };
   }
+  const resume = async (reason: string): Promise<MoveResult> => {
+    await http('POST', '/v1/retomar', '{}').catch(() => undefined);
+    return { ok: false, reason };
+  };
+  const fetchFile = async (): Promise<string | null> => {
+    const response = await http('GET', '/v1/ledger/arquivo');
+    if (response.status === 404) return JSON.stringify(emptyLedgerDoc(), null, 2);
+    return response.status === 200 ? readText(response) : null;
+  };
+  let text: string | null;
+  try {
+    text = await fetchFile();
+  } catch {
+    text = null;
+  }
+  if (text === null) return resume('a VPS não entregou o registro; ela segue com ele');
   const check = checkLedgerImport(text, () => true);
-  if (!check.ok) return { ok: false, reason: check.reason };
+  if (!check.ok) return resume(check.reason);
   for (const file of check.proofFiles) {
     const target = join(proofsDir, file);
     if (io.existsSync(target)) continue;
     try {
       const response = await http('GET', `/v1/provas/${encodeURIComponent(file)}`);
-      if (response.status !== 200) return { ok: false, reason: `faltou trazer a prova ${file}; nada mudou neste PC` };
+      if (response.status !== 200) return resume(`faltou trazer a prova ${file}; nada mudou neste PC`);
       await proofFs.mkdir(proofsDir);
       await proofFs.writeFile(target, Buffer.from(await response.bytes()));
     } catch {
-      if (!io.existsSync(target)) return { ok: false, reason: `faltou trazer a prova ${file}; nada mudou neste PC` };
+      if (!io.existsSync(target)) return resume(`faltou trazer a prova ${file}; nada mudou neste PC`);
     }
   }
-  if (!writeAtomic(io, ledgerFile, text)) return { ok: false, reason: 'não consegui gravar o ledger.json neste PC' };
+  // The two sides, one last time: the VPS's file is still the one that came.
+  let again: string | null;
+  try {
+    again = await fetchFile();
+  } catch {
+    again = null;
+  }
+  if (again !== text) return resume('o registro da VPS mudou durante a volta; nada mudou neste PC');
+  if (!writeAtomic(io, ledgerFile, text)) return resume('não consegui gravar o ledger.json neste PC');
   return { ok: true, tarefas: check.count.tasks };
 }

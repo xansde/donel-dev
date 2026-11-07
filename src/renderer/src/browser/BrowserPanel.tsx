@@ -4,6 +4,8 @@ import { Button } from '@donel-dev/design-system';
 import { browserStore, usePtyBrowser } from './browserStore';
 import { isViewportCovered } from './coverage';
 import { agentAskedHelpLine } from '../../../shared/browser/ipc';
+import { browserFullscreenKey } from '../../../shared/browser/fullscreen';
+import type { BrowserFullscreenKeyFocus } from '../../../shared/browser/fullscreen';
 import type { DomainMode } from '../../../shared/browser/guardrails';
 import styles from './BrowserPanel.module.css';
 
@@ -26,6 +28,7 @@ export interface BrowserPanelProps {
 
 export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
   const browser = usePtyBrowser(ptyId);
+  const panelRef = useRef<HTMLElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const [covered, setCovered] = useState(false);
   const [snapshot, setSnapshot] = useState<string | null>(null);
@@ -94,6 +97,39 @@ export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
     };
   }, [covered, ptyId]);
 
+  // Navegador em tela cheia: F11 toggles it while this panel is the one on screen, Esc leaves it from the panel's
+  // chrome (shared/browser/fullscreen.ts). Capture phase: the window's own F11 (the menu's full screen) never runs.
+  const fullscreen = showing && browser.fullscreen;
+  useEffect(() => {
+    if (!showing) return undefined;
+    const onKey = (event: KeyboardEvent): void => {
+      const panel = panelRef.current;
+      const target = event.target instanceof Element ? event.target : null;
+      let focus: BrowserFullscreenKeyFocus = 'app';
+      if (panel && target && panel.contains(target)) {
+        focus = target.closest('input, textarea, select, [contenteditable="true"]') ? 'field' : 'panel';
+      }
+      const action = browserFullscreenKey({
+        key: event.key,
+        repeat: event.repeat,
+        defaultPrevented: event.defaultPrevented,
+        fullscreen: browserStore.get(ptyId).fullscreen,
+        focus,
+      });
+      if (!action) return;
+      event.preventDefault();
+      browserStore.fullscreen(ptyId, action);
+    };
+    window.addEventListener('keydown', onKey, { capture: true });
+    return () => window.removeEventListener('keydown', onKey, { capture: true });
+  }, [showing, ptyId]);
+
+  // Entering it, the focus goes to the panel: Esc then leaves the full screen and never reaches the chat (Parar).
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (fullscreen && panel && !panel.contains(document.activeElement)) panel.focus();
+  }, [fullscreen]);
+
   if (!browser.open) return null;
 
   const state = browser.state;
@@ -134,9 +170,12 @@ export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
 
   return (
     <aside
-      className={ownerDriving ? `${styles.panel} ${styles.panelOwner}` : styles.panel}
+      ref={panelRef}
+      tabIndex={-1}
+      className={[styles.panel, ownerDriving ? styles.panelOwner : '', fullscreen ? styles.panelFullscreen : ''].filter(Boolean).join(' ')}
       data-testid="browser-panel"
       data-owner={browser.control?.owner ?? 'agent'}
+      data-fullscreen={fullscreen ? 'true' : 'false'}
       aria-label="Navegador"
     >
       <form className={styles.toolbar} onSubmit={submit}>
@@ -190,6 +229,17 @@ export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
           onClick={() => setRulesOpen(!rulesOpen)}
         >
           Regras
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          aria-label={fullscreen ? 'Sair da tela cheia' : 'Tela cheia'}
+          aria-pressed={fullscreen}
+          title={fullscreen ? 'Sair da tela cheia (F11 ou Esc)' : 'Tela cheia: o navegador ocupa a janela inteira (F11)'}
+          data-testid="browser-fullscreen"
+          onClick={() => browserStore.fullscreen(ptyId, 'toggle')}
+        >
+          {fullscreen ? '⤡' : '⤢'}
         </Button>
         <Button type="button" variant="ghost" aria-label="Fechar navegador" title="Fechar navegador" onClick={() => browserStore.setOpen(ptyId, false)}>
           ×

@@ -19,6 +19,7 @@ import { createOracleAdminRoutes } from './admin';
 import { createRelay } from './relay';
 import { pickTailscaleAddress } from '../main/celular/tailscale';
 import { createOracleApiHandler } from './api';
+import { createReturnGuard } from './devolvido';
 import { ORACLE_PORT, startOracleServer, type OracleServer } from './server';
 
 export const TOKEN_HASH_FILE = 'pc.token.sha256';
@@ -54,7 +55,7 @@ async function main(): Promise<void> {
   const RELAY_WAIT_MS = 10_000;
   // The phone's server lives here now (src/main/celular), so cards reach the phone with the PC off.
   let celular: ReturnType<typeof createCelularCore> | null = null;
-  const ledger = createLedgerService({
+  const raw = createLedgerService({
     filePath: ledgerFile,
     io,
     proofFs: nodeLedgerProofFs,
@@ -63,6 +64,10 @@ async function main(): Promise<void> {
       celular?.ledgerChanged(snapshot.doc);
     },
   });
+  // Every writer of the daemon (the PC's API, the phone, the card writer) goes through the way back's guard: once
+  // the ledger was returned to the PC, nothing writes here.
+  const guard = createReturnGuard(raw, dir);
+  const ledger = guard.ledger;
   const cardWriter: CardWriter = createCardWriter({
     service: () => ledger,
     deliver: async (message) => {
@@ -79,11 +84,12 @@ async function main(): Promise<void> {
     deliverToLeader: () => async (text) => (await relay.send({ projectPath: '', placeId: '', text, leaderText: text }, RELAY_WAIT_MS)) === 'lider',
   });
   // Fails here, not on the first call, when the file is there but unreadable (it would be written over).
-  const first = ledger.load();
+  const first = raw.load();
   const handler = createOracleApiHandler({
     ledger,
     ledgerFile,
     tokenHash,
+    returned: guard,
     changed: () => {
       server?.notify('ledger');
       try {

@@ -163,6 +163,22 @@
   opacity: 0.55;
 }
 
+/* Navegador em tela cheia: the panel over the whole window of the app, above the screens that slide over the
+   center (Mindscape 40, Cadeira 45). Dialogs (900) still open on top, and the cover check swaps the view for a
+   print under them. */
+.panelFullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  max-width: none;
+  min-width: 0;
+  border-left: 0;
+}
+
+.panel:focus {
+  outline: none;
+}
+
 /* Owner in control (D11): orange frame + the bar with "Devolver ao agente". */
 .panelOwner {
   box-shadow: inset 0 0 0 2px var(--state-permission);

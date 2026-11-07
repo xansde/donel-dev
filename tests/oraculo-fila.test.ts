@@ -119,6 +119,7 @@ describe('Fila do Oráculo na VPS para o PC', () => {
       },
       localService: local,
       setService: (next) => held.set(next),
+      freeze: (reason) => held.freeze(reason),
       onChange: () => undefined,
       fetchImpl,
       deliver: () => async (m) => {

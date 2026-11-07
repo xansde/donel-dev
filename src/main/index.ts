@@ -3084,6 +3084,7 @@ function registerLedgerIpcHandlers(): void {
     runScript: (sshTarget, script, timeoutMs) => runRemoteScript(sshTarget, script, timeoutMs),
     localService: localLedger,
     setService: (next) => switchable?.set(next),
+    freeze: (reason) => switchable?.freeze(reason) ?? Promise.resolve(),
     onChange,
     deliver: () => deliverOwnerMessageViaBoard,
   });
