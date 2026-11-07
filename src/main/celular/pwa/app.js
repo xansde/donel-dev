@@ -6,6 +6,7 @@
 (function () {
   var CHAVE_TOKEN = 'donel-ledger-token';
   var LIMIAR = 0.28; // fração da largura que confirma o gesto
+  var OPCAO_PROPRIA = 'Outra'; // a decisão que o dono escreve na carta (OWN_OPTION no contrato do Oráculo)
   var PRAZO_ESCREVER_MS = 30000; // escrever na carta: sem resposta nisso, mostra que não confirmou (o texto fica)
 
   // Glifos próprios (traço simples, sem copiar arte de baralho nenhum).
@@ -656,20 +657,28 @@
     texto.maxLength = 2000;
     texto.rows = 3;
     texto.placeholder = 'Escreva ou dite pelo microfone do teclado.';
-    var dica = el('small', null, 'Mandar à sessão entrega o texto agora a ' + ctx.item.quemEntregou + ' (fechada, vai ao Líder). Não decide a carta; se você escolher um caminho com isto escrito, vai junto.');
+    var dica = el('small', null, 'Decidir assim fecha a carta com o que você escreveu como sua decisão e manda a ' + ctx.item.quemEntregou + ' (fechada, vai ao Líder). Só perguntar manda sem fechar a carta. Escolher um caminho acima com isto escrito leva o texto junto.');
     var falha = el('div', 'A-falhou');
     falha.hidden = true;
     falha.setAttribute('role', 'alert');
     var estado = el('p', 'A-estado');
     estado.hidden = true;
     estado.setAttribute('aria-live', 'polite');
-    var enviar = el('button', null, 'Mandar à sessão');
+    // 07/11 ("eu escrevo minha própria opção e não some o cartão"): o padrão decide e tira a carta da pilha;
+    // perguntar sem decidir é o segundo botão.
+    var decidirAssim = el('button', null, 'Decidir assim');
+    decidirAssim.type = 'button';
+    ctx.botoes.push(decidirAssim);
+    var enviar = el('button', 'A-perguntar', 'Só perguntar (a carta fica)');
     enviar.type = 'button';
+    var acoes = el('div', 'A-acoes');
+    acoes.appendChild(decidirAssim);
+    acoes.appendChild(enviar);
     caixa.appendChild(texto);
     caixa.appendChild(dica);
     caixa.appendChild(falha);
     caixa.appendChild(estado);
-    caixa.appendChild(enviar);
+    caixa.appendChild(acoes);
     var recibos = el('div', 'A-recibos');
     bloco.appendChild(abrir);
     bloco.appendChild(caixa);
@@ -698,7 +707,7 @@
       falha.textContent = '';
       if (!motivo) {
         falha.hidden = true;
-        enviar.textContent = 'Mandar à sessão';
+        enviar.textContent = 'Só perguntar (a carta fica)';
         return;
       }
       falha.appendChild(el('b', null, 'Não saiu: ' + motivo));
@@ -745,13 +754,23 @@
       if (caixa.hidden) abrirCaixa(true);
       else caixa.hidden = true;
     });
+    decidirAssim.addEventListener('click', function () {
+      var valor = texto.value.trim();
+      if (!valor) { texto.focus(); return; }
+      if (ctx.ocupado) return;
+      guardar(null);
+      // O PC diz como a opção própria fecha (carta de Slack: não envia); o texto vai literal.
+      decidir(ctx, 'aceitar', null, OPCAO_PROPRIA, valor);
+    });
     enviar.addEventListener('click', function () {
       var valor = texto.value.trim();
       if (!valor) { texto.focus(); return; }
       if (!pedido) pedido = idAleatorio();
+      if (ctx.ocupado) return;
       guardar(null);
       mostrarFalha(null);
       enviar.disabled = true;
+      decidirAssim.disabled = true;
       enviar.textContent = 'Mandando…';
       estado.textContent = 'Enviando para ' + ctx.item.quemEntregou + '…';
       estado.hidden = false;
@@ -796,7 +815,8 @@
           enviando--;
           estado.hidden = true;
           enviar.disabled = false;
-          if (falha.hidden) enviar.textContent = 'Mandar à sessão';
+          decidirAssim.disabled = !!ctx.ocupado;
+          if (falha.hidden) enviar.textContent = 'Só perguntar (a carta fica)';
         });
     });
     return bloco;
@@ -1002,7 +1022,7 @@
       .then(function (resposta) {
         if (resposta.ok || resposta.status === 404) {
           guardarRascunho(ctx.item.id, null);
-          if (resposta.ok) avisar(opcao ? 'Decidido: ' + opcao + '.' : decisao === 'aceitar' ? 'Aceita.' : 'Rejeitada. O motivo foi para quem entregou.');
+          if (resposta.ok) avisar(opcao === OPCAO_PROPRIA ? 'Decidido com o que você escreveu.' : opcao ? 'Decidido: ' + opcao + '.' : decisao === 'aceitar' ? 'Aceita.' : 'Rejeitada. O motivo foi para quem entregou.');
           remover(ctx);
           return;
         }

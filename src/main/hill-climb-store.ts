@@ -37,7 +37,7 @@ import {
 import { convene, councilStatus, FAKE_JUDGES_ENV_VAR, fakeCouncil, type CouncilStatus, type JudgeProvider } from '../shared/hillClimb/council';
 import type { HillClimbGestureResult, HillClimbSnapshot } from '../shared/hillClimb/channels';
 import type { HillClimbToolCall } from '../shared/hillClimb/tools';
-import type { LedgerActor, LedgerDoc, LedgerForOwner, LedgerOp } from '../shared/ledger/contract';
+import { lastDecision, OWN_OPTION, type LedgerActor, type LedgerDoc, type LedgerForOwner, type LedgerOp } from '../shared/ledger/contract';
 import type { LedgerApplyResult } from '../shared/ledger/channels';
 import type { OwnerMessage } from './ledger-card-writer';
 
@@ -173,7 +173,10 @@ export function createHillClimbService(deps: HillClimbServiceDeps): HillClimbSer
           if (mission.state !== 'proposta') continue;
           const card = ledger.tasks[mission.ledgerTaskId];
           if (card?.state !== 'aceita' && card?.state !== 'rejeitada') continue;
-          const settled = settleProposal(mission, card.state, now());
+          // 07/11 — the owner's own words on the proposal ("Decidir assim") never start a run that spends: his words
+          // reach the Escalador (tellDecision), and a run is a new proposal.
+          const decision = card.state === 'aceita' && lastDecision(card)?.option === OWN_OPTION ? 'rejeitada' : card.state;
+          const settled = settleProposal(mission, decision, now());
           if (settled.state === 'rodando') started.push(settled);
           next = withMission(next, settled);
         }

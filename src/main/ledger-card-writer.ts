@@ -9,7 +9,7 @@
 // send is reported as such ("enviado, mas não gravou"), never retried into a second message.
 
 import { randomUUID } from 'node:crypto';
-import { commentOfRequest, commentRefusal, lastDelivery, type LedgerDeliveredTo, type LedgerTask } from '../shared/ledger/contract';
+import { commentOfRequest, commentRefusal, lastDelivery, OWN_OPTION, type LedgerDeliveredTo, type LedgerTask } from '../shared/ledger/contract';
 import type { PlaceNameOf } from '../shared/ledger/labels';
 import type { LedgerService } from './ledger-store';
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
@@ -73,10 +73,15 @@ export function decisionMessage(task: LedgerTask, words: string | undefined, pla
   const last = task.events.at(-1);
   if (!last || last.by.kind !== 'dono' || (last.kind !== 'aceita' && last.kind !== 'rejeitada' && last.kind !== 'conferida')) return null;
   const what = task.slack ? 'a carta de Slack' : 'a tarefa';
-  const option = last.option ? ` (escolheu «${last.option}»)` : '';
-  const said = words?.trim() && last.kind !== 'rejeitada' ? ` Palavras do dono: ${words.trim()}` : '';
-  const verdict =
-    last.kind === 'conferida'
+  const own = last.kind !== 'conferida' && last.option === OWN_OPTION;
+  const option = last.option && !own ? ` (escolheu «${last.option}»)` : '';
+  const said = words?.trim() && last.kind !== 'rejeitada' && !own ? ` Palavras do dono: ${words.trim()}` : '';
+  // 07/11 — his own option: the decision IS his words; the session goes on from them.
+  const verdict = own
+    ? last.kind === 'aceita'
+      ? `decidiu ${what} «${cardTitle(task)}» com a própria opção, nas palavras dele: «${last.text ?? ''}». Siga a partir disso; se precisar dele de novo, crie outra tarefa.`
+      : `não aprovou ${what} «${cardTitle(task)}» e escreveu a própria opção: «${last.text ?? ''}». Não envie esta carta. Siga a partir do que ele escreveu; outro texto no Slack é outra carta com carta_slack.`
+    : last.kind === 'conferida'
       ? `conferiu o aceite ${task.slack ? 'da carta de Slack' : 'da tarefa'} «${cardTitle(task)}».`
       : last.kind === 'aceita'
         ? `aceitou ${what} «${cardTitle(task)}»${option}.${task.slack ? ' Envie agora o texto exato da carta, ao mesmo destino e thread, uma vez só.' : ''}`
