@@ -177,6 +177,7 @@ import {
 import { ROTINAS_CHANNELS, type ShadowEntry } from '../shared/rotinas/contract';
 import { LIDER_CHANNELS, type LiderReport, type LiderSendPayload, type LiderSendResult, type LiderState } from '../shared/lider/ipc';
 import { ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
+import type { ClaudeInventory } from '../shared/role-scope';
 import type { TeamPrefs } from '../shared/teamPrefs';
 import { SESSION_RENEWAL_CHANNELS, type HandoffStatus, type RenewalPrepareInput, type RenewalPrepared, type SessionRenewalPrefs } from '../shared/sessionRenewal';
 
@@ -612,6 +613,7 @@ const donelApi: DonelApi = {
   roles: {
     list: () => ipcRenderer.invoke(ROLES_CHANNELS.list) as Promise<SessionRole[]>,
     save: (role: SessionRole) => ipcRenderer.invoke(ROLES_CHANNELS.save, role) as Promise<RoleSaveResult>,
+    inventory: (cwd?: string) => ipcRenderer.invoke(ROLES_CHANNELS.inventory, cwd) as Promise<ClaudeInventory>,
   },
 
   // Diário de gestos — fire and forget; the main validates and stamps the time.

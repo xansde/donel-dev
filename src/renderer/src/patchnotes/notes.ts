@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-07',
     items: [
       {
+        title: 'A tela da cadeira',
+        text: 'Na gaveta de uma cadeira, "Definir cadeira ▸" agora abre a tela da cadeira (também em Papéis, por "Ver como cadeira ▸"). Ela mostra o que uma sessão recebe ao sentar ali: as instruções na ordem em que chegam (a moldura do Donel e o texto do papel) e as suas skills, MCPs e plugins, ligados ou fora, com um selo dizendo de onde cada linha vem (Donel, Papel ou o seu ~/.claude). Também mostra o modelo e o esforço sugeridos. À direita fica o custo estimado de uma sessão, em tokens e memória, com o detalhe de onde vem. A coluna de custo recolhe num clique, vira uma faixa estreita com os dois totais e continua recolhida na próxima vez. Nesta versão a tela só mostra; para mudar, use "Editar em Papéis ▸". Os números de custo são estimativas.',
+      },
+      {
         title: 'O Mindscape mostra as cadeiras',
         text: 'No canto direito das abas do Mindscape há agora "Lugares | Cadeiras". Em Cadeiras, o quadro vira o esquema que você aprovou: o rig com o nome do projeto, uma cadeira redonda por papel com o nome grande e quantos estão sentados, setas mostrando por onde o trabalho passa (quem abriu quem) e, no topo, quantas cadeiras estão com problema, atenção, bem ou sem sinal; clicar num número destaca essas cadeiras. Clicar numa cadeira abre a gaveta com quem está sentado agora, quem já sentou (um clique retoma a conversa), a última nota escrita ali, as tarefas do Oráculo dela e o modelo configurado ao lado do usado. Esc, o ✕ ou um clique no quadro fecham. Seu desenho e seus post-its ficam onde estão, por cima, esmaecidos ou ocultos, e continuam editáveis. Nada é gravado: voltar a Lugares devolve o quadro como estava. Pods e a tela de definir cadeira vêm nas próximas versões.',
       },

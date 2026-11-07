@@ -124,6 +124,8 @@ export interface MindscapeScreenProps {
   readonly onStartPlace?: (placeId: string, projectPath: string) => void;
   /** Item 12b — "Papéis…": the screen to create and edit roles. */
   readonly onManageRoles?: () => void;
+  /** Cadeiras, fatia 2 — "Definir cadeira ▸" in the drawer: the chair screen (B1) of that role. */
+  readonly onDefineChair?: (roleId: string) => void;
   /** Clock of the "antigas" rule (tests pin it). */
   readonly now?: () => number;
 }
@@ -253,6 +255,7 @@ export function MindscapeScreen({
   roles = NO_ROLES,
   onStartPlace,
   onManageRoles,
+  onDefineChair,
 }: MindscapeScreenProps): React.JSX.Element {
   const boardPaths = Object.keys(doc.boards);
   const [selectedPath, setSelectedPath] = useState<string | undefined>(initialProjectPath);
@@ -1168,7 +1171,7 @@ export function MindscapeScreen({
           details={openDetail ? chairDetails(openDetail) : null}
           onClose={() => setOpenDetail(null)}
           onOpenChair={(chairId) => setOpenDetail(chairId)}
-          onDefine={onManageRoles}
+          onDefine={onDefineChair ?? (onManageRoles ? () => onManageRoles() : undefined)}
         />
       ) : null}
       </div>
