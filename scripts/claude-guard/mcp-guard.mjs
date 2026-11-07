@@ -224,35 +224,78 @@ function walk(value, visit) {
 }
 
 const stringsIn = (v) => (typeof v === 'string' ? [v] : Array.isArray(v) ? v.flatMap(stringsIn) : v && typeof v === 'object' ? Object.values(v).flatMap(stringsIn) : []);
-const truthy = (v) => v === true || v === 'true' || v === 1 || v === '1';
-const EMAIL_RE = /[^\s<>"',;:]+@([A-Za-z0-9.-]+\.[A-Za-z]{2,})/g;
-const RECIPIENT_KEYS = set('to cc bcc recipient recipients recipient_email recipient_emails attendees attendee invitees invitee guests guest emails email_addresses emailAddress');
+const normKey = (k) => String(k).toLowerCase().replace(/[^a-z0-9]/g, '');
+/** Absent, or explicitly off: the only values an effect switch may carry. Anything else ("yes", "True", 1) counts as on. */
+const isOff = (v) => v === undefined || v === null || v === false || (typeof v === 'string' && /^(false|no|none|off|0|)$/i.test(v.trim())) || v === 0;
+const OWNER_EMAIL = /^[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)$/;
 
-/** Parameters that change what an otherwise plain write does: publish, trash/archive, production, force, invite outside. */
+/** A single ASCII address on one of the owner's domains (or a subdomain). IDN and anything else fail. */
+export function isOwnerEmail(v, policy) {
+  if (typeof v !== 'string') return false;
+  const m = OWNER_EMAIL.exec(v.trim());
+  if (!m) return false;
+  const dom = m[1].toLowerCase();
+  return policy.ownerDomains.some((d) => dom === d.toLowerCase() || dom.endsWith(`.${d.toLowerCase()}`));
+}
+
+/** Effect switches: any value but absent/off blocks (archived:"yes" included). Matched on the normalized key. */
+const EFFECT_SWITCHES = set('archived isarchived archive intrash trashed trash istrashed deleted public ispublic publish published force forcepush forceupdate transferownership productionenvironment isproduction production allowfilediscovery sendupdates sendnotifications notify notifyattendees sendnotificationemail sendinvites');
+const ENV_KEYS = set('environment env target targets targetenv stage deploytarget environments');
+const RECIPIENT_HINT = /email|recipient|attendee|invitee|guest|participant|^cc$|^bcc$|^to$|member/;
+
+/** Parameters that change what an otherwise plain write does. A blocklist kept as a second layer: the first one is the argument list (`args`). */
 function effectProblem(input, policy) {
   let why = null;
-  const outside = (text) => [...String(text).matchAll(EMAIL_RE)].some((m) => !policy.ownerDomains.some((dom) => m[1].toLowerCase() === dom.toLowerCase() || m[1].toLowerCase().endsWith(`.${dom.toLowerCase()}`)));
   walk(input, (k, v) => {
-    const key = k.toLowerCase();
-    const sv = typeof v === 'string' ? v.toLowerCase() : null;
-    if ((key === 'private' || key === 'is_private' || key === 'isprivate') && (v === false || v === 'false')) why = 'torna algo público';
-    if ((key === 'visibility' || key === 'repo_visibility') && sv !== null && sv !== 'private') why = 'muda visibilidade';
-    if ((key === 'public' || key === 'is_public' || key === 'publish' || key === 'published') && truthy(v)) why = 'torna algo público';
-    if (key === 'type' && (sv === 'anyone' || sv === 'domain')) why = 'compartilha com qualquer um ou com o domínio';
-    if ((key === 'allowfilediscovery' || key === 'allow_file_discovery') && truthy(v)) why = 'deixa o arquivo achável';
-    if (key === 'force' && v !== false && v !== 'false' && v !== undefined && v !== null) why = 'pede force';
-    if (['archived', 'is_archived', 'archive', 'in_trash', 'trashed', 'trash', 'is_trashed', 'deleted'].includes(key) && truthy(v)) why = 'arquiva ou manda para a lixeira';
-    if (/label/.test(key) && (Array.isArray(v) ? v : [v]).some((x) => typeof x === 'string' && /^(trash|spam)$/i.test(x))) why = 'manda para a lixeira ou o spam';
-    if (['environment', 'env', 'target', 'target_env', 'stage', 'deploy_target'].includes(key) && sv !== null && /^prod(uction)?$/.test(sv)) why = 'mexe em produção';
-    if ((key === 'production' || key === 'is_production') && truthy(v)) why = 'mexe em produção';
-    if (RECIPIENT_KEYS.has(k) || RECIPIENT_KEYS.has(key)) {
-      if (stringsIn(v).some(outside)) why = 'convida ou escreve para endereço fora dos domínios do dono';
-    }
-    if (['send_updates', 'sendupdates', 'send_notifications', 'sendnotifications', 'notify', 'notify_attendees'].includes(key) && v !== false && v !== 'false' && v !== 'none' && v !== undefined && v !== null) {
-      if (policy.ownerDomains.length === 0) why = 'avisa convidados em nome do dono';
-    }
+    const key = normKey(k);
+    const json = (() => {
+      try {
+        return JSON.stringify(v).toLowerCase();
+      } catch {
+        return '';
+      }
+    })();
+    if ((key === 'private' || key === 'isprivate') && v !== true && !(typeof v === 'string' && v.trim().toLowerCase() === 'true')) why = 'torna algo público';
+    if ((key === 'visibility' || key === 'repovisibility') && !(typeof v === 'string' && v.trim().toLowerCase() === 'private')) why = 'muda visibilidade';
+    if (EFFECT_SWITCHES.has(key) && !isOff(v)) why = `liga "${k}"`;
+    if (key.includes('transfer') || key.includes('ownership')) why = 'passa a posse';
+    if (key === 'role' && /owner/.test(json)) why = 'passa a posse';
+    if (key === 'type' && /"(anyone|domain)"/.test(json)) why = 'compartilha com qualquer um ou com o domínio';
+    if (key.includes('label') && /trash|spam/.test(json)) why = 'manda para a lixeira ou o spam';
+    if (ENV_KEYS.has(key) && /prod|prd|live/.test(json)) why = 'mexe em produção';
+    if (RECIPIENT_HINT.test(key) && stringsIn(v).some((x) => x.includes('@') && !isOwnerEmail(x, policy))) why = 'convida ou escreve para endereço fora dos domínios do dono';
   });
   return why;
+}
+
+/** The shape a listed argument's value must have. Unknown shape = refused. */
+function shapeOk(shape, v, policy) {
+  if (typeof shape !== 'string') return false;
+  if (shape === 'text') return typeof v === 'string';
+  if (shape === 'id') return typeof v === 'string' && /^[A-Za-z0-9_.:/-]{1,256}$/.test(v);
+  if (shape === 'int') return Number.isInteger(v);
+  if (shape === 'bool') return typeof v === 'boolean';
+  if (shape === 'false') return v === false;
+  if (shape === 'owner-email') return isOwnerEmail(v, policy);
+  if (shape === 'owner-emails') return Array.isArray(v) && v.length > 0 && v.every((x) => isOwnerEmail(x, policy));
+  if (shape === 'text-list') return Array.isArray(v) && v.every((x) => typeof x === 'string');
+  if (shape.startsWith('enum:')) return typeof v === 'string' && shape.slice(5).split('|').includes(v);
+  if (shape.startsWith('enum-list:')) {
+    const ok = shape.slice(10).split('|');
+    return Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === 'string' && ok.includes(x));
+  }
+  return false;
+}
+
+/** An allowed write takes only the arguments its rule lists, each with the listed shape. */
+function argsProblem(spec, input, policy) {
+  if (!spec || typeof spec !== 'object' || Array.isArray(spec)) return 'regra de escrita sem a lista de argumentos ("args")';
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return 'argumentos fora do formato';
+  for (const [k, v] of Object.entries(input)) {
+    if (!Object.hasOwn(spec, k)) return `o argumento "${k}" não está na lista da regra`;
+    if (!shapeOk(spec[k], v, policy)) return `o argumento "${k}" não tem a forma da regra (${String(spec[k]).slice(0, 40)})`;
+  }
+  return null;
 }
 
 function protectedRepo(input, policy) {
@@ -294,7 +337,10 @@ function dispatchedCalls(input) {
   if (!items || items.length === 0) return null;
   const calls = [];
   for (const it of items) {
-    const slug = it?.tool_slug ?? it?.slug;
+    if (!it || typeof it !== 'object') return null;
+    const slugKeys = ['tool_slug', 'toolSlug', 'slug', 'action', 'action_name', 'tool'].filter((k) => Object.hasOwn(it, k));
+    if (slugKeys.length !== 1) return null;
+    const slug = it[slugKeys[0]];
     const args = it?.arguments ?? it?.args ?? {};
     if (typeof slug !== 'string' || !args || typeof args !== 'object') return null;
     calls.push({ slug, args });
@@ -304,8 +350,14 @@ function dispatchedCalls(input) {
 
 /** The rule of a Composio slug: only an explicit one (owner's policy, then the default list). Never inferred. */
 function slugRule(slug, policy) {
-  if (Object.hasOwn(policy.slugRules, slug)) return policy.slugRules[slug];
-  if (Object.hasOwn(DEFAULT_SLUG_RULES, slug)) return DEFAULT_SLUG_RULES[slug];
+  const raw = Object.hasOwn(policy.slugRules, slug) ? policy.slugRules[slug] : Object.hasOwn(DEFAULT_SLUG_RULES, slug) ? DEFAULT_SLUG_RULES[slug] : null;
+  return normalizeRule(raw);
+}
+
+/** A rule as written in the policy: "read" or { rule: "write", args: { name: shape } }. */
+function normalizeRule(raw) {
+  if (typeof raw === 'string') return { rule: raw };
+  if (raw && typeof raw === 'object' && typeof raw.rule === 'string') return { rule: raw.rule, args: raw.args };
   return null;
 }
 
@@ -334,8 +386,11 @@ export function judge(rule, why, server, input, policy, depth = 0) {
       for (const c of calls) {
         const r = slugRule(c.slug, policy);
         if (!r) return `${c.slug}: fora da lista de ações do Composio permitidas (o dono libera em slugRules)`;
-        if (r === 'dispatch' || r === 'code') return `${c.slug}: despacho ou código`;
-        const v = judge(r, undefined, server, c.args, policy, depth + 1);
+        if (r.rule === 'dispatch' || r.rule === 'code') return `${c.slug}: despacho ou código`;
+        // A write the owner allows for a slug passes only with the arguments its rule lists.
+        const listed = r.rule === 'write' ? argsProblem(r.args, c.args, policy) : null;
+        if (listed) return `${c.slug}: ${listed}`;
+        const v = judge(r.rule, undefined, server, c.args, policy, depth + 1);
         if (v) return `${c.slug}: ${v}`;
       }
       return null;
@@ -372,8 +427,11 @@ export function decide(payload, state) {
   const changed = drift?.changed?.[name];
   if (changed && changed.hash !== entry.hash) return deny(`a descrição de ${name} mudou desde o selo (${changed.seenAt ?? 'data desconhecida'}). Fica barrada até o Alexandre conferir e reselar. ${RESEAL}`);
 
-  const rule = policy.toolRules[name] ?? entry.rule ?? 'blocked';
-  const why = judge(rule, policy.toolRules[name] ? undefined : entry.why, parts.server, input, policy);
+  const own = Object.hasOwn(policy.toolRules, name) ? normalizeRule(policy.toolRules[name]) : null;
+  const rule = own?.rule ?? entry.rule ?? 'blocked';
+  // An owner's rule with an argument list is strict; an inferred one keeps the effect checks only.
+  const listed = own?.args ? argsProblem(own.args, input, policy) : null;
+  const why = listed ?? judge(rule, own ? undefined : entry.why, parts.server, input, policy);
   return why ? deny(`${name} — ${why}. ${LIBERA}`) : ALLOW;
 }
 

@@ -29,9 +29,39 @@ repo público.
 | `git-write` | push/commit/escrita de arquivo num repo | `branch` presente e fora de `protectedBranches` (main, master, staging), nenhuma outra chave de branch (`ref`, `base`…), repo fora de `protectedRepos` (`xansde/donel`) |
 | `repo-create` | criar repositório | `private === true` |
 | `sql`, `target-op` | SQL, migration, deploy | `project_id` está em `nonProdTargets` e nenhuma outra chave de alvo aponta para outro lugar. **Todo SQL fora do staging é barrado, leitura inclusive.** |
-| `dispatch` | `COMPOSIO_MULTI_EXECUTE_TOOL` e afins | cada `tool_slug` está na **lista explícita** (`DEFAULT_SLUG_RULES`, só leituras e o envio ao Slack com carta, ou `slugRules` do dono) e passa pela regra dela. Slug nunca é liberado por inferência |
+| `dispatch` | `COMPOSIO_MULTI_EXECUTE_TOOL` e afins | cada `tool_slug` está na **lista explícita** (`DEFAULT_SLUG_RULES`, só leituras e o envio ao Slack com carta, ou `slugRules` do dono) e passa pela regra dela. Slug nunca é liberado por inferência. Item com mais de uma chave de slug barra. Escrita liberada pelo dono só passa com os argumentos que a regra lista (abaixo) |
 | `code` | workbench, bash remoto, execute/run | nunca: código não se julga antes de rodar |
 | `blocked` | apagar, lixeira, merge, force, referência, segredo, permissão… ou não reconhecido | nunca (o dono pode reclassificar em `toolRules`) |
+
+### Escrita liberada pelo dono: só com os argumentos listados
+
+Uma ação de escrita que o dono libera (`slugRules` para o Composio, `toolRules`
+para uma ferramenta selada) precisa da lista dos argumentos aceitos, com a forma
+de cada valor. Qualquer outra chave, valor composto ou formato inesperado barra:
+
+```json
+{ "ownerDomains": ["seazone.com.br"],
+  "slugRules": {
+    "GMAIL_SEND_EMAIL": { "rule": "write", "args": { "recipient_email": "owner-email", "subject": "text", "body": "text" } },
+    "NOTION_UPDATE_PAGE": { "rule": "write", "args": { "page_id": "id", "archived": "false" } } } }
+```
+
+Formas: `text`, `id` (`[A-Za-z0-9_.:/-]`), `int`, `bool`, `false` (só `false`),
+`owner-email` e `owner-emails` (ASCII, domínio em `ownerDomains`; IDN barra),
+`text-list`, `enum:a|b`, `enum-list:a|b`. `"write"` sem `args` barra.
+
+Por cima da lista, as chaves de efeito continuam barrando, com a chave
+normalizada (caixa e `_` não contam):
+- liga/desliga (`archived`, `trash`, `public`, `force`, `production_environment`, `send_updates`…): qualquer valor que não seja ausente ou desligado barra, inclusive `"yes"` e `"True"`;
+- `private` só passa `true`, e `visibility` só `private`;
+- posse (`transfer…`, `…ownership`, `role: owner`) barra;
+- `type: anyone|domain` barra;
+- `TRASH`/`SPAM` em qualquer chave de etiqueta barra, inclusive dentro de texto separado por vírgula;
+- produção em `environment`/`target`/`stage` barra em qualquer forma: lista, objeto ou com espaço;
+- endereço fora dos domínios do dono, em qualquer chave de destinatário, barra.
+
+A escrita inferida no selo (taskdex, github…) não tem lista. Ela fica só com
+esta segunda camada.
 
 ## Por que o agente não desliga nem resela
 
@@ -126,6 +156,19 @@ O donel não entra no gateway: o token dele é por sessão e o próprio app deci
 hierarquia e carta.
 
 ## Limites conhecidos
+
+- **Impostor até a próxima reconferência.** Outro servidor com o nome de um
+  selado só é barrado depois do `check`, que o timer roda a cada 10 min. Até lá,
+  ele passa com a regra do selado.
+- **`--mcp-config` fora das pastas olhadas.** Um servidor passado por
+  `claude --mcp-config /tmp/x.json` com o nome de um selado **nunca** é marcado.
+  A reconferência só olha o `~/.claude.json`, o `.mcp.json` dos projetos, os
+  `mcp.json` das sessões do Donel e os `--mcp-config` que o dono passar a ela.
+- **O navegador do Donel é um caminho fora da trava.** O servidor `donel` está
+  em `trustedServers`, e isso inclui o `navegador_*`. Onde o dono tiver Gmail,
+  Drive ou Slack logado no navegador interno, o agente envia e compartilha por
+  lá sem passar por aqui. O que o navegador tem é o pedido de humano para login,
+  pagamento e exclusão, e a lista de domínios que o dono pode limitar.
 
 - O PreToolUse não traz a descrição da ferramenta. Por isso a mudança de
   descrição só aparece na reconferência, que roda a cada 10 min.

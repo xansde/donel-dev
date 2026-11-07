@@ -117,7 +117,7 @@ const stats = (xs) => {
 const guards = [
   ...(V1 ? [{ name: 'v1 (1ª devolvida)', path: V1 }] : []),
   ...(V2 ? [{ name: 'v2 (2ª devolvida)', path: V2 }] : []),
-  { name: 'v3 (esta)', path: join(HERE, 'mcp-guard.mjs') },
+  { name: 'atual (v4)', path: join(HERE, 'mcp-guard.mjs') },
 ].map((g) => ({ ...g, ...sandboxFor(g.path), times: [], leaks: new Map(), fps: new Map(), perRound: [] }));
 const before = { times: [], perRoundDirect: [] };
 

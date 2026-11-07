@@ -241,12 +241,84 @@ describe('Composio slugs (round 2 of the review)', () => {
     expect(run('GOOGLECALENDAR_CREATE_EVENT', args)).toBe('deny');
     allowAsWrite('GOOGLECALENDAR_CREATE_EVENT');
     expect(run('GOOGLECALENDAR_CREATE_EVENT', args)).toBe('deny');
+    policy({ slugRules: { GOOGLECALENDAR_CREATE_EVENT: { rule: 'write', args: { summary: 'text', attendees: 'owner-emails' } } }, ownerDomains: ['example.com'] });
     expect(run('GOOGLECALENDAR_CREATE_EVENT', { summary: 'x', attendees: ['eu@example.com'] })).toBe('allow');
   });
 
   it('a slug is never allowed by inference, and reads on the list go through', () => {
     expect(run('TASKDEX_CREATE_TASK', { title: 'x' })).toBe('deny');
     expect(run('GMAIL_FETCH_EMAILS', { max_results: 5 })).toBe('allow');
+  });
+});
+
+// Round 3: an allowed write passes only with the arguments its rule lists, each with the shape of its value.
+describe('allowed writes take only the listed arguments (round 3 of the review)', () => {
+  beforeEach(sealWorkTools);
+  const run = (slug, args) => decisionOf('mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL', multi(slug, args));
+  const allow = (slugRules) => policy({ slugRules, ownerDomains: ['seazone.com.br'] });
+  const W = (args) => ({ rule: 'write', args });
+
+  it('linha 1: an extra recipient next to an owner one', () => {
+    allow({ GMAIL_SEND_EMAIL: W({ recipient_email: 'owner-email', subject: 'text', body: 'text' }) });
+    expect(run('GMAIL_SEND_EMAIL', { recipient_email: 'a@seazone.com.br', subject: 's', body: 'b' })).toBe('allow');
+    expect(run('GMAIL_SEND_EMAIL', { recipient_email: 'a@seazone.com.br', subject: 's', body: 'b', extra_recipients: ['x@evil.com'] })).toBe('deny');
+  });
+
+  it('linha 2: an international (IDN) domain', () => {
+    allow({ GMAIL_SEND_EMAIL: W({ recipient_email: 'owner-email', subject: 'text', body: 'text' }) });
+    expect(run('GMAIL_SEND_EMAIL', { recipient_email: 'x@пример.рф', subject: 's', body: 'b' })).toBe('deny');
+    expect(run('GMAIL_SEND_EMAIL', { recipient_email: 'a@time.seazone.com.br', subject: 's', body: 'b' })).toBe('allow');
+  });
+
+  it('linha 3: a Drive share by email_address to an outside address', () => {
+    allow({ GOOGLEDRIVE_ADD_FILE_SHARING_PREFERENCE: W({ file_id: 'id', type: 'enum:user', role: 'enum:reader|commenter|writer', email_address: 'owner-email' }) });
+    expect(run('GOOGLEDRIVE_ADD_FILE_SHARING_PREFERENCE', { file_id: 'f1', type: 'user', role: 'writer', email_address: 'x@evil.com' })).toBe('deny');
+    expect(run('GOOGLEDRIVE_ADD_FILE_SHARING_PREFERENCE', { file_id: 'f1', type: 'user', role: 'writer', email_address: 'a@seazone.com.br' })).toBe('allow');
+  });
+
+  it('linha 4: handing over ownership of a Drive file', () => {
+    allow({ GOOGLEDRIVE_ADD_FILE_SHARING_PREFERENCE: W({ file_id: 'id', type: 'enum:user', role: 'enum:reader|commenter|writer', email_address: 'owner-email' }) });
+    expect(run('GOOGLEDRIVE_ADD_FILE_SHARING_PREFERENCE', { file_id: 'f1', type: 'user', role: 'owner', email_address: 'a@seazone.com.br', transferOwnership: true })).toBe('deny');
+    expect(run('GOOGLEDRIVE_ADD_FILE_SHARING_PREFERENCE', { file_id: 'f1', type: 'user', role: 'owner', email_address: 'a@seazone.com.br' })).toBe('deny');
+  });
+
+  it('linha 5: a calendar invite through attendee_emails', () => {
+    allow({ GOOGLECALENDAR_CREATE_EVENT: W({ summary: 'text', start_datetime: 'text', attendees: 'owner-emails' }) });
+    expect(run('GOOGLECALENDAR_CREATE_EVENT', { summary: 'x', attendee_emails: ['x@evil.com'], send_updates: 'all' })).toBe('deny');
+    expect(run('GOOGLECALENDAR_CREATE_EVENT', { summary: 'x', attendees: ['a@seazone.com.br'] })).toBe('allow');
+  });
+
+  it('linha 6: a GitHub deployment to "prd" with production_environment', () => {
+    allow({ GITHUB_CREATE_A_DEPLOYMENT: W({ owner: 'id', repo: 'id', ref: 'id', environment: 'enum:preview|staging' }) });
+    expect(run('GITHUB_CREATE_A_DEPLOYMENT', { owner: 'o', repo: 'r', ref: 'feature/x', environment: 'prd', production_environment: true })).toBe('deny');
+    expect(run('GITHUB_CREATE_A_DEPLOYMENT', { owner: 'o', repo: 'r', ref: 'feature/x', environment: 'staging' })).toBe('allow');
+  });
+
+  it('linha 7: a Vercel target as a list, an object or with a trailing space', () => {
+    allow({ VERCEL_ADD_ENVIRONMENT_VARIABLE: W({ key: 'id', value: 'text', target: 'enum:preview|development' }) });
+    expect(run('VERCEL_ADD_ENVIRONMENT_VARIABLE', { key: 'K', value: 'v', target: ['production'] })).toBe('deny');
+    expect(run('VERCEL_ADD_ENVIRONMENT_VARIABLE', { key: 'K', value: 'v', target: { name: 'production' } })).toBe('deny');
+    expect(run('VERCEL_ADD_ENVIRONMENT_VARIABLE', { key: 'K', value: 'v', target: 'production ' })).toBe('deny');
+    expect(run('VERCEL_ADD_ENVIRONMENT_VARIABLE', { key: 'K', value: 'v', target: 'preview' })).toBe('allow');
+  });
+
+  it('linha 8: the trash inside a comma-separated label string', () => {
+    allow({ GMAIL_ADD_LABEL_TO_EMAIL: W({ message_id: 'id', add_label_ids: 'enum-list:STARRED|IMPORTANT' }) });
+    expect(run('GMAIL_ADD_LABEL_TO_EMAIL', { message_id: 'm1', add_label_ids: 'INBOX,TRASH' })).toBe('deny');
+    expect(run('GMAIL_ADD_LABEL_TO_EMAIL', { message_id: 'm1', add_label_ids: ['STARRED'] })).toBe('allow');
+  });
+
+  it('linha 9: archived as "yes" or "True"', () => {
+    allow({ NOTION_UPDATE_PAGE: W({ page_id: 'id', archived: 'false' }) });
+    expect(run('NOTION_UPDATE_PAGE', { page_id: 'p', archived: 'yes' })).toBe('deny');
+    expect(run('NOTION_UPDATE_PAGE', { page_id: 'p', archived: 'True' })).toBe('deny');
+    expect(run('NOTION_UPDATE_PAGE', { page_id: 'p', archived: false })).toBe('allow');
+  });
+
+  it('a write rule without its argument list, and an item with two slug keys, are blocked', () => {
+    policy({ slugRules: { NOTION_UPDATE_PAGE: 'write' } });
+    expect(run('NOTION_UPDATE_PAGE', { page_id: 'p' })).toBe('deny');
+    expect(decisionOf('mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL', { tools: [{ tool_slug: 'GMAIL_FETCH_EMAILS', slug: 'GMAIL_SEND_EMAIL', arguments: {} }] })).toBe('deny');
   });
 });
 
