@@ -31,7 +31,7 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
       },
       {
         title: 'A trava do Slack fecha três caminhos que ficavam abertos',
-        text: 'Mandar mensagem ou compartilhar arquivo chamando a ação do Composio pelo nome direto, ou montando o nome da ação em código (juntando pedaços, em variável ou codificado), agora também passa pela trava e precisa da carta aceita. Tornar um arquivo do Slack público volta a ser barrado: é publicação e não sai nem com carta; se precisar, você faz à mão no Slack.',
+        text: 'Mandar mensagem ou compartilhar arquivo chamando a ação do Composio pelo nome direto, ou montando o nome da ação em código (juntando pedaços, em variável ou codificado), agora também passa pela trava e precisa da carta aceita. Tornar um arquivo do Slack público volta a ser barrado: é publicação e não sai nem com carta; se precisar, você faz à mão no Slack. Trocar o tópico de um canal e criar lembrete para outra pessoa também ficam barrados, porque põem texto seu na frente dos outros. No código do workbench do Composio, só passa a chamada direta com o nome da ação escrito por extenso; atalhos que escondem o que roda (apelido, função guardada, execução dinâmica, texto codificado) são recusados.',
       },
       {
         title: 'Ler um arquivo do Slack não pede mais carta',
