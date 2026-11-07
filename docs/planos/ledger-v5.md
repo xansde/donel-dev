@@ -42,7 +42,7 @@ As quatro pesquisas de 07/11, em `docs/pesquisas/` (branch `docs/pesquisas-ledge
 
 Lido também: `src/shared/ledger/contract.ts` e `src/main/ledger-store.ts` em `origin/staging`
 (v4), o PR #249 (Oráculo no serviço da VPS), o PR #260 (espelho no Supabase) e a branch do Dev
-"ledger legível no Supabase" (`feature/ledger-legivel`, ainda sem PR).
+"ledger legível no Supabase" (PR #279).
 
 ## O problema numa frase
 
@@ -349,8 +349,7 @@ mais bonita para pedidos grandes, mas esconde o que não veio dele (sinais do Cu
 
 ## 4. Colunas, alinhadas com o Dev do espelho
 
-O Dev "ledger legível no Supabase" (tarefa t-a627741e, branch `feature/ledger-legivel`, sem PR
-aberto até agora) está trocando a tabela `demandas` por `tarefas`. **O v5 mantém todos os nomes
+O Dev "ledger legível no Supabase" (tarefa t-a627741e, PR #279) está trocando a tabela `demandas` por `tarefas`. **O v5 mantém todos os nomes
 dele e só acrescenta.** Nenhuma renomeação depois que o PR dele entrar.
 
 | Coluna (dele) | No v5 passa a vir de | Coluna nova do v5 | O que mostra |
