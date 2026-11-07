@@ -4252,6 +4252,17 @@ void app.whenReady().then(async () => {
         }
       },
     },
+    uploadGrants: {
+      get: () => appConfig.browserUploadGrants.grants,
+      set: (grants) => {
+        appConfig = { ...appConfig, browserUploadGrants: { grants: [...grants] } };
+        try {
+          persistAppConfig();
+        } catch (error) {
+          console.error('[donel-dev] pastas liberadas pelo orquestrador não foram gravadas:', error);
+        }
+      },
+    },
     executeLedger: (ptyId, call) => executeLedgerTool(boardBridge, ptyId, call),
     executeHillClimb: (ptyId, call) => executeHillClimbTool(boardBridge, ptyId, call),
   }); // Navegador integrado
