@@ -19,7 +19,19 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     items: [
       {
         title: 'O Líder pode rodar na VPS',
-        text: 'Em Preferências, Avisos e Jobu, "Onde o Líder roda" escolhe entre este computador e a VPS. O Líder com quem você fala pelo Jobu muda de lugar na mensagem seguinte e continua a mesma conversa, com tudo o que já sabia. Se ele estiver trabalhando, muda quando terminar. Na VPS ele deixa de ocupar memória do computador; o navegador integrado continua aqui, e ele o usa como antes. Ele só lê arquivos de projetos que já estão no GitHub. Para voltar, escolha "Este computador".',
+        text: 'Em Preferências, Avisos e Jobu, "Onde o Líder roda" escolhe entre este computador e a VPS. O Líder com quem você fala pelo Jobu muda de lugar na mensagem seguinte e continua a mesma conversa, com tudo o que já sabia. Se ele estiver trabalhando, muda quando terminar. O antigo só fecha depois que o novo respondeu; se algo falhar no caminho, ele continua onde estava, com a conversa, e recebe a mensagem. Se o computador dormir e a ligação com a VPS cair, a próxima mensagem religa o mesmo Líder. Na VPS ele deixa de ocupar memória do computador; o navegador integrado continua aqui, e ele o usa como antes. Ele só lê arquivos de projetos que já estão no GitHub. Para voltar, escolha "Este computador".',
+      },
+      {
+        title: 'Sessão nova espera vaga quando a máquina está cheia',
+        text: 'Quando uma VPS (ou o PC) está com pouca RAM, swap alto, carga alta ou sem sinal, uma sessão que outra sessão pede para abrir lá entra numa fila em vez de afundar a máquina. O lugar já aparece no quadro, e a sessão abre sozinha, com o pedido original, quando a máquina passa duas leituras seguidas abaixo dos limites, uma por minuto em cada máquina. Um papel marcado com "lugar: qualquer" vai para a outra VPS em vez de esperar. Uma aba que foi aberta mas nunca começou, se o Faxineiro a fechar com a máquina cheia, volta para a fila sem perder o pedido.',
+      },
+      {
+        title: 'O Faxineiro acorda sozinho',
+        text: 'Cada quadro ganhou uma cadeira Faxineiro, que o Donel acorda sozinho quando uma máquina aperta, sem você nem o Líder precisarem chamar. Os gatilhos: RAM livre abaixo de 15%, swap acima de 10%, carga da VPS acima de duas vezes o número de processadores, disco acima de 85%, uma VPS sem sinal, sessões paradas há meia hora e uma ronda por dia, depois das 6h. O Faxineiro roda numa máquina que não é a apertada e fecha só as sessões do próprio quadro que terminaram. O Donel não deixa ele fechar o Líder, uma sessão trabalhando, uma que espera você ou uma aba que você abriu à mão. Quando ele termina a ronda e fica parado, o Donel fecha o Faxineiro também. Para não juntar Faxineiros, uma máquina cheia acorda um quadro de cada vez, e o Donel acorda no máximo quatro por hora. Os limites ficam na seção "faxineiro" do arquivo de configuração das rotinas, que também registra cada fechamento.',
+      },
+      {
+        title: 'O Oráculo pode morar na sua VPS',
+        text: 'Em Preferências, Celular, "Onde mora o Oráculo" leva o registro de tarefas para a sua VPS, inteiro e como está, e este PC passa a ler e gravar nele. A diferença aparece quando o PC desliga: o registro continua lá. Se a VPS sumir da rede, o PC mostra o último retrato só para ler e não grava nada até ela voltar, para nunca haver dois registros diferentes. "Trazer de volta para este PC" desfaz, também sem perder nada. As cartas no celular e as sessões da VPS sem o PC chegam nas próximas versões.',
       },
       {
         title: 'O navegador em tela cheia',

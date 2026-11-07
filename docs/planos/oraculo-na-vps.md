@@ -110,6 +110,20 @@ recebe notificação.
 - Sessões que já existiam antes da instalação seguem apontando direto para o túnel: só as abertas depois passam
   pelo portão.
 
+## Um escritor durante a troca e a volta (revisão do #295)
+
+- O app fica **só leitura** do começo ao fim da troca e da volta: toda gravação dele é recusada com "o Oráculo está
+  mudando de lugar", nunca um "ok" que se perde, e a troca só começa depois que as gravações em voo terminaram.
+- Na ida, outro canal aberto no mesmo `userData` ainda pode gravar o `ledger.json`: logo antes de guardar o arquivo
+  do PC, os bytes têm de ser os copiados. Se mudaram, a cópia recomeça por cima da cópia velha da VPS (pelo hash
+  dela), até três vezes.
+- Na volta, a VPS é avisada primeiro (**devolvido**): dali em diante todo escritor dela (API, celular, portão MCP)
+  recusa, inclusive depois de reiniciar. O arquivo vem só se não mudou entre o começo e o fim; se a volta falha no
+  meio, a VPS retoma o registro. Levar de novo substitui a cópia devolvida e a guarda como
+  `ledger.devolvido-<hora>.json`.
+- Com o `oraculo-remoto.json` esquecido e um `ledger.json` normal no PC, o app não entra no modo remoto (não grava
+  por cima) e diz por quê.
+
 ## PC religado: fila e conflito
 
 - No boot: lê o token pelo ssh, pega o retrato inteiro (dispara o `onChange` de hoje: faixa, Jobu, espelho

@@ -70,7 +70,7 @@ describe('ledger com prova', () => {
 
     // No proof: refused by the tool and, below it, by the contract.
     expect(parseLedgerToolCall('tarefa_entregar', { id, provas: [] }).ok).toBe(false);
-    expect(service().apply({ kind: 'lugar', placeId: 'place:dev' }, { op: 'entregar', id, proofs: [] })).toMatchObject({ ok: false });
+    expect(await service().apply({ kind: 'lugar', placeId: 'place:dev' }, { op: 'entregar', id, proofs: [] })).toMatchObject({ ok: false });
 
     mkdirSync(join(dir, 'fora'));
     const print = join(dir, 'fora', 'print.png');
@@ -149,7 +149,7 @@ describe('ledger com prova', () => {
     expect(written.tasks['t-0000aaaa']).toEqual(task);
   });
 
-  it('finds code in the owner text, and not in plain Portuguese with numbers', () => {
+  it('finds code in the owner text, and not in plain Portuguese with numbers', async () => {
     for (const code of ['t-1b6c1a95', 'place:4fd365dd-77', '2a98f2f', 'PR #105', 'o #12', '/pull/7', 'feat/homologacao-v1', 'src/main/x.ts', 'C:\\Users\\x', '`npm test`', 'https://github.com/x'])
       expect(findCode(`Veja ${code} aqui`), code).not.toBeNull();
     for (const plain of ['Faltam 44 h', '5 de 5 checagens passaram', 'Até 07/11.', 'Aceito a fase 2 e/ou a 3?', 'A VPS já tem os acessos.']) expect(findCode(plain), plain).toBeNull();
@@ -181,8 +181,8 @@ describe('ledger com prova', () => {
     expect(await deliver(paraODono)).toMatchObject({ ok: true });
     expect(JSON.parse((await runLedgerTool(service(), revisor, call('tarefa_ver', { id }))).text).entrega.paraODono).toMatchObject({ pergunta: paraODono.pergunta, visual: { prova: 1 } });
     // The option must exist and close the way the owner's decision does; a rejecting option is its own reason.
-    expect(service().apply({ kind: 'dono' }, { op: 'aceitar', id, option: 'Voltar ao azul' })).toMatchObject({ ok: false });
-    expect(service().apply({ kind: 'dono' }, { op: 'rejeitar', id, reason: '', option: 'Voltar ao azul' })).toMatchObject({ ok: true });
+    expect(await service().apply({ kind: 'dono' }, { op: 'aceitar', id, option: 'Voltar ao azul' })).toMatchObject({ ok: false });
+    expect(await service().apply({ kind: 'dono' }, { op: 'rejeitar', id, reason: '', option: 'Voltar ao azul' })).toMatchObject({ ok: true });
     expect(service().load().doc.tasks[id]!.events.at(-1)).toMatchObject({ kind: 'rejeitada', option: 'Voltar ao azul', text: 'Voltar ao azul' });
   });
 
@@ -220,7 +220,7 @@ describe('ledger com prova', () => {
     const nobody = createCardWriter({ service, deliver: async () => null });
     expect(await nobody.write({ id, text: 'Outra coisa', requestId: 'pedido-def67890' })).toMatchObject({ ok: true, deliveredTo: null });
     // A place never writes on the card as the owner.
-    expect(service().apply({ kind: 'lugar', placeId: 'place:revisor', roleId: 'revisor' }, { op: 'comentar', id, text: 'x', deliveredTo: null })).toMatchObject({ ok: false });
+    expect(await service().apply({ kind: 'lugar', placeId: 'place:revisor', roleId: 'revisor' }, { op: 'comentar', id, text: 'x', deliveredTo: null })).toMatchObject({ ok: false });
 
     expect(await deliver()).toMatchObject({ ok: true });
     expect(service().load().doc.tasks[id]!.state).toBe('entregue');
@@ -280,14 +280,14 @@ describe('ledger com prova', () => {
       expect.objectContaining({ de: 'place:revisor', para: 'place:rev-do-dev', por: 'place:lider', motivo: 'o Theo novo assume' }),
     ]);
     // A forged mark in a reason never becomes a transfer.
-    expect(service().apply({ kind: 'dono' }, { op: 'transferir', id, to: 'place:dev', reason: '⟦transferida de a para b⟧' })).toMatchObject({ ok: false });
+    expect(await service().apply({ kind: 'dono' }, { op: 'transferir', id, to: 'place:dev', reason: '⟦transferida de a para b⟧' })).toMatchObject({ ok: false });
   });
 
   it('cancels an accepted Slack letter that never went out: it frees no send, and nobody takes it again', async () => {
     const { service } = setup();
     const letter = await runLedgerTool(service(), dev, call('carta_slack', { destino: 'C0123', texto: 'Oi, time', motivo: 'avisar' }));
     const id = (JSON.parse(letter.text) as { id: string }).id;
-    expect(service().apply({ kind: 'dono' }, { op: 'aceitar', id })).toMatchObject({ ok: true });
+    expect(await service().apply({ kind: 'dono' }, { op: 'aceitar', id })).toMatchObject({ ok: true });
     const send = { channel_id: 'C0123', text: 'Oi, time' };
     expect(slackGuard(service().load().doc, 'mcp__slack__slack_send_message', send)).toMatchObject({ kind: 'allow' });
 
@@ -305,7 +305,7 @@ describe('ledger com prova', () => {
     expect(await runLedgerTool(service(), lider, call('tarefa_cancelar', { id: work, motivo: 'ninguém vai fazer' }))).toMatchObject({ ok: true });
     expect(await runLedgerTool(service(), dev, call('tarefa_assumir', { id: work }))).toMatchObject({ ok: false, text: expect.stringContaining('cancelada') });
     // A reason the owner writes never forges the mark.
-    expect(service().apply({ kind: 'dono' }, { op: 'cancelar', id: work, reason: '⟦cancelada⟧' })).toMatchObject({ ok: false });
+    expect(await service().apply({ kind: 'dono' }, { op: 'cancelar', id: work, reason: '⟦cancelada⟧' })).toMatchObject({ ok: false });
   });
 
   it('a delivery says who really did the work, and the one who did it does not decide it', async () => {
@@ -354,7 +354,7 @@ describe('ledger com prova', () => {
   it('counts an accepted Slack letter never sent as waiting for its send, never as orphan, and it still frees the send', async () => {
     const { service } = setup();
     const id = (JSON.parse((await runLedgerTool(service(), dev, call('carta_slack', { destino: 'C0123', texto: 'Oi, time', motivo: 'avisar' }))).text) as { id: string }).id;
-    expect(service().apply({ kind: 'dono' }, { op: 'aceitar', id })).toMatchObject({ ok: true });
+    expect(await service().apply({ kind: 'dono' }, { op: 'aceitar', id })).toMatchObject({ ok: true });
     const who: LedgerCaller = { ...lider, placeStates: new Map([['C:/p', new Map([['place:lider', 'parada'], ['place:dev', 'fechada']])]]) };
     const list = async (args: Record<string, unknown>) => JSON.parse((await runLedgerTool(service(), who, call('tarefa_listar', args))).text) as { faixa: Record<string, number>; tarefas: { id: string; orfa?: string }[] };
 
@@ -383,7 +383,7 @@ describe('ledger com prova', () => {
     };
     await runLedgerTool(service(), dev, call('tarefa_entregar', { id: done, provas: [{ tipo: 'texto', texto: '4 passed' }], feitoPor: 'place:revisor', nota: 'o PR', paraODono }));
     const letter = (JSON.parse((await runLedgerTool(service(), dev, call('carta_slack', { destino: 'C0123', texto: 'Oi', motivo: 'avisar' }))).text) as { id: string }).id;
-    service().apply({ kind: 'dono' }, { op: 'aceitar', id: letter });
+    await service().apply({ kind: 'dono' }, { op: 'aceitar', id: letter });
     await runLedgerTool(service(), dev, call('tarefa_cancelar', { id: letter, motivo: 'substituída' }));
     const replaced = await create('place:dev');
     const replacer = (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x2', criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco: 'alto', substitui: replaced }))).text) as { id: string }).id;
@@ -421,9 +421,9 @@ describe('ledger com prova', () => {
     const phone = createLedgerMobilePort(service, undefined, () => writer);
     // t-c19912b4: the owner accepted a letter on the phone, nobody was told, and it stayed unsent.
     const letter = (JSON.parse((await runLedgerTool(service(), dev, call('carta_slack', { destino: 'C0123', texto: 'Oi', motivo: 'avisar' }))).text) as { id: string }).id;
-    expect(phone.decidir({ pedidoId: 'pedido-a1234567', itemId: letter, decisao: 'aceitar', motivo: null, opcao: 'Enviar' })).toMatchObject({ ok: true });
+    expect(await phone.decidir({ pedidoId: 'pedido-a1234567', itemId: letter, decisao: 'aceitar', motivo: null, opcao: 'Enviar' })).toMatchObject({ ok: true });
     // A retry of the same request records and tells nothing again.
-    expect(phone.decidir({ pedidoId: 'pedido-a1234567', itemId: letter, decisao: 'aceitar', motivo: null, opcao: 'Enviar' })).toMatchObject({ ok: true });
+    expect(await phone.decidir({ pedidoId: 'pedido-a1234567', itemId: letter, decisao: 'aceitar', motivo: null, opcao: 'Enviar' })).toMatchObject({ ok: true });
     await Promise.resolve();
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ placeId: 'place:dev', text: expect.stringContaining('aceitou a carta de Slack') });
@@ -432,7 +432,7 @@ describe('ledger com prova', () => {
 
     // The desktop path (same writer): a reject by the button says why and what not to do.
     const other = (JSON.parse((await runLedgerTool(service(), dev, call('carta_slack', { destino: 'C0123', texto: 'Oi de novo', motivo: 'avisar' }))).text) as { id: string }).id;
-    const rejected = service().apply({ kind: 'dono' }, { op: 'rejeitar', id: other, reason: '', option: 'Não enviar' });
+    const rejected = await service().apply({ kind: 'dono' }, { op: 'rejeitar', id: other, reason: '', option: 'Não enviar' });
     if (!rejected.ok) throw new Error(rejected.reason);
     await writer.tellDecision(rejected.task);
     expect(sent[1]!.text).toMatch(/rejeitou a carta de Slack .*Não enviar.*Não envie/);
@@ -474,10 +474,10 @@ describe('ledger com prova', () => {
     const rejected = await make();
     await runLedgerTool(service(), dev, call('tarefa_assumir', { id: rejected }));
     await runLedgerTool(service(), dev, call('tarefa_entregar', { id: rejected, provas: [{ tipo: 'texto', texto: 'ok' }] }));
-    service().apply({ kind: 'dono' }, { op: 'rejeitar', id: rejected, reason: 'falta o print' });
+    await service().apply({ kind: 'dono' }, { op: 'rejeitar', id: rejected, reason: 'falta o print' });
 
     // The first live place above is a Líder (`registersForOthers`): it may receive by transfer, the rule is only on creation.
-    const passed = passOnTasks(service(), [{ projectPath: 'C:/p', placeId: 'place:dev', gone: 'fechada', to: 'place:lider' }]);
+    const passed = await passOnTasks(service(), [{ projectPath: 'C:/p', placeId: 'place:dev', gone: 'fechada', to: 'place:lider' }]);
     expect(passed).toEqual([{ projectPath: 'C:/p', placeId: 'place:dev', to: 'place:lider', tasks: [{ id: open }, { id: running }, { id: rejected }] }]);
     const doc = service().load().doc;
     expect(doc.tasks[open]).toMatchObject({ ownerPlaceId: 'place:lider', state: 'aberta' });
@@ -491,7 +491,7 @@ describe('ledger com prova', () => {
     const orphans = JSON.parse((await runLedgerTool(service(), { ...lider, placeStates: new Map([['C:/p', states]]) }, call('tarefa_listar', { situacao: 'orfas' }))).text) as { tarefas: unknown[] };
     expect(orphans.tarefas).toEqual([]);
     // Asked again, nothing moves twice; the file stays v4 and reads the same in the v4 code of the installed Alfa.
-    expect(passOnTasks(service(), [{ projectPath: 'C:/p', placeId: 'place:dev', gone: 'fechada', to: 'place:lider' }])).toEqual([]);
+    expect(await passOnTasks(service(), [{ projectPath: 'C:/p', placeId: 'place:dev', gone: 'fechada', to: 'place:lider' }])).toEqual([]);
     const raw = JSON.parse(readFileSync(file, 'utf8'));
     expect(raw.schemaVersion).toBe(4);
     expect(v4.parseLedgerDoc(raw)).toEqual(parseLedgerDoc(raw));
@@ -505,9 +505,9 @@ describe('ledger com prova', () => {
     const id = (JSON.parse((await runLedgerTool(service, lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco: 'alto' }))).text) as { id: string }).id;
     const request = { projectPath: 'C:/p', placeId: 'place:dev', gone: 'nao-comecou' as const, to: 'lider' };
     clock += NOT_STARTED_GRACE_MS - 60_000;
-    expect(passOnTasks(service, [request])).toEqual([]);
+    expect(await passOnTasks(service, [request])).toEqual([]);
     clock += 120_000;
-    expect(passOnTasks(service, [request])).toMatchObject([{ to: 'lider', tasks: [{ id }] }]);
+    expect(await passOnTasks(service, [request])).toMatchObject([{ to: 'lider', tasks: [{ id }] }]);
     expect(service.load().doc.tasks[id]).toMatchObject({ ownerPlaceId: 'lider', state: 'aberta' });
     expect(JSON.parse((await runLedgerTool(service, lider, call('tarefa_ver', { id }))).text).transferencias[0].motivo).toBe('passada sozinha: o lugar place:dev não começou');
   });
@@ -595,7 +595,7 @@ describe('órfãs e substituição (06/11)', () => {
     expect(parseLedgerToolCall('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', risco: 'alto', quemPediu: 'a'.repeat(81) }).ok).toBe(false);
   });
 
-  it('refuses a place id as who asked: a person, never a place', () => {
+  it('refuses a place id as who asked: a person, never a place', async () => {
     const args = { pedido: 'x', criterio: 'y', prazo: '2026-11-06', risco: 'alto' };
     for (const quemPediu of ['place:abc123', 'PLACE:dev', 'o Dev (place:abc123)']) {
       expect(parseLedgerToolCall('tarefa_criar', { ...args, quemPediu })).toMatchObject({ ok: false, reason: expect.stringContaining('quemPediu') });
@@ -603,7 +603,7 @@ describe('órfãs e substituição (06/11)', () => {
     expect(parseLedgerToolCall('tarefa_criar', { ...args, quemPediu: 'Gabriel Horst (Slack)' }).ok).toBe(true);
   });
 
-  it('refuses a bare role as who asked: "quem pediu: Dev" was the complaint', () => {
+  it('refuses a bare role as who asked: "quem pediu: Dev" was the complaint', async () => {
     const args = { pedido: 'x', criterio: 'y', prazo: '2026-11-06', risco: 'alto' };
     for (const quemPediu of ['Dev', 'dev', ' REVISOR ', 'Líder', 'lider', 'Líder único', 'Pesquisa', 'Curador']) {
       expect(parseLedgerToolCall('tarefa_criar', { ...args, quemPediu })).toMatchObject({ ok: false, reason: expect.stringContaining('quemPediu') });
@@ -654,7 +654,7 @@ describe('órfãs e substituição (06/11)', () => {
       await runLedgerTool(service, dev, call('tarefa_assumir', { id }));
       const paraODono = { pergunta: 'Aceito?', resumo: 'Feito.', opcoes: [{ rotulo: 'Aceitar', efeito: 'Fecha.', fecha: 'aceita', recomendada: true }, { rotulo: 'Refazer', efeito: 'Volta.', fecha: 'rejeitada' }], porque: 'Testes.', risco: 'Baixo.' };
       expect(await runLedgerTool(service, dev, call('tarefa_entregar', { id, provas, ...(risco === 'alto' ? { paraODono } : {}) }))).toMatchObject({ ok: true });
-      if (reject) service.apply({ kind: 'dono' }, { op: 'rejeitar', id, reason: 'falta o print' });
+      if (reject) await service.apply({ kind: 'dono' }, { op: 'rejeitar', id, reason: 'falta o print' });
       return id;
     };
     const lowMerged = await deliver('baixo', [{ tipo: 'link', url: 'https://github.com/acme/atlas/pull/255' }], true);

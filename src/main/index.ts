@@ -21,6 +21,9 @@ import { LEADER_ROLE_ID, ROLES_CHANNELS, type RoleSaveResult, type SessionRole }
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
+import { createRemoteOracleHost } from './ledger-remote-host';
+import { createSwitchableLedger, type SwitchableLedger } from './ledger-remote';
+import { LEDGER_REMOTE_CHANNELS, type LedgerRemoteResult, type LedgerRemoteState } from '../shared/ledger/remote';
 import { createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerSnapshot } from '../shared/ledger/channels';
 import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
@@ -335,6 +338,9 @@ import { createRemoteFileReader, type RemoteFileReader } from './homologacao/rem
 import { parseFactoryMetrics, type FactoryMetricsParse } from '../shared/homologacao/factoryMetrics';
 import { HOMOLOGACAO_CHANNELS, type FactoryMetricsView } from '../shared/homologacao/ipc';
 import { createRoutineRunner, type RoutineRunner } from './rotinas/routine-runner';
+import { createFaxineiroService, type FaxineiroService } from './rotinas/faxineiro-service';
+import { FAXINEIRO_CHANNELS, type FaxineiroRoundAnswer } from '../shared/faxineiro/ipc';
+import type { FaxineiroLogEntry, SessionView } from '../shared/faxineiro/triggers';
 import { createFaxinaRunner, type FaxinaRunner } from './rotinas/oraculo-faxina';
 import type { PrRef, PrState } from '../shared/ledger/faxina';
 import { ROTINAS_CHANNELS, type ShadowEntry } from '../shared/rotinas/contract';
@@ -2985,6 +2991,31 @@ function registerRotinasIpcHandlers(): void {
   ipcMain.handle(ROTINAS_CHANNELS.today, (): ShadowEntry[] => routineRunner?.today() ?? []);
 }
 
+/** Faxineiro com gatilhos (t-b3b26e60); `null` until whenReady. */
+let faxineiroService: FaxineiroService | null = null;
+
+/**
+ * Faxineiro com gatilhos — the renderer asks for a round once a minute with the open sessions; the answer says whom to
+ * wake and which idle Faxineiro to close. Memory, config and log live in `<userData>/rotinas/`.
+ */
+function registerFaxineiroIpcHandlers(): void {
+  faxineiroService = createFaxineiroService({
+    dir: join(app.getPath('userData'), 'rotinas'),
+    pcReport: () => healthService?.getReport() ?? null,
+    remoteReports: () => remoteHealthService?.getReports() ?? [],
+  });
+  ipcMain.handle(FAXINEIRO_CHANNELS.round, (event, sessions: unknown): FaxineiroRoundAnswer => {
+    const window = getMainWindow();
+    if (!window || event.sender.id !== window.webContents.id || !Array.isArray(sessions)) return { wakes: [], closeIdle: [], fullMachines: {} };
+    return faxineiroService?.round(sessions as SessionView[]) ?? { wakes: [], closeIdle: [], fullMachines: {} };
+  });
+  ipcMain.on(FAXINEIRO_CHANNELS.log, (event, entries: unknown) => {
+    const window = getMainWindow();
+    if (!window || event.sender.id !== window.webContents.id || !Array.isArray(entries)) return;
+    faxineiroService?.log(entries.filter((entry): entry is FaxineiroLogEntry => typeof entry === 'object' && entry !== null && typeof (entry as FaxineiroLogEntry).summary === 'string'));
+  });
+}
+
 /** B33 — `null` until whenReady. */
 let appUpdateService: AppUpdateService | null = null;
 
@@ -3114,11 +3145,7 @@ function registerLedgerMirror(): void {
 }
 
 function registerLedgerIpcHandlers(): void {
-  const service = createLedgerService({
-    filePath: ledgerFilePath(process.env, app.getPath('userData')),
-    io: configIoDeps,
-    proofFs: nodeLedgerProofFs,
-    onChange: (snapshot) => {
+  const onChange = (snapshot: LedgerSnapshot): void => {
       const window = getMainWindow();
       if (window && !window.isDestroyed()) window.webContents.send(LEDGER_CHANNELS.changed, snapshot);
       // The progress panel of the Jobu reads the ledger too (it only reads: `decide` stays the main window's).
@@ -3131,15 +3158,49 @@ function registerLedgerIpcHandlers(): void {
       ledgerMirrorService?.changed(snapshot.doc);
       // Hill climbing: a proposal card the owner decided starts (or ends) its mission.
       hillClimbService?.syncLedger(snapshot.doc);
-    },
+  };
+  const ledgerFile = ledgerFilePath(process.env, app.getPath('userData'));
+  const localLedger = (): LedgerService => createLedgerService({ filePath: ledgerFile, io: configIoDeps, proofFs: nodeLedgerProofFs, onChange });
+  // Oráculo na VPS (docs/planos/oraculo-na-vps.md): the ledger may live on a remote place; the app holds a
+  // switchable service, so taking it there (or back) never restarts the app.
+  let switchable: SwitchableLedger | undefined;
+  const remoteHost = createRemoteOracleHost({
+    userDataDir: app.getPath('userData'),
+    ledgerFile,
+    io: configIoDeps,
+    proofFs: nodeLedgerProofFs,
+    remotes: () => appConfig.accounts.remotes,
+    runScript: (sshTarget, script, timeoutMs) => runRemoteScript(sshTarget, script, timeoutMs),
+    localService: localLedger,
+    setService: (next) => switchable?.set(next),
+    freeze: (reason) => switchable?.freeze(reason) ?? Promise.resolve(),
+    onChange,
   });
+  const service = createSwitchableLedger(remoteHost.boot());
+  switchable = service;
   ledgerService = service;
+  app.on('will-quit', () => remoteHost.dispose());
+  const remoteState = (event: Electron.IpcMainInvokeEvent): void => {
+    if (getMainWindow()?.webContents.id !== event.sender.id) throw new Error('forbidden');
+  };
+  ipcMain.handle(LEDGER_REMOTE_CHANNELS.getState, (event): LedgerRemoteState => {
+    remoteState(event);
+    return remoteHost.state();
+  });
+  ipcMain.handle(LEDGER_REMOTE_CHANNELS.move, (event, lugar: unknown): Promise<LedgerRemoteResult> => {
+    remoteState(event);
+    return typeof lugar === 'string' ? remoteHost.move(lugar) : Promise.resolve({ ok: false, reason: 'Escolha o lugar.', state: remoteHost.state() });
+  });
+  ipcMain.handle(LEDGER_REMOTE_CHANNELS.back, (event): Promise<LedgerRemoteResult> => {
+    remoteState(event);
+    return remoteHost.back();
+  });
   // Cartas forma A — the card shows the proofs (the HTML prototype, a video) by `donel-prova:`.
   registerProofProtocol(protocol, ledgerProofsDir(ledgerFilePath(process.env, app.getPath('userData'))));
   const fromMain = (sender: Electron.WebContents): boolean => getMainWindow()?.webContents.id === sender.id;
   const cardDiagnostics = createDiagnosticsLog(app.getPath('userData'));
   ipcMain.handle(LEDGER_CHANNELS.load, (): LedgerSnapshot => service.load());
-  ipcMain.handle(LEDGER_CHANNELS.decide, (event, raw: unknown): LedgerApplyResult => {
+  ipcMain.handle(LEDGER_CHANNELS.decide, async (event, raw: unknown): Promise<LedgerApplyResult> => {
     if (!fromMain(event.sender)) return { ok: false, reason: 'Só a janela do app decide.' };
     const decision = raw as Partial<LedgerOwnerDecision> | null;
     if (!decision || typeof decision.id !== 'string') return { ok: false, reason: 'Pedido inválido.' };
@@ -3149,15 +3210,15 @@ function registerLedgerIpcHandlers(): void {
     const reason = (decision as { reason?: unknown }).reason;
     const result =
       decision.accept === true
-        ? service.apply({ kind: 'dono' }, { op: 'aceitar', id: decision.id, ...option, ...(text ? { text } : {}) })
-        : service.apply({ kind: 'dono' }, { op: 'rejeitar', id: decision.id, reason: [typeof reason === 'string' ? reason.trim() : '', text].filter(Boolean).join('\n'), ...option });
+        ? await service.apply({ kind: 'dono' }, { op: 'aceitar', id: decision.id, ...option, ...(text ? { text } : {}) })
+        : await service.apply({ kind: 'dono' }, { op: 'rejeitar', id: decision.id, reason: [typeof reason === 'string' ? reason.trim() : '', text].filter(Boolean).join('\n'), ...option });
     // Every decision of the owner, by a button or with words, tells the session that owns it (closed: the Líder).
     if (result.ok) void cardWriter?.tellDecision(result.task, text);
     return result;
   });
   // 06/11 (t-e753b554) — a place gone for good (its tab closed and did not come back, or it never started): the
   // renderer names who takes the work (reach.ts), the main moves the live tasks with the record.
-  ipcMain.handle(LEDGER_CHANNELS.passOn, (event, raw: unknown): LedgerPassedOn[] => {
+  ipcMain.handle(LEDGER_CHANNELS.passOn, async (event, raw: unknown): Promise<LedgerPassedOn[]> => {
     if (!fromMain(event.sender) || !Array.isArray(raw)) return [];
     const requests = raw.filter(
       (item): item is LedgerPassOnRequest =>
@@ -4183,6 +4244,7 @@ void app.whenReady().then(async () => {
   registerHealthIpcHandlers(); // Saúde do computador
   registerHomologacaoIpcHandlers(); // Mindscape de homologação V1 — Números da factory
   registerRotinasIpcHandlers(); // Item 20 — rotinas em sombra
+  registerFaxineiroIpcHandlers(); // t-b3b26e60 — Faxineiro com gatilhos
   registerAppUpdateIpcHandlers(); // B33 — atualizar de dentro do app
   registerWorkspaceIpcHandlers(); // Sidebar — abrir no editor + branch
   celularService = createCelularService({
