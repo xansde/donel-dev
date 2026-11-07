@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-07',
     items: [
       {
+        title: 'Sessão que abriu sem o papel avisa',
+        text: 'Quando uma sessão com papel abre (ou é retomada, ou renovada) e o papel não chega a ela, a aba mostra um aviso amarelo no topo do terminal: "sem o papel", quando o texto do papel sumiu ou não foi gravado, ou "sem o escopo do papel", quando as regras de MCPs, plugins e skills não foram gravadas e a sessão ficou com tudo. Antes ela abria assim sem dizer nada.',
+      },
+      {
         title: 'Sessões na VPS seguem com o PC desligado',
         text: 'Com o Oráculo na VPS, uma sessão aberta lá depois desta versão continua criando, entregando e listando tarefas quando o PC desliga, e sabe quem é no quadro (do jeito que o quadro estava quando o PC desligou). O resto (navegador, desenhar no quadro, falar com outras sessões) volta quando o PC liga.',
       },
