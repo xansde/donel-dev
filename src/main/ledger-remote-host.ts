@@ -49,6 +49,8 @@ export interface RemoteOracleHost {
   celular(): CelularRemote | null;
   /** Delivers what waits in the VPS's relay (also on each `fila` event and once a minute). */
   drain(): Promise<void>;
+  /** Fatia 4: the picture of the VPS's sessions on the board, for the daemon's MCP gate. `false` = not sent. */
+  pushPicture(picture: { readonly at: number; readonly sessoes: Readonly<Record<string, unknown>> }): Promise<boolean>;
 }
 
 /** The script that leaves the token's hash on the place and answers where the daemon listens. */
@@ -362,5 +364,14 @@ export function createRemoteOracleHost(deps: RemoteOracleHostDeps): RemoteOracle
     },
     celular: () => (remote ? celularRemote : null),
     drain,
+    async pushPicture(picture) {
+      const http = remote ? httpOf(link) : null;
+      if (!http) return false;
+      try {
+        return (await http('POST', '/v1/retrato', JSON.stringify(picture))).status === 200;
+      } catch {
+        return false;
+      }
+    },
   };
 }

@@ -8,7 +8,7 @@
 // Env: DONEL_ORACULO_DIR (default ~/.donel/oraculo), DONEL_ORACULO_HOST (default: this place's Tailscale address),
 // DONEL_ORACULO_PORT (default 47816).
 
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { createSystemConfigIoDeps } from '../main/config-store';
@@ -20,6 +20,7 @@ import { createRelay } from './relay';
 import { pickTailscaleAddress } from '../main/celular/tailscale';
 import { createOracleApiHandler } from './api';
 import { createReturnGuard } from './devolvido';
+import { createGateHandler, GATE_PORT, mergePicture, startGateServer, tunnelForward, type BoardPicture } from './portao';
 import { ORACLE_PORT, startOracleServer, type OracleServer } from './server';
 
 export const TOKEN_HASH_FILE = 'pc.token.sha256';
@@ -84,6 +85,20 @@ async function main(): Promise<void> {
     deliverToLeader: () => async (text, pedidoId) =>
       (await relay.send({ projectPath: '', placeId: '', text, leaderText: text, ...(pedidoId ? { key: `pedido:${pedidoId}` } : {}) }, RELAY_WAIT_MS)) === 'lider',
   });
+  // Fatia 4: the last picture of the board the PC left (kept across a restart), for the MCP gate of the VPS's sessions.
+  const pictureFile = join(dir, 'retrato.json');
+  let picture: BoardPicture | null = null;
+  try {
+    picture = JSON.parse(readFileSync(pictureFile, 'utf8')) as BoardPicture;
+  } catch {
+    picture = null;
+  }
+  const setPicture = (next: BoardPicture): void => {
+    const sessionsDir = join(homedir(), '.donel', 's');
+    picture = mergePicture(picture, next, (folder) => /^[A-Za-z0-9-]{1,64}$/.test(folder) && existsSync(join(sessionsDir, folder)));
+    writeFileSync(`${pictureFile}.tmp`, JSON.stringify(picture), { mode: 0o600 });
+    renameSync(`${pictureFile}.tmp`, pictureFile);
+  };
   // Fails here, not on the first call, when the file is there but unreadable (it would be written over).
   const first = raw.load();
   const handler = createOracleApiHandler({
@@ -99,13 +114,20 @@ async function main(): Promise<void> {
         // unreadable: the next write says it
       }
     },
-    extra: createOracleAdminRoutes({ celular, relay }),
+    extra: createOracleAdminRoutes({ celular, relay, setPicture }),
   });
   server = await startOracleServer({ host, port, tokenHash, handler });
   writeFileSync(join(dir, 'url'), `${server.url}\n`, { mode: 0o600 });
+  const gatePort = Number(process.env.DONEL_ORACULO_PORTAO_PORT) || GATE_PORT;
+  const gate = await startGateServer({
+    port: gatePort,
+    handler: createGateHandler({ sessionsDir: join(homedir(), '.donel', 's'), ledger: () => ledger, picture: () => picture, forward: tunnelForward, serverVersion: 'oraculo-vps' }),
+  });
+  // The setup of a remote session reads this to point its MCP at the gate.
+  writeFileSync(join(dir, 'portao'), `${gate.port}\n`, { mode: 0o600 });
   console.log(`[oraculo] no ar em ${server.url} (${Object.keys(first.doc.tasks).length} tarefas${first.readOnly ? ', só leitura' : ''})`);
   const stop = (): void => {
-    void Promise.all([server?.close(), celular?.dispose()]).then(() => process.exit(0));
+    void Promise.all([server?.close(), celular?.dispose(), gate.close()]).then(() => process.exit(0));
   };
   process.on('SIGTERM', stop);
   process.on('SIGINT', stop);

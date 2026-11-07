@@ -5,6 +5,7 @@ import type { LedgerDeliveredTo } from '../shared/ledger/contract';
 import type { CelularCore } from '../main/celular/service';
 import type { OracleRequest, OracleResponse } from './api';
 import type { Relay } from './relay';
+import type { BoardPicture } from './portao';
 
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } as const;
 const json = (status: number, value: unknown): OracleResponse => ({ status, headers: JSON_HEADERS, body: JSON.stringify(value) });
@@ -29,7 +30,7 @@ function deliveredToOf(value: unknown): LedgerDeliveredTo {
 
 export type OracleExtraRoutes = (request: OracleRequest, path: string) => Promise<OracleResponse | null>;
 
-export function createOracleAdminRoutes(deps: { readonly celular: CelularCore; readonly relay: Relay }): OracleExtraRoutes {
+export function createOracleAdminRoutes(deps: { readonly celular: CelularCore; readonly relay: Relay; readonly setPicture?: (picture: BoardPicture) => void }): OracleExtraRoutes {
   const { celular, relay } = deps;
   return async (request, path) => {
     const { method } = request;
@@ -48,6 +49,19 @@ export function createOracleAdminRoutes(deps: { readonly celular: CelularCore; r
       const tarefa = body.tarefa;
       if (typeof body.pedidoId !== 'string' || !isRecord(tarefa) || typeof tarefa.id !== 'string' || typeof tarefa.titulo !== 'string') return json(400, { error: 'pedido inválido' });
       return json(200, { ok: celular.linkPedido(body.pedidoId, { id: tarefa.id, titulo: tarefa.titulo }) });
+    }
+    // Fatia 4: the PC's picture of the VPS's sessions on its board (who each is, its board), for the MCP gate.
+    if (method === 'POST' && path === '/v1/retrato') {
+      const body = bodyOf(request);
+      if (typeof body.at !== 'number' || !isRecord(body.sessoes) || !deps.setPicture) return json(400, { error: 'retrato inválido' });
+      const sessoes: BoardPicture['sessoes'] = Object.fromEntries(
+        Object.entries(body.sessoes).filter((entry): entry is [string, BoardPicture['sessoes'][string]] => {
+          const value = entry[1];
+          return isRecord(value) && isRecord(value.quemSou) && Array.isArray(value.listar);
+        }),
+      );
+      deps.setPicture({ at: body.at, sessoes });
+      return json(200, { ok: true, sessoes: Object.keys(sessoes).length });
     }
     if (method === 'GET' && path === '/v1/fila') return json(200, { itens: relay.pending().map((item) => ({ id: item.id, message: item.message })) });
     if (method === 'POST' && path === '/v1/fila/ack') {
