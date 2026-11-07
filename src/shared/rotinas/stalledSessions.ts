@@ -31,6 +31,10 @@ export interface LiveSessionSignal {
   readonly unconfirmed?: boolean;
   readonly pendingKinds?: readonly string[];
   readonly turnFailure?: string;
+  /** Epoch ms of the last hook heard; a `working` silent for long reads "sem sinal" (see `deriveSessionAxes`). */
+  readonly lastEventAt?: number;
+  /** Tool calls still running. */
+  readonly openCalls?: number;
 }
 
 function ago(ms: number): string {
@@ -50,9 +54,14 @@ export function findStalledSessions(doc: MindscapeDoc, live: readonly LiveSessio
       unconfirmed: session.unconfirmed,
       pendingKinds: session.pendingKinds,
       turnFailure: session.turnFailure,
+      lastEventAt: session.lastEventAt,
+      openCalls: session.openCalls,
+      now,
     });
     if (axes.process !== 'aberta' && axes.needs.length === 0) continue;
-    const age = now - session.stateEnteredAt;
+    // A `working` gone silent is stopped since its last signal, not since it started working.
+    const since = session.state === 'working' && session.lastEventAt !== undefined ? session.lastEventAt : session.stateEnteredAt;
+    const age = now - since;
     const base = { projectPath: board.projectPath, placeId: place.id, wake: { roleId: LEADER_ROLE_ID, projectPath: board.projectPath } };
     if (axes.needs.length > 0) {
       if (age > config.needsOwnerMinutes * 60_000) {
