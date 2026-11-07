@@ -14,7 +14,31 @@ export const LEDGER_CHANNELS = {
   proofImage: 'ledger:proof-image',
   /** Cartas forma A — the owner writes on a card (`LedgerComment` → `LedgerCommentResult`). */
   comment: 'ledger:comment',
+  /** 06/11 (t-e753b554) — a place is gone: its live tasks pass on (`LedgerPassOnRequest[]` → `LedgerPassedOn[]`). */
+  passOn: 'ledger:pass-on',
 } as const;
+
+/**
+ * 06/11 (t-e753b554) — the renderer saw that a place is gone (its tab was closed and did not come back, or it never
+ * started) and names who takes its work: the first live place above it (`firstLiveAbove`, reach.ts) or the Líder
+ * único (`'lider'`). The main moves only the tasks that are aberta, em execução or rejeitada (a delivered one waits
+ * for whoever decides) and, for `nao-comecou`, only past the grace of `ownerGone`.
+ */
+export interface LedgerPassOnRequest {
+  readonly projectPath: string;
+  readonly placeId: string;
+  readonly gone: 'fechada' | 'nao-comecou';
+  /** A place id of the same board, or `'lider'`. */
+  readonly to: string;
+}
+
+/** What moved for one request: the tasks now owned by `to`. */
+export interface LedgerPassedOn {
+  readonly projectPath: string;
+  readonly placeId: string;
+  readonly to: string;
+  readonly tasks: readonly { readonly id: string; readonly title?: string }[];
+}
 
 export interface LedgerComment {
   readonly id: string;
@@ -62,4 +86,6 @@ export interface DonelLedgerApi {
   proofImage(taskId: string, proofIndex: number): Promise<string | null>;
   /** The owner writes on a card: recorded and sent at once to whoever reads it. */
   comment(comment: LedgerComment): Promise<LedgerCommentResult>;
+  /** 06/11 — the live tasks of gone places pass on, with the record; answers what moved. */
+  passOn(requests: readonly LedgerPassOnRequest[]): Promise<readonly LedgerPassedOn[]>;
 }

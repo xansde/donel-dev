@@ -15,6 +15,71 @@ export interface PatchNoteDay {
 
 export const PATCH_NOTES: readonly PatchNoteDay[] = [
   {
+    date: '2026-11-06',
+    items: [
+      {
+        title: 'Quem o Líder abriu fala com ele, e tarefa não fica sem dono',
+        text: 'Uma sessão que o Líder abriu, ou que está abaixo dela no quadro, agora manda mensagem ao Líder e recebe resposta, em vez de travar esperando. O Líder também pode ficar com uma tarefa: quem passa a tarefa para ele vê o Líder como dono, e ela não aparece como órfã. Quando você fecha uma sessão que tinha tarefa aberta, em andamento ou rejeitada, a tarefa passa sozinha, um minuto depois, para quem está acima dela no quadro, ou para o Líder se não houver ninguém aberto, e quem recebe é avisado no chat. Tarefa entregue fica onde está, esperando a sua decisão. Fechar ou atualizar o Donel não mexe em nada. Uma sessão que nunca começou passa as tarefas depois de meia hora.',
+      },
+      {
+        title: 'O Oráculo conta as órfãs igual para todo mundo',
+        text: 'Quando uma sessão pede a lista de tarefas de todos os quadros, ela agora vê os mesmos números que o Líder único: vivas, órfãs e fechadas. Um quadro que não respondeu na hora aparece num número à parte, "desconhecidas", em vez de inflar as vivas. Uma tarefa nova pode dizer qual tarefa ela substitui, e a antiga é cancelada na mesma hora. Líder, Curador e Pesquisa sempre dizem quem vai fazer o trabalho, para a tarefa não ficar sem dono quando a sessão deles fecha.',
+      },
+      {
+        title: 'O bot do próprio agente manda no Slack sem carta',
+        text: 'A carta de Slack volta a ser só para o que sai em seu nome. Quando um agente fala pelo bot dele (como o Theo West, no PC ou na VPS) e esse bot está na lista de bots dos agentes da sua configuração, a mensagem ou o arquivo sai sem esperar você, e fica anotado no Oráculo como "enviado pelo bot do agente", com destino, texto e link para você ver depois. O que sai pela sua conta (Composio, o Slack do seu usuário, terminal) continua pedindo carta.',
+      },
+      {
+        title: 'Carta de Slack que leva um arquivo',
+        text: 'Uma sessão que precisa mandar um arquivo no Slack, como um print ou um PDF, agora pede numa carta, como já pedia para mensagem. A carta diz "Posso mandar este arquivo no Slack em seu nome?" e mostra o nome do arquivo, onde ele está e o comentário que vai junto. O arquivo só sai depois que você aceita, uma vez, para aquele canal ou thread. A carta confere o nome e o lugar do arquivo, não o que tem dentro: veja o arquivo antes de aceitar. Numa versão anterior do Donel aberta no mesmo computador, essa carta não aparece como carta de Slack e não libera nada.',
+      },
+      {
+        title: 'Slack com nome em português também pede carta',
+        text: 'Uma ferramenta de Slack com nome em português, como "enviar mensagem" ou "enviar arquivo", passava sem carta, porque a trava só conhecia os nomes em inglês. Agora a mensagem só sai com carta aceita, e o arquivo é barrado como qualquer outro, também com o app fechado. Ler e baixar arquivo continuam livres.',
+      },
+      {
+        title: 'Sessão numa VPS em bypass abre em bypass de verdade',
+        text: 'Quando uma sessão aberta num lugar remoto sobe no modo bypassPermissions, o lugar agora recebe o que o claude precisa para aceitar esse modo sem pedir confirmação, inclusive quando a VPS roda como root. Antes, o claude de lá podia recusar o bypass.',
+      },
+      {
+        title: 'Carta de Slack que falhou pode ser reenviada uma vez',
+        text: 'Se o envio de uma carta de Slack aceita falha de forma clara (o Slack recusou, a conexão caiu), a carta continua valendo e a sessão pode mandar o mesmo texto, para o mesmo lugar, mais uma vez, sem você aceitar uma carta nova. É um reenvio só. Quando não dá para saber se a mensagem saiu, a carta conta como usada e fica marcada "envio sem confirmação".',
+      },
+      {
+        title: 'O aviso "◆ … terminou" chega inteiro',
+        text: 'Quando uma sessão termina o turno, o aviso que entra no chat de quem a abriu ou lhe mandou trabalho agora traz o que ela escreveu inteiro, com as quebras de linha e as listas, e não mais as primeiras linhas emendadas numa só e cortadas em "…". Só uma resposta muito longa é cortada, e o próprio aviso diz quanto ficou de fora e que o resto está na tela da sessão.',
+      },
+      {
+        title: 'Escrever na carta: "Mandar à sessão" mostra o que aconteceu',
+        text: 'O botão embaixo da caixa "✎ Escrever para…" agora se chama "Mandar à sessão", para não se confundir com o "Enviar" das cartas de Slack, que publica a mensagem. Ao mandar, o que você escreveu fica na frente da carta com para onde foi: para a sessão, para o Líder (se ela estava fechada) ou, se os dois estavam fechados, um aviso em vermelho de que ficou guardado na carta. Se não sair, a carta diz o motivo, o texto continua na caixa e o botão vira "Tentar de novo", que nunca manda duas vezes.',
+      },
+      {
+        title: 'Os avisos das sessões não atropelam mais o que você digita',
+        text: 'Quando você digita no terminal de uma sessão, os avisos das outras ("◆ … terminou") e as mensagens entre sessões esperam você enviar. Os que chegarem nesse meio-tempo entram juntos, num aviso só, logo depois da sua mensagem. Se um aviso estiver sendo escrito no exato momento em que você começa a digitar, as suas teclas entram logo depois do Enter dele, nunca no meio. E o que você manda pelo chat, pelo Jobu, pelo "Pedir" do celular ou escrevendo numa carta passa na frente dos avisos que ainda não começaram e nunca entra grudado a eles. Nenhum aviso se perde.',
+      },
+      {
+        title: 'Escrever na carta pelo celular não perde mais o texto',
+        text: 'Quando o que você escreve numa carta não sai (a Tailscale caiu, o computador demorou a responder), a carta mostra em vermelho o motivo e guarda o texto no celular, mesmo se você fechar o Oráculo ou a lista recarregar. O botão vira "Tentar de novo", e tentar de novo nunca manda duas vezes. Quando sai, aparece o aviso "Saiu" e o texto fica na carta com para quem foi; na próxima vez que você abrir, ele continua lá. Ao abrir "Escrever", o botão Enviar aparece na tela, sem ficar escondido embaixo.',
+      },
+      {
+        title: 'Pedir ao Líder pelo celular, escrevendo ou falando',
+        text: 'O Oráculo no celular ganhou o botão "Pedir", no topo. Escreva ou grave o que você quer: o áudio é transcrito no seu computador, pelo OpenWhispr, e você confere e corrige o texto antes de enviar. O pedido vai direto para o chat do Líder. Se ele estiver fechado, o computador guarda o pedido e entrega quando o Líder abrir, mesmo que o Donel reinicie no meio. Em "Seus pedidos" você vê cada um: na fila, entregue, ou a tarefa que ele virou. Para gravar direto na página, use o endereço https do Oráculo; no http, o botão abre o gravador do celular.',
+      },
+      {
+        title: 'O Oráculo no lugar da conversa do Líder',
+        text: 'Você fala com o Líder pelo Jobu, então a janela do Donel não repete mais essa conversa. No lugar dela, o centro mostra o Oráculo Harrow com as cartas que esperam você, de todos os quadros. As sessões continuam a um clique: "Terminais", no alto (ou Ctrl+Shift+O), e "Conversa do Líder" quando quiser ver a dele. Abrir uma sessão, clicar numa aba ou numa notificação já leva aos terminais, e o Donel lembra onde você parou. Para voltar ao jeito antigo, desligue "Mostrar o Oráculo no centro" em Preferências, em Avisos e Jobu.',
+      },
+      {
+        title: 'Cartas do Oráculo grandes no celular, com zoom',
+        text: 'No Oráculo pelo celular, o print ou o protótipo agora ocupa quase a carta toda, e a letra ficou maior. Embaixo fica a opção recomendada, a um toque, e "caminhos" abre as outras com o porquê. "⤢ Tela cheia" abre a prova na tela inteira: no print dá zoom com a pinça ou a roda do mouse e dá para arrastar; o protótipo fica navegável. Para sair, o ✕, o voltar do celular, o Esc ou, no print, arrastar para baixo. No computador, a prova fica à esquerda e a decisão num painel à direita.',
+      },
+      {
+        title: 'Tarefas do Oráculo que ficavam presas agora andam',
+        text: 'Quando a sessão dona de uma tarefa fecha ou nem chega a abrir, o Líder passa a tarefa para outra, ou a sessão que vai fazer o trabalho a assume, e o registro guarda quem passou para quem. Carta de Slack substituída por outra pode ser cancelada com motivo, e a carta cancelada nunca é enviada. Quando uma sessão faz o trabalho e outra entrega, a carta mostra "Feito por" com o nome de quem fez. As sessões passam a ver só as tarefas vivas, e as que ficaram sem dono aparecem à parte. Nada do histórico é apagado. E toda decisão sua numa carta, pelo botão ou com texto, no computador ou no celular, avisa na hora a sessão dona (ou o Líder, se ela estiver fechada): uma carta de Slack aceita não fica mais parada sem ninguém saber.',
+      },
+    ],
+  },
+  {
     date: '2026-11-05',
     items: [
       {

@@ -14,7 +14,9 @@
     <link rel="icon" href="/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icon.svg" />
     <link rel="stylesheet" href="/app.css" />
+    <script src="/zoom.js" defer></script>
     <script src="/app.js" defer></script>
+    <script src="/pedir.js" defer></script>
   </head>
   <body>
     <header class="topo">
@@ -25,6 +27,10 @@
           <p id="contagem" class="contagem" aria-live="polite"></p>
         </div>
       </div>
+      <button id="pedir" class="botao-pedir" type="button" aria-haspopup="dialog">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z" /><path d="M8 9.5h8M8 12.5h5" /></svg>
+        <span>Pedir</span>
+      </button>
       <button id="avisos" class="botao-icone" type="button" aria-label="Avisar neste celular" hidden>
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4zM10 20a2 2 0 0 0 4 0" /></svg>
       </button>
@@ -34,6 +40,31 @@
     </header>
     <main id="baralho" class="baralho" aria-label="Entregas esperando você"></main>
     <div id="aviso" class="aviso" role="status" aria-live="polite" hidden></div>
+
+    <div id="pedir-folha" class="folha-fundo pedir-fundo" hidden>
+      <form id="pedir-form" class="folha pedir" role="dialog" aria-modal="true" aria-labelledby="pedir-titulo">
+        <div class="pedir-topo">
+          <h2 id="pedir-titulo">Pedir ao Líder</h2>
+          <button type="button" id="pedir-fechar" class="botao-icone" aria-label="Fechar">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          </button>
+        </div>
+        <p class="folha-dica">Vai direto para o chat do Líder. Se ele estiver fechado, o PC guarda e entrega quando ele abrir.</p>
+        <textarea id="pedir-texto" rows="6" maxlength="4000" placeholder="O que você quer? Escreva, dite pelo teclado ou grave."></textarea>
+        <div class="pedir-linha">
+          <button type="button" id="pedir-microfone" class="botao-microfone">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" /></svg>
+            <span id="pedir-microfone-rotulo">Gravar</span>
+          </button>
+          <span id="pedir-contador" class="pedir-contador">0 / 4000</span>
+        </div>
+        <input id="pedir-arquivo" type="file" accept="audio/*" capture hidden />
+        <p id="pedir-voz" class="pedir-voz" role="status" aria-live="polite" hidden></p>
+        <button type="submit" id="pedir-enviar" class="botao botao-pedir-enviar" disabled>Enviar ao Líder</button>
+        <h3 class="pedir-subtitulo">Seus pedidos</h3>
+        <ul id="pedir-lista" class="pedir-lista"></ul>
+      </form>
+    </div>
 
     <div id="folha" class="folha-fundo" hidden>
       <form id="folha-form" class="folha" aria-labelledby="folha-titulo">

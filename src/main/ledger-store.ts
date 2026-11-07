@@ -11,6 +11,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { constants as fsConstants, promises as fs } from 'node:fs';
 import { dirname, extname, isAbsolute, join } from 'node:path';
+import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { isBelow, isOpenedBy } from '../shared/mindscape/reach';
 import type { MindscapeBoard } from '../shared/mindscape/model';
 import type { ConfigIoDeps } from './config-store';
@@ -22,7 +23,17 @@ import {
   isNewerLedger,
   lastDelivery,
   slackLetterSent,
+  slackLetterText,
+  slackSendState,
+  type SlackSendState,
   ledgerStrip,
+  transfersOf,
+  eventNote,
+  doneByOf,
+  replacesOf,
+  isCancelled,
+  isClosed,
+  viewState,
   maxProofBytes,
   parseLedgerDoc,
   PROOF_FILE_TYPES,
@@ -35,9 +46,9 @@ import {
   type LedgerStrip,
   type LedgerTask,
 } from '../shared/ledger/contract';
-import type { LedgerApplyResult, LedgerSnapshot } from '../shared/ledger/channels';
+import type { LedgerApplyResult, LedgerPassedOn, LedgerPassOnRequest, LedgerSnapshot } from '../shared/ledger/channels';
 import type { LedgerToolCall, ProofInput } from '../shared/ledger/tools';
-import { detectSlackSend, slackGuard } from '../shared/ledger/slack-guard';
+import { AGENT_BOT_SERVERS, detectAgentBotSend, detectSlackSend, fileNameOf, slackGuard, slackMessageLink, slackSendOutcome, type AgentBotSend } from '../shared/ledger/slack-guard';
 
 /** Smoke/test override: isolates the ledger from the real one. */
 export const LEDGER_FILE_ENV_VAR = 'DONEL_LEDGER_FILE';
@@ -108,6 +119,8 @@ export interface LedgerService {
   /** `tarefa_ver` by `placeId` of the delivery made at `deliveredAt` (memory only: after a restart, look again). */
   noteProofSeen(placeId: string, taskId: string, deliveredAt: number): void;
   proofSeen(placeId: string, taskId: string, deliveredAt: number): boolean;
+  /** The service's clock (the vitest moves it). */
+  now(): number;
 }
 
 /** The biggest print `tarefa_ver` sends inline (the path goes in any case). */
@@ -237,6 +250,7 @@ export function createLedgerService(deps: LedgerServiceDeps): LedgerService {
     proofSeen(placeId, taskId, deliveredAt) {
       return seen.has(seenKey(placeId, taskId, deliveredAt));
     },
+    now,
   };
 }
 
@@ -251,6 +265,79 @@ export interface LedgerCaller {
   readonly boardPlaceIds: readonly string[];
   /** The caller's board as saved in `mindscape.json` (who opened whom, the arrows). Missing = the strict answer. */
   readonly board?: MindscapeBoard;
+  /**
+   * 06/11 — the places of the boards the main could read (project folder → place id → `estado` of `sessao_listar`:
+   * trabalhando, parada, fechada, nao-comecou…). A board missing here is unknown: none of its tasks counts as orphan,
+   * and `tarefa_listar` counts them apart (`desconhecidas`), never as alive.
+   */
+  readonly placeStates?: ReadonlyMap<string, ReadonlyMap<string, string>>;
+}
+
+/** Why a task is orphan (not closed, its owner place gone); `null` = alive, closed or unknown. A delivered task waits for whoever decides, not for its owner place. */
+export function orphanReason(caller: LedgerCaller, task: LedgerTask, now: number): string | null {
+  return isClosed(task) || task.state === 'entregue' ? null : ownerGone(caller, task, now);
+}
+
+/** The owner place of `task` could not be checked: its board did not answer. Closed and delivered tasks do not depend on it. */
+export function ownerUnknown(caller: LedgerCaller, task: LedgerTask): boolean {
+  // The Líder único is no place of any board: whether the board answered says nothing of it (t-52b31719).
+  if (task.ownerPlaceId === LEADER_OF_ALL) return false;
+  return !isClosed(task) && task.state !== 'entregue' && !caller.placeStates?.has(task.projectPath);
+}
+
+/** A place that has not started is gone only after this long (a place made a moment ago is still opening). */
+export const NOT_STARTED_GRACE_MS = 30 * 60 * 1000;
+
+/** Why the owner place of `task` can no longer do the work (closed, out of the board, never started); `null` = alive or unknown. */
+export function ownerGone(caller: LedgerCaller, task: LedgerTask, now: number): string | null {
+  // The Líder único has no place on any board (t-52b31719): a task it owns is alive, never orphan.
+  if (task.ownerPlaceId === LEADER_OF_ALL) return null;
+  const states = caller.placeStates?.get(task.projectPath);
+  if (!states) return null;
+  const state = states.get(task.ownerPlaceId);
+  if (state === undefined) return 'o lugar dono saiu do quadro';
+  if (state === 'fechada') return 'o lugar dono está fechado';
+  const since = task.events.at(-1)?.at ?? task.createdAt;
+  if (state === 'nao-comecou' && now - since >= NOT_STARTED_GRACE_MS) return 'o lugar dono não começou';
+  return null;
+}
+
+/** The words of the record of a passage: "passada sozinha: o lugar X fechou". */
+export function passOnReason(placeId: string, gone: LedgerPassOnRequest['gone']): string {
+  return `passada sozinha: o lugar ${placeId} ${gone === 'fechada' ? 'fechou' : 'não começou'}`;
+}
+
+/**
+ * 06/11 (t-e753b554) — a place is gone: each task it owns that is aberta, em execução or rejeitada passes to `to`,
+ * signed by the gone place itself (the owner place may pass its task on), with the reason "passada sozinha…" in the
+ * `criada` event the transfer already writes (v4: no new kind, no new field). A delivered task stays: it waits for
+ * whoever decides. A never-started place passes only past `NOT_STARTED_GRACE_MS` (`ownerGone`).
+ */
+export function passOnTasks(service: LedgerService, requests: readonly LedgerPassOnRequest[]): LedgerPassedOn[] {
+  let doc: LedgerDoc;
+  try {
+    const snapshot = service.load();
+    if (snapshot.readOnly) return [];
+    doc = snapshot.doc;
+  } catch {
+    return [];
+  }
+  const now = service.now();
+  const passed: LedgerPassedOn[] = [];
+  for (const request of requests) {
+    if (!request.to || request.to === request.placeId) continue;
+    const caller: LedgerCaller = { projectPath: request.projectPath, placeId: request.placeId, boardPlaceIds: [], placeStates: new Map([[request.projectPath, new Map([[request.placeId, request.gone]])]]) };
+    const tasks: { id: string; title?: string }[] = [];
+    for (const task of Object.values(doc.tasks)) {
+      if (task.projectPath !== request.projectPath || task.ownerPlaceId !== request.placeId || task.slack) continue;
+      if (isClosed(task) || (task.state !== 'aberta' && task.state !== 'em-execucao' && task.state !== 'rejeitada')) continue;
+      if (!ownerGone(caller, task, now)) continue;
+      const result = service.apply({ kind: 'lugar', placeId: request.placeId }, { op: 'transferir', id: task.id, to: request.to, reason: passOnReason(request.placeId, request.gone) });
+      if (result.ok) tasks.push({ id: task.id, ...(task.title ? { title: task.title } : {}) });
+    }
+    if (tasks.length) passed.push({ projectPath: request.projectPath, placeId: request.placeId, to: request.to, tasks });
+  }
+  return passed;
 }
 
 /** The strip with the same pt-BR words as the rest of the tool (`aberta`, `em-execucao`, `esperandoDono`…). */
@@ -281,10 +368,12 @@ function decideRefusal(caller: LedgerCaller, task: LedgerTask, seen: boolean): s
   if (task.state !== 'entregue' || !delivery || delivery.by.kind !== 'lugar' || cannotDecide(task, callerActor(caller))) return null;
   if (task.projectPath !== caller.projectPath) return 'a tarefa é de outro quadro; só se decide tarefa do próprio quadro.';
   if (!seen) return 'leia a prova antes com tarefa_ver.';
-  const from = delivery.by.placeId;
   if (!caller.board) return 'não consegui ler o quadro para conferir a cadeia de quem entregou; um Revisor de fora dela ou o dono decide.';
-  if (isOpenedBy(caller.board, from, caller.placeId) || isBelow(caller.board, from, caller.placeId)) {
-    return `você está na cadeia de quem entregou (${from}): um Revisor de fora dela ou o dono decide.`;
+  // Who delivered and, when another place did the work, who did it: a Revisor of neither chain decides.
+  for (const from of [delivery.by.placeId, doneByOf(delivery)].filter((id): id is string => id !== undefined)) {
+    if (isOpenedBy(caller.board, from, caller.placeId) || isBelow(caller.board, from, caller.placeId)) {
+      return `você está na cadeia de quem entregou ou fez o trabalho (${from}): um Revisor de fora dela ou o dono decide.`;
+    }
   }
   return null;
 }
@@ -322,46 +411,68 @@ function forOwnerView(forOwner: LedgerForOwner): Record<string, unknown> {
   };
 }
 
-function taskView(task: LedgerTask, doc: LedgerDoc): Record<string, unknown> {
+function taskView(task: LedgerTask, doc: LedgerDoc, orphan: string | null = null): Record<string, unknown> {
   const delivery = lastDelivery(task);
   const decision = [...task.events].reverse().find((event) => event.kind === 'aceita' || event.kind === 'rejeitada');
   const who = (actor: LedgerActor): string => (actor.kind === 'dono' ? 'dono' : actor.placeId);
+  const transfers = transfersOf(task);
   return {
     id: task.id,
     ...(task.title ? { titulo: task.title } : {}),
-    estado: task.state,
+    estado: viewState(task),
     pedido: task.request,
     criterio: task.doneWhen,
     prazo: task.due,
     dono: task.ownerPlaceId,
     risco: task.risk,
+    ...(replacesOf(task) ? { substitui: replacesOf(task) } : {}),
+    ...(transfers.length ? { transferencias: transfers.map((t) => ({ de: t.from, para: t.to, por: who(t.by), em: new Date(t.at).toISOString(), motivo: t.reason })) } : {}),
     ...(delivery
       ? {
           entrega: {
             por: who(delivery.by),
+            ...(doneByOf(delivery) ? { feitoPor: doneByOf(delivery) } : {}),
             em: new Date(delivery.at).toISOString(),
             provas: delivery.proofs?.map((proof) => (proof.kind === 'arquivo' ? `arquivo ${proof.file}` : proof.kind === 'link' ? proof.url : `texto (${proof.text.length} caracteres; leia com tarefa_ver)`)),
-            ...(delivery.text ? { nota: delivery.text } : {}),
+            ...(eventNote(delivery) ? { nota: eventNote(delivery) } : {}),
             ...(delivery.forOwner ? { paraODono: forOwnerView(delivery.forOwner) } : {}),
           },
         }
       : {}),
-    ...(decision ? { decisao: { tipo: decision.kind, por: who(decision.by), ...(decision.option ? { opcao: decision.option } : {}), ...(decision.text ? { motivo: decision.text } : {}) } } : {}),
+    ...(decision
+      ? { decisao: { tipo: isCancelled(task) ? 'cancelada' : decision.kind, por: who(decision.by), ...(decision.option ? { opcao: decision.option } : {}), ...(eventNote(decision) ? { motivo: eventNote(decision) } : {}) } }
+      : {}),
     ...(waitsForOwner(doc, task) ? { esperandoDono: true } : {}),
+    ...(orphan ? { orfa: `${orphan}: passe adiante com tarefa_transferir ou encerre com tarefa_cancelar.` } : {}),
     ...(task.slack
       ? {
           cartaSlack: {
             destino: task.slack.destination,
             ...(task.slack.thread ? { thread: task.slack.thread } : {}),
-            texto: task.slack.text,
+            texto: slackLetterText(task.slack),
+            ...(task.slack.file ? { arquivo: task.slack.file.path, arquivoNome: task.slack.file.name } : {}),
             enviada: slackLetterSent(task),
-            ...(task.state === 'aceita' && !slackLetterSent(task) ? { proximo: 'Aceita: envie este texto exato a este destino, uma vez.' } : {}),
-            ...(task.state === 'rejeitada' ? { proximo: 'Rejeitada: não envie. Ajuste o texto pelo motivo e crie outra carta com carta_slack.' } : {}),
+            ...(SEND_LABEL[slackSendState(task)] ? { envio: SEND_LABEL[slackSendState(task)] } : {}),
+            ...(task.state === 'aceita' && slackSendState(task) === 'nenhum' ? { proximo: 'Aceita: envie este texto exato a este destino, uma vez.' } : {}),
+            ...(task.state === 'aceita' && slackSendState(task) === 'falhou'
+              ? { proximo: 'O envio falhou e não chegou ao Slack: pode mandar o mesmo texto ao mesmo destino mais uma vez, uma só. Se falhar de novo, a carta se esgota.' }
+              : {}),
+            ...(task.state === 'rejeitada' && !isCancelled(task) ? { proximo: 'Rejeitada: não envie. Ajuste o texto pelo motivo e crie outra carta com carta_slack.' } : {}),
+            ...(isCancelled(task) ? { proximo: 'Cancelada: não envie.' } : {}),
           },
         }
       : {}),
   };
 }
+
+/** What `tarefa_ver` says of a letter's send (`nenhum` says nothing). */
+const SEND_LABEL: Record<SlackSendState, string | null> = {
+  nenhum: null,
+  'sem-confirmacao': 'envio sem confirmação: a carta conta como usada',
+  confirmado: 'envio confirmado pelo Slack',
+  falhou: 'envio falhou; resta um reenvio',
+  esgotada: 'o reenvio também falhou; a carta se esgotou',
+};
 
 export interface LedgerToolAnswer {
   readonly ok: boolean;
@@ -394,6 +505,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         ownerPlaceId: owner,
         risk: lowRefused ? 'alto' : call.risco,
         ...(call.titulo ? { title: call.titulo } : {}),
+        ...(call.substitui ? { replaces: call.substitui } : {}),
       });
       if (!result.ok || !lowRefused) return answer(result, 'criada');
       return {
@@ -403,11 +515,43 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
     }
     case 'tarefa_assumir':
       return answer(service.apply(actor, { op: 'assumir', id: call.id }), 'assumida');
+    case 'tarefa_cancelar':
+    case 'tarefa_transferir': {
+      let doc: LedgerDoc;
+      try {
+        doc = service.load().doc;
+      } catch (error) {
+        return { ok: false, text: `Não consegui ler o Oráculo Harrow: ${error instanceof Error ? error.message : String(error)}` };
+      }
+      const task = doc.tasks[call.id];
+      if (!task) return { ok: false, text: `Não existe tarefa "${call.id}" (veja tarefa_listar).` };
+      if (task.projectPath !== caller.projectPath) return { ok: false, text: 'A tarefa é de outro quadro; só se mexe em tarefa do próprio quadro.' };
+      if (call.tool === 'tarefa_cancelar') return answer(service.apply(actor, { op: 'cancelar', id: task.id, reason: call.motivo }), 'cancelada');
+      const to = call.para === 'seu' ? caller.placeId : call.para;
+      // The Líder único has no place, but owns tasks too (t-52b31719): "lider" is a destination of every board.
+      if (to !== LEADER_OF_ALL && !caller.boardPlaceIds.includes(to)) return { ok: false, text: `"${to}" não é um lugar deste quadro que você alcança (veja sessao_listar), nem "lider" (o Líder único).` };
+      const gone = ownerGone(caller, task, service.now());
+      const result = service.apply(actor, { op: 'transferir', id: task.id, to, reason: gone && !call.motivo.includes(gone) ? `${call.motivo} (${gone})` : call.motivo, ...(gone ? { ownerGone: true } : {}) });
+      if (!result.ok) return { ok: false, text: result.reason };
+      return {
+        ok: true,
+        text: JSON.stringify({ transferida: true, id: result.task.id, estado: result.task.state, dono: result.task.ownerPlaceId, ...(result.task.state === 'aberta' ? { proximo: 'O novo dono assume com tarefa_assumir.' } : {}) }),
+      };
+    }
     case 'carta_slack': {
       const result = service.apply(actor, {
         op: 'carta-slack',
         projectPath: caller.projectPath,
-        slack: { destination: call.destino, ...(call.destinoNome ? { destinationLabel: call.destinoNome } : {}), ...(call.thread ? { thread: call.thread } : {}), text: call.texto, reason: call.motivo },
+        slack: {
+          destination: call.destino,
+          ...(call.destinoNome ? { destinationLabel: call.destinoNome } : {}),
+          ...(call.thread ? { thread: call.thread } : {}),
+          // With a file, the comment lives in the file and `text` stays '' (`SlackLetter.file`: safe for a v4 app).
+          ...(call.arquivo
+            ? { text: '', file: { path: call.arquivo, name: call.arquivoNome ?? fileNameOf(call.arquivo), comment: call.texto } }
+            : { text: call.texto }),
+          reason: call.motivo,
+        },
       });
       if (!result.ok) return { ok: false, text: result.reason };
       return {
@@ -422,6 +566,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       };
     }
     case 'tarefa_entregar': {
+      if (call.feitoPor && !caller.boardPlaceIds.includes(call.feitoPor)) return { ok: false, text: `Nada foi entregue. "feitoPor": "${call.feitoPor}" não é um lugar deste quadro (veja sessao_listar).` };
       const proofs: LedgerProof[] = [];
       for (const input of call.provas) {
         const proof = await service.importProof(input, remote);
@@ -431,7 +576,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         }
         proofs.push(proof);
       }
-      const result = service.apply(actor, { op: 'entregar', id: call.id, proofs, ...(call.nota ? { note: call.nota } : {}), ...(call.paraODono ? { forOwner: call.paraODono } : {}) });
+      const result = service.apply(actor, { op: 'entregar', id: call.id, proofs, ...(call.nota ? { note: call.nota } : {}), ...(call.paraODono ? { forOwner: call.paraODono } : {}), ...(call.feitoPor ? { doneBy: call.feitoPor } : {}) });
       if (!result.ok) await service.discardProofs(proofs);
       return answer(result, 'entregue');
     }
@@ -463,7 +608,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       const delivery = lastDelivery(task);
       if (delivery) service.noteProofSeen(caller.placeId, task.id, delivery.at);
       const proofs = delivery?.proofs ?? [];
-      const text = JSON.stringify({ ...taskView(task, doc), ...(proofs.length ? { provas: proofs.map((proof) => proofView(service, proof)) } : {}) }, null, 1);
+      const text = JSON.stringify({ ...taskView(task, doc, orphanReason(caller, task, service.now())), ...(proofs.length ? { provas: proofs.map((proof) => proofView(service, proof)) } : {}) }, null, 1);
       for (const proof of proofs) {
         const image = await service.proofImage(proof);
         if (image) return { ok: true, text, image };
@@ -478,37 +623,202 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         return { ok: false, text: `Não consegui ler o Oráculo Harrow: ${error instanceof Error ? error.message : String(error)}` };
       }
       const scope = call.todos ? null : caller.projectPath;
-      const tasks = Object.values(doc.tasks)
-        .filter((task) => (scope === null || task.projectPath === scope) && (!call.estado || task.state === call.estado))
+      const situacao = call.situacao ?? (call.estado ? 'todas' : 'vivas');
+      const now = service.now();
+      const orphanOf = (task: LedgerTask): string | null => orphanReason(caller, task, now);
+      const inScope = Object.values(doc.tasks).filter((task) => scope === null || task.projectPath === scope);
+      const counts = { vivas: 0, orfas: 0, fechadas: 0, desconhecidas: 0 };
+      for (const task of inScope) counts[isClosed(task) ? 'fechadas' : orphanOf(task) ? 'orfas' : ownerUnknown(caller, task) ? 'desconhecidas' : 'vivas'] += 1;
+      const tasks = inScope
+        .filter((task) => !call.estado || viewState(task) === call.estado)
+        .filter((task) => situacao === 'todas' || (situacao === 'orfas' ? orphanOf(task) !== null : !isClosed(task) && orphanOf(task) === null))
         .sort((a, b) => a.createdAt - b.createdAt);
-      return { ok: true, text: JSON.stringify({ faixa: stripView(ledgerStrip(doc, scope)), tarefas: tasks.map((task) => taskView(task, doc)) }, null, 1) };
+      const hidden = situacao === 'todas' ? 0 : inScope.length - tasks.length;
+      return {
+        ok: true,
+        text: JSON.stringify(
+          {
+            faixa: { ...stripView(ledgerStrip(doc, scope)), ...counts },
+            situacao,
+            ...(hidden ? { fora: `${hidden} tarefa(s) fora desta lista; "situacao": "todas" mostra o histórico inteiro, "orfas" as que ficaram sem lugar.` } : {}),
+            tarefas: tasks.map((task) => ({
+              ...taskView(task, doc, orphanOf(task)),
+              ...(ownerUnknown(caller, task) ? { desconhecida: 'o quadro desta tarefa não respondeu: não sei se o lugar dono ainda existe.' } : {}),
+            })),
+          },
+          null,
+          1,
+        ),
+      };
     }
   }
 }
 
-// ---------------------------------------------------------------------------------------------------------------
-// Slack só com carta — the hook bridge's `PreToolUse` guard (pure decision in `slack-guard.ts`).
+// Slack só com carta — the hook bridge's guard (pure decision in `slack-guard.ts`).
+//
+// `PreToolUse` frees the call and writes `enviada` on its letters right away, on disk: from that moment the letter
+// is spent, even if the app closes before the answer, and a second call finds nothing to free. At `PostToolUse` /
+// `PostToolUseFailure` the answer is read (`slackSendOutcome`): Slack took it → an `enviada` "confirmado"; an
+// EXPLICIT failure ("fetch failed", `isError`, `ok: false`) → an `enviada` "falhou" (`SEND_ANSWER`), and the letter frees ONE resend of the same
+// text (t-8119864a); a doubt, or no answer within `LETTER_IN_FLIGHT_MS`, writes nothing: the letter stays spent,
+// "envio sem confirmação".
+//
+// A post by an agent's OWN bot (`agentBotServers`) passes with no letter. At its answer the guard writes the record
+// "enviado pelo bot do agente" (op `slack-bot`: destination, text, file, link and outcome), on the board and place
+// of the session (`placeOf`), for the owner to see later. An answer that never comes (the app closed) leaves no record.
 
-/**
- * `null` = the call goes on (not a Slack post, or an accepted letter freed it and is now used); a string = the
- * refusal the session reads. A ledger that cannot be read, or a letter that cannot be marked as used, refuses.
- */
-export function guardSlackSend(service: LedgerService | null, toolName: string, toolInput: unknown): string | null {
-  if (detectSlackSend(toolName, toolInput).kind === 'none') return null;
-  let doc: LedgerDoc | null = null;
+export const LETTER_IN_FLIGHT_MS = 15 * 60 * 1000;
+
+interface LetterInFlight {
+  readonly ptyId: string;
+  readonly toolUseId: string | null;
+  readonly callKey: string;
+  readonly letterIds: readonly string[];
+  /** A post by an agent's own bot: recorded at the answer, no letter. */
+  readonly bot?: AgentBotSend;
+  readonly cwd?: string;
+  readonly at: number;
+}
+
+/** The board and place of a session, for the record of its bot's post; `null` = unknown (the record keeps the folder). */
+export type SlackSessionPlace = (ptyId: string) => Promise<{ readonly projectPath: string; readonly placeId: string } | null>;
+
+export interface SlackLetterGuardOptions {
+  readonly now?: () => number;
+  /** The MCP servers of the agents' own bots (from the config); default `AGENT_BOT_SERVERS`. */
+  readonly agentBotServers?: () => readonly string[];
+  readonly placeOf?: SlackSessionPlace;
+}
+
+export interface SlackLetterGuard {
+  /** `PreToolUse`: `null` = the call goes on (its letters are now spent); a string = the refusal the session reads. */
+  before(ptyId: string, payload: Record<string, unknown>): string | null;
+  /**
+   * `PostToolUse` / `PostToolUseFailure` of the same call: records the answer; only an explicit failure reopens. A
+   * bot's post is recorded asynchronously (the promise ends when it is on disk).
+   */
+  after(ptyId: string, event: string, payload: Record<string, unknown>): Promise<void> | void;
+}
+
+const toolNameOf = (payload: Record<string, unknown>): string => (typeof payload.tool_name === 'string' ? payload.tool_name : '');
+
+function callKeyOf(payload: Record<string, unknown>): string {
+  let input = '';
   try {
-    const snapshot = service?.load();
-    doc = snapshot && !snapshot.readOnly ? snapshot.doc : null;
+    input = JSON.stringify(payload.tool_input) ?? '';
   } catch {
-    doc = null;
+    input = '';
   }
-  const verdict = slackGuard(doc, toolName, toolInput);
-  if (verdict.kind === 'not-slack') return null;
-  if (verdict.kind === 'deny') return verdict.reason;
-  for (const id of verdict.letterIds) {
-    const task = doc!.tasks[id]!;
-    const marked = service!.apply({ kind: 'lugar', placeId: task.ownerPlaceId }, { op: 'slack-enviada', id });
-    if (!marked.ok) return `Envio ao Slack bloqueado pelo Donel Dev: não consegui marcar a carta ${id} como usada (${marked.reason}). Tente de novo.`;
+  return `${typeof payload.agent_id === 'string' ? payload.agent_id : ''}\u0000${toolNameOf(payload)}\u0000${input}`;
+}
+
+export function createSlackLetterGuard(service: () => LedgerService | null, options: SlackLetterGuardOptions | (() => number) = {}): SlackLetterGuard {
+  const opts: SlackLetterGuardOptions = typeof options === 'function' ? { now: options } : options;
+  const now = opts.now ?? Date.now;
+  const botServers = (): readonly string[] => opts.agentBotServers?.() ?? AGENT_BOT_SERVERS;
+  const inFlight: LetterInFlight[] = [];
+
+  async function recordBot(ptyId: string, entry: LetterInFlight, event: string, payload: Record<string, unknown>): Promise<void> {
+    const bot = entry.bot!;
+    const outcome = slackSendOutcome(event, payload.tool_response, payload.error);
+    let place: { projectPath: string; placeId: string } | null = null;
+    try {
+      place = (await opts.placeOf?.(ptyId)) ?? null;
+    } catch {
+      place = null;
+    }
+    const ledger = service();
+    if (!ledger) return;
+    const link = outcome.kind === 'falhou' ? null : slackMessageLink(payload.tool_response, bot);
+    try {
+      ledger.apply(
+        { kind: 'lugar', placeId: place?.placeId ?? `sessao:${ptyId}` },
+        {
+          op: 'slack-bot',
+          projectPath: place?.projectPath ?? entry.cwd ?? '',
+          bot: {
+            server: bot.server,
+            tool: bot.tool,
+            destination: bot.destination,
+            ...(bot.thread ? { thread: bot.thread } : {}),
+            text: bot.text,
+            ...(bot.file ? { file: bot.file } : {}),
+            outcome: outcome.kind,
+            ...(outcome.kind === 'falhou' ? { why: outcome.why } : {}),
+            ...(link ? { link } : {}),
+          },
+        },
+      );
+    } catch {
+      // the record is for the owner to see later; failing to write it never touches the send
+    }
   }
-  return null;
+
+  function prune(): void {
+    const cutoff = now() - LETTER_IN_FLIGHT_MS;
+    for (let i = inFlight.length - 1; i >= 0; i--) if (inFlight[i]!.at < cutoff) inFlight.splice(i, 1);
+  }
+
+  return {
+    before(ptyId, payload) {
+      const toolName = toolNameOf(payload);
+      if (detectSlackSend(toolName, payload.tool_input).kind === 'none' && !detectAgentBotSend(toolName, payload.tool_input, botServers())) return null;
+      prune();
+      const ledger = service();
+      let doc: LedgerDoc | null = null;
+      try {
+        const snapshot = ledger?.load();
+        doc = snapshot && !snapshot.readOnly ? snapshot.doc : null;
+      } catch {
+        doc = null;
+      }
+      const verdict = slackGuard(doc, toolName, payload.tool_input, botServers());
+      if (verdict.kind === 'not-slack') return null;
+      if (verdict.kind === 'deny') return verdict.reason;
+      if (verdict.kind === 'agent-bot') {
+        const toolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : null;
+        const cwd = typeof payload.cwd === 'string' ? payload.cwd : undefined;
+        inFlight.push({ ptyId, toolUseId, callKey: callKeyOf(payload), letterIds: [], bot: verdict.send, ...(cwd ? { cwd } : {}), at: now() });
+        return null;
+      }
+      for (const id of verdict.letterIds) {
+        const task = doc!.tasks[id]!;
+        const marked = ledger!.apply({ kind: 'lugar', placeId: task.ownerPlaceId }, { op: 'slack-enviada', id });
+        if (!marked.ok) return `Envio ao Slack bloqueado pelo Donel Dev: não consegui marcar a carta ${id} como usada (${marked.reason}). Tente de novo.`;
+      }
+      const toolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : null;
+      inFlight.push({ ptyId, toolUseId, callKey: callKeyOf(payload), letterIds: verdict.letterIds, at: now() });
+      return null;
+    },
+    after(ptyId, event, payload) {
+      if (event !== 'PostToolUse' && event !== 'PostToolUseFailure') return;
+      prune(); // an answer after the deadline finds nothing: the letter stays spent
+      const toolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : null;
+      const callKey = callKeyOf(payload);
+      const index = inFlight.findIndex(
+        (entry) => entry.ptyId === ptyId && (entry.toolUseId !== null && toolUseId !== null ? entry.toolUseId === toolUseId : entry.callKey === callKey),
+      );
+      if (index < 0) return;
+      const [entry] = inFlight.splice(index, 1);
+      if (entry!.bot) return recordBot(ptyId, entry!, event, payload);
+      const outcome = slackSendOutcome(event, payload.tool_response, payload.error);
+      if (outcome.kind === 'sem-confirmacao') return; // spent, "envio sem confirmação"
+      const ledger = service();
+      if (!ledger) return;
+      let doc: LedgerDoc;
+      try {
+        doc = ledger.load().doc;
+      } catch {
+        return;
+      }
+      for (const id of entry!.letterIds) {
+        const task = doc.tasks[id];
+        if (!task) continue;
+        ledger.apply(
+          { kind: 'lugar', placeId: task.ownerPlaceId },
+          outcome.kind === 'confirmado' ? { op: 'slack-resultado', id, outcome: 'confirmado' } : { op: 'slack-resultado', id, outcome: 'falhou', why: outcome.why },
+        );
+      }
+    },
+  };
 }

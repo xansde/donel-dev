@@ -18,6 +18,11 @@ export interface DiagnosticsLog {
   sendFailed(entry: { ptyId: string; reason: string; detail?: SendFailureDetail }): void;
   /** Modo auto and Modo YOLO: the tool name and the outcome, never its input. */
   autoApproval(entry: { ptyId: string; tool: string; outcome: 'approved' | 'yolo' | 'after-blocks' }): void;
+  /**
+   * The owner wrote on a card ("Mandar à sessão", t-8fed1d77): the task, where it went (`place`, `lider`, `nowhere`)
+   * or the refusal, and how long it took. Never the text.
+   */
+  cardWrite(entry: { taskId: string; outcome: 'place' | 'lider' | 'nowhere' | 'refused'; durationMs: number; reason?: string }): void;
 }
 
 /** `dir` is injected (the app passes `app.getPath('userData')`); `now` is injectable for tests. Writing never throws. */
@@ -37,6 +42,8 @@ export function createDiagnosticsLog(dir: string, now: () => number = Date.now):
     hook: ({ event, ptyId, durationMs, notificationType }) =>
       write({ kind: 'hook', event, ptyId, durationMs, ...(notificationType !== undefined ? { notificationType } : {}) }),
     autoApproval: ({ ptyId, tool, outcome }) => write({ kind: 'auto-approval', ptyId, tool, outcome }),
+    cardWrite: ({ taskId, outcome, durationMs, reason }) =>
+      write({ kind: 'card-write', taskId, outcome, durationMs, ...(reason !== undefined ? { reason: reason.slice(0, 160) } : {}) }),
     unknownEntry: ({ ptyId, entryType }) => {
       const key = `${ptyId}\u0000${entryType}`;
       if (seenUnknown.has(key)) return;

@@ -74,6 +74,9 @@ export interface PreferencesProps {
   /** "Modo auto nunca pede permissão" (`autoMode.neverAsks`); applies at once. */
   autoNeverAsks: boolean;
   onChangeAutoNeverAsks: (neverAsks: boolean) => void;
+  /** Oráculo no centro (`layout.oracleCenter`); off = the old layout. Applies at once. */
+  oracleCenter: boolean;
+  onChangeOracleCenter: (oracleCenter: boolean) => void;
   /** Sessões remotas — places for the "Onde roda" default; `[]` hides the setting. */
   remotes?: readonly PreferencesRemotePlace[];
   /** `launcherDefaults.where`: `undefined` = last choice / first place with an account, `'local'` = this computer. */
@@ -297,6 +300,21 @@ export function Preferences(props: PreferencesProps): React.JSX.Element | null {
           onChange={props.onChangePetEnabled}
           label="Jobu na área de trabalho"
           description="Avisa quando uma sessão termina ou espera você, e quando a conta muda."
+        />
+      ),
+    },
+    {
+      id: 'oracle-center',
+      category: 'avisos',
+      title: 'Oráculo no lugar da conversa do Líder',
+      keywords: 'oráculo oraculo cartas líder lider jobu layout terminais tela centro antigo',
+      hint: 'Você fala com o Líder pelo Jobu. A janela mostra as cartas que esperam você, e as sessões ficam a um clique, em "Terminais" (Ctrl+Shift+O).',
+      body: (
+        <Toggle
+          checked={props.oracleCenter}
+          onChange={props.onChangeOracleCenter}
+          label="Mostrar o Oráculo no centro"
+          description="Desligado, volta o layout antigo: só as abas, com a do Líder entre elas."
         />
       ),
     },

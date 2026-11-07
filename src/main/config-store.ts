@@ -3,7 +3,9 @@ import { dirname } from 'node:path';
 import type { AccountsConfig } from '../shared/accounts';
 import { defaultAccountsConfig } from '../shared/accounts';
 import type { EffortLevel, ModelAlias, PermissionMode } from '../shared/commandBuilder';
-import type { AppConfigDto, AppUpdatePrefs, AutoModePrefs, BrowserUploadPrefs, ChatPrefs, LauncherDefaultsDto, NotificationPreference, PetPrefs, ProjectScanMode, SessionNamesMap, SweepPrefs, YoloPrefs } from '../shared/config';
+import type { AppConfigDto, AppUpdatePrefs, AutoModePrefs, BrowserUploadPrefs, ChatPrefs, LauncherDefaultsDto, NotificationPreference, PetPrefs, ProjectScanMode, SessionNamesMap, SlackAgentBotPrefs, SweepPrefs, YoloPrefs } from '../shared/config';
+import { AGENT_BOT_SERVERS, isAgentBotServerName } from '../shared/ledger/slack-guard';
+import { DEFAULT_LAYOUT_PREFS, sanitizeLayoutPrefs, type LayoutPrefs } from '../shared/layoutPrefs';
 // T014 (015-jobu-pet) — limits of the pet size: the same rule the window uses (placement.ts).
 import { PET_SIZE_DEFAULT, clampSize } from '../shared/pet/placement';
 import { withUploadFolder } from '../shared/browser/upload';
@@ -157,10 +159,14 @@ export interface AppConfig {
   readonly autoMode: AutoModePrefs;
   /** Modo YOLO — a TOP-LEVEL key (like `pet`, R20): a channel without it keeps it in `unknownFields`. In the DTO. */
   readonly yolo: YoloPrefs;
+  /** Oráculo no centro — a TOP-LEVEL key (like `pet`, R20): a channel without it keeps it in `unknownFields`. In the DTO. */
+  readonly layout: LayoutPrefs;
   /** B33 — the installers folder of the in-app update. A TOP-LEVEL key (like `pet`, R20). Not in the DTO. */
   readonly appUpdate: AppUpdatePrefs;
   /** Navegador integrado — the authorized upload folders. A TOP-LEVEL key (like `pet`, R20). Not in the DTO. */
   readonly browserUploads: BrowserUploadPrefs;
+  /** Slack só com carta — the agents' own bots, whose posts need no letter. A TOP-LEVEL key (like `pet`, R20). Not in the DTO. */
+  readonly slackAgentBots: SlackAgentBotPrefs;
   /**
    * G1 (011-contas-e-provedores, issue 08) — chaves de TOPO que este build
    * não reconhece (ex.: um campo que só um canal/versão mais nova entende).
@@ -203,8 +209,10 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     team: DEFAULT_TEAM_PREFS,
     autoMode: defaultAutoModePrefs(),
     yolo: defaultYoloPrefs(),
+    layout: DEFAULT_LAYOUT_PREFS,
     appUpdate: { installersDir: null },
     browserUploads: { folders: [] },
+    slackAgentBots: { servers: [...AGENT_BOT_SERVERS] },
     unknownFields: {},
   };
 }
@@ -272,6 +280,14 @@ export function sanitizeAppUpdatePrefs(value: unknown): AppUpdatePrefs {
  * folders: anything else is dropped, never kept as authorized. The browser service checks each one again with
  * `refusedUploadFolder` before using it.
  */
+/** Slack só com carta — plain server names, once each; absent or broken = the default (empty: every post needs a letter). */
+export function sanitizeSlackAgentBotPrefs(value: unknown): SlackAgentBotPrefs {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return { servers: [...AGENT_BOT_SERVERS] };
+  const { servers } = value as Record<string, unknown>;
+  if (!Array.isArray(servers)) return { servers: [...AGENT_BOT_SERVERS] };
+  return { servers: [...new Set(servers.filter((name): name is string => typeof name === 'string' && isAgentBotServerName(name.trim())).map((name) => name.trim()))] };
+}
+
 export function sanitizeBrowserUploadPrefs(value: unknown): BrowserUploadPrefs {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return { folders: [] };
   const { folders } = value as Record<string, unknown>;
@@ -355,6 +371,7 @@ export function toAppConfigDto(config: AppConfig): AppConfigDto {
     team: config.team,
     autoMode: config.autoMode,
     yolo: config.yolo,
+    layout: config.layout,
   };
 }
 
@@ -781,8 +798,10 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     team: sanitizeTeamPrefs(candidate.team, defaults.team),
     autoMode: sanitizeAutoModePrefs(candidate.autoMode, defaults.autoMode),
     yolo: sanitizeYoloPrefs(candidate.yolo),
+    layout: sanitizeLayoutPrefs(candidate.layout, defaults.layout),
     appUpdate: sanitizeAppUpdatePrefs(candidate.appUpdate),
     browserUploads: sanitizeBrowserUploadPrefs(candidate.browserUploads),
+    slackAgentBots: sanitizeSlackAgentBotPrefs(candidate.slackAgentBots),
     unknownFields,
   };
 }

@@ -1,3 +1,4 @@
+import type { LayoutPrefs } from '../shared/layoutPrefs';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 // G5 (batch N5) — guarda contra segundo assinante silencioso de canal IPC:
 // todo `onX` abaixo passa por aqui em vez de `ipcRenderer.on` direto.
@@ -150,7 +151,7 @@ import {
 } from '../shared/esteira/ipc';
 
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
-import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerSnapshot } from '../shared/ledger/channels';
+import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerSnapshot } from '../shared/ledger/channels';
 import type { LedgerProof } from '../shared/ledger/contract';
 import { HILL_CLIMB_CHANNELS, type HillClimbGestureRequest, type HillClimbGestureResult, type HillClimbSnapshot } from '../shared/hillClimb/channels';
 import { LEARNING_CHANNELS, type RendererGesture } from '../shared/learning/gestures';
@@ -433,6 +434,8 @@ const donelApi: DonelApi = {
       ipcRenderer.invoke(CONFIG_CHANNELS.setAutoModePrefs, prefs) as Promise<AppConfigDto>,
     setProjectYolo: (projectPath: string, enabled: boolean) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setProjectYolo, projectPath, enabled) as Promise<AppConfigDto>,
+    // Oráculo no centro — the new layout switch and the view the center shows.
+    setLayoutPrefs: (prefs: Partial<LayoutPrefs>) => ipcRenderer.invoke(CONFIG_CHANNELS.setLayoutPrefs, prefs) as Promise<AppConfigDto>,
     setCollapsedFavorites: (collapsed: string[]) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setCollapsedFavorites, collapsed) as Promise<AppConfigDto>,
   },
@@ -592,6 +595,7 @@ const donelApi: DonelApi = {
     openProof: (proof: LedgerProof) => ipcRenderer.invoke(LEDGER_CHANNELS.openProof, proof) as Promise<boolean>,
     proofImage: (taskId: string, proofIndex: number) => ipcRenderer.invoke(LEDGER_CHANNELS.proofImage, taskId, proofIndex) as Promise<string | null>,
     comment: (comment: LedgerComment) => ipcRenderer.invoke(LEDGER_CHANNELS.comment, comment) as Promise<LedgerCommentResult>,
+    passOn: (requests: readonly LedgerPassOnRequest[]) => ipcRenderer.invoke(LEDGER_CHANNELS.passOn, requests) as Promise<readonly LedgerPassedOn[]>,
   },
 
   // Hill climbing — `<userData>/hill-climb.json` (main is the only writer); gestures go as the owner.

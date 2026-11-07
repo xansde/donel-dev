@@ -10,10 +10,19 @@
 //     the view the composer renders.
 //   - Every transition INTO `failed` goes once to `reportFailure` (the gate detail for `chat-diagnostics.log`,
 //     never the message text): a retry that fails again is a new report.
+//   - 06/11 - the owner comes first. A message from another session (`from: 'session'`: "◆ … terminou", sessao_enviar)
+//     never starts while the owner is typing in the terminal or has a message of his own waiting, and the notices
+//     held meanwhile go in as ONE message. While a notice is being written (paste → Enter), the owner's keystrokes
+//     are held and written right after its Enter, never in the middle of it. Before, a notice's Enter submitted
+//     what the owner was typing, cut ("trava não fi"), and his message waited behind every notice.
+//     An Enter of a notice that looks lost (the notice still in the box) is written again BEFORE his held keys go
+//     in: released into that box, they would ride along with the notice on his next Enter (Revisor, #257).
+//     Only `session` sends merge with each other; an `owner` send (chat, Jobu, a card, "Pedir") never does.
 
 import type { PromptSignalKind } from '../../../shared/chat/ipc';
 import { commandResolvesTo, matchOldestPending, matchesPrompt, normalizePrompt, oldestPending } from '../../../shared/chat/promptMatch';
 import type { SendKind, SendMode, SendState } from '../../../shared/chat/rows';
+import { readInputText } from '../../../shared/chat/screen';
 import { describeSendFailure, type SendFailureDetail } from '../../../shared/chat/sendDiagnostics';
 import {
   createSend,
@@ -49,7 +58,14 @@ export interface SendRequest {
   readonly mode?: SendMode;
   readonly opensScreen?: boolean;
   readonly customCommands?: ReadonlySet<string>;
+  /**
+   * Who sends it: `owner` (the chat box, the Jobu, a button the owner pressed: the default) or `session` (a notice or
+   * a message from another session). The owner always goes first; a `session` message waits for him (see the top).
+   */
+  readonly from?: SendFrom;
 }
+
+export type SendFrom = 'owner' | 'session';
 
 export interface SendEnv {
   readonly alive?: boolean;
@@ -89,6 +105,13 @@ export interface SendItemView {
 interface Item {
   readonly id: string;
   readonly request: SendRequest;
+  readonly from: SendFrom;
+  /** What is pasted: the request text, plus the notices merged into this one while they waited for the owner. */
+  text: string;
+  /** When the first Enter of this attempt went out (session messages: the owner's keys are held until then). */
+  enterWrittenAt: number | null;
+  /** When the last Enter of this attempt went out (the first, a resend of the machine, or one written for the owner). */
+  lastEnterAt: number | null;
   readonly createdAt: number;
   mode: SendMode;
   machine: SendMachineState | null;
@@ -103,6 +126,31 @@ interface Item {
 const ACTIVE_PHASES: ReadonlySet<SendState> = new Set(['waiting-cli', 'typing', 'confirming']);
 const isActive = (item: Item): boolean => item.machine !== null && ACTIVE_PHASES.has(item.machine.phase);
 const SIGNAL_TTL_MS = 30_000;
+/** A session message does not start until the owner has not typed in the terminal for this long. */
+export const OWNER_QUIET_MS = 2_000;
+/** After a session message's Enter, the owner's held keys wait at most this long for the box to clear. */
+const OWNER_HOLD_AFTER_ENTER_MS = 1_500;
+/**
+ * The owner's keys are never held longer than this, whatever the notice is doing: room for the paste, its Enter and
+ * two more Enters `OWNER_HOLD_AFTER_ENTER_MS` apart when the box still shows the notice.
+ */
+const OWNER_HOLD_MAX_MS = 5_000;
+const MAX_ALIASES = 500;
+
+/**
+ * Bytes the terminal emits on its own (focus in/out, cursor and device reports, mouse): not the owner typing.
+ * Everything else that reaches the PTY from the terminal is (keys, Enter, Backspace, arrows, a paste).
+ */
+const TERMINAL_REPORT = /^\x1b\[(?:I|O|\?[\d;]*c|\d+;\d+R|<[\d;]+[Mm]|M[\s\S]{3})$/;
+export const isOwnerTyping = (data: string): boolean => data !== '' && !TERMINAL_REPORT.test(data);
+
+/** Session messages that can go in as one paste (plain text, no image, no command). */
+const mergeable = (item: Item): boolean =>
+  item.from === 'session' &&
+  (item.request.imagePaths?.length ?? 0) === 0 &&
+  (item.request.mode ?? 'normal') === 'normal' &&
+  item.request.opensScreen !== true &&
+  !/^[/!]/.test(item.text.trimStart());
 
 const CAUSE_WORKING = 'entra na próxima pausa do Claude';
 const CAUSE_STARTING = 'entra assim que o Claude ficar pronto';
@@ -186,6 +234,19 @@ export class SendDriver {
   private disposed = false;
   /** Echo filter: how many copies of a signal each origin delivered (`kind\0text`). */
   private readonly seen = new Map<string, { hook: number; transcript: number; at: number }>();
+  /** Last time the owner typed in the terminal (`null`: never). */
+  private ownerTypedAt: number | null = null;
+  /** Last time a key of the owner actually reached the PTY (typed through, or released after being held). */
+  private ownerWrittenAt: number | null = null;
+  /** The owner typed and the box has not been seen empty since: his text may be in it. */
+  private ownerBoxDirty = false;
+  /** The owner's keys held while a session message was being written, in order. */
+  private held: { data: string; forward: (data: string) => void }[] = [];
+  private heldSince: number | null = null;
+  private ownerTimer: unknown = undefined;
+  private holdTimer: unknown = undefined;
+  /** A session message merged into another: its id answers for the one that carries it (`carrierOf`). */
+  private readonly aliases = new Map<string, string>();
 
   constructor(private readonly ports: SendDriverPorts) {}
 
@@ -193,9 +254,14 @@ export class SendDriver {
 
   enqueue(request: SendRequest): string {
     const id = `send-${++this.seq}-${this.ports.now().toString(36)}`;
+    const from = request.from ?? 'owner';
     this.items.push({
       id,
       request,
+      from,
+      text: request.text,
+      enterWrittenAt: null,
+      lastEnterAt: null,
       createdAt: this.ports.now(),
       mode: request.mode ?? 'normal',
       machine: null,
@@ -214,9 +280,39 @@ export class SendDriver {
       this.ports.clearTimeout(old.timer);
       this.items = this.items.filter((i) => i !== old);
     }
+    // The owner's message goes before a notice that has not written anything yet.
+    if (from === 'owner') this.demoteWaitingSession();
     this.pump();
     this.publish();
     return id;
+  }
+
+  /** The send that carries `id`: itself, or the notice it was merged into while waiting for the owner. */
+  carrierOf(id: string): string {
+    return this.aliases.get(id) ?? id;
+  }
+
+  /**
+   * A keystroke (or paste) of the owner in this tab's terminal, on its way to the PTY. `forward` writes it: now, or
+   * right after the Enter of a session message being written at this very moment (never in the middle of it).
+   */
+  ownerInput(data: string, forward: (data: string) => void): void {
+    if (this.disposed || !isOwnerTyping(data)) {
+      forward(data);
+      return;
+    }
+    const now = this.ports.now();
+    this.ownerTypedAt = now;
+    this.ownerBoxDirty = true;
+    if (this.held.length > 0 || this.sessionWriting(now)) {
+      this.held.push({ data, forward });
+      this.heldSince ??= now;
+      this.armHoldTimer();
+    } else this.writeOwner(data, forward);
+    this.demoteWaitingSession();
+    this.armOwnerTimer(now);
+    this.pump();
+    this.publish();
   }
 
   getItems(): readonly SendItemView[] {
@@ -250,7 +346,14 @@ export class SendDriver {
   /** The hidden terminal drew something: feed the active machine a fresh screen. */
   onScreen(): void {
     const item = this.items.find(isActive);
-    if (item === undefined) return;
+    if (item === undefined) {
+      // A notice waiting for the owner: the box he just emptied (his Enter) lets it go.
+      if (this.held.length > 0 || this.items.some((i) => i.machine === null)) {
+        this.pump();
+        this.publish();
+      }
+      return;
+    }
     this.feedScreen(item);
     this.pump();
     this.publish();
@@ -311,7 +414,7 @@ export class SendDriver {
 
   /** Drops a finished send from the list (the real transcript row took over). */
   dismiss(id: string): void {
-    const item = this.items.find((i) => i.id === id);
+    const item = this.items.find((i) => i.id === this.carrierOf(id));
     if (item === undefined) return;
     this.ports.clearTimeout(item.timer);
     item.dismissed = true;
@@ -321,7 +424,9 @@ export class SendDriver {
   }
 
   dispose(): void {
+    this.releaseHeld();
     this.disposed = true;
+    this.ports.clearTimeout(this.ownerTimer);
     for (const item of this.items) this.ports.clearTimeout(item.timer);
     this.items = [];
     this.view = [];
@@ -361,16 +466,22 @@ export class SendDriver {
     this.dispatch(item, { type: 'screen', now: this.ports.now(), screen: { lines: this.ports.readLines() } });
   }
 
-  /** Starts the next message when none is active. */
+  /** Starts the next message when none is active: the owner's first; a session message only when he is not typing. */
   private pump(): void {
     if (this.disposed) return;
     for (;;) {
       if (this.items.some(isActive)) return;
-      const next = this.items.find((i) => i.machine === null);
-      if (next === undefined) return;
+      let next = this.items.find((i) => i.machine === null && i.from === 'owner');
+      if (next === undefined) {
+        const waiting = this.items.filter((i) => i.machine === null);
+        if (waiting.length === 0 || this.ownerHolds()) return;
+        next = this.mergeWaiting(waiting);
+      }
+      next.enterWrittenAt = null;
+      next.lastEnterAt = null;
       const input: SendInput = {
         id: next.id,
-        text: next.request.text,
+        text: next.text,
         imagePaths: next.request.imagePaths,
         mode: next.mode,
         firstPaste: this.sentCount === 0,
@@ -410,6 +521,13 @@ export class SendDriver {
     for (const effect of effects) {
       switch (effect.type) {
         case 'write':
+          if (effect.data === '\r' && item.from === 'session') {
+            // An Enter written again (the first one looked lost) once a key of the owner reached the box would submit
+            // HIS text with it. Keys still held never reached it: then the Enter is safe, and wanted.
+            if (item.enterWrittenAt !== null && this.ownerWrittenAt !== null && this.ownerWrittenAt >= item.enterWrittenAt) break;
+            item.enterWrittenAt ??= this.ports.now();
+            item.lastEnterAt = this.ports.now();
+          }
           this.ports.write(effect.data);
           if (effect.data === '\r' && item.request.opensScreen === true) this.ports.opensScreen?.();
           break;
@@ -452,8 +570,117 @@ export class SendDriver {
     this.publish();
   }
 
+  // ------------------------------------------------------------- the owner first
+
+  /** The owner typed a moment ago, or typed and the box has not been seen empty since: notices wait. */
+  private ownerHolds(): boolean {
+    if (this.ownerTypedAt === null) return false;
+    if (this.ports.now() - this.ownerTypedAt < OWNER_QUIET_MS) {
+      this.armOwnerTimer(this.ownerTypedAt);
+      return true;
+    }
+    if (this.ownerBoxDirty && readInputText(this.ports.readLines()) === '') this.ownerBoxDirty = false;
+    // Text of his still in the box (or a box that cannot be read): wait for him to send it. A screen update (his
+    // Enter) looks again; there is no clock, so a notice never fails for waiting.
+    return this.ownerBoxDirty;
+  }
+
+  /** Looks again when the quiet time after the owner's last key is over. */
+  private armOwnerTimer(typedAt: number): void {
+    this.ports.clearTimeout(this.ownerTimer);
+    const delay = Math.max(0, typedAt + OWNER_QUIET_MS - this.ports.now());
+    this.ownerTimer = this.ports.setTimeout(() => {
+      this.ownerTimer = undefined;
+      if (this.disposed) return;
+      this.pump();
+      this.publish();
+    }, delay);
+  }
+
+  /** While keys are held, looks again on a short beat (the cap must hold even without a screen update). */
+  private armHoldTimer(): void {
+    if (this.holdTimer !== undefined) return;
+    this.holdTimer = this.ports.setTimeout(() => {
+      this.holdTimer = undefined;
+      if (this.disposed || this.held.length === 0) return;
+      this.publish();
+      if (this.held.length > 0) this.armHoldTimer();
+    }, 100);
+  }
+
+  /**
+   * A session message is in the middle of its write (paste written and Enter not yet, or Enter written and the box
+   * not cleared yet): a key of the owner now would land inside it, or be submitted with it. When the box still shows
+   * the notice `OWNER_HOLD_AFTER_ENTER_MS` after its last Enter, that Enter looks lost: it is written again here,
+   * while his keys are still held (the box holds only the notice), and they keep waiting for the box to clear.
+   */
+  private sessionWriting(now: number): boolean {
+    if (this.heldSince !== null && now - this.heldSince >= OWNER_HOLD_MAX_MS) return false;
+    const item = this.items.find((i) => i.from === 'session' && isActive(i));
+    const m = item?.machine;
+    if (item === undefined || m == null) return false;
+    if (m.phase === 'typing') return true;
+    if (m.phase !== 'confirming') return false;
+    if (m.step !== 'await-ack' || item.enterWrittenAt === null || item.lastEnterAt === null) return true;
+    const box = readInputText(this.ports.readLines());
+    if (box === null || box === '') return false;
+    if (now - item.lastEnterAt < OWNER_HOLD_AFTER_ENTER_MS) return true;
+    // A key of his already in the box: an Enter now would submit it too (the same rule as the machine's resend).
+    if (this.ownerWrittenAt !== null && this.ownerWrittenAt >= item.enterWrittenAt) return false;
+    this.ports.write('\r');
+    item.lastEnterAt = now;
+    return true;
+  }
+
+  /** Writes one key of the owner to the PTY now. */
+  private writeOwner(data: string, forward: (data: string) => void): void {
+    this.ownerWrittenAt = this.ports.now();
+    forward(data);
+  }
+
+  /** Writes the owner's held keys, in order. */
+  private releaseHeld(): void {
+    const held = this.held;
+    this.held = [];
+    this.heldSince = null;
+    this.ports.clearTimeout(this.holdTimer);
+    this.holdTimer = undefined;
+    for (const key of held) this.writeOwner(key.data, key.forward);
+  }
+
+  /** A session message that has not written anything yet goes back to waiting (the owner comes first). */
+  private demoteWaitingSession(): void {
+    const item = this.items.find((i) => i.from === 'session' && isActive(i));
+    const m = item?.machine;
+    if (item === undefined || m == null || m.phase !== 'waiting-cli' || m.attempts > 0 || m.interruptSent) return;
+    this.ports.clearTimeout(item.timer);
+    item.timer = undefined;
+    item.machine = null;
+    item.label = 'na fila';
+    item.reason = undefined;
+    item.canDiscard = false;
+  }
+
+  /** The notices that piled up while the owner typed go in as one message (none is lost: each id answers for it). */
+  private mergeWaiting(waiting: readonly Item[]): Item {
+    const carrier = waiting[0];
+    if (!mergeable(carrier)) return carrier;
+    const rest = waiting.slice(1).filter(mergeable);
+    if (rest.length === 0) return carrier;
+    carrier.text = [carrier.text, ...rest.map((i) => i.text)].join('\n');
+    for (const item of rest) {
+      for (const [alias, to] of this.aliases) if (to === item.id) this.aliases.set(alias, carrier.id);
+      this.aliases.set(item.id, carrier.id);
+      this.ports.clearTimeout(item.timer);
+    }
+    while (this.aliases.size > MAX_ALIASES) this.aliases.delete(this.aliases.keys().next().value as string);
+    this.items = this.items.filter((i) => !rest.includes(i));
+    return carrier;
+  }
+
   private publish(): void {
     if (this.disposed) return;
+    if (this.held.length > 0 && !this.sessionWriting(this.ports.now())) this.releaseHeld();
     const active = this.items.find(isActive);
     const activeCause = active !== undefined ? queuedCause(active, undefined) : undefined;
     this.view = this.items.map((item): SendItemView => {
@@ -465,9 +692,9 @@ export class SendDriver {
       const leftover = m !== null && m.phase === 'waiting-cli' && m.leftoverShown !== null ? { text: m.leftoverShown, canDiscard: item.canDiscard } : null;
       return {
         id: item.id,
-        text: m?.text ?? item.request.text,
+        text: m?.text ?? item.text,
         images: m?.images ?? item.request.imagePaths ?? [],
-        kind: m?.kind ?? (item.request.text.startsWith('!') ? 'shell' : item.request.text.startsWith('/') ? 'slash' : 'prompt'),
+        kind: m?.kind ?? (item.text.startsWith('!') ? 'shell' : item.text.startsWith('/') ? 'slash' : 'prompt'),
         mode: m?.mode ?? item.mode,
         state,
         label: state === 'pending' ? 'na fila' : item.label,

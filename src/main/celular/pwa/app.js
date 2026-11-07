@@ -6,6 +6,7 @@
 (function () {
   var CHAVE_TOKEN = 'donel-ledger-token';
   var LIMIAR = 0.28; // fração da largura que confirma o gesto
+  var PRAZO_ESCREVER_MS = 30000; // escrever na carta: sem resposta nisso, mostra que não confirmou (o texto fica)
 
   // Glifos próprios (traço simples, sem copiar arte de baralho nenhum).
   var GLIFOS = {
@@ -96,19 +97,55 @@
     avisoTimer = setTimeout(function () { aviso.hidden = true; }, 3500);
   }
 
+  /** `opcoes.prazoMs`: sem resposta nesse tempo, desiste com o erro `prazo` (a rede caiu no meio e o pedido ficou pendurado). */
   function api(caminho, opcoes) {
     opcoes = opcoes || {};
     var headers = { Authorization: 'Bearer ' + (token() || '') };
     if (opcoes.body) headers['Content-Type'] = 'application/json';
-    return fetch(caminho, { method: opcoes.method || 'GET', headers: headers, body: opcoes.body, cache: 'no-store' }).then(function (resposta) {
-      if (resposta.status === 401) {
-        guardarToken(null);
-        mostrarPareamento();
-        throw new Error('nao-pareado');
-      }
-      return resposta;
-    });
+    var controle = opcoes.prazoMs && typeof AbortController === 'function' ? new AbortController() : null;
+    var relogio = controle ? setTimeout(function () { controle.abort(); }, opcoes.prazoMs) : null;
+    return fetch(caminho, { method: opcoes.method || 'GET', headers: headers, body: opcoes.body, cache: 'no-store', signal: controle ? controle.signal : undefined }).then(
+      function (resposta) {
+        clearTimeout(relogio);
+        if (resposta.status === 401) {
+          guardarToken(null);
+          mostrarPareamento();
+          throw new Error('nao-pareado');
+        }
+        return resposta;
+      },
+      function (erro) {
+        clearTimeout(relogio);
+        throw controle && controle.signal.aborted ? new Error('prazo') : erro;
+      },
+    );
   }
+
+  // ---- rascunho do que o dono escreve na carta ----
+  // Fica neste celular até o PC confirmar que recebeu: sobrevive a recarregar a fila, fechar o app e a rede cair.
+
+  var CHAVE_RASCUNHO = 'donel-escrever:';
+
+  function lerRascunho(itemId) {
+    try {
+      var valor = JSON.parse(localStorage.getItem(CHAVE_RASCUNHO + itemId) || 'null');
+      return valor && typeof valor.texto === 'string' && valor.texto ? valor : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function guardarRascunho(itemId, rascunho) {
+    try {
+      if (rascunho && rascunho.texto) localStorage.setItem(CHAVE_RASCUNHO + itemId, JSON.stringify(rascunho));
+      else localStorage.removeItem(CHAVE_RASCUNHO + itemId);
+    } catch (e) {
+      /* sem armazenamento: o texto fica só na tela */
+    }
+  }
+
+  /** Envios em andamento: recarregar a fila agora trocaria a carta que espera a resposta. */
+  var enviando = 0;
 
   // ---- pareamento ----
 
@@ -247,11 +284,11 @@
     } else if (prova.tipo === 'imagem') {
       var img = el('img');
       img.alt = prova.rotulo;
-      img.addEventListener('click', function () { img.classList.toggle('ampliada'); });
+      ampliarAoTocar(img, prova.rotulo);
       bloco.appendChild(img);
       baixar(caminho).then(function (url) { if (url) img.src = url; });
     } else if (prova.tipo === 'prototipo') {
-      bloco.appendChild(prototipo(item, prova));
+      bloco.appendChild(prototipoComBotao(item, prova));
     } else if (prova.tipo === 'video') {
       var botao = el('button', 'prova-carregar', 'Ver o vídeo');
       botao.type = 'button';
@@ -270,6 +307,17 @@
       bloco.appendChild(botao);
     }
     return bloco;
+  }
+
+  /** Tocar no print abre a tela cheia com zoom (zoom.js), fora da carta. */
+  function ampliarAoTocar(img, rotulo) {
+    img.classList.add('ampliavel');
+    img.title = 'Toque para ampliar';
+    img.addEventListener('click', function (e) {
+      if (!img.src || !window.DonelZoom) return;
+      e.stopPropagation();
+      window.DonelZoom.abrirImagem(img.src, rotulo);
+    });
   }
 
   function baixar(caminho) {
@@ -323,24 +371,37 @@
     frame.setAttribute('referrerpolicy', 'no-referrer');
     frame.title = 'Protótipo anexado à entrega';
     caixa.appendChild(frame);
-    var cheia = el('button', 'proto-cheia', '⤢ Tela cheia');
-    cheia.type = 'button';
-    cheia.addEventListener('click', function () {
-      var aberta = caixa.classList.toggle('cheia');
-      cheia.textContent = aberta ? '✕ Fechar' : '⤢ Tela cheia';
+    // Cada iframe pede o seu bilhete (é de uso único): a tela cheia abre um quadro novo, do tamanho da tela.
+    function enderecoNovo() {
+      return api('/api/prova-bilhete?item=' + encodeURIComponent(item.id) + '&prova=' + encodeURIComponent(prova.id))
+        .then(function (resposta) { return resposta.ok ? resposta.json() : null; })
+        .catch(function () { return null; })
+        .then(function (dados) { return dados && dados.bilhete ? '/api/prova-html?b=' + encodeURIComponent(dados.bilhete) : null; });
+    }
+    caixa.abrirCheia = function () {
+      if (window.DonelZoom) window.DonelZoom.abrirPrototipo(enderecoNovo, item.titulo);
+    };
+    enderecoNovo().then(function (url) {
+      if (url) frame.src = url;
+      else caixa.replaceChild(el('p', 'proto-falhou', 'Não consegui abrir o protótipo. Toque em atualizar.'), frame);
     });
-    caixa.appendChild(cheia);
-    api('/api/prova-bilhete?item=' + encodeURIComponent(item.id) + '&prova=' + encodeURIComponent(prova.id))
-      .then(function (resposta) { return resposta.ok ? resposta.json() : null; })
-      .catch(function () { return null; })
-      .then(function (dados) {
-        if (dados && dados.bilhete) frame.src = '/api/prova-html?b=' + encodeURIComponent(dados.bilhete);
-        else caixa.replaceChild(el('p', 'proto-falhou', 'Não consegui abrir o protótipo. Toque em atualizar.'), frame);
-      });
     return caixa;
   }
 
-  /** Print (amplia ao tocar), vídeo (toca dentro da carta) ou protótipo (roda dentro da carta). */
+  /** O protótipo do verso: o botão de tela cheia fica embaixo do quadro, nunca por cima dos controles dele. */
+  function prototipoComBotao(item, prova) {
+    var caixa = prototipo(item, prova);
+    var cheia = el('button', 'proto-cheia', '⤢ Tela cheia');
+    cheia.type = 'button';
+    cheia.addEventListener('click', caixa.abrirCheia);
+    caixa.appendChild(cheia);
+    return caixa;
+  }
+
+  /**
+   * Print (toque abre em tela cheia com zoom), vídeo (toca dentro da carta) ou protótipo (roda dentro da carta).
+   * O elemento leva `abrirCheia`: o "⤢ Tela cheia" do pé da carta abre a prova principal por ele.
+   */
   function midia(item, prova) {
     if (prova.tipo === 'prototipo') return prototipo(item, prova);
     var caminho = '/api/prova?item=' + encodeURIComponent(item.id) + '&prova=' + encodeURIComponent(prova.id);
@@ -349,12 +410,19 @@
       video.controls = true;
       video.setAttribute('playsinline', '');
       baixar(caminho).then(function (url) { if (url) video.src = url; });
+      video.abrirCheia = function () {
+        var pedir = video.requestFullscreen || video.webkitEnterFullscreen;
+        if (pedir) pedir.call(video);
+      };
       return video;
     }
     var img = el('img', 'A-midia');
     img.alt = prova.rotulo;
-    img.addEventListener('click', function () { img.classList.toggle('ampliada'); });
+    ampliarAoTocar(img, prova.rotulo);
     baixar(caminho).then(function (url) { if (url) img.src = url; });
+    img.abrirCheia = function () {
+      if (img.src && window.DonelZoom) window.DonelZoom.abrirImagem(img.src, prova.rotulo);
+    };
     return img;
   }
 
@@ -380,6 +448,8 @@
       caixa.appendChild(lista);
       return caixa;
     }
+    // Print, vídeo ou protótipo: a prova é o palco da carta (`abrirCheia` abre a principal em tela cheia).
+    caixa.className = 'vis vis-midia';
     if (visual.tipo === 'antes-depois') {
       var antes = provaPorId(item, visual.antes);
       var depois = provaPorId(item, visual.depois);
@@ -388,15 +458,19 @@
       [['Antes', antes], ['Depois', depois]].forEach(function (lado) {
         var col = el('div');
         col.appendChild(el('div', 'leg', lado[0]));
-        col.appendChild(midia(item, lado[1]));
+        var m = midia(item, lado[1]);
+        col.appendChild(m);
         par.appendChild(col);
+        caixa.abrirCheia = m.abrirCheia; // fica a do "depois"
       });
       caixa.appendChild(par);
       return caixa;
     }
     var prova = provaPorId(item, visual.prova);
     if (!prova || (prova.tipo !== 'imagem' && prova.tipo !== 'video' && prova.tipo !== 'prototipo')) return null;
-    caixa.appendChild(midia(item, prova));
+    var principal = midia(item, prova);
+    caixa.appendChild(principal);
+    caixa.abrirCheia = principal.abrirCheia;
     return caixa;
   }
 
@@ -426,15 +500,17 @@
     titulo.appendChild(el('div', 'A-nome', item.titulo));
     titulo.appendChild(el('h2', null, c.pergunta));
     frente.interna.appendChild(titulo);
-    var rolagem = el('div', 'A-rola');
     var visual = c.visual ? montarVisual(item, c.visual) : null;
-    if (visual) rolagem.appendChild(visual);
+    // Com print, vídeo ou protótipo, a prova é o palco: ocupa a carta, e o que decidir fica ao lado (tela larga)
+    // ou numa gaveta recolhida embaixo (celular), aberta pela barra de decisão. Sem eles, a frente rola como antes.
+    var palco = !!(visual && visual.classList.contains('vis-midia'));
+    var decide = el('div', 'A-decide');
     if (rec) {
       var faixa = el('p', 'A-rec');
       faixa.appendChild(document.createTextNode('Recomendo '));
       faixa.appendChild(el('b', null, rec.rotulo));
       faixa.appendChild(document.createTextNode(': ' + c.porque));
-      rolagem.appendChild(faixa);
+      decide.appendChild(faixa);
     }
     var opcoes = el('div', 'opcoes');
     c.opcoes.forEach(function (o) {
@@ -447,14 +523,62 @@
       ctx.botoes.push(b);
       opcoes.appendChild(b);
     });
-    rolagem.appendChild(opcoes);
-    rolagem.appendChild(montarEscrever(ctx));
-    frente.interna.appendChild(rolagem);
+    decide.appendChild(opcoes);
+    decide.appendChild(montarEscrever(ctx));
+    if (palco) decide.appendChild(el('p', 'A-risco', c.risco));
+    var corpoFrente;
+    if (palco) {
+      corpoFrente = el('div', 'A-palco');
+      corpoFrente.appendChild(visual);
+      var gaveta = el('div', 'A-gaveta');
+      var fecharGaveta = el('button', 'A-gaveta-fechar', '▾ Recolher');
+      fecharGaveta.type = 'button';
+      gaveta.appendChild(fecharGaveta);
+      gaveta.appendChild(decide);
+      corpoFrente.appendChild(gaveta);
+      var barra = el('div', 'A-barra');
+      if (rec) {
+        var atalho = el('button', 'opcao-atalho');
+        atalho.type = 'button';
+        atalho.appendChild(el('small', null, 'Recomendo'));
+        atalho.appendChild(el('b', null, rec.rotulo));
+        atalho.addEventListener('click', function () { escolher(ctx, rec, atalho); });
+        ctx.botoes.push(atalho);
+        barra.appendChild(atalho);
+      }
+      var caminhos = el('button', 'A-caminhos', c.opcoes.length + ' caminhos ▴');
+      caminhos.type = 'button';
+      caminhos.setAttribute('aria-expanded', 'false');
+      barra.appendChild(caminhos);
+      var alternarGaveta = function (aberta) {
+        corpoFrente.classList.toggle('aberta', aberta);
+        caminhos.setAttribute('aria-expanded', aberta ? 'true' : 'false');
+      };
+      caminhos.addEventListener('click', function () { alternarGaveta(!corpoFrente.classList.contains('aberta')); });
+      fecharGaveta.addEventListener('click', function () { alternarGaveta(false); });
+      // Um texto que não saiu (ou que ainda não foi enviado) abre a gaveta: o dono vê o que escreveu e o Enviar.
+      if (ctx.temRascunho) alternarGaveta(true);
+    } else {
+      corpoFrente = el('div', 'A-rola');
+      if (visual) corpoFrente.appendChild(visual);
+      corpoFrente.appendChild(decide);
+    }
+    frente.interna.appendChild(corpoFrente);
+    if (palco) {
+      frente.face.classList.add('com-palco');
+      frente.interna.appendChild(barra);
+    }
     var pe = el('footer', 'A-pe');
     var selo = el('span', 'A-selo ' + item.risco);
     selo.appendChild(el('i', null, 'risco ' + item.risco));
     selo.appendChild(el('span', null, c.risco));
     pe.appendChild(selo);
+    if (palco && visual.abrirCheia) {
+      var cheia = el('button', 'A-virar A-cheia', '⤢ Tela cheia');
+      cheia.type = 'button';
+      cheia.addEventListener('click', visual.abrirCheia);
+      pe.appendChild(cheia);
+    }
     var virar = el('button', 'A-virar', '↻ Virar');
     virar.type = 'button';
     pe.appendChild(virar);
@@ -522,6 +646,7 @@
    * para quem fez (ou ao Líder) e a carta continua esperando; escolher uma opção com o texto escrito leva o texto junto.
    */
   function montarEscrever(ctx) {
+    var itemId = ctx.item.id;
     var bloco = el('div', 'escrever');
     var abrir = el('button', 'A-escrever', '✎ Escrever para ' + ctx.item.quemEntregou + ' (pergunta, ajuste, outra opção)');
     abrir.type = 'button';
@@ -531,49 +656,147 @@
     texto.maxLength = 2000;
     texto.rows = 3;
     texto.placeholder = 'Escreva ou dite pelo microfone do teclado.';
-    var dica = el('small', null, 'Enviar manda agora. Se você escolher um caminho com isto escrito, vai junto da decisão.');
-    var enviar = el('button', null, 'Enviar');
+    var dica = el('small', null, 'Mandar à sessão entrega o texto agora a ' + ctx.item.quemEntregou + ' (fechada, vai ao Líder). Não decide a carta; se você escolher um caminho com isto escrito, vai junto.');
+    var falha = el('div', 'A-falhou');
+    falha.hidden = true;
+    falha.setAttribute('role', 'alert');
+    var estado = el('p', 'A-estado');
+    estado.hidden = true;
+    estado.setAttribute('aria-live', 'polite');
+    var enviar = el('button', null, 'Mandar à sessão');
     enviar.type = 'button';
     caixa.appendChild(texto);
     caixa.appendChild(dica);
+    caixa.appendChild(falha);
+    caixa.appendChild(estado);
     caixa.appendChild(enviar);
-    var recibos = el('div');
+    var recibos = el('div', 'A-recibos');
     bloco.appendChild(abrir);
     bloco.appendChild(caixa);
     bloco.appendChild(recibos);
     ctx.texto = texto;
-    // O mesmo pedidoId enquanto o texto não muda: um reenvio (rede caiu, dois toques) não manda duas vezes.
+
+    function mostrarRecibo(valor, recibo) {
+      var linha = el('div', 'A-enviado');
+      linha.appendChild(el('p', null, '“' + valor + '”'));
+      linha.appendChild(el('small', null, recibo));
+      recibos.appendChild(linha);
+      return linha;
+    }
+
+    // O que o dono já escreveu nesta carta fica nela (gravado no Oráculo, não só neste celular).
+    var recebidos = {};
+    (ctx.item.conversa || []).forEach(function (fala) {
+      if (fala.de !== 'voce') return;
+      if (fala.pedidoId) recebidos[fala.pedidoId] = true;
+      mostrarRecibo(fala.texto, fala.recibo || '');
+    });
+
+    // O mesmo pedidoId enquanto o texto não muda: um reenvio (rede caiu, dois toques, app reaberto) não manda duas vezes.
     var pedido = null;
-    texto.addEventListener('input', function () { pedido = null; });
+    function mostrarFalha(motivo) {
+      falha.textContent = '';
+      if (!motivo) {
+        falha.hidden = true;
+        enviar.textContent = 'Mandar à sessão';
+        return;
+      }
+      falha.appendChild(el('b', null, 'Não saiu: ' + motivo));
+      falha.appendChild(el('span', null, 'O texto continua guardado aqui, mesmo se você fechar o app.'));
+      falha.hidden = false;
+      enviar.textContent = 'Tentar de novo';
+    }
+    function guardar(motivo) {
+      guardarRascunho(itemId, { texto: texto.value, pedidoId: pedido, falha: motivo || null });
+    }
+    function abrirCaixa(focar) {
+      caixa.hidden = false;
+      setTimeout(function () {
+        if (focar) texto.focus({ preventScroll: true });
+        // Na gaveta do celular o Enviar fica embaixo do texto: traz o botão para a vista, acima da barra.
+        enviar.scrollIntoView({ block: 'nearest' });
+      }, 60);
+    }
+
+    var guardado = lerRascunho(itemId);
+    if (guardado && guardado.pedidoId && recebidos[guardado.pedidoId]) {
+      // O PC recebeu, mas a resposta se perdeu no caminho: já está na carta, o rascunho sai.
+      guardarRascunho(itemId, null);
+      guardado = null;
+    }
+    if (guardado) {
+      texto.value = guardado.texto;
+      pedido = guardado.pedidoId || null;
+      caixa.hidden = false;
+      mostrarFalha(guardado.falha);
+      ctx.temRascunho = true;
+    }
+
+    texto.addEventListener('input', function () {
+      pedido = null;
+      mostrarFalha(null);
+      guardar(null);
+    });
+    texto.addEventListener('focus', function () {
+      // O teclado do celular sobe e encolhe a tela: o Enviar volta para a vista depois.
+      setTimeout(function () { enviar.scrollIntoView({ block: 'nearest' }); }, 350);
+    });
     abrir.addEventListener('click', function () {
-      caixa.hidden = !caixa.hidden;
-      if (!caixa.hidden) setTimeout(function () { texto.focus(); }, 50);
+      if (caixa.hidden) abrirCaixa(true);
+      else caixa.hidden = true;
     });
     enviar.addEventListener('click', function () {
       var valor = texto.value.trim();
       if (!valor) { texto.focus(); return; }
       if (!pedido) pedido = idAleatorio();
+      guardar(null);
+      mostrarFalha(null);
       enviar.disabled = true;
-      enviar.textContent = 'Enviando…';
-      api('/api/comentar', { method: 'POST', body: JSON.stringify({ pedidoId: pedido, itemId: ctx.item.id, texto: valor }) })
-        .then(function (resposta) { return resposta.json().then(function (dados) { return { ok: resposta.ok, dados: dados }; }); })
+      enviar.textContent = 'Mandando…';
+      estado.textContent = 'Enviando para ' + ctx.item.quemEntregou + '…';
+      estado.hidden = false;
+      var demora = setTimeout(function () {
+        estado.textContent = 'Ainda enviando: esperando a sessão receber. Pode sair do app, o texto fica guardado.';
+      }, 5000);
+      enviando++;
+      api('/api/comentar', { method: 'POST', body: JSON.stringify({ pedidoId: pedido, itemId: itemId, texto: valor }), prazoMs: PRAZO_ESCREVER_MS })
+        .then(function (resposta) {
+          return resposta.json().catch(function () { return null; }).then(function (dados) { return { status: resposta.status, ok: resposta.ok, dados: dados }; });
+        })
         .then(function (r) {
-          if (!r.ok) { avisar('Não enviou: ' + ((r.dados && r.dados.mensagem) || 'tente de novo.')); return; }
-          var recibo = el('div', 'A-enviado');
-          recibo.appendChild(el('p', null, '“' + valor + '”'));
-          recibo.appendChild(el('small', null, r.dados.recibo));
-          recibos.appendChild(recibo);
+          if (!r.ok || !r.dados || typeof r.dados.recibo !== 'string') {
+            var motivo = r.dados && r.dados.mensagem ? r.dados.mensagem : 'o PC respondeu com erro (' + r.status + '). Tente de novo.';
+            guardar(motivo);
+            mostrarFalha(motivo);
+            avisar('Não saiu: ' + motivo);
+            return;
+          }
+          guardarRascunho(itemId, null);
+          var recibo = mostrarRecibo(valor, r.dados.recibo);
+          recibo.classList.add('novo');
           texto.value = '';
           pedido = null;
           caixa.hidden = true;
+          avisar('Saiu. ' + r.dados.recibo);
+          setTimeout(function () { recibo.scrollIntoView({ block: 'nearest' }); }, 60);
         })
         .catch(function (erro) {
           if (erro && erro.message === 'nao-pareado') return;
-          avisar('Não enviou: sem conexão com o PC. Tente de novo (não sai duas vezes).');
+          var motivo =
+            erro && erro.message === 'prazo'
+              ? 'o PC não confirmou em ' + PRAZO_ESCREVER_MS / 1000 + ' s (a rede pode ter caído no meio). Pode ter chegado: tentar de novo não manda duas vezes.'
+              : 'sem conexão com o PC. A Tailscale está ligada neste celular?';
+          guardar(motivo);
+          mostrarFalha(motivo);
+          avisar('Não saiu: ' + motivo);
+          setTimeout(function () { enviar.scrollIntoView({ block: 'nearest' }); }, 60);
         })
         .then(function () {
+          clearTimeout(demora);
+          enviando--;
+          estado.hidden = true;
           enviar.disabled = false;
-          enviar.textContent = 'Enviar';
+          if (falha.hidden) enviar.textContent = 'Mandar à sessão';
         });
     });
     return bloco;
@@ -713,7 +936,7 @@
     carta.addEventListener('pointerdown', function (e) {
       if (ctx.ocupado) return;
       if (e.pointerType === 'mouse' && e.button !== 0) return;
-      if (e.target.closest && e.target.closest('a, button, pre, video, img.ampliada')) return;
+      if (e.target.closest && e.target.closest('a, button, pre, video')) return;
       inicio = { x: e.clientX, y: e.clientY, id: e.pointerId };
       modo = null;
       dx = 0;
@@ -778,6 +1001,7 @@
     enviarDecisao(corpo, 0)
       .then(function (resposta) {
         if (resposta.ok || resposta.status === 404) {
+          guardarRascunho(ctx.item.id, null);
           if (resposta.ok) avisar(opcao ? 'Decidido: ' + opcao + '.' : decisao === 'aceitar' ? 'Aceita.' : 'Rejeitada. O motivo foi para quem entregou.');
           remover(ctx);
           return;
@@ -918,7 +1142,9 @@
 
   document.getElementById('atualizar').addEventListener('click', function () { carregar(); });
   document.addEventListener('visibilitychange', function () {
-    if (document.visibilityState === 'visible' && !folhaPendente) carregar();
+    // Com uma prova em tela cheia aberta, recarregar revogaria o print que está na tela.
+    // Com um envio no meio, recarregar trocaria a carta que espera a resposta (o rascunho guardado volta na próxima).
+    if (document.visibilityState === 'visible' && !folhaPendente && enviando === 0 && !(window.DonelZoom && window.DonelZoom.aberto())) carregar();
   });
 
   parearPeloLink().then(carregar).then(prepararAvisos);

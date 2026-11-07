@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
 import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
 import type { ConfigIoDeps } from '../src/main/config-store';
 import { createCelularAuth } from '../src/main/celular/auth';
 import { createLedgerMobilePort } from '../src/main/celular/ledger-port';
@@ -9,6 +9,8 @@ import { proofUrl } from '../src/shared/ledger/channels';
 import type { LedgerActor, LedgerForOwner } from '../src/shared/ledger/contract';
 import { createMobileHandler, startMobileServer, TICKET_TTL_MS, type MobileResponse } from '../src/main/celular/server';
 import { pickTailscaleAddress } from '../src/main/celular/tailscale';
+import { createCardWriter, type OwnerMessage } from '../src/main/ledger-card-writer';
+import type { EntregaCelular } from '../src/shared/celular';
 
 // Ledger no celular — o que quebraria sem o dono ver: o servidor aceitar quem não pareou, subir fora da
 // Tailscale, ou uma decisão do celular gravar duas vezes no ledger.
@@ -166,6 +168,56 @@ describe('servidor do celular', () => {
     expect(decisions(first)).toEqual([expect.objectContaining({ kind: 'aceita', by: { kind: 'dono' } })]);
     expect(ledger.load().doc.tasks[first]!.state).toBe('aceita');
     expect((bodyOf(call('GET', '/api/fila', token)).itens as { id: string }[]).some((item) => item.id === first)).toBe(false);
+  });
+
+  it('escrever na carta: sai uma vez para quem fez e fica na carta; recusado, não grava e diz o motivo', async () => {
+    const { auth, ledger, first } = setup();
+    const sent: OwnerMessage[] = [];
+    let closed = false;
+    const writer = createCardWriter({
+      service: () => ledger,
+      deliver: async (message) => {
+        sent.push(message);
+        return closed ? null : { placeId: message.placeId };
+      },
+    });
+    const handle = createMobileHandler({ auth, ledger: () => createLedgerMobilePort(() => ledger, undefined, () => writer), assets: {}, provasRoot: null });
+    const token = (JSON.parse(atOnce(handle({ method: 'POST', url: '/api/parear', body: JSON.stringify({ codigo: auth.createPairingCode().code, aparelho: 'Android' }) })).body as string) as { token: string }).token;
+    const write = async (body: unknown) => {
+      const response = await handle({ method: 'POST', url: '/api/comentar', authorization: `Bearer ${token}`, body: JSON.stringify(body) });
+      return { status: response.status, body: bodyOf(response) };
+    };
+    const comments = () => ledger.load().doc.tasks[first]!.events.filter((event) => event.kind === 'comentada');
+    const pedido = { pedidoId: 'escrever-0001', itemId: first, texto: 'Pode configurar com a senha do cofre.' };
+
+    // Sucesso: entregue a quem fez, gravado na carta com o id do envio, recibo para o celular.
+    const ok = await write(pedido);
+    expect(ok).toEqual({ status: 200, body: { ok: true, recibo: expect.stringMatching(/^Enviado a /) } });
+    // A resposta se perdeu (a rede caiu) e o celular reenviou: o mesmo recibo, sem mandar nem gravar de novo.
+    expect(await write(pedido)).toEqual(ok);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain('Pode configurar com a senha do cofre.');
+    expect(comments()).toEqual([expect.objectContaining({ text: 'Pode configurar com a senha do cofre.', requestId: 'escrever-0001', by: { kind: 'dono' } })]);
+    // A carta mostra o que foi escrito, com o id do envio (o celular apaga o rascunho guardado por ele).
+    const fila = bodyOf(atOnce(handle({ method: 'GET', url: '/api/fila', authorization: `Bearer ${token}`, body: '' }))).itens as EntregaCelular[];
+    expect(fila.find((item) => item.id === first)?.conversa).toEqual([expect.objectContaining({ de: 'voce', texto: 'Pode configurar com a senha do cofre.', pedidoId: 'escrever-0001' })]);
+
+    // Ninguém aberto: não se perde, fica guardado na carta.
+    closed = true;
+    expect(await write({ ...pedido, pedidoId: 'escrever-0002', texto: 'E me avisa.' })).toEqual({ status: 200, body: { ok: true, recibo: expect.stringContaining('fica guardado na carta') } });
+    expect(comments()).toHaveLength(2);
+
+    // Falha: a carta já fechou. Não manda, não grava, e o motivo volta para o celular mostrar.
+    expect(ledger.apply({ kind: 'dono' }, { op: 'aceitar', id: first }).ok).toBe(true);
+    const refused = await write({ ...pedido, pedidoId: 'escrever-0003', texto: 'Tarde demais.' });
+    expect(refused).toEqual({ status: 409, body: { erro: 'recusada', mensagem: expect.stringContaining('já foi aceita') } });
+    // O app ainda abrindo (sem o escritor da carta): recusa com motivo, sem gravar.
+    const opening = createMobileHandler({ auth, ledger: () => createLedgerMobilePort(() => ledger, undefined, () => null), assets: {}, provasRoot: null });
+    const early = await opening({ method: 'POST', url: '/api/comentar', authorization: `Bearer ${token}`, body: JSON.stringify({ ...pedido, pedidoId: 'escrever-0004' }) });
+    expect(early.status).toBe(409);
+    expect(bodyOf(early).mensagem).toEqual(expect.stringContaining('abrindo'));
+    expect(sent).toHaveLength(2);
+    expect(comments()).toHaveLength(2);
   });
 
   it('a fila leva só o começo da saída, sem segredo; a inteira vem mascarada ao abrir', () => {

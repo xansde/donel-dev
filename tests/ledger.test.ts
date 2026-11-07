@@ -3,12 +3,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
-import { createLedgerService, ledgerProofsDir, nodeLedgerProofFs, runLedgerTool, type LedgerCaller, type LedgerProofFs } from '../src/main/ledger-store';
+import { createLedgerService, ledgerProofsDir, NOT_STARTED_GRACE_MS, nodeLedgerProofFs, passOnTasks, runLedgerTool, type LedgerCaller, type LedgerProofFs } from '../src/main/ledger-store';
 import type { MindscapeBoard } from '../src/shared/mindscape/model';
-import { findCode, LEDGER_SCHEMA_VERSION } from '../src/shared/ledger/contract';
-import { createCardWriter, type OwnerMessage } from '../src/main/ledger-card-writer';
+import { findCode, LEDGER_SCHEMA_VERSION, parseLedgerDoc } from '../src/shared/ledger/contract';
+import { LEADER_OF_ALL } from '../src/shared/mindscape/leader';
+import * as v4 from './fixtures/ledger/contract-v4';
+import { createCardWriter, decisionMessage, type OwnerMessage } from '../src/main/ledger-card-writer';
+import { createLedgerMobilePort } from '../src/main/celular/ledger-port';
 import { buildRemoteProofCommand, fetchRemoteProof } from '../src/main/ledger-remote-proof';
 import { parseLedgerToolCall, type LedgerToolCall } from '../src/shared/ledger/tools';
+import { slackGuard } from '../src/shared/ledger/slack-guard';
+import { deliveryNote } from '../src/shared/ledger/labels';
 
 // Ledger com prova (item 19) — persisted data a channel could erase, and the two rules that live in code:
 // no delivery without proof, and whoever delivered never accepts. Through the MCP port, round trip on disk.
@@ -135,7 +140,7 @@ describe('ledger com prova', () => {
     writeFileSync(file, JSON.stringify(v2));
     const task = { ...v2.tasks['t-0000aaaa'], id: 't-0000aaaa' };
     expect(service().load()).toEqual({ doc: { ...v2, schemaVersion: LEDGER_SCHEMA_VERSION, tasks: { 't-0000aaaa': task } }, readOnly: false });
-    await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', risco: 'alto', titulo: 'Outra tarefa' }));
+    await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco: 'alto', titulo: 'Outra tarefa' }));
     const written = JSON.parse(readFileSync(file, 'utf8')) as { schemaVersion: number; tasks: Record<string, unknown> };
     expect(written.schemaVersion).toBe(LEDGER_SCHEMA_VERSION);
     expect(written.tasks['t-0000aaaa']).toEqual(task);
@@ -242,6 +247,255 @@ describe('ledger com prova', () => {
     if (proof.kind === 'arquivo') expect(readFileSync(join(ledgerProofsDir(join(dir, 'ledger.json')), proof.file), 'utf8')).toBe('<p>protótipo</p>');
   });
 
+  it('passes a task stuck on a gone place to another one, and records who passed it from whom to whom', async () => {
+    const { service } = setup();
+    const created = await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'Corrige o envio', criterio: 'saída do teste', prazo: '2026-11-06', dono: 'place:dev', risco: 'baixo' }));
+    const id = (JSON.parse(created.text) as { id: string }).id;
+    await runLedgerTool(service(), dev, call('tarefa_assumir', { id }));
+    const theo = (estadoDoDev: string | null): LedgerCaller => {
+      const states = new Map(board.map((place) => [place, 'parada']));
+      if (estadoDoDev === null) states.delete('place:dev');
+      else states.set('place:dev', estadoDoDev);
+      return { ...at('place:revisor', 'revisor'), placeStates: new Map([['C:/p', states]]) };
+    };
+    // The owner place alive: nobody else takes it to itself.
+    expect(await runLedgerTool(service(), theo('parada'), call('tarefa_transferir', { id, para: 'seu', motivo: 'eu faço' }))).toMatchObject({ ok: false });
+    // Closed: the place that does the work takes it, the running task goes back to open for it to take.
+    expect(await runLedgerTool(service(), theo('fechada'), call('tarefa_transferir', { id, para: 'seu', motivo: 'o Dev fechou' }))).toMatchObject({ ok: true });
+    let task = service().load().doc.tasks[id]!;
+    expect(task).toMatchObject({ ownerPlaceId: 'place:revisor', state: 'aberta' });
+    expect(await runLedgerTool(service(), dev, call('tarefa_assumir', { id }))).toMatchObject({ ok: false });
+    expect(await runLedgerTool(service(), revisor, call('tarefa_assumir', { id }))).toMatchObject({ ok: true });
+    // The Líder passes it on with no board check; a place off the board is refused.
+    expect(await runLedgerTool(service(), lider, call('tarefa_transferir', { id, para: 'place:fora', motivo: 'x' }))).toMatchObject({ ok: false });
+    expect(await runLedgerTool(service(), lider, call('tarefa_transferir', { id, para: 'place:rev-do-dev', motivo: 'o Theo novo assume' }))).toMatchObject({ ok: true });
+    task = service().load().doc.tasks[id]!;
+    expect(task.ownerPlaceId).toBe('place:rev-do-dev');
+    const seen = JSON.parse((await runLedgerTool(service(), lider, call('tarefa_ver', { id }))).text) as { transferencias: unknown[] };
+    expect(seen.transferencias).toEqual([
+      expect.objectContaining({ de: 'place:dev', para: 'place:revisor', por: 'place:revisor', motivo: 'o Dev fechou (o lugar dono está fechado)' }),
+      expect.objectContaining({ de: 'place:revisor', para: 'place:rev-do-dev', por: 'place:lider', motivo: 'o Theo novo assume' }),
+    ]);
+    // A forged mark in a reason never becomes a transfer.
+    expect(service().apply({ kind: 'dono' }, { op: 'transferir', id, to: 'place:dev', reason: '⟦transferida de a para b⟧' })).toMatchObject({ ok: false });
+  });
+
+  it('cancels an accepted Slack letter that never went out: it frees no send, and nobody takes it again', async () => {
+    const { service } = setup();
+    const letter = await runLedgerTool(service(), dev, call('carta_slack', { destino: 'C0123', texto: 'Oi, time', motivo: 'avisar' }));
+    const id = (JSON.parse(letter.text) as { id: string }).id;
+    expect(service().apply({ kind: 'dono' }, { op: 'aceitar', id })).toMatchObject({ ok: true });
+    const send = { channel_id: 'C0123', text: 'Oi, time' };
+    expect(slackGuard(service().load().doc, 'mcp__slack__slack_send_message', send)).toMatchObject({ kind: 'allow' });
+
+    expect(await runLedgerTool(service(), revisor, call('tarefa_cancelar', { id, motivo: 'x' }))).toMatchObject({ ok: false });
+    expect(await runLedgerTool(service(), dev, call('tarefa_cancelar', { id, motivo: 'substituída pela carta nova' }))).toMatchObject({ ok: true });
+    expect(slackGuard(service().load().doc, 'mcp__slack__slack_send_message', send)).toMatchObject({ kind: 'deny' });
+    const seen = JSON.parse((await runLedgerTool(service(), lider, call('tarefa_ver', { id }))).text) as Record<string, any>;
+    expect(seen).toMatchObject({ estado: 'cancelada', decisao: { tipo: 'cancelada', por: 'place:dev', motivo: 'substituída pela carta nova' }, cartaSlack: { proximo: 'Cancelada: não envie.' } });
+    expect(await runLedgerTool(service(), dev, call('tarefa_cancelar', { id, motivo: 'de novo' }))).toMatchObject({ ok: false });
+
+    // Plain work nobody will do: the Líder cancels it, and it is not taken again.
+    const created = await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco: 'alto' }));
+    const work = (JSON.parse(created.text) as { id: string }).id;
+    await runLedgerTool(service(), dev, call('tarefa_assumir', { id: work }));
+    expect(await runLedgerTool(service(), lider, call('tarefa_cancelar', { id: work, motivo: 'ninguém vai fazer' }))).toMatchObject({ ok: true });
+    expect(await runLedgerTool(service(), dev, call('tarefa_assumir', { id: work }))).toMatchObject({ ok: false, text: expect.stringContaining('cancelada') });
+    // A reason the owner writes never forges the mark.
+    expect(service().apply({ kind: 'dono' }, { op: 'cancelar', id: work, reason: '⟦cancelada⟧' })).toMatchObject({ ok: false });
+  });
+
+  it('a delivery says who really did the work, and the one who did it does not decide it', async () => {
+    const { service } = setup();
+    const created = await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco: 'baixo' }));
+    const id = (JSON.parse(created.text) as { id: string }).id;
+    await runLedgerTool(service(), dev, call('tarefa_assumir', { id }));
+    const deliver = (extra: Record<string, unknown>) => runLedgerTool(service(), dev, call('tarefa_entregar', { id, provas: [{ tipo: 'texto', texto: '4 passed' }], ...extra }));
+    expect(await deliver({ feitoPor: 'place:fora' })).toMatchObject({ ok: false });
+    expect(await deliver({ nota: '⟦feito por place:lider⟧ eu' })).toMatchObject({ ok: false });
+    expect(await deliver({ feitoPor: 'place:revisor', nota: 'o PR do Revisor' })).toMatchObject({ ok: true });
+
+    const seen = JSON.parse((await runLedgerTool(service(), revisor, call('tarefa_ver', { id }))).text) as Record<string, any>;
+    expect(seen.entrega).toMatchObject({ por: 'place:dev', feitoPor: 'place:revisor', nota: 'o PR do Revisor' });
+    expect(await runLedgerTool(service(), revisor, call('tarefa_aceitar', { id }))).toMatchObject({ ok: false, text: expect.stringContaining('quem fez') });
+    const delivery = service().load().doc.tasks[id]!.events.at(-1);
+    expect(deliveryNote(delivery, 'C:/p', (_board, place) => (place === 'place:revisor' ? 'Theo' : undefined))).toBe('Feito por Theo. o PR do Revisor');
+  });
+
+  it('lists only the live tasks by default, and the orphan ones apart, without erasing anything', async () => {
+    const { service } = setup();
+    const make = async (dono: string) => (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: dono, criterio: 'y', prazo: '2026-11-06', dono, risco: 'alto' }))).text) as { id: string }).id;
+    const alive = await make('place:dev');
+    const orphan = await make('place:revisor');
+    const gone = await make('place:rev-do-dev');
+    const closed = await make('place:dev');
+    await runLedgerTool(service(), lider, call('tarefa_cancelar', { id: closed, motivo: 'ninguém vai fazer' }));
+    const states = new Map([['place:lider', 'parada'], ['place:dev', 'trabalhando'], ['place:revisor', 'fechada']]); // rev-do-dev left the board
+    const who: LedgerCaller = { ...lider, placeStates: new Map([['C:/p', states]]) };
+    const list = async (args: Record<string, unknown>) => {
+      const answer = JSON.parse((await runLedgerTool(service(), who, call('tarefa_listar', args))).text) as { faixa: Record<string, number>; tarefas: { id: string; orfa?: string }[] };
+      return { ids: answer.tarefas.map((task) => task.id), faixa: answer.faixa, tarefas: answer.tarefas };
+    };
+    expect((await list({})).ids).toEqual([alive]);
+    expect((await list({})).faixa).toMatchObject({ total: 4, vivas: 1, orfas: 2, fechadas: 1 });
+    const orphans = await list({ situacao: 'orfas' });
+    expect(orphans.ids).toEqual([orphan, gone]);
+    expect(orphans.tarefas[0]!.orfa).toContain('fechado');
+    expect(orphans.tarefas[1]!.orfa).toContain('saiu do quadro');
+    expect((await list({ situacao: 'todas' })).ids).toEqual([alive, orphan, gone, closed]);
+    expect((await list({ estado: 'cancelada' })).ids).toEqual([closed]);
+    // A board the main could not read is unknown: nothing there is orphan.
+    expect(JSON.parse((await runLedgerTool(service(), lider, call('tarefa_listar', {}))).text).tarefas).toHaveLength(3);
+  });
+
+  it('what the current code writes, the v4 code of the installed Alfa reads and rewrites without losing or blocking anything', async () => {
+    const { file, service } = setup();
+    const create = async (dono: string) => (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', dono, risco: 'alto' }))).text) as { id: string }).id;
+    const moved = await create('place:dev');
+    await runLedgerTool(service(), lider, call('tarefa_transferir', { id: moved, para: 'place:revisor', motivo: 'o Dev fechou' }));
+    const done = await create('place:dev');
+    await runLedgerTool(service(), dev, call('tarefa_assumir', { id: done }));
+    const paraODono = {
+      pergunta: 'Ficou pronto. Aceito?',
+      resumo: 'O Revisor fez e o Dev entregou.',
+      opcoes: [
+        { rotulo: 'Aceitar', efeito: 'Fecha.', fecha: 'aceita', recomendada: true },
+        { rotulo: 'Refazer', efeito: 'Volta.', fecha: 'rejeitada' },
+      ],
+      porque: 'A saída do teste mostra.',
+      risco: 'Baixo.',
+    };
+    await runLedgerTool(service(), dev, call('tarefa_entregar', { id: done, provas: [{ tipo: 'texto', texto: '4 passed' }], feitoPor: 'place:revisor', nota: 'o PR', paraODono }));
+    const letter = (JSON.parse((await runLedgerTool(service(), dev, call('carta_slack', { destino: 'C0123', texto: 'Oi', motivo: 'avisar' }))).text) as { id: string }).id;
+    service().apply({ kind: 'dono' }, { op: 'aceitar', id: letter });
+    await runLedgerTool(service(), dev, call('tarefa_cancelar', { id: letter, motivo: 'substituída' }));
+    const replaced = await create('place:dev');
+    const replacer = (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x2', criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco: 'alto', substitui: replaced }))).text) as { id: string }).id;
+    const written = readFileSync(file, 'utf8');
+    expect(JSON.parse(written).schemaVersion).toBe(4);
+
+    // The v4 code reads it as its own (not read-only), with every task and event, and rewrites it after its own write.
+    expect(v4.isNewerLedger(JSON.parse(written))).toBe(false);
+    const asV4 = v4.parseLedgerDoc(JSON.parse(written));
+    expect(asV4).toEqual(parseLedgerDoc(JSON.parse(written)));
+    const next = v4.applyLedgerOp(asV4, { kind: 'dono' }, { op: 'criar', projectPath: 'C:/p', request: 'z', doneWhen: 'z', due: '2026-11-07', ownerPlaceId: 'place:dev', risk: 'alto' }, { now: 9e12, newId: () => 't-0000ffff' });
+    if (!next.ok) throw new Error(next.reason);
+    writeFileSync(file, JSON.stringify(next.doc, null, 2));
+    for (const id of [moved, done, letter, replaced, replacer]) expect(service().load().doc.tasks[id]).toEqual(asV4.tasks[id]);
+
+    // And the current code still reads every fact back.
+    const view = async (id: string) => JSON.parse((await runLedgerTool(service(), lider, call('tarefa_ver', { id }))).text) as Record<string, any>;
+    expect((await view(moved)).transferencias).toEqual([expect.objectContaining({ de: 'place:dev', para: 'place:revisor', motivo: 'o Dev fechou' })]);
+    expect((await view(done)).entrega).toMatchObject({ por: 'place:dev', feitoPor: 'place:revisor', nota: 'o PR' });
+    expect(await view(letter)).toMatchObject({ estado: 'cancelada' });
+    expect(await view(replaced)).toMatchObject({ estado: 'cancelada', decisao: { motivo: `substituída pela ${replacer}` } });
+    expect(await view(replacer)).toMatchObject({ estado: 'aberta', substitui: replaced });
+
+    // Nothing blocks in v4: the new owner takes the moved task; the cancelled letter frees no send there either.
+    const doc = service().load().doc;
+    expect(v4.applyLedgerOp(doc, { kind: 'lugar', placeId: 'place:revisor' }, { op: 'assumir', id: moved }, { now: 9e12, newId: () => 'x' })).toMatchObject({ ok: true });
+    expect(v4.applyLedgerOp(doc, { kind: 'lugar', placeId: 'place:dev' }, { op: 'slack-enviada', id: letter }, { now: 9e12, newId: () => 'x' })).toMatchObject({ ok: false });
+    expect(slackGuard(doc, 'mcp__slack__slack_send_message', { channel_id: 'C0123', text: 'Oi' })).toMatchObject({ kind: 'deny' });
+  });
+
+  it('a decision of the owner by the button, with no words, tells the session that owns it, and the Líder when it is closed', async () => {
+    const { service } = setup();
+    const sent: OwnerMessage[] = [];
+    const writer = createCardWriter({ service, deliver: async (message) => (sent.push(message), { placeId: message.placeId }) });
+    const phone = createLedgerMobilePort(service, undefined, () => writer);
+    // t-c19912b4: the owner accepted a letter on the phone, nobody was told, and it stayed unsent.
+    const letter = (JSON.parse((await runLedgerTool(service(), dev, call('carta_slack', { destino: 'C0123', texto: 'Oi', motivo: 'avisar' }))).text) as { id: string }).id;
+    expect(phone.decidir({ pedidoId: 'pedido-a1234567', itemId: letter, decisao: 'aceitar', motivo: null, opcao: 'Enviar' })).toMatchObject({ ok: true });
+    // A retry of the same request records and tells nothing again.
+    expect(phone.decidir({ pedidoId: 'pedido-a1234567', itemId: letter, decisao: 'aceitar', motivo: null, opcao: 'Enviar' })).toMatchObject({ ok: true });
+    await Promise.resolve();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ placeId: 'place:dev', text: expect.stringContaining('aceitou a carta de Slack') });
+    expect(sent[0]!.text).toContain('Envie agora');
+    expect(sent[0]!.leaderText).toContain('que está fechada');
+
+    // The desktop path (same writer): a reject by the button says why and what not to do.
+    const other = (JSON.parse((await runLedgerTool(service(), dev, call('carta_slack', { destino: 'C0123', texto: 'Oi de novo', motivo: 'avisar' }))).text) as { id: string }).id;
+    const rejected = service().apply({ kind: 'dono' }, { op: 'rejeitar', id: other, reason: '', option: 'Não enviar' });
+    if (!rejected.ok) throw new Error(rejected.reason);
+    await writer.tellDecision(rejected.task);
+    expect(sent[1]!.text).toMatch(/rejeitou a carta de Slack .*Não enviar.*Não envie/);
+    // A letter of the Líder único (no place) goes straight to it.
+    expect(decisionMessage({ ...rejected.task, ownerPlaceId: 'lider' }, undefined)).toMatchObject({ placeId: '', leaderText: expect.not.stringContaining('fechada') });
+  });
+
+  it('the Líder único owns a task passed to it: alive, never orphan, and it takes it', async () => {
+    const { service } = setup();
+    const id = (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco: 'alto' }))).text) as { id: string }).id;
+    expect(await runLedgerTool(service(), dev, call('tarefa_transferir', { id, para: 'lider', motivo: 'só o Líder decide isso' }))).toMatchObject({ ok: true });
+    expect(service().load().doc.tasks[id]).toMatchObject({ ownerPlaceId: 'lider', state: 'aberta' });
+    // Every place of the board is known and "lider" is none of them: still alive, not orphan.
+    const states = new Map(board.map((place) => [place, 'parada']));
+    const who: LedgerCaller = { ...dev, placeStates: new Map([['C:/p', states]]) };
+    const listed = JSON.parse((await runLedgerTool(service(), who, call('tarefa_listar', {}))).text) as { faixa: Record<string, number>; tarefas: { id: string; dono: string; orfa?: string; desconhecida?: string }[] };
+    expect(listed.tarefas).toEqual([expect.objectContaining({ id, dono: 'lider' })]);
+    expect(listed.tarefas[0]!.orfa).toBeUndefined();
+    expect(listed.faixa).toMatchObject({ vivas: 1, orfas: 0, desconhecidas: 0 });
+    // Its board did not answer: the Líder único is no place of it, so the task is still alive, not unknown.
+    const blind = JSON.parse((await runLedgerTool(service(), dev, call('tarefa_listar', {}))).text) as { faixa: Record<string, number>; tarefas: { desconhecida?: string }[] };
+    expect(blind.faixa).toMatchObject({ vivas: 1, orfas: 0, desconhecidas: 0 });
+    expect(blind.tarefas[0]!.desconhecida).toBeUndefined();
+    const liderUnico: LedgerCaller = { projectPath: 'C:/p', placeId: 'lider', roleId: 'lider', boardPlaceIds: ['place:dev'] };
+    expect(await runLedgerTool(service(), liderUnico, call('tarefa_assumir', { id }))).toMatchObject({ ok: true });
+    // A place that is not on the board is still refused.
+    expect(await runLedgerTool(service(), liderUnico, call('tarefa_transferir', { id, para: 'place:fora', motivo: 'x' }))).toMatchObject({ ok: false });
+  });
+
+  it('a place that closed passes its open, running and rejected tasks up, with the record; a delivered one stays', async () => {
+    const { file, service } = setup();
+    const make = async () => (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco: 'baixo' }))).text) as { id: string }).id;
+    const open = await make();
+    const running = await make();
+    await runLedgerTool(service(), dev, call('tarefa_assumir', { id: running }));
+    const delivered = await make();
+    await runLedgerTool(service(), dev, call('tarefa_assumir', { id: delivered }));
+    await runLedgerTool(service(), dev, call('tarefa_entregar', { id: delivered, provas: [{ tipo: 'texto', texto: 'ok' }] }));
+    const rejected = await make();
+    await runLedgerTool(service(), dev, call('tarefa_assumir', { id: rejected }));
+    await runLedgerTool(service(), dev, call('tarefa_entregar', { id: rejected, provas: [{ tipo: 'texto', texto: 'ok' }] }));
+    service().apply({ kind: 'dono' }, { op: 'rejeitar', id: rejected, reason: 'falta o print' });
+
+    // The first live place above is a Líder (`registersForOthers`): it may receive by transfer, the rule is only on creation.
+    const passed = passOnTasks(service(), [{ projectPath: 'C:/p', placeId: 'place:dev', gone: 'fechada', to: 'place:lider' }]);
+    expect(passed).toEqual([{ projectPath: 'C:/p', placeId: 'place:dev', to: 'place:lider', tasks: [{ id: open }, { id: running }, { id: rejected }] }]);
+    const doc = service().load().doc;
+    expect(doc.tasks[open]).toMatchObject({ ownerPlaceId: 'place:lider', state: 'aberta' });
+    expect(doc.tasks[running]).toMatchObject({ ownerPlaceId: 'place:lider', state: 'aberta' });
+    expect(doc.tasks[rejected]).toMatchObject({ ownerPlaceId: 'place:lider', state: 'rejeitada' });
+    expect(doc.tasks[delivered]).toMatchObject({ ownerPlaceId: 'place:dev', state: 'entregue' });
+    const seen = JSON.parse((await runLedgerTool(service(), lider, call('tarefa_ver', { id: running }))).text) as { transferencias: unknown[] };
+    expect(seen.transferencias).toEqual([expect.objectContaining({ de: 'place:dev', para: 'place:lider', por: 'place:dev', motivo: 'passada sozinha: o lugar place:dev fechou' })]);
+    // Nothing orphan left on the board with the Dev closed.
+    const states = new Map([['place:lider', 'parada'], ['place:dev', 'fechada'], ['place:revisor', 'parada'], ['place:rev-do-dev', 'parada']]);
+    const orphans = JSON.parse((await runLedgerTool(service(), { ...lider, placeStates: new Map([['C:/p', states]]) }, call('tarefa_listar', { situacao: 'orfas' }))).text) as { tarefas: unknown[] };
+    expect(orphans.tarefas).toEqual([]);
+    // Asked again, nothing moves twice; the file stays v4 and reads the same in the v4 code of the installed Alfa.
+    expect(passOnTasks(service(), [{ projectPath: 'C:/p', placeId: 'place:dev', gone: 'fechada', to: 'place:lider' }])).toEqual([]);
+    const raw = JSON.parse(readFileSync(file, 'utf8'));
+    expect(raw.schemaVersion).toBe(4);
+    expect(v4.parseLedgerDoc(raw)).toEqual(parseLedgerDoc(raw));
+  });
+
+  it('with nobody live above, the work goes to the Líder único; a place that never started passes only after the grace', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ledger-'));
+    dirs.push(dir);
+    let clock = Date.UTC(2026, 10, 6, 12);
+    const service = createLedgerService({ filePath: join(dir, 'ledger.json'), io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs, now: () => clock });
+    const id = (JSON.parse((await runLedgerTool(service, lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco: 'alto' }))).text) as { id: string }).id;
+    const request = { projectPath: 'C:/p', placeId: 'place:dev', gone: 'nao-comecou' as const, to: 'lider' };
+    clock += NOT_STARTED_GRACE_MS - 60_000;
+    expect(passOnTasks(service, [request])).toEqual([]);
+    clock += 120_000;
+    expect(passOnTasks(service, [request])).toMatchObject([{ to: 'lider', tasks: [{ id }] }]);
+    expect(service.load().doc.tasks[id]).toMatchObject({ ownerPlaceId: 'lider', state: 'aberta' });
+    expect(JSON.parse((await runLedgerTool(service, lider, call('tarefa_ver', { id }))).text).transferencias[0].motivo).toBe('passada sozinha: o lugar place:dev não começou');
+  });
+
   it('reads a ledger written by a newer channel and never writes over it', async () => {
     const { file, service } = setup();
     const newer = JSON.stringify({ schemaVersion: LEDGER_SCHEMA_VERSION + 1, startedAt: null, tasks: {}, novo: true });
@@ -250,5 +504,69 @@ describe('ledger com prova', () => {
     expect(await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', risco: 'alto' }))).toMatchObject({ ok: false });
     expect(readFileSync(file, 'utf8')).toBe(newer);
     expect(existsSync(`${file}.tmp`)).toBe(false);
+  });
+});
+
+describe('órfãs e substituição (06/11)', () => {
+  const idOf = (answer: { text: string }): string => (JSON.parse(answer.text) as { id: string }).id;
+  const make = async (service: () => ReturnType<typeof createLedgerService>, who: LedgerCaller, args: Record<string, unknown>) =>
+    runLedgerTool(service(), who, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', risco: 'alto', ...args }));
+
+  it('counts the same for a session and for the Líder único, and a board that did not answer apart, never as alive', async () => {
+    const { service } = setup();
+    const outroLider: LedgerCaller = { projectPath: 'C:/q', placeId: 'place:q-lider', roleId: 'lider', boardPlaceIds: ['place:q-lider', 'place:q-dev'] };
+    const alive = idOf(await make(service, lider, { dono: 'place:dev' }));
+    const orphan = idOf(await make(service, lider, { dono: 'place:revisor' }));
+    const unknown = idOf(await make(service, outroLider, { dono: 'place:q-dev' }));
+    // C:/p answered; C:/q did not. The main hands every caller of `todos` the same states (index.ts, `withEveryBoard`).
+    const states = new Map([['C:/p', new Map([['place:lider', 'parada'], ['place:dev', 'trabalhando'], ['place:revisor', 'fechada']])]]);
+    const session: LedgerCaller = { ...dev, placeStates: states };
+    const leaderOfAll: LedgerCaller = { projectPath: '', placeId: LEADER_OF_ALL, roleId: 'lider', boardPlaceIds: [], placeStates: states };
+    const list = async (who: LedgerCaller) => JSON.parse((await runLedgerTool(service(), who, call('tarefa_listar', { todos: true }))).text) as { faixa: Record<string, number>; tarefas: Record<string, unknown>[] };
+    const fromSession = await list(session);
+    const fromLeader = await list(leaderOfAll);
+    expect(fromSession.faixa).toMatchObject({ total: 3, vivas: 1, orfas: 1, fechadas: 0, desconhecidas: 1 });
+    expect(fromLeader.faixa).toEqual(fromSession.faixa);
+    // The unknown one stays visible, marked, so nothing vanishes from the list.
+    expect(fromSession.tarefas.map((task) => task.id)).toEqual([alive, unknown]);
+    expect(fromSession.tarefas[1]).toMatchObject({ desconhecida: expect.stringContaining('não respondeu') });
+    expect(fromSession.tarefas[0]).not.toHaveProperty('desconhecida');
+    expect((await list(session)).tarefas.map((task) => task.id)).not.toContain(orphan);
+  });
+
+  it('a new task cancels the one it replaces in the same write, and with no right to cancel nothing is created', async () => {
+    const { service } = setup();
+    const old = idOf(await make(service, lider, { dono: 'place:dev' }));
+    const created = await make(service, lider, { dono: 'place:dev', substitui: old });
+    expect(created.ok).toBe(true);
+    const next = idOf(created);
+    const view = async (id: string) => JSON.parse((await runLedgerTool(service(), lider, call('tarefa_ver', { id }))).text) as Record<string, any>;
+    expect(await view(old)).toMatchObject({ estado: 'cancelada', decisao: { tipo: 'cancelada', por: 'place:lider', motivo: `substituída pela ${next}` } });
+    expect(await view(next)).toMatchObject({ estado: 'aberta', substitui: old });
+
+    // The Revisor may not cancel the Dev's task: refused, it says why, and no task is born.
+    const mine = idOf(await make(service, dev, { dono: 'place:dev' }));
+    const before = Object.keys(service().load().doc.tasks).length;
+    const refused = await make(service, revisor, { dono: 'place:dev', substitui: mine });
+    expect(refused).toMatchObject({ ok: false, text: expect.stringContaining('Não criei') });
+    expect(refused.text).toContain('Só o Líder, o dono ou o lugar dono');
+    expect(Object.keys(service().load().doc.tasks)).toHaveLength(before);
+    expect(service().load().doc.tasks[mine]!.state).toBe('aberta');
+    // A task that does not exist, or one already closed, is not replaced either.
+    expect(await make(service, lider, { dono: 'place:dev', substitui: 't-nao-existe' })).toMatchObject({ ok: false });
+    expect(await make(service, lider, { dono: 'place:dev', substitui: old })).toMatchObject({ ok: false, text: expect.stringContaining('fechada') });
+  });
+
+  it('Líder, Curador and Pesquisa name the place that does the work, never their own', async () => {
+    const { service } = setup();
+    const curador = at('place:rev-do-dev', 'curador');
+    const pesquisa = at('place:revisor', 'pesquisa');
+    for (const [who, args] of [[curador, {}], [pesquisa, { dono: 'place:revisor' }], [lider, { dono: 'seu' }]] as const) {
+      expect(await make(service, who, args)).toMatchObject({ ok: false, text: expect.stringContaining('diga em "dono" o lugar que faz o trabalho') });
+    }
+    expect(Object.keys(service().load().doc.tasks)).toHaveLength(0);
+    expect(await make(service, pesquisa, { dono: 'place:dev' })).toMatchObject({ ok: true });
+    // Every other role keeps the default: the task is its own.
+    expect(await make(service, dev, {})).toMatchObject({ ok: true });
   });
 });

@@ -14,16 +14,38 @@
 // C). Recognising one is deliberately broad: any write method of the Slack Web API (also assembled, `chat.$M`),
 // an incoming webhook, a Composio `SLACK_*` posting slug, the SDK post calls, and any mention of `canal-produto`.
 //
+// Tool names in Portuguese are sends too (owner, 06/11: the Theo West MCP has `slack_enviar_arquivo`): a message
+// (`slack_enviar_mensagem`, `responder_thread`) needs a letter; a file (`slack_enviar_arquivo`) is refused, like
+// any upload, unless an accepted letter carries that file (see below). Reading (`slack_baixar_arquivo`) is not a send.
+//
+// A file (owner, 06/11: "preciso que o theo west seja capaz de ler e enviar arquivos pelo slack"): an UPLOAD tool
+// of a Slack MCP server is read the same way (destination, thread, comment, local path, file name) and passes only
+// with an accepted letter that carries that same file (`SlackLetter.file`). Only `comment`, `initial_comment` and
+// `comentario` are the comment: `text`, `content`, `body` or anything else in an upload is refused, because
+// Slack may show it (or it IS the file) and the letter never did. A letter with a file frees only an upload, one
+// without frees only a message. Composio's uploads (content inline) stay refused: nothing to compare.
+//
+// The letter is for what goes out in the OWNER's name (owner, 06/11: "o envio de cartas era para eu validar as
+// mensagens, agora ele me tornou gargalo"). An agent's OWN bot (the Theo West MCP, its own bot token) does not speak
+// for the owner: a call to one of the servers listed in the config (`slackAgentBots.servers`, empty by default) passes without a letter, upload
+// included, and is recorded in the Oráculo as "enviado pelo bot do agente" for the owner to see later. The decision
+// is by WHO sends (the MCP server), never by the verb: Composio, the user-token `slack` MCP, curl and any upload by
+// the owner's account still need a letter, and an unknown server is still refused.
+//
 // Limit, named on purpose: a hook only sees the call, not what a script written earlier does when it runs
-// (`bash /tmp/posta.sh`). The guarantee is against a mistake, not against a session set on going around it.
+// (`bash /tmp/posta.sh`), nor which token an MCP server named like a bot really holds. The guarantee is against a
+// mistake, not against a session set on going around it.
 
-import { slackLetterSent, type LedgerDoc, type LedgerTask } from './contract';
+import { slackLetterSent, slackLetterText, type LedgerDoc, type LedgerTask } from './contract';
 
 /** One message a tool call would post. */
 export interface SlackSend {
   readonly destination: string;
   readonly thread: string | null;
+  /** The message, or an upload's comment. */
   readonly text: string;
+  /** An upload: the local path the tool sends and the name Slack shows. */
+  readonly file?: { readonly path: string; readonly name: string };
 }
 
 export type SlackSendDetection =
@@ -33,8 +55,21 @@ export type SlackSendDetection =
   /** A post whose content cannot be checked (shell, script, workbench code): always refused. */
   | { readonly kind: 'unreadable'; readonly why: string };
 
+/** What the agent's own bot sent (read leniently: it is a record for the owner, not a check). */
+export interface AgentBotSend {
+  readonly server: string;
+  readonly tool: string;
+  readonly destination: string;
+  readonly thread: string | null;
+  readonly text: string;
+  /** The file, on an upload. */
+  readonly file: string | null;
+}
+
 export type SlackGuardVerdict =
   | { readonly kind: 'not-slack' }
+  /** Sent by an agent's own bot: no letter; the caller records it. */
+  | { readonly kind: 'agent-bot'; readonly send: AgentBotSend }
   | { readonly kind: 'allow'; readonly letterIds: readonly string[] }
   | { readonly kind: 'deny'; readonly reason: string };
 
@@ -47,6 +82,10 @@ const THREAD_KEYS = ['thread_ts', 'threadTs', 'thread_id', 'thread', 'ts_thread'
 const TEXT_KEYS = ['text', 'message', 'markdown_text', 'markdown', 'content', 'body', 'texto', 'mensagem'];
 /** Options that change nothing the owner reads. Anything else in a send is refused. */
 const HARMLESS_KEYS = ['unfurl_links', 'unfurl_media', 'mrkdwn', 'link_names', 'parse'];
+/** An upload's comment. Never `text`/`content`/`body`: in an upload those may be the file itself, or a second text. */
+const COMMENT_KEYS = ['comment', 'initial_comment', 'comentario'];
+const FILE_PATH_KEYS = ['caminho', 'path', 'file_path', 'filePath'];
+const FILE_NAME_KEYS = ['nome', 'filename', 'file_name', 'fileName'];
 
 /** An absent value: a field the call did not really use. */
 function isEmpty(value: unknown): boolean {
@@ -66,7 +105,7 @@ function oneValue(input: Record<string, unknown>, keys: readonly string[], norma
     if (isEmpty(input[key])) continue;
     const text = asText(input[key]);
     if (text === null) return { conflict: `o campo "${key}" não é texto` };
-    if (found !== null && normalize(found) !== normalize(text)) return { conflict: `os campos de ${keys === TEXT_KEYS ? 'texto' : keys === THREAD_KEYS ? 'thread' : 'destino'} discordam entre si` };
+    if (found !== null && normalize(found) !== normalize(text)) return { conflict: `os campos de ${keys === TEXT_KEYS || keys === COMMENT_KEYS ? 'texto' : keys === THREAD_KEYS ? 'thread' : keys === FILE_PATH_KEYS ? 'caminho do arquivo' : keys === FILE_NAME_KEYS ? 'nome do arquivo' : 'destino'} discordam entre si` };
     found ??= text;
   }
   return { value: found };
@@ -88,19 +127,45 @@ function readSend(raw: unknown): SlackSend | { unreadable: string } {
   return { destination: d, thread: (thread as { value: string | null }).value, text: t };
 }
 
+/** The name Slack shows for a path without an explicit name: its last part. */
+export function fileNameOf(path: string): string {
+  return path.trim().split(/[\\/]/).filter(Boolean).at(-1) ?? '';
+}
+
+/** Reads an upload of a Slack MCP server: destination, thread, comment, local path and name, nothing else. */
+function readUpload(raw: unknown): SlackSend | { unreadable: string } {
+  const input = isRecord(raw) ? raw : {};
+  const known = new Set([...DESTINATION_KEYS, ...THREAD_KEYS, ...COMMENT_KEYS, ...FILE_PATH_KEYS, ...FILE_NAME_KEYS, ...HARMLESS_KEYS]);
+  const extra = Object.keys(input).filter((key) => !known.has(key) && !isEmpty(input[key]));
+  if (extra.length > 0) return { unreadable: `a chamada leva ${extra.map((key) => `"${key}"`).join(', ')}, que a carta não mostra ao dono (num arquivo, só destino, thread, comentário, caminho e nome)` };
+  const fields = [
+    oneValue(input, DESTINATION_KEYS, normalizeDestination),
+    oneValue(input, THREAD_KEYS, normalizeThread),
+    oneValue(input, COMMENT_KEYS, normalizeText),
+    oneValue(input, FILE_PATH_KEYS, normalizeFilePath),
+    oneValue(input, FILE_NAME_KEYS, (v) => v.trim()),
+  ];
+  for (const field of fields) if ('conflict' in field) return { unreadable: field.conflict };
+  const [destination, thread, comment, path, name] = fields.map((field) => (field as { value: string | null }).value);
+  if (destination == null || comment == null) return { unreadable: 'não achei o destino e o comentário do arquivo desta chamada' };
+  if (path == null || !path.trim()) return { unreadable: 'não achei o caminho do arquivo desta chamada' };
+  return { destination, thread: thread ?? null, text: comment, file: { path: normalizeFilePath(path), name: name?.trim() || fileNameOf(path) } };
+}
+
 /** A Slack action name (MCP tool part or Composio slug) that puts a message in Slack in the owner's name. */
 function isPostingAction(name: string): boolean {
   const n = name.toLowerCase();
   if (n.includes('draft')) return false;
   return (
     /(sends?|posts?|repl(y|ies)|schedules?|updates?|edits?)[_-]?(an?[_-]?)?(slack[_-]?)?(ephemeral[_-]?|direct[_-]?)?(message|msg|reply|thread|to[_-]?(an?[_-]?)?(channel|thread|user|dm|slack))|chat[_.-]?(post|update|schedule|me)|send[_-]?dm|(message|msg)[_-]?(send|post)/.test(n) ||
+    /(enviar|mandar|postar|publicar|responder|agendar|editar|atualizar)[_-]?((a|o|um|uma|no|na|em)[_-]?)?(mensagem|msg|resposta|thread|fio|canal|dm)/.test(n) ||
     isUploadAction(n)
   );
 }
 
-/** A file to Slack: it posts in the channel (with a comment or not), and a letter carries no file. */
+/** A file to Slack: it posts in the channel (with a comment or not), and only a letter with that file frees it. */
 function isUploadAction(name: string): boolean {
-  return /upload|create[_-]?a?[_-]?file|share[_-]?file|file[_-]?(share|send|post)|remote[_-]?file[_-]?share/i.test(name);
+  return /upload|create[_-]?a?[_-]?file|share[_-]?file|file[_-]?(share|send|post)|remote[_-]?file[_-]?share|(enviar|mandar|subir|postar|publicar|compartilhar|anexar)[_-]?((o|um)[_-]?)?(arquivo|anexo|imagem|print)/i.test(name);
 }
 
 const COMPOSIO_SLACK = /^SLACK_/i;
@@ -140,6 +205,56 @@ export function freeTextSlackPost(text: string): string | null {
   return null;
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// The agents' own bots
+
+/**
+ * MCP servers that post with an agent's OWN bot (not the owner's account). EMPTY on purpose: the names come only
+ * from the config (`slackAgentBots.servers`), never hardcoded (a Seazone integration is off by default). Empty =
+ * every Slack post needs a letter.
+ */
+export const AGENT_BOT_SERVERS: readonly string[] = [];
+
+/** A server name the guards accept in the list: plain, so it goes as is into the offline `grep` too. */
+export function isAgentBotServerName(name: string): boolean {
+  return /^[A-Za-z0-9_-]{1,64}$/.test(name);
+}
+
+/** The MCP server of a tool name (`mcp__<server>__<tool>`), or `null`. */
+function mcpServerOf(toolName: string): { server: string; action: string } | null {
+  if (!toolName.startsWith('mcp__')) return null;
+  const parts = toolName.split('__');
+  return { server: parts[1] ?? '', action: parts.slice(2).join('__') };
+}
+
+function firstText(input: Record<string, unknown>, keys: readonly string[]): string | null {
+  for (const key of keys) {
+    const text = asText(input[key]);
+    if (text !== null && text.trim()) return text;
+  }
+  return null;
+}
+
+const BOT_TEXT_KEYS = [...TEXT_KEYS, 'initial_comment', 'comment', 'comentario', 'legenda', 'caption', 'title', 'titulo'];
+const BOT_FILE_KEYS = ['file_path', 'filePath', 'path', 'file', 'filename', 'caminho', 'arquivo', 'imagem'];
+
+/** A post by one of `botServers`, read for the record; `null` = not a bot server, or not a post. Pure. */
+export function detectAgentBotSend(toolName: string, toolInput: unknown, botServers: readonly string[] = AGENT_BOT_SERVERS): AgentBotSend | null {
+  const mcp = mcpServerOf(toolName);
+  if (!mcp || !botServers.some((name) => name.toLowerCase() === mcp.server.toLowerCase())) return null;
+  if (!isPostingAction(mcp.action)) return null;
+  const input = isRecord(toolInput) ? toolInput : {};
+  const upload = isUploadAction(mcp.action);
+  return {
+    server: mcp.server,
+    tool: mcp.action,
+    destination: firstText(input, [...DESTINATION_KEYS, 'channels']) ?? '(destino não informado)',
+    thread: firstText(input, THREAD_KEYS),
+    text: firstText(input, upload ? BOT_TEXT_KEYS : TEXT_KEYS) ?? '',
+    file: upload ? firstText(input, BOT_FILE_KEYS) : null,
+  };
+}
+
 /** Does this tool call post a message to Slack, and with what? Pure. */
 export function detectSlackSend(toolName: string, toolInput: unknown): SlackSendDetection {
   if (toolName === 'Bash' || toolName === 'PowerShell') {
@@ -147,12 +262,13 @@ export function detectSlackSend(toolName: string, toolInput: unknown): SlackSend
     const why = freeTextSlackPost(command);
     return why ? { kind: 'unreadable', why: `o comando ${why}, e pelo terminal o envio não pode ser conferido` } : { kind: 'none' };
   }
-  if (!toolName.startsWith('mcp__')) return { kind: 'none' };
-  const parts = toolName.split('__');
-  const server = parts[1] ?? '';
-  const action = parts.slice(2).join('__');
+  const mcp = mcpServerOf(toolName);
+  if (!mcp) return { kind: 'none' };
+  const { server, action } = mcp;
   if (server === 'donel') return { kind: 'none' }; // the letter itself, and the Oráculo
-  const read = (args: unknown) => (isUploadAction(String(action)) ? { unreadable: 'manda arquivo ao Slack, e a carta não leva arquivo' } : readSend(args));
+  const inlineUpload = { unreadable: 'manda arquivo ao Slack com o conteúdo dentro da chamada, e a carta só confere um arquivo pelo caminho (use a ferramenta de upload do MCP do Slack)' };
+  // A Slack MCP server's upload is read by the path; anything else that uploads (Composio) cannot be compared.
+  const read = (args: unknown) => (isUploadAction(String(action)) ? (/slack/i.test(server) ? readUpload(args) : inlineUpload) : readSend(args));
   // Composio and alike: the action is a `SLACK_*` slug, as the tool itself or inside an execute call.
   if (COMPOSIO_SLACK.test(action)) {
     if (!isPostingAction(action)) return { kind: 'none' };
@@ -161,7 +277,7 @@ export function detectSlackSend(toolName: string, toolInput: unknown): SlackSend
   if (COMPOSIO_META.test(action)) return { kind: 'none' };
   const inner = composioActions(toolInput).filter((entry) => isPostingAction(entry.slug));
   if (inner.length > 0)
-    return { kind: 'structured', sends: inner.map((entry) => (isUploadAction(entry.slug) ? { unreadable: 'manda arquivo ao Slack, e a carta não leva arquivo' } : readSend(entry.args))) };
+    return { kind: 'structured', sends: inner.map((entry) => (isUploadAction(entry.slug) ? inlineUpload : readSend(entry.args))) };
   if (/slack/i.test(server) && isPostingAction(action)) return { kind: 'structured', sends: [read(toolInput)] };
   // Any other tool (Composio workbench, a remote bash, a runner): a post written inside it cannot be read.
   let flat = '';
@@ -186,12 +302,17 @@ function normalizeThread(value: string | null | undefined): string {
   return (value ?? '').trim();
 }
 
+/** A local path, compared exactly as the session wrote it (the same machine's path, in the letter and the call). */
+export function normalizeFilePath(value: string): string {
+  return value.trim();
+}
+
 /** The exact text, with line endings unified (a Windows `\r\n` and a `\n` are the same message). */
 export function normalizeText(value: string): string {
   return value.replace(/\r\n?/g, '\n');
 }
 
-/** Letters that may still free a send: accepted, never used. */
+/** Letters that may still free a send: accepted, and never sent (or only sent once, and that send failed). */
 export function openSlackLetters(doc: LedgerDoc): LedgerTask[] {
   return Object.values(doc.tasks)
     .filter((task) => task.slack !== undefined && task.state === 'aceita' && !slackLetterSent(task))
@@ -200,10 +321,16 @@ export function openSlackLetters(doc: LedgerDoc): LedgerTask[] {
 
 function sameSend(task: LedgerTask, send: SlackSend): boolean {
   const slack = task.slack!;
+  // A letter without a file (also one whose file an older app dropped) never frees an upload, and vice versa.
+  const sameFile =
+    slack.file === undefined
+      ? send.file === undefined
+      : send.file !== undefined && normalizeFilePath(slack.file.path) === normalizeFilePath(send.file.path) && slack.file.name.trim() === send.file.name.trim();
   return (
     normalizeDestination(slack.destination) === normalizeDestination(send.destination) &&
     normalizeThread(slack.thread) === normalizeThread(send.thread) &&
-    normalizeText(slack.text) === normalizeText(send.text)
+    normalizeText(slackLetterText(slack)) === normalizeText(send.text) &&
+    sameFile
   );
 }
 
@@ -211,12 +338,17 @@ export const SLACK_GUARD_HOW_TO =
   'Toda mensagem ao Slack em nome do dono precisa antes de uma carta ACEITA no Oráculo Harrow. ' +
   'Faça assim: (1) chame a ferramenta carta_slack do servidor donel com "destino" (o mesmo valor que vai no campo de canal ou pessoa da ferramenta de envio), "thread" (o thread_ts, se for resposta), "texto" (a mensagem EXATA, caractere por caractere) e "motivo"; ' +
   '(2) avise que está esperando o dono e espere: veja a decisão com tarefa_ver <id>, sem ficar consultando em laço; ' +
-  '(3) aceita: envie pela ferramenta do Slack (MCP do Slack, ou a ação SLACK_SEND_MESSAGE do Composio) o MESMO texto ao MESMO destino e thread, uma vez só, só com esses campos: sem blocks, anexos, arquivo nem agendamento. Pelo terminal (curl, scripts, canal-produto) ou por código o envio é sempre recusado, porque lá não dá para conferir; ' +
+  '(3) aceita: envie pela ferramenta do Slack (MCP do Slack, ou a ação SLACK_SEND_MESSAGE do Composio) o MESMO texto ao MESMO destino e thread, uma vez só, só com esses campos: sem blocks, anexos nem agendamento. Arquivo: a carta leva também "arquivo" (o caminho local, igual ao da ferramenta) e "arquivoNome" se o nome no Slack for outro; o texto é o comentário; e o envio vai pela ferramenta de upload do MCP do Slack com esses mesmos campos (o comentário em "comentario", "comment" ou "initial_comment"). Pelo terminal (curl, scripts, canal-produto) ou por código o envio é sempre recusado, porque lá não dá para conferir; ' +
   '(4) rejeitada: não envie; o motivo (ou o que o dono escreveu na carta) diz o ajuste; crie outra carta com o texto ajustado. ' +
   'Não tente outro caminho de envio: todos passam por esta trava.';
 
-/** The decision on one tool call, given the ledger. `doc` null = the ledger could not be read (refuse). Pure. */
-export function slackGuard(doc: LedgerDoc | null, toolName: string, toolInput: unknown): SlackGuardVerdict {
+/**
+ * The decision on one tool call, given the ledger. `doc` null = the ledger could not be read (refuse). `botServers`:
+ * the MCP servers of the agents' own bots, whose posts need no letter. Pure.
+ */
+export function slackGuard(doc: LedgerDoc | null, toolName: string, toolInput: unknown, botServers: readonly string[] = AGENT_BOT_SERVERS): SlackGuardVerdict {
+  const bot = detectAgentBotSend(toolName, toolInput, botServers);
+  if (bot) return { kind: 'agent-bot', send: bot };
   const detection = detectSlackSend(toolName, toolInput);
   if (detection.kind === 'none') return { kind: 'not-slack' };
   const deny = (why: string): SlackGuardVerdict => ({ kind: 'deny', reason: `Envio ao Slack bloqueado pelo Donel Dev: ${why} ${SLACK_GUARD_HOW_TO}` });
@@ -232,4 +364,100 @@ export function slackGuard(doc: LedgerDoc | null, toolName: string, toolInput: u
     used.add(letter.id);
   }
   return { kind: 'allow', letterIds: [...used] };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// What did the send answer? (t-8119864a: the MCP answered "fetch failed", nothing reached Slack, and the letter
+// was spent.) The letter is spent when the guard frees the call; only an EXPLICIT failure gives it back, once.
+// An answer that shows neither (a plain "Message sent", or no answer at all) keeps it spent: "envio sem
+// confirmação". The owner was promised one send, so a doubt never frees another.
+
+export type SlackSendOutcome = { readonly kind: 'confirmado' } | { readonly kind: 'falhou'; readonly why: string } | { readonly kind: 'sem-confirmacao' };
+
+const SLACK_TS = /^\d{6,}\.\d+$/;
+const TS_KEYS = ['ts', 'message_ts', 'messageTs'];
+/** Success in a text: `ok: true`, a message `ts`, or a Slack message link (`…/archives/C…/p1730900000123456`). */
+const TEXT_SUCCESS = [/["']?\bok["']?\s*[:=]\s*true\b/i, /["']?\b(message_)?ts["']?\s*[:=]\s*["']?\d{6,}\.\d+/i, /\/p\d{10,}\b/, /(?<![\d.])\d{10}\.\d{6}(?![\d.])/];
+/** Failure in a text: Slack's `ok: false`, and network errors that leave no doubt nothing went out. */
+const TEXT_FAILURE = [
+  /["']?\bok["']?\s*[:=]\s*false\b/i,
+  /["']?\bisError["']?\s*[:=]\s*true\b|["']?\bsuccess(ful)?["']?\s*[:=]\s*false\b/i,
+  /fetch failed|socket hang up|network error|getaddrinfo|\b(ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH|ECONNABORTED)\b/i,
+];
+
+interface Signals {
+  success: boolean;
+  failure: string | null;
+}
+
+function short(text: string): string {
+  const line = text.trim().replace(/\s+/g, ' ');
+  return line.length > 200 ? `${line.slice(0, 199)}…` : line;
+}
+
+function scan(response: unknown, out: Signals, depth: number): void {
+  if (depth > 8) return;
+  if (typeof response === 'string') {
+    const text = response.trim();
+    if (/^[[{]/.test(text)) {
+      try {
+        scan(JSON.parse(text), out, depth + 1);
+        return;
+      } catch {
+        // not JSON: read it as text below
+      }
+    }
+    if (TEXT_SUCCESS.some((pattern) => pattern.test(text))) out.success = true;
+    if (TEXT_FAILURE.some((pattern) => pattern.test(text))) out.failure ??= short(text);
+    return;
+  }
+  if (Array.isArray(response)) {
+    for (const item of response) scan(item, out, depth + 1);
+    return;
+  }
+  if (!isRecord(response)) return;
+  if (response.isError === true || response.ok === false || response.successful === false || response.success === false) {
+    const error = response.error ?? response.message ?? response.content;
+    out.failure ??= typeof error === 'string' && error.trim() ? short(error) : 'a ferramenta respondeu com erro';
+  }
+  if (response.ok === true) out.success = true;
+  if (TS_KEYS.some((key) => typeof response[key] === 'string' && SLACK_TS.test((response[key] as string).trim()))) out.success = true;
+  for (const value of Object.values(response)) if (typeof value === 'string' || typeof value === 'object') scan(value, out, depth + 1);
+}
+
+/**
+ * The answer of a freed send. `event` is the hook (`PostToolUse`, `PostToolUseFailure`); `response` its
+ * `tool_response` (MCP content, Composio result, raw Slack API JSON) and `error` its error text, if any. A signal of
+ * success and one of failure in the same answer is a doubt, and a doubt spends the letter. Pure.
+ */
+export function slackSendOutcome(event: string, response: unknown, error?: unknown): SlackSendOutcome {
+  const signals: Signals = { success: false, failure: null };
+  scan(response, signals, 0);
+  if (event === 'PostToolUseFailure') signals.failure ??= typeof error === 'string' && error.trim() ? short(error) : 'a chamada terminou em erro';
+  if (signals.failure !== null && !signals.success) return { kind: 'falhou', why: signals.failure };
+  if (signals.success && signals.failure === null) return { kind: 'confirmado' };
+  return { kind: 'sem-confirmacao' };
+}
+
+
+/**
+ * The link of the message an agent's bot just posted, from the send's answer: a permalink in it, or one built from
+ * the channel and the `ts` (`https://slack.com/archives/<canal>/p<ts>` opens the message in the workspace); `null`
+ * = the answer shows neither. Pure.
+ */
+export function slackMessageLink(response: unknown, send: Pick<AgentBotSend, 'destination' | 'thread'>): string | null {
+  let flat = '';
+  try {
+    flat = typeof response === 'string' ? response : (JSON.stringify(response) ?? '');
+  } catch {
+    return null;
+  }
+  const unescaped = flat.replace(/\\+"/g, '"').replace(/\\\//g, '/');
+  const permalink = /https:\/\/[A-Za-z0-9.-]*slack\.com\/(archives|files)\/[^\s"'<>\\]+/.exec(unescaped);
+  if (permalink) return permalink[0];
+  const ts = /"(?:message_)?ts"\s*:\s*"(\d{6,}\.\d+)"/.exec(unescaped)?.[1];
+  const channel = /"channel(?:_id)?"\s*:\s*"([CGD][A-Z0-9]{6,})"/.exec(unescaped)?.[1] ?? (/^[CGD][A-Z0-9]{6,}$/.test(send.destination) ? send.destination : null);
+  if (!ts || !channel) return null;
+  const base = `https://slack.com/archives/${channel}/p${ts.replace('.', '')}`;
+  return send.thread && send.thread !== ts ? `${base}?thread_ts=${send.thread}&cid=${channel}` : base;
 }

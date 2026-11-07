@@ -146,6 +146,11 @@ export interface TerminalPaneProps {
   /** Ação real de fechar a aba na barra de abas (T010): App.tsx remove a aba do array (unmount cuida do teardown do PTY). */
   onCloseTab?: () => void;
   /**
+   * 06/11 — the owner's keys (and pastes) pass through here on their way to the PTY: `forward` writes them now, or
+   * right after the Enter of a notice from another session being written at that moment. Absent: written directly.
+   */
+  ownerInputGate?: (data: string, forward: (data: string) => void) => void;
+  /**
    * T009 — semáforo de sessões (FR-010). TerminalPane é quem conhece o
    * `ptyId` de verdade (nasce da resposta de `pty.create`, nunca sobe pro
    * App.tsx) — por isso é ele quem assina `semaphore.onUpdate` e "levanta" o
@@ -300,6 +305,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     roleId,
     leaderOfAll,
     onCloseTab,
+    ownerInputGate,
     onStateChange,
     onAliveChange,
     onAccountResolved,
@@ -314,6 +320,17 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<XTerm | null>(null);
   const ptyIdRef = useRef<string | null>(null);
+  const ownerInputGateRef = useRef(ownerInputGate);
+  ownerInputGateRef.current = ownerInputGate;
+  /** What the owner types or pastes into the terminal (never the app's own writes). */
+  const ownerToPty = (data: string): void => {
+    const forward = (bytes: string): void => {
+      if (ptyIdRef.current) window.donel.pty.input(ptyIdRef.current, bytes);
+    };
+    const gate = ownerInputGateRef.current;
+    if (gate) gate(data, forward);
+    else forward(data);
+  };
   const unsubscribeDataRef = useRef<(() => void) | null>(null);
   const unsubscribeExitRef = useRef<(() => void) | null>(null);
   const unsubscribeSemaphoreRef = useRef<(() => void) | null>(null);
@@ -707,7 +724,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
             // CA-4/CA-4b — só a tecla, nada mais: sem arquivo temp, sem
             // base64, sem spinner nosso (o `Pasting…`/`[Image #N]` são
             // desenhados pelo próprio CLI). Sequência provada no SPIKE-1.
-            if (ptyIdRef.current) window.donel.pty.input(ptyIdRef.current, IMAGE_PASTE_SEQUENCE);
+            ownerToPty(IMAGE_PASTE_SEQUENCE);
             return undefined;
           }
 
@@ -717,7 +734,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
             // CA-3 — bracketed paste só em aba claude (o CLI liga `\x1b[?2004h`
             // no boot); em aba shell o PowerShell não pede isso, escreve cru.
             const payload = isClaudeTab ? `\x1b[200~${normalized}\x1b[201~` : normalized;
-            if (ptyIdRef.current) window.donel.pty.input(ptyIdRef.current, payload);
+            ownerToPty(payload);
           });
         })
         .catch((error: unknown) => {
@@ -731,7 +748,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     });
 
     term.onData((data) => {
-      if (ptyIdRef.current) window.donel.pty.input(ptyIdRef.current, data);
+      ownerToPty(data);
     });
 
     spawnSession();

@@ -14,6 +14,9 @@ test('o app abre e uma sessão nasce num PTY', async () => {
   try {
     const { window } = launched;
     await dismissPatchNotes(window);
+    // Oráculo no centro (06/11) — a new machine opens on the Oráculo; the terminals are one click away.
+    await expect(window.locator('[data-testid="oracle-center"]')).toBeVisible();
+    await window.locator('[data-testid="center-view-switch"]').getByRole('radio', { name: 'Terminais' }).click();
     await expect(window.locator('[data-testid="empty-state"]')).toBeVisible();
     expect(await window.evaluate(() => typeof (window as unknown as { donel?: unknown }).donel)).toBe('object');
     await launchClaudeTab(window, { name: 'boot' });

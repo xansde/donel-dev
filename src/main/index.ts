@@ -21,9 +21,9 @@ import { LEADER_ROLE_ID, ROLES_CHANNELS, type RoleSaveResult, type SessionRole }
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
-import { createLedgerService, guardSlackSend, ledgerFilePath, ledgerProofsDir, nodeLedgerProofFs, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
-import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerSnapshot } from '../shared/ledger/channels';
-import { isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, type LedgerProof } from '../shared/ledger/contract';
+import { createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, nodeLedgerProofFs, passOnTasks, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
+import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerSnapshot } from '../shared/ledger/channels';
+import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
 import type { LedgerToolCall } from '../shared/ledger/tools';
 import type { BoardBridge } from './board-bridge';
 import { MCP_SERVER_NAME, type BrowserToolOutcome } from '../shared/browser/mcp';
@@ -274,6 +274,7 @@ import type { AccountMod } from './accounts/account-mod';
 // do diretório, cofre, e a limpeza obrigatória no fim (sucesso ou falha).
 import { IsolatedLoginManager, type IsolatedLoginFsDeps } from './accounts/isolated-login';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
+import { sanitizeLayoutPrefs, type LayoutPrefs } from '../shared/layoutPrefs';
 import { adoptRefreshedActivePair, applyAccountSwitch, createSystemClaudeStateIoDeps, readCurrentCredentialPair } from './accounts/claude-state';
 import { accountFingerprintFromClaudeJsonText } from './accounts/credentials-file';
 import { createLocalMod } from './accounts/mods/local-mod';
@@ -1697,7 +1698,7 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
   const hooksOn = hookBridge !== null && hookBridge.port !== null;
   if (hooksOn) {
     // Slack só com carta, fatia 4: the remote session outlives the app; with it down, a post to Slack is refused.
-    files.push({ name: 'slack-guard.sh', content: buildSlackOfflineGuardScript({ port: fresh.hookPort, token: fresh.hookToken }) });
+    files.push({ name: 'slack-guard.sh', content: buildSlackOfflineGuardScript({ port: fresh.hookPort, token: fresh.hookToken, agentBotServers: appConfig.slackAgentBots.servers }) });
     const settings = buildSessionHooksSettings({
       port: fresh.hookPort,
       token: fresh.hookToken,
@@ -2228,6 +2229,14 @@ function registerConfigIpcHandlers(): void {
   ipcMain.handle(CONFIG_CHANNELS.setAutoModePrefs, (_event, prefs: Partial<AutoModePrefs>): AppConfigDto => {
     const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
     appConfig = { ...appConfig, autoMode: sanitizeAutoModePrefs({ ...appConfig.autoMode, ...patch }, appConfig.autoMode) };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
+  /** Oráculo no centro — atualização parcial; o renderer aplica na hora e isto só lembra. */
+  ipcMain.handle(CONFIG_CHANNELS.setLayoutPrefs, (_event, prefs: Partial<LayoutPrefs>): AppConfigDto => {
+    const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
+    appConfig = { ...appConfig, layout: sanitizeLayoutPrefs({ ...appConfig.layout, ...patch }, appConfig.layout) };
     persistAppConfig();
     return toAppConfigDto(appConfig);
   });
@@ -2940,6 +2949,8 @@ function registerMindscapeIpcHandlers(): void {
 let ledgerService: LedgerService | null = null;
 /** Cartas forma A — what the owner writes on a card; born with the board bridge (it delivers through it). */
 let cardWriter: CardWriter | null = null;
+/** Pedir pelo Oráculo — a entrega ao Líder único, ligada quando a ponte do quadro nasce. */
+let deliverPedidoToLeader: ((text: string) => Promise<boolean>) | null = null;
 
 function registerLedgerIpcHandlers(): void {
   const service = createLedgerService({
@@ -2963,6 +2974,7 @@ function registerLedgerIpcHandlers(): void {
   // Cartas forma A — the card shows the proofs (the HTML prototype, a video) by `donel-prova:`.
   registerProofProtocol(protocol, ledgerProofsDir(ledgerFilePath(process.env, app.getPath('userData'))));
   const fromMain = (sender: Electron.WebContents): boolean => getMainWindow()?.webContents.id === sender.id;
+  const cardDiagnostics = createDiagnosticsLog(app.getPath('userData'));
   ipcMain.handle(LEDGER_CHANNELS.load, (): LedgerSnapshot => service.load());
   ipcMain.handle(LEDGER_CHANNELS.decide, (event, raw: unknown): LedgerApplyResult => {
     if (!fromMain(event.sender)) return { ok: false, reason: 'Só a janela do app decide.' };
@@ -2976,15 +2988,37 @@ function registerLedgerIpcHandlers(): void {
       decision.accept === true
         ? service.apply({ kind: 'dono' }, { op: 'aceitar', id: decision.id, ...option, ...(text ? { text } : {}) })
         : service.apply({ kind: 'dono' }, { op: 'rejeitar', id: decision.id, reason: [typeof reason === 'string' ? reason.trim() : '', text].filter(Boolean).join('\n'), ...option });
-    if (result.ok && text) void cardWriter?.tell(result.task, text);
+    // Every decision of the owner, by a button or with words, tells the session that owns it (closed: the Líder).
+    if (result.ok) void cardWriter?.tellDecision(result.task, text);
     return result;
+  });
+  // 06/11 (t-e753b554) — a place gone for good (its tab closed and did not come back, or it never started): the
+  // renderer names who takes the work (reach.ts), the main moves the live tasks with the record.
+  ipcMain.handle(LEDGER_CHANNELS.passOn, (event, raw: unknown): LedgerPassedOn[] => {
+    if (!fromMain(event.sender) || !Array.isArray(raw)) return [];
+    const requests = raw.filter(
+      (item): item is LedgerPassOnRequest =>
+        typeof item === 'object' && item !== null &&
+        typeof item.projectPath === 'string' && typeof item.placeId === 'string' && typeof item.to === 'string' &&
+        (item.gone === 'fechada' || item.gone === 'nao-comecou'),
+    );
+    return passOnTasks(service, requests);
   });
   ipcMain.handle(LEDGER_CHANNELS.comment, async (event, raw: unknown): Promise<LedgerCommentResult> => {
     if (!fromMain(event.sender)) return { ok: false, reason: 'Só a janela do app escreve na carta.' };
     const comment = raw as Partial<LedgerComment> | null;
     if (!comment || typeof comment.id !== 'string' || typeof comment.text !== 'string' || !isRequestId(comment.requestId)) return { ok: false, reason: 'Pedido inválido.' };
     if (!cardWriter) return { ok: false, reason: 'O app ainda está abrindo; tente de novo em instantes.' };
-    return cardWriter.write({ id: comment.id, text: comment.text, requestId: comment.requestId });
+    // t-8fed1d77: a write that "did nothing" left no trace anywhere; now each one leaves a line (never the text).
+    const startedAt = Date.now();
+    const result = await cardWriter.write({ id: comment.id, text: comment.text, requestId: comment.requestId });
+    cardDiagnostics.cardWrite({
+      taskId: comment.id,
+      outcome: !result.ok ? 'refused' : result.deliveredTo === 'lider' ? 'lider' : result.deliveredTo ? 'place' : 'nowhere',
+      durationMs: Date.now() - startedAt,
+      ...(result.ok ? {} : { reason: result.reason }),
+    });
+    return result;
   });
   ipcMain.handle(LEDGER_CHANNELS.proofImage, async (event, taskId: unknown, proofIndex: unknown): Promise<string | null> => {
     if (!fromMain(event.sender) || typeof taskId !== 'string' || typeof proofIndex !== 'number') return null;
@@ -3033,13 +3067,67 @@ function placeNameOf(projectPath: string, placeId: string): string | undefined {
   return appConfig.sessionRegistry[card.sessionId]?.label;
 }
 
+/** The board of a task (the Líder único names no board for a tool that acts by the task id). */
+function taskBoardOf(id: string): string | undefined {
+  try {
+    return ledgerService?.load().doc.tasks[id]?.projectPath;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `estado` of every place of a `sessao_listar` answer (a list, or the Líder único's `{ lugares }`). */
+function placeStatesOf(places: unknown): Map<string, string> {
+  const states = new Map<string, string>();
+  for (const place of Array.isArray(places) ? places : []) {
+    const { id, estado } = (place ?? {}) as { id?: unknown; estado?: unknown };
+    if (typeof id === 'string') states.set(id, typeof estado === 'string' ? estado : '');
+  }
+  return states;
+}
+
+/**
+ * The places of every board with a task not closed (orphans need them), for `tarefa_listar` with `todos`. The same
+ * internal call for the Líder único and for any session (t-04099af0: each used to see only what it reaches, so the
+ * counts differed). A board that did not answer stays out: its tasks count apart, as `desconhecidas`.
+ */
+async function everyBoardPlaceStates(boardBridge: BoardBridge, ptyId: string): Promise<Map<string, Map<string, string>>> {
+  const states = new Map<string, Map<string, string>>();
+  let tasks: LedgerTask[] = [];
+  try {
+    tasks = Object.values(ledgerService?.load().doc.tasks ?? {});
+  } catch {
+    return states;
+  }
+  const pastas = [...new Set(tasks.filter((task) => !isClosed(task)).map((task) => task.projectPath))];
+  if (!pastas.length) return states;
+  const answer = await boardBridge.execute(ptyId, { tool: 'estados_dos_lugares', pastas }).catch(() => null);
+  if (answer?.kind !== 'text') return states;
+  try {
+    const boards = JSON.parse(answer.text) as Record<string, unknown>;
+    for (const pasta of pastas) if (Array.isArray(boards[pasta])) states.set(pasta, placeStatesOf(boards[pasta]));
+  } catch {
+    // every board unknown
+  }
+  return states;
+}
+
+/** `tarefa_listar` with `todos`: the caller's board answer, plus every other board's, from the same call for all. */
+async function withEveryBoard(boardBridge: BoardBridge, ptyId: string, caller: LedgerCaller, call: LedgerToolCall): Promise<LedgerCaller> {
+  if (call.tool !== 'tarefa_listar' || !call.todos) return caller;
+  const states = await everyBoardPlaceStates(boardBridge, ptyId);
+  for (const [pasta, own] of caller.placeStates ?? []) if (!states.has(pasta)) states.set(pasta, new Map(own));
+  return { ...caller, placeStates: states };
+}
+
 async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<{ caller: LedgerCaller; call: LedgerToolCall } | string> {
-  const quadro = call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' ? call.quadro : undefined;
+  const quadro = call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' ? call.quadro : call.tool === 'tarefa_transferir' || call.tool === 'tarefa_cancelar' ? taskBoardOf(call.id) : undefined;
   const base = { placeId: LEADER_OF_ALL, roleId: LEADER_ROLE_ID };
   if (!quadro) {
     if (call.tool === 'tarefa_criar') return 'Você é o Líder único e não tem quadro: diga qual em "quadro" (nome ou pasta).';
     // No board: the list is of every board; the other tools act by the task id.
-    return { caller: { ...base, projectPath: '', boardPlaceIds: [] }, call: call.tool === 'tarefa_listar' ? { ...call, todos: true } : call };
+    if (call.tool !== 'tarefa_listar') return { caller: { ...base, projectPath: '', boardPlaceIds: [] }, call };
+    return { caller: await withEveryBoard(boardBridge, ptyId, { ...base, projectPath: '', boardPlaceIds: [] }, { ...call, todos: true }), call: { ...call, todos: true } };
   }
   const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar', quadro });
   if (list.kind !== 'text') return list.kind === 'error' ? list.text : 'Não consegui ler o quadro.';
@@ -3049,8 +3137,12 @@ async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, cal
   if (call.tool === 'tarefa_criar' && (!call.dono || !reached.includes(call.dono)))
     return `O Líder único não faz a tarefa: diga em "dono" um lugar que você alcança neste quadro (${reached.join(', ') || 'nenhum'}).`;
   const saved = savedBoard(board.pasta);
-  return { caller: { ...base, projectPath: board.pasta, boardPlaceIds: reached, ...(saved ? { board: saved } : {}) }, call };
+  const placeStates = new Map([[board.pasta, placeStatesOf(board.lugares)]]);
+  return { caller: await withEveryBoard(boardBridge, ptyId, { ...base, projectPath: board.pasta, boardPlaceIds: reached, placeStates, ...(saved ? { board: saved } : {}) }, call), call };
 }
+
+/** The board and place of a session, for the record of its agent's bot post (set once the board bridge is up). */
+let slackPlaceOf: ((ptyId: string) => Promise<{ projectPath: string; placeId: string } | null>) | null = null;
 
 /** The caller of a `tarefa_*` tool, from the board the renderer owns (the same answers the session would get). */
 async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<{ caller: LedgerCaller; call: LedgerToolCall } | string> {
@@ -3065,16 +3157,15 @@ async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: Led
   const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar' });
   const places = list.kind === 'text' ? (JSON.parse(list.text) as { id?: unknown }[]) : [];
   const board = savedBoard(who.pasta);
-  return {
-    caller: {
-      projectPath: who.pasta,
-      placeId: who.lugar,
-      ...(typeof who.papel === 'string' ? { roleId: who.papel } : {}),
-      boardPlaceIds: places.map((place) => place.id).filter((id): id is string => typeof id === 'string'),
-      ...(board ? { board } : {}),
-    },
-    call,
+  const caller: LedgerCaller = {
+    projectPath: who.pasta,
+    placeId: who.lugar,
+    ...(typeof who.papel === 'string' ? { roleId: who.papel } : {}),
+    boardPlaceIds: places.map((place) => place.id).filter((id): id is string => typeof id === 'string'),
+    ...(list.kind === 'text' ? { placeStates: new Map([[who.pasta, placeStatesOf(places)]]) } : {}),
+    ...(board ? { board } : {}),
   };
+  return { caller: await withEveryBoard(boardBridge, ptyId, caller, call), call };
 }
 
 async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<BrowserToolOutcome> {
@@ -3086,6 +3177,11 @@ async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: 
   const remote = sshTarget ? (path: string) => fetchRemoteProof(sshTarget, path) : undefined;
   const result = await runLedgerTool(ledgerService, resolved.caller, resolved.call, remote);
   if (!result.ok) return { kind: 'error', text: result.text };
+  // Pedir pelo Oráculo — the task born of an owner's request: his phone shows "virou tarefa" with its name.
+  if (call.tool === 'tarefa_criar' && call.pedidoDoDono) {
+    const created = JSON.parse(result.text) as { id?: unknown };
+    if (typeof created.id === 'string') celularService?.linkPedido(call.pedidoDoDono, { id: created.id, titulo: call.titulo ?? call.pedido.slice(0, 80) });
+  }
   return result.image ? { kind: 'image', base64: result.image.base64, mimeType: result.image.mimeType, text: result.text } : { kind: 'text', text: result.text };
 }
 
@@ -3721,17 +3817,23 @@ void app.whenReady().then(async () => {
     } else {
       cleanupStaleHookSettings(userDataDir);
       curlPath = detectCurlPath();
+      const slackLetters = createSlackLetterGuard(() => ledgerService, {
+        // The agents' own bots post without a letter; each post is recorded on the board and place of its session.
+        agentBotServers: () => appConfig.slackAgentBots.servers,
+        placeOf: (ptyId) => slackPlaceOf?.(ptyId) ?? Promise.resolve(null),
+      });
       const bridge = createHookBridge({
         diagnostics: createDiagnosticsLog(userDataDir),
         autoNeverAsks: () => appConfig.autoMode.neverAsks,
         projectYolo: isTabYolo,
         holdsPendings: () => chatHub !== null,
         // Slack só com carta: a post to Slack passes only with an accepted letter of the Oráculo Harrow.
-        preToolUseGuard: (_ptyId, payload) => guardSlackSend(ledgerService, typeof payload.tool_name === 'string' ? payload.tool_name : '', payload.tool_input),
+        preToolUseGuard: (ptyId, payload) => slackLetters.before(ptyId, payload),
       });
       await bridge.start();
       semaphoreManager.attachBridge(bridge);
       bridge.onAny((event) => {
+        if (event.type === 'hook') slackLetters.after(event.ptyId, event.event, event.payload); // spent only on a confirmed send
         if (event.type === 'conversation-switched') handleConversationSwitched(event);
         else if (event.type === 'statusline') statusLineStore.update(event.ptyId, event.payload);
       });
@@ -3899,6 +4001,7 @@ void app.whenReady().then(async () => {
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
     placeName: placeNameOf,
     cardWriter: () => cardWriter,
+    deliverToLeader: () => deliverPedidoToLeader,
   }); // Ledger no celular (PWA só na Tailscale)
   // Quadro por MCP — the board and session tools of the same server go to the renderer (owner of the document).
   const boardBridge = createBoardBridge({
@@ -3906,8 +4009,16 @@ void app.whenReady().then(async () => {
     getWindow: getMainWindow,
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
   });
+  slackPlaceOf = async (ptyId) => {
+    const self = await boardBridge.execute(ptyId, { tool: 'sessao_quem_sou' });
+    if (self.kind !== 'text') return null;
+    const who = JSON.parse(self.text) as { lugar?: unknown; pasta?: unknown };
+    return typeof who.lugar === 'string' && typeof who.pasta === 'string' ? { projectPath: who.pasta, placeId: who.lugar } : null;
+  };
   cardWriter = createCardWriter({ service: () => ledgerService, deliver: (message) => boardBridge.deliverOwnerMessage(message), placeName: placeNameOf });
   hillClimbNotify = (message) => void boardBridge.deliverOwnerMessage(message).catch(() => null);
+  // No place: the renderer sends it straight to the Líder único (or answers `null`: closed, the request waits).
+  deliverPedidoToLeader = (text) => boardBridge.deliverOwnerMessage({ projectPath: '', placeId: '', text, leaderText: text }).then((to) => to === 'lider');
   browserService = createBrowserService({
     ipcMain,
     getWindow: getMainWindow,

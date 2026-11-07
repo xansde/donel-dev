@@ -16,6 +16,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createWriteStream, mkdirSync, type WriteStream } from 'node:fs';
 import { basename, join, relative, sep, isAbsolute } from 'node:path';
+import { resolvePermissionMode } from '../shared/commandBuilder';
 
 export const REMOTE_TMUX_SOCKET = 'donel';
 export const REMOTE_SESSIONS_DIR = '.donel/s';
@@ -121,6 +122,17 @@ export function remoteTranscriptPath(remoteDir: string, sid: string): string {
   return `.claude/projects/${remoteDir.replace(/[^a-zA-Z0-9]/g, '-')}/${sid}.jsonl`;
 }
 
+/**
+ * Pure — the env lines a bypass session needs on a remote place. Without them the CLI asks to confirm the bypass,
+ * and as root it refuses it outright unless `IS_SANDBOX=1` (checked on the place, at launch: the app does not
+ * know which user the ssh target is).
+ */
+function bypassEnvLines(claudeArgs: readonly string[]): string[] {
+  const bypass = resolvePermissionMode(claudeArgs, undefined) === 'bypassPermissions' || claudeArgs.includes('--dangerously-skip-permissions');
+  if (!bypass) return [];
+  return ['export CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1', 'if [ "$(id -u)" = 0 ]; then export IS_SANDBOX=1; fi'];
+}
+
 function renderArg(arg: string): string {
   return arg.startsWith('@S/') ? `"$S"/${shQuote(arg.slice(3))}` : shQuote(arg);
 }
@@ -148,6 +160,9 @@ export function buildRemoteSetupScript(input: RemoteSetupInput): string {
     'export CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1',
     'export LANG="${LANG:-C.UTF-8}" LC_ALL="${LC_ALL:-C.UTF-8}"',
     'export COLORTERM=truecolor',
+    // Proxy de saída (scripts/proxy-saida): written by its VPS installer; only sessions started after the install pick it up.
+    'if [ -r "$HOME/.donel/proxy-saida.env" ]; then . "$HOME/.donel/proxy-saida.env"; fi',
+    ...bypassEnvLines(input.claudeArgs),
     `exec claude ${input.claudeArgs.map(renderArg).join(' ')}`,
     '',
   ].join('\n');

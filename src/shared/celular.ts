@@ -197,6 +197,8 @@ export interface FalaCelular {
   readonly em: string;
   /** Só do dono: para onde foi ("Enviado a Dev · painel", "Foi ao Líder", "Ninguém aberto…"). */
   readonly recibo?: string;
+  /** Só do dono: o id do envio que gravou esta fala. O celular apaga o rascunho guardado quando o vê aqui. */
+  readonly pedidoId?: string;
 }
 
 /** O resultado de escrever na carta, com o recibo para mostrar. */
