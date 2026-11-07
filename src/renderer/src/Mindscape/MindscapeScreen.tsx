@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SessionState } from '@donel-dev/design-system';
 import { addDrawing, bringToFront, moveItems, removeItems, sendToBack, setDrawingsStyle, updateDrawing } from '../../../shared/mindscape/drawings';
 import { eraseDoc } from '../../../shared/mindscape/eraser';
 import type { CardRect, ItemIds } from '../../../shared/mindscape/geometry';
 import { sessionHighlight } from '../../../shared/mindscape/highlight';
+import { boardContentOrigin, deriveChairs, layoutChairs, NO_ROLE_CHAIR, type Chair, type ChairHealth } from '../../../shared/mindscape/chairs';
+import { isClosed, viewState } from '../../../shared/ledger/contract';
 import { classifyBoardSessions, closedLabel, dormantSessionName, type DormantSession } from '../../../shared/mindscape/dormant';
 import { organizeBoard, organizeColumnOf, type OrganizeEntry } from '../../../shared/mindscape/organize';
 import { deriveSessionAxes, type SessionAxes } from '../../../shared/mindscape/sessionAxes';
@@ -44,6 +46,9 @@ import { MindscapeSelectionLayer } from './MindscapeSelectionLayer';
 import { LedgerStrip } from './LedgerStrip';
 import { MindscapeToolbar, type DrawStyle } from './MindscapeToolbar';
 import { ShadowRoutines } from './ShadowRoutines';
+import { ChairDrawer, ChairsBand, ChairsLayer, RIG_SELECTION, type ChairDetails, type ChairFace, type OwnerLayerMode, type RigDetails } from './MindscapeChairs';
+import { useLedgerSnapshot } from './useLedgerSnapshot';
+import chairStyles from './Chairs.module.css';
 import { preparePrint, useMindscapeImages } from './useMindscapeImage';
 import styles from './Mindscape.module.css';
 
@@ -178,6 +183,41 @@ function folderName(path: string): string {
   return parts[parts.length - 1] ?? path;
 }
 
+/** Cadeiras, fatia 1 — the lens of the board: the places of today or the chairs (F2a). Remembered on this machine. */
+type BoardLens = 'places' | 'chairs';
+const LENS_KEY = 'donel.mindscape.lens';
+
+function readLens(): BoardLens {
+  try {
+    return window.localStorage.getItem(LENS_KEY) === 'chairs' ? 'chairs' : 'places';
+  } catch {
+    return 'places';
+  }
+}
+
+function writeLens(lens: BoardLens): void {
+  try {
+    window.localStorage.setItem(LENS_KEY, lens);
+  } catch {
+    // No storage (private window): the lens lasts only this visit.
+  }
+}
+
+/** Where the rig lands on screen when the lens opens (px from the top-left of the board). */
+const RIG_SCREEN_MARGIN = 40;
+
+/** `Donel Dev` → `donel-dev`: the board's part of a chair address (`papel@rig`). */
+function addressSlug(name: string): string {
+  return (
+    name
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '') || 'quadro'
+  );
+}
+
 /** The selection, tied to the board it was made on (another board starts empty). */
 interface Selection extends ItemIds {
   readonly path?: string;
@@ -235,6 +275,21 @@ export function MindscapeScreen({
   const [selection, setSelection] = useState<Selection>(EMPTY_ITEMS);
   const [spaceHeld, setSpaceHeld] = useState(false);
   const [cancelSignal, setCancelSignal] = useState(0);
+  // Cadeiras, fatia 1 — the lens, the owner's layer in it, the arrows, the highlighted health and the open drawer.
+  const [lens, setLensState] = useState<BoardLens>(readLens);
+  const chairsOn = lens === 'chairs';
+  const [ownerMode, setOwnerMode] = useState<OwnerLayerMode>('over');
+  const [showArrows, setShowArrows] = useState(true);
+  const [highlight, setHighlight] = useState<ChairHealth | null>(null);
+  /** The chair (its id) or the rig (`RIG_SELECTION`) whose drawer is open. */
+  const [openDetail, setOpenDetail] = useState<string | null>(null);
+  const setLens = (next: BoardLens): void => {
+    setLensState(next);
+    writeLens(next);
+    setOpenDetail(null);
+    setHighlight(null);
+  };
+  const ledger = useLedgerSnapshot(chairsOn);
   /** A gesture is in flight on the board (pointer down): Ctrl+Z and the keys that change the board wait for it to end. */
   const gestureActiveRef = useRef(false);
   const sectionRef = useRef<HTMLElement>(null);
@@ -351,6 +406,8 @@ export function MindscapeScreen({
   const closeRoleMenu = (): void => setRoleMenuPlaceId(undefined);
   const visibleCards = board
     ? Object.values(board.cards).filter((card) => {
+        // The chairs lens: the places and their notes live inside the chairs; only the owner's post-its stay.
+        if (chairsOn) return card.kind === 'owner' && ownerMode !== 'hidden';
         if (card.kind === 'session') return card.sessionId === undefined || liveSessionIds.has(card.sessionId) || dormantIds.has(card.sessionId);
         if (card.kind === 'session-note') return !foldedIds.has(card.sessionId);
         return true;
@@ -391,6 +448,103 @@ export function MindscapeScreen({
   const selectedSession = onlySessionId ? boardSessions.find((session) => session.sessionId === onlySessionId) : undefined;
   const selectedDormantId = onlySessionId && dormantIds.has(onlySessionId) ? onlySessionId : undefined;
   const selectedPendingId = onlyCard?.kind === 'session' && onlyCard.sessionId === undefined ? onlyCard.id : undefined;
+
+  // Cadeiras, fatia 1 — the chairs of the board (one per role), read from its places; nothing is written.
+  const boardName = board ? (projectNames[board.projectPath] ?? folderName(board.projectPath)) : '';
+  const allPlaces: readonly SessionPlaceCard[] = board ? Object.values(board.cards).filter((card): card is SessionPlaceCard => card.kind === 'session') : [];
+  const liveByPlace = new Map<string, MindscapeLiveSession>();
+  if (board) {
+    for (const session of boardSessions) {
+      const place = placeOfSession(board, session.sessionId);
+      if (place) liveByPlace.set(place.id, session);
+    }
+  }
+  const chairsView = useMemo(() => {
+    if (!chairsOn || !board) return undefined;
+    const liveAxes = new Map([...liveByPlace].map(([placeId, session]) => [placeId, axesOfLive(session)] as const));
+    const view = deriveChairs({ places: allPlaces, links: board.links, liveAxes, roleOrder: roles.map((role) => role.id) });
+    return { ...view, layout: layoutChairs(view, boardContentOrigin(board)) };
+    // The live sessions and the board change identity on every update; the chairs follow them.
+  }, [chairsOn, board, sessions, roles, transcripts]);
+  const faceOf = (chair: Chair): ChairFace => {
+    if (chair.id === NO_ROLE_CHAIR) return { name: 'Sem papel', color: 'var(--text-muted)' };
+    const seal = roleSealOf(chair.roleId)!;
+    return { name: seal.name, color: seal.color };
+  };
+  // Pan the rig into view when the lens opens on a board; the places' view comes back when it closes.
+  const placesPanRef = useRef(new Map<string, { x: number; y: number }>());
+  const rigOrigin = chairsView ? `${chairsView.layout.rig.x},${chairsView.layout.rig.y}` : undefined;
+  useEffect(() => {
+    if (!board) return;
+    const { projectPath } = board;
+    const saved = placesPanRef.current;
+    if (chairsOn && chairsView) {
+      if (saved.has(projectPath)) return;
+      saved.set(projectPath, board.pan);
+      const { rig } = chairsView.layout;
+      onView(projectPath, (view) => ({ ...view, pan: { x: RIG_SCREEN_MARGIN - rig.x * view.zoom, y: RIG_SCREEN_MARGIN - rig.y * view.zoom } }));
+    } else if (!chairsOn) {
+      const pan = saved.get(projectPath);
+      if (!pan) return;
+      saved.delete(projectPath);
+      onView(projectPath, (view) => ({ ...view, pan }));
+    }
+    // Only the lens and the board decide; the pan itself must not re-run this.
+  }, [chairsOn, board?.projectPath, rigOrigin]);
+
+  const chairDetails = (chairId: string): ChairDetails | RigDetails | null => {
+    if (!board || !chairsView) return null;
+    if (chairId === RIG_SELECTION) {
+      return { boardName, projectPath: board.projectPath, placeCount: allPlaces.length, chairs: chairsView.chairs.map((chair) => ({ chair, face: faceOf(chair) })) };
+    }
+    const chair = chairsView.chairs.find((candidate) => candidate.id === chairId);
+    if (!chair) return null;
+    const role = roles.find((candidate) => candidate.id === chair.roleId);
+    const places = chair.placeIds.map((id) => board.cards[id]).filter((card): card is SessionPlaceCard => card?.kind === 'session');
+    const sessionIds = new Set(places.flatMap((place) => [...(place.sessionId ? [place.sessionId] : []), ...place.previous]));
+    const notes = Object.values(board.cards).filter((card): card is Extract<Card, { kind: 'session-note' }> => card.kind === 'session-note' && sessionIds.has(card.sessionId));
+    const lastNote = notes.reduce<(typeof notes)[number] | undefined>((newest, note) => (!newest || note.writtenAt > newest.writtenAt ? note : newest), undefined);
+    const noteAt = new Map(notes.map((note) => [note.sessionId, note.writtenAt]));
+    const seated = chair.seated.flatMap((placeId) => {
+      const session = liveByPlace.get(placeId);
+      if (!session) return [];
+      const axes = axesOfLive(session);
+      const label = axes.needs.length > 0 ? `precisa de você · ${axes.needs.join(', ')}` : axes.activity;
+      return [{ placeId, name: session.name, state: session.state, label, since: session.stateEnteredAt, onOpen: () => onGoToTerminal(session.tabId) }];
+    });
+    const past = chair.closed
+      .flatMap((placeId) => {
+        const sessionId = (board.cards[placeId] as SessionPlaceCard | undefined)?.sessionId;
+        if (!sessionId) return [];
+        const registered = registry[sessionId]?.lastActivityAt ?? null;
+        const noted = noteAt.get(sessionId) ?? null;
+        const at = registered === null ? noted : noted === null ? registered : Math.max(registered, noted);
+        return [{ placeId, name: dormantName(sessionId), at, when: closedLabel(at), onOpen: onResume ? () => resume(sessionId) : undefined }];
+      })
+      .sort((a, b) => (b.at ?? -Infinity) - (a.at ?? -Infinity));
+    const placeIds = new Set(chair.placeIds);
+    const tasks = ledger ? Object.values(ledger.doc.tasks).filter((task) => task.projectPath === board.projectPath && placeIds.has(task.ownerPlaceId)) : [];
+    const liveTasks = tasks
+      .filter((task) => !isClosed(task))
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .map((task) => ({ id: task.id, title: task.title ?? (task.request.length > 60 ? `${task.request.slice(0, 59)}…` : task.request), state: viewState(task) }));
+    const engines = [...new Set(seated.flatMap((row) => liveByPlace.get(row.placeId)?.engine ?? []))];
+    return {
+      chair,
+      face: faceOf(chair),
+      address: `${chair.roleId ?? 'sem-papel'}@${addressSlug(boardName)}`,
+      boardName,
+      seated,
+      past,
+      notes: notes.length,
+      ...(lastNote ? { lastNote: { text: lastNote.text, by: liveByPlace.get(places.find((place) => place.sessionId === lastNote.sessionId)?.id ?? '')?.name ?? lastNote.sessionName, at: lastNote.writtenAt } } : {}),
+      ...(role?.model ? { configuredModel: role.model } : {}),
+      ...(role?.effort ? { configuredEffort: role.effort } : {}),
+      observedEngines: engines,
+      liveTasks,
+      closedTasks: tasks.length - liveTasks.length,
+    };
+  };
 
   /** Rule 7 — one undoable gesture; favorites (and their notes) stay where they are. */
   const organize = (): void => {
@@ -561,6 +715,7 @@ export function MindscapeScreen({
         // Cancels the gesture in flight (also with V, where the tool does not change) and drops the selection.
         setCancelSignal((signal) => signal + 1);
         clearSelection();
+        setOpenDetail(null);
         setTool('select');
         return;
       case 'tool':
@@ -631,6 +786,16 @@ export function MindscapeScreen({
             <span>{projectNames[path] ?? folderName(path)}</span>
           </button>
         ))}
+        {board ? (
+          <span className={chairStyles.lens} role="group" aria-label="Ver o quadro como">
+            <button type="button" aria-pressed={!chairsOn} onClick={() => setLens('places')} data-testid="mindscape-lens-places">
+              Lugares
+            </button>
+            <button type="button" aria-pressed={chairsOn} onClick={() => setLens('chairs')} data-testid="mindscape-lens-chairs">
+              Cadeiras
+            </button>
+          </span>
+        ) : null}
       </div>
       <LedgerStrip projectPath={activePath} placeName={placeName} cardsHost={boardArea} />
       <MindscapeToolbar
@@ -690,7 +855,7 @@ export function MindscapeScreen({
           else if (selectedDormantId) resume(selectedDormantId);
           else if (selectedPendingId) startPlace(selectedPendingId);
         }}
-        canOrganize={boardSessions.length + dormantDrawn.length + pendingPlaces.length > 0}
+        canOrganize={!chairsOn && boardSessions.length + dormantDrawn.length + pendingPlaces.length > 0}
         onOrganize={organize}
         oldCount={sessionsView?.oldSessionIds.size ?? 0}
         showOld={showOld}
@@ -698,8 +863,24 @@ export function MindscapeScreen({
           if (!showOld && board) onGesture?.({ type: 'mindscape', acao: 'mostrar-antigas', projectPath: board.projectPath });
           setShowOld((current) => !current);
         }}
-        hint={hint}
+        hint={chairsOn && tool === 'select' && !notice ? 'Clique numa cadeira ou no nome do rig para ver os detalhes; Esc fecha. Seu desenho segue editável.' : hint}
       />
+      {chairsOn && chairsView ? (
+        <ChairsBand
+          placeCount={allPlaces.length}
+          chairCount={chairsView.chairs.length}
+          counts={chairsView.counts}
+          highlight={highlight}
+          onHighlight={setHighlight}
+          ownerMode={ownerMode}
+          onOwnerMode={(mode) => {
+            setOwnerMode(mode);
+            if (mode === 'hidden') clearSelection();
+          }}
+          showArrows={showArrows}
+          onShowArrows={setShowArrows}
+        />
+      ) : null}
       {/* Cartas forma A — the Oráculo's cards open over the board only (LedgerStrip portals them here). */}
       <div ref={setBoardArea} className={styles.boardArea}>
       {!board ? (
@@ -709,7 +890,7 @@ export function MindscapeScreen({
       ) : (
         <MindscapeBoard
           board={board}
-          tool={tool}
+          tool={chairsOn && ownerMode === 'hidden' ? 'hand' : tool}
           panMode={spaceHeld}
           cancelSignal={cancelSignal}
           cardRects={cardRects}
@@ -732,6 +913,7 @@ export function MindscapeScreen({
           onBackgroundClick={() => {
             clearSelection();
             setSelectedLinkId(undefined);
+            setOpenDetail(null);
           }}
           onImageFile={(file, at) => void handleImageFile(file, at)}
         >
@@ -749,8 +931,8 @@ export function MindscapeScreen({
               return rect ? [{ id, ...rect }] : [];
             });
             const shownSelected = drawings.filter((drawing) => live.drawings.includes(drawing.id));
-            return (
-            <>
+            const ownerInk = (
+              <>
               <MindscapeDrawingLayer drawings={drawings} selectedIds={live.drawings} images={images} draft={draft && isDrawTool(tool) ? draftOf(draft, drawStyle) : undefined} />
               <MindscapeLinkLayer
                 links={visibleLinks(links, visibleIds)}
@@ -762,6 +944,106 @@ export function MindscapeScreen({
                   setSelectedLinkId(linkId);
                 }}
               />
+              </>
+            );
+            const ownerCards = (
+              <>
+              {Object.values(board.cards).map((card) => {
+                if (!visibleIds.has(card.id)) return null;
+                const position = positionOf(card);
+                if (card.kind === 'owner') {
+                  return (
+                    <MindscapeOwnerCard
+                      key={card.id}
+                      id={card.id}
+                      text={card.text}
+                      color={card.color}
+                      createdAt={card.createdAt}
+                      x={position.x}
+                      y={position.y}
+                      startEditing={card.id === createdCardId}
+                      onEdit={(text) => {
+                        // Only the first mount opens in edit: a redo that brings the card back must not.
+                        if (card.id === createdCardId) setCreatedCardId(undefined);
+                        onAction(board.projectPath, (current) => editOwnerCard(current, board.projectPath, card.id, text));
+                      }}
+                      onColor={(color) => onAction(board.projectPath, (current) => setOwnerColor(current, board.projectPath, card.id, color))}
+                      onArchive={() => {
+                        onAction(board.projectPath, (current) => archiveCard(current, board.projectPath, card.id));
+                        onGesture?.({ type: 'mindscape', acao: 'arquivar', projectPath: board.projectPath, cardKind: 'owner' });
+                      }}
+                    />
+                  );
+                }
+                if (card.kind !== 'session-note') return null;
+                const liveSession = boardSessions.find((session) => session.sessionId === card.sessionId);
+                return (
+                  <MindscapeNoteCard
+                    key={card.id}
+                    sessionId={card.sessionId}
+                    sessionName={liveSession?.name ?? card.sessionName}
+                    text={card.text}
+                    writtenAt={card.writtenAt}
+                    stripe={liveSession ? (liveSession.cliColorHex ?? STRIPE_BY_TOKEN[liveSession.color]) : undefined}
+                    x={position.x}
+                    y={position.y}
+                    onArchive={() => {
+                      onAction(board.projectPath, (current) => archiveCard(current, board.projectPath, card.id));
+                      onGesture?.({ type: 'mindscape', acao: 'arquivar', projectPath: board.projectPath, cardKind: 'session-note', sessionId: card.sessionId });
+                    }}
+                  />
+                );
+              })}
+              </>
+            );
+            const outlines = (
+              <>
+              <MindscapeOutlineLayer cardIds={visibleCards.map((card) => card.id)} rectOf={rectOf} />
+              <MindscapeSelectionLayer
+                cards={outlinedCards}
+                drawings={shownSelected}
+                withHandles={tool === 'select' && live.cards.length === 0 && selectedDrawings.length === 1}
+                lasso={lasso}
+                zoom={board.zoom}
+              />
+              </>
+            );
+            if (chairsOn && chairsView) {
+              const ownerClass = [chairStyles.ownerLayer, ownerMode === 'dim' ? chairStyles.ownerDim : '', ownerMode === 'hidden' ? chairStyles.ownerHidden : ''].filter(Boolean).join(' ');
+              return (
+                <>
+                  <ChairsLayer
+                    boardName={boardName}
+                    chairs={chairsView.chairs}
+                    edges={chairsView.edges}
+                    layout={chairsView.layout}
+                    faceOf={faceOf}
+                    seatState={(placeId) => liveByPlace.get(placeId)?.state}
+                    showArrows={showArrows}
+                    highlight={highlight}
+                    selected={openDetail}
+                    onOpenChair={(chairId) => {
+                      clearSelection();
+                      setOpenDetail((open) => (open === chairId ? null : chairId));
+                    }}
+                    onOpenRig={() => {
+                      clearSelection();
+                      setOpenDetail((open) => (open === RIG_SELECTION ? null : RIG_SELECTION));
+                    }}
+                  />
+                  {/* The owner's drawing stays free and on top (por cima · esmaecido · oculto); the layout never moves it. */}
+                  <div className={ownerClass} data-testid="mindscape-owner-layer" data-mode={ownerMode}>
+                    {ownerInk}
+                    {ownerCards}
+                    {outlines}
+                  </div>
+                  {chairsView.chairs.length === 0 ? <p className={styles.empty}>Nenhum lugar neste quadro ainda: as cadeiras aparecem quando houver sessões.</p> : null}
+                </>
+              );
+            }
+            return (
+            <>
+              {ownerInk}
               {boardSessions.map((session) => {
                 const card = placeOfSession(board, session.sessionId);
                 if (!card) return null;
@@ -856,68 +1138,24 @@ export function MindscapeScreen({
                   </div>
                 );
               })()}
-              {Object.values(board.cards).map((card) => {
-                if (!visibleIds.has(card.id)) return null;
-                const position = positionOf(card);
-                if (card.kind === 'owner') {
-                  return (
-                    <MindscapeOwnerCard
-                      key={card.id}
-                      id={card.id}
-                      text={card.text}
-                      color={card.color}
-                      createdAt={card.createdAt}
-                      x={position.x}
-                      y={position.y}
-                      startEditing={card.id === createdCardId}
-                      onEdit={(text) => {
-                        // Only the first mount opens in edit: a redo that brings the card back must not.
-                        if (card.id === createdCardId) setCreatedCardId(undefined);
-                        onAction(board.projectPath, (current) => editOwnerCard(current, board.projectPath, card.id, text));
-                      }}
-                      onColor={(color) => onAction(board.projectPath, (current) => setOwnerColor(current, board.projectPath, card.id, color))}
-                      onArchive={() => {
-                        onAction(board.projectPath, (current) => archiveCard(current, board.projectPath, card.id));
-                        onGesture?.({ type: 'mindscape', acao: 'arquivar', projectPath: board.projectPath, cardKind: 'owner' });
-                      }}
-                    />
-                  );
-                }
-                if (card.kind !== 'session-note') return null;
-                const liveSession = boardSessions.find((session) => session.sessionId === card.sessionId);
-                return (
-                  <MindscapeNoteCard
-                    key={card.id}
-                    sessionId={card.sessionId}
-                    sessionName={liveSession?.name ?? card.sessionName}
-                    text={card.text}
-                    writtenAt={card.writtenAt}
-                    stripe={liveSession ? (liveSession.cliColorHex ?? STRIPE_BY_TOKEN[liveSession.color]) : undefined}
-                    x={position.x}
-                    y={position.y}
-                    onArchive={() => {
-                      onAction(board.projectPath, (current) => archiveCard(current, board.projectPath, card.id));
-                      onGesture?.({ type: 'mindscape', acao: 'arquivar', projectPath: board.projectPath, cardKind: 'session-note', sessionId: card.sessionId });
-                    }}
-                  />
-                );
-              })}
+              {ownerCards}
               {visibleCards.length === 0 ? (
                 <p className={styles.empty}>Nenhuma sessão aberta neste projeto.</p>
               ) : null}
-              <MindscapeOutlineLayer cardIds={visibleCards.map((card) => card.id)} rectOf={rectOf} />
-              <MindscapeSelectionLayer
-                cards={outlinedCards}
-                drawings={shownSelected}
-                withHandles={tool === 'select' && live.cards.length === 0 && selectedDrawings.length === 1}
-                lasso={lasso}
-                zoom={board.zoom}
-              />
+              {outlines}
             </>
             );
           }}
         </MindscapeBoard>
       )}
+      {chairsOn ? (
+        <ChairDrawer
+          details={openDetail ? chairDetails(openDetail) : null}
+          onClose={() => setOpenDetail(null)}
+          onOpenChair={(chairId) => setOpenDetail(chairId)}
+          onDefine={onManageRoles}
+        />
+      ) : null}
       </div>
     </section>
   );
