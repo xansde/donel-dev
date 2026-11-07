@@ -26,6 +26,80 @@
      linha "Modo" no cabeçalho da seção; implementada = mergeada na integradora;
      aguardando-merge e concluida flipam em bloco (PR único da demanda). -->
 
+## Cadeiras no Mindscape e tela de cadeira (`cadeiras`)
+
+- **Plano**: `docs/planos/cadeiras.pda.md` (PR #256, rascunho) + arquitetura curta `docs/planos/cadeiras-arquitetura.md`
+- **Forma**: F2a para o Mindscape e B1 com custo recolhível (`~/seazone/insumos/prototipos-cadeiras/decisao.md`, dono, 06/11)
+- **Pedido** (dono, 07/11, via Líder): "Ontem aprovei protótipos de visualização do mindscape. Quero eles rodando"
+- **Fatiado em**: 2026-11-07 (sessão Dev na VPS; as skills `esteira:*` não estavam carregadas, então o rito foi seguido à mão)
+- **Rodadas previstas**: 01 | 02 | 03 | 04 → 05, 06, 07 | 08 <!-- 04 espera as decisões 02 e 03 do PDA (dono); 05-07 dependem da 04 -->
+
+Convenções: um PR por fatia contra `staging`; `npm run verify` verde; tela sem teste (o dono vê no alfa);
+**schema do `mindscape.json` ou do ledger que mudar ganha teste de parse/migração**; patch note em toda fatia visível;
+print lado a lado com o protótipo em `docs/prototipos/cadeiras/`.
+
+### 01 — Lente "Cadeiras" (F2a) com dados reais, sem gravar nada
+
+- **Status**: implementada
+- **Branch**: `feat/cadeiras-f2a-fatia1`
+- **Depende de**: —
+- **Propósito**: "Lugares | Cadeiras" nas abas do Mindscape; rig = quadro; uma cadeira por papel (nome grande,
+  N sentados, borda = saúde); setas do caminho do trabalho; faixa problema/atenção/bem/sem sinal que destaca;
+  gaveta (sentados, quem já sentou, onde parou, Oráculo, configurado × observado); seu desenho por
+  cima/esmaecido/oculto e editável. Nenhum campo novo: `schemaVersion` fica em 5.
+- **Como testar**: no alfa, Mindscape → Cadeiras; clicar em Dev; Esc; Esmaecido; voltar a Lugares (a vista volta).
+
+### 02 — Tela de cadeira B1, lendo o papel
+
+- **Status**: pendente
+- **Depende de**: 01
+- **Propósito**: "Definir cadeira ▸" abre a B1 da cadeira: seções (instruções, skills, MCPs, plugins, modelo e
+  esforço, permissão) com selo de origem ("seu ~/.claude" ou "Papel"), lendo o papel e o escopo do #250; a coluna
+  lateral de custo é recolhível e lembrada, e recolhida vira uma faixa com o total (estimativa, marcada como tal).
+  Só leitura nesta fatia.
+
+### 03 — B1 grava no papel
+
+- **Status**: pendente
+- **Depende de**: 02
+- **Propósito**: salvar instruções, escopo, modelo, esforço e permissão pela B1, pelo `roles-store` (único dono de
+  `<userData>/papeis/`); "vale para quem sentar depois de salvar". O total da coluna de custo muda ao ligar ou
+  desligar um item.
+
+### 04 — Rig e pods guardados (`mindscape.json` v6)
+
+- **Status**: pendente, **bloqueada** pelas decisões 02 e 03 do PDA (dono): o que é cadeira guardada, cadeira
+  elástica, se cadeira é só de um rig, e se o dono posiciona a cadeira ou só o pod
+- **Depende de**: 01
+- **Propósito**: molduras tipadas (rig | pod) com nome, missão e paradigma; cadeira dentro de pod com posição própria;
+  endereço `papel@rig` estável. A F2a ganha as molduras de pod. Teste de parse v5 → v6 e canal antigo só leitura.
+
+### 05 — Folhas de instrução do rig e do pod
+
+- **Status**: pendente
+- **Depende de**: 04 (e decisão do item 04 do PDA: onde guardar, como versionar e injetar)
+- **Propósito**: folha por rig e por pod, editável na B1 com selo "Rig"/"Pod" e lida na gaveta do rig/pod;
+  injeção em camadas Donel → Rig → Pod → Cadeira no spawn.
+
+### 06 — Saúde real, onde parou e observado medido
+
+- **Status**: pendente
+- **Depende de**: 04 (e item 06 do PDA)
+- **Propósito**: trocar a regra provisória de saúde pela decidida; "onde parou" escrito pela sessão (não a última
+  nota); esforço observado lido do argv real de cada spawn.
+
+### 07 — Tarefas do Oráculo presas à cadeira (ledger v5)
+
+- **Status**: pendente
+- **Depende de**: 04 (e item 07 do PDA)
+- **Propósito**: a tarefa aponta a cadeira; o ocupante fica no evento; teste de parse v4 → v5.
+
+### 08 — F2b ligável (uma linha embaixo do nó)
+
+- **Status**: pendente, só se o dono pedir
+- **Depende de**: 01
+- **Propósito**: opção na faixa para mostrar "onde parou" em até 6 palavras e o selo de estado embaixo de cada nó.
+
 ## Cartas do Oráculo, forma A (`cartas-forma-a`)
 
 - **Spec**: `docs/specs/cartas-forma-a.md` (branch `proto/cartas`, commit 321c673); forma em

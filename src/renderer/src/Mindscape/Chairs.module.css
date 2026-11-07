@@ -1,0 +1,577 @@
+/* Cadeiras, fatia 1 — the "Cadeiras" lens of the Mindscape (prototype F2a). Tokens of the design system only,
+   except the frame border tones (#3a4553), derived from --border as in the prototype. */
+
+/* --- The lens switch, at the right of the board tabs --- */
+.lens {
+  margin-left: auto;
+  align-self: center;
+  display: inline-flex;
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.lens button,
+.segmented button {
+  background: var(--bg-raised);
+  border: 0;
+  padding: 0 10px;
+  height: 24px;
+  cursor: pointer;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+}
+
+.lens button[aria-pressed='true'],
+.segmented button[aria-pressed='true'] {
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+
+.lens button:focus-visible,
+.segmented button:focus-visible,
+.num:focus-visible,
+.node:focus-visible,
+.frameName:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* --- The band: motto, tools and the count by health --- */
+.band {
+  display: flex;
+  align-items: stretch;
+  gap: 1px;
+  background: var(--border);
+  border-bottom: var(--hairline);
+}
+
+.band > * {
+  background: var(--bg-panel);
+}
+
+.motto {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 8px 16px;
+  gap: 2px;
+}
+
+.motto b {
+  font-size: 14px;
+}
+
+.motto span {
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tools {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 6px 12px;
+  flex-wrap: wrap;
+}
+
+.toolGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toolLabel {
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+}
+
+.segmented {
+  display: inline-flex;
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.num {
+  min-width: 104px;
+  padding: 8px 16px;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+  color: var(--text-primary);
+  font: inherit;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.numOn {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.numValue {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.1;
+}
+
+.numLabel {
+  font-size: var(--text-caption-size);
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.num:hover .numLabel {
+  color: var(--text-primary);
+}
+
+.healthDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.d-problema {
+  background: var(--state-error);
+}
+
+.d-atencao {
+  background: var(--state-permission);
+}
+
+.d-bem {
+  background: var(--state-working);
+}
+
+.d-sem-sinal {
+  border: 1.5px dashed var(--state-done);
+}
+
+/* --- On the board (inside the world) --- */
+.rig {
+  position: absolute;
+  border: 1.5px solid #3a4553;
+  border-radius: 10px;
+  background: rgba(14, 17, 22, 0.55);
+  pointer-events: none;
+}
+
+.rig::before,
+.rig::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--text-primary);
+}
+
+.rig::before {
+  left: -3px;
+  top: -3px;
+  border-right: 0;
+  border-bottom: 0;
+  border-top-left-radius: 10px;
+}
+
+.rig::after {
+  right: -3px;
+  bottom: -3px;
+  border-left: 0;
+  border-top: 0;
+  border-bottom-right-radius: 10px;
+}
+
+.frameHead {
+  position: absolute;
+  left: 16px;
+  top: 14px;
+  right: 16px;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  white-space: nowrap;
+}
+
+.frameName {
+  pointer-events: auto;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--text-primary);
+  font: inherit;
+}
+
+.rigName {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.frameName:hover .rigName,
+.frameNameOn .rigName {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  text-decoration-color: var(--accent);
+}
+
+.frameCount {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.kind {
+  display: inline-block;
+  position: relative;
+  top: -2px;
+  padding: 0 5px;
+  border: 1px solid var(--text-muted);
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.arrows {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.arrowDim {
+  opacity: 0.25;
+}
+
+.node {
+  position: absolute;
+  border-radius: 50%;
+  background: var(--bg-panel);
+  border: 2.5px solid var(--state-done);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 0;
+  cursor: pointer;
+  color: var(--text-primary);
+  font: inherit;
+  transition:
+    box-shadow var(--duration-micro) var(--ease-standard),
+    opacity var(--duration-panel);
+}
+
+.h-sem-sinal {
+  border-style: dashed;
+}
+
+.h-bem {
+  border-color: var(--state-working);
+}
+
+.h-atencao {
+  border-color: var(--state-permission);
+}
+
+.h-problema {
+  border-color: var(--state-error);
+}
+
+.node:hover {
+  box-shadow: 0 0 0 4px rgba(76, 156, 240, 0.22);
+}
+
+.nodeOn {
+  box-shadow: 0 0 0 5px rgba(76, 156, 240, 0.5);
+}
+
+.dim {
+  opacity: 0.22;
+}
+
+.seal {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.node .seal {
+  margin-bottom: 5px;
+}
+
+.nodeName {
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1.15;
+  max-width: 100px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nodeCount {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.seatDot {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+/* The owner's layer in the lens: over (default), dimmed or hidden. */
+.ownerLayer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transition: opacity var(--duration-panel);
+}
+
+.ownerDim {
+  opacity: 0.35;
+}
+
+.ownerHidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ownerHidden * {
+  pointer-events: none !important;
+}
+
+/* --- The drawer: opens over the board on a click; closing gives the board back whole --- */
+.drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 420px;
+  max-width: 100%;
+  background: var(--bg-panel);
+  border-left: var(--hairline);
+  transform: translateX(100%);
+  visibility: hidden;
+  transition:
+    transform var(--duration-panel) var(--ease-standard),
+    visibility 0s linear var(--duration-panel);
+  display: flex;
+  flex-direction: column;
+  z-index: 6;
+  font-size: 12px;
+}
+
+.drawerOpen {
+  transform: none;
+  visibility: visible;
+  transition: transform var(--duration-panel) var(--ease-standard);
+  box-shadow: var(--shadow-modal);
+}
+
+.drawerHead {
+  padding: 14px 16px 12px;
+  border-bottom: var(--hairline);
+}
+
+.close {
+  float: right;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 16px;
+  padding: 2px 4px;
+}
+
+.close:hover {
+  color: var(--text-primary);
+}
+
+.headRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.drawerTitle {
+  font-size: 16px;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.caption {
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+}
+
+p.caption {
+  margin: 8px 0 0;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  gap: 3px 10px;
+  margin-top: 10px;
+}
+
+.kv > span:nth-child(odd) {
+  color: var(--text-muted);
+}
+
+.actions {
+  margin-top: 12px;
+  display: flex;
+  gap: 6px;
+}
+
+.button {
+  background: var(--bg-raised);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  height: 28px;
+  padding: 0 12px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.button:hover {
+  border-color: var(--accent);
+}
+
+.drawerBody {
+  overflow: auto;
+  padding: 4px 16px 40px;
+}
+
+.drawerBody h4 {
+  margin: 16px 0 6px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.cmp {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 3px 14px;
+}
+
+.stop {
+  background: var(--bg-raised);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+}
+
+.stopText {
+  white-space: pre-line;
+  display: -webkit-box;
+  -webkit-line-clamp: 8;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.list li {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: var(--hairline);
+  align-items: center;
+}
+
+.list li .mono {
+  margin-top: 0;
+}
+
+.rowGo {
+  cursor: pointer;
+}
+
+.rowGo:hover > span:nth-child(2) {
+  color: var(--accent);
+}
+
+li.rowEmpty {
+  display: block;
+  color: var(--text-muted);
+}
+
+.stateDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.chip {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.t-aceita {
+  color: var(--zone-ok);
+}
+
+.t-rejeitada {
+  color: var(--state-permission);
+}
+
+.t-entregue,
+.t-em-execucao {
+  color: var(--state-waiting);
+}
