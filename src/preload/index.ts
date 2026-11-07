@@ -560,9 +560,6 @@ const donelApi: DonelApi = {
     removeUploadDir: (ptyId: string, folder: string) => {
       ipcRenderer.send(BROWSER_CHANNELS.removeUploadDir, ptyId, folder);
     },
-    answerUploadRequest: (ptyId: string, allow: boolean, wideConfirmed?: boolean) => {
-      ipcRenderer.send(BROWSER_CHANNELS.answerUploadRequest, ptyId, allow, wideConfirmed === true);
-    },
     setDomains: (ptyId: string, mode: DomainMode, typed: string) => ipcRenderer.invoke(BROWSER_CHANNELS.setDomains, ptyId, mode, typed) as Promise<BrowserRulesResult>,
     onRules: (listener: (rules: BrowserAgentRules) => void) => {
       const handler = (_event: unknown, rules: BrowserAgentRules): void => listener(rules);

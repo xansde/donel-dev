@@ -8,7 +8,7 @@ import { AGENT_BOT_SERVERS, isAgentBotServerName } from '../shared/ledger/slack-
 import { DEFAULT_LAYOUT_PREFS, sanitizeLayoutPrefs, type LayoutPrefs } from '../shared/layoutPrefs';
 // T014 (015-jobu-pet) — limits of the pet size: the same rule the window uses (placement.ts).
 import { PET_SIZE_DEFAULT, clampSize } from '../shared/pet/placement';
-import { withUploadFolder } from '../shared/browser/upload';
+import { withUploadFolder, withUploadGrant, type UploadGrant } from '../shared/browser/upload';
 import type {
   ArchivedPhaseSession,
   ArchivedPhaseSessions,
@@ -166,6 +166,11 @@ export interface AppConfig {
   readonly appUpdate: AppUpdatePrefs;
   /** Navegador integrado — the authorized upload folders. A TOP-LEVEL key (like `pet`, R20). Not in the DTO. */
   readonly browserUploads: BrowserUploadPrefs;
+  /**
+   * Navegador integrado — the folders the orchestrator of each board liberated for it (`navegador_liberar_pasta`), with
+   * who and when: the record the owner reads in Regras. A TOP-LEVEL key (like `pet`, R20). Not in the DTO.
+   */
+  readonly browserUploadGrants: { readonly grants: readonly UploadGrant[] };
   /** Slack só com carta — the agents' own bots, whose posts need no letter. A TOP-LEVEL key (like `pet`, R20). Not in the DTO. */
   readonly slackAgentBots: SlackAgentBotPrefs;
   /**
@@ -218,6 +223,7 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     layout: DEFAULT_LAYOUT_PREFS,
     appUpdate: { installersDir: null },
     browserUploads: { folders: [] },
+    browserUploadGrants: { grants: [] },
     slackAgentBots: { servers: [...AGENT_BOT_SERVERS] },
     homologacao: null,
     unknownFields: {},
@@ -304,6 +310,22 @@ export function sanitizeBrowserUploadPrefs(value: unknown): BrowserUploadPrefs {
       (list, folder) => (typeof folder === 'string' && folder.trim() !== '' ? withUploadFolder(list, folder.trim()) : list),
       [],
     ),
+  };
+}
+
+/** Navegador integrado — only complete grants (board, folder, who, when, all non-empty text), once per board and folder. */
+export function sanitizeBrowserUploadGrants(value: unknown): { readonly grants: readonly UploadGrant[] } {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return { grants: [] };
+  const { grants } = value as Record<string, unknown>;
+  if (!Array.isArray(grants)) return { grants: [] };
+  const text = (field: unknown): string | null => (typeof field === 'string' && field.trim() !== '' ? field.trim() : null);
+  return {
+    grants: grants.reduce<UploadGrant[]>((list, item) => {
+      if (typeof item !== 'object' || item === null) return list;
+      const raw = item as Record<string, unknown>;
+      const [board, folder, by, at] = [text(raw.board), text(raw.folder), text(raw.by), text(raw.at)];
+      return board && folder && by && at ? withUploadGrant(list, { board, folder, by, at }) : list;
+    }, []),
   };
 }
 
@@ -808,6 +830,7 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     layout: sanitizeLayoutPrefs(candidate.layout, defaults.layout),
     appUpdate: sanitizeAppUpdatePrefs(candidate.appUpdate),
     browserUploads: sanitizeBrowserUploadPrefs(candidate.browserUploads),
+    browserUploadGrants: sanitizeBrowserUploadGrants(candidate.browserUploadGrants),
     slackAgentBots: sanitizeSlackAgentBotPrefs(candidate.slackAgentBots),
     homologacao: sanitizeHomologacaoPrefs(candidate.homologacao),
     unknownFields,

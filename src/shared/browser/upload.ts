@@ -1,21 +1,31 @@
 // Navegador integrado — what `navegador_enviar_arquivo` may send (V2, docs/design/navegador-interno.md). Pure: the
 // paths come already resolved; the caller does the `realpath` and the `stat`.
 //
-// Only files inside a folder the owner authorized go up. The list is the app's (config `browserUploads`, every
-// session, survives a restart) and grows only by a gesture of the owner: Permitir on the request the tool shows him
-// (the folder of the file the agent asked for), or the picker in Regras. The credentials rule of the app holds here too: a folder that is (or holds) the
-// agent's own config, the app's data or the usual key folders cannot be authorized, and a file that looks like a
-// secret is refused even inside an authorized folder.
+// Only files inside an authorized folder go up. Three sources (owner, 07/11: "receba o poder de liberar as pastas
+// através do orquestrador de cada quadro/projeto"):
+// - the owner's folders (config `browserUploads`, every session), from the picker in Regras;
+// - the folders the orchestrator of a board liberated for that board (config `browserUploadGrants`, with who and
+//   when): the Líder único on any board, the Líder of a board on its own (`navegador_liberar_pasta`);
+// - the chat attachments (`<userData>/chat-attachments`), which are the owner's own: always, for every session.
+// The disk root and the whole home are never authorized. A folder of config or keys MAY be; inside any folder, the
+// FILES that hold a secret are refused (`secretUploadFile`): that is the line, not the folder.
 //
 // Lesson from browser-use (MIT, `tools/service.py`, GHSA-j9hj-92j8-jv9h): an agent-controlled path must be resolved
 // and checked against the folder after the resolution, never matched by name.
 
 export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
-/** Folders of the home that hold credentials or keys, whatever the file name. */
-export const SENSITIVE_HOME_DIRS = ['.claude', '.claude-profiles', '.claude-profiles.old', '.ssh', '.aws', '.gnupg', '.azure', '.kube', '.docker', '.config', 'AppData'] as const;
+/** Key folders of the home: every file in them is a key or the config of one. */
+export const KEY_HOME_DIRS = ['.ssh', '.gnupg', '.aws', '.azure', '.kube'] as const;
+
+/** The owner's own content inside the app's folder; everything else there is the app's (config, vault, tokens, cookies). */
+export const USER_DATA_CONTENT_DIRS = ['chat-attachments', 'browser-downloads', 'pedidos-audio'] as const;
 
 const SECRET_FILE = /^(\.credentials\.json|credentials(\.json)?|\.env(\..*)?|\.netrc|\.npmrc|\.pypirc|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|.*\.(pem|key|p12|pfx|kdbx|keystore|jks|ppk))$/i;
+/** A browser profile's stores (Chromium, Edge, Chrome, the app's own partition): cookies, saved logins, the key that opens them. */
+const BROWSER_SECRET_FILE = /^(cookies|cookies-journal|login data|login data-journal|login data for account|web data|web data-journal|local state)$/i;
+/** A text-like file whose name says secret, token or password (`api-token.txt`, `client_secret.json`); an image named "token" is not. */
+const NAMED_SECRET_FILE = /^(.*[-_. ])?(token|tokens|secret|secrets|password|passwords|senha|senhas|apikey|api-key|api_key)([-_. ].*)?\.(json|ya?ml|toml|ini|txt|cfg|conf|env|xml)$|^(token|secret|password|senha|apikey)s?$/i;
 
 /** Backslashes to slashes, no trailing slash, lower case (Windows paths compare without case). */
 function normalize(path: string): string {
@@ -43,17 +53,123 @@ export interface UploadFolderContext {
   readonly userData: string;
 }
 
-/** Why the owner cannot authorize `folder`; `null` when he can. */
+/** The chat attachments of the app: the owner's own files, sendable by every session without asking. */
+export function chatAttachmentsDir(userData: string): string {
+  const sep = userData.includes('\\') && !userData.includes('/') ? '\\' : '/';
+  return `${userData.replace(/[\\/]+$/, '')}${sep}chat-attachments`;
+}
+
+/** Why `folder` cannot be authorized (by the owner or an orchestrator); `null` when it can. */
 export function refusedUploadFolder(folder: string, context: UploadFolderContext): string | null {
   const target = normalize(folder);
   if (target === '' || /^[a-z]:$/.test(target)) return 'A raiz do disco não pode ser autorizada: escolha uma pasta só com o que o agente pode enviar.';
   const home = normalize(context.home);
-  if (isInsideOrEqual(home, target)) return 'Sua pasta de usuário inteira não pode ser autorizada: escolha uma pasta só com o que o agente pode enviar.';
-  const sensitive = [...SENSITIVE_HOME_DIRS.map((name) => `${home}/${name.toLowerCase()}`), normalize(context.userData)];
-  if (sensitive.some((dir) => isInsideOrEqual(target, dir) || isInsideOrEqual(dir, target))) {
-    return 'Essa pasta guarda configurações ou credenciais e não pode ser autorizada.';
+  if (isInsideOrEqual(home, target)) return 'A pasta de usuário inteira não pode ser autorizada: escolha uma pasta só com o que o agente pode enviar.';
+  return null;
+}
+
+/**
+ * Why the file at `realPath` (absolute, after `realpath`) holds a secret and is never sent, whatever folder was
+ * authorized; `null` when it may go. The list (owner, 07/11: "só os arquivos de segredo, não a pasta inteira"):
+ * - key and credential names anywhere (`.credentials.json`, `.env*`, `id_rsa`, `*.pem`/`.key`/`.pfx`/`.kdbx`…),
+ *   a browser profile's cookies, saved logins and `Local State`, and a text file named token/secret/senha;
+ * - every file of `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.azure`, `~/.kube`;
+ * - `~/.claude.json` and the `settings*.json` of `~/.claude*` (they carry env tokens), `~/.docker/config.json`,
+ *   `~/.config/gh/hosts.yml`;
+ * - inside the app's folder (`userData`), everything but the owner's content (`USER_DATA_CONTENT_DIRS`): there live
+ *   the config with keys, the accounts vault, the per-session MCP tokens, the hooks and the browser's cookies.
+ */
+export function secretUploadFile(realPath: string, context: UploadFolderContext): string | null {
+  const target = normalize(realPath);
+  const name = target.slice(target.lastIndexOf('/') + 1);
+  const said = 'Esse arquivo guarda uma credencial ou chave e não é enviado.';
+  if (SECRET_FILE.test(name) || BROWSER_SECRET_FILE.test(name) || NAMED_SECRET_FILE.test(name)) return said;
+  const home = normalize(context.home);
+  if (KEY_HOME_DIRS.some((dir) => isInsideOrEqual(target, `${home}/${dir}`))) return said;
+  if (target === `${home}/.claude.json` || target === `${home}/.docker/config.json` || target === `${home}/.config/gh/hosts.yml`) return said;
+  const first = target.startsWith(`${home}/`) ? target.slice(home.length + 1).split('/')[0]! : '';
+  if (first.startsWith('.claude') && /^settings.*\.json$/.test(name)) return said;
+  const userData = normalize(context.userData);
+  if (isInsideOrEqual(target, userData)) {
+    const inside = target.slice(userData.length + 1).split('/');
+    if (inside.length < 2 || !(USER_DATA_CONTENT_DIRS as readonly string[]).includes(inside[0]!)) {
+      return 'Esse arquivo é da configuração do Donel Dev (config, cofre, tokens das sessões ou cookies) e não é enviado. Anexos do chat, downloads e áudios saem.';
+    }
   }
   return null;
+}
+
+/** A folder an orchestrator liberated for the sessions of one board: who, and when. */
+export interface UploadGrant {
+  /** The board (project folder) whose sessions may send from `folder`. */
+  readonly board: string;
+  readonly folder: string;
+  /** Who liberated it, as the owner reads it: "Líder único", or "Líder Dalton (place:…)". */
+  readonly by: string;
+  /** ISO date. */
+  readonly at: string;
+}
+
+/** `grants` with `grant`: the same board and folder (compared like `withUploadFolder`) is updated, never duplicated. */
+export function withUploadGrant(grants: readonly UploadGrant[], grant: UploadGrant): UploadGrant[] {
+  const same = (item: UploadGrant): boolean => normalize(item.board) === normalize(grant.board) && normalize(item.folder) === normalize(grant.folder);
+  return grants.some(same) ? grants.map((item) => (same(item) ? { ...item, by: grant.by, at: grant.at } : item)) : [...grants, grant];
+}
+
+/** `grants` without `folder`, on every board (the owner's "Remover" in Regras). */
+export function withoutUploadGrantFolder(grants: readonly UploadGrant[], folder: string): UploadGrant[] {
+  const key = normalize(folder);
+  return grants.filter((grant) => normalize(grant.folder) !== key);
+}
+
+/**
+ * The folders a session may send from: the owner's, the chat attachments, and the ones liberated for its board
+ * (`'all'` = the Líder único, which stands over every board). Once each, in that order.
+ */
+export function uploadFoldersFor(input: {
+  readonly owner: readonly string[];
+  readonly grants: readonly UploadGrant[];
+  readonly board: string | 'all' | null;
+  readonly userData: string;
+}): string[] {
+  const board = input.board === null || input.board === 'all' ? input.board : normalize(input.board);
+  const granted = input.grants.filter((grant) => board === 'all' || (board !== null && normalize(grant.board) === board)).map((grant) => grant.folder);
+  return [...input.owner, chatAttachmentsDir(input.userData), ...granted].reduce<string[]>((list, folder) => withUploadFolder(list, folder), []);
+}
+
+/** What `sessao_quem_sou` says of the caller (the fields this rule reads). */
+export interface UploadCaller {
+  readonly liderUnico?: boolean;
+  readonly lugar?: string | null;
+  readonly papel?: string;
+  readonly papelNome?: string;
+  readonly nome?: string;
+  readonly pasta?: string;
+}
+
+export type UploadGrantAuthority =
+  | { readonly ok: true; readonly leaderOfAll: true }
+  | { readonly ok: true; readonly board: string; readonly by: string }
+  | { readonly ok: false; readonly reason: string };
+
+/** The role id of the Líder (shared/roles.ts `LEADER_ROLE_ID`; repeated here to keep this module free of imports). */
+const LEADER_ROLE = 'lider';
+
+/**
+ * May the caller liberate a folder (`navegador_liberar_pasta`): the Líder único on the board it names in `quadro`, the
+ * Líder of a board on its own board. Nobody else: the agent that wants a folder asks the orchestrator of its board.
+ */
+export function uploadGrantAuthority(caller: UploadCaller, quadro: string | undefined): UploadGrantAuthority {
+  if (caller.liderUnico === true) {
+    return quadro ? { ok: true, leaderOfAll: true } : { ok: false, reason: 'Você é o Líder único e não tem quadro: diga em "quadro" para qual quadro a pasta fica liberada.' };
+  }
+  if (caller.papel !== LEADER_ROLE) {
+    return { ok: false, reason: 'Só o orquestrador do quadro (o Líder dele) ou o Líder único libera pasta. Peça a ele, com o caminho da pasta, por sessao_enviar.' };
+  }
+  if (typeof caller.lugar !== 'string' || typeof caller.pasta !== 'string') return { ok: false, reason: 'Seu lugar ainda não está no quadro; espere o primeiro turno terminar.' };
+  if (quadro) return { ok: false, reason: 'O Líder de um quadro libera só no próprio quadro (chame sem "quadro"). Para outro quadro, peça ao Líder único.' };
+  const name = caller.nome ? ` ${caller.nome}` : '';
+  return { ok: true, board: caller.pasta, by: `${caller.papelNome ?? 'Líder'}${name} (${caller.lugar})` };
 }
 
 /** The usual wide folders of a user, by name: under the home and under a OneDrive folder of the home. */
@@ -85,9 +201,9 @@ export function wideUploadFolder(folder: string, context: UploadFolderContext & 
 export function refusedUploadFile(relativePath: string): string | null {
   const parts = relativePath.replace(/\\/g, '/').split('/').filter((part) => part !== '');
   if (parts.length === 0 || parts[0] === '..' || /^[a-z]:/i.test(parts[0]) || relativePath.startsWith('/') || relativePath.startsWith('\\')) {
-    return 'Esse arquivo está fora da pasta que o dono autorizou.';
+    return 'Esse arquivo está fora da pasta autorizada.';
   }
-  if (parts.some((part) => part === '..')) return 'Esse arquivo está fora da pasta que o dono autorizou.';
+  if (parts.some((part) => part === '..')) return 'Esse arquivo está fora da pasta autorizada.';
   if (parts.some((part) => part.startsWith('.') && !SECRET_FILE.test(part))) return 'Arquivo ou pasta oculta não é enviado.';
   if (parts.some((part) => SECRET_FILE.test(part))) return 'Esse arquivo parece guardar uma credencial e não é enviado.';
   return null;

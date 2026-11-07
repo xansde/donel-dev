@@ -34,8 +34,6 @@ export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
   const [rulesOpen, setRulesOpen] = useState(false);
   /** The domain rule being edited; `null` = showing what is in force. */
   const [domainDraft, setDomainDraft] = useState<{ readonly mode: DomainMode; readonly typed: string } | null>(null);
-  /** The folder whose wide-folder warning he already clicked Permitir on once (the second click confirms). */
-  const [wideArmed, setWideArmed] = useState<string | null>(null);
   const showing = browser.open && active;
 
   // Pins the view on the viewport box, following resize, scroll, DPI/zoom and layout shifts: one rect read per
@@ -102,7 +100,8 @@ export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
 
   const tabs = state?.tabs ?? [];
   const uploadDirs = browser.rules?.uploadDirs ?? [];
-  const uploadRequest = browser.rules?.uploadRequest ?? null;
+  const uploadGrants = browser.rules?.uploadGrants ?? [];
+  const boardName = (path: string): string => path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path;
 
   const domainMode = domainDraft?.mode ?? browser.rules?.domainMode ?? 'all';
   const domainsTyped = domainDraft?.typed ?? (browser.rules?.domains ?? []).join(', ');
@@ -243,7 +242,7 @@ export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
           </div>
           <div className={styles.rulesRow}>
             <span className={styles.rulesLabel}>Envio de arquivos</span>
-            {uploadDirs.length === 0 ? <span className={styles.rulesValue}>desligado: nenhuma pasta autorizada</span> : null}
+            {uploadDirs.length === 0 && uploadGrants.length === 0 ? <span className={styles.rulesValue}>só os anexos do chat; as outras pastas, o Líder do quadro libera</span> : null}
             <Button type="button" variant="ghost" data-testid="browser-upload-choose" onClick={chooseUploadDir}>
               Autorizar pasta
             </Button>
@@ -259,58 +258,23 @@ export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
               </Button>
             </div>
           ))}
+          {uploadGrants.map((grant) => (
+            <div key={`${grant.board}\n${grant.folder}`} className={styles.rulesRow} data-testid="browser-upload-grant">
+              <span className={styles.rulesLabel} />
+              <span className={styles.rulesValue} title={`${grant.folder}\nQuadro: ${grant.board}`}>
+                {grant.folder} · liberada por {grant.by} em {new Date(grant.at).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })}, para {boardName(grant.board)}
+              </span>
+              <Button type="button" variant="ghost" onClick={() => window.donel.browser.removeUploadDir(ptyId, grant.folder)}>
+                Remover
+              </Button>
+            </div>
+          ))}
         </div>
       ) : null}
       {error ? (
         <p className={styles.error} role="alert">
           {error}
         </p>
-      ) : null}
-      {uploadRequest ? (
-        <div className={styles.ownerBar} role="alert" data-testid="browser-upload-request">
-          <span className={styles.ownerText} title={uploadRequest.folder}>
-            O agente quer enviar <strong>{uploadRequest.file}</strong>, da pasta {uploadRequest.folder}. Permitindo, a pasta inteira fica autorizada para as próximas vezes, em todas as sessões (dá para remover em Regras).
-            {uploadRequest.wide ? (
-              <>
-                {' '}
-                <strong data-testid="browser-upload-wide">{uploadRequest.wide}</strong>
-              </>
-            ) : null}
-          </span>
-          {uploadRequest.wide && wideArmed === uploadRequest.folder ? (
-            <Button
-              type="button"
-              variant="secondary"
-              data-testid="browser-upload-allow-wide"
-              onClick={() => {
-                setWideArmed(null);
-                window.donel.browser.answerUploadRequest(ptyId, true, true);
-              }}
-            >
-              Sim, liberar a pasta inteira
-            </Button>
-          ) : (
-            <Button
-              type="button"
-              variant="secondary"
-              data-testid="browser-upload-allow"
-              onClick={() => (uploadRequest.wide ? setWideArmed(uploadRequest.folder) : window.donel.browser.answerUploadRequest(ptyId, true))}
-            >
-              Permitir
-            </Button>
-          )}
-          <Button
-            type="button"
-            variant="ghost"
-            data-testid="browser-upload-deny"
-            onClick={() => {
-              setWideArmed(null);
-              window.donel.browser.answerUploadRequest(ptyId, false);
-            }}
-          >
-            Negar
-          </Button>
-        </div>
       ) : null}
       {ownerDriving ? (
         <div className={styles.ownerBar} role="status" data-testid="browser-owner-bar">

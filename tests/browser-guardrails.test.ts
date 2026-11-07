@@ -99,14 +99,11 @@ describe('vigia de domínio', () => {
 describe('envio de arquivo', () => {
   const context = { home: 'C:\\Users\\dono', userData: 'C:\\Users\\dono\\AppData\\Roaming\\donel-dev' };
 
-  it('a pasta autorizada nunca é a de credenciais nem a casa inteira', () => {
+  it('a pasta autorizada nunca é a raiz nem a casa inteira (as de credenciais, ver browser-upload-grants)', () => {
     expect(refusedUploadFolder('C:\\Users\\dono\\Documents\\envios', context)).toBeNull();
     expect(refusedUploadFolder('C:\\', context)).not.toBeNull();
     expect(refusedUploadFolder('C:\\Users\\dono', context)).not.toBeNull();
     expect(refusedUploadFolder('C:\\Users', context)).not.toBeNull();
-    expect(refusedUploadFolder('c:\\users\\dono\\.CLAUDE', context)).not.toBeNull();
-    expect(refusedUploadFolder('C:\\Users\\dono\\.ssh\\chaves', context)).not.toBeNull();
-    expect(refusedUploadFolder('C:\\Users\\dono\\AppData\\Roaming\\donel-dev', context)).not.toBeNull();
   });
 
   it('só sai arquivo comum de dentro da pasta', () => {
