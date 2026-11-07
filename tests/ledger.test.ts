@@ -351,6 +351,19 @@ describe('ledger com prova', () => {
     expect(JSON.parse((await runLedgerTool(service(), lider, call('tarefa_listar', {}))).text).tarefas).toHaveLength(3);
   });
 
+  it('counts an accepted Slack letter never sent as waiting for its send, never as orphan, and it still frees the send', async () => {
+    const { service } = setup();
+    const id = (JSON.parse((await runLedgerTool(service(), dev, call('carta_slack', { destino: 'C0123', texto: 'Oi, time', motivo: 'avisar' }))).text) as { id: string }).id;
+    expect(service().apply({ kind: 'dono' }, { op: 'aceitar', id })).toMatchObject({ ok: true });
+    const who: LedgerCaller = { ...lider, placeStates: new Map([['C:/p', new Map([['place:lider', 'parada'], ['place:dev', 'fechada']])]]) };
+    const list = async (args: Record<string, unknown>) => JSON.parse((await runLedgerTool(service(), who, call('tarefa_listar', args))).text) as { faixa: Record<string, number>; tarefas: { id: string; orfa?: string }[] };
+
+    expect((await list({})).faixa).toMatchObject({ total: 1, vivas: 0, orfas: 0, fechadas: 0, esperandoEnvio: 1 });
+    expect((await list({ situacao: 'orfas' })).tarefas).toEqual([]);
+    expect((await list({ situacao: 'todas' })).tarefas.map((task) => task.id)).toEqual([id]);
+    expect(slackGuard(service().load().doc, 'mcp__slack__slack_send_message', { channel_id: 'C0123', text: 'Oi, time' })).toMatchObject({ kind: 'allow' });
+  });
+
   it('what the current code writes, the v4 code of the installed Alfa reads and rewrites without losing or blocking anything', async () => {
     const { file, service } = setup();
     const create = async (dono: string) => (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', dono, risco: 'alto' }))).text) as { id: string }).id;

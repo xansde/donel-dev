@@ -32,6 +32,7 @@ import {
   doneByOf,
   replacesOf,
   isCancelled,
+  awaitsSend,
   isClosed,
   viewState,
   maxProofBytes,
@@ -273,16 +274,19 @@ export interface LedgerCaller {
   readonly placeStates?: ReadonlyMap<string, ReadonlyMap<string, string>>;
 }
 
-/** Why a task is orphan (not closed, its owner place gone); `null` = alive, closed or unknown. A delivered task waits for whoever decides, not for its owner place. */
+/**
+ * Why a task is orphan (not closed, its owner place gone); `null` = alive, closed or unknown. A delivered task waits
+ * for whoever decides, and an accepted letter never sent waits for its send: neither waits for its owner place.
+ */
 export function orphanReason(caller: LedgerCaller, task: LedgerTask, now: number): string | null {
-  return isClosed(task) || task.state === 'entregue' ? null : ownerGone(caller, task, now);
+  return isClosed(task) || task.state === 'entregue' || awaitsSend(task) ? null : ownerGone(caller, task, now);
 }
 
 /** The owner place of `task` could not be checked: its board did not answer. Closed and delivered tasks do not depend on it. */
 export function ownerUnknown(caller: LedgerCaller, task: LedgerTask): boolean {
   // The Líder único is no place of any board: whether the board answered says nothing of it (t-52b31719).
   if (task.ownerPlaceId === LEADER_OF_ALL) return false;
-  return !isClosed(task) && task.state !== 'entregue' && !caller.placeStates?.has(task.projectPath);
+  return !isClosed(task) && task.state !== 'entregue' && !awaitsSend(task) && !caller.placeStates?.has(task.projectPath);
 }
 
 /** A place that has not started is gone only after this long (a place made a moment ago is still opening). */
@@ -649,11 +653,13 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       const now = service.now();
       const orphanOf = (task: LedgerTask): string | null => orphanReason(caller, task, now);
       const inScope = Object.values(doc.tasks).filter((task) => scope === null || task.projectPath === scope);
-      const counts = { vivas: 0, orfas: 0, fechadas: 0, desconhecidas: 0 };
-      for (const task of inScope) counts[isClosed(task) ? 'fechadas' : orphanOf(task) ? 'orfas' : ownerUnknown(caller, task) ? 'desconhecidas' : 'vivas'] += 1;
+      const counts = { vivas: 0, orfas: 0, fechadas: 0, desconhecidas: 0, esperandoEnvio: 0 };
+      for (const task of inScope) {
+        counts[isClosed(task) ? 'fechadas' : awaitsSend(task) ? 'esperandoEnvio' : orphanOf(task) ? 'orfas' : ownerUnknown(caller, task) ? 'desconhecidas' : 'vivas'] += 1;
+      }
       const tasks = inScope
         .filter((task) => !call.estado || viewState(task) === call.estado)
-        .filter((task) => situacao === 'todas' || (situacao === 'orfas' ? orphanOf(task) !== null : !isClosed(task) && orphanOf(task) === null))
+        .filter((task) => situacao === 'todas' || (situacao === 'orfas' ? orphanOf(task) !== null : !isClosed(task) && !awaitsSend(task) && orphanOf(task) === null))
         .sort((a, b) => a.createdAt - b.createdAt);
       const hidden = situacao === 'todas' ? 0 : inScope.length - tasks.length;
       return {

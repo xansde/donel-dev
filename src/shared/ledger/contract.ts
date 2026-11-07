@@ -336,8 +336,16 @@ export function viewState(task: LedgerTask): LedgerViewState {
  */
 export function isClosed(task: LedgerTask): boolean {
   if (isCancelled(task)) return true;
-  if (task.state === 'aceita') return !(task.slack && !slackLetterSent(task));
+  if (task.state === 'aceita') return !awaitsSend(task);
   return task.state === 'rejeitada' && task.slack !== undefined;
+}
+
+/**
+ * 07/11 — a Slack letter the owner accepted and nobody sent yet: not closed (it still frees one send), and not orphan
+ * either (no work is left for its owner place; the send is the letter's own). `tarefa_listar` counts it apart.
+ */
+export function awaitsSend(task: LedgerTask): boolean {
+  return task.state === 'aceita' && task.slack !== undefined && !slackLetterSent(task) && !isCancelled(task);
 }
 
 /** The place that really did the work of a delivery (`⟦feito por …⟧`); absent = whoever delivered. */
