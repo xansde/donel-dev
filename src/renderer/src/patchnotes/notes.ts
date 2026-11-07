@@ -22,6 +22,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'Uma sessão que o Líder abriu, ou que está abaixo dela no quadro, agora manda mensagem ao Líder e recebe resposta, em vez de travar esperando. O Líder também pode ficar com uma tarefa: quem passa a tarefa para ele vê o Líder como dono, e ela não aparece como órfã. Quando você fecha uma sessão que tinha tarefa aberta, em andamento ou rejeitada, a tarefa passa sozinha, um minuto depois, para quem está acima dela no quadro, ou para o Líder se não houver ninguém aberto, e quem recebe é avisado no chat. Tarefa entregue fica onde está, esperando a sua decisão. Fechar ou atualizar o Donel não mexe em nada. Uma sessão que nunca começou passa as tarefas depois de meia hora.',
       },
       {
+        title: 'O Oráculo conta as órfãs igual para todo mundo',
+        text: 'Quando uma sessão pede a lista de tarefas de todos os quadros, ela agora vê os mesmos números que o Líder único: vivas, órfãs e fechadas. Um quadro que não respondeu na hora aparece num número à parte, "desconhecidas", em vez de inflar as vivas. Uma tarefa nova pode dizer qual tarefa ela substitui, e a antiga é cancelada na mesma hora. Líder, Curador e Pesquisa sempre dizem quem vai fazer o trabalho, para a tarefa não ficar sem dono quando a sessão deles fecha.',
+      },
+      {
         title: 'O bot do próprio agente manda no Slack sem carta',
         text: 'A carta de Slack volta a ser só para o que sai em seu nome. Quando um agente fala pelo bot dele (como o Theo West, no PC ou na VPS) e esse bot está na lista de bots dos agentes da sua configuração, a mensagem ou o arquivo sai sem esperar você, e fica anotado no Oráculo como "enviado pelo bot do agente", com destino, texto e link para você ver depois. O que sai pela sua conta (Composio, o Slack do seu usuário, terminal) continua pedindo carta.',
       },

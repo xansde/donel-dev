@@ -30,6 +30,7 @@ import {
   transfersOf,
   eventNote,
   doneByOf,
+  replacesOf,
   isCancelled,
   isClosed,
   viewState,
@@ -266,7 +267,8 @@ export interface LedgerCaller {
   readonly board?: MindscapeBoard;
   /**
    * 06/11 — the places of the boards the main could read (project folder → place id → `estado` of `sessao_listar`:
-   * trabalhando, parada, fechada, nao-comecou…). A board missing here is unknown: none of its tasks counts as orphan.
+   * trabalhando, parada, fechada, nao-comecou…). A board missing here is unknown: none of its tasks counts as orphan,
+   * and `tarefa_listar` counts them apart (`desconhecidas`), never as alive.
    */
   readonly placeStates?: ReadonlyMap<string, ReadonlyMap<string, string>>;
 }
@@ -274,6 +276,13 @@ export interface LedgerCaller {
 /** Why a task is orphan (not closed, its owner place gone); `null` = alive, closed or unknown. A delivered task waits for whoever decides, not for its owner place. */
 export function orphanReason(caller: LedgerCaller, task: LedgerTask, now: number): string | null {
   return isClosed(task) || task.state === 'entregue' ? null : ownerGone(caller, task, now);
+}
+
+/** The owner place of `task` could not be checked: its board did not answer. Closed and delivered tasks do not depend on it. */
+export function ownerUnknown(caller: LedgerCaller, task: LedgerTask): boolean {
+  // The Líder único is no place of any board: whether the board answered says nothing of it (t-52b31719).
+  if (task.ownerPlaceId === LEADER_OF_ALL) return false;
+  return !isClosed(task) && task.state !== 'entregue' && !caller.placeStates?.has(task.projectPath);
 }
 
 /** A place that has not started is gone only after this long (a place made a moment ago is still opening). */
@@ -416,6 +425,7 @@ function taskView(task: LedgerTask, doc: LedgerDoc, orphan: string | null = null
     prazo: task.due,
     dono: task.ownerPlaceId,
     risco: task.risk,
+    ...(replacesOf(task) ? { substitui: replacesOf(task) } : {}),
     ...(transfers.length ? { transferencias: transfers.map((t) => ({ de: t.from, para: t.to, por: who(t.by), em: new Date(t.at).toISOString(), motivo: t.reason })) } : {}),
     ...(delivery
       ? {
@@ -495,6 +505,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         ownerPlaceId: owner,
         risk: lowRefused ? 'alto' : call.risco,
         ...(call.titulo ? { title: call.titulo } : {}),
+        ...(call.substitui ? { replaces: call.substitui } : {}),
       });
       if (!result.ok || !lowRefused) return answer(result, 'criada');
       return {
@@ -616,8 +627,8 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       const now = service.now();
       const orphanOf = (task: LedgerTask): string | null => orphanReason(caller, task, now);
       const inScope = Object.values(doc.tasks).filter((task) => scope === null || task.projectPath === scope);
-      const counts = { vivas: 0, orfas: 0, fechadas: 0 };
-      for (const task of inScope) counts[isClosed(task) ? 'fechadas' : orphanOf(task) ? 'orfas' : 'vivas'] += 1;
+      const counts = { vivas: 0, orfas: 0, fechadas: 0, desconhecidas: 0 };
+      for (const task of inScope) counts[isClosed(task) ? 'fechadas' : orphanOf(task) ? 'orfas' : ownerUnknown(caller, task) ? 'desconhecidas' : 'vivas'] += 1;
       const tasks = inScope
         .filter((task) => !call.estado || viewState(task) === call.estado)
         .filter((task) => situacao === 'todas' || (situacao === 'orfas' ? orphanOf(task) !== null : !isClosed(task) && orphanOf(task) === null))
@@ -630,7 +641,10 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
             faixa: { ...stripView(ledgerStrip(doc, scope)), ...counts },
             situacao,
             ...(hidden ? { fora: `${hidden} tarefa(s) fora desta lista; "situacao": "todas" mostra o histórico inteiro, "orfas" as que ficaram sem lugar.` } : {}),
-            tarefas: tasks.map((task) => taskView(task, doc, orphanOf(task))),
+            tarefas: tasks.map((task) => ({
+              ...taskView(task, doc, orphanOf(task)),
+              ...(ownerUnknown(caller, task) ? { desconhecida: 'o quadro desta tarefa não respondeu: não sei se o lugar dono ainda existe.' } : {}),
+            })),
           },
           null,
           1,

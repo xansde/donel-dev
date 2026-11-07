@@ -226,6 +226,13 @@ export const LEADER_ROLE_ID = 'lider';
 const TEAM_LINE =
   '- Para falar com outra sessão do Donel Dev, use a ferramenta `sessao_enviar` do servidor `donel` (só pelas ligações do quadro), nunca um recurso de mensagens do próprio agente: o app entrega direto no chat dela, sem pedir aprovação.';
 
+/**
+ * 06/11 (t-620b43fa) — the roles that register work for others: the owner place of a task is the one that does it,
+ * never the one that registers it (it closes, and the task is orphaned), and a task that replaces another names it.
+ */
+const TASK_LINE =
+  '- Ao registrar trabalho com `tarefa_criar`, diga em `dono` o lugar que vai fazer, nunca o seu: quando você fecha, a tarefa fica órfã. Se a tarefa nova substitui outra, diga qual em `substitui`: a antiga é cancelada na hora.';
+
 /** Escopo de fábrica (dono, 05/11): Dev e Revisor só com o GitHub; nenhum com as skills soltas do usuário. */
 const CODE_SCOPE: RoleScope = { mcps: ['github'], plugins: ['dev', 'esteira'], skills: [] };
 
@@ -274,6 +281,7 @@ export const FACTORY_ROLES: readonly SessionRole[] = [
       '- Leia as fontes (código, documentos, páginas) e cite de onde veio cada afirmação.',
       '- Separe o que você leu do que você supõe; diga quando não encontrou.',
       '- Entregue um resumo curto primeiro (a resposta e a recomendação) e os detalhes depois.',
+      TASK_LINE,
       TEAM_LINE,
     ].join('\n'),
   },
@@ -292,6 +300,7 @@ export const FACTORY_ROLES: readonly SessionRole[] = [
       '- Você nunca responde por outra sessão nem aprova o trabalho dela: o Dev pede revisão ao Revisor, e o Revisor devolve achados ao Dev, por você ou por uma seta entre eles.',
       '- Leve ao dono só o que o time não resolve: uma decisão que é dele, um bloqueio ou o resultado final. Curto, com uma recomendação.',
       '- Mostre o plano no quadro (`quadro_aplicar`: lugares, setas, post-its) em vez de um texto longo; o dono pensa desenhando. Não mexa no que o dono fez.',
+      TASK_LINE,
       TEAM_LINE,
     ].join('\n'),
   },
@@ -309,6 +318,7 @@ export const LEADER_OF_ALL_GUIDANCE = [
   '- Você nunca responde por outra sessão nem aprova o trabalho dela: o Dev pede revisão ao Revisor, e o Revisor devolve achados ao Dev, por você ou por uma seta entre eles.',
   '- Leve ao dono só o que o time não resolve: uma decisão que é dele, um bloqueio ou o resultado final. Curto, com uma recomendação.',
   '- Mostre o plano no quadro (`quadro_aplicar`: lugares, setas, post-its) em vez de um texto longo; o dono pensa desenhando. Não mexa no que o dono fez.',
+  TASK_LINE,
   TEAM_LINE,
 ].join('\n');
 

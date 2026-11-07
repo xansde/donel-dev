@@ -39,10 +39,15 @@ export type BoardToolCall =
   | { readonly tool: 'sessao_abrir'; readonly papel: string; readonly pedido: string; readonly nome?: string; readonly onde?: string; readonly quadro?: string }
   | { readonly tool: 'sessao_enviar'; readonly para: string; readonly texto: string; readonly quadro?: string }
   | { readonly tool: 'sessao_ver_tela'; readonly quem: string; readonly quadro?: string }
-  | { readonly tool: 'sessao_fechar'; readonly quem: string; readonly quadro?: string };
+  | { readonly tool: 'sessao_fechar'; readonly quem: string; readonly quadro?: string }
+  /**
+   * Internal, never an MCP tool (not in `BOARD_TOOLS`): the `estado` of every place of these boards (folders), the same
+   * answer for whoever asks. The ledger's orphan count must not depend on who asks (t-04099af0).
+   */
+  | { readonly tool: 'estados_dos_lugares'; readonly pastas: readonly string[] };
 
 /** The tools that act on ONE board: the Líder único names it with `quadro` (ADR 0007); the other sessions use their own. */
-export type BoardScopedCall = Exclude<BoardToolCall, { readonly tool: 'papeis_listar' | 'sessao_quem_sou' }>;
+export type BoardScopedCall = Exclude<BoardToolCall, { readonly tool: 'papeis_listar' | 'sessao_quem_sou' | 'estados_dos_lugares' }>;
 
 export type BoardToolName = BoardToolCall['tool'];
 
