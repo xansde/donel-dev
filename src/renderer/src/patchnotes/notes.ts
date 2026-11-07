@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-07',
     items: [
       {
+        title: 'O Líder pode rodar na VPS',
+        text: 'Em Preferências, Avisos e Jobu, "Onde o Líder roda" escolhe entre este computador e a VPS. O Líder com quem você fala pelo Jobu muda de lugar na mensagem seguinte e continua a mesma conversa, com tudo o que já sabia. Se ele estiver trabalhando, muda quando terminar. O antigo só fecha depois que o novo respondeu; se algo falhar no caminho, ele continua onde estava, com a conversa, e recebe a mensagem. Se o computador dormir e a ligação com a VPS cair, a próxima mensagem religa o mesmo Líder. Na VPS ele deixa de ocupar memória do computador; o navegador integrado continua aqui, e ele o usa como antes. Ele só lê arquivos de projetos que já estão no GitHub. Para voltar, escolha "Este computador".',
+      },
+      {
         title: 'Pods no Mindscape de cadeiras',
         text: 'Na lente Cadeiras, "+ Pod" cria um pod dentro do rig. Dê nome e missão na gaveta dele e escolha as cadeiras que sentam ali, pela gaveta do pod ou pela da cadeira (cada cadeira fica em um pod só). O pod arruma as próprias cadeiras; você só move o pod, arrastando pelo nome. As cadeiras sem pod ficam à esquerda dos pods, longe do seu desenho. Apagar um pod deixa as cadeiras no quadro, sem pod, e Ctrl+Z desfaz qualquer passo. Atenção: depois que esta versão gravar o quadro (por você ou por uma sessão, ao renovar a conversa ou mexer no quadro), o Donel Beta aberto no mesmo computador passa a mostrar o Mindscape só para leitura, até ser atualizado.',
       },
