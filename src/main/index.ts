@@ -320,8 +320,7 @@ import { registerPetIpcHandlers } from './pet/pet-ipc';
 import { createLiderService, type LiderService } from './lider/lider-service';
 import { createPetService, type PetService } from './pet/pet-service';
 import { createPetWindow } from './pet/pet-window';
-import { createFullscreenWatcher } from './pet/fullscreen-watcher';
-import { readPetSeams, type PetSmokeGlobal } from './pet/pet-seams';
+import { readPetSeams } from './pet/pet-seams';
 // 016-jobu-faxina — "Fazer faxina": the sweep of repos, worktrees, branches and old sessions the Jobu runs from his menu.
 import { createGitRunner } from './sweep/git';
 import { createSweepRunner } from './sweep/sweep-service';
@@ -331,6 +330,10 @@ import { createHealthService, type HealthService } from './health/health-service
 import { createRemoteHealthService, type RemoteHealthService } from './health/remote-health-service';
 import type { RemoteHealthReport } from '../shared/health/remote';
 import { HEALTH_CHANNELS, type KillProcessOutcome } from '../shared/health/ipc';
+// Mindscape de homologação V1 — the factory's files, read over ssh (read-only).
+import { createRemoteFileReader, type RemoteFileReader } from './homologacao/remote-file-reader';
+import { parseFactoryMetrics, type FactoryMetricsParse } from '../shared/homologacao/factoryMetrics';
+import { HOMOLOGACAO_CHANNELS, type FactoryMetricsView } from '../shared/homologacao/ipc';
 import { createRoutineRunner, type RoutineRunner } from './rotinas/routine-runner';
 import { createFaxinaRunner, type FaxinaRunner } from './rotinas/oraculo-faxina';
 import type { PrRef, PrState } from '../shared/ledger/faxina';
@@ -1275,8 +1278,6 @@ function startPetService(): void {
     clearInterval: (handle) => clearInterval(handle as ReturnType<typeof setInterval>),
     // FR-034: with `DONEL_PET_CAPTURABLE=1` the protection against capture never turns on (the real screenshots of the docs).
     alwaysCapturable: seams.capturable,
-    // T050 (R10): the full-screen helper only exists while the Jobu window is open.
-    startFullscreenWatcher: (onChange) => createFullscreenWatcher({ onChange }),
     // T049 (FR-005): a monitor plugged in, unplugged or with its work area changed revalidates the position.
     subscribeDisplays: (listener) => {
       const handler = (): void => listener();
@@ -1291,12 +1292,6 @@ function startPetService(): void {
     },
   });
   petService.start();
-  if (seams.ghost) {
-    // The test hook of the ghost mode: what the full-screen watcher would do on seeing an app take the screen. Verification
-    // with a REAL full screen belongs to the owner's checklist; the smoke only proves that the window hides and comes back when the service is told.
-    const hooks = globalThis as PetSmokeGlobal;
-    hooks.__donelPetSmoke = { ...hooks.__donelPetSmoke, setFullscreen: (active) => petService?.onFullscreenChanged(active) };
-  }
 }
 
 /**
@@ -2850,6 +2845,49 @@ function registerHealthIpcHandlers(): void {
   );
 }
 
+/** Mindscape de homologação V1 — the reader of `metricas.json`; same life as `remoteHealthService`. */
+let factoryMetricsReader: RemoteFileReader<FactoryMetricsParse> | null = null;
+
+/** The remote place named by `homologacao.lugar` (label or id), or `null`. */
+function homologacaoPlace(): { readonly sshTarget: string } | null {
+  const prefs = appConfig.homologacao;
+  if (!prefs) return null;
+  const remotes = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
+  return remotes.find((place) => place.label === prefs.lugar) ?? remotes.find((place) => place.id === prefs.lugar) ?? null;
+}
+
+function factoryMetricsView(): FactoryMetricsView | null {
+  const prefs = appConfig.homologacao;
+  if (!prefs?.metricas || !factoryMetricsReader) return null;
+  return { board: prefs.quadro, place: prefs.lugar, placeFound: homologacaoPlace() !== null, file: factoryMetricsReader.get() };
+}
+
+/**
+ * Mindscape de homologação V1, fatia 1 — "Números da factory": `metricas.json` read once a minute from the place of
+ * `homologacao.lugar`. Without the key (or its `metricas`), or without that place, no ssh goes out.
+ */
+function registerHomologacaoIpcHandlers(): void {
+  factoryMetricsReader = createRemoteFileReader({
+    source: () => {
+      const path = appConfig.homologacao?.metricas;
+      const place = path ? homologacaoPlace() : null;
+      return place && path ? { sshTarget: place.sshTarget, path } : null;
+    },
+    parse: parseFactoryMetrics,
+    run: runRemoteScript,
+    onState: () => {
+      const window = getMainWindow();
+      if (window) window.webContents.send(HOMOLOGACAO_CHANNELS.metricsChanged, factoryMetricsView());
+    },
+  });
+  factoryMetricsReader.start();
+  ipcMain.handle(HOMOLOGACAO_CHANNELS.metricsGet, (): FactoryMetricsView | null => factoryMetricsView());
+  ipcMain.handle(HOMOLOGACAO_CHANNELS.metricsRefresh, async (): Promise<FactoryMetricsView | null> => {
+    await factoryMetricsReader?.refresh();
+    return factoryMetricsView();
+  });
+}
+
 /** Item 20 — the routines in shadow; `null` until whenReady and after the app closes. */
 let routineRunner: RoutineRunner | null = null;
 
@@ -4109,6 +4147,7 @@ void app.whenReady().then(async () => {
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
   }); // 015-jobu-pet
   registerHealthIpcHandlers(); // Saúde do computador
+  registerHomologacaoIpcHandlers(); // Mindscape de homologação V1 — Números da factory
   registerRotinasIpcHandlers(); // Item 20 — rotinas em sombra
   registerAppUpdateIpcHandlers(); // B33 — atualizar de dentro do app
   registerWorkspaceIpcHandlers(); // Sidebar — abrir no editor + branch
@@ -4198,6 +4237,8 @@ app.on('window-all-closed', () => {
   healthService = null;
   remoteHealthService?.stop();
   remoteHealthService = null;
+  factoryMetricsReader?.stop();
+  factoryMetricsReader = null;
   routineRunner?.stop();
   routineRunner = null;
   faxinaRunner?.stop();

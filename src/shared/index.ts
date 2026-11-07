@@ -30,6 +30,7 @@ import type { DonelRolesApi } from './roles';
 import type { DonelRenewalApi } from './sessionRenewal';
 import type { DonelLearningApi } from './learning/gestures';
 import type { DonelHealthApi } from './health/ipc';
+import type { DonelHomologacaoApi } from './homologacao/ipc';
 import type { DonelAppUpdateApi } from './appUpdate';
 import type { DonelWorkspaceApi } from './workspace';
 import type { DonelBrowserApi } from './browser/ipc';
@@ -541,6 +542,8 @@ export interface DonelApi {
   celular: DonelCelularApi;
   /** Saúde do computador — RAM, disco e processos que estão pesando, com a ação de encerrar um processo. */
   health: DonelHealthApi;
+  /** Mindscape de homologação V1 — os números da factory, lidos por ssh (só leitura). */
+  homologacao: DonelHomologacaoApi;
   /** B33 — versão nova do alfa: atualizar de dentro do app e reabrir as abas depois. */
   appUpdate: DonelAppUpdateApi;
   /** Sidebar — "Abrir no editor" (VS Code/Cursor) e branch atual da pasta da sessão/projeto. */

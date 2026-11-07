@@ -22,6 +22,14 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'Em Preferências, Celular, "Onde mora o Oráculo" leva o registro de tarefas para a sua VPS, inteiro e como está, e este PC passa a ler e gravar nele. A diferença aparece quando o PC desliga: o registro continua lá. Se a VPS sumir da rede, o PC mostra o último retrato só para ler e não grava nada até ela voltar, para nunca haver dois registros diferentes. "Trazer de volta para este PC" desfaz, também sem perder nada. As cartas no celular e as sessões da VPS sem o PC chegam nas próximas versões.',
       },
       {
+        title: 'Os números da factory no Mindscape',
+        text: 'No quadro da homologação, na vista Cadeiras, o botão "Números da factory" abre um painel com os números que a factory grava na VPS dela: um cartão por número, com o valor exatamente como ela escreveu, a pergunta que ele responde e de onde veio (medido, estimado ou sem fonte). Os números que têm de ficar em zero ou subir levam a marca trava, e os que não têm meta dizem "só mostrado". No topo aparece a hora em que foram gerados ("atualizado às" ou, depois de duas horas, "parado desde"); se a VPS não responde ou o arquivo some, "sem sinal desde", mantendo a última leitura. O painel só lê: nada nele muda a factory. Liga com a chave "homologacao" na configuração; sem ela, nada aparece e nada é lido.',
+      },
+      {
+        title: 'O Jobu não some mais em outro monitor',
+        text: 'Levar o Donel para outro monitor, maximizado, fazia o Jobu sumir: o Windows tratava isso como "um app em tela cheia", e o Jobu se escondia de qualquer tela cheia. Essa regra saiu. O Jobu fica na tela em qualquer monitor, inclusive com escala diferente e depois de voltar a janela, e os balões aparecem como sempre. Para tirá-lo da frente, use "Esconder" no menu dele.',
+      },
+      {
         title: 'A tela da cadeira salva o papel',
         text: 'A tela da cadeira deixou de ser só leitura. Agora dá para escrever a orientação do papel, ligar ou desligar cada skill e plugin, desligar um MCP ou ligar outro pelo nome, e escolher modelo, esforço e permissão. O custo à direita muda na hora, a cada mudança. "Salvar" grava o papel, e vale para todo lugar com aquele papel que abrir ou continuar depois; "Descartar" volta ao que estava salvo. Desligar uma skill quando o papel usava todas deixa o papel com as outras, nunca com nenhuma. "Usar todos os seus" desfaz a lista. Sair da tela ou trocar de cadeira com mudanças não salvas pergunta antes. Nome, cor e motor continuam em Papéis.',
       },

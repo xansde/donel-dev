@@ -8,13 +8,13 @@
 // The core is fed ALWAYS, with the pet on or off: it is a handful of cheap reductions, and that way
 // turning the pet on finds the current state of the sessions (US5, scenario 9) with the real age of
 // every wait, instead of starting blind. What exists only while the pet is on is what costs: the
-// window, the tick, the sending of views, the listener of the monitors and the watcher of full screen. Turning it on
+// window, the tick, the sending of views and the listener of the monitors. Turning it on
 // (`enable`) tells the core to `resume`, so the hours it spent without a clock do not turn into a waffle.
 //
 // What the core cannot know it is told here: the kind of the pending the chat opened (`onPendingOpened`),
-// that a process exited and whether the owner asked for it (`onSessionExited`), that the account changed
-// (`onAccountSwitched`, US4) and that an app has the whole screen (`onFullscreenChanged`, called by the
-// watcher of US5). The gestures of the window next to `handleInteractive` - the click, the item of the list,
+// that a process exited and whether the owner asked for it (`onSessionExited`) and that the account changed
+// (`onAccountSwitched`, US4). Nothing hides the Jobu but the owner (t-56abde57): the old "an app has the whole
+// screen" rule hid him whenever the Donel was maximized on a monitor without the taskbar. The gestures of the window next to `handleInteractive` - the click, the item of the list,
 // the list opening (US3) - are answered here too, and so are the ones of US5: the drag, the Ctrl + wheel, the
 // right-click menu and what each item of it does (silence, hide, go home, the size, the capture, and since 016 the sweep).
 // The sweep itself is not here: `runSweep` comes in through the deps, and this file only turns its totals into the bubble.
@@ -148,11 +148,6 @@ export interface PetSemaphoreUpdate {
   readonly awaitingBackgroundAgents?: boolean;
 }
 
-/** The watcher of full screen apps (src/main/pet/fullscreen-watcher.ts), as the service holds it. */
-export interface PetFullscreenWatcher {
-  stop(): void;
-}
-
 export interface PetServiceDeps {
   readonly getMainWindow: () => PetMainWindowLike | null;
   /** The current `pet` preferences: a getter, because the config changes under the service. */
@@ -167,11 +162,6 @@ export interface PetServiceDeps {
   readonly clearInterval: (handle: unknown) => void;
   /** FR-034 test override (`DONEL_PET_CAPTURABLE=1`): the protection against screen captures is never on. */
   readonly alwaysCapturable?: boolean;
-  /**
-   * Starts the watcher of apps in full screen (R10); it calls `onChange(true)` when one takes the whole screen and
-   * `onChange(false)` when it gives it back. Started with the window and stopped with it. Absent = the Jobu never hides.
-   */
-  readonly startFullscreenWatcher?: (onChange: (active: boolean) => void) => PetFullscreenWatcher;
   /**
    * `display-added`, `display-removed` and `display-metrics-changed` of Electron's `screen` (FR-005): `listener` runs
    * when the monitors or their work areas change. Returns the way to stop listening. Absent = the place is only judged at the start.
@@ -238,11 +228,6 @@ export interface PetService {
   openSession(ptyId: string): void;
   /** The account in use changed, by the panel or by the automatic switch (US4): the label, never an e-mail. */
   onAccountSwitched(label: string): void;
-  /**
-   * An app took the whole screen, or gave it back (the watcher of US5): no bubble is born while it lasts and the
-   * window hides, to show again - without taking the focus - when the screen is free.
-   */
-  onFullscreenChanged(active: boolean): void;
   /** 016: the sweep is running. The menu says "Faxinando…" and a second one does not start. */
   isSweeping(): boolean;
   /** Is this web contents the pet window? The IPC layer asks before it trusts a gesture. */
@@ -318,10 +303,6 @@ export function createPetService(deps: PetServiceDeps): PetService {
   /** US5/FR-034: the rule of when a capture may see the Jobu, and what the window was last told about it. */
   let capture: CaptureState = createCaptureState({ alwaysCapturable: deps.alwaysCapturable === true });
   let captureApplied: boolean | null = null;
-  /** US5/FR-007: what the watcher last said (an app has the whole screen), and whether it is why the window is hidden. */
-  let fullscreen = false;
-  let hiddenForFullscreen = false;
-  let fullscreenWatcher: PetFullscreenWatcher | null = null;
   let unsubscribeDisplays: (() => void) | null = null;
   /** 016: a sweep is running. Lives in the service, not in the core: it is a fact about the menu, not about what the Jobu shows. */
   let sweeping = false;
@@ -520,31 +501,10 @@ export function createPetService(deps: PetServiceDeps): PetService {
     tickHandle = null;
   }
 
-  /** The watcher of full screen and the listener of the monitors live exactly as long as the window does. */
+  /** The listener of the monitors lives exactly as long as the window does. */
   function releaseWatchers(): void {
-    fullscreenWatcher?.stop();
-    fullscreenWatcher = null;
     unsubscribeDisplays?.();
     unsubscribeDisplays = null;
-  }
-
-  /** Hides the window while an app has the whole screen and brings it back, without the focus, when the screen is free. */
-  function syncVisibility(): void {
-    if (window === null || window.isDestroyed() || !petReady) return;
-    if (fullscreen && !hiddenForFullscreen) {
-      hiddenForFullscreen = true;
-      window.hide();
-    } else if (!fullscreen && hiddenForFullscreen) {
-      hiddenForFullscreen = false;
-      window.showInactive();
-    }
-  }
-
-  function onFullscreenChanged(active: boolean): void {
-    if (disposed) return;
-    fullscreen = active;
-    feed({ type: 'fullscreen', active });
-    syncVisibility();
   }
 
   function onDisplaysChanged(): void {
@@ -566,8 +526,6 @@ export function createPetService(deps: PetServiceDeps): PetService {
     appliedBounds = null;
     drag = null;
     captureApplied = null;
-    fullscreen = false;
-    hiddenForFullscreen = false;
   }
 
   function enable(): void {
@@ -611,7 +569,6 @@ export function createPetService(deps: PetServiceDeps): PetService {
     reduce({ type: 'resume' });
     tickHandle = deps.setInterval(onTick, PET_TICK_MS);
     unsubscribeDisplays = deps.subscribeDisplays?.(onDisplaysChanged) ?? null;
-    fullscreenWatcher = deps.startFullscreenWatcher?.(onFullscreenChanged) ?? null;
   }
 
   function disable(): void {
@@ -847,8 +804,6 @@ export function createPetService(deps: PetServiceDeps): PetService {
       return sweeping;
     },
 
-    onFullscreenChanged,
-
     isPetSender(sender) {
       return window !== null && sender.id === window.webContentsId;
     },
@@ -857,9 +812,7 @@ export function createPetService(deps: PetServiceDeps): PetService {
       if (disposed || window === null) return;
       petReady = true;
       pushView(true);
-      // An app that has the whole screen when the screen of the pet comes up: the window stays hidden and shows when it is free.
-      if (fullscreen) hiddenForFullscreen = true;
-      else window.showInactive();
+      window.showInactive();
     },
 
     handleInteractive(interactive) {

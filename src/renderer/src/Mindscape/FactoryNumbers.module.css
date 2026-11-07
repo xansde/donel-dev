@@ -1,0 +1,482 @@
+/* Mindscape de homologação V1, fatia 1 — "Números da factory" (prototype 2-numeros). Tokens of the design system only. */
+
+.openButton {
+  align-self: center;
+  margin: 0 0 4px 8px;
+  background: var(--bg-raised);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: 0 10px;
+  height: 24px;
+  cursor: pointer;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12px;
+}
+
+.openButton[aria-pressed='true'] {
+  background: var(--bg-app);
+  color: var(--text-primary);
+}
+
+.openButton:focus-visible,
+.close:focus-visible,
+.provenance summary:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* --- The panel: over the board, under the strip of the lens --- */
+.panel {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-app);
+  font-size: 12px;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 10px 16px;
+  background: var(--bg-panel);
+  border-bottom: var(--hairline);
+}
+
+.title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.title b {
+  font-size: var(--text-heading-size);
+}
+
+.title span {
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+}
+
+.fresh {
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  border: var(--hairline);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.fresh span {
+  color: var(--text-muted);
+}
+
+.fresh-ok {
+  border-color: var(--zone-ok);
+}
+
+.fresh-stale {
+  border-color: var(--zone-warn);
+}
+
+.fresh-down {
+  border-color: var(--zone-over);
+}
+
+.legend {
+  margin-left: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.close {
+  background: none;
+  border: 0;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.close:hover {
+  color: var(--text-primary);
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.notice {
+  margin: 0;
+  padding: 12px 14px;
+  border: var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  color: var(--text-primary);
+}
+
+/* --- Groups and cards --- */
+.group {
+  border: var(--hairline);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-md);
+  background: var(--bg-panel);
+  padding: 10px 12px 12px;
+}
+
+.group[data-rig='rig2'] {
+  border-left-color: var(--state-error);
+}
+
+.group[data-rig='factory'] {
+  border-left-color: var(--text-muted);
+}
+
+.group h3 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.groupNote {
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+  font-weight: normal;
+}
+
+.group:has(.groupNote) h3 {
+  margin-bottom: 0;
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 10px;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--bg-raised);
+}
+
+.cardHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cardName {
+  font-size: 12.5px;
+}
+
+.value {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.unit {
+  color: var(--text-muted);
+}
+
+.marks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.lock,
+.shown,
+.goal {
+  font-size: var(--text-caption-size);
+  border-radius: var(--radius-sm);
+  padding: 0 6px;
+  line-height: 18px;
+}
+
+.lock {
+  border: 1px solid var(--state-permission);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.shown {
+  border: 1px dashed var(--border);
+  color: var(--text-muted);
+}
+
+.goal {
+  color: var(--text-muted);
+  padding: 0;
+}
+
+.question {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* The origin tag: the word carries the meaning; the color only reinforces it. */
+.tag {
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 600;
+  border-radius: 999px;
+  padding: 0 7px;
+  line-height: 17px;
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.tag-medido {
+  border-color: var(--zone-ok);
+}
+
+.tag-estimado {
+  border-color: var(--zone-warn);
+}
+
+.tag-sem-fonte {
+  border-style: dashed;
+  color: var(--text-muted);
+}
+
+/* --- The weeks --- */
+.series {
+  margin: 6px 0 0;
+}
+
+.bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  border-bottom: var(--hairline);
+}
+
+.barSlot {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  height: 100%;
+}
+
+.barSlot:hover .bar {
+  background: var(--text-primary);
+}
+
+.bar {
+  width: 100%;
+  background: var(--accent);
+  border-radius: 2px 2px 0 0;
+}
+
+.weeks {
+  display: flex;
+  justify-content: space-between;
+  color: var(--text-muted);
+  font-size: 10.5px;
+  margin-top: 2px;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* --- "de onde veio" --- */
+.provenance {
+  margin-top: 4px;
+  color: var(--text-muted);
+}
+
+.provenance summary {
+  cursor: pointer;
+  font-size: var(--text-caption-size);
+  border-radius: var(--radius-sm);
+}
+
+.provenance p {
+  margin: 6px 0 4px;
+  line-height: 1.45;
+  color: var(--text-primary);
+}
+
+.provenance ul {
+  margin: 0;
+  padding-left: 16px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  overflow-wrap: anywhere;
+}
+
+/* --- Footer --- */
+.outOfContract {
+  margin: 0;
+  padding: 8px 12px 8px 26px;
+  border: 1px dashed var(--state-permission);
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+}
+
+.sources {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+  overflow-wrap: anywhere;
+}
+
+.sources b {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* --- Problem and attention: what the owner follows here has to jump out (the word says it; color reinforces) --- */
+.alerts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 8px 16px;
+  border-bottom: var(--hairline);
+  background: var(--bg-panel);
+}
+
+.alerts[data-level='problema'] {
+  background: color-mix(in srgb, var(--state-permission) 14%, var(--bg-panel));
+  border-bottom-color: var(--state-permission);
+}
+
+.alerts[data-level='atencao'] {
+  background: color-mix(in srgb, var(--zone-warn) 12%, var(--bg-panel));
+  border-bottom-color: var(--zone-warn);
+}
+
+.alertCount {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 2px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.alertCount b {
+  font-size: 20px;
+  line-height: 1.1;
+  color: var(--text-primary);
+}
+
+.alertCount.alert-problema {
+  border-color: var(--state-permission);
+}
+
+.alertCount.alert-atencao {
+  border-color: var(--zone-warn);
+}
+
+.alertNone {
+  color: var(--text-muted);
+}
+
+.alertList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.alertList li {
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+}
+
+.alertList li.alert-problema {
+  border-color: var(--state-permission);
+  background: color-mix(in srgb, var(--state-permission) 18%, transparent);
+}
+
+.alertList li.alert-atencao {
+  border-color: var(--zone-warn);
+  background: color-mix(in srgb, var(--zone-warn) 14%, transparent);
+}
+
+.alertList button {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+
+.alertList button:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.cardProblem {
+  border: 2px solid var(--state-permission);
+  background: color-mix(in srgb, var(--state-permission) 10%, var(--bg-raised));
+}
+
+.cardAttention {
+  border: 2px solid var(--zone-warn);
+}
+
+.cardFlag {
+  align-self: flex-start;
+  font-size: var(--text-caption-size);
+  font-weight: 700;
+  color: var(--text-primary);
+  background: var(--state-permission);
+  border-radius: var(--radius-sm);
+  padding: 0 6px;
+  line-height: 18px;
+}
