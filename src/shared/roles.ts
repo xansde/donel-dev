@@ -44,6 +44,11 @@ export interface SessionRole {
    * axis absent = that axis as before.
    */
   readonly scope?: RoleScope;
+  /**
+   * t-b3b26e60 — header `lugar: qualquer`: with the chosen machine full, `sessao_abrir` may open this role on another
+   * remote place instead of queueing it. Absent = it waits for room on the machine asked for.
+   */
+  readonly anyPlace?: boolean;
   /** The guidance, Markdown. */
   readonly guidance: string;
 }
@@ -107,7 +112,9 @@ export const MAX_ROLE_NAME_CHARS = 40;
 export const MAX_ROLE_GUIDANCE_CHARS = 20_000;
 
 /** Header keys, in Portuguese: the owner may open the file by hand. */
-const KEYS = { name: 'nome', color: 'cor', engine: 'motor', model: 'modelo', effort: 'esforco', permissionMode: 'permissao' } as const;
+const KEYS = { name: 'nome', color: 'cor', engine: 'motor', model: 'modelo', effort: 'esforco', permissionMode: 'permissao', place: 'lugar' } as const;
+/** The only value of `lugar` the app reads. */
+const ANY_PLACE = 'qualquer';
 
 function oneOf<T extends string>(value: string | undefined, options: readonly T[]): T | undefined {
   return value && (options as readonly string[]).includes(value) ? (value as T) : undefined;
@@ -134,6 +141,7 @@ export function parseRoleFile(id: string, text: string): SessionRole | null {
   const effort = oneOf(header[KEYS.effort], EFFORTS);
   const permissionMode = oneOf(header[KEYS.permissionMode], PERMISSIONS);
   const scope = scopeFromHeader(header);
+  const anyPlace = header[KEYS.place]?.toLowerCase() === ANY_PLACE;
   return {
     id,
     name,
@@ -143,6 +151,7 @@ export function parseRoleFile(id: string, text: string): SessionRole | null {
     ...(effort ? { effort } : {}),
     ...(permissionMode ? { permissionMode } : {}),
     ...(scope ? { scope } : {}),
+    ...(anyPlace ? { anyPlace: true } : {}),
     guidance: match[2]!.trim().slice(0, MAX_ROLE_GUIDANCE_CHARS),
   };
 }
@@ -158,6 +167,7 @@ export function serializeRole(role: SessionRole): string {
     ...(role.model ? [`${KEYS.model}: ${role.model}`] : []),
     ...(role.effort ? [`${KEYS.effort}: ${role.effort}`] : []),
     ...(role.permissionMode ? [`${KEYS.permissionMode}: ${role.permissionMode}`] : []),
+    ...(role.anyPlace ? [`${KEYS.place}: ${ANY_PLACE}`] : []),
     ...SCOPE_AXES.flatMap((axis) => {
       const list = role.scope?.[axis];
       if (list === undefined) return [];
@@ -368,6 +378,7 @@ export function sanitizeRole(raw: unknown): SessionRole | null {
       ...(effort ? { effort } : {}),
       ...(permissionMode ? { permissionMode } : {}),
       ...(scope ? { scope } : {}),
+      ...(value.anyPlace === true ? { anyPlace: true } : {}),
       guidance: value.guidance,
     }),
   );

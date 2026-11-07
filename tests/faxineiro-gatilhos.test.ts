@@ -14,8 +14,9 @@ import {
   type SessionView,
 } from '../src/shared/faxineiro/triggers';
 import { canFaxineiroClose } from '../src/shared/mindscape/reach';
-import { addLink, addPlace, emptyMindscapeDoc, type MindscapeDoc } from '../src/shared/mindscape/model';
-import { FAXINEIRO_ROLE_ID, LEADER_ROLE_ID } from '../src/shared/roles';
+import { addLink, addPlace, emptyMindscapeDoc, setPlaceConversation, type MindscapeDoc } from '../src/shared/mindscape/model';
+import { FACTORY_ROLES, FAXINEIRO_ROLE_ID, LEADER_ROLE_ID, parseRoleFile, serializeRole, type SessionRole } from '../src/shared/roles';
+import { AgentBridge, type AgentBridgePorts, type BridgeTab, type OpenSessionRequest } from '../src/renderer/src/Mindscape/agentBridge';
 
 const MIN = 60_000;
 const NOW = new Date(2026, 10, 7, 16, 0).getTime();
@@ -203,5 +204,101 @@ describe('canFaxineiroClose', () => {
   it('only a Faxineiro place has this reach', () => {
     const dev = { projectPath: board, placeId: 'place:dev' };
     expect(canFaxineiroClose(doc(), dev, { projectPath: board, placeId: 'place:fax' }, idle).ok).toBe(false);
+  });
+});
+
+describe('máquina cheia para abrir sessão', () => {
+  it('fica cheia com RAM, swap, carga ou sem sinal, e só sai depois de 2 leituras seguidas abaixo dos limites', () => {
+    let round = evaluateFaxineiro(input({ machines: [vps({ ramFreeRatio: 0.05 })] }), stateToday(), NOW);
+    expect(round.fullMachines.vps?.join(' ')).toContain('RAM');
+    round = evaluateFaxineiro(input({ machines: [vps({ checkedAt: NOW + MIN })] }), round.state, NOW + MIN);
+    expect(round.fullMachines.vps).toBeDefined();
+    // the same read again is not a second one
+    round = evaluateFaxineiro(input({ machines: [vps({ checkedAt: NOW + MIN })] }), round.state, NOW + 90_000);
+    expect(round.fullMachines.vps).toBeDefined();
+    round = evaluateFaxineiro(input({ machines: [vps({ checkedAt: NOW + 2 * MIN })] }), round.state, NOW + 2 * MIN);
+    expect(round.fullMachines.vps).toBeUndefined();
+  });
+
+  it('disco cheio não segura abertura', () => {
+    expect(evaluateFaxineiro(input({ machines: [vps({ diskUsedRatio: 0.95 })] }), stateToday(), NOW).fullMachines).toEqual({});
+  });
+});
+
+describe('fila de abertura', () => {
+  const BOARD = '/p/atlas';
+  const setupQueue = (extraRoles: SessionRole[] = []) => {
+    let doc = addPlace(emptyMindscapeDoc(), BOARD, { id: 'place:dev', roleId: 'dev' });
+    doc = setPlaceConversation(doc, BOARD, 'place:dev', 'conv-dev');
+    const opened: OpenSessionRequest[] = [];
+    const tabs: BridgeTab[] = [{ id: 'tab-dev', name: 'Dev', cwd: BOARD, claudeSessionId: 'conv-dev', remoteId: 'vps', sessionType: 'claude' }];
+    const ports: AgentBridgePorts = {
+      loaded: true,
+      doc: () => doc,
+      applyGesture: (_path, reducer) => {
+        doc = reducer(doc);
+      },
+      tabs: () => tabs,
+      tabOfPty: (ptyId) => tabs.find((tab) => tab.id === `tab-${ptyId}`),
+      stateOf: () => 'waiting',
+      roles: () => [...FACTORY_ROLES, ...extraRoles],
+      openSession: (request) => {
+        opened.push(request);
+        return `tab-new-${opened.length}`;
+      },
+      closeTab: () => undefined,
+      sendLine: () => undefined,
+      deliverLine: async () => ({ kind: 'entrou' }),
+      permissionOnScreen: () => false,
+      unconfirmed: () => false,
+      startTrouble: () => null,
+      askOwner: async () => true,
+      remoteLabel: (id) => id.toUpperCase(),
+      remotes: () => [
+        { id: 'vps', label: 'VPS' },
+        { id: 'vps2', label: 'VPS 2' },
+      ],
+      projects: () => [{ path: BOARD, name: 'atlas' }],
+    };
+    const bridge = new AgentBridge(ports);
+    return { bridge, opened, doc: () => doc };
+  };
+
+  it('com a máquina cheia, o pedido espera vaga e abre uma vez só quando ela libera', async () => {
+    const { bridge, opened, doc } = setupQueue();
+    bridge.setFullMachines({ vps: ['VPS: RAM livre 5% (limite 15%)'] });
+    const answer = await bridge.handle('dev', { tool: 'sessao_abrir', papel: 'revisor', pedido: 'revise o PR 7' });
+    expect(answer.ok).toBe(true);
+    expect(answer.text).toContain('fila');
+    expect(opened).toEqual([]);
+    const placeId = JSON.parse(answer.text).lugar as string;
+    expect(doc().boards[BOARD]?.cards[placeId]?.kind).toBe('session');
+
+    bridge.drainQueue(); // still full
+    expect(opened).toEqual([]);
+    bridge.setFullMachines({});
+    bridge.drainQueue();
+    expect(opened).toHaveLength(1);
+    expect(opened[0]).toMatchObject({ placeId, firstMessage: 'revise o PR 7', remoteId: 'vps' });
+    bridge.drainQueue();
+    expect(opened).toHaveLength(1);
+  });
+
+  it('papel com "lugar: qualquer" vai para a outra VPS em vez de esperar', async () => {
+    const free: SessionRole = { id: 'pesquisa-livre', name: 'Pesquisa livre', color: 'discovery', anyPlace: true, guidance: 'lê' };
+    const { bridge, opened } = setupQueue([free]);
+    bridge.setFullMachines({ vps: ['VPS: carga'] });
+    const answer = await bridge.handle('dev', { tool: 'sessao_abrir', papel: 'pesquisa-livre', pedido: 'leia X' });
+    expect(answer.ok).toBe(true);
+    expect(opened).toHaveLength(1);
+    expect(opened[0]!.remoteId).toBe('vps2');
+  });
+});
+
+describe('papel com lugar: qualquer', () => {
+  it('a chave sobrevive a salvar o papel', () => {
+    const role = parseRoleFile('pesquisa-livre', '---\nnome: Pesquisa livre\ncor: discovery\nlugar: qualquer\n---\nlê')!;
+    expect(role.anyPlace).toBe(true);
+    expect(parseRoleFile('pesquisa-livre', serializeRole(role))?.anyPlace).toBe(true);
   });
 });
