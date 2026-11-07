@@ -33,8 +33,8 @@ export interface PendingNotifierDeps {
   readonly preference: () => NotificationPreference;
   /**
    * 015-jobu-pet (R8): the Jobu is on screen. He says it with a bubble, so the system notification would be
-   * the same news twice (FR-020): with him on, it stays quiet - also while he is silenced or hidden by a
-   * full-screen app, so nothing pops up over a presentation. Off or hidden by the owner, it is back as before.
+   * the same news twice (FR-020): with him on, it stays quiet - also while he is silenced. Off or hidden by the
+   * owner, it is back as before.
    */
   readonly isPetEnabled: () => boolean;
   readonly isWindowFocused: () => boolean;

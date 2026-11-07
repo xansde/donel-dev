@@ -213,7 +213,7 @@ e nenhum aviso do Windows sai.
 
 ## Phase 7: User Story 5 — Convivência (P2)
 
-- [x] T045 [P] [US5] `tests/pet-fullscreen-state.test.ts`: parser da saída do auxiliar (`2|3|4` → oculto, resto → livre; lixo → livre).
+- [x] T045 [P] [US5] (removido em 07/11, t-56abde57: FR-007 revogado) `tests/pet-fullscreen-state.test.ts`: parser da saída do auxiliar (`2|3|4` → oculto, resto → livre; lixo → livre).
 - [x] T046 [US5] Arraste:
   - `src/renderer/src/pet/usePetDrag.ts`: limiar de 4 px, `dragStart`/`dragMove`/`dragEnd` com coordenadas de tela, sem `-webkit-app-region`;
   - `pet-service.ts`: move a janela, encaixa ao soltar, grava `pet.placement` e recalcula `docked` e `align`;
@@ -227,7 +227,7 @@ e nenhum aviso do Windows sai.
   - Ctrl + roda sobre o desenho → `pet.resizeStep(±1)`;
   - `pet-service.ts` limita o tamanho, recalcula os limites ancorados na base (`windowBoundsFor`), grava `pet.size` e manda a vista.
 - [x] T049 [US5] Eventos de `screen` (`display-added`, `display-removed`, `display-metrics-changed`) → revalidam a posição (FR-005) e o `docked`.
-- [x] T050 [US5] `src/main/pet/fullscreen-watcher.ts` + `src/shared/pet/fullscreenState.ts` (passa T045):
+- [x] T050 [US5] (removido em 07/11, t-56abde57: FR-007 revogado) `src/main/pet/fullscreen-watcher.ts` + `src/shared/pet/fullscreenState.ts` (passa T045):
   - PowerShell `-NoProfile` de vida longa com `Add-Type` P/Invoke `SHQueryUserNotificationState`, consulta a cada 1,5 s;
   - existe só com o pet ligado e reinicia com recuo;
   - em tela cheia faz `hide()`; ao voltar, `showInactive()`;

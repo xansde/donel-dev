@@ -133,16 +133,6 @@ export interface SilenceEvent {
   readonly until: number | null;
 }
 
-/**
- * An app took the whole screen, or gave it back (the watcher of US5, T050). No bubble is born while it
- * lasts, and the one that is up goes (Q9): the Jobu is hidden then, and a bubble must not be waiting for
- * him when he comes back.
- */
-export interface FullscreenEvent {
-  readonly type: 'fullscreen';
-  readonly active: boolean;
-}
-
 /** The owner clicked the bubble (or the Jobu, or an item of the list): the bubble has served and goes away at once. */
 export interface BubbleDismissedEvent {
   readonly type: 'bubbleDismissed';
@@ -186,7 +176,6 @@ export type PetEvent =
   | SessionExitedEvent
   | PendingOpenedEvent
   | SilenceEvent
-  | FullscreenEvent
   | BubbleDismissedEvent
   | TickEvent;
 
@@ -288,11 +277,9 @@ export interface PetState {
   readonly waffleUntil: number | null;
   /** In memory only: silence does not survive a restart (Q3). */
   readonly silencedUntil: number | null;
-  /** An app has the whole screen: no bubble is born (Q9). Set by the full-screen watcher; `resume` forgets it. */
-  readonly fullscreen: boolean;
   /**
    * notificacoes-completas: grows every time an input gives session news, whether or not a bubble could say it
-   * (silence and full screen only hold the bubble back). `notices` are the events of that input. The service
+   * (silence only holds the bubble back). `notices` are the events of that input. The service
    * compares the number before and after a reduction to hand the news to the other channels (toast, flash).
    */
   readonly noticeSeq: number;
