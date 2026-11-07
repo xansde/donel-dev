@@ -4188,6 +4188,29 @@ void app.whenReady().then(async () => {
   // Oráculo na VPS: what waits in the VPS's relay goes by the same driver, now that it exists.
   deliverOwnerMessageViaBoard = (message) => boardBridge.deliverOwnerMessage(message);
   void remoteOracleHost?.drain();
+  // Fatia 4: the picture of each VPS session on its board (who it is, the places, the saved board), for the MCP gate
+  // that answers it when this PC is off. The board does not change while the PC is off, so the last one is right.
+  const pushBoardPicture = async (): Promise<void> => {
+    const host = remoteOracleHost;
+    const registry = remoteSessions;
+    if (!host || !registry || host.state().mode !== 'remoto') return;
+    const sessoes: Record<string, unknown> = {};
+    for (const { ptyId, folder } of registry.liveSessions()) {
+      try {
+        const who = await boardBridge.execute(ptyId, { tool: 'sessao_quem_sou' });
+        if (who.kind !== 'text') continue;
+        const quemSou = JSON.parse(who.text) as Record<string, unknown>;
+        const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar' });
+        const listar = list.kind === 'text' ? (JSON.parse(list.text) as unknown) : [];
+        const board = typeof quemSou.pasta === 'string' ? savedBoard(quemSou.pasta) : undefined;
+        sessoes[folder] = { quemSou, listar: Array.isArray(listar) ? listar : [], ...(board ? { board } : {}) };
+      } catch {
+        // this one stays as the VPS last had it
+      }
+    }
+    if (Object.keys(sessoes).length) await host.pushPicture({ at: Date.now(), sessoes });
+  };
+  setInterval(() => void pushBoardPicture(), 30_000).unref();
   hillClimbNotify = (message) => void boardBridge.deliverOwnerMessage(message).catch(() => null);
   // No place: the renderer sends it straight to the Líder único (or answers `null`: closed, the request waits).
   deliverPedidoToLeader = (text) => boardBridge.deliverOwnerMessage({ projectPath: '', placeId: '', text, leaderText: text }).then((to) => to === 'lider');
