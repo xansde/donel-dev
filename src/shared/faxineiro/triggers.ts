@@ -146,10 +146,19 @@ export interface FaxineiroState {
   /** Local day (`AAAA-MM-DD`) of the last daily round started, and the boards still to visit. */
   readonly dailyDay: string | null;
   readonly dailyPending: readonly string[];
+  /**
+   * Machine full for opening sessions → reads in a row below the limits since (it leaves at 2), and why it is full.
+   * Disk is not in it: a full disk is cleaned, it does not hold an opening.
+   */
+  readonly fullHealthy: Readonly<Record<string, number>>;
+  readonly fullReasons: Readonly<Record<string, readonly string[]>>;
 }
 
+/** Reads in a row below the limits before a full machine takes new sessions again. */
+export const FULL_RELEASE_READS = 2;
+
 export function emptyFaxineiroState(): FaxineiroState {
-  return { schemaVersion: STATE_SCHEMA_VERSION, lastFired: {}, wakes: [], unreachable: {}, reported: {}, boardWokenAt: {}, machineBoard: {}, dailyDay: null, dailyPending: [] };
+  return { schemaVersion: STATE_SCHEMA_VERSION, lastFired: {}, wakes: [], unreachable: {}, reported: {}, boardWokenAt: {}, machineBoard: {}, dailyDay: null, dailyPending: [], fullHealthy: {}, fullReasons: {} };
 }
 
 /** The state read back from the file. `null` = written by a newer channel: this round neither runs nor writes. */
@@ -168,6 +177,8 @@ export function readFaxineiroState(raw: unknown): FaxineiroState | null {
     machineBoard: record<string>(value.machineBoard),
     dailyDay: typeof value.dailyDay === 'string' ? value.dailyDay : null,
     dailyPending: Array.isArray(value.dailyPending) ? value.dailyPending.filter((path): path is string => typeof path === 'string') : [],
+    fullHealthy: record<number>(value.fullHealthy),
+    fullReasons: record<readonly string[]>(value.fullReasons),
   };
 }
 
@@ -184,7 +195,7 @@ export interface FaxineiroWake {
 /** One line of `<userData>/rotinas/faxineiro.log` (JSON Lines). */
 export interface FaxineiroLogEntry {
   readonly at: number;
-  readonly kind: 'acordou' | 'segurou' | 'fechou-faxineiro' | 'fechar' | 'recusou-fechar' | 'falhou';
+  readonly kind: 'acordou' | 'segurou' | 'fechou-faxineiro' | 'fechar' | 'recusou-fechar' | 'falhou' | 'fila' | 'abriu-da-fila' | 'saiu-da-fila';
   readonly projectPath?: string;
   readonly placeId?: string;
   readonly summary: string;
@@ -195,6 +206,8 @@ export interface FaxineiroRound {
   readonly closeIdle: readonly { readonly projectPath: string; readonly placeId: string }[];
   /** The holds of this round (cap, interval, Faxineiro busy), for the log. The wakes are logged by whoever delivers them. */
   readonly held: readonly FaxineiroLogEntry[];
+  /** Machines where `sessao_abrir` waits for room (machine id → why), with the release hysteresis applied. */
+  readonly fullMachines: Readonly<Record<string, readonly string[]>>;
   readonly state: FaxineiroState;
 }
 
@@ -224,7 +237,7 @@ function isFaxineiro(session: SessionView): boolean {
 }
 
 /** The trouble of one machine, in pt-BR; `[]` = healthy. Stale numbers of a machine without signal never count. */
-export function machineReasons(machine: MachineReading, streak: number, config: FaxineiroConfig): string[] {
+export function machineReasons(machine: MachineReading, streak: number, config: FaxineiroConfig, withDisk = true): string[] {
   const reasons: string[] = [];
   if (!machine.reachable) {
     if (streak >= config.unreachableReads) reasons.push(`${machine.label}: sem sinal (${streak} leituras seguidas sem resposta)`);
@@ -236,7 +249,7 @@ export function machineReasons(machine: MachineReading, streak: number, config: 
     reasons.push(`${machine.label}: swap em uso ${pct(machine.swapUsedRatio)} (limite ${config.swapUsedMaxPct}%)`);
   if (machine.load5PerCpu !== null && machine.load5PerCpu > config.loadPerCpuMax)
     reasons.push(`${machine.label}: carga de 5 min ${decimal(machine.load5PerCpu)} por CPU (limite ${decimal(config.loadPerCpuMax)})`);
-  if (machine.diskUsedRatio !== null && machine.diskUsedRatio * 100 > config.diskUsedMaxPct)
+  if (withDisk && machine.diskUsedRatio !== null && machine.diskUsedRatio * 100 > config.diskUsedMaxPct)
     reasons.push(`${machine.label}: disco ${pct(machine.diskUsedRatio)} usado (limite ${config.diskUsedMaxPct}%)`);
   return reasons;
 }
@@ -261,12 +274,14 @@ function draftOf(state: FaxineiroState): Draft {
     machineBoard: { ...state.machineBoard },
     dailyDay: state.dailyDay,
     dailyPending: [...state.dailyPending],
+    fullHealthy: { ...state.fullHealthy },
+    fullReasons: { ...state.fullReasons },
   };
 }
 
 export function evaluateFaxineiro(input: FaxineiroInput, previous: FaxineiroState, now: number): FaxineiroRound {
   const config = input.config;
-  if (!config.enabled) return { wakes: [], closeIdle: [], held: [], state: previous };
+  if (!config.enabled) return { wakes: [], closeIdle: [], held: [], fullMachines: {}, state: previous };
   const draft = draftOf(previous);
   const held: FaxineiroLogEntry[] = [];
   const cooldown = config.cooldownMinutes * MIN;
@@ -276,7 +291,27 @@ export function evaluateFaxineiro(input: FaxineiroInput, previous: FaxineiroStat
   for (const machine of input.machines) {
     const seen = draft.unreachable[machine.id];
     if (machine.checkedAt === null || seen?.checkedAt === machine.checkedAt) continue;
-    draft.unreachable[machine.id] = { checkedAt: machine.checkedAt, streak: machine.reachable ? 0 : (seen?.streak ?? 0) + 1 };
+    const streak = machine.reachable ? 0 : (seen?.streak ?? 0) + 1;
+    draft.unreachable[machine.id] = { checkedAt: machine.checkedAt, streak };
+    // Full for opening, per read: in at once, out only after FULL_RELEASE_READS reads in a row below the limits.
+    const trouble = machineReasons(machine, streak, config, false);
+    if (trouble.length > 0) {
+      draft.fullHealthy[machine.id] = 0;
+      draft.fullReasons[machine.id] = trouble;
+    } else if (machine.id in draft.fullHealthy) {
+      const healthy = (draft.fullHealthy[machine.id] ?? 0) + 1;
+      if (healthy >= FULL_RELEASE_READS) {
+        delete draft.fullHealthy[machine.id];
+        delete draft.fullReasons[machine.id];
+      } else draft.fullHealthy[machine.id] = healthy;
+    }
+  }
+  const fullMachines: Record<string, readonly string[]> = {};
+  const present = new Set(input.machines.map((machine) => machine.id));
+  for (const id of Object.keys(draft.fullHealthy)) {
+    if (!present.has(id)) continue; // a place that left the config, or not read yet this run
+    const reasons = draft.fullReasons[id] ?? [];
+    fullMachines[id] = (draft.fullHealthy[id] ?? 0) > 0 ? [...reasons, 'esperando mais uma leitura abaixo dos limites'] : reasons;
   }
 
   const workers = input.sessions.filter((session) => !isFaxineiro(session));
@@ -393,5 +428,5 @@ export function evaluateFaxineiro(input: FaxineiroInput, previous: FaxineiroStat
     )
     .map((session) => ({ projectPath: session.projectPath, placeId: session.placeId }));
 
-  return { wakes, closeIdle, held, state: draft };
+  return { wakes, closeIdle, held, fullMachines, state: draft };
 }

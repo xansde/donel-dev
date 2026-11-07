@@ -44,6 +44,40 @@ from public.tarefas
 where estado in ('aberta', 'em execução', 'entregue', 'aceita, esperando envio') or esperando_dono
 order by esperando_dono desc, prazo, criada_em;
 
--- After checking `tarefas` filled up (the owner's call):
+-- 07/11 — what was delivered, by day. "entregue" alone means "delivered, no decision yet": the owner filtered it and
+-- read 15 rows on a day with 50 deliveries, most already accepted. `fase` says where each delivery is now.
+create or replace view public.entregas
+with (security_invoker = true) as
+select
+  (entregue_em at time zone 'America/Sao_Paulo')::date as entregue_dia,
+  entregue_em,
+  quadro,
+  titulo,
+  case
+    when esperando_dono then 'esperando você'
+    when estado = 'entregue' then 'entregue, sem decisão'
+    else estado
+  end as fase,
+  quem_pediu,
+  quem_faz_agora,
+  risco,
+  decisao,
+  ultima_entrega,
+  link_da_prova,
+  id
+from public.tarefas
+where entregue_em is not null
+order by entregue_em desc;
+
+create or replace view public.entregues_hoje
+with (security_invoker = true) as
+select * from public.entregas
+where entregue_dia = (now() at time zone 'America/Sao_Paulo')::date;
+
+comment on view public.entregas is 'Uma linha por tarefa que já teve entrega: o dia (São Paulo) da última entrega e a fase de hoje (esperando você, entregue sem decisão, aceita, rejeitada, cancelada…).';
+comment on view public.entregues_hoje is 'O que foi entregue hoje (São Paulo), inclusive o que já foi aceito.';
+
+-- The first table, `demandas`, and its view were dropped on 07/11 (the owner's call; its 173 rows were kept in a CSV
+-- outside the repo). In a project that still has them:
 -- drop view if exists public.demandas_em_aberto;
 -- drop table if exists public.demandas;

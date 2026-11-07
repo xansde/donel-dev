@@ -22,6 +22,8 @@ export interface FaxineiroWakeOrder {
 export interface FaxineiroRoundAnswer {
   readonly wakes: readonly FaxineiroWakeOrder[];
   readonly closeIdle: readonly { readonly projectPath: string; readonly placeId: string }[];
+  /** Machines where a new session waits for room (`pc` or a remote id → why). */
+  readonly fullMachines: Readonly<Record<string, readonly string[]>>;
 }
 
 export interface DonelFaxineiroApi {
