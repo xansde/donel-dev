@@ -87,7 +87,7 @@ async function openDirections(env: ReturnType<typeof setup>, missao: string, nam
 }
 
 describe('hill climbing — the missions file', () => {
-  it('reads a missing file as empty and never writes over an unreadable or newer one', async () => {
+  it('reads a missing file as empty and never writes over an unreadable one', async () => {
     const env = setup(scriptedJudges([[5, 5, 5]]));
     expect(env.service.load()).toMatchObject({ readOnly: false, warning: null });
 
@@ -95,11 +95,24 @@ describe('hill climbing — the missions file', () => {
     expect(env.service.load().readOnly).toBe(true);
     expect((await env.service.runTool(escalador, call('hillclimb_propor', proposal), env.ledger)).ok).toBe(false);
     expect(readFileSync(env.file, 'utf8')).toBe('{ isto não é json');
+  });
 
-    const newer = JSON.stringify({ schemaVersion: HILL_CLIMB_SCHEMA_VERSION + 1, missions: { x: { futuro: true } } });
+  // The real case: a newer channel adds a field to a mission this one still reads. Every mission parses and
+  // the count matches, so only the schemaVersion check keeps this channel from dropping the field on write.
+  it('never writes over a newer file whose missions it can read', async () => {
+    const env = setup(scriptedJudges([[5, 5, 5]]));
+    const id = await proposeAndAccept(env);
+    const doc = JSON.parse(readFileSync(env.file, 'utf8')) as { schemaVersion: number; missions: Record<string, Record<string, unknown>> };
+    doc.schemaVersion = HILL_CLIMB_SCHEMA_VERSION + 1;
+    doc.missions[id]!.campoNovo = 'de um canal mais novo';
+    const newer = JSON.stringify(doc);
     writeFileSync(env.file, newer);
-    expect(env.service.load().readOnly).toBe(true);
-    expect(env.service.gesture('x', { kind: 'aceitar' }).ok).toBe(false);
+
+    const loaded = env.service.load();
+    expect(Object.keys(loaded.doc.missions)).toEqual([id]);
+    expect(loaded.readOnly).toBe(true);
+    const sent = await send(env, id, 'versão A', { direcao: 'A', inventario: ['o cabeçalho de hoje'] });
+    expect(sent.ok).toBe(false);
     expect(readFileSync(env.file, 'utf8')).toBe(newer);
   });
 
