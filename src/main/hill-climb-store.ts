@@ -37,7 +37,7 @@ import {
 import { convene, councilStatus, FAKE_JUDGES_ENV_VAR, fakeCouncil, type CouncilStatus, type JudgeProvider } from '../shared/hillClimb/council';
 import type { HillClimbGestureResult, HillClimbSnapshot } from '../shared/hillClimb/channels';
 import type { HillClimbToolCall } from '../shared/hillClimb/tools';
-import type { LedgerActor, LedgerDoc, LedgerForOwner, LedgerOp } from '../shared/ledger/contract';
+import { lastDecision, OWN_OPTION, type LedgerActor, type LedgerDoc, type LedgerForOwner, type LedgerOp } from '../shared/ledger/contract';
 import type { LedgerApplyResult } from '../shared/ledger/channels';
 import type { OwnerMessage } from './ledger-card-writer';
 
@@ -56,7 +56,7 @@ export function resolveCouncil(env: Record<string, string | undefined>): JudgePr
 
 /** What the Oráculo port needs: the same `apply` every other port uses. */
 export interface HillClimbLedgerPort {
-  apply(actor: LedgerActor, op: LedgerOp): LedgerApplyResult;
+  apply(actor: LedgerActor, op: LedgerOp): Promise<LedgerApplyResult>;
 }
 
 export interface HillClimbCaller {
@@ -173,7 +173,10 @@ export function createHillClimbService(deps: HillClimbServiceDeps): HillClimbSer
           if (mission.state !== 'proposta') continue;
           const card = ledger.tasks[mission.ledgerTaskId];
           if (card?.state !== 'aceita' && card?.state !== 'rejeitada') continue;
-          const settled = settleProposal(mission, card.state, now());
+          // 07/11 — the owner's own words on the proposal ("Decidir assim") never start a run that spends: his words
+          // reach the Escalador (tellDecision), and a run is a new proposal.
+          const decision = card.state === 'aceita' && lastDecision(card)?.option === OWN_OPTION ? 'rejeitada' : card.state;
+          const settled = settleProposal(mission, decision, now());
           if (settled.state === 'rodando') started.push(settled);
           next = withMission(next, settled);
         }
@@ -218,7 +221,7 @@ export function createHillClimbService(deps: HillClimbServiceDeps): HillClimbSer
         if (current.readOnly) return { ok: false, text: current.warning ?? 'As missões estão só para leitura.' };
         const id = newId();
         const actor: LedgerActor = { kind: 'lugar', placeId: caller.placeId };
-        const created = ledger.apply(actor, {
+        const created = await ledger.apply(actor, {
           op: 'criar',
           projectPath: caller.projectPath,
           title: `Hill climbing: ${call.titulo}`,
@@ -230,9 +233,9 @@ export function createHillClimbService(deps: HillClimbServiceDeps): HillClimbSer
         });
         if (!created.ok) return { ok: false, text: `O Oráculo recusou a carta: ${created.reason}` };
         const taskId = created.task.id;
-        const taken = ledger.apply(actor, { op: 'assumir', id: taskId });
+        const taken = await ledger.apply(actor, { op: 'assumir', id: taskId });
         if (!taken.ok) return { ok: false, text: `O Oráculo recusou a carta: ${taken.reason}` };
-        const delivered = ledger.apply(actor, {
+        const delivered = await ledger.apply(actor, {
           op: 'entregar',
           id: taskId,
           proofs: [{ kind: 'texto', text: proposalText(call) }],

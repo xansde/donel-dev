@@ -6,6 +6,7 @@ import type { NotificationPreference, ProjectScanMode } from '../../shared/confi
 import type { SessionRenewalPrefs } from '../../shared/sessionRenewal';
 import { CelularSection } from './CelularSection';
 import { EspelhoSection } from './EspelhoSection';
+import { OraculoVpsSection } from './OraculoVpsSection';
 import styles from './Preferences.module.css';
 
 // Preferências — tela cheia com menu lateral (pedido do dono, 04/11: "como popup não está vingando").
@@ -83,6 +84,9 @@ export interface PreferencesProps {
   /** `launcherDefaults.where`: `undefined` = last choice / first place with an account, `'local'` = this computer. */
   launcherWhere?: string;
   onChangeLauncherWhere?: (where: string | undefined) => void;
+  /** Líder único na VPS — `leader.where`: `'local'` or a remote place. The next message through the Jobu moves it. */
+  leaderWhere?: string;
+  onChangeLeaderWhere?: (where: string) => void;
   /** Papéis de sessão — opens the roles editor. */
   onManageRoles?: () => void;
 }
@@ -304,6 +308,24 @@ export function Preferences(props: PreferencesProps): React.JSX.Element | null {
         />
       ),
     },
+    ...(remotes.length > 0 && props.onChangeLeaderWhere
+      ? [
+          {
+            id: 'leader-where',
+            category: 'avisos' as const,
+            title: 'Onde o Líder roda',
+            keywords: 'líder lider jobu onde roda vps remoto servidor ram memória',
+            hint: 'O Líder com quem você fala pelo Jobu. Ao trocar, ele muda de lugar na próxima mensagem, com a mesma conversa; se estiver trabalhando, muda quando terminar.',
+            body: (
+              <Select
+                value={props.leaderWhere && remotes.some((place) => place.id === props.leaderWhere) ? props.leaderWhere : 'local'}
+                options={[{ value: 'local', label: 'Este computador', description: 'padrão' }, ...remotes.map((place) => ({ value: place.id, label: place.label }))]}
+                onChange={(value) => props.onChangeLeaderWhere?.(value)}
+              />
+            ),
+          },
+        ]
+      : []),
     {
       id: 'oracle-center',
       category: 'avisos',
@@ -334,6 +356,14 @@ export function Preferences(props: PreferencesProps): React.JSX.Element | null {
       keywords: 'oráculo harrow tarefas registro histórico supabase espelho backup demandas planilha',
       hint: 'Cada mudança no Oráculo vai, em até um minuto, para uma tabela no seu Supabase pessoal: o histórico sobrevive ao PC e abre no navegador ou no celular. Prints e vídeos ficam só aqui.',
       body: <EspelhoSection />,
+    },
+    {
+      id: 'oraculo-vps',
+      category: 'celular',
+      title: 'Onde mora o Oráculo',
+      keywords: 'oráculo harrow vps servidor pc desligado registro tarefas remoto tailscale',
+      hint: 'Leve o Oráculo para a sua VPS: as cartas chegam ao celular e as sessões de lá seguem criando e entregando tarefas com o PC desligado.',
+      body: <OraculoVpsSection />,
     },
     ...(props.onManageRoles
       ? [

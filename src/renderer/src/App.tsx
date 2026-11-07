@@ -89,6 +89,7 @@ import { useHillClimb } from './HillClimb/useHillClimb';
 import { MindscapeScreen, type MindscapeLiveSession } from './Mindscape/MindscapeScreen';
 import { useMindscapeDoc } from './Mindscape/useMindscapeDoc';
 import { AgentBridge, type AgentBridgePorts } from './Mindscape/agentBridge';
+import type { FaxineiroLogEntry } from '../../shared/faxineiro/triggers';
 import { SpawnAskPanel, type SpawnAsk } from './Mindscape/SpawnAskPanel';
 import { appendConversation, findSessionBoard, placeSessionCards, roleOfSession, setBoardView, setPlaceConversation, writeSessionNote, type MindscapeDoc } from '../../shared/mindscape/model';
 import type { SessionRole } from '../../shared/roles';
@@ -126,6 +127,8 @@ import { disposeTabSend, ownerTerminalInput, sendDriverFor, sendToTab, pendingSe
 import { blockingScreen, readInputText } from '../../shared/chat/screen';
 import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../shared/lider/ipc';
 import { isLeaderOfAllTab, leaderHome } from '../../shared/mindscape/leader';
+import { DEFAULT_LEADER_PREFS, leaderRemoteId } from '../../shared/leaderPrefs';
+import { planLeaderDelivery, startLeaderMove, type LeaderMove } from '../../shared/lider/move';
 import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
 import { TerminalPane } from './TerminalPane';
 import { PatchNotes } from './patchnotes/PatchNotes';
@@ -323,6 +326,9 @@ function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
   return next;
 }
 
+/** Líder único na VPS — how long the Líder on the new place has to take the first message (a cold CLI on a busy VPS). */
+const LIDER_MOVE_WAIT_MS = 240_000;
+
 export function App(): React.JSX.Element {
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(true);
@@ -440,6 +446,8 @@ export function App(): React.JSX.Element {
   const [aliveTabs, setAliveTabs] = useState<Record<string, boolean>>({});
   /** 07/11 — why a tab's terminal never started (read by the board's `startTrouble`). */
   const startFailuresRef = useRef<Record<string, string>>({});
+  // Líder único na VPS — per new Líder tab of a move, what ends the wait for it (its start failed or its process left).
+  const liderTabDiedRef = useRef<Record<string, () => void>>({});
   // FIX (feedback E2E rodada 5) — epoch ms de quando cada aba ficou `alive`
   // pela ÚLTIMA vez (ref, não state — só alimenta o diagnóstico abaixo,
   // nunca o gate real de injeção). Usado por `possiblyBlockedOnPrompt` pra
@@ -1183,6 +1191,7 @@ export function App(): React.JSX.Element {
    * apaga nada. Sem aviso na tela, como o CA-11 pede.
    */
   const handleTabProcessExit = (tab: TabState, info: { exitCode: number | undefined; msSinceSpawn: number }): void => {
+    liderTabDiedRef.current[tab.id]?.(); // Líder único na VPS — the new Líder of a move died: the old one stays
     // T057 (014-chat, FR-034) — a barra "Sessão encerrada (código N)" do chat.
     setTabExits((prev) => ({ ...prev, [tab.id]: { exitCode: info.exitCode ?? null } }));
     // Spec 010 / B1 — o processo da sessão morreu (saiu sozinho, ou foi morto).
@@ -1991,13 +2000,17 @@ export function App(): React.JSX.Element {
               launchArgs: withResumeArgs(entry.launchArgs, entry.sessionId),
               remoteId: entry.remoteId,
               ...(entry.openedBy ? { openedBySession: true, openedBy: entry.openedBy } : {}),
+              // Líder único na VPS — it comes back as the Líder (the Jobu talks to it), not as an ordinary tab.
+              ...(entry.roleId ? { roleId: entry.roleId } : {}),
+              ...(entry.leaderOfAll ? { leaderOfAll: true } : {}),
             },
             false,
           );
           // Só os Líderes nas abas — a session a Líder opened on the remote stays out of the tab bar after a restart.
           if (entry.openedBy) agentBridgeRef.current.adoptOpened(id, entry.openedBy);
-          // A restore, not a gesture: it takes the focus as before, without leaving the Oráculo.
-          else setActiveTabId(id);
+          // A restore, not a gesture: it takes the focus as before, without leaving the Oráculo. The Líder único is
+          // reached through the Jobu: it never takes the focus.
+          else if (!entry.leaderOfAll) setActiveTabId(id);
         }
       })
       .catch(() => undefined);
@@ -2261,27 +2274,41 @@ export function App(): React.JSX.Element {
     window.donel.lider.report(report);
   });
   const liderDeliverRef = useRef<(text: string) => LiderSendResult>(() => ({ ok: false, reason: 'O Donel ainda está abrindo.' }));
+  // Líder único na VPS — the move in progress (its messages wait for it). Async steps close tabs through a ref,
+  // never through a stale render.
+  const liderMoveRef = useRef<LeaderMove | null>(null);
   liderDeliverRef.current = (text: string): LiderSendResult => {
-    let tabId = findLiderTab()?.id;
-    if (tabId === undefined) {
-      const role = roles.find((candidate) => candidate.id === LIDER_ROLE_ID);
+    const sendTo = (tabId: string, message: string): void => {
+      sendToTab(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text: message });
+    };
+    if (liderMoveRef.current) {
+      liderMoveRef.current.enqueue(text);
+      return { ok: true };
+    }
+    const role = roles.find((candidate) => candidate.id === LIDER_ROLE_ID);
+    const providerId = role?.engine && providers.some((provider) => provider.id === role.engine) ? role.engine : undefined;
+    // Líder único na VPS (docs/planos/lider-na-vps.md) — where the owner wants it (Preferences). A provider of a third
+    // party does not run on a remote place (ADR 0006): that Líder stays here.
+    const wantedRemoteId = providerId ? undefined : leaderRemoteId(appConfig?.leader ?? DEFAULT_LEADER_PREFS, accountsView.remotes.map((place) => place.id));
+    const openLeader = (resume?: { readonly sessionId: string; readonly cwd: string | undefined }): string => {
       // Without the role there is no Líder único (it is the role + the mark below): say so instead of opening a plain session.
-      if (!role) return { ok: false, reason: 'O papel Líder não existe nesta máquina.' };
-      const providerId = role.engine && providers.some((provider) => provider.id === role.engine) ? role.engine : undefined;
+      if (!role) throw new Error('O papel Líder não existe nesta máquina.');
       const defaults = appConfig?.launcherDefaults;
-      const home = leaderHome(Object.keys(mindscape.doc.boards));
-      tabId = addTab({
+      const home = resume ? resume.cwd : leaderHome(Object.keys(mindscape.doc.boards));
+      const launchArgs = buildLauncherArgs({
+        providerId,
+        model: role.model ?? defaults?.model ?? DEFAULT_MODEL_ALIAS,
+        effort: role.effort ?? defaults?.effort ?? DEFAULT_EFFORT_LEVEL,
+        permissionMode: role.permissionMode ?? defaults?.permissionMode ?? 'acceptEdits',
+        sessionName: '',
+      });
+      return addTab({
         name: role.name,
         // No `projectName`: the Líder único belongs to no board.
         ...(home ? { cwd: home } : {}),
         pinned: false,
-        launchArgs: buildLauncherArgs({
-          providerId,
-          model: role.model ?? defaults?.model ?? DEFAULT_MODEL_ALIAS,
-          effort: role.effort ?? defaults?.effort ?? DEFAULT_EFFORT_LEVEL,
-          permissionMode: role.permissionMode ?? defaults?.permissionMode ?? 'acceptEdits',
-          sessionName: '',
-        }),
+        launchArgs: resume ? withResumeArgs(launchArgs, resume.sessionId) : launchArgs,
+        ...(wantedRemoteId ? { remoteId: wantedRemoteId } : {}),
         sessionType: 'claude',
         providerId,
         roleId: role.id,
@@ -2289,11 +2316,64 @@ export function App(): React.JSX.Element {
         leaderOfAll: true,
         // Oráculo no centro — the owner talks to it through the Jobu: it opens without taking the front.
       }, !layoutPrefsRef.current.oracleCenter);
-      liderTabRef.current = tabId;
+    };
+
+    // The live Líder; with none, the one whose process ended (the ssh dropped while the notebook slept).
+    const live = findLiderTab();
+    const remembered = liderTabRef.current ? tabs.find((tab) => tab.id === liderTabRef.current && isLeaderOfAllTab(tab)) : undefined;
+    const tab = live ?? remembered ?? tabs.find(isLeaderOfAllTab);
+    const plan = planLeaderDelivery(
+      tab ? { id: tab.id, remoteId: tab.remoteId, claudeSessionId: tab.claudeSessionId, state: semaphoreStates[tab.id]?.state, exited: tabExits[tab.id] !== undefined } : undefined,
+      wantedRemoteId,
+    );
+
+    if (plan.kind === 'send') {
+      sendTo(plan.tabId, text);
+      return { ok: true };
     }
-    const target = tabId;
-    sendToTab(target, { terminal: () => terminalRefs.current[target] ?? null }, { text });
-    return { ok: true };
+    if (plan.kind === 'reconnect') {
+      // The same conversation, where it was: on a remote place this reattaches to the same CLI in its tmux.
+      liderTabRef.current = plan.tabId;
+      terminalRefs.current[plan.tabId]?.respawn({ resume: plan.sessionId });
+      sendTo(plan.tabId, text);
+      return { ok: true };
+    }
+    if (plan.kind === 'move' && tab) {
+      const oldTabId = plan.tabId;
+      const cwd = tab.cwd;
+      const move = startLeaderMove(oldTabId, text, {
+        carry: () => window.donel.lider.carry({ sessionId: plan.sessionId, ...(cwd ? { cwd } : {}), ...(tab.remoteId ? { from: tab.remoteId } : {}), ...(wantedRemoteId ? { to: wantedRemoteId } : {}) }),
+        openNew: () => openLeader({ sessionId: plan.sessionId, cwd }),
+        deliverFirst: (tabId, first) =>
+          new Promise<boolean>((resolve) => {
+            liderTabDiedRef.current[tabId] = () => resolve(false);
+            void sendToTabAndWait(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text: first }, LIDER_MOVE_WAIT_MS).then((outcome) =>
+              resolve(outcome.kind === 'entrou' || outcome.kind === 'na-fila'),
+            );
+          }).finally(() => {
+            delete liderTabDiedRef.current[tabId];
+          }),
+        send: sendTo,
+        close: (tabId) => closeTabImmediatelyRef.current(tabId),
+        adopt: (tabId) => {
+          liderTabRef.current = tabId;
+        },
+        notify: (message) => setDevModeToast(message),
+      });
+      liderMoveRef.current = move;
+      void move.done.finally(() => {
+        if (liderMoveRef.current === move) liderMoveRef.current = null;
+      });
+      return { ok: true };
+    }
+    try {
+      const tabId = openLeader();
+      liderTabRef.current = tabId;
+      sendTo(tabId, text);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+    }
   };
   useEffect(() => window.donel.lider.onDeliver(({ text }, reply) => reply(liderDeliverRef.current(text))), []);
   useEffect(
@@ -2410,6 +2490,8 @@ export function App(): React.JSX.Element {
     remotes: () => accountsView.remotes.map((remote) => ({ id: remote.id, label: remote.label })),
     projects: () => projects.map((project) => ({ path: project.path, name: project.name })),
     passOn: (requests) => window.donel.ledger.passOn(requests),
+    stateEnteredAt: (tabId) => semaphoreStates[tabId]?.stateEnteredAt,
+    logFaxineiro: (entries) => window.donel.faxineiro.log(entries),
   };
   const agentBridgeRef = useRef<AgentBridge>(null as unknown as AgentBridge);
   if (agentBridgeRef.current === null) agentBridgeRef.current = new AgentBridge(agentPorts);
@@ -2417,6 +2499,33 @@ export function App(): React.JSX.Element {
   // t-e753b554 — a place that never started passes its live tasks on (the main waits 30 min after the last event).
   useEffect(() => {
     const timer = setInterval(() => void agentBridgeRef.current.checkNotStarted(), 5 * 60_000);
+    return () => clearInterval(timer);
+  }, []);
+  // t-b3b26e60 — Faxineiro com gatilhos: once a minute the main judges the machines and the open sessions, and the
+  // bridge wakes the Faxineiro of a board (or closes one that finished its round). One round at a time.
+  useEffect(() => {
+    let running = false;
+    const round = async (): Promise<void> => {
+      if (running) return;
+      running = true;
+      try {
+        const bridge = agentBridgeRef.current;
+        const answer = await window.donel.faxineiro.round(bridge.faxineiroSessions());
+        bridge.setFullMachines(answer.fullMachines);
+        const entries: FaxineiroLogEntry[] = [...bridge.drainQueue()];
+        for (const close of answer.closeIdle) {
+          const closed = bridge.closeIdleFaxineiro(close.projectPath, close.placeId);
+          if (closed) entries.push(closed);
+        }
+        for (const wake of answer.wakes) entries.push(await bridge.wakeFaxineiro(wake));
+        if (entries.length > 0) window.donel.faxineiro.log(entries);
+      } catch (error) {
+        console.error('[donel-dev] faxineiro: rodada falhou', error);
+      } finally {
+        running = false;
+      }
+    };
+    const timer = setInterval(() => void round(), 60_000);
     return () => clearInterval(timer);
   }, []);
   useEffect(() => {
@@ -3358,6 +3467,7 @@ export function App(): React.JSX.Element {
                   onProcessExit={(info) => handleTabProcessExit(tab, info)}
                   onStartFailed={(message) => {
                     startFailuresRef.current[tab.id] = message;
+                    liderTabDiedRef.current[tab.id]?.(); // Líder único na VPS — the new Líder of a move did not start
                     agentBridgeRef.current?.startFailed(tab.id);
                   }}
                   onCloseTab={() => handleRequestCloseTab(tab.id)}
@@ -3579,6 +3689,10 @@ export function App(): React.JSX.Element {
         }}
         remotes={accountsView.remotes.map((place) => ({ id: place.id, label: place.label }))}
         launcherWhere={appConfig?.launcherDefaults.where}
+        leaderWhere={appConfig?.leader.where ?? 'local'}
+        onChangeLeaderWhere={(where) => {
+          void window.donel.config.setLeaderPrefs({ where }).then(setAppConfig).catch(() => undefined);
+        }}
         onChangeLauncherWhere={(where) => {
           if (!appConfig) return;
           const { where: _previous, ...rest } = appConfig.launcherDefaults;

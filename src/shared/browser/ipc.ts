@@ -39,14 +39,14 @@ export const BROWSER_CHANNELS = {
   getRules: 'browser:getRules',
   /** invoke(ptyId) -> `BrowserRulesResult`. Native folder picker: the owner adds an upload folder (V2). */
   chooseUploadDir: 'browser:chooseUploadDir',
-  /** send(ptyId, folder). The owner takes one upload folder back (for every session). */
+  /** send(ptyId, folder). The owner takes one upload folder back (his list and every board that had it liberated). */
   removeUploadDir: 'browser:removeUploadDir',
-  /** send(ptyId, allow). Permitir / Negar on the folder `navegador_enviar_arquivo` asked for (the main knows which). */
-  answerUploadRequest: 'browser:answerUploadRequest',
   /** invoke(ptyId, mode, typedDomains) -> `BrowserRulesResult`. The vigia de domínio of this session (V2). */
   setDomains: 'browser:setDomains',
   /** main -> renderer: `BrowserAgentRules` every time they change. */
   rules: 'browser:rules',
+  /** main -> renderer: `BrowserOpenRequest` — F11 pressed with the focus on the page (navegador em tela cheia). */
+  fullscreenKey: 'browser:fullscreenKey',
 } as const;
 
 export interface BrowserRect {
@@ -73,13 +73,10 @@ export type BrowserTabAction = 'switch' | 'close';
  */
 export interface BrowserAgentRules {
   readonly ptyId: string;
-  /** The only folders `navegador_enviar_arquivo` reads from (empty = sending files is off until he allows one). */
+  /** The folders the owner authorized himself (every session). The chat attachments always go, without being here. */
   readonly uploadDirs: readonly string[];
-  /**
-   * The folder `navegador_enviar_arquivo` of this session is waiting for him to allow (Permitir / Negar), the file
-   * the agent asked for, and the warning when the folder is wide (Permitir then needs a second, explicit click).
-   */
-  readonly uploadRequest: { readonly folder: string; readonly file: string; readonly wide: string | null } | null;
+  /** The folders the orchestrators liberated, per board, with who and when (`navegador_liberar_pasta`). */
+  readonly uploadGrants: readonly { readonly folder: string; readonly board: string; readonly by: string; readonly at: string }[];
   /** Where the agent may navigate. */
   readonly domainMode: DomainMode;
   readonly domains: readonly string[];
@@ -152,10 +149,10 @@ export interface DonelBrowserApi {
   getRules(ptyId: string): Promise<BrowserAgentRules | null>;
   chooseUploadDir(ptyId: string): Promise<BrowserRulesResult>;
   removeUploadDir(ptyId: string, folder: string): void;
-  /** `wideConfirmed`: he confirmed the warning of a wide folder (without it, Permitir on a wide folder is ignored). */
-  answerUploadRequest(ptyId: string, allow: boolean, wideConfirmed?: boolean): void;
   setDomains(ptyId: string, mode: DomainMode, typed: string): Promise<BrowserRulesResult>;
   onRules(listener: (rules: BrowserAgentRules) => void): () => void;
+  /** F11 pressed on the page of this PTY's browser (shared/browser/fullscreen.ts). */
+  onFullscreenKey(listener: (request: BrowserOpenRequest) => void): () => void;
 }
 
 /** Validates a rect that came over IPC (finite, non-negative size). */

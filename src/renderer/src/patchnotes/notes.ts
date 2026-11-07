@@ -18,6 +18,38 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-07',
     items: [
       {
+        title: 'O Líder pode rodar na VPS',
+        text: 'Em Preferências, Avisos e Jobu, "Onde o Líder roda" escolhe entre este computador e a VPS. O Líder com quem você fala pelo Jobu muda de lugar na mensagem seguinte e continua a mesma conversa, com tudo o que já sabia. Se ele estiver trabalhando, muda quando terminar. O antigo só fecha depois que o novo respondeu; se algo falhar no caminho, ele continua onde estava, com a conversa, e recebe a mensagem. Se o computador dormir e a ligação com a VPS cair, a próxima mensagem religa o mesmo Líder. Na VPS ele deixa de ocupar memória do computador; o navegador integrado continua aqui, e ele o usa como antes. Ele só lê arquivos de projetos que já estão no GitHub. Para voltar, escolha "Este computador".',
+      },
+      {
+        title: 'Sessões na VPS seguem com o PC desligado',
+        text: 'Com o Oráculo na VPS, uma sessão aberta lá depois desta versão continua criando, entregando e listando tarefas quando o PC desliga, e sabe quem é no quadro (do jeito que o quadro estava quando o PC desligou). O resto (navegador, desenhar no quadro, falar com outras sessões) volta quando o PC liga.',
+      },
+      {
+        title: 'Com o Oráculo na VPS, o celular fala com ela',
+        text: 'Quando o Oráculo mora na VPS, o app do celular passa a abrir no endereço dela: as cartas chegam com aviso e você responde com o PC desligado. Pareie o celular de novo uma vez, em Preferências, Celular (o endereço mudou). O que você escreve numa carta, ou pede pelo botão Pedir, espera na VPS e chega à sessão assim que o PC liga, uma vez só. Pedido por áudio continua precisando do PC ligado.',
+      },
+      {
+        title: 'Sessão nova espera vaga quando a máquina está cheia',
+        text: 'Quando uma VPS (ou o PC) está com pouca RAM, swap alto, carga alta ou sem sinal, uma sessão que outra sessão pede para abrir lá entra numa fila em vez de afundar a máquina. O lugar já aparece no quadro, e a sessão abre sozinha, com o pedido original, quando a máquina passa duas leituras seguidas abaixo dos limites, uma por minuto em cada máquina. Um papel marcado com "lugar: qualquer" vai para a outra VPS em vez de esperar. Uma aba que foi aberta mas nunca começou, se o Faxineiro a fechar com a máquina cheia, volta para a fila sem perder o pedido.',
+      },
+      {
+        title: 'O Faxineiro acorda sozinho',
+        text: 'Cada quadro ganhou uma cadeira Faxineiro, que o Donel acorda sozinho quando uma máquina aperta, sem você nem o Líder precisarem chamar. Os gatilhos: RAM livre abaixo de 15%, swap acima de 10%, carga da VPS acima de duas vezes o número de processadores, disco acima de 85%, uma VPS sem sinal, sessões paradas há meia hora e uma ronda por dia, depois das 6h. O Faxineiro roda numa máquina que não é a apertada e fecha só as sessões do próprio quadro que terminaram. O Donel não deixa ele fechar o Líder, uma sessão trabalhando, uma que espera você ou uma aba que você abriu à mão. Quando ele termina a ronda e fica parado, o Donel fecha o Faxineiro também. Para não juntar Faxineiros, uma máquina cheia acorda um quadro de cada vez, e o Donel acorda no máximo quatro por hora. Os limites ficam na seção "faxineiro" do arquivo de configuração das rotinas, que também registra cada fechamento.',
+      },
+      {
+        title: 'O Líder do quadro libera as pastas de envio, não você',
+        text: 'Quando um agente precisa enviar por uma página um arquivo de uma pasta nova, quem libera agora é o Líder do quadro dele (ou o Líder único, em qualquer quadro), sem pedir a você. Fica registrado quem liberou, quando e para qual quadro, e você vê e remove em Regras, no navegador. Os anexos do chat saem sem pedido nenhum. O que continua sempre recusado são os arquivos de segredo: chaves, tokens, senhas, a configuração e o cofre de contas do Donel, os cookies do navegador e as pastas de chaves do sistema. A raiz do disco e a sua pasta de usuário inteira também não podem ser liberadas.',
+      },
+      {
+        title: 'O Oráculo pode morar na sua VPS',
+        text: 'Em Preferências, Celular, "Onde mora o Oráculo" leva o registro de tarefas para a sua VPS, inteiro e como está, e este PC passa a ler e gravar nele. A diferença aparece quando o PC desliga: o registro continua lá. Se a VPS sumir da rede, o PC mostra o último retrato só para ler e não grava nada até ela voltar, para nunca haver dois registros diferentes. "Trazer de volta para este PC" desfaz, também sem perder nada. As cartas no celular e as sessões da VPS sem o PC chegam nas próximas versões.',
+      },
+      {
+        title: 'O navegador em tela cheia',
+        text: 'O navegador ao lado da conversa agora pode ocupar a janela inteira: o botão ⤢ na barra dele, ou F11, mesmo com o cursor dentro da página. Para voltar ao lado da conversa, o mesmo botão, F11 de novo ou Esc. O Esc só tira da tela cheia quando você não está dentro da página nem digitando no endereço, para não atrapalhar o Esc do próprio site. A sessão continua trabalhando, e o agente segue controlando a mesma página. Fechar o navegador também sai da tela cheia.',
+      },
+      {
         title: 'As cadeiras da factory mostram o que acontece agora',
         text: 'No desenho dos rigs, cada cadeira de agente mostra quantas sessões estão sentadas nela e a saúde pela borda: bem quando alguém está sentado e quieto, atenção quando alguém precisa de você, problema com erro ou limite de uso, e sem sinal quando ninguém está sentado. Embaixo do nó vem o que ela faz agora. As cadeiras de código e de fila mostram o que a factory escreveu e passam a sem sinal quando o arquivo dela fica parado por mais de 15 minutos. Um clique abre a gaveta: estado e onde parou, quem está sentado com modelo e esforço, as tarefas do Oráculo presas à cadeira e de quem ela recebe e para quem manda trabalho. Uma sessão com um papel que a factory não desenhou aparece no meio, como fora do desenho, para nada que roda sumir da tela.',
       },
@@ -64,6 +96,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
       {
         title: 'O primeiro pedido chega à sessão na VPS',
         text: 'Uma sessão aberta numa VPS agora espera o Claude de lá ficar pronto, mesmo quando a conexão e a subida demoram alguns minutos, e só então recebe o pedido. Se aparecer lixo do terminal na caixa dela, o app apaga antes de mandar. Uma mensagem que entrou, mas cuja confirmação atrasou, não é mais dada como perdida, e mandar o mesmo texto de novo não faz ele chegar duas vezes. Uma sessão que já respondeu não aparece mais como "não começou".',
+      },
+      {
+        title: 'Escrever a sua opção fecha a carta',
+        text: 'Na carta do Oráculo, depois de escrever em "Escrever para…", o botão principal agora é "Decidir assim": o que você escreveu vira a sua decisão, a carta sai da pilha na hora e a sessão recebe o texto para seguir a partir dele. Se for só uma pergunta, use "Só perguntar (a carta fica)": o texto vai à sessão e a carta continua esperando você. Numa carta de Slack, decidir com as suas palavras nunca manda a mensagem; a sessão fica sabendo que você não aprovou aquele texto. Vale no app e no celular.',
       },
     ],
   },

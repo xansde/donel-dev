@@ -9,7 +9,7 @@
 // send is reported as such ("enviado, mas não gravou"), never retried into a second message.
 
 import { randomUUID } from 'node:crypto';
-import { commentOfRequest, commentRefusal, lastDelivery, type LedgerDeliveredTo, type LedgerTask } from '../shared/ledger/contract';
+import { commentOfRequest, commentRefusal, lastDelivery, OWN_OPTION, type LedgerDeliveredTo, type LedgerTask } from '../shared/ledger/contract';
 import type { PlaceNameOf } from '../shared/ledger/labels';
 import type { LedgerService } from './ledger-store';
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
@@ -22,6 +22,11 @@ export interface OwnerMessage {
   readonly text: string;
   /** For the Líder único, naming the place and the board. */
   readonly leaderText: string;
+  /**
+   * Oráculo na VPS: what makes this message one (the decision event, the phone's request id). The relay of the VPS
+   * joins a retry of the same key and never two messages of the same text but different events. Absent = unique.
+   */
+  readonly key?: string;
 }
 
 export type DeliverOwnerMessage = (message: OwnerMessage) => Promise<LedgerDeliveredTo>;
@@ -73,10 +78,15 @@ export function decisionMessage(task: LedgerTask, words: string | undefined, pla
   const last = task.events.at(-1);
   if (!last || last.by.kind !== 'dono' || (last.kind !== 'aceita' && last.kind !== 'rejeitada' && last.kind !== 'conferida')) return null;
   const what = task.slack ? 'a carta de Slack' : 'a tarefa';
-  const option = last.option ? ` (escolheu «${last.option}»)` : '';
-  const said = words?.trim() && last.kind !== 'rejeitada' ? ` Palavras do dono: ${words.trim()}` : '';
-  const verdict =
-    last.kind === 'conferida'
+  const own = last.kind !== 'conferida' && last.option === OWN_OPTION;
+  const option = last.option && !own ? ` (escolheu «${last.option}»)` : '';
+  const said = words?.trim() && last.kind !== 'rejeitada' && !own ? ` Palavras do dono: ${words.trim()}` : '';
+  // 07/11 — his own option: the decision IS his words; the session goes on from them.
+  const verdict = own
+    ? last.kind === 'aceita'
+      ? `decidiu ${what} «${cardTitle(task)}» com a própria opção, nas palavras dele: «${last.text ?? ''}». Siga a partir disso; se precisar dele de novo, crie outra tarefa.`
+      : `não aprovou ${what} «${cardTitle(task)}» e escreveu a própria opção: «${last.text ?? ''}». Não envie esta carta. Siga a partir do que ele escreveu; outro texto no Slack é outra carta com carta_slack.`
+    : last.kind === 'conferida'
       ? `conferiu o aceite ${task.slack ? 'da carta de Slack' : 'da tarefa'} «${cardTitle(task)}».`
       : last.kind === 'aceita'
         ? `aceitou ${what} «${cardTitle(task)}»${option}.${task.slack ? ' Envie agora o texto exato da carta, ao mesmo destino e thread, uma vez só.' : ''}`
@@ -114,8 +124,8 @@ export function createCardWriter(deps: CardWriterDeps): CardWriter {
     const why = commentRefusal(task, { kind: 'dono' }, input.text);
     if (why) return { ok: false, reason: `Não enviei: ${why}` };
     const text = input.text.trim();
-    const deliveredTo = await send(ownerMessage(task, text, deps.placeName));
-    const result = service.apply({ kind: 'dono' }, { op: 'comentar', id: task.id, text, ...(input.requestId ? { requestId: input.requestId } : {}), deliveredTo });
+    const deliveredTo = await send({ ...ownerMessage(task, text, deps.placeName), ...(input.requestId ? { key: `comentario:${task.id}:${input.requestId}` } : {}) });
+    const result = await service.apply({ kind: 'dono' }, { op: 'comentar', id: task.id, text, ...(input.requestId ? { requestId: input.requestId } : {}), deliveredTo });
     if (!result.ok) return { ok: false, reason: deliveredTo ? `Enviado, mas não gravou na carta: ${result.reason}` : `Não gravou: ${result.reason}` };
     const recorded = input.requestId ? commentOfRequest(result.task, input.requestId) : result.task.events.at(-1);
     return { ok: true, deliveredTo, at: recorded?.at ?? Date.now() };
@@ -132,7 +142,9 @@ export function createCardWriter(deps: CardWriterDeps): CardWriter {
     },
     tellDecision(task, words) {
       const message = decisionMessage(task, words, deps.placeName);
-      return message ? send(message) : Promise.resolve(null);
+      // One decision event, one message: the same text from another round is another message.
+      const event = task.events.at(-1);
+      return message ? send({ ...message, ...(event ? { key: `decisao:${task.id}:${event.at}` } : {}) }) : Promise.resolve(null);
     },
   };
 }

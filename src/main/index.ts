@@ -21,9 +21,12 @@ import { LEADER_ROLE_ID, ROLES_CHANNELS, type RoleSaveResult, type SessionRole }
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
+import { createRemoteOracleHost } from './ledger-remote-host';
+import { createSwitchableLedger, type SwitchableLedger } from './ledger-remote';
+import { LEDGER_REMOTE_CHANNELS, type LedgerRemoteResult, type LedgerRemoteState } from '../shared/ledger/remote';
 import { createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerSnapshot } from '../shared/ledger/channels';
-import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
+import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, OWN_OPTION, type LedgerDeliveredTo, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
 import { askedByRefusal, type LedgerToolCall } from '../shared/ledger/tools';
 import type { BoardBridge } from './board-bridge';
 import { MCP_SERVER_NAME, type BrowserToolOutcome } from '../shared/browser/mcp';
@@ -220,6 +223,8 @@ import {
   buildAttachSshArgs,
   buildRemoteSetupScript,
   discoverRemoteSessions,
+  sshRemoteCommand,
+  remoteAliveFromMeta,
   findRemoteTranscript,
   parseRemoteSetupOutput,
   pickRemotePort,
@@ -277,6 +282,7 @@ import type { AccountMod } from './accounts/account-mod';
 import { IsolatedLoginManager, type IsolatedLoginFsDeps } from './accounts/isolated-login';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
 import { sanitizeLayoutPrefs, type LayoutPrefs } from '../shared/layoutPrefs';
+import { sanitizeLeaderPrefs, type LeaderPrefs } from '../shared/leaderPrefs';
 import { adoptRefreshedActivePair, applyAccountSwitch, createSystemClaudeStateIoDeps, readCurrentCredentialPair } from './accounts/claude-state';
 import { accountFingerprintFromClaudeJsonText } from './accounts/credentials-file';
 import { createLocalMod } from './accounts/mods/local-mod';
@@ -333,6 +339,9 @@ import { parseFactoryMetrics, type FactoryMetricsParse } from '../shared/homolog
 import { HOMOLOGACAO_CHANNELS, type FactoryMetricsView, type FactoryRigsView } from '../shared/homologacao/ipc';
 import { parseRigsFile, type RigsParse } from '../shared/homologacao/rigs';
 import { createRoutineRunner, type RoutineRunner } from './rotinas/routine-runner';
+import { createFaxineiroService, type FaxineiroService } from './rotinas/faxineiro-service';
+import { FAXINEIRO_CHANNELS, type FaxineiroRoundAnswer } from '../shared/faxineiro/ipc';
+import type { FaxineiroLogEntry, SessionView } from '../shared/faxineiro/triggers';
 import { createFaxinaRunner, type FaxinaRunner } from './rotinas/oraculo-faxina';
 import type { PrRef, PrState } from '../shared/ledger/faxina';
 import { ROTINAS_CHANNELS, type ShadowEntry } from '../shared/rotinas/contract';
@@ -349,6 +358,9 @@ import type { PetDisplay } from '../shared/pet/types';
 import { hasImage, readText, writeText } from './clipboard-bridge';
 import { CLIPBOARD_CHANNELS } from '../shared';
 import { resolveClaudeCorrelation } from './session-correlation';
+import { carryTranscriptLocally, largestTranscript } from './lider/carry-transcript';
+import { fetchTranscriptFromRemote, sendTranscriptToRemote } from './lider/transfer';
+import { LIDER_CHANNELS, isValidLiderCarryPayload, type LiderCarryPayload, type LiderSendResult } from '../shared/lider/ipc';
 import { defaultClaudeHome, indexProjectSessions, resolveProjectSessionsDir } from './session-indexer';
 import { seedProject } from './session-seed';
 import { SessionSemaphoreManager } from './session-semaphore-manager';
@@ -1714,7 +1726,14 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     claudeArgs.push('--settings', '@S/settings.json');
   }
   const mcp = fresh.mcpPort !== null ? (browserService?.prepareRemoteSession(ptyId, fresh.mcpPort) ?? null) : null;
-  const meta: RemoteSessionMeta = { ...fresh, mcpToken: mcp?.token ?? null, mcpPort: mcp ? fresh.mcpPort : null };
+  const meta: RemoteSessionMeta = {
+    ...fresh,
+    mcpToken: mcp?.token ?? null,
+    mcpPort: mcp ? fresh.mcpPort : null,
+    // Líder único na VPS — the tab that comes back after a restart is the Líder again (`remoteAliveFromMeta`).
+    ...(roleId ? { roleId } : {}),
+    ...(options.leaderOfAll === true ? { leaderOfAll: true } : {}),
+  };
   if (mcp) {
     files.push({ name: 'mcp.json', content: mcp.configFileContent });
     claudeArgs.push(...appMcpAllowArgs(), '--mcp-config', '@S/mcp.json');
@@ -1786,20 +1805,65 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
   return { ptyId, claudeSessionId: correlationId, ...(accountId && accountLabel ? { account: { id: accountId, label: accountLabel } } : {}) };
 }
 
+/**
+ * Líder único na VPS — copies the Líder's conversation from where it runs (`from`) to where it goes (`to`);
+ * `undefined` = this computer. Coming from a place, the place's own file comes down (never only the mirror that
+ * arrived here), checked by hash, and the larger of it and the copy here stays. Going to a place, the largest copy
+ * here goes up, checked there. Nothing is closed here: a failure leaves the Líder where it is.
+ */
+async function carryLeaderConversation(payload: LiderCarryPayload): Promise<LiderSendResult> {
+  if (payload.from === payload.to) return { ok: true };
+  const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
+  const placeOf = (id: string): { readonly sshTarget: string; readonly label: string } => {
+    const place = places.find((candidate) => candidate.id === id);
+    if (!place) throw new Error('o lugar remoto não existe mais (painel Contas).');
+    return place;
+  };
+  const sid = payload.sessionId;
+  const cwd = payload.cwd ?? homedir();
+  const homeRelativeDir = remoteDirFor(cwd, appConfig.projectRoots);
+  const localTranscript = resolveTranscriptPath(sid, cwd, undefined);
+
+  if (payload.from !== undefined) {
+    const from = placeOf(payload.from);
+    mkdirSync(dirname(localTranscript), { recursive: true });
+    const arriving = `${localTranscript}.chegando-${randomUUID()}`;
+    const fetched = await fetchTranscriptFromRemote(sshRemoteCommand(from.sshTarget), homeRelativeDir, sid, arriving);
+    if (!fetched.ok) return { ok: false, reason: `${from.label}: ${fetched.reason}` };
+    try {
+      if (fetched.size > 0) carryTranscriptLocally(arriving, localTranscript);
+    } finally {
+      rmSync(arriving, { force: true });
+    }
+  }
+
+  if (payload.to !== undefined) {
+    const to = placeOf(payload.to);
+    const source = largestTranscript([localTranscript, spawnedTranscriptPaths.get(sid), remoteSessions?.mirrorPathFor(sid)]);
+    if (!source) return { ok: false, reason: 'a conversa do Líder não está neste computador.' };
+    const sent = await sendTranscriptToRemote(sshRemoteCommand(to.sshTarget), homeRelativeDir, sid, source.path);
+    if (!sent.ok) return { ok: false, reason: `${to.label}: ${sent.reason}` };
+  }
+  return { ok: true };
+}
+
 function registerPtyIpcHandlers(): void {
   remoteSessions = new RemoteSessionRegistry(join(app.getPath('userData'), 'remote-transcripts'));
   ipcMain.handle(PTY_CHANNELS.remoteAlive, async (): Promise<RemoteAliveSession[]> => {
     const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
     const found = await discoverRemoteSessions(places);
-    return found.map(({ remoteId, meta }) => ({
-      remoteId,
-      sessionId: meta.sid,
-      cwd: meta.localCwd,
-      projectName: meta.projectName,
-      name: meta.name,
-      launchArgs: meta.launchArgs,
-      ...(typeof meta.openedBy === 'string' && meta.openedBy !== '' ? { openedBy: meta.openedBy } : {}),
-    }));
+    return found.map(({ remoteId, meta }) => remoteAliveFromMeta(remoteId, meta));
+  });
+
+  // Líder único na VPS — the conversation goes to the place the Líder moves to BEFORE it opens there, by stream and
+  // checked there; the renderer closes the old Líder only after the new one took a message (shared/lider/move.ts).
+  ipcMain.handle(LIDER_CHANNELS.carry, async (_event, payload: unknown): Promise<LiderSendResult> => {
+    if (!isValidLiderCarryPayload(payload)) return { ok: false, reason: 'pedido de cópia inválido.' };
+    try {
+      return await carryLeaderConversation(payload);
+    } catch (error) {
+      return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+    }
   });
 
   ipcMain.handle(PTY_CHANNELS.create, (_event, options: PtyCreateOptions): PtyCreateResult | Promise<PtyCreateResult> => {
@@ -2237,6 +2301,14 @@ function registerConfigIpcHandlers(): void {
   ipcMain.handle(CONFIG_CHANNELS.setLayoutPrefs, (_event, prefs: Partial<LayoutPrefs>): AppConfigDto => {
     const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
     appConfig = { ...appConfig, layout: sanitizeLayoutPrefs({ ...appConfig.layout, ...patch }, appConfig.layout) };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
+  /** Onde o Líder roda — só lembra; o renderer muda o Líder de lugar na próxima mensagem pelo Jobu. */
+  ipcMain.handle(CONFIG_CHANNELS.setLeaderPrefs, (_event, prefs: Partial<LeaderPrefs>): AppConfigDto => {
+    const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
+    appConfig = { ...appConfig, leader: sanitizeLeaderPrefs({ ...appConfig.leader, ...patch }, appConfig.leader) };
     persistAppConfig();
     return toAppConfigDto(appConfig);
   });
@@ -2950,6 +3022,31 @@ function registerRotinasIpcHandlers(): void {
   ipcMain.handle(ROTINAS_CHANNELS.today, (): ShadowEntry[] => routineRunner?.today() ?? []);
 }
 
+/** Faxineiro com gatilhos (t-b3b26e60); `null` until whenReady. */
+let faxineiroService: FaxineiroService | null = null;
+
+/**
+ * Faxineiro com gatilhos — the renderer asks for a round once a minute with the open sessions; the answer says whom to
+ * wake and which idle Faxineiro to close. Memory, config and log live in `<userData>/rotinas/`.
+ */
+function registerFaxineiroIpcHandlers(): void {
+  faxineiroService = createFaxineiroService({
+    dir: join(app.getPath('userData'), 'rotinas'),
+    pcReport: () => healthService?.getReport() ?? null,
+    remoteReports: () => remoteHealthService?.getReports() ?? [],
+  });
+  ipcMain.handle(FAXINEIRO_CHANNELS.round, (event, sessions: unknown): FaxineiroRoundAnswer => {
+    const window = getMainWindow();
+    if (!window || event.sender.id !== window.webContents.id || !Array.isArray(sessions)) return { wakes: [], closeIdle: [], fullMachines: {} };
+    return faxineiroService?.round(sessions as SessionView[]) ?? { wakes: [], closeIdle: [], fullMachines: {} };
+  });
+  ipcMain.on(FAXINEIRO_CHANNELS.log, (event, entries: unknown) => {
+    const window = getMainWindow();
+    if (!window || event.sender.id !== window.webContents.id || !Array.isArray(entries)) return;
+    faxineiroService?.log(entries.filter((entry): entry is FaxineiroLogEntry => typeof entry === 'object' && entry !== null && typeof (entry as FaxineiroLogEntry).summary === 'string'));
+  });
+}
+
 /** B33 — `null` until whenReady. */
 let appUpdateService: AppUpdateService | null = null;
 
@@ -3078,12 +3175,13 @@ function registerLedgerMirror(): void {
   void mirror.syncNow().catch(() => undefined);
 }
 
+/** Oráculo na VPS — the remote-mode host (`null` until the ledger handlers register). */
+let remoteOracleHost: ReturnType<typeof createRemoteOracleHost> | null = null;
+/** The board bridge's send driver, for what the VPS's relay holds (set once the bridge is up). */
+let deliverOwnerMessageViaBoard: ((message: OwnerMessage) => Promise<LedgerDeliveredTo>) | null = null;
+
 function registerLedgerIpcHandlers(): void {
-  const service = createLedgerService({
-    filePath: ledgerFilePath(process.env, app.getPath('userData')),
-    io: configIoDeps,
-    proofFs: nodeLedgerProofFs,
-    onChange: (snapshot) => {
+  const onChange = (snapshot: LedgerSnapshot): void => {
       const window = getMainWindow();
       if (window && !window.isDestroyed()) window.webContents.send(LEDGER_CHANNELS.changed, snapshot);
       // The progress panel of the Jobu reads the ledger too (it only reads: `decide` stays the main window's).
@@ -3096,15 +3194,51 @@ function registerLedgerIpcHandlers(): void {
       ledgerMirrorService?.changed(snapshot.doc);
       // Hill climbing: a proposal card the owner decided starts (or ends) its mission.
       hillClimbService?.syncLedger(snapshot.doc);
-    },
+  };
+  const ledgerFile = ledgerFilePath(process.env, app.getPath('userData'));
+  const localLedger = (): LedgerService => createLedgerService({ filePath: ledgerFile, io: configIoDeps, proofFs: nodeLedgerProofFs, onChange });
+  // Oráculo na VPS (docs/planos/oraculo-na-vps.md): the ledger may live on a remote place; the app holds a
+  // switchable service, so taking it there (or back) never restarts the app.
+  let switchable: SwitchableLedger | undefined;
+  const remoteHost = createRemoteOracleHost({
+    userDataDir: app.getPath('userData'),
+    ledgerFile,
+    io: configIoDeps,
+    proofFs: nodeLedgerProofFs,
+    remotes: () => appConfig.accounts.remotes,
+    runScript: (sshTarget, script, timeoutMs) => runRemoteScript(sshTarget, script, timeoutMs),
+    localService: localLedger,
+    setService: (next) => switchable?.set(next),
+    freeze: (reason) => switchable?.freeze(reason) ?? Promise.resolve(),
+    onChange,
+    deliver: () => deliverOwnerMessageViaBoard,
   });
+  remoteOracleHost = remoteHost;
+  const service = createSwitchableLedger(remoteHost.boot());
+  switchable = service;
   ledgerService = service;
+  app.on('will-quit', () => remoteHost.dispose());
+  const remoteState = (event: Electron.IpcMainInvokeEvent): void => {
+    if (getMainWindow()?.webContents.id !== event.sender.id) throw new Error('forbidden');
+  };
+  ipcMain.handle(LEDGER_REMOTE_CHANNELS.getState, (event): LedgerRemoteState => {
+    remoteState(event);
+    return remoteHost.state();
+  });
+  ipcMain.handle(LEDGER_REMOTE_CHANNELS.move, (event, lugar: unknown): Promise<LedgerRemoteResult> => {
+    remoteState(event);
+    return typeof lugar === 'string' ? remoteHost.move(lugar) : Promise.resolve({ ok: false, reason: 'Escolha o lugar.', state: remoteHost.state() });
+  });
+  ipcMain.handle(LEDGER_REMOTE_CHANNELS.back, (event): Promise<LedgerRemoteResult> => {
+    remoteState(event);
+    return remoteHost.back();
+  });
   // Cartas forma A — the card shows the proofs (the HTML prototype, a video) by `donel-prova:`.
   registerProofProtocol(protocol, ledgerProofsDir(ledgerFilePath(process.env, app.getPath('userData'))));
   const fromMain = (sender: Electron.WebContents): boolean => getMainWindow()?.webContents.id === sender.id;
   const cardDiagnostics = createDiagnosticsLog(app.getPath('userData'));
   ipcMain.handle(LEDGER_CHANNELS.load, (): LedgerSnapshot => service.load());
-  ipcMain.handle(LEDGER_CHANNELS.decide, (event, raw: unknown): LedgerApplyResult => {
+  ipcMain.handle(LEDGER_CHANNELS.decide, async (event, raw: unknown): Promise<LedgerApplyResult> => {
     if (!fromMain(event.sender)) return { ok: false, reason: 'Só a janela do app decide.' };
     const decision = raw as Partial<LedgerOwnerDecision> | null;
     if (!decision || typeof decision.id !== 'string') return { ok: false, reason: 'Pedido inválido.' };
@@ -3112,17 +3246,20 @@ function registerLedgerIpcHandlers(): void {
     // The owner's words with a named option go with the decision (its text) AND to whoever did it (Parte B).
     const text = typeof decision.text === 'string' ? decision.text.trim().slice(0, MAX_COMMENT_CHARS) : '';
     const reason = (decision as { reason?: unknown }).reason;
+    // 07/11 — "Decidir assim": the owner's own option (his words); the ledger says how it closes.
     const result =
-      decision.accept === true
-        ? service.apply({ kind: 'dono' }, { op: 'aceitar', id: decision.id, ...option, ...(text ? { text } : {}) })
-        : service.apply({ kind: 'dono' }, { op: 'rejeitar', id: decision.id, reason: [typeof reason === 'string' ? reason.trim() : '', text].filter(Boolean).join('\n'), ...option });
+      decision.option === OWN_OPTION
+        ? await service.apply({ kind: 'dono' }, { op: 'decidir-outra', id: decision.id, text })
+        : decision.accept === true
+        ? await service.apply({ kind: 'dono' }, { op: 'aceitar', id: decision.id, ...option, ...(text ? { text } : {}) })
+        : await service.apply({ kind: 'dono' }, { op: 'rejeitar', id: decision.id, reason: [typeof reason === 'string' ? reason.trim() : '', text].filter(Boolean).join('\n'), ...option });
     // Every decision of the owner, by a button or with words, tells the session that owns it (closed: the Líder).
     if (result.ok) void cardWriter?.tellDecision(result.task, text);
     return result;
   });
   // 06/11 (t-e753b554) — a place gone for good (its tab closed and did not come back, or it never started): the
   // renderer names who takes the work (reach.ts), the main moves the live tasks with the record.
-  ipcMain.handle(LEDGER_CHANNELS.passOn, (event, raw: unknown): LedgerPassedOn[] => {
+  ipcMain.handle(LEDGER_CHANNELS.passOn, async (event, raw: unknown): Promise<LedgerPassedOn[]> => {
     if (!fromMain(event.sender) || !Array.isArray(raw)) return [];
     const requests = raw.filter(
       (item): item is LedgerPassOnRequest =>
@@ -4148,6 +4285,7 @@ void app.whenReady().then(async () => {
   registerHealthIpcHandlers(); // Saúde do computador
   registerHomologacaoIpcHandlers(); // Mindscape de homologação V1 — Números da factory
   registerRotinasIpcHandlers(); // Item 20 — rotinas em sombra
+  registerFaxineiroIpcHandlers(); // t-b3b26e60 — Faxineiro com gatilhos
   registerAppUpdateIpcHandlers(); // B33 — atualizar de dentro do app
   registerWorkspaceIpcHandlers(); // Sidebar — abrir no editor + branch
   celularService = createCelularService({
@@ -4160,6 +4298,8 @@ void app.whenReady().then(async () => {
     placeName: placeNameOf,
     cardWriter: () => cardWriter,
     deliverToLeader: () => deliverPedidoToLeader,
+    // Oráculo na VPS: the phone talks to the daemon there; this PC's server stays down.
+    remote: () => remoteOracleHost?.celular() ?? null,
   }); // Ledger no celular (PWA só na Tailscale)
   // Quadro por MCP — the board and session tools of the same server go to the renderer (owner of the document).
   const boardBridge = createBoardBridge({
@@ -4174,6 +4314,32 @@ void app.whenReady().then(async () => {
     return typeof who.lugar === 'string' && typeof who.pasta === 'string' ? { projectPath: who.pasta, placeId: who.lugar } : null;
   };
   cardWriter = createCardWriter({ service: () => ledgerService, deliver: (message) => boardBridge.deliverOwnerMessage(message), placeName: placeNameOf });
+  // Oráculo na VPS: what waits in the VPS's relay goes by the same driver, now that it exists.
+  deliverOwnerMessageViaBoard = (message) => boardBridge.deliverOwnerMessage(message);
+  void remoteOracleHost?.drain();
+  // Fatia 4: the picture of each VPS session on its board (who it is, the places, the saved board), for the MCP gate
+  // that answers it when this PC is off. The board does not change while the PC is off, so the last one is right.
+  const pushBoardPicture = async (): Promise<void> => {
+    const host = remoteOracleHost;
+    const registry = remoteSessions;
+    if (!host || !registry || host.state().mode !== 'remoto') return;
+    const sessoes: Record<string, unknown> = {};
+    for (const { ptyId, folder } of registry.liveSessions()) {
+      try {
+        const who = await boardBridge.execute(ptyId, { tool: 'sessao_quem_sou' });
+        if (who.kind !== 'text') continue;
+        const quemSou = JSON.parse(who.text) as Record<string, unknown>;
+        const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar' });
+        const listar = list.kind === 'text' ? (JSON.parse(list.text) as unknown) : [];
+        const board = typeof quemSou.pasta === 'string' ? savedBoard(quemSou.pasta) : undefined;
+        sessoes[folder] = { quemSou, listar: Array.isArray(listar) ? listar : [], ...(board ? { board } : {}) };
+      } catch {
+        // this one stays as the VPS last had it
+      }
+    }
+    if (Object.keys(sessoes).length) await host.pushPicture({ at: Date.now(), sessoes });
+  };
+  setInterval(() => void pushBoardPicture(), 30_000).unref();
   hillClimbNotify = (message) => void boardBridge.deliverOwnerMessage(message).catch(() => null);
   // No place: the renderer sends it straight to the Líder único (or answers `null`: closed, the request waits).
   deliverPedidoToLeader = (text) => boardBridge.deliverOwnerMessage({ projectPath: '', placeId: '', text, leaderText: text }).then((to) => to === 'lider');
@@ -4206,6 +4372,17 @@ void app.whenReady().then(async () => {
         } catch (error) {
           // The change holds until the app closes; it is only not remembered.
           console.error('[donel-dev] pastas de envio não foram gravadas:', error);
+        }
+      },
+    },
+    uploadGrants: {
+      get: () => appConfig.browserUploadGrants.grants,
+      set: (grants) => {
+        appConfig = { ...appConfig, browserUploadGrants: { grants: [...grants] } };
+        try {
+          persistAppConfig();
+        } catch (error) {
+          console.error('[donel-dev] pastas liberadas pelo orquestrador não foram gravadas:', error);
         }
       },
     },
