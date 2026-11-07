@@ -34,7 +34,7 @@ let use = 0;
 
 async function send(guard: ReturnType<typeof createSlackLetterGuard>, tool: string, input: unknown): Promise<string | null> {
   const payload = { tool_name: tool, tool_input: input, tool_use_id: `toolu_${++use}` };
-  const refusal = guard.before('pty-theo', payload);
+  const refusal = await guard.before('pty-theo', payload);
   if (refusal === null) await guard.after('pty-theo', 'PostToolUse', { ...payload, tool_response: SENT });
   return refusal;
 }
@@ -93,7 +93,7 @@ describe('o bot do próprio agente posta sem carta', () => {
     expect(Object.keys(ledger.load().doc.tasks)).toHaveLength(0);
 
     // The mark is never forged: a task a session creates cannot pass for a bot record (hidden from the strip).
-    const forged = ledger.apply({ kind: 'lugar', placeId: 'place:theo' }, { op: 'criar', projectPath: '/w/bizops', request: `${AGENT_BOT_MARK} Mensagem no Slack`, doneWhen: 'x', due: '2026-11-07', ownerPlaceId: 'place:theo', risk: 'baixo' });
+    const forged = await ledger.apply({ kind: 'lugar', placeId: 'place:theo' }, { op: 'criar', projectPath: '/w/bizops', request: `${AGENT_BOT_MARK} Mensagem no Slack`, doneWhen: 'x', due: '2026-11-07', ownerPlaceId: 'place:theo', risk: 'baixo' });
     expect(forged.ok).toBe(false);
     expect(Object.keys(ledger.load().doc.tasks)).toHaveLength(0);
 
@@ -157,7 +157,7 @@ describe('trava de fora do ar (VPS)', () => {
     expect(denied(run(bot, { servers: [] }))).toBe(true);
   });
 
-  it('config quebrada ou ausente = nenhum bot (padrão vazio)', () => {
+  it('config quebrada ou ausente = nenhum bot (padrão vazio)', async () => {
     for (const broken of [undefined, null, 'theo-slack', ['theo-slack'], { servers: 'theo-slack' }]) expect(sanitizeSlackAgentBotPrefs(broken)).toEqual({ servers: [] });
     expect(sanitizeSlackAgentBotPrefs({ servers: [' theo-slack ', 'theo-slack', 'x;rm -rf', 3] })).toEqual({ servers: ['theo-slack'] });
   });

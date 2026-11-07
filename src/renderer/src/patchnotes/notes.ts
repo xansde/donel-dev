@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-07',
     items: [
       {
+        title: 'O Oráculo pode morar na sua VPS',
+        text: 'Em Preferências, Celular, "Onde mora o Oráculo" leva o registro de tarefas para a sua VPS, inteiro e como está, e este PC passa a ler e gravar nele. A diferença aparece quando o PC desliga: o registro continua lá. Se a VPS sumir da rede, o PC mostra o último retrato só para ler e não grava nada até ela voltar, para nunca haver dois registros diferentes. "Trazer de volta para este PC" desfaz, também sem perder nada. As cartas no celular e as sessões da VPS sem o PC chegam nas próximas versões.',
+      },
+      {
         title: 'A tela da cadeira salva o papel',
         text: 'A tela da cadeira deixou de ser só leitura. Agora dá para escrever a orientação do papel, ligar ou desligar cada skill e plugin, desligar um MCP ou ligar outro pelo nome, e escolher modelo, esforço e permissão. O custo à direita muda na hora, a cada mudança. "Salvar" grava o papel, e vale para todo lugar com aquele papel que abrir ou continuar depois; "Descartar" volta ao que estava salvo. Desligar uma skill quando o papel usava todas deixa o papel com as outras, nunca com nenhuma. "Usar todos os seus" desfaz a lista. Sair da tela ou trocar de cadeira com mudanças não salvas pergunta antes. Nome, cor e motor continuam em Papéis.',
       },

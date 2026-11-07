@@ -1,0 +1,269 @@
+// Oráculo na VPS (docs/planos/oraculo-na-vps.md) — the app's side of remote mode: which place holds the ledger
+// (`<userData>/oraculo-remoto.json`, kept OUT of config.json so an older channel's sanitize never drops it), the
+// handshake through the place's own ssh, the events stream that keeps the PC's snapshot fresh, and the two
+// gestures of Preferências. The ledger service the rest of the app holds is a switchable one: the move and the way
+// back swap what is behind it without restarting the app (the owner's sessions stay up).
+
+import { createHash, randomBytes } from 'node:crypto';
+import { join } from 'node:path';
+import type { LedgerSnapshot } from '../shared/ledger/channels';
+import type { LedgerRemoteResult, LedgerRemoteState } from '../shared/ledger/remote';
+import type { ConfigIoDeps } from './config-store';
+import { bringLedgerBack, createRemoteLedgerService, fetchOracleHttp, moveLedgerToRemote, readRemoteMarker, type OracleHttp, type RemoteLedgerService, type RemoteMarker } from './ledger-remote';
+import type { LedgerProofFs, LedgerService } from './ledger-store';
+
+export const REMOTE_CONFIG_FILE = 'oraculo-remoto.json';
+
+export interface RemoteOracleHostDeps {
+  readonly userDataDir: string;
+  readonly ledgerFile: string;
+  readonly io: ConfigIoDeps;
+  readonly proofFs: LedgerProofFs;
+  /** `accounts.remotes`, read at each use. */
+  readonly remotes: () => readonly { readonly id: string; readonly label: string; readonly sshTarget: string }[];
+  readonly runScript: (sshTarget: string, script: string, timeoutMs: number) => Promise<{ code: number | null; stdout: string; stderr: string }>;
+  /** A local ledger over `ledgerFile` (the mode of today). */
+  readonly localService: () => LedgerService;
+  /** Puts a service behind the one the app holds. */
+  readonly setService: (service: LedgerService) => void;
+  readonly onChange: (snapshot: LedgerSnapshot) => void;
+  readonly fetchImpl?: typeof fetch;
+}
+
+export interface RemoteOracleHost {
+  /** The service to start with (local, or remote when the config says so; it connects in the background). */
+  boot(): LedgerService;
+  state(): LedgerRemoteState;
+  move(lugar: string): Promise<LedgerRemoteResult>;
+  back(): Promise<LedgerRemoteResult>;
+  dispose(): void;
+}
+
+/** The script that leaves the token's hash on the place and answers where the daemon listens. */
+export function handshakeScript(tokenHash: string): string {
+  if (!/^[0-9a-f]{64}$/.test(tokenHash)) throw new Error('hash inválido');
+  return [
+    'set -e',
+    'd="$HOME/.donel/oraculo"',
+    'umask 077',
+    'mkdir -p "$d"',
+    `printf '%s\\n' '${tokenHash}' > "$d/pc.token.sha256.tmp"`,
+    'mv "$d/pc.token.sha256.tmp" "$d/pc.token.sha256"',
+    'test -f "$d/url" || { echo "sem-daemon"; exit 3; }',
+    'cat "$d/url"',
+    '',
+  ].join('\n');
+}
+
+export function parseHandshakeUrl(stdout: string): string | null {
+  const line = stdout.trim().split('\n').pop()?.trim() ?? '';
+  return /^http:\/\/(?:\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-f:]+\]):\d{2,5}$/i.test(line) ? line : null;
+}
+
+const STREAM_IDLE_MS = 70_000;
+const RETRY_MS = [5_000, 15_000, 30_000, 60_000];
+
+export function createRemoteOracleHost(deps: RemoteOracleHostDeps): RemoteOracleHost {
+  const { io, userDataDir, ledgerFile } = deps;
+  const configFile = join(userDataDir, REMOTE_CONFIG_FILE);
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  let remote: RemoteLedgerService | null = null;
+  let link: { url: string; token: string } | null = null;
+  let lugar: string | null = null;
+  let erro: string | null = null;
+  let disposed = false;
+  let stream: AbortController | null = null;
+  let generation = 0;
+
+  function readConfig(): string | null {
+    const text = io.readFileText(configFile);
+    if (text === null) return null;
+    try {
+      const raw = JSON.parse(text) as { lugar?: unknown };
+      return typeof raw.lugar === 'string' && raw.lugar.trim() ? raw.lugar : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function writeConfig(value: string | null): boolean {
+    try {
+      if (value === null) {
+        if (io.existsSync(configFile)) io.unlinkFile(configFile);
+        return !io.existsSync(configFile);
+      }
+      const tmp = `${configFile}.tmp-${process.pid}`;
+      io.writeFileText(tmp, JSON.stringify({ lugar: value }, null, 2));
+      io.renameFile(tmp, configFile);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  const placeOf = (id: string | null) => (id ? (deps.remotes().find((place) => place.id === id) ?? null) : null);
+
+  async function handshake(id: string): Promise<{ url: string; token: string } | string> {
+    const place = placeOf(id);
+    if (!place) return `o lugar remoto "${id}" não está mais em Contas → Lugares remotos`;
+    const token = randomBytes(32).toString('hex');
+    const hash = createHash('sha256').update(token).digest('hex');
+    const result = await deps.runScript(place.sshTarget, handshakeScript(hash), 20_000);
+    if (result.stdout.includes('sem-daemon')) return `o Oráculo não está instalado em ${place.label} (scripts/oraculo-vps.sh instalar)`;
+    const url = result.code === 0 ? parseHandshakeUrl(result.stdout) : null;
+    if (!url) return `não consegui falar com ${place.label} pelo ssh${result.stderr.trim() ? ` (${result.stderr.trim().split('\n').pop()})` : ''}`;
+    return { url, token };
+  }
+
+  const httpOf = (current: { url: string; token: string } | null): OracleHttp | null => (current ? fetchOracleHttp(current.url, current.token, fetchImpl) : null);
+
+  async function connect(id: string, gen: number): Promise<boolean> {
+    const linked = await handshake(id);
+    if (gen !== generation) return false;
+    if (typeof linked === 'string') {
+      erro = linked;
+      return false;
+    }
+    link = linked;
+    erro = null;
+    const ok = (await remote?.refresh()) ?? false;
+    if (!ok) erro = 'o Oráculo da VPS não respondeu';
+    return ok;
+  }
+
+  /** The events stream: one `ledger` event per write on the VPS → re-read. Reconnects (and re-handshakes) forever. */
+  async function listen(id: string, gen: number): Promise<void> {
+    let attempt = 0;
+    while (!disposed && gen === generation) {
+      if (!link) await connect(id, gen);
+      if (link && gen === generation) {
+        const controller = new AbortController();
+        stream = controller;
+        let idle: NodeJS.Timeout | null = null;
+        const bump = (): void => {
+          if (idle) clearTimeout(idle);
+          idle = setTimeout(() => controller.abort(), STREAM_IDLE_MS);
+        };
+        try {
+          bump();
+          const response = await fetchImpl(`${link.url}/v1/eventos`, { headers: { Authorization: `Bearer ${link.token}` }, signal: controller.signal });
+          if (response.status === 401) link = null; // another boot rewrote the hash: shake hands again
+          else if (response.ok && response.body) {
+            attempt = 0;
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            for (;;) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              bump();
+              buffer += decoder.decode(value, { stream: true });
+              let cut: number;
+              while ((cut = buffer.indexOf('\n\n')) >= 0) {
+                const block = buffer.slice(0, cut);
+                buffer = buffer.slice(cut + 2);
+                if (/^event: ledger$/m.test(block)) {
+                  const ok = await remote?.refresh();
+                  erro = ok ? null : 'o Oráculo da VPS não respondeu';
+                }
+              }
+            }
+          }
+        } catch {
+          // dropped, or idle too long (a PC that slept): reconnect below
+        } finally {
+          if (idle) clearTimeout(idle);
+        }
+        // The stream ended: until it is back, the PC is read-only.
+        if (gen === generation && !disposed) await remote?.refresh();
+      }
+      if (disposed || gen !== generation) return;
+      await new Promise((resolve) => setTimeout(resolve, RETRY_MS[Math.min(attempt++, RETRY_MS.length - 1)]));
+    }
+  }
+
+  function startRemote(id: string, marker: RemoteMarker, linked: { url: string; token: string } | null = null): RemoteLedgerService {
+    generation++;
+    stream?.abort();
+    link = linked;
+    lugar = id;
+    remote = createRemoteLedgerService({ http: () => httpOf(link), ledgerFile, io, proofFs: deps.proofFs, marker, onChange: deps.onChange });
+    void listen(id, generation);
+    return remote;
+  }
+
+  function stopRemote(): void {
+    generation++;
+    stream?.abort();
+    remote = null;
+    link = null;
+    lugar = null;
+  }
+
+  function state(): LedgerRemoteState {
+    const marker = readRemoteMarker(io, ledgerFile);
+    const place = placeOf(lugar);
+    return {
+      mode: remote ? 'remoto' : 'local',
+      lugar,
+      lugarNome: place?.label ?? null,
+      conectado: remote?.connected() ?? false,
+      erro,
+      espelhoSemModo: !remote && marker ? marker.lugar : null,
+      lugares: deps.remotes().map((p) => ({ id: p.id, label: p.label })),
+    };
+  }
+
+  const done = (reason?: string): LedgerRemoteResult => (reason ? { ok: false, reason, state: state() } : { ok: true, state: state() });
+
+  return {
+    boot() {
+      const configured = readConfig();
+      if (configured) {
+        const marker = readRemoteMarker(io, ledgerFile) ?? { lugar: configured, desde: new Date().toISOString() };
+        return startRemote(configured, marker);
+      }
+      // No config: today's local ledger. A mirror left behind opens read-only by itself (version 1000); the
+      // Preferences show `espelhoSemModo` and offer to bring it back from that place.
+      return deps.localService();
+    },
+    state,
+    async move(id) {
+      if (remote) return done('o Oráculo já está numa VPS');
+      const gen = ++generation;
+      const linked = await handshake(id);
+      if (gen !== generation) return done('outra troca começou');
+      if (typeof linked === 'string') return done(linked);
+      const marker: RemoteMarker = { lugar: id, desde: new Date().toISOString() };
+      const moved = await moveLedgerToRemote({ http: fetchOracleHttp(linked.url, linked.token, fetchImpl), ledgerFile, io, proofFs: deps.proofFs, marker });
+      if (!moved.ok) return done(moved.reason);
+      if (!writeConfig(id)) return done('o registro está na VPS, mas não consegui gravar o oraculo-remoto.json; tente de novo (a troca recomeça sem duplicar)');
+      const service = startRemote(id, marker, linked);
+      await service.refresh();
+      deps.setService(service);
+      return done();
+    },
+    async back() {
+      const id = remote ? lugar : (readRemoteMarker(io, ledgerFile)?.lugar ?? null);
+      if (!id) return done('o Oráculo já está neste PC');
+      const linked = link ?? (await handshake(id));
+      if (typeof linked === 'string') return done(`${linked}. Sem a VPS, use o caminho manual do plano (Volta atrás).`);
+      const back = await bringLedgerBack({ http: fetchOracleHttp(linked.url, linked.token, fetchImpl), ledgerFile, io, proofFs: deps.proofFs });
+      if (!back.ok) return done(back.reason);
+      stopRemote();
+      writeConfig(null);
+      const local = deps.localService();
+      deps.setService(local);
+      try {
+        deps.onChange(local.load());
+      } catch {
+        // the next read says it
+      }
+      return done();
+    },
+    dispose() {
+      disposed = true;
+      stopRemote();
+    },
+  };
+}
