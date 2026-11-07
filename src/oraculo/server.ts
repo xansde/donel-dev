@@ -5,7 +5,7 @@
 import { createReadStream } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { isTailscaleAddress } from '../main/celular/tailscale';
-import { bearerMatches, isBinaryRoute, MAX_JSON_BYTES, MAX_UPLOAD_BYTES, type OracleApiHandler } from './api';
+import { isBinaryRoute, MAX_JSON_BYTES, MAX_UPLOAD_BYTES, type OracleApiHandler } from './api';
 
 export const ORACLE_PORT = 47816;
 export const EVENTS_PATH = '/v1/eventos';
@@ -18,8 +18,8 @@ export interface OracleServer {
   close(): Promise<void>;
 }
 
-export function startOracleServer(options: { readonly host: string; readonly port: number; readonly tokenHash: () => string | null; readonly handler: OracleApiHandler }): Promise<OracleServer> {
-  const { host, port, handler, tokenHash } = options;
+export function startOracleServer(options: { readonly host: string; readonly port: number; /** The PC's or a service's token (the handler then says which routes). */ readonly authorized: (authorization: string | undefined) => boolean; readonly handler: OracleApiHandler }): Promise<OracleServer> {
+  const { host, port, handler, authorized } = options;
   if (!isTailscaleAddress(host)) return Promise.reject(new Error(`recusado: ${host} não é um endereço da Tailscale`));
   const streams = new Set<ServerResponse>();
 
@@ -31,7 +31,7 @@ export function startOracleServer(options: { readonly host: string; readonly por
     }
     const path = (req.url ?? '/').split('?')[0] ?? '/';
     // The token before the body: a caller without it never gets to send 50 MB into memory.
-    if (!bearerMatches(req.headers.authorization, tokenHash())) {
+    if (!authorized(req.headers.authorization)) {
       res.writeHead(401).end();
       req.socket.destroy();
       return;

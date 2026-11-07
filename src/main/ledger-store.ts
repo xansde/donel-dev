@@ -36,6 +36,7 @@ import {
   isCancelled,
   awaitsSend,
   isClosed,
+  isServicePlace,
   viewState,
   maxProofBytes,
   parseLedgerDoc,
@@ -302,7 +303,7 @@ export function orphanReason(caller: LedgerCaller, task: LedgerTask, now: number
 /** The owner place of `task` could not be checked: its board did not answer. Closed and delivered tasks do not depend on it. */
 export function ownerUnknown(caller: LedgerCaller, task: LedgerTask): boolean {
   // The Líder único is no place of any board: whether the board answered says nothing of it (t-52b31719).
-  if (task.ownerPlaceId === LEADER_OF_ALL) return false;
+  if (task.ownerPlaceId === LEADER_OF_ALL || isServicePlace(task.ownerPlaceId)) return false;
   return !isClosed(task) && task.state !== 'entregue' && !awaitsSend(task) && !caller.placeStates?.has(task.projectPath);
 }
 
@@ -312,7 +313,8 @@ export const NOT_STARTED_GRACE_MS = 30 * 60 * 1000;
 /** Why the owner place of `task` can no longer do the work (closed, out of the board, never started); `null` = alive or unknown. */
 export function ownerGone(caller: LedgerCaller, task: LedgerTask, now: number): string | null {
   // The Líder único has no place on any board (t-52b31719): a task it owns is alive, never orphan.
-  if (task.ownerPlaceId === LEADER_OF_ALL) return null;
+  // Nor does a headless service (t-a1ea2798): no board has its place.
+  if (task.ownerPlaceId === LEADER_OF_ALL || isServicePlace(task.ownerPlaceId)) return null;
   const states = caller.placeStates?.get(task.projectPath);
   if (!states) return null;
   const state = states.get(task.ownerPlaceId);
