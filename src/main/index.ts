@@ -317,8 +317,7 @@ import { registerPetIpcHandlers } from './pet/pet-ipc';
 import { createLiderService, type LiderService } from './lider/lider-service';
 import { createPetService, type PetService } from './pet/pet-service';
 import { createPetWindow } from './pet/pet-window';
-import { createFullscreenWatcher } from './pet/fullscreen-watcher';
-import { readPetSeams, type PetSmokeGlobal } from './pet/pet-seams';
+import { readPetSeams } from './pet/pet-seams';
 // 016-jobu-faxina — "Fazer faxina": the sweep of repos, worktrees, branches and old sessions the Jobu runs from his menu.
 import { createGitRunner } from './sweep/git';
 import { createSweepRunner } from './sweep/sweep-service';
@@ -1276,8 +1275,6 @@ function startPetService(): void {
     clearInterval: (handle) => clearInterval(handle as ReturnType<typeof setInterval>),
     // FR-034: with `DONEL_PET_CAPTURABLE=1` the protection against capture never turns on (the real screenshots of the docs).
     alwaysCapturable: seams.capturable,
-    // T050 (R10): the full-screen helper only exists while the Jobu window is open.
-    startFullscreenWatcher: (onChange) => createFullscreenWatcher({ onChange }),
     // T049 (FR-005): a monitor plugged in, unplugged or with its work area changed revalidates the position.
     subscribeDisplays: (listener) => {
       const handler = (): void => listener();
@@ -1292,12 +1289,6 @@ function startPetService(): void {
     },
   });
   petService.start();
-  if (seams.ghost) {
-    // The test hook of the ghost mode: what the full-screen watcher would do on seeing an app take the screen. Verification
-    // with a REAL full screen belongs to the owner's checklist; the smoke only proves that the window hides and comes back when the service is told.
-    const hooks = globalThis as PetSmokeGlobal;
-    hooks.__donelPetSmoke = { ...hooks.__donelPetSmoke, setFullscreen: (active) => petService?.onFullscreenChanged(active) };
-  }
 }
 
 /**

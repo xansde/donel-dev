@@ -157,6 +157,8 @@ Levantamento do código em 21/10/2026 (branch `015-jobu-pet`, base `staging`
 
 ## R10 — Tela cheia sem dependência nova
 
+> **Removido em 07/11 (t-56abde57):** o dono revogou o FR-007; o vigia de tela cheia, o parser e o evento `fullscreen` saíram do código. O Jobu só some por Esconder.
+
 - **Decisão**: um processo auxiliar do PowerShell, de vida longa, que roda só
   com o pet ligado.
   - Ele chama `SHQueryUserNotificationState` (shell32) por P/Invoke a cada

@@ -22,6 +22,14 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'No quadro da homologação, na vista Cadeiras, o botão "Números da factory" abre um painel com os números que a factory grava na VPS dela: um cartão por número, com o valor exatamente como ela escreveu, a pergunta que ele responde e de onde veio (medido, estimado ou sem fonte). Os números que têm de ficar em zero ou subir levam a marca trava, e os que não têm meta dizem "só mostrado". No topo aparece a hora em que foram gerados ("atualizado às" ou, depois de duas horas, "parado desde"); se a VPS não responde ou o arquivo some, "sem sinal desde", mantendo a última leitura. O painel só lê: nada nele muda a factory. Liga com a chave "homologacao" na configuração; sem ela, nada aparece e nada é lido.',
       },
       {
+        title: 'O Jobu não some mais em outro monitor',
+        text: 'Levar o Donel para outro monitor, maximizado, fazia o Jobu sumir: o Windows tratava isso como "um app em tela cheia", e o Jobu se escondia de qualquer tela cheia. Essa regra saiu. O Jobu fica na tela em qualquer monitor, inclusive com escala diferente e depois de voltar a janela, e os balões aparecem como sempre. Para tirá-lo da frente, use "Esconder" no menu dele.',
+      },
+      {
+        title: 'A tela da cadeira salva o papel',
+        text: 'A tela da cadeira deixou de ser só leitura. Agora dá para escrever a orientação do papel, ligar ou desligar cada skill e plugin, desligar um MCP ou ligar outro pelo nome, e escolher modelo, esforço e permissão. O custo à direita muda na hora, a cada mudança. "Salvar" grava o papel, e vale para todo lugar com aquele papel que abrir ou continuar depois; "Descartar" volta ao que estava salvo. Desligar uma skill quando o papel usava todas deixa o papel com as outras, nunca com nenhuma. "Usar todos os seus" desfaz a lista. Sair da tela ou trocar de cadeira com mudanças não salvas pergunta antes. Nome, cor e motor continuam em Papéis.',
+      },
+      {
         title: 'A tela da cadeira',
         text: 'Na gaveta de uma cadeira, "Definir cadeira ▸" agora abre a tela da cadeira (também em Papéis, por "Ver como cadeira ▸"). Ela mostra o que uma sessão recebe ao sentar ali: as instruções na ordem em que chegam (a moldura do Donel e o texto do papel) e as suas skills, MCPs e plugins, ligados ou fora, com um selo dizendo de onde cada linha vem (Donel, Papel ou o seu ~/.claude). Também mostra o modelo e o esforço sugeridos. À direita fica o custo estimado de uma sessão, em tokens e memória, com o detalhe de onde vem. A coluna de custo recolhe num clique, vira uma faixa estreita com os dois totais e continua recolhida na próxima vez. Nesta versão a tela só mostra; para mudar, use "Editar em Papéis ▸". Os números de custo são estimativas.',
       },

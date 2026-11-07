@@ -3047,6 +3047,7 @@ export function App(): React.JSX.Element {
                     setRolesEditorOpen(true);
                   }}
                   onClose={() => setChairRoleId(null)}
+                  onSaved={setRoles}
                 />
               );
             })()
