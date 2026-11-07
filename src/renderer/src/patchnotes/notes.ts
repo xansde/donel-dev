@@ -22,6 +22,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'Na lente Cadeiras, "+ Pod" cria um pod dentro do rig. Dê nome e missão na gaveta dele e escolha as cadeiras que sentam ali, pela gaveta do pod ou pela da cadeira (cada cadeira fica em um pod só). O pod arruma as próprias cadeiras; você só move o pod, arrastando pelo nome. As cadeiras sem pod ficam à esquerda dos pods, longe do seu desenho. Apagar um pod deixa as cadeiras no quadro, sem pod, e Ctrl+Z desfaz qualquer passo. Atenção: depois que esta versão gravar o quadro (por você ou por uma sessão, ao renovar a conversa ou mexer no quadro), o Donel Beta aberto no mesmo computador passa a mostrar o Mindscape só para leitura, até ser atualizado.',
       },
       {
+        title: 'Sessões na VPS seguem com o PC desligado',
+        text: 'Com o Oráculo na VPS, uma sessão aberta lá depois desta versão continua criando, entregando e listando tarefas quando o PC desliga, e sabe quem é no quadro (do jeito que o quadro estava quando o PC desligou). O resto (navegador, desenhar no quadro, falar com outras sessões) volta quando o PC liga.',
+      },
+      {
         title: 'Com o Oráculo na VPS, o celular fala com ela',
         text: 'Quando o Oráculo mora na VPS, o app do celular passa a abrir no endereço dela: as cartas chegam com aviso e você responde com o PC desligado. Pareie o celular de novo uma vez, em Preferências, Celular (o endereço mudou). O que você escreve numa carta, ou pede pelo botão Pedir, espera na VPS e chega à sessão assim que o PC liga, uma vez só. Pedido por áudio continua precisando do PC ligado.',
       },
@@ -80,6 +84,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
       {
         title: 'O primeiro pedido chega à sessão na VPS',
         text: 'Uma sessão aberta numa VPS agora espera o Claude de lá ficar pronto, mesmo quando a conexão e a subida demoram alguns minutos, e só então recebe o pedido. Se aparecer lixo do terminal na caixa dela, o app apaga antes de mandar. Uma mensagem que entrou, mas cuja confirmação atrasou, não é mais dada como perdida, e mandar o mesmo texto de novo não faz ele chegar duas vezes. Uma sessão que já respondeu não aparece mais como "não começou".',
+      },
+      {
+        title: 'Escrever a sua opção fecha a carta',
+        text: 'Na carta do Oráculo, depois de escrever em "Escrever para…", o botão principal agora é "Decidir assim": o que você escreveu vira a sua decisão, a carta sai da pilha na hora e a sessão recebe o texto para seguir a partir dele. Se for só uma pergunta, use "Só perguntar (a carta fica)": o texto vai à sessão e a carta continua esperando você. Numa carta de Slack, decidir com as suas palavras nunca manda a mensagem; a sessão fica sabendo que você não aprovou aquele texto. Vale no app e no celular.',
       },
     ],
   },

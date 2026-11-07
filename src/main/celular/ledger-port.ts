@@ -11,6 +11,7 @@ import {
   HTML_MEDIA_TYPE,
   lastDecision,
   lastDelivery,
+  OWN_OPTION,
   ownerQueue,
   waitsForOwner,
   type LedgerForOwner,
@@ -189,8 +190,11 @@ export function createLedgerMobilePort(getService: () => LedgerService | null, p
       if (!waitsForOwner(current, task)) return { ok: false, reason: 'recusada', message: 'Esta entrega já não espera você.' };
       const option = input.opcao ? { option: input.opcao } : {};
       const texto = input.texto?.trim() ?? '';
+      // 07/11 — "Decidir assim": his own option; the ledger says how it closes (the phone's `decisao` does not).
       const result =
-        input.decisao === 'aceitar'
+        input.opcao === OWN_OPTION
+          ? await service.apply({ kind: 'dono' }, { op: 'decidir-outra', id: task.id, text: texto, requestId: input.pedidoId })
+          : input.decisao === 'aceitar'
           ? await service.apply({ kind: 'dono' }, { op: 'aceitar', id: task.id, requestId: input.pedidoId, ...option, ...(texto ? { text: texto } : {}) })
           : await service.apply({ kind: 'dono' }, { op: 'rejeitar', id: task.id, reason: [input.motivo ?? '', texto].filter((part) => part.trim()).join('\n'), requestId: input.pedidoId, ...option });
       if (!result.ok) return { ok: false, reason: 'recusada', message: result.reason };
