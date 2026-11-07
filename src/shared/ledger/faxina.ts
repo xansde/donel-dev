@@ -34,10 +34,7 @@ export type PrState = { readonly merged: true; readonly mergedAt: string } | { r
 
 const PR_URL = /https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/(\d+)/g;
 
-/** The PRs of the current delivery: its links and the links written in its text proofs. */
-export function prRefsOf(task: LedgerTask): PrRef[] {
-  const delivery = lastDelivery(task);
-  const texts = (delivery?.proofs ?? []).map((proof) => (proof.kind === 'link' ? proof.url : proof.kind === 'texto' ? proof.text : ''));
+function refsIn(texts: readonly string[]): PrRef[] {
   const refs = new Map<string, PrRef>();
   for (const text of texts) {
     for (const match of text.matchAll(PR_URL)) {
@@ -49,6 +46,18 @@ export function prRefsOf(task: LedgerTask): PrRef[] {
   return [...refs.values()];
 }
 
+/**
+ * The PRs OF the current delivery: its link proofs. A PR only cited in a text proof ("empilhado no #273") is not the
+ * delivery's; the text counts only when the delivery has no PR link and names exactly one PR (the CI output of it).
+ */
+export function prRefsOf(task: LedgerTask): PrRef[] {
+  const proofs = lastDelivery(task)?.proofs ?? [];
+  const linked = refsIn(proofs.flatMap((proof) => (proof.kind === 'link' ? [proof.url] : [])));
+  if (linked.length) return linked;
+  const cited = refsIn(proofs.flatMap((proof) => (proof.kind === 'texto' ? [proof.text] : [])));
+  return cited.length === 1 ? cited : [];
+}
+
 /** The tasks the round asks `gh` about: not closed, not a Slack letter, delivered or rejected, with a PR. */
 export function prCandidates(doc: LedgerDoc): { readonly task: LedgerTask; readonly refs: readonly PrRef[] }[] {
   return Object.values(doc.tasks).flatMap((task) => {
@@ -58,23 +67,27 @@ export function prCandidates(doc: LedgerDoc): { readonly task: LedgerTask; reado
   });
 }
 
-export function mergedReason(pr: PrRef, mergedAt: string): string {
-  return `concluída: PR #${pr.number} mesclado em ${mergedAt.slice(0, 10)}`;
+export function mergedReason(prs: readonly PrRef[], mergedAt: string): string {
+  return `concluída: ${prs.length === 1 ? 'PR' : 'PRs'} ${prs.map((pr) => `#${pr.number}`).join(', ')} ${prs.length === 1 ? 'mesclado' : 'mesclados'} em ${mergedAt.slice(0, 10)}`;
 }
 
 export type MergedDecision =
   | { readonly kind: 'cancelar'; readonly task: LedgerTask; readonly pr: PrRef; readonly reason: string }
   | { readonly kind: 'fica-risco-alto'; readonly task: LedgerTask; readonly pr: PrRef; readonly mergedAt: string };
 
-/** Rule 1: low risk + a merged PR → cancel as done; high risk + merged → stays (logged); no merged PR → nothing. */
+/**
+ * Rule 1: every PR of the delivery merged → low risk ends done, high risk stays (logged); any PR of it not merged (or
+ * unknown) → nothing. `pr` is the last one merged, `mergedAt` its date.
+ */
 export function mergedDecisions(doc: LedgerDoc, states: ReadonlyMap<string, PrState>): MergedDecision[] {
-  return prCandidates(doc).flatMap(({ task, refs }) => {
-    for (const pr of refs) {
-      const state = states.get(pr.url);
-      if (!state || !('merged' in state) || !state.merged) continue;
-      return [task.risk === 'baixo' ? { kind: 'cancelar' as const, task, pr, reason: mergedReason(pr, state.mergedAt) } : { kind: 'fica-risco-alto' as const, task, pr, mergedAt: state.mergedAt }];
-    }
-    return [];
+  return prCandidates(doc).flatMap(({ task, refs }): MergedDecision[] => {
+    const merged = refs.map((pr) => ({ pr, state: states.get(pr.url) }));
+    if (!merged.every(({ state }) => state !== undefined && 'merged' in state && state.merged)) return [];
+    const last = merged
+      .map(({ pr, state }) => ({ pr, mergedAt: (state as { mergedAt: string }).mergedAt }))
+      .sort((a, b) => a.mergedAt.localeCompare(b.mergedAt))
+      .at(-1)!;
+    return [task.risk === 'baixo' ? { kind: 'cancelar', task, pr: last.pr, reason: mergedReason(refs, last.mergedAt) } : { kind: 'fica-risco-alto', task, pr: last.pr, mergedAt: last.mergedAt }];
   });
 }
 

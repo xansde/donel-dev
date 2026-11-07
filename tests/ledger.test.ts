@@ -590,6 +590,9 @@ describe('órfãs e substituição (06/11)', () => {
     const highMerged = await deliver('alto', [{ tipo: 'texto', texto: 'PR https://github.com/acme/atlas/pull/257 e 4 passed' }], true);
     const lowOpenPr = await deliver('baixo', [{ tipo: 'link', url: 'https://github.com/acme/atlas/pull/258' }], false);
     const noPr = await deliver('baixo', [{ tipo: 'texto', texto: '4 passed' }], true);
+    // A PR only cited in a text (the base of a stacked PR) is not the delivery's: its own PR is still open.
+    const stacked = await deliver('baixo', [{ tipo: 'link', url: 'https://github.com/acme/atlas/pull/258' }, { tipo: 'texto', texto: 'Empilhado no https://github.com/acme/atlas/pull/255' }], true);
+    const citedOnly = await deliver('baixo', [{ tipo: 'texto', texto: 'Base https://github.com/acme/atlas/pull/255, este https://github.com/acme/atlas/pull/258' }], true);
     // An old orphan: its place closed (started, no live session), nobody touched it for more than a day.
     const orphan = (JSON.parse((await runLedgerTool(service, lider, call('tarefa_criar', { pedido: 'velha', criterio: 'y', prazo: '2026-11-06', dono: 'place:revisor', risco: 'alto' }))).text) as { id: string }).id;
     let boards = addPlace(emptyMindscapeDoc(), 'C:/p', { id: 'place:lider', roleId: 'lider' });
@@ -616,7 +619,7 @@ describe('órfãs e substituição (06/11)', () => {
       expect(entries.find((entry) => entry.tarefa === lowMerged)).toMatchObject({ acao: 'cancelaria', sombra: true, motivo: 'concluída: PR #255 mesclado em 2026-11-05' });
       expect(entries.find((entry) => entry.tarefa === highMerged)).toMatchObject({ acao: 'fica-risco-alto' });
       expect(entries.find((entry) => entry.tarefa === orphan)).toMatchObject({ acao: 'passaria', de: 'place:revisor', para: 'place:dev' });
-      expect(entries.some((entry) => entry.tarefa === lowOpenPr || entry.tarefa === noPr)).toBe(false);
+      expect(entries.some((entry) => [lowOpenPr, noPr, stacked, citedOnly].includes(entry.tarefa ?? ''))).toBe(false);
       expect(await runner.runNight()).toEqual([]); // once a night
       clock += 24 * 60 * 60 * 1000;
     }
@@ -633,6 +636,8 @@ describe('órfãs e substituição (06/11)', () => {
     expect((await view(highMerged)).estado).toBe('rejeitada');
     expect((await view(lowOpenPr)).estado).toBe('entregue');
     expect((await view(noPr)).estado).toBe('rejeitada');
+    expect((await view(stacked)).estado).toBe('rejeitada');
+    expect((await view(citedOnly)).estado).toBe('rejeitada');
     expect(await view(orphan)).toMatchObject({ dono: 'place:dev', transferencias: [expect.objectContaining({ de: 'place:revisor', para: 'place:dev', motivo: expect.stringContaining('passada sozinha pela faxina') })] });
     expect(told).toEqual([{ to: 'place:dev', text: expect.stringContaining(orphan) }]);
     expect(new Set(asked)).toEqual(new Set(['https://github.com/acme/atlas/pull/255', 'https://github.com/acme/atlas/pull/257', 'https://github.com/acme/atlas/pull/258']));
