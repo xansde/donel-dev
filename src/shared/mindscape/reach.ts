@@ -20,7 +20,7 @@
 // - Who takes the work of a place that is gone (06/11, t-e753b554): the first live place above it by the
 //   hierarchy arrows, the one that opened it first; none → the Líder único.
 
-import { LEADER_ROLE_ID } from '../roles';
+import { FAXINEIRO_ROLE_ID, LEADER_ROLE_ID } from '../roles';
 import type { BoardReach, MindscapeBoard, MindscapeDoc, MindscapeLink } from './model';
 
 export function boardReach(board: MindscapeBoard | undefined): BoardReach {
@@ -151,4 +151,36 @@ export function findPlace(doc: MindscapeDoc, placeId: string, preferredPath: str
   const paths = [preferredPath, ...Object.keys(doc.boards).filter((path) => path !== preferredPath)];
   const projectPath = paths.find((path) => doc.boards[path]?.cards[placeId]?.kind === 'session');
   return projectPath ? { projectPath, placeId } : undefined;
+}
+
+/** What only the live tab tells (the board does not keep it), for `canFaxineiroClose`. */
+export interface CloseFacts {
+  /** Working, or not known yet. */
+  readonly working: boolean;
+  /** A permission on screen, a question, a plan, a usage limit or an error: the owner's. */
+  readonly needsOwner: boolean;
+  /** Another session (or the app) opened the tab; `false` = the owner opened it by hand. */
+  readonly openedBySession: boolean;
+}
+
+/**
+ * Faxineiro com gatilhos (t-b3b26e60) — the Faxineiro of a board closes the sessions of its own board with no arrow
+ * to them ("ele tem permissão para fechar sessões do próprio quadro"), and never: another board, itself, the Líder, a
+ * session working, one waiting for the owner, or a tab the owner opened by hand ("nunca fecha sessão trabalhando nem
+ * mexe no que é do dono"). Only a place with the Faxineiro role has this reach; the arrows of `canReach` still hold
+ * for everyone else.
+ */
+export function canFaxineiroClose(doc: MindscapeDoc, from: ReachEnd, to: ReachEnd, facts: CloseFacts): ReachVerdict {
+  const board = doc.boards[from.projectPath];
+  const self = board?.cards[from.placeId];
+  if (!board || self?.kind !== 'session' || self.roleId !== FAXINEIRO_ROLE_ID) return { ok: false, reason: 'só o Faxineiro do quadro fecha sem seta.' };
+  if (from.projectPath !== to.projectPath) return { ok: false, reason: 'ela está em outro quadro; o Faxineiro só fecha sessões do próprio quadro.' };
+  if (from.placeId === to.placeId) return { ok: false, reason: 'esta é a sua própria sessão.' };
+  const target = board.cards[to.placeId];
+  if (target?.kind !== 'session') return { ok: false, reason: `"${to.placeId}" não é um lugar do quadro.` };
+  if (target.roleId === LEADER_ROLE_ID) return { ok: false, reason: 'é o Líder do quadro; o Faxineiro não fecha o Líder.' };
+  if (facts.working) return { ok: false, reason: 'ela está trabalhando; o Faxineiro não corta turno.' };
+  if (facts.needsOwner) return { ok: false, reason: 'ela espera o dono (permissão, pergunta, plano, limite ou erro).' };
+  if (!facts.openedBySession) return { ok: false, reason: 'o dono abriu esta aba à mão; ela é dele.' };
+  return { ok: true };
 }

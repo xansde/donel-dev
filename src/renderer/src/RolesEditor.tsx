@@ -35,6 +35,8 @@ interface Draft {
   readonly permissionMode: string;
   /** Not edited on this screen (it lives in the file's header); carried so a save keeps it. */
   readonly scope: RoleScope | undefined;
+  /** `lugar: qualquer` — not edited on this screen either; carried so a save keeps it. */
+  readonly anyPlace: boolean;
   readonly guidance: string;
 }
 
@@ -48,6 +50,7 @@ function draftOf(role: SessionRole | undefined): Draft {
     effort: role?.effort ?? NONE,
     permissionMode: role?.permissionMode ?? NONE,
     scope: role?.scope,
+    anyPlace: role?.anyPlace === true,
     guidance: role?.guidance ?? '',
   };
 }
@@ -94,6 +97,7 @@ export function RolesEditor({ open, roles, providers, onClose, onSaved, initialR
       ...(draft.effort ? { effort: draft.effort as EffortLevel } : {}),
       ...(draft.permissionMode ? { permissionMode: draft.permissionMode as PermissionMode } : {}),
       ...(draft.scope ? { scope: draft.scope } : {}),
+      ...(draft.anyPlace ? { anyPlace: true } : {}),
       guidance: draft.guidance,
     };
     setSaving(true);

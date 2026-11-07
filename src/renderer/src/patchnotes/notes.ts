@@ -22,6 +22,14 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'Muita tarefa feita aparecia como "cancelada": era o único jeito de fechar o que não passava pelo aceite. Agora o Oráculo e a tabela do Supabase leem o motivo e dizem o que foi de verdade: "concluída por prova" quando o trabalho saiu (um PR mesclado, por exemplo), "enviada" quando a mensagem foi, e "substituída pela" outra tarefa quando ela tomou o lugar. "Cancelada" fica só para o que não vai acontecer. Nada muda no registro: é só a leitura. O pedido dos posts do bot do agente também deixou de mostrar a marca interna.',
       },
       {
+        title: 'Sessão nova espera vaga quando a máquina está cheia',
+        text: 'Quando uma VPS (ou o PC) está com pouca RAM, swap alto, carga alta ou sem sinal, uma sessão que outra sessão pede para abrir lá entra numa fila em vez de afundar a máquina. O lugar já aparece no quadro, e a sessão abre sozinha, com o pedido original, quando a máquina passa duas leituras seguidas abaixo dos limites, uma por minuto em cada máquina. Um papel marcado com "lugar: qualquer" vai para a outra VPS em vez de esperar. Uma aba que foi aberta mas nunca começou, se o Faxineiro a fechar com a máquina cheia, volta para a fila sem perder o pedido.',
+      },
+      {
+        title: 'O Faxineiro acorda sozinho',
+        text: 'Cada quadro ganhou uma cadeira Faxineiro, que o Donel acorda sozinho quando uma máquina aperta, sem você nem o Líder precisarem chamar. Os gatilhos: RAM livre abaixo de 15%, swap acima de 10%, carga da VPS acima de duas vezes o número de processadores, disco acima de 85%, uma VPS sem sinal, sessões paradas há meia hora e uma ronda por dia, depois das 6h. O Faxineiro roda numa máquina que não é a apertada e fecha só as sessões do próprio quadro que terminaram. O Donel não deixa ele fechar o Líder, uma sessão trabalhando, uma que espera você ou uma aba que você abriu à mão. Quando ele termina a ronda e fica parado, o Donel fecha o Faxineiro também. Para não juntar Faxineiros, uma máquina cheia acorda um quadro de cada vez, e o Donel acorda no máximo quatro por hora. Os limites ficam na seção "faxineiro" do arquivo de configuração das rotinas, que também registra cada fechamento.',
+      },
+      {
         title: 'O Oráculo pode morar na sua VPS',
         text: 'Em Preferências, Celular, "Onde mora o Oráculo" leva o registro de tarefas para a sua VPS, inteiro e como está, e este PC passa a ler e gravar nele. A diferença aparece quando o PC desliga: o registro continua lá. Se a VPS sumir da rede, o PC mostra o último retrato só para ler e não grava nada até ela voltar, para nunca haver dois registros diferentes. "Trazer de volta para este PC" desfaz, também sem perder nada. As cartas no celular e as sessões da VPS sem o PC chegam nas próximas versões.',
       },

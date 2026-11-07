@@ -335,6 +335,9 @@ import { createRemoteFileReader, type RemoteFileReader } from './homologacao/rem
 import { parseFactoryMetrics, type FactoryMetricsParse } from '../shared/homologacao/factoryMetrics';
 import { HOMOLOGACAO_CHANNELS, type FactoryMetricsView } from '../shared/homologacao/ipc';
 import { createRoutineRunner, type RoutineRunner } from './rotinas/routine-runner';
+import { createFaxineiroService, type FaxineiroService } from './rotinas/faxineiro-service';
+import { FAXINEIRO_CHANNELS, type FaxineiroRoundAnswer } from '../shared/faxineiro/ipc';
+import type { FaxineiroLogEntry, SessionView } from '../shared/faxineiro/triggers';
 import { createFaxinaRunner, type FaxinaRunner } from './rotinas/oraculo-faxina';
 import type { PrRef, PrState } from '../shared/ledger/faxina';
 import { ROTINAS_CHANNELS, type ShadowEntry } from '../shared/rotinas/contract';
@@ -2922,6 +2925,31 @@ function registerRotinasIpcHandlers(): void {
   ipcMain.handle(ROTINAS_CHANNELS.today, (): ShadowEntry[] => routineRunner?.today() ?? []);
 }
 
+/** Faxineiro com gatilhos (t-b3b26e60); `null` until whenReady. */
+let faxineiroService: FaxineiroService | null = null;
+
+/**
+ * Faxineiro com gatilhos — the renderer asks for a round once a minute with the open sessions; the answer says whom to
+ * wake and which idle Faxineiro to close. Memory, config and log live in `<userData>/rotinas/`.
+ */
+function registerFaxineiroIpcHandlers(): void {
+  faxineiroService = createFaxineiroService({
+    dir: join(app.getPath('userData'), 'rotinas'),
+    pcReport: () => healthService?.getReport() ?? null,
+    remoteReports: () => remoteHealthService?.getReports() ?? [],
+  });
+  ipcMain.handle(FAXINEIRO_CHANNELS.round, (event, sessions: unknown): FaxineiroRoundAnswer => {
+    const window = getMainWindow();
+    if (!window || event.sender.id !== window.webContents.id || !Array.isArray(sessions)) return { wakes: [], closeIdle: [], fullMachines: {} };
+    return faxineiroService?.round(sessions as SessionView[]) ?? { wakes: [], closeIdle: [], fullMachines: {} };
+  });
+  ipcMain.on(FAXINEIRO_CHANNELS.log, (event, entries: unknown) => {
+    const window = getMainWindow();
+    if (!window || event.sender.id !== window.webContents.id || !Array.isArray(entries)) return;
+    faxineiroService?.log(entries.filter((entry): entry is FaxineiroLogEntry => typeof entry === 'object' && entry !== null && typeof (entry as FaxineiroLogEntry).summary === 'string'));
+  });
+}
+
 /** B33 — `null` until whenReady. */
 let appUpdateService: AppUpdateService | null = null;
 
@@ -4150,6 +4178,7 @@ void app.whenReady().then(async () => {
   registerHealthIpcHandlers(); // Saúde do computador
   registerHomologacaoIpcHandlers(); // Mindscape de homologação V1 — Números da factory
   registerRotinasIpcHandlers(); // Item 20 — rotinas em sombra
+  registerFaxineiroIpcHandlers(); // t-b3b26e60 — Faxineiro com gatilhos
   registerAppUpdateIpcHandlers(); // B33 — atualizar de dentro do app
   registerWorkspaceIpcHandlers(); // Sidebar — abrir no editor + branch
   celularService = createCelularService({
