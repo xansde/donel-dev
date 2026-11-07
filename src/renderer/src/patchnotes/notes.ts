@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-07',
     items: [
       {
+        title: '"Cancelada" quer dizer cancelada',
+        text: 'Muita tarefa feita aparecia como "cancelada": era o único jeito de fechar o que não passava pelo aceite. Agora o Oráculo e a tabela do Supabase leem o motivo e dizem o que foi de verdade: "concluída por prova" quando o trabalho saiu (um PR mesclado, por exemplo), "enviada" quando a mensagem foi, e "substituída pela" outra tarefa quando ela tomou o lugar. "Cancelada" fica só para o que não vai acontecer. Nada muda no registro: é só a leitura. O pedido dos posts do bot do agente também deixou de mostrar a marca interna.',
+      },
+      {
         title: 'O Oráculo pode morar na sua VPS',
         text: 'Em Preferências, Celular, "Onde mora o Oráculo" leva o registro de tarefas para a sua VPS, inteiro e como está, e este PC passa a ler e gravar nele. A diferença aparece quando o PC desliga: o registro continua lá. Se a VPS sumir da rede, o PC mostra o último retrato só para ler e não grava nada até ela voltar, para nunca haver dois registros diferentes. "Trazer de volta para este PC" desfaz, também sem perder nada. As cartas no celular e as sessões da VPS sem o PC chegam nas próximas versões.',
       },

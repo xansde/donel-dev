@@ -27,6 +27,7 @@ import {
   type LedgerTask,
   type LedgerViewState,
 } from './contract';
+import { CLOSING_LABELS, closingOf, withoutMarks } from './closing';
 import { deliveryNote } from './labels';
 import { LEADER_OF_ALL } from '../mindscape/leader';
 
@@ -306,20 +307,24 @@ export function tarefaRow(doc: LedgerDoc, task: LedgerTask, places: PlaceInfoOf 
   const nameOf = (projectPath: string, placeId: string): string | undefined => places?.(projectPath, placeId)?.name;
   const gist = delivery ? (delivery.forOwner?.summary ?? deliveryNote(delivery, project, nameOf) ?? texts[0] ?? null) : null;
   const decidedBy = decision ? actorName(decision.by, project, places, ownerName) : null;
+  // Ledger v5, fatia 4: a "cancel" that was really done, sent or replaced says so (read from the reason, never written).
+  const closing = closingOf(task);
   const decisionLabel = decision
-    ? isCancelled(task)
-      ? `cancelada por ${decidedBy}`
-      : `${decision.kind} por ${decidedBy}${decision.option ? ` · ${decision.option}` : ''}`
+    ? closing && closing.kind !== 'cancelada'
+      ? `${closing.kind === 'substituida' && closing.replacedBy ? `substituída pela ${closing.replacedBy}` : CLOSING_LABELS[closing.kind]} · fechada por ${decidedBy}`
+      : isCancelled(task)
+        ? `cancelada por ${decidedBy}`
+        : `${decision.kind} por ${decidedBy}${decision.option ? ` · ${decision.option}` : ''}`
     : null;
   const reason = decision ? (eventNote(decision) ?? null) : null;
   const state = viewState(task);
   return {
     quadro: boardName(project),
     titulo: mask('titulo', task.title ?? task.request.split('\n')[0]!.slice(0, 60)),
-    estado: awaitsSend(task) ? 'aceita, esperando envio' : STATE_LABELS[state],
+    estado: awaitsSend(task) ? 'aceita, esperando envio' : closing ? CLOSING_LABELS[closing.kind] : STATE_LABELS[state],
     esperando_dono: waitsForOwner(doc, task),
     quem_pediu: mask('quem_pediu', whoAsked(task, places, ownerName)),
-    pedido: mask('pedido', task.request),
+    pedido: mask('pedido', withoutMarks(task.request)),
     quem_faz_agora: placeLabel(project, task.ownerPlaceId, ownerRoleFromSteps(task), places),
     quem_criou: actorName(created?.by, project, places, ownerName),
     risco: task.risk,
