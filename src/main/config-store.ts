@@ -28,6 +28,7 @@ import { defaultMigrationState, sanitizeMigrationState, type MigrationState } fr
 import { sanitizeProvidersConfig } from './providers/providers-config';
 import { defaultProvidersConfig } from '../shared/providers';
 import type { ProvidersConfigDto } from '../shared/providers';
+import { sanitizeHomologacaoPrefs, type HomologacaoPrefs } from '../shared/homologacao/config';
 import type { StoredSessionName } from '../shared/sessionName';
 import type { RegisteredSession, SessionRegistry } from '../shared/sessionRegistry';
 // CA-26/CA-27 (009-modo-dev-v3, lote 1) — cor + ordem da aba v3, por sessão claude.
@@ -168,6 +169,11 @@ export interface AppConfig {
   /** Slack só com carta — the agents' own bots, whose posts need no letter. A TOP-LEVEL key (like `pet`, R20). Not in the DTO. */
   readonly slackAgentBots: SlackAgentBotPrefs;
   /**
+   * Mindscape de homologação V1 — where the factory's files live (`lugar`, `metricas`, `rigs`, `quadro`). A TOP-LEVEL
+   * key (like `pet`, R20). Not in the DTO: the renderer gets the panel by `homologacao:*`. `null` = off, no ssh.
+   */
+  readonly homologacao: HomologacaoPrefs | null;
+  /**
    * G1 (011-contas-e-provedores, issue 08) — chaves de TOPO que este build
    * não reconhece (ex.: um campo que só um canal/versão mais nova entende).
    * `sanitizeAppConfig` NUNCA as descarta — guarda aqui em vez de jogar fora
@@ -213,6 +219,7 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     appUpdate: { installersDir: null },
     browserUploads: { folders: [] },
     slackAgentBots: { servers: [...AGENT_BOT_SERVERS] },
+    homologacao: null,
     unknownFields: {},
   };
 }
@@ -802,6 +809,7 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     appUpdate: sanitizeAppUpdatePrefs(candidate.appUpdate),
     browserUploads: sanitizeBrowserUploadPrefs(candidate.browserUploads),
     slackAgentBots: sanitizeSlackAgentBotPrefs(candidate.slackAgentBots),
+    homologacao: sanitizeHomologacaoPrefs(candidate.homologacao),
     unknownFields,
   };
 }
