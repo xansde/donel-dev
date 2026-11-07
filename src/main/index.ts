@@ -26,7 +26,7 @@ import { createSwitchableLedger, type SwitchableLedger } from './ledger-remote';
 import { LEDGER_REMOTE_CHANNELS, type LedgerRemoteResult, type LedgerRemoteState } from '../shared/ledger/remote';
 import { createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerSnapshot } from '../shared/ledger/channels';
-import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, type LedgerDeliveredTo, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
+import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, OWN_OPTION, type LedgerDeliveredTo, type LedgerDoc, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
 import { askedByRefusal, type LedgerToolCall } from '../shared/ledger/tools';
 import type { BoardBridge } from './board-bridge';
 import { MCP_SERVER_NAME, type BrowserToolOutcome } from '../shared/browser/mcp';
@@ -223,6 +223,8 @@ import {
   buildAttachSshArgs,
   buildRemoteSetupScript,
   discoverRemoteSessions,
+  sshRemoteCommand,
+  remoteAliveFromMeta,
   findRemoteTranscript,
   parseRemoteSetupOutput,
   pickRemotePort,
@@ -253,7 +255,7 @@ import { FAKE_JUDGES_ENV_VAR } from '../shared/hillClimb/council';
 import type { HillClimbToolCall } from '../shared/hillClimb/tools';
 import { fetchRemoteProof } from './ledger-remote-proof';
 import { createLedgerMirrorService, type LedgerMirrorService } from './ledger-mirror/service';
-import { LEDGER_MIRROR_CHANNELS, type LedgerMirrorConfigureResult, type LedgerMirrorState, type PlaceInfoOf } from '../shared/ledger/mirror';
+import { LEDGER_MIRROR_CHANNELS, type LedgerMirrorConfigureResult, type LedgerMirrorState, type LedgerPlacesSnapshot, type PlaceInfoOf } from '../shared/ledger/mirror';
 import { CHAT_CHANNELS } from '../shared/chat/ipc';
 // 011-contas-e-provedores (etapa 1) — motor de contas + mods. Nasce inerte
 // (accounts.mod = null); toda a mecânica mora em src/main/accounts/, este
@@ -280,6 +282,7 @@ import type { AccountMod } from './accounts/account-mod';
 import { IsolatedLoginManager, type IsolatedLoginFsDeps } from './accounts/isolated-login';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
 import { sanitizeLayoutPrefs, type LayoutPrefs } from '../shared/layoutPrefs';
+import { sanitizeLeaderPrefs, type LeaderPrefs } from '../shared/leaderPrefs';
 import { adoptRefreshedActivePair, applyAccountSwitch, createSystemClaudeStateIoDeps, readCurrentCredentialPair } from './accounts/claude-state';
 import { accountFingerprintFromClaudeJsonText } from './accounts/credentials-file';
 import { createLocalMod } from './accounts/mods/local-mod';
@@ -354,6 +357,9 @@ import type { PetDisplay } from '../shared/pet/types';
 import { hasImage, readText, writeText } from './clipboard-bridge';
 import { CLIPBOARD_CHANNELS } from '../shared';
 import { resolveClaudeCorrelation } from './session-correlation';
+import { carryTranscriptLocally, largestTranscript } from './lider/carry-transcript';
+import { fetchTranscriptFromRemote, sendTranscriptToRemote } from './lider/transfer';
+import { LIDER_CHANNELS, isValidLiderCarryPayload, type LiderCarryPayload, type LiderSendResult } from '../shared/lider/ipc';
 import { defaultClaudeHome, indexProjectSessions, resolveProjectSessionsDir } from './session-indexer';
 import { seedProject } from './session-seed';
 import { SessionSemaphoreManager } from './session-semaphore-manager';
@@ -1719,7 +1725,14 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     claudeArgs.push('--settings', '@S/settings.json');
   }
   const mcp = fresh.mcpPort !== null ? (browserService?.prepareRemoteSession(ptyId, fresh.mcpPort) ?? null) : null;
-  const meta: RemoteSessionMeta = { ...fresh, mcpToken: mcp?.token ?? null, mcpPort: mcp ? fresh.mcpPort : null };
+  const meta: RemoteSessionMeta = {
+    ...fresh,
+    mcpToken: mcp?.token ?? null,
+    mcpPort: mcp ? fresh.mcpPort : null,
+    // Líder único na VPS — the tab that comes back after a restart is the Líder again (`remoteAliveFromMeta`).
+    ...(roleId ? { roleId } : {}),
+    ...(options.leaderOfAll === true ? { leaderOfAll: true } : {}),
+  };
   if (mcp) {
     files.push({ name: 'mcp.json', content: mcp.configFileContent });
     claudeArgs.push(...appMcpAllowArgs(), '--mcp-config', '@S/mcp.json');
@@ -1791,20 +1804,65 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
   return { ptyId, claudeSessionId: correlationId, ...(accountId && accountLabel ? { account: { id: accountId, label: accountLabel } } : {}) };
 }
 
+/**
+ * Líder único na VPS — copies the Líder's conversation from where it runs (`from`) to where it goes (`to`);
+ * `undefined` = this computer. Coming from a place, the place's own file comes down (never only the mirror that
+ * arrived here), checked by hash, and the larger of it and the copy here stays. Going to a place, the largest copy
+ * here goes up, checked there. Nothing is closed here: a failure leaves the Líder where it is.
+ */
+async function carryLeaderConversation(payload: LiderCarryPayload): Promise<LiderSendResult> {
+  if (payload.from === payload.to) return { ok: true };
+  const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
+  const placeOf = (id: string): { readonly sshTarget: string; readonly label: string } => {
+    const place = places.find((candidate) => candidate.id === id);
+    if (!place) throw new Error('o lugar remoto não existe mais (painel Contas).');
+    return place;
+  };
+  const sid = payload.sessionId;
+  const cwd = payload.cwd ?? homedir();
+  const homeRelativeDir = remoteDirFor(cwd, appConfig.projectRoots);
+  const localTranscript = resolveTranscriptPath(sid, cwd, undefined);
+
+  if (payload.from !== undefined) {
+    const from = placeOf(payload.from);
+    mkdirSync(dirname(localTranscript), { recursive: true });
+    const arriving = `${localTranscript}.chegando-${randomUUID()}`;
+    const fetched = await fetchTranscriptFromRemote(sshRemoteCommand(from.sshTarget), homeRelativeDir, sid, arriving);
+    if (!fetched.ok) return { ok: false, reason: `${from.label}: ${fetched.reason}` };
+    try {
+      if (fetched.size > 0) carryTranscriptLocally(arriving, localTranscript);
+    } finally {
+      rmSync(arriving, { force: true });
+    }
+  }
+
+  if (payload.to !== undefined) {
+    const to = placeOf(payload.to);
+    const source = largestTranscript([localTranscript, spawnedTranscriptPaths.get(sid), remoteSessions?.mirrorPathFor(sid)]);
+    if (!source) return { ok: false, reason: 'a conversa do Líder não está neste computador.' };
+    const sent = await sendTranscriptToRemote(sshRemoteCommand(to.sshTarget), homeRelativeDir, sid, source.path);
+    if (!sent.ok) return { ok: false, reason: `${to.label}: ${sent.reason}` };
+  }
+  return { ok: true };
+}
+
 function registerPtyIpcHandlers(): void {
   remoteSessions = new RemoteSessionRegistry(join(app.getPath('userData'), 'remote-transcripts'));
   ipcMain.handle(PTY_CHANNELS.remoteAlive, async (): Promise<RemoteAliveSession[]> => {
     const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
     const found = await discoverRemoteSessions(places);
-    return found.map(({ remoteId, meta }) => ({
-      remoteId,
-      sessionId: meta.sid,
-      cwd: meta.localCwd,
-      projectName: meta.projectName,
-      name: meta.name,
-      launchArgs: meta.launchArgs,
-      ...(typeof meta.openedBy === 'string' && meta.openedBy !== '' ? { openedBy: meta.openedBy } : {}),
-    }));
+    return found.map(({ remoteId, meta }) => remoteAliveFromMeta(remoteId, meta));
+  });
+
+  // Líder único na VPS — the conversation goes to the place the Líder moves to BEFORE it opens there, by stream and
+  // checked there; the renderer closes the old Líder only after the new one took a message (shared/lider/move.ts).
+  ipcMain.handle(LIDER_CHANNELS.carry, async (_event, payload: unknown): Promise<LiderSendResult> => {
+    if (!isValidLiderCarryPayload(payload)) return { ok: false, reason: 'pedido de cópia inválido.' };
+    try {
+      return await carryLeaderConversation(payload);
+    } catch (error) {
+      return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+    }
   });
 
   ipcMain.handle(PTY_CHANNELS.create, (_event, options: PtyCreateOptions): PtyCreateResult | Promise<PtyCreateResult> => {
@@ -2242,6 +2300,14 @@ function registerConfigIpcHandlers(): void {
   ipcMain.handle(CONFIG_CHANNELS.setLayoutPrefs, (_event, prefs: Partial<LayoutPrefs>): AppConfigDto => {
     const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
     appConfig = { ...appConfig, layout: sanitizeLayoutPrefs({ ...appConfig.layout, ...patch }, appConfig.layout) };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
+  /** Onde o Líder roda — só lembra; o renderer muda o Líder de lugar na próxima mensagem pelo Jobu. */
+  ipcMain.handle(CONFIG_CHANNELS.setLeaderPrefs, (_event, prefs: Partial<LeaderPrefs>): AppConfigDto => {
+    const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
+    appConfig = { ...appConfig, leader: sanitizeLeaderPrefs({ ...appConfig.leader, ...patch }, appConfig.leader) };
     persistAppConfig();
     return toAppConfigDto(appConfig);
   });
@@ -2914,6 +2980,8 @@ function registerRotinasIpcHandlers(): void {
           ...(snapshot.unconfirmed ? { unconfirmed: true } : {}),
           ...(snapshot.pendingKinds ? { pendingKinds: snapshot.pendingKinds } : {}),
           ...(snapshot.turnFailure ? { turnFailure: snapshot.turnFailure } : {}),
+          ...(snapshot.lastEventAt !== undefined ? { lastEventAt: snapshot.lastEventAt } : {}),
+          ...(snapshot.openCalls !== undefined ? { openCalls: snapshot.openCalls } : {}),
         });
       }
       return live;
@@ -3073,6 +3141,16 @@ function registerLedgerMirror(): void {
     return mirror.state();
   });
   ipcMain.handle(LEDGER_MIRROR_CHANNELS.syncNow, (): Promise<LedgerMirrorState> => mirror.syncNow());
+  // Ledger v5, fatia 3 — the table of the Oráculo names places as the mirror does (read only, mirror on or off).
+  ipcMain.handle(LEDGER_MIRROR_CHANNELS.places, (): LedgerPlacesSnapshot => {
+    let doc: LedgerDoc | null = null;
+    try {
+      doc = ledgerService?.load().doc ?? null;
+    } catch {
+      doc = null;
+    }
+    return mirror.placesSnapshot(doc);
+  });
   // The first registry of this run: the whole ledger (it may have changed while the app was closed, or a push may
   // have failed before quitting). The key only comes in through the screen — never a file on disk.
   void mirror.syncNow().catch(() => undefined);
@@ -3149,8 +3227,11 @@ function registerLedgerIpcHandlers(): void {
     // The owner's words with a named option go with the decision (its text) AND to whoever did it (Parte B).
     const text = typeof decision.text === 'string' ? decision.text.trim().slice(0, MAX_COMMENT_CHARS) : '';
     const reason = (decision as { reason?: unknown }).reason;
+    // 07/11 — "Decidir assim": the owner's own option (his words); the ledger says how it closes.
     const result =
-      decision.accept === true
+      decision.option === OWN_OPTION
+        ? await service.apply({ kind: 'dono' }, { op: 'decidir-outra', id: decision.id, text })
+        : decision.accept === true
         ? await service.apply({ kind: 'dono' }, { op: 'aceitar', id: decision.id, ...option, ...(text ? { text } : {}) })
         : await service.apply({ kind: 'dono' }, { op: 'rejeitar', id: decision.id, reason: [typeof reason === 'string' ? reason.trim() : '', text].filter(Boolean).join('\n'), ...option });
     // Every decision of the owner, by a button or with words, tells the session that owns it (closed: the Líder).
@@ -4217,6 +4298,29 @@ void app.whenReady().then(async () => {
   // Oráculo na VPS: what waits in the VPS's relay goes by the same driver, now that it exists.
   deliverOwnerMessageViaBoard = (message) => boardBridge.deliverOwnerMessage(message);
   void remoteOracleHost?.drain();
+  // Fatia 4: the picture of each VPS session on its board (who it is, the places, the saved board), for the MCP gate
+  // that answers it when this PC is off. The board does not change while the PC is off, so the last one is right.
+  const pushBoardPicture = async (): Promise<void> => {
+    const host = remoteOracleHost;
+    const registry = remoteSessions;
+    if (!host || !registry || host.state().mode !== 'remoto') return;
+    const sessoes: Record<string, unknown> = {};
+    for (const { ptyId, folder } of registry.liveSessions()) {
+      try {
+        const who = await boardBridge.execute(ptyId, { tool: 'sessao_quem_sou' });
+        if (who.kind !== 'text') continue;
+        const quemSou = JSON.parse(who.text) as Record<string, unknown>;
+        const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar' });
+        const listar = list.kind === 'text' ? (JSON.parse(list.text) as unknown) : [];
+        const board = typeof quemSou.pasta === 'string' ? savedBoard(quemSou.pasta) : undefined;
+        sessoes[folder] = { quemSou, listar: Array.isArray(listar) ? listar : [], ...(board ? { board } : {}) };
+      } catch {
+        // this one stays as the VPS last had it
+      }
+    }
+    if (Object.keys(sessoes).length) await host.pushPicture({ at: Date.now(), sessoes });
+  };
+  setInterval(() => void pushBoardPicture(), 30_000).unref();
   hillClimbNotify = (message) => void boardBridge.deliverOwnerMessage(message).catch(() => null);
   // No place: the renderer sends it straight to the Líder único (or answers `null`: closed, the request waits).
   deliverPedidoToLeader = (text) => boardBridge.deliverOwnerMessage({ projectPath: '', placeId: '', text, leaderText: text }).then((to) => to === 'lider');

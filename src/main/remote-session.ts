@@ -17,6 +17,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createWriteStream, mkdirSync, type WriteStream } from 'node:fs';
 import { basename, join, relative, sep, isAbsolute } from 'node:path';
 import { resolvePermissionMode } from '../shared/commandBuilder';
+import type { RemoteAliveSession } from '../shared';
 
 export const REMOTE_TMUX_SOCKET = 'donel';
 export const REMOTE_SESSIONS_DIR = '.donel/s';
@@ -55,6 +56,9 @@ export interface RemoteSessionMeta {
   readonly launchArgs: readonly string[];
   /** Place of the session that opened this one (`sessao_abrir`); absent when the owner opened it. */
   readonly openedBy?: string;
+  /** Líder único na VPS — the role and the Jobu's mark, so the tab that comes back after a restart is the Líder again. */
+  readonly roleId?: string;
+  readonly leaderOfAll?: boolean;
   readonly createdAt: string;
 }
 
@@ -207,6 +211,9 @@ export function buildRemoteSetupScript(input: RemoteSetupInput): string {
     `printf '%s' ${shQuote(b64(TMUX_CONF))} | base64 -d > "$HOME/.donel/tmux.conf"`,
     ...files.map((file) => `printf '%s' ${shQuote(b64(file.content))} | base64 -d > "$S"/${shQuote(file.name)} && chmod 600 "$S"/${shQuote(file.name)}`),
     '(cd "$D" && pwd) > "$S/dir"',
+    // Oráculo na VPS (fatia 4): with the daemon's MCP gate there, the session calls it instead of its tunnel; the gate
+    // passes the call on while the PC is on and answers who the session is and the tasks when it is off.
+    'if [ -f "$S/mcp.json" ] && [ -r "$HOME/.donel/oraculo/portao" ]; then P="$(tr -dc 0-9 < "$HOME/.donel/oraculo/portao")"; if [ -n "$P" ]; then sed -i "s#http://127.0.0.1:[0-9]*/mcp#http://127.0.0.1:$P/s/$SID/mcp#" "$S/mcp.json"; fi; fi',
     // The CLI on a fresh machine opens on onboarding (theme + login method) and asks to trust the folder,
     // even with the account already written there by the accounts engine. Mark both as done, atomically.
     `command -v python3 >/dev/null 2>&1 && python3 -c ${shQuote(MARK_ONBOARDED_PY)} "$(cat "$S/dir")" >/dev/null 2>&1 || true`,
@@ -280,6 +287,27 @@ export function parseDiscoverOutput(stdout: string): RemoteSessionMeta[] {
     }
   }
   return metas;
+}
+
+/** Pure — the tab a live remote session comes back as. The Líder único comes back with its mark and no project. */
+export function remoteAliveFromMeta(remoteId: string, meta: RemoteSessionMeta): RemoteAliveSession {
+  const leaderOfAll = meta.leaderOfAll === true;
+  return {
+    remoteId,
+    sessionId: meta.sid,
+    cwd: meta.localCwd,
+    ...(leaderOfAll ? {} : { projectName: meta.projectName }),
+    name: meta.name,
+    launchArgs: meta.launchArgs,
+    ...(typeof meta.openedBy === 'string' && meta.openedBy !== '' ? { openedBy: meta.openedBy } : {}),
+    ...(typeof meta.roleId === 'string' && meta.roleId !== '' ? { roleId: meta.roleId } : {}),
+    ...(leaderOfAll ? { leaderOfAll: true } : {}),
+  };
+}
+
+/** Líder único na VPS — runs one command line on the place over ssh, with stdin and stdout piped (`lider/transfer.ts`). */
+export function sshRemoteCommand(sshTarget: string): (command: string) => ChildProcess {
+  return (command) => spawn('ssh', [...SSH_OPTIONS, '-T', '--', sshTarget, command], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
 }
 
 export function buildEndScript(sid: string): string {
@@ -356,6 +384,8 @@ export function pickRemotePort(random: () => number = Math.random): number {
 
 interface LiveRemote {
   readonly sshTarget: string;
+  /** `~/.donel/s/<folder>`: the id the session was prepared with (it never follows `/clear`). */
+  readonly folder: string;
   sid: string;
   readonly remoteDir: string;
   pump: { child: ChildProcess; out: WriteStream } | null;
@@ -383,9 +413,14 @@ export class RemoteSessionRegistry {
 
   /** The tab was spawned: starts mirroring the transcript; returns the local mirror path. */
   attach(ptyId: string, sshTarget: string, sid: string, remoteDir: string): string {
-    const entry: LiveRemote = { sshTarget, sid, remoteDir, pump: null };
+    const entry: LiveRemote = { sshTarget, folder: sid, sid, remoteDir, pump: null };
     this.live.set(ptyId, entry);
     return this.startPump(entry, remoteTranscriptPath(remoteDir, sid), sid);
+  }
+
+  /** Oráculo na VPS (fatia 4): the live remote tabs, by the folder their MCP gate knows them by. */
+  liveSessions(): { readonly ptyId: string; readonly folder: string }[] {
+    return [...this.live].map(([ptyId, entry]) => ({ ptyId, folder: entry.folder }));
   }
 
   /** `/clear`, `/resume` or fork inside the remote session: follow the new transcript. */

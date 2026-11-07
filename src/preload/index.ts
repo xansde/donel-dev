@@ -1,4 +1,5 @@
 import type { LayoutPrefs } from '../shared/layoutPrefs';
+import type { LeaderPrefs } from '../shared/leaderPrefs';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 // G5 (batch N5) — guarda contra segundo assinante silencioso de canal IPC:
 // todo `onX` abaixo passa por aqui em vez de `ipcRenderer.on` direto.
@@ -155,7 +156,7 @@ import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerSnapshot } from '../shared/ledger/channels';
 import type { LedgerProof } from '../shared/ledger/contract';
 import { LEDGER_REMOTE_CHANNELS, type LedgerRemoteResult, type LedgerRemoteState } from '../shared/ledger/remote';
-import { LEDGER_MIRROR_CHANNELS, type LedgerMirrorConfigureResult, type LedgerMirrorState } from '../shared/ledger/mirror';
+import { LEDGER_MIRROR_CHANNELS, type LedgerMirrorConfigureResult, type LedgerMirrorState, type LedgerPlacesSnapshot } from '../shared/ledger/mirror';
 import { HILL_CLIMB_CHANNELS, type HillClimbGestureRequest, type HillClimbGestureResult, type HillClimbSnapshot } from '../shared/hillClimb/channels';
 import { LEARNING_CHANNELS, type RendererGesture } from '../shared/learning/gestures';
 import type {
@@ -180,7 +181,7 @@ import {
 import { ROTINAS_CHANNELS, type ShadowEntry } from '../shared/rotinas/contract';
 import { FAXINEIRO_CHANNELS, type FaxineiroRoundAnswer } from '../shared/faxineiro/ipc';
 import type { FaxineiroLogEntry, SessionView } from '../shared/faxineiro/triggers';
-import { LIDER_CHANNELS, type LiderReport, type LiderSendPayload, type LiderSendResult, type LiderState } from '../shared/lider/ipc';
+import { LIDER_CHANNELS, type LiderCarryPayload, type LiderReport, type LiderSendPayload, type LiderSendResult, type LiderState } from '../shared/lider/ipc';
 import { ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
 import type { ClaudeInventory } from '../shared/role-scope';
 import type { TeamPrefs } from '../shared/teamPrefs';
@@ -442,6 +443,8 @@ const donelApi: DonelApi = {
       ipcRenderer.invoke(CONFIG_CHANNELS.setProjectYolo, projectPath, enabled) as Promise<AppConfigDto>,
     // Oráculo no centro — the new layout switch and the view the center shows.
     setLayoutPrefs: (prefs: Partial<LayoutPrefs>) => ipcRenderer.invoke(CONFIG_CHANNELS.setLayoutPrefs, prefs) as Promise<AppConfigDto>,
+    // Líder único na VPS — onde o Líder roda.
+    setLeaderPrefs: (prefs: Partial<LeaderPrefs>) => ipcRenderer.invoke(CONFIG_CHANNELS.setLeaderPrefs, prefs) as Promise<AppConfigDto>,
     setCollapsedFavorites: (collapsed: string[]) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setCollapsedFavorites, collapsed) as Promise<AppConfigDto>,
   },
@@ -631,6 +634,7 @@ const donelApi: DonelApi = {
     configure: (url: string, key: string, ownerName?: string) => ipcRenderer.invoke(LEDGER_MIRROR_CHANNELS.configure, url, key, ownerName) as Promise<LedgerMirrorConfigureResult>,
     disable: () => ipcRenderer.invoke(LEDGER_MIRROR_CHANNELS.disable) as Promise<LedgerMirrorState>,
     syncNow: () => ipcRenderer.invoke(LEDGER_MIRROR_CHANNELS.syncNow) as Promise<LedgerMirrorState>,
+    places: () => ipcRenderer.invoke(LEDGER_MIRROR_CHANNELS.places) as Promise<LedgerPlacesSnapshot>,
   },
 
   // Oráculo na VPS — where the ledger lives; the move and the way back.
@@ -923,6 +927,7 @@ const donelApi: DonelApi = {
       const handler = (_event: unknown, payload: { readonly tabId: string }): void => listener(payload);
       return subscribeChannel(ipcRenderer, LIDER_CHANNELS.activateTab, handler);
     },
+    carry: (payload: LiderCarryPayload) => ipcRenderer.invoke(LIDER_CHANNELS.carry, payload) as Promise<LiderSendResult>,
     // --- pet window (the bubble of the Líder) ---
     getState: () => ipcRenderer.invoke(LIDER_CHANNELS.getState) as Promise<LiderState>,
     onState: (listener: (state: LiderState) => void) => {
