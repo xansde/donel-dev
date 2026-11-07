@@ -110,7 +110,8 @@ export interface LedgerServiceDeps {
 export interface LedgerService {
   /** Missing file → empty ledger. Throws when the file exists but is unreadable or not a ledger. */
   load(): LedgerSnapshot;
-  apply(actor: LedgerActor, op: LedgerOp): LedgerApplyResult;
+  /** A promise: in remote mode (docs/planos/oraculo-na-vps.md) the write goes to the Oráculo on the VPS. */
+  apply(actor: LedgerActor, op: LedgerOp): Promise<LedgerApplyResult>;
   /**
    * Copies a print/video/prototype into `ledger-provas/` and returns the proof; text and link are only checked. With
    * `remote`, the file is on the calling session's remote place (the VPS) and is read through its ssh.
@@ -133,6 +134,31 @@ const MAX_INLINE_PROOF_BYTES = 5 * 1024 * 1024;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * A proof file named by a session on this computer: absolute, a print/video/prototype, a real file (no link, and the
+ * file it really is has the same kind), within the size. Shared by the local ledger and the remote one (oraculo na VPS).
+ */
+export async function checkLocalProofFile(proofFs: LedgerProofFs, source: string): Promise<{ readonly real: string; readonly ext: string; readonly mediaType: string } | { readonly error: string }> {
+  const ext = extname(source).slice(1).toLowerCase();
+  const mediaType = PROOF_FILE_TYPES[ext];
+  if (!isAbsolute(source)) return { error: `"${source}": use o caminho absoluto do arquivo.` };
+  if (!mediaType) return { error: `"${source}": a prova em arquivo é print, vídeo ou protótipo HTML (${Object.keys(PROOF_FILE_TYPES).join(', ')}). Saída de comando vai como texto.` };
+  try {
+    // A link with a print's name could point at anything (the proofs go to the phone): only a real file,
+    // and the file it really is (a folder junction on the way) has to be a print or video too.
+    if ((await proofFs.lstat(source)).isSymbolicLink()) return { error: `"${source}" é um atalho (link simbólico); mande o arquivo de verdade.` };
+    const real = await proofFs.realpath(source);
+    if (extname(real).slice(1).toLowerCase() !== ext) return { error: `"${source}" leva a "${real}", que não é print, vídeo nem protótipo.` };
+    const info = await proofFs.stat(real);
+    if (!info.isFile()) return { error: `"${source}" não é um arquivo.` };
+    const max = maxProofBytes(mediaType);
+    if (info.size > max) return { error: `"${source}" passa de ${max / 1024 / 1024} MB${mediaType === 'text/html' ? ' (o protótipo é um HTML autocontido de até 2 MB)' : ''}.` };
+    return { real, ext, mediaType };
+  } catch {
+    return { error: `Não consegui copiar "${source}" (o arquivo existe neste computador?). Numa sessão remota, mande a prova como texto ou link.` };
+  }
 }
 
 export function createLedgerService(deps: LedgerServiceDeps): LedgerService {
@@ -179,7 +205,7 @@ export function createLedgerService(deps: LedgerServiceDeps): LedgerService {
 
   return {
     load,
-    apply(actor, op) {
+    async apply(actor, op) {
       let snapshot: LedgerSnapshot;
       try {
         snapshot = load();
@@ -210,21 +236,10 @@ export function createLedgerService(deps: LedgerServiceDeps): LedgerService {
           return { error: `Li "${source}" na VPS, mas não consegui guardar a cópia neste computador.` };
         }
       }
-      const ext = extname(source).slice(1).toLowerCase();
-      const mediaType = PROOF_FILE_TYPES[ext];
-      if (!isAbsolute(source)) return { error: `"${source}": use o caminho absoluto do arquivo.` };
-      if (!mediaType) return { error: `"${source}": a prova em arquivo é print, vídeo ou protótipo HTML (${Object.keys(PROOF_FILE_TYPES).join(', ')}). Saída de comando vai como texto.` };
+      const checked = await checkLocalProofFile(deps.proofFs, source);
+      if ('error' in checked) return checked;
+      const { real, ext, mediaType } = checked;
       try {
-        // A link with a print's name could point at anything (the proofs go to the phone): only a real file,
-        // and the file it really is (a folder junction on the way) has to be a print or video too.
-        if ((await deps.proofFs.lstat(source)).isSymbolicLink()) return { error: `"${source}" é um atalho (link simbólico); mande o arquivo de verdade.` };
-        const real = await deps.proofFs.realpath(source);
-        if (extname(real).slice(1).toLowerCase() !== ext) return { error: `"${source}" leva a "${real}", que não é print, vídeo nem protótipo.` };
-        const info = await deps.proofFs.stat(real);
-        if (!info.isFile()) return { error: `"${source}" não é um arquivo.` };
-        const max = maxProofBytes(mediaType);
-        if (info.size > max)
-          return { error: `"${source}" passa de ${max / 1024 / 1024} MB${mediaType === 'text/html' ? ' (o protótipo é um HTML autocontido de até 2 MB)' : ''}.` };
         await deps.proofFs.mkdir(proofsDir);
         const file = newName(ext);
         await deps.proofFs.copyFile(real, join(proofsDir, file));
@@ -321,7 +336,7 @@ export function passOnReason(placeId: string, gone: LedgerPassOnRequest['gone'])
  * `criada` event the transfer already writes (v4: no new kind, no new field). A delivered task stays: it waits for
  * whoever decides. A never-started place passes only past `NOT_STARTED_GRACE_MS` (`ownerGone`).
  */
-export function passOnTasks(service: LedgerService, requests: readonly LedgerPassOnRequest[]): LedgerPassedOn[] {
+export async function passOnTasks(service: LedgerService, requests: readonly LedgerPassOnRequest[]): Promise<LedgerPassedOn[]> {
   let doc: LedgerDoc;
   try {
     const snapshot = service.load();
@@ -340,7 +355,7 @@ export function passOnTasks(service: LedgerService, requests: readonly LedgerPas
       if (task.projectPath !== request.projectPath || task.ownerPlaceId !== request.placeId || task.slack) continue;
       if (isClosed(task) || (task.state !== 'aberta' && task.state !== 'em-execucao' && task.state !== 'rejeitada')) continue;
       if (!ownerGone(caller, task, now)) continue;
-      const result = service.apply({ kind: 'lugar', placeId: request.placeId }, { op: 'transferir', id: task.id, to: request.to, reason: passOnReason(request.placeId, request.gone) });
+      const result = await service.apply({ kind: 'lugar', placeId: request.placeId }, { op: 'transferir', id: task.id, to: request.to, reason: passOnReason(request.placeId, request.gone) });
       if (result.ok) tasks.push({ id: task.id, ...(task.title ? { title: task.title } : {}) });
     }
     if (tasks.length) passed.push({ projectPath: request.projectPath, placeId: request.placeId, to: request.to, tasks });
@@ -528,7 +543,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       const owner = call.dono === undefined || call.dono === 'seu' ? caller.placeId : call.dono;
       if (!caller.boardPlaceIds.includes(owner)) return { ok: false, text: `"${owner}" não é um lugar deste quadro (veja sessao_listar).` };
       const lowRefused = call.risco === 'baixo' ? lowRiskRefusal(caller, owner) : null;
-      const result = service.apply(actor, {
+      const result = await service.apply(actor, {
         op: 'criar',
         projectPath: caller.projectPath,
         request: call.pedido,
@@ -558,11 +573,11 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       })();
       if (!task) return { ok: false, text: `Não existe tarefa "${call.id}" (veja tarefa_listar).` };
       if (task.projectPath !== caller.projectPath) return { ok: false, text: 'A tarefa é de outro quadro; só se mexe em tarefa do próprio quadro.' };
-      const result = service.apply(actor, { op: 'frente', id: task.id, frente: call.frente, ...(call.quemPediu ? { requestedBy: call.quemPediu } : {}) });
+      const result = await service.apply(actor, { op: 'frente', id: task.id, frente: call.frente, ...(call.quemPediu ? { requestedBy: call.quemPediu } : {}) });
       return result.ok ? { ok: true, text: JSON.stringify({ frente: frenteOf(result.task), id: result.task.id, ...(requestedByOf(result.task) ? { quemPediu: requestedByOf(result.task) } : {}) }) } : { ok: false, text: result.reason };
     }
     case 'tarefa_assumir':
-      return answer(service.apply(actor, { op: 'assumir', id: call.id }), 'assumida');
+      return answer(await service.apply(actor, { op: 'assumir', id: call.id }), 'assumida');
     case 'tarefa_cancelar':
     case 'tarefa_transferir': {
       let doc: LedgerDoc;
@@ -574,12 +589,12 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       const task = doc.tasks[call.id];
       if (!task) return { ok: false, text: `Não existe tarefa "${call.id}" (veja tarefa_listar).` };
       if (task.projectPath !== caller.projectPath) return { ok: false, text: 'A tarefa é de outro quadro; só se mexe em tarefa do próprio quadro.' };
-      if (call.tool === 'tarefa_cancelar') return answer(service.apply(actor, { op: 'cancelar', id: task.id, reason: call.motivo }), 'cancelada');
+      if (call.tool === 'tarefa_cancelar') return answer(await service.apply(actor, { op: 'cancelar', id: task.id, reason: call.motivo }), 'cancelada');
       const to = call.para === 'seu' ? caller.placeId : call.para;
       // The Líder único has no place, but owns tasks too (t-52b31719): "lider" is a destination of every board.
       if (to !== LEADER_OF_ALL && !caller.boardPlaceIds.includes(to)) return { ok: false, text: `"${to}" não é um lugar deste quadro que você alcança (veja sessao_listar), nem "lider" (o Líder único).` };
       const gone = ownerGone(caller, task, service.now());
-      const result = service.apply(actor, { op: 'transferir', id: task.id, to, reason: gone && !call.motivo.includes(gone) ? `${call.motivo} (${gone})` : call.motivo, ...(gone ? { ownerGone: true } : {}) });
+      const result = await service.apply(actor, { op: 'transferir', id: task.id, to, reason: gone && !call.motivo.includes(gone) ? `${call.motivo} (${gone})` : call.motivo, ...(gone ? { ownerGone: true } : {}) });
       if (!result.ok) return { ok: false, text: result.reason };
       return {
         ok: true,
@@ -587,7 +602,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       };
     }
     case 'carta_slack': {
-      const result = service.apply(actor, {
+      const result = await service.apply(actor, {
         op: 'carta-slack',
         projectPath: caller.projectPath,
         slack: {
@@ -624,7 +639,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         }
         proofs.push(proof);
       }
-      const result = service.apply(actor, { op: 'entregar', id: call.id, proofs, ...(call.nota ? { note: call.nota } : {}), ...(call.paraODono ? { forOwner: call.paraODono } : {}), ...(call.feitoPor ? { doneBy: call.feitoPor } : {}) });
+      const result = await service.apply(actor, { op: 'entregar', id: call.id, proofs, ...(call.nota ? { note: call.nota } : {}), ...(call.paraODono ? { forOwner: call.paraODono } : {}), ...(call.feitoPor ? { doneBy: call.feitoPor } : {}) });
       if (!result.ok) await service.discardProofs(proofs);
       return answer(result, 'entregue');
     }
@@ -641,8 +656,8 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       const why = task ? decideRefusal(caller, task, deliveredAt !== undefined && service.proofSeen(caller.placeId, task.id, deliveredAt)) : null;
       if (why) return { ok: false, text: `Não ${call.tool === 'tarefa_aceitar' ? 'aceitei' : 'rejeitei'}: ${why}` };
       return call.tool === 'tarefa_aceitar'
-        ? answer(service.apply(actor, { op: 'aceitar', id: call.id }), 'aceita')
-        : answer(service.apply(actor, { op: 'rejeitar', id: call.id, reason: call.motivo }), 'rejeitada');
+        ? answer(await service.apply(actor, { op: 'aceitar', id: call.id }), 'aceita')
+        : answer(await service.apply(actor, { op: 'rejeitar', id: call.id, reason: call.motivo }), 'rejeitada');
     }
     case 'tarefa_ver': {
       let doc: LedgerDoc;
@@ -742,7 +757,7 @@ export interface SlackLetterGuardOptions {
 
 export interface SlackLetterGuard {
   /** `PreToolUse`: `null` = the call goes on (its letters are now spent); a string = the refusal the session reads. */
-  before(ptyId: string, payload: Record<string, unknown>): string | null;
+  before(ptyId: string, payload: Record<string, unknown>): Promise<string | null>;
   /**
    * `PostToolUse` / `PostToolUseFailure` of the same call: records the answer; only an explicit failure reopens. A
    * bot's post is recorded asynchronously (the promise ends when it is on disk).
@@ -781,7 +796,7 @@ export function createSlackLetterGuard(service: () => LedgerService | null, opti
     if (!ledger) return;
     const link = outcome.kind === 'falhou' ? null : slackMessageLink(payload.tool_response, bot);
     try {
-      ledger.apply(
+      await ledger.apply(
         { kind: 'lugar', placeId: place?.placeId ?? `sessao:${ptyId}` },
         {
           op: 'slack-bot',
@@ -810,7 +825,7 @@ export function createSlackLetterGuard(service: () => LedgerService | null, opti
   }
 
   return {
-    before(ptyId, payload) {
+    async before(ptyId, payload) {
       const toolName = toolNameOf(payload);
       if (detectSlackSend(toolName, payload.tool_input).kind === 'none' && !detectAgentBotSend(toolName, payload.tool_input, botServers())) return null;
       prune();
@@ -833,14 +848,14 @@ export function createSlackLetterGuard(service: () => LedgerService | null, opti
       }
       for (const id of verdict.letterIds) {
         const task = doc!.tasks[id]!;
-        const marked = ledger!.apply({ kind: 'lugar', placeId: task.ownerPlaceId }, { op: 'slack-enviada', id });
+        const marked = await ledger!.apply({ kind: 'lugar', placeId: task.ownerPlaceId }, { op: 'slack-enviada', id });
         if (!marked.ok) return `Envio ao Slack bloqueado pelo Donel Dev: não consegui marcar a carta ${id} como usada (${marked.reason}). Tente de novo.`;
       }
       const toolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : null;
       inFlight.push({ ptyId, toolUseId, callKey: callKeyOf(payload), letterIds: verdict.letterIds, at: now() });
       return null;
     },
-    after(ptyId, event, payload) {
+    async after(ptyId, event, payload) {
       if (event !== 'PostToolUse' && event !== 'PostToolUseFailure') return;
       prune(); // an answer after the deadline finds nothing: the letter stays spent
       const toolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : null;
@@ -864,7 +879,7 @@ export function createSlackLetterGuard(service: () => LedgerService | null, opti
       for (const id of entry!.letterIds) {
         const task = doc.tasks[id];
         if (!task) continue;
-        ledger.apply(
+        await ledger.apply(
           { kind: 'lugar', placeId: task.ownerPlaceId },
           outcome.kind === 'confirmado' ? { op: 'slack-resultado', id, outcome: 'confirmado' } : { op: 'slack-resultado', id, outcome: 'falhou', why: outcome.why },
         );

@@ -36,15 +36,15 @@ const guardOf = (ledger: ReturnType<typeof createLedgerService>) => {
   return guards.get(ledger)!;
 };
 let nextUse = 0;
-function attempt(ledger: ReturnType<typeof createLedgerService>, tool: string, input: unknown): { refusal: string | null; answer(event: string, response?: unknown): void } {
+async function attempt(ledger: ReturnType<typeof createLedgerService>, tool: string, input: unknown): Promise<{ refusal: string | null; answer(event: string, response?: unknown): Promise<void> | void }> {
   const payload = { tool_name: tool, tool_input: input, tool_use_id: `toolu_${++nextUse}` };
-  const refusal = guardOf(ledger).before('pty-1', payload);
+  const refusal = await guardOf(ledger).before('pty-1', payload);
   return { refusal, answer: (event, response) => guardOf(ledger).after('pty-1', event, { ...payload, tool_response: response }) };
 }
 const SENT = [{ type: 'text', text: JSON.stringify({ ok: true, channel: 'C0123ABC', ts: '1730900000.123456' }) }];
-function guardSlackSend(ledger: ReturnType<typeof createLedgerService>, tool: string, input: unknown): string | null {
-  const call = attempt(ledger, tool, input);
-  if (call.refusal === null) call.answer('PostToolUse', SENT);
+async function guardSlackSend(ledger: ReturnType<typeof createLedgerService>, tool: string, input: unknown): Promise<string | null> {
+  const call = await attempt(ledger, tool, input);
+  if (call.refusal === null) await call.answer('PostToolUse', SENT);
   return call.refusal;
 }
 
@@ -55,8 +55,8 @@ async function letter(ledger: ReturnType<typeof createLedgerService>, decide: 'a
   const created = await runLedgerTool(ledger, dev, call('carta_slack', { destino: 'C0123ABC', destinoNome: '#produto', thread: '1730.42', texto: text, motivo: 'avisar o time do deploy' }));
   expect(created.ok).toBe(true);
   const id = (JSON.parse(created.text) as { id: string }).id;
-  if (decide === 'aceitar') expect(ledger.apply({ kind: 'dono' }, { op: 'aceitar', id }).ok).toBe(true);
-  if (decide === 'rejeitar') expect(ledger.apply({ kind: 'dono' }, { op: 'rejeitar', id, reason: 'tira o travessão' }).ok).toBe(true);
+  if (decide === 'aceitar') expect((await ledger.apply({ kind: 'dono' }, { op: 'aceitar', id })).ok).toBe(true);
+  if (decide === 'rejeitar') expect((await ledger.apply({ kind: 'dono' }, { op: 'rejeitar', id, reason: 'tira o travessão' })).ok).toBe(true);
   return id;
 }
 
@@ -71,17 +71,17 @@ describe('Slack só com carta', () => {
   it('refuses every way of posting without a letter, and teaches the session to write one', async () => {
     const ledger = service();
     for (const [tool, input] of [slackMcp(TEXT), composio(TEXT), curl(TEXT), script(TEXT), ['mcp__composio__SLACK_SEND_MESSAGE', { channel: 'C0123ABC', text: TEXT }] as const]) {
-      const refusal = guardSlackSend(ledger, tool, input);
+      const refusal = await guardSlackSend(ledger, tool, input);
       expect(refusal, tool).toMatch(/carta_slack/);
     }
     // A letter still waiting for the owner, or rejected, frees nothing.
     await letter(ledger, null);
     await letter(ledger, 'rejeitar');
-    expect(guardSlackSend(ledger, ...slackMcp(TEXT))).toMatch(/bloqueado/);
+    expect(await guardSlackSend(ledger, ...slackMcp(TEXT))).toMatch(/bloqueado/);
     // Reading Slack, a draft, or any other tool is not a post.
-    expect(guardSlackSend(ledger, 'mcp__claude_ai_Slack__slack_read_channel', { channel_id: 'C0123ABC' })).toBeNull();
-    expect(guardSlackSend(ledger, 'mcp__claude_ai_Slack__slack_send_message_draft', { channel_id: 'C0123ABC', message: 'x' })).toBeNull();
-    expect(guardSlackSend(ledger, 'Bash', { command: 'git status' })).toBeNull();
+    expect(await guardSlackSend(ledger, 'mcp__claude_ai_Slack__slack_read_channel', { channel_id: 'C0123ABC' })).toBeNull();
+    expect(await guardSlackSend(ledger, 'mcp__claude_ai_Slack__slack_send_message_draft', { channel_id: 'C0123ABC', message: 'x' })).toBeNull();
+    expect(await guardSlackSend(ledger, 'Bash', { command: 'git status' })).toBeNull();
   });
 
   it('an accepted letter frees exactly one structured send of the same text to the same destination and thread', async () => {
@@ -90,21 +90,21 @@ describe('Slack só com carta', () => {
       const ledger = service();
       if (send === composio) {
         const created = await runLedgerTool(ledger, dev, call('carta_slack', { destino: '#produto', thread: '1730.42', texto: TEXT, motivo: 'avisar' }));
-        ledger.apply({ kind: 'dono' }, { op: 'aceitar', id: (JSON.parse(created.text) as { id: string }).id });
+        await ledger.apply({ kind: 'dono' }, { op: 'aceitar', id: (JSON.parse(created.text) as { id: string }).id });
       } else await letter(ledger, 'aceitar');
-      expect(guardSlackSend(ledger, ...send(`${TEXT} `)), 'different text').toMatch(/bloqueado/);
-      expect(guardSlackSend(ledger, ...send(TEXT)), 'same text').toBeNull();
-      expect(guardSlackSend(ledger, ...send(TEXT)), 'second send').toMatch(/bloqueado/);
+      expect(await guardSlackSend(ledger, ...send(`${TEXT} `)), 'different text').toMatch(/bloqueado/);
+      expect(await guardSlackSend(ledger, ...send(TEXT)), 'same text').toBeNull();
+      expect(await guardSlackSend(ledger, ...send(TEXT)), 'second send').toMatch(/bloqueado/);
       const seen = await runLedgerTool(ledger, dev, call('tarefa_listar', { situacao: 'todas' }));
       expect(seen.text).toContain('"enviada": true');
     }
     const ledger = service();
     await letter(ledger, 'aceitar');
-    expect(guardSlackSend(ledger, ...slackMcp(TEXT, 'C9999')), 'other channel').toMatch(/bloqueado/);
+    expect(await guardSlackSend(ledger, ...slackMcp(TEXT, 'C9999')), 'other channel').toMatch(/bloqueado/);
     // The terminal never approves a post, even with the accepted text in it: it cannot be read field by field.
-    expect(guardSlackSend(ledger, ...curl(TEXT))).toMatch(/terminal/);
-    expect(guardSlackSend(ledger, ...script(TEXT))).toMatch(/canal-produto/);
-    expect(guardSlackSend(ledger, ...slackMcp(TEXT)), 'the letter is still unused').toBeNull();
+    expect(await guardSlackSend(ledger, ...curl(TEXT))).toMatch(/terminal/);
+    expect(await guardSlackSend(ledger, ...script(TEXT))).toMatch(/canal-produto/);
+    expect(await guardSlackSend(ledger, ...slackMcp(TEXT)), 'the letter is still unused').toBeNull();
   });
 
   // t-8119864a: the MCP answered "fetch failed" and the letter was spent. Only an EXPLICIT failure gives it back,
@@ -114,35 +114,35 @@ describe('Slack só com carta', () => {
 
   it('t-8119864a: an explicit failure frees one resend; the third send is refused', async () => {
     for (const failure of [
-      (send: ReturnType<typeof attempt>) => send.answer('PostToolUse', [{ type: 'text', text: 'Error: fetch failed' }]),
-      (send: ReturnType<typeof attempt>) => send.answer('PostToolUseFailure'),
-      (send: ReturnType<typeof attempt>) => send.answer('PostToolUse', { isError: true, content: [{ type: 'text', text: 'connect ECONNREFUSED 127.0.0.1:443' }] }),
-      (send: ReturnType<typeof attempt>) => send.answer('PostToolUse', { ok: false, error: 'channel_not_found' }),
-      (send: ReturnType<typeof attempt>) => send.answer('PostToolUse', { successful: false, error: 'Slack API error' }),
+      async (send: Awaited<ReturnType<typeof attempt>>) => await send.answer('PostToolUse', [{ type: 'text', text: 'Error: fetch failed' }]),
+      async (send: Awaited<ReturnType<typeof attempt>>) => await send.answer('PostToolUseFailure'),
+      async (send: Awaited<ReturnType<typeof attempt>>) => await send.answer('PostToolUse', { isError: true, content: [{ type: 'text', text: 'connect ECONNREFUSED 127.0.0.1:443' }] }),
+      async (send: Awaited<ReturnType<typeof attempt>>) => await send.answer('PostToolUse', { ok: false, error: 'channel_not_found' }),
+      async (send: Awaited<ReturnType<typeof attempt>>) => await send.answer('PostToolUse', { successful: false, error: 'Slack API error' }),
     ]) {
       const ledger = service();
       const id = await letter(ledger, 'aceitar');
-      const first = attempt(ledger, ...slackMcp(TEXT));
+      const first = await attempt(ledger, ...slackMcp(TEXT));
       expect(first.refusal).toBeNull();
-      expect(attempt(ledger, ...slackMcp(TEXT)).refusal, 'a second send while the first is in flight').toMatch(/bloqueado/);
-      failure(first);
+      expect((await attempt(ledger, ...slackMcp(TEXT))).refusal, 'a second send while the first is in flight').toMatch(/bloqueado/);
+      await failure(first);
       expect(await view(ledger, id)).toMatchObject({ enviada: false, envio: expect.stringMatching(/falhou/) });
 
-      const resend = attempt(ledger, ...slackMcp(TEXT));
+      const resend = await attempt(ledger, ...slackMcp(TEXT));
       expect(resend.refusal, 'the one resend').toBeNull();
-      resend.answer('PostToolUse', SENT);
+      await resend.answer('PostToolUse', SENT);
       expect(await view(ledger, id)).toMatchObject({ enviada: true, envio: expect.stringMatching(/confirmado/) });
-      expect(attempt(ledger, ...slackMcp(TEXT)).refusal, 'third send').toMatch(/bloqueado/);
+      expect((await attempt(ledger, ...slackMcp(TEXT))).refusal, 'third send').toMatch(/bloqueado/);
     }
     // Two explicit failures in a row: the letter is used up, never a third try.
     const ledger = service();
     const id = await letter(ledger, 'aceitar');
     for (let i = 0; i < 2; i++) {
-      const send = attempt(ledger, ...slackMcp(TEXT));
+      const send = await attempt(ledger, ...slackMcp(TEXT));
       expect(send.refusal).toBeNull();
-      send.answer('PostToolUseFailure');
+      await send.answer('PostToolUseFailure');
     }
-    expect(attempt(ledger, ...slackMcp(TEXT)).refusal).toMatch(/bloqueado/);
+    expect((await attempt(ledger, ...slackMcp(TEXT))).refusal).toMatch(/bloqueado/);
     expect((await view(ledger, id)).envio).toMatch(/esgotou/);
   });
 
@@ -157,11 +157,11 @@ describe('Slack só com carta', () => {
     for (const [response, label] of answers) {
       const ledger = service();
       const id = await letter(ledger, 'aceitar');
-      const send = attempt(ledger, ...slackMcp(TEXT));
+      const send = await attempt(ledger, ...slackMcp(TEXT));
       expect(send.refusal).toBeNull();
-      send.answer('PostToolUse', response);
+      await send.answer('PostToolUse', response);
       expect(await view(ledger, id)).toMatchObject({ enviada: true, envio: expect.stringMatching(label) });
-      expect(attempt(ledger, ...slackMcp(TEXT)).refusal, `second send after ${JSON.stringify(response)}`).toMatch(/bloqueado/);
+      expect((await attempt(ledger, ...slackMcp(TEXT))).refusal, `second send after ${JSON.stringify(response)}`).toMatch(/bloqueado/);
     }
   });
 
@@ -171,14 +171,14 @@ describe('Slack só com carta', () => {
     let clock = 0;
     const guard = createSlackLetterGuard(() => ledger, () => clock);
     const payload = { tool_name: slackMcp(TEXT)[0], tool_input: slackMcp(TEXT)[1], tool_use_id: 'toolu_lost' };
-    expect(guard.before('pty-1', payload)).toBeNull();
+    expect(await guard.before('pty-1', payload)).toBeNull();
     clock += LETTER_IN_FLIGHT_MS + 1;
-    expect(guard.before('pty-1', { ...payload, tool_use_id: 'toolu_late' }), 'past the deadline').toMatch(/bloqueado/);
+    expect(await guard.before('pty-1', { ...payload, tool_use_id: 'toolu_late' }), 'past the deadline').toMatch(/bloqueado/);
     // The failure that arrives too late, or reaches an app that restarted, reopens nothing.
     guard.after('pty-1', 'PostToolUseFailure', payload);
     const restarted = createSlackLetterGuard(() => ledger, () => clock);
     restarted.after('pty-1', 'PostToolUseFailure', payload);
-    for (let i = 0; i < 4; i++) expect(restarted.before('pty-1', { ...payload, tool_use_id: `toolu_again_${i}` })).toMatch(/bloqueado/);
+    for (let i = 0; i < 4; i++) expect(await restarted.before('pty-1', { ...payload, tool_use_id: `toolu_again_${i}` })).toMatch(/bloqueado/);
     expect(await view(ledger, id)).toMatchObject({ enviada: true, envio: expect.stringMatching(/sem confirmação/) });
   });
 
@@ -192,11 +192,11 @@ describe('Slack só com carta', () => {
     const confirmed = await letter(ledger, 'aceitar'); // failed, resent, confirmed
     const failed = await letter(ledger, 'aceitar', `${TEXT}!`); // failed once: frees the resend here
     const unconfirmed = await letter(ledger, 'aceitar', `${TEXT}?`); // a doubt
-    const first = attempt(ledger, ...slackMcp(TEXT));
-    first.answer('PostToolUse', [{ type: 'text', text: 'Error: fetch failed' }]);
-    attempt(ledger, ...slackMcp(TEXT)).answer('PostToolUse', SENT);
-    attempt(ledger, ...slackMcp(`${TEXT}!`)).answer('PostToolUseFailure');
-    attempt(ledger, ...slackMcp(`${TEXT}?`)).answer('PostToolUse', [{ type: 'text', text: 'Message sent.' }]);
+    const first = await attempt(ledger, ...slackMcp(TEXT));
+    await first.answer('PostToolUse', [{ type: 'text', text: 'Error: fetch failed' }]);
+    await (await attempt(ledger, ...slackMcp(TEXT))).answer('PostToolUse', SENT);
+    await (await attempt(ledger, ...slackMcp(`${TEXT}!`))).answer('PostToolUseFailure');
+    await (await attempt(ledger, ...slackMcp(`${TEXT}?`))).answer('PostToolUse', [{ type: 'text', text: 'Message sent.' }]);
 
     // What v4 knows (staging before this PR, Alfa 0.4.0): the version, the event kinds, the event fields.
     const V4_KINDS = ['criada', 'assumida', 'entregue', 'aceita', 'rejeitada', 'conferida', 'comentada', 'enviada'];
@@ -230,8 +230,8 @@ describe('Slack só com carta', () => {
       ['Enviar', 'aceita'],
       ['Não enviar', 'rejeitada'],
     ]);
-    expect(ledger.apply({ kind: 'dono' }, { op: 'rejeitar', id, reason: '', option: 'Não enviar' }).ok).toBe(true);
-    expect(guardSlackSend(ledger, ...slackMcp(TEXT))).toMatch(/bloqueado/);
+    expect((await ledger.apply({ kind: 'dono' }, { op: 'rejeitar', id, reason: '', option: 'Não enviar' })).ok).toBe(true);
+    expect(await guardSlackSend(ledger, ...slackMcp(TEXT))).toMatch(/bloqueado/);
   });
 
   it('the hook bridge answers deny to a refused PreToolUse and never dispatches it', async () => {
