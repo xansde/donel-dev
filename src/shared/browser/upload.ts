@@ -15,15 +15,46 @@
 
 export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
 
-/** Key folders of the home: every file in them is a key or the config of one. */
-export const KEY_HOME_DIRS = ['.ssh', '.gnupg', '.aws', '.azure', '.kube'] as const;
+/**
+ * Key folders of the home: every file in them is a key, a token or the config of one (cloud CLIs, the system's
+ * keychains and credential stores, `pass`).
+ */
+export const KEY_HOME_DIRS = [
+  '.ssh',
+  '.gnupg',
+  '.aws',
+  '.azure',
+  '.kube',
+  '.config/gcloud',
+  'AppData/Roaming/gcloud',
+  '.password-store',
+  '.local/share/keyrings',
+  '.local/share/kwalletd',
+  'Library/Keychains',
+  'AppData/Roaming/Microsoft/Credentials',
+  'AppData/Local/Microsoft/Credentials',
+  'AppData/Roaming/Microsoft/Protect',
+  'AppData/Local/Microsoft/Vault',
+] as const;
 
 /** The owner's own content inside the app's folder; everything else there is the app's (config, vault, tokens, cookies). */
 export const USER_DATA_CONTENT_DIRS = ['chat-attachments', 'browser-downloads', 'pedidos-audio'] as const;
 
-const SECRET_FILE = /^(\.credentials\.json|credentials(\.json)?|\.env(\..*)?|\.netrc|\.npmrc|\.pypirc|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|.*\.(pem|key|p12|pfx|kdbx|keystore|jks|ppk))$/i;
-/** A browser profile's stores (Chromium, Edge, Chrome, the app's own partition): cookies, saved logins, the key that opens them. */
-const BROWSER_SECRET_FILE = /^(cookies|cookies-journal|login data|login data-journal|login data for account|web data|web data-journal|local state)$/i;
+/**
+ * Credential and key files by name: the agent's and the clouds' (gcloud, Terraform, Vault, s3cmd, boto, kubeconfig),
+ * git, npm/yarn/pip/PyPI, databases (`.pgpass`, `.my.cnf`), `.netrc`, rclone, Docker, `.htpasswd`, keys and keychains.
+ */
+const SECRET_FILE =
+  /^(\.credentials\.json|credentials(\.json|\.db|\.tfrc\.json)?|application_default_credentials\.json|access_tokens\.db|\.env(\..*)?|[._]netrc|\.npmrc|\.yarnrc\.yml|\.pypirc|pip\.(conf|ini)|\.?git-credentials|\.pgpass|pgpass\.conf|\.my\.cnf|rclone\.conf|\.boto|\.s3cfg|\.vault-token|\.terraformrc|kubeconfig|\.htpasswd|\.dockercfg|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?|.*\.(pem|key|p12|pfx|kdbx|keystore|jks|ppk|keychain|keychain-db|keyring|kwl))$/i;
+/**
+ * A browser profile's stores: cookies, saved logins and the key that opens them. Chromium, Chrome, Edge and the app's
+ * own partition (`Cookies`, `Login Data`, `Local State`…); Firefox (`cookies.sqlite`, `logins.json`, `key4.db`, and
+ * the open session, which carries session cookies).
+ */
+const BROWSER_SECRET_FILE =
+  /^(cookies|cookies-journal|extension cookies|safe browsing cookies|login data|login data-journal|login data for account|web data|web data-journal|account web data|local state|cookies\.sqlite(-wal|-shm)?|logins\.json|logins-backup\.json|key[34]\.db|signons\.sqlite|sessionstore\.jsonlz4|recovery\.(jsonlz4|baklz4)|previous\.jsonlz4)$/i;
+/** Folders of a browser profile where sites keep their login tokens (Slack, Google…): every file in them. */
+const BROWSER_STORAGE_DIRS = ['local storage', 'session storage', 'indexeddb'];
 /** A text-like file whose name says secret, token or password (`api-token.txt`, `client_secret.json`); an image named "token" is not. */
 const NAMED_SECRET_FILE = /^(.*[-_. ])?(token|tokens|secret|secrets|password|passwords|senha|senhas|apikey|api-key|api_key)([-_. ].*)?\.(json|ya?ml|toml|ini|txt|cfg|conf|env|xml)$|^(token|secret|password|senha|apikey)s?$/i;
 
@@ -71,9 +102,10 @@ export function refusedUploadFolder(folder: string, context: UploadFolderContext
 /**
  * Why the file at `realPath` (absolute, after `realpath`) holds a secret and is never sent, whatever folder was
  * authorized; `null` when it may go. The list (owner, 07/11: "só os arquivos de segredo, não a pasta inteira"):
- * - key and credential names anywhere (`.credentials.json`, `.env*`, `id_rsa`, `*.pem`/`.key`/`.pfx`/`.kdbx`…),
- *   a browser profile's cookies, saved logins and `Local State`, and a text file named token/secret/senha;
- * - every file of `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.azure`, `~/.kube`;
+ * - key and credential names anywhere (`SECRET_FILE`: `.credentials.json`, `.env*`, `id_rsa`, `*.pem`/`.pfx`/`.kdbx`,
+ *   `.netrc`, `.pgpass`, `git-credentials`, `rclone.conf`, gcloud's, npm/pip's, keychains…), a browser profile's
+ *   cookies, saved logins and keys (Chromium and Firefox) and its site storage, and a text file named token/secret/senha;
+ * - every file of the key folders (`KEY_HOME_DIRS`: `~/.ssh`, `~/.aws`, gcloud, keyrings, the Windows credential stores…);
  * - `~/.claude.json` and the `settings*.json` of `~/.claude*` (they carry env tokens), `~/.docker/config.json`,
  *   `~/.config/gh/hosts.yml`;
  * - inside the app's folder (`userData`), everything but the owner's content (`USER_DATA_CONTENT_DIRS`): there live
@@ -84,8 +116,9 @@ export function secretUploadFile(realPath: string, context: UploadFolderContext)
   const name = target.slice(target.lastIndexOf('/') + 1);
   const said = 'Esse arquivo guarda uma credencial ou chave e não é enviado.';
   if (SECRET_FILE.test(name) || BROWSER_SECRET_FILE.test(name) || NAMED_SECRET_FILE.test(name)) return said;
+  if (target.split('/').slice(0, -1).some((part) => BROWSER_STORAGE_DIRS.includes(part))) return said;
   const home = normalize(context.home);
-  if (KEY_HOME_DIRS.some((dir) => isInsideOrEqual(target, `${home}/${dir}`))) return said;
+  if (KEY_HOME_DIRS.some((dir) => isInsideOrEqual(target, `${home}/${dir.toLowerCase()}`))) return said;
   if (target === `${home}/.claude.json` || target === `${home}/.docker/config.json` || target === `${home}/.config/gh/hosts.yml`) return said;
   const first = target.startsWith(`${home}/`) ? target.slice(home.length + 1).split('/')[0]! : '';
   if (first.startsWith('.claude') && /^settings.*\.json$/.test(name)) return said;
@@ -140,6 +173,8 @@ export function uploadFoldersFor(input: {
 /** What `sessao_quem_sou` says of the caller (the fields this rule reads). */
 export interface UploadCaller {
   readonly liderUnico?: boolean;
+  /** The Líder the owner put on the board (`isBoardOrchestrator`): the board says it, never the role alone. */
+  readonly orquestrador?: boolean;
   readonly lugar?: string | null;
   readonly papel?: string;
   readonly papelNome?: string;
@@ -152,24 +187,23 @@ export type UploadGrantAuthority =
   | { readonly ok: true; readonly board: string; readonly by: string }
   | { readonly ok: false; readonly reason: string };
 
-/** The role id of the Líder (shared/roles.ts `LEADER_ROLE_ID`; repeated here to keep this module free of imports). */
-const LEADER_ROLE = 'lider';
-
 /**
  * May the caller liberate a folder (`navegador_liberar_pasta`): the Líder único on the board it names in `quadro`, the
- * Líder of a board on its own board. Nobody else: the agent that wants a folder asks the orchestrator of its board.
+ * orchestrator of a board (the Líder the owner put there) on its own board. Nobody else, whatever role a session got:
+ * the agent that wants a folder asks the orchestrator of its board.
  */
 export function uploadGrantAuthority(caller: UploadCaller, quadro: string | undefined): UploadGrantAuthority {
   if (caller.liderUnico === true) {
     return quadro ? { ok: true, leaderOfAll: true } : { ok: false, reason: 'Você é o Líder único e não tem quadro: diga em "quadro" para qual quadro a pasta fica liberada.' };
   }
-  if (caller.papel !== LEADER_ROLE) {
-    return { ok: false, reason: 'Só o orquestrador do quadro (o Líder dele) ou o Líder único libera pasta. Peça a ele, com o caminho da pasta, por sessao_enviar.' };
+  if (caller.orquestrador !== true) {
+    return { ok: false, reason: 'Só o orquestrador do quadro (o Líder que o dono pôs nele) ou o Líder único libera pasta. Peça a ele, com o caminho da pasta, por sessao_enviar.' };
   }
   if (typeof caller.lugar !== 'string' || typeof caller.pasta !== 'string') return { ok: false, reason: 'Seu lugar ainda não está no quadro; espere o primeiro turno terminar.' };
-  if (quadro) return { ok: false, reason: 'O Líder de um quadro libera só no próprio quadro (chame sem "quadro"). Para outro quadro, peça ao Líder único.' };
-  const name = caller.nome ? ` ${caller.nome}` : '';
-  return { ok: true, board: caller.pasta, by: `${caller.papelNome ?? 'Líder'}${name} (${caller.lugar})` };
+  if (quadro) return { ok: false, reason: 'O orquestrador de um quadro libera só no próprio quadro (chame sem "quadro"). Para outro quadro, peça ao Líder único.' };
+  const role = caller.papelNome ?? 'Líder';
+  const name = caller.nome && caller.nome.trim().toLowerCase() !== role.toLowerCase() ? ` ${caller.nome}` : '';
+  return { ok: true, board: caller.pasta, by: `${role}${name} (${caller.lugar})` };
 }
 
 /** The usual wide folders of a user, by name: under the home and under a OneDrive folder of the home. */

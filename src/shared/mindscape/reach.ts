@@ -74,6 +74,16 @@ export function isTop(board: MindscapeBoard | undefined, placeId: string): boole
   return !board.links.some((link) => link.to === placeId && isHierarchyArrow(link) && board.cards[link.from]?.kind === 'session');
 }
 
+/**
+ * The orchestrator of a board: a place with the Líder role that the OWNER put there. Never one a session opened or drew
+ * (`by: 'session'`): a role given by a session would let any Dev make itself a Líder (PR #305). What a session cannot
+ * forge is who made the place, so that is the line, here and in `canReach` across boards.
+ */
+export function isBoardOrchestrator(board: MindscapeBoard | undefined, placeId: string): boolean {
+  const card = board?.cards[placeId];
+  return card?.kind === 'session' && card.roleId === LEADER_ROLE_ID && card.by !== 'session';
+}
+
 /** The Líder único reaches `placeId`: a top place, or one below a top place by hierarchy arrows. */
 function leaderOfAllReaches(board: MindscapeBoard | undefined, placeId: string): boolean {
   if (!board || board.cards[placeId]?.kind !== 'session') return false;
@@ -99,7 +109,7 @@ export function canReach(doc: MindscapeDoc, from: ReachFrom, to: ReachEnd): Reac
   }
   const self = fromBoard?.cards[from.placeId];
   if (self?.kind !== 'session' || self.roleId !== LEADER_ROLE_ID) return { ok: false, reason: 'ela está em outro quadro, e só o Líder alcança outros quadros.' };
-  if (self.by === 'session') return { ok: false, reason: 'ela está em outro quadro, e só o Líder que o dono pôs no quadro alcança outros quadros (você foi aberta por uma sessão).' };
+  if (!isBoardOrchestrator(fromBoard, from.placeId)) return { ok: false, reason: 'ela está em outro quadro, e só o Líder que o dono pôs no quadro alcança outros quadros (você foi aberta por uma sessão).' };
   if (boardReach(fromBoard) !== 'all') return { ok: false, reason: 'ela está em outro quadro, e o alcance do seu quadro é só ele mesmo (o dono muda em "Alcance", no quadro).' };
   return { ok: true };
 }

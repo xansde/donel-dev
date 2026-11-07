@@ -177,7 +177,7 @@ export const BROWSER_TOOLS: readonly ToolDefinition[] = [
     name: 'navegador_liberar_pasta',
     title: 'Liberar uma pasta de envio',
     description:
-      'Só o orquestrador: o Líder de um quadro libera, para as sessões do próprio quadro, uma pasta de onde navegador_enviar_arquivo pode enviar; o Líder único libera em qualquer quadro, dizendo qual em "quadro". Fica registrado quem liberou e quando, e o dono vê e remove em Regras. A raiz do disco e a pasta de usuário inteira não são liberadas, e arquivo de segredo dentro da pasta continua recusado.',
+      'Só o orquestrador: o Líder que o dono pôs num quadro libera, para as sessões do próprio quadro, uma pasta de onde navegador_enviar_arquivo pode enviar; o Líder único libera em qualquer quadro, dizendo qual em "quadro". Fica registrado quem liberou e quando, e o dono vê e remove em Regras. A raiz do disco e a pasta de usuário inteira não são liberadas, e arquivo de segredo dentro da pasta continua recusado.',
     inputSchema: {
       type: 'object',
       properties: {
