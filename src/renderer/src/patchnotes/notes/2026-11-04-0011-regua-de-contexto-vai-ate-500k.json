@@ -1,0 +1,4 @@
+{
+  "title": "Régua de contexto vai até 500k",
+  "text": "A barra de contexto da sessão agora mede até 500k (antes 300k): 250k usados aparecem como 50%. No Haiku a régua continua sendo a janela dele, 200k."
+}

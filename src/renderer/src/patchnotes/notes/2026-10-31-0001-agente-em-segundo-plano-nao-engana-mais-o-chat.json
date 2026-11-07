@@ -1,0 +1,4 @@
+{
+  "title": "Agente em segundo plano não engana mais o chat",
+  "text": "Quando o Claude deixava um agente trabalhando em segundo plano e terminava a resposta, o chat continuava em \"Trabalhando\" e mostrava o aviso amarelo \"Não estou recebendo a conversa\", sem nada errado. Agora o chat fica livre e o agente aparece só no cartão dele."
+}

@@ -50,9 +50,19 @@ via `CLAUDE_CONFIG_DIR`.
 
 - O dono quer um instalador novo do alfa pronto quando pedir e uma janela "O que
   mudou" na primeira abertura de cada versão.
-- **Todo PR mergeado em `staging` que muda algo visível acrescenta um item em
-  `src/renderer/src/patchnotes/notes.ts`**, no dia do merge (cria o dia se não
-  existir). Texto de usuário: o que muda para ele, sem arquivo, PR ou jargão.
+- **Todo PR que muda algo visível acrescenta uma novidade**, e cada novidade é
+  um **arquivo novo** (desde 07/11; antes era um item no `notes.ts`, e cada
+  merge dava conflito no PR seguinte):
+  - Crie `src/renderer/src/patchnotes/notes/AAAA-MM-DD-HHMM-slug.json` com
+    `{ "title": "...", "text": "..." }`. Data e hora são as de quando você
+    escreve (hora local, 24h); o slug é o título em minúsculas, sem acento,
+    com hífens.
+  - A janela agrupa por data, o dia mais novo primeiro e, no dia, o `HHMM`
+    maior primeiro. Nunca edite o `notes.ts` nem o arquivo de outro PR para
+    acrescentar a sua; corrigir o texto de uma novidade é editar o arquivo dela.
+  - Nome fora do padrão ou arquivo sem `title`/`text` quebra o `npm test` e o
+    build com o nome do arquivo.
+  - Texto de usuário: o que muda para ele, sem arquivo, PR ou jargão.
 - Build **sob demanda** (dono, 03/11: "Desliga essa automação. Eu vou falar quando eu
   quiser"; antes houve 06:30 diário e, por uma hora, a cada 10 min — os dois
   derrubados). A tarefa agendada "Donel Dev Alfa diario" fica **desativada**. O
