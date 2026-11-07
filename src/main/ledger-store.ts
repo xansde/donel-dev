@@ -51,6 +51,7 @@ import {
 } from '../shared/ledger/contract';
 import type { LedgerApplyResult, LedgerPassedOn, LedgerPassOnRequest, LedgerSnapshot } from '../shared/ledger/channels';
 import type { LedgerToolCall, ProofInput } from '../shared/ledger/tools';
+import { NOT_STARTED_GRACE_MS, orphanReasonIn, ownerGoneIn } from '../shared/ledger/inbox';
 import { AGENT_BOT_SERVERS, detectAgentBotSend, detectSlackSend, fileNameOf, slackGuard, slackMessageLink, slackSendOutcome, type AgentBotSend } from '../shared/ledger/slack-guard';
 
 /** Smoke/test override: isolates the ledger from the real one. */
@@ -276,12 +277,9 @@ export interface LedgerCaller {
   readonly placeStates?: ReadonlyMap<string, ReadonlyMap<string, string>>;
 }
 
-/**
- * Why a task is orphan (not closed, its owner place gone); `null` = alive, closed or unknown. A delivered task waits
- * for whoever decides, and an accepted letter never sent waits for its send: neither waits for its owner place.
- */
+/** Why a task is orphan (not closed, its owner place gone); `null` = alive, closed or unknown. The rule is shared with the box. */
 export function orphanReason(caller: LedgerCaller, task: LedgerTask, now: number): string | null {
-  return isClosed(task) || task.state === 'entregue' || awaitsSend(task) ? null : ownerGone(caller, task, now);
+  return orphanReasonIn(caller.placeStates, task, now);
 }
 
 /** The owner place of `task` could not be checked: its board did not answer. Closed and delivered tasks do not depend on it. */
@@ -291,21 +289,11 @@ export function ownerUnknown(caller: LedgerCaller, task: LedgerTask): boolean {
   return !isClosed(task) && task.state !== 'entregue' && !awaitsSend(task) && !caller.placeStates?.has(task.projectPath);
 }
 
-/** A place that has not started is gone only after this long (a place made a moment ago is still opening). */
-export const NOT_STARTED_GRACE_MS = 30 * 60 * 1000;
+export { NOT_STARTED_GRACE_MS };
 
 /** Why the owner place of `task` can no longer do the work (closed, out of the board, never started); `null` = alive or unknown. */
 export function ownerGone(caller: LedgerCaller, task: LedgerTask, now: number): string | null {
-  // The Líder único has no place on any board (t-52b31719): a task it owns is alive, never orphan.
-  if (task.ownerPlaceId === LEADER_OF_ALL) return null;
-  const states = caller.placeStates?.get(task.projectPath);
-  if (!states) return null;
-  const state = states.get(task.ownerPlaceId);
-  if (state === undefined) return 'o lugar dono saiu do quadro';
-  if (state === 'fechada') return 'o lugar dono está fechado';
-  const since = task.events.at(-1)?.at ?? task.createdAt;
-  if (state === 'nao-comecou' && now - since >= NOT_STARTED_GRACE_MS) return 'o lugar dono não começou';
-  return null;
+  return ownerGoneIn(caller.placeStates, task, now);
 }
 
 /** The words of the record of a passage: "passada sozinha: o lugar X fechou". */

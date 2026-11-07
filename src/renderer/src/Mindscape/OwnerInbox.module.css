@@ -1,0 +1,218 @@
+/* Ledger v5, fatia 1 — a caixa "Esperando você" (docs/planos/ledger-v5/prototipo.html, variante A, no topo do
+   Oráculo). O desktop é dark-only: as mesmas tintas das cartas (LedgerCards.module.css). */
+
+.inbox {
+  --fundo: #121019;
+  --carta: #1d1a27;
+  --carta-borda: #4a4030;
+  --tinta: #efe6d2;
+  --tinta-suave: #b3a78f;
+  --ouro: #d2a44c;
+  --nao: #e0736a;
+  --pre-fundo: #15131d;
+  --serifa: 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+  padding: 20px;
+  color: var(--tinta);
+}
+
+/* Sobre o quadro (a faixa abre a caixa): uma camada fixa que cobre o quadro; a caixa rola dentro dela. */
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 59;
+  background: rgba(8, 10, 14, 0.9);
+  backdrop-filter: blur(2px);
+}
+
+.overlay > .inbox {
+  height: 100%;
+  box-sizing: border-box;
+  overflow-y: auto;
+}
+
+.head {
+  display: flex;
+  align-items: flex-end;
+  gap: 24px;
+  margin-bottom: 16px;
+}
+
+.count {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+}
+
+.count small {
+  color: var(--tinta-suave);
+  font-size: 0.75rem;
+}
+
+.count b {
+  color: var(--ouro);
+  font-family: var(--serifa);
+  font-size: 2.6rem;
+  line-height: 1;
+}
+
+.headText {
+  flex: 1;
+  min-width: 0;
+}
+
+.headText h2 {
+  margin: 0 0 4px;
+  font-family: var(--serifa);
+  font-size: 1.3rem;
+  font-weight: 600;
+}
+
+.headText p {
+  margin: 0;
+  color: var(--tinta-suave);
+  font-size: 0.82rem;
+}
+
+.close {
+  flex: none;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.group {
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--carta-borda);
+  border-radius: 10px;
+  background: var(--carta);
+}
+
+.groupHead {
+  margin: 0 0 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.groupCount {
+  color: var(--tinta-suave);
+  font-weight: 400;
+}
+
+.items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  padding: 10px 0;
+}
+
+.item + .item {
+  border-top: 1px solid rgba(239, 230, 210, 0.08);
+}
+
+.itemHead {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.itemTitle {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.risk {
+  flex: none;
+  padding: 0 6px;
+  border: 1px solid var(--nao);
+  border-radius: 4px;
+  color: var(--nao);
+  font-size: 0.7rem;
+}
+
+.meta,
+.why,
+.hint,
+.detailLabel {
+  margin: 3px 0 0;
+  color: var(--tinta-suave);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+
+.why {
+  color: var(--tinta);
+}
+
+.hint {
+  font-style: italic;
+}
+
+.details {
+  margin-top: 8px;
+  padding-left: 10px;
+  border-left: 2px solid var(--ouro);
+}
+
+.letter {
+  max-height: 180px;
+  margin: 4px 0 0;
+  padding: 8px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--pre-fundo);
+  color: var(--tinta);
+  font-family: inherit;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.verbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.verbs button,
+.close {
+  padding: 4px 12px;
+  border: 1px solid var(--carta-borda);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--tinta);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.verbs button:hover,
+.close:hover {
+  border-color: var(--ouro);
+}
+
+.verbs .primary {
+  border-color: var(--ouro);
+  background: rgba(210, 164, 76, 0.16);
+}
+
+@media (max-width: 520px) {
+  .inbox {
+    padding: 16px;
+  }
+
+  .head {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+}

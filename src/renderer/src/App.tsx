@@ -2772,6 +2772,10 @@ export function App(): React.JSX.Element {
     return true;
   };
   const hiddenFromTabBar = (tab: TabState): boolean => oracleLayoutOn && isLeaderOfAllTab(tab) && (oracleShown || tab.id !== activeTabId);
+  // Ledger v5, fatia 1 — the orphans of the box "Esperando você" read the places as `tarefa_listar` does; before the
+  // board loads every place would look closed, so no orphan is called until then.
+  const ledgerPlaceStatesOf = (projectPaths: readonly string[]): Map<string, Map<string, string>> =>
+    mindscapeLoaded ? agentBridgeRef.current.placeStates(projectPaths) : new Map();
   const oraclePlaceName: PlaceNameOf = (projectPath, placeId) => {
     const card = mindscape.doc.boards[projectPath]?.cards[placeId];
     if (card?.kind !== 'session' || !card.sessionId) return undefined;
@@ -3027,6 +3031,7 @@ export function App(): React.JSX.Element {
             onStartPlace={handleMindscapeStartPlace}
             onManageRoles={() => setRolesEditorOpen(true)}
             onDefineChair={setChairRoleId}
+            ledgerPlaceStatesOf={ledgerPlaceStatesOf}
           />
         ) : null}
 
@@ -3176,7 +3181,7 @@ export function App(): React.JSX.Element {
               o path cru do "consultar artefato" (Zona 2, acima) parecia ser
               o header. Uso geral mantém a condição antiga (nome+path só com
               aba aberta, lote 8). */}
-          {oracleShown ? <OracleCenter placeName={oraclePlaceName} /> : null}
+          {oracleShown ? <OracleCenter placeName={oraclePlaceName} placeStatesOf={ledgerPlaceStatesOf} /> : null}
           {!oracleShown && listedTabIds.size > 0 ? (
             <div className={styles.sessionHeader} data-testid="session-header">
               {/* Spec 010 / B6 — o breadcrumb passou a ser o dos nós novos:

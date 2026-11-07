@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-07',
     items: [
       {
+        title: 'O Oráculo mostra tudo o que espera por você',
+        text: 'O topo do Oráculo agora é a caixa "Esperando você", com tudo o que depende de você, e não só as entregas de risco alto: entregas para decidir, cartas de Slack para aprovar, cartas que você aceitou e não saíram, envios ao Slack sem confirmação ou que falharam, entregas de risco baixo paradas há um dia sem ninguém decidir, tarefas cujo lugar fechou e precisam ir para outro, e a amostra do dia do Revisor. Cada coisa aparece no seu grupo, com o botão do que fazer: decidir abre a carta, e o que ainda não tem botão próprio mostra o pedido ou a mensagem e diz o que fazer. Vem primeiro o que trava alguém, depois o prazo, depois a idade. A faixa do Mindscape mostra o total e há quanto tempo espera a mais antiga, e abre a mesma caixa. Com nada esperando, a caixa some.',
+      },
+      {
         title: 'O Jobu não some mais em outro monitor',
         text: 'Levar o Donel para outro monitor, maximizado, fazia o Jobu sumir: o Windows tratava isso como "um app em tela cheia", e o Jobu se escondia de qualquer tela cheia. Essa regra saiu. O Jobu fica na tela em qualquer monitor, inclusive com escala diferente e depois de voltar a janela, e os balões aparecem como sempre. Para tirá-lo da frente, use "Esconder" no menu dele.',
       },
