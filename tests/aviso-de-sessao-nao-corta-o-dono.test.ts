@@ -79,14 +79,15 @@ class Clock {
   }
 }
 
-function setup(working: boolean) {
+function setup(working: boolean, signals = true, inTranscript?: (text: string) => boolean) {
   const clock = new Clock();
   let driver: SendDriver;
   const cli: FakeCli = new FakeCli(
     clock,
     working,
-    (text) =>
-      driver.handleSignal({ signal: working ? 'enqueue' : 'submit', text, at: new Date(clock.now).toISOString(), origin: 'hook' }),
+    (text) => {
+      if (signals) driver.handleSignal({ signal: working ? 'enqueue' : 'submit', text, at: new Date(clock.now).toISOString(), origin: 'hook' });
+    },
     () => driver.onScreen(),
   );
   driver = new SendDriver({
@@ -97,7 +98,7 @@ function setup(working: boolean) {
     },
     write: (data) => cli.write(data),
     readLines: () => cli.lines(),
-    ackLookup: (text) => Promise.resolve({ matched: cli.submitted.some((s) => s.includes(text)) }),
+    ackLookup: (text) => Promise.resolve({ matched: inTranscript ? inTranscript(text) : cli.submitted.some((s) => s.includes(text)) }),
   });
   driver.setEnv({ working });
   /** The owner's keys in the terminal: through the driver's gate (as TerminalPane does), or straight to the PTY. */
@@ -244,5 +245,79 @@ describe('aviso de sessão chegando enquanto o dono digita (06/11)', () => {
     // His messages go before the notices that were still waiting.
     expect(cli.submitted.indexOf(PEDIR)).toBeLessThan(cli.submitted.indexOf(`${NOTICES[1]}\n${NOTICES[2]}`));
     expect(cli.submitted.indexOf(ESCREVER)).toBeLessThan(cli.submitted.indexOf(`${NOTICES[1]}\n${NOTICES[2]}`));
+  });
+});
+
+// t-116a8521 / t-1cf1ed54 (07/11) — sessão na VPS com o app a 100 % de CPU: o hook de aceite não chega, quem mandou ouve
+// "não entrou" ou "o app não respondeu a tempo" e manda de novo; a mensagem chegava duplicada. E a sessão que já tinha
+// pego o pedido era dada como "não começou" por nunca ter mandado um hook.
+describe('mensagem de outra sessão sem sinal de aceite (07/11)', () => {
+  const TEXT = '◆ De Revisor (place:r1): aprovei, pode mesclar.';
+
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it('entra uma vez só: o reenvio enquanto a primeira está a caminho responde por ela, e a sessão conta como tendo pego a mensagem', async () => {
+    const { clock, cli, driver } = setup(false, false);
+    clock.advanceTo(1_000);
+    expect(driver.tookMessage()).toBe(false);
+    const first = driver.enqueue({ text: TEXT, from: 'session', dedupe: true });
+    clock.advanceTo(10_000); // quem mandou ouviu timeout e manda de novo, com a primeira ainda sem aceite
+    const again = driver.enqueue({ text: TEXT, from: 'session', dedupe: true });
+    expect(driver.carrierOf(again)).toBe(first);
+    clock.advanceTo(47_000); // a tab's first send waits 45 s for the acceptance, then asks the transcript
+    await flush();
+    clock.advanceTo(60_000);
+    expect(cli.submitted).toEqual([TEXT]);
+    expect(driver.getItems().find((i) => i.id === first)?.state).toBe('accepted');
+    expect(driver.wasDelivered(again)).toBe(true);
+    expect(driver.tookMessage()).toBe(true);
+  });
+
+  // Revisão do #281: "Siga de onde parou" mandado de novo depois de um segundo 429 não era escrito, e o Líder ouvia "entrou".
+  it('o mesmo texto mandado de novo depois que a primeira entrou é mensagem nova, e entra', () => {
+    const { clock, cli, driver } = setup(false);
+    clock.advanceTo(1_000);
+    const first = driver.enqueue({ text: TEXT, from: 'session', dedupe: true });
+    clock.advanceTo(20_000);
+    expect(driver.getItems().find((i) => i.id === first)?.state).toBe('accepted');
+    clock.advanceTo(140_000);
+    const again = driver.enqueue({ text: TEXT, from: 'session', dedupe: true });
+    clock.advanceTo(170_000);
+    expect(again).not.toBe(first);
+    expect(cli.submitted).toEqual([TEXT, TEXT]);
+    expect(driver.getItems().find((i) => i.id === again)?.state).toBe('accepted');
+  });
+
+  // Revisão do #281, item 2: Claude parado, caixa vazia, transcript da VPS chegando pelo espelho alguns segundos atrasado.
+  // A consulta única dava "não foi", quem mandou reenviava, e a mensagem entrava duas vezes.
+  it('transcript atrasado na hora da consulta: pergunta de novo antes de dizer "não foi"', async () => {
+    let mirrored = false;
+    const { clock, cli, driver } = setup(false, false, (text) => mirrored && cli.submitted.some((s) => s.includes(text)));
+    clock.advanceTo(1_000);
+    const first = driver.enqueue({ text: TEXT, from: 'session', dedupe: true });
+    clock.advanceTo(47_000); // prazo do aceite: o transcript ainda não chegou
+    await flush();
+    clock.advanceTo(50_000);
+    expect(driver.getItems().find((i) => i.id === first)?.state).not.toBe('failed');
+    mirrored = true; // o espelho trouxe o transcript
+    clock.advanceTo(65_000);
+    await flush();
+    clock.advanceTo(66_000);
+    expect(driver.getItems().find((i) => i.id === first)?.state).toBe('accepted');
+    expect(cli.submitted).toEqual([TEXT]);
+  });
+
+  it('o reenvio de uma mensagem que de fato não entrou vai de novo', () => {
+    const { clock, cli, driver } = setup(false);
+    clock.advanceTo(1_000);
+    driver.setEnv({ alive: false });
+    const first = driver.enqueue({ text: TEXT, from: 'session', dedupe: true });
+    clock.advanceTo(300_000);
+    expect(driver.getItems().find((i) => i.id === first)?.state).toBe('failed');
+    driver.setEnv({ alive: true });
+    const again = driver.enqueue({ text: TEXT, from: 'session', dedupe: true });
+    clock.advanceTo(330_000);
+    expect(driver.carrierOf(again)).toBe(again);
+    expect(cli.submitted).toEqual([TEXT]);
   });
 });
