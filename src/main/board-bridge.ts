@@ -89,12 +89,13 @@ export function createBoardBridge(deps: BoardBridgeDeps): BoardBridge {
         const timer = setTimeout(() => {
           pending.delete(requestId);
           // 07/11 — a send keeps going after this: "tente de novo" made senders paste it twice. A resend of the same
-          // text now answers for the first one (sendDriver `dedupe`), so repeating it is safe and tells where it is.
+          // text answers for the first one only while that one is on its way (sendDriver `dedupe`); once it went in,
+          // the same text is a new message. So: look first.
           resolve({
             kind: 'error',
             text:
               call.tool === 'sessao_enviar'
-                ? 'O app não respondeu a tempo, mas a mensagem pode ter entrado. Mandar de novo o mesmo texto não duplica: responde onde ela está. Ou confira com sessao_ver_tela.'
+                ? 'O app não respondeu a tempo, mas a mensagem pode ter entrado. Confira com sessao_ver_tela antes de mandar de novo: enquanto ela ainda está a caminho, o mesmo texto não duplica; se ela já entrou, entra outra vez.'
                 : 'O app não respondeu a tempo. Tente de novo.',
           });
         }, timeoutMs);
