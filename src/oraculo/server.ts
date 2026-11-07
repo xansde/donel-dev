@@ -13,8 +13,8 @@ const HEARTBEAT_MS = 25_000;
 
 export interface OracleServer {
   readonly url: string;
-  /** The ledger changed: every open events stream hears it. */
-  notifyLedger(): void;
+  /** Every open events stream hears it: `ledger` (re-read it) or `fila` (something for the PC to deliver). */
+  notify(event: 'ledger' | 'fila'): void;
   close(): Promise<void>;
 }
 
@@ -38,7 +38,8 @@ export function startOracleServer(options: { readonly host: string; readonly por
     }
     if (req.method === 'GET' && path === EVENTS_PATH) {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
-      res.write('event: ledger\ndata: {}\n\n');
+      // On (re)connect the PC re-reads the ledger and drains the relay.
+      res.write('event: ledger\ndata: {}\n\nevent: fila\ndata: {}\n\n');
       streams.add(res);
       req.on('close', () => streams.delete(res));
       return;
@@ -103,8 +104,8 @@ export function startOracleServer(options: { readonly host: string; readonly por
       server.on('error', (error) => console.error('[oraculo] erro no servidor:', error));
       resolvePromise({
         url: `http://${host.includes(':') ? `[${host}]` : host}:${port}`,
-        notifyLedger() {
-          for (const stream of streams) stream.write('event: ledger\ndata: {}\n\n');
+        notify(event) {
+          for (const stream of streams) stream.write(`event: ${event}\ndata: {}\n\n`);
         },
         close: () =>
           new Promise<void>((done) => {

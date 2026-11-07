@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-07',
     items: [
       {
+        title: 'Com o Oráculo na VPS, o celular fala com ela',
+        text: 'Quando o Oráculo mora na VPS, o app do celular passa a abrir no endereço dela: as cartas chegam com aviso e você responde com o PC desligado. Pareie o celular de novo uma vez, em Preferências, Celular (o endereço mudou). O que você escreve numa carta, ou pede pelo botão Pedir, espera na VPS e chega à sessão assim que o PC liga, uma vez só. Pedido por áudio continua precisando do PC ligado.',
+      },
+      {
         title: 'O Oráculo pode morar na sua VPS',
         text: 'Em Preferências, Celular, "Onde mora o Oráculo" leva o registro de tarefas para a sua VPS, inteiro e como está, e este PC passa a ler e gravar nele. A diferença aparece quando o PC desliga: o registro continua lá. Se a VPS sumir da rede, o PC mostra o último retrato só para ler e não grava nada até ela voltar, para nunca haver dois registros diferentes. "Trazer de volta para este PC" desfaz, também sem perder nada. As cartas no celular e as sessões da VPS sem o PC chegam nas próximas versões.',
       },

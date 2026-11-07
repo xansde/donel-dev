@@ -26,7 +26,7 @@ import { createSwitchableLedger, type SwitchableLedger } from './ledger-remote';
 import { LEDGER_REMOTE_CHANNELS, type LedgerRemoteResult, type LedgerRemoteState } from '../shared/ledger/remote';
 import { createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerSnapshot } from '../shared/ledger/channels';
-import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
+import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, type LedgerDeliveredTo, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
 import { askedByRefusal, type LedgerToolCall } from '../shared/ledger/tools';
 import type { BoardBridge } from './board-bridge';
 import { MCP_SERVER_NAME, type BrowserToolOutcome } from '../shared/browser/mcp';
@@ -3050,6 +3050,11 @@ function registerLedgerMirror(): void {
   void mirror.syncNow().catch(() => undefined);
 }
 
+/** Oráculo na VPS — the remote-mode host (`null` until the ledger handlers register). */
+let remoteOracleHost: ReturnType<typeof createRemoteOracleHost> | null = null;
+/** The board bridge's send driver, for what the VPS's relay holds (set once the bridge is up). */
+let deliverOwnerMessageViaBoard: ((message: OwnerMessage) => Promise<LedgerDeliveredTo>) | null = null;
+
 function registerLedgerIpcHandlers(): void {
   const onChange = (snapshot: LedgerSnapshot): void => {
       const window = getMainWindow();
@@ -3080,7 +3085,9 @@ function registerLedgerIpcHandlers(): void {
     localService: localLedger,
     setService: (next) => switchable?.set(next),
     onChange,
+    deliver: () => deliverOwnerMessageViaBoard,
   });
+  remoteOracleHost = remoteHost;
   const service = createSwitchableLedger(remoteHost.boot());
   switchable = service;
   ledgerService = service;
@@ -4161,6 +4168,8 @@ void app.whenReady().then(async () => {
     placeName: placeNameOf,
     cardWriter: () => cardWriter,
     deliverToLeader: () => deliverPedidoToLeader,
+    // Oráculo na VPS: the phone talks to the daemon there; this PC's server stays down.
+    remote: () => remoteOracleHost?.celular() ?? null,
   }); // Ledger no celular (PWA só na Tailscale)
   // Quadro por MCP — the board and session tools of the same server go to the renderer (owner of the document).
   const boardBridge = createBoardBridge({
@@ -4175,6 +4184,9 @@ void app.whenReady().then(async () => {
     return typeof who.lugar === 'string' && typeof who.pasta === 'string' ? { projectPath: who.pasta, placeId: who.lugar } : null;
   };
   cardWriter = createCardWriter({ service: () => ledgerService, deliver: (message) => boardBridge.deliverOwnerMessage(message), placeName: placeNameOf });
+  // Oráculo na VPS: what waits in the VPS's relay goes by the same driver, now that it exists.
+  deliverOwnerMessageViaBoard = (message) => boardBridge.deliverOwnerMessage(message);
+  void remoteOracleHost?.drain();
   hillClimbNotify = (message) => void boardBridge.deliverOwnerMessage(message).catch(() => null);
   // No place: the renderer sends it straight to the Líder único (or answers `null`: closed, the request waits).
   deliverPedidoToLeader = (text) => boardBridge.deliverOwnerMessage({ projectPath: '', placeId: '', text, leaderText: text }).then((to) => to === 'lider');
