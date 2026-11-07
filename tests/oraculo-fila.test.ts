@@ -2,7 +2,9 @@
 // his decision, a "Pedir" to the Líder único) while the phone talks to the VPS. What breaks without the owner
 // noticing: a message that vanishes with the PC off (or a daemon restart), or one that arrives twice when the
 // phone's queue retries.
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createCardWriter } from '../src/main/ledger-card-writer';
+import type { LedgerForOwner } from '../src/shared/ledger/contract';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -59,17 +61,81 @@ describe('Fila do Oráculo na VPS para o PC', () => {
     expect(await sent).toEqual('lider');
   });
 
-  it('a nova tentativa do mesmo recado não duplica: pendente vira o mesmo item; já entregue responde onde foi', async () => {
+  it('a nova tentativa do MESMO pedido não duplica: pendente vira o mesmo item; já entregue responde onde foi', async () => {
     const { open } = setup();
     const relay = open();
-    await relay.send(message, 0);
-    await relay.send(message, 0);
+    const once = { ...message, key: 'comentario:t-1:pedido-0001' };
+    await relay.send(once, 0);
+    await relay.send(once, 0);
     expect(relay.pending()).toHaveLength(1);
     relay.ack(relay.pending()[0]!.id, { placeId: 'place:dev' });
-    expect(await relay.send(message, 0)).toEqual({ placeId: 'place:dev' });
+    expect(await relay.send(once, 0)).toEqual({ placeId: 'place:dev' });
     expect(relay.pending()).toHaveLength(0);
-    // The same words, another card: another message.
-    await relay.send({ ...message, placeId: 'place:outro' }, 0);
+  });
+
+  it('mensagens de texto igual mas de pedidos diferentes entram as duas (revisão do #299)', async () => {
+    const { open } = setup();
+    const relay = open();
+    await relay.send({ ...message, key: 'decisao:t-1:1000' }, 0);
+    relay.ack(relay.pending()[0]!.id, { placeId: 'place:dev' });
+    expect(await relay.send({ ...message, key: 'decisao:t-1:2000' }, 0)).toBe('pendente');
+    expect(relay.pending()).toHaveLength(1);
+    // Without a key, every send is its own message.
+    await relay.send(message, 0);
+    await relay.send(message, 0);
+    expect(relay.pending()).toHaveLength(3);
+  });
+
+  it('duas rejeições "Refazer" da mesma tarefa, em rodadas diferentes, chegam as duas ao Dev', async () => {
+    const { open } = setup();
+    const relay = open();
+    const dir = mkdtempSync(join(tmpdir(), 'fila-carta-'));
+    dirs.push(dir);
+    let clock = Date.UTC(2026, 10, 7, 21);
+    const ledger = createLedgerService({ filePath: join(dir, 'ledger.json'), io, proofFs: nodeLedgerProofFs, now: () => (clock += 1000) });
+    const writer = createCardWriter({
+      service: () => ledger,
+      deliver: async (m) => {
+        const to = await relay.send(m, 0);
+        return to === 'pendente' ? null : to;
+      },
+    });
+    const dev = { kind: 'lugar' as const, placeId: 'place:dev' };
+    const created = await ledger.apply({ kind: 'lugar', placeId: 'place:lider', roleId: 'lider' }, { op: 'criar', projectPath: '/p', request: 'faz', doneWhen: 'x', due: '2026-11-10', ownerPlaceId: 'place:dev', risk: 'alto' });
+    if (!created.ok) throw new Error(created.reason);
+    const id = created.task.id;
+    const forOwner: LedgerForOwner = {
+      question: 'Aceito?',
+      summary: 'Feito.',
+      options: [
+        { label: 'Aceitar', effect: 'Fecha.', closes: 'aceita', recommended: true },
+        { label: 'Refazer', effect: 'Volta.', closes: 'rejeitada' },
+      ],
+      why: 'ok',
+      risk: 'baixo',
+    };
+    for (let round = 1; round <= 2; round++) {
+      expect((await ledger.apply(dev, { op: 'assumir', id })).ok).toBe(true);
+      expect((await ledger.apply(dev, { op: 'entregar', id, proofs: [{ kind: 'texto', text: `rodada ${round}` }], forOwner })).ok).toBe(true);
+      const rejected = await ledger.apply({ kind: 'dono' }, { op: 'rejeitar', id, reason: '', option: 'Refazer' });
+      if (!rejected.ok) throw new Error(rejected.reason);
+      expect(await writer.tellDecision(rejected.task), `rodada ${round}`).toBeNull();
+      const pending = relay.pending();
+      expect(pending, `rodada ${round}`).toHaveLength(1);
+      expect(pending[0]!.message.text).toMatch(/rejeitou a tarefa/);
+      relay.ack(pending[0]!.id, { placeId: 'place:dev' });
+    }
+  });
+
+  it('uma fila.json ilegível fica guardada à parte, não é sobrescrita', async () => {
+    const { open } = setup();
+    const relay = open();
+    const dir = dirs.at(-1)!;
+    writeFileSync(join(dir, 'fila.json'), '{ isto não é json');
+    await relay.send({ ...message, key: 'k-1' }, 0);
+    const kept = readdirSync(dir).filter((name) => name.startsWith('fila.ilegivel-'));
+    expect(kept).toHaveLength(1);
+    expect(readFileSync(join(dir, kept[0]!), 'utf8')).toBe('{ isto não é json');
     expect(relay.pending()).toHaveLength(1);
   });
 

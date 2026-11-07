@@ -81,7 +81,8 @@ async function main(): Promise<void> {
     ledger: () => ledger,
     provasRoot: ledgerProofsDir(ledgerFile),
     cardWriter: () => cardWriter,
-    deliverToLeader: () => async (text) => (await relay.send({ projectPath: '', placeId: '', text, leaderText: text }, RELAY_WAIT_MS)) === 'lider',
+    deliverToLeader: () => async (text, pedidoId) =>
+      (await relay.send({ projectPath: '', placeId: '', text, leaderText: text, ...(pedidoId ? { key: `pedido:${pedidoId}` } : {}) }, RELAY_WAIT_MS)) === 'lider',
   });
   // Fails here, not on the first call, when the file is there but unreadable (it would be written over).
   const first = raw.load();
