@@ -238,8 +238,19 @@ export function parseRemoteSetupOutput(stdout: string, code: number | null, stde
   return { kind: 'error', message: `O lugar remoto não respondeu como esperado${said ? `: ${said}` : '.'}` };
 }
 
+/**
+ * The ssh's last line, clean: it goes to a terminal and to another session's chat, so escape sequences (CSI, OSC)
+ * and every other control character are dropped, and a lone `\r` (a redrawn progress line) counts as a new line.
+ */
 function lastLine(text: string): string {
-  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0);
+  const clean = text
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g, '')
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b[@-_]?/g, '');
+  const lines = clean
+    .split(/\r\n|\r|\n/)
+    .map((line) => line.replace(/[\x00-\x1f\x7f-\x9f]/g, '').trim())
+    .filter((line) => line.length > 0);
   const last = lines[lines.length - 1] ?? '';
   return last.length > 300 ? `${last.slice(0, 300)}…` : last;
 }

@@ -63,4 +63,10 @@ describe('sessões remotas', () => {
     const refused = parseRemoteSetupOutput('', 255, 'root@vps: Permission denied (publickey).\r\n');
     expect(refused).toEqual({ kind: 'error', message: 'Não consegui entrar no lugar remoto por ssh: root@vps: Permission denied (publickey).' });
   });
+
+  it('a linha do ssh chega sem caractere de controle ao terminal e ao chat (07/11)', () => {
+    const noisy = 'progresso 10%\rprogresso 99%\r\x1b[31mroot@vps: \x1b]0;título\x07Permission\x00 denied\x1b[0m\x9b\x7f\n';
+    const answer = parseRemoteSetupOutput('', 255, noisy);
+    expect(answer).toEqual({ kind: 'error', message: 'Não consegui entrar no lugar remoto por ssh: root@vps: Permission denied' });
+  });
 });
