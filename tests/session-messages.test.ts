@@ -144,7 +144,7 @@ describe('sessão que não abre conta o motivo a quem abriu', () => {
       tabs: () => tabs,
       tabOfPty: (ptyId) => tabs.find((tab) => `pty-${tab.id}` === ptyId),
       stateOf: () => 'working',
-      roles: () => [{ id: 'dev', name: 'Dev', color: 'accent', guidance: '' }],
+      roles: () => [{ id: 'dev', name: 'Dev', color: 'implementar', guidance: '' }],
       openSession: (request) => {
         tabs.push({ id: 'tab-dev', name: request.name, cwd: ATLAS, placeId: request.placeId, sessionType: 'claude' });
         return 'tab-dev';
