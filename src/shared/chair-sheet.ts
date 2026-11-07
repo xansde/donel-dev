@@ -134,7 +134,9 @@ export function setScopeItem(role: SessionRole, axis: ScopeAxisName, name: strin
   if (kept(name, list) === on) return role;
   // Off: drop every entry that keeps it (a plugin kept by its short name too). On: add it by its full name.
   const next = on ? [...list, name] : list.filter((entry) => !kept(name, [entry]));
-  return withAxis(role, axis, next);
+  // Back to the whole set: "all" again (`*`), so what the owner installs later still comes (Revisor, #286).
+  const whole = on && names.length > 0 && names.every((candidate) => kept(candidate, next));
+  return withAxis(role, axis, whole ? '*' : next);
 }
 
 /** Adds an MCP by name to a role that names its MCPs (never to one that keeps them all: that would drop the rest). */
@@ -148,4 +150,40 @@ export function addScopeMcp(role: SessionRole, name: string): SessionRole {
 /** "Usar todos": the axis keeps everything of the user again (written as `*`, so a factory list is not inherited). */
 export function setScopeAll(role: SessionRole, axis: ScopeAxisName): SessionRole {
   return role.scope?.[axis] === '*' ? role : withAxis(role, axis, '*');
+}
+
+/**
+ * One change the chair screen made. The draft is the list of changes, never the whole role: they are laid over the
+ * role saved MOST RECENTLY, so a name, color, engine or axis saved in Papéis meanwhile is never written back (#286).
+ */
+export type ChairEdit =
+  | { readonly kind: 'guidance'; readonly text: string }
+  | { readonly kind: 'field'; readonly key: 'model' | 'effort' | 'permissionMode'; readonly value: string | undefined }
+  | { readonly kind: 'item'; readonly axis: ScopeAxisName; readonly name: string; readonly on: boolean }
+  | { readonly kind: 'add-mcp'; readonly name: string }
+  | { readonly kind: 'all'; readonly axis: ScopeAxisName }
+  /** "nomear só alguns MCPs": from every MCP of the user to only the ones the role names (none yet). */
+  | { readonly kind: 'name-mcps' };
+
+function applyEdit(role: SessionRole, edit: ChairEdit, inventory: ClaudeInventory): SessionRole {
+  switch (edit.kind) {
+    case 'guidance':
+      return role.guidance === edit.text ? role : { ...role, guidance: edit.text };
+    case 'field': {
+      const { [edit.key]: _previous, ...rest } = role;
+      return (edit.value ? { ...rest, [edit.key]: edit.value } : rest) as SessionRole;
+    }
+    case 'item':
+      return setScopeItem(role, edit.axis, edit.name, edit.on, inventory);
+    case 'add-mcp':
+      return addScopeMcp(role, edit.name);
+    case 'all':
+      return setScopeAll(role, edit.axis);
+    case 'name-mcps':
+      return isList(role.scope?.mcps) ? role : withAxis(role, 'mcps', []);
+  }
+}
+
+export function applyChairEdits(role: SessionRole, edits: readonly ChairEdit[], inventory: ClaudeInventory): SessionRole {
+  return edits.reduce((current, edit) => applyEdit(current, edit, inventory), role);
 }

@@ -4,7 +4,7 @@
 // (remembered on this machine). Saving through this screen is the next slice; for now "Editar em Papéis ▸".
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { addScopeMcp, chairSheet, escapeClosesChairScreen, setScopeAll, setScopeItem, type ScopeAxisName, COST_PER_MCP_MB, COST_PER_MCP_TOKENS, COST_PER_PLUGIN_TOKENS, COST_PER_SKILL_TOKENS, BASE_SESSION_MB, type SheetAxis, type SheetItem, type SheetOrigin } from '../../shared/chair-sheet';
+import { applyChairEdits, chairSheet, escapeClosesChairScreen, type ChairEdit, type ScopeAxisName, COST_PER_MCP_MB, COST_PER_MCP_TOKENS, COST_PER_PLUGIN_TOKENS, COST_PER_SKILL_TOKENS, BASE_SESSION_MB, type SheetAxis, type SheetItem, type SheetOrigin } from '../../shared/chair-sheet';
 import { EMPTY_INVENTORY, type ClaudeInventory } from '../../shared/role-scope';
 import { MAX_ROLE_GUIDANCE_CHARS, roleColorVar, type SessionRole } from '../../shared/roles';
 import type { MindscapeBoard } from '../../shared/mindscape/model';
@@ -128,17 +128,21 @@ export function ChairScreen({ roles, roleId, projectPath, projectName, board, on
 
   const savedRole = roles.find((candidate) => candidate.id === roleId);
   // Cadeiras, fatia 3 — the edits live in a draft of the role until "Salvar"; the cost follows the draft.
-  const [draft, setDraft] = useState<{ readonly id: string; readonly role: SessionRole; readonly dropped: readonly string[] } | null>(null);
+  // The draft is the list of changes (never the whole role): laid over the role saved most recently (#286).
+  const [draft, setDraft] = useState<{ readonly id: string; readonly edits: readonly ChairEdit[]; readonly dropped: readonly string[] } | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [mcpName, setMcpName] = useState('');
   const liveDraft = draft && draft.id === roleId ? draft : null;
-  const role = liveDraft?.role ?? savedRole;
-  const dirty = Boolean(liveDraft && savedRole && !sameRole(liveDraft.role, savedRole));
-  const edit = (change: (current: SessionRole) => SessionRole, dropped?: (current: readonly string[]) => readonly string[]): void => {
-    if (!role) return;
-    const next = change(role);
-    setDraft({ id: roleId, role: next, dropped: dropped ? dropped(liveDraft?.dropped ?? []) : (liveDraft?.dropped ?? []) });
+  const role = savedRole && liveDraft ? applyChairEdits(savedRole, liveDraft.edits, inventory ?? EMPTY_INVENTORY) : savedRole;
+  const dirty = Boolean(role && savedRole && !sameRole(role, savedRole));
+  const edit = (change: ChairEdit, dropped?: (current: readonly string[]) => readonly string[]): void => {
+    if (!savedRole) return;
+    // The text and a field keep only their last value; toggles are replayed in order.
+    const previous = (liveDraft?.edits ?? []).filter(
+      (entry) => !(change.kind === 'guidance' && entry.kind === 'guidance') && !(change.kind === 'field' && entry.kind === 'field' && entry.key === change.key),
+    );
+    setDraft({ id: roleId, edits: [...previous, change], dropped: dropped ? dropped(liveDraft?.dropped ?? []) : (liveDraft?.dropped ?? []) });
     setSaveError(null);
   };
   const discard = (): void => {
@@ -150,7 +154,13 @@ export function ChairScreen({ roles, roleId, projectPath, projectName, board, on
   const save = async (): Promise<void> => {
     if (!liveDraft || saving) return;
     setSaving(true);
-    const result = await window.donel.roles.save(liveDraft.role).catch(() => null);
+    // Over the role as it is on disk NOW: what Papéis saved meanwhile (name, color, engine, an axis) stays.
+    const onDisk = await window.donel.roles
+      .list()
+      .then((list) => list.find((candidate) => candidate.id === roleId))
+      .catch(() => undefined);
+    const base = onDisk ?? savedRole;
+    const result = base ? await window.donel.roles.save(applyChairEdits(base, liveDraft.edits, inventory ?? EMPTY_INVENTORY)).catch(() => null) : null;
     setSaving(false);
     if (!result || !result.ok) {
       setSaveError('Não foi possível salvar o papel.');
@@ -160,10 +170,7 @@ export function ChairScreen({ roles, roleId, projectPath, projectName, board, on
     setDraft(null);
   };
   const toggle = (axis: ScopeAxisName, name: string, on: boolean): void => {
-    edit(
-      (current) => setScopeItem(current, axis, name, on, inventory ?? EMPTY_INVENTORY),
-      axis === 'mcps' ? (dropped) => (on ? dropped.filter((entry) => entry !== name) : [...dropped, name]) : undefined,
-    );
+    edit({ kind: 'item', axis, name, on }, axis === 'mcps' ? (dropped) => (on ? dropped.filter((entry) => entry !== name) : [...dropped, name]) : undefined);
   };
   const rigName = projectName ?? 'Sem projeto';
   const placeCounts = new Map<string, number>();
@@ -315,7 +322,7 @@ export function ChairScreen({ roles, roleId, projectPath, projectName, board, on
                     aria-label={`Orientação do papel ${role.name}`}
                     onChange={(event) => {
                       const guidance = event.target.value;
-                      edit((current) => ({ ...current, guidance }));
+                      edit({ kind: 'guidance', text: guidance });
                     }}
                   />
                 </div>
@@ -336,7 +343,7 @@ export function ChairScreen({ roles, roleId, projectPath, projectName, board, on
                 axis={sheet.skills}
                 unit={COST_PER_SKILL_TOKENS}
                 onToggle={(name, on) => toggle('skills', name, on)}
-                onAll={() => edit((current) => setScopeAll(current, 'skills'))}
+                onAll={() => edit({ kind: 'all', axis: 'skills' })}
               />
               <AxisCard
                 id="mcps"
@@ -350,7 +357,7 @@ export function ChairScreen({ roles, roleId, projectPath, projectName, board, on
                 unit={COST_PER_MCP_TOKENS}
                 allNote="O papel não escolhe: todos os seus MCPs valem. O Donel não lê a lista deles, porque ela guarda segredos."
                 onToggle={(name, on) => toggle('mcps', name, on)}
-                onAll={() => edit((current) => setScopeAll(current, 'mcps'), () => [])}
+                onAll={() => edit({ kind: 'all', axis: 'mcps' }, () => [])}
                 extra={
                   sheet.mcps.mode === 'list' ? (
                     <form
@@ -358,7 +365,7 @@ export function ChairScreen({ roles, roleId, projectPath, projectName, board, on
                       onSubmit={(event) => {
                         event.preventDefault();
                         const name = mcpName;
-                        edit((current) => addScopeMcp(current, name), (dropped) => dropped.filter((entry) => entry !== name.trim()));
+                        edit({ kind: 'add-mcp', name }, (dropped) => dropped.filter((entry) => entry !== name.trim()));
                         setMcpName('');
                       }}
                     >
@@ -373,7 +380,7 @@ export function ChairScreen({ roles, roleId, projectPath, projectName, board, on
                       className={styles.link}
                       onClick={() => {
                         if (window.confirm('Ficar só com os MCPs que você nomear? Os seus outros MCPs deixam de valer para este papel.')) {
-                          edit((current) => ({ ...current, scope: { ...current.scope, mcps: [] } }));
+                          edit({ kind: 'name-mcps' });
                         }
                       }}
                     >
@@ -389,7 +396,7 @@ export function ChairScreen({ roles, roleId, projectPath, projectName, board, on
                 axis={sheet.plugins}
                 unit={COST_PER_PLUGIN_TOKENS}
                 onToggle={(name, on) => toggle('plugins', name, on)}
-                onAll={() => edit((current) => setScopeAll(current, 'plugins'))}
+                onAll={() => edit({ kind: 'all', axis: 'plugins' })}
               />
 
               <section className={styles.card} data-section="modelo">
@@ -419,10 +426,7 @@ export function ChairScreen({ roles, roleId, projectPath, projectName, board, on
                       aria-label={label}
                       onChange={(event) => {
                         const value = event.target.value;
-                        edit((current) => {
-                          const { [key]: _old, ...rest } = current;
-                          return (value ? { ...rest, [key]: value } : rest) as SessionRole;
-                        });
+                        edit({ kind: 'field', key, value: value || undefined });
                       }}
                     >
                       <option value="">{fallback}</option>
