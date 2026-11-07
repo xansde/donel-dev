@@ -22,6 +22,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'Na lente Cadeiras, "+ Pod" cria um pod dentro do rig. Dê nome e missão na gaveta dele e escolha as cadeiras que sentam ali, pela gaveta do pod ou pela da cadeira (cada cadeira fica em um pod só). O pod arruma as próprias cadeiras; você só move o pod, arrastando pelo nome. As cadeiras sem pod ficam à esquerda dos pods, longe do seu desenho. Apagar um pod deixa as cadeiras no quadro, sem pod, e Ctrl+Z desfaz qualquer passo. Atenção: depois de mexer no quadro nesta versão, uma versão mais antiga do Donel aberta no mesmo computador passa a mostrar o Mindscape só para leitura, até ser atualizada.',
       },
       {
+        title: 'O Jobu não some mais em outro monitor',
+        text: 'Levar o Donel para outro monitor, maximizado, fazia o Jobu sumir: o Windows tratava isso como "um app em tela cheia", e o Jobu se escondia de qualquer tela cheia. Essa regra saiu. O Jobu fica na tela em qualquer monitor, inclusive com escala diferente e depois de voltar a janela, e os balões aparecem como sempre. Para tirá-lo da frente, use "Esconder" no menu dele.',
+      },
+      {
         title: 'A tela da cadeira salva o papel',
         text: 'A tela da cadeira deixou de ser só leitura. Agora dá para escrever a orientação do papel, ligar ou desligar cada skill e plugin, desligar um MCP ou ligar outro pelo nome, e escolher modelo, esforço e permissão. O custo à direita muda na hora, a cada mudança. "Salvar" grava o papel, e vale para todo lugar com aquele papel que abrir ou continuar depois; "Descartar" volta ao que estava salvo. Desligar uma skill quando o papel usava todas deixa o papel com as outras, nunca com nenhuma. "Usar todos os seus" desfaz a lista. Sair da tela ou trocar de cadeira com mudanças não salvas pergunta antes. Nome, cor e motor continuam em Papéis.',
       },
