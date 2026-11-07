@@ -22,6 +22,11 @@ export interface OwnerMessage {
   readonly text: string;
   /** For the Líder único, naming the place and the board. */
   readonly leaderText: string;
+  /**
+   * Oráculo na VPS: what makes this message one (the decision event, the phone's request id). The relay of the VPS
+   * joins a retry of the same key and never two messages of the same text but different events. Absent = unique.
+   */
+  readonly key?: string;
 }
 
 export type DeliverOwnerMessage = (message: OwnerMessage) => Promise<LedgerDeliveredTo>;
@@ -119,7 +124,7 @@ export function createCardWriter(deps: CardWriterDeps): CardWriter {
     const why = commentRefusal(task, { kind: 'dono' }, input.text);
     if (why) return { ok: false, reason: `Não enviei: ${why}` };
     const text = input.text.trim();
-    const deliveredTo = await send(ownerMessage(task, text, deps.placeName));
+    const deliveredTo = await send({ ...ownerMessage(task, text, deps.placeName), ...(input.requestId ? { key: `comentario:${task.id}:${input.requestId}` } : {}) });
     const result = await service.apply({ kind: 'dono' }, { op: 'comentar', id: task.id, text, ...(input.requestId ? { requestId: input.requestId } : {}), deliveredTo });
     if (!result.ok) return { ok: false, reason: deliveredTo ? `Enviado, mas não gravou na carta: ${result.reason}` : `Não gravou: ${result.reason}` };
     const recorded = input.requestId ? commentOfRequest(result.task, input.requestId) : result.task.events.at(-1);
@@ -137,7 +142,9 @@ export function createCardWriter(deps: CardWriterDeps): CardWriter {
     },
     tellDecision(task, words) {
       const message = decisionMessage(task, words, deps.placeName);
-      return message ? send(message) : Promise.resolve(null);
+      // One decision event, one message: the same text from another round is another message.
+      const event = task.events.at(-1);
+      return message ? send({ ...message, ...(event ? { key: `decisao:${task.id}:${event.at}` } : {}) }) : Promise.resolve(null);
     },
   };
 }
