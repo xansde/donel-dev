@@ -557,6 +557,10 @@ const donelApi: DonelApi = {
       const handler = (_event: unknown, rules: BrowserAgentRules): void => listener(rules);
       return subscribeChannel(ipcRenderer, BROWSER_CHANNELS.rules, handler);
     },
+    onFullscreenKey: (listener: (request: BrowserOpenRequest) => void) => {
+      const handler = (_event: unknown, request: BrowserOpenRequest): void => listener(request);
+      return subscribeChannel(ipcRenderer, BROWSER_CHANNELS.fullscreenKey, handler);
+    },
   },
 
   // Mindscape V1 — the board document (main is the only writer).

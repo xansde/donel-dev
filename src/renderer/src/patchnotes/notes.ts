@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-07',
     items: [
       {
+        title: 'O navegador em tela cheia',
+        text: 'O navegador ao lado da conversa agora pode ocupar a janela inteira: o botão ⤢ na barra dele, ou F11, mesmo com o cursor dentro da página. Para voltar ao lado da conversa, o mesmo botão, F11 de novo ou Esc. O Esc só tira da tela cheia quando você não está dentro da página nem digitando no endereço, para não atrapalhar o Esc do próprio site. A sessão continua trabalhando, e o agente segue controlando a mesma página. Fechar o navegador também sai da tela cheia.',
+      },
+      {
         title: 'A tela da cadeira salva o papel',
         text: 'A tela da cadeira deixou de ser só leitura. Agora dá para escrever a orientação do papel, ligar ou desligar cada skill e plugin, desligar um MCP ou ligar outro pelo nome, e escolher modelo, esforço e permissão. O custo à direita muda na hora, a cada mudança. "Salvar" grava o papel, e vale para todo lugar com aquele papel que abrir ou continuar depois; "Descartar" volta ao que estava salvo. Desligar uma skill quando o papel usava todas deixa o papel com as outras, nunca com nenhuma. "Usar todos os seus" desfaz a lista. Sair da tela ou trocar de cadeira com mudanças não salvas pergunta antes. Nome, cor e motor continuam em Papéis.',
       },
