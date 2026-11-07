@@ -131,18 +131,51 @@ const RIG_PAD_BOTTOM = 100;
 /** Space between the rig and the rest of the board (it stands to the left of everything). */
 const RIG_MARGIN = 160;
 
+/**
+ * A pod as the layout sees it, whatever its source: the owner's pods on the board (`mindscape.json` v6) or a rig file
+ * kept by someone else. `at` is the pod's corner relative to the rig's corner; absent = the layout places it.
+ */
+export interface PodShape {
+  readonly id: string;
+  readonly name: string;
+  readonly mission?: string;
+  /** Chair ids (role ids). A chair that is not on the board is skipped. */
+  readonly chairIds: readonly string[];
+  readonly at?: { readonly x: number; readonly y: number };
+}
+
+export interface PodBox {
+  readonly id: string;
+  /** Board units. */
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
 export interface ChairsLayout {
   /** Center of each chair, in board units. */
   readonly centers: Readonly<Record<string, { readonly x: number; readonly y: number }>>;
   readonly rig: { readonly x: number; readonly y: number; readonly w: number; readonly h: number };
+  /** The pods, in the order given. */
+  readonly pods: readonly PodBox[];
 }
+
+/** Inside a pod: room for its header and around its chairs. */
+const POD_PAD_X = 70;
+const POD_PAD_TOP = 70;
+const POD_PAD_BOTTOM = 60;
+const POD_MIN_W = 320;
+const POD_GAP = 40;
+/** Where the first pod (or the chairs with no pod) starts inside the rig, below the rig's header. */
+const RIG_INNER_TOP = 64;
+const RIG_INNER_LEFT = 24;
 
 /**
  * Column = longest path from a chair nobody points at, after dropping the edges that close a cycle (Dev ⇄ Revisor
- * keeps the busier direction). Rows follow the chairs' order. The rig stands to the left of `content` (the
- * bounding box of everything on the board), top-aligned with it, so it never covers the owner's drawing.
+ * keeps the busier direction).
  */
-export function layoutChairs(view: ChairsView, content: { readonly x: number; readonly y: number } | null): ChairsLayout {
+function chairColumns(view: ChairsView): Map<string, number> {
   const ids = view.chairs.map((chair) => chair.id);
   const out = new Map<string, string[]>(ids.map((id) => [id, []]));
   for (const edge of view.edges) out.get(edge.from)?.push(edge.to);
@@ -177,26 +210,93 @@ export function layoutChairs(view: ChairsView, content: { readonly x: number; re
     }
     if (!changed) break;
   }
+  return column;
+}
 
+/** A block of chairs in columns (the global ones, packed) and rows: centers relative to the block's corner, and its size. */
+function blockOf(ids: readonly string[], column: ReadonlyMap<string, number>, padX: number, padTop: number, padBottom: number): { centers: Record<string, { x: number; y: number }>; w: number; h: number } {
+  const used = [...new Set(ids.map((id) => column.get(id) ?? 0))].sort((a, b) => a - b);
   const rows = new Map<number, number>();
-  const local: Record<string, { x: number; y: number }> = {};
-  let maxColumn = 0;
+  const centers: Record<string, { x: number; y: number }> = {};
   let maxRow = 0;
   for (const id of ids) {
-    const col = column.get(id)!;
+    const col = used.indexOf(column.get(id) ?? 0);
     const row = rows.get(col) ?? 0;
     rows.set(col, row + 1);
-    maxColumn = Math.max(maxColumn, col);
     maxRow = Math.max(maxRow, row);
-    local[id] = { x: RIG_PAD_X + CHAIR_NODE / 2 + col * COLUMN_GAP, y: RIG_PAD_TOP + CHAIR_NODE / 2 + row * ROW_GAP };
+    centers[id] = { x: padX + CHAIR_NODE / 2 + col * COLUMN_GAP, y: padTop + CHAIR_NODE / 2 + row * ROW_GAP };
   }
-  const w = Math.max(2 * RIG_PAD_X + CHAIR_NODE + maxColumn * COLUMN_GAP, 720);
-  const h = RIG_PAD_TOP + CHAIR_NODE + maxRow * ROW_GAP + RIG_PAD_BOTTOM;
-  const x = content ? content.x - RIG_MARGIN - w : 40;
-  const y = content ? content.y : 40;
+  const cols = Math.max(used.length, 1);
+  return { centers, w: 2 * padX + CHAIR_NODE + (cols - 1) * COLUMN_GAP, h: padTop + CHAIR_NODE + maxRow * ROW_GAP + padBottom };
+}
+
+/**
+ * The schema: with no pod, the chairs fill the rig in columns along the path of the work. With pods (dono, 07/11:
+ * the pod arranges its own chairs), each pod lays out its chairs the same way inside its frame, at the corner the
+ * owner dragged it to (or in a row, left to right, when it has none); the chairs with no pod go to the left of the
+ * pods. The rig stands to the left of `content` (the bounding box of everything on the board), top-aligned with it,
+ * so it never covers the owner's drawing.
+ */
+export function layoutChairs(view: ChairsView, content: { readonly x: number; readonly y: number } | null, pods: readonly PodShape[] = []): ChairsLayout {
+  const column = chairColumns(view);
+  const order = view.chairs.map((chair) => chair.id);
+  const podded = new Set<string>();
+  const blocks = pods.map((pod) => {
+    const ids = order.filter((id) => pod.chairIds.includes(id) && !podded.has(id));
+    ids.forEach((id) => podded.add(id));
+    const block = blockOf(ids, column, POD_PAD_X, POD_PAD_TOP, POD_PAD_BOTTOM);
+    const w = Math.max(block.w, POD_MIN_W);
+    return { pod, ids, block, w, h: ids.length > 0 ? block.h : POD_PAD_TOP + POD_PAD_BOTTOM + 40, shift: (w - block.w) / 2 };
+  });
+  const loose = order.filter((id) => !podded.has(id));
+  const looseBlock = pods.length === 0 ? blockOf(loose, column, RIG_PAD_X, RIG_PAD_TOP, RIG_PAD_BOTTOM) : loose.length > 0 ? blockOf(loose, column, POD_PAD_X, POD_PAD_TOP, POD_PAD_BOTTOM) : null;
+
   const centers: Record<string, { x: number; y: number }> = {};
-  for (const id of ids) centers[id] = { x: x + local[id]!.x, y: y + local[id]!.y };
-  return { centers, rig: { x, y, w, h } };
+  const boxes: PodBox[] = [];
+  const place = (ids: readonly string[], block: { centers: Record<string, { x: number; y: number }> }, x: number, y: number, shift = 0): void => {
+    for (const id of ids) centers[id] = { x: x + shift + block.centers[id]!.x, y: y + block.centers[id]!.y };
+  };
+
+  if (pods.length === 0) {
+    // No pod: the chairs fill the rig, which stands left of everything on the board.
+    const w = Math.max(looseBlock!.w, 720);
+    const h = looseBlock!.h;
+    const x = content ? content.x - RIG_MARGIN - w : 40;
+    const y = content ? content.y : 40;
+    place(loose, looseBlock!, x, y);
+    return { centers, rig: { x, y, w, h }, pods: [] };
+  }
+
+  // Pods the owner placed keep their corner (board units); the others follow in a row, then the chairs with no pod.
+  const placed = blocks.filter((entry) => entry.pod.at);
+  const autoWidth = blocks.filter((entry) => !entry.pod.at).reduce((sum, entry) => sum + entry.w + POD_GAP, 0);
+  let rowX: number;
+  let rowY: number;
+  if (placed.length > 0) {
+    rowX = Math.max(...placed.map((entry) => entry.pod.at!.x + entry.w)) + POD_GAP;
+    rowY = Math.min(...placed.map((entry) => entry.pod.at!.y));
+  } else {
+    rowX = content ? content.x - RIG_MARGIN - RIG_INNER_LEFT - autoWidth : 40 + RIG_INNER_LEFT;
+    rowY = (content ? content.y : 40) + RIG_INNER_TOP;
+  }
+  for (const entry of blocks) {
+    const at = entry.pod.at ?? { x: rowX, y: rowY };
+    if (!entry.pod.at) rowX += entry.w + POD_GAP;
+    place(entry.ids, entry.block, at.x, at.y, entry.shift);
+    boxes.push({ id: entry.pod.id, x: at.x, y: at.y, w: entry.w, h: entry.h });
+  }
+  const frames: Array<{ x: number; y: number; w: number; h: number }> = [...boxes];
+  if (looseBlock && loose.length > 0) {
+    // The chairs with no pod stand LEFT of the pods: the pods stand left of the owner's drawing, so this never covers it.
+    const at = { x: Math.min(...boxes.map((box) => box.x)) - POD_GAP - looseBlock.w, y: Math.min(...boxes.map((box) => box.y)) };
+    place(loose, looseBlock, at.x, at.y);
+    frames.push({ x: at.x, y: at.y, w: looseBlock.w, h: looseBlock.h });
+  }
+  const left = Math.min(...frames.map((frame) => frame.x)) - RIG_INNER_LEFT;
+  const top = Math.min(...frames.map((frame) => frame.y)) - RIG_INNER_TOP;
+  const right = Math.max(...frames.map((frame) => frame.x + frame.w)) + RIG_INNER_LEFT;
+  const bottom = Math.max(...frames.map((frame) => frame.y + frame.h)) + RIG_INNER_LEFT;
+  return { centers, rig: { x: left, y: top, w: Math.max(right - left, 720), h: bottom - top }, pods: boxes };
 }
 
 /** Top-left of everything on the board (cards and drawings), board units; `null` on an empty board. */
