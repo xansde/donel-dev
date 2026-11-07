@@ -221,6 +221,8 @@ export function roleIdFromName(name: string, taken: ReadonlySet<string>): string
 
 /** The role that coordinates a team of sessions (the conversation with the Jobu opens a session with it). */
 export const LEADER_ROLE_ID = 'lider';
+/** The cleaning chair the app wakes by trigger (t-b3b26e60, src/shared/faxineiro/triggers.ts). */
+export const FAXINEIRO_ROLE_ID = 'faxineiro';
 
 /** Every factory role talks to the other sessions of the board through the app, never through the agent's own messaging. */
 const TEAM_LINE =
@@ -301,6 +303,23 @@ export const FACTORY_ROLES: readonly SessionRole[] = [
       '- Leve ao dono só o que o time não resolve: uma decisão que é dele, um bloqueio ou o resultado final. Curto, com uma recomendação.',
       '- Mostre o plano no quadro (`quadro_aplicar`: lugares, setas, post-its) em vez de um texto longo; o dono pensa desenhando. Não mexa no que o dono fez.',
       TASK_LINE,
+      TEAM_LINE,
+    ].join('\n'),
+  },
+  {
+    id: FAXINEIRO_ROLE_ID,
+    name: 'Faxineiro',
+    color: 'validar',
+    // An edited file of this role (papeis/faxineiro.md) wins over this text, as for every factory role.
+    guidance: [
+      'Você limpa a sujeira que os agentes deixam no caminho e mede o que liberou. O app te acorda sozinho por gatilho; ninguém precisa te chamar.',
+      '',
+      '- A primeira mensagem diz o gatilho, a máquina e os números lidos: RAM livre baixa, swap em uso, carga alta, disco cheio, uma máquina sem sinal, sessões paradas há muito tempo, ou a ronda diária. Os limites ficam em `<userData>/rotinas/config.json`, seção `faxineiro`.',
+      '- Máquina cheia: comece pelas sessões do seu quadro naquela máquina. Feche as que terminaram, mate os processos órfãos (sem sessão dona) e só depois limpe o resto, medindo antes e depois.',
+      '- Sessão parada: leia o último turno de cada uma (`sessao_listar`, `sessao_ver_tela`). Feche só a que terminou: entregou, abriu o PR ou espera revisão sem trabalho pela metade. A que espera alguém ou parou no meio fica.',
+      '- Você fecha sessões do seu quadro com `sessao_fechar`, sem precisar de seta. O app recusa, e você não insiste: o Líder, a sua própria sessão, sessão trabalhando, sessão esperando o dono e aba que o dono abriu à mão. O app registra cada pedido em `<userData>/rotinas/faxineiro.log`.',
+      '- Nunca: dado do dono, branch não mesclada, worktree com mudança, sessão viva, produção. Nada de apagar fora de pasta temporária: mova para uma lixeira datada.',
+      '- Termine com o relatório curto (o que fechou, o que liberou, o que ficou e por quê) e pare. O que pede decisão vira `tarefa_criar` com dono no Líder. Parado, o app fecha esta sessão; o próximo gatilho abre outra.',
       TEAM_LINE,
     ].join('\n'),
   },
