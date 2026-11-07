@@ -26,6 +26,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'Cada quadro ganhou uma cadeira Faxineiro, que o Donel acorda sozinho quando uma máquina aperta, sem você nem o Líder precisarem chamar. Os gatilhos: RAM livre abaixo de 15%, swap acima de 10%, carga da VPS acima de duas vezes o número de processadores, disco acima de 85%, uma VPS sem sinal, sessões paradas há meia hora e uma ronda por dia, depois das 6h. O Faxineiro roda numa máquina que não é a apertada e fecha só as sessões do próprio quadro que terminaram. O Donel não deixa ele fechar o Líder, uma sessão trabalhando, uma que espera você ou uma aba que você abriu à mão. Quando ele termina a ronda e fica parado, o Donel fecha o Faxineiro também. Para não juntar Faxineiros, uma máquina cheia acorda um quadro de cada vez, e o Donel acorda no máximo quatro por hora. Os limites ficam na seção "faxineiro" do arquivo de configuração das rotinas, que também registra cada fechamento.',
       },
       {
+        title: 'O Oráculo pode morar na sua VPS',
+        text: 'Em Preferências, Celular, "Onde mora o Oráculo" leva o registro de tarefas para a sua VPS, inteiro e como está, e este PC passa a ler e gravar nele. A diferença aparece quando o PC desliga: o registro continua lá. Se a VPS sumir da rede, o PC mostra o último retrato só para ler e não grava nada até ela voltar, para nunca haver dois registros diferentes. "Trazer de volta para este PC" desfaz, também sem perder nada. As cartas no celular e as sessões da VPS sem o PC chegam nas próximas versões.',
+      },
+      {
         title: 'O navegador em tela cheia',
         text: 'O navegador ao lado da conversa agora pode ocupar a janela inteira: o botão ⤢ na barra dele, ou F11, mesmo com o cursor dentro da página. Para voltar ao lado da conversa, o mesmo botão, F11 de novo ou Esc. O Esc só tira da tela cheia quando você não está dentro da página nem digitando no endereço, para não atrapalhar o Esc do próprio site. A sessão continua trabalhando, e o agente segue controlando a mesma página. Fechar o navegador também sai da tela cheia.',
       },
