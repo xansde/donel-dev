@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import type { LedgerSnapshot } from '../shared/ledger/channels';
 import type { LedgerRemoteResult, LedgerRemoteState } from '../shared/ledger/remote';
 import type { ConfigIoDeps } from './config-store';
-import { bringLedgerBack, createRemoteLedgerService, fetchOracleHttp, moveLedgerToRemote, readRemoteMarker, type OracleHttp, type RemoteLedgerService, type RemoteMarker } from './ledger-remote';
+import { bringLedgerBack, createRemoteLedgerService, fetchOracleHttp, MOVING_REASON, moveLedgerToRemote, readRemoteMarker, type OracleHttp, type RemoteLedgerService, type RemoteMarker } from './ledger-remote';
 import type { LedgerProofFs, LedgerService } from './ledger-store';
 
 export const REMOTE_CONFIG_FILE = 'oraculo-remoto.json';
@@ -26,6 +26,8 @@ export interface RemoteOracleHostDeps {
   readonly localService: () => LedgerService;
   /** Puts a service behind the one the app holds. */
   readonly setService: (service: LedgerService) => void;
+  /** Freezes (reason) or thaws (`null`) the app's writes around the move and the way back; ends when none is in flight. */
+  readonly freeze: (reason: string | null) => Promise<void>;
   readonly onChange: (snapshot: LedgerSnapshot) => void;
   readonly fetchImpl?: typeof fetch;
 }
@@ -220,8 +222,14 @@ export function createRemoteOracleHost(deps: RemoteOracleHostDeps): RemoteOracle
     boot() {
       const configured = readConfig();
       if (configured) {
-        const marker = readRemoteMarker(io, ledgerFile) ?? { lugar: configured, desde: new Date().toISOString() };
-        return startRemote(configured, marker);
+        const marker = readRemoteMarker(io, ledgerFile);
+        // A normal ledger here with the config still there (a way back by hand that forgot the file): the first
+        // snapshot of the VPS would write over it. Stay on this PC and say why.
+        if (!marker && io.readFileText(ledgerFile) !== null) {
+          erro = `o oraculo-remoto.json aponta para ${placeOf(configured)?.label ?? configured}, mas o ledger.json deste PC é um registro normal: o app ficou neste PC e não gravou por cima. Apague o oraculo-remoto.json, ou leve o Oráculo de novo por esta tela.`;
+          return deps.localService();
+        }
+        return startRemote(configured, marker ?? { lugar: configured, desde: new Date().toISOString() });
       }
       // No config: today's local ledger. A mirror left behind opens read-only by itself (version 1000); the
       // Preferences show `espelhoSemModo` and offer to bring it back from that place.
@@ -235,31 +243,44 @@ export function createRemoteOracleHost(deps: RemoteOracleHostDeps): RemoteOracle
       if (gen !== generation) return done('outra troca começou');
       if (typeof linked === 'string') return done(linked);
       const marker: RemoteMarker = { lugar: id, desde: new Date().toISOString() };
-      const moved = await moveLedgerToRemote({ http: fetchOracleHttp(linked.url, linked.token, fetchImpl), ledgerFile, io, proofFs: deps.proofFs, marker });
-      if (!moved.ok) return done(moved.reason);
-      if (!writeConfig(id)) return done('o registro está na VPS, mas não consegui gravar o oraculo-remoto.json; tente de novo (a troca recomeça sem duplicar)');
-      const service = startRemote(id, marker, linked);
-      await service.refresh();
-      deps.setService(service);
-      return done();
+      // One writer at a time: this app's writes are refused (never a false "ok") until the move ends either way.
+      await deps.freeze(MOVING_REASON);
+      try {
+        const moved = await moveLedgerToRemote({ http: fetchOracleHttp(linked.url, linked.token, fetchImpl), ledgerFile, io, proofFs: deps.proofFs, marker });
+        if (!moved.ok) return done(moved.reason);
+        if (!writeConfig(id)) return done('o registro está na VPS, mas não consegui gravar o oraculo-remoto.json; tente de novo (a troca recomeça sem duplicar)');
+        const service = startRemote(id, marker, linked);
+        await service.refresh();
+        deps.setService(service);
+        erro = null;
+        return done();
+      } finally {
+        await deps.freeze(null);
+      }
     },
     async back() {
       const id = remote ? lugar : (readRemoteMarker(io, ledgerFile)?.lugar ?? null);
       if (!id) return done('o Oráculo já está neste PC');
       const linked = link ?? (await handshake(id));
       if (typeof linked === 'string') return done(`${linked}. Sem a VPS, use o caminho manual do plano (Volta atrás).`);
-      const back = await bringLedgerBack({ http: fetchOracleHttp(linked.url, linked.token, fetchImpl), ledgerFile, io, proofFs: deps.proofFs });
-      if (!back.ok) return done(back.reason);
-      stopRemote();
-      writeConfig(null);
-      const local = deps.localService();
-      deps.setService(local);
+      await deps.freeze(MOVING_REASON);
       try {
-        deps.onChange(local.load());
-      } catch {
-        // the next read says it
+        const back = await bringLedgerBack({ http: fetchOracleHttp(linked.url, linked.token, fetchImpl), ledgerFile, io, proofFs: deps.proofFs });
+        if (!back.ok) return done(back.reason);
+        stopRemote();
+        writeConfig(null);
+        erro = null;
+        const local = deps.localService();
+        deps.setService(local);
+        try {
+          deps.onChange(local.load());
+        } catch {
+          // the next read says it
+        }
+        return done();
+      } finally {
+        await deps.freeze(null);
       }
-      return done();
     },
     dispose() {
       disposed = true;

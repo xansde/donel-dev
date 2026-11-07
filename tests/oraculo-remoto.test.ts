@@ -12,6 +12,8 @@ import { bringLedgerBack, createRemoteLedgerService, LEDGER_BEFORE_REMOTE, moveL
 import { createOracleApiHandler } from '../src/oraculo/api';
 import { createRemoteOracleHost, REMOTE_CONFIG_FILE } from '../src/main/ledger-remote-host';
 import { createSwitchableLedger } from '../src/main/ledger-remote';
+import { createReturnGuard } from '../src/oraculo/devolvido';
+import { readdirSync } from 'node:fs';
 import type { LedgerForOwner } from '../src/shared/ledger/contract';
 
 const TOKEN = 'c'.repeat(64);
@@ -41,8 +43,9 @@ function tempDir(prefix: string): string {
 function vps() {
   const dir = tempDir('vps-');
   const file = join(dir, 'ledger.json');
-  const ledger = createLedgerService({ filePath: file, io, proofFs: nodeLedgerProofFs });
-  const handle = createOracleApiHandler({ ledger, ledgerFile: file, tokenHash: () => createHash('sha256').update(TOKEN).digest('hex') });
+  const guard = createReturnGuard(createLedgerService({ filePath: file, io, proofFs: nodeLedgerProofFs }), dir);
+  const ledger = guard.ledger;
+  const handle = createOracleApiHandler({ ledger, ledgerFile: file, tokenHash: () => createHash('sha256').update(TOKEN).digest('hex'), returned: guard });
   let up = true;
   const http: OracleHttp = async (method, path, body) => {
     if (!up) throw new Error('ECONNREFUSED');
@@ -75,7 +78,7 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-describe('Oráculo na VPS — o PC em modo remoto', () => {
+describe('Oráculo na VPS — o PC em modo remoto', { timeout: 30_000 }, () => {
   it('a troca leva o registro e as provas byte a byte, guarda o do PC e deixa um espelho que canal antigo só lê', async () => {
     const pc = await pcWithLedger();
     const remote = vps();
@@ -174,7 +177,8 @@ describe('Oráculo na VPS — o PC em modo remoto', () => {
     const vpsDir = tempDir('vps-');
     const vpsFile = join(vpsDir, 'ledger.json');
     let hashOnVps: string | null = null;
-    const daemon = createOracleApiHandler({ ledger: createLedgerService({ filePath: vpsFile, io, proofFs: nodeLedgerProofFs }), ledgerFile: vpsFile, tokenHash: () => hashOnVps });
+    const vpsGuard = createReturnGuard(createLedgerService({ filePath: vpsFile, io, proofFs: nodeLedgerProofFs }), vpsDir);
+    const daemon = createOracleApiHandler({ ledger: vpsGuard.ledger, ledgerFile: vpsFile, tokenHash: () => hashOnVps, returned: vpsGuard });
     const scripts: string[] = [];
     const runScript = async (_target: string, script: string) => {
       scripts.push(script);
@@ -199,6 +203,7 @@ describe('Oráculo na VPS — o PC em modo remoto', () => {
       runScript,
       localService,
       setService: (next) => held.set(next),
+      freeze: (reason) => held.freeze(reason),
       onChange: () => undefined,
       fetchImpl,
     });
@@ -222,6 +227,135 @@ describe('Oráculo na VPS — o PC em modo remoto', () => {
       expect(held.load().doc.tasks[pc.id]!.state).toBe('aceita');
     } finally {
       host.dispose();
+    }
+  });
+
+  // ── Revisão do #295: um só escritor durante a troca e a volta ──────────────────────────────────────────────────
+
+  /** The PC app (switchable + host) talking to a daemon whose writers all pass the return guard; `hook` runs before a request. */
+  function harness(pc: { dir: string; file: string }) {
+    const vpsDir = tempDir('vps-');
+    const vpsFile = join(vpsDir, 'ledger.json');
+    let hash: string | null = null;
+    // The daemon's writers (the phone, the MCP gate) all go through this one guarded service.
+    const guard = createReturnGuard(createLedgerService({ filePath: vpsFile, io, proofFs: nodeLedgerProofFs }), vpsDir);
+    const daemon = createOracleApiHandler({ ledger: guard.ledger, ledgerFile: vpsFile, tokenHash: () => hash, returned: guard });
+    const hooks: { before?: (method: string, path: string) => Promise<void> } = {};
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      const { pathname, search } = new URL(url);
+      await hooks.before?.(init.method ?? 'GET', pathname);
+      const body = init.body;
+      const res = await daemon({ method: init.method ?? 'GET', url: pathname + search, authorization: (init.headers as Record<string, string>).Authorization, body: typeof body === 'string' ? body : '', ...(body instanceof Uint8Array ? { bytes: body } : {}) });
+      return new Response(typeof res.body === 'string' ? res.body : readFileSync(res.body.filePath), { status: res.status });
+    }) as unknown as typeof fetch;
+    const localService = () => createLedgerService({ filePath: pc.file, io, proofFs: nodeLedgerProofFs });
+    const held = createSwitchableLedger(localService());
+    const host = createRemoteOracleHost({
+      userDataDir: pc.dir,
+      ledgerFile: pc.file,
+      io,
+      proofFs: nodeLedgerProofFs,
+      remotes: () => [{ id: 'vps-pessoal', label: 'VPS pessoal', sshTarget: 'eu@vps' }],
+      runScript: async (_target, script) => {
+        hash = /'([0-9a-f]{64})'/.exec(script)![1]!;
+        return { code: 0, stdout: 'http://100.64.0.9:47816\n', stderr: '' };
+      },
+      localService,
+      setService: (next) => held.set(next),
+      freeze: (reason) => held.freeze(reason),
+      onChange: () => undefined,
+      fetchImpl,
+    });
+    return { vpsDir, vpsFile, phone: guard.ledger, held, host, hooks };
+  }
+  const tasksIn = (file: string): string[] => Object.keys(JSON.parse(readFileSync(file, 'utf8')).tasks).sort();
+  const newTask = { op: 'criar' as const, projectPath: '/p', request: 'no meio da troca', doneWhen: 'x', due: '2026-11-10', ownerPlaceId: 'place:dev', risk: 'baixo' as const };
+
+  it('durante a troca o app recusa gravar, sem ok falso, e nada fica só no arquivo guardado', async () => {
+    const pc = await pcWithLedger();
+    const h = harness(pc);
+    const during: { ok: boolean; reason?: string }[] = [];
+    h.hooks.before = async (method, path) => {
+      if (method === 'PUT' && path.startsWith('/v1/provas/') && during.length === 0) during.push(await h.held.apply(LIDER, newTask));
+    };
+    try {
+      expect((await h.host.move('vps-pessoal')).ok).toBe(true);
+      expect(during).toEqual([{ ok: false, reason: expect.stringMatching(/mudando de lugar/) }]);
+      expect(tasksIn(h.vpsFile)).toEqual([pc.id]);
+      expect(tasksIn(pc.file)).toEqual([pc.id]);
+      expect(readFileSync(join(pc.dir, LEDGER_BEFORE_REMOTE), 'utf8')).toBe(readFileSync(h.vpsFile, 'utf8'));
+      // Thawed: the app writes again, on the VPS.
+      expect((await h.held.apply(LIDER, newTask)).ok).toBe(true);
+      expect(tasksIn(h.vpsFile)).toHaveLength(2);
+    } finally {
+      h.host.dispose();
+    }
+  });
+
+  it('outro canal grava o ledger.json do PC no meio da troca: a cópia recomeça e nada some', async () => {
+    const pc = await pcWithLedger();
+    const h = harness(pc);
+    let wrote = false;
+    h.hooks.before = async (method, path) => {
+      if (method === 'POST' && path === '/v1/importar' && !wrote) {
+        wrote = true;
+        // An older channel (same userData, its own process) writes the PC's file during the copy.
+        expect((await createLedgerService({ filePath: pc.file, io, proofFs: nodeLedgerProofFs }).apply(LIDER, newTask)).ok).toBe(true);
+      }
+    };
+    try {
+      expect((await h.host.move('vps-pessoal')).ok).toBe(true);
+      expect(tasksIn(h.vpsFile)).toHaveLength(2);
+      expect(tasksIn(pc.file)).toEqual(tasksIn(h.vpsFile));
+      expect(readFileSync(join(pc.dir, LEDGER_BEFORE_REMOTE), 'utf8')).toBe(readFileSync(h.vpsFile, 'utf8'));
+    } finally {
+      h.host.dispose();
+    }
+  });
+
+  it('durante a volta nem o app nem quem grava na VPS ganha ok falso; a VPS devolvida não grava mais e pode receber de novo', async () => {
+    const pc = await pcWithLedger();
+    const h = harness(pc);
+    try {
+      expect((await h.host.move('vps-pessoal')).ok).toBe(true);
+      const during: { ok: boolean; reason?: string }[] = [];
+      h.hooks.before = async (method, path) => {
+        if (method === 'GET' && path === '/v1/ledger/arquivo' && during.length === 0) {
+          during.push(await h.held.apply(LIDER, newTask));
+          during.push(await h.phone.apply(LIDER, newTask));
+        }
+      };
+      expect((await h.host.back()).ok).toBe(true);
+      expect(during).toEqual([
+        { ok: false, reason: expect.stringMatching(/mudando de lugar/) },
+        { ok: false, reason: expect.stringMatching(/voltou para o PC/) },
+      ]);
+      expect(readFileSync(pc.file, 'utf8')).toBe(readFileSync(h.vpsFile, 'utf8'));
+      expect((await h.phone.apply(LIDER, newTask)).ok, 'a VPS devolvida segue recusando').toBe(false);
+      expect((await h.held.apply(LIDER, newTask)).ok, 'o PC grava sozinho').toBe(true);
+
+      // Taking it there again replaces the dead copy, keeping it.
+      h.hooks.before = undefined;
+      expect(await h.host.move('vps-pessoal')).toMatchObject({ ok: true });
+      expect(tasksIn(h.vpsFile)).toHaveLength(2);
+      expect(readdirSync(h.vpsDir).some((name) => name.startsWith('ledger.devolvido-'))).toBe(true);
+      expect((await h.phone.apply(LIDER, { ...newTask, request: 'de novo na VPS' })).ok).toBe(true);
+    } finally {
+      h.host.dispose();
+    }
+  });
+
+  it('com o oraculo-remoto.json esquecido e um registro normal no PC, não entra no modo remoto nem grava por cima', async () => {
+    const pc = await pcWithLedger();
+    writeFileSync(join(pc.dir, REMOTE_CONFIG_FILE), JSON.stringify({ lugar: 'vps-pessoal' }));
+    const h = harness(pc);
+    try {
+      const service = h.host.boot();
+      expect(service.load()).toMatchObject({ readOnly: false });
+      expect(h.host.state()).toMatchObject({ mode: 'local', erro: expect.stringMatching(/registro normal/) });
+      expect(readFileSync(pc.file, 'utf8')).toBe(pc.before);
+    } finally {
+      h.host.dispose();
     }
   });
 });

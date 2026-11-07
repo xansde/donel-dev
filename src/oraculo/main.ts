@@ -15,6 +15,7 @@ import { createSystemConfigIoDeps } from '../main/config-store';
 import { createLedgerService, nodeLedgerProofFs } from '../main/ledger-store';
 import { pickTailscaleAddress } from '../main/celular/tailscale';
 import { createOracleApiHandler } from './api';
+import { createReturnGuard } from './devolvido';
 import { ORACLE_PORT, startOracleServer, type OracleServer } from './server';
 
 export const TOKEN_HASH_FILE = 'pc.token.sha256';
@@ -44,15 +45,18 @@ async function main(): Promise<void> {
   const ledgerFile = join(dir, 'ledger.json');
   const tokenHash = (): string | null => readTokenHash(dir);
   let server: OracleServer | null = null;
-  const ledger = createLedgerService({
+  const raw = createLedgerService({
     filePath: ledgerFile,
     io: createSystemConfigIoDeps(),
     proofFs: nodeLedgerProofFs,
     onChange: () => server?.notifyLedger(),
   });
   // Fails here, not on the first call, when the file is there but unreadable (it would be written over).
-  const first = ledger.load();
-  const handler = createOracleApiHandler({ ledger, ledgerFile, tokenHash, changed: () => server?.notifyLedger() });
+  const first = raw.load();
+  // Every writer of the daemon goes through the way back's guard: once returned to the PC, nothing writes here.
+  const guard = createReturnGuard(raw, dir);
+  const ledger = guard.ledger;
+  const handler = createOracleApiHandler({ ledger, ledgerFile, tokenHash, returned: guard, changed: () => server?.notifyLedger() });
   server = await startOracleServer({ host, port, tokenHash, handler });
   writeFileSync(join(dir, 'url'), `${server.url}\n`, { mode: 0o600 });
   console.log(`[oraculo] no ar em ${server.url} (${Object.keys(first.doc.tasks).length} tarefas${first.readOnly ? ', só leitura' : ''})`);
