@@ -2,8 +2,8 @@
 // places grouped into chairs (one chair per role on the board), the path of the work between chairs (the links
 // between their places), a health per chair and the layout of the schema (prototype F2a, owner 06/11).
 //
-// DERIVED, never stored: nothing here writes the document, so the lens adds no field to `mindscape.json` and the
-// `schemaVersion` stays. The stored chair (rig, pod, own position, `papel@rig`) is a later slice that bumps it.
+// The chairs are DERIVED, never stored: a chair is a role on the board (owner, 07/11). What the board stores for them
+// is only the owner's pods (`mindscape.json` v6, fatia 4, in model.ts); this file lays the pods out, it never writes.
 // Pure: no React, no Electron.
 
 import type { SessionAxes } from './sessionAxes';
