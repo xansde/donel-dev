@@ -154,6 +154,7 @@ import {
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerSnapshot } from '../shared/ledger/channels';
 import type { LedgerProof } from '../shared/ledger/contract';
+import { LEDGER_REMOTE_CHANNELS, type LedgerRemoteResult, type LedgerRemoteState } from '../shared/ledger/remote';
 import { LEDGER_MIRROR_CHANNELS, type LedgerMirrorConfigureResult, type LedgerMirrorState, type LedgerPlacesSnapshot } from '../shared/ledger/mirror';
 import { HILL_CLIMB_CHANNELS, type HillClimbGestureRequest, type HillClimbGestureResult, type HillClimbSnapshot } from '../shared/hillClimb/channels';
 import { LEARNING_CHANNELS, type RendererGesture } from '../shared/learning/gestures';
@@ -568,6 +569,10 @@ const donelApi: DonelApi = {
       const handler = (_event: unknown, rules: BrowserAgentRules): void => listener(rules);
       return subscribeChannel(ipcRenderer, BROWSER_CHANNELS.rules, handler);
     },
+    onFullscreenKey: (listener: (request: BrowserOpenRequest) => void) => {
+      const handler = (_event: unknown, request: BrowserOpenRequest): void => listener(request);
+      return subscribeChannel(ipcRenderer, BROWSER_CHANNELS.fullscreenKey, handler);
+    },
   },
 
   // Mindscape V1 — the board document (main is the only writer).
@@ -628,6 +633,13 @@ const donelApi: DonelApi = {
     disable: () => ipcRenderer.invoke(LEDGER_MIRROR_CHANNELS.disable) as Promise<LedgerMirrorState>,
     syncNow: () => ipcRenderer.invoke(LEDGER_MIRROR_CHANNELS.syncNow) as Promise<LedgerMirrorState>,
     places: () => ipcRenderer.invoke(LEDGER_MIRROR_CHANNELS.places) as Promise<LedgerPlacesSnapshot>,
+  },
+
+  // Oráculo na VPS — where the ledger lives; the move and the way back.
+  ledgerRemote: {
+    getState: () => ipcRenderer.invoke(LEDGER_REMOTE_CHANNELS.getState) as Promise<LedgerRemoteState>,
+    move: (lugar: string) => ipcRenderer.invoke(LEDGER_REMOTE_CHANNELS.move, lugar) as Promise<LedgerRemoteResult>,
+    back: () => ipcRenderer.invoke(LEDGER_REMOTE_CHANNELS.back) as Promise<LedgerRemoteResult>,
   },
 
   // Papéis de sessão (item 12a) — `<userData>/papeis/` (main is the only writer).

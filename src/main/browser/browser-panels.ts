@@ -5,6 +5,7 @@ import { guardBrowserPanelNavigation } from '../navigation-guard';
 import { canServeLocalFile, isAllowedLocalFileUrl, isAllowedPanelUrl } from '../../shared/browser/url';
 import type { BrowserPanelState, BrowserRect, BrowserTabInfo } from '../../shared/browser/ipc';
 import { cleanUserAgent, uniqueDownloadName } from './panel-helpers';
+import { browserFullscreenKey } from '../../shared/browser/fullscreen';
 
 // Navegador interno — the `WebContentsView`s of the panel (docs/design/navegador-interno.md).
 //
@@ -67,6 +68,8 @@ export interface BrowserPanelsDeps {
   isPinned?(ptyId: string): boolean;
   /** `true` to refuse a top-level navigation or a popup (the vigia de domínio, while an agent tool runs). */
   blockNavigation?(ptyId: string, url: string): boolean;
+  /** F11 on the page: the panel toggles its full screen (the key is taken, the window stays as it is). */
+  onFullscreenKey?(ptyId: string): void;
   now?: () => number;
 }
 
@@ -339,6 +342,15 @@ export class BrowserPanels {
       this.deps.onNavigated?.(ptyId, url);
     });
     contents.on('render-process-gone', emit);
+    // Navegador em tela cheia: with the focus on the page the key never reaches the app's renderer. Esc stays
+    // with the page (a site's dialog); F11 is the panel's.
+    contents.on('before-input-event', (event, input) => {
+      if (input.type !== 'keyDown') return;
+      const action = browserFullscreenKey({ key: input.key, repeat: input.isAutoRepeat, defaultPrevented: false, fullscreen: false, focus: 'page' });
+      if (action !== 'toggle') return;
+      event.preventDefault();
+      this.deps.onFullscreenKey?.(ptyId);
+    });
     // A page may close itself (`window.close()` of a popup): the neighbor tab takes over.
     contents.once('destroyed', () => this.onTabGone(ptyId, tab));
 

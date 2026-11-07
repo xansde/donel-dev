@@ -86,7 +86,7 @@ export interface HookBridgeOptions {
    * and shows the reason to the model); `null` lets it go on as usual. A refused call is not dispatched: the
    * tool never runs, so the semaphore and the chat never see it start.
    */
-  readonly preToolUseGuard?: (ptyId: string, payload: HookPayload) => string | null;
+  readonly preToolUseGuard?: (ptyId: string, payload: HookPayload) => string | null | Promise<string | null>;
 }
 
 export interface HookBridge {
@@ -377,7 +377,7 @@ export function createHookBridge(options: HookBridgeOptions = {}): HookBridge {
     if (event === 'PreToolUse' && options.preToolUseGuard) {
       let reason: string | null;
       try {
-        reason = options.preToolUseGuard(state.ptyId, payload);
+        reason = await options.preToolUseGuard(state.ptyId, payload);
       } catch {
         reason = null;
       }
