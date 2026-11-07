@@ -32,7 +32,7 @@ Abas de terminal comum nunca entram na lista.
 | `sessionExited` | `ptyId`, `name`, `byUser`, `at` | a PTY saiu; `byUser = true` quando o dono fechou a aba |
 | `pendingOpened` | `ptyId`, `kind`, `at` | o chat abriu uma pendência (`question`, `permission` ou `plan`) |
 | `silence` | `until \| null` | Silenciar por 1 hora / Retomar avisos |
-| `fullscreen` | `active` | um app tomou a tela inteira, ou a devolveu (o vigia da US5) |
+| `fullscreen` | `active` | removido em 07/11 (t-56abde57, FR-007 revogado) |
 | `bubbleDismissed` | — | o dono clicou no balão, no Jobu ou num item da lista: o balão cumpriu o papel |
 | `tick` | — | relógio do main (1 s); o instante vai à parte, no argumento `now` de `reducePet` |
 
@@ -53,7 +53,7 @@ serve de registro.
 | `waffleShown` | `boolean` | o waffle já apareceu neste período sereno |
 | `waffleUntil` | `number \| null` | fim do waffle em exibição |
 | `silencedUntil` | `number \| null` | fim do silêncio (só em memória) |
-| `fullscreen` | `boolean` | um app tem a tela inteira: nenhum balão nasce. O `resume` o esquece, porque o vigia diz a verdade de novo ao começar |
+| `fullscreen` | `boolean` | removido em 07/11 (t-56abde57, FR-007 revogado). Antes: um app tem a tela inteira: nenhum balão nasce. O `resume` o esquece, porque o vigia diz a verdade de novo ao começar |
 
 ### `TrackedSession`
 
@@ -179,7 +179,7 @@ Regras:
 - Com `now < silencedUntil`, nenhum balão nasce, mas o estado segue mudando. Ligar
   o silêncio também tira o balão que está na tela (FR-027); o que se perdeu nele
   não se repete no fim.
-- Com um app em tela cheia (`fullscreen`), nenhum balão nasce, e o que estava na
+- (Removido em 07/11, t-56abde57.) Com um app em tela cheia (`fullscreen`), nenhum balão nasce, e o que estava na
   tela sai (Q9).
 - O balão sai antes dos 6 s quando **todas** as sessões por trás dele deixam de
   pedir: o dono abriu a aba dela (Q9), a aba fechou ou ela voltou a trabalhar. Um

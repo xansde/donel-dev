@@ -59,7 +59,7 @@ a fonte da página e o lugar onde o resultado fica registrado.
 | 5.2 | Arrastar para o meio da tela | A base esmaece em vez de mostrar o corte reto |
 | 5.3 | Arrastar para o outro monitor; fechar e reabrir o Donel | Volta ao mesmo lugar |
 | 5.4 | Clicar no vazio logo ao lado do desenho, com uma janela embaixo | O clique chega à janela de baixo |
-| 5.5 | Abrir um vídeo em tela cheia | O Jobu some; volta ao sair da tela cheia |
+| 5.5 | Maximizar o Donel no monitor sem barra de tarefas; depois voltar a janela ao primeiro | O Jobu continua lá nos dois (desde 07/11, t-56abde57, ele só some por Esconder) |
 | 5.6 | Botão direito → Silenciar por 1 hora; provocar um fim de turno | Nenhum balão nem aviso do Windows; rosto e selo mudam; o menu oferece Retomar avisos |
 | 5.7 | Botão direito → Voltar ao canto | Volta à posição padrão |
 | 5.8 | Esconder e religar pelas Preferências | Some e volta na posição lembrada, já com o estado atual |

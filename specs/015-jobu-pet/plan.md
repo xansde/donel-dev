@@ -117,7 +117,7 @@ As decisões e os porquês estão em `research.md`. Resumo:
 - **R8:** com o pet ligado, os dois emissores de aviso do Windows se calam.
 - **R9:** a janela cresce com o tamanho do desenho (FR-033), não é focável e deixa o clique atravessar
   o vazio pelo alfa do desenho.
-- **R10:** tela cheia é detectada por `SHQueryUserNotificationState`, via
+- **R10** (removido em 07/11, t-56abde57: o dono revogou o FR-007; nada disto existe mais no código): tela cheia é detectada por `SHQueryUserNotificationState`, via
   PowerShell.
 - **R11:** o arraste é manual, encaixa na barra a até 24 px e a posição fica na
   config.
