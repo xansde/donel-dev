@@ -80,6 +80,7 @@ describe('defaultAppConfig (puro)', () => {
       leader: { where: 'local' },
       appUpdate: { installersDir: null },
       browserUploads: { folders: [] },
+      browserUploadGrants: { grants: [] },
       slackAgentBots: { servers: [] },
       homologacao: null,
       unknownFields: {},
@@ -259,6 +260,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       leader: { where: 'vps-1' },
       appUpdate: { installersDir: 'D:\\instaladores' },
       browserUploads: { folders: [] },
+      browserUploadGrants: { grants: [] },
       slackAgentBots: { servers: ['theo-west-slack', 'theo-slack'] },
       homologacao: { lugar: 'factory-vps', metricas: '/srv/factory/metricas.json', rigs: null, quadro: 'atlas' },
       unknownFields: {},
@@ -362,6 +364,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       leader: defaults.leader,
       appUpdate: { installersDir: null },
       browserUploads: { folders: [] },
+      browserUploadGrants: { grants: [] },
       slackAgentBots: { servers: [] },
       homologacao: null,
       unknownFields: {}, // nenhuma chave desconhecida no objeto de entrada
