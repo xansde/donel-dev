@@ -13,6 +13,7 @@ import type { DonelPetApi } from './pet/ipc';
 import type { DonelLiderApi } from './lider/ipc';
 import type { DonelCelularApi } from './celular';
 import type { DonelRotinasApi } from './rotinas/contract';
+import type { DonelFaxineiroApi } from './faxineiro/ipc';
 import type { DonelEsteiraApi } from './esteira/ipc';
 import type { DonelGithubApi } from './github';
 import type { DonelProjectBindingApi } from './projectBinding';
@@ -554,4 +555,6 @@ export interface DonelApi {
   renewal: DonelRenewalApi;
   /** Item 20 — what the routines in shadow would have woken today. */
   rotinas: DonelRotinasApi;
+  /** t-b3b26e60 — the Faxineiro woken by trigger: a round a minute and its log. */
+  faxineiro: DonelFaxineiroApi;
 }
