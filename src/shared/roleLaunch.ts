@@ -3,6 +3,8 @@
 // with every MCP (a scope that did not reach the CLI widens the session). Pure: the spawn in the main feeds it.
 
 import { roleDeliveryFor, type AgentCli } from './commandBuilder';
+import { roleScopeRestricts } from './role-scope';
+import type { RoleScope } from './roles';
 
 /** What a launch with a role failed to hand the CLI: the guidance (`papel`) or the scope settings (`escopo`). */
 export type RoleLaunchGap = 'papel' | 'escopo';
@@ -12,8 +14,8 @@ export interface RoleLaunchInput {
   readonly roleId: string | undefined;
   /** The guidance file written for this launch; `null` = the role is gone or the write failed. */
   readonly promptPath: string | null;
-  /** The role declares a scope (MCPs, plugins, skills). */
-  readonly scopeDeclared: boolean;
+  /** The role's scope (MCPs, plugins, skills); only one that restricts something has to reach the CLI. */
+  readonly scope: RoleScope | undefined;
   /** The scope reached the CLI (a `--settings` file carrying it was written). */
   readonly scopeDelivered: boolean;
 }
@@ -27,7 +29,7 @@ export function planRoleLaunch(cli: AgentCli, input: RoleLaunchInput): RoleLaunc
   if (!input.roleId) return { args: [], missing: [] };
   const missing: RoleLaunchGap[] = [];
   if (!input.promptPath) missing.push('papel');
-  if (input.scopeDeclared && !input.scopeDelivered) missing.push('escopo');
+  if (roleScopeRestricts(input.scope) && !input.scopeDelivered) missing.push('escopo');
   return { args: input.promptPath ? roleDeliveryFor(cli, input.promptPath).args : [], missing };
 }
 

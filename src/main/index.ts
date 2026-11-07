@@ -1708,7 +1708,7 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
   }
   const roleScope = roleScopeSettingsFor(roleId, () => remoteInventory);
   // Papel não entregue — the remote settings.json always carries the scope when there is one.
-  const rolePlan = planRoleLaunch('claude-code', { roleId, promptPath: remoteRolePath, scopeDeclared: scope !== undefined, scopeDelivered: roleScope !== null });
+  const rolePlan = planRoleLaunch('claude-code', { roleId, promptPath: remoteRolePath, scope, scopeDelivered: roleScope !== null });
   claudeArgs.push(...rolePlan.args);
 
   const hooksOn = hookBridge !== null && hookBridge.port !== null;
@@ -2046,7 +2046,7 @@ function registerPtyIpcHandlers(): void {
       const rolePlan = planRoleLaunch('claude-code', {
         roleId,
         promptPath: rolePromptPath,
-        scopeDeclared: roleId !== undefined && rolesStore?.get(roleId)?.scope !== undefined,
+        scope: roleId ? rolesStore?.get(roleId)?.scope : undefined,
         scopeDelivered: scopeWritten,
       });
       const roleArgs = rolePlan.args;
