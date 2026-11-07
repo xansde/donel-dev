@@ -16,7 +16,6 @@ import {
   eventNote,
   isAgentBotRecord,
   isCancelled,
-  isLeaderRole,
   lastDecision,
   lastDelivery,
   requestedByOf,
@@ -218,26 +217,21 @@ function ownerRoleFromSteps(task: LedgerTask): string | undefined {
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Who asked — a person. What the creator said (`quemPediu`, 07/11) wins; for the tasks before it, what the ledger
-// already tells: who created it, the Slack letter's person, the source quoted in the request.
+// Who asked — a person, declared, never guessed (owner, 07/11). What the creator said (`quemPediu`) wins; for the
+// tasks before it, only what the ledger states: the owner created it, the Slack letter's person, a Curador signal.
+// A quote "(dono, 05/11)" anywhere in a request is the source of a rule, not who asked; a role is never a person;
+// and a task the Líder created without `quemPediu` is "não registrado", not "the owner".
 
-const ROLE_SOURCES = 'Revisor|Líder|Lider|Curador|Pesquisa|Dev';
+const QUOTE_SOURCES = 'dono|Revisor|Líder|Lider|Curador|Pesquisa|Dev';
 
-function escapeRe(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/** "(dono, 05/11)", "(Revisor, PR #219, Ressalva 1)": who said it, and a short source. */
-function quotedSource(request: string, ownerName: string): { owner: true } | { owner: false; role: string; source: string } | null {
-  const owners = ['dono', ownerName].filter(Boolean).map(escapeRe).join('|');
-  const match = new RegExp(`\\((${owners}|${ROLE_SOURCES})\\b[\\s,;:]*([^)]*)\\)`, 'i').exec(request);
+/** The source a Curador signal quotes: "(Revisor, PR #219, Ressalva 1)" → "Revisor, PR #219". */
+function signalSource(request: string): string | null {
+  const match = new RegExp(`\\((${QUOTE_SOURCES})\\b[\\s,;:·]*([^)]*)\\)`, 'i').exec(request);
   if (!match) return null;
-  const who = match[1]!;
-  if (new RegExp(`^(${owners})$`, 'i').test(who)) return { owner: true };
-  const role = roleName(who.toLowerCase()) ?? who;
-  const source = match[2]!.split(/[;:"«]| — /)[0]!.trim().replace(/,$/, '');
-  const short = source.split(',')[0]!.trim();
-  return { owner: false, role, source: short.length > 60 ? `${short.slice(0, 59)}…` : short };
+  const who = match[1]!.toLowerCase() === 'dono' ? 'dono' : (roleName(match[1]!.toLowerCase()) ?? match[1]!);
+  const source = match[2]!.split(/[;:"«]| — /)[0]!.split(',')[0]!.trim();
+  const short = source.length > 60 ? `${source.slice(0, 59)}…` : source;
+  return [who, short].filter(Boolean).join(', ');
 }
 
 /** The person a Slack letter answers: the person of a DM, «Fulano: assunto», "thread do Fulano". */
@@ -261,12 +255,10 @@ export function whoAsked(task: LedgerTask, places: PlaceInfoOf | undefined, owne
   if (task.slack) return slackPerson(task);
   if (isAgentBotRecord(task)) return 'ninguém: post do bot do agente';
   const creatorRole = creator?.kind === 'lugar' ? (creator.roleId ?? places?.(task.projectPath, creator.placeId)?.roleId) : undefined;
-  const quoted = quotedSource(task.request, ownerName);
-  if (quoted?.owner) return ownerName;
-  if (creatorRole?.split('-')[0] === 'curador') return quoted ? `sinal do Curador: ${[quoted.role, quoted.source].filter(Boolean).join(', ')}` : 'sinal do Curador';
-  if (quoted) return quoted.source ? `sinal do ${quoted.role}: ${quoted.source}` : `sinal do ${quoted.role}`;
-  // The Líder (of a board or the único) registers what the owner asks.
-  if (isLeaderRole(creatorRole) || (creator?.kind === 'lugar' && creator.placeId === LEADER_OF_ALL)) return ownerName;
+  if (creatorRole?.split('-')[0] === 'curador') {
+    const source = signalSource(task.request);
+    return source ? `sinal do Curador: ${source}` : 'sinal do Curador';
+  }
   return 'não registrado';
 }
 

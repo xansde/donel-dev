@@ -269,7 +269,8 @@ export function lastDecision(task: LedgerTask): LedgerEvent | undefined {
 //   doer      → the `entregue` event "⟦feito por <placeId>⟧ <note>"
 //   replaces  → the new task's `criada` event "⟦substitui <id>⟧" (the old one is cancelled "substituída pela <id>")
 //   asked by  → the new task's `criada` event "⟦pedido por <who>⟧" (07/11: the person, not the role that typed it);
-//               with a replaced task, both share the mark: "⟦substitui <id> · pedido por <who>⟧"
+//               with a replaced task, a second mark after the first: "⟦substitui <id>⟧ ⟦pedido por <who>⟧", so the
+//               alfa/beta before it (which read the first mark whole) still see the "substitui"
 // A text the sessions or the owner write never starts with the mark (`startsWithMark`), so a mark is never forged.
 
 const MARK_OPEN = '⟦';
@@ -288,7 +289,7 @@ function markOf(text: string | undefined): { tag: string; rest: string } | null 
 function birthTagsOf(replaces: string | undefined, requestedBy: string | undefined): { text?: string } {
   const asked = requestedBy ? cleanAskedBy(requestedBy) : '';
   const tags = [...(replaces ? [`substitui ${replaces}`] : []), ...(asked ? [`${ASKED_BY}${asked}`] : [])];
-  return tags.length ? { text: withMark(tags.join(TAG_SEPARATOR), '') } : {};
+  return tags.length ? { text: tags.reduceRight((rest, tag) => withMark(tag, rest), '') } : {};
 }
 
 export function startsWithMark(text: string | undefined): boolean {
@@ -297,8 +298,8 @@ export function startsWithMark(text: string | undefined): boolean {
 
 /** An event's text without its mark (what a person wrote). */
 export function eventNote(event: LedgerEvent): string | undefined {
-  const mark = markOf(event.text);
-  const note = mark ? mark.rest : event.text;
+  let note = event.text;
+  for (let mark = markOf(note); mark; mark = markOf(note)) note = mark.rest;
   return note?.trim() ? note : undefined;
 }
 
@@ -310,11 +311,16 @@ export interface LedgerTransfer {
   readonly reason: string;
 }
 
-/** The tags of the birth mark (the first `criada` event), split on ` · `. */
+/** The tags of the birth marks (the first `criada` event): each mark, also split on ` · ` (the first 07/11 form). */
 function birthTags(task: LedgerTask): string[] {
   const first = task.events[0];
-  const mark = first?.kind === 'criada' ? markOf(first.text) : null;
-  return mark ? mark.tag.split(TAG_SEPARATOR) : [];
+  const tags: string[] = [];
+  let text = first?.kind === 'criada' ? first.text : undefined;
+  for (let mark = markOf(text); mark; mark = markOf(text)) {
+    tags.push(...mark.tag.split(TAG_SEPARATOR));
+    text = mark.rest;
+  }
+  return tags;
 }
 
 const TAG_SEPARATOR = ' · ';

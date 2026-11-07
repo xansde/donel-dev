@@ -104,7 +104,7 @@ export const LEDGER_TOOLS = [
         pedidoDoDono: { type: 'string', description: 'Quando a tarefa nasce de um "◆ Pedido do dono pelo Oráculo", o id que veio nele (pd-…): o dono vê no celular que o pedido virou esta tarefa.' },
         quemPediu: {
           type: 'string',
-          description: `A PESSOA de quem veio o pedido, nunca um papel: "dono" (o dono do Donel), alguém do Slack pelo nome ("Gabriel Horst (Slack)") ou a fonte de um sinal ("sinal do Curador: PR #219"). Até ${MAX_ASKED_BY_CHARS} caracteres. É o que o registro mostra em "quem pediu".`,
+          description: `A PESSOA de quem veio o pedido, nunca um papel: "dono" (o dono do Donel), alguém do Slack pelo nome ("Gabriel Horst (Slack)") ou a fonte de um sinal ("sinal do Curador: PR #219"). Até ${MAX_ASKED_BY_CHARS} caracteres. É o que o registro mostra em "quem pediu"; sem ele, a coluna fica "não registrado" (nada é deduzido de quem criou).`,
         },
       },
       required: ['pedido', 'criterio', 'prazo', 'risco'],
@@ -420,6 +420,7 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       const substitui = text(args.substitui, 'substitui', 120, false);
       const quemPediu = text(args.quemPediu, 'quemPediu', MAX_ASKED_BY_CHARS, false);
       for (const value of [pedido, criterio, prazo, dono, titulo, substitui, quemPediu]) if (typeof value === 'object') return fail(value.error);
+      if (typeof quemPediu === 'string' && /place:/i.test(quemPediu)) return fail('"quemPediu" é a pessoa que pediu ("dono", "Fulano (Slack)"), nunca o id de um lugar.');
       if (args.risco !== 'baixo' && args.risco !== 'alto') return fail('"risco" tem de ser baixo ou alto.');
       if (args.pedidoDoDono !== undefined && (typeof args.pedidoDoDono !== 'string' || !/^pd-[0-9a-f]{12}$/.test(args.pedidoDoDono))) return fail('"pedidoDoDono" é o id que veio no pedido do dono (pd-…).');
       const fromOwner = typeof args.pedidoDoDono === 'string' ? { pedidoDoDono: args.pedidoDoDono } : {};

@@ -213,7 +213,8 @@ describe('espelho do Oráculo', () => {
       estado: 'aceita',
       // The first week's daily sample: a Revisor's accept goes to the owner too.
       esperando_dono: true,
-      quem_pediu: 'Alexandre',
+      // Created by a Líder who did not say who asked: no guess (owner, 07/11).
+      quem_pediu: 'não registrado',
       pedido: 'Quero ver as cadeiras do Mindscape',
       quem_faz_agora: 'Dev · Mindscape de cadeiras',
       quem_criou: 'Líder · leva do dia',
@@ -251,7 +252,10 @@ describe('espelho do Oráculo', () => {
     ['the creator said who (the new field)', { events: [{ kind: 'criada', at: T0, by: by('place:dev', 'dev'), text: '⟦pedido por Marta (Slack)⟧' }] }, 'Marta (Slack)'],
     ['the creator said it was the owner', { events: [{ kind: 'criada', at: T0, by: by('place:dev', 'dev'), text: '⟦substitui t-0 · pedido por dono⟧' }] }, 'Alexandre'],
     ['the owner created it', { events: [{ kind: 'criada', at: T0, by: { kind: 'dono' } }] }, 'Alexandre'],
-    ['the Líder registered it', { events: [{ kind: 'criada', at: T0, by: by('place:lider', 'lider') }] }, 'Alexandre'],
+    // 07/11, owner: "quem pediu" is the person, declared; a role never stands for one and nothing is deduced.
+    ['the Líder registered it without saying who', { events: [{ kind: 'criada', at: T0, by: by('place:lider', 'lider') }] }, 'não registrado'],
+    ['the Líder único registered it without saying who', { events: [{ kind: 'criada', at: T0, by: by(LEADER_OF_ALL) }] }, 'não registrado'],
+    ['the Líder said it was the owner', { events: [{ kind: 'criada', at: T0, by: by('place:lider', 'lider'), text: '⟦pedido por dono⟧' }] }, 'Alexandre'],
     [
       'a Slack letter names the person it answers',
       {
@@ -277,8 +281,13 @@ describe('espelho do Oráculo', () => {
       },
       'Filipe (Slack)',
     ],
-    ['a quote of the owner in the request', { request: '"Preciso disso amanhã" (dono, 05/11; continua t-57d5a139)', events: [{ kind: 'criada', at: T0, by: by('place:pesq', 'pesquisa') }] }, 'Alexandre'],
-    ['a quote of the Revisor', { request: '"Sugestão: recusar também" (Revisor, PR #219, Ressalva 1)', events: [{ kind: 'criada', at: T0, by: by('place:pesq', 'pesquisa') }] }, 'sinal do Revisor: PR #219'],
+    ['a quote of the owner in the request', { request: '"Preciso disso amanhã" (dono, 05/11; continua t-57d5a139)', events: [{ kind: 'criada', at: T0, by: by('place:pesq', 'pesquisa') }] }, 'não registrado'],
+    ['a rule of the owner quoted mid-request', { request: 'Corrigir o build (dono, 05/11: verify inclui build) que quebrou no CI', events: [{ kind: 'criada', at: T0, by: by('place:dev', 'dev') }] }, 'não registrado'],
+    ['a quote of the Revisor', { request: '"Sugestão: recusar também" (Revisor, PR #219, Ressalva 1)', events: [{ kind: 'criada', at: T0, by: by('place:pesq', 'pesquisa') }] }, 'não registrado'],
+    ['a place quoted by its role', { request: 'Ajustar o card (Dev · Mindscape de cadeiras) antes do merge', events: [{ kind: 'criada', at: T0, by: by('place:dev', 'dev') }] }, 'não registrado'],
+    ['a role quoted with a topic', { request: 'Comparar opções (Pesquisa sobre ledger v5)', events: [{ kind: 'criada', at: T0, by: by('place:lider', 'lider') }] }, 'não registrado'],
+    ['a Curador signal quoting the owner is not the owner', { request: '"Sinal" (dono, 05/11: verify inclui build)', events: [{ kind: 'criada', at: T0, by: by('place:curador') }] }, 'sinal do Curador: dono, 05/11'],
+    ['a Curador signal quoting a place by its role', { request: '"Sinal" (Dev · Mindscape de cadeiras)', events: [{ kind: 'criada', at: T0, by: by('place:curador') }] }, 'sinal do Curador: Dev, Mindscape de cadeiras'],
     ['a Curador signal with its source', { request: '"É a peça mais frágil." (Líder, como-trabalhar-05-11.html §2)', events: [{ kind: 'criada', at: T0, by: by('place:curador') }] }, 'sinal do Curador: Líder, como-trabalhar-05-11.html §2'],
     ['nobody said', { events: [{ kind: 'criada', at: T0, by: by('place:dev', 'dev') }] }, 'não registrado'],
   ])('who asked: %s', (_name, over, expected) => {

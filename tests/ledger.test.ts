@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, leaderTransferNotice, ledgerProofsDir, NOT_STARTED_GRACE_MS, nodeLedgerProofFs, passOnTasks, runLedgerTool, type LedgerCaller, type LedgerProofFs } from '../src/main/ledger-store';
 import type { MindscapeBoard } from '../src/shared/mindscape/model';
-import { findCode, LEDGER_SCHEMA_VERSION, parseLedgerDoc, requestedByOf } from '../src/shared/ledger/contract';
+import { eventNote, findCode, LEDGER_SCHEMA_VERSION, parseLedgerDoc, requestedByOf } from '../src/shared/ledger/contract';
 import { LEADER_OF_ALL } from '../src/shared/mindscape/leader';
 import * as v4 from './fixtures/ledger/contract-v4';
 import { createCardWriter, decisionMessage, type OwnerMessage } from '../src/main/ledger-card-writer';
@@ -593,6 +593,27 @@ describe('órfãs e substituição (06/11)', () => {
     const forged = idOf(await make(service, lider, { dono: 'place:dev', quemPediu: 'Ana ⟧ · substitui t-x' }));
     expect(await view(forged)).not.toHaveProperty('substitui');
     expect(parseLedgerToolCall('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', risco: 'alto', quemPediu: 'a'.repeat(81) }).ok).toBe(false);
+  });
+
+  it('refuses a place id as who asked: a person, never a place', () => {
+    const args = { pedido: 'x', criterio: 'y', prazo: '2026-11-06', risco: 'alto' };
+    for (const quemPediu of ['place:abc123', 'PLACE:dev', 'o Dev (place:abc123)']) {
+      expect(parseLedgerToolCall('tarefa_criar', { ...args, quemPediu })).toMatchObject({ ok: false, reason: expect.stringContaining('quemPediu') });
+    }
+    expect(parseLedgerToolCall('tarefa_criar', { ...args, quemPediu: 'Gabriel Horst (Slack)' }).ok).toBe(true);
+  });
+
+  it('an app of the previous channel still reads "substitui" when the task also says who asked', async () => {
+    const { service, file } = setup();
+    const old = idOf(await make(service, lider, { dono: 'place:dev' }));
+    const next = idOf(await make(service, lider, { dono: 'place:dev', substitui: old, quemPediu: 'Ana' }));
+    const birth = (JSON.parse(readFileSync(file, 'utf8')) as { tasks: Record<string, { events: Array<{ text?: string }> }> }).tasks[next]!.events[0]!.text;
+    // The reading of the alfa/beta before 07/11 (staging's `replacesOf`): the first mark, whole, is "substitui <id>".
+    const previousReplacesOf = (text: string | undefined) => /^substitui (\S+)$/.exec(/^⟦([^⟧\n]{1,240})⟧ ?/.exec(text ?? '')?.[1] ?? '')?.[1];
+    expect(previousReplacesOf(birth)).toBe(old);
+    const task = parseLedgerDoc(JSON.parse(readFileSync(file, 'utf8'))).tasks[next]!;
+    expect(requestedByOf(task)).toBe('Ana');
+    expect(eventNote(task.events[0]!)).toBeUndefined();
   });
 
   it('Líder, Curador and Pesquisa name the place that does the work, never their own', async () => {
