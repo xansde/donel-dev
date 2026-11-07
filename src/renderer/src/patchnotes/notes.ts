@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-07',
     items: [
       {
+        title: 'Os dois rigs da factory no quadro da homologação',
+        text: 'No quadro da homologação, a vista Cadeiras desenha a factory como ela mesma se descreve: os dois rigs lado a lado, cada um com os seus pods e as suas cadeiras, e, no meio, as cadeiras que ficam fora das duas cadeias e "Você", que só recebe. Cada seta diz o que é (delega, verifica, escala a você, rotina acorda) na legenda e no rótulo, e nenhuma sai de você. Cadeira de código e fila têm o tipo escrito no círculo, além da borda. O rig que ainda não rodou aparece vazio, dizendo isso. Para mudar o desenho, peça à factory: o Donel só espelha. Sem o arquivo da factory, o quadro volta às cadeiras de sempre, com um aviso dizendo por quê. Os outros quadros não mudam.',
+      },
+      {
         title: 'Os números da factory no Mindscape',
         text: 'No quadro da homologação, na vista Cadeiras, o botão "Números da factory" abre um painel com os números que a factory grava na VPS dela: um cartão por número, com o valor exatamente como ela escreveu, a pergunta que ele responde e de onde veio (medido, estimado ou sem fonte). Os números que têm de ficar em zero ou subir levam a marca trava, e os que não têm meta dizem "só mostrado". No topo aparece a hora em que foram gerados ("atualizado às" ou, depois de duas horas, "parado desde"); se a VPS não responde ou o arquivo some, "sem sinal desde", mantendo a última leitura. O painel só lê: nada nele muda a factory. Liga com a chave "homologacao" na configuração; sem ela, nada aparece e nada é lido.',
       },

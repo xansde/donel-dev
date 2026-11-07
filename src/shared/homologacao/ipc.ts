@@ -2,6 +2,7 @@
 // anything on the factory's place.
 
 import type { FactoryMetricsParse } from './factoryMetrics';
+import type { RigsParse } from './rigs';
 import type { RemoteFileState } from './remoteFile';
 
 export const HOMOLOGACAO_CHANNELS = {
@@ -11,7 +12,22 @@ export const HOMOLOGACAO_CHANNELS = {
   metricsRefresh: 'homologacao:metricsRefresh',
   /** main -> renderer, after every read. */
   metricsChanged: 'homologacao:metricsChanged',
+  /** invoke -> `FactoryRigsView | null` (null = the `homologacao` key, or its `rigs`, is not in the config). */
+  rigsGet: 'homologacao:rigsGet',
+  /** invoke -> reads `rigs.json` now (unless a read is running) and resolves with the view. */
+  rigsRefresh: 'homologacao:rigsRefresh',
+  /** main -> renderer, after every read. */
+  rigsChanged: 'homologacao:rigsChanged',
 } as const;
+
+/** Fatia 2 — the shape of the factory's rigs, as the factory describes itself in `rigs.json` (decision D1). */
+export interface FactoryRigsView {
+  /** The board whose "Cadeiras" lens draws the rigs (`homologacao.quadro`). */
+  readonly board: string;
+  readonly place: string;
+  readonly placeFound: boolean;
+  readonly file: RemoteFileState<RigsParse>;
+}
 
 export interface FactoryMetricsView {
   /** The board where the panel shows up (`homologacao.quadro`). */
@@ -27,4 +43,7 @@ export interface DonelHomologacaoApi {
   metricsGet(): Promise<FactoryMetricsView | null>;
   metricsRefresh(): Promise<FactoryMetricsView | null>;
   onMetricsChanged(listener: (view: FactoryMetricsView | null) => void): () => void;
+  rigsGet(): Promise<FactoryRigsView | null>;
+  rigsRefresh(): Promise<FactoryRigsView | null>;
+  onRigsChanged(listener: (view: FactoryRigsView | null) => void): () => void;
 }

@@ -1,0 +1,151 @@
+/* Mindscape de homologação — the factory's rigs in the "Cadeiras" lens (prototype 1-topologia). */
+
+.rigFrame {
+  border-color: var(--border);
+}
+
+.rigHead {
+  position: absolute;
+  left: 16px;
+  top: 12px;
+  right: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rigTitle {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.rigMission {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.rigEmpty {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 110px;
+  margin: 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+
+
+
+
+.middle {
+  position: absolute;
+  pointer-events: none;
+}
+
+.middleLabel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 12px;
+  text-align: center;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.legend {
+  position: absolute;
+  display: flex;
+  gap: 18px;
+  align-items: center;
+  padding: 6px 12px;
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  font-size: 12px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.legendItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.arrowLabel {
+  font-size: 12px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--bg-app);
+  stroke-width: 4px;
+}
+
+/* The kind of chair is written in the node; the border only reinforces it. Code and queue are rounded squares.
+   Doubled classes: they must win over the node's circle and over the health's dashed "sem sinal". */
+.k-agente.k-agente {
+  border-style: solid;
+}
+
+.k-codigo.k-codigo,
+.k-fila.k-fila {
+  border-radius: 18px;
+}
+
+.k-codigo.k-codigo {
+  border-style: dashed;
+}
+
+.k-fila.k-fila {
+  border-style: dotted;
+}
+
+.rigNodeName {
+  max-width: 104px;
+  white-space: normal;
+  text-align: center;
+  font-size: 15px;
+}
+
+.kindWord {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.nodeLine {
+  position: absolute;
+  text-align: center;
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--text-primary);
+  pointer-events: none;
+}
+
+.owner {
+  position: absolute;
+  border-radius: 50%;
+  border: 2.5px solid var(--state-waiting);
+  background: var(--bg-panel);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-primary);
+}
+
+.notice {
+  padding: 6px 16px;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-raised);
+  border-bottom: var(--hairline);
+}
