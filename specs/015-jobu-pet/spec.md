@@ -178,16 +178,16 @@ automática; nas duas, conferir o espelho e o balão com o rótulo novo.
 ### User Story 5 — Conviver com ele (Priority: P2)
 
 O Jobu nasce sentado na borda da barra de tarefas, pode ir para onde o dono
-quiser, cala quando pedido, sai do caminho em tela cheia e nunca rouba um
-clique que não é dele.
+quiser, cala quando pedido, só some quando o dono manda (Esconder) e nunca
+rouba um clique que não é dele. (Sair do caminho em tela cheia foi revogado em 07/11 pelo dono ("quero o jobu sem essa restrição burra", t-56abde57).)
 
 **Why this priority**: Um pet que atrapalha é desligado no primeiro dia — o
 critério de sucesso da semana depende disto.
 
 **Independent Test**: Arrastar o Jobu para o outro monitor, reiniciar o
 Donel e conferir a posição; clicar no vazio ao lado dele e conferir que o
-clique chegou à janela de baixo; abrir um vídeo em tela cheia e conferir que
-ele some; silenciar e provocar um evento.
+clique chegou à janela de baixo; maximizar o Donel no monitor sem barra de
+tarefas e conferir que o Jobu continua lá; silenciar e provocar um evento.
 
 **Acceptance Scenarios**:
 
@@ -201,8 +201,10 @@ ele some; silenciar e provocar um evento.
    abre, **Then** ele volta à posição padrão.
 4. **Given** o dono clica no espaço transparente ao lado do desenho, **When**
    há uma janela embaixo, **Then** o clique chega a ela.
-5. **Given** um app em tela cheia na frente, **When** ele ocupa a tela,
-   **Then** o Jobu some, e volta quando a tela cheia acaba.
+5. **Given** o Donel maximizado num monitor sem barra de tarefas (ou outro
+   app em tela cheia), **When** ele ocupa a tela, **Then** o Jobu continua
+   visível; ele só some por Esconder. (O cenário antigo, "o Jobu some em tela
+   cheia", foi revogado em 07/11 pelo dono ("quero o jobu sem essa restrição burra", t-56abde57).)
 6. **Given** o menu do botão direito, **When** o dono escolhe Silenciar por 1
    hora, **Then** nenhum balão nem aviso do Windows aparece nesse tempo, o
    rosto e o selo seguem mudando, e o menu passa a oferecer Retomar avisos.
@@ -296,8 +298,11 @@ com a arte de piscar presente, conferir a piscada em repouso.
   padrão.
 - **FR-006**: Só o desenho do Jobu, o balão e a lista MUST receber clique; o
   espaço transparente em volta MUST deixar o clique passar à janela de baixo.
-- **FR-007**: O Jobu MUST sumir enquanto um app estiver em tela cheia e voltar
-  quando ela acabar.
+- **FR-007**: ~~O Jobu MUST sumir enquanto um app estiver em tela cheia e
+  voltar quando ela acabar.~~ **Revogado em 07/11** pelo dono ("quero o jobu
+  sem essa restrição burra", t-56abde57): o Windows conta o Donel maximizado
+  num monitor sem barra de tarefas como tela cheia, e o Jobu sumia. Agora o
+  Jobu MUST continuar visível em qualquer monitor e só sumir por Esconder.
 - **FR-008**: O Jobu MUST nascer com cerca de 140 px de altura em escala 100%
   (tamanho Médio, ajustável pelo FR-033) e acompanhar a escala de exibição do
   Windows.
@@ -427,7 +432,7 @@ com a arte de piscar presente, conferir a piscada em repouso.
 - **SC-004**: **Zero** avisos duplicados: com o Jobu visível, nenhum aviso do
   Windows para os eventos da bateria; com ele escondido, todos voltam.
 - **SC-005**: **Zero** cliques interceptados fora do desenho, do balão e da
-  lista, e **zero** aparições sobre app em tela cheia na bateria.
+  lista. (A parte "zero aparições sobre app em tela cheia" foi revogada em 07/11 pelo dono ("quero o jobu sem essa restrição burra", t-56abde57).)
 - **SC-006**: **Nenhum** balão da bateria contém trecho de conversa, comando
   ou caminho de arquivo.
 - **SC-007**: Ao fim de uma semana de uso diário no alfa, o dono não desligou

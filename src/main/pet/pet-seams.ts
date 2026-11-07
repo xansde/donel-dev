@@ -23,14 +23,13 @@ export interface PetSeams {
 /**
  * What the ghost mode leaves in `globalThis.__donelPetSmoke` of the main process for a test to use through
  * `electronApp.evaluate`: the right-click menu the owner would have seen and the way to choose from it (the very
- * callback a click on an item runs), and the call the full-screen watcher makes when an app takes the screen.
+ * callback a click on an item runs).
  */
 export interface PetSmokeHooks {
   menu?: {
     readonly entries: readonly import('../../shared/pet/menu').PetMenuEntry[];
     readonly choose: (action: import('../../shared/pet/menu').PetMenuAction) => void;
   } | null;
-  setFullscreen?: (active: boolean) => void;
 }
 
 /** The slot of the hooks in the global object of the main process. */
