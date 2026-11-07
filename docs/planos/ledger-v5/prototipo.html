@@ -1,0 +1,322 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Oráculo v5 · protótipo</title>
+<style>
+:root{
+  --bg-app:#0e1116;--bg-panel:#151a21;--bg-raised:#1c232c;--bg-hover:#222a35;--border:#28303b;
+  --text:#d7dde5;--muted:#828d9c;--faint:#5e6873;
+  --accent:#4c9cf0;--donel:#e8b44c;--ok:#3dce8f;--warn:#e8b44c;--bad:#f0684c;--violet:#b678f0;--teal:#5fb0a8;
+  --radius:8px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg-app);color:var(--text);font:14px/1.45 "Segoe UI",system-ui,-apple-system,Roboto,sans-serif}
+button{font:inherit;color:inherit;cursor:pointer}
+.topbar{height:44px;display:flex;align-items:center;gap:16px;padding:0 20px;background:var(--bg-panel);border-bottom:1px solid var(--border)}
+.brand{font-weight:600;letter-spacing:.2px}.brand b{color:var(--donel)}
+.switch{margin-left:auto;display:flex;gap:4px;background:var(--bg-app);border:1px solid var(--border);border-radius:999px;padding:3px}
+.switch button{border:0;background:transparent;padding:4px 12px;border-radius:999px;color:var(--muted);font-size:12.5px}
+.switch button.on{background:var(--bg-raised);color:var(--text)}
+.proto{font-size:11px;color:var(--faint);text-transform:uppercase;letter-spacing:.8px}
+main{padding:18px 22px 24px}
+h1{font-size:20px;margin:0}
+h2{font-size:15px;margin:0}
+.sub{color:var(--muted);font-size:12.5px}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:2px 9px;border-radius:999px;font-size:12px;white-space:nowrap;border:1px solid transparent}
+.pill::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.s-aberta{color:var(--muted);background:#1f262f}
+.s-exec{color:var(--accent);background:#14263b}
+.s-bloq{color:var(--violet);background:#251a33}
+.s-voce{color:var(--donel);background:#2e2614}
+.s-entregue{color:var(--teal);background:#132b29}
+.s-ok{color:var(--ok);background:#12291f}
+.s-cancel{color:var(--faint);background:#1a1f25}
+.s-bad{color:var(--bad);background:#33181a}
+.tag{font-size:11px;padding:1px 7px;border-radius:4px;background:var(--bg-raised);color:var(--muted);border:1px solid var(--border);white-space:nowrap}
+.tag.alto{color:var(--bad);border-color:#5a2a26}
+.ver{color:var(--ok)} .dec{color:var(--warn)}
+.btn{border:1px solid var(--border);background:var(--bg-raised);border-radius:6px;padding:5px 11px;font-size:12.5px}
+.btn:hover{background:var(--bg-hover)}
+.btn.pri{background:#1d3a5c;border-color:#2c5684;color:#e6f0fb}
+.btn.ghost{background:transparent}
+.card{background:var(--bg-panel);border:1px solid var(--border);border-radius:var(--radius)}
+.who{color:var(--muted);font-size:12.5px}.who b{color:var(--text);font-weight:500}
+.missing{color:var(--bad)}
+.code{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--faint)}
+.row{display:flex;align-items:center;gap:10px}
+.grow{flex:1;min-width:0}
+.ellipsis{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.view{display:none}.view.on{display:block}
+
+/* ---------- A: caixa primeiro ---------- */
+.a-head{display:flex;align-items:flex-end;gap:16px;margin-bottom:14px}
+.a-count{font-size:44px;font-weight:600;line-height:1;color:var(--donel)}
+.a-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.group{padding:12px 14px}
+.group h3{margin:0 0 8px;font-size:13px;display:flex;align-items:center;gap:8px}
+.group h3 .n{color:var(--muted);font-weight:400}
+.item{padding:10px 0;border-top:1px solid var(--border)}
+.item:first-of-type{border-top:0}
+.item .t{font-weight:500}
+.item .acts{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}
+.a-all{margin-top:16px;padding:12px 14px;display:flex;align-items:center;gap:18px}
+.a-all .stat{display:flex;flex-direction:column}.a-all .stat b{font-size:18px}
+
+/* ---------- B: tabela ---------- */
+.b-wrap{display:grid;grid-template-columns:minmax(0,1fr) 400px;gap:16px}
+.b-inbox{display:flex;gap:8px;align-items:center;padding:10px 12px;margin-bottom:12px;border-color:#4d3f1d;background:#19160f}
+.b-inbox .lbl{color:var(--donel);font-weight:600;margin-right:6px}
+.chip{border:1px solid var(--border);background:var(--bg-raised);border-radius:999px;padding:3px 10px;font-size:12px}
+.chip b{color:var(--donel);margin-left:4px}
+.filters{display:flex;gap:6px;margin:0 0 10px;align-items:center}
+.filters .chip.on{border-color:var(--accent);color:#e6f0fb;background:#14263b}
+.search{margin-left:auto;background:var(--bg-panel);border:1px solid var(--border);border-radius:6px;padding:5px 10px;width:300px;white-space:nowrap;color:var(--muted);font-size:12.5px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-weight:500;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.4px;padding:8px 7px;border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:8px 7px;white-space:nowrap;border-bottom:1px solid #1e252e;vertical-align:middle}
+tr.sel td{background:#162231}
+tr:hover td{background:#171e27}
+tr.child td.titlecell{padding-left:22px}
+.tree{color:var(--faint);margin-right:6px}
+.caret{color:var(--muted);margin-right:6px}
+.drawer{padding:16px;position:sticky;top:12px;align-self:start}
+.drawer .lbl{color:var(--muted);font-size:11.5px;text-transform:uppercase;letter-spacing:.5px;margin:14px 0 6px}
+.roles{display:grid;grid-template-columns:110px 1fr;gap:5px 10px;font-size:13px}
+.roles dt{color:var(--muted)}.roles dd{margin:0}
+.quote{border-left:3px solid var(--donel);padding:6px 10px;background:var(--bg-raised);border-radius:0 6px 6px 0;font-style:italic}
+.tl{list-style:none;margin:0;padding:0;font-size:12.5px}
+.tl li{display:grid;grid-template-columns:52px 1fr;gap:8px;padding:6px 0;border-bottom:1px dashed #232b35}
+.tl .h{color:var(--faint);font-family:ui-monospace,Consolas,monospace;font-size:11.5px}
+.proof{display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px;font-size:12.5px;background:var(--bg-raised)}
+.chain{margin-top:10px;font-size:11.5px;color:var(--faint)}
+
+/* ---------- C: pedidos ---------- */
+.c-wrap{display:grid;grid-template-columns:1fr 420px;gap:16px}
+.c-list{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-content:start}
+.ask{padding:14px}
+.ask .q{font-size:15px;font-style:italic;margin:6px 0 10px}
+.bar{height:6px;background:var(--bg-raised);border-radius:3px;overflow:hidden;margin:8px 0 10px}
+.bar i{display:block;height:100%;background:var(--ok)}
+.kids{list-style:none;margin:0;padding:0}
+.kids li{display:flex;align-items:center;gap:8px;padding:5px 0;border-top:1px solid #1e252e;font-size:13px}
+.c-side{padding:14px;align-self:start}
+.c-side .item .t{font-size:13px}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <span class="brand">◆ Oráculo <b>Harrow</b></span>
+  <span class="sub">Quadro Donel Dev · 97 tarefas</span>
+  <span class="proto">protótipo v5 · dados de exemplo no formato de 07/11</span>
+  <div class="switch" id="switch">
+    <button data-v="a">A · Caixa primeiro</button>
+    <button data-v="b">B · Tabela</button>
+    <button data-v="c">C · Pedidos seus</button>
+  </div>
+</div>
+<main>
+  <section class="view" id="view-a"></section>
+  <section class="view" id="view-b"></section>
+  <section class="view" id="view-c"></section>
+</main>
+
+<script>
+// ---------------------------------------------------------------- data (formato v5)
+const ST = {
+  aberta:['aberta','s-aberta'], exec:['em execução','s-exec'], bloq:['bloqueada','s-bloq'], voce:['esperando você','s-voce'],
+  entregue:['entregue','s-entregue'], ok:['concluída','s-ok'], cancel:['cancelada','s-cancel'], dup:['duplicada','s-cancel'],
+  aprovada:['aprovada · sem envio','s-voce'], semconf:['sem confirmação','s-bad'], falhou:['falhou','s-bad'], enviada:['enviada','s-ok'],
+};
+const T = [
+  {c:'H-201',t:'Ledger em padrão top de linha',st:'exec',pai:null,ped:'Alexandre · chat',reg:'Líder · Donel Dev',resp:'Líder · Donel Dev',exe:'—',dec:'você',risco:'alto',prazo:'08/11',ps:'no prazo',rod:0,prova:'',kids:6,done:4,
+   q:'Primeiro de tudo, o ledger está uma bosta. Quero ele em padrão top de linha, manda as pesquisas todas.'},
+  {c:'H-202',t:'Pesquisa: diagnóstico do nosso ledger',st:'ok',pai:'H-201',ped:'Alexandre · chat',reg:'Líder · Donel Dev',resp:'Pesquisa · Donel Dev',exe:'Pesquisa · diagnóstico',dec:'Revisor',risco:'baixo',prazo:'08/11',ps:'cumprido',rod:1,prova:'ver'},
+  {c:'H-203',t:'Pesquisa: orquestração multiagente',st:'ok',pai:'H-201',ped:'Alexandre · chat',reg:'Líder · Donel Dev',resp:'Pesquisa · Donel Dev',exe:'Pesquisa · orquestração',dec:'Revisor',risco:'baixo',prazo:'08/11',ps:'cumprido',rod:1,prova:'ver'},
+  {c:'H-204',t:'Pesquisa: registro e prova',st:'ok',pai:'H-201',ped:'Alexandre · chat',reg:'Líder · Donel Dev',resp:'Pesquisa · Donel Dev',exe:'Pesquisa · registro e prova',dec:'Revisor',risco:'baixo',prazo:'08/11',ps:'cumprido',rod:1,prova:'ver'},
+  {c:'H-205',t:'Pesquisa: ferramentas de trabalho',st:'ok',pai:'H-201',ped:'Alexandre · chat',reg:'Líder · Donel Dev',resp:'Pesquisa · Donel Dev',exe:'Pesquisa · ferramentas',dec:'Revisor',risco:'baixo',prazo:'08/11',ps:'cumprido',rod:1,prova:'ver'},
+  {c:'H-206',t:'Síntese: proposta do Ledger v5',st:'entregue',pai:'H-201',ped:'Alexandre · chat',reg:'Líder · Donel Dev',resp:'Dev · Donel Dev',exe:'Dev · síntese do ledger top',dec:'você',risco:'alto',prazo:'08/11',ps:'no prazo',rod:1,prova:'ver'},
+  {c:'H-207',t:'Supabase legível: quem pediu de verdade',st:'exec',pai:'H-201',ped:'Alexandre · chat',reg:'Líder · Donel Dev',resp:'Dev · Donel Dev',exe:'Dev · ledger legível no Supabase',dec:'Revisor',risco:'baixo',prazo:'08/11',ps:'no prazo',rod:0,prova:'',
+   q:'Tem o "Quem pediu" como Dev, que não é NADA esclarecedor.'},
+  {c:'H-188',t:'Carta: status do Retiro para #produto',st:'aprovada',tipo:'carta',pai:null,ped:'Alexandre · chat',reg:'Dev · status do Retiro',resp:'Dev · Donel Dev',exe:'— (a sessão fechou)',dec:'você',risco:'alto',prazo:'07/11',ps:'em risco',rod:0,prova:'',
+   idade:'aprovada há 2 h'},
+  {c:'H-176',t:'Carta: item 6 do WhatsApp para Marta',st:'semconf',tipo:'carta',pai:null,ped:'Marta · Slack DM',reg:'Dev · WhatsApp',resp:'Dev · Donel Dev',exe:'Dev · WhatsApp',dec:'você',risco:'alto',prazo:'06/11',ps:'vencido',rod:0,prova:'',idade:'saiu há 1 dia, sem recibo'},
+  {c:'H-209',t:'Carta: resumo da semana para Bill',st:'voce',tipo:'carta',pai:null,ped:'Bill · Slack #liderancas',reg:'Líder · Donel Dev',resp:'Líder · Donel Dev',exe:'Líder · Donel Dev',dec:'você',risco:'alto',prazo:'08/11',ps:'no prazo',rod:0,prova:'',idade:'há 25 min'},
+  {c:'H-171',t:'Oráculo na VPS: migrar o ledger do PC',st:'entregue',pai:null,ped:'Alexandre · chat',reg:'Líder · Donel Dev',resp:'Dev · Donel Dev',exe:'Dev · VPS fatia 2',dec:'você',risco:'alto',prazo:'08/11',ps:'no prazo',rod:1,prova:'ver',idade:'há 6 h'},
+  {c:'H-165',t:'Faxina das órfãs: 14 cancelamentos',st:'voce',pai:null,ped:'Alexandre · chat',reg:'Curador · Donel Dev',resp:'Curador · Donel Dev',exe:'Curador · ronda',dec:'você',risco:'baixo',prazo:'07/11',ps:'pausado',rod:0,prova:'',
+   pergunta:'Posso cancelar estas 14 com os motivos da lista? Todas foram feitas por PR ou ficaram obsoletas.',idade:'há 14 h'},
+  {c:'H-158',t:'sessao_enviar não pode dar timeout falso',st:'voce',travou:true,pai:null,ped:'Sinal do Líder: chat-diagnostics.log',reg:'Líder · Donel Dev',resp:'Dev · Donel Dev',exe:'Dev · primeira mensagem na VPS',dec:'Revisor',risco:'baixo',prazo:'09/11',ps:'no prazo',rod:3,prova:'dec',idade:'3ª rodada recusada há 1 h'},
+  {c:'H-149',t:'Aviso "não começou" falso',st:'exec',pai:null,ped:'Sinal do Líder: transcript 4c8c1eb4',reg:'Líder · Donel Dev',resp:'Dev · Donel Dev',exe:'Dev · primeira mensagem na VPS',dec:'Revisor',risco:'baixo',prazo:'06/11',ps:'vencido',rod:0,prova:'',idade:'venceu ontem'},
+  {c:'H-150',t:'Sessão na VPS: primeiro pedido nunca entra',st:'aberta',pai:null,ped:'Sinal do Líder: Saúde das VPS',reg:'Líder · Donel Dev',resp:'Dev · Donel Dev',exe:'— (a sessão fechou)',dec:'Revisor',risco:'baixo',prazo:'09/11',ps:'no prazo',rod:0,prova:'',idade:'sem executor há 5 h'},
+  {c:'H-162',t:'Revisar os consertos do bypass e da carta',st:'ok',amostra:true,pai:null,ped:'Alexandre · chat',reg:'Líder · Donel Dev',resp:'Revisor · Donel Dev',exe:'Revisor · bypass e carta',dec:'Revisor',risco:'baixo',prazo:'07/11',ps:'cumprido',rod:1,prova:'ver',idade:'aceita pelo Revisor hoje'},
+  {c:'H-140',t:'Lente Cadeiras no Mindscape · fatia 1',st:'exec',pai:null,ped:'Alexandre · chat',reg:'Líder · Donel Dev',resp:'Dev · Donel Dev',exe:'Dev · Mindscape de cadeiras',dec:'Revisor',risco:'baixo',prazo:'09/11',ps:'no prazo',rod:0,prova:''},
+  {c:'H-133',t:'Painel do Jobu com contas da VPS',st:'bloq',pai:null,ped:'Alexandre · chat',reg:'Líder · Donel Dev',resp:'Dev · Donel Dev',exe:'—',dec:'você',risco:'alto',prazo:'10/11',ps:'no prazo',rod:0,prova:'',bloq:'espera H-171'},
+  {c:'H-121',t:'Espelho do Oráculo no Supabase',st:'cancel',pai:null,ped:'Alexandre · chat',reg:'Líder · Donel Dev',resp:'Dev · Donel Dev',exe:'Dev · espelho',dec:'Revisor',risco:'baixo',prazo:'06/11',ps:'—',rod:1,prova:'ver',motivo:'substituída pela H-207'},
+  {c:'H-119',t:'Status do Retiro (2ª versão)',st:'dup',tipo:'carta',pai:null,ped:'Alexandre · chat',reg:'Dev · status do Retiro',resp:'Dev · Donel Dev',exe:'—',dec:'você',risco:'alto',prazo:'06/11',ps:'—',rod:0,prova:'',motivo:'duplicada da H-188'},
+];
+const byCode = Object.fromEntries(T.map(x=>[x.c,x]));
+function comQuem(x){
+  if(x.travou) return 'você: travou em 3 rodadas';
+  if(x.st==='entregue') return x.dec==='você'?'você decide':'Revisor confere';
+  if(x.st==='voce') return x.tipo==='carta'?'você aprova a carta':'você responde';
+  if(x.st==='aprovada') return 'ninguém enviou';
+  if(x.st==='semconf') return 'você confere o envio';
+  if(x.st==='bloq') return x.bloq;
+  if(x.st==='aberta') return 'falta executor (Líder repassa)';
+  if(x.st==='exec') return x.exe;
+  return '—';
+}
+const pill = s => `<span class="pill ${ST[s][1]}">${ST[s][0]}</span>`;
+const proof = p => p==='ver'?'<span class="ver" title="o app conferiu">✔ conferida</span>':p==='dec'?'<span class="dec" title="só o agente disse">◌ declarada</span>':'<span class="sub">—</span>';
+const ps = p => ({'vencido':'<span class="missing">vencido</span>','em risco':'<span class="dec">em risco</span>','pausado':'<span class="sub">pausado</span>'}[p] || `<span class="sub">${p}</span>`);
+
+// ---------------------------------------------------------------- inbox (derivada)
+const INBOX = [
+  {k:'Decidir entrega',ic:'◆',items:[byCode['H-206'],byCode['H-171']],acts:['Aceitar','Pedir ajustes','Recusar']},
+  {k:'Aprovar carta',ic:'✉',items:[byCode['H-209']],acts:['Aprovar','Pedir mudança','Recusar']},
+  {k:'Conferir envio',ic:'⚠',items:[byCode['H-176']],acts:['Reenviar (mesma chave)','Marcar enviada','Desistir']},
+  {k:'Carta parada',ic:'→',items:[byCode['H-188']],acts:['Enviar pelo app','Passar a outro lugar']},
+  {k:'Responder',ic:'?',items:[byCode['H-165']],acts:['Aprovar','Negar','Responder']},
+  {k:'Travou',ic:'⟲',items:[byCode['H-158']],acts:['Trocar executor','Mudar critério','Cancelar']},
+  {k:'Atrasado',ic:'!',items:[byCode['H-149']],acts:['Novo prazo','Cancelar']},
+  {k:'Amostra do Revisor',ic:'✓',items:[byCode['H-162']],acts:['Conferir','Derrubar aceite']},
+];
+const inboxTotal = INBOX.reduce((n,g)=>n+g.items.length,0);
+function itemLine(x){
+  const extra = x.pergunta?`<div class="quote" style="margin-top:6px;font-size:12.5px">${x.pergunta}</div>`:'';
+  return `<div class="row"><span class="code">${x.c}</span><span class="t grow ellipsis">${x.t}</span>${x.risco==='alto'?'<span class="tag alto">risco alto</span>':''}</div>
+  <div class="who" style="margin-top:3px">pediu <b>${x.ped}</b> · faz <b>${x.exe}</b> · <span>${x.idade||''}</span></div>${extra}`;
+}
+
+// ---------------------------------------------------------------- A
+document.getElementById('view-a').innerHTML = `
+  <div class="a-head">
+    <div><div class="sub">Esperando você</div><div class="a-count">${inboxTotal}</div></div>
+    <div class="grow"><h1>Tudo o que depende de você, em um lugar</h1>
+      <div class="sub">Ordem: o que trava alguém → prazo → idade. A mais antiga espera há 1 dia (Conferir envio). Adiar some até a hora escolhida.</div></div>
+    <button class="btn ghost">Adiar tudo até 14h</button>
+  </div>
+  <div class="a-grid">
+    ${INBOX.map(g=>`<div class="card group"><h3><span>${g.ic}</span>${g.k}<span class="n">${g.items.length}</span></h3>
+      ${g.items.map(x=>`<div class="item">${itemLine(x)}<div class="acts">${g.acts.map((a,i)=>`<button class="btn ${i===0?'pri':''}">${a}</button>`).join('')}<button class="btn ghost">Adiar</button></div></div>`).join('')}
+    </div>`).join('')}
+    <div class="card group" style="border-style:dashed"><h3><span>#</span>Integridade<span class="n">0</span></h3>
+      <div class="sub">Cadeia de 4 182 eventos conferida às 14:03. Nenhum evento de versão mais nova. Alfa 0.4.0 aberto: só lê.</div></div>
+  </div>
+  <div class="card a-all">
+    <h2>Tudo</h2>
+    <div class="stat"><b>11</b><span class="sub">em execução</span></div>
+    <div class="stat"><b>1</b><span class="sub">bloqueada</span></div>
+    <div class="stat"><b>1</b><span class="sub">sem executor</span></div>
+    <div class="stat"><b>0</b><span class="sub">órfãs</span></div>
+    <div class="stat"><b>55</b><span class="sub">concluídas</span></div>
+    <div class="stat"><b>12</b><span class="sub">canceladas · 3 duplicadas</span></div>
+    <div class="grow"></div><button class="btn">Abrir a tabela ▾</button>
+  </div>`;
+
+// ---------------------------------------------------------------- B
+function rowsB(){
+  const out=[];
+  for(const x of T){
+    if(x.pai) continue;
+    out.push(rowB(x,false));
+    if(x.kids) for(const k of T.filter(y=>y.pai===x.c)) out.push(rowB(k,true));
+  }
+  return out.join('');
+}
+function rowB(x,child){
+  const title = `${child?'<span class="tree">└</span>':''}${x.kids?'<span class="caret">▾</span>':''}${x.tipo==='carta'?'✉ ':''}${x.t}${x.kids?` <span class="sub">· ${x.done} de ${x.kids} prontas</span>`:''}`;
+  const ped = x.ped.startsWith('não')?`<span class="missing">${x.ped}</span>`:x.ped;
+  return `<tr class="${child?'child':''} ${x.c==='H-206'?'sel':''}">
+    <td class="code">${x.c}</td><td class="titlecell"><div class="ellipsis" style="max-width:250px">${title}</div></td>
+    <td>${pill(x.st)}</td><td class="ellipsis" style="max-width:150px">${comQuem(x)}</td>
+    <td class="ellipsis" style="max-width:140px">${ped}</td><td class="ellipsis" style="max-width:115px">${x.resp}</td>
+    <td class="ellipsis" style="max-width:140px">${x.exe}</td><td>${x.dec}</td>
+    <td>${x.prazo} · ${ps(x.ps)}</td><td style="text-align:center">${x.rod||'—'}</td><td>${proof(x.prova)}</td></tr>`;
+}
+document.getElementById('view-b').innerHTML = `
+  <div class="card b-inbox"><span class="lbl">◆ ${inboxTotal} esperando você</span>
+    ${INBOX.map(g=>`<span class="chip">${g.k}<b>${g.items.length}</b></span>`).join('')}
+    <span class="grow"></span><span class="sub">a mais antiga: 1 dia</span><button class="btn pri">Abrir a caixa</button></div>
+  <div class="b-wrap">
+    <div>
+      <div class="filters">
+        <span class="chip">Esperando você <b>${inboxTotal}</b></span><span class="chip">Sem executor <b>1</b></span>
+        <span class="chip">Cartas <b>4</b></span><span class="chip">Travadas <b>1</b></span><span class="chip on">Vivas e de hoje</span><span class="chip">Tudo · 97</span>
+        <span class="search">Buscar por frase, pessoa, lugar, código…</span>
+      </div>
+      <div class="card" style="overflow:hidden"><table>
+        <thead><tr><th>Código</th><th>Título</th><th>Estado</th><th>Com quem está</th><th>Quem pediu</th><th>Responsável</th><th>Quem faz agora</th><th>Decide</th><th>Prazo</th><th>Rod.</th><th>Prova</th></tr></thead>
+        <tbody>${rowsB()}</tbody></table></div>
+    </div>
+    <aside class="card drawer">
+      <div class="row"><span class="code">H-206</span>${pill('entregue')}<span class="tag alto">risco alto</span><span class="grow"></span><span class="sub">filha de H-201</span></div>
+      <h2 style="margin-top:8px">Síntese: proposta do Ledger v5</h2>
+      <div class="lbl">A frase de quem pediu</div>
+      <div class="quote">Primeiro de tudo, o ledger está uma bosta. Quero ele em padrão top de linha, manda as pesquisas todas.</div>
+      <div class="lbl">Papéis</div>
+      <dl class="roles">
+        <dt>Pediu</dt><dd><b>Alexandre</b> · chat do app, 07/11 12:41</dd>
+        <dt>Registrou</dt><dd>Líder · Donel Dev</dd>
+        <dt>Responde</dt><dd>Dev · quadro Donel Dev</dd>
+        <dt>Faz agora</dt><dd>Dev · síntese do ledger top <span class="sub">(3ª sessão; trocou 2× sem perder nada)</span></dd>
+        <dt>Decide</dt><dd><b style="color:var(--donel)">você</b> <span class="sub">(risco alto)</span></dd>
+        <dt>Prazo</dt><dd>08/11 · no prazo · 1ª rodada</dd>
+      </dl>
+      <div class="lbl">Pronto quando</div>
+      <div style="font-size:12.5px">☑ plano em docs/planos/ledger-v5.md<br>☑ protótipo com 3 variantes e prints<br>☑ PR de documentação contra staging<br>☐ resumo de 10 linhas para a carta</div>
+      <div class="lbl">Provas</div>
+      <div class="proof"><span class="ver">✔</span><span class="grow">PR de docs · aberto · checks verdes</span><span class="code">a3f9…</span></div>
+      <div class="proof"><span class="ver">✔</span><span class="grow">prototipo.html · 38 KB</span><span class="code">sha256 7c1e…</span></div>
+      <div class="proof"><span class="dec">◌</span><span class="grow">resumo em texto (declarada)</span></div>
+      <div class="lbl">Linha do tempo</div>
+      <ul class="tl">
+        <li><span class="h">12:41</span><span>Criada por <b>Líder · Donel Dev</b> a pedido de <b>Alexandre</b> · via chat</span></li>
+        <li><span class="h">13:08</span><span>Executor trocado: Pesquisa · diagnóstico → Pesquisa (reaberta) · motivo: não recebeu o pedido</span></li>
+        <li><span class="h">13:22</span><span>Executor trocado → <b>Dev · síntese do ledger top</b> (VPS) · ordem do dono</span></li>
+        <li><span class="h">13:25</span><span>Assumida · via MCP · canal alfa</span></li>
+        <li><span class="h">15:40</span><span>Entregue com 3 provas (2 verificadas pelo app)</span></li>
+      </ul>
+      <div class="chain">5 eventos · cadeia íntegra · último hash 9b02…e1</div>
+      <div class="row" style="margin-top:12px;gap:6px"><button class="btn pri">Aceitar</button><button class="btn">Pedir ajustes</button><button class="btn">Recusar</button></div>
+    </aside>
+  </div>`;
+
+// ---------------------------------------------------------------- C
+const asks = [
+  {root:byCode['H-201'],kids:T.filter(y=>y.pai==='H-201')},
+  {root:{c:'H-171',q:'Manda bala: o Oráculo mora na VPS, o PC é cliente.',ped:'Alexandre · chat',prazo:'08/11'},kids:[byCode['H-171'],byCode['H-133']]},
+  {root:{c:'H-188',q:'Manda o status do Retiro no #produto.',ped:'Alexandre · chat',prazo:'07/11'},kids:[byCode['H-188'],byCode['H-119']]},
+  {root:{c:'H-162',q:'Liga o item 9 em TUDO. Odeio o modo automático, bypass supremo é meu favorito.',ped:'Alexandre · chat',prazo:'07/11'},kids:[byCode['H-162']]},
+  {root:{c:'H-140',q:'Quero ver as cadeiras do quadro de verdade, com os dados reais.',ped:'Alexandre · chat',prazo:'09/11'},kids:[byCode['H-140']]},
+  {root:{c:'H-209',q:'Resumo da semana para as lideranças.',ped:'Bill · Slack #liderancas',prazo:'08/11'},kids:[byCode['H-209']]},
+];
+document.getElementById('view-c').innerHTML = `
+  <div class="row" style="margin-bottom:12px"><h1>Pedidos</h1><span class="sub">cada cartão é uma frase de alguém; as filhas são o trabalho que ela gerou</span>
+    <span class="grow"></span><span class="chip on">De você · 5</span><span class="chip">De outras pessoas · 2</span><span class="chip">Sinais e rotinas · 3</span></div>
+  <div class="c-wrap">
+    <div class="c-list">
+      ${asks.map(a=>{const done=a.kids.filter(k=>['ok','cancel','dup','enviada'].includes(k.st)).length;const pct=Math.round(100*done/a.kids.length);
+        return `<div class="card ask"><div class="row"><span class="code">${a.root.c}</span><span class="who">pediu <b>${a.root.ped}</b> · prazo ${a.root.prazo}</span><span class="grow"></span><span class="sub">${done} de ${a.kids.length}</span></div>
+        <div class="q">“${a.root.q}”</div><div class="bar"><i style="width:${pct}%"></i></div>
+        <ul class="kids">${a.kids.map(k=>`<li>${pill(k.st)}<span class="grow ellipsis">${k.tipo==='carta'?'✉ ':''}${k.t}</span><span class="who ellipsis" style="max-width:190px">${comQuem(k)}</span></li>`).join('')}</ul></div>`}).join('')}
+    </div>
+    <aside class="card c-side">
+      <div class="row"><h2>◆ Esperando você</h2><span class="grow"></span><span class="a-count" style="font-size:28px">${inboxTotal}</span></div>
+      ${INBOX.map(g=>g.items.map(x=>`<div class="item"><div class="sub" style="font-size:11.5px;text-transform:uppercase;letter-spacing:.5px">${g.ic} ${g.k}</div>
+        <div class="row"><span class="t grow ellipsis">${x.t}</span></div><div class="who">${x.idade||''}</div>
+        <div class="acts">${g.acts.slice(0,2).map((a,i)=>`<button class="btn ${i===0?'pri':''}">${a}</button>`).join('')}</div></div>`).join('')).join('')}
+    </aside>
+  </div>`;
+
+// ---------------------------------------------------------------- switch
+function show(v){
+  for(const id of ['a','b','c']) document.getElementById('view-'+id).classList.toggle('on',id===v);
+  for(const b of document.querySelectorAll('#switch button')) b.classList.toggle('on',b.dataset.v===v);
+}
+document.getElementById('switch').addEventListener('click',e=>{const v=e.target.dataset&&e.target.dataset.v;if(v){history.replaceState(null,'','#'+v);show(v);}});
+show((location.hash||'#b').slice(1) in {a:1,b:1,c:1}?(location.hash||'#b').slice(1):'b');
+</script>
+</body>
+</html>
