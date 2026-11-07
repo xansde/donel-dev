@@ -129,9 +129,6 @@ import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../sha
 import { isLeaderOfAllTab, leaderHome } from '../../shared/mindscape/leader';
 import { DEFAULT_LEADER_PREFS, leaderRemoteId } from '../../shared/leaderPrefs';
 import { planLeaderDelivery, startLeaderMove, type LeaderMove } from '../../shared/lider/move';
-
-/** Líder único na VPS — how long the Líder on the new place has to take the first message (a cold CLI on a busy VPS). */
-const LIDER_MOVE_WAIT_MS = 240_000;
 import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
 import { TerminalPane } from './TerminalPane';
 import { PatchNotes } from './patchnotes/PatchNotes';
@@ -329,6 +326,9 @@ function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
   return next;
 }
 
+/** Líder único na VPS — how long the Líder on the new place has to take the first message (a cold CLI on a busy VPS). */
+const LIDER_MOVE_WAIT_MS = 240_000;
+
 export function App(): React.JSX.Element {
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(true);
@@ -446,6 +446,8 @@ export function App(): React.JSX.Element {
   const [aliveTabs, setAliveTabs] = useState<Record<string, boolean>>({});
   /** 07/11 — why a tab's terminal never started (read by the board's `startTrouble`). */
   const startFailuresRef = useRef<Record<string, string>>({});
+  // Líder único na VPS — per new Líder tab of a move, what ends the wait for it (its start failed or its process left).
+  const liderTabDiedRef = useRef<Record<string, () => void>>({});
   // FIX (feedback E2E rodada 5) — epoch ms de quando cada aba ficou `alive`
   // pela ÚLTIMA vez (ref, não state — só alimenta o diagnóstico abaixo,
   // nunca o gate real de injeção). Usado por `possiblyBlockedOnPrompt` pra
@@ -2272,10 +2274,9 @@ export function App(): React.JSX.Element {
     window.donel.lider.report(report);
   });
   const liderDeliverRef = useRef<(text: string) => LiderSendResult>(() => ({ ok: false, reason: 'O Donel ainda está abrindo.' }));
-  // Líder único na VPS — the move in progress (its messages wait for it) and, per new tab, what ends the wait for it
-  // to come up (its start failed or its process left). Async steps read the tabs through refs, never a stale render.
+  // Líder único na VPS — the move in progress (its messages wait for it). Async steps close tabs through a ref,
+  // never through a stale render.
   const liderMoveRef = useRef<LeaderMove | null>(null);
-  const liderTabDiedRef = useRef<Record<string, () => void>>({});
   liderDeliverRef.current = (text: string): LiderSendResult => {
     const sendTo = (tabId: string, message: string): void => {
       sendToTab(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text: message });
