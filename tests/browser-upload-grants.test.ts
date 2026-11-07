@@ -155,13 +155,75 @@ describe('que pastas cada sessão usa', () => {
 });
 
 describe('pasta liberável e arquivo de segredo', () => {
-  it('a pasta do app e as de configuração podem ser liberadas; a raiz e a casa inteira não', () => {
+  it('a pasta do app pode ser liberada; a raiz e a casa inteira não', () => {
     expect(refusedUploadFolder(WIN.userData, WIN)).toBeNull();
     expect(refusedUploadFolder(`${WIN.userData}\\chat-attachments`, WIN)).toBeNull();
-    expect(refusedUploadFolder('C:\\Users\\dono\\.claude', WIN)).toBeNull();
     expect(refusedUploadFolder('C:\\', WIN)).not.toBeNull();
     expect(refusedUploadFolder('C:\\Users\\dono', WIN)).not.toBeNull();
     expect(refusedUploadFolder('C:\\Users', WIN)).not.toBeNull();
+  });
+
+  // Decisão do Líder (07/11): ~/.claude não é liberável nem origem de envio, nem as transcrições e as pastas projects,
+  // sessions e todos de qualquer ~/.claude; diretórios de sistema também não são liberáveis.
+  const LNX = { home: '/home/dono', userData: '/home/dono/.config/donel-dev' };
+  const ROOT = { home: '/root', userData: '/root/.config/donel-dev' };
+  it.each([
+    ['~/.claude no Windows', 'C:\\Users\\dono\\.claude', WIN],
+    ['~/.claude no Linux', '/home/dono/.claude', LNX],
+    ['uma pasta dentro de ~/.claude', '/home/dono/.claude/skills', LNX],
+    ['~/.claude/projects', '/home/dono/.claude/projects', LNX],
+    ['a pasta de um projeto dentro de ~/.claude/projects', 'C:\\Users\\dono\\.claude\\projects\\C--seazone-atlas', WIN],
+    ['~/.claude/sessions', '/home/dono/.claude/sessions', LNX],
+    ['~/.claude/todos', '/home/dono/.claude/todos', LNX],
+    ['um ~/.claude de perfil antigo', 'C:\\Users\\dono\\.claude-profiles.old\\trabalho', WIN],
+    ['projects de um .claude fora da casa (CLAUDE_CONFIG_DIR)', '/opt/contas/.claude/projects', LNX],
+    ['sessions de um .claude fora da casa', 'D:\\contas\\.claude-b\\sessions', WIN],
+    ['todos de um .claude fora da casa', '/opt/contas/.claude/todos', LNX],
+    ['/etc', '/etc', LNX],
+    ['uma pasta dentro de /etc', '/etc/ssl', LNX],
+    ['/var', '/var', LNX],
+    ['uma pasta dentro de /var', '/var/lib/postgresql', LNX],
+    ['/root de outro usuário', '/root', LNX],
+    ['uma pasta dentro do /root de outro usuário', '/root/seazone', LNX],
+    ['/usr', '/usr/local', LNX],
+    ['/bin', '/bin', LNX],
+    ['/boot', '/boot', LNX],
+    ['/proc', '/proc/1', LNX],
+    ['/sys', '/sys', LNX],
+    ['/sbin', '/sbin', LNX],
+    ['/lib', '/lib', LNX],
+    ['/dev', '/dev', LNX],
+    ['/run', '/run/secrets', LNX],
+    ['/etc do macOS depois do realpath', '/private/etc', { home: '/Users/dono', userData: '/Users/dono/Library/Application Support/donel-dev' }],
+    ['/var do macOS depois do realpath', '/private/var/db', { home: '/Users/dono', userData: '/Users/dono/Library/Application Support/donel-dev' }],
+    ['C:\\Windows', 'C:\\Windows', WIN],
+    ['uma pasta dentro de C:\\Windows', 'C:\\Windows\\System32\\config', WIN],
+    ['C:\\Program Files', 'C:\\Program Files', WIN],
+    ['C:\\Program Files (x86)', 'C:\\Program Files (x86)\\Steam', WIN],
+    ['C:\\ProgramData', 'C:\\ProgramData\\ssh', WIN],
+  ])('não libera %s', (_what, folder, context) => {
+    expect(refusedUploadFolder(folder, context)).not.toBeNull();
+  });
+
+  it.each([
+    ['um arquivo comum de ~/.claude', 'C:\\Users\\dono\\.claude\\projects\\x\\relatorio.html', WIN],
+    ['uma skill em ~/.claude', '/home/dono/.claude/skills/x/SKILL.md', LNX],
+    ['uma transcrição', '/home/dono/.claude/projects/-home-dono-atlas/abc.jsonl', LNX],
+    ['uma sessão', '/home/dono/.claude/sessions/123.json', LNX],
+    ['uma lista de todos', '/home/dono/.claude/todos/abc-agent.json', LNX],
+    ['uma transcrição de um .claude fora da casa', '/opt/contas/.claude/projects/-x/abc.jsonl', LNX],
+    ['um arquivo de sessions de um .claude fora da casa', 'D:\\contas\\.claude-b\\sessions\\1.json', WIN],
+    ['um arquivo de todos de um .claude fora da casa', '/opt/contas/.claude/todos/a.json', LNX],
+  ])('não envia %s', (_what, path, context) => {
+    expect(secretUploadFile(path, context)).not.toBeNull();
+  });
+
+  it('a pasta de trabalho de quem roda como root (a VPS) continua liberável, e o .claude de um repositório também', () => {
+    expect(refusedUploadFolder('/root/seazone/atlas', ROOT)).toBeNull();
+    expect(refusedUploadFolder('/root', ROOT)).not.toBeNull();
+    expect(refusedUploadFolder('/home/dono/seazone/atlas/.claude/worktrees/x', LNX)).toBeNull();
+    expect(refusedUploadFolder('/var-projetos/atlas', LNX)).toBeNull();
+    expect(refusedUploadFolder('D:\\Windows-backup', WIN)).toBeNull();
   });
 
   it('recusa os arquivos de segredo, onde quer que a pasta liberada esteja', () => {
@@ -248,7 +310,6 @@ describe('pasta liberável e arquivo de segredo', () => {
       `${WIN.userData}\\chat-attachments\\sessao-1\\print.png`,
       `${WIN.userData}\\browser-downloads\\nota.pdf`,
       'C:\\Users\\dono\\Documents\\envios\\contrato.pdf',
-      'C:\\Users\\dono\\.claude\\projects\\x\\relatorio.html',
       'D:\\design\\token-de-cor.png',
       'D:\\projeto\\config.json',
       'D:\\projeto\\package.json',

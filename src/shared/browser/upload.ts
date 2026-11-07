@@ -7,8 +7,9 @@
 // - the folders the orchestrator of a board liberated for that board (config `browserUploadGrants`, with who and
 //   when): the Líder único on any board, the Líder of a board on its own (`navegador_liberar_pasta`);
 // - the chat attachments (`<userData>/chat-attachments`), which are the owner's own: always, for every session.
-// The disk root and the whole home are never authorized. A folder of config or keys MAY be; inside any folder, the
-// FILES that hold a secret are refused (`secretUploadFile`): that is the line, not the folder.
+// Never authorized: the disk root, the whole home, the Claude CLI's config (`~/.claude*`, and the transcripts,
+// sessions and todos of any `.claude*`) and the system folders. Another folder of config or keys MAY be; inside any
+// folder, the FILES that hold a secret are refused (`secretUploadFile`).
 //
 // Lesson from browser-use (MIT, `tools/service.py`, GHSA-j9hj-92j8-jv9h): an agent-controlled path must be resolved
 // and checked against the folder after the resolution, never matched by name.
@@ -96,7 +97,33 @@ export function refusedUploadFolder(folder: string, context: UploadFolderContext
   if (target === '' || /^[a-z]:$/.test(target)) return 'A raiz do disco não pode ser autorizada: escolha uma pasta só com o que o agente pode enviar.';
   const home = normalize(context.home);
   if (isInsideOrEqual(home, target)) return 'A pasta de usuário inteira não pode ser autorizada: escolha uma pasta só com o que o agente pode enviar.';
+  if (insideClaudeConfig(target, home)) return CLAUDE_CONFIG_REFUSED;
+  const system = SYSTEM_DIRS.find((dir) => isInsideOrEqual(target, dir) && !isInsideOrEqual(home, dir));
+  if (system || WINDOWS_SYSTEM_DIR.test(target)) return 'Pasta do sistema não pode ser autorizada: escolha uma pasta só com o que o agente pode enviar.';
   return null;
+}
+
+/**
+ * System folders (Líder, 07/11): never authorized, nor anything inside. On macOS `/etc` and `/var` resolve to
+ * `/private/…` (the folder goes through `realpath` first). A system folder that holds the home (root's `/root` on a
+ * VPS) still refuses itself through the home rule, but its subfolders (the projects) stay authorizable.
+ */
+const SYSTEM_DIRS = ['/etc', '/var', '/root', '/usr', '/bin', '/sbin', '/lib', '/lib64', '/boot', '/proc', '/sys', '/dev', '/run', '/private/etc', '/private/var'];
+/** `C:\Windows`, `C:\Program Files*`, `C:\ProgramData` (any drive), and what is inside. */
+const WINDOWS_SYSTEM_DIR = /^[a-z]:\/(windows|program files[^/]*|programdata)(\/|$)/;
+
+const CLAUDE_CONFIG_REFUSED = 'Essa é a configuração do Claude (~/.claude, transcrições, sessões e todos) e não sai por aqui.';
+/** The Claude CLI's private folders, in any `.claude*` config folder (the home's or a `CLAUDE_CONFIG_DIR` elsewhere). */
+const CLAUDE_PRIVATE_DIRS = ['projects', 'sessions', 'todos'];
+
+/**
+ * Inside the Claude CLI's config (Líder, 07/11): anything in a `.claude*` folder of the home, and the transcripts,
+ * sessions and todos of any `.claude*` folder. A repository's own `.claude` (skills, worktrees) is not the CLI's config.
+ */
+function insideClaudeConfig(target: string, home: string): boolean {
+  if (target.startsWith(`${home}/`) && target.slice(home.length + 1).split('/')[0]!.startsWith('.claude')) return true;
+  const parts = target.split('/');
+  return parts.some((part, i) => part.startsWith('.claude') && CLAUDE_PRIVATE_DIRS.includes(parts[i + 1] ?? ''));
 }
 
 /**
@@ -106,8 +133,8 @@ export function refusedUploadFolder(folder: string, context: UploadFolderContext
  *   `.netrc`, `.pgpass`, `git-credentials`, `rclone.conf`, gcloud's, npm/pip's, keychains…), a browser profile's
  *   cookies, saved logins and keys (Chromium and Firefox) and its site storage, and a text file named token/secret/senha;
  * - every file of the key folders (`KEY_HOME_DIRS`: `~/.ssh`, `~/.aws`, gcloud, keyrings, the Windows credential stores…);
- * - `~/.claude.json` and the `settings*.json` of `~/.claude*` (they carry env tokens), `~/.docker/config.json`,
- *   `~/.config/gh/hosts.yml`;
+ * - `~/.claude.json` and everything in `~/.claude*`, and the transcripts, sessions and todos of any `.claude*`
+ *   (`insideClaudeConfig`), `~/.docker/config.json`, `~/.config/gh/hosts.yml`;
  * - inside the app's folder (`userData`), everything but the owner's content (`USER_DATA_CONTENT_DIRS`): there live
  *   the config with keys, the accounts vault, the per-session MCP tokens, the hooks and the browser's cookies.
  */
@@ -120,8 +147,7 @@ export function secretUploadFile(realPath: string, context: UploadFolderContext)
   const home = normalize(context.home);
   if (KEY_HOME_DIRS.some((dir) => isInsideOrEqual(target, `${home}/${dir.toLowerCase()}`))) return said;
   if (target === `${home}/.claude.json` || target === `${home}/.docker/config.json` || target === `${home}/.config/gh/hosts.yml`) return said;
-  const first = target.startsWith(`${home}/`) ? target.slice(home.length + 1).split('/')[0]! : '';
-  if (first.startsWith('.claude') && /^settings.*\.json$/.test(name)) return said;
+  if (insideClaudeConfig(target, home)) return CLAUDE_CONFIG_REFUSED;
   const userData = normalize(context.userData);
   if (isInsideOrEqual(target, userData)) {
     const inside = target.slice(userData.length + 1).split('/');
