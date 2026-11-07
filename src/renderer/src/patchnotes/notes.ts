@@ -18,8 +18,8 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-07',
     items: [
       {
-        title: 'O progresso do Jobu mostra os seus pedidos, por frente',
-        text: 'O painel Progresso, no balão do Líder, agora mostra só o que você pediu, agrupado por frente (por exemplo "Ledger" ou "Oráculo e Líder na VPS"), e não mais por quadro. Cada pedido aparece com um título curto e um estado claro: esperando você, travado, tocando (com quem está) ou parado (ninguém assumiu, ninguém deu notícia em um dia, ou a entrega espera conferência há 12 horas). Cada frente tem a sua barra e recolhe num clique. O que terminou sai da lista: fica só "N concluídas hoje", recolhido no fim. A frente é o Líder que diz, ao registrar o pedido; o que ainda não tem frente aparece em "Sem frente".',
+        title: 'O Líder pode rodar na VPS',
+        text: 'Em Preferências, Avisos e Jobu, "Onde o Líder roda" escolhe entre este computador e a VPS. O Líder com quem você fala pelo Jobu muda de lugar na mensagem seguinte e continua a mesma conversa, com tudo o que já sabia. Se ele estiver trabalhando, muda quando terminar. O antigo só fecha depois que o novo respondeu; se algo falhar no caminho, ele continua onde estava, com a conversa, e recebe a mensagem. Se o computador dormir e a ligação com a VPS cair, a próxima mensagem religa o mesmo Líder. Na VPS ele deixa de ocupar memória do computador; o navegador integrado continua aqui, e ele o usa como antes. Ele só lê arquivos de projetos que já estão no GitHub. Para voltar, escolha "Este computador".',
       },
       {
         title: 'Sessões na VPS seguem com o PC desligado',
@@ -88,6 +88,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
       {
         title: 'Escrever a sua opção fecha a carta',
         text: 'Na carta do Oráculo, depois de escrever em "Escrever para…", o botão principal agora é "Decidir assim": o que você escreveu vira a sua decisão, a carta sai da pilha na hora e a sessão recebe o texto para seguir a partir dele. Se for só uma pergunta, use "Só perguntar (a carta fica)": o texto vai à sessão e a carta continua esperando você. Numa carta de Slack, decidir com as suas palavras nunca manda a mensagem; a sessão fica sabendo que você não aprovou aquele texto. Vale no app e no celular.',
+      },
+      {
+        title: 'O progresso do Jobu mostra os seus pedidos, por frente',
+        text: 'O painel Progresso, no balão do Líder, agora mostra só o que você pediu, agrupado por frente (por exemplo "Ledger" ou "Oráculo e Líder na VPS"), e não mais por quadro. Cada pedido aparece com um título curto e um estado claro: esperando você, travado, tocando (com quem está) ou parado (ninguém assumiu, ninguém deu notícia em um dia, ou a entrega espera conferência há 12 horas). Cada frente tem a sua barra e recolhe num clique. O que terminou sai da lista: fica só "N concluídas hoje", recolhido no fim. A frente é o Líder que diz, ao registrar o pedido; o que ainda não tem frente aparece em "Sem frente".',
       },
     ],
   },
