@@ -34,6 +34,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'No canto direito das abas do Mindscape há agora "Lugares | Cadeiras". Em Cadeiras, o quadro vira o esquema que você aprovou: o rig com o nome do projeto, uma cadeira redonda por papel com o nome grande e quantos estão sentados, setas mostrando por onde o trabalho passa (quem abriu quem) e, no topo, quantas cadeiras estão com problema, atenção, bem ou sem sinal; clicar num número destaca essas cadeiras. Clicar numa cadeira abre a gaveta com quem está sentado agora, quem já sentou (um clique retoma a conversa), a última nota escrita ali, as tarefas do Oráculo dela e o modelo configurado ao lado do usado. Esc, o ✕ ou um clique no quadro fecham. Seu desenho e seus post-its ficam onde estão, por cima, esmaecidos ou ocultos, e continuam editáveis. Nada é gravado: voltar a Lugares devolve o quadro como estava. Pods e a tela de definir cadeira vêm nas próximas versões.',
       },
       {
+        title: 'Ler um arquivo do Slack não pede mais carta',
+        text: 'A trava do Slack barrava qualquer ação do Slack que tivesse "arquivo" no nome, inclusive só ler os detalhes de um arquivo, e até um comando que apenas citava essa ação. Agora só barra o que manda ou sobe algo ao Slack; ler passa direto, e enviar continua precisando da carta aceita.',
+      },
+      {
         title: 'Sessão na VPS que não abre diz por quê',
         text: 'Quando uma sessão aberta numa VPS não consegue entrar lá, quem a abriu fica sabendo na hora e com o motivo que a conexão deu, como um pedido de verificação do Tailscale, em vez de ouvir só "o terminal não chegou a abrir" minuto e meio depois.',
       },
