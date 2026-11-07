@@ -4,9 +4,9 @@
 // (remembered on this machine). Saving through this screen is the next slice; for now "Editar em Papéis ▸".
 
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
-import { chairSheet, escapeClosesChairScreen, COST_PER_MCP_MB, COST_PER_MCP_TOKENS, COST_PER_PLUGIN_TOKENS, COST_PER_SKILL_TOKENS, BASE_SESSION_MB, type SheetAxis, type SheetItem, type SheetOrigin } from '../../shared/chair-sheet';
+import { applyChairEdits, chairSheet, escapeClosesChairScreen, type ChairEdit, type ScopeAxisName, COST_PER_MCP_MB, COST_PER_MCP_TOKENS, COST_PER_PLUGIN_TOKENS, COST_PER_SKILL_TOKENS, BASE_SESSION_MB, type SheetAxis, type SheetItem, type SheetOrigin } from '../../shared/chair-sheet';
 import { EMPTY_INVENTORY, type ClaudeInventory } from '../../shared/role-scope';
-import { roleColorVar, type SessionRole } from '../../shared/roles';
+import { MAX_ROLE_GUIDANCE_CHARS, roleColorVar, type SessionRole } from '../../shared/roles';
 import type { MindscapeBoard } from '../../shared/mindscape/model';
 import styles from './ChairScreen.module.css';
 
@@ -64,6 +64,17 @@ export interface ChairScreenProps {
   readonly onPick: (roleId: string) => void;
   readonly onEditRole: (roleId: string) => void;
   readonly onClose: () => void;
+  /** Cadeiras, fatia 3 — the list after a save through this screen. */
+  readonly onSaved: (roles: SessionRole[]) => void;
+}
+
+const MODEL_CHOICES = ['opus', 'sonnet', 'haiku', 'fable'] as const;
+const EFFORT_CHOICES = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+const PERMISSION_CHOICES = ['manual', 'acceptEdits', 'auto', 'plan', 'dontAsk', 'bypassPermissions'] as const;
+
+/** Same role, field by field (the draft against what is saved). */
+function sameRole(a: SessionRole, b: SessionRole): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 const SECTIONS = [
@@ -74,7 +85,7 @@ const SECTIONS = [
   ['modelo', 'Modelo e esforço'],
 ] as const;
 
-export function ChairScreen({ roles, roleId, projectPath, projectName, board, onPick, onEditRole, onClose }: ChairScreenProps): React.JSX.Element {
+export function ChairScreen({ roles, roleId, projectPath, projectName, board, onPick, onEditRole, onClose, onSaved }: ChairScreenProps): React.JSX.Element {
   const [inventory, setInventory] = useState<ClaudeInventory | null>(null);
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const sectionRef = useRef<HTMLElement>(null);
@@ -98,7 +109,6 @@ export function ChairScreen({ roles, roleId, projectPath, projectName, board, on
   // Esc is heard on the window: a button that folds away ("Recolher ›", "mostrar os N desligados") drops the focus on
   // the page, out of the screen. A dialog over it (Papéis) keeps its own Esc.
   const closeRef = useRef(onClose);
-  closeRef.current = onClose;
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       const active = document.activeElement;
@@ -116,7 +126,52 @@ export function ChairScreen({ roles, roleId, projectPath, projectName, board, on
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const role = roles.find((candidate) => candidate.id === roleId);
+  const savedRole = roles.find((candidate) => candidate.id === roleId);
+  // Cadeiras, fatia 3 — the edits live in a draft of the role until "Salvar"; the cost follows the draft.
+  // The draft is the list of changes (never the whole role): laid over the role saved most recently (#286).
+  const [draft, setDraft] = useState<{ readonly id: string; readonly edits: readonly ChairEdit[]; readonly dropped: readonly string[] } | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [mcpName, setMcpName] = useState('');
+  const liveDraft = draft && draft.id === roleId ? draft : null;
+  const role = savedRole && liveDraft ? applyChairEdits(savedRole, liveDraft.edits, inventory ?? EMPTY_INVENTORY) : savedRole;
+  const dirty = Boolean(role && savedRole && !sameRole(role, savedRole));
+  const edit = (change: ChairEdit, dropped?: (current: readonly string[]) => readonly string[]): void => {
+    if (!savedRole) return;
+    // The text and a field keep only their last value; toggles are replayed in order.
+    const previous = (liveDraft?.edits ?? []).filter(
+      (entry) => !(change.kind === 'guidance' && entry.kind === 'guidance') && !(change.kind === 'field' && entry.kind === 'field' && entry.key === change.key),
+    );
+    setDraft({ id: roleId, edits: [...previous, change], dropped: dropped ? dropped(liveDraft?.dropped ?? []) : (liveDraft?.dropped ?? []) });
+    setSaveError(null);
+  };
+  const discard = (): void => {
+    setDraft(null);
+    setSaveError(null);
+  };
+  /** Leaving with unsaved edits asks first (another chair, ✕ or Esc). */
+  const leaveOk = (): boolean => !dirty || window.confirm(`Descartar as mudanças em ${role?.name ?? 'esta cadeira'}?`);
+  const save = async (): Promise<void> => {
+    if (!liveDraft || saving) return;
+    setSaving(true);
+    // Over the role as it is on disk NOW: what Papéis saved meanwhile (name, color, engine, an axis) stays.
+    const onDisk = await window.donel.roles
+      .list()
+      .then((list) => list.find((candidate) => candidate.id === roleId))
+      .catch(() => undefined);
+    const base = onDisk ?? savedRole;
+    const result = base ? await window.donel.roles.save(applyChairEdits(base, liveDraft.edits, inventory ?? EMPTY_INVENTORY)).catch(() => null) : null;
+    setSaving(false);
+    if (!result || !result.ok) {
+      setSaveError('Não foi possível salvar o papel.');
+      return;
+    }
+    onSaved(result.roles);
+    setDraft(null);
+  };
+  const toggle = (axis: ScopeAxisName, name: string, on: boolean): void => {
+    edit({ kind: 'item', axis, name, on }, axis === 'mcps' ? (dropped) => (on ? dropped.filter((entry) => entry !== name) : [...dropped, name]) : undefined);
+  };
   const rigName = projectName ?? 'Sem projeto';
   const placeCounts = new Map<string, number>();
   for (const card of Object.values(board?.cards ?? {})) {
@@ -143,8 +198,20 @@ export function ChairScreen({ roles, roleId, projectPath, projectName, board, on
     return axis.onCount === null ? 'todos' : `${axis.onCount}/${axis.items.length}`;
   };
 
+  closeRef.current = () => {
+    if (leaveOk()) onClose();
+  };
   const chairRow = (candidate: SessionRole): React.JSX.Element => (
-    <button key={candidate.id} type="button" className={candidate.id === roleId ? `${styles.treeRow} ${styles.treeRowOn}` : styles.treeRow} onClick={() => onPick(candidate.id)}>
+    <button
+      key={candidate.id}
+      type="button"
+      className={candidate.id === roleId ? `${styles.treeRow} ${styles.treeRowOn}` : styles.treeRow}
+      onClick={() => {
+        if (candidate.id === roleId || !leaveOk()) return;
+        discard();
+        onPick(candidate.id);
+      }}
+    >
       <span className={styles.dot} style={{ background: roleColorVar(candidate.color) }} />
       <span>{candidate.name}</span>
       <span className={styles.muted}>{placeCounts.get(candidate.id) ?? ''}</span>
@@ -163,7 +230,7 @@ export function ChairScreen({ roles, roleId, projectPath, projectName, board, on
         <span>
           <b>Cadeiras</b> · Rig <b>{rigName}</b> › <b className={styles.mono}>{role ? `${role.id}@${addressSlug(rigName)}` : roleId}</b>
         </span>
-        <button type="button" className={styles.close} onClick={onClose} aria-label="Fechar">
+        <button type="button" className={styles.close} onClick={() => closeRef.current()} aria-label="Fechar">
           ✕
         </button>
       </header>
@@ -206,13 +273,23 @@ export function ChairScreen({ roles, roleId, projectPath, projectName, board, on
               <p className={styles.lead}>
                 Papel <b>{role.name}</b> sentado no rig <b>{rigName}</b>. Cada linha diz de onde vem.
               </p>
-              <div className={styles.banner}>
+              <div className={dirty ? `${styles.banner} ${styles.bannerDirty}` : styles.banner}>
                 <span>
-                  <b>Só leitura nesta versão.</b> Para mudar, edite o papel: vale para todo lugar com o papel {role.name}.
+                  {dirty ? <b>Mudanças não salvas. </b> : <b>Editando o papel {role.name}. </b>}
+                  Salvar grava o papel: vale para todo lugar com o papel {role.name}.
+                  {saveError ? <span className={styles.error}> {saveError}</span> : null}
                 </span>
-                <button type="button" className={styles.button} onClick={() => onEditRole(role.id)}>
-                  Editar em Papéis ▸
-                </button>
+                <span className={styles.bannerActions}>
+                  <button type="button" className={styles.button} onClick={() => onEditRole(role.id)} title="Nome, cor e motor">
+                    Papéis ▸
+                  </button>
+                  <button type="button" className={styles.button} onClick={discard} disabled={!dirty || saving}>
+                    Descartar
+                  </button>
+                  <button type="button" className={`${styles.button} ${styles.primary}`} onClick={() => void save()} disabled={!dirty || saving} data-testid="chair-save">
+                    {saving ? 'Salvando…' : 'Salvar'}
+                  </button>
+                </span>
               </div>
 
               <section className={styles.card} data-section="instrucoes">
@@ -236,7 +313,18 @@ export function ChairScreen({ roles, roleId, projectPath, projectName, board, on
                     <span className={styles.muted}>papel reutilizável</span>
                     <span className={styles.right}>{tokensLabel(sheet.guidanceTokens)}</span>
                   </div>
-                  {sheet.guidance ? <p className={styles.text}>{sheet.guidance}</p> : <p className={styles.muted}>Sem orientação.</p>}
+                  <textarea
+                    className={styles.guidance}
+                    value={role.guidance}
+                    maxLength={MAX_ROLE_GUIDANCE_CHARS}
+                    rows={Math.min(16, Math.max(4, role.guidance.split('\n').length + 1))}
+                    placeholder="O que este papel faz, o que não faz e como entrega."
+                    aria-label={`Orientação do papel ${role.name}`}
+                    onChange={(event) => {
+                      const guidance = event.target.value;
+                      edit({ kind: 'guidance', text: guidance });
+                    }}
+                  />
                 </div>
                 <div className={styles.stillRow}>
                   <span className={styles.muted}>Continuam valendo</span>
@@ -248,34 +336,107 @@ export function ChairScreen({ roles, roleId, projectPath, projectName, board, on
                 </div>
               </section>
 
-              <AxisCard id="skills" title="Skills suas" hint="as suas, de ~/.claude/skills; as de plugin vão com o plugin" axis={sheet.skills} unit={COST_PER_SKILL_TOKENS} />
+              <AxisCard
+                id="skills"
+                title="Skills suas"
+                hint="as suas, de ~/.claude/skills; as de plugin vão com o plugin"
+                axis={sheet.skills}
+                unit={COST_PER_SKILL_TOKENS}
+                onToggle={(name, on) => toggle('skills', name, on)}
+                onAll={() => edit({ kind: 'all', axis: 'skills' })}
+              />
               <AxisCard
                 id="mcps"
                 title="MCPs"
                 hint="o donel fica sempre; os outros só se o papel nomear"
-                axis={sheet.mcps}
+                axis={
+                  sheet.mcps.mode === 'list'
+                    ? { ...sheet.mcps, items: [...sheet.mcps.items, ...(liveDraft?.dropped ?? []).filter((name) => !sheet.mcps.items.some((item) => item.name === name)).map((name) => ({ name, on: false, origin: 'papel' as const }))] }
+                    : sheet.mcps
+                }
                 unit={COST_PER_MCP_TOKENS}
                 allNote="O papel não escolhe: todos os seus MCPs valem. O Donel não lê a lista deles, porque ela guarda segredos."
+                onToggle={(name, on) => toggle('mcps', name, on)}
+                onAll={() => edit({ kind: 'all', axis: 'mcps' }, () => [])}
+                extra={
+                  sheet.mcps.mode === 'list' ? (
+                    <form
+                      className={styles.addRow}
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        const name = mcpName;
+                        edit({ kind: 'add-mcp', name }, (dropped) => dropped.filter((entry) => entry !== name.trim()));
+                        setMcpName('');
+                      }}
+                    >
+                      <input className={styles.input} value={mcpName} placeholder="nome do MCP (como no seu ~/.claude.json)" aria-label="Nome do MCP" onChange={(event) => setMcpName(event.target.value)} />
+                      <button type="submit" className={styles.button} disabled={!mcpName.trim()}>
+                        + Ligar
+                      </button>
+                    </form>
+                  ) : (
+                    <button
+                      type="button"
+                      className={styles.link}
+                      onClick={() => {
+                        if (window.confirm('Ficar só com os MCPs que você nomear? Os seus outros MCPs deixam de valer para este papel.')) {
+                          edit({ kind: 'name-mcps' });
+                        }
+                      }}
+                    >
+                      nomear só alguns MCPs
+                    </button>
+                  )
+                }
               />
-              <AxisCard id="plugins" title="Plugins" hint="desligar o plugin tira as skills e os hooks dele" axis={sheet.plugins} unit={COST_PER_PLUGIN_TOKENS} />
+              <AxisCard
+                id="plugins"
+                title="Plugins"
+                hint="desligar o plugin tira as skills e os hooks dele"
+                axis={sheet.plugins}
+                unit={COST_PER_PLUGIN_TOKENS}
+                onToggle={(name, on) => toggle('plugins', name, on)}
+                onAll={() => edit({ kind: 'all', axis: 'plugins' })}
+              />
 
               <section className={styles.card} data-section="modelo">
                 <header className={styles.cardHead}>
                   <h3>Modelo e esforço</h3>
                   <span className={styles.muted}>sugeridos no Launcher; quem abre a sessão ainda pode trocar</span>
                 </header>
+                <div className={styles.settingRow}>
+                  <span className={styles.muted}>Motor</span>
+                  <span>
+                    {role.engine ?? <span className={styles.muted}>conta ativa</span>} <span className={styles.muted}>· troca em Papéis</span>
+                  </span>
+                  <Seal origin={role.engine ? 'papel' : 'usuario'} />
+                </div>
                 {(
                   [
-                    ['Motor', role.engine, 'conta ativa'],
-                    ['Modelo', role.model, 'o padrão do CLI'],
-                    ['Esforço', role.effort, 'o padrão do CLI'],
-                    ['Permissão', role.permissionMode, 'a do seu ~/.claude'],
+                    ['model', 'Modelo', MODEL_CHOICES, 'o padrão do CLI'],
+                    ['effort', 'Esforço', EFFORT_CHOICES, 'o padrão do CLI'],
+                    ['permissionMode', 'Permissão', PERMISSION_CHOICES, 'a do seu ~/.claude'],
                   ] as const
-                ).map(([label, value, fallback]) => (
-                  <div key={label} className={styles.settingRow}>
+                ).map(([key, label, choices, fallback]) => (
+                  <div key={key} className={styles.settingRow}>
                     <span className={styles.muted}>{label}</span>
-                    <span>{value ?? <span className={styles.muted}>{fallback}</span>}</span>
-                    <Seal origin={value ? 'papel' : 'usuario'} />
+                    <select
+                      className={styles.select}
+                      value={role[key] ?? ''}
+                      aria-label={label}
+                      onChange={(event) => {
+                        const value = event.target.value;
+                        edit({ kind: 'field', key, value: value || undefined });
+                      }}
+                    >
+                      <option value="">{fallback}</option>
+                      {choices.map((choice) => (
+                        <option key={choice} value={choice}>
+                          {choice}
+                        </option>
+                      ))}
+                    </select>
+                    <Seal origin={role[key] ? 'papel' : 'usuario'} />
                   </div>
                 ))}
               </section>
@@ -386,13 +547,42 @@ function Meter({ value, max }: { value: number; max: number }): React.JSX.Elemen
 }
 
 /** Off items stay folded until asked (the role starts from what it names). */
-function AxisCard({ id, title, hint, axis, unit, allNote }: { id: string; title: string; hint: string; axis: SheetAxis; unit: number; allNote?: string }): React.JSX.Element {
+function AxisCard({
+  id,
+  title,
+  hint,
+  axis,
+  unit,
+  allNote,
+  onToggle,
+  onAll,
+  extra,
+}: {
+  id: string;
+  title: string;
+  hint: string;
+  axis: SheetAxis;
+  unit: number;
+  allNote?: string;
+  onToggle: (name: string, on: boolean) => void;
+  onAll: () => void;
+  extra?: React.ReactNode;
+}): React.JSX.Element {
   const [showOff, setShowOff] = useState(false);
   const on = axis.items.filter((item) => item.on);
   const off = axis.items.filter((item) => !item.on);
   const row = (item: SheetItem): React.JSX.Element => (
     <div key={item.name} className={item.on ? styles.itemRow : `${styles.itemRow} ${styles.itemOff}`}>
-      <span className={item.on ? `${styles.toggle} ${styles.toggleOn}` : styles.toggle} role="switch" aria-checked={item.on} aria-disabled="true" aria-label={item.name} />
+      <button
+        type="button"
+        className={item.on ? `${styles.toggle} ${styles.toggleOn}` : styles.toggle}
+        role="switch"
+        aria-checked={item.on}
+        aria-label={item.name}
+        disabled={item.origin === 'donel' || (id === 'mcps' && axis.mode === 'all')}
+        title={item.origin === 'donel' ? 'O MCP do Donel fica sempre' : item.on ? 'Desligar' : 'Ligar'}
+        onClick={() => onToggle(item.name, !item.on)}
+      />
       <span>{item.name}</span>
       <span className={styles.mono}>{item.on ? `≈ ${tokensLabel(unit)}` : ''}</span>
       <Seal origin={item.origin} />
@@ -405,7 +595,7 @@ function AxisCard({ id, title, hint, axis, unit, allNote }: { id: string; title:
         <span className={styles.muted}>{hint}</span>
         <span className={styles.right}>{axis.onCount === null ? 'todos ligados' : `${axis.onCount} ligado${axis.onCount === 1 ? '' : 's'} · ${off.length} fora`}</span>
       </header>
-      {axis.mode === 'all' ? <p className={styles.note}>{allNote ?? 'O papel não escolhe: valem todas as suas.'}</p> : null}
+      {axis.mode === 'all' ? <p className={styles.note}>{allNote ?? 'O papel não escolhe: valem todas as suas. Desligar uma passa a lista para o papel.'}</p> : null}
       {on.map(row)}
       {on.length === 0 && axis.mode === 'list' ? <p className={styles.note}>Nenhum: o papel não leva nada daqui.</p> : null}
       {off.length > 0 ? (
@@ -417,6 +607,14 @@ function AxisCard({ id, title, hint, axis, unit, allNote }: { id: string; title:
           </button>
         )
       ) : null}
+      <div className={styles.cardFoot}>
+        {extra}
+        {axis.mode === 'list' ? (
+          <button type="button" className={styles.link} onClick={onAll}>
+            usar todos os seus
+          </button>
+        ) : null}
+      </div>
     </section>
   );
 }

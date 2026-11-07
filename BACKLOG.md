@@ -52,8 +52,9 @@ print lado a lado com o protótipo em `docs/prototipos/cadeiras/`.
 
 ### 02 — Tela de cadeira B1, lendo o papel
 
-- **Status**: implementada
+- **Status**: concluida
 - **Branch**: `feat/cadeiras-b1-leitura`
+- **PR**: #282 (mergeado em `staging`, acbda56)
 - **Depende de**: 01
 - **Propósito**: "Definir cadeira ▸" abre a B1 da cadeira: seções (instruções, skills, MCPs, plugins, modelo e
   esforço, permissão) com selo de origem ("seu ~/.claude" ou "Papel"), lendo o papel e o escopo do #250; a coluna
@@ -63,7 +64,9 @@ print lado a lado com o protótipo em `docs/prototipos/cadeiras/`.
 
 ### 03 — B1 grava no papel
 
-- **Status**: pendente
+- **Status**: concluida
+- **Branch**: `feat/cadeiras-b1-salvar`
+- **PR**: #286 (mergeado em `staging`)
 - **Depende de**: 02
 - **Propósito**: salvar instruções, escopo, modelo, esforço e permissão pela B1, pelo `roles-store` (único dono de
   `<userData>/papeis/`); "vale para quem sentar depois de salvar". O total da coluna de custo muda ao ligar ou
