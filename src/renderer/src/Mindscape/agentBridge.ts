@@ -583,7 +583,6 @@ export class AgentBridge {
     return this.ports.tabs().some((tab) => tab.cwd === projectPath && tab.openedBy === LEADER_OF_ALL && this.placeOfTab(tab)?.id === placeId);
   }
 
-  /** What `sessao_enviar` answers once the line went (or not) to the tab of there. */
   /**
    * `sessao_fechar` of the Faxineiro (t-b3b26e60): its own board with no arrow, never a session working, waiting for
    * the owner or opened by his hand (`canFaxineiroClose`). Never cuts a turn. Every ask, closed or refused, is logged.
@@ -596,7 +595,10 @@ export class AgentBridge {
       log('recusou-fechar', 'não está aberta');
       return { ok: false, text: `Não fechei: "${to.placeId}" não está aberta agora.` };
     }
-    if (target.id === callerTabId) return { ok: false, text: 'Não fechei: esta é a sua própria sessão.' };
+    if (target.id === callerTabId) {
+      log('recusou-fechar', `${target.name}: esta é a sua própria sessão.`);
+      return { ok: false, text: 'Não fechei: esta é a sua própria sessão.' };
+    }
     const state = this.ports.stateOf(target.id);
     // A tab that never started, on a full machine, goes back to the queue with the same request (nothing is lost).
     const asked = this.launched.get(target.id);
@@ -636,6 +638,7 @@ export class AgentBridge {
     return { ok: true, text: 'Fechada.' };
   }
 
+  /** What `sessao_enviar` answers once the line went (or not) to the tab of there. */
   private deliveryAnswer(outcome: DeliveryOutcome, targetId: string): Answer {
     if (outcome.kind === 'entrou') return { ok: true, text: 'Entregue: entrou no Claude de lá.' };
     if (outcome.kind === 'na-fila') return { ok: true, text: 'Entregue à fila do Claude de lá: ela está trabalhando e o próprio CLI a entrega no próximo passo.' };
