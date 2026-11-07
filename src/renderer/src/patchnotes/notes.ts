@@ -18,6 +18,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
     date: '2026-11-07',
     items: [
       {
+        title: 'O Líder pode rodar na VPS',
+        text: 'Em Preferências, Avisos e Jobu, "Onde o Líder roda" escolhe entre este computador e a VPS. O Líder com quem você fala pelo Jobu muda de lugar na mensagem seguinte e continua a mesma conversa, com tudo o que já sabia. Se ele estiver trabalhando, muda quando terminar. Na VPS ele deixa de ocupar memória do computador; o navegador integrado continua aqui, e ele o usa como antes. Ele só lê arquivos de projetos que já estão no GitHub. Para voltar, escolha "Este computador".',
+      },
+      {
         title: 'O Jobu não some mais em outro monitor',
         text: 'Levar o Donel para outro monitor, maximizado, fazia o Jobu sumir: o Windows tratava isso como "um app em tela cheia", e o Jobu se escondia de qualquer tela cheia. Essa regra saiu. O Jobu fica na tela em qualquer monitor, inclusive com escala diferente e depois de voltar a janela, e os balões aparecem como sempre. Para tirá-lo da frente, use "Esconder" no menu dele.',
       },
