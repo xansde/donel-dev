@@ -12,6 +12,8 @@ const MARK = 'DONEL_HEALTH';
 /** What one read of a remote place found. A field the place did not answer is `null`. */
 export interface RemoteHealthReading {
   readonly ram: { readonly totalBytes: number; readonly freeBytes: number } | null;
+  /** Swap (`SwapTotal`/`SwapFree`); a machine without swap answers total 0 and reads `null`. */
+  readonly swap: { readonly totalBytes: number; readonly freeBytes: number } | null;
   /** The disk of `$HOME` (where the projects and the sessions live). */
   readonly disk: { readonly totalBytes: number; readonly freeBytes: number } | null;
   /** Load average of 1, 5 and 15 minutes. */
@@ -42,6 +44,7 @@ export interface RemoteHealthReport {
 export function buildRemoteHealthScript(): string {
   return [
     `awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} END{print "${MARK} mem", t, a}' /proc/meminfo 2>/dev/null`,
+    `awk '/^SwapTotal:/{t=$2} /^SwapFree:/{f=$2} END{print "${MARK} swap", t, f}' /proc/meminfo 2>/dev/null`,
     `df -kP "$HOME" 2>/dev/null | awk 'NR==2{print "${MARK} disk", $2, $4}'`,
     `printf '${MARK} load %s\\n' "$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)"`,
     `printf '${MARK} cpus %s\\n' "$(nproc 2>/dev/null)"`,
@@ -60,6 +63,7 @@ function numbers(rest: string, count: number): number[] | null {
 /** Pure — `null` when the answer did not reach the end marker (ssh failed, timeout, cut short). */
 export function parseRemoteHealthOutput(stdout: string): RemoteHealthReading | null {
   let ram: RemoteHealthReading['ram'] = null;
+  let swap: RemoteHealthReading['swap'] = null;
   let disk: RemoteHealthReading['disk'] = null;
   let load: RemoteHealthReading['load'] = null;
   let cpus: number | null = null;
@@ -74,6 +78,9 @@ export function parseRemoteHealthOutput(stdout: string): RemoteHealthReading | n
     else if (key === 'mem') {
       const values = numbers(rest, 2);
       if (values && values[0] > 0 && values[1] <= values[0]) ram = { totalBytes: values[0] * KB, freeBytes: values[1] * KB };
+    } else if (key === 'swap') {
+      const values = numbers(rest, 2);
+      if (values && values[0] > 0 && values[1] <= values[0]) swap = { totalBytes: values[0] * KB, freeBytes: values[1] * KB };
     } else if (key === 'disk') {
       const values = numbers(rest, 2);
       if (values && values[0] > 0 && values[1] <= values[0]) disk = { totalBytes: values[0] * KB, freeBytes: values[1] * KB };
@@ -88,7 +95,7 @@ export function parseRemoteHealthOutput(stdout: string): RemoteHealthReading | n
       if (values) sessions = Math.floor(values[0]);
     }
   }
-  return ended ? { ram, disk, load, cpus, sessions } : null;
+  return ended ? { ram, swap, disk, load, cpus, sessions } : null;
 }
 
 /** Load of the last minute per CPU at or above this is a busy machine; at or above the critical one, a choked one. */
