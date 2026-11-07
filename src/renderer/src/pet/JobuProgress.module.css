@@ -172,9 +172,9 @@
   background: var(--state-done);
 }
 
-/* The bar: 4px, like the meter of the smart zone. */
+/* The bar: 4px, like the meter of the smart zone; one segment per ask, in the color of its state. */
 .bar {
-  display: block;
+  display: flex;
   height: 4px;
   margin-top: 2px;
   overflow: hidden;
@@ -182,19 +182,28 @@
   background: color-mix(in srgb, var(--text-primary) 10%, transparent);
 }
 
-.fill {
+.segment {
   display: block;
+  flex: none;
   height: 100%;
-  border-radius: 2px;
   background: var(--state-working);
 }
 
-.fill[data-state='esperando'] {
+.segment[data-state='esperando'] {
   background: var(--state-waiting);
 }
 
-.fill[data-state='travado'] {
+.segment[data-state='travado'] {
   background: var(--state-permission);
+}
+
+/* Parado with steps already walked (delivered and nobody checked, or silent): the muted of its hollow dot. */
+.segment[data-state='parado'] {
+  background: color-mix(in srgb, var(--text-muted) 55%, transparent);
+}
+
+.segment[data-state='concluida'] {
+  background: var(--state-done);
 }
 
 .meta {

@@ -10,7 +10,8 @@
 //   said a word for a day, or delivered and nobody checked for 12 h);
 // - what ended leaves the list: an accepted task only counts in "concluídas hoje", a cancelled one vanishes, and a
 //   front with nothing alive leaves too;
-// - the bar of a front counts the steps of its asks alive and accepted today, 3 each: assumed, delivered, accepted.
+// - the bar of a front counts the steps of its asks alive and accepted today, 3 each: assumed, delivered, accepted;
+//   it is drawn as one segment per ask, as long as the ask's steps and in the color of its state (`segments`).
 
 import { ASKED_BY_OWNER, frenteOf, isCancelled, lastDelivery, lastWorkAt, requestedByOf, type LedgerDoc, type LedgerTask } from '../ledger/contract';
 import { LEADER_OF_ALL } from '../mindscape/leader';
@@ -24,6 +25,7 @@ export const UNCHECKED_MS = 12 * 60 * 60 * 1000;
 
 export type FrontTaskState = 'esperando' | 'travado' | 'tocando' | 'parado';
 const STATE_ORDER: Readonly<Record<FrontTaskState, number>> = { esperando: 0, travado: 1, tocando: 2, parado: 3 };
+const SEGMENT_ORDER: Readonly<Record<FrontSegment['state'], number>> = { concluida: -1, ...STATE_ORDER };
 
 export interface FrontTask {
   readonly id: string;
@@ -40,6 +42,13 @@ export interface FrontTask {
   readonly changedAt: number;
 }
 
+/** A piece of the bar of a front: one ask, `steps` of `Front.totalSteps` long, in the color of its state. */
+export interface FrontSegment {
+  readonly id: string;
+  readonly state: FrontTaskState | 'concluida';
+  readonly steps: number;
+}
+
 export interface Front {
   /** The front's name; `''` = "Sem frente". */
   readonly name: string;
@@ -50,6 +59,8 @@ export interface Front {
   readonly doneToday: number;
   readonly steps: number;
   readonly totalSteps: number;
+  /** The bar: the longest first (accepted, then the rest by state); an ask with no step has none. */
+  readonly segments: readonly FrontSegment[];
   readonly changedAt: number;
 }
 
@@ -181,6 +192,12 @@ export function jobuProgress(doc: LedgerDoc, now: number): JobuProgress {
       const frontCounts = zeroCounts();
       for (const task of tasks) frontCounts[task.state] += 1;
       const alive = tasks.map((task) => doc.tasks[task.id]!);
+      const segments: FrontSegment[] = [
+        ...group.done.map((task) => ({ id: task.id, state: 'concluida' as const, steps: PROGRESS_STEPS })),
+        ...tasks.map((task) => ({ id: task.id, state: task.state, steps: stepsOf(doc.tasks[task.id]!) })),
+      ]
+        .filter((segment) => segment.steps > 0)
+        .sort((a, b) => b.steps - a.steps || SEGMENT_ORDER[a.state] - SEGMENT_ORDER[b.state]);
       return {
         name,
         tasks,
@@ -188,6 +205,7 @@ export function jobuProgress(doc: LedgerDoc, now: number): JobuProgress {
         doneToday: group.done.length,
         steps: [...alive, ...group.done].reduce((sum, task) => sum + stepsOf(task), 0),
         totalSteps: (alive.length + group.done.length) * PROGRESS_STEPS,
+        segments,
         changedAt: Math.max(...tasks.map((task) => task.changedAt)),
       };
     });

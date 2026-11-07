@@ -90,6 +90,15 @@ describe('jobuProgress', () => {
     });
     // What needs the owner comes first.
     expect(tasks.map((task) => task.state)).toEqual(['esperando', 'travado', 'tocando', 'tocando', 'parado', 'parado', 'parado']);
+    // The bar: one segment per ask, as long as its steps and in the color of its state; an ask with no step has none.
+    expect(jobuProgress(doc, now).fronts[0]!.segments.map((segment) => [segment.id, segment.state, segment.steps])).toEqual([
+      ['carta', 'esperando', 2],
+      ['revisao', 'tocando', 2],
+      ['esquecida', 'parado', 2],
+      ['voltou', 'travado', 1],
+      ['rodando', 'tocando', 1],
+      ['calada', 'parado', 1],
+    ]);
   });
 
   it('what ended leaves the list: accepted today only counts, cancelled vanishes, and the bar counts the steps of the front', () => {
@@ -112,6 +121,10 @@ describe('jobuProgress', () => {
     expect(front.doneToday).toBe(1);
     // rodando delivered (2 of 3) + feita accepted today (3 of 3).
     expect([front.steps, front.totalSteps]).toEqual([5, 6]);
+    expect(front.segments.map((segment) => [segment.state, segment.steps])).toEqual([
+      ['concluida', 3],
+      ['tocando', 2],
+    ]);
     expect(progress.doneToday.map((task) => task.id).sort()).toEqual(['feita', 'so-feita']);
   });
 });

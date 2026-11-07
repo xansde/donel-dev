@@ -131,7 +131,9 @@ function FrontBar({ front }: { readonly front: Front }): React.JSX.Element {
   const pct = front.totalSteps === 0 ? 0 : Math.round((100 * front.steps) / front.totalSteps);
   return (
     <span className={styles.bar} role="progressbar" aria-valuemin={0} aria-valuemax={front.totalSteps} aria-valuenow={front.steps} aria-valuetext={`${pct}% das etapas`}>
-      <span className={styles.fill} data-state={front.counts.esperando ? 'esperando' : front.counts.travado ? 'travado' : 'tocando'} style={{ width: `${pct}%` }} />
+      {front.segments.map((segment) => (
+        <span key={segment.id} className={styles.segment} data-state={segment.state} style={{ width: `${(100 * segment.steps) / front.totalSteps}%` }} />
+      ))}
     </span>
   );
 }
