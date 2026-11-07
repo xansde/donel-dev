@@ -119,7 +119,7 @@ async function main(): Promise<void> {
     },
     extra: createOracleAdminRoutes({ celular, relay, setPicture }),
   });
-  server = await startOracleServer({ host, port, authorized: (authorization) => callerOf(authorization, tokenHash(), services()) !== null, handler });
+  server = await startOracleServer({ host, port, caller: (authorization) => callerOf(authorization, tokenHash(), services()), handler });
   writeFileSync(join(dir, 'url'), `${server.url}\n`, { mode: 0o600 });
   const gatePort = Number(process.env.DONEL_ORACULO_PORTAO_PORT) || GATE_PORT;
   const gate = await startGateServer({

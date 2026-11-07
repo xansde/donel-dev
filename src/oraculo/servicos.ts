@@ -3,12 +3,14 @@
 // `scripts/oraculo-vps.sh servico <name>`); deleting the file revokes it, with no restart (read at each call).
 //
 // The credential reaches ONE route, `POST /v1/servico/apply` with `{ op }`: create, take and deliver, with text or
-// link proofs. The daemon signs as the place `servico:<name>` (role `servico`), whatever the body says; the ledger's
-// own rules do the rest (only the owner place takes and delivers, a high risk delivery carries the owner's letter).
+// link proofs, never marked as asked by the owner. Not the events stream either (server.ts), so a revoked service
+// has no open connection left to cut. The daemon signs as the place `servico:<name>` (role `servico`), whatever the
+// body says; the ledger's own rules do the rest (only the owner place takes and delivers, a high risk delivery
+// carries the owner's letter).
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { SERVICE_PLACE_PREFIX, SERVICE_ROLE, type LedgerActor, type LedgerOp } from '../shared/ledger/contract';
+import { ASKED_BY_OWNER, cleanAskedBy, SERVICE_PLACE_PREFIX, SERVICE_ROLE, type LedgerActor, type LedgerOp } from '../shared/ledger/contract';
 
 export const SERVICE_PATH = '/v1/servico/apply';
 export const SERVICES_DIR = 'servicos';
@@ -44,8 +46,10 @@ export function serviceActor(name: string): LedgerActor {
 /** Why a service may not send `op`; `null` = may (the ledger's rules still apply after). */
 export function serviceOpRefusal(op: unknown): string | null {
   if (typeof op !== 'object' || op === null || typeof (op as { op?: unknown }).op !== 'string') return 'op inválida';
-  const { op: kind, proofs, doneBy } = op as { op: string; proofs?: unknown; doneBy?: unknown };
+  const { op: kind, proofs, doneBy, requestedBy } = op as { op: string; proofs?: unknown; doneBy?: unknown; requestedBy?: unknown };
   if (!SERVICE_OPS.has(kind)) return 'serviço só cria, assume e entrega tarefas';
+  // The owner's mark puts the task in the owner's progress (Jobu); a service names the person, never the owner.
+  if (typeof requestedBy === 'string' && cleanAskedBy(requestedBy).toLowerCase() === ASKED_BY_OWNER) return 'serviço não marca pedido do dono';
   if (kind !== 'entregar') return null;
   if (doneBy !== undefined) return 'serviço entrega o próprio trabalho (sem feitoPor)';
   if (!Array.isArray(proofs) || proofs.some((p) => typeof p !== 'object' || p === null || ((p as { kind?: unknown }).kind !== 'texto' && (p as { kind?: unknown }).kind !== 'link')))
