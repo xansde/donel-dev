@@ -1,0 +1,567 @@
+{
+ "formato": "metricas-factory@1",
+ "geradoEm": "2026-11-07T16:48:46.126Z",
+ "fontesLidas": [
+  {
+   "id": "rodadas",
+   "caminho": "/root/.homologacao-agentica/rodadas",
+   "existe": true,
+   "registros": 56
+  },
+  {
+   "id": "log",
+   "caminho": "/root/.homologacao-agentica/log.jsonl",
+   "existe": true,
+   "registros": 78
+  },
+  {
+   "id": "transcricoes",
+   "caminho": "/root/.claude/projects",
+   "existe": true,
+   "registros": 9
+  },
+  {
+   "id": "gabarito",
+   "caminho": "/root/pesquisas-rigs-homologacao/dataset-rig1/gabarito-rig1.jsonl",
+   "existe": true,
+   "registros": 209
+  },
+  {
+   "id": "passk-triagem",
+   "caminho": "/root/spikes-rig2/passk-triagem/rows.json",
+   "existe": true,
+   "registros": 10
+  },
+  {
+   "id": "evals-base",
+   "caminho": "/root/spikes-rig2/pesquisa-mutacao/base/deploy/olimpo/evals",
+   "existe": true,
+   "registros": 3
+  },
+  {
+   "id": "fonte-nova:defeitos-plantados.jsonl",
+   "caminho": "/root/pesquisas-rigs-homologacao/metricas/fontes/defeitos-plantados.jsonl",
+   "existe": true,
+   "registros": 15
+  },
+  {
+   "id": "fonte-nova:avaliador-estado-final.jsonl",
+   "caminho": "/root/pesquisas-rigs-homologacao/metricas/fontes/avaliador-estado-final.jsonl",
+   "existe": false,
+   "registros": null
+  },
+  {
+   "id": "fonte-nova:tokens.jsonl",
+   "caminho": "/root/pesquisas-rigs-homologacao/metricas/fontes/tokens.jsonl",
+   "existe": false,
+   "registros": null
+  },
+  {
+   "id": "fonte-nova:revisoes.jsonl",
+   "caminho": "/root/pesquisas-rigs-homologacao/metricas/fontes/revisoes.jsonl",
+   "existe": false,
+   "registros": null
+  },
+  {
+   "id": "fonte-nova:passk.jsonl",
+   "caminho": "/root/pesquisas-rigs-homologacao/metricas/fontes/passk.jsonl",
+   "existe": false,
+   "registros": null
+  }
+ ],
+ "metricas": [
+  {
+   "id": "defeitos-plantados",
+   "nome": "Defeitos plantados detectados",
+   "pergunta": "Plantando um defeito conhecido, a factory (ou a bateria que a vigia) pega?",
+   "trava": true,
+   "fontes": [
+    "/root/pesquisas-rigs-homologacao/metricas/fontes/defeitos-plantados.jsonl"
+   ],
+   "status": "medido",
+   "valor": 0.3333333333333333,
+   "texto": "5 de 15",
+   "unidade": "defeitos pegos com firmeza",
+   "origem": "defeitos-plantados.jsonl: cada linha é um defeito plantado numa cópia, \"pego\" só com a falha do caso ligado à regra. 1 pego(s) só em parte das rodadas não contam. Por suíte: decisões do Dalton (37 casos, contexto da sessão) 5 de 10; skill conferir-tecnico 0 de 5.",
+   "detalhe": {
+    "porSuite": [
+     {
+      "suite": "decisões do Dalton (37 casos, contexto da sessão)",
+      "plantados": 10,
+      "pegos": 5,
+      "instaveis": 1
+     },
+     {
+      "suite": "skill conferir-tecnico",
+      "plantados": 5,
+      "pegos": 0,
+      "instaveis": 0
+     }
+    ],
+    "instaveis": 1,
+    "datas": [
+     "2026-11-07"
+    ]
+   }
+  },
+  {
+   "id": "passou-falso",
+   "nome": "“Passou” falso",
+   "pergunta": "Quantas vezes a factory diz \"ok\" para algo que não está ok?",
+   "trava": true,
+   "fontes": [
+    "/root/pesquisas-rigs-homologacao/metricas/fontes/avaliador-estado-final.jsonl",
+    "/root/.homologacao-agentica/rodadas",
+    "/root/pesquisas-rigs-homologacao/dataset-rig1/gabarito-rig1.jsonl"
+   ],
+   "status": "medido",
+   "valor": 0,
+   "texto": "0 de 324 iscas",
+   "unidade": "iscas",
+   "origem": "Iscas do avaliador: lotes/*/vereditos.json das rodadas (2 iscas por lote; \"passou\" = o modelo deu ok para a isca). Cobre só o avaliador, não o comando. O gabarito (189 itens) só tem itens que o rig reprovou, então não mede \"ok\" falso: mede a falha falsa (3). O avaliador por estado final entra quando a fonte existir.",
+   "detalhe": {
+    "estadoFinal": null,
+    "iscas": {
+     "plantadas": 324,
+     "passaram": 0
+    },
+    "gabarito": {
+     "itens": 189,
+     "rigOk": 0,
+     "passouFalso": 0,
+     "falhaFalsa": 3
+    }
+   }
+  },
+  {
+   "id": "pass-k",
+   "nome": "Consistência (pass^k)",
+   "pergunta": "Rodando o mesmo caso k vezes, em quantos casos a factory acerta (ou responde igual) todas as vezes?",
+   "fontes": [
+    "/root/spikes-rig2/passk-triagem/rows.json",
+    "/root/spikes-rig2/pesquisa-mutacao/base/deploy/olimpo/evals",
+    "/root/pesquisas-rigs-homologacao/metricas/fontes/passk.jsonl"
+   ],
+   "status": "medido",
+   "valor": 0,
+   "texto": "0/2 · 35/37",
+   "unidade": "casos que acertam as k",
+   "origem": "Baterias repetidas, cada caso contando só se acerta em todas as k tentativas: triagem: mesmo x/y e mesmos bloqueantes (k=5, 0 de 2); decisões do Dalton (k=3, 35 de 37). O valor é o do pior conjunto. Medições de spike (07/11), não da produção; a fonte nova passk.jsonl soma as próximas.",
+   "detalhe": {
+    "conjuntos": [
+     {
+      "nome": "triagem: mesmo x/y e mesmos bloqueantes",
+      "k": 5,
+      "casos": 2,
+      "passam": 0,
+      "fonte": "/root/spikes-rig2/passk-triagem/rows.json"
+     },
+     {
+      "nome": "decisões do Dalton",
+      "k": 3,
+      "casos": 37,
+      "passam": 35,
+      "fonte": "/root/spikes-rig2/pesquisa-mutacao/base/deploy/olimpo/evals"
+     }
+    ]
+   }
+  },
+  {
+   "id": "selos-por-semana",
+   "nome": "Selos por semana",
+   "pergunta": "Quantos selos provisórios a factory gravou em cada semana (segunda a domingo)?",
+   "fontes": [
+    "/root/.homologacao-agentica/rodadas"
+   ],
+   "status": "medido",
+   "valor": 1,
+   "texto": "1 nesta semana",
+   "unidade": "selos",
+   "origem": "estado.json de 56 rodadas: selo = fechamento.desfecho \"selar\" (ou nada segura e a rodada está em aguardando-migracao), na data em que a etiqueta foi gravada. 2 selo(s) no total.",
+   "detalhe": {
+    "total": 2,
+    "selos": [
+     {
+      "rodada": "homologar-aplicativo-de-stop-de-crescimento-das-franquias/rodada-3",
+      "em": "2026-10-29T03:43:11.085Z"
+     },
+     {
+      "rodada": "seamovel-homologacao-da-busca-de-imoveis-do-mercado-migrar-c/rodada-2",
+      "em": "2026-11-03T16:12:53.279Z"
+     }
+    ]
+   },
+   "serie": [
+    {
+     "semana": "14/09",
+     "valor": 0
+    },
+    {
+     "semana": "21/09",
+     "valor": 0
+    },
+    {
+     "semana": "28/09",
+     "valor": 0
+    },
+    {
+     "semana": "05/10",
+     "valor": 0
+    },
+    {
+     "semana": "12/10",
+     "valor": 0
+    },
+    {
+     "semana": "19/10",
+     "valor": 0
+    },
+    {
+     "semana": "26/10",
+     "valor": 1
+    },
+    {
+     "semana": "02/11",
+     "valor": 1
+    }
+   ]
+  },
+  {
+   "id": "resolvidos-sozinhos",
+   "nome": "Resolvidos sozinhos com prova",
+   "pergunta": "Dos itens que seguram o selo e não são decisão do dono, quantos a factory consertou sozinha, com prova por execução (antes falha, depois passa)?",
+   "fontes": [
+    "/root/.homologacao-agentica/rodadas"
+   ],
+   "status": "medido",
+   "valor": 0.07488986784140969,
+   "texto": "17 de 227",
+   "unidade": "itens",
+   "origem": "Regra da pesquisa 21 (extrair.py) sobre 21 rodadas julgadas: estado.json (julgamento.seguramSelo), correcoes.csv e provas-execucao com \"antes\" e \"depois\". 2.4 e 2.6 saem do denominador (decisão do dono). Uma execução só; o \"3 de 3 repetições\" entra quando houver replay.",
+   "detalhe": {
+    "resolvidos": 17,
+    "denominador": 227,
+    "rodadasJulgadas": 21,
+    "porRodada": [
+     {
+      "rodada": "07-de-abril-de-2026-atendimento-ao-hospede/rodada-1",
+      "resolvidos": 0,
+      "denominador": 12,
+      "itens": []
+     },
+     {
+      "rodada": "28-de-abril-de-2026-controle-evento-franqueados/rodada-1",
+      "resolvidos": 2,
+      "denominador": 23,
+      "itens": [
+       "4.3",
+       "4.9"
+      ]
+     },
+     {
+      "rodada": "ai-rats-hub/rodada-1",
+      "resolvidos": 0,
+      "denominador": 8,
+      "itens": []
+     },
+     {
+      "rodada": "envio-de-reservas-fase-1/rodada-1",
+      "resolvidos": 1,
+      "denominador": 13,
+      "itens": [
+       "4.5"
+      ]
+     },
+     {
+      "rodada": "funil-auditoria-rm/rodada-1",
+      "resolvidos": 2,
+      "denominador": 7,
+      "itens": [
+       "3.3",
+       "4.5"
+      ]
+     },
+     {
+      "rodada": "homologacao-aplicativo-jornada-das-franquias/rodada-1",
+      "resolvidos": 1,
+      "denominador": 21,
+      "itens": [
+       "4.3"
+      ]
+     },
+     {
+      "rodada": "homologacao-central-de-contato/rodada-1",
+      "resolvidos": 0,
+      "denominador": 14,
+      "itens": []
+     },
+     {
+      "rodada": "homologacao-cotacao-inteligente/rodada-1",
+      "resolvidos": 0,
+      "denominador": 18,
+      "itens": []
+     },
+     {
+      "rodada": "homologacao-da-apresentacao-private/rodada-1",
+      "resolvidos": 1,
+      "denominador": 9,
+      "itens": [
+       "4.3"
+      ]
+     },
+     {
+      "rodada": "homologacao-da-plataforma-terrenos/rodada-1",
+      "resolvidos": 1,
+      "denominador": 12,
+      "itens": [
+       "5.7"
+      ]
+     },
+     {
+      "rodada": "homologacao-dashboard-atendimento-comercial/rodada-1",
+      "resolvidos": 0,
+      "denominador": 14,
+      "itens": []
+     },
+     {
+      "rodada": "homologacao-do-app-seazone-guidebook-ai-app-de-staging/rodada-1",
+      "resolvidos": 2,
+      "denominador": 11,
+      "itens": [
+       "4.3",
+       "5.7"
+      ]
+     },
+     {
+      "rodada": "homologacao-do-hub-de-suprimentos-administrativo/rodada-1",
+      "resolvidos": 0,
+      "denominador": 17,
+      "itens": []
+     },
+     {
+      "rodada": "homologacao-do-site-auditor-rm-que-esta-no-coolify-usamos-el/rodada-1",
+      "resolvidos": 0,
+      "denominador": 7,
+      "itens": []
+     },
+     {
+      "rodada": "homologar-aplicativo-de-chat-jurdico-para-franquias/rodada-1",
+      "resolvidos": 1,
+      "denominador": 10,
+      "itens": [
+       "4.5"
+      ]
+     },
+     {
+      "rodada": "homologar-aplicativo-de-stop-de-crescimento-das-franquias/rodada-1",
+      "resolvidos": 0,
+      "denominador": 12,
+      "itens": []
+     },
+     {
+      "rodada": "multas-revertidas-seazone/rodada-1",
+      "resolvidos": 5,
+      "denominador": 13,
+      "itens": [
+       "2.2",
+       "3.3",
+       "3.7",
+       "4.5",
+       "4.9"
+      ]
+     },
+     {
+      "rodada": "seamovel-homologacao-da-busca-de-imoveis-do-mercado-migrar-c/rodada-1",
+      "resolvidos": 1,
+      "denominador": 6,
+      "itens": [
+       "4.5"
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "id": "retrabalho",
+   "nome": "Retrabalho",
+   "pergunta": "Quanto do trabalho da factory teve de ser refeito: rodada refeita ou reaberta, entrega devolvida na revisão?",
+   "fontes": [
+    "/root/.homologacao-agentica/rodadas",
+    "/root/pesquisas-rigs-homologacao/metricas/fontes/revisoes.jsonl"
+   ],
+   "status": "medido",
+   "valor": 0.21428571428571427,
+   "texto": "12 de 56 rodadas",
+   "unidade": "rodadas",
+   "origem": "estado.json: rodada N > 1 (rodadaAnterior) conta como refeita; \"reaberta\" conta como reaberta (inclui reabertura por mudança de regra do coordenador). Entregas devolvidas pelo Revisor ou Conferente entram quando revisoes.jsonl existir.",
+   "detalhe": {
+    "rodadas": 56,
+    "refeitas": 3,
+    "reabertas": 9,
+    "revisoes": null,
+    "lista": [
+     {
+      "rodada": "09-de-abril-de-2026-operacao-pool-vistas-gestao-de-contas/rodada-1",
+      "tipo": "reaberta",
+      "motivo": "coordenador 29/10: o agente toca também app de público externo"
+     },
+     {
+      "rodada": "28-de-abril-de-2026-controle-evento-franqueados/rodada-1",
+      "tipo": "reaberta",
+      "motivo": "coordenador 29/10: o agente toca também app de público externo"
+     },
+     {
+      "rodada": "homologacao-central-de-contato/rodada-1",
+      "tipo": "reaberta",
+      "motivo": "coordenador 29/10: o agente toca também app de público externo"
+     },
+     {
+      "rodada": "homologacao-check-in/rodada-1",
+      "tipo": "reaberta",
+      "motivo": "coordenador 29/10: o agente toca também app de público externo"
+     },
+     {
+      "rodada": "homologacao-denuncias-hospedes/rodada-1",
+      "tipo": "reaberta",
+      "motivo": "coordenador 29/10: o agente toca também app de público externo"
+     },
+     {
+      "rodada": "homologacao-do-app-seazone-guidebook-ai-app-de-staging/rodada-1",
+      "tipo": "reaberta",
+      "motivo": "coordenador 29/10: o agente toca também app de público externo"
+     },
+     {
+      "rodada": "homologacao-do-gerenciamento-private/rodada-1",
+      "tipo": "reaberta",
+      "motivo": "coordenador 29/10: o agente toca também app de público externo"
+     },
+     {
+      "rodada": "homologar-aplicativo-de-chat-jurdico-para-franquias/rodada-1",
+      "tipo": "reaberta",
+      "motivo": "coordenador 29/10: o agente toca também app de público externo"
+     },
+     {
+      "rodada": "homologar-aplicativo-de-stop-de-crescimento-das-franquias/rodada-2",
+      "tipo": "refeita",
+      "motivo": "rodada 1 sem selo: 13 critérios seguravam; o time de homologação corrigiu pelos PRs #69 a #75 e pelo ruleset da main"
+     },
+     {
+      "rodada": "homologar-aplicativo-de-stop-de-crescimento-das-franquias/rodada-3",
+      "tipo": "refeita",
+      "motivo": "a main mudou depois da medição da rodada 2 (PR #76)"
+     },
+     {
+      "rodada": "jornada-de-enxoval/rodada-1",
+      "tipo": "reaberta",
+      "motivo": "coordenador 29/10: o agente toca também app de público externo"
+     },
+     {
+      "rodada": "seamovel-homologacao-da-busca-de-imoveis-do-mercado-migrar-c/rodada-2",
+      "tipo": "refeita",
+      "motivo": "rodada 1 sem selo; coordenador mandou refazer a medição inteira em 03/11/2026 depois de staging alinhado (PR #29), PR #28 e login Google na produção (PRs #24 e #30)"
+     }
+    ]
+   }
+  },
+  {
+   "id": "espera-do-time",
+   "nome": "Tempo que o time espera a factory",
+   "pergunta": "Quando a bola está com a factory, quanto tempo o time espera? (critério: não virar gargalo)",
+   "fontes": [
+    "/root/.homologacao-agentica/rodadas",
+    "/root/.homologacao-agentica/log.jsonl"
+   ],
+   "status": "medido",
+   "valor": 104.1,
+   "texto": "104,1 h na fila (mediana)",
+   "unidade": "horas",
+   "origem": "Fila: de entrouEm (ou do início da factory, 2026-10-20, para card mais antigo) até criadoEm da rodada 1, em 53 rodadas. Duração das rodadas da VPS: rodada-vps-fim do log.jsonl. \"Com a factory agora\" é estimado: conta desde a última mexida no registro, não desde que a bola voltou.",
+   "detalhe": {
+    "fila": {
+     "inicioDaFactory": "2026-10-20T00:52:59.329Z",
+     "rodadas": 53,
+     "medianaH": 104.1,
+     "p90H": 169.1,
+     "maximoH": 169.1
+    },
+    "rodadasVps": {
+     "sessoes": 9,
+     "medianaH": 0.7,
+     "maximoH": 8.4
+    },
+    "comAFactoryAgora": {
+     "status": "estimado",
+     "rodadas": [
+      {
+       "rodada": "09-de-abril-de-2026-operacao-pool-vistas-gestao-de-contas/rodada-1",
+       "fase": "rodada",
+       "horasDesdeUltimaMexida": 188.4
+      },
+      {
+       "rodada": "correcoes-reservas-stays/rodada-1",
+       "fase": "rodada",
+       "horasDesdeUltimaMexida": 17
+      },
+      {
+       "rodada": "funil-auditoria-rm/rodada-1",
+       "fase": "rodada",
+       "horasDesdeUltimaMexida": 97.8
+      },
+      {
+       "rodada": "homologacao-da-plataforma-terrenos/rodada-1",
+       "fase": "rodada",
+       "horasDesdeUltimaMexida": 95.6,
+       "pausa": "destino em definição pela triagem SZI (Ana Vianna, #homologações-szi)"
+      },
+      {
+       "rodada": "homologacao-do-hub-de-suprimentos-administrativo/rodada-1",
+       "fase": "rodada",
+       "horasDesdeUltimaMexida": 26.1,
+       "pausa": "ciclos de conserto do passo 5 não couberam na sessão da VPS de 06/11 (cada medição dos 3 perfis afetados leva ~90 min): a diferença em /envios/rastreio (AF-19, "
+      },
+      {
+       "rodada": "levar-artefato-da-vercel-para-a-infra-da-seazone/rodada-1",
+       "fase": "rodada",
+       "horasDesdeUltimaMexida": 188.4,
+       "pausa": "Login fora do padrão (Clerk), bloqueante pela decisão do coordenador de 30/10 (07h item 4 e 07h55). Não dá para concluir que o app é só interno: o Clerk de dese"
+      }
+     ]
+    }
+   }
+  },
+  {
+   "id": "tokens",
+   "nome": "Tokens por selo e por conta",
+   "pergunta": "Quanto a factory gasta, em tokens, por selo e por conta? (só mostrado: sem meta)",
+   "soMostrado": true,
+   "fontes": [
+    "/root/.homologacao-agentica/log.jsonl",
+    "/root/.claude/projects",
+    "/root/pesquisas-rigs-homologacao/metricas/fontes/tokens.jsonl"
+   ],
+   "status": "medido",
+   "valor": null,
+   "unidade": "tokens por selo",
+   "texto": "261.653.219 tokens, sem selo no período",
+   "origem": "Transcrições das sessões da VPS (as sessões vêm do log.jsonl; uso de cada mensagem do modelo, contada uma vez, somando entrada, saída e cache) desde 2026-11-05, mais tokens.jsonl. Antes disso (PC e Olimpo) não há registro. A conta da VPS não grava o nome. Custo de lista em US$ vem do rodada-vps-fim.",
+   "detalhe": {
+    "desde": "2026-11-05T18:00:01.838Z",
+    "total": 261653219,
+    "porConta": [
+     {
+      "conta": "conta Claude da VPS (nome não gravado)",
+      "sessoes": 9,
+      "entrada": 2566,
+      "saida": 783774,
+      "cacheLeitura": 256456323,
+      "cacheCriacao": 4410556,
+      "total": 261653219
+     }
+    ],
+    "selosNoPeriodo": 0,
+    "sessoesSemTranscricao": [],
+    "custoListaUsd": 68.86
+   }
+  }
+ ]
+}
