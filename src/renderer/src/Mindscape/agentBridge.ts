@@ -15,6 +15,7 @@
 // tasks to the first live place above it, or to the Líder único (`firstLiveAbove`), and whoever gets them hears it.
 
 import {
+  LEADER_PLACE_IS_THE_OWNERS,
   applyBoardOps,
   describeBoard,
   hasArrowLink,
@@ -24,13 +25,13 @@ import {
 } from '../../../shared/mindscape/agent-tools';
 import type { MindscapeBoardResponse } from '../../../shared/mindscape/channels';
 import { LEADER_OF_ALL, isLeaderOfAllTab, knownBoards, resolveBoard, type KnownBoard } from '../../../shared/mindscape/leader';
-import { LEADER_OF_ALL_FROM, canFaxineiroClose, canReach, canReachLeader, findPlace, firstLiveAbove } from '../../../shared/mindscape/reach';
+import { LEADER_OF_ALL_FROM, canFaxineiroClose, canReach, canReachLeader, findPlace, firstLiveAbove, isBoardOrchestrator } from '../../../shared/mindscape/reach';
 import { FAXINEIRO_OPENER, PC_MACHINE_ID, type FaxineiroLogEntry, type SessionView } from '../../../shared/faxineiro/triggers';
 import type { FaxineiroWakeOrder } from '../../../shared/faxineiro/ipc';
 import type { LedgerPassedOn, LedgerPassOnRequest } from '../../../shared/ledger/channels';
 import { addLink, addPlace, noteCardId, placeCardId, placeHasStarted, placeOfSession, type MindscapeBoard, type MindscapeDoc, type SessionPlaceCard } from '../../../shared/mindscape/model';
 import type { SemaphoreState } from '../../../shared';
-import { FAXINEIRO_ROLE_ID, type SessionRole } from '../../../shared/roles';
+import { FAXINEIRO_ROLE_ID, LEADER_ROLE_ID, type SessionRole } from '../../../shared/roles';
 import type { SendFrom } from '../chat/sendDriver';
 
 /**
@@ -798,6 +799,8 @@ export class AgentBridge {
           pasta: caller.cwd,
           ...(self ? { lugar: self.id } : { lugar: null, aviso: 'Seu lugar ainda não está no quadro (a sessão acabou de abrir).' }),
           ...(self?.roleId ?? caller.roleId ? { papel: self?.roleId ?? caller.roleId, papelNome: this.roleName(self?.roleId ?? caller.roleId) } : {}),
+          // The Líder the owner put on the board (never one a session made): it liberates upload folders for it.
+          orquestrador: self ? isBoardOrchestrator(this.board(caller.cwd), self.id) : false,
           roda: caller.remoteId ? this.ports.remoteLabel(caller.remoteId) : 'este computador',
           lugaresRemotos: this.ports.remotes().map((remote) => remote.label),
         }),
@@ -948,6 +951,7 @@ export class AgentBridge {
         if (opener === undefined) return fail('Seu lugar ainda não está no quadro; espere o primeiro turno terminar.');
         const role = this.ports.roles().find((candidate) => candidate.id === call.papel);
         if (!role) return fail(`Papel "${call.papel}" não existe (veja papeis_listar).`);
+        if (role.id === LEADER_ROLE_ID) return fail(`Não abri: ${LEADER_PLACE_IS_THE_OWNERS}`);
         // `onde` — absent or "aqui": where the caller runs; "este computador": local; else a remote place by label or id.
         let remoteId = caller.remoteId;
         const where = call.onde?.trim().toLowerCase();

@@ -41,6 +41,7 @@ export type BrowserToolCall =
   | { readonly tool: 'navegador_trocar_aba'; readonly i: number }
   | { readonly tool: 'navegador_fechar_aba'; readonly i: number }
   | { readonly tool: 'navegador_enviar_arquivo'; readonly n: number; readonly caminho: string }
+  | { readonly tool: 'navegador_liberar_pasta'; readonly pasta: string; readonly quadro?: string }
   | { readonly tool: 'navegador_teclar'; readonly tecla: string }
   | { readonly tool: 'navegador_rolar'; readonly direcao: ScrollDirection }
   | { readonly tool: 'navegador_voltar' }
@@ -164,11 +165,26 @@ export const BROWSER_TOOLS: readonly ToolDefinition[] = [
     name: 'navegador_enviar_arquivo',
     title: 'Enviar um arquivo',
     description:
-      'Coloca um arquivo no campo de envio [N] (ou no campo de arquivo ligado a esse botão). Passe o caminho COMPLETO do arquivo. Só sai arquivo de uma pasta que o dono autorizou; se a pasta do arquivo ainda não está autorizada, esta ferramenta mesma mostra essa pasta ao dono no painel, com Permitir / Negar, e espera a resposta (até 30 min). Permitida, a pasta fica autorizada para as próximas vezes. Não use navegador_pedir_humano para pedir pasta.',
+      'Coloca um arquivo no campo de envio [N] (ou no campo de arquivo ligado a esse botão). Passe o caminho COMPLETO do arquivo. Saem os anexos do chat e os arquivos das pastas liberadas para o seu quadro (pelo dono ou pelo orquestrador do quadro). Pasta ainda não liberada: peça ao Líder do seu quadro (ou ao Líder único) que a libere com navegador_liberar_pasta; não peça ao dono. Arquivo de segredo (chaves, tokens, config com credenciais) nunca sai.',
     inputSchema: {
       type: 'object',
       properties: { n: ELEMENT_NUMBER, caminho: { type: 'string', description: 'Caminho completo do arquivo (relativo só vale dentro de uma pasta já autorizada).' } },
       required: ['n', 'caminho'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'navegador_liberar_pasta',
+    title: 'Liberar uma pasta de envio',
+    description:
+      'Só o orquestrador: o Líder que o dono pôs num quadro libera, para as sessões do próprio quadro, uma pasta de onde navegador_enviar_arquivo pode enviar; o Líder único libera em qualquer quadro, dizendo qual em "quadro". Fica registrado quem liberou e quando, e o dono vê e remove em Regras. A raiz do disco e a pasta de usuário inteira não são liberadas, e arquivo de segredo dentro da pasta continua recusado.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pasta: { type: 'string', description: 'Caminho completo da pasta, neste computador.' },
+        quadro: { type: 'string', description: 'Só o Líder único: o quadro, pelo nome ou pela pasta do projeto.' },
+      },
+      required: ['pasta'],
       additionalProperties: false,
     },
   },
@@ -217,7 +233,7 @@ export const BROWSER_TOOLS: readonly ToolDefinition[] = [
     name: 'navegador_pedir_humano',
     title: 'Pedir ajuda ao dono',
     description:
-      'Pede ao dono que assuma o navegador (login, 2FA, captcha, uma decisão dele). O painel abre com o motivo e esta ferramenta só volta quando ele devolver o controle (até 30 min). Nunca peça senha ao dono pelo chat: ele digita na própria página. Para enviar arquivo não use esta: navegador_enviar_arquivo com o caminho completo já pede a pasta ao dono.',
+      'Pede ao dono que assuma o navegador (login, 2FA, captcha, uma decisão dele). O painel abre com o motivo e esta ferramenta só volta quando ele devolver o controle (até 30 min). Nunca peça senha ao dono pelo chat: ele digita na própria página. Para enviar arquivo não use esta: a pasta é liberada pelo orquestrador do quadro (navegador_liberar_pasta).',
     inputSchema: {
       type: 'object',
       properties: { motivo: { type: 'string', description: 'O que o dono precisa fazer, em uma frase.' } },
@@ -303,6 +319,18 @@ export function parseToolCall(name: string, rawArgs: unknown): ParsedToolCall {
       if (typeof caminho !== 'string') return { ok: false, reason: caminho.error };
       if (caminho.trim() === '') return { ok: false, reason: '"caminho" vazio.' };
       return { ok: true, call: { tool: name, n: args.n, caminho: caminho.trim() } };
+    }
+    case 'navegador_liberar_pasta': {
+      const pasta = boundedText(args.pasta, 'pasta');
+      if (typeof pasta !== 'string') return { ok: false, reason: pasta.error };
+      if (pasta.trim() === '') return { ok: false, reason: '"pasta" vazia.' };
+      let quadro: string | undefined;
+      if (args.quadro !== undefined) {
+        const text = boundedText(args.quadro, 'quadro');
+        if (typeof text !== 'string') return { ok: false, reason: text.error };
+        quadro = text.trim() || undefined;
+      }
+      return { ok: true, call: { tool: name, pasta: pasta.trim(), ...(quadro ? { quadro } : {}) } };
     }
     case 'navegador_teclar': {
       if (typeof args.tecla !== 'string' || args.tecla.trim() === '' || args.tecla.length > 64) return { ok: false, reason: '"tecla" tem de ser uma tecla, como "Enter" ou "Ctrl+A".' };

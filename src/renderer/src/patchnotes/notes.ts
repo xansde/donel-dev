@@ -26,12 +26,24 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'No centro, o Oráculo agora mostra todas as tarefas numa tabela: título, estado, com quem está agora (você decide, o Revisor confere, falta alguém assumir), quem pediu, quem faz, quem criou, risco, prazo, a última entrega e a decisão. "Quem pediu" é sempre uma pessoa ou uma fonte, nunca "Dev"; quando ninguém disse, aparece "não registrado" em vermelho. Em cima, os filtros prontos (Esperando você, Sem executor, Cartas, Tudo) com o número de cada um, e uma busca por frase, pessoa, lugar ou código. Clicar numa linha abre ao lado a frase do pedido, os papéis, o "pronto quando", as provas da última entrega e a linha do tempo da tarefa. As cartas que esperam você continuam lá: "Abrir as cartas" no alto, ou "Abrir a carta para decidir" no detalhe. Os nomes são os mesmos da tabela do Supabase. Numa janela estreita, a tabela mostra só as colunas principais e o detalhe desce para baixo dela.',
       },
       {
+        title: 'Sessões na VPS seguem com o PC desligado',
+        text: 'Com o Oráculo na VPS, uma sessão aberta lá depois desta versão continua criando, entregando e listando tarefas quando o PC desliga, e sabe quem é no quadro (do jeito que o quadro estava quando o PC desligou). O resto (navegador, desenhar no quadro, falar com outras sessões) volta quando o PC liga.',
+      },
+      {
+        title: 'Com o Oráculo na VPS, o celular fala com ela',
+        text: 'Quando o Oráculo mora na VPS, o app do celular passa a abrir no endereço dela: as cartas chegam com aviso e você responde com o PC desligado. Pareie o celular de novo uma vez, em Preferências, Celular (o endereço mudou). O que você escreve numa carta, ou pede pelo botão Pedir, espera na VPS e chega à sessão assim que o PC liga, uma vez só. Pedido por áudio continua precisando do PC ligado.',
+      },
+      {
         title: 'Sessão nova espera vaga quando a máquina está cheia',
         text: 'Quando uma VPS (ou o PC) está com pouca RAM, swap alto, carga alta ou sem sinal, uma sessão que outra sessão pede para abrir lá entra numa fila em vez de afundar a máquina. O lugar já aparece no quadro, e a sessão abre sozinha, com o pedido original, quando a máquina passa duas leituras seguidas abaixo dos limites, uma por minuto em cada máquina. Um papel marcado com "lugar: qualquer" vai para a outra VPS em vez de esperar. Uma aba que foi aberta mas nunca começou, se o Faxineiro a fechar com a máquina cheia, volta para a fila sem perder o pedido.',
       },
       {
         title: 'O Faxineiro acorda sozinho',
         text: 'Cada quadro ganhou uma cadeira Faxineiro, que o Donel acorda sozinho quando uma máquina aperta, sem você nem o Líder precisarem chamar. Os gatilhos: RAM livre abaixo de 15%, swap acima de 10%, carga da VPS acima de duas vezes o número de processadores, disco acima de 85%, uma VPS sem sinal, sessões paradas há meia hora e uma ronda por dia, depois das 6h. O Faxineiro roda numa máquina que não é a apertada e fecha só as sessões do próprio quadro que terminaram. O Donel não deixa ele fechar o Líder, uma sessão trabalhando, uma que espera você ou uma aba que você abriu à mão. Quando ele termina a ronda e fica parado, o Donel fecha o Faxineiro também. Para não juntar Faxineiros, uma máquina cheia acorda um quadro de cada vez, e o Donel acorda no máximo quatro por hora. Os limites ficam na seção "faxineiro" do arquivo de configuração das rotinas, que também registra cada fechamento.',
+      },
+      {
+        title: 'O Líder do quadro libera as pastas de envio, não você',
+        text: 'Quando um agente precisa enviar por uma página um arquivo de uma pasta nova, quem libera agora é o Líder do quadro dele (ou o Líder único, em qualquer quadro), sem pedir a você. Fica registrado quem liberou, quando e para qual quadro, e você vê e remove em Regras, no navegador. Os anexos do chat saem sem pedido nenhum. O que continua sempre recusado são os arquivos de segredo: chaves, tokens, senhas, a configuração e o cofre de contas do Donel, os cookies do navegador e as pastas de chaves do sistema. A raiz do disco e a sua pasta de usuário inteira também não podem ser liberadas.',
       },
       {
         title: 'O Oráculo pode morar na sua VPS',
