@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentBridge, NOTICE_CHARS, type AgentBridgePorts, type BridgeTab } from '../src/renderer/src/Mindscape/agentBridge';
 import { SessionSemaphoreManager } from '../src/main/session-semaphore-manager';
 import type { HookBridge } from '../src/main/hook-bridge';
@@ -124,5 +124,82 @@ describe('mensagem entre sessões vai na hora para o CLI', () => {
     doc = addPlace(doc, ATLAS, { id: 'place:outro' });
     expect(await new AgentBridge(ports).deliverOwnerMessage(message)).toBeNull();
     expect(sent).toHaveLength(1);
+  });
+});
+
+// 07/11 — a session opened with `sessao_abrir` whose terminal never opens (the ssh of a remote place failed):
+// whoever opened it hears the literal reason, whether the ssh fails at once or hangs past the 90 s grace notice.
+describe('sessão que não abre conta o motivo a quem abriu', () => {
+  function opener() {
+    let doc = addPlace(emptyMindscapeDoc(), ATLAS, { id: 'place:lider' });
+    const tabs: BridgeTab[] = [{ id: 'tab-lider', name: 'Líder', cwd: ATLAS, placeId: 'place:lider', claudeSessionId: 's-lider', sessionType: 'claude' }];
+    const failures: Record<string, string> = {};
+    const sent: string[] = [];
+    const ports: AgentBridgePorts = {
+      loaded: true,
+      doc: () => doc,
+      applyGesture: (_path, reducer) => {
+        doc = reducer(doc);
+      },
+      tabs: () => tabs,
+      tabOfPty: (ptyId) => tabs.find((tab) => `pty-${tab.id}` === ptyId),
+      stateOf: () => 'working',
+      roles: () => [{ id: 'dev', name: 'Dev', color: 'implementar', guidance: '' }],
+      openSession: (request) => {
+        tabs.push({ id: 'tab-dev', name: request.name, cwd: ATLAS, placeId: request.placeId, sessionType: 'claude' });
+        return 'tab-dev';
+      },
+      sendLine: (tabId, text) => {
+        if (tabId === 'tab-lider') sent.push(text);
+      },
+      deliverLine: async () => ({ kind: 'entrou' }),
+      permissionOnScreen: () => false,
+      unconfirmed: (tabId) => tabId === 'tab-dev',
+      // As App's: a failure the terminal reported wins over "never opened".
+      startTrouble: (tabId) => (failures[tabId] !== undefined ? `o terminal dela não abriu (${failures[tabId]})` : 'o terminal dela não chegou a abrir'),
+      closeTab: () => undefined,
+      askOwner: async () => false,
+      remoteLabel: (id) => id,
+      remotes: () => [{ id: 'vps', label: 'VPS' }],
+      projects: () => [],
+    };
+    const bridge = new AgentBridge(ports);
+    return {
+      bridge,
+      sent,
+      open: () => bridge.handle('pty-tab-lider', { tool: 'sessao_abrir', papel: 'dev', pedido: 'faz X', onde: 'VPS' }),
+      fail: (reason: string) => {
+        failures['tab-dev'] = reason;
+        bridge.startFailed('tab-dev');
+      },
+    };
+  }
+
+  afterEach(() => vi.useRealTimers());
+
+  it('falha rápida: o motivo chega na hora, uma vez', async () => {
+    vi.useFakeTimers();
+    const team = opener();
+    await team.open();
+    vi.advanceTimersByTime(2_000);
+    team.fail('VPS: Não consegui entrar no lugar remoto por ssh: Permission denied');
+    vi.advanceTimersByTime(200_000);
+    expect(team.sent).toEqual([expect.stringContaining('Permission denied')]);
+    team.bridge.dispose();
+  });
+
+  it('ssh pendurado: o aviso dos 90 s vem antes, e o motivo ainda chega quando o preparo falha aos 180 s', async () => {
+    vi.useFakeTimers();
+    const team = opener();
+    await team.open();
+    vi.advanceTimersByTime(90_000);
+    expect(team.sent).toEqual([expect.stringContaining('não chegou a abrir')]);
+    vi.advanceTimersByTime(90_000);
+    team.fail('VPS: O lugar remoto não respondeu em 180 s (o ssh disse: To authenticate, visit: https://login.tailscale.com/a/x)');
+    expect(team.sent).toHaveLength(2);
+    expect(team.sent[1]).toContain('https://login.tailscale.com/a/x');
+    team.fail('de novo');
+    expect(team.sent).toHaveLength(2);
+    team.bridge.dispose();
   });
 });
