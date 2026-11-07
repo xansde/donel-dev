@@ -138,6 +138,8 @@ export interface SendMachineState {
   readonly idleAtEnter: boolean;
   /** `queued` and the turn is over: when to look the prompt up (`verify`) if no delivery signal came. */
   readonly verifyAt: number | null;
+  /** The empty-box lookup after the Enter already missed once: the next miss is "não foi". */
+  readonly relooked: boolean;
   readonly leftoverShown: string | null;
   readonly lastStatusKey: string | null;
   readonly lastWake: number | null;
@@ -292,6 +294,7 @@ export function createSend(input: SendInput, now: number): StepResult {
     textGiveUpAt: null,
     idleAtEnter: true,
     verifyAt: null,
+    relooked: false,
     leftoverShown: null,
     lastStatusKey: null,
     lastWake: null,
@@ -335,9 +338,14 @@ export function step(state: SendMachineState, event: SendEvent): StepResult {
         } else resetForRetry(s, now);
       } else if (s.step === 'verify' && s.phase === 'confirming') {
         // The Enter went and the box emptied, but no acceptance signal came: the transcript decides, never a new paste.
+        // A remote transcript comes through the mirror, seconds late: one miss asks again after VERIFY_MS (a late
+        // signal accepts meanwhile). Saying "não foi" too soon made the sender resend and the message go in twice.
         if (event.found) {
           s.phase = 'accepted';
           s.step = 'done';
+        } else if (!s.relooked) {
+          s.relooked = true;
+          s.verifyAt = now + VERIFY_MS;
         } else fail(s, 'não foi');
       } else if (s.step === 'verify' && s.phase === 'queued') {
         if (event.found) {
@@ -793,6 +801,13 @@ function evaluateTyping(s: Draft, now: number, fx: SendEffect[]): void {
 
 function evaluateConfirming(s: Draft, now: number, fx: SendEffect[]): void {
   const lines = s.lines;
+  if (s.step === 'verify') {
+    if (s.verifyAt !== null && now >= s.verifyAt) {
+      s.verifyAt = null;
+      fx.push({ type: 'ack-lookup', text: s.text, since: s.createdAt });
+    }
+    return;
+  }
   if (s.step === 'menu-esc') {
     if (lines !== null && textSeen(s, lines) && !slashMenuOpen(lines)) {
       s.step = 'enter-gap';
@@ -898,6 +913,7 @@ function nextWake(s: Draft, now: number): number | null {
     case 'confirming':
       if (s.step === 'menu-esc' && s.stepDeadline !== null) candidates.push(s.stepDeadline);
       if (s.step === 'enter-gap' && s.enterAt !== null) candidates.push(s.enterAt);
+      if (s.step === 'verify' && s.verifyAt !== null) candidates.push(s.verifyAt);
       if (s.step === 'await-ack') {
         if (s.ackDeadline !== null) candidates.push(s.ackDeadline);
         // mid-turn the resend time is also when an empty box turns the send into `queued`

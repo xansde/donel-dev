@@ -1238,10 +1238,14 @@ describe('Enter que entrou sem sinal de aceite (07/11)', () => {
     expect(sim.allWrites().filter((w) => w.includes('oi tudo bem'))).toHaveLength(1);
   });
 
-  it('caixa vazia, parado e nada no transcript: "não foi", sem colar de novo', () => {
+  it('caixa vazia, parado e nada no transcript duas vezes, 15 s depois: "não foi", sem colar de novo', () => {
     const sim = sendUntilEnter('oi tudo bem');
     sim.screen(idleEmpty(), 15_180);
     sim.ev({ type: 'ack-result', now: 15_300, found: false });
+    expect(sim.phase).not.toBe('failed'); // a remote transcript can come seconds late: asks once more
+    const again = sim.tick(30_300);
+    expect(again.effects).toContainEqual({ type: 'ack-lookup', text: 'oi tudo bem', since: 0 });
+    sim.ev({ type: 'ack-result', now: 30_400, found: false });
     expect(sim.phase).toBe('failed');
     expect(sim.status?.reason).toBe('não foi');
     expect(sim.allWrites().filter((w) => w.includes('oi tudo bem'))).toHaveLength(1);

@@ -64,8 +64,8 @@ export interface SendRequest {
    */
   readonly from?: SendFrom;
   /**
-   * 07/11 — the same text sent again within `DEDUPE_MS` answers for the first send instead of going in twice, unless
-   * that one failed. For `sessao_enviar`: a sender that heard "não entrou" or a timeout while the message did go in
+   * 07/11 — the same text sent again while the first send is still on its way (at most `DEDUPE_MS`) answers for it
+   * instead of going in twice. After the first one went in (or failed), the same text is a new message. For `sessao_enviar`: a sender that heard "não entrou" or a timeout while the message did go in
    * sent it again, and the destination got it twice.
    */
   readonly dedupe?: boolean;
@@ -257,7 +257,7 @@ export class SendDriver {
   private readonly aliases = new Map<string, string>();
   /** Deduped sends by normalized text: the first id and when it was sent. */
   private readonly recent = new Map<string, { readonly id: string; readonly at: number }>();
-  /** Ids that reached `accepted` or `queued` (they answer for a resend after leaving the list). */
+  /** Ids that reached `accepted` or `queued` (`sendToTabAndWait` hears "entrou" for them after they leave the list). */
   private readonly delivered = new Set<string>();
   /** Some send of this tab was taken by the CLI. */
   private took = false;
@@ -319,16 +319,19 @@ export class SendDriver {
     return this.delivered.has(this.carrierOf(id));
   }
 
-  /** A deduped send of the same text, recent and not failed: the id that answers for this one. */
+  /**
+   * A deduped send of the same text still on its way (not accepted, not failed): the id that answers for this one.
+   * Once the first went in, the same text again is a new message ("Siga de onde parou" after a second 429) and goes.
+   */
   private resendOf(request: SendRequest): string | null {
     if (request.dedupe !== true) return null;
     const key = normalizePrompt(request.text);
     const prev = this.recent.get(key);
     if (prev === undefined || this.ports.now() - prev.at >= DEDUPE_MS) return null;
     const carrier = this.carrierOf(prev.id);
-    const item = this.items.find((i) => i.id === carrier);
-    if (item !== undefined ? item.machine?.phase !== 'failed' : this.delivered.has(carrier)) return prev.id;
-    return null;
+    const phase = this.items.find((i) => i.id === carrier)?.machine?.phase;
+    if (phase === undefined || phase === 'accepted' || phase === 'failed') return null;
+    return prev.id;
   }
 
   private remember(text: string, id: string): void {
