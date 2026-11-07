@@ -27,6 +27,8 @@ files:
   - "!design/**"
   - "!design-system/**"
   - "!src/**"
+  # O Oráculo da VPS (docs/planos/oraculo-na-vps.md) roda fora do app: não vai no instalador.
+  - "!out/oraculo/**"
   - "!tests/**"
   - "!patches/**"
   # Material de trabalho do repo (processo, rascunhos, protótipos, skills):
