@@ -1,53 +1,65 @@
 #!/usr/bin/env node
-// MCP guard — PreToolUse hook that blocks MCP tool calls by CAPABILITY (what the
-// call does), not by a list of names, plus a sealed inventory of the MCP tools
-// this machine trusts.
+// MCP guard — PreToolUse hook that lets an MCP tool call run only when it is RECOGNIZED as safe, plus a
+// sealed inventory of the MCP tools this machine trusts.
 //
-//   node mcp-guard.mjs hook    PreToolUse (matcher "mcp__.*|Bash|Write|Edit|MultiEdit|NotebookEdit")
-//   node mcp-guard.mjs check   SessionStart: relists the MCP servers, marks tools whose description changed
-//   node mcp-guard.mjs seal    a PERSON at a terminal seals what the servers expose today
+//   mcp-guard.mjs hook --system     PreToolUse (matcher "mcp__.*"), called by the root-owned hook.sh
+//   mcp-guard.mjs seal --system     root/admin seals what the servers expose today (types SELAR)
+//   mcp-guard.mjs check --system    root timer: relists the servers, marks tools whose description changed
+//   mcp-guard.mjs list              prints what the servers expose (input for `seal --from` on Windows)
 //
-// Rules of the hook, in order:
-//   1. an MCP tool that is not in the sealed inventory (new or renamed server, new tool) is blocked;
-//   2. a sealed tool whose description changed since the seal (seen by `check`) is blocked;
-//   3. a call is blocked when it would: write to production, send a message in the owner's name,
-//      delete, push/merge into main, or make a repository public. The capability comes from the tool
-//      name, its sealed description and the call's input (Composio slugs included), never from a list
-//      of server names.
-// Exit 0 always; a block is the JSON `permissionDecision: "deny"` on stdout.
-// Zero dependencies: runs with the Node that already exists on the PC and on the VPSs.
+// Order of the hook: (1) no inventory, or one the Claude user could have written -> block every MCP call;
+// (2) tool not in the inventory (new or renamed server, new tool) -> block; (3) description changed since
+// the seal -> block; (4) the tool's RULE decides. The rule is fixed at seal time from the tool's name and
+// description, with an allowlist: read, plain write, Slack through the letter gate, git write to a named
+// feature branch, SQL/deploy on the staging project, private repo creation, dispatch of Composio slugs
+// (each slug judged by the same rules). Anything not recognized is blocked, and so is executable code.
+//
+// System mode (`--system`): the files live in a root/admin-owned dir, MCP_GUARD_DIR is ignored, and on
+// POSIX the hook refuses files the Claude user can write. That ownership, not any pattern match, is what
+// keeps the agent from resealing or editing the rules.
+// The hook always prints a JSON decision; hook.sh turns an empty output or a crash into a block.
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { delimiter, dirname, extname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
 const SELF = fileURLToPath(import.meta.url);
+export const SYSTEM_DIR = process.platform === 'win32' ? 'C:\\Program Files\\ClaudeCode\\mcp-guard' : '/etc/claude-code/mcp-guard';
 
 // ---------- policy ----------
 
 export const DEFAULT_POLICY = {
-  /** Targets that are NOT production: a write there is allowed (Supabase staging shared by the squad). */
+  /** Targets that are NOT production; SQL and deploys run only there (Supabase staging shared by the squad). */
   nonProdTargets: ['fxjpnamoafzomqlncdyn'],
-  /** Sending in the owner's name is allowed only on these channels and servers, where the Donel letter gate (carta_slack) decides. */
+  /** Sending in the owner's name only on these channels and servers, where the Donel letter gate (carta_slack) decides. */
   letterGated: { slack: ['composio'] },
-  /** Servers that talk as the agent's own bot, never as the owner. */
-  agentBotServers: ['theo-slack', 'theo-west-slack'],
-  /** Extra MCP configs to relist at SessionStart; {session_id} comes from the hook input. */
-  sessionMcpConfigs: ['~/.donel/s/{session_id}/mcp.json'],
-  /** Explicit capabilities for a tool, when the inference is wrong ("mcp__s__t": ["delete"] or []). */
-  capOverrides: {},
-  checkTtlMinutes: 10,
+  /** Servers whose tools are all allowed: the Donel app (it decides hierarchy and letters) and the agent's own bot. */
+  trustedServers: ['donel', 'theo-slack', 'theo-west-slack'],
+  /** Explicit rule for a sealed tool, set by the owner: { "mcp__s__t": "write" }. */
+  toolRules: {},
+  /** Explicit rule for a Composio slug: { "GOOGLESHEETS_BATCH_UPDATE": "write" }. */
+  slugRules: {},
+  /** Per-session MCP configs the seal and the check also list (Donel: remote sessions, and local ones on the PC). */
+  sessionMcpGlobs: ['~/.donel/s/*/mcp.json', '~/AppData/Roaming/donel-dev/browser-mcp/*.json'],
+  sessionMaxAgeHours: 24,
   serverTimeoutMs: 8000,
 };
 
-export function guardDir() {
-  return process.env.MCP_GUARD_DIR ? resolve(process.env.MCP_GUARD_DIR) : join(homedir(), '.claude', 'mcp-guard');
+function parseArgs(argv) {
+  const [mode, ...rest] = argv;
+  const flags = new Set(rest.filter((a) => a.startsWith('--')));
+  const values = (flag) => rest.flatMap((a, i) => (a === flag && rest[i + 1] !== undefined ? [rest[i + 1]] : []));
+  return { mode, flags, values, value: (flag) => values(flag)[0] };
 }
-const defaultGuardDir = () => join(homedir(), '.claude', 'mcp-guard');
-const paths = () => ({ inventory: join(guardDir(), 'inventory.json'), drift: join(guardDir(), 'drift.json'), policy: join(guardDir(), 'policy.json') });
+
+function contextOf(opts) {
+  const system = opts.flags.has('--system');
+  const dir = resolve(system ? (opts.value('--dir') ?? SYSTEM_DIR) : (opts.value('--dir') ?? process.env.MCP_GUARD_DIR ?? SYSTEM_DIR));
+  return { system, dir, files: { inventory: join(dir, 'inventory.json'), drift: join(dir, 'drift.json'), policy: join(dir, 'policy.json') } };
+}
 
 function readJson(file, fallback) {
   try {
@@ -56,15 +68,27 @@ function readJson(file, fallback) {
     return fallback;
   }
 }
-function writeJsonAtomic(file, value) {
-  mkdirSync(guardDir(), { recursive: true });
+function writeJsonAtomic(ctx, file, value) {
+  mkdirSync(ctx.dir, { recursive: true, mode: 0o755 });
   const tmp = `${file}.${process.pid}.tmp`;
-  writeFileSync(tmp, JSON.stringify(value, null, 2) + '\n', 'utf8');
+  writeFileSync(tmp, JSON.stringify(value, null, 2) + '\n', { encoding: 'utf8', mode: 0o644 });
   renameSync(tmp, file);
 }
-function loadPolicy() {
-  const local = readJson(paths().policy, {});
+function loadPolicy(ctx) {
+  const local = readJson(ctx.files.policy, {});
   return { ...DEFAULT_POLICY, ...local, letterGated: { ...DEFAULT_POLICY.letterGated, ...(local.letterGated || {}) } };
+}
+
+/** POSIX, system mode: every file the decision depends on must be root-owned and not group/other-writable. */
+function ownershipProblem(ctx) {
+  if (!ctx.system || process.platform === 'win32') return null;
+  const must = [dirname(ctx.dir), ctx.dir, ctx.files.inventory, ctx.files.policy, ctx.files.drift, SELF];
+  for (const p of must) {
+    if (!existsSync(p)) continue;
+    const st = statSync(realpathSync(p));
+    if (st.uid !== 0 || (st.mode & 0o022) !== 0) return `${p} não é só do root (dono ${st.uid}, modo ${(st.mode & 0o777).toString(8)})`;
+  }
+  return null;
 }
 
 // ---------- names, hashes, tokens ----------
@@ -89,206 +113,176 @@ export function tokens(text) {
     .filter(Boolean);
 }
 
-const set = (words) => new Set(words.split(/\s+/));
-const DELETE_WORDS = set('delete deletes deleting remove removes drop drops truncate destroy destroys purge wipe erase rm unlink apagar apaga excluir exclui deletar deleta remover remove');
-const SEND_WORDS = set('send sends post posts reply respond publish publishes broadcast forward forwards schedule enviar envia mandar manda postar posta publicar publica responder responde encaminhar agendar');
-const MESSAGE_WORDS = set('message messages msg email emails mail dm dms chat mensagem mensagens sms');
-const READ_WORDS = set('get list fetch search read find lookup describe show view count retrieve ler listar buscar ver');
-const INTERNAL_WORDS = set('sessão sessao sessões sessoes session sessions agent agents agente agentes subagent subagente');
-const CHANNEL_WORDS = set('slack gmail email mail outlook whatsapp telegram teams discord sms twilio linkedin twitter');
-const GIT_WRITE_WORDS = set('push commit commits merge merges rebase');
-const PROD_OP_WORDS = set('deploy deploys pause restore rollback promote migration migrations migrate');
+const set = (words) => new Set(words.trim().split(/\s+/));
+const READ_WORDS = set('get list fetch search read find lookup describe show view count retrieve download ler listar buscar ver obter consultar');
+const SAFE_WRITE_WORDS = set('create add update edit comment assign unassign label request open rename set mark submit react criar adicionar atualizar editar comentar marcar');
+const SEND_WORDS = set('send post reply respond broadcast forward share upload publish schedule enviar mandar postar publicar responder encaminhar compartilhar agendar');
+const RISKY_ACTION_WORDS = set(`delete deletes remove drop truncate destroy purge wipe erase trash archive unlink rm revoke ban kick disable
+  merge force push commit rebase reset revert transfer deploy release invite approve dismiss
+  apagar excluir deletar remover lixeira arquivar ${[...SEND_WORDS].join(' ')}`);
+const RISKY_OBJECT_WORDS = set(`repository repositories repo repos visibility public private ref refs reference references secret secrets
+  token tokens key keys credential credentials permission permissions collaborator collaborators member members role roles admin admins
+  webhook webhooks workflow workflows billing payment payments protection ruleset rulesets owner owners org organization password`);
+const RUN_WORDS = set('execute exec run eval');
+const CODE_WORDS = set('workbench bash shell python terminal script eval exec');
 const SQL_WORDS = set('sql migration migrations migrate');
+const TARGET_OP_WORDS = set('deploy deploys publish release promote rollback restore pause');
+const GIT_PUSH_WORDS = set('push commit commits');
 const GIT_CONTEXT_WORDS = set('github gitlab git bitbucket repository repositories repo repos commit branch');
-const REPO_WORDS = set('repo repos repository repositories visibility');
-const CODE_WORDS = set('workbench code exec execute run bash python script shell');
-const BRANCH_KEYS = set('branch ref base base_branch target_branch targetBranch baseBranch branch_name branchName');
-const TARGET_KEYS = set('project_id projectId project_ref projectRef project database db');
-const SQL_KEYS = set('query sql statement statements');
-const MAIN_RE = /^(refs\/heads\/)?(main|master)$/i;
-const SQL_WRITE_RE = /\b(insert|update|delete|merge|upsert|alter|create|grant|revoke|copy|call|vacuum|reindex|cluster|refresh)\b/i;
-const SQL_DESTROY_RE = /\b(drop|truncate)\b/i;
-const SLUG_RE = /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+){1,}\b/g;
+const ANY_VERB = new Set([...READ_WORDS, ...SAFE_WRITE_WORDS, ...RISKY_ACTION_WORDS, ...RUN_WORDS]);
+/** Keys that also name a branch: when present next to `branch`, the server may honor them instead. */
+const DECOY_BRANCH_KEYS = set('ref refs base base_branch baseBranch target_branch targetBranch branch_name branchName head head_ref default_branch');
+/** Keys that also name a project or database: when present next to `project_id`, the server may honor them instead. */
+const DECOY_TARGET_KEYS = set('project projectId project_ref projectRef ref db database env environment branch_id');
+const MAIN_RE = /^(refs\/)?(heads\/)?(main|master)$/i;
 
 const has = (toks, words) => toks.some((t) => words.has(t));
 
-// ---------- capability inference ----------
+// ---------- rules ----------
 
-/** Capabilities a tool has by its name and sealed description alone (stored in the inventory at seal time). */
-export function staticCaps(server, tool, description = '') {
-  const nameToks = tokens(tool);
-  const descToks = tokens(description);
-  const all = [...nameToks, ...tokens(server), ...descToks];
-  // A name that starts with a read verb (get_thread_replies, SLACK_FETCH_...) only reads.
-  const readsOnly = READ_WORDS.has(nameToks[0]) || READ_WORDS.has(nameToks[1]);
-  const leads = (words) => !readsOnly && (has(nameToks, words) || (descToks.length > 0 && words.has(descToks[0])));
-  const caps = new Set();
-  if (leads(DELETE_WORDS)) caps.add('delete');
-  // A message to another session or agent is internal; one to a person's channel is in the owner's name.
-  if (leads(SEND_WORDS) && (has(all, CHANNEL_WORDS) || (has(all, MESSAGE_WORDS) && !has(all, INTERNAL_WORDS)))) caps.add('send-as-owner');
-  const writesFile = nameToks.includes('file') && (nameToks.includes('update') || nameToks.includes('create'));
-  if ((has(nameToks, GIT_WRITE_WORDS) || writesFile) && has(all, GIT_CONTEXT_WORDS)) caps.add('git-write');
-  if (has(nameToks, SQL_WORDS) || descToks.includes('sql')) caps.add('sql');
-  if (has(nameToks, PROD_OP_WORDS)) caps.add('prod-op');
-  if (has(nameToks, REPO_WORDS)) caps.add('repo');
-  if (has(nameToks, CODE_WORDS)) caps.add('code');
-  return [...caps].sort();
+/**
+ * The rule of a tool (or a Composio slug), from its name and description. Allowlist: what is not
+ * recognized with certainty is `blocked`.
+ */
+export function classify(server, tool, description = '', policy = DEFAULT_POLICY, { nested = false } = {}) {
+  if (!nested && policy.trustedServers.includes(server)) return { rule: 'trusted' };
+  const t = tokens(tool);
+  const d = tokens(description);
+  const ctxToks = [...t, ...tokens(server), ...d];
+  const lead = t.find((x) => ANY_VERB.has(x));
+  const descLead = d.find((x) => ANY_VERB.has(x));
+  const riskyAction = t.find((x) => RISKY_ACTION_WORDS.has(x)) ?? (descLead && RISKY_ACTION_WORDS.has(descLead) ? descLead : undefined);
+  const riskyObject = t.find((x) => RISKY_OBJECT_WORDS.has(x));
+
+  if (has(t, RUN_WORDS) && (t.includes('tool') || t.includes('tools'))) return { rule: 'dispatch' };
+  if (has(t, SQL_WORDS) || d.includes('sql')) return { rule: 'sql' };
+  if (has(t, CODE_WORDS) || RUN_WORDS.has(lead)) return { rule: 'code', why: 'roda código ou comando, que não dá para julgar antes' };
+  if (has(t, TARGET_OP_WORDS)) return { rule: 'target-op' };
+  if (has(t, SEND_WORDS) && (t.includes('slack') || tokens(server).includes('slack'))) return { rule: 'slack-send' };
+  const writesFile = t.includes('file') && (t.includes('update') || t.includes('create'));
+  if ((has(t, GIT_PUSH_WORDS) || writesFile) && has(ctxToks, GIT_CONTEXT_WORDS) && !t.some((x) => RISKY_ACTION_WORDS.has(x) && !GIT_PUSH_WORDS.has(x))) return { rule: 'git-write' };
+  if (lead === 'create' && (t.includes('repository') || t.includes('repo')) && !riskyAction) return { rule: 'repo-create' };
+  if (READ_WORDS.has(lead) && !riskyAction) return { rule: 'read' };
+  if (SAFE_WRITE_WORDS.has(lead) && !riskyAction && !riskyObject) return { rule: 'write' };
+  if (riskyAction) return { rule: 'blocked', why: `faz "${riskyAction}"` };
+  if (riskyObject) return { rule: 'blocked', why: `mexe em "${riskyObject}"` };
+  return { rule: 'blocked', why: 'ação não reconhecida como segura' };
 }
 
-function walk(value, visit, key = '') {
-  if (Array.isArray(value)) value.forEach((v) => walk(v, visit, key));
+function walk(value, visit) {
+  if (Array.isArray(value)) value.forEach((v) => walk(v, visit));
   else if (value && typeof value === 'object') for (const [k, v] of Object.entries(value)) {
     visit(k, v);
-    walk(v, visit, k);
+    walk(v, visit);
   }
 }
 
-/** Nested tool calls inside an input (Composio: { tool_slug, arguments }), plus slugs named in free code. */
-function nestedCalls(input, freeText) {
-  const calls = [];
-  const visitNode = (node) => {
-    if (Array.isArray(node)) return node.forEach(visitNode);
-    if (!node || typeof node !== 'object') return;
-    const slug = node.tool_slug ?? node.toolSlug ?? node.slug ?? node.action ?? node.action_name;
-    if (typeof slug === 'string') {
-      const args = node.arguments ?? node.args ?? node.params ?? node.input;
-      calls.push({ slug, input: args && typeof args === 'object' ? args : {} });
-    }
-    Object.values(node).forEach(visitNode);
-  };
-  visitNode(input);
-  if (freeText) walk(input, (_k, v) => {
-    if (typeof v === 'string') for (const m of v.match(SLUG_RE) || []) calls.push({ slug: m, input: {} });
+function dangerousFlags(input) {
+  let why = null;
+  walk(input, (k, v) => {
+    const key = k.toLowerCase();
+    if ((key === 'private' || key === 'is_private' || key === 'isprivate') && (v === false || v === 'false')) why = 'torna algo público';
+    if ((key === 'visibility' || key === 'repo_visibility') && typeof v === 'string' && v.toLowerCase() !== 'private') why = 'muda visibilidade';
+    if ((key === 'public' || key === 'is_public') && (v === true || v === 'true')) why = 'torna algo público';
+    if (key === 'force' && v !== false && v !== 'false' && v !== undefined && v !== null) why = 'pede force';
   });
+  return why;
+}
+
+function branchProblem(input) {
+  const b = input?.branch;
+  if (typeof b !== 'string' || !b.trim()) return 'escrita no repositório sem "branch": cai na branch padrão (main)';
+  if (MAIN_RE.test(b.trim())) return 'escrita direto em main/master';
+  const decoy = Object.keys(input).find((k) => DECOY_BRANCH_KEYS.has(k));
+  if (decoy) return `"${decoy}" ao lado de "branch": o servidor pode usar o outro`;
+  return null;
+}
+
+function targetProblem(input, policy) {
+  const id = input?.project_id;
+  if (typeof id !== 'string' || !policy.nonProdTargets.includes(id)) return 'SQL, migration ou deploy fora do projeto de staging';
+  const decoy = Object.keys(input).find((k) => DECOY_TARGET_KEYS.has(k) && input[k] !== id);
+  if (decoy) return `"${decoy}" aponta para outro alvo ao lado de "project_id"`;
+  return null;
+}
+
+function dispatchedCalls(input) {
+  const items = Array.isArray(input?.tools) ? input.tools : input && (input.tool_slug || input.slug) ? [input] : null;
+  if (!items || items.length === 0) return null;
+  const calls = [];
+  for (const it of items) {
+    const slug = it?.tool_slug ?? it?.slug;
+    const args = it?.arguments ?? it?.args ?? {};
+    if (typeof slug !== 'string' || !args || typeof args !== 'object') return null;
+    calls.push({ slug, args });
+  }
   return calls;
 }
 
-function targetIsNonProd(input, policy) {
-  let nonProd = false;
-  walk(input, (k, v) => {
-    if (TARGET_KEYS.has(k) && typeof v === 'string' && policy.nonProdTargets.includes(v)) nonProd = true;
-  });
-  return nonProd;
-}
-
-function sqlClass(input) {
-  let text = null;
-  walk(input, (k, v) => {
-    if (SQL_KEYS.has(k) && typeof v === 'string') text = `${text ?? ''}\n${v}`;
-  });
-  if (text === null) return 'write';
-  const noStrings = text.replace(/'(?:[^']|'')*'/g, "''");
-  if (SQL_DESTROY_RE.test(noStrings)) return 'destroy';
-  if (SQL_WRITE_RE.test(noStrings)) return 'write';
-  return 'read';
-}
-
-function branchTargets(input) {
-  const found = [];
-  walk(input, (k, v) => {
-    if (BRANCH_KEYS.has(k) && typeof v === 'string') found.push(v);
-  });
-  return found;
-}
-
-function makesPublic(input) {
-  let pub = false;
-  walk(input, (k, v) => {
-    const key = k.toLowerCase();
-    if ((key === 'private' || key === 'is_private' || key === 'isprivate') && (v === false || v === 'false')) pub = true;
-    if ((key === 'visibility' || key === 'repo_visibility') && typeof v === 'string' && v.toLowerCase() === 'public') pub = true;
-    if ((key === 'public' || key === 'is_public') && (v === true || v === 'true')) pub = true;
-  });
-  return pub;
-}
-
-/**
- * Violations of one call: [{ cap, why }]. `caps` are the sealed static caps of the tool;
- * nested calls (Composio slugs) are judged as if they were tools of the same server.
- */
-export function violations(server, tool, input, caps, policy, depth = 0) {
-  const out = [];
-  const add = (cap, why) => out.push({ cap, why });
-  const c = new Set(caps);
-  const isBot = policy.agentBotServers.includes(server);
-  const nameToks = tokens(tool);
-  const channel = has(nameToks, new Set(['slack'])) || tokens(server).includes('slack') ? 'slack' : 'other';
-  const nonProd = targetIsNonProd(input, policy);
-
-  if (c.has('send-as-owner') && !isBot) {
-    const gated = policy.letterGated[channel] || [];
-    if (!gated.includes(server)) add('send-as-owner', channel === 'slack' ? 'mensagem ao Slack em nome do dono fora do caminho com carta (Composio)' : 'mensagem em nome do dono (e-mail, chat ou outro canal sem carta)');
-  }
-  if (c.has('delete')) add('delete', 'apaga dado, arquivo, branch ou repositório');
-  if (c.has('sql')) {
-    const k = sqlClass(input);
-    if (k === 'destroy' && !nonProd) add('delete', 'SQL com DROP/TRUNCATE fora do staging');
-    else if (k !== 'read' && !nonProd) add('prod-write', 'SQL que grava num banco que não é o staging');
-  }
-  if (c.has('prod-op') && !nonProd) add('prod-write', 'deploy, migração ou operação num projeto que não é o staging');
-  if (c.has('git-write')) {
-    if (has(nameToks, new Set(['merge', 'merges']))) add('push-main', 'merge por MCP (a base não aparece na chamada; use gh pr merge, que a trava do Bash confere)');
-    else {
-      const branches = branchTargets(input);
-      if (branches.length === 0) add('push-main', 'escrita no repositório sem branch: cai na branch padrão (main)');
-      else if (branches.some((b) => MAIN_RE.test(b))) add('push-main', 'escrita direto em main/master');
+/** null = allowed; otherwise the reason it is blocked. */
+export function judge(rule, why, server, input, policy, depth = 0) {
+  const flags = () => dangerousFlags(input);
+  switch (rule) {
+    case 'trusted':
+    case 'read':
+      return null;
+    case 'write':
+      return flags();
+    case 'slack-send':
+      return (policy.letterGated.slack || []).includes(server) ? null : 'mensagem ao Slack em nome do dono fora do caminho com carta (Composio)';
+    case 'git-write':
+      return branchProblem(input) ?? flags();
+    case 'repo-create':
+      return input?.private === true ? flags() : 'repositório que não é explicitamente privado';
+    case 'sql':
+    case 'target-op':
+      return targetProblem(input, policy) ?? flags();
+    case 'dispatch': {
+      if (depth > 0) return 'despacho dentro de despacho';
+      const calls = dispatchedCalls(input);
+      if (!calls) return 'não achei a ação despachada (tool_slug + arguments)';
+      for (const c of calls) {
+        const explicit = policy.slugRules[c.slug];
+        const r = explicit ? { rule: explicit } : classify(server, c.slug, '', policy, { nested: true });
+        if (r.rule === 'dispatch' || r.rule === 'code') return `${c.slug}: ${r.why ?? 'despacho ou código'}`;
+        const v = judge(r.rule, r.why, server, c.args, policy, depth + 1);
+        if (v) return `${c.slug}: ${v}`;
+      }
+      return null;
     }
+    case 'code':
+      return why ?? 'roda código ou comando, que não dá para julgar antes';
+    default:
+      return why ?? 'ação não reconhecida como segura';
   }
-  if ((c.has('repo') || has(nameToks, REPO_WORDS)) && makesPublic(input)) add('repo-visibility', 'torna repositório público');
-
-  if (depth === 0) {
-    for (const n of nestedCalls(input, c.has('code'))) {
-      out.push(...violations(server, n.slug, n.input, staticCaps(server, n.slug, ''), policy, 1));
-    }
-  }
-  const seen = new Set();
-  return out.filter((v) => (seen.has(v.cap + v.why) ? false : seen.add(v.cap + v.why)));
 }
 
 // ---------- hook ----------
 
-const LIBERA = 'O Alexandre libera com pedido literal; com ele, peça que ele faça a ação à mão. Não tente outro caminho.';
-const deny = (reason) => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: `Bloqueado pela trava de MCP (~/.claude/hooks/mcp-guard.mjs): ${reason}` } });
+const RESEAL = 'O Alexandre resela como root/admin: sudo node /etc/claude-code/mcp-guard/mcp-guard.mjs seal --system --user <usuário>';
+const LIBERA = 'Se for trabalho legítimo, o Alexandre classifica em policy.json (toolRules/slugRules, arquivo do root) ou faz à mão. Não tente outro caminho.';
+const deny = (reason) => ({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: `Bloqueado pela trava de MCP (mcp-guard): ${reason}` } });
+const ALLOW = { suppressOutput: true };
 
-function isInside(file, dir) {
-  const norm = (p) => resolve(p).replace(/\\/g, '/').replace(/\/+$/, '');
-  const f = process.platform === 'win32' ? norm(file).toLowerCase() : norm(file);
-  const d = process.platform === 'win32' ? norm(dir).toLowerCase() : norm(dir);
-  return f === d || f.startsWith(d + '/');
-}
-
-/** Pure decision for one hook payload: null = allow, otherwise the deny output. */
+/** Pure decision for one hook payload: the JSON to print (ALLOW or a deny). */
 export function decide(payload, state) {
   const name = payload?.tool_name;
-  const input = payload?.tool_input ?? {};
-  if (typeof name !== 'string') return deny('chamada sem nome de ferramenta.');
-
-  if (name === 'Bash') {
-    const cmd = String(input.command ?? '');
-    if (/mcp-guard/i.test(cmd) && (/\bseal\b/i.test(cmd) || /(>|\btee\b|\brm\b|\bmv\b|\bcp\b|\bsed\s+-i|\bchmod\b|\bln\b|\btruncate\b|writeFile|unlink)/.test(cmd))) {
-      return deny('selar ou mexer no inventário de MCP é ato do dono, num terminal dele. Peça ao Alexandre.');
-    }
-    return null;
-  }
-  if (['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(name)) {
-    const file = input.file_path ?? input.notebook_path;
-    if (typeof file === 'string' && (isInside(file, guardDir()) || isInside(file, SELF))) return deny('o inventário e a própria trava de MCP só mudam pela mão do dono.');
-    return null;
-  }
+  const input = payload?.tool_input && typeof payload.tool_input === 'object' ? payload.tool_input : {};
+  if (typeof name !== 'string') return deny('chamada sem nome de ferramenta; na dúvida, nada passa.');
   const parts = splitToolName(name);
-  if (!parts) return null;
+  if (!parts) return ALLOW;
 
-  const { inventory, drift, policy } = state;
-  if (!inventory || !inventory.tools) return deny(`nenhum inventário de MCP selado nesta máquina, então nenhuma ferramenta MCP roda. O Alexandre sela num terminal: node ~/.claude/hooks/mcp-guard.mjs seal`);
+  const { inventory, drift, policy, ownerProblem } = state;
+  if (ownerProblem) return deny(`os arquivos da trava podem ter sido mexidos pelo usuário do Claude (${ownerProblem}); exige root. Nenhum MCP roda até o Alexandre corrigir a instalação.`);
+  if (!inventory || !inventory.tools) return deny(`nenhum inventário de MCP selado nesta máquina, então nenhuma ferramenta MCP roda. ${RESEAL}`);
   const entry = inventory.tools[name];
-  if (!entry) return deny(`${name} está fora do inventário selado (MCP novo, renomeado ou ferramenta nova). Se for de confiança, o Alexandre resela num terminal: node ~/.claude/hooks/mcp-guard.mjs seal`);
+  if (!entry) return deny(`${name} está fora do inventário selado (MCP novo, renomeado ou ferramenta nova). Se for de confiança: ${RESEAL}`);
   const changed = drift?.changed?.[name];
-  if (changed && changed.hash !== entry.hash) return deny(`a descrição de ${name} mudou desde o selo (${changed.seenAt ?? 'data desconhecida'}). Fica barrada até o Alexandre conferir e reselar: node ~/.claude/hooks/mcp-guard.mjs seal`);
+  if (changed && changed.hash !== entry.hash) return deny(`a descrição de ${name} mudou desde o selo (${changed.seenAt ?? 'data desconhecida'}). Fica barrada até o Alexandre conferir e reselar. ${RESEAL}`);
 
-  const caps = policy.capOverrides[name] ?? entry.caps ?? [];
-  const v = violations(parts.server, parts.tool, input, caps, policy);
-  if (v.length) return deny(`${v.map((x) => `${x.cap} (${x.why})`).join('; ')}. ${LIBERA}`);
-  return null;
+  const rule = policy.toolRules[name] ?? entry.rule ?? 'blocked';
+  const why = judge(rule, policy.toolRules[name] ? undefined : entry.why, parts.server, input, policy);
+  return why ? deny(`${name} — ${why}. ${LIBERA}`) : ALLOW;
 }
 
 async function readStdin() {
@@ -297,28 +291,71 @@ async function readStdin() {
   return s;
 }
 
-async function runHook() {
-  const raw = await readStdin();
-  let payload;
+async function runHook(_opts, ctx) {
+  let payload = null;
   try {
-    payload = JSON.parse(raw);
-  } catch {
-    payload = null;
-  }
-  const p = paths();
-  const out = decide(payload, { inventory: readJson(p.inventory, null), drift: readJson(p.drift, null), policy: loadPolicy() });
-  if (out) process.stdout.write(JSON.stringify(out) + '\n');
+    payload = JSON.parse(await readStdin());
+  } catch {}
+  const state = { ownerProblem: ownershipProblem(ctx), inventory: readJson(ctx.files.inventory, null), drift: readJson(ctx.files.drift, null), policy: loadPolicy(ctx) };
+  process.stdout.write(JSON.stringify(decide(payload, state)) + '\n');
 }
 
-// ---------- MCP listing (seal / check) ----------
+// ---------- the user whose MCP servers are listed ----------
 
-const expand = (s) => String(s).replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g, (_m, k, d) => process.env[k] ?? d ?? '').replace(/^~(?=\/|\\|$)/, homedir());
+/** Root lists the servers of `--user` with that user's uid, so a server never runs as root. */
+function targetUser(opts) {
+  const name = opts.value('--user');
+  if (!name) return { home: homedir(), spawnAs: {} };
+  if (process.platform === 'win32' || process.getuid?.() !== 0) throw new Error('--user só vale rodando como root (Linux)');
+  const line = readFileSync('/etc/passwd', 'utf8').split('\n').find((l) => l.split(':')[0] === name);
+  if (!line) throw new Error(`usuário ${name} não existe`);
+  const [, , uid, gid, , home] = line.split(':');
+  return { home, spawnAs: { uid: Number(uid), gid: Number(gid), env: { HOME: home, USER: name, LOGNAME: name, PATH: `${home}/.local/bin:/usr/local/bin:/usr/bin:/bin` } } };
+}
 
-function listStdio(cfg, timeoutMs) {
+// ---------- MCP listing ----------
+
+const expandWith = (home) => (s) => {
+  let out = String(s).replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g, (_m, k, d) => process.env[k] ?? d ?? '');
+  if (process.platform === 'win32') out = out.replace(/%([A-Za-z_][A-Za-z0-9_]*)%/g, (m, k) => process.env[k] ?? m);
+  return out.replace(/^~(?=\/|\\|$)/, home);
+};
+
+const META = /([()\][%!^"`<>&|;, *?])/g;
+function quoteWinArg(arg, doubleEscape) {
+  let a = String(arg).replace(/(\\*)"/g, '$1$1\\"').replace(/(\\*)$/, '$1$1');
+  a = `"${a}"`.replace(META, '^$1');
+  return doubleEscape ? a.replace(META, '^$1') : a;
+}
+/** Windows: an .exe runs directly; a .cmd/.bat goes through cmd.exe with every argument quoted and escaped (no shell: true). */
+export function winSpawn(command, args, env = process.env) {
+  let file = command;
+  if (!extname(file)) {
+    const exts = (env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';');
+    for (const dir of [dirname(file) !== '.' ? dirname(file) : null, ...(env.PATH || env.Path || '').split(delimiter)].filter(Boolean)) {
+      const base = dirname(file) !== '.' ? file : join(dir, file);
+      const hit = exts.map((e) => base + e.toLowerCase()).find((p) => existsSync(p));
+      if (hit) {
+        file = hit;
+        break;
+      }
+    }
+  }
+  if (/\.(exe|com)$/i.test(file)) return { file, args, options: {} };
+  const doubleEscape = /node_modules[\\/]\.bin[\\/][^\\/]+\.cmd$/i.test(file);
+  const line = [String(file).replace(META, '^$1'), ...args.map((a) => quoteWinArg(a, doubleEscape))].join(' ');
+  return { file: env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', `"${line}"`], options: { windowsVerbatimArguments: true } };
+}
+
+function listStdio(cfg, timeoutMs, who) {
   return new Promise((resolveP, reject) => {
-    const env = { ...process.env };
+    const expand = expandWith(who.home);
+    const env = { ...(who.spawnAs.env ? who.spawnAs.env : process.env) };
     for (const [k, v] of Object.entries(cfg.env || {})) env[k] = expand(v);
-    const child = spawn(expand(cfg.command), (cfg.args || []).map(expand), { env, stdio: ['pipe', 'pipe', 'ignore'], shell: process.platform === 'win32', windowsHide: true });
+    const command = expand(cfg.command);
+    const args = (cfg.args || []).map(expand);
+    const plan = process.platform === 'win32' ? winSpawn(command, args, env) : { file: command, args, options: {} };
+    const child = spawn(plan.file, plan.args, { ...plan.options, env, cwd: who.home, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true, ...(who.spawnAs.uid !== undefined ? { uid: who.spawnAs.uid, gid: who.spawnAs.gid } : {}) });
     const tools = [];
     let done = false;
     const finish = (err) => {
@@ -331,6 +368,7 @@ function listStdio(cfg, timeoutMs) {
     const timer = setTimeout(() => finish(new Error(`sem resposta em ${timeoutMs} ms`)), timeoutMs);
     const send = (msg) => child.stdin.write(JSON.stringify({ jsonrpc: '2.0', ...msg }) + '\n');
     child.on('error', finish);
+    child.stdin.on('error', () => {});
     child.on('exit', () => finish(new Error('o servidor encerrou antes de listar')));
     createInterface({ input: child.stdout }).on('line', (line) => {
       let msg;
@@ -350,11 +388,12 @@ function listStdio(cfg, timeoutMs) {
         else finish();
       }
     });
-    send({ id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'mcp-guard', version: '1' } } });
+    send({ id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'mcp-guard', version: '2' } } });
   });
 }
 
-async function listHttp(cfg, timeoutMs) {
+async function listHttp(cfg, timeoutMs, who) {
+  const expand = expandWith(who.home);
   const headers = { 'content-type': 'application/json', accept: 'application/json, text/event-stream' };
   for (const [k, v] of Object.entries(cfg.headers || {})) headers[k] = expand(v);
   const url = expand(cfg.url);
@@ -370,19 +409,20 @@ async function listHttp(cfg, timeoutMs) {
       ? text.split(/\r?\n/).filter((l) => l.startsWith('data:')).map((l) => l.slice(5).trim())
       : [text];
     for (const c of candidates) {
+      let msg;
       try {
-        const msg = JSON.parse(c);
-        if (msg.id === body.id) {
-          if (msg.error) throw new Error(msg.error.message);
-          return msg.result;
-        }
-      } catch (e) {
-        if (!(e instanceof SyntaxError)) throw e;
+        msg = JSON.parse(c);
+      } catch {
+        continue;
+      }
+      if (msg.id === body.id) {
+        if (msg.error) throw new Error(msg.error.message);
+        return msg.result;
       }
     }
     throw new Error('resposta sem o resultado pedido');
   };
-  await rpc({ id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'mcp-guard', version: '1' } } });
+  await rpc({ id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'mcp-guard', version: '2' } } });
   await rpc({ method: 'notifications/initialized' });
   const tools = [];
   let cursor;
@@ -395,50 +435,67 @@ async function listHttp(cfg, timeoutMs) {
   return tools;
 }
 
-function listServer(cfg, timeoutMs) {
+function listServer(cfg, timeoutMs, who) {
   const type = cfg.type || (cfg.url ? 'http' : 'stdio');
-  if (type === 'stdio') return listStdio(cfg, timeoutMs);
-  if (type === 'http') return listHttp(cfg, timeoutMs);
+  if (type === 'stdio') return listStdio(cfg, timeoutMs, who);
+  if (type === 'http') return listHttp(cfg, timeoutMs, who);
   return Promise.reject(new Error(`transporte ${type} não suportado pelo selo; sele por --from`));
 }
 
-function serversFromConfigFile(file) {
-  const json = readJson(expand(file), null);
-  return json?.mcpServers ?? {};
+const serversFromConfigFile = (file) => readJson(file, null)?.mcpServers ?? {};
+
+/** Files matching a glob whose only wildcard is one `*` segment (or `*.json`), newest first. */
+function globFiles(pattern, home, maxAgeMs) {
+  const p = expandWith(home)(pattern).replace(/\\/g, '/');
+  const parts = p.split('/');
+  const star = parts.findIndex((s) => s.includes('*'));
+  if (star < 0) return existsSync(p) ? [p] : [];
+  const base = parts.slice(0, star).join('/') || '/';
+  const re = new RegExp(`^${parts[star].replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`);
+  let names = [];
+  try {
+    names = readdirSync(base).filter((n) => re.test(n));
+  } catch {
+    return [];
+  }
+  const now = Date.now();
+  return names
+    .map((n) => [base, n, ...parts.slice(star + 1)].join('/'))
+    .filter((f) => existsSync(f))
+    .map((f) => ({ f, m: statSync(f).mtimeMs }))
+    .filter((x) => now - x.m < maxAgeMs)
+    .sort((a, b) => b.m - a.m)
+    .map((x) => x.f);
 }
 
-function discoverServers(cwd) {
+function discoverServers(opts, who, policy) {
   const servers = {};
-  const claudeJson = readJson(join(homedir(), '.claude.json'), {});
-  Object.assign(servers, claudeJson.mcpServers || {});
-  const project = claudeJson.projects?.[cwd] || claudeJson.projects?.[cwd?.replace(/\\/g, '/')];
-  Object.assign(servers, project?.mcpServers || {});
-  if (cwd) Object.assign(servers, serversFromConfigFile(join(cwd, '.mcp.json')));
+  if (!opts.flags.has('--no-discover')) {
+    const cwd = process.cwd();
+    const claudeJson = readJson(join(who.home, '.claude.json'), {});
+    Object.assign(servers, claudeJson.mcpServers || {});
+    Object.assign(servers, claudeJson.projects?.[cwd]?.mcpServers || {});
+    Object.assign(servers, serversFromConfigFile(join(cwd, '.mcp.json')));
+    // Per-session configs: the newest file wins for each server name.
+    for (const g of policy.sessionMcpGlobs) {
+      for (const f of globFiles(g, who.home, policy.sessionMaxAgeHours * 3_600_000)) {
+        for (const [n, c] of Object.entries(serversFromConfigFile(f))) if (!(n in servers)) servers[n] = c;
+      }
+    }
+  }
+  for (const f of opts.values('--mcp-config')) Object.assign(servers, serversFromConfigFile(expandWith(who.home)(f)));
   return servers;
 }
 
-/** { server: { tools:[{name,description}] } | { error } } for every server in the configs. */
-async function listAll(servers, timeoutMs) {
+async function gather(opts, ctx) {
+  const who = targetUser(opts);
+  const policy = loadPolicy(ctx);
+  const servers = discoverServers(opts, who, policy);
   const names = Object.keys(servers);
-  const results = await Promise.allSettled(names.map((n) => listServer(servers[n], timeoutMs)));
-  return Object.fromEntries(names.map((n, i) => [n, results[i].status === 'fulfilled' ? { tools: results[i].value } : { error: results[i].reason?.message ?? String(results[i].reason) }]));
-}
-
-function argValues(args, flag) {
-  const out = [];
-  args.forEach((a, i) => {
-    if (a === flag && args[i + 1]) out.push(args[i + 1]);
-  });
-  return out;
-}
-
-async function gather(args, extraConfigs = []) {
-  const cwd = process.cwd();
-  const servers = args.includes('--no-discover') ? {} : discoverServers(cwd);
-  for (const f of [...argValues(args, '--mcp-config'), ...extraConfigs]) Object.assign(servers, serversFromConfigFile(f));
-  const listed = await listAll(servers, loadPolicy().serverTimeoutMs);
-  for (const f of argValues(args, '--from')) {
-    const data = readJson(expand(f), null);
+  const results = await Promise.allSettled(names.map((n) => listServer(servers[n], policy.serverTimeoutMs, who)));
+  const listed = Object.fromEntries(names.map((n, i) => [n, results[i].status === 'fulfilled' ? { tools: results[i].value } : { error: results[i].reason?.message ?? String(results[i].reason) }]));
+  for (const f of opts.values('--from')) {
+    const data = readJson(f, null);
     if (!data) throw new Error(`não consegui ler ${f}`);
     for (const s of Array.isArray(data) ? data : [data]) listed[s.server] = { tools: s.tools, imported: f };
   }
@@ -447,83 +504,73 @@ async function gather(args, extraConfigs = []) {
 
 // ---------- seal ----------
 
-function buildEntries(listed) {
-  const tools = {};
+async function confirm(ctx, opts) {
+  if (!ctx.system && opts.flags.has('--yes')) return true;
+  const rl = createInterface({ input: process.stdin, output: process.stderr });
+  const answer = await new Promise((r) => {
+    rl.question('Digite SELAR para gravar este inventário: ', r);
+    rl.on('close', () => r(''));
+  });
+  rl.close();
+  return String(answer).trim() === 'SELAR';
+}
+
+async function runSeal(opts, ctx) {
+  if (ctx.system && process.platform !== 'win32' && process.getuid?.() !== 0) {
+    process.stderr.write('Selar o inventário do sistema exige root (sudo). O usuário que roda o Claude não sela.\n');
+    process.exitCode = 1;
+    return;
+  }
+  const listed = await gather(opts, ctx);
+  const policy = loadPolicy(ctx);
+  const old = readJson(ctx.files.inventory, { tools: {} });
+  const fresh = {};
   for (const [server, r] of Object.entries(listed)) {
-    if (!r.tools) continue;
+    const s = normalizeName(server);
+    if (r.error) {
+      for (const [k, e] of Object.entries(old.tools || {})) if (e.server === s) fresh[k] = e;
+      continue;
+    }
     for (const t of r.tools) {
       const key = toolKey(server, t.name);
-      tools[key] = { server: normalizeName(server), hash: sealHash(key, t.description), caps: staticCaps(normalizeName(server), t.name, t.description), description: String(t.description ?? '').slice(0, 400), source: r.imported ? `importado de ${r.imported}` : 'listado do servidor' };
+      const c = classify(s, t.name, t.description, policy);
+      fresh[key] = { server: s, hash: sealHash(key, t.description), rule: c.rule, ...(c.why ? { why: c.why } : {}), description: String(t.description ?? '').slice(0, 400), source: r.imported ? `importado de ${r.imported}` : 'listado do servidor' };
     }
   }
-  return tools;
-}
-
-async function confirmAtTerminal() {
-  const isDefault = resolve(guardDir()) === resolve(defaultGuardDir());
-  if (process.argv.includes('--yes') && !isDefault) return true;
-  if (!process.stdin.isTTY) {
-    process.stderr.write('Selar o inventário real exige uma pessoa num terminal (o agente não sela sozinho). Rode este comando no seu terminal, fora do Claude.\n');
-    return false;
-  }
-  const rl = createInterface({ input: process.stdin, output: process.stderr });
-  const answer = await new Promise((r) => rl.question('Digite SELAR para gravar este inventário: ', r));
-  rl.close();
-  return answer.trim() === 'SELAR';
-}
-
-async function runSeal(args) {
-  const listed = await gather(args);
-  const p = paths();
-  const old = readJson(p.inventory, { tools: {} });
-  const fresh = buildEntries(listed);
-  // A server that failed to list keeps what was sealed for it before.
-  for (const [server, r] of Object.entries(listed)) {
-    if (r.error) for (const [k, e] of Object.entries(old.tools || {})) if (e.server === normalizeName(server)) fresh[k] = e;
-  }
-  if (!args.includes('--replace')) for (const [k, e] of Object.entries(old.tools || {})) if (!(k in fresh) && !Object.keys(listed).map(normalizeName).includes(e.server)) fresh[k] = e;
+  const listedServers = new Set(Object.keys(listed).map(normalizeName));
+  if (!opts.flags.has('--replace')) for (const [k, e] of Object.entries(old.tools || {})) if (!(k in fresh) && !listedServers.has(e.server)) fresh[k] = e;
 
   const lines = [];
   for (const [server, r] of Object.entries(listed)) lines.push(r.error ? `  ! ${server}: não listou (${r.error}); fica o selo anterior` : `  ${server}: ${r.tools.length} ferramentas${r.imported ? ' (importadas)' : ''}`);
   for (const [k, e] of Object.entries(fresh)) {
     const before = old.tools?.[k];
-    if (!before) lines.push(`  + ${k} [${e.caps.join(', ') || 'sem capacidade de risco'}] — ${e.description.slice(0, 120)}`);
-    else if (before.hash !== e.hash) lines.push(`  ~ ${k} DESCRIÇÃO MUDOU [${e.caps.join(', ')}]\n      antes: ${String(before.description).slice(0, 160)}\n      agora: ${e.description.slice(0, 160)}`);
+    const tag = `[${e.rule}${e.why ? `: ${e.why}` : ''}]`;
+    if (!before) lines.push(`  + ${k} ${tag} — ${e.description.slice(0, 120)}`);
+    else if (before.hash !== e.hash) lines.push(`  ~ ${k} DESCRIÇÃO MUDOU ${tag}\n      antes: ${String(before.description).slice(0, 160)}\n      agora: ${e.description.slice(0, 160)}`);
   }
   for (const k of Object.keys(old.tools || {})) if (!(k in fresh)) lines.push(`  - ${k} (sai do inventário)`);
-  process.stderr.write(`Inventário de MCP em ${p.inventory}\n${lines.join('\n')}\n`);
+  process.stderr.write(`Inventário de MCP em ${ctx.files.inventory}\n${lines.join('\n')}\n`);
 
-  if (!(await confirmAtTerminal())) {
+  if (!(await confirm(ctx, opts))) {
     process.stderr.write('Nada gravado.\n');
     process.exitCode = 1;
     return;
   }
-  writeJsonAtomic(p.inventory, { version: 1, sealedAt: new Date().toISOString(), tools: fresh });
-  const drift = readJson(p.drift, { changed: {} });
+  writeJsonAtomic(ctx, ctx.files.inventory, { version: 2, sealedAt: new Date().toISOString(), tools: fresh });
+  const drift = readJson(ctx.files.drift, { changed: {} });
   for (const k of Object.keys(drift.changed || {})) if (fresh[k] && fresh[k].hash === drift.changed[k].hash) delete drift.changed[k];
-  writeJsonAtomic(p.drift, drift);
+  writeJsonAtomic(ctx, ctx.files.drift, drift);
   process.stderr.write(`Selado: ${Object.keys(fresh).length} ferramentas.\n`);
 }
 
-// ---------- check ----------
+// ---------- check / list ----------
 
-async function runCheck(args) {
-  const p = paths();
-  const inventory = readJson(p.inventory, null);
+async function runCheck(opts, ctx) {
+  const inventory = readJson(ctx.files.inventory, null);
   if (!inventory?.tools) return;
-  const drift = readJson(p.drift, { changed: {} });
+  const drift = readJson(ctx.files.drift, { changed: {} });
   drift.changed ||= {};
-  const policy = loadPolicy();
-  const fresh = drift.checkedAt && Date.now() - Date.parse(drift.checkedAt) < policy.checkTtlMinutes * 60_000;
-  let sessionId = null;
-  if (!process.stdin.isTTY) {
-    try {
-      sessionId = JSON.parse(await readStdin()).session_id ?? null;
-    } catch {}
-  }
-  if (fresh && !args.includes('--force')) return report(drift);
-  const extra = sessionId ? policy.sessionMcpConfigs.map((t) => t.replace('{session_id}', sessionId)).filter((f) => existsSync(expand(f))) : [];
-  const listed = await gather(args.filter((a) => a !== '--from'), extra);
+  const listed = await gather(opts, ctx);
   const now = new Date().toISOString();
   const unverified = [];
   for (const [server, r] of Object.entries(listed)) {
@@ -542,28 +589,37 @@ async function runCheck(args) {
   }
   drift.checkedAt = now;
   drift.unverified = unverified;
-  writeJsonAtomic(p.drift, drift);
-  report(drift);
+  writeJsonAtomic(ctx, ctx.files.drift, drift);
+  const changed = Object.keys(drift.changed);
+  if (changed.length) process.stderr.write(`mcp-guard: ${changed.length} ferramenta(s) com descrição mudada, barradas até reselar: ${changed.join(', ')}\n`);
 }
 
-function report(drift) {
-  const changed = Object.keys(drift.changed || {});
-  if (changed.length === 0) return;
-  const msg = `Trava de MCP: ${changed.length} ferramenta(s) MCP mudaram de descrição desde o selo e estão barradas até o Alexandre conferir e reselar: ${changed.join(', ')}.`;
-  process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: msg } }) + '\n');
-  process.stderr.write(msg + '\n');
+async function runList(opts, ctx) {
+  const listed = await gather(opts, ctx);
+  const dump = Object.entries(listed).filter(([, r]) => r.tools).map(([server, r]) => ({ server, tools: r.tools.map((t) => ({ name: t.name, description: t.description ?? '' })) }));
+  for (const [server, r] of Object.entries(listed)) if (r.error) process.stderr.write(`  ! ${server}: não listou (${r.error})\n`);
+  process.stdout.write(JSON.stringify(dump, null, 2) + '\n');
 }
 
 // ---------- main ----------
 
-const samePath = (a, b) => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b);
-if (process.argv[1] && samePath(resolve(process.argv[1]), SELF)) {
-  const [mode, ...args] = process.argv.slice(2);
-  const run = mode === 'seal' ? runSeal(args) : mode === 'check' ? runCheck(args) : runHook();
+function isEntrypoint() {
+  try {
+    return Boolean(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(SELF);
+  } catch {
+    return false;
+  }
+}
+
+if (isEntrypoint()) {
+  const opts = parseArgs(process.argv.slice(2));
+  const ctx = contextOf(opts);
+  const runners = { seal: runSeal, check: runCheck, list: runList };
+  const run = (runners[opts.mode] ?? runHook)(opts, ctx);
   run.catch((e) => {
-    if (mode === 'seal' || mode === 'check') {
-      process.stderr.write(`mcp-guard ${mode}: ${e.message}\n`);
-      process.exitCode = mode === 'seal' ? 1 : 0;
+    if (runners[opts.mode]) {
+      process.stderr.write(`mcp-guard ${opts.mode}: ${e.message}\n`);
+      process.exitCode = 1;
     } else {
       process.stdout.write(JSON.stringify(deny(`erro interno da trava (${e.message}); na dúvida, nada passa.`)) + '\n');
     }

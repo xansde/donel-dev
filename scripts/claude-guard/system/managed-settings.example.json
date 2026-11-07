@@ -1,0 +1,10 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__.*",
+        "hooks": [{ "type": "command", "command": "/etc/claude-code/mcp-guard/hook.sh", "timeout": 15 }]
+      }
+    ]
+  }
+}

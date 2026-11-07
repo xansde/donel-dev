@@ -1,0 +1,9 @@
+[Unit]
+Description=mcp-guard: reconferência periódica dos MCPs de %i
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+
+[Install]
+WantedBy=timers.target
