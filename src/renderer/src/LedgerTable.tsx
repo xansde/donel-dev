@@ -18,6 +18,7 @@ import {
   type LedgerTableRow,
 } from '../../shared/ledger/table';
 import type { LedgerDoc, LedgerProof, LedgerTask } from '../../shared/ledger/contract';
+import type { OwnerInboxKind } from '../../shared/ledger/inbox';
 import styles from './LedgerTable.module.css';
 
 const STATE_TONE: Readonly<Record<string, string | undefined>> = {
@@ -88,7 +89,7 @@ function Panel({
         </button>
       </div>
       <h2 className={styles.panelTitle}>{row.titulo}</h2>
-      {item.waitsForOwner ? (
+      {item.onCard ? (
         <button type="button" className={styles.primary} onClick={() => onOpenCard(task)}>
           Abrir a carta para decidir
         </button>
@@ -157,15 +158,18 @@ export function LedgerTable({
   places,
   ownerName,
   onOpenCard,
+  inbox,
 }: {
   readonly doc: LedgerDoc;
   readonly places: PlaceInfoOf | undefined;
   readonly ownerName: string | null;
   /** Opens the card of a task that waits for the owner (where he decides). */
   readonly onOpenCard: (task: LedgerTask) => void;
+  /** The box "Esperando você" (task id → kind): the filter "Esperando você" shows the same items. */
+  readonly inbox?: ReadonlyMap<string, OwnerInboxKind>;
 }): React.JSX.Element {
   const owner = ownerName?.trim() || DEFAULT_OWNER_NAME;
-  const rows = useMemo(() => ledgerTableRows(doc, places, owner), [doc, places, owner]);
+  const rows = useMemo(() => ledgerTableRows(doc, places, owner, inbox), [doc, places, owner, inbox]);
   const counts = useMemo(() => filterCounts(rows), [rows]);
   const [filter, setFilter] = useState<LedgerTableFilter>('tudo');
   const [query, setQuery] = useState('');

@@ -1,4 +1,4 @@
-/* Oráculo no centro — the box on top (fatia 1 takes its place) and the table below (Ledger v5, fatia 3).
+/* Oráculo no centro — the box "Esperando você" on top (fatia 1) and the table below (Ledger v5, fatia 3).
    LedgerCards' veil is absolute, so this is its box. */
 .oracle {
   position: relative;
@@ -37,30 +37,17 @@
   color: #efe6d2;
 }
 
-.waitingCount {
-  color: #d2a44c;
-  font-weight: 700;
-}
-
 .waitingMeta {
   color: #b3a78f;
   font-size: 0.85rem;
 }
 
-.waitingOpen {
-  margin-left: auto;
-  padding: 5px 12px;
-  border: 1px solid #d2a44c;
-  border-radius: 6px;
-  background: #2a2214;
-  color: #efe6d2;
-  font: inherit;
-  font-size: 0.85rem;
-  cursor: pointer;
-}
-
-.waitingOpen:hover {
-  background: #3a2e18;
+/* The box "Esperando você" on top: at most a little under half the height, scrolling inside, so the table always
+   shows below. Not positioned, so the cards' veil (absolute) still covers the whole Oráculo. */
+.inboxSlot {
+  flex-shrink: 0;
+  max-height: 45%;
+  overflow-y: auto;
 }
 
 .empty {
@@ -96,7 +83,9 @@
     padding: var(--space-1);
   }
 
-  .waitingOpen {
-    margin-left: 0;
+  /* The whole Oráculo scrolls already: the box shows whole. */
+  .inboxSlot {
+    max-height: none;
+    overflow-y: visible;
   }
 }
