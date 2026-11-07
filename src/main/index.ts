@@ -2940,8 +2940,8 @@ function registerFaxineiroIpcHandlers(): void {
   });
   ipcMain.handle(FAXINEIRO_CHANNELS.round, (event, sessions: unknown): FaxineiroRoundAnswer => {
     const window = getMainWindow();
-    if (!window || event.sender.id !== window.webContents.id || !Array.isArray(sessions)) return { wakes: [], closeIdle: [] };
-    return faxineiroService?.round(sessions as SessionView[]) ?? { wakes: [], closeIdle: [] };
+    if (!window || event.sender.id !== window.webContents.id || !Array.isArray(sessions)) return { wakes: [], closeIdle: [], fullMachines: {} };
+    return faxineiroService?.round(sessions as SessionView[]) ?? { wakes: [], closeIdle: [], fullMachines: {} };
   });
   ipcMain.on(FAXINEIRO_CHANNELS.log, (event, entries: unknown) => {
     const window = getMainWindow();
