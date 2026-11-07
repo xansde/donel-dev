@@ -13,6 +13,7 @@
 import {
   ASKED_BY_OWNER,
   awaitsSend,
+  doneByOf,
   eventNote,
   isAgentBotRecord,
   isCancelled,
@@ -20,6 +21,7 @@ import {
   lastDelivery,
   requestedByOf,
   slackDestinationLabel,
+  transfersOf,
   viewState,
   waitsForOwner,
   type LedgerActor,
@@ -171,6 +173,46 @@ export function withPlaceMemory(live: () => PlaceInfoOf | undefined, memory: Map
   };
 }
 
+/**
+ * Ledger v5, fatia 3 — the names of the places a ledger mentions, as plain data for the renderer (the table of the
+ * Oráculo names them as the mirror does): projectPath → placeId → what the board, or the mirror's memory, says.
+ */
+export type LedgerPlacesMap = Readonly<Record<string, Readonly<Record<string, PlaceInfo>>>>;
+
+/** Every place `doc` mentions (owner, authors, transfers, who did a delivery), looked up once each. */
+export function placesOfDoc(doc: LedgerDoc, places: PlaceInfoOf): LedgerPlacesMap {
+  const out: Record<string, Record<string, PlaceInfo>> = {};
+  const add = (projectPath: string, placeId: string | undefined): void => {
+    if (!placeId) return;
+    const board = (out[projectPath] ??= {});
+    if (placeId in board) return;
+    const info = places(projectPath, placeId);
+    if (info) board[placeId] = { ...(info.roleId ? { roleId: info.roleId } : {}), ...(info.name ? { name: info.name } : {}) };
+  };
+  for (const task of Object.values(doc.tasks)) {
+    add(task.projectPath, task.ownerPlaceId);
+    for (const event of task.events) {
+      if (event.by.kind === 'lugar') add(task.projectPath, event.by.placeId);
+      add(task.projectPath, doneByOf(event));
+    }
+    for (const transfer of transfersOf(task)) {
+      add(task.projectPath, transfer.from);
+      add(task.projectPath, transfer.to);
+    }
+  }
+  return out;
+}
+
+/** The lookup over a `LedgerPlacesMap`; `liveName` (the renderer's own session names) fills a name the map lacks. */
+export function placeInfoOfMap(map: LedgerPlacesMap, liveName?: (projectPath: string, placeId: string) => string | undefined): PlaceInfoOf {
+  return (projectPath, placeId) => {
+    const kept = map[projectPath]?.[placeId];
+    const name = kept?.name ?? liveName?.(projectPath, placeId)?.trim();
+    if (!kept?.roleId && !name) return undefined;
+    return { ...(kept?.roleId ? { roleId: kept.roleId } : {}), ...(name ? { name } : {}) };
+  };
+}
+
 const ROLE_NAMES: Readonly<Record<string, string>> = {
   dev: 'Dev',
   revisor: 'Revisor',
@@ -193,7 +235,7 @@ function roleName(roleId: string | undefined): string | undefined {
 }
 
 /** "Dev · Mindscape de cadeiras": the role, then the name (once, when the name already starts with the role). */
-function placeLabel(projectPath: string, placeId: string, roleHint: string | undefined, places: PlaceInfoOf | undefined): string {
+export function placeLabel(projectPath: string, placeId: string, roleHint: string | undefined, places: PlaceInfoOf | undefined): string {
   if (placeId === LEADER_OF_ALL) return 'Líder único';
   const info = places?.(projectPath, placeId);
   const role = roleName(info?.roleId ?? roleHint);
@@ -204,7 +246,7 @@ function placeLabel(projectPath: string, placeId: string, roleHint: string | und
   return `${role} · ${name}`;
 }
 
-function actorName(actor: LedgerActor | undefined, projectPath: string, places: PlaceInfoOf | undefined, ownerName: string): string {
+export function actorName(actor: LedgerActor | undefined, projectPath: string, places: PlaceInfoOf | undefined, ownerName: string): string {
   if (!actor) return 'não registrado';
   if (actor.kind === 'dono') return ownerName;
   return placeLabel(projectPath, actor.placeId, actor.roleId, places);
@@ -353,7 +395,16 @@ export const LEDGER_MIRROR_CHANNELS = {
   configure: 'ledger-mirror:configure',
   disable: 'ledger-mirror:disable',
   syncNow: 'ledger-mirror:sync-now',
+  /** Ledger v5, fatia 3 — read only: the names of the places of the ledger and the owner's name (`LedgerPlacesSnapshot`). */
+  places: 'ledger-mirror:places',
 } as const;
+
+/** What the table of the Oráculo needs to name people and places as the mirror does. */
+export interface LedgerPlacesSnapshot {
+  /** The owner's name set in the mirror ("Alexandre"); `null` = `DEFAULT_OWNER_NAME`. */
+  readonly ownerName: string | null;
+  readonly places: LedgerPlacesMap;
+}
 
 /** What the Preferences show. The key never leaves the main: only whether it is in the vault. */
 export interface LedgerMirrorState {
@@ -377,6 +428,8 @@ export interface DonelLedgerMirrorApi {
   configure(url: string, key: string, ownerName?: string): Promise<LedgerMirrorConfigureResult>;
   disable(): Promise<LedgerMirrorState>;
   syncNow(): Promise<LedgerMirrorState>;
+  /** Ledger v5, fatia 3 — read only; works with the mirror off too. */
+  places(): Promise<LedgerPlacesSnapshot>;
 }
 
 /** `https://<ref>.supabase.co` — the only shape accepted (no path, no query). */

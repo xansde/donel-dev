@@ -1,4 +1,5 @@
-/* Oráculo no centro — the cards take the whole area; LedgerCards' veil is absolute, so this is its box. */
+/* Oráculo no centro — the box on top (fatia 1 takes its place) and the table below (Ledger v5, fatia 3).
+   LedgerCards' veil is absolute, so this is its box. */
 .oracle {
   position: relative;
   flex: 1;
@@ -11,10 +12,59 @@
   /* The cards' veil has z-index 60 (it covers the board in the Mindscape): kept inside this box, so the menus of
      the window ("＋ Nova sessão", the project picker) still open above it. */
   isolation: isolate;
+  container-type: inline-size;
+  container-name: oracle;
+}
+
+.layout {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-2) var(--space-2);
+  min-width: 0;
+}
+
+.waiting {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+  padding: 10px var(--space-2);
+  border: 1px solid #4a4030;
+  border-radius: var(--radius-md);
+  background: #1a1612;
+  color: #efe6d2;
+}
+
+.waitingCount {
+  color: #d2a44c;
+  font-weight: 700;
+}
+
+.waitingMeta {
+  color: #b3a78f;
+  font-size: 0.85rem;
+}
+
+.waitingOpen {
+  margin-left: auto;
+  padding: 5px 12px;
+  border: 1px solid #d2a44c;
+  border-radius: 6px;
+  background: #2a2214;
+  color: #efe6d2;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.waitingOpen:hover {
+  background: #3a2e18;
 }
 
 .empty {
-  height: 100%;
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -35,4 +85,18 @@
   margin: 0;
   color: #b3a78f;
   font-size: 0.85rem;
+}
+
+/* Phone width: one column, the whole Oráculo scrolls; the table scrolls only inside its own card. */
+@container oracle (max-width: 760px) {
+  .layout {
+    height: auto;
+    max-height: 100%;
+    overflow-y: auto;
+    padding: var(--space-1);
+  }
+
+  .waitingOpen {
+    margin-left: 0;
+  }
 }
