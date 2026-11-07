@@ -54,4 +54,19 @@ describe('sessões remotas', () => {
     expect(alive.kind === 'alive' && alive.meta.hookToken).toBe('tok');
     expect(parseRemoteSetupOutput('DONEL_ERR sem tmux\n', 3)).toEqual({ kind: 'error', message: 'sem tmux' });
   });
+
+  it('o erro de ssh traz o que o ssh disse, e o tempo esgotado diz que esgotou (07/11)', () => {
+    const check = '# Tailscale SSH requires an additional check.\n# To authenticate, visit: https://login.tailscale.com/a/x\n';
+    const timedOut = parseRemoteSetupOutput('', null, check, true);
+    expect(timedOut.kind === 'error' && timedOut.message).toContain('não respondeu em 180 s');
+    expect(timedOut.kind === 'error' && timedOut.message).toContain('https://login.tailscale.com/a/x');
+    const refused = parseRemoteSetupOutput('', 255, 'root@vps: Permission denied (publickey).\r\n');
+    expect(refused).toEqual({ kind: 'error', message: 'Não consegui entrar no lugar remoto por ssh: root@vps: Permission denied (publickey).' });
+  });
+
+  it('a linha do ssh chega sem caractere de controle ao terminal e ao chat (07/11)', () => {
+    const noisy = 'progresso 10%\rprogresso 99%\r\x1b[31mroot@vps: \x1b]0;título\x07Permission\x00 denied\x1b[0m\x9b\x7f\n';
+    const answer = parseRemoteSetupOutput('', 255, noisy);
+    expect(answer).toEqual({ kind: 'error', message: 'Não consegui entrar no lugar remoto por ssh: root@vps: Permission denied' });
+  });
 });

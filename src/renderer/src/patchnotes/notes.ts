@@ -21,6 +21,10 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         title: 'As tarefas do Oráculo numa tabela que se lê sem decifrar',
         text: 'Cada tarefa do Oráculo agora pode ir, em até um minuto depois de mudar, para uma tabela no seu Supabase pessoal, uma linha por tarefa e na ordem em que se lê: quadro, título, estado, quem pediu, a frase do pedido, quem faz agora, quem criou, risco, prazo, a última entrega com o link da prova, quem aceitou ou rejeitou e o motivo, e as datas. "Quem pediu" é a pessoa: você, alguém do Slack pelo nome ou a fonte de um sinal, e não mais "Dev". As sessões aparecem pelo nome, como "Dev · Mindscape de cadeiras", e continuam com o nome depois de fechadas. Há também a visão do que ainda não fechou. Prints e vídeos ficam só aqui; senhas, chaves e e-mails que aparecerem num texto saem mascarados. Sem internet, o Donel guarda e manda quando a rede voltar. Liga em Preferências, Celular, onde você também diz o seu nome para a tabela.',
       },
+      {
+        title: 'Sessão na VPS que não abre diz por quê',
+        text: 'Quando uma sessão aberta numa VPS não consegue entrar lá, quem a abriu fica sabendo na hora e com o motivo que a conexão deu, como um pedido de verificação do Tailscale, em vez de ouvir só "o terminal não chegou a abrir" minuto e meio depois.',
+      },
     ],
   },
   {

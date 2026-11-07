@@ -1737,7 +1737,7 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     meta,
   });
   const setup = await runRemoteScript(place.sshTarget, script);
-  const answer = parseRemoteSetupOutput(setup.stdout, setup.code);
+  const answer = parseRemoteSetupOutput(setup.stdout, setup.code, setup.stderr, setup.timedOut);
   if (answer.kind === 'error') {
     browserService?.releasePty(ptyId);
     throw new Error(`${place.label}: ${answer.message}`);
