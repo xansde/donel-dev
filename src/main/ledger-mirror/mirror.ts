@@ -1,17 +1,16 @@
 // Espelho do Oráculo — a layer that only WATCHES the ledger (`LedgerService.onChange`), never writes it. After a
 // change it waits a little (a burst — create, take, deliver — goes as one registry), turns the whole document into
-// rows (`demandaRows`, secrets masked) and hands them to the destination (`MirrorSink`, Supabase today). It never
+// rows (`tarefaRows`, secrets masked) and hands them to the destination (`MirrorSink`, Supabase today). It never
 // throws into the app and never blocks it: a failure (no network, the destination down) keeps the latest document
 // pending and tries again later, growing the wait; the next change goes too. The ledger file stays the source:
 // after a restart the main simply mirrors it once more.
 
-import { demandaRows, type DemandaRow, type MaskNote } from '../../shared/ledger/mirror';
+import { tarefaRows, type MaskNote, type PlaceInfoOf, type TarefaRow } from '../../shared/ledger/mirror';
 import type { LedgerDoc } from '../../shared/ledger/contract';
-import type { PlaceNameOf } from '../../shared/ledger/labels';
 
 /** Where the rows go. `push` gets every row (an upsert); it rejects on failure, with a message free of secrets. */
 export interface MirrorSink {
-  push(rows: readonly DemandaRow[]): Promise<void>;
+  push(rows: readonly TarefaRow[]): Promise<void>;
 }
 
 export interface MirrorTimers {
@@ -22,8 +21,10 @@ export interface MirrorTimers {
 export interface LedgerMirrorDeps {
   /** `null` = mirror off (not configured): changes are ignored. Read at every push (the owner may configure later). */
   readonly sink: () => MirrorSink | null;
-  /** Called once per push: the place names as they are now (one read of the boards, not one per task). */
-  readonly placeNames?: () => PlaceNameOf;
+  /** Called once per push: the places as they are now (one read of the boards, not one per task). */
+  readonly places?: () => PlaceInfoOf;
+  /** How the owner is named in the rows ("Alexandre"); read at every push. */
+  readonly ownerName?: () => string | undefined;
   /** The wait that joins a burst of changes (default 45 s). */
   readonly delayMs?: number;
   /** First retry after a failure; doubles up to `maxRetryMs`. */
@@ -103,7 +104,7 @@ export function createLedgerMirror(deps: LedgerMirrorDeps): LedgerMirror {
     pendingDoc = null;
     inFlight = (async () => {
       try {
-        const { rows, masked } = demandaRows(doc, deps.placeNames?.());
+        const { rows, masked } = tarefaRows(doc, deps.places?.(), { ownerName: deps.ownerName?.() });
         for (const note of masked) log(logMasked(note));
         await sink.push(rows);
         failures = 0;

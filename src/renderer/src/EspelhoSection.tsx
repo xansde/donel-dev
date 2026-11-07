@@ -24,6 +24,7 @@ export function EspelhoSection(): React.JSX.Element {
   const [state, setState] = useState<LedgerMirrorState | null>(null);
   const [url, setUrl] = useState('');
   const [key, setKey] = useState('');
+  const [ownerName, setOwnerName] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -33,6 +34,7 @@ export function EspelhoSection(): React.JSX.Element {
       if (!alive) return;
       setState(next);
       setUrl(next.url ?? '');
+      setOwnerName(next.ownerName ?? '');
     });
     return () => {
       alive = false;
@@ -46,7 +48,7 @@ export function EspelhoSection(): React.JSX.Element {
     setBusy(true);
     setError(null);
     void window.donel.ledgerMirror
-      .configure(url.trim(), key)
+      .configure(url.trim(), key, ownerName.trim())
       .then((result) => {
         if (!result.ok) setError(result.reason);
         else setKey('');
@@ -73,6 +75,7 @@ export function EspelhoSection(): React.JSX.Element {
         onChange={(event) => setKey(event.target.value)}
         placeholder={state.keyConfigured ? 'guardada no cofre; preencha só para trocar' : 'cole a chave de serviço'}
       />
+      <TextInput label="Seu nome na tabela" placeholder="Dono" value={ownerName} onChange={(event) => setOwnerName(event.target.value)} />
       {error ? <p className={styles.statusWarn}>{error}</p> : null}
       <div style={{ display: 'flex', gap: 8 }}>
         <Button variant="primary" onClick={save} disabled={busy || !url.trim() || (!key && !state.keyConfigured)}>

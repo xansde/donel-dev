@@ -268,6 +268,8 @@ export function lastDecision(task: LedgerTask): LedgerEvent | undefined {
 //   cancel    → a `rejeitada` event "⟦cancelada⟧ <reason>"                      (state `rejeitada`: v4 bars it too)
 //   doer      → the `entregue` event "⟦feito por <placeId>⟧ <note>"
 //   replaces  → the new task's `criada` event "⟦substitui <id>⟧" (the old one is cancelled "substituída pela <id>")
+//   asked by  → the new task's `criada` event "⟦pedido por <who>⟧" (07/11: the person, not the role that typed it);
+//               with a replaced task, both share the mark: "⟦substitui <id> · pedido por <who>⟧"
 // A text the sessions or the owner write never starts with the mark (`startsWithMark`), so a mark is never forged.
 
 const MARK_OPEN = '⟦';
@@ -280,6 +282,13 @@ function withMark(tag: string, rest: string): string {
 function markOf(text: string | undefined): { tag: string; rest: string } | null {
   const match = text ? MARK.exec(text) : null;
   return match ? { tag: match[1]!, rest: text!.slice(match[0].length) } : null;
+}
+
+/** The text of a birth event: `{}` when there is nothing to mark. */
+function birthTagsOf(replaces: string | undefined, requestedBy: string | undefined): { text?: string } {
+  const asked = requestedBy ? cleanAskedBy(requestedBy) : '';
+  const tags = [...(replaces ? [`substitui ${replaces}`] : []), ...(asked ? [`${ASKED_BY}${asked}`] : [])];
+  return tags.length ? { text: withMark(tags.join(TAG_SEPARATOR), '') } : {};
 }
 
 export function startsWithMark(text: string | undefined): boolean {
@@ -301,11 +310,37 @@ export interface LedgerTransfer {
   readonly reason: string;
 }
 
-/** The task this one replaced (`tarefa_criar` with `substitui`), if any. */
-export function replacesOf(task: LedgerTask): string | undefined {
+/** The tags of the birth mark (the first `criada` event), split on ` · `. */
+function birthTags(task: LedgerTask): string[] {
   const first = task.events[0];
   const mark = first?.kind === 'criada' ? markOf(first.text) : null;
-  return mark ? /^substitui (\S+)$/.exec(mark.tag)?.[1] : undefined;
+  return mark ? mark.tag.split(TAG_SEPARATOR) : [];
+}
+
+const TAG_SEPARATOR = ' · ';
+const ASKED_BY = 'pedido por ';
+/** `quemPediu` = the owner: the mirror writes the owner's name. */
+export const ASKED_BY_OWNER = 'dono';
+export const MAX_ASKED_BY_CHARS = 80;
+
+/** The task this one replaced (`tarefa_criar` with `substitui`), if any. */
+export function replacesOf(task: LedgerTask): string | undefined {
+  for (const tag of birthTags(task)) {
+    const id = /^substitui (\S+)$/.exec(tag)?.[1];
+    if (id) return id;
+  }
+  return undefined;
+}
+
+/** 07/11 — who asked for the task (a person: `dono`, "Gabriel Horst (Slack)"), when the creator said it. */
+export function requestedByOf(task: LedgerTask): string | undefined {
+  const tag = birthTags(task).find((each) => each.startsWith(ASKED_BY));
+  return tag ? tag.slice(ASKED_BY.length).trim() || undefined : undefined;
+}
+
+/** A name that can never open, close or split a mark: one line, no `⟦ ⟧`, no ` · `. */
+export function cleanAskedBy(value: string): string {
+  return value.replace(/[⟦⟧\n\r]/g, ' ').replace(/·/g, ',').replace(/\s+/g, ' ').trim().slice(0, MAX_ASKED_BY_CHARS);
 }
 
 /** The transfers of a task, oldest first. */
@@ -382,6 +417,8 @@ export type LedgerOp =
       readonly risk: LedgerRisk;
       /** 06/11 — the task this one replaces: cancelled in the same write ("substituída pela <id>"), with the cancel rule. */
       readonly replaces?: string;
+      /** 07/11 — who asked (a person); `ASKED_BY_OWNER` for the owner. Kept in the birth mark (`requestedByOf`). */
+      readonly requestedBy?: string;
     }
   | { readonly op: 'assumir'; readonly id: string }
   /** `doneBy` (06/11): the place that really did the work, when it is not the owner place that delivers. */
@@ -477,7 +514,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       risk: op.risk,
       state: 'aberta',
       createdAt: ctx.now,
-      events: [{ kind: 'criada', at: ctx.now, by: actor, ...(replaced ? { text: withMark(`substitui ${replaced.id}`, '') } : {}) }],
+      events: [{ kind: 'criada', at: ctx.now, by: actor, ...(birthTagsOf(replaced?.id, op.requestedBy)) }],
     };
     if (!replaced) return { ok: true, doc: withTask(doc, task), task };
     // One write: the new task and the old one cancelled, or neither.

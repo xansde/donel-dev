@@ -231,7 +231,7 @@ const TEAM_LINE =
  * never the one that registers it (it closes, and the task is orphaned), and a task that replaces another names it.
  */
 const TASK_LINE =
-  '- Ao registrar trabalho com `tarefa_criar`, diga em `dono` o lugar que vai fazer, nunca o seu: quando você fecha, a tarefa fica órfã. Se a tarefa nova substitui outra, diga qual em `substitui`: a antiga é cancelada na hora.';
+  '- Ao registrar trabalho com `tarefa_criar`, diga em `dono` o lugar que vai fazer, nunca o seu: quando você fecha, a tarefa fica órfã. Se a tarefa nova substitui outra, diga qual em `substitui`: a antiga é cancelada na hora. Em `quemPediu`, diga a pessoa de quem veio o pedido: "dono", alguém do Slack pelo nome ou a fonte do sinal, nunca um papel.';
 
 /** Escopo de fábrica (dono, 05/11): Dev e Revisor só com o GitHub; nenhum com as skills soltas do usuário. */
 const CODE_SCOPE: RoleScope = { mcps: ['github'], plugins: ['dev', 'esteira'], skills: [] };

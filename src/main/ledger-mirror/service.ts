@@ -8,8 +8,7 @@ import { join } from 'node:path';
 import type { ConfigIoDeps } from '../config-store';
 import { decryptVaultEntry, writeVaultEntry, type SafeStorageLike, type VaultIoDeps } from '../accounts/vault';
 import type { LedgerDoc } from '../../shared/ledger/contract';
-import type { PlaceNameOf } from '../../shared/ledger/labels';
-import { isSupabaseUrl, type LedgerMirrorConfigureResult, type LedgerMirrorState } from '../../shared/ledger/mirror';
+import { isSupabaseUrl, withPlaceMemory, type LedgerMirrorConfigureResult, type LedgerMirrorState, type PlaceInfo, type PlaceInfoOf } from '../../shared/ledger/mirror';
 import { createLedgerMirror, type LedgerMirror, type MirrorSink } from './mirror';
 import { createSupabaseSink } from './supabase-sink';
 
@@ -20,6 +19,16 @@ interface MirrorSettings {
   readonly kind: 'supabase';
   readonly enabled: boolean;
   readonly url: string;
+  /** How the owner is named in the rows ("Alexandre"); absent = "Dono". */
+  readonly ownerName?: string;
+}
+
+const MAX_OWNER_NAME_CHARS = 60;
+
+function cleanOwnerName(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const name = value.replace(/\s+/g, ' ').trim().slice(0, MAX_OWNER_NAME_CHARS);
+  return name || undefined;
 }
 
 function parseSettings(text: string | null): MirrorSettings | null {
@@ -27,7 +36,8 @@ function parseSettings(text: string | null): MirrorSettings | null {
   try {
     const raw = JSON.parse(text) as Partial<MirrorSettings>;
     if (raw.kind !== 'supabase' || typeof raw.url !== 'string' || !isSupabaseUrl(raw.url)) return null;
-    return { kind: 'supabase', enabled: raw.enabled === true, url: raw.url.trim().replace(/\/+$/, '') };
+    const ownerName = cleanOwnerName(raw.ownerName);
+    return { kind: 'supabase', enabled: raw.enabled === true, url: raw.url.trim().replace(/\/+$/, ''), ...(ownerName ? { ownerName } : {}) };
   } catch {
     return null;
   }
@@ -40,7 +50,8 @@ export interface LedgerMirrorServiceDeps {
   readonly vaultPath: () => string | null;
   readonly safeStorage: SafeStorageLike;
   readonly vaultIo: VaultIoDeps;
-  readonly placeNames?: () => PlaceNameOf;
+  /** The places as the boards say now (role of the card, name of the session). */
+  readonly places?: () => PlaceInfoOf;
   /** The current ledger, for the first sync after configuring. */
   readonly loadDoc: () => LedgerDoc | null;
 }
@@ -48,16 +59,49 @@ export interface LedgerMirrorServiceDeps {
 export interface LedgerMirrorService {
   changed(doc: LedgerDoc): void;
   state(): LedgerMirrorState;
-  configure(url: unknown, key: unknown): Promise<LedgerMirrorConfigureResult>;
+  configure(url: unknown, key: unknown, ownerName?: unknown): Promise<LedgerMirrorConfigureResult>;
   disable(): void;
   syncNow(): Promise<LedgerMirrorState>;
   dispose(): void;
 }
 
+/** `ledger-espelho-nomes.json`: placeId → the last role and name seen. Anything else is dropped. */
+function readNames(text: string | null): Map<string, PlaceInfo> {
+  const names = new Map<string, PlaceInfo>();
+  if (!text) return names;
+  try {
+    const raw = JSON.parse(text) as Record<string, unknown>;
+    for (const [placeId, value] of Object.entries(raw ?? {})) {
+      if (!value || typeof value !== 'object') continue;
+      const { roleId, name } = value as { roleId?: unknown; name?: unknown };
+      const info: PlaceInfo = { ...(typeof roleId === 'string' && roleId ? { roleId } : {}), ...(typeof name === 'string' && name.trim() ? { name: name.trim() } : {}) };
+      if (info.roleId || info.name) names.set(placeId, info);
+    }
+  } catch {
+    // a broken file: start again from what the boards say
+  }
+  return names;
+}
+
 export function createLedgerMirrorService(deps: LedgerMirrorServiceDeps): LedgerMirrorService {
   const settingsPath = join(deps.userDataPath, 'ledger-espelho.json');
   const logPath = join(deps.userDataPath, 'ledger-espelho.log');
+  const namesPath = join(deps.userDataPath, 'ledger-espelho-nomes.json');
   let settings = parseSettings(deps.io.readFileText(settingsPath));
+
+  // The names of the places, kept after their session closes (the session registry forgets it): a task keeps
+  // saying "Dev · Mindscape de cadeiras" a week later. Its own file, written only here.
+  const names = readNames(deps.io.readFileText(namesPath));
+  const saveNames = (): void => {
+    try {
+      const tmp = `${namesPath}.tmp`;
+      deps.io.writeFileText(tmp, JSON.stringify(Object.fromEntries(names), null, 2));
+      deps.io.renameFile(tmp, namesPath);
+    } catch {
+      // a name not saved is learned again at the next push
+    }
+  };
+  const places = withPlaceMemory(() => deps.places?.(), names, saveNames);
 
   const readKey = (): string | null => {
     const vault = deps.vaultPath();
@@ -88,7 +132,7 @@ export function createLedgerMirrorService(deps: LedgerMirrorServiceDeps): Ledger
     return sink;
   };
 
-  const mirror: LedgerMirror = createLedgerMirror({ sink: currentSink, placeNames: deps.placeNames, log });
+  const mirror: LedgerMirror = createLedgerMirror({ sink: currentSink, places, ownerName: () => settings?.ownerName, log });
 
   const writeSettings = (next: MirrorSettings): void => {
     const tmp = `${settingsPath}.tmp`;
@@ -102,6 +146,7 @@ export function createLedgerMirrorService(deps: LedgerMirrorServiceDeps): Ledger
     return {
       enabled: settings?.enabled ?? false,
       url: settings?.url ?? null,
+      ownerName: settings?.ownerName ?? null,
       keyConfigured: readKey() !== null,
       lastSyncAt: status.lastSyncAt === null ? null : new Date(status.lastSyncAt).toISOString(),
       pending: status.pending,
@@ -115,7 +160,7 @@ export function createLedgerMirrorService(deps: LedgerMirrorServiceDeps): Ledger
     await mirror.flush();
   };
 
-  async function configure(url: unknown, key: unknown): Promise<LedgerMirrorConfigureResult> {
+  async function configure(url: unknown, key: unknown, ownerName?: unknown): Promise<LedgerMirrorConfigureResult> {
     if (typeof url !== 'string' || !isSupabaseUrl(url)) return { ok: false, reason: 'Endereço inválido: use https://<projeto>.supabase.co.' };
     if (key !== undefined && key !== '') {
       if (typeof key !== 'string' || key.trim().length < 20) return { ok: false, reason: 'Chave inválida.' };
@@ -125,7 +170,8 @@ export function createLedgerMirrorService(deps: LedgerMirrorServiceDeps): Ledger
       if (written.kind !== 'ok') return { ok: false, reason: 'O cofre do Windows não está disponível neste PC.' };
     }
     if (readKey() === null) return { ok: false, reason: 'Falta a chave de serviço do Supabase.' };
-    writeSettings({ kind: 'supabase', enabled: true, url: url.trim().replace(/\/+$/, '') });
+    const name = cleanOwnerName(ownerName);
+    writeSettings({ kind: 'supabase', enabled: true, url: url.trim().replace(/\/+$/, ''), ...(name ? { ownerName: name } : {}) });
     log(`configurado: ${settings!.url}`);
     await syncAll();
     return { ok: true };

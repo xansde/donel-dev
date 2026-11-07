@@ -15,12 +15,17 @@ export interface PatchNoteDay {
 
 export const PATCH_NOTES: readonly PatchNoteDay[] = [
   {
-    date: '2026-11-06',
+    date: '2026-11-07',
     items: [
       {
-        title: 'As tarefas do Oráculo registradas fora do PC',
-        text: 'Cada tarefa do Oráculo agora pode ir, em até um minuto depois de mudar, para uma tabela no seu Supabase pessoal: quadro, título, o pedido como foi feito, quem pediu, estado, risco, dono, prazo, datas, decisão e motivo. Abre no navegador ou no celular, e o histórico sobrevive se o PC morrer. Há também a visão do que ainda não fechou. Prints e vídeos ficam só aqui; senhas, chaves e e-mails que aparecerem num texto saem mascarados. Sem internet, o Donel guarda e manda quando a rede voltar. Liga em Preferências, Celular.',
+        title: 'As tarefas do Oráculo numa tabela que se lê sem decifrar',
+        text: 'Cada tarefa do Oráculo agora pode ir, em até um minuto depois de mudar, para uma tabela no seu Supabase pessoal, uma linha por tarefa e na ordem em que se lê: quadro, título, estado, quem pediu, a frase do pedido, quem faz agora, quem criou, risco, prazo, a última entrega com o link da prova, quem aceitou ou rejeitou e o motivo, e as datas. "Quem pediu" é a pessoa: você, alguém do Slack pelo nome ou a fonte de um sinal, e não mais "Dev". As sessões aparecem pelo nome, como "Dev · Mindscape de cadeiras", e continuam com o nome depois de fechadas. Há também a visão do que ainda não fechou. Prints e vídeos ficam só aqui; senhas, chaves e e-mails que aparecerem num texto saem mascarados. Sem internet, o Donel guarda e manda quando a rede voltar. Liga em Preferências, Celular, onde você também diz o seu nome para a tabela.',
       },
+    ],
+  },
+  {
+    date: '2026-11-06',
+    items: [
       {
         title: 'Faxina do Oráculo toda noite',
         text: 'Uma vez por noite, o Oráculo faz uma faxina sozinho, sem usar modelo. Uma tarefa de risco baixo que foi entregue ou rejeitada e cujo PR já entrou é encerrada como concluída, com o número do PR e o dia. Uma tarefa de risco alto nunca se encerra sozinha. Uma tarefa sem dono há mais de um dia passa para quem está acima no quadro, ou para o Líder, e quem recebe é avisado. Nas três primeiras noites, a faxina só anota o que faria, sem mudar nada. O Líder também passa a ser avisado quando uma sessão lhe passa uma tarefa à mão.',

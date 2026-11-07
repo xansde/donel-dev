@@ -1,11 +1,11 @@
 // Espelho do Oráculo — destination Supabase (the owner's PERSONAL project, never a Seazone one): an upsert of every
-// row into the table `demandas` through PostgREST. The table and the view "em aberto" are created once by
+// row into the table `tarefas` through PostgREST. The table and the view "em aberto" are created once by
 // docs/oraculo-espelho/supabase.sql. The service key comes from the vault at each push and never enters an error
 // message or a log line.
 
 import type { MirrorSink } from './mirror';
 
-export const SUPABASE_TABLE = 'demandas';
+export const SUPABASE_TABLE = 'tarefas';
 const TIMEOUT_MS = 20_000;
 /** PostgREST takes a big body, but a bounded batch keeps one bad row from hiding the rest. */
 const BATCH = 200;

@@ -612,7 +612,7 @@ const donelApi: DonelApi = {
   // Espelho do Oráculo — the registry outside this PC. The key goes in (write-only); only "configured" comes back.
   ledgerMirror: {
     getState: () => ipcRenderer.invoke(LEDGER_MIRROR_CHANNELS.getState) as Promise<LedgerMirrorState>,
-    configure: (url: string, key: string) => ipcRenderer.invoke(LEDGER_MIRROR_CHANNELS.configure, url, key) as Promise<LedgerMirrorConfigureResult>,
+    configure: (url: string, key: string, ownerName?: string) => ipcRenderer.invoke(LEDGER_MIRROR_CHANNELS.configure, url, key, ownerName) as Promise<LedgerMirrorConfigureResult>,
     disable: () => ipcRenderer.invoke(LEDGER_MIRROR_CHANNELS.disable) as Promise<LedgerMirrorState>,
     syncNow: () => ipcRenderer.invoke(LEDGER_MIRROR_CHANNELS.syncNow) as Promise<LedgerMirrorState>,
   },

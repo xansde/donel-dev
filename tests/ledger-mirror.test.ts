@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { createLedgerMirror, type MirrorSink, type MirrorTimers } from '../src/main/ledger-mirror/mirror';
 import { createSupabaseSink } from '../src/main/ledger-mirror/supabase-sink';
-import { demandaRows, maskSecrets, type DemandaRow } from '../src/shared/ledger/mirror';
+import { maskSecrets, tarefaRows, withPlaceMemory, type PlaceInfo, type PlaceInfoOf, type TarefaRow } from '../src/shared/ledger/mirror';
+import { LEADER_OF_ALL } from '../src/shared/mindscape/leader';
 import { LEDGER_SCHEMA_VERSION, type LedgerDoc, type LedgerTask } from '../src/shared/ledger/contract';
 
 // Espelho do Oráculo — the tasks leave the PC: a burst goes as one registry, no network never loses a change nor
@@ -50,8 +51,8 @@ function fakeTimers(): MirrorTimers & { fire(): Promise<void>; pending(): number
   };
 }
 
-function recordingSink(fail: () => boolean = () => false): MirrorSink & { pushes: DemandaRow[][] } {
-  const pushes: DemandaRow[][] = [];
+function recordingSink(fail: () => boolean = () => false): MirrorSink & { pushes: TarefaRow[][] } {
+  const pushes: TarefaRow[][] = [];
   return {
     pushes,
     async push(rows) {
@@ -169,53 +170,124 @@ describe('espelho do Oráculo', () => {
     const mirror = createLedgerMirror({ sink: () => sink, timers, log: (line) => lines.push(line) });
     mirror.changed(doc(delivered));
     await timers.fire();
-    expect(sink.pushes[0]![0]!.prova).toBe('deploy ok com [segredo]');
-    expect(lines).toEqual(['mascarado: tarefa t-1, campo prova (chave Anthropic/OpenAI)']);
+    expect(sink.pushes[0]![0]!.prova_texto).toBe('deploy ok com [segredo]');
+    expect(lines).toEqual(['mascarado: tarefa t-1, campo ultima_entrega (chave Anthropic/OpenAI)', 'mascarado: tarefa t-1, campo prova_texto (chave Anthropic/OpenAI)']);
   });
 
-  it('a row says board, who asked, owner by name, dates, decision and reason; files stay out', () => {
-    const rejected = task('t-1', {
-      risk: 'alto',
-      state: 'rejeitada',
-      request: 'Registrar as tarefas fora do PC',
+  // 07/11 — the owner opened the table and read "quem pediu: Dev". Each row has to be read without decoding code.
+  const places: PlaceInfoOf = (_project, placeId) =>
+    ({
+      'place:lider': { roleId: 'lider', name: 'Líder · leva do dia' },
+      'place:dev': { roleId: 'dev', name: 'Dev · Mindscape de cadeiras' },
+      'place:rev': { roleId: 'revisor', name: 'PR 276' },
+      'place:theo': { roleId: 'theo-west', name: 'Theo · VPS' },
+      'place:curador': { roleId: 'curador' },
+    })[placeId];
+  const by = (placeId: string, roleId?: string) => ({ kind: 'lugar' as const, placeId, ...(roleId ? { roleId } : {}) });
+
+  it('a row reads like a sentence: people and place names, Portuguese state, last delivery and who decided', () => {
+    const accepted = task('t-1', {
+      title: 'Cadeiras no Mindscape',
+      state: 'aceita',
+      request: 'Quero ver as cadeiras do Mindscape',
       events: [
-        { kind: 'criada', at: T0, by: { kind: 'lugar', placeId: 'place:lider', roleId: 'lider' } },
-        { kind: 'assumida', at: T0 + 1000, by: { kind: 'lugar', placeId: 'place:dev', roleId: 'dev' } },
+        { kind: 'criada', at: T0, by: by('place:lider', 'lider') },
+        { kind: 'assumida', at: T0 + 1000, by: by('place:dev', 'dev') },
         {
           kind: 'entregue',
           at: T0 + 2000,
-          by: { kind: 'lugar', placeId: 'place:dev', roleId: 'dev' },
+          by: by('place:dev', 'dev'),
+          text: 'PR #280 com as cadeiras',
           proofs: [
             { kind: 'arquivo', file: 'abcdefgh-print.png', mediaType: 'image/png' },
-            { kind: 'link', url: 'https://github.com/x/y/actions/runs/1' },
+            { kind: 'link', url: 'https://github.com/x/y/pull/280' },
           ],
         },
-        { kind: 'rejeitada', at: T0 + 3000, by: { kind: 'dono' }, text: 'Faltou a visão em aberto' },
+        { kind: 'aceita', at: T0 + 3000, by: by('place:rev', 'revisor') },
       ],
     });
-    const { rows } = demandaRows(doc(rejected), (_project, placeId) => (placeId === 'place:dev' ? 'espelho' : undefined));
+    const { rows } = tarefaRows(doc(accepted), places, { ownerName: 'Alexandre' });
     expect(rows[0]).toEqual({
-      id: 't-1',
       quadro: 'Donel Dev',
-      titulo: 'Tarefa t-1',
-      pedido: 'Registrar as tarefas fora do PC',
-      quem_pediu: 'Líder',
-      estado: 'rejeitada',
-      esperando_dono: false,
-      risco: 'alto',
-      dono: 'Dev · espelho',
+      titulo: 'Cadeiras no Mindscape',
+      estado: 'aceita',
+      // The first week's daily sample: a Revisor's accept goes to the owner too.
+      esperando_dono: true,
+      quem_pediu: 'Alexandre',
+      pedido: 'Quero ver as cadeiras do Mindscape',
+      quem_faz_agora: 'Dev · Mindscape de cadeiras',
+      quem_criou: 'Líder · leva do dia',
+      risco: 'baixo',
       prazo: '2026-11-07',
+      ultima_entrega: 'PR #280 com as cadeiras',
+      link_da_prova: 'https://github.com/x/y/pull/280',
+      decisao: 'aceita por Revisor · PR 276',
+      motivo: null,
       criada_em: new Date(T0).toISOString(),
       entregue_em: new Date(T0 + 2000).toISOString(),
       decidida_em: new Date(T0 + 3000).toISOString(),
-      decisao: 'rejeitada (Dono)',
-      motivo: 'Faltou a visão em aberto',
-      prova: '(1 arquivo de prova só no app)',
-      prova_link: 'https://github.com/x/y/actions/runs/1',
+      prova_texto: '(1 arquivo de prova só no app)',
+      id: 't-1',
     });
-    // A high-risk delivery waits for the owner.
-    const waiting = task('t-2', { risk: 'alto', state: 'entregue', events: [...rejected.events.slice(0, 3)] });
-    expect(demandaRows(doc(waiting)).rows[0]).toMatchObject({ estado: 'entregue', esperando_dono: true, decisao: null });
+    // Nothing in a row is an id but the id itself.
+    for (const [column, value] of Object.entries(rows[0]!)) if (column !== 'id') expect(String(value)).not.toMatch(/place:|session:|t-1\b/);
+  });
+
+  it('the owner decides by name, a cancel says so, and a waiting delivery is flagged', () => {
+    const cancelled = task('t-2', {
+      state: 'rejeitada',
+      events: [
+        { kind: 'criada', at: T0, by: { kind: 'dono' } },
+        { kind: 'rejeitada', at: T0 + 1, by: { kind: 'dono' }, text: '⟦cancelada⟧ substituída pela t-9' },
+      ],
+    });
+    const waiting = task('t-3', { risk: 'alto', state: 'entregue', events: [{ kind: 'criada', at: T0, by: by('place:dev', 'dev') }, { kind: 'entregue', at: T0 + 1, by: by('place:dev', 'dev'), proofs: [{ kind: 'texto', text: 'ok' }] }] });
+    const [a, b] = tarefaRows(doc(cancelled, waiting), places, { ownerName: 'Alexandre' }).rows;
+    expect(a).toMatchObject({ estado: 'cancelada', decisao: 'cancelada por Alexandre', motivo: 'substituída pela t-9', quem_criou: 'Alexandre' });
+    expect(b).toMatchObject({ estado: 'entregue', esperando_dono: true, decisao: null, ultima_entrega: 'ok' });
+  });
+
+  it.each<[string, Partial<LedgerTask>, string]>([
+    ['the creator said who (the new field)', { events: [{ kind: 'criada', at: T0, by: by('place:dev', 'dev'), text: '⟦pedido por Marta (Slack)⟧' }] }, 'Marta (Slack)'],
+    ['the creator said it was the owner', { events: [{ kind: 'criada', at: T0, by: by('place:dev', 'dev'), text: '⟦substitui t-0 · pedido por dono⟧' }] }, 'Alexandre'],
+    ['the owner created it', { events: [{ kind: 'criada', at: T0, by: { kind: 'dono' } }] }, 'Alexandre'],
+    ['the Líder registered it', { events: [{ kind: 'criada', at: T0, by: by('place:lider', 'lider') }] }, 'Alexandre'],
+    [
+      'a Slack letter names the person it answers',
+      {
+        request: 'Mensagem no Slack para Gabriel Horst (DM): Você aceitou responder em «Gabriel Horst: ligar as funções novas».',
+        slack: { destination: 'U1', destinationLabel: 'Gabriel Horst (DM)', text: 'oi', reason: 'Você aceitou responder em «Gabriel Horst: ligar as funções novas».' },
+        events: [{ kind: 'criada', at: T0, by: by('place:theo', 'theo-west') }],
+      },
+      'Gabriel Horst (Slack)',
+    ],
+    [
+      'a Slack letter in a thread names who opened it',
+      {
+        slack: { destination: 'C1', destinationLabel: '#homologacao, na thread do Filipe de 28/10', thread: '1.2', text: 'oi', reason: 'Resposta ao Filipe sobre as homologações' },
+        events: [{ kind: 'criada', at: T0, by: by('place:theo', 'theo-west') }],
+      },
+      'Filipe (Slack)',
+    ],
+    ['a quote of the owner in the request', { request: '"Preciso disso amanhã" (dono, 05/11; continua t-57d5a139)', events: [{ kind: 'criada', at: T0, by: by('place:pesq', 'pesquisa') }] }, 'Alexandre'],
+    ['a quote of the Revisor', { request: '"Sugestão: recusar também" (Revisor, PR #219, Ressalva 1)', events: [{ kind: 'criada', at: T0, by: by('place:pesq', 'pesquisa') }] }, 'Revisor, PR #219'],
+    ['a Curador signal with its source', { request: '"É a peça mais frágil." (Líder, como-trabalhar-05-11.html §2)', events: [{ kind: 'criada', at: T0, by: by('place:curador') }] }, 'sinal do Curador: Líder, como-trabalhar-05-11.html §2'],
+    ['nobody said', { events: [{ kind: 'criada', at: T0, by: by('place:dev', 'dev') }] }, 'não registrado'],
+  ])('who asked: %s', (_name, over, expected) => {
+    expect(tarefaRows(doc(task('t-1', over)), places, { ownerName: 'Alexandre' }).rows[0]!.quem_pediu).toBe(expected);
+  });
+
+  it('a place keeps the name it had once its session closes, and an unknown one never shows an id', () => {
+    const memory = new Map<string, PlaceInfo>();
+    let live: Record<string, PlaceInfo> = { 'place:dev': { roleId: 'dev', name: 'Dev · espelho' } };
+    const lookup = withPlaceMemory(() => (_project, placeId) => live[placeId], memory);
+    const owned = (ownerPlaceId: string) => doc(task('t-1', { ownerPlaceId, events: [{ kind: 'criada', at: T0, by: { kind: 'dono' } }] }));
+    expect(tarefaRows(owned('place:dev'), lookup()).rows[0]!.quem_faz_agora).toBe('Dev · espelho');
+    live = {}; // the session closed: the registry forgot it
+    expect(tarefaRows(owned('place:dev'), lookup()).rows[0]!.quem_faz_agora).toBe('Dev · espelho');
+    expect(tarefaRows(owned('place:9f8e7d6c'), lookup()).rows[0]!.quem_faz_agora).toBe('lugar sem nome');
+    expect(tarefaRows(owned(LEADER_OF_ALL), lookup()).rows[0]!.quem_faz_agora).toBe('Líder único');
+    expect(tarefaRows(owned('place:dev'), lookup()).rows[0]!.quem_pediu).toBe('Dono');
   });
 
   it('the Supabase sink upserts by id and never puts the key in an error', async () => {
@@ -225,8 +297,8 @@ describe('espelho do Oráculo', () => {
       calls.push({ url, init });
       return new Response(null, { status: 201 });
     }) as unknown as typeof fetch;
-    await createSupabaseSink({ url: 'https://abcdefgh.supabase.co/', key: () => key, fetch: okFetch }).push(demandaRows(doc(task('t-1'))).rows);
-    expect(calls[0]!.url).toBe('https://abcdefgh.supabase.co/rest/v1/demandas?on_conflict=id');
+    await createSupabaseSink({ url: 'https://abcdefgh.supabase.co/', key: () => key, fetch: okFetch }).push(tarefaRows(doc(task('t-1'))).rows);
+    expect(calls[0]!.url).toBe('https://abcdefgh.supabase.co/rest/v1/tarefas?on_conflict=id');
     expect((calls[0]!.init.headers as Record<string, string>).Prefer).toContain('resolution=merge-duplicates');
 
     const echo = (async () => new Response(`bad key ${key}`, { status: 401 })) as unknown as typeof fetch;
@@ -237,7 +309,7 @@ describe('espelho do Oráculo', () => {
     // Empty push sends nothing; a real one fails without the key.
     expect(error).toBeNull();
     const failed = await createSupabaseSink({ url: 'https://abcdefgh.supabase.co', key: () => key, fetch: echo })
-      .push(demandaRows(doc(task('t-1'))).rows)
+      .push(tarefaRows(doc(task('t-1'))).rows)
       .then(
         () => null,
         (e: Error) => e.message,
