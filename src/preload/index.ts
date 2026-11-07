@@ -14,6 +14,7 @@ import { HEALTH_CHANNELS } from '../shared/health/ipc';
 import type { KillProcessOutcome } from '../shared/health/ipc';
 import type { HealthReport } from '../shared/health/types';
 import type { RemoteHealthReport } from '../shared/health/remote';
+import { HOMOLOGACAO_CHANNELS, type FactoryMetricsView } from '../shared/homologacao/ipc';
 // B33 — atualizar de dentro do app.
 import { APP_UPDATE_CHANNELS, type AppUpdateApplyResult, type AppUpdateBoot, type AppUpdateStatus, type ResumeTab } from '../shared/appUpdate';
 // Sidebar — abrir no editor + branch atual.
@@ -484,6 +485,16 @@ const donelApi: DonelApi = {
     },
   },
 
+  // Mindscape de homologação V1 — the factory's numbers, read-only.
+  homologacao: {
+    metricsGet: () => ipcRenderer.invoke(HOMOLOGACAO_CHANNELS.metricsGet) as Promise<FactoryMetricsView | null>,
+    metricsRefresh: () => ipcRenderer.invoke(HOMOLOGACAO_CHANNELS.metricsRefresh) as Promise<FactoryMetricsView | null>,
+    onMetricsChanged: (listener: (view: FactoryMetricsView | null) => void) => {
+      const handler = (_event: unknown, view: FactoryMetricsView | null): void => listener(view);
+      return subscribeChannel(ipcRenderer, HOMOLOGACAO_CHANNELS.metricsChanged, handler);
+    },
+  },
+
   // B33 — versão nova do alfa: o estado da pasta dos instaladores, a troca e as abas a reabrir depois.
   appUpdate: {
     get: () => ipcRenderer.invoke(APP_UPDATE_CHANNELS.get) as Promise<AppUpdateStatus>,
@@ -559,6 +570,10 @@ const donelApi: DonelApi = {
     onRules: (listener: (rules: BrowserAgentRules) => void) => {
       const handler = (_event: unknown, rules: BrowserAgentRules): void => listener(rules);
       return subscribeChannel(ipcRenderer, BROWSER_CHANNELS.rules, handler);
+    },
+    onFullscreenKey: (listener: (request: BrowserOpenRequest) => void) => {
+      const handler = (_event: unknown, request: BrowserOpenRequest): void => listener(request);
+      return subscribeChannel(ipcRenderer, BROWSER_CHANNELS.fullscreenKey, handler);
     },
   },
 

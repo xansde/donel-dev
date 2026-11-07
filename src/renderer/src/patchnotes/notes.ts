@@ -22,6 +22,14 @@ export const PATCH_NOTES: readonly PatchNoteDay[] = [
         text: 'Em Preferências, Avisos e Jobu, "Onde o Líder roda" escolhe entre este computador e a VPS. O Líder com quem você fala pelo Jobu muda de lugar na mensagem seguinte e continua a mesma conversa, com tudo o que já sabia. Se ele estiver trabalhando, muda quando terminar. Na VPS ele deixa de ocupar memória do computador; o navegador integrado continua aqui, e ele o usa como antes. Ele só lê arquivos de projetos que já estão no GitHub. Para voltar, escolha "Este computador".',
       },
       {
+        title: 'O navegador em tela cheia',
+        text: 'O navegador ao lado da conversa agora pode ocupar a janela inteira: o botão ⤢ na barra dele, ou F11, mesmo com o cursor dentro da página. Para voltar ao lado da conversa, o mesmo botão, F11 de novo ou Esc. O Esc só tira da tela cheia quando você não está dentro da página nem digitando no endereço, para não atrapalhar o Esc do próprio site. A sessão continua trabalhando, e o agente segue controlando a mesma página. Fechar o navegador também sai da tela cheia.',
+      },
+      {
+        title: 'Os números da factory no Mindscape',
+        text: 'No quadro da homologação, na vista Cadeiras, o botão "Números da factory" abre um painel com os números que a factory grava na VPS dela: um cartão por número, com o valor exatamente como ela escreveu, a pergunta que ele responde e de onde veio (medido, estimado ou sem fonte). Os números que têm de ficar em zero ou subir levam a marca trava, e os que não têm meta dizem "só mostrado". No topo aparece a hora em que foram gerados ("atualizado às" ou, depois de duas horas, "parado desde"); se a VPS não responde ou o arquivo some, "sem sinal desde", mantendo a última leitura. O painel só lê: nada nele muda a factory. Liga com a chave "homologacao" na configuração; sem ela, nada aparece e nada é lido.',
+      },
+      {
         title: 'O Jobu não some mais em outro monitor',
         text: 'Levar o Donel para outro monitor, maximizado, fazia o Jobu sumir: o Windows tratava isso como "um app em tela cheia", e o Jobu se escondia de qualquer tela cheia. Essa regra saiu. O Jobu fica na tela em qualquer monitor, inclusive com escala diferente e depois de voltar a janela, e os balões aparecem como sempre. Para tirá-lo da frente, use "Esconder" no menu dele.',
       },
