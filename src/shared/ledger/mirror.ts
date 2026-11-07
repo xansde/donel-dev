@@ -199,7 +199,8 @@ function placeLabel(projectPath: string, placeId: string, roleHint: string | und
   const info = places?.(projectPath, placeId);
   const role = roleName(info?.roleId ?? roleHint);
   const name = info?.name?.trim();
-  if (!name) return role ? `${role} (sem nome)` : 'lugar sem nome';
+  // A generic role says nothing alone ("Dev" was the complaint); an agent's own role is already its name ("Theo West").
+  if (!name) return !role ? 'lugar sem nome' : Object.values(ROLE_NAMES).includes(role) ? `${role} (sem nome)` : role;
   if (!role || name.toLowerCase().startsWith(role.toLowerCase())) return name;
   return `${role} · ${name}`;
 }
@@ -227,7 +228,7 @@ function escapeRe(text: string): string {
 }
 
 /** "(dono, 05/11)", "(Revisor, PR #219, Ressalva 1)": who said it, and a short source. */
-function quotedSource(request: string, ownerName: string): { owner: true } | { owner: false; text: string } | null {
+function quotedSource(request: string, ownerName: string): { owner: true } | { owner: false; role: string; source: string } | null {
   const owners = ['dono', ownerName].filter(Boolean).map(escapeRe).join('|');
   const match = new RegExp(`\\((${owners}|${ROLE_SOURCES})\\b[\\s,;:]*([^)]*)\\)`, 'i').exec(request);
   if (!match) return null;
@@ -236,18 +237,19 @@ function quotedSource(request: string, ownerName: string): { owner: true } | { o
   const role = roleName(who.toLowerCase()) ?? who;
   const source = match[2]!.split(/[;:"«]| — /)[0]!.trim().replace(/,$/, '');
   const short = source.split(',')[0]!.trim();
-  return { owner: false, text: short ? `${role}, ${short.length > 60 ? `${short.slice(0, 59)}…` : short}` : role };
+  return { owner: false, role, source: short.length > 60 ? `${short.slice(0, 59)}…` : short };
 }
 
-/** The person a Slack letter answers: «Fulano: assunto», "thread do Fulano", or the person of a DM. */
+/** The person a Slack letter answers: the person of a DM, «Fulano: assunto», "thread do Fulano". */
 function slackPerson(task: LedgerTask): string {
   const slack = task.slack!;
+  const label = slackDestinationLabel(slack).trim();
+  // A DM names the person in full ("Gabriel Horst (DM)"); the «topic» may carry a nickname («Horst: …»).
+  if (!label.startsWith('#') && !/^[CGUD][A-Z0-9]{6,}$/.test(label)) return `${label.replace(/\s*\(DM\)\s*$/, '').trim()} (Slack)`;
   const topic = /«([^:»]{2,60}):/.exec(slack.reason);
   if (topic) return `${topic[1]!.trim()} (Slack)`;
-  const label = slackDestinationLabel(slack);
   const thread = /thread d[aoe]s? ([^(),]+?)(?: de \d|[(),]|$)/.exec(label);
   if (thread) return `${thread[1]!.trim()} (Slack)`;
-  if (!label.trim().startsWith('#') && !/^[CGU][A-Z0-9]{6,}$/.test(label.trim())) return `${label.replace(/\s*\(DM\)\s*$/, '').trim()} (Slack)`;
   return `Slack: ${label}`;
 }
 
@@ -261,8 +263,8 @@ export function whoAsked(task: LedgerTask, places: PlaceInfoOf | undefined, owne
   const creatorRole = creator?.kind === 'lugar' ? (creator.roleId ?? places?.(task.projectPath, creator.placeId)?.roleId) : undefined;
   const quoted = quotedSource(task.request, ownerName);
   if (quoted?.owner) return ownerName;
-  if (creatorRole?.split('-')[0] === 'curador') return quoted ? `sinal do Curador: ${quoted.text}` : 'sinal do Curador';
-  if (quoted) return quoted.text;
+  if (creatorRole?.split('-')[0] === 'curador') return quoted ? `sinal do Curador: ${[quoted.role, quoted.source].filter(Boolean).join(', ')}` : 'sinal do Curador';
+  if (quoted) return quoted.source ? `sinal do ${quoted.role}: ${quoted.source}` : `sinal do ${quoted.role}`;
   // The Líder (of a board or the único) registers what the owner asks.
   if (isLeaderRole(creatorRole) || (creator?.kind === 'lugar' && creator.placeId === LEADER_OF_ALL)) return ownerName;
   return 'não registrado';

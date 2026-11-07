@@ -255,11 +255,19 @@ describe('espelho do Oráculo', () => {
     [
       'a Slack letter names the person it answers',
       {
-        request: 'Mensagem no Slack para Gabriel Horst (DM): Você aceitou responder em «Gabriel Horst: ligar as funções novas».',
-        slack: { destination: 'U1', destinationLabel: 'Gabriel Horst (DM)', text: 'oi', reason: 'Você aceitou responder em «Gabriel Horst: ligar as funções novas».' },
+        request: 'Mensagem no Slack para Gabriel Horst (DM): Você aceitou responder em «Horst: ligar as funções novas».',
+        slack: { destination: 'U1', destinationLabel: 'Gabriel Horst (DM)', text: 'oi', reason: 'Você aceitou responder em «Horst: ligar as funções novas».' },
         events: [{ kind: 'criada', at: T0, by: by('place:theo', 'theo-west') }],
       },
       'Gabriel Horst (Slack)',
+    ],
+    [
+      'a Slack letter in a channel names the person of the topic',
+      {
+        slack: { destination: 'C1', destinationLabel: '#homologação-spotometro, thread da Julia', thread: '1.2', text: 'oi', reason: 'Você aceitou responder em «Julia: saldo errado».' },
+        events: [{ kind: 'criada', at: T0, by: by('place:theo', 'theo-west') }],
+      },
+      'Julia (Slack)',
     ],
     [
       'a Slack letter in a thread names who opened it',
@@ -270,7 +278,7 @@ describe('espelho do Oráculo', () => {
       'Filipe (Slack)',
     ],
     ['a quote of the owner in the request', { request: '"Preciso disso amanhã" (dono, 05/11; continua t-57d5a139)', events: [{ kind: 'criada', at: T0, by: by('place:pesq', 'pesquisa') }] }, 'Alexandre'],
-    ['a quote of the Revisor', { request: '"Sugestão: recusar também" (Revisor, PR #219, Ressalva 1)', events: [{ kind: 'criada', at: T0, by: by('place:pesq', 'pesquisa') }] }, 'Revisor, PR #219'],
+    ['a quote of the Revisor', { request: '"Sugestão: recusar também" (Revisor, PR #219, Ressalva 1)', events: [{ kind: 'criada', at: T0, by: by('place:pesq', 'pesquisa') }] }, 'sinal do Revisor: PR #219'],
     ['a Curador signal with its source', { request: '"É a peça mais frágil." (Líder, como-trabalhar-05-11.html §2)', events: [{ kind: 'criada', at: T0, by: by('place:curador') }] }, 'sinal do Curador: Líder, como-trabalhar-05-11.html §2'],
     ['nobody said', { events: [{ kind: 'criada', at: T0, by: by('place:dev', 'dev') }] }, 'não registrado'],
   ])('who asked: %s', (_name, over, expected) => {
@@ -287,6 +295,9 @@ describe('espelho do Oráculo', () => {
     expect(tarefaRows(owned('place:dev'), lookup()).rows[0]!.quem_faz_agora).toBe('Dev · espelho');
     expect(tarefaRows(owned('place:9f8e7d6c'), lookup()).rows[0]!.quem_faz_agora).toBe('lugar sem nome');
     expect(tarefaRows(owned(LEADER_OF_ALL), lookup()).rows[0]!.quem_faz_agora).toBe('Líder único');
+    live = { 'place:a': { roleId: 'dev' }, 'place:b': { roleId: 'theo-west' } };
+    expect(tarefaRows(owned('place:a'), lookup()).rows[0]!.quem_faz_agora).toBe('Dev (sem nome)');
+    expect(tarefaRows(owned('place:b'), lookup()).rows[0]!.quem_faz_agora).toBe('Theo West');
     expect(tarefaRows(owned('place:dev'), lookup()).rows[0]!.quem_pediu).toBe('Dono');
   });
 
