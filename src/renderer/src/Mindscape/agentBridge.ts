@@ -24,11 +24,13 @@ import {
 } from '../../../shared/mindscape/agent-tools';
 import type { MindscapeBoardResponse } from '../../../shared/mindscape/channels';
 import { LEADER_OF_ALL, isLeaderOfAllTab, knownBoards, resolveBoard, type KnownBoard } from '../../../shared/mindscape/leader';
-import { LEADER_OF_ALL_FROM, canReach, canReachLeader, findPlace, firstLiveAbove } from '../../../shared/mindscape/reach';
+import { LEADER_OF_ALL_FROM, canFaxineiroClose, canReach, canReachLeader, findPlace, firstLiveAbove } from '../../../shared/mindscape/reach';
+import { FAXINEIRO_OPENER, PC_MACHINE_ID, type FaxineiroLogEntry, type SessionView } from '../../../shared/faxineiro/triggers';
+import type { FaxineiroWakeOrder } from '../../../shared/faxineiro/ipc';
 import type { LedgerPassedOn, LedgerPassOnRequest } from '../../../shared/ledger/channels';
-import { addLink, addPlace, placeCardId, placeHasStarted, placeOfSession, type MindscapeBoard, type MindscapeDoc, type SessionPlaceCard } from '../../../shared/mindscape/model';
+import { addLink, addPlace, noteCardId, placeCardId, placeHasStarted, placeOfSession, type MindscapeBoard, type MindscapeDoc, type SessionPlaceCard } from '../../../shared/mindscape/model';
 import type { SemaphoreState } from '../../../shared';
-import type { SessionRole } from '../../../shared/roles';
+import { FAXINEIRO_ROLE_ID, type SessionRole } from '../../../shared/roles';
 import type { SendFrom } from '../chat/sendDriver';
 
 /**
@@ -141,6 +143,10 @@ export interface AgentBridgePorts {
   projects(): readonly { readonly path: string; readonly name: string }[];
   /** 06/11 — the live tasks of gone places pass on (the main writes the ledger); answers what moved. */
   passOn?(requests: readonly LedgerPassOnRequest[]): Promise<readonly LedgerPassedOn[]>;
+  /** t-b3b26e60 — since when the tab is in its current state (epoch ms); `undefined` = no reading. */
+  stateEnteredAt?(tabId: string): number | undefined;
+  /** t-b3b26e60 — lines for `<userData>/rotinas/faxineiro.log` (each close the Faxineiro asks for, each wake). */
+  logFaxineiro?(entries: readonly FaxineiroLogEntry[]): void;
 }
 
 const STATE_NAMES: Readonly<Record<SemaphoreState, string>> = {
@@ -297,6 +303,98 @@ export class AgentBridge {
     }
   }
 
+  // ---- Faxineiro com gatilhos (t-b3b26e60) ----------------------------------------------------------------------
+
+  /** The open session tabs of the boards, as the triggers read them (the Líder único has no board: left out). */
+  faxineiroSessions(): SessionView[] {
+    const out: SessionView[] = [];
+    for (const tab of this.ports.tabs()) {
+      if (tab.sessionType !== 'claude' || !tab.cwd || isLeaderOfAllTab(tab)) continue;
+      const state = this.ports.stateOf(tab.id);
+      const place = this.placeOfTab(tab);
+      const enteredAt = this.ports.stateEnteredAt?.(tab.id);
+      if (state === undefined || !place || enteredAt === undefined) continue;
+      const openedBy = tab.openedBy ?? this.openedBy.get(tab.id);
+      out.push({
+        projectPath: tab.cwd,
+        placeId: place.id,
+        name: this.roleName(place.roleId) ?? tab.name,
+        ...(place.roleId ? { roleId: place.roleId } : {}),
+        machineId: tab.remoteId ?? PC_MACHINE_ID,
+        // the birth guess (no hook yet) counts as working: never judged stopped by mistake
+        working: state === 'working' || this.ports.unconfirmed(tab.id),
+        needsOwner: state === 'permission' || state === 'error' || this.ports.permissionOnScreen(tab.id),
+        stateEnteredAt: enteredAt,
+        openedBySession: openedBy !== undefined,
+        ...(openedBy !== undefined ? { openedBy } : {}),
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Wakes the Faxineiro of a board: its chair with a tab open and stopped gets the message; a chair without a tab (or
+   * no chair yet: it is born on the board, out of the arrows) gets a new session. One working is left alone.
+   */
+  async wakeFaxineiro(order: FaxineiroWakeOrder): Promise<FaxineiroLogEntry> {
+    const at = Date.now();
+    const entry = (kind: FaxineiroLogEntry['kind'], summary: string, placeId?: string): FaxineiroLogEntry => ({
+      at,
+      kind,
+      projectPath: order.projectPath,
+      ...(placeId ? { placeId } : {}),
+      summary: `${order.reasons.join('; ')} → ${summary}`,
+    });
+    const role = this.ports.roles().find((candidate) => candidate.id === FAXINEIRO_ROLE_ID);
+    if (!role) return entry('falhou', 'não existe o papel faxineiro');
+    if (!this.ports.loaded) return entry('falhou', 'o quadro ainda não carregou');
+    const board = this.board(order.projectPath);
+    if (!board) return entry('falhou', 'o projeto não tem quadro');
+    const chairs = Object.values(board.cards).filter((card): card is SessionPlaceCard => card.kind === 'session' && card.roleId === FAXINEIRO_ROLE_ID);
+    for (const chair of chairs) {
+      const tab = this.tabOfPlace(order.projectPath, chair.id);
+      if (!tab) continue;
+      if (this.ports.stateOf(tab.id) === 'working') return entry('segurou', 'o Faxineiro está trabalhando', chair.id);
+      const outcome = await this.ports.deliverLine(tab.id, order.text, DELIVERY_WAIT_MS, 'session');
+      return outcome.kind === 'nao-foi' ? entry('falhou', `a mensagem não entrou (${outcome.reason})`, chair.id) : entry('acordou', 'mensagem ao Faxineiro aberto', chair.id);
+    }
+    let placeId = chairs[0]?.id;
+    if (placeId === undefined) {
+      const made = placeCardId(crypto.randomUUID());
+      let added = false;
+      this.ports.applyGesture(order.projectPath, (doc) => {
+        const next = addPlace(doc, order.projectPath, { id: made, roleId: role.id, by: 'session' });
+        added = next !== doc;
+        return next;
+      });
+      if (!added) return entry('falhou', 'o quadro não aceitou a cadeira');
+      placeId = made;
+    }
+    const tabId = this.ports.openSession({
+      projectPath: order.projectPath,
+      placeId,
+      role,
+      name: role.name,
+      ...(order.remoteId ? { remoteId: order.remoteId } : {}),
+      openedBy: FAXINEIRO_OPENER,
+      firstMessage: order.text,
+    });
+    this.openedBy.set(tabId, FAXINEIRO_OPENER);
+    this.openedAt.set(tabId, Date.now());
+    return entry('acordou', `abriu o Faxineiro em ${order.remoteId ? this.ports.remoteLabel(order.remoteId) : 'este computador'}`, placeId);
+  }
+
+  /** Closes a Faxineiro the app opened that finished its round (stopped, nothing for the owner); `null` = left open. */
+  closeIdleFaxineiro(projectPath: string, placeId: string): FaxineiroLogEntry | null {
+    const tab = this.tabOfPlace(projectPath, placeId);
+    if (!tab || (tab.openedBy ?? this.openedBy.get(tab.id)) !== FAXINEIRO_OPENER) return null;
+    if (this.ports.stateOf(tab.id) !== 'waiting' && this.ports.stateOf(tab.id) !== 'done') return null;
+    if (this.ports.permissionOnScreen(tab.id)) return null;
+    this.ports.closeTab(tab.id);
+    this.openedBy.delete(tab.id);
+    return { at: Date.now(), kind: 'fechou-faxineiro', projectPath, placeId, summary: 'a ronda acabou e o Faxineiro ficou parado' };
+  }
+
   private boardName(projectPath: string): string {
     return this.boards().find((board) => board.projectPath === projectPath)?.name ?? lastSegment(projectPath);
   }
@@ -412,6 +510,39 @@ export class AgentBridge {
   }
 
   /** What `sessao_enviar` answers once the line went (or not) to the tab of there. */
+  /**
+   * `sessao_fechar` of the Faxineiro (t-b3b26e60): its own board with no arrow, never a session working, waiting for
+   * the owner or opened by his hand (`canFaxineiroClose`). Never cuts a turn. Every ask, closed or refused, is logged.
+   */
+  private faxineiroClose(doc: MindscapeDoc, from: { projectPath: string; placeId: string }, to: { projectPath: string; placeId: string }, callerTabId: string): Answer {
+    const log = (kind: FaxineiroLogEntry['kind'], summary: string): void =>
+      this.ports.logFaxineiro?.([{ at: Date.now(), kind, projectPath: to.projectPath, placeId: to.placeId, summary }]);
+    const target = this.tabOfPlace(to.projectPath, to.placeId);
+    if (!target) {
+      log('recusou-fechar', 'não está aberta');
+      return { ok: false, text: `Não fechei: "${to.placeId}" não está aberta agora.` };
+    }
+    if (target.id === callerTabId) return { ok: false, text: 'Não fechei: esta é a sua própria sessão.' };
+    const state = this.ports.stateOf(target.id);
+    const openedBy = target.openedBy ?? this.openedBy.get(target.id);
+    const verdict = canFaxineiroClose(doc, from, to, {
+      working: state === 'working' || this.ports.unconfirmed(target.id),
+      needsOwner: state === 'permission' || state === 'error' || this.ports.permissionOnScreen(target.id),
+      openedBySession: openedBy !== undefined,
+    });
+    const note = target.claudeSessionId ? doc.boards[to.projectPath]?.cards[noteCardId(target.claudeSessionId)] : undefined;
+    const lastTurn = note?.kind === 'session-note' ? ` · último turno: ${note.text.replace(/\s+/g, ' ').slice(0, 200)}` : '';
+    if (!verdict.ok) {
+      log('recusou-fechar', `${target.name}: ${verdict.reason}`);
+      return { ok: false, text: `Não fechei: ${verdict.reason}` };
+    }
+    this.ports.closeTab(target.id);
+    this.openedBy.delete(target.id);
+    this.leaderHears.delete(target.id);
+    log('fechar', `${target.name} (${STATE_NAMES[state ?? 'done']})${lastTurn}`);
+    return { ok: true, text: 'Fechada.' };
+  }
+
   private deliveryAnswer(outcome: DeliveryOutcome, targetId: string): Answer {
     if (outcome.kind === 'entrou') return { ok: true, text: 'Entregue: entrou no Claude de lá.' };
     if (outcome.kind === 'na-fila') return { ok: true, text: 'Entregue à fila do Claude de lá: ela está trabalhando e o próprio CLI a entrega no próximo passo.' };
@@ -683,6 +814,7 @@ export class AgentBridge {
         const doc = this.ports.doc();
         const where = findPlace(doc, call.quem, projectPath);
         if (!where) return no(`"${call.quem}" não é um lugar de nenhum quadro (veja sessao_listar).`);
+        if (!scope.leader && self?.roleId === FAXINEIRO_ROLE_ID) return this.faxineiroClose(doc, { projectPath, placeId: self.id }, where, caller.id);
         const reach = canReach(doc, from, where);
         if (!reach.ok) return no(reach.reason);
         const target = this.tabOfPlace(where.projectPath, where.placeId);
