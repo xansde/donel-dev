@@ -77,6 +77,7 @@ describe('defaultAppConfig (puro)', () => {
       yolo: { projects: [] },
       // Oráculo no centro (06/11) — o layout novo é o padrão, com o Oráculo à vista.
       layout: { oracleCenter: true, centerView: 'oracle' },
+      leader: { where: 'local' },
       appUpdate: { installersDir: null },
       browserUploads: { folders: [] },
       slackAgentBots: { servers: [] },
@@ -116,6 +117,7 @@ describe('toAppConfigDto (puro)', () => {
       autoMode: { neverAsks: true },
       yolo: { projects: [] },
       layout: { oracleCenter: true, centerView: 'oracle' },
+      leader: { where: 'local' },
     });
   });
 
@@ -253,6 +255,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       autoMode: { neverAsks: false },
       yolo: { projects: ['C:\\repos\\app'] },
       layout: { oracleCenter: false, centerView: 'terminals' },
+      leader: { where: 'vps-1' },
       appUpdate: { installersDir: 'D:\\instaladores' },
       browserUploads: { folders: [] },
       slackAgentBots: { servers: ['theo-west-slack', 'theo-slack'] },
@@ -354,6 +357,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       yolo: { projects: ['C:\\ok'] },
       // Oráculo no centro — o campo ruim cai no default só dele; a vista escolhida fica.
       layout: { oracleCenter: true, centerView: 'terminals' },
+      leader: defaults.leader,
       appUpdate: { installersDir: null },
       browserUploads: { folders: [] },
       slackAgentBots: { servers: [] },

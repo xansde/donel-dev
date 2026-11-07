@@ -17,6 +17,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createWriteStream, mkdirSync, type WriteStream } from 'node:fs';
 import { basename, join, relative, sep, isAbsolute } from 'node:path';
 import { resolvePermissionMode } from '../shared/commandBuilder';
+import type { RemoteAliveSession } from '../shared';
 
 export const REMOTE_TMUX_SOCKET = 'donel';
 export const REMOTE_SESSIONS_DIR = '.donel/s';
@@ -55,6 +56,9 @@ export interface RemoteSessionMeta {
   readonly launchArgs: readonly string[];
   /** Place of the session that opened this one (`sessao_abrir`); absent when the owner opened it. */
   readonly openedBy?: string;
+  /** Líder único na VPS — the role and the Jobu's mark, so the tab that comes back after a restart is the Líder again. */
+  readonly roleId?: string;
+  readonly leaderOfAll?: boolean;
   readonly createdAt: string;
 }
 
@@ -280,6 +284,49 @@ export function parseDiscoverOutput(stdout: string): RemoteSessionMeta[] {
     }
   }
   return metas;
+}
+
+/** Pure — the tab a live remote session comes back as. The Líder único comes back with its mark and no project. */
+export function remoteAliveFromMeta(remoteId: string, meta: RemoteSessionMeta): RemoteAliveSession {
+  const leaderOfAll = meta.leaderOfAll === true;
+  return {
+    remoteId,
+    sessionId: meta.sid,
+    cwd: meta.localCwd,
+    ...(leaderOfAll ? {} : { projectName: meta.projectName }),
+    name: meta.name,
+    launchArgs: meta.launchArgs,
+    ...(typeof meta.openedBy === 'string' && meta.openedBy !== '' ? { openedBy: meta.openedBy } : {}),
+    ...(typeof meta.roleId === 'string' && meta.roleId !== '' ? { roleId: meta.roleId } : {}),
+    ...(leaderOfAll ? { leaderOfAll: true } : {}),
+  };
+}
+
+/**
+ * Pure — Líder único na VPS: writes the conversation `sid` the app carries into the CLI's transcript folder of the
+ * project folder (`homeRelativeDir`, as `remoteDirFor` gives it), so `claude -r <sid>` finds it there. Same rule as
+ * `carryTranscriptLocally`: only a larger copy replaces the one there, which stays as `.bak-<time>`. Answers
+ * `DONEL_CARRIED` or `DONEL_KEPT`.
+ */
+export function buildCarryTranscriptScript(homeRelativeDir: string, sid: string, content: string): string {
+  assertSessionId(sid);
+  const size = Buffer.byteLength(content, 'utf8');
+  const encoded = (Buffer.from(content, 'utf8').toString('base64').match(/.{1,76}/g) ?? []).join('\n');
+  return [
+    'set -u',
+    `D=$(cd "$HOME"/${shQuote(homeRelativeDir)} 2>/dev/null && pwd) || { echo "DONEL_ERR A pasta do Líder não existe no lugar remoto."; exit 3; }`,
+    'SLUG=$(printf %s "$D" | sed "s/[^a-zA-Z0-9]/-/g")',
+    'P="$HOME/.claude/projects/$SLUG"',
+    `T="$P/${sid}.jsonl"`,
+    `if [ -f "$T" ] && [ "$(wc -c < "$T")" -ge ${size} ]; then echo DONEL_KEPT; exit 0; fi`,
+    'mkdir -p "$P" || exit 4',
+    "base64 -d > \"$T.chegando\" <<'DONEL_EOF' || exit 4",
+    encoded,
+    'DONEL_EOF',
+    'if [ -f "$T" ]; then mv "$T" "$T.bak-$(date +%s)"; fi',
+    'mv "$T.chegando" "$T" && echo DONEL_CARRIED',
+    '',
+  ].join('\n');
 }
 
 export function buildEndScript(sid: string): string {

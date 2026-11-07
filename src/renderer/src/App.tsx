@@ -126,6 +126,7 @@ import { disposeTabSend, ownerTerminalInput, sendDriverFor, sendToTab, pendingSe
 import { blockingScreen, readInputText } from '../../shared/chat/screen';
 import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../shared/lider/ipc';
 import { isLeaderOfAllTab, leaderHome } from '../../shared/mindscape/leader';
+import { DEFAULT_LEADER_PREFS, leaderMoves, leaderRemoteId } from '../../shared/leaderPrefs';
 import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
 import { TerminalPane } from './TerminalPane';
 import { PatchNotes } from './patchnotes/PatchNotes';
@@ -1991,13 +1992,17 @@ export function App(): React.JSX.Element {
               launchArgs: withResumeArgs(entry.launchArgs, entry.sessionId),
               remoteId: entry.remoteId,
               ...(entry.openedBy ? { openedBySession: true, openedBy: entry.openedBy } : {}),
+              // Líder único na VPS — it comes back as the Líder (the Jobu talks to it), not as an ordinary tab.
+              ...(entry.roleId ? { roleId: entry.roleId } : {}),
+              ...(entry.leaderOfAll ? { leaderOfAll: true } : {}),
             },
             false,
           );
           // Só os Líderes nas abas — a session a Líder opened on the remote stays out of the tab bar after a restart.
           if (entry.openedBy) agentBridgeRef.current.adoptOpened(id, entry.openedBy);
-          // A restore, not a gesture: it takes the focus as before, without leaving the Oráculo.
-          else setActiveTabId(id);
+          // A restore, not a gesture: it takes the focus as before, without leaving the Oráculo. The Líder único is
+          // reached through the Jobu: it never takes the focus.
+          else if (!entry.leaderOfAll) setActiveTabId(id);
         }
       })
       .catch(() => undefined);
@@ -2262,7 +2267,18 @@ export function App(): React.JSX.Element {
   });
   const liderDeliverRef = useRef<(text: string) => LiderSendResult>(() => ({ ok: false, reason: 'O Donel ainda está abrindo.' }));
   liderDeliverRef.current = (text: string): LiderSendResult => {
-    let tabId = findLiderTab()?.id;
+    const live = findLiderTab();
+    let tabId = live?.id;
+    // Líder único na VPS (docs/planos/lider-na-vps.md) — where the owner wants it (Preferences). A Líder running
+    // elsewhere and stopped moves now, with its conversation (`-r`, the main carries the transcript); one in the middle
+    // of a turn stays where it is and moves on a later message.
+    const wantedRemoteId = leaderRemoteId(appConfig?.leader ?? DEFAULT_LEADER_PREFS, accountsView.remotes.map((place) => place.id));
+    let resumeSessionId: string | undefined;
+    if (live && live.claudeSessionId && leaderMoves({ remoteId: live.remoteId, state: semaphoreStates[live.id]?.state }, wantedRemoteId)) {
+      resumeSessionId = live.claudeSessionId;
+      closeTabImmediately(live.id);
+      tabId = undefined;
+    }
     if (tabId === undefined) {
       const role = roles.find((candidate) => candidate.id === LIDER_ROLE_ID);
       // Without the role there is no Líder único (it is the role + the mark below): say so instead of opening a plain session.
@@ -2270,18 +2286,21 @@ export function App(): React.JSX.Element {
       const providerId = role.engine && providers.some((provider) => provider.id === role.engine) ? role.engine : undefined;
       const defaults = appConfig?.launcherDefaults;
       const home = leaderHome(Object.keys(mindscape.doc.boards));
+      const launchArgs = buildLauncherArgs({
+        providerId,
+        model: role.model ?? defaults?.model ?? DEFAULT_MODEL_ALIAS,
+        effort: role.effort ?? defaults?.effort ?? DEFAULT_EFFORT_LEVEL,
+        permissionMode: role.permissionMode ?? defaults?.permissionMode ?? 'acceptEdits',
+        sessionName: '',
+      });
       tabId = addTab({
         name: role.name,
         // No `projectName`: the Líder único belongs to no board.
         ...(home ? { cwd: home } : {}),
         pinned: false,
-        launchArgs: buildLauncherArgs({
-          providerId,
-          model: role.model ?? defaults?.model ?? DEFAULT_MODEL_ALIAS,
-          effort: role.effort ?? defaults?.effort ?? DEFAULT_EFFORT_LEVEL,
-          permissionMode: role.permissionMode ?? defaults?.permissionMode ?? 'acceptEdits',
-          sessionName: '',
-        }),
+        launchArgs: resumeSessionId ? withResumeArgs(launchArgs, resumeSessionId) : launchArgs,
+        // A provider of a third party does not run on a remote place (ADR 0006): that Líder stays here.
+        ...(wantedRemoteId && !providerId ? { remoteId: wantedRemoteId } : {}),
         sessionType: 'claude',
         providerId,
         roleId: role.id,
@@ -3579,6 +3598,10 @@ export function App(): React.JSX.Element {
         }}
         remotes={accountsView.remotes.map((place) => ({ id: place.id, label: place.label }))}
         launcherWhere={appConfig?.launcherDefaults.where}
+        leaderWhere={appConfig?.leader.where ?? 'local'}
+        onChangeLeaderWhere={(where) => {
+          void window.donel.config.setLeaderPrefs({ where }).then(setAppConfig).catch(() => undefined);
+        }}
         onChangeLauncherWhere={(where) => {
           if (!appConfig) return;
           const { where: _previous, ...rest } = appConfig.launcherDefaults;

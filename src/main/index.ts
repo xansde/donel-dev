@@ -220,6 +220,8 @@ import {
   buildAttachSshArgs,
   buildRemoteSetupScript,
   discoverRemoteSessions,
+  buildCarryTranscriptScript,
+  remoteAliveFromMeta,
   findRemoteTranscript,
   parseRemoteSetupOutput,
   pickRemotePort,
@@ -277,6 +279,7 @@ import type { AccountMod } from './accounts/account-mod';
 import { IsolatedLoginManager, type IsolatedLoginFsDeps } from './accounts/isolated-login';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
 import { sanitizeLayoutPrefs, type LayoutPrefs } from '../shared/layoutPrefs';
+import { sanitizeLeaderPrefs, type LeaderPrefs } from '../shared/leaderPrefs';
 import { adoptRefreshedActivePair, applyAccountSwitch, createSystemClaudeStateIoDeps, readCurrentCredentialPair } from './accounts/claude-state';
 import { accountFingerprintFromClaudeJsonText } from './accounts/credentials-file';
 import { createLocalMod } from './accounts/mods/local-mod';
@@ -345,6 +348,7 @@ import type { PetDisplay } from '../shared/pet/types';
 import { hasImage, readText, writeText } from './clipboard-bridge';
 import { CLIPBOARD_CHANNELS } from '../shared';
 import { resolveClaudeCorrelation } from './session-correlation';
+import { carryTranscriptLocally, largestTranscript } from './lider/carry-transcript';
 import { defaultClaudeHome, indexProjectSessions, resolveProjectSessionsDir } from './session-indexer';
 import { seedProject } from './session-seed';
 import { SessionSemaphoreManager } from './session-semaphore-manager';
@@ -1718,7 +1722,14 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     claudeArgs.push('--settings', '@S/settings.json');
   }
   const mcp = fresh.mcpPort !== null ? (browserService?.prepareRemoteSession(ptyId, fresh.mcpPort) ?? null) : null;
-  const meta: RemoteSessionMeta = { ...fresh, mcpToken: mcp?.token ?? null, mcpPort: mcp ? fresh.mcpPort : null };
+  const meta: RemoteSessionMeta = {
+    ...fresh,
+    mcpToken: mcp?.token ?? null,
+    mcpPort: mcp ? fresh.mcpPort : null,
+    // Líder único na VPS — the tab that comes back after a restart is the Líder again (`remoteAliveFromMeta`).
+    ...(roleId ? { roleId } : {}),
+    ...(options.leaderOfAll === true ? { leaderOfAll: true } : {}),
+  };
   if (mcp) {
     files.push({ name: 'mcp.json', content: mcp.configFileContent });
     claudeArgs.push(...appMcpAllowArgs(), '--mcp-config', '@S/mcp.json');
@@ -1727,9 +1738,10 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
 
   await remoteSessions.waitEnded(correlationId);
   const git = localGitInfo(localCwd);
+  const homeRelativeDir = remoteDirFor(localCwd, appConfig.projectRoots);
   const script = buildRemoteSetupScript({
     sid: correlationId,
-    homeRelativeDir: remoteDirFor(localCwd, appConfig.projectRoots),
+    homeRelativeDir,
     repoUrl: git.repoUrl,
     branch: git.branch,
     files,
@@ -1743,6 +1755,19 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     throw new Error(`${place.label}: ${answer.message}`);
   }
   const live = answer.kind === 'alive' ? answer.meta : meta;
+
+  // Líder único na VPS — the Líder that changes place resumes (`-r`) the conversation it had here: it goes before the
+  // CLI starts (the tmux starts when the PTY attaches, below). The largest local copy is the newest one.
+  if (answer.kind !== 'alive' && options.leaderOfAll === true && launcherArgs.includes('-r')) {
+    const source = largestTranscript([spawnedTranscriptPaths.get(correlationId), resolveTranscriptPath(correlationId, localCwd, undefined), remoteSessions.mirrorPathFor(correlationId)]);
+    if (source) {
+      const carried = await runRemoteScript(place.sshTarget, buildCarryTranscriptScript(homeRelativeDir, correlationId, readFileSync(source.path, 'utf8')), 120_000);
+      if (!/DONEL_(CARRIED|KEPT)/.test(carried.stdout)) {
+        browserService?.releasePty(ptyId);
+        throw new Error(`${place.label}: não consegui levar a conversa do Líder para lá. Ela continua neste computador.`);
+      }
+    }
+  }
 
   // The bridge and the MCP know this tab by the tokens the remote CLI holds.
   if (hooksOn && hookBridge) hookBridge.registerSession(ptyId, live.hookToken);
@@ -1795,15 +1820,7 @@ function registerPtyIpcHandlers(): void {
   ipcMain.handle(PTY_CHANNELS.remoteAlive, async (): Promise<RemoteAliveSession[]> => {
     const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
     const found = await discoverRemoteSessions(places);
-    return found.map(({ remoteId, meta }) => ({
-      remoteId,
-      sessionId: meta.sid,
-      cwd: meta.localCwd,
-      projectName: meta.projectName,
-      name: meta.name,
-      launchArgs: meta.launchArgs,
-      ...(typeof meta.openedBy === 'string' && meta.openedBy !== '' ? { openedBy: meta.openedBy } : {}),
-    }));
+    return found.map(({ remoteId, meta }) => remoteAliveFromMeta(remoteId, meta));
   });
 
   ipcMain.handle(PTY_CHANNELS.create, (_event, options: PtyCreateOptions): PtyCreateResult | Promise<PtyCreateResult> => {
@@ -1856,6 +1873,16 @@ function registerPtyIpcHandlers(): void {
       // graça se o servidor do semáforo não subiu no boot (app.whenReady):
       // a sessão continua funcionando, só sem os indicadores de estado.
       const { correlationId, extraArgs } = resolveClaudeCorrelation(launcherArgs, randomUUID);
+
+      // Líder único na VPS — back on this computer, the Líder resumes (`-r`) the conversation it had on the remote
+      // place: its mirror becomes the CLI's transcript here before the CLI starts (only when it is the larger copy).
+      if (options.leaderOfAll === true && launcherArgs.includes('-r') && !options.providerId && remoteSessions) {
+        try {
+          carryTranscriptLocally(remoteSessions.mirrorPathFor(correlationId), resolveTranscriptPath(correlationId, options.cwd, undefined));
+        } catch {
+          // it resumes the copy that is already here
+        }
+      }
 
       // T1222 (011-contas-e-provedores, etapa 2, D8/entregável) — com os
       // perfis demolidos, sessões SEM provider nunca mais recebem override de
@@ -2241,6 +2268,14 @@ function registerConfigIpcHandlers(): void {
   ipcMain.handle(CONFIG_CHANNELS.setLayoutPrefs, (_event, prefs: Partial<LayoutPrefs>): AppConfigDto => {
     const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
     appConfig = { ...appConfig, layout: sanitizeLayoutPrefs({ ...appConfig.layout, ...patch }, appConfig.layout) };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
+  /** Onde o Líder roda — só lembra; o renderer muda o Líder de lugar na próxima mensagem pelo Jobu. */
+  ipcMain.handle(CONFIG_CHANNELS.setLeaderPrefs, (_event, prefs: Partial<LeaderPrefs>): AppConfigDto => {
+    const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
+    appConfig = { ...appConfig, leader: sanitizeLeaderPrefs({ ...appConfig.leader, ...patch }, appConfig.leader) };
     persistAppConfig();
     return toAppConfigDto(appConfig);
   });

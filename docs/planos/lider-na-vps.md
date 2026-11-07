@@ -28,8 +28,11 @@ O resto já funciona numa sessão remota: chat pelo transcript espelhado, hooks 
   lugar diferente do escolhido, e ele **não** está trabalhando:
   1. o app pega o transcript dele (o do CLI, no PC; ou o espelho local, se ele está na VPS);
   2. fecha a aba antiga (encerra o CLI de lá);
-  3. abre o Líder no lugar novo com `-r <mesmo id>`, levando o transcript junto: o preparo remoto o grava em
-     `~/.claude/projects/<pasta>/<id>.jsonl` **só se ainda não existir** (nunca sobrescreve);
+  3. abre o Líder no lugar novo com `-r <mesmo id>`, levando o transcript junto, antes de o CLI subir. Ele vai para
+     `~/.claude/projects/<pasta>/<id>.jsonl` de lá. Como transcript só cresce, a cópia maior é a mais nova: ela
+     substitui a que estiver lá, que fica guardada como `<id>.jsonl.bak-<hora>`. Uma cópia menor nunca sobrescreve.
+     (A primeira versão deste plano dizia "só se não existir", mas isso perdia a conversa na volta, PC → VPS → PC,
+     porque a cópia antiga do PC já existe.)
   4. entrega a mensagem a ele.
   Mesmo id de conversa: o mesmo nome, o mesmo histórico, o mesmo chat no Jobu. Com o Líder trabalhando, a mensagem
   vai para ele onde está, e a troca espera a próxima.
@@ -62,7 +65,9 @@ segue vivo no tmux, mas sem quadro, sessões, tarefas e navegador até o app vol
 ## Testes (só o que quebraria sem o dono ver)
 
 - `meta.json` leva e devolve `roleId` e `leaderOfAll` (sem isso, o Líder some ao reiniciar).
-- O preparo remoto grava o transcript só se ele não existir (sem isso, uma troca apagaria a conversa da VPS).
+- O transcript só é substituído por uma cópia maior, e a anterior fica guardada, dos dois lados: no PC
+  (`carryTranscriptLocally`) e na VPS (`buildCarryTranscriptScript`, executado com bash). Sem isso, uma troca
+  apagaria a conversa ou retomaria uma versão velha.
 - `leader.where` sobrevive ao sanitize do config, e um lugar removido cai para "este computador".
 - A decisão de trocar (lugar vivo ≠ escolhido e Líder parado) é uma função pura em `leader.ts`.
 
@@ -73,10 +78,11 @@ histórico de antes.
 ## Volta atrás
 
 - **Pelo dono, sem código:** Preferências → "Onde o Líder roda" → "Este computador". Na próxima mensagem o Líder volta
-  ao PC com `-r` e o mesmo transcript (o espelho local vira o arquivo do CLI do PC, também só se não existir).
+  ao PC com `-r` e o mesmo transcript (o espelho local vira o arquivo do CLI do PC, pela mesma regra da cópia maior).
 - **Nada é apagado:** o transcript original fica no PC e a cópia fica na VPS.
 - **Revert do PR:** a chave `leader.where` passa a ser ignorada, e o Líder volta a abrir no PC. Um Líder que estiver
   vivo na VPS voltaria como sessão comum: fechar a aba dele, e o Jobu abre outro no PC. A conversa da VPS segue
   retomável pela lista de sessões.
-- **Risco conhecido:** abrir o beta ou o stable (que não conhecem `leader.where`) pode apagar a chave no sanitize. O
-  Líder então volta ao PC na próxima mensagem, com a conversa. Basta escolher VPS de novo.
+- **Canais antigos:** o beta e o stable não conhecem `leader`, mas guardam a chave de topo desconhecida
+  (`unknownFields`) e a regravam intacta. Abrir um deles abre o Líder no PC, porque o código antigo não sabe da
+  escolha, mas a escolha não se perde.
