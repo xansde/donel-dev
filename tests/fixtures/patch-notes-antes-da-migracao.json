@@ -19,6 +19,10 @@
         "text": "No centro, o Oráculo agora mostra todas as tarefas numa tabela: título, estado, com quem está agora (você decide, o Revisor confere, falta alguém assumir), quem pediu, quem faz, quem criou, risco, prazo, a última entrega e a decisão. \"Quem pediu\" é sempre uma pessoa ou uma fonte, nunca \"Dev\"; quando ninguém disse, aparece \"não registrado\" em vermelho. Em cima, os filtros prontos (Esperando você, Sem executor, Cartas, Tudo) com o número de cada um, e uma busca por frase, pessoa, lugar ou código. Clicar numa linha abre ao lado a frase do pedido, os papéis, o \"pronto quando\", as provas da última entrega e a linha do tempo da tarefa. As cartas que esperam você continuam lá: \"Abrir as cartas\" no alto, ou \"Abrir a carta para decidir\" no detalhe. Os nomes são os mesmos da tabela do Supabase. Numa janela estreita, a tabela mostra só as colunas principais e o detalhe desce para baixo dela."
       },
       {
+        "title": "Pods no Mindscape de cadeiras",
+        "text": "Na lente Cadeiras, \"+ Pod\" cria um pod dentro do rig. Dê nome e missão na gaveta dele e escolha as cadeiras que sentam ali, pela gaveta do pod ou pela da cadeira (cada cadeira fica em um pod só). O pod arruma as próprias cadeiras; você só move o pod, arrastando pelo nome. As cadeiras sem pod ficam à esquerda dos pods, longe do seu desenho. Apagar um pod deixa as cadeiras no quadro, sem pod, e Ctrl+Z desfaz qualquer passo. Atenção: depois que esta versão gravar o quadro (por você ou por uma sessão, ao renovar a conversa ou mexer no quadro), o Donel Beta aberto no mesmo computador passa a mostrar o Mindscape só para leitura, até ser atualizado."
+      },
+      {
         "title": "Sessões na VPS seguem com o PC desligado",
         "text": "Com o Oráculo na VPS, uma sessão aberta lá depois desta versão continua criando, entregando e listando tarefas quando o PC desliga, e sabe quem é no quadro (do jeito que o quadro estava quando o PC desligou). O resto (navegador, desenhar no quadro, falar com outras sessões) volta quando o PC liga."
       },

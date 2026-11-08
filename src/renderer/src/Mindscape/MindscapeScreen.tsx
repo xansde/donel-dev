@@ -14,6 +14,11 @@ import type { SessionRegistry } from '../../../shared/sessionRegistry';
 import { fitImage, imageBoxAt, isPrintInputType, MAX_PRINT_BYTES } from '../../../shared/mindscape/images';
 import { roleColorVar, type SessionRole } from '../../../shared/roles';
 import {
+  addPod,
+  movePod,
+  removePod,
+  setChairPod,
+  updatePod,
   addLink,
   addOwnerCard,
   addPlace,
@@ -47,7 +52,7 @@ import { LedgerStrip } from './LedgerStrip';
 import type { PlaceStates } from '../../../shared/ledger/inbox';
 import { MindscapeToolbar, type DrawStyle } from './MindscapeToolbar';
 import { ShadowRoutines } from './ShadowRoutines';
-import { ChairDrawer, ChairsBand, ChairsLayer, RIG_SELECTION, type ChairDetails, type ChairFace, type OwnerLayerMode, type RigDetails } from './MindscapeChairs';
+import { ChairDrawer, ChairsBand, ChairsLayer, podSelection, RIG_SELECTION, type ChairDetails, type ChairFace, type OwnerLayerMode, type PodChoice, type PodDetails, type RigDetails } from './MindscapeChairs';
 import { useLedgerSnapshot } from './useLedgerSnapshot';
 import { FactoryNumbersButton, FactoryNumbersPanel, useFactoryMetrics } from './FactoryNumbers';
 import { sameBoardName } from '../../../shared/homologacao/config';
@@ -490,7 +495,9 @@ export function MindscapeScreen({
     if (!chairsOn || !board) return undefined;
     const liveAxes = new Map([...liveByPlace].map(([placeId, session]) => [placeId, axesOfLive(session)] as const));
     const view = deriveChairs({ places: allPlaces, links: board.links, liveAxes, roleOrder: roles.map((role) => role.id) });
-    return { ...view, layout: layoutChairs(view, boardContentOrigin(board)) };
+    // Cadeiras, fatia 4 — the owner's pods (v6): each one lays out its own chairs, at the corner he dragged it to.
+    const pods = (board.pods ?? []).map((pod) => ({ id: pod.id, name: pod.name, ...(pod.mission ? { mission: pod.mission } : {}), chairIds: pod.roleIds, at: { x: pod.x, y: pod.y } }));
+    return { ...view, pods, layout: layoutChairs(view, boardContentOrigin(board), pods) };
     // The live sessions and the board change identity on every update; the chairs follow them.
   }, [chairsOn, board, sessions, roles, transcripts]);
   const faceOf = (chair: Chair): ChairFace => {
@@ -517,8 +524,56 @@ export function MindscapeScreen({
     applyView(projectPath, change);
   };
 
-  const chairDetails = (chairId: string): ChairDetails | RigDetails | null => {
+  const podOfChair = (chairId: string): string | null => board?.pods?.find((pod) => pod.roleIds.includes(chairId))?.id ?? null;
+  const podChoiceOf = (chairId: string | null): PodChoice | undefined => {
+    if (!board || !chairId || chairId === NO_ROLE_CHAIR || boardLocked || !(board.pods?.length ?? 0)) return undefined;
+    const { projectPath } = board;
+    return {
+      current: podOfChair(chairId),
+      pods: (board.pods ?? []).map((pod) => ({ id: pod.id, name: pod.name })),
+      onPick: (podId) => onAction(projectPath, (current) => setChairPod(current, projectPath, chairId, podId)),
+    };
+  };
+  const addNewPod = (): void => {
+    if (!board || !chairsView) return;
+    const { projectPath } = board;
+    const { rig, pods: boxes } = chairsView.layout;
+    const id = `pod:${crypto.randomUUID()}`;
+    // The first pod takes the rig's corner; the next ones go below the lowest (never right, toward the owner's drawing).
+    const at = boxes.length === 0 ? { x: rig.x + 24, y: rig.y + 64 } : { x: Math.min(...boxes.map((box) => box.x)), y: Math.max(...boxes.map((box) => box.y + box.h)) + 40 };
+    const name = `Pod ${(board.pods?.length ?? 0) + 1}`;
+    onAction(projectPath, (current) => addPod(current, projectPath, { id, name, ...at }));
+    setOpenDetail(podSelection(id));
+  };
+  const chairDetails = (chairId: string): ChairDetails | RigDetails | PodDetails | null => {
     if (!board || !chairsView) return null;
+    const pod = board.pods?.find((candidate) => podSelection(candidate.id) === chairId);
+    if (pod) {
+      const { projectPath } = board;
+      const entry = (chair: Chair) => ({ chair, face: faceOf(chair) });
+      return {
+        podId: pod.id,
+        name: pod.name,
+        ...(pod.mission ? { mission: pod.mission } : {}),
+        boardName,
+        chairs: pod.roleIds.flatMap((roleId) => chairsView.chairs.filter((chair) => chair.id === roleId)).map(entry),
+        others: chairsView.chairs.filter((chair) => chair.roleId && !pod.roleIds.includes(chair.id)).map(entry),
+        ...(boardLocked
+          ? {}
+          : {
+              edit: {
+                onRename: (name: string) => onAction(projectPath, (current) => updatePod(current, projectPath, pod.id, { name })),
+                onMission: (mission: string) => onAction(projectPath, (current) => updatePod(current, projectPath, pod.id, { mission })),
+                onAddChair: (id: string) => onAction(projectPath, (current) => setChairPod(current, projectPath, id, pod.id)),
+                onRemoveChair: (id: string) => onAction(projectPath, (current) => setChairPod(current, projectPath, id, null)),
+                onDelete: () => {
+                  onAction(projectPath, (current) => removePod(current, projectPath, pod.id));
+                  setOpenDetail(RIG_SELECTION);
+                },
+              },
+            }),
+      };
+    }
     if (chairId === RIG_SELECTION) {
       return { boardName, projectPath: board.projectPath, placeCount: allPlaces.length, chairs: chairsView.chairs.map((chair) => ({ chair, face: faceOf(chair) })) };
     }
@@ -911,6 +966,7 @@ export function MindscapeScreen({
           }}
           showArrows={showArrows}
           onShowArrows={setShowArrows}
+          {...(boardLocked ? {} : { onAddPod: addNewPod })}
         />
       ) : null}
       {/* Cartas forma A — the Oráculo's cards open over the board only (LedgerStrip portals them here). */}
@@ -1062,6 +1118,20 @@ export function MindscapeScreen({
                       clearSelection();
                       setOpenDetail((open) => (open === RIG_SELECTION ? null : RIG_SELECTION));
                     }}
+                    pods={chairsView.pods}
+                    zoom={(shownBoard ?? board).zoom}
+                    onOpenPod={(podId) => {
+                      clearSelection();
+                      setOpenDetail((open) => (open === podSelection(podId) ? null : podSelection(podId)));
+                    }}
+                    {...(boardLocked
+                      ? {}
+                      : {
+                          onMovePod: (podId: string, x: number, y: number) => {
+                            const { projectPath } = board;
+                            onAction(projectPath, (current) => movePod(current, projectPath, podId, x, y));
+                          },
+                        })}
                   />
                   {/* The owner's drawing stays free and on top (por cima · esmaecido · oculto); the layout never moves it. */}
                   <div className={ownerClass} data-testid="mindscape-owner-layer" data-mode={ownerMode}>
@@ -1186,6 +1256,7 @@ export function MindscapeScreen({
           onClose={() => setOpenDetail(null)}
           onOpenChair={(chairId) => setOpenDetail(chairId)}
           onDefine={onDefineChair ?? (onManageRoles ? () => onManageRoles() : undefined)}
+          podChoice={podChoiceOf(openDetail)}
         />
       ) : null}
       {factoryHere && factoryNumbersOpen ? <FactoryNumbersPanel view={factoryHere} onClose={() => setFactoryNumbersOpen(false)} /> : null}
