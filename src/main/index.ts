@@ -1432,7 +1432,7 @@ function createMainWindow(): void {
     // exit, is what keeps the mark from staying forever; the Jobu gets the result (`byUser`).
     const closedByOwner = consumeKillRequested(ptyId);
     // "Sem ligação" — the ssh of a remote tab dropped on its own: the session lives on the place; the app relinks.
-    if (remoteLinks.onPtyExit(ptyId, closedByOwner, info)) return;
+    if (remoteLinks.onPtyExit(ptyId, closedByOwner, info, exitCode === 0)) return;
     finishPtyExit(ptyId, info, closedByOwner);
   });
   const unsubscribeSemaphore = semaphoreManager.onUpdate((update: SemaphoreUpdate) => {
