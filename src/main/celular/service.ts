@@ -149,16 +149,17 @@ export function createCelularCore(deps: CelularCoreDeps): CelularCore {
   });
   // O que já esperava o dono quando o app abriu não avisa de novo; só o que passar a esperar daqui em diante.
   // Ledger v5, fatia 2: every item of the box "Esperando você", not only the letters to decide.
-  let waiting = new Map<string, number>();
+  // `null` = sem ponto de partida ainda: a primeira leitura boa vira o ponto de partida e não avisa nada.
+  let waiting: Map<string, number> | null = null;
   let lastDoc: LedgerDoc | null = null;
   try {
     const doc = deps.ledger()?.load().doc;
     if (doc) {
       lastDoc = doc;
-      waiting = newlyWaiting(new Map(), doc, Date.now()).next;
+      waiting = newlyWaiting(null, doc, Date.now()).next;
     }
   } catch {
-    // ledger ilegível: a primeira mudança avisa o que estiver na fila
+    // ledger ilegível na abertura: fica sem ponto de partida (sem isso, a primeira mudança avisaria a caixa inteira)
   }
   // Outra porta só para uma instância de teste ao lado do app aberto (as duas não dividem a 47815).
   const port = Number(process.env.DONEL_CELULAR_PORT) || MOBILE_PORT;
