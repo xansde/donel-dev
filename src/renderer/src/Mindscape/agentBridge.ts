@@ -25,7 +25,7 @@ import {
 } from '../../../shared/mindscape/agent-tools';
 import type { MindscapeBoardResponse } from '../../../shared/mindscape/channels';
 import { LEADER_OF_ALL, isLeaderOfAllTab, knownBoards, resolveBoard, type KnownBoard } from '../../../shared/mindscape/leader';
-import { LEADER_OF_ALL_FROM, canFaxineiroClose, canReach, canReachLeader, findPlace, firstLiveAbove, isBoardOrchestrator } from '../../../shared/mindscape/reach';
+import { BOARD_LEADER, LEADER_OF_ALL_FROM, boardOrchestrators, canFaxineiroClose, canReach, canReachLeader, findPlace, firstLiveAbove, isBoardOrchestrator } from '../../../shared/mindscape/reach';
 import { FAXINEIRO_OPENER, PC_MACHINE_ID, type FaxineiroLogEntry, type SessionView } from '../../../shared/faxineiro/triggers';
 import type { FaxineiroWakeOrder } from '../../../shared/faxineiro/ipc';
 import type { LedgerPassedOn, LedgerPassOnRequest } from '../../../shared/ledger/channels';
@@ -671,10 +671,16 @@ export class AgentBridge {
     };
   }
 
-  /** May the caller send to `placeId`: the Líder único by its reach, the others by an arrow of theirs. */
+  /**
+   * May the caller send to `placeId`: the Líder único by its reach, the Líder of the board to every place of it (reach.ts),
+   * the others by an arrow of theirs.
+   */
   private canSend(scope: Scope, board: MindscapeBoard | undefined, placeId: string): boolean {
     if (scope.leader) return this.leaderReaches(scope.projectPath, placeId);
-    return scope.self ? hasArrowLink(board, scope.self.id, placeId) : false;
+    if (!scope.self) return false;
+    if (hasArrowLink(board, scope.self.id, placeId)) return true;
+    const here = scope.projectPath;
+    return isBoardOrchestrator(board, scope.self.id) && canReach(this.ports.doc(), { projectPath: here, placeId: scope.self.id }, { projectPath: here, placeId }).ok;
   }
 
   private boards(): KnownBoard[] {
@@ -897,6 +903,15 @@ export class AgentBridge {
           const outcome = await this.ports.deliverLine(leader.id, `◆ De ${signature}, quadro ${scope.projectName ?? this.boardName(projectPath)}: ${call.texto}`, DELIVERY_WAIT_MS, 'session');
           return this.deliveryAnswer(outcome, leader.id);
         }
+        // Up to the Líder of the board (08/11): every place of the board, no arrow needed (reach.ts).
+        if (!scope.leader && self && call.para.trim().toLowerCase() === BOARD_LEADER) {
+          const leaders = boardOrchestrators(this.board(projectPath)).filter((id) => id !== self.id);
+          if (leaders.length === 0) return fail('Este quadro não tem Líder posto pelo dono. Fale com quem está acima de você pelas setas (ou "lider", se o Líder único abriu você).');
+          const leader = leaders.map((id) => this.tabOfPlace(projectPath, id)).find((tab) => tab !== undefined);
+          if (!leader) return fail('O Líder do quadro não está aberto agora. Registre o que precisa no Oráculo (tarefa_criar) e siga.');
+          const outcome = await this.ports.deliverLine(leader.id, `◆ De ${signature}: ${call.texto}`, DELIVERY_WAIT_MS, 'session');
+          return this.deliveryAnswer(outcome, leader.id);
+        }
         const board = this.board(projectPath);
         const place = board?.cards[call.para];
         if (place?.kind !== 'session') return fail(`"${call.para}" não é um lugar do quadro (veja sessao_listar).`);
@@ -904,7 +919,7 @@ export class AgentBridge {
           return fail(
             scope.leader
               ? `Sem ligação: "${place.id}" não está no topo do quadro ${scope.projectName ?? projectPath} nem abaixo dele pelas setas do dono. Peça ao dono.`
-              : `Sem ligação: não há seta do seu lugar (${self?.id}) para "${place.id}". Peça ao dono, ou use sessao_abrir.`,
+              : `Sem ligação: não há seta do seu lugar (${self?.id}) para "${place.id}". Peça ao dono, ou use sessao_abrir. Para o Líder do quadro, "para": "${BOARD_LEADER}".`,
           );
         const target = this.tabOfPlace(projectPath, place.id);
         if (!target) return fail(`"${place.id}" não está aberta agora.`);

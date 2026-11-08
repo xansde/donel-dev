@@ -253,7 +253,7 @@ function freePlaceId(board: MindscapeBoard, sessionId: string): string {
   }
 }
 
-/** Links after cards were renamed (or merged into another): no link to itself, no duplicate pair. */
+/** Links after cards were renamed (or merged into another): no link to itself, no duplicate pair (as in `addLink`). */
 function rewireLinks(links: readonly MindscapeLink[], renamed: ReadonlyMap<string, string>): MindscapeLink[] {
   if (renamed.size === 0) return [...links];
   const out: MindscapeLink[] = [];
@@ -261,7 +261,8 @@ function rewireLinks(links: readonly MindscapeLink[], renamed: ReadonlyMap<strin
     const from = renamed.get(link.from) ?? link.from;
     const to = renamed.get(link.to) ?? link.to;
     if (from === to) continue;
-    const duplicate = out.some((other) => (other.from === from && other.to === to) || (other.from === to && other.to === from));
+    // The rule of `addLink`: an arrow the other way next to an arrow is not a duplicate (Dev ⇄ Revisor).
+    const duplicate = out.some((other) => (other.from === from && other.to === to) || (other.from === to && other.to === from && !(other.arrow && link.arrow)));
     if (duplicate) continue;
     out.push(from === link.from && to === link.to ? link : { ...link, from, to });
   }
@@ -571,20 +572,24 @@ export interface LinkInput {
 
 /**
  * Links two cards of the board, arrow on unless `arrow: false`. A card to itself, a card missing
- * from the board, an id in use or a pair already linked (either way) → same document.
+ * from the board, an id in use or a pair already linked → same document. Already linked: the same way, or
+ * either way when one of the two is a line (an arrow the other way next to an arrow is a link of its own).
  */
 export function addLink(doc: MindscapeDoc, projectPath: string, input: LinkInput): MindscapeDoc {
   const board = doc.boards[projectPath];
   if (!board || !input.id || input.from === input.to) return doc;
   if (!board.cards[input.from] || !board.cards[input.to]) return doc;
+  // 08/11 — an arrow the other way next to an arrow is a link of its own (Dev ⇄ Revisor talk both ways); a line has no
+  // way, so a line and anything between the same two cards is the same link. The file shape does not change.
+  const arrow = input.arrow ?? true;
   const taken = board.links.some(
     (link) =>
       link.id === input.id ||
       (link.from === input.from && link.to === input.to) ||
-      (link.from === input.to && link.to === input.from),
+      (link.from === input.to && link.to === input.from && !(arrow && link.arrow)),
   );
   if (taken) return doc;
-  return replaceLinks(doc, board, [...board.links, { id: input.id, from: input.from, to: input.to, arrow: input.arrow ?? true, ...(input.by ? { by: input.by } : {}), ...(input.opened ? { opened: true as const } : {}) }]);
+  return replaceLinks(doc, board, [...board.links, { id: input.id, from: input.from, to: input.to, arrow, ...(input.by ? { by: input.by } : {}), ...(input.opened ? { opened: true as const } : {}) }]);
 }
 
 /** Switches the arrow of the link on/off. Missing link → same document. */
