@@ -2,7 +2,6 @@
 // click. What breaks without the owner noticing: the ledger that goes and does not come back whole when the move
 // fails half way, a move that runs again over a ledger already there (or after the owner brought it back by hand),
 // or a move to a place with no Oráculo installed.
-import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
