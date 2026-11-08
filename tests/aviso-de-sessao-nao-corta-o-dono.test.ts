@@ -18,6 +18,8 @@ class FakeCli {
   readonly submitted: string[] = [];
   /** How many of the next Enters the CLI swallows (a lost Enter: busy, short of RAM). */
   dropEnters = 0;
+  /** A paste that the CLI only draws this long after it arrived (a loaded machine). */
+  pasteDelayMs = 0;
   constructor(
     private readonly clock: Clock,
     public working: boolean,
@@ -30,7 +32,13 @@ class FakeCli {
     while (rest !== '') {
       const paste = /^\x1b\[200~([\s\S]*?)\x1b\[201~/.exec(rest);
       if (paste) {
-        this.box += paste[1];
+        const text = paste[1];
+        if (this.pasteDelayMs > 0)
+          this.clock.after(this.pasteDelayMs, () => {
+            this.box += text;
+            this.onRedraw();
+          });
+        else this.box += text;
         rest = rest.slice(paste[0].length);
         continue;
       }
@@ -44,6 +52,9 @@ class FakeCli {
           this.submitted.push(text);
           this.clock.after(30, () => this.onSubmit(text));
         }
+      } else if (ch === '\x1b' && rest[0] === '\x1b') {
+        rest = rest.slice(1);
+        this.box = ''; // Esc Esc clears the box
       } else if (ch === '\x7f') this.box = this.box.slice(0, -1);
       else if (ch !== '\x1b') this.box += ch;
     }
@@ -319,5 +330,55 @@ describe('mensagem de outra sessão sem sinal de aceite (07/11)', () => {
     clock.advanceTo(330_000);
     expect(driver.carrierOf(again)).toBe(again);
     expect(cli.submitted).toEqual([TEXT]);
+  });
+
+  // 08/11 — 6 sessões numa VPS com "[Pasted text #N +M lines]" parado na caixa, sem o Enter. O CLI de lá perdia Enters
+  // (ssh + tmux, máquina carregada) e, ao reanexar, o terminal respondia às perguntas do tmux (versão, cores): o app
+  // contava essas respostas como o dono digitando e parava de reenviar o Enter. Depois do "não foi", o aviso ficava na
+  // caixa e travava todos os que vinham atrás dele ("sobrou texto na caixa").
+  const terminalReplies = (driver: SendDriver): void => {
+    for (const reply of ['\x1b[>0;276;0c', '\x1bP>|xterm.js(6.0.0)\x1b\\', '\x1b]11;rgb:0e0e/1111/1616\x1b\\']) driver.ownerInput(reply, () => undefined);
+  };
+
+  it('Enter perdido várias vezes numa sessão parada da VPS: o app insiste só no Enter até o aviso sair da caixa, e ele entra uma vez (08/11)', () => {
+    const { clock, cli, driver, notice } = setup(false);
+    clock.advanceTo(1_000);
+    notice(NOTICES[0]);
+    clock.advanceTo(60_000);
+    expect(cli.submitted).toEqual([NOTICES[0]]);
+    cli.dropEnters = 5;
+    notice(NOTICES[1]);
+    clock.after(400, () => terminalReplies(driver)); // tmux reattached right after the Enter: the terminal answers it
+    clock.advanceTo(180_000);
+    expect(cli.box).toBe('');
+    expect(cli.submitted).toEqual([NOTICES[0], NOTICES[1]]);
+  });
+
+  it('o CLI nunca pega o Enter: o aviso não fica parado na caixa travando os seguintes, e nada entra em dobro (08/11)', () => {
+    const { clock, cli, driver, notice } = setup(false);
+    clock.advanceTo(1_000);
+    notice(NOTICES[0]);
+    clock.advanceTo(60_000);
+    cli.dropEnters = 1_000;
+    const stuck = notice(NOTICES[1]);
+    clock.advanceTo(240_000);
+    expect(driver.getItems().find((item) => item.id === stuck)?.state).toBe('failed');
+    expect(cli.box).toBe('');
+    cli.dropEnters = 0;
+    notice(NOTICES[2]);
+    clock.advanceTo(300_000);
+    expect(cli.submitted).toEqual([NOTICES[0], NOTICES[2]]);
+  });
+
+  it('a colagem só aparece na caixa 40 s depois (máquina carregada): leva o Enter quando aparece, e entra uma vez (08/11)', () => {
+    const { clock, cli, notice } = setup(false);
+    clock.advanceTo(1_000);
+    notice(NOTICES[0]);
+    clock.advanceTo(60_000);
+    cli.pasteDelayMs = 40_000;
+    notice(NOTICES[1]);
+    clock.advanceTo(180_000);
+    expect(cli.box).toBe('');
+    expect(cli.submitted).toEqual([NOTICES[0], NOTICES[1]]);
   });
 });
