@@ -17,6 +17,11 @@
 // - Back up to the Líder único (06/11, t-52b31719): a session the Líder único opened, or one below it by the
 //   arrows, reaches the Líder único (a message, a task passed to it). Nobody else does: a place out of that chain
 //   talks to whoever is above it on its board.
+// - The Líder of a board (08/11, Líder único: "o líder do quadro … deve ser a palavra mestre de tudo"): the Líder
+//   the owner placed on a board (`isBoardOrchestrator`) reaches EVERY place of its own board, with or without an
+//   arrow, whoever opened it (the Líder único included). Nobody else gains reach by it: a common session still only
+//   reaches down its arrows, and a Líder a session made is a common session. And every place of a board talks up to
+//   that Líder (`sessao_enviar` with "lider-quadro", `boardOrchestrators`), as the chain of the Líder único talks to it.
 // - Who takes the work of a place that is gone (06/11, t-e753b554): the first live place above it by the
 //   hierarchy arrows, the one that opened it first; none → the Líder único.
 
@@ -84,6 +89,14 @@ export function isBoardOrchestrator(board: MindscapeBoard | undefined, placeId: 
   return card?.kind === 'session' && card.roleId === LEADER_ROLE_ID && card.by !== 'session';
 }
 
+/** `sessao_enviar` to the Líder of the caller's board, whoever it is: `"para": "lider-quadro"`. */
+export const BOARD_LEADER = 'lider-quadro';
+
+/** The orchestrators of a board (`isBoardOrchestrator`), in card order: whom "lider-quadro" means. */
+export function boardOrchestrators(board: MindscapeBoard | undefined): string[] {
+  return board ? Object.keys(board.cards).filter((id) => isBoardOrchestrator(board, id)) : [];
+}
+
 /** The Líder único reaches `placeId`: a top place, or one below a top place by hierarchy arrows. */
 function leaderOfAllReaches(board: MindscapeBoard | undefined, placeId: string): boolean {
   if (!board || board.cards[placeId]?.kind !== 'session') return false;
@@ -103,6 +116,7 @@ export function canReach(doc: MindscapeDoc, from: ReachFrom, to: ReachEnd): Reac
   if (from.projectPath === to.projectPath && from.placeId === to.placeId) return { ok: false, reason: 'esta é a sua própria sessão.' };
   const fromBoard = doc.boards[from.projectPath];
   if (from.projectPath === to.projectPath) {
+    if (isBoardOrchestrator(fromBoard, from.placeId) && fromBoard?.cards[to.placeId]?.kind === 'session') return { ok: true };
     return isBelow(fromBoard, from.placeId, to.placeId)
       ? { ok: true }
       : { ok: false, reason: `"${to.placeId}" não está abaixo de você: falta seta (direta ou em cadeia) do seu lugar (${from.placeId}) para ela.` };

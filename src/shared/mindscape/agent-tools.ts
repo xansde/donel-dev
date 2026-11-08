@@ -129,7 +129,7 @@ export const BOARD_TOOLS = [
     description:
       'Aplica um lote de operações no Mindscape do projeto desta sessão, ao vivo e como UM gesto que o dono desfaz com Ctrl+Z. Tudo ou nada: uma operação inválida recusa o lote inteiro. Operações: ' +
       '"lugar" (sessão com papel que ainda não começou; o dono abre com dois cliques; "pedido" vira um post-it ligado a ele), ' +
-      '"postit", "ligacao" (de/para: id de cartão ou "$nome" criado neste lote; "seu" = o seu lugar), ' +
+      '"postit", "ligacao" (de/para: id de cartão ou "$nome" criado neste lote; "seu" = o seu lugar; a seta de volta entre os mesmos dois cartões também entra, para as duas sessões conversarem nos dois sentidos), ' +
       '"retangulo", "elipse", "linha" (seta opcional), e, só no que uma sessão criou (autor sessao): "mover" (x/y do canto), "editar" (texto/cor de post-it) e "apagar". ' +
       'Nunca mexe no que o dono fez (a ferramenta recusa). Sem x/y, o app acha um espaço livre. Devolve os ids reais.',
     inputSchema: {
@@ -182,7 +182,7 @@ export const BOARD_TOOLS = [
     name: 'sessao_listar',
     title: 'Listar as sessões do quadro',
     description:
-      'As sessões (lugares) do quadro do projeto: id, papel, nome, estado (trabalhando, parada, precisa do dono, não começou, sem ligação: viva no lugar remoto e o app religando, fechada), se você pode mandar mensagem a ela (ligação com seta sua → dela) e quem a abriu.',
+      'As sessões (lugares) do quadro do projeto: id, papel, nome, estado (trabalhando, parada, precisa do dono, não começou, sem ligação: viva no lugar remoto e o app religando, fechada), se você pode mandar mensagem a ela (ligação com seta sua → dela; o Líder do quadro, a todas) e quem a abriu.',
     inputSchema: BOARD_ONLY,
     annotations: { readOnlyHint: true },
   },
@@ -208,7 +208,7 @@ export const BOARD_TOOLS = [
     name: 'sessao_enviar',
     title: 'Mandar mensagem a outra sessão',
     description:
-      'Manda uma mensagem ao chat de outra sessão aberta. Só pela ligação: precisa existir uma seta do seu lugar para o dela (o Líder único alcança, em cada quadro, o topo, onde nenhuma seta do dono nem de abertura aponta, e quem está abaixo dele pelas setas; sessao_listar diz em "podeMandar"). Para falar com o Líder único, "para": "lider": vale para quem ele abriu e para quem está abaixo dela pelas setas. A mensagem vai direto para a fila do Claude de lá; com uma permissão aberta na tela dela, entra assim que ela fechar.',
+      'Manda uma mensagem ao chat de outra sessão aberta. Só pela ligação: precisa existir uma seta do seu lugar para o dela (o Líder único alcança, em cada quadro, o topo, onde nenhuma seta do dono nem de abertura aponta, e quem está abaixo dele pelas setas; sessao_listar diz em "podeMandar"). O Líder do quadro (o que o dono pôs) manda a qualquer sessão do próprio quadro, sem seta. Para falar com o Líder do seu quadro, "para": "lider-quadro", sem precisar de seta. Para falar com o Líder único, "para": "lider": vale para quem ele abriu e para quem está abaixo dela pelas setas. Para duas sessões conversarem nos dois sentidos, cada uma precisa da sua seta (a de volta entra com quadro_aplicar). A mensagem vai direto para a fila do Claude de lá; com uma permissão aberta na tela dela, entra assim que ela fechar.',
     inputSchema: {
       type: 'object',
       properties: { para: PLACE_REF, texto: { type: 'string', description: 'A mensagem.' }, quadro: BOARD_REF },
@@ -227,7 +227,7 @@ export const BOARD_TOOLS = [
     name: 'sessao_fechar',
     title: 'Fechar uma sessão que você dirige',
     description:
-      'Fecha a aba de outra sessão e encerra o processo dela. Só com hierarquia: no seu quadro, quem está abaixo de você pelas setas (sua → dela, direta ou em cadeia); em outro quadro, só se você é o Líder de um quadro com alcance "todos" (o dono marca no quadro). O Líder único fecha em qualquer quadro (diga qual em "quadro") quem está no topo dele ou abaixo do topo pelas setas. Nunca a sua. Se ela estiver trabalhando, recebe antes um aviso para pausar e a ferramenta espera o turno acabar (até 20 s). Com um pedido de permissão aberto na tela dela, não fecha. O lugar fica no quadro como "fechada" e o dono retoma com dois cliques: nada se apaga (registro, conversa, worktree). Responde em uma linha: "Fechada." ou "Não fechei: …".',
+      'Fecha a aba de outra sessão e encerra o processo dela. Só com hierarquia: no seu quadro, quem está abaixo de você pelas setas (sua → dela, direta ou em cadeia), ou qualquer sessão dele se você é o Líder que o dono pôs no quadro; em outro quadro, só se você é o Líder de um quadro com alcance "todos" (o dono marca no quadro). O Líder único fecha em qualquer quadro (diga qual em "quadro") quem está no topo dele ou abaixo do topo pelas setas. Nunca a sua. Se ela estiver trabalhando, recebe antes um aviso para pausar e a ferramenta espera o turno acabar (até 20 s). Com um pedido de permissão aberto na tela dela, não fecha. O lugar fica no quadro como "fechada" e o dono retoma com dois cliques: nada se apaga (registro, conversa, worktree). Responde em uma linha: "Fechada." ou "Não fechei: …".',
     inputSchema: { type: 'object', properties: { quem: PLACE_REF, quadro: BOARD_REF }, required: ['quem'], additionalProperties: false },
     annotations: { destructiveHint: true },
   },
@@ -491,7 +491,7 @@ export function applyBoardOps(doc: MindscapeDoc, projectPath: string, ops: reado
         if (!to || !cards[to]) return { ok: false, reason: `${where}: "${op.para}" não é um cartão do quadro.` };
         const id = ctx.newId();
         const next = addLink(current, projectPath, { id, from, to, arrow: op.seta ?? true, by: 'session' });
-        if (next === current) return { ok: false, reason: `${where}: esses dois cartões já estão ligados (ou é o mesmo cartão).` };
+        if (next === current) return { ok: false, reason: `${where}: esses dois cartões já estão ligados nesse sentido, ou por uma linha sem seta (ou é o mesmo cartão).` };
         current = next;
         const clash = claimTemp(op.id, id, where);
         if (clash) return { ok: false, reason: clash };
