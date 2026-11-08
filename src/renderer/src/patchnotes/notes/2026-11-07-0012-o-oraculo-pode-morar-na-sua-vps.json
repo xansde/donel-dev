@@ -1,0 +1,4 @@
+{
+  "title": "O Oráculo pode morar na sua VPS",
+  "text": "Em Preferências, Celular, \"Onde mora o Oráculo\" leva o registro de tarefas para a sua VPS, inteiro e como está, e este PC passa a ler e gravar nele. A diferença aparece quando o PC desliga: o registro continua lá. Se a VPS sumir da rede, o PC mostra o último retrato só para ler e não grava nada até ela voltar, para nunca haver dois registros diferentes. \"Trazer de volta para este PC\" desfaz, também sem perder nada. As cartas no celular e as sessões da VPS sem o PC chegam nas próximas versões."
+}

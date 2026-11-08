@@ -1,0 +1,4 @@
+{
+  "title": "Slack com nome em português também pede carta",
+  "text": "Uma ferramenta de Slack com nome em português, como \"enviar mensagem\" ou \"enviar arquivo\", passava sem carta, porque a trava só conhecia os nomes em inglês. Agora a mensagem só sai com carta aceita, e o arquivo é barrado como qualquer outro, também com o app fechado. Ler e baixar arquivo continuam livres."
+}

@@ -1,0 +1,4 @@
+{
+  "title": "O rodapé mostra o modelo de verdade",
+  "text": "Se você trocar com /model ou retomar uma sessão de outro modelo, o rodapé acompanha na próxima resposta, e o percentual de contexto usa o tamanho certo da janela. Quem tem statusline própria passa a ver também a cota de 5h e da semana lida pela sessão, sem perder a statusline."
+}

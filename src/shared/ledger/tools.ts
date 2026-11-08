@@ -16,6 +16,7 @@ import {
   MAX_SLACK_TEXT_CHARS,
   MAX_TITLE_CHARS,
   MAX_ASKED_BY_CHARS,
+  MAX_FRENTE_CHARS,
   MIN_OPTIONS,
   type LedgerCheck,
   type LedgerForOwner,
@@ -48,7 +49,10 @@ export type LedgerToolCall =
       readonly substitui?: string;
       /** 07/11 — a pessoa de quem veio o pedido ("dono", "Gabriel Horst (Slack)", "sinal do Curador: PR #219"). */
       readonly quemPediu?: string;
+      /** 07/11 — a frente de trabalho ("Ledger", "Oráculo na VPS"); o Jobu agrupa o progresso por ela. */
+      readonly frente?: string;
     }
+  | { readonly tool: 'tarefa_frente'; readonly id: string; readonly frente: string; readonly quemPediu?: string }
   | { readonly tool: 'tarefa_assumir'; readonly id: string }
   | { readonly tool: 'tarefa_entregar'; readonly id: string; readonly provas: readonly ProofInput[]; readonly nota?: string; readonly paraODono?: LedgerForOwner; readonly feitoPor?: string }
   | { readonly tool: 'tarefa_aceitar'; readonly id: string }
@@ -88,6 +92,12 @@ const STATES: readonly LedgerViewState[] = ['aberta', 'em-execucao', 'entregue',
 export type LedgerListScope = 'vivas' | 'orfas' | 'todas';
 const LIST_SCOPES: readonly LedgerListScope[] = ['vivas', 'orfas', 'todas'];
 
+const FRONT_FIELD = {
+  type: 'string',
+  description: `A frente de trabalho, até ${MAX_FRENTE_CHARS} caracteres, sem código: o nome curto do assunto maior a que o pedido pertence ("Ledger", "Mindscape de homologação", "Oráculo e Líder na VPS"). Use o mesmo nome para os pedidos do mesmo assunto: o progresso do Jobu agrupa por ela; sem frente, a tarefa cai em "Sem frente".`,
+};
+const ASKED_BY_DESCRIPTION = `A PESSOA de quem veio o pedido, nunca um papel: "dono" (o dono do Donel), alguém do Slack pelo nome ("Gabriel Horst (Slack)") ou a fonte de um sinal ("sinal do Curador: PR #219"). Até ${MAX_ASKED_BY_CHARS} caracteres. É o que o registro mostra em "quem pediu"; sem ele, a coluna fica "não registrado" (nada é deduzido de quem criou).`;
+
 export const LEDGER_TOOLS = [
   {
     name: 'tarefa_criar',
@@ -108,10 +118,8 @@ export const LEDGER_TOOLS = [
         risco: { type: 'string', enum: ['baixo', 'alto'] },
         quadro: BOARD,
         pedidoDoDono: { type: 'string', description: 'Quando a tarefa nasce de um "◆ Pedido do dono pelo Oráculo", o id que veio nele (pd-…): o dono vê no celular que o pedido virou esta tarefa.' },
-        quemPediu: {
-          type: 'string',
-          description: `A PESSOA de quem veio o pedido, nunca um papel: "dono" (o dono do Donel), alguém do Slack pelo nome ("Gabriel Horst (Slack)") ou a fonte de um sinal ("sinal do Curador: PR #219"). Até ${MAX_ASKED_BY_CHARS} caracteres. É o que o registro mostra em "quem pediu"; sem ele, a coluna fica "não registrado" (nada é deduzido de quem criou).`,
-        },
+        quemPediu: { type: 'string', description: ASKED_BY_DESCRIPTION },
+        frente: { ...FRONT_FIELD, description: `${FRONT_FIELD.description} Sem ela, uma tarefa que substitui outra herda a frente da antiga.` },
       },
       required: ['pedido', 'criterio', 'prazo', 'risco'],
       additionalProperties: false,
@@ -252,6 +260,18 @@ export const LEDGER_TOOLS = [
       type: 'object',
       properties: { id: ID, motivo: { type: 'string', description: 'Por que acaba (ex.: substituída pela carta nova).' } },
       required: ['id', 'motivo'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'tarefa_frente',
+    title: 'Dizer a frente de uma tarefa',
+    description:
+      'Só o Líder: diz a frente de trabalho de uma tarefa que já existe (e, se faltar, quem pediu), para o progresso do Jobu agrupar os pedidos do dono por frente. Não muda estado nem dono; a última frente dita vale. Para tarefa nova, use "frente" no tarefa_criar.',
+    inputSchema: {
+      type: 'object',
+      properties: { id: ID, frente: FRONT_FIELD, quemPediu: { type: 'string', description: `${ASKED_BY_DESCRIPTION} Opcional: só quando a tarefa ainda não diz.` } },
+      required: ['id', 'frente'],
       additionalProperties: false,
     },
   },
@@ -481,7 +501,8 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       const titulo = text(args.titulo, 'titulo', MAX_TITLE_CHARS, false);
       const substitui = text(args.substitui, 'substitui', 120, false);
       const quemPediu = text(args.quemPediu, 'quemPediu', MAX_ASKED_BY_CHARS, false);
-      for (const value of [pedido, criterio, prazo, dono, titulo, substitui, quemPediu]) if (typeof value === 'object') return fail(value.error);
+      const frente = text(args.frente, 'frente', MAX_FRENTE_CHARS, false);
+      for (const value of [pedido, criterio, prazo, dono, titulo, substitui, quemPediu, frente]) if (typeof value === 'object') return fail(value.error);
       const askedRefused = typeof quemPediu === 'string' ? askedByRefusal(quemPediu) : null;
       if (askedRefused) return fail(askedRefused);
       if (args.risco !== 'baixo' && args.risco !== 'alto') return fail('"risco" tem de ser baixo ou alto.');
@@ -489,8 +510,18 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       const fromOwner = typeof args.pedidoDoDono === 'string' ? { pedidoDoDono: args.pedidoDoDono } : {};
       return {
         ok: true,
-        call: { tool: 'tarefa_criar', pedido: pedido as string, criterio: criterio as string, prazo: (prazo as string).trim(), ...(typeof dono === 'string' && dono.trim() ? { dono: dono.trim() } : {}), risco: args.risco, ...quadro, ...(typeof titulo === 'string' && titulo.trim() ? { titulo: titulo.trim() } : {}), ...(typeof substitui === 'string' && substitui.trim() ? { substitui: substitui.trim() } : {}), ...(typeof quemPediu === 'string' && quemPediu.trim() ? { quemPediu: quemPediu.trim() } : {}), ...fromOwner },
+        call: { tool: 'tarefa_criar', pedido: pedido as string, criterio: criterio as string, prazo: (prazo as string).trim(), ...(typeof dono === 'string' && dono.trim() ? { dono: dono.trim() } : {}), risco: args.risco, ...quadro, ...(typeof titulo === 'string' && titulo.trim() ? { titulo: titulo.trim() } : {}), ...(typeof substitui === 'string' && substitui.trim() ? { substitui: substitui.trim() } : {}), ...(typeof quemPediu === 'string' && quemPediu.trim() ? { quemPediu: quemPediu.trim() } : {}), ...(typeof frente === 'string' && frente.trim() ? { frente: frente.trim() } : {}), ...fromOwner },
       };
+    }
+    case 'tarefa_frente': {
+      if (typeof id === 'object' || id === undefined) return fail('"id" é obrigatório.');
+      const frente = text(args.frente, 'frente', MAX_FRENTE_CHARS, true);
+      const quemPediu = text(args.quemPediu, 'quemPediu', MAX_ASKED_BY_CHARS, false);
+      for (const value of [frente, quemPediu]) if (typeof value === 'object') return fail(value.error);
+      if (typeof frente !== 'string' || !frente.trim()) return fail('"frente" é obrigatório: o nome da frente (ex.: Ledger).');
+      const askedRefused = typeof quemPediu === 'string' && quemPediu.trim() ? askedByRefusal(quemPediu) : null;
+      if (askedRefused) return fail(askedRefused);
+      return { ok: true, call: { tool: 'tarefa_frente', id: id.trim(), frente: frente.trim(), ...(typeof quemPediu === 'string' && quemPediu.trim() ? { quemPediu: quemPediu.trim() } : {}) } };
     }
     case 'tarefa_assumir':
     case 'tarefa_aceitar':

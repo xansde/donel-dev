@@ -1,0 +1,4 @@
+{
+  "title": "Mensagem na fila não vira mais \"não foi\"",
+  "text": "Com o computador sem memória, mensagens mandadas enquanto o Claude trabalhava ficavam amarelas e depois eram recusadas, mesmo já estando na fila do Claude. Agora elas ficam \"na fila\" até a vez delas."
+}

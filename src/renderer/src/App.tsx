@@ -379,6 +379,19 @@ export function App(): React.JSX.Element {
   const [chatPtyIds, setChatPtyIds] = useState<Record<string, string>>({});
   // Aba cujo processo saiu (FR-034): alimenta a barra "Sessão encerrada" do chat.
   const [tabExits, setTabExits] = useState<Record<string, { exitCode: number | null }>>({});
+  // Sessões remotas — ptyIds whose ssh dropped while the session lives on the place ("sem ligação"; main/remote-link.ts).
+  const [linkLostPtys, setLinkLostPtys] = useState<Record<string, true>>({});
+  useEffect(
+    () =>
+      window.donel.pty.onLink?.((ptyId, linked) => {
+        setLinkLostPtys((prev) => (linked ? omitKey(prev, ptyId) : prev[ptyId] ? prev : { ...prev, [ptyId]: true }));
+      }),
+    [],
+  );
+  const tabLinkLost = (tabId: string): boolean => {
+    const ptyId = chatPtyIds[tabId];
+    return tabExits[tabId] === undefined && ptyId !== undefined && linkLostPtys[ptyId] === true;
+  };
   const tabIdCounter = useRef(0);
   // T1221 (011-contas-e-provedores, etapa 2) — `AccountsPanel` substitui o
   // `ProfileSwitcher` (dropdown de perfis) como fonte da statusbar/badge:
@@ -2069,13 +2082,14 @@ export function App(): React.JSX.Element {
             ...(!semaphore || semaphore.unconfirmed ? { unconfirmed: true } : {}),
             ...(semaphore?.pendingKinds ? { pendingKinds: semaphore.pendingKinds } : {}),
             ...(semaphore?.turnFailure ? { turnFailure: semaphore.turnFailure } : {}),
+            ...(tabLinkLost(tab.id) ? { linkLost: true } : {}),
             ...(engine ? { engine } : {}),
             ...(meter.usedTokens !== null ? { meter: { usedTokens: meter.usedTokens, maxTokens: meter.contextZone } } : {}),
           },
         ];
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tabs, semaphoreStates, appConfig, backgroundByPty, chatPtyIds, tabExits, statusLines, sessionModels, contextTokens, sessionModelEffort, providers],
+    [tabs, semaphoreStates, appConfig, backgroundByPty, chatPtyIds, tabExits, linkLostPtys, statusLines, sessionModels, contextTokens, sessionModelEffort, providers],
   );
   // Mindscape, fatia 02 — last visit of the owner to each session, in memory
   // only (not persisted: the app is born without tabs). Stamped when a tab
@@ -2419,6 +2433,7 @@ export function App(): React.JSX.Element {
     tabs: () => tabsRef.current,
     tabOfPty: (ptyId) => tabsRef.current.find((tab) => chatPtyIds[tab.id] === ptyId),
     stateOf: (tabId) => (tabExits[tabId] !== undefined || !tabsRef.current.some((tab) => tab.id === tabId) ? undefined : (semaphoreStates[tabId]?.state ?? 'working')),
+    linkLost: (tabId) => tabLinkLost(tabId),
     roles: () => roles,
     openSession: (request) => {
       const defaults = appConfig?.launcherDefaults;

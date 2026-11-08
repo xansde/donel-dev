@@ -14,6 +14,7 @@ import type { DonelLiderApi } from './lider/ipc';
 import type { DonelCelularApi } from './celular';
 import type { DonelRotinasApi } from './rotinas/contract';
 import type { DonelFaxineiroApi } from './faxineiro/ipc';
+import type { RoleLaunchGap } from './roleLaunch';
 import type { DonelEsteiraApi } from './esteira/ipc';
 import type { DonelGithubApi } from './github';
 import type { DonelProjectBindingApi } from './projectBinding';
@@ -263,6 +264,8 @@ export const PTY_CHANNELS = {
   preview: 'pty:preview',
   /** Sessões remotas — sessions still alive on the remote places (boot reattach). */
   remoteAlive: 'pty:remoteAlive',
+  /** Sessões remotas — the ssh of a remote tab dropped (`false`, "sem ligação") or was relinked (`true`). */
+  link: 'pty:link',
 } as const;
 
 export interface PtyCreateOptions {
@@ -403,6 +406,11 @@ export interface PtyCreateResult {
    * nenhum valor de env sensível — `label` é o texto livre do operador.
    */
   provider?: { id: string; label: string };
+  /**
+   * Papel não entregue — the launch carried a role and part of it did not reach the CLI (`papel`: the guidance;
+   * `escopo`: the scope settings, so the session has everything). Absent when the role arrived whole or none was asked.
+   */
+  roleNotDelivered?: { roleId: string; missing: readonly RoleLaunchGap[] };
 }
 
 export interface PtyExitInfo {
@@ -424,6 +432,8 @@ export interface DonelPtyApi {
   onData(ptyId: string, listener: (data: string) => void): () => void;
   /** Retorna função de unsubscribe. */
   onExit(ptyId: string, listener: (info: PtyExitInfo) => void): () => void;
+  /** Sessões remotas — every tab whose link dropped (`linked: false`) or came back. Returns unsubscribe. */
+  onLink?(listener: (ptyId: string, linked: boolean) => void): () => void;
 }
 
 /** Nomes dos canais IPC do domínio semáforo (T009, FR-010). */

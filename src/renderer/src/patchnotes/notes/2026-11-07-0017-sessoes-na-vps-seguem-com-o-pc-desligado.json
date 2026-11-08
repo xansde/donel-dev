@@ -1,0 +1,4 @@
+{
+  "title": "Sessões na VPS seguem com o PC desligado",
+  "text": "Com o Oráculo na VPS, uma sessão aberta lá depois desta versão continua criando, entregando e listando tarefas quando o PC desliga, e sabe quem é no quadro (do jeito que o quadro estava quando o PC desligou). O resto (navegador, desenhar no quadro, falar com outras sessões) volta quando o PC liga."
+}
