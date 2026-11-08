@@ -202,8 +202,10 @@ import {
   buildSessionHooksSettings,
   buildSlackOfflineGuardScript,
   cleanupStaleHookSettings,
+  keyFilePermissions,
   planStatusLineBridge,
   removeSessionHooksSettings,
+  sessionHookSettingsDir,
   statusLineBridgeMode,
   writeHooksSettingsFile,
   tokenHeaderFileContent,
@@ -381,7 +383,7 @@ import { projectOfFolders, tabFolders, withProjectYolo } from '../shared/project
 import { isProcessAlive } from './process-alive';
 import { createPullRequestStatusService, createSystemPullRequestStatusDeps, openPullRequestUrl } from './pull-request-status';
 // Navegador interno — painel com WebContentsView por sessão (docs/design/navegador-interno.md).
-import { createBrowserService, type BrowserService } from './browser/browser-service';
+import { browserMcpConfigDir, createBrowserService, type BrowserService } from './browser/browser-service';
 import { createBoardBridge } from './board-bridge';
 
 // Scaffold T003 — janela única com o layout do shell (ui-spec §2).
@@ -1755,6 +1757,8 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
   claudeArgs.push(...rolePlan.args);
 
   const hooksOn = hookBridge !== null && hookBridge.port !== null;
+  // The session folder holds its keys (`meta.json`, `hook-header`, `mcp.json`, `settings.json`): its tools may not read it.
+  const remoteKeyDirs = [`~/${REMOTE_SESSIONS_DIR}`];
   if (hooksOn) {
     // Slack só com carta, fatia 4: the remote session outlives the app; with it down, a post to Slack is refused.
     // The token goes in a file of its own (600, like every file of the session folder): a hook command never carries it.
@@ -1769,13 +1773,14 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
       slackOfflineGuardCommand: `sh "$HOME/${REMOTE_SESSIONS_DIR}/${correlationId}/slack-guard.sh"`,
       statusLine: planStatusLineBridge({ mode: statusLineBridgeModeSetting, userStatusLine: null, chatEnabled: appConfig.chat.enabled }),
       roleScope,
+      keyDirs: remoteKeyDirs,
     });
     files.push({ name: 'settings.json', content: `${JSON.stringify(settings, null, 2)}\n` });
-    claudeArgs.push('--settings', '@S/settings.json');
-  } else if (roleScope) {
-    files.push({ name: 'settings.json', content: `${JSON.stringify(roleScope, null, 2)}\n` });
-    claudeArgs.push('--settings', '@S/settings.json');
+  } else {
+    // `meta.json` (and `mcp.json`) hold keys even without hooks: the deny rules go in any case.
+    files.push({ name: 'settings.json', content: `${JSON.stringify({ ...(roleScope ?? {}), ...keyFilePermissions(remoteKeyDirs) }, null, 2)}\n` });
   }
+  claudeArgs.push('--settings', '@S/settings.json');
   const mcp = fresh.mcpPort !== null ? (browserService?.prepareRemoteSession(ptyId, fresh.mcpPort) ?? null) : null;
   const meta: RemoteSessionMeta = {
     ...fresh,
@@ -2039,6 +2044,8 @@ function registerPtyIpcHandlers(): void {
       // Escopo do papel — only the MCPs, plugins and skills the role declares; no declaration = everything.
       const roleScope = roleScopeSettingsFor(roleId, () => readClaudeInventory(claudeConfigDirForSession ?? defaultClaudeConfigDir(), options.cwd));
       let sessionHooksSettingsPath: string | null = null;
+      // The folders holding this session's keys (hook token, MCP bearer): its tools may not read them.
+      const keyDirs = [sessionHookSettingsDir(app.getPath('userData')), browserMcpConfigDir(app.getPath('userData'))];
       // Papel não entregue — true only when a `--settings` file carrying the role's scope reaches the CLI.
       let scopeWritten = false;
       if (hooksTransport === 'bridge') {
@@ -2062,6 +2069,7 @@ function registerPtyIpcHandlers(): void {
               // "Isolar em worktree" — a worktree parte da branch ATUAL da pasta, não de origin/HEAD.
               isolatedWorktree: worktreeNameFromArgs(launcherArgs) !== null,
               roleScope,
+              keyDirs,
             });
             scopeWritten = roleScope !== null;
           } catch (error) {
@@ -2075,13 +2083,13 @@ function registerPtyIpcHandlers(): void {
       } else {
         sessionHooksSettingsPath = hooksSettingsPath;
       }
-      // Escopo do papel sem o arquivo dos hooks (ponte fora): the scope alone. The legacy single file is shared by
-      // every session, so a scope never goes there.
+      // Sem o arquivo dos hooks (ponte fora): the scope and the key-file deny rules alone (the MCP config still holds
+      // a key). The legacy single file is shared by every session, so a scope never goes there.
       let settingsPathForSession = sessionHooksSettingsPath;
-      if (settingsPathForSession === null && roleScope) {
+      if (settingsPathForSession === null) {
         try {
-          settingsPathForSession = writeSessionScopeOnlySettings(app.getPath('userData'), plannedPtyId, roleScope);
-          scopeWritten = true;
+          settingsPathForSession = writeSessionScopeOnlySettings(app.getPath('userData'), plannedPtyId, roleScope, keyDirs);
+          scopeWritten = roleScope !== null;
         } catch (error) {
           console.error('[donel-dev] escopo do papel não gravou — sessão com tudo:', error);
         }
