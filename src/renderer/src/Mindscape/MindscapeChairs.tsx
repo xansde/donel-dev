@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from 'react';
 import type { SessionState } from '@donel-dev/design-system';
-import { CHAIR_HEALTHS, CHAIR_NODE, type Chair, type ChairEdge, type ChairHealth, type ChairsLayout } from '../../../shared/mindscape/chairs';
+import { CHAIR_HEALTHS, CHAIR_NODE, type Chair, type ChairEdge, type ChairHealth, type ChairsLayout, type PodShape } from '../../../shared/mindscape/chairs';
 import type { LedgerViewState } from '../../../shared/ledger/contract';
 import styles from './Chairs.module.css';
 
@@ -71,7 +71,22 @@ export interface ChairsLayerProps {
   readonly selected: string | null;
   readonly onOpenChair: (chairId: string) => void;
   readonly onOpenRig: () => void;
+  /** Cadeiras, fatia 4 — the pods (name, mission, chairs); their boxes come in `layout.pods`. */
+  readonly pods?: readonly PodShape[];
+  /** The board's zoom (a pod drag is measured on screen). */
+  readonly zoom?: number;
+  /** Absent = the pods do not move (a source the owner does not edit, or the hidden layer). */
+  readonly onMovePod?: (podId: string, x: number, y: number) => void;
+  readonly onOpenPod?: (podId: string) => void;
 }
+
+/** The `selected` value of a pod. */
+export function podSelection(podId: string): string {
+  return `\u0000pod:${podId}`;
+}
+
+/** A press on a pod header that moves less than this (px) is a click. */
+const DRAG_SLOP_PX = 3;
 
 const RADIUS = CHAIR_NODE / 2;
 /** At most this many seat dots around a node (the rest are counted in "N sentados"). */
@@ -117,8 +132,60 @@ function arrowPath(from: { x: number; y: number }, to: { x: number; y: number },
   return `M${start.x},${start.y} Q${control.x},${control.y} ${end.x},${end.y}`;
 }
 
-export function ChairsLayer({ boardName, chairs, edges, layout, faceOf, seatState, showArrows, highlight, selected, onOpenChair, onOpenRig }: ChairsLayerProps): React.JSX.Element {
+export function ChairsLayer({
+  boardName,
+  chairs,
+  edges,
+  layout,
+  faceOf,
+  seatState,
+  showArrows,
+  highlight,
+  selected,
+  onOpenChair,
+  onOpenRig,
+  pods = [],
+  zoom = 1,
+  onMovePod,
+  onOpenPod,
+}: ChairsLayerProps): React.JSX.Element {
   const { rig } = layout;
+  // A pod in flight: its frame and its chairs follow the pointer; the drop writes the new corner (one history entry).
+  const [drag, setDrag] = useState<{ readonly podId: string; readonly dx: number; readonly dy: number } | null>(null);
+  const draggedChairs = new Set(drag ? (pods.find((pod) => pod.id === drag.podId)?.chairIds ?? []) : []);
+  const centers: Record<string, { x: number; y: number }> = {};
+  for (const [id, center] of Object.entries(layout.centers)) centers[id] = drag && draggedChairs.has(id) ? { x: center.x + drag.dx, y: center.y + drag.dy } : center;
+  const startDrag = (event: React.PointerEvent<HTMLButtonElement>, podId: string, box: { x: number; y: number }): void => {
+    if (event.button !== 0) return;
+    // The board never sees this press (no lasso, no selection).
+    event.stopPropagation();
+    const target = event.currentTarget;
+    target.setPointerCapture(event.pointerId);
+    const startX = event.clientX;
+    const startY = event.clientY;
+    let moved = false;
+    const move = (next: PointerEvent): void => {
+      const dx = (next.clientX - startX) / zoom;
+      const dy = (next.clientY - startY) / zoom;
+      if (!moved && Math.hypot(next.clientX - startX, next.clientY - startY) < DRAG_SLOP_PX) return;
+      moved = true;
+      if (onMovePod) setDrag({ podId, dx, dy });
+    };
+    const up = (next: PointerEvent): void => {
+      target.removeEventListener('pointermove', move);
+      target.removeEventListener('pointerup', up);
+      target.removeEventListener('pointercancel', up);
+      setDrag(null);
+      if (!moved) {
+        onOpenPod?.(podId);
+        return;
+      }
+      if (next.type === 'pointerup' && onMovePod) onMovePod(podId, box.x + (next.clientX - startX) / zoom, box.y + (next.clientY - startY) / zoom);
+    };
+    target.addEventListener('pointermove', move);
+    target.addEventListener('pointerup', up);
+    target.addEventListener('pointercancel', up);
+  };
   const seatedTotal = chairs.reduce((sum, chair) => sum + chair.seated.length, 0);
   const pairs = new Set(edges.map((edge) => `${edge.from}\u0000${edge.to}`));
   return (
@@ -134,6 +201,32 @@ export function ChairsLayer({ boardName, chairs, edges, layout, faceOf, seatStat
           </span>
         </div>
       </section>
+      {layout.pods.map((box) => {
+        const pod = pods.find((candidate) => candidate.id === box.id);
+        if (!pod) return null;
+        const shown = drag?.podId === box.id ? { ...box, x: box.x + drag.dx, y: box.y + drag.dy } : box;
+        const on = selected === podSelection(box.id);
+        return (
+          <section key={box.id} className={drag?.podId === box.id ? `${styles.pod} ${styles.podDragging}` : styles.pod} style={{ left: shown.x, top: shown.y, width: shown.w, height: shown.h }} data-testid="mindscape-pod" data-pod={box.id}>
+            <div className={styles.podHead}>
+              <button
+                type="button"
+                className={on ? `${styles.frameName} ${styles.podName} ${styles.frameNameOn}` : `${styles.frameName} ${styles.podName}`}
+                onPointerDown={(event) => startDrag(event, box.id, box)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') onOpenPod?.(box.id);
+                }}
+                title={onMovePod ? 'Clique para ver o pod; arraste para mover' : 'Clique para ver o pod'}
+              >
+                <span className={`${styles.kind} ${styles.kindPod}`}>Pod</span>
+                <span className={styles.podTitle}>{pod.name}</span>
+              </button>
+              {pod.mission ? <span className={styles.podMission}>{pod.mission}</span> : null}
+            </div>
+            {pod.chairIds.length === 0 ? <span className={styles.podEmpty}>Sem cadeiras: escolha o pod na gaveta de uma cadeira.</span> : null}
+          </section>
+        );
+      })}
       {showArrows ? (
         <svg className={styles.arrows} aria-hidden="true">
           <defs>
@@ -142,11 +235,11 @@ export function ChairsLayer({ boardName, chairs, edges, layout, faceOf, seatStat
             </marker>
           </defs>
           {edges.map((edge) => {
-            const from = layout.centers[edge.from];
-            const to = layout.centers[edge.to];
+            const from = centers[edge.from];
+            const to = centers[edge.to];
             if (!from || !to) return null;
             const both = pairs.has(`${edge.to}\u0000${edge.from}`);
-            const others = chairs.filter((chair) => chair.id !== edge.from && chair.id !== edge.to).flatMap((chair) => layout.centers[chair.id] ?? []);
+            const others = chairs.filter((chair) => chair.id !== edge.from && chair.id !== edge.to).flatMap((chair) => centers[chair.id] ?? []);
             return (
               <path
                 key={`${edge.from}>${edge.to}`}
@@ -164,7 +257,7 @@ export function ChairsLayer({ boardName, chairs, edges, layout, faceOf, seatStat
         </svg>
       ) : null}
       {chairs.map((chair) => {
-        const center = layout.centers[chair.id];
+        const center = centers[chair.id];
         if (!center) return null;
         const face = faceOf(chair);
         const dim = highlight !== null && chair.health !== highlight;
@@ -220,6 +313,8 @@ export interface ChairsBandProps {
   readonly onOwnerMode: (mode: OwnerLayerMode) => void;
   readonly showArrows: boolean;
   readonly onShowArrows: (show: boolean) => void;
+  /** Cadeiras, fatia 4 — "+ Pod"; absent = no new pod now (the owner's layer is hidden). */
+  readonly onAddPod?: () => void;
 }
 
 function Segmented<T extends string | boolean>({ label, value, options, onChange }: { label: string; value: T; options: ReadonlyArray<readonly [T, string]>; onChange: (value: T) => void }): React.JSX.Element {
@@ -247,7 +342,7 @@ const ARROW_OPTIONS: ReadonlyArray<readonly [boolean, string]> = [
   [false, 'Ocultas'],
 ];
 
-export function ChairsBand({ placeCount, chairCount, counts, highlight, onHighlight, ownerMode, onOwnerMode, showArrows, onShowArrows }: ChairsBandProps): React.JSX.Element {
+export function ChairsBand({ placeCount, chairCount, counts, highlight, onHighlight, ownerMode, onOwnerMode, showArrows, onShowArrows, onAddPod }: ChairsBandProps): React.JSX.Element {
   return (
     <div className={styles.band} data-testid="chairs-band">
       <div className={styles.motto}>
@@ -259,6 +354,11 @@ export function ChairsBand({ placeCount, chairCount, counts, highlight, onHighli
       <div className={styles.tools}>
         <Segmented label="Seu desenho" value={ownerMode} options={OWNER_OPTIONS} onChange={onOwnerMode} />
         <Segmented label="Setas" value={showArrows} options={ARROW_OPTIONS} onChange={onShowArrows} />
+        {onAddPod ? (
+          <button type="button" className={styles.button} onClick={onAddPod} data-testid="chairs-add-pod" title="Um pod agrupa cadeiras; ele mesmo arruma as cadeiras dentro">
+            + Pod
+          </button>
+        ) : null}
       </div>
       {CHAIR_HEALTHS.map((health) => (
         <button
@@ -325,6 +425,31 @@ export interface ChairDetails {
   readonly closedTasks: number;
 }
 
+/** Cadeiras, fatia 4 — the pod a chair sits in, chosen in its drawer. */
+export interface PodChoice {
+  readonly current: string | null;
+  readonly pods: readonly { readonly id: string; readonly name: string }[];
+  readonly onPick: (podId: string | null) => void;
+}
+
+export interface PodDetails {
+  readonly podId: string;
+  readonly name: string;
+  readonly mission?: string;
+  readonly boardName: string;
+  readonly chairs: readonly { readonly chair: Chair; readonly face: ChairFace }[];
+  /** Chairs of the board in no pod or in another one (what "+ cadeira" offers). */
+  readonly others: readonly { readonly chair: Chair; readonly face: ChairFace }[];
+  /** Absent = read-only (the owner's layer is hidden). */
+  readonly edit?: {
+    readonly onRename: (name: string) => void;
+    readonly onMission: (mission: string) => void;
+    readonly onAddChair: (chairId: string) => void;
+    readonly onRemoveChair: (chairId: string) => void;
+    readonly onDelete: () => void;
+  };
+}
+
 export interface RigDetails {
   readonly boardName: string;
   readonly projectPath: string;
@@ -363,18 +488,24 @@ function Empty({ text }: { text: string }): React.JSX.Element {
 }
 
 export interface ChairDrawerProps {
-  readonly details: ChairDetails | RigDetails | null;
+  readonly details: ChairDetails | RigDetails | PodDetails | null;
   readonly onClose: () => void;
   readonly onOpenChair: (chairId: string) => void;
   /** "Definir cadeira ▸" — the chair screen (B1) of the chair's role. */
   readonly onDefine?: (roleId: string) => void;
+  /** Cadeiras, fatia 4 — the pod of the chair open in the drawer. */
+  readonly podChoice?: PodChoice;
 }
 
-function isRig(details: ChairDetails | RigDetails): details is RigDetails {
+function isRig(details: ChairDetails | RigDetails | PodDetails): details is RigDetails {
   return 'projectPath' in details;
 }
 
-export function ChairDrawer({ details, onClose, onOpenChair, onDefine }: ChairDrawerProps): React.JSX.Element {
+function isPod(details: ChairDetails | RigDetails | PodDetails): details is PodDetails {
+  return 'podId' in details;
+}
+
+export function ChairDrawer({ details, onClose, onOpenChair, onDefine, podChoice }: ChairDrawerProps): React.JSX.Element {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
@@ -399,7 +530,7 @@ export function ChairDrawer({ details, onClose, onOpenChair, onDefine }: ChairDr
             <div className={styles.caption}>
               {details.chairs.length} cadeiras · {details.placeCount} lugares · {details.chairs.reduce((sum, entry) => sum + entry.chair.seated.length, 0)} sentados agora
             </div>
-            <p className={styles.caption}>Por enquanto o rig é o quadro do projeto. Pods, missão e a folha de instruções do rig chegam nas próximas versões.</p>
+            <p className={styles.caption}>O rig é o quadro do projeto. Use "+ Pod" para agrupar cadeiras; a missão e a folha de instruções do rig chegam depois.</p>
           </header>
           <div className={styles.drawerBody}>
             <h4>Cadeiras</h4>
@@ -418,14 +549,128 @@ export function ChairDrawer({ details, onClose, onOpenChair, onDefine }: ChairDr
             </ul>
           </div>
         </>
+      ) : details && isPod(details) ? (
+        <PodBody key={details.podId} details={details} close={close} onOpenChair={onOpenChair} />
       ) : details ? (
-        <ChairBody details={details} close={close} now={now} onDefine={onDefine} />
+        <ChairBody details={details} close={close} now={now} onDefine={onDefine} podChoice={podChoice} />
       ) : null}
     </aside>
   );
 }
 
-function ChairBody({ details, close, now, onDefine }: { details: ChairDetails; close: React.ReactNode; now: number; onDefine?: (roleId: string) => void }): React.JSX.Element {
+function PodBody({ details, close, onOpenChair }: { details: PodDetails; close: React.ReactNode; onOpenChair: (chairId: string) => void }): React.JSX.Element {
+  const [name, setName] = useState(details.name);
+  const [mission, setMission] = useState(details.mission ?? '');
+  useEffect(() => setName(details.name), [details.name]);
+  useEffect(() => setMission(details.mission ?? ''), [details.mission]);
+  const { edit } = details;
+  return (
+    <>
+      <header className={styles.drawerHead}>
+        {close}
+        <div className={styles.headRow}>
+          <span className={`${styles.kind} ${styles.kindPod}`}>Pod</span>
+          <b className={styles.drawerTitle}>{details.name}</b>
+        </div>
+        <div className={styles.caption}>
+          Rig {details.boardName} · {details.chairs.length} cadeira{details.chairs.length === 1 ? '' : 's'} ·{' '}
+          {details.chairs.reduce((sum, entry) => sum + entry.chair.seated.length, 0)} sentados agora
+        </div>
+        {edit ? (
+          <div className={styles.form}>
+            <label>
+              <span>Nome</span>
+              <input
+                className={styles.input}
+                value={name}
+                maxLength={40}
+                onChange={(event) => setName(event.target.value)}
+                onBlur={() => {
+                  // A pod always has a name: an emptied field comes back to the saved one.
+                  if (name.trim()) edit.onRename(name);
+                  else setName(details.name);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Enter') return;
+                  if (name.trim()) edit.onRename(name);
+                  else setName(details.name);
+                }}
+              />
+            </label>
+            <label>
+              <span>Missão</span>
+              <input
+                className={styles.input}
+                value={mission}
+                maxLength={200}
+                placeholder="Uma linha: o que este pod entrega"
+                onChange={(event) => setMission(event.target.value)}
+                onBlur={() => edit.onMission(mission)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') edit.onMission(mission);
+                }}
+              />
+            </label>
+          </div>
+        ) : details.mission ? (
+          <div className={styles.kv}>
+            <span>Missão</span>
+            <span>{details.mission}</span>
+          </div>
+        ) : null}
+        <p className={styles.caption}>O pod arruma as próprias cadeiras; arraste o pod pelo nome para movê-lo.</p>
+      </header>
+      <div className={styles.drawerBody}>
+        <h4>Cadeiras</h4>
+        <ul className={styles.list}>
+          {details.chairs.length === 0 ? <Empty text="Nenhuma ainda." /> : null}
+          {details.chairs.map(({ chair, face }) => (
+            <li key={chair.id}>
+              <span className={styles.seal} style={{ background: face.color }} />
+              <span className={styles.rowGo} onClick={() => onOpenChair(chair.id)}>
+                <b>{face.name}</b> <span className={styles.muted}>· {seatedLabel(chair)}</span>
+              </span>
+              {edit ? (
+                <button type="button" className={styles.linkButton} onClick={() => edit.onRemoveChair(chair.id)}>
+                  tirar do pod
+                </button>
+              ) : (
+                <span />
+              )}
+            </li>
+          ))}
+        </ul>
+        {edit && details.others.length > 0 ? (
+          <select
+            className={styles.select}
+            value=""
+            aria-label="Pôr uma cadeira neste pod"
+            onChange={(event) => {
+              if (event.target.value) edit.onAddChair(event.target.value);
+            }}
+          >
+            <option value="">+ pôr uma cadeira neste pod…</option>
+            {details.others.map(({ chair, face }) => (
+              <option key={chair.id} value={chair.id}>
+                {face.name}
+              </option>
+            ))}
+          </select>
+        ) : null}
+        {edit ? (
+          <div className={styles.actions}>
+            <button type="button" className={styles.button} onClick={edit.onDelete}>
+              Apagar o pod
+            </button>
+            <span className={styles.caption}>As cadeiras ficam no quadro, sem pod. Ctrl+Z desfaz.</span>
+          </div>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
+function ChairBody({ details, close, now, onDefine, podChoice }: { details: ChairDetails; close: React.ReactNode; now: number; onDefine?: (roleId: string) => void; podChoice?: PodChoice }): React.JSX.Element {
   const { chair, face } = details;
   const observed = details.observedEngines.length > 0 ? details.observedEngines.join(', ') : '—';
   const pastShown = details.past.slice(0, MAX_PAST_ROWS);
@@ -454,6 +699,21 @@ function ChairBody({ details, close, now, onDefine }: { details: ChairDetails; c
           <span>
             {chair.placeIds.length} lugar{chair.placeIds.length === 1 ? '' : 'es'} · {details.notes} nota{details.notes === 1 ? '' : 's'}
           </span>
+          {podChoice && chair.roleId ? (
+            <>
+              <span>Pod</span>
+              <span>
+                <select className={styles.select} value={podChoice.current ?? ''} aria-label="Pod da cadeira" onChange={(event) => podChoice.onPick(event.target.value || null)}>
+                  <option value="">sem pod</option>
+                  {podChoice.pods.map((pod) => (
+                    <option key={pod.id} value={pod.id}>
+                      {pod.name}
+                    </option>
+                  ))}
+                </select>
+              </span>
+            </>
+          ) : null}
         </div>
         {onDefine && chair.roleId ? (
           <div className={styles.actions}>

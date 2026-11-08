@@ -64,8 +64,9 @@ print lado a lado com o protótipo em `docs/prototipos/cadeiras/`.
 
 ### 03 — B1 grava no papel
 
-- **Status**: implementada
+- **Status**: concluida
 - **Branch**: `feat/cadeiras-b1-salvar`
+- **PR**: #286 (mergeado em `staging`)
 - **Depende de**: 02
 - **Propósito**: salvar instruções, escopo, modelo, esforço e permissão pela B1, pelo `roles-store` (único dono de
   `<userData>/papeis/`); "vale para quem sentar depois de salvar". O total da coluna de custo muda ao ligar ou
@@ -73,8 +74,10 @@ print lado a lado com o protótipo em `docs/prototipos/cadeiras/`.
 
 ### 04 — Rig e pods guardados (`mindscape.json` v6)
 
-- **Status**: pendente, **bloqueada** pelas decisões 02 e 03 do PDA (dono): o que é cadeira guardada, cadeira
-  elástica, se cadeira é só de um rig, e se o dono posiciona a cadeira ou só o pod
+- **Status**: implementada
+- **Branch**: `feat/cadeiras-pods`
+- **Decisões do dono (07/11, "Toca fi, espera não")**: cadeira = papel no quadro (A); o pod arruma as próprias
+  cadeiras e o dono só move o pod (A)
 - **Depende de**: 01
 - **Propósito**: molduras tipadas (rig | pod) com nome, missão e paradigma; cadeira dentro de pod com posição própria;
   endereço `papel@rig` estável. A F2a ganha as molduras de pod. Teste de parse v5 → v6 e canal antigo só leitura.
