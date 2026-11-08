@@ -712,8 +712,8 @@ export function App(): React.JSX.Element {
     if (index === -1) return;
     // t-e753b554 — the place of this tab, if it does not come back, passes its live tasks on (read before it leaves).
     agentBridgeRef.current?.placeClosed(tabId);
-    const remaining = tabs.filter((tab) => tab.id !== tabId);
-    setTabs(remaining);
+    // Functional on purpose: "Fechar marcadas" (gargalos) closes several tabs in one render.
+    setTabs((prev) => prev.filter((tab) => tab.id !== tabId));
     if (activeTabId === tabId) {
       // A hidden session (opened by another one) never takes the focus: it would come back to the tab bar.
       const fallback = listedFallback(tabs, tabId);
@@ -751,6 +751,16 @@ export function App(): React.JSX.Element {
    * (que lê `tabs`/`activeTabId` do render corrente). Mesmo padrão de
    * `appConfigRef`/`tabsRef`.
    */
+  /**
+   * Gargalos do ambiente — "Fechar marcadas": the same close as `sessao_fechar` (the remote session ends with its tab),
+   * for several tabs at once. When the tab in focus is among them, the focus goes to one that stays.
+   */
+  const handleMindscapeCloseSessions = (tabIds: readonly string[]): void => {
+    const closing = new Set(tabIds);
+    for (const tabId of tabIds) closeTabImmediately(tabId);
+    if (closing.has(activeTabId)) setActiveTabId(tabs.find((tab) => !closing.has(tab.id) && (!tab.openedBySession || tab.shown))?.id ?? '');
+  };
+
   const closeTabImmediatelyRef = useRef(closeTabImmediately);
   closeTabImmediatelyRef.current = closeTabImmediately;
 
@@ -2082,6 +2092,7 @@ export function App(): React.JSX.Element {
             stateEnteredAt: semaphore?.stateEnteredAt ?? 0,
             background: backgroundRunningOf(tab.id),
             ...(tab.roleId ? { roleId: tab.roleId } : {}),
+            ...(tab.remoteId ? { machineId: tab.remoteId } : {}),
             ...(!semaphore || semaphore.unconfirmed ? { unconfirmed: true } : {}),
             ...(semaphore?.pendingKinds ? { pendingKinds: semaphore.pendingKinds } : {}),
             ...(semaphore?.turnFailure ? { turnFailure: semaphore.turnFailure } : {}),
@@ -3191,6 +3202,7 @@ export function App(): React.JSX.Element {
             onManageRoles={() => setRolesEditorOpen(true)}
             onDefineChair={setChairRoleId}
             ledgerPlaceStatesOf={ledgerPlaceStatesOf}
+            onCloseSessions={handleMindscapeCloseSessions}
           />
         ) : null}
 
