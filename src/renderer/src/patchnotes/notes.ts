@@ -15,6 +15,15 @@ export interface PatchNoteDay {
 
 export const PATCH_NOTES: readonly PatchNoteDay[] = [
   {
+    date: '2026-11-08',
+    items: [
+      {
+        title: 'O celular avisa de tudo o que espera por você',
+        text: 'O aviso no celular, que antes só tocava para carta e entrega de risco alto, agora toca para cada coisa nova na caixa "Esperando você": uma carta que você aceitou e não saiu em meia hora, um envio ao Slack que não teve resposta ou falhou, uma entrega parada há um dia sem decisão, uma tarefa sem ninguém para fazer. Cada coisa avisa uma vez só, e o que já estava na caixa quando o Donel abriu não avisa de novo. Tocar no aviso de uma carta abre a carta; nos outros, abre o Oráculo.',
+      },
+    ],
+  },
+  {
     date: '2026-11-07',
     items: [
       {
