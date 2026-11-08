@@ -526,11 +526,6 @@ function textSeen(s: Draft, lines: readonly LineInput[]): boolean {
   return s.boxEmptyAtPaste && looksLikeOurs(stripped, s.text);
 }
 
-/** The box shows our text and nothing else (a resend of the Enter submits only ours). */
-export function boxHoldsOnlyOurs(state: SendMachineState, lines: readonly LineInput[]): boolean {
-  return textSeen(state, lines);
-}
-
 /** Letters and digits only: what survives a screen read that drops or doubles a glyph (◆, ambiguous widths, wraps). */
 const lettersOnly = (t: string): string => t.normalize('NFKC').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
 

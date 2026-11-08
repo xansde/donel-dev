@@ -25,7 +25,6 @@ import type { SendKind, SendMode, SendState } from '../../../shared/chat/rows';
 import { readInputText } from '../../../shared/chat/screen';
 import { describeSendFailure, type SendFailureDetail } from '../../../shared/chat/sendDiagnostics';
 import {
-  boxHoldsOnlyOurs,
   createSend,
   step,
   type MessageClass,
@@ -147,10 +146,12 @@ const MAX_ALIASES = 500;
 const DEDUPE_MS = 10 * 60_000;
 
 /**
- * Bytes the terminal emits on its own (focus in/out, cursor and device reports, mouse): not the owner typing.
+ * Bytes the terminal emits on its own (focus in/out, cursor and device reports, mouse; and, 08/11, its answers to what
+ * tmux asks on every attach of a remote session: DA2 `ESC[>…c`, version `ESC P>|…`, colours `ESC]10/11;rgb:…`): not the owner typing.
  * Everything else that reaches the PTY from the terminal is (keys, Enter, Backspace, arrows, a paste).
  */
-const TERMINAL_REPORT = /^\x1b\[(?:I|O|\?[\d;]*c|\d+;\d+R|<[\d;]+[Mm]|M[\s\S]{3})$/;
+const TERMINAL_REPORT =
+  /^(?:\x1b\[(?:I|O|[?>][\d;]*c|\d+;\d+R|<[\d;]+[Mm]|M[\s\S]{3})|\x1bP>\|[^\x1b]*\x1b\\|\x1b\]1[01];rgb:[\da-fA-F/]+(?:\x07|\x1b\\))+$/; // several answers may come in one chunk
 export const isOwnerTyping = (data: string): boolean => data !== '' && !TERMINAL_REPORT.test(data);
 
 /** Session messages that can go in as one paste (plain text, no image, no command). */
@@ -581,13 +582,16 @@ export class SendDriver {
         case 'write':
           if (effect.data === '\r' && item.from === 'session') {
             // An Enter written again (the first one looked lost) once a key of the owner reached the box would submit
-            // HIS text with it. Keys still held never reached it: then the Enter is safe, and wanted. So is a box that,
-            // read right now, holds our text and nothing else (what reached the PTY was not typed into it).
-            const ownerSince = item.enterWrittenAt !== null && this.ownerWrittenAt !== null && this.ownerWrittenAt >= item.enterWrittenAt;
-            if (ownerSince && !(item.machine !== null && boxHoldsOnlyOurs(item.machine, this.ports.readLines()))) break;
+            // HIS text with it. Keys still held never reached it: then the Enter is safe, and wanted. (The screen cannot
+            // clear him: his keys may still be on their way through ssh.)
+            if (item.enterWrittenAt !== null && this.ownerWrittenAt !== null && this.ownerWrittenAt >= item.enterWrittenAt) break;
             item.enterWrittenAt ??= this.ports.now();
             item.lastEnterAt = this.ports.now();
           }
+          // The same for the Esc Esc an unattended send writes to clear its own text when it gives up (08/11): a key of
+          // the owner sent after its Enter may be in that box too, and must not be erased with it.
+          if (effect.data === '\x1b\x1b' && item.from === 'session' && item.enterWrittenAt !== null && this.ownerWrittenAt !== null && this.ownerWrittenAt >= item.enterWrittenAt)
+            break;
           this.ports.write(effect.data);
           if (effect.data === '\r' && item.request.opensScreen === true) this.ports.opensScreen?.();
           break;
