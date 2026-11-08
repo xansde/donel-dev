@@ -3364,7 +3364,8 @@ function registerLedgerIpcHandlers(): void {
   ipcMain.handle(LEDGER_CHANNELS.turnEnded, async (event, raw: unknown): Promise<LedgerTurnRecorded> => {
     const record = raw as Partial<LedgerTurnRecord> | null;
     if (!fromMain(event.sender) || !record || typeof record.projectPath !== 'string' || typeof record.placeId !== 'string' || typeof record.text !== 'string') return 'falhou';
-    return recordTurnEnd(service, { projectPath: record.projectPath, placeId: record.placeId, text: record.text });
+    const estado = record.estado === 'travada' || record.estado === 'precisa-do-dono' ? { estado: record.estado } : {};
+    return recordTurnEnd(service, { projectPath: record.projectPath, placeId: record.placeId, text: record.text, ...estado });
   });
   ipcMain.handle(LEDGER_CHANNELS.comment, async (event, raw: unknown): Promise<LedgerCommentResult> => {
     if (!fromMain(event.sender)) return { ok: false, reason: 'Só a janela do app escreve na carta.' };

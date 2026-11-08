@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { AgentBridge, type AgentBridgePorts, type BridgeTab } from '../src/renderer/src/Mindscape/agentBridge';
+import { AgentBridge, type AgentBridgePorts, type BridgeTab, type DeliveryOutcome } from '../src/renderer/src/Mindscape/agentBridge';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, nodeLedgerProofFs, recordTurnEnd, resetNewsCursors, runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService } from '../src/main/ledger-store';
 import { parseLedgerDoc } from '../src/shared/ledger/contract';
@@ -23,6 +23,8 @@ import * as v4 from './fixtures/ledger/contract-v4';
 const BOARD = 'C:/proj/atlas';
 const LIDER = 'place:lider';
 const DEVS = ['place:dev1', 'place:dev2', 'place:dev3'] as const;
+/** A Revisor working by request, with no task of its own in the ledger; the Líder único opened it. */
+const REV = 'place:rev';
 
 const dirs: string[] = [];
 beforeEach(() => resetNewsCursors());
@@ -45,7 +47,8 @@ function boardDoc(): MindscapeDoc {
     doc = setPlaceConversation(doc, BOARD, dev, `conv-dev${i + 1}`);
     doc = addLink(doc, BOARD, { id: `l${i}`, from: LIDER, to: dev, arrow: true, by: 'session', opened: true });
   }
-  return doc;
+  doc = addPlace(doc, BOARD, { id: REV, roleId: 'revisor', by: 'session' });
+  return setPlaceConversation(doc, BOARD, REV, 'conv-rev');
 }
 
 interface Team {
@@ -58,7 +61,27 @@ interface Team {
   readonly records: Promise<unknown>[];
   /** Tabs whose process left. */
   readonly closed: Set<string>;
+  /** Remote tabs whose ssh dropped ("sem ligação"). */
+  readonly linkLost: Set<string>;
+  /** The next answers of the destination's CLI (default: it took the line). */
+  readonly outcomes: DeliveryOutcome[];
   mode: TurnNotices;
+}
+
+/** Lets the ledger writes and the deliveries that follow them run. */
+async function settle(t: Team): Promise<void> {
+  for (let round = 0; round < 3; round += 1) {
+    await Promise.all(t.records.splice(0));
+    for (let tick = 0; tick < 5; tick += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+function progressRecords(t: Team): { owner: string; progress: NonNullable<ReturnType<typeof progressOf>> }[] {
+  const doc = parseLedgerDoc(JSON.parse(readFileSync(t.file, 'utf8')));
+  return Object.values(doc.tasks).flatMap((task) => task.events.flatMap((event) => {
+    const progress = progressOf(event);
+    return progress ? [{ owner: task.ownerPlaceId, progress }] : [];
+  }));
 }
 
 async function team(): Promise<Team> {
@@ -72,13 +95,16 @@ async function team(): Promise<Team> {
     { id: 'tab-unico', name: 'Líder', cwd: 'C:/proj', roleId: 'lider', leaderOfAll: true, sessionType: 'claude' },
     { id: 'tab-lider', name: 'Líder', cwd: BOARD, projectName: 'atlas', roleId: 'lider', claudeSessionId: 'conv-lider', sessionType: 'claude' },
     ...DEVS.map((_dev, i): BridgeTab => ({ id: `tab-dev${i + 1}`, name: `Dev ${i + 1}`, cwd: BOARD, projectName: 'atlas', roleId: 'dev', claudeSessionId: `conv-dev${i + 1}`, openedBy: i === 2 ? 'lider' : LIDER, sessionType: 'claude' })),
+    { id: 'tab-rev', name: 'Revisor', cwd: BOARD, projectName: 'atlas', roleId: 'revisor', claudeSessionId: 'conv-rev', openedBy: 'lider', sessionType: 'claude' },
   ];
   const sent: { tabId: string; text: string }[] = [];
   const states: Record<string, SemaphoreState> = {};
   const failures: Record<string, string | undefined> = {};
   const records: Promise<unknown>[] = [];
   const closed = new Set<string>();
-  const state: Team = { bridge: undefined as unknown as AgentBridge, sent, service, file, states, failures, records, closed, mode: 'ledger' };
+  const linkLost = new Set<string>();
+  const outcomes: DeliveryOutcome[] = [];
+  const state: Team = { bridge: undefined as unknown as AgentBridge, sent, service, file, states, failures, records, closed, linkLost, outcomes, mode: 'ledger' };
   const ports: AgentBridgePorts = {
     loaded: true,
     doc: () => doc,
@@ -91,9 +117,11 @@ async function team(): Promise<Team> {
     closeTab: () => undefined,
     sendLine: (tabId, text) => sent.push({ tabId, text }),
     deliverLine: async (tabId, text) => {
-      sent.push({ tabId, text });
-      return { kind: 'entrou' };
+      const outcome = outcomes.shift() ?? { kind: 'entrou' };
+      if (outcome.kind !== 'nao-foi') sent.push({ tabId, text });
+      return outcome;
     },
+    linkLost: (tabId) => linkLost.has(tabId),
     permissionOnScreen: () => false,
     unconfirmed: () => false,
     startTrouble: () => null,
@@ -102,7 +130,11 @@ async function team(): Promise<Team> {
     remotes: () => [],
     projects: () => [{ path: BOARD, name: 'atlas' }],
     turnNotices: () => state.mode,
-    recordTurn: (record: LedgerTurnRecord) => void records.push(recordTurnEnd(service, record)),
+    recordTurn: (record: LedgerTurnRecord) => {
+      const written = recordTurnEnd(service, record);
+      records.push(written);
+      return written;
+    },
     turnFailureOf: (tabId) => failures[tabId],
   };
   const bridge = new AgentBridge(ports);
@@ -117,7 +149,7 @@ async function team(): Promise<Team> {
 }
 
 function caller(placeId: string, roleId: string): LedgerCaller {
-  return { projectPath: BOARD, placeId, roleId, boardPlaceIds: [LIDER, ...DEVS] };
+  return { projectPath: BOARD, placeId, roleId, boardPlaceIds: [LIDER, ...DEVS, REV] };
 }
 
 describe('andamento no ledger, não no chat do Líder', () => {
@@ -126,14 +158,13 @@ describe('andamento no ledger, não no chat do Líder', () => {
     t.bridge.turnEnded('conv-dev1', 'Escrevi o teste do contrato.\nFalta o build.');
     t.bridge.turnEnded('conv-dev2', 'PR aberto, esperando o Revisor.');
     t.bridge.turnEnded('conv-dev3', 'Li o código do quadro.');
-    await Promise.all(t.records);
+    await settle(t);
 
     expect(t.sent).toEqual([]); // nem o Líder do quadro nem o Líder único
 
-    const doc = parseLedgerDoc(JSON.parse(readFileSync(t.file, 'utf8')));
-    const records = Object.values(doc.tasks).flatMap((task) => task.events.map((event) => ({ owner: task.ownerPlaceId, progress: progressOf(event) }))).filter((each) => each.progress);
+    const records = progressRecords(t);
     expect(records.map((each) => each.owner).sort()).toEqual([...DEVS]);
-    expect(records.find((each) => each.owner === 'place:dev1')!.progress).toEqual({ estado: 'turno-encerrado', resumo: 'Escrevi o teste do contrato. Falta o build.' });
+    expect(records.find((each) => each.owner === 'place:dev1')?.progress).toEqual({ estado: 'turno-encerrado', resumo: 'Escrevi o teste do contrato. Falta o build.' });
 
     const read = await runLedgerTool(t.service, caller(LIDER, 'lider'), call('tarefa_novidades', {}));
     expect(read.ok).toBe(true);
@@ -154,6 +185,7 @@ describe('andamento no ledger, não no chat do Líder', () => {
     t.failures['tab-dev2'] = 'rate_limit';
     t.bridge.attention('tab-dev2');
     t.bridge.attention('tab-dev2'); // the same situation again: told once
+    await settle(t);
     expect(t.sent).toHaveLength(1);
     expect(t.sent[0]).toMatchObject({ tabId: 'tab-lider' });
     expect(t.sent[0]!.text).toMatch(/^◆ Dev Dev 2 \(place:dev2\) está travada: limite de uso/);
@@ -161,6 +193,7 @@ describe('andamento no ledger, não no chat do Líder', () => {
     // The Dev 3 was opened by the Líder único; its permission still goes to the Líder of its board.
     t.states['tab-dev3'] = 'permission';
     t.bridge.attention('tab-dev3');
+    await settle(t);
     expect(t.sent[1]).toMatchObject({ tabId: 'tab-lider', text: expect.stringContaining('precisa do dono') });
 
     // Cleared and stuck again: told again.
@@ -170,6 +203,7 @@ describe('andamento no ledger, não no chat do Líder', () => {
     t.states['tab-dev2'] = 'waiting';
     t.failures['tab-dev2'] = 'authentication_failed';
     t.bridge.attention('tab-dev2');
+    await settle(t);
     expect(t.sent[2]).toMatchObject({ tabId: 'tab-lider', text: expect.stringContaining('login expirado') });
   });
 
@@ -177,6 +211,7 @@ describe('andamento no ledger, não no chat do Líder', () => {
     const t = await team();
     t.states['tab-lider'] = 'permission';
     t.bridge.attention('tab-lider');
+    await settle(t);
     expect(t.sent).toEqual([{ tabId: 'tab-unico', text: expect.stringMatching(/^◆ Líder Líder \(place:lider, quadro atlas\) precisa do dono/) }]);
 
     // With the board's Líder closed, a stuck Dev reaches the Líder único, saying the board.
@@ -184,6 +219,7 @@ describe('andamento no ledger, não no chat do Líder', () => {
     t.states['tab-dev1'] = 'waiting';
     t.failures['tab-dev1'] = 'rate_limit';
     t.bridge.attention('tab-dev1');
+    await settle(t);
     expect(t.sent[1]).toMatchObject({ tabId: 'tab-unico', text: expect.stringContaining('quadro atlas') });
   });
 
@@ -195,7 +231,65 @@ describe('andamento no ledger, não no chat do Líder', () => {
 
     const answer = await t.bridge.handle('pty-tab-dev1', { tool: 'aviso_imediato', texto: 'entregou a tarefa t-1 para aceite.' });
     expect(answer.ok).toBe(true);
+    await settle(t);
     expect(t.sent).toEqual([{ tabId: 'tab-lider', text: '◆ Dev Dev 1 (place:dev1) entregou a tarefa t-1 para aceite.' }]);
+  });
+
+  it('aviso imediato sem nenhum Líder aberto fica no ledger e chega quando um Líder abre, uma vez', async () => {
+    const t = await team();
+    t.closed.add('tab-lider');
+    t.closed.add('tab-unico');
+    t.states['tab-dev2'] = 'waiting';
+    t.failures['tab-dev2'] = 'rate_limit';
+    t.bridge.attention('tab-dev2');
+    await settle(t);
+    expect(t.sent).toEqual([]);
+    expect(progressRecords(t)).toEqual([{ owner: 'place:dev2', progress: { estado: 'travada', precisa: 'está travada: limite de uso (o turno parou e não segue sozinho) (aviso pendente: nenhum Líder aberto)' } }]);
+
+    // The Líder of the board opens: its state shows up, the App calls attention for every tab.
+    t.closed.delete('tab-lider');
+    t.states['tab-lider'] = 'waiting';
+    for (const tabId of ['tab-lider', 'tab-dev2']) t.bridge.attention(tabId);
+    await settle(t);
+    t.bridge.flushUrgent();
+    await settle(t);
+    expect(t.sent).toEqual([{ tabId: 'tab-lider', text: expect.stringMatching(/^◆ Dev Dev 2 \(place:dev2\) está travada: limite de uso/) }]);
+  });
+
+  it('Líder "sem ligação" ou CLI que não pegou a linha: o aviso espera e vai quando ele volta', async () => {
+    const t = await team();
+    t.linkLost.add('tab-lider');
+    t.linkLost.add('tab-unico');
+    t.states['tab-dev1'] = 'permission';
+    t.bridge.attention('tab-dev1');
+    await settle(t);
+    expect(t.sent).toEqual([]);
+
+    t.linkLost.delete('tab-lider'); // religou: nenhum estado mudou, a ronda de meio minuto tenta de novo
+    t.outcomes.push({ kind: 'nao-foi', reason: 'a caixa não esvaziou' });
+    t.bridge.flushUrgent();
+    await settle(t);
+    expect(t.sent).toEqual([]); // não entrou: segue pendente
+    t.bridge.flushUrgent();
+    await settle(t);
+    t.bridge.flushUrgent();
+    await settle(t);
+    expect(t.sent).toEqual([{ tabId: 'tab-lider', text: expect.stringContaining('precisa do dono') }]);
+  });
+
+  it('sessão sem tarefa viva mantém o fim de turno no chat do Líder do quadro; com tarefa, só no ledger', async () => {
+    const t = await team();
+    t.bridge.turnEnded('conv-rev', 'Revisei o #324: devolvido.');
+    t.bridge.turnEnded('conv-dev1', 'Corrigi o achado.');
+    await settle(t);
+    // The Revisor was opened by the Líder único, and still its turn goes to the Líder of its board.
+    expect(t.sent).toEqual([{ tabId: 'tab-lider', text: '◆ Revisor Revisor (place:rev) terminou: Revisei o #324: devolvido.' }]);
+    expect(progressRecords(t).map((each) => each.owner)).toEqual(['place:dev1']);
+
+    // The Líder of the board has no task either: its turn keeps the old road (here, nobody holds an arrow to it).
+    t.bridge.turnEnded('conv-lider', 'Repassei ao Dev.');
+    await settle(t);
+    expect(t.sent).toHaveLength(1);
   });
 
   it('o registro do fim do turno não repete o que a sessão registrou no mesmo turno', async () => {

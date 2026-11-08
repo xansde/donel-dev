@@ -52,7 +52,7 @@ import {
   type LedgerTask,
 } from '../shared/ledger/contract';
 import type { LedgerApplyResult, LedgerPassedOn, LedgerPassOnRequest, LedgerSnapshot, LedgerTurnRecord, LedgerTurnRecorded } from '../shared/ledger/channels';
-import { isUrgentProgress, turnEndProgress, type LedgerProgress } from '../shared/ledger/andamento';
+import { isUrgentProgress, progressLine, PROGRESS_FIELD_CHARS, turnEndProgress, type LedgerProgress } from '../shared/ledger/andamento';
 import { agoText, ledgerNews, progressTaskOf, turnAlreadyRecorded } from '../shared/ledger/novidades';
 import type { LedgerToolCall, ProofInput } from '../shared/ledger/tools';
 import { NOT_STARTED_GRACE_MS, orphanReasonIn, ownerGoneIn } from '../shared/ledger/inbox';
@@ -384,7 +384,7 @@ export async function recordTurnEnd(service: LedgerService, record: LedgerTurnRe
   // The end of its previous turn, on the ledger's own clock (memory only: after a restart the first turn is recorded).
   const key = `${record.projectPath}\n${record.placeId}`;
   const since = turnEnds.get(key);
-  turnEnds.set(key, service.now());
+  if (!record.estado) turnEnds.set(key, service.now());
   let doc: LedgerDoc;
   try {
     const snapshot = service.load();
@@ -395,8 +395,9 @@ export async function recordTurnEnd(service: LedgerService, record: LedgerTurnRe
   }
   const task = progressTaskOf(doc, record.projectPath, record.placeId);
   if ('reason' in task) return 'sem-tarefa';
-  if (turnAlreadyRecorded(task, record.placeId, since)) return 'ja-registrado';
-  const result = await service.apply({ kind: 'lugar', placeId: record.placeId }, { op: 'andamento', id: task.id, progress: turnEndProgress(record.text) });
+  if (!record.estado && turnAlreadyRecorded(task, record.placeId, since)) return 'ja-registrado';
+  const progress: LedgerProgress = record.estado ? { estado: record.estado, precisa: progressLine(record.text, PROGRESS_FIELD_CHARS) } : turnEndProgress(record.text);
+  const result = await service.apply({ kind: 'lugar', placeId: record.placeId }, { op: 'andamento', id: task.id, progress });
   return result.ok ? 'registrado' : 'falhou';
 }
 

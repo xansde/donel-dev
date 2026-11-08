@@ -28,6 +28,11 @@ export interface LedgerTurnRecord {
   readonly projectPath: string;
   readonly placeId: string;
   readonly text: string;
+  /**
+   * Not an end of turn: a situation that cannot wait (a permission open, a failed turn), recorded with this state and
+   * `text` as what it needs, whether or not a Líder could hear it yet (Revisor, #324).
+   */
+  readonly estado?: 'travada' | 'precisa-do-dono';
 }
 
 export type LedgerTurnRecorded = 'registrado' | 'ja-registrado' | 'sem-tarefa' | 'falhou';
