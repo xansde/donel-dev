@@ -2284,6 +2284,12 @@ export function App(): React.JSX.Element {
    * the role's suggestions (model, effort, permission, engine) and the role itself. A tab already
    * opening for that place is only focused. The place binds to the conversation when its id comes.
    */
+  /** Where the Líderes run (Preferences, "Onde o Líder roda"): a remote place, or `undefined` for this computer. */
+  const leaderPlace = (): string | undefined =>
+    leaderRemoteId(
+      appConfig?.leader ?? DEFAULT_LEADER_PREFS,
+      accountsView.remotes.map((remote) => ({ id: remote.id, hasAccount: Boolean(remote.activeAccountId) })),
+    );
   const handleMindscapeStartPlace = (placeId: string, projectPath: string): void => {
     const existingTab = tabs.find((tab) => tab.placeId === placeId);
     if (existingTab) {
@@ -2298,13 +2304,16 @@ export function App(): React.JSX.Element {
     const defaults = appConfig?.launcherDefaults;
     const project = projects.find((candidate) => candidate.path === projectPath);
     // "Onde roda" — same default as the Launcher (owner, 04/11): the last choice; without one, the first remote place with an account.
+    // A Líder of a board opens where the Líder único runs (owner, 08/11: the orchestrator on the VPS, the PC only with the app).
     const savedWhere = defaults?.where;
     const remoteId =
-      savedWhere === 'local'
-        ? undefined
-        : accountsView.remotes.some((remote) => remote.id === savedWhere)
-          ? savedWhere
-          : accountsView.remotes.find((remote) => remote.activeAccountId)?.id;
+      place.roleId === LIDER_ROLE_ID && !providerId
+        ? leaderPlace()
+        : savedWhere === 'local'
+          ? undefined
+          : accountsView.remotes.some((remote) => remote.id === savedWhere)
+            ? savedWhere
+            : accountsView.remotes.find((remote) => remote.activeAccountId)?.id;
     addTab({
       name: role?.name ?? 'Sessão',
       cwd: projectPath,
@@ -2369,7 +2378,7 @@ export function App(): React.JSX.Element {
     const providerId = role?.engine && providers.some((provider) => provider.id === role.engine) ? role.engine : undefined;
     // Líder único na VPS (docs/planos/lider-na-vps.md) — where the owner wants it (Preferences). A provider of a third
     // party does not run on a remote place (ADR 0006): that Líder stays here.
-    const wantedRemoteId = providerId ? undefined : leaderRemoteId(appConfig?.leader ?? DEFAULT_LEADER_PREFS, accountsView.remotes.map((place) => place.id));
+    const wantedRemoteId = providerId ? undefined : leaderPlace();
     const openLeader = (resume?: { readonly sessionId: string; readonly cwd: string | undefined }): string => {
       // Without the role there is no Líder único (it is the role + the mark below): say so instead of opening a plain session.
       if (!role) throw new Error('O papel Líder não existe nesta máquina.');
@@ -3810,7 +3819,7 @@ export function App(): React.JSX.Element {
         }}
         remotes={accountsView.remotes.map((place) => ({ id: place.id, label: place.label }))}
         launcherWhere={appConfig?.launcherDefaults.where}
-        leaderWhere={appConfig?.leader.where ?? 'local'}
+        leaderWhere={appConfig?.leader.where ?? DEFAULT_LEADER_PREFS.where}
         onChangeLeaderWhere={(where) => {
           void window.donel.config.setLeaderPrefs({ where }).then(setAppConfig).catch(() => undefined);
         }}
