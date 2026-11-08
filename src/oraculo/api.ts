@@ -9,6 +9,7 @@ import { extname, join } from 'node:path';
 import { MAX_PROOF_FILE_BYTES, PROOF_FILE_TYPES, isProofFileName, maxProofBytes, type LedgerActor, type LedgerOp } from '../shared/ledger/contract';
 import { checkLedgerImport, ledgerCount, ledgerProofFiles, sameLedger } from '../shared/ledger/remote-import';
 import { ledgerProofsDir, type LedgerService } from '../main/ledger-store';
+import { SERVICE_PATH, serviceActor, serviceOpRefusal, type ServiceOp } from './servicos';
 
 export interface OracleRequest {
   readonly method: string;
@@ -57,6 +58,15 @@ export function bearerMatches(authorization: string | undefined, tokenHash: stri
   return timingSafeEqual(Buffer.from(sha256Hex(authorization.slice('Bearer '.length)), 'hex'), Buffer.from(tokenHash, 'hex'));
 }
 
+/** Who is calling: the PC (every route) or a headless service (only `SERVICE_PATH`, src/oraculo/servicos.ts). */
+export type OracleCaller = { readonly kind: 'pc' } | { readonly kind: 'servico'; readonly name: string };
+
+export function callerOf(authorization: string | undefined, tokenHash: string | null, services: ReadonlyMap<string, string>): OracleCaller | null {
+  if (bearerMatches(authorization, tokenHash)) return { kind: 'pc' };
+  for (const [name, hash] of services) if (bearerMatches(authorization, hash)) return { kind: 'servico', name };
+  return null;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -89,6 +99,8 @@ export interface OracleApiDeps {
   readonly changed?: () => void;
   /** More routes behind the same token (src/oraculo/admin.ts); `null` = not one of them. */
   readonly extra?: (request: OracleRequest, path: string) => Promise<OracleResponse | null>;
+  /** t-a1ea2798 — the headless services' token hashes (name → sha256), read at each call; absent = none. */
+  readonly services?: () => ReadonlyMap<string, string>;
   /** The way back's mark (src/oraculo/devolvido.ts): set, every writer of the daemon refuses. */
   readonly returned?: { returned(): boolean; set(returned: boolean): void };
 }
@@ -151,11 +163,35 @@ export function createOracleApiHandler(deps: OracleApiDeps): OracleApiHandler {
     return json(200, { ok: true, tarefas: count.tasks, eventos: count.events, provas: check.proofFiles.length });
   }
 
+  /** A service's one route: the actor comes from its token, never from the body. */
+  async function serviceApply(name: string, body: string): Promise<OracleResponse> {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      return json(400, { error: 'corpo não é JSON' });
+    }
+    const op = isRecord(parsed) ? parsed.op : undefined;
+    const why = serviceOpRefusal(op);
+    if (why) return json(400, { error: why });
+    try {
+      const result = await ledger.apply(serviceActor(name), op as ServiceOp);
+      return result.ok ? json(200, { ok: true, id: result.task.id, estado: result.task.state }) : json(400, result);
+    } catch {
+      return json(400, { error: 'op malformada' });
+    }
+  }
+
   return async (request) => {
-    if (!bearerMatches(request.authorization, deps.tokenHash())) return json(401, { error: 'token' });
+    const caller = callerOf(request.authorization, deps.tokenHash(), deps.services?.() ?? new Map());
+    if (!caller) return json(401, { error: 'token' });
     const url = new URL(request.url, 'http://oraculo');
     const path = url.pathname;
     const { method } = request;
+    if (caller.kind === 'servico') {
+      if (method !== 'POST' || path !== SERVICE_PATH) return json(403, { error: 'credencial de serviço só cria, assume e entrega tarefas' });
+      return serviceApply(caller.name, request.body);
+    }
 
     if (method === 'GET' && path === '/v1/ledger') {
       try {
