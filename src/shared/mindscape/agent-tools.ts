@@ -177,7 +177,7 @@ export const BOARD_TOOLS = [
     name: 'sessao_listar',
     title: 'Listar as sessões do quadro',
     description:
-      'As sessões (lugares) do quadro do projeto: id, papel, nome, estado (trabalhando, parada, precisa do dono, não começou, fechada), se você pode mandar mensagem a ela (ligação com seta sua → dela; o Líder do quadro, a todas) e quem a abriu.',
+      'As sessões (lugares) do quadro do projeto: id, papel, nome, estado (trabalhando, parada, precisa do dono, não começou, sem ligação: viva no lugar remoto e o app religando, fechada), se você pode mandar mensagem a ela (ligação com seta sua → dela; o Líder do quadro, a todas) e quem a abriu.',
     inputSchema: BOARD_ONLY,
     annotations: { readOnlyHint: true },
   },

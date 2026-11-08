@@ -85,7 +85,7 @@ export function deriveChairs({ places, links, liveAxes, roleOrder }: ChairsInput
   const ids = [...byChair.keys()].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
   const chairs: Chair[] = ids.map((id) => {
     const list = byChair.get(id)!;
-    const seated = list.filter((place) => liveAxes.get(place.id)?.process === 'aberta');
+    const seated = list.filter((place) => (liveAxes.get(place.id)?.process ?? 'fechada') !== 'fechada'); // "sem ligação" still holds the chair
     const seatedIds = new Set(seated.map((place) => place.id));
     return {
       id,
