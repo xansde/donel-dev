@@ -162,20 +162,37 @@ export function parseRigsFile(source: string): RigsParse {
   // Chairs first: the pods, the middle column and the links only keep ids that exist.
   const chairs: RigChair[] = [];
   const known = new Set<string>();
+  /** Ids of chairs already named as out of the contract: a pod that lists them is not warned twice. */
+  const refusedChairs = new Set<string>();
+  /** The chair that holds each role (the first one in the file). */
+  const roleOwner = new Map<string, string>();
   (Array.isArray(raw.cadeiras) ? raw.cadeiras : []).forEach((item, index) => {
     const chair = parseChair(item);
     if (!chair || known.has(chair.id)) {
-      outside.push(idOf(item, `cadeira ${index + 1}`));
+      const id = idOf(item, `cadeira ${index + 1}`);
+      refusedChairs.add(id);
+      outside.push(id);
       return;
     }
     known.add(chair.id);
+    // A role sits in one chair only: the same places in two chairs would count twice in the band.
+    const owner = chair.papel ? roleOwner.get(chair.papel) : undefined;
+    if (chair.papel && owner) {
+      outside.push(`papel ${chair.papel} repetido na cadeira ${chair.id} (fica só em ${owner})`);
+      const { papel: _repeated, ...vacant } = chair;
+      chairs.push(vacant);
+      return;
+    }
+    if (chair.papel) roleOwner.set(chair.papel, chair.id);
     chairs.push(chair);
   });
 
   const placed = new Set<string>();
-  const takeChairs = (value: unknown): string[] => {
+  /** The chair ids of a pod or of the middle; one the file does not have is warned (`where` names the list). */
+  const takeChairs = (value: unknown, where: string): string[] => {
     const ids: string[] = [];
     for (const id of Array.isArray(value) ? value : []) {
+      if (typeof id === 'string' && !known.has(id) && !refusedChairs.has(id)) outside.push(`cadeira ${id} ${where} não existe no arquivo`);
       if (typeof id !== 'string' || !known.has(id) || placed.has(id)) continue;
       placed.add(id);
       ids.push(id);
@@ -200,14 +217,14 @@ export function parseRigsFile(source: string): RigsParse {
         return;
       }
       const missao = text(pod.missao);
-      pods.push({ id: podId, nome: podName, ...(missao ? { missao } : {}), cadeiras: takeChairs(pod.cadeiras) });
+      pods.push({ id: podId, nome: podName, ...(missao ? { missao } : {}), cadeiras: takeChairs(pod.cadeiras, `do pod ${podName}`) });
     });
     const missao = text(item.missao);
     rigs.push({ id, nome, ...(missao ? { missao } : {}), pods });
   });
   if (rigs.length === 0) return { ok: false, reason: 'estrutura', message: 'nenhum rig dentro do contrato' };
 
-  const foraDosRigs = takeChairs(raw.foraDosRigs);
+  const foraDosRigs = takeChairs(raw.foraDosRigs, 'de foraDosRigs');
   for (const chair of chairs) if (!placed.has(chair.id)) foraDosRigs.push(chair.id);
 
   const ligacoes: RigLink[] = [];
