@@ -225,7 +225,6 @@ export function createCelularCore(deps: CelularCoreDeps): CelularCore {
   }
 
   if (auth.enabled) void reconcile();
-  // A Tailscale pode subir depois do app (ou trocar de endereço): confere de minuto em minuto.
   function warnNewItems(doc: LedgerDoc): void {
     const { fresh, next } = newlyWaiting(waiting, doc, Date.now());
     waiting = next;
@@ -252,6 +251,7 @@ export function createCelularCore(deps: CelularCoreDeps): CelularCore {
     }
   }
 
+  // A Tailscale pode subir depois do app (ou trocar de endereço): confere de minuto em minuto.
   const timer = setInterval(() => {
     if (auth.enabled) void reconcile();
     // Some items of the box are born with time alone (a letter stuck for 30 min, a delivery stopped for a day).
