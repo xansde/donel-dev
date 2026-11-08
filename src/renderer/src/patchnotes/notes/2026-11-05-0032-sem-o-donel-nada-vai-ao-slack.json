@@ -1,0 +1,4 @@
+{
+  "title": "Sem o Donel, nada vai ao Slack",
+  "text": "Uma sessão na VPS continua rodando mesmo com o Donel fechado no computador. Agora, se ela tentar mandar mensagem no Slack nessa hora, o envio é recusado, porque não dá para conferir a sua carta. A sessão fica sabendo o motivo e espera o Donel voltar."
+}

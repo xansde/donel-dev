@@ -8,6 +8,7 @@
 import { useEffect, useState } from 'react';
 import {
   eventNote,
+  isFrontMark,
   lastDelivery,
   OWN_OPTION,
   recommendedOption,
@@ -560,13 +561,16 @@ export function LedgerCards({
   queue,
   placeName,
   onClose,
+  initialId,
 }: {
   readonly queue: readonly LedgerTask[];
   readonly placeName?: PlaceNameOf;
   /** Absent = the cards ARE the screen (the Oráculo in the center of the main window): no "Fechar", no Esc. */
   readonly onClose?: () => void;
+  /** The card in front when it opens (an item picked in the box "Esperando você"); absent = the first. */
+  readonly initialId?: string;
 }): React.JSX.Element | null {
-  const [selected, setSelected] = useState<string | null>(queue[0]?.id ?? null);
+  const [selected, setSelected] = useState<string | null>(initialId ?? queue[0]?.id ?? null);
   // What the owner is writing on each card, above the card: a new event (his own note, an answer) redraws it.
   const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>({});
 
@@ -588,6 +592,9 @@ export function LedgerCards({
   const task = queue[index]!;
   const delivery = lastDelivery(task);
   const naipe = naipeDoPapel(delivery?.by.kind === 'lugar' ? delivery.by.roleId : undefined);
+  // A new event remounts the card (a new delivery is a new card); the Líder naming the front is no new event for the
+  // owner, so it never throws away what he is typing.
+  const cardKey = `${task.id}:${task.events.filter((event) => !isFrontMark(task, event)).length}`;
   const who = actorLabel(delivery?.by, task.projectPath, placeName);
   const note = deliveryNote(delivery, task.projectPath, placeName);
   const forOwner = task.state === 'aceita' ? undefined : delivery?.forOwner;
@@ -622,13 +629,13 @@ export function LedgerCards({
           ) : null}
         </div>
         {forOwner ? (
-          <CardA key={`${task.id}:${task.events.length}`} task={task} forOwner={forOwner} naipe={naipe} index={index} count={queue.length} who={who} note={note}
+          <CardA key={cardKey} task={task} forOwner={forOwner} naipe={naipe} index={index} count={queue.length} who={who} note={note}
             decide={decide}
             draft={drafts[task.id] ?? ''}
             setDraft={(text) => setDrafts((all) => ({ ...all, [task.id]: text }))}
           />
         ) : (
-          <OldCard key={`${task.id}:${task.events.length}`} task={task} naipe={naipe} index={index} count={queue.length} who={who} note={note} decide={decide} />
+          <OldCard key={cardKey} task={task} naipe={naipe} index={index} count={queue.length} who={who} note={note} decide={decide} />
         )}
       </div>
     </div>

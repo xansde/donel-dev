@@ -8,7 +8,16 @@ import { join } from 'node:path';
 import type { ConfigIoDeps } from '../config-store';
 import { decryptVaultEntry, writeVaultEntry, type SafeStorageLike, type VaultIoDeps } from '../accounts/vault';
 import type { LedgerDoc } from '../../shared/ledger/contract';
-import { isSupabaseUrl, withPlaceMemory, type LedgerMirrorConfigureResult, type LedgerMirrorState, type PlaceInfo, type PlaceInfoOf } from '../../shared/ledger/mirror';
+import {
+  isSupabaseUrl,
+  placesOfDoc,
+  withPlaceMemory,
+  type LedgerMirrorConfigureResult,
+  type LedgerMirrorState,
+  type LedgerPlacesSnapshot,
+  type PlaceInfo,
+  type PlaceInfoOf,
+} from '../../shared/ledger/mirror';
 import { createLedgerMirror, type LedgerMirror, type MirrorSink } from './mirror';
 import { createSupabaseSink } from './supabase-sink';
 
@@ -62,6 +71,8 @@ export interface LedgerMirrorService {
   configure(url: unknown, key: unknown, ownerName?: unknown): Promise<LedgerMirrorConfigureResult>;
   disable(): void;
   syncNow(): Promise<LedgerMirrorState>;
+  /** Ledger v5, fatia 3 — the places by name (the boards, completed by the memory) and the owner's name, for the table. */
+  placesSnapshot(doc: LedgerDoc | null): LedgerPlacesSnapshot;
   dispose(): void;
 }
 
@@ -189,6 +200,7 @@ export function createLedgerMirrorService(deps: LedgerMirrorServiceDeps): Ledger
       await syncAll();
       return state();
     },
+    placesSnapshot: (doc) => ({ ownerName: settings?.ownerName ?? null, places: doc ? placesOfDoc(doc, places()) : {} }),
     dispose: () => mirror.dispose(),
   };
 }

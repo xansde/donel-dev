@@ -1,6 +1,7 @@
-// Painel de progresso do Jobu (owner's ask, 05/11) — one line per front of work (a board of the ledger), its tasks
-// indented under it, each with a bar of estimated progress and an estimated end. Folded by default and silent: it opens
-// by the "Progresso" button in the bubble of the Líder (or the little dot on the Jobu), and remembers that it was open.
+// Painel de progresso do Jobu (owner's ask, 05/11; by front since 07/11) — the owner's asks grouped by front of work,
+// each with its state and who has it, a bar per front, and what ended folded into "N concluídas hoje". Folded by
+// default and silent: it opens by the "Progresso" button in the bubble of the Líder (or the little dot on the Jobu),
+// and remembers that it was open and which fronts the owner folded.
 // The numbers are `jobuProgress` (src/shared/pet/progress.ts); this file only reads the ledger and draws.
 //
 // Always current: the panel is recomputed on every real event it can hear — a write to the ledger (every `tarefa_*`)
@@ -8,11 +9,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { emptyLedgerDoc, type LedgerDoc } from '../../../shared/ledger/contract';
-import { endLabel, jobuProgress, PROGRESS_STEPS, type JobuProgress as Progress, type ProgressBoard, type ProgressTask } from '../../../shared/pet/progress';
+import { dueLabel, jobuProgress, type Front, type FrontTask, type FrontTaskState, type JobuProgress as Progress } from '../../../shared/pet/progress';
 import styles from './JobuProgress.module.css';
 
 const OPEN_KEY = 'donel.pet.progressOpen';
 const SEEN_KEY = 'donel.pet.progressSeenAt';
+const FOLDED_KEY = 'donel.pet.progressFolded';
 
 function readStored(key: string): string | null {
   try {
@@ -104,56 +106,92 @@ export function useJobuProgress(eventKey: string): JobuProgressState {
   return { progress, computedAt, failed, unseen: changedAt !== null && changedAt > seenAt, open, setOpen, markSeen };
 }
 
-function Bar({ steps, total, state }: { readonly steps: number; readonly total: number; readonly state: string }): React.JSX.Element {
-  const pct = total === 0 ? 0 : Math.round((100 * steps) / total);
+const STATE_LABEL: Readonly<Record<FrontTaskState, string>> = {
+  esperando: 'esperando você',
+  travado: 'travado',
+  tocando: 'tocando',
+  parado: 'parado',
+};
+
+function plural(count: number, one: string, many: string): string {
+  return `${count} ${count === 1 ? one : many}`;
+}
+
+function readFolded(): Set<string> {
+  try {
+    const raw = JSON.parse(readStored(FOLDED_KEY) ?? '[]') as unknown;
+    return new Set(Array.isArray(raw) ? raw.filter((name): name is string => typeof name === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+/** The bar of a front: one segment per ask, filled by its steps, colored by its state. */
+function FrontBar({ front }: { readonly front: Front }): React.JSX.Element {
+  const pct = front.totalSteps === 0 ? 0 : Math.round((100 * front.steps) / front.totalSteps);
   return (
-    <span className={styles.bar} role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={steps} aria-valuetext={`${steps} de ${total} etapas`}>
-      <span className={styles.fill} data-state={state} style={{ width: `${pct}%` }} />
+    <span className={styles.bar} role="progressbar" aria-valuemin={0} aria-valuemax={front.totalSteps} aria-valuenow={front.steps} aria-valuetext={`${pct}% das etapas`}>
+      {front.segments.map((segment) => (
+        <span key={segment.id} className={styles.segment} data-state={segment.state} style={{ width: `${(100 * segment.steps) / front.totalSteps}%` }} />
+      ))}
     </span>
   );
 }
 
-function TaskLine({ task, now }: { readonly task: ProgressTask; readonly now: number }): React.JSX.Element {
+function TaskLine({ task, now }: { readonly task: FrontTask; readonly now: number }): React.JSX.Element {
   return (
     <li className={styles.task} data-testid="pet-progress-task" data-state={task.state}>
-      <div className={styles.line}>
+      <span className={styles.dot} data-state={task.state} aria-hidden="true" />
+      <span className={styles.taskBody}>
         <span className={styles.taskTitle} title={task.title}>
           {task.title}
         </span>
-        <span className={styles.end} data-late={task.late ? 'true' : undefined}>
-          ~{endLabel(task.endsAt, now)}
+        <span className={styles.who} data-state={task.state}>
+          {STATE_LABEL[task.state]} · {task.who}
         </span>
-      </div>
-      <Bar steps={task.steps} total={PROGRESS_STEPS} state={task.state} />
-      <div className={styles.meta}>
-        {task.stepLabel}
-        {task.places.length ? ` · ${task.places.join(' → ')}` : ''}
-      </div>
-      <div className={styles.source}>estimado {task.source}</div>
+      </span>
+      <span className={styles.end} data-late={task.late && task.state !== 'esperando' ? 'true' : undefined}>
+        {dueLabel(task.due, now)}
+      </span>
     </li>
   );
 }
 
-function BoardLine({ board, now }: { readonly board: ProgressBoard; readonly now: number }): React.JSX.Element {
+function FrontLine({ front, now, folded, onToggle }: { readonly front: Front; readonly now: number; readonly folded: boolean; readonly onToggle: () => void }): React.JSX.Element {
+  const { counts } = front;
+  const chips = [
+    counts.esperando ? <span key="e" className={styles.waiting}>{counts.esperando} esperando você</span> : null,
+    counts.travado ? <span key="t" className={styles.stuck}>{plural(counts.travado, 'travado', 'travados')}</span> : null,
+    counts.tocando ? <span key="o">{counts.tocando} tocando</span> : null,
+    counts.parado ? <span key="p">{plural(counts.parado, 'parado', 'parados')}</span> : null,
+    front.doneToday ? <span key="d">{plural(front.doneToday, 'concluída hoje', 'concluídas hoje')}</span> : null,
+  ].filter((chip) => chip !== null);
+  const pct = front.totalSteps === 0 ? 0 : Math.round((100 * front.steps) / front.totalSteps);
   return (
     <li className={styles.board} data-testid="pet-progress-board">
-      <div className={styles.line}>
-        <span className={styles.boardTitle} title={board.projectPath}>
-          {board.title}
+      <button type="button" className={styles.frontHead} aria-expanded={!folded} onClick={onToggle}>
+        <span className={styles.chevron} aria-hidden="true">
+          {folded ? '▸' : '▾'}
         </span>
-        <span className={styles.end} data-late={board.late ? 'true' : undefined}>
-          ~{endLabel(board.endsAt, now)}
-        </span>
-      </div>
-      <Bar steps={board.steps} total={board.totalSteps} state="em-execucao" />
+        <span className={styles.boardTitle}>{front.name || 'Sem frente'}</span>
+        <span className={styles.end}>{pct}%</span>
+      </button>
+      <FrontBar front={front} />
       <div className={styles.meta}>
-        {board.tasks.length} {board.tasks.length === 1 ? 'tarefa rolando' : 'tarefas rolando'} · {board.steps} de {board.totalSteps} etapas · fim = a última tarefa
-      </div>
-      <ul className={styles.tasks}>
-        {board.tasks.map((task) => (
-          <TaskLine key={task.id} task={task} now={now} />
+        {chips.map((chip, index) => (
+          <span key={index}>
+            {index > 0 ? ' · ' : ''}
+            {chip}
+          </span>
         ))}
-      </ul>
+      </div>
+      {folded ? null : (
+        <ul className={styles.tasks}>
+          {front.tasks.map((task) => (
+            <TaskLine key={task.id} task={task} now={now} />
+          ))}
+        </ul>
+      )}
     </li>
   );
 }
@@ -161,24 +199,61 @@ function BoardLine({ board, now }: { readonly board: ProgressBoard; readonly now
 /** The panel itself, in the body of the bubble of the Líder. */
 export function JobuProgressPanel({ state }: { readonly state: JobuProgressState }): React.JSX.Element {
   const { progress, computedAt, failed, markSeen } = state;
+  const [folded, setFolded] = useState(readFolded);
   // Looking at the panel is seeing what changed: the dot on the Jobu goes.
   useEffect(() => markSeen(), [markSeen]);
+  const toggle = (name: string): void =>
+    setFolded((previous) => {
+      const next = new Set(previous);
+      if (!next.delete(name)) next.add(name);
+      writeStored(FOLDED_KEY, JSON.stringify([...next]));
+      return next;
+    });
+  const { counts, doneToday } = progress;
   return (
     <div className={styles.panel} data-testid="pet-progress">
       <div className={styles.head}>
-        <span>Progresso</span>
+        <span>Progresso · seus pedidos</span>
         <span className={styles.stamp}>{failed ? 'não consegui ler o Oráculo' : `atualizado às ${clock(computedAt)}`}</span>
       </div>
-      {progress.boards.length === 0 ? (
-        <p className={styles.empty}>Nada rodando agora.</p>
+      {progress.fronts.length === 0 ? (
+        <p className={styles.empty}>Nenhum pedido seu em aberto.</p>
       ) : (
-        <ul className={styles.boards}>
-          {progress.boards.map((board) => (
-            <BoardLine key={board.projectPath} board={board} now={computedAt} />
-          ))}
-        </ul>
+        <>
+          <div className={styles.summary}>
+            {(['esperando', 'travado', 'tocando', 'parado'] as const).map((key) => (
+              <span key={key}>
+                <span className={styles.dot} data-state={key} aria-hidden="true" />
+                <b>{counts[key]}</b> {key === 'esperando' ? 'esperando você' : key === 'travado' ? 'travados' : key === 'parado' ? 'parados' : 'tocando'}
+              </span>
+            ))}
+          </div>
+          <ul className={styles.boards}>
+            {progress.fronts.map((front) => (
+              <FrontLine key={front.name} front={front} now={computedAt} folded={folded.has(front.name)} onToggle={() => toggle(front.name)} />
+            ))}
+          </ul>
+        </>
       )}
-      <p className={styles.how}>Só o que está rolando: a tarefa aceita sai na hora. A barra conta as etapas da tarefa: assumida, entregue, aceita. A data vem do prazo enquanto ninguém assumiu, e do ritmo das etapas depois.</p>
+      {doneToday.length > 0 ? (
+        <details className={styles.done}>
+          <summary>{plural(doneToday.length, 'concluída hoje', 'concluídas hoje')}</summary>
+          <ul className={styles.tasks}>
+            {doneToday.map((task) => (
+              <li key={task.id} className={styles.task}>
+                <span className={styles.dot} data-state="concluida" aria-hidden="true" />
+                <span className={styles.taskBody}>
+                  <span className={styles.taskTitle} title={task.title}>
+                    {task.title}
+                  </span>
+                  <span className={styles.who}>{task.front || 'Sem frente'}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
+      <p className={styles.how}>Só os seus pedidos, pela frente que o Líder deu a cada um. A barra conta as etapas dos pedidos da frente (assumido, entregue, aceito), contando os aceitos hoje. Parado: ninguém assumiu, ninguém deu notícia em um dia, ou a entrega espera conferência há 12 h.</p>
     </div>
   );
 }

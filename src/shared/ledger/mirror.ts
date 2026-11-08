@@ -13,13 +13,16 @@
 import {
   ASKED_BY_OWNER,
   awaitsSend,
+  doneByOf,
   eventNote,
+  frenteOf,
   isAgentBotRecord,
   isCancelled,
   lastDecision,
   lastDelivery,
   requestedByOf,
   slackDestinationLabel,
+  transfersOf,
   viewState,
   waitsForOwner,
   type LedgerActor,
@@ -27,6 +30,7 @@ import {
   type LedgerTask,
   type LedgerViewState,
 } from './contract';
+import { CLOSING_LABELS, closingOf, withoutMarks } from './closing';
 import { deliveryNote } from './labels';
 import { LEADER_OF_ALL } from '../mindscape/leader';
 
@@ -37,6 +41,8 @@ import { LEADER_OF_ALL } from '../mindscape/leader';
 export interface TarefaRow {
   readonly quadro: string;
   readonly titulo: string;
+  /** 07/11 — the front of work (`frenteOf`); `null` = "sem frente". */
+  readonly frente: string | null;
   /** In Portuguese: aberta, em execução, entregue, aceita, aceita, esperando envio, rejeitada, cancelada. */
   readonly estado: string;
   readonly esperando_dono: boolean;
@@ -171,6 +177,46 @@ export function withPlaceMemory(live: () => PlaceInfoOf | undefined, memory: Map
   };
 }
 
+/**
+ * Ledger v5, fatia 3 — the names of the places a ledger mentions, as plain data for the renderer (the table of the
+ * Oráculo names them as the mirror does): projectPath → placeId → what the board, or the mirror's memory, says.
+ */
+export type LedgerPlacesMap = Readonly<Record<string, Readonly<Record<string, PlaceInfo>>>>;
+
+/** Every place `doc` mentions (owner, authors, transfers, who did a delivery), looked up once each. */
+export function placesOfDoc(doc: LedgerDoc, places: PlaceInfoOf): LedgerPlacesMap {
+  const out: Record<string, Record<string, PlaceInfo>> = {};
+  const add = (projectPath: string, placeId: string | undefined): void => {
+    if (!placeId) return;
+    const board = (out[projectPath] ??= {});
+    if (placeId in board) return;
+    const info = places(projectPath, placeId);
+    if (info) board[placeId] = { ...(info.roleId ? { roleId: info.roleId } : {}), ...(info.name ? { name: info.name } : {}) };
+  };
+  for (const task of Object.values(doc.tasks)) {
+    add(task.projectPath, task.ownerPlaceId);
+    for (const event of task.events) {
+      if (event.by.kind === 'lugar') add(task.projectPath, event.by.placeId);
+      add(task.projectPath, doneByOf(event));
+    }
+    for (const transfer of transfersOf(task)) {
+      add(task.projectPath, transfer.from);
+      add(task.projectPath, transfer.to);
+    }
+  }
+  return out;
+}
+
+/** The lookup over a `LedgerPlacesMap`; `liveName` (the renderer's own session names) fills a name the map lacks. */
+export function placeInfoOfMap(map: LedgerPlacesMap, liveName?: (projectPath: string, placeId: string) => string | undefined): PlaceInfoOf {
+  return (projectPath, placeId) => {
+    const kept = map[projectPath]?.[placeId];
+    const name = kept?.name ?? liveName?.(projectPath, placeId)?.trim();
+    if (!kept?.roleId && !name) return undefined;
+    return { ...(kept?.roleId ? { roleId: kept.roleId } : {}), ...(name ? { name } : {}) };
+  };
+}
+
 const ROLE_NAMES: Readonly<Record<string, string>> = {
   dev: 'Dev',
   revisor: 'Revisor',
@@ -193,7 +239,7 @@ function roleName(roleId: string | undefined): string | undefined {
 }
 
 /** "Dev · Mindscape de cadeiras": the role, then the name (once, when the name already starts with the role). */
-function placeLabel(projectPath: string, placeId: string, roleHint: string | undefined, places: PlaceInfoOf | undefined): string {
+export function placeLabel(projectPath: string, placeId: string, roleHint: string | undefined, places: PlaceInfoOf | undefined): string {
   if (placeId === LEADER_OF_ALL) return 'Líder único';
   const info = places?.(projectPath, placeId);
   const role = roleName(info?.roleId ?? roleHint);
@@ -204,7 +250,7 @@ function placeLabel(projectPath: string, placeId: string, roleHint: string | und
   return `${role} · ${name}`;
 }
 
-function actorName(actor: LedgerActor | undefined, projectPath: string, places: PlaceInfoOf | undefined, ownerName: string): string {
+export function actorName(actor: LedgerActor | undefined, projectPath: string, places: PlaceInfoOf | undefined, ownerName: string): string {
   if (!actor) return 'não registrado';
   if (actor.kind === 'dono') return ownerName;
   return placeLabel(projectPath, actor.placeId, actor.roleId, places);
@@ -306,20 +352,25 @@ export function tarefaRow(doc: LedgerDoc, task: LedgerTask, places: PlaceInfoOf 
   const nameOf = (projectPath: string, placeId: string): string | undefined => places?.(projectPath, placeId)?.name;
   const gist = delivery ? (delivery.forOwner?.summary ?? deliveryNote(delivery, project, nameOf) ?? texts[0] ?? null) : null;
   const decidedBy = decision ? actorName(decision.by, project, places, ownerName) : null;
+  // Ledger v5, fatia 4: a "cancel" that was really done, sent or replaced says so (read from the reason, never written).
+  const closing = closingOf(task);
   const decisionLabel = decision
-    ? isCancelled(task)
-      ? `cancelada por ${decidedBy}`
-      : `${decision.kind} por ${decidedBy}${decision.option ? ` · ${decision.option}` : ''}`
+    ? closing && closing.kind !== 'cancelada'
+      ? `${closing.kind === 'substituida' && closing.replacedBy ? `substituída pela ${closing.replacedBy}` : CLOSING_LABELS[closing.kind]} · fechada por ${decidedBy}`
+      : isCancelled(task)
+        ? `cancelada por ${decidedBy}`
+        : `${decision.kind} por ${decidedBy}${decision.option ? ` · ${decision.option}` : ''}`
     : null;
   const reason = decision ? (eventNote(decision) ?? null) : null;
   const state = viewState(task);
   return {
     quadro: boardName(project),
     titulo: mask('titulo', task.title ?? task.request.split('\n')[0]!.slice(0, 60)),
-    estado: awaitsSend(task) ? 'aceita, esperando envio' : STATE_LABELS[state],
+    frente: frenteOf(task) ?? null,
+    estado: awaitsSend(task) ? 'aceita, esperando envio' : closing ? CLOSING_LABELS[closing.kind] : STATE_LABELS[state],
     esperando_dono: waitsForOwner(doc, task),
     quem_pediu: mask('quem_pediu', whoAsked(task, places, ownerName)),
-    pedido: mask('pedido', task.request),
+    pedido: mask('pedido', withoutMarks(task.request)),
     quem_faz_agora: placeLabel(project, task.ownerPlaceId, ownerRoleFromSteps(task), places),
     quem_criou: actorName(created?.by, project, places, ownerName),
     risco: task.risk,
@@ -353,7 +404,16 @@ export const LEDGER_MIRROR_CHANNELS = {
   configure: 'ledger-mirror:configure',
   disable: 'ledger-mirror:disable',
   syncNow: 'ledger-mirror:sync-now',
+  /** Ledger v5, fatia 3 — read only: the names of the places of the ledger and the owner's name (`LedgerPlacesSnapshot`). */
+  places: 'ledger-mirror:places',
 } as const;
+
+/** What the table of the Oráculo needs to name people and places as the mirror does. */
+export interface LedgerPlacesSnapshot {
+  /** The owner's name set in the mirror ("Alexandre"); `null` = `DEFAULT_OWNER_NAME`. */
+  readonly ownerName: string | null;
+  readonly places: LedgerPlacesMap;
+}
 
 /** What the Preferences show. The key never leaves the main: only whether it is in the vault. */
 export interface LedgerMirrorState {
@@ -377,6 +437,8 @@ export interface DonelLedgerMirrorApi {
   configure(url: string, key: string, ownerName?: string): Promise<LedgerMirrorConfigureResult>;
   disable(): Promise<LedgerMirrorState>;
   syncNow(): Promise<LedgerMirrorState>;
+  /** Ledger v5, fatia 3 — read only; works with the mirror off too. */
+  places(): Promise<LedgerPlacesSnapshot>;
 }
 
 /** `https://<ref>.supabase.co` — the only shape accepted (no path, no query). */

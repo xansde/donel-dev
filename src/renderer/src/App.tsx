@@ -378,6 +378,19 @@ export function App(): React.JSX.Element {
   const [chatPtyIds, setChatPtyIds] = useState<Record<string, string>>({});
   // Aba cujo processo saiu (FR-034): alimenta a barra "Sessão encerrada" do chat.
   const [tabExits, setTabExits] = useState<Record<string, { exitCode: number | null }>>({});
+  // Sessões remotas — ptyIds whose ssh dropped while the session lives on the place ("sem ligação"; main/remote-link.ts).
+  const [linkLostPtys, setLinkLostPtys] = useState<Record<string, true>>({});
+  useEffect(
+    () =>
+      window.donel.pty.onLink?.((ptyId, linked) => {
+        setLinkLostPtys((prev) => (linked ? omitKey(prev, ptyId) : prev[ptyId] ? prev : { ...prev, [ptyId]: true }));
+      }),
+    [],
+  );
+  const tabLinkLost = (tabId: string): boolean => {
+    const ptyId = chatPtyIds[tabId];
+    return tabExits[tabId] === undefined && ptyId !== undefined && linkLostPtys[ptyId] === true;
+  };
   const tabIdCounter = useRef(0);
   // T1221 (011-contas-e-provedores, etapa 2) — `AccountsPanel` substitui o
   // `ProfileSwitcher` (dropdown de perfis) como fonte da statusbar/badge:
@@ -2068,13 +2081,14 @@ export function App(): React.JSX.Element {
             ...(!semaphore || semaphore.unconfirmed ? { unconfirmed: true } : {}),
             ...(semaphore?.pendingKinds ? { pendingKinds: semaphore.pendingKinds } : {}),
             ...(semaphore?.turnFailure ? { turnFailure: semaphore.turnFailure } : {}),
+            ...(tabLinkLost(tab.id) ? { linkLost: true } : {}),
             ...(engine ? { engine } : {}),
             ...(meter.usedTokens !== null ? { meter: { usedTokens: meter.usedTokens, maxTokens: meter.contextZone } } : {}),
           },
         ];
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tabs, semaphoreStates, appConfig, backgroundByPty, chatPtyIds, tabExits, statusLines, sessionModels, contextTokens, sessionModelEffort, providers],
+    [tabs, semaphoreStates, appConfig, backgroundByPty, chatPtyIds, tabExits, linkLostPtys, statusLines, sessionModels, contextTokens, sessionModelEffort, providers],
   );
   // Mindscape, fatia 02 — last visit of the owner to each session, in memory
   // only (not persisted: the app is born without tabs). Stamped when a tab
@@ -2418,6 +2432,7 @@ export function App(): React.JSX.Element {
     tabs: () => tabsRef.current,
     tabOfPty: (ptyId) => tabsRef.current.find((tab) => chatPtyIds[tab.id] === ptyId),
     stateOf: (tabId) => (tabExits[tabId] !== undefined || !tabsRef.current.some((tab) => tab.id === tabId) ? undefined : (semaphoreStates[tabId]?.state ?? 'working')),
+    linkLost: (tabId) => tabLinkLost(tabId),
     roles: () => roles,
     openSession: (request) => {
       const defaults = appConfig?.launcherDefaults;
@@ -2881,6 +2896,10 @@ export function App(): React.JSX.Element {
     return true;
   };
   const hiddenFromTabBar = (tab: TabState): boolean => oracleLayoutOn && isLeaderOfAllTab(tab) && (oracleShown || tab.id !== activeTabId);
+  // Ledger v5, fatia 1 — the orphans of the box "Esperando você" read the places as `tarefa_listar` does; before the
+  // board loads every place would look closed, so no orphan is called until then.
+  const ledgerPlaceStatesOf = (projectPaths: readonly string[]): Map<string, Map<string, string>> =>
+    mindscapeLoaded ? agentBridgeRef.current.placeStates(projectPaths) : new Map();
   const oraclePlaceName: PlaceNameOf = (projectPath, placeId) => {
     const card = mindscape.doc.boards[projectPath]?.cards[placeId];
     if (card?.kind !== 'session' || !card.sessionId) return undefined;
@@ -3136,6 +3155,7 @@ export function App(): React.JSX.Element {
             onStartPlace={handleMindscapeStartPlace}
             onManageRoles={() => setRolesEditorOpen(true)}
             onDefineChair={setChairRoleId}
+            ledgerPlaceStatesOf={ledgerPlaceStatesOf}
           />
         ) : null}
 
@@ -3285,7 +3305,7 @@ export function App(): React.JSX.Element {
               o path cru do "consultar artefato" (Zona 2, acima) parecia ser
               o header. Uso geral mantém a condição antiga (nome+path só com
               aba aberta, lote 8). */}
-          {oracleShown ? <OracleCenter placeName={oraclePlaceName} /> : null}
+          {oracleShown ? <OracleCenter placeName={oraclePlaceName} placeStatesOf={ledgerPlaceStatesOf} /> : null}
           {!oracleShown && listedTabIds.size > 0 ? (
             <div className={styles.sessionHeader} data-testid="session-header">
               {/* Spec 010 / B6 — o breadcrumb passou a ser o dos nós novos:

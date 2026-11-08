@@ -118,6 +118,8 @@ export interface AgentBridgePorts {
   tabOfPty(ptyId: string): BridgeTab | undefined;
   /** Live state of an open tab; `undefined` = the process left. */
   stateOf(tabId: string): SemaphoreState | undefined;
+  /** Sessões remotas — the ssh of that tab dropped and its process lives on the place ("sem ligação"). */
+  linkLost?(tabId: string): boolean;
   roles(): readonly SessionRole[];
   /** Opens the tab of a place without stealing the focus and sends its first message; returns the tab id. */
   openSession(request: OpenSessionRequest): string;
@@ -156,6 +158,9 @@ export interface AgentBridgePorts {
   /** t-b3b26e60 — lines for `<userData>/rotinas/faxineiro.log` (each close the Faxineiro asks for, each wake). */
   logFaxineiro?(entries: readonly FaxineiroLogEntry[]): void;
 }
+
+/** Sessões remotas — the process lives on the place but its ssh dropped (main/remote-link.ts); never "fechada". */
+const LINK_LOST = 'sem ligação';
 
 const STATE_NAMES: Readonly<Record<SemaphoreState, string>> = {
   working: 'trabalhando',
@@ -277,6 +282,22 @@ export class AgentBridge {
         void this.passOn([{ projectPath, placeId: place.id, gone: 'fechada' }]);
       }, PASS_ON_GRACE_MS),
     );
+  }
+
+  /**
+   * The state of every place of each board in `pastas` (`sessao_listar`'s `estado`), by the folder asked. A folder that
+   * is no board stays out (unknown). The ledger's orphans read it: `tarefa_listar` through the main, the box directly.
+   */
+  placeStates(pastas: readonly string[]): Map<string, Map<string, string>> {
+    const states = new Map<string, Map<string, string>>();
+    for (const pasta of pastas) {
+      const match = resolveBoard(this.boards(), pasta);
+      if (!match.ok) continue;
+      const board = this.board(match.board.projectPath);
+      const places = board ? Object.values(board.cards).filter((card): card is SessionPlaceCard => card.kind === 'session') : [];
+      states.set(pasta, new Map(places.map((place) => [place.id, this.stateName(match.board.projectPath, place)])));
+    }
+    return states;
   }
 
   /** Places of every board that never started: their tasks pass on once the main's grace is over (`ownerGone`). */
@@ -504,6 +525,7 @@ export class AgentBridge {
     return placeState(card, (sessionId) => {
       const tab = this.ports.tabs().find((candidate) => candidate.cwd === projectPath && candidate.claudeSessionId === sessionId);
       const state = tab ? this.ports.stateOf(tab.id) : undefined;
+      if (tab && state !== undefined && this.ports.linkLost?.(tab.id)) return LINK_LOST;
       if (tab && state === 'working' && this.ports.unconfirmed(tab.id)) return this.startState(tab.id);
       return state ? STATE_NAMES[state] : undefined;
     });
@@ -756,13 +778,7 @@ export class AgentBridge {
       // Only ids and states, for the ledger's orphan count: the same for every caller (no reach in it). A folder that is
       // no board stays out (unknown).
       const states: Record<string, { id: string; estado: string }[]> = {};
-      for (const pasta of call.pastas) {
-        const match = resolveBoard(this.boards(), pasta);
-        if (!match.ok) continue;
-        const board = this.board(match.board.projectPath);
-        const places = board ? Object.values(board.cards).filter((card): card is SessionPlaceCard => card.kind === 'session') : [];
-        states[pasta] = places.map((place) => ({ id: place.id, estado: this.stateName(match.board.projectPath, place) }));
-      }
+      for (const [pasta, places] of this.placeStates(call.pastas)) states[pasta] = [...places].map(([id, estado]) => ({ id, estado }));
       return { ok: true, text: json(states) };
     }
 
@@ -814,6 +830,7 @@ export class AgentBridge {
           stateOf: (sessionId) => {
             const tab = this.ports.tabs().find((candidate) => candidate.cwd === projectPath && candidate.claudeSessionId === sessionId);
             const state = tab ? this.ports.stateOf(tab.id) : undefined;
+            if (tab && state !== undefined && this.ports.linkLost?.(tab.id)) return LINK_LOST;
             return state ? STATE_NAMES[state] : undefined;
           },
         });
@@ -898,6 +915,7 @@ export class AgentBridge {
           );
         const target = this.tabOfPlace(projectPath, place.id);
         if (!target) return fail(`"${place.id}" não está aberta agora.`);
+        if (this.ports.linkLost?.(target.id)) return fail(`"${place.id}" está sem ligação: o processo dela segue vivo no lugar remoto e o app está religando. Tente de novo em instantes; não abra outra no lugar dela.`);
         if (scope.leader) this.leaderHears.add(target.id);
         // 05/11 — "Entregue" only once the CLI of there took it: the answer waits for the send to end.
         const outcome = await this.ports.deliverLine(target.id, `◆ De ${signature}: ${call.texto}`, DELIVERY_WAIT_MS, 'session');
@@ -922,7 +940,8 @@ export class AgentBridge {
         const permission = 'ela tem um pedido de permissão aberto na tela; o dono responde antes.';
         if (this.ports.permissionOnScreen(target.id)) return no(permission);
         let cut = false;
-        if (this.ports.stateOf(target.id) === 'working') {
+        // "Sem ligação": no line reaches it, so there is no pause to wait for; closing ends its tmux on the place.
+        if (this.ports.stateOf(target.id) === 'working' && !this.ports.linkLost?.(target.id)) {
           this.ports.sendLine(target.id, `◆ De ${signature}: pause agora e não comece nada novo. Esta sessão vai ser fechada em instantes (o dono pode retomá-la depois).`);
           const deadline = Date.now() + CLOSE_WAIT_MS;
           while (this.ports.stateOf(target.id) === 'working' && Date.now() < deadline) {
