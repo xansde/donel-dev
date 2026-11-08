@@ -293,10 +293,10 @@ function markOf(text: string | undefined): { tag: string; rest: string } | null 
 }
 
 /** The text of a birth event (or of a front mark): `{}` when there is nothing to mark. */
-function birthTagsOf(replaces: string | undefined, requestedBy: string | undefined, front?: string): { text?: string } {
+function birthTagsOf(replaces: string | undefined, requestedBy: string | undefined, front?: string, lowAsked?: boolean): { text?: string } {
   const asked = requestedBy ? cleanAskedBy(requestedBy) : '';
   const named = front ? cleanFrente(front) : '';
-  const tags = [...(replaces ? [`substitui ${replaces}`] : []), ...(asked ? [`${ASKED_BY}${asked}`] : []), ...(named ? [`${FRONT}${named}`] : [])];
+  const tags = [...(replaces ? [`substitui ${replaces}`] : []), ...(asked ? [`${ASKED_BY}${asked}`] : []), ...(named ? [`${FRONT}${named}`] : []), ...(lowAsked ? [LOW_ASKED] : [])];
   return tags.length ? { text: tags.reduceRight((rest, tag) => withMark(tag, rest), '') } : {};
 }
 
@@ -341,6 +341,13 @@ function criadaTags(task: LedgerTask): string[] {
 }
 
 const TAG_SEPARATOR = ' · ';
+/** 08/11 — the creator asked low and the rule made it high (`lowRiskAsked`). */
+const LOW_ASKED = 'risco baixo pedido';
+
+/** Whoever created the task asked for low risk and the rule forced it high: a transfer out of the chain gives it back. */
+export function lowRiskAsked(task: LedgerTask): boolean {
+  return tagsOf(task.events[0]?.text).includes(LOW_ASKED);
+}
 const ASKED_BY = 'pedido por ';
 /** `quemPediu` = the owner: the mirror writes the owner's name. */
 export const ASKED_BY_OWNER = 'dono';
@@ -481,6 +488,8 @@ export type LedgerOp =
       readonly requestedBy?: string;
       /** 07/11 — the front of work (`frenteOf`); missing = the replaced task's, else none. */
       readonly frente?: string;
+      /** 08/11 — low was asked and the rule forced high: kept in the birth mark, so a transfer can give low back. */
+      readonly lowAsked?: true;
     }
   /** 07/11 — the Líder (or the owner) names the front of a task already made, and who asked, if it says. */
   | { readonly op: 'frente'; readonly id: string; readonly frente: string; readonly requestedBy?: string }
@@ -507,7 +516,15 @@ export type LedgerOp =
    * main saw that the owner place is gone (`ownerGone`: closed, out of the board, never started), the place that
    * takes the work over passing it to itself. A running task goes back to `aberta`, so the new owner takes it.
    */
-  | { readonly op: 'transferir'; readonly id: string; readonly to: string; readonly reason: string; readonly ownerGone?: boolean }
+  | {
+      readonly op: 'transferir';
+      readonly id: string;
+      readonly to: string;
+      readonly reason: string;
+      readonly ownerGone?: boolean;
+      /** 08/11 — the risk recalculated for the new owner by whoever knows the board (`ledger-store`); absent = kept. */
+      readonly risk?: LedgerRisk;
+    }
   /**
    * 06/11 — the task stops for good (a letter replaced by a new one, work nobody will do). The Líder, the owner or the
    * owner place; any task not closed, and an accepted Slack letter never sent. It ends `rejeitada` (v4 reads it and a
@@ -585,7 +602,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       risk: op.risk,
       state: 'aberta',
       createdAt: ctx.now,
-      events: [{ kind: 'criada', at: ctx.now, by: actor, ...birthTagsOf(replaced?.id, op.requestedBy, op.frente?.trim() || (replaced && frenteOf(replaced))) }],
+      events: [{ kind: 'criada', at: ctx.now, by: actor, ...birthTagsOf(replaced?.id, op.requestedBy, op.frente?.trim() || (replaced && frenteOf(replaced)), op.lowAsked === true && op.risk === 'alto') }],
     };
     if (!replaced) return { ok: true, doc: withTask(doc, task), task };
     // One write: the new task and the old one cancelled, or neither.
@@ -712,7 +729,10 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       if (!may)
         return fail(`Só o Líder, o dono, o lugar dono (${task.ownerPlaceId}) ou, com o lugar dono fechado ou fora do quadro, quem assume o trabalho passa a tarefa adiante.`);
       const state: LedgerTaskState = task.state === 'em-execucao' ? 'aberta' : task.state;
-      return done({ ...step(task, state, { kind: 'criada', at: ctx.now, by: actor, text: withMark(`transferida de ${task.ownerPlaceId} para ${to}`, reason) }), ownerPlaceId: to });
+      const risk = op.risk ?? task.risk;
+      // The transfer mark is parsed as is (`transfersOf`): the risk change goes in the reason, never in the mark.
+      const note = risk === task.risk ? reason : `${reason} (risco passou a ${risk})`;
+      return done({ ...step(task, state, { kind: 'criada', at: ctx.now, by: actor, text: withMark(`transferida de ${task.ownerPlaceId} para ${to}`, note) }), ownerPlaceId: to, risk });
     }
 
     case 'frente': {
