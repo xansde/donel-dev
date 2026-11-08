@@ -3,7 +3,7 @@ import type { SelectOption } from '@donel-dev/design-system';
 import { useEffect, useState, type CSSProperties } from 'react';
 import type { ProviderSummaryDto } from '../../shared';
 import type { EffortLevel, ModelAlias, PermissionMode } from '../../shared/commandBuilder';
-import { MAX_ROLE_GUIDANCE_CHARS, MAX_ROLE_NAME_CHARS, ROLE_COLORS, roleColorVar, roleIdFromName, type RoleColor, type RoleScope, type SessionRole } from '../../shared/roles';
+import { factoryRole, MAX_ROLE_GUIDANCE_CHARS, MAX_ROLE_NAME_CHARS, ROLE_COLORS, roleColorVar, roleIdFromName, type RoleColor, type RoleScope, type SessionRole } from '../../shared/roles';
 import styles from './RolesEditor.module.css';
 
 // Item 12b — the simple screen to create and edit roles: the text (guidance) and the suggestions.
@@ -204,6 +204,9 @@ export function RolesEditor({ open, roles, providers, onClose, onSaved, initialR
 
       <label className={styles.field}>
         <span className={styles.label}>Orientação</span>
+        {draft.id !== null && factoryRole(draft.id) ? (
+          <span className={styles.note}>A parte de fábrica deste papel se atualiza sozinha a cada versão; o que você acrescentar ou mudar aqui vale como complemento.</span>
+        ) : null}
         <textarea
           className={styles.guidance}
           value={draft.guidance}
