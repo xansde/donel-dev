@@ -1,0 +1,4 @@
+{
+  "title": "Uma sessão daqui abre sessões na VPS",
+  "text": "Uma sessão que roda neste computador agora pode abrir uma sessão com papel na VPS (ou o contrário), em vez de só no mesmo lugar onde ela roda. Ela vê os lugares disponíveis e escolhe pelo nome."
+}

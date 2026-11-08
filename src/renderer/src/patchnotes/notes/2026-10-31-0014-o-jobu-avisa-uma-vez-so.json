@@ -1,0 +1,4 @@
+{
+  "title": "O Jobu avisa uma vez só",
+  "text": "Ele não avisa mais a cada agente em segundo plano que termina: fica lendo enquanto os agentes trabalham e diz \"terminou\" quando a sessão termina de fato."
+}

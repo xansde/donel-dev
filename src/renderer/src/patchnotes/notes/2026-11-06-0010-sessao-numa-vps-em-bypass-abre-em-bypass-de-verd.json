@@ -1,0 +1,4 @@
+{
+  "title": "Sessão numa VPS em bypass abre em bypass de verdade",
+  "text": "Quando uma sessão aberta num lugar remoto sobe no modo bypassPermissions, o lugar agora recebe o que o claude precisa para aceitar esse modo sem pedir confirmação, inclusive quando a VPS roda como root. Antes, o claude de lá podia recusar o bypass."
+}

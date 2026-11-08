@@ -1,0 +1,4 @@
+{
+  "title": "O Enter do app não leva o que você digitou junto",
+  "text": "Se você escrever na caixa de uma sessão logo depois que chegou uma mensagem de outra sessão, o app não aperta mais o Enter por ela: sua digitação não sai misturada com a mensagem. E a sessão que mandou ouve que não deve repetir enquanto a primeira ainda não entrou, para nada chegar duas vezes."
+}
