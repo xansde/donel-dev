@@ -19,6 +19,7 @@ import {
   type LedgerTask,
   type LedgerVisual,
 } from '../../shared/ledger/contract';
+import { isProgressEvent } from '../../shared/ledger/andamento';
 import { actorLabel, deliveryNote, naipeDoPapel, reciboDe, type PlaceNameOf } from '../../shared/ledger/labels';
 import type { CardWriter } from '../ledger-card-writer';
 import type { LedgerService } from '../ledger-store';
@@ -115,12 +116,13 @@ function provaCelular(proof: LedgerProof, index: number): ProvaCelular {
 function conversaDe(task: LedgerTask, quem: string): FalaCelular[] {
   const firstDelivery = task.events.find((event) => event.kind === 'entregue');
   return task.events.flatMap((event): FalaCelular[] => {
-    if (event.kind === 'comentada' && event.text) {
+    // A session's progress record (08/11) is a `comentada` too, but never the owner's words.
+    if (event.kind === 'comentada' && event.text && !isProgressEvent(event)) {
       const fala: FalaCelular = { de: 'voce', texto: event.text, em: new Date(event.at).toISOString(), recibo: reciboDe(event.deliveredTo, quem, event.at) };
       return [event.requestId ? { ...fala, pedidoId: event.requestId } : fala];
     }
     // A reentrega (depois do que o dono escreveu) é a resposta de quem fez.
-    if (event.kind === 'entregue' && event !== firstDelivery && task.events.some((other) => other.kind === 'comentada' && other.at <= event.at)) {
+    if (event.kind === 'entregue' && event !== firstDelivery && task.events.some((other) => other.kind === 'comentada' && !isProgressEvent(other) && other.at <= event.at)) {
       const texto = event.forOwner?.summary ?? eventNote(event);
       return texto ? [{ de: 'entrega', texto, em: new Date(event.at).toISOString() }] : [];
     }

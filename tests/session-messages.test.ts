@@ -41,6 +41,8 @@ function team(state: SemaphoreState) {
     remoteLabel: (id) => id,
     remotes: () => [],
     projects: () => [],
+    // The old mode (08/11, Preferências): the "◆ … terminou" in the chat.
+    turnNotices: () => 'chat',
   };
   return { bridge: new AgentBridge(ports), sent };
 }

@@ -5,6 +5,7 @@
 // What the mirror has not and the table adds, all derived: "com quem está" (the next step, in words), the filters,
 // the search text and the timeline of the side panel.
 
+import { isProgressEvent } from './andamento';
 import {
   awaitsSend,
   doneByOf,
@@ -187,7 +188,7 @@ export function timelineOf(task: LedgerTask, places: PlaceInfoOf | undefined, ow
       case 'conferida':
         return withNote(`Conferida por ${who(event)}`);
       case 'comentada':
-        return withNote(`${who(event)} escreveu na carta`);
+        return withNote(isProgressEvent(event) ? `Andamento de ${who(event)}` : `${who(event)} escreveu na carta`);
       case 'enviada':
         return withNote(`Envio ao Slack (${who(event)})`);
     }
