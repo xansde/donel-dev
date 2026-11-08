@@ -2395,7 +2395,9 @@ function registerConfigIpcHandlers(): void {
   /** Onde o Líder roda — só lembra; o renderer muda o Líder de lugar na próxima mensagem pelo Jobu. */
   ipcMain.handle(CONFIG_CHANNELS.setLeaderPrefs, (_event, prefs: Partial<LeaderPrefs>): AppConfigDto => {
     const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
-    appConfig = { ...appConfig, leader: sanitizeLeaderPrefs({ ...appConfig.leader, ...patch }, appConfig.leader) };
+    // A `where` from Preferences is the owner's choice: marked, so a 'local' he picks is never read as the old default.
+    const chosen = typeof patch.where === 'string' ? { chosen: true } : {};
+    appConfig = { ...appConfig, leader: sanitizeLeaderPrefs({ ...appConfig.leader, ...patch, ...chosen }, appConfig.leader) };
     persistAppConfig();
     return toAppConfigDto(appConfig);
   });
