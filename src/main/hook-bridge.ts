@@ -443,7 +443,9 @@ export function createHookBridge(options: HookBridgeOptions = {}): HookBridge {
       const state = byPty.get(ptyId);
       if (!state) return;
       byPty.delete(ptyId);
-      byToken.delete(state.token);
+      // 08/11 — the same key may already be on the PTY of a reattach: only drop it when it is still this one's (else
+      // the hooks of a live session answered 401).
+      if (byToken.get(state.token) === state) byToken.delete(state.token);
       for (const d of [...state.open.values()]) {
         if (d.settle('{}')) emit({ type: 'cancelled', ptyId, requestId: d.id });
       }

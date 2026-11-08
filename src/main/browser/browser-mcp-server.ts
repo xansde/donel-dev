@@ -151,7 +151,9 @@ export function createBrowserMcpServer(deps: BrowserMcpServerDeps): BrowserMcpSe
     },
     unregisterSession: (ptyId) => {
       const token = tokenByPty.get(ptyId);
-      if (token) ptyByToken.delete(token);
+      // 08/11 — a reattach puts the same key on a new PTY: the old one leaving must not take the key from the new one
+      // (a live session there went "Host not allowed", then "fechada").
+      if (token && ptyByToken.get(token) === ptyId) ptyByToken.delete(token);
       tokenByPty.delete(ptyId);
       tunnelPortByPty.delete(ptyId);
     },
