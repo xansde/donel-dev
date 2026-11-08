@@ -561,13 +561,16 @@ export function LedgerCards({
   queue,
   placeName,
   onClose,
+  initialId,
 }: {
   readonly queue: readonly LedgerTask[];
   readonly placeName?: PlaceNameOf;
   /** Absent = the cards ARE the screen (the Oráculo in the center of the main window): no "Fechar", no Esc. */
   readonly onClose?: () => void;
+  /** The card in front when it opens (an item picked in the box "Esperando você"); absent = the first. */
+  readonly initialId?: string;
 }): React.JSX.Element | null {
-  const [selected, setSelected] = useState<string | null>(queue[0]?.id ?? null);
+  const [selected, setSelected] = useState<string | null>(initialId ?? queue[0]?.id ?? null);
   // What the owner is writing on each card, above the card: a new event (his own note, an answer) redraws it.
   const [drafts, setDrafts] = useState<Readonly<Record<string, string>>>({});
 

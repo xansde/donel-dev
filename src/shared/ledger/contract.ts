@@ -902,6 +902,16 @@ const BOT_OUTCOME: Record<AgentBotRecord['outcome'], string> = {
   'sem-confirmacao': 'sem confirmação do Slack',
 };
 
+/** The outcome a bot record wrote in its delivery text (read only: the record is never rewritten); `null` = not one. */
+export function agentBotOutcome(task: LedgerTask): AgentBotRecord['outcome'] | null {
+  if (!isAgentBotRecord(task)) return null;
+  const delivery = lastDelivery(task);
+  const note = (delivery && eventNote(delivery)) ?? '';
+  if (note.startsWith(BOT_OUTCOME.falhou)) return 'falhou';
+  if (note.startsWith(BOT_OUTCOME['sem-confirmacao'])) return 'sem-confirmacao';
+  return note.startsWith(BOT_OUTCOME.confirmado) ? 'confirmado' : null;
+}
+
 function createAgentBotRecord(doc: LedgerDoc, actor: LedgerActor, op: Extract<LedgerOp, { op: 'slack-bot' }>, ctx: LedgerOpContext): LedgerOpResult {
   if (actor.kind !== 'lugar') return { ok: false, reason: 'O registro do bot é do lugar que enviou.' };
   const bot = op.bot;
