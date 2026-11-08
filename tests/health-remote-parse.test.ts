@@ -24,6 +24,9 @@ describe('parseRemoteHealthOutput', () => {
       load: { one: 0.42, five: 0.38, fifteen: 0.3 },
       cpus: 4,
       sessions: 3,
+      sessionDetails: null,
+      readAt: null,
+      gateway: null,
     });
   });
 
@@ -36,6 +39,19 @@ describe('parseRemoteHealthOutput', () => {
     const reading = parseRemoteHealthOutput(
       ['DONEL_HEALTH mem  ', 'DONEL_HEALTH disk 10 20', 'DONEL_HEALTH load abc', 'DONEL_HEALTH cpus ', 'DONEL_HEALTH sessions 0', 'DONEL_HEALTH end'].join('\n'),
     );
-    expect(reading).toEqual({ ram: null, swap: null, disk: null, load: null, cpus: null, sessions: 0 });
+    expect(reading).toEqual({ ram: null, swap: null, disk: null, load: null, cpus: null, sessions: 0, sessionDetails: null, readAt: null, gateway: null });
+  });
+
+  it('reads what each session is doing, drops a garbled line, and never trusts an empty list the program did not write', () => {
+    const sess = JSON.stringify({ sid: 'abc-1', name: 'Dev', rss: 1000, ticks: 50, clk: 100, pane: 'idle', activity: 10, openedBy: 'lider', transcript: true, lastAt: 5, turn: 'ended', last: 'error', tool: null, apiError: { kind: 'rate_limit', text: '429', at: 5 }, retry: null });
+    const reading = parseRemoteHealthOutput(
+      ['DONEL_HEALTH now 1000', 'DONEL_HEALTH gateway {"host":"gw.ts.net","port":8317}', `DONEL_HEALTH sess ${sess}`, 'DONEL_HEALTH sess {broken', 'DONEL_HEALTH sess {"sid":"../etc"}', 'DONEL_HEALTH end'].join('\n'),
+    );
+    expect(reading?.readAt).toBe(1000);
+    expect(reading?.gateway).toEqual({ host: 'gw.ts.net', port: 8317 });
+    expect(reading?.sessionDetails).toEqual([
+      expect.objectContaining({ sid: 'abc-1', openedBy: 'lider', pane: 'idle', turn: 'ended', last: 'error', apiError: { kind: 'rate_limit', text: '429', at: 5 } }),
+    ]);
+    expect(parseRemoteHealthOutput(FULL)?.sessionDetails).toBeNull();
   });
 });
