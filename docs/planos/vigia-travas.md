@@ -20,8 +20,8 @@ sozinha", e uma trava nova da mesma chave pode avisar de novo.
 |---|---|---|
 | `vps-fora:<lugar>` | VPS inalcançável há duas rodadas | `RemoteHealthReport.status === 'unreachable'` |
 | `vps-login:<lugar>` | o ssh pede verificação/login (ex.: Tailscale SSH) | stderr do ssh, hoje descartado pelo serviço de saúde: passa a guardar a última linha (limpa) e o `timedOut` |
-| `sessao-esperando:<lugar>:<sid>` | sessão em `precisa-dono` ou `travada` há mais de 10 min | `pulseOfRemote(reading, now)` (`shared/mindscape/bottlenecks.ts`) sobre `sessionDetails` |
-| `cofre:<lugar>` | cofre trancado, sem login ou lento (> 20 s ou sem resposta) | linha nova no script de saúde: `bw status` com prazo, imprimindo só o campo `status` e o tempo |
+| `sessoes:<lugar>` | sessões `travada` ou repetindo uma chamada que falhou (`retry`) há mais de 10 min, uma carta por lugar | `pulseOfRemote(reading, now)` (`shared/mindscape/bottlenecks.ts`) sobre `sessionDetails` |
+| `cofre:<lugar>` | cofre trancado, sem login ou lento (> 20 s ou sem resposta) | **adaptador opcional** `vigia.cofre` na config (`command`, `sessionFile`), desligado por padrão: `<command> status` com prazo, só o campo `status` e o tempo |
 
 **Cofre sem tocar segredo no app.** O script roda na VPS. A chave de sessão do `bw` é carregada pelo próprio shell da
 VPS a partir de `~/.bw_session`, vai só no ambiente do `bw` (nunca em argumento) e nada além de `status` e do tempo
@@ -60,3 +60,14 @@ Reinício do app não reabre carta de trava que já tem carta aberta.
 - **"No topo"**: a caixa ordena por bloqueio, prazo e idade (desktop) e da mais antiga para a mais nova (celular).
   A carta nasce bloqueando e com prazo de hoje; garantir o primeiro lugar pede um campo novo no Oráculo (sobe o
   `schemaVersion`) — fica para depois de medir se a ordem atual basta.
+
+## Revisão de 08/11 (Revisor, achados do #349)
+
+1. **Cofre vira adaptador.** Nada do cofre do dono fica no código: `vigia.cofre = { command, sessionFile }` na config
+   (chave de topo, como `homologacao`), desligada por padrão; sem ela o vigia olha só o genérico. Os valores passam por
+   uma validação estrita (nome de programa, caminho relativo sem `..`) e entram no script entre aspas simples.
+2. **O Oráculo pode ser quem caiu.** Desde o #331 ele mora na VPS; se ela cai, nem a carta nem o push saem. Quando a
+   carta não pode ser feita, o PC mostra uma notificação nativa (uma vez por trava). A carta sai quando o Oráculo volta,
+   com o horário da primeira leitura que viu a trava; se a trava já passou, sai uma carta de registro, com início e fim.
+3. **"Esperando a API".** Escolha: contar só quando o CLI está repetindo uma chamada que falhou (`retry`). Subir o
+   limiar para 20 min só moveria o alarme falso de uma resposta longa e legítima, que não repete nada.

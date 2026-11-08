@@ -3,6 +3,7 @@
 // the ssh, the ledger and the file. No password is ever involved: the vault is only asked for its state.
 
 import type { RemoteHealthReport } from '../health/remote';
+import type { VigiaCofrePrefs } from './config';
 import { pulseOfRemote } from '../mindscape/bottlenecks';
 
 export const VIGIA_ROUND_MS = 5 * 60_000;
@@ -37,17 +38,24 @@ export interface Trava {
   readonly detail: string;
 }
 
+function shQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
 /**
- * Pure — the probe: says it was reached, then the vault's state and how long `bw status` took. The session key is
- * loaded by the place's own shell from `~/.bw_session` into the environment of `bw` only (never an argument), and
- * only the `status` field of the answer leaves the place.
+ * Pure — the probe: says it was reached, then (only with the optional `vigia.cofre` adapter) the vault's state and how
+ * long its `status` took. The session file is loaded by the place's own shell into the environment of the vault's
+ * command only (never an argument), and only the `status` field of the answer leaves the place.
  */
-export function buildVigiaProbeScript(): string {
-  return [
-    "printf 'DONEL_VIGIA_OK\\n'",
-    'if command -v bw >/dev/null 2>&1 && [ -r "$HOME/.bw_session" ]; then',
+export function buildVigiaProbeScript(cofre: VigiaCofrePrefs | null): string {
+  const lines = ["printf 'DONEL_VIGIA_OK\\n'"];
+  if (!cofre) return `${lines.join('\n')}\n`;
+  const command = shQuote(cofre.command);
+  const file = `"$HOME"/${shQuote(cofre.sessionFile)}`;
+  lines.push(
+    `if command -v ${command} >/dev/null 2>&1 && [ -r ${file} ]; then`,
     '  t0=$(date +%s%3N)',
-    '  st=$( ( set -a; . "$HOME/.bw_session" >/dev/null 2>&1; set +a; timeout 25 bw status 2>/dev/null ) | python3 -c \'import sys, json',
+    `  st=$( ( set -a; . ${file} >/dev/null 2>&1; set +a; timeout 25 ${command} status 2>/dev/null ) | python3 -c 'import sys, json`,
     'try:',
     '    print(json.load(sys.stdin).get("status", "sem-resposta"))',
     'except Exception:',
@@ -57,8 +65,8 @@ export function buildVigiaProbeScript(): string {
     'else',
     "  printf 'DONEL_COFRE ausente 0\\n'",
     'fi',
-    '',
-  ].join('\n');
+  );
+  return `${lines.join('\n')}\n`;
 }
 
 const COFRE_STATES: readonly CofreStatus[] = ['unlocked', 'locked', 'unauthenticated', 'sem-resposta', 'ausente'];
@@ -111,7 +119,10 @@ export function detectTravas(input: { readonly probes: readonly PlaceProbe[]; re
     if (!reading?.sessionDetails || readAt === null) continue;
     const stuck = reading.sessionDetails.filter((session) => {
       const pulse = pulseOfRemote(session, readAt);
-      return (pulse.state === 'travada' || pulse.state === 'esperando-api') && pulse.since !== null && readAt - pulse.since >= SESSION_STUCK_MS;
+      // "Esperando a API" counts only when the CLI is RETRYING a failed call (`retry`): a long, legitimate answer
+      // also waits on the API for minutes, and a bigger threshold would only move the false alarm, not remove it.
+      const loop = pulse.state === 'travada' || (pulse.state === 'esperando-api' && session.retry !== null);
+      return loop && pulse.since !== null && readAt - pulse.since >= SESSION_STUCK_MS;
     });
     if (stuck.length > 0) {
       const names = stuck.map((session) => session.name || session.sid).join(', ');
@@ -121,41 +132,90 @@ export function detectTravas(input: { readonly probes: readonly PlaceProbe[]; re
   return travas;
 }
 
-/** What the vigia keeps between rounds and restarts: per lock, when it was first seen, the rounds, and its card. */
-export interface VigiaState {
-  readonly open: Readonly<Record<string, { readonly firstSeen: number; readonly rounds: number; readonly cartaId: string | null }>>;
+/** One lock the vigia keeps between rounds and restarts: when it was first seen, its card, and whether the PC warned. */
+export interface VigiaEntry {
+  readonly firstSeen: number;
+  readonly rounds: number;
+  readonly cartaId: string | null;
+  /** The card could not be made (the Oráculo's place was down): the PC warned natively, once. */
+  readonly notified: boolean;
+  /** The lock passed before its card could be made; the card still goes, saying when it began and ended. */
+  readonly endedAt: number | null;
+  readonly trava: Trava;
 }
 
-/** Pure — one round: the locks that open a card now, the cards whose lock passed, and the next state. */
+export interface VigiaState {
+  readonly open: Readonly<Record<string, VigiaEntry>>;
+}
+
+/**
+ * Pure — one round:
+ * - `toOpen`: a lock seen in two rounds with no card yet (its card says since when);
+ * - `toClose`: the card of a lock that passed (cancelled);
+ * - `toRecord`: a lock that passed while its card could not be made — the owner was only warned on the PC, so a card
+ *   still goes when the Oráculo answers, with when it began and ended.
+ */
 export function planRound(
   state: VigiaState,
   travas: readonly Trava[],
   now: number,
-): { state: VigiaState; toOpen: Trava[]; toClose: Array<{ key: string; cartaId: string }> } {
-  const open: Record<string, { firstSeen: number; rounds: number; cartaId: string | null }> = {};
-  const toOpen: Trava[] = [];
+): {
+  state: VigiaState;
+  toOpen: Array<{ trava: Trava; firstSeen: number }>;
+  toClose: Array<{ key: string; cartaId: string }>;
+  toRecord: Array<{ key: string; trava: Trava; firstSeen: number; endedAt: number }>;
+} {
+  const open: Record<string, VigiaEntry> = {};
+  const toOpen: Array<{ trava: Trava; firstSeen: number }> = [];
   for (const trava of travas) {
     const before = state.open[trava.key];
-    const entry = { firstSeen: before?.firstSeen ?? now, rounds: (before?.rounds ?? 0) + 1, cartaId: before?.cartaId ?? null };
+    const entry: VigiaEntry = {
+      firstSeen: before?.firstSeen ?? now,
+      rounds: (before?.rounds ?? 0) + 1,
+      cartaId: before?.cartaId ?? null,
+      notified: before?.notified ?? false,
+      endedAt: null,
+      trava,
+    };
     open[trava.key] = entry;
-    if (entry.cartaId === null && entry.rounds >= ROUNDS_TO_WARN) toOpen.push(trava);
+    if (entry.cartaId === null && entry.rounds >= ROUNDS_TO_WARN) toOpen.push({ trava, firstSeen: entry.firstSeen });
   }
   const toClose: Array<{ key: string; cartaId: string }> = [];
+  const toRecord: Array<{ key: string; trava: Trava; firstSeen: number; endedAt: number }> = [];
   for (const [key, entry] of Object.entries(state.open)) {
-    if (!(key in open) && entry.cartaId !== null) toClose.push({ key, cartaId: entry.cartaId });
+    if (key in open) continue;
+    if (entry.cartaId !== null) {
+      toClose.push({ key, cartaId: entry.cartaId });
+    } else if (entry.notified) {
+      const endedAt = entry.endedAt ?? now;
+      open[key] = { ...entry, endedAt };
+      toRecord.push({ key, trava: entry.trava, firstSeen: entry.firstSeen, endedAt });
+    }
   }
-  return { state: { open }, toOpen, toClose };
+  return { state: { open }, toOpen, toClose, toRecord };
 }
 
-/** Pure — the state read from disk; anything unreadable is an empty state (the worst case is one card more). */
+const TRAVA_KINDS: readonly TravaKind[] = ['vps-fora', 'vps-login', 'cofre', 'sessoes'];
+
+/** Pure — the state read from disk; anything unreadable is dropped (the worst case is one card more). */
 export function parseVigiaState(raw: unknown): VigiaState {
-  const open: Record<string, { firstSeen: number; rounds: number; cartaId: string | null }> = {};
+  const open: Record<string, VigiaEntry> = {};
   const entries = (raw as { open?: unknown } | null)?.open;
   if (entries && typeof entries === 'object') {
     for (const [key, value] of Object.entries(entries as Record<string, unknown>)) {
-      const entry = value as { firstSeen?: unknown; rounds?: unknown; cartaId?: unknown };
+      const entry = value as Partial<Record<keyof VigiaEntry, unknown>>;
+      const trava = entry?.trava as Partial<Trava> | undefined;
       if (typeof entry?.firstSeen !== 'number' || typeof entry.rounds !== 'number') continue;
-      open[key] = { firstSeen: entry.firstSeen, rounds: entry.rounds, cartaId: typeof entry.cartaId === 'string' ? entry.cartaId : null };
+      if (!trava || typeof trava.placeId !== 'string' || typeof trava.label !== 'string' || typeof trava.detail !== 'string') continue;
+      if (!(TRAVA_KINDS as readonly unknown[]).includes(trava.kind)) continue;
+      open[key] = {
+        firstSeen: entry.firstSeen,
+        rounds: entry.rounds,
+        cartaId: typeof entry.cartaId === 'string' ? entry.cartaId : null,
+        notified: entry.notified === true,
+        endedAt: typeof entry.endedAt === 'number' ? entry.endedAt : null,
+        trava: { key, kind: trava.kind as TravaKind, placeId: trava.placeId, label: trava.label, detail: trava.detail },
+      };
     }
   }
   return { open };

@@ -6,6 +6,7 @@
 
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import type { RemoteHealthReport } from '../../shared/health/remote';
+import type { VigiaCofrePrefs } from '../../shared/vigia/config';
 import { SERVICE_PLACE_PREFIX, SERVICE_ROLE, type LedgerActor, type LedgerForOwner, type LedgerOp } from '../../shared/ledger/contract';
 import {
   buildVigiaProbeScript,
@@ -41,6 +42,13 @@ export interface VigiaServiceDeps {
   readonly apply: (actor: LedgerActor, op: LedgerOp) => Promise<ApplyResult>;
   /** Where the card is filed (any board path; the owner sees it in the Oráculo and on the phone). */
   readonly projectPath: () => string | null;
+  /** The optional vault adapter (`vigia.cofre` in the config); `null` = no vault check at all. */
+  readonly cofre: () => VigiaCofrePrefs | null;
+  /**
+   * A native notification on the PC. Used when the card cannot be made — above all when the place that hosts the
+   * Oráculo is the one that fell: then neither the card nor the phone's push can leave it.
+   */
+  readonly notify: (title: string, body: string) => void;
   readonly statePath: string;
   readonly now?: () => number;
   readonly log?: (line: string) => void;
@@ -70,6 +78,12 @@ function today(now: number): string {
   return new Date(now).toISOString().slice(0, 10);
 }
 
+const CLOCK = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+/** "08/11, 14:32" — when the lock was first seen (the card may be made later, when the Oráculo answers again). */
+export function vigiaClock(at: number): string {
+  return CLOCK.format(at);
+}
+
 const KIND_TITLE: Record<Trava['kind'], string> = {
   'vps-fora': 'VPS fora do ar',
   'vps-login': 'VPS pedindo login',
@@ -85,11 +99,24 @@ const KIND_WHAT_TO_DO: Record<Trava['kind'], string> = {
 };
 
 /** The owner's card: only the kind and the place's name, never a session's name (it may carry a code the card refuses). */
-export function vigiaCard(trava: Pick<Trava, 'kind' | 'label'>): LedgerForOwner {
+export function vigiaCard(trava: Pick<Trava, 'kind' | 'label'>, firstSeen: number, endedAt: number | null = null): LedgerForOwner {
+  if (endedAt !== null) {
+    return {
+      title: `Trava que passou: ${KIND_TITLE[trava.kind]}`.slice(0, 60),
+      question: `${KIND_TITLE[trava.kind]} em ${trava.label}, de ${vigiaClock(firstSeen)} a ${vigiaClock(endedAt)}. Já viu?`.slice(0, 160),
+      summary: `A trava passou sozinha. A carta não pôde sair na hora, porque o Oráculo não respondia; o aviso foi só no PC.`,
+      options: [
+        { label: 'Já vi', effect: 'A carta fecha; fica no registro do Oráculo.', closes: 'aceita', recommended: true },
+        { label: 'Quero entender', effect: 'A carta volta como pendência para alguém investigar.', closes: 'rejeitada' },
+      ],
+      why: 'A trava já passou; a carta só registra quando aconteceu.',
+      risk: 'Se voltar a acontecer, chega outra carta.',
+    };
+  }
   return {
     title: `Trava: ${KIND_TITLE[trava.kind]}`.slice(0, 60),
     question: `${KIND_TITLE[trava.kind]}. Já resolveu?`,
-    summary: `${KIND_TITLE[trava.kind]} em ${trava.label}, visto em duas leituras seguidas. ${KIND_WHAT_TO_DO[trava.kind]}`.slice(0, 280),
+    summary: `${KIND_TITLE[trava.kind]} em ${trava.label}, desde ${vigiaClock(firstSeen)}. ${KIND_WHAT_TO_DO[trava.kind]}`.slice(0, 280),
     options: [
       { label: 'Já resolvi', effect: 'A carta fecha; se a trava voltar, chega outra.', closes: 'aceita', recommended: true },
       { label: 'Deixar assim', effect: 'A carta fecha sem mudar nada; se a trava seguir, ela some só quando passar.', closes: 'rejeitada' },
@@ -122,7 +149,7 @@ export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
 
   async function probe(place: VigiaPlace): Promise<PlaceProbe> {
     try {
-      const result = await deps.run(place.sshTarget, buildVigiaProbeScript(), VIGIA_PROBE_TIMEOUT_MS);
+      const result = await deps.run(place.sshTarget, buildVigiaProbeScript(deps.cofre()), VIGIA_PROBE_TIMEOUT_MS);
       const parsed = parseVigiaProbe(result.stdout);
       if (parsed.reached) return { placeId: place.id, label: place.label, reached: true, ...(parsed.cofre ? { cofre: parsed.cofre } : {}) };
       return { placeId: place.id, label: place.label, reached: false, failure: classifySshFailure(lastLine(result.stderr), result.timedOut) };
@@ -131,7 +158,7 @@ export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
     }
   }
 
-  async function openCard(trava: Trava, projectPath: string, at: number): Promise<string | null> {
+  async function openCard(trava: Trava, projectPath: string, at: number, firstSeen: number, endedAt: number | null = null): Promise<string | null> {
     const created = await deps.apply(ACTOR, {
       op: 'criar',
       projectPath,
@@ -157,8 +184,13 @@ export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
     const delivered = await deps.apply(ACTOR, {
       op: 'entregar',
       id,
-      proofs: [{ kind: 'texto', text: `${trava.detail}. Visto em duas leituras seguidas, com 5 min entre elas.` }],
-      forOwner: vigiaCard(trava),
+      proofs: [
+        {
+          kind: 'texto',
+          text: `${trava.detail}. Vista pela primeira vez em ${vigiaClock(firstSeen)}${endedAt === null ? '' : `; passou em ${vigiaClock(endedAt)}`}, em leituras com 5 min entre elas.`,
+        },
+      ],
+      forOwner: vigiaCard(trava, firstSeen, endedAt),
     });
     if (delivered.ok) return id;
     // A card the owner cannot see is no warning: drop it and try again next round.
@@ -178,10 +210,19 @@ export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
         const plan = planRound(readState(), travas, at);
         const open = { ...plan.state.open };
         const projectPath = deps.projectPath();
-        for (const trava of plan.toOpen) {
-          if (projectPath === null) break;
-          const id = await openCard(trava, projectPath, at);
-          if (id !== null) open[trava.key] = { ...open[trava.key]!, cartaId: id };
+        for (const { trava, firstSeen } of plan.toOpen) {
+          const id = projectPath === null ? null : await openCard(trava, projectPath, at, firstSeen);
+          if (id !== null) {
+            open[trava.key] = { ...open[trava.key]!, cartaId: id };
+          } else if (!open[trava.key]!.notified) {
+            // No card (the Oráculo did not answer): the PC itself warns, once; the card follows when it answers.
+            deps.notify(`Trava: ${KIND_TITLE[trava.kind]}`, `${KIND_TITLE[trava.kind]} em ${trava.label}, desde ${vigiaClock(firstSeen)}. O Oráculo não respondeu; a carta sai quando ele voltar.`);
+            open[trava.key] = { ...open[trava.key]!, notified: true };
+          }
+        }
+        for (const { key, trava, firstSeen, endedAt } of plan.toRecord) {
+          const id = projectPath === null ? null : await openCard(trava, projectPath, at, firstSeen, endedAt);
+          if (id !== null) delete open[key];
         }
         for (const closed of plan.toClose) {
           const result = await deps.apply(ACTOR, { op: 'cancelar', id: closed.cartaId, reason: 'a trava passou sozinha' });

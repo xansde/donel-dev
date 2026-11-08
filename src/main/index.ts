@@ -3038,6 +3038,20 @@ function registerHealthIpcHandlers(): void {
       return result.ok ? { ok: true, task: { id: result.task.id } } : { ok: false, reason: result.reason };
     },
     projectPath: () => appConfig.projectRoots[0] ?? null,
+    cofre: () => appConfig.vigia.cofre,
+    notify: (title, body) => {
+      if (!systemNotificationsSupported()) return;
+      const notification = createSystemNotification({ title, body });
+      notification.on('click', () => {
+        const window = getMainWindow();
+        if (window) {
+          if (window.isMinimized()) window.restore();
+          window.show();
+          window.focus();
+        }
+      });
+      notification.show();
+    },
     statePath: join(app.getPath('userData'), 'vigia-travas.json'),
     log: (line) => console.log(line),
   });
