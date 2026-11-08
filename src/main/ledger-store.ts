@@ -12,6 +12,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { constants as fsConstants, promises as fs } from 'node:fs';
 import { dirname, extname, isAbsolute, join } from 'node:path';
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
+import { LEADER_ROLE_ID } from '../shared/roles';
 import { isBelow, isOpenedBy } from '../shared/mindscape/reach';
 import type { MindscapeBoard } from '../shared/mindscape/model';
 import type { ConfigIoDeps } from './config-store';
@@ -33,6 +34,7 @@ import {
   replacesOf,
   requestedByOf,
   frenteOf,
+  lowRiskAsked,
   ASKED_BY_OWNER,
   isCancelled,
   awaitsSend,
@@ -386,12 +388,29 @@ function stripView(strip: LedgerStrip): Record<string, unknown> {
   };
 }
 
-/** Low risk only when whoever creates is not the owner of the work nor opened by it (it would review itself). */
-function lowRiskRefusal(caller: LedgerCaller, owner: string): string | null {
-  if (owner === caller.placeId) return 'quem cria não pode ser o dono do trabalho';
-  if (!caller.board) return 'não consegui ler o quadro para conferir quem abriu quem';
-  if (isOpenedBy(caller.board, owner, caller.placeId)) return `você foi aberta pelo dono do trabalho (${owner})`;
+/**
+ * Low risk only when whoever creates is not the owner of the work nor opened by it (it would review itself). The
+ * Líder reparte, não executa (Líder do quadro, 08/11): a Líder (or the Líder único) asking low for a place of its board
+ * keeps it low even when the board file could not be read; the "opened by the owner" check still holds when it can.
+ */
+function lowRiskRefusal(creator: { readonly placeId: string; readonly roleId?: string }, owner: string, board: MindscapeBoard | undefined): string | null {
+  if (owner === creator.placeId) return 'quem cria não pode ser o dono do trabalho';
+  if (board && isOpenedBy(board, owner, creator.placeId)) return `você foi aberta pelo dono do trabalho (${owner})`;
+  const leader = creator.placeId === LEADER_OF_ALL || creator.roleId === LEADER_ROLE_ID;
+  if (!board && !leader) return 'não consegui ler o quadro para conferir quem abriu quem';
   return null;
+}
+
+/**
+ * The risk of a task passed to `to` (08/11): into the creator's own chain a low one goes high; out of it, a task that
+ * asked low and was forced high gets low back. Tasks the owner created, or asked high, keep their risk.
+ */
+function riskAfterTransfer(task: LedgerTask, to: string, board: MindscapeBoard | undefined): LedgerTask['risk'] {
+  const creator = task.events[0]?.by;
+  if (!creator || creator.kind !== 'lugar' || task.slack) return task.risk;
+  const refused = lowRiskRefusal(creator, to, board);
+  if (task.risk === 'baixo') return refused ? 'alto' : 'baixo';
+  return lowRiskAsked(task) && !refused ? 'baixo' : 'alto';
 }
 
 /** Why the place `caller` may not decide this delivery, beyond the contract's rules; `null` = may. */
@@ -530,7 +549,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
     case 'tarefa_criar': {
       const owner = call.dono === undefined || call.dono === 'seu' ? caller.placeId : call.dono;
       if (!caller.boardPlaceIds.includes(owner)) return { ok: false, text: `"${owner}" não é um lugar deste quadro (veja sessao_listar).` };
-      const lowRefused = call.risco === 'baixo' ? lowRiskRefusal(caller, owner) : null;
+      const lowRefused = call.risco === 'baixo' ? lowRiskRefusal(caller, owner, caller.board) : null;
       const result = await service.apply(actor, {
         op: 'criar',
         projectPath: caller.projectPath,
@@ -544,6 +563,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         // Who asked: what the creator said, or the owner when the task came from his phone's "Pedir".
         ...(call.quemPediu ? { requestedBy: call.quemPediu } : call.pedidoDoDono ? { requestedBy: ASKED_BY_OWNER } : {}),
         ...(call.frente ? { frente: call.frente } : {}),
+        ...(lowRefused ? { lowAsked: true as const } : {}),
       });
       if (!result.ok || !lowRefused) return answer(result, 'criada');
       return {
@@ -582,11 +602,19 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       // The Líder único has no place, but owns tasks too (t-52b31719): "lider" is a destination of every board.
       if (to !== LEADER_OF_ALL && !caller.boardPlaceIds.includes(to)) return { ok: false, text: `"${to}" não é um lugar deste quadro que você alcança (veja sessao_listar), nem "lider" (o Líder único).` };
       const gone = ownerGone(caller, task, service.now());
-      const result = await service.apply(actor, { op: 'transferir', id: task.id, to, reason: gone && !call.motivo.includes(gone) ? `${call.motivo} (${gone})` : call.motivo, ...(gone ? { ownerGone: true } : {}) });
+      const risk = riskAfterTransfer(task, to, caller.board);
+      const result = await service.apply(actor, { op: 'transferir', id: task.id, to, reason: gone && !call.motivo.includes(gone) ? `${call.motivo} (${gone})` : call.motivo, ...(gone ? { ownerGone: true } : {}), ...(risk !== task.risk ? { risk } : {}) });
       if (!result.ok) return { ok: false, text: result.reason };
       return {
         ok: true,
-        text: JSON.stringify({ transferida: true, id: result.task.id, estado: result.task.state, dono: result.task.ownerPlaceId, ...(result.task.state === 'aberta' ? { proximo: 'O novo dono assume com tarefa_assumir.' } : {}) }),
+        text: JSON.stringify({
+          transferida: true,
+          id: result.task.id,
+          estado: result.task.state,
+          dono: result.task.ownerPlaceId,
+          ...(risk !== task.risk ? { risco: risk, aviso: risk === 'alto' ? 'O novo dono está na cadeia de quem criou: o risco subiu para alto e a entrega espera o dono.' : 'Fora da cadeia de quem criou, o risco baixo pedido na criação voltou.' } : {}),
+          ...(result.task.state === 'aberta' ? { proximo: 'O novo dono assume com tarefa_assumir.' } : {}),
+        }),
       };
     }
     case 'carta_slack': {
