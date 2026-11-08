@@ -1,7 +1,7 @@
 ﻿# Do PC, instala (ou reinstala) o relay do proxy de saída numa VPS, pela Tailscale.
 #
 #   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\proxy-saida\instalar-vps.ps1 `
-#     -Destino root@vps-time-homologacoes [-Queda direto|parar] [-Settings]
+#     -Destino root@vps-time-homologacoes [-Settings]
 #   ... -Desinstalar   desfaz na VPS
 #
 # A senha sai do senha.dpapi do PC e vai só pelo stdin do ssh (nunca argumento, log ou arquivo temporário).
@@ -10,7 +10,6 @@
 # abrir daqui em diante pegam o proxy.
 param(
   [Parameter(Mandatory = $true)][string]$Destino,
-  [ValidateSet('direto', 'parar')][string]$Queda = 'direto',
   [switch]$Settings,
   [switch]$Desinstalar
 )
@@ -43,7 +42,7 @@ $senha = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServ
 Send-File (Join-Path $PSScriptRoot 'proxy-saida.mjs') "$remote/proxy-saida.mjs"
 Send-File (Join-Path $PSScriptRoot 'instalar-vps.sh') "$remote/instalar-vps.sh"
 
-$remoteArgs = "--upstream $($config.bind):$($config.porta) --usuario $($config.usuario) --queda $Queda"
+$remoteArgs = "--upstream $($config.bind):$($config.porta) --usuario $($config.usuario)"
 if ($Settings) { $remoteArgs += ' --settings' }
 $psi = New-Object Diagnostics.ProcessStartInfo 'ssh', "-o BatchMode=yes $Destino `"bash $remote/instalar-vps.sh $remoteArgs; rc=`$?; rm -rf $remote; exit `$rc`""
 $psi.UseShellExecute = $false; $psi.RedirectStandardInput = $true

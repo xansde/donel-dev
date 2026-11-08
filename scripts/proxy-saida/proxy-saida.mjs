@@ -6,8 +6,9 @@
 //   modo "pc"  — roda no PC do dono. Proxy HTTP CONNECT que escuta SÓ no IP da Tailscale, exige usuário e
 //                senha, só abre túnel para os destinos da lista e grava uma linha por conexão (sem conteúdo).
 //   modo "vps" — roda em cada VPS, em 127.0.0.1. É o HTTPS_PROXY das sessões do Claude. Manda os destinos da
-//                lista para o proxy do PC e o resto direto. Se o PC não responde, cai para o direto (ou para,
-//                se a config pedir), grava o aviso e volta sozinho quando o PC voltar.
+//                lista para o proxy do PC e o resto direto. Se o PC não responde, recusa a lista (503), grava o
+//                aviso e volta sozinho quando o PC voltar. A lista NUNCA sai pelo IP da VPS (dono, 08/11: "não
+//                pode deixar o proxy sair no IP da VPS"); a antiga queda "direto" é ignorada.
 //
 // Uso: node proxy-saida.mjs <config.json>      sobe o proxy no modo da config
 //      node proxy-saida.mjs hash                lê a senha do stdin e imprime o hash para a config do PC
@@ -280,7 +281,7 @@ function connectDirect(host, port) {
  * Estado do caminho até o PC. `usarProxy()` diz se a próxima conexão da lista tenta o PC. Ao cair, grava o
  * aviso uma vez e testa o PC a cada `probeMs`; quando ele volta, grava a volta e as conexões retornam a ele.
  */
-export function createUpstreamHealth({ probe, log, onChange = () => {}, probeMs = 15_000, queda = 'direto' }) {
+export function createUpstreamHealth({ probe, log, onChange = () => {}, probeMs = 15_000 }) {
   let up = true;
   let timer = null;
   let since = new Date().toISOString();
@@ -303,13 +304,9 @@ export function createUpstreamHealth({ probe, log, onChange = () => {}, probeMs 
     if (!up) return;
     up = false;
     since = new Date().toISOString();
-    const caminho = queda === 'parar' ? 'parado' : 'direto (IP da nuvem)';
-    const aviso =
-      queda === 'parar'
-        ? 'Proxy do PC fora; o Claude desta VPS está parado até o PC voltar.'
-        : 'Proxy do PC fora; o Claude desta VPS está saindo direto, pelo IP da nuvem, até o PC voltar.';
-    log({ evento: 'proxy-caiu', motivo, caminho, aviso });
-    onChange({ estado: queda === 'parar' ? 'parado' : 'direto', desde: since, motivo });
+    const aviso = 'Proxy do PC fora; o Claude desta VPS está parado até o PC voltar (nunca sai pelo IP da nuvem).';
+    log({ evento: 'proxy-caiu', motivo, caminho: 'parado', aviso });
+    onChange({ estado: 'parado', desde: since, motivo });
     if (!timer) schedule();
   };
   /** Um destino falhou mas o PC atendeu: só cai se o PC também não alcança a Anthropic agora. */
@@ -324,7 +321,11 @@ export function startVpsRelay(config, log = makeLogger(config.log)) {
   if (!upstream?.host || !upstream?.porta || !upstream?.usuario || !upstream?.senha) {
     throw new Error('config da VPS sem upstream.host/porta/usuario/senha');
   }
-  const queda = config.queda === 'parar' ? 'parar' : 'direto';
+  // Só existe uma queda: parar. Uma config de antes de 08/11 com "direto" sobe igual, parando, e avisa no log.
+  const queda = 'parar';
+  if (config.queda === 'direto') {
+    log({ evento: 'queda-direto-ignorada', aviso: 'A config pede queda "direto"; o Claude desta VPS para sem o PC, nunca sai pelo IP da nuvem.' });
+  }
   const allow = config.permitir ?? DEFAULT_ALLOW;
   const stateFile = expandHome(config.estado);
   const writeState = (state) => {
@@ -337,7 +338,6 @@ export function startVpsRelay(config, log = makeLogger(config.log)) {
     }
   };
   const health = createUpstreamHealth({
-    queda,
     log,
     onChange: writeState,
     probeMs: config.testeMs ?? 15_000,
@@ -363,15 +363,13 @@ export function startVpsRelay(config, log = makeLogger(config.log)) {
           // 403 = o PC recusou o destino: devolve a recusa, sem contornar pelo direto.
           if (error.status === 403) return reply(client, 403, 'Forbidden');
           // 502: o PC atendeu mas não chegou NESTE destino (de casa, às vezes um IP do Cloudflare demora).
-          // Esta conexão segue pela queda; o caminho todo só cai se o PC também não alcançar a Anthropic.
+          // Esta conexão é recusada; o caminho todo só cai se o PC também não alcançar a Anthropic.
           if (error.status === 502) health.recheck('proxy do PC não alcança a Anthropic');
           else health.markDown(error.status ? `proxy do PC respondeu ${error.status}` : (error.code ?? error.message));
         }
       }
-      if (!tunnel) {
-        if (queda === 'parar') return reply(client, 503, 'Service Unavailable');
-        tunnel = await connectDirect(target.host, target.port);
-      }
+      // A lista sem túnel pelo PC: recusa. Nunca contorna pelo direto.
+      if (!tunnel) return reply(client, 503, 'Service Unavailable');
     } catch (error) {
       return reply(client, 502, 'Bad Gateway');
     }
