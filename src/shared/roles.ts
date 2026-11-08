@@ -9,6 +9,7 @@
 // delegated. Pure: no I/O here; the store is `src/main/roles-store.ts`.
 
 import type { EffortLevel, ModelAlias, PermissionMode } from './commandBuilder';
+import { ROLE_FACTORY_HISTORY } from './roleFactoryHistory';
 
 /** File name without `.md`: lowercase letters, digits and dashes. */
 const ROLE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,47}$/;
@@ -179,29 +180,64 @@ export function serializeRole(role: SessionRole): string {
   return `${lines.join('\n')}${role.guidance.trim().slice(0, MAX_ROLE_GUIDANCE_CHARS)}\n`;
 }
 
-/**
- * What the agent reads: a short identity, the rule of the fixed role, and the guidance.
- * Neutral text (no AI named), so it works on any engine.
- */
-export function rolePromptText(role: SessionRole): string {
-  const identity = [
+/** The identity at the top of what the agent reads: who it is here and the rule of the fixed role. */
+export function roleIdentityText(role: SessionRole): string {
+  return [
     `Você é ${role.name} nesta sessão, aberta pelo Donel Dev num lugar do quadro do projeto.`,
     'O papel é fixo neste lugar. Se o trabalho pedir outro papel, diga isso ao dono e sugira passar a parte a uma sessão com esse papel, em vez de mudar o seu.',
   ].join('\n');
-  return role.guidance ? `${identity}\n\n${role.guidance}\n` : `${identity}\n`;
+}
+
+/** Heading of the owner's block of an edited factory role. */
+export const OWNER_GUIDANCE_HEADING = 'Orientação do dono para este papel (complementa a de fábrica):';
+
+const normalizedLine = (line: string): string => line.trim().replace(/\s+/g, ' ');
+
+/**
+ * Papel de fábrica editado (dono, 08/11: "bloco de fábrica separado"): the owner's part of the guidance of a factory
+ * role — the lines (normalized: trimmed, spaces collapsed) that no known version of that role's factory guidance has
+ * (`ROLE_FACTORY_HISTORY` + the current one). The file keeps the factory text of the day it was saved; this is what is
+ * left of it once that factory text is taken out. A role that is not a factory one: the guidance itself, trimmed.
+ */
+export function ownerPartOf(roleId: string, guidance: string): string {
+  const factory = factoryRole(roleId);
+  if (!factory) return guidance.trim();
+  const known = new Set([...(ROLE_FACTORY_HISTORY[roleId] ?? []), ...factory.guidance.split('\n').map(normalizedLine)]);
+  const kept: string[] = [];
+  for (const line of guidance.split(/\r?\n/)) {
+    const norm = normalizedLine(line);
+    if (!norm) {
+      if (kept.length > 0 && kept[kept.length - 1] !== '') kept.push('');
+    } else if (!known.has(norm)) kept.push(line.trimEnd());
+  }
+  return kept.join('\n').trim();
+}
+
+/**
+ * What the agent reads: a short identity, the rule of the fixed role, and the guidance. A factory role gets the CURRENT
+ * factory guidance plus, when the owner edited it, only his part as a complement (`ownerPartOf`): so the factory
+ * improvements of a new version reach an edited role too. Neutral text (no AI named), so it works on any engine.
+ */
+export function rolePromptText(role: SessionRole): string {
+  const identity = roleIdentityText(role);
+  const factory = factoryRole(role.id)?.guidance.trim();
+  if (factory === undefined) return role.guidance ? `${identity}\n\n${role.guidance}\n` : `${identity}\n`;
+  const owner = ownerPartOf(role.id, role.guidance);
+  return `${identity}\n\n${factory}${owner ? `\n\n${OWNER_GUIDANCE_HEADING}\n\n${owner}` : ''}\n`;
 }
 
 /**
  * What the Líder único reads (the tab the Jobu opened with the `leaderOfAll` mark, never the `lider` role alone): its
- * own identity and guidance. When the owner edited the Líder role, his guidance follows, as a complement.
+ * own identity and guidance. When the owner edited the Líder role, only his part of it follows (`ownerPartOf`), as a
+ * complement — never the factory guidance of the board's Líder, which is not this one's.
  */
 export function leaderOfAllPromptText(role: SessionRole): string {
   const identity = [
     'Você é o Líder único nesta sessão, aberta pelo Jobu do Donel Dev. Você não pertence a nenhum quadro.',
     'O papel é fixo. Se o trabalho pedir outro papel, abra uma sessão com esse papel em vez de mudar o seu.',
   ].join('\n');
-  const factory = factoryRole(LEADER_ROLE_ID)?.guidance.trim();
-  const ownerEdit = role.guidance.trim() && role.guidance.trim() !== factory ? `\n\nOrientação do dono para o papel Líder (complementa a de cima):\n\n${role.guidance.trim()}` : '';
+  const owner = ownerPartOf(LEADER_ROLE_ID, role.guidance);
+  const ownerEdit = owner ? `\n\nOrientação do dono para o papel Líder (complementa a de cima):\n\n${owner}` : '';
   return `${identity}\n\n${LEADER_OF_ALL_GUIDANCE}${ownerEdit}\n`;
 }
 

@@ -7,7 +7,7 @@
 // one process per MCP the role names (a remote MCP spawns none, but the app does not read the MCP list to know).
 
 import type { ClaudeInventory } from './role-scope';
-import { rolePromptText, type ScopeList, type SessionRole } from './roles';
+import { roleIdentityText, type ScopeList, type SessionRole } from './roles';
 
 export const APP_MCP_NAME = 'donel';
 
@@ -76,9 +76,8 @@ const sameName = (name: string, list: readonly string[]): boolean => list.includ
 const pluginKept = (id: string, list: readonly string[]): boolean => list.some((entry) => entry === id || entry === id.split('@')[0]);
 
 export function chairSheet(role: SessionRole, inventory: ClaudeInventory): ChairSheet {
-  const prompt = rolePromptText(role);
   const guidance = role.guidance.trim();
-  const frame = (guidance ? prompt.slice(0, prompt.indexOf(guidance)) : prompt).trim();
+  const frame = roleIdentityText(role).trim();
   const skills = axisOf(role.scope?.skills, inventory.skillNames, sameName);
   const plugins = axisOf(role.scope?.plugins, inventory.pluginIds, pluginKept);
   const named = isList(role.scope?.mcps) ? role.scope.mcps.filter((name) => name !== APP_MCP_NAME) : null;
