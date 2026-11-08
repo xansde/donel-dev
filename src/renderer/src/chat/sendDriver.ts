@@ -49,6 +49,8 @@ export interface SendDriverPorts {
   opensScreen?(): void;
   /** A send has just ended in `failed`: the gate detail for the diagnostics log (no message or screen text). */
   reportFailure?(detail: SendFailureDetail): void;
+  /** 08/11 — what the box held right before a session message cleared it (Esc Esc): kept for the owner. */
+  boxCleared?(text: string): void;
 }
 
 export interface SendRequest {
@@ -592,6 +594,7 @@ export class SendDriver {
           // the owner sent after its Enter may be in that box too, and must not be erased with it.
           if (effect.data === '\x1b\x1b' && item.from === 'session' && item.enterWrittenAt !== null && this.ownerWrittenAt !== null && this.ownerWrittenAt >= item.enterWrittenAt)
             break;
+          if (effect.data === '\x1b\x1b' && item.from === 'session') this.keepCleared();
           this.ports.write(effect.data);
           if (effect.data === '\r' && item.request.opensScreen === true) this.ports.opensScreen?.();
           break;
@@ -623,6 +626,21 @@ export class SendDriver {
           item.canDiscard = effect.canDiscard;
           break;
       }
+    }
+  }
+
+  /**
+   * 08/11 (Revisor, #333) — a session message is about to clear the box (its own text that never went in, or a leftover
+   * redrawn next to its paste). What the box shows goes to the owner first: it may be a draft of his. A long paste only
+   * shows as `[Pasted text #N]`; that marker is what is kept then.
+   */
+  private keepCleared(): void {
+    const text = readInputText(this.ports.readLines());
+    if (text === null || text.trim() === '') return;
+    try {
+      this.ports.boxCleared?.(text);
+    } catch {
+      // keeping it must never stop the send
     }
   }
 
