@@ -1,0 +1,4 @@
+{
+  "title": "Progresso do Jobu só com o que está rolando",
+  "text": "O painel de progresso do Jobu mostra só as tarefas abertas, em execução, entregues esperando decisão e rejeitadas. Uma tarefa aceita sai do painel na hora e deixa de contar nas barras. Quando não há nada em andamento, o painel diz \"Nada rodando agora\"."
+}

@@ -1,0 +1,4 @@
+{
+  "title": "\"Esperando você\" só quando a sessão pede algo",
+  "text": "A lista \"Esperando você\" do Jobu (e o número na barra de tarefas) agora mostra só as sessões com pergunta, permissão ou diálogo aberto na tela. Sessão que só terminou o que fazia não entra mais nela; o aviso de \"terminou\" continua. E a marca some assim que a sessão volta a trabalhar depois de você responder, em vez de ficar até o próximo passo dela."
+}

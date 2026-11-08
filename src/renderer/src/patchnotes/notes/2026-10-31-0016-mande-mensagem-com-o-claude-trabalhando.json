@@ -1,0 +1,4 @@
+{
+  "title": "Mande mensagem com o Claude trabalhando",
+  "text": "A mensagem vai na hora, aparece \"na fila\" e entra quando ele terminar o que está fazendo, sem precisar interromper. Se ele não pegar a mensagem, o chat avisa e oferece tentar de novo. E \"Interromper e mandar agora\" volta a interromper de verdade: o app espera o Claude parar antes de mandar."
+}
