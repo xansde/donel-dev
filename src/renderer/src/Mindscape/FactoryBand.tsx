@@ -62,7 +62,7 @@ export function FactoryBand({ metrics, waiting, placeName, cardsHost }: FactoryB
         data-testid="factory-band-waiting"
         title="Entregas de risco alto deste quadro que esperam você decidir; abre as cartas do Oráculo, só elas"
       >
-        <b>{waiting.length}</b> esperando você
+        <b>{waiting.length}</b> de risco alto esperando você
       </button>
       {open && waiting.length > 0 && cardsHost ? createPortal(<LedgerCards queue={waiting} placeName={placeName} onClose={() => setOpen(false)} />, cardsHost) : null}
     </div>
