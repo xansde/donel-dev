@@ -354,6 +354,7 @@ import { parseFactoryMetrics, type FactoryMetricsParse } from '../shared/homolog
 import { HOMOLOGACAO_CHANNELS, type FactoryMetricsView, type FactoryRigsView } from '../shared/homologacao/ipc';
 import { parseRigsFile, type RigsParse } from '../shared/homologacao/rigs';
 import { createRoutineRunner, type RoutineRunner } from './rotinas/routine-runner';
+import { createVigiaService, type VigiaService } from './vigia/vigia-service';
 import { createFaxineiroService, type FaxineiroService } from './rotinas/faxineiro-service';
 import { FAXINEIRO_CHANNELS, type FaxineiroRoundAnswer } from '../shared/faxineiro/ipc';
 import type { FaxineiroLogEntry, SessionView } from '../shared/faxineiro/triggers';
@@ -3025,6 +3026,36 @@ function registerHealthIpcHandlers(): void {
     },
   });
   remoteHealthService.start();
+  // Vigia de travas, fase 1 (t-f15b71a7) — every 5 min, a lock on a remote place (down, asking for login, vault
+  // locked or slow, sessions stuck in a loop) seen twice opens ONE urgent card; it never handles a password.
+  vigiaService = createVigiaService({
+    places: () => (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes,
+    run: runRemoteScript,
+    reports: () => remoteHealthService?.getReports() ?? [],
+    apply: async (actor, op) => {
+      if (!ledgerService) return { ok: false, reason: 'o Oráculo ainda não está pronto' };
+      const result = await ledgerService.apply(actor, op);
+      return result.ok ? { ok: true, task: { id: result.task.id } } : { ok: false, reason: result.reason };
+    },
+    projectPath: () => appConfig.projectRoots[0] ?? null,
+    cofre: () => appConfig.vigia.cofre,
+    notify: (title, body) => {
+      if (!systemNotificationsSupported()) return;
+      const notification = createSystemNotification({ title, body });
+      notification.on('click', () => {
+        const window = getMainWindow();
+        if (window) {
+          if (window.isMinimized()) window.restore();
+          window.show();
+          window.focus();
+        }
+      });
+      notification.show();
+    },
+    statePath: join(app.getPath('userData'), 'vigia-travas.json'),
+    log: (line) => console.log(line),
+  });
+  vigiaService.start();
   ipcMain.handle(HEALTH_CHANNELS.remoteGet, (): readonly RemoteHealthReport[] => remoteHealthService?.getReports() ?? []);
   ipcMain.handle(HEALTH_CHANNELS.remoteRefresh, async (): Promise<readonly RemoteHealthReport[]> =>
     remoteHealthService ? remoteHealthService.refresh() : [],
@@ -3032,6 +3063,8 @@ function registerHealthIpcHandlers(): void {
 
 }
 
+/** Vigia de travas — same life as `remoteHealthService` (it reads its reports). */
+let vigiaService: VigiaService | null = null;
 /** Mindscape de homologação V1 — the reader of `metricas.json`; same life as `remoteHealthService`. */
 let factoryMetricsReader: RemoteFileReader<FactoryMetricsParse> | null = null;
 /** Fatia 2 — the reader of `rigs.json`, the shape of the factory's rigs; same life. */
@@ -4599,6 +4632,7 @@ app.on('window-all-closed', () => {
   healthService?.stop();
   healthService = null;
   remoteHealthService?.stop();
+  vigiaService?.stop();
   remoteHealthService = null;
   factoryMetricsReader?.stop();
   factoryMetricsReader = null;
