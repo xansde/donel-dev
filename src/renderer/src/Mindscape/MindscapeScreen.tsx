@@ -55,6 +55,7 @@ import { ShadowRoutines } from './ShadowRoutines';
 import { ChairDrawer, ChairsBand, ChairsLayer, podSelection, RIG_SELECTION, type ChairDetails, type ChairFace, type OwnerLayerMode, type PodChoice, type PodDetails, type RigDetails } from './MindscapeChairs';
 import { useLedgerSnapshot } from './useLedgerSnapshot';
 import { FactoryNumbersButton, FactoryNumbersPanel, useFactoryMetrics } from './FactoryNumbers';
+import { EnvironmentButton, EnvironmentPanel, PULSE_TONE, pulseLine, useEnvironment, useEnvView } from './EnvironmentPanel';
 import { sameBoardName } from '../../../shared/homologacao/config';
 import chairStyles from './Chairs.module.css';
 // Mindscape de homologação — the factory's rigs, drawn from its own `rigs.json` on the factory's board.
@@ -96,6 +97,8 @@ export interface MindscapeLiveSession {
   readonly engine?: string;
   /** Item 04 — the context, same reading as the footer of the chat; absent = no reading (never a made-up 0%). */
   readonly meter?: { readonly usedTokens: number; readonly maxTokens: number };
+  /** Gargalos do ambiente — the remote place the session runs on (`accounts.remotes` id); absent = this computer. */
+  readonly machineId?: string;
 }
 
 export interface MindscapeScreenProps {
@@ -149,6 +152,8 @@ export interface MindscapeScreenProps {
   readonly ledgerPlaceStatesOf?: (projectPaths: readonly string[]) => PlaceStates;
   /** Clock of the "antigas" rule (tests pin it). */
   readonly now?: () => number;
+  /** Gargalos do ambiente — "Fechar marcadas": closes these tabs (the same path as `sessao_fechar`). */
+  readonly onCloseSessions?: (tabIds: readonly string[]) => void;
 }
 
 const NO_REGISTRY: SessionRegistry = {};
@@ -324,6 +329,7 @@ export function MindscapeScreen({
   onResume,
   onGesture,
   now = Date.now,
+  onCloseSessions,
   roles = NO_ROLES,
   onStartPlace,
   onManageRoles,
@@ -369,6 +375,15 @@ export function MindscapeScreen({
   // Mindscape de homologação V1, fatia 1 — the factory's numbers (`homologacao` key), on its board, in the lens.
   const factoryMetrics = useFactoryMetrics();
   const [factoryNumbersOpen, setFactoryNumbersOpen] = useState(false);
+  // Gargalos do ambiente — the readings (PC, remote places, accounts) and the panel; the clock ticks each minute.
+  const environment = useEnvironment();
+  const [envOpen, setEnvOpen] = useState(false);
+  const [envNow, setEnvNow] = useState(() => now());
+  useEffect(() => {
+    const timer = setInterval(() => setEnvNow(now()), 60_000);
+    return () => clearInterval(timer);
+  }, [now]);
+  const envView = useEnvView(environment, sessions, doc, projectNames, envNow);
   // Fatia 2 — the shape of the factory's rigs (`rigs.json`), drawn in the lens of its board.
   const factoryRigs = useFactoryRigs(chairsOn);
   /** "Seu desenho: Oculto" — the board only moves: no key, paste or button may change what the owner cannot see. */
@@ -1018,6 +1033,7 @@ export function MindscapeScreen({
           </span>
         ) : null}
         {factoryHere ? <FactoryNumbersButton open={factoryNumbersOpen} onToggle={() => setFactoryNumbersOpen((open) => !open)} /> : null}
+        <EnvironmentButton open={envOpen} onToggle={() => setEnvOpen((open) => !open)} view={envView} />
       </div>
       <LedgerStrip projectPath={activePath} placeName={placeName} cardsHost={boardArea} placeStatesOf={ledgerPlaceStatesOf} />
       <MindscapeToolbar
@@ -1337,6 +1353,10 @@ export function MindscapeScreen({
                     engine={session.engine}
                     meter={session.meter}
                     axes={axesOfLive(session)}
+                    pulse={(() => {
+                      const env = envView.bySession.get(session.sessionId);
+                      return env ? { text: pulseLine(env), tone: PULSE_TONE[env.pulse.state] } : undefined;
+                    })()}
                   />
                 );
               })}
@@ -1429,6 +1449,18 @@ export function MindscapeScreen({
         />
       ) : null}
       {factoryHere && factoryNumbersOpen ? <FactoryNumbersPanel view={factoryHere} onClose={() => setFactoryNumbersOpen(false)} /> : null}
+      {envOpen ? (
+        <EnvironmentPanel
+          view={envView}
+          onClose={() => setEnvOpen(false)}
+          onRefresh={environment.refresh}
+          {...(onCloseSessions ? { onCloseSessions } : {})}
+          onGoTo={(tabId) => {
+            setEnvOpen(false);
+            onGoToTerminal(tabId);
+          }}
+        />
+      ) : null}
       </div>
     </section>
   );

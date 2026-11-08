@@ -4,6 +4,7 @@
 
 import { formatBytes } from '../format-bytes';
 import { HEALTH_THRESHOLDS } from './analyze';
+import { parseGatewayLine, parseSessionLine, remoteSessionsScriptLines, type RemoteGateway, type RemoteSessionReading } from './remoteSessions';
 import type { HealthSeverity } from './types';
 
 const KB = 1024;
@@ -21,6 +22,16 @@ export interface RemoteHealthReading {
   readonly cpus: number | null;
   /** Live Donel sessions (tmux sessions `donel-*` on the `donel` socket). */
   readonly sessions: number | null;
+  /**
+   * Gargalos do ambiente — what each of those sessions is really doing (`remoteSessions.ts`); `null` = the place
+   * could not tell (no `python3`, the program failed). Also `null` on a place that has no session (no line printed
+   * and no clock line): an empty list is only trusted when the program ran.
+   */
+  readonly sessionDetails: readonly RemoteSessionReading[] | null;
+  /** The place's clock when the details were read (ages are measured on it, never on the PC's clock). */
+  readonly readAt: number | null;
+  /** Where the CLI of the place sends its calls; `null` = straight to the API (or not known). */
+  readonly gateway: RemoteGateway | null;
 }
 
 export interface RemoteHealthReport {
@@ -49,6 +60,7 @@ export function buildRemoteHealthScript(): string {
     `printf '${MARK} load %s\\n' "$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)"`,
     `printf '${MARK} cpus %s\\n' "$(nproc 2>/dev/null)"`,
     `printf '${MARK} sessions %s\\n' "$(tmux -L donel ls -F '#S' 2>/dev/null | grep -c '^donel-')"`,
+    ...remoteSessionsScriptLines(),
     `echo '${MARK} end'`,
     '',
   ].join('\n');
@@ -68,6 +80,9 @@ export function parseRemoteHealthOutput(stdout: string): RemoteHealthReading | n
   let load: RemoteHealthReading['load'] = null;
   let cpus: number | null = null;
   let sessions: number | null = null;
+  const details: RemoteSessionReading[] = [];
+  let readAt: number | null = null;
+  let gateway: RemoteGateway | null = null;
   let ended = false;
   for (const raw of stdout.split(/\r?\n/)) {
     const line = raw.trim();
@@ -93,9 +108,18 @@ export function parseRemoteHealthOutput(stdout: string): RemoteHealthReading | n
     } else if (key === 'sessions') {
       const values = numbers(rest, 1);
       if (values) sessions = Math.floor(values[0]);
+    } else if (key === 'now') {
+      const values = numbers(rest, 1);
+      if (values) readAt = values[0];
+    } else if (key === 'gateway') {
+      gateway = parseGatewayLine(rest);
+    } else if (key === 'sess') {
+      const reading = parseSessionLine(rest);
+      if (reading) details.push(reading);
     }
   }
-  return ended ? { ram, swap, disk, load, cpus, sessions } : null;
+  if (!ended) return null;
+  return { ram, swap, disk, load, cpus, sessions, sessionDetails: readAt === null ? null : details, readAt, gateway };
 }
 
 /** Load of the last minute per CPU at or above this is a busy machine; at or above the critical one, a choked one. */
