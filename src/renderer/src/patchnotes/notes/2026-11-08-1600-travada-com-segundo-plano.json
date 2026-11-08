@@ -1,0 +1,4 @@
+{
+  "title": "Gargalos: travada continua travada",
+  "text": "Uma sessão que parou por falta de cota ou por erro da API, mas deixou algum processo rodando por baixo, agora aparece como travada (com a causa e o que ainda roda), em vez de \"trabalhando\". Ela continua fora da lista do que pode fechar."
+}
