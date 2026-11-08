@@ -8,6 +8,7 @@
 import { useEffect, useState } from 'react';
 import {
   eventNote,
+  isFrontMark,
   lastDelivery,
   OWN_OPTION,
   recommendedOption,
@@ -591,6 +592,9 @@ export function LedgerCards({
   const task = queue[index]!;
   const delivery = lastDelivery(task);
   const naipe = naipeDoPapel(delivery?.by.kind === 'lugar' ? delivery.by.roleId : undefined);
+  // A new event remounts the card (a new delivery is a new card); the Líder naming the front is no new event for the
+  // owner, so it never throws away what he is typing.
+  const cardKey = `${task.id}:${task.events.filter((event) => !isFrontMark(task, event)).length}`;
   const who = actorLabel(delivery?.by, task.projectPath, placeName);
   const note = deliveryNote(delivery, task.projectPath, placeName);
   const forOwner = task.state === 'aceita' ? undefined : delivery?.forOwner;
@@ -625,13 +629,13 @@ export function LedgerCards({
           ) : null}
         </div>
         {forOwner ? (
-          <CardA key={`${task.id}:${task.events.length}`} task={task} forOwner={forOwner} naipe={naipe} index={index} count={queue.length} who={who} note={note}
+          <CardA key={cardKey} task={task} forOwner={forOwner} naipe={naipe} index={index} count={queue.length} who={who} note={note}
             decide={decide}
             draft={drafts[task.id] ?? ''}
             setDraft={(text) => setDrafts((all) => ({ ...all, [task.id]: text }))}
           />
         ) : (
-          <OldCard key={`${task.id}:${task.events.length}`} task={task} naipe={naipe} index={index} count={queue.length} who={who} note={note} decide={decide} />
+          <OldCard key={cardKey} task={task} naipe={naipe} index={index} count={queue.length} who={who} note={note} decide={decide} />
         )}
       </div>
     </div>
