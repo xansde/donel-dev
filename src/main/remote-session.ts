@@ -310,6 +310,20 @@ export function sshRemoteCommand(sshTarget: string): (command: string) => ChildP
   return (command) => spawn('ssh', [...SSH_OPTIONS, '-T', '--', sshTarget, command], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
 }
 
+/**
+ * "Sem ligação" — asks whether the tmux session of `sid` is still there. A place that prints neither marker (ssh
+ * failed, timeout) is unreachable, never "gone": only `gone` lets the app give the place as closed.
+ */
+export async function probeRemoteSession(sshTarget: string, sid: string): Promise<'alive' | 'gone' | 'unreachable'> {
+  assertSessionId(sid);
+  const script = `if tmux -L ${REMOTE_TMUX_SOCKET} has-session -t ${shQuote(`donel-${sid}`)} 2>/dev/null; then echo DONEL_LIVE; else echo DONEL_GONE; fi\n`;
+  const { stdout } = await runRemoteScript(sshTarget, script, 20_000);
+  const lines = stdout.split(/\r?\n/).map((line) => line.trim());
+  if (lines.includes('DONEL_LIVE')) return 'alive';
+  if (lines.includes('DONEL_GONE')) return 'gone';
+  return 'unreachable';
+}
+
 export function buildEndScript(sid: string): string {
   assertSessionId(sid);
   return [
@@ -370,6 +384,10 @@ export function buildAttachSshArgs(input: {
   return [
     '-t',
     ...SSH_OPTIONS,
+    // A relink right after a drop can find the old tunnel still held on the place (its sshd has not noticed the
+    // drop yet). Without this the ssh would attach with no tunnel at all, and hooks and MCP would stay refused;
+    // with it the ssh leaves, and the app tries again later (remote-link.ts) until the old tunnel is gone.
+    '-o', 'ExitOnForwardFailure=yes',
     ...input.tunnels.flatMap((tunnel) => ['-R', `127.0.0.1:${tunnel.remotePort}:127.0.0.1:${tunnel.localPort}`]),
     '--',
     input.sshTarget,
@@ -388,7 +406,9 @@ interface LiveRemote {
   readonly folder: string;
   sid: string;
   readonly remoteDir: string;
-  pump: { child: ChildProcess; out: WriteStream } | null;
+  /** The transcript the mirror follows (it moves with `/clear`); a relink resumes it where it stopped. */
+  transcript: string;
+  pump: { child: ChildProcess; out: WriteStream; bytes: number } | null;
 }
 
 /** The live remote tabs of this run of the app: transcript mirrors and the end of the remote session. */
@@ -413,9 +433,9 @@ export class RemoteSessionRegistry {
 
   /** The tab was spawned: starts mirroring the transcript; returns the local mirror path. */
   attach(ptyId: string, sshTarget: string, sid: string, remoteDir: string): string {
-    const entry: LiveRemote = { sshTarget, folder: sid, sid, remoteDir, pump: null };
+    const entry: LiveRemote = { sshTarget, folder: sid, sid, remoteDir, transcript: remoteTranscriptPath(remoteDir, sid), pump: null };
     this.live.set(ptyId, entry);
-    return this.startPump(entry, remoteTranscriptPath(remoteDir, sid), sid);
+    return this.startPump(entry, entry.transcript, sid);
   }
 
   /** Oráculo na VPS (fatia 4): the live remote tabs, by the folder their MCP gate knows them by. */
@@ -429,8 +449,30 @@ export class RemoteSessionRegistry {
     if (!entry) return null;
     if (entry.sid === sid && entry.pump) return this.mirrorPathFor(sid); // the hub and the main both follow the switch
     entry.sid = sid;
+    entry.transcript = remoteAbsoluteTranscript;
     this.stopPump(entry);
     return this.startPump(entry, remoteAbsoluteTranscript, sid);
+  }
+
+  /**
+   * "Sem ligação" — the ssh of the tab was spawned again: the mirror's ssh fell with the same link (or will, once its
+   * keepalive gives up), so a new one takes over from the byte the mirror already has. Appending, never rewriting:
+   * a mirror read again from the start would show the chat's messages twice.
+   */
+  resumePump(ptyId: string): void {
+    const entry = this.live.get(ptyId);
+    if (!entry) return;
+    const old = entry.pump;
+    const from = old?.bytes ?? 0;
+    entry.pump = null;
+    const start = (): void => {
+      if (this.live.get(ptyId) !== entry || entry.pump) return; // closed, or repointed, meanwhile
+      this.startPump(entry, entry.transcript, entry.sid, from);
+    };
+    if (!old) return start();
+    old.child.stdout?.unpipe(old.out);
+    old.child.kill();
+    old.out.end(start); // the old stream flushes before the new one appends
   }
 
   /** The PTY left (tab closed, app quitting or ssh dropped): stop mirroring. */
@@ -445,7 +487,9 @@ export class RemoteSessionRegistry {
   endRemote(ptyId: string): void {
     const entry = this.live.get(ptyId);
     if (!entry) return;
-    const sid = entry.sid;
+    // The tmux session and its folder are named after the id the session was prepared with, never after the
+    // conversation a `/clear` moved it to: ending by `entry.sid` left the tmux alive after the tab closed.
+    const sid = entry.folder;
     const ending = runRemoteScript(entry.sshTarget, buildEndScript(sid), 20_000).then(() => undefined);
     this.ending.set(sid, ending);
     void ending.finally(() => {
@@ -462,18 +506,22 @@ export class RemoteSessionRegistry {
     for (const ptyId of [...this.live.keys()]) this.onPtyExit(ptyId);
   }
 
-  private startPump(entry: LiveRemote, remoteTranscript: string, sid: string): string {
+  private startPump(entry: LiveRemote, remoteTranscript: string, sid: string, fromByte = 0): string {
     const mirror = this.mirrorPathFor(sid);
     mkdirSync(this.mirrorRoot, { recursive: true });
-    const out = createWriteStream(mirror, { flags: 'w' });
+    const out = createWriteStream(mirror, { flags: fromByte > 0 ? 'a' : 'w' });
     const target = remoteTranscript.startsWith('/') ? shQuote(remoteTranscript) : `"$HOME"/${shQuote(remoteTranscript)}`;
-    const child = spawn('ssh', [...SSH_OPTIONS, '-T', '--', entry.sshTarget, `tail -c +1 -F ${target} 2>/dev/null`], {
+    const child = spawn('ssh', [...SSH_OPTIONS, '-T', '--', entry.sshTarget, `tail -c +${fromByte + 1} -F ${target} 2>/dev/null`], {
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'ignore'],
     });
+    const pump = { child, out, bytes: fromByte };
+    child.stdout?.on('data', (chunk: Buffer) => {
+      pump.bytes += chunk.length;
+    });
     child.stdout?.pipe(out);
     child.on('error', () => out.end());
-    entry.pump = { child, out };
+    entry.pump = pump;
     return mirror;
   }
 
