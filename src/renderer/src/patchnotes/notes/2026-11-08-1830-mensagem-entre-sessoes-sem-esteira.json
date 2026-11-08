@@ -1,0 +1,4 @@
+{
+  "title": "Mensagem entre sessões não dispara mais a esteira",
+  "text": "Os avisos e as mensagens que uma sessão manda a outra (e o primeiro pedido de quem um Líder abre) chegam marcados com #sem-esteira. A sessão que recebe não é mais mandada \"invocar /prototipo\" a cada aviso, nem gasta linhas explicando por que não vai."
+}
