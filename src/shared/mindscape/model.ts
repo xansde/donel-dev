@@ -19,8 +19,11 @@ import { clampZoom } from './view';
  * 3 since the place (item 12a): a session card has its own id, the conversation
  * of the moment, the previous ones and a role. A v2 channel would drop a place
  * that has not started yet and every conversation after a renewal.
+ * 7 since the link both ways (08/11): two arrows between the same two cards, one each way (Dev ⇄ Revisor). The
+ * link has the same shape, but a v6 channel drops the arrow the other way whenever it rewires links (a place with a
+ * post-it taking a new conversation, as after a /clear); with 7 it reads and never writes.
  */
-export const MINDSCAPE_SCHEMA_VERSION = 6;
+export const MINDSCAPE_SCHEMA_VERSION = 7;
 
 /**
  * 4 since the board by MCP (item 08 + B37): what a session made on the board carries `by: 'session'`
@@ -145,7 +148,7 @@ export interface MindscapeBoard {
 }
 
 export interface MindscapeDoc {
-  schemaVersion: 6;
+  schemaVersion: 7;
   boards: Record<string, MindscapeBoard>;
 }
 
@@ -253,7 +256,7 @@ function freePlaceId(board: MindscapeBoard, sessionId: string): string {
   }
 }
 
-/** Links after cards were renamed (or merged into another): no link to itself, no duplicate pair. */
+/** Links after cards were renamed (or merged into another): no link to itself, no duplicate pair (as in `addLink`). */
 function rewireLinks(links: readonly MindscapeLink[], renamed: ReadonlyMap<string, string>): MindscapeLink[] {
   if (renamed.size === 0) return [...links];
   const out: MindscapeLink[] = [];
@@ -261,7 +264,8 @@ function rewireLinks(links: readonly MindscapeLink[], renamed: ReadonlyMap<strin
     const from = renamed.get(link.from) ?? link.from;
     const to = renamed.get(link.to) ?? link.to;
     if (from === to) continue;
-    const duplicate = out.some((other) => (other.from === from && other.to === to) || (other.from === to && other.to === from));
+    // The rule of `addLink`: an arrow the other way next to an arrow is not a duplicate (Dev ⇄ Revisor).
+    const duplicate = out.some((other) => (other.from === from && other.to === to) || (other.from === to && other.to === from && !(other.arrow && link.arrow)));
     if (duplicate) continue;
     out.push(from === link.from && to === link.to ? link : { ...link, from, to });
   }
@@ -571,20 +575,24 @@ export interface LinkInput {
 
 /**
  * Links two cards of the board, arrow on unless `arrow: false`. A card to itself, a card missing
- * from the board, an id in use or a pair already linked (either way) → same document.
+ * from the board, an id in use or a pair already linked → same document. Already linked: the same way, or
+ * either way when one of the two is a line (an arrow the other way next to an arrow is a link of its own).
  */
 export function addLink(doc: MindscapeDoc, projectPath: string, input: LinkInput): MindscapeDoc {
   const board = doc.boards[projectPath];
   if (!board || !input.id || input.from === input.to) return doc;
   if (!board.cards[input.from] || !board.cards[input.to]) return doc;
+  // 08/11 — an arrow the other way next to an arrow is a link of its own (Dev ⇄ Revisor talk both ways); a line has no
+  // way, so a line and anything between the same two cards is the same link. The file shape does not change.
+  const arrow = input.arrow ?? true;
   const taken = board.links.some(
     (link) =>
       link.id === input.id ||
       (link.from === input.from && link.to === input.to) ||
-      (link.from === input.to && link.to === input.from),
+      (link.from === input.to && link.to === input.from && !(arrow && link.arrow)),
   );
   if (taken) return doc;
-  return replaceLinks(doc, board, [...board.links, { id: input.id, from: input.from, to: input.to, arrow: input.arrow ?? true, ...(input.by ? { by: input.by } : {}), ...(input.opened ? { opened: true as const } : {}) }]);
+  return replaceLinks(doc, board, [...board.links, { id: input.id, from: input.from, to: input.to, arrow, ...(input.by ? { by: input.by } : {}), ...(input.opened ? { opened: true as const } : {}) }]);
 }
 
 /** Switches the arrow of the link on/off. Missing link → same document. */
@@ -825,7 +833,7 @@ export function setBoardReach(doc: MindscapeDoc, projectPath: string, reach: Boa
 }
 
 /**
- * Sanitizes an untrusted document, v1 to v6; always comes out as v6. Garbage
+ * Sanitizes an untrusted document, v1 to v7; always comes out as v7. Garbage
  * or absence → empty document; bad boards, cards, links and drawings are
  * dropped one by one (an owner card colored `permission` is not accepted — rule 6).
  */

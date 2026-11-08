@@ -76,8 +76,8 @@ describe('quadro_aplicar — o que é do dono', () => {
 });
 
 describe('sessao_fechar — a hierarquia', () => {
-  // Kills a process: only a session below the caller (arrows on its board) or, across boards, only the
-  // Líder of a board with reach "all". Never the caller itself.
+  // Kills a process: only a session below the caller (arrows on its board), any session of its board for the Líder
+  // the owner placed or, across boards, only the Líder of a board with reach "all". Never the caller itself.
   const Q = 'C:/proj/beacon';
   function setup(opts: { arrows: boolean; reach?: 'own' | 'all' }) {
     let doc = addPlace(addPlace(addPlace(emptyMindscapeDoc(), P, { id: 'place:lider', roleId: 'lider' }), P, { id: 'place:dev' }), P, { id: 'place:neto' });
@@ -126,7 +126,7 @@ describe('sessao_fechar — a hierarquia', () => {
 
   it('without hierarchy closes nothing, and never the own session', async () => {
     const flat = setup({ arrows: false });
-    expect(await flat.close('tab-lider', 'place:dev')).toMatchObject({ ok: false });
+    expect(await flat.close('tab-dev', 'place:neto')).toMatchObject({ ok: false }); // the Líder of the board needs no arrow (alcance-lider-do-quadro)
     const tree = setup({ arrows: true });
     expect(await tree.close('tab-lider', 'place:lider')).toMatchObject({ ok: false });
     expect(await tree.close('tab-neto', 'place:dev')).toMatchObject({ ok: false }); // up the arrows

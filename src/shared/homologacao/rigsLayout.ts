@@ -61,10 +61,15 @@ function layoutRig(rig: Rig, shape: RigsShape): { centers: Record<string, { x: n
  * The rigs stand to the left of `content` (the top-left of everything on the board), top-aligned with it, so they
  * never cover the owner's drawing or post-its; `null` content puts them at the origin.
  */
-export function layoutRigs(shape: RigsShape, content: { readonly x: number; readonly y: number } | null): RigsLayout {
+export function layoutRigs(
+  shape: RigsShape,
+  content: { readonly x: number; readonly y: number } | null,
+  /** Chairs of roles the file does not draw ("fora do desenho"): they stand in the middle column, under "Você". */
+  outsideDrawing: readonly string[] = [],
+): RigsLayout {
   const laid = shape.rigs.map((rig) => layoutRig(rig, shape));
   const ownerReached = shape.ligacoes.some((link) => link.para === OWNER_TARGET);
-  const middleIds = [...shape.foraDosRigs, ...(ownerReached ? [OWNER_TARGET] : [])];
+  const middleIds = [...shape.foraDosRigs, ...(ownerReached ? [OWNER_TARGET] : []), ...outsideDrawing];
   const height = Math.max(MIDDLE_TOP + middleIds.length * SLOT_H + 40, ...laid.map((rig) => rig.box.h));
 
   const centers: Record<string, { x: number; y: number }> = {};
