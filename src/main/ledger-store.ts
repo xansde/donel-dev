@@ -32,10 +32,12 @@ import {
   doneByOf,
   replacesOf,
   requestedByOf,
+  frenteOf,
   ASKED_BY_OWNER,
   isCancelled,
   awaitsSend,
   isClosed,
+  isServicePlace,
   viewState,
   maxProofBytes,
   parseLedgerDoc,
@@ -300,7 +302,7 @@ export function orphanReason(caller: LedgerCaller, task: LedgerTask, now: number
 /** The owner place of `task` could not be checked: its board did not answer. Closed and delivered tasks do not depend on it. */
 export function ownerUnknown(caller: LedgerCaller, task: LedgerTask): boolean {
   // The Líder único is no place of any board: whether the board answered says nothing of it (t-52b31719).
-  if (task.ownerPlaceId === LEADER_OF_ALL) return false;
+  if (task.ownerPlaceId === LEADER_OF_ALL || isServicePlace(task.ownerPlaceId)) return false;
   return !isClosed(task) && task.state !== 'entregue' && !awaitsSend(task) && !caller.placeStates?.has(task.projectPath);
 }
 
@@ -458,6 +460,7 @@ function taskView(task: LedgerTask, doc: LedgerDoc, orphan: string | null = null
     risco: task.risk,
     ...(replacesOf(task) ? { substitui: replacesOf(task) } : {}),
     ...(requestedByOf(task) ? { quemPediu: requestedByOf(task) } : {}),
+    ...(frenteOf(task) ? { frente: frenteOf(task) } : {}),
     ...(transfers.length ? { transferencias: transfers.map((t) => ({ de: t.from, para: t.to, por: who(t.by), em: new Date(t.at).toISOString(), motivo: t.reason })) } : {}),
     ...(delivery
       ? {
@@ -540,12 +543,26 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         ...(call.substitui ? { replaces: call.substitui } : {}),
         // Who asked: what the creator said, or the owner when the task came from his phone's "Pedir".
         ...(call.quemPediu ? { requestedBy: call.quemPediu } : call.pedidoDoDono ? { requestedBy: ASKED_BY_OWNER } : {}),
+        ...(call.frente ? { frente: call.frente } : {}),
       });
       if (!result.ok || !lowRefused) return answer(result, 'criada');
       return {
         ok: true,
         text: JSON.stringify({ criada: true, id: result.task.id, estado: result.task.state, risco: 'alto', aviso: `Risco baixo não vale aqui (${lowRefused}); a tarefa espera o dono.` }),
       };
+    }
+    case 'tarefa_frente': {
+      const task = (() => {
+        try {
+          return service.load().doc.tasks[call.id];
+        } catch {
+          return undefined;
+        }
+      })();
+      if (!task) return { ok: false, text: `Não existe tarefa "${call.id}" (veja tarefa_listar).` };
+      if (task.projectPath !== caller.projectPath) return { ok: false, text: 'A tarefa é de outro quadro; só se mexe em tarefa do próprio quadro.' };
+      const result = await service.apply(actor, { op: 'frente', id: task.id, frente: call.frente, ...(call.quemPediu ? { requestedBy: call.quemPediu } : {}) });
+      return result.ok ? { ok: true, text: JSON.stringify({ frente: frenteOf(result.task), id: result.task.id, ...(requestedByOf(result.task) ? { quemPediu: requestedByOf(result.task) } : {}) }) } : { ok: false, text: result.reason };
     }
     case 'tarefa_assumir':
       return answer(await service.apply(actor, { op: 'assumir', id: call.id }), 'assumida');
