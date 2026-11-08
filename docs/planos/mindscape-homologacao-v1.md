@@ -190,13 +190,13 @@ métricas e ao Dev de ferramenta da factory para os dois lados baterem.
   "homologacao": {
     "lugar": "Homologações",
     "metricas": "/root/pesquisas-rigs-homologacao/metricas/metricas.json",
-    "rigs": "/root/esteira-homologacao/rigs.json",
+    "rigs": "/root/pesquisas-rigs-homologacao/metricas/rigs.json",
     "quadro": "Homologação"
   }
   ```
 
-  O caminho do `rigs.json` é sugestão: quem o escreve decide onde ele mora. Nada disso fica fixo no
-  código.
+  O `rigs.json` mora ao lado do `metricas.json` (conferido na VPS em 07/11), mas quem o escreve decide
+  onde ele fica. Nada disso fica fixo no código.
 - **Como o Donel lê.** Do mesmo jeito que a Saúde das VPS: um `ssh … cat <arquivo>` curto, com timeout
   de 8 s, a cada minuto e ao abrir a lente. O main nunca espera essa leitura. **Só lê**: o Donel não
   escreve nada na VPS por este caminho.

@@ -196,6 +196,31 @@ export function renewalLaunchArgs(args: readonly string[] | undefined, permissio
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// The first message of the new session (the handoff to read)
+// ---------------------------------------------------------------------------
+
+/** How long the renderer waits for the new session to take its first message before it tells the owner. */
+export const RENEWAL_HANDOFF_WAIT_MS = 120_000;
+
+/** How the first message of the new session ended (same shape as the send driver's outcome). */
+export type RenewalHandoffDelivery =
+  | { readonly kind: 'entrou' }
+  | { readonly kind: 'na-fila' }
+  | { readonly kind: 'nao-foi'; readonly reason: string }
+  | { readonly kind: 'enviando'; readonly reason?: string };
+
+/**
+ * `null` when the new session took (or queued) the "read the handoff" message. Otherwise the notice
+ * for the tab: the new session did not get the handoff and would start from scratch without anyone
+ * noticing. It names the handoff file and never resends by itself: the owner decides.
+ */
+export function renewalHandoffDeliveryNotice(outcome: RenewalHandoffDelivery, handoffPath: string): string | null {
+  if (outcome.kind === 'entrou' || outcome.kind === 'na-fila') return null;
+  const why = outcome.kind === 'nao-foi' ? `não entrou (${outcome.reason})` : `ainda não entrou${outcome.reason ? ` (${outcome.reason})` : ''}`;
+  return `A sessão nova não confirmou ter recebido a passagem de bastão: a primeira mensagem ${why}. A passagem está em ${handoffPath}. Confira antes de reenviar.`;
+}
+
 /** "250k" for the warning and the prompts. */
 export function formatTokensK(tokens: number): string {
   return `${Math.round(tokens / 1000)}k`;

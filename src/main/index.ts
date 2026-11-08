@@ -206,6 +206,7 @@ import {
   removeSessionHooksSettings,
   statusLineBridgeMode,
   writeHooksSettingsFile,
+  tokenHeaderFileContent,
   writeSessionHooksSettings,
   writeSessionScopeOnlySettings,
 } from './hooks-settings';
@@ -339,7 +340,8 @@ import { HEALTH_CHANNELS, type KillProcessOutcome } from '../shared/health/ipc';
 // Mindscape de homologação V1 — the factory's files, read over ssh (read-only).
 import { createRemoteFileReader, type RemoteFileReader } from './homologacao/remote-file-reader';
 import { parseFactoryMetrics, type FactoryMetricsParse } from '../shared/homologacao/factoryMetrics';
-import { HOMOLOGACAO_CHANNELS, type FactoryMetricsView } from '../shared/homologacao/ipc';
+import { HOMOLOGACAO_CHANNELS, type FactoryMetricsView, type FactoryRigsView } from '../shared/homologacao/ipc';
+import { parseRigsFile, type RigsParse } from '../shared/homologacao/rigs';
 import { createRoutineRunner, type RoutineRunner } from './rotinas/routine-runner';
 import { createFaxineiroService, type FaxineiroService } from './rotinas/faxineiro-service';
 import { FAXINEIRO_CHANNELS, type FaxineiroRoundAnswer } from '../shared/faxineiro/ipc';
@@ -1755,10 +1757,14 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
   const hooksOn = hookBridge !== null && hookBridge.port !== null;
   if (hooksOn) {
     // Slack só com carta, fatia 4: the remote session outlives the app; with it down, a post to Slack is refused.
-    files.push({ name: 'slack-guard.sh', content: buildSlackOfflineGuardScript({ port: fresh.hookPort, token: fresh.hookToken, agentBotServers: appConfig.slackAgentBots.servers }) });
+    // The token goes in a file of its own (600, like every file of the session folder): a hook command never carries it.
+    const tokenHeaderPath = `$HOME/${REMOTE_SESSIONS_DIR}/${correlationId}/hook-header`;
+    files.push({ name: 'hook-header', content: tokenHeaderFileContent(fresh.hookToken) });
+    files.push({ name: 'slack-guard.sh', content: buildSlackOfflineGuardScript({ port: fresh.hookPort, tokenHeaderPath, agentBotServers: appConfig.slackAgentBots.servers }) });
     const settings = buildSessionHooksSettings({
       port: fresh.hookPort,
       token: fresh.hookToken,
+      tokenHeaderPath,
       curlPath: 'curl',
       slackOfflineGuardCommand: `sh "$HOME/${REMOTE_SESSIONS_DIR}/${correlationId}/slack-guard.sh"`,
       statusLine: planStatusLineBridge({ mode: statusLineBridgeModeSetting, userStatusLine: null, chatEnabled: appConfig.chat.enabled }),
@@ -2986,10 +2992,13 @@ function registerHealthIpcHandlers(): void {
   ipcMain.handle(HEALTH_CHANNELS.remoteRefresh, async (): Promise<readonly RemoteHealthReport[]> =>
     remoteHealthService ? remoteHealthService.refresh() : [],
   );
+
 }
 
 /** Mindscape de homologação V1 — the reader of `metricas.json`; same life as `remoteHealthService`. */
 let factoryMetricsReader: RemoteFileReader<FactoryMetricsParse> | null = null;
+/** Fatia 2 — the reader of `rigs.json`, the shape of the factory's rigs; same life. */
+let factoryRigsReader: RemoteFileReader<RigsParse> | null = null;
 
 /** The remote place named by `homologacao.lugar` (label or id), or `null`. */
 function homologacaoPlace(): { readonly sshTarget: string } | null {
@@ -3003,6 +3012,12 @@ function factoryMetricsView(): FactoryMetricsView | null {
   const prefs = appConfig.homologacao;
   if (!prefs?.metricas || !factoryMetricsReader) return null;
   return { board: prefs.quadro, place: prefs.lugar, placeFound: homologacaoPlace() !== null, file: factoryMetricsReader.get() };
+}
+
+function factoryRigsView(): FactoryRigsView | null {
+  const prefs = appConfig.homologacao;
+  if (!prefs?.rigs || !factoryRigsReader) return null;
+  return { board: prefs.quadro, place: prefs.lugar, placeFound: homologacaoPlace() !== null, file: factoryRigsReader.get() };
 }
 
 /**
@@ -3028,6 +3043,27 @@ function registerHomologacaoIpcHandlers(): void {
   ipcMain.handle(HOMOLOGACAO_CHANNELS.metricsRefresh, async (): Promise<FactoryMetricsView | null> => {
     await factoryMetricsReader?.refresh();
     return factoryMetricsView();
+  });
+
+  // Fatia 2 — the shape of the rigs (`rigs.json`), read the same way; the factory's board draws it in its lens.
+  factoryRigsReader = createRemoteFileReader({
+    source: () => {
+      const path = appConfig.homologacao?.rigs;
+      const place = path ? homologacaoPlace() : null;
+      return place && path ? { sshTarget: place.sshTarget, path } : null;
+    },
+    parse: parseRigsFile,
+    run: runRemoteScript,
+    onState: () => {
+      const window = getMainWindow();
+      if (window) window.webContents.send(HOMOLOGACAO_CHANNELS.rigsChanged, factoryRigsView());
+    },
+  });
+  factoryRigsReader.start();
+  ipcMain.handle(HOMOLOGACAO_CHANNELS.rigsGet, (): FactoryRigsView | null => factoryRigsView());
+  ipcMain.handle(HOMOLOGACAO_CHANNELS.rigsRefresh, async (): Promise<FactoryRigsView | null> => {
+    await factoryRigsReader?.refresh();
+    return factoryRigsView();
   });
 }
 
@@ -4470,6 +4506,8 @@ app.on('window-all-closed', () => {
   remoteHealthService = null;
   factoryMetricsReader?.stop();
   factoryMetricsReader = null;
+  factoryRigsReader?.stop();
+  factoryRigsReader = null;
   routineRunner?.stop();
   routineRunner = null;
   faxinaRunner?.stop();
