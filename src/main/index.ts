@@ -246,6 +246,7 @@ import { resolveMainRepoRootSync } from './session-worktree';
 import { ATTACHMENT_MAX_AGE_MS, AttachmentStore } from './chat/attachments';
 import { createChatHub, type ChatHub, type ChatSourceInfo } from './chat/chat-hub';
 import { registerChatIpcHandlers } from './chat/chat-ipc';
+import { keepClearedBoxText } from './chat/cleared-box-store';
 import { createCommandCatalogScanner } from './chat/command-catalog-scanner';
 import { createProjectFiles } from './chat/project-files';
 import { createPendingNotifier, type NotificationLike } from './chat/notifications';
@@ -1668,6 +1669,15 @@ function registerChatDomain(): void {
     openPath: (path) => shell.openPath(path),
     onFocusState: (input) => notifier.setFocusState(input.activePtyId, input.tabNames),
     onSendFailed: (entry) => chatDiagnostics.sendFailed(entry),
+    // 08/11 — what a message from another session erased from the terminal box is kept for the owner, and the tab says so.
+    onBoxCleared: ({ ptyId, text }) => {
+      try {
+        const file = keepClearedBoxText(join(app.getPath('userData'), 'caixa-limpa'), activeSessionByPty.get(ptyId) ?? ptyId, text);
+        chatHub?.noteApp(ptyId, `O app apagou da caixa do terminal um texto que tinha sobrado ao lado de uma mensagem de outra sessão. Ele ficou guardado em ${file}.`);
+      } catch (error) {
+        console.error('[donel-dev] não consegui guardar o texto apagado da caixa:', error);
+      }
+    },
   });
   registerAssetsProtocol(protocol, { transcriptRoots: (ptyId) => hub.transcriptRoots(ptyId), attachmentsRoot });
 }
