@@ -20,6 +20,13 @@ class FakeCli {
   dropEnters = 0;
   /** A paste that the CLI only draws this long after it arrived (a loaded machine). */
   pasteDelayMs = 0;
+  /** Each paste shows as `[Pasted text #N +M lines]`, as the CLI draws a long one (what Enter submits stays the text). */
+  asPlaceholder = false;
+  /** Text that lands in the box right before the next paste (a leftover redrawn late, after a reattach). */
+  intrude: string | null = null;
+  /** What the box shows (the box itself is what an Enter submits). */
+  private shown = '';
+  private pasteSeq = 0;
   constructor(
     private readonly clock: Clock,
     public working: boolean,
@@ -33,12 +40,16 @@ class FakeCli {
       const paste = /^\x1b\[200~([\s\S]*?)\x1b\[201~/.exec(rest);
       if (paste) {
         const text = paste[1];
+        if (this.intrude !== null) {
+          this.add(this.intrude);
+          this.intrude = null;
+        }
         if (this.pasteDelayMs > 0)
           this.clock.after(this.pasteDelayMs, () => {
-            this.box += text;
+            this.add(text);
             this.onRedraw();
           });
-        else this.box += text;
+        else this.add(text);
         rest = rest.slice(paste[0].length);
         continue;
       }
@@ -48,6 +59,7 @@ class FakeCli {
       else if (ch === '\r') {
         const text = this.box;
         this.box = '';
+        this.shown = '';
         if (text.trim() !== '') {
           this.submitted.push(text);
           this.clock.after(30, () => this.onSubmit(text));
@@ -55,16 +67,27 @@ class FakeCli {
       } else if (ch === '\x1b' && rest[0] === '\x1b') {
         rest = rest.slice(1);
         this.box = ''; // Esc Esc clears the box
-      } else if (ch === '\x7f') this.box = this.box.slice(0, -1);
-      else if (ch !== '\x1b') this.box += ch;
+        this.shown = '';
+      } else if (ch === '\x7f') {
+        this.box = this.box.slice(0, -1);
+        this.shown = this.shown.slice(0, -1);
+      } else if (ch !== '\x1b') {
+        this.box += ch;
+        this.shown += ch;
+      }
     }
     // The terminal redraws a moment later (what the driver's screen reads depend on).
     this.clock.after(15, () => this.onRedraw());
     return true;
   }
 
+  private add(text: string): void {
+    this.box += text;
+    this.shown += this.asPlaceholder ? `[Pasted text #${++this.pasteSeq} +${(text.match(/\n/g) ?? []).length} lines]` : text;
+  }
+
   lines(): LineInput[] {
-    return ['● resposta anterior', RULE, this.box === '' ? '❯' : `❯ ${this.box}`, RULE, this.working ? WORKING_FOOTER : IDLE_FOOTER];
+    return ['● resposta anterior', RULE, this.shown === '' ? '❯' : `❯ ${this.shown}`, RULE, this.working ? WORKING_FOOTER : IDLE_FOOTER];
   }
 }
 
@@ -379,6 +402,40 @@ describe('mensagem de outra sessão sem sinal de aceite (07/11)', () => {
     notice(NOTICES[1]);
     clock.advanceTo(180_000);
     expect(cli.box).toBe('');
+    expect(cli.submitted).toEqual([NOTICES[0], NOTICES[1]]);
+  });
+
+  // 08/11 (BizOps) — depois de reiniciar o PC, o texto que tinha ficado preso na caixa da sessão remota emendou na
+  // mensagem seguinte: a caixa foi lida vazia, o resto reapareceu junto com a colagem, e o Enter levou os dois.
+  const STALE = '◆ Dev (place:d9, quadro Donel Dev) terminou: resto de antes do reinício\n- e uma segunda linha';
+
+  it('o resto parado reaparece na caixa junto com a colagem: o aviso não sai emendado nele, e entra uma vez (08/11)', () => {
+    const { clock, cli, notice } = setup(false);
+    cli.asPlaceholder = true;
+    clock.advanceTo(1_000);
+    notice(NOTICES[0]);
+    clock.advanceTo(60_000);
+    cli.intrude = STALE;
+    notice(NOTICES[1]);
+    clock.advanceTo(300_000);
+    expect(cli.submitted).toEqual([NOTICES[0], NOTICES[1]]);
+    expect(cli.box).toBe('');
+  });
+
+  it('o mesmo no meio do turno do Claude de lá: não manda o Enter emendado; espera o turno acabar, limpa e cola de novo (08/11)', () => {
+    const { clock, cli, driver, notice } = setup(true);
+    clock.advanceTo(1_000);
+    notice(NOTICES[0]);
+    clock.advanceTo(60_000);
+    cli.intrude = STALE;
+    notice(NOTICES[1]);
+    clock.after(30_000, () => {
+      cli.working = false;
+      driver.setEnv({ working: false });
+      driver.onScreen();
+    });
+    clock.advanceTo(300_000);
+    expect(cli.submitted.filter((s) => s.includes('resto de antes'))).toEqual([]);
     expect(cli.submitted).toEqual([NOTICES[0], NOTICES[1]]);
   });
 });

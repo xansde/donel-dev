@@ -4,22 +4,31 @@
 // `openCap`: how many live sessions one session may have opened with `sessao_abrir` before the owner is asked
 // ("Precisa de você"); the Líder único counts per board. `null` = no limit (the default). The PC's RAM ceiling is
 // another matter (not here).
+//
+// `turnNotices` (dono, 08/11: "Eles devem atualizar diretamente o ledger, né. Em vez de te notificar a cada instante"):
+// `ledger` (the default) — a session's end of turn goes to the ledger (`andamento`), never to a Líder's chat; only
+// "precisa do dono", "travada" and "entregue para aceite" reach the Líder of its board at once. `chat` — the old mode:
+// a "◆ … terminou" to whoever has an arrow to the session, and no immediate notices.
+
+export type TurnNotices = 'ledger' | 'chat';
 
 export interface TeamPrefs {
   readonly openCap: number | null;
+  readonly turnNotices: TurnNotices;
 }
 
-export const DEFAULT_TEAM_PREFS: TeamPrefs = { openCap: null };
+export const DEFAULT_TEAM_PREFS: TeamPrefs = { openCap: null, turnNotices: 'ledger' };
 export const OPEN_CAP_MIN = 1;
 export const OPEN_CAP_MAX = 99;
 
 /** An invalid value falls back; a number is kept whole and inside 1–99. */
 export function sanitizeTeamPrefs(value: unknown, fallback: TeamPrefs = DEFAULT_TEAM_PREFS): TeamPrefs {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return fallback;
-  const cap = (value as Record<string, unknown>).openCap;
-  if (cap === null) return { openCap: null };
-  if (typeof cap === 'number' && Number.isFinite(cap)) return { openCap: Math.min(OPEN_CAP_MAX, Math.max(OPEN_CAP_MIN, Math.round(cap))) };
-  return fallback;
+  const raw = value as Record<string, unknown>;
+  const cap = raw.openCap;
+  const openCap = cap === null ? null : typeof cap === 'number' && Number.isFinite(cap) ? Math.min(OPEN_CAP_MAX, Math.max(OPEN_CAP_MIN, Math.round(cap))) : fallback.openCap;
+  const turnNotices = raw.turnNotices === 'ledger' || raw.turnNotices === 'chat' ? raw.turnNotices : (fallback.turnNotices ?? DEFAULT_TEAM_PREFS.turnNotices);
+  return { openCap, turnNotices };
 }
 
 /** The cap as `sessao_abrir` tells the agent. */

@@ -127,7 +127,7 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
       if (!mine) return { kind: 'error', text: noPicture };
       const who = mine.quemSou;
       if (who.liderUnico === true) return { kind: 'error', text: 'O Líder único decide pelos quadros do PC; com o PC desligado, as tarefas dele esperam.' };
-      if ((call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar') && call.quadro) return { kind: 'error', text: 'Só o Líder único escolhe o quadro. Esta sessão usa sempre o próprio quadro (chame sem "quadro").' };
+      if ((call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' || call.tool === 'tarefa_novidades') && call.quadro) return { kind: 'error', text: 'Só o Líder único escolhe o quadro. Esta sessão usa sempre o próprio quadro (chame sem "quadro").' };
       if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string') return { kind: 'error', text: noPicture };
       const refused = call.tool === 'tarefa_criar' && call.quemPediu ? askedByRefusal(call.quemPediu) : null;
       if (refused) return { kind: 'error', text: refused };

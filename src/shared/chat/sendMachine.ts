@@ -516,7 +516,11 @@ function textSeen(s: Draft, lines: readonly LineInput[]): boolean {
   if (squash(stripped) === squash(s.text)) return true;
   const placeholder = pastedPlaceholder(lines);
   if (placeholder && /^(?:\[Pasted text #\d+(?: \+\d+ lines?)?\]\s*)+$/.test(stripped)) {
-    const breaks = (s.text.match(/\n/g) ?? []).length;
+    const breaks = lineBreaks(s.text);
+    const counts = placeholderCounts(stripped);
+    // 08/11 — a paste the CLI took in two parts is still ours; a leftover redrawn next to ours is not (its lines add
+    // to ours): an Enter on that box sent the old text glued to the new one.
+    if (counts.length > 1 && counts.every((count) => count !== null)) return counts.reduce<number>((sum, count) => sum + (count ?? 0), 0) <= breaks;
     if (placeholder.lines === null || placeholder.lines === breaks) return true;
     // The box was empty right before our paste, so only our paste can have put a placeholder there: a count the
     // CLI made differently (line endings, a paste it took in two parts) is still ours. Missing it left the
@@ -524,6 +528,28 @@ function textSeen(s: Draft, lines: readonly LineInput[]): boolean {
     return s.boxEmptyAtPaste;
   }
   return s.boxEmptyAtPaste && looksLikeOurs(stripped, s.text);
+}
+
+const lineBreaks = (text: string): number => (text.match(/\n/g) ?? []).length;
+
+/** The `+M lines` of each `[Pasted text #N +M lines]` in the box (`null` when the CLI drew it without a count). */
+function placeholderCounts(box: string): (number | null)[] {
+  return [...box.matchAll(/\[Pasted text #\d+(?: \+(\d+) lines?)?\]/g)].map((match) => (match[1] === undefined ? null : Number(match[1])));
+}
+
+/**
+ * 08/11 (BizOps) — our paste is in the box, but next to something else: text left there before (after a restart, a
+ * reattach that redrew the box late) came back with it. An Enter now would submit both, glued. Literal: the box holds
+ * our text and more. As placeholders: one of them has our line count and there are others.
+ */
+function oursWithRest(s: Draft, lines: readonly LineInput[]): boolean {
+  const raw = readInputText(lines);
+  if (raw === null) return false;
+  const box = squash(raw.replace(/\[Image #\d+\]/g, ''));
+  const ours = squash(s.text);
+  if (ours !== '' && box.length > ours.length && box.includes(ours)) return true;
+  const counts = placeholderCounts(raw);
+  return counts.length > 1 && counts.includes(lineBreaks(s.text));
 }
 
 /** Letters and digits only: what survives a screen read that drops or doubles a glyph (◆, ambiguous widths, wraps). */
@@ -795,6 +821,23 @@ function evaluateTyping(s: Draft, now: number, fx: SendEffect[]): void {
     }
     if (lines !== null && textSeen(s, lines)) {
       enterConfirming(s, lines, now, fx);
+      return;
+    }
+    if (lines !== null && oursWithRest(s, lines)) {
+      // Never the Enter on that box. Unattended: clear it (Esc Esc, never mid-turn: Esc would interrupt the turn) and
+      // paste again once the gate sees it empty. The owner's own message: the box is his to sort out.
+      if (!s.unattended) {
+        fail(s, 'sobrou texto na caixa do terminal');
+        return;
+      }
+      if (midTurn(s, lines) || s.junkCleans >= MAX_JUNK_CLEANS) {
+        s.stepDeadline = now + TEXT_RECHECK_MS;
+        if (s.textGiveUpAt !== null && now >= s.textGiveUpAt) fail(s, 'sobrou texto na caixa do terminal');
+        return;
+      }
+      fx.push({ type: 'write', data: '\x1b\x1b' });
+      s.junkCleans += 1;
+      resetForRetry(s, now);
       return;
     }
     if (s.stepDeadline !== null && now >= s.stepDeadline) {

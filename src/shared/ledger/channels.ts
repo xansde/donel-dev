@@ -16,7 +16,26 @@ export const LEDGER_CHANNELS = {
   comment: 'ledger:comment',
   /** 06/11 (t-e753b554) — a place is gone: its live tasks pass on (`LedgerPassOnRequest[]` → `LedgerPassedOn[]`). */
   passOn: 'ledger:pass-on',
+  /** 08/11 — a session ended a turn: the record goes to its live task (`LedgerTurnRecord` → `LedgerTurnRecorded`). */
+  turnEnded: 'ledger:turn-ended',
 } as const;
+
+/**
+ * 08/11 (dono: "Eles devem atualizar diretamente o ledger") — the end of a turn of the session of `placeId`, written to
+ * its live task as an `andamento` record instead of a "◆ … terminou" in the Líder's chat.
+ */
+export interface LedgerTurnRecord {
+  readonly projectPath: string;
+  readonly placeId: string;
+  readonly text: string;
+  /**
+   * Not an end of turn: a situation that cannot wait (a permission open, a failed turn), recorded with this state and
+   * `text` as what it needs, whether or not a Líder could hear it yet (Revisor, #324).
+   */
+  readonly estado?: 'travada' | 'precisa-do-dono';
+}
+
+export type LedgerTurnRecorded = 'registrado' | 'ja-registrado' | 'sem-tarefa' | 'falhou';
 
 /**
  * 06/11 (t-e753b554) — the renderer saw that a place is gone (its tab was closed and did not come back, or it never
@@ -88,4 +107,6 @@ export interface DonelLedgerApi {
   comment(comment: LedgerComment): Promise<LedgerCommentResult>;
   /** 06/11 — the live tasks of gone places pass on, with the record; answers what moved. */
   passOn(requests: readonly LedgerPassOnRequest[]): Promise<readonly LedgerPassedOn[]>;
+  /** 08/11 — the end of a session's turn, recorded in the ledger. */
+  turnEnded(record: LedgerTurnRecord): Promise<LedgerTurnRecorded>;
 }

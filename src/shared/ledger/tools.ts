@@ -25,6 +25,7 @@ import {
   type LedgerViewState,
   type LedgerVisual,
 } from './contract';
+import { PROGRESS_FIELD_CHARS, PROGRESS_STATES } from './andamento';
 
 /** A proof as the session sends it. A file is a path on the session's computer; the main copies it in. */
 export type ProofInput =
@@ -71,7 +72,11 @@ export type LedgerToolCall =
       /** An upload: the local path and the name in Slack. */
       readonly arquivo?: string;
       readonly arquivoNome?: string;
-    };
+    }
+  /** 08/11 — the session records how its work goes (`andamento.ts`), instead of a notice to the Líder. */
+  | { readonly tool: 'tarefa_andamento'; readonly id?: string; readonly estado: (typeof PROGRESS_STATES)[number]; readonly precisa?: string; readonly prova?: string; readonly proximo?: string }
+  /** 08/11 — what changed in the ledger since the caller's last read, grouped by session (`novidades.ts`). */
+  | { readonly tool: 'tarefa_novidades'; readonly quadro?: string; readonly horas?: number };
 
 export type LedgerToolName = LedgerToolCall['tool'];
 
@@ -294,6 +299,39 @@ export const LEDGER_TOOLS = [
     description:
       'Uma tarefa inteira, com a prova da última entrega: o texto completo, o link e, para print ou vídeo, o caminho do arquivo copiado (o primeiro print vem também como imagem). Quem decide (tarefa_aceitar, tarefa_rejeitar) lê a prova aqui antes.',
     inputSchema: { type: 'object', properties: { id: ID }, required: ['id'], additionalProperties: false },
+    annotations: { readOnlyHint: true },
+  },
+  {
+    name: 'tarefa_andamento',
+    title: 'Registrar o andamento no Oráculo',
+    description:
+      'Registra no Oráculo Harrow como vai o seu trabalho, em campos curtos (uma linha cada): estado, o que precisa, a prova e o próximo passo. É assim que o Líder acompanha você: ele lê quando quiser (tarefa_novidades), sem um aviso a cada turno. Vai na sua tarefa viva (ou na de "id"). Registre ao mudar de fase, ao travar, ao precisar de alguém e ao terminar. "travada" e "precisa-do-dono" chegam ao Líder do quadro na hora; o resto fica só no registro.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Id da tarefa. Sem ele: a sua tarefa viva mais recente.' },
+        estado: { type: 'string', enum: PROGRESS_STATES, description: 'trabalhando, esperando (alguém ou algo), travada (limite, login, erro que você não resolve), precisa-do-dono (decisão ou acesso dele) ou pronta.' },
+        precisa: { type: 'string', description: `O que falta para seguir e de quem (até ${PROGRESS_FIELD_CHARS}).` },
+        prova: { type: 'string', description: `Onde está a evidência: saída de teste, PR, caminho do print (até ${PROGRESS_FIELD_CHARS}).` },
+        proximo: { type: 'string', description: `O próximo passo (até ${PROGRESS_FIELD_CHARS}).` },
+      },
+      required: ['estado'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'tarefa_novidades',
+    title: 'Ler o que mudou no Oráculo',
+    description:
+      'O que mudou no Oráculo Harrow desde a sua última leitura, agrupado por sessão (lugar dono de cada tarefa): o andamento que cada uma registrou, o fim de cada turno, tarefas criadas, assumidas, entregues, aceitas, rejeitadas e passadas adiante. Curto: a última situação de cada sessão em "agora" e os itens mais novos. Cada leitura avança o seu marcador; "horas" relê as últimas N horas. O Líder do quadro lê o próprio quadro; o Líder único lê todos (ou um, com "quadro").',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        quadro: BOARD,
+        horas: { type: 'number', description: 'Relê as últimas N horas (1 a 72), em vez de desde a última leitura.' },
+      },
+      additionalProperties: false,
+    },
     annotations: { readOnlyHint: true },
   },
   {
@@ -559,6 +597,22 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
           ...(caminho ? { arquivo: caminho, ...(typeof arquivoNome === 'string' && arquivoNome.trim() ? { arquivoNome: arquivoNome.trim() } : {}) } : {}),
         },
       };
+    }
+    case 'tarefa_andamento': {
+      const ref = text(args.id, 'id', 120, false);
+      if (typeof ref === 'object') return fail(ref.error);
+      if (!PROGRESS_STATES.includes(args.estado as (typeof PROGRESS_STATES)[number])) return fail(`"estado" tem de ser ${PROGRESS_STATES.join(', ')}.`);
+      const fields: Record<string, string> = {};
+      for (const key of ['precisa', 'prova', 'proximo'] as const) {
+        const value = text(args[key], key, PROGRESS_FIELD_CHARS, false);
+        if (typeof value === 'object') return fail(value.error);
+        if (value?.trim()) fields[key] = value.trim();
+      }
+      return { ok: true, call: { tool: 'tarefa_andamento', ...(ref?.trim() ? { id: ref.trim() } : {}), estado: args.estado as (typeof PROGRESS_STATES)[number], ...fields } };
+    }
+    case 'tarefa_novidades': {
+      if (args.horas !== undefined && (typeof args.horas !== 'number' || !Number.isFinite(args.horas) || args.horas < 1 || args.horas > 72)) return fail('"horas" é um número de 1 a 72.');
+      return { ok: true, call: { tool: 'tarefa_novidades', ...quadro, ...(typeof args.horas === 'number' ? { horas: args.horas } : {}) } };
     }
     default:
       return fail(`Ferramenta desconhecida: ${name}`);
