@@ -2424,7 +2424,9 @@ function registerConfigIpcHandlers(): void {
     const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
     // A `where` from Preferences is the owner's choice: marked, so a 'local' he picks is never read as the old default.
     const chosen = typeof patch.where === 'string' ? { chosen: true } : {};
-    appConfig = { ...appConfig, leader: sanitizeLeaderPrefs({ ...appConfig.leader, ...patch, ...chosen }, appConfig.leader) };
+    const leader = sanitizeLeaderPrefs({ ...appConfig.leader, ...patch, ...chosen }, appConfig.leader);
+    // The choice also goes to its own key, which an older channel keeps intact (it rewrites `leader` without `chosen`).
+    appConfig = { ...appConfig, leader, leaderChoice: leader.chosen ? { where: leader.where } : appConfig.leaderChoice };
     persistAppConfig();
     return toAppConfigDto(appConfig);
   });

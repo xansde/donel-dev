@@ -78,6 +78,7 @@ describe('defaultAppConfig (puro)', () => {
       // Oráculo no centro (06/11) — o layout novo é o padrão, com o Oráculo à vista.
       layout: { oracleCenter: true, centerView: 'oracle' },
       leader: { where: 'auto' },
+      leaderChoice: null,
       appUpdate: { installersDir: null },
       browserUploads: { folders: [] },
       browserUploadGrants: { grants: [] },
@@ -258,6 +259,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       yolo: { projects: ['C:\\repos\\app'] },
       layout: { oracleCenter: false, centerView: 'terminals' },
       leader: { where: 'vps-1' },
+      leaderChoice: null,
       appUpdate: { installersDir: 'D:\\instaladores' },
       browserUploads: { folders: [] },
       browserUploadGrants: { grants: [] },
@@ -362,6 +364,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       // Oráculo no centro — o campo ruim cai no default só dele; a vista escolhida fica.
       layout: { oracleCenter: true, centerView: 'terminals' },
       leader: defaults.leader,
+      leaderChoice: null,
       appUpdate: { installersDir: null },
       browserUploads: { folders: [] },
       browserUploadGrants: { grants: [] },

@@ -6,7 +6,7 @@ import type { EffortLevel, ModelAlias, PermissionMode } from '../shared/commandB
 import type { AppConfigDto, AppUpdatePrefs, AutoModePrefs, BrowserUploadPrefs, ChatPrefs, LauncherDefaultsDto, NotificationPreference, PetPrefs, ProjectScanMode, SessionNamesMap, SlackAgentBotPrefs, SweepPrefs, YoloPrefs } from '../shared/config';
 import { AGENT_BOT_SERVERS, isAgentBotServerName } from '../shared/ledger/slack-guard';
 import { DEFAULT_LAYOUT_PREFS, sanitizeLayoutPrefs, type LayoutPrefs } from '../shared/layoutPrefs';
-import { DEFAULT_LEADER_PREFS, sanitizeLeaderPrefs, type LeaderPrefs } from '../shared/leaderPrefs';
+import { DEFAULT_LEADER_PREFS, resolveLeaderPrefs, sanitizeLeaderChoice, type LeaderChoice, type LeaderPrefs } from '../shared/leaderPrefs';
 // T014 (015-jobu-pet) — limits of the pet size: the same rule the window uses (placement.ts).
 import { PET_SIZE_DEFAULT, clampSize } from '../shared/pet/placement';
 import { withUploadFolder, withUploadGrant, type UploadGrant } from '../shared/browser/upload';
@@ -165,6 +165,8 @@ export interface AppConfig {
   readonly layout: LayoutPrefs;
   /** Onde o Líder roda — a TOP-LEVEL key (like `pet`, R20): a channel without it keeps it in `unknownFields`. In the DTO. */
   readonly leader: LeaderPrefs;
+  /** The owner's pick of `leader.where`, in its own TOP-LEVEL key: an older channel rewrites `leader` but keeps this (`leaderPrefs.ts`). Not in the DTO. */
+  readonly leaderChoice: LeaderChoice | null;
   /** B33 — the installers folder of the in-app update. A TOP-LEVEL key (like `pet`, R20). Not in the DTO. */
   readonly appUpdate: AppUpdatePrefs;
   /** Navegador integrado — the authorized upload folders. A TOP-LEVEL key (like `pet`, R20). Not in the DTO. */
@@ -225,6 +227,7 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     yolo: defaultYoloPrefs(),
     layout: DEFAULT_LAYOUT_PREFS,
     leader: DEFAULT_LEADER_PREFS,
+    leaderChoice: null,
     appUpdate: { installersDir: null },
     browserUploads: { folders: [] },
     browserUploadGrants: { grants: [] },
@@ -833,7 +836,8 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     autoMode: sanitizeAutoModePrefs(candidate.autoMode, defaults.autoMode),
     yolo: sanitizeYoloPrefs(candidate.yolo),
     layout: sanitizeLayoutPrefs(candidate.layout, defaults.layout),
-    leader: sanitizeLeaderPrefs(candidate.leader, defaults.leader),
+    leader: resolveLeaderPrefs(candidate.leader, candidate.leaderChoice, defaults.leader),
+    leaderChoice: sanitizeLeaderChoice(candidate.leaderChoice),
     appUpdate: sanitizeAppUpdatePrefs(candidate.appUpdate),
     browserUploads: sanitizeBrowserUploadPrefs(candidate.browserUploads),
     browserUploadGrants: sanitizeBrowserUploadGrants(candidate.browserUploadGrants),
