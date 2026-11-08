@@ -1,0 +1,4 @@
+{
+  "title": "Mensagem de outra sessão não fica mais parada na caixa do terminal",
+  "text": "Às vezes a mensagem que uma sessão manda para outra (ou o aviso de que ela terminou) ficava colada na caixa de entrada como \"[Pasted text]\", sem ser enviada, e travava as que vinham depois. Agora o app espera mais pela colagem numa máquina lenta e insiste só no Enter até a mensagem sair da caixa, sem colar o texto de novo. Se o Claude de lá nunca aceitar, o app limpa a caixa e avisa que não entrou, para quem mandou poder mandar de novo sem duplicar."
+}
