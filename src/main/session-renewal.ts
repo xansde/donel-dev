@@ -7,8 +7,10 @@
 // Text sent to the session is about the mechanism, not about a model: it works
 // for the CLI the app runs today and is the extension point for another CLI.
 
+import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, join, posix } from 'node:path';
+import { shQuote } from './remote-session';
 import { formatTokensK, HANDOFF_FORMAT_MARKER, parseHandoffHeader, type HandoffStatus } from '../shared/sessionRenewal';
 
 export interface RenewalPrepareRequest {
@@ -19,6 +21,20 @@ export interface RenewalPrepareRequest {
   readonly contextTokens: number;
   readonly limitTokens: number;
 }
+
+/**
+ * A session on a remote place (VPS) cannot read nor write a path of this computer: its handoff lives on the place,
+ * in `<home>/.donel/handoffs/`, and the app reads it there over ssh (`index.ts`). Both sessions — the one that
+ * leaves and the new one — run on the same place, so the new one reads the same file.
+ */
+export interface RenewalRemote {
+  readonly sshTarget: string;
+  /** `$HOME` on the place (absolute, POSIX). */
+  readonly home: string;
+}
+
+/** Where the handoffs of a remote session live, under its `$HOME`. */
+export const REMOTE_HANDOFFS_DIR = '.donel/handoffs';
 
 export interface RenewalRecord {
   readonly id: string;
@@ -31,6 +47,14 @@ export interface RenewalRecord {
   readonly requestPrompt: string;
   /** Sent to the new session as its first message: "read the handoff first". One line. */
   readonly firstPrompt: string;
+  /** The text of the instructions (written by the service on this computer; over ssh by the caller on a place). */
+  readonly instructions: string;
+  /** A session on a remote place: `handoffPath` and `instructionsPath` are paths ON the place. */
+  readonly remote?: {
+    readonly sshTarget: string;
+    /** The copy on this computer, written when the handoff is read ready: what the chat's "abrir" opens. */
+    readonly localCopyPath: string;
+  };
 }
 
 export interface RenewalFs {
@@ -49,7 +73,8 @@ export interface SessionRenewalServiceDeps {
 
 export interface SessionRenewalService {
   readonly handoffsDir: string;
-  prepare(request: RenewalPrepareRequest): RenewalRecord;
+  /** With `remote`, nothing is written here: the caller writes `instructions` on the place. */
+  prepare(request: RenewalPrepareRequest, remote?: RenewalRemote): RenewalRecord;
   get(renewalId: string): RenewalRecord | undefined;
   status(renewalId: string): HandoffStatus;
 }
@@ -156,24 +181,26 @@ export function createSessionRenewalService(deps: SessionRenewalServiceDeps): Se
   return {
     handoffsDir: deps.handoffsDir,
 
-    prepare(request) {
+    prepare(request, remote) {
       const at = now();
       const { date, file } = stamp(at);
       const base = `${file}-${slug(projectName(request.cwd))}-${request.sessionId.slice(0, 8)}`;
-      const handoffPath = join(deps.handoffsDir, `${base}.md`);
-      const instructionsPath = join(deps.handoffsDir, `${base}.instrucoes.md`);
-      fs.mkdirSync(deps.handoffsDir);
-      fs.writeFileSync(
-        instructionsPath,
-        buildHandoffInstructions({
-          handoffPath,
-          sessionId: request.sessionId,
-          cwd: request.cwd,
-          date,
-          contextTokens: request.contextTokens,
-          limitTokens: request.limitTokens,
-        }),
-      );
+      const dir = remote ? posix.join(remote.home, REMOTE_HANDOFFS_DIR) : deps.handoffsDir;
+      const joinIn = remote ? posix.join : join;
+      const handoffPath = joinIn(dir, `${base}.md`);
+      const instructionsPath = joinIn(dir, `${base}.instrucoes.md`);
+      const instructions = buildHandoffInstructions({
+        handoffPath,
+        sessionId: request.sessionId,
+        cwd: request.cwd,
+        date,
+        contextTokens: request.contextTokens,
+        limitTokens: request.limitTokens,
+      });
+      if (!remote) {
+        fs.mkdirSync(deps.handoffsDir);
+        fs.writeFileSync(instructionsPath, instructions);
+      }
       const record: RenewalRecord = {
         id: deps.randomId(),
         previousSessionId: request.sessionId,
@@ -190,6 +217,8 @@ export function createSessionRenewalService(deps: SessionRenewalServiceDeps): Se
           `ao chegar no limite de contexto. Leia primeiro a passagem de bastão em ${handoffPath} e siga a seção ` +
           `"Primeira ação da sessão nova". Só vale como aprovado o que a passagem marca como aprovado. Depois responda ` +
           `em poucas linhas com a prioridade e o estado das frentes, e espere a próxima mensagem.`,
+        instructions,
+        ...(remote ? { remote: { sshTarget: remote.sshTarget, localCopyPath: join(deps.handoffsDir, `${base}.md`) } } : {}),
       };
       records.set(record.id, record);
       return record;
@@ -201,7 +230,7 @@ export function createSessionRenewalService(deps: SessionRenewalServiceDeps): Se
 
     status(renewalId) {
       const record = records.get(renewalId);
-      if (record === undefined) return { kind: 'missing' };
+      if (record === undefined || record.remote) return { kind: 'missing' }; // a remote handoff is read over ssh
       return parseHandoffHeader(fs.readFileText(record.handoffPath));
     },
   };
@@ -210,4 +239,41 @@ export function createSessionRenewalService(deps: SessionRenewalServiceDeps): Se
 /** The name shown in the chat divider: the handoff file, without the folder. */
 export function handoffFileName(handoffPath: string): string {
   return basename(handoffPath);
+}
+
+// ---------------------------------------------------------------------------
+// A session on a remote place — the scripts the main runs there over ssh (`runRemoteScript`, stdin). Pure.
+// ---------------------------------------------------------------------------
+
+const HOME_MARK = 'DONEL_HOME=';
+const FILE_MARK = 'DONEL_FILE_BEGIN';
+
+/** Prints the place's `$HOME` after a marker (a login shell may print other lines first). */
+export function buildRemoteHomeScript(): string {
+  return `printf '${HOME_MARK}%s\\n' "$HOME"\n`;
+}
+
+/** The `$HOME` printed by `buildRemoteHomeScript`, or `null` (no answer, or not an absolute path). */
+export function parseRemoteHome(stdout: string): string | null {
+  const line = stdout.split(/\r?\n/).find((candidate) => candidate.startsWith(HOME_MARK));
+  const home = line?.slice(HOME_MARK.length).trim();
+  return home && home.startsWith('/') ? home : null;
+}
+
+/** Writes `content` to `path` on the place (the folder is created), byte for byte: a quoted heredoc expands nothing. */
+export function buildRemoteWriteScript(path: string, content: string, delimiter = `DONEL_EOF_${randomBytes(8).toString('hex')}`): string {
+  if (content.includes(delimiter)) throw new Error('delimitador presente no conteúdo');
+  const body = content.endsWith('\n') ? content : `${content}\n`;
+  return `set -e\nmkdir -p -- ${shQuote(posix.dirname(path))}\ncat > ${shQuote(path)} <<'${delimiter}'\n${body}${delimiter}\necho DONEL_OK\n`;
+}
+
+/** Prints the file after a marker; a missing file prints only the marker. */
+export function buildRemoteReadScript(path: string): string {
+  return `printf '${FILE_MARK}\\n'; cat -- ${shQuote(path)} 2>/dev/null || true\n`;
+}
+
+/** The file printed by `buildRemoteReadScript`; `null` when the marker never came (ssh failed). */
+export function parseRemoteRead(stdout: string): string | null {
+  const at = stdout.indexOf(`${FILE_MARK}\n`);
+  return at === -1 ? null : stdout.slice(at + FILE_MARK.length + 1);
 }
