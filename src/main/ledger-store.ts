@@ -49,7 +49,9 @@ import {
   type LedgerStrip,
   type LedgerTask,
 } from '../shared/ledger/contract';
-import type { LedgerApplyResult, LedgerPassedOn, LedgerPassOnRequest, LedgerSnapshot } from '../shared/ledger/channels';
+import type { LedgerApplyResult, LedgerPassedOn, LedgerPassOnRequest, LedgerSnapshot, LedgerTurnRecord, LedgerTurnRecorded } from '../shared/ledger/channels';
+import { isUrgentProgress, turnEndProgress, type LedgerProgress } from '../shared/ledger/andamento';
+import { agoText, ledgerNews, progressTaskOf, turnAlreadyRecorded } from '../shared/ledger/novidades';
 import type { LedgerToolCall, ProofInput } from '../shared/ledger/tools';
 import { NOT_STARTED_GRACE_MS, orphanReasonIn, ownerGoneIn } from '../shared/ledger/inbox';
 import { AGENT_BOT_SERVERS, detectAgentBotSend, detectSlackSend, fileNameOf, slackGuard, slackMessageLink, slackSendOutcome, type AgentBotSend } from '../shared/ledger/slack-guard';
@@ -371,6 +373,65 @@ export function leaderTransferNotice(service: LedgerService, fromPlaceId: string
   return `◆ Oráculo: ${fromPlaceId} passou para você a tarefa ${answer.id}${task?.title ? ` «${task.title}»` : ''}${board ? ` (quadro ${board})` : ''}. Motivo: ${reason}. Leia com tarefa_ver e assuma com tarefa_assumir, ou passe adiante com tarefa_transferir.`;
 }
 
+/**
+ * 08/11 (dono: "Eles devem atualizar diretamente o ledger") — the end of a turn of a session, recorded on its live
+ * task as an `andamento` (`turno-encerrado` + the start of what it said) instead of a notice in the Líder's chat.
+ * Nothing when it owns no live task, or when it already wrote its own record during this turn.
+ */
+export async function recordTurnEnd(service: LedgerService, record: LedgerTurnRecord): Promise<LedgerTurnRecorded> {
+  // The end of its previous turn, on the ledger's own clock (memory only: after a restart the first turn is recorded).
+  const key = `${record.projectPath}\n${record.placeId}`;
+  const since = turnEnds.get(key);
+  turnEnds.set(key, service.now());
+  let doc: LedgerDoc;
+  try {
+    const snapshot = service.load();
+    if (snapshot.readOnly) return 'falhou';
+    doc = snapshot.doc;
+  } catch {
+    return 'falhou';
+  }
+  const task = progressTaskOf(doc, record.projectPath, record.placeId);
+  if ('reason' in task) return 'sem-tarefa';
+  if (turnAlreadyRecorded(task, record.placeId, since)) return 'ja-registrado';
+  const result = await service.apply({ kind: 'lugar', placeId: record.placeId }, { op: 'andamento', id: task.id, progress: turnEndProgress(record.text) });
+  return result.ok ? 'registrado' : 'falhou';
+}
+
+/**
+ * 08/11 — the words of what reaches the Líder of the board at once after a tool (the bridge puts who said it in front):
+ * a delivery for acceptance, or a record of "travada" / "precisa-do-dono". `null` = it stays in the ledger only.
+ */
+export function urgentLedgerNotice(call: LedgerToolCall, answerText: string): string | null {
+  let answer: { entregue?: unknown; registrado?: unknown; id?: unknown };
+  try {
+    answer = JSON.parse(answerText) as typeof answer;
+  } catch {
+    return null;
+  }
+  if (typeof answer.id !== 'string') return null;
+  if (call.tool === 'tarefa_entregar' && answer.entregue === true) return `entregou a tarefa ${answer.id} para aceite. Leia a prova com tarefa_ver ${answer.id}.`;
+  if (call.tool === 'tarefa_andamento' && answer.registrado === true && isUrgentProgress({ estado: call.estado })) {
+    const what = call.estado === 'travada' ? 'está travada' : 'precisa do dono';
+    return `${what} (tarefa ${answer.id})${call.precisa ? `: ${call.precisa}` : ''}.`;
+  }
+  return null;
+}
+
+/** A first `tarefa_novidades` (no read yet in this run of the app) looks this far back. */
+export const FIRST_NEWS_READ_MS = 24 * 60 * 60 * 1000;
+/** The last `tarefa_novidades` of each reader (place + board, or `*` for every board): memory only, like `proofSeen`. */
+const newsCursors = new Map<string, number>();
+
+/** Place → when its previous turn ended (`recordTurnEnd`). */
+const turnEnds = new Map<string, number>();
+
+/** The vitest starts each case with no reads and no turns. */
+export function resetNewsCursors(): void {
+  newsCursors.clear();
+  turnEnds.clear();
+}
+
 /** The strip with the same pt-BR words as the rest of the tool (`aberta`, `em-execucao`, `esperandoDono`…). */
 function stripView(strip: LedgerStrip): Record<string, unknown> {
   return {
@@ -648,6 +709,59 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         if (image) return { ok: true, text, image };
       }
       return { ok: true, text };
+    }
+    case 'tarefa_andamento': {
+      let doc: LedgerDoc;
+      try {
+        doc = service.load().doc;
+      } catch (error) {
+        return { ok: false, text: `Não consegui ler o Oráculo Harrow: ${error instanceof Error ? error.message : String(error)}` };
+      }
+      const task = progressTaskOf(doc, caller.projectPath, caller.placeId, call.id);
+      if ('reason' in task) return { ok: false, text: `Nada registrado. ${task.reason}` };
+      const progress: LedgerProgress = {
+        estado: call.estado,
+        ...(call.precisa ? { precisa: call.precisa } : {}),
+        ...(call.prova ? { prova: call.prova } : {}),
+        ...(call.proximo ? { proximo: call.proximo } : {}),
+      };
+      const result = await service.apply(actor, { op: 'andamento', id: task.id, progress });
+      if (!result.ok) return { ok: false, text: `Nada registrado. ${result.reason}` };
+      return {
+        ok: true,
+        text: JSON.stringify({
+          registrado: true,
+          id: result.task.id,
+          estado: call.estado,
+          aviso: isUrgentProgress(progress) ? 'O Líder do seu quadro recebe este registro agora.' : 'Fica no registro; o Líder lê quando quiser (tarefa_novidades).',
+        }),
+      };
+    }
+    case 'tarefa_novidades': {
+      let doc: LedgerDoc;
+      try {
+        doc = service.load().doc;
+      } catch (error) {
+        return { ok: false, text: `Não consegui ler o Oráculo Harrow: ${error instanceof Error ? error.message : String(error)}` };
+      }
+      const now = service.now();
+      // The Líder único without "quadro" has no board: every board.
+      const scope = caller.projectPath || null;
+      const key = `${caller.placeId}\n${scope ?? '*'}`;
+      const since = call.horas ? now - call.horas * 60 * 60 * 1000 : (newsCursors.get(key) ?? now - FIRST_NEWS_READ_MS);
+      newsCursors.set(key, now);
+      const news = ledgerNews(doc, scope, since, now);
+      return {
+        ok: true,
+        text: JSON.stringify(
+          {
+            desde: agoText(since, now),
+            ...(news.grupos.length ? { sessoes: news.grupos.length, grupos: news.grupos } : { nada: 'Nada mudou no Oráculo desde a última leitura.' }),
+          },
+          null,
+          1,
+        ),
+      };
     }
     case 'tarefa_listar': {
       let doc: LedgerDoc;

@@ -12,6 +12,7 @@ import {
   Toast,
   Toggle,
 } from '@donel-dev/design-system';
+import { DEFAULT_TEAM_PREFS } from '../../shared/teamPrefs';
 import { PanelLeftClose, PanelLeftOpen, PanelRightClose, Settings } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type {
@@ -2492,10 +2493,19 @@ export function App(): React.JSX.Element {
     passOn: (requests) => window.donel.ledger.passOn(requests),
     stateEnteredAt: (tabId) => semaphoreStates[tabId]?.stateEnteredAt,
     logFaxineiro: (entries) => window.donel.faxineiro.log(entries),
+    // 08/11 — the end of a turn goes to the ledger, not to a Líder's chat (Preferências can turn the old mode back on).
+    turnNotices: () => appConfig?.team.turnNotices ?? 'ledger',
+    recordTurn: (record) => void window.donel.ledger.turnEnded(record).catch(() => undefined),
+    turnFailureOf: (tabId) => semaphoreStates[tabId]?.turnFailure,
   };
   const agentBridgeRef = useRef<AgentBridge>(null as unknown as AgentBridge);
   if (agentBridgeRef.current === null) agentBridgeRef.current = new AgentBridge(agentPorts);
   agentBridgeRef.current.setPorts(agentPorts);
+  // 08/11 — what cannot wait for the Líder's read of the ledger (a permission open, a failed turn) is told at once by
+  // the bridge, from the semaphore the app already has; the bridge tells each situation once.
+  useEffect(() => {
+    for (const tabId of Object.keys(semaphoreStates)) agentBridgeRef.current.attention(tabId);
+  }, [semaphoreStates]);
   // t-e753b554 — a place that never started passes its live tasks on (the main waits 30 min after the last event).
   useEffect(() => {
     const timer = setInterval(() => void agentBridgeRef.current.checkNotStarted(), 5 * 60_000);
@@ -3690,7 +3700,11 @@ export function App(): React.JSX.Element {
         }}
         openCap={appConfig?.team.openCap ?? null}
         onChangeOpenCap={(openCap) => {
-          void window.donel.config.setTeamPrefs({ openCap }).then(setAppConfig).catch(() => undefined);
+          void window.donel.config.setTeamPrefs({ ...(appConfig?.team ?? DEFAULT_TEAM_PREFS), openCap }).then(setAppConfig).catch(() => undefined);
+        }}
+        turnNotices={appConfig?.team.turnNotices ?? 'ledger'}
+        onChangeTurnNotices={(turnNotices) => {
+          void window.donel.config.setTeamPrefs({ ...(appConfig?.team ?? DEFAULT_TEAM_PREFS), turnNotices }).then(setAppConfig).catch(() => undefined);
         }}
         remotes={accountsView.remotes.map((place) => ({ id: place.id, label: place.label }))}
         launcherWhere={appConfig?.launcherDefaults.where}

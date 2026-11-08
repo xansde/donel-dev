@@ -48,6 +48,8 @@ function setup(): { bridge: AgentBridge; sent: { tabId: string; text: string }[]
     remoteLabel: (id) => id,
     remotes: () => [],
     projects: () => [{ path: HOMOL, name: 'beacon' }],
+    // The old mode (08/11, Preferências): these cases are about the "◆ … terminou" and the passage notice in the chat.
+    turnNotices: () => 'chat',
   };
   return { bridge: new AgentBridge(ports), sent };
 }
@@ -123,6 +125,7 @@ function team(): { bridge: AgentBridge; sent: { tabId: string; text: string }[];
     remoteLabel: (id) => id,
     remotes: () => [],
     projects: () => [{ path: ATLAS, name: 'atlas' }],
+    turnNotices: () => 'chat',
     passOn: async (requests) => {
       passOns.push([...requests]);
       return requests.map((request) => ({ ...request, tasks: [{ id: `t-${request.placeId.slice(6)}`, title: 'Corrige o envio' }] }));

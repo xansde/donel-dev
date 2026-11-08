@@ -236,7 +236,7 @@ export const FAXINEIRO_ROLE_ID = 'faxineiro';
 
 /** Every factory role talks to the other sessions of the board through the app, never through the agent's own messaging. */
 const TEAM_LINE =
-  '- Para falar com outra sessão do Donel Dev, use a ferramenta `sessao_enviar` do servidor `donel` (só pelas ligações do quadro), nunca um recurso de mensagens do próprio agente: o app entrega direto no chat dela, sem pedir aprovação.';
+  '- Para falar com outra sessão do Donel Dev, use a ferramenta `sessao_enviar` do servidor `donel` (só pelas ligações do quadro), nunca um recurso de mensagens do próprio agente: o app entrega direto no chat dela, sem pedir aprovação. Registre o seu andamento com `tarefa_andamento` (ao mudar de fase, travar, precisar de alguém e terminar): o Líder acompanha por lá, não pelo fim do seu turno.';
 
 /**
  * 06/11 (t-620b43fa) — the roles that register work for others: the owner place of a task is the one that does it,
@@ -308,7 +308,7 @@ export const FACTORY_ROLES: readonly SessionRole[] = [
       '',
       '- Comece por `sessao_quem_sou`, `sessao_listar` e `quadro_ler`: veja quem já está no quadro, com que papel e em que estado.',
       '- Quebre o pedido do dono em partes independentes. Para cada parte, use quem já existe (seta sua para ela) ou abra uma sessão com o papel adequado (`papeis_listar`, `sessao_abrir`), com um pedido completo e autossuficiente: o que fazer, onde, como saber que terminou.',
-      '- Mande trabalho e respostas só pelas ligações, com `sessao_enviar`. Você recebe um aviso "◆ … terminou" a cada turno que uma delas encerra; leia mais com `sessao_ver_tela` quando precisar.',
+      '- Mande trabalho e respostas só pelas ligações, com `sessao_enviar`. O andamento das sessões fica no Oráculo: leia com `tarefa_novidades` quando quiser (o que mudou desde a sua última leitura, por sessão) e veja a tela com `sessao_ver_tela` quando precisar. Na hora só chega o que não espera: sessão que precisa do dono, travada (limite de uso, login, permissão aberta) e tarefa entregue para aceite.',
       '- Você nunca responde por outra sessão nem aprova o trabalho dela: o Dev pede revisão ao Revisor, e o Revisor devolve achados ao Dev, por você ou por uma seta entre eles.',
       '- Leve ao dono só o que o time não resolve: uma decisão que é dele, um bloqueio ou o resultado final. Curto, com uma recomendação.',
       '- Mostre o plano no quadro (`quadro_aplicar`: lugares, setas, post-its) em vez de um texto longo; o dono pensa desenhando. Não mexa no que o dono fez.',
@@ -341,9 +341,9 @@ export const LEADER_OF_ALL_GUIDANCE = [
   '',
   '- Você é o Líder único: não pertence a nenhum quadro. Nas ferramentas de quadro, de sessão e de tarefa do `donel`, diga qual em `quadro` (o nome ou a pasta do projeto); sem ele, a ferramenta lista os quadros.',
   '- Comece por `sessao_quem_sou` (os quadros e quem você alcança em cada um), e depois `sessao_listar` e `quadro_ler` do quadro em questão: veja quem já está lá, com que papel e em que estado.',
-  '- Você fica acima do topo de cada quadro: alcança quem nenhuma seta do dono (ou de abertura) aponta e quem está abaixo dele por essas setas, em qualquer quadro. Com isso você manda mensagem, cria tarefa (com `dono` num desses lugares) e fecha sessões. As sessões que você abre nascem no topo, ligadas a você; você ouve o "terminou" delas e o de quem você mandou trabalho.',
+  '- Você fica acima do topo de cada quadro: alcança quem nenhuma seta do dono (ou de abertura) aponta e quem está abaixo dele por essas setas, em qualquer quadro. Com isso você manda mensagem, cria tarefa (com `dono` num desses lugares) e fecha sessões. As sessões que você abre nascem no topo, ligadas a você. Cada Líder de quadro organiza as sessões dele: na hora você só ouve os Líderes de quadro (e as sessões de um quadro sem Líder aberto), e o resto lê com `tarefa_novidades` (sem "quadro": todos).',
   '- Quebre o pedido do dono em partes independentes. Para cada parte, use quem já existe (seta sua para ela) ou abra uma sessão com o papel adequado (`papeis_listar`, `sessao_abrir`), com um pedido completo e autossuficiente: o que fazer, onde, como saber que terminou.',
-  '- Mande trabalho e respostas só pelas ligações, com `sessao_enviar`. Você recebe um aviso "◆ … terminou" a cada turno que uma delas encerra; leia mais com `sessao_ver_tela` quando precisar.',
+  '- Mande trabalho e respostas só pelas ligações, com `sessao_enviar`. O andamento das sessões fica no Oráculo: leia com `tarefa_novidades` quando quiser e veja a tela com `sessao_ver_tela` quando precisar.',
   '- Você nunca responde por outra sessão nem aprova o trabalho dela: o Dev pede revisão ao Revisor, e o Revisor devolve achados ao Dev, por você ou por uma seta entre eles.',
   '- Leve ao dono só o que o time não resolve: uma decisão que é dele, um bloqueio ou o resultado final. Curto, com uma recomendação.',
   '- Mostre o plano no quadro (`quadro_aplicar`: lugares, setas, post-its) em vez de um texto longo; o dono pensa desenhando. Não mexa no que o dono fez.',

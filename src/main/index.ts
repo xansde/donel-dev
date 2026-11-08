@@ -24,8 +24,8 @@ import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { createRemoteOracleHost } from './ledger-remote-host';
 import { createSwitchableLedger, type SwitchableLedger } from './ledger-remote';
 import { LEDGER_REMOTE_CHANNELS, type LedgerRemoteResult, type LedgerRemoteState } from '../shared/ledger/remote';
-import { createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
-import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerSnapshot } from '../shared/ledger/channels';
+import { createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, recordTurnEnd, runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService } from './ledger-store';
+import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerSnapshot, type LedgerTurnRecord, type LedgerTurnRecorded } from '../shared/ledger/channels';
 import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, OWN_OPTION, type LedgerDeliveredTo, type LedgerDoc, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
 import { askedByRefusal, type LedgerToolCall } from '../shared/ledger/tools';
 import type { BoardBridge } from './board-bridge';
@@ -3250,6 +3250,12 @@ function registerLedgerIpcHandlers(): void {
     );
     return passOnTasks(service, requests);
   });
+  // 08/11 — a session ended a turn: recorded on its live task, instead of a notice in the Líder's chat.
+  ipcMain.handle(LEDGER_CHANNELS.turnEnded, async (event, raw: unknown): Promise<LedgerTurnRecorded> => {
+    const record = raw as Partial<LedgerTurnRecord> | null;
+    if (!fromMain(event.sender) || !record || typeof record.projectPath !== 'string' || typeof record.placeId !== 'string' || typeof record.text !== 'string') return 'falhou';
+    return recordTurnEnd(service, { projectPath: record.projectPath, placeId: record.placeId, text: record.text });
+  });
   ipcMain.handle(LEDGER_CHANNELS.comment, async (event, raw: unknown): Promise<LedgerCommentResult> => {
     if (!fromMain(event.sender)) return { ok: false, reason: 'Só a janela do app escreve na carta.' };
     const comment = raw as Partial<LedgerComment> | null;
@@ -3385,7 +3391,7 @@ async function withEveryBoard(boardBridge: BoardBridge, ptyId: string, caller: L
 }
 
 async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<{ caller: LedgerCaller; call: LedgerToolCall } | string> {
-  const quadro = call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' ? call.quadro : call.tool === 'tarefa_transferir' || call.tool === 'tarefa_cancelar' ? taskBoardOf(call.id) : undefined;
+  const quadro = call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' || call.tool === 'tarefa_novidades' ? call.quadro : call.tool === 'tarefa_transferir' || call.tool === 'tarefa_cancelar' ? taskBoardOf(call.id) : undefined;
   const base = { placeId: LEADER_OF_ALL, roleId: LEADER_ROLE_ID };
   if (!quadro) {
     if (call.tool === 'tarefa_criar') return 'Você é o Líder único e não tem quadro: diga qual em "quadro" (nome ou pasta).';
@@ -3414,7 +3420,7 @@ async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: Led
   if (self.kind !== 'text') return self.kind === 'error' ? self.text : 'Não consegui saber quem é esta sessão.';
   const who = JSON.parse(self.text) as { lugar?: unknown; papel?: unknown; pasta?: unknown; liderUnico?: unknown };
   if (who.liderUnico === true) return leaderLedgerCallerOf(boardBridge, ptyId, call);
-  if (call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar') {
+  if (call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' || call.tool === 'tarefa_novidades') {
     if (call.quadro) return 'Só o Líder único escolhe o quadro. Esta sessão usa sempre o próprio quadro (chame sem "quadro").';
   }
   if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string') return 'Seu lugar ainda não está no quadro; espere o primeiro turno terminar.';
@@ -3444,8 +3450,15 @@ async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: 
   const remote = sshTarget ? (path: string) => fetchRemoteProof(sshTarget, path) : undefined;
   const result = await runLedgerTool(ledgerService, resolved.caller, resolved.call, remote);
   if (!result.ok) return { kind: 'error', text: result.text };
-  // A task passed to the Líder único by hand: it hears it, as when a place that closes passes one (t-2c18d666).
-  if (call.tool === 'tarefa_transferir' && resolved.caller.placeId !== LEADER_OF_ALL) {
+  // 08/11 — what cannot wait for the Líder's next read (tarefa_novidades) reaches the Líder of the board at once: a
+  // delivery for acceptance, and a record of "travada" or "precisa-do-dono". Everything else stays in the ledger.
+  if (appConfig.team.turnNotices === 'ledger' && resolved.caller.placeId !== LEADER_OF_ALL) {
+    const urgent = urgentLedgerNotice(call, result.text);
+    if (urgent) void boardBridge.execute(ptyId, { tool: 'aviso_imediato', texto: urgent }).catch(() => null);
+  }
+  // A task passed to the Líder único by hand: it hears it, as when a place that closes passes one (t-2c18d666). With
+  // the notices in the ledger (08/11), the transfer is read there (tarefa_novidades), not in its chat.
+  if (call.tool === 'tarefa_transferir' && resolved.caller.placeId !== LEADER_OF_ALL && appConfig.team.turnNotices === 'chat') {
     const notice = leaderTransferNotice(ledgerService, resolved.caller.placeId, result.text, call.motivo);
     if (notice) void deliverPedidoToLeader?.(notice);
   }
@@ -4332,6 +4345,8 @@ void app.whenReady().then(async () => {
     liveSessionIds: () => new Set(activeSessionByPty.values()),
     prState: ghPrState,
     tell: (projectPath, to, text) => {
+      // 08/11 — with the notices in the ledger, the passage is read there (tarefa_novidades), not in a chat.
+      if (appConfig.team.turnNotices === 'ledger') return;
       void boardBridge.deliverOwnerMessage({ projectPath, placeId: to === LEADER_OF_ALL ? '' : to, text, leaderText: text }).catch(() => null);
     },
   });

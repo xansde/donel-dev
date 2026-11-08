@@ -4,6 +4,7 @@ import { Bell, FolderTree, MessagesSquare, PlayCircle, Search, Smartphone, Trash
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { NotificationPreference, ProjectScanMode } from '../../shared/config';
 import type { SessionRenewalPrefs } from '../../shared/sessionRenewal';
+import type { TurnNotices } from '../../shared/teamPrefs';
 import { CelularSection } from './CelularSection';
 import { EspelhoSection } from './EspelhoSection';
 import { OraculoVpsSection } from './OraculoVpsSection';
@@ -73,6 +74,9 @@ export interface PreferencesProps {
   /** Limite de sessões abertas por um Líder (`team.openCap`, `null` = sem limite); applies at once. */
   openCap: number | null;
   onChangeOpenCap: (openCap: number | null) => void;
+  /** 08/11 — where the end of a session's turn goes (`team.turnNotices`): the ledger (default) or the Líder's chat. */
+  turnNotices: TurnNotices;
+  onChangeTurnNotices: (turnNotices: TurnNotices) => void;
   /** "Modo auto nunca pede permissão" (`autoMode.neverAsks`); applies at once. */
   autoNeverAsks: boolean;
   onChangeAutoNeverAsks: (neverAsks: boolean) => void;
@@ -262,6 +266,21 @@ export function Preferences(props: PreferencesProps): React.JSX.Element | null {
           value={props.openCap === null ? 'sem' : String(props.openCap)}
           options={openCapOptions(props.openCap)}
           onChange={(value) => props.onChangeOpenCap(value === 'sem' ? null : Number(value))}
+        />
+      ),
+    },
+    {
+      id: 'turn-notices',
+      category: 'sessoes',
+      title: 'Avisos de fim de turno',
+      keywords: 'aviso terminou fim de turno líder ledger oráculo andamento notificar',
+      hint: 'Cada sessão grava o andamento no Oráculo e o Líder lê quando quiser. Só chegam na hora: sessão que precisa de você, travada (limite de uso, login, permissão aberta) e tarefa entregue para aceite. O modo antigo manda um aviso "◆ … terminou" ao Líder a cada turno.',
+      body: (
+        <Toggle
+          checked={props.turnNotices === 'chat'}
+          onChange={(checked) => props.onChangeTurnNotices(checked ? 'chat' : 'ledger')}
+          label="Modo antigo: avisar o Líder a cada turno"
+          description="Desligado, o andamento fica no Oráculo."
         />
       ),
     },

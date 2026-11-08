@@ -52,10 +52,15 @@ export type BoardToolCall =
    * Internal, never an MCP tool (not in `BOARD_TOOLS`): the `estado` of every place of these boards (folders), the same
    * answer for whoever asks. The ledger's orphan count must not depend on who asks (t-04099af0).
    */
-  | { readonly tool: 'estados_dos_lugares'; readonly pastas: readonly string[] };
+  | { readonly tool: 'estados_dos_lugares'; readonly pastas: readonly string[] }
+  /**
+   * Internal, never an MCP tool (08/11): a notice that cannot wait for the Líder's read of the ledger (a delivery for
+   * acceptance, "travada", "precisa-do-dono"), from the calling session to the Líder of its board (`texto` without who).
+   */
+  | { readonly tool: 'aviso_imediato'; readonly texto: string };
 
 /** The tools that act on ONE board: the Líder único names it with `quadro` (ADR 0007); the other sessions use their own. */
-export type BoardScopedCall = Exclude<BoardToolCall, { readonly tool: 'papeis_listar' | 'sessao_quem_sou' | 'estados_dos_lugares' }>;
+export type BoardScopedCall = Exclude<BoardToolCall, { readonly tool: 'papeis_listar' | 'sessao_quem_sou' | 'estados_dos_lugares' | 'aviso_imediato' }>;
 
 export type BoardToolName = BoardToolCall['tool'];
 
