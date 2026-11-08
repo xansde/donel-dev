@@ -101,6 +101,11 @@ export interface BrowserService {
 
 const MAX_PTY_ID_LENGTH = 128;
 const MCP_CONFIG_DIR = 'browser-mcp';
+
+/** The folder of the per-session `--mcp-config` files (they hold the MCP bearer token). */
+export function browserMcpConfigDir(userDataDir: string): string {
+  return join(userDataDir, MCP_CONFIG_DIR);
+}
 const STALE_CONFIG_MS = 24 * 60 * 60_000;
 const MAX_LOG_URL = 300;
 /** Budget of one `navegador_extrair` answer (the agent continues with `a_partir`). */
@@ -165,7 +170,7 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
   const agentBusy = new Set<string>();
   /** One tool at a time per PTY: the agent may call tools in parallel, the page has one pair of hands. */
   const queues = new Map<string, Promise<unknown>>();
-  const configDir = join(deps.userDataDir, MCP_CONFIG_DIR);
+  const configDir = browserMcpConfigDir(deps.userDataDir);
   const configPath = (ptyId: string): string => join(configDir, `${ptyId}.json`);
 
   const send = (channel: string, payload: unknown): void => {
