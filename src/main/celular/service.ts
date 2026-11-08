@@ -148,10 +148,15 @@ export function createCelularCore(deps: CelularCoreDeps): CelularCore {
     pedidos,
   });
   // O que já esperava o dono quando o app abriu não avisa de novo; só o que passar a esperar daqui em diante.
+  // Ledger v5, fatia 2: every item of the box "Esperando você", not only the letters to decide.
   let waiting = new Map<string, number>();
+  let lastDoc: LedgerDoc | null = null;
   try {
     const doc = deps.ledger()?.load().doc;
-    if (doc) waiting = newlyWaiting(new Map(), doc).next;
+    if (doc) {
+      lastDoc = doc;
+      waiting = newlyWaiting(new Map(), doc, Date.now()).next;
+    }
   } catch {
     // ledger ilegível: a primeira mudança avisa o que estiver na fila
   }
@@ -220,9 +225,37 @@ export function createCelularCore(deps: CelularCoreDeps): CelularCore {
   }
 
   if (auth.enabled) void reconcile();
+  function warnNewItems(doc: LedgerDoc): void {
+    const { fresh, next } = newlyWaiting(waiting, doc, Date.now());
+    waiting = next;
+    if (!auth.enabled || deps.suspended?.() || fresh.length === 0) return;
+    const paired = new Set(auth.devices().map((device) => device.id));
+    let keys;
+    try {
+      keys = push.keys();
+    } catch (error) {
+      console.error('[donel-dev] celular: sem chave de aviso:', error);
+      return;
+    }
+    for (const { deviceId, subscription } of push.subscriptions()) {
+      if (!paired.has(deviceId)) {
+        push.remove(deviceId); // aparelho revogado: não recebe mais nada
+        continue;
+      }
+      for (const item of fresh) {
+        void sendPush(subscription, pushMessageFor(item), keys, pushFetch).then((outcome) => {
+          if (outcome === 'gone') push.remove(deviceId);
+          else if (outcome === 'failed') console.error('[donel-dev] celular: o aviso não saiu para um aparelho.');
+        });
+      }
+    }
+  }
+
   // A Tailscale pode subir depois do app (ou trocar de endereço): confere de minuto em minuto.
   const timer = setInterval(() => {
     if (auth.enabled) void reconcile();
+    // Some items of the box are born with time alone (a letter stuck for 30 min, a delivery stopped for a day).
+    if (lastDoc) warnNewItems(lastDoc);
   }, 60_000);
   timer.unref?.();
 
@@ -241,29 +274,8 @@ export function createCelularCore(deps: CelularCoreDeps): CelularCore {
       return state();
     },
     ledgerChanged(doc) {
-      const { fresh, next } = newlyWaiting(waiting, doc);
-      waiting = next;
-      if (!auth.enabled || deps.suspended?.() || fresh.length === 0) return;
-      const paired = new Set(auth.devices().map((device) => device.id));
-      let keys;
-      try {
-        keys = push.keys();
-      } catch (error) {
-        console.error('[donel-dev] celular: sem chave de aviso:', error);
-        return;
-      }
-      for (const { deviceId, subscription } of push.subscriptions()) {
-        if (!paired.has(deviceId)) {
-          push.remove(deviceId); // aparelho revogado: não recebe mais nada
-          continue;
-        }
-        for (const task of fresh) {
-          void sendPush(subscription, pushMessageFor(task), keys, pushFetch).then((outcome) => {
-            if (outcome === 'gone') push.remove(deviceId);
-            else if (outcome === 'failed') console.error('[donel-dev] celular: o aviso não saiu para um aparelho.');
-          });
-        }
-      }
+      lastDoc = doc;
+      warnNewItems(doc);
     },
     linkPedido: (pedidoId, tarefa) => pedidosStore.linkTask(pedidoId, tarefa),
     dispose: async () => {
