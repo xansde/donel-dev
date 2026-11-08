@@ -149,15 +149,19 @@ function basePayload(event) {
   return { session_id: sessionId, transcript_path: transcriptPath, cwd, permission_mode: 'default', hook_event_name: event };
 }
 
-/** Runs the `command` hook of SessionStart exactly like the CLI: JSON on stdin, shell. */
+/** Runs the `command` hook of SessionStart exactly like the CLI: JSON on stdin, shell. Resolves with what it said. */
 function runCommandHook(command, payload) {
   return new Promise((done) => {
-    const proc = spawn(command, { shell: true, stdio: ['pipe', 'ignore', 'ignore'], windowsHide: true });
+    const proc = spawn(command, { shell: true, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+    let stdout = '';
+    let stderr = '';
     const timer = setTimeout(() => proc.kill(), 10_000);
-    proc.on('error', () => done());
-    proc.on('exit', () => {
+    proc.stdout.on('data', (chunk) => (stdout += chunk));
+    proc.stderr.on('data', (chunk) => (stderr += chunk));
+    proc.on('error', () => done({ stdout, stderr, exitCode: 1 }));
+    proc.on('exit', (code) => {
       clearTimeout(timer);
-      done();
+      done({ stdout, stderr, exitCode: code ?? 1 });
     });
     proc.stdin.on('error', () => {});
     proc.stdin.end(JSON.stringify(payload));
@@ -171,7 +175,11 @@ async function fireHook(event, extra = {}, options = {}) {
   const payload = { ...basePayload(event), ...extra };
   logCall({ hook: event, type: entry.type });
   if (entry.type === 'command') {
-    await runCommandHook(entry.command, payload);
+    const ran = await runCommandHook(entry.command, payload);
+    // Like the real CLI (2.1.3xx): a SessionStart command hook leaves its command line, verbatim, in the transcript.
+    if (event === 'SessionStart' && transcriptPath) {
+      appendLine({ type: 'attachment', attachment: { type: 'hook_success', hookName: `SessionStart:${extra.source ?? 'startup'}`, hookEvent: 'SessionStart', content: '', ...ran, command: entry.command } });
+    }
     return null;
   }
   if (entry.type !== 'http') return null;

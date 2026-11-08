@@ -58,7 +58,7 @@ describe('escopo do papel', () => {
   });
 
   it('o escopo entra no mesmo --settings dos hooks', () => {
-    const settings = buildSessionHooksSettings({ port: 1, token: 't', curlPath: 'curl', roleScope: { allowedMcpServers: [{ serverName: 'donel' }] } });
+    const settings = buildSessionHooksSettings({ port: 1, token: 't', tokenHeaderPath: '/s/hook-header', curlPath: 'curl', roleScope: { allowedMcpServers: [{ serverName: 'donel' }] } });
     expect(settings.allowedMcpServers).toEqual([{ serverName: 'donel' }]);
     expect(Object.keys(settings.hooks)).toContain('SessionStart');
   });

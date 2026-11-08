@@ -173,9 +173,11 @@ export function pushMessageFor(item: OwnerInboxItem): PushMessage {
  * Returns the whole box for the next comparison. An item leaving and coming back (a delivery rejected and delivered
  * again), or a task that changes kind (a letter accepted, then stuck), warns again: its wait started again. Some items
  * are born with time alone (a letter stuck for 30 min), so the caller also runs this with no change in the ledger.
+ * `known` = `null`: no baseline yet (the ledger was unreadable when the app opened); this first good read becomes the
+ * baseline and warns nothing, instead of the whole box at once.
  */
 export function newlyWaiting(
-  known: ReadonlyMap<string, number>,
+  known: ReadonlyMap<string, number> | null,
   doc: LedgerDoc,
   now: number,
   places?: PlaceStates,
@@ -185,7 +187,7 @@ export function newlyWaiting(
   for (const item of ownerInbox(doc, null, now, places)) {
     const key = `${item.task.id}:${item.kind}`;
     next.set(key, item.since);
-    if (known.get(key) !== item.since) fresh.push(item);
+    if (known && known.get(key) !== item.since) fresh.push(item);
   }
   return { fresh, next };
 }

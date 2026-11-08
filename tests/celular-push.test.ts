@@ -100,4 +100,24 @@ describe('aviso no celular', () => {
     // The next minute (the service checks every minute) does not warn again.
     expect(newlyWaiting(late.next, doc, t0 + 32 * 60_000).fresh).toEqual([]);
   });
+
+  // Ledger unreadable when the app opened: no baseline. The first good read becomes it and warns nothing (it used to
+  // warn the whole box at once, one push per item per phone); what starts waiting after that warns as usual.
+  it('with no baseline, the first good read warns nothing and the next new item warns', () => {
+    let seq = 0;
+    const t0 = Date.UTC(2026, 10, 8, 14);
+    const ctx = () => ({ now: t0 + seq * 1000, newId: () => `t-${++seq}` });
+    const dev = { kind: 'lugar' as const, placeId: 'place:dev' };
+    const letter = (label: string) => ({ op: 'carta-slack' as const, projectPath: 'C:/p', slack: { destination: 'C0123ABC', destinationLabel: label, text: 'oi', reason: 'avisar' } });
+    const first = applyLedgerOp(emptyLedgerDoc(), dev, letter('#produto'), ctx());
+    if (!first.ok) throw new Error(first.reason);
+
+    const baseline = newlyWaiting(null, first.doc, t0);
+    expect(baseline.fresh).toEqual([]);
+    expect(baseline.next.size).toBe(1);
+
+    const second = applyLedgerOp(first.doc, dev, letter('#time'), ctx());
+    if (!second.ok) throw new Error(second.reason);
+    expect(newlyWaiting(baseline.next, second.doc, t0).fresh.map((item) => item.task.id)).toEqual([second.task.id]);
+  });
 });
