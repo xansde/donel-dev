@@ -1,4 +1,4 @@
 {
   "title": "O Líder do quadro alcança o quadro todo, e duas sessões conversam nos dois sentidos",
-  "text": "O Líder que você pôs num quadro agora manda mensagem, passa tarefa e fecha qualquer sessão desse quadro, mesmo sem seta para ela e mesmo que quem a abriu tenha sido o Líder único. Qualquer sessão do quadro também consegue falar com ele sem seta. Uma sessão comum continua só alcançando quem está abaixo dela pelas setas. E duas sessões podem ter uma seta em cada sentido, como Dev e Revisor, para se avisarem uma à outra sem passar pelo Líder."
+  "text": "O Líder que você pôs num quadro agora manda mensagem, passa tarefa e fecha qualquer sessão desse quadro, mesmo sem seta para ela e mesmo que quem a abriu tenha sido o Líder único. Qualquer sessão do quadro também consegue falar com ele sem seta. Uma sessão comum continua só alcançando quem está abaixo dela pelas setas. E duas sessões podem ter uma seta em cada sentido, como Dev e Revisor, para se avisarem uma à outra sem passar pelo Líder. Para não perder essas setas, uma versão mais antiga do Donel Dev aberta ao mesmo tempo mostra o quadro, mas não grava nada nele."
 }

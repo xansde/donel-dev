@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ConfigIoDeps } from '../src/main/config-store';
 import { AgentBridge, type AgentBridgePorts, type BridgeTab } from '../src/renderer/src/Mindscape/agentBridge';
-import { addLink, addPlace, emptyMindscapeDoc, parseMindscapeDoc, setPlaceConversation, type MindscapeDoc } from '../src/shared/mindscape/model';
+import { addLink, addPlace, emptyMindscapeDoc, parseMindscapeDoc, setPlaceConversation, writeSessionNote, type MindscapeDoc, type MindscapeLink } from '../src/shared/mindscape/model';
 import { FACTORY_ROLES } from '../src/shared/roles';
 
 // 08/11 — the Líder of a board directs every session of its board (close, send), even one the Líder único opened with
@@ -81,6 +82,15 @@ describe('Líder do quadro alcança o próprio quadro', () => {
     expect(closed).toEqual([]);
   });
 
+  it('the Líder itself asking for "lider-quadro" hears that it is itself, not that the board has no Líder', async () => {
+    const { bridge, sent } = setup();
+
+    const answer = await bridge.handle('lider', { tool: 'sessao_enviar', para: 'lider-quadro', texto: 'oi' });
+    expect(answer.ok).toBe(false);
+    expect(answer.text).toContain('você mesmo');
+    expect(sent).toEqual([]);
+  });
+
   it('any session of the board talks up to its Líder with "lider-quadro", no arrow needed', async () => {
     const { bridge, sent } = setup();
 
@@ -108,5 +118,78 @@ describe('Ligação de ida e volta', () => {
     const reread = parseMindscapeDoc(JSON.parse(JSON.stringify(doc())));
     const pair = reread.boards[ATLAS]!.links.filter((link) => [DEV, REVISOR].includes(link.from) && [DEV, REVISOR].includes(link.to));
     expect(pair.map((link) => `${link.from}>${link.to}`).sort()).toEqual([`${DEV}>${REVISOR}`, `${REVISOR}>${DEV}`]);
+  });
+});
+
+// The /clear of an older channel (#318, Revisor): a place with a post-it takes a new conversation, the links are
+// rewired, and the v6 rule took an arrow the other way for a duplicate and dropped it. The file must not lose it.
+const FILE = 'C:/data/mindscape.json';
+
+function memoryIo(files: Record<string, string>): ConfigIoDeps {
+  return {
+    existsSync: (path) => path in files || path === 'C:/data',
+    readFileText: (path) => files[path] ?? null,
+    writeFileText: (path, content) => {
+      files[path] = content;
+    },
+    renameFile: (from, to) => {
+      files[to] = files[from]!;
+      delete files[from];
+    },
+    mkdirSync: () => undefined,
+    unlinkFile: (path) => {
+      delete files[path];
+    },
+  };
+}
+
+/** `rewireLinks` of the v6 channels (beta and the alfas before #318): either way is the same pair. */
+function v6Rewire(links: readonly MindscapeLink[]): MindscapeLink[] {
+  const out: MindscapeLink[] = [];
+  for (const link of links) if (!out.some((other) => (other.from === link.from && other.to === link.to) || (other.from === link.to && other.to === link.from))) out.push(link);
+  return out;
+}
+
+function twoWayWithNote(): MindscapeDoc {
+  let doc = addPlace(emptyMindscapeDoc(), ATLAS, { id: DEV, roleId: 'dev' });
+  doc = addPlace(doc, ATLAS, { id: REVISOR, roleId: 'revisor' });
+  doc = setPlaceConversation(doc, ATLAS, DEV, 'conv-dev');
+  doc = setPlaceConversation(doc, ATLAS, REVISOR, 'conv-rev');
+  doc = writeSessionNote(doc, ATLAS, { sessionId: 'conv-rev', sessionName: 'Revisor', text: 'revisei', writtenAt: 1 });
+  doc = addLink(doc, ATLAS, { id: 'ida', from: DEV, to: REVISOR, arrow: true });
+  return addLink(doc, ATLAS, { id: 'volta', from: REVISOR, to: DEV, arrow: true, by: 'session' });
+}
+
+const ways = (doc: MindscapeDoc): string[] =>
+  doc.boards[ATLAS]!.links.filter((link) => link.from !== link.to && [DEV, REVISOR].includes(link.from) && [DEV, REVISOR].includes(link.to)).map((link) => link.id).sort();
+
+describe('A seta de volta sobrevive ao /clear', () => {
+  afterEach(() => {
+    vi.doUnmock('../src/shared/mindscape/model');
+    vi.resetModules();
+  });
+
+  it('this channel keeps both arrows when the Revisor (with a post-it) takes a new conversation', () => {
+    const doc = setPlaceConversation(twoWayWithNote(), ATLAS, REVISOR, 'conv-rev-2');
+    expect(ways(doc)).toEqual(['ida', 'volta']);
+  });
+
+  it('a v6 channel doing that /clear cannot write over the file: the arrow back stays on disk', async () => {
+    const { createMindscapeStore: currentStore } = await import('../src/main/mindscape-store');
+    const files: Record<string, string> = {};
+    expect(currentStore(FILE, memoryIo(files)).save(twoWayWithNote())).toEqual({ ok: true });
+
+    // The older channel: its store knows v6, and its /clear rewires links by the v6 rule.
+    vi.resetModules();
+    vi.doMock('../src/shared/mindscape/model', async (importOriginal) => ({ ...(await importOriginal<object>()), MINDSCAPE_SCHEMA_VERSION: 6 }));
+    const { createMindscapeStore: v6Store } = await import('../src/main/mindscape-store');
+    const old = v6Store(FILE, memoryIo(files));
+    const read = old.load();
+    const cleared = setPlaceConversation(read, ATLAS, REVISOR, 'conv-rev-2');
+    const asV6Writes = { ...cleared, boards: { [ATLAS]: { ...cleared.boards[ATLAS]!, links: v6Rewire(cleared.boards[ATLAS]!.links) } } };
+    expect(ways(asV6Writes)).toEqual(['ida']); // what the v6 channel would write
+
+    expect(old.save(asV6Writes)).toEqual({ ok: false, reason: 'read-only' });
+    expect(ways(parseMindscapeDoc(JSON.parse(files[FILE]!)))).toEqual(['ida', 'volta']);
   });
 });

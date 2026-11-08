@@ -25,10 +25,9 @@ const v5 = {
 };
 
 describe('mindscape.json v6 — pods', () => {
-  it('a v5 file comes up as v6 with every card, link, drawing, view and reach, and no pod', () => {
+  it('a v5 file comes up as the current version with every card, link, drawing, view and reach, and no pod', () => {
     const doc = parseMindscapeDoc(v5);
-    expect(MINDSCAPE_SCHEMA_VERSION).toBe(6);
-    expect(doc.schemaVersion).toBe(6);
+    expect(doc.schemaVersion).toBe(MINDSCAPE_SCHEMA_VERSION);
     const board = doc.boards[path]!;
     expect(Object.keys(board.cards)).toEqual(['place:a', 'owner-1']);
     expect(board.links).toHaveLength(1);

@@ -913,6 +913,8 @@ export class AgentBridge {
         // Up to the Líder of the board (08/11): every place of the board, no arrow needed (reach.ts).
         if (!scope.leader && self && call.para.trim().toLowerCase() === BOARD_LEADER) {
           const leaders = boardOrchestrators(this.board(projectPath)).filter((id) => id !== self.id);
+          if (leaders.length === 0 && isBoardOrchestrator(this.board(projectPath), self.id))
+            return fail(`Não mandei: você é o Líder deste quadro, e "${BOARD_LEADER}" é você mesmo. Para falar com o Líder único, "para": "lider".`);
           if (leaders.length === 0) return fail('Este quadro não tem Líder posto pelo dono. Fale com quem está acima de você pelas setas (ou "lider", se o Líder único abriu você).');
           const leader = leaders.map((id) => this.tabOfPlace(projectPath, id)).find((tab) => tab !== undefined);
           if (!leader) return fail('O Líder do quadro não está aberto agora. Registre o que precisa no Oráculo (tarefa_criar) e siga.');

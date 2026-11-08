@@ -19,8 +19,11 @@ import { clampZoom } from './view';
  * 3 since the place (item 12a): a session card has its own id, the conversation
  * of the moment, the previous ones and a role. A v2 channel would drop a place
  * that has not started yet and every conversation after a renewal.
+ * 7 since the link both ways (08/11): two arrows between the same two cards, one each way (Dev ⇄ Revisor). The
+ * link has the same shape, but a v6 channel drops the arrow the other way whenever it rewires links (a place with a
+ * post-it taking a new conversation, as after a /clear); with 7 it reads and never writes.
  */
-export const MINDSCAPE_SCHEMA_VERSION = 6;
+export const MINDSCAPE_SCHEMA_VERSION = 7;
 
 /**
  * 4 since the board by MCP (item 08 + B37): what a session made on the board carries `by: 'session'`
@@ -145,7 +148,7 @@ export interface MindscapeBoard {
 }
 
 export interface MindscapeDoc {
-  schemaVersion: 6;
+  schemaVersion: 7;
   boards: Record<string, MindscapeBoard>;
 }
 
@@ -830,7 +833,7 @@ export function setBoardReach(doc: MindscapeDoc, projectPath: string, reach: Boa
 }
 
 /**
- * Sanitizes an untrusted document, v1 to v6; always comes out as v6. Garbage
+ * Sanitizes an untrusted document, v1 to v7; always comes out as v7. Garbage
  * or absence → empty document; bad boards, cards, links and drawings are
  * dropped one by one (an owner card colored `permission` is not accepted — rule 6).
  */
