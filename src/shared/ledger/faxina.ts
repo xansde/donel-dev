@@ -15,7 +15,7 @@
 import { LEADER_OF_ALL } from '../mindscape/leader';
 import { placeHasStarted, type MindscapeDoc } from '../mindscape/model';
 import { firstLiveAbove } from '../mindscape/reach';
-import { isClosed, lastDelivery, lastWorkAt, type LedgerDoc, type LedgerTask } from './contract';
+import { isClosed, isServicePlace, lastDelivery, lastWorkAt, type LedgerDoc, type LedgerTask } from './contract';
 
 /** A task nobody touched for this long, with its owner place gone, is an old orphan. */
 export const ORPHAN_AGE_MS = 24 * 60 * 60 * 1000;
@@ -110,7 +110,7 @@ export function orphanPassReason(placeId: string, how: GoneHow): string {
  */
 export function oldOrphans(doc: LedgerDoc, boards: MindscapeDoc, liveSessionIds: ReadonlySet<string>, now: number): OldOrphan[] {
   return Object.values(doc.tasks).flatMap((task): OldOrphan[] => {
-    if (isClosed(task) || task.slack || task.ownerPlaceId === LEADER_OF_ALL) return [];
+    if (isClosed(task) || task.slack || task.ownerPlaceId === LEADER_OF_ALL || isServicePlace(task.ownerPlaceId)) return [];
     if (task.state !== 'aberta' && task.state !== 'em-execucao' && task.state !== 'rejeitada') return [];
     if (now - lastWorkAt(task) < ORPHAN_AGE_MS) return [];
     const board = boards.boards[task.projectPath];

@@ -448,6 +448,17 @@ export function registersForOthers(roleId: string | undefined): boolean {
   return isLeaderRole(roleId) || roleId === 'curador' || roleId === 'pesquisa';
 }
 
+/**
+ * t-a1ea2798 — a headless service (Slack mentions) acting on the VPS's Oráculo with its own credential
+ * (src/oraculo/servicos.ts) signs as the place `servico:<name>`. No board has it, and it is never orphan.
+ */
+export const SERVICE_PLACE_PREFIX = 'servico:';
+export const SERVICE_ROLE = 'servico';
+
+export function isServicePlace(placeId: string): boolean {
+  return placeId.startsWith(SERVICE_PLACE_PREFIX);
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Operations — the ONE place the rules live. Pure: the caller gives the clock and the new id.
 
