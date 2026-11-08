@@ -27,16 +27,20 @@ const DONE = /^conclu[ií]da(?::|\s+pel[ao]s?\s+t-[0-9a-f]+\b)/i;
 const SENT = /^enviada:/i;
 /** "substituída pela t-…", "Carta substituída pela t-…", "Substituída pelas cartas t-…", "Coberta pela t-…": the id must follow. */
 const REPLACED = /^(?:carta\s+)?(?:substitu[ií]da|coberta)\s+pel[ao]s?\s+(?:cartas?\s+)?(t-[0-9a-f]+)\b/i;
+/** "concluída: não, …", "Enviada: nunca saiu", "Enviada: ainda não": the colon is followed by a denial. */
+const DENIED_AFTER_COLON = /^[^:]*:\s*(?:ainda\s+)?(?:n[aã]o|nunca)\b/i;
 
 /** How a cancelled task closed; `null` = not cancelled (open, delivered, accepted, or rejected to be redone). */
 export function closingOf(task: LedgerTask): Closing | null {
   if (!isCancelled(task)) return null;
   const decision = lastDecision(task);
   const reason = (decision && eventNote(decision))?.trim() ?? '';
-  if (DONE.test(reason) && EVIDENCE.test(reason)) return { kind: 'concluida-por-prova' };
-  if (SENT.test(reason)) return { kind: 'enviada' };
-  const replaced = REPLACED.exec(reason);
-  if (replaced) return { kind: 'substituida', replacedBy: replaced[1]! };
+  const denied = DENIED_AFTER_COLON.test(reason);
+  if (DONE.test(reason) && EVIDENCE.test(reason) && !denied) return { kind: 'concluida-por-prova' };
+  if (SENT.test(reason) && !denied) return { kind: 'enviada' };
+  // Ids are lower case ("T-ABCD" is the same task); a task never replaces itself.
+  const replacedBy = REPLACED.exec(reason)?.[1]?.toLowerCase();
+  if (replacedBy && replacedBy !== task.id.toLowerCase()) return { kind: 'substituida', replacedBy };
   return { kind: 'cancelada' };
 }
 

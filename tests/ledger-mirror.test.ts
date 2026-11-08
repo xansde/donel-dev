@@ -281,6 +281,12 @@ describe('espelho do Oráculo', () => {
     ['covered by a person', 'Coberta pelo Fernando', 'cancelada', 'cancelada por Alexandre'],
     ['covered by the rain', 'Coberta pela chuva', 'cancelada', 'cancelada por Alexandre'],
     ['replaced, with no task named', 'substituída pela nova versão do pedido', 'cancelada', 'cancelada por Alexandre'],
+    // Ressalvas do Revisor no #308: a denial right after the colon, the case of the id, and a task that replaces itself.
+    ['sent, then denied', 'Enviada: não chegou a sair', 'cancelada', 'cancelada por Alexandre'],
+    ['done, then denied, with a PR further on', 'concluída: não, o dono desistiu; ver #12', 'cancelada', 'cancelada por Alexandre'],
+    ['done, "nunca" after the colon', 'Concluída: nunca saiu do rascunho (t-0123abcd)', 'cancelada', 'cancelada por Alexandre'],
+    ['replaced, id in capitals', 'Coberta pela T-ABCD1234 (aceita)', 'substituída', 'substituída pela t-abcd1234 · fechada por Alexandre'],
+    ['replaced by itself', 'substituída pela t-2', 'cancelada', 'cancelada por Alexandre'],
   ])('a cancel that was really %s says so', (_case, reason, estado, decisao) => {
     const closed = task('t-2', {
       state: 'rejeitada',
