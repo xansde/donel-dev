@@ -18,7 +18,8 @@ import { createCelularCore } from '../main/celular/service';
 import { createOracleAdminRoutes } from './admin';
 import { createRelay } from './relay';
 import { pickTailscaleAddress } from '../main/celular/tailscale';
-import { createOracleApiHandler } from './api';
+import { callerOf, createOracleApiHandler } from './api';
+import { readServiceHashes } from './servicos';
 import { createReturnGuard } from './devolvido';
 import { createGateHandler, GATE_PORT, mergePicture, startGateServer, tunnelForward, type BoardPicture } from './portao';
 import { ORACLE_PORT, startOracleServer, type OracleServer } from './server';
@@ -49,6 +50,7 @@ async function main(): Promise<void> {
   const port = Number(process.env.DONEL_ORACULO_PORT) || ORACLE_PORT;
   const ledgerFile = join(dir, 'ledger.json');
   const tokenHash = (): string | null => readTokenHash(dir);
+  const services = (): ReadonlyMap<string, string> => readServiceHashes(dir);
   const io = createSystemConfigIoDeps();
   let server: OracleServer | null = null;
   // What only the PC delivers (its board knows who is open): waits in `fila.json` until the PC acks.
@@ -105,6 +107,7 @@ async function main(): Promise<void> {
     ledger,
     ledgerFile,
     tokenHash,
+    services,
     returned: guard,
     changed: () => {
       server?.notify('ledger');
@@ -116,7 +119,7 @@ async function main(): Promise<void> {
     },
     extra: createOracleAdminRoutes({ celular, relay, setPicture }),
   });
-  server = await startOracleServer({ host, port, tokenHash, handler });
+  server = await startOracleServer({ host, port, caller: (authorization) => callerOf(authorization, tokenHash(), services()), handler });
   writeFileSync(join(dir, 'url'), `${server.url}\n`, { mode: 0o600 });
   const gatePort = Number(process.env.DONEL_ORACULO_PORTAO_PORT) || GATE_PORT;
   const gate = await startGateServer({
