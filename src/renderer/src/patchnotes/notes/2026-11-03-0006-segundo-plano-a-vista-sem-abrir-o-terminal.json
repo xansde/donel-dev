@@ -1,0 +1,4 @@
+{
+  "title": "Segundo plano à vista, sem abrir o terminal",
+  "text": "Comandos, agentes e monitores que a sessão deixou rodando em segundo plano agora aparecem no chat, logo acima da caixa de texto: \"⟳ 2 em segundo plano\", mesmo depois que o turno acaba. Clique para ver a lista (o que é, desde quando, se terminou, falhou ou foi parada) e clique num item para ir até onde ele começou na conversa. A aba ganha um \"⟳ 2\" discreto, o cartão da sessão no Mindscape também, e a barra de status mostra o total de todas as sessões, com uma lista que leva até a aba certa."
+}

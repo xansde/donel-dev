@@ -1,0 +1,4 @@
+{
+  "title": "\"Cancelada\" quer dizer cancelada",
+  "text": "Muita tarefa feita aparecia como \"cancelada\": era o único jeito de fechar o que não passava pelo aceite. Agora o Oráculo e a tabela do Supabase leem o motivo e dizem o que foi de verdade: \"concluída por prova\" quando o trabalho saiu (um PR mesclado, por exemplo), \"enviada\" quando a mensagem foi, e \"substituída pela\" outra tarefa quando ela tomou o lugar. \"Cancelada\" fica só para o que não vai acontecer. Nada muda no registro: é só a leitura. O pedido dos posts do bot do agente também deixou de mostrar a marca interna."
+}

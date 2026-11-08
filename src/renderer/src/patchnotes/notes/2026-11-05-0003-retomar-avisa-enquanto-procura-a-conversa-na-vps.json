@@ -1,0 +1,4 @@
+{
+  "title": "Retomar avisa enquanto procura a conversa na VPS",
+  "text": "Ao retomar uma sessão cuja conversa não está neste computador, o app pergunta à VPS onde ela está, o que pode levar alguns segundos. Antes o clique parecia não fazer nada; agora aparece \"Procurando a conversa…\" até a resposta chegar."
+}

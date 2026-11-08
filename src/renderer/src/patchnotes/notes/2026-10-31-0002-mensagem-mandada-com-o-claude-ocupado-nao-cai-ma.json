@@ -1,0 +1,4 @@
+{
+  "title": "Mensagem mandada com o Claude ocupado não cai mais em \"não foi\"",
+  "text": "Ainda acontecia: com o Claude rodando um comando demorado, a mensagem ficava meio minuto esperando e virava \"não foi · o Claude não ficou pronto\". Agora ela fica \"na fila\", dizendo que espera o Claude terminar o que está fazendo, e entra sozinha assim que ele libera."
+}
