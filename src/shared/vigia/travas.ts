@@ -9,7 +9,7 @@ import { pulseOfRemote } from '../mindscape/bottlenecks';
 export const VIGIA_ROUND_MS = 5 * 60_000;
 /** A session in a loop (retrying the API, login fallen, failed call) for longer than this is a lock. */
 export const SESSION_STUCK_MS = 10 * 60_000;
-/** `bw status` slower than this (or no answer) = the vault is slow. */
+/** The vault command's `status` slower than this (or no answer) = the vault is slow. */
 export const COFRE_SLOW_MS = 20_000;
 /** A lock seen in this many rounds in a row opens its card (one round can be a blip). */
 export const ROUNDS_TO_WARN = 2;

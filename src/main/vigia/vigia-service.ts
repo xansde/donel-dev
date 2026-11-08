@@ -21,7 +21,7 @@ import {
   type VigiaState,
 } from '../../shared/vigia/travas';
 
-/** The probe's own budget: `bw status` may take up to 25 s on a slow vault, plus the ssh. */
+/** The probe's own budget: the vault command's `status` may take up to 25 s on a slow vault, plus the ssh. */
 export const VIGIA_PROBE_TIMEOUT_MS = 45_000;
 /** The first round waits for the app (and the remote health's first read) to settle. */
 export const VIGIA_FIRST_DELAY_MS = 3 * 60_000;
