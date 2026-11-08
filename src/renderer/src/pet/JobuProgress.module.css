@@ -197,11 +197,6 @@
   background: var(--state-permission);
 }
 
-/* Parado with steps already walked (delivered and nobody checked, or silent): the muted of its hollow dot. */
-.segment[data-state='parado'] {
-  background: color-mix(in srgb, var(--text-muted) 55%, transparent);
-}
-
 .segment[data-state='concluida'] {
   background: var(--state-done);
 }

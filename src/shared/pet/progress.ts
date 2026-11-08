@@ -10,10 +10,12 @@
 //   said a word for a day, or delivered and nobody checked for 12 h);
 // - what ended leaves the list: an accepted task only counts in "concluídas hoje", a cancelled one vanishes, and a
 //   front with nothing alive leaves too;
-// - the bar of a front counts the steps of its asks alive and accepted today, 3 each: assumed, delivered, accepted;
-//   it is drawn as one segment per ask, as long as the ask's steps and in the color of its state (`segments`).
+// - the bar of a front counts the steps of its asks alive and accepted today, 3 each, as in the prototype the owner
+//   approved: accepted today 3, esperando você 2, travado and tocando 1, parado 0 (a stopped ask paints nothing, even
+//   delivered or taken: it is not moving). It is drawn as one segment per ask, as long as the ask's steps and in the
+//   color of its state (`segments`).
 
-import { ASKED_BY_OWNER, frenteOf, isCancelled, lastDelivery, lastWorkAt, requestedByOf, type LedgerDoc, type LedgerTask } from '../ledger/contract';
+import { ASKED_BY_OWNER, frenteOf, isCancelled, lastDecision, lastDelivery, lastWorkAt, requestedByOf, type LedgerDoc, type LedgerTask } from '../ledger/contract';
 import { LEADER_OF_ALL } from '../mindscape/leader';
 
 /** Assumed, delivered, accepted. */
@@ -25,6 +27,8 @@ export const UNCHECKED_MS = 12 * 60 * 60 * 1000;
 
 export type FrontTaskState = 'esperando' | 'travado' | 'tocando' | 'parado';
 const STATE_ORDER: Readonly<Record<FrontTaskState, number>> = { esperando: 0, travado: 1, tocando: 2, parado: 3 };
+/** The steps an ask counts in the bar of its front, by what the owner reads (the prototype's scale). */
+const STATE_STEPS: Readonly<Record<FrontTaskState, number>> = { esperando: 2, travado: 1, tocando: 1, parado: 0 };
 const SEGMENT_ORDER: Readonly<Record<FrontSegment['state'], number>> = { concluida: -1, ...STATE_ORDER };
 
 export interface FrontTask {
@@ -123,20 +127,6 @@ function ago(ms: number, unit: 'h' | 'd'): string {
   return unit === 'h' ? `${Math.max(1, Math.round(ms / 3_600_000))} h` : `${Math.max(1, Math.floor(ms / 86_400_000))} d`;
 }
 
-function stepsOf(task: LedgerTask): number {
-  switch (task.state) {
-    case 'aberta':
-      return 0;
-    case 'em-execucao':
-    case 'rejeitada':
-      return 1;
-    case 'entregue':
-      return 2;
-    case 'aceita':
-      return 3;
-  }
-}
-
 /** The state the owner reads, and who has the task. */
 function stateOf(task: LedgerTask, changedAt: number, now: number): { state: FrontTaskState; who: string } {
   if (task.state === 'entregue') {
@@ -161,7 +151,7 @@ const zeroCounts = (): Record<FrontTaskState, number> => ({ esperando: 0, travad
 /** The panel at `now`. */
 export function jobuProgress(doc: LedgerDoc, now: number): JobuProgress {
   const today = startOfDay(now);
-  const byFront = new Map<string, { tasks: FrontTask[]; done: LedgerTask[] }>();
+  const byFront = new Map<string, { tasks: FrontTask[]; done: { id: string; at: number }[] }>();
   const doneToday: DoneTask[] = [];
   const counts = zeroCounts();
   let changed: number | null = null;
@@ -173,8 +163,10 @@ export function jobuProgress(doc: LedgerDoc, now: number): JobuProgress {
     const changedAt = lastWorkAt(task);
     const group = byFront.get(front) ?? { tasks: [], done: [] };
     if (task.state === 'aceita') {
-      if (changedAt < today) continue;
-      group.done.push(task);
+      // Accepted today by the accept itself: the owner checking or commenting on yesterday's accept is no accept today.
+      const acceptedAt = lastDecision(task)?.at ?? changedAt;
+      if (acceptedAt < today) continue;
+      group.done.push({ id: task.id, at: acceptedAt });
       doneToday.push({ id: task.id, title: shortTitle(task), front });
     } else {
       const { state, who } = stateOf(task, changedAt, now);
@@ -191,11 +183,11 @@ export function jobuProgress(doc: LedgerDoc, now: number): JobuProgress {
       const tasks = [...group.tasks].sort((a, b) => STATE_ORDER[a.state] - STATE_ORDER[b.state] || a.due.localeCompare(b.due) || a.id.localeCompare(b.id));
       const frontCounts = zeroCounts();
       for (const task of tasks) frontCounts[task.state] += 1;
-      const alive = tasks.map((task) => doc.tasks[task.id]!);
-      const segments: FrontSegment[] = [
+      const all: FrontSegment[] = [
         ...group.done.map((task) => ({ id: task.id, state: 'concluida' as const, steps: PROGRESS_STEPS })),
-        ...tasks.map((task) => ({ id: task.id, state: task.state, steps: stepsOf(doc.tasks[task.id]!) })),
-      ]
+        ...tasks.map((task) => ({ id: task.id, state: task.state, steps: STATE_STEPS[task.state] })),
+      ];
+      const segments = all
         .filter((segment) => segment.steps > 0)
         .sort((a, b) => b.steps - a.steps || SEGMENT_ORDER[a.state] - SEGMENT_ORDER[b.state]);
       return {
@@ -203,10 +195,11 @@ export function jobuProgress(doc: LedgerDoc, now: number): JobuProgress {
         tasks,
         counts: frontCounts,
         doneToday: group.done.length,
-        steps: [...alive, ...group.done].reduce((sum, task) => sum + stepsOf(task), 0),
-        totalSteps: (alive.length + group.done.length) * PROGRESS_STEPS,
+        steps: segments.reduce((sum, segment) => sum + segment.steps, 0),
+        totalSteps: all.length * PROGRESS_STEPS,
         segments,
-        changedAt: Math.max(...tasks.map((task) => task.changedAt)),
+        // An accept today is news too: the front of a fresh accept goes up, as in the prototype.
+        changedAt: Math.max(...tasks.map((task) => task.changedAt), ...group.done.map((task) => task.at)),
       };
     });
   // What needs the owner first, then the newest; "Sem frente" always last.

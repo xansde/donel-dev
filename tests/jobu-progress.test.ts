@@ -90,41 +90,48 @@ describe('jobuProgress', () => {
     });
     // What needs the owner comes first.
     expect(tasks.map((task) => task.state)).toEqual(['esperando', 'travado', 'tocando', 'tocando', 'parado', 'parado', 'parado']);
-    // The bar: one segment per ask, as long as its steps and in the color of its state; an ask with no step has none.
-    expect(jobuProgress(doc, now).fronts[0]!.segments.map((segment) => [segment.id, segment.state, segment.steps])).toEqual([
+    // The bar, as in the prototype: one segment per ask, in the color of its state; a stopped ask counts no step and
+    // paints nothing, even delivered or taken (esperando 2, travado and tocando 1, parado 0).
+    const front = jobuProgress(doc, now).fronts[0]!;
+    expect(front.segments.map((segment) => [segment.id, segment.state, segment.steps])).toEqual([
       ['carta', 'esperando', 2],
-      ['revisao', 'tocando', 2],
-      ['esquecida', 'parado', 2],
       ['voltou', 'travado', 1],
+      ['revisao', 'tocando', 1],
       ['rodando', 'tocando', 1],
-      ['calada', 'parado', 1],
     ]);
+    expect([front.steps, front.totalSteps]).toEqual([5, 21]);
   });
 
   it('what ended leaves the list: accepted today only counts, cancelled vanishes, and the bar counts the steps of the front', () => {
     let doc = emptyLedgerDoc();
     for (const id of ['feita', 'ontem', 'rodando', 'cancelada']) doc = ask(doc, { id, frente: 'F' }, T0 - 30 * H);
     doc = ask(doc, { id: 'so-feita', frente: 'G' }, T0 - 30 * H);
-    for (const id of ['feita', 'ontem', 'rodando', 'so-feita']) doc = run(doc, dev, { op: 'assumir', id }, T0 - 29 * H);
-    for (const id of ['feita', 'ontem', 'so-feita']) doc = run(doc, dev, { op: 'entregar', id, proofs }, T0 - 28 * H);
+    for (const id of ['k-aberta', 'k-feita']) doc = ask(doc, { id, frente: 'K' }, T0 - 30 * H);
+    for (const id of ['feita', 'ontem', 'rodando', 'so-feita', 'k-feita']) doc = run(doc, dev, { op: 'assumir', id }, T0 - 29 * H);
+    for (const id of ['feita', 'ontem', 'so-feita', 'k-feita']) doc = run(doc, dev, { op: 'entregar', id, proofs }, T0 - 28 * H);
     doc = run(doc, revisor, { op: 'aceitar', id: 'ontem' }, T0 - 27 * H);
     doc = run(doc, revisor, { op: 'aceitar', id: 'feita' }, T0);
     doc = run(doc, revisor, { op: 'aceitar', id: 'so-feita' }, T0);
     doc = run(doc, lider, { op: 'cancelar', id: 'cancelada', reason: 'não vai sair' }, T0);
     doc = run(doc, dev, { op: 'entregar', id: 'rodando', proofs }, T0 + H);
+    doc = run(doc, revisor, { op: 'aceitar', id: 'k-feita' }, T0 + 1.5 * H);
+    // The owner checking (or commenting on) yesterday's accept today is no accept today.
+    doc = run(doc, { kind: 'dono' }, { op: 'comentar', id: 'ontem', text: 'valeu', deliveredTo: null }, T0 + H / 2);
+    doc = run(doc, { kind: 'dono' }, { op: 'aceitar', id: 'ontem' }, T0 + H / 2);
 
     const progress = jobuProgress(doc, T0 + 2 * H);
-    // A front with nothing left alive leaves too; its accept still counts today.
-    expect(progress.fronts.map((front) => front.name)).toEqual(['F']);
-    const front = progress.fronts[0]!;
+    // A front with nothing left alive leaves too; its accept still counts today. An accept today is news: K, with
+    // nothing moving but an accept at 10:30, comes before F, last moved at 10:00.
+    expect(progress.fronts.map((front) => front.name)).toEqual(['K', 'F']);
+    const front = progress.fronts[1]!;
     expect(front.tasks.map((task) => task.id)).toEqual(['rodando']);
     expect(front.doneToday).toBe(1);
-    // rodando delivered (2 of 3) + feita accepted today (3 of 3).
-    expect([front.steps, front.totalSteps]).toEqual([5, 6]);
+    // rodando delivered, waiting for the Revisor (tocando: 1 of 3) + feita accepted today (3 of 3).
+    expect([front.steps, front.totalSteps]).toEqual([4, 6]);
     expect(front.segments.map((segment) => [segment.state, segment.steps])).toEqual([
       ['concluida', 3],
-      ['tocando', 2],
+      ['tocando', 1],
     ]);
-    expect(progress.doneToday.map((task) => task.id).sort()).toEqual(['feita', 'so-feita']);
+    expect(progress.doneToday.map((task) => task.id).sort()).toEqual(['feita', 'k-feita', 'so-feita']);
   });
 });
