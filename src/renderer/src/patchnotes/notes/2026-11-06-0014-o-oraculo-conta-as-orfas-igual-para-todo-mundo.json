@@ -1,0 +1,4 @@
+{
+  "title": "O Oráculo conta as órfãs igual para todo mundo",
+  "text": "Quando uma sessão pede a lista de tarefas de todos os quadros, ela agora vê os mesmos números que o Líder único: vivas, órfãs e fechadas. Um quadro que não respondeu na hora aparece num número à parte, \"desconhecidas\", em vez de inflar as vivas. Uma tarefa nova pode dizer qual tarefa ela substitui, e a antiga é cancelada na mesma hora. Líder, Curador e Pesquisa sempre dizem quem vai fazer o trabalho, para a tarefa não ficar sem dono quando a sessão deles fecha."
+}

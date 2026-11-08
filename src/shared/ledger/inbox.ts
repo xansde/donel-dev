@@ -20,6 +20,7 @@ import {
   inDailySample,
   isCancelled,
   isClosed,
+  isServicePlace,
   lastDecision,
   lastDelivery,
   slackSendState,
@@ -39,7 +40,8 @@ export const NOT_STARTED_GRACE_MS = 30 * 60 * 1000;
  */
 export function ownerGoneIn(places: PlaceStates | undefined, task: LedgerTask, now: number): string | null {
   // The Líder único has no place on any board (t-52b31719): a task it owns is alive, never orphan.
-  if (task.ownerPlaceId === LEADER_OF_ALL) return null;
+  // Nor does a headless service (t-a1ea2798): no board has its place.
+  if (task.ownerPlaceId === LEADER_OF_ALL || isServicePlace(task.ownerPlaceId)) return null;
   const states = places?.get(task.projectPath);
   if (!states) return null;
   const state = states.get(task.ownerPlaceId);

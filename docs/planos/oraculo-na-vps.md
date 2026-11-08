@@ -62,6 +62,7 @@ O #248 (motor de contas em cada VPS) é outro assunto e não disputa porta nem r
 | App do PC | API, IP tailnet da VPS | Token de 256 bits que **o PC gera a cada boot** e guarda só em memória. Ele grava o sha256 em `~/.donel/oraculo/pc.token.sha256` (0600) **pelo ssh que já tem** para a VPS (`accounts.remotes`); o daemon só conhece o hash. Nada novo para o dono digitar ou guardar. (A fatia 1 ainda gera um `pc.token` em claro; a fatia 2 troca pelo hash e apaga o arquivo.) |
 | Celular | PWA, `https://vps-alexandrelentz.tail8629f1.ts.net` | O pareamento de hoje (código de uso único → token; só o hash fica no disco). O link de parear sai das Preferências do PC (pela API) ou de `oraculo-vps.sh parear` na VPS. |
 | Sessão da VPS | portão MCP, loopback | O `mcpToken` que a sessão já tem no `meta.json` dela. |
+| Serviço sem tela (menções do Slack; t-a1ea2798) | API, IP tailnet da VPS | Token próprio por serviço, criado com `oraculo-vps.sh servico <nome>`: só o sha256 fica em `~/.donel/oraculo/servicos/<nome>.sha256`; apagar o arquivo (`revogar`) corta na hora. Alcança **só** `POST /v1/servico/apply` (criar, assumir, entregar, prova em texto ou link) e assina como o lugar `servico:<nome>`, seja o que for que o corpo diga. Não lê o registro, não mexe na troca, na volta nem no celular. Tarefa de serviço nunca vira órfã. |
 
 Toda porta recusa conexão que não venha da tailnet (ou do loopback, no portão), como o servidor do celular faz hoje.
 O token do PC age como `dono`, de propósito; por isso ele **nunca** serve ao celular nem ao portão MCP, que têm os
