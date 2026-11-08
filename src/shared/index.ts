@@ -263,6 +263,8 @@ export const PTY_CHANNELS = {
   preview: 'pty:preview',
   /** Sessões remotas — sessions still alive on the remote places (boot reattach). */
   remoteAlive: 'pty:remoteAlive',
+  /** Sessões remotas — the ssh of a remote tab dropped (`false`, "sem ligação") or was relinked (`true`). */
+  link: 'pty:link',
 } as const;
 
 export interface PtyCreateOptions {
@@ -424,6 +426,8 @@ export interface DonelPtyApi {
   onData(ptyId: string, listener: (data: string) => void): () => void;
   /** Retorna função de unsubscribe. */
   onExit(ptyId: string, listener: (info: PtyExitInfo) => void): () => void;
+  /** Sessões remotas — every tab whose link dropped (`linked: false`) or came back. Returns unsubscribe. */
+  onLink?(listener: (ptyId: string, linked: boolean) => void): () => void;
 }
 
 /** Nomes dos canais IPC do domínio semáforo (T009, FR-010). */

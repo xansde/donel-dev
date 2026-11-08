@@ -235,7 +235,9 @@ export class PtyManager {
     ptyProcess.onExit(({ exitCode, signal }) => {
       if (record.flushTimer) clearTimeout(record.flushTimer);
       this.flush(record);
-      this.ptys.delete(id);
+      // "Sem ligação" (remote-link.ts): the ssh of a remote tab is spawned again on the same id. A late exit of the
+      // old process must not drop the new one.
+      if (this.ptys.get(id) === record) this.ptys.delete(id);
       for (const listener of this.exitListeners) listener(id, exitCode, signal);
     });
 

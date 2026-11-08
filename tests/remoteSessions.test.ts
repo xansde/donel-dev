@@ -42,6 +42,7 @@ describe('sessões remotas', () => {
     expect(buildAttachSshArgs({ sshTarget: 'u@vps', sid, tunnels: [{ remotePort: 21000, localPort: 5555 }] })).toEqual([
       '-t',
       '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=4',
+      '-o', 'ExitOnForwardFailure=yes',
       '-R', '127.0.0.1:21000:127.0.0.1:5555',
       '--',
       'u@vps',

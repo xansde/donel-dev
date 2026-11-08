@@ -231,10 +231,12 @@ import {
   REMOTE_SESSIONS_DIR,
   remoteDirFor,
   RemoteSessionRegistry,
+  probeRemoteSession,
   runRemoteScript,
   type RemoteFile,
   type RemoteSessionMeta,
 } from './remote-session';
+import { RemoteLinkSupervisor } from './remote-link';
 import { createDiagnosticsLog } from './chat/diagnostics-log';
 import { resolveMainRepoRootSync } from './session-worktree';
 import { ATTACHMENT_MAX_AGE_MS, AttachmentStore } from './chat/attachments';
@@ -600,6 +602,33 @@ let hooksSettingsPath: string | null = null;
 let hookBridge: HookBridge | null = null;
 /** Sessões remotas — live remote tabs of this run (transcript mirrors, end of the remote session). */
 let remoteSessions: RemoteSessionRegistry | null = null;
+/** "Sem ligação" — how to spawn the ssh of each remote tab again (same id, same tunnels). */
+const remoteSpawns = new Map<string, { cwd: string; command: string; args: string[]; cols: number; rows: number }>();
+/**
+ * "Sem ligação" (main/remote-link.ts) — an ssh of a remote tab that drops with the tmux alive is not the end of the
+ * session: the exit is held back, the place reads "sem ligação" and the app relinks it.
+ */
+const remoteLinks = new RemoteLinkSupervisor<PtyExitInfo>({
+  probe: (sshTarget, sid) => probeRemoteSession(sshTarget, sid),
+  relink: (ptyId) => {
+    const spawnSpec = remoteSpawns.get(ptyId);
+    if (!spawnSpec) return false;
+    try {
+      ptyManager.create({ id: ptyId, ...spawnSpec });
+    } catch {
+      return false;
+    }
+    remoteSessions?.resumePump(ptyId);
+    return true;
+  },
+  finalize: (ptyId, info, closedByOwner) => finishPtyExit(ptyId, info, closedByOwner),
+  notify: (ptyId, linked) => {
+    if (mainWindowRef && !mainWindowRef.isDestroyed()) mainWindowRef.webContents.send(PTY_CHANNELS.link, ptyId, linked);
+  },
+  setTimer: (run, ms) => setTimeout(run, ms),
+  clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  now: () => Date.now(),
+});
 /** `curl.exe` achado no boot (`where.exe curl`); `null` = fallback no encaminhador PowerShell que lê bytes. */
 let curlPath: string | null = null;
 /**
@@ -1393,48 +1422,13 @@ function createMainWindow(): void {
   });
   const unsubscribeExit = ptyManager.onExit((ptyId, exitCode, signal) => {
     const info: PtyExitInfo = { exitCode, signal };
-    mainWindow.webContents.send(PTY_CHANNELS.exit, ptyId, info);
-
     // C3 (015-jobu-pet) — the exit consumes the intent that `pty:kill` marked: `true` = the owner closed
     // the tab (or Resume/Reopen killed it), `false` = the process left by itself. Consuming here, on every
     // exit, is what keeps the mark from staying forever; the Jobu gets the result (`byUser`).
     const closedByOwner = consumeKillRequested(ptyId);
-    petService?.onSessionExited(ptyId, closedByOwner);
-    void sessionWorktrees.onExit(ptyId, closedByOwner); // "Isolar em worktree": a aba fechou -> worktree sem trabalho sai
-    // Sessões remotas — the owner closed the tab: the remote session ends too. App quitting or ssh dropping leaves it alive.
-    if (closedByOwner) remoteSessions?.endRemote(ptyId);
-    remoteSessions?.onPtyExit(ptyId);
-
-    // T009 — onExit do node-pty (evento do SO) é a fonte de verdade pra
-    // "encerrada"/"falha" (spike: kill forçado nunca dispara SessionEnd).
-    // Só reage a ptyIds que o semáforo de fato registrou (sessão claude
-    // real, T005+); uma futura aba de terminal livre (FR-008/T010) nunca
-    // passou por `registerSession`, então isso é um no-op silencioso pra ela.
-    if (semaphoreManager.getSnapshot(ptyId)) {
-      semaphoreManager.onProcessExit(ptyId, exitCode);
-      semaphoreManager.unregisterSession(ptyId);
-    }
-
-    // T412 (004) — baixa do watcher de transcript. AQUI e não no `SessionEnd`:
-    // kill forçado não dispara o hook, e um watcher sobrevivente é handle
-    // vazado. No-op para aba de terminal livre (nunca abriu watcher).
-    transcriptWatchers.stop(ptyId);
-    // T015 (014-chat) — baixa da ponte: apaga o `--settings` da sessão e esquece o token.
-    // No-op para aba sem hooks (terminal livre, login isolado, transporte legado).
-    hookBridge?.unregisterSession(ptyId);
-    removeSessionHooksSettings(app.getPath('userData'), ptyId);
-    statusLineStore.remove(ptyId);
-    activeSessionByPty.delete(ptyId);
-    tabCwdByPty.delete(ptyId);
-    chatHub?.markEnded(ptyId);
-    void chatAttachments?.releasePty(ptyId);
-    // T1125 (011-contas-e-provedores, etapa 1, C4) — mesma baixa, pro poll de
-    // 5 min do motor de contas parar de contar esta sessão como viva.
-    // Fase 2 (D5) — `releaseAccountsBusyPty` também retoma um auto-switch
-    // adiado se esta era a última sessão ocupada.
-    releaseAccountsBusyPty(ptyId);
-    accountsLiveSessionPtyIds.delete(ptyId);
-    browserService?.releasePty(ptyId); // navegador interno: the session's browser dies with it
+    // "Sem ligação" — the ssh of a remote tab dropped on its own: the session lives on the place; the app relinks.
+    if (remoteLinks.onPtyExit(ptyId, closedByOwner, info)) return;
+    finishPtyExit(ptyId, info, closedByOwner);
   });
   const unsubscribeSemaphore = semaphoreManager.onUpdate((update: SemaphoreUpdate) => {
     mainWindow.webContents.send(SEMAPHORE_CHANNELS.update, update);
@@ -1448,6 +1442,7 @@ function createMainWindow(): void {
     unsubscribeData();
     unsubscribeExit();
     unsubscribeSemaphore();
+    remoteLinks.stopAll(); // the app is going: nothing more is relinked (the remote sessions stay alive there)
     // A janela morrendo mata os PTYs; os watchers deles vão junto (o `onExit`
     // de cada um já daria baixa, mas não depender disso é o que garante zero
     // handle sobrevivendo ao fechamento).
@@ -1464,6 +1459,52 @@ function createMainWindow(): void {
   } else {
     void mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
   }
+}
+
+/**
+ * The end of a PTY: tells the renderer and lets go of everything the session held. Called on the exit of the
+ * process, or later for a remote tab that was "sem ligação" (closed by the owner then, or its tmux ended there).
+ */
+function finishPtyExit(ptyId: string, info: PtyExitInfo, closedByOwner: boolean): void {
+  const { exitCode } = info;
+  if (mainWindowRef && !mainWindowRef.isDestroyed()) mainWindowRef.webContents.send(PTY_CHANNELS.exit, ptyId, info);
+  remoteSpawns.delete(ptyId);
+  petService?.onSessionExited(ptyId, closedByOwner);
+  void sessionWorktrees.onExit(ptyId, closedByOwner); // "Isolar em worktree": a aba fechou -> worktree sem trabalho sai
+  // Sessões remotas — the owner closed the tab: the remote session ends too. App quitting or ssh dropping leaves it alive.
+  if (closedByOwner) remoteSessions?.endRemote(ptyId);
+  remoteSessions?.onPtyExit(ptyId);
+
+  // T009 — onExit do node-pty (evento do SO) é a fonte de verdade pra
+  // "encerrada"/"falha" (spike: kill forçado nunca dispara SessionEnd).
+  // Só reage a ptyIds que o semáforo de fato registrou (sessão claude
+  // real, T005+); uma futura aba de terminal livre (FR-008/T010) nunca
+  // passou por `registerSession`, então isso é um no-op silencioso pra ela.
+  if (semaphoreManager.getSnapshot(ptyId)) {
+    semaphoreManager.onProcessExit(ptyId, exitCode);
+    semaphoreManager.unregisterSession(ptyId);
+  }
+
+  // T412 (004) — baixa do watcher de transcript. AQUI e não no `SessionEnd`:
+  // kill forçado não dispara o hook, e um watcher sobrevivente é handle
+  // vazado. No-op para aba de terminal livre (nunca abriu watcher).
+  transcriptWatchers.stop(ptyId);
+  // T015 (014-chat) — baixa da ponte: apaga o `--settings` da sessão e esquece o token.
+  // No-op para aba sem hooks (terminal livre, login isolado, transporte legado).
+  hookBridge?.unregisterSession(ptyId);
+  removeSessionHooksSettings(app.getPath('userData'), ptyId);
+  statusLineStore.remove(ptyId);
+  activeSessionByPty.delete(ptyId);
+  tabCwdByPty.delete(ptyId);
+  chatHub?.markEnded(ptyId);
+  void chatAttachments?.releasePty(ptyId);
+  // T1125 (011-contas-e-provedores, etapa 1, C4) — mesma baixa, pro poll de
+  // 5 min do motor de contas parar de contar esta sessão como viva.
+  // Fase 2 (D5) — `releaseAccountsBusyPty` também retoma um auto-switch
+  // adiado se esta era a última sessão ocupada.
+  releaseAccountsBusyPty(ptyId);
+  accountsLiveSessionPtyIds.delete(ptyId);
+  browserService?.releasePty(ptyId); // navegador interno: the session's browser dies with it
 }
 
 /**
@@ -1769,15 +1810,17 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     ...(live.mcpPort !== null && mcp ? [{ remotePort: live.mcpPort, localPort: mcp.localPort }] : []),
   ];
 
+  const spawnSpec = {
+    cols: options.cols,
+    rows: options.rows,
+    cwd: localCwd,
+    command: process.platform === 'win32' ? 'ssh.exe' : 'ssh',
+    args: buildAttachSshArgs({ sshTarget: place.sshTarget, sid: correlationId, tunnels }),
+  };
   try {
-    ptyManager.create({
-      id: ptyId,
-      cols: options.cols,
-      rows: options.rows,
-      cwd: localCwd,
-      command: process.platform === 'win32' ? 'ssh.exe' : 'ssh',
-      args: buildAttachSshArgs({ sshTarget: place.sshTarget, sid: correlationId, tunnels }),
-    });
+    ptyManager.create({ id: ptyId, ...spawnSpec });
+    remoteSpawns.set(ptyId, spawnSpec);
+    remoteLinks.track(ptyId, place.sshTarget, correlationId);
   } catch (error) {
     hookBridge?.unregisterSession(ptyId);
     browserService?.releasePty(ptyId);
@@ -2143,9 +2186,13 @@ function registerPtyIpcHandlers(): void {
 
   ipcMain.on(PTY_CHANNELS.resize, (_event, ptyId: string, cols: number, rows: number) => {
     ptyManager.resize(ptyId, cols, rows);
+    const spawnSpec = remoteSpawns.get(ptyId);
+    if (spawnSpec && cols > 0 && rows > 0) remoteSpawns.set(ptyId, { ...spawnSpec, cols, rows }); // a relink opens at the current size
   });
 
   ipcMain.on(PTY_CHANNELS.kill, (_event, ptyId: string) => {
+    // "Sem ligação" — there is no PTY to kill: the held exit happens now as a close by the owner (ends the tmux there).
+    if (remoteLinks.kill(ptyId)) return;
     markKillRequested(ptyId); // C3 (015-jobu-pet) — mark BEFORE killing: the exit that follows is "the owner's"
     ptyManager.kill(ptyId);
   });
