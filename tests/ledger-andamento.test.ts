@@ -71,7 +71,7 @@ async function team(): Promise<Team> {
   const tabs: BridgeTab[] = [
     { id: 'tab-unico', name: 'Líder', cwd: 'C:/proj', roleId: 'lider', leaderOfAll: true, sessionType: 'claude' },
     { id: 'tab-lider', name: 'Líder', cwd: BOARD, projectName: 'atlas', roleId: 'lider', claudeSessionId: 'conv-lider', sessionType: 'claude' },
-    ...DEVS.map((dev, i): BridgeTab => ({ id: `tab-dev${i + 1}`, name: `Dev ${i + 1}`, cwd: BOARD, projectName: 'atlas', roleId: 'dev', claudeSessionId: `conv-dev${i + 1}`, openedBy: i === 2 ? 'lider' : LIDER, sessionType: 'claude' })),
+    ...DEVS.map((_dev, i): BridgeTab => ({ id: `tab-dev${i + 1}`, name: `Dev ${i + 1}`, cwd: BOARD, projectName: 'atlas', roleId: 'dev', claudeSessionId: `conv-dev${i + 1}`, openedBy: i === 2 ? 'lider' : LIDER, sessionType: 'claude' })),
   ];
   const sent: { tabId: string; text: string }[] = [];
   const states: Record<string, SemaphoreState> = {};
