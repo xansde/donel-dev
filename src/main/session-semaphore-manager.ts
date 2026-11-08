@@ -48,6 +48,10 @@ export interface SemaphoreUpdate {
    * `unknown`. Cleared by the next prompt or tool call.
    */
   readonly turnFailure?: string;
+  /** Epoch ms of the last hook heard from the session (any hook); absent = none yet. */
+  readonly lastEventAt?: number;
+  /** Tool calls still running, all origins summed; absent = none. */
+  readonly openCalls?: number;
 }
 
 /**
@@ -128,6 +132,8 @@ export class SessionSemaphoreManager {
   private readonly heardPtyIds = new Set<string>();
   /** Item 04 — `StopFailure` code of the last turn, by pty (see `SemaphoreUpdate.turnFailure`). */
   private readonly turnFailureByPty = new Map<string, string>();
+  /** Epoch ms of the last hook from each pty (see `SemaphoreUpdate.lastEventAt`). */
+  private readonly lastEventAtByPty = new Map<string, number>();
   private readonly listeners = new Set<(update: SemaphoreUpdate) => void>();
   /**
    * Emenda 22/09 (011-contas-e-provedores, etapa 3, Fase 2, item 4) —
@@ -219,6 +225,7 @@ export class SessionSemaphoreManager {
     this.pendingKindsByPty.delete(ptyId);
     this.heardPtyIds.delete(ptyId);
     this.turnFailureByPty.delete(ptyId);
+    this.lastEventAtByPty.delete(ptyId);
     for (const [claudeSessionId, mappedPtyId] of this.sessionToPty) {
       if (mappedPtyId === ptyId) this.sessionToPty.delete(claudeSessionId);
     }
@@ -325,6 +332,8 @@ export class SessionSemaphoreManager {
   }
 
   private applyHookEvent(ptyId: string, hookEventName: unknown, reason: unknown, payload: Record<string, unknown>): void {
+    // Any hook is a sign of life, even one that moves no state.
+    this.lastEventAtByPty.set(ptyId, this.now());
     // Emenda 22/09 (item 4) — dispara ANTES do mapeamento genérico (que funde
     // StopFailure em 'stop'), pro gatilho imediato de auto-switch saber que este
     // fim de turno foi por erro de API.
@@ -397,6 +406,8 @@ export class SessionSemaphoreManager {
     const publicState = this.publicStateFor(ptyId, state);
     const kinds = this.pendingKindsByPty.get(ptyId);
     const failure = this.turnFailureByPty.get(ptyId);
+    const lastEventAt = this.lastEventAtByPty.get(ptyId);
+    const openCalls = Object.values(state.openCalls ?? {}).reduce((sum, count) => sum + count, 0);
     return {
       ptyId,
       state: publicState,
@@ -407,6 +418,8 @@ export class SessionSemaphoreManager {
       ...(publicState === 'working' && !this.heardPtyIds.has(ptyId) ? { unconfirmed: true as const } : {}),
       ...(publicState === 'permission' && kinds && kinds.length > 0 ? { pendingKinds: kinds } : {}),
       ...(failure && publicState !== 'working' ? { turnFailure: failure } : {}),
+      ...(lastEventAt !== undefined ? { lastEventAt } : {}),
+      ...(openCalls > 0 ? { openCalls } : {}),
     };
   }
 
