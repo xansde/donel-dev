@@ -1,0 +1,4 @@
+{
+  "title": "Chat funciona com statusline configurada",
+  "text": "O chat agora percebe quando o Claude está trabalhando mesmo com uma statusline configurada. Por isso cota, contexto e PR da sessão aparecem sempre no rodapé, e \"Interromper e mandar agora\" e o Parar funcionam também enquanto há texto na caixa."
+}

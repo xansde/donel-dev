@@ -1,0 +1,4 @@
+{
+  "title": "Saúde das VPS ao lado da saúde do computador",
+  "text": "Ao lado de \"PC · RAM · disco\", no rodapé, aparece agora uma linha para cada VPS configurada, com a memória em uso e o disco livre. O painel de saúde ganhou uma seção por VPS com memória, disco, carga do processador e quantas sessões do Donel rodam lá. As VPS são lidas a cada minuto e na hora em que você abre o painel. Quando uma não responde, ela aparece como \"sem sinal\", com a hora da última leitura boa, e o resto do app segue normal."
+}

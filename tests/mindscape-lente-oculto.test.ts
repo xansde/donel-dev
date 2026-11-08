@@ -9,7 +9,7 @@ import { mindscapeShortcut } from '../src/shared/mindscape/shortcuts';
 
 const path = 'C:/projetos/atlas';
 const doc: MindscapeDoc = {
-  schemaVersion: 5,
+  schemaVersion: 6,
   boards: {
     [path]: {
       projectPath: path,
