@@ -617,6 +617,19 @@ export class AgentBridge {
 
   // ---- Líder único (ADR 0007) ---------------------------------------------------------------------------------
 
+  /**
+   * 08/11 (Homologação, item 8) — who opened a place with `sessao_abrir`, for `abertaPor` (the Atestador reads it). The
+   * memory of this run, the mark the tab carries across a restart, then the opening arrow on the board (a closed place
+   * keeps it), then the places the Líder único opened in this run (it has no card to draw the arrow from).
+   */
+  private openerOf(projectPath: string, placeId: string, tab: BridgeTab | undefined): string | undefined {
+    const fromTab = tab ? (this.openedBy.get(tab.id) ?? tab.openedBy) : undefined;
+    if (fromTab !== undefined) return fromTab;
+    const arrow = this.board(projectPath)?.links.find((link) => link.opened === true && link.to === placeId);
+    if (arrow) return arrow.from;
+    return this.leaderOpened.has(`${projectPath}\n${placeId}`) ? LEADER_OF_ALL : undefined;
+  }
+
   /** The open tab of the Líder único, if any. */
   private leaderTab(): BridgeTab | undefined {
     return this.ports.tabs().find((tab) => isLeaderOfAllTab(tab) && this.ports.stateOf(tab.id) !== undefined);
@@ -1027,7 +1040,7 @@ export class AgentBridge {
         const places = board ? Object.values(board.cards).filter((card): card is SessionPlaceCard => card.kind === 'session') : [];
         const list = places.map((place) => {
               const tab = this.tabOfPlace(projectPath, place.id);
-              const opener = tab ? this.openedBy.get(tab.id) : undefined;
+              const opener = this.openerOf(projectPath, place.id, tab);
               return {
                 id: place.id,
                 ...(place.roleId ? { papel: place.roleId, papelNome: this.roleName(place.roleId) } : {}),

@@ -205,3 +205,37 @@ describe('sessão que não abre conta o motivo a quem abriu', () => {
     team.bridge.dispose();
   });
 });
+
+// 08/11 (Homologação, item 8) — o Atestador lê "abertaPor" no sessao_listar para saber quem abriu cada sessão. Ele só
+// vinha para a aba aberta nesta execução do app: o lugar fechado, ou religado depois de reiniciar, saía sem ele.
+describe('abertaPor no sessao_listar', () => {
+  it('vem para todo lugar aberto por sessao_abrir: fechado (pela seta de abertura) ou religado (pela marca da aba)', async () => {
+    let doc = addPlace(emptyMindscapeDoc(), ATLAS, { id: 'place:lider' });
+    doc = addPlace(doc, ATLAS, { id: 'place:dev-fechado' });
+    doc = addPlace(doc, ATLAS, { id: 'place:dev-religado' });
+    doc = addLink(doc, ATLAS, { id: 'l1', from: 'place:lider', to: 'place:dev-fechado', arrow: true, by: 'session', opened: true });
+    doc = addLink(doc, ATLAS, { id: 'l2', from: 'place:lider', to: 'place:dev-religado', arrow: true, by: 'session', opened: true });
+    const tabs: BridgeTab[] = [
+      { id: 'tab-lider', name: 'Líder', cwd: ATLAS, placeId: 'place:lider', claudeSessionId: 's-lider', sessionType: 'claude' },
+      // reattached after a restart: the tab carries the mark, the bridge's memory of this run does not
+      { id: 'tab-religado', name: 'Dev', cwd: ATLAS, placeId: 'place:dev-religado', claudeSessionId: 's-rel', sessionType: 'claude', openedBy: 'place:lider' },
+    ];
+    const ports = {
+      loaded: true,
+      doc: () => doc,
+      tabs: () => tabs,
+      tabOfPty: (ptyId: string) => (ptyId === 'pty-lider' ? tabs[0] : undefined),
+      stateOf: () => 'waiting' as const,
+      unconfirmed: () => false,
+      roles: () => [],
+      startTrouble: () => null,
+      permissionOnScreen: () => false,
+    } as unknown as AgentBridgePorts;
+    const result = await new AgentBridge(ports).handle('pty-lider', { tool: 'sessao_listar' });
+    const byId = new Map((JSON.parse(result.text) as { id: string; abertaPor?: string }[]).map((place) => [place.id, place.abertaPor]));
+    expect(byId.get('place:dev-fechado')).toBe('place:lider');
+    expect(byId.get('place:dev-religado')).toBe('place:lider');
+    expect(byId.get('place:lider')).toBeUndefined();
+  });
+});
+
