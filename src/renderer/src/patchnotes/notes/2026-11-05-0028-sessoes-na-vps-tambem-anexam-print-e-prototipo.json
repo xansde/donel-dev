@@ -1,0 +1,4 @@
+{
+  "title": "Sessões na VPS também anexam print e protótipo",
+  "text": "Uma sessão que roda na VPS agora entrega print, vídeo ou protótipo como prova, e eles aparecem na carta como os das sessões do computador. O app busca o arquivo pela conexão com a VPS, recusa atalho e arquivo grande demais, e guarda uma cópia aqui."
+}

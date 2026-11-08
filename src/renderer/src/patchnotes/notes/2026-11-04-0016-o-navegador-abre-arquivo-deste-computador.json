@@ -1,0 +1,4 @@
+{
+  "title": "O navegador abre arquivo deste computador",
+  "text": "O HTML que uma sessão gerou agora abre direto no navegador ao lado da conversa, sem sair do app. Vale para página HTML, imagem e PDF: a sessão abre pelo caminho do arquivo, e você também pode colar o caminho (C:\\pasta\\relatorio.html) na barra de endereço. A página aberta não navega para outro arquivo nem mostra a pasta onde está."
+}

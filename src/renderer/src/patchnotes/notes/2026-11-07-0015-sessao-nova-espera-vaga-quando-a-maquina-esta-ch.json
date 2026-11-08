@@ -1,0 +1,4 @@
+{
+  "title": "Sessão nova espera vaga quando a máquina está cheia",
+  "text": "Quando uma VPS (ou o PC) está com pouca RAM, swap alto, carga alta ou sem sinal, uma sessão que outra sessão pede para abrir lá entra numa fila em vez de afundar a máquina. O lugar já aparece no quadro, e a sessão abre sozinha, com o pedido original, quando a máquina passa duas leituras seguidas abaixo dos limites, uma por minuto em cada máquina. Um papel marcado com \"lugar: qualquer\" vai para a outra VPS em vez de esperar. Uma aba que foi aberta mas nunca começou, se o Faxineiro a fechar com a máquina cheia, volta para a fila sem perder o pedido."
+}
