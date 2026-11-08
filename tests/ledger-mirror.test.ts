@@ -256,8 +256,59 @@ describe('espelho do Oráculo', () => {
     });
     const waiting = task('t-3', { risk: 'alto', state: 'entregue', events: [{ kind: 'criada', at: T0, by: by('place:dev', 'dev') }, { kind: 'entregue', at: T0 + 1, by: by('place:dev', 'dev'), proofs: [{ kind: 'texto', text: 'ok' }] }] });
     const [a, b] = tarefaRows(doc(cancelled, waiting), places, { ownerName: 'Alexandre' }).rows;
-    expect(a).toMatchObject({ estado: 'cancelada', decisao: 'cancelada por Alexandre', motivo: 'substituída pela t-9', quem_criou: 'Alexandre' });
+    expect(a).toMatchObject({ estado: 'substituída', decisao: 'substituída pela t-9 · fechada por Alexandre', motivo: 'substituída pela t-9', quem_criou: 'Alexandre' });
     expect(b).toMatchObject({ estado: 'entregue', esperando_dono: true, decisao: null, ultima_entrega: 'ok' });
+  });
+
+  // Ledger v5, fatia 4 — a "cancel" is how v4 closed many things that were done or replaced: the row says what it
+  // really was, read from the reason (nothing is written back).
+  it.each<[string, string, string, string]>([
+    ['done, with the merged PR', 'concluída: PR #269 (mesclado 06/11 22:57Z) criou tarefa_transferir', 'concluída por prova', 'concluída por prova · fechada por Alexandre'],
+    ['done by other tasks', 'concluída pelas t-0dbcc00d e t-04d510ab: Jornada com selo provisório', 'concluída por prova', 'concluída por prova · fechada por Alexandre'],
+    ['done, capitalized', 'Concluída: o ranking saiu pelo bot do Theo (t-856378c5 aceita)', 'concluída por prova', 'concluída por prova · fechada por Alexandre'],
+    ['a message that went out', 'Enviada: é a raiz da thread de status no #retiro-ai', 'enviada', 'enviada · fechada por Alexandre'],
+    ['replaced by one task', 'Carta substituída pela t-dc4a7364: a Triagem passa a uma cadeira agente', 'substituída', 'substituída pela t-dc4a7364 · fechada por Alexandre'],
+    ['replaced by two letters', 'Substituída pelas cartas t-3401231c (reenvio da coleta) e t-c6964cbb', 'substituída', 'substituída pela t-3401231c · fechada por Alexandre'],
+    ['covered by another task', 'Coberta pela t-121da54c (aceita pelo dono 06/11 20:36)', 'substituída', 'substituída pela t-121da54c · fechada por Alexandre'],
+    ['it will not happen', 'O dono mandou não pedir ao Fernando', 'cancelada', 'cancelada por Alexandre'],
+    // In doubt it stays "cancelada" (Revisor, PR #308): the first word is not proof; the reason must carry it.
+    ['a question, not a fact', 'Concluída? Não: o dono desistiu', 'cancelada', 'cancelada por Alexandre'],
+    ['a denial', 'concluída não, cancelada', 'cancelada', 'cancelada por Alexandre'],
+    ['half done', 'Concluída parcialmente; o resto não vai sair', 'cancelada', 'cancelada por Alexandre'],
+    ['done somewhere unnamed', 'Concluída em outra tarefa, não sei qual', 'cancelada', 'cancelada por Alexandre'],
+    ['done, with no evidence after the colon', 'concluída: deu certo', 'cancelada', 'cancelada por Alexandre'],
+    ['a send that did not happen', 'Enviada? não chegou a sair', 'cancelada', 'cancelada por Alexandre'],
+    ['covered by a person', 'Coberta pelo Fernando', 'cancelada', 'cancelada por Alexandre'],
+    ['covered by the rain', 'Coberta pela chuva', 'cancelada', 'cancelada por Alexandre'],
+    ['replaced, with no task named', 'substituída pela nova versão do pedido', 'cancelada', 'cancelada por Alexandre'],
+  ])('a cancel that was really %s says so', (_case, reason, estado, decisao) => {
+    const closed = task('t-2', {
+      state: 'rejeitada',
+      events: [
+        { kind: 'criada', at: T0, by: { kind: 'dono' } },
+        { kind: 'rejeitada', at: T0 + 1, by: { kind: 'dono' }, text: `⟦cancelada⟧ ${reason}` },
+      ],
+    });
+    const [row] = tarefaRows(doc(closed), places, { ownerName: 'Alexandre' }).rows;
+    expect(row).toMatchObject({ estado, decisao, motivo: reason });
+  });
+
+  it('a rejected delivery stays rejected, and no cell shows a mark', () => {
+    const rejected = task('t-4', {
+      state: 'rejeitada',
+      events: [
+        { kind: 'criada', at: T0, by: { kind: 'dono' } },
+        { kind: 'rejeitada', at: T0 + 1, by: { kind: 'dono' }, text: 'concluída: falta o print' },
+      ],
+    });
+    const bot = task('t-5', {
+      state: 'aceita',
+      request: '⟦enviado pelo bot do agente⟧ Mensagem no Slack para D0CFB605B5M, por theo-west-slack (slack_post_message), sem carta.',
+    });
+    const [a, b] = tarefaRows(doc(rejected, bot), places, { ownerName: 'Alexandre' }).rows;
+    expect(a).toMatchObject({ estado: 'rejeitada', decisao: 'rejeitada por Alexandre' });
+    expect(b!.pedido).toBe('Mensagem no Slack para D0CFB605B5M, por theo-west-slack (slack_post_message), sem carta.');
+    for (const row of [a!, b!]) for (const value of Object.values(row)) expect(String(value)).not.toContain('⟦');
   });
 
   it.each<[string, Partial<LedgerTask>, string]>([
