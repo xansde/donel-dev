@@ -103,6 +103,13 @@ export const BRIDGE_HTTP_EVENTS: ReadonlyArray<{ readonly event: string; readonl
 export interface SessionHooksSettingsInput {
   readonly port: number;
   readonly token: string;
+  /**
+   * The file with the token header (`tokenHeaderFileContent`, mode 600), as the hook command names it (a remote
+   * session's may hold `$HOME`). The `curl` commands read the header from it (`-H @file`) and never carry the
+   * token: the CLI records a SessionStart hook's command line in the transcript (seen in 2.1.3xx,
+   * `hook_success.command`), and from there it reached collectors and subagents.
+   */
+  readonly tokenHeaderPath: string;
   /** Path (or bare name) of `curl.exe`; `null` when the boot did not find it — falls back to the PowerShell forwarder. */
   readonly curlPath: string | null;
   /** Required when `curlPath` is null: the `.ps1` written by `writeSessionHooksSettings`. */
@@ -138,6 +145,16 @@ function bridgeUrl(port: number, event: string): string {
   return `http://127.0.0.1:${port}/h/${event}`;
 }
 
+/** Pure — what the token header file holds: one header line, read by `curl -H @<file>`. */
+export function tokenHeaderFileContent(token: string): string {
+  return `X-Donel-Token: ${token}\n`;
+}
+
+/** Pure — the `-H` of a `curl` command that reads the token header from its file (forward slashes: Git Bash eats `\`). */
+function tokenHeaderArg(tokenHeaderPath: string): string {
+  return `-H "@${tokenHeaderPath.replaceAll('\\', '/')}"`;
+}
+
 /** Pure — the per-session `--settings` content. No `matcher` anywhere: every tool is observed. */
 export function buildSessionHooksSettings(input: SessionHooksSettingsInput): SessionHooksSettingsContent {
   const { port, token, curlPath, forwarderScriptPath } = input;
@@ -151,7 +168,7 @@ export function buildSessionHooksSettings(input: SessionHooksSettingsInput): Ses
   let command: string;
   if (curlPath !== null) {
     const exe = /\s/.test(curlPath) ? `"${curlPath}"` : curlPath;
-    command = `${exe} -s --data-binary @- -H "X-Donel-Token: ${token}" ${bridgeUrl(port, 'SessionStart')}`;
+    command = `${exe} -s --data-binary @- ${tokenHeaderArg(input.tokenHeaderPath)} ${bridgeUrl(port, 'SessionStart')}`;
   } else {
     command = `powershell -NoProfile -ExecutionPolicy Bypass -File "${forwarderScriptPath ?? ''}"`;
   }
@@ -231,7 +248,7 @@ export function agentBotOfflineLines(servers: readonly string[]): string[] {
 }
 
 /** Pure — the POSIX `sh` script of the offline guard (stdin: the hook payload; stdout: a deny, or nothing). */
-export function buildSlackOfflineGuardScript(input: { readonly port: number; readonly token: string; readonly agentBotServers?: readonly string[] }): string {
+export function buildSlackOfflineGuardScript(input: { readonly port: number; readonly tokenHeaderPath: string; readonly agentBotServers?: readonly string[] }): string {
   const deny = JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: SLACK_OFFLINE_REFUSAL } });
   return [
     '#!/bin/sh',
@@ -239,7 +256,7 @@ export function buildSlackOfflineGuardScript(input: { readonly port: number; rea
     // Read by the Theo West MCP (VPS): only an app that checks a letter with a file offers the file upload.
     `# ${SLACK_GUARD_FILE_LETTER_MARK}`,
     'payload=$(cat)',
-    `if curl -s -f --noproxy 127.0.0.1 --connect-timeout 2 --max-time 4 -o /dev/null -X POST -H "X-Donel-Token: ${input.token}" ${bridgeUrl(input.port, 'Ping')} 2>/dev/null; then`,
+    `if curl -s -f --noproxy 127.0.0.1 --connect-timeout 2 --max-time 4 -o /dev/null -X POST ${tokenHeaderArg(input.tokenHeaderPath)} ${bridgeUrl(input.port, 'Ping')} 2>/dev/null; then`,
     '  exit 0',
     'fi',
     ...agentBotOfflineLines(input.agentBotServers ?? AGENT_BOT_SERVERS),
@@ -353,7 +370,7 @@ function powershellFile(scriptPath: string): string {
 /** Puro — o bloco `statusLine` do `--settings` da sessão. */
 export function buildStatusLineSetting(
   plan: StatusLineBridgePlan,
-  input: { readonly port: number; readonly token: string; readonly curlPath: string | null; readonly statusLineScriptPath?: string },
+  input: { readonly port: number; readonly tokenHeaderPath: string; readonly curlPath: string | null; readonly statusLineScriptPath?: string },
 ): StatusLineSetting {
   if (plan.kind === 'chain') {
     // `padding`, `refreshInterval` e `hideVimModeIndicator` do usuário viajam junto: a nossa substitui a dele.
@@ -369,7 +386,7 @@ export function buildStatusLineSetting(
     // A ponte responde com corpo vazio: o curl não imprime nada.
     return {
       type: 'command',
-      command: `${exe} -s --noproxy 127.0.0.1 --connect-timeout 1 --max-time 2 --data-binary "@-" -H "X-Donel-Token: ${input.token}" ${bridgeUrl(input.port, STATUS_LINE_ROUTE)}`,
+      command: `${exe} -s --noproxy 127.0.0.1 --connect-timeout 1 --max-time 2 --data-binary "@-" ${tokenHeaderArg(input.tokenHeaderPath)} ${bridgeUrl(input.port, STATUS_LINE_ROUTE)}`,
     };
   }
   return { type: 'command', command: powershellFile(input.statusLineScriptPath ?? '') };
@@ -453,10 +470,16 @@ function sessionStatusLineScriptPath(userDataDir: string, ptyId: string): string
   return join(userDataDir, HOOK_SETTINGS_DIR_NAME, `${ptyId}.statusline.ps1`);
 }
 
+function sessionTokenHeaderPath(userDataDir: string, ptyId: string): string {
+  return join(userDataDir, HOOK_SETTINGS_DIR_NAME, `${ptyId}.header`);
+}
+
 /** I/O — writes `userData/hook-settings/<ptyId>.json` (plus the forwarder script when there is no curl) and returns the settings path. */
-export function writeSessionHooksSettings(input: SessionHooksSettingsInput & { readonly userDataDir: string; readonly ptyId: string }): string {
+export function writeSessionHooksSettings(input: Omit<SessionHooksSettingsInput, 'tokenHeaderPath'> & { readonly userDataDir: string; readonly ptyId: string }): string {
   const { userDataDir, ptyId, port, token } = input;
   mkdirSync(join(userDataDir, HOOK_SETTINGS_DIR_NAME), { recursive: true });
+  const tokenHeaderPath = sessionTokenHeaderPath(userDataDir, ptyId);
+  writeFileSync(tokenHeaderPath, tokenHeaderFileContent(token), { encoding: 'utf8', mode: 0o600 });
 
   let forwarderScriptPath = input.forwarderScriptPath;
   if (input.curlPath === null) {
@@ -473,7 +496,7 @@ export function writeSessionHooksSettings(input: SessionHooksSettingsInput & { r
   }
 
   const path = sessionHookSettingsPath(userDataDir, ptyId);
-  writeFileSync(path, JSON.stringify(buildSessionHooksSettings({ ...input, forwarderScriptPath, statusLineScriptPath }), null, 2), 'utf8');
+  writeFileSync(path, JSON.stringify(buildSessionHooksSettings({ ...input, tokenHeaderPath, forwarderScriptPath, statusLineScriptPath }), null, 2), 'utf8');
   return path;
 }
 
@@ -490,7 +513,12 @@ export function writeSessionScopeOnlySettings(userDataDir: string, ptyId: string
 
 /** I/O — removes the session's settings file and forwarder script; missing files are fine. */
 export function removeSessionHooksSettings(userDataDir: string, ptyId: string): void {
-  for (const path of [sessionHookSettingsPath(userDataDir, ptyId), sessionForwarderScriptPath(userDataDir, ptyId), sessionStatusLineScriptPath(userDataDir, ptyId)]) {
+  for (const path of [
+    sessionHookSettingsPath(userDataDir, ptyId),
+    sessionForwarderScriptPath(userDataDir, ptyId),
+    sessionStatusLineScriptPath(userDataDir, ptyId),
+    sessionTokenHeaderPath(userDataDir, ptyId),
+  ]) {
     try {
       unlinkSync(path);
     } catch {

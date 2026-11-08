@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHookBridge } from '../src/main/hook-bridge';
-import { buildSessionHooksSettings, buildSlackOfflineGuardScript, SLACK_OFFLINE_GUARD_MATCHER } from '../src/main/hooks-settings';
+import { buildSessionHooksSettings, buildSlackOfflineGuardScript, SLACK_OFFLINE_GUARD_MATCHER, tokenHeaderFileContent } from '../src/main/hooks-settings';
 
 // Slack só com carta, fatia 4 — falha fechada: a remote session outlives the app; with the app down (or not
 // knowing the session), a post to Slack is REFUSED by the command hook, never let through. The real script, run
@@ -21,7 +21,9 @@ async function runGuard(port: number, token: string, payload: unknown): Promise<
   const dir = mkdtempSync(join(tmpdir(), 'slack-offline-'));
   dirs.push(dir);
   const script = join(dir, 'slack-guard.sh');
-  writeFileSync(script, buildSlackOfflineGuardScript({ port, token }));
+  const tokenHeaderPath = join(dir, 'hook-header');
+  writeFileSync(tokenHeaderPath, tokenHeaderFileContent(token), { mode: 0o600 });
+  writeFileSync(script, buildSlackOfflineGuardScript({ port, tokenHeaderPath }));
   const child = spawn('sh', [script], { stdio: ['pipe', 'pipe', 'ignore'] });
   let out = '';
   child.stdout.on('data', (chunk: Buffer) => (out += chunk.toString('utf8')));
@@ -75,7 +77,7 @@ describe.skipIf(process.platform === 'win32')('Slack só com carta — app fora 
   });
 
   it('the remote settings carry the guard on PreToolUse, next to the http hook', () => {
-    const settings = buildSessionHooksSettings({ port: 30000, token: 't', curlPath: 'curl', slackOfflineGuardCommand: 'sh "$HOME/.donel/s/x/slack-guard.sh"' });
+    const settings = buildSessionHooksSettings({ port: 30000, token: 't', tokenHeaderPath: '$HOME/.donel/s/x/hook-header', curlPath: 'curl', slackOfflineGuardCommand: 'sh "$HOME/.donel/s/x/slack-guard.sh"' });
     expect(settings.hooks.PreToolUse).toEqual([
       { hooks: [expect.objectContaining({ type: 'http' })] },
       { matcher: SLACK_OFFLINE_GUARD_MATCHER, hooks: [{ type: 'command', command: 'sh "$HOME/.donel/s/x/slack-guard.sh"', timeout: 10 }] },

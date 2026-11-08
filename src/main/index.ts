@@ -206,6 +206,7 @@ import {
   removeSessionHooksSettings,
   statusLineBridgeMode,
   writeHooksSettingsFile,
+  tokenHeaderFileContent,
   writeSessionHooksSettings,
   writeSessionScopeOnlySettings,
 } from './hooks-settings';
@@ -1714,10 +1715,14 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
   const hooksOn = hookBridge !== null && hookBridge.port !== null;
   if (hooksOn) {
     // Slack só com carta, fatia 4: the remote session outlives the app; with it down, a post to Slack is refused.
-    files.push({ name: 'slack-guard.sh', content: buildSlackOfflineGuardScript({ port: fresh.hookPort, token: fresh.hookToken, agentBotServers: appConfig.slackAgentBots.servers }) });
+    // The token goes in a file of its own (600, like every file of the session folder): a hook command never carries it.
+    const tokenHeaderPath = `$HOME/${REMOTE_SESSIONS_DIR}/${correlationId}/hook-header`;
+    files.push({ name: 'hook-header', content: tokenHeaderFileContent(fresh.hookToken) });
+    files.push({ name: 'slack-guard.sh', content: buildSlackOfflineGuardScript({ port: fresh.hookPort, tokenHeaderPath, agentBotServers: appConfig.slackAgentBots.servers }) });
     const settings = buildSessionHooksSettings({
       port: fresh.hookPort,
       token: fresh.hookToken,
+      tokenHeaderPath,
       curlPath: 'curl',
       slackOfflineGuardCommand: `sh "$HOME/${REMOTE_SESSIONS_DIR}/${correlationId}/slack-guard.sh"`,
       statusLine: planStatusLineBridge({ mode: statusLineBridgeModeSetting, userStatusLine: null, chatEnabled: appConfig.chat.enabled }),

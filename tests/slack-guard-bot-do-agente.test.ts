@@ -117,7 +117,7 @@ describe('trava de fora do ar (VPS)', () => {
     const dir = mkdtempSync(join(tmpdir(), 'slack-offline-'));
     dirs.push(dir);
     const script = join(dir, 'slack-guard.sh');
-    writeFileSync(script, buildSlackOfflineGuardScript({ port: 1, token: 'tok', agentBotServers: opts.servers ?? BOTS }));
+    writeFileSync(script, buildSlackOfflineGuardScript({ port: 1, tokenHeaderPath: join(dir, 'hook-header'), agentBotServers: opts.servers ?? BOTS }));
     let env: NodeJS.ProcessEnv = process.env;
     if (opts.path) {
       // A PATH with only these tools: a VPS without node (or without any JSON parser).
