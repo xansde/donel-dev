@@ -36,6 +36,7 @@ import {
   isCancelled,
   awaitsSend,
   isClosed,
+  isServicePlace,
   viewState,
   maxProofBytes,
   parseLedgerDoc,
@@ -300,7 +301,7 @@ export function orphanReason(caller: LedgerCaller, task: LedgerTask, now: number
 /** The owner place of `task` could not be checked: its board did not answer. Closed and delivered tasks do not depend on it. */
 export function ownerUnknown(caller: LedgerCaller, task: LedgerTask): boolean {
   // The Líder único is no place of any board: whether the board answered says nothing of it (t-52b31719).
-  if (task.ownerPlaceId === LEADER_OF_ALL) return false;
+  if (task.ownerPlaceId === LEADER_OF_ALL || isServicePlace(task.ownerPlaceId)) return false;
   return !isClosed(task) && task.state !== 'entregue' && !awaitsSend(task) && !caller.placeStates?.has(task.projectPath);
 }
 
