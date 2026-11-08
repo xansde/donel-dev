@@ -358,6 +358,12 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   // handle acima pro porquê de ser evento, não poll).
   const renderListenersRef = useRef(new Set<() => void>());
   const screenListenersRef = useRef(new Set<() => void>());
+  /**
+   * Peso do renderer (08/11) — while the listeners of one parsed chunk run, the buffer cannot change (xterm parses
+   * later writes in a later task), so they share ONE read of the screen. Three readers per tab (working, permission
+   * mode, terminal needed) each walking every row on every chunk was a third of the window's CPU with tabs printing.
+   */
+  const sharedScreenRef = useRef<{ active: boolean; snapshot: ScreenSnapshot | null }>({ active: false, snapshot: null });
   /** T039 — argv efetivo do próximo spawn (respawn com `-r` o substitui); `undefined` = prop `args`. */
   const spawnArgsRef = useRef<string[] | undefined>(undefined);
   const respawnRef = useRef<(options?: { resume?: string }) => void>(() => undefined);
@@ -412,6 +418,38 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status.kind]);
 
+  /** The visible screen as rows of text (the chat's screen readers); `sharedScreenRef` shares it within one chunk. */
+  const readScreenNow = (): ScreenSnapshot => {
+    const term = termRef.current;
+    if (!term) return { lines: [], bracketedPaste: false, altScreen: false, cols: 0, rows: 0 };
+    const buffer = term.buffer.active;
+    const scratch = buffer.getNullCell();
+    const lines: ScreenSnapshot['lines'][number][] = [];
+    for (let y = 0; y < term.rows; y += 1) {
+      const line = buffer.getLine(buffer.viewportY + y);
+      if (!line) {
+        lines.push({ text: '', dim: [] });
+        continue;
+      }
+      lines.push(
+        bufferLineToScreenLine({
+          cols: term.cols,
+          getCell: (x) => {
+            const cell = line.getCell(x, scratch);
+            return cell ? { chars: cell.getChars(), width: cell.getWidth(), dim: cell.isDim() !== 0 } : undefined;
+          },
+        })
+      );
+    }
+    return {
+      lines,
+      bracketedPaste: term.modes.bracketedPasteMode,
+      altScreen: buffer.type === 'alternate',
+      cols: term.cols,
+      rows: term.rows,
+    };
+  };
+
   // T011 (FR-011) — `injectCommand` lê `ptyIdRef` no momento da CHAMADA (não
   // captura o valor no momento em que o handle foi criado), por isso não
   // precisa de dependências: mesmo padrão de `term.onData` (linha ~161
@@ -448,34 +486,11 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         return true;
       },
       readScreen: (): ScreenSnapshot => {
-        const term = termRef.current;
-        if (!term) return { lines: [], bracketedPaste: false, altScreen: false, cols: 0, rows: 0 };
-        const buffer = term.buffer.active;
-        const scratch = buffer.getNullCell();
-        const lines: ScreenSnapshot['lines'][number][] = [];
-        for (let y = 0; y < term.rows; y += 1) {
-          const line = buffer.getLine(buffer.viewportY + y);
-          if (!line) {
-            lines.push({ text: '', dim: [] });
-            continue;
-          }
-          lines.push(
-            bufferLineToScreenLine({
-              cols: term.cols,
-              getCell: (x) => {
-                const cell = line.getCell(x, scratch);
-                return cell ? { chars: cell.getChars(), width: cell.getWidth(), dim: cell.isDim() !== 0 } : undefined;
-              },
-            })
-          );
-        }
-        return {
-          lines,
-          bracketedPaste: term.modes.bracketedPasteMode,
-          altScreen: buffer.type === 'alternate',
-          cols: term.cols,
-          rows: term.rows,
-        };
+        const shared = sharedScreenRef.current;
+        if (shared.active && shared.snapshot) return shared.snapshot;
+        const snapshot = readScreenNow();
+        if (shared.active) shared.snapshot = snapshot;
+        return snapshot;
       },
       onScreenUpdate: (listener: () => void): (() => void) => {
         screenListenersRef.current.add(listener);
@@ -597,8 +612,13 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
               // transiente ANTES do próximo redraw sobrescrever por cima
               // (ver comentário do handle acima).
               term.write(data, () => {
-                renderListenersRef.current.forEach((listener) => listener());
-                screenListenersRef.current.forEach((listener) => listener());
+                sharedScreenRef.current = { active: true, snapshot: null };
+                try {
+                  renderListenersRef.current.forEach((listener) => listener());
+                  screenListenersRef.current.forEach((listener) => listener());
+                } finally {
+                  sharedScreenRef.current = { active: false, snapshot: null };
+                }
               });
             });
           });
