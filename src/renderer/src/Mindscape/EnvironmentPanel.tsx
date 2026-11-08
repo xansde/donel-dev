@@ -169,7 +169,8 @@ export function useEnvView(env: Environment, live: readonly MindscapeLiveSession
       seen.add(session.sessionId);
       const remote = found ? pulseOfRemote(found.detail, found.readAt) : null;
       // A background task the app heard of (hooks) also keeps a remote session working.
-      const pulse = remote && !((session.background ?? 0) > 0 && remote.state !== 'trabalhando' && remote.state !== 'precisa-dono') ? remote : pulseOfLocal(session, now);
+      const idleRemote = remote !== null && (remote.state === 'ociosa' || remote.state === 'pode-fechar' || remote.state === 'desconhecido');
+      const pulse = remote && !((session.background ?? 0) > 0 && idleRemote) ? remote : pulseOfLocal(session, now);
       sessions.push({
         sessionId: session.sessionId,
         name: session.name,

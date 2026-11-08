@@ -367,8 +367,13 @@ export type ParsedLedgerCall = { readonly ok: true; readonly call: LedgerToolCal
 function text(value: unknown, field: string, max: number, required: boolean): string | undefined | { error: string } {
   if (value === undefined && !required) return undefined;
   if (typeof value !== 'string' || (required && !value.trim())) return { error: `"${field}" é obrigatório (texto).` };
-  if (value.length > max) return { error: `"${field}" longo demais (máximo ${max} caracteres).` };
+  // The size sent and the limit: a session that only hears "longo demais" cuts at random (BizOps, 08/11).
+  if (value.length > max) return { error: `"${field}" longo demais: ${value.length} caracteres (máximo ${max}). Encurte e mande de novo.` };
   return value;
+}
+
+function isTooLong(value: unknown, max: number): boolean {
+  return typeof value === 'string' && value.length > max;
 }
 
 function parseProofInput(raw: unknown, index: number): ProofInput | string {
@@ -550,6 +555,7 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
     case 'tarefa_rejeitar': {
       if (typeof id === 'object' || id === undefined) return fail('"id" é obrigatório.');
       const motivo = text(args.motivo, 'motivo', MAX_REQUEST_CHARS, true);
+      if (typeof motivo === 'object' && isTooLong(args.motivo, MAX_REQUEST_CHARS)) return fail(motivo.error);
       if (typeof motivo === 'object' || motivo === undefined) return fail(`"motivo" é obrigatório para ${name === 'tarefa_cancelar' ? 'cancelar' : 'rejeitar'}.`);
       return { ok: true, call: { tool: name, id: id.trim(), motivo } };
     }
@@ -558,6 +564,7 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       const para = text(args.para, 'para', 120, true);
       const motivo = text(args.motivo, 'motivo', MAX_REQUEST_CHARS, true);
       if (typeof para === 'object' || para === undefined) return fail('"para" é obrigatório: o lugar que fica com a tarefa, ou "seu".');
+      if (typeof motivo === 'object' && isTooLong(args.motivo, MAX_REQUEST_CHARS)) return fail(motivo.error);
       if (typeof motivo === 'object' || motivo === undefined) return fail('"motivo" é obrigatório: por que a tarefa muda de dono.');
       return { ok: true, call: { tool: 'tarefa_transferir', id: id.trim(), para: para.trim(), motivo: motivo.trim() } };
     }

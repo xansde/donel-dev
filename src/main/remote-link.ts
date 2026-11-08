@@ -40,6 +40,8 @@ interface Lost<Exit> {
   attempt: number;
   timer: unknown;
   readonly exit: Exit;
+  /** The tab was told it lost its link (a clean exit is not announced until the place fails to answer). */
+  announced: boolean;
 }
 
 export class RemoteLinkSupervisor<Exit> {
@@ -62,8 +64,11 @@ export class RemoteLinkSupervisor<Exit> {
   /**
    * The PTY of a tab exited. `true` = held back: the tab is "sem ligação" and the app relinks it (the caller does no
    * teardown). `false` = a real exit: not a remote tab, the owner closed it, or the app is quitting.
+   * `clean` = the ssh left with 0: the command on the place ended (the session ended there, as a rule), the link did
+   * not drop. The place is asked at once and the tab is not shown "sem ligação" unless the place fails to answer:
+   * before, every normal end passed through "sem ligação" for a moment (Revisor, #317).
    */
-  onPtyExit(ptyId: string, closedByOwner: boolean, exit: Exit): boolean {
+  onPtyExit(ptyId: string, closedByOwner: boolean, exit: Exit, clean = false): boolean {
     const tracked = this.tracked.get(ptyId);
     if (!tracked || closedByOwner || this.stopped) {
       this.forget(ptyId);
@@ -72,8 +77,12 @@ export class RemoteLinkSupervisor<Exit> {
     const previous = this.relinkedAt.get(ptyId);
     this.relinkedAt.delete(ptyId);
     const attempt = previous && this.deps.now() - previous.at < RELINK_STABLE_MS ? previous.attempt + 1 : 0;
-    const entry: Lost<Exit> = { attempt, timer: null, exit };
+    const entry: Lost<Exit> = { attempt, timer: null, exit, announced: !clean };
     this.lost.set(ptyId, entry);
+    if (clean) {
+      entry.timer = this.deps.setTimer(() => void this.tryRelink(ptyId, entry), 0);
+      return true;
+    }
     this.deps.notify(ptyId, false);
     this.schedule(ptyId, entry);
     return true;
@@ -125,7 +134,13 @@ export class RemoteLinkSupervisor<Exit> {
     if (answer === 'alive' && this.deps.relink(ptyId)) {
       this.lost.delete(ptyId);
       this.relinkedAt.set(ptyId, { at: this.deps.now(), attempt: entry.attempt });
-      this.deps.notify(ptyId, true);
+      if (entry.announced) this.deps.notify(ptyId, true);
+      return;
+    }
+    if (!entry.announced) {
+      entry.announced = true;
+      this.deps.notify(ptyId, false);
+      this.schedule(ptyId, entry); // the first wait of the normal ladder
       return;
     }
     entry.attempt += 1;

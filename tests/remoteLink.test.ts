@@ -141,6 +141,26 @@ describe('sessão remota sem ligação', () => {
     expect(finalized).toEqual([true]);
   });
 
+  it('fim normal da sessão (o ssh saiu com 0): pergunta à VPS na hora e fecha, sem passar por "sem ligação" (08/11)', async () => {
+    const h = harness(['gone']);
+    h.sup.track('pty-1', 'root@vps', 'sid-1');
+    expect(h.sup.onPtyExit('pty-1', false, 'exit-0', true)).toBe(true);
+    expect(h.timers[0].ms).toBe(0);
+    await h.tick();
+    expect(h.notes).toEqual([]);
+    expect(h.finalized).toEqual([{ ptyId: 'pty-1', exit: 'exit-0', byOwner: false }]);
+  });
+
+  it('saída 0 com a VPS fora do ar: aí sim fica "sem ligação" e tenta de novo', async () => {
+    const h = harness(['unreachable', 'alive']);
+    h.sup.track('pty-1', 'root@vps', 'sid-1');
+    h.sup.onPtyExit('pty-1', false, 'exit-0', true);
+    await h.tick();
+    expect(h.notes).toEqual([{ ptyId: 'pty-1', linked: false }]);
+    await h.tick();
+    expect(h.relinked).toEqual(['pty-1']);
+  });
+
   it('o dono fechou, ou o app está saindo: a saída não é segurada', () => {
     const h = harness([]);
     h.sup.track('pty-1', 'root@vps', 'sid-1');

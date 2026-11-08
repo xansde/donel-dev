@@ -127,8 +127,6 @@ describe('review of #322', () => {
     expect(pulseOfRemote(verifyQueue, NOW)).toMatchObject({ state: 'trabalhando', reason: 'em segundo plano: flock, npm' });
     const pendingTask = reading({ lastAt: NOW - 3 * 60 * MIN, background: { procs: 0, names: [], pendingTasks: 1 } });
     expect(pulseOfRemote(pendingTask, NOW).state).toBe('trabalhando');
-    const stuckButRunning = reading({ last: 'error', apiError: { kind: 'server_error', text: 'Connection refused', at: NOW - 2 * 60 * MIN }, background: { procs: 1, names: ['sleep'], pendingTasks: 0 } });
-    expect(pulseOfRemote(stuckButRunning, NOW).state).toBe('trabalhando');
     expect(pulseOfLocal({ state: 'waiting', stateEnteredAt: NOW - 3 * 60 * MIN, background: 1 }, NOW).state).toBe('trabalhando');
     expect(canOfferClose(session('a', pulseOfRemote(verifyQueue, NOW)))).toBe(false);
   });
@@ -138,5 +136,23 @@ describe('review of #322', () => {
     expect(canOfferClose(session('a', { state: 'pode-fechar' }, { roleKnown: true, roleId: 'lider' }))).toBe(false);
     const panel = buildEnvPanel({ sessions: [session('nowhere', { state: 'pode-fechar' }, { roleKnown: false })], machines: [], accounts: [], links: [] });
     expect(panel.closable).toEqual([]);
+  });
+});
+
+describe('stuck with a process left behind (ressalva do #322)', () => {
+  it('stays "travada" with the background note and is never offered for closing', () => {
+    const stuck = reading({
+      last: 'error',
+      apiError: { kind: 'rate_limit', text: 'API Error: Request rejected (429) · All credentials for model claude-opus are cooling down', at: NOW - 2 * 60 * MIN },
+      background: { procs: 2, names: ['bash', 'sleep'], pendingTasks: 0 },
+    });
+    const pulse = pulseOfRemote(stuck, NOW);
+    expect(pulse).toMatchObject({ state: 'travada', reason: 'gateway sem cota (429) há 2 h · em segundo plano: bash, sleep', background: true });
+    expect(canOfferClose(session('a', pulse))).toBe(false);
+    const panel = buildEnvPanel({ sessions: [session('a', pulse)], machines: [], accounts: [], links: [] });
+    expect(panel.bottlenecks.map((item) => item.title)).toContain('1 sessão travada: gateway sem cota (429)');
+    expect(panel.closable).toEqual([]);
+    const local = pulseOfLocal({ state: 'waiting', stateEnteredAt: NOW - MIN, turnFailure: 'rate_limit', background: 1 }, NOW);
+    expect(local).toMatchObject({ state: 'travada', background: true });
   });
 });
