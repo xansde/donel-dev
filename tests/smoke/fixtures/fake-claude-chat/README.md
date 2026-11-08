@@ -57,7 +57,8 @@ Os transcripts do falso ficam em `<userData>/fake-claude-home` quando o helper o
 - **Colagem grande sem marcadores (T089)**: como o ConPTY descarta os marcadores, um pedaco de entrada sem eles com 5+ linhas ou 1000+ caracteres vira `[Pasted text #N +M lines]` do mesmo jeito, e os pedacos que chegam em ate 250 ms depois (o PTY parte uma escrita em varias) continuam a MESMA colagem. Sem isso, 500 linhas encheriam a caixa e o chat diria "o texto nao entrou na caixa".
 - LF (`\n`) insere quebra de linha na caixa; so CR (`\r`) envia. No Windows o ConPTY descarta os marcadores de bracketed paste antes de um filho Node, entao uma colagem de varias linhas chega como texto puro com LF (como o Ctrl+J do CLI real).
 - Inicio: cria o transcript e roda o `command` do `SessionStart` (JSON no stdin) com `session_id`,
-  `transcript_path`, `source`, `cwd`, `hook_event_name`.
+  `transcript_path`, `source`, `cwd`, `hook_event_name`. Como o CLI real, grava no transcript um `attachment`
+  `hook_success` com a linha de comando do hook, literal (`command`): por isso nenhuma chave pode ir nela.
 - **Statusline** (ponte da statusline): com `statusLine` (`type: command`) no `--settings`, roda o comando como o CLI
   (shell, JSON no stdin) no inicio da sessao e em cada passo `{ "type": "statusline", "payload": {...} }`. O JSON e
   `session_id`/`transcript_path`/`cwd`/`version` + `scenario.statusLine` + o `payload` do passo. A saida so vai

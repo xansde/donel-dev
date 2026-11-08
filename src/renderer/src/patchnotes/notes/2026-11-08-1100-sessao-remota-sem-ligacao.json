@@ -1,0 +1,4 @@
+{
+  "title": "Sessão na VPS que perde a conexão aparece \"sem ligação\", não \"fechada\"",
+  "text": "Quando a conexão com a VPS cai, a sessão que roda lá continua trabalhando. Antes, o quadro a mostrava como fechada, e o Líder abria outra no lugar dela. Agora ela aparece \"sem ligação\" e o app se reconecta sozinho assim que a VPS responde, sem perder a conversa. Se você ou o Líder fecharem a sessão nesse estado, ela é encerrada também na VPS."
+}

@@ -213,7 +213,7 @@ describe('arquivo no Slack: pela ferramenta carta_slack e a resposta do upload',
 
 describe('arquivo no Slack: com o app fora do ar', () => {
   it('o script da trava diz que confere carta com arquivo, e o padrão pega o upload e deixa baixar', async () => {
-    expect(buildSlackOfflineGuardScript({ port: 1, token: 'x' }).split('\n')).toContain(`# ${SLACK_GUARD_FILE_LETTER_MARK}`);
+    expect(buildSlackOfflineGuardScript({ port: 1, tokenHeaderPath: '/x/hook-header' }).split('\n')).toContain(`# ${SLACK_GUARD_FILE_LETTER_MARK}`);
     const offline = new RegExp(SLACK_OFFLINE_PATTERN, 'i');
     const payload = (tool: string) => JSON.stringify({ tool_name: tool, tool_input: {} });
     expect(offline.test(payload(UP))).toBe(true);

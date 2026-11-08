@@ -14,7 +14,7 @@ import { HEALTH_CHANNELS } from '../shared/health/ipc';
 import type { KillProcessOutcome } from '../shared/health/ipc';
 import type { HealthReport } from '../shared/health/types';
 import type { RemoteHealthReport } from '../shared/health/remote';
-import { HOMOLOGACAO_CHANNELS, type FactoryMetricsView } from '../shared/homologacao/ipc';
+import { HOMOLOGACAO_CHANNELS, type FactoryMetricsView, type FactoryRigsView } from '../shared/homologacao/ipc';
 // B33 — atualizar de dentro do app.
 import { APP_UPDATE_CHANNELS, type AppUpdateApplyResult, type AppUpdateBoot, type AppUpdateStatus, type ResumeTab } from '../shared/appUpdate';
 // Sidebar — abrir no editor + branch atual.
@@ -233,6 +233,12 @@ const donelApi: DonelApi = {
       };
       ipcRenderer.on(PTY_CHANNELS.exit, handler);
       return () => ipcRenderer.removeListener(PTY_CHANNELS.exit, handler);
+    },
+
+    onLink: (listener: (ptyId: string, linked: boolean) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, ptyId: string, linked: boolean): void => listener(ptyId, linked);
+      ipcRenderer.on(PTY_CHANNELS.link, handler);
+      return () => ipcRenderer.removeListener(PTY_CHANNELS.link, handler);
     },
   },
 
@@ -495,6 +501,12 @@ const donelApi: DonelApi = {
     onMetricsChanged: (listener: (view: FactoryMetricsView | null) => void) => {
       const handler = (_event: unknown, view: FactoryMetricsView | null): void => listener(view);
       return subscribeChannel(ipcRenderer, HOMOLOGACAO_CHANNELS.metricsChanged, handler);
+    },
+    rigsGet: () => ipcRenderer.invoke(HOMOLOGACAO_CHANNELS.rigsGet) as Promise<FactoryRigsView | null>,
+    rigsRefresh: () => ipcRenderer.invoke(HOMOLOGACAO_CHANNELS.rigsRefresh) as Promise<FactoryRigsView | null>,
+    onRigsChanged: (listener: (view: FactoryRigsView | null) => void) => {
+      const handler = (_event: unknown, view: FactoryRigsView | null): void => listener(view);
+      return subscribeChannel(ipcRenderer, HOMOLOGACAO_CHANNELS.rigsChanged, handler);
     },
   },
 

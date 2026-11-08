@@ -4,6 +4,7 @@ import {
   decideSwap,
   DEFAULT_SESSION_RENEWAL_PREFS,
   parseHandoffHeader,
+  renewalHandoffDeliveryNotice,
   type RenewalCheckInput,
 } from '../src/shared/sessionRenewal';
 
@@ -67,5 +68,23 @@ describe('decideSwap — swap or wait?', () => {
     expect(decideSwap({ handoff: ready, turn: 'waiting', backgroundAgents: false, turnEndedSinceAsk: false })).toBe('wait-turn');
     expect(decideSwap({ handoff: parseHandoffHeader(null), turn: 'waiting', backgroundAgents: false, turnEndedSinceAsk: true })).toBe('give-up');
     expect(decideSwap({ handoff: parseHandoffHeader('# sem cabeçalho'), turn: 'waiting', backgroundAgents: false, turnEndedSinceAsk: true })).toBe('give-up');
+  });
+});
+
+describe('renewalHandoffDeliveryNotice — did the new session get the handoff?', () => {
+  const path = '/home/atlas/.config/donel-dev/handoffs/beacon.md';
+
+  it('quiet when the first message went in or the CLI queued it', () => {
+    expect(renewalHandoffDeliveryNotice({ kind: 'entrou' }, path)).toBeNull();
+    expect(renewalHandoffDeliveryNotice({ kind: 'na-fila' }, path)).toBeNull();
+  });
+
+  it('says so, with the handoff path, when it did not go in or is still on its way past the wait', () => {
+    const failed = renewalHandoffDeliveryNotice({ kind: 'nao-foi', reason: 'a caixa não respondeu' }, path);
+    expect(failed).toContain(path);
+    expect(failed).toContain('a caixa não respondeu');
+    const pending = renewalHandoffDeliveryNotice({ kind: 'enviando' }, path);
+    expect(pending).toContain(path);
+    expect(pending).not.toBeNull();
   });
 });

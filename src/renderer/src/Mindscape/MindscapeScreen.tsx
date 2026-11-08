@@ -58,6 +58,13 @@ import { FactoryNumbersButton, FactoryNumbersPanel, useFactoryMetrics } from './
 import { EnvironmentButton, EnvironmentPanel, PULSE_TONE, pulseLine, useEnvironment, useEnvView } from './EnvironmentPanel';
 import { sameBoardName } from '../../../shared/homologacao/config';
 import chairStyles from './Chairs.module.css';
+// Mindscape de homologação — the factory's rigs, drawn from its own `rigs.json` on the factory's board.
+import { RigsLayer, RigsNotice } from './MindscapeRigs';
+import { useFactoryRigs } from './useFactoryRigs';
+import type { FactoryRigsView } from '../../../shared/homologacao/ipc';
+import { RIGS_STALE_MS, type RigsShape } from '../../../shared/homologacao/rigs';
+import { layoutRigs } from '../../../shared/homologacao/rigsLayout';
+import { deriveRigsView } from '../../../shared/homologacao/rigsView';
 import { preparePrint, useMindscapeImages } from './useMindscapeImage';
 import styles from './Mindscape.module.css';
 
@@ -82,6 +89,8 @@ export interface MindscapeLiveSession {
   readonly pendingKinds?: readonly string[];
   /** Item 04 — `StopFailure` code of the last turn. */
   readonly turnFailure?: string;
+  /** Sessões remotas — the ssh dropped while the process lives on the place: "sem ligação" (the app relinks). */
+  readonly linkLost?: boolean;
   /** Item 04 — engine seal: the short model label read from the session (and the provider); absent = no reading. */
   readonly engine?: string;
   /** Item 04 — the context, same reading as the footer of the chat; absent = no reading (never a made-up 0%). */
@@ -223,6 +232,45 @@ function writeLens(lens: BoardLens): void {
 /** Where the rig lands on screen when the lens opens (px from the top-left of the board). */
 const RIG_SCREEN_MARGIN = 40;
 
+/** The band's line on the factory's board: where the drawing comes from. */
+function rigsDetail(shape: { readonly rigs: readonly unknown[]; readonly geradoEmMs: number }, chairCount: number): string {
+  return `${shape.rigs.length} rig${shape.rigs.length === 1 ? '' : 's'} → ${chairCount} cadeira${chairCount === 1 ? '' : 's'}, como a factory se descreve no rigs.json (gerado às ${clockOf(shape.geradoEmMs)}). Para mudar o desenho, peça à factory.`;
+}
+
+/** Room above the rigs for the arrows' legend (board units). */
+const RIGS_LEGEND_ROOM = 56;
+
+function clockOf(at: number): string {
+  const date = new Date(at);
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+/** The shape to draw: the last good read, unless the place says the file is gone (then today's lens comes back). */
+function rigsShapeOf(view: FactoryRigsView): RigsShape | null {
+  if (view.file.status === 'missing' || !view.file.value?.ok) return null;
+  return view.file.value.shape;
+}
+
+/** What the factory's board says above the lens about its `rigs.json`; `null` when the drawing is fresh. */
+function rigsNoticeText(view: FactoryRigsView, now = Date.now()): string | null {
+  const fallback = 'mostrando as cadeiras deste quadro, uma por papel.';
+  const { file } = view;
+  const shape = rigsShapeOf(view);
+  if (!view.placeFound) return `Sem a forma dos rigs: o lugar "${view.place}" não está nos lugares remotos; ${fallback}`;
+  if (file.status === 'missing') return `Sem a forma dos rigs: o rigs.json não está no lugar ${view.place}; ${fallback}`;
+  if (file.value && !file.value.ok) return `Sem a forma dos rigs: ${file.value.message}; ${fallback}`;
+  if (file.status === 'pending' || file.status === 'off') return shape ? null : 'Lendo a forma dos rigs na VPS…';
+  if (file.status === 'unreachable') {
+    return shape && file.lastOkAt
+      ? `Sem sinal de ${view.place} desde ${clockOf(file.lastOkAt)}: o desenho é o da última leitura.`
+      : `Sem a forma dos rigs: ${view.place} não respondeu; ${fallback}`;
+  }
+  const parts: string[] = [];
+  if (shape && now - shape.geradoEmMs > RIGS_STALE_MS) parts.push(`Forma dos rigs parada desde ${clockOf(shape.geradoEmMs)}.`);
+  if (shape && shape.foraDoContrato.length > 0) parts.push(`Item fora do contrato: ${shape.foraDoContrato.join(', ')}.`);
+  return parts.length > 0 ? parts.join(' ') : null;
+}
+
 /** `Donel Dev` → `donel-dev`: the board's part of a chair address (`papel@rig`). */
 function addressSlug(name: string): string {
   return (
@@ -322,6 +370,8 @@ export function MindscapeScreen({
     return () => clearInterval(timer);
   }, [now]);
   const envView = useEnvView(environment, sessions, doc, projectNames, envNow);
+  // Fatia 2 — the shape of the factory's rigs (`rigs.json`), drawn in the lens of its board.
+  const factoryRigs = useFactoryRigs(chairsOn);
   /** "Seu desenho: Oculto" — the board only moves: no key, paste or button may change what the owner cannot see. */
   const boardLocked = lensLocksBoard(chairsOn, ownerMode);
   const onAction = (projectPath: string, reducer: (doc: MindscapeDoc) => MindscapeDoc): void => {
@@ -408,6 +458,7 @@ export function MindscapeScreen({
       unconfirmed: session.unconfirmed,
       pendingKinds: session.pendingKinds,
       turnFailure: session.turnFailure,
+      linkLost: session.linkLost,
       transcriptFound: transcriptFound(session.sessionId),
     });
   const isFavorite = (sessionId: string): boolean => registry[sessionId]?.pinned === true;
@@ -515,17 +566,31 @@ export function MindscapeScreen({
     return { ...view, pods, layout: layoutChairs(view, boardContentOrigin(board), pods) };
     // The live sessions and the board change identity on every update; the chairs follow them.
   }, [chairsOn, board, sessions, roles, transcripts]);
+  // Mindscape de homologação — on the factory's board (`homologacao.quadro`), the lens draws the factory's rigs from
+  // its `rigs.json`; without a readable file it keeps today's lens, with a notice saying why.
+  const rigsHere =
+    chairsOn && board && factoryRigs && (sameBoardName(factoryRigs.board, boardName) || sameBoardName(factoryRigs.board, folderName(board.projectPath)))
+      ? factoryRigs
+      : null;
+  const rigsBoard = useMemo(() => {
+    const shape = rigsHere ? rigsShapeOf(rigsHere) : null;
+    if (!shape || !board) return undefined;
+    return { shape, view: deriveRigsView(shape), layout: layoutRigs(shape, boardContentOrigin(board)) };
+    // The board changes identity on every update; the rigs follow the file and where the owner's drawing starts.
+  }, [rigsHere, board]);
+  const rigsNotice = rigsHere ? rigsNoticeText(rigsHere) : null;
   const faceOf = (chair: Chair): ChairFace => {
     if (chair.id === NO_ROLE_CHAIR) return { name: 'Sem papel', color: 'var(--text-muted)' };
     const seal = roleSealOf(chair.roleId)!;
     return { name: seal.name, color: seal.color };
   };
   // The lens opens with the rig at the top-left of the board, at the board's zoom.
+  const lensOrigin = rigsBoard ? { x: rigsBoard.layout.bounds.x, y: rigsBoard.layout.bounds.y - RIGS_LEGEND_ROOM } : chairsView?.layout.rig;
   const lensView: BoardView | undefined =
-    board && chairsView
+    board && chairsView && lensOrigin
       ? (lensViews[board.projectPath] ?? {
           zoom: board.zoom,
-          pan: { x: RIG_SCREEN_MARGIN - chairsView.layout.rig.x * board.zoom, y: RIG_SCREEN_MARGIN - chairsView.layout.rig.y * board.zoom },
+          pan: { x: RIG_SCREEN_MARGIN - lensOrigin.x * board.zoom, y: RIG_SCREEN_MARGIN - lensOrigin.y * board.zoom },
         })
       : undefined;
   /** The board as shown: in the lens, with the lens's own view. */
@@ -562,6 +627,8 @@ export function MindscapeScreen({
   };
   const chairDetails = (chairId: string): ChairDetails | RigDetails | PodDetails | null => {
     if (!board || !chairsView) return null;
+    // The factory's chairs get their own drawer with the live state (fatia 3 of the homologation board).
+    if (rigsBoard) return null;
     const pod = board.pods?.find((candidate) => podSelection(candidate.id) === chairId);
     if (pod) {
       const { projectPath } = board;
@@ -971,8 +1038,9 @@ export function MindscapeScreen({
       {chairsOn && chairsView ? (
         <ChairsBand
           placeCount={allPlaces.length}
-          chairCount={chairsView.chairs.length}
-          counts={chairsView.counts}
+          chairCount={rigsBoard ? rigsBoard.view.chairs.length : chairsView.chairs.length}
+          counts={rigsBoard ? rigsBoard.view.counts : chairsView.counts}
+          detail={rigsBoard ? rigsDetail(rigsBoard.shape, rigsBoard.view.chairs.length) : undefined}
           highlight={highlight}
           onHighlight={setHighlight}
           ownerMode={ownerMode}
@@ -982,9 +1050,10 @@ export function MindscapeScreen({
           }}
           showArrows={showArrows}
           onShowArrows={setShowArrows}
-          {...(boardLocked ? {} : { onAddPod: addNewPod })}
+          {...(boardLocked || rigsBoard ? {} : { onAddPod: addNewPod })}
         />
       ) : null}
+      {chairsOn && rigsNotice ? <RigsNotice text={rigsNotice} /> : null}
       {/* Cartas forma A — the Oráculo's cards open over the board only (LedgerStrip portals them here). */}
       <div ref={setBoardArea} className={styles.boardArea}>
       {!board ? (
@@ -1116,6 +1185,20 @@ export function MindscapeScreen({
               const ownerClass = [chairStyles.ownerLayer, ownerMode === 'dim' ? chairStyles.ownerDim : '', ownerMode === 'hidden' ? chairStyles.ownerHidden : ''].filter(Boolean).join(' ');
               return (
                 <>
+                  {rigsBoard ? (
+                    <RigsLayer
+                      shape={rigsBoard.shape}
+                      chairs={rigsBoard.view.chairs}
+                      layout={rigsBoard.layout}
+                      showArrows={showArrows}
+                      highlight={highlight}
+                      selected={openDetail}
+                      onOpenChair={(chairId) => {
+                        clearSelection();
+                        setOpenDetail((open) => (open === chairId ? null : chairId));
+                      }}
+                    />
+                  ) : (
                   <ChairsLayer
                     boardName={boardName}
                     chairs={chairsView.chairs}
@@ -1149,13 +1232,14 @@ export function MindscapeScreen({
                           },
                         })}
                   />
+                  )}
                   {/* The owner's drawing stays free and on top (por cima · esmaecido · oculto); the layout never moves it. */}
                   <div className={ownerClass} data-testid="mindscape-owner-layer" data-mode={ownerMode}>
                     {ownerInk}
                     {ownerCards}
                     {outlines}
                   </div>
-                  {chairsView.chairs.length === 0 ? <p className={styles.empty}>Nenhum lugar neste quadro ainda: as cadeiras aparecem quando houver sessões.</p> : null}
+                  {!rigsBoard && chairsView.chairs.length === 0 ? <p className={styles.empty}>Nenhum lugar neste quadro ainda: as cadeiras aparecem quando houver sessões.</p> : null}
                 </>
               );
             }

@@ -148,12 +148,18 @@ export function createCelularCore(deps: CelularCoreDeps): CelularCore {
     pedidos,
   });
   // O que já esperava o dono quando o app abriu não avisa de novo; só o que passar a esperar daqui em diante.
-  let waiting = new Map<string, number>();
+  // Ledger v5, fatia 2: every item of the box "Esperando você", not only the letters to decide.
+  // `null` = sem ponto de partida ainda: a primeira leitura boa vira o ponto de partida e não avisa nada.
+  let waiting: Map<string, number> | null = null;
+  let lastDoc: LedgerDoc | null = null;
   try {
     const doc = deps.ledger()?.load().doc;
-    if (doc) waiting = newlyWaiting(new Map(), doc).next;
+    if (doc) {
+      lastDoc = doc;
+      waiting = newlyWaiting(null, doc, Date.now()).next;
+    }
   } catch {
-    // ledger ilegível: a primeira mudança avisa o que estiver na fila
+    // ledger ilegível na abertura: fica sem ponto de partida (sem isso, a primeira mudança avisaria a caixa inteira)
   }
   // Outra porta só para uma instância de teste ao lado do app aberto (as duas não dividem a 47815).
   const port = Number(process.env.DONEL_CELULAR_PORT) || MOBILE_PORT;
@@ -220,9 +226,37 @@ export function createCelularCore(deps: CelularCoreDeps): CelularCore {
   }
 
   if (auth.enabled) void reconcile();
+  function warnNewItems(doc: LedgerDoc): void {
+    const { fresh, next } = newlyWaiting(waiting, doc, Date.now());
+    waiting = next;
+    if (!auth.enabled || deps.suspended?.() || fresh.length === 0) return;
+    const paired = new Set(auth.devices().map((device) => device.id));
+    let keys;
+    try {
+      keys = push.keys();
+    } catch (error) {
+      console.error('[donel-dev] celular: sem chave de aviso:', error);
+      return;
+    }
+    for (const { deviceId, subscription } of push.subscriptions()) {
+      if (!paired.has(deviceId)) {
+        push.remove(deviceId); // aparelho revogado: não recebe mais nada
+        continue;
+      }
+      for (const item of fresh) {
+        void sendPush(subscription, pushMessageFor(item), keys, pushFetch).then((outcome) => {
+          if (outcome === 'gone') push.remove(deviceId);
+          else if (outcome === 'failed') console.error('[donel-dev] celular: o aviso não saiu para um aparelho.');
+        });
+      }
+    }
+  }
+
   // A Tailscale pode subir depois do app (ou trocar de endereço): confere de minuto em minuto.
   const timer = setInterval(() => {
     if (auth.enabled) void reconcile();
+    // Some items of the box are born with time alone (a letter stuck for 30 min, a delivery stopped for a day).
+    if (lastDoc) warnNewItems(lastDoc);
   }, 60_000);
   timer.unref?.();
 
@@ -241,29 +275,8 @@ export function createCelularCore(deps: CelularCoreDeps): CelularCore {
       return state();
     },
     ledgerChanged(doc) {
-      const { fresh, next } = newlyWaiting(waiting, doc);
-      waiting = next;
-      if (!auth.enabled || deps.suspended?.() || fresh.length === 0) return;
-      const paired = new Set(auth.devices().map((device) => device.id));
-      let keys;
-      try {
-        keys = push.keys();
-      } catch (error) {
-        console.error('[donel-dev] celular: sem chave de aviso:', error);
-        return;
-      }
-      for (const { deviceId, subscription } of push.subscriptions()) {
-        if (!paired.has(deviceId)) {
-          push.remove(deviceId); // aparelho revogado: não recebe mais nada
-          continue;
-        }
-        for (const task of fresh) {
-          void sendPush(subscription, pushMessageFor(task), keys, pushFetch).then((outcome) => {
-            if (outcome === 'gone') push.remove(deviceId);
-            else if (outcome === 'failed') console.error('[donel-dev] celular: o aviso não saiu para um aparelho.');
-          });
-        }
-      }
+      lastDoc = doc;
+      warnNewItems(doc);
     },
     linkPedido: (pedidoId, tarefa) => pedidosStore.linkTask(pedidoId, tarefa),
     dispose: async () => {
