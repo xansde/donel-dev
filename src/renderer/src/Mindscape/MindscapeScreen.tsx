@@ -49,6 +49,7 @@ import { MindscapeNoteCard, MindscapeOwnerCard, MindscapeSessionCard, STRIPE_BY_
 import { RoleMenu } from './RoleMenu';
 import { MindscapeSelectionLayer } from './MindscapeSelectionLayer';
 import { LedgerStrip } from './LedgerStrip';
+import type { PlaceStates } from '../../../shared/ledger/inbox';
 import { MindscapeToolbar, type DrawStyle } from './MindscapeToolbar';
 import { ShadowRoutines } from './ShadowRoutines';
 import { ChairDrawer, ChairsBand, ChairsLayer, podSelection, RIG_SELECTION, type ChairDetails, type ChairFace, type OwnerLayerMode, type PodChoice, type PodDetails, type RigDetails } from './MindscapeChairs';
@@ -141,6 +142,8 @@ export interface MindscapeScreenProps {
   readonly onManageRoles?: () => void;
   /** Cadeiras, fatia 2 — "Definir cadeira ▸" in the drawer: the chair screen (B1) of that role. */
   readonly onDefineChair?: (roleId: string) => void;
+  /** Ledger v5, fatia 1 — the places of these boards, for the orphans of the box "Esperando você". */
+  readonly ledgerPlaceStatesOf?: (projectPaths: readonly string[]) => PlaceStates;
   /** Clock of the "antigas" rule (tests pin it). */
   readonly now?: () => number;
 }
@@ -322,6 +325,7 @@ export function MindscapeScreen({
   onStartPlace,
   onManageRoles,
   onDefineChair,
+  ledgerPlaceStatesOf,
 }: MindscapeScreenProps): React.JSX.Element {
   const boardPaths = Object.keys(doc.boards);
   const [selectedPath, setSelectedPath] = useState<string | undefined>(initialProjectPath);
@@ -1011,7 +1015,7 @@ export function MindscapeScreen({
         ) : null}
         {factoryHere ? <FactoryNumbersButton open={factoryNumbersOpen} onToggle={() => setFactoryNumbersOpen((open) => !open)} /> : null}
       </div>
-      <LedgerStrip projectPath={activePath} placeName={placeName} cardsHost={boardArea} />
+      <LedgerStrip projectPath={activePath} placeName={placeName} cardsHost={boardArea} placeStatesOf={ledgerPlaceStatesOf} />
       <MindscapeToolbar
         enabled={Boolean(board) && !boardLocked}
         tool={tool}

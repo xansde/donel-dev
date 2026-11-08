@@ -1,0 +1,4 @@
+{
+  "title": "Celular: o que precisa antes do QR",
+  "text": "Em Preferências → Celular, antes de parear, a tela explica que o celular precisa do app Tailscale instalado e logado na mesma conta deste PC, e mostra se já há algum celular na sua Tailscale (e se está conectado). Se o celular não abrir a página, \"O celular não abriu a página?\" confere o Firewall do Windows e, se faltar, oferece liberar só a porta do app para quem está na sua Tailscale, com a confirmação de administrador do Windows."
+}

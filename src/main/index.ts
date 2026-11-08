@@ -8,7 +8,8 @@ import { basename, dirname, join } from 'node:path';
 import { readUserDefaultPermissionMode, readUserStatusLine } from './cli-user-settings';
 import { createStatusLineStore } from './statusline-store';
 import { STATUS_LINE_CHANNELS, type StatusLineChangedPayload, type StatusLineSnapshot } from '../shared/statusLine';
-import { appMcpAllowArgs, roleDeliveryFor, withResolvedPermissionMode } from '../shared/commandBuilder';
+import { appMcpAllowArgs, withResolvedPermissionMode } from '../shared/commandBuilder';
+import { planRoleLaunch } from '../shared/roleLaunch';
 import type { DevModeBoardConfig } from '../shared/devMode';
 // Spec 010 — esteira nova: serviço (store + ingestão + disparo) e a fronteira IPC.
 import { createEsteiraService, type EsteiraService } from './esteira-service';
@@ -26,7 +27,7 @@ import { createSwitchableLedger, type SwitchableLedger } from './ledger-remote';
 import { LEDGER_REMOTE_CHANNELS, type LedgerRemoteResult, type LedgerRemoteState } from '../shared/ledger/remote';
 import { createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, runLedgerTool, type LedgerCaller, type LedgerService } from './ledger-store';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerSnapshot } from '../shared/ledger/channels';
-import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, OWN_OPTION, type LedgerDeliveredTo, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
+import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, OWN_OPTION, type LedgerDeliveredTo, type LedgerDoc, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
 import { askedByRefusal, type LedgerToolCall } from '../shared/ledger/tools';
 import type { BoardBridge } from './board-bridge';
 import { MCP_SERVER_NAME, type BrowserToolOutcome } from '../shared/browser/mcp';
@@ -255,7 +256,7 @@ import { FAKE_JUDGES_ENV_VAR } from '../shared/hillClimb/council';
 import type { HillClimbToolCall } from '../shared/hillClimb/tools';
 import { fetchRemoteProof } from './ledger-remote-proof';
 import { createLedgerMirrorService, type LedgerMirrorService } from './ledger-mirror/service';
-import { LEDGER_MIRROR_CHANNELS, type LedgerMirrorConfigureResult, type LedgerMirrorState, type PlaceInfoOf } from '../shared/ledger/mirror';
+import { LEDGER_MIRROR_CHANNELS, type LedgerMirrorConfigureResult, type LedgerMirrorState, type LedgerPlacesSnapshot, type PlaceInfoOf } from '../shared/ledger/mirror';
 import { CHAT_CHANNELS } from '../shared/chat/ipc';
 // 011-contas-e-provedores (etapa 1) — motor de contas + mods. Nasce inerte
 // (accounts.mod = null); toda a mecânica mora em src/main/accounts/, este
@@ -1689,12 +1690,13 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
 
   const roleId = roleIdForSpawn(options.roleId, launcherArgs, options.renewalId);
   const rolePromptPath = roleId ? (rolesStore?.promptFileFor(roleId, { leaderOfAll: options.leaderOfAll === true }) ?? null) : null;
+  let remoteRolePath: string | null = null;
   if (rolePromptPath) {
     try {
       files.push({ name: 'role.md', content: readFileSync(rolePromptPath, 'utf8') });
-      claudeArgs.push(...roleDeliveryFor('claude-code', '@S/role.md').args);
+      remoteRolePath = '@S/role.md';
     } catch {
-      // the session opens without the role, as a local one would
+      // the session opens without the role, as a local one would — and the tab is told (papel não entregue)
     }
   }
 
@@ -1706,6 +1708,9 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     remoteInventory = parseRemoteInventoryOutput(listed.stdout) ?? EMPTY_INVENTORY;
   }
   const roleScope = roleScopeSettingsFor(roleId, () => remoteInventory);
+  // Papel não entregue — the remote settings.json always carries the scope when there is one.
+  const rolePlan = planRoleLaunch('claude-code', { roleId, promptPath: remoteRolePath, scope, scopeDelivered: roleScope !== null });
+  claudeArgs.push(...rolePlan.args);
 
   const hooksOn = hookBridge !== null && hookBridge.port !== null;
   if (hooksOn) {
@@ -1802,7 +1807,12 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
 
   const accountId = place.activeAccountId;
   const accountLabel = accountId ? (accountEngineHost.current()?.getSnapshot().accounts.find((account) => account.id === accountId)?.label ?? accountId) : null;
-  return { ptyId, claudeSessionId: correlationId, ...(accountId && accountLabel ? { account: { id: accountId, label: accountLabel } } : {}) };
+  return {
+    ptyId,
+    claudeSessionId: correlationId,
+    ...(accountId && accountLabel ? { account: { id: accountId, label: accountLabel } } : {}),
+    ...(roleId && rolePlan.missing.length > 0 ? { roleNotDelivered: { roleId, missing: rolePlan.missing } } : {}),
+  };
 }
 
 /**
@@ -1981,6 +1991,8 @@ function registerPtyIpcHandlers(): void {
       // Escopo do papel — only the MCPs, plugins and skills the role declares; no declaration = everything.
       const roleScope = roleScopeSettingsFor(roleId, () => readClaudeInventory(claudeConfigDirForSession ?? defaultClaudeConfigDir(), options.cwd));
       let sessionHooksSettingsPath: string | null = null;
+      // Papel não entregue — true only when a `--settings` file carrying the role's scope reaches the CLI.
+      let scopeWritten = false;
       if (hooksTransport === 'bridge') {
         if (hookBridge && hookBridge.port !== null) {
           try {
@@ -2003,6 +2015,7 @@ function registerPtyIpcHandlers(): void {
               isolatedWorktree: worktreeNameFromArgs(launcherArgs) !== null,
               roleScope,
             });
+            scopeWritten = roleScope !== null;
           } catch (error) {
             // Degrada como o boot sem servidor: a sessão nasce sem semáforo, nunca sem terminal.
             console.error('[donel-dev] --settings da sessão não gravou — sessão sem hooks:', error);
@@ -2020,6 +2033,7 @@ function registerPtyIpcHandlers(): void {
       if (settingsPathForSession === null && roleScope) {
         try {
           settingsPathForSession = writeSessionScopeOnlySettings(app.getPath('userData'), plannedPtyId, roleScope);
+          scopeWritten = true;
         } catch (error) {
           console.error('[donel-dev] escopo do papel não gravou — sessão com tudo:', error);
         }
@@ -2029,7 +2043,14 @@ function registerPtyIpcHandlers(): void {
       // (`mcpDeliveryFor`, emenda agnóstica). Por último: `--mcp-config` é variádico e só opções podem vir depois.
       const browserMcpArgs = browserService?.prepareSession(plannedPtyId, 'claude-code') ?? [];
       const rolePromptPath = roleId ? (rolesStore?.promptFileFor(roleId, { leaderOfAll: options.leaderOfAll === true }) ?? null) : null;
-      const roleArgs = rolePromptPath ? roleDeliveryFor('claude-code', rolePromptPath).args : [];
+      // Papel não entregue — what the role asked for and did not reach the CLI goes back to the tab, never silent.
+      const rolePlan = planRoleLaunch('claude-code', {
+        roleId,
+        promptPath: rolePromptPath,
+        scope: roleId ? rolesStore?.get(roleId)?.scope : undefined,
+        scopeDelivered: scopeWritten,
+      });
+      const roleArgs = rolePlan.args;
       const finalArgs = [...launcherArgs, ...extraArgs, ...roleArgs, ...semaphoreArgs, ...browserMcpArgs];
       // (T018: o `--permission-mode` resolvido entra mais abaixo, quando o config dir da sessão é conhecido.)
 
@@ -2131,7 +2152,13 @@ function registerPtyIpcHandlers(): void {
             }
           : undefined;
 
-      return { ptyId, claudeSessionId: correlationId, account: spawnAccount, provider: spawnProvider };
+      return {
+        ptyId,
+        claudeSessionId: correlationId,
+        account: spawnAccount,
+        provider: spawnProvider,
+        ...(roleId && rolePlan.missing.length > 0 ? { roleNotDelivered: { roleId, missing: rolePlan.missing } } : {}),
+      };
     }
 
     const ptyId = ptyManager.create(options);
@@ -3011,6 +3038,8 @@ function registerRotinasIpcHandlers(): void {
           ...(snapshot.unconfirmed ? { unconfirmed: true } : {}),
           ...(snapshot.pendingKinds ? { pendingKinds: snapshot.pendingKinds } : {}),
           ...(snapshot.turnFailure ? { turnFailure: snapshot.turnFailure } : {}),
+          ...(snapshot.lastEventAt !== undefined ? { lastEventAt: snapshot.lastEventAt } : {}),
+          ...(snapshot.openCalls !== undefined ? { openCalls: snapshot.openCalls } : {}),
         });
       }
       return live;
@@ -3170,6 +3199,16 @@ function registerLedgerMirror(): void {
     return mirror.state();
   });
   ipcMain.handle(LEDGER_MIRROR_CHANNELS.syncNow, (): Promise<LedgerMirrorState> => mirror.syncNow());
+  // Ledger v5, fatia 3 — the table of the Oráculo names places as the mirror does (read only, mirror on or off).
+  ipcMain.handle(LEDGER_MIRROR_CHANNELS.places, (): LedgerPlacesSnapshot => {
+    let doc: LedgerDoc | null = null;
+    try {
+      doc = ledgerService?.load().doc ?? null;
+    } catch {
+      doc = null;
+    }
+    return mirror.placesSnapshot(doc);
+  });
   // The first registry of this run: the whole ledger (it may have changed while the app was closed, or a push may
   // have failed before quitting). The key only comes in through the screen — never a file on disk.
   void mirror.syncNow().catch(() => undefined);
@@ -3404,7 +3443,7 @@ async function withEveryBoard(boardBridge: BoardBridge, ptyId: string, caller: L
 }
 
 async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<{ caller: LedgerCaller; call: LedgerToolCall } | string> {
-  const quadro = call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' ? call.quadro : call.tool === 'tarefa_transferir' || call.tool === 'tarefa_cancelar' ? taskBoardOf(call.id) : undefined;
+  const quadro = call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' ? call.quadro : call.tool === 'tarefa_transferir' || call.tool === 'tarefa_cancelar' || call.tool === 'tarefa_frente' ? taskBoardOf(call.id) : undefined;
   const base = { placeId: LEADER_OF_ALL, roleId: LEADER_ROLE_ID };
   if (!quadro) {
     if (call.tool === 'tarefa_criar') return 'Você é o Líder único e não tem quadro: diga qual em "quadro" (nome ou pasta).';
@@ -3454,7 +3493,7 @@ async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: Led
 async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<BrowserToolOutcome> {
   if (!ledgerService) return { kind: 'error', text: 'O Oráculo Harrow não abriu neste app.' };
   // 07/11, owner: "quem pediu" is a person, never a role; the parse knows the factory roles, this app's own here.
-  const askedRefused = call.tool === 'tarefa_criar' && call.quemPediu ? askedByRefusal(call.quemPediu, rolesStore?.list() ?? []) : null;
+  const askedRefused = (call.tool === 'tarefa_criar' || call.tool === 'tarefa_frente') && call.quemPediu ? askedByRefusal(call.quemPediu, rolesStore?.list() ?? []) : null;
   if (askedRefused) return { kind: 'error', text: askedRefused };
   const resolved = await ledgerCallerOf(boardBridge, ptyId, call);
   if (typeof resolved === 'string') return { kind: 'error', text: resolved };

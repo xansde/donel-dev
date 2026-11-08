@@ -7,6 +7,7 @@ import { IMAGE_PASTE_SEQUENCE, parseClaudeNotFound, resolveTerminalKeyAction } f
 import type { PtyExitInfo, SemaphoreStateInfo } from '../../shared';
 import type { ScreenSnapshot } from '../../shared/chat/screen';
 import { bufferLineToScreenLine, estimateGridSize, withResumeArgs } from '../../shared/terminalScreen';
+import { roleLaunchWarning } from '../../shared/roleLaunch';
 import { formatRingBufferPreview } from './ringBufferPreview';
 import styles from './TerminalPane.module.css';
 
@@ -581,6 +582,9 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
             // replay do ring buffer aqui só cuida de MOSTRAR pro usuário o
             // que já rodou antes de `onData` ser assinado (ver comentário de
             // topo de ringBufferPreview.ts).
+            // Papel não entregue — the launch asked for a role that did not reach the CLI: said in the tab, never silent.
+            const roleWarning = result.roleNotDelivered ? roleLaunchWarning(result.roleNotDelivered.roleId, result.roleNotDelivered.missing) : null;
+            if (roleWarning) term.write(`\x1b[33m[Donel Dev] ${roleWarning}\x1b[0m\r\n`);
             const preview = formatRingBufferPreview(lines);
             if (preview) term.write(preview);
 

@@ -32,10 +32,12 @@ import {
   doneByOf,
   replacesOf,
   requestedByOf,
+  frenteOf,
   ASKED_BY_OWNER,
   isCancelled,
   awaitsSend,
   isClosed,
+  isServicePlace,
   viewState,
   maxProofBytes,
   parseLedgerDoc,
@@ -51,6 +53,7 @@ import {
 } from '../shared/ledger/contract';
 import type { LedgerApplyResult, LedgerPassedOn, LedgerPassOnRequest, LedgerSnapshot } from '../shared/ledger/channels';
 import type { LedgerToolCall, ProofInput } from '../shared/ledger/tools';
+import { NOT_STARTED_GRACE_MS, orphanReasonIn, ownerGoneIn } from '../shared/ledger/inbox';
 import { AGENT_BOT_SERVERS, detectAgentBotSend, detectSlackSend, fileNameOf, slackGuard, slackMessageLink, slackSendOutcome, type AgentBotSend } from '../shared/ledger/slack-guard';
 
 /** Smoke/test override: isolates the ledger from the real one. */
@@ -291,36 +294,23 @@ export interface LedgerCaller {
   readonly placeStates?: ReadonlyMap<string, ReadonlyMap<string, string>>;
 }
 
-/**
- * Why a task is orphan (not closed, its owner place gone); `null` = alive, closed or unknown. A delivered task waits
- * for whoever decides, and an accepted letter never sent waits for its send: neither waits for its owner place.
- */
+/** Why a task is orphan (not closed, its owner place gone); `null` = alive, closed or unknown. The rule is shared with the box. */
 export function orphanReason(caller: LedgerCaller, task: LedgerTask, now: number): string | null {
-  return isClosed(task) || task.state === 'entregue' || awaitsSend(task) ? null : ownerGone(caller, task, now);
+  return orphanReasonIn(caller.placeStates, task, now);
 }
 
 /** The owner place of `task` could not be checked: its board did not answer. Closed and delivered tasks do not depend on it. */
 export function ownerUnknown(caller: LedgerCaller, task: LedgerTask): boolean {
   // The Líder único is no place of any board: whether the board answered says nothing of it (t-52b31719).
-  if (task.ownerPlaceId === LEADER_OF_ALL) return false;
+  if (task.ownerPlaceId === LEADER_OF_ALL || isServicePlace(task.ownerPlaceId)) return false;
   return !isClosed(task) && task.state !== 'entregue' && !awaitsSend(task) && !caller.placeStates?.has(task.projectPath);
 }
 
-/** A place that has not started is gone only after this long (a place made a moment ago is still opening). */
-export const NOT_STARTED_GRACE_MS = 30 * 60 * 1000;
+export { NOT_STARTED_GRACE_MS };
 
 /** Why the owner place of `task` can no longer do the work (closed, out of the board, never started); `null` = alive or unknown. */
 export function ownerGone(caller: LedgerCaller, task: LedgerTask, now: number): string | null {
-  // The Líder único has no place on any board (t-52b31719): a task it owns is alive, never orphan.
-  if (task.ownerPlaceId === LEADER_OF_ALL) return null;
-  const states = caller.placeStates?.get(task.projectPath);
-  if (!states) return null;
-  const state = states.get(task.ownerPlaceId);
-  if (state === undefined) return 'o lugar dono saiu do quadro';
-  if (state === 'fechada') return 'o lugar dono está fechado';
-  const since = task.events.at(-1)?.at ?? task.createdAt;
-  if (state === 'nao-comecou' && now - since >= NOT_STARTED_GRACE_MS) return 'o lugar dono não começou';
-  return null;
+  return ownerGoneIn(caller.placeStates, task, now);
 }
 
 /** The words of the record of a passage: "passada sozinha: o lugar X fechou". */
@@ -470,6 +460,7 @@ function taskView(task: LedgerTask, doc: LedgerDoc, orphan: string | null = null
     risco: task.risk,
     ...(replacesOf(task) ? { substitui: replacesOf(task) } : {}),
     ...(requestedByOf(task) ? { quemPediu: requestedByOf(task) } : {}),
+    ...(frenteOf(task) ? { frente: frenteOf(task) } : {}),
     ...(transfers.length ? { transferencias: transfers.map((t) => ({ de: t.from, para: t.to, por: who(t.by), em: new Date(t.at).toISOString(), motivo: t.reason })) } : {}),
     ...(delivery
       ? {
@@ -552,12 +543,26 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         ...(call.substitui ? { replaces: call.substitui } : {}),
         // Who asked: what the creator said, or the owner when the task came from his phone's "Pedir".
         ...(call.quemPediu ? { requestedBy: call.quemPediu } : call.pedidoDoDono ? { requestedBy: ASKED_BY_OWNER } : {}),
+        ...(call.frente ? { frente: call.frente } : {}),
       });
       if (!result.ok || !lowRefused) return answer(result, 'criada');
       return {
         ok: true,
         text: JSON.stringify({ criada: true, id: result.task.id, estado: result.task.state, risco: 'alto', aviso: `Risco baixo não vale aqui (${lowRefused}); a tarefa espera o dono.` }),
       };
+    }
+    case 'tarefa_frente': {
+      const task = (() => {
+        try {
+          return service.load().doc.tasks[call.id];
+        } catch {
+          return undefined;
+        }
+      })();
+      if (!task) return { ok: false, text: `Não existe tarefa "${call.id}" (veja tarefa_listar).` };
+      if (task.projectPath !== caller.projectPath) return { ok: false, text: 'A tarefa é de outro quadro; só se mexe em tarefa do próprio quadro.' };
+      const result = await service.apply(actor, { op: 'frente', id: task.id, frente: call.frente, ...(call.quemPediu ? { requestedBy: call.quemPediu } : {}) });
+      return result.ok ? { ok: true, text: JSON.stringify({ frente: frenteOf(result.task), id: result.task.id, ...(requestedByOf(result.task) ? { quemPediu: requestedByOf(result.task) } : {}) }) } : { ok: false, text: result.reason };
     }
     case 'tarefa_assumir':
       return answer(await service.apply(actor, { op: 'assumir', id: call.id }), 'assumida');

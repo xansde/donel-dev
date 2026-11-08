@@ -1,0 +1,4 @@
+{
+  "title": "Pasta larga no envio de arquivos pede confirmação",
+  "text": "O pedido de pasta agora mostra também o nome do arquivo que a sessão quer enviar. Se a pasta for larga, como Documentos, Área de Trabalho ou Downloads (também dentro do OneDrive), aparece um aviso e o Permitir pede um segundo clique, \"Sim, liberar a pasta inteira\"; pelo seletor em Regras, uma caixa de confirmação. E uma sessão só pede uma pasta de cada vez."
+}

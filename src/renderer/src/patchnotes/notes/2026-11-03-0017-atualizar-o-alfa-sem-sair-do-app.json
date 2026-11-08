@@ -1,0 +1,4 @@
+{
+  "title": "Atualizar o alfa sem sair do app",
+  "text": "Quando a versão nova da manhã fica pronta, aparece \"Versão nova · Atualizar\" na barra de baixo. O clique espera as sessões pararem (nada é cortado no meio de uma resposta ou de uma pergunta para você; dá para cancelar), fecha o app, instala e abre de novo com as mesmas abas, cada conversa retomada no mesmo lugar do Mindscape. Se a instalação falhar, a versão de antes volta e a barra diz o que houve. Se a build da manhã falhar, a barra avisa e abre o log."
+}

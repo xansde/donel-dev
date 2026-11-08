@@ -1,0 +1,4 @@
+{
+  "title": "Escrever na carta pelo celular não perde mais o texto",
+  "text": "Quando o que você escreve numa carta não sai (a Tailscale caiu, o computador demorou a responder), a carta mostra em vermelho o motivo e guarda o texto no celular, mesmo se você fechar o Oráculo ou a lista recarregar. O botão vira \"Tentar de novo\", e tentar de novo nunca manda duas vezes. Quando sai, aparece o aviso \"Saiu\" e o texto fica na carta com para quem foi; na próxima vez que você abrir, ele continua lá. Ao abrir \"Escrever\", o botão Enviar aparece na tela, sem ficar escondido embaixo."
+}

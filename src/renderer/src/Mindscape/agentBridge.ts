@@ -279,6 +279,22 @@ export class AgentBridge {
     );
   }
 
+  /**
+   * The state of every place of each board in `pastas` (`sessao_listar`'s `estado`), by the folder asked. A folder that
+   * is no board stays out (unknown). The ledger's orphans read it: `tarefa_listar` through the main, the box directly.
+   */
+  placeStates(pastas: readonly string[]): Map<string, Map<string, string>> {
+    const states = new Map<string, Map<string, string>>();
+    for (const pasta of pastas) {
+      const match = resolveBoard(this.boards(), pasta);
+      if (!match.ok) continue;
+      const board = this.board(match.board.projectPath);
+      const places = board ? Object.values(board.cards).filter((card): card is SessionPlaceCard => card.kind === 'session') : [];
+      states.set(pasta, new Map(places.map((place) => [place.id, this.stateName(match.board.projectPath, place)])));
+    }
+    return states;
+  }
+
   /** Places of every board that never started: their tasks pass on once the main's grace is over (`ownerGone`). */
   checkNotStarted(): Promise<void> {
     if (!this.ports.loaded) return Promise.resolve();
@@ -756,13 +772,7 @@ export class AgentBridge {
       // Only ids and states, for the ledger's orphan count: the same for every caller (no reach in it). A folder that is
       // no board stays out (unknown).
       const states: Record<string, { id: string; estado: string }[]> = {};
-      for (const pasta of call.pastas) {
-        const match = resolveBoard(this.boards(), pasta);
-        if (!match.ok) continue;
-        const board = this.board(match.board.projectPath);
-        const places = board ? Object.values(board.cards).filter((card): card is SessionPlaceCard => card.kind === 'session') : [];
-        states[pasta] = places.map((place) => ({ id: place.id, estado: this.stateName(match.board.projectPath, place) }));
-      }
+      for (const [pasta, places] of this.placeStates(call.pastas)) states[pasta] = [...places].map(([id, estado]) => ({ id, estado }));
       return { ok: true, text: json(states) };
     }
 
