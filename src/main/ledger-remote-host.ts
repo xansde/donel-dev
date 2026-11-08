@@ -17,6 +17,19 @@ import type { CelularRemote } from './celular/service';
 import type { OwnerMessage } from './ledger-card-writer';
 
 export const REMOTE_CONFIG_FILE = 'oraculo-remoto.json';
+/**
+ * The night's version (Líder único, 08/11): on the first open the app takes the ledger to the VPS by itself. This
+ * file says it already went once, so it never runs again — not even after the owner brought it back by hand. Kept
+ * only after a move that worked: a failed one tries again on the next open.
+ */
+export const AUTO_MOVE_FILE = 'oraculo-ida-automatica.json';
+/** What the probe answers on a place where the daemon is installed (`scripts/oraculo-vps.sh instalar`). */
+export const ORACLE_INSTALLED = 'oraculo-instalado';
+
+/** Reads only: is the daemon installed there? (The handshake would leave a token hash on a place without it.) */
+export function oracleProbeScript(): string {
+  return `test -f "$HOME/.donel/oraculo/url" && echo ${ORACLE_INSTALLED} || echo sem-oraculo\n`;
+}
 
 export interface RemoteOracleHostDeps {
   readonly userDataDir: string;
@@ -36,6 +49,8 @@ export interface RemoteOracleHostDeps {
   readonly fetchImpl?: typeof fetch;
   /** Today's send driver (the board bridge; `null` before it is up): delivers what waits in the VPS's relay. */
   readonly deliver?: () => ((message: OwnerMessage) => Promise<LedgerDeliveredTo>) | null;
+  /** The phone was on, on this PC (`celular.json`): the automatic move turns it on at the VPS too. */
+  readonly celularWanted?: () => boolean;
 }
 
 export interface RemoteOracleHost {
@@ -43,6 +58,12 @@ export interface RemoteOracleHost {
   boot(): LedgerService;
   state(): LedgerRemoteState;
   move(lugar: string): Promise<LedgerRemoteResult>;
+  /**
+   * The first open of the night's version: the move without a click, to the first remote place with the Oráculo
+   * installed. Not again once it went (`AUTO_MOVE_FILE`), nor when the ledger is already remote. A failure leaves (or
+   * brings back) the ledger on this PC and tries again on the next open.
+   */
+  autoMove(): Promise<LedgerRemoteResult>;
   back(): Promise<LedgerRemoteResult>;
   dispose(): void;
   /** Remote mode: the phone that lives on the VPS (Preferences → Celular forward to it). `null` = local mode. */
@@ -293,7 +314,7 @@ export function createRemoteOracleHost(deps: RemoteOracleHostDeps): RemoteOracle
 
   const done = (reason?: string): LedgerRemoteResult => (reason ? { ok: false, reason, state: state() } : { ok: true, state: state() });
 
-  return {
+  const host: RemoteOracleHost = {
     boot() {
       const configured = readConfig();
       if (configured) {
@@ -323,7 +344,22 @@ export function createRemoteOracleHost(deps: RemoteOracleHostDeps): RemoteOracle
       try {
         const moved = await moveLedgerToRemote({ http: fetchOracleHttp(linked.url, linked.token, fetchImpl), ledgerFile, io, proofFs: deps.proofFs, marker });
         if (!moved.ok) return done(moved.reason);
-        if (!writeConfig(id)) return done('o registro está na VPS, mas não consegui gravar o oraculo-remoto.json; tente de novo (a troca recomeça sem duplicar)');
+        if (!writeConfig(id)) {
+          // Without the file the next open would not know where the ledger is: it comes back to this PC now.
+          const back = await bringLedgerBack({ http: fetchOracleHttp(linked.url, linked.token, fetchImpl), ledgerFile, io, proofFs: deps.proofFs });
+          if (back.ok) {
+            try {
+              deps.onChange(deps.localService().load());
+            } catch {
+              // the next read says it
+            }
+          }
+          return done(
+            back.ok
+              ? 'não consegui gravar o oraculo-remoto.json; o registro voltou para este PC, nada se perdeu'
+              : `o registro está na VPS, mas não consegui gravar o oraculo-remoto.json nem trazê-lo de volta (${back.reason}); tente de novo`,
+          );
+        }
         const service = startRemote(id, marker, linked);
         await service.refresh();
         deps.setService(service);
@@ -332,6 +368,30 @@ export function createRemoteOracleHost(deps: RemoteOracleHostDeps): RemoteOracle
       } finally {
         await deps.freeze(null);
       }
+    },
+    async autoMove() {
+      if (remote || readConfig() !== null) return done('o Oráculo já está numa VPS');
+      if (io.readFileText(join(userDataDir, AUTO_MOVE_FILE)) !== null) return done('o Oráculo já foi levado uma vez; daqui em diante só pelas Preferências');
+      // A mirror left by a move cut in the middle: the way back of the Preferences, not a second move.
+      if (readRemoteMarker(io, ledgerFile)) return done('há um espelho de uma troca anterior; resolva pelas Preferências');
+      let target: string | null = null;
+      for (const place of deps.remotes()) {
+        const probe = await deps.runScript(place.sshTarget, oracleProbeScript(), 20_000).catch(() => null);
+        if (probe?.code === 0 && probe.stdout.includes(ORACLE_INSTALLED)) {
+          target = place.id;
+          break;
+        }
+      }
+      if (!target) return done('nenhum lugar remoto tem o Oráculo instalado');
+      const moved = await host.move(target);
+      if (!moved.ok) return moved;
+      try {
+        io.writeFileText(join(userDataDir, AUTO_MOVE_FILE), JSON.stringify({ lugar: target, em: new Date().toISOString() }, null, 2));
+      } catch {
+        // the next open finds the ledger remote and does nothing anyway
+      }
+      if (deps.celularWanted?.()) await celularRemote.setEnabled(true);
+      return done();
     },
     async back() {
       const id = remote ? lugar : (readRemoteMarker(io, ledgerFile)?.lugar ?? null);
@@ -374,4 +434,5 @@ export function createRemoteOracleHost(deps: RemoteOracleHostDeps): RemoteOracle
       }
     },
   };
+  return host;
 }

@@ -93,6 +93,15 @@ recebe notificação.
   e mostra o caminho manual abaixo.
 - Celular: com o modo remoto ligado, o servidor do celular **do PC** não sobe; as Preferências → Celular mostram o
   estado e o link de parear do daemon.
+- **Ida automática (Líder único, 08/11):** na primeira abertura da versão, ~15 s depois do início, o app faz sozinho o
+  que o botão "Levar o Oráculo para a VPS" faz, para o primeiro lugar remoto com o daemon instalado. Antes de gravar
+  qualquer coisa, uma sondagem só lê `~/.donel/oraculo/url`, e nenhum hash fica num lugar sem daemon. Se o celular
+  estava ligado no PC, ele é ligado na VPS. A marca `<userData>/oraculo-ida-automatica.json` só é gravada depois de uma
+  ida que deu certo; a ida não roda de novo nem depois de uma volta feita à mão. Qualquer falha devolve o registro ao
+  PC: o `ledger.json` guardado volta ao lugar, a cópia da VPS é declarada morta (`/v1/devolver`) e, se só o
+  `oraculo-remoto.json` falhou, o registro volta pela volta normal. A próxima abertura tenta de novo. O pareamento do
+  celular não se mantém (o endereço muda de origem, e o token do celular fica preso à origem antiga): escanear o QR
+  novo é a única ação do dono.
 
 ## PC desligado
 
