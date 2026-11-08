@@ -234,6 +234,12 @@ const donelApi: DonelApi = {
       ipcRenderer.on(PTY_CHANNELS.exit, handler);
       return () => ipcRenderer.removeListener(PTY_CHANNELS.exit, handler);
     },
+
+    onLink: (listener: (ptyId: string, linked: boolean) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, ptyId: string, linked: boolean): void => listener(ptyId, linked);
+      ipcRenderer.on(PTY_CHANNELS.link, handler);
+      return () => ipcRenderer.removeListener(PTY_CHANNELS.link, handler);
+    },
   },
 
   projects: {

@@ -8,7 +8,8 @@
 
 import { createECDH, createCipheriv, createPrivateKey, generateKeyPairSync, hkdfSync, randomBytes, sign, type JsonWebKey } from 'node:crypto';
 import type { ConfigIoDeps } from '../config-store';
-import { slackDestinationLabel, waitingSince, ownerQueue, type LedgerDoc, type LedgerTask } from '../../shared/ledger/contract';
+import { slackDestinationLabel, type LedgerDoc, type LedgerTask } from '../../shared/ledger/contract';
+import { CARD_KINDS, ownerInbox, type OwnerInboxItem, type OwnerInboxKind, type PlaceStates } from '../../shared/ledger/inbox';
 
 export interface VapidKeys {
   /** Ponto público P-256 não comprimido (65 bytes), base64url: o `applicationServerKey` do celular. */
@@ -144,27 +145,47 @@ export function pushTitle(task: LedgerTask): string {
   return shorten(typeof human === 'string' && human.trim() ? human : task.request);
 }
 
-export function pushMessageFor(task: LedgerTask): PushMessage {
+/** Ledger v5, fatia 2 — the line under the title, by kind of item of the box "Esperando você". */
+const BODIES: Readonly<Record<OwnerInboxKind, string>> = {
+  'decidir-entrega': 'Esperando você no Oráculo Harrow.',
+  'aprovar-carta': 'Esperando você no Oráculo Harrow.',
+  'entrega-parada': 'Entregue há um dia sem decisão: você decide no lugar do Revisor.',
+  'amostra-revisor': 'Um aceite do Revisor para você conferir.',
+  'carta-parada': 'Você aceitou e a mensagem ainda não saiu.',
+  'conferir-envio': 'Confira no Slack se a mensagem chegou.',
+  'para-repassar': 'Ninguém está fazendo: peça ao Líder para repassar.',
+};
+
+/** The warning of one item: a card kind opens its card; the others open the app (the box is there). */
+export function pushMessageFor(item: OwnerInboxItem): PushMessage {
+  const { task, kind } = item;
+  const onCard = CARD_KINDS.has(kind);
   return {
     title: pushTitle(task),
-    body: task.state === 'aceita' ? 'Um aceite do Revisor para você conferir.' : 'Esperando você no Oráculo Harrow.',
-    tag: `carta-${task.id}`,
-    url: `/#carta=${encodeURIComponent(task.id)}`,
+    body: BODIES[kind],
+    tag: onCard ? `carta-${task.id}` : `caixa-${kind}-${task.id}`,
+    url: onCard ? `/#carta=${encodeURIComponent(task.id)}` : '/',
   };
 }
 
 /**
- * As cartas que passaram a esperar o dono desde `known` (as que já esperavam e já foram avisadas). Devolve a
- * fila nova inteira para a próxima comparação. Uma carta que sai da fila e volta (rejeitada e entregue de novo)
- * avisa de novo, porque a espera recomeçou.
+ * The items of the box "Esperando você" (fatia 1) that started waiting since `known` (the ones already warned).
+ * Returns the whole box for the next comparison. An item leaving and coming back (a delivery rejected and delivered
+ * again), or a task that changes kind (a letter accepted, then stuck), warns again: its wait started again. Some items
+ * are born with time alone (a letter stuck for 30 min), so the caller also runs this with no change in the ledger.
  */
-export function newlyWaiting(known: ReadonlyMap<string, number>, doc: LedgerDoc): { fresh: LedgerTask[]; next: Map<string, number> } {
+export function newlyWaiting(
+  known: ReadonlyMap<string, number>,
+  doc: LedgerDoc,
+  now: number,
+  places?: PlaceStates,
+): { fresh: OwnerInboxItem[]; next: Map<string, number> } {
   const next = new Map<string, number>();
-  const fresh: LedgerTask[] = [];
-  for (const task of ownerQueue(doc, null)) {
-    const since = waitingSince(task);
-    next.set(task.id, since);
-    if (known.get(task.id) !== since) fresh.push(task);
+  const fresh: OwnerInboxItem[] = [];
+  for (const item of ownerInbox(doc, null, now, places)) {
+    const key = `${item.task.id}:${item.kind}`;
+    next.set(key, item.since);
+    if (known.get(key) !== item.since) fresh.push(item);
   }
   return { fresh, next };
 }

@@ -1,6 +1,6 @@
 // Item 04 — cartão rico (docs/refinamentos/mindscape-cartao-rico.md). The state of a session card in
 // THREE axes that never mix, plus "precisa de você" as a count with its reasons (never a state):
-//   processo       aberta · fechada
+//   processo       aberta · sem ligação · fechada
 //   atividade      trabalhando · parada · desconhecido
 //   retomabilidade viva · retomável · sem retomada · desconhecido
 // "Desconhecido" is honest: the app says it does not know instead of guessing (the `working` a session
@@ -9,7 +9,8 @@
 
 import type { SemaphoreState } from '../index';
 
-export type ProcessAxis = 'aberta' | 'fechada';
+/** `sem ligação`: the process lives (a remote tmux) but the app lost its link to it; the app is relinking. */
+export type ProcessAxis = 'aberta' | 'sem ligação' | 'fechada';
 export type ActivityAxis = 'trabalhando' | 'parada' | 'desconhecido';
 export type ResumeAxis = 'viva' | 'retomável' | 'sem retomada' | 'desconhecido';
 export type NeedReason = 'permissão' | 'pergunta' | 'plano' | 'limite de uso' | 'erro';
@@ -36,6 +37,8 @@ export interface SessionAxesInput {
   readonly now?: number;
   /** Tool calls still running (any origin); a long build keeps the session "trabalhando". Absent = none. */
   readonly openCalls?: number;
+  /** Remote session whose ssh dropped while its process lives on the place (main/remote-link.ts). */
+  readonly linkLost?: boolean;
 }
 
 export interface SessionAxes {
@@ -60,16 +63,16 @@ const PENDING_REASON: Readonly<Record<string, NeedReason>> = { permission: 'perm
 
 export function deriveSessionAxes(input: SessionAxesInput): SessionAxes {
   const exited = input.state === 'done' || input.state === 'error';
-  const process: ProcessAxis = input.tabOpen && !exited ? 'aberta' : 'fechada';
+  const process: ProcessAxis = !input.tabOpen || exited ? 'fechada' : input.linkLost ? 'sem ligação' : 'aberta';
 
   let activity: ActivityAxis;
   if (process === 'fechada') activity = 'parada';
-  else if (input.state === undefined) activity = 'desconhecido';
+  else if (process === 'sem ligação' || input.state === undefined) activity = 'desconhecido'; // no hook can come through
   else if (input.state === 'working') activity = input.unconfirmed || signalIsStale(input) ? 'desconhecido' : 'trabalhando';
   else activity = 'parada';
 
   const resume: ResumeAxis =
-    process === 'aberta' ? 'viva' : input.transcriptFound === undefined ? 'desconhecido' : input.transcriptFound ? 'retomável' : 'sem retomada';
+    process !== 'fechada' ? 'viva' : input.transcriptFound === undefined ? 'desconhecido' : input.transcriptFound ? 'retomável' : 'sem retomada';
 
   const reasons = new Set<NeedReason>();
   if (process === 'aberta' && input.state === 'permission') {

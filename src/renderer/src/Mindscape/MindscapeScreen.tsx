@@ -89,6 +89,8 @@ export interface MindscapeLiveSession {
   readonly pendingKinds?: readonly string[];
   /** Item 04 — `StopFailure` code of the last turn. */
   readonly turnFailure?: string;
+  /** Sessões remotas — the ssh dropped while the process lives on the place: "sem ligação" (the app relinks). */
+  readonly linkLost?: boolean;
   /** Item 04 — engine seal: the short model label read from the session (and the provider); absent = no reading. */
   readonly engine?: string;
   /** Item 04 — the context, same reading as the footer of the chat; absent = no reading (never a made-up 0%). */
@@ -454,6 +456,7 @@ export function MindscapeScreen({
       unconfirmed: session.unconfirmed,
       pendingKinds: session.pendingKinds,
       turnFailure: session.turnFailure,
+      linkLost: session.linkLost,
       transcriptFound: transcriptFound(session.sessionId),
     });
   const isFavorite = (sessionId: string): boolean => registry[sessionId]?.pinned === true;

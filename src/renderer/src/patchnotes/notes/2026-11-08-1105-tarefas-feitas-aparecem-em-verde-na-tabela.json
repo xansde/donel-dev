@@ -1,0 +1,4 @@
+{
+  "title": "Tarefas feitas aparecem em verde na tabela",
+  "text": "Na tabela do Oráculo, as tarefas \"concluída por prova\" e as mensagens \"enviada\" ganham o verde das aceitas, e as \"substituída\" ficam apagadas como as canceladas. Antes elas apareciam sem cor nenhuma."
+}
