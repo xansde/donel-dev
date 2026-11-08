@@ -42,6 +42,11 @@ export interface FactoryMetric {
   readonly rig: 'rig1' | 'rig2' | null;
   /** "meta: 1 por semana", as the factory wrote it. */
   readonly goal: string | null;
+  /**
+   * Fatia 4 — `faixa: true`: the factory wants this number on the board's band (e.g. how long the team waits for the
+   * factory, the sign of a bottleneck). Optional, no version bump; the Donel never picks a number by its id.
+   */
+  readonly band: boolean;
 }
 
 export interface FactorySource {
@@ -109,6 +114,7 @@ function metric(item: Json): FactoryMetric | null {
     series: series(item.serie),
     rig: item.rig === 'rig1' || item.rig === 'rig2' ? item.rig : null,
     goal: isObject(item.meta) ? str(item.meta.texto) : null,
+    band: item.faixa === true,
   };
 }
 
