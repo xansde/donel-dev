@@ -50,6 +50,9 @@ import type { SendFrom } from '../chat/sendDriver';
  * A session opened by `sessao_abrir` that sent no hook in this long did not start: the gate waits up to 30 s for
  * the CLI and the first paste up to 45 s more on a machine short of RAM.
  */
+/** How long a tool call from a PTY not yet on a tab waits for it (a reattach after a restart), and how often it looks. */
+const CALLER_WAIT_MS = 20_000;
+const CALLER_POLL_MS = 500;
 const START_GRACE_MS = 90_000;
 /** `sessao_enviar` answers once the message went in, was queued, or failed; past this it says "ainda não entrou". */
 const DELIVERY_WAIT_MS = 40_000;
@@ -559,12 +562,40 @@ export class AgentBridge {
   }
 
   /**
+   * 08/11 (BizOps, item 11) — the PTY a tool call comes from is not on a tab yet: right after the app restarts, the
+   * remote sessions are attached again and their calls arrive before the renderer has their new PTY. Wait for the tab
+   * (up to CALLER_WAIT_MS) instead of answering at once that the session "is not a tab" (the Revisor stopped there).
+   */
+  private async callerTab(ptyId: string): Promise<BridgeTab | undefined> {
+    const deadline = Date.now() + CALLER_WAIT_MS;
+    for (;;) {
+      const tab = this.ports.tabOfPty(ptyId);
+      if (tab !== undefined || Date.now() >= deadline) return tab;
+      await new Promise((resolve) => setTimeout(resolve, CALLER_POLL_MS));
+    }
+  }
+
+  /**
+   * Homologação, item 7 — a session no hook has come from since the app opened, but which ended turns before (its note
+   * of the last turn is on the board, kept across restarts): its last real state, not "sem nenhum pedido".
+   */
+  private lastKnownState(tabId: string): string | undefined {
+    const tab = this.ports.tabs().find((candidate) => candidate.id === tabId);
+    if (!tab?.cwd || !tab.claudeSessionId) return undefined;
+    const note = this.board(tab.cwd)?.cards[noteCardId(tab.claudeSessionId)];
+    if (note?.kind !== 'session-note') return undefined;
+    const at = new Date(note.writtenAt);
+    const hhmm = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+    return `parada desde ${hhmm} (último fim de turno; o app reabriu e ainda não ouviu dela)`;
+  }
+
+  /**
    * 05/11 — a live process that never sent a hook is not "trabalhando": it has not taken any message yet. A session
    * opened by `sessao_abrir` that is still like that after START_GRACE_MS failed to start, and says why.
    */
   private startState(tabId: string): string {
     const openedAt = this.openedAt.get(tabId);
-    if (openedAt === undefined) return 'aberta, sem nenhum pedido ainda';
+    if (openedAt === undefined) return this.lastKnownState(tabId) ?? 'aberta, sem nenhum pedido ainda';
     if (Date.now() - openedAt < START_GRACE_MS) return 'começando';
     return `não começou: ${this.ports.startTrouble(tabId) ?? 'o Claude de lá não recebeu o pedido'}`;
   }
@@ -927,8 +958,11 @@ export class AgentBridge {
   private async run(ptyId: string, call: BoardToolCall): Promise<Answer> {
     const fail = (text: string): Answer => ({ ok: false, text });
     if (!this.ports.loaded) return fail('O quadro ainda não abriu no app (ou falhou ao abrir). Tente de novo em instantes.');
-    const caller = this.ports.tabOfPty(ptyId);
-    if (!caller) return fail('Esta sessão não é uma aba do Donel Dev.');
+    const caller = await this.callerTab(ptyId);
+    if (!caller)
+      return fail(
+        'O app está religando esta sessão (ele reiniciou ou acabou de voltar) e ainda não a reconheceu. Você não caiu: espere 1 minuto e tente de novo. Não abra outra sessão no seu lugar.',
+      );
     const roleNames = new Map(this.ports.roles().map((role) => [role.id, role.name]));
 
     if (call.tool === 'papeis_listar') return { ok: true, text: json(this.ports.roles().map((role) => ({ id: role.id, nome: role.name }))) };
