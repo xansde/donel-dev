@@ -1440,7 +1440,7 @@ function createMainWindow(): void {
     // exit, is what keeps the mark from staying forever; the Jobu gets the result (`byUser`).
     const closedByOwner = consumeKillRequested(ptyId);
     // "Sem ligação" — the ssh of a remote tab dropped on its own: the session lives on the place; the app relinks.
-    if (remoteLinks.onPtyExit(ptyId, closedByOwner, info)) return;
+    if (remoteLinks.onPtyExit(ptyId, closedByOwner, info, exitCode === 0)) return;
     finishPtyExit(ptyId, info, closedByOwner);
   });
   const unsubscribeSemaphore = semaphoreManager.onUpdate((update: SemaphoreUpdate) => {
@@ -3328,12 +3328,26 @@ function registerLedgerIpcHandlers(): void {
     freeze: (reason) => switchable?.freeze(reason) ?? Promise.resolve(),
     onChange,
     deliver: () => deliverOwnerMessageViaBoard,
+    celularWanted: () => {
+      const text = configIoDeps.readFileText(join(app.getPath('userData'), 'celular.json'));
+      try {
+        return text !== null && (JSON.parse(text) as { enabled?: unknown }).enabled === true;
+      } catch {
+        return false;
+      }
+    },
   });
   remoteOracleHost = remoteHost;
   const service = createSwitchableLedger(remoteHost.boot());
   switchable = service;
   ledgerService = service;
   app.on('will-quit', () => remoteHost.dispose());
+  // The night's version (Líder único, 08/11): the first open takes the ledger to the VPS that has the Oráculo, with
+  // no click; a failure brings it back to this PC and tries again next open (AUTO_MOVE_FILE: once, ever). A little
+  // after the start, so the window is up before the writes freeze for the copy.
+  setTimeout(() => {
+    void remoteHost.autoMove().then((result) => console.log(`[oraculo] ida automática: ${result.ok ? `levado para ${result.state.lugarNome ?? result.state.lugar}` : result.reason}`));
+  }, 15_000).unref();
   const remoteState = (event: Electron.IpcMainInvokeEvent): void => {
     if (getMainWindow()?.webContents.id !== event.sender.id) throw new Error('forbidden');
   };

@@ -1,0 +1,4 @@
+{
+  "title": "Sessão na VPS que termina normalmente não pisca mais \"sem ligação\"",
+  "text": "Quando uma sessão na VPS terminava do jeito normal, o quadro a mostrava \"sem ligação\" por um instante antes de \"fechada\". Agora o app confere na hora e ela vai direto para \"fechada\". O \"sem ligação\" só aparece quando a VPS não responde."
+}

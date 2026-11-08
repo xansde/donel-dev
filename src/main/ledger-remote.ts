@@ -399,6 +399,21 @@ async function readText(response: OracleResponseLike): Promise<string> {
  * on the PC when a step fails.
  */
 export async function moveLedgerToRemote(deps: MoveDeps): Promise<MoveResult> {
+  const progress: { copied: string | null } = { copied: null };
+  const result = await moveSteps(deps, progress);
+  // Failed after the copy went in: the VPS's copy is declared dead (best effort), so nothing written there is taken
+  // for the ledger and the next move replaces it even if the PC's file changed meanwhile (the VPS keeps it aside).
+  if (!result.ok && progress.copied !== null) {
+    try {
+      await deps.http('POST', '/v1/devolver', '{}');
+    } catch {
+      // the VPS is away: its copy stays; the PC's file is untouched either way
+    }
+  }
+  return result;
+}
+
+async function moveSteps(deps: MoveDeps, progress: { copied: string | null }): Promise<MoveResult> {
   const { http, io, ledgerFile, proofFs } = deps;
   const proofsDir = ledgerProofsDir(ledgerFile);
   let copied: string | null = null;
@@ -443,6 +458,7 @@ export async function moveLedgerToRemote(deps: MoveDeps): Promise<MoveResult> {
         const body = await readJson(response);
         if (response.status !== 200) return { ok: false, reason: `a VPS recusou a cópia: ${isRecord(body) && typeof body.error === 'string' ? body.error : response.status}` };
         copied = text;
+        progress.copied = text;
       }
     }
 
@@ -450,14 +466,25 @@ export async function moveLedgerToRemote(deps: MoveDeps): Promise<MoveResult> {
     if (!now || !sameLedger(local, now.doc)) return { ok: false, reason: 'a VPS não confirmou o mesmo registro; nada foi trocado neste PC' };
     // The two sides, one last time: the PC's file is still what the VPS has.
     if (io.readFileText(ledgerFile) !== text) continue;
-    if (text !== null) {
+    const saved = text !== null ? freeName(io, dirname(ledgerFile), LEDGER_BEFORE_REMOTE) : null;
+    if (saved) {
       try {
-        io.renameFile(ledgerFile, freeName(io, dirname(ledgerFile), LEDGER_BEFORE_REMOTE));
+        io.renameFile(ledgerFile, saved);
       } catch {
         return { ok: false, reason: 'a cópia está na VPS, mas não consegui guardar o ledger.json deste PC; nada mudou aqui' };
       }
     }
-    if (!writeRemoteMirror(io, ledgerFile, now.doc, deps.marker)) return { ok: false, reason: 'não consegui gravar o espelho neste PC' };
+    if (!writeRemoteMirror(io, ledgerFile, now.doc, deps.marker)) {
+      // The PC's own file goes back where it was: the app keeps writing on this PC.
+      if (saved) {
+        try {
+          io.renameFile(saved, ledgerFile);
+        } catch {
+          return { ok: false, reason: `não consegui gravar o espelho neste PC; o registro deste PC está guardado em ${saved}` };
+        }
+      }
+      return { ok: false, reason: 'não consegui gravar o espelho neste PC; o registro continua neste PC' };
+    }
     return { ok: true, tarefas: Object.keys(now.doc.tasks).length };
   }
   return { ok: false, reason: 'o ledger.json deste PC mudou durante a cópia três vezes (outro canal do Donel aberto?); feche os outros e tente de novo' };

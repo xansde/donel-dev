@@ -22,6 +22,8 @@ export interface SessionPulse {
   readonly since: number | null;
   /** Where the reading came from: the place itself, or the hooks the app heard. */
   readonly source: 'lugar' | 'app';
+  /** Something still runs under the CLI (a process it started, a background task): never offered for closing. */
+  readonly background?: true;
 }
 
 /** A session that ended its turn and sat this long without anyone picking it up "pode fechar". */
@@ -100,15 +102,18 @@ export function pulseOfRemote(reading: RemoteSessionReading, now: number): Sessi
   // The turn ended but something still runs under the CLI (a build in the verify queue, a `claude -p`, a background
   // command or task): working in the background, never idle, never closable.
   const background = backgroundReason(reading.background);
-  if (background) return { state: 'trabalhando', reason: background, since, source };
-  if (!reading.transcript) {
-    const created = reading.paneActivityAt;
-    return idle(created, now, 'aberta e nunca recebeu pedido', source);
-  }
+  // A turn that ended on a failed call stays "travada" even with something left running under it (the cause must
+  // stay visible in the panel); the note and the flag keep it out of the closing list.
   if (reading.apiError && reading.last === 'error') {
     const at = reading.apiError.at ?? since;
     const age = at === null ? '' : ` há ${shortAge(now - at)}`;
-    return { state: 'travada', reason: `${apiFailureReason(reading.apiError.kind, reading.apiError.text)}${age}`, since: at, source };
+    const reason = `${apiFailureReason(reading.apiError.kind, reading.apiError.text)}${age}`;
+    return background ? { state: 'travada', reason: `${reason} · ${background}`, since: at, source, background: true } : { state: 'travada', reason, since: at, source };
+  }
+  if (background) return { state: 'trabalhando', reason: background, since, source, background: true };
+  if (!reading.transcript) {
+    const created = reading.paneActivityAt;
+    return idle(created, now, 'aberta e nunca recebeu pedido', source);
   }
   if (reading.turn === 'ended') return idle(since, now, 'terminou', source);
   // A turn still open with no spinner on the pane: the call or the tool died quietly, or the owner pressed Esc.
@@ -136,7 +141,12 @@ export function pulseOfLocal(input: LocalPulseInput, now: number): SessionPulse 
   const since = input.stateEnteredAt > 0 ? input.stateEnteredAt : null;
   if (input.unconfirmed) return { state: 'desconhecido', reason: 'nenhum sinal do CLI ainda', since, source };
   if (input.state === 'working') return { state: 'trabalhando', reason: 'trabalhando', since, source };
-  if ((input.background ?? 0) > 0) return { state: 'trabalhando', reason: `em segundo plano: ${input.background} ${input.background === 1 ? 'tarefa' : 'tarefas'}`, since, source };
+  const running = (input.background ?? 0) > 0 ? `em segundo plano: ${input.background} ${input.background === 1 ? 'tarefa' : 'tarefas'}` : null;
+  if (input.turnFailure && running) {
+    const age = since === null ? '' : ` há ${shortAge(now - since)}`;
+    return { state: 'travada', reason: `${apiFailureReason(input.turnFailure, '')}${age} · ${running}`, since, source, background: true };
+  }
+  if (running) return { state: 'trabalhando', reason: running, since, source, background: true };
   if (input.state === 'permission') {
     const kinds = input.pendingKinds ?? [];
     const reason = kinds.includes('question') ? 'pergunta esperando resposta' : kinds.includes('plan') ? 'plano esperando aprovação' : 'pedindo permissão';
@@ -275,7 +285,7 @@ export function canOfferClose(session: EnvSession): boolean {
 
 /** Stopped (idle, forgotten or stuck) and not the Líder: worth closing, whether or not this app holds its tab. */
 function isCloseCandidate(session: EnvSession): boolean {
-  if (session.roleKnown !== true || session.roleId === LEADER_ROLE_ID) return false;
+  if (session.roleKnown !== true || session.roleId === LEADER_ROLE_ID || session.pulse.background) return false;
   return session.pulse.state === 'pode-fechar' || session.pulse.state === 'ociosa' || session.pulse.state === 'travada';
 }
 
