@@ -1,0 +1,4 @@
+{
+  "title": "O app pesa menos com muitas sessões trabalhando",
+  "text": "Com várias sessões trabalhando ao mesmo tempo, a janela redesenhava a tela inteira, o quadro incluído, a cada linha que qualquer sessão escrevia. Agora ela só redesenha quando algo muda de verdade, e mede os lugares do quadro sem travar a tela. Na medição com 20 sessões trabalhando e o quadro aberto, o trabalho da janela caiu perto de pela metade."
+}

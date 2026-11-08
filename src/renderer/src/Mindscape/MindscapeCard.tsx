@@ -256,8 +256,11 @@ export interface MindscapeNoteCardProps {
   readonly onArchive: () => void;
 }
 
+/** One formatter for every card: `toLocaleTimeString` built a new one per call, per card, per render. */
+const HOUR_FORMAT = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
 function formatHour(epochMs: number): string {
-  return new Date(epochMs).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  return HOUR_FORMAT.format(epochMs);
 }
 
 /** Mindscape, fatia 03 — the post-it written by the session: last answer of the turn and the hour. Stays after the tab closes, until archived. */
