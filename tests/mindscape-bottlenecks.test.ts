@@ -24,6 +24,7 @@ function reading(over: Partial<RemoteSessionReading>): RemoteSessionReading {
     tool: null,
     apiError: null,
     retry: null,
+    background: { procs: 0, names: [], pendingTasks: 0 },
     ...over,
   };
 }
@@ -66,7 +67,7 @@ describe('pulseOfLocal', () => {
 });
 
 function session(id: string, pulse: Partial<SessionPulse> & Pick<SessionPulse, 'state'>, over: Partial<EnvSession> = {}): EnvSession {
-  return { sessionId: id, name: id, tabId: `tab-${id}`, machineId: 'vps', account: null, pulse: { reason: '', since: NOW - 2 * 60 * MIN, source: 'lugar', ...pulse }, ...over };
+  return { sessionId: id, name: id, tabId: `tab-${id}`, roleKnown: true, machineId: 'vps', account: null, pulse: { reason: '', since: NOW - 2 * 60 * MIN, source: 'lugar', ...pulse }, ...over };
 }
 
 describe('closing in batch', () => {
@@ -117,5 +118,25 @@ describe('bottlenecks', () => {
     expect(titles).toContain('Conta a@x: sem cota (100%)');
     expect(titles).toContain('VPS: RAM 95%');
     expect(panel.waits).toEqual([expect.objectContaining({ waiting: 'mae', on: 'filha', kind: 'mae-espera-filha', blocked: true })]);
+  });
+});
+
+describe('review of #322', () => {
+  it('a turn ended with work still running under the CLI is "trabalhando em segundo plano", never closable', () => {
+    const verifyQueue = reading({ lastAt: NOW - 3 * 60 * MIN, background: { procs: 2, names: ['flock', 'npm'], pendingTasks: 0 } });
+    expect(pulseOfRemote(verifyQueue, NOW)).toMatchObject({ state: 'trabalhando', reason: 'em segundo plano: flock, npm' });
+    const pendingTask = reading({ lastAt: NOW - 3 * 60 * MIN, background: { procs: 0, names: [], pendingTasks: 1 } });
+    expect(pulseOfRemote(pendingTask, NOW).state).toBe('trabalhando');
+    const stuckButRunning = reading({ last: 'error', apiError: { kind: 'server_error', text: 'Connection refused', at: NOW - 2 * 60 * MIN }, background: { procs: 1, names: ['sleep'], pendingTasks: 0 } });
+    expect(pulseOfRemote(stuckButRunning, NOW).state).toBe('trabalhando');
+    expect(pulseOfLocal({ state: 'waiting', stateEnteredAt: NOW - 3 * 60 * MIN, background: 1 }, NOW).state).toBe('trabalhando');
+    expect(canOfferClose(session('a', pulseOfRemote(verifyQueue, NOW)))).toBe(false);
+  });
+
+  it('the role comes from the place: unknown place = never offered, the Líder place = never offered', () => {
+    expect(canOfferClose(session('a', { state: 'pode-fechar' }, { roleKnown: false }))).toBe(false);
+    expect(canOfferClose(session('a', { state: 'pode-fechar' }, { roleKnown: true, roleId: 'lider' }))).toBe(false);
+    const panel = buildEnvPanel({ sessions: [session('nowhere', { state: 'pode-fechar' }, { roleKnown: false })], machines: [], accounts: [], links: [] });
+    expect(panel.closable).toEqual([]);
   });
 });

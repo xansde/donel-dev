@@ -43,6 +43,12 @@ export interface RemoteSessionReading {
   readonly apiError: { readonly kind: string; readonly text: string; readonly at: number | null } | null;
   /** The CLI is retrying a call that failed (`system/api_error`) and nothing answered after it. */
   readonly retry: { readonly text: string; readonly attempt: number | null; readonly at: number | null } | null;
+  /**
+   * Work under the CLI after its turn: processes it started after its own boot (a background command, a build in the
+   * verify queue, a `claude -p`, a `sleep`; the MCP servers it starts at boot are left out), and background tasks it
+   * launched whose end the conversation has not recorded yet.
+   */
+  readonly background: { readonly procs: number; readonly names: readonly string[]; readonly pendingTasks: number };
 }
 
 /** Host and port of the gateway the place's CLI talks to (`ANTHROPIC_BASE_URL`); `null` = straight to the API. */
@@ -78,7 +84,7 @@ try:
             out('gateway', {'host': parts.hostname, 'port': parts.port})
 except Exception:
     pass
-kids, stat = {}, {}
+kids, stat, born, comm = {}, {}, {}, {}
 try:
     page = os.sysconf('SC_PAGE_SIZE')
     clk = os.sysconf('SC_CLK_TCK')
@@ -91,6 +97,8 @@ for entry in os.listdir('/proc'):
         raw = open('/proc/' + entry + '/stat').read()
         rest = raw[raw.rindex(')') + 2:].split()
         stat[int(entry)] = (int(rest[11]) + int(rest[12]), int(rest[21]) * page)
+        born[int(entry)] = int(rest[19])
+        comm[int(entry)] = raw[raw.index('(') + 1:raw.rindex(')')]
         kids.setdefault(int(rest[1]), []).append(int(entry))
     except Exception:
         pass
@@ -106,6 +114,40 @@ def tree(pid):
             rss += stat[p][1]
         todo.extend(kids.get(p, []))
     return ticks, rss
+BOOT_GRACE = 120
+try:
+    BTIME = int([line.split()[1] for line in open('/proc/stat') if line.startswith('btime ')][0])
+except Exception:
+    BTIME = None
+def started_ms(pid):
+    # When the process was born (epoch ms); None when unknown.
+    if BTIME is None or pid not in born:
+        return None
+    return int((BTIME + born[pid] / clk) * 1000)
+def background(pid):
+    # Descendants the CLI started after its own boot: a background command, a build waiting on the verify queue, a
+    # claude -p, a sleep. What it starts at boot (MCP servers, its helpers) is left out by the grace.
+    if pid not in born:
+        return 0, []
+    limit = born[pid] + BOOT_GRACE * clk
+    found, todo, seen = [], list(kids.get(pid, [])), set()
+    while todo:
+        p = todo.pop()
+        if p in seen:
+            continue
+        seen.add(p)
+        todo.extend(kids.get(p, []))
+        if born.get(p, 0) > limit:
+            found.append(p)
+    names = []
+    for p in sorted(found, key=lambda q: born.get(q, 0)):
+        name = comm.get(p, '')
+        if name and name not in names:
+            names.append(name)
+    return len(found), names[:3]
+# Only the CLI's own answer to a launch, at the START of a tool result (a result that merely quotes it does not count).
+TASK_STARTED = re.compile(r'^\s*(?:Command running in background with ID|Workflow launched in background\. Task ID|Async agent launched successfully\.[\s\S]*?agentId): ([A-Za-z0-9_-]{5,})')
+TASK_ENDED = re.compile(r'<task-id>([A-Za-z0-9_-]+)</task-id>')
 def pane_state(name):
     try:
         text = subprocess.run(['tmux', '-L', 'donel', 'capture-pane', '-p', '-t', name], capture_output=True, text=True, timeout=3).stdout
@@ -132,10 +174,10 @@ def text_of(content):
             if isinstance(part, dict) and part.get('type') == 'text':
                 return str(part.get('text') or '')
     return ''
-def read_transcript(sid):
+def read_transcript(sid, alive_since):
     files = glob.glob(H + '/.claude/projects/*/' + sid + '.jsonl')
     if not files:
-        return {'transcript': False, 'lastAt': None, 'turn': None, 'last': None, 'tool': None, 'apiError': None, 'retry': None}
+        return {'transcript': False, 'lastAt': None, 'turn': None, 'last': None, 'tool': None, 'apiError': None, 'retry': None, 'pendingTasks': 0}
     path = max(files, key=os.path.getmtime)
     size = os.path.getsize(path)
     with open(path, 'rb') as handle:
@@ -144,10 +186,13 @@ def read_transcript(sid):
     if size > TAIL:
         chunk = chunk[1:]
     d = {'transcript': True, 'lastAt': None, 'turn': None, 'last': None, 'tool': None, 'apiError': None, 'retry': None}
+    started, ended = [], set()
     for line in chunk:
         line = line.strip()
         if not line:
             continue
+        if '<task-id>' in line and '<status>' in line:
+            ended.update(TASK_ENDED.findall(line))
         try:
             j = json.loads(line)
         except Exception:
@@ -159,6 +204,13 @@ def read_transcript(sid):
         if kind == 'user':
             if j.get('isMeta'):
                 continue
+            content = (j.get('message') or {}).get('content')
+            for part in content if isinstance(content, list) else []:
+                if isinstance(part, dict) and part.get('type') == 'tool_result':
+                    match = TASK_STARTED.match(text_of(part.get('content')))
+                    # A task launched before this CLI process was born died with the previous one (app restart).
+                    if match and (alive_since is None or at is None or at >= alive_since):
+                        started.append(match.group(1))
             d.update(turn='open', last='request', tool=None, apiError=None, retry=None)
         elif kind == 'assistant':
             message = j.get('message') or {}
@@ -182,6 +234,7 @@ def read_transcript(sid):
             d['lastAt'] = at
     if d['lastAt'] is None:
         d['lastAt'] = int(os.path.getmtime(path) * 1000)
+    d['pendingTasks'] = len(set(started) - ended)
     return d
 try:
     listing = subprocess.run(['tmux', '-L', 'donel', 'ls', '-F', '#S\t#{pane_pid}\t#{session_activity}'], capture_output=True, text=True, timeout=3).stdout
@@ -199,13 +252,14 @@ for row in listing.splitlines():
         except Exception:
             pass
         ticks, rss = tree(int(cols[1])) if cols[1].isdigit() else (0, 0)
+        bg_count, bg_names = background(int(cols[1])) if cols[1].isdigit() else (0, [])
         record = {'sid': sid, 'name': str(meta.get('name') or ''), 'rss': rss, 'ticks': ticks, 'clk': clk, 'pane': pane_state(name),
-                  'activity': int(cols[2]) * 1000 if cols[2].isdigit() else None}
+                  'activity': int(cols[2]) * 1000 if cols[2].isdigit() else None, 'bgProcs': bg_count, 'bgNames': bg_names}
         if isinstance(meta.get('openedBy'), str):
             record['openedBy'] = meta['openedBy']
         if isinstance(meta.get('roleId'), str):
             record['roleId'] = meta['roleId']
-        record.update(read_transcript(sid))
+        record.update(read_transcript(sid, started_ms(int(cols[1])) if cols[1].isdigit() else None))
         out('sess', record)
     except Exception:
         pass
@@ -265,6 +319,11 @@ export function parseSessionLine(json: string): RemoteSessionReading | null {
       transcript && retryRaw && typeof retryRaw === 'object'
         ? { text: str(retryRaw.text), attempt: finite(retryRaw.attempt), at: finite(retryRaw.at) }
         : null,
+    background: {
+      procs: Math.max(0, Math.floor(finite(raw.bgProcs) ?? 0)),
+      names: Array.isArray(raw.bgNames) ? raw.bgNames.filter((name): name is string => typeof name === 'string').map((name) => name.slice(0, 40)).slice(0, 3) : [],
+      pendingTasks: transcript ? Math.max(0, Math.floor(finite(raw.pendingTasks) ?? 0)) : 0,
+    },
   };
 }
 

@@ -72,6 +72,12 @@ function idle(since: number | null, now: number, what: string, source: SessionPu
   return { state: 'ociosa', reason: age === null ? what : age < 60_000 ? `${what} agora` : `${what} há ${shortAge(age)}`, since, source };
 }
 
+function backgroundReason(background: RemoteSessionReading['background']): string | null {
+  if (background.procs > 0) return `em segundo plano: ${background.names.length > 0 ? background.names.join(', ') : `${background.procs} processo(s)`}`;
+  if (background.pendingTasks > 0) return `em segundo plano: ${background.pendingTasks} ${background.pendingTasks === 1 ? 'tarefa' : 'tarefas'} sem fim registrado`;
+  return null;
+}
+
 /** The pulse of a session on a remote place, from the place's own reading. `now` is the place's clock. */
 export function pulseOfRemote(reading: RemoteSessionReading, now: number): SessionPulse {
   const source = 'lugar';
@@ -91,6 +97,10 @@ export function pulseOfRemote(reading: RemoteSessionReading, now: number): Sessi
     }
     return { state: 'trabalhando', reason: 'escrevendo', since, source };
   }
+  // The turn ended but something still runs under the CLI (a build in the verify queue, a `claude -p`, a background
+  // command or task): working in the background, never idle, never closable.
+  const background = backgroundReason(reading.background);
+  if (background) return { state: 'trabalhando', reason: background, since, source };
   if (!reading.transcript) {
     const created = reading.paneActivityAt;
     return idle(created, now, 'aberta e nunca recebeu pedido', source);
@@ -116,6 +126,8 @@ export interface LocalPulseInput {
   readonly unconfirmed?: boolean;
   readonly pendingKinds?: readonly string[];
   readonly turnFailure?: string;
+  /** Background tasks of the tab still running (0 = none). */
+  readonly background?: number;
 }
 
 /** The pulse of a session from the semaphore alone (the PC's own sessions, or a remote one the place did not read). */
@@ -124,6 +136,7 @@ export function pulseOfLocal(input: LocalPulseInput, now: number): SessionPulse 
   const since = input.stateEnteredAt > 0 ? input.stateEnteredAt : null;
   if (input.unconfirmed) return { state: 'desconhecido', reason: 'nenhum sinal do CLI ainda', since, source };
   if (input.state === 'working') return { state: 'trabalhando', reason: 'trabalhando', since, source };
+  if ((input.background ?? 0) > 0) return { state: 'trabalhando', reason: `em segundo plano: ${input.background} ${input.background === 1 ? 'tarefa' : 'tarefas'}`, since, source };
   if (input.state === 'permission') {
     const kinds = input.pendingKinds ?? [];
     const reason = kinds.includes('question') ? 'pergunta esperando resposta' : kinds.includes('plan') ? 'plano esperando aprovação' : 'pedindo permissão';
@@ -155,7 +168,10 @@ export interface EnvSession {
   readonly tabId?: string;
   /** Board (project) it belongs to, for the panel's line. */
   readonly projectName?: string;
+  /** The role of the session's PLACE on the Mindscape (a tab or a remote meta may have lost it). */
   readonly roleId?: string;
+  /** The session's place was found on a board, so `roleId` is known. Unknown role = never offered for closing. */
+  readonly roleKnown?: boolean;
   /** `pc` or the remote place's id. */
   readonly machineId: string;
   readonly pulse: SessionPulse;
@@ -250,7 +266,8 @@ const STOPPED: ReadonlySet<PulseState> = new Set(['ociosa', 'pode-fechar', 'trav
 
 /**
  * May the panel offer to close this session? Never one that moves or waits for the owner, never the Líder (it
- * coordinates the board even idle), never one with no tab in the app (the close gesture goes through the tab).
+ * coordinates the board even idle), never one whose place (and so whose role) was not found, never one with no tab in
+ * the app (the close gesture goes through the tab).
  */
 export function canOfferClose(session: EnvSession): boolean {
   return Boolean(session.tabId) && isCloseCandidate(session);
@@ -258,7 +275,7 @@ export function canOfferClose(session: EnvSession): boolean {
 
 /** Stopped (idle, forgotten or stuck) and not the Líder: worth closing, whether or not this app holds its tab. */
 function isCloseCandidate(session: EnvSession): boolean {
-  if (session.roleId === LEADER_ROLE_ID) return false;
+  if (session.roleKnown !== true || session.roleId === LEADER_ROLE_ID) return false;
   return session.pulse.state === 'pode-fechar' || session.pulse.state === 'ociosa' || session.pulse.state === 'travada';
 }
 

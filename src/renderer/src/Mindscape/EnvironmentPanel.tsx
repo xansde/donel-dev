@@ -23,7 +23,7 @@ import {
   type EnvSession,
   type PulseState,
 } from '../../../shared/mindscape/bottlenecks';
-import type { MindscapeDoc } from '../../../shared/mindscape/model';
+import { placeOfSession, type MindscapeDoc } from '../../../shared/mindscape/model';
 import type { MindscapeLiveSession } from './MindscapeScreen';
 import styles from './EnvironmentPanel.module.css';
 
@@ -152,19 +152,30 @@ export function useEnvView(env: Environment, live: readonly MindscapeLiveSession
       for (const detail of reading.sessionDetails) detailOf.set(detail.sid, { placeId: report.id, detail, readAt: reading.readAt });
     }
 
+    /** The role of a session comes from its place on the Mindscape, never from the tab or the remote meta. */
+    const placeRole = (sessionId: string): { roleKnown: boolean; roleId?: string } => {
+      for (const board of Object.values(doc.boards)) {
+        const place = placeOfSession(board, sessionId);
+        if (place) return { roleKnown: true, ...(place.roleId ? { roleId: place.roleId } : {}) };
+      }
+      return { roleKnown: false };
+    };
+
     const sessions: EnvSession[] = [];
     const seen = new Set<string>();
     for (const session of live) {
       const machineId = session.machineId ?? PC_MACHINE;
       const found = machineId !== PC_MACHINE ? detailOf.get(session.sessionId) : undefined;
       seen.add(session.sessionId);
-      const pulse = found ? pulseOfRemote(found.detail, found.readAt) : pulseOfLocal(session, now);
+      const remote = found ? pulseOfRemote(found.detail, found.readAt) : null;
+      // A background task the app heard of (hooks) also keeps a remote session working.
+      const pulse = remote && !((session.background ?? 0) > 0 && remote.state !== 'trabalhando' && remote.state !== 'precisa-dono') ? remote : pulseOfLocal(session, now);
       sessions.push({
         sessionId: session.sessionId,
         name: session.name,
         tabId: session.tabId,
         projectName: projectNames[session.projectPath] ?? session.projectPath.split(/[\\/]/).filter(Boolean).pop(),
-        ...(session.roleId ? { roleId: session.roleId } : {}),
+        ...placeRole(session.sessionId),
         machineId,
         pulse,
         account: machineById.get(machineId)?.account ?? null,
@@ -178,7 +189,7 @@ export function useEnvView(env: Environment, live: readonly MindscapeLiveSession
         sessionId: sid,
         name: found.detail.name || sid.slice(0, 8),
         projectName: 'sem aba no app',
-        ...(found.detail.roleId ? { roleId: found.detail.roleId } : {}),
+        ...placeRole(sid),
         machineId: found.placeId,
         pulse: pulseOfRemote(found.detail, found.readAt),
         account: machineById.get(found.placeId)?.account ?? null,

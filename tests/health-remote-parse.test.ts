@@ -43,14 +43,14 @@ describe('parseRemoteHealthOutput', () => {
   });
 
   it('reads what each session is doing, drops a garbled line, and never trusts an empty list the program did not write', () => {
-    const sess = JSON.stringify({ sid: 'abc-1', name: 'Dev', rss: 1000, ticks: 50, clk: 100, pane: 'idle', activity: 10, openedBy: 'lider', transcript: true, lastAt: 5, turn: 'ended', last: 'error', tool: null, apiError: { kind: 'rate_limit', text: '429', at: 5 }, retry: null });
+    const sess = JSON.stringify({ sid: 'abc-1', name: 'Dev', rss: 1000, ticks: 50, clk: 100, pane: 'idle', activity: 10, openedBy: 'lider', transcript: true, lastAt: 5, turn: 'ended', last: 'error', tool: null, apiError: { kind: 'rate_limit', text: '429', at: 5 }, retry: null, bgProcs: 2, bgNames: ['flock', 'npm'], pendingTasks: 1 });
     const reading = parseRemoteHealthOutput(
       ['DONEL_HEALTH now 1000', 'DONEL_HEALTH gateway {"host":"gw.ts.net","port":8317}', `DONEL_HEALTH sess ${sess}`, 'DONEL_HEALTH sess {broken', 'DONEL_HEALTH sess {"sid":"../etc"}', 'DONEL_HEALTH end'].join('\n'),
     );
     expect(reading?.readAt).toBe(1000);
     expect(reading?.gateway).toEqual({ host: 'gw.ts.net', port: 8317 });
     expect(reading?.sessionDetails).toEqual([
-      expect.objectContaining({ sid: 'abc-1', openedBy: 'lider', pane: 'idle', turn: 'ended', last: 'error', apiError: { kind: 'rate_limit', text: '429', at: 5 } }),
+      expect.objectContaining({ sid: 'abc-1', openedBy: 'lider', pane: 'idle', turn: 'ended', last: 'error', apiError: { kind: 'rate_limit', text: '429', at: 5 }, background: { procs: 2, names: ['flock', 'npm'], pendingTasks: 1 } }),
     ]);
     expect(parseRemoteHealthOutput(FULL)?.sessionDetails).toBeNull();
   });
