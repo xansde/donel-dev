@@ -51,6 +51,8 @@ export interface DonelChatApi {
   screenState(ptyId: string, terminalNeeded: TerminalNeededReason | null): Promise<void>;
   /** Envio que terminou em "não foi": o detalhe do portão vai para o `chat-diagnostics.log` (nunca texto). */
   sendFailed(ptyId: string, detail: SendFailureDetail): Promise<void>;
+  /** 08/11 — text the app erased from the terminal box: the main keeps it in userData and says so in the chat. */
+  boxCleared?(ptyId: string, text: string): Promise<void>;
 
   /** T076 - responde a pendência aberta; o renderer nunca monta o JSON do hook. */
   answer(ptyId: string, pendingId: string, answer: PendingAnswer): Promise<ChatAnswerOutput>;

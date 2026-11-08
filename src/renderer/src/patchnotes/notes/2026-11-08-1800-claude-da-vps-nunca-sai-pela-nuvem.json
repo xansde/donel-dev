@@ -1,0 +1,4 @@
+{
+  "title": "O Claude das VPS nunca sai pelo IP da nuvem",
+  "text": "Quando o seu PC some (dormindo, sem internet ou fora da Tailscale), as sessões nas VPS não passam mais a falar com a Anthropic direto pelo IP da nuvem: elas esperam o PC voltar. E uma sessão que abre enquanto o proxy da VPS está reiniciando não fica mais a vida toda sem ele."
+}

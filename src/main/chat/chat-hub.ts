@@ -126,6 +126,8 @@ export interface ChatHub {
   reportScreenState(ptyId: string, terminalNeeded: TerminalNeededReason | null): void;
   /** T076 - the owner's answer to an open pending (chat:answer). */
   answer(ptyId: string, pendingId: string, answer: PendingAnswer): ChatAnswerOutput;
+  /** 08/11 — a line of the app in the tab's conversation (a warning: what it did on its own that the owner must know). */
+  noteApp(ptyId: string, text: string): void;
   /** Modo YOLO was just turned on: the tab's open permission requests stop waiting. Questions and plans stay. */
   approveOpenPermissions(ptyId: string): void;
   /** Folders the tab's transcript files (and sub-agent files) may be served from. */
@@ -835,6 +837,15 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
   // ---- api -----------------------------------------------------------------
 
   return {
+    noteApp(ptyId, text) {
+      const rec = recs.get(ptyId);
+      if (rec === undefined) return;
+      noticeSeq += 1;
+      const notice = noticeRow(`app:note:${noticeSeq}`, 'informational', { text, level: 'warning' });
+      rec.appNotices.push(notice);
+      if (rec.session !== null) emitRows(rec, [{ op: 'append', rows: [notice] }]);
+    },
+
     attach(ptyId) {
       const rec = recOf(ptyId);
       return serial(rec, async () => {

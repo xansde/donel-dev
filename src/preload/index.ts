@@ -828,6 +828,7 @@ const donelApi: DonelApi = {
       ipcRenderer.invoke(CHAT_CHANNELS.screenState, { ptyId, terminalNeeded }) as Promise<void>,
     sendFailed: (ptyId: string, detail: SendFailureDetail) =>
       ipcRenderer.invoke(CHAT_CHANNELS.sendFailed, { ptyId, detail }) as Promise<void>,
+    boxCleared: (ptyId: string, text: string) => ipcRenderer.invoke(CHAT_CHANNELS.boxCleared, { ptyId, text }) as Promise<void>,
 
     // T076/T079 - pendencias e foco
     answer: (ptyId: string, pendingId: string, answer: PendingAnswer) =>

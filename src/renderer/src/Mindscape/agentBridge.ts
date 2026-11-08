@@ -35,7 +35,7 @@ import {
 } from '../../../shared/mindscape/agent-tools';
 import type { MindscapeBoardResponse } from '../../../shared/mindscape/channels';
 import { LEADER_OF_ALL, isLeaderOfAllTab, knownBoards, resolveBoard, type KnownBoard } from '../../../shared/mindscape/leader';
-import { BOARD_LEADER, LEADER_OF_ALL_FROM, boardOrchestrators, canFaxineiroClose, canReach, canReachLeader, findPlace, firstLiveAbove, isBelow, isBoardOrchestrator } from '../../../shared/mindscape/reach';
+import { BOARD_LEADER, LEADER_OF_ALL_FROM, boardOrchestrators, canFaxineiroClose, canReach, canReachLeader, findPlace, firstLiveAbove, isBelow, isBoardOrchestrator, MY_OPENER, openersOf } from '../../../shared/mindscape/reach';
 import { FAXINEIRO_OPENER, PC_MACHINE_ID, type FaxineiroLogEntry, type SessionView } from '../../../shared/faxineiro/triggers';
 import type { FaxineiroWakeOrder } from '../../../shared/faxineiro/ipc';
 import type { LedgerPassedOn, LedgerPassOnRequest, LedgerTurnRecord, LedgerTurnRecorded } from '../../../shared/ledger/channels';
@@ -50,6 +50,9 @@ import type { SendFrom } from '../chat/sendDriver';
  * A session opened by `sessao_abrir` that sent no hook in this long did not start: the gate waits up to 30 s for
  * the CLI and the first paste up to 45 s more on a machine short of RAM.
  */
+/** How long a tool call from a PTY not yet on a tab waits for it (a reattach after a restart), and how often it looks. */
+const CALLER_WAIT_MS = 20_000;
+const CALLER_POLL_MS = 500;
 const START_GRACE_MS = 90_000;
 /** `sessao_enviar` answers once the message went in, was queued, or failed; past this it says "ainda não entrou". */
 const DELIVERY_WAIT_MS = 40_000;
@@ -559,12 +562,40 @@ export class AgentBridge {
   }
 
   /**
+   * 08/11 (BizOps, item 11) — the PTY a tool call comes from is not on a tab yet: right after the app restarts, the
+   * remote sessions are attached again and their calls arrive before the renderer has their new PTY. Wait for the tab
+   * (up to CALLER_WAIT_MS) instead of answering at once that the session "is not a tab" (the Revisor stopped there).
+   */
+  private async callerTab(ptyId: string): Promise<BridgeTab | undefined> {
+    const deadline = Date.now() + CALLER_WAIT_MS;
+    for (;;) {
+      const tab = this.ports.tabOfPty(ptyId);
+      if (tab !== undefined || Date.now() >= deadline) return tab;
+      await new Promise((resolve) => setTimeout(resolve, CALLER_POLL_MS));
+    }
+  }
+
+  /**
+   * Homologação, item 7 — a session no hook has come from since the app opened, but which ended turns before (its note
+   * of the last turn is on the board, kept across restarts): its last real state, not "sem nenhum pedido".
+   */
+  private lastKnownState(tabId: string): string | undefined {
+    const tab = this.ports.tabs().find((candidate) => candidate.id === tabId);
+    if (!tab?.cwd || !tab.claudeSessionId) return undefined;
+    const note = this.board(tab.cwd)?.cards[noteCardId(tab.claudeSessionId)];
+    if (note?.kind !== 'session-note') return undefined;
+    const at = new Date(note.writtenAt);
+    const hhmm = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+    return `parada desde ${hhmm} (último fim de turno; o app reabriu e ainda não ouviu dela)`;
+  }
+
+  /**
    * 05/11 — a live process that never sent a hook is not "trabalhando": it has not taken any message yet. A session
    * opened by `sessao_abrir` that is still like that after START_GRACE_MS failed to start, and says why.
    */
   private startState(tabId: string): string {
     const openedAt = this.openedAt.get(tabId);
-    if (openedAt === undefined) return 'aberta, sem nenhum pedido ainda';
+    if (openedAt === undefined) return this.lastKnownState(tabId) ?? 'aberta, sem nenhum pedido ainda';
     if (Date.now() - openedAt < START_GRACE_MS) return 'começando';
     return `não começou: ${this.ports.startTrouble(tabId) ?? 'o Claude de lá não recebeu o pedido'}`;
   }
@@ -927,8 +958,11 @@ export class AgentBridge {
   private async run(ptyId: string, call: BoardToolCall): Promise<Answer> {
     const fail = (text: string): Answer => ({ ok: false, text });
     if (!this.ports.loaded) return fail('O quadro ainda não abriu no app (ou falhou ao abrir). Tente de novo em instantes.');
-    const caller = this.ports.tabOfPty(ptyId);
-    if (!caller) return fail('Esta sessão não é uma aba do Donel Dev.');
+    const caller = await this.callerTab(ptyId);
+    if (!caller)
+      return fail(
+        'O app está religando esta sessão (ele reiniciou ou acabou de voltar) e ainda não a reconheceu. Você não caiu: espere 1 minuto e tente de novo. Não abra outra sessão no seu lugar.',
+      );
     const roleNames = new Map(this.ports.roles().map((role) => [role.id, role.name]));
 
     if (call.tool === 'papeis_listar') return { ok: true, text: json(this.ports.roles().map((role) => ({ id: role.id, nome: role.name }))) };
@@ -1081,6 +1115,22 @@ export class AgentBridge {
           const outcome = await this.ports.deliverLine(leader.id, `◆ De ${signature}: ${call.texto}`, DELIVERY_WAIT_MS, 'session');
           return this.deliveryAnswer(outcome, leader.id);
         }
+        // Back up to whoever opened me (08/11): the opening arrow, no arrow back needed (reach.ts).
+        if (!scope.leader && self && call.para.trim().toLowerCase() === MY_OPENER) {
+          const openers = openersOf(this.board(projectPath), self.id);
+          if (openers.length === 0) {
+            if (!this.openedByLeader(projectPath, self.id)) return fail(`Ninguém abriu você por sessao_abrir (foi o dono). Fale com o Líder do quadro ("para": "${BOARD_LEADER}") ou com quem está acima de você pelas setas.`);
+            const leader = this.leaderTab();
+            if (!leader) return fail('Quem abriu você foi o Líder único, e ele não está aberto agora. Registre o que precisa no Oráculo (tarefa_criar ou tarefa_transferir com "para": "lider") e siga.');
+            const outcome = await this.ports.deliverLine(leader.id, `◆ De ${signature}, quadro ${scope.projectName ?? this.boardName(projectPath)}: ${call.texto}`, DELIVERY_WAIT_MS, 'session');
+            return this.deliveryAnswer(outcome, leader.id);
+          }
+          const opener = openers.map((id) => this.tabOfPlace(projectPath, id)).find((tab) => tab !== undefined);
+          if (!opener) return fail(`Quem abriu você (${openers.join(', ')}) não está aberta agora. Registre o que precisa no Oráculo (tarefa_criar) e siga, ou fale com o Líder do quadro ("para": "${BOARD_LEADER}").`);
+          if (this.ports.linkLost?.(opener.id)) return fail('Quem abriu você está sem ligação: o processo dela segue vivo no lugar remoto e o app está religando. Tente de novo em instantes.');
+          const outcome = await this.ports.deliverLine(opener.id, `◆ De ${signature}: ${call.texto}`, DELIVERY_WAIT_MS, 'session');
+          return this.deliveryAnswer(outcome, opener.id);
+        }
         const board = this.board(projectPath);
         const place = board?.cards[call.para];
         if (place?.kind !== 'session') return fail(`"${call.para}" não é um lugar do quadro (veja sessao_listar).`);
@@ -1088,7 +1138,7 @@ export class AgentBridge {
           return fail(
             scope.leader
               ? `Sem ligação: "${place.id}" não está no topo do quadro ${scope.projectName ?? projectPath} nem abaixo dele pelas setas do dono. Peça ao dono.`
-              : `Sem ligação: não há seta do seu lugar (${self?.id}) para "${place.id}". Peça ao dono, ou use sessao_abrir. Para o Líder do quadro, "para": "${BOARD_LEADER}".`,
+              : `Sem ligação: não há seta do seu lugar (${self?.id}) para "${place.id}". Peça ao dono, ou use sessao_abrir. Para o Líder do quadro, "para": "${BOARD_LEADER}"; para quem abriu você, "para": "${MY_OPENER}".`,
           );
         const target = this.tabOfPlace(projectPath, place.id);
         if (!target) return fail(`"${place.id}" não está aberta agora.`);

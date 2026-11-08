@@ -1,0 +1,4 @@
+{
+  "title": "O que o app apaga da caixa do terminal fica guardado",
+  "text": "Quando uma mensagem de outra sessão precisa limpar a caixa do terminal (um resto que tinha sobrado ao lado dela, ou o próprio texto que nunca entrou), o app guarda antes o que estava lá, num arquivo por conversa na pasta caixa-limpa dos dados do app, e avisa no chat da aba onde ficou. Se era um rascunho seu, dá para recuperar."
+}

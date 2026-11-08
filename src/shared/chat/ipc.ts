@@ -32,6 +32,8 @@ export const CHAT_CHANNELS = {
   screenState: 'chat:screen-state',
   /** Diagnóstico de um envio que terminou em "não foi" (só o portão, nunca texto) -> `chat-diagnostics.log`. */
   sendFailed: 'chat:send-failed',
+  /** 08/11 — the app cleared text left in the box next to a message from another session: kept for the owner. */
+  boxCleared: 'chat:box-cleared',
   setChatPrefs: 'config:setChatPrefs',
   // Eventos (main -> renderer)
   rows: 'chat:rows',
@@ -227,6 +229,12 @@ export interface ChatSendFailedInput {
   readonly detail: SendFailureDetail;
 }
 export type ChatSendFailedOutput = void;
+
+/** `chat:box-cleared` - o texto que o app apagou da caixa do terminal (Esc Esc), para o dono recuperar. */
+export interface ChatBoxClearedInput {
+  readonly ptyId: string;
+  readonly text: string;
+}
 
 /** `config:setChatPrefs` — a saída (`AppConfigDto`) é tipada em ../config. */
 export interface SetChatPrefsInput {

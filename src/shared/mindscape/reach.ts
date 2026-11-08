@@ -22,6 +22,9 @@
 //   arrow, whoever opened it (the Líder único included). Nobody else gains reach by it: a common session still only
 //   reaches down its arrows, and a Líder a session made is a common session. And every place of a board talks up to
 //   that Líder (`sessao_enviar` with "lider-quadro", `boardOrchestrators`), as the chain of the Líder único talks to it.
+// - Back up to whoever opened me (08/11, homologação item 2): a place talks to the session that opened it with
+//   `sessao_abrir` (`sessao_enviar` with "quem-me-abriu", `openersOf`), with no arrow back. Only the opening arrow
+//   counts, and a session cannot draw one (quadro_aplicar never sets `opened`), so nobody makes itself an opener.
 // - Who takes the work of a place that is gone (06/11, t-e753b554): the first live place above it by the
 //   hierarchy arrows, the one that opened it first; none → the Líder único.
 
@@ -95,6 +98,15 @@ export const BOARD_LEADER = 'lider-quadro';
 /** The orchestrators of a board (`isBoardOrchestrator`), in card order: whom "lider-quadro" means. */
 export function boardOrchestrators(board: MindscapeBoard | undefined): string[] {
   return board ? Object.keys(board.cards).filter((id) => isBoardOrchestrator(board, id)) : [];
+}
+
+/** `sessao_enviar` to the session that opened the caller with `sessao_abrir`: `"para": "quem-me-abriu"`. */
+export const MY_OPENER = 'quem-me-abriu';
+
+/** The places that opened `placeId` (a `sessao_abrir` arrow straight to it), in link order. */
+export function openersOf(board: MindscapeBoard | undefined, placeId: string): string[] {
+  if (!board) return [];
+  return board.links.filter((link) => link.opened === true && link.arrow && link.to === placeId && board.cards[link.from]?.kind === 'session').map((link) => link.from);
 }
 
 /** The Líder único reaches `placeId`: a top place, or one below a top place by hierarchy arrows. */
