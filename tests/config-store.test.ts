@@ -77,7 +77,7 @@ describe('defaultAppConfig (puro)', () => {
       yolo: { projects: [] },
       // Oráculo no centro (06/11) — o layout novo é o padrão, com o Oráculo à vista.
       layout: { oracleCenter: true, centerView: 'oracle' },
-      leader: { where: 'local' },
+      leader: { where: 'auto' },
       appUpdate: { installersDir: null },
       browserUploads: { folders: [] },
       browserUploadGrants: { grants: [] },
@@ -119,7 +119,7 @@ describe('toAppConfigDto (puro)', () => {
       autoMode: { neverAsks: true },
       yolo: { projects: [] },
       layout: { oracleCenter: true, centerView: 'oracle' },
-      leader: { where: 'local' },
+      leader: { where: 'auto' },
     });
   });
 

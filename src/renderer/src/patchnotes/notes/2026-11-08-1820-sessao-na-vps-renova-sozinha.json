@@ -1,0 +1,4 @@
+{
+  "title": "Sessão na VPS também se renova sozinha quando o contexto enche",
+  "text": "Quando uma sessão rodando na VPS chegava ao limite de contexto, ela escrevia a passagem de bastão num lugar que o app não achava, e a sessão nova não abria. Agora a passagem fica na própria VPS, o app a lê de lá e a sessão nova abre na mesma aba, já com a passagem. O \"abrir\" do divisor mostra uma cópia dela aqui."
+}
