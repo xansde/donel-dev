@@ -106,7 +106,7 @@ function distanceToSegment(point: { x: number; y: number }, a: { x: number; y: n
  * The arrow from one chair to another, cut at the node borders. A pair that points both ways is drawn as two
  * parallel arrows (`offset`); an arrow that would cross another chair bows out instead.
  */
-function arrowPath(from: { x: number; y: number }, to: { x: number; y: number }, offset: number, others: readonly { x: number; y: number }[]): string {
+export function arrowPath(from: { x: number; y: number }, to: { x: number; y: number }, offset: number, others: readonly { x: number; y: number }[]): string {
   const dx = to.x - from.x;
   const dy = to.y - from.y;
   const length = Math.hypot(dx, dy) || 1;
@@ -306,6 +306,8 @@ export const RIG_SELECTION = '\u0000rig';
 export interface ChairsBandProps {
   readonly placeCount: number;
   readonly chairCount: number;
+  /** Replaces the line under the motto (the factory's board says where its chairs come from). */
+  readonly detail?: string;
   readonly counts: Readonly<Record<ChairHealth, number>>;
   readonly highlight: ChairHealth | null;
   readonly onHighlight: (health: ChairHealth | null) => void;
@@ -342,13 +344,13 @@ const ARROW_OPTIONS: ReadonlyArray<readonly [boolean, string]> = [
   [false, 'Ocultas'],
 ];
 
-export function ChairsBand({ placeCount, chairCount, counts, highlight, onHighlight, ownerMode, onOwnerMode, showArrows, onShowArrows, onAddPod }: ChairsBandProps): React.JSX.Element {
+export function ChairsBand({ placeCount, chairCount, detail, counts, highlight, onHighlight, ownerMode, onOwnerMode, showArrows, onShowArrows, onAddPod }: ChairsBandProps): React.JSX.Element {
   return (
     <div className={styles.band} data-testid="chairs-band">
       <div className={styles.motto}>
         <b>Os agentes mudam. As cadeiras ficam.</b>
         <span>
-          {placeCount} lugar{placeCount === 1 ? '' : 'es'} no quadro → {chairCount} cadeira{chairCount === 1 ? '' : 's'}, uma por papel. Quem já sentou está dentro delas.
+          {detail ?? `${placeCount} lugar${placeCount === 1 ? '' : 'es'} no quadro → ${chairCount} cadeira${chairCount === 1 ? '' : 's'}, uma por papel. Quem já sentou está dentro delas.`}
         </span>
       </div>
       <div className={styles.tools}>
