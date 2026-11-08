@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { guardBoardAction, lensLocksBoard, shortcutInLens } from '../src/shared/mindscape/chairs';
 import { removeItems } from '../src/shared/mindscape/drawings';
-import type { MindscapeDoc } from '../src/shared/mindscape/model';
+import { MINDSCAPE_SCHEMA_VERSION, type MindscapeDoc } from '../src/shared/mindscape/model';
 import { mindscapeShortcut } from '../src/shared/mindscape/shortcuts';
 
 // Cadeiras, fatia 1 (Revisor, #278): with "Seu desenho: Oculto" in the chairs lens, Ctrl+A + Delete erased every
@@ -9,7 +9,7 @@ import { mindscapeShortcut } from '../src/shared/mindscape/shortcuts';
 
 const path = 'C:/projetos/atlas';
 const doc: MindscapeDoc = {
-  schemaVersion: 6,
+  schemaVersion: MINDSCAPE_SCHEMA_VERSION,
   boards: {
     [path]: {
       projectPath: path,

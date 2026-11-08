@@ -1,0 +1,73 @@
+/* Mindscape de homologação, fatia 4 — the factory's band on its board. A zero stays neutral: only what is not zero
+   gets a colored border, so the sign of attention is not diluted. */
+
+.band {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 16px;
+  background: var(--bg-panel);
+  border-bottom: var(--hairline);
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.count {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+}
+
+.count b {
+  font-size: 16px;
+  color: var(--text-primary);
+}
+
+button.count:not(:disabled) {
+  cursor: pointer;
+}
+
+button.count:disabled {
+  cursor: default;
+}
+
+.problem {
+  border-color: var(--state-permission);
+  color: var(--text-primary);
+}
+
+.waiting {
+  border-color: var(--state-waiting);
+  color: var(--text-primary);
+}
+
+.names {
+  margin-left: 6px;
+  color: var(--state-permission);
+  font-weight: 600;
+}
+
+.highlight {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 2px 10px;
+  border-left: 3px solid var(--state-waiting);
+  background: var(--bg-raised);
+  border-radius: var(--radius-sm);
+}
+
+.highlightName {
+  color: var(--text-muted);
+}
+
+.highlight b {
+  font-size: 14px;
+}

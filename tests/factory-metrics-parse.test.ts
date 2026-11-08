@@ -83,6 +83,17 @@ describe('parseFactoryMetrics — a broken lock', () => {
   });
 });
 
+describe('parseFactoryMetrics — the board band (fatia 4)', () => {
+  it('only the numbers the factory marks with faixa: true go to the board band', () => {
+    const parsed = ok(file([metric({ id: 'espera', faixa: true }), metric({ id: 'outro' }), metric({ id: 'texto', faixa: 'sim' })]));
+    expect(parsed.metrics.filter((m) => m.band).map((m) => m.id)).toEqual(['espera']);
+  });
+
+  it('no number of the real file of 07/11 is in the band: the Donel never picks one by its id', () => {
+    expect(ok(REAL).metrics.some((m) => m.band)).toBe(false);
+  });
+});
+
 describe('parseFactoryMetrics — an item out of the contract', () => {
   it('drops only that item and names it; the others stay', () => {
     const parsed = ok(
