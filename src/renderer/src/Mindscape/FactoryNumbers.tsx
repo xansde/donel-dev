@@ -3,8 +3,9 @@
 // factory wrote them, never computes a number and has no button that changes anything on the factory.
 
 import { useCallback, useEffect, useState } from 'react';
-import { FACTORY_METRICS_MAJOR, FACTORY_METRICS_FORMAT, FACTORY_METRICS_STALE_MS, type FactoryMetric, type FactoryMetricPoint, type MetricOrigin } from '../../../shared/homologacao/factoryMetrics';
+import { FACTORY_METRICS_MAJOR, FACTORY_METRICS_FORMAT, type FactoryMetric, type FactoryMetricPoint, type MetricOrigin } from '../../../shared/homologacao/factoryMetrics';
 import type { FactoryMetricsView } from '../../../shared/homologacao/ipc';
+import { alertsOf, freshnessOf, hhmm, type Alert } from '../../../shared/homologacao/factoryAlerts';
 import styles from './FactoryNumbers.module.css';
 
 /** The view of `metricas.json`, live; `null` = the `homologacao` key (or its `metricas`) is not in the config. */
@@ -32,9 +33,6 @@ const ORIGIN_HINT: Record<MetricOrigin, string> = {
   'sem-fonte': 'ninguém mede ainda',
 };
 
-function hhmm(at: number): string {
-  return new Date(at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-}
 
 export function FactoryNumbersButton({ open, onToggle }: { open: boolean; onToggle: () => void }): React.JSX.Element {
   return (
@@ -145,56 +143,6 @@ export function FactoryNumbersPanel({ view, onClose }: PanelProps): React.JSX.El
   );
 }
 
-interface FreshnessLine {
-  readonly tone: 'ok' | 'stale' | 'down';
-  readonly line: string;
-  readonly generatedAt: number | null;
-}
-
-/** "sem sinal" (the place or the file did not answer), "parado" (the file is older than 2 h) or "atualizado". */
-function freshnessOf(view: FactoryMetricsView, now: number): FreshnessLine | null {
-  const { file } = view;
-  const parsed = file.value;
-  const generatedAt = parsed?.kind === 'ok' ? parsed.generatedAt : null;
-  if (file.status === 'unreachable' || file.status === 'missing') {
-    const why = file.status === 'missing' ? 'o arquivo não está lá' : `${view.place} não respondeu`;
-    return { tone: 'down', generatedAt, line: file.lastOkAt === null ? `sem sinal: ${why}` : `sem sinal desde ${hhmm(file.lastOkAt)}: ${why}` };
-  }
-  if (generatedAt === null) return null;
-  const stale = now - generatedAt > FACTORY_METRICS_STALE_MS;
-  return { tone: stale ? 'stale' : 'ok', generatedAt, line: stale ? `parado desde ${hhmm(generatedAt)}` : `atualizado às ${hhmm(generatedAt)}` };
-}
-
-interface Alert {
-  readonly level: 'problema' | 'atencao';
-  readonly text: string;
-  /** The card to bring into view. */
-  readonly metricId?: string;
-}
-
-/** What is wrong, from what the factory wrote and from the read itself; the Donel judges no number. */
-function alertsOf(view: FactoryMetricsView, now: number): Alert[] {
-  const alerts: Alert[] = [];
-  const fresh = freshnessOf(view, now);
-  const parsed = view.file.value;
-  if (!view.placeFound) alerts.push({ level: 'problema', text: `lugar “${view.place}” não encontrado` });
-  if (fresh?.tone === 'down') alerts.push({ level: 'problema', text: fresh.line });
-  if (parsed?.kind === 'unsupported') alerts.push({ level: 'problema', text: `formato ${parsed.format}: nenhum número mostrado` });
-  if (parsed?.kind === 'invalid') alerts.push({ level: 'problema', text: 'arquivo fora do contrato: nenhum número mostrado' });
-  if (parsed?.kind === 'ok') {
-    for (const metric of parsed.metrics) if (metric.lockBroken) alerts.push({ level: 'problema', text: `trava rompida: ${metric.name}`, metricId: metric.id });
-  }
-  if (fresh?.tone === 'stale') alerts.push({ level: 'atencao', text: fresh.line });
-  if (parsed?.kind === 'ok') {
-    for (const metric of parsed.metrics) if (metric.unknownOrigin) alerts.push({ level: 'atencao', text: `origem desconhecida: ${metric.name}`, metricId: metric.id });
-    if (parsed.outOfContract.length > 0) {
-      const count = parsed.outOfContract.length;
-      alerts.push({ level: 'atencao', text: `${count} ite${count === 1 ? 'm' : 'ns'} fora do contrato` });
-    }
-  }
-  return alerts;
-}
-
 const ALERT_LABEL = { problema: 'problema', atencao: 'atenção' } as const;
 
 /** The strip under the header: how many things are in problem and in attention, and which. */
@@ -205,7 +153,8 @@ function Alerts({ view, now }: { view: FactoryMetricsView; now: number }): React
   return (
     <div className={styles.alerts} data-testid="factory-numbers-alerts" data-level={count('problema') > 0 ? 'problema' : count('atencao') > 0 ? 'atencao' : 'bem'}>
       {(['problema', 'atencao'] as const).map((level) => (
-        <span key={level} className={`${styles.alertCount} ${styles[`alert-${level}`]}`}>
+        // A zero keeps the neutral border: only a count that is not zero is colored, so the sign is not diluted.
+        <span key={level} className={count(level) > 0 ? `${styles.alertCount} ${styles[`alert-${level}`]}` : styles.alertCount}>
           <b>{count(level)}</b> {ALERT_LABEL[level]}
         </span>
       ))}

@@ -5,7 +5,7 @@ import { eraseDoc } from '../../../shared/mindscape/eraser';
 import type { CardRect, ItemIds } from '../../../shared/mindscape/geometry';
 import { sessionHighlight } from '../../../shared/mindscape/highlight';
 import { boardContentOrigin, deriveChairs, guardBoardAction, layoutChairs, lensLocksBoard, NO_ROLE_CHAIR, shortcutInLens, type Chair, type ChairHealth } from '../../../shared/mindscape/chairs';
-import { isClosed, viewState } from '../../../shared/ledger/contract';
+import { isClosed, ownerQueue, viewState } from '../../../shared/ledger/contract';
 import { classifyBoardSessions, closedLabel, dormantSessionName, type DormantSession } from '../../../shared/mindscape/dormant';
 import { organizeBoard, organizeColumnOf, type OrganizeEntry } from '../../../shared/mindscape/organize';
 import { deriveSessionAxes, type SessionAxes } from '../../../shared/mindscape/sessionAxes';
@@ -60,6 +60,7 @@ import chairStyles from './Chairs.module.css';
 // Mindscape de homologação — the factory's rigs, drawn from its own `rigs.json` on the factory's board.
 import { FactoryChairDrawer, RigsLayer, RigsNotice, type FactoryChairDetails } from './MindscapeRigs';
 import { useFactoryRigs } from './useFactoryRigs';
+import { FactoryBand } from './FactoryBand';
 import type { FactoryRigsView } from '../../../shared/homologacao/ipc';
 import { RIGS_STALE_MS, type RigsShape } from '../../../shared/homologacao/rigs';
 import { layoutRigs } from '../../../shared/homologacao/rigsLayout';
@@ -1108,6 +1109,15 @@ export function MindscapeScreen({
           showArrows={showArrows}
           onShowArrows={setShowArrows}
           {...(boardLocked || rigsBoard ? {} : { onAddPod: addNewPod })}
+        />
+      ) : null}
+      {/* Fatia 4 — the factory's band: broken locks by name, the numbers marked for the band and what waits for you. */}
+      {chairsOn && board && (factoryHere || rigsHere) ? (
+        <FactoryBand
+          metrics={factoryHere}
+          waiting={ledger ? ownerQueue(ledger.doc, board.projectPath).filter((task) => task.state === 'entregue' && task.risk === 'alto') : []}
+          placeName={placeName}
+          cardsHost={boardArea}
         />
       ) : null}
       {chairsOn && rigsNotice ? <RigsNotice text={rigsNotice} /> : null}
