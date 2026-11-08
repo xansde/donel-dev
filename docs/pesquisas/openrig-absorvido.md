@@ -1,8 +1,35 @@
 # OpenRig — registro de absorção
 
-Último commit absorvido: 7ae8f6ef5b636c4a127e1d5976eb37972da9c3af
+Último commit absorvido: 220e27a9a73bdfb5264262727319b9ff899dbf6f
 
 Referência de design do Mindscape (github.com/mvschwarz/openrig). Procedimento na skill `absorver-openrig`. Cada rodada lista o que virou PR, o que ficou adiado, o que espera o dono e o que foi descartado.
+
+## 2026-11-08 — 7ae8f6e..220e27a
+
+31 commits do OpenRig; versão 0.7.10.
+
+### Vale → PR
+
+- **Renovação em voo confirma que a sessão nova recebeu a passagem de bastão** (plano: item 07 Sessão renovada em voo, B36). Origem: OpenRig `2d0bd8b`, `f554785`, `92a1c738`, `4a18628`. PR: https://github.com/xansde/donel-dev/pull/321. Teste primeiro: em `tests/session-renewal.test.ts`, os 2 testes de `renewalHandoffDeliveryNotice` falharam antes de a função existir (2 failed, 7 passed) e passaram depois (9 passed). Verify verde pela fila, com `origin/staging` mesclada (74 arquivos, 1101 testes, build ok).
+
+### Vale → adiado
+
+Nenhum (teto de 3 PRs não foi atingido).
+
+### Vale → pendente para o dono
+
+- **Pessoa responde as perguntas do time pelo próprio assistente** (OpenRig `cab7f56`, `8a46d8f`). Ferramentas MCP com escopo de pessoa leem e respondem a Steering view, com operationId, revisão esperada e retry que reporta gravado/não gravado. No Donel, o "esperando você" do ledger e as decisões do Oráculo só se respondem como dono pela tela, pelo cartão ou pelo celular (PWA). Pelo MCP donel, toda chamada age como o lugar que chama, nunca como o dono (regra do ledger: quem chama é o lugar resolvido pelo quadro). Pergunta: quer que uma sessão sua (por exemplo, a conversa com o Jobu/Líder) possa responder em seu nome o que está "esperando você" (aceitar, rejeitar, responder decisão), com confirmação de gravado/não gravado? Ou o dono só responde pela tela e pelo celular, como hoje, para que nenhuma sessão vista o crachá de dono?
+
+### Descartado
+
+- Estado e atividade do lugar (helpers, retomada, estado honesto): o Donel já não mistura essas coisas: o hook carrega `session_id` e `session-correlation.ts` liga cada evento à aba pelo id. Um `claude -p` ou Codex auxiliar tem id próprio e não roda com o `--settings` da aba, então não mexe na atividade nem no id de retomada do lugar. O resto é relay de daemon.
+- Fila, outbox e varredura de travados: mecânica de daemon/SQLite (poda de eventos, varredura em lote, claim entre hosts, polling). A fila durável (continuação do item 13) ainda não começou, e o filtro das rotinas (item 20) já tem dedup e teto por janela.
+- MCP: roteamento de tarefa e lugar sem rig: o Donel já tem igual: `agentBridge.ts` avisa "Seu lugar ainda não está no quadro", e o envio segue as setas via `canSend`/`reach.ts`. Mesmo motivo da rodada anterior.
+- Wrappers de lançamento para Claude Code local: pertencem ao runtime do OpenRig (shim, exec fixado, script gerenciado). O Donel monta o argv no `CommandBuilder`, não declara wrapper, e o plano não pede wrapper. O aviso de lançamento que não entrega o papel já entrou no PR #311.
+- Workflow: objetivo raiz da execução: o Donel já carrega o pedido de origem: a tarefa do ledger nasce com a frase literal de quem pediu, e o `sessao_abrir` leva o pedido completo (skill `abrir-sessao-com-pedido-completo`). Nenhuma ideia nova para o quadro.
+- Refocus e catálogo de projetos: ajustes internos do trace-to-root e de timeout do catálogo de skills do OpenRig. O advisory já vem pela skill `refocusing`, instalada aqui.
+- ACP (`rig acp serve`): expor o orquestrador em outro editor não está no plano; a porta é o MCP donel. Mesmo motivo da rodada anterior.
+- Plugin, marketplace, docs e TUI demo: packaging, docs e release do próprio OpenRig, e a TUI está fora de escopo (decisão do dono, 03/11).
 
 ## 2026-11-07 — c9b1ae4..7ae8f6e
 
