@@ -334,11 +334,15 @@ export function Preferences(props: PreferencesProps): React.JSX.Element | null {
             category: 'avisos' as const,
             title: 'Onde o Líder roda',
             keywords: 'líder lider jobu onde roda vps remoto servidor ram memória',
-            hint: 'O Líder com quem você fala pelo Jobu. Ao trocar, ele muda de lugar na próxima mensagem, com a mesma conversa; se estiver trabalhando, muda quando terminar.',
+            hint: 'O Líder com quem você fala pelo Jobu e os Líderes dos quadros. Ao trocar, o do Jobu muda de lugar na próxima mensagem, com a mesma conversa; se estiver trabalhando, muda quando terminar. O de um quadro vale na próxima vez que abrir.',
             body: (
               <Select
-                value={props.leaderWhere && remotes.some((place) => place.id === props.leaderWhere) ? props.leaderWhere : 'local'}
-                options={[{ value: 'local', label: 'Este computador', description: 'padrão' }, ...remotes.map((place) => ({ value: place.id, label: place.label }))]}
+                value={props.leaderWhere !== undefined && (props.leaderWhere === 'local' || remotes.some((place) => place.id === props.leaderWhere)) ? props.leaderWhere : 'auto'}
+                options={[
+                  { value: 'auto', label: 'Numa VPS', description: 'padrão: o primeiro lugar remoto com conta' },
+                  { value: 'local', label: 'Este computador' },
+                  ...remotes.map((place) => ({ value: place.id, label: place.label })),
+                ]}
                 onChange={(value) => props.onChangeLeaderWhere?.(value)}
               />
             ),

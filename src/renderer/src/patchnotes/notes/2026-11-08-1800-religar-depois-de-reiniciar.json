@@ -1,0 +1,4 @@
+{
+  "title": "Sessões da VPS não se dão por perdidas quando o app reinicia",
+  "text": "Quando o app reinicia, as sessões que rodam na VPS continuam vivas e são religadas. Antes, no meio da religação, elas ouviam do app que \"não eram uma aba do Donel Dev\" e paravam de trabalhar. Agora o app espera a aba delas aparecer e, se demorar, avisa que está religando. No quadro, uma sessão religada mostra quando terminou o último turno (\"parada desde 14:37\"), em vez de \"aberta, sem nenhum pedido ainda\"."
+}

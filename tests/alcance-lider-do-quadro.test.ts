@@ -98,6 +98,19 @@ describe('Líder do quadro alcança o próprio quadro', () => {
     expect(sent.at(-1)).toMatchObject({ tabId: 'tab-lider' });
     expect(sent.at(-1)!.text).toContain('travei');
   });
+
+  it('a session answers whoever opened it with "quem-me-abriu", no arrow back; an arrow of the owner does not make an opener', async () => {
+    const { bridge, sent } = setup();
+
+    // Dev opened the Revisor (sessao_abrir arrow); there is no Revisor → Dev arrow.
+    expect(await bridge.handle('revisor', { tool: 'sessao_enviar', para: 'quem-me-abriu', texto: 'achei dois bugs' })).toMatchObject({ ok: true });
+    expect(sent.at(-1)).toMatchObject({ tabId: 'tab-dev' });
+    expect(sent.at(-1)!.text).toContain('achei dois bugs');
+    // The owner's arrow Líder → Dev is hierarchy, not an opening: the Dev has no opener to answer.
+    const before = sent.length;
+    expect((await bridge.handle('dev', { tool: 'sessao_enviar', para: 'quem-me-abriu', texto: 'oi' })).ok).toBe(false);
+    expect(sent.length).toBe(before);
+  });
 });
 
 describe('Ligação de ida e volta', () => {

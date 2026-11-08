@@ -30,6 +30,7 @@ import type {
   ChatSaveImageOutput,
   ChatScreenStateInput,
   ChatSendFailedInput,
+  ChatBoxClearedInput,
   RowDetail,
 } from '../../shared/chat/ipc';
 import { sanitizeSendFailure, type SendFailureDetail } from '../../shared/chat/sendDiagnostics';
@@ -63,6 +64,8 @@ export interface ChatIpcDeps {
   readonly onFocusState?: (input: ChatFocusStateInput) => void;
   /** `chat:send-failed`: a send ended in `failed`; the detail arrives already sanitized (goes to `chat-diagnostics.log`). */
   readonly onSendFailed?: (entry: { ptyId: string; reason: string; detail: SendFailureDetail }) => void;
+  /** `chat:box-cleared`: the app erased text from the terminal box; the main keeps it for the owner. */
+  readonly onBoxCleared?: (entry: { ptyId: string; text: string }) => void;
 }
 
 export interface ChatIpcRegistration {
@@ -81,6 +84,7 @@ const HANDLED: readonly string[] = [
   CHAT_CHANNELS.ackLookup,
   CHAT_CHANNELS.screenState,
   CHAT_CHANNELS.sendFailed,
+  CHAT_CHANNELS.boxCleared,
   CHAT_CHANNELS.answer,
   CHAT_CHANNELS.focusState,
   CHAT_CHANNELS.saveImage,
@@ -169,6 +173,11 @@ export function registerChatIpcHandlers(deps: ChatIpcDeps): ChatIpcRegistration 
     const detail = sanitizeSendFailure(input.detail);
     if (detail === null) return;
     deps.onSendFailed?.({ ptyId: input.ptyId, reason: detail.reason, detail });
+  });
+
+  ipcMain.handle(CHAT_CHANNELS.boxCleared, (_e, input: ChatBoxClearedInput): void => {
+    if (!isString(input?.ptyId) || !isString(input.text) || input.text.trim() === '') return;
+    deps.onBoxCleared?.({ ptyId: input.ptyId, text: input.text });
   });
 
   ipcMain.handle(CHAT_CHANNELS.answer, (_e, input: ChatAnswerInput): ChatAnswerOutput => {

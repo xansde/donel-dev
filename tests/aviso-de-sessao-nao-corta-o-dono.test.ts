@@ -115,6 +115,8 @@ class Clock {
 
 function setup(working: boolean, signals = true, inTranscript?: (text: string) => boolean) {
   const clock = new Clock();
+  /** What the app reported as erased from the box (to be kept for the owner) before each Esc Esc of its own. */
+  const cleared: string[] = [];
   let driver: SendDriver;
   const cli: FakeCli = new FakeCli(
     clock,
@@ -133,7 +135,8 @@ function setup(working: boolean, signals = true, inTranscript?: (text: string) =
     write: (data) => cli.write(data),
     readLines: () => cli.lines(),
     ackLookup: (text) => Promise.resolve({ matched: inTranscript ? inTranscript(text) : cli.submitted.some((s) => s.includes(text)) }),
-  });
+    boxCleared: (text: string) => cleared.push(text),
+  } as ConstructorParameters<typeof SendDriver>[0]);
   driver.setEnv({ working });
   /** The owner's keys in the terminal: through the driver's gate (as TerminalPane does), or straight to the PTY. */
   const ownerKey = (data: string): void => {
@@ -149,7 +152,7 @@ function setup(working: boolean, signals = true, inTranscript?: (text: string) =
     return enterAt;
   };
   const notice = (text: string): string => driver.enqueue({ text, from: 'session' } as SendRequest);
-  return { clock, cli, driver, typeAt, notice, ownerKey };
+  return { clock, cli, driver, typeAt, notice, ownerKey, cleared };
 }
 
 const NOTICES = [
@@ -438,4 +441,18 @@ describe('mensagem de outra sessão sem sinal de aceite (07/11)', () => {
     expect(cli.submitted.filter((s) => s.includes('resto de antes'))).toEqual([]);
     expect(cli.submitted).toEqual([NOTICES[0], NOTICES[1]]);
   });
+
+  it('o que o app limpa da caixa fica guardado para o dono: o resto de antes é entregue antes do Esc Esc (08/11)', () => {
+    const { clock, cli, notice, cleared } = setup(false);
+    clock.advanceTo(1_000);
+    notice(NOTICES[0]);
+    clock.advanceTo(60_000);
+    cli.intrude = 'rascunho que o dono deixou antes de reiniciar';
+    notice(NOTICES[1]);
+    clock.advanceTo(300_000);
+    expect(cli.submitted).toEqual([NOTICES[0], NOTICES[1]]);
+    expect(cleared).toHaveLength(1);
+    expect(cleared[0]).toContain('rascunho que o dono deixou antes de reiniciar');
+  });
 });
+
