@@ -20,6 +20,7 @@ import {
   type LedgerProof,
   type LedgerTask,
 } from './contract';
+import { CARD_KINDS, type OwnerInboxKind } from './inbox';
 import { actorName, placeLabel, tarefaRow, type MaskNote, type PlaceInfoOf, type TarefaRow } from './mirror';
 
 export type LedgerTableFilter = 'esperando-voce' | 'sem-executor' | 'cartas' | 'tudo';
@@ -47,8 +48,10 @@ export interface LedgerTableRow {
   readonly askedMissing: boolean;
   /** "Com quem está": the next step, in words ("você decide", "Revisor confere", "falta assumir"). */
   readonly withWhom: string;
-  /** It waits for the owner (the queue of today: `waitsForOwner`). */
+  /** It is in the box "Esperando você" (fatia 1); without the box, `waitsForOwner`. */
   readonly waitsForOwner: boolean;
+  /** The owner decides it on the card (a card kind of the box). */
+  readonly onCard: boolean;
   /** Nothing more happens to it. */
   readonly closed: boolean;
   /** The last step (ms): the order of the table, newest first. */
@@ -77,7 +80,13 @@ function withWhomOf(doc: LedgerDoc, task: LedgerTask, owner: string): string {
 }
 
 /** Every task as a row of the table, the latest activity first. */
-export function ledgerTableRows(doc: LedgerDoc, places: PlaceInfoOf | undefined, ownerName: string | undefined): LedgerTableRow[] {
+export function ledgerTableRows(
+  doc: LedgerDoc,
+  places: PlaceInfoOf | undefined,
+  ownerName: string | undefined,
+  /** The box "Esperando você": task id → its kind. Absent = the queue of `waitsForOwner`. */
+  inbox?: ReadonlyMap<string, OwnerInboxKind>,
+): LedgerTableRow[] {
   const masked: MaskNote[] = [];
   return Object.values(doc.tasks)
     .map((task): LedgerTableRow => {
@@ -95,7 +104,8 @@ export function ledgerTableRows(doc: LedgerDoc, places: PlaceInfoOf | undefined,
         askedBy,
         askedMissing: askedBy === NOT_RECORDED,
         withWhom,
-        waitsForOwner: row.esperando_dono,
+        waitsForOwner: inbox ? inbox.has(task.id) : row.esperando_dono,
+        onCard: inbox ? inbox.has(task.id) && CARD_KINDS.has(inbox.get(task.id)!) : row.esperando_dono,
         closed: isClosed(task),
         lastActivityAt,
         searchText,

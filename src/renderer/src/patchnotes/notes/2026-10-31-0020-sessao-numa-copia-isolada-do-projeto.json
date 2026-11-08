@@ -1,0 +1,4 @@
+{
+  "title": "Sessão numa cópia isolada do projeto",
+  "text": "Marque \"Isolar em worktree\" no painel de nova sessão e o Claude trabalha numa cópia separada do repositório, que começa da branch em que você está, marcada com ⎇ na aba. Ao fechar a aba, a cópia some sozinha se não tiver trabalho pendente; se tiver, nada é apagado e o Donel avisa, com um botão para abrir a pasta. A faxina do Jobu também passa a recolher as cópias esquecidas."
+}

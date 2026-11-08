@@ -1,31 +1,36 @@
 // Oráculo no centro (owner, 06/11: "Estou com telas redundantes") — the center of "Uso geral" shows the Oráculo
-// Harrow instead of a conversation the Jobu already shows. Ledger v5, fatia 3 (D5: tela B with the box of A on top):
-// on top, what waits for the owner (the slot of the box "Esperando você", fatia 1); below, the readable table of
-// every task (`LedgerTable`). The cards (`LedgerCards`, the same as the Mindscape's) open over it, where the owner
-// decides; every decision goes to the main as the owner. The terminals are one click away (Ctrl+Shift+O).
+// Harrow instead of a conversation the Jobu already shows. Ledger v5 (D5: tela B with the box of A on top):
+// - on top, the box "Esperando você" (fatia 1, `OwnerInbox`): every kind of thing that waits for the owner, not only
+//   the high-risk deliveries; it folds into one line when empty;
+// - below, the readable table of every task (fatia 3, `LedgerTable`), whose filter "Esperando você" is the same list.
+// The cards (`LedgerCards`, the same as the Mindscape's) open over it, where the owner decides; every decision goes
+// to the main as the owner. The terminals are one click away (Ctrl+Shift+O).
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ledgerStrip, ownerQueue, type LedgerTask } from '../../shared/ledger/contract';
+import { ledgerStrip, type LedgerTask } from '../../shared/ledger/contract';
 import type { LedgerSnapshot } from '../../shared/ledger/channels';
+import { CARD_KINDS, inboxBoards, ownerInbox, type OwnerInboxKind, type PlaceStates } from '../../shared/ledger/inbox';
 import type { PlaceNameOf } from '../../shared/ledger/labels';
 import { placeInfoOfMap, type LedgerPlacesSnapshot } from '../../shared/ledger/mirror';
 import { LedgerCards } from './Mindscape/LedgerCards';
+import { OwnerInbox } from './Mindscape/OwnerInbox';
 import { LedgerTable } from './LedgerTable';
 import styles from './OracleCenter.module.css';
 
-function ago(since: number, now: number): string {
-  const minutes = Math.max(0, Math.round((now - since) / 60_000));
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.round(minutes / 60);
-  return hours < 48 ? `${hours} h` : `${Math.round(hours / 24)} dias`;
-}
-
-export function OracleCenter({ placeName }: { readonly placeName?: PlaceNameOf }): React.JSX.Element {
+export function OracleCenter({
+  placeName,
+  placeStatesOf,
+}: {
+  readonly placeName?: PlaceNameOf;
+  /** The places of these boards (for the orphans); absent = no orphan is shown. */
+  readonly placeStatesOf?: (projectPaths: readonly string[]) => PlaceStates;
+}): React.JSX.Element {
   const [snapshot, setSnapshot] = useState<LedgerSnapshot | null>(null);
   const [names, setNames] = useState<LedgerPlacesSnapshot | null>(null);
-  /** The cards open over the table: the first one is the task the owner picked. */
-  const [cardsFirst, setCardsFirst] = useState<string | null | undefined>(undefined);
-  const closeCards = useCallback(() => setCardsFirst(undefined), []);
+  const [now, setNow] = useState(() => Date.now());
+  /** The cards open over the table, on the task the owner picked. */
+  const [cardFor, setCardFor] = useState<string | null>(null);
+  const closeCards = useCallback(() => setCardFor(null), []);
 
   useEffect(() => {
     const api = window.donel?.ledger;
@@ -49,44 +54,46 @@ export function OracleCenter({ placeName }: { readonly placeName?: PlaceNameOf }
     readNames();
     const off = api.onChanged((next) => {
       setSnapshot(next);
+      setNow(Date.now());
       readNames();
     });
+    // The box has thresholds in time (a delivery stopped for 24 h, a letter stuck for 30 min).
+    const timer = setInterval(() => setNow(Date.now()), 60_000);
     return () => {
       alive = false;
       off();
+      clearInterval(timer);
     };
   }, []);
 
   const places = useMemo(() => placeInfoOfMap(names?.places ?? {}, placeName), [names, placeName]);
-  const queue = snapshot ? ownerQueue(snapshot.doc, null) : [];
+  const items = useMemo(
+    () => (snapshot ? ownerInbox(snapshot.doc, null, now, placeStatesOf?.(inboxBoards(snapshot.doc))) : []),
+    [snapshot, now, placeStatesOf],
+  );
+  const inbox = useMemo(() => new Map<string, OwnerInboxKind>(items.map((item) => [item.task.id, item.kind])), [items]);
+  const cardQueue = items.filter((item) => CARD_KINDS.has(item.kind)).map((item) => item.task);
   const strip = snapshot ? ledgerStrip(snapshot.doc, null) : null;
-  const cards =
-    cardsFirst === undefined ? [] : cardsFirst === null ? queue : [...queue.filter((task) => task.id === cardsFirst), ...queue.filter((task) => task.id !== cardsFirst)];
-  const openCard = useCallback((task: LedgerTask) => setCardsFirst(task.id), []);
+  const openCard = useCallback((task: LedgerTask) => setCardFor(task.id), []);
 
   return (
     <div className={styles.oracle} data-testid="oracle-center">
       <div className={styles.layout}>
-        {/* The box "Esperando você" (fatia 1) takes this place; until then, the count and the cards. */}
-        <section className={styles.waiting} data-slot="caixa-esperando-voce" aria-label="Esperando você">
-          {queue.length > 0 ? (
-            <>
-              <span className={styles.waitingCount}>◆ {queue.length} esperando você</span>
-              {strip?.oldestWaitingSince != null ? <span className={styles.waitingMeta}>a mais antiga há {ago(strip.oldestWaitingSince, Date.now())}</span> : null}
-              <button type="button" className={styles.waitingOpen} onClick={() => setCardsFirst(null)}>
-                Abrir as cartas
-              </button>
-            </>
-          ) : (
+        {items.length > 0 ? (
+          <div className={styles.inboxSlot}>
+            <OwnerInbox items={items} now={now} placeName={placeName} showBoard />
+          </div>
+        ) : (
+          <section className={styles.waiting} aria-label="Esperando você">
             <span className={styles.waitingMeta}>
               Nada esperando você
               {strip && strip.total > 0 ? ` · ${strip.open} abertas · ${strip.running} em execução · ${strip.deliveredUnaccepted} entregues sem aceite` : ''}
             </span>
-          )}
-          {snapshot?.readOnly ? <span className={styles.waitingMeta}>gravado por versão mais nova: só leitura</span> : null}
-        </section>
-        {snapshot && snapshot.doc && Object.keys(snapshot.doc.tasks).length > 0 ? (
-          <LedgerTable doc={snapshot.doc} places={places} ownerName={names?.ownerName ?? null} onOpenCard={openCard} />
+          </section>
+        )}
+        {snapshot?.readOnly ? <p className={styles.waitingMeta}>Gravado por uma versão mais nova do Donel: aqui é só leitura.</p> : null}
+        {snapshot && Object.keys(snapshot.doc.tasks).length > 0 ? (
+          <LedgerTable doc={snapshot.doc} places={places} ownerName={names?.ownerName ?? null} onOpenCard={openCard} inbox={inbox} />
         ) : (
           <div className={styles.empty}>
             <p className={styles.title}>Nenhuma tarefa ainda</p>
@@ -94,7 +101,9 @@ export function OracleCenter({ placeName }: { readonly placeName?: PlaceNameOf }
           </div>
         )}
       </div>
-      {cards.length > 0 ? <LedgerCards key={cardsFirst ?? 'fila'} queue={cards} placeName={placeName} onClose={closeCards} /> : null}
+      {cardFor !== null && cardQueue.length > 0 ? (
+        <LedgerCards key={cardFor} queue={cardQueue} placeName={placeName} initialId={cardFor} onClose={closeCards} />
+      ) : null}
     </div>
   );
 }

@@ -1,0 +1,4 @@
+{
+  "title": "PR de cada projeto na barra lateral",
+  "text": "Cada projeto mostra o número do PR da branch, verde, amarelo ou vermelho conforme os checks, e avisa quando pediram mudanças. Clique nele para ver os checks e reviews e, se algo quebrou, mande o Claude consertar com um botão."
+}

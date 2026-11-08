@@ -1,0 +1,4 @@
+{
+  "title": "Ler um arquivo do Slack não pede mais carta",
+  "text": "A trava do Slack barrava qualquer ação do Slack que tivesse \"arquivo\" no nome, inclusive só ler os detalhes de um arquivo, e até um comando que apenas citava essa ação. Agora só barra o que manda ou sobe algo ao Slack; ler passa direto, e enviar continua precisando da carta aceita."
+}

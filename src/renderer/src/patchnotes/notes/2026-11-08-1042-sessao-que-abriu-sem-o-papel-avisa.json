@@ -1,0 +1,4 @@
+{
+  "title": "Sessão que abriu sem o papel avisa",
+  "text": "Quando uma sessão com papel abre (ou é retomada, ou renovada) e o papel não chega a ela, a aba mostra um aviso amarelo no topo do terminal: \"sem o papel\", quando o texto do papel sumiu ou não foi gravado, ou \"sem o escopo do papel\", quando as regras de MCPs, plugins e skills não foram gravadas e a sessão ficou com tudo. Antes ela abria assim sem dizer nada."
+}
