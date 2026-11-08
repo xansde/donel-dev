@@ -42,6 +42,58 @@ describe('furar a trava (tem de recusar)', () => {
   });
 });
 
+// The Revisor's probe on #285: holes that were there before it, closed here.
+describe('furos antigos (revisão do #285)', () => {
+  const wb = (code: string) => v('mcp__composio__COMPOSIO_REMOTE_WORKBENCH', { code_to_execute: code });
+  it('M envio chamado pelo nome direto da ferramenta do Composio', () => {
+    expect(v('mcp__composio__SLACK_SHARE_A_REMOTE_FILE', { channels: 'geral', file: 'F1' })).toBe('deny');
+    expect(v('mcp__composio__SLACK_SEND_ME_MESSAGE', { channel: 'geral', text: 'x' })).toBe('deny');
+  });
+  it('N nome da ação montado em código no workbench', () => {
+    expect(wb(`run_composio_tool("SLACK_" + "SEND_MESSAGE", {"channel": "geral", "text": "x"})`)).toBe('deny');
+    expect(wb(`run_composio_tool(f"SLACK_{'SEND'}_MESSAGE", {"channel": "geral", "text": "x"})`)).toBe('deny');
+    expect(wb(`run_composio_tool("slack_send_message".upper(), {"channel": "geral", "text": "x"})`)).toBe('deny');
+    expect(wb(`s = pick()\nrun_composio_tool(s, {"channel": "geral", "text": "x"})`)).toBe('deny');
+    expect(wb(`import base64\nrun_composio_tool(base64.b64decode("U0xBQ0tfU0VORF9NRVNTQUdF").decode(), {"channel": "geral"})`)).toBe('deny');
+  });
+  it('O nome da ação montado num comando que executa o Composio', () => {
+    expect(bash(`python3 -c 'from composio import Composio; s=input(); Composio().tools.execute(s, {"channel": "geral"})'`)).toBe('deny');
+  });
+  it('P tornar arquivo do Slack público é publicação', () => {
+    const slug = 'SLACK_ENABLE_PUBLIC_SHARING_OF_A_FILE';
+    expect(v('mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL', { tools: [{ tool_slug: slug, arguments: { file: 'F1' } }] })).toBe('deny');
+    expect(v(`mcp__composio__${slug}`, { file: 'F1' })).toBe('deny');
+    expect(wb(`run_composio_tool('${slug}', {'file': 'F1'})`)).toBe('deny');
+    expect(bash(`python run.py ${slug} F1`)).toBe('deny');
+  });
+  // 2ª revisão do #287: o executor chamado de forma indireta é ilegível; só chamada direta com literal é julgada.
+  it('R1 alias do executor', () => expect(wb(`r = run_composio_tool\nr('SL' + 'ACK_SEND_MESSAGE', {'channel': 'geral', 'text': 'x'})`)).toBe('deny'));
+  it('R2 functools.partial', () =>
+    expect(wb(`import functools\nfunctools.partial(run_composio_tool, 'SL' + 'ACK_SEND_MESSAGE')({'channel': 'geral', 'text': 'x'})`)).toBe('deny'));
+  it('R3 dict de funções', () => expect(wb(`ops = {'go': run_composio_tool}\nops['go']('SL' + 'ACK_SEND_MESSAGE', {'channel': 'geral'})`)).toBe('deny'));
+  it('R4 globals()[...]', () => expect(wb(`globals()['run_' + 'composio_tool']('SL' + 'ACK_SEND_MESSAGE', {'channel': 'geral'})`)).toBe('deny'));
+  it('R5 exec(base64) sem citar Composio', () => expect(wb(`import base64\nexec(base64.b64decode('cHJpbnQoMSk='))`)).toBe('deny'));
+  it('R6 JS com .tools["execute"]', () => expect(wb(`await c.tools['execute']('SL' + 'ACK_SEND_MESSAGE', {})`)).toBe('deny'));
+  it('R7 URL da API v2 com a ação montada', () =>
+    expect(bash(`curl -X POST https://backend.composio.dev/api/v2/actions/$A/execute -d '{"input":{"channel":"geral"}}'`)).toBe('deny'));
+  it('S lembrete para outra pessoa e troca de tópico põem texto em nome do dono', () => {
+    const run = (slug: string, args: unknown) => v('mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL', { tools: [{ tool_slug: slug, arguments: args }] });
+    expect(run('SLACK_CREATE_A_REMINDER', { text: 'pagar', time: 'in 1 hour', user: 'U0OUTRA' })).toBe('deny');
+    expect(run('SLACK_SET_THE_TOPIC_OF_A_CONVERSATION', { channel: 'geral', topic: 'x' })).toBe('deny');
+    expect(v('mcp__composio__SLACK_SET_THE_TOPIC_OF_A_CONVERSATION', { channel: 'geral', topic: 'x' })).toBe('deny');
+    expect(wb(`run_composio_tool('SLACK_CREATE_A_REMINDER', {'text': 'x', 'user': 'U0OUTRA'})`)).toBe('deny');
+    expect(run('SLACK_CREATE_A_REMINDER', { text: 'pagar', time: 'in 1 hour' })).toBe('not-slack');
+  });
+  it('T código do workbench que não chama o executor segue usável', () => {
+    expect(wb(`import pandas as pd\nprint(pd.DataFrame({'a': [1, 2]}).sum())`)).toBe('not-slack');
+    expect(bash('git log --oneline | grep -i composio')).toBe('not-slack');
+  });
+  it('Q ação de leitura com nome literal no workbench continua passando', () => {
+    expect(wb(`run_composio_tool("GMAIL_FETCH_EMAILS", {"max_results": 5})`)).toBe('not-slack');
+    expect(wb(`run_composio_tool('SLACK_FETCH_CONVERSATION_HISTORY', {'channel': 'geral'})`)).toBe('not-slack');
+  });
+});
+
 describe('o que a trava promete (controle)', () => {
   it('H um caractere diferente recusa', () => expect(v(slack, { channel_id: 'produto', message: 'oi!' })).toBe('deny'));
   it('H2 mesmo texto passa', () => expect(v(slack, { channel_id: 'produto', message: 'oi' })).toBe('allow'));

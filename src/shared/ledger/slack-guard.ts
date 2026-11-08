@@ -159,6 +159,8 @@ function isPostingAction(name: string): boolean {
   return (
     /(sends?|posts?|repl(y|ies)|schedules?|updates?|edits?)[_-]?(an?[_-]?)?(slack[_-]?)?(ephemeral[_-]?|direct[_-]?)?(message|msg|reply|thread|to[_-]?(an?[_-]?)?(channel|thread|user|dm|slack))|chat[_.-]?(post|update|schedule|me)|send[_-]?dm|(message|msg)[_-]?(send|post)/.test(n) ||
     /(enviar|mandar|postar|publicar|responder|agendar|editar|atualizar)[_-]?((a|o|um|uma|no|na|em)[_-]?)?(mensagem|msg|resposta|thread|fio|canal|dm)/.test(n) ||
+    // Text others read in the owner's name: a channel topic or purpose, a reminder (for someone else: `isPostingCall`).
+    /(set|change|update|edit)s?[_-]?(the[_-]?)?(channel[_-]?|conversation[_-]?)?(topic|purpose)|(create|add|set)s?[_-]?(an?[_-]?)?reminder/.test(n) ||
     isUploadAction(n)
   );
 }
@@ -192,7 +194,7 @@ const READ_METHOD =
   /^(conversations\.(history|replies|info|list|members)|users\.(info|list|lookupByEmail|conversations|getPresence|profile\.get)|auth\.test|team\.info|emoji\.list|search\.(messages|files|all)|reactions\.(get|list)|pins\.list|bookmarks\.list|files\.(info|list)|bots\.info|usergroups\.(list|users\.list)|chat\.getPermalink|dnd\.info)$/;
 
 /** Why a free text (a shell command, workbench code, any tool input) carries a post to Slack; `null` = it does not. */
-export function freeTextSlackPost(text: string): string | null {
+export function freeTextSlackPost(text: string, { code = false }: { code?: boolean } = {}): string | null {
   for (const match of text.matchAll(/slack\.com\/api\/([A-Za-z0-9_.${}()-]*)/gi)) {
     const method = match[1]!.replace(/[?#].*$/, '');
     if (!READ_METHOD.test(method)) return `chama a API do Slack (${method || 'método montado'})`;
@@ -201,16 +203,90 @@ export function freeTextSlackPost(text: string): string | null {
   if (/canal-produto/i.test(text)) return 'usa o canal-produto';
   if (/\bchat[._](postMessage|post_message|update|scheduleMessage|schedule_message|postEphemeral|post_ephemeral|meMessage|me_message)\b/i.test(text)) return 'chama um envio do Slack';
   if (/\bfiles[._](upload|upload_v2|uploadV2|completeUploadExternal|complete_upload_external|getUploadURLExternal|get_upload_url_external|share)/i.test(text)) return 'manda arquivo ao Slack';
-  for (const [slug] of text.matchAll(/SLACK_[A-Z0-9_]+/g)) if (isPostingSlug(slug)) return 'chama uma ação de envio do Slack do Composio';
-  return null;
+  for (const [slug] of text.matchAll(/SLACK_[A-Z0-9_]+/g)) {
+    // A reminder posts only when it names someone: judged with its arguments (structured) or in code, not as a word.
+    if (/REMINDER/.test(slug)) continue;
+    if (isPublishingSlug(slug)) return 'torna um arquivo do Slack público';
+    if (isPostingSlug(slug)) return 'chama uma ação de envio do Slack do Composio';
+  }
+  return composioCallInCode(text, code);
 }
 
 /**
- * A Composio Slack slug named in free text that sends or uploads: the same test as a structured call, plus any
- * slug with a send verb as a word (SHARE_A_REMOTE_FILE). A slug that only names a file (RETRIEVE_..._FILE) reads.
+ * A Composio Slack slug that sends or uploads: the posting-action test, plus any slug with a send verb as a word
+ * (SHARE_A_REMOTE_FILE, SEND_ME_MESSAGE). A slug that only names a file (RETRIEVE_..._FILE) reads.
  */
 function isPostingSlug(slug: string): boolean {
-  return isPostingAction(slug) || /(^|_)(SENDS?|POSTS?|REPL(Y|IES)|SCHEDULES?|UPLOADS?|SHARES?)(_|$)/.test(slug);
+  if (isPostingAction(slug) || isPublishingSlug(slug)) return true;
+  // The word test is for Composio's upper-case slugs only; a draft or a read (GET_THREAD_REPLIES) does not post.
+  if (/draft/i.test(slug) || COMPOSIO_READ_LEAD.test(slug)) return false;
+  return /(^|_)(SENDS?|POSTS?|REPLY|SCHEDULES?|UPLOADS?|SHARES?)(_|$)/.test(slug);
+}
+
+const COMPOSIO_READ_LEAD = /^SLACK_(GET|LIST|FETCH|RETRIEVE|SEARCH|FIND|LOOKUP)_/;
+
+/** A structured call that posts: a reminder only when it names someone (or a channel); for oneself it posts nothing. */
+function isPostingCall(slug: string, args: unknown): boolean {
+  if (!isPostingSlug(slug)) return false;
+  if (!/reminder/i.test(slug)) return true;
+  return isRecord(args) && ['user', 'user_id', 'userId', 'channel', 'channel_id'].some((key) => !isEmpty(args[key]));
+}
+
+/** A Composio slug that makes something public (ENABLE_PUBLIC_SHARING_OF_A_FILE): a publication, never freed by a letter. */
+function isPublishingSlug(slug: string): boolean {
+  return !COMPOSIO_READ_LEAD.test(slug) && /(^|_)(PUBLIC|PUBLISH(ES)?|SHARING)(_|$)/.test(slug);
+}
+
+/** The Composio executor, by name (`run_composio_tool`, `tools.execute`, `tools['execute']`…). */
+const COMPOSIO_EXECUTOR = /\b(?:run_composio_tool|execute_tool|execute_action|executeAction|executeTool)\b|\b(?:tools|actions|composio)\s*(?:\.\s*execute\b|\[\s*['"`]execute['"`]\s*\])/g;
+/** Dynamic execution: with it, code can reach the executor without naming it, or build what it runs. */
+const DYNAMIC_CODE = /\b(?:exec|eval|compile|getattr|setattr|globals|locals|vars|__import__|partial|methodcaller|attrgetter|b64decode|b32decode|a85decode|unhexlify|fromhex|atob)\s*\(|__builtins__|__dict__|\bimportlib\b|\bbase64\b|\bcodecs\b|\bnew\s+Function\b|\bFunction\s*\(|\bBuffer\.from\s*\(/;
+/** The REST API: v3 puts the action after `execute`, v2 before it. */
+const COMPOSIO_EXEC_URLS = [/\/(?:tools|actions)\/execute\/([^\s"'?#]*)/g, /\/actions\/([^\s"'?#/]*)\/execute\b/g];
+
+/**
+ * Code that runs Composio actions (workbench, a remote bash, a script a command runs) is read only in one form:
+ * the executor called DIRECTLY, by name, with the action as a plain string literal. Any indirection (an alias, a
+ * dict of functions, `partial`, `getattr`/`globals`, `exec`/`eval`, base64 or another decode) is unreadable and
+ * refused, since from the text it could be a send. A literal Slack slug that sends or publishes is refused too.
+ * This holds back a mistake or an injected instruction, not an agent set on getting around it.
+ */
+function composioCallInCode(text: string, code: boolean): string | null {
+  const namesExecutor = new RegExp(COMPOSIO_EXECUTOR.source).test(text);
+  if (!code && !namesExecutor && !/composio/i.test(text)) return null;
+  if (DYNAMIC_CODE.test(text)) return 'usa execução dinâmica (exec, eval, getattr, globals, partial, base64 ou outro decode), e assim não dá para saber o que roda';
+  const literal = /^\s*\(\s*(['"])([A-Za-z0-9_]+)\1\s*[,)]/;
+  for (const match of text.matchAll(COMPOSIO_EXECUTOR)) {
+    const rest = text.slice((match.index ?? 0) + match[0].length);
+    if (match[0].includes('[') || !/^\s*\(/.test(rest)) return 'usa o executor do Composio fora de uma chamada direta (alias, dicionário ou função passada adiante)';
+    const lit = literal.exec(rest);
+    if (!lit) return 'monta em código o nome da ação do Composio, e assim não dá para saber se é um envio ao Slack';
+    const slug = lit[2]!.toUpperCase();
+    if (COMPOSIO_SLACK.test(slug) && isPublishingSlug(slug)) return 'torna um arquivo do Slack público';
+    if (COMPOSIO_SLACK.test(slug) && isPostingSlug(slug)) return 'chama uma ação de envio do Slack do Composio';
+  }
+  for (const re of COMPOSIO_EXEC_URLS) {
+    for (const match of text.matchAll(re)) {
+      const seg = match[1] ?? '';
+      if (!/^[A-Za-z0-9_]+$/.test(seg)) return 'monta na URL o nome da ação do Composio, e assim não dá para saber se é um envio ao Slack';
+      const slug = seg.toUpperCase();
+      if (COMPOSIO_SLACK.test(slug) && isPostingSlug(slug)) return 'chama uma ação de envio do Slack do Composio';
+    }
+  }
+  return null;
+}
+
+/** Every key and string value of a tool input, depth-first (bounded, like `composioActions`). */
+function textsOf(value: unknown, out: string[] = [], depth = 0): string[] {
+  if (depth > 8) return out;
+  if (typeof value === 'string') out.push(value);
+  else if (Array.isArray(value)) for (const item of value) textsOf(item, out, depth + 1);
+  else if (isRecord(value))
+    for (const [key, item] of Object.entries(value)) {
+      out.push(key);
+      textsOf(item, out, depth + 1);
+    }
+  return out;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -274,27 +350,25 @@ export function detectSlackSend(toolName: string, toolInput: unknown): SlackSend
   if (!mcp) return { kind: 'none' };
   const { server, action } = mcp;
   if (server === 'donel') return { kind: 'none' }; // the letter itself, and the Oráculo
+  const publishing = { unreadable: 'torna um arquivo do Slack público; publicação não passa por carta, peça ao dono' };
   const inlineUpload = { unreadable: 'manda arquivo ao Slack com o conteúdo dentro da chamada, e a carta só confere um arquivo pelo caminho (use a ferramenta de upload do MCP do Slack)' };
   // A Slack MCP server's upload is read by the path; anything else that uploads (Composio) cannot be compared.
   const read = (args: unknown) => (isUploadAction(String(action)) ? (/slack/i.test(server) ? readUpload(args) : inlineUpload) : readSend(args));
   // Composio and alike: the action is a `SLACK_*` slug, as the tool itself or inside an execute call.
   if (COMPOSIO_SLACK.test(action)) {
-    if (!isPostingAction(action)) return { kind: 'none' };
+    if (isPublishingSlug(action)) return { kind: 'structured', sends: [publishing] };
+    if (!isPostingCall(action, toolInput)) return { kind: 'none' };
     return { kind: 'structured', sends: [read(toolInput)] };
   }
   if (COMPOSIO_META.test(action)) return { kind: 'none' };
-  const inner = composioActions(toolInput).filter((entry) => isPostingAction(entry.slug));
+  const inner = composioActions(toolInput).filter((entry) => isPostingCall(entry.slug, entry.args));
   if (inner.length > 0)
-    return { kind: 'structured', sends: inner.map((entry) => (isUploadAction(entry.slug) ? inlineUpload : readSend(entry.args))) };
+    return { kind: 'structured', sends: inner.map((entry) => (isPublishingSlug(entry.slug) ? publishing : isUploadAction(entry.slug) ? inlineUpload : readSend(entry.args))) };
   if (/slack/i.test(server) && isPostingAction(action)) return { kind: 'structured', sends: [read(toolInput)] };
   // Any other tool (Composio workbench, a remote bash, a runner): a post written inside it cannot be read.
-  let flat = '';
-  try {
-    flat = JSON.stringify(toolInput) ?? '';
-  } catch {
-    flat = '';
-  }
-  const why = freeTextSlackPost(flat);
+  // The raw strings, not the JSON: code keeps its own quotes, so a literal slug is still told from an assembled one.
+  const flat = textsOf(toolInput).join('\n');
+  const why = freeTextSlackPost(flat, { code: /composio/i.test(server) });
   return why ? { kind: 'unreadable', why: `a ferramenta ${action || toolName} ${why} dentro de código, e lá o envio não pode ser conferido` } : { kind: 'none' };
 }
 
