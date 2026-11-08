@@ -279,7 +279,7 @@ export function EnvironmentPanel({ view, onClose, onRefresh, onCloseSessions, on
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const closableIds = new Set(panel.closable.map((entry) => entry.session.sessionId));
+  const closableIds = new Set(panel.closable.filter((entry) => entry.canClose).map((entry) => entry.session.sessionId));
   const markedNow = [...marked].filter((id) => closableIds.has(id));
   const toggle = (id: string): void => {
     const next = new Set(marked);
@@ -288,7 +288,7 @@ export function EnvironmentPanel({ view, onClose, onRefresh, onCloseSessions, on
     setManual(next);
   };
   const closeMarked = (): void => {
-    const tabIds = panel.closable.filter((entry) => marked.has(entry.session.sessionId)).flatMap((entry) => (entry.session.tabId ? [entry.session.tabId] : []));
+    const tabIds = panel.closable.filter((entry) => entry.canClose && marked.has(entry.session.sessionId)).flatMap((entry) => (entry.session.tabId ? [entry.session.tabId] : []));
     if (tabIds.length > 0) onCloseSessions?.(tabIds);
     setManual(new Set());
     setConfirming(false);
@@ -405,11 +405,14 @@ export function EnvironmentPanel({ view, onClose, onRefresh, onCloseSessions, on
               ) : null}
             </div>
             {panel.closable.length === 0 ? <p className={styles.muted}>Nada para fechar: toda sessão aberta está andando ou espera você.</p> : null}
+            {panel.closable.some((entry) => !entry.canClose) ? (
+              <p className={styles.muted}>As sem caixa não têm aba neste app: feche pelo app que as abriu.</p>
+            ) : null}
             <ul className={styles.list}>
-              {panel.closable.map(({ session }) => (
+              {panel.closable.map(({ session, canClose }) => (
                 <li key={session.sessionId} className={styles.closeRow}>
-                  <label>
-                    <input type="checkbox" checked={marked.has(session.sessionId)} onChange={() => toggle(session.sessionId)} />
+                  <label title={canClose ? undefined : 'Sem aba neste app: feche pelo app que a abriu.'}>
+                    <input type="checkbox" disabled={!canClose} checked={canClose && marked.has(session.sessionId)} onChange={() => toggle(session.sessionId)} />
                     <span className={`${styles.chip} ${styles[`tone_${PULSE_TONE[session.pulse.state]}`]}`}>{PULSE_LABEL[session.pulse.state]}</span>
                     <b>{session.name}</b>
                   </label>

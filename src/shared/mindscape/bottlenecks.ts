@@ -69,7 +69,7 @@ export function apiFailureReason(kind: string, text: string): string {
 function idle(since: number | null, now: number, what: string, source: SessionPulse['source']): SessionPulse {
   const age = since === null ? null : now - since;
   if (age !== null && age >= IDLE_CLOSE_MS) return { state: 'pode-fechar', reason: `${what} há ${shortAge(age)}, ninguém retomou`, since, source };
-  return { state: 'ociosa', reason: age === null ? what : `${what} há ${shortAge(age)}`, since, source };
+  return { state: 'ociosa', reason: age === null ? what : age < 60_000 ? `${what} agora` : `${what} há ${shortAge(age)}`, since, source };
 }
 
 /** The pulse of a session on a remote place, from the place's own reading. `now` is the place's clock. */
@@ -87,7 +87,7 @@ export function pulseOfRemote(reading: RemoteSessionReading, now: number): Sessi
     if (reading.last === 'tool') return { state: 'trabalhando', reason: reading.tool ? `rodando ${reading.tool}` : 'rodando uma ferramenta', since, source };
     if (reading.last === 'request') {
       const age = since === null ? null : now - since;
-      return { state: 'esperando-api', reason: age === null ? 'esperando a resposta da API' : `esperando a resposta da API há ${shortAge(age)}`, since, source };
+      return { state: 'esperando-api', reason: age === null || age < 60_000 ? 'esperando a resposta da API' : `esperando a resposta da API há ${shortAge(age)}`, since, source };
     }
     return { state: 'trabalhando', reason: 'escrevendo', since, source };
   }
@@ -232,8 +232,11 @@ export interface EnvPanel {
   readonly perMachine: readonly { readonly machine: EnvMachine; readonly counts: Readonly<Record<PulseState, number>>; readonly total: number; readonly rssBytes: number }[];
   readonly bottlenecks: readonly Bottleneck[];
   readonly waits: readonly WaitPair[];
-  /** Sessions the owner can close, the "pode fechar" ones first (pre-marked), then idle and stuck ones. */
-  readonly closable: readonly { readonly session: EnvSession; readonly premarked: boolean }[];
+  /**
+   * Sessions that could be closed, the "pode fechar" ones first (pre-marked), then stuck and idle ones. `canClose` is
+   * `canOfferClose`: a session with no tab in this app is listed (it weighs on its machine) but has no box.
+   */
+  readonly closable: readonly { readonly session: EnvSession; readonly premarked: boolean; readonly canClose: boolean }[];
 }
 
 const STATES: readonly PulseState[] = ['trabalhando', 'esperando-api', 'travada', 'precisa-dono', 'ociosa', 'pode-fechar', 'desconhecido'];
@@ -250,7 +253,12 @@ const STOPPED: ReadonlySet<PulseState> = new Set(['ociosa', 'pode-fechar', 'trav
  * coordinates the board even idle), never one with no tab in the app (the close gesture goes through the tab).
  */
 export function canOfferClose(session: EnvSession): boolean {
-  if (!session.tabId || session.roleId === LEADER_ROLE_ID) return false;
+  return Boolean(session.tabId) && isCloseCandidate(session);
+}
+
+/** Stopped (idle, forgotten or stuck) and not the Líder: worth closing, whether or not this app holds its tab. */
+function isCloseCandidate(session: EnvSession): boolean {
+  if (session.roleId === LEADER_ROLE_ID) return false;
   return session.pulse.state === 'pode-fechar' || session.pulse.state === 'ociosa' || session.pulse.state === 'travada';
 }
 
@@ -398,8 +406,8 @@ export function buildEnvPanel(input: EnvInput): EnvPanel {
 
   const rank: Partial<Record<PulseState, number>> = { 'pode-fechar': 0, travada: 1, ociosa: 2 };
   const closable = input.sessions
-    .filter(canOfferClose)
-    .map((session) => ({ session, premarked: session.pulse.state === 'pode-fechar' }))
+    .filter(isCloseCandidate)
+    .map((session) => ({ session, premarked: session.pulse.state === 'pode-fechar' && canOfferClose(session), canClose: canOfferClose(session) }))
     .sort((a, b) => (rank[a.session.pulse.state] ?? 9) - (rank[b.session.pulse.state] ?? 9) || (a.session.pulse.since ?? 0) - (b.session.pulse.since ?? 0));
 
   return { total: input.sessions.length, counts, perMachine, bottlenecks, waits, closable };

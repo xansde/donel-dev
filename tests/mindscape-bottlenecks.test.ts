@@ -79,15 +79,23 @@ describe('closing in batch', () => {
 
   it('pre-marks only "pode fechar"; idle and stuck ones are offered unmarked', () => {
     const panel = buildEnvPanel({
-      sessions: [session('idle', { state: 'ociosa' }), session('old', { state: 'pode-fechar' }), session('stuck', { state: 'travada', reason: 'gateway fora do ar há 1 h' }), session('busy', { state: 'trabalhando' })],
+      sessions: [
+        session('idle', { state: 'ociosa' }),
+        session('old', { state: 'pode-fechar' }),
+        session('stuck', { state: 'travada', reason: 'gateway fora do ar há 1 h' }),
+        session('busy', { state: 'trabalhando' }),
+        session('elsewhere', { state: 'pode-fechar' }, { tabId: undefined }),
+        session('leader', { state: 'pode-fechar' }, { roleId: 'lider' }),
+      ],
       machines: [],
       accounts: [],
       links: [],
     });
-    expect(panel.closable.map((entry) => [entry.session.sessionId, entry.premarked])).toEqual([
-      ['old', true],
-      ['stuck', false],
-      ['idle', false],
+    expect(panel.closable.map((entry) => [entry.session.sessionId, entry.premarked, entry.canClose])).toEqual([
+      ['old', true, true],
+      ['elsewhere', false, false],
+      ['stuck', false, true],
+      ['idle', false, true],
     ]);
   });
 });
