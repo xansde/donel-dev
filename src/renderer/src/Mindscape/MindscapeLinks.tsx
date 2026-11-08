@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react';
 import type { MindscapeLink } from '../../../shared/mindscape/model';
 import { cardOutlinePath, linkPath, type Rect } from './roughShapes';
 import styles from './Mindscape.module.css';
@@ -13,20 +13,80 @@ function sameSizes(a: CardSizes, b: CardSizes): boolean {
 
 /**
  * Mindscape, fatia 05 — the rendered size of each card (`data-card-id`) inside
- * `container`, read after every render. The state only changes when a size
- * does, so a drag (position only) costs no extra render.
+ * `container`. The state only changes when a size does, so a drag (position
+ * only) costs no extra render.
+ *
+ * Peso do renderer (08/11): the sizes come from a `ResizeObserver`, which reads
+ * them after the browser's own layout. Reading `offsetWidth` of every card after
+ * every render forced a full layout of the board (hundreds of cards) on each of
+ * them — and the app renders on every event of every session. After each render
+ * only the set of observed cards is brought up to date (no size is read there).
  */
 export function useCardSizes(container: RefObject<HTMLElement>): CardSizes {
   const [sizes, setSizes] = useState<CardSizes>({});
+  const observerRef = useRef<ResizeObserver | null>(null);
+  /** The observed card elements, with the id each one draws. */
+  const observedRef = useRef(new Map<Element, string>());
+
+  useEffect(
+    () => () => {
+      observerRef.current?.disconnect();
+      observerRef.current = null;
+      observedRef.current.clear();
+    },
+    [],
+  );
+
   useLayoutEffect(() => {
     const root = container.current;
-    if (!root) return;
-    const next: Record<string, { w: number; h: number }> = {};
+    if (!root || typeof ResizeObserver === 'undefined') return;
+    if (!observerRef.current) {
+      observerRef.current = new ResizeObserver((entries) => {
+        const measured: Record<string, { w: number; h: number }> = {};
+        for (const entry of entries) {
+          const id = observedRef.current.get(entry.target);
+          if (!id) continue;
+          const box = entry.borderBoxSize?.[0];
+          measured[id] = box
+            ? { w: Math.round(box.inlineSize), h: Math.round(box.blockSize) }
+            : { w: (entry.target as HTMLElement).offsetWidth, h: (entry.target as HTMLElement).offsetHeight };
+        }
+        setSizes((previous) => {
+          const next = { ...previous, ...measured };
+          return sameSizes(previous, next) ? previous : next;
+        });
+      });
+    }
+    const observer = observerRef.current;
+    const observed = observedRef.current;
+    const present = new Set<Element>();
     root.querySelectorAll<HTMLElement>('[data-card-id]').forEach((element) => {
       const id = element.dataset.cardId;
-      if (id) next[id] = { w: element.offsetWidth, h: element.offsetHeight };
+      if (!id) return;
+      present.add(element);
+      if (observed.get(element) !== id) {
+        observed.set(element, id);
+        observer.observe(element);
+      }
     });
-    setSizes((previous) => (sameSizes(previous, next) ? previous : next));
+    const gone: string[] = [];
+    for (const [element, id] of observed) {
+      if (present.has(element)) continue;
+      observer.unobserve(element);
+      observed.delete(element);
+      gone.push(id);
+    }
+    if (gone.length > 0) {
+      const drawn = new Set(observed.values());
+      const dropped = gone.filter((id) => !drawn.has(id));
+      if (dropped.length > 0) {
+        setSizes((previous) => {
+          const next = { ...previous };
+          for (const id of dropped) delete next[id];
+          return next;
+        });
+      }
+    }
   });
   return sizes;
 }
