@@ -271,6 +271,10 @@ export function lastDecision(task: LedgerTask): LedgerEvent | undefined {
 //   asked by  → the new task's `criada` event "⟦pedido por <who>⟧" (07/11: the person, not the role that typed it);
 //               with a replaced task, a second mark after the first: "⟦substitui <id>⟧ ⟦pedido por <who>⟧", so the
 //               alfa/beta before it (which read the first mark whole) still see the "substitui"
+//   front     → the new task's `criada` event "⟦frente <name>⟧", after the marks above (07/11, the Jobu's progress by
+//               front); a replacement with no front of its own inherits the replaced one's. The Líder marks a task
+//               already made with op `frente`: one more `criada` event "⟦frente <name>⟧ ⟦pedido por <who>⟧" (not a
+//               transfer: no "transferida" mark); the last front, and the last "pedido por", win
 // A text the sessions or the owner write never starts with the mark (`startsWithMark`), so a mark is never forged.
 
 const MARK_OPEN = '⟦';
@@ -285,10 +289,11 @@ function markOf(text: string | undefined): { tag: string; rest: string } | null 
   return match ? { tag: match[1]!, rest: text!.slice(match[0].length) } : null;
 }
 
-/** The text of a birth event: `{}` when there is nothing to mark. */
-function birthTagsOf(replaces: string | undefined, requestedBy: string | undefined): { text?: string } {
+/** The text of a birth event (or of a front mark): `{}` when there is nothing to mark. */
+function birthTagsOf(replaces: string | undefined, requestedBy: string | undefined, front?: string): { text?: string } {
   const asked = requestedBy ? cleanAskedBy(requestedBy) : '';
-  const tags = [...(replaces ? [`substitui ${replaces}`] : []), ...(asked ? [`${ASKED_BY}${asked}`] : [])];
+  const named = front ? cleanFrente(front) : '';
+  const tags = [...(replaces ? [`substitui ${replaces}`] : []), ...(asked ? [`${ASKED_BY}${asked}`] : []), ...(named ? [`${FRONT}${named}`] : [])];
   return tags.length ? { text: tags.reduceRight((rest, tag) => withMark(tag, rest), '') } : {};
 }
 
@@ -311,16 +316,25 @@ export interface LedgerTransfer {
   readonly reason: string;
 }
 
-/** The tags of the birth marks (the first `criada` event): each mark, also split on ` · ` (the first 07/11 form). */
-function birthTags(task: LedgerTask): string[] {
-  const first = task.events[0];
+/** The tags of the marks of one event's text: each mark, also split on ` · ` (the first 07/11 form). */
+function tagsOf(text: string | undefined): string[] {
   const tags: string[] = [];
-  let text = first?.kind === 'criada' ? first.text : undefined;
   for (let mark = markOf(text); mark; mark = markOf(text)) {
     tags.push(...mark.tag.split(TAG_SEPARATOR));
     text = mark.rest;
   }
   return tags;
+}
+
+/** The tags of the birth marks (the first `criada` event). */
+function birthTags(task: LedgerTask): string[] {
+  const first = task.events[0];
+  return first?.kind === 'criada' ? tagsOf(first.text) : [];
+}
+
+/** Every tag of the `criada` events, oldest first: the birth, then the transfers and the front marks. */
+function criadaTags(task: LedgerTask): string[] {
+  return task.events.flatMap((event) => (event.kind === 'criada' ? tagsOf(event.text) : []));
 }
 
 const TAG_SEPARATOR = ' · ';
@@ -338,10 +352,36 @@ export function replacesOf(task: LedgerTask): string | undefined {
   return undefined;
 }
 
-/** 07/11 — who asked for the task (a person: `dono`, "Gabriel Horst (Slack)"), when the creator said it. */
+/** 07/11 — who asked for the task (a person: `dono`, "Gabriel Horst (Slack)"), when the creator or the Líder said it. */
 export function requestedByOf(task: LedgerTask): string | undefined {
-  const tag = birthTags(task).find((each) => each.startsWith(ASKED_BY));
+  const tag = [...criadaTags(task)].reverse().find((each) => each.startsWith(ASKED_BY));
   return tag ? tag.slice(ASKED_BY.length).trim() || undefined : undefined;
+}
+
+const FRONT = 'frente ';
+export const MAX_FRENTE_CHARS = 40;
+
+/** 07/11 — the front of work of the task ("Ledger", "Oráculo na VPS"), the last one marked; none = "Sem frente". */
+export function frenteOf(task: LedgerTask): string | undefined {
+  const tag = [...criadaTags(task)].reverse().find((each) => each.startsWith(FRONT));
+  return tag ? tag.slice(FRONT.length).trim() || undefined : undefined;
+}
+
+/** A front mark (op `frente`): a later `criada` event that only names the front and who asked; no work happened. */
+export function isFrontMark(task: LedgerTask, event: LedgerEvent): boolean {
+  if (event.kind !== 'criada' || event === task.events[0]) return false;
+  const tags = tagsOf(event.text);
+  return tags.length > 0 && tags.every((tag) => tag.startsWith(FRONT) || tag.startsWith(ASKED_BY));
+}
+
+/** When the task last moved (ms): its newest event that is not a front mark, so naming a front never looks like work. */
+export function lastWorkAt(task: LedgerTask): number {
+  return task.events.reduce((latest, event) => (isFrontMark(task, event) ? latest : Math.max(latest, event.at)), task.createdAt);
+}
+
+/** A front that can never open, close or split a mark: one line, no `⟦ ⟧`, no ` · `. */
+export function cleanFrente(value: string): string {
+  return value.replace(/[⟦⟧\n\r]/g, ' ').replace(/·/g, ',').replace(/\s+/g, ' ').trim().slice(0, MAX_FRENTE_CHARS);
 }
 
 /** A name that can never open, close or split a mark: one line, no `⟦ ⟧`, no ` · `. */
@@ -436,7 +476,11 @@ export type LedgerOp =
       readonly replaces?: string;
       /** 07/11 — who asked (a person); `ASKED_BY_OWNER` for the owner. Kept in the birth mark (`requestedByOf`). */
       readonly requestedBy?: string;
+      /** 07/11 — the front of work (`frenteOf`); missing = the replaced task's, else none. */
+      readonly frente?: string;
     }
+  /** 07/11 — the Líder (or the owner) names the front of a task already made, and who asked, if it says. */
+  | { readonly op: 'frente'; readonly id: string; readonly frente: string; readonly requestedBy?: string }
   | { readonly op: 'assumir'; readonly id: string }
   /** `doneBy` (06/11): the place that really did the work, when it is not the owner place that delivers. */
   | { readonly op: 'entregar'; readonly id: string; readonly proofs: readonly LedgerProof[]; readonly note?: string; readonly forOwner?: LedgerForOwner; readonly doneBy?: string }
@@ -536,7 +580,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       risk: op.risk,
       state: 'aberta',
       createdAt: ctx.now,
-      events: [{ kind: 'criada', at: ctx.now, by: actor, ...(birthTagsOf(replaced?.id, op.requestedBy)) }],
+      events: [{ kind: 'criada', at: ctx.now, by: actor, ...birthTagsOf(replaced?.id, op.requestedBy, op.frente?.trim() || (replaced && frenteOf(replaced))) }],
     };
     if (!replaced) return { ok: true, doc: withTask(doc, task), task };
     // One write: the new task and the old one cancelled, or neither.
@@ -656,6 +700,13 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
         return fail(`Só o Líder, o dono, o lugar dono (${task.ownerPlaceId}) ou, com o lugar dono fechado ou fora do quadro, quem assume o trabalho passa a tarefa adiante.`);
       const state: LedgerTaskState = task.state === 'em-execucao' ? 'aberta' : task.state;
       return done({ ...step(task, state, { kind: 'criada', at: ctx.now, by: actor, text: withMark(`transferida de ${task.ownerPlaceId} para ${to}`, reason) }), ownerPlaceId: to });
+    }
+
+    case 'frente': {
+      const front = cleanFrente(op.frente);
+      if (!front) return fail('"frente" é obrigatório: o nome da frente (ex.: Ledger).');
+      if (!(actor.kind === 'dono' || isLeaderRole(actor.roleId))) return fail('Só o Líder ou o dono diz a frente de uma tarefa.');
+      return done(step(task, task.state, { kind: 'criada', at: ctx.now, by: actor, ...birthTagsOf(undefined, op.requestedBy, front) }));
     }
 
     case 'cancelar': {

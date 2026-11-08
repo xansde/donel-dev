@@ -15,6 +15,7 @@ import {
   awaitsSend,
   doneByOf,
   eventNote,
+  frenteOf,
   isAgentBotRecord,
   isCancelled,
   lastDecision,
@@ -40,6 +41,8 @@ import { LEADER_OF_ALL } from '../mindscape/leader';
 export interface TarefaRow {
   readonly quadro: string;
   readonly titulo: string;
+  /** 07/11 — the front of work (`frenteOf`); `null` = "sem frente". */
+  readonly frente: string | null;
   /** In Portuguese: aberta, em execução, entregue, aceita, aceita, esperando envio, rejeitada, cancelada. */
   readonly estado: string;
   readonly esperando_dono: boolean;
@@ -363,6 +366,7 @@ export function tarefaRow(doc: LedgerDoc, task: LedgerTask, places: PlaceInfoOf 
   return {
     quadro: boardName(project),
     titulo: mask('titulo', task.title ?? task.request.split('\n')[0]!.slice(0, 60)),
+    frente: frenteOf(task) ?? null,
     estado: awaitsSend(task) ? 'aceita, esperando envio' : closing ? CLOSING_LABELS[closing.kind] : STATE_LABELS[state],
     esperando_dono: waitsForOwner(doc, task),
     quem_pediu: mask('quem_pediu', whoAsked(task, places, ownerName)),

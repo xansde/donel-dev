@@ -14,6 +14,7 @@ import type { DonelLiderApi } from './lider/ipc';
 import type { DonelCelularApi } from './celular';
 import type { DonelRotinasApi } from './rotinas/contract';
 import type { DonelFaxineiroApi } from './faxineiro/ipc';
+import type { RoleLaunchGap } from './roleLaunch';
 import type { DonelEsteiraApi } from './esteira/ipc';
 import type { DonelGithubApi } from './github';
 import type { DonelProjectBindingApi } from './projectBinding';
@@ -403,6 +404,11 @@ export interface PtyCreateResult {
    * nenhum valor de env sensível — `label` é o texto livre do operador.
    */
   provider?: { id: string; label: string };
+  /**
+   * Papel não entregue — the launch carried a role and part of it did not reach the CLI (`papel`: the guidance;
+   * `escopo`: the scope settings, so the session has everything). Absent when the role arrived whole or none was asked.
+   */
+  roleNotDelivered?: { roleId: string; missing: readonly RoleLaunchGap[] };
 }
 
 export interface PtyExitInfo {

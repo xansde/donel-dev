@@ -210,6 +210,8 @@ describe('espelho do Oráculo', () => {
     expect(rows[0]).toEqual({
       quadro: 'Donel Dev',
       titulo: 'Cadeiras no Mindscape',
+      // No front said: null, the table reads "sem frente".
+      frente: null,
       estado: 'aceita',
       // The first week's daily sample: a Revisor's accept goes to the owner too.
       esperando_dono: true,
@@ -232,6 +234,16 @@ describe('espelho do Oráculo', () => {
     });
     // Nothing in a row is an id but the id itself.
     for (const [column, value] of Object.entries(rows[0]!)) if (column !== 'id') expect(String(value)).not.toMatch(/place:|session:|t-1\b/);
+  });
+
+  it('sends the front of a task, the last one the Líder marked', () => {
+    const marked = task('t-3', {
+      events: [
+        { kind: 'criada', at: T0, by: { kind: 'dono' }, text: '⟦pedido por dono⟧ ⟦frente Ledger⟧' },
+        { kind: 'criada', at: T0 + 1000, by: { kind: 'lugar', placeId: LEADER_OF_ALL, roleId: 'lider' }, text: '⟦frente Oráculo na VPS⟧' },
+      ],
+    });
+    expect(tarefaRows(doc(marked, task('t-4'))).rows.map((row) => row.frente)).toEqual(['Oráculo na VPS', null]);
   });
 
   it('the owner decides by name, a cancel says so, and a waiting delivery is flagged', () => {
@@ -269,6 +281,12 @@ describe('espelho do Oráculo', () => {
     ['covered by a person', 'Coberta pelo Fernando', 'cancelada', 'cancelada por Alexandre'],
     ['covered by the rain', 'Coberta pela chuva', 'cancelada', 'cancelada por Alexandre'],
     ['replaced, with no task named', 'substituída pela nova versão do pedido', 'cancelada', 'cancelada por Alexandre'],
+    // Ressalvas do Revisor no #308: a denial right after the colon, the case of the id, and a task that replaces itself.
+    ['sent, then denied', 'Enviada: não chegou a sair', 'cancelada', 'cancelada por Alexandre'],
+    ['done, then denied, with a PR further on', 'concluída: não, o dono desistiu; ver #12', 'cancelada', 'cancelada por Alexandre'],
+    ['done, "nunca" after the colon', 'Concluída: nunca saiu do rascunho (t-0123abcd)', 'cancelada', 'cancelada por Alexandre'],
+    ['replaced, id in capitals', 'Coberta pela T-ABCD1234 (aceita)', 'substituída', 'substituída pela t-abcd1234 · fechada por Alexandre'],
+    ['replaced by itself', 'substituída pela t-2', 'cancelada', 'cancelada por Alexandre'],
   ])('a cancel that was really %s says so', (_case, reason, estado, decisao) => {
     const closed = task('t-2', {
       state: 'rejeitada',

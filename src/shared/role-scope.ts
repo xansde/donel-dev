@@ -35,6 +35,11 @@ function isList(list: ScopeList | undefined): list is readonly string[] {
   return Array.isArray(list);
 }
 
+/** True when the scope restricts something (an axis with a list); every axis `*` = nothing to write, like no scope. */
+export function roleScopeRestricts(scope: RoleScope | undefined): boolean {
+  return isList(scope?.mcps) || isList(scope?.plugins) || isList(scope?.skills);
+}
+
 /** True when the scope turns off plugins or skills (then the inventory has to be read). */
 export function roleScopeNeedsInventory(scope: RoleScope | undefined): boolean {
   return isList(scope?.plugins) || isList(scope?.skills);

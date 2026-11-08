@@ -23,6 +23,7 @@ import {
   isServicePlace,
   lastDecision,
   lastDelivery,
+  lastWorkAt,
   slackSendState,
   type LedgerDoc,
   type LedgerTask,
@@ -47,7 +48,8 @@ export function ownerGoneIn(places: PlaceStates | undefined, task: LedgerTask, n
   const state = states.get(task.ownerPlaceId);
   if (state === undefined) return 'o lugar dono saiu do quadro';
   if (state === 'fechada') return 'o lugar dono está fechado';
-  const since = task.events.at(-1)?.at ?? task.createdAt;
+  // A front mark is no work: naming the front of a task never starts the grace of its owner place again.
+  const since = lastWorkAt(task);
   if (state === 'nao-comecou' && now - since >= NOT_STARTED_GRACE_MS) return 'o lugar dono não começou';
   return null;
 }
