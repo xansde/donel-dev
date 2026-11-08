@@ -1,0 +1,4 @@
+{
+  "title": "Mindscape não perde o quadro",
+  "text": "Se ele não conseguir abrir o quadro salvo, avisa e não grava nada por cima, com um botão para tentar de novo. Se não conseguir gravar, tenta mais algumas vezes, avisa e guarda suas mudanças até conseguir, inclusive ao fechar o app. Um print que não carregou também é tentado de novo sozinho."
+}

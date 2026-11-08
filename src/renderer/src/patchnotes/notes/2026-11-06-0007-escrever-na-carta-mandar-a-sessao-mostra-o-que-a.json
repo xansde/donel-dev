@@ -1,0 +1,4 @@
+{
+  "title": "Escrever na carta: \"Mandar à sessão\" mostra o que aconteceu",
+  "text": "O botão embaixo da caixa \"✎ Escrever para…\" agora se chama \"Mandar à sessão\", para não se confundir com o \"Enviar\" das cartas de Slack, que publica a mensagem. Ao mandar, o que você escreveu fica na frente da carta com para onde foi: para a sessão, para o Líder (se ela estava fechada) ou, se os dois estavam fechados, um aviso em vermelho de que ficou guardado na carta. Se não sair, a carta diz o motivo, o texto continua na caixa e o botão vira \"Tentar de novo\", que nunca manda duas vezes."
+}

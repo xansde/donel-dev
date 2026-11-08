@@ -13,6 +13,7 @@ import type { DonelPetApi } from './pet/ipc';
 import type { DonelLiderApi } from './lider/ipc';
 import type { DonelCelularApi } from './celular';
 import type { DonelRotinasApi } from './rotinas/contract';
+import type { DonelFaxineiroApi } from './faxineiro/ipc';
 import type { DonelEsteiraApi } from './esteira/ipc';
 import type { DonelGithubApi } from './github';
 import type { DonelProjectBindingApi } from './projectBinding';
@@ -24,6 +25,7 @@ import type { DonelTabsApi } from './tabChannels';
 import type { DonelMindscapeApi } from './mindscape/channels';
 import type { DonelLedgerApi } from './ledger/channels';
 import type { DonelLedgerMirrorApi } from './ledger/mirror';
+import type { DonelLedgerRemoteApi } from './ledger/remote';
 import type { DonelHillClimbApi } from './hillClimb/channels';
 import type { DonelRolesApi } from './roles';
 import type { DonelRenewalApi } from './sessionRenewal';
@@ -336,10 +338,14 @@ export interface RemoteAliveSession {
   readonly remoteId: string;
   readonly sessionId: string;
   readonly cwd: string;
-  readonly projectName: string;
+  /** Absent for the Líder único, which belongs to no board. */
+  readonly projectName?: string;
   readonly name: string;
   readonly launchArgs: readonly string[];
   readonly openedBy?: string;
+  /** Líder único na VPS — the role and the Jobu's mark of the session. */
+  readonly roleId?: string;
+  readonly leaderOfAll?: boolean;
 }
 
 /**
@@ -525,6 +531,8 @@ export interface DonelApi {
   ledger: DonelLedgerApi;
   /** Espelho do Oráculo — the tasks copied to the owner's personal Supabase (Preferências → Celular). */
   ledgerMirror: DonelLedgerMirrorApi;
+  /** Oráculo na VPS — where the ledger lives (docs/planos/oraculo-na-vps.md). */
+  ledgerRemote: DonelLedgerRemoteApi;
   /** Hill climbing — the missions in `<userData>/hill-climb.json` (the main is the only writer) and the owner's gestures. */
   hillClimb: DonelHillClimbApi;
   /** Papéis de sessão (item 12a) — the roles in `<userData>/papeis/` (the main is the only writer). */
@@ -551,4 +559,6 @@ export interface DonelApi {
   renewal: DonelRenewalApi;
   /** Item 20 — what the routines in shadow would have woken today. */
   rotinas: DonelRotinasApi;
+  /** t-b3b26e60 — the Faxineiro woken by trigger: a round a minute and its log. */
+  faxineiro: DonelFaxineiroApi;
 }

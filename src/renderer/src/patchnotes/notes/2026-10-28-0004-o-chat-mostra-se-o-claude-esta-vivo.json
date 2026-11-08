@@ -1,0 +1,4 @@
+{
+  "title": "O chat mostra se o Claude está vivo",
+  "text": "A barra \"trabalhando\" diz \"pensando\" quando nenhum comando roda, há quanto tempo o comando atual está rodando e quantos subagentes seguem junto. Não precisa mais abrir o terminal para conferir."
+}

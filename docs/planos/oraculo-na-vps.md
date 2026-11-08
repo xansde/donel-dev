@@ -62,6 +62,7 @@ O #248 (motor de contas em cada VPS) é outro assunto e não disputa porta nem r
 | App do PC | API, IP tailnet da VPS | Token de 256 bits que **o PC gera a cada boot** e guarda só em memória. Ele grava o sha256 em `~/.donel/oraculo/pc.token.sha256` (0600) **pelo ssh que já tem** para a VPS (`accounts.remotes`); o daemon só conhece o hash. Nada novo para o dono digitar ou guardar. (A fatia 1 ainda gera um `pc.token` em claro; a fatia 2 troca pelo hash e apaga o arquivo.) |
 | Celular | PWA, `https://vps-alexandrelentz.tail8629f1.ts.net` | O pareamento de hoje (código de uso único → token; só o hash fica no disco). O link de parear sai das Preferências do PC (pela API) ou de `oraculo-vps.sh parear` na VPS. |
 | Sessão da VPS | portão MCP, loopback | O `mcpToken` que a sessão já tem no `meta.json` dela. |
+| Serviço sem tela (menções do Slack; t-a1ea2798) | API, IP tailnet da VPS | Token próprio por serviço, criado com `oraculo-vps.sh servico <nome>`: só o sha256 fica em `~/.donel/oraculo/servicos/<nome>.sha256`; apagar o arquivo (`revogar`) corta na hora. Alcança **só** `POST /v1/servico/apply` (criar, assumir, entregar, prova em texto ou link) e assina como o lugar `servico:<nome>`, seja o que for que o corpo diga. Não lê o registro, não mexe na troca, na volta nem no celular. Tarefa de serviço nunca vira órfã. |
 
 Toda porta recusa conexão que não venha da tailnet (ou do loopback, no portão), como o servidor do celular faz hoje.
 O token do PC age como `dono`, de propósito; por isso ele **nunca** serve ao celular nem ao portão MCP, que têm os
@@ -109,6 +110,20 @@ recebe notificação.
   ferramentas respondem "o PC está desligado". Prova em arquivo: o portão lê o arquivo na própria VPS.
 - Sessões que já existiam antes da instalação seguem apontando direto para o túnel: só as abertas depois passam
   pelo portão.
+
+## Um escritor durante a troca e a volta (revisão do #295)
+
+- O app fica **só leitura** do começo ao fim da troca e da volta: toda gravação dele é recusada com "o Oráculo está
+  mudando de lugar", nunca um "ok" que se perde, e a troca só começa depois que as gravações em voo terminaram.
+- Na ida, outro canal aberto no mesmo `userData` ainda pode gravar o `ledger.json`: logo antes de guardar o arquivo
+  do PC, os bytes têm de ser os copiados. Se mudaram, a cópia recomeça por cima da cópia velha da VPS (pelo hash
+  dela), até três vezes.
+- Na volta, a VPS é avisada primeiro (**devolvido**): dali em diante todo escritor dela (API, celular, portão MCP)
+  recusa, inclusive depois de reiniciar. O arquivo vem só se não mudou entre o começo e o fim; se a volta falha no
+  meio, a VPS retoma o registro. Levar de novo substitui a cópia devolvida e a guarda como
+  `ledger.devolvido-<hora>.json`.
+- Com o `oraculo-remoto.json` esquecido e um `ledger.json` normal no PC, o app não entra no modo remoto (não grava
+  por cima) e diz por quê.
 
 ## PC religado: fila e conflito
 

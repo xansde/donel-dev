@@ -712,6 +712,20 @@
   cursor: default;
 }
 
+.writeActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.writeBox .writeAsk {
+  background: transparent;
+  color: var(--tinta);
+  border: 1px solid var(--carta-borda);
+  font-weight: 600;
+}
+
 .sent,
 .line {
   margin-top: 8px;

@@ -8,6 +8,7 @@
 // may move, edit or remove ONLY that (and the post-it written by a session). Never the owner's post-its,
 // places, drawings or links.
 
+import { LEADER_ROLE_ID } from '../roles';
 import { openCapSentence } from '../teamPrefs';
 import { addDrawing, removeItems, translateDrawing } from './drawings';
 import {
@@ -29,6 +30,13 @@ import {
   type MindscapeDrawing,
   type OwnerCardColor,
 } from './model';
+
+/**
+ * Why no session makes a place with the Líder role (PR #305): the Líder of a board is the owner's pick, and its powers
+ * (liberating upload folders, reaching other boards) come from the place the owner put there (`isBoardOrchestrator`).
+ */
+export const LEADER_PLACE_IS_THE_OWNERS =
+  'o papel Líder só o dono põe no quadro; uma sessão não abre nem desenha um Líder. Abra com outro papel, ou peça ao Líder do quadro.';
 
 export type BoardToolCall =
   | { readonly tool: 'quadro_ler'; readonly quadro?: string }
@@ -181,7 +189,7 @@ export const BOARD_TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        papel: { type: 'string', description: 'Id do papel (papeis_listar).' },
+        papel: { type: 'string', description: 'Id do papel (papeis_listar). Líder não: esse só o dono põe no quadro.' },
         pedido: { type: 'string', description: 'A primeira mensagem: o trabalho, completo e autossuficiente.' },
         nome: { type: 'string', description: 'Nome curto da aba (opcional).' },
         onde: { type: 'string', description: 'Onde ela roda (opcional): "aqui" (padrão, onde você roda), "este computador" ou o nome de um lugar remoto (ex.: a VPS; veja sessao_quem_sou).' },
@@ -447,6 +455,7 @@ export function applyBoardOps(doc: MindscapeDoc, projectPath: string, ops: reado
     switch (op.op) {
       case 'lugar': {
         if (op.papel && !ctx.roleIds.has(op.papel)) return { ok: false, reason: `${where}: papel "${op.papel}" não existe (veja papeis_listar).` };
+        if (op.papel === LEADER_ROLE_ID) return { ok: false, reason: `${where}: ${LEADER_PLACE_IS_THE_OWNERS}` };
         const id = placeCardId(ctx.newId());
         let next = addPlace(current, projectPath, { id, by: 'session', ...(op.papel ? { roleId: op.papel } : {}) });
         if (next === current) return { ok: false, reason: `${where}: o lugar não entrou.` };

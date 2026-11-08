@@ -408,6 +408,17 @@ export function registersForOthers(roleId: string | undefined): boolean {
   return isLeaderRole(roleId) || roleId === 'curador' || roleId === 'pesquisa';
 }
 
+/**
+ * t-a1ea2798 — a headless service (Slack mentions) acting on the VPS's Oráculo with its own credential
+ * (src/oraculo/servicos.ts) signs as the place `servico:<name>`. No board has it, and it is never orphan.
+ */
+export const SERVICE_PLACE_PREFIX = 'servico:';
+export const SERVICE_ROLE = 'servico';
+
+export function isServicePlace(placeId: string): boolean {
+  return placeId.startsWith(SERVICE_PLACE_PREFIX);
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // Operations — the ONE place the rules live. Pure: the caller gives the clock and the new id.
 
@@ -431,6 +442,11 @@ export type LedgerOp =
   | { readonly op: 'entregar'; readonly id: string; readonly proofs: readonly LedgerProof[]; readonly note?: string; readonly forOwner?: LedgerForOwner; readonly doneBy?: string }
   /** `option`: the label of an option of the current delivery's block, closing as `aceita`; `text`: the owner's words with it. */
   | { readonly op: 'aceitar'; readonly id: string; readonly requestId?: string; readonly option?: string; readonly text?: string }
+  /**
+   * 07/11 — the owner decides with his own words, not one of the named paths ("Decidir assim" on the card): the
+   * option `OWN_OPTION`, the text literal. It closes the way `ownOptionCloses` says (a Slack letter never as sent).
+   */
+  | { readonly op: 'decidir-outra'; readonly id: string; readonly text: string; readonly requestId?: string }
   /** The owner writes on the card (forma A, Parte B): recorded, and sent by the main to whoever reads it (`deliveredTo`). */
   | { readonly op: 'comentar'; readonly id: string; readonly text: string; readonly requestId?: string; readonly deliveredTo: LedgerDeliveredTo }
   /** `option`: the label of an option closing as `rejeitada`; then `reason` may be empty (the option is a reason). */
@@ -589,6 +605,20 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       return done(
         step(task, 'aceita', { kind: 'aceita', at: ctx.now, by: actor, ...requestOf(op), ...(op.option ? { option: op.option } : {}), ...(op.text?.trim() ? { text: op.text.trim() } : {}) }),
       );
+    }
+
+    case 'decidir-outra': {
+      const text = op.text.trim();
+      if (!text) return fail('Escreva a sua opção: sem texto não há decisão.');
+      if (text.length > MAX_COMMENT_CHARS) return fail(`Texto longo demais (máximo ${MAX_COMMENT_CHARS} caracteres).`);
+      if (actor.kind !== 'dono') return fail('Só o dono decide com a própria opção.');
+      if (task.state !== 'entregue') return fail(`A tarefa está "${task.state}"; só se decide uma entregue.`);
+      const why = cannotDecide(task, actor);
+      if (why) return fail(`Não decidi: ${why}`);
+      const closes = ownOptionCloses(task);
+      // On `rejeitada` the text is the reason, so it may not pose as a mark of the app.
+      if (closes === 'rejeitada' && startsWithMark(text)) return fail(`O texto não pode começar com "${MARK_OPEN}".`);
+      return done(step(task, closes, { kind: closes, at: ctx.now, by: actor, text, ...requestOf(op), option: OWN_OPTION }));
     }
 
     case 'comentar': {
@@ -832,6 +862,16 @@ const BOT_OUTCOME: Record<AgentBotRecord['outcome'], string> = {
   'sem-confirmacao': 'sem confirmação do Slack',
 };
 
+/** The outcome a bot record wrote in its delivery text (read only: the record is never rewritten); `null` = not one. */
+export function agentBotOutcome(task: LedgerTask): AgentBotRecord['outcome'] | null {
+  if (!isAgentBotRecord(task)) return null;
+  const delivery = lastDelivery(task);
+  const note = (delivery && eventNote(delivery)) ?? '';
+  if (note.startsWith(BOT_OUTCOME.falhou)) return 'falhou';
+  if (note.startsWith(BOT_OUTCOME['sem-confirmacao'])) return 'sem-confirmacao';
+  return note.startsWith(BOT_OUTCOME.confirmado) ? 'confirmado' : null;
+}
+
 function createAgentBotRecord(doc: LedgerDoc, actor: LedgerActor, op: Extract<LedgerOp, { op: 'slack-bot' }>, ctx: LedgerOpContext): LedgerOpResult {
   if (actor.kind !== 'lugar') return { ok: false, reason: 'O registro do bot é do lugar que enviou.' };
   const bot = op.bot;
@@ -881,6 +921,18 @@ export function commentRefusal(task: LedgerTask, actor: LedgerActor, text: strin
 /** The note the owner wrote on the card with a given request id (a retry), if any. */
 export function commentOfRequest(task: LedgerTask, requestId: string): LedgerEvent | undefined {
   return task.events.find((event) => event.kind === 'comentada' && event.requestId === requestId);
+}
+
+/** 07/11 — the option of a decision the owner wrote himself ("Decidir assim"); the event's `text` is his words. */
+export const OWN_OPTION = 'Outra';
+
+/**
+ * How the owner's own option closes: as accepted (he decided; the session goes on from his words), except a Slack
+ * letter, where an accept frees the one send of the exact text — his words are never that text, so it closes
+ * rejected (not sent).
+ */
+export function ownOptionCloses(task: LedgerTask): LedgerOption['closes'] {
+  return task.slack ? 'rejeitada' : 'aceita';
 }
 
 /** Why the owner may not pick `option` (closing as `closes`) on the current delivery; `null` = may (or no option). */
@@ -959,6 +1011,7 @@ export function forOwnerRefusal(forOwner: LedgerForOwner, proofs: readonly Ledge
   const recommended = forOwner.options.filter((option) => option.recommended).length;
   if (recommended !== 1) return `"opcoes": exatamente 1 recomendada (veio ${recommended}).`;
   if (new Set(forOwner.options.map((option) => option.label)).size !== forOwner.options.length) return '"opcoes": dois caminhos com o mesmo nome.';
+  if (forOwner.options.some((option) => option.label === OWN_OPTION)) return `"opcoes": "${OWN_OPTION}" é a opção que o dono escreve na carta; dê outro nome ao caminho.`;
   if (visual?.kind === 'prova' && !isFileProof(proofs[visual.proof])) return `"visual.prova": a prova ${visual.proof + 1} desta entrega não é um arquivo (print, vídeo ou protótipo).`;
   if (visual?.kind === 'antes-depois' && (!isFileProof(proofs[visual.before]) || !isFileProof(proofs[visual.after]) || visual.before === visual.after))
     return '"visual": "antes" e "depois" são dois arquivos diferentes desta entrega.';

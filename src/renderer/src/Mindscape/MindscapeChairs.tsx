@@ -587,9 +587,15 @@ function PodBody({ details, close, onOpenChair }: { details: PodDetails; close: 
                 value={name}
                 maxLength={40}
                 onChange={(event) => setName(event.target.value)}
-                onBlur={() => edit.onRename(name)}
+                onBlur={() => {
+                  // A pod always has a name: an emptied field comes back to the saved one.
+                  if (name.trim()) edit.onRename(name);
+                  else setName(details.name);
+                }}
                 onKeyDown={(event) => {
-                  if (event.key === 'Enter') edit.onRename(name);
+                  if (event.key !== 'Enter') return;
+                  if (name.trim()) edit.onRename(name);
+                  else setName(details.name);
                 }}
               />
             </label>
