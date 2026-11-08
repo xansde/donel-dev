@@ -5,6 +5,7 @@
 // Supabase table say the same. Read only: a decision opens the card (`onOpenCard`), as everywhere else.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { CLOSING_LABELS, type ClosingKind } from '../../shared/ledger/closing';
 import { DEFAULT_OWNER_NAME, type PlaceInfoOf } from '../../shared/ledger/mirror';
 import {
   currentProofs,
@@ -21,6 +22,14 @@ import type { LedgerDoc, LedgerProof, LedgerTask } from '../../shared/ledger/con
 import type { OwnerInboxKind } from '../../shared/ledger/inbox';
 import styles from './LedgerTable.module.css';
 
+// Every closing kind has a tone: a new kind fails the typecheck here instead of showing a grey pill.
+const CLOSING_TONE: Readonly<Record<ClosingKind, string | undefined>> = {
+  'concluida-por-prova': styles.toneDone,
+  enviada: styles.toneDone,
+  substituida: styles.toneMuted,
+  cancelada: styles.toneMuted,
+};
+
 const STATE_TONE: Readonly<Record<string, string | undefined>> = {
   aberta: styles.toneMuted,
   'em execução': styles.toneRun,
@@ -28,7 +37,7 @@ const STATE_TONE: Readonly<Record<string, string | undefined>> = {
   aceita: styles.toneDone,
   'aceita, esperando envio': styles.toneWait,
   rejeitada: styles.toneBad,
-  cancelada: styles.toneMuted,
+  ...Object.fromEntries((Object.keys(CLOSING_LABELS) as ClosingKind[]).map((kind) => [CLOSING_LABELS[kind], CLOSING_TONE[kind]])),
 };
 
 function dayMonth(iso: string): string {
