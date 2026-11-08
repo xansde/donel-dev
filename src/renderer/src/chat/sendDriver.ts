@@ -25,6 +25,7 @@ import type { SendKind, SendMode, SendState } from '../../../shared/chat/rows';
 import { readInputText } from '../../../shared/chat/screen';
 import { describeSendFailure, type SendFailureDetail } from '../../../shared/chat/sendDiagnostics';
 import {
+  boxHoldsOnlyOurs,
   createSend,
   step,
   type MessageClass,
@@ -536,6 +537,7 @@ export class SendDriver {
         firstPaste: this.sentCount === 0,
         opensScreen: next.request.opensScreen,
         customCommands: next.request.customCommands,
+        unattended: next.from === 'session',
       };
       this.sentCount += 1;
       const created = createSend(input, this.ports.now());
@@ -579,8 +581,10 @@ export class SendDriver {
         case 'write':
           if (effect.data === '\r' && item.from === 'session') {
             // An Enter written again (the first one looked lost) once a key of the owner reached the box would submit
-            // HIS text with it. Keys still held never reached it: then the Enter is safe, and wanted.
-            if (item.enterWrittenAt !== null && this.ownerWrittenAt !== null && this.ownerWrittenAt >= item.enterWrittenAt) break;
+            // HIS text with it. Keys still held never reached it: then the Enter is safe, and wanted. So is a box that,
+            // read right now, holds our text and nothing else (what reached the PTY was not typed into it).
+            const ownerSince = item.enterWrittenAt !== null && this.ownerWrittenAt !== null && this.ownerWrittenAt >= item.enterWrittenAt;
+            if (ownerSince && !(item.machine !== null && boxHoldsOnlyOurs(item.machine, this.ports.readLines()))) break;
             item.enterWrittenAt ??= this.ports.now();
             item.lastEnterAt = this.ports.now();
           }

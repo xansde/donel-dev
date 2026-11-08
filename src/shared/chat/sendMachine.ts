@@ -86,6 +86,11 @@ export interface SendInput {
   readonly opensScreen?: boolean;
   /** Names (without `/`) of custom commands/skills; they win over native names. */
   readonly customCommands?: ReadonlySet<string>;
+  /**
+   * Nobody watches that box (a message from another session, `from: 'session'`): no owner will press Enter or clear
+   * it by hand. The machine insists on the Enter longer and never leaves its own text sitting there (08/11).
+   */
+  readonly unattended?: boolean;
 }
 
 export type SendStep = 'gate' | 'image' | 'text' | 'menu-esc' | 'enter-gap' | 'await-ack' | 'lookup' | 'verify' | 'done';
@@ -100,6 +105,9 @@ export interface SendMachineState {
   readonly mode: SendMode;
   readonly firstPaste: boolean;
   readonly opensScreen: boolean;
+  readonly unattended: boolean;
+  /** Enters written after the acceptance deadline, while our text still sat in the box (unattended only). */
+  readonly lateEnters: number;
   readonly createdAt: number;
   readonly phase: SendState;
   readonly step: SendStep;
@@ -208,6 +216,16 @@ const ENTER_GAP_MS = 80;
 const RESEND_ENTER_MS = 3_000;
 const VERIFY_MS = 15_000;
 const INTERRUPT_SETTLE_MS = 3_000;
+/**
+ * Unattended (08/11): sessions on a loaded remote place were found with `[Pasted text #N +M lines]` sitting in the box,
+ * never submitted, and every later message waiting behind it. A paste drawn after the machine gave up, or an Enter the
+ * CLI lost four times in a row, left it there. So an unattended send waits longer for its paste to show up, keeps
+ * writing only the Enter (never the text) while its text is in the box, and if the CLI never takes it, clears its own
+ * text from the box before saying "não foi": the box is free for the next message, and a resend is not a duplicate.
+ */
+const UNATTENDED_TEXT_EXTRA_MS = 120_000;
+const LATE_ENTER_MS = 10_000;
+const MAX_LATE_ENTERS = 6;
 
 // ----------------------------------------------------------- text and class
 
@@ -266,6 +284,8 @@ export function createSend(input: SendInput, now: number): StepResult {
     mode: input.mode ?? 'normal',
     firstPaste: input.firstPaste ?? false,
     opensScreen: input.opensScreen ?? false,
+    unattended: input.unattended ?? false,
+    lateEnters: 0,
     createdAt: now,
     phase: 'waiting-cli',
     step: 'gate',
@@ -506,6 +526,11 @@ function textSeen(s: Draft, lines: readonly LineInput[]): boolean {
   return s.boxEmptyAtPaste && looksLikeOurs(stripped, s.text);
 }
 
+/** The box shows our text and nothing else (a resend of the Enter submits only ours). */
+export function boxHoldsOnlyOurs(state: SendMachineState, lines: readonly LineInput[]): boolean {
+  return textSeen(state, lines);
+}
+
 /** Letters and digits only: what survives a screen read that drops or doubles a glyph (◆, ambiguous widths, wraps). */
 const lettersOnly = (t: string): string => t.normalize('NFKC').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
 
@@ -569,7 +594,7 @@ function textDeadlineMs(s: Draft): number {
 function startText(s: Draft, now: number, fx: SendEffect[]): void {
   s.step = 'text';
   s.stepDeadline = now + textDeadlineMs(s);
-  s.textGiveUpAt = s.stepDeadline + (s.firstPaste ? FIRST_PASTE_IDLE_EXTRA_MS : TEXT_IDLE_EXTRA_MS);
+  s.textGiveUpAt = s.stepDeadline + Math.max(s.firstPaste ? FIRST_PASTE_IDLE_EXTRA_MS : TEXT_IDLE_EXTRA_MS, s.unattended ? UNATTENDED_TEXT_EXTRA_MS : 0);
   fx.push({ type: 'write', data: bracketedPaste(s.text) });
 }
 
@@ -860,6 +885,19 @@ function evaluateConfirming(s: Draft, now: number, fx: SendEffect[]): void {
           fx.push({ type: 'ack-lookup', text: s.text, since: s.createdAt });
         }
         return;
+      }
+      if (s.unattended && lines !== null && textSeen(s, lines)) {
+        // Our text still sits in the box: only the Enter again, while there are tries left (mid-turn the turn may still
+        // be holding the CLI: it does not use them up). Out of tries, idle: clear our own text, then "não foi".
+        const working = isWorking(lines);
+        if (working || s.lateEnters < MAX_LATE_ENTERS) {
+          fx.push({ type: 'write', data: '\r' });
+          if (!working) s.lateEnters += 1;
+          s.ackDeadline = now + LATE_ENTER_MS;
+          s.attempts += 1;
+          return;
+        }
+        fx.push({ type: 'write', data: '\x1b\x1b' });
       }
       fail(s, 'não foi');
       return;
