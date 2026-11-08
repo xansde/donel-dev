@@ -133,12 +133,50 @@ export interface SessionHooksSettingsInput {
   readonly slackOfflineGuardCommand?: string;
   /** Escopo do papel: the MCPs, plugins and skills this session keeps (role-scope.ts). Absent = everything. */
   readonly roleScope?: RoleScopeSettings | null;
+  /** The folders that hold this session's keys (`keyFileReadDenyRules`): the session's tools may not read them. */
+  readonly keyDirs?: readonly string[];
 }
 
 export interface SessionHooksSettingsContent extends RoleScopeSettings {
   readonly hooks: Record<string, ReadonlyArray<{ readonly matcher?: string; readonly hooks: ReadonlyArray<Record<string, unknown>> }>>;
   readonly statusLine?: StatusLineSetting;
   readonly worktree?: { readonly baseRef: 'head' };
+  readonly permissions?: KeyFilePermissions;
+}
+
+/** The `permissions` block that keeps the session's own tools away from the files holding its keys. */
+export interface KeyFilePermissions {
+  readonly deny: readonly string[];
+}
+
+/**
+ * Pure — deny rules that keep the session's tools from reading the files that hold its keys (hook token, MCP
+ * bearer): a session that opened `meta.json` or `mcp.json` copied the key into its transcript, and from there to
+ * collectors and subagents (08/11). Measured with the real CLI 2.1.319, in `bypassPermissions` too:
+ * - `Read(<dir>/**)` stops Read, Grep and the Bash commands the CLI knows read a file (`cat`, `head`, `cp`, also after
+ *   a `cd`); the CLI itself still reads `--settings`, `--mcp-config` and the role file from there, and hooks still run.
+ * - It does not stop an interpreter that opens the file itself (`python3 -c "open(...)"`): a Bash rule with a
+ *   wildcard on each side of `/<parent>/<dir>/` refuses any command naming a path below the folder. A leading separator keeps code searches for the folder's
+ *   name (`grep "\.donel/s/"`) working. Indirect reads (a script that builds the path) stay possible: best effort.
+ * A `~/` dir stays home-relative; an absolute one becomes `//<posix>` (Windows `C:\x` → `//c/x`, as the CLI matches).
+ */
+export function keyFileReadDenyRules(dirs: readonly string[]): string[] {
+  const rules: string[] = [];
+  for (const dir of dirs) {
+    const windows = /^[A-Za-z]:[\\/]/.test(dir);
+    const posix = dir.replaceAll('\\', '/').replace(/\/+$/, '');
+    const readPath = posix.startsWith('~/') ? posix : windows ? `//${posix[0].toLowerCase()}${posix.slice(2)}` : `/${posix}`;
+    rules.push(`Read(${readPath}/**)`);
+    const tail = posix.split('/').filter((part) => part !== '' && part !== '~').slice(-2);
+    rules.push(`Bash(*/${tail.join('/')}/*)`);
+    if (windows) rules.push(`Bash(*\\${tail.join('\\')}\\*)`);
+  }
+  return rules;
+}
+
+/** Pure — the `permissions` key of a session's `--settings` (absent when there is no key folder). */
+export function keyFilePermissions(dirs: readonly string[] | undefined): { permissions?: KeyFilePermissions } {
+  return dirs && dirs.length > 0 ? { permissions: { deny: keyFileReadDenyRules(dirs) } } : {};
 }
 
 function bridgeUrl(port: number, event: string): string {
@@ -183,6 +221,7 @@ export function buildSessionHooksSettings(input: SessionHooksSettingsInput): Ses
     ...(statusLine ? { statusLine } : {}),
     ...(input.isolatedWorktree ? { worktree: { baseRef: 'head' as const } } : {}),
     ...(input.roleScope ?? {}),
+    ...keyFilePermissions(input.keyDirs),
   };
 }
 
@@ -458,6 +497,11 @@ export function buildByteSafeForwarderScript(input: { port: number; token: strin
   ].join('\r\n');
 }
 
+/** The folder of the per-session `--settings` files, token headers and forwarders. */
+export function sessionHookSettingsDir(userDataDir: string): string {
+  return join(userDataDir, HOOK_SETTINGS_DIR_NAME);
+}
+
 export function sessionHookSettingsPath(userDataDir: string, ptyId: string): string {
   return join(userDataDir, HOOK_SETTINGS_DIR_NAME, `${ptyId}.json`);
 }
@@ -501,13 +545,13 @@ export function writeSessionHooksSettings(input: Omit<SessionHooksSettingsInput,
 }
 
 /**
- * I/O — the session's `--settings` with only the role scope, for a session whose hooks file could not be written
- * (same path, so `removeSessionHooksSettings` and the boot cleanup take it too).
+ * I/O — the session's `--settings` without hooks: the role scope (if any) and the key-file deny rules, for a session
+ * whose hooks file could not be written (same path, so `removeSessionHooksSettings` and the boot cleanup take it too).
  */
-export function writeSessionScopeOnlySettings(userDataDir: string, ptyId: string, roleScope: RoleScopeSettings): string {
+export function writeSessionScopeOnlySettings(userDataDir: string, ptyId: string, roleScope: RoleScopeSettings | null, keyDirs?: readonly string[]): string {
   mkdirSync(join(userDataDir, HOOK_SETTINGS_DIR_NAME), { recursive: true });
   const path = sessionHookSettingsPath(userDataDir, ptyId);
-  writeFileSync(path, JSON.stringify(roleScope, null, 2), 'utf8');
+  writeFileSync(path, JSON.stringify({ ...(roleScope ?? {}), ...keyFilePermissions(keyDirs) }, null, 2), 'utf8');
   return path;
 }
 
