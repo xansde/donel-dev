@@ -53,7 +53,10 @@ function agentLine(seated: readonly string[], axesOf: (placeId: string) => Sessi
   const needing = axes.filter((entry) => entry.needs.length > 0);
   if (needing.length > 0) return `${needing.length} precisa${needing.length > 1 ? 'm' : ''} de você · ${[...new Set(needing.flatMap((entry) => entry.needs))].join(', ')}`;
   const working = axes.filter((entry) => entry.activity === 'trabalhando').length;
-  return working > 0 ? `${working} trabalhando` : 'parada, esperando trabalho';
+  if (working > 0) return `${working} trabalhando`;
+  // No reading of a seated session (no hook heard yet): say so, never "parada".
+  if (axes.length < seated.length || axes.some((entry) => entry.activity === 'desconhecido')) return 'sem leitura';
+  return 'parada, esperando trabalho';
 }
 
 /** The chairs as the file draws them, with the live state of the Donel's places and the freshness of the file. */

@@ -93,6 +93,23 @@ describe('parseRigsFile', () => {
     expect(result.shape.foraDoContrato).toEqual(['cadeira fantasma do pod Rodada não existe no arquivo', 'cadeira sumida de foraDosRigs não existe no arquivo']);
   });
 
+  it('seats a role in one chair only: a second chair with the same papel is vaga and warned', () => {
+    const result = parseRigsFile(
+      file({
+        cadeiras: [
+          { id: 'vega', nome: 'Vega', tipo: 'agente', papel: 'atlas-conferente' },
+          { id: 'portao', nome: 'Portão', tipo: 'codigo' },
+          { id: 'revisor', nome: 'Revisor', tipo: 'agente', papel: 'atlas-conferente' },
+        ],
+      }),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.shape.cadeiras.find((chair) => chair.id === 'vega')?.papel).toBe('atlas-conferente');
+    expect(result.shape.cadeiras.find((chair) => chair.id === 'revisor')?.papel).toBeUndefined();
+    expect(result.shape.foraDoContrato).toEqual(['papel atlas-conferente repetido na cadeira revisor (fica só em vega)']);
+  });
+
   it('refuses an unknown major version and shows nothing of it', () => {
     const result = parseRigsFile(file({ formato: 'rigs-factory@2' }));
     expect(result).toEqual({ ok: false, reason: 'formato', message: 'formato rigs-factory@2: este Donel lê até @1' });

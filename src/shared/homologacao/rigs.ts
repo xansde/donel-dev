@@ -164,6 +164,8 @@ export function parseRigsFile(source: string): RigsParse {
   const known = new Set<string>();
   /** Ids of chairs already named as out of the contract: a pod that lists them is not warned twice. */
   const refusedChairs = new Set<string>();
+  /** The chair that holds each role (the first one in the file). */
+  const roleOwner = new Map<string, string>();
   (Array.isArray(raw.cadeiras) ? raw.cadeiras : []).forEach((item, index) => {
     const chair = parseChair(item);
     if (!chair || known.has(chair.id)) {
@@ -173,6 +175,15 @@ export function parseRigsFile(source: string): RigsParse {
       return;
     }
     known.add(chair.id);
+    // A role sits in one chair only: the same places in two chairs would count twice in the band.
+    const owner = chair.papel ? roleOwner.get(chair.papel) : undefined;
+    if (chair.papel && owner) {
+      outside.push(`papel ${chair.papel} repetido na cadeira ${chair.id} (fica só em ${owner})`);
+      const { papel: _repeated, ...vacant } = chair;
+      chairs.push(vacant);
+      return;
+    }
+    if (chair.papel) roleOwner.set(chair.papel, chair.id);
     chairs.push(chair);
   });
 
