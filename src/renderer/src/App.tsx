@@ -94,9 +94,9 @@ import { SpawnAskPanel, type SpawnAsk } from './Mindscape/SpawnAskPanel';
 import { appendConversation, findSessionBoard, placeSessionCards, roleOfSession, setBoardView, setPlaceConversation, writeSessionNote, type MindscapeDoc } from '../../shared/mindscape/model';
 import type { SessionRole } from '../../shared/roles';
 // Sessão renovada em voo (B36) — limit crossed at the end of a turn → handoff → new session in the same tab.
-import { DEFAULT_SESSION_RENEWAL_PREFS, renewalLaunchArgs, type SessionRenewalPrefs } from '../../shared/sessionRenewal';
+import { DEFAULT_SESSION_RENEWAL_PREFS, RENEWAL_HANDOFF_WAIT_MS, renewalHandoffDeliveryNotice, renewalLaunchArgs, type SessionRenewalPrefs } from '../../shared/sessionRenewal';
 import { useSessionRenewal, type RenewalTabInput } from './sessionRenewal/useSessionRenewal';
-import { RenewalStrip } from './sessionRenewal/RenewalStrip';
+import { RenewalDeliveryStrip, RenewalStrip } from './sessionRenewal/RenewalStrip';
 import type { BoardView } from '../../shared/mindscape/view';
 import {
   AUTO_START_NOT_READY_MESSAGE,
@@ -530,6 +530,8 @@ export function App(): React.JSX.Element {
   const [esteiraState, setEsteiraState] = useState<EsteiraSnapshotDto | null>(null);
   /** D4 — Toast informativo (o que o gesto fez, por que foi recusado); nunca tem desfazer. */
   const [devModeToast, setDevModeToast] = useState<string | null>(null);
+  /** B36 — tabs whose new session did not confirm it got the handoff (until the owner dismisses it). */
+  const [renewalDeliveryNotices, setRenewalDeliveryNotices] = useState<Record<string, string>>({});
   // "Isolar em worktree" — a aba fechou e a worktree ficou por ter trabalho não enviado: aviso discreto com "Abrir pasta".
   const [worktreeKept, setWorktreeKept] = useState<WorktreeKeptPayload | null>(null);
   /** Cleanup do watcher de prontidão em voo por aba (mesmo padrão de `pendingInjectionWatchersRef`). */
@@ -2145,7 +2147,7 @@ export function App(): React.JSX.Element {
    * card (with its post-it and links) moves to the new session in the same place — BEFORE the tab
    * gets the new id, so the board never places a second card. Then the first message: read the handoff.
    */
-  const handleRenewedSession = (tab: TabState, previousSessionId: string, sessionId: string, firstPrompt: string): void => {
+  const handleRenewedSession = (tab: TabState, previousSessionId: string, sessionId: string, firstPrompt: string, handoffPath: string): void => {
     const stored = appConfigRef.current?.sessionNames[previousSessionId] ?? null;
     const effectiveName = resolveSessionName({ fallback: tab.name, customTitle: tab.customTitle ?? null, stored });
     // Item 12a — the new conversation is added to the same place (card, role, post-it, links).
@@ -2161,7 +2163,24 @@ export function App(): React.JSX.Element {
     if (tab.color && tab.color !== 'none') {
       void window.donel.tabs.setColor(sessionId, tab.color).then(setAppConfig).catch(() => undefined);
     }
-    sendRenewalLine(tab.id, firstPrompt);
+    // The handoff must reach the new session: with the chat, wait for its CLI to take the message and,
+    // when it does not, say so on the tab (never resent by itself). The terminal-only path types it as before.
+    const tabId = tab.id;
+    if (!hasChatView(tab, chatEnabled)) {
+      sendRenewalLine(tabId, firstPrompt);
+      return;
+    }
+    setRenewalDeliveryNotices((prev) => {
+      if (!(tabId in prev)) return prev;
+      const next = { ...prev };
+      delete next[tabId];
+      return next;
+    });
+    void sendToTabAndWait(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text: firstPrompt }, RENEWAL_HANDOFF_WAIT_MS).then((outcome) => {
+      const notice = renewalHandoffDeliveryNotice(outcome, handoffPath);
+      if (notice === null || !tabsRef.current.some((candidate) => candidate.id === tabId)) return;
+      setRenewalDeliveryNotices((prev) => ({ ...prev, [tabId]: notice }));
+    });
   };
   // Desenho, fatia 02 — what the sessions do goes through `applySession`: it
   // never enters the history (an undo does not take a session post-it away).
@@ -3356,6 +3375,21 @@ export function App(): React.JSX.Element {
               <RenewalStrip banner={sessionRenewal.banners[activeTab.id]!} onSnooze={() => sessionRenewal.snooze(activeTab.id)} />
             </div>
           ) : null}
+          {!oracleShown && activeTab && renewalDeliveryNotices[activeTab.id] ? (
+            <div className={styles.renewalStrip} data-testid="renewal-delivery-strip">
+              <RenewalDeliveryStrip
+                text={renewalDeliveryNotices[activeTab.id]!}
+                onDismiss={() => {
+                  const tabId = activeTab.id;
+                  setRenewalDeliveryNotices((prev) => {
+                    const next = { ...prev };
+                    delete next[tabId];
+                    return next;
+                  });
+                }}
+              />
+            </div>
+          ) : null}
           {/* Oráculo no centro — the terminals stay mounted (the PTYs live on), only out of sight. */}
           <div className={oracleShown ? styles.terminalHidden : styles.terminal}>
             {/* FIX (decisão A, 2026-07-23) — mesmo empty state pros dois
@@ -3434,7 +3468,7 @@ export function App(): React.JSX.Element {
                     // the Mindscape, and the new session reads the handoff first.
                     const renewal = sessionRenewal.takeCompletion(tab.id, claudeSessionId);
                     if (renewal && claudeSessionId) {
-                      handleRenewedSession(tab, renewal.previousSessionId, claudeSessionId, renewal.firstPrompt);
+                      handleRenewedSession(tab, renewal.previousSessionId, claudeSessionId, renewal.firstPrompt, renewal.handoffPath);
                     } else if (tab.placeId && tab.cwd && claudeSessionId && mindscapeLoaded) {
                       // Item 12a — the tab opened from a place that had not started: the place starts
                       // with this conversation, BEFORE the tab gets the id (no second card).

@@ -2,7 +2,7 @@
 // due, or in progress. "Agora não" postpones it (and, mid-renewal, leaves the session as it is).
 
 import { Banner, Button } from '@donel-dev/design-system';
-import { RefreshCw } from 'lucide-react';
+import { TriangleAlert, RefreshCw } from 'lucide-react';
 import { formatTokensK } from '../../../shared/sessionRenewal';
 import type { RenewalBanner } from './useSessionRenewal';
 
@@ -39,6 +39,28 @@ export function RenewalStrip({ banner, onSnooze }: RenewalStripProps): React.JSX
             Agora não
           </Button>
         )
+      }
+    />
+  );
+}
+
+export interface RenewalDeliveryStripProps {
+  text: string;
+  onDismiss: () => void;
+}
+
+/** The new session did not confirm it got the handoff: says so, with the file, until the owner dismisses it. */
+export function RenewalDeliveryStrip({ text, onDismiss }: RenewalDeliveryStripProps): React.JSX.Element {
+  return (
+    <Banner
+      variant="compact"
+      tone="waiting"
+      icon={<TriangleAlert size={14} strokeWidth={1.75} />}
+      title={<span data-testid="renewal-delivery-text">{text}</span>}
+      actions={
+        <Button variant="link" onClick={onDismiss}>
+          Entendi
+        </Button>
       }
     />
   );
