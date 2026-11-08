@@ -1,0 +1,4 @@
+{
+  "title": "Gargalos do ambiente no Mindscape",
+  "text": "O botão \"Gargalos\", no alto do Mindscape, mostra o que cada sessão está fazendo de verdade, lido na própria máquina onde ela roda: trabalhando, esperando a API, travada (e por quê: sem cota, gateway fora do ar, login caído), esperando você, ociosa ou já pronta para fechar. Mostra também a RAM de cada máquina, a memória de cada sessão, a conta que ela usa, quem está esperando quem entre mãe e filha, e uma lista do que pode fechar, com as esquecidas já marcadas e um botão para fechar todas de uma vez. Cada cartão de sessão ganhou essa mesma linha."
+}

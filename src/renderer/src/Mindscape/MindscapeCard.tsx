@@ -6,6 +6,7 @@ import { axesLabel, needsLabel, type SessionAxes } from '../../../shared/mindsca
 import { OWNER_COLORS, type OwnerCardColor } from '../../../shared/mindscape/model';
 import type { TabColorToken } from '../../../shared/tabAppearance';
 import styles from './Mindscape.module.css';
+import envStyles from './EnvironmentPanel.module.css';
 
 /** Same glyphs as `TerminalTab` (`SESSION_STATE_ICON`, not exported by the design system). */
 const STATE_GLYPH: Record<SessionState, string> = {
@@ -69,6 +70,8 @@ export interface MindscapeSessionCardProps {
   readonly meter?: { readonly usedTokens: number; readonly maxTokens: number };
   /** Item 04 — the three axes and "precisa de você". */
   readonly axes?: SessionAxes;
+  /** Gargalos do ambiente — what the session is really doing ("travada · gateway fora do ar há 2 h"). */
+  readonly pulse?: { readonly text: string; readonly tone: string; readonly title?: string };
 }
 
 /** Item 04 — the ring around the glyph: what the session asks of the owner at a glance. */
@@ -113,6 +116,7 @@ export function MindscapeSessionCard({
   engine,
   meter,
   axes,
+  pulse,
 }: MindscapeSessionCardProps): React.JSX.Element {
   // A place that has not started reads like a dormant one, with its own glyph and words.
   const closedLabel = notStarted ? `${NOT_STARTED_LABEL} · duplo clique abre` : closedLabelText;
@@ -229,6 +233,11 @@ export function MindscapeSessionCard({
       {need ? (
         <div className={styles.needLine} data-testid="mindscape-session-need">
           {need}
+        </div>
+      ) : null}
+      {pulse && !dormant ? (
+        <div className={`${envStyles.cardPulse} ${envStyles[`tone_${pulse.tone}`] ?? ''}`} title={pulse.title ?? pulse.text} data-testid="mindscape-session-pulse">
+          {pulse.text}
         </div>
       ) : null}
     </article>

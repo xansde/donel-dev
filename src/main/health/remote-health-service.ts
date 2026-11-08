@@ -7,8 +7,8 @@ import { buildRemoteHealthScript, parseRemoteHealthOutput, remoteHealthSeverity,
 export const REMOTE_HEALTH_INTERVAL_MS = 60_000;
 /** Lets the boot settle, like the PC sample. */
 export const REMOTE_HEALTH_FIRST_DELAY_MS = 15_000;
-/** One ssh round trip plus a few `/proc` reads: past this the place counts as down. */
-export const REMOTE_HEALTH_TIMEOUT_MS = 8_000;
+/** One ssh round trip plus a few `/proc` reads and the session read (`remoteSessions.ts`): past this the place counts as down. */
+export const REMOTE_HEALTH_TIMEOUT_MS = 15_000;
 
 export interface RemoteHealthPlace {
   readonly id: string;
