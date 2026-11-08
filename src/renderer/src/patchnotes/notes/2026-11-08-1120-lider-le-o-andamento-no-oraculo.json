@@ -1,0 +1,4 @@
+{
+  "title": "O Líder não recebe mais um aviso a cada turno das sessões",
+  "text": "Cada sessão do time grava o andamento no Oráculo (estado, o que precisa, a prova e o próximo passo), e o Líder lê o que mudou quando quiser, agrupado por sessão. Assim ele não se afoga em avisos \"◆ … terminou\" e não perde o plano. Só chega na hora ao Líder do quadro o que não pode esperar: sessão que precisa de você, travada (limite de uso, login ou permissão aberta) e tarefa entregue para aceite. O Líder único ouve só os Líderes de quadro. Se preferir o jeito antigo, ligue \"Avisos de fim de turno\" em Preferências."
+}
