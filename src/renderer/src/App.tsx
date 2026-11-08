@@ -127,6 +127,7 @@ import { runningCount } from '../../shared/chat/backgroundTasks';
 import { effectiveTabView, hasChatView, nextTabView, shouldHandleViewShortcut } from './chat/tabView';
 import { disposeTabSend, ownerTerminalInput, sendDriverFor, sendToTab, pendingSendReason, sendToTabAndWait, tabTookMessage } from './chat/composer/tabSend';
 import { blockingScreen, readInputText } from '../../shared/chat/screen';
+import { withNoPipelineTag } from '../../shared/chat/noPipeline';
 import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../shared/lider/ipc';
 import { isLeaderOfAllTab, leaderHome } from '../../shared/mindscape/leader';
 import { DEFAULT_LEADER_PREFS, leaderRemoteId } from '../../shared/leaderPrefs';
@@ -1822,9 +1823,11 @@ export function App(): React.JSX.Element {
   });
   /** One line to the session of `tabId` — same doors as the Esteira auto-start: the chat's send driver, or typed into the terminal. */
   /** `from: 'session'` — a notice or a message from another session: it waits for the owner (sendDriver, 06/11). */
-  const sendRenewalLine = (tabId: string, text: string, from?: 'session'): void => {
+  const sendRenewalLine = (tabId: string, rawText: string, from?: 'session'): void => {
     const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
     if (tab === undefined) return;
+    // Not the owner's request: the pipeline router leaves it alone (src/shared/chat/noPipeline.ts).
+    const text = from === 'session' ? withNoPipelineTag(rawText) : rawText;
     if (hasChatView(tab, chatEnabled)) sendToTab(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text, ...(from ? { from } : {}) });
     else armEsteiraAutoStart(tabId, text);
   };
@@ -2500,7 +2503,7 @@ export function App(): React.JSX.Element {
     deliverLine: (tabId, text, waitMs, from) => {
       const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
       if (tab !== undefined && hasChatView(tab, chatEnabled))
-        return sendToTabAndWait(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text, from }, waitMs);
+        return sendToTabAndWait(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text: from === 'session' ? withNoPipelineTag(text) : text, from }, waitMs);
       sendRenewalLine(tabId, text, from === 'session' ? 'session' : undefined);
       return Promise.resolve({ kind: 'pelo-terminal' as const });
     },
@@ -2612,7 +2615,8 @@ export function App(): React.JSX.Element {
     for (const [tabId, text] of Object.entries(pendingFirstMessagesRef.current)) {
       if (!tabs.some((tab) => tab.id === tabId)) continue;
       delete pendingFirstMessagesRef.current[tabId];
-      sendRenewalLine(tabId, text);
+      // The request of the session that opened it, not the owner's: the pipeline router leaves it alone.
+      sendRenewalLine(tabId, withNoPipelineTag(text));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabs]);
