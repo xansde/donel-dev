@@ -18,6 +18,7 @@ import {
   type LedgerTask,
   type LedgerVisual,
 } from '../../../shared/ledger/contract';
+import { isProgressEvent } from '../../../shared/ledger/andamento';
 import { proofUrl } from '../../../shared/ledger/channels';
 import { actorLabel, deliveryNote, mandarDaCarta, naipeDoPapel, notasDaFrente, reciboDe, type PlaceNameOf } from '../../../shared/ledger/labels';
 import type { Naipe } from '../../../shared/celular';
@@ -151,8 +152,9 @@ function WriteBox({ task, who, draft, onDraft, decide }: { readonly task: Ledger
 function Conversation({ task, who }: { readonly task: LedgerTask; readonly who: string }): React.JSX.Element | null {
   const first = task.events.find((event) => event.kind === 'entregue');
   const lines = task.events.flatMap((event): { at: number; mine: boolean; text: string; receipt?: string }[] => {
-    if (event.kind === 'comentada' && event.text) return [{ at: event.at, mine: true, text: event.text, receipt: reciboDe(event.deliveredTo, who, event.at) }];
-    if (event.kind === 'entregue' && event !== first && task.events.some((other) => other.kind === 'comentada' && other.at <= event.at)) {
+    // A session's progress record (08/11) is a `comentada` too, but never the owner's words.
+    if (event.kind === 'comentada' && event.text && !isProgressEvent(event)) return [{ at: event.at, mine: true, text: event.text, receipt: reciboDe(event.deliveredTo, who, event.at) }];
+    if (event.kind === 'entregue' && event !== first && task.events.some((other) => other.kind === 'comentada' && !isProgressEvent(other) && other.at <= event.at)) {
       const text = event.forOwner?.summary ?? eventNote(event);
       return text ? [{ at: event.at, mine: false, text }] : [];
     }

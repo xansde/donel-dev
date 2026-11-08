@@ -72,7 +72,7 @@ describe('defaultAppConfig (puro)', () => {
       sweep: { lastSweepAt: null },
       // B36 — sessão renovada em voo: ligada, 250k de contexto.
       sessionRenewal: { enabled: true, limitTokens: 250_000 },
-      team: { openCap: null },
+      team: { openCap: null, turnNotices: 'ledger' },
       autoMode: { neverAsks: true },
       yolo: { projects: [] },
       // Oráculo no centro (06/11) — o layout novo é o padrão, com o Oráculo à vista.
@@ -115,7 +115,7 @@ describe('toAppConfigDto (puro)', () => {
       chat: { enabled: false, focusMode: true },
       pet: { enabled: false, placement: null, size: 140 },
       sessionRenewal: { enabled: true, limitTokens: 250_000 },
-      team: { openCap: null },
+      team: { openCap: null, turnNotices: 'ledger' },
       autoMode: { neverAsks: true },
       yolo: { projects: [] },
       layout: { oracleCenter: true, centerView: 'oracle' },
@@ -253,7 +253,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       pet: { enabled: true, placement: { x: 1830, y: 1040 }, size: 200 },
       sweep: { lastSweepAt: null },
       sessionRenewal: { enabled: false, limitTokens: 180_000 },
-      team: { openCap: 3 },
+      team: { openCap: 3, turnNotices: 'chat' },
       autoMode: { neverAsks: false },
       yolo: { projects: ['C:\\repos\\app'] },
       layout: { oracleCenter: false, centerView: 'terminals' },

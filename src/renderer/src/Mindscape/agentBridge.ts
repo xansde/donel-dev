@@ -13,6 +13,16 @@
 // Back to the Líder único (06/11): a session it opened, or one below that one, sends to `"lider"` (`canReachLeader`).
 // A place that is gone (its tab closed and did not come back in PASS_ON_GRACE_MS, or it never started) passes its live
 // tasks to the first live place above it, or to the Líder único (`firstLiveAbove`), and whoever gets them hears it.
+// Andamento no ledger (dono, 08/11: "Eles devem atualizar diretamente o ledger, né. Em vez de te notificar a cada
+// instante"; and "O líder do quadro que se vire para organizar as sessões"): with `turnNotices` 'ledger' (the default)
+// an end of turn is recorded on the session's live task (`recordTurn`), never sent to a chat, and a passage of tasks
+// is read in the ledger too. Only what cannot wait goes at once (`queueUrgent`): a permission open on its screen, a
+// turn that failed (usage limit, login…), a delivery for acceptance and a record of "travada"/"precisa-do-dono" — to
+// the Líder of the session's board; the Líder único hears only the Líderes of the boards (or a board with none).
+// A session WITH NO live task keeps the old end of turn, by the same road (Líder do quadro, 08/11: it would go mute).
+// Nothing of it is lost (Revisor, #324): it counts as told only once the Líder's CLI took it; with no Líder open (or
+// "sem ligação") it waits and goes when one opens or comes back (`flushUrgent`), and the situation is in the ledger.
+// 'chat' is the old mode, kept for the owner to turn back on (Preferências).
 
 import {
   LEADER_PLACE_IS_THE_OWNERS,
@@ -25,10 +35,12 @@ import {
 } from '../../../shared/mindscape/agent-tools';
 import type { MindscapeBoardResponse } from '../../../shared/mindscape/channels';
 import { LEADER_OF_ALL, isLeaderOfAllTab, knownBoards, resolveBoard, type KnownBoard } from '../../../shared/mindscape/leader';
-import { BOARD_LEADER, LEADER_OF_ALL_FROM, boardOrchestrators, canFaxineiroClose, canReach, canReachLeader, findPlace, firstLiveAbove, isBoardOrchestrator } from '../../../shared/mindscape/reach';
+import { BOARD_LEADER, LEADER_OF_ALL_FROM, boardOrchestrators, canFaxineiroClose, canReach, canReachLeader, findPlace, firstLiveAbove, isBelow, isBoardOrchestrator } from '../../../shared/mindscape/reach';
 import { FAXINEIRO_OPENER, PC_MACHINE_ID, type FaxineiroLogEntry, type SessionView } from '../../../shared/faxineiro/triggers';
 import type { FaxineiroWakeOrder } from '../../../shared/faxineiro/ipc';
-import type { LedgerPassedOn, LedgerPassOnRequest } from '../../../shared/ledger/channels';
+import type { LedgerPassedOn, LedgerPassOnRequest, LedgerTurnRecord, LedgerTurnRecorded } from '../../../shared/ledger/channels';
+import { failureReasonText } from '../../../shared/attention/rule';
+import type { TurnNotices } from '../../../shared/teamPrefs';
 import { addLink, addPlace, noteCardId, placeCardId, placeHasStarted, placeOfSession, type MindscapeBoard, type MindscapeDoc, type SessionPlaceCard } from '../../../shared/mindscape/model';
 import type { SemaphoreState } from '../../../shared';
 import { FAXINEIRO_ROLE_ID, LEADER_ROLE_ID, type SessionRole } from '../../../shared/roles';
@@ -157,6 +169,12 @@ export interface AgentBridgePorts {
   stateEnteredAt?(tabId: string): number | undefined;
   /** t-b3b26e60 — lines for `<userData>/rotinas/faxineiro.log` (each close the Faxineiro asks for, each wake). */
   logFaxineiro?(entries: readonly FaxineiroLogEntry[]): void;
+  /** 08/11 — where the end of a turn goes (Preferências): 'ledger' (absent = this) or 'chat' (the old "◆ … terminou"). */
+  turnNotices?(): TurnNotices;
+  /** 08/11 — the end of a turn, recorded on the session's live task (the main writes the ledger). */
+  recordTurn?(record: LedgerTurnRecord): Promise<LedgerTurnRecorded> | void;
+  /** The `StopFailure` code of the last turn of that tab (`rate_limit`…), if it failed; read, never computed here. */
+  turnFailureOf?(tabId: string): string | undefined;
 }
 
 /** Sessões remotas — the process lives on the place but its ssh dropped (main/remote-link.ts); never "fechada". */
@@ -206,6 +224,11 @@ export class AgentBridge {
   private readonly leaderOpened = new Set<string>();
   /** A closed place waiting PASS_ON_GRACE_MS before its tasks pass on (`projectPath\nplaceId` → timer). */
   private readonly passOnTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Tab → the urgent situation already queued (permission, failure): queued once until it clears. */
+  private readonly toldUrgent = new Map<string, string>();
+  /** What cannot wait and was not taken yet by a Líder's CLI (`tab:<id>` for a situation, `n:<seq>` for the rest). */
+  private readonly pendingUrgent = new Map<string, { readonly tabId: string; readonly words: string; sending: boolean }>();
+  private urgentSeq = 0;
   /** t-b3b26e60 — machines where a new session waits for room (`pc` or a remote id → why), from the minute round. */
   private fullMachines = new Map<string, readonly string[]>();
   /** t-b3b26e60 — the `sessao_abrir` waiting for room, oldest first. In memory: a restart leaves them "não começou". */
@@ -249,6 +272,8 @@ export class AgentBridge {
   }
 
   dispose(): void {
+    this.toldUrgent.clear();
+    this.pendingUrgent.clear();
     this.lastNoticeFrom.clear();
     this.lastNoticeText.clear();
     this.leaderHears.clear();
@@ -324,6 +349,8 @@ export class AgentBridge {
     } catch {
       return; // nothing moved; the next close or check tries again
     }
+    // 08/11 — with the notices in the ledger, the passage is read there (tarefa_novidades), not in a chat.
+    if (!this.chatMode()) return;
     for (const moved of passed) {
       const leader = moved.to === LEADER_OF_ALL;
       const target = leader ? this.leaderTab() : this.tabOfPlace(moved.projectPath, moved.to);
@@ -729,16 +756,43 @@ export class AgentBridge {
 
   // ---- end-of-turn notice (D) --------------------------------------------------------------------------------
 
-  /** A session ended a turn: each open session with an arrow to it (or that opened it) hears a short notice. */
+  private chatMode(): boolean {
+    return this.ports.turnNotices?.() === 'chat';
+  }
+
+  /**
+   * A session ended a turn. 'ledger' (default): recorded on its live task, nobody's chat hears it. 'chat' (the old
+   * mode): each open session with an arrow to it (or that opened it) hears a short notice.
+   */
   turnEnded(sessionId: string, text: string): void {
     const ended = this.ports.tabs().find((tab) => tab.claudeSessionId === sessionId);
     if (!ended?.cwd || isLeaderOfAllTab(ended)) return;
+    const cwd = ended.cwd;
     // B40 — the same end of turn arriving twice (a repeated or late hook) is announced once.
     if (this.lastNoticeText.get(sessionId) === text) return;
     this.lastNoticeText.set(sessionId, text);
     const place = this.placeOfTab(ended);
     const board = this.board(ended.cwd);
     if (!place || !board) return;
+    if (!this.chatMode()) {
+      // With no live task (or a ledger that cannot be written) the turn is not recorded: it keeps the old notice, to
+      // the Líder of the board (Líder do quadro, 08/11).
+      // The Líder of a board has no Líder of its board above it: its turn keeps the old road whole.
+      const words = `terminou: ${noticeBody(text) || '(sem resumo)'}`;
+      void Promise.resolve(this.ports.recordTurn?.({ projectPath: ended.cwd, placeId: place.id, text }))
+        .catch((): LedgerTurnRecorded => 'falhou')
+        .then((recorded) => {
+          if (recorded !== 'sem-tarefa' && recorded !== 'falhou' && recorded !== undefined) return;
+          if (isBoardOrchestrator(board, place.id)) this.chatTurnNotice(ended, cwd, place, board, text);
+          else this.queueUrgent(`n:${++this.urgentSeq}`, ended.id, words);
+        });
+      return;
+    }
+    this.chatTurnNotice(ended, cwd, place, board, text);
+  }
+
+  /** The old "◆ … terminou": each open session with an arrow to it (or that opened it) hears it. */
+  private chatTurnNotice(ended: BridgeTab, cwd: string, place: SessionPlaceCard, board: MindscapeBoard, text: string): void {
     const listeners = new Set<string>();
     for (const link of board.links) if (link.arrow && link.to === place.id) listeners.add(link.from);
     const opener = this.openedBy.get(ended.id);
@@ -749,16 +803,115 @@ export class AgentBridge {
     this.lastNoticeFrom.delete(ended.id);
     const role = this.roleName(place.roleId);
     const line = `◆ ${role ? `${role} ` : ''}${ended.name} (${place.id}) terminou: ${noticeBody(text) || '(sem resumo)'}`;
-    const boardName = ended.projectName ?? lastSegment(ended.cwd);
+    const boardName = ended.projectName ?? lastSegment(cwd);
     for (const listenerPlace of listeners) {
       if (listenerPlace === place.id || listenerPlace === guard) continue;
       const leader = listenerPlace === LEADER_OF_ALL;
-      const target = leader ? this.leaderTab() : this.tabOfPlace(ended.cwd, listenerPlace);
+      const target = leader ? this.leaderTab() : this.tabOfPlace(cwd, listenerPlace);
       if (!target) continue;
       this.lastNoticeFrom.set(target.id, place.id);
       // The Líder único hears every board: the notice says which one.
       this.ports.sendLine(target.id, leader ? line.replace(`(${place.id})`, `(${place.id}, quadro ${boardName})`) : line);
     }
+  }
+
+  // ---- what cannot wait (08/11) --------------------------------------------------------------------------------
+
+  /**
+   * The state of a tab changed (App, from the semaphore it already has; nothing is computed here). A permission open
+   * on its screen ("precisa do dono") or a turn that failed (usage limit, login…: "travada") reaches the Líder of its
+   * board at once, once per situation. In the old mode ('chat') the "◆ … terminou" already says it: nothing here.
+   */
+  attention(tabId: string): void {
+    if (this.chatMode()) return;
+    const state = this.ports.stateOf(tabId);
+    const failure = state !== undefined && state !== 'working' ? this.ports.turnFailureOf?.(tabId) : undefined;
+    const stuck = failure ? `está travada: ${failureReasonText(failure)} (o turno parou e não segue sozinho)` : undefined;
+    const situation = state === 'permission' ? 'precisa do dono: há uma permissão aberta na tela dela' : stuck;
+    const key = `tab:${tabId}`;
+    if (!situation) {
+      this.toldUrgent.delete(tabId);
+      if (!this.pendingUrgent.get(key)?.sending) this.pendingUrgent.delete(key); // it cleared before anyone heard
+      this.flushUrgent();
+      return;
+    }
+    if (this.toldUrgent.get(tabId) !== situation) {
+      this.toldUrgent.set(tabId, situation);
+      const tab = this.ports.tabs().find((candidate) => candidate.id === tabId);
+      const place = tab ? this.placeOfTab(tab) : undefined;
+      if (tab?.cwd && place) {
+        // The ledger keeps it too, saying when nobody could hear it yet.
+        const waiting = this.urgentTarget(tab) ? '' : ' (aviso pendente: nenhum Líder aberto)';
+        void Promise.resolve(this.ports.recordTurn?.({ projectPath: tab.cwd, placeId: place.id, text: `${situation}${waiting}`, estado: state === 'permission' ? 'precisa-do-dono' : 'travada' })).catch(() => undefined);
+      }
+      this.queueUrgent(key, tabId, `${situation}. Veja a tela dela com sessao_ver_tela.`);
+      return;
+    }
+    this.flushUrgent();
+  }
+
+  /** Something of the session of `tabId` that cannot wait: it stays here until a Líder's CLI took it. */
+  private queueUrgent(key: string, tabId: string, words: string): void {
+    this.pendingUrgent.set(key, { tabId, words, sending: false });
+    this.flushUrgent();
+  }
+
+  /**
+   * Tries every pending notice (App calls it at each state change and every half minute: a Líder that opens or comes
+   * back from "sem ligação" gets what waited). Told = the Líder's CLI took it, or its send driver holds it.
+   */
+  flushUrgent(): void {
+    for (const [key, entry] of this.pendingUrgent) {
+      if (entry.sending) continue;
+      const tab = this.ports.tabs().find((candidate) => candidate.id === entry.tabId);
+      const place = tab ? this.placeOfTab(tab) : undefined;
+      if (!tab?.cwd || !place) {
+        this.pendingUrgent.delete(key); // the session itself is gone from every board: nobody to speak for
+        continue;
+      }
+      const route = this.urgentTarget(tab);
+      if (!route) continue; // waits for a Líder
+      entry.sending = true;
+      const role = this.roleName(place.roleId ?? tab.roleId);
+      const where = route.leader ? `, quadro ${tab.projectName ?? this.boardName(tab.cwd)}` : '';
+      const line = `◆ ${role ? `${role} ` : ''}${tab.name} (${place.id}${where}) ${entry.words}`;
+      void this.ports
+        .deliverLine(route.target.id, line, DELIVERY_WAIT_MS, 'session')
+        .catch((): DeliveryOutcome => ({ kind: 'nao-foi', reason: 'erro' }))
+        .then((outcome) => {
+          if (this.pendingUrgent.get(key) !== entry) return; // replaced by a newer situation meanwhile
+          if (outcome.kind === 'nao-foi') entry.sending = false; // the next flush tries again
+          else this.pendingUrgent.delete(key);
+        });
+    }
+  }
+
+  /** A Líder tab that can take a line now: open, and not "sem ligação". */
+  private reachableTab(tab: BridgeTab | undefined): BridgeTab | undefined {
+    return tab && !this.ports.linkLost?.(tab.id) ? tab : undefined;
+  }
+
+  /**
+   * Who hears what cannot wait from the session of `tab`: the Líder of its board (an orchestrator the owner put there,
+   * open; the one above it by the arrows first). The Líder of a board, or a board with no reachable Líder, goes to the
+   * Líder único ("O líder do quadro que se vire para organizar as sessões"; the Líder único hears the Líderes).
+   */
+  private urgentTarget(tab: BridgeTab): { readonly target: BridgeTab; readonly leader: boolean } | undefined {
+    if (!tab.cwd || isLeaderOfAllTab(tab)) return undefined;
+    const cwd = tab.cwd;
+    const place = this.placeOfTab(tab);
+    const board = this.board(cwd);
+    // A tab out of every board (opened by hand, no place) belongs to no team: nobody is told.
+    if (!place || !board) return undefined;
+    if (!isBoardOrchestrator(board, place.id)) {
+      // The same Líder `"para": "lider-quadro"` reaches (reach.ts), here only those that can take a line now.
+      const leaders = boardOrchestrators(board).filter((id) => id !== place.id && this.reachableTab(this.tabOfPlace(cwd, id)) !== undefined);
+      const above = leaders.find((id) => isBelow(board, id, place.id)) ?? leaders[0];
+      const target = above ? this.tabOfPlace(cwd, above) : undefined;
+      if (target) return { target, leader: false };
+    }
+    const leader = this.reachableTab(this.leaderTab());
+    return leader ? { target: leader, leader: true } : undefined;
   }
 
   // ---- the tools ---------------------------------------------------------------------------------------------
@@ -779,6 +932,13 @@ export class AgentBridge {
     const roleNames = new Map(this.ports.roles().map((role) => [role.id, role.name]));
 
     if (call.tool === 'papeis_listar') return { ok: true, text: json(this.ports.roles().map((role) => ({ id: role.id, nome: role.name }))) };
+
+    if (call.tool === 'aviso_imediato') {
+      if (this.chatMode()) return { ok: true, text: 'modo antigo: o aviso vai no fim do turno' };
+      const heard = this.urgentTarget(caller) !== undefined;
+      this.queueUrgent(`n:${++this.urgentSeq}`, caller.id, call.texto);
+      return { ok: true, text: heard ? 'avisado' : 'guardado: vai quando um Líder abrir' };
+    }
 
     if (call.tool === 'estados_dos_lugares') {
       // Only ids and states, for the ledger's orphan count: the same for every caller (no reach in it). A folder that is

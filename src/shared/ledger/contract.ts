@@ -24,6 +24,8 @@
 // Consumers (e.g. "Rotinas em sombra", item 20) read the document with `parseLedgerDoc` and the numbers with
 // `ledgerStrip`; they never write the file — a write goes through the main (`LedgerService.apply`).
 
+import { progressRefusal, progressText, type LedgerProgress } from './andamento';
+
 /**
  * Bump on any new field: the parse drops what it does not know and `userData` is shared by the channels.
  * 2 — `requestId` on a decision (the phone's request id: a retry after a restart never records twice).
@@ -36,6 +38,7 @@
  *   A letter with a file (`SlackLetter.file`) has no new version either, on purpose: the Alfa 0.4.0 and the beta
  *   share this file, and a bump would leave them read-only (tasks, letters and the Slack guard stopped). See
  *   `SlackLetter.file` for why a v4 app is safe with it.
+ *   The progress of a session (08/11, `andamento.ts`) is a marked `comentada` by the owner place: no new version.
  */
 export const LEDGER_SCHEMA_VERSION = 4;
 
@@ -514,7 +517,9 @@ export type LedgerOp =
   /** The answer of the send in flight: Slack took it, or it failed EXPLICITLY (`why`). An `enviada` with `SEND_ANSWER` text. */
   | { readonly op: 'slack-resultado'; readonly id: string; readonly outcome: 'confirmado' | 'falhou'; readonly why?: string }
   /** The record of a post by an agent's OWN bot, which needs no letter (`AGENT_BOT_MARK`). Written by the guard. */
-  | { readonly op: 'slack-bot'; readonly projectPath: string; readonly bot: AgentBotRecord };
+  | { readonly op: 'slack-bot'; readonly projectPath: string; readonly bot: AgentBotRecord }
+  /** 08/11 — the owner place records how the work goes (`andamento.ts`): a marked `comentada`, the state unchanged. */
+  | { readonly op: 'andamento'; readonly id: string; readonly progress: LedgerProgress };
 
 export interface LedgerOpContext {
   readonly now: number;
@@ -663,6 +668,14 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       // On `rejeitada` the text is the reason, so it may not pose as a mark of the app.
       if (closes === 'rejeitada' && startsWithMark(text)) return fail(`O texto não pode começar com "${MARK_OPEN}".`);
       return done(step(task, closes, { kind: closes, at: ctx.now, by: actor, text, ...requestOf(op), option: OWN_OPTION }));
+    }
+
+    case 'andamento': {
+      if (!isOwnerPlace) return fail(`Só o lugar dono (${task.ownerPlaceId}) registra o andamento desta tarefa.`);
+      if (isClosed(task) || task.slack) return fail('A tarefa já fechou: o andamento vai numa tarefa viva.');
+      const why = progressRefusal(op.progress);
+      if (why) return fail(why);
+      return done(step(task, task.state, { kind: 'comentada', at: ctx.now, by: actor, text: progressText(op.progress) }));
     }
 
     case 'comentar': {
