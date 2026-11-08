@@ -8,12 +8,18 @@ Decisão do dono (06/11), literal:
 A pesquisa que pesou os riscos está em `Donel Dev Alfa - diario\proxy-vps\proxy-nas-vps.html` (opção "c").
 O dono pesou e decidiu; este documento é só a operação.
 
+> **Mudança de 08/11 (dono: "não pode deixar o proxy sair no IP da VPS. Se não algumas ferramentas minhas caem"):**
+> a queda `direto` acabou. Sem o PC, o relay recusa Anthropic/Claude (503) e grava o aviso; a lista nunca sai pelo
+> IP da nuvem. Uma `vps.json` antiga com `"queda": "direto"` sobe parando, com `queda-direto-ignorada` no log. O
+> `proxy-saida.env` liga o proxy sempre (antes, só se o relay estivesse de pé na hora). Onde este texto fala em
+> "cai para o direto", leia "para". Plano: `docs/planos/orquestradora-na-vps.md`.
+
 ## Como ficou
 
 ```
 sessão do Claude na VPS ──HTTPS_PROXY──▶ relay 127.0.0.1:3128 ──┬─ Anthropic/Claude ─▶ proxy do PC (100.76.108.30:3128, Tailscale) ─▶ IP de casa
                                                                ├─ resto (git, npm, MCP...) ─▶ direto, IP da nuvem
-                                                               └─ PC fora ─▶ direto (ou para, com queda=parar) + aviso no log
+                                                               └─ PC fora ─▶ para (503) + aviso no log; nunca direto (08/11)
 ```
 
 - **Um arquivo**, `scripts/proxy-saida/proxy-saida.mjs`, Node puro, sem dependência. A config diz o modo.
