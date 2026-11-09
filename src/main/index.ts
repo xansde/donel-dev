@@ -3532,6 +3532,22 @@ function placesSnapshot(): PlaceInfoOf {
   };
 }
 
+/** 09/11 (t-5c0df1df) — place → its conversation of the moment, for `tarefa_listar`/`tarefa_ver`; the boards are read once. */
+function sessionsSnapshot(): (projectPath: string, placeId: string) => string | undefined {
+  let boards: Readonly<Record<string, MindscapeBoard>> | null = null;
+  return (projectPath, placeId) => {
+    if (boards === null) {
+      try {
+        boards = createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load().boards;
+      } catch {
+        boards = {};
+      }
+    }
+    const card = boards[projectPath]?.cards[placeId];
+    return card?.kind === 'session' ? card.sessionId : undefined;
+  };
+}
+
 /** The board of a task (the Líder único names no board for a tool that acts by the task id). */
 function taskBoardOf(id: string): string | undefined {
   try {
@@ -3587,7 +3603,7 @@ async function withEveryBoard(boardBridge: BoardBridge, ptyId: string, caller: L
 
 async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<{ caller: LedgerCaller; call: LedgerToolCall } | string> {
   const quadro = call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' || call.tool === 'tarefa_novidades' ? call.quadro : call.tool === 'tarefa_transferir' || call.tool === 'tarefa_cancelar' || call.tool === 'tarefa_frente' ? taskBoardOf(call.id) : undefined;
-  const base = { placeId: LEADER_OF_ALL, roleId: LEADER_ROLE_ID };
+  const base = { placeId: LEADER_OF_ALL, roleId: LEADER_ROLE_ID, sessionOf: sessionsSnapshot() };
   if (!quadro) {
     if (call.tool === 'tarefa_criar') return 'Você é o Líder único e não tem quadro: diga qual em "quadro" (nome ou pasta).';
     // No board: the list is of every board; the other tools act by the task id.
@@ -3629,6 +3645,7 @@ async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: Led
     boardPlaceIds: places.map((place) => place.id).filter((id): id is string => typeof id === 'string'),
     ...(list.kind === 'text' ? { placeStates: new Map([[who.pasta, placeStatesOf(places)]]) } : {}),
     ...(board ? { board } : {}),
+    sessionOf: sessionsSnapshot(),
   };
   return { caller: await withEveryBoard(boardBridge, ptyId, caller, call), call };
 }

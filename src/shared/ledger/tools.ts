@@ -279,7 +279,7 @@ export const LEDGER_TOOLS = [
     name: 'tarefa_listar',
     title: 'Listar tarefas do Oráculo Harrow',
     description:
-      'As tarefas do quadro deste projeto (ou de todos), com estado, dono, prazo, risco e o resumo da última entrega, e a faixa de números do quadro. A prova inteira se lê com tarefa_ver. ' +
+      'As tarefas do quadro deste projeto (ou de todos), com estado, dono, a sessão que executa cada uma ("sessao": a conversa do lugar dono, como o quadro a tem), prazo, risco e o resumo da última entrega, e a faixa de números do quadro. A prova inteira se lê com tarefa_ver. ' +
       'Por padrão, só as vivas: nem fechadas (aceitas, canceladas, cartas rejeitadas) nem órfãs, nem cartas de Slack aceitas que ainda esperam o envio (contadas à parte, em "esperandoEnvio"; seguem liberando um envio). Órfã é a tarefa não fechada cujo lugar dono fechou, saiu do quadro ou não começou: passe-a adiante com tarefa_transferir ou encerre com tarefa_cancelar. Nada se apaga: "situacao" "todas" mostra o histórico inteiro.',
     inputSchema: {
       type: 'object',
@@ -297,7 +297,7 @@ export const LEDGER_TOOLS = [
     name: 'tarefa_ver',
     title: 'Ver tarefa e prova',
     description:
-      'Uma tarefa inteira, com a prova da última entrega: o texto completo, o link e, para print ou vídeo, o caminho do arquivo copiado (o primeiro print vem também como imagem). Quem decide (tarefa_aceitar, tarefa_rejeitar) lê a prova aqui antes.',
+      'Uma tarefa inteira, com a sessão que a executa ("sessao") e a prova da última entrega: o texto completo, o link e, para print ou vídeo, o caminho do arquivo copiado (o primeiro print vem também como imagem). Quem decide (tarefa_aceitar, tarefa_rejeitar) lê a prova aqui antes.',
     inputSchema: { type: 'object', properties: { id: ID }, required: ['id'], additionalProperties: false },
     annotations: { readOnlyHint: true },
   },
