@@ -2508,6 +2508,10 @@ export function App(): React.JSX.Element {
     tabOfPty: (ptyId) => tabsRef.current.find((tab) => chatPtyIds[tab.id] === ptyId),
     stateOf: (tabId) => (tabExits[tabId] !== undefined || !tabsRef.current.some((tab) => tab.id === tabId) ? undefined : (semaphoreStates[tabId]?.state ?? 'working')),
     linkLost: (tabId) => tabLinkLost(tabId),
+    relinkTools: (tabId) => {
+      const ptyId = tabExits[tabId] === undefined ? chatPtyIds[tabId] : undefined;
+      return ptyId ? window.donel.pty.relinkTools(ptyId) : Promise.resolve({ ok: false, text: 'a aba dela não tem processo vivo.' });
+    },
     roles: () => roles,
     openSession: (request) => {
       const defaults = appConfig?.launcherDefaults;

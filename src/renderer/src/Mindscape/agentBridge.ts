@@ -144,6 +144,8 @@ export interface AgentBridgePorts {
   stateOf(tabId: string): SemaphoreState | undefined;
   /** Sessões remotas — the ssh of that tab dropped and its process lives on the place ("sem ligação"). */
   linkLost?(tabId: string): boolean;
+  /** `sessao_religar` (t-1293c818) — the app registers again the keys (hooks, MCP) the CLI of that tab holds. */
+  relinkTools?(tabId: string): Promise<{ readonly ok: boolean; readonly text: string }>;
   roles(): readonly SessionRole[];
   /** Opens the tab of a place without stealing the focus and sends its first message; returns the tab id. */
   openSession(request: OpenSessionRequest): string;
@@ -1235,6 +1237,26 @@ export class AgentBridge {
         this.openedBy.delete(target.id);
         this.leaderHears.delete(target.id);
         return { ok: true, text: cut ? `Fechada (o turno não acabou em ${CLOSE_WAIT_MS / 1000} s; cortei).` : 'Fechada.' };
+      }
+
+      case 'sessao_religar': {
+        const no = (why: string): Omit<MindscapeBoardResponse, 'requestId'> => fail(`Não religuei: ${why}`);
+        // Same reach as `sessao_fechar` (shared/mindscape/reach.ts), plus the caller's own session (a hook gone while
+        // its MCP still answers). Nothing is killed: only the app's keys go back.
+        const doc = this.ports.doc();
+        const where = findPlace(doc, call.quem, projectPath);
+        if (!where) return no(`"${call.quem}" não é um lugar de nenhum quadro (veja sessao_listar).`);
+        const target = this.tabOfPlace(where.projectPath, where.placeId);
+        if (target?.id !== caller.id) {
+          const from = scope.leader ? LEADER_OF_ALL_FROM : self ? { projectPath, placeId: self.id } : undefined;
+          if (!from) return no('seu lugar ainda não está no quadro; espere o primeiro turno terminar.');
+          const reach = canReach(doc, from, where);
+          if (!reach.ok) return no(reach.reason);
+        }
+        if (!target) return no(`"${where.placeId}" não está aberta agora (para uma fechada, o dono retoma).`);
+        if (!this.ports.relinkTools) return no('este app não religa ferramentas.');
+        const outcome = await this.ports.relinkTools(target.id);
+        return outcome.ok ? { ok: true, text: outcome.text } : no(outcome.text);
       }
 
       case 'sessao_abrir': {
