@@ -20,9 +20,9 @@
 // is read in the ledger too. Only what cannot wait goes at once (`queueUrgent`): a permission open on its screen, a
 // turn that failed (usage limit, login…), a delivery for acceptance and a record of "travada"/"precisa-do-dono" — to
 // the Líder of the session's board (`boardLeaders`). The Líder único (dono, 09/11: "Quero um ambiente leve de
-// desenvolvimento, sem interrupções mil de report de cadeiras de dentro de cada Rig") hears only a Líder of a board:
-// what it delivers and what blocks it. Never a chair, not even with the Líder of the board closed (the notice waits for
-// it), never an end of turn, and never a round of the Faxineiro (its rounds live in the Faxineiro's log).
+// desenvolvimento, sem interrupções mil de report de cadeiras de dentro de cada Rig") hears a Líder of a board (what
+// it delivers, what blocks it) and, from a board with no Líder open, only a delivery or a lock of a chair. Never an end
+// of turn, a plain record of progress, or a round of the Faxineiro (its rounds live in the Faxineiro's log).
 // A session WITH NO live task keeps the old end of turn, by the same road (Líder do quadro, 08/11: it would go mute).
 // Nothing of it is lost (Revisor, #324): it counts as told only once the Líder's CLI took it; with no Líder open (or
 // "sem ligação") it waits and goes when one opens or comes back (`flushUrgent`), and the situation is in the ledger.
@@ -205,6 +205,13 @@ function lastSegment(path: string): string {
 
 type Answer = Omit<MindscapeBoardResponse, 'requestId'>;
 
+/**
+ * What a notice of a session is, for whom may hear it (`urgentTarget`): `trava` = what cannot wait (a permission, a
+ * failed turn, a delivery for acceptance, a record of "travada"/"precisa-do-dono"); `turno` = an end of turn the ledger
+ * could not keep (no live task). Only a `trava` of a board with no Líder open reaches the Líder único.
+ */
+type NoticeKind = 'trava' | 'turno';
+
 /** Who calls a board-scoped tool, on which board. `self` is the caller's place; the Líder único has none. */
 interface Scope {
   readonly projectPath: string;
@@ -234,7 +241,7 @@ export class AgentBridge {
   /** Tab → the urgent situation already queued (permission, failure): queued once until it clears. */
   private readonly toldUrgent = new Map<string, string>();
   /** What cannot wait and was not taken yet by a Líder's CLI (`tab:<id>` for a situation, `n:<seq>` for the rest). */
-  private readonly pendingUrgent = new Map<string, { readonly tabId: string; readonly words: string; sending: boolean }>();
+  private readonly pendingUrgent = new Map<string, { readonly tabId: string; readonly words: string; readonly kind: NoticeKind; sending: boolean }>();
   private urgentSeq = 0;
   /** t-b3b26e60 — machines where a new session waits for room (`pc` or a remote id → why), from the minute round. */
   private fullMachines = new Map<string, readonly string[]>();
@@ -825,7 +832,7 @@ export class AgentBridge {
           if (place.roleId === FAXINEIRO_ROLE_ID) return; // a round: in the Faxineiro's log, nobody's chat
           if (isBoardLeader(board, place.id)) this.chatTurnNotice(ended, cwd, place, board, text, false);
           // A board with no Líder at all has nobody to wait for: the end of turn stays on the session's own note.
-          else if (boardLeaders(board).length > 0) this.queueUrgent(`n:${++this.urgentSeq}`, ended.id, words);
+          else if (boardLeaders(board).length > 0) this.queueUrgent(`n:${++this.urgentSeq}`, ended.id, words, 'turno');
         });
       return;
     }
@@ -886,18 +893,18 @@ export class AgentBridge {
       const place = tab ? this.placeOfTab(tab) : undefined;
       if (tab?.cwd && place) {
         // The ledger keeps it too, saying when nobody could hear it yet.
-        const waiting = this.urgentTarget(tab) ? '' : ' (aviso pendente: nenhum Líder aberto)';
+        const waiting = this.urgentTarget(tab, 'trava') ? '' : ' (aviso pendente: nenhum Líder aberto)';
         void Promise.resolve(this.ports.recordTurn?.({ projectPath: tab.cwd, placeId: place.id, text: `${situation}${waiting}`, estado: state === 'permission' ? 'precisa-do-dono' : 'travada' })).catch(() => undefined);
       }
-      this.queueUrgent(key, tabId, `${situation}. Veja a tela dela com sessao_ver_tela.`);
+      this.queueUrgent(key, tabId, `${situation}. Veja a tela dela com sessao_ver_tela.`, 'trava');
       return;
     }
     this.flushUrgent();
   }
 
   /** Something of the session of `tabId` that cannot wait: it stays here until a Líder's CLI took it. */
-  private queueUrgent(key: string, tabId: string, words: string): void {
-    this.pendingUrgent.set(key, { tabId, words, sending: false });
+  private queueUrgent(key: string, tabId: string, words: string, kind: NoticeKind): void {
+    this.pendingUrgent.set(key, { tabId, words, kind, sending: false });
     this.flushUrgent();
   }
 
@@ -914,7 +921,7 @@ export class AgentBridge {
         this.pendingUrgent.delete(key); // the session itself is gone from every board: nobody to speak for
         continue;
       }
-      const route = this.urgentTarget(tab);
+      const route = this.urgentTarget(tab, entry.kind);
       if (!route) continue; // waits for a Líder
       entry.sending = true;
       const role = this.roleName(place.roleId ?? tab.roleId);
@@ -937,11 +944,15 @@ export class AgentBridge {
   }
 
   /**
-   * Who hears what cannot wait from the session of `tab`: a chair, the Líder of its board (`boardLeaders`, open; the one
-   * above it by the arrows first), and nobody else: with no Líder open the notice waits for one (dono, 09/11: nothing
-   * of a chair reaches the Líder único). A Líder of a board goes to the Líder único: what it delivers, what blocks it.
+   * Who hears a notice of the session of `tab` (dono, 09/11: "receber término de tasks completas" is the Líder único's
+   * job, never the chairs' reports):
+   * - a chair: the Líder of its board (`boardLeaders`, open; the one above it by the arrows first). A `trava` needs that
+   *   Líder to have shown signs of life since the app opened (`unconfirmed`): a Líder mute since a reinstall would
+   *   swallow it in silence. With no such Líder, a `trava` goes to the Líder único (it hears the boards with no Líder
+   *   open) and a `turno` waits for the Líder of the board, never the Líder único.
+   * - a Líder of a board: the Líder único (what it delivers, what blocks it).
    */
-  private urgentTarget(tab: BridgeTab): { readonly target: BridgeTab; readonly leader: boolean } | undefined {
+  private urgentTarget(tab: BridgeTab, kind: NoticeKind): { readonly target: BridgeTab; readonly leader: boolean } | undefined {
     if (!tab.cwd || isLeaderOfAllTab(tab)) return undefined;
     const cwd = tab.cwd;
     const place = this.placeOfTab(tab);
@@ -950,10 +961,15 @@ export class AgentBridge {
     if (!place || !board) return undefined;
     if (!isBoardLeader(board, place.id)) {
       // The same Líder `"para": "lider-quadro"` reaches (reach.ts), here only those that can take a line now.
-      const leaders = boardLeaders(board).filter((id) => id !== place.id && this.reachableTab(this.tabOfPlace(cwd, id)) !== undefined);
+      const hears = (id: string): boolean => {
+        const leaderTab = this.reachableTab(this.tabOfPlace(cwd, id));
+        return leaderTab !== undefined && (kind === 'turno' || !this.ports.unconfirmed(leaderTab.id));
+      };
+      const leaders = boardLeaders(board).filter((id) => id !== place.id && hears(id));
       const above = leaders.find((id) => isBelow(board, id, place.id)) ?? leaders[0];
       const target = above ? this.tabOfPlace(cwd, above) : undefined;
-      return target ? { target, leader: false } : undefined;
+      if (target) return { target, leader: false };
+      if (kind === 'turno') return undefined;
     }
     const leader = this.reachableTab(this.leaderTab());
     return leader ? { target: leader, leader: true } : undefined;
@@ -983,8 +999,8 @@ export class AgentBridge {
 
     if (call.tool === 'aviso_imediato') {
       if (this.chatMode()) return { ok: true, text: 'modo antigo: o aviso vai no fim do turno' };
-      const heard = this.urgentTarget(caller) !== undefined;
-      this.queueUrgent(`n:${++this.urgentSeq}`, caller.id, call.texto);
+      const heard = this.urgentTarget(caller, 'trava') !== undefined;
+      this.queueUrgent(`n:${++this.urgentSeq}`, caller.id, call.texto, 'trava');
       return { ok: true, text: heard ? 'avisado' : 'guardado: vai quando um Líder abrir' };
     }
 
