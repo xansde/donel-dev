@@ -16,7 +16,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createWriteStream, mkdirSync, type WriteStream } from 'node:fs';
 import { basename, join, relative, sep, isAbsolute } from 'node:path';
-import { resolvePermissionMode } from '../shared/commandBuilder';
+import { isBypassLaunch } from '../shared/launchPermission';
 import type { RemoteAliveSession } from '../shared';
 
 export const REMOTE_TMUX_SOCKET = 'donel';
@@ -132,8 +132,7 @@ export function remoteTranscriptPath(remoteDir: string, sid: string): string {
  * know which user the ssh target is).
  */
 function bypassEnvLines(claudeArgs: readonly string[]): string[] {
-  const bypass = resolvePermissionMode(claudeArgs, undefined) === 'bypassPermissions' || claudeArgs.includes('--dangerously-skip-permissions');
-  if (!bypass) return [];
+  if (!isBypassLaunch(claudeArgs)) return [];
   return ['export CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1', 'if [ "$(id -u)" = 0 ]; then export IS_SANDBOX=1; fi'];
 }
 

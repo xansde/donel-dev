@@ -31,7 +31,7 @@
 
 import { FAXINEIRO_ROLE_ID, LEADER_ROLE_ID } from '../roles';
 import { LEADER_OF_ALL } from './leader';
-import type { BoardReach, MindscapeBoard, MindscapeDoc, MindscapeLink } from './model';
+import { placeHolding, type BoardReach, type MindscapeBoard, type MindscapeDoc, type MindscapeLink } from './model';
 
 export function boardReach(board: MindscapeBoard | undefined): BoardReach {
   return board?.reach === 'all' ? 'all' : 'own';
@@ -67,6 +67,21 @@ export function isBelow(board: MindscapeBoard | undefined, from: string, to: str
 /** `to` was opened by `from`: a path of `sessao_abrir` arrows `from → … → to` (daughter, granddaughter…). */
 export function isOpenedBy(board: MindscapeBoard | undefined, from: string, to: string): boolean {
   return hasPath(board, from, to, (link) => link.opened === true);
+}
+
+/**
+ * Super bypass das orquestradoras (dono, 09/11) — what the board says of the session `sessionId` at spawn: its role and
+ * whether its place is above another session place by a hierarchy arrow (it opened or directs sessions: an
+ * orchestrator, `isOrchestratorSpawn` in src/shared/launchPermission.ts). A conversation on no board: nothing.
+ */
+export function spawnFactsOf(doc: MindscapeDoc, sessionId: string): { roleId?: string; directsOthers: boolean } {
+  for (const board of Object.values(doc.boards)) {
+    const place = placeHolding(board, sessionId);
+    if (!place) continue;
+    const directsOthers = board.links.some((link) => link.from === place.id && isHierarchyArrow(link) && board.cards[link.to]?.kind === 'session');
+    return { ...(place.roleId ? { roleId: place.roleId } : {}), directsOthers };
+  }
+  return { directsOthers: false };
 }
 
 export interface ReachEnd {

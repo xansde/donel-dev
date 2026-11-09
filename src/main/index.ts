@@ -8,7 +8,9 @@ import { basename, dirname, join } from 'node:path';
 import { readUserDefaultPermissionMode, readUserStatusLine } from './cli-user-settings';
 import { createStatusLineStore } from './statusline-store';
 import { STATUS_LINE_CHANNELS, type StatusLineChangedPayload, type StatusLineSnapshot } from '../shared/statusLine';
-import { appMcpAllowArgs, withResolvedPermissionMode } from '../shared/commandBuilder';
+import { appMcpAllowArgs } from '../shared/commandBuilder';
+import { planLaunchPermission, type SpawnFacts } from '../shared/launchPermission';
+import { spawnFactsOf } from '../shared/mindscape/reach';
 import { planRoleLaunch } from '../shared/roleLaunch';
 import type { DevModeBoardConfig } from '../shared/devMode';
 // Spec 010 — esteira nova: serviço (store + ingestão + disparo) e a fronteira IPC.
@@ -17,7 +19,6 @@ import { esteiraStoreDir } from './esteira-store';
 import { createMindscapeStore, mindscapeFilePath } from './mindscape-store';
 import { createRolesStore, type RolesStore } from './roles-store';
 import { createCelularService, type CelularService } from './celular/service';
-import { roleOfSession } from '../shared/mindscape/model';
 import { LEADER_ROLE_ID, ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
@@ -1751,7 +1752,8 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
   const files: RemoteFile[] = [];
   const claudeArgs: string[] = [...launcherArgs, ...extraArgs];
 
-  const roleId = roleIdForSpawn(options.roleId, launcherArgs, options.renewalId);
+  const spawnFacts = spawnFactsFor(options, launcherArgs);
+  const roleId = spawnFacts.roleId;
   const rolePromptPath = roleId ? (rolesStore?.promptFileFor(roleId, { leaderOfAll: options.leaderOfAll === true }) ?? null) : null;
   let remoteRolePath: string | null = null;
   if (rolePromptPath) {
@@ -1813,7 +1815,8 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     files.push({ name: 'mcp.json', content: mcp.configFileContent });
     claudeArgs.push(...appMcpAllowArgs(), '--mcp-config', '@S/mcp.json');
   }
-  const finalClaudeArgs = withResolvedPermissionMode(claudeArgs, readUserDefaultPermissionMode(undefined));
+  // Super bypass das orquestradoras (t-66cb0ce4): the env goes in the claude.sh (`bypassEnvLines`), read from these args.
+  const finalClaudeArgs = planLaunchPermission(claudeArgs, spawnFacts, readUserDefaultPermissionMode(undefined)).args;
 
   await remoteSessions.waitEnded(correlationId);
   const git = localGitInfo(localCwd);
@@ -2068,7 +2071,8 @@ function registerPtyIpcHandlers(): void {
       const plannedPtyId = randomUUID();
       // Papéis de sessão (item 12a) — the guidance of the role at every launch, resume and renewal
       // (`roleDeliveryFor`, one case per CLI). A missing role or file → the session opens without it.
-      const roleId = roleIdForSpawn(options.roleId, launcherArgs, options.renewalId);
+      const spawnFacts = spawnFactsFor(options, launcherArgs);
+      const roleId = spawnFacts.roleId;
       // Escopo do papel — only the MCPs, plugins and skills the role declares; no declaration = everything.
       const roleScope = roleScopeSettingsFor(roleId, () => readClaudeInventory(claudeConfigDirForSession ?? defaultClaudeConfigDir(), options.cwd));
       let sessionHooksSettingsPath: string | null = null;
@@ -2136,7 +2140,10 @@ function registerPtyIpcHandlers(): void {
       });
       const roleArgs = rolePlan.args;
       const finalArgs = [...launcherArgs, ...extraArgs, ...roleArgs, ...semaphoreArgs, ...browserMcpArgs];
-      // (T018: o `--permission-mode` resolvido entra mais abaixo, quando o config dir da sessão é conhecido.)
+      // T018 + super bypass das orquestradoras (t-66cb0ce4): one explicit `--permission-mode`, and the env of the bypass
+      // when the session runs in it (an orchestrator always does).
+      const permissionPlan = planLaunchPermission(finalArgs, spawnFacts, readUserDefaultPermissionMode(claudeConfigDirForSession));
+      const sessionEnv = Object.keys(permissionPlan.env).length > 0 ? { ...(envOverrides ?? {}), ...permissionPlan.env } : envOverrides;
 
       let ptyId: string;
       try {
@@ -2149,14 +2156,11 @@ function registerPtyIpcHandlers(): void {
           // (npm -g) no interpretador; ConPTY não executa script direto.
           command: resolved.launch.command,
           // T018 (014-chat, FR-030) — sessão `claude` sempre com modo de permissão
-          // explícito: launcher > `permissions.defaultMode` do CLI do usuário > default.
+          // explícito: launcher > `permissions.defaultMode` do CLI do usuário > default; orquestradora em bypass.
           // Só este ramo: o shell e a aba de login (retorno antecipado acima) não passam por aqui.
-          args: [
-            ...resolved.launch.argsPrefix,
-            ...withResolvedPermissionMode(finalArgs, readUserDefaultPermissionMode(claudeConfigDirForSession)),
-          ],
+          args: [...resolved.launch.argsPrefix, ...permissionPlan.args],
           claudeConfigDir: claudeConfigDirForSession,
-          envOverrides,
+          envOverrides: sessionEnv,
         });
       } catch (error) {
         // O spawn falhou: nada de token nem arquivo órfão.
@@ -3773,19 +3777,24 @@ function registerRolesIpcHandlers(): void {
  * place that had not started, the Launcher, a fork); else the role of the place that holds the
  * resumed conversation, or the conversation a renewal replaces. Read from `mindscape.json`, which
  * the renderer keeps saved; any failure → no role (the session still opens).
+ * Super bypass das orquestradoras (t-66cb0ce4) — also the Jobu's mark and whether that place is above another one on
+ * its board (it opened or directs sessions): the facts `planLaunchPermission` reads.
  */
-function roleIdForSpawn(explicit: string | undefined, launcherArgs: readonly string[], renewalId: string | undefined): string | undefined {
-  if (explicit) return explicit;
+function spawnFactsFor(options: PtyCreateOptions, launcherArgs: readonly string[]): SpawnFacts {
+  const explicit = options.roleId;
+  const leaderOfAll = options.leaderOfAll === true ? { leaderOfAll: true } : {};
   const resumeIndex = launcherArgs.indexOf('-r');
   const resumed = resumeIndex !== -1 && !launcherArgs.includes('--fork-session') ? launcherArgs[resumeIndex + 1] : undefined;
-  const predecessor = renewalId ? sessionRenewal?.get(renewalId)?.previousSessionId : undefined;
+  const predecessor = options.renewalId ? sessionRenewal?.get(options.renewalId)?.previousSessionId : undefined;
   const sessionId = resumed ?? predecessor;
-  if (!sessionId) return undefined;
+  if (!sessionId) return { ...(explicit ? { roleId: explicit } : {}), ...leaderOfAll };
   try {
     const doc = createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load();
-    return roleOfSession(doc, sessionId);
+    const onBoard = spawnFactsOf(doc, sessionId);
+    const roleId = explicit ?? onBoard.roleId;
+    return { ...(roleId ? { roleId } : {}), ...leaderOfAll, directsOthers: onBoard.directsOthers };
   } catch {
-    return undefined;
+    return { ...(explicit ? { roleId: explicit } : {}), ...leaderOfAll };
   }
 }
 
