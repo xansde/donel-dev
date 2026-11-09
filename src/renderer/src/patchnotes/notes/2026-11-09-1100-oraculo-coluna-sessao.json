@@ -1,0 +1,4 @@
+{
+  "title": "A tabela do Oráculo mostra a sessão de cada tarefa",
+  "text": "Na tabela de tarefas do Oráculo, a coluna Sessão mostra o começo do identificador da conversa que está fazendo cada tarefa em andamento. Passe o mouse para ver o identificador inteiro. Tarefa aceita ou cancelada fica com um traço."
+}
