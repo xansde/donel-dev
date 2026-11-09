@@ -69,12 +69,14 @@ function ProofItem({ proof }: { readonly proof: LedgerProof }): React.JSX.Elemen
 function Panel({
   item,
   places,
+  sessions,
   ownerName,
   onOpenCard,
   onClose,
 }: {
   readonly item: LedgerTableRow;
   readonly places: PlaceInfoOf | undefined;
+  readonly sessions: LedgerSessionsMap | undefined;
   readonly ownerName: string;
   readonly onOpenCard: (task: LedgerTask) => void;
   readonly onClose: () => void;
@@ -116,6 +118,8 @@ function Panel({
         <dd>{row.quem_criou}</dd>
         <dt>Faz agora</dt>
         <dd>{row.quem_faz_agora}</dd>
+        <dt>Sessão</dt>
+        <dd className={styles.code}>{sessionCell(task, sessions).full || '—'}</dd>
         <dt>Com quem está</dt>
         <dd className={item.waitsForOwner ? styles.you : undefined}>{item.withWhom}</dd>
         <dt>Decide</dt>
@@ -289,7 +293,7 @@ export function LedgerTable({
           </table>
           {shown.length === 0 ? <p className={styles.emptyRows}>{query ? 'Nada com essa busca neste filtro.' : 'Nenhuma tarefa neste filtro.'}</p> : null}
         </div>
-        {selected ? <Panel item={selected} places={places} ownerName={owner} onOpenCard={onOpenCard} onClose={() => setSelectedId(null)} /> : null}
+        {selected ? <Panel item={selected} places={places} sessions={sessions} ownerName={owner} onOpenCard={onOpenCard} onClose={() => setSelectedId(null)} /> : null}
       </div>
     </div>
   );
