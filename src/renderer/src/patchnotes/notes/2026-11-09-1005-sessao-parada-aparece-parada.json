@@ -1,0 +1,4 @@
+{
+  "title": "Sessão parada aparece parada depois de reabrir o app",
+  "text": "Ao reabrir o Donel, as sessões que estavam paradas no prompt voltam como paradas, e não mais como \"trabalhando\" ou \"sem sinal\" até o primeiro pedido. As da VPS são conferidas pela própria tela de lá em até um minuto. Isso destrava a atualização do app e faz os avisos e as tarefas chegarem ao Líder vivo. O Jobu não anuncia \"terminou\" por elas."
+}
