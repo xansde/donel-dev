@@ -12,7 +12,8 @@
 // `quadro`; whom it reaches is the one rule of shared/mindscape/reach.ts. Every other session stays on its own board.
 // Back to the Líder único (06/11): a session it opened, or one below that one, sends to `"lider"` (`canReachLeader`).
 // A place that is gone (its tab closed and did not come back in PASS_ON_GRACE_MS, or it never started) passes its live
-// tasks to the first live place above it, or to the Líder único (`firstLiveAbove`), and whoever gets them hears it.
+// tasks to the first live place above it (`firstLiveAbove`), else to the live Líder of its board, else to the Líder
+// único; in the old mode ('chat') whoever gets them hears it, in the ledger mode it is read there.
 // Andamento no ledger (dono, 08/11: "Eles devem atualizar diretamente o ledger, né. Em vez de te notificar a cada
 // instante"; and "O líder do quadro que se vire para organizar as sessões"): with `turnNotices` 'ledger' (the default)
 // an end of turn is recorded on the session's live task (`recordTurn`), never sent to a chat, and a passage of tasks
@@ -352,10 +353,18 @@ export class AgentBridge {
   /** Names who takes the work of each gone place, has the main move it, and tells whoever got something. */
   private async passOn(gone: readonly Omit<LedgerPassOnRequest, 'to'>[]): Promise<void> {
     if (!this.ports.passOn || gone.length === 0) return;
-    const requests = gone.map((request) => ({
-      ...request,
-      to: firstLiveAbove(this.board(request.projectPath), request.placeId, (id) => this.tabOfPlace(request.projectPath, id) !== undefined) ?? LEADER_OF_ALL,
-    }));
+    // Dono, 09/11 ("devolve ao Líder do quadro, em silêncio"): with nobody live above, the Líder of the board takes them;
+    // only a place with no live Líder on its board (or the Líder itself) leaves them with the Líder único.
+    const requests = gone.map((request) => {
+      const live = (id: string): boolean => this.tabOfPlace(request.projectPath, id) !== undefined;
+      const board = this.board(request.projectPath);
+      // A Líder mute since the app opened (a reinstall) would sit on them in silence: it does not count.
+      const leader = boardLeaders(board).find((id) => {
+        const tab = id === request.placeId ? undefined : this.tabOfPlace(request.projectPath, id);
+        return tab !== undefined && !this.ports.unconfirmed(tab.id);
+      });
+      return { ...request, to: firstLiveAbove(board, request.placeId, live) ?? leader ?? LEADER_OF_ALL };
+    });
     let passed: readonly LedgerPassedOn[] = [];
     try {
       passed = await this.ports.passOn(requests);
