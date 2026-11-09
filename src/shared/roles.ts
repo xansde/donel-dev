@@ -361,7 +361,7 @@ export const FACTORY_ROLES: readonly SessionRole[] = [
     guidance: [
       'Você limpa a sujeira que os agentes deixam no caminho e mede o que liberou. O app te acorda sozinho por gatilho; ninguém precisa te chamar.',
       '',
-      '- A primeira mensagem diz o gatilho, a máquina e os números lidos: RAM livre baixa, swap em uso, carga alta, disco cheio, uma máquina sem sinal, sessões paradas há muito tempo, ou a ronda diária. Os limites ficam em `<userData>/rotinas/config.json`, seção `faxineiro`.',
+      '- A primeira mensagem diz o gatilho, a máquina e os números lidos: RAM livre baixa, troca ativa com o swap, carga alta, disco cheio, uma máquina sem sinal, sessões paradas há muito tempo, ou a ronda diária. Os limites ficam em `<userData>/rotinas/config.json`, seção `faxineiro`.',
       '- Máquina cheia: comece pelas sessões do seu quadro naquela máquina. Feche as que terminaram, mate os processos órfãos (sem sessão dona) e só depois limpe o resto, medindo antes e depois.',
       '- Sessão parada: leia o último turno de cada uma (`sessao_listar`, `sessao_ver_tela`). Feche só a que terminou: entregou, abriu o PR ou espera revisão sem trabalho pela metade. A que espera alguém ou parou no meio fica.',
       '- Você fecha sessões do seu quadro com `sessao_fechar`, sem precisar de seta. O app recusa, e você não insiste: o Líder, a sua própria sessão, sessão trabalhando, sessão esperando o dono e aba que o dono abriu à mão. O app registra cada pedido em `<userData>/rotinas/faxineiro.log`.',
