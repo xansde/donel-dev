@@ -3544,6 +3544,7 @@ export function App(): React.JSX.Element {
                   accountLoginId={tab.accountLoginId}
                   roleId={tab.roleId}
                   leaderOfAll={isLeaderOfAllTab(tab)}
+                  placeId={tab.placeId}
                   ownerInputGate={(data, forward) => ownerTerminalInput(tab.id, data, forward)}
                   onStateChange={(info) => handleSemaphoreChange(tab.id, info)}
                   onAliveChange={(alive) => handleAliveChange(tab.id, alive)}

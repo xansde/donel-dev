@@ -3787,14 +3787,16 @@ function spawnFactsFor(options: PtyCreateOptions, launcherArgs: readonly string[
   const resumed = resumeIndex !== -1 && !launcherArgs.includes('--fork-session') ? launcherArgs[resumeIndex + 1] : undefined;
   const predecessor = options.renewalId ? sessionRenewal?.get(options.renewalId)?.previousSessionId : undefined;
   const sessionId = resumed ?? predecessor;
-  if (!sessionId) return { ...(explicit ? { roleId: explicit } : {}), ...leaderOfAll };
+  const alone: SpawnFacts = { ...(explicit ? { roleId: explicit } : {}), ...leaderOfAll };
+  if (!sessionId && !options.placeId) return alone;
   try {
     const doc = createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load();
-    const onBoard = spawnFactsOf(doc, sessionId);
-    const roleId = explicit ?? onBoard.roleId;
+    const onBoard = spawnFactsOf(doc, { ...(options.placeId ? { placeId: options.placeId } : {}), ...(sessionId ? { sessionId } : {}) });
+    // The role the renderer sent wins; the board's only fills a resume or a renewal (as before).
+    const roleId = explicit ?? (sessionId ? onBoard.roleId : undefined);
     return { ...(roleId ? { roleId } : {}), ...leaderOfAll, directsOthers: onBoard.directsOthers };
   } catch {
-    return { ...(explicit ? { roleId: explicit } : {}), ...leaderOfAll };
+    return alone;
   }
 }
 

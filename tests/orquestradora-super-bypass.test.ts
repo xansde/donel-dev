@@ -48,7 +48,9 @@ const ORCHESTRATORS = [
   { papel: 'Líder do quadro', facts: { roleId: 'lider' } },
   { papel: 'Líder único (Jobu)', facts: { roleId: 'lider', leaderOfAll: true } },
   { papel: 'Líder único sem o papel resolvido', facts: { leaderOfAll: true } },
-  { papel: 'sessão que abriu outras (Theo West)', facts: spawnFactsOf(theoDoc, 'conv-theo') },
+  { papel: 'sessão que abriu outras (Theo West)', facts: spawnFactsOf(theoDoc, { sessionId: 'conv-theo' }) },
+  // Started by the owner on its place, before any conversation: the arrows already put it above the Dalton.
+  { papel: 'lugar com seta para outro, antes da 1ª conversa', facts: spawnFactsOf(theoDoc, { placeId: OPENER }) },
 ] as const;
 
 describe('sessão orquestradora nasce em super bypass', () => {
@@ -74,8 +76,8 @@ describe('sessão orquestradora nasce em super bypass', () => {
   });
 
   it('a filha que não abriu ninguém segue o modo do papel; só a mãe é orquestradora', () => {
-    expect(spawnFactsOf(theoDoc, 'conv-dalton')).toEqual({ roleId: 'dev', directsOthers: false });
-    const plan = planLaunchPermission(bornArgs('dono'), spawnFactsOf(theoDoc, 'conv-dalton'), undefined);
+    expect(spawnFactsOf(theoDoc, { sessionId: 'conv-dalton' })).toEqual({ roleId: 'dev', directsOthers: false });
+    const plan = planLaunchPermission(bornArgs('dono'), spawnFactsOf(theoDoc, { sessionId: 'conv-dalton' }), undefined);
     expect(modesOf(plan.args)).toEqual(['acceptEdits']);
     expect(plan.env).toEqual({});
   });

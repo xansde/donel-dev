@@ -70,13 +70,15 @@ export function isOpenedBy(board: MindscapeBoard | undefined, from: string, to: 
 }
 
 /**
- * Super bypass das orquestradoras (dono, 09/11) — what the board says of the session `sessionId` at spawn: its role and
- * whether its place is above another session place by a hierarchy arrow (it opened or directs sessions: an
- * orchestrator, `isOrchestratorSpawn` in src/shared/launchPermission.ts). A conversation on no board: nothing.
+ * Super bypass das orquestradoras (dono, 09/11) — what the board says of a session at spawn, found by its place (a tab
+ * that has one, even before its first conversation) or by its conversation (a resume, a renewal): its role and whether
+ * its place is above another session place by a hierarchy arrow (it opened or directs sessions: an orchestrator,
+ * `isOrchestratorSpawn` in src/shared/launchPermission.ts). On no board: nothing.
  */
-export function spawnFactsOf(doc: MindscapeDoc, sessionId: string): { roleId?: string; directsOthers: boolean } {
+export function spawnFactsOf(doc: MindscapeDoc, of: { readonly placeId?: string; readonly sessionId?: string }): { roleId?: string; directsOthers: boolean } {
   for (const board of Object.values(doc.boards)) {
-    const place = placeHolding(board, sessionId);
+    const byPlace = of.placeId ? board.cards[of.placeId] : undefined;
+    const place = byPlace?.kind === 'session' ? byPlace : of.sessionId ? placeHolding(board, of.sessionId) : undefined;
     if (!place) continue;
     const directsOthers = board.links.some((link) => link.from === place.id && isHierarchyArrow(link) && board.cards[link.to]?.kind === 'session');
     return { ...(place.roleId ? { roleId: place.roleId } : {}), directsOthers };

@@ -325,6 +325,11 @@ export interface PtyCreateOptions {
    */
   leaderOfAll?: boolean;
   /**
+   * Super bypass das orquestradoras (t-66cb0ce4) — the place of the tab on the board, when it has one: a place above
+   * another one by the arrows (it opened or directs sessions) is born in super bypass even before its first conversation.
+   */
+  placeId?: string;
+  /**
    * Sessões remotas — id of a remote place (`accounts.remotes`) where this session runs, inside a tmux
    * session that outlives the app. Absent = this computer. Only with `sessionType === 'claude'`.
    */
