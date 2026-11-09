@@ -13,9 +13,14 @@
 // - the bar of a front counts the steps of its asks alive and accepted today, 3 each, as in the prototype the owner
 //   approved: accepted today 3, esperando você 2, travado and tocando 1, parado 0 (a stopped ask paints nothing, even
 //   delivered or taken: it is not moving). It is drawn as one segment per ask, as long as the ask's steps and in the
-//   color of its state (`segments`).
+//   color of its state (`segments`);
+// - 09/11 (t-5c0df1df) — ONE order, the panel read top down: the owner moves an ask up and down in its front, and a
+//   whole front up and down (`movedOrder`, `movedFrontOrder`). The fronts he ordered come first, by their first ask;
+//   inside a front, the asks he ordered first, in his order, then the rest by state. The order goes to the ledger as
+//   one list (`priorityWrites`): the first move numbers every ask as the panel shows it, so the Líder of each board
+//   reads its open tasks in the same order the owner sees, whatever front they are in.
 
-import { ASKED_BY_OWNER, frenteOf, isCancelled, lastDecision, lastDelivery, lastWorkAt, requestedByOf, type LedgerDoc, type LedgerTask } from '../ledger/contract';
+import { ASKED_BY_OWNER, frenteOf, isCancelled, lastDecision, lastDelivery, lastWorkAt, priorityOf, requestedByOf, type LedgerDoc, type LedgerTask } from '../ledger/contract';
 import { LEADER_OF_ALL } from '../mindscape/leader';
 
 /** Assumed, delivered, accepted. */
@@ -44,6 +49,8 @@ export interface FrontTask {
   readonly late: boolean;
   /** The newest event of the task (ms). */
   readonly changedAt: number;
+  /** The owner's place for it in his list (1 = first); none = he did not order it. */
+  readonly priority?: number;
 }
 
 /** A piece of the bar of a front: one ask, `steps` of `Front.totalSteps` long, in the color of its state. */
@@ -66,6 +73,8 @@ export interface Front {
   /** The bar: the longest first (accepted, then the rest by state); an ask with no step has none. */
   readonly segments: readonly FrontSegment[];
   readonly changedAt: number;
+  /** The owner's place of its first ask; none = he ordered none of them. */
+  readonly priority?: number;
 }
 
 export interface DoneTask {
@@ -148,6 +157,40 @@ function startOfDay(now: number): number {
 
 const zeroCounts = (): Record<FrontTaskState, number> => ({ esperando: 0, travado: 0, tocando: 0, parado: 0 });
 
+/** The owner's order: what he ordered first, in his order; the rest by state, deadline and id. */
+function byOwnerOrder(a: FrontTask, b: FrontTask): number {
+  if (a.priority !== undefined && b.priority !== undefined) return a.priority - b.priority || a.id.localeCompare(b.id);
+  if (a.priority !== undefined || b.priority !== undefined) return a.priority !== undefined ? -1 : 1;
+  return STATE_ORDER[a.state] - STATE_ORDER[b.state] || a.due.localeCompare(b.due) || a.id.localeCompare(b.id);
+}
+
+/**
+ * The owner moves ask `id` one step up or down in its front: the whole list of his asks in the new order (first = most
+ * important), for `window.donel.ledger.prioritize`. `null` = it cannot move that way (first, last, or gone).
+ */
+export function movedOrder(progress: JobuProgress, id: string, direction: 'subir' | 'descer'): string[] | null {
+  const front = progress.fronts.find((each) => each.tasks.some((task) => task.id === id));
+  if (!front) return null;
+  const at = front.tasks.findIndex((task) => task.id === id);
+  const neighbour = front.tasks[direction === 'subir' ? at - 1 : at + 1];
+  if (!neighbour) return null;
+  // The panel top down is the one order: the ask moves past its neighbour, every other ask keeps its place.
+  const all = progress.fronts.flatMap((each) => each.tasks.map((task) => task.id)).filter((each) => each !== id);
+  const target = all.indexOf(neighbour.id);
+  all.splice(direction === 'subir' ? target : target + 1, 0, id);
+  return all;
+}
+
+/** The owner moves a whole front one step up or down: the whole list of his asks in the new order; `null` = it cannot. */
+export function movedFrontOrder(progress: JobuProgress, name: string, direction: 'subir' | 'descer'): string[] | null {
+  const blocks = progress.fronts.map((front) => front.tasks.map((task) => task.id));
+  const at = progress.fronts.findIndex((front) => front.name === name);
+  const other = direction === 'subir' ? at - 1 : at + 1;
+  if (at < 0 || other < 0 || other >= blocks.length) return null;
+  [blocks[at], blocks[other]] = [blocks[other]!, blocks[at]!];
+  return blocks.flat();
+}
+
 /** The panel at `now`. */
 export function jobuProgress(doc: LedgerDoc, now: number): JobuProgress {
   const today = startOfDay(now);
@@ -170,7 +213,8 @@ export function jobuProgress(doc: LedgerDoc, now: number): JobuProgress {
       doneToday.push({ id: task.id, title: shortTitle(task), front });
     } else {
       const { state, who } = stateOf(task, changedAt, now);
-      group.tasks.push({ id: task.id, title: shortTitle(task), state, who, due: task.due, late: now > dueEndsAt(task.due), changedAt });
+      const priority = priorityOf(task);
+      group.tasks.push({ id: task.id, title: shortTitle(task), state, who, due: task.due, late: now > dueEndsAt(task.due), changedAt, ...(priority !== undefined ? { priority } : {}) });
       counts[state] += 1;
     }
     byFront.set(front, group);
@@ -180,7 +224,7 @@ export function jobuProgress(doc: LedgerDoc, now: number): JobuProgress {
   const fronts: Front[] = [...byFront]
     .filter(([, group]) => group.tasks.length > 0)
     .map(([name, group]) => {
-      const tasks = [...group.tasks].sort((a, b) => STATE_ORDER[a.state] - STATE_ORDER[b.state] || a.due.localeCompare(b.due) || a.id.localeCompare(b.id));
+      const tasks = [...group.tasks].sort(byOwnerOrder);
       const frontCounts = zeroCounts();
       for (const task of tasks) frontCounts[task.state] += 1;
       const all: FrontSegment[] = [
@@ -200,11 +244,13 @@ export function jobuProgress(doc: LedgerDoc, now: number): JobuProgress {
         segments,
         // An accept today is news too: the front of a fresh accept goes up, as in the prototype.
         changedAt: Math.max(...tasks.map((task) => task.changedAt), ...group.done.map((task) => task.at)),
+        ...(tasks[0]?.priority !== undefined ? { priority: tasks[0].priority } : {}),
       };
     });
-  // What needs the owner first, then the newest; "Sem frente" always last.
+  // The fronts the owner ordered first, in his order; then what needs him first, then the newest; "Sem frente" last.
   fronts.sort(
     (a, b) =>
+      (a.priority !== undefined && b.priority !== undefined ? a.priority - b.priority : Number(a.priority === undefined) - Number(b.priority === undefined)) ||
       Number(a.name === '') - Number(b.name === '') ||
       Number(b.counts.esperando > 0) - Number(a.counts.esperando > 0) ||
       Number(b.counts.travado > 0) - Number(a.counts.travado > 0) ||
