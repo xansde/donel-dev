@@ -1,0 +1,4 @@
+{
+  "title": "Sessão da VPS religada não perde mais a ligação com o app",
+  "text": "Depois de o app religar uma sessão da VPS, ela podia perder de repente a ligação com o app: as ferramentas do quadro respondiam \"Host not allowed\" e a sessão acabava aparecendo fechada, mesmo trabalhando. Isso acontecia quando a aba antiga da mesma sessão saía e levava junto a chave que a aba nova já usava. Agora a chave só sai com a última aba da sessão."
+}

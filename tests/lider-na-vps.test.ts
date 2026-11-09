@@ -51,13 +51,24 @@ function bigTranscript(path: string, bytes: number): string {
 const sha = (text: string | Buffer): string => createHash('sha256').update(text).digest('hex');
 
 describe('Líder único na VPS', () => {
-  it('a escolha "onde o Líder roda" sobrevive ao config e cai para este computador quando o lugar some', () => {
-    expect(sanitizeLeaderPrefs(undefined)).toEqual({ where: 'local' });
-    expect(sanitizeLeaderPrefs({ where: 'vps-1' })).toEqual({ where: 'vps-1' });
-    expect(sanitizeLeaderPrefs({ where: 42 })).toEqual({ where: 'local' });
-    expect(leaderRemoteId({ where: 'vps-1' }, ['vps-1'])).toBe('vps-1');
-    expect(leaderRemoteId({ where: 'vps-removida' }, ['vps-1'])).toBeUndefined();
-    expect(leaderRemoteId({ where: 'local' }, ['vps-1'])).toBeUndefined();
+  it('o Líder roda na VPS por padrão; "este computador" só quando o dono escolheu', () => {
+    const remotes = [
+      { id: 'vps-sem-conta', hasAccount: false },
+      { id: 'vps-1', hasAccount: true },
+    ];
+    // Sem escolha: o primeiro lugar remoto com conta (owner, 08/11: a orquestradora na VPS, o PC só com o app).
+    expect(sanitizeLeaderPrefs(undefined)).toEqual({ where: 'auto' });
+    expect(leaderRemoteId(sanitizeLeaderPrefs(undefined), remotes)).toBe('vps-1');
+    expect(leaderRemoteId({ where: 'auto' }, [{ id: 'vps-sem-conta', hasAccount: false }])).toBeUndefined();
+    // O #296 gravou o padrão antigo ('local') na primeira escrita do config: sem a marca de escolha, vira 'auto'.
+    expect(sanitizeLeaderPrefs({ where: 'local' })).toEqual({ where: 'auto' });
+    expect(sanitizeLeaderPrefs({ where: 'local', chosen: true })).toEqual({ where: 'local', chosen: true });
+    expect(leaderRemoteId({ where: 'local', chosen: true }, remotes)).toBeUndefined();
+    expect(sanitizeLeaderPrefs({ where: 'vps-1', chosen: true })).toEqual({ where: 'vps-1', chosen: true });
+    expect(sanitizeLeaderPrefs({ where: 42 })).toEqual({ where: 'auto' });
+    expect(leaderRemoteId({ where: 'vps-1' }, remotes)).toBe('vps-1');
+    // Um lugar escolhido que foi removido: este computador, nunca outro lugar no escuro.
+    expect(leaderRemoteId({ where: 'vps-removida', chosen: true }, remotes)).toBeUndefined();
   });
 
   it('troca de lugar só com o Líder parado; trabalhando ou pedindo permissão, ele fica onde está', () => {

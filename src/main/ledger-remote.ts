@@ -209,6 +209,10 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
         setOnline(false);
         return { ok: false, reason: UNREACHABLE };
       }
+      // t-7a8f84a9: a daemon older than this app only says "op malformada" for an op it does not know (its apply fell
+      // through); name the cause and the way out instead (the newer daemons answer `unknownOpReason` themselves).
+      if (response.status === 400 && isRecord(body) && body.error === 'op malformada')
+        return { ok: false, reason: `O Oráculo da VPS não conhece a operação "${op.op}" (respondeu "op malformada"): ele é de uma versão anterior à deste app. Na VPS, atualize-o com scripts/oraculo-vps.sh atualizar; nada foi gravado.` };
       if (response.status !== 200 || !isRecord(body)) return { ok: false, reason: `O Oráculo da VPS recusou (${isRecord(body) && typeof body.error === 'string' ? body.error : response.status}); nada foi gravado.` };
       if (body.ok !== true) return { ok: false, reason: typeof body.reason === 'string' ? body.reason : 'O Oráculo da VPS recusou.' };
       const snapshot = snapshotOf(body.snapshot);

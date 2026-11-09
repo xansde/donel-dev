@@ -100,6 +100,20 @@ describe('API do Oráculo na VPS', () => {
     expect((await handle(req({ url: '/v1/provas/%E0%A4%A', authorization: auth }))).status).toBe(404);
   });
 
+  it('uma operação que esta versão não conhece (app mais novo) volta com o motivo e o caminho, sem gravar', async () => {
+    // t-7a8f84a9: o app de 08/11 mandou "andamento" a um daemon anterior a ele; o apply puro devolvia undefined e a
+    // sessão só via "op malformada".
+    const { file, handle } = setup();
+    const created = JSON.parse((await handle(req({ method: 'POST', url: '/v1/apply', body: JSON.stringify(criar), authorization: auth }))).body as string);
+    const before = readFileSync(file, 'utf8');
+    for (const op of [{ op: 'operacao-nova', id: created.task.id }, { op: 'operacao-nova' }]) {
+      const res = await handle(req({ method: 'POST', url: '/v1/apply', body: JSON.stringify({ actor: criar.actor, op }), authorization: auth }));
+      expect(res.status).toBe(200);
+      expect(JSON.parse(res.body as string)).toMatchObject({ ok: false, reason: expect.stringMatching(/não conhece a operação "operacao-nova".*scripts\/oraculo-vps\.sh atualizar/s) });
+    }
+    expect(readFileSync(file, 'utf8')).toBe(before);
+  });
+
   it('guarda a prova enviada em bytes, a devolve pelo nome e só apaga a que nenhuma entrega cita', async () => {
     const { file, handle } = setup();
     const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);

@@ -30,6 +30,7 @@ import { sanitizeProvidersConfig } from './providers/providers-config';
 import { defaultProvidersConfig } from '../shared/providers';
 import type { ProvidersConfigDto } from '../shared/providers';
 import { sanitizeHomologacaoPrefs, type HomologacaoPrefs } from '../shared/homologacao/config';
+import { defaultVigiaPrefs, sanitizeVigiaPrefs, type VigiaPrefs } from '../shared/vigia/config';
 import type { StoredSessionName } from '../shared/sessionName';
 import type { RegisteredSession, SessionRegistry } from '../shared/sessionRegistry';
 // CA-26/CA-27 (009-modo-dev-v3, lote 1) — cor + ordem da aba v3, por sessão claude.
@@ -181,6 +182,8 @@ export interface AppConfig {
    * key (like `pet`, R20). Not in the DTO: the renderer gets the panel by `homologacao:*`. `null` = off, no ssh.
    */
   readonly homologacao: HomologacaoPrefs | null;
+  /** Vigia de travas — the optional vault adapter (`cofre`, off by default). A TOP-LEVEL key (like `pet`, R20). Not in the DTO. */
+  readonly vigia: VigiaPrefs;
   /**
    * G1 (011-contas-e-provedores, issue 08) — chaves de TOPO que este build
    * não reconhece (ex.: um campo que só um canal/versão mais nova entende).
@@ -230,6 +233,7 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     browserUploadGrants: { grants: [] },
     slackAgentBots: { servers: [...AGENT_BOT_SERVERS] },
     homologacao: null,
+    vigia: defaultVigiaPrefs(),
     unknownFields: {},
   };
 }
@@ -839,6 +843,7 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     browserUploadGrants: sanitizeBrowserUploadGrants(candidate.browserUploadGrants),
     slackAgentBots: sanitizeSlackAgentBotPrefs(candidate.slackAgentBots),
     homologacao: sanitizeHomologacaoPrefs(candidate.homologacao),
+    vigia: sanitizeVigiaPrefs(candidate.vigia),
     unknownFields,
   };
 }

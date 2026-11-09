@@ -1,8 +1,28 @@
 # OpenRig — registro de absorção
 
-Último commit absorvido: 220e27a9a73bdfb5264262727319b9ff899dbf6f
+Último commit absorvido: 545a4234893ed51294d45b066e81b0fec3d471eb
 
 Referência de design do Mindscape (github.com/mvschwarz/openrig). Procedimento na skill `absorver-openrig`. Cada rodada lista o que virou PR, o que ficou adiado, o que espera o dono e o que foi descartado.
+
+## 2026-11-08 (2ª leitura) — 220e27a..545a423
+
+2 commits do OpenRig; versão 0.7.10 (changelog publicado na main).
+
+### Vale → PR
+
+Nenhum.
+
+### Vale → adiado
+
+Nenhum.
+
+### Vale → pendente para o dono
+
+Nenhum.
+
+### Descartado
+
+- Changelog e release do OpenRig (0.7.10 levada ao CHANGELOG da main; baseline de plugins atrelada à 0.7.10; openrig-core 0.1.27): só empacotamento, release e docs do próprio OpenRig (`d2c5bbd` só copia texto do CHANGELOG, já triado na rodada anterior; `545a423` só muda a versão nos manifestos e a fixture de baseline). A régua descarta esse tipo de mudança, e não há ideia de design nova.
 
 ## 2026-11-08 — 7ae8f6e..220e27a
 

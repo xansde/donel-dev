@@ -139,6 +139,10 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
         boardPlaceIds: ids,
         placeStates: new Map([[who.pasta, placeStatesOf(mine.listar)]]),
         ...(mine.board ? { board: mine.board } : {}),
+        sessionOf: (projectPath, placeId) => {
+          const card = projectPath === who.pasta ? mine.board?.cards[placeId] : undefined;
+          return card?.kind === 'session' ? card.sessionId : undefined;
+        },
       };
       // No `remote`: the proof files named by a VPS session are here, on this machine.
       const result = await runLedgerTool(deps.ledger(), caller, call);

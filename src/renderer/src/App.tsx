@@ -89,6 +89,7 @@ import { HillClimbBar } from './HillClimb/HillClimbBar';
 import { useHillClimb } from './HillClimb/useHillClimb';
 // Mindscape V1 — third mode of the shell (docs/design/mindscape.md).
 import { MindscapeScreen, type MindscapeLiveSession } from './Mindscape/MindscapeScreen';
+import { sameSemaphoreInfo } from './sameSemaphoreInfo';
 import { useMindscapeDoc } from './Mindscape/useMindscapeDoc';
 import { AgentBridge, type AgentBridgePorts } from './Mindscape/agentBridge';
 import type { FaxineiroLogEntry } from '../../shared/faxineiro/triggers';
@@ -127,6 +128,7 @@ import { runningCount } from '../../shared/chat/backgroundTasks';
 import { effectiveTabView, hasChatView, nextTabView, shouldHandleViewShortcut } from './chat/tabView';
 import { disposeTabSend, ownerTerminalInput, sendDriverFor, sendToTab, pendingSendReason, sendToTabAndWait, tabTookMessage } from './chat/composer/tabSend';
 import { blockingScreen, readInputText } from '../../shared/chat/screen';
+import { withNoPipelineTag } from '../../shared/chat/noPipeline';
 import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../shared/lider/ipc';
 import { isLeaderOfAllTab, leaderHome } from '../../shared/mindscape/leader';
 import { DEFAULT_LEADER_PREFS, leaderRemoteId } from '../../shared/leaderPrefs';
@@ -319,6 +321,9 @@ function tabMarks(roleName: string | undefined, worktreeMark: string | undefined
   const marks = [roleName ? `◆ ${roleName}` : undefined, worktreeMark, backgroundRunning > 0 ? `⟳ ${backgroundRunning}` : undefined].filter(Boolean);
   return marks.length > 0 ? marks.join(' ') : undefined;
 }
+
+/** How long the statusline readings of all tabs wait to land together (one render for all of them). */
+const STATUS_LINE_FLUSH_MS = 300;
 
 /** Remove uma chave de um record sem mutar o original — usado ao limpar `semaphoreStates`/`aliveTabs` no fechamento de aba. */
 function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
@@ -565,8 +570,10 @@ export function App(): React.JSX.Element {
   const sessionAccountsRef = useRef<Record<string, { id: string; label: string } | undefined>>({});
   sessionAccountsRef.current = sessionAccounts;
 
+  // Peso do renderer (08/11) — the bridge repeats the same state on every hook of a working session; an equal
+  // state keeps the record, so the whole app does not render again for nothing.
   const handleSemaphoreChange = useCallback((tabId: string, info: SemaphoreStateInfo): void => {
-    setSemaphoreStates((prev) => ({ ...prev, [tabId]: info }));
+    setSemaphoreStates((prev) => (sameSemaphoreInfo(prev[tabId], info) ? prev : { ...prev, [tabId]: info }));
   }, []);
 
   const handleAliveChange = useCallback((tabId: string, alive: boolean): void => {
@@ -1509,14 +1516,30 @@ export function App(): React.JSX.Element {
   // (leituras que chegaram antes da montagem). `snapshot: null` = a aba saiu.
   useEffect(() => {
     let disposed = false;
-    const unsubscribe = window.donel.statusLine.onChanged(({ ptyId, snapshot }) => {
+    // Peso do renderer (08/11) — each working session posts its statusline many times a second; the readings are
+    // gathered and land together a few times a second, so the app renders once for all of them.
+    let pending = new Map<string, StatusLineSnapshot | null>();
+    let flushTimer: number | undefined;
+    const flush = (): void => {
+      flushTimer = undefined;
+      const batch = pending;
+      pending = new Map();
       setStatusLines((prev) => {
-        if (snapshot) return { ...prev, [ptyId]: snapshot };
-        if (!(ptyId in prev)) return prev;
-        const next = { ...prev };
-        delete next[ptyId];
+        let next = prev;
+        for (const [ptyId, snapshot] of batch) {
+          if (snapshot) {
+            next = { ...next, [ptyId]: snapshot };
+          } else if (ptyId in next) {
+            next = { ...next };
+            delete next[ptyId];
+          }
+        }
         return next;
       });
+    };
+    const unsubscribe = window.donel.statusLine.onChanged(({ ptyId, snapshot }) => {
+      pending.set(ptyId, snapshot);
+      if (flushTimer === undefined) flushTimer = window.setTimeout(flush, STATUS_LINE_FLUSH_MS);
     });
     void window.donel.statusLine
       .getAll()
@@ -1527,6 +1550,7 @@ export function App(): React.JSX.Element {
     return () => {
       disposed = true;
       unsubscribe();
+      window.clearTimeout(flushTimer);
     };
   }, []);
   useEffect(() => {
@@ -1536,9 +1560,17 @@ export function App(): React.JSX.Element {
         // `updateTab`. Uma mesma sessão retomada pode estar em mais de uma aba.
         // Fix #19 — `cliColorName` entra no MESMO `.map`: é o mesmo evento, a
         // mesma chave, nenhum segundo caminho de estado.
-        setTabs((prev) =>
-          prev.map((tab) => (tab.claudeSessionId === sessionId ? { ...tab, customTitle, cliColorName } : tab)),
-        );
+        // Peso do renderer (08/11) — this arrives on every line a session writes: only a real change makes new
+        // tabs (a new array re-rendered the whole app, the Mindscape included, for each line of each session).
+        setTabs((prev) => {
+          let changed = false;
+          const next = prev.map((tab) => {
+            if (tab.claudeSessionId !== sessionId || (tab.customTitle === customTitle && tab.cliColorName === cliColorName)) return tab;
+            changed = true;
+            return { ...tab, customTitle, cliColorName };
+          });
+          return changed ? next : prev;
+        });
 
         // T610 (006) — MESMA assinatura, MESMO evento: a 006 só lê o segundo campo
         // do payload. Abrir uma segunda assinatura aqui era risco nomeado na
@@ -1822,9 +1854,11 @@ export function App(): React.JSX.Element {
   });
   /** One line to the session of `tabId` — same doors as the Esteira auto-start: the chat's send driver, or typed into the terminal. */
   /** `from: 'session'` — a notice or a message from another session: it waits for the owner (sendDriver, 06/11). */
-  const sendRenewalLine = (tabId: string, text: string, from?: 'session'): void => {
+  const sendRenewalLine = (tabId: string, rawText: string, from?: 'session'): void => {
     const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
     if (tab === undefined) return;
+    // Not the owner's request: the pipeline router leaves it alone (src/shared/chat/noPipeline.ts).
+    const text = from === 'session' ? withNoPipelineTag(rawText) : rawText;
     if (hasChatView(tab, chatEnabled)) sendToTab(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text, ...(from ? { from } : {}) });
     else armEsteiraAutoStart(tabId, text);
   };
@@ -2250,6 +2284,12 @@ export function App(): React.JSX.Element {
    * the role's suggestions (model, effort, permission, engine) and the role itself. A tab already
    * opening for that place is only focused. The place binds to the conversation when its id comes.
    */
+  /** Where the Líderes run (Preferences, "Onde o Líder roda"): a remote place, or `undefined` for this computer. */
+  const leaderPlace = (): string | undefined =>
+    leaderRemoteId(
+      appConfig?.leader ?? DEFAULT_LEADER_PREFS,
+      accountsView.remotes.map((remote) => ({ id: remote.id, hasAccount: Boolean(remote.activeAccountId) })),
+    );
   const handleMindscapeStartPlace = (placeId: string, projectPath: string): void => {
     const existingTab = tabs.find((tab) => tab.placeId === placeId);
     if (existingTab) {
@@ -2264,13 +2304,16 @@ export function App(): React.JSX.Element {
     const defaults = appConfig?.launcherDefaults;
     const project = projects.find((candidate) => candidate.path === projectPath);
     // "Onde roda" — same default as the Launcher (owner, 04/11): the last choice; without one, the first remote place with an account.
+    // A Líder of a board opens where the Líder único runs (owner, 08/11: the orchestrator on the VPS, the PC only with the app).
     const savedWhere = defaults?.where;
     const remoteId =
-      savedWhere === 'local'
-        ? undefined
-        : accountsView.remotes.some((remote) => remote.id === savedWhere)
-          ? savedWhere
-          : accountsView.remotes.find((remote) => remote.activeAccountId)?.id;
+      place.roleId === LIDER_ROLE_ID && !providerId
+        ? leaderPlace()
+        : savedWhere === 'local'
+          ? undefined
+          : accountsView.remotes.some((remote) => remote.id === savedWhere)
+            ? savedWhere
+            : accountsView.remotes.find((remote) => remote.activeAccountId)?.id;
     addTab({
       name: role?.name ?? 'Sessão',
       cwd: projectPath,
@@ -2335,7 +2378,7 @@ export function App(): React.JSX.Element {
     const providerId = role?.engine && providers.some((provider) => provider.id === role.engine) ? role.engine : undefined;
     // Líder único na VPS (docs/planos/lider-na-vps.md) — where the owner wants it (Preferences). A provider of a third
     // party does not run on a remote place (ADR 0006): that Líder stays here.
-    const wantedRemoteId = providerId ? undefined : leaderRemoteId(appConfig?.leader ?? DEFAULT_LEADER_PREFS, accountsView.remotes.map((place) => place.id));
+    const wantedRemoteId = providerId ? undefined : leaderPlace();
     const openLeader = (resume?: { readonly sessionId: string; readonly cwd: string | undefined }): string => {
       // Without the role there is no Líder único (it is the role + the mark below): say so instead of opening a plain session.
       if (!role) throw new Error('O papel Líder não existe nesta máquina.');
@@ -2500,7 +2543,7 @@ export function App(): React.JSX.Element {
     deliverLine: (tabId, text, waitMs, from) => {
       const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
       if (tab !== undefined && hasChatView(tab, chatEnabled))
-        return sendToTabAndWait(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text, from }, waitMs);
+        return sendToTabAndWait(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text: from === 'session' ? withNoPipelineTag(text) : text, from }, waitMs);
       sendRenewalLine(tabId, text, from === 'session' ? 'session' : undefined);
       return Promise.resolve({ kind: 'pelo-terminal' as const });
     },
@@ -2612,7 +2655,8 @@ export function App(): React.JSX.Element {
     for (const [tabId, text] of Object.entries(pendingFirstMessagesRef.current)) {
       if (!tabs.some((tab) => tab.id === tabId)) continue;
       delete pendingFirstMessagesRef.current[tabId];
-      sendRenewalLine(tabId, text);
+      // The request of the session that opened it, not the owner's: the pipeline router leaves it alone.
+      sendRenewalLine(tabId, withNoPipelineTag(text));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabs]);
@@ -3775,7 +3819,7 @@ export function App(): React.JSX.Element {
         }}
         remotes={accountsView.remotes.map((place) => ({ id: place.id, label: place.label }))}
         launcherWhere={appConfig?.launcherDefaults.where}
-        leaderWhere={appConfig?.leader.where ?? 'local'}
+        leaderWhere={appConfig?.leader.where ?? DEFAULT_LEADER_PREFS.where}
         onChangeLeaderWhere={(where) => {
           void window.donel.config.setLeaderPrefs({ where }).then(setAppConfig).catch(() => undefined);
         }}

@@ -26,6 +26,27 @@ function inlinePetArt(): Plugin {
 }
 
 /**
+ * Peso do renderer (08/11) — xterm 6.0.0 redraws the selection on EVERY scroll (`onScroll` →
+ * `SelectionService.refresh()` → the DOM renderer re-renders all rows), even with nothing selected and even
+ * for a hidden tab, where the width cache cannot fill (`offsetWidth` is 0) and every glyph is measured again.
+ * With tabs printing, the window spent half its CPU there (5 tabs at 50 lines/s: 70% CPU, 49% in `_measure`;
+ * 20 tabs: 100%, and the app stops answering). With no selection there is nothing to redraw, so the refresh
+ * only runs when there is one. Applied to the dependency at build time; an xterm without this exact code fails
+ * the build, so an upgrade has to look at this again.
+ */
+const XTERM_SCROLL_REFRESH = /(this\._inputHandler\.onScroll\)\(\(?\(\)=>\{)this\._selectionService\.refresh\(\)/;
+function xtermScrollWithoutSelection(): Plugin {
+  return {
+    name: 'donel:xterm-scroll-without-selection',
+    transform(code, id) {
+      if (!/[\\/]@xterm[\\/]xterm[\\/]lib[\\/]xterm\.m?js$/.test(id.split('?')[0])) return null;
+      if (!XTERM_SCROLL_REFRESH.test(code)) this.error('xterm: the scroll refresh of the selection changed; revisit donel:xterm-scroll-without-selection');
+      return { code: code.replace(XTERM_SCROLL_REFRESH, '$1this._selectionService.hasSelection&&this._selectionService.refresh()'), map: null };
+    },
+  };
+}
+
+/**
  * B33 — the commit this build came from, so the app can tell whether the installers folder holds a newer one.
  * `DONEL_BUILD_COMMIT` wins (a build outside git); without git or env it is `null` and the update stays quiet.
  */
@@ -61,6 +82,6 @@ export default defineConfig({
   },
   renderer: {
     root: resolve(__dirname, 'src/renderer'),
-    plugins: [react(), inlinePetArt()],
+    plugins: [react(), inlinePetArt(), xtermScrollWithoutSelection()],
   },
 });

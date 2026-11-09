@@ -77,12 +77,13 @@ describe('defaultAppConfig (puro)', () => {
       yolo: { projects: [] },
       // Oráculo no centro (06/11) — o layout novo é o padrão, com o Oráculo à vista.
       layout: { oracleCenter: true, centerView: 'oracle' },
-      leader: { where: 'local' },
+      leader: { where: 'auto' },
       appUpdate: { installersDir: null },
       browserUploads: { folders: [] },
       browserUploadGrants: { grants: [] },
       slackAgentBots: { servers: [] },
       homologacao: null,
+      vigia: { cofre: null },
       unknownFields: {},
     });
   });
@@ -119,7 +120,7 @@ describe('toAppConfigDto (puro)', () => {
       autoMode: { neverAsks: true },
       yolo: { projects: [] },
       layout: { oracleCenter: true, centerView: 'oracle' },
-      leader: { where: 'local' },
+      leader: { where: 'auto' },
     });
   });
 
@@ -263,6 +264,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       browserUploadGrants: { grants: [] },
       slackAgentBots: { servers: ['theo-west-slack', 'theo-slack'] },
       homologacao: { lugar: 'factory-vps', metricas: '/srv/factory/metricas.json', rigs: null, quadro: 'atlas' },
+      vigia: { cofre: null },
       unknownFields: {},
     };
     expect(sanitizeAppConfig(valid, baseDefaults())).toEqual(valid);
@@ -367,6 +369,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       browserUploadGrants: { grants: [] },
       slackAgentBots: { servers: [] },
       homologacao: null,
+      vigia: { cofre: null },
       unknownFields: {}, // nenhuma chave desconhecida no objeto de entrada
     });
   });

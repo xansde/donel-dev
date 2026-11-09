@@ -278,6 +278,10 @@ export function lastDecision(task: LedgerTask): LedgerEvent | undefined {
 //               front); a replacement with no front of its own inherits the replaced one's. The Líder marks a task
 //               already made with op `frente`: one more `criada` event "⟦frente <name>⟧ ⟦pedido por <who>⟧" (not a
 //               transfer: no "transferida" mark); the last front, and the last "pedido por", win
+//   priority  → a later `criada` event by the OWNER "⟦priorizada <n>⟧" (09/11, t-5c0df1df: the owner orders his asks
+//               in "Seus pedidos" and the Líder of each board reads the next one by that order). `n` is the place in
+//               the owner's single list (1 = first); the name and "the last one wins" are those of `priorizada` in
+//               livro/fila.ts, the format of the future journal (not wired). Like a front mark, it is no work
 // A text the sessions or the owner write never starts with the mark (`startsWithMark`), so a mark is never forged.
 
 const MARK_OPEN = '⟦';
@@ -377,11 +381,35 @@ export function frenteOf(task: LedgerTask): string | undefined {
   return tag ? tag.slice(FRONT.length).trim() || undefined : undefined;
 }
 
-/** A front mark (op `frente`): a later `criada` event that only names the front and who asked; no work happened. */
+/**
+ * A front mark (op `frente`) or a priority mark (op `priorizar`): a later `criada` event that only names the front, who
+ * asked or the owner's order; no work happened.
+ */
 export function isFrontMark(task: LedgerTask, event: LedgerEvent): boolean {
   if (event.kind !== 'criada' || event === task.events[0]) return false;
   const tags = tagsOf(event.text);
-  return tags.length > 0 && tags.every((tag) => tag.startsWith(FRONT) || tag.startsWith(ASKED_BY));
+  return tags.length > 0 && tags.every((tag) => tag.startsWith(FRONT) || tag.startsWith(ASKED_BY) || PRIORITY_TAG.test(tag));
+}
+
+const PRIORITY = 'priorizada ';
+const PRIORITY_TAG = /^priorizada (\d{1,5})$/;
+/** The biggest place in the owner's list (the `MAX_POSICAO` of livro/fila.ts). */
+export const MAX_PRIORITY = 10_000;
+
+/** The place a priority mark of the owner sets (1 = first); `undefined` = the event is no priority mark. */
+export function priorityMarkOf(task: LedgerTask, event: LedgerEvent): number | undefined {
+  if (event.kind !== 'criada' || event.by.kind !== 'dono' || event === task.events[0]) return undefined;
+  const tag = tagsOf(event.text).find((each) => PRIORITY_TAG.test(each));
+  return tag ? Number(PRIORITY_TAG.exec(tag)![1]) : undefined;
+}
+
+/** 09/11 — the place of the task in the owner's list (1 = first), the last one he set; none = not ordered. */
+export function priorityOf(task: LedgerTask): number | undefined {
+  for (let index = task.events.length - 1; index > 0; index -= 1) {
+    const place = priorityMarkOf(task, task.events[index]!);
+    if (place !== undefined) return place;
+  }
+  return undefined;
 }
 
 /** When the task last moved (ms): its newest event that is not a front mark, so naming a front never looks like work. */
@@ -493,6 +521,8 @@ export type LedgerOp =
     }
   /** 07/11 — the Líder (or the owner) names the front of a task already made, and who asked, if it says. */
   | { readonly op: 'frente'; readonly id: string; readonly frente: string; readonly requestedBy?: string }
+  /** 09/11 — the owner puts the task at `posicao` in his list (`priorityOf`). */
+  | { readonly op: 'priorizar'; readonly id: string; readonly posicao: number }
   | { readonly op: 'assumir'; readonly id: string }
   /** `doneBy` (06/11): the place that really did the work, when it is not the owner place that delivers. */
   | { readonly op: 'entregar'; readonly id: string; readonly proofs: readonly LedgerProof[]; readonly note?: string; readonly forOwner?: LedgerForOwner; readonly doneBy?: string }
@@ -573,8 +603,41 @@ function ownerChecked(task: LedgerTask): boolean {
   return decision !== undefined && task.events.some((event) => event.kind === 'conferida' && event.at >= decision.at);
 }
 
+/**
+ * Every op this build applies. A `Record` so a new op that is not listed here fails the typecheck: the guard below never
+ * lags behind the union.
+ */
+const KNOWN_OPS: Readonly<Record<LedgerOp['op'], true>> = {
+  criar: true,
+  frente: true,
+  priorizar: true,
+  assumir: true,
+  entregar: true,
+  aceitar: true,
+  'decidir-outra': true,
+  comentar: true,
+  rejeitar: true,
+  'carta-slack': true,
+  'slack-enviada': true,
+  transferir: true,
+  cancelar: true,
+  'slack-resultado': true,
+  'slack-bot': true,
+  andamento: true,
+};
+
+/**
+ * 09/11 (t-7a8f84a9) — the refusal of an op this build does not know: a newer app talking to an older daemon on the VPS
+ * (the daemon is built apart, by `scripts/oraculo-vps.sh`, and does not follow the app's installer). Before, the apply
+ * fell through the switch and the daemon only answered "op malformada".
+ */
+export function unknownOpReason(name: string): string {
+  return `Este Oráculo não conhece a operação "${name}": é de uma versão anterior à do app que pediu. Nada foi gravado. Na VPS, atualize-o com scripts/oraculo-vps.sh atualizar.`;
+}
+
 export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, ctx: LedgerOpContext): LedgerOpResult {
   const fail = (reason: string): LedgerOpResult => ({ ok: false, reason });
+  if (!Object.prototype.hasOwnProperty.call(KNOWN_OPS, op.op)) return fail(unknownOpReason(String(op.op)));
   if (op.op === 'criar') {
     if (!op.request.trim()) return fail('"pedido" é obrigatório: a frase literal de quem pediu.');
     if (startsWithMark(op.request)) return fail(`"pedido" não pode começar com "${MARK_OPEN}".`);
@@ -740,6 +803,14 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       if (!front) return fail('"frente" é obrigatório: o nome da frente (ex.: Ledger).');
       if (!(actor.kind === 'dono' || isLeaderRole(actor.roleId))) return fail('Só o Líder ou o dono diz a frente de uma tarefa.');
       return done(step(task, task.state, { kind: 'criada', at: ctx.now, by: actor, ...birthTagsOf(undefined, op.requestedBy, front) }));
+    }
+
+    case 'priorizar': {
+      if (actor.kind !== 'dono') return fail('Só o dono diz a prioridade dos pedidos dele.');
+      if (!Number.isInteger(op.posicao) || op.posicao < 1 || op.posicao > MAX_PRIORITY) return fail(`A posição é um inteiro de 1 a ${MAX_PRIORITY}.`);
+      if (isClosed(task) || task.slack) return fail('A tarefa já fechou: a prioridade vai numa tarefa viva.');
+      if (priorityOf(task) === op.posicao) return { ok: true, doc, task };
+      return done(step(task, task.state, { kind: 'criada', at: ctx.now, by: actor, text: withMark(`${PRIORITY}${op.posicao}`, '') }));
     }
 
     case 'cancelar': {

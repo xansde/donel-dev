@@ -53,11 +53,13 @@ import {
   type LedgerStrip,
   type LedgerTask,
 } from '../shared/ledger/contract';
-import type { LedgerApplyResult, LedgerPassedOn, LedgerPassOnRequest, LedgerSnapshot, LedgerTurnRecord, LedgerTurnRecorded } from '../shared/ledger/channels';
+import type { LedgerApplyResult, LedgerPassedOn, LedgerPrioritized, LedgerPassOnRequest, LedgerSnapshot, LedgerTurnRecord, LedgerTurnRecorded } from '../shared/ledger/channels';
 import { isUrgentProgress, progressLine, PROGRESS_FIELD_CHARS, turnEndProgress, type LedgerProgress } from '../shared/ledger/andamento';
 import { agoText, ledgerNews, progressTaskOf, turnAlreadyRecorded } from '../shared/ledger/novidades';
 import type { LedgerToolCall, ProofInput } from '../shared/ledger/tools';
 import { NOT_STARTED_GRACE_MS, orphanReasonIn, ownerGoneIn } from '../shared/ledger/inbox';
+import { byPanelThenPriority, inBoardQueue, panelPlaces, priorityWrites } from '../shared/ledger/prioridade';
+import { liveSessionOf } from '../shared/ledger/mirror';
 import { AGENT_BOT_SERVERS, detectAgentBotSend, detectSlackSend, fileNameOf, slackGuard, slackMessageLink, slackSendOutcome, type AgentBotSend } from '../shared/ledger/slack-guard';
 
 /** Smoke/test override: isolates the ledger from the real one. */
@@ -279,6 +281,24 @@ export function createLedgerService(deps: LedgerServiceDeps): LedgerService {
   };
 }
 
+/**
+ * 09/11 (t-5c0df1df) — the owner's asks in the order he wants them ("Seus pedidos"): one priority mark per task whose
+ * place changed, signed by the owner. Stops at the first refusal (the marks before it stay: the next move rewrites).
+ */
+export async function prioritizeAsks(service: LedgerService, order: readonly string[]): Promise<LedgerPrioritized> {
+  let writes: { id: string; posicao: number }[];
+  try {
+    writes = priorityWrites(service.load().doc, order);
+  } catch (error) {
+    return { ok: false, reason: `Não consegui ler o Oráculo Harrow: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  for (const [index, write] of writes.entries()) {
+    const result = await service.apply({ kind: 'dono' }, { op: 'priorizar', id: write.id, posicao: write.posicao });
+    if (!result.ok) return { ok: false, reason: index ? `${result.reason} (${index} de ${writes.length} já gravadas)` : result.reason };
+  }
+  return { ok: true, written: writes.length };
+}
+
 // ---------------------------------------------------------------------------------------------------------------
 // The MCP port: a `tarefa_*` call of a session, with the caller resolved from the board by the main.
 
@@ -296,6 +316,12 @@ export interface LedgerCaller {
    * and `tarefa_listar` counts them apart (`desconhecidas`), never as alive.
    */
   readonly placeStates?: ReadonlyMap<string, ReadonlyMap<string, string>>;
+  /**
+   * 09/11 (t-5c0df1df) — the conversation of the moment of a place, as its board has it (place → sessionId), so each
+   * task says which session runs it (the watchdog and the Líder look there). Read from the board, never written to
+   * the ledger: a /clear or a renewal changes the conversation, the place stays. Missing = unknown, nothing is said.
+   */
+  readonly sessionOf?: (projectPath: string, placeId: string) => string | undefined;
 }
 
 /** Why a task is orphan (not closed, its owner place gone); `null` = alive, closed or unknown. The rule is shared with the box. */
@@ -525,7 +551,7 @@ function forOwnerView(forOwner: LedgerForOwner): Record<string, unknown> {
   };
 }
 
-function taskView(task: LedgerTask, doc: LedgerDoc, orphan: string | null = null): Record<string, unknown> {
+function taskView(task: LedgerTask, doc: LedgerDoc, orphan: string | null = null, caller?: LedgerCaller): Record<string, unknown> {
   const delivery = lastDelivery(task);
   const decision = [...task.events].reverse().find((event) => event.kind === 'aceita' || event.kind === 'rejeitada');
   const who = (actor: LedgerActor): string => (actor.kind === 'dono' ? 'dono' : actor.placeId);
@@ -538,6 +564,7 @@ function taskView(task: LedgerTask, doc: LedgerDoc, orphan: string | null = null
     criterio: task.doneWhen,
     prazo: task.due,
     dono: task.ownerPlaceId,
+    ...(sessionOfTask(caller, task) ? { sessao: sessionOfTask(caller, task) } : {}),
     risco: task.risk,
     ...(replacesOf(task) ? { substitui: replacesOf(task) } : {}),
     ...(requestedByOf(task) ? { quemPediu: requestedByOf(task) } : {}),
@@ -579,6 +606,11 @@ function taskView(task: LedgerTask, doc: LedgerDoc, orphan: string | null = null
         }
       : {}),
   };
+}
+
+/** The session that runs `task`: the conversation of its owner place on the board (a closed task says none). */
+function sessionOfTask(caller: LedgerCaller | undefined, task: LedgerTask): string | undefined {
+  return caller?.sessionOf ? liveSessionOf(task, caller.sessionOf) : undefined;
 }
 
 /** What `tarefa_ver` says of a letter's send (`nenhum` says nothing). */
@@ -749,7 +781,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       const delivery = lastDelivery(task);
       if (delivery) service.noteProofSeen(caller.placeId, task.id, delivery.at);
       const proofs = delivery?.proofs ?? [];
-      const text = JSON.stringify({ ...taskView(task, doc, orphanReason(caller, task, service.now())), ...(proofs.length ? { provas: proofs.map((proof) => proofView(service, proof)) } : {}) }, null, 1);
+      const text = JSON.stringify({ ...taskView(task, doc, orphanReason(caller, task, service.now()), caller), ...(proofs.length ? { provas: proofs.map((proof) => proofView(service, proof)) } : {}) }, null, 1);
       for (const proof of proofs) {
         const image = await service.proofImage(proof);
         if (image) return { ok: true, text, image };
@@ -825,10 +857,20 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       for (const task of inScope) {
         counts[isClosed(task) ? 'fechadas' : awaitsSend(task) ? 'esperandoEnvio' : orphanOf(task) ? 'orfas' : ownerUnknown(caller, task) ? 'desconhecidas' : 'vivas'] += 1;
       }
+      // The owner's list as "Seus pedidos" draws it, top down: the board queue follows it exactly (R6 of #364).
+      const byOwner = byPanelThenPriority(panelPlaces(doc, now));
       const tasks = inScope
         .filter((task) => !call.estado || viewState(task) === call.estado)
         .filter((task) => situacao === 'todas' || (situacao === 'orfas' ? orphanOf(task) !== null : !isClosed(task) && !awaitsSend(task) && orphanOf(task) === null))
-        .sort((a, b) => a.createdAt - b.createdAt);
+        // 09/11 (t-5c0df1df) — the open ones first, in the owner's order: the Líder hands out the next from the top.
+        .sort((a, b) => Number(inBoardQueue(b)) - Number(inBoardQueue(a)) || (inBoardQueue(a) ? byOwner(a, b) : a.createdAt - b.createdAt));
+      const queuePlace = new Map<string, number>();
+      const perBoard = new Map<string, number>();
+      for (const task of tasks.filter(inBoardQueue)) {
+        const place = (perBoard.get(task.projectPath) ?? 0) + 1;
+        perBoard.set(task.projectPath, place);
+        queuePlace.set(task.id, place);
+      }
       const hidden = situacao === 'todas' ? 0 : inScope.length - tasks.length;
       return {
         ok: true,
@@ -836,9 +878,13 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
           {
             faixa: { ...stripView(ledgerStrip(doc, scope)), ...counts },
             situacao,
+            ...(queuePlace.size
+              ? { fila: 'As abertas vêm primeiro, na prioridade que o dono deu em "Seus pedidos" ("posicao" 1 = a próxima do quadro). Nada é puxado sozinho: com alguém livre, entregue a próxima a ele.' }
+              : {}),
             ...(hidden ? { fora: `${hidden} tarefa(s) fora desta lista; "situacao": "todas" mostra o histórico inteiro, "orfas" as que ficaram sem lugar.` } : {}),
             tarefas: tasks.map((task) => ({
-              ...taskView(task, doc, orphanOf(task)),
+              ...(queuePlace.has(task.id) ? { posicao: queuePlace.get(task.id) } : {}),
+              ...taskView(task, doc, orphanOf(task), caller),
               ...(ownerUnknown(caller, task) ? { desconhecida: 'o quadro desta tarefa não respondeu: não sei se o lugar dono ainda existe.' } : {}),
             })),
           },

@@ -1,0 +1,4 @@
+{
+  "title": "Muitas sessões escrevendo ao mesmo tempo não travam mais a janela",
+  "text": "Quando várias sessões escreviam bastante texto ao mesmo tempo, o terminal de cada aba, até das escondidas, se redesenhava inteiro a cada linha nova, e a janela chegava a parar de responder. Agora a aba escondida não se redesenha à toa, e o que o chat lê da tela é lido uma vez só. Com 20 sessões escrevendo sem parar, o uso da janela caiu de 100% para cerca de um terço, sem nenhuma trava longa."
+}
