@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { buildSlackOfflineGuardScript, SLACK_GUARD_FILE_LETTER_MARK, SLACK_OFFLINE_PATTERN } from '../src/main/hooks-settings';
-import { createLedgerService, createSlackLetterGuard, nodeLedgerProofFs, runLedgerTool, type LedgerCaller } from '../src/main/ledger-store';
+import { createLedgerService, nodeLedgerProofFs, runLedgerTool, type LedgerCaller } from '../src/main/ledger-store';
 import { applyLedgerOp, emptyLedgerDoc, LEDGER_SCHEMA_VERSION, parseLedgerDoc, type LedgerActor, type LedgerDoc, type LedgerOp, type SlackLetter } from '../src/shared/ledger/contract';
 import { slackGuard } from '../src/shared/ledger/slack-guard';
 import { parseLedgerToolCall, type LedgerToolCall } from '../src/shared/ledger/tools';
@@ -162,12 +162,6 @@ describe('arquivo no Slack: pela ferramenta carta_slack e a resposta do upload',
   }
   const view = async (ledger: ReturnType<typeof service>, id: string) =>
     (JSON.parse((await runLedgerTool(ledger, caller, call('tarefa_ver', { id }))).text) as { cartaSlack: Record<string, unknown> }).cartaSlack;
-  let use = 0;
-  const attempt = async (guard: ReturnType<typeof createSlackLetterGuard>, input: unknown) => {
-    const payload = { tool_name: UP, tool_input: input, tool_use_id: `toolu_${++use}` };
-    return { refusal: await guard.before('pty-1', payload), answer: (event: string, response?: unknown) => guard.after('pty-1', event, { ...payload, tool_response: response }) };
-  };
-
   it('a carta leva caminho, nome e comentário, e o dono lê que vai um arquivo', async () => {
     const ledger = service();
     expect(parseLedgerToolCall('carta_slack', { destino: 'C1', texto: 'x', motivo: 'y', arquivoNome: 'a.png' }).ok).toBe(false);
@@ -179,35 +173,6 @@ describe('arquivo no Slack: pela ferramenta carta_slack e a resposta do upload',
     expect(delivery.forOwner?.question).toBe('Posso mandar este arquivo no Slack em seu nome?');
     expect(delivery.proofs?.map((proof) => (proof.kind === 'texto' ? proof.text : ''))).toEqual([COMMENT, expect.stringContaining('print-07.png')]);
     expect(await view(ledger, id)).toMatchObject({ texto: COMMENT, arquivo: PATH, arquivoNome: 'print-07.png' });
-  });
-
-  it('upload que responde sem ok nem ts: a carta fica gasta ("envio sem confirmação"), sem segundo envio', async () => {
-    for (const response of [[{ type: 'text', text: JSON.stringify({ enviado: true, nome: 'print-07.png' }) }], undefined, [{ type: 'text', text: 'Arquivo enviado.' }]]) {
-      const ledger = service();
-      const guard = createSlackLetterGuard(() => ledger);
-      const id = await fileLetter(ledger, true);
-      const first = await attempt(guard, upload());
-      expect(first.refusal).toBeNull();
-      expect((await attempt(guard, upload())).refusal, 'outro upload com o primeiro no ar').toMatch(/bloqueado/);
-      await first.answer('PostToolUse', response);
-      expect(await view(ledger, id)).toMatchObject({ enviada: true, envio: expect.stringMatching(/sem confirmação/) });
-      for (let i = 0; i < 3; i++) expect((await attempt(guard, upload())).refusal, `upload ${i + 2}`).toMatch(/bloqueado/);
-    }
-  });
-
-  it('upload que falha explicitamente libera um reenvio só; confirmado, a carta se fecha', async () => {
-    const ledger = service();
-    const guard = createSlackLetterGuard(() => ledger);
-    const id = await fileLetter(ledger, true);
-    const first = await attempt(guard, upload());
-    expect(first.refusal).toBeNull();
-    await first.answer('PostToolUse', { isError: true, content: [{ type: 'text', text: 'Erro: Slack files.getUploadURLExternal: missing_scope' }] });
-    expect(await view(ledger, id)).toMatchObject({ enviada: false, envio: expect.stringMatching(/falhou/) });
-    const resend = await attempt(guard, upload());
-    expect(resend.refusal).toBeNull();
-    await resend.answer('PostToolUse', [{ type: 'text', text: JSON.stringify({ ok: true, enviado: true, id: 'F0NOVO456' }) }]);
-    expect(await view(ledger, id)).toMatchObject({ enviada: true, envio: expect.stringMatching(/confirmado/) });
-    expect((await attempt(guard, upload())).refusal).toMatch(/bloqueado/);
   });
 });
 

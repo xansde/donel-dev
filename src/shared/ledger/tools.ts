@@ -374,7 +374,7 @@ export const LEDGER_TOOLS = [
     name: 'carta_slack',
     title: 'Pedir ao dono para mandar mensagem no Slack',
     description:
-      'Toda mensagem ao Slack em nome do dono (canal, pessoa ou thread; por MCP do Slack, Composio, curl ou script) precisa ANTES desta carta aceita pelo dono: sem ela o Donel Dev bloqueia o envio. A carta leva o destino, a thread, o texto EXATO e o motivo, e espera o dono no Oráculo Harrow (desktop e celular). Aceita: envie o mesmo texto ao mesmo destino e thread, uma vez só. Rejeitada: não envie; o motivo diz o ajuste; crie outra carta. Veja a decisão com tarefa_ver. Para mandar um ARQUIVO, a carta leva também "arquivo" (o caminho local, exatamente como vai na ferramenta de upload do MCP do Slack) e o texto é o comentário do arquivo; aceita, libera um upload só desse arquivo.',
+      'Opcional: o Donel Dev NÃO exige carta nem bloqueia envio ao Slack. Use só quando quiser que o dono confira uma mensagem antes de ela sair em nome dele. A carta leva o destino, a thread, o texto EXATO e o motivo, e espera o dono no Oráculo Harrow (desktop e celular). Aceita: envie o mesmo texto ao mesmo destino e thread, uma vez só. Rejeitada: não envie; o motivo diz o ajuste; crie outra carta. Veja a decisão com tarefa_ver. Para mandar um ARQUIVO, a carta leva também "arquivo" (o caminho local, exatamente como vai na ferramenta de upload do MCP do Slack) e o texto é o comentário do arquivo; aceita, libera um upload só desse arquivo.',
     inputSchema: {
       type: 'object',
       properties: {

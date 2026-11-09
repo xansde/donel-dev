@@ -75,32 +75,6 @@ describe('o bot do próprio agente posta sem carta', () => {
     expect(LEDGER_SCHEMA_VERSION).toBe(4);
     expect(parseLedgerDoc(JSON.parse(JSON.stringify(doc)))).toEqual(doc);
   });
-
-  it('pela conta do dono continua barrado sem carta, e um MCP desconhecido também', async () => {
-    const ledger = service();
-    const guard = createSlackLetterGuard(() => ledger, { placeOf: place, agentBotServers: () => BOTS });
-    const owner: ReadonlyArray<readonly [string, unknown]> = [
-      ['mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL', { tools: [{ tool_slug: 'SLACK_SEND_MESSAGE', arguments: { channel: 'C0CGE4DSGCQ', markdown_text: 'Oi.' } }] }],
-      ['mcp__composio__SLACK_SEND_MESSAGE', { channel: 'C0CGE4DSGCQ', text: 'Oi.' }],
-      ['mcp__composio__SLACK_UPLOAD_OR_CREATE_A_FILE_IN_SLACK', { channels: 'C0CGE4DSGCQ', initial_comment: 'Oi.' }],
-      ['mcp__slack__slack_post_message', { channel_id: 'C0CGE4DSGCQ', text: 'Oi.' }],
-      ['mcp__claude_ai_Slack__slack_send_message', { channel_id: 'C0CGE4DSGCQ', message: 'Oi.' }],
-      ['Bash', { command: `curl -s https://slack.com/api/chat.postMessage -H "Authorization: Bearer $SLACK_USER_TOKEN" -d channel=C0CGE4DSGCQ -d text=Oi` }],
-      ['mcp__outro-bot-slack__slack_post_message', { channel_id: 'C0CGE4DSGCQ', text: 'Oi.' }],
-      ['mcp__theo-west-slack-falso__slack_post_message', { channel_id: 'C0CGE4DSGCQ', text: 'Oi.' }],
-    ];
-    for (const [tool, input] of owner) expect(await send(guard, tool, input), tool).toMatch(/carta_slack/);
-    expect(Object.keys(ledger.load().doc.tasks)).toHaveLength(0);
-
-    // The mark is never forged: a task a session creates cannot pass for a bot record (hidden from the strip).
-    const forged = await ledger.apply({ kind: 'lugar', placeId: 'place:theo' }, { op: 'criar', projectPath: '/w/bizops', request: `${AGENT_BOT_MARK} Mensagem no Slack`, doneWhen: 'x', due: '2026-11-07', ownerPlaceId: 'place:theo', risk: 'baixo' });
-    expect(forged.ok).toBe(false);
-    expect(Object.keys(ledger.load().doc.tasks)).toHaveLength(0);
-
-    // The list is the owner's, only from the config: by default (empty), the Theo West bot needs a letter too.
-    const strict = createSlackLetterGuard(() => ledger, { placeOf: place });
-    expect(await send(strict, 'mcp__theo-west-slack__slack_post_message', { channel_id: 'C0CGE4DSGCQ', text: 'Oi.' })).toMatch(/carta_slack/);
-  });
 });
 
 describe('trava de fora do ar (VPS)', () => {
