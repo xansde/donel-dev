@@ -2658,7 +2658,7 @@ export function App(): React.JSX.Element {
       try {
         const bridge = agentBridgeRef.current;
         const answer = await window.donel.faxineiro.round(bridge.faxineiroSessions());
-        bridge.setFullMachines(answer.fullMachines);
+        bridge.setFullMachines(answer.fullMachines, answer.openingRoom);
         const entries: FaxineiroLogEntry[] = [...bridge.drainQueue()];
         for (const close of answer.closeIdle) {
           const closed = bridge.closeIdleFaxineiro(close.projectPath, close.placeId);

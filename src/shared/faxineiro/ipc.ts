@@ -2,7 +2,7 @@
 // it sees; the main adds the machines, the config and the memory, and answers whom to wake and which idle Faxineiro to
 // close. The renderer reports back what it did, for the log.
 
-import type { FaxineiroLogEntry, SessionView } from './triggers';
+import type { FaxineiroLogEntry, OpeningRoom, SessionView } from './triggers';
 
 export const FAXINEIRO_CHANNELS = {
   /** Renderer → main (invoke): one round with the open sessions → `FaxineiroRoundAnswer`. */
@@ -24,6 +24,8 @@ export interface FaxineiroRoundAnswer {
   readonly closeIdle: readonly { readonly projectPath: string; readonly placeId: string }[];
   /** Machines where a new session waits for room (`pc` or a remote id → why). */
   readonly fullMachines: Readonly<Record<string, readonly string[]>>;
+  /** t-d1f072fd — new sessions each machine's last read has room for (`pc` or a remote id → room). */
+  readonly openingRoom: Readonly<Record<string, OpeningRoom>>;
 }
 
 export interface DonelFaxineiroApi {
