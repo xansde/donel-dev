@@ -168,7 +168,10 @@ function trackSession(previous: TrackedSession | undefined, watched: WatchedSess
       seen = isSeenNow(focus, watched.ptyId);
       // notificacoes-completas: whether this wait is news, and of what kind, is THE rule (src/shared/attention/rule.ts).
       const failure = watched.failure ?? null;
-      const kind = newWaitNotice({ known: previous !== undefined, semaphore: watched.semaphore, seenNow: seen, failure });
+      // t-1293c818 (item 5) — a session found at its prompt (resumed, reattached) was never seen working: no turn
+      // ended, so no "terminou". A pending found that way is still news.
+      const neverWorked = previous?.semaphore === 'idle' && watched.semaphore === 'waiting';
+      const kind = newWaitNotice({ known: previous !== undefined && !neverWorked, semaphore: watched.semaphore, seenNow: seen, failure });
       if (kind !== null) {
         const base = { kind, ptyId: watched.ptyId, name: watched.name, blockedKind: kind === 'blocked' ? watched.blockedKind : null, at: now };
         event = kind === 'failed' ? { ...base, reason: failure } : base;

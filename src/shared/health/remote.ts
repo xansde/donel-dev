@@ -173,3 +173,21 @@ export function formatLoad(reading: RemoteHealthReading): string | null {
   const cpus = reading.cpus ? ` (${reading.cpus} ${reading.cpus === 1 ? 'CPU' : 'CPUs'})` : '';
   return `${fmt(reading.load.one)} · ${fmt(reading.load.five)} · ${fmt(reading.load.fifteen)}${cpus}`;
 }
+
+/**
+ * t-1293c818 (item 5) — the sessions each place read at its prompt in its last read: the pane idle (no spinner, no
+ * dialog), the transcript's turn closed and no background task left without an end. `readStartedAt` is the app's clock
+ * at the latest moment the read could have started (`checkedAt - timeoutMs`): whatever the session did after that is
+ * newer than the reading. A place that did not answer this time keeps its old reading: it says nothing now.
+ */
+export function settledRemoteSessions(reports: readonly RemoteHealthReport[], timeoutMs: number): { sid: string; readStartedAt: number }[] {
+  const out: { sid: string; readStartedAt: number }[] = [];
+  for (const report of reports) {
+    if (report.status !== 'ok' || report.checkedAt === null || report.lastOkAt !== report.checkedAt) continue;
+    for (const session of report.reading?.sessionDetails ?? []) {
+      if (session.pane !== 'idle' || !session.transcript || session.turn !== 'ended' || session.background.pendingTasks > 0) continue;
+      out.push({ sid: session.sid, readStartedAt: report.checkedAt - timeoutMs });
+    }
+  }
+  return out;
+}

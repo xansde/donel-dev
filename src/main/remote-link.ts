@@ -57,6 +57,11 @@ export class RemoteLinkSupervisor<Exit> {
     this.tracked.set(ptyId, { sshTarget, sid });
   }
 
+  /** The tmux session of every remote tab, by ptyId (`donel-<sid>`; it keeps the first id across a `/clear`). */
+  trackedSids(): ReadonlyMap<string, string> {
+    return new Map([...this.tracked].map(([ptyId, entry]) => [ptyId, entry.sid]));
+  }
+
   isLost(ptyId: string): boolean {
     return this.lost.has(ptyId);
   }
