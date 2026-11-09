@@ -128,6 +128,7 @@ import { runningCount } from '../../shared/chat/backgroundTasks';
 import { effectiveTabView, hasChatView, nextTabView, shouldHandleViewShortcut } from './chat/tabView';
 import { disposeTabSend, ownerTerminalInput, sendDriverFor, sendToTab, pendingSendReason, sendToTabAndWait, tabTookMessage } from './chat/composer/tabSend';
 import { blockingScreen, readInputText } from '../../shared/chat/screen';
+import { LEADER_DENY_REASON, permissionPorts } from './Mindscape/permissionPorts';
 import { withNoPipelineTag } from '../../shared/chat/noPipeline';
 import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../shared/lider/ipc';
 import { isLeaderOfAllTab, leaderHome } from '../../shared/mindscape/leader';
@@ -2551,6 +2552,20 @@ export function App(): React.JSX.Element {
       const lines = terminalRefs.current[tabId]?.readScreen().lines;
       return lines !== undefined && blockingScreen(lines)?.kind === 'permission';
     },
+    // t-1293c818 (3) — the Líder reads and answers a permission open on this tab (the held hook first, else the screen).
+    ...permissionPorts({
+      held: async (tabId) => {
+        const ptyId = chatPtyIds[tabId];
+        return ptyId ? window.donel.chat.openPermissions(ptyId) : [];
+      },
+      answerHeld: async (tabId, pendingId, answer) => {
+        const ptyId = chatPtyIds[tabId];
+        if (!ptyId) return { ok: false };
+        return window.donel.chat.answer(ptyId, pendingId, answer === 'allow' ? { kind: 'allow' } : { kind: 'deny', reason: LEADER_DENY_REASON });
+      },
+      screen: (tabId) => terminalRefs.current[tabId]?.readScreen().lines,
+      write: (tabId, data) => terminalRefs.current[tabId]?.write(data) ?? false,
+    }),
     // No hook yet is not "never started" when the CLI already took a message (the transcript showed it): a session on a
     // remote place whose hooks do not come back was told "não começou" with five answers in its transcript (07/11).
     unconfirmed: (tabId) => (semaphoreStates[tabId]?.unconfirmed === true || semaphoreStates[tabId] === undefined) && !tabTookMessage(tabId),

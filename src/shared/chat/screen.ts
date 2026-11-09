@@ -8,7 +8,7 @@
 // the CLI text changes between versions. Detectors never read the byte stream:
 // in ConPTY a space is a cursor advance, not a character (see `cliInputBox.ts`).
 
-import { hasPermissionPrompt, locateInputBox, readInputBox } from '../cliInputBox';
+import { hasPermissionPrompt, isRulerLine, locateInputBox, readInputBox } from '../cliInputBox';
 import { lineText, type LineInput, type ScreenLine } from '../screenLine';
 import { trustDialogKind } from '../trustDialog';
 
@@ -242,6 +242,48 @@ export function blockingScreen(lines: readonly LineInput[]): BlockingScreen | nu
     if (title) return { kind: 'screen', title };
   }
   return null;
+}
+
+/** A permission dialog read from the screen (t-1293c818): what it asks, as drawn, and the key that answers "Yes". */
+export interface PermissionDialog {
+  /** The dialog from its top border down to its question ("Bash command / rm -rf build / … / Do you want to proceed?"). */
+  readonly text: string;
+  /** The digit of the option that is exactly "Yes" (allow once); `null` = none drawn (never guess another option). */
+  readonly yesKey: string | null;
+}
+
+const PERMISSION_QUESTION = /Do you want to\b.*\?|requires confirmation/i;
+const YES_OPTION = /^\s*(?:❯\s*)?(\d)\.\s+Yes\s*$/;
+/** How far above its question the dialog may start (a long command wraps). */
+const DIALOG_ROWS_ABOVE = 24;
+const DIALOG_TEXT_MAX = 1_500;
+
+/**
+ * The permission dialog on the screen, so a Líder can read what it asks before answering it from another session
+ * (`sessao_permissao`); `null` when `blockingScreen` sees no permission prompt. Refusing is Esc; allowing is `yesKey`.
+ */
+export function permissionDialog(lines: readonly LineInput[]): PermissionDialog | null {
+  if (blockingScreen(lines)?.kind !== 'permission') return null;
+  const plain = lines.map(lineText);
+  let question = -1;
+  for (let i = plain.length - 1; i >= 0; i -= 1) {
+    if (PERMISSION_QUESTION.test(plain[i])) {
+      question = i;
+      break;
+    }
+  }
+  if (question < 0) question = Math.max(0, plain.findIndex((line) => YES_OPTION.test(line)) - 1);
+  let top = question;
+  while (top > 0 && question - top < DIALOG_ROWS_ABOVE && !isRulerLine(plain[top - 1]) && !isBarLine(plain[top - 1])) top -= 1;
+  const body: string[] = [];
+  for (const line of plain.slice(top, question + 1).map((row) => row.trimEnd())) {
+    if (line.trim() === '' && (body.length === 0 || body[body.length - 1] === '')) continue;
+    body.push(line);
+  }
+  while (body.length > 0 && body[body.length - 1] === '') body.pop();
+  const text = body.join('\n');
+  const yes = plain.slice(question + 1).map((line) => YES_OPTION.exec(line)).find((match) => match !== null);
+  return { text: text.length > DIALOG_TEXT_MAX ? `${text.slice(0, DIALOG_TEXT_MAX)}…` : text, yesKey: yes ? yes[1] : null };
 }
 
 /** Footer present: the CLI printed something under the box (mode, hints). Typed text hides "? for shortcuts", so any text counts. */

@@ -15,6 +15,7 @@ import { adapt, expandGroup, initAdapterState, viewOf, type AdapterState } from 
 import type {
   ChatAckLookupOutput,
   ChatAnswerOutput,
+  ChatOpenPermissionsOutput,
   ChatConversationSwitchedEvent,
   ChatLiveEvent,
   ChatLoadOlderOutput,
@@ -126,6 +127,8 @@ export interface ChatHub {
   reportScreenState(ptyId: string, terminalNeeded: TerminalNeededReason | null): void;
   /** T076 - the owner's answer to an open pending (chat:answer). */
   answer(ptyId: string, pendingId: string, answer: PendingAnswer): ChatAnswerOutput;
+  /** t-1293c818 (3) — the tab's open permission requests (questions and plans stay out), oldest first. */
+  openPermissions(ptyId: string): ChatOpenPermissionsOutput;
   /** 08/11 — a line of the app in the tab's conversation (a warning: what it did on its own that the owner must know). */
   noteApp(ptyId: string, text: string): void;
   /** Modo YOLO was just turned on: the tab's open permission requests stop waiting. Questions and plans stay. */
@@ -1001,6 +1004,14 @@ export function createChatHub(deps: ChatHubDeps): ChatHub {
       closeOpenPending(rec, pendingId, 'answered', false);
       emitLiveIfChanged(rec);
       return { ok: true };
+    },
+
+    openPermissions(ptyId) {
+      const rec = recs.get(ptyId);
+      if (rec === undefined) return [];
+      return [...rec.pendings.values()]
+        .filter(({ pending }) => pending.state === 'open' && pending.kind === 'permission')
+        .map(({ pending }) => ({ id: pending.id, toolName: pending.match.toolName, toolInput: pending.match.toolInput }));
     },
 
     approveOpenPermissions(ptyId) {
