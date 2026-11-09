@@ -270,7 +270,7 @@ import { FAKE_JUDGES_ENV_VAR } from '../shared/hillClimb/council';
 import type { HillClimbToolCall } from '../shared/hillClimb/tools';
 import { fetchRemoteProof } from './ledger-remote-proof';
 import { createLedgerMirrorService, type LedgerMirrorService } from './ledger-mirror/service';
-import { LEDGER_MIRROR_CHANNELS, type LedgerMirrorConfigureResult, type LedgerMirrorState, type LedgerPlacesSnapshot, type PlaceInfoOf } from '../shared/ledger/mirror';
+import { LEDGER_MIRROR_CHANNELS, ledgerSessionsOfDoc, type LedgerMirrorConfigureResult, type LedgerMirrorState, type LedgerPlacesSnapshot, type PlaceInfoOf } from '../shared/ledger/mirror';
 import { CHAT_CHANNELS } from '../shared/chat/ipc';
 // 011-contas-e-provedores (etapa 1) — motor de contas + mods. Nasce inerte
 // (accounts.mod = null); toda a mecânica mora em src/main/accounts/, este
@@ -3329,7 +3329,8 @@ function registerLedgerMirror(): void {
     } catch {
       doc = null;
     }
-    return mirror.placesSnapshot(doc);
+    // t-5c0df1df — the column "Sessão": the session of each live task, the same the tools give.
+    return { ...mirror.placesSnapshot(doc), ...(doc ? { sessions: ledgerSessionsOfDoc(doc, sessionsSnapshot()) } : {}) };
   });
   // The first registry of this run: the whole ledger (it may have changed while the app was closed, or a push may
   // have failed before quitting). The key only comes in through the screen — never a file on disk.
@@ -3520,10 +3521,10 @@ function placeNameOf(projectPath: string, placeId: string): string | undefined {
   return appConfig.sessionRegistry[card.sessionId]?.label;
 }
 
-/** The places for many lookups in a row (the mirror's push): the boards are read once; the card gives the role. */
-function placesSnapshot(): PlaceInfoOf {
+/** The saved boards, read once on the first lookup (many lookups in a row: the mirror's push, a `tarefa_listar`). */
+function boardsOnce(): () => Readonly<Record<string, MindscapeBoard>> {
   let boards: Readonly<Record<string, MindscapeBoard>> | null = null;
-  return (projectPath, placeId) => {
+  return () => {
     if (boards === null) {
       try {
         boards = createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load().boards;
@@ -3531,25 +3532,26 @@ function placesSnapshot(): PlaceInfoOf {
         boards = {};
       }
     }
-    const card = boards[projectPath]?.cards[placeId];
+    return boards;
+  };
+}
+
+/** The places for many lookups in a row (the mirror's push): the boards are read once; the card gives the role. */
+function placesSnapshot(): PlaceInfoOf {
+  const boards = boardsOnce();
+  return (projectPath, placeId) => {
+    const card = boards()[projectPath]?.cards[placeId];
     if (card?.kind !== 'session') return undefined;
     const name = card.sessionId ? appConfig.sessionRegistry[card.sessionId]?.label : undefined;
     return { ...(card.roleId ? { roleId: card.roleId } : {}), ...(name ? { name } : {}) };
   };
 }
 
-/** 09/11 (t-5c0df1df) — place → its conversation of the moment, for `tarefa_listar`/`tarefa_ver`; the boards are read once. */
+/** 09/11 (t-5c0df1df) — place → its conversation of the moment, for `tarefa_listar`/`tarefa_ver` and the table's "Sessão". */
 function sessionsSnapshot(): (projectPath: string, placeId: string) => string | undefined {
-  let boards: Readonly<Record<string, MindscapeBoard>> | null = null;
+  const boards = boardsOnce();
   return (projectPath, placeId) => {
-    if (boards === null) {
-      try {
-        boards = createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load().boards;
-      } catch {
-        boards = {};
-      }
-    }
-    const card = boards[projectPath]?.cards[placeId];
+    const card = boards()[projectPath]?.cards[placeId];
     return card?.kind === 'session' ? card.sessionId : undefined;
   };
 }

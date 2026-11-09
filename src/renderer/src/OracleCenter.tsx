@@ -93,7 +93,7 @@ export function OracleCenter({
         )}
         {snapshot?.readOnly ? <p className={styles.waitingMeta}>Gravado por uma versão mais nova do Donel: aqui é só leitura.</p> : null}
         {snapshot && Object.keys(snapshot.doc.tasks).length > 0 ? (
-          <LedgerTable doc={snapshot.doc} places={places} ownerName={names?.ownerName ?? null} onOpenCard={openCard} inbox={inbox} />
+          <LedgerTable doc={snapshot.doc} places={places} ownerName={names?.ownerName ?? null} onOpenCard={openCard} inbox={inbox} sessions={names?.sessions} />
         ) : (
           <div className={styles.empty}>
             <p className={styles.title}>Nenhuma tarefa ainda</p>

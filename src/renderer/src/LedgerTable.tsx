@@ -6,7 +6,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CLOSING_LABELS, type ClosingKind } from '../../shared/ledger/closing';
-import { DEFAULT_OWNER_NAME, type PlaceInfoOf } from '../../shared/ledger/mirror';
+import { DEFAULT_OWNER_NAME, type LedgerSessionsMap, type PlaceInfoOf } from '../../shared/ledger/mirror';
 import {
   currentProofs,
   filterCounts,
@@ -14,6 +14,7 @@ import {
   LEDGER_TABLE_FILTERS,
   ledgerTableRows,
   matchesSearch,
+  sessionCell,
   timelineOf,
   type LedgerTableFilter,
   type LedgerTableRow,
@@ -168,10 +169,13 @@ export function LedgerTable({
   ownerName,
   onOpenCard,
   inbox,
+  sessions,
 }: {
   readonly doc: LedgerDoc;
   readonly places: PlaceInfoOf | undefined;
   readonly ownerName: string | null;
+  /** The session of each live task (t-5c0df1df, the column "Sessão"). */
+  readonly sessions?: LedgerSessionsMap;
   /** Opens the card of a task that waits for the owner (where he decides). */
   readonly onOpenCard: (task: LedgerTask) => void;
   /** The box "Esperando você" (task id → kind): the filter "Esperando você" shows the same items. */
@@ -217,6 +221,7 @@ export function LedgerTable({
                 <th className={styles.colWith}>Com quem está</th>
                 <th className={styles.colAsked}>Quem pediu</th>
                 <th className={`${styles.colDoer} ${styles.secondary}`}>Quem faz agora</th>
+                <th className={`${styles.colSession} ${styles.secondary}`}>Sessão</th>
                 <th className={`${styles.colCreator} ${styles.secondary}`}>Quem criou</th>
                 <th className={`${styles.colRisk} ${styles.secondary}`}>Risco</th>
                 <th className={`${styles.colDue} ${styles.secondary}`}>Prazo</th>
@@ -259,6 +264,9 @@ export function LedgerTable({
                     </td>
                     <td className={styles.secondary} title={row.quem_faz_agora}>
                       {row.quem_faz_agora}
+                    </td>
+                    <td className={`${styles.secondary} ${styles.code}`} title={sessionCell(item.task, sessions).full}>
+                      {sessionCell(item.task, sessions).text}
                     </td>
                     <td className={styles.secondary} title={row.quem_criou}>
                       {row.quem_criou}
