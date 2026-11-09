@@ -250,13 +250,21 @@ export interface PermissionDialog {
   readonly text: string;
   /** The digit of the option that is exactly "Yes" (allow once); `null` = none drawn (never guess another option). */
   readonly yesKey: string | null;
+  /** false = the dialog's top is off the screen, or the text was cut: what was read is not all it asks. */
+  readonly complete: boolean;
+  /**
+   * The whole dialog as drawn, never cut: from its top down to its last option. What identifies THIS request (the
+   * footer under it, a status line that ticks, stays out, or the id would change by itself).
+   */
+  readonly whole: string;
 }
 
 const PERMISSION_QUESTION = /Do you want to\b.*\?|requires confirmation/i;
 const YES_OPTION = /^\s*(?:❯\s*)?(\d)\.\s+Yes\s*$/;
-/** How far above its question the dialog may start (a long command wraps). */
-const DIALOG_ROWS_ABOVE = 24;
-const DIALOG_TEXT_MAX = 1_500;
+const ANY_OPTION = /^\s*(?:❯\s*)?\d\.\s/;
+const DIALOG_TEXT_MAX = 8_000;
+/** Said first when the dialog's top border is not on the screen (a long command scrolled it off). */
+export const DIALOG_TOP_MISSING = '[o começo do pedido não está na tela]';
 
 /**
  * The permission dialog on the screen, so a Líder can read what it asks before answering it from another session
@@ -273,17 +281,24 @@ export function permissionDialog(lines: readonly LineInput[]): PermissionDialog 
     }
   }
   if (question < 0) question = Math.max(0, plain.findIndex((line) => YES_OPTION.test(line)) - 1);
+  // Up to the dialog's top border, however long the command: a cap here hid the start of a long one (Revisor, #377).
   let top = question;
-  while (top > 0 && question - top < DIALOG_ROWS_ABOVE && !isRulerLine(plain[top - 1]) && !isBarLine(plain[top - 1])) top -= 1;
+  while (top > 0 && !isRulerLine(plain[top - 1]) && !isBarLine(plain[top - 1])) top -= 1;
+  const topFound = top > 0;
   const body: string[] = [];
   for (const line of plain.slice(top, question + 1).map((row) => row.trimEnd())) {
     if (line.trim() === '' && (body.length === 0 || body[body.length - 1] === '')) continue;
     body.push(line);
   }
   while (body.length > 0 && body[body.length - 1] === '') body.pop();
-  const text = body.join('\n');
+  const whole = body.join('\n');
+  const cut = whole.length > DIALOG_TEXT_MAX;
+  const text = `${topFound ? '' : `${DIALOG_TOP_MISSING}\n`}${cut ? `${whole.slice(0, DIALOG_TEXT_MAX)}\n[cortado: ${DIALOG_TEXT_MAX} de ${whole.length} letras]` : whole}`;
   const yes = plain.slice(question + 1).map((line) => YES_OPTION.exec(line)).find((match) => match !== null);
-  return { text: text.length > DIALOG_TEXT_MAX ? `${text.slice(0, DIALOG_TEXT_MAX)}…` : text, yesKey: yes ? yes[1] : null };
+  let last = question;
+  for (let i = question + 1; i < plain.length && (ANY_OPTION.test(plain[i]) || plain[i].trim() === ''); i += 1) if (ANY_OPTION.test(plain[i])) last = i;
+  const drawn = plain.slice(top, last + 1).map((row) => row.trimEnd()).join('\n');
+  return { text, yesKey: yes ? yes[1] : null, complete: topFound && !cut, whole: drawn };
 }
 
 /** Footer present: the CLI printed something under the box (mode, hints). Typed text hides "? for shortcuts", so any text counts. */

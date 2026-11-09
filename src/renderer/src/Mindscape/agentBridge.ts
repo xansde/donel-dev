@@ -154,6 +154,8 @@ export interface PermissionAsk {
   readonly tool?: string;
   /** What it asks: the command, the file, or the dialog as drawn. */
   readonly what: string;
+  /** false = what was read is not all it asks (cut, or the dialog's top off the screen): only a refusal goes. */
+  readonly complete?: boolean;
 }
 
 export type PermissionAnswer = { readonly ok: true } | { readonly ok: false; readonly reason: string };
@@ -1327,7 +1329,9 @@ export class AgentBridge {
               ...(ask.tool ? { ferramenta: ask.tool } : {}),
               oQuePede: ask.what,
               origem: ask.source === 'chat' ? 'pendência do chat (o app segura o pedido)' : 'diálogo na tela do CLI',
-              comoResponder: `sessao_permissao com "resposta": "permitir" e "pedido": "${ask.id}", ou "resposta": "recusar".`,
+              ...(ask.complete === false
+                ? { completo: false, comoResponder: `A leitura está incompleta (o pedido foi cortado ou o começo dele não está na tela): só "resposta": "recusar" vale por aqui.` }
+                : { comoResponder: `sessao_permissao com "resposta": "permitir" e "pedido": "${ask.id}", ou "resposta": "recusar".` }),
             }),
           };
         }
@@ -1335,6 +1339,8 @@ export class AgentBridge {
           return no(`o pedido aberto agora é outro (${ask.id}): ${asked}. Leia e responda de novo.`);
         if (call.resposta === 'permitir' && call.pedido === undefined)
           return no(`para permitir, diga o id do pedido que você leu ("pedido": "${ask.id}"). O pedido: ${asked}.`);
+        if (call.resposta === 'permitir' && ask.complete === false)
+          return no(`a leitura do pedido está incompleta (cortada, ou o começo dele não está na tela), e não se permite o que não se leu inteiro. Só "recusar" vale. O que se lê: ${asked}.`);
         const answer = call.resposta === 'permitir' ? 'allow' : 'deny';
         const result = await this.ports.answerPermission(target.id, ask.id, answer);
         if (!result.ok) return no(`${result.reason}. O pedido era: ${asked}.`);

@@ -4,7 +4,9 @@
 // - `chat`: the PermissionRequest hook the app holds (main/hook-bridge.ts), answered through `chat:answer`;
 // - `tela`: only the dialog drawn by the CLI (no hook came back: a remote place, the chat off), answered with a key —
 //   Esc refuses, the digit of "Yes" allows once. Never another option ("don't ask again" is the owner's choice).
-// An answer names the request it answers (`askId`): when what is open now is another one, nothing is answered.
+// An answer names the request it answers (`askId`): when what is open now is another one, nothing is answered. On the
+// screen the id covers the WHOLE dialog, never the cut text (Revisor, #377), and a reading that is not all the request
+// (cut, or the dialog's top scrolled off) only refuses.
 
 import { permissionDialog, type LineInput } from '../../../shared/chat/screen';
 import type { ChatOpenPermission } from '../../../shared/chat/ipc';
@@ -13,7 +15,8 @@ import type { PermissionAnswer, PermissionAsk } from './agentBridge';
 const CHAT_PREFIX = 'chat:';
 const SCREEN_PREFIX = 'tela:';
 const ESC = '\x1b';
-const WHAT_MAX = 1_500;
+/** What a held request shows; past this it is cut, out loud, and only refused. */
+const WHAT_MAX = 20_000;
 /** What the hook says to the CLI when the Líder refuses (it reads it as the reason). */
 export const LEADER_DENY_REASON = 'Recusado pelo Líder, que responde por esta sessão.';
 
@@ -27,49 +30,69 @@ export interface PermissionPortDeps {
   write(tabId: string, data: string): boolean;
 }
 
-/** The input of a tool in one readable piece: the command, the file or the address, else the input itself. */
-export function summarizeToolInput(input: Readonly<Record<string, unknown>>): string {
-  for (const key of ['command', 'file_path', 'notebook_path', 'url', 'pattern', 'path', 'prompt']) {
-    const value = input[key];
-    if (typeof value === 'string' && value.trim() !== '') return cut(value);
+/** The input of a tool in one readable piece, and whether it is all of it (`complete: false` = cut). */
+function describeInput(toolName: string, input: Readonly<Record<string, unknown>>): { readonly what: string; readonly complete: boolean } {
+  const text = (key: string): string | undefined => (typeof input[key] === 'string' && (input[key] as string) !== '' ? (input[key] as string) : undefined);
+  const file = text('file_path') ?? text('notebook_path');
+  let what: string;
+  // A write shows what it writes, not only where (Revisor, #377).
+  if (file !== undefined && text('content') !== undefined) what = `${file}\n${text('content')}`;
+  else if (file !== undefined && (text('old_string') !== undefined || text('new_string') !== undefined)) what = `${file}\n- ${text('old_string') ?? ''}\n+ ${text('new_string') ?? ''}`;
+  else if (file !== undefined && Object.keys(input).length > 1) {
+    const { file_path: _file, notebook_path: _notebook, ...rest } = input;
+    what = `${file}\n${JSON.stringify(rest)}`;
+  } else {
+    const plain = ['command', 'file_path', 'notebook_path', 'url', 'pattern', 'path', 'prompt'].map(text).find((value) => value !== undefined && value.trim() !== '');
+    what = plain ?? `${toolName} ${JSON.stringify(input)}`;
   }
-  return cut(JSON.stringify(input));
+  if (what.length <= WHAT_MAX) return { what, complete: true };
+  return { what: `${what.slice(0, WHAT_MAX)}\n[cortado: ${WHAT_MAX} de ${what.length} letras]`, complete: false };
 }
 
-function cut(text: string): string {
-  return text.length > WHAT_MAX ? `${text.slice(0, WHAT_MAX)}…` : text;
+export function summarizeToolInput(toolName: string, input: Readonly<Record<string, unknown>>): string {
+  return describeInput(toolName, input).what;
 }
 
-/** Same dialog text → same id; another request drawn → another id. */
-function screenId(text: string): string {
-  let hash = 5381;
-  for (let i = 0; i < text.length; i += 1) hash = ((hash * 33) ^ text.charCodeAt(i)) >>> 0;
-  return `${SCREEN_PREFIX}${hash.toString(16)}`;
+/** The whole dialog, never the cut text: a change in a part the reading cut is another id. */
+function screenId(whole: string): string {
+  let a = 5381;
+  let b = 52711;
+  for (let i = 0; i < whole.length; i += 1) {
+    const code = whole.charCodeAt(i);
+    a = ((a * 33) ^ code) >>> 0;
+    b = (Math.imul(b, 31) + code) >>> 0;
+  }
+  return `${SCREEN_PREFIX}${a.toString(16)}${b.toString(16).padStart(8, '0')}`;
 }
 
 export function permissionPorts(deps: PermissionPortDeps): {
   permissionAsk(tabId: string): Promise<PermissionAsk | null>;
   answerPermission(tabId: string, askId: string, answer: 'allow' | 'deny'): Promise<PermissionAnswer>;
 } {
-  const ask = async (tabId: string): Promise<PermissionAsk | null> => {
+  /** The open request, with the screen it was read from (the key that answers it comes from that same screen). */
+  const read = async (tabId: string): Promise<{ readonly ask: PermissionAsk; readonly yesKey: string | null } | null> => {
     const held = (await deps.held(tabId).catch(() => []))[0];
-    if (held) return { id: `${CHAT_PREFIX}${held.id}`, source: 'chat', tool: held.toolName, what: summarizeToolInput(held.toolInput) };
+    if (held) {
+      const { what, complete } = describeInput(held.toolName, held.toolInput);
+      return { ask: { id: `${CHAT_PREFIX}${held.id}`, source: 'chat', tool: held.toolName, what, ...(complete ? {} : { complete: false }) }, yesKey: null };
+    }
     const lines = deps.screen(tabId);
     const dialog = lines ? permissionDialog(lines) : null;
-    return dialog ? { id: screenId(dialog.text), source: 'tela', what: dialog.text } : null;
+    if (!lines || !dialog) return null;
+    return { ask: { id: screenId(dialog.whole), source: 'tela', what: dialog.text, ...(dialog.complete ? {} : { complete: false }) }, yesKey: dialog.yesKey };
   };
   return {
-    permissionAsk: ask,
+    permissionAsk: async (tabId) => (await read(tabId))?.ask ?? null,
     async answerPermission(tabId, askId, answer) {
-      const open = await ask(tabId);
+      const open = await read(tabId);
       if (open === null) return { ok: false, reason: 'o pedido já não está aberto' };
-      if (open.id !== askId) return { ok: false, reason: 'o pedido aberto agora é outro' };
-      if (open.source === 'chat') {
+      if (open.ask.id !== askId) return { ok: false, reason: 'o pedido aberto agora é outro' };
+      if (answer === 'allow' && open.ask.complete === false) return { ok: false, reason: 'a leitura do pedido está incompleta; só recusar' };
+      if (open.ask.source === 'chat') {
         const done = await deps.answerHeld(tabId, askId.slice(CHAT_PREFIX.length), answer).catch(() => ({ ok: false }));
         return done.ok ? { ok: true } : { ok: false, reason: 'o pedido já tinha sido respondido ou expirou' };
       }
-      const lines = deps.screen(tabId);
-      const key = answer === 'deny' ? ESC : lines ? permissionDialog(lines)?.yesKey : null;
+      const key = answer === 'deny' ? ESC : open.yesKey;
       if (!key) return { ok: false, reason: 'a tela não mostra a opção "Yes" (só recusar é possível por aqui)' };
       return deps.write(tabId, key) ? { ok: true } : { ok: false, reason: 'o processo dela não está vivo' };
     },
