@@ -22,7 +22,7 @@ import {
   type LedgerTask,
 } from './contract';
 import { CARD_KINDS, type OwnerInboxKind } from './inbox';
-import { actorName, placeLabel, tarefaRow, type MaskNote, type PlaceInfoOf, type TarefaRow } from './mirror';
+import { actorName, placeLabel, tarefaRow, type LedgerSessionsMap, type MaskNote, type PlaceInfoOf, type TarefaRow } from './mirror';
 
 export type LedgerTableFilter = 'esperando-voce' | 'sem-executor' | 'cartas' | 'tudo';
 
@@ -198,4 +198,10 @@ export function timelineOf(task: LedgerTask, places: PlaceInfoOf | undefined, ow
 /** The proofs of the current delivery. */
 export function currentProofs(task: LedgerTask): readonly LedgerProof[] {
   return lastDelivery(task)?.proofs ?? [];
+}
+
+/** The "Sessão" cell: the session of the task's owner (`LedgerSessionsMap`, live tasks only), or "—". */
+export function sessionCell(task: LedgerTask, sessions: LedgerSessionsMap | undefined): { readonly text: string; readonly full: string } {
+  const session = isClosed(task) ? undefined : sessions?.[task.projectPath]?.[task.ownerPlaceId];
+  return session ? { text: session.slice(0, 8), full: session } : { text: '—', full: '' };
 }

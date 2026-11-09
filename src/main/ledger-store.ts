@@ -58,6 +58,7 @@ import { isUrgentProgress, progressLine, PROGRESS_FIELD_CHARS, turnEndProgress, 
 import { agoText, ledgerNews, progressTaskOf, turnAlreadyRecorded } from '../shared/ledger/novidades';
 import type { LedgerToolCall, ProofInput } from '../shared/ledger/tools';
 import { NOT_STARTED_GRACE_MS, orphanReasonIn, ownerGoneIn } from '../shared/ledger/inbox';
+import { liveSessionOf } from '../shared/ledger/mirror';
 import { AGENT_BOT_SERVERS, detectAgentBotSend, detectSlackSend, fileNameOf, slackGuard, slackMessageLink, slackSendOutcome, type AgentBotSend } from '../shared/ledger/slack-guard';
 
 /** Smoke/test override: isolates the ledger from the real one. */
@@ -590,8 +591,7 @@ function taskView(task: LedgerTask, doc: LedgerDoc, orphan: string | null = null
 
 /** The session that runs `task`: the conversation of its owner place on the board (a closed task says none). */
 function sessionOfTask(caller: LedgerCaller | undefined, task: LedgerTask): string | undefined {
-  if (!caller?.sessionOf || isClosed(task)) return undefined;
-  return caller.sessionOf(task.projectPath, task.ownerPlaceId);
+  return caller?.sessionOf ? liveSessionOf(task, caller.sessionOf) : undefined;
 }
 
 /** What `tarefa_ver` says of a letter's send (`nenhum` says nothing). */
