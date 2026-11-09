@@ -1779,17 +1779,17 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
   // The session folder holds its keys (`meta.json`, `hook-header`, `mcp.json`, `settings.json`): its tools may not read it.
   const remoteKeyDirs = [`~/${REMOTE_SESSIONS_DIR}`];
   if (hooksOn) {
-    // Slack só com carta, fatia 4: the remote session outlives the app; with it down, a post to Slack is refused.
     // The token goes in a file of its own (600, like every file of the session folder): a hook command never carries it.
     const tokenHeaderPath = `$HOME/${REMOTE_SESSIONS_DIR}/${correlationId}/hook-header`;
     files.push({ name: 'hook-header', content: tokenHeaderFileContent(fresh.hookToken) });
+    // Letters never lock (owner, 09/11): no offline Slack guard runs as a hook. The file is still written because the
+    // Theo West MCP reads its "carta-com-arquivo" mark to offer the file upload.
     files.push({ name: 'slack-guard.sh', content: buildSlackOfflineGuardScript({ port: fresh.hookPort, tokenHeaderPath, agentBotServers: appConfig.slackAgentBots.servers }) });
     const settings = buildSessionHooksSettings({
       port: fresh.hookPort,
       token: fresh.hookToken,
       tokenHeaderPath,
       curlPath: 'curl',
-      slackOfflineGuardCommand: `sh "$HOME/${REMOTE_SESSIONS_DIR}/${correlationId}/slack-guard.sh"`,
       statusLine: planStatusLineBridge({ mode: statusLineBridgeModeSetting, userStatusLine: null, chatEnabled: appConfig.chat.enabled }),
       roleScope,
       keyDirs: remoteKeyDirs,
@@ -4379,7 +4379,7 @@ void app.whenReady().then(async () => {
         autoNeverAsks: () => appConfig.autoMode.neverAsks,
         projectYolo: isTabYolo,
         holdsPendings: () => chatHub !== null,
-        // Slack só com carta: a post to Slack passes only with an accepted letter of the Oráculo Harrow.
+        // Slack letters: never a lock (owner, 09/11); a matching send marks its letter, a bot's post is recorded.
         preToolUseGuard: (ptyId, payload) => slackLetters.before(ptyId, payload),
       });
       await bridge.start();

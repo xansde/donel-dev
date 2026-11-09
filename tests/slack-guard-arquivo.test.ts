@@ -180,35 +180,6 @@ describe('arquivo no Slack: pela ferramenta carta_slack e a resposta do upload',
     expect(delivery.proofs?.map((proof) => (proof.kind === 'texto' ? proof.text : ''))).toEqual([COMMENT, expect.stringContaining('print-07.png')]);
     expect(await view(ledger, id)).toMatchObject({ texto: COMMENT, arquivo: PATH, arquivoNome: 'print-07.png' });
   });
-
-  it('upload que responde sem ok nem ts: a carta fica gasta ("envio sem confirmação"), sem segundo envio', async () => {
-    for (const response of [[{ type: 'text', text: JSON.stringify({ enviado: true, nome: 'print-07.png' }) }], undefined, [{ type: 'text', text: 'Arquivo enviado.' }]]) {
-      const ledger = service();
-      const guard = createSlackLetterGuard(() => ledger);
-      const id = await fileLetter(ledger, true);
-      const first = await attempt(guard, upload());
-      expect(first.refusal).toBeNull();
-      expect((await attempt(guard, upload())).refusal, 'outro upload com o primeiro no ar').toMatch(/bloqueado/);
-      await first.answer('PostToolUse', response);
-      expect(await view(ledger, id)).toMatchObject({ enviada: true, envio: expect.stringMatching(/sem confirmação/) });
-      for (let i = 0; i < 3; i++) expect((await attempt(guard, upload())).refusal, `upload ${i + 2}`).toMatch(/bloqueado/);
-    }
-  });
-
-  it('upload que falha explicitamente libera um reenvio só; confirmado, a carta se fecha', async () => {
-    const ledger = service();
-    const guard = createSlackLetterGuard(() => ledger);
-    const id = await fileLetter(ledger, true);
-    const first = await attempt(guard, upload());
-    expect(first.refusal).toBeNull();
-    await first.answer('PostToolUse', { isError: true, content: [{ type: 'text', text: 'Erro: Slack files.getUploadURLExternal: missing_scope' }] });
-    expect(await view(ledger, id)).toMatchObject({ enviada: false, envio: expect.stringMatching(/falhou/) });
-    const resend = await attempt(guard, upload());
-    expect(resend.refusal).toBeNull();
-    await resend.answer('PostToolUse', [{ type: 'text', text: JSON.stringify({ ok: true, enviado: true, id: 'F0NOVO456' }) }]);
-    expect(await view(ledger, id)).toMatchObject({ enviada: true, envio: expect.stringMatching(/confirmado/) });
-    expect((await attempt(guard, upload())).refusal).toMatch(/bloqueado/);
-  });
 });
 
 describe('arquivo no Slack: com o app fora do ar', () => {

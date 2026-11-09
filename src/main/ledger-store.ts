@@ -919,7 +919,11 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
   }
 }
 
-// Slack só com carta — the hook bridge's guard (pure decision in `slack-guard.ts`).
+// Slack letters — the hook bridge's side (pure matching in `slack-guard.ts`).
+//
+// NEVER a lock (owner, 09/11: "Não quero que cartas travem nada também"): `before` always lets the call go on. A
+// letter is an optional check by the owner; a send without one, or past a spent one, goes out like any tool call.
+// What stays is bookkeeping: a send that matches an accepted letter marks it sent, and a bot's post is recorded.
 //
 // `PreToolUse` frees the call and writes `enviada` on its letters right away, on disk: from that moment the letter
 // is spent, even if the app closes before the answer, and a second call finds nothing to free. At `PostToolUse` /
@@ -956,7 +960,7 @@ export interface SlackLetterGuardOptions {
 }
 
 export interface SlackLetterGuard {
-  /** `PreToolUse`: `null` = the call goes on (its letters are now spent); a string = the refusal the session reads. */
+  /** `PreToolUse`: always `null` (the call goes on; a matching accepted letter is now spent). Letters never lock (owner, 09/11). */
   before(ptyId: string, payload: Record<string, unknown>): Promise<string | null>;
   /**
    * `PostToolUse` / `PostToolUseFailure` of the same call: records the answer; only an explicit failure reopens. A
@@ -1038,8 +1042,8 @@ export function createSlackLetterGuard(service: () => LedgerService | null, opti
         doc = null;
       }
       const verdict = slackGuard(doc, toolName, payload.tool_input, botServers());
-      if (verdict.kind === 'not-slack') return null;
-      if (verdict.kind === 'deny') return verdict.reason;
+      // No letter (or one already spent): the send goes on all the same. Letters never lock (owner, 09/11).
+      if (verdict.kind === 'not-slack' || verdict.kind === 'deny') return null;
       if (verdict.kind === 'agent-bot') {
         const toolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : null;
         const cwd = typeof payload.cwd === 'string' ? payload.cwd : undefined;
@@ -1048,8 +1052,7 @@ export function createSlackLetterGuard(service: () => LedgerService | null, opti
       }
       for (const id of verdict.letterIds) {
         const task = doc!.tasks[id]!;
-        const marked = await ledger!.apply({ kind: 'lugar', placeId: task.ownerPlaceId }, { op: 'slack-enviada', id });
-        if (!marked.ok) return `Envio ao Slack bloqueado pelo Donel Dev: não consegui marcar a carta ${id} como usada (${marked.reason}). Tente de novo.`;
+        await ledger!.apply({ kind: 'lugar', placeId: task.ownerPlaceId }, { op: 'slack-enviada', id }); // bookkeeping only: a failure never holds the send
       }
       const toolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : null;
       inFlight.push({ ptyId, toolUseId, callKey: callKeyOf(payload), letterIds: verdict.letterIds, at: now() });
