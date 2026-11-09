@@ -140,6 +140,24 @@ describe('Oráculo na VPS — o PC em modo remoto', { timeout: 30_000 }, () => {
     expect(changes.at(-1)).toBe(true);
   });
 
+  it('um daemon anterior ao app que só diz "op malformada" vira um motivo que diz a causa e como atualizar', async () => {
+    // t-7a8f84a9: o daemon da VPS pessoal (anterior ao andamento) respondia 400 "op malformada" e nada mais.
+    const pc = await pcWithLedger();
+    const remote = vps();
+    await moveLedgerToRemote({ http: remote.http, ledgerFile: pc.file, io, proofFs: nodeLedgerProofFs, marker });
+    const older: OracleHttp = async (method, path, body) => {
+      if (path === '/v1/apply' && typeof body === 'string' && JSON.parse(body).op.op === 'andamento') {
+        const raw = JSON.stringify({ error: 'op malformada' });
+        return { status: 400, text: async () => raw, bytes: async () => new Uint8Array(Buffer.from(raw)) };
+      }
+      return remote.http(method, path, body);
+    };
+    const service = createRemoteLedgerService({ http: () => older, ledgerFile: pc.file, io, proofFs: nodeLedgerProofFs, marker });
+    expect(await service.refresh()).toBe(true);
+    const refused = await service.apply({ kind: 'lugar', placeId: 'place:a' }, { op: 'andamento', id: pc.id, progress: { estado: 'trabalhando' } });
+    expect(refused).toMatchObject({ ok: false, reason: expect.stringMatching(/não conhece a operação "andamento".*versão anterior.*scripts\/oraculo-vps\.sh atualizar.*nada foi gravado/s) });
+  });
+
   it('a prova entregue pelo PC vai à VPS e fica também na cópia do PC', async () => {
     const pc = await pcWithLedger();
     const remote = vps();

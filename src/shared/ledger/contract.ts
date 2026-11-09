@@ -573,8 +573,40 @@ function ownerChecked(task: LedgerTask): boolean {
   return decision !== undefined && task.events.some((event) => event.kind === 'conferida' && event.at >= decision.at);
 }
 
+/**
+ * Every op this build applies. A `Record` so a new op that is not listed here fails the typecheck: the guard below never
+ * lags behind the union.
+ */
+const KNOWN_OPS: Readonly<Record<LedgerOp['op'], true>> = {
+  criar: true,
+  frente: true,
+  assumir: true,
+  entregar: true,
+  aceitar: true,
+  'decidir-outra': true,
+  comentar: true,
+  rejeitar: true,
+  'carta-slack': true,
+  'slack-enviada': true,
+  transferir: true,
+  cancelar: true,
+  'slack-resultado': true,
+  'slack-bot': true,
+  andamento: true,
+};
+
+/**
+ * 09/11 (t-7a8f84a9) — the refusal of an op this build does not know: a newer app talking to an older daemon on the VPS
+ * (the daemon is built apart, by `scripts/oraculo-vps.sh`, and does not follow the app's installer). Before, the apply
+ * fell through the switch and the daemon only answered "op malformada".
+ */
+export function unknownOpReason(name: string): string {
+  return `Este Oráculo não conhece a operação "${name}": é de uma versão anterior à do app que pediu. Nada foi gravado. Na VPS, atualize-o com scripts/oraculo-vps.sh atualizar.`;
+}
+
 export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, ctx: LedgerOpContext): LedgerOpResult {
   const fail = (reason: string): LedgerOpResult => ({ ok: false, reason });
+  if (!Object.prototype.hasOwnProperty.call(KNOWN_OPS, op.op)) return fail(unknownOpReason(String(op.op)));
   if (op.op === 'criar') {
     if (!op.request.trim()) return fail('"pedido" é obrigatório: a frase literal de quem pediu.');
     if (startsWithMark(op.request)) return fail(`"pedido" não pode começar com "${MARK_OPEN}".`);
