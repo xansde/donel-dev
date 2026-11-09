@@ -51,6 +51,8 @@ export interface RemoteOracleHostDeps {
   readonly deliver?: () => ((message: OwnerMessage) => Promise<LedgerDeliveredTo>) | null;
   /** The phone was on, on this PC (`celular.json`): the automatic move turns it on at the VPS too. */
   readonly celularWanted?: () => boolean;
+  /** Where the vigia's cards go and the vault adapter, handed to the daemon at each handshake (t-ffbf8e7d). */
+  readonly vigia?: () => Omit<DaemonVigiaSetup, 'placeId' | 'label'>;
 }
 
 export interface RemoteOracleHost {
@@ -70,13 +72,36 @@ export interface RemoteOracleHost {
   celular(): CelularRemote | null;
   /** Delivers what waits in the VPS's relay (also on each `fila` event and once a minute). */
   drain(): Promise<void>;
+  /** The place whose vault and sessions the daemon's vigia watches (it said so at the last handshake); `null` = none. */
+  vigiaDelegada(): string | null;
   /** Fatia 4: the picture of the VPS's sessions on the board, for the daemon's MCP gate. `false` = not sent. */
   pushPicture(picture: { readonly at: number; readonly sessoes: Readonly<Record<string, unknown>> }): Promise<boolean>;
 }
 
-/** The script that leaves the token's hash on the place and answers where the daemon listens. */
-export function handshakeScript(tokenHash: string): string {
+/** What the daemon's vigia needs from the PC (t-ffbf8e7d): which place it is, where cards go, the vault adapter. */
+export interface DaemonVigiaSetup {
+  readonly placeId: string;
+  readonly label: string;
+  readonly projectPath: string | null;
+  readonly cofre: { readonly command: string; readonly sessionFile: string } | null;
+}
+
+/** Printed by the handshake when the daemon runs the vigia (`src/oraculo/vigia.ts` leaves `vigia.ativo`). */
+export const DAEMON_VIGIA_ON = 'vigia-ativo';
+
+/**
+ * The script that leaves the token's hash on the place and answers where the daemon listens. With `vigia`, it also
+ * leaves the vigia's setup (`vigia.json`, base64 so no quoting can break it) and says whether the daemon watches.
+ */
+export function handshakeScript(tokenHash: string, vigia?: DaemonVigiaSetup): string {
   if (!/^[0-9a-f]{64}$/.test(tokenHash)) throw new Error('hash inválido');
+  const vigiaLines = vigia
+    ? [
+        `printf '%s' '${Buffer.from(JSON.stringify(vigia), 'utf8').toString('base64')}' | base64 -d > "$d/vigia.json.tmp"`,
+        'mv "$d/vigia.json.tmp" "$d/vigia.json"',
+        `if [ -f "$d/vigia.ativo" ]; then echo ${DAEMON_VIGIA_ON}; fi`,
+      ]
+    : [];
   return [
     'set -e',
     'd="$HOME/.donel/oraculo"',
@@ -84,6 +109,7 @@ export function handshakeScript(tokenHash: string): string {
     'mkdir -p "$d"',
     `printf '%s\\n' '${tokenHash}' > "$d/pc.token.sha256.tmp"`,
     'mv "$d/pc.token.sha256.tmp" "$d/pc.token.sha256"',
+    ...vigiaLines,
     'test -f "$d/url" || { echo "sem-daemon"; exit 3; }',
     'cat "$d/url"',
     '',
@@ -106,6 +132,8 @@ export function createRemoteOracleHost(deps: RemoteOracleHostDeps): RemoteOracle
   let link: { url: string; token: string } | null = null;
   let lugar: string | null = null;
   let erro: string | null = null;
+  /** The place whose daemon said, at the last handshake, that it runs the vigia. */
+  let vigiaPlace: string | null = null;
   let disposed = false;
   let stream: AbortController | null = null;
   let generation = 0;
@@ -143,8 +171,10 @@ export function createRemoteOracleHost(deps: RemoteOracleHostDeps): RemoteOracle
     if (!place) return `o lugar remoto "${id}" não está mais em Contas → Lugares remotos`;
     const token = randomBytes(32).toString('hex');
     const hash = createHash('sha256').update(token).digest('hex');
-    const result = await deps.runScript(place.sshTarget, handshakeScript(hash), 20_000);
+    const vigia = deps.vigia ? { placeId: place.id, label: place.label, ...deps.vigia() } : undefined;
+    const result = await deps.runScript(place.sshTarget, handshakeScript(hash, vigia), 20_000);
     if (result.stdout.includes('sem-daemon')) return `o Oráculo não está instalado em ${place.label} (scripts/oraculo-vps.sh instalar)`;
+    vigiaPlace = result.stdout.split(/\r?\n/).some((line) => line.trim() === DAEMON_VIGIA_ON) ? place.id : null;
     const url = result.code === 0 ? parseHandshakeUrl(result.stdout) : null;
     if (!url) return `não consegui falar com ${place.label} pelo ssh${result.stderr.trim() ? ` (${result.stderr.trim().split('\n').pop()})` : ''}`;
     return { url, token };
@@ -423,6 +453,7 @@ export function createRemoteOracleHost(deps: RemoteOracleHostDeps): RemoteOracle
       stopRemote();
     },
     celular: () => (remote ? celularRemote : null),
+    vigiaDelegada: () => (remote && lugar !== null && vigiaPlace === lugar ? lugar : null),
     drain,
     async pushPicture(picture) {
       const http = remote ? httpOf(link) : null;

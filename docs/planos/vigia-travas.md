@@ -55,8 +55,7 @@ Reinício do app não reabre carta de trava que já tem carta aberta.
 
 - **Cura do cofre** (destravar sozinho pelo PC): depende de o dono emendar a regra de credenciais. Até lá, a carta diz
   o que fazer à mão.
-- **Vigia sem o PC**: a fase 1 roda no app do PC. Com o PC desligado não há vigia; levar a regra ao daemon da VPS
-  (`src/oraculo`) é a fase seguinte, já prevista no contrato das rotinas ("mover para a VPS").
+- ~~**Vigia sem o PC**~~: feito na fase 2 (abaixo).
 - **"No topo"**: a caixa ordena por bloqueio, prazo e idade (desktop) e da mais antiga para a mais nova (celular).
   A carta nasce bloqueando e com prazo de hoje; garantir o primeiro lugar pede um campo novo no Oráculo (sobe o
   `schemaVersion`) — fica para depois de medir se a ordem atual basta.
@@ -71,3 +70,25 @@ Reinício do app não reabre carta de trava que já tem carta aberta.
    com o horário da primeira leitura que viu a trava; se a trava já passou, sai uma carta de registro, com início e fim.
 3. **"Esperando a API".** Escolha: contar só quando o CLI está repetindo uma chamada que falhou (`retry`). Subir o
    limiar para 20 min só moveria o alarme falso de uma resposta longa e legítima, que não repete nada.
+
+## Fase 2 — o vigia no daemon do Oráculo (t-ffbf8e7d, 08/11)
+
+Com o PC desligado, o daemon do Oráculo (`src/oraculo/vigia.ts`) vigia **a VPS onde ele mora** com as mesmas regras
+e o mesmo serviço do PC (`createVigiaService`): cofre (só com o adaptador `vigia.cofre`) e sessões em laço. A carta
+nasce no ledger dele, e o push ao celular sai dali mesmo, sem o PC.
+
+- **O que vem do PC:** em cada aperto de mão (`handshakeScript`), o PC deixa `~/.donel/oraculo/vigia.json` com o id e
+  o nome que ele dá ao lugar (as chaves das travas batem com as do PC), o quadro onde a carta é arquivada e o
+  adaptador do cofre. Vai em base64 e não leva segredo. Sem o arquivo, o daemon não vigia nada.
+- **Sem carta dobrada:** o daemon deixa `vigia.ativo`, e o aperto de mão responde `vigia-ativo`. A partir daí, o PC
+  não abre carta de cofre nem de sessões daquele lugar (`delegated`), mas segue avisando se ele cair ou pedir login:
+  ninguém vê a própria queda. PC novo com daemon velho, ou o contrário: quem não sabe do outro vigia tudo, como na
+  fase 1.
+- **Fora:** o daemon não vigia a outra VPS (exigiria ssh de VPS para VPS, que hoje não existe). Com o PC desligado e
+  a homologações caída, ninguém avisa.
+
+Testes: `tests/vigia-no-oraculo.test.ts`.
+- O daemon, com o cofre trancado em 4 rodadas, abre uma carta só (risco alto, no quadro que o PC disse).
+- Sem a config do PC, o daemon não vigia.
+- O PC com o lugar delegado não abre a carta do cofre, mas abre a de "VPS fora".
+- O aperto de mão grava a config e só diz `vigia-ativo` com o daemon vigiando, sem estragar a URL.

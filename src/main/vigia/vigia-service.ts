@@ -50,6 +50,12 @@ export interface VigiaServiceDeps {
    */
   readonly notify: (title: string, body: string) => void;
   readonly statePath: string;
+  /**
+   * The place whose vault and sessions the Oráculo's daemon watches itself (t-ffbf8e7d: it warns with the PC off), so
+   * the PC does not open the same card twice. The PC still tells when that place falls or asks for a login: the daemon
+   * cannot see its own death. `null` or absent = the PC watches everything.
+   */
+  readonly delegated?: () => string | null;
   readonly now?: () => number;
   readonly log?: (line: string) => void;
 }
@@ -206,7 +212,10 @@ export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
         const places = deps.places();
         const probes = await Promise.all(places.map((place) => probe(place)));
         const at = now();
-        const travas = detectTravas({ probes, reports: deps.reports(), now: at });
+        const delegated = deps.delegated?.() ?? null;
+        const travas = detectTravas({ probes, reports: deps.reports(), now: at }).filter(
+          (trava) => !(trava.placeId === delegated && (trava.kind === 'cofre' || trava.kind === 'sessoes')),
+        );
         const plan = planRound(readState(), travas, at);
         const open = { ...plan.state.open };
         const projectPath = deps.projectPath();
