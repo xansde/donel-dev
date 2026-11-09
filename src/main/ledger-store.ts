@@ -296,6 +296,12 @@ export interface LedgerCaller {
    * and `tarefa_listar` counts them apart (`desconhecidas`), never as alive.
    */
   readonly placeStates?: ReadonlyMap<string, ReadonlyMap<string, string>>;
+  /**
+   * 09/11 (t-5c0df1df) — the conversation of the moment of a place, as its board has it (place → sessionId), so each
+   * task says which session runs it (the watchdog and the Líder look there). Read from the board, never written to
+   * the ledger: a /clear or a renewal changes the conversation, the place stays. Missing = unknown, nothing is said.
+   */
+  readonly sessionOf?: (projectPath: string, placeId: string) => string | undefined;
 }
 
 /** Why a task is orphan (not closed, its owner place gone); `null` = alive, closed or unknown. The rule is shared with the box. */
@@ -525,7 +531,7 @@ function forOwnerView(forOwner: LedgerForOwner): Record<string, unknown> {
   };
 }
 
-function taskView(task: LedgerTask, doc: LedgerDoc, orphan: string | null = null): Record<string, unknown> {
+function taskView(task: LedgerTask, doc: LedgerDoc, orphan: string | null = null, caller?: LedgerCaller): Record<string, unknown> {
   const delivery = lastDelivery(task);
   const decision = [...task.events].reverse().find((event) => event.kind === 'aceita' || event.kind === 'rejeitada');
   const who = (actor: LedgerActor): string => (actor.kind === 'dono' ? 'dono' : actor.placeId);
@@ -538,6 +544,7 @@ function taskView(task: LedgerTask, doc: LedgerDoc, orphan: string | null = null
     criterio: task.doneWhen,
     prazo: task.due,
     dono: task.ownerPlaceId,
+    ...(sessionOfTask(caller, task) ? { sessao: sessionOfTask(caller, task) } : {}),
     risco: task.risk,
     ...(replacesOf(task) ? { substitui: replacesOf(task) } : {}),
     ...(requestedByOf(task) ? { quemPediu: requestedByOf(task) } : {}),
@@ -579,6 +586,12 @@ function taskView(task: LedgerTask, doc: LedgerDoc, orphan: string | null = null
         }
       : {}),
   };
+}
+
+/** The session that runs `task`: the conversation of its owner place on the board (a closed task says none). */
+function sessionOfTask(caller: LedgerCaller | undefined, task: LedgerTask): string | undefined {
+  if (!caller?.sessionOf || isClosed(task)) return undefined;
+  return caller.sessionOf(task.projectPath, task.ownerPlaceId);
 }
 
 /** What `tarefa_ver` says of a letter's send (`nenhum` says nothing). */
@@ -749,7 +762,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       const delivery = lastDelivery(task);
       if (delivery) service.noteProofSeen(caller.placeId, task.id, delivery.at);
       const proofs = delivery?.proofs ?? [];
-      const text = JSON.stringify({ ...taskView(task, doc, orphanReason(caller, task, service.now())), ...(proofs.length ? { provas: proofs.map((proof) => proofView(service, proof)) } : {}) }, null, 1);
+      const text = JSON.stringify({ ...taskView(task, doc, orphanReason(caller, task, service.now()), caller), ...(proofs.length ? { provas: proofs.map((proof) => proofView(service, proof)) } : {}) }, null, 1);
       for (const proof of proofs) {
         const image = await service.proofImage(proof);
         if (image) return { ok: true, text, image };
@@ -838,7 +851,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
             situacao,
             ...(hidden ? { fora: `${hidden} tarefa(s) fora desta lista; "situacao": "todas" mostra o histórico inteiro, "orfas" as que ficaram sem lugar.` } : {}),
             tarefas: tasks.map((task) => ({
-              ...taskView(task, doc, orphanOf(task)),
+              ...taskView(task, doc, orphanOf(task), caller),
               ...(ownerUnknown(caller, task) ? { desconhecida: 'o quadro desta tarefa não respondeu: não sei se o lugar dono ainda existe.' } : {}),
             })),
           },
