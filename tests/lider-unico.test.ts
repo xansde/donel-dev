@@ -89,8 +89,12 @@ const THEO = 'place:theo';
 const DEV = 'place:dev';
 const OUTRO = 'place:outro';
 
-function team(): { bridge: AgentBridge; sent: { tabId: string; text: string }[]; tabs: BridgeTab[]; passOns: LedgerPassOnRequest[][] } {
+/** The Líder of the board the Líder único opened (a place made by a session), as on 09/11. */
+const LQ = 'place:lq';
+
+function team(options: { readonly boardLeader?: boolean } = {}): { bridge: AgentBridge; sent: { tabId: string; text: string }[]; tabs: BridgeTab[]; passOns: LedgerPassOnRequest[][] } {
   let doc = addPlace(emptyMindscapeDoc(), ATLAS, { id: THEO, roleId: 'dev', by: 'session' });
+  if (options.boardLeader) doc = setPlaceConversation(addPlace(doc, ATLAS, { id: LQ, roleId: 'lider', by: 'session' }), ATLAS, LQ, 'conv-lq');
   doc = addPlace(doc, ATLAS, { id: DEV, roleId: 'dev', by: 'session' });
   doc = addPlace(doc, ATLAS, { id: OUTRO, roleId: 'dev' });
   for (const [place, conv] of [[THEO, 'conv-theo'], [DEV, 'conv-dev'], [OUTRO, 'conv-outro']] as const) doc = setPlaceConversation(doc, ATLAS, place, conv);
@@ -102,6 +106,7 @@ function team(): { bridge: AgentBridge; sent: { tabId: string; text: string }[];
     { id: 'tab-theo', name: 'Theo', cwd: ATLAS, projectName: 'atlas', claudeSessionId: 'conv-theo', openedBy: 'lider', sessionType: 'claude' },
     { id: 'tab-dev', name: 'Dev', cwd: ATLAS, projectName: 'atlas', claudeSessionId: 'conv-dev', openedBy: THEO, sessionType: 'claude' },
     { id: 'tab-outro', name: 'Outro', cwd: ATLAS, projectName: 'atlas', claudeSessionId: 'conv-outro', sessionType: 'claude' },
+    ...(options.boardLeader ? [{ id: 'tab-lq', name: 'Líder', cwd: ATLAS, projectName: 'atlas', roleId: 'lider', claudeSessionId: 'conv-lq', openedBy: 'lider', sessionType: 'claude' as const }] : []),
   ];
   const ports: AgentBridgePorts = {
     loaded: true,
@@ -171,6 +176,19 @@ describe('Líder único recebe e lugar fechado passa adiante', () => {
     await vi.advanceTimersByTimeAsync(PASS_ON_GRACE_MS);
     expect(passOns[1]).toEqual([{ projectPath: ATLAS, placeId: THEO, gone: 'fechada', to: 'lider' }]);
     expect(sent[1]).toEqual({ tabId: 'tab-lider', text: expect.stringContaining('quadro atlas') });
+  });
+
+  it('with nobody live above, the tasks go back to the Líder of the board, not to the Líder único (dono, 09/11)', async () => {
+    vi.useFakeTimers();
+    const { bridge, tabs, passOns } = team({ boardLeader: true });
+    close(tabs, bridge, 'tab-theo');
+    await vi.advanceTimersByTimeAsync(PASS_ON_GRACE_MS);
+    expect(passOns).toEqual([[{ projectPath: ATLAS, placeId: THEO, gone: 'fechada', to: LQ }]]);
+
+    // The Líder of the board itself closes: nobody is above it, so the Líder único holds its tasks.
+    close(tabs, bridge, 'tab-lq');
+    await vi.advanceTimersByTimeAsync(PASS_ON_GRACE_MS);
+    expect(passOns[1]).toEqual([{ projectPath: ATLAS, placeId: LQ, gone: 'fechada', to: 'lider' }]);
   });
 
   it('closing the app before the grace, or a place that comes back, moves nothing', async () => {

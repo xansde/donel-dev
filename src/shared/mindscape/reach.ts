@@ -26,7 +26,8 @@
 //   `sessao_abrir` (`sessao_enviar` with "quem-me-abriu", `openersOf`), with no arrow back. Only the opening arrow
 //   counts, and a session cannot draw one (quadro_aplicar never sets `opened`), so nobody makes itself an opener.
 // - Who takes the work of a place that is gone (06/11, t-e753b554): the first live place above it by the
-//   hierarchy arrows, the one that opened it first; none → the Líder único.
+//   hierarchy arrows, the one that opened it first; none → the live Líder of its board (`boardLeaders`, dono 09/11);
+//   none → the Líder único.
 
 import { FAXINEIRO_ROLE_ID, LEADER_ROLE_ID } from '../roles';
 import type { BoardReach, MindscapeBoard, MindscapeDoc, MindscapeLink } from './model';
