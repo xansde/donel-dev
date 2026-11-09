@@ -141,9 +141,8 @@ fatiada.
 
 - **Tipo**: prototipo
 - **Prioridade**: alta
-- **Status**: pendente
+- **Status**: em-andamento (protótipo pronto em docs/prototipos/ledger-bom/; carta esperando o dono)
 - **Bloqueado por**: 01, 03
-- **Status real**: em-andamento (protótipo pronto, carta esperando o dono)
 - **Pergunta**: protótipo navegável (3 variantes) da tela Progresso, da prioridade e do limite por quadro, com
   dados reais, e a carta com recomendação: (1) o que é linha em andamento; (2) o limite por quadro e quem ajusta;
   (3) prioridade e agrupamento; (4) a faxina antes de ligar a puxada; (5) a fila do Líder único; (6) o D1 do v5
