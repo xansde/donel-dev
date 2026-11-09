@@ -274,7 +274,7 @@ export const LEDGER_TOOLS = [
     name: 'tarefa_lote',
     title: 'Dar destino a várias tarefas num gesto',
     description:
-      `Passa adiante ou cancela até ${MAX_BATCH_ITEMS} tarefas numa chamada, cada uma com o seu motivo: a faxina de órfãs, de entregues paradas e de abertas velhas. Cada item segue as mesmas regras de tarefa_transferir e tarefa_cancelar (quem pode, quadro, "seu" e "lider"). Um item recusado não para os outros, e a resposta diz o resultado de cada um. Nada se apaga: o histórico fica.`,
+      `Passa adiante ou cancela até ${MAX_BATCH_ITEMS} tarefas numa chamada, cada uma com o seu motivo: a faxina de órfãs, de entregues paradas e de abertas velhas. Cada item segue as mesmas regras de tarefa_transferir e tarefa_cancelar (quem pode, quadro, "seu" e "lider"). Um item recusado pelas regras não para os outros, e a resposta diz o resultado de cada um; um item malformado (sem id, sem motivo, transferir sem para) recusa o lote inteiro antes de aplicar qualquer um. Nada se apaga: o histórico fica.`,
     inputSchema: {
       type: 'object',
       properties: {

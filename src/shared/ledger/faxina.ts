@@ -6,15 +6,15 @@
 //    cancelled with "concluída: PR #n mesclado em AAAA-MM-DD" (a rejected task whose PR went in later stayed
 //    rejected forever: t-c86b9505, t-12786061). HIGH risk never ends by itself: it is only written to the log.
 // 2. A task open, running or rejected whose owner place is gone (closed, never started, out of the board) and that
-//    nobody touched for ORPHAN_AGE_MS passes to the first live place above it, or to the Líder único — the same
-//    rule as the pass-on of a place that closes (`firstLiveAbove`, reach.ts), for the orphans that rule never saw.
+//    nobody touched for ORPHAN_AGE_MS passes to the first live place above it, else the live Líder of its board, else the Líder único — the same
+//    rule as the pass-on of a place that closes (`whoHears`, reach.ts), for the orphans that rule never saw.
 //
 // Nothing here bumps the ledger: a cancel is the `rejeitada` event with the `cancelada` mark, a pass is the transfer's
 // `criada` event; the words go in their `text` (v4, read by the installed Alfa).
 
 import { LEADER_OF_ALL } from '../mindscape/leader';
 import { placeHasStarted, type MindscapeDoc } from '../mindscape/model';
-import { firstLiveAbove } from '../mindscape/reach';
+import { whoHears } from '../mindscape/reach';
 import { isClosed, isServicePlace, lastDelivery, lastWorkAt, type LedgerDoc, type LedgerTask } from './contract';
 
 /** A task nobody touched for this long, with its owner place gone, is an old orphan. */
@@ -120,9 +120,11 @@ export function oldOrphans(doc: LedgerDoc, boards: MindscapeDoc, liveSessionIds:
       return card?.kind === 'session' && card.sessionId !== undefined && liveSessionIds.has(card.sessionId);
     };
     const card = board.cards[task.ownerPlaceId];
-    if (card?.kind !== 'session') return [{ task, how: 'saiu do quadro', to: LEADER_OF_ALL }];
+    // The same rule as the notices (`whoHears`, dono 09/11): the first live place above by the arrows, else the live
+    // Líder of the board, else the Líder único.
+    if (card?.kind !== 'session') return [{ task, how: 'saiu do quadro', to: whoHears(board, task.ownerPlaceId, isLive) }];
     if (isLive(task.ownerPlaceId)) return [];
     const how: GoneHow = placeHasStarted(card) ? 'fechou' : 'não começou';
-    return [{ task, how, to: firstLiveAbove(board, task.ownerPlaceId, isLive) ?? LEADER_OF_ALL }];
+    return [{ task, how, to: whoHears(board, task.ownerPlaceId, isLive) }];
   });
 }

@@ -633,7 +633,6 @@ function callerActor(caller: LedgerCaller): LedgerActor {
   return { kind: 'lugar', placeId: caller.placeId, ...(caller.roleId ? { roleId: caller.roleId } : {}) };
 }
 
-/** `remote`: the calling session runs on a remote place; its proof files are read there (fatia 6). */
 /**
  * `tarefa_lote` (t-147e6783, item 2): each item runs as its own `tarefa_transferir` / `tarefa_cancelar` through `run`
  * (the caller resolves the board of each task), one after the other; a refused item does not stop the rest.
@@ -654,6 +653,7 @@ export async function runLedgerBatch(call: Extract<LedgerToolCall, { tool: 'tare
   return { ok: aplicados > 0, text: JSON.stringify({ aplicados, recusados: itens.length - aplicados, itens }, null, 1) };
 }
 
+/** `remote`: the calling session runs on a remote place; its proof files are read there (fatia 6). */
 export async function runLedgerTool(service: LedgerService, caller: LedgerCaller, call: LedgerToolCall, remote?: RemoteProofFetch): Promise<LedgerToolAnswer> {
   const actor = callerActor(caller);
   const answer = (result: LedgerApplyResult, what: string): { ok: boolean; text: string } =>
