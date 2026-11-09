@@ -58,7 +58,7 @@ import { isUrgentProgress, progressLine, PROGRESS_FIELD_CHARS, turnEndProgress, 
 import { agoText, ledgerNews, progressTaskOf, turnAlreadyRecorded } from '../shared/ledger/novidades';
 import type { LedgerToolCall, ProofInput } from '../shared/ledger/tools';
 import { NOT_STARTED_GRACE_MS, orphanReasonIn, ownerGoneIn } from '../shared/ledger/inbox';
-import { byOwnerPriority, inBoardQueue, priorityWrites } from '../shared/ledger/prioridade';
+import { byPanelThenPriority, inBoardQueue, panelPlaces, priorityWrites } from '../shared/ledger/prioridade';
 import { liveSessionOf } from '../shared/ledger/mirror';
 import { AGENT_BOT_SERVERS, detectAgentBotSend, detectSlackSend, fileNameOf, slackGuard, slackMessageLink, slackSendOutcome, type AgentBotSend } from '../shared/ledger/slack-guard';
 
@@ -857,11 +857,13 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       for (const task of inScope) {
         counts[isClosed(task) ? 'fechadas' : awaitsSend(task) ? 'esperandoEnvio' : orphanOf(task) ? 'orfas' : ownerUnknown(caller, task) ? 'desconhecidas' : 'vivas'] += 1;
       }
+      // The owner's list as "Seus pedidos" draws it, top down: the board queue follows it exactly (R6 of #364).
+      const byOwner = byPanelThenPriority(panelPlaces(doc, now));
       const tasks = inScope
         .filter((task) => !call.estado || viewState(task) === call.estado)
         .filter((task) => situacao === 'todas' || (situacao === 'orfas' ? orphanOf(task) !== null : !isClosed(task) && !awaitsSend(task) && orphanOf(task) === null))
         // 09/11 (t-5c0df1df) — the open ones first, in the owner's order: the Líder hands out the next from the top.
-        .sort((a, b) => Number(inBoardQueue(b)) - Number(inBoardQueue(a)) || (inBoardQueue(a) ? byOwnerPriority(a, b) : a.createdAt - b.createdAt));
+        .sort((a, b) => Number(inBoardQueue(b)) - Number(inBoardQueue(a)) || (inBoardQueue(a) ? byOwner(a, b) : a.createdAt - b.createdAt));
       const queuePlace = new Map<string, number>();
       const perBoard = new Map<string, number>();
       for (const task of tasks.filter(inBoardQueue)) {
