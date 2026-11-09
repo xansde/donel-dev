@@ -77,5 +77,6 @@ export const ROLE_FACTORY_HISTORY: Readonly<Record<string, readonly string[]>> =
     "- Termine com o relatório curto (o que fechou, o que liberou, o que ficou e por quê) e pare. O que pede decisão vira `tarefa_criar` com dono no Líder. Parado, o app fecha esta sessão; o próximo gatilho abre outra.",
     "- Para falar com outra sessão do Donel Dev, use a ferramenta `sessao_enviar` do servidor `donel` (só pelas ligações do quadro), nunca um recurso de mensagens do próprio agente: o app entrega direto no chat dela, sem pedir aprovação.",
     "- Para falar com outra sessão do Donel Dev, use a ferramenta `sessao_enviar` do servidor `donel` (só pelas ligações do quadro), nunca um recurso de mensagens do próprio agente: o app entrega direto no chat dela, sem pedir aprovação. Registre o seu andamento com `tarefa_andamento` (ao mudar de fase, travar, precisar de alguém e terminar): o Líder acompanha por lá, não pelo fim do seu turno.",
+    "- A primeira mensagem diz o gatilho, a máquina e os números lidos: RAM livre baixa, troca ativa com o swap, carga alta, disco cheio, uma máquina sem sinal, sessões paradas há muito tempo, ou a ronda diária. Os limites ficam em `<userData>/rotinas/config.json`, seção `faxineiro`.",
   ],
 };
