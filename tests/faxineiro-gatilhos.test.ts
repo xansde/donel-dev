@@ -323,6 +323,70 @@ describe('fila de abertura', () => {
     expect(opened).toHaveLength(1);
     expect(opened[0]!.remoteId).toBe('vps2');
   });
+
+  // t-d1f072fd — a leitura de memória é de 60 s: sem contar o que abriu depois dela, quatro aberturas no mesmo minuto
+  // passavam do limite e levavam a VPS pessoal ao swap antes da leitura seguinte.
+  it('rajada: com vaga para 2 sessões, a terceira abertura do mesmo minuto espera na fila', async () => {
+    const { bridge, opened } = setupQueue();
+    bridge.setFullMachines({}, { vps: { sessions: 2, checkedAt: Date.now() } });
+    for (const pedido of ['a', 'b']) {
+      const answer = await bridge.handle('dev', { tool: 'sessao_abrir', papel: 'revisor', pedido });
+      expect(answer.ok).toBe(true);
+    }
+    expect(opened).toHaveLength(2);
+    const third = await bridge.handle('dev', { tool: 'sessao_abrir', papel: 'revisor', pedido: 'c' });
+    expect(third.ok).toBe(true);
+    expect(third.text).toContain('fila');
+    expect(third.text).toContain('2 aberturas desde a última leitura');
+    expect(opened).toHaveLength(2);
+
+    bridge.drainQueue(); // same reading: still no room
+    expect(opened).toHaveLength(2);
+    // a newer reading already sees the two sessions in the RAM it reports
+    bridge.setFullMachines({}, { vps: { sessions: 1, checkedAt: Date.now() + 2 * MIN } });
+    bridge.drainQueue();
+    expect(opened).toHaveLength(3);
+    expect(opened[2]).toMatchObject({ firstMessage: 'c', remoteId: 'vps' });
+  });
+
+  it('rajada: sem vaga nenhuma na leitura, a primeira abertura já espera', async () => {
+    const { bridge, opened } = setupQueue();
+    bridge.setFullMachines({}, { vps: { sessions: 0, checkedAt: Date.now() } });
+    const answer = await bridge.handle('dev', { tool: 'sessao_abrir', papel: 'revisor', pedido: 'a' });
+    expect(answer.text).toContain('fila');
+    expect(opened).toEqual([]);
+  });
+
+  it('rajada: papel com "lugar: qualquer" vai para a outra VPS quando a sua não tem vaga', async () => {
+    const free: SessionRole = { id: 'pesquisa-livre', name: 'Pesquisa livre', color: 'discovery', anyPlace: true, guidance: 'lê' };
+    const { bridge, opened } = setupQueue([free]);
+    bridge.setFullMachines({}, { vps: { sessions: 0, checkedAt: Date.now() }, vps2: { sessions: 3, checkedAt: Date.now() } });
+    await bridge.handle('dev', { tool: 'sessao_abrir', papel: 'pesquisa-livre', pedido: 'leia X' });
+    expect(opened).toHaveLength(1);
+    expect(opened[0]!.remoteId).toBe('vps2');
+  });
+});
+
+describe('vaga para abrir sessão (t-d1f072fd)', () => {
+  // VPS pessoal: 7,6 GiB; o limite de 15% de RAM livre fica em 1,14 GiB.
+  const personal = (availableGb: number): MachineReading => vps({ ramAvailableBytes: availableGb * GB, ramFreeRatio: availableGb / 7.6 });
+
+  it('conta quantas sessões de 400 MB cabem antes do limite de RAM livre', () => {
+    const round = evaluateFaxineiro(input({ machines: [personal(3.6)] }), stateToday(), NOW);
+    expect(round.fullMachines).toEqual({});
+    expect(round.openingRoom.vps).toEqual({ sessions: 6, checkedAt: NOW });
+  });
+
+  it('perto do limite (1,2 GiB disponíveis) não cabe nenhuma', () => {
+    const round = evaluateFaxineiro(input({ machines: [personal(1.2)] }), stateToday(), NOW);
+    expect(round.fullMachines).toEqual({});
+    expect(round.openingRoom.vps?.sessions).toBe(0);
+  });
+
+  it('máquina sem sinal ou sem leitura de RAM não tem vaga calculada', () => {
+    const round = evaluateFaxineiro(input({ machines: [vps({ reachable: false }), vps({ id: 'pc', label: 'PC', ramFreeRatio: null, ramAvailableBytes: null })] }), stateToday(), NOW);
+    expect(round.openingRoom).toEqual({});
+  });
 });
 
 describe('papel com lugar: qualquer', () => {
