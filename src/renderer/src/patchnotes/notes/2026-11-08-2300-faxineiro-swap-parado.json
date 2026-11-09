@@ -1,0 +1,4 @@
+{
+  "title": "Swap parado não acorda mais o Faxineiro",
+  "text": "O gatilho de swap do Faxineiro olhava só quanto do swap estava ocupado, e o Linux deixa páginas paradas lá mesmo com a máquina folgada. Com isso, o Faxineiro acordava a cada leitura sem ter o que limpar. Agora ele acorda quando a máquina está trocando páginas com o swap naquele momento, ou quando há swap em uso e menos de 1 GB de RAM disponível. Uma máquina com swap parado também deixa de segurar a abertura de sessões. Os dois limites ficam na seção \"faxineiro\" do arquivo de configuração das rotinas."
+}

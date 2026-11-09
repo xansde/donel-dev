@@ -68,7 +68,10 @@ export function machineReadings(pc: HealthReport | null, remotes: readonly Remot
       reachable: true,
       checkedAt: pc.at,
       ramFreeRatio: pc.ram.totalBytes > 0 ? pc.ram.freeBytes / pc.ram.totalBytes : null,
+      ramAvailableBytes: pc.ram.totalBytes > 0 ? pc.ram.freeBytes : null,
       swapUsedRatio: null,
+      swapInPerSec: null,
+      swapOutPerSec: null,
       load5PerCpu: null,
       diskUsedRatio: pc.disk && pc.disk.totalBytes > 0 ? 1 - pc.disk.freeBytes / pc.disk.totalBytes : null,
     });
@@ -82,7 +85,10 @@ export function machineReadings(pc: HealthReport | null, remotes: readonly Remot
       reachable: report.status === 'ok',
       checkedAt: report.checkedAt,
       ramFreeRatio: reading?.ram ? reading.ram.freeBytes / reading.ram.totalBytes : null,
+      ramAvailableBytes: reading?.ram ? reading.ram.freeBytes : null,
       swapUsedRatio: reading?.swap ? 1 - reading.swap.freeBytes / reading.swap.totalBytes : null,
+      swapInPerSec: reading?.swapIo?.inPerSec ?? null,
+      swapOutPerSec: reading?.swapIo?.outPerSec ?? null,
       load5PerCpu: reading?.load && reading.cpus ? reading.load.five / reading.cpus : null,
       diskUsedRatio: reading?.disk ? 1 - reading.disk.freeBytes / reading.disk.totalBytes : null,
     });
