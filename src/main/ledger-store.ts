@@ -477,6 +477,7 @@ function stripView(strip: LedgerStrip): Record<string, unknown> {
     esperandoDono: strip.waitingForOwner,
     esperandoDesde: strip.oldestWaitingSince === null ? null : new Date(strip.oldestWaitingSince).toISOString(),
     validadasSemDonoPct: strip.validatedWithoutOwnerPct,
+    fechadasSemRevisor: strip.closedAlone,
   };
 }
 
@@ -488,6 +489,8 @@ function stripView(strip: LedgerStrip): Record<string, unknown> {
 function riskAfterTransfer(task: LedgerTask): LedgerTask['risk'] {
   const creator = task.events[0]?.by;
   if (!creator || creator.kind !== 'lugar' || task.slack) return task.risk;
+  // A card already on the owner's table changes only by the owner's decision (revisão do #383).
+  if (task.events.some((event) => event.kind === 'entregue' && event.forOwner)) return task.risk;
   return task.risk === 'alto' && lowRiskAsked(task) ? 'baixo' : task.risk;
 }
 
@@ -518,7 +521,8 @@ function liveReviewersOutside(caller: LedgerCaller, from: readonly string[]): st
  * risk on the caller's board with no card for the owner; `null` = it does not apply or the board is unknown.
  */
 function closeAloneCheck(service: LedgerService, caller: LedgerCaller, call: Extract<LedgerToolCall, { tool: 'tarefa_entregar' }>): string[] | null {
-  if (call.paraODono) return null;
+  // Done by another place (`feitoPor`): its chain is not the deliverer's, so a Revisor decides (revisão do #383).
+  if (call.paraODono || (call.feitoPor && call.feitoPor !== caller.placeId)) return null;
   let task: LedgerTask | undefined;
   try {
     task = service.load().doc.tasks[call.id];
@@ -708,7 +712,8 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         ...(call.quemPediu ? { requestedBy: call.quemPediu } : call.pedidoDoDono ? { requestedBy: ASKED_BY_OWNER } : {}),
         ...(call.frente ? { frente: call.frente } : {}),
       });
-      return answer(result, 'criada');
+      if (!result.ok || result.task.risk === call.risco) return answer(result, 'criada');
+      return { ok: true, text: JSON.stringify({ criada: true, id: result.task.id, estado: result.task.state, risco: result.task.risk, aviso: 'Ela substitui uma tarefa de risco alto e herda o risco: a entrega espera o dono.' }) };
     }
     case 'tarefa_frente': {
       const task = (() => {

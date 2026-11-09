@@ -684,7 +684,8 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       doneWhen: op.doneWhen,
       due: op.due,
       ownerPlaceId: op.ownerPlaceId,
-      risk: op.risk,
+      // Revisão do #383: a replacement never lowers the risk of what it replaces (a high decision stays the owner's).
+      risk: replaced?.risk === 'alto' ? 'alto' : op.risk,
       state: 'aberta',
       createdAt: ctx.now,
       events: [{ kind: 'criada', at: ctx.now, by: actor, ...birthTagsOf(replaced?.id, op.requestedBy, op.frente?.trim() || (replaced && frenteOf(replaced)), op.lowAsked === true && op.risk === 'alto') }],
@@ -733,8 +734,8 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
         const why = forOwnerRefusal(op.forOwner, op.proofs);
         if (why) return fail(`"paraODono" recusado: ${why}`);
       }
-      if (op.closeAlone && (task.risk !== 'baixo' || op.forOwner || task.slack || actor.kind !== 'lugar'))
-        return fail('Só fecha sozinha a entrega de risco baixo, sem carta ao dono, de um lugar.');
+      if (op.closeAlone && (task.risk !== 'baixo' || op.forOwner || task.slack || actor.kind !== 'lugar' || isServicePlace(actor.placeId) || (doneBy && doneBy !== actor.placeId)))
+        return fail('Só fecha sozinha a entrega de risco baixo, sem carta ao dono, feita e entregue pelo mesmo lugar do quadro (serviço nunca).');
       const delivered = step(task, 'entregue', {
         kind: 'entregue',
         at: ctx.now,
@@ -1276,6 +1277,8 @@ export interface LedgerStrip {
   readonly oldestWaitingSince: number | null;
   /** Accepted tasks whose accept was not the owner's, 0–100; `null` = nothing accepted yet. */
   readonly validatedWithoutOwnerPct: number | null;
+  /** 09/11 — low-risk deliveries that closed alone, with no Revisor (`closedAlone`): the owner sees how many. */
+  readonly closedAlone: number;
 }
 
 /** The numbers of one board (`projectPath`), or of every board when `projectPath` is `null`. */
@@ -1291,6 +1294,7 @@ export function ledgerStrip(doc: LedgerDoc, projectPath: string | null): LedgerS
     waitingForOwner: waiting.length,
     oldestWaitingSince: waiting.length ? Math.min(...waiting.map(waitingSince)) : null,
     validatedWithoutOwnerPct: accepted.length ? Math.round((100 * accepted.filter(acceptedWithoutOwner).length) / accepted.length) : null,
+    closedAlone: tasks.filter(closedAlone).length,
   };
 }
 

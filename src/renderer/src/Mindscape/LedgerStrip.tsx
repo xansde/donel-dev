@@ -83,6 +83,7 @@ export function LedgerStrip({
           {waiting.oldestSince !== null ? ` · a mais antiga há ${waitedFor(waiting.oldestSince, now)}` : ''}
         </button>
         <span>{strip.validatedWithoutOwnerPct === null ? 'nenhuma validada ainda' : `${strip.validatedWithoutOwnerPct}% validadas sem você`}</span>
+        {strip.closedAlone > 0 ? <span>{strip.closedAlone} fechadas sem Revisor</span> : null}
         {snapshot.readOnly ? <span className={styles.ledgerMeta}>gravado por versão mais nova: só leitura</span> : null}
       </div>
       {open && items.length > 0 && cardsHost ? createPortal(<OwnerInbox items={items} now={now} placeName={placeName} onClose={close} />, cardsHost) : null}

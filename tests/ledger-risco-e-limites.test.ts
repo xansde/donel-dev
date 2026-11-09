@@ -7,7 +7,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, nodeLedgerProofFs, runLedgerTool, type LedgerCaller } from '../src/main/ledger-store';
-import { MAX_REQUEST_CHARS, ownerQueue } from '../src/shared/ledger/contract';
+import { ledgerStrip, MAX_REQUEST_CHARS, ownerQueue } from '../src/shared/ledger/contract';
+import { serviceActor, serviceOpRefusal } from '../src/oraculo/servicos';
 import { ownerInbox, STALE_DELIVERY_MS } from '../src/shared/ledger/inbox';
 import { parseLedgerToolCall, type LedgerToolCall } from '../src/shared/ledger/tools';
 import type { MindscapeBoard } from '../src/shared/mindscape/model';
@@ -152,5 +153,52 @@ describe('risco declarado: o que a sessão fez e provou fecha sem carta', () => 
     const high = created((await runLedgerTool(ledger, lider, task('place:dev', 'alto'))).text).id;
     await runLedgerTool(ledger, lider, call('tarefa_transferir', { id: high, para: 'place:revisor', motivo: 'outro faz' }));
     expect(ledger.load().doc.tasks[high]!.risk).toBe('alto');
+  });
+
+  // Revisão do #383 (achados 1 a 4): nada tira da mesa do dono uma decisão alta, e o fechamento sozinho deixa rastro.
+  it('a delivery done by another place (feitoPor) never closes alone: it waits for the live Revisor', async () => {
+    const ledger = service();
+    const dev = live('place:dev', 'dev', 'trabalhando');
+    const id = await ownTask(ledger, dev, 'baixo');
+    await runLedgerTool(ledger, dev, call('tarefa_entregar', { id, ...proof, feitoPor: 'place:lider' }));
+    expect(ledger.load().doc.tasks[id]!.state).toBe('entregue');
+  });
+
+  it('a service credential cannot close its own task alone', async () => {
+    const op = { op: 'entregar', id: 't-x', proofs: [{ kind: 'texto', text: 'x' }], closeAlone: true };
+    expect(serviceOpRefusal(op)).not.toBeNull();
+    const ledger = service();
+    const n8n = serviceActor('n8n');
+    const made = await ledger.apply(n8n, { op: 'criar', projectPath: 'C:/p', request: 'x', doneWhen: 'y', due: '2026-11-09', ownerPlaceId: n8n.kind === 'lugar' ? n8n.placeId : '', risk: 'baixo' });
+    if (!made.ok) throw new Error(made.reason);
+    await ledger.apply(n8n, { op: 'assumir', id: made.task.id });
+    const closed = await ledger.apply(n8n, { op: 'entregar', id: made.task.id, proofs: [{ kind: 'texto', text: 'x' }], closeAlone: true });
+    expect(closed.ok).toBe(false);
+    expect(ledger.load().doc.tasks[made.task.id]!.state).toBe('em-execucao');
+  });
+
+  it('a task that replaces a high one is born high, and what closed alone shows in the owner\'s strip', async () => {
+    const ledger = service();
+    const high = created((await runLedgerTool(ledger, at('place:lider', 'lider'), task('place:dev', 'alto'))).text).id;
+    const dev = live('place:dev', 'dev', 'fechada');
+    const again = created((await runLedgerTool(ledger, dev, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-09', risco: 'baixo', substitui: high }))).text).id;
+    expect(ledger.load().doc.tasks[again]!.risk).toBe('alto');
+    const id = await ownTask(ledger, dev, 'baixo');
+    await runLedgerTool(ledger, dev, call('tarefa_entregar', { id, ...proof }));
+    expect(ledgerStrip(ledger.load().doc, 'C:/p').closedAlone).toBe(1);
+  });
+
+  it('a card already on the owner\'s table keeps its risk when the task is passed on', async () => {
+    const ledger = service();
+    const dev = { kind: 'lugar', placeId: 'place:dev', roleId: 'dev' } as const;
+    const forced = await ledger.apply(dev, { op: 'criar', projectPath: 'C:/p', request: 'x', doneWhen: 'y', due: '2026-11-09', ownerPlaceId: 'place:dev', risk: 'alto', lowAsked: true });
+    if (!forced.ok) throw new Error(forced.reason);
+    const id = forced.task.id;
+    await ledger.apply(dev, { op: 'assumir', id });
+    const card = { question: 'Publico?', summary: 'Pronto.', options: [{ label: 'Sim', effect: 'Sai.', closes: 'aceita' as const, recommended: true as const }, { label: 'Não', effect: 'Fica.', closes: 'rejeitada' as const }], why: 'Testado.', risk: 'Baixo.' };
+    expect((await ledger.apply(dev, { op: 'entregar', id, proofs: [{ kind: 'texto', text: 'ok' }], forOwner: card })).ok).toBe(true);
+    await runLedgerTool(ledger, at('place:lider', 'lider'), call('tarefa_transferir', { id, para: 'place:revisor', motivo: 'outro olha' }));
+    expect(ledger.load().doc.tasks[id]!.risk).toBe('alto');
+    expect(ownerQueue(ledger.load().doc, null).map((t) => t.id)).toEqual([id]);
   });
 });
