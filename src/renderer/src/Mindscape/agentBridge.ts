@@ -358,7 +358,11 @@ export class AgentBridge {
     const requests = gone.map((request) => {
       const live = (id: string): boolean => this.tabOfPlace(request.projectPath, id) !== undefined;
       const board = this.board(request.projectPath);
-      const leader = boardLeaders(board).find((id) => id !== request.placeId && live(id));
+      // A Líder mute since the app opened (a reinstall) would sit on them in silence: it does not count.
+      const leader = boardLeaders(board).find((id) => {
+        const tab = id === request.placeId ? undefined : this.tabOfPlace(request.projectPath, id);
+        return tab !== undefined && !this.ports.unconfirmed(tab.id);
+      });
       return { ...request, to: firstLiveAbove(board, request.placeId, live) ?? leader ?? LEADER_OF_ALL };
     });
     let passed: readonly LedgerPassedOn[] = [];

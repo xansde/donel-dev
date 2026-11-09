@@ -92,7 +92,7 @@ const OUTRO = 'place:outro';
 /** The Líder of the board the Líder único opened (a place made by a session), as on 09/11. */
 const LQ = 'place:lq';
 
-function team(options: { readonly boardLeader?: boolean } = {}): { bridge: AgentBridge; sent: { tabId: string; text: string }[]; tabs: BridgeTab[]; passOns: LedgerPassOnRequest[][] } {
+function team(options: { readonly boardLeader?: boolean; readonly muteLeader?: boolean } = {}): { bridge: AgentBridge; sent: { tabId: string; text: string }[]; tabs: BridgeTab[]; passOns: LedgerPassOnRequest[][] } {
   let doc = addPlace(emptyMindscapeDoc(), ATLAS, { id: THEO, roleId: 'dev', by: 'session' });
   if (options.boardLeader) doc = setPlaceConversation(addPlace(doc, ATLAS, { id: LQ, roleId: 'lider', by: 'session' }), ATLAS, LQ, 'conv-lq');
   doc = addPlace(doc, ATLAS, { id: DEV, roleId: 'dev', by: 'session' });
@@ -124,7 +124,7 @@ function team(options: { readonly boardLeader?: boolean } = {}): { bridge: Agent
       return { kind: 'entrou' };
     },
     permissionOnScreen: () => false,
-    unconfirmed: () => false,
+    unconfirmed: (tabId) => options.muteLeader === true && tabId === 'tab-lq',
     startTrouble: () => null,
     askOwner: async () => true,
     remoteLabel: (id) => id,
@@ -189,6 +189,14 @@ describe('Líder único recebe e lugar fechado passa adiante', () => {
     close(tabs, bridge, 'tab-lq');
     await vi.advanceTimersByTimeAsync(PASS_ON_GRACE_MS);
     expect(passOns[1]).toEqual([{ projectPath: ATLAS, placeId: LQ, gone: 'fechada', to: 'lider' }]);
+  });
+
+  it('a Líder of the board mute since the app opened does not take them: they stay with the Líder único', async () => {
+    vi.useFakeTimers();
+    const { bridge, tabs, passOns } = team({ boardLeader: true, muteLeader: true });
+    close(tabs, bridge, 'tab-theo');
+    await vi.advanceTimersByTimeAsync(PASS_ON_GRACE_MS);
+    expect(passOns).toEqual([[{ projectPath: ATLAS, placeId: THEO, gone: 'fechada', to: 'lider' }]]);
   });
 
   it('closing the app before the grace, or a place that comes back, moves nothing', async () => {
