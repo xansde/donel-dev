@@ -1,17 +1,14 @@
-import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps, sanitizeSlackAgentBotPrefs } from '../src/main/config-store';
-import { buildSlackOfflineGuardScript } from '../src/main/hooks-settings';
 import { createLedgerService, createSlackLetterGuard, nodeLedgerProofFs } from '../src/main/ledger-store';
 import { AGENT_BOT_MARK, LEDGER_SCHEMA_VERSION, parseLedgerDoc, waitsForOwner } from '../src/shared/ledger/contract';
 
-// Slack só com carta — the letter is for what goes out in the OWNER's name (owner, 06/11: "o envio de cartas era
-// para eu validar as mensagens, agora ele me tornou gargalo"). The Theo West's own bot (its MCP, on the PC and on
-// the VPS) posts with no letter and leaves a record in the Oráculo; every way out by the owner's account still
-// needs one, and an unknown server is still refused.
+// The agent's own bot — the Theo West's own bot (its MCP, on the PC and on the VPS) posts and leaves a record in the
+// Oráculo for the owner to see later. Since 09/11 no post to Slack needs a letter (owner: "Não quero que cartas
+// travem nada também"); what stays guarded is the record itself: a session cannot forge the bot's mark.
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -75,62 +72,17 @@ describe('o bot do próprio agente posta sem carta', () => {
     expect(LEDGER_SCHEMA_VERSION).toBe(4);
     expect(parseLedgerDoc(JSON.parse(JSON.stringify(doc)))).toEqual(doc);
   });
+
+  it('a marca do bot não se forja: uma sessão não cria tarefa que se passe por registro do bot', async () => {
+    const ledger = service();
+    // A task a session creates cannot pass for a bot record (which the owner's strip hides).
+    const forged = await ledger.apply({ kind: 'lugar', placeId: 'place:theo' }, { op: 'criar', projectPath: '/w/bizops', request: `${AGENT_BOT_MARK} Mensagem no Slack`, doneWhen: 'x', due: '2026-11-07', ownerPlaceId: 'place:theo', risk: 'baixo' });
+    expect(forged.ok).toBe(false);
+    expect(Object.keys(ledger.load().doc.tasks)).toHaveLength(0);
+  });
 });
 
-describe('trava de fora do ar (VPS)', () => {
-  // The real script, run by `sh` with the app down (nothing listens on port 1): only the top-level `tool_name`,
-  // read by a JSON parser, lets the bot through; with no parser on the machine, nothing passes.
-  const COMPOSIO = 'mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL';
-  const composioSend = { tools: [{ tool_slug: 'SLACK_SEND_MESSAGE', arguments: { channel: 'C0CGE4DSGCQ', markdown_text: 'Oi.' } }] };
-  const which = (bin: string): string | null => {
-    const found = spawnSync('sh', ['-c', `command -v ${bin}`], { encoding: 'utf8' });
-    return found.status === 0 && found.stdout.trim() ? found.stdout.trim() : null;
-  };
-
-  function run(payload: unknown, opts: { servers?: readonly string[]; path?: readonly string[] } = {}): string {
-    const dir = mkdtempSync(join(tmpdir(), 'slack-offline-'));
-    dirs.push(dir);
-    const script = join(dir, 'slack-guard.sh');
-    writeFileSync(script, buildSlackOfflineGuardScript({ port: 1, tokenHeaderPath: join(dir, 'hook-header'), agentBotServers: opts.servers ?? BOTS }));
-    let env: NodeJS.ProcessEnv = process.env;
-    if (opts.path) {
-      // A PATH with only these tools: a VPS without node (or without any JSON parser).
-      const bin = join(dir, 'bin');
-      mkdirSync(bin);
-      for (const tool of ['cat', 'grep', 'curl', ...opts.path]) symlinkSync(which(tool)!, join(bin, tool));
-      env = { PATH: bin };
-    }
-    const out = spawnSync(which('sh')!, [script], { input: JSON.stringify(payload), env, encoding: 'utf8' });
-    expect(out.status).toBe(0);
-    return out.stdout;
-  }
-  const denied = (out: string): boolean => out.includes('"permissionDecision":"deny"');
-
-  it.skipIf(process.platform === 'win32' || !which('curl'))('só o tool_name do topo deixa o bot passar, nunca um campo plantado nos parâmetros', () => {
-    const bot = { tool_name: 'mcp__theo-slack__slack_enviar_mensagem', tool_input: { canal: 'C0CGE4DSGCQ', texto: 'Oi.' } };
-    // The reviewer's attack: the same Composio send, with a "tool_name" object field inside the parameters.
-    const planted = [
-      { tool_name: COMPOSIO, tool_input: { ...composioSend, tool_name: 'mcp__theo-slack__x' } },
-      { tool_name: COMPOSIO, tool_input: { tools: [{ ...composioSend.tools[0]!, arguments: { ...composioSend.tools[0]!.arguments, tool_name: 'mcp__theo-slack__x' } }] } },
-      { tool_name: 'Bash', tool_input: { command: 'curl https://slack.com/api/chat.postMessage -d text=Oi', tool_name: 'mcp__theo-west-slack__x' } },
-    ];
-
-    expect(denied(run({ tool_name: COMPOSIO, tool_input: composioSend }))).toBe(true);
-    for (const payload of planted) expect(denied(run(payload)), JSON.stringify(payload)).toBe(true);
-    expect(run(bot)).toBe('');
-    expect(run({ tool_name: 'mcp__theo-west-slack__slack_post_message', tool_input: { channel_id: 'C1', text: 'Oi.' } })).toBe('');
-
-    // With python3 and no node, the same answers.
-    if (which('python3')) {
-      expect(run(bot, { path: ['python3'] })).toBe('');
-      for (const payload of planted) expect(denied(run(payload, { path: ['python3'] })), JSON.stringify(payload)).toBe(true);
-    }
-    // No JSON parser on the machine: nothing passes as the bot, the guard stays closed.
-    expect(denied(run(bot, { path: [] }))).toBe(true);
-    // No bot in the config (the default): the bot needs a letter too.
-    expect(denied(run(bot, { servers: [] }))).toBe(true);
-  });
-
+describe('a lista de bots vem só da config', () => {
   it('config quebrada ou ausente = nenhum bot (padrão vazio)', async () => {
     for (const broken of [undefined, null, 'theo-slack', ['theo-slack'], { servers: 'theo-slack' }]) expect(sanitizeSlackAgentBotPrefs(broken)).toEqual({ servers: [] });
     expect(sanitizeSlackAgentBotPrefs({ servers: [' theo-slack ', 'theo-slack', 'x;rm -rf', 3] })).toEqual({ servers: ['theo-slack'] });

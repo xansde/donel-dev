@@ -208,7 +208,7 @@ import {
 import { createJsonRpcCallTool, createSystemHttpPostJson } from './taskdex-mcp-transport';
 import {
   buildSessionHooksSettings,
-  buildSlackOfflineGuardScript,
+  buildSlackMarkFile,
   cleanupStaleHookSettings,
   keyFilePermissions,
   planStatusLineBridge,
@@ -1784,7 +1784,7 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     files.push({ name: 'hook-header', content: tokenHeaderFileContent(fresh.hookToken) });
     // Letters never lock (owner, 09/11): no offline Slack guard runs as a hook. The file is still written because the
     // Theo West MCP reads its "carta-com-arquivo" mark to offer the file upload.
-    files.push({ name: 'slack-guard.sh', content: buildSlackOfflineGuardScript({ port: fresh.hookPort, tokenHeaderPath, agentBotServers: appConfig.slackAgentBots.servers }) });
+    files.push({ name: 'slack-guard.sh', content: buildSlackMarkFile() });
     const settings = buildSessionHooksSettings({
       port: fresh.hookPort,
       token: fresh.hookToken,

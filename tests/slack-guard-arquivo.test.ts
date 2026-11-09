@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
-import { buildSlackOfflineGuardScript, SLACK_GUARD_FILE_LETTER_MARK, SLACK_OFFLINE_PATTERN } from '../src/main/hooks-settings';
+import { buildSlackMarkFile, SLACK_GUARD_FILE_LETTER_MARK } from '../src/main/hooks-settings';
 import { createLedgerService, nodeLedgerProofFs, runLedgerTool, type LedgerCaller } from '../src/main/ledger-store';
 import { applyLedgerOp, emptyLedgerDoc, LEDGER_SCHEMA_VERSION, parseLedgerDoc, type LedgerActor, type LedgerDoc, type LedgerOp, type SlackLetter } from '../src/shared/ledger/contract';
 import { slackGuard } from '../src/shared/ledger/slack-guard';
@@ -176,12 +176,13 @@ describe('arquivo no Slack: pela ferramenta carta_slack e a resposta do upload',
   });
 });
 
-describe('arquivo no Slack: com o app fora do ar', () => {
-  it('o script da trava diz que confere carta com arquivo, e o padrão pega o upload e deixa baixar', async () => {
-    expect(buildSlackOfflineGuardScript({ port: 1, tokenHeaderPath: '/x/hook-header' }).split('\n')).toContain(`# ${SLACK_GUARD_FILE_LETTER_MARK}`);
-    const offline = new RegExp(SLACK_OFFLINE_PATTERN, 'i');
-    const payload = (tool: string) => JSON.stringify({ tool_name: tool, tool_input: {} });
-    expect(offline.test(payload(UP))).toBe(true);
-    expect(offline.test(payload('mcp__theo-slack__slack_baixar_arquivo'))).toBe(false);
+describe('arquivo no Slack: a marca que o MCP do Theo West lê', () => {
+  // The Theo West MCP offers the upload only when the remote session's slack-guard.sh carries this line; losing it
+  // would silently take the file upload away from him.
+  it('o slack-guard.sh da sessão remota traz a marca e não recusa nada', () => {
+    const file = buildSlackMarkFile();
+    expect(file.split('\n').some((line) => /^# carta-com-arquivo:/.test(line))).toBe(true);
+    expect(file.split('\n')).toContain(`# ${SLACK_GUARD_FILE_LETTER_MARK}`);
+    expect(file).not.toMatch(/deny/);
   });
 });

@@ -175,7 +175,7 @@ export interface AppConfig {
    * who and when: the record the owner reads in Regras. A TOP-LEVEL key (like `pet`, R20). Not in the DTO.
    */
   readonly browserUploadGrants: { readonly grants: readonly UploadGrant[] };
-  /** Slack só com carta — the agents' own bots, whose posts need no letter. A TOP-LEVEL key (like `pet`, R20). Not in the DTO. */
+  /** The agents' own bots, whose posts are recorded in the Oráculo. A TOP-LEVEL key (like `pet`, R20). Not in the DTO. */
   readonly slackAgentBots: SlackAgentBotPrefs;
   /**
    * Mindscape de homologação V1 — where the factory's files live (`lugar`, `metricas`, `rigs`, `quadro`). A TOP-LEVEL
@@ -301,7 +301,7 @@ export function sanitizeAppUpdatePrefs(value: unknown): AppUpdatePrefs {
  * folders: anything else is dropped, never kept as authorized. The browser service checks each one again with
  * `refusedUploadFolder` before using it.
  */
-/** Slack só com carta — plain server names, once each; absent or broken = the default (empty: every post needs a letter). */
+/** The agents' own bots — plain server names, once each; absent or broken = the default (empty: no bot listed). */
 export function sanitizeSlackAgentBotPrefs(value: unknown): SlackAgentBotPrefs {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return { servers: [...AGENT_BOT_SERVERS] };
   const { servers } = value as Record<string, unknown>;
