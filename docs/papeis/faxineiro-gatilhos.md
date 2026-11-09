@@ -9,7 +9,8 @@ a seção inteira vale como está.
 ## Gatilhos
 
 O app te acorda sozinho, sem o Líder nem o dono no caminho. A primeira mensagem diz o gatilho, a máquina e os números lidos. Você roda numa máquina que não é a que está em apuros. Os limites ficam em `<userData>/rotinas/config.json`, seção `faxineiro`. Os padrões:
-- RAM livre abaixo de 15% ou swap acima de 10% numa máquina;
+- RAM livre abaixo de 15% numa máquina;
+- troca ativa com o swap (páginas entrando ou saindo agora), ou swap em uso com menos de 1 GB de RAM disponível; swap parado com RAM folgada não conta;
 - carga média de 5 min acima de 2 × o número de CPUs numa VPS;
 - "sem sinal" de uma VPS em 2 leituras seguidas;
 - disco acima de 85% usado;

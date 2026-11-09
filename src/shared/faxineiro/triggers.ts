@@ -11,6 +11,7 @@
 // first Faxineiro stopped working; at most `maxWakesPerHour` wakes in the whole app; a Faxineiro working is never
 // woken again (the trigger waits for the next round).
 
+import { formatBytes } from '../format-bytes';
 import { FAXINEIRO_ROLE_ID, LEADER_ROLE_ID } from '../roles';
 
 /** `openedBy` of the Faxineiro tabs the app opens: only those the app also closes when they sit idle. */
@@ -25,8 +26,14 @@ export interface FaxineiroConfig {
   readonly enabled: boolean;
   /** RAM free under this percent → trigger. */
   readonly ramFreeMinPct: number;
-  /** Swap used over this percent of the swap → trigger. */
-  readonly swapUsedMaxPct: number;
+  /**
+   * Swap paging (pages in or out per second, the `si`/`so` of `vmstat`) over this → trigger. Swap in use alone is not
+   * one (t-e3e8698a, 08/11): Linux leaves pages parked in swap on a machine with RAM to spare, and a cleanup barely moves
+   * them (swap at 18% with si/so 0 and 3,6 GB free woke the Faxineiro every read; the round freed 35 MB).
+   */
+  readonly swapActiveMinPagesPerSec: number;
+  /** Swap in use and RAM available under this many MB → trigger (the next session would push the machine into paging). */
+  readonly swapRamAvailableMinMb: number;
   /** Load average of 5 min per CPU over this → trigger (remote places only: Windows has no load average). */
   readonly loadPerCpuMax: number;
   /** Reads in a row without answer before "sem sinal" is a trigger. */
@@ -46,7 +53,12 @@ export interface FaxineiroConfig {
 export const DEFAULT_FAXINEIRO_CONFIG: FaxineiroConfig = {
   enabled: true,
   ramFreeMinPct: 15,
-  swapUsedMaxPct: 10,
+  // 0: any paging in the one-second window counts. A parked swap reads 0 exactly; a machine choking pages for seconds
+  // on end. The owner raises it in config.json if a stray page now and then wakes the Faxineiro.
+  swapActiveMinPagesPerSec: 0,
+  // 1 GB: room for two or three more Claude sessions (each takes 300 to 500 MB), so the Faxineiro wakes before the
+  // paging starts. The 08/11 reading (3,6 GB) stays out. Absolute, not a percent: the RAM trigger above already is one.
+  swapRamAvailableMinMb: 1024,
   loadPerCpuMax: 2,
   unreachableReads: 2,
   stalledMinutes: 30,
@@ -60,7 +72,8 @@ export const DEFAULT_FAXINEIRO_CONFIG: FaxineiroConfig = {
 /** The pt-BR keys of the `faxineiro` section of `<userData>/rotinas/config.json` (the owner edits it by hand). */
 const CONFIG_KEYS: Readonly<Record<Exclude<keyof FaxineiroConfig, 'enabled'>, string>> = {
   ramFreeMinPct: 'ramLivreMinimaPct',
-  swapUsedMaxPct: 'swapMaximoPct',
+  swapActiveMinPagesPerSec: 'trocaAtivaMinimaPaginasPorSeg',
+  swapRamAvailableMinMb: 'swapRamDisponivelMinimaMb',
   loadPerCpuMax: 'cargaMaximaPorCpu',
   unreachableReads: 'leiturasSemSinal',
   stalledMinutes: 'minutosParada',
@@ -99,7 +112,12 @@ export interface MachineReading {
   /** When the last read finished: a read seen twice counts once. */
   readonly checkedAt: number | null;
   readonly ramFreeRatio: number | null;
+  /** RAM available (`MemAvailable`), in bytes. */
+  readonly ramAvailableBytes: number | null;
   readonly swapUsedRatio: number | null;
+  /** Pages swapped in and out per second, read over one second. */
+  readonly swapInPerSec: number | null;
+  readonly swapOutPerSec: number | null;
   readonly load5PerCpu: number | null;
   readonly diskUsedRatio: number | null;
 }
@@ -245,8 +263,13 @@ export function machineReasons(machine: MachineReading, streak: number, config: 
   }
   if (machine.ramFreeRatio !== null && machine.ramFreeRatio * 100 < config.ramFreeMinPct)
     reasons.push(`${machine.label}: RAM livre ${pct(machine.ramFreeRatio)} (limite ${config.ramFreeMinPct}%)`);
-  if (machine.swapUsedRatio !== null && machine.swapUsedRatio * 100 > config.swapUsedMaxPct)
-    reasons.push(`${machine.label}: swap em uso ${pct(machine.swapUsedRatio)} (limite ${config.swapUsedMaxPct}%)`);
+  const swapIn = machine.swapInPerSec ?? 0;
+  const swapOut = machine.swapOutPerSec ?? 0;
+  const swapUsed = machine.swapUsedRatio !== null ? ` (swap em uso ${pct(machine.swapUsedRatio)})` : '';
+  if (swapIn > config.swapActiveMinPagesPerSec || swapOut > config.swapActiveMinPagesPerSec)
+    reasons.push(`${machine.label}: troca ativa com o swap, ${swapIn} páginas/s entrando e ${swapOut} saindo${swapUsed} (limite ${config.swapActiveMinPagesPerSec})`);
+  else if (machine.swapUsedRatio !== null && machine.swapUsedRatio > 0 && machine.ramAvailableBytes !== null && machine.ramAvailableBytes < config.swapRamAvailableMinMb * 1024 * 1024)
+    reasons.push(`${machine.label}: swap em uso ${pct(machine.swapUsedRatio)} com só ${formatBytes(machine.ramAvailableBytes)} de RAM disponível (limite ${config.swapRamAvailableMinMb} MB)`);
   if (machine.load5PerCpu !== null && machine.load5PerCpu > config.loadPerCpuMax)
     reasons.push(`${machine.label}: carga de 5 min ${decimal(machine.load5PerCpu)} por CPU (limite ${decimal(config.loadPerCpuMax)})`);
   if (withDisk && machine.diskUsedRatio !== null && machine.diskUsedRatio * 100 > config.diskUsedMaxPct)
