@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { buildSlackOfflineGuardScript, SLACK_GUARD_FILE_LETTER_MARK, SLACK_OFFLINE_PATTERN } from '../src/main/hooks-settings';
-import { createLedgerService, createSlackLetterGuard, nodeLedgerProofFs, runLedgerTool, type LedgerCaller } from '../src/main/ledger-store';
+import { createLedgerService, nodeLedgerProofFs, runLedgerTool, type LedgerCaller } from '../src/main/ledger-store';
 import { applyLedgerOp, emptyLedgerDoc, LEDGER_SCHEMA_VERSION, parseLedgerDoc, type LedgerActor, type LedgerDoc, type LedgerOp, type SlackLetter } from '../src/shared/ledger/contract';
 import { slackGuard } from '../src/shared/ledger/slack-guard';
 import { parseLedgerToolCall, type LedgerToolCall } from '../src/shared/ledger/tools';
@@ -162,12 +162,6 @@ describe('arquivo no Slack: pela ferramenta carta_slack e a resposta do upload',
   }
   const view = async (ledger: ReturnType<typeof service>, id: string) =>
     (JSON.parse((await runLedgerTool(ledger, caller, call('tarefa_ver', { id }))).text) as { cartaSlack: Record<string, unknown> }).cartaSlack;
-  let use = 0;
-  const attempt = async (guard: ReturnType<typeof createSlackLetterGuard>, input: unknown) => {
-    const payload = { tool_name: UP, tool_input: input, tool_use_id: `toolu_${++use}` };
-    return { refusal: await guard.before('pty-1', payload), answer: (event: string, response?: unknown) => guard.after('pty-1', event, { ...payload, tool_response: response }) };
-  };
-
   it('a carta leva caminho, nome e comentário, e o dono lê que vai um arquivo', async () => {
     const ledger = service();
     expect(parseLedgerToolCall('carta_slack', { destino: 'C1', texto: 'x', motivo: 'y', arquivoNome: 'a.png' }).ok).toBe(false);
