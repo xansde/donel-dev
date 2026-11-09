@@ -75,7 +75,7 @@ describe('Líder único', () => {
 
   it('only the tab with the Jobu mark reads "Líder único"; a Líder of a board reads the board guidance', () => {
     const lider = FACTORY_ROLES.find((role) => role.id === LEADER_ROLE_ID)!;
-    expect(rolePromptText(lider)).not.toContain('Líder único');
+    expect(rolePromptText(lider)).not.toContain('Você é o Líder único');
     expect(leaderOfAllPromptText(lider)).toContain('Você é o Líder único');
     expect(leaderOfAllPromptText({ ...lider, guidance: 'Fale curto.' })).toContain('Fale curto.');
   });
@@ -152,13 +152,20 @@ describe('Líder único recebe e lugar fechado passa adiante', () => {
 
   it('a session the Líder único opened, or one below it, sends to "lider"; one out of that chain is refused', async () => {
     const { bridge, sent } = team();
-    expect(await bridge.handle('theo', { tool: 'sessao_enviar', para: 'lider', texto: 'terminei a parte 1' })).toMatchObject({ ok: true });
-    expect(await bridge.handle('dev', { tool: 'sessao_enviar', para: 'lider', texto: 'travei no build' })).toMatchObject({ ok: true });
+    expect(await bridge.handle('theo', { tool: 'sessao_enviar', para: 'lider', texto: 'terminei a parte 1', motivo: 'tarefa-completa' })).toMatchObject({ ok: true });
+    expect(await bridge.handle('dev', { tool: 'sessao_enviar', para: 'lider', texto: 'travei no build', motivo: 'bloqueio' })).toMatchObject({ ok: true });
     expect(sent).toEqual([
-      { tabId: 'tab-lider', text: `◆ De Dev (${THEO}), quadro atlas: terminei a parte 1` },
-      { tabId: 'tab-lider', text: `◆ De Dev (${DEV}), quadro atlas: travei no build` },
+      { tabId: 'tab-lider', text: `◆ De Dev (${THEO}), quadro atlas, tarefa completa: terminei a parte 1` },
+      { tabId: 'tab-lider', text: `◆ De Dev (${DEV}), quadro atlas, bloqueio: travei no build` },
     ]);
-    const refused = await bridge.handle('outro', { tool: 'sessao_enviar', para: 'lider', texto: 'oi' });
+    // Dono, 09/11: to the Líder único only a finished task or a lock; progress stays in the ledger. The tool refuses
+    // the rest, by "lider" or by "quem-me-abriu" when the Líder único is the opener.
+    const chatter = await bridge.handle('theo', { tool: 'sessao_enviar', para: 'lider', texto: 'rodando o verify agora' });
+    expect(chatter).toMatchObject({ ok: false, text: expect.stringContaining('tarefa_andamento') });
+    const viaOpener = await bridge.handle('theo', { tool: 'sessao_enviar', para: 'quem-me-abriu', texto: 'li o código' });
+    expect(viaOpener).toMatchObject({ ok: false, text: expect.stringContaining('tarefa_andamento') });
+    expect(sent).toHaveLength(2);
+    const refused = await bridge.handle('outro', { tool: 'sessao_enviar', para: 'lider', texto: 'oi', motivo: 'bloqueio' });
     expect(refused).toMatchObject({ ok: false, text: expect.stringContaining('Sem ligação com o Líder único') });
     expect(sent).toHaveLength(2);
   });

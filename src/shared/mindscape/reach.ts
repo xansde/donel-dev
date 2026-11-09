@@ -30,6 +30,7 @@
 //   none → the Líder único.
 
 import { FAXINEIRO_ROLE_ID, LEADER_ROLE_ID } from '../roles';
+import { LEADER_OF_ALL } from './leader';
 import type { BoardReach, MindscapeBoard, MindscapeDoc, MindscapeLink } from './model';
 
 export function boardReach(board: MindscapeBoard | undefined): BoardReach {
@@ -203,6 +204,20 @@ export function firstLiveAbove(board: MindscapeBoard | undefined, placeId: strin
     level = next;
   }
   return undefined;
+}
+
+/**
+ * Who hears a session (dono, 09/11: "não é nem configuração, é comportamento definido por nós nos mindscapes. Só mudar
+ * quem responde quem"): the ONE rule for the delivery and the lock of a session, and for whoever takes the tasks of a
+ * place that is gone. Read from the board at each notice, so an arrow drawn or erased counts at the next one:
+ * the first live place above it by the hierarchy arrows (the owner's, or the opening ones); none → the live Líder of
+ * its board (`boardLeaders`); none → the Líder único (`LEADER_OF_ALL`). End of turn and progress never ask it: they
+ * stay in the ledger. `isLive` is the caller's (an open tab that answers).
+ */
+export function whoHears(board: MindscapeBoard | undefined, placeId: string, isLive: (placeId: string) => boolean): string {
+  const above = firstLiveAbove(board, placeId, isLive);
+  if (above) return above;
+  return boardLeaders(board).find((id) => id !== placeId && isLive(id)) ?? LEADER_OF_ALL;
 }
 
 /** The board and place of a place id: the caller's board first, then every other one. */
