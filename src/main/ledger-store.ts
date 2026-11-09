@@ -53,11 +53,12 @@ import {
   type LedgerStrip,
   type LedgerTask,
 } from '../shared/ledger/contract';
-import type { LedgerApplyResult, LedgerPassedOn, LedgerPassOnRequest, LedgerSnapshot, LedgerTurnRecord, LedgerTurnRecorded } from '../shared/ledger/channels';
+import type { LedgerApplyResult, LedgerPassedOn, LedgerPrioritized, LedgerPassOnRequest, LedgerSnapshot, LedgerTurnRecord, LedgerTurnRecorded } from '../shared/ledger/channels';
 import { isUrgentProgress, progressLine, PROGRESS_FIELD_CHARS, turnEndProgress, type LedgerProgress } from '../shared/ledger/andamento';
 import { agoText, ledgerNews, progressTaskOf, turnAlreadyRecorded } from '../shared/ledger/novidades';
 import type { LedgerToolCall, ProofInput } from '../shared/ledger/tools';
 import { NOT_STARTED_GRACE_MS, orphanReasonIn, ownerGoneIn } from '../shared/ledger/inbox';
+import { byOwnerPriority, inBoardQueue, priorityWrites } from '../shared/ledger/prioridade';
 import { liveSessionOf } from '../shared/ledger/mirror';
 import { AGENT_BOT_SERVERS, detectAgentBotSend, detectSlackSend, fileNameOf, slackGuard, slackMessageLink, slackSendOutcome, type AgentBotSend } from '../shared/ledger/slack-guard';
 
@@ -278,6 +279,24 @@ export function createLedgerService(deps: LedgerServiceDeps): LedgerService {
     },
     now,
   };
+}
+
+/**
+ * 09/11 (t-5c0df1df) — the owner's asks in the order he wants them ("Seus pedidos"): one priority mark per task whose
+ * place changed, signed by the owner. Stops at the first refusal (the marks before it stay: the next move rewrites).
+ */
+export async function prioritizeAsks(service: LedgerService, order: readonly string[]): Promise<LedgerPrioritized> {
+  let writes: { id: string; posicao: number }[];
+  try {
+    writes = priorityWrites(service.load().doc, order);
+  } catch (error) {
+    return { ok: false, reason: `Não consegui ler o Oráculo Harrow: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  for (const [index, write] of writes.entries()) {
+    const result = await service.apply({ kind: 'dono' }, { op: 'priorizar', id: write.id, posicao: write.posicao });
+    if (!result.ok) return { ok: false, reason: index ? `${result.reason} (${index} de ${writes.length} já gravadas)` : result.reason };
+  }
+  return { ok: true, written: writes.length };
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -841,7 +860,15 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       const tasks = inScope
         .filter((task) => !call.estado || viewState(task) === call.estado)
         .filter((task) => situacao === 'todas' || (situacao === 'orfas' ? orphanOf(task) !== null : !isClosed(task) && !awaitsSend(task) && orphanOf(task) === null))
-        .sort((a, b) => a.createdAt - b.createdAt);
+        // 09/11 (t-5c0df1df) — the open ones first, in the owner's order: the Líder hands out the next from the top.
+        .sort((a, b) => Number(inBoardQueue(b)) - Number(inBoardQueue(a)) || (inBoardQueue(a) ? byOwnerPriority(a, b) : a.createdAt - b.createdAt));
+      const queuePlace = new Map<string, number>();
+      const perBoard = new Map<string, number>();
+      for (const task of tasks.filter(inBoardQueue)) {
+        const place = (perBoard.get(task.projectPath) ?? 0) + 1;
+        perBoard.set(task.projectPath, place);
+        queuePlace.set(task.id, place);
+      }
       const hidden = situacao === 'todas' ? 0 : inScope.length - tasks.length;
       return {
         ok: true,
@@ -849,8 +876,12 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
           {
             faixa: { ...stripView(ledgerStrip(doc, scope)), ...counts },
             situacao,
+            ...(queuePlace.size
+              ? { fila: 'As abertas vêm primeiro, na prioridade que o dono deu em "Seus pedidos" ("posicao" 1 = a próxima do quadro). Nada é puxado sozinho: com alguém livre, entregue a próxima a ele.' }
+              : {}),
             ...(hidden ? { fora: `${hidden} tarefa(s) fora desta lista; "situacao": "todas" mostra o histórico inteiro, "orfas" as que ficaram sem lugar.` } : {}),
             tarefas: tasks.map((task) => ({
+              ...(queuePlace.has(task.id) ? { posicao: queuePlace.get(task.id) } : {}),
               ...taskView(task, doc, orphanOf(task), caller),
               ...(ownerUnknown(caller, task) ? { desconhecida: 'o quadro desta tarefa não respondeu: não sei se o lugar dono ainda existe.' } : {}),
             })),
