@@ -100,6 +100,28 @@ export function boardOrchestrators(board: MindscapeBoard | undefined): string[] 
   return board ? Object.keys(board.cards).filter((id) => isBoardOrchestrator(board, id)) : [];
 }
 
+/**
+ * Who hears the chairs of a board and whom "lider-quadro" means (dono, 09/11: nothing of a chair reaches the Líder
+ * único): the Líderes the owner put there (`boardOrchestrators`) first, then a place with the Líder role a session
+ * made (a Líder the Líder único opened before 07/11, or one the owner gave the role by hand). Only who HEARS: the
+ * power of a Líder (every place, other boards, liberating a folder) stays with `isBoardOrchestrator`. No session can
+ * make a Líder place today (`sessao_abrir` and `quadro_aplicar` refuse it), so nobody makes itself heard as one.
+ */
+export function boardLeaders(board: MindscapeBoard | undefined): string[] {
+  if (!board) return [];
+  const owners = boardOrchestrators(board);
+  const made = Object.keys(board.cards).filter((id) => {
+    const card = board.cards[id];
+    return card?.kind === 'session' && card.roleId === LEADER_ROLE_ID && !owners.includes(id);
+  });
+  return [...owners, ...made];
+}
+
+/** `placeId` is a Líder of its board in the sense of `boardLeaders` (hears the chairs; not the power). */
+export function isBoardLeader(board: MindscapeBoard | undefined, placeId: string): boolean {
+  return boardLeaders(board).includes(placeId);
+}
+
 /** `sessao_enviar` to the session that opened the caller with `sessao_abrir`: `"para": "quem-me-abriu"`. */
 export const MY_OPENER = 'quem-me-abriu';
 
