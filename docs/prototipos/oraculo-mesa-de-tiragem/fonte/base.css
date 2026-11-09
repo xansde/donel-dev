@@ -1,0 +1,322 @@
+/* ===================================================================================================
+   PROTÓTIPO DESCARTÁVEL (skill /prototipo). Nada aqui vai para produção.
+   Tokens copiados literalmente de:
+   - Carta (Harrow): src/main/celular/pwa/app.css (origin/staging, 09/11) — :root claro e bloco escuro
+   - Moldura do app (PC): design-system/src/tokens.css (origin/staging, 09/11)
+   - Forma da carta: forma A escolhida pelo dono em 05/11 (docs/prototipos/carta-oraculo/final.html, ramo de protótipo)
+   =================================================================================================== */
+
+/* --- design-system/src/tokens.css --- */
+:root {
+  --bg-app: #0e1116;
+  --bg-panel: #151a21;
+  --bg-raised: #1c232c;
+  --border: #28303b;
+  --text-primary: #d7dde5;
+  --text-muted: #828d9c;
+  --accent: #4c9cf0;
+  --state-waiting: #e8b44c;
+  --state-permission: #f0684c;
+  --zone-ok: #3dce8f;
+  --donel-accent: #e8b44c;
+  --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+}
+
+/* --- src/main/celular/pwa/app.css, bloco escuro (padrão: o PC é dark-only) --- */
+.tema-escuro {
+  --fundo: #121019;
+  --fundo-veio: #17141f;
+  --carta: #1d1a27;
+  --carta-borda: #4a4030;
+  --tinta: #efe6d2;
+  --tinta-suave: #b3a78f;
+  --ouro: #d2a44c;
+  --sim: #5fbf86;
+  --nao: #e0736a;
+  --pre-fundo: #15131d;
+  --sombra: 0 10px 30px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.4);
+  --martelos: #d98a5f;
+  --escudos: #7fa6c9;
+  --chaves: #6cbfa8;
+  --livros: #cf7d93;
+  --estrelas: #a495e0;
+  --coroas: #e0bb5a;
+  --aviso: #e8b44c;
+}
+/* --- src/main/celular/pwa/app.css, :root (claro) --- */
+.tema-claro {
+  --fundo: #e9dfc8;
+  --fundo-veio: #e1d4b8;
+  --carta: #f8f1e1;
+  --carta-borda: #c9b48a;
+  --tinta: #2a2118;
+  --tinta-suave: #6b5a45;
+  --ouro: #9c7428;
+  --sim: #2f7a4d;
+  --nao: #a8362e;
+  --pre-fundo: #efe5cf;
+  --sombra: 0 10px 30px rgba(60, 40, 10, 0.18), 0 2px 6px rgba(60, 40, 10, 0.12);
+  --martelos: #a4552f;
+  --escudos: #3f6687;
+  --chaves: #2f7564;
+  --livros: #7a2c40;
+  --estrelas: #4e3f8f;
+  --coroas: #8a6a1c;
+  --aviso: #e8b44c;
+}
+:root {
+  --serifa: 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+  --sem-serifa: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg-app); color: var(--text-primary); font-family: var(--font-ui); }
+button { font: inherit; cursor: pointer; color: inherit; }
+svg.ic, .ic svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+details > summary { cursor: pointer; }
+
+/* ===================================================================================================
+   CASCA DO PROTÓTIPO (não faz parte do design avaliado)
+   =================================================================================================== */
+.casca-barra { position: sticky; top: 0; z-index: 100; background: var(--bg-panel); border-bottom: 1px solid var(--border); padding: 8px 16px; display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; font-size: 12px; }
+.casca-barra h1 { margin: 0; font-size: 14px; font-weight: 600; }
+.casca-barra h1 small { display: block; font-weight: 400; font-size: 11px; color: var(--text-muted); }
+.casca-grupo { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.casca-grupo > span { color: var(--text-muted); margin-right: 2px; }
+.casca-grupo button { background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 5px 10px; font-size: 12px; color: var(--text-primary); }
+.casca-grupo button[aria-pressed='true'] { border-color: var(--donel-accent); color: var(--donel-accent); }
+.casca-sobre { padding: 10px 16px 0; font-size: 13px; color: var(--text-muted); max-width: 1180px; line-height: 1.45; }
+.casca-sobre b { color: var(--text-primary); }
+.casca-palco { display: flex; flex-wrap: wrap; gap: 28px; justify-content: center; align-items: flex-start; padding: 16px 16px 80px; }
+.casca-rotulo { font-size: 11px; color: var(--text-muted); text-align: center; margin-bottom: 6px; letter-spacing: .08em; text-transform: uppercase; }
+
+/* Moldura do PC: a janela do Donel Dev com o Oráculo no centro */
+.pc { width: min(1280px, calc(100vw - 32px)); height: 800px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--bg-app); display: flex; flex-direction: column; box-shadow: 0 20px 50px rgba(0,0,0,.5); }
+.pc-titulo { height: 30px; flex: none; background: var(--bg-panel); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; padding: 0 12px; font-size: 12px; color: var(--text-muted); }
+.pc-titulo i { width: 10px; height: 10px; border-radius: 50%; background: var(--border); display: inline-block; }
+.pc-titulo .troca { margin-left: auto; display: flex; gap: 2px; }
+.pc-titulo .troca b, .pc-titulo .troca span { padding: 2px 10px; border-radius: var(--radius-sm); }
+.pc-titulo .troca b { color: var(--donel-accent); background: var(--bg-raised); font-weight: 600; }
+.pc-tela { flex: 1; min-height: 0; position: relative; }
+
+/* Moldura do celular */
+.cel { width: 390px; height: 820px; border-radius: 44px; padding: 12px; background: #000; box-shadow: 0 0 0 2px #333, 0 20px 50px rgba(0,0,0,.5); flex: none; }
+.cel-tela { position: relative; width: 100%; height: 100%; border-radius: 34px; overflow: hidden; display: flex; flex-direction: column; }
+.cel-status { height: 30px; flex: none; display: flex; justify-content: space-between; align-items: center; padding: 6px 26px 0; font-size: 12px; font-weight: 600; background: var(--fundo); color: var(--tinta); }
+.cel-tela .vista { flex: 1; min-height: 0; }
+
+/* A vista: onde cada variante monta a mesa. Container query: a mesma variante se adapta ao celular. */
+.vista { position: relative; height: 100%; container-type: inline-size; container-name: vista; overflow: hidden; background: var(--fundo); background-image: radial-gradient(circle at 50% 0%, var(--fundo-veio), var(--fundo) 70%); color: var(--tinta); font-family: var(--sem-serifa); }
+
+/* Aviso de destravado (toast) */
+.oc-toast { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%) translateY(20px); opacity: 0; transition: all .35s ease; background: var(--tinta); color: var(--carta); border-radius: 12px; padding: 9px 14px; font-size: .82rem; line-height: 1.35; max-width: min(92%, 520px); z-index: 60; box-shadow: var(--sombra); display: flex; gap: 8px; align-items: flex-start; pointer-events: none; }
+.oc-toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
+.oc-toast b { color: var(--sim); white-space: nowrap; }
+.tema-claro .oc-toast b { color: #8fe0b0; }
+
+/* ===================================================================================================
+   A CARTA — molde modular (igual em todas as variantes)
+   Cabeça → O que você decide → Visual → Recomendação e porquê → Resposta (cada caminho com o que acontece)
+   → Risco → Saídas de sempre. O verso guarda o pedido literal e o detalhe técnico.
+   =================================================================================================== */
+.naipe-martelos { --naipe: var(--martelos); } .naipe-escudos { --naipe: var(--escudos); } .naipe-chaves { --naipe: var(--chaves); }
+.naipe-livros { --naipe: var(--livros); } .naipe-estrelas { --naipe: var(--estrelas); } .naipe-coroas { --naipe: var(--coroas); }
+
+.oc-carta { position: relative; width: 100%; height: 100%; perspective: 1800px; color: var(--tinta); font-family: var(--sem-serifa); font-size: 14px; }
+.oc-giro { position: relative; width: 100%; height: 100%; transform-style: preserve-3d; transition: transform .6s ease; }
+.oc-carta.virada .oc-giro { transform: rotateY(180deg); }
+.oc-face { position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; border-radius: 18px; background: var(--carta); box-shadow: var(--sombra); padding: 8px; }
+.oc-face.verso { transform: rotateY(180deg); }
+.oc-moldura { height: 100%; border: 2px solid var(--naipe); border-radius: 12px; padding: 4px; }
+.oc-interna { position: relative; height: 100%; border: 1px solid var(--ouro); border-radius: 9px; display: flex; flex-direction: column; overflow: hidden; }
+.oc-rolagem { flex: 1; min-height: 0; overflow: auto; padding: 0 14px 10px; scrollbar-width: thin; }
+
+/* Cabeça */
+.oc-cabeca { flex: none; display: flex; align-items: center; gap: 8px; padding: 9px 12px 2px; color: var(--naipe); }
+.oc-cabeca .glifo { width: 24px; height: 24px; flex: none; }
+.oc-cabeca .glifo svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.oc-cabeca .tipo { font-family: var(--serifa); font-size: .7rem; letter-spacing: .2em; text-transform: uppercase; }
+.oc-cabeca .idx { margin-left: auto; white-space: nowrap; font-family: var(--serifa); font-size: .75rem; color: var(--tinta-suave); }
+.oc-meta { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 10px; font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; color: var(--tinta-suave); padding: 2px 12px 0; }
+.oc-meta .urgente { color: var(--nao); font-weight: 700; }
+.oc-pergunta { margin: 4px 0 2px; text-align: center; font-family: var(--serifa); font-size: 1.22rem; line-height: 1.2; font-weight: 600; }
+.oc-destrava { display: block; font-size: .78rem; color: var(--tinta-suave); text-align: center; margin: 2px 0 8px; line-height: 1.35; }
+.oc-destrava b { color: var(--sim); font-weight: 700; white-space: nowrap; }
+.oc-real { font-size: .64rem; letter-spacing: .06em; text-transform: uppercase; color: var(--tinta-suave); opacity: .8; text-align: center; margin-top: 2px; }
+
+/* Visual (módulos tipados) */
+.oc-vis { border: 1px solid var(--carta-borda); background: var(--pre-fundo); border-radius: 10px; padding: 10px; font-size: .8rem; margin: 2px 0 8px; }
+.oc-vis h5 { margin: 0 0 7px; font-size: .64rem; letter-spacing: .12em; text-transform: uppercase; color: var(--tinta-suave); font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
+.oc-vis h5 i { font-style: normal; letter-spacing: .04em; text-transform: none; opacity: .8; }
+/* checagens */
+.oc-luzes { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+.oc-luzes li { display: grid; grid-template-columns: 18px 1fr; gap: 1px 8px; align-items: start; }
+.oc-luzes li > i { width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center; margin-top: 1px; color: #fff; font-style: normal; font-size: 10px; font-weight: 800; }
+.oc-luzes li.ok > i { background: var(--sim); }
+.oc-luzes li.nao > i { background: var(--nao); }
+.oc-luzes li.aviso > i { background: var(--aviso); color: #2a2118; }
+.oc-luzes b { font-size: .8rem; }
+.oc-luzes span { grid-column: 2; font-size: .72rem; color: var(--tinta-suave); line-height: 1.3; }
+/* passos do dono */
+.oc-passos { margin: 0; padding: 0; list-style: none; counter-reset: p; display: grid; gap: 6px; }
+.oc-passos li { counter-increment: p; display: grid; grid-template-columns: 22px 1fr; gap: 8px; align-items: start; font-size: .8rem; line-height: 1.35; }
+.oc-passos li::before { content: counter(p); width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--naipe); color: var(--naipe); display: grid; place-items: center; font-weight: 700; font-size: .72rem; }
+.oc-passos li small { display: block; color: var(--tinta-suave); font-size: .72rem; }
+.oc-parado { display: flex; align-items: center; gap: 8px; margin-top: 9px; font-size: .74rem; color: var(--tinta-suave); }
+.oc-parado .trilho { flex: 1; height: 6px; border-radius: 3px; background: repeating-linear-gradient(45deg, var(--nao), var(--nao) 6px, transparent 6px, transparent 11px); opacity: .75; }
+.oc-parado b { color: var(--nao); }
+/* grade da semana */
+.oc-grade { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.oc-grade .dia { font-size: .64rem; text-transform: uppercase; letter-spacing: .08em; color: var(--tinta-suave); text-align: center; }
+.oc-grade .col { display: grid; gap: 3px; align-content: start; }
+.oc-grade .bloco { border-radius: 5px; padding: 3px 5px; font-size: .64rem; background: color-mix(in srgb, var(--naipe) 22%, var(--carta)); border-left: 3px solid var(--naipe); line-height: 1.2; }
+.oc-grade .bloco.sem { border-left-color: var(--nao); background: color-mix(in srgb, var(--nao) 16%, var(--carta)); }
+/* comparação de variantes */
+.oc-comp { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.oc-comp .tela { border: 1.5px solid var(--carta-borda); border-radius: 8px; background: #151a21; padding: 6px; min-height: 92px; display: flex; flex-direction: column; gap: 3px; position: relative; }
+.oc-comp .tela.rec { border-color: var(--ouro); box-shadow: 0 0 0 1px var(--ouro); }
+.oc-comp .tela .l { height: 6px; border-radius: 3px; background: #28303b; }
+.oc-comp .tela .l.a { background: #4c9cf0; } .oc-comp .tela .l.o { background: #e8b44c; } .oc-comp .tela .l.v { background: #3dce8f; }
+.oc-comp .tela .cols { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; flex: 1; }
+.oc-comp .tela .cols div { border-radius: 3px; background: #1c232c; border: 1px solid #28303b; display: flex; flex-direction: column; gap: 2px; padding: 2px; }
+.oc-comp .tela .faixa { font-size: 8px; color: #828d9c; letter-spacing: .08em; text-transform: uppercase; }
+.oc-comp figcaption { font-size: .72rem; text-align: center; margin-top: 4px; line-height: 1.2; }
+.oc-comp figure { margin: 0; }
+.oc-comp figure button.ver { width: 100%; background: none; border: 0; padding: 0; text-align: inherit; }
+.oc-comp .selo-rec { position: absolute; top: -8px; right: -6px; background: var(--ouro); color: var(--carta); font-size: .55rem; font-weight: 800; letter-spacing: .08em; border-radius: 999px; padding: 1px 6px; text-transform: uppercase; }
+/* irreversível × tem volta */
+.oc-volta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.oc-volta div { border-radius: 8px; padding: 8px; font-size: .74rem; line-height: 1.35; }
+.oc-volta .nao-volta { border: 1.5px solid var(--nao); }
+.oc-volta .volta { border: 1.5px solid var(--sim); }
+.oc-volta b { display: block; font-size: .66rem; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 3px; }
+.oc-volta .nao-volta b { color: var(--nao); } .oc-volta .volta b { color: var(--sim); }
+/* medidor */
+.oc-medidor { display: grid; gap: 9px; }
+.oc-medidor .linha { display: grid; gap: 3px; }
+.oc-medidor .rot { display: flex; justify-content: space-between; font-size: .72rem; color: var(--tinta-suave); gap: 8px; }
+.oc-medidor .rot b { color: var(--tinta); }
+.oc-medidor .barra { height: 10px; border-radius: 5px; background: var(--carta-borda); overflow: hidden; position: relative; }
+.oc-medidor .barra div { height: 100%; border-radius: 5px; background: var(--naipe); }
+.oc-medidor .barra div.ruim { background: var(--nao); }
+.oc-medidor .barra div.bom { background: var(--sim); }
+.oc-medidor .zero { font-family: var(--serifa); font-size: 1.6rem; color: var(--nao); line-height: 1; }
+/* citação (quem pediu, nas palavras dele) */
+.oc-citacao { border-left: 3px solid var(--naipe); padding: 4px 0 4px 10px; margin: 0 0 6px; font-family: var(--serifa); font-style: italic; font-size: .86rem; line-height: 1.4; }
+.oc-citacao small { display: block; font-family: var(--sem-serifa); font-style: normal; font-size: .68rem; color: var(--tinta-suave); margin-top: 3px; }
+
+/* Recomendação */
+.oc-rec { margin: 2px 0 8px; padding: 7px 10px; border-top: 1px solid var(--ouro); border-bottom: 1px solid var(--ouro); text-align: center; font-size: .82rem; line-height: 1.38; }
+.oc-rec b { color: var(--ouro); font-family: var(--serifa); font-size: .98rem; }
+
+/* Resposta: caminhos (cada um com o que acontece) */
+.oc-caminhos { display: flex; flex-direction: column; gap: 7px; }
+.oc-caminho { text-align: left; width: 100%; border: 1.5px solid var(--carta-borda); background: var(--carta); border-radius: 12px; padding: 8px 12px; display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: center; transition: transform .12s ease; }
+.oc-caminho:hover { transform: translateY(-1px); border-color: var(--naipe); }
+.oc-caminho b { font-size: .94rem; }
+.oc-caminho span { grid-column: 1 / -1; font-size: .77rem; color: var(--tinta-suave); line-height: 1.35; }
+.oc-caminho em { font-style: normal; font-size: .6rem; letter-spacing: .08em; text-transform: uppercase; color: var(--carta); background: var(--ouro); border-radius: 999px; padding: 2px 8px; font-weight: 700; }
+.oc-caminho.rec { border-color: var(--ouro); box-shadow: inset 0 0 0 1px var(--ouro); }
+.oc-caminho.armado { background: var(--pre-fundo); }
+.oc-caminho .confirma { grid-column: 1 / -1; font-size: .72rem; color: var(--ouro); font-weight: 700; }
+/* segurar para confirmar (irreversível) */
+.oc-segurar { position: relative; overflow: hidden; }
+.oc-segurar .enchendo { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: color-mix(in srgb, var(--nao) 25%, transparent); pointer-events: none; }
+.oc-segurar.segurando .enchendo { width: 100%; transition: width 1.2s linear; }
+/* campo livre e texto a aprovar */
+.oc-campo { display: flex; flex-direction: column; gap: 6px; }
+.oc-campo label { font-size: .74rem; color: var(--tinta-suave); }
+.oc-campo textarea { width: 100%; min-height: 70px; border-radius: 10px; border: 1.5px solid var(--carta-borda); background: var(--pre-fundo); color: var(--tinta); font: .88rem/1.4 var(--sem-serifa); padding: 9px; resize: vertical; }
+.oc-campo textarea:focus { outline: none; border-color: var(--ouro); }
+.oc-campo .acoes { display: flex; gap: 6px; flex-wrap: wrap; }
+.oc-btn { border: 0; border-radius: 10px; padding: 8px 14px; font-weight: 700; font-size: .84rem; background: var(--tinta); color: var(--carta); }
+.oc-btn.ouro { background: var(--ouro); color: var(--carta); }
+.oc-btn.leve { background: transparent; color: var(--tinta); border: 1.5px solid var(--carta-borda); font-weight: 600; }
+.oc-btn:disabled { opacity: .4; cursor: default; }
+.oc-msg { border: 1px solid var(--carta-borda); border-radius: 4px 14px 14px 14px; background: var(--pre-fundo); padding: 8px 11px; font-size: .86rem; line-height: 1.42; }
+.oc-msg-dest { font-size: .7rem; color: var(--tinta-suave); margin-bottom: 4px; letter-spacing: .02em; }
+.oc-msg-dest b { color: var(--tinta); }
+/* itens em lote */
+.oc-itens { display: grid; gap: 6px; }
+.oc-item { border: 1px solid var(--carta-borda); border-radius: 10px; padding: 7px 9px; background: var(--carta); display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: start; }
+.oc-item .t { font-weight: 700; font-size: .82rem; }
+.oc-item .r { grid-column: 1 / -1; font-size: .74rem; color: var(--tinta-suave); line-height: 1.35; }
+.oc-item .r b { color: var(--ouro); font-weight: 600; }
+.oc-item .alt { grid-column: 1 / -1; font-size: .7rem; color: var(--tinta-suave); opacity: .85; }
+.oc-item .alterna { display: flex; gap: 2px; border: 1px solid var(--carta-borda); border-radius: 999px; padding: 2px; }
+.oc-item .alterna button { border: 0; background: transparent; border-radius: 999px; padding: 2px 8px; font-size: .66rem; font-weight: 700; color: var(--tinta-suave); }
+.oc-item .alterna button[aria-pressed='true'] { background: var(--sim); color: #fff; }
+.oc-item .alterna button.troca[aria-pressed='true'] { background: var(--aviso); color: #2a2118; }
+.oc-item .nota { grid-column: 1 / -1; display: none; }
+.oc-item.trocando .nota { display: block; }
+.oc-item .nota input { width: 100%; border-radius: 8px; border: 1px solid var(--carta-borda); background: var(--pre-fundo); color: var(--tinta); padding: 5px 8px; font-size: .78rem; }
+.oc-num { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 3px; }
+.oc-num label { display: flex; align-items: center; gap: 4px; font-size: .72rem; color: var(--tinta-suave); border: 1px solid var(--carta-borda); border-radius: 999px; padding: 2px 4px 2px 9px; }
+.oc-num button { width: 20px; height: 20px; border-radius: 50%; border: 0; background: var(--pre-fundo); font-weight: 800; line-height: 1; padding: 0; }
+.oc-num output { min-width: 14px; text-align: center; font-weight: 800; color: var(--tinta); }
+
+/* Risco */
+.oc-risco { display: flex; gap: 8px; align-items: flex-start; margin-top: 9px; font-size: .76rem; color: var(--tinta-suave); line-height: 1.35; }
+.oc-risco i { flex: none; font-style: normal; font-size: .6rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; border: 1.5px solid currentColor; border-radius: 999px; padding: 1px 6px; transform: rotate(-4deg); }
+.oc-risco.alto i { color: var(--nao); } .oc-risco.baixo i { color: var(--sim); }
+
+/* Saídas de sempre */
+.oc-saidas { flex: none; display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; justify-content: space-between; padding: 6px 12px 9px; border-top: 1px solid var(--carta-borda); }
+.oc-saidas .grupo { display: flex; flex-wrap: wrap; gap: 4px; }
+.oc-saidas button { border: 1px solid var(--carta-borda); background: transparent; border-radius: 999px; padding: 3px 9px; font-size: .7rem; color: var(--tinta-suave); }
+.oc-saidas button:hover { color: var(--tinta); border-color: var(--naipe); }
+.oc-saidas .virar { border-color: var(--naipe); color: var(--naipe); }
+.oc-saidas-painel { display: none; padding: 8px 12px; border-top: 1px dashed var(--carta-borda); font-size: .78rem; }
+.oc-saidas-painel.on { display: block; }
+.oc-saidas-painel textarea { width: 100%; min-height: 50px; border-radius: 8px; border: 1px solid var(--carta-borda); background: var(--pre-fundo); color: var(--tinta); padding: 6px 8px; font: .82rem var(--sem-serifa); }
+.oc-saidas-painel .chips { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 4px; }
+.oc-saidas-painel .chips button { border: 1px solid var(--carta-borda); background: var(--carta); border-radius: 999px; padding: 3px 9px; font-size: .74rem; }
+.oc-esperando { margin-top: 8px; font-size: .76rem; border-left: 3px solid var(--aviso); padding: 5px 9px; background: var(--pre-fundo); border-radius: 6px; }
+
+/* Verso */
+.oc-verso-corpo { flex: 1; min-height: 0; overflow: auto; padding: 4px 16px 10px; font-size: .84rem; line-height: 1.45; }
+.oc-verso-corpo h4 { margin: 12px 0 3px; font-family: var(--serifa); font-size: .7rem; letter-spacing: .16em; text-transform: uppercase; color: var(--naipe); }
+.oc-verso-corpo p { margin: 0; }
+.oc-verso-corpo blockquote { margin: 0; padding: 4px 0 4px 10px; border-left: 3px solid var(--naipe); font-family: var(--serifa); font-style: italic; }
+.oc-verso-corpo dl { margin: 0; } .oc-verso-corpo dt { font-weight: 700; margin-top: 6px; } .oc-verso-corpo dd { margin: 0; color: var(--tinta-suave); }
+.oc-verso-corpo details { margin-top: 10px; border-top: 1px solid var(--carta-borda); padding-top: 6px; }
+.oc-verso-corpo details summary { font-size: .74rem; color: var(--tinta-suave); }
+.oc-verso-corpo .tec { font-family: var(--mono); font-size: .7rem; background: var(--pre-fundo); border: 1px solid var(--carta-borda); border-radius: 6px; padding: 8px; white-space: pre-wrap; color: var(--tinta); margin-top: 6px; }
+
+/* Carta em miniatura (o dorso e a carta fechada na mesa) */
+.oc-mini { position: relative; border-radius: 12px; background: var(--carta); border: 2px solid var(--naipe); color: var(--tinta); padding: 9px 10px; text-align: left; box-shadow: var(--sombra); display: flex; flex-direction: column; gap: 3px; width: 100%; }
+.oc-mini .topo { display: flex; align-items: center; gap: 6px; color: var(--naipe); }
+.oc-mini .topo .glifo { width: 16px; height: 16px; }
+.oc-mini .topo .glifo svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.oc-mini .topo small { font-size: .58rem; letter-spacing: .14em; text-transform: uppercase; }
+.oc-mini .topo .urg { margin-left: auto; color: var(--nao); font-size: .58rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.oc-mini b { font-family: var(--serifa); font-size: .86rem; line-height: 1.2; }
+.oc-mini .dest { font-size: .68rem; color: var(--tinta-suave); line-height: 1.25; }
+.oc-mini .dest em { color: var(--sim); font-style: normal; font-weight: 700; }
+.oc-dorso { border-radius: 12px; border: 2px solid var(--ouro); background: var(--carta); box-shadow: var(--sombra); display: grid; place-items: center; color: var(--ouro); }
+.oc-dorso svg { width: 46%; max-width: 70px; fill: none; stroke: currentColor; stroke-width: 1.2; opacity: .7; }
+
+/* Carta saindo da mesa */
+.oc-sai-direita { animation: oc-sai-d .45s ease forwards; }
+.oc-sai-esquerda { animation: oc-sai-e .45s ease forwards; }
+.oc-sai-cima { animation: oc-sai-c .45s ease forwards; }
+@keyframes oc-sai-d { to { transform: translateX(120%) rotate(12deg); opacity: 0; } }
+@keyframes oc-sai-e { to { transform: translateX(-120%) rotate(-12deg); opacity: 0; } }
+@keyframes oc-sai-c { to { transform: translateY(-110%) scale(.9); opacity: 0; } }
+
+/* Mesa vazia */
+.oc-vazia { height: 100%; display: grid; place-items: center; text-align: center; padding: 24px; color: var(--tinta-suave); }
+.oc-vazia b { display: block; font-family: var(--serifa); font-size: 1.3rem; color: var(--tinta); margin: 10px 0 4px; }
+.oc-vazia .oc-dorso { width: 120px; height: 170px; margin: 0 auto; }
+
+/* Celular de verdade (tela estreita): a moldura some e a vista ocupa a tela inteira */
+body.no-celular .casca-palco { padding: 0; gap: 0; }
+body.no-celular .casca-rotulo, body.no-celular .casca-sobre { display: none; }
+body.no-celular .cel { width: 100vw; height: calc(100dvh - 44px); border-radius: 0; padding: 0; box-shadow: none; }
+body.no-celular .cel-tela { border-radius: 0; }
+body.no-celular .cel-status { display: none; }
+body.no-celular .casca-barra { padding: 6px 10px; gap: 6px; }
+body.no-celular .casca-barra h1, body.no-celular .casca-barra [data-grupo-tela] { display: none; }

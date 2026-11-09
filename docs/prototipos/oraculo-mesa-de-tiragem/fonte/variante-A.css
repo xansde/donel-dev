@@ -1,0 +1,147 @@
+/* ===================================================================================================
+   Variante A — Tiragem em três casas
+   =================================================================================================== */
+.vA-mesa { position: absolute; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr) 250px; grid-template-rows: auto minmax(0, 1fr) auto; gap: 12px 18px; padding: 14px 18px 12px; }
+
+/* ---- faixa das três casas ---- */
+.vA-faixa { grid-column: 1; grid-row: 1; display: grid; grid-template-columns: 128px repeat(3, minmax(0, 1fr)); gap: 10px; }
+.vA-lead { display: flex; flex-direction: column; justify-content: center; gap: 2px; padding-right: 4px; }
+.vA-titulo { font-family: var(--serifa); font-size: .7rem; letter-spacing: .22em; text-transform: uppercase; color: var(--ouro); }
+.vA-conta { font-family: var(--serifa); font-size: .95rem; line-height: 1.2; color: var(--tinta); }
+.vA-conta b { display: block; font-size: 1.9rem; line-height: 1; font-weight: 600; }
+.vA-sub { font-size: .7rem; color: var(--tinta-suave); }
+
+.vA-casa { position: relative; display: grid; grid-template-columns: 56px minmax(0, 1fr); grid-template-rows: auto 1fr auto; grid-template-areas: 'pilha nome' 'pilha topo' 'pilha estado'; gap: 2px 12px; align-items: start; text-align: left; padding: 10px 12px 9px 10px; border: 1px solid var(--carta-borda); border-radius: 14px; background: color-mix(in srgb, var(--carta) 55%, transparent); color: var(--tinta); transition: transform .15s ease, border-color .15s ease, background .15s ease; min-width: 0; }
+.vA-casa:not(:disabled):hover { transform: translateY(-2px); border-color: var(--ouro); background: color-mix(in srgb, var(--carta) 85%, transparent); }
+.vA-casa:disabled { cursor: default; }
+.vA-casa.vA-ativa { border-color: var(--ouro); box-shadow: inset 0 0 0 1px var(--ouro); }
+.vA-casa.vA-vazia { border-style: dashed; background: transparent; }
+.vA-casa-nome { grid-area: nome; font-family: var(--serifa); font-size: .68rem; letter-spacing: .18em; text-transform: uppercase; font-weight: 700; }
+.vA-casa-trava .vA-casa-nome { color: var(--nao); }
+.vA-casa-hoje .vA-casa-nome { color: var(--ouro); }
+.vA-casa-espera .vA-casa-nome { color: var(--tinta-suave); }
+.vA-casa-dest .vA-casa-nome { color: var(--sim); }
+.vA-casa-topo { grid-area: topo; display: flex; gap: 6px; align-items: flex-start; min-width: 0; }
+.vA-glifo { flex: none; width: 15px; height: 15px; color: var(--naipe); display: inline-block; }
+.vA-glifo svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.vA-casa-perg { font-family: var(--serifa); font-size: .8rem; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.vA-casa-estado { grid-area: estado; font-size: .66rem; color: var(--tinta-suave); }
+.vA-casa.vA-ativa .vA-casa-estado { color: var(--ouro); }
+
+/* pilha de dorsos */
+.vA-pilha { grid-area: pilha; position: relative; width: 50px; height: 72px; margin-top: 2px; }
+.vA-pilha.vazia { border: 1.5px dashed var(--carta-borda); border-radius: 8px; }
+.vA-dorso { position: absolute; inset: 0; border-radius: 8px; border: 1.5px solid var(--ouro); background: var(--carta); display: grid; place-items: center; color: var(--ouro); box-shadow: 0 2px 5px rgba(0, 0, 0, .35); transform: translate(calc(var(--k) * 3px), calc(var(--k) * -3px)); }
+.vA-dorso svg { width: 62%; fill: none; stroke: currentColor; stroke-width: 1.4; opacity: .7; }
+.vA-n { position: absolute; right: -8px; bottom: -6px; z-index: 2; min-width: 22px; height: 22px; padding: 0 5px; border-radius: 999px; background: var(--ouro); color: var(--carta); font-size: .74rem; font-weight: 800; display: grid; place-items: center; box-shadow: 0 1px 3px rgba(0, 0, 0, .4); }
+.vA-casa-dest { display: none; }
+.vA-pilha-dest { border: 1.5px solid var(--sim); border-radius: 8px; display: grid; place-items: center; color: var(--sim); background: color-mix(in srgb, var(--sim) 12%, transparent); }
+.vA-pilha-dest i { font-style: normal; font-weight: 800; }
+.vA-pilha-dest .vA-n { background: var(--sim); }
+
+/* ---- centro: a carta da vez ---- */
+.vA-centro { grid-column: 1; grid-row: 2; position: relative; min-height: 0; display: flex; justify-content: center; }
+.vA-carta { position: relative; z-index: 5; height: 100%; width: min(720px, 100%); touch-action: pan-y; cursor: grab; }
+.vA-carta .oc-rolagem, .vA-carta .oc-verso-corpo { touch-action: pan-y; }
+.vA-arrastando .vA-carta { cursor: grabbing; }
+.vA-arrastando, .vA-arrastando * { user-select: none; -webkit-user-select: none; }
+.vA-carta.vA-voando { z-index: 50; pointer-events: none; }
+.vA-carimbo { position: absolute; top: 74px; z-index: 6; pointer-events: none; opacity: 0; font-family: var(--serifa); font-size: 1.5rem; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; padding: 4px 14px; border: 3px solid currentColor; border-radius: 10px; background: color-mix(in srgb, var(--carta) 80%, transparent); }
+.vA-carimbo.sim { left: 26px; color: var(--sim); transform: rotate(-12deg); }
+.vA-carimbo.nao { right: 26px; color: var(--nao); transform: rotate(10deg); }
+.vA-vazia { width: 100%; }
+
+/* ---- pé da mesa ---- */
+.vA-pe { grid-column: 1; grid-row: 3; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 14px; }
+.vA-dica { font-size: .78rem; color: var(--tinta-suave); }
+.vA-dica b { color: var(--sim); }
+.vA-cel { display: none; }
+.vA-teclas { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 10px; font-size: .68rem; color: var(--tinta-suave); }
+.vA-teclas kbd { font: 600 .64rem var(--sem-serifa); border: 1px solid var(--carta-borda); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; margin-right: 2px; color: var(--tinta); }
+.vA-seguir { position: relative; overflow: hidden; display: flex; align-items: center; gap: 12px; max-width: 460px; min-width: 260px; border: 0; border-radius: 999px; padding: 8px 18px 8px 22px; background: var(--ouro); color: var(--carta); text-align: left; box-shadow: var(--sombra); transition: transform .12s ease, filter .12s ease; }
+.vA-seguir:hover { transform: translateY(-1px); filter: brightness(1.06); }
+.vA-seguir-txt { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.vA-seguir small { font-size: .6rem; letter-spacing: .14em; text-transform: uppercase; font-weight: 700; opacity: .8; }
+.vA-seguir b { font-family: var(--serifa); font-size: .98rem; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vA-seta { position: relative; font-size: 1.2rem; font-weight: 800; }
+.vA-enche { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: rgba(0, 0, 0, .22); pointer-events: none; }
+.vA-seguir.vA-falta { background: color-mix(in srgb, var(--ouro) 60%, var(--carta)); }
+.vA-seguir.vA-segurar { background: color-mix(in srgb, var(--nao) 55%, var(--ouro)); }
+.vA-seguir.vA-segurando .vA-enche { width: 100%; transition: width 1.2s linear; }
+.vA-seguir.vA-pulsa { animation: vA-pulsa .5s ease 2; }
+@keyframes vA-pulsa { 50% { transform: scale(1.05); } }
+.vA-pe-fim .vA-seguir, .vA-pe-fim .vA-teclas { visibility: hidden; }
+
+/* ---- casa Destravado ---- */
+.vA-destravado { grid-column: 2; grid-row: 1 / 4; display: flex; flex-direction: column; gap: 10px; min-height: 0; padding: 14px 12px 12px; border: 1.5px dashed color-mix(in srgb, var(--sim) 45%, transparent); border-radius: 16px; background: color-mix(in srgb, var(--carta) 30%, transparent); transition: background .2s ease, border-color .2s ease; }
+.vA-arrastando .vA-destravado { border-color: var(--sim); }
+.vA-destravado.vA-alvo { border-style: solid; background: color-mix(in srgb, var(--sim) 14%, transparent); }
+.vA-dest-cab h3 { margin: 0; display: flex; align-items: center; gap: 8px; font-family: var(--serifa); font-size: 1.05rem; font-weight: 600; color: var(--sim); }
+.vA-dest-cab h3 b { font-family: var(--sem-serifa); font-size: .72rem; min-width: 22px; height: 22px; border-radius: 999px; background: var(--sim); color: var(--carta); display: grid; place-items: center; padding: 0 6px; }
+.vA-dest-cab p { margin: 2px 0 0; font-size: .72rem; color: var(--tinta-suave); }
+.vA-dest-fechar { display: none; }
+.vA-slot { flex: none; min-height: 84px; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1.5px dashed var(--carta-borda); border-radius: 12px; font-size: .74rem; line-height: 1.35; color: var(--tinta-suave); transition: all .2s ease; }
+.vA-slot b { color: var(--tinta); font-weight: 600; }
+.vA-slot-seta { font-size: 1.3rem; color: var(--sim); }
+.vA-arrastando .vA-slot, .vA-alvo .vA-slot { border-color: var(--sim); color: var(--tinta); }
+.vA-alvo .vA-slot { background: color-mix(in srgb, var(--sim) 18%, transparent); transform: scale(1.03); }
+.vA-slot.vA-recebe { background: color-mix(in srgb, var(--sim) 28%, transparent); }
+.vA-slot.vA-slot-fim { display: none; }
+.vA-rastro { list-style: none; margin: 0; padding: 0 2px 4px; flex: 0 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 7px; scrollbar-width: thin; }
+.vA-slip { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 8px 10px; border-radius: 10px; background: var(--carta); border: 1px solid var(--carta-borda); border-left: 3px solid var(--naipe); box-shadow: 0 2px 6px rgba(0, 0, 0, .3); font-family: var(--serifa); font-size: .86rem; line-height: 1.25; transform: rotate(-.6deg); }
+.vA-slip:nth-child(even) { transform: rotate(.5deg); }
+.vA-slip i { font-style: normal; color: var(--sim); font-weight: 800; font-family: var(--sem-serifa); }
+.vA-slip.vA-cai { animation: vA-cai .45s cubic-bezier(.2,.9,.3,1.3); }
+@keyframes vA-cai { from { transform: translateY(-18px) rotate(-4deg) scale(.9); opacity: 0; } }
+.vA-adiadas { flex: none; font-size: .68rem; line-height: 1.4; color: var(--tinta-suave); }
+.vA-adiadas:empty { display: none; }
+.vA-adiadas b { color: var(--tinta); font-weight: 600; }
+.vA-adiadas i { font-style: normal; opacity: .8; }
+
+/* aviso quando o gesto não basta */
+.vA-aviso { position: absolute; left: 50%; bottom: 132px; z-index: 70; transform: translateX(-50%) translateY(10px); opacity: 0; pointer-events: none; transition: all .3s ease; max-width: min(90%, 460px); padding: 9px 14px; border-radius: 12px; border: 1.5px solid var(--aviso); background: var(--carta); color: var(--tinta); font-size: .8rem; line-height: 1.35; box-shadow: var(--sombra); }
+.vA-aviso.on { opacity: 1; transform: translateX(-50%) translateY(0); }
+.vista .vA-mesa ~ .oc-toast { bottom: 76px; width: max-content; }
+/* no PC o aviso de destravado aparece dentro da casa Destravado, onde a carta caiu, sem cobrir a carta da vez */
+@container vista (min-width: 641px) {
+  .vista .vA-mesa ~ .oc-toast { left: auto; right: 30px; bottom: 28px; width: 226px; max-width: 226px; flex-direction: column; gap: 2px; transform: translateY(20px); }
+  .vista .vA-mesa ~ .oc-toast.on { transform: none; }
+}
+
+/* ===================================================================================================
+   Celular: faixa de quatro pilhas pequenas no alto, a carta ocupa o resto
+   =================================================================================================== */
+@container vista (max-width: 640px) {
+  .vA-mesa { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 8px 10px 10px; }
+  .vA-faixa { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+  .vA-lead { display: none; }
+  .vA-casa, .vA-casa-dest { display: grid; grid-template-columns: 24px minmax(0, 1fr); grid-template-rows: auto auto; grid-template-areas: 'pilha topo' 'nome nome'; gap: 4px 6px; align-items: center; padding: 6px 6px 5px; border-radius: 10px; }
+  .vA-casa:not(:disabled):hover { transform: none; }
+  .vA-casa-nome { font-size: .5rem; letter-spacing: .02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .vA-casa-perg, .vA-casa-estado { display: none; }
+  .vA-casa-topo { justify-content: flex-end; padding-right: 2px; }
+  .vA-glifo { width: 16px; height: 16px; }
+  .vA-pilha { width: 22px; height: 30px; margin: 0; }
+  .vA-dorso { border-radius: 4px; border-width: 1px; transform: translate(calc(var(--k) * 2px), calc(var(--k) * -2px)); }
+  .vA-pilha.vazia, .vA-pilha-dest { border-radius: 4px; }
+  .vA-n { min-width: 17px; height: 17px; font-size: .62rem; right: -12px; bottom: -4px; padding: 0 3px; }
+  .vA-casa-dest .vA-casa-topo { display: none; }
+
+  .vA-carta { width: 100%; }
+  .vA-carimbo { top: 64px; font-size: 1.2rem; }
+
+  .vA-pe { grid-template-columns: minmax(0, 1fr); gap: 6px; justify-items: stretch; }
+  .vA-dica { text-align: center; font-size: .7rem; }
+  .vA-pc, .vA-teclas { display: none; }
+  .vA-cel { display: inline; }
+  .vA-dica .vA-cel b { color: var(--tinta); }
+  .vA-seguir { min-width: 0; max-width: none; width: 100%; padding: 7px 16px 7px 18px; }
+  .vA-pe-fim .vA-seguir { display: none; }
+
+  .vA-destravado { display: none; }
+  .vA-rastro-aberto .vA-destravado { display: flex; position: absolute; grid-column: 1 / -1; grid-row: 1 / -1; inset: 58px 0 0; z-index: 40; background: var(--fundo); border-style: solid; box-shadow: var(--sombra); }
+  .vA-rastro-aberto .vA-dest-fechar { display: block; align-self: flex-start; border: 1px solid var(--carta-borda); background: transparent; border-radius: 999px; padding: 4px 12px; font-size: .74rem; color: var(--tinta); }
+  .vA-rastro-aberto .vA-slot { display: none; }
+  .vista .vA-mesa ~ .oc-toast { bottom: 92px; }
+  .vA-aviso { bottom: 150px; }
+}

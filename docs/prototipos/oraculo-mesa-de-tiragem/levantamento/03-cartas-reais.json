@@ -1,0 +1,632 @@
+{
+ "fonte": "Oráculo real, lido em 09/11/2026 por mcp__donel__tarefa_listar {todos:true, situacao:'todas'} (466 tarefas), ~/bin/rotinas/ledger_resumo.py --dias 3650 (eventos) e mcp__donel__tarefa_ver em cada id abaixo, salvo onde marcado. Caminhos de prova são do PC do dono (C:\\Users\\compu\\...), copiados de tarefa_ver.",
+ "regra": "Nada inventado: o que não existe no dado está como \"não há\". Textos entre aspas são literais do Oráculo; o campo contexto é resumo meu do resumo/provas da carta.",
+ "cartas": [
+  {
+   "id": "t-d35cbf67",
+   "tipo_de_decisao": "credencial / risco de segurança com 3 caminhos",
+   "categoria": "A",
+   "situacao": "ABERTA (entregue, esperando o dono)",
+   "quadro": "BizOps",
+   "titulo": "Contas novas: token e login",
+   "pergunta": "O que faço com o token amplo que está na VPS e com a reposição de contas, já que o login pela VPS é barrado?",
+   "contexto": "Você liberou duas chaves para a VPS cadastrar contas Claude sozinha. As chaves estão lá e no cofre, mas nenhuma conta nova entrou: o site barra o login vindo da VPS. E o token do Google que foi para a VPS não é só de leitura: ele envia e-mail e mexe no seu Drive. Até você decidir, nada usa esse token.",
+   "opcoes": [
+    {
+     "rotulo": "Tirar o token, login por pessoa",
+     "efeito": "O token sai da VPS e fica só no cofre. Uma pessoa faz os logins num navegador normal quando precisar repor.",
+     "recomendada": true
+    },
+    {
+     "rotulo": "Trocar por token só de leitura",
+     "efeito": "Você autoriza um token novo que só lê o Gmail e o atual sai da VPS. A rotina segue parada até o site deixar o login passar."
+    },
+    {
+     "rotulo": "Deixar como está",
+     "efeito": "O token amplo fica na VPS sem uso e a rotina parada. A tarefa encerra sem conta nova."
+    }
+   ],
+   "recomendacao": "Tirar o token, login por pessoa",
+   "porque": "Sem login pela VPS, o token lá não serve para nada e só traz risco. Login por pessoa é o caminho que não tenta passar por cima da verificação do site.",
+   "risco": "Não revogue o acesso deste token no Google: é o mesmo do PC, e o Google do PC cairia. Apagar o arquivo da VPS não afeta o PC.",
+   "visual": "Checagens (5): chave do gateway ok, token no cofre ok, token só de leitura NÃO (29 permissões), conta nova NÃO, token parado ok. Sem print nem HTML.",
+   "prova_arquivo": "não há (só 2 provas em texto)",
+   "pedido_literal": "\"Libero as duas\" (dono, na carta \"Contas novas entrando sozinhas\", t-ce521745: \"Libero as duas chaves para a VPS cadastrar contas sozinha?\")",
+   "detalhe_tecnico": "~/.config/claude-proxy/management.key e gmail-token.json (600) na VPS pessoal; tokeninfo: 29 escopos (gmail.send, gmail.modify, drive, spreadsheets, documents, calendar, script); registro.jsonl com 5 falhas 'tela Authorize não apareceu' (08/11 14:35Z–15:12Z); ~/.donel/contas/login-habilitado ausente; handoffs/2026-11-08-chaves-rotina-contas.md.",
+   "esperando_desde": "2026-11-09T03:56Z (entrega); tarefa criada 2026-11-09T02:21Z",
+   "o_que_destrava": "A reposição de contas do pool (o critério pedia ao menos uma conta nova; o pool tinha 16 de 56 contas com cota em 08/11, t-c94293d9) e tira um risco de e-mail/Drive em nome do dono.",
+   "o_que_faltou_na_carta": "não há registro de reação do dono (ainda aberta). Observação: a carta corrige um erro da carta anterior (t-ce521745 dizia que o token só lia o Gmail), sem mostrar lado a lado o que mudou."
+  },
+  {
+   "id": "t-fd44bd79",
+   "tipo_de_decisao": "resposta livre (só o dono sabe o fato)",
+   "categoria": "A",
+   "situacao": "ABERTA (reentregue após rejeição do dono) [corrigido pelo crítico: o estado é \"entregue\", não \"aberta\". Foi reentregue com risco baixo em 09/11 02:21 UTC e só entra na caixa do desktop 24 h depois (entrega-parada), após o prazo \"segunda 10h\"; não entra no celular. Conferido com tarefa_ver e com o recálculo da caixa às 16:12 UTC]",
+   "quadro": "BizOps",
+   "titulo": "1:1s da semana refeitos",
+   "pergunta": "Você disse que o planejamento mudou, mas não achei o quê em nenhuma fonte. A grade continua valendo?",
+   "contexto": "Você recusou a grade de 1:1s dizendo só \"o planejamento mudou\". O time conferiu agenda, recessos, Slack e roadmap e não achou mudança escrita. A primeira conversa da semana (Raiza, segunda 10h) ainda não tem convite.",
+   "opcoes": [
+    {
+     "rotulo": "Dizer o que mudou",
+     "efeito": "Você escreve em uma frase o que mudou e a grade é refeita antes de marcar qualquer coisa.",
+     "recomendada": true
+    },
+    {
+     "rotulo": "Manter a grade",
+     "efeito": "Os 9 horários ficam como estão; os convites são criados."
+    }
+   ],
+   "recomendacao": "Dizer o que mudou",
+   "porque": "A mudança que você citou não está escrita em lugar nenhum que eu alcance. Marcar 9 pessoas sem saber qual é seria chutar.",
+   "risco": "Sem resposta até segunda cedo, a conversa das 10h com a Raiza fica sem convite. O período dos JTs com você acaba na sexta.",
+   "visual": "Print do painel 'A sua semana' (grade de segunda a quinta com as 1:1 e a pauta de cada uma).",
+   "prova_arquivo": "C:\\Users\\compu\\AppData\\Roaming\\donel-dev\\ledger-provas\\2026-11-09-f41bdf372e43.jpg",
+   "pedido_literal": "\"Prepara 1:1s pra mim na semana que vem com meus liderados e com os JTs (Somente os que não estão de recesso.\" (Alexandre, 05/11; carta t-1dd156cf)",
+   "detalhe_tecnico": "Handoff C:\\Users\\compu\\seazone\\BizOps\\handoffs\\2026-11-08-1on1s-semana-09-11-refeitos.md; FreeBusy dos 9 horários; TeamZone (Karina 04-13/11, Vitor 04-10/11); 47 initiatives do roadmap comparadas.",
+   "esperando_desde": "1ª entrega 2026-11-06T01:35Z; rejeitada pelo dono 2026-11-09T02:02Z com \"o planejamento mudou\"; reentregue 2026-11-09T02:21Z",
+   "o_que_destrava": "Os convites das 9 conversas 1:1 da semana 09–13/11 (a primeira era segunda 10h).",
+   "o_que_faltou_na_carta": "O dono respondeu a 1ª carta com 4 palavras (\"o planejamento mudou\") e a carta não tinha onde pedir o detalhe; a 2ª carta precisa de uma resposta livre que as opções não cobrem."
+  },
+  {
+   "id": "t-80da20a7",
+   "tipo_de_decisao": "pedido de acesso (chave nova que só o dono cria)",
+   "categoria": "E (com efeito de A: trava todos os selos)",
+   "situacao": "NÃO VIROU CARTA: está como andamento 'precisa-do-dono' (vai ao Líder, não ao Esperando você)",
+   "quadro": "Homologação",
+   "titulo": "Religar o fluxo na VPS e chegar a apps com selo",
+   "pergunta": "não há (a sessão não fez carta; o pedido está só no andamento)",
+   "contexto": "A chave do AI Hub que o avaliador da homologação usa foi bloqueada em 07/11. Sem ela nenhuma rodada é julgada e nenhum selo sai. A plataforma não respondeu ao chamado, e chave nova só você cria.",
+   "opcoes": "não há",
+   "recomendacao": "não há",
+   "porque": "não há",
+   "risco": "não há campo de risco; o andamento diz: \"nenhuma rodada julga, nenhum selo sai\"",
+   "visual": "não há",
+   "prova_arquivo": "não há",
+   "pedido_literal": "\"E, em paralelo, na VPS de homologação, o fluxo de homologação. Quero ver apps com o selo\"",
+   "detalhe_tecnico": "Andamento 2026-11-09T03:18Z: \"Chave do AI Hub do avaliador bloqueada (401) desde 07/11 [...] Plataforma não respondeu o chamado. Chave nova só o dono cria. prova: rodada do copiloto-pos-reserva 09/11 03:13 UTC pausou em avaliar (Key is blocked); chamado 1140d1c2 em submitted\". Ver também t-54d85cbd (\"Chamado crítico: chave do AI Hub na homologação\", cancelada após o dono comentar \"Faça você. PAra de delegar pra mim safado\").",
+   "esperando_desde": "2026-11-09T03:18Z (andamento precisa-do-dono)",
+   "o_que_destrava": "Todas as rodadas de homologação e a emissão de selos (critério: 2 apps com selo novo).",
+   "o_que_faltou_na_carta": "A carta não existe: o critério do Esperando você (src/shared/ledger/inbox.ts:106-128) não olha andamento 'precisa-do-dono'. O pedido de acesso mais bloqueante do dia não chega à mesa."
+  },
+  {
+   "id": "t-32b82559",
+   "tipo_de_decisao": "escolha entre protótipos (2 conjuntos x 3 variantes)",
+   "categoria": "A",
+   "situacao": "decidida (aceita: \"Planta + Seções\")",
+   "quadro": "Donel Dev",
+   "titulo": "Cadeiras no quadro e tela de cadeira",
+   "pergunta": "Qual forma você quer para o quadro de cadeiras e para a tela que define uma cadeira?",
+   "contexto": "Três jeitos de mostrar cadeiras no quadro e três jeitos da tela que define uma cadeira, feitos com os dados reais do quadro Donel Dev (58 cartões de sessão viram 5 cadeiras em 3 pods).",
+   "opcoes": [
+    {
+     "rotulo": "Planta + Seções",
+     "efeito": "Quadro como planta: cadeiras dentro dos pods, seu desenho livre por cima. Tela de cadeira em seções, cada linha dizendo de onde vem.",
+     "recomendada": true
+    },
+    {
+     "rotulo": "Cockpit + Orçamento",
+     "efeito": "Quadro como painel com cadeiras contadas por estado; tela de cadeira começando pelo custo."
+    },
+    {
+     "rotulo": "Trilhas + Cascata",
+     "efeito": "Cada pod vira uma faixa; tela de cadeira como tabela, uma coluna por nível."
+    },
+    {
+     "rotulo": "Refazer",
+     "efeito": "Nenhuma serve; escreva o que juntar ou mudar."
+    }
+   ],
+   "recomendacao": "Planta + Seções (A1 com a faixa de números da A3; B1 com custo e travas da B3)",
+   "porque": "É a única que mantém seu quadro livre para desenhar e responde às três falas de uma vez.",
+   "risco": "Muda a forma do que você vê e usa todo dia. Os custos mostrados são estimativa, e os 3 pods são proposta.",
+   "visual": "Índice com 6 miniaturas (A1/A2/A3 e B1/B2/B3), cada uma com 3 bullets e botão Abrir; recomendação em faixa amarela por conjunto.",
+   "prova_arquivo": "C:\\Users\\compu\\AppData\\Roaming\\donel-dev\\ledger-provas\\2026-11-06-1fdac5fd8fcb.html (índice) + prints 2026-11-06-ce4dc22bfdcf.png, 2026-11-06-243b4f83b4aa.png, 2026-11-06-c056cd14a6c6.png; variantes em C:\\Users\\compu\\Donel Dev Alfa - diario\\prototipos-cadeiras\\",
+   "pedido_literal": "\"O nosso mindscape está orientado a sessões, que são os agentes sentados nas cadeiras. [...] precisa mostrar as cadeiras, não os agentes.\" / \"Quero descrições em texto.\" / \"Temos que organizar melhor a tela de definição de cadeiras [...]\" (dono, 05/11)",
+   "detalhe_tecnico": "mindscape.json lido 05/11 22:20 (58 cartões: dev 40, revisor 10, pesquisa 6, líder 2); 18 MCPs, 12 plugins, 5 hooks, 26 skills; decisao.md.",
+   "esperando_desde": "entregue 2026-11-06T02:04Z; decidida 2026-11-06T15:45Z (13,7 h)",
+   "o_que_destrava": "O plano de construção das telas de cadeiras (seguiu na t-678f3cb3).",
+   "o_que_faltou_na_carta": "A escolha real do dono foi uma MISTURA que nenhuma opção permitia: \"Prefiro a facilidade de leitura da A3, com o layout da A1 / B1: Coluna lateral de custo deve ser colapsavel\" (pedido da t-678f3cb3). O registro da decisão ficou só \"Planta + Seções\".",
+   "correcao_critico": "[corrigido pelo crítico] O visual da frente (prova 1) é um png-índice que já mostra as 6 variantes lado a lado, com as recomendadas marcadas. O html anexado é só o índice; as 6 páginas das variantes ficaram numa pasta do PC, fora da carta (tarefa_ver t-32b82559)."
+  },
+  {
+   "id": "t-678f3cb3",
+   "tipo_de_decisao": "aprovar protótipo final (\"É assim que você quer?\")",
+   "categoria": "A",
+   "situacao": "rejeitada pelo dono (\"Ajustar\"), depois cancelada pelo Líder e substituída pela t-d3256680 (hoje órfã)",
+   "quadro": "Donel Dev",
+   "titulo": "Cadeiras: a versão final",
+   "pergunta": "É assim que você quer?",
+   "contexto": "O quadro segue a planta da A1 com seu desenho livre por cima e ganhou a leitura da A3 (contagem por estado no topo, nome grande, onde cada cadeira parou). A tela de cadeira é a B1, com o custo recolhível.",
+   "opcoes": [
+    {
+     "rotulo": "Sim, pode planejar a construção",
+     "efeito": "Escrevo o plano de construção das duas telas, sem código ainda.",
+     "recomendada": true
+    },
+    {
+     "rotulo": "Ajustar",
+     "efeito": "Escreva na carta o que mudar e eu refaço o protótipo antes de planejar."
+    }
+   ],
+   "recomendacao": "Sim, pode planejar a construção",
+   "porque": "Segue as suas duas frases ao pé da letra.",
+   "risco": "Muda o quadro que você usa todo dia; saúde das cadeiras e custos ainda são estimativa.",
+   "visual": "Print 1920x1080 do Mindscape de cadeiras (rig, 3 pods, 5 cadeiras, post-its) e versão de celular 390x844.",
+   "prova_arquivo": "C:\\Users\\compu\\AppData\\Roaming\\donel-dev\\ledger-provas\\2026-11-06-4505c7885862.html + 2026-11-06-d8d1cf29d3e1.png, 2026-11-06-a6be95395edb.png, 2026-11-06-99c41de13d51.png, 2026-11-06-bd445f7aca01.png",
+   "pedido_literal": "\"A: Mindscape de cadeiras — Prefiro a facilidade de leitura da A3, com o layout da A1 / B: Definição de cadeiras — B1: Coluna lateral de custo deve ser colapsavel. Mas é disparado o melhor\"",
+   "detalhe_tecnico": "final-mindscape.html e final-cadeira.html em C:\\Users\\compu\\Donel Dev Alfa - diario\\prototipos-cadeiras\\; prints com Playwright + Edge.",
+   "esperando_desde": "entregue 2026-11-06T15:50Z; dono rejeitou 2026-11-06T16:48Z",
+   "o_que_destrava": "O plano de construção das telas de cadeiras.",
+   "o_que_faltou_na_carta": "O dono escreveu só \"Não tá como eu havia esperado\" e escolheu \"Ajustar\". A carta não tinha como apontar ONDE no protótipo (marcar região, comparar com a A3/A1 originais lado a lado)."
+  },
+  {
+   "id": "t-d37471a5",
+   "tipo_de_decisao": "escolha entre 3 telas + aceitar 5 recomendações em lote",
+   "categoria": "A",
+   "situacao": "decidida (aceita: \"Uma lista só dos seus pedidos\")",
+   "quadro": "Donel Dev",
+   "titulo": "Fila por quadro e Seus pedidos",
+   "pergunta": "Qual destas três telas vira o seu Progresso, com a fila de cada quadro, e posso seguir as recomendações das cinco decisões?",
+   "contexto": "Hoje há 406 tarefas: 56 vivas, 74 órfãs e 58 pedidos repetidos. Das 18 em execução, 11 já não têm a sessão viva. Três telas montadas com esses dados; o botão da carta no protótipo traz as cinco decisões com recomendação.",
+   "opcoes": [
+    {
+     "rotulo": "Uma lista só dos seus pedidos",
+     "efeito": "Você ordena seus pedidos numa lista; cada quadro puxa o primeiro que é dele.",
+     "recomendada": true
+    },
+    {
+     "rotulo": "Colunas por quadro",
+     "efeito": "Cada quadro vira uma coluna com limite e fila; você reordena dentro de cada um."
+    },
+    {
+     "rotulo": "Faxina e faixas",
+     "efeito": "Aceita a faxina de uma vez e põe cada pedido numa faixa (Agora, Próximas, Depois)."
+    },
+    {
+     "rotulo": "Refazer",
+     "efeito": "Nenhuma serve: diga o que mudar."
+    }
+   ],
+   "recomendacao": "Uma lista só dos seus pedidos",
+   "porque": "A lista única responde ao seu pedido de priorizar no Progresso, e a fila de cada quadro sai dela.",
+   "risco": "Ligar a puxada antes da faxina faria o app puxar sobre órfãs; por isso a faxina vem antes, e nada é apagado.",
+   "visual": "Protótipo navegável com 3 variantes e a carta com as 5 decisões (testado a 1400 px e 390 px).",
+   "prova_arquivo": "C:\\Users\\compu\\AppData\\Roaming\\donel-dev\\ledger-provas\\2026-11-09-c30cc34a1969.html (cópia de docs/prototipos/ledger-bom/index.html, branch docs/pda-ledger-fila, commit 5d5f67d)",
+   "pedido_literal": "\"A tela de \\\"progresso - Seus pedidos\\\" deve ser bem alinhada com o ledger, para eu conseguir priorizar pontualmente ali, inclusive\"",
+   "detalhe_tecnico": "Plano docs/planos/ledger-bom.md (F1-F9); cobre também a t-1a2ca09e.",
+   "esperando_desde": "entregue 2026-11-09T01:40Z; decidida 2026-11-09T02:14Z (0,6 h)",
+   "o_que_destrava": "A construção da fila priorizada (F4 e a tela esperavam esta carta).",
+   "o_que_faltou_na_carta": "As 5 decisões ficaram escondidas atrás de um botão dentro do protótipo; a carta pergunta duas coisas numa resposta só (qual tela E as 5 recomendações)."
+  },
+  {
+   "id": "t-463b08ed",
+   "tipo_de_decisao": "aprovar forma de uma tela nova (protótipo antes de construir)",
+   "categoria": "A",
+   "situacao": "decidida (aceita: \"Construir assim\")",
+   "quadro": "Donel Dev",
+   "titulo": "Carta das tarefas sem dono",
+   "pergunta": "A carta das tarefas sem dono pode ficar assim, no computador e no celular?",
+   "contexto": "Uma carta só no Esperando você, com a lista das tarefas sem dono há mais de um dia e por que cada uma ficou assim. Dois caminhos: passar todas ao Líder ou ver uma a uma.",
+   "opcoes": [
+    {
+     "rotulo": "Construir assim",
+     "efeito": "Construo a carta no app e no celular igual ao protótipo.",
+     "recomendada": true
+    },
+    {
+     "rotulo": "Ajustar antes",
+     "efeito": "Escreva na carta o que mudar; refaço o protótipo."
+    }
+   ],
+   "recomendacao": "Construir assim",
+   "porque": "Segue o desenho das cartas que você já usa, e a lista cabe na frente sem rolar até os botões.",
+   "risco": "Muda o que você vê no Esperando você.",
+   "visual": "Protótipo clicável computador + celular e 2 prints.",
+   "prova_arquivo": "2026-11-07-b914bacc862b.html, 2026-11-07-713601afde9b.png, 2026-11-07-8dd5ce89c7ab.png (nomes da listagem; pasta C:\\Users\\compu\\AppData\\Roaming\\donel-dev\\ledger-provas\\ pelo padrão das outras provas, não aberta com tarefa_ver); PR https://github.com/xansde/donel-dev/pull/274 (docs/prototipos/carta-sem-dono.html)",
+   "pedido_literal": "\"(2) o que sobrar órfão há mais de 24 h vira UMA carta no Esperando você (desktop e celular), \\\"N tarefas sem dono\\\", com a lista e dois caminhos [...]\" (critério da tarefa Faxina noturna do Oráculo, Líder, 06/11)",
+   "detalhe_tecnico": "não há além do PR #274",
+   "esperando_desde": "entregue 2026-11-07T00:21Z; decidida 2026-11-07T00:31Z (0,2 h)",
+   "o_que_destrava": "A construção da carta de órfãs (hoje há 75 órfãs no Oráculo).",
+   "o_que_faltou_na_carta": "não há registro de reclamação. Nota: o pedido veio do Líder, não do dono, e a carta trata órfã como coisa do dono, que este levantamento classifica como ruído (D)."
+  },
+  {
+   "id": "t-0dbcc00d",
+   "tipo_de_decisao": "decisão em lote com tabela de 10 itens (aceitar tudo / item a item / esperar)",
+   "categoria": "A",
+   "situacao": "decidida (aceita: \"Aceitar o recomendado\")",
+   "quadro": "Homologação",
+   "titulo": "Jornada: pronta para o selo provisório",
+   "pergunta": "Aceita o selo provisório da Jornada com as dez recomendações da tabela e o resto como lista aberta?",
+   "contexto": "Entrou no ar a regra que separa fotos e laudos de cada franquia, as funções do servidor só respondem ao endereço do app, e foi fechado um furo grave: uma função do banco deixava ler, sem login, nomes, telefones e endereços. Faltam dez decisões suas, cada uma com recomendação.",
+   "opcoes": [
+    {
+     "rotulo": "Aceitar o recomendado",
+     "efeito": "Valem as dez recomendações; grava o selo provisório e o resto vira lista aberta com responsável.",
+     "recomendada": true
+    },
+    {
+     "rotulo": "Decidir item a item",
+     "efeito": "O selo espera a sua resposta em cada uma das dez decisões."
+    },
+    {
+     "rotulo": "Só depois de fechar tudo",
+     "efeito": "Sem selo agora; primeiro resolvo os desvios."
+    }
+   ],
+   "recomendacao": "Aceitar o recomendado",
+   "porque": "O que expunha dado de pessoas está fechado e provado na produção; o que falta são desvios antigos que não pioram com o selo provisório.",
+   "risco": "O furo existia desde a base de outubro; nos registros que existem ninguém de fora leu. Comunicar sob a lei de dados é decisão sua.",
+   "visual": "Tabela 'Antes e depois' (6 linhas, vermelho→verde) + tabela 'Decisões que faltam ao dono, com a minha recomendação' (10 linhas).",
+   "prova_arquivo": "C:\\Users\\compu\\AppData\\Roaming\\donel-dev\\ledger-provas\\2026-11-06-03c9b89b9310.png e 2026-11-06-b75ee216478f.html; https://github.com/seazone-tech/seazone-vistoria-pro/blob/ca86191/homologacao/resultado.md",
+   "pedido_literal": "\"Sobre homologaçoes, qual o andamento da homologação do Jornada Implantação? — PRECISO DISSO AMANHÃ FEITO\" (dono, 05/11)",
+   "detalhe_tecnico": "Storage produção rjfrztqibfvsszgznfce: 16→21 regras (md5 911f5f46…→171199e4…); CORS 35 funções no teste, 33 na produção; correção C-1 (mcp_query e mais 4 funções executáveis pelo anônimo); PRs #569-#575, #568 aberto.",
+   "esperando_desde": "entregue 2026-11-06T12:40Z; decidida 2026-11-06T12:51Z (0,2 h)",
+   "o_que_destrava": "O selo provisório da Jornada da Implantação (mensagem de selo depois saiu na t-2e971e4a).",
+   "o_que_faltou_na_carta": "Para decidir 'item a item' a carta só oferece um botão que adia tudo; não há como aceitar 9 e mudar 1 na própria tabela."
+  },
+  {
+   "id": "t-04d510ab",
+   "tipo_de_decisao": "lote de 6 decisões heterogêneas (produção, Slack, 2FA, apps)",
+   "categoria": "A",
+   "situacao": "decidida (aceita: \"Aceitar as seis\")",
+   "quadro": "Homologação",
+   "titulo": "Homologação torando: 6 decisões em lote",
+   "pergunta": "A fila voltou a andar. Aceito em bloco as seis recomendações que dependem de você?",
+   "contexto": "O piloto voltou a rodar com 5 apps prontos na fila. Ficam com você: as mesclas na produção, dois avisos no Slack, o código em dois fatores do Envio de Reservas, três apps do Lovable, a Jornada e o Hub de Campanhas.",
+   "opcoes": [
+    {
+     "rotulo": "Aceitar as seis",
+     "efeito": "Mesclo os PRs de segurança depois do aviso, abro as duas cartas de Slack, copio os três apps do Lovable e ponho o Hub de Campanhas na fila. Você guarda o código do autenticador e libera a Jornada.",
+     "recomendada": true
+    },
+    {
+     "rotulo": "Aceitar sem as mesclas",
+     "efeito": "Faço tudo menos as mesclas; os oito PRs ficam com os donos dos apps."
+    },
+    {
+     "rotulo": "Vou responder item a item",
+     "efeito": "Nada muda até você escrever na carta qual item aceita."
+    }
+   ],
+   "recomendacao": "Aceitar as seis",
+   "porque": "Os quatro PRs de segurança fecham login e limite em apps que hoje abrem sem login; o resto só destrava a fila, sem tocar em produção.",
+   "risco": "Gasta a conta compartilhada com o PC: uma rodada por vez.",
+   "visual": "Checagens (piloto rodando, fila pronta, ...). A lista dos 6 itens está numa prova em texto, não na frente da carta.",
+   "prova_arquivo": "não há arquivo (2 provas em texto + https://github.com/seazone-tech/esteira-homologacao/pull/114)",
+   "pedido_literal": "\"Vamos organizar o mindscape de homologação! Quero ele TORANDO\"",
+   "detalhe_tecnico": "PR #114 do esteira-homologacao; o resto nas provas em texto (não abri com tarefa_ver).",
+   "esperando_desde": "entregue 2026-11-06T23:15Z; decidida 2026-11-06T23:18Z (3 min)",
+   "o_que_destrava": "Envio de Reservas, Auditor RM e Hub Suprimentos (parados sem as mesclas).",
+   "o_que_faltou_na_carta": "Seis decisões de naturezas diferentes (mescla em produção, texto de Slack, código 2FA que o dono guarda) num só botão; o item que pede AÇÃO do dono (guardar o código do autenticador) some no meio do efeito."
+  },
+  {
+   "id": "t-40b23043",
+   "tipo_de_decisao": "escolha de regra para itens com dados conflitantes",
+   "categoria": "A",
+   "situacao": "decidida (aceita: \"Seguir o mapa de hubs\")",
+   "quadro": "Homologação",
+   "titulo": "Quatro cards parados na Triagem",
+   "pergunta": "Como sigo com os 4 cards que a Triagem não conseguiu decidir sozinha?",
+   "contexto": "A Triagem andou 20 cards com prova. Nas duas Centrais, o mapa de hubs manda juntar ao hub, mas a de Franquias tinha ordem de recriar (06/11). Nos outros dois, o cadastro parecido no catálogo não abriu.",
+   "opcoes": [
+    {
+     "rotulo": "Seguir o mapa de hubs",
+     "efeito": "As duas Centrais passam ao hub e vão para a reunião de entendimento; os outros dois ficam em Triagem.",
+     "recomendada": true
+    },
+    {
+     "rotulo": "Homologar as Centrais soltas",
+     "efeito": "As duas Centrais seguem como apps próprios e a de Franquias é recriada como mandado em 6/11."
+    },
+    {
+     "rotulo": "Deixar os quatro parados",
+     "efeito": "Nada muda nos quatro cards; o que você escrever vira o ajuste."
+    }
+   ],
+   "recomendacao": "Seguir o mapa de hubs",
+   "porque": "O mapa de hubs é a regra da área e evita dois sistemas para a mesma função.",
+   "risco": "Só muda a coluna e os campos dos cards; nada é desligado nem apagado.",
+   "visual": "Checagens: 20 andaram com prova (ok); 2 esperam você (não); 2 busca inconclusiva (não); fora (ok).",
+   "prova_arquivo": "não há arquivo (1 prova em texto)",
+   "pedido_literal": "\"Bota o Dalton para atualizar os registros do taskdex\"",
+   "detalhe_tecnico": "Cards do SUPHOM; mover-card.js; Central do Hóspede, Central de Franquias, Hub Controladoria, Sistema de indicadores financeiros.",
+   "esperando_desde": "entregue 2026-11-07T20:05Z; decidida 2026-11-07T20:19Z (0,2 h)",
+   "o_que_destrava": "4 cards da Triagem do quadro de homologação.",
+   "o_que_faltou_na_carta": "Os 4 cards têm situações diferentes (2 com conflito de ordem, 2 com busca inconclusiva) mas a resposta é uma só para os quatro."
+  },
+  {
+   "id": "t-db38a77c",
+   "tipo_de_decisao": "escolher uma pessoa (quem decide)",
+   "categoria": "A",
+   "situacao": "decidida (aceita: \"Eu decido\")",
+   "quadro": "Homologação",
+   "titulo": "Quem decide os problemas graves da vistoria",
+   "pergunta": "Quem decide os dois problemas graves do app de vistoria?",
+   "contexto": "Dois problemas graves de acesso no banco do app de vistoria: qualquer pessoa logada cria vistoria em qualquer empresa, e a pessoa troca a própria empresa no perfil e passa a ver outra. Falta alguém dizer: corrigimos assim, de outro jeito, ou é de propósito.",
+   "opcoes": [
+    {
+     "rotulo": "Eu decido",
+     "efeito": "A mensagem sai endereçada a você no canal de homologação do app. Antes, você convida o robô Dalton para o canal privado.",
+     "recomendada": true
+    },
+    {
+     "rotulo": "Outra pessoa",
+     "efeito": "Você escreve o nome na carta, e a mensagem sai endereçada a essa pessoa."
+    },
+    {
+     "rotulo": "Segurar por agora",
+     "efeito": "Nada sai no Slack. Os dois problemas seguem abertos no banco de produção."
+    }
+   ],
+   "recomendacao": "Eu decido",
+   "porque": "Você é o solicitante no card do app, e a pergunta sobre quem é o dono do produto está aberta desde 14/10.",
+   "risco": "O robô Dalton não está no canal privado da Jornada; o convite do robô fica com você. Enquanto ninguém decide, os dois problemas seguem abertos.",
+   "visual": "Checagens: problema 1 (não), problema 2 (não), robô no canal (não), dado real não usado (ok).",
+   "prova_arquivo": "não há arquivo (3 provas em texto)",
+   "pedido_literal": "\"Quem decide os dois problemas graves do app de vistoria?\"",
+   "detalhe_tecnico": "29 achados (regras franchise_rw_own_copy e 'Users can update own profile'); canal C0C9PB7BZEZ (channel_not_found); card cmv854nrg02mr01pr1d4xgctn; 181 combinações provadas certas.",
+   "esperando_desde": "entregue 2026-11-07T20:30Z; decidida 2026-11-07T22:14Z (1,7 h)",
+   "o_que_destrava": "A correção dos dois furos no banco de produção do app de vistoria.",
+   "o_que_faltou_na_carta": "A opção 'Outra pessoa' pede um nome escrito, sem lista de pessoas; e a ação física do dono (convidar o robô no canal) está escondida no efeito. Depois o dono comentou em t-b9232976: \"Dalton que se vire pra fazer.\""
+  },
+  {
+   "id": "t-356b8b45",
+   "tipo_de_decisao": "questionário com várias perguntas abertas (respondido em texto livre)",
+   "categoria": "A",
+   "situacao": "decidida (aceita: \"Aceitar\") depois de o dono responder em texto",
+   "quadro": "Homologação",
+   "titulo": "Acessos da factory: pedido aberto",
+   "pergunta": "Suas respostas viraram um pedido único à plataforma, já aberto. Aceito o mapa como está?",
+   "contexto": "A factory de homologação vai ter acessos próprios, independentes dos seus. A 1ª carta trazia as perguntas; você respondeu em texto; a 2ª carta mostra o pedido único à plataforma, já aberto com as suas 7 respostas.",
+   "opcoes": [
+    {
+     "rotulo": "Aceitar",
+     "efeito": "O mapa fica valendo e eu acompanho o pedido até a plataforma responder.",
+     "recomendada": true
+    },
+    {
+     "rotulo": "Ajustar",
+     "efeito": "Você diz o que mudar e eu corrijo o mapa e comento no pedido."
+    }
+   ],
+   "recomendacao": "Aceitar",
+   "porque": "Segue as suas 7 respostas ao pé da letra.",
+   "risco": "O pedido saiu em seu nome, porque a factory ainda não tem chave própria na plataforma.",
+   "visual": "Checagens (7): pedido à plataforma, conta Google (não), robô do Slack, contas de modelo (não), selo e suíte oculta, sem gargalo, VPS fora da sua rede.",
+   "prova_arquivo": "C:\\Users\\compu\\AppData\\Roaming\\donel-dev\\ledger-provas\\2026-11-07-84e4c56d451e.html; chamado https://suporte-plataforma.seazone.dev/ticket/070680f9-3bce-4f0a-8e1f-96ae90a7d820",
+   "pedido_literal": "\"Estou curtindo o que estou vendo. Mas agora, quero que veja TODAS as propostas e todas as homologações passadas. Quero saber quais todos acessos serão necessários para gerar para a factory de homologação. A factory de homologação terá acessos próprios independentes dos meus\"",
+   "detalhe_tecnico": "/root/pesquisas-rigs-homologacao/50-acessos-da-factory.md e .html; 26 itens no chamado; KMS da AWS para selo e suíte oculta.",
+   "esperando_desde": "1ª entrega 2026-11-07T16:18Z; resposta do dono em texto 16:30Z; 2ª entrega 16:37Z; aceita 17:52Z",
+   "o_que_destrava": "O chamado único à plataforma com os 26 acessos da factory.",
+   "o_que_faltou_na_carta": "O dono respondeu 7 perguntas num bloco só de comentário (\"Conta google: Utilizará um grupo de e-mail [...] Guardião da suíte oculta? WTF [...] cuidado para não burocratizar\"): a carta não tinha um campo por pergunta, e uma pergunta ele nem entendeu (\"WTF\")."
+  },
+  {
+   "id": "t-632788d1",
+   "tipo_de_decisao": "comparação de 3 caminhos com custo (credencial nova x dinheiro x nada)",
+   "categoria": "A",
+   "situacao": "decidida (aceita: \"Liberar pelo Theo\")",
+   "quadro": "BizOps",
+   "titulo": "Ler o Slack pelo Theo para ter 1 min das 8h às 20h",
+   "pergunta": "Libero uma chave de leitura do seu Slack pelo app do Theo, para ver as menções em 1 minuto das 8h às 20h, sem gastar a Composio?",
+   "contexto": "Hoje a escuta de menções lê pela Composio e, para não estourar o limite, só olha a cada minuto das 9h às 18h. Pelo app do Theo não há limite nem custo, mas é uma chave nova que lê tudo o que você vê no Slack.",
+   "opcoes": [
+    {
+     "rotulo": "Liberar pelo Theo",
+     "efeito": "Você autoriza uma vez no navegador do PC (uns 2 minutos); a escuta olha a cada minuto das 8h às 20h.",
+     "recomendada": true
+    },
+    {
+     "rotulo": "Ficar como está",
+     "efeito": "Segue pela Composio: a cada minuto das 9h às 18h em dia útil e a cada hora no resto."
+    },
+    {
+     "rotulo": "Pagar a Composio",
+     "efeito": "Plano pago de 29 dólares por mês mais o uso; a escuta olha a cada minuto o tempo todo."
+    }
+   ],
+   "recomendacao": "Liberar pelo Theo",
+   "porque": "Cumpre o pedido sem custo e ainda destrava a leitura das conversas, que hoje é lenta pela Composio.",
+   "risco": "A chave nova dá leitura do Slack inteiro em seu nome. Fica guardada só na VPS e só lê.",
+   "visual": "Checagens: custo zero (ok), chave nova (não: você autoriza), sua regra de ler só pela Composio (não: muda).",
+   "prova_arquivo": "não há arquivo (1 prova em texto)",
+   "pedido_literal": "\"Antes de levar dinheiro ao dono, esgote o caminho sem custo, que ele mesmo apontou (\\\"vc tem todos os bots\\\") [...]\" (Líder)",
+   "detalhe_tecnico": "Token de usuário xoxp com search:read; search.messages Tier 2 (~20/min); pior mês da Composio 14.957 de 15.000; choque com a regra do ~/.claude/CLAUDE.md \"Slack: em nome do Alexandre, só Composio\".",
+   "esperando_desde": "entregue 2026-11-07T22:59Z; decidida 2026-11-07T23:23Z (0,4 h)",
+   "o_que_destrava": "Leitura de menções em 1 min das 8h às 20h.",
+   "o_que_faltou_na_carta": "A decisão pede uma AÇÃO física depois (autorizar no navegador do PC) que a carta só cita no efeito; a comparação de custo e cobertura dos 3 caminhos está em prosa, não em tabela."
+  },
+  {
+   "id": "t-c94293d9",
+   "tipo_de_decisao": "manter ou podar, com números medidos",
+   "categoria": "A",
+   "situacao": "decidida (aceita: \"Ficar só com o que gerou ação\")",
+   "quadro": "BizOps",
+   "titulo": "Fábrica de casos: manter ou podar",
+   "pergunta": "A fábrica de casos sobe a contagem do coletor, mas ainda não gerou nenhuma ação. Mantenho tudo ou fico só com o que gerou ação?",
+   "contexto": "Na primeira hora a fábrica rodou 14 casos e gastou uns 2,8 milhões de tokens, cerca de 120 mil por caso. No ritmo ligado seriam 30 a 40 milhões por dia. O pool tem 16 de 56 contas com cota, e nenhum resumo virou ação ainda.",
+   "opcoes": [
+    {
+     "rotulo": "Ficar só com o que gerou ação",
+     "efeito": "Fica só a conferência diária de crons e serviços, que achou problema real. O resto para.",
+     "recomendada": true
+    },
+    {
+     "rotulo": "Manter",
+     "efeito": "As 12 rotinas seguem, com 150 a 200 casos por dia, e a contagem passa de 400 até sexta."
+    }
+   ],
+   "recomendacao": "Ficar só com o que gerou ação",
+   "porque": "O coletor conta cada roteiro com conteúdo diferente; o número sobe com o tamanho da lista, não com o valor.",
+   "risco": "Alto para o pool: a fábrica usa as mesmas contas da homologação.",
+   "visual": "Checagens (5): trava de cota, volume parado, ação de verdade (não), pool (não), efeito colateral (não).",
+   "prova_arquivo": "não há arquivo (4 provas em texto)",
+   "pedido_literal": "\"A 'fábrica de casos' precisa de carta ao dono hoje, antes de seguir crescendo. [...] A meta do dono é 400 workflows REAIS, e isso pode estar só enchendo o número.\" (Líder único, 08/11)",
+   "detalhe_tecnico": "~/seazone/_scratch/fp2/tokens_fabrica.py; VPS pessoal 755.469 tokens em 7 workflows; Homologações 925.168 em 7; PR #338 aberto por engano; ALERTA-POUCA-COTA.txt.",
+   "esperando_desde": "entregue 2026-11-08T15:53Z; decidida 2026-11-08T16:31Z (0,6 h)",
+   "o_que_destrava": "O consumo de cota do pool compartilhado com a homologação.",
+   "o_que_faltou_na_carta": "Números de custo x valor estão em prosa; um gráfico simples (tokens por dia x ações geradas, contagem até 400) caberia na frente."
+  },
+  {
+   "id": "t-efc96bcc",
+   "tipo_de_decisao": "texto exato a aprovar (mensagem sensível em nome do dono)",
+   "categoria": "A",
+   "situacao": "decidida (aceita: \"Enviar\"; envio confirmado pelo Slack)",
+   "quadro": "Homologação",
+   "titulo": "Mensagem no Slack para canal da homologação do Hub Suprimen…",
+   "pergunta": "Posso mandar esta mensagem no Slack em seu nome?",
+   "contexto": "Aviso de achado grave no Hub Suprimentos: as páginas públicas da festa leem e gravam dado pessoal sem login.",
+   "opcoes": [
+    {
+     "rotulo": "Enviar",
+     "efeito": "Sai exatamente o texto da carta, para este destino, uma vez só.",
+     "recomendada": true
+    },
+    {
+     "rotulo": "Não enviar",
+     "efeito": "Nada sai. O que você escrever na carta vai para a sessão ajustar o texto."
+    }
+   ],
+   "recomendacao": "Enviar",
+   "porque": "A sessão pediu para mandar; o texto da carta é o que vai sair, letra por letra.",
+   "risco": "Depois de enviada, a mensagem fica no Slack em seu nome.",
+   "visual": "não há campo visual; o texto está em cartaSlack.texto e repetido como prova em texto",
+   "prova_arquivo": "não há arquivo",
+   "texto_a_aprovar": "*Hub Suprimentos: exposição de dado pessoal sem login (homologação)*\n\nNa homologação achei uma exposição que está no ar agora. As páginas públicas da festa (check-in e interesse) usam funções do banco que a chave pública do site consegue chamar sem login. Com o e-mail de uma pessoa, essas funções devolvem os dados de viagem e de hospedagem dela, e a resposta de interesse. As páginas de interesse e de pesquisa de satisfação também gravam pelo e-mail digitado, sem login.\n\nNão abri nenhum dado: a medida foi só a contagem de registros no banco e a leitura do código das funções. O registro está no card da homologação.\n\nA correção vai por PR na homologação. Antes de mesclar, eu aviso aqui o que muda nas páginas públicas da festa.",
+   "pedido_literal": "\"Mensagem no Slack para canal da homologação do Hub Suprimentos: Aviso de achado grave [...] (registro de decisão 014 manda avisar o dono).\"",
+   "detalhe_tecnico": "destino C0CC6U407U3",
+   "esperando_desde": "entregue 2026-11-06T23:28Z; decidida 2026-11-06T23:29Z (1 min)",
+   "o_que_destrava": "O aviso ao dono do app sobre exposição de dado pessoal no ar.",
+   "o_que_faltou_na_carta": "O resumo da carta (paraODono.resumo) só diz destino e motivo; o texto que sai não está no resumo. No mesmo dia, em outras cartas de Slack, o dono escreveu: \"Não dá pra ver mensagem alguma nesse cartão.\" (t-dab38f1d), \"Não vejo nenhuma mensagem no cartao\" (t-556daef7), \"Não consigo ler mensagem alguma nesse cartão....\" (t-037fc748). Não verifiquei se a tela atual já mostra o texto."
+  },
+  {
+   "id": "t-315032f8",
+   "tipo_de_decisao": "autorizar outra pessoa + aprovar o texto que sai (duas cartas para uma decisão)",
+   "categoria": "A",
+   "situacao": "decidida (aceita: \"Mandar o rascunho\"); a carta do texto (t-ca7a7cab) foi aceita em 06/11 18:58 e NUNCA foi enviada (cartaSlack.enviada=false em 09/11)",
+   "quadro": "BizOps",
+   "titulo": "Marta: desligar o Stop de Crescimento antigo",
+   "pergunta": "Libero a Marta para desligar o Stop de Crescimento antigo, deixando o app parado uma semana sem apagar?",
+   "contexto": "A Marta quer desligar o app antigo no Coolify e redirecionar o endereço para o novo. Todos os usos mapeados, inclusive os três seus, já usam o endereço novo. Você também prometeu a ela a lista de projetos Supabase para revogar.",
+   "opcoes": [
+    {
+     "rotulo": "Mandar o rascunho",
+     "efeito": "Preparo a mensagem e ela só vai ao Slack depois que você aceitar a carta do envio.",
+     "recomendada": true
+    },
+    {
+     "rotulo": "Eu mesmo respondo",
+     "efeito": "Fecho esta carta sem mandar nada."
+    },
+    {
+     "rotulo": "Não precisa responder",
+     "efeito": "Fecho esta carta sem resposta."
+    }
+   ],
+   "recomendacao": "Mandar o rascunho",
+   "porque": "Nada mais depende do app antigo; manter parado uma semana dá volta se aparecer algum uso esquecido.",
+   "risco": "O app antigo segue ligado em paralelo e a lista prometida fica sem dono.",
+   "visual": "HTML com o rascunho e a conversa (prova 1).",
+   "prova_arquivo": "C:\\Users\\compu\\AppData\\Roaming\\donel-dev\\ledger-provas\\2026-11-06-cd3f641c9af1.html; conversa https://seazone-fund.slack.com/archives/D09L41D4L69/p1793903529369419",
+   "texto_a_aprovar": "Marta, show! Do meu lado está tudo no endereço novo, pode desligar e ligar o redirecionamento. Só deixa o app antigo parado, sem apagar, por uma semana, pra gente ter volta se aparecer alguém esquecido. A lista dos projetos Supabase pra revogar te mando até segunda.",
+   "pedido_literal": "Marta (DM, 05/11 15:32): \"Podemos descomissionar o stop-crescimento do Coolify? Junto com o desligamento, ligo o redirecionamento [...] Do seu lado está tudo ok, ou ainda falta algo antes?\"",
+   "detalhe_tecnico": "Refeita em 06/11 a partir da carta de 05/11 (t-801d8bf7), que ficou num lugar fechado e não aparecia para o dono (critério da t-315032f8); t-801d8bf7 segue órfã.",
+   "esperando_desde": "a pergunta da Marta é de 05/11 15:32; carta entregue 2026-11-06T13:21Z; decidida 15:49Z; carta do texto aceita 18:58Z e não enviada até 09/11",
+   "o_que_destrava": "O desligamento do app antigo pela Marta e a promessa da lista de projetos Supabase.",
+   "o_que_faltou_na_carta": "A decisão e o texto viraram DUAS cartas (o dono reclamou: \"todos vem com uma proposta rascunhada e fala que vai rascunhar mais coisa e enviar pra mim. Absurdo\", t-4aba83a3); a carta do texto foi aceita e a mensagem não saiu, sem nada na mesa dizendo isso."
+  },
+  {
+   "id": "t-4bd4bc80",
+   "tipo_de_decisao": "ação destrutiva (apagar dado do dono)",
+   "categoria": "A",
+   "situacao": "decidida (aceita: \"Apagar\")",
+   "quadro": "Donel Dev",
+   "titulo": "Apagar a tabela antiga de demandas",
+   "pergunta": "Apago a tabela antiga de demandas no ledger?",
+   "contexto": "O ledger na nuvem agora grava na tabela de tarefas. A antiga, de demandas, parou em 173 linhas e ninguém escreve mais nela, mas continua lá e confunde.",
+   "opcoes": [
+    {
+     "rotulo": "Apagar",
+     "efeito": "Guardo as 173 linhas num arquivo de planilha e apago a tabela antiga.",
+     "recomendada": true
+    },
+    {
+     "rotulo": "Manter",
+     "efeito": "Nada muda: as duas tabelas seguem lá."
+    }
+   ],
+   "recomendacao": "Apagar",
+   "porque": "Tudo o que a antiga tem também está na nova, com mais informação.",
+   "risco": "Apagar não se desfaz na nuvem; a volta é recriar a tabela a partir do arquivo guardado.",
+   "visual": "HTML (prova 1).",
+   "prova_arquivo": "2026-11-07-9c281a82b7ba.html (nome da listagem; pasta ledger-provas pelo padrão, não aberta com tarefa_ver)",
+   "pedido_literal": "\"Uma decisão do dono precisa virar carta no Oráculo, porque ele só decide por lá: apagar a tabela antiga `demandas` (173 linhas, ninguém mais escreve nela), para ele não abrir a tabela errada.\"",
+   "detalhe_tecnico": "Supabase do espelho (oraculo-harrow); CSV das 173 linhas guardado na VPS.",
+   "esperando_desde": "entregue 2026-11-07T18:58Z; decidida 2026-11-07T19:02Z (4 min)",
+   "o_que_destrava": "Remove a tabela que fazia o dono achar que o ledger tinha parado.",
+   "o_que_faltou_na_carta": "não há registro de reclamação."
+  },
+  {
+   "id": "t-49934e83",
+   "tipo_de_decisao": "como o sistema deve se comportar (regra de avisos)",
+   "categoria": "A",
+   "situacao": "rejeitada pelo dono (\"Ajustar antes\", sem texto)",
+   "quadro": "Donel Dev",
+   "titulo": "Sessões escrevem no Oráculo, Líder sem enxurrada",
+   "pergunta": "As sessões passam a gravar o andamento no Oráculo e o Líder lê quando quiser. Sigo para revisão e alfa?",
+   "contexto": "O fim de turno vira registro no Oráculo, não aviso no chat do Líder. Na hora, só chega ao Líder do quadro: precisa de você, travada e entrega para aceite.",
+   "opcoes": [
+    {
+     "rotulo": "Seguir",
+     "efeito": "Um Revisor confere e entra no alfa já ligado; o modo antigo volta por Preferências.",
+     "recomendada": true
+    },
+    {
+     "rotulo": "Ajustar antes",
+     "efeito": "Você diz o que mudar (por exemplo, quais avisos continuam chegando na hora) e eu refaço antes da revisão."
+    }
+   ],
+   "recomendacao": "Seguir",
+   "porque": "Os testes mostram as três sessões trabalhando sem nenhum aviso ao Líder, os registros no Oráculo e a sessão parada por limite avisando na hora.",
+   "risco": "Reversível por uma chave em Preferências.",
+   "visual": "Checagens (5), todas ok.",
+   "prova_arquivo": "não há arquivo (PR https://github.com/xansde/donel-dev/pull/324 + saída de teste em texto)",
+   "pedido_literal": "\"Eles devem atualizar diretamente o ledger, né. Em vez de te notificar a cada instante\"",
+   "detalhe_tecnico": "tests/ledger-andamento.test.ts (7 testes); npm run verify 1120 testes.",
+   "esperando_desde": "entregue 2026-11-08T14:20Z; rejeitada 2026-11-08T15:29Z (1,2 h)",
+   "o_que_destrava": "O fim da enxurrada de avisos ao Líder.",
+   "o_que_faltou_na_carta": "O dono escolheu 'Ajustar antes' e o motivo gravado é só o rótulo (\"Ajustar antes\"): a carta pedia 'você diz o que mudar' mas não obrigou nem facilitou o texto, e o time ficou sem saber o quê. Hoje, o pedido do dono (t-5c0df1df, 09/11) diz que o Oráculo/ledger não deve ser lugar de andamento — o que esta carta propunha."
+  },
+  {
+   "id": "t-2a4da5a9",
+   "tipo_de_decisao": "conferir conteúdo (cobre o que eu queria?)",
+   "categoria": "A",
+   "situacao": "decidida (aceita: \"Sim, guardar\")",
+   "quadro": "Donel Dev",
+   "titulo": "Cartões de estudo do sistema",
+   "pergunta": "Os cartões cobrem o que você queria estudar?",
+   "contexto": "45 perguntas de 3 opções em 8 temas (Mindscape e papéis, Líder único, Oráculo e cartas, rig de melhoria, VPS e contas, esteira e canais, faixa marrom, vocabulário do Bill).",
+   "opcoes": [
+    {
+     "rotulo": "Sim, guardar",
+     "efeito": "A tarefa fecha e os cartões ficam como estão.",
+     "recomendada": true
+    },
+    {
+     "rotulo": "Faltou tema",
+     "efeito": "A tarefa volta. Escreva qual tema faltou."
+    }
+   ],
+   "recomendacao": "Sim, guardar",
+   "porque": "Cobre todos os temas que o Líder listou, com o estado real de hoje.",
+   "risco": "Nenhum: é material de estudo, fora do app.",
+   "visual": "HTML para celular + 2 prints.",
+   "prova_arquivo": "2026-11-06-d20d4c4cab7b.html, 2026-11-06-5997738d0232.png, 2026-11-06-7f3638c396a3.png (nomes da listagem; pasta ledger-provas pelo padrão, não aberta com tarefa_ver)",
+   "pedido_literal": "\"Depois faça um HTML para celular com cartões de estudo sobre os tópicos do sistema atual\"",
+   "detalhe_tecnico": "não há",
+   "esperando_desde": "entregue 2026-11-06T09:17Z; decidida 2026-11-06T12:49Z (3,5 h)",
+   "o_que_destrava": "Nada fica parado: é material para ele (decisão A de gosto, mas sem bloqueio).",
+   "o_que_faltou_na_carta": "não há registro de reclamação."
+  }
+ ]
+}

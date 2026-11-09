@@ -1,0 +1,158 @@
+/* ===================================================================================================
+   Variante D — O QUE DESTRAVA (classes vD-)
+   =================================================================================================== */
+.vD-raiz { position: absolute; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr) 0px; transition: grid-template-columns .3s ease; }
+.vD-raiz.com-folha { grid-template-columns: minmax(0, 1fr) 480px; }
+.vD-mesa { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+
+/* Topo: quantas coisas estão paradas esperando você */
+.vD-topo { flex: none; display: grid; grid-template-columns: 1fr auto; gap: 4px 20px; align-items: end; padding: 12px 24px 8px; border-bottom: 1px solid var(--carta-borda); }
+.vD-titulo { margin: 0; font-family: var(--serifa); font-weight: 600; font-size: 1.45rem; line-height: 1.15; }
+.vD-titulo .vD-n { color: var(--nao); font-size: 1.15em; }
+.vD-titulo small { display: inline-block; margin-left: 12px; font-family: var(--sem-serifa); font-weight: 400; font-size: .74rem; letter-spacing: .1em; text-transform: uppercase; color: var(--tinta-suave); vertical-align: middle; }
+.vD-sub { grid-column: 1 / -1; margin: 0; font-size: .82rem; line-height: 1.4; color: var(--tinta-suave); max-width: 980px; }
+.vD-legenda { display: flex; gap: 14px; font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; color: var(--tinta-suave); padding-bottom: 4px; }
+.vD-legenda span { display: flex; align-items: center; gap: 6px; }
+.vD-legenda i { width: 30px; height: 8px; border-radius: 4px; display: inline-block; }
+.vD-legenda .p i { background: repeating-linear-gradient(45deg, var(--nao), var(--nao) 4px, transparent 4px, transparent 8px); }
+.vD-legenda .a i { background: var(--sim); }
+
+.vD-corpo { flex: 1; min-height: 0; overflow: auto; padding: 8px 24px 64px; scrollbar-width: thin; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), transparent); }
+
+/* Grupos por quadro */
+.vD-grupos { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 14px 30px; align-items: start; }
+.vD-grupo h3 { margin: 0 0 6px; padding-bottom: 4px; border-bottom: 1px solid var(--carta-borda); display: flex; align-items: baseline; gap: 10px; font-weight: 400; }
+.vD-quadro { font-family: var(--serifa); font-size: .78rem; letter-spacing: .18em; text-transform: uppercase; color: var(--tinta); }
+.vD-grupo h3 small { margin-left: auto; font-size: .7rem; color: var(--nao); font-weight: 700; }
+.vD-grupo.vD-grupo-livre h3 small { color: var(--sim); }
+.vD-tudo { font-size: .64rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--carta); background: var(--nao); border-radius: 999px; padding: 2px 9px; }
+.vD-heroi { margin-bottom: 10px; }
+.vD-lista { display: flex; flex-direction: column; gap: 6px; }
+
+/* A trava: o que parou, a barra listrada e, sobre ela, a carta que destrava */
+.vD-trava { container: vDtrava / inline-size; position: relative; transition: height .35s ease, opacity .35s ease, margin .35s ease; }
+.vD-trava.vD-sai { opacity: 0; overflow: hidden; margin-top: -6px; }
+.vD-trava-in { display: grid; grid-template-columns: minmax(0, 1fr); row-gap: 6px; }
+
+.vD-coisa { grid-row: 1; grid-column: 1; min-width: 0; }
+.vD-nome { font-family: var(--serifa); font-size: 1.02rem; line-height: 1.2; font-weight: 600; transition: color .4s; }
+.vD-baixo { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin-top: 1px; }
+.vD-estado { font-size: .62rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--nao); transition: color .4s; }
+.vD-desde { font-size: .7rem; color: var(--tinta-suave); }
+
+.vD-trilho { grid-row: 2; grid-column: 1; align-self: center; position: relative; height: 12px; border-radius: 6px; overflow: hidden; background: repeating-linear-gradient(45deg, color-mix(in srgb, var(--nao) 80%, transparent), color-mix(in srgb, var(--nao) 80%, transparent) 6px, transparent 6px, transparent 11px); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nao) 45%, transparent); }
+.vD-trilho::after { content: ''; position: absolute; inset: 0; background: var(--sim); transform: scaleX(0); transform-origin: left; transition: transform .55s ease; }
+.vD-poe { grid-row: 2; grid-column: 1; position: relative; z-index: 1; margin: 0 16px 0 34px; min-width: 0; }
+
+/* A carta fechada, com o botão de destravar */
+.vD-trava .oc-mini { cursor: pointer; gap: 2px; padding: 7px 12px 7px; transition: transform .15s ease, box-shadow .15s ease; }
+.vD-trava .oc-mini:hover { transform: translateY(-2px); }
+.vD-trava .oc-mini:focus-visible { outline: 2px solid var(--ouro); outline-offset: 2px; }
+.vD-trava .oc-mini .dest { display: none; } /* a faixa acima já diz o que destrava */
+.vD-trava .oc-mini .topo .urg { display: none; } /* o "parado" já está na faixa; o atraso pinta o "desde" */
+.vD-trava.vD-atrasada .vD-desde { color: var(--nao); }
+.vD-trava.aberta .oc-mini { box-shadow: 0 0 0 2px var(--ouro), var(--sombra); }
+.vD-pe { display: flex; align-items: center; gap: 4px 12px; flex-wrap: wrap; margin-top: 4px; }
+.vD-btn { position: relative; overflow: hidden; border: 0; border-radius: 10px; min-height: 34px; padding: 6px 16px; font-size: .86rem; font-weight: 800; letter-spacing: .02em; background: var(--ouro); color: var(--carta); box-shadow: 0 2px 8px rgba(0, 0, 0, .25); touch-action: manipulation; }
+.vD-btn:hover { filter: brightness(1.08); }
+.vD-btn:focus-visible { outline: 2px solid var(--tinta); outline-offset: 2px; }
+.vD-segue { flex: 1 1 150px; min-width: 0; font-size: .72rem; line-height: 1.3; color: var(--tinta-suave); }
+.vD-segue b { color: var(--tinta); font-weight: 600; }
+/* segurar para o que não tem volta */
+.vD-segurar { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: none; }
+.vD-segurar .vD-btn-txt { position: relative; }
+.vD-segurar .vD-enche { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--nao); opacity: .85; }
+.vD-segurar.segurando .vD-enche { width: 100%; transition: width 1.2s linear; }
+
+/* Destravou: a barra vira verde lisa, a carta sobe e sai */
+.vD-trava.andando .vD-trilho::after { transform: scaleX(1); }
+.vD-trava.andando .vD-nome { color: var(--sim); }
+.vD-trava.andando .vD-estado { color: var(--sim); }
+.vD-trava.adiada .vD-trilho { opacity: .35; }
+.vD-trava.adiada .vD-estado { color: var(--tinta-suave); }
+/* sai no próprio lugar (subir por cima da trava de cima sobrepunha as cartas) */
+.vD-poe.vD-sai-carta { pointer-events: none; animation: vD-sai-carta .42s ease forwards; }
+@keyframes vD-sai-carta { to { transform: translateY(-8px) scale(.94); opacity: 0; } }
+/* Estreita: a carta some de vez e a barra verde sobe para logo abaixo do nome (sem buraco onde a carta estava) */
+@container vDtrava (max-width: 519px) { .vD-trava.vD-sem-carta .vD-poe { display: none; } }
+.vD-poe.vD-volta { animation: vD-volta .35s ease; }
+@keyframes vD-volta { from { transform: translateY(-40%) scale(.95); opacity: 0; } }
+
+/* A trava maior: a que trava tudo */
+.vD-grande .vD-nome { font-size: 1.4rem; }
+.vD-grande .vD-desde { font-size: .78rem; }
+.vD-grande .vD-trilho { height: 18px; border-radius: 9px; }
+.vD-grande .oc-mini { padding: 9px 16px 9px; border-width: 2.5px; }
+.vD-grande .oc-mini .topo small { font-size: .64rem; }
+.vD-grande .oc-mini > b { font-size: 1.06rem; line-height: 1.25; }
+.vD-grande .vD-btn { min-height: 38px; padding: 7px 22px; font-size: .94rem; }
+
+/* Larga (PC): o nome à esquerda, a barra corre por baixo dele até a carta, à direita */
+@container vDtrava (min-width: 520px) {
+  .vD-trava-in { grid-template-columns: minmax(150px, 34%) minmax(0, 1fr); }
+  .vD-coisa { grid-row: 1; grid-column: 1; display: grid; grid-template-rows: 1fr 22px 1fr; padding-right: 14px; }
+  .vD-cima { grid-row: 1; align-self: end; }
+  .vD-baixo { grid-row: 3; align-self: start; margin-top: 0; }
+  .vD-trilho { grid-row: 1; grid-column: 1 / -1; }
+  .vD-poe { grid-row: 1; grid-column: 2; margin: 0 14px 0 0; }
+  .vD-grande .vD-trava-in { grid-template-columns: minmax(200px, 36%) minmax(0, 1fr); }
+  .vD-grande .vD-coisa { grid-template-rows: 1fr 30px 1fr; }
+  .vD-grande .vD-poe { justify-self: end; width: min(100%, 640px); margin-right: 24px; }
+}
+
+/* Aviso com Desfazer */
+.vD-aviso { position: absolute; right: 24px; bottom: 16px; z-index: 40; transform: translate(0, 20px); opacity: 0; pointer-events: none; transition: opacity .3s ease, transform .3s ease; display: flex; align-items: center; gap: 10px; width: max-content; max-width: min(92%, 480px); padding: 9px 8px 11px 14px; border-radius: 12px; overflow: hidden; background: var(--tinta); color: var(--carta); box-shadow: var(--sombra); font-size: .82rem; line-height: 1.35; }
+.vD-aviso.on { opacity: 1; transform: translate(0, 0); pointer-events: auto; }
+.vD-aviso-txt { min-width: 0; }
+.vD-aviso-txt b { color: color-mix(in srgb, var(--sim) 70%, var(--carta)); margin-right: 4px; }
+.vD-aviso-txt b.neutro { color: inherit; margin: 0; }
+.vD-desfazer { flex: none; border: 1.5px solid currentColor; background: transparent; color: inherit; border-radius: 999px; padding: 5px 12px; font-size: .78rem; font-weight: 800; }
+.vD-tempo { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--ouro); transform-origin: left; }
+.vD-aviso.on .vD-tempo { animation: vD-tempo 4s linear forwards; }
+@keyframes vD-tempo { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+
+/* Folha com a carta inteira — PC: à direita, altura toda */
+.vD-folha { position: relative; min-width: 0; min-height: 0; overflow: hidden; border-left: 1px solid transparent; background: var(--fundo-veio); transition: border-color .3s; }
+.com-folha > .vD-folha { border-left-color: var(--carta-borda); }
+.vD-folha-in { width: 480px; height: 100%; display: flex; flex-direction: column; }
+.vD-folha-topo { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 16px 6px; }
+.vD-folha-rot { min-width: 0; font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; color: var(--tinta-suave); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vD-fechar { flex: none; border: 1px solid var(--carta-borda); background: transparent; border-radius: 999px; padding: 4px 12px; font-size: .76rem; color: var(--tinta-suave); }
+.vD-fechar:hover { color: var(--tinta); border-color: var(--ouro); }
+.vD-folha-carta { flex: 1; min-height: 0; padding: 2px 14px 14px; }
+.vD-alca, .vD-veu { display: none; }
+
+/* Celular: lista vertical por quadro; a carta abre de baixo para cima, quase a tela toda */
+@container vista (max-width: 640px) {
+  .vD-raiz, .vD-raiz.com-folha { grid-template-columns: minmax(0, 1fr); }
+  .vD-topo { grid-template-columns: 1fr; padding: 14px 16px 10px; gap: 4px; }
+  .vD-titulo { font-size: 1.32rem; }
+  .vD-titulo small { display: block; margin: 3px 0 0; font-size: .66rem; }
+  .vD-legenda { display: none; }
+  .vD-sub { font-size: .76rem; }
+  .vD-corpo { padding: 12px 16px 84px; }
+  .vD-grupos { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .vD-heroi { margin-bottom: 18px; }
+  .vD-poe { margin: 0 10px 0 22px; }
+  .vD-grande .vD-nome { font-size: 1.22rem; }
+  .vD-grande .oc-mini > b { font-size: 1.02rem; }
+
+  .vD-folha { position: absolute; left: 0; right: 0; bottom: 0; top: 30px; z-index: 50; border-left: 0; border-radius: 18px 18px 0 0; transform: translateY(103%); transition: transform .32s ease; box-shadow: 0 -12px 30px rgba(0, 0, 0, .45); }
+  .vD-folha.arrastando { transition: none; }
+  .vD-raiz.com-folha .vD-folha { transform: translateY(0); }
+  .vD-folha-in { width: auto; }
+  .vD-alca { display: flex; justify-content: center; flex: none; }
+  .vD-alca button { border: 0; background: transparent; padding: 8px 40px 4px; touch-action: none; }
+  .vD-alca i { display: block; width: 44px; height: 5px; border-radius: 3px; background: var(--tinta-suave); opacity: .7; }
+  .vD-folha-topo { padding: 2px 14px 6px; }
+  .vD-folha-carta { padding: 0 10px 12px; }
+  .vD-veu { display: block; position: absolute; inset: 0; z-index: 45; background: rgba(0, 0, 0, .5); opacity: 0; pointer-events: none; transition: opacity .3s ease; }
+  .vD-raiz.com-folha .vD-veu { opacity: 1; pointer-events: auto; }
+  .vD-aviso { left: 50%; right: auto; bottom: 12px; transform: translate(-50%, 20px); }
+  .vD-aviso.on { transform: translate(-50%, 0); }
+}
+
+/* Mesa limpa */
+.vD-vazia { height: 100%; min-height: 360px; }
+.vD-vazia > div { display: flex; flex-direction: column; align-items: center; gap: 2px; max-width: 320px; }
+.vD-vazia span { font-size: .86rem; line-height: 1.4; }

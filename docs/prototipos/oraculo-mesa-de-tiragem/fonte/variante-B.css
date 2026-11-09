@@ -1,0 +1,95 @@
+/* ===================================================================================================
+   Variante B — uma carta por vez. A mesa é só a pilha: carta da vez ao centro, dorsos atrás.
+   PC: dicas do gesto nas laterais. Celular (@container vista ≤ 640px): carta em tela cheia, dicas embaixo.
+   =================================================================================================== */
+.vB-mesa { position: absolute; inset: 0; display: grid; grid-template-columns: 1fr minmax(0, 560px) 1fr; grid-template-rows: 1fr auto; grid-template-areas: 'esq pilha dir' '. espaco .'; column-gap: 36px; padding: 20px 28px 10px; }
+
+/* A pilha: dorsos atrás, a carta da vez por cima */
+.vB-pilha { grid-area: pilha; position: relative; min-height: 0; margin-bottom: 22px; }
+.vB-dorso { position: absolute; inset: 0; border-radius: 18px; transform-origin: 50% 100%; }
+.vB-dorso svg { max-width: 120px; }
+.vB-pilha { --vB-sobe: 0; }
+.vB-d1 { transform: translateY(calc(7px * (1 - var(--vB-sobe)))) scale(calc(.975 + .025 * var(--vB-sobe))) rotate(calc(.6deg * (1 - var(--vB-sobe)))); }
+.vB-d2 { transform: translateY(14px) scale(.95) rotate(-.8deg); opacity: .85; }
+.vB-d3 { transform: translateY(21px) scale(.925) rotate(1deg); opacity: .7; }
+.vB-atual { position: absolute; inset: 0; z-index: 2; touch-action: pan-y; user-select: none; -webkit-user-select: none; cursor: grab; will-change: transform; }
+/* No dedo, a rolagem da carta é um contêiner próprio: sem pan-y nela o navegador cancela o arrasto horizontal. */
+.vB-atual .oc-rolagem, .vB-atual .oc-verso-corpo { touch-action: pan-y; }
+.vB-atual textarea, .vB-atual input, .vB-atual .oc-verso-corpo { user-select: text; -webkit-user-select: text; cursor: auto; }
+.vB-atual button { cursor: pointer; }
+.vB-atual.vB-arrastando { cursor: grabbing; }
+.vB-atual.vB-entra { animation: vB-sobe .34s ease-out; }
+@keyframes vB-sobe { from { transform: translateY(16px) scale(.975); opacity: .4; } to { transform: none; opacity: 1; } }
+.vB-atual.vB-treme { animation: vB-treme .42s ease; }
+@keyframes vB-treme { 20% { transform: translateX(10px); } 45% { transform: translateX(-8px); } 70% { transform: translateX(5px); } 100% { transform: none; } }
+
+/* Carimbo que acende enquanto arrasta */
+.vB-carimbo { position: absolute; top: 15%; z-index: 6; pointer-events: none; opacity: 0; max-width: 74%; text-align: center; padding: 7px 16px 8px; border: 3px solid currentColor; border-radius: 10px; font-family: var(--serifa); font-weight: 700; font-size: 1.45rem; line-height: 1.1; letter-spacing: .14em; text-transform: uppercase; background: color-mix(in srgb, var(--carta) 86%, transparent); box-shadow: 0 6px 18px rgba(0, 0, 0, .25); transition: opacity .12s ease, transform .15s ease; }
+.vB-carimbo small { display: block; margin-top: 3px; font-family: var(--sem-serifa); font-size: .82rem; font-weight: 700; letter-spacing: .02em; text-transform: none; }
+.vB-carimbo.dir { left: 9%; color: var(--sim); transform: rotate(-11deg) scale(.92); }
+.vB-carimbo.esq { right: 9%; color: var(--tinta-suave); transform: rotate(10deg) scale(.92); }
+.vB-carimbo.dir.aviso { color: var(--aviso); }
+.vB-carimbo.dir.nao { color: var(--nao); }
+.vB-carimbo.pronto.dir { transform: rotate(-11deg) scale(1); }
+.vB-carimbo.pronto.esq { transform: rotate(10deg) scale(1); }
+
+/* Onde o dono precisa agir quando arrastar não basta */
+.vB-aponta { animation: vB-aponta .8s ease 2; }
+@keyframes vB-aponta { 50% { box-shadow: 0 0 0 4px var(--ouro); } }
+
+/* Dicas do gesto (PC: nas laterais) */
+.vB-dica { align-self: center; display: flex; align-items: center; gap: 12px; max-width: 230px; background: none; border: 1px dashed transparent; border-radius: 14px; padding: 12px 14px; color: var(--tinta-suave); opacity: .62; text-align: left; transition: opacity .15s ease, color .15s ease, border-color .15s ease; }
+.vB-dica:hover { opacity: 1; border-color: var(--carta-borda); }
+.vB-dica.esq { grid-area: esq; justify-self: end; flex-direction: row; text-align: right; }
+.vB-dica.esq .txt { order: 2; } .vB-dica.esq .seta { order: 1; } .vB-dica.esq kbd { order: 3; }
+.vB-dica.dir { grid-area: dir; justify-self: start; }
+.vB-dica.dir .txt { order: 2; } .vB-dica.dir .seta { order: 3; } .vB-dica.dir kbd { order: 1; }
+.vB-dica .seta { font-size: 1.9rem; line-height: 1; font-family: var(--serifa); }
+.vB-dica .txt { display: flex; flex-direction: column; gap: 3px; }
+.vB-dica .txt b { font-family: var(--serifa); font-size: 1.02rem; color: var(--tinta); font-weight: 600; }
+.vB-dica .txt small { font-size: .78rem; line-height: 1.3; }
+.vB-dica.dir .txt small.rec { color: var(--ouro); }
+.vB-dica.acesa { opacity: 1; }
+.vB-dica.dir.acesa { color: var(--sim); border-color: var(--sim); }
+.vB-dica.esq.acesa { border-color: var(--tinta-suave); }
+.vB-mesa kbd { font-family: var(--sem-serifa); font-size: .66rem; border: 1px solid var(--carta-borda); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; color: var(--tinta-suave); background: var(--carta); }
+.vB-espaco { grid-area: espaco; justify-self: center; font-size: .72rem; color: var(--tinta-suave); opacity: .62; }
+
+/* O aviso de destravado: largura do texto (a base o limita à metade da vista). No PC ele aparece
+   na lateral para onde a carta foi, sem cobrir a próxima; no celular, embaixo, por cima das dicas
+   (não cobre as saídas da carta). */
+.vB-mesa ~ .oc-toast { width: max-content; max-width: max(200px, calc(50% - 320px)); bottom: 28px; }
+.vB-mesa.vB-saiu-dir ~ .oc-toast { left: auto; right: 28px; transform: translateY(20px); }
+.vB-mesa.vB-saiu-esq ~ .oc-toast { left: 28px; transform: translateY(20px); }
+.vB-mesa.vB-saiu-dir ~ .oc-toast.on, .vB-mesa.vB-saiu-esq ~ .oc-toast.on { transform: none; }
+
+/* Fim: o baralho vazio */
+.vB-mesa.vB-fim .vB-dica, .vB-mesa.vB-fim .vB-espaco { visibility: hidden; }
+.vB-vazia .oc-dorso { margin-bottom: 4px; }
+.vB-vazia b { font-size: 1.5rem; }
+
+/* ---------------------------------------------------------------- celular: carta em tela cheia */
+@container vista (max-width: 640px) {
+  .vB-mesa { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr auto; grid-template-areas: 'pilha pilha' 'esq dir'; column-gap: 8px; padding: 8px 10px 6px; }
+  .vB-pilha { margin-bottom: 26px; }
+  .vB-d1 { transform: translateY(calc(8px * (1 - var(--vB-sobe)))) scale(calc(.965 + .035 * var(--vB-sobe))) rotate(calc(.6deg * (1 - var(--vB-sobe)))); }
+  .vB-d2 { transform: translateY(15px) scale(.93) rotate(-.8deg); }
+  .vB-d3 { transform: translateY(22px) scale(.895) rotate(1deg); }
+  .vB-espaco { display: none; }
+  .vB-dica { max-width: none; padding: 4px 6px; gap: 6px; border: 0; opacity: .7; }
+  .vB-dica .seta { font-size: 1.1rem; }
+  .vB-dica .txt b { font-size: .8rem; font-family: var(--sem-serifa); font-weight: 600; color: var(--tinta-suave); }
+  .vB-dica .txt small, .vB-dica kbd { display: none; }
+  .vB-dica.esq { justify-self: start; }
+  .vB-dica.dir { justify-self: end; }
+  .vB-dica .txt b { white-space: nowrap; }
+  .vB-dica.dir.acesa .txt b { color: var(--sim); }
+  .vB-carimbo { font-size: 1.1rem; padding: 6px 12px; }
+  .vB-mesa ~ .oc-toast, .vB-mesa.vB-saiu-dir ~ .oc-toast, .vB-mesa.vB-saiu-esq ~ .oc-toast { left: 50%; right: auto; bottom: 4px; max-width: min(92%, 520px); transform: translateX(-50%) translateY(20px); }
+  .vB-mesa.vB-saiu-dir ~ .oc-toast.on, .vB-mesa.vB-saiu-esq ~ .oc-toast.on { transform: translateX(-50%); }
+  .vB-carimbo small { font-size: .74rem; }
+}
+/* Celular estreito (moldura de ~366 px): as saídas da carta cabem numa linha só */
+@container vista (max-width: 380px) {
+  .vB-atual .oc-saidas button { padding: 3px 7px; }
+}

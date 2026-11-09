@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Oráculo, mesa de tiragem</title>
+<style>
+  /* Cores da base do protótipo (fonte/base.css: carta Harrow, tema escuro e claro). */
+  :root {
+    --fundo: #121019;
+    --carta: #1d1a27;
+    --carta-borda: #4a4030;
+    --tinta: #efe6d2;
+    --tinta-suave: #b3a78f;
+    --ouro: #d2a44c;
+    --sim: #5fbf86;
+    --nao: #e0736a;
+    --pre-fundo: #15131d;
+    --chaves: #6cbfa8;
+    --escudos: #7fa6c9;
+    --livros: #cf7d93;
+    --estrelas: #a495e0;
+    --serifa: 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+    --sem-serifa: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    color-scheme: dark;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --fundo: #e9dfc8;
+      --carta: #f8f1e1;
+      --carta-borda: #c9b48a;
+      --tinta: #2a2118;
+      --tinta-suave: #6b5a45;
+      --ouro: #9c7428;
+      --sim: #2f7a4d;
+      --nao: #a8362e;
+      --pre-fundo: #efe5cf;
+      --chaves: #2f7564;
+      --escudos: #3f6687;
+      --livros: #7a2c40;
+      --estrelas: #4e3f8f;
+      color-scheme: light;
+    }
+  }
+  :root[data-theme="light"] {
+    --fundo: #e9dfc8; --carta: #f8f1e1; --carta-borda: #c9b48a; --tinta: #2a2118; --tinta-suave: #6b5a45;
+    --ouro: #9c7428; --sim: #2f7a4d; --nao: #a8362e; --pre-fundo: #efe5cf;
+    --chaves: #2f7564; --escudos: #3f6687; --livros: #7a2c40; --estrelas: #4e3f8f; color-scheme: light;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--fundo);
+    color: var(--tinta);
+    font: 14px/1.5 var(--sem-serifa);
+    padding: 24px 16px 40px;
+  }
+  .folha {
+    max-width: 820px;
+    margin: 0 auto;
+    background: var(--carta);
+    border: 1px solid var(--carta-borda);
+    border-radius: 10px;
+    padding: 28px 32px 24px;
+    outline: 1px solid var(--carta-borda);
+    outline-offset: 4px;
+  }
+  header { text-align: center; margin-bottom: 14px; }
+  .naipe { letter-spacing: .22em; text-transform: uppercase; font-size: 11px; color: var(--ouro); }
+  h1 { font-family: var(--serifa); font-weight: 600; font-size: 26px; line-height: 1.2; margin: 6px 0 4px; text-wrap: balance; }
+  .sub { color: var(--tinta-suave); font-size: 13px; margin: 0; }
+  h2 {
+    font-family: var(--serifa); font-weight: 600; font-size: 16px;
+    margin: 18px 0 6px; padding-top: 12px; border-top: 1px solid var(--carta-borda);
+    display: flex; gap: 10px; align-items: baseline;
+  }
+  h2 .n { color: var(--ouro); font-size: 13px; min-width: 1.2em; }
+  p { margin: 0 0 6px; }
+  ul { margin: 0 0 6px; padding-left: 18px; }
+  li { margin: 2px 0; }
+  b, strong { font-weight: 650; }
+  .num { color: var(--ouro); font-weight: 650; font-variant-numeric: tabular-nums; }
+  .ruim { color: var(--nao); font-weight: 650; }
+  .bom { color: var(--sim); font-weight: 650; }
+  .grade { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 18px; }
+  .grade ul { margin: 0; }
+  .rot { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--tinta-suave); margin: 4px 0 2px; }
+  .variantes { list-style: none; padding: 0; }
+  .variantes li { display: grid; grid-template-columns: 28px 1fr; gap: 8px; padding: 3px 0; }
+  .variantes .l {
+    font-family: var(--serifa); font-weight: 700; color: var(--tinta-suave);
+    border: 1px solid var(--carta-borda); border-radius: 4px; text-align: center; height: 22px; line-height: 20px;
+  }
+  .variantes li.escolhida .l { color: var(--carta); background: var(--ouro); border-color: var(--ouro); }
+  .rec {
+    margin-top: 16px; padding: 14px 16px 10px;
+    background: var(--pre-fundo);
+    border: 1.5px solid var(--ouro); border-radius: 8px;
+  }
+  .rec h2 { border-top: 0; padding-top: 0; margin-top: 0; }
+  .rec h2 .selo {
+    margin-left: auto; font-family: var(--sem-serifa); font-size: 10px; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--carta); background: var(--ouro); border-radius: 999px; padding: 2px 8px;
+  }
+  .depois { color: var(--tinta-suave); }
+  footer { margin-top: 14px; text-align: center; color: var(--tinta-suave); font-size: 12px; }
+
+  @media (max-width: 640px) {
+    body { padding: 12px 16px 28px; }
+    .folha { padding: 20px 16px 18px; }
+    h1 { font-size: 22px; }
+    .grade { grid-template-columns: 1fr; }
+  }
+  @media print {
+    body { padding: 0; font-size: 10.5px; line-height: 1.4; }
+    .folha { border: 0; outline: 0; padding: 0; max-width: none; }
+    header { margin-bottom: 6px; }
+    h1 { font-size: 19px; }
+    h2 { margin: 8px 0 3px; padding-top: 6px; font-size: 13px; }
+    p, ul { margin-bottom: 3px; }
+    li { margin: 1px 0; }
+    .rec { margin-top: 10px; padding: 10px 12px 6px; }
+    footer { margin-top: 8px; }
+    @page { size: A4; margin: 12mm 14mm; }
+  }
+</style>
+</head>
+<body>
+<main class="folha">
+  <header>
+    <div class="naipe">Oráculo Harrow</div>
+    <h1>O Oráculo volta a ser mesa de tiragem</h1>
+    <p class="sub">Uma página para você escolher, escrita em 09/11/2026.</p>
+  </header>
+
+  <h2><span class="n">1</span>O que era</h2>
+  <p>O baralho nasceu no celular em <b>05/11</b>, com uma carta por tela. Arrastar para a direita aceitava, arrastar para a esquerda rejeitava, e no fim aparecia "O baralho está vazio". No mesmo dia você escolheu a <b>forma A</b>. Nela a frente decide, com a pergunta, o visual, a recomendação e as opções. O verso explica, com o porquê, os riscos e o seu pedido. Em <b>06/11</b> as cartas viraram a tela do centro.</p>
+
+  <h2><span class="n">2</span>O que a descaracterizou</h2>
+  <ul>
+    <li><b>Em 07/11</b> o centro virou uma caixa de <span class="num">7</span> tipos, e só 4 deles abrem carta. Abaixo dela veio uma tabela de <span class="num">12</span> colunas, e a carta passou a abrir só com um clique numa linha.</li>
+    <li><b>Depois entraram coisas que não pedem decisão:</b> pedágio do Slack, alarme do vigia, órfãs.</li>
+    <li><b>Só 15% era decisão sua.</b> De <span class="num">296</span> itens, só <span class="num">44</span> eram seus, <span class="num">131</span> (44%) eram do Revisor ou do Líder e <span class="ruim">88</span> (30%) eram órfãs ou repetidos. Na caixa de hoje, só <span class="num">1</span> de cerca de <span class="ruim">115</span> itens é seu.</li>
+    <li><b>O risco não separa o que é seu:</b> de 128 cartas de risco alto, só 33 eram suas.</li>
+  </ul>
+
+  <h2><span class="n">3</span>A regra do que sobe</h2>
+  <ul>
+    <li>O ledger só registra e é a fonte da verdade; o Oráculo é a central de validação.</li>
+    <li>O que a sessão fez e provou fecha com o Revisor ou sozinha. Desfazível, já decidido, andamento e órfã também não sobem.</li>
+    <li><b class="bom">Vira carta</b> só o que precisa de você e trava algo: um acesso seu, dinheiro, algo sem volta, um compromisso em seu nome ou dois jeitos bons de uma tela.</li>
+    <li>Nenhuma carta trava o resto: a mensagem ao Slack sai sem carta.</li>
+    <li>O que não cabe numa frase com duas opções reais não sobe.</li>
+  </ul>
+
+  <h2><span class="n">4</span>A carta modular</h2>
+  <p>Decisão e visual, em texto de gente, com a linha "<b>Destrava:</b>" e há quanto tempo a coisa está parada. O naipe diz o tipo de decisão.</p>
+  <div class="grade">
+    <div>
+      <div class="rot">Visual</div>
+      <ul><li>os passos que só você faz, as checagens, a comparação de telas, a mensagem a aprovar, "tem volta × não tem" e um medidor.</li></ul>
+    </div>
+    <div>
+      <div class="rot">Resposta</div>
+      <ul><li>os caminhos com um recomendado, "Fiz", uma frase livre, a escolha da variante, um lote item a item, a edição do texto e "segurar para apagar".</li></ul>
+    </div>
+  </div>
+  <p><b>Sempre:</b> Decida você, Perguntar, Agora não e Virar.</p>
+
+  <h2><span class="n">5</span>As variantes</h2>
+  <ul class="variantes">
+    <li><span class="l">A</span><span><b>Três casas:</b> as cartas ficam em Trava tudo, Hoje e Pode esperar; você arrasta uma até "Destravado".</span></li>
+    <li class="escolhida"><span class="l">B</span><span><b>Uma carta por vez:</b> é o baralho puro, com a carta que trava tudo primeiro. Arrastar para a direita segue a recomendação; para a esquerda é "agora não".</span></li>
+    <li><span class="l">C</span><span><b>Mão e mesa:</b> a mão fica em leque e você escolhe a ordem, arrastando para o dourado ou para "Mais tarde".</span></li>
+    <li><span class="l">D</span><span><b>O que destrava:</b> um painel por quadro mostra cada coisa parada com a carta que a destrava. Um toque decide, e dá para desfazer.</span></li>
+  </ul>
+
+  <section class="rec">
+    <h2><span class="n">6</span>Recomendação: B, no celular e no PC <span class="selo">Recomendo</span></h2>
+    <p>A B volta ao que você escolheu em 05/11: uma carta por vez, a frente decide e o gesto tira a carta até o baralho esvaziar. Nada em volta pode crescer e virar caixa e tabela de novo. Você segue a recomendação em 9 de 10 cartas, então o gesto principal é arrastar para a direita.</p>
+    <p>A D decide sem mostrar a carta e volta a ser painel; A e C gastam espaço com estrutura que a ordem já resolve.</p>
+    <p class="depois"><b>Fica para depois:</b> o rastro do que você destravou, ideia da A; os outros prazos no arrasto para a esquerda; os módulos de vídeo e de formulário; a mesma fila no celular e no PC.</p>
+  </section>
+
+  <footer>O protótipo navegável das quatro variantes está na mesma pasta deste resumo.</footer>
+</main>
+</body>
+</html>

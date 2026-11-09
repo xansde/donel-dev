@@ -1,0 +1,3234 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Oráculo · mesa de tiragem</title>
+<style>
+/* ===================================================================================================
+   PROTÓTIPO DESCARTÁVEL (skill /prototipo). Nada aqui vai para produção.
+   Tokens copiados literalmente de:
+   - Carta (Harrow): src/main/celular/pwa/app.css (origin/staging, 09/11) — :root claro e bloco escuro
+   - Moldura do app (PC): design-system/src/tokens.css (origin/staging, 09/11)
+   - Forma da carta: forma A escolhida pelo dono em 05/11 (docs/prototipos/carta-oraculo/final.html, ramo de protótipo)
+   =================================================================================================== */
+
+/* --- design-system/src/tokens.css --- */
+:root {
+  --bg-app: #0e1116;
+  --bg-panel: #151a21;
+  --bg-raised: #1c232c;
+  --border: #28303b;
+  --text-primary: #d7dde5;
+  --text-muted: #828d9c;
+  --accent: #4c9cf0;
+  --state-waiting: #e8b44c;
+  --state-permission: #f0684c;
+  --zone-ok: #3dce8f;
+  --donel-accent: #e8b44c;
+  --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+}
+
+/* --- src/main/celular/pwa/app.css, bloco escuro (padrão: o PC é dark-only) --- */
+.tema-escuro {
+  --fundo: #121019;
+  --fundo-veio: #17141f;
+  --carta: #1d1a27;
+  --carta-borda: #4a4030;
+  --tinta: #efe6d2;
+  --tinta-suave: #b3a78f;
+  --ouro: #d2a44c;
+  --sim: #5fbf86;
+  --nao: #e0736a;
+  --pre-fundo: #15131d;
+  --sombra: 0 10px 30px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.4);
+  --martelos: #d98a5f;
+  --escudos: #7fa6c9;
+  --chaves: #6cbfa8;
+  --livros: #cf7d93;
+  --estrelas: #a495e0;
+  --coroas: #e0bb5a;
+  --aviso: #e8b44c;
+}
+/* --- src/main/celular/pwa/app.css, :root (claro) --- */
+.tema-claro {
+  --fundo: #e9dfc8;
+  --fundo-veio: #e1d4b8;
+  --carta: #f8f1e1;
+  --carta-borda: #c9b48a;
+  --tinta: #2a2118;
+  --tinta-suave: #6b5a45;
+  --ouro: #9c7428;
+  --sim: #2f7a4d;
+  --nao: #a8362e;
+  --pre-fundo: #efe5cf;
+  --sombra: 0 10px 30px rgba(60, 40, 10, 0.18), 0 2px 6px rgba(60, 40, 10, 0.12);
+  --martelos: #a4552f;
+  --escudos: #3f6687;
+  --chaves: #2f7564;
+  --livros: #7a2c40;
+  --estrelas: #4e3f8f;
+  --coroas: #8a6a1c;
+  --aviso: #e8b44c;
+}
+:root {
+  --serifa: 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+  --sem-serifa: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg-app); color: var(--text-primary); font-family: var(--font-ui); }
+button { font: inherit; cursor: pointer; color: inherit; }
+svg.ic, .ic svg { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+details > summary { cursor: pointer; }
+
+/* ===================================================================================================
+   CASCA DO PROTÓTIPO (não faz parte do design avaliado)
+   =================================================================================================== */
+.casca-barra { position: sticky; top: 0; z-index: 100; background: var(--bg-panel); border-bottom: 1px solid var(--border); padding: 8px 16px; display: flex; flex-wrap: wrap; gap: 8px 18px; align-items: center; font-size: 12px; }
+.casca-barra h1 { margin: 0; font-size: 14px; font-weight: 600; }
+.casca-barra h1 small { display: block; font-weight: 400; font-size: 11px; color: var(--text-muted); }
+.casca-grupo { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.casca-grupo > span { color: var(--text-muted); margin-right: 2px; }
+.casca-grupo button { background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 5px 10px; font-size: 12px; color: var(--text-primary); }
+.casca-grupo button[aria-pressed='true'] { border-color: var(--donel-accent); color: var(--donel-accent); }
+.casca-sobre { padding: 10px 16px 0; font-size: 13px; color: var(--text-muted); max-width: 1180px; line-height: 1.45; }
+.casca-sobre b { color: var(--text-primary); }
+.casca-palco { display: flex; flex-wrap: wrap; gap: 28px; justify-content: center; align-items: flex-start; padding: 16px 16px 80px; }
+.casca-rotulo { font-size: 11px; color: var(--text-muted); text-align: center; margin-bottom: 6px; letter-spacing: .08em; text-transform: uppercase; }
+
+/* Moldura do PC: a janela do Donel Dev com o Oráculo no centro */
+.pc { width: min(1280px, calc(100vw - 32px)); height: 800px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: var(--bg-app); display: flex; flex-direction: column; box-shadow: 0 20px 50px rgba(0,0,0,.5); }
+.pc-titulo { height: 30px; flex: none; background: var(--bg-panel); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; padding: 0 12px; font-size: 12px; color: var(--text-muted); }
+.pc-titulo i { width: 10px; height: 10px; border-radius: 50%; background: var(--border); display: inline-block; }
+.pc-titulo .troca { margin-left: auto; display: flex; gap: 2px; }
+.pc-titulo .troca b, .pc-titulo .troca span { padding: 2px 10px; border-radius: var(--radius-sm); }
+.pc-titulo .troca b { color: var(--donel-accent); background: var(--bg-raised); font-weight: 600; }
+.pc-tela { flex: 1; min-height: 0; position: relative; }
+
+/* Moldura do celular */
+.cel { width: 390px; height: 820px; border-radius: 44px; padding: 12px; background: #000; box-shadow: 0 0 0 2px #333, 0 20px 50px rgba(0,0,0,.5); flex: none; }
+.cel-tela { position: relative; width: 100%; height: 100%; border-radius: 34px; overflow: hidden; display: flex; flex-direction: column; }
+.cel-status { height: 30px; flex: none; display: flex; justify-content: space-between; align-items: center; padding: 6px 26px 0; font-size: 12px; font-weight: 600; background: var(--fundo); color: var(--tinta); }
+.cel-tela .vista { flex: 1; min-height: 0; }
+
+/* A vista: onde cada variante monta a mesa. Container query: a mesma variante se adapta ao celular. */
+.vista { position: relative; height: 100%; container-type: inline-size; container-name: vista; overflow: hidden; background: var(--fundo); background-image: radial-gradient(circle at 50% 0%, var(--fundo-veio), var(--fundo) 70%); color: var(--tinta); font-family: var(--sem-serifa); }
+
+/* Aviso de destravado (toast) */
+.oc-toast { position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%) translateY(20px); opacity: 0; transition: all .35s ease; background: var(--tinta); color: var(--carta); border-radius: 12px; padding: 9px 14px; font-size: .82rem; line-height: 1.35; max-width: min(92%, 520px); z-index: 60; box-shadow: var(--sombra); display: flex; gap: 8px; align-items: flex-start; pointer-events: none; }
+.oc-toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
+.oc-toast b { color: var(--sim); white-space: nowrap; }
+.tema-claro .oc-toast b { color: #8fe0b0; }
+
+/* ===================================================================================================
+   A CARTA — molde modular (igual em todas as variantes)
+   Cabeça → O que você decide → Visual → Recomendação e porquê → Resposta (cada caminho com o que acontece)
+   → Risco → Saídas de sempre. O verso guarda o pedido literal e o detalhe técnico.
+   =================================================================================================== */
+.naipe-martelos { --naipe: var(--martelos); } .naipe-escudos { --naipe: var(--escudos); } .naipe-chaves { --naipe: var(--chaves); }
+.naipe-livros { --naipe: var(--livros); } .naipe-estrelas { --naipe: var(--estrelas); } .naipe-coroas { --naipe: var(--coroas); }
+
+.oc-carta { position: relative; width: 100%; height: 100%; perspective: 1800px; color: var(--tinta); font-family: var(--sem-serifa); font-size: 14px; }
+.oc-giro { position: relative; width: 100%; height: 100%; transform-style: preserve-3d; transition: transform .6s ease; }
+.oc-carta.virada .oc-giro { transform: rotateY(180deg); }
+.oc-face { position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; border-radius: 18px; background: var(--carta); box-shadow: var(--sombra); padding: 8px; }
+.oc-face.verso { transform: rotateY(180deg); }
+.oc-moldura { height: 100%; border: 2px solid var(--naipe); border-radius: 12px; padding: 4px; }
+.oc-interna { position: relative; height: 100%; border: 1px solid var(--ouro); border-radius: 9px; display: flex; flex-direction: column; overflow: hidden; }
+.oc-rolagem { flex: 1; min-height: 0; overflow: auto; padding: 0 14px 10px; scrollbar-width: thin; }
+
+/* Cabeça */
+.oc-cabeca { flex: none; display: flex; align-items: center; gap: 8px; padding: 9px 12px 2px; color: var(--naipe); }
+.oc-cabeca .glifo { width: 24px; height: 24px; flex: none; }
+.oc-cabeca .glifo svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.oc-cabeca .tipo { font-family: var(--serifa); font-size: .7rem; letter-spacing: .2em; text-transform: uppercase; }
+.oc-cabeca .idx { margin-left: auto; white-space: nowrap; font-family: var(--serifa); font-size: .75rem; color: var(--tinta-suave); }
+.oc-meta { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 10px; font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; color: var(--tinta-suave); padding: 2px 12px 0; }
+.oc-meta .urgente { color: var(--nao); font-weight: 700; }
+.oc-pergunta { margin: 4px 0 2px; text-align: center; font-family: var(--serifa); font-size: 1.22rem; line-height: 1.2; font-weight: 600; }
+.oc-destrava { display: block; font-size: .78rem; color: var(--tinta-suave); text-align: center; margin: 2px 0 8px; line-height: 1.35; }
+.oc-destrava b { color: var(--sim); font-weight: 700; white-space: nowrap; }
+.oc-real { font-size: .64rem; letter-spacing: .06em; text-transform: uppercase; color: var(--tinta-suave); opacity: .8; text-align: center; margin-top: 2px; }
+
+/* Visual (módulos tipados) */
+.oc-vis { border: 1px solid var(--carta-borda); background: var(--pre-fundo); border-radius: 10px; padding: 10px; font-size: .8rem; margin: 2px 0 8px; }
+.oc-vis h5 { margin: 0 0 7px; font-size: .64rem; letter-spacing: .12em; text-transform: uppercase; color: var(--tinta-suave); font-weight: 600; display: flex; justify-content: space-between; gap: 8px; }
+.oc-vis h5 i { font-style: normal; letter-spacing: .04em; text-transform: none; opacity: .8; }
+/* checagens */
+.oc-luzes { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+.oc-luzes li { display: grid; grid-template-columns: 18px 1fr; gap: 1px 8px; align-items: start; }
+.oc-luzes li > i { width: 16px; height: 16px; border-radius: 50%; display: grid; place-items: center; margin-top: 1px; color: #fff; font-style: normal; font-size: 10px; font-weight: 800; }
+.oc-luzes li.ok > i { background: var(--sim); }
+.oc-luzes li.nao > i { background: var(--nao); }
+.oc-luzes li.aviso > i { background: var(--aviso); color: #2a2118; }
+.oc-luzes b { font-size: .8rem; }
+.oc-luzes span { grid-column: 2; font-size: .72rem; color: var(--tinta-suave); line-height: 1.3; }
+/* passos do dono */
+.oc-passos { margin: 0; padding: 0; list-style: none; counter-reset: p; display: grid; gap: 6px; }
+.oc-passos li { counter-increment: p; display: grid; grid-template-columns: 22px 1fr; gap: 8px; align-items: start; font-size: .8rem; line-height: 1.35; }
+.oc-passos li::before { content: counter(p); width: 22px; height: 22px; border-radius: 50%; border: 1.5px solid var(--naipe); color: var(--naipe); display: grid; place-items: center; font-weight: 700; font-size: .72rem; }
+.oc-passos li small { display: block; color: var(--tinta-suave); font-size: .72rem; }
+.oc-parado { display: flex; align-items: center; gap: 8px; margin-top: 9px; font-size: .74rem; color: var(--tinta-suave); }
+.oc-parado .trilho { flex: 1; height: 6px; border-radius: 3px; background: repeating-linear-gradient(45deg, var(--nao), var(--nao) 6px, transparent 6px, transparent 11px); opacity: .75; }
+.oc-parado b { color: var(--nao); }
+/* grade da semana */
+.oc-grade { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.oc-grade .dia { font-size: .64rem; text-transform: uppercase; letter-spacing: .08em; color: var(--tinta-suave); text-align: center; }
+.oc-grade .col { display: grid; gap: 3px; align-content: start; }
+.oc-grade .bloco { border-radius: 5px; padding: 3px 5px; font-size: .64rem; background: color-mix(in srgb, var(--naipe) 22%, var(--carta)); border-left: 3px solid var(--naipe); line-height: 1.2; }
+.oc-grade .bloco.sem { border-left-color: var(--nao); background: color-mix(in srgb, var(--nao) 16%, var(--carta)); }
+/* comparação de variantes */
+.oc-comp { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.oc-comp .tela { border: 1.5px solid var(--carta-borda); border-radius: 8px; background: #151a21; padding: 6px; min-height: 92px; display: flex; flex-direction: column; gap: 3px; position: relative; }
+.oc-comp .tela.rec { border-color: var(--ouro); box-shadow: 0 0 0 1px var(--ouro); }
+.oc-comp .tela .l { height: 6px; border-radius: 3px; background: #28303b; }
+.oc-comp .tela .l.a { background: #4c9cf0; } .oc-comp .tela .l.o { background: #e8b44c; } .oc-comp .tela .l.v { background: #3dce8f; }
+.oc-comp .tela .cols { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3px; flex: 1; }
+.oc-comp .tela .cols div { border-radius: 3px; background: #1c232c; border: 1px solid #28303b; display: flex; flex-direction: column; gap: 2px; padding: 2px; }
+.oc-comp .tela .faixa { font-size: 8px; color: #828d9c; letter-spacing: .08em; text-transform: uppercase; }
+.oc-comp figcaption { font-size: .72rem; text-align: center; margin-top: 4px; line-height: 1.2; }
+.oc-comp figure { margin: 0; }
+.oc-comp figure button.ver { width: 100%; background: none; border: 0; padding: 0; text-align: inherit; }
+.oc-comp .selo-rec { position: absolute; top: -8px; right: -6px; background: var(--ouro); color: var(--carta); font-size: .55rem; font-weight: 800; letter-spacing: .08em; border-radius: 999px; padding: 1px 6px; text-transform: uppercase; }
+/* irreversível × tem volta */
+.oc-volta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.oc-volta div { border-radius: 8px; padding: 8px; font-size: .74rem; line-height: 1.35; }
+.oc-volta .nao-volta { border: 1.5px solid var(--nao); }
+.oc-volta .volta { border: 1.5px solid var(--sim); }
+.oc-volta b { display: block; font-size: .66rem; letter-spacing: .1em; text-transform: uppercase; margin-bottom: 3px; }
+.oc-volta .nao-volta b { color: var(--nao); } .oc-volta .volta b { color: var(--sim); }
+/* medidor */
+.oc-medidor { display: grid; gap: 9px; }
+.oc-medidor .linha { display: grid; gap: 3px; }
+.oc-medidor .rot { display: flex; justify-content: space-between; font-size: .72rem; color: var(--tinta-suave); gap: 8px; }
+.oc-medidor .rot b { color: var(--tinta); }
+.oc-medidor .barra { height: 10px; border-radius: 5px; background: var(--carta-borda); overflow: hidden; position: relative; }
+.oc-medidor .barra div { height: 100%; border-radius: 5px; background: var(--naipe); }
+.oc-medidor .barra div.ruim { background: var(--nao); }
+.oc-medidor .barra div.bom { background: var(--sim); }
+.oc-medidor .zero { font-family: var(--serifa); font-size: 1.6rem; color: var(--nao); line-height: 1; }
+/* citação (quem pediu, nas palavras dele) */
+.oc-citacao { border-left: 3px solid var(--naipe); padding: 4px 0 4px 10px; margin: 0 0 6px; font-family: var(--serifa); font-style: italic; font-size: .86rem; line-height: 1.4; }
+.oc-citacao small { display: block; font-family: var(--sem-serifa); font-style: normal; font-size: .68rem; color: var(--tinta-suave); margin-top: 3px; }
+
+/* Recomendação */
+.oc-rec { margin: 2px 0 8px; padding: 7px 10px; border-top: 1px solid var(--ouro); border-bottom: 1px solid var(--ouro); text-align: center; font-size: .82rem; line-height: 1.38; }
+.oc-rec b { color: var(--ouro); font-family: var(--serifa); font-size: .98rem; }
+
+/* Resposta: caminhos (cada um com o que acontece) */
+.oc-caminhos { display: flex; flex-direction: column; gap: 7px; }
+.oc-caminho { text-align: left; width: 100%; border: 1.5px solid var(--carta-borda); background: var(--carta); border-radius: 12px; padding: 8px 12px; display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: center; transition: transform .12s ease; }
+.oc-caminho:hover { transform: translateY(-1px); border-color: var(--naipe); }
+.oc-caminho b { font-size: .94rem; }
+.oc-caminho span { grid-column: 1 / -1; font-size: .77rem; color: var(--tinta-suave); line-height: 1.35; }
+.oc-caminho em { font-style: normal; font-size: .6rem; letter-spacing: .08em; text-transform: uppercase; color: var(--carta); background: var(--ouro); border-radius: 999px; padding: 2px 8px; font-weight: 700; }
+.oc-caminho.rec { border-color: var(--ouro); box-shadow: inset 0 0 0 1px var(--ouro); }
+.oc-caminho.armado { background: var(--pre-fundo); }
+.oc-caminho .confirma { grid-column: 1 / -1; font-size: .72rem; color: var(--ouro); font-weight: 700; }
+/* segurar para confirmar (irreversível) */
+.oc-segurar { position: relative; overflow: hidden; }
+.oc-segurar .enchendo { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: color-mix(in srgb, var(--nao) 25%, transparent); pointer-events: none; }
+.oc-segurar.segurando .enchendo { width: 100%; transition: width 1.2s linear; }
+/* campo livre e texto a aprovar */
+.oc-campo { display: flex; flex-direction: column; gap: 6px; }
+.oc-campo label { font-size: .74rem; color: var(--tinta-suave); }
+.oc-campo textarea { width: 100%; min-height: 70px; border-radius: 10px; border: 1.5px solid var(--carta-borda); background: var(--pre-fundo); color: var(--tinta); font: .88rem/1.4 var(--sem-serifa); padding: 9px; resize: vertical; }
+.oc-campo textarea:focus { outline: none; border-color: var(--ouro); }
+.oc-campo .acoes { display: flex; gap: 6px; flex-wrap: wrap; }
+.oc-btn { border: 0; border-radius: 10px; padding: 8px 14px; font-weight: 700; font-size: .84rem; background: var(--tinta); color: var(--carta); }
+.oc-btn.ouro { background: var(--ouro); color: var(--carta); }
+.oc-btn.leve { background: transparent; color: var(--tinta); border: 1.5px solid var(--carta-borda); font-weight: 600; }
+.oc-btn:disabled { opacity: .4; cursor: default; }
+.oc-msg { border: 1px solid var(--carta-borda); border-radius: 4px 14px 14px 14px; background: var(--pre-fundo); padding: 8px 11px; font-size: .86rem; line-height: 1.42; }
+.oc-msg-dest { font-size: .7rem; color: var(--tinta-suave); margin-bottom: 4px; letter-spacing: .02em; }
+.oc-msg-dest b { color: var(--tinta); }
+/* itens em lote */
+.oc-itens { display: grid; gap: 6px; }
+.oc-item { border: 1px solid var(--carta-borda); border-radius: 10px; padding: 7px 9px; background: var(--carta); display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; align-items: start; }
+.oc-item .t { font-weight: 700; font-size: .82rem; }
+.oc-item .r { grid-column: 1 / -1; font-size: .74rem; color: var(--tinta-suave); line-height: 1.35; }
+.oc-item .r b { color: var(--ouro); font-weight: 600; }
+.oc-item .alt { grid-column: 1 / -1; font-size: .7rem; color: var(--tinta-suave); opacity: .85; }
+.oc-item .alterna { display: flex; gap: 2px; border: 1px solid var(--carta-borda); border-radius: 999px; padding: 2px; }
+.oc-item .alterna button { border: 0; background: transparent; border-radius: 999px; padding: 2px 8px; font-size: .66rem; font-weight: 700; color: var(--tinta-suave); }
+.oc-item .alterna button[aria-pressed='true'] { background: var(--sim); color: #fff; }
+.oc-item .alterna button.troca[aria-pressed='true'] { background: var(--aviso); color: #2a2118; }
+.oc-item .nota { grid-column: 1 / -1; display: none; }
+.oc-item.trocando .nota { display: block; }
+.oc-item .nota input { width: 100%; border-radius: 8px; border: 1px solid var(--carta-borda); background: var(--pre-fundo); color: var(--tinta); padding: 5px 8px; font-size: .78rem; }
+.oc-num { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; margin-top: 3px; }
+.oc-num label { display: flex; align-items: center; gap: 4px; font-size: .72rem; color: var(--tinta-suave); border: 1px solid var(--carta-borda); border-radius: 999px; padding: 2px 4px 2px 9px; }
+.oc-num button { width: 20px; height: 20px; border-radius: 50%; border: 0; background: var(--pre-fundo); font-weight: 800; line-height: 1; padding: 0; }
+.oc-num output { min-width: 14px; text-align: center; font-weight: 800; color: var(--tinta); }
+
+/* Risco */
+.oc-risco { display: flex; gap: 8px; align-items: flex-start; margin-top: 9px; font-size: .76rem; color: var(--tinta-suave); line-height: 1.35; }
+.oc-risco i { flex: none; font-style: normal; font-size: .6rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; border: 1.5px solid currentColor; border-radius: 999px; padding: 1px 6px; transform: rotate(-4deg); }
+.oc-risco.alto i { color: var(--nao); } .oc-risco.baixo i { color: var(--sim); }
+
+/* Saídas de sempre */
+.oc-saidas { flex: none; display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; justify-content: space-between; padding: 6px 12px 9px; border-top: 1px solid var(--carta-borda); }
+.oc-saidas .grupo { display: flex; flex-wrap: wrap; gap: 4px; }
+.oc-saidas button { border: 1px solid var(--carta-borda); background: transparent; border-radius: 999px; padding: 3px 9px; font-size: .7rem; color: var(--tinta-suave); }
+.oc-saidas button:hover { color: var(--tinta); border-color: var(--naipe); }
+.oc-saidas .virar { border-color: var(--naipe); color: var(--naipe); }
+.oc-saidas-painel { display: none; padding: 8px 12px; border-top: 1px dashed var(--carta-borda); font-size: .78rem; }
+.oc-saidas-painel.on { display: block; }
+.oc-saidas-painel textarea { width: 100%; min-height: 50px; border-radius: 8px; border: 1px solid var(--carta-borda); background: var(--pre-fundo); color: var(--tinta); padding: 6px 8px; font: .82rem var(--sem-serifa); }
+.oc-saidas-painel .chips { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 4px; }
+.oc-saidas-painel .chips button { border: 1px solid var(--carta-borda); background: var(--carta); border-radius: 999px; padding: 3px 9px; font-size: .74rem; }
+.oc-esperando { margin-top: 8px; font-size: .76rem; border-left: 3px solid var(--aviso); padding: 5px 9px; background: var(--pre-fundo); border-radius: 6px; }
+
+/* Verso */
+.oc-verso-corpo { flex: 1; min-height: 0; overflow: auto; padding: 4px 16px 10px; font-size: .84rem; line-height: 1.45; }
+.oc-verso-corpo h4 { margin: 12px 0 3px; font-family: var(--serifa); font-size: .7rem; letter-spacing: .16em; text-transform: uppercase; color: var(--naipe); }
+.oc-verso-corpo p { margin: 0; }
+.oc-verso-corpo blockquote { margin: 0; padding: 4px 0 4px 10px; border-left: 3px solid var(--naipe); font-family: var(--serifa); font-style: italic; }
+.oc-verso-corpo dl { margin: 0; } .oc-verso-corpo dt { font-weight: 700; margin-top: 6px; } .oc-verso-corpo dd { margin: 0; color: var(--tinta-suave); }
+.oc-verso-corpo details { margin-top: 10px; border-top: 1px solid var(--carta-borda); padding-top: 6px; }
+.oc-verso-corpo details summary { font-size: .74rem; color: var(--tinta-suave); }
+.oc-verso-corpo .tec { font-family: var(--mono); font-size: .7rem; background: var(--pre-fundo); border: 1px solid var(--carta-borda); border-radius: 6px; padding: 8px; white-space: pre-wrap; color: var(--tinta); margin-top: 6px; }
+
+/* Carta em miniatura (o dorso e a carta fechada na mesa) */
+.oc-mini { position: relative; border-radius: 12px; background: var(--carta); border: 2px solid var(--naipe); color: var(--tinta); padding: 9px 10px; text-align: left; box-shadow: var(--sombra); display: flex; flex-direction: column; gap: 3px; width: 100%; }
+.oc-mini .topo { display: flex; align-items: center; gap: 6px; color: var(--naipe); }
+.oc-mini .topo .glifo { width: 16px; height: 16px; }
+.oc-mini .topo .glifo svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.7; }
+.oc-mini .topo small { font-size: .58rem; letter-spacing: .14em; text-transform: uppercase; }
+.oc-mini .topo .urg { margin-left: auto; color: var(--nao); font-size: .58rem; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.oc-mini b { font-family: var(--serifa); font-size: .86rem; line-height: 1.2; }
+.oc-mini .dest { font-size: .68rem; color: var(--tinta-suave); line-height: 1.25; }
+.oc-mini .dest em { color: var(--sim); font-style: normal; font-weight: 700; }
+.oc-dorso { border-radius: 12px; border: 2px solid var(--ouro); background: var(--carta); box-shadow: var(--sombra); display: grid; place-items: center; color: var(--ouro); }
+.oc-dorso svg { width: 46%; max-width: 70px; fill: none; stroke: currentColor; stroke-width: 1.2; opacity: .7; }
+
+/* Carta saindo da mesa */
+.oc-sai-direita { animation: oc-sai-d .45s ease forwards; }
+.oc-sai-esquerda { animation: oc-sai-e .45s ease forwards; }
+.oc-sai-cima { animation: oc-sai-c .45s ease forwards; }
+@keyframes oc-sai-d { to { transform: translateX(120%) rotate(12deg); opacity: 0; } }
+@keyframes oc-sai-e { to { transform: translateX(-120%) rotate(-12deg); opacity: 0; } }
+@keyframes oc-sai-c { to { transform: translateY(-110%) scale(.9); opacity: 0; } }
+
+/* Mesa vazia */
+.oc-vazia { height: 100%; display: grid; place-items: center; text-align: center; padding: 24px; color: var(--tinta-suave); }
+.oc-vazia b { display: block; font-family: var(--serifa); font-size: 1.3rem; color: var(--tinta); margin: 10px 0 4px; }
+.oc-vazia .oc-dorso { width: 120px; height: 170px; margin: 0 auto; }
+
+/* Celular de verdade (tela estreita): a moldura some e a vista ocupa a tela inteira */
+body.no-celular .casca-palco { padding: 0; gap: 0; }
+body.no-celular .casca-rotulo, body.no-celular .casca-sobre { display: none; }
+body.no-celular .cel { width: 100vw; height: calc(100dvh - 44px); border-radius: 0; padding: 0; box-shadow: none; }
+body.no-celular .cel-tela { border-radius: 0; }
+body.no-celular .cel-status { display: none; }
+body.no-celular .casca-barra { padding: 6px 10px; gap: 6px; }
+body.no-celular .casca-barra h1, body.no-celular .casca-barra [data-grupo-tela] { display: none; }
+
+/* ===================================================================================================
+   Variante A — Tiragem em três casas
+   =================================================================================================== */
+.vA-mesa { position: absolute; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr) 250px; grid-template-rows: auto minmax(0, 1fr) auto; gap: 12px 18px; padding: 14px 18px 12px; }
+
+/* ---- faixa das três casas ---- */
+.vA-faixa { grid-column: 1; grid-row: 1; display: grid; grid-template-columns: 128px repeat(3, minmax(0, 1fr)); gap: 10px; }
+.vA-lead { display: flex; flex-direction: column; justify-content: center; gap: 2px; padding-right: 4px; }
+.vA-titulo { font-family: var(--serifa); font-size: .7rem; letter-spacing: .22em; text-transform: uppercase; color: var(--ouro); }
+.vA-conta { font-family: var(--serifa); font-size: .95rem; line-height: 1.2; color: var(--tinta); }
+.vA-conta b { display: block; font-size: 1.9rem; line-height: 1; font-weight: 600; }
+.vA-sub { font-size: .7rem; color: var(--tinta-suave); }
+
+.vA-casa { position: relative; display: grid; grid-template-columns: 56px minmax(0, 1fr); grid-template-rows: auto 1fr auto; grid-template-areas: 'pilha nome' 'pilha topo' 'pilha estado'; gap: 2px 12px; align-items: start; text-align: left; padding: 10px 12px 9px 10px; border: 1px solid var(--carta-borda); border-radius: 14px; background: color-mix(in srgb, var(--carta) 55%, transparent); color: var(--tinta); transition: transform .15s ease, border-color .15s ease, background .15s ease; min-width: 0; }
+.vA-casa:not(:disabled):hover { transform: translateY(-2px); border-color: var(--ouro); background: color-mix(in srgb, var(--carta) 85%, transparent); }
+.vA-casa:disabled { cursor: default; }
+.vA-casa.vA-ativa { border-color: var(--ouro); box-shadow: inset 0 0 0 1px var(--ouro); }
+.vA-casa.vA-vazia { border-style: dashed; background: transparent; }
+.vA-casa-nome { grid-area: nome; font-family: var(--serifa); font-size: .68rem; letter-spacing: .18em; text-transform: uppercase; font-weight: 700; }
+.vA-casa-trava .vA-casa-nome { color: var(--nao); }
+.vA-casa-hoje .vA-casa-nome { color: var(--ouro); }
+.vA-casa-espera .vA-casa-nome { color: var(--tinta-suave); }
+.vA-casa-dest .vA-casa-nome { color: var(--sim); }
+.vA-casa-topo { grid-area: topo; display: flex; gap: 6px; align-items: flex-start; min-width: 0; }
+.vA-glifo { flex: none; width: 15px; height: 15px; color: var(--naipe); display: inline-block; }
+.vA-glifo svg { width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.vA-casa-perg { font-family: var(--serifa); font-size: .8rem; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.vA-casa-estado { grid-area: estado; font-size: .66rem; color: var(--tinta-suave); }
+.vA-casa.vA-ativa .vA-casa-estado { color: var(--ouro); }
+
+/* pilha de dorsos */
+.vA-pilha { grid-area: pilha; position: relative; width: 50px; height: 72px; margin-top: 2px; }
+.vA-pilha.vazia { border: 1.5px dashed var(--carta-borda); border-radius: 8px; }
+.vA-dorso { position: absolute; inset: 0; border-radius: 8px; border: 1.5px solid var(--ouro); background: var(--carta); display: grid; place-items: center; color: var(--ouro); box-shadow: 0 2px 5px rgba(0, 0, 0, .35); transform: translate(calc(var(--k) * 3px), calc(var(--k) * -3px)); }
+.vA-dorso svg { width: 62%; fill: none; stroke: currentColor; stroke-width: 1.4; opacity: .7; }
+.vA-n { position: absolute; right: -8px; bottom: -6px; z-index: 2; min-width: 22px; height: 22px; padding: 0 5px; border-radius: 999px; background: var(--ouro); color: var(--carta); font-size: .74rem; font-weight: 800; display: grid; place-items: center; box-shadow: 0 1px 3px rgba(0, 0, 0, .4); }
+.vA-casa-dest { display: none; }
+.vA-pilha-dest { border: 1.5px solid var(--sim); border-radius: 8px; display: grid; place-items: center; color: var(--sim); background: color-mix(in srgb, var(--sim) 12%, transparent); }
+.vA-pilha-dest i { font-style: normal; font-weight: 800; }
+.vA-pilha-dest .vA-n { background: var(--sim); }
+
+/* ---- centro: a carta da vez ---- */
+.vA-centro { grid-column: 1; grid-row: 2; position: relative; min-height: 0; display: flex; justify-content: center; }
+.vA-carta { position: relative; z-index: 5; height: 100%; width: min(720px, 100%); touch-action: pan-y; cursor: grab; }
+.vA-carta .oc-rolagem, .vA-carta .oc-verso-corpo { touch-action: pan-y; }
+.vA-arrastando .vA-carta { cursor: grabbing; }
+.vA-arrastando, .vA-arrastando * { user-select: none; -webkit-user-select: none; }
+.vA-carta.vA-voando { z-index: 50; pointer-events: none; }
+.vA-carimbo { position: absolute; top: 74px; z-index: 6; pointer-events: none; opacity: 0; font-family: var(--serifa); font-size: 1.5rem; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; padding: 4px 14px; border: 3px solid currentColor; border-radius: 10px; background: color-mix(in srgb, var(--carta) 80%, transparent); }
+.vA-carimbo.sim { left: 26px; color: var(--sim); transform: rotate(-12deg); }
+.vA-carimbo.nao { right: 26px; color: var(--nao); transform: rotate(10deg); }
+.vA-vazia { width: 100%; }
+
+/* ---- pé da mesa ---- */
+.vA-pe { grid-column: 1; grid-row: 3; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 14px; }
+.vA-dica { font-size: .78rem; color: var(--tinta-suave); }
+.vA-dica b { color: var(--sim); }
+.vA-cel { display: none; }
+.vA-teclas { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 10px; font-size: .68rem; color: var(--tinta-suave); }
+.vA-teclas kbd { font: 600 .64rem var(--sem-serifa); border: 1px solid var(--carta-borda); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; margin-right: 2px; color: var(--tinta); }
+.vA-seguir { position: relative; overflow: hidden; display: flex; align-items: center; gap: 12px; max-width: 460px; min-width: 260px; border: 0; border-radius: 999px; padding: 8px 18px 8px 22px; background: var(--ouro); color: var(--carta); text-align: left; box-shadow: var(--sombra); transition: transform .12s ease, filter .12s ease; }
+.vA-seguir:hover { transform: translateY(-1px); filter: brightness(1.06); }
+.vA-seguir-txt { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.vA-seguir small { font-size: .6rem; letter-spacing: .14em; text-transform: uppercase; font-weight: 700; opacity: .8; }
+.vA-seguir b { font-family: var(--serifa); font-size: .98rem; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vA-seta { position: relative; font-size: 1.2rem; font-weight: 800; }
+.vA-enche { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: rgba(0, 0, 0, .22); pointer-events: none; }
+.vA-seguir.vA-falta { background: color-mix(in srgb, var(--ouro) 60%, var(--carta)); }
+.vA-seguir.vA-segurar { background: color-mix(in srgb, var(--nao) 55%, var(--ouro)); }
+.vA-seguir.vA-segurando .vA-enche { width: 100%; transition: width 1.2s linear; }
+.vA-seguir.vA-pulsa { animation: vA-pulsa .5s ease 2; }
+@keyframes vA-pulsa { 50% { transform: scale(1.05); } }
+.vA-pe-fim .vA-seguir, .vA-pe-fim .vA-teclas { visibility: hidden; }
+
+/* ---- casa Destravado ---- */
+.vA-destravado { grid-column: 2; grid-row: 1 / 4; display: flex; flex-direction: column; gap: 10px; min-height: 0; padding: 14px 12px 12px; border: 1.5px dashed color-mix(in srgb, var(--sim) 45%, transparent); border-radius: 16px; background: color-mix(in srgb, var(--carta) 30%, transparent); transition: background .2s ease, border-color .2s ease; }
+.vA-arrastando .vA-destravado { border-color: var(--sim); }
+.vA-destravado.vA-alvo { border-style: solid; background: color-mix(in srgb, var(--sim) 14%, transparent); }
+.vA-dest-cab h3 { margin: 0; display: flex; align-items: center; gap: 8px; font-family: var(--serifa); font-size: 1.05rem; font-weight: 600; color: var(--sim); }
+.vA-dest-cab h3 b { font-family: var(--sem-serifa); font-size: .72rem; min-width: 22px; height: 22px; border-radius: 999px; background: var(--sim); color: var(--carta); display: grid; place-items: center; padding: 0 6px; }
+.vA-dest-cab p { margin: 2px 0 0; font-size: .72rem; color: var(--tinta-suave); }
+.vA-dest-fechar { display: none; }
+.vA-slot { flex: none; min-height: 84px; display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1.5px dashed var(--carta-borda); border-radius: 12px; font-size: .74rem; line-height: 1.35; color: var(--tinta-suave); transition: all .2s ease; }
+.vA-slot b { color: var(--tinta); font-weight: 600; }
+.vA-slot-seta { font-size: 1.3rem; color: var(--sim); }
+.vA-arrastando .vA-slot, .vA-alvo .vA-slot { border-color: var(--sim); color: var(--tinta); }
+.vA-alvo .vA-slot { background: color-mix(in srgb, var(--sim) 18%, transparent); transform: scale(1.03); }
+.vA-slot.vA-recebe { background: color-mix(in srgb, var(--sim) 28%, transparent); }
+.vA-slot.vA-slot-fim { display: none; }
+.vA-rastro { list-style: none; margin: 0; padding: 0 2px 4px; flex: 0 1 auto; min-height: 0; overflow: auto; display: flex; flex-direction: column; gap: 7px; scrollbar-width: thin; }
+.vA-slip { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 8px 10px; border-radius: 10px; background: var(--carta); border: 1px solid var(--carta-borda); border-left: 3px solid var(--naipe); box-shadow: 0 2px 6px rgba(0, 0, 0, .3); font-family: var(--serifa); font-size: .86rem; line-height: 1.25; transform: rotate(-.6deg); }
+.vA-slip:nth-child(even) { transform: rotate(.5deg); }
+.vA-slip i { font-style: normal; color: var(--sim); font-weight: 800; font-family: var(--sem-serifa); }
+.vA-slip.vA-cai { animation: vA-cai .45s cubic-bezier(.2,.9,.3,1.3); }
+@keyframes vA-cai { from { transform: translateY(-18px) rotate(-4deg) scale(.9); opacity: 0; } }
+.vA-adiadas { flex: none; font-size: .68rem; line-height: 1.4; color: var(--tinta-suave); }
+.vA-adiadas:empty { display: none; }
+.vA-adiadas b { color: var(--tinta); font-weight: 600; }
+.vA-adiadas i { font-style: normal; opacity: .8; }
+
+/* aviso quando o gesto não basta */
+.vA-aviso { position: absolute; left: 50%; bottom: 132px; z-index: 70; transform: translateX(-50%) translateY(10px); opacity: 0; pointer-events: none; transition: all .3s ease; max-width: min(90%, 460px); padding: 9px 14px; border-radius: 12px; border: 1.5px solid var(--aviso); background: var(--carta); color: var(--tinta); font-size: .8rem; line-height: 1.35; box-shadow: var(--sombra); }
+.vA-aviso.on { opacity: 1; transform: translateX(-50%) translateY(0); }
+.vista .vA-mesa ~ .oc-toast { bottom: 76px; width: max-content; }
+/* no PC o aviso de destravado aparece dentro da casa Destravado, onde a carta caiu, sem cobrir a carta da vez */
+@container vista (min-width: 641px) {
+  .vista .vA-mesa ~ .oc-toast { left: auto; right: 30px; bottom: 28px; width: 226px; max-width: 226px; flex-direction: column; gap: 2px; transform: translateY(20px); }
+  .vista .vA-mesa ~ .oc-toast.on { transform: none; }
+}
+
+/* ===================================================================================================
+   Celular: faixa de quatro pilhas pequenas no alto, a carta ocupa o resto
+   =================================================================================================== */
+@container vista (max-width: 640px) {
+  .vA-mesa { grid-template-columns: minmax(0, 1fr); gap: 8px; padding: 8px 10px 10px; }
+  .vA-faixa { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; }
+  .vA-lead { display: none; }
+  .vA-casa, .vA-casa-dest { display: grid; grid-template-columns: 24px minmax(0, 1fr); grid-template-rows: auto auto; grid-template-areas: 'pilha topo' 'nome nome'; gap: 4px 6px; align-items: center; padding: 6px 6px 5px; border-radius: 10px; }
+  .vA-casa:not(:disabled):hover { transform: none; }
+  .vA-casa-nome { font-size: .5rem; letter-spacing: .02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .vA-casa-perg, .vA-casa-estado { display: none; }
+  .vA-casa-topo { justify-content: flex-end; padding-right: 2px; }
+  .vA-glifo { width: 16px; height: 16px; }
+  .vA-pilha { width: 22px; height: 30px; margin: 0; }
+  .vA-dorso { border-radius: 4px; border-width: 1px; transform: translate(calc(var(--k) * 2px), calc(var(--k) * -2px)); }
+  .vA-pilha.vazia, .vA-pilha-dest { border-radius: 4px; }
+  .vA-n { min-width: 17px; height: 17px; font-size: .62rem; right: -12px; bottom: -4px; padding: 0 3px; }
+  .vA-casa-dest .vA-casa-topo { display: none; }
+
+  .vA-carta { width: 100%; }
+  .vA-carimbo { top: 64px; font-size: 1.2rem; }
+
+  .vA-pe { grid-template-columns: minmax(0, 1fr); gap: 6px; justify-items: stretch; }
+  .vA-dica { text-align: center; font-size: .7rem; }
+  .vA-pc, .vA-teclas { display: none; }
+  .vA-cel { display: inline; }
+  .vA-dica .vA-cel b { color: var(--tinta); }
+  .vA-seguir { min-width: 0; max-width: none; width: 100%; padding: 7px 16px 7px 18px; }
+  .vA-pe-fim .vA-seguir { display: none; }
+
+  .vA-destravado { display: none; }
+  .vA-rastro-aberto .vA-destravado { display: flex; position: absolute; grid-column: 1 / -1; grid-row: 1 / -1; inset: 58px 0 0; z-index: 40; background: var(--fundo); border-style: solid; box-shadow: var(--sombra); }
+  .vA-rastro-aberto .vA-dest-fechar { display: block; align-self: flex-start; border: 1px solid var(--carta-borda); background: transparent; border-radius: 999px; padding: 4px 12px; font-size: .74rem; color: var(--tinta); }
+  .vA-rastro-aberto .vA-slot { display: none; }
+  .vista .vA-mesa ~ .oc-toast { bottom: 92px; }
+  .vA-aviso { bottom: 150px; }
+}
+
+/* ===================================================================================================
+   Variante B — uma carta por vez. A mesa é só a pilha: carta da vez ao centro, dorsos atrás.
+   PC: dicas do gesto nas laterais. Celular (@container vista ≤ 640px): carta em tela cheia, dicas embaixo.
+   =================================================================================================== */
+.vB-mesa { position: absolute; inset: 0; display: grid; grid-template-columns: 1fr minmax(0, 560px) 1fr; grid-template-rows: 1fr auto; grid-template-areas: 'esq pilha dir' '. espaco .'; column-gap: 36px; padding: 20px 28px 10px; }
+
+/* A pilha: dorsos atrás, a carta da vez por cima */
+.vB-pilha { grid-area: pilha; position: relative; min-height: 0; margin-bottom: 22px; }
+.vB-dorso { position: absolute; inset: 0; border-radius: 18px; transform-origin: 50% 100%; }
+.vB-dorso svg { max-width: 120px; }
+.vB-pilha { --vB-sobe: 0; }
+.vB-d1 { transform: translateY(calc(7px * (1 - var(--vB-sobe)))) scale(calc(.975 + .025 * var(--vB-sobe))) rotate(calc(.6deg * (1 - var(--vB-sobe)))); }
+.vB-d2 { transform: translateY(14px) scale(.95) rotate(-.8deg); opacity: .85; }
+.vB-d3 { transform: translateY(21px) scale(.925) rotate(1deg); opacity: .7; }
+.vB-atual { position: absolute; inset: 0; z-index: 2; touch-action: pan-y; user-select: none; -webkit-user-select: none; cursor: grab; will-change: transform; }
+/* No dedo, a rolagem da carta é um contêiner próprio: sem pan-y nela o navegador cancela o arrasto horizontal. */
+.vB-atual .oc-rolagem, .vB-atual .oc-verso-corpo { touch-action: pan-y; }
+.vB-atual textarea, .vB-atual input, .vB-atual .oc-verso-corpo { user-select: text; -webkit-user-select: text; cursor: auto; }
+.vB-atual button { cursor: pointer; }
+.vB-atual.vB-arrastando { cursor: grabbing; }
+.vB-atual.vB-entra { animation: vB-sobe .34s ease-out; }
+@keyframes vB-sobe { from { transform: translateY(16px) scale(.975); opacity: .4; } to { transform: none; opacity: 1; } }
+.vB-atual.vB-treme { animation: vB-treme .42s ease; }
+@keyframes vB-treme { 20% { transform: translateX(10px); } 45% { transform: translateX(-8px); } 70% { transform: translateX(5px); } 100% { transform: none; } }
+
+/* Carimbo que acende enquanto arrasta */
+.vB-carimbo { position: absolute; top: 15%; z-index: 6; pointer-events: none; opacity: 0; max-width: 74%; text-align: center; padding: 7px 16px 8px; border: 3px solid currentColor; border-radius: 10px; font-family: var(--serifa); font-weight: 700; font-size: 1.45rem; line-height: 1.1; letter-spacing: .14em; text-transform: uppercase; background: color-mix(in srgb, var(--carta) 86%, transparent); box-shadow: 0 6px 18px rgba(0, 0, 0, .25); transition: opacity .12s ease, transform .15s ease; }
+.vB-carimbo small { display: block; margin-top: 3px; font-family: var(--sem-serifa); font-size: .82rem; font-weight: 700; letter-spacing: .02em; text-transform: none; }
+.vB-carimbo.dir { left: 9%; color: var(--sim); transform: rotate(-11deg) scale(.92); }
+.vB-carimbo.esq { right: 9%; color: var(--tinta-suave); transform: rotate(10deg) scale(.92); }
+.vB-carimbo.dir.aviso { color: var(--aviso); }
+.vB-carimbo.dir.nao { color: var(--nao); }
+.vB-carimbo.pronto.dir { transform: rotate(-11deg) scale(1); }
+.vB-carimbo.pronto.esq { transform: rotate(10deg) scale(1); }
+
+/* Onde o dono precisa agir quando arrastar não basta */
+.vB-aponta { animation: vB-aponta .8s ease 2; }
+@keyframes vB-aponta { 50% { box-shadow: 0 0 0 4px var(--ouro); } }
+
+/* Dicas do gesto (PC: nas laterais) */
+.vB-dica { align-self: center; display: flex; align-items: center; gap: 12px; max-width: 230px; background: none; border: 1px dashed transparent; border-radius: 14px; padding: 12px 14px; color: var(--tinta-suave); opacity: .62; text-align: left; transition: opacity .15s ease, color .15s ease, border-color .15s ease; }
+.vB-dica:hover { opacity: 1; border-color: var(--carta-borda); }
+.vB-dica.esq { grid-area: esq; justify-self: end; flex-direction: row; text-align: right; }
+.vB-dica.esq .txt { order: 2; } .vB-dica.esq .seta { order: 1; } .vB-dica.esq kbd { order: 3; }
+.vB-dica.dir { grid-area: dir; justify-self: start; }
+.vB-dica.dir .txt { order: 2; } .vB-dica.dir .seta { order: 3; } .vB-dica.dir kbd { order: 1; }
+.vB-dica .seta { font-size: 1.9rem; line-height: 1; font-family: var(--serifa); }
+.vB-dica .txt { display: flex; flex-direction: column; gap: 3px; }
+.vB-dica .txt b { font-family: var(--serifa); font-size: 1.02rem; color: var(--tinta); font-weight: 600; }
+.vB-dica .txt small { font-size: .78rem; line-height: 1.3; }
+.vB-dica.dir .txt small.rec { color: var(--ouro); }
+.vB-dica.acesa { opacity: 1; }
+.vB-dica.dir.acesa { color: var(--sim); border-color: var(--sim); }
+.vB-dica.esq.acesa { border-color: var(--tinta-suave); }
+.vB-mesa kbd { font-family: var(--sem-serifa); font-size: .66rem; border: 1px solid var(--carta-borda); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; color: var(--tinta-suave); background: var(--carta); }
+.vB-espaco { grid-area: espaco; justify-self: center; font-size: .72rem; color: var(--tinta-suave); opacity: .62; }
+
+/* O aviso de destravado: largura do texto (a base o limita à metade da vista). No PC ele aparece
+   na lateral para onde a carta foi, sem cobrir a próxima; no celular, embaixo, por cima das dicas
+   (não cobre as saídas da carta). */
+.vB-mesa ~ .oc-toast { width: max-content; max-width: max(200px, calc(50% - 320px)); bottom: 28px; }
+.vB-mesa.vB-saiu-dir ~ .oc-toast { left: auto; right: 28px; transform: translateY(20px); }
+.vB-mesa.vB-saiu-esq ~ .oc-toast { left: 28px; transform: translateY(20px); }
+.vB-mesa.vB-saiu-dir ~ .oc-toast.on, .vB-mesa.vB-saiu-esq ~ .oc-toast.on { transform: none; }
+
+/* Fim: o baralho vazio */
+.vB-mesa.vB-fim .vB-dica, .vB-mesa.vB-fim .vB-espaco { visibility: hidden; }
+.vB-vazia .oc-dorso { margin-bottom: 4px; }
+.vB-vazia b { font-size: 1.5rem; }
+
+/* ---------------------------------------------------------------- celular: carta em tela cheia */
+@container vista (max-width: 640px) {
+  .vB-mesa { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr auto; grid-template-areas: 'pilha pilha' 'esq dir'; column-gap: 8px; padding: 8px 10px 6px; }
+  .vB-pilha { margin-bottom: 26px; }
+  .vB-d1 { transform: translateY(calc(8px * (1 - var(--vB-sobe)))) scale(calc(.965 + .035 * var(--vB-sobe))) rotate(calc(.6deg * (1 - var(--vB-sobe)))); }
+  .vB-d2 { transform: translateY(15px) scale(.93) rotate(-.8deg); }
+  .vB-d3 { transform: translateY(22px) scale(.895) rotate(1deg); }
+  .vB-espaco { display: none; }
+  .vB-dica { max-width: none; padding: 4px 6px; gap: 6px; border: 0; opacity: .7; }
+  .vB-dica .seta { font-size: 1.1rem; }
+  .vB-dica .txt b { font-size: .8rem; font-family: var(--sem-serifa); font-weight: 600; color: var(--tinta-suave); }
+  .vB-dica .txt small, .vB-dica kbd { display: none; }
+  .vB-dica.esq { justify-self: start; }
+  .vB-dica.dir { justify-self: end; }
+  .vB-dica .txt b { white-space: nowrap; }
+  .vB-dica.dir.acesa .txt b { color: var(--sim); }
+  .vB-carimbo { font-size: 1.1rem; padding: 6px 12px; }
+  .vB-mesa ~ .oc-toast, .vB-mesa.vB-saiu-dir ~ .oc-toast, .vB-mesa.vB-saiu-esq ~ .oc-toast { left: 50%; right: auto; bottom: 4px; max-width: min(92%, 520px); transform: translateX(-50%) translateY(20px); }
+  .vB-mesa.vB-saiu-dir ~ .oc-toast.on, .vB-mesa.vB-saiu-esq ~ .oc-toast.on { transform: translateX(-50%); }
+  .vB-carimbo small { font-size: .74rem; }
+}
+/* Celular estreito (moldura de ~366 px): as saídas da carta cabem numa linha só */
+@container vista (max-width: 380px) {
+  .vB-atual .oc-saidas button { padding: 3px 7px; }
+}
+
+/* ===== Variante C — Mão e mesa ===== */
+.vC-raiz { position: absolute; inset: 0; display: flex; flex-direction: column; user-select: none; -webkit-user-select: none; }
+.vC-raiz textarea, .vC-raiz input { user-select: text; -webkit-user-select: text; }
+
+/* ---- a mesa (feltro) ---- */
+.vC-mesa {
+  position: relative; flex: 1; min-height: 0; margin: 8px 12px 0; border-radius: 22px;
+  display: grid; grid-template-columns: 1fr minmax(420px, 540px) 1fr; grid-template-rows: minmax(0, 1fr); align-items: center; gap: 0 18px; padding: 10px 18px;
+  background:
+    repeating-linear-gradient(115deg, rgba(255, 255, 255, .012) 0 2px, transparent 2px 7px),
+    radial-gradient(ellipse at 50% 42%, var(--fundo-veio), var(--fundo) 78%);
+  border: 1px solid var(--carta-borda);
+  box-shadow: inset 0 0 90px rgba(0, 0, 0, .45), inset 0 0 0 6px rgba(0, 0, 0, .12);
+}
+.tema-claro .vC-mesa { box-shadow: inset 0 0 70px rgba(0, 0, 0, .12), inset 0 0 0 6px rgba(0, 0, 0, .04); }
+.vC-topo { position: absolute; top: 16px; left: 22px; display: flex; flex-direction: column; gap: 2px; z-index: 2; }
+.vC-topo-n { font-family: var(--serifa); font-size: 1.05rem; color: var(--tinta); }
+.vC-topo-n b { color: var(--ouro); font-size: 1.5rem; margin-right: 2px; }
+.vC-topo-x { font-size: .7rem; letter-spacing: .08em; text-transform: uppercase; color: var(--tinta-suave); }
+
+.vC-centro { position: relative; grid-column: 2; grid-row: 1; height: 100%; min-height: 0; }
+.vC-jogada { position: absolute; inset: 0; z-index: 5; touch-action: pan-y; }
+.vC-jogada.vC-arrastando { z-index: 40; transition: none; cursor: grabbing; }
+.vC-jogada.vC-arrastando .oc-face { box-shadow: 0 30px 60px rgba(0, 0, 0, .55); }
+.vC-jogada .oc-cabeca { cursor: grab; touch-action: none; }
+.vC-jogada.vC-voando { transition: transform .45s cubic-bezier(.5, 0, .7, .4), opacity .45s ease; z-index: 40; pointer-events: none; }
+.vC-jogada.vC-volta-lugar { transition: transform .3s cubic-bezier(.2, .9, .3, 1.2); }
+.vC-entra { animation: vC-entra .42s cubic-bezier(.2, .8, .3, 1); }
+@keyframes vC-entra { from { transform: translateY(42%) scale(.55) rotate(-3deg); opacity: 0; } }
+.vC-treme { animation: vC-treme .42s ease; }
+@keyframes vC-treme { 20% { transform: translateX(-9px); } 40% { transform: translateX(8px); } 60% { transform: translateX(-5px); } 80% { transform: translateX(3px); } }
+
+/* lugar vazio no centro / mesa limpa */
+.vC-alvo { position: absolute; inset: 0; border-radius: 18px; display: none; }
+.vC-sem-carta .vC-alvo { display: grid; }
+.vC-alvo-jogue { place-items: center; align-content: center; gap: 6px; text-align: center; padding: 24px; border: 2px dashed var(--carta-borda); color: var(--tinta-suave); }
+.vC-alvo-jogue b { font-family: var(--serifa); font-size: 1.25rem; color: var(--tinta); font-weight: 600; }
+.vC-alvo-jogue span { font-size: .84rem; max-width: 30ch; line-height: 1.4; }
+.vC-alvo-ic { font-size: 1.6rem; color: var(--ouro); }
+.vC-centro.vC-quente .vC-alvo, .vC-centro.vC-quente .vC-jogada .oc-face { outline: 2px solid var(--ouro); outline-offset: 4px; }
+.vC-centro.vC-quente .vC-alvo-jogue { border-color: var(--ouro); background: color-mix(in srgb, var(--ouro) 10%, transparent); }
+.vC-jogando .vC-sem-carta .vC-alvo-jogue { border-color: var(--ouro); }
+
+/* ---- os dois lugares marcados na mesa ---- */
+.vC-lugar {
+  justify-self: center; width: min(220px, 100%); aspect-ratio: 5 / 7; max-height: 100%; border-radius: 18px;
+  background: transparent; border: 2px dashed var(--tinta-suave); color: var(--tinta-suave);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 18px 16px; text-align: center;
+  transition: transform .18s ease, background .18s ease, border-color .18s ease, opacity .18s ease; opacity: .8;
+}
+.vC-lugar:hover { opacity: 1; }
+.vC-lugar-tarde { grid-column: 1; grid-row: 1; justify-self: end; }
+.vC-lugar-seguir { grid-column: 3; grid-row: 1; justify-self: start; border-color: var(--ouro); color: var(--ouro); opacity: 1; background: color-mix(in srgb, var(--ouro) 6%, transparent); }
+.vC-lugar-ic { width: 54px; height: 54px; border-radius: 50%; border: 2px dashed currentColor; display: grid; place-items: center; font-size: 1.4rem; margin-bottom: 4px; }
+.vC-lugar b { font-family: var(--serifa); font-size: 1.12rem; line-height: 1.2; color: var(--tinta); font-weight: 600; }
+.vC-lugar-seguir b { color: var(--ouro); }
+.vC-lugar small { font-size: .76rem; line-height: 1.35; color: var(--tinta-suave); }
+.vC-lugar-seguir small { font-family: var(--serifa); font-size: .92rem; color: var(--tinta); }
+.vC-lugar-dica { margin-top: 8px; font-size: .66rem; letter-spacing: .08em; text-transform: uppercase; color: var(--tinta-suave); display: flex; gap: 6px; align-items: center; justify-content: center; flex-wrap: wrap; }
+.vC-raiz kbd { font: 600 .66rem var(--sem-serifa); border: 1px solid var(--carta-borda); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; color: var(--tinta-suave); letter-spacing: 0; }
+.vC-lugar.vC-quente { transform: scale(1.06); opacity: 1; border-style: solid; background: color-mix(in srgb, currentColor 16%, transparent); }
+.vC-lugar-seguir.vC-quente .vC-lugar-ic, .vC-lugar-seguir.vC-aceso .vC-lugar-ic { background: var(--ouro); color: var(--carta); border-style: solid; }
+.vC-lugar-seguir.vC-aceso { background: color-mix(in srgb, var(--ouro) 22%, transparent); border-style: solid; }
+.vC-movendo .vC-lugar { opacity: 1; }
+.vC-sem-carta .vC-lugar { opacity: .35; pointer-events: none; }
+/* quando o dourado não basta (falta a frase, ou não tem volta) */
+.vC-lugar-seguir.vC-bloq { border-color: var(--aviso); color: var(--aviso); background: transparent; }
+.vC-lugar-seguir.vC-bloq b { color: var(--aviso); }
+.vC-lugar-seguir.vC-bloq-nao { border-color: var(--nao); color: var(--nao); }
+.vC-lugar-seguir.vC-bloq-nao b { color: var(--nao); }
+.vC-lugar-seguir.vC-bloq .vC-lugar-ic::before { content: '!'; font-weight: 800; }
+.vC-lugar-seguir.vC-bloq .vC-lugar-ic { font-size: 0; }
+.vC-lugar-seguir.vC-bloq .vC-lugar-ic::before { font-size: 1.4rem; }
+.vC-pulsa { animation: vC-pulsa .5s ease; }
+@keyframes vC-pulsa { 30% { transform: scale(1.07); } }
+
+.vC-pe { display: none; }
+
+/* ---- a mão ---- */
+.vC-mao { position: relative; flex: none; height: 188px; transition: background .2s ease; }
+.vC-mao-rot { position: absolute; top: 10px; left: 24px; font-size: .74rem; color: var(--tinta-suave); z-index: 1; }
+.vC-mao-rot b { font-family: var(--serifa); font-size: .9rem; color: var(--tinta); font-weight: 600; }
+.vC-leque { position: absolute; inset: 0; }
+.vC-namao {
+  position: absolute; left: 50%; bottom: 20px; width: 190px; height: 138px;
+  --vC-x: 0px; --vC-y: 0px; --vC-rot: 0deg; --vC-dx: 0px; --vC-dy: 0px;
+  transform: translate(var(--vC-dx), var(--vC-dy)) translateX(calc(-50% + var(--vC-x))) translateY(var(--vC-y)) rotate(var(--vC-rot));
+  transform-origin: 50% 120%; transition: transform .22s ease, opacity .2s ease, filter .2s ease; touch-action: none;
+}
+.vC-namao .oc-mini { height: 100%; overflow: hidden; cursor: grab; justify-content: flex-start; }
+.vC-namao .oc-mini b { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; flex: none; }
+.vC-namao .oc-mini .dest { margin-top: auto; }
+.vC-namao:hover, .vC-namao:focus-within { transform: translate(var(--vC-dx), var(--vC-dy)) translateX(calc(-50% + var(--vC-x))) translateY(calc(var(--vC-y) - 40px)) rotate(0deg) scale(1.05); z-index: 60 !important; }
+.vC-namao.vC-arrastando { transition: none; z-index: 80 !important; transform: translate(var(--vC-dx), var(--vC-dy)) translateX(calc(-50% + var(--vC-x))) translateY(var(--vC-y)) rotate(0deg) scale(1.08); }
+.vC-namao.vC-arrastando .oc-mini { cursor: grabbing; box-shadow: 0 24px 50px rgba(0, 0, 0, .55); }
+.vC-adiada .oc-mini { filter: saturate(.25) brightness(.62); }
+.vC-adiada:hover .oc-mini { filter: none; }
+.vC-volta { position: absolute; top: -9px; left: 50%; transform: translateX(-50%); white-space: nowrap; font-size: .6rem; letter-spacing: .08em; text-transform: uppercase; font-weight: 700; background: var(--carta); color: var(--tinta-suave); border: 1px solid var(--carta-borda); border-radius: 999px; padding: 1px 8px; z-index: 2; }
+.vC-num { position: absolute; bottom: 6px; right: 7px; z-index: 2; background: var(--carta); }
+.vC-chega { animation: vC-chega .5s ease; }
+@keyframes vC-chega { from { opacity: 0; filter: brightness(1.8); } }
+.vC-mao-vazia { position: absolute; inset: 0; display: grid; place-items: center; font-size: .82rem; color: var(--tinta-suave); }
+.vC-devolver { display: none; }
+.vC-mao.vC-quente { background: color-mix(in srgb, var(--ouro) 10%, transparent); }
+.vC-mao.vC-quente .vC-devolver { display: grid; position: absolute; inset: 8px 12px; place-items: center; border: 2px dashed var(--ouro); border-radius: 16px; color: var(--ouro); font-family: var(--serifa); font-size: 1rem; z-index: 90; background: color-mix(in srgb, var(--fundo) 70%, transparent); }
+
+/* A face escondida da carta (verso, ou a frente quando virada) segue "por cima" para o toque e rouba a rolagem
+   com o dedo: no celular a carta não rolava. Só a face visível recebe ponteiro. (Bug da base; remendo local.) */
+.vC-jogada .oc-carta:not(.virada) .oc-face.verso, .vC-jogada .oc-carta.virada .oc-face.frente { pointer-events: none; }
+
+/* o aviso de destravado aparece acima do lugar dourado, onde a carta caiu: não tapa a carta nova nem a mão */
+.vC-raiz ~ .oc-toast { top: 18px; bottom: auto; left: auto; right: 30px; width: max-content; max-width: max(220px, calc((100% - 650px) / 2)); transform: translateY(-10px); }
+.vC-raiz ~ .oc-toast.on { transform: none; }
+
+/* ===================================================================================================
+   CELULAR: a mão vira a fileira do rodapé; a carta aberta ocupa o resto; o gesto é o botão dourado.
+   =================================================================================================== */
+@container vista (max-width: 640px) {
+  .vC-mesa { margin: 0; border-radius: 0; border: 0; padding: 0 10px; box-shadow: none; display: flex; flex-direction: column; align-items: stretch; gap: 0; background: transparent; }
+  .vC-topo { position: static; flex: none; flex-direction: row; align-items: baseline; justify-content: space-between; gap: 8px; padding: 6px 4px 6px; }
+  .vC-topo-n { font-size: .88rem; }
+  .vC-topo-n b { font-size: 1.1rem; }
+  .vC-topo-x { font-size: .6rem; text-align: right; }
+  .vC-lugar { display: none; }
+  .vC-centro { flex: 1; min-height: 0; height: auto; }
+  .vC-jogada.vC-arrastando .oc-face { box-shadow: 0 -10px 40px rgba(0, 0, 0, .5); }
+  .vC-pe { display: block; flex: none; padding: 8px 2px 8px; }
+  .vC-seguir-btn {
+    width: 100%; min-height: 50px; border: 0; border-radius: 14px; background: var(--ouro); color: var(--carta);
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; padding: 6px 12px; box-shadow: var(--sombra);
+    transition: transform .15s ease, background .2s ease;
+  }
+  .vC-seguir-btn b { font-size: .96rem; }
+  .vC-seguir-btn small { font-family: var(--serifa); font-size: .8rem; opacity: .9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  .vC-seguir-btn:active { transform: scale(.98); }
+  .vC-seguir-btn.vC-bloq { background: transparent; color: var(--aviso); box-shadow: inset 0 0 0 2px var(--aviso); }
+  .vC-seguir-btn.vC-bloq-nao { color: var(--nao); box-shadow: inset 0 0 0 2px var(--nao); }
+  .vC-seguir-btn.vC-aceso { background: var(--sim); }
+  .vC-sem-carta .vC-pe { visibility: hidden; }
+
+  .vC-mao { height: 124px; border-top: 1px solid var(--carta-borda); background: rgba(0, 0, 0, .14); }
+  .tema-claro .vC-mao { background: rgba(0, 0, 0, .05); }
+  .vC-mao-rot { top: 6px; left: 14px; font-size: .66rem; }
+  .vC-mao-rot b { font-size: .8rem; }
+  .vC-leque {
+    top: 24px; display: flex; gap: 8px; padding: 6px 14px 10px; overflow-x: auto; overflow-y: hidden;
+    scroll-snap-type: x mandatory; scroll-padding: 0 14px; scrollbar-width: none; -webkit-overflow-scrolling: touch;
+  }
+  .vC-leque::-webkit-scrollbar { display: none; }
+  .vC-namao { position: relative; left: auto; bottom: auto; flex: none; width: 132px; height: 86px; transform: none !important; scroll-snap-align: start; touch-action: pan-x; }
+  .vC-namao .oc-mini { padding: 6px 8px; gap: 2px; border-radius: 10px; box-shadow: 0 3px 10px rgba(0, 0, 0, .3); cursor: pointer; }
+  .vC-namao .oc-mini .topo small { font-size: .5rem; letter-spacing: .1em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .vC-namao .oc-mini .topo .glifo { width: 13px; height: 13px; flex: none; }
+  .vC-namao .oc-mini .topo .urg { font-size: .5rem; }
+  .vC-namao .oc-mini b { font-size: .7rem; -webkit-line-clamp: 3; line-height: 1.18; }
+  .vC-namao .oc-mini .dest { display: none; }
+  .vC-volta { top: auto; bottom: 4px; font-size: .5rem; padding: 0 6px; }
+  .vC-mao.vC-quente .vC-devolver { inset: 4px 8px; }
+  .vC-raiz ~ .oc-toast { top: 4px; left: 50%; right: auto; max-width: 94%; transform: translateX(-50%) translateY(-10px); }
+  .vC-raiz ~ .oc-toast.on { transform: translateX(-50%); }
+}
+
+/* ===================================================================================================
+   Variante D — O QUE DESTRAVA (classes vD-)
+   =================================================================================================== */
+.vD-raiz { position: absolute; inset: 0; display: grid; grid-template-columns: minmax(0, 1fr) 0px; transition: grid-template-columns .3s ease; }
+.vD-raiz.com-folha { grid-template-columns: minmax(0, 1fr) 480px; }
+.vD-mesa { position: relative; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+
+/* Topo: quantas coisas estão paradas esperando você */
+.vD-topo { flex: none; display: grid; grid-template-columns: 1fr auto; gap: 4px 20px; align-items: end; padding: 12px 24px 8px; border-bottom: 1px solid var(--carta-borda); }
+.vD-titulo { margin: 0; font-family: var(--serifa); font-weight: 600; font-size: 1.45rem; line-height: 1.15; }
+.vD-titulo .vD-n { color: var(--nao); font-size: 1.15em; }
+.vD-titulo small { display: inline-block; margin-left: 12px; font-family: var(--sem-serifa); font-weight: 400; font-size: .74rem; letter-spacing: .1em; text-transform: uppercase; color: var(--tinta-suave); vertical-align: middle; }
+.vD-sub { grid-column: 1 / -1; margin: 0; font-size: .82rem; line-height: 1.4; color: var(--tinta-suave); max-width: 980px; }
+.vD-legenda { display: flex; gap: 14px; font-size: .68rem; letter-spacing: .1em; text-transform: uppercase; color: var(--tinta-suave); padding-bottom: 4px; }
+.vD-legenda span { display: flex; align-items: center; gap: 6px; }
+.vD-legenda i { width: 30px; height: 8px; border-radius: 4px; display: inline-block; }
+.vD-legenda .p i { background: repeating-linear-gradient(45deg, var(--nao), var(--nao) 4px, transparent 4px, transparent 8px); }
+.vD-legenda .a i { background: var(--sim); }
+
+.vD-corpo { flex: 1; min-height: 0; overflow: auto; padding: 8px 24px 64px; scrollbar-width: thin; -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 18px), transparent); }
+
+/* Grupos por quadro */
+.vD-grupos { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 14px 30px; align-items: start; }
+.vD-grupo h3 { margin: 0 0 6px; padding-bottom: 4px; border-bottom: 1px solid var(--carta-borda); display: flex; align-items: baseline; gap: 10px; font-weight: 400; }
+.vD-quadro { font-family: var(--serifa); font-size: .78rem; letter-spacing: .18em; text-transform: uppercase; color: var(--tinta); }
+.vD-grupo h3 small { margin-left: auto; font-size: .7rem; color: var(--nao); font-weight: 700; }
+.vD-grupo.vD-grupo-livre h3 small { color: var(--sim); }
+.vD-tudo { font-size: .64rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--carta); background: var(--nao); border-radius: 999px; padding: 2px 9px; }
+.vD-heroi { margin-bottom: 10px; }
+.vD-lista { display: flex; flex-direction: column; gap: 6px; }
+
+/* A trava: o que parou, a barra listrada e, sobre ela, a carta que destrava */
+.vD-trava { container: vDtrava / inline-size; position: relative; transition: height .35s ease, opacity .35s ease, margin .35s ease; }
+.vD-trava.vD-sai { opacity: 0; overflow: hidden; margin-top: -6px; }
+.vD-trava-in { display: grid; grid-template-columns: minmax(0, 1fr); row-gap: 6px; }
+
+.vD-coisa { grid-row: 1; grid-column: 1; min-width: 0; }
+.vD-nome { font-family: var(--serifa); font-size: 1.02rem; line-height: 1.2; font-weight: 600; transition: color .4s; }
+.vD-baixo { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin-top: 1px; }
+.vD-estado { font-size: .62rem; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--nao); transition: color .4s; }
+.vD-desde { font-size: .7rem; color: var(--tinta-suave); }
+
+.vD-trilho { grid-row: 2; grid-column: 1; align-self: center; position: relative; height: 12px; border-radius: 6px; overflow: hidden; background: repeating-linear-gradient(45deg, color-mix(in srgb, var(--nao) 80%, transparent), color-mix(in srgb, var(--nao) 80%, transparent) 6px, transparent 6px, transparent 11px); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nao) 45%, transparent); }
+.vD-trilho::after { content: ''; position: absolute; inset: 0; background: var(--sim); transform: scaleX(0); transform-origin: left; transition: transform .55s ease; }
+.vD-poe { grid-row: 2; grid-column: 1; position: relative; z-index: 1; margin: 0 16px 0 34px; min-width: 0; }
+
+/* A carta fechada, com o botão de destravar */
+.vD-trava .oc-mini { cursor: pointer; gap: 2px; padding: 7px 12px 7px; transition: transform .15s ease, box-shadow .15s ease; }
+.vD-trava .oc-mini:hover { transform: translateY(-2px); }
+.vD-trava .oc-mini:focus-visible { outline: 2px solid var(--ouro); outline-offset: 2px; }
+.vD-trava .oc-mini .dest { display: none; } /* a faixa acima já diz o que destrava */
+.vD-trava .oc-mini .topo .urg { display: none; } /* o "parado" já está na faixa; o atraso pinta o "desde" */
+.vD-trava.vD-atrasada .vD-desde { color: var(--nao); }
+.vD-trava.aberta .oc-mini { box-shadow: 0 0 0 2px var(--ouro), var(--sombra); }
+.vD-pe { display: flex; align-items: center; gap: 4px 12px; flex-wrap: wrap; margin-top: 4px; }
+.vD-btn { position: relative; overflow: hidden; border: 0; border-radius: 10px; min-height: 34px; padding: 6px 16px; font-size: .86rem; font-weight: 800; letter-spacing: .02em; background: var(--ouro); color: var(--carta); box-shadow: 0 2px 8px rgba(0, 0, 0, .25); touch-action: manipulation; }
+.vD-btn:hover { filter: brightness(1.08); }
+.vD-btn:focus-visible { outline: 2px solid var(--tinta); outline-offset: 2px; }
+.vD-segue { flex: 1 1 150px; min-width: 0; font-size: .72rem; line-height: 1.3; color: var(--tinta-suave); }
+.vD-segue b { color: var(--tinta); font-weight: 600; }
+/* segurar para o que não tem volta */
+.vD-segurar { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; touch-action: none; }
+.vD-segurar .vD-btn-txt { position: relative; }
+.vD-segurar .vD-enche { position: absolute; left: 0; top: 0; bottom: 0; width: 0; background: var(--nao); opacity: .85; }
+.vD-segurar.segurando .vD-enche { width: 100%; transition: width 1.2s linear; }
+
+/* Destravou: a barra vira verde lisa, a carta sobe e sai */
+.vD-trava.andando .vD-trilho::after { transform: scaleX(1); }
+.vD-trava.andando .vD-nome { color: var(--sim); }
+.vD-trava.andando .vD-estado { color: var(--sim); }
+.vD-trava.adiada .vD-trilho { opacity: .35; }
+.vD-trava.adiada .vD-estado { color: var(--tinta-suave); }
+/* sai no próprio lugar (subir por cima da trava de cima sobrepunha as cartas) */
+.vD-poe.vD-sai-carta { pointer-events: none; animation: vD-sai-carta .42s ease forwards; }
+@keyframes vD-sai-carta { to { transform: translateY(-8px) scale(.94); opacity: 0; } }
+/* Estreita: a carta some de vez e a barra verde sobe para logo abaixo do nome (sem buraco onde a carta estava) */
+@container vDtrava (max-width: 519px) { .vD-trava.vD-sem-carta .vD-poe { display: none; } }
+.vD-poe.vD-volta { animation: vD-volta .35s ease; }
+@keyframes vD-volta { from { transform: translateY(-40%) scale(.95); opacity: 0; } }
+
+/* A trava maior: a que trava tudo */
+.vD-grande .vD-nome { font-size: 1.4rem; }
+.vD-grande .vD-desde { font-size: .78rem; }
+.vD-grande .vD-trilho { height: 18px; border-radius: 9px; }
+.vD-grande .oc-mini { padding: 9px 16px 9px; border-width: 2.5px; }
+.vD-grande .oc-mini .topo small { font-size: .64rem; }
+.vD-grande .oc-mini > b { font-size: 1.06rem; line-height: 1.25; }
+.vD-grande .vD-btn { min-height: 38px; padding: 7px 22px; font-size: .94rem; }
+
+/* Larga (PC): o nome à esquerda, a barra corre por baixo dele até a carta, à direita */
+@container vDtrava (min-width: 520px) {
+  .vD-trava-in { grid-template-columns: minmax(150px, 34%) minmax(0, 1fr); }
+  .vD-coisa { grid-row: 1; grid-column: 1; display: grid; grid-template-rows: 1fr 22px 1fr; padding-right: 14px; }
+  .vD-cima { grid-row: 1; align-self: end; }
+  .vD-baixo { grid-row: 3; align-self: start; margin-top: 0; }
+  .vD-trilho { grid-row: 1; grid-column: 1 / -1; }
+  .vD-poe { grid-row: 1; grid-column: 2; margin: 0 14px 0 0; }
+  .vD-grande .vD-trava-in { grid-template-columns: minmax(200px, 36%) minmax(0, 1fr); }
+  .vD-grande .vD-coisa { grid-template-rows: 1fr 30px 1fr; }
+  .vD-grande .vD-poe { justify-self: end; width: min(100%, 640px); margin-right: 24px; }
+}
+
+/* Aviso com Desfazer */
+.vD-aviso { position: absolute; right: 24px; bottom: 16px; z-index: 40; transform: translate(0, 20px); opacity: 0; pointer-events: none; transition: opacity .3s ease, transform .3s ease; display: flex; align-items: center; gap: 10px; width: max-content; max-width: min(92%, 480px); padding: 9px 8px 11px 14px; border-radius: 12px; overflow: hidden; background: var(--tinta); color: var(--carta); box-shadow: var(--sombra); font-size: .82rem; line-height: 1.35; }
+.vD-aviso.on { opacity: 1; transform: translate(0, 0); pointer-events: auto; }
+.vD-aviso-txt { min-width: 0; }
+.vD-aviso-txt b { color: color-mix(in srgb, var(--sim) 70%, var(--carta)); margin-right: 4px; }
+.vD-aviso-txt b.neutro { color: inherit; margin: 0; }
+.vD-desfazer { flex: none; border: 1.5px solid currentColor; background: transparent; color: inherit; border-radius: 999px; padding: 5px 12px; font-size: .78rem; font-weight: 800; }
+.vD-tempo { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--ouro); transform-origin: left; }
+.vD-aviso.on .vD-tempo { animation: vD-tempo 4s linear forwards; }
+@keyframes vD-tempo { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+
+/* Folha com a carta inteira — PC: à direita, altura toda */
+.vD-folha { position: relative; min-width: 0; min-height: 0; overflow: hidden; border-left: 1px solid transparent; background: var(--fundo-veio); transition: border-color .3s; }
+.com-folha > .vD-folha { border-left-color: var(--carta-borda); }
+.vD-folha-in { width: 480px; height: 100%; display: flex; flex-direction: column; }
+.vD-folha-topo { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 16px 6px; }
+.vD-folha-rot { min-width: 0; font-size: .7rem; letter-spacing: .1em; text-transform: uppercase; color: var(--tinta-suave); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vD-fechar { flex: none; border: 1px solid var(--carta-borda); background: transparent; border-radius: 999px; padding: 4px 12px; font-size: .76rem; color: var(--tinta-suave); }
+.vD-fechar:hover { color: var(--tinta); border-color: var(--ouro); }
+.vD-folha-carta { flex: 1; min-height: 0; padding: 2px 14px 14px; }
+.vD-alca, .vD-veu { display: none; }
+
+/* Celular: lista vertical por quadro; a carta abre de baixo para cima, quase a tela toda */
+@container vista (max-width: 640px) {
+  .vD-raiz, .vD-raiz.com-folha { grid-template-columns: minmax(0, 1fr); }
+  .vD-topo { grid-template-columns: 1fr; padding: 14px 16px 10px; gap: 4px; }
+  .vD-titulo { font-size: 1.32rem; }
+  .vD-titulo small { display: block; margin: 3px 0 0; font-size: .66rem; }
+  .vD-legenda { display: none; }
+  .vD-sub { font-size: .76rem; }
+  .vD-corpo { padding: 12px 16px 84px; }
+  .vD-grupos { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .vD-heroi { margin-bottom: 18px; }
+  .vD-poe { margin: 0 10px 0 22px; }
+  .vD-grande .vD-nome { font-size: 1.22rem; }
+  .vD-grande .oc-mini > b { font-size: 1.02rem; }
+
+  .vD-folha { position: absolute; left: 0; right: 0; bottom: 0; top: 30px; z-index: 50; border-left: 0; border-radius: 18px 18px 0 0; transform: translateY(103%); transition: transform .32s ease; box-shadow: 0 -12px 30px rgba(0, 0, 0, .45); }
+  .vD-folha.arrastando { transition: none; }
+  .vD-raiz.com-folha .vD-folha { transform: translateY(0); }
+  .vD-folha-in { width: auto; }
+  .vD-alca { display: flex; justify-content: center; flex: none; }
+  .vD-alca button { border: 0; background: transparent; padding: 8px 40px 4px; touch-action: none; }
+  .vD-alca i { display: block; width: 44px; height: 5px; border-radius: 3px; background: var(--tinta-suave); opacity: .7; }
+  .vD-folha-topo { padding: 2px 14px 6px; }
+  .vD-folha-carta { padding: 0 10px 12px; }
+  .vD-veu { display: block; position: absolute; inset: 0; z-index: 45; background: rgba(0, 0, 0, .5); opacity: 0; pointer-events: none; transition: opacity .3s ease; }
+  .vD-raiz.com-folha .vD-veu { opacity: 1; pointer-events: auto; }
+  .vD-aviso { left: 50%; right: auto; bottom: 12px; transform: translate(-50%, 20px); }
+  .vD-aviso.on { transform: translate(-50%, 0); }
+}
+
+/* Mesa limpa */
+.vD-vazia { height: 100%; min-height: 360px; }
+.vD-vazia > div { display: flex; flex-direction: column; align-items: center; gap: 2px; max-width: 320px; }
+.vD-vazia span { font-size: .86rem; line-height: 1.4; }
+
+</style>
+</head>
+<body>
+<header class="casca-barra">
+  <h1>Oráculo · mesa de tiragem<small>Protótipo. Cartas reais de 06 a 09/11. Nada aqui grava.</small></h1>
+  <div class="casca-grupo" data-grupo="variante"><span>Mesa</span></div>
+  <div class="casca-grupo" data-grupo-tela><span>Tela</span><button type="button" data-tela="cel">Celular</button><button type="button" data-tela="pc">PC</button><button type="button" data-tela="os-dois">Os dois</button></div>
+  <div class="casca-grupo"><span>Celular</span><button type="button" data-tema="escuro">Escuro</button><button type="button" data-tema="claro">Claro</button></div>
+  <div class="casca-grupo"><button type="button" data-recomecar>↺ Dar as cartas de novo</button></div>
+</header>
+<p class="casca-sobre"></p>
+<main class="casca-palco"></main>
+<script>
+/* ===================================================================================================
+   PROTÓTIPO DESCARTÁVEL — base comum às variantes: as cartas reais, o molde modular da carta e a casca.
+   Nada grava: decidir só tira a carta da mesa e mostra o que destrava.
+   =================================================================================================== */
+(function () {
+  'use strict';
+
+  // Glifos próprios do Oráculo (copiados de src/main/celular/pwa/app.js).
+  var GLIFOS = {
+    martelos: '<svg viewBox="0 0 24 24"><path d="M5.5 3.5l5 5-2.8 2.8-5-5z"/><path d="M8.2 6.2l3.3-3.3 2.6 2.6-3.3 3.3"/><path d="M10.4 11.2L20 20.8"/><path d="M14 4.5l1.5-1.5"/></svg>',
+    escudos: '<svg viewBox="0 0 24 24"><path d="M12 2.8l7.5 3v5.4c0 5-3.6 8.6-7.5 10-3.9-1.4-7.5-5-7.5-10V5.8z"/><path d="M12 6.5v11M7.8 11h8.4"/></svg>',
+    chaves: '<svg viewBox="0 0 24 24"><circle cx="7" cy="12" r="3.6"/><circle cx="7" cy="12" r="1.1"/><path d="M10.6 12H21.5M17.5 12v3.2M20.5 12v2.3"/></svg>',
+    livros: '<svg viewBox="0 0 24 24"><path d="M3.5 5.2c3-1.1 6-1 8.5 1 2.5-2 5.5-2.1 8.5-1v13.6c-3-1.1-6-1-8.5 1-2.5-2-5.5-2.1-8.5-1z"/><path d="M12 6.2v13.6M6 9c1.5-.3 2.8-.1 4 .5M6 12c1.5-.3 2.8-.1 4 .5M14 9.5c1.2-.6 2.5-.8 4-.5"/></svg>',
+    estrelas: '<svg viewBox="0 0 24 24"><path d="M12 2.2l1.9 6.3 6.2-2.2-3.6 5.7 3.6 5.7-6.2-2.2L12 21.8l-1.9-6.3-6.2 2.2 3.6-5.7-3.6-5.7 6.2 2.2z"/><circle cx="12" cy="12" r="1.6"/></svg>',
+    coroas: '<svg viewBox="0 0 24 24"><path d="M3 8.2l4.6 4.1L12 4.8l4.4 7.5L21 8.2l-2 10.6H5z"/><path d="M5.6 15.6h12.8"/><circle cx="12" cy="4" r=".6"/></svg>',
+  };
+  var VERSO_SVG = '<svg viewBox="0 0 70 70"><circle cx="35" cy="35" r="30"/><circle cx="35" cy="35" r="20"/><path d="M35 5v60M5 35h60M14 14l42 42M56 14L14 56"/><circle cx="35" cy="35" r="5"/></svg>';
+
+  // O naipe diz o TIPO DE DECISÃO (proposta deste protótipo; hoje o naipe sai do papel de quem entregou).
+  var NAIPES = {
+    chaves: 'Acesso só seu',
+    escudos: 'Risco que não volta',
+    livros: 'Palavra sua',
+    estrelas: 'Forma do que você vê',
+    martelos: 'Plano com várias decisões',
+    coroas: 'Escolher o caminho',
+  };
+  var ROMANOS = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'];
+
+  /* ------------------------------------------------------------------------------------------------
+     AS CARTAS REAIS. Fonte: Oráculo de 09/11 (tarefa_listar de todos os quadros + tarefa_ver).
+     O texto é o das cartas reais, encurtado; "real" diz de onde veio cada uma.
+     ------------------------------------------------------------------------------------------------ */
+  var CARTAS = [
+    {
+      id: 'aihub', naipe: 'chaves', quadro: 'Homologação', desde: 'parada desde sáb, 07/11', urgente: true, peso: 3,
+      real: 'De hoje. Esta carta nunca chegou a você: o pedido ficou num aviso ao Líder.',
+      pergunta: 'A homologação está parada sem a chave do AI Hub. Você cria uma chave nova?',
+      destrava: 'as rodadas de homologação voltam a ser julgadas e os selos voltam a sair',
+      destravaCurto: 'Homologação volta a julgar',
+      visual: {
+        tipo: 'passos', titulo: 'O que só você faz', nota: 'uns 3 minutos',
+        passos: [
+          ['Criar uma chave nova no AI Hub', 'Só a sua conta pode. A antiga foi bloqueada em 07/11 e o chamado à plataforma não teve resposta.'],
+          ['Guardar no cofre com o nome que a sessão pedir', 'Você não cola em lugar nenhum além do cofre.'],
+          ['Tocar em "Fiz"', 'A sessão testa a chave e religa a rodada que parou.'],
+        ],
+        parado: 'nenhum selo sai há 2 dias',
+      },
+      rec: { rotulo: 'Criar a chave agora', porque: 'Sem ela nada da homologação anda, e esperar a plataforma já custou dois dias.' },
+      resposta: {
+        tipo: 'fiz',
+        caminhos: [
+          { rotulo: 'Fiz', efeito: 'A sessão confere a chave e religa a rodada. Se a chave não funcionar, a carta volta para você com o erro.', rec: true },
+          { rotulo: 'Não consigo agora', efeito: 'A carta volta amanhã cedo. A homologação segue parada até lá.' },
+        ],
+      },
+      risco: { nivel: 'alto', texto: 'A chave dá acesso pago ao AI Hub. Ela fica só no cofre e só a homologação usa.' },
+      verso: {
+        pedido: '"E, em paralelo, na VPS de homologação, o fluxo de homologação. Quero ver apps com o selo"',
+        quem: 'Você, ao pedir o fluxo de homologação na VPS',
+        caminhos: [['Fiz', 'A rodada parada é retomada na hora.'], ['Não consigo agora', 'Nenhum selo sai até a chave existir.']],
+        tecnico: 'Avaliador da homologação recebe "chave bloqueada" desde 07/11.\nChamado aberto na plataforma, sem resposta.\nA rodada mais recente parou na etapa de avaliar.',
+      },
+    },
+    {
+      id: 'token', naipe: 'escudos', quadro: 'BizOps', desde: 'esperando desde hoje, 00:56', peso: 2,
+      real: 'De hoje. Carta real, ainda aberta.',
+      pergunta: 'O token do Google na VPS faz mais do que ler. Tiro de lá e a reposição de contas fica por pessoa?',
+      destrava: 'a reposição de contas do pool, hoje com 16 de 56 contas com cota',
+      destravaCurto: 'Reposição de contas',
+      visual: {
+        tipo: 'checagens', titulo: 'Como está agora',
+        itens: [
+          ['ok', 'Chave do pool no lugar', 'Está na VPS e no cofre.'],
+          ['ok', 'Token guardado no cofre', 'Cópia segura existe.'],
+          ['nao', 'Token só de leitura', 'Não: ele envia e-mail e mexe no seu Drive.'],
+          ['nao', 'Conta nova entrou', 'Não: o site barra o login vindo da VPS.'],
+          ['ok', 'Ninguém usa o token', 'Parado até você decidir.'],
+        ],
+      },
+      rec: { rotulo: 'Tirar o token, login por pessoa', porque: 'Sem login pela VPS o token lá não serve para nada e só traz risco.' },
+      resposta: {
+        tipo: 'caminhos',
+        caminhos: [
+          { rotulo: 'Tirar o token, login por pessoa', efeito: 'O token sai da VPS e fica só no cofre. Uma pessoa faz os logins num navegador normal quando precisar repor.', rec: true },
+          { rotulo: 'Trocar por um só de leitura', efeito: 'Você autoriza um token novo que só lê o Gmail. A reposição segue parada até o site deixar o login passar.' },
+          { rotulo: 'Deixar como está', efeito: 'O token amplo fica na VPS sem uso. A tarefa fecha sem conta nova.' },
+        ],
+      },
+      risco: { nivel: 'alto', texto: 'Não revogue o token no Google: é o mesmo do PC, e o Google do PC cairia. Apagar o arquivo da VPS não afeta o PC.' },
+      verso: {
+        pedido: '"Libero as duas" — você, na carta que liberava duas chaves para a VPS cadastrar contas sozinha.',
+        quem: 'Você liberou; a sessão de contas descobriu que o token era amplo demais.',
+        caminhos: [['Tirar o token', 'Nenhum acesso amplo fica fora do PC.'], ['Só leitura', 'Mais uma autorização sua, sem efeito até o site liberar o login.'], ['Deixar', 'Risco parado na VPS.']],
+        tecnico: 'O token tem 29 permissões (enviar e-mail, alterar Gmail, Drive, Planilhas, Documentos, Agenda).\nCinco tentativas de login pela VPS em 08/11, todas barradas antes da tela de autorizar.',
+      },
+    },
+    {
+      id: 'oneonone', naipe: 'livros', quadro: 'BizOps', desde: 'conversa de hoje, 10h, já passou', urgente: true, peso: 2,
+      real: 'De hoje. Carta real; voltou com risco baixo e não chegou à sua mesa a tempo.',
+      pergunta: 'Você disse que o planejamento mudou. O que mudou?',
+      destrava: 'os convites das conversas 1:1 desta semana com seus liderados e os JTs',
+      destravaCurto: 'Convites das 1:1',
+      visual: {
+        tipo: 'grade', titulo: 'A grade proposta', nota: 'ilustração; a grade real está no verso',
+        dias: ['seg', 'ter', 'qua', 'qui'],
+        blocos: [[['Raiza · 10h', 'sem']], [['1:1'], ['1:1'], ['1:1']], [['1:1'], ['1:1']], [['1:1'], ['1:1'], ['1:1']]],
+      },
+      citacao: { texto: 'o planejamento mudou', de: 'você, ao recusar a primeira grade' },
+      rec: { rotulo: 'Dizer em uma frase o que mudou', porque: 'A mudança não está escrita em nenhuma agenda, recesso, Slack ou roadmap que o time alcança. Marcar 9 pessoas sem saber seria chutar.' },
+      resposta: {
+        tipo: 'livre', rotulo: 'O que mudou?', placeholder: 'Ex.: os JTs saem desta semana; só liderados.',
+        enviar: 'Refazer a grade com isto', efeito: 'A grade é refeita antes de qualquer convite.',
+        alternativa: { rotulo: 'Manter a grade', efeito: 'Os horários ficam como estão e os convites saem.' },
+      },
+      risco: { nivel: 'baixo', texto: 'O período dos JTs com você acaba na sexta: cada dia sem resposta é uma conversa a menos.' },
+      verso: {
+        pedido: '"Prepara 1:1s pra mim na semana que vem com meus liderados e com os JTs (Somente os que não estão de recesso."',
+        quem: 'Você, na quinta, 05/11',
+        caminhos: [['Dizer o que mudou', 'Grade refeita e convites na sequência.'], ['Manter', 'Convites saem com a grade de antes.']],
+        tecnico: 'Conferidos: agenda livre dos 9 horários, recessos da semana, Slack e as iniciativas do roadmap.\nNenhuma mudança de planejamento escrita.',
+      },
+    },
+    {
+      id: 'telas', naipe: 'estrelas', quadro: 'Donel Dev', desde: 'entregue domingo, 22:40', peso: 1,
+      real: 'Carta real de domingo à noite, já decidida por você às 23:14.',
+      pergunta: 'Qual destas três telas vira o seu Progresso, com a fila de cada quadro?',
+      destrava: 'a construção da fila priorizada por quadro',
+      destravaCurto: 'Fila por quadro',
+      visual: {
+        tipo: 'comparacao', titulo: 'As três telas, com os dados de hoje', nota: 'toque para abrir cada uma',
+        telas: [
+          { rotulo: 'Uma lista só dos seus pedidos', forma: 'lista', rec: true },
+          { rotulo: 'Colunas por quadro', forma: 'colunas' },
+          { rotulo: 'Faxina e faixas', forma: 'faixas' },
+        ],
+      },
+      rec: { rotulo: 'Uma lista só dos seus pedidos', porque: 'Responde ao seu pedido de priorizar no Progresso; a fila de cada quadro sai dela.' },
+      resposta: {
+        tipo: 'variante',
+        caminhos: [
+          { rotulo: 'Uma lista só dos seus pedidos', efeito: 'Você ordena seus pedidos numa lista; cada quadro puxa o primeiro que é dele.', rec: true },
+          { rotulo: 'Colunas por quadro', efeito: 'Cada quadro vira uma coluna com limite e fila; você reordena dentro de cada uma.' },
+          { rotulo: 'Faxina e faixas', efeito: 'Aceita a faxina de uma vez e põe cada pedido numa faixa: Agora, Próximas, Depois.' },
+        ],
+        misturar: true,
+      },
+      risco: { nivel: 'baixo', texto: 'Ligar a puxada antes da faxina faria o app puxar tarefas sem dono; por isso a faxina vem antes, e nada é apagado.' },
+      verso: {
+        pedido: '"A tela de \\"progresso - Seus pedidos\\" deve ser bem alinhada com o ledger, para eu conseguir priorizar pontualmente ali, inclusive"',
+        quem: 'Você, no sábado, 08/11',
+        caminhos: [['Lista única', 'Uma ordem só, sua.'], ['Colunas', 'Uma ordem por quadro.'], ['Faixas', 'Três faixas em vez de ordem.']],
+        tecnico: 'Montado com 406 tarefas reais: 56 vivas, 74 sem dono, 58 pedidos repetidos.\nTestado a 1400 e a 390 pixels de largura.',
+      },
+    },
+    {
+      id: 'fila5', naipe: 'martelos', quadro: 'Donel Dev', desde: 'veio junto com a carta das telas', peso: 1,
+      real: 'Da mesma carta de domingo à noite. Estas cinco decisões estavam escondidas atrás de um botão dentro do protótipo.',
+      pergunta: 'Sigo as cinco recomendações para ligar a fila por quadro?',
+      destrava: 'ligar a puxada: cada quadro passa a buscar a próxima demanda sozinho',
+      destravaCurto: 'Puxada por quadro',
+      visual: null,
+      rec: { rotulo: 'Aceitar as cinco', porque: 'Nenhuma apaga nada, e cada uma você ajusta depois no próprio quadro.' },
+      resposta: {
+        tipo: 'lote', tudo: 'Aceitar as cinco recomendações',
+        itens: [
+          { t: 'O que conta como trabalho em andamento', r: 'Tarefa assumida por uma sessão viva, mais as entregues esperando o Revisor.', alt: 'Ou: contar sessões abertas, ou contar seus pedidos abertos.' },
+          { t: 'Limite por quadro', r: 'Começar com estes números; você ajusta no quadro, o Líder só propõe.', num: [['Donel Dev', 4], ['BizOps', 4], ['Homologação', 3]] },
+          { t: 'Prioridade', r: 'Numa lista só, em Seus pedidos; pedidos repetidos viram partes de um.', alt: 'Ou: uma ordem por quadro.' },
+          { t: 'Faxina antes de ligar', r: 'Uma faxina única: sem dono e vencida é arquivada, o resto volta ao Líder do quadro. Nada é apagado.' },
+          { t: 'Fila do Líder único', r: 'A soma das filas dos quadros, na mesma ordem; quem puxa é o Líder de cada quadro.' },
+        ],
+      },
+      risco: { nivel: 'baixo', texto: 'Uma versão antiga do app aberta ao lado passa a só ler as tarefas.' },
+      verso: {
+        pedido: '"A tela de \\"progresso - Seus pedidos\\" deve ser bem alinhada com o ledger, para eu conseguir priorizar pontualmente ali, inclusive"',
+        quem: 'Você, no sábado, 08/11',
+        caminhos: [['Aceitar as cinco', 'A puxada liga depois da faxina.'], ['Trocar uma', 'Só aquela espera a sua resposta; as outras seguem.']],
+        tecnico: 'Memória: cada sessão usa uns 354 MB numa VPS de 31 GB; o limite real é a cota das contas e a revisão.\nA memória do PC e a cota ainda não foram medidas.',
+      },
+    },
+    {
+      id: 'marta', naipe: 'livros', quadro: 'BizOps', desde: 'a Marta perguntou na quinta, 05/11', peso: 2,
+      real: 'Carta real de 06/11, já decidida. Aqui as duas cartas que ela virou (liberar e aprovar o texto) são uma só.',
+      pergunta: 'Libero a Marta para desligar o app antigo, com esta resposta?',
+      destrava: 'a Marta desliga o app antigo e liga o redirecionamento',
+      destravaCurto: 'Marta segue',
+      visual: {
+        tipo: 'texto', titulo: 'A mensagem que sai em seu nome',
+        pedidoDe: { texto: 'Podemos descomissionar o stop-crescimento do Coolify? Junto com o desligamento, ligo o redirecionamento. Do seu lado está tudo ok, ou ainda falta algo antes?', de: 'Marta, por mensagem direta, quinta 05/11 15:32' },
+        para: 'Marta · conversa direta, na mesma conversa',
+        texto: 'Marta, show! Do meu lado está tudo no endereço novo, pode desligar e ligar o redirecionamento. Só deixa o app antigo parado, sem apagar, por uma semana, pra gente ter volta se aparecer alguém esquecido. A lista dos projetos Supabase pra revogar te mando até segunda.',
+      },
+      rec: { rotulo: 'Enviar como está', porque: 'Nada mais depende do app antigo; parado uma semana dá volta se aparecer algum uso esquecido.' },
+      resposta: {
+        tipo: 'texto',
+        caminhos: [
+          { rotulo: 'Enviar como está', efeito: 'A mensagem sai agora, na conversa com a Marta.', rec: true },
+          { rotulo: 'Enviar editado', efeito: 'Sai o texto como você deixou acima.' },
+          { rotulo: 'Eu mesmo respondo', efeito: 'Nada sai; a carta fecha.' },
+        ],
+      },
+      risco: { nivel: 'alto', texto: 'Fala por você com outra pessoa. A promessa da lista até segunda passa a ser sua.' },
+      verso: {
+        pedido: 'Marta: "Podemos descomissionar o stop-crescimento do Coolify? [...] Do seu lado está tudo ok, ou ainda falta algo antes?"',
+        quem: 'Marta, por mensagem direta',
+        caminhos: [['Enviar', 'Ela desliga e redireciona.'], ['Eu respondo', 'A conversa fica com você.']],
+        tecnico: 'Todos os usos mapeados, inclusive os três seus, já usam o endereço novo.\nNa versão de hoje do app, a carta do texto foi aceita em 06/11 e a mensagem não saiu.',
+      },
+    },
+    {
+      id: 'tabela', naipe: 'escudos', quadro: 'Donel Dev', desde: 'entregue sábado, 07/11', peso: 1,
+      real: 'Carta real de 07/11, já decidida. Aqui com a confirmação de segurar, porque não tem volta.',
+      pergunta: 'Apago a tabela antiga de demandas?',
+      destrava: 'acaba a tabela que fazia parecer que o registro tinha parado',
+      destravaCurto: 'Uma tabela só',
+      visual: {
+        tipo: 'volta', titulo: 'O que tem e o que não tem volta',
+        naoVolta: 'A tabela some da nuvem. Não existe desfazer.',
+        volta: 'As 173 linhas ficam guardadas numa planilha; dá para recriar a tabela a partir dela.',
+      },
+      rec: { rotulo: 'Apagar', porque: 'Tudo o que ela tem também está na tabela nova, com mais informação, e ninguém escreve mais nela.' },
+      resposta: {
+        tipo: 'segurar',
+        caminhos: [
+          { rotulo: 'Apagar', efeito: 'Guardo as 173 linhas numa planilha e apago a tabela antiga.', rec: true, segurar: 'Segure para apagar' },
+          { rotulo: 'Manter', efeito: 'Nada muda: as duas tabelas seguem lá.' },
+        ],
+      },
+      risco: { nivel: 'alto', texto: 'Apagar não se desfaz na nuvem; a volta é recriar a partir da planilha guardada.' },
+      verso: {
+        pedido: '"Uma decisão do dono precisa virar carta no Oráculo, porque ele só decide por lá: apagar a tabela antiga."',
+        quem: 'O Líder, depois de você abrir a tabela errada',
+        caminhos: [['Apagar', 'Fica uma tabela só.'], ['Manter', 'As duas seguem.']],
+        tecnico: 'Tabela antiga parada em 173 linhas; a nova recebe tudo desde 07/11.',
+      },
+    },
+    {
+      id: 'fabrica', naipe: 'coroas', quadro: 'BizOps', desde: 'entregue domingo, 08/11', peso: 2,
+      real: 'Carta real de 08/11, já decidida. Aqui os números saem da prosa e viram medidor.',
+      pergunta: 'A fábrica de casos gasta cota e ainda não gerou nenhuma ação. Mantenho ou fico só com o que gerou ação?',
+      destrava: 'a cota do pool que a homologação divide com a fábrica',
+      destravaCurto: 'Cota do pool',
+      visual: {
+        tipo: 'medidor', titulo: 'Custo × valor, medido na primeira hora',
+        linhas: [
+          { rot: 'Gasto por dia, no ritmo ligado', valor: '30 a 40 milhões de tokens', pct: 85, cls: 'ruim' },
+          { rot: 'Contas do pool com cota', valor: '16 de 56', pct: 29, cls: 'ruim' },
+          { rot: 'Contagem de rotinas até sexta', valor: 'passa de 400 (a sua meta)', pct: 100, cls: 'bom' },
+        ],
+        zero: { rot: 'Ações que os resumos geraram', valor: '0' },
+      },
+      rec: { rotulo: 'Ficar só com o que gerou ação', porque: 'O número sobe com o tamanho da lista, não com o valor; a conferência de crons e serviços é a única que achou problema real.' },
+      resposta: {
+        tipo: 'caminhos',
+        caminhos: [
+          { rotulo: 'Ficar só com o que gerou ação', efeito: 'Fica só a conferência diária de crons e serviços. O resto para.', rec: true },
+          { rotulo: 'Manter tudo', efeito: 'As 12 rotinas seguem, com 150 a 200 casos por dia.' },
+        ],
+      },
+      risco: { nivel: 'alto', texto: 'Manter tira cota da homologação, que usa as mesmas contas.' },
+      verso: {
+        pedido: '"A meta do dono é 400 workflows REAIS, e isso pode estar só enchendo o número."',
+        quem: 'O Líder único, no domingo',
+        caminhos: [['Podar', 'Sobra cota para a homologação.'], ['Manter', 'Número sobe, cota cai.']],
+        tecnico: 'Primeira hora: 14 casos, cerca de 2,8 milhões de tokens, uns 120 mil por caso.',
+      },
+    },
+  ];
+
+  /* ------------------------------------------------------------------------------------------------
+     utilidades
+     ------------------------------------------------------------------------------------------------ */
+  function el(tag, cls, html) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (html != null) e.innerHTML = html;
+    return e;
+  }
+  function esc(s) {
+    return String(s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; });
+  }
+  function copia(x) { return JSON.parse(JSON.stringify(x)); }
+
+  /* ------------------------------------------------------------------------------------------------
+     VISUAIS (um por carta, tipado)
+     ------------------------------------------------------------------------------------------------ */
+  function visual(v, card) {
+    if (!v) return null;
+    var box = el('div', 'oc-vis oc-vis-' + v.tipo);
+    box.appendChild(el('h5', null, esc(v.titulo) + (v.nota ? '<i>' + esc(v.nota) + '</i>' : '')));
+    if (v.tipo === 'checagens') {
+      var ul = el('ul', 'oc-luzes');
+      v.itens.forEach(function (it) {
+        ul.appendChild(el('li', it[0], '<i>' + (it[0] === 'ok' ? '✓' : it[0] === 'nao' ? '✕' : '!') + '</i><b>' + esc(it[1]) + '</b><span>' + esc(it[2]) + '</span>'));
+      });
+      box.appendChild(ul);
+    } else if (v.tipo === 'passos') {
+      var ol = el('ol', 'oc-passos');
+      v.passos.forEach(function (p) { ol.appendChild(el('li', null, '<div>' + esc(p[0]) + '<small>' + esc(p[1]) + '</small></div>')); });
+      box.appendChild(ol);
+      if (v.parado) box.appendChild(el('div', 'oc-parado', '<span class="trilho"></span><b>' + esc(v.parado) + '</b>'));
+    } else if (v.tipo === 'grade') {
+      var g = el('div', 'oc-grade');
+      v.dias.forEach(function (d, i) {
+        var col = el('div', 'col');
+        col.appendChild(el('div', 'dia', esc(d)));
+        v.blocos[i].forEach(function (b) { col.appendChild(el('div', 'bloco' + (b[1] ? ' ' + b[1] : ''), esc(b[0]))); });
+        g.appendChild(col);
+      });
+      box.appendChild(g);
+    } else if (v.tipo === 'comparacao') {
+      var c = el('div', 'oc-comp');
+      v.telas.forEach(function (t, i) {
+        var f = el('figure');
+        var b = el('button', 'ver');
+        b.type = 'button';
+        var tela = el('div', 'tela' + (t.rec ? ' rec' : ''));
+        if (t.rec) tela.appendChild(el('span', 'selo-rec', 'recomendo'));
+        if (t.forma === 'lista') {
+          tela.innerHTML += '<span class="faixa">seus pedidos</span><div class="l o"></div><div class="l a"></div><div class="l"></div><div class="l a"></div><div class="l"></div><div class="l"></div>';
+        } else if (t.forma === 'colunas') {
+          tela.innerHTML += '<span class="faixa">por quadro</span><div class="cols"><div><div class="l a"></div><div class="l"></div></div><div><div class="l o"></div><div class="l"></div><div class="l"></div></div><div><div class="l v"></div></div></div>';
+        } else {
+          tela.innerHTML += '<span class="faixa">agora</span><div class="l o"></div><div class="l o"></div><span class="faixa">próximas</span><div class="l a"></div><span class="faixa">depois</span><div class="l"></div>';
+        }
+        b.appendChild(tela);
+        b.addEventListener('click', function () { abrirTela(box, t, i); });
+        f.appendChild(b);
+        f.appendChild(el('figcaption', null, esc(t.rotulo)));
+        c.appendChild(f);
+      });
+      box.appendChild(c);
+    } else if (v.tipo === 'texto') {
+      if (v.pedidoDe) box.appendChild(el('blockquote', 'oc-citacao', esc(v.pedidoDe.texto) + '<small>' + esc(v.pedidoDe.de) + '</small>'));
+      box.appendChild(el('div', 'oc-msg-dest', 'Para <b>' + esc(v.para) + '</b> · você pode editar'));
+      var ta = el('textarea', 'oc-msg oc-msg-edit');
+      ta.value = v.texto;
+      ta.rows = 5;
+      ta.style.width = '100%';
+      ta.style.font = 'inherit';
+      ta.style.color = 'inherit';
+      ta.setAttribute('aria-label', 'Mensagem a enviar');
+      box.appendChild(ta);
+      card._textoOriginal = v.texto;
+    } else if (v.tipo === 'volta') {
+      box.appendChild(el('div', 'oc-volta', '<div class="nao-volta"><b>Não volta</b>' + esc(v.naoVolta) + '</div><div class="volta"><b>Tem volta</b>' + esc(v.volta) + '</div>'));
+    } else if (v.tipo === 'medidor') {
+      var m = el('div', 'oc-medidor');
+      v.linhas.forEach(function (l) {
+        m.appendChild(el('div', 'linha', '<div class="rot"><span>' + esc(l.rot) + '</span><b>' + esc(l.valor) + '</b></div><div class="barra"><div class="' + l.cls + '" style="width:' + l.pct + '%"></div></div>'));
+      });
+      if (v.zero) m.appendChild(el('div', 'linha', '<div class="rot"><span>' + esc(v.zero.rot) + '</span><span class="zero">' + esc(v.zero.valor) + '</span></div>'));
+      box.appendChild(m);
+    }
+    return box;
+  }
+
+  // Abrir uma das telas comparadas, grande, dentro da própria carta.
+  function abrirTela(box, t, i) {
+    var velho = box.querySelector('.oc-tela-aberta');
+    if (velho) velho.remove();
+    var a = el('div', 'oc-tela-aberta');
+    a.style.cssText = 'margin-top:8px;border:1px solid var(--carta-borda);border-radius:8px;background:#151a21;color:#d7dde5;padding:10px;font:12px/1.4 var(--font-ui)';
+    var linhas = {
+      lista: '<b style="color:#e8b44c">Seus pedidos</b> · arraste para mudar a ordem<ol style="margin:6px 0 0;padding-left:18px"><li>Oráculo volta a ser mesa de tiragem <span style="color:#828d9c">· Donel Dev</span></li><li>Limpeza final da trava de carta <span style="color:#828d9c">· Theo</span></li><li>Ledger só registra <span style="color:#828d9c">· Donel Dev</span></li><li>Dono nunca entra em outra sessão <span style="color:#828d9c">· Donel Dev</span></li></ol>',
+      colunas: '<b style="color:#e8b44c">Uma coluna por quadro</b><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:6px"><div>Donel Dev · 4<br><span style="color:#828d9c">mesa de tiragem<br>ledger só registra</span></div><div>BizOps · 4<br><span style="color:#828d9c">token da VPS<br>1:1s</span></div><div>Homologação · 3<br><span style="color:#828d9c">chave do AI Hub</span></div></div>',
+      faixas: '<b style="color:#e8b44c">Agora</b> · mesa de tiragem, chave do AI Hub<br><b style="color:#4c9cf0">Próximas</b> · ledger só registra, âncora do proxy<br><b style="color:#828d9c">Depois</b> · faxina, gatilho de swap',
+    };
+    a.innerHTML = '<div style="display:flex;justify-content:space-between;margin-bottom:4px"><span style="color:#828d9c">' + esc(t.rotulo) + '</span><button type="button" style="background:none;border:0;color:#828d9c">fechar</button></div>' + linhas[t.forma];
+    a.querySelector('button').addEventListener('click', function () { a.remove(); });
+    box.appendChild(a);
+  }
+
+  /* ------------------------------------------------------------------------------------------------
+     RESPOSTAS (o jeito de responder muda com a decisão)
+     ------------------------------------------------------------------------------------------------ */
+  function resposta(card, decidir) {
+    var r = card.resposta;
+    var wrap = el('div', 'oc-resp oc-resp-' + r.tipo);
+
+    function caminho(c, extraCls) {
+      var b = el('button', 'oc-caminho' + (c.rec ? ' rec' : '') + (extraCls ? ' ' + extraCls : ''));
+      b.type = 'button';
+      b.innerHTML = '<b>' + esc(c.rotulo) + '</b>' + (c.rec ? '<em>recomendo</em>' : '<i></i>') + '<span>' + esc(c.efeito) + '</span>';
+      return b;
+    }
+
+    if (r.tipo === 'caminhos' || r.tipo === 'fiz' || r.tipo === 'variante') {
+      var lista = el('div', 'oc-caminhos');
+      r.caminhos.forEach(function (c) {
+        var b = caminho(c);
+        // Dois toques: o primeiro arma, o segundo confirma (evita decisão por engano).
+        b.addEventListener('click', function () {
+          if (b.classList.contains('armado')) { decidir({ caminho: c.rotulo, rec: !!c.rec }); return; }
+          lista.querySelectorAll('.armado').forEach(function (o) { o.classList.remove('armado'); var x = o.querySelector('.confirma'); if (x) x.remove(); });
+          b.classList.add('armado');
+          b.appendChild(el('span', 'confirma', 'Toque de novo para confirmar'));
+        });
+        lista.appendChild(b);
+      });
+      wrap.appendChild(lista);
+    } else if (r.tipo === 'livre') {
+      var campo = el('div', 'oc-campo');
+      campo.appendChild(el('label', null, esc(r.rotulo)));
+      var ta = el('textarea');
+      ta.placeholder = r.placeholder;
+      campo.appendChild(ta);
+      var acoes = el('div', 'acoes');
+      var env = el('button', 'oc-btn ouro', esc(r.enviar));
+      env.type = 'button';
+      env.disabled = true;
+      ta.addEventListener('input', function () { env.disabled = !ta.value.trim(); });
+      env.addEventListener('click', function () { decidir({ caminho: r.enviar, texto: ta.value.trim(), rec: true }); });
+      acoes.appendChild(env);
+      campo.appendChild(acoes);
+      campo.appendChild(el('div', null, '<span style="font-size:.74rem;color:var(--tinta-suave)">' + esc(r.efeito) + '</span>'));
+      wrap.appendChild(campo);
+      var alt = caminho({ rotulo: r.alternativa.rotulo, efeito: r.alternativa.efeito });
+      alt.style.marginTop = '8px';
+      alt.addEventListener('click', function () {
+        if (alt.classList.contains('armado')) { decidir({ caminho: r.alternativa.rotulo }); return; }
+        alt.classList.add('armado');
+        alt.appendChild(el('span', 'confirma', 'Toque de novo para confirmar'));
+      });
+      wrap.appendChild(alt);
+    } else if (r.tipo === 'texto') {
+      var l2 = el('div', 'oc-caminhos');
+      var botoes = {};
+      r.caminhos.forEach(function (c) {
+        var b = caminho(c);
+        botoes[c.rotulo] = b;
+        b.addEventListener('click', function () {
+          var t = card._raiz && card._raiz.querySelector('.oc-msg-edit');
+          var editado = t && t.value !== card._textoOriginal;
+          if (c.rotulo === 'Enviar editado' && !editado) { t && t.focus(); return; }
+          if (b.classList.contains('armado')) { decidir({ caminho: c.rotulo, texto: t ? t.value : '', rec: !!c.rec }); return; }
+          l2.querySelectorAll('.armado').forEach(function (o) { o.classList.remove('armado'); var x = o.querySelector('.confirma'); if (x) x.remove(); });
+          b.classList.add('armado');
+          b.appendChild(el('span', 'confirma', 'Toque de novo para enviar'));
+        });
+        l2.appendChild(b);
+      });
+      // "Enviar editado" só acende quando o texto muda.
+      setTimeout(function () {
+        var t = card._raiz && card._raiz.querySelector('.oc-msg-edit');
+        var be = botoes['Enviar editado'];
+        if (!t || !be) return;
+        be.style.opacity = '.45';
+        t.addEventListener('input', function () {
+          var mudou = t.value !== card._textoOriginal;
+          be.style.opacity = mudou ? '1' : '.45';
+          botoes['Enviar como está'].style.opacity = mudou ? '.45' : '1';
+        });
+      }, 0);
+      wrap.appendChild(l2);
+    } else if (r.tipo === 'lote') {
+      var itens = el('div', 'oc-itens');
+      r.itens.forEach(function (it, i) {
+        var d = el('div', 'oc-item');
+        d.innerHTML = '<span class="t">' + (i + 1) + '. ' + esc(it.t) + '</span><span class="alterna"><button type="button" aria-pressed="true" class="ok">Aceito</button><button type="button" aria-pressed="false" class="troca">Mudar</button></span><span class="r"><b>Recomendo:</b> ' + esc(it.r) + '</span>' + (it.alt ? '<span class="alt">' + esc(it.alt) + '</span>' : '');
+        if (it.num) {
+          var n = el('div', 'oc-num');
+          it.num.forEach(function (p) {
+            var lab = el('label', null, esc(p[0]) + ' <button type="button" aria-label="menos">−</button><output>' + p[1] + '</output><button type="button" aria-label="mais">+</button>');
+            var out = lab.querySelector('output');
+            var bs = lab.querySelectorAll('button');
+            bs[0].addEventListener('click', function () { out.textContent = Math.max(1, +out.textContent - 1); });
+            bs[1].addEventListener('click', function () { out.textContent = +out.textContent + 1; });
+            n.appendChild(lab);
+          });
+          d.appendChild(n);
+        }
+        var nota = el('span', 'nota', '<input type="text" placeholder="O que muda nesta? (as outras seguem)">');
+        d.appendChild(nota);
+        var bOk = d.querySelector('.alterna .ok');
+        var bTr = d.querySelector('.alterna .troca');
+        bOk.addEventListener('click', function () { bOk.setAttribute('aria-pressed', 'true'); bTr.setAttribute('aria-pressed', 'false'); d.classList.remove('trocando'); atualizar(); });
+        bTr.addEventListener('click', function () { bTr.setAttribute('aria-pressed', 'true'); bOk.setAttribute('aria-pressed', 'false'); d.classList.add('trocando'); d.querySelector('input').focus(); atualizar(); });
+        itens.appendChild(d);
+      });
+      wrap.appendChild(itens);
+      var fim = el('button', 'oc-btn ouro');
+      fim.type = 'button';
+      fim.style.cssText = 'width:100%;margin-top:8px;padding:10px';
+      function atualizar() {
+        var mudando = itens.querySelectorAll('.trocando').length;
+        fim.textContent = mudando ? 'Seguir com ' + (r.itens.length - mudando) + ' e mandar ' + mudando + ' de volta com a sua nota' : r.tudo;
+      }
+      atualizar();
+      fim.addEventListener('click', function () {
+        var mudando = itens.querySelectorAll('.trocando').length;
+        decidir({ caminho: mudando ? 'Seguir com ' + (r.itens.length - mudando) + ', mudar ' + mudando : r.tudo, rec: !mudando });
+      });
+      wrap.appendChild(fim);
+    } else if (r.tipo === 'segurar') {
+      var l3 = el('div', 'oc-caminhos');
+      r.caminhos.forEach(function (c) {
+        var b = caminho(c, c.segurar ? 'oc-segurar' : '');
+        if (c.segurar) {
+          b.appendChild(el('span', 'confirma', esc(c.segurar)));
+          b.appendChild(el('span', 'enchendo'));
+          var timer = null;
+          var ini = function (e) { e.preventDefault(); b.classList.add('segurando'); timer = setTimeout(function () { decidir({ caminho: c.rotulo, rec: !!c.rec }); }, 1200); };
+          var fimS = function () { b.classList.remove('segurando'); clearTimeout(timer); };
+          b.addEventListener('pointerdown', ini);
+          b.addEventListener('pointerup', fimS);
+          b.addEventListener('pointerleave', fimS);
+        } else {
+          b.addEventListener('click', function () {
+            if (b.classList.contains('armado')) { decidir({ caminho: c.rotulo }); return; }
+            b.classList.add('armado');
+            b.appendChild(el('span', 'confirma', 'Toque de novo para confirmar'));
+          });
+        }
+        l3.appendChild(b);
+      });
+      wrap.appendChild(l3);
+    }
+    return wrap;
+  }
+
+  /* ------------------------------------------------------------------------------------------------
+     A CARTA INTEIRA
+     ctx: { indice: 'I · VIII', aoDecidir(card, res), aoAgoraNao(card, quando), aoDecidaVoce(card) }
+     res = { caminho, rec, texto?, tipo: 'decidiu' | 'decida-voce' }
+     ------------------------------------------------------------------------------------------------ */
+  function carta(card, ctx) {
+    ctx = ctx || {};
+    var raiz = el('article', 'oc-carta naipe-' + card.naipe);
+    raiz.dataset.carta = card.id;
+    card._raiz = raiz;
+    var giro = el('div', 'oc-giro');
+    raiz.appendChild(giro);
+
+    function decidir(res) {
+      res.tipo = res.tipo || 'decidiu';
+      if (ctx.aoDecidir) ctx.aoDecidir(card, res);
+    }
+
+    // ---- frente
+    var frente = el('div', 'oc-face frente');
+    var mf = el('div', 'oc-moldura');
+    var fi = el('div', 'oc-interna');
+    mf.appendChild(fi);
+    frente.appendChild(mf);
+    fi.appendChild(el('div', 'oc-cabeca', '<span class="glifo">' + GLIFOS[card.naipe] + '</span><span class="tipo">' + esc(NAIPES[card.naipe]) + '</span><span class="idx">' + esc(ctx.indice || '') + '</span>'));
+    var rol = el('div', 'oc-rolagem');
+    fi.appendChild(rol);
+    rol.appendChild(el('div', 'oc-meta', '<span>' + esc(card.quadro) + '</span><span class="' + (card.urgente ? 'urgente' : '') + '">' + esc(card.desde) + '</span>'));
+    // 1. o que você decide
+    rol.appendChild(el('h3', 'oc-pergunta', esc(card.pergunta)));
+    rol.appendChild(el('div', 'oc-destrava', '<b>Destrava:</b> ' + esc(card.destrava)));
+    // visual primeiro
+    if (card.citacao) rol.appendChild(el('blockquote', 'oc-citacao', '"' + esc(card.citacao.texto) + '"<small>' + esc(card.citacao.de) + '</small>'));
+    var vis = visual(card.visual, card);
+    if (vis) rol.appendChild(vis);
+    // 2. recomendação e porquê
+    rol.appendChild(el('div', 'oc-rec', 'Recomendo <b>' + esc(card.rec.rotulo) + '</b>: ' + esc(card.rec.porque)));
+    // 3. o que acontece em cada caminho (a resposta)
+    rol.appendChild(resposta(card, decidir));
+    // 4. risco
+    rol.appendChild(el('div', 'oc-risco ' + card.risco.nivel, '<i>risco ' + esc(card.risco.nivel) + '</i><span>' + esc(card.risco.texto) + '</span>'));
+    rol.appendChild(el('div', 'oc-real', esc(card.real)));
+
+    // saídas de sempre
+    var saidas = el('div', 'oc-saidas');
+    var g = el('div', 'grupo');
+    var bDecida = el('button', null, 'Decida você');
+    var bPerg = el('button', null, 'Perguntar');
+    var bDepois = el('button', null, 'Agora não');
+    [bDecida, bPerg, bDepois].forEach(function (b) { b.type = 'button'; g.appendChild(b); });
+    saidas.appendChild(g);
+    var bVirar = el('button', 'virar', '↻ Virar');
+    bVirar.type = 'button';
+    saidas.appendChild(bVirar);
+    var painel = el('div', 'oc-saidas-painel');
+    fi.appendChild(painel);
+    fi.appendChild(saidas);
+
+    bDecida.addEventListener('click', function () {
+      painel.className = 'oc-saidas-painel on';
+      painel.innerHTML = 'A sessão segue a recomendação (<b>' + esc(card.rec.rotulo) + '</b>) e só volta se algo sair do previsto. <div class="chips"><button type="button" data-ok>Sim, decida você</button><button type="button" data-x>Cancelar</button></div>';
+      painel.querySelector('[data-ok]').onclick = function () { decidir({ caminho: card.rec.rotulo, rec: true, tipo: 'decida-voce' }); };
+      painel.querySelector('[data-x]').onclick = function () { painel.className = 'oc-saidas-painel'; };
+    });
+    bPerg.addEventListener('click', function () {
+      painel.className = 'oc-saidas-painel on';
+      painel.innerHTML = '<textarea placeholder="Sua pergunta. A carta fica na mesa e a resposta volta nela."></textarea><div class="chips"><button type="button" data-ok>Perguntar</button><button type="button" data-x>Cancelar</button></div>';
+      painel.querySelector('[data-ok]').onclick = function () {
+        var t = painel.querySelector('textarea').value.trim();
+        if (!t) return;
+        painel.className = 'oc-saidas-painel';
+        var e = el('div', 'oc-esperando', '<b>Você perguntou:</b> ' + esc(t) + '<br><span style="color:var(--tinta-suave)">A resposta volta nesta carta. Ela fica na mesa.</span>');
+        rol.appendChild(e);
+        e.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      };
+      painel.querySelector('[data-x]').onclick = function () { painel.className = 'oc-saidas-painel'; };
+    });
+    bDepois.addEventListener('click', function () {
+      painel.className = 'oc-saidas-painel on';
+      painel.innerHTML = 'Tirar da mesa sem decidir. Volta: <div class="chips"><button type="button" data-q="em 2 horas">em 2 horas</button><button type="button" data-q="amanhã cedo">amanhã cedo</button><button type="button" data-q="segunda">segunda</button><button type="button" data-x>Cancelar</button></div>';
+      painel.querySelectorAll('[data-q]').forEach(function (b) { b.onclick = function () { if (ctx.aoAgoraNao) ctx.aoAgoraNao(card, b.dataset.q); }; });
+      painel.querySelector('[data-x]').onclick = function () { painel.className = 'oc-saidas-painel'; };
+    });
+
+    // ---- verso
+    var verso = el('div', 'oc-face verso');
+    var mv = el('div', 'oc-moldura');
+    var vi = el('div', 'oc-interna');
+    mv.appendChild(vi);
+    verso.appendChild(mv);
+    vi.appendChild(el('div', 'oc-cabeca', '<span class="glifo">' + GLIFOS[card.naipe] + '</span><span class="tipo">O verso</span><span class="idx">' + esc(ctx.indice || '') + '</span>'));
+    var vc = el('div', 'oc-verso-corpo');
+    var html = '<h4>Por que recomendo</h4><p>' + esc(card.rec.porque) + '</p>';
+    html += '<h4>Cada caminho</h4><dl>' + card.verso.caminhos.map(function (c) { return '<dt>' + esc(c[0]) + '</dt><dd>' + esc(c[1]) + '</dd>'; }).join('') + '</dl>';
+    html += '<h4>Quem pediu</h4><p>' + esc(card.verso.quem) + '</p>';
+    html += '<details><summary>O pedido, nas palavras de quem pediu</summary><blockquote>' + esc(card.verso.pedido) + '</blockquote></details>';
+    html += '<details><summary>Detalhe técnico</summary><div class="tec">' + esc(card.verso.tecnico) + '</div></details>';
+    vc.innerHTML = html;
+    vi.appendChild(vc);
+    var sv = el('div', 'oc-saidas');
+    var bVolta = el('button', 'virar', '↻ Frente');
+    bVolta.type = 'button';
+    sv.appendChild(el('span', null, ''));
+    sv.appendChild(bVolta);
+    vi.appendChild(sv);
+
+    bVirar.addEventListener('click', function () { raiz.classList.add('virada'); });
+    bVolta.addEventListener('click', function () { raiz.classList.remove('virada'); });
+
+    giro.appendChild(frente);
+    giro.appendChild(verso);
+    return raiz;
+  }
+
+  // A carta fechada (miniatura): naipe, pergunta curta e o que destrava.
+  function mini(card, opts) {
+    opts = opts || {};
+    var b = el(opts.tag || 'button', 'oc-mini naipe-' + card.naipe);
+    if (b.tagName === 'BUTTON') b.type = 'button';
+    b.dataset.carta = card.id;
+    b.innerHTML = '<span class="topo"><span class="glifo">' + GLIFOS[card.naipe] + '</span><small>' + esc(NAIPES[card.naipe]) + '</small>' + (card.urgente ? '<span class="urg">parado</span>' : '') + '</span><b>' + esc(card.pergunta) + '</b><span class="dest"><em>Destrava:</em> ' + esc(card.destravaCurto) + '</span>';
+    return b;
+  }
+  function dorso() { return el('div', 'oc-dorso', VERSO_SVG); }
+
+  // Aviso que mostra o que a decisão destravou.
+  function toast(vista, card, res) {
+    var t = vista.querySelector('.oc-toast');
+    if (!t) { t = el('div', 'oc-toast'); vista.appendChild(t); }
+    var o = res.tipo === 'decida-voce' ? 'A sessão segue a recomendação.' : res.tipo === 'agora-nao' ? 'Volta ' + esc(res.quando) + '.' : 'Você escolheu: ' + esc(res.caminho) + '.';
+    t.innerHTML = res.tipo === 'agora-nao' ? '<span>Fora da mesa. ' + o + '</span>' : '<b>Destravado</b><span>' + esc(card.destravaCurto) + '. ' + o + '</span>';
+    t.classList.add('on');
+    clearTimeout(t._h);
+    t._h = setTimeout(function () { t.classList.remove('on'); }, 2600);
+  }
+
+  window.Oraculo = { CARTAS: CARTAS, GLIFOS: GLIFOS, NAIPES: NAIPES, ROMANOS: ROMANOS, carta: carta, mini: mini, dorso: dorso, toast: toast, el: el, esc: esc, copia: copia };
+
+  /* ------------------------------------------------------------------------------------------------
+     CASCA: escolhe variante, tela (PC, celular, os dois) e tema; monta cada variante em cada moldura.
+     Cada variante registra-se em window.VARIANTES[letra] = { nome, sobre, montar(vista, cartas) }.
+     ------------------------------------------------------------------------------------------------ */
+  window.VARIANTES = window.VARIANTES || {};
+  document.addEventListener('DOMContentLoaded', function () {
+    var letras = Object.keys(window.VARIANTES).sort();
+    var estado = { v: (location.hash.replace('#', '') || letras[0]), tela: window.innerWidth < 700 ? 'cel-solo' : 'os-dois', tema: 'escuro' };
+    if (letras.indexOf(estado.v) < 0) estado.v = letras[0];
+    var barra = document.querySelector('.casca-barra');
+    var gv = barra.querySelector('[data-grupo=variante]');
+    letras.forEach(function (l) {
+      var b = el('button', null, l + ' · ' + esc(window.VARIANTES[l].nome));
+      b.type = 'button';
+      b.dataset.v = l;
+      b.onclick = function () { estado.v = l; desenhar(); };
+      gv.appendChild(b);
+    });
+    barra.querySelectorAll('[data-tela]').forEach(function (b) { b.onclick = function () { estado.tela = b.dataset.tela; desenhar(); }; });
+    barra.querySelectorAll('[data-tema]').forEach(function (b) { b.onclick = function () { estado.tema = b.dataset.tema; desenhar(); }; });
+    var rb = barra.querySelector('[data-recomecar]');
+    if (rb) rb.onclick = function () { desenhar(); };
+
+    document.addEventListener('keydown', function (e) {
+      var t = e.target;
+      if ((t.matches && t.matches('input, textarea, select')) || t.isContentEditable) return;
+      if (!e.altKey) return;
+      var i = letras.indexOf(estado.v);
+      if (e.key === 'ArrowRight') { estado.v = letras[(i + 1) % letras.length]; desenhar(); }
+      if (e.key === 'ArrowLeft') { estado.v = letras[(i - 1 + letras.length) % letras.length]; desenhar(); }
+    });
+
+    function moldura(tipo) {
+      var w = el('div');
+      var vista = el('div', 'vista tema-' + (tipo === 'pc' ? 'escuro' : estado.tema));
+      if (tipo === 'pc') {
+        w.appendChild(el('div', 'casca-rotulo', 'PC · Donel Dev, Uso geral'));
+        var pc = el('div', 'pc');
+        pc.appendChild(el('div', 'pc-titulo', '<i></i><i></i><i></i><span>Donel Dev Alfa · Uso geral</span><span class="troca"><b>Oráculo</b><span>Terminais</span></span>'));
+        var tela = el('div', 'pc-tela');
+        tela.appendChild(vista);
+        pc.appendChild(tela);
+        w.appendChild(pc);
+        if (estado.tema === 'claro') vista.className = 'vista tema-claro';
+      } else {
+        w.appendChild(el('div', 'casca-rotulo', 'Celular · Oráculo Harrow'));
+        var cel = el('div', 'cel');
+        var ct = el('div', 'cel-tela tema-' + estado.tema);
+        ct.appendChild(el('div', 'cel-status', '<span>16:20</span><span>Tailscale · 82%</span>'));
+        ct.appendChild(vista);
+        cel.appendChild(ct);
+        w.appendChild(cel);
+      }
+      return { w: w, vista: vista };
+    }
+
+    function desenhar() {
+      location.hash = estado.v;
+      gv.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.v === estado.v)); });
+      barra.querySelectorAll('[data-tela]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.tela === estado.tela || (estado.tela === 'cel-solo' && b.dataset.tela === 'cel'))); });
+      barra.querySelectorAll('[data-tema]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.tema === estado.tema)); });
+      var V = window.VARIANTES[estado.v];
+      document.querySelector('.casca-sobre').innerHTML = '<b>' + esc(estado.v + ' · ' + V.nome) + '.</b> ' + V.sobre;
+      var palco = document.querySelector('.casca-palco');
+      palco.innerHTML = '';
+      var telas = estado.tela === 'os-dois' ? ['cel', 'pc'] : estado.tela === 'cel-solo' ? ['cel'] : [estado.tela];
+      telas.forEach(function (t) {
+        var m = moldura(t);
+        palco.appendChild(m.w);
+        V.montar(m.vista, copia(CARTAS));
+      });
+      // celular de verdade (tela estreita): a moldura some e a vista ocupa a tela
+      document.body.classList.toggle('no-celular', window.innerWidth < 700);
+    }
+    desenhar();
+  });
+})();
+
+</script>
+<script>
+/* variante A */
+/* Variante A — TIRAGEM EM TRÊS CASAS. A mesa é um spread com posições que têm significado:
+   "Trava tudo", "Hoje" e "Pode esperar" são pilhas; a carta da vez fica virada e grande no centro;
+   o que você decide cai na casa "Destravado", deixando à vista só o que destravou (rastro desta tiragem).
+   Destravar: arrastar a carta até "Destravado" (ou o botão dourado) segue a recomendação.
+   Celular: faixa de pilhas no alto; arrastar à direita segue, à esquerda "Agora não" (volta amanhã cedo).
+   Zero estado global: tudo vive no fechamento de cada montar(). */
+window.VARIANTES.A = {
+  nome: 'Três casas',
+  sobre: 'A mesa é uma tiragem com três casas que dizem a pressa: Trava tudo, Hoje e Pode esperar. '
+    + 'A carta de cima da primeira casa com cartas fica virada no centro; clicar numa casa traz a dela. '
+    + 'Destravar é arrastar a carta até a casa Destravado (ou o botão dourado): segue a recomendação e deixa ali só o que destravou. '
+    + 'No celular, arrastar à direita segue e à esquerda volta amanhã cedo.',
+  montar: function (vista, cartas) {
+    var O = window.Oraculo;
+    var el = O.el, esc = O.esc;
+
+    var CASAS = [
+      { k: 'trava', nome: 'Trava tudo', tecla: '1' },
+      { k: 'hoje', nome: 'Hoje', tecla: '2' },
+      { k: 'espera', nome: 'Pode esperar', tecla: '3' },
+    ];
+    function casaDe(c) { return (c.urgente || c.peso >= 3) ? 'trava' : c.peso === 2 ? 'hoje' : 'espera'; }
+
+    var pilhas = { trava: [], hoje: [], espera: [] };
+    cartas.forEach(function (c) { pilhas[casaDe(c)].push(c); });
+    var total = cartas.length;
+    var centro = null;      // { card, casa, wrap, raiz }
+    var destravados = [];   // { card, res }, o mais novo primeiro
+    var adiadas = [];       // { card, quando }
+    var saindo = false;     // trava enquanto uma carta voa
+
+    // ------------------------------------------------------------------ estrutura da mesa
+    var mesa = el('div', 'vA-mesa');
+    var faixa = el('div', 'vA-faixa');
+    var lead = el('div', 'vA-lead');
+    faixa.appendChild(lead);
+    var botoesCasa = {};
+    CASAS.forEach(function (c) {
+      var b = el('button', 'vA-casa vA-casa-' + c.k);
+      b.type = 'button';
+      b.title = 'Tirar a carta de cima de "' + c.nome + '" para o centro';
+      b.addEventListener('click', function () { b.blur(); tirar(c.k); });
+      botoesCasa[c.k] = b;
+      faixa.appendChild(b);
+    });
+    var casaDest = el('button', 'vA-casa vA-casa-dest');
+    casaDest.type = 'button';
+    casaDest.title = 'Ver o que esta tiragem já destravou';
+    casaDest.addEventListener('click', function () { mesa.classList.toggle('vA-rastro-aberto'); });
+    faixa.appendChild(casaDest);
+
+    var centroEl = el('div', 'vA-centro');
+
+    var pe = el('div', 'vA-pe');
+    var dica = el('div', 'vA-dica');
+    var seguirBtn = el('button', 'vA-seguir');
+    seguirBtn.type = 'button';
+    var teclas = el('div', 'vA-teclas', '<span><kbd>→</kbd> segue</span><span><kbd>←</kbd> agora não</span><span><kbd>espaço</kbd> vira</span><span><kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> casas</span>');
+    pe.appendChild(dica);
+    pe.appendChild(seguirBtn);
+    pe.appendChild(teclas);
+
+    var dest = el('aside', 'vA-destravado');
+    var destCab = el('div', 'vA-dest-cab');
+    var destFechar = el('button', 'vA-dest-fechar', 'Voltar à carta');
+    destFechar.type = 'button';
+    destFechar.addEventListener('click', function () { mesa.classList.remove('vA-rastro-aberto'); });
+    var slot = el('div', 'vA-slot', '<span class="vA-slot-seta">→</span><span>Solte aqui a carta do centro para <b>seguir a recomendação</b></span>');
+    var rastro = el('ol', 'vA-rastro');
+    var adiadasEl = el('div', 'vA-adiadas');
+    dest.appendChild(destCab);
+    dest.appendChild(destFechar);
+    dest.appendChild(slot);
+    dest.appendChild(rastro);
+    dest.appendChild(adiadasEl);
+
+    var aviso = el('div', 'vA-aviso');
+
+    mesa.appendChild(faixa);
+    mesa.appendChild(centroEl);
+    mesa.appendChild(pe);
+    mesa.appendChild(dest);
+    mesa.appendChild(aviso);
+    vista.appendChild(mesa);
+
+    // ------------------------------------------------------------------ utilidades
+    function estreita() { return vista.clientWidth <= 640; }
+    function naMesa() { return pilhas.trava.length + pilhas.hoje.length + pilhas.espera.length + (centro ? 1 : 0); }
+    function cartasTxt(n) { return n === 1 ? '1 carta' : n + ' cartas'; }
+    function indice() { return O.ROMANOS[destravados.length + adiadas.length] + ' · ' + O.ROMANOS[total - 1]; }
+    function precisaSegurar(card) {
+      return card.resposta.tipo === 'segurar' && card.resposta.caminhos.some(function (c) { return c.rec && c.segurar; });
+    }
+    function clamp(x) { return Math.max(0, Math.min(1, x)); }
+    function avisar(txt) {
+      aviso.textContent = txt;
+      aviso.classList.add('on');
+      clearTimeout(aviso._h);
+      aviso._h = setTimeout(function () { aviso.classList.remove('on'); }, 3200);
+    }
+    // Rola só a carta (scrollIntoView rolaria também a vista, que tem overflow escondido).
+    function rolarAte(alvo) {
+      var rol = alvo && alvo.closest('.oc-rolagem');
+      if (!rol) return;
+      rol.scrollTop += alvo.getBoundingClientRect().top - rol.getBoundingClientRect().top - rol.clientHeight / 3;
+    }
+
+    // ------------------------------------------------------------------ desenho
+    function desenharLead() {
+      var n = naMesa();
+      lead.innerHTML = '<span class="vA-titulo">A tiragem</span>'
+        + (n ? '<span class="vA-conta"><b>' + n + '</b> ' + (n === 1 ? 'carta' : 'cartas') + ' na mesa</span>'
+             : '<span class="vA-conta"><b>Mesa limpa</b></span>')
+        + '<span class="vA-sub">' + destravados.length + ' de ' + total + ' destravadas</span>';
+    }
+
+    function pilhaHtml(n, max) {
+      var h = '<span class="vA-pilha' + (n ? '' : ' vazia') + '">';
+      for (var i = Math.min(max, n) - 1; i >= 0; i--) h += '<span class="vA-dorso" style="--k:' + i + '">' + O.dorso().innerHTML + '</span>';
+      if (n) h += '<b class="vA-n">' + n + '</b>';
+      return h + '</span>';
+    }
+
+    function desenharCasas() {
+      CASAS.forEach(function (c) {
+        var b = botoesCasa[c.k];
+        var p = pilhas[c.k];
+        var ativa = centro && centro.casa === c.k;
+        var topo = p[0];
+        b.className = 'vA-casa vA-casa-' + c.k + (ativa ? ' vA-ativa' : '') + (p.length ? '' : ' vA-vazia') + (topo ? ' naipe-' + topo.naipe : '');
+        b.disabled = !p.length;
+        var estado = p.length
+          ? (ativa ? 'a da vez saiu daqui · mais ' + cartasTxt(p.length) : cartasTxt(p.length))
+          : (ativa ? 'a última está no centro' : 'vazia');
+        b.innerHTML = '<span class="vA-casa-nome">' + esc(c.nome) + '</span>'
+          + pilhaHtml(p.length, 3)
+          + '<span class="vA-casa-topo">' + (topo ? '<span class="vA-glifo">' + O.GLIFOS[topo.naipe] + '</span><span class="vA-casa-perg">' + esc(topo.pergunta) + '</span>' : '') + '</span>'
+          + '<span class="vA-casa-estado">' + esc(estado) + '</span>';
+      });
+      var nd = destravados.length;
+      casaDest.className = 'vA-casa vA-casa-dest' + (nd ? '' : ' vA-vazia');
+      casaDest.innerHTML = '<span class="vA-casa-nome">Destravado</span><span class="vA-pilha vA-pilha-dest"><i>✓</i>' + (nd ? '<b class="vA-n">' + nd + '</b>' : '') + '</span><span class="vA-casa-topo"></span>';
+    }
+
+    function desenharDestravado(novo) {
+      destCab.innerHTML = '<h3>Destravado' + (destravados.length ? '<b>' + destravados.length + '</b>' : '') + '</h3><p>O que esta tiragem já destravou.</p>';
+      rastro.innerHTML = '';
+      destravados.forEach(function (d, i) {
+        var li = el('li', 'vA-slip naipe-' + d.card.naipe + (novo && i === 0 ? ' vA-cai' : ''));
+        li.innerHTML = '<span class="vA-glifo">' + O.GLIFOS[d.card.naipe] + '</span><span>' + esc(d.card.destravaCurto) + '</span><i>✓</i>';
+        li.addEventListener('animationend', function () { li.classList.remove('vA-cai'); });
+        rastro.appendChild(li);
+      });
+      slot.classList.toggle('vA-slot-fim', !centro);
+      adiadasEl.innerHTML = adiadas.length
+        ? '<b>Fora da mesa sem decidir:</b> ' + adiadas.map(function (a) { return esc(a.card.destravaCurto) + ' <i>(volta ' + esc(a.quando) + ')</i>'; }).join(' · ')
+        : '';
+    }
+
+    function desenharPe() {
+      var n = naMesa();
+      if (!centro) {
+        pe.classList.add('vA-pe-fim');
+        dica.innerHTML = '<span class="vA-pc">Nada mais espera por você.</span><span class="vA-cel">Mesa limpa. Nada mais espera por você.</span>';
+        return;
+      }
+      pe.classList.remove('vA-pe-fim');
+      dica.innerHTML = '<span class="vA-pc">Arraste a carta até <b>Destravado</b> →</span>'
+        + '<span class="vA-cel"><b>' + cartasTxt(n) + ' na mesa</b> · arraste → segue · ← volta amanhã</span>';
+      var pl = plano();
+      seguirBtn.className = 'vA-seguir' + (pl.segurar ? ' vA-segurar' : '') + (pl.falta ? ' vA-falta' : '');
+      seguirBtn.innerHTML = '<span class="vA-enche"></span><span class="vA-seguir-txt"><small>'
+        + esc(pl.topo) + '</small><b>' + esc(pl.rotulo) + '</b></span><span class="vA-seta">→</span>';
+    }
+
+    // O que o gesto de destravar faz AGORA com a carta do centro. Segue a recomendação, a menos que
+    // você já tenha mexido na carta: item do lote em "Mudar", texto editado, frase escrita.
+    // Assim o botão dourado e o arrastar nunca jogam fora o que você mudou.
+    function plano() {
+      var card = centro.card, r = card.resposta, raiz = centro.raiz;
+      if (raiz && r.tipo === 'lote') {
+        var m = raiz.querySelectorAll('.oc-item.trocando').length;
+        if (m) {
+          var cam = 'Seguir com ' + (r.itens.length - m) + ', mudar ' + m;
+          return { topo: 'Seguir com a sua mudança', rotulo: cam, res: { caminho: cam, rec: false } };
+        }
+      }
+      if (raiz && r.tipo === 'texto') {
+        var t = raiz.querySelector('.oc-msg-edit');
+        if (t && t.value !== card._textoOriginal) {
+          return { topo: 'Seguir com o seu texto', rotulo: 'Enviar editado', res: { caminho: 'Enviar editado', texto: t.value, rec: false } };
+        }
+        return { topo: 'Seguir a recomendação', rotulo: card.rec.rotulo, res: { caminho: card.rec.rotulo, texto: t ? t.value : '', rec: true } };
+      }
+      if (r.tipo === 'livre') {
+        var ta = raiz && raiz.querySelector('.oc-resp-livre textarea');
+        if (ta && ta.value.trim()) {
+          return { topo: 'Seguir com a sua frase', rotulo: r.enviar, res: { caminho: r.enviar, texto: ta.value.trim(), rec: true } };
+        }
+        return { topo: 'Escreva na carta e siga', rotulo: card.rec.rotulo, falta: true, campo: ta };
+      }
+      var segurar = precisaSegurar(card);
+      return { topo: segurar ? 'Não tem volta · segure até encher' : 'Seguir a recomendação', rotulo: card.rec.rotulo, segurar: segurar, res: { caminho: card.rec.rotulo, rec: true } };
+    }
+
+    function desenharCentro(origem) {
+      centroEl.innerHTML = '';
+      if (!centro) {
+        var v = el('div', 'oc-vazia vA-vazia');
+        var inner = el('div');
+        inner.appendChild(O.dorso());
+        inner.appendChild(el('b', null, 'O baralho está vazio.'));
+        inner.appendChild(el('span', null, destravados.length
+          ? 'Mesa limpa. Você destravou ' + (destravados.length === 1 ? '1 coisa' : destravados.length + ' coisas') + ' nesta tiragem.'
+          : 'Mesa limpa. Nada precisa de você agora.'));
+        v.appendChild(inner);
+        centroEl.appendChild(v);
+        return;
+      }
+      var card = centro.card;
+      var wrap = el('div', 'vA-carta');
+      var raiz = O.carta(card, {
+        indice: indice(),
+        aoDecidir: function (c, res) { decidir(c, res); },
+        aoAgoraNao: function (c, quando) { agoraNao(quando); },
+      });
+      wrap.appendChild(raiz);
+      wrap.appendChild(el('div', 'vA-carimbo sim', 'Destravado'));
+      wrap.appendChild(el('div', 'vA-carimbo nao', 'Agora não'));
+      centroEl.appendChild(wrap);
+      centro.wrap = wrap;
+      centro.raiz = raiz;
+      desenharPe();   // o plano lê a carta montada (texto original, campos)
+      // o botão dourado acompanha o que você muda dentro da carta
+      raiz.addEventListener('input', function () { if (centro && centro.raiz === raiz) desenharPe(); });
+      raiz.addEventListener('click', function () { setTimeout(function () { if (centro && centro.raiz === raiz && !saindo) desenharPe(); }, 0); });
+      ligarArrasto(wrap);
+      // a carta sai da casa de onde veio e vem para o centro
+      if (origem && origem.getClientRects().length) {
+        var r = wrap.getBoundingClientRect(), t = origem.getBoundingClientRect();
+        if (r.width) {
+          var s = Math.max(0.1, t.height / r.height);
+          wrap.style.transition = 'none';
+          wrap.style.opacity = '0.2';
+          wrap.style.transform = 'translate(' + (t.left + t.width / 2 - r.left - r.width / 2) + 'px,' + (t.top + t.height / 2 - r.top - r.height / 2) + 'px) scale(' + s + ')';
+          void wrap.offsetWidth;
+          wrap.style.transition = 'transform .42s cubic-bezier(.2,.8,.3,1), opacity .3s ease';
+          wrap.style.transform = '';
+          wrap.style.opacity = '';
+          setTimeout(function () { if (wrap.isConnected) wrap.style.transition = ''; }, 450);
+        }
+      }
+    }
+
+    function desenhar(opts) {
+      opts = opts || {};
+      desenharLead();
+      desenharCasas();
+      desenharPe();
+      desenharDestravado(opts.novo);
+      if (opts.centro !== false) desenharCentro(opts.casa ? botoesCasa[opts.casa].querySelector('.vA-pilha') : null);
+    }
+
+    // ------------------------------------------------------------------ tirar, decidir, adiar
+    function puxarProxima() {
+      for (var i = 0; i < CASAS.length; i++) {
+        var k = CASAS[i].k;
+        if (pilhas[k].length) { centro = { card: pilhas[k].shift(), casa: k }; return k; }
+      }
+      centro = null;
+      return null;
+    }
+
+    function tirar(k) {
+      if (saindo || !pilhas[k].length) return;
+      if (centro) {
+        if (centro.casa === k) pilhas[k].push(centro.card);     // mesma casa: a da vez vai para o fundo
+        else pilhas[centro.casa].unshift(centro.card);          // outra casa: volta para o topo da dela
+      }
+      centro = { card: pilhas[k].shift(), casa: k };
+      mesa.classList.remove('vA-rastro-aberto');
+      desenhar({ casa: k });
+    }
+
+    function proxima() {
+      var k = puxarProxima();
+      desenhar({ novo: true, casa: k });
+    }
+
+    function voar(wrap, alvo, depois) {
+      var r = wrap.getBoundingClientRect(), t = alvo.getBoundingClientRect(), c = centroEl.getBoundingClientRect();
+      // centro da carta sem transformação (posição de layout) e centro de onde ela está agora
+      var ux = c.left + wrap.offsetLeft + wrap.offsetWidth / 2, uy = c.top + wrap.offsetTop + wrap.offsetHeight / 2;
+      var vx = r.left + r.width / 2, vy = r.top + r.height / 2;
+      var s0 = (r.width && wrap._dx !== undefined && (wrap._dx || wrap._dy) && !estreita()) ? 0.45 : 1;
+      var rot0 = (wrap._dx || 0) * (estreita() ? 0.05 : 0.02);
+      wrap.style.transition = 'none';
+      wrap.style.transformOrigin = '50% 50%';
+      wrap.style.transform = 'translate(' + (vx - ux) + 'px,' + (vy - uy) + 'px) rotate(' + rot0 + 'deg) scale(' + s0 + ')';
+      void wrap.offsetWidth;
+      var s = Math.max(0.08, Math.min(0.4, t.height / (wrap.offsetHeight || 1)));
+      wrap.classList.add('vA-voando');
+      wrap.style.transition = 'transform .55s cubic-bezier(.45,0,.25,1), opacity .55s ease-in';
+      wrap.style.transform = 'translate(' + (t.left + t.width / 2 - ux) + 'px,' + (t.top + t.height / 2 - uy) + 'px) rotate(8deg) scale(' + s + ')';
+      wrap.style.opacity = '0.15';
+      setTimeout(function () {
+        alvo.classList.add('vA-recebe');
+        setTimeout(function () { alvo.classList.remove('vA-recebe'); }, 500);
+        depois();
+      }, 560);
+    }
+
+    function decidir(card, res) {
+      if (saindo || !centro || centro.card !== card) return;
+      saindo = true;
+      res.tipo = res.tipo || 'decidiu';
+      var alvo = estreita() ? casaDest.querySelector('.vA-pilha') : slot;
+      voar(centro.wrap, alvo, function () {
+        destravados.unshift({ card: card, res: res });
+        centro = null;
+        saindo = false;
+        O.toast(vista, card, res);
+        proxima();
+      });
+    }
+
+    function agoraNao(quando) {
+      if (saindo || !centro) return;
+      saindo = true;
+      var card = centro.card, wrap = centro.wrap;
+      wrap.style.transition = 'none';
+      wrap.classList.add('oc-sai-esquerda');
+      setTimeout(function () {
+        adiadas.push({ card: card, quando: quando });
+        centro = null;
+        saindo = false;
+        O.toast(vista, card, { tipo: 'agora-nao', quando: quando });
+        proxima();
+      }, 460);
+    }
+
+    // Seguir a recomendação num gesto só. Devolve false quando o gesto não basta (a carta volta ao centro).
+    function seguir(opts) {
+      opts = opts || {};
+      if (!centro || saindo) return false;
+      var card = centro.card, pl = plano();
+      if (pl.falta) {
+        avisar('Esta pede uma frase sua: escreva na carta o que mudou e siga de novo.');
+        if (pl.campo) { rolarAte(pl.campo); pl.campo.focus({ preventScroll: true }); }
+        return false;
+      }
+      if (pl.segurar && !opts.segurou) {
+        avisar('Esta não tem volta: segure o botão dourado até ele encher.');
+        seguirBtn.classList.remove('vA-pulsa');
+        void seguirBtn.offsetWidth;
+        seguirBtn.classList.add('vA-pulsa');
+        return false;
+      }
+      pl.res.tipo = 'decidiu';
+      decidir(card, pl.res);
+      return true;
+    }
+
+    // ------------------------------------------------------------------ botão dourado (clique ou segurar)
+    var holdTimer = null, segurou = false;
+    seguirBtn.addEventListener('pointerdown', function (e) {
+      if (!centro || !precisaSegurar(centro.card)) return;
+      e.preventDefault();
+      segurou = false;
+      seguirBtn.classList.add('vA-segurando');
+      holdTimer = setTimeout(function () { segurou = true; seguirBtn.classList.remove('vA-segurando'); seguir({ segurou: true }); }, 1200);
+    });
+    function soltarBotao() { clearTimeout(holdTimer); seguirBtn.classList.remove('vA-segurando'); }
+    seguirBtn.addEventListener('pointerup', soltarBotao);
+    seguirBtn.addEventListener('pointerleave', soltarBotao);
+    seguirBtn.addEventListener('click', function () {
+      seguirBtn.blur();
+      if (segurou) { segurou = false; return; }
+      seguir();
+    });
+
+    // ------------------------------------------------------------------ arrastar a carta
+    function sobreAlvo(x, y) {
+      var r = dest.getBoundingClientRect();
+      return x >= r.left - 30 && x <= r.right + 30 && y >= r.top - 30 && y <= r.bottom + 30;
+    }
+    function limite(wrap) { return Math.min(120, wrap.offsetWidth * 0.28); }
+    function voltarAoCentro(wrap) {
+      wrap.style.transition = 'transform .3s cubic-bezier(.2,.9,.3,1.2)';
+      wrap.style.transform = '';
+      wrap._dx = wrap._dy = 0;
+      setTimeout(function () { if (!wrap.style.transform) wrap.style.transformOrigin = ''; }, 320);
+      wrap.querySelectorAll('.vA-carimbo').forEach(function (c) { c.style.opacity = ''; });
+    }
+
+    function ligarArrasto(wrap) {
+      var d = null;
+      var sim = wrap.querySelector('.vA-carimbo.sim'), nao = wrap.querySelector('.vA-carimbo.nao');
+      wrap.addEventListener('pointerdown', function (e) {
+        if (saindo || e.button > 0) return;
+        if (e.target.closest('button, textarea, input, select, label, summary, a, output, .oc-tela-aberta')) return;
+        d = { id: e.pointerId, x: e.clientX, y: e.clientY, dx: 0, dy: 0, on: false, swipe: estreita() };
+      });
+      wrap.addEventListener('pointermove', function (e) {
+        if (!d || e.pointerId !== d.id) return;
+        d.dx = e.clientX - d.x;
+        d.dy = e.clientY - d.y;
+        if (!d.on) {
+          if (Math.abs(d.dx) < 8 && Math.abs(d.dy) < 8) return;
+          if (d.swipe && Math.abs(d.dy) > Math.abs(d.dx)) { d = null; return; }   // vertical: é rolar a carta
+          d.on = true;
+          try { wrap.setPointerCapture(d.id); } catch (_) { /* sem captura */ }
+          if (!d.swipe) {   // no PC a carta encolhe em volta do ponto onde você a pegou
+            var rr = wrap.getBoundingClientRect();
+            wrap.style.transformOrigin = (d.x - rr.left) + 'px ' + (d.y - rr.top) + 'px';
+          }
+          var sel = window.getSelection && window.getSelection();
+          if (sel) sel.removeAllRanges();
+          mesa.classList.add('vA-arrastando');
+        }
+        e.preventDefault();
+        var dy = d.swipe ? d.dy * 0.12 : d.dy;
+        wrap._dx = d.dx;
+        wrap._dy = dy;
+        wrap.style.transition = 'none';
+        wrap.style.transform = 'translate(' + d.dx + 'px,' + dy + 'px) rotate(' + (d.dx * (d.swipe ? 0.05 : 0.02)) + 'deg)' + (d.swipe ? '' : ' scale(.45)');
+        if (d.swipe) {
+          var lim = limite(wrap);
+          sim.style.opacity = clamp(d.dx / lim);
+          nao.style.opacity = clamp(-d.dx / lim);
+        } else {
+          var over = sobreAlvo(e.clientX, e.clientY);
+          dest.classList.toggle('vA-alvo', over);
+          sim.style.opacity = over ? 1 : clamp(d.dx / 500) * 0.5;
+          nao.style.opacity = 0;
+        }
+      });
+      function soltar(e, cancelou) {
+        if (!d || e.pointerId !== d.id) return;
+        var x = d;
+        d = null;
+        mesa.classList.remove('vA-arrastando');
+        dest.classList.remove('vA-alvo');
+        if (!x.on) return;
+        if (!cancelou) {
+          if (x.swipe) {
+            var lim = limite(wrap);
+            if (x.dx > lim && seguir()) return;
+            if (x.dx < -lim) { agoraNao('amanhã cedo'); return; }
+          } else if (sobreAlvo(e.clientX, e.clientY) && seguir()) {
+            return;
+          }
+        }
+        voltarAoCentro(wrap);
+      }
+      wrap.addEventListener('pointerup', function (e) { soltar(e, false); });
+      wrap.addEventListener('pointercancel', function (e) { soltar(e, true); });
+    }
+
+    // ------------------------------------------------------------------ teclado (só a primeira vista PC, visível)
+    function minhaVez() {
+      if (!vista.isConnected || !vista.getClientRects().length) return false;
+      var primeira = document.querySelector('.pc .vista') || document.querySelector('.vista');
+      return primeira === vista;
+    }
+    function tecla(e) {
+      if (!vista.isConnected) { document.removeEventListener('keydown', tecla); return; }
+      if (!minhaVez() || e.altKey || e.ctrlKey || e.metaKey) return;
+      var t = e.target;
+      if ((t.matches && t.matches('input, textarea, select, button')) || t.isContentEditable) return;
+      if (e.key === 'ArrowRight') { e.preventDefault(); seguir(); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); agoraNao('amanhã cedo'); }
+      else if (e.key === ' ' && centro) { e.preventDefault(); centro.raiz.classList.toggle('virada'); }
+      else if (e.key === '1' || e.key === '2' || e.key === '3') { tirar(CASAS[+e.key - 1].k); }
+    }
+    document.addEventListener('keydown', tecla);
+
+    // ------------------------------------------------------------------ dar as cartas
+    puxarProxima();
+    desenhar({});
+  },
+};
+
+</script>
+<script>
+/* variante B */
+/* Variante B — UMA CARTA POR VEZ. O baralho puro: a carta da vez, o índice e os dorsos que restam.
+   Arrastar para a direita segue a recomendação; para a esquerda, "Agora não" (volta amanhã cedo).
+   Zero estado global: tudo vive no fechamento de cada montar(). */
+window.VARIANTES.B = {
+  nome: 'Uma carta por vez',
+  sobre: 'O baralho puro, no PC e no celular: só a carta da vez, o índice e os dorsos do que resta, '
+    + 'com o que trava tudo primeiro. Destravar é arrastar a carta para a direita (segue a recomendação) '
+    + 'ou para a esquerda (agora não, volta amanhã cedo); no PC as setas fazem o mesmo e o espaço vira a carta.',
+  montar: function (vista, cartas) {
+    var O = window.Oraculo;
+    var el = O.el, esc = O.esc;
+
+    // Ordem: o que trava tudo primeiro (peso), depois o parado (urgente), depois a ordem de chegada.
+    var fila = cartas.map(function (c, i) { return { c: c, i: i }; }).sort(function (a, b) {
+      return (b.c.peso || 0) - (a.c.peso || 0) || (b.c.urgente ? 1 : 0) - (a.c.urgente ? 1 : 0) || a.i - b.i;
+    }).map(function (x) { return x.c; });
+    var total = fila.length;
+    var pos = 0;          // quantas já saíram da mesa
+    var saindo = false;   // trava enquanto uma carta voa
+    var atual = null;     // { card, wrap, carta, carimbo }
+
+    var mesa = el('div', 'vB-mesa');
+    var dEsq = el('button', 'vB-dica esq', '<span class="seta">←</span><span class="txt"><b>Agora não</b><small>volta amanhã cedo</small></span><kbd>←</kbd>');
+    var dDir = el('button', 'vB-dica dir', '<span class="seta">→</span><span class="txt"><b>Seguir a recomendação</b><small class="rec"></small></span><kbd>→</kbd>');
+    dEsq.type = dDir.type = 'button';
+    var pilha = el('div', 'vB-pilha');
+    var espaco = el('div', 'vB-espaco', '<kbd>espaço</kbd> vira a carta');
+    mesa.appendChild(dEsq);
+    mesa.appendChild(pilha);
+    mesa.appendChild(dDir);
+    mesa.appendChild(espaco);
+    vista.appendChild(mesa);
+
+    dEsq.addEventListener('click', function () { dEsq.blur(); agoraNao('amanhã cedo'); });
+    dDir.addEventListener('click', function () { dDir.blur(); seguir(); });
+
+    // ---------------------------------------------------------------- a carta da vez
+    function rom(i) { return O.ROMANOS[i] || String(i + 1); }  // a base só tem romanos até XII
+    function indice() { return rom(pos) + ' · ' + rom(total - 1); }
+
+    // Quando arrastar à direita NÃO basta: resposta que pede frase, ou recomendação sem volta.
+    function bloqueio(card) {
+      var r = card.resposta;
+      if (r.tipo === 'livre') {
+        var ta = atual && atual.wrap.querySelector('.oc-resp-livre textarea');
+        if (!ta || !ta.value.trim()) return { cls: 'aviso', t: 'Falta sua frase', s: 'escreva na carta e arraste de novo', foco: ta };
+      }
+      if (r.tipo === 'segurar') {
+        var rc = r.caminhos.filter(function (c) { return c.rec && c.segurar; })[0];
+        if (rc) return { cls: 'nao', t: 'Não tem volta', s: 'segure o botão na carta', foco: atual && atual.wrap.querySelector('.oc-segurar') };
+      }
+      return null;
+    }
+    function dicaDireita(card) {
+      var r = card.resposta;
+      if (r.tipo === 'livre') return 'Escreva na carta o que mudou, depois arraste';
+      if (r.tipo === 'segurar' && r.caminhos.some(function (c) { return c.rec && c.segurar; })) return 'Esta não tem volta: segure o botão na carta';
+      return card.rec.rotulo;
+    }
+
+    function mostrar() {
+      pilha.innerHTML = '';
+      pilha.style.setProperty('--vB-sobe', '0');
+      atual = null;
+      saindo = false;
+      var resta = total - pos;
+      mesa.classList.toggle('vB-fim', resta <= 0);
+      if (resta <= 0) {
+        var v = el('div', 'oc-vazia vB-vazia');
+        var inner = el('div');
+        inner.appendChild(O.dorso());
+        inner.appendChild(el('b', null, 'O baralho está vazio.'));
+        inner.appendChild(el('span', null, 'Nada precisa de você agora.'));
+        v.appendChild(inner);
+        pilha.appendChild(v);
+        return;
+      }
+      // dorsos do que resta, atrás da carta
+      var n = Math.min(3, resta - 1);
+      for (var k = n; k >= 1; k--) {
+        var d = O.dorso();
+        d.classList.add('vB-dorso', 'vB-d' + k);
+        pilha.appendChild(d);
+      }
+      var card = fila[pos];
+      var wrap = el('div', 'vB-atual vB-entra');
+      var c = O.carta(card, {
+        indice: indice(),
+        aoDecidir: function (cd, res) { sair('direita', res); },
+        aoAgoraNao: function (cd, quando) { sair('esquerda', { tipo: 'agora-nao', quando: quando }); },
+      });
+      wrap.appendChild(c);
+      var carimbo = el('div', 'vB-carimbo');
+      wrap.appendChild(carimbo);
+      pilha.appendChild(wrap);
+      atual = { card: card, wrap: wrap, carta: c, carimbo: carimbo };
+      dDir.querySelector('.rec').textContent = dicaDireita(card);
+      ligarGesto(wrap);
+      setTimeout(function () { wrap.classList.remove('vB-entra'); }, 400);
+    }
+
+    function pintarCarimbo(dir, forca, quando) {
+      if (!atual) return;
+      var k = atual.carimbo, card = atual.card;
+      if (!dir) { k.className = 'vB-carimbo'; k.style.opacity = 0; k.style.translate = ''; pilha.style.setProperty('--vB-sobe', '0'); return; }
+      var b = dir === 'direita' ? bloqueio(card) : null;
+      var cls = dir === 'esquerda' ? 'esq' : b ? 'dir ' + b.cls : 'dir';
+      var html = dir === 'esquerda' ? 'Agora não<small>volta ' + esc(quando || 'amanhã cedo') + '</small>'
+        : b ? esc(b.t) + '<small>' + esc(b.s) + '</small>'
+          : 'Destravado<small>' + esc(card.destravaCurto) + '</small>';
+      if (k.dataset.html !== cls + html) { k.innerHTML = html; k.dataset.html = cls + html; }
+      k.className = 'vB-carimbo ' + cls + (forca >= 1 ? ' pronto' : '');
+      k.style.opacity = forca >= 1 ? 1 : Math.max(0, (forca - 0.35) / 0.65) * 0.55;
+      dEsq.classList.toggle('acesa', dir === 'esquerda' && forca >= 1);
+      dDir.classList.toggle('acesa', dir === 'direita' && forca >= 1 && !b);
+      // a próxima do baralho sobe enquanto a carta da vez sai
+      pilha.style.setProperty('--vB-sobe', b ? '0' : String(Math.min(1, Math.max(0, forca || 0))));
+    }
+
+    // ---------------------------------------------------------------- sair da mesa
+    function sair(dir, res) {
+      if (saindo || !atual) return;
+      saindo = true;
+      var a = atual, card = a.card;
+      pintarCarimbo(dir, 1, res.quando);
+      var w = vista.clientWidth || 800;
+      a.wrap.style.transition = 'transform .38s ease-in, opacity .38s ease-in';
+      a.wrap.style.transform = 'translateX(' + (dir === 'direita' ? w : -w) + 'px) rotate(' + (dir === 'direita' ? 16 : -16) + 'deg)';
+      a.wrap.style.opacity = '0';
+      // no PC o aviso aparece do lado para onde a carta foi
+      mesa.classList.toggle('vB-saiu-dir', dir === 'direita');
+      mesa.classList.toggle('vB-saiu-esq', dir === 'esquerda');
+      O.toast(vista, card, res);
+      setTimeout(function () {
+        dEsq.classList.remove('acesa');
+        dDir.classList.remove('acesa');
+        pos++;
+        mostrar();
+      }, 380);
+    }
+    function seguir() {
+      if (saindo || !atual) return;
+      var card = atual.card;
+      var b = bloqueio(card);
+      if (b) { recusar(b); return; }
+      var r = card.resposta;
+      if (r.tipo === 'livre') {
+        var ta = atual.wrap.querySelector('.oc-resp-livre textarea');
+        sair('direita', { caminho: r.enviar, texto: ta.value.trim(), rec: true, tipo: 'decidiu' });
+        return;
+      }
+      if (r.tipo === 'lote' && atual.wrap.querySelector('.oc-item.trocando')) {
+        // o dono mexeu em algum item: arrastar confirma o que está na carta, não as cinco
+        atual.wrap.querySelector('.oc-resp-lote > .oc-btn.ouro').click();
+        return;
+      }
+      if (r.tipo === 'texto') {
+        var t = atual.wrap.querySelector('.oc-msg-edit');
+        if (t && t.value !== card._textoOriginal) { sair('direita', { caminho: 'Enviar editado', texto: t.value, rec: false, tipo: 'decidiu' }); return; }
+      }
+      sair('direita', { caminho: card.rec.rotulo, rec: true, tipo: 'decidiu' });
+    }
+    function agoraNao(quando) {
+      if (saindo || !atual) return;
+      sair('esquerda', { tipo: 'agora-nao', quando: quando });
+    }
+    function recusar(b) {
+      var a = atual;
+      pintarCarimbo('direita', 1);
+      a.carimbo.style.translate = '';  // a carta volta ao centro; o carimbo também
+      a.wrap.style.transition = 'transform .3s cubic-bezier(.3,1.6,.5,1)';
+      a.wrap.style.transform = '';
+      a.wrap.classList.remove('vB-treme');
+      void a.wrap.offsetWidth;
+      a.wrap.classList.add('vB-treme');
+      a.carta.classList.remove('virada');
+      setTimeout(function () {
+        if (atual !== a) return;
+        pintarCarimbo(null);
+        dDir.classList.remove('acesa');
+        if (b.foco) {
+          rolarAte(b.foco);
+          b.foco.classList.add('vB-aponta');
+          setTimeout(function () { b.foco.classList.remove('vB-aponta'); }, 1600);
+          if (b.foco.tagName === 'TEXTAREA') b.foco.focus({ preventScroll: true });
+        }
+      }, 900);
+    }
+
+    // Rola só a carta até o alvo. scrollIntoView rolaria também a página e a vista (overflow hidden).
+    function rolarAte(alvo) {
+      var rol = alvo.closest('.oc-rolagem');
+      if (!rol) return;
+      var rr = rol.getBoundingClientRect(), ar = alvo.getBoundingClientRect();
+      rol.scrollTo({ top: rol.scrollTop + (ar.top - rr.top) - Math.max(0, (rr.height - ar.height) / 2), behavior: 'smooth' });
+    }
+
+    // ---------------------------------------------------------------- o gesto (mouse e dedo)
+    var INTERATIVO = 'button, textarea, input, select, label, a, summary, output, .oc-saidas-painel';
+    function ligarGesto(wrap) {
+      var ini = null, arrastando = false, dx = 0;
+      function limiar() { return Math.max(80, wrap.clientWidth * 0.28); }
+      wrap.addEventListener('pointerdown', function (e) {
+        if (saindo || e.button > 0) return;
+        if (e.target.closest(INTERATIVO)) return;
+        ini = { x: e.clientX, y: e.clientY, id: e.pointerId };
+        arrastando = false;
+        dx = 0;
+      });
+      wrap.addEventListener('pointermove', function (e) {
+        if (!ini || e.pointerId !== ini.id) return;
+        var mx = e.clientX - ini.x, my = e.clientY - ini.y;
+        if (!arrastando) {
+          if (Math.abs(mx) > 8 && Math.abs(mx) > Math.abs(my) * 1.2) {
+            arrastando = true;
+            try { wrap.setPointerCapture(e.pointerId); } catch (_) { /* sem captura, segue */ }
+            wrap.classList.add('vB-arrastando');
+            wrap.style.transition = 'none';
+            var s = window.getSelection && window.getSelection();
+            if (s) s.removeAllRanges();
+          } else if (Math.abs(my) > 12) { ini = null; return; }
+          else return;
+        }
+        e.preventDefault();
+        dx = mx;
+        wrap.style.transform = 'translateX(' + dx + 'px) rotate(' + (dx / 22) + 'deg)';
+        pintarCarimbo(dx > 0 ? 'direita' : dx < 0 ? 'esquerda' : null, Math.abs(dx) / limiar());
+        // o carimbo anda menos que a carta, para não sair da tela no celular
+        if (atual) atual.carimbo.style.translate = Math.round(-dx * 0.55) + 'px 0';
+      });
+      function soltar(e) {
+        if (!ini || (e && e.pointerId !== ini.id)) return;
+        ini = null;
+        if (!arrastando) return;
+        arrastando = false;
+        wrap.classList.remove('vB-arrastando');
+        if (Math.abs(dx) >= limiar()) {
+          if (dx > 0) seguir(); else agoraNao('amanhã cedo');
+          return;
+        }
+        wrap.style.transition = 'transform .3s cubic-bezier(.3,1.5,.5,1)';
+        wrap.style.transform = '';
+        pintarCarimbo(null);
+        dEsq.classList.remove('acesa');
+        dDir.classList.remove('acesa');
+      }
+      wrap.addEventListener('pointerup', soltar);
+      wrap.addEventListener('pointercancel', soltar);
+    }
+
+    // ---------------------------------------------------------------- teclado (só a primeira vista do PC)
+    function donaDoTeclado() {
+      if (!vista.isConnected) return false;
+      if (!vista.getClientRects().length) return false;
+      var primeira = document.querySelector('.pc .vista') || document.querySelector('.vista');
+      return primeira === vista;
+    }
+    function tecla(e) {
+      if (!vista.isConnected) { document.removeEventListener('keydown', tecla); return; }
+      if (!donaDoTeclado() || e.altKey || e.ctrlKey || e.metaKey) return;
+      var t = e.target;
+      if ((t.matches && t.matches('input, textarea, select')) || t.isContentEditable) {
+        // Esc devolve o teclado à mesa (depois de escrever a frase, → segue)
+        if (e.key === 'Escape' && atual && atual.wrap.contains(t)) t.blur();
+        return;
+      }
+      if (!atual || saindo) return;
+      if (e.key === 'ArrowRight') { e.preventDefault(); seguir(); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); agoraNao('amanhã cedo'); }
+      else if (e.key === ' ' || e.code === 'Space') { e.preventDefault(); atual.carta.classList.toggle('virada'); }
+    }
+    document.addEventListener('keydown', tecla);
+
+    mostrar();
+  },
+};
+
+</script>
+<script>
+/* variante C */
+/* Variante C — MÃO E MESA. Um jogo de cartas: o dono segura a mão inteira (todas as cartas fechadas, em leque)
+   e joga UMA na mesa. Na mesa, dois lugares marcados: o dourado (seguir a recomendação) e "Mais tarde".
+   Arrastar a carta aberta para o dourado destrava; para "Mais tarde", ela volta ao fim da mão, esmaecida.
+   No celular: a mão vira uma fileira no rodapé e o gesto único é o botão dourado no pé da carta.
+   Zero estado global: tudo vive no fechamento de cada montar(). */
+window.VARIANTES.C = {
+  nome: 'Mão e mesa',
+  sobre: 'Um jogo de cartas: você vê a mão inteira o tempo todo (quantas e quais decisões tem) e escolhe a ordem, '
+    + 'jogando uma carta na mesa. Destravar é arrastar a carta aberta para o lugar dourado, que segue a recomendação; '
+    + '"Mais tarde" devolve a carta ao fim da mão, esmaecida. No celular a mão é a fileira do rodapé e o gesto é o botão dourado.',
+  montar: function (vista, cartas) {
+    var O = window.Oraculo;
+    var el = O.el, esc = O.esc;
+
+    // ---------------------------------------------------------------- estado (só deste montar)
+    var ordem = cartas.map(function (c, i) { return { c: c, i: i }; }).sort(function (a, b) {
+      return (b.c.peso || 0) - (a.c.peso || 0) || (b.c.urgente ? 1 : 0) - (a.c.urgente ? 1 : 0) || a.i - b.i;
+    }).map(function (x) { return x.c; });
+    var pos = {};
+    ordem.forEach(function (c, i) { pos[c.id] = i; });
+    var total = ordem.length;
+    var mao = ordem.slice();     // cartas na mão, na ordem em que aparecem
+    var tarde = {};              // id -> quando (cartas adiadas: ficam no fim da mão, esmaecidas)
+    var feitas = 0;              // quantas saíram da mesa decididas
+    var jogada = null;           // { card, wrap }
+    var ocupado = false;         // trava enquanto uma carta voa
+
+    // ---------------------------------------------------------------- esqueleto
+    var raiz = el('div', 'vC-raiz');
+    var mesa = el('div', 'vC-mesa');
+    var topo = el('div', 'vC-topo');
+    var lTarde = el('button', 'vC-lugar vC-lugar-tarde',
+      '<span class="vC-lugar-ic">☾</span><b>Mais tarde</b><small>volta amanhã cedo, no fim da sua mão</small>'
+      + '<span class="vC-lugar-dica">arraste a carta aqui<kbd>←</kbd></span>');
+    var lSeguir = el('button', 'vC-lugar vC-lugar-seguir',
+      '<span class="vC-lugar-ic">✓</span><b class="vC-seg-tit">Seguir a recomendação</b><small class="vC-seg-sub"></small>'
+      + '<span class="vC-lugar-dica"><span class="vC-seg-dica">arraste a carta aqui</span><kbd>→</kbd></span>');
+    lTarde.type = lSeguir.type = 'button';
+    var centro = el('div', 'vC-centro');
+    var alvo = el('div', 'vC-alvo');
+    centro.appendChild(alvo);
+    var bSeguir = el('button', 'vC-seguir-btn', '<b class="vC-seg-tit">Seguir a recomendação</b><small class="vC-seg-sub"></small>');
+    bSeguir.type = 'button';
+    var pe = el('div', 'vC-pe');
+    pe.appendChild(bSeguir);
+
+    mesa.appendChild(topo);
+    mesa.appendChild(lTarde);
+    mesa.appendChild(centro);
+    mesa.appendChild(lSeguir);
+    mesa.appendChild(pe);
+
+    var maoBox = el('div', 'vC-mao');
+    var maoRot = el('div', 'vC-mao-rot');
+    var leque = el('div', 'vC-leque');
+    var devolver = el('div', 'vC-devolver', 'Solte para devolver à mão');
+    maoBox.appendChild(maoRot);
+    maoBox.appendChild(leque);
+    maoBox.appendChild(devolver);
+
+    raiz.appendChild(mesa);
+    raiz.appendChild(maoBox);
+    vista.appendChild(raiz);
+
+    function celular() { return vista.clientWidth <= 640; }
+    function ativas() { return mao.filter(function (c) { return !tarde[c.id]; }); }
+
+    // ---------------------------------------------------------------- contagem
+    function contar() {
+      var at = ativas().length + (jogada ? 1 : 0);
+      var nt = Object.keys(tarde).length;
+      topo.innerHTML = '<span class="vC-topo-n"><b>' + at + '</b> ' + (at === 1 ? 'carta espera' : 'cartas esperam') + ' você</span>'
+        + '<span class="vC-topo-x">' + (feitas ? feitas + (feitas === 1 ? ' destravada' : ' destravadas') : 'nenhuma destravada ainda')
+        + (nt ? ' · ' + nt + ' para mais tarde' : '') + '</span>';
+      var nm = mao.length;
+      maoRot.innerHTML = '<b>Sua mão</b> · ' + (nm ? nm + (nm === 1 ? ' carta' : ' cartas') : 'vazia')
+        + (nm ? '<span class="vC-mao-dica"> · ' + (celular() ? 'toque para abrir' : 'arraste uma para a mesa, ou clique') + '</span>' : '');
+    }
+
+    // ---------------------------------------------------------------- a mão
+    function desenharMao() {
+      // Mede ANTES de inserir: uma leitura de layout depois de inserir pinta as cartas novas com --vC-x: 0,
+      // e o leque inteiro fechava no centro e reabria (0,22 s) a cada jogada.
+      var cel = celular();
+      var W = leque.clientWidth;
+      leque.innerHTML = '';
+      mao.forEach(function (card, i) {
+        var w = el('div', 'vC-namao' + (tarde[card.id] ? ' vC-adiada' : ''));
+        w.dataset.carta = card.id;
+        var m = O.mini(card);
+        m.setAttribute('aria-label', 'Abrir: ' + card.pergunta);
+        w.appendChild(m);
+        if (tarde[card.id]) w.appendChild(el('span', 'vC-volta', 'volta ' + esc(tarde[card.id])));
+        if (!cel && i < 9) w.appendChild(el('kbd', 'vC-num', String(i + 1)));
+        arrastarDaMao(w, card);
+        leque.appendChild(w);
+      });
+      leque.classList.toggle('vC-vazio', !mao.length);
+      if (!mao.length) leque.appendChild(el('div', 'vC-mao-vazia', 'Nenhuma carta na mão.'));
+      leque_(W);
+      contar();
+    }
+
+    // Leque: posição, giro e curva de cada carta (só vale no PC; no celular a CSS ignora estas variáveis).
+    function leque_(largLeque) {
+      var itens = leque.querySelectorAll('.vC-namao');
+      var n = itens.length;
+      if (!n) return;
+      var W = largLeque || leque.clientWidth || 1000;
+      var cw = 190;
+      var passo = n > 1 ? Math.min(cw * 0.9, (W - cw - 40) / (n - 1)) : 0;
+      var meio = (n - 1) / 2;
+      var giro = Math.min(3, 14 / n);
+      itens.forEach(function (it, i) {
+        var d = i - meio;
+        it.style.setProperty('--vC-x', (d * passo).toFixed(1) + 'px');
+        it.style.setProperty('--vC-rot', (d * giro).toFixed(2) + 'deg');
+        it.style.setProperty('--vC-y', (meio ? (d * d) * (9 / (meio * meio)) : 0).toFixed(1) + 'px');
+        it.style.zIndex = String(10 + i);
+      });
+    }
+
+    function arrastarDaMao(w, card) {
+      var btn = w.querySelector('.oc-mini');
+      var ini = null, arrastou = false;
+      btn.addEventListener('click', function (e) {
+        if (arrastou) { arrastou = false; e.preventDefault(); return; }
+        jogar(card);
+      });
+      w.addEventListener('pointerdown', function (e) {
+        if (celular() || ocupado || e.button > 0) return;
+        ini = { x: e.clientX, y: e.clientY, id: e.pointerId };
+        arrastou = false;
+      });
+      w.addEventListener('pointermove', function (e) {
+        if (!ini || e.pointerId !== ini.id) return;
+        var dx = e.clientX - ini.x, dy = e.clientY - ini.y;
+        if (!arrastou && Math.hypot(dx, dy) < 7) return;
+        if (!arrastou) { arrastou = true; try { w.setPointerCapture(e.pointerId); } catch (x) { /* ponteiro sintético */ } w.classList.add('vC-arrastando'); raiz.classList.add('vC-jogando'); }
+        w.style.setProperty('--vC-dx', dx + 'px');
+        w.style.setProperty('--vC-dy', dy + 'px');
+        centro.classList.toggle('vC-quente', dentro(e, mesa) && !dentro(e, maoBox));
+      });
+      function soltar(e) {
+        if (!ini || e.pointerId !== ini.id) return;
+        ini = null;
+        raiz.classList.remove('vC-jogando');
+        centro.classList.remove('vC-quente');
+        if (!arrastou) return;
+        var naMesa = dentro(e, mesa) && !dentro(e, maoBox);
+        w.classList.remove('vC-arrastando');
+        if (naMesa) { jogar(card); return; }
+        w.style.setProperty('--vC-dx', '0px');
+        w.style.setProperty('--vC-dy', '0px');
+      }
+      w.addEventListener('pointerup', soltar);
+      w.addEventListener('pointercancel', soltar);
+    }
+
+    function dentro(e, alvoEl) {
+      var r = alvoEl.getBoundingClientRect();
+      return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+    }
+
+    // ---------------------------------------------------------------- a mesa
+    function indice() { return O.ROMANOS[Math.min(feitas, total - 1)] + ' · ' + O.ROMANOS[total - 1]; }
+
+    function jogar(card) {
+      if (ocupado) return;
+      if (jogada && jogada.card.id === card.id) return;
+      if (jogada) voltarParaMao(jogada.card, false);
+      mao = mao.filter(function (c) { return c.id !== card.id; });
+      delete tarde[card.id];
+      var wrap = el('div', 'vC-jogada vC-entra');
+      var c = O.carta(card, {
+        indice: indice(),
+        aoDecidir: function (cd, res) { sair(cd, res); },
+        aoAgoraNao: function (cd, quando) { adiar(cd, quando); },
+      });
+      wrap.appendChild(c);
+      centro.querySelectorAll('.vC-jogada').forEach(function (x) { x.remove(); });
+      centro.appendChild(wrap);
+      jogada = { card: card, wrap: wrap };
+      arrastarJogada(wrap, card);
+      wrap.addEventListener('input', atualizarRec);
+      wrap.addEventListener('click', function () { setTimeout(atualizarRec, 0); });
+      setTimeout(function () { wrap.classList.remove('vC-entra'); }, 420);
+      desenharMao();
+      estadoMesa();
+    }
+
+    function voltarParaMao(card, comAnim) {
+      mao.push(card);
+      mao.sort(function (a, b) { return (tarde[a.id] ? 1000 : 0) + pos[a.id] - ((tarde[b.id] ? 1000 : 0) + pos[b.id]); });
+      if (jogada && jogada.card.id === card.id) { jogada.wrap.remove(); jogada = null; }
+      if (comAnim) {
+        desenharMao();
+        var it = leque.querySelector('[data-carta="' + card.id + '"]');
+        if (it) it.classList.add('vC-chega');
+        estadoMesa();
+      }
+    }
+
+    // O que o lugar dourado faz com a carta da vez (às vezes ele não basta: falta a frase, ou não tem volta).
+    function avaliar(card) {
+      var r = card.resposta;
+      var cr = card._raiz;
+      if (r.tipo === 'livre') {
+        var ta = cr && cr.querySelector('.oc-resp-livre textarea');
+        var txt = ta && ta.value.trim();
+        if (!txt) return { ok: false, cls: 'aviso', tit: 'Falta a sua frase', sub: 'Escreva na carta o que mudou', dica: 'depois arraste aqui', foco: ta };
+        return { ok: true, sub: r.enviar, res: { caminho: r.enviar, texto: txt, rec: true } };
+      }
+      if (r.tipo === 'segurar') {
+        var rc = r.caminhos.filter(function (c) { return c.rec && c.segurar; })[0];
+        if (rc) return { ok: false, cls: 'nao', tit: 'Esta não tem volta', sub: 'Segure “' + rc.rotulo + '” na carta', dica: 'o lugar dourado não decide o que não se desfaz', foco: cr && cr.querySelector('.oc-segurar') };
+      }
+      if (r.tipo === 'texto') {
+        var t = cr && cr.querySelector('.oc-msg-edit');
+        if (t && t.value !== card._textoOriginal) return { ok: true, sub: 'Enviar o texto que você editou', res: { caminho: 'Enviar editado', texto: t.value, rec: false } };
+      }
+      if (r.tipo === 'lote') {
+        var m = cr ? cr.querySelectorAll('.oc-item.trocando').length : 0;
+        if (m) { var s = 'Seguir com ' + (r.itens.length - m) + ', mudar ' + m; return { ok: true, sub: s, res: { caminho: s, rec: false } }; }
+      }
+      return { ok: true, sub: card.rec.rotulo, res: { caminho: card.rec.rotulo, rec: true } };
+    }
+
+    function atualizarRec() {
+      var a = jogada ? avaliar(jogada.card) : null;
+      [lSeguir, bSeguir].forEach(function (b) {
+        b.classList.toggle('vC-bloq', !!(a && !a.ok));
+        b.classList.toggle('vC-bloq-nao', !!(a && a.cls === 'nao'));
+        b.querySelector('.vC-seg-tit').textContent = a && !a.ok ? a.tit : 'Seguir a recomendação';
+        b.querySelector('.vC-seg-sub').textContent = a ? a.sub : '';
+        var d = b.querySelector('.vC-seg-dica');
+        if (d) d.textContent = a && !a.ok ? a.dica : 'arraste a carta aqui';
+      });
+    }
+
+    function estadoMesa() {
+      var vazia = !jogada;
+      mesa.classList.toggle('vC-sem-carta', vazia);
+      alvo.innerHTML = '';
+      if (vazia) {
+        if (ativas().length) {
+          alvo.className = 'vC-alvo vC-alvo-jogue';
+          alvo.innerHTML = '<span class="vC-alvo-ic">' + (celular() ? '↓' : '↑') + '</span><b>Jogue uma carta aqui</b><span>'
+            + (celular() ? 'Toque numa carta da sua mão, logo abaixo.' : 'Arraste uma carta da sua mão até a mesa, ou clique nela.') + '</span>';
+        } else {
+          alvo.className = 'vC-alvo oc-vazia';
+          var inner = el('div');
+          inner.appendChild(O.dorso());
+          var nt = Object.keys(tarde).length;
+          inner.appendChild(el('b', null, nt ? 'Mesa limpa.' : 'O baralho está vazio.'));
+          inner.appendChild(el('span', null, nt
+            ? 'Nada precisa de você agora. ' + (nt === 1 ? 'Uma carta volta' : nt + ' cartas voltam') + ' mais tarde; ' + (nt === 1 ? 'está esmaecida' : 'estão esmaecidas') + ' na sua mão.'
+            : 'Nada precisa de você agora. Você destravou ' + feitas + (feitas === 1 ? ' decisão.' : ' decisões.')));
+          alvo.appendChild(inner);
+        }
+      } else {
+        alvo.className = 'vC-alvo';
+      }
+      atualizarRec();
+      contar();
+    }
+
+    // ---------------------------------------------------------------- arrastar a carta aberta
+    var INTERATIVO = 'button, textarea, input, select, a, summary, label, output, .oc-tela-aberta, .oc-saidas-painel';
+    function arrastarJogada(wrap, card) {
+      var ini = null, arr = false;
+      wrap.addEventListener('pointerdown', function (e) {
+        if (ocupado || e.button > 0) return;
+        var t = e.target;
+        if (t.closest(INTERATIVO)) return;
+        if (e.pointerType !== 'mouse' && !t.closest('.oc-cabeca')) return; // no toque, só pela cabeça (o resto rola)
+        if ((t.classList.contains('oc-rolagem') || t.classList.contains('oc-verso-corpo')) && e.offsetX > t.clientWidth) return; // barra de rolagem
+        ini = { x: e.clientX, y: e.clientY, id: e.pointerId };
+        arr = false;
+        if (e.pointerType === 'mouse') e.preventDefault();
+      });
+      wrap.addEventListener('pointermove', function (e) {
+        if (!ini || e.pointerId !== ini.id) return;
+        var dx = e.clientX - ini.x, dy = e.clientY - ini.y;
+        if (!arr && Math.hypot(dx, dy) < 8) return;
+        if (!arr) { arr = true; try { wrap.setPointerCapture(e.pointerId); } catch (x) { /* ponteiro sintético */ } wrap.classList.add('vC-arrastando'); raiz.classList.add('vC-movendo'); }
+        if (celular()) dx = dx * 0.35;
+        wrap.style.transform = 'translate(' + dx + 'px,' + dy + 'px) rotate(' + (dx * 0.03).toFixed(2) + 'deg) scale(' + (celular() ? 1 : 0.92) + ')';
+        var onde = alvoDe(e);
+        lSeguir.classList.toggle('vC-quente', onde === 'seguir');
+        lTarde.classList.toggle('vC-quente', onde === 'tarde');
+        maoBox.classList.toggle('vC-quente', onde === 'mao');
+      });
+      function soltar(e) {
+        if (!ini || e.pointerId !== ini.id) return;
+        ini = null;
+        raiz.classList.remove('vC-movendo');
+        [lSeguir, lTarde, maoBox].forEach(function (x) { x.classList.remove('vC-quente'); });
+        if (!arr) return;
+        wrap.classList.remove('vC-arrastando');
+        var onde = e.type === 'pointercancel' ? null : alvoDe(e);
+        if (onde === 'seguir') { if (!seguir()) voltaAoLugar(wrap); return; }
+        if (onde === 'tarde') { adiar(card, 'amanhã cedo'); return; }
+        if (onde === 'mao') { devolver_(card); return; }
+        voltaAoLugar(wrap);
+      }
+      wrap.addEventListener('pointerup', soltar);
+      wrap.addEventListener('pointercancel', soltar);
+    }
+    function alvoDe(e) {
+      if (!celular() && dentro(e, lSeguir)) return 'seguir';
+      if (!celular() && dentro(e, lTarde)) return 'tarde';
+      if (dentro(e, maoBox)) return 'mao';
+      return null;
+    }
+    function voltaAoLugar(wrap) {
+      wrap.classList.add('vC-volta-lugar');
+      wrap.style.transform = '';
+      setTimeout(function () { wrap.classList.remove('vC-volta-lugar'); }, 320);
+    }
+
+    // Voo da carta aberta até um lugar da mesa (ou para cima/baixo no celular).
+    function voar(wrap, destino, depois) {
+      ocupado = true;
+      var r = wrap.getBoundingClientRect();
+      var tr;
+      if (destino && typeof destino !== 'string' && !celular()) {
+        var d = destino.getBoundingClientRect();
+        tr = 'translate(' + (d.left + d.width / 2 - (r.left + r.width / 2)) + 'px,' + (d.top + d.height / 2 - (r.top + r.height / 2)) + 'px) scale(.28) rotate(' + (destino === lSeguir ? 8 : -8) + 'deg)';
+      } else {
+        tr = destino === 'baixo' ? 'translateY(70%) scale(.5)' : 'translateY(-90%) scale(.7)';
+      }
+      wrap.classList.add('vC-voando');
+      // força o estilo atual antes de animar
+      void wrap.offsetWidth;
+      wrap.style.transform = tr;
+      wrap.style.opacity = '0';
+      setTimeout(function () { wrap.remove(); ocupado = false; depois(); }, 460);
+    }
+
+    function seguir() {
+      if (!jogada || ocupado) return false;
+      var a = avaliar(jogada.card);
+      if (!a.ok) {
+        var w = jogada.wrap;
+        w.classList.remove('vC-treme'); void w.offsetWidth; w.classList.add('vC-treme');
+        [lSeguir, bSeguir].forEach(function (b) { b.classList.remove('vC-pulsa'); void b.offsetWidth; b.classList.add('vC-pulsa'); });
+        if (a.foco) { rolarAte(a.foco); if (a.foco.focus) a.foco.focus({ preventScroll: true }); }
+        return false;
+      }
+      var res = a.res;
+      res.tipo = 'decidiu';
+      sair(jogada.card, res);
+      return true;
+    }
+
+    // Rola só a carta (scrollIntoView rolaria também a vista e a página).
+    function rolarAte(alvoEl) {
+      var rol = alvoEl.closest('.oc-rolagem');
+      if (!rol) return;
+      var a = alvoEl.getBoundingClientRect(), r = rol.getBoundingClientRect();
+      rol.scrollTo({ top: rol.scrollTop + (a.top - r.top) - (rol.clientHeight - a.height) / 2, behavior: 'smooth' });
+    }
+
+    function sair(card, res) {
+      if (!jogada || jogada.card.id !== card.id || ocupado) return;
+      var w = jogada.wrap;
+      jogada = null;
+      lSeguir.classList.add('vC-aceso');
+      bSeguir.classList.add('vC-aceso');
+      voar(w, lSeguir, function () {
+        lSeguir.classList.remove('vC-aceso');
+        bSeguir.classList.remove('vC-aceso');
+        feitas++;
+        O.toast(vista, card, res);
+        proxima();
+      });
+      estadoMesa();
+    }
+
+    function adiar(card, quando) {
+      if (!jogada || jogada.card.id !== card.id || ocupado) return;
+      var w = jogada.wrap;
+      jogada = null;
+      voar(w, celular() ? 'baixo' : lTarde, function () {
+        tarde[card.id] = quando;
+        voltarParaMao(card, true);
+        O.toast(vista, card, { tipo: 'agora-nao', quando: quando });
+        proxima();
+      });
+      estadoMesa();
+    }
+
+    function devolver_(card) {
+      if (!jogada || ocupado) return;
+      var w = jogada.wrap;
+      jogada = null;
+      voar(w, 'baixo', function () { voltarParaMao(card, true); });
+      estadoMesa();
+    }
+
+    // Depois de uma decisão, a próxima carta da mão (a que mais trava) vem para a mesa. O dono troca quando quiser.
+    function proxima() {
+      var at = ativas();
+      if (at.length) jogar(at[0]);
+      else { desenharMao(); estadoMesa(); }
+    }
+
+    // ---------------------------------------------------------------- botões, teclado, tamanho
+    lSeguir.addEventListener('click', function () { seguir(); });
+    bSeguir.addEventListener('click', function () { seguir(); });
+    lTarde.addEventListener('click', function () { if (jogada) adiar(jogada.card, 'amanhã cedo'); });
+
+    function principal() {
+      var pc = document.querySelector('.pc-tela .vista');
+      return (pc || document.querySelector('.vista')) === vista;
+    }
+    function tecla(e) {
+      if (!vista.isConnected) { document.removeEventListener('keydown', tecla); return; }
+      if (!principal() || !vista.offsetParent) return;
+      var t = e.target;
+      if ((t.matches && t.matches('input, textarea, select')) || t.isContentEditable) return;
+      if (e.altKey || e.ctrlKey || e.metaKey) return;
+      if (e.key === 'ArrowRight') { e.preventDefault(); seguir(); }
+      else if (e.key === 'ArrowLeft') { e.preventDefault(); if (jogada) adiar(jogada.card, 'amanhã cedo'); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); if (jogada) devolver_(jogada.card); }
+      else if (/^[1-9]$/.test(e.key)) { var c = mao[+e.key - 1]; if (c) jogar(c); }
+    }
+    document.addEventListener('keydown', tecla);
+
+    var largura = vista.clientWidth;
+    if (window.ResizeObserver) {
+      var espera = null;
+      var ro = new ResizeObserver(function () {
+        if (!vista.isConnected) { ro.disconnect(); return; }
+        // espera o tamanho assentar (um print de página inteira muda a janela por um instante)
+        clearTimeout(espera);
+        espera = setTimeout(function () {
+          var w = vista.clientWidth;
+          if (!w || w === largura) return;
+          var mudouForma = (largura <= 640) !== (w <= 640);
+          largura = w;
+          if (mudouForma) { desenharMao(); estadoMesa(); } else leque_();
+        }, 160);
+      });
+      ro.observe(vista);
+    }
+
+    // dar as cartas: a que mais trava já vem jogada
+    jogar(ordem[0]);
+  },
+};
+
+</script>
+<script>
+/* variante D */
+/* Variante D — O QUE DESTRAVA. A mesa organizada pelo que está parado esperando o dono.
+   Cada coisa parada é uma trava: o nome do que parou, a barra listrada "parado" e, sobre ela, a carta fechada
+   que a destrava. O botão dourado da carta segue a recomendação num toque (com Desfazer por 4 s); tocar na
+   carta abre ela inteira numa folha (lateral no PC, de baixo para cima no celular).
+   Zero estado global: tudo vive no fechamento de cada montar(). */
+window.VARIANTES = window.VARIANTES || {};
+window.VARIANTES.D = {
+  nome: 'O que destrava',
+  sobre: 'A mesa mostra o que está parado esperando você, por quadro: cada coisa parada tem a barra listrada e, '
+    + 'sobre ela, a carta que a destrava; a que trava tudo vem primeiro e maior. Destravar é o botão dourado da '
+    + 'carta (segue a recomendação num toque, com Desfazer por 4 segundos): a barra fica verde e a coisa sai da mesa. '
+    + 'Tocar na carta abre ela inteira ao lado (no celular, de baixo para cima) para ler, virar ou escolher outro caminho.',
+  montar: function (vista, cartas) {
+    var O = window.Oraculo;
+    var el = O.el, esc = O.esc;
+    var ESPERA = 4000;
+
+    // O que trava tudo primeiro (peso), depois o que já está atrasado (urgente), depois a ordem de chegada.
+    var ordem = cartas.map(function (c, i) { return { c: c, i: i }; }).sort(function (a, b) {
+      return (b.c.peso || 0) - (a.c.peso || 0) || (b.c.urgente ? 1 : 0) - (a.c.urgente ? 1 : 0) || a.i - b.i;
+    }).map(function (x) { return x.c; });
+    var total = ordem.length;
+
+    var travas = {};      // id -> { card, pos, no, poe, estado: 'parado' | 'andando' | 'fora', grupo, removida }
+    var grupos = [];      // { nome, sec, conta, ids }
+    var pendente = null;  // { id, timer } — a última destravada, que ainda pode ser desfeita
+    var aberta = null;    // id da carta aberta na folha
+
+    // ------------------------------------------------------------------ esqueleto
+    var raiz = el('div', 'vD-raiz');
+    var mesa = el('section', 'vD-mesa');
+    var topo = el('header', 'vD-topo');
+    var titulo = el('h2', 'vD-titulo');
+    var sub = el('p', 'vD-sub', 'Uma carta destrava cada uma. O botão dourado segue a minha recomendação num toque; '
+      + 'toque na carta para ler inteira ou responder de outro jeito.');
+    var leg = el('div', 'vD-legenda', '<span class="p"><i></i>parado</span><span class="a"><i></i>andando</span>');
+    topo.appendChild(titulo);
+    topo.appendChild(leg);
+    topo.appendChild(sub);
+    var corpo = el('div', 'vD-corpo');
+    var aviso = el('div', 'vD-aviso', '<div class="vD-aviso-txt"></div><button type="button" class="vD-desfazer">Desfazer</button><i class="vD-tempo"></i>');
+    aviso.setAttribute('role', 'status');
+    mesa.appendChild(topo);
+    mesa.appendChild(corpo);
+    mesa.appendChild(aviso);
+
+    var folha = el('aside', 'vD-folha', '<div class="vD-folha-in">'
+      + '<div class="vD-alca"><button type="button" aria-label="Fechar a carta"><i></i></button></div>'
+      + '<div class="vD-folha-topo"><span class="vD-folha-rot"></span><button type="button" class="vD-fechar">Fechar ✕</button></div>'
+      + '<div class="vD-folha-carta"></div></div>');
+    folha.inert = true;
+    var veu = el('div', 'vD-veu');
+    raiz.appendChild(mesa);
+    raiz.appendChild(folha);
+    raiz.appendChild(veu);
+    vista.appendChild(raiz);
+
+    var caixaCarta = folha.querySelector('.vD-folha-carta');
+    var rotFolha = folha.querySelector('.vD-folha-rot');
+    folha.querySelector('.vD-fechar').addEventListener('click', fechar);
+    folha.querySelector('.vD-alca button').addEventListener('click', fechar);
+    veu.addEventListener('click', fechar);
+    aviso.querySelector('.vD-desfazer').addEventListener('click', desfazer);
+    ligarAlca(folha.querySelector('.vD-alca'));
+
+    // ------------------------------------------------------------------ as travas, por quadro
+    var heroi = ordem.filter(function (c) { return (c.peso || 0) >= 3; });
+    var resto = ordem.filter(function (c) { return (c.peso || 0) < 3; });
+
+    heroi.forEach(function (c) {
+      var g = novoGrupo(c.quadro, 'vD-heroi', '<span class="vD-tudo">Trava tudo</span>');
+      corpo.appendChild(g.sec);
+      g.lista.appendChild(novaTrava(c, g, true));
+    });
+    var colunas = el('div', 'vD-grupos');
+    corpo.appendChild(colunas);
+    var porNome = {};
+    resto.forEach(function (c) {
+      var g = porNome[c.quadro];
+      if (!g) { g = porNome[c.quadro] = novoGrupo(c.quadro); colunas.appendChild(g.sec); }
+      g.lista.appendChild(novaTrava(c, g, false));
+    });
+    contar();
+
+    function novoGrupo(nome, cls, antes) {
+      var sec = el('section', 'vD-grupo' + (cls ? ' ' + cls : ''));
+      var h = el('h3', null, (antes || '') + '<span class="vD-quadro">' + esc(nome) + '</span><small></small>');
+      var lista = el('div', 'vD-lista');
+      sec.appendChild(h);
+      sec.appendChild(lista);
+      var g = { nome: nome, sec: sec, conta: h.querySelector('small'), lista: lista, ids: [] };
+      grupos.push(g);
+      return g;
+    }
+
+    // Como a carta destrava num toque depende da resposta que ela pede.
+    function modoDe(card) {
+      var r = card.resposta;
+      if (r.tipo === 'fiz') return 'fiz';          // só o dono faz (ex.: criar a chave): abre os passos
+      if (r.tipo === 'livre') return 'livre';      // pede uma frase dele: abre a carta no campo
+      if (r.tipo === 'segurar' && r.caminhos.some(function (c) { return c.rec && c.segurar; })) return 'segurar'; // sem volta
+      return 'toque';
+    }
+
+    function novaTrava(card, g, grande) {
+      var pos = ordem.indexOf(card);
+      var no = el('div', 'vD-trava' + (grande ? ' vD-grande' : '') + (card.urgente ? ' vD-atrasada' : ''));
+      no.dataset.id = card.id;
+      var dentro = el('div', 'vD-trava-in');
+      var coisa = el('div', 'vD-coisa',
+        '<div class="vD-cima"><b class="vD-nome">' + esc(card.destravaCurto) + '</b></div>'
+        + '<div class="vD-baixo"><span class="vD-estado">parado</span><small class="vD-desde">' + esc(card.desde) + '</small></div>');
+      var trilho = el('div', 'vD-trilho');
+      var poe = el('div', 'vD-poe');
+
+      var m = O.mini(card, { tag: 'div' });
+      m.tabIndex = 0;
+      m.setAttribute('role', 'button');
+      m.setAttribute('aria-label', 'Abrir a carta inteira: ' + card.pergunta);
+
+      var modo = modoDe(card);
+      var pe = el('div', 'vD-pe');
+      var b = el('button', 'vD-btn');
+      b.type = 'button';
+      var segue;
+      if (modo === 'fiz') {
+        b.textContent = 'Fazer agora';
+        segue = 'Só você faz' + (card.visual && card.visual.nota ? ' · ' + esc(card.visual.nota) : '');
+      } else if (modo === 'livre') {
+        b.textContent = 'Responder';
+        segue = 'Precisa de uma frase sua';
+      } else if (modo === 'segurar') {
+        var cs = card.resposta.caminhos.filter(function (c) { return c.rec && c.segurar; })[0];
+        b.className = 'vD-btn vD-segurar';
+        b.innerHTML = '<span class="vD-enche"></span><span class="vD-btn-txt">' + esc(cs.segurar) + '</span>';
+        segue = '<b>Não tem volta</b>: segure até encher';
+      } else {
+        b.textContent = 'Destravar';
+        segue = 'Segue: <b>' + esc(card.rec.rotulo) + '</b>';
+      }
+      pe.appendChild(b);
+      pe.appendChild(el('span', 'vD-segue', segue));
+      m.appendChild(pe);
+      poe.appendChild(m);
+
+      dentro.appendChild(coisa);
+      dentro.appendChild(trilho);
+      dentro.appendChild(poe);
+      no.appendChild(dentro);
+
+      var T = { card: card, pos: pos, no: no, poe: poe, estadoTxt: coisa.querySelector('.vD-estado'), estado: 'parado', grupo: g };
+      travas[card.id] = T;
+      g.ids.push(card.id);
+
+      m.addEventListener('click', function (e) {
+        if (e.target.closest('.vD-btn')) return;
+        abrir(card.id);
+      });
+      m.addEventListener('keydown', function (e) {
+        if (e.target !== m) return;
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); abrir(card.id); }
+      });
+
+      if (modo === 'toque') {
+        b.addEventListener('click', function () { destravar(card.id, { caminho: card.rec.rotulo, rec: true, tipo: 'decidiu' }); });
+      } else if (modo === 'fiz') {
+        b.addEventListener('click', function () { abrir(card.id, '.oc-vis'); });
+      } else if (modo === 'livre') {
+        b.addEventListener('click', function () { abrir(card.id, '.oc-resp-livre textarea'); });
+      } else {
+        // Segurar 1,2 s para confirmar o que não tem volta.
+        var timer = null;
+        var cs2 = card.resposta.caminhos.filter(function (c) { return c.rec && c.segurar; })[0];
+        var ini = function (e) {
+          e.preventDefault();
+          b.classList.add('segurando');
+          timer = setTimeout(function () { b.classList.remove('segurando'); destravar(card.id, { caminho: cs2.rotulo, rec: true, tipo: 'decidiu' }); }, 1200);
+        };
+        var fim = function () { b.classList.remove('segurando'); clearTimeout(timer); };
+        b.addEventListener('pointerdown', ini);
+        b.addEventListener('pointerup', fim);
+        b.addEventListener('pointerleave', fim);
+        b.addEventListener('pointercancel', fim);
+        b.addEventListener('contextmenu', function (e) { e.preventDefault(); }); // segurar no celular não abre o menu
+      }
+      return no;
+    }
+
+    // ------------------------------------------------------------------ destravar, desfazer, sair da mesa
+    function destravar(id, res) {
+      var T = travas[id];
+      if (!T || T.estado !== 'parado') return;
+      if (aberta === id) fechar();
+      if (pendente) confirmar(pendente.id, false);
+      var adiada = res.tipo === 'agora-nao';
+      T.estado = adiada ? 'fora' : 'andando';
+      T.no.classList.add(adiada ? 'adiada' : 'andando');
+      T.estadoTxt.textContent = adiada ? 'volta ' + res.quando : 'andando';
+      T.poe.classList.remove('vD-volta');
+      T.poe.classList.add('vD-sai-carta');
+      contar();
+      mostrarAviso(T, res);
+      setTimeout(function () { if (T.estado !== 'parado') T.no.classList.add('vD-sem-carta'); }, 420);
+      pendente = { id: id, timer: setTimeout(function () { confirmar(id, true); }, ESPERA) };
+    }
+
+    function desfazer() {
+      if (!pendente) return;
+      var T = travas[pendente.id];
+      clearTimeout(pendente.timer);
+      pendente = null;
+      T.estado = 'parado';
+      T.no.classList.remove('andando', 'adiada', 'vD-sem-carta');
+      T.estadoTxt.textContent = 'parado';
+      T.poe.classList.remove('vD-sai-carta');
+      T.poe.classList.add('vD-volta');
+      esconderAviso();
+      contar();
+    }
+
+    // Passado o Desfazer, a trava sai da mesa: aqui só fica o que ainda espera você.
+    function confirmar(id, doTempo) {
+      if (pendente && pendente.id === id) { clearTimeout(pendente.timer); pendente = null; if (doTempo) esconderAviso(); }
+      var T = travas[id];
+      var no = T.no;
+      no.style.height = no.offsetHeight + 'px';
+      void no.offsetHeight;
+      no.classList.add('vD-sai');
+      no.style.height = '0px';
+      setTimeout(function () {
+        no.remove();
+        T.removida = true;
+        var g = T.grupo;
+        var vivos = g.ids.filter(function (x) { return !travas[x].removida; });
+        if (!vivos.length) g.sec.remove();
+        contar();
+        if (Object.keys(travas).every(function (x) { return travas[x].removida; })) vazia();
+      }, 380);
+    }
+
+    function contar() {
+      var n = 0;
+      Object.keys(travas).forEach(function (id) { if (travas[id].estado === 'parado') n++; });
+      titulo.innerHTML = n
+        ? '<span class="vD-n">' + n + '</span> ' + (n === 1 ? 'coisa parada esperando você' : 'coisas paradas esperando você')
+          + '<small>' + (n === 1 ? '1 carta na mesa' : n + ' cartas na mesa') + '</small>'
+        : 'Nada parado esperando você<small>0 cartas na mesa</small>';
+      grupos.forEach(function (g) {
+        var k = g.ids.filter(function (x) { return travas[x].estado === 'parado'; }).length;
+        g.conta.textContent = k ? (k === 1 ? '1 parada' : k + ' paradas') : 'andando';
+        g.sec.classList.toggle('vD-grupo-livre', !k);
+      });
+    }
+
+    function vazia() {
+      corpo.innerHTML = '';
+      sub.remove();
+      leg.remove();
+      var v = el('div', 'oc-vazia vD-vazia');
+      var d = el('div');
+      d.appendChild(O.dorso());
+      d.appendChild(el('b', null, 'Mesa limpa'));
+      d.appendChild(el('span', null, 'O baralho está vazio. Nada parado esperando você.'));
+      v.appendChild(d);
+      corpo.appendChild(v);
+    }
+
+    function mostrarAviso(T, res) {
+      var txt = aviso.querySelector('.vD-aviso-txt');
+      if (res.tipo === 'agora-nao') {
+        txt.innerHTML = '<span>Fora da mesa: <b class="neutro">' + esc(T.card.destravaCurto) + '</b>. Volta ' + esc(res.quando) + '.</span>';
+      } else {
+        var o = res.tipo === 'decida-voce' ? 'A sessão segue a recomendação.' : 'Você escolheu: ' + esc(res.caminho) + '.';
+        txt.innerHTML = '<span><b>Destravado</b> ' + esc(T.card.destravaCurto) + ' volta a andar. ' + o + '</span>';
+      }
+      var tempo = aviso.querySelector('.vD-tempo');
+      tempo.style.animation = 'none';
+      void tempo.offsetWidth;
+      tempo.style.animation = '';
+      aviso.classList.add('on');
+    }
+    function esconderAviso() { aviso.classList.remove('on'); }
+
+    // ------------------------------------------------------------------ a carta inteira, na folha
+    function abrir(id, foco) {
+      var T = travas[id];
+      if (!T || T.estado !== 'parado') return;
+      if (aberta && travas[aberta]) travas[aberta].no.classList.remove('aberta');
+      aberta = id;
+      T.no.classList.add('aberta');
+      caixaCarta.innerHTML = '';
+      caixaCarta.appendChild(O.carta(T.card, {
+        indice: O.ROMANOS[T.pos] + ' · ' + O.ROMANOS[total - 1],
+        aoDecidir: function (c, res) { destravar(id, res); },
+        aoAgoraNao: function (c, quando) { destravar(id, { tipo: 'agora-nao', quando: quando }); },
+      }));
+      rotFolha.textContent = T.card.quadro + ' · destrava: ' + T.card.destravaCurto;
+      folha.inert = false;
+      folha.style.transform = '';
+      raiz.classList.add('com-folha');
+      setTimeout(function () { if (aberta === id) revelar(corpo, T.no, false); }, 340);
+      if (foco) {
+        setTimeout(function () {
+          var x = caixaCarta.querySelector(foco);
+          if (!x) return;
+          revelar(x.closest('.oc-rolagem'), x, false);
+          if (x.focus) x.focus({ preventScroll: true });
+        }, 380);
+      }
+    }
+
+    // Rola só o contêiner certo: scrollIntoView rolaria também a vista (overflow hidden) e deslocaria a mesa.
+    function revelar(caixa, alvo, centro) {
+      if (!caixa || !alvo) return;
+      var c = caixa.getBoundingClientRect(), r = alvo.getBoundingClientRect(), d = 0;
+      if (centro) d = (r.top + r.height / 2) - (c.top + c.height / 2);
+      else if (r.top < c.top) d = r.top - c.top - 10;
+      else if (r.bottom > c.bottom - 30) d = r.bottom - c.bottom + 40;
+      if (d) caixa.scrollBy({ top: d, behavior: 'smooth' });
+    }
+
+    function fechar() {
+      if (aberta && travas[aberta]) travas[aberta].no.classList.remove('aberta');
+      aberta = null;
+      raiz.classList.remove('com-folha');
+      folha.inert = true;
+      folha.style.transform = '';
+    }
+
+    // No celular, puxar a alça para baixo fecha a folha.
+    function ligarAlca(alca) {
+      var y0 = null, dy = 0;
+      alca.addEventListener('pointerdown', function (e) { y0 = e.clientY; dy = 0; folha.classList.add('arrastando'); alca.setPointerCapture(e.pointerId); });
+      alca.addEventListener('pointermove', function (e) {
+        if (y0 == null) return;
+        dy = Math.max(0, e.clientY - y0);
+        folha.style.transform = 'translateY(' + dy + 'px)';
+      });
+      var solta = function () {
+        if (y0 == null) return;
+        y0 = null;
+        folha.classList.remove('arrastando');
+        if (dy > 90) fechar(); else folha.style.transform = '';
+      };
+      alca.addEventListener('pointerup', solta);
+      alca.addEventListener('pointercancel', solta);
+    }
+
+    // Teclado: só a primeira vista de PC (ou a única vista) responde, e só enquanto está na tela.
+    function aoTeclar(e) {
+      if (!vista.isConnected) { document.removeEventListener('keydown', aoTeclar); return; }
+      var dona = document.querySelector('.pc .vista') || document.querySelector('.vista');
+      if (dona !== vista || !vista.getClientRects().length) return;
+      if (e.key === 'Escape' && aberta) { e.preventDefault(); fechar(); }
+    }
+    document.addEventListener('keydown', aoTeclar);
+  },
+};
+
+</script>
+</body>
+</html>
