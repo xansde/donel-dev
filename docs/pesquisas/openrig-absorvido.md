@@ -1,8 +1,38 @@
 # OpenRig — registro de absorção
 
-Último commit absorvido: 545a4234893ed51294d45b066e81b0fec3d471eb
+Último commit absorvido: 521405f48d67613650f1c77bc139efffc9cf6a18
 
 Referência de design do Mindscape (github.com/mvschwarz/openrig). Procedimento na skill `absorver-openrig`. Cada rodada lista o que virou PR, o que ficou adiado, o que espera o dono e o que foi descartado.
+
+## 2026-11-09 — 545a423..521405f
+
+38 commits do OpenRig; versões novas: nenhuma identificada.
+
+### Vale → PR
+
+Nenhum.
+
+### Vale → adiado
+
+Nenhum (teto de 3 PRs não foi atingido).
+
+### Vale → pendente para o dono
+
+Nenhum.
+
+### Descartado
+
+- Identidade de retomada: ocupante anterior não troca o alvo de retomada (`8064fc8`, `1c9d007`): O Donel já tem igual: a ponte de hooks (`src/main/hook-bridge.ts`, `registerSession`) dá token novo a cada lançamento da aba e apaga o antigo, então um hook do processo anterior não chega ao ptyId atual; o `session_id` só serve para correlação (`session-correlation.ts`). O guard de geração do OpenRig compensa o tmux/daemon, que o Donel não usa.
+- Entrega de mensagem: leitura da caixa de entrada e override deliberado (`8b003da`, `7d43d56`, `b29a70f`, `ae04d25`, `4147d7d`): O Donel já lê a caixa por posição entre as duas réguas, imune à statusLine (`src/shared/cliInputBox.ts`; patchnote 31/10), e `sendDriver`/`tabSend` dão entrou/na-fila/não-foi com guarda de digitação. O override `--dangerously-interact` é flag do CLI rig, que o Donel não tem.
+- Compactação e fila: espera de hooks e retomada de wake (`0a91a8f`, `3de06ef`, `44affad`): Mecânica de daemon/fila do OpenRig. A renovação em voo (item 07, PRs #161/#321) já cobre o handoff, e a fila durável (continuação do 13) ainda não começou.
+- Tiles de terminal: linhas inteiras, attach só ao digitar, colagem inteira (`1538231`, `30b8232`): Específico de tiles tmux/Herdr. A prévia do cartão (item 05) segue pendente de refinamento e o Donel é dono dos PTYs pelo xterm.
+- Troca de runtime do lugar com Pi e conta Pi (`5eaf0c1`, `2a17eef`, `d13ad48`): Runtime Pi não existe no Donel, e preparar conta tocaria `src/main/accounts/` (perímetro proibido).
+- Restore e rig up: mensagens honestas (`e806c4d`, `faff36a`, `1c9d007`, `a2355b7`): Mensagens do CLI `rig up` e do orquestrador de restore do daemon. O Donel não tem esse CLI, e 'salvar e reabrir o quadro' (item 09) segue pendente, sem restore por nó onde aplicar.
+- Slack do OpenRig: pergunta aberta, threads e liquidação (`d79049c`, `c415da6`, `a8574f8`): Integração Slack própria do OpenRig, fora do plano. O Slack do dono passa só pela Composio e pelo slack-guard.
+- Escopo MCP/CLI: mensagens de rota e raízes visíveis (`521405f`, `fb02dd9`, `1b83d29`): O Donel já tem igual: as recusas de `reach.ts` e `agentBridge.ts` dizem o caminho ("o dono muda em 'Alcance'", "fale com quem está acima de você pelas setas", "só o Faxineiro fecha sem seta"). Raízes e workspaces com escopo são conceito do daemon.
+- Workflow e slices: validate somente leitura, documentos alinhados (`1760d6e`, `a57285d`, `cc3a31d`): Comandos de workflow e slices do daemon do OpenRig, sem ideia nova para o quadro. A esteira no Mindscape (item 15) não tem spec YAML.
+- Infra do daemon: tmux em escopo systemd, Codex hook trust, OpenShell, JSON de settings (`011b995`, `6b6aa91`, `4d7c50d`, `b40bc71`): Infra de tmux/systemd/Linux e dependências do daemon, sem ideia nova (a régua descarta tmux e daemon).
+- Docs, skills, roadmap e testes de contrato (`7f4e326`, `46ba2f5`, `2add9ba`, `0964fb7`, `e1dedbf`, `ce0186c`, `f3268fa`, `cc3a31d`): Só docs, skills, roadmap e testes do próprio OpenRig (packaging/release), sem ideia de design.
 
 ## 2026-11-08 (2ª leitura) — 220e27a..545a423
 
