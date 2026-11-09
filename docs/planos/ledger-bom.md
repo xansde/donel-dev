@@ -14,7 +14,8 @@ origem: |
     (re)priorizar o ledger e agrupar as tarefas para, quem sabe, agilizar o desenvolvimento".
   Unir sem duplicar: t-1a2ca09e, t-d37ec300 (fila do Líder único), t-49934e83 (andamento no ledger), t-c12f8b2e.
 criado: 2026-11-08
-status: rascunho
+status: em-execucao
+aprovado-por: Líder único, 08/11 22:20 (a fundação; F4 e a tela esperam a carta)
 ---
 
 # PDA — Um bom ledger para o ambiente inteiro
@@ -57,6 +58,7 @@ fatiada.
 ## Decisões até agora
 
 <!-- Índice: uma linha por item concluído — gist + link pro artefato. -->
+- **02 — Fatias da fundação que começam já** → três Devs na VPS (F1+F2/F3, F5/F7, F8/F9/F6), aberto pelo Líder único em 08/11.
 
 ## Ainda não especificado
 
@@ -118,11 +120,11 @@ fatiada.
 
 - **Tipo**: tarefa
 - **Prioridade**: alta
-- **Status**: pendente
+- **Status**: concluido
 - **Bloqueado por**: —
 - **Pergunta**: repartir entre Devs (Líder do quadro) as fatias marcadas "sim" na tabela da fundação; cada uma com
   o "pronto quando" da tabela. F1 e F2 na mesma branch; F3 depois delas.
-- **Resolução**: —
+- **Resolução**: o Líder único abriu três Devs na VPS em 08/11: F1+F2 e F3; F5 e F7; F8, F9 e F6.
 
 ### 03 — Capacidade real por máquina
 
@@ -141,6 +143,7 @@ fatiada.
 - **Prioridade**: alta
 - **Status**: pendente
 - **Bloqueado por**: 01, 03
+- **Status real**: em-andamento (protótipo pronto, carta esperando o dono)
 - **Pergunta**: protótipo navegável (3 variantes) da tela Progresso, da prioridade e do limite por quadro, com
   dados reais, e a carta com recomendação: (1) o que é linha em andamento; (2) o limite por quadro e quem ajusta;
   (3) prioridade e agrupamento; (4) a faxina antes de ligar a puxada; (5) a fila do Líder único; (6) o D1 do v5
