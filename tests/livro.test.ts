@@ -13,7 +13,7 @@ const dev: LedgerActor = { kind: 'lugar', placeId: 'place:dev', roleId: 'dev' };
 const revisor: LedgerActor = { kind: 'lugar', placeId: 'place:revisor', roleId: 'revisor' };
 const T0 = Date.UTC(2026, 10, 8, 12);
 
-const criar = { projectPath: '/p', request: 'Faça o livro', doneWhen: 'Testes verdes', due: '2026-11-10', ownerPlaceId: 'place:dev', risk: 'baixo' };
+const criar = { projectPath: '/p', request: 'Faça o livro', doneWhen: 'Testes verdes', due: '2026-11-10', ownerPlaceId: 'place:dev', risk: 'baixo' as const };
 const flow: EntryInput[] = [
   { id: 'l-1', em: T0, quem: lider, tipo: 'criar', tarefa: 't-1', dados: criar, chave: 'k-criar' },
   { id: 'l-2', em: T0 + 1, quem: dev, tipo: 'assumir', tarefa: 't-1', dados: {}, chave: 'k-assumir' },
@@ -100,7 +100,7 @@ describe('livro — projeção (F2)', () => {
     expect(projection.steps.map((step) => step.status)).toEqual(['aplicado', 'aplicado', 'aplicado', 'aplicado']);
     expect(projection.doc).toEqual(
       today([
-        [lider, { op: 'criar', ...criar, risk: 'baixo' }, T0],
+        [lider, { op: 'criar', ...criar }, T0],
         [dev, { op: 'assumir', id: 't-1' }, T0 + 1],
         [dev, { op: 'entregar', id: 't-1', proofs: [{ kind: 'texto', text: 'npm test: 1 passed' }], note: 'pronto' }, T0 + 2],
         [revisor, { op: 'aceitar', id: 't-1' }, T0 + 3],
@@ -141,7 +141,7 @@ describe('livro — importação do ledger v4, só leitura (F3)', () => {
       doc = result.doc;
       return result.task.id;
     };
-    const a = run(lider, { op: 'criar', ...criar, risk: 'baixo', title: 'Livro', requestedBy: 'dono', frente: 'Ledger' });
+    const a = run(lider, { op: 'criar', ...criar, title: 'Livro', requestedBy: 'dono', frente: 'Ledger' });
     run(lider, { op: 'transferir', id: a, to: 'place:dev2', reason: 'o outro Dev fecha', risk: 'alto' });
     const dev2: LedgerActor = { kind: 'lugar', placeId: 'place:dev2', roleId: 'dev' };
     run(dev2, { op: 'assumir', id: a });
