@@ -61,6 +61,12 @@ const START_GRACE_MS = 90_000;
 /** `sessao_enviar` answers once the message went in, was queued, or failed; past this it says "ainda não entrou". */
 const DELIVERY_WAIT_MS = 40_000;
 /**
+ * 09/11 (t-81ff5a82) — `sessao_enviar` waits longer for a definitive answer: in 48 h, a third of the answers took more than 40 s
+ * to be taken (a destination mid-turn, a loaded PC), and the sender heard "ainda não entrou" or a timeout. The main's
+ * net for this call (`board-bridge.ts`, 180 s) stays well above it, with the caller wait (20 s) on top.
+ */
+const SEND_WAIT_MS = 90_000;
+/**
  * The end-of-turn notice carries the whole last turn up to this ceiling (06/11: at 600, squashed into one line, the
  * Líder acted on half of it). Past it, the cut is said in the notice, never a silent "…".
  */
@@ -1135,7 +1141,7 @@ export class AgentBridge {
           if (!reach.ok) return fail(`Sem ligação com o Líder único: ${reach.reason}`);
           const leader = this.leaderTab();
           if (!leader) return fail('O Líder único não está aberto agora. Registre o que precisa no Oráculo (tarefa_criar ou tarefa_transferir com "para": "lider") e siga.');
-          const outcome = await this.ports.deliverLine(leader.id, `◆ De ${signature}, quadro ${scope.projectName ?? this.boardName(projectPath)}: ${call.texto}`, DELIVERY_WAIT_MS, 'session');
+          const outcome = await this.ports.deliverLine(leader.id, `◆ De ${signature}, quadro ${scope.projectName ?? this.boardName(projectPath)}: ${call.texto}`, SEND_WAIT_MS, 'session');
           return this.deliveryAnswer(outcome, leader.id);
         }
         // Up to the Líder of the board (08/11): every place of the board, no arrow needed (reach.ts).
@@ -1146,7 +1152,7 @@ export class AgentBridge {
           if (leaders.length === 0) return fail('Este quadro não tem Líder. Fale com quem está acima de você pelas setas (ou "lider", se o Líder único abriu você).');
           const leader = leaders.map((id) => this.tabOfPlace(projectPath, id)).find((tab) => tab !== undefined);
           if (!leader) return fail('O Líder do quadro não está aberto agora. Registre o que precisa no Oráculo (tarefa_criar) e siga.');
-          const outcome = await this.ports.deliverLine(leader.id, `◆ De ${signature}: ${call.texto}`, DELIVERY_WAIT_MS, 'session');
+          const outcome = await this.ports.deliverLine(leader.id, `◆ De ${signature}: ${call.texto}`, SEND_WAIT_MS, 'session');
           return this.deliveryAnswer(outcome, leader.id);
         }
         // Back up to whoever opened me (08/11): the opening arrow, no arrow back needed (reach.ts).
@@ -1156,13 +1162,13 @@ export class AgentBridge {
             if (!this.openedByLeader(projectPath, self.id)) return fail(`Ninguém abriu você por sessao_abrir (foi o dono). Fale com o Líder do quadro ("para": "${BOARD_LEADER}") ou com quem está acima de você pelas setas.`);
             const leader = this.leaderTab();
             if (!leader) return fail('Quem abriu você foi o Líder único, e ele não está aberto agora. Registre o que precisa no Oráculo (tarefa_criar ou tarefa_transferir com "para": "lider") e siga.');
-            const outcome = await this.ports.deliverLine(leader.id, `◆ De ${signature}, quadro ${scope.projectName ?? this.boardName(projectPath)}: ${call.texto}`, DELIVERY_WAIT_MS, 'session');
+            const outcome = await this.ports.deliverLine(leader.id, `◆ De ${signature}, quadro ${scope.projectName ?? this.boardName(projectPath)}: ${call.texto}`, SEND_WAIT_MS, 'session');
             return this.deliveryAnswer(outcome, leader.id);
           }
           const opener = openers.map((id) => this.tabOfPlace(projectPath, id)).find((tab) => tab !== undefined);
           if (!opener) return fail(`Quem abriu você (${openers.join(', ')}) não está aberta agora. Registre o que precisa no Oráculo (tarefa_criar) e siga, ou fale com o Líder do quadro ("para": "${BOARD_LEADER}").`);
           if (this.ports.linkLost?.(opener.id)) return fail('Quem abriu você está sem ligação: o processo dela segue vivo no lugar remoto e o app está religando. Tente de novo em instantes.');
-          const outcome = await this.ports.deliverLine(opener.id, `◆ De ${signature}: ${call.texto}`, DELIVERY_WAIT_MS, 'session');
+          const outcome = await this.ports.deliverLine(opener.id, `◆ De ${signature}: ${call.texto}`, SEND_WAIT_MS, 'session');
           return this.deliveryAnswer(outcome, opener.id);
         }
         const board = this.board(projectPath);
@@ -1179,7 +1185,7 @@ export class AgentBridge {
         if (this.ports.linkLost?.(target.id)) return fail(`"${place.id}" está sem ligação: o processo dela segue vivo no lugar remoto e o app está religando. Tente de novo em instantes; não abra outra no lugar dela.`);
         if (scope.leader) this.leaderHears.add(target.id);
         // 05/11 — "Entregue" only once the CLI of there took it: the answer waits for the send to end.
-        const outcome = await this.ports.deliverLine(target.id, `◆ De ${signature}: ${call.texto}`, DELIVERY_WAIT_MS, 'session');
+        const outcome = await this.ports.deliverLine(target.id, `◆ De ${signature}: ${call.texto}`, SEND_WAIT_MS, 'session');
         return this.deliveryAnswer(outcome, target.id);
       }
 
