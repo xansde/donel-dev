@@ -2,8 +2,9 @@
 // dos lançamentos, nunca gravado à mão. Cada lançamento de operação passa pelo `applyLedgerOp`, a mesma regra que
 // o main e o Oráculo usam hoje; o que ela recusa fica no diário, marcado como recusado, e não muda o estado.
 
-import { applyLedgerOp, emptyLedgerDoc, type LedgerDoc, type LedgerOp } from '../ledger/contract';
-import type { JournalLine, LivroEntry } from './formato';
+import { applyLedgerOp, emptyLedgerDoc, parseLedgerDoc, type LedgerDoc, type LedgerEvent, type LedgerOp, type LedgerTask } from '../ledger/contract';
+import { canonicalJson, type JournalLine, type LivroEntry } from './formato';
+import type { V4EventData } from './importar-v4';
 
 /**
  * `aplicado` mudou o estado; `recusado` ficou no diário sem mudar nada (o motivo é o da regra);
@@ -44,11 +45,41 @@ function applyOp(doc: LedgerDoc, entry: LivroEntry): StepResult {
   }
 }
 
+/**
+ * Um evento importado do ledger v4 (F3): fato histórico, aplicado como está — o estado, o dono e o risco vêm no
+ * lançamento. A tarefa que sai tem de passar inteira pelo parse do v4, senão o lançamento é recusado.
+ */
+function applyImported(doc: LedgerDoc, entry: LivroEntry): StepResult {
+  const data = entry.dados as unknown as V4EventData;
+  const current = doc.tasks[entry.tarefa];
+  if (data.nova && current) return { ok: false, reason: `a tarefa ${entry.tarefa} já existe; o cabeçalho importado não a sobrescreve.` };
+  if (!data.nova && !current) return { ok: false, reason: `a tarefa ${entry.tarefa} não existe; o evento importado precisa do cabeçalho antes.` };
+  const base: LedgerTask = current ?? ({ ...data.nova, id: entry.tarefa, state: 'aberta', events: [] } as unknown as LedgerTask);
+  const events: LedgerEvent[] = data.evento ? [...base.events, data.evento] : [...base.events];
+  const task = {
+    ...base,
+    ...(data.dono !== undefined ? { ownerPlaceId: data.dono } : {}),
+    ...(data.risco !== undefined ? { risk: data.risco } : {}),
+    state: data.estado,
+    events,
+  } as LedgerTask;
+  let parsed: LedgerTask | undefined;
+  try {
+    parsed = parseLedgerDoc({ tasks: { [task.id]: task } }).tasks[task.id];
+  } catch {
+    parsed = undefined;
+  }
+  if (!parsed || canonicalJson(parsed) !== canonicalJson(task)) return { ok: false, reason: 'o evento importado não forma uma tarefa v4 válida.' };
+  return { ok: true, doc: { ...doc, startedAt: doc.startedAt ?? parsed.createdAt, tasks: { ...doc.tasks, [parsed.id]: parsed } } };
+}
+
 /** Calcula o estado a partir dos lançamentos, em ordem de `seq`. */
 export function projectJournal(lines: readonly JournalLine[]): Projection {
   let doc = emptyLedgerDoc();
   const steps: ProjectionStep[] = [];
   const seen = new Set<string>();
+  // The import is the start of the journal: after the first operation, an imported event would skip today's rules.
+  let opened = false;
   for (const line of lines) {
     if (line.kind === 'newer') {
       steps.push({ seq: line.seq, status: 'so-leitura', reason: `lançamento da versão ${line.versao}` });
@@ -59,7 +90,13 @@ export function projectJournal(lines: readonly JournalLine[]): Projection {
       continue;
     }
     seen.add(line.chave);
-    const result: StepResult = line.tipo === 'v4-evento' ? { ok: false, reason: 'evento importado do v4 ainda não se projeta (F3).' } : applyOp(doc, line);
+    const imported = line.tipo === 'v4-evento';
+    const result: StepResult = !imported
+      ? applyOp(doc, line)
+      : opened
+        ? { ok: false, reason: 'evento importado do v4 só vale no começo do diário, antes da primeira operação.' }
+        : applyImported(doc, line);
+    if (!imported) opened = true;
     if (result.ok) {
       doc = result.doc;
       steps.push({ seq: line.seq, status: 'aplicado' });

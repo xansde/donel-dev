@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyLedgerOp, emptyLedgerDoc, type LedgerActor, type LedgerDoc, type LedgerOp } from '../src/shared/ledger/contract';
 import { appendEntry, canonicalJson, entryHash, LIVRO_VERSION, readJournal, serializeJournal, type EntryInput, type JournalLine } from '../src/shared/livro/formato';
+import { compareLedgers, importV4Journal } from '../src/shared/livro/importar-v4';
 import { projectJournal } from '../src/shared/livro/projecao';
 
 // O livro (plano ledger-bom, F1 + F2): o diário de lançamentos é o dado persistido; o estado é só derivado dele.
@@ -12,7 +13,7 @@ const dev: LedgerActor = { kind: 'lugar', placeId: 'place:dev', roleId: 'dev' };
 const revisor: LedgerActor = { kind: 'lugar', placeId: 'place:revisor', roleId: 'revisor' };
 const T0 = Date.UTC(2026, 10, 8, 12);
 
-const criar = { projectPath: '/p', request: 'Faça o livro', doneWhen: 'Testes verdes', due: '2026-11-10', ownerPlaceId: 'place:dev', risk: 'baixo' };
+const criar = { projectPath: '/p', request: 'Faça o livro', doneWhen: 'Testes verdes', due: '2026-11-10', ownerPlaceId: 'place:dev', risk: 'baixo' as const };
 const flow: EntryInput[] = [
   { id: 'l-1', em: T0, quem: lider, tipo: 'criar', tarefa: 't-1', dados: criar, chave: 'k-criar' },
   { id: 'l-2', em: T0 + 1, quem: dev, tipo: 'assumir', tarefa: 't-1', dados: {}, chave: 'k-assumir' },
@@ -99,7 +100,7 @@ describe('livro — projeção (F2)', () => {
     expect(projection.steps.map((step) => step.status)).toEqual(['aplicado', 'aplicado', 'aplicado', 'aplicado']);
     expect(projection.doc).toEqual(
       today([
-        [lider, { op: 'criar', ...criar, risk: 'baixo' }, T0],
+        [lider, { op: 'criar', ...criar }, T0],
         [dev, { op: 'assumir', id: 't-1' }, T0 + 1],
         [dev, { op: 'entregar', id: 't-1', proofs: [{ kind: 'texto', text: 'npm test: 1 passed' }], note: 'pronto' }, T0 + 2],
         [revisor, { op: 'aceitar', id: 't-1' }, T0 + 3],
@@ -126,3 +127,73 @@ describe('livro — projeção (F2)', () => {
     expect(projection.doc.tasks['t-1']!.state).toBe('entregue');
   });
 });
+
+describe('livro — importação do ledger v4, só leitura (F3)', () => {
+  /** A v4 ledger as today's code writes it, with the odd paths: marks, transfer with risk change, rework, letters, bot. */
+  function v4Ledger(): LedgerDoc {
+    let n = 0;
+    let clock = T0;
+    let doc = emptyLedgerDoc();
+    const dono: LedgerActor = { kind: 'dono' };
+    const run = (actor: LedgerActor, op: LedgerOp): string => {
+      const result = applyLedgerOp(doc, actor, op, { now: (clock += 1000), newId: () => `t-${(n += 1)}` });
+      if (!result.ok) throw new Error(result.reason);
+      doc = result.doc;
+      return result.task.id;
+    };
+    const a = run(lider, { op: 'criar', ...criar, title: 'Livro', requestedBy: 'dono', frente: 'Ledger' });
+    run(lider, { op: 'transferir', id: a, to: 'place:dev2', reason: 'o outro Dev fecha', risk: 'alto' });
+    const dev2: LedgerActor = { kind: 'lugar', placeId: 'place:dev2', roleId: 'dev' };
+    run(dev2, { op: 'assumir', id: a });
+    run(dev2, { op: 'entregar', id: a, proofs: [{ kind: 'texto', text: 'ok' }], forOwner: { question: 'Aceita o livro?', summary: 'O livro está pronto.', options: [{ label: 'Aceitar', effect: 'Fecha.', closes: 'aceita', recommended: true }, { label: 'Refazer', effect: 'Volta.', closes: 'rejeitada' }], why: 'Testes verdes.', risk: 'Nenhum.' } });
+    run(dono, { op: 'rejeitar', id: a, reason: '', option: 'Refazer' });
+    run(dev2, { op: 'assumir', id: a });
+    run(dev2, { op: 'andamento', id: a, progress: { estado: 'trabalhando', proximo: 'ajustar' } });
+    const b = run(lider, { op: 'criar', ...criar, request: 'Outro pedido' });
+    run(lider, { op: 'frente', id: b, frente: 'Ledger', requestedBy: 'dono' });
+    run(lider, { op: 'criar', ...criar, request: 'Substituto', replaces: b });
+    const letter = run(dev, { op: 'carta-slack', projectPath: '/p', slack: { destination: 'C01', text: 'Oi', reason: 'avisar' } });
+    run(dono, { op: 'aceitar', id: letter, option: 'Enviar' });
+    run(dev, { op: 'slack-enviada', id: letter });
+    run(dev, { op: 'slack-resultado', id: letter, outcome: 'confirmado' });
+    run(dev, { op: 'slack-bot', projectPath: '/p', bot: { server: 'bot', tool: 'post', destination: 'C02', text: 'feito', outcome: 'confirmado' } });
+    const c = run(lider, { op: 'criar', ...criar, request: 'Para o Revisor' });
+    run(dev, { op: 'assumir', id: c });
+    run(dev, { op: 'entregar', id: c, proofs: [{ kind: 'link', url: 'https://ci.example/1' }] });
+    run(revisor, { op: 'aceitar', id: c });
+    run(dono, { op: 'comentar', id: c, text: 'Visto.', deliveredTo: null });
+    run(dono, { op: 'aceitar', id: c });
+    return doc;
+  }
+
+  it('cada evento vira um lançamento e a projeção devolve as mesmas tarefas, uma a uma', () => {
+    const original = v4Ledger();
+    const lines = importV4Journal(original);
+    expect(lines).toHaveLength(Object.values(original.tasks).reduce((sum, task) => sum + task.events.length, 0));
+    const read = readJournal(serializeJournal(lines));
+    expect(read.problems).toEqual([]);
+    const projection = projectJournal(read.lines);
+    expect(projection.steps.every((step) => step.status === 'aplicado')).toBe(true);
+    expect(compareLedgers(original, projection.doc)).toEqual([]);
+    expect(projection.doc).toEqual(original);
+    // Importing again is the same journal: the keys are the events.
+    expect(serializeJournal(importV4Journal(original))).toBe(serializeJournal(lines));
+  });
+
+  it('a diferença aparece tarefa a tarefa, e evento importado depois de uma operação é recusado', () => {
+    const original = v4Ledger();
+    const changed = { ...original, tasks: { ...original.tasks, 't-1': { ...original.tasks['t-1']!, state: 'aceita' as const } } };
+    expect(compareLedgers(changed, projectJournal(importV4Journal(original)).doc).map((difference) => difference.task)).toEqual(['t-1']);
+    const lines = importV4Journal(original);
+    const opened = appendEntry(lines, { id: 'l-op', em: T0 + 99_000, quem: lider, tipo: 'criar', tarefa: 't-99', dados: criar, chave: 'k-op' });
+    if (!opened.ok) throw new Error(opened.reason);
+    const late = appendEntry(opened.lines, { ...stripLine(lines[0]!), id: 'l-tarde', chave: 'k-tarde', tarefa: 't-tarde' });
+    if (!late.ok) throw new Error(late.reason);
+    expect(projectJournal(late.lines).steps.at(-1)).toMatchObject({ status: 'recusado' });
+  });
+});
+
+function stripLine(line: JournalLine): EntryInput {
+  if (line.kind !== 'entry') throw new Error('linha de versão maior');
+  return { id: line.id, em: line.em, quem: line.quem, tipo: line.tipo, tarefa: line.tarefa, dados: line.dados, chave: line.chave };
+}
