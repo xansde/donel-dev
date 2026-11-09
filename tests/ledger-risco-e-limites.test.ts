@@ -1,5 +1,5 @@
 // Achados da revisão do BizOps (08/11) nas ferramentas do Oráculo: um motivo longo virava "motivo é obrigatório", um
-// pedido longo era recusado sem o tamanho, e o risco baixo nunca valia na cadeia do Líder nem mudava ao transferir.
+// pedido longo era recusado sem o tamanho. E (09/11) o risco declarado vale: tarefa própria provada fecha sem carta.
 
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -7,7 +7,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, nodeLedgerProofFs, runLedgerTool, type LedgerCaller } from '../src/main/ledger-store';
-import { MAX_REQUEST_CHARS } from '../src/shared/ledger/contract';
+import { MAX_REQUEST_CHARS, ownerQueue } from '../src/shared/ledger/contract';
+import { ownerInbox, STALE_DELIVERY_MS } from '../src/shared/ledger/inbox';
 import { parseLedgerToolCall, type LedgerToolCall } from '../src/shared/ledger/tools';
 import type { MindscapeBoard } from '../src/shared/mindscape/model';
 
@@ -35,7 +36,10 @@ const board: MindscapeBoard = {
   projectPath: 'C:/p',
   pan: { x: 0, y: 0 },
   zoom: 1,
-  cards: {},
+  cards: {
+    'place:revisor': { kind: 'session', id: 'place:revisor', previous: [], roleId: 'revisor', x: 0, y: 0 },
+    'place:rev-do-dev': { kind: 'session', id: 'place:rev-do-dev', previous: [], roleId: 'revisor', x: 0, y: 0 },
+  },
   links: [opened('place:lider', 'place:dev'), opened('place:lider', 'place:revisor'), opened('place:dev', 'place:rev-do-dev')],
   drawings: [],
 };
@@ -65,36 +69,86 @@ describe('limites com o tamanho', () => {
   });
 });
 
-describe('risco baixo: o Líder reparte, não executa', () => {
-  it('the Líder creates low for a place it opened, even when the board file could not be read', async () => {
+// 09/11 (dono: "o que a sessão fez e provou fecha com um Revisor ou sozinho, sem passar por você. Carta só quando há
+// uma decisão sua de verdade") — quem cria não decide mais o risco: vale o declarado.
+describe('risco declarado: o que a sessão fez e provou fecha sem carta', () => {
+  const states = (revisor: string): LedgerCaller['placeStates'] =>
+    new Map([['C:/p', new Map([['place:lider', 'trabalhando'], ['place:dev', 'trabalhando'], ['place:revisor', revisor], ['place:rev-do-dev', 'trabalhando']])]]);
+  const live = (placeId: string, roleId: string, revisor: string): LedgerCaller => ({ ...at(placeId, roleId), placeStates: states(revisor) });
+  const proof = { provas: [{ tipo: 'texto', texto: 'npm run verify: 0 falhas' }] };
+
+  async function ownTask(ledger: ReturnType<typeof service>, dev: LedgerCaller, risco: 'baixo' | 'alto'): Promise<string> {
+    const answer = created((await runLedgerTool(ledger, dev, task('place:dev', risco))).text);
+    expect(answer.aviso).toBeUndefined();
+    await runLedgerTool(ledger, dev, call('tarefa_assumir', { id: answer.id }));
+    return answer.id;
+  }
+
+  it('a low task a session created for itself, delivered with proof and no live Revisor out of its chain, closes alone, never a card', async () => {
     const ledger = service();
-    const answer = await runLedgerTool(ledger, at('place:lider', 'lider', false), task('place:dev', 'baixo'));
-    expect(answer.ok).toBe(true);
-    expect(created(answer.text).aviso).toBeUndefined();
-    expect(ledger.load().doc.tasks[created(answer.text).id]!.risk).toBe('baixo');
+    // The only live Revisor was opened by the Dev (its own chain); the other one is closed.
+    const dev = live('place:dev', 'dev', 'fechada');
+    const id = await ownTask(ledger, dev, 'baixo');
+    expect(ledger.load().doc.tasks[id]!.risk).toBe('baixo');
+    const delivered = await runLedgerTool(ledger, dev, call('tarefa_entregar', { id, ...proof }));
+    expect(delivered.ok).toBe(true);
+    const doc = ledger.load().doc;
+    const closed = doc.tasks[id]!;
+    expect(closed.state).toBe('aceita');
+    expect(closed.events.at(-1)).toMatchObject({ kind: 'aceita', by: { kind: 'lugar', placeId: 'place:dev' } });
+    expect(closed.events.at(-1)!.text).toContain('sem Revisor');
+    expect(ownerQueue(doc, null)).toEqual([]);
+    expect(ownerInbox(doc, null, ledger.now() + 2 * STALE_DELIVERY_MS, states('fechada'))).toEqual([]);
+    // Auditable: the delivery and its proof stay, and the owner can still reopen it.
+    expect(closed.events.some((event) => event.kind === 'entregue' && event.proofs?.length === 1)).toBe(true);
+    expect((await ledger.apply({ kind: 'dono' }, { op: 'rejeitar', id, reason: 'refazer' })).ok).toBe(true);
   });
 
-  it('whoever was opened by the owner of the work still cannot ask for low', async () => {
+  it('with a live Revisor out of the chain, the low delivery waits for it, not for the owner', async () => {
     const ledger = service();
-    const answer = await runLedgerTool(ledger, at('place:rev-do-dev', 'revisor'), task('place:dev', 'baixo'));
-    expect(created(answer.text)).toMatchObject({ risco: 'alto' });
+    const dev = live('place:dev', 'dev', 'trabalhando');
+    const id = await ownTask(ledger, dev, 'baixo');
+    await runLedgerTool(ledger, dev, call('tarefa_entregar', { id, ...proof }));
+    expect(ledger.load().doc.tasks[id]!.state).toBe('entregue');
+    expect(ownerQueue(ledger.load().doc, null)).toEqual([]);
+    const revisor = live('place:revisor', 'revisor', 'trabalhando');
+    await runLedgerTool(ledger, revisor, call('tarefa_ver', { id }));
+    expect((await runLedgerTool(ledger, revisor, call('tarefa_aceitar', { id }))).ok).toBe(true);
   });
 
-  it('a transfer recalculates: into the creator\'s own chain it goes high, out of it a low that was forced high comes back', async () => {
+  it('a high task still goes to the owner: card required, no Revisor accepts, nothing closes alone', async () => {
+    const ledger = service();
+    const dev = live('place:dev', 'dev', 'fechada');
+    const id = await ownTask(ledger, dev, 'alto');
+    expect((await runLedgerTool(ledger, dev, call('tarefa_entregar', { id, ...proof }))).ok).toBe(false);
+    const card = {
+      pergunta: 'Publico a versão no repositório público?',
+      resumo: 'A versão está pronta e testada.',
+      opcoes: [
+        { rotulo: 'Publicar', efeito: 'Sai para todos.', fecha: 'aceita', recomendada: true },
+        { rotulo: 'Esperar', efeito: 'Fica para amanhã.', fecha: 'rejeitada' },
+      ],
+      porque: 'Os testes passaram.',
+      risco: 'Difícil de desfazer.',
+    };
+    expect((await runLedgerTool(ledger, dev, call('tarefa_entregar', { id, ...proof, paraODono: card }))).ok).toBe(true);
+    expect(ledger.load().doc.tasks[id]!.state).toBe('entregue');
+    expect(ownerQueue(ledger.load().doc, null).map((t) => t.id)).toEqual([id]);
+    const revisor = live('place:revisor', 'revisor', 'trabalhando');
+    await runLedgerTool(ledger, revisor, call('tarefa_ver', { id }));
+    expect((await runLedgerTool(ledger, revisor, call('tarefa_aceitar', { id }))).ok).toBe(false);
+  });
+
+  it('a transfer keeps the declared risk; a low once forced high by the old rule gets its low back', async () => {
     const ledger = service();
     const lider = at('place:lider', 'lider');
-    // Low, then passed to the creator itself: the creator would do its own work.
     const low = created((await runLedgerTool(ledger, lider, task('place:dev', 'baixo'))).text).id;
-    const toSelf = await runLedgerTool(ledger, lider, call('tarefa_transferir', { id: low, para: 'place:lider', motivo: 'eu faço' }));
-    expect(toSelf.ok).toBe(true);
-    expect(ledger.load().doc.tasks[low]!.risk).toBe('alto');
-    // Asked low, forced high (the Dev's own Revisor for the Dev); the Líder passes it out of that chain.
-    const forced = created((await runLedgerTool(ledger, at('place:rev-do-dev', 'revisor'), task('place:dev', 'baixo'))).text).id;
-    expect(ledger.load().doc.tasks[forced]!.risk).toBe('alto');
-    const out = await runLedgerTool(ledger, lider, call('tarefa_transferir', { id: forced, para: 'place:revisor', motivo: 'outro faz' }));
-    expect(out.ok).toBe(true);
-    expect(ledger.load().doc.tasks[forced]!.risk).toBe('baixo');
-    // A task asked high stays high wherever it goes.
+    expect((await runLedgerTool(ledger, lider, call('tarefa_transferir', { id: low, para: 'place:lider', motivo: 'eu faço' }))).ok).toBe(true);
+    expect(ledger.load().doc.tasks[low]!.risk).toBe('baixo');
+    const forced = await ledger.apply({ kind: 'lugar', placeId: 'place:dev', roleId: 'dev' }, { op: 'criar', projectPath: 'C:/p', request: 'x', doneWhen: 'y', due: '2026-11-09', ownerPlaceId: 'place:dev', risk: 'alto', lowAsked: true });
+    if (!forced.ok) throw new Error(forced.reason);
+    await runLedgerTool(ledger, lider, call('tarefa_transferir', { id: forced.task.id, para: 'place:revisor', motivo: 'outro faz' }));
+    expect(ledger.load().doc.tasks[forced.task.id]!.risk).toBe('baixo');
     const high = created((await runLedgerTool(ledger, lider, task('place:dev', 'alto'))).text).id;
     await runLedgerTool(ledger, lider, call('tarefa_transferir', { id: high, para: 'place:revisor', motivo: 'outro faz' }));
     expect(ledger.load().doc.tasks[high]!.risk).toBe('alto');

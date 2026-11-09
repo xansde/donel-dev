@@ -103,15 +103,6 @@ describe('ledger com prova', () => {
     expect(readFileSync(join(ledgerProofsDir(file), proof.file), 'utf8')).toBe('png-bytes');
   });
 
-  it('low risk waits for the owner when whoever creates is the owner of the work or was opened by it', async () => {
-    const { service } = setup();
-    for (const [who, owner] of [[dev, undefined], [revisorDoDev, 'place:dev']] as const) {
-      const created = await runLedgerTool(service(), who, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', risco: 'baixo', ...(owner ? { dono: owner } : {}) }));
-      const id = (JSON.parse(created.text) as { id: string }).id;
-      expect(service().load().doc.tasks[id]!.risk).toBe('alto');
-    }
-  });
-
   it('refuses a proof file that is a symbolic link', async () => {
     const { dir, service } = setup({ ...nodeLedgerProofFs, lstat: async () => ({ isSymbolicLink: () => true }) });
     const created = await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco: 'alto' }));
