@@ -377,6 +377,15 @@
   right: auto;
   left: 8px;
 }
+/* Any place takes a number (Revisor do #374: a coordinator is a chair too); with none set and no Líder role, the seal
+   shows only on hover, so a board of Devs is not covered in ∞. */
+.parallelSealIdle {
+  opacity: 0;
+}
+.sessionCard:hover .parallelSealIdle,
+.parallelSealIdle:focus-visible {
+  opacity: 1;
+}
 
 .parallelMenu {
   display: flex;

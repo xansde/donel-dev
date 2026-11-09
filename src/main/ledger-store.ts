@@ -641,6 +641,7 @@ function callerActor(caller: LedgerCaller): LedgerActor {
  * place the owner gave a number (the Coordenador). No number = no limit, as before. Nothing is pulled: the Líder does.
  */
 function parallelOf(caller: LedgerCaller, doc: LedgerDoc): { paralelo?: { limite: number | 'sem limite'; tocando: number; podePuxar: number | 'sem limite' } } {
+  if (caller.placeId === LEADER_OF_ALL) return {}; // above every board: the block would be the board's, not its own
   const card = caller.board?.cards[caller.placeId];
   const limite = card?.kind === 'session' ? card.parallel : undefined;
   if (limite === undefined && !isLeaderRole(caller.roleId)) return {};

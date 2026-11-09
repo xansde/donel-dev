@@ -1355,9 +1355,10 @@ export function MindscapeScreen({
                     engine={session.engine}
                     meter={session.meter}
                     axes={axesOfLive(session)}
-                    {...(card.roleId === LEADER_ROLE_ID || card.parallel !== undefined
-                      ? { parallel: card.parallel ?? null, onParallelClick: () => setParallelMenuPlaceId((open) => (open === card.id ? undefined : card.id)) }
-                      : {})}
+                    // Any place takes a number (Revisor do #374); a Líder or a place with one shows it, the rest on hover.
+                    parallel={card.parallel ?? null}
+                    parallelIdle={card.roleId !== LEADER_ROLE_ID && card.parallel === undefined}
+                    onParallelClick={() => setParallelMenuPlaceId((open) => (open === card.id ? undefined : card.id))}
                     pulse={(() => {
                       const env = envView.bySession.get(session.sessionId);
                       return env ? { text: pulseLine(env), tone: PULSE_TONE[env.pulse.state] } : undefined;

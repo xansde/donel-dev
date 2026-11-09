@@ -241,4 +241,16 @@ describe('quanto cada Líder toca em paralelo', () => {
     expect(parseMindscapeDoc(bad).boards[BOARD]!.cards['place:lider']).not.toHaveProperty('parallel');
     expect(JSON.parse((await runLedgerTool(s, { ...at('place:dev', 'dev'), board: board.boards[BOARD]! }, call('tarefa_listar', {}))).text)).not.toHaveProperty('paralelo');
   });
+
+  // Revisor do #374: a chair that is not a Líder (a coordinator) takes the number too, and the Líder único, above every
+  // board, gets no block (its "paralelo" would be the board's, not its own).
+  it('qualquer lugar com número vê o bloco; o Líder único, não', async () => {
+    const s = service();
+    const t1 = await create(s, 'place:dev', 'Parte 1');
+    await runLedgerTool(s, at('place:dev', 'dev'), call('tarefa_assumir', { id: t1 }));
+    const board = setPlaceParallel(addPlace(emptyMindscapeDoc(), BOARD, { id: 'place:coord', roleId: 'coordenador' }), BOARD, 'place:coord', 2);
+    const listing = async (caller: LedgerCaller) => JSON.parse((await runLedgerTool(s, { ...caller, board: board.boards[BOARD]! }, call('tarefa_listar', {}))).text) as { paralelo?: unknown };
+    expect((await listing(at('place:coord', 'coordenador'))).paralelo).toEqual({ limite: 2, tocando: 1, podePuxar: 1 });
+    expect(await listing(at('lider', 'lider'))).not.toHaveProperty('paralelo');
+  });
 });
