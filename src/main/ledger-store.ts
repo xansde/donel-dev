@@ -633,6 +633,26 @@ function callerActor(caller: LedgerCaller): LedgerActor {
   return { kind: 'lugar', placeId: caller.placeId, ...(caller.roleId ? { roleId: caller.roleId } : {}) };
 }
 
+/**
+ * `tarefa_lote` (t-147e6783, item 2): each item runs as its own `tarefa_transferir` / `tarefa_cancelar` through `run`
+ * (the caller resolves the board of each task), one after the other; a refused item does not stop the rest.
+ */
+export async function runLedgerBatch(call: Extract<LedgerToolCall, { tool: 'tarefa_lote' }>, run: (item: LedgerToolCall) => Promise<{ readonly ok: boolean; readonly text: string }>): Promise<{ ok: boolean; text: string }> {
+  const itens: { id: string; acao: string; ok: boolean; resposta: string }[] = [];
+  for (const item of call.itens) {
+    const one: LedgerToolCall = item.acao === 'transferir' ? { tool: 'tarefa_transferir', id: item.id, para: item.para, motivo: item.motivo } : { tool: 'tarefa_cancelar', id: item.id, motivo: item.motivo };
+    let result: { readonly ok: boolean; readonly text: string };
+    try {
+      result = await run(one);
+    } catch (error) {
+      result = { ok: false, text: error instanceof Error ? error.message : String(error) };
+    }
+    itens.push({ id: item.id, acao: item.acao, ok: result.ok, resposta: result.text.slice(0, 300) });
+  }
+  const aplicados = itens.filter((item) => item.ok).length;
+  return { ok: aplicados > 0, text: JSON.stringify({ aplicados, recusados: itens.length - aplicados, itens }, null, 1) };
+}
+
 /** `remote`: the calling session runs on a remote place; its proof files are read there (fatia 6). */
 export async function runLedgerTool(service: LedgerService, caller: LedgerCaller, call: LedgerToolCall, remote?: RemoteProofFetch): Promise<LedgerToolAnswer> {
   const actor = callerActor(caller);
@@ -640,6 +660,9 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
     result.ok ? { ok: true, text: JSON.stringify({ [what]: true, id: result.task.id, estado: result.task.state }) } : { ok: false, text: result.reason };
 
   switch (call.tool) {
+    // The same caller for every item (a board session, or the VPS's gate); the main resolves each board for the Líder único.
+    case 'tarefa_lote':
+      return runLedgerBatch(call, (item) => runLedgerTool(service, caller, item, remote));
     case 'tarefa_criar': {
       const owner = call.dono === undefined || call.dono === 'seu' ? caller.placeId : call.dono;
       if (!caller.boardPlaceIds.includes(owner)) return { ok: false, text: `"${owner}" não é um lugar deste quadro (veja sessao_listar).` };
