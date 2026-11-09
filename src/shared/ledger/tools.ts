@@ -341,7 +341,7 @@ export const LEDGER_TOOLS = [
     name: 'tarefa_andamento',
     title: 'Registrar o andamento no Oráculo',
     description:
-      'Registra no Oráculo Harrow como vai o seu trabalho, em campos curtos (uma linha cada): estado, o que precisa, a prova e o próximo passo. É assim que o Líder acompanha você: ele lê quando quiser (tarefa_novidades), sem um aviso a cada turno. Vai na sua tarefa viva (ou na de "id"). Registre ao mudar de fase, ao travar, ao precisar de alguém e ao terminar. "travada" e "precisa-do-dono" chegam ao Líder do quadro na hora; o resto fica só no registro.',
+      'Registra no Oráculo Harrow como vai o seu trabalho, em campos curtos (uma linha cada): estado, o que precisa, a prova e o próximo passo. É assim que o Líder acompanha você: ele lê quando quiser (tarefa_novidades), sem um aviso a cada turno. Vai na sua tarefa viva (ou na de "id"). Registre ao mudar de fase, ao travar, ao precisar de alguém e ao terminar. "travada" e "precisa-do-dono" chegam na hora a quem está acima de você pelas setas (sem seta, ao Líder do quadro); o resto fica só no registro.',
     inputSchema: {
       type: 'object',
       properties: {
