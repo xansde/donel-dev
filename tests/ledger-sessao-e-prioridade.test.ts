@@ -7,7 +7,7 @@ import { createLedgerService, nodeLedgerProofFs, prioritizeAsks, runLedgerTool, 
 import { parseLedgerToolCall, type LedgerToolCall } from '../src/shared/ledger/tools';
 import { parseLedgerDoc, priorityOf } from '../src/shared/ledger/contract';
 import { priorityWrites } from '../src/shared/ledger/prioridade';
-import { jobuProgress, movedOrder } from '../src/shared/pet/progress';
+import { jobuProgress, movedFrontOrder, movedOrder } from '../src/shared/pet/progress';
 import * as v4 from './fixtures/ledger/contract-v4';
 
 // t-5c0df1df (dono, 09/11: "Mantenha o status de cada tarefa e uma coluna indicando um identificador da tarefa. Assim
@@ -131,5 +131,46 @@ describe('prioridade do dono, lida pelo Líder do quadro', () => {
     const last = jobuProgress(s.load().doc, Date.UTC(2026, 10, 9, 13)).fronts[0]!.tasks.at(-1)!;
     expect(movedOrder(jobuProgress(s.load().doc, Date.UTC(2026, 10, 9, 13)), last.id, 'descer')).toBeNull();
     expect(ids).toContain(last.id);
+  });
+
+  it('reordenar não leva o andamento da sessão para a tarefa que o dono mexeu', async () => {
+    const s = service();
+    const x = await create(s, 'place:dev', 'X');
+    const y = await create(s, 'place:dev', 'Y');
+    await runLedgerTool(s, at('place:dev', 'dev'), call('tarefa_assumir', { id: x }));
+    await runLedgerTool(s, at('place:dev', 'dev'), call('tarefa_andamento', { id: x, estado: 'trabalhando' }));
+    await prioritizeAsks(s, [y]); // only Y gets a mark, after X's last record
+    const recorded = JSON.parse((await runLedgerTool(s, at('place:dev', 'dev'), call('tarefa_andamento', { estado: 'esperando' }))).text) as { id: string };
+    expect(recorded.id).toBe(x);
+  });
+
+  it('uma ordem só: o painel de cima para baixo é a fila do quadro, mesmo com duas frentes, e o dono move a frente inteira', async () => {
+    const s = service();
+    const ask = async (titulo: string, frente: string): Promise<string> => {
+      const created = await runLedgerTool(s, at('place:lider', 'lider'), call('tarefa_criar', { pedido: titulo, criterio: 'ok', prazo: '2026-11-10', dono: 'place:dev', risco: 'baixo', titulo, quemPediu: 'dono', frente }));
+      return (JSON.parse(created.text) as { id: string }).id;
+    };
+    await ask('A1', 'Alfa');
+    await ask('B1', 'Beta');
+    await ask('A2', 'Alfa');
+    const now = Date.UTC(2026, 10, 9, 13);
+    const panel = (): string[] => jobuProgress(s.load().doc, now).fronts.flatMap((front) => front.tasks.map((task) => task.title));
+    const queue = async (): Promise<string[]> =>
+      (JSON.parse((await runLedgerTool(s, at('place:lider', 'lider'), call('tarefa_listar', {}))).text) as { tarefas: { titulo: string; posicao?: number }[] }).tarefas
+        .filter((task) => task.posicao !== undefined)
+        .map((task) => task.titulo);
+
+    // The first move fixes the whole list as the owner sees it; from then on the Líder's queue is the panel, top down.
+    const first = jobuProgress(s.load().doc, now);
+    await prioritizeAsks(s, movedOrder(first, first.fronts[0]!.tasks.at(-1)!.id, 'subir')!);
+    expect(await queue()).toEqual(panel());
+
+    // Moving a front moves all its asks: the other front's first ask becomes position 1 of the board.
+    const before = jobuProgress(s.load().doc, now);
+    const second = before.fronts[1]!;
+    await prioritizeAsks(s, movedFrontOrder(before, second.name, 'subir')!);
+    expect(panel().slice(0, second.tasks.length)).toEqual(second.tasks.map((task) => task.title));
+    expect(await queue()).toEqual(panel());
+    expect(movedFrontOrder(jobuProgress(s.load().doc, now), second.name, 'subir')).toBeNull();
   });
 });

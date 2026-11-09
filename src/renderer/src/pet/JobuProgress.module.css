@@ -65,7 +65,19 @@
   border-top: 1px solid var(--border);
 }
 
+.frontRow {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+
+.frontRow:hover .moves {
+  opacity: 1;
+}
+
 .frontHead {
+  flex: 1;
   display: flex;
   align-items: baseline;
   gap: 6px;

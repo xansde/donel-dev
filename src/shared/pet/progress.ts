@@ -14,9 +14,11 @@
 //   approved: accepted today 3, esperando você 2, travado and tocando 1, parado 0 (a stopped ask paints nothing, even
 //   delivered or taken: it is not moving). It is drawn as one segment per ask, as long as the ask's steps and in the
 //   color of its state (`segments`);
-// - 09/11 (t-5c0df1df) — the owner orders his asks (up and down): within a front, the ones he ordered come first, in his
-//   order, then the rest by state; the order goes to the ledger as one list (`movedOrder` → `priorityWrites`) and the
-//   Líder of each board reads its open tasks in it.
+// - 09/11 (t-5c0df1df) — ONE order, the panel read top down: the owner moves an ask up and down in its front, and a
+//   whole front up and down (`movedOrder`, `movedFrontOrder`). The fronts he ordered come first, by their first ask;
+//   inside a front, the asks he ordered first, in his order, then the rest by state. The order goes to the ledger as
+//   one list (`priorityWrites`): the first move numbers every ask as the panel shows it, so the Líder of each board
+//   reads its open tasks in the same order the owner sees, whatever front they are in.
 
 import { ASKED_BY_OWNER, frenteOf, isCancelled, lastDecision, lastDelivery, lastWorkAt, priorityOf, requestedByOf, type LedgerDoc, type LedgerTask } from '../ledger/contract';
 import { LEADER_OF_ALL } from '../mindscape/leader';
@@ -71,6 +73,8 @@ export interface Front {
   /** The bar: the longest first (accepted, then the rest by state); an ask with no step has none. */
   readonly segments: readonly FrontSegment[];
   readonly changedAt: number;
+  /** The owner's place of its first ask; none = he ordered none of them. */
+  readonly priority?: number;
 }
 
 export interface DoneTask {
@@ -170,10 +174,21 @@ export function movedOrder(progress: JobuProgress, id: string, direction: 'subir
   const at = front.tasks.findIndex((task) => task.id === id);
   const neighbour = front.tasks[direction === 'subir' ? at - 1 : at + 1];
   if (!neighbour) return null;
-  const all = progress.fronts.flatMap((each) => each.tasks).sort(byOwnerOrder).map((task) => task.id).filter((each) => each !== id);
+  // The panel top down is the one order: the ask moves past its neighbour, every other ask keeps its place.
+  const all = progress.fronts.flatMap((each) => each.tasks.map((task) => task.id)).filter((each) => each !== id);
   const target = all.indexOf(neighbour.id);
   all.splice(direction === 'subir' ? target : target + 1, 0, id);
   return all;
+}
+
+/** The owner moves a whole front one step up or down: the whole list of his asks in the new order; `null` = it cannot. */
+export function movedFrontOrder(progress: JobuProgress, name: string, direction: 'subir' | 'descer'): string[] | null {
+  const blocks = progress.fronts.map((front) => front.tasks.map((task) => task.id));
+  const at = progress.fronts.findIndex((front) => front.name === name);
+  const other = direction === 'subir' ? at - 1 : at + 1;
+  if (at < 0 || other < 0 || other >= blocks.length) return null;
+  [blocks[at], blocks[other]] = [blocks[other]!, blocks[at]!];
+  return blocks.flat();
 }
 
 /** The panel at `now`. */
@@ -229,11 +244,13 @@ export function jobuProgress(doc: LedgerDoc, now: number): JobuProgress {
         segments,
         // An accept today is news too: the front of a fresh accept goes up, as in the prototype.
         changedAt: Math.max(...tasks.map((task) => task.changedAt), ...group.done.map((task) => task.at)),
+        ...(tasks[0]?.priority !== undefined ? { priority: tasks[0].priority } : {}),
       };
     });
-  // What needs the owner first, then the newest; "Sem frente" always last.
+  // The fronts the owner ordered first, in his order; then what needs him first, then the newest; "Sem frente" last.
   fronts.sort(
     (a, b) =>
+      (a.priority !== undefined && b.priority !== undefined ? a.priority - b.priority : Number(a.priority === undefined) - Number(b.priority === undefined)) ||
       Number(a.name === '') - Number(b.name === '') ||
       Number(b.counts.esperando > 0) - Number(a.counts.esperando > 0) ||
       Number(b.counts.travado > 0) - Number(a.counts.travado > 0) ||
