@@ -27,12 +27,18 @@ function fail(code, message) {
 }
 
 function parseArgs(argv) {
-  const [command, ...rest] = argv;
+  // The command is the one word that is not a flag's value; the flags go before or after it.
+  let command;
   const flags = {};
-  for (let i = 0; i < rest.length; i += 1) {
-    const flag = rest[i];
-    if (!flag.startsWith('--') || i + 1 >= rest.length) fail(2, USAGE);
-    flags[flag.slice(2)] = rest[(i += 1)];
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i];
+    if (!arg.startsWith('--')) {
+      if (command !== undefined) fail(2, USAGE);
+      command = arg;
+      continue;
+    }
+    if (i + 1 >= argv.length) fail(2, USAGE);
+    flags[arg.slice(2)] = argv[(i += 1)];
   }
   return { command, flags };
 }
