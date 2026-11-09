@@ -1,0 +1,4 @@
+{
+  "title": "Várias sessões no mesmo minuto não afundam a VPS",
+  "text": "A memória de cada máquina é lida uma vez por minuto, e várias sessões abertas nesse intervalo podiam passar do limite antes da leitura seguinte, levando a VPS a usar o disco como memória. Agora cada leitura diz quantas sessões novas ainda cabem, e o app conta as que abriu desde então. Quando a vaga acaba, a próxima sessão espera na fila e abre sozinha, com o mesmo pedido, assim que houver espaço."
+}

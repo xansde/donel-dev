@@ -65,6 +65,12 @@ Os gatilhos que dispararam (e os segurados pelos freios) vão para o mesmo log.
 2. senão, o lugar nasce no quadro marcado "na fila", e a resposta volta na hora ("na fila, posição N, a VPS está
    cheia"). Abre quando a máquina passar 2 leituras seguidas abaixo dos limites, na ordem de chegada.
 
+A leitura de memória é de 60 s, então o limite sozinho deixa passar uma rajada (t-d1f072fd: quatro aberturas no mesmo
+minuto, começando perto de 1,2 GiB disponíveis, levavam a VPS pessoal ao swap antes da leitura seguinte). Por isso cada
+leitura diz também quantas sessões de 400 MB cabem antes do limite de RAM livre, e o app conta o que abriu na máquina
+desde essa leitura (mais 60 s antes dela, porque a sessão recém-aberta ainda não cresceu). Esgotada a vaga, a próxima
+abertura vai para a fila do mesmo jeito, e a fila também respeita a vaga ao abrir.
+
 O Faxineiro também "põe na fila" uma sessão que ainda não começou: fechar pelo Faxineiro uma aba aberta que nunca
 teve turno devolve o pedido dela à fila, sem perder o pedido. A fila mora na memória do app; se o app fechar, os
 lugares da fila viram "não começou", que o Oráculo já trata.
