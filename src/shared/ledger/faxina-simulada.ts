@@ -6,7 +6,8 @@
 // The rules, first match wins:
 // - orphan (owner place closed, out of the board or never started):
 //   1. a repeat (F7, `repetidas.ts`) of a root still open → joins the root (`agrupar`, the F9 lançamento);
-//      of an accepted root → archived ("repetida de X, que já foi aceita"), except high risk or in progress (joins);
+//      of an accepted root → archived only when it is provably the same work (same text AND same criterion), low
+//      risk and not in progress; a sister (same request, another criterion) only joins;
 //      of a cancelled root → no special case (it may be the replacement);
 //   2. low risk, not in progress, nobody touched it for ARCHIVE_AGE_MS → archived by age;
 //   3. a live place above the owner on the board (the rule of today, `firstLiveAbove`) → passed to it;
@@ -19,7 +20,7 @@
 //   (a repeat joins its root first); a fresher one stays.
 
 import type { LedgerRisk, LedgerViewState } from './contract';
-import { repeatGroups, rootOf, type PedidoView } from './repetidas';
+import { normalizeRequest, repeatGroups, rootOf, type PedidoView } from './repetidas';
 
 const HOUR = 60 * 60 * 1000;
 export const ARCHIVE_AGE_MS = 72 * HOUR;
@@ -106,10 +107,16 @@ function lancamento(task: FaxinaView, destino: FaxinaDestino, para: string, reas
   return { tipo: 'transferir', tarefa: task.id, dados: { to: para, reason }, chave };
 }
 
+/** Provably the same work: the same request text and the same criterion, both known. */
+function sameWork(a: FaxinaView, b: FaxinaView): boolean {
+  if (!a.criterion || !b.criterion) return false;
+  return normalizeRequest(a.request) === normalizeRequest(b.request) && normalizeRequest(a.criterion) === normalizeRequest(b.criterion);
+}
+
 export function simularFaxina(items: readonly FaxinaView[], options: FaxinaOptions): FaxinaSimulada {
   const { now } = options;
   const byId = new Map(items.map((item) => [item.id, item]));
-  const roots = rootOf(repeatGroups(items));
+  const roots = rootOf(repeatGroups(items, { now }));
   const propostas: FaxinaProposta[] = [];
   const ficam: FaxinaFica[] = [];
   const propose = (task: FaxinaView, categoria: FaxinaCategoria, destino: FaxinaDestino, para: string, motivo: string): void => {
@@ -117,17 +124,17 @@ export function simularFaxina(items: readonly FaxinaView[], options: FaxinaOptio
   };
 
   /**
-   * Rule 1 for orphans and old open tasks: a repeat of an accepted root is archived (low risk, not in progress); of a
-   * root still open (or accepted, when it cannot be archived) it joins the root. A cancelled root may have been
-   * replaced by this very task: the repeat then follows the other rules.
+   * Rule 1 for orphans and old open tasks: a copy of the same work as an accepted root (same text and criterion) is
+   * archived (low risk, not in progress); any other repeat of a root still open or accepted joins it as a child. A
+   * cancelled root may have been replaced by this very task: the repeat then follows the other rules.
    */
   const repeat = (task: FaxinaView, categoria: FaxinaCategoria): boolean => {
     const rootId = roots.get(task.id);
     const root = rootId ? byId.get(rootId) : undefined;
     if (!root || (root.closed && root.state !== 'aceita')) return false;
     const where = task.board !== null && root.board !== null ? 'no mesmo quadro' : 'o quadro de uma delas é desconhecido';
-    if (root.state === 'aceita' && task.risk === 'baixo' && task.state !== 'em-execucao') {
-      propose(task, categoria, 'arquivar', '', `repetida de ${root.id}, que já foi aceita: o mesmo pedido (${where})`);
+    if (root.state === 'aceita' && task.risk === 'baixo' && task.state !== 'em-execucao' && sameWork(task, root)) {
+      propose(task, categoria, 'arquivar', '', `cópia de ${root.id}, que já foi aceita: o mesmo pedido e o mesmo critério (${where})`);
     } else {
       propose(task, categoria, 'juntar', root.id, `o mesmo pedido de ${root.id} (${where}): vira filha dela`);
     }

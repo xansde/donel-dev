@@ -8,7 +8,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { parseLedgerDoc, type LedgerDoc } from '../src/shared/ledger/contract';
-import { simularFaxina, type FaxinaView } from '../src/shared/ledger/faxina-simulada';
+import { simularFaxina } from '../src/shared/ledger/faxina-simulada';
 import { repeatGroups, type PedidoView, type RepeatGroup } from '../src/shared/ledger/repetidas';
 import { copyInstant, pedidosFromLedger, viewsFromListing } from '../src/shared/ledger/simulacao-entrada';
 
@@ -103,30 +103,29 @@ function groupReport(title: string, items: readonly (PedidoView & { readonly tit
   for (const g of groups) sizes.set(g.children.length + 1, (sizes.get(g.children.length + 1) ?? 0) + 1);
   say(`### ${title}`);
   say();
-  say(`**${groups.length} grupos, ${total} tarefas** (${[...sizes].sort((a, b) => a[0] - b[0]).map(([size, n]) => `${n}× de ${size}`).join(', ')}); ${groups.filter((g) => g.sameText).length} com o texto inteiro igual, ${groups.filter((g) => !g.sameText).length} só com o começo igual.`);
+  say(`**${groups.length} grupos, ${total} tarefas** (${[...sizes].sort((a, b) => a[0] - b[0]).map(([size, n]) => `${n}× de ${size}`).join(', ')}); ${groups.filter((g) => g.sameText).length} com o texto inteiro igual, ${groups.filter((g) => !g.sameText).length} com a mesma mensagem citada ou a mesma frase entre aspas; ${groups.filter((g) => g.sameWork).length} são cópias do mesmo trabalho (texto e critério iguais), ${groups.filter((g) => !g.sameWork).length} são irmãs (critérios diferentes); ${groups.filter((g) => g.undated).length} têm tarefa sem data, com a janela conferida só pelos limites (nasceu depois da cópia, antes de agora).`);
   say();
   const fives = groups.filter((g) => g.children.length + 1 === 5);
   if (fives.length) {
     say(`Pedidos repetidos 5 vezes: ${fives.map((g) => `${g.root} (raiz) + ${g.children.length} filhas`).join('; ')}.`);
     say();
   }
-  say(`| raiz proposta | criada | quadro | pedido | filhas | texto |`);
-  say(`|---|---|---|---|---|---|`);
+  say(`| raiz proposta | criada | quadro | pedido | filhas | texto | trabalho | sem data |`);
+  say(`|---|---|---|---|---|---|---|---|`);
   for (const g of [...groups].sort((a, b) => b.children.length - a.children.length || a.root.localeCompare(b.root))) {
     const root = item.get(g.root)!;
-    say(`| ${g.root} | ${iso(root.createdAt)} | ${boardName(g.board)} | ${cell(root.title ?? root.request, 70)} | ${g.children.join(', ')} | ${g.sameText ? 'igual' : 'começo igual'} |`);
+    say(`| ${g.root} | ${iso(root.createdAt)} | ${boardName(g.board)} | ${cell(root.title ?? root.request, 70)} | ${g.children.join(', ')} | ${g.sameText ? 'igual' : 'mesma citação'} | ${g.sameWork ? 'cópia' : 'irmãs'} | ${g.undated ? 'sim' : '—'} |`);
   }
   say();
 }
 
 say(`## F7 — pedidos repetidos e tarefa-pai`);
 say();
-say(`Mesmo pedido = os primeiros 240 caracteres iguais depois de normalizar (caixa, acento, pontuação), no mesmo quadro, até 72 h depois da raiz; a raiz é a mais antiga. Juntar seria o lançamento \`agrupar\` da F9.`);
+say(`Mesmo pedido = a mesma frase de quem pediu, no mesmo quadro, até 72 h depois da raiz (a mais antiga). A frase é, nesta ordem: a mensagem citada na primeira linha (o link do Slack), a frase entre aspas no começo, ou o texto inteiro, normalizados (caixa, acento, pontuação). Sem corte por tamanho. Juntar seria o lançamento \`agrupar\` da F9; arquivar por repetição só vale para cópia do mesmo trabalho (texto e critério iguais).`);
 say();
 const copyPedidos = pedidosFromLedger(copy);
 groupReport('Sobre a cópia v4', copyPedidos, repeatGroups(copyPedidos));
-const viewGroups = repeatGroups(views as readonly FaxinaView[]);
-groupReport('Sobre a lista do dia (tarefas novas sem quadro conhecido entram no grupo do mesmo texto)', views, viewGroups);
+groupReport('Sobre a lista do dia (tarefa nova sem quadro conhecido entra no grupo da mesma frase)', views, repeatGroups(views, { now }));
 
 const after = { lista: sha(listaPath), copia: sha(copiaPath) };
 say(`## Conferência`);

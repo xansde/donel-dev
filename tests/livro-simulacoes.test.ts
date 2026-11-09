@@ -26,25 +26,39 @@ describe('F7 — pedidos repetidos e tarefa-pai', () => {
     expect(groups[0]!.sameText).toBe(true);
   });
 
-  it('a request that only differs in case, accents, punctuation or after its long head is the same request', () => {
-    const head = 'Lucas Araújo, DM, 05/11/2026 15:58 — «O PR já está pronto para revisão, ' + 'com as telas conferidas uma a uma e o banco de teste montado, '.repeat(4);
+  it('the same cited message or the same quoted sentence of who asked is the same request; no length cut', () => {
+    const link = 'https://acme.slack.com/archives/D08R86FB4PM/p1793905129917139';
+    const long = 'O PR já está pronto para revisão, com as telas conferidas uma a uma e o banco de teste montado. '.repeat(4);
     const groups = repeatGroups([
-      pedido('t-a', `${head} Se até lá eu não tiver retorno, sigo com o merge.`, NOW - 5 * H),
-      pedido('t-b', `${head.toUpperCase().replace(/á/g, 'a')} Qualquer dificuldade, me fala.`, NOW - 4 * H),
-      pedido('t-c', 'Lucas Araujo, DM, outro assunto curto', NOW - 3 * H),
+      pedido('t-a', `Lucas Araújo, DM, 05/11/2026 15:58 — ${link}\n\n«${long}» (sua mensagem)`, NOW - 5 * H),
+      pedido('t-b', `Lucas Araujo, DM, 05/11/2026 — ${link}\n\n«Qualquer dificuldade, me fala.» (mensagem dele)`, NOW - 4 * H),
+      pedido('t-c', '"Toca, espera não" (resposta à carta do plano; recomendação 1)', NOW - 3 * H),
+      pedido('t-d', '«TOCA espera não!» (dono, na carta; recomendação 2)', NOW - 2 * H),
+      pedido('t-e', `${long} Se até lá eu não tiver retorno, sigo.`, NOW - 2 * H),
+      pedido('t-f', `${long} Qualquer coisa me fala.`, NOW - H),
     ]);
-    expect(groups).toEqual([{ root: 't-a', children: ['t-b'], board: '/p/atlas', sameText: false }]);
+    expect(groups).toEqual([
+      { root: 't-a', children: ['t-b'], board: '/p/atlas', sameText: false, sameWork: false, undated: false },
+      { root: 't-c', children: ['t-d'], board: '/p/atlas', sameText: false, sameWork: false, undated: false },
+    ]);
   });
 
-  it('another board or more than 72 h after the root is not the same request; an unknown board can join', () => {
+  it('another board or outside 72 h of the root is not the same request; an undated task joins only inside its bounds', () => {
     const text = 'Arruma o aviso que some do celular';
-    const groups = repeatGroups([
-      pedido('t-1', text, NOW - 10 * DAY),
-      pedido('t-2', text, NOW - 2 * DAY),
-      pedido('t-3', text, NOW - 2 * DAY - H, '/p/beacon'),
-      pedido('t-4', text, null, null),
-    ]);
-    expect(groups).toEqual([{ root: 't-2', children: ['t-4'], board: '/p/atlas', sameText: true }]);
+    const other = 'Outro pedido que só a tarefa velha tinha';
+    const groups = repeatGroups(
+      [
+        pedido('t-1', text, NOW - 10 * DAY),
+        pedido('t-2', text, NOW - 2 * DAY),
+        pedido('t-3', text, NOW - 2 * DAY - H, '/p/beacon'),
+        { ...pedido('t-4', text, null, null), bornAfter: NOW - 30 * H },
+        pedido('t-5', other, NOW - 10 * DAY),
+        { ...pedido('t-6', other, null, null), bornAfter: NOW - 30 * H },
+        pedido('t-7', other, null, null),
+      ],
+      { now: NOW },
+    );
+    expect(groups).toEqual([{ root: 't-2', children: ['t-4'], board: '/p/atlas', sameText: true, sameWork: false, undated: true }]);
   });
 });
 
@@ -52,6 +66,7 @@ const view = (id: string, over: Partial<FaxinaView> = {}): FaxinaView => ({
   id,
   board: '/p/atlas',
   request: `pedido único ${id}`,
+  criterion: `critério ${id}`,
   createdAt: NOW - 5 * DAY,
   state: 'aberta',
   closed: false,
@@ -67,8 +82,9 @@ describe('F5 — faxina por lançamento (simulação)', () => {
   const items: FaxinaView[] = [
     view('raiz-viva', { request: 'pedido repetido', createdAt: NOW - 3 * H, lastWorkAt: NOW - 3 * H, state: 'em-execucao' }),
     view('repetida', { request: 'pedido repetido', createdAt: NOW - 2 * H, lastWorkAt: NOW - 2 * H, orphan: true }),
-    view('raiz-feita', { request: 'pedido feito', createdAt: NOW - 3 * DAY, state: 'aceita', closed: true }),
-    view('repetida-de-feita', { request: 'pedido feito', createdAt: NOW - 3 * DAY + H, orphan: true }),
+    view('raiz-feita', { request: 'pedido feito', criterion: 'o mesmo critério', createdAt: NOW - 3 * DAY, state: 'aceita', closed: true }),
+    view('repetida-de-feita', { request: 'pedido feito', criterion: 'O mesmo critério.', createdAt: NOW - 3 * DAY + H, orphan: true }),
+    view('irma-de-feita', { request: 'pedido feito', criterion: 'passo 2 de 2', createdAt: NOW - 3 * DAY + 3 * H, orphan: true }),
     view('repetida-em-execucao', { request: 'pedido feito', createdAt: NOW - 3 * DAY + 2 * H, orphan: true, state: 'em-execucao' }),
     view('raiz-cancelada', { request: 'pedido trocado', createdAt: NOW - 4 * H, state: 'cancelada', closed: true }),
     view('repetida-de-cancelada', { request: 'pedido trocado', createdAt: NOW - 3 * H, lastWorkAt: NOW - 3 * H, orphan: true }),
@@ -92,13 +108,14 @@ describe('F5 — faxina por lançamento (simulação)', () => {
     expect(seen.sort()).toEqual(items.filter((i) => !i.closed && (i.orphan || i.state === 'entregue' || i.state === 'aberta')).map((i) => i.id).sort());
     expect(result.ficam.map((f) => f.id).sort()).toEqual(['aberta-recente', 'entregue-recente']);
     for (const p of result.propostas) expect(p.motivo.length).toBeGreaterThan(10);
-    expect(result.contagens).toMatchObject({ orfas: 8, entregues: 2, abertas: 8, abertasOrfas: 6, abertasVelhas: 1, abertasRecentes: 1 });
+    expect(result.contagens).toMatchObject({ orfas: 9, entregues: 2, abertas: 9, abertasOrfas: 7, abertasVelhas: 1, abertasRecentes: 1 });
   });
 
-  it('a repeated request joins its live root; a repeat of an accepted one is archived unless in progress', () => {
+  it('a repeat joins its live root; only a copy of the same work as an accepted root is archived, a sister joins', () => {
     expect(byId.get('repetida')).toMatchObject({ categoria: 'orfa', destino: 'juntar', para: 'raiz-viva', lancamento: { tipo: 'agrupar', tarefa: 'repetida', dados: { pai: 'raiz-viva' }, chave: 'faxina:repetida:juntar:2026-11-09' } });
     expect(byId.get('repetida-de-feita')).toMatchObject({ destino: 'arquivar', lancamento: { tipo: 'cancelar' } });
     expect(byId.get('repetida-de-feita')!.motivo).toContain('raiz-feita');
+    expect(byId.get('irma-de-feita')).toMatchObject({ destino: 'juntar', para: 'raiz-feita', lancamento: { tipo: 'agrupar' } });
     expect(byId.get('repetida-em-execucao')).toMatchObject({ destino: 'juntar', para: 'raiz-feita' });
     expect(byId.get('repetida-de-cancelada')).toMatchObject({ destino: 'repassar', para: 'place:acima' });
   });

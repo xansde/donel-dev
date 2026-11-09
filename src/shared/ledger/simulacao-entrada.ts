@@ -14,6 +14,7 @@ interface ListingTask {
   readonly pedido: string;
   readonly dono: string;
   readonly risco: LedgerRisk;
+  readonly criterio?: string;
   readonly titulo?: string;
   readonly orfa?: string;
   readonly cartaSlack?: unknown;
@@ -45,6 +46,8 @@ export function viewsFromListing(listing: unknown, copy: LedgerDoc | null): Faxi
       board: old?.projectPath ?? null,
       request: task.pedido,
       createdAt: old?.createdAt ?? null,
+      ...(old ? {} : { bornAfter: notBefore }),
+      ...(task.criterio ? { criterion: task.criterio } : {}),
       state: task.estado,
       closed: task.estado === 'aceita' || task.estado === 'cancelada' || (task.estado === 'rejeitada' && slack),
       orphan: task.orfa !== undefined,
@@ -64,6 +67,7 @@ export function pedidosFromLedger(doc: LedgerDoc): (PedidoView & { readonly clos
     board: task.projectPath,
     request: task.request,
     createdAt: task.createdAt,
+    criterion: task.doneWhen,
     closed: isClosed(task),
     ...(task.title ? { title: task.title } : {}),
   }));
