@@ -39,6 +39,7 @@ import {
   isCancelled,
   awaitsSend,
   isClosed,
+  isLeaderRole,
   isServicePlace,
   viewState,
   maxProofBytes,
@@ -633,6 +634,21 @@ function callerActor(caller: LedgerCaller): LedgerActor {
   return { kind: 'lugar', placeId: caller.placeId, ...(caller.roleId ? { roleId: caller.roleId } : {}) };
 }
 
+/**
+ * t-cccce5e4 (dono, 09/11: "cada líder deverá ter a configuração de quanto aceita puxar e tocar em paralelo"): the
+ * number on the caller's place in the Mindscape (`parallel`, read from the board at this call), how many demands of its
+ * board are being worked now (in progress or sent back), and how many it may still pull. Shown to a Líder, or to any
+ * place the owner gave a number (the Coordenador). No number = no limit, as before. Nothing is pulled: the Líder does.
+ */
+function parallelOf(caller: LedgerCaller, doc: LedgerDoc): { paralelo?: { limite: number | 'sem limite'; tocando: number; podePuxar: number | 'sem limite' } } {
+  const card = caller.board?.cards[caller.placeId];
+  const limite = card?.kind === 'session' ? card.parallel : undefined;
+  if (limite === undefined && !isLeaderRole(caller.roleId)) return {};
+  if (!caller.projectPath) return {};
+  const tocando = Object.values(doc.tasks).filter((task) => task.projectPath === caller.projectPath && !isClosed(task) && (task.state === 'em-execucao' || task.state === 'rejeitada') && !task.slack).length;
+  return { paralelo: limite === undefined ? { limite: 'sem limite', tocando, podePuxar: 'sem limite' } : { limite, tocando, podePuxar: Math.max(0, limite - tocando) } };
+}
+
 /** `remote`: the calling session runs on a remote place; its proof files are read there (fatia 6). */
 export async function runLedgerTool(service: LedgerService, caller: LedgerCaller, call: LedgerToolCall, remote?: RemoteProofFetch): Promise<LedgerToolAnswer> {
   const actor = callerActor(caller);
@@ -882,6 +898,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
               ? { fila: 'As abertas vêm primeiro, na prioridade que o dono deu em "Seus pedidos" ("posicao" 1 = a próxima do quadro). Nada é puxado sozinho: com alguém livre, entregue a próxima a ele.' }
               : {}),
             ...(hidden ? { fora: `${hidden} tarefa(s) fora desta lista; "situacao": "todas" mostra o histórico inteiro, "orfas" as que ficaram sem lugar.` } : {}),
+            ...parallelOf(caller, doc),
             tarefas: tasks.map((task) => ({
               ...(queuePlace.has(task.id) ? { posicao: queuePlace.get(task.id) } : {}),
               ...taskView(task, doc, orphanOf(task), caller),

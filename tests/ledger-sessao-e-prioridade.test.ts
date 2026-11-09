@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, nodeLedgerProofFs, prioritizeAsks, runLedgerTool, type LedgerCaller } from '../src/main/ledger-store';
 import { parseLedgerToolCall, type LedgerToolCall } from '../src/shared/ledger/tools';
+import { addPlace, emptyMindscapeDoc, MINDSCAPE_SCHEMA_VERSION, parseMindscapeDoc, setPlaceParallel, type MindscapeDoc } from '../src/shared/mindscape/model';
 import { parseLedgerDoc, priorityOf } from '../src/shared/ledger/contract';
 import { priorityWrites } from '../src/shared/ledger/prioridade';
 import { jobuProgress, movedFrontOrder, movedOrder } from '../src/shared/pet/progress';
@@ -209,5 +210,35 @@ describe('a coluna Sessão da tabela do Oráculo', () => {
     expect(liveSessionOf(accepted.tasks[done]!, (_p, id) => SESSIONS[id])).toBeUndefined();
     expect(sessionCell(accepted.tasks[running]!, map)).toEqual({ text: 'conv-dev', full: 'conv-dev' });
     expect(sessionCell(accepted.tasks[done]!, map)).toEqual({ text: '—', full: '' });
+  });
+});
+
+// t-cccce5e4 (dono, 09/11: "cada líder deverá ter a configuração de quanto aceita puxar e tocar em paralelo"): the
+// number lives on the Líder's place in the Mindscape and is read at each tarefa_listar. What breaks without the owner
+// seeing it: the number lost on save (an older channel, a parse that drops it) or a Líder told it can pull more.
+describe('quanto cada Líder toca em paralelo', () => {
+  it('o número do lugar do Líder no quadro vale na hora: mudar o número muda quantas ele pode puxar', async () => {
+    const s = service();
+    const t1 = await create(s, 'place:dev', 'Parte 1');
+    await create(s, 'place:dev', 'Parte 2');
+    await runLedgerTool(s, at('place:dev', 'dev'), call('tarefa_assumir', { id: t1 }));
+    let board = addPlace(emptyMindscapeDoc(), BOARD, { id: 'place:lider', roleId: 'lider' });
+    const leaderWith = (doc: MindscapeDoc): LedgerCaller => ({ ...at('place:lider', 'lider'), board: doc.boards[BOARD]! });
+    const paralelo = async (doc: MindscapeDoc) => (JSON.parse((await runLedgerTool(s, leaderWith(doc), call('tarefa_listar', {}))).text) as { paralelo?: unknown }).paralelo;
+
+    expect(await paralelo(board)).toEqual({ limite: 'sem limite', tocando: 1, podePuxar: 'sem limite' });
+    board = setPlaceParallel(board, BOARD, 'place:lider', 3);
+    expect(await paralelo(board)).toEqual({ limite: 3, tocando: 1, podePuxar: 2 });
+    board = setPlaceParallel(board, BOARD, 'place:lider', 1);
+    expect(await paralelo(board)).toEqual({ limite: 1, tocando: 1, podePuxar: 0 });
+
+    // The number survives the save (v8) and a bad one is dropped; a Dev's listing has no block.
+    const saved = parseMindscapeDoc(JSON.parse(JSON.stringify(board)));
+    expect(saved.boards[BOARD]!.cards['place:lider']).toMatchObject({ parallel: 1 });
+    expect(saved.schemaVersion).toBe(MINDSCAPE_SCHEMA_VERSION);
+    const bad = JSON.parse(JSON.stringify(board));
+    bad.boards[BOARD].cards['place:lider'].parallel = 0;
+    expect(parseMindscapeDoc(bad).boards[BOARD]!.cards['place:lider']).not.toHaveProperty('parallel');
+    expect(JSON.parse((await runLedgerTool(s, { ...at('place:dev', 'dev'), board: board.boards[BOARD]! }, call('tarefa_listar', {}))).text)).not.toHaveProperty('paralelo');
   });
 });

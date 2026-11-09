@@ -64,6 +64,9 @@ export interface MindscapeSessionCardProps {
   readonly notStarted?: boolean;
   /** Item 12b — click on the seal of a place that has not started: choose another role. */
   readonly onRoleClick?: () => void;
+  /** t-cccce5e4 — how many demands this place takes in parallel (`null` = no limit), with the owner's menu to change it. */
+  readonly parallel?: number | null;
+  readonly onParallelClick?: () => void;
   /** Item 04 — engine seal ("opus 5.5", "· provedor"); absent = no reading. */
   readonly engine?: string;
   /** Item 04 — context, same reading as the footer; absent = no reading. */
@@ -113,6 +116,8 @@ export function MindscapeSessionCard({
   role,
   notStarted = false,
   onRoleClick,
+  parallel,
+  onParallelClick,
   engine,
   meter,
   axes,
@@ -188,6 +193,18 @@ export function MindscapeSessionCard({
           data-testid="mindscape-role-seal"
         >
           ＋ papel
+        </button>
+      ) : null}
+      {parallel !== undefined && onParallelClick ? (
+        <button
+          type="button"
+          className={`${styles.roleSeal} ${styles.roleSealButton} ${styles.parallelSeal}`}
+          title={parallel === null ? 'Toca quantas demandas em paralelo? Sem limite. Clique para mudar.' : `Toca até ${parallel} demanda(s) em paralelo. Clique para mudar.`}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={onParallelClick}
+          data-testid="mindscape-parallel"
+        >
+          ∥ {parallel === null ? '∞' : parallel}
         </button>
       ) : null}
       <div className={styles.sessionHead}>

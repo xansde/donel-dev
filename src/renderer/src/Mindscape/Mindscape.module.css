@@ -372,6 +372,43 @@
   border: 1px dashed var(--text-muted);
 }
 
+/* t-cccce5e4 — how many demands a Líder takes in parallel: a seal at the card's top left, the owner's menu. */
+.parallelSeal {
+  right: auto;
+  left: 8px;
+}
+
+.parallelMenu {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: 200px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-2, 0 4px 12px rgba(0, 0, 0, 0.2));
+}
+.parallelMenuTitle {
+  flex-basis: 100%;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.parallelMenu button {
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.parallelMenu .parallelOn {
+  border-color: var(--accent, currentColor);
+  font-weight: var(--weight-semibold);
+}
+
 /* The menu of a place's seal opens from the card, at its top right. */
 .placeRoleMenu {
   position: absolute;
