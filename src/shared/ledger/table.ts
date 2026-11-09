@@ -14,6 +14,7 @@ import {
   isCancelled,
   isClosed,
   lastDelivery,
+  priorityMarkOf,
   slackSendState,
   transfersOf,
   waitsForOwner,
@@ -171,6 +172,8 @@ export function timelineOf(task: LedgerTask, places: PlaceInfoOf | undefined, ow
           const to = placeLabel(project, transfer.to, undefined, places);
           return { at: event.at, text: `Passada de ${from} para ${to} por ${who(event)}`, ...(transfer.reason ? { note: transfer.reason } : {}) };
         }
+        const priority = priorityMarkOf(task, event);
+        if (priority !== undefined) return { at: event.at, text: `Prioridade dada por ${who(event)}: ${priority}º dos seus pedidos` };
         return withNote(`Criada por ${who(event)}`);
       }
       case 'assumida':

@@ -224,3 +224,37 @@
   color: var(--text-muted);
   font-size: 11.5px;
 }
+
+/* 09/11 — the owner orders his asks: up and down, quiet until the line is hovered or focused. */
+.moves {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  align-self: center;
+  opacity: 0.35;
+}
+
+.task:hover .moves,
+.moves:focus-within {
+  opacity: 1;
+}
+
+.move {
+  padding: 0 3px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 14px;
+  cursor: pointer;
+}
+
+.move:hover:not(:disabled) {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+
+.move:disabled {
+  visibility: hidden;
+}

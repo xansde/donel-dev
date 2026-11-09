@@ -1,7 +1,7 @@
 // Andamento no ledger (08/11) — where a session's record goes, and the compact read the Líder makes when it wants
 // (`tarefa_novidades`), instead of one "◆ … terminou" per turn in its chat. Pure: the main gives the clock.
 
-import { eventNote, isClosed, transfersOf, viewState, type LedgerDoc, type LedgerEvent, type LedgerTask } from './contract';
+import { eventNote, isClosed, priorityMarkOf, transfersOf, viewState, type LedgerDoc, type LedgerEvent, type LedgerTask } from './contract';
 import { isProgressEvent, progressOf, type LedgerProgress } from './andamento';
 
 /** The latest moment something happened to the task. */
@@ -115,7 +115,8 @@ export function ledgerNews(doc: LedgerDoc, scope: string | null, since: number, 
   for (const task of Object.values(doc.tasks)) {
     if (scope !== null && task.projectPath !== scope) continue;
     for (const event of task.events) {
-      if (event.at <= since) continue;
+      // The owner's order is read in tarefa_listar ("posicao"): moving one ask is no news of the session's work.
+      if (event.at <= since || priorityMarkOf(task, event) !== undefined) continue;
       const key = `${task.projectPath}\n${task.ownerPlaceId}`;
       const group = groups.get(key) ?? { quadro: task.projectPath, lugar: task.ownerPlaceId, latest: 0, items: [], agoraAt: -1 };
       groups.set(key, group);

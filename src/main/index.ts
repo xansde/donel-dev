@@ -25,9 +25,9 @@ import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { createRemoteOracleHost } from './ledger-remote-host';
 import { createSwitchableLedger, type SwitchableLedger } from './ledger-remote';
 import { LEDGER_REMOTE_CHANNELS, type LedgerRemoteResult, type LedgerRemoteState } from '../shared/ledger/remote';
-import { createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, recordTurnEnd, runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService } from './ledger-store';
-import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerSnapshot, type LedgerTurnRecord, type LedgerTurnRecorded } from '../shared/ledger/channels';
-import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, OWN_OPTION, type LedgerDeliveredTo, type LedgerDoc, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
+import { createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, prioritizeAsks, recordTurnEnd, runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService } from './ledger-store';
+import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerPrioritized, type LedgerSnapshot, type LedgerTurnRecord, type LedgerTurnRecorded } from '../shared/ledger/channels';
+import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, MAX_PRIORITY, OWN_OPTION, type LedgerDeliveredTo, type LedgerDoc, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
 import { askedByRefusal, type LedgerToolCall } from '../shared/ledger/tools';
 import type { BoardBridge } from './board-bridge';
 import { MCP_SERVER_NAME, type BrowserToolOutcome } from '../shared/browser/mcp';
@@ -3450,6 +3450,12 @@ function registerLedgerIpcHandlers(): void {
     if (!fromMain(event.sender) || !record || typeof record.projectPath !== 'string' || typeof record.placeId !== 'string' || typeof record.text !== 'string') return 'falhou';
     const estado = record.estado === 'travada' || record.estado === 'precisa-do-dono' ? { estado: record.estado } : {};
     return recordTurnEnd(service, { projectPath: record.projectPath, placeId: record.placeId, text: record.text, ...estado });
+  });
+  // 09/11 (t-5c0df1df) — the owner reorders his asks in "Seus pedidos"; the Líder of each board reads that order.
+  ipcMain.handle(LEDGER_CHANNELS.prioritize, async (event, raw: unknown): Promise<LedgerPrioritized> => {
+    if (!fromMain(event.sender)) return { ok: false, reason: 'Só a janela do app ordena os pedidos.' };
+    if (!Array.isArray(raw) || raw.length > MAX_PRIORITY || !raw.every((id) => typeof id === 'string')) return { ok: false, reason: 'Pedido inválido.' };
+    return prioritizeAsks(service, raw as string[]);
   });
   ipcMain.handle(LEDGER_CHANNELS.comment, async (event, raw: unknown): Promise<LedgerCommentResult> => {
     if (!fromMain(event.sender)) return { ok: false, reason: 'Só a janela do app escreve na carta.' };

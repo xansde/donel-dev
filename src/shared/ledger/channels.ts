@@ -18,6 +18,8 @@ export const LEDGER_CHANNELS = {
   passOn: 'ledger:pass-on',
   /** 08/11 — a session ended a turn: the record goes to its live task (`LedgerTurnRecord` → `LedgerTurnRecorded`). */
   turnEnded: 'ledger:turn-ended',
+  /** 09/11 (t-5c0df1df) — the owner reorders his asks in "Seus pedidos" (`string[]`, first = most important → `LedgerPrioritized`). */
+  prioritize: 'ledger:prioritize',
 } as const;
 
 /**
@@ -92,6 +94,9 @@ export type LedgerOwnerDecision =
   | { readonly id: string; readonly accept: true; readonly option?: string; readonly text?: string }
   | { readonly id: string; readonly accept: false; readonly reason: string; readonly option?: string; readonly text?: string };
 
+/** How many priority marks were written; or why the order stopped (the marks before it stay). */
+export type LedgerPrioritized = { readonly ok: true; readonly written: number } | { readonly ok: false; readonly reason: string };
+
 export type LedgerApplyResult = { readonly ok: true; readonly task: LedgerTask } | { readonly ok: false; readonly reason: string };
 
 export interface DonelLedgerApi {
@@ -109,4 +114,6 @@ export interface DonelLedgerApi {
   passOn(requests: readonly LedgerPassOnRequest[]): Promise<readonly LedgerPassedOn[]>;
   /** 08/11 — the end of a session's turn, recorded in the ledger. */
   turnEnded(record: LedgerTurnRecord): Promise<LedgerTurnRecorded>;
+  /** 09/11 — the owner's asks in the order he wants them (task ids, first = most important). */
+  prioritize(order: readonly string[]): Promise<LedgerPrioritized>;
 }

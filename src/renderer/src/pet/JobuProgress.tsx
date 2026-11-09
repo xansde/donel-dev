@@ -9,7 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { emptyLedgerDoc, type LedgerDoc } from '../../../shared/ledger/contract';
-import { dueLabel, jobuProgress, type Front, type FrontTask, type FrontTaskState, type JobuProgress as Progress } from '../../../shared/pet/progress';
+import { dueLabel, jobuProgress, movedOrder, type Front, type FrontTask, type FrontTaskState, type JobuProgress as Progress } from '../../../shared/pet/progress';
 import styles from './JobuProgress.module.css';
 
 const OPEN_KEY = 'donel.pet.progressOpen';
@@ -138,9 +138,19 @@ function FrontBar({ front }: { readonly front: Front }): React.JSX.Element {
   );
 }
 
-function TaskLine({ task, now }: { readonly task: FrontTask; readonly now: number }): React.JSX.Element {
+type Move = (id: string, direction: 'subir' | 'descer') => void;
+
+function TaskLine({ task, now, first, last, onMove }: { readonly task: FrontTask; readonly now: number; readonly first: boolean; readonly last: boolean; readonly onMove: Move }): React.JSX.Element {
   return (
     <li className={styles.task} data-testid="pet-progress-task" data-state={task.state}>
+      <span className={styles.moves}>
+        <button type="button" className={styles.move} disabled={first} aria-label={`Subir a prioridade de ${task.title}`} title="Subir a prioridade" onClick={() => onMove(task.id, 'subir')}>
+          ▲
+        </button>
+        <button type="button" className={styles.move} disabled={last} aria-label={`Descer a prioridade de ${task.title}`} title="Descer a prioridade" onClick={() => onMove(task.id, 'descer')}>
+          ▼
+        </button>
+      </span>
       <span className={styles.dot} data-state={task.state} aria-hidden="true" />
       <span className={styles.taskBody}>
         <span className={styles.taskTitle} title={task.title}>
@@ -157,7 +167,7 @@ function TaskLine({ task, now }: { readonly task: FrontTask; readonly now: numbe
   );
 }
 
-function FrontLine({ front, now, folded, onToggle }: { readonly front: Front; readonly now: number; readonly folded: boolean; readonly onToggle: () => void }): React.JSX.Element {
+function FrontLine({ front, now, folded, onToggle, onMove }: { readonly front: Front; readonly now: number; readonly folded: boolean; readonly onToggle: () => void; readonly onMove: Move }): React.JSX.Element {
   const { counts } = front;
   const chips = [
     counts.esperando ? <span key="e" className={styles.waiting}>{counts.esperando} esperando você</span> : null,
@@ -187,8 +197,8 @@ function FrontLine({ front, now, folded, onToggle }: { readonly front: Front; re
       </div>
       {folded ? null : (
         <ul className={styles.tasks}>
-          {front.tasks.map((task) => (
-            <TaskLine key={task.id} task={task} now={now} />
+          {front.tasks.map((task, index) => (
+            <TaskLine key={task.id} task={task} now={now} first={index === 0} last={index === front.tasks.length - 1} onMove={onMove} />
           ))}
         </ul>
       )}
@@ -209,12 +219,22 @@ export function JobuProgressPanel({ state }: { readonly state: JobuProgressState
       writeStored(FOLDED_KEY, JSON.stringify([...next]));
       return next;
     });
+  const [moveFailed, setMoveFailed] = useState<string | null>(null);
+  // The owner's order goes to the ledger; the panel redraws from the ledger's push, not from here.
+  const move: Move = (id, direction) => {
+    const order = movedOrder(progress, id, direction);
+    if (!order) return;
+    void window.donel.ledger
+      .prioritize(order)
+      .then((result) => setMoveFailed(result.ok ? null : result.reason))
+      .catch(() => setMoveFailed('não consegui gravar a ordem'));
+  };
   const { counts, doneToday } = progress;
   return (
     <div className={styles.panel} data-testid="pet-progress">
       <div className={styles.head}>
         <span>Progresso · seus pedidos</span>
-        <span className={styles.stamp}>{failed ? 'não consegui ler o Oráculo' : `atualizado às ${clock(computedAt)}`}</span>
+        <span className={styles.stamp}>{failed ? 'não consegui ler o Oráculo' : moveFailed ? `ordem não gravada: ${moveFailed}` : `atualizado às ${clock(computedAt)}`}</span>
       </div>
       {progress.fronts.length === 0 ? (
         <p className={styles.empty}>Nenhum pedido seu em aberto.</p>
@@ -230,7 +250,7 @@ export function JobuProgressPanel({ state }: { readonly state: JobuProgressState
           </div>
           <ul className={styles.boards}>
             {progress.fronts.map((front) => (
-              <FrontLine key={front.name} front={front} now={computedAt} folded={folded.has(front.name)} onToggle={() => toggle(front.name)} />
+              <FrontLine key={front.name} front={front} now={computedAt} folded={folded.has(front.name)} onToggle={() => toggle(front.name)} onMove={move} />
             ))}
           </ul>
         </>
@@ -253,7 +273,7 @@ export function JobuProgressPanel({ state }: { readonly state: JobuProgressState
           </ul>
         </details>
       ) : null}
-      <p className={styles.how}>Só os seus pedidos, pela frente que o Líder deu a cada um. A barra conta as etapas dos pedidos da frente (assumido, entregue, aceito), contando os aceitos hoje. Parado: ninguém assumiu, ninguém deu notícia em um dia, ou a entrega espera conferência há 12 h.</p>
+      <p className={styles.how}>Só os seus pedidos, pela frente que o Líder deu a cada um. A barra conta as etapas dos pedidos da frente (assumido, entregue, aceito), contando os aceitos hoje. Parado: ninguém assumiu, ninguém deu notícia em um dia, ou a entrega espera conferência há 12 h. As setas ▲▼ dão a prioridade: o Líder de cada quadro pega a próxima pela sua ordem.</p>
     </div>
   );
 }
