@@ -2179,7 +2179,7 @@ export function App(): React.JSX.Element {
   // Lugar principal, rule 5 — a dormant session is resumed (`-r <id>`) in a new tab of the
   // board's project; a session already open in a tab is only focused (never opened twice).
   /** The tab that resumes `sessionId` of a dormant place (the owner's double click, or `sessao_retomar`). */
-  const resumeTab = (sessionId: string, projectPath: string, name: string, remote: { remoteId?: string }, bySession?: { openedBy?: string }): string => {
+  const resumeTab = (sessionId: string, projectPath: string, name: string, remote: { remoteId?: string }, bySession?: { placeId: string; openedBy?: string }): string => {
     const project = projects.find((candidate) => candidate.path === projectPath);
     return addTab(
       {
@@ -2191,8 +2191,9 @@ export function App(): React.JSX.Element {
         sessionType: 'claude',
         ...remote,
         customTitle: null,
-        // Resumed by a session: out of the owner's tab bar and without his focus, like one opened by `sessao_abrir`.
-        ...(bySession ? { openedBySession: true, ...(bySession.openedBy ? { openedBy: bySession.openedBy } : {}) } : {}),
+        // Resumed by a session: out of the owner's tab bar and without his focus, like one opened by `sessao_abrir`. Its
+        // place goes along, so the bridge sees the place open before the conversation binds (seconds, on a remote place).
+        ...(bySession ? { placeId: bySession.placeId, openedBySession: true, ...(bySession.openedBy ? { openedBy: bySession.openedBy } : {}) } : {}),
       },
       !bySession,
     );
@@ -2317,7 +2318,11 @@ export function App(): React.JSX.Element {
    * The first tab of a place that never started (the owner's double click, or `sessao_retomar` with `bySession`: then
    * without his focus and out of his tab bar). `undefined` = no such place.
    */
-  const startPlaceTab = (placeId: string, projectPath: string, bySession?: { openedBy?: string }): { tabId: string; remoteId?: string } | undefined => {
+  const startPlaceTab = (
+    placeId: string,
+    projectPath: string,
+    bySession?: { openedBy?: string; mayOpenOn(remoteId: string | undefined): string | undefined },
+  ): { tabId: string; remoteId?: string } | { refused: string } | undefined => {
     const place = mindscape.doc.boards[projectPath]?.cards[placeId];
     if (place?.kind !== 'session') return undefined;
     const role = place.roleId ? roles.find((candidate) => candidate.id === place.roleId) : undefined;
@@ -2336,6 +2341,8 @@ export function App(): React.JSX.Element {
           : accountsView.remotes.some((remote) => remote.id === savedWhere)
             ? savedWhere
             : accountsView.remotes.find((remote) => remote.activeAccountId)?.id;
+    const refused = bySession?.mayOpenOn(remoteId);
+    if (refused) return { refused };
     const tabId = addTab(
       {
         name: role?.name ?? 'Sessão',
@@ -2566,10 +2573,12 @@ export function App(): React.JSX.Element {
     // t-1293c818 — `sessao_retomar`: the owner's two clicks on a dormant place, without his focus.
     resumePlace: (request) =>
       new Promise((resolve) => {
-        const bySession = request.openedBy ? { openedBy: request.openedBy } : {};
+        const opener = request.openedBy ? { openedBy: request.openedBy } : {};
         if (!request.sessionId) {
-          const started = startPlaceTab(request.placeId, request.projectPath, bySession);
-          resolve(started ? { ok: true, ...started } : { ok: false, reason: 'o lugar não está mais no quadro' });
+          const started = startPlaceTab(request.placeId, request.projectPath, { ...opener, mayOpenOn: request.mayOpenOn });
+          if (!started) resolve({ ok: false, reason: 'o lugar não está mais no quadro' });
+          else if ('refused' in started) resolve({ ok: false, reason: started.refused });
+          else resolve({ ok: true, ...started });
           return;
         }
         const sessionId = request.sessionId;
@@ -2577,7 +2586,11 @@ export function App(): React.JSX.Element {
         openWhereItLives(
           sessionId,
           request.projectPath,
-          (remote) => resolve({ ok: true, tabId: resumeTab(sessionId, request.projectPath, name, remote, bySession), ...remote }),
+          (remote) => {
+            const refused = request.mayOpenOn(remote.remoteId);
+            if (refused) resolve({ ok: false, reason: refused });
+            else resolve({ ok: true, tabId: resumeTab(sessionId, request.projectPath, name, remote, { placeId: request.placeId, ...opener }), ...remote });
+          },
           (reason) => resolve({ ok: false, reason }),
         );
       }),

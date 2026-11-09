@@ -46,9 +46,13 @@ function setup(): { bridge: AgentBridge; doc: () => MindscapeDoc; tabs: BridgeTa
       tabs.push({ id, name: request.name, cwd: request.projectPath, projectName: 'atlas', placeId: request.placeId, roleId: request.role.id, openedBy: request.openedBy, sessionType: 'claude' });
       return id;
     },
+    // Like the app: the place's machine is known only after locating the conversation, then the guard; the tab shows
+    // up in the list only on a later render.
     resumePlace: async (request) => {
+      const full = request.mayOpenOn(undefined);
+      if (full) return { ok: false, reason: full };
       resumed.push(request);
-      return { ok: true, tabId: 'tab-resumed' };
+      return { ok: true, tabId: `tab-resumed-${resumed.length}` };
     },
     closeTab: () => undefined,
     sendLine: () => undefined,
@@ -90,6 +94,34 @@ describe('Líder único retoma uma sessão fechada (t-1293c818, item 1)', () => 
     expect(await bridge.handle('dev', { tool: 'sessao_retomar', quem: LIDER })).toMatchObject({ ok: false });
     expect(await bridge.handle('dev', { tool: 'sessao_retomar', quem: NETO })).toMatchObject({ ok: true });
     expect(resumed.map((request) => request.placeId)).toEqual([NETO]);
+  });
+});
+
+describe('sessao_retomar sem rajada nem retomada dupla (Revisor do #376)', () => {
+  it('a place just resumed counts as open before its tab shows up: no second `claude -r` on the same conversation', async () => {
+    const { bridge, resumed } = setup();
+    const [first, second] = await Promise.all([
+      bridge.handle('unico', { tool: 'sessao_retomar', quem: LIDER, quadro: 'atlas' }),
+      bridge.handle('unico', { tool: 'sessao_retomar', quem: LIDER, quadro: 'atlas' }),
+    ]);
+    const third = await bridge.handle('unico', { tool: 'sessao_retomar', quem: LIDER, quadro: 'atlas' });
+    expect([first.ok, second.ok, third.ok]).toEqual([true, true, true]);
+    expect(resumed).toHaveLength(1);
+  });
+
+  it('respects the RAM brake of sessao_abrir: a full machine refuses, and a resume counts as an opening', async () => {
+    const full = setup();
+    full.bridge.setFullMachines({ pc: ['este computador: 300 MB livres'] });
+    const refused = await full.bridge.handle('unico', { tool: 'sessao_retomar', quem: LIDER, quadro: 'atlas' });
+    expect(refused).toMatchObject({ ok: false, text: expect.stringContaining('300 MB livres') });
+    expect(full.resumed).toHaveLength(0);
+
+    const room = setup();
+    room.bridge.setFullMachines({}, { pc: { sessions: 1, checkedAt: Date.now() } });
+    expect(await room.bridge.handle('unico', { tool: 'sessao_retomar', quem: LIDER, quadro: 'atlas' })).toMatchObject({ ok: true });
+    // The one room of the last read went to the resume: the next opening on this machine waits.
+    expect(await room.bridge.handle('unico', { tool: 'sessao_retomar', quem: NETO, quadro: 'atlas' })).toMatchObject({ ok: false });
+    expect(room.resumed).toHaveLength(1);
   });
 });
 
