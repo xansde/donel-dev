@@ -936,8 +936,12 @@ export function App(): React.JSX.Element {
    * so and opens nothing (an empty session on this computer would hide where the conversation is).
    */
   const resumingRef = useRef(new Set<string>());
-  const openWhereItLives = (sessionId: string, projectPath: string, open: (remote: { remoteId?: string }) => void): void => {
-    if (resumingRef.current.has(sessionId)) return;
+  /** `onFail` (t-1293c818, `sessao_retomar`): the caller hears why instead of the owner's toast. */
+  const openWhereItLives = (sessionId: string, projectPath: string, open: (remote: { remoteId?: string }) => void, onFail?: (reason: string) => void): void => {
+    if (resumingRef.current.has(sessionId)) {
+      onFail?.('ela já está sendo retomada');
+      return;
+    }
     resumingRef.current.add(sessionId);
     // The answer from this disk is instant; a slower one means the app is asking the remote places by ssh
     // (up to 20 s each). Without a word the click looked dead.
@@ -951,9 +955,9 @@ export function App(): React.JSX.Element {
           if (where.kind === 'unreachable') {
             const many = where.labels.length > 1;
             const names = where.labels.map((label) => `«${label}»`).join(' e ');
-            setDevModeToast(
-              `Não consegui retomar: a conversa não está neste computador, e ${many ? 'os lugares remotos' : 'o lugar remoto'} ${names} não ${many ? 'responderam' : 'respondeu'}. Confira se está ligado e tente de novo.`,
-            );
+            const why = `a conversa não está neste computador, e ${many ? 'os lugares remotos' : 'o lugar remoto'} ${names} não ${many ? 'responderam' : 'respondeu'}`;
+            if (onFail) onFail(why);
+            else setDevModeToast(`Não consegui retomar: ${why}. Confira se está ligado e tente de novo.`);
             return;
           }
           open(where.kind === 'remote' ? { remoteId: where.remoteId } : {});
@@ -2174,16 +2178,11 @@ export function App(): React.JSX.Element {
   }, []);
   // Lugar principal, rule 5 — a dormant session is resumed (`-r <id>`) in a new tab of the
   // board's project; a session already open in a tab is only focused (never opened twice).
-  const handleMindscapeResume = (sessionId: string, projectPath: string, name: string): void => {
-    const existingTab = tabs.find((tab) => tab.claudeSessionId === sessionId);
-    if (existingTab) {
-      handleMindscapeGoToTerminal(existingTab.id);
-      return;
-    }
+  /** The tab that resumes `sessionId` of a dormant place (the owner's double click, or `sessao_retomar`). */
+  const resumeTab = (sessionId: string, projectPath: string, name: string, remote: { remoteId?: string }, bySession?: { openedBy?: string }): string => {
     const project = projects.find((candidate) => candidate.path === projectPath);
-    openWhereItLives(sessionId, projectPath, (remote) => {
-      window.donel.learning?.record({ type: 'sessao-aberta', sessionId, via: 'retomar' });
-      addTab({
+    return addTab(
+      {
         name,
         cwd: projectPath,
         projectName: project?.name ?? projectPath.split(/[\\/]/).filter(Boolean).pop(),
@@ -2192,7 +2191,21 @@ export function App(): React.JSX.Element {
         sessionType: 'claude',
         ...remote,
         customTitle: null,
-      });
+        // Resumed by a session: out of the owner's tab bar and without his focus, like one opened by `sessao_abrir`.
+        ...(bySession ? { openedBySession: true, ...(bySession.openedBy ? { openedBy: bySession.openedBy } : {}) } : {}),
+      },
+      !bySession,
+    );
+  };
+  const handleMindscapeResume = (sessionId: string, projectPath: string, name: string): void => {
+    const existingTab = tabs.find((tab) => tab.claudeSessionId === sessionId);
+    if (existingTab) {
+      handleMindscapeGoToTerminal(existingTab.id);
+      return;
+    }
+    openWhereItLives(sessionId, projectPath, (remote) => {
+      window.donel.learning?.record({ type: 'sessao-aberta', sessionId, via: 'retomar' });
+      resumeTab(sessionId, projectPath, name, remote);
       setSelectedProjectPath(projectPath);
       setAppMode('geral');
     });
@@ -2296,8 +2309,17 @@ export function App(): React.JSX.Element {
       handleMindscapeGoToTerminal(existingTab.id);
       return;
     }
+    if (!startPlaceTab(placeId, projectPath)) return;
+    setSelectedProjectPath(projectPath);
+    setAppMode('geral');
+  };
+  /**
+   * The first tab of a place that never started (the owner's double click, or `sessao_retomar` with `bySession`: then
+   * without his focus and out of his tab bar). `undefined` = no such place.
+   */
+  const startPlaceTab = (placeId: string, projectPath: string, bySession?: { openedBy?: string }): { tabId: string; remoteId?: string } | undefined => {
     const place = mindscape.doc.boards[projectPath]?.cards[placeId];
-    if (place?.kind !== 'session') return;
+    if (place?.kind !== 'session') return undefined;
     const role = place.roleId ? roles.find((candidate) => candidate.id === place.roleId) : undefined;
     // A suggested engine that is not registered here is ignored: the session opens on the active account.
     const providerId = role?.engine && providers.some((provider) => provider.id === role.engine) ? role.engine : undefined;
@@ -2314,26 +2336,29 @@ export function App(): React.JSX.Element {
           : accountsView.remotes.some((remote) => remote.id === savedWhere)
             ? savedWhere
             : accountsView.remotes.find((remote) => remote.activeAccountId)?.id;
-    addTab({
-      name: role?.name ?? 'Sessão',
-      cwd: projectPath,
-      projectName: project?.name ?? projectPath.split(/[\\/]/).filter(Boolean).pop(),
-      pinned: false,
-      launchArgs: buildLauncherArgs({
+    const tabId = addTab(
+      {
+        name: role?.name ?? 'Sessão',
+        cwd: projectPath,
+        projectName: project?.name ?? projectPath.split(/[\\/]/).filter(Boolean).pop(),
+        pinned: false,
+        launchArgs: buildLauncherArgs({
+          providerId,
+          model: role?.model ?? defaults?.model ?? DEFAULT_MODEL_ALIAS,
+          effort: role?.effort ?? defaults?.effort ?? DEFAULT_EFFORT_LEVEL,
+          permissionMode: role?.permissionMode ?? defaults?.permissionMode ?? 'acceptEdits',
+          sessionName: '',
+        }),
+        sessionType: 'claude',
         providerId,
-        model: role?.model ?? defaults?.model ?? DEFAULT_MODEL_ALIAS,
-        effort: role?.effort ?? defaults?.effort ?? DEFAULT_EFFORT_LEVEL,
-        permissionMode: role?.permissionMode ?? defaults?.permissionMode ?? 'acceptEdits',
-        sessionName: '',
-      }),
-      sessionType: 'claude',
-      providerId,
-      ...(remoteId ? { remoteId } : {}),
-      ...(place.roleId ? { roleId: place.roleId } : {}),
-      placeId,
-    });
-    setSelectedProjectPath(projectPath);
-    setAppMode('geral');
+        ...(remoteId ? { remoteId } : {}),
+        ...(place.roleId ? { roleId: place.roleId } : {}),
+        placeId,
+        ...(bySession ? { openedBySession: true, ...(bySession.openedBy ? { openedBy: bySession.openedBy } : {}) } : {}),
+      },
+      !bySession,
+    );
+    return { tabId, ...(remoteId ? { remoteId } : {}) };
   };
 
   // Item 18 (PDA mindscape-openrig) + Líder único (ADR 0007) — the Jobu as the Líder of EVERY board, in a bubble that
@@ -2538,6 +2563,24 @@ export function App(): React.JSX.Element {
       pendingFirstMessagesRef.current[tabId] = request.firstMessage;
       return tabId;
     },
+    // t-1293c818 — `sessao_retomar`: the owner's two clicks on a dormant place, without his focus.
+    resumePlace: (request) =>
+      new Promise((resolve) => {
+        const bySession = request.openedBy ? { openedBy: request.openedBy } : {};
+        if (!request.sessionId) {
+          const started = startPlaceTab(request.placeId, request.projectPath, bySession);
+          resolve(started ? { ok: true, ...started } : { ok: false, reason: 'o lugar não está mais no quadro' });
+          return;
+        }
+        const sessionId = request.sessionId;
+        const name = appConfig?.sessionNames[sessionId]?.name ?? request.name;
+        openWhereItLives(
+          sessionId,
+          request.projectPath,
+          (remote) => resolve({ ok: true, tabId: resumeTab(sessionId, request.projectPath, name, remote, bySession), ...remote }),
+          (reason) => resolve({ ok: false, reason }),
+        );
+      }),
     closeTab: (tabId) => closeTabImmediatelyRef.current(tabId),
     sendLine: (tabId, text) => sendRenewalLine(tabId, text, 'session'),
     deliverLine: (tabId, text, waitMs, from) => {

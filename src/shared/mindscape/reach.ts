@@ -87,7 +87,8 @@ export function isTop(board: MindscapeBoard | undefined, placeId: string): boole
 /**
  * The orchestrator of a board: a place with the Líder role that the OWNER put there. Never one a session opened or drew
  * (`by: 'session'`): a role given by a session would let any Dev make itself a Líder (PR #305). What a session cannot
- * forge is who made the place, so that is the line, here and in `canReach` across boards.
+ * forge is who made the place, so that is the line, here and in `canReach` across boards. The Líder único, the owner's
+ * orchestrator, makes it for him (t-1293c818: `sessao_abrir`/`quadro_aplicar` leave out `by` only for it).
  */
 export function isBoardOrchestrator(board: MindscapeBoard | undefined, placeId: string): boolean {
   const card = board?.cards[placeId];
@@ -106,8 +107,9 @@ export function boardOrchestrators(board: MindscapeBoard | undefined): string[] 
  * Who hears the chairs of a board and whom "lider-quadro" means (dono, 09/11: nothing of a chair reaches the Líder
  * único): the Líderes the owner put there (`boardOrchestrators`); only when there is none, the places with the Líder
  * role a session made (a Líder the Líder único opened before 07/11, or one the owner gave the role by hand). Only who HEARS: the
- * power of a Líder (every place, other boards, liberating a folder) stays with `isBoardOrchestrator`. No session can
- * make a Líder place today (`sessao_abrir` and `quadro_aplicar` refuse it), so nobody makes itself heard as one.
+ * power of a Líder (every place, other boards, liberating a folder) stays with `isBoardOrchestrator`. No session of a
+ * board can make a Líder place (`sessao_abrir` and `quadro_aplicar` refuse it; only the Líder único can, as the owner's),
+ * so nobody makes itself heard as one.
  */
 export function boardLeaders(board: MindscapeBoard | undefined): string[] {
   if (!board) return [];
