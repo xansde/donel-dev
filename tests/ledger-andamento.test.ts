@@ -46,7 +46,7 @@ function call(name: string, args: unknown): LedgerToolCall {
  * The board of the owner: a Líder he put there, and three Devs below it; plus the Líder único (Jobu) open. With
  * `liderDoUnico`, the Líder of the board is one the Líder único opened (a place made by a session), as on 09/11.
  */
-function boardDoc(liderDoUnico = false): MindscapeDoc {
+function boardDoc(liderDoUnico = false, segundoLider = false): MindscapeDoc {
   let doc = addPlace(emptyMindscapeDoc(), BOARD, { id: LIDER, roleId: 'lider', ...(liderDoUnico ? { by: 'session' as const } : {}) });
   doc = setPlaceConversation(doc, BOARD, LIDER, 'conv-lider');
   for (const [i, dev] of DEVS.entries()) {
@@ -56,6 +56,7 @@ function boardDoc(liderDoUnico = false): MindscapeDoc {
   }
   doc = addPlace(doc, BOARD, { id: REV, roleId: 'revisor', by: 'session' });
   doc = setPlaceConversation(doc, BOARD, REV, 'conv-rev');
+  if (segundoLider) doc = setPlaceConversation(addPlace(doc, BOARD, { id: 'place:lider2', roleId: 'lider', by: 'session' }), BOARD, 'place:lider2', 'conv-lider2');
   doc = addPlace(doc, BOARD, { id: FAX, roleId: 'faxineiro', by: 'session' });
   return setPlaceConversation(doc, BOARD, FAX, 'conv-fax');
 }
@@ -93,18 +94,19 @@ function progressRecords(t: Team): { owner: string; progress: NonNullable<Return
   }));
 }
 
-async function team(options: { readonly liderDoUnico?: boolean } = {}): Promise<Team> {
+async function team(options: { readonly liderDoUnico?: boolean; readonly segundoLider?: boolean } = {}): Promise<Team> {
   const dir = mkdtempSync(join(tmpdir(), 'andamento-'));
   dirs.push(dir);
   const file = join(dir, 'ledger.json');
   let clock = Date.UTC(2026, 10, 8, 12);
   const service = createLedgerService({ filePath: file, io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs, now: () => (clock += 60_000) });
-  const doc = boardDoc(options.liderDoUnico);
+  const doc = boardDoc(options.liderDoUnico, options.segundoLider);
   const tabs: BridgeTab[] = [
     { id: 'tab-unico', name: 'Líder', cwd: 'C:/proj', roleId: 'lider', leaderOfAll: true, sessionType: 'claude' },
     { id: 'tab-lider', name: 'Líder', cwd: BOARD, projectName: 'atlas', roleId: 'lider', claudeSessionId: 'conv-lider', ...(options.liderDoUnico ? { openedBy: LEADER_OF_ALL } : {}), sessionType: 'claude' },
     ...DEVS.map((_dev, i): BridgeTab => ({ id: `tab-dev${i + 1}`, name: `Dev ${i + 1}`, cwd: BOARD, projectName: 'atlas', roleId: 'dev', claudeSessionId: `conv-dev${i + 1}`, openedBy: i === 2 ? 'lider' : LIDER, sessionType: 'claude' })),
     { id: 'tab-rev', name: 'Revisor', cwd: BOARD, projectName: 'atlas', roleId: 'revisor', claudeSessionId: 'conv-rev', openedBy: 'lider', sessionType: 'claude' },
+    ...(options.segundoLider ? [{ id: 'tab-lider2', name: 'Líder 2', cwd: BOARD, projectName: 'atlas', roleId: 'lider', claudeSessionId: 'conv-lider2', openedBy: LEADER_OF_ALL, sessionType: 'claude' as const }] : []),
     { id: 'tab-fax', name: 'Faxineiro', cwd: BOARD, projectName: 'atlas', roleId: 'faxineiro', claudeSessionId: 'conv-fax', openedBy: FAXINEIRO_OPENER, sessionType: 'claude' },
   ];
   const sent: { tabId: string; text: string }[] = [];
@@ -274,6 +276,15 @@ describe('andamento no ledger, não no chat do Líder', () => {
     const answer = await t.bridge.handle('pty-tab-dev1', { tool: 'sessao_enviar', para: 'lider-quadro', texto: 'preciso do Revisor' });
     expect(answer).toMatchObject({ ok: true });
     expect(t.sent.at(-1)).toMatchObject({ tabId: 'tab-lider', text: expect.stringContaining('preciso do Revisor') });
+  });
+
+  it('com Líder do dono no quadro, um lugar Líder feito por sessão é cadeira: o bloqueio e o fim de turno dele vão ao Líder do dono', async () => {
+    const t = await team({ segundoLider: true });
+    t.states['tab-lider2'] = 'permission';
+    t.bridge.attention('tab-lider2');
+    t.bridge.turnEnded('conv-lider2', 'Repassei.');
+    await settle(t);
+    expect(t.sent.map((each) => each.tabId)).toEqual(['tab-lider', 'tab-lider']);
   });
 
   it('entrega para aceite e andamento "travada" chegam na hora; o resto fica só no ledger', async () => {
