@@ -25,7 +25,7 @@ import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { createRemoteOracleHost } from './ledger-remote-host';
 import { createSwitchableLedger, type SwitchableLedger } from './ledger-remote';
 import { LEDGER_REMOTE_CHANNELS, type LedgerRemoteResult, type LedgerRemoteState } from '../shared/ledger/remote';
-import { createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, prioritizeAsks, recordTurnEnd, runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService } from './ledger-store';
+import { createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, prioritizeAsks, recordTurnEnd, runLedgerBatch, runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService } from './ledger-store';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerPrioritized, type LedgerSnapshot, type LedgerTurnRecord, type LedgerTurnRecorded } from '../shared/ledger/channels';
 import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, MAX_PRIORITY, OWN_OPTION, type LedgerDeliveredTo, type LedgerDoc, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
 import { askedByRefusal, type LedgerToolCall } from '../shared/ledger/tools';
@@ -3663,6 +3663,15 @@ async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: 
   // 07/11, owner: "quem pediu" is a person, never a role; the parse knows the factory roles, this app's own here.
   const askedRefused = (call.tool === 'tarefa_criar' || call.tool === 'tarefa_frente') && call.quemPediu ? askedByRefusal(call.quemPediu, rolesStore?.list() ?? []) : null;
   if (askedRefused) return { kind: 'error', text: askedRefused };
+  // t-147e6783 — a batch resolves the caller item by item: the Líder único acts on the board of each task.
+  if (call.tool === 'tarefa_lote') {
+    const service = ledgerService;
+    const batch = await runLedgerBatch(call, async (item) => {
+      const one = await ledgerCallerOf(boardBridge, ptyId, item);
+      return typeof one === 'string' ? { ok: false, text: one } : runLedgerTool(service, one.caller, one.call);
+    });
+    return batch.ok ? { kind: 'text', text: batch.text } : { kind: 'error', text: batch.text };
+  }
   const resolved = await ledgerCallerOf(boardBridge, ptyId, call);
   if (typeof resolved === 'string') return { kind: 'error', text: resolved };
   // Fatia 6 — a session on a remote place (VPS) names files there: read through that place's own ssh.
