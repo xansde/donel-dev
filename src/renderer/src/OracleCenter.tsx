@@ -14,14 +14,17 @@ import type { PlaceNameOf } from '../../shared/ledger/labels';
 import { placeInfoOfMap, type LedgerPlacesSnapshot } from '../../shared/ledger/mirror';
 import { LedgerCards } from './Mindscape/LedgerCards';
 import { OwnerInbox } from './Mindscape/OwnerInbox';
-import { LedgerTable } from './LedgerTable';
+import { LedgerTable, type SessionOf } from './LedgerTable';
 import styles from './OracleCenter.module.css';
 
 export function OracleCenter({
   placeName,
   placeStatesOf,
+  sessionOf,
 }: {
   readonly placeName?: PlaceNameOf;
+  /** The session that runs each task (place → its conversation, from the board), for the table's "Sessão". */
+  readonly sessionOf?: SessionOf;
   /** The places of these boards (for the orphans); absent = no orphan is shown. */
   readonly placeStatesOf?: (projectPaths: readonly string[]) => PlaceStates;
 }): React.JSX.Element {
@@ -93,7 +96,7 @@ export function OracleCenter({
         )}
         {snapshot?.readOnly ? <p className={styles.waitingMeta}>Gravado por uma versão mais nova do Donel: aqui é só leitura.</p> : null}
         {snapshot && Object.keys(snapshot.doc.tasks).length > 0 ? (
-          <LedgerTable doc={snapshot.doc} places={places} ownerName={names?.ownerName ?? null} onOpenCard={openCard} inbox={inbox} />
+          <LedgerTable doc={snapshot.doc} places={places} sessionOf={sessionOf} ownerName={names?.ownerName ?? null} onOpenCard={openCard} inbox={inbox} />
         ) : (
           <div className={styles.empty}>
             <p className={styles.title}>Nenhuma tarefa ainda</p>

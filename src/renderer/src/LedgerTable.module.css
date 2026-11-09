@@ -140,7 +140,7 @@
   width: 6%;
 }
 .colTitle {
-  width: 18%;
+  width: 13%;
 }
 .colState {
   width: 9%;
@@ -154,6 +154,9 @@
 .colDoer {
   width: 10%;
 }
+.colSession {
+  width: 7%;
+}
 .colCreator {
   width: 9%;
 }
@@ -164,7 +167,7 @@
   width: 7%;
 }
 .colLast {
-  width: 9%;
+  width: 7%;
 }
 .colDecision {
   width: 7%;

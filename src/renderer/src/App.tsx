@@ -2990,6 +2990,11 @@ export function App(): React.JSX.Element {
   // board loads every place would look closed, so no orphan is called until then.
   const ledgerPlaceStatesOf = (projectPaths: readonly string[]): Map<string, Map<string, string>> =>
     mindscapeLoaded ? agentBridgeRef.current.placeStates(projectPaths) : new Map();
+  // 09/11 (t-5c0df1df) — the table's "Sessão": the conversation of the moment of the task's owner place.
+  const oracleSessionOf = (projectPath: string, placeId: string): string | undefined => {
+    const card = mindscape.doc.boards[projectPath]?.cards[placeId];
+    return card?.kind === 'session' ? card.sessionId : undefined;
+  };
   const oraclePlaceName: PlaceNameOf = (projectPath, placeId) => {
     const card = mindscape.doc.boards[projectPath]?.cards[placeId];
     if (card?.kind !== 'session' || !card.sessionId) return undefined;
@@ -3396,7 +3401,7 @@ export function App(): React.JSX.Element {
               o path cru do "consultar artefato" (Zona 2, acima) parecia ser
               o header. Uso geral mantém a condição antiga (nome+path só com
               aba aberta, lote 8). */}
-          {oracleShown ? <OracleCenter placeName={oraclePlaceName} placeStatesOf={ledgerPlaceStatesOf} /> : null}
+          {oracleShown ? <OracleCenter placeName={oraclePlaceName} placeStatesOf={ledgerPlaceStatesOf} sessionOf={oracleSessionOf} /> : null}
           {!oracleShown && listedTabIds.size > 0 ? (
             <div className={styles.sessionHeader} data-testid="session-header">
               {/* Spec 010 / B6 — o breadcrumb passou a ser o dos nós novos:

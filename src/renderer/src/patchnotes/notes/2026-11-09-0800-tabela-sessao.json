@@ -1,0 +1,4 @@
+{
+  "title": "A tabela do Oráculo mostra a sessão de cada tarefa",
+  "text": "Uma coluna nova, \"Sessão\", diz qual conversa está tocando cada tarefa viva (o código completo aparece ao passar o mouse e no painel da tarefa). Assim dá para achar quem está com ela."
+}

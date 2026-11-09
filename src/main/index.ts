@@ -46,7 +46,7 @@ import { parseHandoffHeader, SESSION_RENEWAL_CHANNELS, sanitizeSessionRenewalPre
 import { LEARNING_CHANNELS, parseRendererGesture, type GestureEvent } from '../shared/learning/gestures';
 import { createGestureDiary, type GestureDiary } from './gesture-diary';
 import type { MindscapeReadImageResult, MindscapeSaveImageResult, MindscapeSaveResult, MindscapeTurnEndedPayload } from '../shared/mindscape/channels';
-import type { MindscapeBoard, MindscapeDoc } from '../shared/mindscape/model';
+import type { MindscapeBoard, MindscapeCard, MindscapeDoc } from '../shared/mindscape/model';
 import { esteiraOutboxDir } from './esteira-ingest';
 import { esteiraInboxDir } from './esteira-dispatch';
 import { resolveBoardMirrorAdapter } from './esteira-mirror';
@@ -3516,16 +3516,9 @@ function placeNameOf(projectPath: string, placeId: string): string | undefined {
 
 /** The places for many lookups in a row (the mirror's push): the boards are read once; the card gives the role. */
 function placesSnapshot(): PlaceInfoOf {
-  let boards: Readonly<Record<string, MindscapeBoard>> | null = null;
+  const cardOf = savedCardsSnapshot();
   return (projectPath, placeId) => {
-    if (boards === null) {
-      try {
-        boards = createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load().boards;
-      } catch {
-        boards = {};
-      }
-    }
-    const card = boards[projectPath]?.cards[placeId];
+    const card = cardOf(projectPath, placeId);
     if (card?.kind !== 'session') return undefined;
     const name = card.sessionId ? appConfig.sessionRegistry[card.sessionId]?.label : undefined;
     return { ...(card.roleId ? { roleId: card.roleId } : {}), ...(name ? { name } : {}) };
@@ -3534,6 +3527,15 @@ function placesSnapshot(): PlaceInfoOf {
 
 /** 09/11 (t-5c0df1df) — place → its conversation of the moment, for `tarefa_listar`/`tarefa_ver`; the boards are read once. */
 function sessionsSnapshot(): (projectPath: string, placeId: string) => string | undefined {
+  const cardOf = savedCardsSnapshot();
+  return (projectPath, placeId) => {
+    const card = cardOf(projectPath, placeId);
+    return card?.kind === 'session' ? card.sessionId : undefined;
+  };
+}
+
+/** A card of the saved boards, for many lookups in a row: `mindscape.json` is read once, at the first one. */
+function savedCardsSnapshot(): (projectPath: string, placeId: string) => MindscapeCard | undefined {
   let boards: Readonly<Record<string, MindscapeBoard>> | null = null;
   return (projectPath, placeId) => {
     if (boards === null) {
@@ -3543,8 +3545,7 @@ function sessionsSnapshot(): (projectPath: string, placeId: string) => string | 
         boards = {};
       }
     }
-    const card = boards[projectPath]?.cards[placeId];
-    return card?.kind === 'session' ? card.sessionId : undefined;
+    return boards[projectPath]?.cards[placeId];
   };
 }
 

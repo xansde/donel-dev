@@ -18,9 +18,17 @@ import {
   type LedgerTableFilter,
   type LedgerTableRow,
 } from '../../shared/ledger/table';
-import type { LedgerDoc, LedgerProof, LedgerTask } from '../../shared/ledger/contract';
+import { isClosed, type LedgerDoc, type LedgerProof, type LedgerTask } from '../../shared/ledger/contract';
 import type { OwnerInboxKind } from '../../shared/ledger/inbox';
 import styles from './LedgerTable.module.css';
+
+/** 09/11 (t-5c0df1df) — the conversation of the moment of a place, as its board has it; absent = unknown. */
+export type SessionOf = (projectPath: string, placeId: string) => string | undefined;
+
+/** The session that runs a live task (its owner place's conversation); a closed task has none. */
+function sessionOfTask(task: LedgerTask, sessionOf: SessionOf | undefined): string | undefined {
+  return isClosed(task) ? undefined : sessionOf?.(task.projectPath, task.ownerPlaceId);
+}
 
 // Every closing kind has a tone: a new kind fails the typecheck here instead of showing a grey pill.
 const CLOSING_TONE: Readonly<Record<ClosingKind, string | undefined>> = {
@@ -68,12 +76,14 @@ function ProofItem({ proof }: { readonly proof: LedgerProof }): React.JSX.Elemen
 function Panel({
   item,
   places,
+  sessionOf,
   ownerName,
   onOpenCard,
   onClose,
 }: {
   readonly item: LedgerTableRow;
   readonly places: PlaceInfoOf | undefined;
+  readonly sessionOf: SessionOf | undefined;
   readonly ownerName: string;
   readonly onOpenCard: (task: LedgerTask) => void;
   readonly onClose: () => void;
@@ -115,6 +125,8 @@ function Panel({
         <dd>{row.quem_criou}</dd>
         <dt>Faz agora</dt>
         <dd>{row.quem_faz_agora}</dd>
+        <dt>Sessão</dt>
+        <dd className={styles.code}>{sessionOfTask(task, sessionOf) ?? '—'}</dd>
         <dt>Com quem está</dt>
         <dd className={item.waitsForOwner ? styles.you : undefined}>{item.withWhom}</dd>
         <dt>Decide</dt>
@@ -165,12 +177,15 @@ function Panel({
 export function LedgerTable({
   doc,
   places,
+  sessionOf,
   ownerName,
   onOpenCard,
   inbox,
 }: {
   readonly doc: LedgerDoc;
   readonly places: PlaceInfoOf | undefined;
+  /** The session that runs each task (place → its conversation); absent = the column says "—". */
+  readonly sessionOf?: SessionOf;
   readonly ownerName: string | null;
   /** Opens the card of a task that waits for the owner (where he decides). */
   readonly onOpenCard: (task: LedgerTask) => void;
@@ -217,6 +232,7 @@ export function LedgerTable({
                 <th className={styles.colWith}>Com quem está</th>
                 <th className={styles.colAsked}>Quem pediu</th>
                 <th className={`${styles.colDoer} ${styles.secondary}`}>Quem faz agora</th>
+                <th className={`${styles.colSession} ${styles.secondary}`}>Sessão</th>
                 <th className={`${styles.colCreator} ${styles.secondary}`}>Quem criou</th>
                 <th className={`${styles.colRisk} ${styles.secondary}`}>Risco</th>
                 <th className={`${styles.colDue} ${styles.secondary}`}>Prazo</th>
@@ -260,6 +276,9 @@ export function LedgerTable({
                     <td className={styles.secondary} title={row.quem_faz_agora}>
                       {row.quem_faz_agora}
                     </td>
+                    <td className={`${styles.secondary} ${styles.code}`} title={sessionOfTask(item.task, sessionOf) ?? ''}>
+                      {sessionOfTask(item.task, sessionOf)?.slice(0, 8) ?? '—'}
+                    </td>
                     <td className={styles.secondary} title={row.quem_criou}>
                       {row.quem_criou}
                     </td>
@@ -281,7 +300,7 @@ export function LedgerTable({
           </table>
           {shown.length === 0 ? <p className={styles.emptyRows}>{query ? 'Nada com essa busca neste filtro.' : 'Nenhuma tarefa neste filtro.'}</p> : null}
         </div>
-        {selected ? <Panel item={selected} places={places} ownerName={owner} onOpenCard={onOpenCard} onClose={() => setSelectedId(null)} /> : null}
+        {selected ? <Panel item={selected} places={places} sessionOf={sessionOf} ownerName={owner} onOpenCard={onOpenCard} onClose={() => setSelectedId(null)} /> : null}
       </div>
     </div>
   );
