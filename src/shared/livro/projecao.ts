@@ -3,6 +3,7 @@
 // o main e o Oráculo usam hoje; o que ela recusa fica no diário, marcado como recusado, e não muda o estado.
 
 import { applyLedgerOp, emptyLedgerDoc, type LedgerDoc, type LedgerOp } from '../ledger/contract';
+import { emptyFila, isFilaTipo, passoFila, type EstadoFila, type FilaTipo } from './fila';
 import type { JournalLine, LivroEntry } from './formato';
 
 /**
@@ -20,6 +21,8 @@ export interface ProjectionStep {
 
 export interface Projection {
   readonly doc: LedgerDoc;
+  /** F9: priority, parents and board limits (`fila.ts`). */
+  readonly fila: EstadoFila;
   readonly steps: ProjectionStep[];
   /** Algum lançamento é de versão maior: a projeção é a melhor leitura possível, não a verdade inteira. */
   readonly readOnly: boolean;
@@ -44,9 +47,19 @@ function applyOp(doc: LedgerDoc, entry: LivroEntry): StepResult {
   }
 }
 
+/** F9: priority and parent name tasks the ledger has; the board limit names a board, not a task. */
+function filaStep(doc: LedgerDoc, fila: EstadoFila, entry: LivroEntry): ReturnType<typeof passoFila> {
+  const tipo = entry.tipo as FilaTipo;
+  if (tipo !== 'limite-do-quadro' && !doc.tasks[entry.tarefa]) return { ok: false, reason: `a tarefa ${entry.tarefa} não existe no livro` };
+  const pai = (entry.dados as { pai?: unknown }).pai;
+  if (tipo === 'agrupada' && typeof pai === 'string' && !doc.tasks[pai]) return { ok: false, reason: `o pai ${pai} não existe no livro` };
+  return passoFila(fila, { seq: entry.seq, tipo, tarefa: entry.tarefa, dados: entry.dados });
+}
+
 /** Calcula o estado a partir dos lançamentos, em ordem de `seq`. */
 export function projectJournal(lines: readonly JournalLine[]): Projection {
   let doc = emptyLedgerDoc();
+  let fila = emptyFila();
   const steps: ProjectionStep[] = [];
   const seen = new Set<string>();
   for (const line of lines) {
@@ -59,11 +72,17 @@ export function projectJournal(lines: readonly JournalLine[]): Projection {
       continue;
     }
     seen.add(line.chave);
+    if (isFilaTipo(line.tipo)) {
+      const step = filaStep(doc, fila, line);
+      if (step.ok) fila = step.state;
+      steps.push(step.ok ? { seq: line.seq, status: 'aplicado' } : { seq: line.seq, status: 'recusado', reason: step.reason });
+      continue;
+    }
     const result: StepResult = line.tipo === 'v4-evento' ? { ok: false, reason: 'evento importado do v4 ainda não se projeta (F3).' } : applyOp(doc, line);
     if (result.ok) {
       doc = result.doc;
       steps.push({ seq: line.seq, status: 'aplicado' });
     } else steps.push({ seq: line.seq, status: 'recusado', reason: result.reason });
   }
-  return { doc, steps, readOnly: lines.some((line) => line.kind === 'newer') };
+  return { doc, fila, steps, readOnly: lines.some((line) => line.kind === 'newer') };
 }

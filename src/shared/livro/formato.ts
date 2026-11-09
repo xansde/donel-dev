@@ -24,12 +24,16 @@
 
 import { createHash } from 'node:crypto';
 import type { LedgerActor, LedgerOp } from '../ledger/contract';
+import { FILA_TIPOS, type FilaTipo } from './fila';
 
 export const LIVRO_VERSION = 1;
 
-/** O que um lançamento pode ser: uma operação de hoje (`applyLedgerOp`), ou um evento importado do ledger v4 (F3). */
+/**
+ * O que um lançamento pode ser: uma operação de hoje (`applyLedgerOp`), um evento importado do ledger v4 (F3), ou
+ * prioridade, pai e limite do quadro (F9, `fila.ts`).
+ */
 export type LivroOpType = LedgerOp['op'];
-export type LivroType = LivroOpType | 'v4-evento';
+export type LivroType = LivroOpType | 'v4-evento' | FilaTipo;
 
 export const LIVRO_OP_TYPES: readonly LivroOpType[] = [
   'criar',
@@ -48,7 +52,7 @@ export const LIVRO_OP_TYPES: readonly LivroOpType[] = [
   'slack-bot',
   'andamento',
 ];
-export const LIVRO_TYPES: readonly LivroType[] = [...LIVRO_OP_TYPES, 'v4-evento'];
+export const LIVRO_TYPES: readonly LivroType[] = [...LIVRO_OP_TYPES, 'v4-evento', ...FILA_TIPOS];
 
 export type JsonValue = null | boolean | number | string | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 export type JsonObject = { readonly [key: string]: JsonValue };
