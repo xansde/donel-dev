@@ -345,8 +345,8 @@ import { createSweepRunner } from './sweep/sweep-service';
 // Saúde do computador — samples RAM, disk and processes every minute; ends a process on request.
 import { collectHealthSnapshot, lookupProcessName } from './health/collector';
 import { createHealthService, type HealthService } from './health/health-service';
-import { createRemoteHealthService, type RemoteHealthService } from './health/remote-health-service';
-import type { RemoteHealthReport } from '../shared/health/remote';
+import { REMOTE_HEALTH_TIMEOUT_MS, createRemoteHealthService, type RemoteHealthService } from './health/remote-health-service';
+import { settledRemoteSessions, type RemoteHealthReport } from '../shared/health/remote';
 import { HEALTH_CHANNELS, type KillProcessOutcome } from '../shared/health/ipc';
 // Mindscape de homologação V1 — the factory's files, read over ssh (read-only).
 import { createRemoteFileReader, type RemoteFileReader } from './homologacao/remote-file-reader';
@@ -3023,6 +3023,13 @@ function registerHealthIpcHandlers(): void {
     onReports: (reports) => {
       const window = getMainWindow();
       if (window) window.webContents.send(HEALTH_CHANNELS.remoteChanged, reports);
+      // t-1293c818 (item 5) — a tab reattached after the app reopened hears no hook until its next turn: what the
+      // place reads on its pane says it is at the prompt.
+      const settled = new Map(settledRemoteSessions(reports, REMOTE_HEALTH_TIMEOUT_MS).map((entry) => [entry.sid, entry.readStartedAt]));
+      for (const [ptyId, sid] of remoteLinks.trackedSids()) {
+        const readStartedAt = settled.get(sid);
+        if (readStartedAt !== undefined && !remoteLinks.isLost(ptyId)) semaphoreManager.settleFromPlace(ptyId, readStartedAt);
+      }
     },
   });
   remoteHealthService.start();
@@ -3188,8 +3195,8 @@ function registerFaxineiroIpcHandlers(): void {
   });
   ipcMain.handle(FAXINEIRO_CHANNELS.round, (event, sessions: unknown): FaxineiroRoundAnswer => {
     const window = getMainWindow();
-    if (!window || event.sender.id !== window.webContents.id || !Array.isArray(sessions)) return { wakes: [], closeIdle: [], fullMachines: {} };
-    return faxineiroService?.round(sessions as SessionView[]) ?? { wakes: [], closeIdle: [], fullMachines: {} };
+    if (!window || event.sender.id !== window.webContents.id || !Array.isArray(sessions)) return { wakes: [], closeIdle: [], fullMachines: {}, openingRoom: {} };
+    return faxineiroService?.round(sessions as SessionView[]) ?? { wakes: [], closeIdle: [], fullMachines: {}, openingRoom: {} };
   });
   ipcMain.on(FAXINEIRO_CHANNELS.log, (event, entries: unknown) => {
     const window = getMainWindow();

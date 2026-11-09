@@ -226,7 +226,30 @@ export interface FaxineiroRound {
   readonly held: readonly FaxineiroLogEntry[];
   /** Machines where `sessao_abrir` waits for room (machine id → why), with the release hysteresis applied. */
   readonly fullMachines: Readonly<Record<string, readonly string[]>>;
+  /** t-d1f072fd — how many new sessions each machine's last read has room for (machine id → room). */
+  readonly openingRoom: Readonly<Record<string, OpeningRoom>>;
   readonly state: FaxineiroState;
+}
+
+/**
+ * t-d1f072fd — sessions that fit on a machine before its RAM free falls under `ramFreeMinPct`, by its last read. The
+ * read is every 60 s, so whoever opens sessions counts what it opened since `checkedAt` against `sessions`: four opens
+ * in the same minute, starting near 1,2 GiB available, used to push the personal VPS into swap before the next read.
+ */
+export interface OpeningRoom {
+  readonly sessions: number;
+  readonly checkedAt: number;
+}
+
+/** RAM one new Claude session takes, for the room (300 to 500 MB each; 356 MB the mean measured on the personal VPS). */
+export const OPENING_SESSION_RAM_MB = 400;
+
+/** The room of one machine; `null` = no signal or no RAM read (nothing to count against). */
+export function openingRoomOf(machine: MachineReading, config: FaxineiroConfig): OpeningRoom | null {
+  if (!machine.reachable || machine.checkedAt === null || machine.ramAvailableBytes === null || machine.ramFreeRatio === null || machine.ramFreeRatio <= 0) return null;
+  const totalBytes = machine.ramAvailableBytes / machine.ramFreeRatio;
+  const spare = machine.ramAvailableBytes - (totalBytes * config.ramFreeMinPct) / 100;
+  return { sessions: Math.max(0, Math.floor(spare / (OPENING_SESSION_RAM_MB * 1024 * 1024))), checkedAt: machine.checkedAt };
 }
 
 function pct(ratio: number): string {
@@ -304,7 +327,7 @@ function draftOf(state: FaxineiroState): Draft {
 
 export function evaluateFaxineiro(input: FaxineiroInput, previous: FaxineiroState, now: number): FaxineiroRound {
   const config = input.config;
-  if (!config.enabled) return { wakes: [], closeIdle: [], held: [], fullMachines: {}, state: previous };
+  if (!config.enabled) return { wakes: [], closeIdle: [], held: [], fullMachines: {}, openingRoom: {}, state: previous };
   const draft = draftOf(previous);
   const held: FaxineiroLogEntry[] = [];
   const cooldown = config.cooldownMinutes * MIN;
@@ -451,5 +474,10 @@ export function evaluateFaxineiro(input: FaxineiroInput, previous: FaxineiroStat
     )
     .map((session) => ({ projectPath: session.projectPath, placeId: session.placeId }));
 
-  return { wakes, closeIdle, held, fullMachines, state: draft };
+  const openingRoom: Record<string, OpeningRoom> = {};
+  for (const machine of input.machines) {
+    const room = openingRoomOf(machine, config);
+    if (room !== null) openingRoom[machine.id] = room;
+  }
+  return { wakes, closeIdle, held, fullMachines, openingRoom, state: draft };
 }
