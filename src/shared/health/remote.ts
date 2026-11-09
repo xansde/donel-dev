@@ -15,6 +15,11 @@ export interface RemoteHealthReading {
   readonly ram: { readonly totalBytes: number; readonly freeBytes: number } | null;
   /** Swap (`SwapTotal`/`SwapFree`); a machine without swap answers total 0 and reads `null`. */
   readonly swap: { readonly totalBytes: number; readonly freeBytes: number } | null;
+  /**
+   * Pages swapped in and out per second (`pswpin`/`pswpout` of `/proc/vmstat`, read twice one second apart: the `si`/`so`
+   * of `vmstat`). Swap in use alone says little (Linux leaves pages parked there); paging now is the machine choking.
+   */
+  readonly swapIo: { readonly inPerSec: number; readonly outPerSec: number } | null;
   /** The disk of `$HOME` (where the projects and the sessions live). */
   readonly disk: { readonly totalBytes: number; readonly freeBytes: number } | null;
   /** Load average of 1, 5 and 15 minutes. */
@@ -56,6 +61,8 @@ export function buildRemoteHealthScript(): string {
   return [
     `awk '/^MemTotal:/{t=$2} /^MemAvailable:/{a=$2} END{print "${MARK} mem", t, a}' /proc/meminfo 2>/dev/null`,
     `awk '/^SwapTotal:/{t=$2} /^SwapFree:/{f=$2} END{print "${MARK} swap", t, f}' /proc/meminfo 2>/dev/null`,
+    // one second of sleep, inside the 15 s timeout of the read
+    `donel_swapio() { awk '/^pswpin /{i=$2} /^pswpout /{o=$2} END{print i, o}' /proc/vmstat 2>/dev/null; }; donel_swapio_a=$(donel_swapio); sleep 1; printf '${MARK} swapio %s %s\\n' "$donel_swapio_a" "$(donel_swapio)"`,
     `df -kP "$HOME" 2>/dev/null | awk 'NR==2{print "${MARK} disk", $2, $4}'`,
     `printf '${MARK} load %s\\n' "$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)"`,
     `printf '${MARK} cpus %s\\n' "$(nproc 2>/dev/null)"`,
@@ -76,6 +83,7 @@ function numbers(rest: string, count: number): number[] | null {
 export function parseRemoteHealthOutput(stdout: string): RemoteHealthReading | null {
   let ram: RemoteHealthReading['ram'] = null;
   let swap: RemoteHealthReading['swap'] = null;
+  let swapIo: RemoteHealthReading['swapIo'] = null;
   let disk: RemoteHealthReading['disk'] = null;
   let load: RemoteHealthReading['load'] = null;
   let cpus: number | null = null;
@@ -96,6 +104,9 @@ export function parseRemoteHealthOutput(stdout: string): RemoteHealthReading | n
     } else if (key === 'swap') {
       const values = numbers(rest, 2);
       if (values && values[0] > 0 && values[1] <= values[0]) swap = { totalBytes: values[0] * KB, freeBytes: values[1] * KB };
+    } else if (key === 'swapio') {
+      const values = numbers(rest, 4);
+      if (values && values[2] >= values[0] && values[3] >= values[1]) swapIo = { inPerSec: values[2] - values[0], outPerSec: values[3] - values[1] };
     } else if (key === 'disk') {
       const values = numbers(rest, 2);
       if (values && values[0] > 0 && values[1] <= values[0]) disk = { totalBytes: values[0] * KB, freeBytes: values[1] * KB };
@@ -119,7 +130,7 @@ export function parseRemoteHealthOutput(stdout: string): RemoteHealthReading | n
     }
   }
   if (!ended) return null;
-  return { ram, swap, disk, load, cpus, sessions, sessionDetails: readAt === null ? null : details, readAt, gateway };
+  return { ram, swap, swapIo, disk, load, cpus, sessions, sessionDetails: readAt === null ? null : details, readAt, gateway };
 }
 
 /** Load of the last minute per CPU at or above this is a busy machine; at or above the critical one, a choked one. */
