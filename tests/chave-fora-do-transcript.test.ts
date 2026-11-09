@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createHookBridge, type HookBridge } from '../src/main/hook-bridge';
-import { buildSessionHooksSettings, buildSlackOfflineGuardScript, tokenHeaderFileContent, writeSessionHooksSettings } from '../src/main/hooks-settings';
+import { buildSessionHooksSettings, buildSlackMarkFile, tokenHeaderFileContent, writeSessionHooksSettings } from '../src/main/hooks-settings';
 import { buildRemoteSetupScript, REMOTE_SESSIONS_DIR } from '../src/main/remote-session';
 
 // A chave dos hooks não pode ir à linha de comando de nada: o CLI grava a linha de comando do hook de início
@@ -123,12 +123,11 @@ describe('chave dos hooks fora do argv e do transcript', () => {
       token,
       tokenHeaderPath,
       curlPath: 'curl',
-      slackOfflineGuardCommand: `sh "$HOME/${REMOTE_SESSIONS_DIR}/${sid}/slack-guard.sh"`,
       statusLine: { kind: 'forward' },
     });
     const files = [
       { name: 'hook-header', content: tokenHeaderFileContent(token) },
-      { name: 'slack-guard.sh', content: buildSlackOfflineGuardScript({ port, tokenHeaderPath }) },
+      { name: 'slack-guard.sh', content: buildSlackMarkFile() },
       { name: 'settings.json', content: `${JSON.stringify(settings, null, 2)}\n` },
     ];
     const claudeArgs = ['--session-id', sid, '--settings', '@S/settings.json'];

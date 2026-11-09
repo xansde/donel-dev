@@ -2,7 +2,6 @@ import { mkdirSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'nod
 import { join } from 'node:path';
 import type { UserStatusLine } from './cli-user-settings';
 import type { RoleScopeSettings } from '../shared/role-scope';
-import { AGENT_BOT_SERVERS, isAgentBotServerName } from '../shared/ledger/slack-guard';
 
 // T009 — arquivo `--settings` adicional (spike: "soma hooks aos hooks
 // globais do usuário sem substituí-los" — validado byte-a-byte que
@@ -126,11 +125,6 @@ export interface SessionHooksSettingsInput {
    * Only this session's file: the owner's `~/.claude/settings.json` is never touched.
    */
   readonly isolatedWorktree?: boolean;
-  /**
-   * Slack só com carta, fatia 4 — the command that runs `buildSlackOfflineGuardScript` (a remote session: it
-   * outlives the app). Absent = only the `http` hook, whose bridge lives and dies with a local session.
-   */
-  readonly slackOfflineGuardCommand?: string;
   /** Escopo do papel: the MCPs, plugins and skills this session keeps (role-scope.ts). Absent = everything. */
   readonly roleScope?: RoleScopeSettings | null;
   /** The folders that hold this session's keys (`keyFileReadDenyRules`): the session's tools may not read them. */
@@ -211,9 +205,6 @@ export function buildSessionHooksSettings(input: SessionHooksSettingsInput): Ses
     command = `powershell -NoProfile -ExecutionPolicy Bypass -File "${forwarderScriptPath ?? ''}"`;
   }
   hooks.SessionStart = [{ hooks: [{ type: 'command', command, timeout: 10 }] }];
-  if (input.slackOfflineGuardCommand) {
-    hooks.PreToolUse = [...hooks.PreToolUse!, { matcher: SLACK_OFFLINE_GUARD_MATCHER, hooks: [{ type: 'command', command: input.slackOfflineGuardCommand, timeout: 10 }] }];
-  }
 
   const statusLine = input.statusLine ? buildStatusLineSetting(input.statusLine, input) : null;
   return {
@@ -225,88 +216,19 @@ export function buildSessionHooksSettings(input: SessionHooksSettingsInput): Ses
   };
 }
 
-// --- Slack só com carta, fatia 4: falha fechada --------------------------------
+// --- slack-guard.sh: só a marca do envio de arquivo -----------------------------
 //
-// A post to Slack is decided by the bridge (`preToolUseGuard`, answering the `http` PreToolUse hook). But an
-// `http` hook that gets no answer does NOT block: with the app down, the post would go out unchecked. A local
-// session dies with the app (its PTY is the app's child); a remote one lives on in tmux. So the remote session
-// also gets this command hook: it asks the bridge `/h/Ping` (app up AND this token known); if yes, it says
-// nothing and the bridge decides as usual; if not, and the call looks like a post to Slack, it REFUSES. The
-// offline test is deliberately broad (it refuses a Slack draft, or any call to the Slack Web API, even a read,
-// while the app is down): the owner's rule is
-// "a carta antes de qualquer coisa", so what cannot be checked does not go out.
+// Until 09/11 a remote session ran this file as a hook that refused posts to Slack while the app was down. Letters
+// never lock anymore (owner, 09/11: "Não quero que cartas travem nada também"), so no hook runs it. The file is still
+// written in the remote session folder, under the same name, because the Theo West MCP (VPS) reads its
+// `# carta-com-arquivo:` line to offer the file upload (`appKnowsFileLetter` in its servidor.js).
 
-export const SLACK_OFFLINE_GUARD_MATCHER = 'Bash|mcp__.*';
+/** The line the Theo West MCP looks for (it matches only the `carta-com-arquivo:` prefix). */
+export const SLACK_GUARD_FILE_LETTER_MARK = 'carta-com-arquivo: o envio de arquivo pelo MCP do Theo West está liberado';
 
-/** A line of the offline guard script that says this app checks a letter with a file (`SlackLetter.file`). */
-export const SLACK_GUARD_FILE_LETTER_MARK = 'carta-com-arquivo: esta trava confere carta com arquivo';
-
-/** ERE over the hook payload (tool name + input), case-insensitive: anything that may post to Slack. */
-export const SLACK_OFFLINE_PATTERN =
-  'mcp__[^"]*slack[^"]*__[^"]*(send|post|repl|schedul|updat|edit|upload|file|share|enviar|mandar|postar|publicar|respond|agendar|editar|atualizar|subir|compartilh|anexar)|slack_[a-z_]*(send|post|repl|schedul|updat|edit|upload|file|share|enviar|mandar|postar|publicar|respond|agendar|editar|atualizar|subir|compartilh|anexar)|chat[._](postMessage|post_message|update|scheduleMessage|postEphemeral|meMessage)|files[._](upload|completeUpload|complete_upload|share)|slack\\.com/api/|hooks\\.slack\\.com|canal-produto';
-
-export const SLACK_OFFLINE_REFUSAL =
-  'Envio ao Slack bloqueado pelo Donel Dev: o app do Donel está fora do ar (ou não reconhece esta sessão), então não dá para confirmar a carta no Oráculo Harrow. Toda mensagem ao Slack em nome do dono precisa antes de uma carta aceita, e o que não se confirma não sai. Não tente outro caminho de envio. Diga ao dono que a mensagem está esperando o Donel voltar; quando ele voltar, crie a carta com carta_slack e espere a decisão.';
-
-/**
- * The `sh` lines that let a call by one of the agents' own bots (`slackAgentBots`) through the offline guard: their
- * posts need no letter. They read ONLY the top-level `tool_name` of the hook payload, with a real JSON parser
- * (`node`, else `python3`): a text match over the payload would also find a `"tool_name"` planted inside the
- * call's input. With no parser on the machine (or a payload it cannot read) nothing passes here: the guard stays
- * closed. `[]` = no bot listed (the default).
- */
-export function agentBotOfflineLines(servers: readonly string[]): string[] {
-  const names = servers.filter(isAgentBotServerName);
-  if (names.length === 0) return [];
-  // Plain names ([A-Za-z0-9_-]): safe inside the regex and inside the single-quoted `sh` strings.
-  const re = `^mcp__(${names.join('|')})__`;
-  const node = `let s="";process.stdin.on("data",(d)=>{s+=d}).on("end",()=>{try{const v=JSON.parse(s);if(v&&typeof v==="object"&&!Array.isArray(v)&&typeof v.tool_name==="string"&&/${re}/i.test(v.tool_name))process.stdout.write("bot")}catch(e){}})`;
-  const python = [
-    'import sys, json, re',
-    'try:',
-    '    v = json.loads(sys.stdin.read())',
-    'except Exception:',
-    '    sys.exit(0)',
-    't = v.get("tool_name") if isinstance(v, dict) else None',
-    `if isinstance(t, str) and re.match(r"${re}", t, re.I):`,
-    '    sys.stdout.write("bot")',
-  ].join('\n');
-  return [
-    '# O bot do próprio agente não fala em nome do dono: passa sem carta. Só o tool_name do topo do JSON decide;',
-    '# sem node nem python3 para ler o JSON, nada passa por aqui (a trava fica fechada).',
-    "bot=''",
-    'if command -v node >/dev/null 2>&1; then',
-    `  bot=$(printf '%s' "$payload" | node -e '${node}' 2>/dev/null)`,
-    'elif command -v python3 >/dev/null 2>&1; then',
-    `  bot=$(printf '%s' "$payload" | python3 -I -c '${python}' 2>/dev/null)`,
-    'fi',
-    'if [ "$bot" = bot ]; then',
-    '  exit 0',
-    'fi',
-  ];
-}
-
-/** Pure — the POSIX `sh` script of the offline guard (stdin: the hook payload; stdout: a deny, or nothing). */
-export function buildSlackOfflineGuardScript(input: { readonly port: number; readonly tokenHeaderPath: string; readonly agentBotServers?: readonly string[] }): string {
-  const deny = JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: SLACK_OFFLINE_REFUSAL } });
-  return [
-    '#!/bin/sh',
-    '# Donel Dev — Slack só com carta: com o app fora do ar, envio ao Slack é recusado (falha fechada).',
-    // Read by the Theo West MCP (VPS): only an app that checks a letter with a file offers the file upload.
-    `# ${SLACK_GUARD_FILE_LETTER_MARK}`,
-    'payload=$(cat)',
-    `if curl -s -f --noproxy 127.0.0.1 --connect-timeout 2 --max-time 4 -o /dev/null -X POST ${tokenHeaderArg(input.tokenHeaderPath)} ${bridgeUrl(input.port, 'Ping')} 2>/dev/null; then`,
-    '  exit 0',
-    'fi',
-    ...agentBotOfflineLines(input.agentBotServers ?? AGENT_BOT_SERVERS),
-    `if printf '%s' "$payload" | grep -Eqi '${SLACK_OFFLINE_PATTERN}'; then`,
-    "  cat <<'DONEL_DENY'",
-    deny,
-    'DONEL_DENY',
-    'fi',
-    'exit 0',
-    '',
-  ].join('\n');
+/** Pure — the content of a remote session's `slack-guard.sh`: the mark, and nothing that refuses. */
+export function buildSlackMarkFile(): string {
+  return ['#!/bin/sh', '# Donel Dev — nada é recusado aqui: o arquivo existe só pela marca abaixo.', `# ${SLACK_GUARD_FILE_LETTER_MARK}`, 'cat >/dev/null', 'exit 0', ''].join('\n');
 }
 
 // --- Ponte da statusline ------------------------------------------------------
