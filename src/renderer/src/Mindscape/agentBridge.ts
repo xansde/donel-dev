@@ -37,7 +37,7 @@ import {
 import type { MindscapeBoardResponse } from '../../../shared/mindscape/channels';
 import { LEADER_OF_ALL, isLeaderOfAllTab, knownBoards, resolveBoard, type KnownBoard } from '../../../shared/mindscape/leader';
 import { BOARD_LEADER, LEADER_OF_ALL_FROM, boardLeaders, canFaxineiroClose, canReach, canReachLeader, findPlace, isBoardLeader, isBoardOrchestrator, MY_OPENER, openersOf, whoHears } from '../../../shared/mindscape/reach';
-import { FAXINEIRO_OPENER, PC_MACHINE_ID, type FaxineiroLogEntry, type SessionView } from '../../../shared/faxineiro/triggers';
+import { FAXINEIRO_OPENER, PC_MACHINE_ID, type FaxineiroLogEntry, type OpeningRoom, type SessionView } from '../../../shared/faxineiro/triggers';
 import type { FaxineiroWakeOrder } from '../../../shared/faxineiro/ipc';
 import type { LedgerPassedOn, LedgerPassOnRequest, LedgerTurnRecord, LedgerTurnRecorded } from '../../../shared/ledger/channels';
 import { failureReasonText } from '../../../shared/attention/rule';
@@ -55,6 +55,8 @@ import type { SendFrom } from '../chat/sendDriver';
 const CALLER_WAIT_MS = 20_000;
 const CALLER_POLL_MS = 500;
 const START_GRACE_MS = 90_000;
+/** t-d1f072fd — a session opened this long before a memory read still counts against that read's room: it had not grown yet. */
+const LAUNCH_SETTLE_MS = 60_000;
 /** `sessao_enviar` answers once the message went in, was queued, or failed; past this it says "ainda não entrou". */
 const DELIVERY_WAIT_MS = 40_000;
 /**
@@ -274,6 +276,10 @@ export class AgentBridge {
   private urgentSeq = 0;
   /** t-b3b26e60 — machines where a new session waits for room (`pc` or a remote id → why), from the minute round. */
   private fullMachines = new Map<string, readonly string[]>();
+  /** t-d1f072fd — new sessions each machine's last read has room for (`pc` or a remote id), from the minute round. */
+  private openingRoom = new Map<string, OpeningRoom>();
+  /** t-d1f072fd — when this bridge opened a session on each machine (`pc` or a remote id), to count against the room. */
+  private readonly launchedOn = new Map<string, number[]>();
   /** t-b3b26e60 — the `sessao_abrir` waiting for room, oldest first. In memory: a restart leaves them "não começou". */
   private openQueue: QueuedOpen[] = [];
   /** t-b3b26e60 — what each tab opened by `sessao_abrir` was asked: a tab that never started can go back to the queue. */
@@ -411,9 +417,28 @@ export class AgentBridge {
 
   // ---- Faxineiro com gatilhos (t-b3b26e60) ----------------------------------------------------------------------
 
-  /** The full machines of the last minute round (`pc` or a remote id → why). */
-  setFullMachines(full: Readonly<Record<string, readonly string[]>>): void {
+  /** The full machines of the last minute round (`pc` or a remote id → why), and the room each last read left. */
+  setFullMachines(full: Readonly<Record<string, readonly string[]>>, room: Readonly<Record<string, OpeningRoom>> = {}): void {
     this.fullMachines = new Map(Object.entries(full));
+    this.openingRoom = new Map(Object.entries(room));
+  }
+
+  /**
+   * t-d1f072fd — why a new session waits on this machine (`pc` or a remote id), or `undefined` when it has room: full by
+   * the last round, or already given, since its last read, as many sessions as that read had room for. A session that
+   * opened up to `LAUNCH_SETTLE_MS` before the read still counts: it had not grown to its RAM yet.
+   */
+  private waitReasons(machine: string): readonly string[] | undefined {
+    const full = this.fullMachines.get(machine);
+    if (full) return full;
+    const room = this.openingRoom.get(machine);
+    if (!room) return undefined;
+    const since = room.checkedAt - LAUNCH_SETTLE_MS;
+    const recent = (this.launchedOn.get(machine) ?? []).filter((at) => at >= since);
+    this.launchedOn.set(machine, recent);
+    if (recent.length < room.sessions) return undefined;
+    const where = machine === PC_MACHINE_ID ? 'este computador' : this.ports.remoteLabel(machine);
+    return [`${where}: ${recent.length} aberturas desde a última leitura de memória, e ela tinha vaga para ${room.sessions}`];
   }
 
   /**
@@ -432,7 +457,7 @@ export class AgentBridge {
         out.push({ at, kind: 'saiu-da-fila', projectPath: entry.projectPath, placeId: entry.placeId, summary: `${entry.name}: o lugar foi apagado ou aberto à mão` });
         continue;
       }
-      if (this.fullMachines.has(machine) || used.has(machine)) {
+      if (this.waitReasons(machine) || used.has(machine)) {
         keep.push(entry);
         continue;
       }
@@ -462,6 +487,8 @@ export class AgentBridge {
       firstMessage: entry.firstMessage,
     };
     const tabId = this.ports.openSession(request);
+    const machine = entry.remoteId ?? PC_MACHINE_ID;
+    this.launchedOn.set(machine, [...(this.launchedOn.get(machine) ?? []), Date.now()]);
     this.openedBy.set(tabId, entry.openedBy);
     this.openedAt.set(tabId, Date.now());
     this.launched.set(tabId, entry);
@@ -1341,9 +1368,9 @@ export class AgentBridge {
         }
         // t-b3b26e60 — a full machine: another remote place when the role allows it ("lugar: qualquer"), else the queue.
         let movedFrom: string | undefined;
-        const full = this.fullMachines.get(remoteId ?? PC_MACHINE_ID);
+        const full = this.waitReasons(remoteId ?? PC_MACHINE_ID);
         if (full && role.anyPlace) {
-          const other = this.ports.remotes().find((remote) => remote.id !== remoteId && !this.fullMachines.has(remote.id));
+          const other = this.ports.remotes().find((remote) => remote.id !== remoteId && !this.waitReasons(remote.id));
           if (other) {
             movedFrom = remoteId ? this.ports.remoteLabel(remoteId) : 'este computador';
             remoteId = other.id;
