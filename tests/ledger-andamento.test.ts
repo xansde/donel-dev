@@ -73,6 +73,8 @@ interface Team {
   readonly closed: Set<string>;
   /** Remote tabs whose ssh dropped ("sem ligação"). */
   readonly linkLost: Set<string>;
+  /** Tabs that sent no hook since the app opened (`unconfirmed`). */
+  readonly mute: Set<string>;
   /** The next answers of the destination's CLI (default: it took the line). */
   readonly outcomes: DeliveryOutcome[];
   mode: TurnNotices;
@@ -115,8 +117,9 @@ async function team(options: { readonly liderDoUnico?: boolean; readonly segundo
   const records: Promise<unknown>[] = [];
   const closed = new Set<string>();
   const linkLost = new Set<string>();
+  const mute = new Set<string>();
   const outcomes: DeliveryOutcome[] = [];
-  const state: Team = { bridge: undefined as unknown as AgentBridge, sent, service, file, states, failures, records, closed, linkLost, outcomes, mode: 'ledger' };
+  const state: Team = { bridge: undefined as unknown as AgentBridge, sent, service, file, states, failures, records, closed, linkLost, mute, outcomes, mode: 'ledger' };
   const ports: AgentBridgePorts = {
     loaded: true,
     doc: () => doc,
@@ -135,7 +138,7 @@ async function team(options: { readonly liderDoUnico?: boolean; readonly segundo
     },
     linkLost: (tabId) => linkLost.has(tabId),
     permissionOnScreen: () => false,
-    unconfirmed: () => false,
+    unconfirmed: (tabId) => mute.has(tabId),
     startTrouble: () => null,
     askOwner: async () => true,
     remoteLabel: (id) => id,
@@ -235,8 +238,8 @@ describe('andamento no ledger, não no chat do Líder', () => {
     await settle(t);
     expect(t.sent[1]).toEqual({ tabId: 'tab-unico', text: '◆ Líder Líder (place:lider, quadro atlas) entregou a tarefa t-9 para aceite.' });
 
-    // Dono, 09/11: with the board's Líder closed, nothing of the chairs reaches the Líder único: a stuck Dev, a turn
-    // with no task, a round of the Faxineiro. The stuck Dev waits for the Líder of its board (and is in the ledger).
+    // Dono, 09/11: with the board's Líder closed, the Líder único still hears the board's deliveries and locks (its job
+    // is "receber término de tasks completas"), never an end of turn nor a round of the Faxineiro.
     t.sent.splice(0);
     t.closed.add('tab-lider');
     t.states['tab-dev1'] = 'waiting';
@@ -244,15 +247,31 @@ describe('andamento no ledger, não no chat do Líder', () => {
     t.bridge.attention('tab-dev1');
     t.bridge.turnEnded('conv-rev', 'Revisei o #330.');
     t.bridge.turnEnded('conv-fax', 'Ronda: 2 sessões paradas, nada a fechar.');
-    await handleAs(t, 'pty-tab-dev2', { tool: 'aviso_imediato', texto: 'está travada (tarefa t-2): login.' });
+    await handleAs(t, 'pty-tab-dev2', { tool: 'aviso_imediato', texto: 'entregou a tarefa t-2 para aceite.' });
     await settle(t);
-    expect(t.sent).toEqual([]);
+    expect(t.sent).toEqual([
+      { tabId: 'tab-unico', text: expect.stringMatching(/^◆ Dev Dev 1 \(place:dev1, quadro atlas\) está travada/) },
+      { tabId: 'tab-unico', text: '◆ Dev Dev 2 (place:dev2, quadro atlas) entregou a tarefa t-2 para aceite.' },
+    ]);
 
+    // The end of turn waited for the Líder of the board; the round of the Faxineiro went nowhere.
     t.closed.delete('tab-lider');
     t.bridge.flushUrgent();
     await settle(t);
-    expect(t.sent.map((each) => each.tabId)).toEqual(['tab-lider', 'tab-lider', 'tab-lider']);
-    expect(t.sent.map((each) => each.text).join('\n')).not.toMatch(/Ronda/);
+    expect(t.sent.slice(2)).toEqual([{ tabId: 'tab-lider', text: '◆ Revisor Revisor (place:rev) terminou: Revisei o #330.' }]);
+  });
+
+  it('Líder do quadro aberto mas mudo desde que o app abriu: a trava da cadeira vai ao Líder único, o fim de turno espera por ele', async () => {
+    const t = await team();
+    t.mute.add('tab-lider');
+    t.states['tab-dev1'] = 'permission';
+    t.bridge.attention('tab-dev1');
+    t.bridge.turnEnded('conv-rev', 'Revisei o #330.');
+    await settle(t);
+    expect(t.sent).toEqual([
+      { tabId: 'tab-unico', text: expect.stringMatching(/^◆ Dev Dev 1 \(place:dev1, quadro atlas\) precisa do dono/) },
+      { tabId: 'tab-lider', text: '◆ Revisor Revisor (place:rev) terminou: Revisei o #330.' },
+    ]);
   });
 
   it('quadro com o Líder que o Líder único abriu: as cadeiras falam com ele, nunca com o Líder único', async () => {
