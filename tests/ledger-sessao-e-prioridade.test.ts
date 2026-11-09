@@ -174,6 +174,18 @@ describe('prioridade do dono, lida pelo Líder do quadro', () => {
     expect(panel().slice(0, second.tasks.length)).toEqual(second.tasks.map((task) => task.title));
     expect(await queue()).toEqual(panel());
     expect(movedFrontOrder(jobuProgress(s.load().doc, now), second.name, 'subir')).toBeNull();
+
+    // A new ask nobody ordered yet sits where the panel shows it (the end of its front) in the Líder's queue too.
+    const top = jobuProgress(s.load().doc, now).fronts[0]!.name;
+    await ask('NOVO', top);
+    expect(panel()).toContain('NOVO');
+    expect(await queue()).toEqual(panel());
+
+    // An ordered ask moved to the other front: the queue still follows the panel.
+    const moved = jobuProgress(s.load().doc, now).fronts[0]!.tasks[0]!;
+    const other = jobuProgress(s.load().doc, now).fronts[1]!.name;
+    expect((await runLedgerTool(s, at('place:lider', 'lider'), call('tarefa_frente', { id: moved.id, frente: other }))).ok).toBe(true);
+    expect(await queue()).toEqual(panel());
   });
 });
 
