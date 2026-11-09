@@ -33,6 +33,12 @@ export type ProofInput =
   | { readonly tipo: 'texto'; readonly texto: string }
   | { readonly tipo: 'link'; readonly url: string };
 
+/** One item of `tarefa_lote`: the same `tarefa_transferir` or `tarefa_cancelar`, with its own reason. */
+export type LedgerBatchItem =
+  | { readonly id: string; readonly acao: 'transferir'; readonly para: string; readonly motivo: string }
+  | { readonly id: string; readonly acao: 'cancelar'; readonly motivo: string };
+export const MAX_BATCH_ITEMS = 50;
+
 export type LedgerToolCall =
   | {
       readonly tool: 'tarefa_criar';
@@ -61,6 +67,7 @@ export type LedgerToolCall =
   | { readonly tool: 'tarefa_ver'; readonly id: string }
   | { readonly tool: 'tarefa_transferir'; readonly id: string; readonly para: string; readonly motivo: string }
   | { readonly tool: 'tarefa_cancelar'; readonly id: string; readonly motivo: string }
+  | { readonly tool: 'tarefa_lote'; readonly itens: readonly LedgerBatchItem[] }
   | {
       readonly tool: 'carta_slack';
       readonly destino: string;
@@ -260,6 +267,35 @@ export const LEDGER_TOOLS = [
       type: 'object',
       properties: { id: ID, motivo: { type: 'string', description: 'Por que acaba (ex.: substituída pela carta nova).' } },
       required: ['id', 'motivo'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'tarefa_lote',
+    title: 'Dar destino a várias tarefas num gesto',
+    description:
+      `Passa adiante ou cancela até ${MAX_BATCH_ITEMS} tarefas numa chamada, cada uma com o seu motivo: a faxina de órfãs, de entregues paradas e de abertas velhas. Cada item segue as mesmas regras de tarefa_transferir e tarefa_cancelar (quem pode, quadro, "seu" e "lider"). Um item recusado não para os outros, e a resposta diz o resultado de cada um. Nada se apaga: o histórico fica.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        itens: {
+          type: 'array',
+          minItems: 1,
+          maxItems: MAX_BATCH_ITEMS,
+          items: {
+            type: 'object',
+            properties: {
+              id: ID,
+              acao: { type: 'string', enum: ['transferir', 'cancelar'] },
+              para: { type: 'string', description: 'Só em "transferir": o lugar que fica com a tarefa, "lider" ou "seu".' },
+              motivo: { type: 'string', description: 'Por que esta tarefa muda de dono ou acaba.' },
+            },
+            required: ['id', 'acao', 'motivo'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['itens'],
       additionalProperties: false,
     },
   },
@@ -558,6 +594,20 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       if (typeof motivo === 'object' && isTooLong(args.motivo, MAX_REQUEST_CHARS)) return fail(motivo.error);
       if (typeof motivo === 'object' || motivo === undefined) return fail(`"motivo" é obrigatório para ${name === 'tarefa_cancelar' ? 'cancelar' : 'rejeitar'}.`);
       return { ok: true, call: { tool: name, id: id.trim(), motivo } };
+    }
+    case 'tarefa_lote': {
+      if (!Array.isArray(args.itens) || args.itens.length === 0) return fail('"itens" é obrigatório: de 1 a 50 tarefas.');
+      if (args.itens.length > MAX_BATCH_ITEMS) return fail(`No máximo ${MAX_BATCH_ITEMS} itens por chamada (vieram ${args.itens.length}).`);
+      const itens: LedgerBatchItem[] = [];
+      for (const [index, raw] of args.itens.entries()) {
+        const item = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
+        const one = item.acao === 'transferir' ? parseLedgerToolCall('tarefa_transferir', { id: item.id, para: item.para, motivo: item.motivo }) : item.acao === 'cancelar' ? parseLedgerToolCall('tarefa_cancelar', { id: item.id, motivo: item.motivo }) : null;
+        if (!one) return fail(`Item ${index + 1}: "acao" é "transferir" ou "cancelar".`);
+        if (!one.ok) return fail(`Item ${index + 1}: ${one.reason}`);
+        if (one.call.tool === 'tarefa_transferir') itens.push({ id: one.call.id, acao: 'transferir', para: one.call.para, motivo: one.call.motivo });
+        else if (one.call.tool === 'tarefa_cancelar') itens.push({ id: one.call.id, acao: 'cancelar', motivo: one.call.motivo });
+      }
+      return { ok: true, call: { tool: 'tarefa_lote', itens } };
     }
     case 'tarefa_transferir': {
       if (typeof id === 'object' || id === undefined) return fail('"id" é obrigatório.');
