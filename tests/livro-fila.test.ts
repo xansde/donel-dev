@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { LedgerActor } from '../src/shared/ledger/contract';
+import { emptyLedgerDoc, type LedgerActor } from '../src/shared/ledger/contract';
 import { filaDoQuadro } from '../src/shared/livro/fila';
 import { appendEntry, type EntryInput, type JournalLine } from '../src/shared/livro/formato';
+import { importV4 } from '../src/shared/livro/importar-v4';
 import { projectJournal } from '../src/shared/livro/projecao';
 
 // F9 (docs/planos/ledger-bom.md) — priority, parent and board limit as entries of the journal. What would break
@@ -52,5 +53,20 @@ describe('prioridade, pai e limite no diário (F9)', () => {
     const limits = projectJournal(journal([input('limite-do-quadro', 'P', { limite: 4 }), input('limite-do-quadro', 'P', { limite: 2 }), input('limite-do-quadro', 'P', { limite: 3, extra: 1 })]));
     expect(limits.fila.limites.get('P')).toBe(2);
     expect(limits.steps.at(-1)).toMatchObject({ status: 'recusado', reason: expect.stringMatching(/campo desconhecido/) });
+  });
+
+  it('a queue entry ends the import phase: an imported v4 event after it is refused', () => {
+    const v4 = {
+      ...emptyLedgerDoc(),
+      startedAt: T0,
+      tasks: {
+        't-v4': { id: 't-v4', projectPath: 'P', request: 'velha', doneWhen: 'x', due: '2026-11-09', ownerPlaceId: 'place:a', risk: 'baixo' as const, state: 'em-execucao' as const, createdAt: T0, events: [{ kind: 'criada' as const, at: T0, by: dono }, { kind: 'assumida' as const, at: T0 + 1, by: { kind: 'lugar' as const, placeId: 'place:a' } }] },
+      },
+    };
+    const [header, taken] = importV4(v4);
+    const projected = projectJournal(journal([header!, input('priorizada', 't-v4', { quadro: 'P', posicao: 1 }), taken!]));
+    expect(projected.steps.map((step) => step.status)).toEqual(['aplicado', 'aplicado', 'recusado']);
+    expect(projected.steps[2]?.reason).toMatch(/só vale no começo do diário/);
+    expect(projected.doc.tasks['t-v4']?.state).toBe('aberta');
   });
 });
