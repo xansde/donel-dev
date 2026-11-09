@@ -15,7 +15,7 @@ import { askedByRefusal, parseLedgerToolCall, type LedgerToolCall } from '../src
 import { slackGuard } from '../src/shared/ledger/slack-guard';
 import { deliveryNote } from '../src/shared/ledger/labels';
 import { createFaxinaRunner } from '../src/main/rotinas/oraculo-faxina';
-import { ORPHAN_AGE_MS, type PrRef } from '../src/shared/ledger/faxina';
+import { oldOrphans, ORPHAN_AGE_MS, type PrRef } from '../src/shared/ledger/faxina';
 import { addLink, addPlace, emptyMindscapeDoc, setPlaceConversation } from '../src/shared/mindscape/model';
 
 // Ledger com prova (item 19) — persisted data a channel could erase, and the two rules that live in code:
@@ -780,5 +780,21 @@ describe('frente da tarefa (07/11)', () => {
     // Who asked is a person here too, and the front is required.
     expect(parseLedgerToolCall('tarefa_frente', { id, frente: 'Ledger', quemPediu: 'Dev' }).ok).toBe(false);
     expect(parseLedgerToolCall('tarefa_frente', { id }).ok).toBe(false);
+  });
+});
+
+// Revisor do #370: a faxina noturna dava às órfãs uma segunda regra de destino (acima vivo, senão o Líder único) e
+// pulava o Líder do quadro. Agora é a mesma regra dos avisos, `whoHears`.
+describe('faxina noturna: órfã velha segue as setas do quadro', () => {
+  it('sem ninguém vivo acima, a órfã vai ao Líder do quadro vivo, não ao Líder único', async () => {
+    const { service } = setup();
+    const id = (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'velha', criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco: 'alto' }))).text) as { id: string }).id;
+    let boards = addPlace(emptyMindscapeDoc(), 'C:/p', { id: 'place:lider', roleId: 'lider' });
+    boards = setPlaceConversation(boards, 'C:/p', 'place:lider', 'conv-lider');
+    boards = setPlaceConversation(addPlace(boards, 'C:/p', { id: 'place:dev', roleId: 'dev', by: 'session' }), 'C:/p', 'place:dev', 'conv-dev');
+    const doc = service().load().doc;
+    const later = Date.now() + ORPHAN_AGE_MS * 10;
+    expect(oldOrphans(doc, boards, new Set(['conv-lider']), later)).toEqual([expect.objectContaining({ task: expect.objectContaining({ id }), to: 'place:lider' })]);
+    expect(oldOrphans(doc, boards, new Set(), later)).toEqual([expect.objectContaining({ to: LEADER_OF_ALL })]);
   });
 });
