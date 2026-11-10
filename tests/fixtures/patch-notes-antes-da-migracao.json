@@ -145,7 +145,7 @@
       },
       {
         "title": "Pedir ao Líder pelo celular, escrevendo ou falando",
-        "text": "O Oráculo no celular ganhou o botão \"Pedir\", no topo. Escreva ou grave o que você quer: o áudio é transcrito no seu computador, pelo OpenWhispr, e você confere e corrige o texto antes de enviar. O pedido vai direto para o chat do Líder. Se ele estiver fechado, o computador guarda o pedido e entrega quando o Líder abrir, mesmo que o Donel reinicie no meio. Em \"Seus pedidos\" você vê cada um: na fila, entregue, ou a tarefa que ele virou. Para gravar direto na página, use o endereço https do Oráculo."
+        "text": "O Oráculo no celular ganhou o botão \"Pedir\", no topo. Escreva ou grave o que você quer: o áudio é transcrito no seu computador, pelo OpenWhispr, e você confere e corrige o texto antes de enviar. O pedido vai direto para o chat do Líder. Se ele estiver fechado, o computador guarda o pedido e entrega quando o Líder abrir, mesmo que o Donel reinicie no meio. Em \"Seus pedidos\" você vê cada um: na fila, entregue, ou a tarefa que ele virou. Para gravar direto na página, use o endereço https do Oráculo; no http, o botão abre o gravador do celular."
       },
       {
         "title": "O Oráculo no lugar da conversa do Líder",
