@@ -27,7 +27,8 @@ export interface FaxineiroConfig {
   /** RAM free under this percent → trigger. */
   readonly ramFreeMinPct: number;
   /**
-   * Swap paging (pages in or out per second, the `si`/`so` of `vmstat`) over this → trigger. Swap in use alone is not
+   * Swap paging (pages out per second, the `so` of `vmstat`; pages in, `si`, only with RAM available under
+   * `swapRamAvailableMinMb`) over this → trigger. Swap in use alone is not
    * one (t-e3e8698a, 08/11): Linux leaves pages parked in swap on a machine with RAM to spare, and a cleanup barely moves
    * them (swap at 18% with si/so 0 and 3,6 GB free woke the Faxineiro every read; the round freed 35 MB).
    */
@@ -289,7 +290,11 @@ export function machineReasons(machine: MachineReading, streak: number, config: 
   const swapIn = machine.swapInPerSec ?? 0;
   const swapOut = machine.swapOutPerSec ?? 0;
   const swapUsed = machine.swapUsedRatio !== null ? ` (swap em uso ${pct(machine.swapUsedRatio)})` : '';
-  if (swapIn > config.swapActiveMinPagesPerSec || swapOut > config.swapActiveMinPagesPerSec)
+  // t-c2e8006a (10/11): pages coming BACK from swap on a machine with RAM to spare are parked pages being touched again,
+  // not pressure (the Homologações read si 4 to 24/s with 23 GB available and every opening waited). Pages going OUT
+  // are: the kernel is evicting. Paging in counts only with RAM available under the swap floor (or unknown).
+  const lowRam = machine.ramAvailableBytes === null || machine.ramAvailableBytes < config.swapRamAvailableMinMb * 1024 * 1024;
+  if ((swapIn > config.swapActiveMinPagesPerSec && lowRam) || swapOut > config.swapActiveMinPagesPerSec)
     reasons.push(`${machine.label}: troca ativa com o swap, ${swapIn} páginas/s entrando e ${swapOut} saindo${swapUsed} (limite ${config.swapActiveMinPagesPerSec})`);
   else if (machine.swapUsedRatio !== null && machine.swapUsedRatio > 0 && machine.ramAvailableBytes !== null && machine.ramAvailableBytes < config.swapRamAvailableMinMb * 1024 * 1024)
     reasons.push(`${machine.label}: swap em uso ${pct(machine.swapUsedRatio)} com só ${formatBytes(machine.ramAvailableBytes)} de RAM disponível (limite ${config.swapRamAvailableMinMb} MB)`);

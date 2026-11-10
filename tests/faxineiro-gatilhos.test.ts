@@ -83,8 +83,15 @@ describe('evaluateFaxineiro — triggers', () => {
     expect(round.fullMachines).toEqual({});
   });
 
-  it('swap paging in or out wakes the Faxineiro', () => {
-    for (const machine of [vps({ swapUsedRatio: 0.18, swapInPerSec: 3 }), vps({ swapUsedRatio: 0.18, swapOutPerSec: 3 })]) {
+  it('pages coming back from swap with RAM to spare are not pressure, nor a full machine: the Homologações on 10/11, 23 GB available, swap 7%, si 4 to 24/s', () => {
+    const trickle = vps({ swapUsedRatio: 0.07, swapInPerSec: 24, ramAvailableBytes: 23.7 * GB, ramFreeRatio: 0.74 });
+    const round = evaluateFaxineiro(input({ machines: [trickle] }), stateToday(), NOW);
+    expect(round.wakes).toEqual([]);
+    expect(round.fullMachines).toEqual({});
+  });
+
+  it('swap paging out, or in with little RAM available, wakes the Faxineiro', () => {
+    for (const machine of [vps({ swapUsedRatio: 0.18, swapInPerSec: 3, ramAvailableBytes: 0.8 * GB }), vps({ swapUsedRatio: 0.18, swapOutPerSec: 3 })]) {
       const round = evaluateFaxineiro(input({ machines: [machine] }), stateToday(), NOW);
       expect(round.wakes).toHaveLength(1);
       expect(round.wakes[0]?.reasons.join(' ')).toContain('troca ativa');

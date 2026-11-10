@@ -1,0 +1,4 @@
+{
+  "title": "Swap parado não barra mais abertura de sessão",
+  "text": "Uma máquina com RAM de sobra e um pouco de swap em uso deixava os pedidos de abrir sessão esperando vaga, porque páginas antigas voltando do swap contavam como máquina cheia. Agora só conta quando a máquina manda páginas para o swap, ou quando elas voltam com pouca RAM disponível. Vale também para o gatilho do Faxineiro."
+}
