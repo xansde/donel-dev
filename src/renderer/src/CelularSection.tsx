@@ -162,7 +162,7 @@ export function CelularSection(): React.JSX.Element {
             <p className={styles.muted}>
               Para o celular avisar quando uma carta esperar você, o app precisa do endereço https da Tailscale. Uma vez só: no painel da
               Tailscale, em DNS, ligue MagicDNS e HTTPS Certificates; depois rode no PowerShell deste PC{' '}
-              <span className={styles.url}>tailscale serve --bg --https=443 {state.url ?? 'http://<IP da Tailscale>:47815'}</span> e pareie de
+              <span className={styles.url}>tailscale serve --bg --https=443 http://127.0.0.1:47815</span> e pareie de
               novo. No celular, toque no sino (no iPhone, primeiro adicione à Tela de Início).
             </p>
           </div>

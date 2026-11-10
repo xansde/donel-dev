@@ -282,7 +282,27 @@ export interface MobileServer {
   close(): Promise<void>;
 }
 
-/** Sobe o servidor em `host:port`. Lança se `host` não for um endereço Tailscale. */
+/** O `tailscale serve` deste PC: no Windows ele só alcança o 127.0.0.1, nunca o IP Tailscale do próprio PC. */
+export const SERVE_PROXY_HOST = '127.0.0.1';
+
+/**
+ * Quem pode falar com o servidor: um aparelho da tailnet direto, ou o `tailscale serve` (no 127.0.0.1)
+ * repassando um aparelho da tailnet. O serve carimba quem é (`Tailscale-User-Login`) e de onde veio
+ * (`X-Forwarded-For`). Um programa deste PC poderia forjar os dois, mas ainda esbarra no token do pareamento,
+ * como qualquer aparelho da tailnet.
+ */
+export function fromTailnet(remoteAddress: string | undefined, headers: Readonly<Record<string, string | string[] | undefined>>): boolean {
+  if (isTailscaleAddress(remoteAddress)) return true;
+  if (remoteAddress !== '127.0.0.1' && remoteAddress !== '::ffff:127.0.0.1') return false;
+  const forwarded = headers['x-forwarded-for'];
+  const login = headers['tailscale-user-login'];
+  return typeof forwarded === 'string' && isTailscaleAddress(forwarded.split(',')[0]) && typeof login === 'string' && login !== '';
+}
+
+/**
+ * Sobe o servidor em `host:port` e, na mesma porta, em 127.0.0.1 para o `tailscale serve` (o endereço https).
+ * Lança se `host` não for um endereço Tailscale.
+ */
 export function startMobileServer(options: {
   readonly host: string;
   readonly port: number;
@@ -292,7 +312,7 @@ export function startMobileServer(options: {
   if (!isTailscaleAddress(host)) return Promise.reject(new Error(`recusado: ${host} não é um endereço da Tailscale`));
 
   const onRequest = (req: IncomingMessage, res: ServerResponse): void => {
-    if (!isTailscaleAddress(req.socket.remoteAddress)) {
+    if (!fromTailnet(req.socket.remoteAddress, req.headers)) {
       res.writeHead(403).end();
       req.socket.destroy();
       return;
@@ -346,20 +366,38 @@ export function startMobileServer(options: {
     });
   };
 
-  return new Promise((resolvePromise, reject) => {
-    const server: Server = createServer(onRequest);
-    server.once('error', reject);
-    server.listen(port, host, () => {
-      server.off('error', reject);
-      server.on('error', (error) => console.error('[donel-dev] celular: erro no servidor:', error));
-      resolvePromise({
-        url: `http://${host.includes(':') ? `[${host}]` : host}:${port}`,
-        close: () =>
-          new Promise<void>((done) => {
-            server.closeAllConnections?.();
-            server.close(() => done());
-          }),
+  const listen = (address: string): Promise<Server> =>
+    new Promise((resolveListen, reject) => {
+      const server: Server = createServer(onRequest);
+      server.once('error', reject);
+      server.listen(port, address, () => {
+        server.off('error', reject);
+        server.on('error', (error) => console.error('[donel-dev] celular: erro no servidor:', error));
+        resolveListen(server);
       });
     });
+  const closeServer = (server: Server): Promise<void> =>
+    new Promise<void>((done) => {
+      server.closeAllConnections?.();
+      server.close(() => done());
+    });
+
+  return listen(host).then(async (server) => {
+    const actualPort = (server.address() as { port: number }).port;
+    // Sem o 127.0.0.1 (porta ocupada), o celular ainda alcança o PC pelo http; só o https fica sem caminho.
+    const proxy = await new Promise<Server | null>((done) => {
+      const extra: Server = createServer(onRequest);
+      extra.once('error', (error) => {
+        console.error('[donel-dev] celular: o 127.0.0.1 do tailscale serve não subiu:', error);
+        done(null);
+      });
+      extra.listen(actualPort, SERVE_PROXY_HOST, () => done(extra));
+    });
+    return {
+      url: `http://${host.includes(':') ? `[${host}]` : host}:${actualPort}`,
+      close: async () => {
+        await Promise.all([closeServer(server), proxy ? closeServer(proxy) : Promise.resolve()]);
+      },
+    };
   });
 }
