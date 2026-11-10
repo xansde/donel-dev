@@ -56,9 +56,11 @@ máquina (`virar-*.sh` / `voltar-*.sh`), e só vale para sessões novas.
 ## Onde o proxy roda e para onde cada máquina aponta (10/11, pedido do dono)
 
 "Tem que ser versátil a ideia de escolher onde fica o proxy." O cadastro não supõe que o gateway mora no PC: cada
-proxy é só um endereço, e cada máquina aponta para qualquer proxy cadastrado que tenha endereço e chave dela. Dá para
+proxy é só um endereço, e cada máquina aponta para qualquer proxy cadastrado que tenha endereço, chave dela e a permita
+(lista de máquinas vazia = todas). Dá para
 combinar à vontade, inclusive o PC apontando para um gateway que roda numa VPS (ex.: `http://vps-time-homologacoes:8327`).
-O que o app não faz é subir ou derrubar um gateway numa máquina; isso fica com a âncora do proxy (docs/ancora-proxy).
+O que o app não faz é subir ou derrubar um gateway numa máquina; isso fica com a âncora do proxy (PR #351,
+`docs/planos/ancora-proxy.md`).
 
 ## Fora
 
