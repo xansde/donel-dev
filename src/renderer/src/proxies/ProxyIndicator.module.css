@@ -1,0 +1,110 @@
+/* Proxy da vez — the panel reuses the health panel's vocabulary (HealthIndicator.module.css); only the layout of
+   the machine rows, the key rows and the editor lives here. Colors only from design-system tokens. */
+
+.alertMark {
+  font-weight: var(--weight-semibold);
+}
+
+.warnLine {
+  margin: 0;
+  color: var(--zone-warn);
+}
+
+.messages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+  padding: var(--space-1);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+}
+
+.machines,
+.proxies {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.machineRow {
+  display: grid;
+  grid-template-columns: minmax(140px, max-content) 1fr auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-half) 0;
+  border-bottom: var(--hairline);
+}
+
+.machineName {
+  --health-color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-half);
+}
+
+.machineCurrent {
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.machineSwitch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 260px;
+}
+
+.machineSwitch > :first-child {
+  flex: 1;
+}
+
+.found {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-half) 0;
+}
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-1);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+}
+
+.machineChecks {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-half);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.keys {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+}
+
+.keyRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1);
+}

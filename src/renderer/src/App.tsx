@@ -137,6 +137,7 @@ import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
 import { TerminalPane } from './TerminalPane';
 import { PatchNotes } from './patchnotes/PatchNotes';
 import { HealthIndicator } from './health/HealthIndicator';
+import { ProxyIndicator } from './proxies/ProxyIndicator';
 import { BrowserPanel, BrowserToggleButton } from './browser/BrowserPanel'; // navegador interno
 import { OracleCenter } from './OracleCenter';
 import { DEFAULT_LAYOUT_PREFS, showsOracle, toggleCenterView, type LayoutPrefs } from '../../shared/layoutPrefs';
@@ -3757,6 +3758,7 @@ export function App(): React.JSX.Element {
           onDismissError={() => setUpdateError(null)}
         />
         <PatchNotes />
+        <ProxyIndicator />
         <HealthIndicator />
       </div>
 
