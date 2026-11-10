@@ -13,6 +13,8 @@ import type {
   ChatAckLookupOutput,
   ChatAnswerInput,
   ChatAnswerOutput,
+  ChatOpenPermissionsInput,
+  ChatOpenPermissionsOutput,
   ChatAttachInput,
   ChatAttachOutput,
   ChatCatalogInput,
@@ -86,6 +88,7 @@ const HANDLED: readonly string[] = [
   CHAT_CHANNELS.sendFailed,
   CHAT_CHANNELS.boxCleared,
   CHAT_CHANNELS.answer,
+  CHAT_CHANNELS.openPermissions,
   CHAT_CHANNELS.focusState,
   CHAT_CHANNELS.saveImage,
   CHAT_CHANNELS.catalog,
@@ -186,6 +189,10 @@ export function registerChatIpcHandlers(deps: ChatIpcDeps): ChatIpcRegistration 
     }
     return hub.answer(input.ptyId, input.pendingId, input.answer);
   });
+
+  ipcMain.handle(CHAT_CHANNELS.openPermissions, (_e, input: ChatOpenPermissionsInput): ChatOpenPermissionsOutput =>
+    isString(input?.ptyId) ? hub.openPermissions(input.ptyId) : [],
+  );
 
   ipcMain.handle(CHAT_CHANNELS.focusState, (_e, input: ChatFocusStateInput): void => {
     if (input === null || typeof input !== 'object') return;

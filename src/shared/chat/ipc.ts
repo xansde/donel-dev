@@ -20,6 +20,8 @@ export const CHAT_CHANNELS = {
   loadOlder: 'chat:load-older',
   rowDetail: 'chat:row-detail',
   answer: 'chat:answer',
+  /** t-1293c818 (3) — the permission requests the app holds open for a tab, for a Líder to read and answer. */
+  openPermissions: 'chat:open-permissions',
   subagentOpen: 'chat:subagent-open',
   subagentClose: 'chat:subagent-close',
   catalog: 'chat:catalog',
@@ -166,6 +168,15 @@ export interface ChatAnswerInput {
 export type ChatAnswerOutput =
   | { readonly ok: true }
   | { readonly ok: false; readonly reason: 'not-open' | 'unknown' };
+
+export interface ChatOpenPermissionsInput { readonly ptyId: string }
+/** One held permission request: the id `chat:answer` takes, the tool and its input (oldest first). */
+export interface ChatOpenPermission {
+  readonly id: string;
+  readonly toolName: string;
+  readonly toolInput: Readonly<Record<string, unknown>>;
+}
+export type ChatOpenPermissionsOutput = readonly ChatOpenPermission[];
 
 export interface ChatSubagentOpenInput { readonly ptyId: string; readonly agentId: string }
 export type ChatSubagentOpenOutput = ChatSnapshot;

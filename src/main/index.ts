@@ -9,7 +9,7 @@ import { readUserDefaultPermissionMode, readUserStatusLine } from './cli-user-se
 import { createStatusLineStore } from './statusline-store';
 import { STATUS_LINE_CHANNELS, type StatusLineChangedPayload, type StatusLineSnapshot } from '../shared/statusLine';
 import { appMcpAllowArgs } from '../shared/commandBuilder';
-import { planLaunchPermission, type SpawnFacts } from '../shared/launchPermission';
+import { isBypassLaunch, planLaunchPermission, type SpawnFacts } from '../shared/launchPermission';
 import { spawnFactsOf } from '../shared/mindscape/reach';
 import { planRoleLaunch } from '../shared/roleLaunch';
 import type { DevModeBoardConfig } from '../shared/devMode';
@@ -609,7 +609,12 @@ function globalClaudeJsonPathFor(home: string): string {
 // T009 — semáforo de sessões (FR-010). `getRecentLines` reaproveita o ring
 // buffer que o PtyManager já mantém (plan.md ponto 8) como sinal B da
 // heurística de fallback (spike §"Fallback heurístico").
-const semaphoreManager = new SessionSemaphoreManager({ getRecentLines: (ptyId) => ptyManager.getPreview(ptyId) });
+/** 10/11 — tabs launched in bypass: their CLI opens no tool permission dialog, so the semaphore's text heuristic is off. */
+const bypassPtyIds = new Set<string>();
+const semaphoreManager = new SessionSemaphoreManager({
+  getRecentLines: (ptyId) => ptyManager.getPreview(ptyId),
+  permissionPromptsPossible: (ptyId) => !bypassPtyIds.has(ptyId),
+});
 /**
  * T014/T015 (014-chat, P4) — transporte dos hooks. Padrão: ponte HTTP com token por
  * aba e um `--settings` por sessão. `DONEL_HOOKS_TRANSPORT=legacy` volta ao caminho
@@ -1507,6 +1512,7 @@ function finishPtyExit(ptyId: string, info: PtyExitInfo, closedByOwner: boolean)
     semaphoreManager.onProcessExit(ptyId, exitCode);
     semaphoreManager.unregisterSession(ptyId);
   }
+  bypassPtyIds.delete(ptyId);
 
   // T412 (004) — baixa do watcher de transcript. AQUI e não no `SessionEnd`:
   // kill forçado não dispara o hook, e um watcher sobrevivente é handle
@@ -1878,6 +1884,7 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
 
   tabCwdByPty.set(ptyId, localCwd);
   activeSessionByPty.set(ptyId, correlationId);
+  if (isBypassLaunch(finalClaudeArgs)) bypassPtyIds.add(ptyId);
   if (hooksOn) {
     semaphoreManager.registerSession(ptyId, correlationId);
     petService?.onSessionRegistered(ptyId);
@@ -2209,6 +2216,7 @@ function registerPtyIpcHandlers(): void {
       }
 
       activeSessionByPty.set(ptyId, correlationId);
+      if (isBypassLaunch(permissionPlan.args)) bypassPtyIds.add(ptyId);
       if (sessionHooksSettingsPath) {
         semaphoreManager.registerSession(ptyId, correlationId);
         // 015-jobu-pet (R2) — the semaphore announces a new session as `working` only because it is born
@@ -3170,6 +3178,7 @@ function registerHealthIpcHandlers(): void {
       const result = await ledgerService.apply(actor, op);
       return result.ok ? { ok: true, task: { id: result.task.id } } : { ok: false, reason: result.reason };
     },
+    tasks: () => Object.values(ledgerService?.load().doc.tasks ?? {}),
     projectPath: () => appConfig.projectRoots[0] ?? null,
     cofre: () => appConfig.vigia.cofre,
     notify: (title, body) => {
@@ -3186,6 +3195,8 @@ function registerHealthIpcHandlers(): void {
       notification.show();
     },
     statePath: join(app.getPath('userData'), 'vigia-travas.json'),
+    // t-ffbf8e7d — with the Oráculo on a VPS whose daemon watches, that place's vault and sessions are the daemon's.
+    delegated: () => remoteOracleHost?.vigiaDelegada() ?? null,
     log: (line) => console.log(line),
   });
   vigiaService.start();
@@ -3507,6 +3518,7 @@ function registerLedgerIpcHandlers(): void {
     freeze: (reason) => switchable?.freeze(reason) ?? Promise.resolve(),
     onChange,
     deliver: () => deliverOwnerMessageViaBoard,
+    vigia: () => ({ projectPath: appConfig.projectRoots[0] ?? null, cofre: appConfig.vigia.cofre }),
     celularWanted: () => {
       const text = configIoDeps.readFileText(join(app.getPath('userData'), 'celular.json'));
       try {
