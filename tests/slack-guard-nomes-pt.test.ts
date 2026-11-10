@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { SLACK_OFFLINE_PATTERN } from '../src/main/hooks-settings';
 import { applyLedgerOp, emptyLedgerDoc, type LedgerActor, type LedgerDoc, type LedgerOp } from '../src/shared/ledger/contract';
 import { slackGuard } from '../src/shared/ledger/slack-guard';
 
@@ -29,22 +28,10 @@ describe('nomes em português na trava do app', () => {
     for (const name of ['slack_enviar_arquivo', 'slack_mandar_arquivo', 'slack_subir_arquivo', 'slack_enviar_imagem']) {
       const verdict = slackGuard(accepted, theo(name), { channel_id: 'C0CGE4DSGCQ', thread_ts: '1793.24', comentario: 'Segue o print.', caminho: '/tmp/p.png' });
       expect(verdict.kind, name).toBe('deny');
-      expect(verdict.kind === 'deny' && verdict.reason, name).toMatch(/arquivo/);
     }
   });
   it('ler não é envio', () => {
     for (const name of ['slack_baixar_arquivo', 'slack_get_channel_history', 'slack_get_thread_replies', 'slack_add_reaction', 'slack_list_channels'])
       expect(slackGuard(none, theo(name), { channel_id: 'C1', arquivo: 'F0123' }).kind, name).toBe('not-slack');
-  });
-});
-
-describe('nomes em português na trava de fora do ar', () => {
-  const offline = new RegExp(SLACK_OFFLINE_PATTERN, 'i');
-  const payload = (tool: string) => JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: tool, tool_input: { channel_id: 'C1' } });
-  it('pega o envio e o upload em português', () => {
-    for (const name of ['slack_enviar_mensagem', 'slack_enviar_arquivo', 'slack_responder_thread']) expect(offline.test(payload(theo(name))), name).toBe(true);
-  });
-  it('deixa baixar e ler', () => {
-    for (const name of ['slack_baixar_arquivo', 'slack_get_channel_history']) expect(offline.test(payload(theo(name))), name).toBe(false);
   });
 });

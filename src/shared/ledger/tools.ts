@@ -33,6 +33,12 @@ export type ProofInput =
   | { readonly tipo: 'texto'; readonly texto: string }
   | { readonly tipo: 'link'; readonly url: string };
 
+/** One item of `tarefa_lote`: the same `tarefa_transferir` or `tarefa_cancelar`, with its own reason. */
+export type LedgerBatchItem =
+  | { readonly id: string; readonly acao: 'transferir'; readonly para: string; readonly motivo: string }
+  | { readonly id: string; readonly acao: 'cancelar'; readonly motivo: string };
+export const MAX_BATCH_ITEMS = 50;
+
 export type LedgerToolCall =
   | {
       readonly tool: 'tarefa_criar';
@@ -61,6 +67,7 @@ export type LedgerToolCall =
   | { readonly tool: 'tarefa_ver'; readonly id: string }
   | { readonly tool: 'tarefa_transferir'; readonly id: string; readonly para: string; readonly motivo: string }
   | { readonly tool: 'tarefa_cancelar'; readonly id: string; readonly motivo: string }
+  | { readonly tool: 'tarefa_lote'; readonly itens: readonly LedgerBatchItem[] }
   | {
       readonly tool: 'carta_slack';
       readonly destino: string;
@@ -103,8 +110,8 @@ export const LEDGER_TOOLS = [
     name: 'tarefa_criar',
     title: 'Criar tarefa no Oráculo Harrow',
     description:
-      'Registra uma tarefa entre lugares do quadro: um título humano, a frase literal de quem pediu, o critério de pronto, o prazo, o lugar dono do trabalho e o risco. Nasce "aberta". Risco baixo pode ser aceito por um lugar com papel Revisor; risco alto espera o dono. Risco baixo só vale quando quem cria não é o dono do trabalho nem foi aberto por ele; senão a tarefa nasce em risco alto. ' +
-      'Quando sobe ao dono (risco alto): difícil de desfazer (main, repo público, apagar, credencial, conta, dinheiro); toca outra pessoa ou algo de fora; gasta o que é do dono (limite de conta, VPS, a hora dele); muda a forma do que ele vê e há 2 jeitos bons (sobe com protótipo, nunca com descrição); contradiz o que ele disse ou sai do pedido. ' +
+      'Registra uma tarefa entre lugares do quadro: um título humano, a frase literal de quem pediu, o critério de pronto, o prazo, o lugar dono do trabalho e o risco. Nasce "aberta". Vale o risco que você declara, também numa tarefa sua: registre o que você mesmo resolve, sem medo de cair no dono. Risco baixo entregue com prova fecha por um Revisor vivo de fora da cadeia de quem entregou ou, sem Revisor, sozinho com a prova, marcado no registro; risco alto espera o dono. ' +
+      'Quando sobe ao dono (risco alto): difícil de desfazer (main, repo público, apagar, credencial, conta, dinheiro); toca outra pessoa ou algo de fora de forma que comprometa; gasta o que é do dono (limite de conta, VPS, a hora dele); muda a forma do que ele vê e há 2 jeitos bons (sobe com protótipo, nunca com descrição); contradiz o que ele disse ou sai do pedido. ' +
       'Não sobe: só uma opção defensável (decida e registre o porquê); escolha técnica reversível dentro do pedido; resposta já escrita em CLAUDE.md, ADR, memória ou decisão anterior; bug corrigido com teste; risco baixo que o Revisor aceita. Teste: sem uma pergunta numa frase, 2 opções reais e uma recomendação, a decisão não está pronta para subir.',
     inputSchema: {
       type: 'object',
@@ -135,7 +142,7 @@ export const LEDGER_TOOLS = [
     name: 'tarefa_entregar',
     title: 'Entregar tarefa com prova',
     description:
-      `Marca a tarefa como entregue. Sem prova é recusada. Provas (1 a ${MAX_PROOFS}): {"tipo":"arquivo","caminho":"C:/…/print.png"} (print, vídeo ou protótipo .html neste computador; o app copia para o Oráculo Harrow), {"tipo":"texto","texto":"saída do comando"} ou {"tipo":"link","url":"https://… (o CI)"}. Quem entrega não aceita a própria entrega. ` +
+      `Marca a tarefa como entregue. Sem prova é recusada. Provas (1 a ${MAX_PROOFS}): {"tipo":"arquivo","caminho":"C:/…/print.png"} (print, vídeo ou protótipo .html neste computador; o app copia para o Oráculo Harrow), {"tipo":"texto","texto":"saída do comando"} ou {"tipo":"link","url":"https://… (o CI)"}. Quem entrega não aceita a própria entrega. Risco baixo sem "paraODono": um Revisor vivo de fora da sua cadeia decide; sem ele, a tarefa fecha sozinha com a prova, marcada no registro, sem carta. ` +
       'Protótipo: um .html AUTOCONTIDO (CSS, JS e imagens dentro dele, até 2 MB), que roda isolado dentro da carta, sem rede; aponte-o como visual ({"prova": n}) quando a decisão muda algo que o dono vê. ' +
       `"paraODono" é a carta que o dono lê para decidir em 5 segundos, sem abrir link; obrigatório no risco alto. Traz a pergunta, um resumo, de ${MIN_OPTIONS} a ${MAX_OPTIONS} opções com nome e efeito (exatamente uma recomendada), o porquê dela, o risco e o visual (qual print mostrar). ` +
       'Escreva para um humano: o texto é recusado se tiver id de tarefa ou de lugar, branch, hash, número de PR, caminho, link ou crases. O técnico vai nas provas. ' +
@@ -220,7 +227,7 @@ export const LEDGER_TOOLS = [
     name: 'tarefa_aceitar',
     title: 'Aceitar entrega',
     description:
-      'Aceita uma entrega. ANTES, leia a prova com tarefa_ver (sem isso o aceite é recusado) e confira que ela mostra o critério. Só um lugar com papel Revisor, só risco baixo, só do seu quadro e de fora da cadeia de quem entregou (não aberto por ele nem abaixo dele); quem entregou nunca aceita. O resto espera o dono.',
+      'Aceita uma entrega. ANTES, leia a prova com tarefa_ver (sem isso o aceite é recusado) e confira que ela mostra o critério. Só um lugar com papel Revisor, só risco baixo, só do seu quadro e de fora da cadeia de quem entregou (não aberto por ele nem abaixo dele); quem entregou nunca aceita. Risco alto espera o dono; risco baixo sem Revisor fecha sozinho na entrega.',
     inputSchema: { type: 'object', properties: { id: ID }, required: ['id'], additionalProperties: false },
   },
   {
@@ -255,11 +262,40 @@ export const LEDGER_TOOLS = [
     name: 'tarefa_cancelar',
     title: 'Cancelar tarefa ou carta',
     description:
-      'Encerra de vez uma tarefa que não vai mais acontecer, com motivo: uma carta de Slack substituída por outra (aceita e nunca enviada, ou ainda esperando o dono), um trabalho que ninguém vai fazer. Cancelada, a carta não libera envio e a tarefa não se assume de novo; o histórico fica. Quem pode: o Líder, o lugar dono ou o dono. Tarefa aceita (fora carta não enviada) não se cancela.',
+      'Encerra de vez uma tarefa que não vai mais acontecer, com motivo: uma carta de Slack substituída por outra (aceita e nunca enviada, ou ainda esperando o dono), um trabalho que ninguém vai fazer. Cancelada, a carta não libera envio e a tarefa não se assume de novo; o histórico fica. Quem pode: o Líder, o lugar dono ou o dono. Tarefa aceita (fora carta não enviada) não se cancela. Trabalho feito não se cancela para não cair no dono: entregue com prova, que o risco baixo fecha sem carta.',
     inputSchema: {
       type: 'object',
       properties: { id: ID, motivo: { type: 'string', description: 'Por que acaba (ex.: substituída pela carta nova).' } },
       required: ['id', 'motivo'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'tarefa_lote',
+    title: 'Dar destino a várias tarefas num gesto',
+    description:
+      `Passa adiante ou cancela até ${MAX_BATCH_ITEMS} tarefas numa chamada, cada uma com o seu motivo: a faxina de órfãs, de entregues paradas e de abertas velhas. Cada item segue as mesmas regras de tarefa_transferir e tarefa_cancelar (quem pode, quadro, "seu" e "lider"). Um item recusado pelas regras não para os outros, e a resposta diz o resultado de cada um; um item malformado (sem id, sem motivo, transferir sem para) recusa o lote inteiro antes de aplicar qualquer um. Nada se apaga: o histórico fica.`,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        itens: {
+          type: 'array',
+          minItems: 1,
+          maxItems: MAX_BATCH_ITEMS,
+          items: {
+            type: 'object',
+            properties: {
+              id: ID,
+              acao: { type: 'string', enum: ['transferir', 'cancelar'] },
+              para: { type: 'string', description: 'Só em "transferir": o lugar que fica com a tarefa, "lider" ou "seu".' },
+              motivo: { type: 'string', description: 'Por que esta tarefa muda de dono ou acaba.' },
+            },
+            required: ['id', 'acao', 'motivo'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['itens'],
       additionalProperties: false,
     },
   },
@@ -279,7 +315,7 @@ export const LEDGER_TOOLS = [
     name: 'tarefa_listar',
     title: 'Listar tarefas do Oráculo Harrow',
     description:
-      'As tarefas do quadro deste projeto (ou de todos), com estado, dono, prazo, risco e o resumo da última entrega, e a faixa de números do quadro. A prova inteira se lê com tarefa_ver. ' +
+      'As tarefas do quadro deste projeto (ou de todos), com estado, dono, a sessão que executa cada uma ("sessao": a conversa do lugar dono, como o quadro a tem), prazo, risco e o resumo da última entrega, e a faixa de números do quadro. A prova inteira se lê com tarefa_ver. ' +
       'Por padrão, só as vivas: nem fechadas (aceitas, canceladas, cartas rejeitadas) nem órfãs, nem cartas de Slack aceitas que ainda esperam o envio (contadas à parte, em "esperandoEnvio"; seguem liberando um envio). Órfã é a tarefa não fechada cujo lugar dono fechou, saiu do quadro ou não começou: passe-a adiante com tarefa_transferir ou encerre com tarefa_cancelar. Nada se apaga: "situacao" "todas" mostra o histórico inteiro.',
     inputSchema: {
       type: 'object',
@@ -297,7 +333,7 @@ export const LEDGER_TOOLS = [
     name: 'tarefa_ver',
     title: 'Ver tarefa e prova',
     description:
-      'Uma tarefa inteira, com a prova da última entrega: o texto completo, o link e, para print ou vídeo, o caminho do arquivo copiado (o primeiro print vem também como imagem). Quem decide (tarefa_aceitar, tarefa_rejeitar) lê a prova aqui antes.',
+      'Uma tarefa inteira, com a sessão que a executa ("sessao") e a prova da última entrega: o texto completo, o link e, para print ou vídeo, o caminho do arquivo copiado (o primeiro print vem também como imagem). Quem decide (tarefa_aceitar, tarefa_rejeitar) lê a prova aqui antes.',
     inputSchema: { type: 'object', properties: { id: ID }, required: ['id'], additionalProperties: false },
     annotations: { readOnlyHint: true },
   },
@@ -305,7 +341,7 @@ export const LEDGER_TOOLS = [
     name: 'tarefa_andamento',
     title: 'Registrar o andamento no Oráculo',
     description:
-      'Registra no Oráculo Harrow como vai o seu trabalho, em campos curtos (uma linha cada): estado, o que precisa, a prova e o próximo passo. É assim que o Líder acompanha você: ele lê quando quiser (tarefa_novidades), sem um aviso a cada turno. Vai na sua tarefa viva (ou na de "id"). Registre ao mudar de fase, ao travar, ao precisar de alguém e ao terminar. "travada" e "precisa-do-dono" chegam ao Líder do quadro na hora; o resto fica só no registro.',
+      'Registra no Oráculo Harrow como vai o seu trabalho, em campos curtos (uma linha cada): estado, o que precisa, a prova e o próximo passo. É assim que o Líder acompanha você: ele lê quando quiser (tarefa_novidades), sem um aviso a cada turno. Vai na sua tarefa viva (ou na de "id"). Registre ao mudar de fase, ao travar, ao precisar de alguém e ao terminar. "travada" e "precisa-do-dono" chegam na hora a quem está acima de você pelas setas (sem seta, ao Líder do quadro); o resto fica só no registro.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -338,7 +374,7 @@ export const LEDGER_TOOLS = [
     name: 'carta_slack',
     title: 'Pedir ao dono para mandar mensagem no Slack',
     description:
-      'Toda mensagem ao Slack em nome do dono (canal, pessoa ou thread; por MCP do Slack, Composio, curl ou script) precisa ANTES desta carta aceita pelo dono: sem ela o Donel Dev bloqueia o envio. A carta leva o destino, a thread, o texto EXATO e o motivo, e espera o dono no Oráculo Harrow (desktop e celular). Aceita: envie o mesmo texto ao mesmo destino e thread, uma vez só. Rejeitada: não envie; o motivo diz o ajuste; crie outra carta. Veja a decisão com tarefa_ver. Para mandar um ARQUIVO, a carta leva também "arquivo" (o caminho local, exatamente como vai na ferramenta de upload do MCP do Slack) e o texto é o comentário do arquivo; aceita, libera um upload só desse arquivo.',
+      'Opcional: o Donel Dev NÃO exige carta nem bloqueia envio ao Slack. Use só quando quiser que o dono confira uma mensagem antes de ela sair em nome dele. A carta leva o destino, a thread, o texto EXATO e o motivo, e espera o dono no Oráculo Harrow (desktop e celular). Aceita: envie o mesmo texto ao mesmo destino e thread, uma vez só. Rejeitada: não envie; o motivo diz o ajuste; crie outra carta. Veja a decisão com tarefa_ver. Para mandar um ARQUIVO, a carta leva também "arquivo" (o caminho local, exatamente como vai na ferramenta de upload do MCP do Slack) e o texto é o comentário do arquivo; aceita, libera um upload só desse arquivo.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -558,6 +594,20 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       if (typeof motivo === 'object' && isTooLong(args.motivo, MAX_REQUEST_CHARS)) return fail(motivo.error);
       if (typeof motivo === 'object' || motivo === undefined) return fail(`"motivo" é obrigatório para ${name === 'tarefa_cancelar' ? 'cancelar' : 'rejeitar'}.`);
       return { ok: true, call: { tool: name, id: id.trim(), motivo } };
+    }
+    case 'tarefa_lote': {
+      if (!Array.isArray(args.itens) || args.itens.length === 0) return fail('"itens" é obrigatório: de 1 a 50 tarefas.');
+      if (args.itens.length > MAX_BATCH_ITEMS) return fail(`No máximo ${MAX_BATCH_ITEMS} itens por chamada (vieram ${args.itens.length}).`);
+      const itens: LedgerBatchItem[] = [];
+      for (const [index, raw] of args.itens.entries()) {
+        const item = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {};
+        const one = item.acao === 'transferir' ? parseLedgerToolCall('tarefa_transferir', { id: item.id, para: item.para, motivo: item.motivo }) : item.acao === 'cancelar' ? parseLedgerToolCall('tarefa_cancelar', { id: item.id, motivo: item.motivo }) : null;
+        if (!one) return fail(`Item ${index + 1}: "acao" é "transferir" ou "cancelar".`);
+        if (!one.ok) return fail(`Item ${index + 1}: ${one.reason}`);
+        if (one.call.tool === 'tarefa_transferir') itens.push({ id: one.call.id, acao: 'transferir', para: one.call.para, motivo: one.call.motivo });
+        else if (one.call.tool === 'tarefa_cancelar') itens.push({ id: one.call.id, acao: 'cancelar', motivo: one.call.motivo });
+      }
+      return { ok: true, call: { tool: 'tarefa_lote', itens } };
     }
     case 'tarefa_transferir': {
       if (typeof id === 'object' || id === undefined) return fail('"id" é obrigatório.');

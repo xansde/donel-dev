@@ -6,7 +6,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CLOSING_LABELS, type ClosingKind } from '../../shared/ledger/closing';
-import { DEFAULT_OWNER_NAME, type PlaceInfoOf } from '../../shared/ledger/mirror';
+import { DEFAULT_OWNER_NAME, type LedgerSessionsMap, type PlaceInfoOf } from '../../shared/ledger/mirror';
 import {
   currentProofs,
   filterCounts,
@@ -14,6 +14,7 @@ import {
   LEDGER_TABLE_FILTERS,
   ledgerTableRows,
   matchesSearch,
+  sessionCell,
   timelineOf,
   type LedgerTableFilter,
   type LedgerTableRow,
@@ -68,12 +69,14 @@ function ProofItem({ proof }: { readonly proof: LedgerProof }): React.JSX.Elemen
 function Panel({
   item,
   places,
+  sessions,
   ownerName,
   onOpenCard,
   onClose,
 }: {
   readonly item: LedgerTableRow;
   readonly places: PlaceInfoOf | undefined;
+  readonly sessions: LedgerSessionsMap | undefined;
   readonly ownerName: string;
   readonly onOpenCard: (task: LedgerTask) => void;
   readonly onClose: () => void;
@@ -115,6 +118,8 @@ function Panel({
         <dd>{row.quem_criou}</dd>
         <dt>Faz agora</dt>
         <dd>{row.quem_faz_agora}</dd>
+        <dt>Sessão</dt>
+        <dd className={styles.code}>{sessionCell(task, sessions).full || '—'}</dd>
         <dt>Com quem está</dt>
         <dd className={item.waitsForOwner ? styles.you : undefined}>{item.withWhom}</dd>
         <dt>Decide</dt>
@@ -168,10 +173,13 @@ export function LedgerTable({
   ownerName,
   onOpenCard,
   inbox,
+  sessions,
 }: {
   readonly doc: LedgerDoc;
   readonly places: PlaceInfoOf | undefined;
   readonly ownerName: string | null;
+  /** The session of each live task (t-5c0df1df, the column "Sessão"). */
+  readonly sessions?: LedgerSessionsMap;
   /** Opens the card of a task that waits for the owner (where he decides). */
   readonly onOpenCard: (task: LedgerTask) => void;
   /** The box "Esperando você" (task id → kind): the filter "Esperando você" shows the same items. */
@@ -217,6 +225,7 @@ export function LedgerTable({
                 <th className={styles.colWith}>Com quem está</th>
                 <th className={styles.colAsked}>Quem pediu</th>
                 <th className={`${styles.colDoer} ${styles.secondary}`}>Quem faz agora</th>
+                <th className={`${styles.colSession} ${styles.secondary}`}>Sessão</th>
                 <th className={`${styles.colCreator} ${styles.secondary}`}>Quem criou</th>
                 <th className={`${styles.colRisk} ${styles.secondary}`}>Risco</th>
                 <th className={`${styles.colDue} ${styles.secondary}`}>Prazo</th>
@@ -260,6 +269,9 @@ export function LedgerTable({
                     <td className={styles.secondary} title={row.quem_faz_agora}>
                       {row.quem_faz_agora}
                     </td>
+                    <td className={`${styles.secondary} ${styles.code}`} title={sessionCell(item.task, sessions).full}>
+                      {sessionCell(item.task, sessions).text}
+                    </td>
                     <td className={styles.secondary} title={row.quem_criou}>
                       {row.quem_criou}
                     </td>
@@ -281,7 +293,7 @@ export function LedgerTable({
           </table>
           {shown.length === 0 ? <p className={styles.emptyRows}>{query ? 'Nada com essa busca neste filtro.' : 'Nenhuma tarefa neste filtro.'}</p> : null}
         </div>
-        {selected ? <Panel item={selected} places={places} ownerName={owner} onOpenCard={onOpenCard} onClose={() => setSelectedId(null)} /> : null}
+        {selected ? <Panel item={selected} places={places} sessions={sessions} ownerName={owner} onOpenCard={onOpenCard} onClose={() => setSelectedId(null)} /> : null}
       </div>
     </div>
   );

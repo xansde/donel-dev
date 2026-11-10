@@ -2615,7 +2615,7 @@ export function App(): React.JSX.Element {
       try {
         const bridge = agentBridgeRef.current;
         const answer = await window.donel.faxineiro.round(bridge.faxineiroSessions());
-        bridge.setFullMachines(answer.fullMachines);
+        bridge.setFullMachines(answer.fullMachines, answer.openingRoom);
         const entries: FaxineiroLogEntry[] = [...bridge.drainQueue()];
         for (const close of answer.closeIdle) {
           const closed = bridge.closeIdleFaxineiro(close.projectPath, close.placeId);
@@ -3544,6 +3544,7 @@ export function App(): React.JSX.Element {
                   accountLoginId={tab.accountLoginId}
                   roleId={tab.roleId}
                   leaderOfAll={isLeaderOfAllTab(tab)}
+                  placeId={tab.placeId}
                   ownerInputGate={(data, forward) => ownerTerminalInput(tab.id, data, forward)}
                   onStateChange={(info) => handleSemaphoreChange(tab.id, info)}
                   onAliveChange={(alive) => handleAliveChange(tab.id, alive)}

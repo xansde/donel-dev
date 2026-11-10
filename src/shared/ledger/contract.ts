@@ -278,6 +278,10 @@ export function lastDecision(task: LedgerTask): LedgerEvent | undefined {
 //               front); a replacement with no front of its own inherits the replaced one's. The Líder marks a task
 //               already made with op `frente`: one more `criada` event "⟦frente <name>⟧ ⟦pedido por <who>⟧" (not a
 //               transfer: no "transferida" mark); the last front, and the last "pedido por", win
+//   priority  → a later `criada` event by the OWNER "⟦priorizada <n>⟧" (09/11, t-5c0df1df: the owner orders his asks
+//               in "Seus pedidos" and the Líder of each board reads the next one by that order). `n` is the place in
+//               the owner's single list (1 = first); the name and "the last one wins" are those of `priorizada` in
+//               livro/fila.ts, the format of the future journal (not wired). Like a front mark, it is no work
 // A text the sessions or the owner write never starts with the mark (`startsWithMark`), so a mark is never forged.
 
 const MARK_OPEN = '⟦';
@@ -344,6 +348,19 @@ const TAG_SEPARATOR = ' · ';
 /** 08/11 — the creator asked low and the rule made it high (`lowRiskAsked`). */
 const LOW_ASKED = 'risco baixo pedido';
 
+/**
+ * 09/11 (dono: "o que a sessão fez e provou fecha com um Revisor ou sozinho, sem passar por você") — the mark of the
+ * accept a low-risk delivery writes on itself when no live Revisor out of the deliverer's chain could decide it. An
+ * older app reads it as an accept by a place, which the owner may still overturn.
+ */
+export const CLOSED_ALONE = 'fechada sem Revisor';
+
+/** The task closed by itself with its proof (`CLOSED_ALONE`). */
+export function closedAlone(task: LedgerTask): boolean {
+  const decision = lastDecision(task);
+  return task.state === 'aceita' && decision?.kind === 'aceita' && tagsOf(decision.text).includes(CLOSED_ALONE);
+}
+
 /** Whoever created the task asked for low risk and the rule forced it high: a transfer out of the chain gives it back. */
 export function lowRiskAsked(task: LedgerTask): boolean {
   return tagsOf(task.events[0]?.text).includes(LOW_ASKED);
@@ -377,11 +394,35 @@ export function frenteOf(task: LedgerTask): string | undefined {
   return tag ? tag.slice(FRONT.length).trim() || undefined : undefined;
 }
 
-/** A front mark (op `frente`): a later `criada` event that only names the front and who asked; no work happened. */
+/**
+ * A front mark (op `frente`) or a priority mark (op `priorizar`): a later `criada` event that only names the front, who
+ * asked or the owner's order; no work happened.
+ */
 export function isFrontMark(task: LedgerTask, event: LedgerEvent): boolean {
   if (event.kind !== 'criada' || event === task.events[0]) return false;
   const tags = tagsOf(event.text);
-  return tags.length > 0 && tags.every((tag) => tag.startsWith(FRONT) || tag.startsWith(ASKED_BY));
+  return tags.length > 0 && tags.every((tag) => tag.startsWith(FRONT) || tag.startsWith(ASKED_BY) || PRIORITY_TAG.test(tag));
+}
+
+const PRIORITY = 'priorizada ';
+const PRIORITY_TAG = /^priorizada (\d{1,5})$/;
+/** The biggest place in the owner's list (the `MAX_POSICAO` of livro/fila.ts). */
+export const MAX_PRIORITY = 10_000;
+
+/** The place a priority mark of the owner sets (1 = first); `undefined` = the event is no priority mark. */
+export function priorityMarkOf(task: LedgerTask, event: LedgerEvent): number | undefined {
+  if (event.kind !== 'criada' || event.by.kind !== 'dono' || event === task.events[0]) return undefined;
+  const tag = tagsOf(event.text).find((each) => PRIORITY_TAG.test(each));
+  return tag ? Number(PRIORITY_TAG.exec(tag)![1]) : undefined;
+}
+
+/** 09/11 — the place of the task in the owner's list (1 = first), the last one he set; none = not ordered. */
+export function priorityOf(task: LedgerTask): number | undefined {
+  for (let index = task.events.length - 1; index > 0; index -= 1) {
+    const place = priorityMarkOf(task, task.events[index]!);
+    if (place !== undefined) return place;
+  }
+  return undefined;
 }
 
 /** When the task last moved (ms): its newest event that is not a front mark, so naming a front never looks like work. */
@@ -493,9 +534,20 @@ export type LedgerOp =
     }
   /** 07/11 — the Líder (or the owner) names the front of a task already made, and who asked, if it says. */
   | { readonly op: 'frente'; readonly id: string; readonly frente: string; readonly requestedBy?: string }
+  /** 09/11 — the owner puts the task at `posicao` in his list (`priorityOf`). */
+  | { readonly op: 'priorizar'; readonly id: string; readonly posicao: number }
   | { readonly op: 'assumir'; readonly id: string }
   /** `doneBy` (06/11): the place that really did the work, when it is not the owner place that delivers. */
-  | { readonly op: 'entregar'; readonly id: string; readonly proofs: readonly LedgerProof[]; readonly note?: string; readonly forOwner?: LedgerForOwner; readonly doneBy?: string }
+  | {
+      readonly op: 'entregar';
+      readonly id: string;
+      readonly proofs: readonly LedgerProof[];
+      readonly note?: string;
+      readonly forOwner?: LedgerForOwner;
+      readonly doneBy?: string;
+      /** 09/11 — low risk, no live Revisor out of the deliverer's chain: the delivery closes itself (`CLOSED_ALONE`). */
+      readonly closeAlone?: true;
+    }
   /** `option`: the label of an option of the current delivery's block, closing as `aceita`; `text`: the owner's words with it. */
   | { readonly op: 'aceitar'; readonly id: string; readonly requestId?: string; readonly option?: string; readonly text?: string }
   /**
@@ -580,6 +632,7 @@ function ownerChecked(task: LedgerTask): boolean {
 const KNOWN_OPS: Readonly<Record<LedgerOp['op'], true>> = {
   criar: true,
   frente: true,
+  priorizar: true,
   assumir: true,
   entregar: true,
   aceitar: true,
@@ -631,7 +684,8 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       doneWhen: op.doneWhen,
       due: op.due,
       ownerPlaceId: op.ownerPlaceId,
-      risk: op.risk,
+      // Revisão do #383: a replacement never lowers the risk of what it replaces (a high decision stays the owner's).
+      risk: replaced?.risk === 'alto' ? 'alto' : op.risk,
       state: 'aberta',
       createdAt: ctx.now,
       events: [{ kind: 'criada', at: ctx.now, by: actor, ...birthTagsOf(replaced?.id, op.requestedBy, op.frente?.trim() || (replaced && frenteOf(replaced)), op.lowAsked === true && op.risk === 'alto') }],
@@ -680,16 +734,18 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
         const why = forOwnerRefusal(op.forOwner, op.proofs);
         if (why) return fail(`"paraODono" recusado: ${why}`);
       }
-      return done(
-        step(task, 'entregue', {
-          kind: 'entregue',
-          at: ctx.now,
-          by: actor,
-          proofs: op.proofs,
-          ...(note ? { text: note } : {}),
-          ...(op.forOwner ? { forOwner: op.forOwner } : {}),
-        }),
-      );
+      if (op.closeAlone && (task.risk !== 'baixo' || op.forOwner || task.slack || actor.kind !== 'lugar' || isServicePlace(actor.placeId) || (doneBy && doneBy !== actor.placeId)))
+        return fail('Só fecha sozinha a entrega de risco baixo, sem carta ao dono, feita e entregue pelo mesmo lugar do quadro (serviço nunca).');
+      const delivered = step(task, 'entregue', {
+        kind: 'entregue',
+        at: ctx.now,
+        by: actor,
+        proofs: op.proofs,
+        ...(note ? { text: note } : {}),
+        ...(op.forOwner ? { forOwner: op.forOwner } : {}),
+      });
+      if (!op.closeAlone) return done(delivered);
+      return done(step(delivered, 'aceita', { kind: 'aceita', at: ctx.now, by: actor, text: withMark(CLOSED_ALONE, 'nenhum Revisor vivo de fora da cadeia de quem entregou; fechou com a prova.') }));
 
     case 'aceitar': {
       // The owner confirming an accept the Revisor made (D2 sample) is recorded, not a second accept.
@@ -772,6 +828,14 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       if (!front) return fail('"frente" é obrigatório: o nome da frente (ex.: Ledger).');
       if (!(actor.kind === 'dono' || isLeaderRole(actor.roleId))) return fail('Só o Líder ou o dono diz a frente de uma tarefa.');
       return done(step(task, task.state, { kind: 'criada', at: ctx.now, by: actor, ...birthTagsOf(undefined, op.requestedBy, front) }));
+    }
+
+    case 'priorizar': {
+      if (actor.kind !== 'dono') return fail('Só o dono diz a prioridade dos pedidos dele.');
+      if (!Number.isInteger(op.posicao) || op.posicao < 1 || op.posicao > MAX_PRIORITY) return fail(`A posição é um inteiro de 1 a ${MAX_PRIORITY}.`);
+      if (isClosed(task) || task.slack) return fail('A tarefa já fechou: a prioridade vai numa tarefa viva.');
+      if (priorityOf(task) === op.posicao) return { ok: true, doc, task };
+      return done(step(task, task.state, { kind: 'criada', at: ctx.now, by: actor, text: withMark(`${PRIORITY}${op.posicao}`, '') }));
     }
 
     case 'cancelar': {
@@ -1178,12 +1242,13 @@ export function isHttpUrl(value: string): boolean {
 
 /** D2 — the Revisor's accepts the owner gets to look at: in the first week, up to 3 per day, not checked yet. */
 export function inDailySample(doc: LedgerDoc, task: LedgerTask): boolean {
-  if (doc.startedAt === null || !acceptedWithoutOwner(task) || ownerChecked(task)) return false;
+  // A delivery that closed alone (no Revisor) is no Revisor's accept: it stays in the record, never a card.
+  if (doc.startedAt === null || !acceptedWithoutOwner(task) || ownerChecked(task) || closedAlone(task)) return false;
   const decidedAt = lastDecision(task)!.at;
   if (decidedAt - doc.startedAt >= SAMPLE_WEEK_MS) return false;
   const day = Math.floor((decidedAt - doc.startedAt) / (24 * 60 * 60 * 1000));
   const sameDay = Object.values(doc.tasks)
-    .filter((other) => acceptedWithoutOwner(other))
+    .filter((other) => acceptedWithoutOwner(other) && !closedAlone(other))
     .map((other) => ({ id: other.id, at: lastDecision(other)!.at }))
     .filter((other) => Math.floor((other.at - doc.startedAt!) / (24 * 60 * 60 * 1000)) === day)
     .sort((a, b) => a.at - b.at || a.id.localeCompare(b.id))
@@ -1212,6 +1277,8 @@ export interface LedgerStrip {
   readonly oldestWaitingSince: number | null;
   /** Accepted tasks whose accept was not the owner's, 0–100; `null` = nothing accepted yet. */
   readonly validatedWithoutOwnerPct: number | null;
+  /** 09/11 — low-risk deliveries that closed alone, with no Revisor (`closedAlone`): the owner sees how many. */
+  readonly closedAlone: number;
 }
 
 /** The numbers of one board (`projectPath`), or of every board when `projectPath` is `null`. */
@@ -1227,6 +1294,7 @@ export function ledgerStrip(doc: LedgerDoc, projectPath: string | null): LedgerS
     waitingForOwner: waiting.length,
     oldestWaitingSince: waiting.length ? Math.min(...waiting.map(waitingSince)) : null,
     validatedWithoutOwnerPct: accepted.length ? Math.round((100 * accepted.filter(acceptedWithoutOwner).length) / accepted.length) : null,
+    closedAlone: tasks.filter(closedAlone).length,
   };
 }
 

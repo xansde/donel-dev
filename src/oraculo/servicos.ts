@@ -46,12 +46,13 @@ export function serviceActor(name: string): LedgerActor {
 /** Why a service may not send `op`; `null` = may (the ledger's rules still apply after). */
 export function serviceOpRefusal(op: unknown): string | null {
   if (typeof op !== 'object' || op === null || typeof (op as { op?: unknown }).op !== 'string') return 'op inválida';
-  const { op: kind, proofs, doneBy, requestedBy } = op as { op: string; proofs?: unknown; doneBy?: unknown; requestedBy?: unknown };
+  const { op: kind, proofs, doneBy, requestedBy, closeAlone } = op as { op: string; proofs?: unknown; doneBy?: unknown; requestedBy?: unknown; closeAlone?: unknown };
   if (!SERVICE_OPS.has(kind)) return 'serviço só cria, assume e entrega tarefas';
   // The owner's mark puts the task in the owner's progress (Jobu); a service names the person, never the owner.
   if (typeof requestedBy === 'string' && cleanAskedBy(requestedBy).toLowerCase() === ASKED_BY_OWNER) return 'serviço não marca pedido do dono';
   if (kind !== 'entregar') return null;
   if (doneBy !== undefined) return 'serviço entrega o próprio trabalho (sem feitoPor)';
+  if (closeAlone !== undefined) return 'serviço não fecha a própria entrega: decide um Revisor ou o dono';
   if (!Array.isArray(proofs) || proofs.some((p) => typeof p !== 'object' || p === null || ((p as { kind?: unknown }).kind !== 'texto' && (p as { kind?: unknown }).kind !== 'link')))
     return 'serviço prova com texto ou link';
   return null;

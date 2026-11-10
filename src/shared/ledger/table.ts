@@ -14,6 +14,8 @@ import {
   isCancelled,
   isClosed,
   lastDelivery,
+  lastWorkAt,
+  priorityMarkOf,
   slackSendState,
   transfersOf,
   waitsForOwner,
@@ -22,7 +24,7 @@ import {
   type LedgerTask,
 } from './contract';
 import { CARD_KINDS, type OwnerInboxKind } from './inbox';
-import { actorName, placeLabel, tarefaRow, type MaskNote, type PlaceInfoOf, type TarefaRow } from './mirror';
+import { actorName, placeLabel, tarefaRow, type LedgerSessionsMap, type MaskNote, type PlaceInfoOf, type TarefaRow } from './mirror';
 
 export type LedgerTableFilter = 'esperando-voce' | 'sem-executor' | 'cartas' | 'tudo';
 
@@ -95,7 +97,8 @@ export function ledgerTableRows(
       const roleOnly = ROLE_ONLY.test(row.quem_pediu.trim());
       const askedBy = roleOnly ? NOT_RECORDED : row.quem_pediu;
       const withWhom = withWhomOf(doc, task, row.quem_faz_agora);
-      const lastActivityAt = task.events.reduce((latest, event) => Math.max(latest, event.at), task.createdAt);
+      // A front or priority mark is no activity: reordering his asks does not push them to the top (`lastWorkAt`).
+      const lastActivityAt = lastWorkAt(task);
       const searchText = [row.id, row.quadro, row.titulo, row.estado, askedBy, row.pedido, row.quem_faz_agora, row.quem_criou, withWhom, row.ultima_entrega ?? '', row.decisao ?? '']
         .join('\n')
         .toLowerCase();
@@ -171,6 +174,8 @@ export function timelineOf(task: LedgerTask, places: PlaceInfoOf | undefined, ow
           const to = placeLabel(project, transfer.to, undefined, places);
           return { at: event.at, text: `Passada de ${from} para ${to} por ${who(event)}`, ...(transfer.reason ? { note: transfer.reason } : {}) };
         }
+        const priority = priorityMarkOf(task, event);
+        if (priority !== undefined) return { at: event.at, text: `Prioridade dada por ${who(event)}: ${priority}º dos seus pedidos` };
         return withNote(`Criada por ${who(event)}`);
       }
       case 'assumida':
@@ -198,4 +203,10 @@ export function timelineOf(task: LedgerTask, places: PlaceInfoOf | undefined, ow
 /** The proofs of the current delivery. */
 export function currentProofs(task: LedgerTask): readonly LedgerProof[] {
   return lastDelivery(task)?.proofs ?? [];
+}
+
+/** The "Sessão" cell: the session of the task's owner (`LedgerSessionsMap`, live tasks only), or "—". */
+export function sessionCell(task: LedgerTask, sessions: LedgerSessionsMap | undefined): { readonly text: string; readonly full: string } {
+  const session = isClosed(task) ? undefined : sessions?.[task.projectPath]?.[task.ownerPlaceId];
+  return session ? { text: session.slice(0, 8), full: session } : { text: '—', full: '' };
 }

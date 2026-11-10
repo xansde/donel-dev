@@ -1,8 +1,8 @@
-// Slack só com carta (owner, 05/11: "toda mensagem que for enviada para o slack em meu nome seja uma carta no
-// oráculo antes de qualquer coisa") — the guard, pure. The hook bridge asks it on every `PreToolUse` of a session
-// the Donel opened (here or on a remote place): a tool call that would post to Slack passes only when an
-// ACCEPTED letter (`SlackLetter`, contract.ts) not used yet has the same destination, thread and exact text.
-// Anything else is refused with a text that teaches the session to write the letter and wait.
+// Slack letters — the matcher, pure. NOT a lock since 09/11 (owner: "Não quero que cartas travem nada também"): the
+// hook bridge still asks it on every `PreToolUse` of a session the Donel opened, but only to know which accepted
+// letter (`SlackLetter`, contract.ts) a send uses (same destination, thread and exact text), to mark it sent, and
+// whether the post is an agent's own bot, to record it. A `deny` verdict just means "no letter matches": the bridge
+// lets the call go on. The notes below are the history of how a send is read (owner, 05/11 to 08/11).
 //
 // Only a STRUCTURED call can be approved: an MCP tool of a Slack server, or a Composio `SLACK_*` action (direct or
 // inside an execute call), whose fields are read one by one. Every field must be the letter's (destination,
@@ -342,13 +342,6 @@ function sameSend(task: LedgerTask, send: SlackSend): boolean {
   );
 }
 
-export const SLACK_GUARD_HOW_TO =
-  'Toda mensagem ao Slack em nome do dono precisa antes de uma carta ACEITA no Oráculo Harrow. ' +
-  'Faça assim: (1) chame a ferramenta carta_slack do servidor donel com "destino" (o mesmo valor que vai no campo de canal ou pessoa da ferramenta de envio), "thread" (o thread_ts, se for resposta), "texto" (a mensagem EXATA, caractere por caractere) e "motivo"; ' +
-  '(2) avise que está esperando o dono e espere: veja a decisão com tarefa_ver <id>, sem ficar consultando em laço; ' +
-  '(3) aceita: envie pela ferramenta do Slack (MCP do Slack, ou a ação SLACK_SEND_MESSAGE do Composio) o MESMO texto ao MESMO destino e thread, uma vez só, só com esses campos: sem blocks, anexos nem agendamento. Arquivo: a carta leva também "arquivo" (o caminho local, igual ao da ferramenta) e "arquivoNome" se o nome no Slack for outro; o texto é o comentário; e o envio vai pela ferramenta de upload do MCP do Slack com esses mesmos campos (o comentário em "comentario", "comment" ou "initial_comment"). Pelo terminal (curl, scripts, canal-produto) ou por código o envio é sempre recusado, porque lá não dá para conferir; ' +
-  '(4) rejeitada: não envie; o motivo (ou o que o dono escreveu na carta) diz o ajuste; crie outra carta com o texto ajustado. ' +
-  'Não tente outro caminho de envio: todos passam por esta trava.';
 
 /**
  * The decision on one tool call, given the ledger. `doc` null = the ledger could not be read (refuse). `botServers`:
@@ -359,7 +352,8 @@ export function slackGuard(doc: LedgerDoc | null, toolName: string, toolInput: u
   if (bot) return { kind: 'agent-bot', send: bot };
   const detection = detectSlackSend(toolName, toolInput);
   if (detection.kind === 'none') return { kind: 'not-slack' };
-  const deny = (why: string): SlackGuardVerdict => ({ kind: 'deny', reason: `Envio ao Slack bloqueado pelo Donel Dev: ${why} ${SLACK_GUARD_HOW_TO}` });
+  // `deny` = no accepted letter matches this send. Since 09/11 it only means "no letter to mark": the send goes on.
+  const deny = (why: string): SlackGuardVerdict => ({ kind: 'deny', reason: `sem carta aceita para este envio: ${why}` });
   if (detection.kind === 'unreadable') return deny(`${detection.why}.`);
   if (doc === null) return deny('não consegui ler o Oráculo Harrow para conferir a carta.');
   const letters = openSlackLetters(doc);

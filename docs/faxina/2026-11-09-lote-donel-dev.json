@@ -1,0 +1,231 @@
+{
+ "itens": [
+  {
+   "id": "t-1ad8443d",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:a8649961-3beb-4b8d-abb7-1b880ca6f6eb saiu e não há lugar vivo conhecido acima (parada há 38 h)"
+  },
+  {
+   "id": "t-9645051f",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:bc174f8a-4244-4d72-98be-565635d609d4 saiu e não há lugar vivo conhecido acima (risco alto não se arquiva sozinho)"
+  },
+  {
+   "id": "t-050fec8a",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:bc174f8a-4244-4d72-98be-565635d609d4 saiu e não há lugar vivo conhecido acima (risco alto não se arquiva sozinho)"
+  },
+  {
+   "id": "t-881254f8",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:bc174f8a-4244-4d72-98be-565635d609d4 saiu e não há lugar vivo conhecido acima (risco alto não se arquiva sozinho)"
+  },
+  {
+   "id": "t-36e07d34",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:bc174f8a-4244-4d72-98be-565635d609d4 saiu e não há lugar vivo conhecido acima (risco alto não se arquiva sozinho)"
+  },
+  {
+   "id": "t-da68a31e",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:bc174f8a-4244-4d72-98be-565635d609d4 saiu e não há lugar vivo conhecido acima (risco alto não se arquiva sozinho)"
+  },
+  {
+   "id": "t-ad76b1b8",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:bc174f8a-4244-4d72-98be-565635d609d4 saiu e não há lugar vivo conhecido acima (risco alto não se arquiva sozinho)"
+  },
+  {
+   "id": "t-d872c026",
+   "acao": "cancelar",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): aberta há 3 dias sem mexer e sem dono vivo (o lugar place:bc174f8a-4244-4d72-98be-565635d609d4 saiu)"
+  },
+  {
+   "id": "t-58b67066",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:1281b1ab-d14a-48eb-981a-2083990d9711 saiu e não há lugar vivo conhecido acima (risco alto não se arquiva sozinho)"
+  },
+  {
+   "id": "t-44655ecc",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:6d8ec650-ee3c-4205-a7a3-be867a936d54 saiu e não há lugar vivo conhecido acima (risco alto não se arquiva sozinho)"
+  },
+  {
+   "id": "t-82905d01",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:6d8ec650-ee3c-4205-a7a3-be867a936d54 saiu e não há lugar vivo conhecido acima (risco alto não se arquiva sozinho)"
+  },
+  {
+   "id": "t-a6f04981",
+   "acao": "transferir",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:141bffd8-99fd-4aba-b252-858e93314d86 saiu; pedido do dono, não se arquiva sozinho: volta ao Líder do quadro",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6"
+  },
+  {
+   "id": "t-b4d7c029",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:1281b1ab-d14a-48eb-981a-2083990d9711 saiu e não há lugar vivo conhecido acima (risco alto não se arquiva sozinho)"
+  },
+  {
+   "id": "t-6561384e",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:47003913-e866-44de-9186-d9cbe6115674 saiu e não há lugar vivo conhecido acima (parada há 2 dias)"
+  },
+  {
+   "id": "t-cce40c2f",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:000c7c21-66e9-426c-b55e-3029bae4f722 saiu e não há lugar vivo conhecido acima (risco alto não se arquiva sozinho)"
+  },
+  {
+   "id": "t-81e27aac",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:000c7c21-66e9-426c-b55e-3029bae4f722 saiu e não há lugar vivo conhecido acima (risco alto não se arquiva sozinho)"
+  },
+  {
+   "id": "t-01d34053",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:000c7c21-66e9-426c-b55e-3029bae4f722 saiu e não há lugar vivo conhecido acima (risco alto não se arquiva sozinho)"
+  },
+  {
+   "id": "t-df3e4d08",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:000c7c21-66e9-426c-b55e-3029bae4f722 saiu e não há lugar vivo conhecido acima (risco alto não se arquiva sozinho)"
+  },
+  {
+   "id": "t-2006c0ba",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:000c7c21-66e9-426c-b55e-3029bae4f722 saiu e não há lugar vivo conhecido acima (risco alto não se arquiva sozinho)"
+  },
+  {
+   "id": "t-74bc7bc4",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:616884d9-7402-4fc3-9e2c-ef31110f3f1e saiu e não há lugar vivo conhecido acima (parada há 47 h)"
+  },
+  {
+   "id": "t-af678813",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:44ea4666-e8ab-4b69-bf97-4ef1b48dbcbd saiu e não há lugar vivo conhecido acima (risco alto não se arquiva sozinho)"
+  },
+  {
+   "id": "t-d92b334e",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:65d49bb8-4394-4242-91a1-9a19bf734b8f saiu e não há lugar vivo conhecido acima (risco alto não se arquiva sozinho)"
+  },
+  {
+   "id": "t-ffbf8e7d",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:45b2adb5-c1ef-4912-839e-3ae11aff725f saiu e não há lugar vivo conhecido acima (parada há 12 h)"
+  },
+  {
+   "id": "t-5a95bc76",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:45b2adb5-c1ef-4912-839e-3ae11aff725f saiu e não há lugar vivo conhecido acima (parada há 1 h)"
+  },
+  {
+   "id": "t-fb11c6cd",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:6f33909b-64fd-4e32-8794-70aaae735d2d saiu e não há lugar vivo conhecido acima (risco alto não se arquiva sozinho)"
+  },
+  {
+   "id": "t-c415c1e0",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:9ab44782-8ce5-46a9-929c-b7694aaa11f6 saiu e não há lugar vivo conhecido acima (risco alto não se arquiva sozinho)"
+  },
+  {
+   "id": "t-11da4263",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:0140c51a-693c-4444-b6e0-91bb1cb1a2f5 saiu e não há lugar vivo conhecido acima (risco alto não se arquiva sozinho)"
+  },
+  {
+   "id": "t-4604624e",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:d05b906f-5289-4501-a1ce-fb6349a6f9bb saiu e não há lugar vivo conhecido acima (parada há 2 dias)"
+  },
+  {
+   "id": "t-efeb0ca3",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:59c288bc-d156-4fd5-bbc3-aebc794b081d saiu e não há lugar vivo conhecido acima (parada há 2 dias)"
+  },
+  {
+   "id": "t-4aba83a3",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:ccb0f934-b715-4f3c-9e0a-1a9673b8f044 saiu e não há lugar vivo conhecido acima (parada há 2 dias)"
+  },
+  {
+   "id": "t-d3256680",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:b25165dc-e8f1-4259-a8ca-18eeaa7451a5 saiu e não há lugar vivo conhecido acima (risco alto não se arquiva sozinho)"
+  },
+  {
+   "id": "t-50930a1d",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:44f867b1-668d-474e-b6c5-7329b28d3529 saiu e não há lugar vivo conhecido acima (parada há 2 dias)"
+  },
+  {
+   "id": "t-29efba60",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:f93da9ab-d273-4cf5-aeed-50568ab750c6 saiu e não há lugar vivo conhecido acima (trabalho começado não se arquiva)"
+  },
+  {
+   "id": "t-2367a54e",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:d5677ada-9346-4271-8ec7-f1b49dde0c17 saiu e não há lugar vivo conhecido acima (trabalho começado não se arquiva)"
+  },
+  {
+   "id": "t-deb733dd",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:f383e5fb-ad09-4171-9c92-d6c3d8e1aa37 saiu e não há lugar vivo conhecido acima (trabalho começado não se arquiva)"
+  },
+  {
+   "id": "t-2c18d666",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:7667427a-e0d6-4f12-9e71-6c6c953b835c saiu e não há lugar vivo conhecido acima (risco alto não se arquiva sozinho)"
+  },
+  {
+   "id": "t-148f5581",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:a8649961-3beb-4b8d-abb7-1b880ca6f6eb saiu e não há lugar vivo conhecido acima (trabalho começado não se arquiva)"
+  },
+  {
+   "id": "t-3ebcfa78",
+   "acao": "transferir",
+   "para": "place:11ccc57a-12c6-4f3b-b51b-361c81565fb6",
+   "motivo": "faxina do ledger (t-147e6783, 09/11): o lugar place:45b2adb5-c1ef-4912-839e-3ae11aff725f saiu e não há lugar vivo conhecido acima (trabalho começado não se arquiva)"
+  }
+ ]
+}
