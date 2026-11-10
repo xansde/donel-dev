@@ -29,6 +29,8 @@ import { defaultMigrationState, sanitizeMigrationState, type MigrationState } fr
 import { sanitizeProvidersConfig } from './providers/providers-config';
 import { defaultProvidersConfig } from '../shared/providers';
 import type { ProvidersConfigDto } from '../shared/providers';
+import type { ProxiesConfig } from '../shared/proxies';
+import { sanitizeProxiesConfig } from './proxies/proxies-config';
 import { sanitizeHomologacaoPrefs, type HomologacaoPrefs } from '../shared/homologacao/config';
 import { defaultVigiaPrefs, sanitizeVigiaPrefs, type VigiaPrefs } from '../shared/vigia/config';
 import type { StoredSessionName } from '../shared/sessionName';
@@ -138,6 +140,8 @@ export interface AppConfig {
    * namespace `provider:<id>`, accounts-vault.json reusado).
    */
   readonly providers: ProvidersConfigDto;
+  /** Proxy da vez (specs/018-proxy-da-vez) — cadastro de proxies; canal IPC próprio (`PROXY_CHANNELS`), chave só no cofre. */
+  readonly proxies: ProxiesConfig;
   /** T008 (014-chat) — interruptor da entrega incremental (R22) e modo foco global (FR-009). Exposta no DTO. */
   readonly chat: ChatPrefs;
   /**
@@ -219,6 +223,7 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     accounts: defaultAccountsConfig(),
     migration: defaultMigrationState(),
     providers: defaultProvidersConfig(),
+    proxies: sanitizeProxiesConfig(undefined),
     chat: defaultChatPrefs(),
     pet: defaultPetPrefs(),
     sweep: defaultSweepPrefs(),
@@ -829,6 +834,7 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     accounts: sanitizeAccountsConfig(candidate.accounts, defaults.accounts),
     migration: sanitizeMigrationState(candidate.migration, defaults.migration),
     providers: sanitizeProvidersConfig(candidate.providers),
+    proxies: sanitizeProxiesConfig(candidate.proxies),
     chat: sanitizeChatPrefs(candidate.chat, defaults.chat),
     pet: sanitizePetPrefs(candidate.pet, defaults.pet),
     sweep: sanitizeSweepPrefs(candidate.sweep, defaults.sweep),
