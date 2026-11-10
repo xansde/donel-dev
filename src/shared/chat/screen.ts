@@ -266,6 +266,27 @@ const DIALOG_TEXT_MAX = 8_000;
 /** Said first when the dialog's top border is not on the screen (a long command scrolled it off). */
 export const DIALOG_TOP_MISSING = '[o começo do pedido não está na tela]';
 
+function indentOf(line: string): number {
+  return line.length - line.trimStart().length;
+}
+
+/**
+ * Whether `plain[at]` is the permission dialog's top border. A line of `─` inside the command (`# ────`, a table in a
+ * heredoc) passed `isRulerLine` and cut the reading mid-command with a partial id, so the border must be the dialog's
+ * own: a full ruler from column 0 (the command is drawn indented, its lines never start there) whose first line below
+ * is the dialog's title, as indented as the question and less than the command (" Bash command" over "   rm -rf x").
+ */
+function isDialogTop(plain: readonly string[], at: number, question: number): boolean {
+  const border = plain[at].trimEnd();
+  if (border.length < 10 || /^\s/.test(border)) return false;
+  if (![...border].every((char) => char === '─') && ![...border].every((char) => char === BAR_CHAR)) return false;
+  for (let i = at + 1; i <= question; i += 1) {
+    if (plain[i].trim() === '') continue;
+    return !isRulerLine(plain[i]) && !isBarLine(plain[i]) && indentOf(plain[i]) <= indentOf(plain[question]);
+  }
+  return false;
+}
+
 /**
  * The permission dialog on the screen, so a Líder can read what it asks before answering it from another session
  * (`sessao_permissao`); `null` when `blockingScreen` sees no permission prompt. Refusing is Esc; allowing is `yesKey`.
@@ -282,8 +303,9 @@ export function permissionDialog(lines: readonly LineInput[]): PermissionDialog 
   }
   if (question < 0) question = Math.max(0, plain.findIndex((line) => YES_OPTION.test(line)) - 1);
   // Up to the dialog's top border, however long the command: a cap here hid the start of a long one (Revisor, #377).
+  // Only the dialog's own border counts, never a ruler drawn inside the command (Revisor, #377, 2nd round).
   let top = question;
-  while (top > 0 && !isRulerLine(plain[top - 1]) && !isBarLine(plain[top - 1])) top -= 1;
+  while (top > 0 && !isDialogTop(plain, top - 1, question)) top -= 1;
   const topFound = top > 0;
   const body: string[] = [];
   for (const line of plain.slice(top, question + 1).map((row) => row.trimEnd())) {
