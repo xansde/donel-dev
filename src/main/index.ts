@@ -3820,7 +3820,15 @@ function registerSessionRenewalIpcHandlers(): void {
     const initial = initialChatSourceByPty.get(ptyId);
     if (!sessionId || !initial) return null;
     const transcriptPath = chatHub?.transcriptPathOf(ptyId) ?? spawnedTranscriptPaths.get(sessionId) ?? null;
-    const request = { sessionId, transcriptPath, cwd: chatHub?.cwdOf(ptyId) ?? initial.cwd, contextTokens, limitTokens };
+    const openingHandoffPath = initial.predecessor?.handoffPath;
+    const request = {
+      sessionId,
+      transcriptPath,
+      cwd: chatHub?.cwdOf(ptyId) ?? initial.cwd,
+      contextTokens,
+      limitTokens,
+      ...(openingHandoffPath ? { openingHandoffPath } : {}),
+    };
     try {
       // A session on a remote place reads and writes the handoff THERE (a path of this computer does not exist on it).
       const sshTarget = remoteSessions?.sshTargetOf(ptyId);

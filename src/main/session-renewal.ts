@@ -20,6 +20,11 @@ export interface RenewalPrepareRequest {
   readonly cwd: string;
   readonly contextTokens: number;
   readonly limitTokens: number;
+  /**
+   * The handoff that opened the session that leaves, when it was itself a renewal (as the chat knows it: on a
+   * remote place, the copy here). Its chain becomes the new session's optional history.
+   */
+  readonly openingHandoffPath?: string;
 }
 
 /**
@@ -41,6 +46,8 @@ export interface RenewalRecord {
   readonly previousSessionId: string;
   readonly previousTranscriptPath: string | null;
   readonly handoffPath: string;
+  /** This handoff first, then the older ones of the same place, newest first (paths where the session reads them). */
+  readonly handoffChain: readonly string[];
   readonly instructionsPath: string;
   readonly cwd: string;
   /** Sent to the session that leaves: "write the handoff". One line. */
@@ -178,6 +185,18 @@ export function createSessionRenewalService(deps: SessionRenewalServiceDeps): Se
   const now = deps.now ?? Date.now;
   const records = new Map<string, RenewalRecord>();
 
+  /** The older handoffs, newest first: the chain of the renewal whose handoff opened the session that leaves. */
+  function olderHandoffs(openingHandoffPath: string | undefined, remote: RenewalRemote | undefined): readonly string[] {
+    if (!openingHandoffPath) return [];
+    for (const record of records.values()) {
+      if (record.handoffPath === openingHandoffPath || record.remote?.localCopyPath === openingHandoffPath) {
+        return record.handoffChain;
+      }
+    }
+    // Not prepared by this run of the app: a path of this computer still reads locally; a place cannot read it.
+    return remote ? [] : [openingHandoffPath];
+  }
+
   return {
     handoffsDir: deps.handoffsDir,
 
@@ -197,6 +216,12 @@ export function createSessionRenewalService(deps: SessionRenewalServiceDeps): Se
         contextTokens: request.contextTokens,
         limitTokens: request.limitTokens,
       });
+      const older = olderHandoffs(request.openingHandoffPath, remote).filter((path) => path !== handoffPath);
+      const history =
+        older.length === 0
+          ? ''
+          : ` Passagens anteriores deste lugar, da mais nova à mais velha (leia só se precisar do histórico deste ` +
+            `lugar): ${older.join(' ; ')}.`;
       if (!remote) {
         fs.mkdirSync(deps.handoffsDir);
         fs.writeFileSync(instructionsPath, instructions);
@@ -206,6 +231,7 @@ export function createSessionRenewalService(deps: SessionRenewalServiceDeps): Se
         previousSessionId: request.sessionId,
         previousTranscriptPath: request.transcriptPath,
         handoffPath,
+        handoffChain: [handoffPath, ...older],
         instructionsPath,
         cwd: request.cwd,
         requestPrompt:
@@ -215,8 +241,8 @@ export function createSessionRenewalService(deps: SessionRenewalServiceDeps): Se
         firstPrompt:
           `[Donel Dev · sessão renovada em voo] Esta sessão continua a ${request.sessionId.slice(0, 8)}, encerrada pelo app ` +
           `ao chegar no limite de contexto. Leia primeiro a passagem de bastão em ${handoffPath} e siga a seção ` +
-          `"Primeira ação da sessão nova". Só vale como aprovado o que a passagem marca como aprovado. Depois responda ` +
-          `em poucas linhas com a prioridade e o estado das frentes, e espere a próxima mensagem.`,
+          `"Primeira ação da sessão nova". Só vale como aprovado o que a passagem marca como aprovado.${history} Depois ` +
+          `responda em poucas linhas com a prioridade e o estado das frentes, e espere a próxima mensagem.`,
         instructions,
         ...(remote ? { remote: { sshTarget: remote.sshTarget, localCopyPath: join(deps.handoffsDir, `${base}.md`) } } : {}),
       };
