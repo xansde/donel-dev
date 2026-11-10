@@ -3090,6 +3090,7 @@ function registerHealthIpcHandlers(): void {
       const result = await ledgerService.apply(actor, op);
       return result.ok ? { ok: true, task: { id: result.task.id } } : { ok: false, reason: result.reason };
     },
+    tasks: () => Object.values(ledgerService?.load().doc.tasks ?? {}),
     projectPath: () => appConfig.projectRoots[0] ?? null,
     cofre: () => appConfig.vigia.cofre,
     notify: (title, body) => {
@@ -3106,6 +3107,8 @@ function registerHealthIpcHandlers(): void {
       notification.show();
     },
     statePath: join(app.getPath('userData'), 'vigia-travas.json'),
+    // t-ffbf8e7d — with the Oráculo on a VPS whose daemon watches, that place's vault and sessions are the daemon's.
+    delegated: () => remoteOracleHost?.vigiaDelegada() ?? null,
     log: (line) => console.log(line),
   });
   vigiaService.start();
@@ -3427,6 +3430,7 @@ function registerLedgerIpcHandlers(): void {
     freeze: (reason) => switchable?.freeze(reason) ?? Promise.resolve(),
     onChange,
     deliver: () => deliverOwnerMessageViaBoard,
+    vigia: () => ({ projectPath: appConfig.projectRoots[0] ?? null, cofre: appConfig.vigia.cofre }),
     celularWanted: () => {
       const text = configIoDeps.readFileText(join(app.getPath('userData'), 'celular.json'));
       try {
