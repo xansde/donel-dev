@@ -266,7 +266,15 @@ export const PTY_CHANNELS = {
   remoteAlive: 'pty:remoteAlive',
   /** Sessões remotas — the ssh of a remote tab dropped (`false`, "sem ligação") or was relinked (`true`). */
   link: 'pty:link',
+  /** `sessao_religar` (t-1293c818) — put the app's keys (hooks, MCP) back on a live session that lost them. */
+  relinkTools: 'pty:relinkTools',
 } as const;
+
+/** The one-line answer of `sessao_religar`. */
+export interface RelinkToolsResult {
+  readonly ok: boolean;
+  readonly text: string;
+}
 
 export interface PtyCreateOptions {
   /** Colunas iniciais (medidas pelo xterm/addon-fit no renderer). */
@@ -324,6 +332,11 @@ export interface PtyCreateOptions {
    * session reads the Líder único's guidance instead of the Líder of one board's.
    */
   leaderOfAll?: boolean;
+  /**
+   * Super bypass das orquestradoras (t-66cb0ce4) — the place of the tab on the board, when it has one: a place above
+   * another one by the arrows (it opened or directs sessions) is born in super bypass even before its first conversation.
+   */
+  placeId?: string;
   /**
    * Sessões remotas — id of a remote place (`accounts.remotes`) where this session runs, inside a tmux
    * session that outlives the app. Absent = this computer. Only with `sessionType === 'claude'`.
@@ -428,6 +441,8 @@ export interface DonelPtyApi {
   getPreview(ptyId: string): Promise<string[]>;
   /** Sessões remotas — sessions still alive on the remote places, to reopen at boot. */
   remoteAlive(): Promise<RemoteAliveSession[]>;
+  /** `sessao_religar` — registers again the app's keys of a live session (hooks, MCP); relinks it when "sem ligação". */
+  relinkTools(ptyId: string): Promise<RelinkToolsResult>;
   /** Retorna função de unsubscribe. */
   onData(ptyId: string, listener: (data: string) => void): () => void;
   /** Retorna função de unsubscribe. */

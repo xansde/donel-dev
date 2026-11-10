@@ -110,8 +110,8 @@ export const LEDGER_TOOLS = [
     name: 'tarefa_criar',
     title: 'Criar tarefa no Oráculo Harrow',
     description:
-      'Registra uma tarefa entre lugares do quadro: um título humano, a frase literal de quem pediu, o critério de pronto, o prazo, o lugar dono do trabalho e o risco. Nasce "aberta". Risco baixo pode ser aceito por um lugar com papel Revisor; risco alto espera o dono. Risco baixo só vale quando quem cria não é o dono do trabalho nem foi aberto por ele; senão a tarefa nasce em risco alto. ' +
-      'Quando sobe ao dono (risco alto): difícil de desfazer (main, repo público, apagar, credencial, conta, dinheiro); toca outra pessoa ou algo de fora; gasta o que é do dono (limite de conta, VPS, a hora dele); muda a forma do que ele vê e há 2 jeitos bons (sobe com protótipo, nunca com descrição); contradiz o que ele disse ou sai do pedido. ' +
+      'Registra uma tarefa entre lugares do quadro: um título humano, a frase literal de quem pediu, o critério de pronto, o prazo, o lugar dono do trabalho e o risco. Nasce "aberta". Vale o risco que você declara, também numa tarefa sua: registre o que você mesmo resolve, sem medo de cair no dono. Risco baixo entregue com prova fecha por um Revisor vivo de fora da cadeia de quem entregou ou, sem Revisor, sozinho com a prova, marcado no registro; risco alto espera o dono. ' +
+      'Quando sobe ao dono (risco alto): difícil de desfazer (main, repo público, apagar, credencial, conta, dinheiro); toca outra pessoa ou algo de fora de forma que comprometa; gasta o que é do dono (limite de conta, VPS, a hora dele); muda a forma do que ele vê e há 2 jeitos bons (sobe com protótipo, nunca com descrição); contradiz o que ele disse ou sai do pedido. ' +
       'Não sobe: só uma opção defensável (decida e registre o porquê); escolha técnica reversível dentro do pedido; resposta já escrita em CLAUDE.md, ADR, memória ou decisão anterior; bug corrigido com teste; risco baixo que o Revisor aceita. Teste: sem uma pergunta numa frase, 2 opções reais e uma recomendação, a decisão não está pronta para subir.',
     inputSchema: {
       type: 'object',
@@ -142,7 +142,7 @@ export const LEDGER_TOOLS = [
     name: 'tarefa_entregar',
     title: 'Entregar tarefa com prova',
     description:
-      `Marca a tarefa como entregue. Sem prova é recusada. Provas (1 a ${MAX_PROOFS}): {"tipo":"arquivo","caminho":"C:/…/print.png"} (print, vídeo ou protótipo .html neste computador; o app copia para o Oráculo Harrow), {"tipo":"texto","texto":"saída do comando"} ou {"tipo":"link","url":"https://… (o CI)"}. Quem entrega não aceita a própria entrega. ` +
+      `Marca a tarefa como entregue. Sem prova é recusada. Provas (1 a ${MAX_PROOFS}): {"tipo":"arquivo","caminho":"C:/…/print.png"} (print, vídeo ou protótipo .html neste computador; o app copia para o Oráculo Harrow), {"tipo":"texto","texto":"saída do comando"} ou {"tipo":"link","url":"https://… (o CI)"}. Quem entrega não aceita a própria entrega. Risco baixo sem "paraODono": um Revisor vivo de fora da sua cadeia decide; sem ele, a tarefa fecha sozinha com a prova, marcada no registro, sem carta. ` +
       'Protótipo: um .html AUTOCONTIDO (CSS, JS e imagens dentro dele, até 2 MB), que roda isolado dentro da carta, sem rede; aponte-o como visual ({"prova": n}) quando a decisão muda algo que o dono vê. ' +
       `"paraODono" é a carta que o dono lê para decidir em 5 segundos, sem abrir link; obrigatório no risco alto. Traz a pergunta, um resumo, de ${MIN_OPTIONS} a ${MAX_OPTIONS} opções com nome e efeito (exatamente uma recomendada), o porquê dela, o risco e o visual (qual print mostrar). ` +
       'Escreva para um humano: o texto é recusado se tiver id de tarefa ou de lugar, branch, hash, número de PR, caminho, link ou crases. O técnico vai nas provas. ' +
@@ -227,7 +227,7 @@ export const LEDGER_TOOLS = [
     name: 'tarefa_aceitar',
     title: 'Aceitar entrega',
     description:
-      'Aceita uma entrega. ANTES, leia a prova com tarefa_ver (sem isso o aceite é recusado) e confira que ela mostra o critério. Só um lugar com papel Revisor, só risco baixo, só do seu quadro e de fora da cadeia de quem entregou (não aberto por ele nem abaixo dele); quem entregou nunca aceita. O resto espera o dono.',
+      'Aceita uma entrega. ANTES, leia a prova com tarefa_ver (sem isso o aceite é recusado) e confira que ela mostra o critério. Só um lugar com papel Revisor, só risco baixo, só do seu quadro e de fora da cadeia de quem entregou (não aberto por ele nem abaixo dele); quem entregou nunca aceita. Risco alto espera o dono; risco baixo sem Revisor fecha sozinho na entrega.',
     inputSchema: { type: 'object', properties: { id: ID }, required: ['id'], additionalProperties: false },
   },
   {
@@ -262,7 +262,7 @@ export const LEDGER_TOOLS = [
     name: 'tarefa_cancelar',
     title: 'Cancelar tarefa ou carta',
     description:
-      'Encerra de vez uma tarefa que não vai mais acontecer, com motivo: uma carta de Slack substituída por outra (aceita e nunca enviada, ou ainda esperando o dono), um trabalho que ninguém vai fazer. Cancelada, a carta não libera envio e a tarefa não se assume de novo; o histórico fica. Quem pode: o Líder, o lugar dono ou o dono. Tarefa aceita (fora carta não enviada) não se cancela.',
+      'Encerra de vez uma tarefa que não vai mais acontecer, com motivo: uma carta de Slack substituída por outra (aceita e nunca enviada, ou ainda esperando o dono), um trabalho que ninguém vai fazer. Cancelada, a carta não libera envio e a tarefa não se assume de novo; o histórico fica. Quem pode: o Líder, o lugar dono ou o dono. Tarefa aceita (fora carta não enviada) não se cancela. Trabalho feito não se cancela para não cair no dono: entregue com prova, que o risco baixo fecha sem carta.',
     inputSchema: {
       type: 'object',
       properties: { id: ID, motivo: { type: 'string', description: 'Por que acaba (ex.: substituída pela carta nova).' } },
@@ -374,7 +374,7 @@ export const LEDGER_TOOLS = [
     name: 'carta_slack',
     title: 'Pedir ao dono para mandar mensagem no Slack',
     description:
-      'Toda mensagem ao Slack em nome do dono (canal, pessoa ou thread; por MCP do Slack, Composio, curl ou script) precisa ANTES desta carta aceita pelo dono: sem ela o Donel Dev bloqueia o envio. A carta leva o destino, a thread, o texto EXATO e o motivo, e espera o dono no Oráculo Harrow (desktop e celular). Aceita: envie o mesmo texto ao mesmo destino e thread, uma vez só. Rejeitada: não envie; o motivo diz o ajuste; crie outra carta. Veja a decisão com tarefa_ver. Para mandar um ARQUIVO, a carta leva também "arquivo" (o caminho local, exatamente como vai na ferramenta de upload do MCP do Slack) e o texto é o comentário do arquivo; aceita, libera um upload só desse arquivo.',
+      'Opcional: o Donel Dev NÃO exige carta nem bloqueia envio ao Slack. Use só quando quiser que o dono confira uma mensagem antes de ela sair em nome dele. A carta leva o destino, a thread, o texto EXATO e o motivo, e espera o dono no Oráculo Harrow (desktop e celular). Aceita: envie o mesmo texto ao mesmo destino e thread, uma vez só. Rejeitada: não envie; o motivo diz o ajuste; crie outra carta. Veja a decisão com tarefa_ver. Para mandar um ARQUIVO, a carta leva também "arquivo" (o caminho local, exatamente como vai na ferramenta de upload do MCP do Slack) e o texto é o comentário do arquivo; aceita, libera um upload só desse arquivo.',
     inputSchema: {
       type: 'object',
       properties: {

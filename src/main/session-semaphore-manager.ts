@@ -116,6 +116,9 @@ export function notificationNeedsOwner(payload: Record<string, unknown>): boolea
   return typeof payload.message === 'string' && /permission/i.test(payload.message);
 }
 
+/** `SessionStart` sources that leave the session at its prompt with no turn running (t-1293c818, item 5). */
+const AT_PROMPT_SESSION_STARTS: ReadonlySet<string> = new Set(['resume', 'clear', 'fork']);
+
 export class SessionSemaphoreManager {
   private server: Server | null = null;
   private port = 0;
@@ -341,6 +344,15 @@ export class SessionSemaphoreManager {
       const error = typeof payload.error === 'string' && payload.error.length > 0 ? payload.error : null;
       for (const listener of this.stopFailureListeners) listener(ptyId, error);
     }
+    // t-1293c818 (item 5) — a resumed (or cleared, or forked) conversation sits at its prompt: stopped, and heard. A
+    // new session (`startup`) is left as it was born: its first message may still be on its way, and "não começou"
+    // reads that. A compaction (`compact`) comes in the middle of a turn.
+    if (hookEventName === 'SessionStart') {
+      if (!AT_PROMPT_SESSION_STARTS.has(String(payload.source))) return;
+      this.heardPtyIds.add(ptyId);
+      this.moveTo(ptyId, { type: 'atPrompt', at: this.now() });
+      return;
+    }
     const eventType = mapHookEventName(hookEventName);
     if (!eventType) return;
     if (hookEventName === 'Notification' && !notificationNeedsOwner(payload)) return; // B40 — idle is not "precisa do dono"
@@ -381,6 +393,26 @@ export class SessionSemaphoreManager {
       const transcriptPath = typeof payload.transcript_path === 'string' && payload.transcript_path.length > 0 ? payload.transcript_path : null;
       for (const listener of this.turnEndedListeners) listener(ptyId, text, transcriptPath);
     }
+  }
+
+  /**
+   * t-1293c818 (item 5) — the remote place read this session's pane idle with its turn closed (`settledRemoteSessions`),
+   * in a read that started at `readStartedAt`. A session reattached after the app reopened sends no `SessionStart` (its
+   * process never stopped), and one whose `Stop` was lost stays "trabalhando" forever. Only a `working` that nothing
+   * moved since the read started is corrected: a hook after it, or a tab born after it, is newer than the reading.
+   */
+  settleFromPlace(ptyId: string, readStartedAt: number): void {
+    const current = this.ptyState.get(ptyId);
+    if (!current || current.state !== 'working' || this.pendingOpenPtyIds.has(ptyId)) return;
+    if (current.stateEnteredAt >= readStartedAt || (this.lastEventAtByPty.get(ptyId) ?? -Infinity) >= readStartedAt) return;
+    this.heardPtyIds.add(ptyId);
+    this.moveTo(ptyId, { type: 'atPrompt', at: this.now() });
+  }
+
+  private moveTo(ptyId: string, event: SemaphoreEvent): void {
+    const current = this.ptyState.get(ptyId) ?? INITIAL_SEMAPHORE_STATE;
+    this.ptyState.set(ptyId, reduceSemaphoreState(current, event));
+    this.emit(ptyId);
   }
 
   private tick(): void {

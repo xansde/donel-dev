@@ -12,7 +12,6 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { constants as fsConstants, promises as fs } from 'node:fs';
 import { dirname, extname, isAbsolute, join } from 'node:path';
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
-import { LEADER_ROLE_ID } from '../shared/roles';
 import { isBelow, isOpenedBy } from '../shared/mindscape/reach';
 import type { MindscapeBoard } from '../shared/mindscape/model';
 import type { ConfigIoDeps } from './config-store';
@@ -21,6 +20,8 @@ import {
   emptyLedgerDoc,
   isHttpUrl,
   cannotDecide,
+  closedAlone,
+  isReviewerRole,
   isNewerLedger,
   lastDelivery,
   slackLetterSent,
@@ -39,6 +40,7 @@ import {
   isCancelled,
   awaitsSend,
   isClosed,
+  isLeaderRole,
   isServicePlace,
   viewState,
   maxProofBytes,
@@ -441,7 +443,10 @@ export function urgentLedgerNotice(call: LedgerToolCall, answerText: string): st
     return null;
   }
   if (typeof answer.id !== 'string') return null;
-  if (call.tool === 'tarefa_entregar' && answer.entregue === true) return `entregou a tarefa ${answer.id} para aceite. Leia a prova com tarefa_ver ${answer.id}.`;
+  if (call.tool === 'tarefa_entregar' && answer.entregue === true)
+    return (answer as { estado?: unknown }).estado === 'aceita'
+      ? `entregou e fechou sozinha a tarefa ${answer.id} com a prova (sem Revisor vivo de fora da cadeia). Leia com tarefa_ver ${answer.id}.`
+      : `entregou a tarefa ${answer.id} para aceite. Leia a prova com tarefa_ver ${answer.id}.`;
   if (call.tool === 'tarefa_andamento' && answer.registrado === true && isUrgentProgress({ estado: call.estado })) {
     const what = call.estado === 'travada' ? 'está travada' : 'precisa do dono';
     return `${what} (tarefa ${answer.id})${call.precisa ? `: ${call.precisa}` : ''}.`;
@@ -473,32 +478,60 @@ function stripView(strip: LedgerStrip): Record<string, unknown> {
     esperandoDono: strip.waitingForOwner,
     esperandoDesde: strip.oldestWaitingSince === null ? null : new Date(strip.oldestWaitingSince).toISOString(),
     validadasSemDonoPct: strip.validatedWithoutOwnerPct,
+    fechadasSemRevisor: strip.closedAlone,
   };
 }
 
 /**
- * Low risk only when whoever creates is not the owner of the work nor opened by it (it would review itself). The
- * Líder reparte, não executa (Líder do quadro, 08/11): a Líder (or the Líder único) asking low for a place of its board
- * keeps it low even when the board file could not be read; the "opened by the owner" check still holds when it can.
+ * The risk of a task passed to another place: the one declared (09/11, dono: "Carta só quando há uma decisão sua de
+ * verdade"). Only a low the old rule forced high (whoever created it was the owner of the work or opened by it) gets
+ * its low back.
  */
-function lowRiskRefusal(creator: { readonly placeId: string; readonly roleId?: string }, owner: string, board: MindscapeBoard | undefined): string | null {
-  if (owner === creator.placeId) return 'quem cria não pode ser o dono do trabalho';
-  if (board && isOpenedBy(board, owner, creator.placeId)) return `você foi aberta pelo dono do trabalho (${owner})`;
-  const leader = creator.placeId === LEADER_OF_ALL || creator.roleId === LEADER_ROLE_ID;
-  if (!board && !leader) return 'não consegui ler o quadro para conferir quem abriu quem';
-  return null;
+function riskAfterTransfer(task: LedgerTask): LedgerTask['risk'] {
+  const creator = task.events[0]?.by;
+  if (!creator || creator.kind !== 'lugar' || task.slack) return task.risk;
+  // A card already on the owner's table changes only by the owner's decision (revisão do #383).
+  if (task.events.some((event) => event.kind === 'entregue' && event.forOwner)) return task.risk;
+  return task.risk === 'alto' && lowRiskAsked(task) ? 'baixo' : task.risk;
+}
+
+/** Place states that count as a live session (`sessao_listar`): everything but closed and never started. */
+const NOT_LIVE: ReadonlySet<string> = new Set(['fechada', 'nao-comecou']);
+
+/**
+ * 09/11 — the live places with a Revisor role on the caller's board that are out of the chain of `from` (who delivers
+ * and who did the work): neither opened by them nor below them. `null` = unknown (the board or its places could not be
+ * read): nothing closes alone on a guess.
+ */
+function liveReviewersOutside(caller: LedgerCaller, from: readonly string[]): string[] | null {
+  const states = caller.placeStates?.get(caller.projectPath);
+  if (!caller.board || !states) return null;
+  const board = caller.board;
+  return Object.values(board.cards)
+    .filter((card) => card.kind === 'session' && isReviewerRole(card.roleId))
+    .map((card) => card.id)
+    .filter((id) => {
+      const state = states.get(id);
+      if (state === undefined || NOT_LIVE.has(state)) return false;
+      return from.every((placeId) => placeId !== id && !isOpenedBy(board, placeId, id) && !isBelow(board, placeId, id));
+    });
 }
 
 /**
- * The risk of a task passed to `to` (08/11): into the creator's own chain a low one goes high; out of it, a task that
- * asked low and was forced high gets low back. Tasks the owner created, or asked high, keep their risk.
+ * The live Revisores out of the chain of whoever delivers `call` (and of who did the work), when the delivery is low
+ * risk on the caller's board with no card for the owner; `null` = it does not apply or the board is unknown.
  */
-function riskAfterTransfer(task: LedgerTask, to: string, board: MindscapeBoard | undefined): LedgerTask['risk'] {
-  const creator = task.events[0]?.by;
-  if (!creator || creator.kind !== 'lugar' || task.slack) return task.risk;
-  const refused = lowRiskRefusal(creator, to, board);
-  if (task.risk === 'baixo') return refused ? 'alto' : 'baixo';
-  return lowRiskAsked(task) && !refused ? 'baixo' : 'alto';
+function closeAloneCheck(service: LedgerService, caller: LedgerCaller, call: Extract<LedgerToolCall, { tool: 'tarefa_entregar' }>): string[] | null {
+  // Done by another place (`feitoPor`): its chain is not the deliverer's, so a Revisor decides (revisão do #383).
+  if (call.paraODono || (call.feitoPor && call.feitoPor !== caller.placeId)) return null;
+  let task: LedgerTask | undefined;
+  try {
+    task = service.load().doc.tasks[call.id];
+  } catch {
+    return null;
+  }
+  if (!task || task.risk !== 'baixo' || task.slack || task.projectPath !== caller.projectPath || task.state !== 'em-execucao') return null;
+  return liveReviewersOutside(caller, [caller.placeId, ...(call.feitoPor ? [call.feitoPor] : [])]);
 }
 
 /** Why the place `caller` may not decide this delivery, beyond the contract's rules; `null` = may. */
@@ -634,6 +667,22 @@ function callerActor(caller: LedgerCaller): LedgerActor {
 }
 
 /**
+ * t-cccce5e4 (dono, 09/11: "cada líder deverá ter a configuração de quanto aceita puxar e tocar em paralelo"): the
+ * number on the caller's place in the Mindscape (`parallel`, read from the board at this call), how many demands of its
+ * board are being worked now (in progress or sent back), and how many it may still pull. Shown to a Líder, or to any
+ * place the owner gave a number (the Coordenador). No number = no limit, as before. Nothing is pulled: the Líder does.
+ */
+function parallelOf(caller: LedgerCaller, doc: LedgerDoc): { paralelo?: { limite: number | 'sem limite'; tocando: number; podePuxar: number | 'sem limite' } } {
+  if (caller.placeId === LEADER_OF_ALL) return {}; // above every board: the block would be the board's, not its own
+  const card = caller.board?.cards[caller.placeId];
+  const limite = card?.kind === 'session' ? card.parallel : undefined;
+  if (limite === undefined && !isLeaderRole(caller.roleId)) return {};
+  if (!caller.projectPath) return {};
+  const tocando = Object.values(doc.tasks).filter((task) => task.projectPath === caller.projectPath && !isClosed(task) && (task.state === 'em-execucao' || task.state === 'rejeitada') && !task.slack).length;
+  return { paralelo: limite === undefined ? { limite: 'sem limite', tocando, podePuxar: 'sem limite' } : { limite, tocando, podePuxar: Math.max(0, limite - tocando) } };
+}
+
+/**
  * `tarefa_lote` (t-147e6783, item 2): each item runs as its own `tarefa_transferir` / `tarefa_cancelar` through `run`
  * (the caller resolves the board of each task), one after the other; a refused item does not stop the rest.
  */
@@ -666,7 +715,6 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
     case 'tarefa_criar': {
       const owner = call.dono === undefined || call.dono === 'seu' ? caller.placeId : call.dono;
       if (!caller.boardPlaceIds.includes(owner)) return { ok: false, text: `"${owner}" não é um lugar deste quadro (veja sessao_listar).` };
-      const lowRefused = call.risco === 'baixo' ? lowRiskRefusal(caller, owner, caller.board) : null;
       const result = await service.apply(actor, {
         op: 'criar',
         projectPath: caller.projectPath,
@@ -674,19 +722,15 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         doneWhen: call.criterio,
         due: call.prazo,
         ownerPlaceId: owner,
-        risk: lowRefused ? 'alto' : call.risco,
+        risk: call.risco,
         ...(call.titulo ? { title: call.titulo } : {}),
         ...(call.substitui ? { replaces: call.substitui } : {}),
         // Who asked: what the creator said, or the owner when the task came from his phone's "Pedir".
         ...(call.quemPediu ? { requestedBy: call.quemPediu } : call.pedidoDoDono ? { requestedBy: ASKED_BY_OWNER } : {}),
         ...(call.frente ? { frente: call.frente } : {}),
-        ...(lowRefused ? { lowAsked: true as const } : {}),
       });
-      if (!result.ok || !lowRefused) return answer(result, 'criada');
-      return {
-        ok: true,
-        text: JSON.stringify({ criada: true, id: result.task.id, estado: result.task.state, risco: 'alto', aviso: `Risco baixo não vale aqui (${lowRefused}); a tarefa espera o dono.` }),
-      };
+      if (!result.ok || result.task.risk === call.risco) return answer(result, 'criada');
+      return { ok: true, text: JSON.stringify({ criada: true, id: result.task.id, estado: result.task.state, risco: result.task.risk, aviso: 'Ela substitui uma tarefa de risco alto e herda o risco: a entrega espera o dono.' }) };
     }
     case 'tarefa_frente': {
       const task = (() => {
@@ -719,7 +763,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       // The Líder único has no place, but owns tasks too (t-52b31719): "lider" is a destination of every board.
       if (to !== LEADER_OF_ALL && !caller.boardPlaceIds.includes(to)) return { ok: false, text: `"${to}" não é um lugar deste quadro que você alcança (veja sessao_listar), nem "lider" (o Líder único).` };
       const gone = ownerGone(caller, task, service.now());
-      const risk = riskAfterTransfer(task, to, caller.board);
+      const risk = riskAfterTransfer(task);
       const result = await service.apply(actor, { op: 'transferir', id: task.id, to, reason: gone && !call.motivo.includes(gone) ? `${call.motivo} (${gone})` : call.motivo, ...(gone ? { ownerGone: true } : {}), ...(risk !== task.risk ? { risk } : {}) });
       if (!result.ok) return { ok: false, text: result.reason };
       return {
@@ -729,7 +773,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
           id: result.task.id,
           estado: result.task.state,
           dono: result.task.ownerPlaceId,
-          ...(risk !== task.risk ? { risco: risk, aviso: risk === 'alto' ? 'O novo dono está na cadeia de quem criou: o risco subiu para alto e a entrega espera o dono.' : 'Fora da cadeia de quem criou, o risco baixo pedido na criação voltou.' } : {}),
+          ...(risk !== task.risk ? { risco: risk, aviso: 'O risco baixo pedido na criação voltou: quem cria não decide mais o risco.' } : {}),
           ...(result.task.state === 'aberta' ? { proximo: 'O novo dono assume com tarefa_assumir.' } : {}),
         }),
       };
@@ -772,9 +816,28 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         }
         proofs.push(proof);
       }
-      const result = await service.apply(actor, { op: 'entregar', id: call.id, proofs, ...(call.nota ? { note: call.nota } : {}), ...(call.paraODono ? { forOwner: call.paraODono } : {}), ...(call.feitoPor ? { doneBy: call.feitoPor } : {}) });
-      if (!result.ok) await service.discardProofs(proofs);
-      return answer(result, 'entregue');
+      // 09/11 — low risk without a card for the owner: a live Revisor out of the chain decides; with none, it closes alone.
+      const reviewers = closeAloneCheck(service, caller, call);
+      const closeAlone = reviewers !== null && reviewers.length === 0;
+      const result = await service.apply(actor, {
+        op: 'entregar',
+        id: call.id,
+        proofs,
+        ...(call.nota ? { note: call.nota } : {}),
+        ...(call.paraODono ? { forOwner: call.paraODono } : {}),
+        ...(call.feitoPor ? { doneBy: call.feitoPor } : {}),
+        ...(closeAlone ? { closeAlone: true as const } : {}),
+      });
+      if (!result.ok) {
+        await service.discardProofs(proofs);
+        return answer(result, 'entregue');
+      }
+      const next = closedAlone(result.task)
+        ? 'Fechada sozinha com a prova: não há Revisor vivo de fora da sua cadeia no quadro. Fica no registro; o dono pode reabrir.'
+        : reviewers?.length
+          ? `Um Revisor de fora da sua cadeia decide (${reviewers.join(', ')}); não vai ao dono.`
+          : undefined;
+      return { ok: true, text: JSON.stringify({ entregue: true, id: result.task.id, estado: result.task.state, ...(next ? { proximo: next } : {}) }) };
     }
     case 'tarefa_aceitar':
     case 'tarefa_rejeitar': {
@@ -905,6 +968,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
               ? { fila: 'As abertas vêm primeiro, na prioridade que o dono deu em "Seus pedidos" ("posicao" 1 = a próxima do quadro). Nada é puxado sozinho: com alguém livre, entregue a próxima a ele.' }
               : {}),
             ...(hidden ? { fora: `${hidden} tarefa(s) fora desta lista; "situacao": "todas" mostra o histórico inteiro, "orfas" as que ficaram sem lugar.` } : {}),
+            ...parallelOf(caller, doc),
             tarefas: tasks.map((task) => ({
               ...(queuePlace.has(task.id) ? { posicao: queuePlace.get(task.id) } : {}),
               ...taskView(task, doc, orphanOf(task), caller),
@@ -919,7 +983,11 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
   }
 }
 
-// Slack só com carta — the hook bridge's guard (pure decision in `slack-guard.ts`).
+// Slack letters — the hook bridge's side (pure matching in `slack-guard.ts`).
+//
+// NEVER a lock (owner, 09/11: "Não quero que cartas travem nada também"): `before` always lets the call go on. A
+// letter is an optional check by the owner; a send without one, or past a spent one, goes out like any tool call.
+// What stays is bookkeeping: a send that matches an accepted letter marks it sent, and a bot's post is recorded.
 //
 // `PreToolUse` frees the call and writes `enviada` on its letters right away, on disk: from that moment the letter
 // is spent, even if the app closes before the answer, and a second call finds nothing to free. At `PostToolUse` /
@@ -956,7 +1024,7 @@ export interface SlackLetterGuardOptions {
 }
 
 export interface SlackLetterGuard {
-  /** `PreToolUse`: `null` = the call goes on (its letters are now spent); a string = the refusal the session reads. */
+  /** `PreToolUse`: always `null` (the call goes on; a matching accepted letter is now spent). Letters never lock (owner, 09/11). */
   before(ptyId: string, payload: Record<string, unknown>): Promise<string | null>;
   /**
    * `PostToolUse` / `PostToolUseFailure` of the same call: records the answer; only an explicit failure reopens. A
@@ -1038,8 +1106,8 @@ export function createSlackLetterGuard(service: () => LedgerService | null, opti
         doc = null;
       }
       const verdict = slackGuard(doc, toolName, payload.tool_input, botServers());
-      if (verdict.kind === 'not-slack') return null;
-      if (verdict.kind === 'deny') return verdict.reason;
+      // No letter (or one already spent): the send goes on all the same. Letters never lock (owner, 09/11).
+      if (verdict.kind === 'not-slack' || verdict.kind === 'deny') return null;
       if (verdict.kind === 'agent-bot') {
         const toolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : null;
         const cwd = typeof payload.cwd === 'string' ? payload.cwd : undefined;
@@ -1048,8 +1116,7 @@ export function createSlackLetterGuard(service: () => LedgerService | null, opti
       }
       for (const id of verdict.letterIds) {
         const task = doc!.tasks[id]!;
-        const marked = await ledger!.apply({ kind: 'lugar', placeId: task.ownerPlaceId }, { op: 'slack-enviada', id });
-        if (!marked.ok) return `Envio ao Slack bloqueado pelo Donel Dev: não consegui marcar a carta ${id} como usada (${marked.reason}). Tente de novo.`;
+        await ledger!.apply({ kind: 'lugar', placeId: task.ownerPlaceId }, { op: 'slack-enviada', id }); // bookkeeping only: a failure never holds the send
       }
       const toolUseId = typeof payload.tool_use_id === 'string' ? payload.tool_use_id : null;
       inFlight.push({ ptyId, toolUseId, callKey: callKeyOf(payload), letterIds: verdict.letterIds, at: now() });

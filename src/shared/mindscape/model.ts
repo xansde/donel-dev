@@ -22,8 +22,12 @@ import { clampZoom } from './view';
  * 7 since the link both ways (08/11): two arrows between the same two cards, one each way (Dev ⇄ Revisor). The
  * link has the same shape, but a v6 channel drops the arrow the other way whenever it rewires links (a place with a
  * post-it taking a new conversation, as after a /clear); with 7 it reads and never writes.
+ * 8 since the parallel of a place (09/11, t-cccce5e4: "cada líder deverá ter a configuração de quanto aceita puxar e
+ * tocar em paralelo"): `parallel` on a place card, set only by the owner. A v7 channel would drop it.
  */
-export const MINDSCAPE_SCHEMA_VERSION = 7;
+export const MINDSCAPE_SCHEMA_VERSION = 8;
+/** The most demands a place can be set to take in parallel. */
+export const MAX_PARALLEL = 20;
 
 /**
  * 4 since the board by MCP (item 08 + B37): what a session made on the board carries `by: 'session'`
@@ -79,6 +83,8 @@ export interface SessionPlaceCard {
   roleId?: string;
   /** v4 — made by a session through the MCP (not by the owner). */
   by?: MadeBy;
+  /** v8 — how many demands this place (a Líder, a Coordenador) takes in parallel; absent = no limit. Owner only. */
+  parallel?: number;
   x: number;
   y: number;
 }
@@ -148,7 +154,7 @@ export interface MindscapeBoard {
 }
 
 export interface MindscapeDoc {
-  schemaVersion: 7;
+  schemaVersion: 8;
   boards: Record<string, MindscapeBoard>;
 }
 
@@ -428,6 +434,18 @@ export function setPlaceRole(doc: MindscapeDoc, projectPath: string, placeId: st
   return withBoardReplaced(doc, { ...board, cards: { ...board.cards, [placeId]: next } });
 }
 
+/** v8 — how many demands a place takes in parallel (`null` = no limit). The owner's gesture; sessions never set it. */
+export function setPlaceParallel(doc: MindscapeDoc, projectPath: string, placeId: string, parallel: number | null): MindscapeDoc {
+  const board = doc.boards[projectPath];
+  const card = board?.cards[placeId];
+  if (!board || card?.kind !== 'session' || (card.parallel ?? null) === parallel) return doc;
+  if (parallel !== null && !isParallel(parallel)) return doc;
+  const next: SessionPlaceCard = { ...card };
+  if (parallel === null) delete next.parallel;
+  else next.parallel = parallel;
+  return withBoardReplaced(doc, { ...board, cards: { ...board.cards, [placeId]: next } });
+}
+
 export interface SessionNoteInput {
   readonly sessionId: string;
   /** Name of the session at the end of the turn — kept so the note survives the tab closing. */
@@ -641,6 +659,10 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
+function isParallel(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= MAX_PARALLEL;
+}
+
 function parseCard(key: string, raw: unknown): MindscapeCard | null {
   if (!isRecord(raw) || raw.id !== key || !isFiniteNumber(raw.x) || !isFiniteNumber(raw.y)) return null;
   const { x, y } = raw;
@@ -657,6 +679,7 @@ function parseCard(key: string, raw: unknown): MindscapeCard | null {
       const card: SessionPlaceCard = { kind: 'session', id: key, ...(sessionId ? { sessionId } : {}), previous, x, y };
       if (isRoleId(raw.roleId)) card.roleId = raw.roleId;
       if (raw.by === 'session') card.by = 'session';
+      if (isParallel(raw.parallel)) card.parallel = raw.parallel;
       return card;
     }
     case 'session-note':

@@ -49,6 +49,7 @@ export type BoardToolCall =
   | { readonly tool: 'sessao_ver_tela'; readonly quem: string; readonly quadro?: string }
   | { readonly tool: 'sessao_fechar'; readonly quem: string; readonly quadro?: string; readonly recusarPermissao?: boolean }
   | { readonly tool: 'sessao_permissao'; readonly quem: string; readonly quadro?: string; readonly resposta?: PermissionReply; readonly pedido?: string }
+  | { readonly tool: 'sessao_religar'; readonly quem: string; readonly quadro?: string }
   /**
    * Internal, never an MCP tool (not in `BOARD_TOOLS`): the `estado` of every place of these boards (folders), the same
    * answer for whoever asks. The ledger's orphan count must not depend on who asks (t-04099af0).
@@ -281,6 +282,14 @@ export const BOARD_TOOLS = [
     },
     annotations: { destructiveHint: true },
   },
+  {
+    name: 'sessao_religar',
+    title: 'Religar as ferramentas do Donel numa sessão',
+    description:
+      'Para a sessão que perdeu as ferramentas do Donel (o MCP donel responde "Host not allowed" ou "Unauthorized", os hooks 401): o app registra de novo as chaves que o CLI dela já tem e, se ela estiver sem ligação no lugar remoto, religa o ssh agora. O processo dela segue vivo, na mesma conversa, sem perder nada. Mesmo alcance de sessao_fechar (abaixo de você pelas setas; o Líder único, em qualquer quadro, dizendo qual em "quadro"); a sua própria também vale. Responde em uma linha o que fez.',
+    inputSchema: { type: 'object', properties: { quem: PLACE_REF, quadro: BOARD_REF }, required: ['quem'], additionalProperties: false },
+    annotations: { idempotentHint: true },
+  },
 ] as const;
 
 /** The board tools with the cap of `sessao_abrir` as the owner set it in Preferências. */
@@ -445,6 +454,11 @@ export function parseBoardToolCall(name: string, rawArgs: unknown): ParsedBoardC
       if (typeof pedido === 'object') return { ok: false, reason: pedido.error };
       const resposta = args.resposta as PermissionReply | undefined;
       return { ok: true, call: { tool: 'sessao_permissao', quem, ...quadro, ...(resposta ? { resposta } : {}), ...(pedido?.trim() ? { pedido: pedido.trim() } : {}) } };
+    }
+    case 'sessao_religar': {
+      const quem = requiredText(args.quem, 'quem', 120);
+      if (typeof quem === 'object') return { ok: false, reason: quem.error };
+      return { ok: true, call: { tool: 'sessao_religar', quem, ...quadro } };
     }
     default:
       return { ok: false, reason: `Ferramenta desconhecida: ${name}` };
