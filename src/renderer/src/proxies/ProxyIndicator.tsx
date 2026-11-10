@@ -18,7 +18,7 @@ const TONE_CLASS: Record<IndicatorTone, string | undefined> = {
 };
 
 const KIND_OPTIONS = [
-  { value: 'gateway', label: 'Gateway de contas num PC' },
+  { value: 'gateway', label: 'Gateway de contas (num PC ou numa VPS)' },
   { value: 'portal', label: 'Portal de API' },
 ];
 
