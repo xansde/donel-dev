@@ -16,7 +16,7 @@ máquina (`virar-*.sh` / `voltar-*.sh`), e só vale para sessões novas.
 
 ## O que o app passa a fazer
 
-1. **Cadastro de proxies** (chave `proxies` do `config.json`): nome, tipo (`gateway` num PC ou `portal`), endereço e
+1. **Cadastro de proxies** (chave `proxies` do `config.json`): nome, tipo (`gateway` de contas, em qualquer máquina: um PC, a VPS pessoal, a VPS Homologações; ou `portal`), endereço e
    em quais máquinas pode ser usado. A chave de cada proxy fica no cofre do app (`safeStorage`), **uma por máquina**
    (o portal pareia uma chave por máquina), nunca no `config.json`, no `settings.json`, em log ou no renderer.
 2. **Seletor "proxy da vez"** por máquina (este computador + cada lugar remoto de `accounts.remotes`) e "todas de uma
@@ -52,6 +52,15 @@ máquina (`virar-*.sh` / `voltar-*.sh`), e só vale para sessões novas.
    chave nunca na saída), troca em todas com falha parcial.
 2. **Tela**: indicador na barra, painel de cadastro e seletor, aviso de queda; item nas novidades da versão.
 3. **Prova no alfa**: trocar PC → portal → PC numa sessão de teste sem derrubar as sessões vivas, com prints.
+
+## Onde o proxy roda e para onde cada máquina aponta (10/11, pedido do dono)
+
+"Tem que ser versátil a ideia de escolher onde fica o proxy." O cadastro não supõe que o gateway mora no PC: cada
+proxy é só um endereço, e cada máquina aponta para qualquer proxy cadastrado que tenha endereço, chave dela e a permita
+(lista de máquinas vazia = todas). Dá para
+combinar à vontade, inclusive o PC apontando para um gateway que roda numa VPS (ex.: `http://vps-time-homologacoes:8327`).
+O que o app não faz é subir ou derrubar um gateway numa máquina; isso fica com a âncora do proxy (PR #351,
+`docs/planos/ancora-proxy.md`).
 
 ## Fora
 
