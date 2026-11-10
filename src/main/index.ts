@@ -101,6 +101,7 @@ import type {
   ProjectScanMode,
   PtyCreateOptions,
   PtyCreateResult,
+  RelinkToolsResult,
   RemoteAliveSession,
   PhaseArchivedPayload,
   PtyExitInfo,
@@ -250,6 +251,7 @@ import {
   type RemoteSessionMeta,
 } from './remote-session';
 import { RemoteLinkSupervisor } from './remote-link';
+import { SessionKeyRing } from './session-keys';
 import { createDiagnosticsLog } from './chat/diagnostics-log';
 import { resolveMainRepoRootSync } from './session-worktree';
 import { ATTACHMENT_MAX_AGE_MS, AttachmentStore } from './chat/attachments';
@@ -645,6 +647,8 @@ const remoteLinks = new RemoteLinkSupervisor<PtyExitInfo>({
   clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
   now: () => Date.now(),
 });
+/** `sessao_religar` (t-1293c818) — the hook and MCP keys each live session's CLI holds, to put back when the app lost them. */
+const sessionKeys = new SessionKeyRing();
 /** `curl.exe` achado no boot (`where.exe curl`); `null` = fallback no encaminhador PowerShell que lê bytes. */
 let curlPath: string | null = null;
 /**
@@ -1507,6 +1511,7 @@ function finishPtyExit(ptyId: string, info: PtyExitInfo, closedByOwner: boolean)
   transcriptWatchers.stop(ptyId);
   // T015 (014-chat) — baixa da ponte: apaga o `--settings` da sessão e esquece o token.
   // No-op para aba sem hooks (terminal livre, login isolado, transporte legado).
+  sessionKeys.forget(ptyId);
   hookBridge?.unregisterSession(ptyId);
   removeSessionHooksSettings(app.getPath('userData'), ptyId);
   statusLineStore.remove(ptyId);
@@ -1843,6 +1848,8 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     browserService?.releasePty(ptyId);
     if (live.mcpPort !== null && live.mcpToken !== null) browserService?.prepareRemoteSession(ptyId, live.mcpPort, live.mcpToken);
   }
+  const remoteMcpKey = browserService?.mcpKeyOf(ptyId) ?? null;
+  sessionKeys.remember(ptyId, { ...(hooksOn ? { hookToken: live.hookToken } : {}), ...(remoteMcpKey ? { mcp: remoteMcpKey } : {}) });
   const tunnels = [
     ...(hooksOn && hookBridge?.port ? [{ remotePort: live.hookPort, localPort: hookBridge.port }] : []),
     ...(live.mcpPort !== null && mcp ? [{ remotePort: live.mcpPort, localPort: mcp.localPort }] : []),
@@ -1860,6 +1867,7 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     remoteSpawns.set(ptyId, spawnSpec);
     remoteLinks.track(ptyId, place.sshTarget, correlationId);
   } catch (error) {
+    sessionKeys.forget(ptyId);
     hookBridge?.unregisterSession(ptyId);
     browserService?.releasePty(ptyId);
     throw error;
@@ -1941,8 +1949,30 @@ async function carryLeaderConversation(payload: LiderCarryPayload): Promise<Lide
   return { ok: true };
 }
 
+/**
+ * `sessao_religar` (t-1293c818, item 4) — the session lost the app's tools ("Host not allowed" in the MCP, 401 in the
+ * hooks) while its process lives: the keys its CLI holds go back on the same PTY, and a remote tab "sem ligação" tries
+ * its ssh again now. Nothing is killed, nothing is respawned here.
+ */
+function relinkSessionTools(ptyId: unknown): RelinkToolsResult {
+  if (typeof ptyId !== 'string' || ptyId === '') return { ok: false, text: 'pedido inválido.' };
+  const service = browserService;
+  const restored = sessionKeys.restore(ptyId, {
+    hooks: hookBridge,
+    mcp: service ? { registerSession: (id, token, tunnelPort) => service.restoreMcpKey(id, token, tunnelPort) } : null,
+  });
+  if (!restored) return { ok: false, text: 'esta sessão não tem chaves do app para religar (foi aberta sem hooks nem MCP, ou já encerrou).' };
+  const keys = [restored.hooks ? 'a chave dos hooks' : null, restored.mcp ? 'a do MCP donel' : null].filter(Boolean).join(' e ');
+  const relinking = remoteLinks.relinkNow(ptyId);
+  return {
+    ok: true,
+    text: `${keys ? `Registrei de novo ${keys}` : 'Nenhuma chave a registrar'}${relinking ? '; ela estava sem ligação e o ssh do lugar remoto religa agora' : ''}. O processo dela não foi tocado.`,
+  };
+}
+
 function registerPtyIpcHandlers(): void {
   remoteSessions = new RemoteSessionRegistry(join(app.getPath('userData'), 'remote-transcripts'));
+  ipcMain.handle(PTY_CHANNELS.relinkTools, (_event, ptyId: unknown): RelinkToolsResult => relinkSessionTools(ptyId));
   ipcMain.handle(PTY_CHANNELS.remoteAlive, async (): Promise<RemoteAliveSession[]> => {
     const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
     const found = await discoverRemoteSessions(places);
@@ -2084,6 +2114,7 @@ function registerPtyIpcHandlers(): void {
         if (hookBridge && hookBridge.port !== null) {
           try {
             const token = hookBridge.registerSession(plannedPtyId);
+            sessionKeys.remember(plannedPtyId, { hookToken: token });
             if (options.cwd) tabCwdByPty.set(plannedPtyId, options.cwd);
             sessionHooksSettingsPath = writeSessionHooksSettings({
               userDataDir: app.getPath('userData'),
@@ -2130,6 +2161,8 @@ function registerPtyIpcHandlers(): void {
       // Navegador integrado — o MCP do app (`donel`) entregue ao CLI da sessão pela função por CLI
       // (`mcpDeliveryFor`, emenda agnóstica). Por último: `--mcp-config` é variádico e só opções podem vir depois.
       const browserMcpArgs = browserService?.prepareSession(plannedPtyId, 'claude-code') ?? [];
+      const mcpKey = browserService?.mcpKeyOf(plannedPtyId) ?? null;
+      if (mcpKey) sessionKeys.remember(plannedPtyId, { mcp: mcpKey });
       const rolePromptPath = roleId ? (rolesStore?.promptFileFor(roleId, { leaderOfAll: options.leaderOfAll === true }) ?? null) : null;
       // Papel não entregue — what the role asked for and did not reach the CLI goes back to the tab, never silent.
       const rolePlan = planRoleLaunch('claude-code', {
@@ -2164,6 +2197,7 @@ function registerPtyIpcHandlers(): void {
         });
       } catch (error) {
         // O spawn falhou: nada de token nem arquivo órfão.
+        sessionKeys.forget(plannedPtyId);
         hookBridge?.unregisterSession(plannedPtyId);
         removeSessionHooksSettings(app.getPath('userData'), plannedPtyId);
         browserService?.releasePty(plannedPtyId);

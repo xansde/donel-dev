@@ -47,6 +47,8 @@ export interface BrowserMcpServer {
    */
   registerSession(ptyId: string, token?: string, tunnelPort?: number): string;
   unregisterSession(ptyId: string): void;
+  /** The key `ptyId` holds now (and the tunnel port of a remote session); `null` = none. */
+  keyOf(ptyId: string): { token: string; tunnelPort?: number } | null;
   stop(): Promise<void>;
 }
 
@@ -156,6 +158,12 @@ export function createBrowserMcpServer(deps: BrowserMcpServerDeps): BrowserMcpSe
       if (token && ptyByToken.get(token) === ptyId) ptyByToken.delete(token);
       tokenByPty.delete(ptyId);
       tunnelPortByPty.delete(ptyId);
+    },
+    keyOf: (ptyId) => {
+      const token = tokenByPty.get(ptyId);
+      if (token === undefined) return null;
+      const tunnelPort = tunnelPortByPty.get(ptyId);
+      return tunnelPort === undefined ? { token } : { token, tunnelPort };
     },
     stop: () =>
       new Promise<void>((resolve) => {

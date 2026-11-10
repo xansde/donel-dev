@@ -106,6 +106,15 @@ export class RemoteLinkSupervisor<Exit> {
     return true;
   }
 
+  /** `sessao_religar` (t-1293c818) — a tab "sem ligação" tries its relink now instead of waiting its turn. `false` = not lost. */
+  relinkNow(ptyId: string): boolean {
+    const entry = this.lost.get(ptyId);
+    if (!entry || this.stopped) return false;
+    if (entry.timer !== null) this.deps.clearTimer(entry.timer);
+    entry.timer = this.deps.setTimer(() => void this.tryRelink(ptyId, entry), 0);
+    return true;
+  }
+
   /** The app is quitting (or its window closed): no more relinking. */
   stopAll(): void {
     this.stopped = true;
