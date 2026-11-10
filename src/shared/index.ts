@@ -21,6 +21,7 @@ import type { DonelProjectBindingApi } from './projectBinding';
 import type { DonelProjectsApi } from './projects';
 import type { DonelStatusLineApi } from './statusLine';
 import type { DonelProvidersApi } from './providers';
+import type { DonelProxiesApi } from './proxies';
 import type { DonelSessionsApi } from './sessions';
 import type { DonelTabsApi } from './tabChannels';
 import type { DonelMindscapeApi } from './mindscape/channels';
@@ -534,6 +535,8 @@ export interface DonelApi {
   migration: DonelMigrationApi;
   /** 011-contas-e-provedores (etapa 3) — registry de providers classe A; nasce inerte (`providers.entries = []`). */
   providers: DonelProvidersApi;
+  /** Proxy da vez (018) — cadastro, seletor por máquina e saúde; chave só entra, nunca volta. */
+  proxies: DonelProxiesApi;
   /** T015 — ConfigStore (FR-007/FR-009); ver src/shared/config.ts. */
   config: DonelConfigApi;
   /** T504 (005-terminal-copy-paste) — clipboard-bridge no main, atrás de IPC. */

@@ -4,6 +4,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 // G5 (batch N5) — guarda contra segundo assinante silencioso de canal IPC:
 // todo `onX` abaixo passa por aqui em vez de `ipcRenderer.on` direto.
 import { subscribeChannel } from './subscribeChannel';
+import { PROXY_CHANNELS, type MachineId, type ProxiesViewDto, type ProxyId, type ProxyKeyResult, type ProxySwitchOutcome, type UpsertProxyInput, type UpsertProxyResult } from '../shared/proxies';
 import { CHAT_CHANNELS } from '../shared/chat/ipc';
 // 015-jobu-pet — the pet channels; same names as the contract (specs/015-jobu-pet/contracts/ipc-pet.md).
 import { PET_CHANNELS } from '../shared/pet/ipc';
@@ -477,6 +478,22 @@ const donelApi: DonelApi = {
 
     setOrder: (sessionId: string, order: number) =>
       ipcRenderer.invoke(TAB_CHANNELS.setOrder, sessionId, order) as Promise<AppConfigDto>,
+  },
+
+  // Proxy da vez (018) — the key goes in through `setKey` and never comes back.
+  proxies: {
+    view: () => ipcRenderer.invoke(PROXY_CHANNELS.view) as Promise<ProxiesViewDto>,
+    refresh: () => ipcRenderer.invoke(PROXY_CHANNELS.refresh) as Promise<ProxiesViewDto>,
+    upsert: (input: UpsertProxyInput) => ipcRenderer.invoke(PROXY_CHANNELS.upsert, input) as Promise<UpsertProxyResult>,
+    remove: (id: ProxyId) => ipcRenderer.invoke(PROXY_CHANNELS.remove, id) as Promise<ProxiesViewDto>,
+    setKey: (id: ProxyId, machineId: MachineId, value: string | null) => ipcRenderer.invoke(PROXY_CHANNELS.setKey, id, machineId, value) as Promise<ProxyKeyResult>,
+    importKey: (id: ProxyId, machineId: MachineId) => ipcRenderer.invoke(PROXY_CHANNELS.importKey, id, machineId) as Promise<ProxyKeyResult>,
+    switch: (machineId: MachineId, id: ProxyId) => ipcRenderer.invoke(PROXY_CHANNELS.switch, machineId, id) as Promise<ProxySwitchOutcome>,
+    switchAll: (id: ProxyId) => ipcRenderer.invoke(PROXY_CHANNELS.switchAll, id) as Promise<readonly ProxySwitchOutcome[]>,
+    onChanged: (listener: (view: ProxiesViewDto) => void) => {
+      const handler = (_event: unknown, view: ProxiesViewDto): void => listener(view);
+      return subscribeChannel(ipcRenderer, PROXY_CHANNELS.changed, handler);
+    },
   },
 
   // Saúde do computador — the last report, its change event and the two actions.

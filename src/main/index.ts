@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, Notification, protocol, safeStorage, screen, shell, webContents } from 'electron';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
@@ -304,12 +304,15 @@ import { sanitizeLeaderPrefs, type LeaderPrefs } from '../shared/leaderPrefs';
 import { adoptRefreshedActivePair, applyAccountSwitch, createSystemClaudeStateIoDeps, readCurrentCredentialPair } from './accounts/claude-state';
 import { accountFingerprintFromClaudeJsonText } from './accounts/credentials-file';
 import { createLocalMod } from './accounts/mods/local-mod';
-import { createRemoteClaudeState } from './accounts/remote-claude-state';
+import { createRemoteClaudeState, createSystemSshRunner } from './accounts/remote-claude-state';
+import { createProxyService, type ProxyMachine, type ProxyService } from './proxies/proxy-service';
+import { probeProxy } from './proxies/proxy-probe';
+import { LOCAL_MACHINE_ID, PROXY_CHANNELS, type MachineId, type ProxiesViewDto, type ProxyId, type UpsertProxyInput } from '../shared/proxies';
 import { createSeazoneMod } from './accounts/mods/seazone-mod';
 import { createLocalWithPoolMod } from './accounts/mods/local-with-pool-mod';
 // 011-contas-e-provedores, etapa 3, Fase 1 (F2) — valida o par colado à mão (fallback do "conectar conta"; login isolado é a Fase 1.2).
 import { buildPastedPair } from './accounts/pasted-pair';
-import { createSystemVaultIoDeps, decryptVaultEntry, deleteVaultEntries, writeVaultEntry, type VaultLike } from './accounts/vault';
+import { createSystemVaultIoDeps, decryptVaultEntry, deleteVaultEntries, deleteVaultEntry, writeVaultEntry, type VaultLike } from './accounts/vault';
 // 011-contas-e-provedores, etapa 3, Fase 1 — faxina do cofre no boot
 // (plan-etapa-3.md §4.4): remove entrada de conta órfã + `seazone:session`,
 // nunca `provider:*`.
@@ -3022,6 +3025,91 @@ function registerTabIpcHandlers(): void {
   });
 }
 
+/** Proxy da vez (specs/018-proxy-da-vez) — `null` until whenReady and again after the app closes. */
+let proxyService: ProxyService | null = null;
+
+/** This computer: the app's own binary as node (`ELECTRON_RUN_AS_NODE`), program on stdin, one JSON line back. */
+function runLocalNodeProgram(program: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value: string | null): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const child = spawn(process.execPath, ['-'], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
+    const timer = setTimeout(() => {
+      child.kill();
+      finish(null);
+    }, 60_000);
+    let stdout = '';
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk;
+    });
+    child.on('error', () => finish(null));
+    child.on('close', (code) => finish(code === 0 ? stdout : null));
+    child.stdin.on('error', () => undefined);
+    child.stdin.end(program);
+  });
+}
+
+function proxyMachines(): readonly ProxyMachine[] {
+  const remotes = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
+  return [{ id: LOCAL_MACHINE_ID, label: 'Este computador', sshTarget: null }, ...remotes.map((place) => ({ id: place.id, label: place.label, sshTarget: place.sshTarget }))];
+}
+
+function registerProxyIpcHandlers(): void {
+  const sshRunner = createSystemSshRunner();
+  proxyService = createProxyService({
+    getConfig: () => appConfig.proxies,
+    setConfig: (next) => {
+      appConfig = { ...appConfig, proxies: next };
+      persistAppConfig();
+    },
+    machines: proxyMachines,
+    run: (machine, program) => (machine.sshTarget === null ? runLocalNodeProgram(program) : sshRunner(machine.sshTarget, program)),
+    vault: {
+      available: () => accountsVaultPath !== null && safeStorage.isEncryptionAvailable(),
+      read: (key) => (accountsVaultPath ? decryptVaultEntry(accountsVaultPath, safeStorage, accountsVaultIo, key) : null),
+      write: (key, value) => (accountsVaultPath ? writeVaultEntry(accountsVaultPath, safeStorage, accountsVaultIo, key, value).kind === 'ok' : false),
+      delete: (key) => {
+        if (accountsVaultPath) deleteVaultEntry(accountsVaultPath, accountsVaultIo, key);
+      },
+    },
+    probe: (baseUrl) => probeProxy(baseUrl),
+    localClaudeDir: () => (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).claudeHome,
+    onChanged: (view) => {
+      const window = getMainWindow();
+      if (window) window.webContents.send(PROXY_CHANNELS.changed, view);
+    },
+    onProxyDown: (down) => {
+      if (!systemNotificationsSupported()) return;
+      const where = down.machines.join(', ');
+      const body = down.suggestion
+        ? `${where} usa este proxy. Abra o proxy na barra e troque para ${down.suggestion.label}, que está de pé.`
+        : `${where} usa este proxy, e nenhum outro cadastrado está de pé para trocar agora.`;
+      createSystemNotification({ title: `Proxy fora: ${down.proxy.label}`, body }).show();
+    },
+  });
+  proxyService.start();
+  ipcMain.handle(PROXY_CHANNELS.view, (): ProxiesViewDto | null => proxyService?.view() ?? null);
+  ipcMain.handle(PROXY_CHANNELS.refresh, async (): Promise<ProxiesViewDto | null> => (proxyService ? proxyService.refresh() : null));
+  ipcMain.handle(PROXY_CHANNELS.upsert, (_event, input: UpsertProxyInput) => proxyService?.upsert(input) ?? { kind: 'invalid', field: 'id' });
+  ipcMain.handle(PROXY_CHANNELS.remove, (_event, id: ProxyId) => proxyService?.remove(id) ?? null);
+  ipcMain.handle(PROXY_CHANNELS.setKey, (_event, id: ProxyId, machineId: MachineId, value: string | null) =>
+    proxyService ? proxyService.setKey(id, machineId, value) : { kind: 'vault-unavailable' },
+  );
+  ipcMain.handle(PROXY_CHANNELS.importKey, async (_event, id: ProxyId, machineId: MachineId) =>
+    proxyService ? proxyService.importKey(id, machineId) : { kind: 'vault-unavailable' },
+  );
+  ipcMain.handle(PROXY_CHANNELS.switch, async (_event, machineId: MachineId, id: ProxyId) =>
+    proxyService ? proxyService.switchMachine(machineId, id) : { kind: 'failed', machineId, reason: 'io' },
+  );
+  ipcMain.handle(PROXY_CHANNELS.switchAll, async (_event, id: ProxyId) => (proxyService ? proxyService.switchAll(id) : []));
+}
+
 /** Saúde do computador — `null` until the handlers are registered (whenReady) and again after the app closes. */
 let healthService: HealthService | null = null;
 /** Saúde das VPS — same life as `healthService`. */
@@ -4587,6 +4675,7 @@ void app.whenReady().then(async () => {
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
   }); // 015-jobu-pet
   registerHealthIpcHandlers(); // Saúde do computador
+  registerProxyIpcHandlers(); // Proxy da vez (018)
   registerHomologacaoIpcHandlers(); // Mindscape de homologação V1 — Números da factory
   registerRotinasIpcHandlers(); // Item 20 — rotinas em sombra
   registerFaxineiroIpcHandlers(); // t-b3b26e60 — Faxineiro com gatilhos
@@ -4718,6 +4807,8 @@ app.on('window-all-closed', () => {
   healthService?.stop();
   healthService = null;
   remoteHealthService?.stop();
+  proxyService?.stop();
+  proxyService = null;
   vigiaService?.stop();
   remoteHealthService = null;
   factoryMetricsReader?.stop();
