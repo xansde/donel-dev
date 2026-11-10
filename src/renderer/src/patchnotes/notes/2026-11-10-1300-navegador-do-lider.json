@@ -1,0 +1,4 @@
+{
+  "title": "Pelo navegador do Líder você chega ao de qualquer sessão",
+  "text": "No navegador da aba do Líder, uma lista mostra o navegador aberto de cada sessão, de todos os quadros, deste computador e das VPS, com o nome da sessão, o quadro e a página. Escolha um e ele aparece ali: você vê, digita, clica, assume e devolve como na aba da própria sessão. Quando uma sessão pede sua mão no navegador, como um login ou um 2FA, o pedido aparece em destaque no topo, o botão Navegador do Líder ganha um sinal, e o navegador dela já abre na aba do Líder. Valia antes também para as sessões que não aparecem na barra de abas, aquelas abertas por outra sessão: o pedido delas ficava num painel que você não via."
+}

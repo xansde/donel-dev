@@ -12,6 +12,7 @@ import {
   type BrowserControlState,
   type BrowserHistoryAction,
   type BrowserAgentRules,
+  type BrowserListResult,
   type BrowserLogEntry,
   type BrowserNavigateResult,
   type BrowserPanelState,
@@ -596,6 +597,20 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
   deps.ipcMain.on(BROWSER_CHANNELS.handBack, (event, ptyId: unknown, generation: unknown) => {
     if (!known(event.sender, ptyId) || typeof generation !== 'number' || !Number.isInteger(generation)) return;
     controls.get(ptyId)?.handBack(generation);
+  });
+
+  // Navegador do Líder: every browser, of any session, so the Líder's tab can list and open them.
+  deps.ipcMain.handle(BROWSER_CHANNELS.list, (event): BrowserListResult => {
+    if (!deps.isMainSender(event.sender)) return { states: [], controls: [] };
+    const states: BrowserPanelState[] = [];
+    for (const ptyId of panels.ptyIds()) {
+      if (!livePtys.has(ptyId)) continue;
+      const state = panels.state(ptyId);
+      if (state) states.push(state);
+    }
+    const controlStates: BrowserControlState[] = [];
+    for (const [ptyId, control] of controls) if (livePtys.has(ptyId)) controlStates.push({ ptyId, ...control.snapshot() });
+    return { states, controls: controlStates };
   });
 
   deps.ipcMain.handle(BROWSER_CHANNELS.getControl, (event, ptyId: unknown): BrowserControlState | null => {

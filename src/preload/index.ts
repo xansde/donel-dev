@@ -22,7 +22,7 @@ import { WORKSPACE_CHANNELS } from '../shared/workspace';
 import type { EditorStatus, GitBranchResult, OpenInEditorResult, PullRequestRequestOptions, PullRequestStatusResult, WorktreeKeptPayload } from '../shared/workspace';
 // Navegador interno — the panel of each session tab.
 import { BROWSER_CHANNELS } from '../shared/browser/ipc';
-import type { BrowserAgentRules, BrowserRulesResult, BrowserTabAction } from '../shared/browser/ipc';
+import type { BrowserAgentRules, BrowserListResult, BrowserRulesResult, BrowserTabAction } from '../shared/browser/ipc';
 import type { DomainMode } from '../shared/browser/guardrails';
 import type {
   BrowserControlState,
@@ -566,6 +566,7 @@ const donelApi: DonelApi = {
       ipcRenderer.send(BROWSER_CHANNELS.handBack, ptyId, generation);
     },
     getControl: (ptyId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.getControl, ptyId) as Promise<BrowserControlState | null>,
+    list: () => ipcRenderer.invoke(BROWSER_CHANNELS.list) as Promise<BrowserListResult>,
     onControl: (listener: (state: BrowserControlState) => void) => {
       const handler = (_event: unknown, state: BrowserControlState): void => listener(state);
       return subscribeChannel(ipcRenderer, BROWSER_CHANNELS.control, handler);
