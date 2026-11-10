@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ConfigIoDeps } from '../src/main/config-store';
 import { createCelularAuth } from '../src/main/celular/auth';
-import { cleanPedidoText, createPedidoRouter, createPedidosStore, pedidoCelular, type MobilePedidosPort } from '../src/main/celular/pedidos';
+import { cleanPedidoText, createMobilePedidosPort, createPedidoRouter, createPedidosStore, pedidoCelular, type MobilePedidosPort } from '../src/main/celular/pedidos';
 import { createMobileHandler, type MobileResponse } from '../src/main/celular/server';
 import { createTranscriptionJobs, isWav } from '../src/main/celular/transcrever';
 import { parseLedgerToolCall } from '../src/shared/ledger/tools';
@@ -159,10 +159,11 @@ describe('pedido do dono ao Líder único', () => {
     expect(created).toEqual(['oi']);
   });
 
-  it('transcrição: guarda só WAV, transcreve no PC e devolve o texto pelo id', async () => {
+  it('pedido falado: o áudio sobe, é transcrito no PC e o pedido chega ao Líder com o texto e o áudio', async () => {
+    const io = memoryIo();
     const written: Record<string, Uint8Array> = {};
     let release: (text: string) => void = () => undefined;
-    const jobs = createTranscriptionJobs({
+    const audio = createTranscriptionJobs({
       dir: 'C:/data/pedidos-audio',
       writeFile: (path, bytes) => {
         written[path] = bytes;
@@ -170,19 +171,52 @@ describe('pedido do dono ao Líder único', () => {
       exists: (path) => path in written,
       transcribe: () => new Promise<string>((resolve) => (release = resolve)),
     });
+    const store = createPedidosStore({ filePath: FILE, io });
+    const { state, deliver } = leader();
+    state.open = true;
+    const router = createPedidoRouter({ store, deliver, audioPath: audio.fileOf, retryMs: 60_000 });
+    const auth = createCelularAuth({ filePath: 'C:/data/celular.json', io });
+    const handle = createMobileHandler({
+      auth,
+      ledger: () => { throw new Error('sem ledger'); },
+      assets: {},
+      provasRoot: null,
+      pedidos: createMobilePedidosPort({ store, router, audio }),
+    });
+    const { code } = auth.createPairingCode();
+    const pairing = handle({ method: 'POST', url: '/api/parear', body: JSON.stringify({ codigo: code, aparelho: 'Android' }) }) as MobileResponse;
+    const authorization = `Bearer ${JSON.parse(pairing.body as string).token as string}`;
+    const body = (response: MobileResponse): Record<string, unknown> => JSON.parse(response.body as string) as Record<string, unknown>;
 
-    expect(isWav(new TextEncoder().encode('<html>não é áudio</html>'.padEnd(64, ' ')))).toBe(false);
-    expect(jobs.start(new TextEncoder().encode('x'.repeat(100)))).toMatchObject({ ok: false });
+    // Só WAV entra: outra coisa nem é gravada no PC.
+    const html = new TextEncoder().encode('<html>não é áudio</html>'.padEnd(64, ' '));
+    expect(isWav(html)).toBe(false);
+    expect((handle({ method: 'POST', url: '/api/pedidos/audio', authorization, body: '', bytes: html }) as MobileResponse).status).not.toBe(200);
     expect(Object.keys(written)).toEqual([]);
 
-    const started = jobs.start(wav());
-    if (!started.ok) throw new Error(started.mensagem);
-    expect(jobs.has(started.audioId)).toBe(true);
-    expect(jobs.status(started.audioId)).toEqual({ estado: 'transcrevendo' });
+    // O celular manda o WAV, recebe o id e pergunta até ficar pronto.
+    const sent = handle({ method: 'POST', url: '/api/pedidos/audio', authorization, body: '', bytes: wav() }) as MobileResponse;
+    expect(sent.status).toBe(200);
+    const audioId = body(sent).audioId as string;
+    const poll = (): Record<string, unknown> => body(handle({ method: 'GET', url: `/api/pedidos/audio?id=${audioId}`, authorization, body: '' }) as MobileResponse);
+    expect(poll()).toMatchObject({ estado: 'transcrevendo' });
     await Promise.resolve();
     release('Líder, abre uma sessão para revisar o PR.');
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(jobs.status(started.audioId)).toEqual({ estado: 'pronto', texto: 'Líder, abre uma sessão para revisar o PR.' });
-    expect(jobs.has('c'.repeat(24))).toBe(false);
+    expect(poll()).toMatchObject({ estado: 'pronto', texto: 'Líder, abre uma sessão para revisar o PR.' });
+
+    // Um audioId que o PC não guardou é recusado; o certo entra e chega ao Líder com o texto e o caminho do áudio.
+    const pedir = (audio: string): MobileResponse =>
+      handle({ method: 'POST', url: '/api/pedidos', authorization, body: JSON.stringify({ pedidoId: 'req-000000006', texto: 'Líder, abre uma sessão para revisar o PR.', audioId: audio }) }) as MobileResponse;
+    expect(pedir('c'.repeat(24)).status).toBe(409);
+    const created = pedir(audioId);
+    expect(created.status).toBe(200);
+    expect(body(created).pedido).toMatchObject({ falado: true });
+    await router.flush();
+    expect(state.received).toHaveLength(1);
+    expect(state.received[0]).toContain('Líder, abre uma sessão para revisar o PR.');
+    expect(state.received[0]).toContain(audio.fileOf(audioId));
+    expect(written[audio.fileOf(audioId)]).toEqual(wav());
+    router.dispose();
   });
 });

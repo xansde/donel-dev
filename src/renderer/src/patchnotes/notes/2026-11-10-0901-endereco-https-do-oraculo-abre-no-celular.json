@@ -1,0 +1,4 @@
+{
+  "title": "O endereço https do Oráculo abre no celular",
+  "text": "O QR de Preferências → Celular, com o https da Tailscale ligado, agora abre o Oráculo no celular, em vez de ficar carregando até dar erro. O comando mostrado ali para ligar o https mudou: rode o novo uma vez e pareie o celular de novo. Pelo https o Oráculo grava áudio pelo microfone e avisa quando uma carta espera você."
+}

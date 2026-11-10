@@ -58,7 +58,15 @@
           </button>
           <span id="pedir-contador" class="pedir-contador">0 / 4000</span>
         </div>
-        <input id="pedir-arquivo" type="file" accept="audio/*" capture hidden />
+        <div id="pedir-ouvir" class="pedir-ouvir" hidden>
+          <audio id="pedir-audio" controls preload="metadata"></audio>
+          <div class="pedir-ouvir-acoes">
+            <button type="button" id="pedir-descartar" class="botao botao-neutro">Descartar</button>
+            <button type="button" id="pedir-usar" class="botao botao-usar">Usar este áudio</button>
+          </div>
+        </div>
+        <button type="button" id="pedir-anexar" class="pedir-anexar">ou anexe um arquivo de áudio</button>
+        <input id="pedir-arquivo" type="file" accept="audio/*" hidden />
         <p id="pedir-voz" class="pedir-voz" role="status" aria-live="polite" hidden></p>
         <button type="submit" id="pedir-enviar" class="botao botao-pedir-enviar" disabled>Enviar ao Líder</button>
         <h3 class="pedir-subtitulo">Seus pedidos</h3>

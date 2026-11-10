@@ -41,11 +41,11 @@ export async function readTailnet(): Promise<CelularTailnet> {
 }
 
 /** Aviso no celular — o endereço https que `tailscale serve` publica para este PC (`null` = não configurado). */
-export async function readServeHttpsUrl(): Promise<string | null> {
+export async function readServeHttpsUrl(port: number): Promise<string | null> {
   const result = await run(tailscaleExe(), ['serve', 'status', '--json'], 5000);
   if (!result.ok) return null;
   try {
-    return httpsServeUrl(JSON.parse(result.stdout));
+    return httpsServeUrl(JSON.parse(result.stdout), port);
   } catch {
     return null;
   }
