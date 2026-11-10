@@ -1,8 +1,39 @@
 # OpenRig — registro de absorção
 
-Último commit absorvido: 521405f48d67613650f1c77bc139efffc9cf6a18
+Último commit absorvido: d5832cd90d5ac6f4a326f7cde4450d3aa4e97eff
 
 Referência de design do Mindscape (github.com/mvschwarz/openrig). Procedimento na skill `absorver-openrig`. Cada rodada lista o que virou PR, o que ficou adiado, o que espera o dono e o que foi descartado.
+
+## 2026-11-10 — 521405f..d5832cd
+
+43 commits do OpenRig; versões novas: nenhuma identificada.
+
+### Vale → PR
+
+- Sessão renovada mais de uma vez recebe as passagens anteriores como histórico opcional (commits `c531d48`, `a43e09c`; item 07 do plano, seat do OpenRig): https://github.com/xansde/donel-dev/pull/385. Teste primeiro em `tests/session-renewal.test.ts` (3 renovações em sequência; falhou com `handoffChain` indefinido; caso do lugar remoto usa o caminho do lugar, nunca a cópia local). `npm run verify` verde pela fila (98 arquivos, 1271 testes, build ok).
+
+### Vale → adiado
+
+Nenhum (teto de 3 PRs não foi atingido).
+
+### Vale → pendente para o dono
+
+- Fila durável entre lugares (continuação do item 13; commits `3518c03`, `7078c754`, `83afa753`, `ac97493c`, `a11a78e`, `fcf0c0f`, `0e49fb8`, `24dd3eb`, `7f7dc97`, `e935533`, `06c05d6`, `10736e1`): o OpenRig acorda um item que nasceu antes de o lugar estar ligado assim que ele fica alcançável, mantém a custódia de quem responde no handoff, avisa quando um item estacionado esperando condição externa não tem quem o acorde e nomeia o sucessor de um item repassado. No Donel, as mensagens pendentes do sessao_enviar e o "quem abriu quem" vivem só na memória do main. A ordem de 04/11 punha a fila durável depois da entrega direta ao CLI e do Líder único, e as duas já andaram (PRs #376/#377 do Líder único estão abertos). Pergunta: abro agora o refinamento da fila durável (mensagem com id e desfecho que sobrevive ao restart, acorda o lugar adormecido antes de entregar, repassada por handoff), usando como base essas regras do OpenRig? Ou ela segue parada?
+
+### Descartado
+
+- Fila (queue): custódia, wake de itens sem rota, delegação, avisos (mecânica): A mecânica em si é daemon/SQLite (sweep de travados, prefixo unroutable, findings de delegates_to, polling, perf de listagem, --source @external), sem onde encaixar enquanto a fila durável não existe. A ideia de produto foi para o dono, em pendentes.
+- Restore e compactação: input devido após prontidão desconhecida, defaults de rascunho: Mecânica do enforcer de compactação e do restore do daemon tmux (71aba02, 0830585). Quem entrega a passagem à sessão nova no Donel é o sendDriver/tabSend com renewalHandoffDeliveryNotice (PR #321), e o item 09 (restore por nó) segue pendente.
+- Leitura de transcript pelo fim em blocos (a43e09c) e session-jsonl (b6e1604): O Donel já tem igual: transcripts JSONL nunca são lidos inteiros, só por streaming + stat (gotcha do CLAUDE.md). O session-renewal.ts lê inteira só a passagem, que é pequena. A parte da cadeia de passagens foi para o PR passagens-anteriores.
+- Terminal: tiles graváveis, tamanho do terminal ativo, provider herdr-app: Específico de tiles tmux/Herdr e da TUI. O Donel é dono dos PTYs pelo xterm, e a prévia do cartão (item 05) segue pendente de refinamento.
+- Prova: política exige todos os juízes: O ledger do Donel aceita com um revisor só, e quem entrega não aceita (item 19, D2). A política do repo é de 1 revisor (CLAUDE.md, 04/08). Vários juízes não estão no plano.
+- Execução: escada do fluxo padrão mostra status gravado por fatia: View de missão/slices do daemon e da TUI (fora de escopo). O princípio 'não registrado não é o mesmo que não feito' o Donel já aprendeu com a trilha sintética (#35, congelada para reverter), e a esteira no quadro (item 15) não tem slices nem escada.
+- Harnesses da comunidade: protocolo pi-rpc e wrappers de lançamento: Runtime Pi e wrappers de lançamento pertencem ao runtime do OpenRig. O Donel monta o argv no CommandBuilder, e motor de terceiro é assunto da 011. Mesmo motivo das rodadas anteriores.
+- Gateway: relay pull-mode com outbox e vínculo humano: Gateway e outbox do daemon estão fora do plano, e o Slack do dono passa só pela Composio e pelo slack-guard.
+- Retenção e apagamento de conteúdo da fila: Retenção e ledger de apagamento da fila SQLite do daemon. O Donel não tem fila durável, e o ledger (item 19) tem contrato próprio no userData.
+- Slack do OpenRig: perguntas abertas e horário silencioso: Integração Slack própria do OpenRig, fora do plano. O Slack do dono passa só pela Composio.
+- Daemon/tmux/MCP: credenciais, troca de token, escopo externo, fuso: Credenciais no ambiente do servidor tmux e grant externo são do daemon. A troca de token tocaria src/main/accounts/ (perímetro proibido). O alcance no Donel já mora em reach.ts.
+- Scripts, testes, docs e perf internos: Guards de repo, fixtures, lista Help wanted e perf de Markdown do próprio OpenRig: packaging/CI/docs sem ideia de design.
 
 ## 2026-11-09 — 545a423..521405f
 
