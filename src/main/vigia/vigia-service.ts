@@ -102,6 +102,24 @@ export function liveVigiaCard(tasks: readonly LedgerTask[], key: string): string
 }
 
 /**
+ * The owner's decision on this lock: the most recent vigia card of the key, if the owner closed it (accepted or
+ * rejected). A vigia that takes the lock over keeps it as its card instead of opening another one, while the lock
+ * lasts — the same as when there is no handover (`planRound` keeps a card the owner closed).
+ */
+function ownerDecidedCard(tasks: readonly LedgerTask[], key: string): LedgerTask | null {
+  let latest: LedgerTask | null = null;
+  for (const task of tasks) {
+    if (task.ownerPlaceId !== VIGIA_PLACE || KEY_OF_DONE_WHEN.exec(task.doneWhen)?.[1] !== key) continue;
+    if (latest === null || task.createdAt > latest.createdAt) latest = task;
+  }
+  const last = latest?.events[latest.events.length - 1];
+  return last && (last.kind === 'aceita' || last.kind === 'rejeitada') && last.by.kind === 'dono' ? latest : null;
+}
+
+/** The PC's clock and the Oráculo's (on the VPS) may differ a little. */
+const CLOCK_SKEW_MS = 60_000;
+
+/**
  * The card in the state is checked against the Oráculo each round (the state may come from another ledger: during
  * the Oráculo's return to the PC the daemon reads a stale copy). A dead card is swapped for the live one of the same
  * lock; with none, a card the vigia itself cancelled is dropped, so the normal flow adopts or opens one. A card the
@@ -191,11 +209,12 @@ export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
   let running = false;
   let inFlight: Promise<void> | null = null;
 
-  function readState(): VigiaState {
+  /** `existed: false` = this vigia never watched (or its state is unreadable). */
+  function readState(): { state: VigiaState; existed: boolean } {
     try {
-      return parseVigiaState(JSON.parse(readFileSync(deps.statePath, 'utf8')));
+      return { state: parseVigiaState(JSON.parse(readFileSync(deps.statePath, 'utf8'))), existed: true };
     } catch {
-      return { open: {} };
+      return { state: { open: {} }, existed: false };
     }
   }
 
@@ -269,9 +288,18 @@ export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
         const isDelegated = (trava: Trava): boolean => trava.placeId === delegated && (trava.kind === 'cofre' || trava.kind === 'sessoes');
         const detected = detectTravas({ probes, reports: deps.reports(), now: at });
         // A lock that is still there but now belongs to the daemon is handed over, not closed: its card stays alive
-        // for the daemon to adopt. Only a lock that is gone is closed ("a trava passou sozinha").
-        const handedOver = new Set(detected.filter(isDelegated).map((trava) => trava.key));
-        const kept = Object.fromEntries(Object.entries(readState().open).filter(([key]) => !handedOver.has(key)));
+        // for the daemon to adopt. Only a lock that is gone is closed ("a trava passou sozinha"). The PC still sees
+        // the handed-over lock, so it keeps when it first saw it (with no card): if the lock comes back to it, it can
+        // tell the owner's decision on this same lock from an older one.
+        const { state: stored, existed } = readState();
+        const handedOver: Record<string, VigiaEntry> = Object.fromEntries(
+          detected.filter(isDelegated).map((trava) => {
+            const before = stored.open[trava.key];
+            const firstSeen = before && before.endedAt === null ? before.firstSeen : at;
+            return [trava.key, { firstSeen, rounds: (before?.rounds ?? 0) + 1, cartaId: null, notified: false, endedAt: null, trava }];
+          }),
+        );
+        const kept = Object.fromEntries(Object.entries(stored.open).filter(([key]) => !(key in handedOver)));
         let tasks: readonly LedgerTask[] | null = null;
         try {
           tasks = deps.tasks ? deps.tasks() : null;
@@ -281,9 +309,21 @@ export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
         const checked = tasks ? reconcileCards(kept, tasks) : kept;
         const plan = planRound({ open: checked }, detected.filter((trava) => !isDelegated(trava)), at);
         const open = { ...plan.state.open };
+        if (!existed && tasks) {
+          // This vigia never watched before (a daemon that just got its setup): a lock it finds may be older than it,
+          // and only another vigia's card can tell. The owner's decision on it holds.
+          for (const [key, entry] of Object.entries(open)) {
+            const decided = entry.cartaId === null ? ownerDecidedCard(tasks, key) : null;
+            if (decided) open[key] = { ...entry, cartaId: decided.id };
+          }
+        }
         const projectPath = deps.projectPath();
         for (const { trava, firstSeen } of plan.toOpen) {
-          const adopted = tasks ? liveVigiaCard(tasks, trava.key) : null;
+          if (open[trava.key]!.cartaId !== null) continue;
+          const decided = tasks ? ownerDecidedCard(tasks, trava.key) : null;
+          // A card made after this vigia began seeing the lock is of this same lock (it never saw the lock pass since).
+          const decidedHere = decided !== null && decided.createdAt >= firstSeen - CLOCK_SKEW_MS ? decided.id : null;
+          const adopted = tasks ? (liveVigiaCard(tasks, trava.key) ?? decidedHere) : null;
           const id = adopted ?? (projectPath === null ? null : await openCard(trava, projectPath, at, firstSeen));
           if (id !== null) {
             open[trava.key] = { ...open[trava.key]!, cartaId: id };
@@ -304,7 +344,7 @@ export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
             if (!result.ok) log(`[vigia] não cancelou a carta de uma trava que passou: ${result.reason}`);
           }
         }
-        writeState({ open });
+        writeState({ open: { ...open, ...handedOver } });
       } catch (error) {
         log(`[vigia] rodada falhou: ${error instanceof Error ? error.message : String(error)}`);
       } finally {

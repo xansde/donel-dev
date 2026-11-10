@@ -165,7 +165,8 @@ describe('a delegação muda com a trava viva', () => {
     };
     const cards = () => Object.values(ledger.load().doc.tasks).map((task) => ({ id: task.id, state: task.state }));
     const live = () => cards().filter((card) => card.state === 'entregue').map((card) => card.id);
-    return { world, rounds, cards, live };
+    const reject = (id: string) => ledger.apply({ kind: 'dono' }, { op: 'rejeitar', id, reason: 'já sei, deixa' });
+    return { world, rounds, cards, live, reject };
   }
 
   it('o Oráculo volta da VPS ao PC: o PC adota a carta do daemon e a cancela quando a trava passa', async () => {
@@ -201,6 +202,43 @@ describe('a delegação muda com a trava viva', () => {
     world.cofre = 'unlocked';
     await rounds(2, { daemon: true });
     expect(live()).toEqual([]);
+  });
+
+  // Re-revisão do #353: a decisão do dono vale enquanto a trava dura, também depois da passagem. Quando a trava passa
+  // e volta, aí sim sai carta nova.
+  it('o dono fechou a carta do daemon e o Oráculo volta ao PC: o PC guarda a decisão, sem segunda carta', async () => {
+    const { world, rounds, cards, live, reject } = setup();
+    world.delegated = 'vps-pessoal';
+    await rounds(3, { daemon: true });
+    const [a] = live();
+    expect(a).toBeDefined();
+    await reject(a!);
+    world.delegated = null;
+    await rounds(3, { daemon: false });
+    expect(cards()).toEqual([{ id: a, state: 'rejeitada' }]);
+    world.cofre = 'unlocked';
+    await rounds(2, { daemon: false });
+    world.cofre = 'locked';
+    await rounds(3, { daemon: false });
+    expect(cards()).toHaveLength(2); // the lock passed and came back: a new card
+    expect(live()).toHaveLength(1);
+  });
+
+  it('o dono fechou a carta do PC e a delegação começa: o daemon guarda a decisão, sem segunda carta', async () => {
+    const { world, rounds, cards, live, reject } = setup();
+    await rounds(3, { daemon: false });
+    const [a] = live();
+    expect(a).toBeDefined();
+    await reject(a!);
+    world.delegated = 'vps-pessoal';
+    await rounds(3, { daemon: true });
+    expect(cards()).toEqual([{ id: a, state: 'rejeitada' }]);
+    world.cofre = 'unlocked';
+    await rounds(2, { daemon: true });
+    world.cofre = 'locked';
+    await rounds(3, { daemon: true });
+    expect(cards()).toHaveLength(2); // the lock passed and came back: a new card
+    expect(live()).toHaveLength(1);
   });
 });
 
