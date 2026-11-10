@@ -140,6 +140,8 @@ import { PatchNotes } from './patchnotes/PatchNotes';
 import { HealthIndicator } from './health/HealthIndicator';
 import { ProxyIndicator } from './proxies/ProxyIndicator';
 import { BrowserPanel, BrowserToggleButton } from './browser/BrowserPanel'; // navegador interno
+import { LeaderBrowserPanel } from './browser/LeaderBrowserPanel';
+import type { BrowserDirectorySession } from '../../shared/browser/directory';
 import { OracleCenter } from './OracleCenter';
 import { DEFAULT_LAYOUT_PREFS, showsOracle, toggleCenterView, type LayoutPrefs } from '../../shared/layoutPrefs';
 import type { PlaceNameOf } from '../../shared/ledger/labels';
@@ -1925,6 +1927,16 @@ export function App(): React.JSX.Element {
     });
   };
 
+  // Navegador do Líder (t-31e2b949) — every session with a PTY, also the ones opened by another session (off the tab
+  // bar): the Líder's browser panel lists their browsers by name, board and place.
+  const browserSessions: BrowserDirectorySession[] = tabs.flatMap((tab) => {
+    const ptyId = tab.sessionType === 'claude' ? chatPtyIds[tab.id] : undefined;
+    if (!ptyId) return [];
+    const board = tab.projectName ?? (tab.cwd ? tab.cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || null : null);
+    const place = tab.remoteId ? (accountsView.remotes.find((remote) => remote.id === tab.remoteId)?.label ?? tab.remoteId) : 'Este computador';
+    return [{ ptyId, name: resolveTabName(tab), board, place }];
+  });
+
   // B33 — "Atualizar": the click only asks; the switch happens when no session is in the middle of a turn
   // or waiting on the owner (never ends a turn). The open tabs go to the main to be reopened after the update.
   const [updateRequested, setUpdateRequested] = useState(false);
@@ -3523,7 +3535,7 @@ export function App(): React.JSX.Element {
                   <Kbd>Ctrl+`</Kbd>
                 </>
               ) : null}
-              {activeClaudeTab && chatPtyIds[activeClaudeTab.id] ? <BrowserToggleButton ptyId={chatPtyIds[activeClaudeTab.id]} /> : null}
+              {activeClaudeTab && chatPtyIds[activeClaudeTab.id] ? <BrowserToggleButton ptyId={chatPtyIds[activeClaudeTab.id]} leader={isLeaderOfAllTab(activeClaudeTab)} /> : null}
               {activeClaudeTab ? (
                 <StateDot
                   state={semaphoreStates[activeClaudeTab.id]?.state ?? 'working'}
@@ -3682,7 +3694,13 @@ export function App(): React.JSX.Element {
                 />
                 </div>
                 {/* Navegador interno — o painel desta sessão (null enquanto fechado). */}
-                {tab.sessionType === 'claude' && chatPtyIds[tab.id] ? <BrowserPanel ptyId={chatPtyIds[tab.id]} active={tab.id === activeTabId} /> : null}
+                {tab.sessionType === 'claude' && chatPtyIds[tab.id] ? (
+                  isLeaderOfAllTab(tab) ? (
+                    <LeaderBrowserPanel ownPtyId={chatPtyIds[tab.id]} active={tab.id === activeTabId} sessions={browserSessions} />
+                  ) : (
+                    <BrowserPanel ptyId={chatPtyIds[tab.id]} active={tab.id === activeTabId} />
+                  )
+                ) : null}
               </div>
               );
             })}

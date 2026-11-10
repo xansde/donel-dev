@@ -40,6 +40,60 @@
   box-shadow: var(--focus-ring);
 }
 
+/* Navegador do Líder: the list of every session's browser and the help requests, above the toolbar. */
+.directory {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-half);
+  padding: var(--space-half) var(--space-1);
+  border-bottom: var(--hairline);
+  font-size: var(--text-caption-size);
+}
+
+.directoryPick {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  color: var(--text-muted);
+}
+
+.directoryPick select {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--text-caption-size);
+}
+
+.directoryCount {
+  white-space: nowrap;
+}
+
+.helpRow {
+  display: block;
+  width: 100%;
+  padding: var(--space-half) var(--space-1);
+  border: 1px solid var(--zone-warn);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--zone-warn) 14%, transparent);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--text-caption-size);
+  text-align: left;
+  cursor: pointer;
+}
+
+.helpOpen {
+  float: right;
+  color: var(--zone-warn);
+  font-weight: var(--weight-semibold);
+}
+
 /* Tab strip: only with two tabs or more. */
 .tabs {
   flex: none;
@@ -229,4 +283,10 @@
   color: var(--bg-app);
   font-size: var(--text-caption-size);
   line-height: 16px;
+}
+
+/* Navegador do Líder: other sessions waiting for the owner's hand. */
+.badgeHelp {
+  background: var(--zone-warn);
+  color: var(--bg-app);
 }
