@@ -84,6 +84,15 @@ nasce no ledger dele, e o push ao celular sai dali mesmo, sem o PC.
   não abre carta de cofre nem de sessões daquele lugar (`delegated`), mas segue avisando se ele cair ou pedir login:
   ninguém vê a própria queda. PC novo com daemon velho, ou o contrário: quem não sabe do outro vigia tudo, como na
   fase 1.
+- **Uma trava, uma carta, também quando a delegação muda** (revisão do #353): o critério da carta viva leva a chave
+  da trava (`chave da trava: cofre:<lugar>`). Antes de abrir, o vigia (do PC ou do daemon, que usam o mesmo lugar de
+  serviço) procura uma carta viva do `servico:vigia` com essa chave e a **adota**. Quando o PC passa a delegar com a
+  trava ainda viva, ele **passa** a carta adiante (tira do estado dele sem cancelar) e o daemon a adota; só a trava
+  que sumiu é cancelada como "passou sozinha". Na volta do Oráculo ao PC, o PC adota a carta do daemon.
+- **Sem quadro, sem delegação:** o aperto de mão só responde `vigia-ativo` quando o PC tem um quadro para a carta. Sem
+  ele, o daemon não vigiaria (`parseDaemonVigiaConfig` dá `null`) e o PC segue vigiando tudo.
+- **Ressalva — a config só chega no aperto de mão** (boot do app ou depois de um 401). Ligar o `vigia.cofre` ou trocar
+  o projeto com o app aberto só chega ao daemon no próximo aperto de mão; até lá, o daemon segue com a config velha.
 - **Fora:** o daemon não vigia a outra VPS (exigiria ssh de VPS para VPS, que hoje não existe). Com o PC desligado e
   a homologações caída, ninguém avisa.
 
@@ -92,3 +101,6 @@ Testes: `tests/vigia-no-oraculo.test.ts`.
 - Sem a config do PC, o daemon não vigia.
 - O PC com o lugar delegado não abre a carta do cofre, mas abre a de "VPS fora".
 - O aperto de mão grava a config e só diz `vigia-ativo` com o daemon vigiando, sem estragar a URL.
+- Sem quadro, o aperto de mão não diz `vigia-ativo`.
+- PC e daemon no mesmo Oráculo: na volta ao PC, no liga e desliga da delegação e no começo dela com a carta do PC
+  aberta, sai uma carta só, e ela fecha quando a trava passa.

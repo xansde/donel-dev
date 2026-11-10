@@ -99,7 +99,8 @@ export function handshakeScript(tokenHash: string, vigia?: DaemonVigiaSetup): st
     ? [
         `printf '%s' '${Buffer.from(JSON.stringify(vigia), 'utf8').toString('base64')}' | base64 -d > "$d/vigia.json.tmp"`,
         'mv "$d/vigia.json.tmp" "$d/vigia.json"',
-        `if [ -f "$d/vigia.ativo" ]; then echo ${DAEMON_VIGIA_ON}; fi`,
+        // Without a board the daemon files no card (`parseDaemonVigiaConfig` = null), so the PC must not hand it over.
+        ...(vigia.projectPath === null ? [] : [`if [ -f "$d/vigia.ativo" ]; then echo ${DAEMON_VIGIA_ON}; fi`]),
       ]
     : [];
   return [

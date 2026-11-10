@@ -109,6 +109,7 @@ export function createDaemonVigia(deps: DaemonVigiaDeps): DaemonVigia {
       const result = await deps.ledger().apply(actor, op);
       return result.ok ? { ok: true, task: { id: result.task.id } } : { ok: false, reason: result.reason };
     },
+    tasks: () => Object.values(deps.ledger().load().doc.tasks),
     projectPath: () => config?.projectPath ?? null,
     cofre: () => config?.cofre ?? null,
     // No screen here: the card's push to the phone is the warning. A card that cannot be made is logged.

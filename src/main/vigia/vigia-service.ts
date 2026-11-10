@@ -7,7 +7,7 @@
 import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import type { RemoteHealthReport } from '../../shared/health/remote';
 import type { VigiaCofrePrefs } from '../../shared/vigia/config';
-import { SERVICE_PLACE_PREFIX, SERVICE_ROLE, type LedgerActor, type LedgerForOwner, type LedgerOp } from '../../shared/ledger/contract';
+import { SERVICE_PLACE_PREFIX, SERVICE_ROLE, type LedgerActor, type LedgerForOwner, type LedgerOp, type LedgerTask } from '../../shared/ledger/contract';
 import {
   buildVigiaProbeScript,
   classifySshFailure,
@@ -40,6 +40,11 @@ export interface VigiaServiceDeps {
   /** The remote health's latest reports (the sessions of each place). */
   readonly reports: () => readonly RemoteHealthReport[];
   readonly apply: (actor: LedgerActor, op: LedgerOp) => Promise<ApplyResult>;
+  /**
+   * The Oráculo's tasks, to adopt the live card another vigia (the PC's or the daemon's) already opened for the same
+   * lock instead of opening a second one (t-ffbf8e7d). Absent or throwing = nothing to adopt.
+   */
+  readonly tasks?: () => readonly LedgerTask[];
   /** Where the card is filed (any board path; the owner sees it in the Oráculo and on the phone). */
   readonly projectPath: () => string | null;
   /** The optional vault adapter (`vigia.cofre` in the config); `null` = no vault check at all. */
@@ -70,6 +75,25 @@ export interface VigiaService {
 /** A service's place: its card never turns orphan, and it may cancel what it opened. */
 const VIGIA_PLACE = `${SERVICE_PLACE_PREFIX}vigia`;
 const ACTOR: LedgerActor = { kind: 'lugar', placeId: VIGIA_PLACE, roleId: SERVICE_ROLE };
+
+const DONE_WHEN = 'A trava passou (o vigia cancela a carta sozinho) ou o dono decidiu.';
+const KEY_OF_DONE_WHEN = /\(chave da trava: ([^()\n]+)\)$/;
+
+/** The criterion of a live lock's card carries the lock's key, so the PC and the daemon find the same card. */
+function doneWhenOf(key: string | null): string {
+  return key === null ? DONE_WHEN : `${DONE_WHEN} (chave da trava: ${key})`;
+}
+
+/** The vigia's live card for this lock (any vigia's: the PC and the daemon share the service place), or `null`. */
+export function liveVigiaCard(tasks: readonly LedgerTask[], key: string): string | null {
+  const live = tasks.find(
+    (task) =>
+      task.ownerPlaceId === VIGIA_PLACE &&
+      (task.state === 'aberta' || task.state === 'em-execucao' || task.state === 'entregue') &&
+      KEY_OF_DONE_WHEN.exec(task.doneWhen)?.[1] === key,
+  );
+  return live?.id ?? null;
+}
 
 function lastLine(text: string): string {
   const lines = text
@@ -170,7 +194,8 @@ export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
       projectPath,
       title: `Trava: ${KIND_TITLE[trava.kind]}`.slice(0, 60),
       request: `vc tem que saber quando isso acontece e, travamentos assim que congelam tudo, deve ser avisado no oráculo ou com máxima prioridade (dono, 06/11)`,
-      doneWhen: 'A trava passou (o vigia cancela a carta sozinho) ou o dono decidiu.',
+      // A record (the lock already passed) is no live card: nobody adopts it.
+      doneWhen: doneWhenOf(endedAt === null ? trava.key : null),
       due: today(at),
       ownerPlaceId: VIGIA_PLACE,
       risk: 'alto',
@@ -213,14 +238,24 @@ export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
         const probes = await Promise.all(places.map((place) => probe(place)));
         const at = now();
         const delegated = deps.delegated?.() ?? null;
-        const travas = detectTravas({ probes, reports: deps.reports(), now: at }).filter(
-          (trava) => !(trava.placeId === delegated && (trava.kind === 'cofre' || trava.kind === 'sessoes')),
-        );
-        const plan = planRound(readState(), travas, at);
+        const isDelegated = (trava: Trava): boolean => trava.placeId === delegated && (trava.kind === 'cofre' || trava.kind === 'sessoes');
+        const detected = detectTravas({ probes, reports: deps.reports(), now: at });
+        // A lock that is still there but now belongs to the daemon is handed over, not closed: its card stays alive
+        // for the daemon to adopt. Only a lock that is gone is closed ("a trava passou sozinha").
+        const handedOver = new Set(detected.filter(isDelegated).map((trava) => trava.key));
+        const kept = Object.fromEntries(Object.entries(readState().open).filter(([key]) => !handedOver.has(key)));
+        const plan = planRound({ open: kept }, detected.filter((trava) => !isDelegated(trava)), at);
         const open = { ...plan.state.open };
         const projectPath = deps.projectPath();
+        const adoptable = (key: string): string | null => {
+          try {
+            return deps.tasks ? liveVigiaCard(deps.tasks(), key) : null;
+          } catch {
+            return null;
+          }
+        };
         for (const { trava, firstSeen } of plan.toOpen) {
-          const id = projectPath === null ? null : await openCard(trava, projectPath, at, firstSeen);
+          const id = adoptable(trava.key) ?? (projectPath === null ? null : await openCard(trava, projectPath, at, firstSeen));
           if (id !== null) {
             open[trava.key] = { ...open[trava.key]!, cartaId: id };
           } else if (!open[trava.key]!.notified) {

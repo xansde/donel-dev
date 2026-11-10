@@ -3082,6 +3082,7 @@ function registerHealthIpcHandlers(): void {
       const result = await ledgerService.apply(actor, op);
       return result.ok ? { ok: true, task: { id: result.task.id } } : { ok: false, reason: result.reason };
     },
+    tasks: () => Object.values(ledgerService?.load().doc.tasks ?? {}),
     projectPath: () => appConfig.projectRoots[0] ?? null,
     cofre: () => appConfig.vigia.cofre,
     notify: (title, body) => {

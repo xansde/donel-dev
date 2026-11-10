@@ -115,4 +115,91 @@ describe('PC com o Oráculo na VPS', () => {
     expect(after).toContain('vigia-ativo');
     expect(parseHandshakeUrl(after)).toBe('http://100.64.0.9:47816');
   });
+
+  it('sem quadro para a carta, o aperto de mão não diz "vigia ativo": o daemon não vigiaria e o PC não delega', () => {
+    const home = temp();
+    const d = join(home, '.donel', 'oraculo');
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, 'url'), 'http://100.64.0.9:47816\n');
+    writeFileSync(join(d, VIGIA_ON_FILE), '1\n');
+    const script = handshakeScript('a'.repeat(64), { placeId: 'vps-pessoal', label: 'VPS pessoal', projectPath: null, cofre: null });
+    const out = spawnSync('bash', ['-s'], { input: script, encoding: 'utf8', env: { ...process.env, HOME: home } }).stdout;
+    expect(out).not.toContain('vigia-ativo');
+    expect(parseHandshakeUrl(out)).toBe('http://100.64.0.9:47816');
+  });
+});
+
+// Revisão do #353: PC e daemon no mesmo Oráculo, com a delegação mudando no meio de uma trava viva. Uma trava = uma
+// carta: quem vai abrir adota a carta viva do vigia para a mesma trava, e quem deixa de vigiar não a cancela.
+describe('a delegação muda com a trava viva', () => {
+  function setup() {
+    const pcDir = temp();
+    const daemonDir = temp();
+    writeFileSync(join(daemonDir, VIGIA_CONFIG_FILE), JSON.stringify({ placeId: 'vps-pessoal', label: 'VPS pessoal', projectPath: 'C:/seazone/donel', cofre: { command: 'cofre-cli', sessionFile: '.cofre/sessao' } }));
+    const world = { clock: NOW, cofre: 'locked', delegated: null as string | null };
+    const ledger = createLedgerService({ filePath: join(daemonDir, 'ledger.json'), io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs, now: () => world.clock });
+    const probe = (script: string) => ({ code: 0, stdout: script.includes('DONEL_COFRE') ? `DONEL_VIGIA_OK\nDONEL_COFRE ${world.cofre} 400\n` : '', stderr: '', timedOut: false });
+    const daemon = createDaemonVigia({ dir: daemonDir, ledger: () => ledger, run: async (script) => probe(script), now: () => world.clock });
+    const pc = createVigiaService({
+      places: () => [{ id: 'vps-pessoal', label: 'VPS pessoal', sshTarget: 'vps' }],
+      run: async (_target, script) => probe(script),
+      reports: () => [],
+      apply: async (actor, op) => {
+        const result = await ledger.apply(actor, op);
+        return result.ok ? { ok: true, task: { id: result.task.id } } : { ok: false, reason: result.reason };
+      },
+      tasks: () => Object.values(ledger.load().doc.tasks),
+      projectPath: () => 'C:/seazone/donel',
+      cofre: () => ({ command: 'cofre-cli', sessionFile: '.cofre/sessao' }),
+      notify: () => undefined,
+      statePath: join(pcDir, 'vigia-travas.json'),
+      now: () => world.clock,
+      delegated: () => world.delegated,
+    });
+    const rounds = async (n: number, who: { daemon: boolean }): Promise<void> => {
+      for (let i = 0; i < n; i += 1) {
+        if (who.daemon) await daemon.round();
+        await pc.round();
+        world.clock += 5 * MIN;
+      }
+    };
+    const cards = () => Object.values(ledger.load().doc.tasks).map((task) => ({ id: task.id, state: task.state }));
+    const live = () => cards().filter((card) => card.state === 'entregue').map((card) => card.id);
+    return { world, rounds, cards, live };
+  }
+
+  it('o Oráculo volta da VPS ao PC: o PC adota a carta do daemon e a cancela quando a trava passa', async () => {
+    const { world, rounds, cards, live } = setup();
+    world.delegated = 'vps-pessoal';
+    await rounds(3, { daemon: true });
+    expect(cards()).toHaveLength(1);
+    world.delegated = null; // the Oráculo came back to the PC
+    await rounds(2, { daemon: false });
+    expect(cards()).toHaveLength(1);
+    world.cofre = 'unlocked';
+    await rounds(2, { daemon: false });
+    expect(live()).toEqual([]);
+  });
+
+  it('ligar e desligar a delegação com a trava viva não abre uma segunda carta', async () => {
+    const { world, rounds, cards } = setup();
+    for (const delegated of ['vps-pessoal', null, 'vps-pessoal', null, null]) {
+      world.delegated = delegated;
+      await rounds(2, { daemon: true });
+    }
+    expect(cards()).toHaveLength(1);
+  });
+
+  it('a delegação começa com a carta do PC aberta: ela segue viva, sem "passou" falso, e o daemon a adota', async () => {
+    const { world, rounds, cards, live } = setup();
+    await rounds(3, { daemon: false });
+    const [first] = live();
+    expect(first).toBeDefined();
+    world.delegated = 'vps-pessoal';
+    await rounds(3, { daemon: true });
+    expect(cards()).toEqual([{ id: first, state: 'entregue' }]);
+    world.cofre = 'unlocked';
+    await rounds(2, { daemon: true });
+    expect(live()).toEqual([]);
+  });
 });
