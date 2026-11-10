@@ -23,6 +23,8 @@ const CLOSE_TIMEOUT_MS = 45_000;
  * median of 45 s and a p90 of 65 s, and 88 sends in 48 h came back "não respondeu a tempo" with the message delivered.
  */
 const SEND_TIMEOUT_MS = 180_000;
+/** `sessao_retomar` may ask each remote place by ssh where the conversation lives (up to 20 s each). */
+const RESUME_TIMEOUT_MS = 90_000;
 /** What the owner wrote on a card: up to 40 s to the place, then up to 40 s to the Líder. */
 const OWNER_MESSAGE_TIMEOUT_MS = 100_000;
 
@@ -90,7 +92,7 @@ export function createBoardBridge(deps: BoardBridgeDeps): BoardBridge {
           return;
         }
         const requestId = randomUUID();
-        const timeoutMs = call.tool === 'sessao_abrir' ? OWNER_DECISION_TIMEOUT_MS : call.tool === 'sessao_fechar' ? CLOSE_TIMEOUT_MS : call.tool === 'sessao_enviar' ? SEND_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
+        const timeoutMs = call.tool === 'sessao_abrir' ? OWNER_DECISION_TIMEOUT_MS : call.tool === 'sessao_fechar' ? CLOSE_TIMEOUT_MS : call.tool === 'sessao_enviar' ? SEND_TIMEOUT_MS : call.tool === 'sessao_retomar' ? RESUME_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
         const timer = setTimeout(() => {
           pending.delete(requestId);
           // 07/11 — a send keeps going after this: "tente de novo" made senders paste it twice. A resend of the same

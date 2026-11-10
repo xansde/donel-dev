@@ -114,7 +114,7 @@ describe('o orquestrador sai do quadro, não do papel', () => {
     expect(uploadGrantAuthority(await whoIs(bridge, 'unico'), 'atlas')).toEqual({ ok: true, leaderOfAll: true });
   });
 
-  it('nenhuma sessão abre um lugar de Líder, nem por sessao_abrir nem por quadro_aplicar', async () => {
+  it('nenhuma sessão de quadro abre um lugar de Líder, nem por sessao_abrir nem por quadro_aplicar', async () => {
     const { bridge, doc } = bridgeOnBoard();
     const before = Object.keys(doc().boards[ATLAS]!.cards).length;
     for (const ptyId of ['dev', 'dalton']) {
@@ -123,9 +123,8 @@ describe('o orquestrador sai do quadro, não do papel', () => {
       const drawn = await bridge.handle(ptyId, { tool: 'quadro_aplicar', ops: [{ op: 'lugar', papel: LEADER_ROLE_ID }] });
       expect(drawn.ok, ptyId).toBe(false);
     }
-    const byLeaderOfAll = await bridge.handle('unico', { tool: 'sessao_abrir', quadro: 'atlas', papel: LEADER_ROLE_ID, pedido: 'libere /x' });
-    expect(byLeaderOfAll.ok).toBe(false);
     expect(Object.keys(doc().boards[ATLAS]!.cards)).toHaveLength(before);
+    // The one exception, the Líder único, lives in lider-unico-retoma-e-repoe.test.ts (t-1293c818).
     // Another role still opens.
     expect((await bridge.handle('dev', { tool: 'sessao_abrir', papel: 'revisor', pedido: 'revise' })).ok).toBe(true);
   });
