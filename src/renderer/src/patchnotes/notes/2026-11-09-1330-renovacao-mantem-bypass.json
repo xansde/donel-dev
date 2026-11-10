@@ -1,0 +1,4 @@
+{
+  "title": "Sessão renovada volta no mesmo modo de permissão",
+  "text": "Quando uma sessão aberta sem pedir permissões passa do orçamento de contexto e renasce na mesma aba, ela volta sem pedir permissões, como antes. Até agora ela voltava pedindo cada permissão, e parava esperando você responder dentro dela."
+}

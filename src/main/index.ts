@@ -8,7 +8,9 @@ import { basename, dirname, join } from 'node:path';
 import { readUserDefaultPermissionMode, readUserStatusLine } from './cli-user-settings';
 import { createStatusLineStore } from './statusline-store';
 import { STATUS_LINE_CHANNELS, type StatusLineChangedPayload, type StatusLineSnapshot } from '../shared/statusLine';
-import { appMcpAllowArgs, withResolvedPermissionMode } from '../shared/commandBuilder';
+import { appMcpAllowArgs } from '../shared/commandBuilder';
+import { planLaunchPermission, type SpawnFacts } from '../shared/launchPermission';
+import { spawnFactsOf } from '../shared/mindscape/reach';
 import { planRoleLaunch } from '../shared/roleLaunch';
 import type { DevModeBoardConfig } from '../shared/devMode';
 // Spec 010 — esteira nova: serviço (store + ingestão + disparo) e a fronteira IPC.
@@ -17,7 +19,6 @@ import { esteiraStoreDir } from './esteira-store';
 import { createMindscapeStore, mindscapeFilePath } from './mindscape-store';
 import { createRolesStore, type RolesStore } from './roles-store';
 import { createCelularService, type CelularService } from './celular/service';
-import { roleOfSession } from '../shared/mindscape/model';
 import { LEADER_ROLE_ID, ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
@@ -100,6 +101,7 @@ import type {
   ProjectScanMode,
   PtyCreateOptions,
   PtyCreateResult,
+  RelinkToolsResult,
   RemoteAliveSession,
   PhaseArchivedPayload,
   PtyExitInfo,
@@ -208,7 +210,7 @@ import {
 import { createJsonRpcCallTool, createSystemHttpPostJson } from './taskdex-mcp-transport';
 import {
   buildSessionHooksSettings,
-  buildSlackOfflineGuardScript,
+  buildSlackMarkFile,
   cleanupStaleHookSettings,
   keyFilePermissions,
   planStatusLineBridge,
@@ -249,6 +251,7 @@ import {
   type RemoteSessionMeta,
 } from './remote-session';
 import { RemoteLinkSupervisor } from './remote-link';
+import { SessionKeyRing } from './session-keys';
 import { createDiagnosticsLog } from './chat/diagnostics-log';
 import { resolveMainRepoRootSync } from './session-worktree';
 import { ATTACHMENT_MAX_AGE_MS, AttachmentStore } from './chat/attachments';
@@ -644,6 +647,8 @@ const remoteLinks = new RemoteLinkSupervisor<PtyExitInfo>({
   clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
   now: () => Date.now(),
 });
+/** `sessao_religar` (t-1293c818) — the hook and MCP keys each live session's CLI holds, to put back when the app lost them. */
+const sessionKeys = new SessionKeyRing();
 /** `curl.exe` achado no boot (`where.exe curl`); `null` = fallback no encaminhador PowerShell que lê bytes. */
 let curlPath: string | null = null;
 /**
@@ -1506,6 +1511,7 @@ function finishPtyExit(ptyId: string, info: PtyExitInfo, closedByOwner: boolean)
   transcriptWatchers.stop(ptyId);
   // T015 (014-chat) — baixa da ponte: apaga o `--settings` da sessão e esquece o token.
   // No-op para aba sem hooks (terminal livre, login isolado, transporte legado).
+  sessionKeys.forget(ptyId);
   hookBridge?.unregisterSession(ptyId);
   removeSessionHooksSettings(app.getPath('userData'), ptyId);
   statusLineStore.remove(ptyId);
@@ -1751,7 +1757,8 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
   const files: RemoteFile[] = [];
   const claudeArgs: string[] = [...launcherArgs, ...extraArgs];
 
-  const roleId = roleIdForSpawn(options.roleId, launcherArgs, options.renewalId);
+  const spawnFacts = spawnFactsFor(options, launcherArgs);
+  const roleId = spawnFacts.roleId;
   const rolePromptPath = roleId ? (rolesStore?.promptFileFor(roleId, { leaderOfAll: options.leaderOfAll === true }) ?? null) : null;
   let remoteRolePath: string | null = null;
   if (rolePromptPath) {
@@ -1779,17 +1786,17 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
   // The session folder holds its keys (`meta.json`, `hook-header`, `mcp.json`, `settings.json`): its tools may not read it.
   const remoteKeyDirs = [`~/${REMOTE_SESSIONS_DIR}`];
   if (hooksOn) {
-    // Slack só com carta, fatia 4: the remote session outlives the app; with it down, a post to Slack is refused.
     // The token goes in a file of its own (600, like every file of the session folder): a hook command never carries it.
     const tokenHeaderPath = `$HOME/${REMOTE_SESSIONS_DIR}/${correlationId}/hook-header`;
     files.push({ name: 'hook-header', content: tokenHeaderFileContent(fresh.hookToken) });
-    files.push({ name: 'slack-guard.sh', content: buildSlackOfflineGuardScript({ port: fresh.hookPort, tokenHeaderPath, agentBotServers: appConfig.slackAgentBots.servers }) });
+    // Letters never lock (owner, 09/11): no offline Slack guard runs as a hook. The file is still written because the
+    // Theo West MCP reads its "carta-com-arquivo" mark to offer the file upload.
+    files.push({ name: 'slack-guard.sh', content: buildSlackMarkFile() });
     const settings = buildSessionHooksSettings({
       port: fresh.hookPort,
       token: fresh.hookToken,
       tokenHeaderPath,
       curlPath: 'curl',
-      slackOfflineGuardCommand: `sh "$HOME/${REMOTE_SESSIONS_DIR}/${correlationId}/slack-guard.sh"`,
       statusLine: planStatusLineBridge({ mode: statusLineBridgeModeSetting, userStatusLine: null, chatEnabled: appConfig.chat.enabled }),
       roleScope,
       keyDirs: remoteKeyDirs,
@@ -1813,7 +1820,8 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     files.push({ name: 'mcp.json', content: mcp.configFileContent });
     claudeArgs.push(...appMcpAllowArgs(), '--mcp-config', '@S/mcp.json');
   }
-  const finalClaudeArgs = withResolvedPermissionMode(claudeArgs, readUserDefaultPermissionMode(undefined));
+  // Super bypass das orquestradoras (t-66cb0ce4): the env goes in the claude.sh (`bypassEnvLines`), read from these args.
+  const finalClaudeArgs = planLaunchPermission(claudeArgs, spawnFacts, readUserDefaultPermissionMode(undefined)).args;
 
   await remoteSessions.waitEnded(correlationId);
   const git = localGitInfo(localCwd);
@@ -1840,6 +1848,8 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     browserService?.releasePty(ptyId);
     if (live.mcpPort !== null && live.mcpToken !== null) browserService?.prepareRemoteSession(ptyId, live.mcpPort, live.mcpToken);
   }
+  const remoteMcpKey = browserService?.mcpKeyOf(ptyId) ?? null;
+  sessionKeys.remember(ptyId, { ...(hooksOn ? { hookToken: live.hookToken } : {}), ...(remoteMcpKey ? { mcp: remoteMcpKey } : {}) });
   const tunnels = [
     ...(hooksOn && hookBridge?.port ? [{ remotePort: live.hookPort, localPort: hookBridge.port }] : []),
     ...(live.mcpPort !== null && mcp ? [{ remotePort: live.mcpPort, localPort: mcp.localPort }] : []),
@@ -1857,6 +1867,7 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     remoteSpawns.set(ptyId, spawnSpec);
     remoteLinks.track(ptyId, place.sshTarget, correlationId);
   } catch (error) {
+    sessionKeys.forget(ptyId);
     hookBridge?.unregisterSession(ptyId);
     browserService?.releasePty(ptyId);
     throw error;
@@ -1938,8 +1949,30 @@ async function carryLeaderConversation(payload: LiderCarryPayload): Promise<Lide
   return { ok: true };
 }
 
+/**
+ * `sessao_religar` (t-1293c818, item 4) — the session lost the app's tools ("Host not allowed" in the MCP, 401 in the
+ * hooks) while its process lives: the keys its CLI holds go back on the same PTY, and a remote tab "sem ligação" tries
+ * its ssh again now. Nothing is killed, nothing is respawned here.
+ */
+function relinkSessionTools(ptyId: unknown): RelinkToolsResult {
+  if (typeof ptyId !== 'string' || ptyId === '') return { ok: false, text: 'pedido inválido.' };
+  const service = browserService;
+  const restored = sessionKeys.restore(ptyId, {
+    hooks: hookBridge,
+    mcp: service ? { registerSession: (id, token, tunnelPort) => service.restoreMcpKey(id, token, tunnelPort) } : null,
+  });
+  if (!restored) return { ok: false, text: 'esta sessão não tem chaves do app para religar (foi aberta sem hooks nem MCP, ou já encerrou).' };
+  const keys = [restored.hooks ? 'a chave dos hooks' : null, restored.mcp ? 'a do MCP donel' : null].filter(Boolean).join(' e ');
+  const relinking = remoteLinks.relinkNow(ptyId);
+  return {
+    ok: true,
+    text: `${keys ? `Registrei de novo ${keys}` : 'Nenhuma chave a registrar'}${relinking ? '; ela estava sem ligação e o ssh do lugar remoto religa agora' : ''}. O processo dela não foi tocado.`,
+  };
+}
+
 function registerPtyIpcHandlers(): void {
   remoteSessions = new RemoteSessionRegistry(join(app.getPath('userData'), 'remote-transcripts'));
+  ipcMain.handle(PTY_CHANNELS.relinkTools, (_event, ptyId: unknown): RelinkToolsResult => relinkSessionTools(ptyId));
   ipcMain.handle(PTY_CHANNELS.remoteAlive, async (): Promise<RemoteAliveSession[]> => {
     const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
     const found = await discoverRemoteSessions(places);
@@ -2068,7 +2101,8 @@ function registerPtyIpcHandlers(): void {
       const plannedPtyId = randomUUID();
       // Papéis de sessão (item 12a) — the guidance of the role at every launch, resume and renewal
       // (`roleDeliveryFor`, one case per CLI). A missing role or file → the session opens without it.
-      const roleId = roleIdForSpawn(options.roleId, launcherArgs, options.renewalId);
+      const spawnFacts = spawnFactsFor(options, launcherArgs);
+      const roleId = spawnFacts.roleId;
       // Escopo do papel — only the MCPs, plugins and skills the role declares; no declaration = everything.
       const roleScope = roleScopeSettingsFor(roleId, () => readClaudeInventory(claudeConfigDirForSession ?? defaultClaudeConfigDir(), options.cwd));
       let sessionHooksSettingsPath: string | null = null;
@@ -2080,6 +2114,7 @@ function registerPtyIpcHandlers(): void {
         if (hookBridge && hookBridge.port !== null) {
           try {
             const token = hookBridge.registerSession(plannedPtyId);
+            sessionKeys.remember(plannedPtyId, { hookToken: token });
             if (options.cwd) tabCwdByPty.set(plannedPtyId, options.cwd);
             sessionHooksSettingsPath = writeSessionHooksSettings({
               userDataDir: app.getPath('userData'),
@@ -2126,6 +2161,8 @@ function registerPtyIpcHandlers(): void {
       // Navegador integrado — o MCP do app (`donel`) entregue ao CLI da sessão pela função por CLI
       // (`mcpDeliveryFor`, emenda agnóstica). Por último: `--mcp-config` é variádico e só opções podem vir depois.
       const browserMcpArgs = browserService?.prepareSession(plannedPtyId, 'claude-code') ?? [];
+      const mcpKey = browserService?.mcpKeyOf(plannedPtyId) ?? null;
+      if (mcpKey) sessionKeys.remember(plannedPtyId, { mcp: mcpKey });
       const rolePromptPath = roleId ? (rolesStore?.promptFileFor(roleId, { leaderOfAll: options.leaderOfAll === true }) ?? null) : null;
       // Papel não entregue — what the role asked for and did not reach the CLI goes back to the tab, never silent.
       const rolePlan = planRoleLaunch('claude-code', {
@@ -2136,7 +2173,10 @@ function registerPtyIpcHandlers(): void {
       });
       const roleArgs = rolePlan.args;
       const finalArgs = [...launcherArgs, ...extraArgs, ...roleArgs, ...semaphoreArgs, ...browserMcpArgs];
-      // (T018: o `--permission-mode` resolvido entra mais abaixo, quando o config dir da sessão é conhecido.)
+      // T018 + super bypass das orquestradoras (t-66cb0ce4): one explicit `--permission-mode`, and the env of the bypass
+      // when the session runs in it (an orchestrator always does).
+      const permissionPlan = planLaunchPermission(finalArgs, spawnFacts, readUserDefaultPermissionMode(claudeConfigDirForSession));
+      const sessionEnv = Object.keys(permissionPlan.env).length > 0 ? { ...(envOverrides ?? {}), ...permissionPlan.env } : envOverrides;
 
       let ptyId: string;
       try {
@@ -2149,17 +2189,15 @@ function registerPtyIpcHandlers(): void {
           // (npm -g) no interpretador; ConPTY não executa script direto.
           command: resolved.launch.command,
           // T018 (014-chat, FR-030) — sessão `claude` sempre com modo de permissão
-          // explícito: launcher > `permissions.defaultMode` do CLI do usuário > default.
+          // explícito: launcher > `permissions.defaultMode` do CLI do usuário > default; orquestradora em bypass.
           // Só este ramo: o shell e a aba de login (retorno antecipado acima) não passam por aqui.
-          args: [
-            ...resolved.launch.argsPrefix,
-            ...withResolvedPermissionMode(finalArgs, readUserDefaultPermissionMode(claudeConfigDirForSession)),
-          ],
+          args: [...resolved.launch.argsPrefix, ...permissionPlan.args],
           claudeConfigDir: claudeConfigDirForSession,
-          envOverrides,
+          envOverrides: sessionEnv,
         });
       } catch (error) {
         // O spawn falhou: nada de token nem arquivo órfão.
+        sessionKeys.forget(plannedPtyId);
         hookBridge?.unregisterSession(plannedPtyId);
         removeSessionHooksSettings(app.getPath('userData'), plannedPtyId);
         browserService?.releasePty(plannedPtyId);
@@ -3773,19 +3811,26 @@ function registerRolesIpcHandlers(): void {
  * place that had not started, the Launcher, a fork); else the role of the place that holds the
  * resumed conversation, or the conversation a renewal replaces. Read from `mindscape.json`, which
  * the renderer keeps saved; any failure → no role (the session still opens).
+ * Super bypass das orquestradoras (t-66cb0ce4) — also the Jobu's mark and whether that place is above another one on
+ * its board (it opened or directs sessions): the facts `planLaunchPermission` reads.
  */
-function roleIdForSpawn(explicit: string | undefined, launcherArgs: readonly string[], renewalId: string | undefined): string | undefined {
-  if (explicit) return explicit;
+function spawnFactsFor(options: PtyCreateOptions, launcherArgs: readonly string[]): SpawnFacts {
+  const explicit = options.roleId;
+  const leaderOfAll = options.leaderOfAll === true ? { leaderOfAll: true } : {};
   const resumeIndex = launcherArgs.indexOf('-r');
   const resumed = resumeIndex !== -1 && !launcherArgs.includes('--fork-session') ? launcherArgs[resumeIndex + 1] : undefined;
-  const predecessor = renewalId ? sessionRenewal?.get(renewalId)?.previousSessionId : undefined;
+  const predecessor = options.renewalId ? sessionRenewal?.get(options.renewalId)?.previousSessionId : undefined;
   const sessionId = resumed ?? predecessor;
-  if (!sessionId) return undefined;
+  const alone: SpawnFacts = { ...(explicit ? { roleId: explicit } : {}), ...leaderOfAll };
+  if (!sessionId && !options.placeId) return alone;
   try {
     const doc = createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load();
-    return roleOfSession(doc, sessionId);
+    const onBoard = spawnFactsOf(doc, { ...(options.placeId ? { placeId: options.placeId } : {}), ...(sessionId ? { sessionId } : {}) });
+    // The role the renderer sent wins; the board's only fills a resume or a renewal (as before).
+    const roleId = explicit ?? (sessionId ? onBoard.roleId : undefined);
+    return { ...(roleId ? { roleId } : {}), ...leaderOfAll, directsOthers: onBoard.directsOthers };
   } catch {
-    return undefined;
+    return alone;
   }
 }
 
@@ -4379,7 +4424,7 @@ void app.whenReady().then(async () => {
         autoNeverAsks: () => appConfig.autoMode.neverAsks,
         projectYolo: isTabYolo,
         holdsPendings: () => chatHub !== null,
-        // Slack só com carta: a post to Slack passes only with an accepted letter of the Oráculo Harrow.
+        // Slack letters: never a lock (owner, 09/11); a matching send marks its letter, a bot's post is recorded.
         preToolUseGuard: (ptyId, payload) => slackLetters.before(ptyId, payload),
       });
       await bridge.start();

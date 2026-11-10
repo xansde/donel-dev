@@ -12,7 +12,7 @@ import { deriveSessionAxes, type SessionAxes } from '../../../shared/mindscape/s
 import type { RendererGesture } from '../../../shared/learning/gestures';
 import type { SessionRegistry } from '../../../shared/sessionRegistry';
 import { fitImage, imageBoxAt, isPrintInputType, MAX_PRINT_BYTES } from '../../../shared/mindscape/images';
-import { roleColorVar, type SessionRole } from '../../../shared/roles';
+import { LEADER_ROLE_ID, roleColorVar, type SessionRole } from '../../../shared/roles';
 import {
   addPod,
   movePod,
@@ -29,6 +29,7 @@ import {
   placeOfSession,
   removeLink,
   setOwnerColor,
+  setPlaceParallel,
   setPlaceRole,
   toggleLinkArrow,
   visibleLinks,
@@ -511,6 +512,7 @@ export function MindscapeScreen({
   };
   /** Item 12a — the place whose seal menu is open (only a place that has not started). */
   const [roleMenuPlaceId, setRoleMenuPlaceId] = useState<string | undefined>(undefined);
+  const [parallelMenuPlaceId, setParallelMenuPlaceId] = useState<string | undefined>(undefined);
   const closeRoleMenu = (): void => setRoleMenuPlaceId(undefined);
   const visibleCards = board
     ? Object.values(board.cards).filter((card) => {
@@ -1353,6 +1355,10 @@ export function MindscapeScreen({
                     engine={session.engine}
                     meter={session.meter}
                     axes={axesOfLive(session)}
+                    // Any place takes a number (Revisor do #374); a Líder or a place with one shows it, the rest on hover.
+                    parallel={card.parallel ?? null}
+                    parallelIdle={card.roleId !== LEADER_ROLE_ID && card.parallel === undefined}
+                    onParallelClick={() => setParallelMenuPlaceId((open) => (open === card.id ? undefined : card.id))}
                     pulse={(() => {
                       const env = envView.bySession.get(session.sessionId);
                       return env ? { text: pulseLine(env), tone: PULSE_TONE[env.pulse.state] } : undefined;
@@ -1424,6 +1430,27 @@ export function MindscapeScreen({
                         onAction(projectPath, (current) => setPlaceRole(current, projectPath, place.id, roleId));
                       }}
                     />
+                  </div>
+                );
+              })()}
+              {(() => {
+                // t-cccce5e4 — the owner says how many demands this place takes in parallel; read at each tarefa_listar.
+                const place = parallelMenuPlaceId ? board.cards[parallelMenuPlaceId] : undefined;
+                if (place?.kind !== 'session') return null;
+                const position = positionOf(place);
+                const pick = (value: number | null): void => {
+                  setParallelMenuPlaceId(undefined);
+                  const { projectPath } = board;
+                  onAction(projectPath, (current) => setPlaceParallel(current, projectPath, place.id, value));
+                };
+                return (
+                  <div className={`${styles.placeRoleMenu} ${styles.parallelMenu}`} style={{ left: position.x, top: position.y + 10 }} role="menu" aria-label="Demandas em paralelo">
+                    <span className={styles.parallelMenuTitle}>Toca em paralelo</span>
+                    {[null, 1, 2, 3, 4, 5, 6, 8, 10].map((value) => (
+                      <button key={value ?? 'sem'} type="button" role="menuitemradio" aria-checked={(place.parallel ?? null) === value} className={(place.parallel ?? null) === value ? styles.parallelOn : undefined} onClick={() => pick(value)}>
+                        {value === null ? 'sem limite' : value}
+                      </button>
+                    ))}
                   </div>
                 );
               })()}

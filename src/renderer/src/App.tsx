@@ -2540,6 +2540,10 @@ export function App(): React.JSX.Element {
     tabOfPty: (ptyId) => tabsRef.current.find((tab) => chatPtyIds[tab.id] === ptyId),
     stateOf: (tabId) => (tabExits[tabId] !== undefined || !tabsRef.current.some((tab) => tab.id === tabId) ? undefined : (semaphoreStates[tabId]?.state ?? 'working')),
     linkLost: (tabId) => tabLinkLost(tabId),
+    relinkTools: (tabId) => {
+      const ptyId = tabExits[tabId] === undefined ? chatPtyIds[tabId] : undefined;
+      return ptyId ? window.donel.pty.relinkTools(ptyId) : Promise.resolve({ ok: false, text: 'a aba dela não tem processo vivo.' });
+    },
     roles: () => roles,
     openSession: (request) => {
       const defaults = appConfig?.launcherDefaults;
@@ -3600,6 +3604,7 @@ export function App(): React.JSX.Element {
                   accountLoginId={tab.accountLoginId}
                   roleId={tab.roleId}
                   leaderOfAll={isLeaderOfAllTab(tab)}
+                  placeId={tab.placeId}
                   ownerInputGate={(data, forward) => ownerTerminalInput(tab.id, data, forward)}
                   onStateChange={(info) => handleSemaphoreChange(tab.id, info)}
                   onAliveChange={(alive) => handleAliveChange(tab.id, alive)}

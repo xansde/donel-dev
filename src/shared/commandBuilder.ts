@@ -229,6 +229,7 @@ export const APP_MCP_PREAUTHORIZED_TOOLS: readonly string[] = [
   'sessao_enviar',
   'sessao_ver_tela',
   'sessao_retomar',
+  'sessao_religar',
 ].map((tool) => `mcp__donel__${tool}`);
 
 export function appMcpAllowArgs(): string[] {

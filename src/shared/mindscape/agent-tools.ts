@@ -51,6 +51,7 @@ export type BoardToolCall =
   | { readonly tool: 'sessao_ver_tela'; readonly quem: string; readonly quadro?: string }
   | { readonly tool: 'sessao_fechar'; readonly quem: string; readonly quadro?: string }
   | { readonly tool: 'sessao_retomar'; readonly quem: string; readonly quadro?: string }
+  | { readonly tool: 'sessao_religar'; readonly quem: string; readonly quadro?: string }
   /**
    * Internal, never an MCP tool (not in `BOARD_TOOLS`): the `estado` of every place of these boards (folders), the same
    * answer for whoever asks. The ledger's orphan count must not depend on who asks (t-04099af0).
@@ -259,6 +260,14 @@ export const BOARD_TOOLS = [
       'Reabre a sessão de um lugar fechado do quadro, com a conversa de antes (o mesmo que os dois cliques do dono no cartão), sem tirar o foco do dono; um lugar que ainda não começou abre pela primeira vez. Só com hierarquia, a mesma do sessao_fechar: quem está abaixo de você pelas setas, ou qualquer lugar do seu quadro se você é o Líder que o dono pôs; o Líder único (diga o quadro em "quadro") retoma quem está no topo do quadro, um Líder de quadro inclusive, e quem está abaixo dele. Lugar já aberto não abre de novo. Para mandar trabalho depois: sessao_enviar.',
     inputSchema: { type: 'object', properties: { quem: PLACE_REF, quadro: BOARD_REF }, required: ['quem'], additionalProperties: false },
   },
+  {
+    name: 'sessao_religar',
+    title: 'Religar as ferramentas do Donel numa sessão',
+    description:
+      'Para a sessão que perdeu as ferramentas do Donel (o MCP donel responde "Host not allowed" ou "Unauthorized", os hooks 401): o app registra de novo as chaves que o CLI dela já tem e, se ela estiver sem ligação no lugar remoto, religa o ssh agora. O processo dela segue vivo, na mesma conversa, sem perder nada. Mesmo alcance de sessao_fechar (abaixo de você pelas setas; o Líder único, em qualquer quadro, dizendo qual em "quadro"); a sua própria também vale. Responde em uma linha o que fez.',
+    inputSchema: { type: 'object', properties: { quem: PLACE_REF, quadro: BOARD_REF }, required: ['quem'], additionalProperties: false },
+    annotations: { idempotentHint: true },
+  },
 ] as const;
 
 /** The board tools with the cap of `sessao_abrir` as the owner set it in Preferências. */
@@ -418,6 +427,11 @@ export function parseBoardToolCall(name: string, rawArgs: unknown): ParsedBoardC
       const quem = requiredText(args.quem, 'quem', 120);
       if (typeof quem === 'object') return { ok: false, reason: quem.error };
       return { ok: true, call: { tool: 'sessao_retomar', quem, ...quadro } };
+    }
+    case 'sessao_religar': {
+      const quem = requiredText(args.quem, 'quem', 120);
+      if (typeof quem === 'object') return { ok: false, reason: quem.error };
+      return { ok: true, call: { tool: 'sessao_religar', quem, ...quadro } };
     }
     default:
       return { ok: false, reason: `Ferramenta desconhecida: ${name}` };
