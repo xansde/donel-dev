@@ -2,31 +2,30 @@
 // accept, waiting for the owner (with the oldest) and "validadas sem você". "Esperando você" opens the cards
 // (forma A, `LedgerCards.tsx`) over the board, where the owner decides. The numbers are pure (`ledgerStrip`,
 // shared/ledger/contract.ts); every decision goes to the main as the owner. Hidden while the board has no task.
+// Ledger v5, fatia 1 — "esperando você" counts the whole box of the board (`ownerInbox`: letters to send, sends to
+// check, orphans… not only high-risk deliveries), says how long the oldest one waits, and opens that box.
 
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ledgerStrip, ownerQueue } from '../../../shared/ledger/contract';
+import { ledgerStrip } from '../../../shared/ledger/contract';
 import type { LedgerSnapshot } from '../../../shared/ledger/channels';
+import { inboxSummary, ownerInbox, type PlaceStates } from '../../../shared/ledger/inbox';
 import type { PlaceNameOf } from '../../../shared/ledger/labels';
-import { LedgerCards } from './LedgerCards';
+import { OwnerInbox, waitedFor } from './OwnerInbox';
 import styles from './Mindscape.module.css';
-
-function ago(since: number, now: number): string {
-  const minutes = Math.max(0, Math.round((now - since) / 60_000));
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.round(minutes / 60);
-  return hours < 48 ? `${hours} h` : `${Math.round(hours / 24)} d`;
-}
 
 export function LedgerStrip({
   projectPath,
   placeName,
   cardsHost,
+  placeStatesOf,
 }: {
   readonly projectPath: string | undefined;
   readonly placeName?: PlaceNameOf;
   /** The board's area: the cards cover it, never the tabs nor the strip (as in the prototype). */
   readonly cardsHost?: HTMLElement | null;
+  /** The places of these boards (for the orphans); absent = no orphan is shown. */
+  readonly placeStatesOf?: (projectPaths: readonly string[]) => PlaceStates;
 }): React.JSX.Element | null {
   const [snapshot, setSnapshot] = useState<LedgerSnapshot | null>(null);
   const [open, setOpen] = useState(false);
@@ -55,10 +54,16 @@ export function LedgerStrip({
     };
   }, []);
 
+  const items = snapshot && projectPath ? ownerInbox(snapshot.doc, projectPath, now, placeStatesOf?.([projectPath])) : [];
+  // The box emptied while open (the last item decided): it closes, and does not pop open by itself later.
+  useEffect(() => {
+    if (items.length === 0) setOpen(false);
+  }, [items.length]);
+
   if (!snapshot || !projectPath) return null;
   const strip = ledgerStrip(snapshot.doc, projectPath);
   if (strip.total === 0) return null;
-  const queue = open ? ownerQueue(snapshot.doc, projectPath) : [];
+  const waiting = inboxSummary(items);
 
   return (
     <div className={styles.ledger} data-testid="ledger-strip">
@@ -69,18 +74,19 @@ export function LedgerStrip({
         <span>{strip.deliveredUnaccepted} entregues sem aceite</span>
         <button
           type="button"
-          className={strip.waitingForOwner > 0 ? `${styles.ledgerWaiting} ${styles.ledgerWaitingOn}` : styles.ledgerWaiting}
-          disabled={strip.waitingForOwner === 0}
+          className={waiting.total > 0 ? `${styles.ledgerWaiting} ${styles.ledgerWaitingOn}` : styles.ledgerWaiting}
+          disabled={waiting.total === 0}
           aria-expanded={open}
           onClick={() => setOpen((value) => !value)}
         >
-          {strip.waitingForOwner} esperando você
-          {strip.oldestWaitingSince !== null ? ` (a mais velha há ${ago(strip.oldestWaitingSince, now)})` : ''}
+          {waiting.total} esperando você
+          {waiting.oldestSince !== null ? ` · a mais antiga há ${waitedFor(waiting.oldestSince, now)}` : ''}
         </button>
         <span>{strip.validatedWithoutOwnerPct === null ? 'nenhuma validada ainda' : `${strip.validatedWithoutOwnerPct}% validadas sem você`}</span>
+        {strip.closedAlone > 0 ? <span>{strip.closedAlone} fechadas sem Revisor</span> : null}
         {snapshot.readOnly ? <span className={styles.ledgerMeta}>gravado por versão mais nova: só leitura</span> : null}
       </div>
-      {open && queue.length > 0 && cardsHost ? createPortal(<LedgerCards queue={queue} placeName={placeName} onClose={close} />, cardsHost) : null}
+      {open && items.length > 0 && cardsHost ? createPortal(<OwnerInbox items={items} now={now} placeName={placeName} onClose={close} />, cardsHost) : null}
     </div>
   );
 }

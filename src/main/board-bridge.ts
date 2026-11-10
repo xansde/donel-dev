@@ -16,10 +16,15 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 const OWNER_DECISION_TIMEOUT_MS = 30 * 60_000;
 /** `sessao_fechar` may wait up to 20 s for the destination's turn to end. */
 const CLOSE_TIMEOUT_MS = 45_000;
-/** `sessao_enviar` waits up to 40 s for the destination's CLI to take the message (`agentBridge.ts`). */
-const SEND_TIMEOUT_MS = 50_000;
+/**
+ * `sessao_enviar`: the renderer waits up to 40 s for the destination's CLI to take the message (`agentBridge.ts`) and
+ * always answers then ("entrou", "na fila", "ainda não entrou"). This is only the net for a renderer that is not there.
+ * 09/11 (t-81ff5a82) — it was 50 s: with the PC and the tunnels loaded, the renderer's answer reached the main with a
+ * median of 45 s and a p90 of 65 s, and 88 sends in 48 h came back "não respondeu a tempo" with the message delivered.
+ */
+const SEND_TIMEOUT_MS = 180_000;
 /** What the owner wrote on a card: up to 40 s to the place, then up to 40 s to the Líder. */
-const OWNER_MESSAGE_TIMEOUT_MS = 2 * SEND_TIMEOUT_MS;
+const OWNER_MESSAGE_TIMEOUT_MS = 100_000;
 
 export interface BoardBridgeDeps {
   readonly ipcMain: IpcMain;
@@ -88,7 +93,16 @@ export function createBoardBridge(deps: BoardBridgeDeps): BoardBridge {
         const timeoutMs = call.tool === 'sessao_abrir' ? OWNER_DECISION_TIMEOUT_MS : call.tool === 'sessao_fechar' ? CLOSE_TIMEOUT_MS : call.tool === 'sessao_enviar' ? SEND_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
         const timer = setTimeout(() => {
           pending.delete(requestId);
-          resolve({ kind: 'error', text: 'O app não respondeu a tempo. Tente de novo.' });
+          // 07/11 — a send keeps going after this: "tente de novo" made senders paste it twice. A resend of the same
+          // text answers for the first one only while that one is on its way (sendDriver `dedupe`); once it went in,
+          // the same text is a new message. So: look first.
+          resolve({
+            kind: 'error',
+            text:
+              call.tool === 'sessao_enviar'
+                ? 'O app não respondeu a tempo, mas a mensagem pode ter entrado. Confira com sessao_ver_tela antes de mandar de novo: enquanto ela ainda está a caminho, o mesmo texto não duplica; se ela já entrou, entra outra vez.'
+                : 'O app não respondeu a tempo. Tente de novo.',
+          });
         }, timeoutMs);
         pending.set(requestId, { resolve, timer });
         window.webContents.send(MINDSCAPE_CHANNELS.boardRequest, { requestId, ptyId, call });

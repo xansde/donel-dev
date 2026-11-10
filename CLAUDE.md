@@ -50,9 +50,19 @@ via `CLAUDE_CONFIG_DIR`.
 
 - O dono quer um instalador novo do alfa pronto quando pedir e uma janela "O que
   mudou" na primeira abertura de cada versão.
-- **Todo PR mergeado em `staging` que muda algo visível acrescenta um item em
-  `src/renderer/src/patchnotes/notes.ts`**, no dia do merge (cria o dia se não
-  existir). Texto de usuário: o que muda para ele, sem arquivo, PR ou jargão.
+- **Todo PR que muda algo visível acrescenta uma novidade**, e cada novidade é
+  um **arquivo novo** (desde 07/11; antes era um item no `notes.ts`, e cada
+  merge dava conflito no PR seguinte):
+  - Crie `src/renderer/src/patchnotes/notes/AAAA-MM-DD-HHMM-slug.json` com
+    `{ "title": "...", "text": "..." }`. Data e hora são as de quando você
+    escreve (hora local, 24h); o slug é o título em minúsculas, sem acento,
+    com hífens.
+  - A janela agrupa por data, o dia mais novo primeiro e, no dia, o `HHMM`
+    maior primeiro. Nunca edite o `notes.ts` nem o arquivo de outro PR para
+    acrescentar a sua; corrigir o texto de uma novidade é editar o arquivo dela.
+  - Nome fora do padrão ou arquivo sem `title`/`text` quebra o `npm test` e o
+    build com o nome do arquivo.
+  - Texto de usuário: o que muda para ele, sem arquivo, PR ou jargão.
 - Build **sob demanda** (dono, 03/11: "Desliga essa automação. Eu vou falar quando eu
   quiser"; antes houve 06:30 diário e, por uma hora, a cada 10 min — os dois
   derrubados). A tarefa agendada "Donel Dev Alfa diario" fica **desativada**. O
@@ -319,7 +329,7 @@ aprovado, e tudo atrás de `chat.enabled` até a virada (Fase 7).
 - Vocabulário canônico: `docs/glossario.md` — use estes termos em código e conversa.
 - Decisões de domínio e arquitetura: `docs/adr/` — consulte antes de propor mudança.
 - Mindscape: quadro próprio em React + `roughjs`, não Excalidraw; o renderer é dono do estado e só `src/main/mindscape-store.ts` grava `<userData>/mindscape.json` ([ADR 0004](docs/adr/0004-base-do-quadro-mindscape.md), [design](docs/design/mindscape.md)).
-- **Alcance / hierarquia entre sessões** (dono, 04/11): dirigir outra sessão com poder de matar (hoje `sessao_fechar`) só com hierarquia — no quadro, abaixo pelas setas (direta ou em cadeia); entre quadros, só o Líder de um quadro com `reach: 'all'` (botão "Alcance" no Mindscape; ausente = só o próprio). A regra mora **só** em `src/shared/mindscape/reach.ts`; quem precisar de alcance reusa, não recria. O Líder único (aba marcada pelo Jobu, [ADR 0007](docs/adr/0007-lider-unico.md)) é um ramo dela: fica acima do topo de todo quadro, sem a marca "Alcance".
+- **Alcance / hierarquia entre sessões** (dono, 04/11): dirigir outra sessão com poder de matar (hoje `sessao_fechar`) só com hierarquia — no quadro, abaixo pelas setas (direta ou em cadeia); entre quadros, só o Líder de um quadro com `reach: 'all'` (botão "Alcance" no Mindscape; ausente = só o próprio). O Líder que o dono pôs num quadro alcança **toda** sessão do próprio quadro, com ou sem seta (08/11), e qualquer sessão fala com ele por `"para": "lider-quadro"`. Duas setas opostas entre os mesmos dois lugares são duas ligações (ida e volta); o `schemaVersion` subiu para 7 por isso, porque o canal v6 apagava a seta de volta ao religar ligações (um `/clear` com post-it). A regra mora **só** em `src/shared/mindscape/reach.ts`; quem precisar de alcance reusa, não recria. O Líder único (aba marcada pelo Jobu, [ADR 0007](docs/adr/0007-lider-unico.md)) é um ramo dela: fica acima do topo de todo quadro, sem a marca "Alcance".
 - `mindscape.json`: campo novo no documento **sobe o `schemaVersion`**. O `parseMindscapeDoc` descarta o que não conhece e o `userData` é compartilhado entre canais, então um canal mais antigo gravaria por cima e apagaria o campo; com a versão maior ele fica read-only ([design do desenho](docs/design/mindscape-desenho.md)).
 
 ## Vault

@@ -1,6 +1,7 @@
 /*
  * Painel de progresso do Jobu — lives in the body of the bubble of the Líder, in place of the last line, like the
- * history. Color only says state (design-system.md): the fill of a bar is the state of the task, the rest is text.
+ * history. Color only says state (design-system.md): the dot of an ask and the fill of a bar are its state, the rest
+ * is text.
  */
 .panel {
   display: flex;
@@ -27,6 +28,19 @@
   text-transform: none;
 }
 
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.summary b {
+  color: var(--text-primary);
+  font-weight: var(--weight-semibold);
+}
+
 .boards,
 .tasks {
   display: flex;
@@ -37,91 +51,183 @@
   list-style: none;
 }
 
-/* The tasks of a board are its sub-items: indented under it, with a thin rule that ties them to the board. */
 .tasks {
-  gap: 8px;
-  margin-top: 8px;
-  padding-left: 12px;
-  border-left: 1px solid var(--border);
+  gap: 6px;
+  margin-top: 6px;
 }
 
-.board,
-.task {
+.board {
   display: flex;
   flex-direction: column;
   gap: 3px;
   min-width: 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
 }
 
-.line {
+.frontRow {
   display: flex;
   align-items: baseline;
-  gap: 8px;
+  gap: 4px;
   min-width: 0;
 }
 
-.boardTitle,
-.taskTitle {
+.frontRow:hover .moves {
+  opacity: 1;
+}
+
+.frontHead {
+  flex: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.chevron {
+  flex: none;
+  width: 10px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.boardTitle {
   flex: 1;
   min-width: 0;
+  overflow: hidden;
+  font-weight: var(--weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.taskBody {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.taskTitle {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.boardTitle {
-  font-family: var(--font-mono);
-  font-weight: var(--weight-semibold);
-}
-
-.end {
-  flex: none;
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  white-space: nowrap;
-}
-
-/* After the deadline: said in words in the source line; here only a quiet mark. */
-.end[data-late='true']::after {
-  content: ' · atrasa';
-  color: var(--text-muted);
-  font-family: var(--font-ui);
-}
-
-/* The bar: 4px, like the meter of the smart zone. */
-.bar {
-  display: block;
-  height: 4px;
-  overflow: hidden;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
-}
-
-.fill {
-  display: block;
-  height: 100%;
-  border-radius: 2px;
-  background: var(--state-working);
-}
-
-.fill[data-state='entregue'] {
-  background: var(--state-waiting);
-}
-
-.fill[data-state='rejeitada'] {
-  background: var(--state-permission);
-}
-
-.meta,
-.source {
+.who {
   color: var(--text-muted);
   font-size: 11px;
   line-height: 1.35;
 }
 
-.source {
-  font-style: italic;
+.who[data-state='esperando'],
+.waiting {
+  color: var(--state-waiting);
+}
+
+.who[data-state='travado'],
+.stuck {
+  color: var(--state-permission);
+}
+
+.end {
+  flex: none;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* The deadline day is over: the date turns the color of trouble. */
+.end[data-late='true'] {
+  color: var(--state-permission);
+}
+
+/* The state of an ask: filled = someone has it or it waits for the owner; hollow = nobody does. */
+.dot {
+  display: inline-block;
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin-right: 4px;
+  border-radius: 50%;
+  background: var(--state-working);
+}
+
+.dot[data-state='esperando'] {
+  background: var(--state-waiting);
+}
+
+.dot[data-state='travado'] {
+  background: var(--state-permission);
+}
+
+.dot[data-state='parado'] {
+  border: 1.5px solid var(--text-muted);
+  background: transparent;
+}
+
+.dot[data-state='concluida'] {
+  background: var(--state-done);
+}
+
+/* The bar: 4px, like the meter of the smart zone; one segment per ask, in the color of its state. */
+.bar {
+  display: flex;
+  height: 4px;
+  margin-top: 2px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+
+.segment {
+  display: block;
+  flex: none;
+  height: 100%;
+  background: var(--state-working);
+}
+
+.segment[data-state='esperando'] {
+  background: var(--state-waiting);
+}
+
+.segment[data-state='travado'] {
+  background: var(--state-permission);
+}
+
+.segment[data-state='concluida'] {
+  background: var(--state-done);
+}
+
+.meta {
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.done {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.done summary {
+  cursor: pointer;
 }
 
 .empty,
@@ -129,4 +235,38 @@
   margin: 0;
   color: var(--text-muted);
   font-size: 11.5px;
+}
+
+/* 09/11 — the owner orders his asks: up and down, quiet until the line is hovered or focused. */
+.moves {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+  align-self: center;
+  opacity: 0.35;
+}
+
+.task:hover .moves,
+.moves:focus-within {
+  opacity: 1;
+}
+
+.move {
+  padding: 0 3px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 14px;
+  cursor: pointer;
+}
+
+.move:hover:not(:disabled) {
+  background: var(--bg-raised);
+  color: var(--text-primary);
+}
+
+.move:disabled {
+  visibility: hidden;
 }

@@ -19,7 +19,6 @@ import type {
   AccountSwitchedEvent,
   BubbleEvent,
   FocusSignal,
-  FullscreenEvent,
   PendingOpenedEvent,
   PetInput,
   PetSemaphore,
@@ -56,7 +55,6 @@ export function createPetState(): PetState {
     waffleShown: false,
     waffleUntil: null,
     silencedUntil: null,
-    fullscreen: false,
     noticeSeq: 0,
     notices: [],
   };
@@ -170,7 +168,10 @@ function trackSession(previous: TrackedSession | undefined, watched: WatchedSess
       seen = isSeenNow(focus, watched.ptyId);
       // notificacoes-completas: whether this wait is news, and of what kind, is THE rule (src/shared/attention/rule.ts).
       const failure = watched.failure ?? null;
-      const kind = newWaitNotice({ known: previous !== undefined, semaphore: watched.semaphore, seenNow: seen, failure });
+      // t-1293c818 (item 5) — a session found at its prompt (resumed, reattached) was never seen working: no turn
+      // ended, so no "terminou". A pending found that way is still news.
+      const neverWorked = previous?.semaphore === 'idle' && watched.semaphore === 'waiting';
+      const kind = newWaitNotice({ known: previous !== undefined && !neverWorked, semaphore: watched.semaphore, seenNow: seen, failure });
       if (kind !== null) {
         const base = { kind, ptyId: watched.ptyId, name: watched.name, blockedKind: kind === 'blocked' ? watched.blockedKind : null, at: now };
         event = kind === 'failed' ? { ...base, reason: failure } : base;
@@ -207,7 +208,7 @@ function withSessionExited(state: PetState, input: SessionExitedEvent, now: numb
 
 /**
  * notificacoes-completas: the session news of this input, for the channels other than the bubble (the toast and the
- * taskbar flash). Recorded BEFORE the bubble's gate: silence and full screen hold back the bubble, not the news.
+ * taskbar flash). Recorded BEFORE the bubble's gate: silence holds back the bubble, not the news.
  */
 function withNotices(state: PetState, events: readonly BubbleEvent[]): PetState {
   if (events.length === 0) return state;
@@ -236,9 +237,9 @@ export function isSilenced(state: PetState, now: number): boolean {
   return state.silencedUntil !== null && now < state.silencedUntil;
 }
 
-/** No bubble is born while the owner silenced them (FR-020, FR-027) or while an app has the whole screen (Q9). */
+/** No bubble is born while the owner silenced them (FR-020, FR-027). */
 function bubblesAllowed(state: PetState, now: number): boolean {
-  return !state.fullscreen && !isSilenced(state, now);
+  return !isSilenced(state, now);
 }
 
 /**
@@ -314,8 +315,6 @@ function withAccountSwitched(state: PetState, input: AccountSwitchedEvent, now: 
  * the Jobu is hidden then.
  */
 function withSweepFinished(state: PetState, input: SweepFinishedEvent, now: number): PetState {
-  // The sweep is over even when full screen swallows its bubble.
-  if (state.fullscreen) return { ...state, sweeping: false };
   const id = state.lastBubbleId + 1;
   return { ...state, sweeping: false, lastBubbleId: id, pendingBurst: [], bubble: { id, ...sweepBubbleFace(input.summary), until: now + PET_BUBBLE_MS } };
 }
@@ -324,12 +323,6 @@ function withSweepFinished(state: PetState, input: SweepFinishedEvent, now: numb
 function withSilence(state: PetState, input: SilenceEvent, now: number): PetState {
   const next: PetState = { ...state, silencedUntil: input.until };
   return input.until !== null && now < input.until ? withoutBubble(next) : next;
-}
-
-/** An app took the whole screen: the Jobu hides, so no bubble stays waiting for him (Q9). */
-function withFullscreen(state: PetState, input: FullscreenEvent): PetState {
-  const next: PetState = { ...state, fullscreen: input.active };
-  return input.active ? withoutBubble(next) : next;
 }
 
 /** An event of the burst no longer asks for anything: its session is gone, or stopped waiting, or the owner saw it. An `ended` never goes stale: its session is gone by definition. */
@@ -380,8 +373,7 @@ function settleTimers(state: PetState, now: number): PetState {
 }
 
 function resumed(state: PetState): PetState {
-  // The full-screen watcher starts again with the pet and says the truth, so what it said before is forgotten.
-  return { ...state, bubble: null, pendingBurst: [], fullscreen: false, laughUntil: null, sereneSince: null, waffleShown: false, waffleUntil: null };
+  return { ...state, bubble: null, pendingBurst: [], laughUntil: null, sereneSince: null, waffleShown: false, waffleUntil: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -419,9 +411,6 @@ export function reducePet(state: PetState, input: PetInput, now: number): PetSta
       break;
     case 'silence':
       next = withSilence(state, input, now);
-      break;
-    case 'fullscreen':
-      next = withFullscreen(state, input);
       break;
     case 'bubbleDismissed':
       next = withoutBubble(state);

@@ -104,6 +104,12 @@ export type SemaphoreEvent =
   /** `backgroundAgents`: subagentes em segundo plano ainda vivos no fim do turno (`countBackgroundSubagents`); ausente = 0. */
   | { readonly type: 'stop'; readonly at: number; readonly backgroundAgents?: number }
   | { readonly type: 'notification'; readonly at: number }
+  /**
+   * t-1293c818 (item 5) — the session is at its prompt with no turn running: a `SessionStart` that is not a new
+   * session nor a compaction (`resume`, `clear`, `fork`), or the remote place itself reading the pane idle with the
+   * turn closed. Unlike `stop` it ends no turn (nothing to announce): it only says where the session already is.
+   */
+  | { readonly type: 'atPrompt'; readonly at: number }
   /** `reason` do hook `SessionEnd`: `clear`/`resume` trocam a conversa da aba, não a encerram (FR-033, T014). */
   | { readonly type: 'sessionEnd'; readonly at: number; readonly reason?: string | null }
   /** Evento do SO via `PtyManager.onExit` — nunca vem de um hook. Tem
@@ -190,6 +196,13 @@ export function reduceSemaphoreState(current: SemaphoreMachineState, event: Sema
       const awaiting = (event.backgroundAgents ?? 0) > 0;
       if ((next.awaitingBackgroundAgents ?? false) === awaiting) return next;
       return { ...next, awaitingBackgroundAgents: awaiting };
+    }
+
+    case 'atPrompt': {
+      // The main thread runs nothing at the prompt (sub-agents in the background keep their calls).
+      const openCalls = withOpenCalls(current, '', -Infinity);
+      if (current.state === 'waiting') return { ...current, openCalls };
+      return { state: 'waiting', pendingToolSince: null, stateEnteredAt: event.at, openCalls };
     }
 
     case 'notification':

@@ -10,8 +10,23 @@
 // Decisions of the owner (04/11): docs/refinamentos/time-de-sessoes-v1.md.
 // Líder único (ADR 0007): the session the Jobu opened (the mark on its tab) acts on every board, naming it with
 // `quadro`; whom it reaches is the one rule of shared/mindscape/reach.ts. Every other session stays on its own board.
+// Back to the Líder único (06/11): a session it opened, or one below that one, sends to `"lider"` (`canReachLeader`).
+// Quem responde a quem (dono, 09/11: "não é nem configuração, é comportamento definido por nós nos mindscapes. Só mudar
+// quem responde quem"): ONE rule, `whoHears` in reach.ts, read from the board at each notice — the first live place
+// above the session by the arrows, else the Líder of its board, else the Líder único. It names who hears what cannot
+// wait (`queueUrgent`: a permission open on its screen, a turn that failed, a delivery for acceptance, a record of
+// "travada"/"precisa-do-dono") and who takes the tasks of a place that is gone (closed past PASS_ON_GRACE_MS, or never
+// started). An arrow drawn or erased in the Mindscape counts at the next notice, with no new version.
+// Andamento no ledger (dono, 08/11 and 09/11: "fim de turno e andamento vão só ao ledger"): with `turnNotices` 'ledger'
+// (the default) an end of turn is recorded on the session's live task (`recordTurn`) and never sent to a chat, arrow or
+// not; a passage of tasks is read in the ledger too. Nothing urgent is lost (Revisor, #324): it counts as told only
+// once the CLI of there took it; with nobody to hear it waits and goes when one opens or comes back (`flushUrgent`).
+// 'chat' is the old mode, kept for the owner to turn back on (Preferências).
 
 import {
+  LEADER_MESSAGE_REFUSAL,
+  LEADER_PLACE_IS_THE_OWNERS,
+  type LeaderMessageReason,
   applyBoardOps,
   describeBoard,
   hasArrowLink,
@@ -21,23 +36,56 @@ import {
 } from '../../../shared/mindscape/agent-tools';
 import type { MindscapeBoardResponse } from '../../../shared/mindscape/channels';
 import { LEADER_OF_ALL, isLeaderOfAllTab, knownBoards, resolveBoard, type KnownBoard } from '../../../shared/mindscape/leader';
-import { LEADER_OF_ALL_FROM, canReach, findPlace } from '../../../shared/mindscape/reach';
-import { addLink, addPlace, placeCardId, placeOfSession, type MindscapeBoard, type MindscapeDoc, type SessionPlaceCard } from '../../../shared/mindscape/model';
+import { BOARD_LEADER, LEADER_OF_ALL_FROM, boardLeaders, canFaxineiroClose, canReach, canReachLeader, findPlace, isBoardLeader, isBoardOrchestrator, MY_OPENER, openersOf, whoHears } from '../../../shared/mindscape/reach';
+import { FAXINEIRO_OPENER, PC_MACHINE_ID, type FaxineiroLogEntry, type OpeningRoom, type SessionView } from '../../../shared/faxineiro/triggers';
+import type { FaxineiroWakeOrder } from '../../../shared/faxineiro/ipc';
+import type { LedgerPassedOn, LedgerPassOnRequest, LedgerTurnRecord, LedgerTurnRecorded } from '../../../shared/ledger/channels';
+import { failureReasonText } from '../../../shared/attention/rule';
+import type { TurnNotices } from '../../../shared/teamPrefs';
+import { addLink, addPlace, noteCardId, placeCardId, placeHasStarted, placeOfSession, type MindscapeBoard, type MindscapeDoc, type SessionPlaceCard } from '../../../shared/mindscape/model';
 import type { SemaphoreState } from '../../../shared';
-import type { SessionRole } from '../../../shared/roles';
+import { FAXINEIRO_ROLE_ID, LEADER_ROLE_ID, type SessionRole } from '../../../shared/roles';
 import type { SendFrom } from '../chat/sendDriver';
 
 /**
  * A session opened by `sessao_abrir` that sent no hook in this long did not start: the gate waits up to 30 s for
  * the CLI and the first paste up to 45 s more on a machine short of RAM.
  */
+/** How long a tool call from a PTY not yet on a tab waits for it (a reattach after a restart), and how often it looks. */
+const CALLER_WAIT_MS = 20_000;
+const CALLER_POLL_MS = 500;
 const START_GRACE_MS = 90_000;
+/** t-d1f072fd — a session opened this long before a memory read still counts against that read's room: it had not grown yet. */
+const LAUNCH_SETTLE_MS = 60_000;
 /** `sessao_enviar` answers once the message went in, was queued, or failed; past this it says "ainda não entrou". */
 const DELIVERY_WAIT_MS = 40_000;
-/** The end-of-turn notice carries at most this much of the summary. */
-const NOTICE_CHARS = 600;
+/**
+ * 09/11 (t-81ff5a82) — `sessao_enviar` waits longer for a definitive answer: in 48 h, a third of the answers took more than 40 s
+ * to be taken (a destination mid-turn, a loaded PC), and the sender heard "ainda não entrou" or a timeout. The main's
+ * net for this call (`board-bridge.ts`, 180 s) stays well above it, with the caller wait (20 s) on top.
+ */
+const SEND_WAIT_MS = 90_000;
+/**
+ * The end-of-turn notice carries the whole last turn up to this ceiling (06/11: at 600, squashed into one line, the
+ * Líder acted on half of it). Past it, the cut is said in the notice, never a silent "…".
+ */
+export const NOTICE_CHARS = 8_000;
+
+/** The body of the end-of-turn notice: the turn as written (lines and lists kept), cut only past `NOTICE_CHARS`, and then out loud. */
+export function noticeBody(text: string): string {
+  const body = text.replace(/\r\n?/g, '\n').replace(/[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n').trim();
+  const chars = Array.from(body);
+  if (chars.length <= NOTICE_CHARS) return body;
+  const kept = chars.slice(0, NOTICE_CHARS).join('').trimEnd();
+  return `${kept}\n[cortado: ${Array.from(kept).length} de ${chars.length} letras; o resto em sessao_ver_tela]`;
+}
 /** `sessao_fechar` waits at most this long for the destination's turn to end, then closes anyway. */
 export const CLOSE_WAIT_MS = 20_000;
+/**
+ * A closed tab whose place did not come back in this long is gone: its live tasks pass on. Closing the app or an
+ * update never gets here (the timer dies with the window, and a restored tab is not a close).
+ */
+export const PASS_ON_GRACE_MS = 60_000;
 const CLOSE_POLL_MS = 500;
 
 export interface BridgeTab {
@@ -52,6 +100,8 @@ export interface BridgeTab {
   readonly sessionType: 'claude' | 'shell';
   /** The Jobu's mark on the Líder único (ADR 0007). */
   readonly leaderOfAll?: boolean;
+  /** The place (or `"lider"`) that opened this tab with `sessao_abrir`, kept on an update or a restart. */
+  readonly openedBy?: string;
 }
 
 export interface OpenSessionRequest {
@@ -65,6 +115,13 @@ export interface OpenSessionRequest {
   readonly openedBy: string;
   /** Sent as soon as the new tab exists (the chat's send driver waits for the session). */
   readonly firstMessage: string;
+}
+
+/** A `sessao_abrir` waiting for room on a full machine (t-b3b26e60), or the launch of one that opened. */
+interface QueuedOpen extends OpenSessionRequest {
+  /** Opened by the Líder único: its place set and its "terminou" go to it. */
+  readonly leader: boolean;
+  readonly queuedAt: number;
 }
 
 /** How a `sessao_enviar` ended on the destination (`chat/composer/tabSend.ts`, `SendOutcome`). */
@@ -85,6 +142,10 @@ export interface AgentBridgePorts {
   tabOfPty(ptyId: string): BridgeTab | undefined;
   /** Live state of an open tab; `undefined` = the process left. */
   stateOf(tabId: string): SemaphoreState | undefined;
+  /** Sessões remotas — the ssh of that tab dropped and its process lives on the place ("sem ligação"). */
+  linkLost?(tabId: string): boolean;
+  /** `sessao_religar` (t-1293c818) — the app registers again the keys (hooks, MCP) the CLI of that tab holds. */
+  relinkTools?(tabId: string): Promise<{ readonly ok: boolean; readonly text: string }>;
   roles(): readonly SessionRole[];
   /** Opens the tab of a place without stealing the focus and sends its first message; returns the tab id. */
   openSession(request: OpenSessionRequest): string;
@@ -116,7 +177,22 @@ export interface AgentBridgePorts {
   remotes(): readonly { readonly id: string; readonly label: string }[];
   /** The projects of the sidebar (path + name): the Líder único may name one that has no board yet. */
   projects(): readonly { readonly path: string; readonly name: string }[];
+  /** 06/11 — the live tasks of gone places pass on (the main writes the ledger); answers what moved. */
+  passOn?(requests: readonly LedgerPassOnRequest[]): Promise<readonly LedgerPassedOn[]>;
+  /** t-b3b26e60 — since when the tab is in its current state (epoch ms); `undefined` = no reading. */
+  stateEnteredAt?(tabId: string): number | undefined;
+  /** t-b3b26e60 — lines for `<userData>/rotinas/faxineiro.log` (each close the Faxineiro asks for, each wake). */
+  logFaxineiro?(entries: readonly FaxineiroLogEntry[]): void;
+  /** 08/11 — where the end of a turn goes (Preferências): 'ledger' (absent = this) or 'chat' (the old "◆ … terminou"). */
+  turnNotices?(): TurnNotices;
+  /** 08/11 — the end of a turn, recorded on the session's live task (the main writes the ledger). */
+  recordTurn?(record: LedgerTurnRecord): Promise<LedgerTurnRecorded> | void;
+  /** The `StopFailure` code of the last turn of that tab (`rate_limit`…), if it failed; read, never computed here. */
+  turnFailureOf?(tabId: string): string | undefined;
 }
+
+/** Sessões remotas — the process lives on the place but its ssh dropped (main/remote-link.ts); never "fechada". */
+const LINK_LOST = 'sem ligação';
 
 const STATE_NAMES: Readonly<Record<SemaphoreState, string>> = {
   working: 'trabalhando',
@@ -136,6 +212,10 @@ function lastSegment(path: string): string {
 
 type Answer = Omit<MindscapeBoardResponse, 'requestId'>;
 
+/** How a message to the Líder único says why it came (`motivo` of `sessao_enviar`). */
+const LEADER_REASON_WORDS: Readonly<Record<LeaderMessageReason, string>> = { 'tarefa-completa': 'tarefa completa', bloqueio: 'bloqueio' };
+
+
 /** Who calls a board-scoped tool, on which board. `self` is the caller's place; the Líder único has none. */
 interface Scope {
   readonly projectPath: string;
@@ -154,9 +234,29 @@ export class AgentBridge {
   private readonly lastNoticeText = new Map<string, string>();
   /** Tab opened by `sessao_abrir` → when (its start is judged against START_GRACE_MS). */
   private readonly openedAt = new Map<string, number>();
-  private readonly startChecks = new Set<ReturnType<typeof setTimeout>>();
+  /** Tab opened by `sessao_abrir` → the pending check of its start (and the report it makes). */
+  private readonly startChecks = new Map<string, { readonly timer: ReturnType<typeof setTimeout>; readonly report: () => boolean }>();
   /** Tabs the Líder único sent work to with `sessao_enviar`: their end-of-turn notices go to it, on any board. */
   private readonly leaderHears = new Set<string>();
+  /** Places the Líder único opened in this run (`projectPath\nplaceId`); the tabs' `openedBy` covers a restart. */
+  private readonly leaderOpened = new Set<string>();
+  /** A closed place waiting PASS_ON_GRACE_MS before its tasks pass on (`projectPath\nplaceId` → timer). */
+  private readonly passOnTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  /** Tab → the urgent situation already queued (permission, failure): queued once until it clears. */
+  private readonly toldUrgent = new Map<string, string>();
+  /** What cannot wait and was not taken yet by a Líder's CLI (`tab:<id>` for a situation, `n:<seq>` for the rest). */
+  private readonly pendingUrgent = new Map<string, { readonly tabId: string; readonly words: string; sending: boolean }>();
+  private urgentSeq = 0;
+  /** t-b3b26e60 — machines where a new session waits for room (`pc` or a remote id → why), from the minute round. */
+  private fullMachines = new Map<string, readonly string[]>();
+  /** t-d1f072fd — new sessions each machine's last read has room for (`pc` or a remote id), from the minute round. */
+  private openingRoom = new Map<string, OpeningRoom>();
+  /** t-d1f072fd — when this bridge opened a session on each machine (`pc` or a remote id), to count against the room. */
+  private readonly launchedOn = new Map<string, number[]>();
+  /** t-b3b26e60 — the `sessao_abrir` waiting for room, oldest first. In memory: a restart leaves them "não começou". */
+  private openQueue: QueuedOpen[] = [];
+  /** t-b3b26e60 — what each tab opened by `sessao_abrir` was asked: a tab that never started can go back to the queue. */
+  private readonly launched = new Map<string, QueuedOpen>();
 
   constructor(ports: AgentBridgePorts) {
     this.ports = ports;
@@ -194,11 +294,274 @@ export class AgentBridge {
   }
 
   dispose(): void {
+    this.toldUrgent.clear();
+    this.pendingUrgent.clear();
     this.lastNoticeFrom.clear();
     this.lastNoticeText.clear();
     this.leaderHears.clear();
-    for (const timer of this.startChecks) clearTimeout(timer);
+    for (const check of this.startChecks.values()) clearTimeout(check.timer);
     this.startChecks.clear();
+    for (const timer of this.passOnTimers.values()) clearTimeout(timer);
+    this.passOnTimers.clear();
+  }
+
+  // ---- a place that is gone passes its tasks on (t-e753b554) -------------------------------------------------
+
+  /**
+   * The tab of `tabId` is being closed (by the owner or `sessao_fechar`; never by closing the app). Called BEFORE it
+   * leaves the tab list, so its place is still known. If the place has no live tab after PASS_ON_GRACE_MS, its live
+   * tasks pass on.
+   */
+  placeClosed(tabId: string): void {
+    this.launched.delete(tabId);
+    const tab = this.ports.tabs().find((candidate) => candidate.id === tabId);
+    if (!tab?.cwd || isLeaderOfAllTab(tab)) return;
+    const place = this.placeOfTab(tab);
+    if (!place) return;
+    const projectPath = tab.cwd;
+    const key = `${projectPath}\n${place.id}`;
+    clearTimeout(this.passOnTimers.get(key));
+    this.passOnTimers.set(
+      key,
+      setTimeout(() => {
+        this.passOnTimers.delete(key);
+        if (this.tabOfPlace(projectPath, place.id) || this.isQueued(projectPath, place.id)) return; // it came back, or waits in the queue
+        void this.passOn([{ projectPath, placeId: place.id, gone: 'fechada' }]);
+      }, PASS_ON_GRACE_MS),
+    );
+  }
+
+  /**
+   * The state of every place of each board in `pastas` (`sessao_listar`'s `estado`), by the folder asked. A folder that
+   * is no board stays out (unknown). The ledger's orphans read it: `tarefa_listar` through the main, the box directly.
+   */
+  placeStates(pastas: readonly string[]): Map<string, Map<string, string>> {
+    const states = new Map<string, Map<string, string>>();
+    for (const pasta of pastas) {
+      const match = resolveBoard(this.boards(), pasta);
+      if (!match.ok) continue;
+      const board = this.board(match.board.projectPath);
+      const places = board ? Object.values(board.cards).filter((card): card is SessionPlaceCard => card.kind === 'session') : [];
+      states.set(pasta, new Map(places.map((place) => [place.id, this.stateName(match.board.projectPath, place)])));
+    }
+    return states;
+  }
+
+  /** Places of every board that never started: their tasks pass on once the main's grace is over (`ownerGone`). */
+  checkNotStarted(): Promise<void> {
+    if (!this.ports.loaded) return Promise.resolve();
+    const gone: { projectPath: string; placeId: string; gone: 'nao-comecou' }[] = [];
+    for (const [projectPath, board] of Object.entries(this.ports.doc().boards)) {
+      for (const card of Object.values(board.cards))
+        if (card.kind === 'session' && !placeHasStarted(card) && !this.isQueued(projectPath, card.id)) gone.push({ projectPath, placeId: card.id, gone: 'nao-comecou' });
+    }
+    return this.passOn(gone);
+  }
+
+  /** Names who takes the work of each gone place, has the main move it, and tells whoever got something. */
+  private async passOn(gone: readonly Omit<LedgerPassOnRequest, 'to'>[]): Promise<void> {
+    if (!this.ports.passOn || gone.length === 0) return;
+    // Dono, 09/11: the same rule as the notices (`whoHears`): the first live place above by the arrows, else the Líder
+    // of the board, else the Líder único.
+    const requests = gone.map((request) => ({ ...request, to: whoHears(this.board(request.projectPath), request.placeId, (id) => this.hears(request.projectPath, id)) }));
+    let passed: readonly LedgerPassedOn[] = [];
+    try {
+      passed = await this.ports.passOn(requests);
+    } catch {
+      return; // nothing moved; the next close or check tries again
+    }
+    // 08/11 — with the notices in the ledger, the passage is read there (tarefa_novidades), not in a chat.
+    if (!this.chatMode()) return;
+    for (const moved of passed) {
+      const leader = moved.to === LEADER_OF_ALL;
+      const target = leader ? this.leaderTab() : this.tabOfPlace(moved.projectPath, moved.to);
+      if (!target) continue; // the Líder único closed: the tasks wait in its name, alive
+      const card = this.board(moved.projectPath)?.cards[moved.placeId];
+      const role = card?.kind === 'session' ? this.roleName(card.roleId) : undefined;
+      const which = moved.tasks.map((task) => `${task.id}${task.title ? ` «${task.title}»` : ''}`).join(', ');
+      const where = leader ? `, quadro ${this.boardName(moved.projectPath)}` : '';
+      const why = gone.find((request) => request.projectPath === moved.projectPath && request.placeId === moved.placeId)?.gone === 'nao-comecou' ? 'não começou' : 'fechou';
+      this.ports.sendLine(
+        target.id,
+        `◆ O lugar ${role ? `${role} ` : ''}(${moved.placeId}${where}) ${why}, e ${moved.tasks.length === 1 ? 'esta tarefa passou' : 'estas tarefas passaram'} para você: ${which}. Leia com tarefa_ver e assuma com tarefa_assumir (ou passe adiante com tarefa_transferir).`,
+      );
+    }
+  }
+
+  // ---- Faxineiro com gatilhos (t-b3b26e60) ----------------------------------------------------------------------
+
+  /** The full machines of the last minute round (`pc` or a remote id → why), and the room each last read left. */
+  setFullMachines(full: Readonly<Record<string, readonly string[]>>, room: Readonly<Record<string, OpeningRoom>> = {}): void {
+    this.fullMachines = new Map(Object.entries(full));
+    this.openingRoom = new Map(Object.entries(room));
+  }
+
+  /**
+   * t-d1f072fd — why a new session waits on this machine (`pc` or a remote id), or `undefined` when it has room: full by
+   * the last round, or already given, since its last read, as many sessions as that read had room for. A session that
+   * opened up to `LAUNCH_SETTLE_MS` before the read still counts: it had not grown to its RAM yet.
+   */
+  private waitReasons(machine: string): readonly string[] | undefined {
+    const full = this.fullMachines.get(machine);
+    if (full) return full;
+    const room = this.openingRoom.get(machine);
+    if (!room) return undefined;
+    const since = room.checkedAt - LAUNCH_SETTLE_MS;
+    const recent = (this.launchedOn.get(machine) ?? []).filter((at) => at >= since);
+    this.launchedOn.set(machine, recent);
+    if (recent.length < room.sessions) return undefined;
+    const where = machine === PC_MACHINE_ID ? 'este computador' : this.ports.remoteLabel(machine);
+    return [`${where}: ${recent.length} aberturas desde a última leitura de memória, e ela tinha vaga para ${room.sessions}`];
+  }
+
+  /**
+   * Opens what waits in the queue on machines that have room again: oldest first, one per machine per call (the next
+   * minute takes the next one, so a freed machine is not flooded at once). A place the owner deleted, or started by
+   * hand meanwhile, leaves the queue.
+   */
+  drainQueue(): FaxineiroLogEntry[] {
+    const out: FaxineiroLogEntry[] = [];
+    const used = new Set<string>();
+    const keep: QueuedOpen[] = [];
+    for (const entry of this.openQueue) {
+      const machine = entry.remoteId ?? PC_MACHINE_ID;
+      const at = Date.now();
+      if (this.board(entry.projectPath)?.cards[entry.placeId]?.kind !== 'session' || this.tabOfPlace(entry.projectPath, entry.placeId)) {
+        out.push({ at, kind: 'saiu-da-fila', projectPath: entry.projectPath, placeId: entry.placeId, summary: `${entry.name}: o lugar foi apagado ou aberto à mão` });
+        continue;
+      }
+      if (this.waitReasons(machine) || used.has(machine)) {
+        keep.push(entry);
+        continue;
+      }
+      used.add(machine);
+      this.launch(entry);
+      const waited = Math.round((at - entry.queuedAt) / 60_000);
+      out.push({ at, kind: 'abriu-da-fila', projectPath: entry.projectPath, placeId: entry.placeId, summary: `${entry.name}: abriu depois de ${waited} min na fila` });
+    }
+    this.openQueue = keep;
+    return out;
+  }
+
+  private isQueued(projectPath: string, placeId: string): boolean {
+    return this.openQueue.some((entry) => entry.projectPath === projectPath && entry.placeId === placeId);
+  }
+
+  /** Opens the tab of a `sessao_abrir` (now, or out of the queue) and keeps what it was asked. */
+  private launch(entry: QueuedOpen): string {
+    const request: OpenSessionRequest = {
+      projectPath: entry.projectPath,
+      ...(entry.projectName ? { projectName: entry.projectName } : {}),
+      placeId: entry.placeId,
+      role: entry.role,
+      name: entry.name,
+      ...(entry.remoteId ? { remoteId: entry.remoteId } : {}),
+      openedBy: entry.openedBy,
+      firstMessage: entry.firstMessage,
+    };
+    const tabId = this.ports.openSession(request);
+    const machine = entry.remoteId ?? PC_MACHINE_ID;
+    this.launchedOn.set(machine, [...(this.launchedOn.get(machine) ?? []), Date.now()]);
+    this.openedBy.set(tabId, entry.openedBy);
+    this.openedAt.set(tabId, Date.now());
+    this.launched.set(tabId, entry);
+    if (entry.leader) this.leaderOpened.add(`${entry.projectPath}\n${entry.placeId}`);
+    this.watchStart(tabId, entry.projectPath, entry.openedBy, entry.placeId, entry.name);
+    return tabId;
+  }
+
+  /** The open session tabs of the boards, as the triggers read them (the Líder único has no board: left out). */
+  faxineiroSessions(): SessionView[] {
+    const out: SessionView[] = [];
+    for (const tab of this.ports.tabs()) {
+      if (tab.sessionType !== 'claude' || !tab.cwd || isLeaderOfAllTab(tab)) continue;
+      const state = this.ports.stateOf(tab.id);
+      const place = this.placeOfTab(tab);
+      const enteredAt = this.ports.stateEnteredAt?.(tab.id);
+      if (state === undefined || !place || enteredAt === undefined) continue;
+      const openedBy = tab.openedBy ?? this.openedBy.get(tab.id);
+      out.push({
+        projectPath: tab.cwd,
+        placeId: place.id,
+        name: this.roleName(place.roleId) ?? tab.name,
+        ...(place.roleId ? { roleId: place.roleId } : {}),
+        machineId: tab.remoteId ?? PC_MACHINE_ID,
+        // the birth guess (no hook yet) counts as working: never judged stopped by mistake
+        working: state === 'working' || this.ports.unconfirmed(tab.id),
+        needsOwner: state === 'permission' || state === 'error' || this.ports.permissionOnScreen(tab.id),
+        stateEnteredAt: enteredAt,
+        openedBySession: openedBy !== undefined,
+        ...(openedBy !== undefined ? { openedBy } : {}),
+      });
+    }
+    return out;
+  }
+
+  /**
+   * Wakes the Faxineiro of a board: its chair with a tab open and stopped gets the message; a chair without a tab (or
+   * no chair yet: it is born on the board, out of the arrows) gets a new session. One working is left alone.
+   */
+  async wakeFaxineiro(order: FaxineiroWakeOrder): Promise<FaxineiroLogEntry> {
+    const at = Date.now();
+    const entry = (kind: FaxineiroLogEntry['kind'], summary: string, placeId?: string): FaxineiroLogEntry => ({
+      at,
+      kind,
+      projectPath: order.projectPath,
+      ...(placeId ? { placeId } : {}),
+      summary: `${order.reasons.join('; ')} → ${summary}`,
+    });
+    const role = this.ports.roles().find((candidate) => candidate.id === FAXINEIRO_ROLE_ID);
+    if (!role) return entry('falhou', 'não existe o papel faxineiro');
+    if (!this.ports.loaded) return entry('falhou', 'o quadro ainda não carregou');
+    const board = this.board(order.projectPath);
+    if (!board) return entry('falhou', 'o projeto não tem quadro');
+    const chairs = Object.values(board.cards).filter((card): card is SessionPlaceCard => card.kind === 'session' && card.roleId === FAXINEIRO_ROLE_ID);
+    for (const chair of chairs) {
+      const tab = this.tabOfPlace(order.projectPath, chair.id);
+      if (!tab) continue;
+      if (this.ports.stateOf(tab.id) === 'working') return entry('segurou', 'o Faxineiro está trabalhando', chair.id);
+      const outcome = await this.ports.deliverLine(tab.id, order.text, DELIVERY_WAIT_MS, 'session');
+      return outcome.kind === 'nao-foi' ? entry('falhou', `a mensagem não entrou (${outcome.reason})`, chair.id) : entry('acordou', 'mensagem ao Faxineiro aberto', chair.id);
+    }
+    let placeId = chairs[0]?.id;
+    if (placeId === undefined) {
+      const made = placeCardId(crypto.randomUUID());
+      let added = false;
+      this.ports.applyGesture(order.projectPath, (doc) => {
+        const next = addPlace(doc, order.projectPath, { id: made, roleId: role.id, by: 'session' });
+        added = next !== doc;
+        return next;
+      });
+      if (!added) return entry('falhou', 'o quadro não aceitou a cadeira');
+      placeId = made;
+    }
+    const tabId = this.ports.openSession({
+      projectPath: order.projectPath,
+      placeId,
+      role,
+      name: role.name,
+      ...(order.remoteId ? { remoteId: order.remoteId } : {}),
+      openedBy: FAXINEIRO_OPENER,
+      firstMessage: order.text,
+    });
+    this.openedBy.set(tabId, FAXINEIRO_OPENER);
+    this.openedAt.set(tabId, Date.now());
+    return entry('acordou', `abriu o Faxineiro em ${order.remoteId ? this.ports.remoteLabel(order.remoteId) : 'este computador'}`, placeId);
+  }
+
+  /** Closes a Faxineiro the app opened that finished its round (stopped, nothing for the owner); `null` = left open. */
+  closeIdleFaxineiro(projectPath: string, placeId: string): FaxineiroLogEntry | null {
+    const tab = this.tabOfPlace(projectPath, placeId);
+    if (!tab || (tab.openedBy ?? this.openedBy.get(tab.id)) !== FAXINEIRO_OPENER) return null;
+    if (this.ports.stateOf(tab.id) !== 'waiting' && this.ports.stateOf(tab.id) !== 'done') return null;
+    if (this.ports.permissionOnScreen(tab.id)) return null;
+    this.ports.closeTab(tab.id);
+    this.openedBy.delete(tab.id);
+    return { at: Date.now(), kind: 'fechou-faxineiro', projectPath, placeId, summary: 'a ronda acabou e o Faxineiro ficou parado' };
+  }
+
+  private boardName(projectPath: string): string {
+    return this.boards().find((board) => board.projectPath === projectPath)?.name ?? lastSegment(projectPath);
   }
 
   // ---- helpers ------------------------------------------------------------------------------------------------
@@ -231,9 +594,38 @@ export class AgentBridge {
     return placeState(card, (sessionId) => {
       const tab = this.ports.tabs().find((candidate) => candidate.cwd === projectPath && candidate.claudeSessionId === sessionId);
       const state = tab ? this.ports.stateOf(tab.id) : undefined;
+      if (tab && state !== undefined && this.ports.linkLost?.(tab.id)) return LINK_LOST;
       if (tab && state === 'working' && this.ports.unconfirmed(tab.id)) return this.startState(tab.id);
       return state ? STATE_NAMES[state] : undefined;
     });
+  }
+
+  /**
+   * 08/11 (BizOps, item 11) — the PTY a tool call comes from is not on a tab yet: right after the app restarts, the
+   * remote sessions are attached again and their calls arrive before the renderer has their new PTY. Wait for the tab
+   * (up to CALLER_WAIT_MS) instead of answering at once that the session "is not a tab" (the Revisor stopped there).
+   */
+  private async callerTab(ptyId: string): Promise<BridgeTab | undefined> {
+    const deadline = Date.now() + CALLER_WAIT_MS;
+    for (;;) {
+      const tab = this.ports.tabOfPty(ptyId);
+      if (tab !== undefined || Date.now() >= deadline) return tab;
+      await new Promise((resolve) => setTimeout(resolve, CALLER_POLL_MS));
+    }
+  }
+
+  /**
+   * Homologação, item 7 — a session no hook has come from since the app opened, but which ended turns before (its note
+   * of the last turn is on the board, kept across restarts): its last real state, not "sem nenhum pedido".
+   */
+  private lastKnownState(tabId: string): string | undefined {
+    const tab = this.ports.tabs().find((candidate) => candidate.id === tabId);
+    if (!tab?.cwd || !tab.claudeSessionId) return undefined;
+    const note = this.board(tab.cwd)?.cards[noteCardId(tab.claudeSessionId)];
+    if (note?.kind !== 'session-note') return undefined;
+    const at = new Date(note.writtenAt);
+    const hhmm = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+    return `parada desde ${hhmm} (último fim de turno; o app reabriu e ainda não ouviu dela)`;
   }
 
   /**
@@ -242,21 +634,38 @@ export class AgentBridge {
    */
   private startState(tabId: string): string {
     const openedAt = this.openedAt.get(tabId);
-    if (openedAt === undefined) return 'aberta, sem nenhum pedido ainda';
+    if (openedAt === undefined) return this.lastKnownState(tabId) ?? 'aberta, sem nenhum pedido ainda';
     if (Date.now() - openedAt < START_GRACE_MS) return 'começando';
     return `não começou: ${this.ports.startTrouble(tabId) ?? 'o Claude de lá não recebeu o pedido'}`;
   }
 
-  /** Once START_GRACE_MS is over, a session that still took nothing is reported to whoever opened it, once. */
+  /**
+   * Once START_GRACE_MS is over, a session that still took nothing is reported to whoever opened it. The check stays
+   * after that notice: a remote setup can still fail later (ssh waiting on a check gives up at 180 s), and the
+   * literal reason must reach the opener then too (`startFailed`).
+   */
   private watchStart(tabId: string, projectPath: string, openerPlace: string, placeId: string, name: string): void {
-    const timer = setTimeout(() => {
-      this.startChecks.delete(timer);
-      if (this.ports.stateOf(tabId) !== 'working' || !this.ports.unconfirmed(tabId)) return;
+    const report = (): boolean => {
+      if (this.ports.stateOf(tabId) !== 'working' || !this.ports.unconfirmed(tabId)) return false;
       const opener = openerPlace === LEADER_OF_ALL ? this.leaderTab() : this.tabOfPlace(projectPath, openerPlace);
-      if (!opener) return;
+      if (!opener) return false;
       this.ports.sendLine(opener.id, `◆ ${name} (${placeId}) ${this.startState(tabId)}. Veja a tela dela com sessao_ver_tela ou peça ao dono.`);
+      return true;
+    };
+    const timer = setTimeout(() => {
+      if (!report()) this.startChecks.delete(tabId);
     }, START_GRACE_MS);
-    this.startChecks.add(timer);
+    this.startChecks.set(tabId, { timer, report });
+  }
+
+  /** 07/11 — the terminal of a tab failed to start: whoever opened it hears why now (before or after the grace notice). */
+  startFailed(tabId: string): void {
+    const check = this.startChecks.get(tabId);
+    if (!check) return;
+    clearTimeout(check.timer);
+    this.startChecks.delete(tabId);
+    this.openedAt.set(tabId, 0); // past the grace: `startState` gives the cause
+    check.report();
   }
 
   /** Live sessions `placeId` opened; for the Líder único, only those of `projectPath` (its cap is per board). */
@@ -267,6 +676,9 @@ export class AgentBridge {
       if (this.ports.stateOf(tabId) === undefined) {
         this.openedBy.delete(tabId);
         this.openedAt.delete(tabId);
+        const check = this.startChecks.get(tabId);
+        if (check) clearTimeout(check.timer);
+        this.startChecks.delete(tabId);
       }
       else if (projectPath === undefined || this.ports.tabs().find((tab) => tab.id === tabId)?.cwd === projectPath) count += 1;
     }
@@ -274,6 +686,19 @@ export class AgentBridge {
   }
 
   // ---- Líder único (ADR 0007) ---------------------------------------------------------------------------------
+
+  /**
+   * 08/11 (Homologação, item 8) — who opened a place with `sessao_abrir`, for `abertaPor` (the Atestador reads it). The
+   * memory of this run, the mark the tab carries across a restart, then the opening arrow on the board (a closed place
+   * keeps it), then the places the Líder único opened in this run (it has no card to draw the arrow from).
+   */
+  private openerOf(projectPath: string, placeId: string, tab: BridgeTab | undefined): string | undefined {
+    const fromTab = tab ? (this.openedBy.get(tab.id) ?? tab.openedBy) : undefined;
+    if (fromTab !== undefined) return fromTab;
+    const arrow = this.board(projectPath)?.links.find((link) => link.opened === true && link.to === placeId);
+    if (arrow) return arrow.from;
+    return this.leaderOpened.has(`${projectPath}\n${placeId}`) ? LEADER_OF_ALL : undefined;
+  }
 
   /** The open tab of the Líder único, if any. */
   private leaderTab(): BridgeTab | undefined {
@@ -285,10 +710,93 @@ export class AgentBridge {
     return canReach(this.ports.doc(), LEADER_OF_ALL_FROM, { projectPath, placeId }).ok;
   }
 
-  /** May the caller send to `placeId`: the Líder único by its reach, the others by an arrow of theirs. */
+  /** The Líder único opened `placeId` (in this run, or a tab of it that carries the mark after a restart). */
+  private openedByLeader(projectPath: string, placeId: string): boolean {
+    if (this.leaderOpened.has(`${projectPath}\n${placeId}`)) return true;
+    return this.ports.tabs().some((tab) => tab.cwd === projectPath && tab.openedBy === LEADER_OF_ALL && this.placeOfTab(tab)?.id === placeId);
+  }
+
+  /**
+   * `sessao_fechar` of the Faxineiro (t-b3b26e60): its own board with no arrow, never a session working, waiting for
+   * the owner or opened by his hand (`canFaxineiroClose`). Never cuts a turn. Every ask, closed or refused, is logged.
+   */
+  private faxineiroClose(doc: MindscapeDoc, from: { projectPath: string; placeId: string }, to: { projectPath: string; placeId: string }, callerTabId: string): Answer {
+    const log = (kind: FaxineiroLogEntry['kind'], summary: string): void =>
+      this.ports.logFaxineiro?.([{ at: Date.now(), kind, projectPath: to.projectPath, placeId: to.placeId, summary }]);
+    const target = this.tabOfPlace(to.projectPath, to.placeId);
+    if (!target) {
+      log('recusou-fechar', 'não está aberta');
+      return { ok: false, text: `Não fechei: "${to.placeId}" não está aberta agora.` };
+    }
+    if (target.id === callerTabId) {
+      log('recusou-fechar', `${target.name}: esta é a sua própria sessão.`);
+      return { ok: false, text: 'Não fechei: esta é a sua própria sessão.' };
+    }
+    const state = this.ports.stateOf(target.id);
+    // A tab that never started, on a full machine, goes back to the queue with the same request (nothing is lost).
+    const asked = this.launched.get(target.id);
+    const machineFull = this.fullMachines.has(target.remoteId ?? PC_MACHINE_ID);
+    if (asked && machineFull && state === 'working' && this.ports.unconfirmed(target.id) && !this.ports.permissionOnScreen(target.id)) {
+      const verdict = canFaxineiroClose(doc, from, to, { working: false, needsOwner: false, openedBySession: true });
+      if (!verdict.ok) {
+        log('recusou-fechar', `${target.name}: ${verdict.reason}`);
+        return { ok: false, text: `Não fechei: ${verdict.reason}` };
+      }
+      const check = this.startChecks.get(target.id);
+      if (check) clearTimeout(check.timer);
+      this.startChecks.delete(target.id);
+      this.ports.closeTab(target.id);
+      this.openedBy.delete(target.id);
+      this.launched.delete(target.id);
+      this.openQueue.push({ ...asked, queuedAt: Date.now() });
+      log('fila', `${target.name}: não tinha começado; voltou à fila com o mesmo pedido`);
+      return { ok: true, text: 'Fechada e devolvida à fila: ela não tinha começado e abre sozinha, com o mesmo pedido, quando a máquina tiver vaga.' };
+    }
+    const openedBy = target.openedBy ?? this.openedBy.get(target.id);
+    const verdict = canFaxineiroClose(doc, from, to, {
+      working: state === 'working' || this.ports.unconfirmed(target.id),
+      needsOwner: state === 'permission' || state === 'error' || this.ports.permissionOnScreen(target.id),
+      openedBySession: openedBy !== undefined,
+    });
+    const note = target.claudeSessionId ? doc.boards[to.projectPath]?.cards[noteCardId(target.claudeSessionId)] : undefined;
+    const lastTurn = note?.kind === 'session-note' ? ` · último turno: ${note.text.replace(/\s+/g, ' ').slice(0, 200)}` : '';
+    if (!verdict.ok) {
+      log('recusou-fechar', `${target.name}: ${verdict.reason}`);
+      return { ok: false, text: `Não fechei: ${verdict.reason}` };
+    }
+    this.ports.closeTab(target.id);
+    this.openedBy.delete(target.id);
+    this.leaderHears.delete(target.id);
+    log('fechar', `${target.name} (${STATE_NAMES[state ?? 'done']})${lastTurn}`);
+    return { ok: true, text: 'Fechada.' };
+  }
+
+  /** What `sessao_enviar` answers once the line went (or not) to the tab of there. */
+  private deliveryAnswer(outcome: DeliveryOutcome, targetId: string): Answer {
+    if (outcome.kind === 'entrou') return { ok: true, text: 'Entregue: entrou no Claude de lá.' };
+    if (outcome.kind === 'na-fila') return { ok: true, text: 'Entregue à fila do Claude de lá: ela está trabalhando e o próprio CLI a entrega no próximo passo.' };
+    if (outcome.kind === 'nao-foi') return { ok: false, text: `Não entrou: ${outcome.reason}. Veja a tela dela com sessao_ver_tela, ou peça ao dono.` };
+    if (outcome.kind === 'pelo-terminal') {
+      return { ok: true, text: 'Enviada pelo terminal dela (a aba não tem a visão de chat), sem confirmação de que entrou. NÃO mande de novo; confira com sessao_ver_tela.' };
+    }
+    return {
+      ok: true,
+      text: this.ports.permissionOnScreen(targetId)
+        ? 'Ainda não entrou: há uma permissão aberta na tela dela. A mensagem entra sozinha assim que ela fechar; NÃO mande de novo.'
+        : `Ainda não entrou${outcome.reason ? ` (${outcome.reason})` : ''}; o app segue tentando sozinho. NÃO mande de novo (sairia duas vezes quando a primeira entrar); confira com sessao_ver_tela.`,
+    };
+  }
+
+  /**
+   * May the caller send to `placeId`: the Líder único by its reach, the Líder of the board to every place of it (reach.ts),
+   * the others by an arrow of theirs.
+   */
   private canSend(scope: Scope, board: MindscapeBoard | undefined, placeId: string): boolean {
     if (scope.leader) return this.leaderReaches(scope.projectPath, placeId);
-    return scope.self ? hasArrowLink(board, scope.self.id, placeId) : false;
+    if (!scope.self) return false;
+    if (hasArrowLink(board, scope.self.id, placeId)) return true;
+    const here = scope.projectPath;
+    return isBoardOrchestrator(board, scope.self.id) && canReach(this.ports.doc(), { projectPath: here, placeId: scope.self.id }, { projectPath: here, placeId }).ok;
   }
 
   private boards(): KnownBoard[] {
@@ -331,16 +839,38 @@ export class AgentBridge {
 
   // ---- end-of-turn notice (D) --------------------------------------------------------------------------------
 
-  /** A session ended a turn: each open session with an arrow to it (or that opened it) hears a short notice. */
+  private chatMode(): boolean {
+    return this.ports.turnNotices?.() === 'chat';
+  }
+
+  /**
+   * A session ended a turn. 'ledger' (default): recorded on its live task, nobody's chat hears it. 'chat' (the old
+   * mode): each open session with an arrow to it (or that opened it) hears a short notice.
+   */
   turnEnded(sessionId: string, text: string): void {
     const ended = this.ports.tabs().find((tab) => tab.claudeSessionId === sessionId);
     if (!ended?.cwd || isLeaderOfAllTab(ended)) return;
+    const cwd = ended.cwd;
     // B40 — the same end of turn arriving twice (a repeated or late hook) is announced once.
     if (this.lastNoticeText.get(sessionId) === text) return;
     this.lastNoticeText.set(sessionId, text);
     const place = this.placeOfTab(ended);
     const board = this.board(ended.cwd);
     if (!place || !board) return;
+    if (!this.chatMode()) {
+      // Dono, 09/11 ("fim de turno e andamento vão só ao ledger"): recorded on the live task, nobody's chat, arrow or
+      // not. With no live task the turn stays on the session's own note (sessao_ver_tela), never in a chat.
+      void Promise.resolve(this.ports.recordTurn?.({ projectPath: ended.cwd, placeId: place.id, text })).catch(() => undefined);
+      return;
+    }
+    this.chatTurnNotice(ended, cwd, place, board, text);
+  }
+
+  /**
+   * The old "◆ … terminou": each open session with an arrow to it (or that opened it) hears it. With the notices in the
+   * ledger (`toLeaderOfAll` false), the Líder único is never one of them (dono, 09/11), even when it opened the session.
+   */
+  private chatTurnNotice(ended: BridgeTab, cwd: string, place: SessionPlaceCard, board: MindscapeBoard, text: string): void {
     const listeners = new Set<string>();
     for (const link of board.links) if (link.arrow && link.to === place.id) listeners.add(link.from);
     const opener = this.openedBy.get(ended.id);
@@ -350,19 +880,121 @@ export class AgentBridge {
     const guard = this.lastNoticeFrom.get(ended.id);
     this.lastNoticeFrom.delete(ended.id);
     const role = this.roleName(place.roleId);
-    const summary = text.trim().replace(/\s+/g, ' ');
-    const cut = summary.length > NOTICE_CHARS ? `${summary.slice(0, NOTICE_CHARS)}…` : summary;
-    const line = `◆ ${role ? `${role} ` : ''}${ended.name} (${place.id}) terminou: ${cut || '(sem resumo)'}`;
-    const boardName = ended.projectName ?? lastSegment(ended.cwd);
+    const line = `◆ ${role ? `${role} ` : ''}${ended.name} (${place.id}) terminou: ${noticeBody(text) || '(sem resumo)'}`;
+    const boardName = ended.projectName ?? lastSegment(cwd);
     for (const listenerPlace of listeners) {
       if (listenerPlace === place.id || listenerPlace === guard) continue;
       const leader = listenerPlace === LEADER_OF_ALL;
-      const target = leader ? this.leaderTab() : this.tabOfPlace(ended.cwd, listenerPlace);
+      const target = leader ? this.leaderTab() : this.tabOfPlace(cwd, listenerPlace);
       if (!target) continue;
       this.lastNoticeFrom.set(target.id, place.id);
       // The Líder único hears every board: the notice says which one.
       this.ports.sendLine(target.id, leader ? line.replace(`(${place.id})`, `(${place.id}, quadro ${boardName})`) : line);
     }
+  }
+
+  // ---- what cannot wait (08/11) --------------------------------------------------------------------------------
+
+  /**
+   * The state of a tab changed (App, from the semaphore it already has; nothing is computed here). A permission open
+   * on its screen ("precisa do dono") or a turn that failed (usage limit, login…: "travada") reaches the Líder of its
+   * board at once, once per situation. In the old mode ('chat') the "◆ … terminou" already says it: nothing here.
+   */
+  attention(tabId: string): void {
+    if (this.chatMode()) return;
+    const state = this.ports.stateOf(tabId);
+    const failure = state !== undefined && state !== 'working' ? this.ports.turnFailureOf?.(tabId) : undefined;
+    const stuck = failure ? `está travada: ${failureReasonText(failure)} (o turno parou e não segue sozinho)` : undefined;
+    const situation = state === 'permission' ? 'precisa do dono: há uma permissão aberta na tela dela' : stuck;
+    const key = `tab:${tabId}`;
+    if (!situation) {
+      this.toldUrgent.delete(tabId);
+      if (!this.pendingUrgent.get(key)?.sending) this.pendingUrgent.delete(key); // it cleared before anyone heard
+      this.flushUrgent();
+      return;
+    }
+    if (this.toldUrgent.get(tabId) !== situation) {
+      this.toldUrgent.set(tabId, situation);
+      const tab = this.ports.tabs().find((candidate) => candidate.id === tabId);
+      const place = tab ? this.placeOfTab(tab) : undefined;
+      if (tab?.cwd && place) {
+        // The ledger keeps it too, saying when nobody could hear it yet.
+        const waiting = this.urgentTarget(tab) ? '' : ' (aviso pendente: nenhum Líder aberto)';
+        void Promise.resolve(this.ports.recordTurn?.({ projectPath: tab.cwd, placeId: place.id, text: `${situation}${waiting}`, estado: state === 'permission' ? 'precisa-do-dono' : 'travada' })).catch(() => undefined);
+      }
+      this.queueUrgent(key, tabId, `${situation}. Veja a tela dela com sessao_ver_tela.`);
+      return;
+    }
+    this.flushUrgent();
+  }
+
+  /** Something of the session of `tabId` that cannot wait: it stays here until a Líder's CLI took it. */
+  private queueUrgent(key: string, tabId: string, words: string): void {
+    this.pendingUrgent.set(key, { tabId, words, sending: false });
+    this.flushUrgent();
+  }
+
+  /**
+   * Tries every pending notice (App calls it at each state change and every half minute: a Líder that opens or comes
+   * back from "sem ligação" gets what waited). Told = the Líder's CLI took it, or its send driver holds it.
+   */
+  flushUrgent(): void {
+    for (const [key, entry] of this.pendingUrgent) {
+      if (entry.sending) continue;
+      const tab = this.ports.tabs().find((candidate) => candidate.id === entry.tabId);
+      const place = tab ? this.placeOfTab(tab) : undefined;
+      if (!tab?.cwd || !place) {
+        this.pendingUrgent.delete(key); // the session itself is gone from every board: nobody to speak for
+        continue;
+      }
+      const route = this.urgentTarget(tab);
+      if (!route) continue; // waits for a Líder
+      entry.sending = true;
+      const role = this.roleName(place.roleId ?? tab.roleId);
+      const where = route.leader ? `, quadro ${tab.projectName ?? this.boardName(tab.cwd)}` : '';
+      const line = `◆ ${role ? `${role} ` : ''}${tab.name} (${place.id}${where}) ${entry.words}`;
+      void this.ports
+        .deliverLine(route.target.id, line, DELIVERY_WAIT_MS, 'session')
+        .catch((): DeliveryOutcome => ({ kind: 'nao-foi', reason: 'erro' }))
+        .then((outcome) => {
+          if (this.pendingUrgent.get(key) !== entry) return; // replaced by a newer situation meanwhile
+          if (outcome.kind === 'nao-foi') entry.sending = false; // the next flush tries again
+          else this.pendingUrgent.delete(key);
+        });
+    }
+  }
+
+  /** A Líder tab that can take a line now: open, and not "sem ligação". */
+  private reachableTab(tab: BridgeTab | undefined): BridgeTab | undefined {
+    return tab && !this.ports.linkLost?.(tab.id) ? tab : undefined;
+  }
+
+  /**
+   * A place that hears now: its tab is open, answers (not "sem ligação") and has shown signs of life since the app
+   * opened (`unconfirmed`: a session mute since a reinstall would swallow a notice, or sit on a task, in silence).
+   */
+  private hears(projectPath: string, placeId: string): boolean {
+    const tab = this.reachableTab(this.tabOfPlace(projectPath, placeId));
+    return tab !== undefined && !this.ports.unconfirmed(tab.id);
+  }
+
+  /**
+   * Who hears the delivery or the lock of the session of `tab`: `whoHears` (reach.ts), the ONE rule, read from the
+   * board at this notice: the first live place above it by the arrows, else the Líder of its board, else the Líder
+   * único. Nobody to hear now: it waits (`flushUrgent`).
+   */
+  private urgentTarget(tab: BridgeTab): { readonly target: BridgeTab; readonly leader: boolean } | undefined {
+    if (!tab.cwd || isLeaderOfAllTab(tab)) return undefined;
+    const cwd = tab.cwd;
+    const place = this.placeOfTab(tab);
+    const board = this.board(cwd);
+    // A tab out of every board (opened by hand, no place) belongs to no team: nobody is told.
+    if (!place || !board) return undefined;
+    const to = whoHears(board, place.id, (id) => this.hears(cwd, id));
+    const target = to === LEADER_OF_ALL ? undefined : this.tabOfPlace(cwd, to);
+    if (target) return { target, leader: false };
+    const leader = this.reachableTab(this.leaderTab());
+    return leader ? { target: leader, leader: true } : undefined;
   }
 
   // ---- the tools ---------------------------------------------------------------------------------------------
@@ -378,11 +1010,29 @@ export class AgentBridge {
   private async run(ptyId: string, call: BoardToolCall): Promise<Answer> {
     const fail = (text: string): Answer => ({ ok: false, text });
     if (!this.ports.loaded) return fail('O quadro ainda não abriu no app (ou falhou ao abrir). Tente de novo em instantes.');
-    const caller = this.ports.tabOfPty(ptyId);
-    if (!caller) return fail('Esta sessão não é uma aba do Donel Dev.');
+    const caller = await this.callerTab(ptyId);
+    if (!caller)
+      return fail(
+        'O app está religando esta sessão (ele reiniciou ou acabou de voltar) e ainda não a reconheceu. Você não caiu: espere 1 minuto e tente de novo. Não abra outra sessão no seu lugar.',
+      );
     const roleNames = new Map(this.ports.roles().map((role) => [role.id, role.name]));
 
     if (call.tool === 'papeis_listar') return { ok: true, text: json(this.ports.roles().map((role) => ({ id: role.id, nome: role.name }))) };
+
+    if (call.tool === 'aviso_imediato') {
+      if (this.chatMode()) return { ok: true, text: 'modo antigo: o aviso vai no fim do turno' };
+      const heard = this.urgentTarget(caller) !== undefined;
+      this.queueUrgent(`n:${++this.urgentSeq}`, caller.id, call.texto);
+      return { ok: true, text: heard ? 'avisado' : 'guardado: vai quando um Líder abrir' };
+    }
+
+    if (call.tool === 'estados_dos_lugares') {
+      // Only ids and states, for the ledger's orphan count: the same for every caller (no reach in it). A folder that is
+      // no board stays out (unknown).
+      const states: Record<string, { id: string; estado: string }[]> = {};
+      for (const [pasta, places] of this.placeStates(call.pastas)) states[pasta] = [...places].map(([id, estado]) => ({ id, estado }));
+      return { ok: true, text: json(states) };
+    }
 
     if (call.tool === 'sessao_quem_sou') {
       if (isLeaderOfAllTab(caller))
@@ -410,6 +1060,8 @@ export class AgentBridge {
           pasta: caller.cwd,
           ...(self ? { lugar: self.id } : { lugar: null, aviso: 'Seu lugar ainda não está no quadro (a sessão acabou de abrir).' }),
           ...(self?.roleId ?? caller.roleId ? { papel: self?.roleId ?? caller.roleId, papelNome: this.roleName(self?.roleId ?? caller.roleId) } : {}),
+          // The Líder the owner put on the board (never one a session made): it liberates upload folders for it.
+          orquestrador: self ? isBoardOrchestrator(this.board(caller.cwd), self.id) : false,
           roda: caller.remoteId ? this.ports.remoteLabel(caller.remoteId) : 'este computador',
           lugaresRemotos: this.ports.remotes().map((remote) => remote.label),
         }),
@@ -430,6 +1082,7 @@ export class AgentBridge {
           stateOf: (sessionId) => {
             const tab = this.ports.tabs().find((candidate) => candidate.cwd === projectPath && candidate.claudeSessionId === sessionId);
             const state = tab ? this.ports.stateOf(tab.id) : undefined;
+            if (tab && state !== undefined && this.ports.linkLost?.(tab.id)) return LINK_LOST;
             return state ? STATE_NAMES[state] : undefined;
           },
         });
@@ -460,7 +1113,7 @@ export class AgentBridge {
         const places = board ? Object.values(board.cards).filter((card): card is SessionPlaceCard => card.kind === 'session') : [];
         const list = places.map((place) => {
               const tab = this.tabOfPlace(projectPath, place.id);
-              const opener = tab ? this.openedBy.get(tab.id) : undefined;
+              const opener = this.openerOf(projectPath, place.id, tab);
               return {
                 id: place.id,
                 ...(place.roleId ? { papel: place.roleId, papelNome: this.roleName(place.roleId) } : {}),
@@ -494,6 +1147,44 @@ export class AgentBridge {
 
       case 'sessao_enviar': {
         if (!scope.leader && !self) return fail('Seu lugar ainda não está no quadro; espere o primeiro turno terminar.');
+        // Back up to the Líder único (t-52b31719): only from a session it opened or one below it (reach.ts).
+        if (!scope.leader && self && call.para.trim().toLowerCase() === LEADER_OF_ALL) {
+          const reach = canReachLeader(this.ports.doc(), { projectPath, placeId: self.id }, (id) => this.openedByLeader(projectPath, id));
+          if (!reach.ok) return fail(`Sem ligação com o Líder único: ${reach.reason}`);
+          if (!call.motivo) return fail(LEADER_MESSAGE_REFUSAL);
+          const leader = this.leaderTab();
+          if (!leader) return fail('O Líder único não está aberto agora. Registre o que precisa no Oráculo (tarefa_criar ou tarefa_transferir com "para": "lider") e siga.');
+          const outcome = await this.ports.deliverLine(leader.id, `◆ De ${signature}, quadro ${scope.projectName ?? this.boardName(projectPath)}, ${LEADER_REASON_WORDS[call.motivo]}: ${call.texto}`, SEND_WAIT_MS, 'session');
+          return this.deliveryAnswer(outcome, leader.id);
+        }
+        // Up to the Líder of the board (08/11): every place of the board, no arrow needed (reach.ts).
+        if (!scope.leader && self && call.para.trim().toLowerCase() === BOARD_LEADER) {
+          const leaders = boardLeaders(this.board(projectPath)).filter((id) => id !== self.id);
+          if (leaders.length === 0 && isBoardLeader(this.board(projectPath), self.id))
+            return fail(`Não mandei: você é o Líder deste quadro, e "${BOARD_LEADER}" é você mesmo. Para falar com o Líder único, "para": "lider".`);
+          if (leaders.length === 0) return fail('Este quadro não tem Líder. Fale com quem está acima de você pelas setas (ou "lider", se o Líder único abriu você).');
+          const leader = leaders.map((id) => this.tabOfPlace(projectPath, id)).find((tab) => tab !== undefined);
+          if (!leader) return fail('O Líder do quadro não está aberto agora. Registre o que precisa no Oráculo (tarefa_criar) e siga.');
+          const outcome = await this.ports.deliverLine(leader.id, `◆ De ${signature}: ${call.texto}`, SEND_WAIT_MS, 'session');
+          return this.deliveryAnswer(outcome, leader.id);
+        }
+        // Back up to whoever opened me (08/11): the opening arrow, no arrow back needed (reach.ts).
+        if (!scope.leader && self && call.para.trim().toLowerCase() === MY_OPENER) {
+          const openers = openersOf(this.board(projectPath), self.id);
+          if (openers.length === 0) {
+            if (!this.openedByLeader(projectPath, self.id)) return fail(`Ninguém abriu você por sessao_abrir (foi o dono). Fale com o Líder do quadro ("para": "${BOARD_LEADER}") ou com quem está acima de você pelas setas.`);
+            if (!call.motivo) return fail(LEADER_MESSAGE_REFUSAL);
+            const leader = this.leaderTab();
+            if (!leader) return fail('Quem abriu você foi o Líder único, e ele não está aberto agora. Registre o que precisa no Oráculo (tarefa_criar ou tarefa_transferir com "para": "lider") e siga.');
+            const outcome = await this.ports.deliverLine(leader.id, `◆ De ${signature}, quadro ${scope.projectName ?? this.boardName(projectPath)}, ${LEADER_REASON_WORDS[call.motivo]}: ${call.texto}`, SEND_WAIT_MS, 'session');
+            return this.deliveryAnswer(outcome, leader.id);
+          }
+          const opener = openers.map((id) => this.tabOfPlace(projectPath, id)).find((tab) => tab !== undefined);
+          if (!opener) return fail(`Quem abriu você (${openers.join(', ')}) não está aberta agora. Registre o que precisa no Oráculo (tarefa_criar) e siga, ou fale com o Líder do quadro ("para": "${BOARD_LEADER}").`);
+          if (this.ports.linkLost?.(opener.id)) return fail('Quem abriu você está sem ligação: o processo dela segue vivo no lugar remoto e o app está religando. Tente de novo em instantes.');
+          const outcome = await this.ports.deliverLine(opener.id, `◆ De ${signature}: ${call.texto}`, SEND_WAIT_MS, 'session');
+          return this.deliveryAnswer(outcome, opener.id);
+        }
         const board = this.board(projectPath);
         const place = board?.cards[call.para];
         if (place?.kind !== 'session') return fail(`"${call.para}" não é um lugar do quadro (veja sessao_listar).`);
@@ -501,25 +1192,15 @@ export class AgentBridge {
           return fail(
             scope.leader
               ? `Sem ligação: "${place.id}" não está no topo do quadro ${scope.projectName ?? projectPath} nem abaixo dele pelas setas do dono. Peça ao dono.`
-              : `Sem ligação: não há seta do seu lugar (${self?.id}) para "${place.id}". Peça ao dono, ou use sessao_abrir.`,
+              : `Sem ligação: não há seta do seu lugar (${self?.id}) para "${place.id}". Peça ao dono, ou use sessao_abrir. Para o Líder do quadro, "para": "${BOARD_LEADER}"; para quem abriu você, "para": "${MY_OPENER}".`,
           );
         const target = this.tabOfPlace(projectPath, place.id);
         if (!target) return fail(`"${place.id}" não está aberta agora.`);
+        if (this.ports.linkLost?.(target.id)) return fail(`"${place.id}" está sem ligação: o processo dela segue vivo no lugar remoto e o app está religando. Tente de novo em instantes; não abra outra no lugar dela.`);
         if (scope.leader) this.leaderHears.add(target.id);
         // 05/11 — "Entregue" only once the CLI of there took it: the answer waits for the send to end.
-        const outcome = await this.ports.deliverLine(target.id, `◆ De ${signature}: ${call.texto}`, DELIVERY_WAIT_MS, 'session');
-        if (outcome.kind === 'entrou') return { ok: true, text: 'Entregue: entrou no Claude de lá.' };
-        if (outcome.kind === 'na-fila') return { ok: true, text: 'Entregue à fila do Claude de lá: ela está trabalhando e o próprio CLI a entrega no próximo passo.' };
-        if (outcome.kind === 'nao-foi') return fail(`Não entrou: ${outcome.reason}. Veja a tela dela com sessao_ver_tela, ou peça ao dono.`);
-        if (outcome.kind === 'pelo-terminal') {
-          return { ok: true, text: 'Enviada pelo terminal dela (a aba não tem a visão de chat), sem confirmação de que entrou. NÃO mande de novo; confira com sessao_ver_tela.' };
-        }
-        return {
-          ok: true,
-          text: this.ports.permissionOnScreen(target.id)
-            ? 'Ainda não entrou: há uma permissão aberta na tela dela. A mensagem entra sozinha assim que ela fechar; NÃO mande de novo.'
-            : `Ainda não entrou${outcome.reason ? ` (${outcome.reason})` : ''}; o app segue tentando sozinho. NÃO mande de novo (sairia duas vezes quando a primeira entrar); confira com sessao_ver_tela.`,
-        };
+        const outcome = await this.ports.deliverLine(target.id, `◆ De ${signature}: ${call.texto}`, SEND_WAIT_MS, 'session');
+        return this.deliveryAnswer(outcome, target.id);
       }
 
       case 'sessao_fechar': {
@@ -531,6 +1212,7 @@ export class AgentBridge {
         const doc = this.ports.doc();
         const where = findPlace(doc, call.quem, projectPath);
         if (!where) return no(`"${call.quem}" não é um lugar de nenhum quadro (veja sessao_listar).`);
+        if (!scope.leader && self?.roleId === FAXINEIRO_ROLE_ID) return this.faxineiroClose(doc, { projectPath, placeId: self.id }, where, caller.id);
         const reach = canReach(doc, from, where);
         if (!reach.ok) return no(reach.reason);
         const target = this.tabOfPlace(where.projectPath, where.placeId);
@@ -539,7 +1221,8 @@ export class AgentBridge {
         const permission = 'ela tem um pedido de permissão aberto na tela; o dono responde antes.';
         if (this.ports.permissionOnScreen(target.id)) return no(permission);
         let cut = false;
-        if (this.ports.stateOf(target.id) === 'working') {
+        // "Sem ligação": no line reaches it, so there is no pause to wait for; closing ends its tmux on the place.
+        if (this.ports.stateOf(target.id) === 'working' && !this.ports.linkLost?.(target.id)) {
           this.ports.sendLine(target.id, `◆ De ${signature}: pause agora e não comece nada novo. Esta sessão vai ser fechada em instantes (o dono pode retomá-la depois).`);
           const deadline = Date.now() + CLOSE_WAIT_MS;
           while (this.ports.stateOf(target.id) === 'working' && Date.now() < deadline) {
@@ -556,11 +1239,32 @@ export class AgentBridge {
         return { ok: true, text: cut ? `Fechada (o turno não acabou em ${CLOSE_WAIT_MS / 1000} s; cortei).` : 'Fechada.' };
       }
 
+      case 'sessao_religar': {
+        const no = (why: string): Omit<MindscapeBoardResponse, 'requestId'> => fail(`Não religuei: ${why}`);
+        // Same reach as `sessao_fechar` (shared/mindscape/reach.ts), plus the caller's own session (a hook gone while
+        // its MCP still answers). Nothing is killed: only the app's keys go back.
+        const doc = this.ports.doc();
+        const where = findPlace(doc, call.quem, projectPath);
+        if (!where) return no(`"${call.quem}" não é um lugar de nenhum quadro (veja sessao_listar).`);
+        const target = this.tabOfPlace(where.projectPath, where.placeId);
+        if (target?.id !== caller.id) {
+          const from = scope.leader ? LEADER_OF_ALL_FROM : self ? { projectPath, placeId: self.id } : undefined;
+          if (!from) return no('seu lugar ainda não está no quadro; espere o primeiro turno terminar.');
+          const reach = canReach(doc, from, where);
+          if (!reach.ok) return no(reach.reason);
+        }
+        if (!target) return no(`"${where.placeId}" não está aberta agora (para uma fechada, o dono retoma).`);
+        if (!this.ports.relinkTools) return no('este app não religa ferramentas.');
+        const outcome = await this.ports.relinkTools(target.id);
+        return outcome.ok ? { ok: true, text: outcome.text } : no(outcome.text);
+      }
+
       case 'sessao_abrir': {
         const opener = scope.leader ? LEADER_OF_ALL : self?.id;
         if (opener === undefined) return fail('Seu lugar ainda não está no quadro; espere o primeiro turno terminar.');
         const role = this.ports.roles().find((candidate) => candidate.id === call.papel);
         if (!role) return fail(`Papel "${call.papel}" não existe (veja papeis_listar).`);
+        if (role.id === LEADER_ROLE_ID) return fail(`Não abri: ${LEADER_PLACE_IS_THE_OWNERS}`);
         // `onde` — absent or "aqui": where the caller runs; "este computador": local; else a remote place by label or id.
         let remoteId = caller.remoteId;
         const where = call.onde?.trim().toLowerCase();
@@ -580,6 +1284,16 @@ export class AgentBridge {
           const allowed = await this.ports.askOwner({ caller: caller.name, role: role.name, request: call.pedido, open });
           if (!allowed) return fail(`O dono negou abrir mais uma sessão (você já tem ${open} abertas${scope.leader ? ' neste quadro' : ''}). Use as que existem.`);
         }
+        // t-b3b26e60 — a full machine: another remote place when the role allows it ("lugar: qualquer"), else the queue.
+        let movedFrom: string | undefined;
+        const full = this.waitReasons(remoteId ?? PC_MACHINE_ID);
+        if (full && role.anyPlace) {
+          const other = this.ports.remotes().find((remote) => remote.id !== remoteId && !this.waitReasons(remote.id));
+          if (other) {
+            movedFrom = remoteId ? this.ports.remoteLabel(remoteId) : 'este computador';
+            remoteId = other.id;
+          }
+        }
         const placeId = placeCardId(crypto.randomUUID());
         let made = false;
         this.ports.applyGesture(projectPath, (doc) => {
@@ -591,7 +1305,7 @@ export class AgentBridge {
         });
         if (!made) return fail('O quadro não aceitou o lugar novo.');
         const name = call.nome ?? role.name;
-        const tabId = this.ports.openSession({
+        const entry: QueuedOpen = {
           projectPath,
           ...(scope.projectName ? { projectName: scope.projectName } : {}),
           placeId,
@@ -600,10 +1314,27 @@ export class AgentBridge {
           ...(remoteId ? { remoteId } : {}),
           openedBy: opener,
           firstMessage: call.pedido,
-        });
-        this.openedBy.set(tabId, opener);
-        this.openedAt.set(tabId, Date.now());
-        this.watchStart(tabId, projectPath, opener, placeId, name);
+          leader: scope.leader,
+          queuedAt: Date.now(),
+        };
+        const roda = remoteId ? this.ports.remoteLabel(remoteId) : 'este computador';
+        if (full !== undefined && movedFrom === undefined) {
+          this.openQueue.push(entry);
+          this.ports.logFaxineiro?.([{ at: entry.queuedAt, kind: 'fila', projectPath, placeId, summary: `${name} (${role.id}) espera vaga em ${roda}: ${full.join('; ')}` }]);
+          return {
+            ok: true,
+            text: json({
+              ...(scope.leader ? { quadro: scope.projectName } : {}),
+              lugar: placeId,
+              nome: name,
+              papel: role.id,
+              roda,
+              fila: this.openQueue.filter((waiting) => (waiting.remoteId ?? PC_MACHINE_ID) === (remoteId ?? PC_MACHINE_ID)).length,
+              aviso: `Na fila: ${roda} está cheia (${full.join('; ')}). O lugar já está no quadro, e a sessão abre sozinha, com o seu pedido, quando a máquina tiver vaga. Não abra outra para o mesmo trabalho.`,
+            }),
+          };
+        }
+        this.launch(entry);
         return {
           ok: true,
           text: json({
@@ -611,7 +1342,8 @@ export class AgentBridge {
             lugar: placeId,
             nome: name,
             papel: role.id,
-            roda: remoteId ? this.ports.remoteLabel(remoteId) : 'este computador',
+            roda,
+            ...(movedFrom ? { mudouDeLugar: `${movedFrom} está cheia; o papel permite outro lugar.` } : {}),
             aviso: 'Você recebe um aviso a cada turno que ela terminar. Para mandar mais trabalho: sessao_enviar.',
           }),
         };

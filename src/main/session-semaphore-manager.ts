@@ -48,6 +48,10 @@ export interface SemaphoreUpdate {
    * `unknown`. Cleared by the next prompt or tool call.
    */
   readonly turnFailure?: string;
+  /** Epoch ms of the last hook heard from the session (any hook); absent = none yet. */
+  readonly lastEventAt?: number;
+  /** Tool calls still running, all origins summed; absent = none. */
+  readonly openCalls?: number;
 }
 
 /**
@@ -112,6 +116,9 @@ export function notificationNeedsOwner(payload: Record<string, unknown>): boolea
   return typeof payload.message === 'string' && /permission/i.test(payload.message);
 }
 
+/** `SessionStart` sources that leave the session at its prompt with no turn running (t-1293c818, item 5). */
+const AT_PROMPT_SESSION_STARTS: ReadonlySet<string> = new Set(['resume', 'clear', 'fork']);
+
 export class SessionSemaphoreManager {
   private server: Server | null = null;
   private port = 0;
@@ -128,6 +135,8 @@ export class SessionSemaphoreManager {
   private readonly heardPtyIds = new Set<string>();
   /** Item 04 — `StopFailure` code of the last turn, by pty (see `SemaphoreUpdate.turnFailure`). */
   private readonly turnFailureByPty = new Map<string, string>();
+  /** Epoch ms of the last hook from each pty (see `SemaphoreUpdate.lastEventAt`). */
+  private readonly lastEventAtByPty = new Map<string, number>();
   private readonly listeners = new Set<(update: SemaphoreUpdate) => void>();
   /**
    * Emenda 22/09 (011-contas-e-provedores, etapa 3, Fase 2, item 4) —
@@ -219,6 +228,7 @@ export class SessionSemaphoreManager {
     this.pendingKindsByPty.delete(ptyId);
     this.heardPtyIds.delete(ptyId);
     this.turnFailureByPty.delete(ptyId);
+    this.lastEventAtByPty.delete(ptyId);
     for (const [claudeSessionId, mappedPtyId] of this.sessionToPty) {
       if (mappedPtyId === ptyId) this.sessionToPty.delete(claudeSessionId);
     }
@@ -325,12 +335,23 @@ export class SessionSemaphoreManager {
   }
 
   private applyHookEvent(ptyId: string, hookEventName: unknown, reason: unknown, payload: Record<string, unknown>): void {
+    // Any hook is a sign of life, even one that moves no state.
+    this.lastEventAtByPty.set(ptyId, this.now());
     // Emenda 22/09 (item 4) — dispara ANTES do mapeamento genérico (que funde
     // StopFailure em 'stop'), pro gatilho imediato de auto-switch saber que este
     // fim de turno foi por erro de API.
     if (hookEventName === 'StopFailure') {
       const error = typeof payload.error === 'string' && payload.error.length > 0 ? payload.error : null;
       for (const listener of this.stopFailureListeners) listener(ptyId, error);
+    }
+    // t-1293c818 (item 5) — a resumed (or cleared, or forked) conversation sits at its prompt: stopped, and heard. A
+    // new session (`startup`) is left as it was born: its first message may still be on its way, and "não começou"
+    // reads that. A compaction (`compact`) comes in the middle of a turn.
+    if (hookEventName === 'SessionStart') {
+      if (!AT_PROMPT_SESSION_STARTS.has(String(payload.source))) return;
+      this.heardPtyIds.add(ptyId);
+      this.moveTo(ptyId, { type: 'atPrompt', at: this.now() });
+      return;
     }
     const eventType = mapHookEventName(hookEventName);
     if (!eventType) return;
@@ -374,6 +395,26 @@ export class SessionSemaphoreManager {
     }
   }
 
+  /**
+   * t-1293c818 (item 5) — the remote place read this session's pane idle with its turn closed (`settledRemoteSessions`),
+   * in a read that started at `readStartedAt`. A session reattached after the app reopened sends no `SessionStart` (its
+   * process never stopped), and one whose `Stop` was lost stays "trabalhando" forever. Only a `working` that nothing
+   * moved since the read started is corrected: a hook after it, or a tab born after it, is newer than the reading.
+   */
+  settleFromPlace(ptyId: string, readStartedAt: number): void {
+    const current = this.ptyState.get(ptyId);
+    if (!current || current.state !== 'working' || this.pendingOpenPtyIds.has(ptyId)) return;
+    if (current.stateEnteredAt >= readStartedAt || (this.lastEventAtByPty.get(ptyId) ?? -Infinity) >= readStartedAt) return;
+    this.heardPtyIds.add(ptyId);
+    this.moveTo(ptyId, { type: 'atPrompt', at: this.now() });
+  }
+
+  private moveTo(ptyId: string, event: SemaphoreEvent): void {
+    const current = this.ptyState.get(ptyId) ?? INITIAL_SEMAPHORE_STATE;
+    this.ptyState.set(ptyId, reduceSemaphoreState(current, event));
+    this.emit(ptyId);
+  }
+
   private tick(): void {
     const now = this.now();
     for (const [ptyId, current] of this.ptyState) {
@@ -397,6 +438,8 @@ export class SessionSemaphoreManager {
     const publicState = this.publicStateFor(ptyId, state);
     const kinds = this.pendingKindsByPty.get(ptyId);
     const failure = this.turnFailureByPty.get(ptyId);
+    const lastEventAt = this.lastEventAtByPty.get(ptyId);
+    const openCalls = Object.values(state.openCalls ?? {}).reduce((sum, count) => sum + count, 0);
     return {
       ptyId,
       state: publicState,
@@ -407,6 +450,8 @@ export class SessionSemaphoreManager {
       ...(publicState === 'working' && !this.heardPtyIds.has(ptyId) ? { unconfirmed: true as const } : {}),
       ...(publicState === 'permission' && kinds && kinds.length > 0 ? { pendingKinds: kinds } : {}),
       ...(failure && publicState !== 'working' ? { turnFailure: failure } : {}),
+      ...(lastEventAt !== undefined ? { lastEventAt } : {}),
+      ...(openCalls > 0 ? { openCalls } : {}),
     };
   }
 

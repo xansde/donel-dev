@@ -19,8 +19,15 @@ import { clampZoom } from './view';
  * 3 since the place (item 12a): a session card has its own id, the conversation
  * of the moment, the previous ones and a role. A v2 channel would drop a place
  * that has not started yet and every conversation after a renewal.
+ * 7 since the link both ways (08/11): two arrows between the same two cards, one each way (Dev ⇄ Revisor). The
+ * link has the same shape, but a v6 channel drops the arrow the other way whenever it rewires links (a place with a
+ * post-it taking a new conversation, as after a /clear); with 7 it reads and never writes.
+ * 8 since the parallel of a place (09/11, t-cccce5e4: "cada líder deverá ter a configuração de quanto aceita puxar e
+ * tocar em paralelo"): `parallel` on a place card, set only by the owner. A v7 channel would drop it.
  */
-export const MINDSCAPE_SCHEMA_VERSION = 5;
+export const MINDSCAPE_SCHEMA_VERSION = 8;
+/** The most demands a place can be set to take in parallel. */
+export const MAX_PARALLEL = 20;
 
 /**
  * 4 since the board by MCP (item 08 + B37): what a session made on the board carries `by: 'session'`
@@ -35,6 +42,25 @@ export type MadeBy = 'session';
  * The rule that reads it lives in `reach.ts`. Same version: the `opened` mark on the arrow `sessao_abrir` makes.
  */
 export type BoardReach = 'own' | 'all';
+
+/**
+ * 6 since the pods (cadeiras, fatia 4; dono 07/11: a chair is a role on the board, and the pod arranges its own
+ * chairs). A pod is a named group of chairs inside the board's rig: the owner names it, gives it a mission, moves it
+ * and puts chairs in it; the chairs are laid out by the pod (never by hand). `x`/`y` are its corner in board units (like
+ * a card); the rig is the frame around the pods. A role sits in one pod at most. A v5 channel would drop the pods.
+ */
+export interface MindscapePod {
+  readonly id: string;
+  readonly name: string;
+  readonly mission?: string;
+  /** The chairs of the pod: role ids, in the owner's order. */
+  readonly roleIds: readonly string[];
+  readonly x: number;
+  readonly y: number;
+}
+
+export const MAX_POD_NAME_CHARS = 40;
+export const MAX_POD_MISSION_CHARS = 200;
 
 export type OwnerCardColor = Exclude<TabColorToken, 'permission'>;
 
@@ -57,6 +83,8 @@ export interface SessionPlaceCard {
   roleId?: string;
   /** v4 — made by a session through the MCP (not by the owner). */
   by?: MadeBy;
+  /** v8 — how many demands this place (a Líder, a Coordenador) takes in parallel; absent = no limit. Owner only. */
+  parallel?: number;
   x: number;
   y: number;
 }
@@ -121,10 +149,12 @@ export interface MindscapeBoard {
   drawings: MindscapeDrawing[];
   /** v5 — absent = `'own'`: its sessions reach only this board. Only the owner changes it. */
   reach?: 'all';
+  /** v6 — the pods of the board's rig; absent = none. Only the owner changes them. */
+  pods?: MindscapePod[];
 }
 
 export interface MindscapeDoc {
-  schemaVersion: 5;
+  schemaVersion: 8;
   boards: Record<string, MindscapeBoard>;
 }
 
@@ -232,7 +262,7 @@ function freePlaceId(board: MindscapeBoard, sessionId: string): string {
   }
 }
 
-/** Links after cards were renamed (or merged into another): no link to itself, no duplicate pair. */
+/** Links after cards were renamed (or merged into another): no link to itself, no duplicate pair (as in `addLink`). */
 function rewireLinks(links: readonly MindscapeLink[], renamed: ReadonlyMap<string, string>): MindscapeLink[] {
   if (renamed.size === 0) return [...links];
   const out: MindscapeLink[] = [];
@@ -240,7 +270,8 @@ function rewireLinks(links: readonly MindscapeLink[], renamed: ReadonlyMap<strin
     const from = renamed.get(link.from) ?? link.from;
     const to = renamed.get(link.to) ?? link.to;
     if (from === to) continue;
-    const duplicate = out.some((other) => (other.from === from && other.to === to) || (other.from === to && other.to === from));
+    // The rule of `addLink`: an arrow the other way next to an arrow is not a duplicate (Dev ⇄ Revisor).
+    const duplicate = out.some((other) => (other.from === from && other.to === to) || (other.from === to && other.to === from && !(other.arrow && link.arrow)));
     if (duplicate) continue;
     out.push(from === link.from && to === link.to ? link : { ...link, from, to });
   }
@@ -403,6 +434,18 @@ export function setPlaceRole(doc: MindscapeDoc, projectPath: string, placeId: st
   return withBoardReplaced(doc, { ...board, cards: { ...board.cards, [placeId]: next } });
 }
 
+/** v8 — how many demands a place takes in parallel (`null` = no limit). The owner's gesture; sessions never set it. */
+export function setPlaceParallel(doc: MindscapeDoc, projectPath: string, placeId: string, parallel: number | null): MindscapeDoc {
+  const board = doc.boards[projectPath];
+  const card = board?.cards[placeId];
+  if (!board || card?.kind !== 'session' || (card.parallel ?? null) === parallel) return doc;
+  if (parallel !== null && !isParallel(parallel)) return doc;
+  const next: SessionPlaceCard = { ...card };
+  if (parallel === null) delete next.parallel;
+  else next.parallel = parallel;
+  return withBoardReplaced(doc, { ...board, cards: { ...board.cards, [placeId]: next } });
+}
+
 export interface SessionNoteInput {
   readonly sessionId: string;
   /** Name of the session at the end of the turn — kept so the note survives the tab closing. */
@@ -550,20 +593,24 @@ export interface LinkInput {
 
 /**
  * Links two cards of the board, arrow on unless `arrow: false`. A card to itself, a card missing
- * from the board, an id in use or a pair already linked (either way) → same document.
+ * from the board, an id in use or a pair already linked → same document. Already linked: the same way, or
+ * either way when one of the two is a line (an arrow the other way next to an arrow is a link of its own).
  */
 export function addLink(doc: MindscapeDoc, projectPath: string, input: LinkInput): MindscapeDoc {
   const board = doc.boards[projectPath];
   if (!board || !input.id || input.from === input.to) return doc;
   if (!board.cards[input.from] || !board.cards[input.to]) return doc;
+  // 08/11 — an arrow the other way next to an arrow is a link of its own (Dev ⇄ Revisor talk both ways); a line has no
+  // way, so a line and anything between the same two cards is the same link. The file shape does not change.
+  const arrow = input.arrow ?? true;
   const taken = board.links.some(
     (link) =>
       link.id === input.id ||
       (link.from === input.from && link.to === input.to) ||
-      (link.from === input.to && link.to === input.from),
+      (link.from === input.to && link.to === input.from && !(arrow && link.arrow)),
   );
   if (taken) return doc;
-  return replaceLinks(doc, board, [...board.links, { id: input.id, from: input.from, to: input.to, arrow: input.arrow ?? true, ...(input.by ? { by: input.by } : {}), ...(input.opened ? { opened: true as const } : {}) }]);
+  return replaceLinks(doc, board, [...board.links, { id: input.id, from: input.from, to: input.to, arrow, ...(input.by ? { by: input.by } : {}), ...(input.opened ? { opened: true as const } : {}) }]);
 }
 
 /** Switches the arrow of the link on/off. Missing link → same document. */
@@ -612,6 +659,10 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === 'string' && value.length > 0;
 }
 
+function isParallel(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= MAX_PARALLEL;
+}
+
 function parseCard(key: string, raw: unknown): MindscapeCard | null {
   if (!isRecord(raw) || raw.id !== key || !isFiniteNumber(raw.x) || !isFiniteNumber(raw.y)) return null;
   const { x, y } = raw;
@@ -628,6 +679,7 @@ function parseCard(key: string, raw: unknown): MindscapeCard | null {
       const card: SessionPlaceCard = { kind: 'session', id: key, ...(sessionId ? { sessionId } : {}), previous, x, y };
       if (isRoleId(raw.roleId)) card.roleId = raw.roleId;
       if (raw.by === 'session') card.by = 'session';
+      if (isParallel(raw.parallel)) card.parallel = raw.parallel;
       return card;
     }
     case 'session-note':
@@ -710,7 +762,89 @@ function parseBoard(key: string, raw: unknown): MindscapeBoard | null {
   // v1 has neither: no drawings, 100%.
   const zoom = isFiniteNumber(raw.zoom) ? clampZoom(raw.zoom) : 1;
   const drawings = Array.isArray(raw.drawings) ? raw.drawings.map(parseDrawing).filter((drawing): drawing is MindscapeDrawing => drawing !== null) : [];
-  return { projectPath: key, pan, zoom, cards, links, drawings, ...(raw.reach === 'all' ? { reach: 'all' as const } : {}) };
+  const pods = parsePods(raw.pods);
+  return { projectPath: key, pan, zoom, cards, links, drawings, ...(raw.reach === 'all' ? { reach: 'all' as const } : {}), ...(pods.length > 0 ? { pods } : {}) };
+}
+
+const roundTenth = (value: number): number => Math.round(value * 10) / 10;
+
+/** v6 — bad pods are dropped one by one; a repeated pod id keeps the first; a role taken by an earlier pod is dropped. */
+function parsePods(raw: unknown): MindscapePod[] {
+  if (!Array.isArray(raw)) return [];
+  const ids = new Set<string>();
+  const taken = new Set<string>();
+  const pods: MindscapePod[] = [];
+  for (const entry of raw) {
+    if (!isRecord(entry) || typeof entry.id !== 'string' || !entry.id || ids.has(entry.id)) continue;
+    const name = typeof entry.name === 'string' ? entry.name.trim().slice(0, MAX_POD_NAME_CHARS) : '';
+    if (!name || !isFiniteNumber(entry.x) || !isFiniteNumber(entry.y)) continue;
+    const mission = typeof entry.mission === 'string' ? entry.mission.trim().slice(0, MAX_POD_MISSION_CHARS) : '';
+    const roleIds = (Array.isArray(entry.roleIds) ? entry.roleIds : []).filter((roleId): roleId is string => isRoleId(roleId) && !taken.has(roleId));
+    const unique = [...new Set(roleIds)];
+    unique.forEach((roleId) => taken.add(roleId));
+    ids.add(entry.id);
+    pods.push({ id: entry.id, name, ...(mission ? { mission } : {}), roleIds: unique, x: roundTenth(entry.x), y: roundTenth(entry.y) });
+  }
+  return pods;
+}
+
+function withPods(doc: MindscapeDoc, board: MindscapeBoard, pods: MindscapePod[]): MindscapeDoc {
+  const { pods: _old, ...rest } = board;
+  return withBoardReplaced(doc, pods.length > 0 ? { ...rest, pods } : rest);
+}
+
+/** v6 — a new empty pod (the owner's "+ Pod"). An existing id or a missing board → same document. */
+export function addPod(doc: MindscapeDoc, projectPath: string, pod: { id: string; name: string; x: number; y: number }): MindscapeDoc {
+  const board = doc.boards[projectPath];
+  const name = pod.name.trim().slice(0, MAX_POD_NAME_CHARS);
+  if (!board || !name || (board.pods ?? []).some((candidate) => candidate.id === pod.id)) return doc;
+  return withPods(doc, board, [...(board.pods ?? []), { id: pod.id, name, roleIds: [], x: roundTenth(pod.x), y: roundTenth(pod.y) }]);
+}
+
+/** v6 — the owner renames a pod or writes its mission (an empty mission removes it; an empty name is refused). */
+export function updatePod(doc: MindscapeDoc, projectPath: string, podId: string, change: { name?: string; mission?: string }): MindscapeDoc {
+  const board = doc.boards[projectPath];
+  const pod = board?.pods?.find((candidate) => candidate.id === podId);
+  if (!board || !pod) return doc;
+  const name = change.name === undefined ? pod.name : change.name.trim().slice(0, MAX_POD_NAME_CHARS);
+  const mission = change.mission === undefined ? (pod.mission ?? '') : change.mission.trim().slice(0, MAX_POD_MISSION_CHARS);
+  if (!name || (name === pod.name && mission === (pod.mission ?? ''))) return doc;
+  const { mission: _old, ...rest } = pod;
+  const next: MindscapePod = { ...rest, name, ...(mission ? { mission } : {}) };
+  return withPods(doc, board, board.pods!.map((candidate) => (candidate.id === podId ? next : candidate)));
+}
+
+/** v6 — the owner drags a pod (board units); its chairs follow, laid out by the pod. */
+export function movePod(doc: MindscapeDoc, projectPath: string, podId: string, x: number, y: number): MindscapeDoc {
+  const board = doc.boards[projectPath];
+  const pod = board?.pods?.find((candidate) => candidate.id === podId);
+  if (!board || !pod || !Number.isFinite(x) || !Number.isFinite(y)) return doc;
+  const nx = roundTenth(x);
+  const ny = roundTenth(y);
+  if (nx === pod.x && ny === pod.y) return doc;
+  return withPods(doc, board, board.pods!.map((candidate) => (candidate.id === podId ? { ...candidate, x: nx, y: ny } : candidate)));
+}
+
+/** v6 — puts a chair (a role) in a pod, taking it out of any other; `null` leaves it with no pod. */
+export function setChairPod(doc: MindscapeDoc, projectPath: string, roleId: string, podId: string | null): MindscapeDoc {
+  const board = doc.boards[projectPath];
+  if (!board || !isRoleId(roleId)) return doc;
+  const pods = board.pods ?? [];
+  if (podId !== null && !pods.some((pod) => pod.id === podId)) return doc;
+  const current = pods.find((pod) => pod.roleIds.includes(roleId))?.id ?? null;
+  if (current === podId) return doc;
+  const next = pods.map((pod) => {
+    const without = pod.roleIds.filter((id) => id !== roleId);
+    return pod.id === podId ? { ...pod, roleIds: [...without, roleId] } : without.length === pod.roleIds.length ? pod : { ...pod, roleIds: without };
+  });
+  return withPods(doc, board, next);
+}
+
+/** v6 — removes a pod; its chairs stay on the board, with no pod. */
+export function removePod(doc: MindscapeDoc, projectPath: string, podId: string): MindscapeDoc {
+  const board = doc.boards[projectPath];
+  if (!board?.pods?.some((pod) => pod.id === podId)) return doc;
+  return withPods(doc, board, board.pods.filter((pod) => pod.id !== podId));
 }
 
 /** The owner's toggle "Alcance" of a board. No board → same document. */
@@ -722,7 +856,7 @@ export function setBoardReach(doc: MindscapeDoc, projectPath: string, reach: Boa
 }
 
 /**
- * Sanitizes an untrusted document, v1 to v5; always comes out as v5. Garbage
+ * Sanitizes an untrusted document, v1 to v7; always comes out as v7. Garbage
  * or absence → empty document; bad boards, cards, links and drawings are
  * dropped one by one (an owner card colored `permission` is not accepted — rule 6).
  */

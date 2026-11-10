@@ -18,6 +18,15 @@ class FakeCli {
   readonly submitted: string[] = [];
   /** How many of the next Enters the CLI swallows (a lost Enter: busy, short of RAM). */
   dropEnters = 0;
+  /** A paste that the CLI only draws this long after it arrived (a loaded machine). */
+  pasteDelayMs = 0;
+  /** Each paste shows as `[Pasted text #N +M lines]`, as the CLI draws a long one (what Enter submits stays the text). */
+  asPlaceholder = false;
+  /** Text that lands in the box right before the next paste (a leftover redrawn late, after a reattach). */
+  intrude: string | null = null;
+  /** What the box shows (the box itself is what an Enter submits). */
+  private shown = '';
+  private pasteSeq = 0;
   constructor(
     private readonly clock: Clock,
     public working: boolean,
@@ -30,7 +39,17 @@ class FakeCli {
     while (rest !== '') {
       const paste = /^\x1b\[200~([\s\S]*?)\x1b\[201~/.exec(rest);
       if (paste) {
-        this.box += paste[1];
+        const text = paste[1];
+        if (this.intrude !== null) {
+          this.add(this.intrude);
+          this.intrude = null;
+        }
+        if (this.pasteDelayMs > 0)
+          this.clock.after(this.pasteDelayMs, () => {
+            this.add(text);
+            this.onRedraw();
+          });
+        else this.add(text);
         rest = rest.slice(paste[0].length);
         continue;
       }
@@ -40,20 +59,35 @@ class FakeCli {
       else if (ch === '\r') {
         const text = this.box;
         this.box = '';
+        this.shown = '';
         if (text.trim() !== '') {
           this.submitted.push(text);
           this.clock.after(30, () => this.onSubmit(text));
         }
-      } else if (ch === '\x7f') this.box = this.box.slice(0, -1);
-      else if (ch !== '\x1b') this.box += ch;
+      } else if (ch === '\x1b' && rest[0] === '\x1b') {
+        rest = rest.slice(1);
+        this.box = ''; // Esc Esc clears the box
+        this.shown = '';
+      } else if (ch === '\x7f') {
+        this.box = this.box.slice(0, -1);
+        this.shown = this.shown.slice(0, -1);
+      } else if (ch !== '\x1b') {
+        this.box += ch;
+        this.shown += ch;
+      }
     }
     // The terminal redraws a moment later (what the driver's screen reads depend on).
     this.clock.after(15, () => this.onRedraw());
     return true;
   }
 
+  private add(text: string): void {
+    this.box += text;
+    this.shown += this.asPlaceholder ? `[Pasted text #${++this.pasteSeq} +${(text.match(/\n/g) ?? []).length} lines]` : text;
+  }
+
   lines(): LineInput[] {
-    return ['● resposta anterior', RULE, this.box === '' ? '❯' : `❯ ${this.box}`, RULE, this.working ? WORKING_FOOTER : IDLE_FOOTER];
+    return ['● resposta anterior', RULE, this.shown === '' ? '❯' : `❯ ${this.shown}`, RULE, this.working ? WORKING_FOOTER : IDLE_FOOTER];
   }
 }
 
@@ -79,14 +113,17 @@ class Clock {
   }
 }
 
-function setup(working: boolean) {
+function setup(working: boolean, signals = true, inTranscript?: (text: string) => boolean) {
   const clock = new Clock();
+  /** What the app reported as erased from the box (to be kept for the owner) before each Esc Esc of its own. */
+  const cleared: string[] = [];
   let driver: SendDriver;
   const cli: FakeCli = new FakeCli(
     clock,
     working,
-    (text) =>
-      driver.handleSignal({ signal: working ? 'enqueue' : 'submit', text, at: new Date(clock.now).toISOString(), origin: 'hook' }),
+    (text) => {
+      if (signals) driver.handleSignal({ signal: working ? 'enqueue' : 'submit', text, at: new Date(clock.now).toISOString(), origin: 'hook' });
+    },
     () => driver.onScreen(),
   );
   driver = new SendDriver({
@@ -97,8 +134,9 @@ function setup(working: boolean) {
     },
     write: (data) => cli.write(data),
     readLines: () => cli.lines(),
-    ackLookup: (text) => Promise.resolve({ matched: cli.submitted.some((s) => s.includes(text)) }),
-  });
+    ackLookup: (text) => Promise.resolve({ matched: inTranscript ? inTranscript(text) : cli.submitted.some((s) => s.includes(text)) }),
+    boxCleared: (text: string) => cleared.push(text),
+  } as ConstructorParameters<typeof SendDriver>[0]);
   driver.setEnv({ working });
   /** The owner's keys in the terminal: through the driver's gate (as TerminalPane does), or straight to the PTY. */
   const ownerKey = (data: string): void => {
@@ -114,7 +152,7 @@ function setup(working: boolean) {
     return enterAt;
   };
   const notice = (text: string): string => driver.enqueue({ text, from: 'session' } as SendRequest);
-  return { clock, cli, driver, typeAt, notice, ownerKey };
+  return { clock, cli, driver, typeAt, notice, ownerKey, cleared };
 }
 
 const NOTICES = [
@@ -246,3 +284,175 @@ describe('aviso de sessão chegando enquanto o dono digita (06/11)', () => {
     expect(cli.submitted.indexOf(ESCREVER)).toBeLessThan(cli.submitted.indexOf(`${NOTICES[1]}\n${NOTICES[2]}`));
   });
 });
+
+// t-116a8521 / t-1cf1ed54 (07/11) — sessão na VPS com o app a 100 % de CPU: o hook de aceite não chega, quem mandou ouve
+// "não entrou" ou "o app não respondeu a tempo" e manda de novo; a mensagem chegava duplicada. E a sessão que já tinha
+// pego o pedido era dada como "não começou" por nunca ter mandado um hook.
+describe('mensagem de outra sessão sem sinal de aceite (07/11)', () => {
+  const TEXT = '◆ De Revisor (place:r1): aprovei, pode mesclar.';
+
+  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it('entra uma vez só: o reenvio enquanto a primeira está a caminho responde por ela, e a sessão conta como tendo pego a mensagem', async () => {
+    const { clock, cli, driver } = setup(false, false);
+    clock.advanceTo(1_000);
+    expect(driver.tookMessage()).toBe(false);
+    const first = driver.enqueue({ text: TEXT, from: 'session', dedupe: true });
+    clock.advanceTo(10_000); // quem mandou ouviu timeout e manda de novo, com a primeira ainda sem aceite
+    const again = driver.enqueue({ text: TEXT, from: 'session', dedupe: true });
+    expect(driver.carrierOf(again)).toBe(first);
+    clock.advanceTo(47_000); // a tab's first send waits 45 s for the acceptance, then asks the transcript
+    await flush();
+    clock.advanceTo(60_000);
+    expect(cli.submitted).toEqual([TEXT]);
+    expect(driver.getItems().find((i) => i.id === first)?.state).toBe('accepted');
+    expect(driver.wasDelivered(again)).toBe(true);
+    expect(driver.tookMessage()).toBe(true);
+  });
+
+  // Revisão do #281: "Siga de onde parou" mandado de novo depois de um segundo 429 não era escrito, e o Líder ouvia "entrou".
+  it('o mesmo texto mandado de novo depois que a primeira entrou é mensagem nova, e entra', () => {
+    const { clock, cli, driver } = setup(false);
+    clock.advanceTo(1_000);
+    const first = driver.enqueue({ text: TEXT, from: 'session', dedupe: true });
+    clock.advanceTo(20_000);
+    expect(driver.getItems().find((i) => i.id === first)?.state).toBe('accepted');
+    clock.advanceTo(140_000);
+    const again = driver.enqueue({ text: TEXT, from: 'session', dedupe: true });
+    clock.advanceTo(170_000);
+    expect(again).not.toBe(first);
+    expect(cli.submitted).toEqual([TEXT, TEXT]);
+    expect(driver.getItems().find((i) => i.id === again)?.state).toBe('accepted');
+  });
+
+  // Revisão do #281, item 2: Claude parado, caixa vazia, transcript da VPS chegando pelo espelho alguns segundos atrasado.
+  // A consulta única dava "não foi", quem mandou reenviava, e a mensagem entrava duas vezes.
+  it('transcript atrasado na hora da consulta: pergunta de novo antes de dizer "não foi"', async () => {
+    let mirrored = false;
+    const { clock, cli, driver } = setup(false, false, (text) => mirrored && cli.submitted.some((s) => s.includes(text)));
+    clock.advanceTo(1_000);
+    const first = driver.enqueue({ text: TEXT, from: 'session', dedupe: true });
+    clock.advanceTo(47_000); // prazo do aceite: o transcript ainda não chegou
+    await flush();
+    clock.advanceTo(50_000);
+    expect(driver.getItems().find((i) => i.id === first)?.state).not.toBe('failed');
+    mirrored = true; // o espelho trouxe o transcript
+    clock.advanceTo(65_000);
+    await flush();
+    clock.advanceTo(66_000);
+    expect(driver.getItems().find((i) => i.id === first)?.state).toBe('accepted');
+    expect(cli.submitted).toEqual([TEXT]);
+  });
+
+  it('o reenvio de uma mensagem que de fato não entrou vai de novo', () => {
+    const { clock, cli, driver } = setup(false);
+    clock.advanceTo(1_000);
+    driver.setEnv({ alive: false });
+    const first = driver.enqueue({ text: TEXT, from: 'session', dedupe: true });
+    clock.advanceTo(300_000);
+    expect(driver.getItems().find((i) => i.id === first)?.state).toBe('failed');
+    driver.setEnv({ alive: true });
+    const again = driver.enqueue({ text: TEXT, from: 'session', dedupe: true });
+    clock.advanceTo(330_000);
+    expect(driver.carrierOf(again)).toBe(again);
+    expect(cli.submitted).toEqual([TEXT]);
+  });
+
+  // 08/11 — 6 sessões numa VPS com "[Pasted text #N +M lines]" parado na caixa, sem o Enter. O CLI de lá perdia Enters
+  // (ssh + tmux, máquina carregada) e, ao reanexar, o terminal respondia às perguntas do tmux (versão, cores): o app
+  // contava essas respostas como o dono digitando e parava de reenviar o Enter. Depois do "não foi", o aviso ficava na
+  // caixa e travava todos os que vinham atrás dele ("sobrou texto na caixa").
+  const terminalReplies = (driver: SendDriver): void => {
+    for (const reply of ['\x1b[>0;276;0c', '\x1bP>|xterm.js(6.0.0)\x1b\\', '\x1b]11;rgb:0e0e/1111/1616\x1b\\']) driver.ownerInput(reply, () => undefined);
+  };
+
+  it('Enter perdido várias vezes numa sessão parada da VPS: o app insiste só no Enter até o aviso sair da caixa, e ele entra uma vez (08/11)', () => {
+    const { clock, cli, driver, notice } = setup(false);
+    clock.advanceTo(1_000);
+    notice(NOTICES[0]);
+    clock.advanceTo(60_000);
+    expect(cli.submitted).toEqual([NOTICES[0]]);
+    cli.dropEnters = 5;
+    notice(NOTICES[1]);
+    clock.after(400, () => terminalReplies(driver)); // tmux reattached right after the Enter: the terminal answers it
+    clock.advanceTo(180_000);
+    expect(cli.box).toBe('');
+    expect(cli.submitted).toEqual([NOTICES[0], NOTICES[1]]);
+  });
+
+  it('o CLI nunca pega o Enter: o aviso não fica parado na caixa travando os seguintes, e nada entra em dobro (08/11)', () => {
+    const { clock, cli, driver, notice } = setup(false);
+    clock.advanceTo(1_000);
+    notice(NOTICES[0]);
+    clock.advanceTo(60_000);
+    cli.dropEnters = 1_000;
+    const stuck = notice(NOTICES[1]);
+    clock.advanceTo(240_000);
+    expect(driver.getItems().find((item) => item.id === stuck)?.state).toBe('failed');
+    expect(cli.box).toBe('');
+    cli.dropEnters = 0;
+    notice(NOTICES[2]);
+    clock.advanceTo(300_000);
+    expect(cli.submitted).toEqual([NOTICES[0], NOTICES[2]]);
+  });
+
+  it('a colagem só aparece na caixa 40 s depois (máquina carregada): leva o Enter quando aparece, e entra uma vez (08/11)', () => {
+    const { clock, cli, notice } = setup(false);
+    clock.advanceTo(1_000);
+    notice(NOTICES[0]);
+    clock.advanceTo(60_000);
+    cli.pasteDelayMs = 40_000;
+    notice(NOTICES[1]);
+    clock.advanceTo(180_000);
+    expect(cli.box).toBe('');
+    expect(cli.submitted).toEqual([NOTICES[0], NOTICES[1]]);
+  });
+
+  // 08/11 (BizOps) — depois de reiniciar o PC, o texto que tinha ficado preso na caixa da sessão remota emendou na
+  // mensagem seguinte: a caixa foi lida vazia, o resto reapareceu junto com a colagem, e o Enter levou os dois.
+  const STALE = '◆ Dev (place:d9, quadro Donel Dev) terminou: resto de antes do reinício\n- e uma segunda linha';
+
+  it('o resto parado reaparece na caixa junto com a colagem: o aviso não sai emendado nele, e entra uma vez (08/11)', () => {
+    const { clock, cli, notice } = setup(false);
+    cli.asPlaceholder = true;
+    clock.advanceTo(1_000);
+    notice(NOTICES[0]);
+    clock.advanceTo(60_000);
+    cli.intrude = STALE;
+    notice(NOTICES[1]);
+    clock.advanceTo(300_000);
+    expect(cli.submitted).toEqual([NOTICES[0], NOTICES[1]]);
+    expect(cli.box).toBe('');
+  });
+
+  it('o mesmo no meio do turno do Claude de lá: não manda o Enter emendado; espera o turno acabar, limpa e cola de novo (08/11)', () => {
+    const { clock, cli, driver, notice } = setup(true);
+    clock.advanceTo(1_000);
+    notice(NOTICES[0]);
+    clock.advanceTo(60_000);
+    cli.intrude = STALE;
+    notice(NOTICES[1]);
+    clock.after(30_000, () => {
+      cli.working = false;
+      driver.setEnv({ working: false });
+      driver.onScreen();
+    });
+    clock.advanceTo(300_000);
+    expect(cli.submitted.filter((s) => s.includes('resto de antes'))).toEqual([]);
+    expect(cli.submitted).toEqual([NOTICES[0], NOTICES[1]]);
+  });
+
+  it('o que o app limpa da caixa fica guardado para o dono: o resto de antes é entregue antes do Esc Esc (08/11)', () => {
+    const { clock, cli, notice, cleared } = setup(false);
+    clock.advanceTo(1_000);
+    notice(NOTICES[0]);
+    clock.advanceTo(60_000);
+    cli.intrude = 'rascunho que o dono deixou antes de reiniciar';
+    notice(NOTICES[1]);
+    clock.advanceTo(300_000);
+    expect(cli.submitted).toEqual([NOTICES[0], NOTICES[1]]);
+    expect(cleared).toHaveLength(1);
+    expect(cleared[0]).toContain('rascunho que o dono deixou antes de reiniciar');
+  });
+});
+

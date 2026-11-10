@@ -62,15 +62,62 @@ describe('aviso no celular', () => {
     if (!made.ok) throw new Error(made.reason);
     doc = made.doc;
 
-    const first = newlyWaiting(new Map(), doc);
+    const t0 = Date.UTC(2026, 10, 5, 15, 5); // minutes after the letter; a stuck letter is the next test
+    const first = newlyWaiting(new Map(), doc, t0);
     expect(first.fresh.map(pushMessageFor)).toEqual([{ title: 'Mensagem no Slack para #produto', body: 'Esperando você no Oráculo Harrow.', tag: `carta-${made.task.id}`, url: `/#carta=${made.task.id}` }]);
-    expect(newlyWaiting(first.next, doc).fresh).toEqual([]);
+    expect(newlyWaiting(first.next, doc, t0).fresh).toEqual([]);
 
     // Decided: leaves the queue, and nothing is warned.
     const accepted = applyLedgerOp(doc, { kind: 'dono' }, { op: 'aceitar', id: made.task.id }, ctx());
     if (!accepted.ok) throw new Error(accepted.reason);
-    const after = newlyWaiting(first.next, accepted.doc);
+    const after = newlyWaiting(first.next, accepted.doc, t0);
     expect(after.fresh).toEqual([]);
     expect(after.next.size).toBe(0);
+  });
+
+  // Ledger v5, fatia 2 — every item of the box warns once, not only letters to decide: also one that is born with
+  // time alone (a letter accepted and not sent for 30 min), with no change in the ledger.
+  it('warns once per item of the box, including one born with time, and opens the box', () => {
+    let doc: LedgerDoc = emptyLedgerDoc();
+    let seq = 0;
+    const t0 = Date.UTC(2026, 10, 5, 15);
+    const ctx = () => ({ now: t0 + seq * 1000, newId: () => `t-${++seq}` });
+    const dev = { kind: 'lugar' as const, placeId: 'place:dev' };
+    const made = applyLedgerOp(doc, dev, { op: 'carta-slack', projectPath: 'C:/p', slack: { destination: 'C0123ABC', destinationLabel: '#produto', text: 'oi', reason: 'avisar' } }, ctx());
+    if (!made.ok) throw new Error(made.reason);
+    const accepted = applyLedgerOp(made.doc, { kind: 'dono' }, { op: 'aceitar', id: made.task.id }, ctx());
+    if (!accepted.ok) throw new Error(accepted.reason);
+    doc = accepted.doc;
+
+    // Accepted a minute ago: the session sends it in seconds, nothing to warn.
+    const soon = newlyWaiting(new Map(), doc, t0 + 60_000);
+    expect(soon.fresh).toEqual([]);
+    // Half an hour later, still not sent: one warning, which opens the box (it is not decided on a card).
+    const late = newlyWaiting(soon.next, doc, t0 + 31 * 60_000);
+    expect(late.fresh.map(pushMessageFor)).toEqual([
+      { title: 'Mensagem no Slack para #produto', body: 'Você aceitou e a mensagem ainda não saiu.', tag: `caixa-carta-parada-${made.task.id}`, url: '/' },
+    ]);
+    // The next minute (the service checks every minute) does not warn again.
+    expect(newlyWaiting(late.next, doc, t0 + 32 * 60_000).fresh).toEqual([]);
+  });
+
+  // Ledger unreadable when the app opened: no baseline. The first good read becomes it and warns nothing (it used to
+  // warn the whole box at once, one push per item per phone); what starts waiting after that warns as usual.
+  it('with no baseline, the first good read warns nothing and the next new item warns', () => {
+    let seq = 0;
+    const t0 = Date.UTC(2026, 10, 8, 14);
+    const ctx = () => ({ now: t0 + seq * 1000, newId: () => `t-${++seq}` });
+    const dev = { kind: 'lugar' as const, placeId: 'place:dev' };
+    const letter = (label: string) => ({ op: 'carta-slack' as const, projectPath: 'C:/p', slack: { destination: 'C0123ABC', destinationLabel: label, text: 'oi', reason: 'avisar' } });
+    const first = applyLedgerOp(emptyLedgerDoc(), dev, letter('#produto'), ctx());
+    if (!first.ok) throw new Error(first.reason);
+
+    const baseline = newlyWaiting(null, first.doc, t0);
+    expect(baseline.fresh).toEqual([]);
+    expect(baseline.next.size).toBe(1);
+
+    const second = applyLedgerOp(first.doc, dev, letter('#time'), ctx());
+    if (!second.ok) throw new Error(second.reason);
+    expect(newlyWaiting(baseline.next, second.doc, t0).fresh.map((item) => item.task.id)).toEqual([second.task.id]);
   });
 });

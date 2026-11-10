@@ -11,6 +11,7 @@ import {
 } from '../../shared/browser/mcp';
 import type { BoardToolCall } from '../../shared/mindscape/agent-tools';
 import type { LedgerToolCall } from '../../shared/ledger/tools';
+import type { HillClimbToolCall } from '../../shared/hillClimb/tools';
 
 // Navegador integrado — the app's local MCP server `donel` (docs/design/navegador-interno.md, D9).
 //
@@ -31,6 +32,8 @@ export interface BrowserMcpServerDeps {
   openCap?(): number | null;
   /** Ledger com prova (item 19) — runs one `tarefa_*` tool for the session of `ptyId`; absent = no ledger tools. */
   executeLedger?(ptyId: string, call: LedgerToolCall): Promise<BrowserToolOutcome>;
+  /** Hill climbing — the Escalador's `hillclimb_*` tools; absent = not offered. */
+  executeHillClimb?(ptyId: string, call: HillClimbToolCall): Promise<BrowserToolOutcome>;
   readonly serverVersion: string;
 }
 
@@ -44,6 +47,8 @@ export interface BrowserMcpServer {
    */
   registerSession(ptyId: string, token?: string, tunnelPort?: number): string;
   unregisterSession(ptyId: string): void;
+  /** The key `ptyId` holds now (and the tunnel port of a remote session); `null` = none. */
+  keyOf(ptyId: string): { token: string; tunnelPort?: number } | null;
   stop(): Promise<void>;
 }
 
@@ -100,6 +105,7 @@ export function createBrowserMcpServer(deps: BrowserMcpServerDeps): BrowserMcpSe
           ...(deps.executeBoard ? { boardExecutor: (call: BoardToolCall) => deps.executeBoard!(gate.ptyId, call) } : {}),
           ...(deps.openCap ? { openCap: () => deps.openCap!() } : {}),
           ...(deps.executeLedger ? { ledgerExecutor: (call: LedgerToolCall) => deps.executeLedger!(gate.ptyId, call) } : {}),
+          ...(deps.executeHillClimb ? { hillClimbExecutor: (call: HillClimbToolCall) => deps.executeHillClimb!(gate.ptyId, call) } : {}),
           serverVersion: deps.serverVersion,
         })
       : parsed.response;
@@ -147,9 +153,17 @@ export function createBrowserMcpServer(deps: BrowserMcpServerDeps): BrowserMcpSe
     },
     unregisterSession: (ptyId) => {
       const token = tokenByPty.get(ptyId);
-      if (token) ptyByToken.delete(token);
+      // 08/11 — a reattach puts the same key on a new PTY: the old one leaving must not take the key from the new one
+      // (a live session there went "Host not allowed", then "fechada").
+      if (token && ptyByToken.get(token) === ptyId) ptyByToken.delete(token);
       tokenByPty.delete(ptyId);
       tunnelPortByPty.delete(ptyId);
+    },
+    keyOf: (ptyId) => {
+      const token = tokenByPty.get(ptyId);
+      if (token === undefined) return null;
+      const tunnelPort = tunnelPortByPty.get(ptyId);
+      return tunnelPort === undefined ? { token } : { token, tunnelPort };
     },
     stop: () =>
       new Promise<void>((resolve) => {

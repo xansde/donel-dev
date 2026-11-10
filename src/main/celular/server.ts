@@ -153,7 +153,7 @@ export function createMobileHandler(deps: MobileHandlerDeps): MobileHandler {
     };
   }
 
-  function decide(body: string): MobileResponse {
+  async function decide(body: string): Promise<MobileResponse> {
     const input = parseJson(body);
     if (!input) return json(400, { erro: 'pedido-invalido' });
     const { pedidoId, itemId, decisao, motivo, opcao, texto } = input;
@@ -166,7 +166,7 @@ export function createMobileHandler(deps: MobileHandlerDeps): MobileHandler {
     const reason = typeof motivo === 'string' ? motivo.trim().slice(0, MAX_MOTIVO) : '';
     // Uma opção que fecha como rejeitada já é o motivo (o ledger confere que ela existe e fecha assim).
     if (decisao === 'rejeitar' && reason.length === 0 && opcao === undefined) return json(400, { erro: 'motivo-obrigatorio' });
-    const outcome = deps.ledger().decidir({
+    const outcome = await deps.ledger().decidir({
       pedidoId,
       itemId,
       decisao: decisao as DecisaoCelular,

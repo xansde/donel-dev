@@ -1,0 +1,599 @@
+/* Cadeiras, fatia 2 — the chair screen (prototype B1). Tokens of the design system only. */
+
+.screen {
+  position: absolute;
+  inset: 0;
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.screen:focus {
+  outline: none;
+}
+
+.crumbs {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  padding: 0 12px;
+  border-bottom: var(--hairline);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+}
+
+.crumbs b {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.close {
+  background: none;
+  border: 0;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 16px;
+}
+
+.close:hover {
+  color: var(--text-primary);
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 220px 170px minmax(0, 1fr) 290px;
+}
+
+.bodyCollapsed {
+  grid-template-columns: 220px 170px minmax(0, 1fr) 64px;
+}
+
+.tree,
+.sections {
+  border-right: var(--hairline);
+  background: var(--bg-panel);
+  padding: 12px 0;
+  overflow: auto;
+}
+
+.tree h4,
+.sections h4,
+.costBody h4 {
+  margin: 4px 14px 10px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.tree h4 + .treeRow,
+.tree .treeRow + h4 {
+  margin-top: 16px;
+}
+
+.treeRig {
+  padding: 6px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.treeRow,
+.sectionRow {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  padding: 6px 14px 6px 28px;
+  cursor: pointer;
+}
+
+.sectionRow {
+  grid-template-columns: 1fr auto;
+  padding-left: 14px;
+}
+
+.treeRow:hover,
+.sectionRow:hover {
+  background: var(--bg-raised);
+}
+
+.treeRowOn {
+  background: var(--bg-raised);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  flex: none;
+}
+
+.kind {
+  display: inline-block;
+  padding: 0 5px;
+  border: 1px solid var(--text-muted);
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+.main {
+  overflow: auto;
+  padding: 16px 20px 60px;
+  min-width: 0;
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.titleRow h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.lead {
+  margin: 6px 0 12px;
+  color: var(--text-muted);
+}
+
+.lead b {
+  color: var(--text-primary);
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel);
+  margin-bottom: 14px;
+}
+
+.button {
+  background: var(--bg-raised);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  height: 26px;
+  padding: 0 10px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.button:hover {
+  border-color: var(--accent);
+}
+
+.card {
+  border: var(--hairline);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  margin-bottom: 14px;
+  padding: 0 14px 10px;
+  scroll-margin-top: 12px;
+}
+
+.cardHead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 12px 0 10px;
+  border-bottom: var(--hairline);
+  margin-bottom: 6px;
+}
+
+.cardHead h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.cardHead .muted {
+  font-size: 12px;
+}
+
+.right {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.layer {
+  background: var(--bg-raised);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  margin: 8px 0;
+  border-left: 3px solid var(--border);
+}
+
+.layerPapel {
+  border-left-color: var(--donel-accent);
+}
+
+.layerHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.text {
+  margin: 0;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+.stillRow {
+  display: grid;
+  grid-template-columns: 130px 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 0 2px;
+}
+
+.seal {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  white-space: nowrap;
+  background: var(--bg-app);
+  color: var(--text-muted);
+  border: var(--hairline);
+}
+
+.o-papel {
+  color: var(--donel-accent);
+  border-color: color-mix(in srgb, var(--donel-accent) 45%, transparent);
+}
+
+.o-donel {
+  color: var(--text-primary);
+}
+
+.o-usuario {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.itemRow {
+  display: grid;
+  grid-template-columns: 36px 1fr auto 100px;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: var(--hairline);
+}
+
+.itemRow > :last-child {
+  justify-self: end;
+}
+
+.settingRow {
+  display: grid;
+  grid-template-columns: 120px 1fr 100px;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: var(--hairline);
+}
+
+.settingRow > :last-child {
+  justify-self: end;
+}
+
+.itemOff {
+  color: var(--text-muted);
+}
+
+.toggle {
+  width: 28px;
+  height: 16px;
+  border-radius: 999px;
+  background: var(--bg-raised);
+  border: var(--hairline);
+  position: relative;
+  opacity: 0.85;
+}
+
+.toggle::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.toggleOn {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.toggleOn::after {
+  left: 14px;
+  background: var(--text-primary);
+}
+
+.note {
+  margin: 6px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.link {
+  background: none;
+  border: 0;
+  padding: 8px 0 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+.cost {
+  border-left: var(--hairline);
+  background: var(--bg-panel);
+  overflow: auto;
+}
+
+.costBody {
+  padding: 12px 0;
+}
+
+.costHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-right: 12px;
+}
+
+.costHead h4 {
+  margin-bottom: 4px;
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 14px;
+  font-size: 12px;
+}
+
+.metric b {
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.meter {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+
+.meter span {
+  display: block;
+  height: 100%;
+  width: var(--fill);
+  background: var(--zone-ok);
+}
+
+.breakdown,
+.legend {
+  list-style: none;
+  margin: 0 14px 12px;
+  padding: 0;
+  font-size: 12px;
+}
+
+.breakdown li {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+}
+
+.legend li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+}
+
+.footnote {
+  margin: 0 14px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.costStrip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 12px 0;
+  font-size: 11px;
+}
+
+.costStrip b {
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+.foldButton {
+  background: var(--bg-raised);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  width: 28px;
+  height: 26px;
+  cursor: pointer;
+}
+
+.vertical {
+  margin-top: 16px;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  color: var(--text-muted);
+}
+
+.status {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 12px;
+  border-top: var(--hairline);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-size: var(--text-caption-size);
+}
+
+.button:focus-visible,
+.foldButton:focus-visible,
+.treeRow:focus-visible,
+.sectionRow:focus-visible,
+.link:focus-visible,
+.close:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* Cadeiras, fatia 3 — editing */
+.bannerDirty {
+  border-color: var(--donel-accent);
+}
+
+.bannerActions {
+  display: inline-flex;
+  gap: 6px;
+  flex: none;
+}
+
+.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--bg-app);
+  font-weight: 600;
+}
+
+.button:disabled {
+  opacity: 0.45;
+  cursor: default;
+  border-color: var(--border);
+}
+
+.error {
+  color: var(--state-permission);
+}
+
+.guidance {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 4px;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font: inherit;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.guidance:focus,
+.select:focus,
+.input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.select,
+.input {
+  background: var(--bg-app);
+  color: var(--text-primary);
+  border: var(--hairline);
+  border-radius: var(--radius-sm);
+  height: 26px;
+  padding: 0 8px;
+  font: inherit;
+  font-size: 12px;
+  max-width: 260px;
+}
+
+.input {
+  flex: 1;
+  max-width: 320px;
+}
+
+.toggle {
+  padding: 0;
+  cursor: pointer;
+}
+
+.toggle:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.cardFoot {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.cardFoot:empty {
+  display: none;
+}
+
+.addRow {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding-top: 8px;
+  flex: 1;
+}

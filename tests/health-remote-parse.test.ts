@@ -6,6 +6,8 @@ import { parseRemoteHealthOutput } from '../src/shared/health/remote';
 const FULL = [
   'Welcome to Ubuntu', // a login profile may print anything
   'DONEL_HEALTH mem 8000000 2000000',
+  'DONEL_HEALTH swap 8000000 6000000',
+  'DONEL_HEALTH swapio 100 200 103 200',
   'DONEL_HEALTH disk 100000000 30000000',
   'DONEL_HEALTH load 0.42 0.38 0.30',
   'DONEL_HEALTH cpus 4',
@@ -18,10 +20,15 @@ describe('parseRemoteHealthOutput', () => {
   it('reads every field, in bytes', () => {
     expect(parseRemoteHealthOutput(FULL)).toEqual({
       ram: { totalBytes: 8000000 * 1024, freeBytes: 2000000 * 1024 },
+      swap: { totalBytes: 8000000 * 1024, freeBytes: 6000000 * 1024 },
+      swapIo: { inPerSec: 3, outPerSec: 0 },
       disk: { totalBytes: 100000000 * 1024, freeBytes: 30000000 * 1024 },
       load: { one: 0.42, five: 0.38, fifteen: 0.3 },
       cpus: 4,
       sessions: 3,
+      sessionDetails: null,
+      readAt: null,
+      gateway: null,
     });
   });
 
@@ -34,6 +41,27 @@ describe('parseRemoteHealthOutput', () => {
     const reading = parseRemoteHealthOutput(
       ['DONEL_HEALTH mem  ', 'DONEL_HEALTH disk 10 20', 'DONEL_HEALTH load abc', 'DONEL_HEALTH cpus ', 'DONEL_HEALTH sessions 0', 'DONEL_HEALTH end'].join('\n'),
     );
-    expect(reading).toEqual({ ram: null, disk: null, load: null, cpus: null, sessions: 0 });
+    expect(reading).toEqual({ ram: null, swap: null, swapIo: null, disk: null, load: null, cpus: null, sessions: 0, sessionDetails: null, readAt: null, gateway: null });
+  });
+
+  it('reads the swap paging of the one-second window, and never a counter that went back', () => {
+    const swapIo = (line: string) => parseRemoteHealthOutput([line, 'DONEL_HEALTH end'].join('\n'))?.swapIo;
+    expect(swapIo('DONEL_HEALTH swapio 5 7 5 7')).toEqual({ inPerSec: 0, outPerSec: 0 });
+    expect(swapIo('DONEL_HEALTH swapio 5 7 9 8')).toEqual({ inPerSec: 4, outPerSec: 1 });
+    expect(swapIo('DONEL_HEALTH swapio   ')).toBeNull(); // no /proc/vmstat
+    expect(swapIo('DONEL_HEALTH swapio 9 7 5 7')).toBeNull();
+  });
+
+  it('reads what each session is doing, drops a garbled line, and never trusts an empty list the program did not write', () => {
+    const sess = JSON.stringify({ sid: 'abc-1', name: 'Dev', rss: 1000, ticks: 50, clk: 100, pane: 'idle', activity: 10, openedBy: 'lider', transcript: true, lastAt: 5, turn: 'ended', last: 'error', tool: null, apiError: { kind: 'rate_limit', text: '429', at: 5 }, retry: null, bgProcs: 2, bgNames: ['flock', 'npm'], pendingTasks: 1 });
+    const reading = parseRemoteHealthOutput(
+      ['DONEL_HEALTH now 1000', 'DONEL_HEALTH gateway {"host":"gw.ts.net","port":8317}', `DONEL_HEALTH sess ${sess}`, 'DONEL_HEALTH sess {broken', 'DONEL_HEALTH sess {"sid":"../etc"}', 'DONEL_HEALTH end'].join('\n'),
+    );
+    expect(reading?.readAt).toBe(1000);
+    expect(reading?.gateway).toEqual({ host: 'gw.ts.net', port: 8317 });
+    expect(reading?.sessionDetails).toEqual([
+      expect.objectContaining({ sid: 'abc-1', openedBy: 'lider', pane: 'idle', turn: 'ended', last: 'error', apiError: { kind: 'rate_limit', text: '429', at: 5 }, background: { procs: 2, names: ['flock', 'npm'], pendingTasks: 1 } }),
+    ]);
+    expect(parseRemoteHealthOutput(FULL)?.sessionDetails).toBeNull();
   });
 });

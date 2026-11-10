@@ -1,0 +1,4 @@
+{
+  "title": "O Líder religa as ferramentas de uma sessão sem você abrir a aba",
+  "text": "Quando uma sessão perde as ferramentas do Donel (quadro, Oráculo, navegador) e passa a responder \"Host not allowed\", o Líder único ou quem está acima dela pelas setas pode religá-las de onde está. A sessão continua na mesma conversa, sem reiniciar, e a da VPS que estava sem ligação tenta reconectar na hora."
+}

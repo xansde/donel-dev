@@ -28,15 +28,13 @@ import { createTranscriptionJobs, DEFAULT_WHISPER_URL, whisperServerTranscriber 
 import { createPushStore, isPushSubscription, newlyWaiting, pushMessageFor, sendPush, type PushFetch } from './webpush';
 import type { LedgerDoc } from '../../shared/ledger/contract';
 
-export interface CelularServiceDeps {
-  readonly ipcMain: IpcMain;
+/** What the phone's server needs, without Electron: the PC's app and the Oráculo's daemon on the VPS both run it. */
+export interface CelularCoreDeps {
   readonly userDataDir: string;
   readonly io: ConfigIoDeps;
   /** O ledger V1 (`null` se não abriu) e a pasta das provas copiadas por ele. */
   readonly ledger: () => LedgerService | null;
   readonly provasRoot: string;
-  /** Só a janela principal mexe nisto. */
-  readonly isMainSender: (sender: Electron.WebContents) => boolean;
   /** O nome de um lugar no quadro, para a carta dizer quem fez (nunca o id). */
   readonly placeName?: PlaceNameOf;
   /** Escrever na carta (nasce com a ponte do quadro; `null` antes). */
@@ -47,7 +45,37 @@ export interface CelularServiceDeps {
    * Pedir pelo Oráculo — entrega um texto no chat do Líder único (o motor do `sessao_enviar`); `true` = entrou.
    * Nasce com a ponte do quadro (`null` antes): até lá, o pedido espera na fila.
    */
-  readonly deliverToLeader?: () => ((text: string) => Promise<boolean>) | null;
+  readonly deliverToLeader?: () => ((text: string, pedidoId?: string) => Promise<boolean>) | null;
+  /** Oráculo na VPS: `true` = the phone talks to the VPS; this server stays down (no double notices). */
+  readonly suspended?: () => boolean;
+  /** Pedido por áudio: o whisper do PC (ausente = sem transcrição, o celular manda texto). */
+  readonly whisperUrl?: string | null;
+}
+
+export interface CelularCore extends CelularService {
+  state(): CelularState;
+  /** Brings the server up or down (enabled, Tailscale address, suspended). */
+  reconcile(): Promise<void>;
+  setEnabled(enabled: boolean): Promise<CelularState>;
+  pair(): Promise<CelularPairResult>;
+  revoke(deviceId: string): CelularState;
+}
+
+/** What the PC's Preferences call when the Oráculo lives on the VPS: the daemon's phone, through its API. */
+export interface CelularRemote {
+  getState(): Promise<CelularState>;
+  setEnabled(enabled: boolean): Promise<CelularState>;
+  pair(): Promise<CelularPairResult>;
+  revoke(deviceId: string): Promise<CelularState>;
+  linkPedido(pedidoId: string, tarefa: PedidoTarefa): Promise<boolean>;
+}
+
+export interface CelularServiceDeps extends CelularCoreDeps {
+  readonly ipcMain: IpcMain;
+  /** Só a janela principal mexe nisto. */
+  readonly isMainSender: (sender: Electron.WebContents) => boolean;
+  /** Oráculo na VPS: the daemon's phone (`null` = the ledger lives on this PC). */
+  readonly remote?: () => CelularRemote | null;
 }
 
 export interface CelularService {
@@ -58,7 +86,7 @@ export interface CelularService {
   dispose(): Promise<void>;
 }
 
-export function createCelularService(deps: CelularServiceDeps): CelularService {
+export function createCelularCore(deps: CelularCoreDeps): CelularCore {
   const auth: CelularAuth = createCelularAuth({ filePath: join(deps.userDataDir, 'celular.json'), io: deps.io });
   const ledger: MobileLedgerPort = createLedgerMobilePort(deps.ledger, deps.placeName, deps.cardWriter);
   const push = createPushStore(join(deps.userDataDir, 'celular-push.json'), deps.io);
@@ -73,11 +101,11 @@ export function createCelularService(deps: CelularServiceDeps): CelularService {
       writeFileSync(path, bytes);
     },
     exists: existsSync,
-    transcribe: whisperServerTranscriber({ url: process.env.DONEL_WHISPER_URL || DEFAULT_WHISPER_URL }),
+    transcribe: whisperServerTranscriber({ url: deps.whisperUrl ?? (process.env.DONEL_WHISPER_URL || DEFAULT_WHISPER_URL) }),
   });
   const router = createPedidoRouter({
     store: pedidosStore,
-    deliver: (text) => deps.deliverToLeader?.()?.(text) ?? Promise.resolve(false),
+    deliver: (text, pedidoId) => deps.deliverToLeader?.()?.(text, pedidoId) ?? Promise.resolve(false),
     audioPath: (file) => join(audioDir, file),
   });
   const taskState = (taskId: string): string | undefined => {
@@ -104,12 +132,18 @@ export function createCelularService(deps: CelularServiceDeps): CelularService {
     pedidos,
   });
   // O que já esperava o dono quando o app abriu não avisa de novo; só o que passar a esperar daqui em diante.
-  let waiting = new Map<string, number>();
+  // Ledger v5, fatia 2: every item of the box "Esperando você", not only the letters to decide.
+  // `null` = sem ponto de partida ainda: a primeira leitura boa vira o ponto de partida e não avisa nada.
+  let waiting: Map<string, number> | null = null;
+  let lastDoc: LedgerDoc | null = null;
   try {
     const doc = deps.ledger()?.load().doc;
-    if (doc) waiting = newlyWaiting(new Map(), doc).next;
+    if (doc) {
+      lastDoc = doc;
+      waiting = newlyWaiting(null, doc, Date.now()).next;
+    }
   } catch {
-    // ledger ilegível: a primeira mudança avisa o que estiver na fila
+    // ledger ilegível na abertura: fica sem ponto de partida (sem isso, a primeira mudança avisaria a caixa inteira)
   }
   // Outra porta só para uma instância de teste ao lado do app aberto (as duas não dividem a 47815).
   const port = Number(process.env.DONEL_CELULAR_PORT) || MOBILE_PORT;
@@ -135,7 +169,7 @@ export function createCelularService(deps: CelularServiceDeps): CelularService {
   /** Sobe ou desce o servidor conforme `enabled` e o endereço Tailscale de agora. */
   function reconcile(): Promise<void> {
     transition = transition.then(async () => {
-      if (!auth.enabled) {
+      if (!auth.enabled || deps.suspended?.()) {
         await stop();
         status = 'off';
         error = null;
@@ -165,82 +199,68 @@ export function createCelularService(deps: CelularServiceDeps): CelularService {
     return transition;
   }
 
-  deps.ipcMain.handle(CELULAR_CHANNELS.getState, async (event): Promise<CelularState> => {
-    if (!deps.isMainSender(event.sender)) throw new Error('forbidden');
-    // A Tailscale pode ter subido ou mudado de endereço desde a última vez.
-    if (auth.enabled) await reconcile();
-    return state();
-  });
-  deps.ipcMain.handle(CELULAR_CHANNELS.setEnabled, async (event, enabled: unknown): Promise<CelularState> => {
-    if (!deps.isMainSender(event.sender)) throw new Error('forbidden');
-    auth.setEnabled(enabled === true);
+  async function pair(): Promise<CelularPairResult> {
     await reconcile();
-    return state();
-  });
-  deps.ipcMain.handle(CELULAR_CHANNELS.pair, async (event): Promise<CelularPairResult> => {
-    if (!deps.isMainSender(event.sender)) throw new Error('forbidden');
-    await reconcile();
-    if (!server) return { ok: false, reason: status === 'no-tailscale' ? 'Ligue a Tailscale neste PC para parear.' : (error ?? 'Ligue o app do celular primeiro.') };
+    if (!server) return { ok: false, reason: status === 'no-tailscale' ? 'Ligue a Tailscale para parear.' : (error ?? 'Ligue o app do celular primeiro.') };
     const { code, expiresAt } = auth.createPairingCode();
     // Com `tailscale serve` no ar, o celular pareia no endereço https: só nele há avisos (service worker).
     const base = (await readServeHttpsUrl(port)) ?? server.url;
     const url = `${base}/#parear=${code}`;
     return { ok: true, pairing: { url, qrSvg: qrSvg(url), expiresAt: new Date(expiresAt).toISOString() } };
-  });
-  deps.ipcMain.handle(CELULAR_CHANNELS.revoke, (event, deviceId: unknown): CelularState => {
-    if (!deps.isMainSender(event.sender)) throw new Error('forbidden');
-    if (typeof deviceId === 'string') {
-      auth.revoke(deviceId);
-      push.remove(deviceId);
-    }
-    return state();
-  });
-
-  deps.ipcMain.handle(CELULAR_CHANNELS.tailnet, async (event): Promise<CelularTailnet> => {
-    if (!deps.isMainSender(event.sender)) throw new Error('forbidden');
-    return readTailnet();
-  });
-  deps.ipcMain.handle(CELULAR_CHANNELS.firewall, async (event): Promise<CelularFirewallRule> => {
-    if (!deps.isMainSender(event.sender)) throw new Error('forbidden');
-    return readFirewallRule();
-  });
-  deps.ipcMain.handle(CELULAR_CHANNELS.allowFirewall, async (event): Promise<CelularAllowFirewallResult> => {
-    if (!deps.isMainSender(event.sender)) throw new Error('forbidden');
-    return allowFirewallRule();
-  });
+  }
 
   if (auth.enabled) void reconcile();
+  function warnNewItems(doc: LedgerDoc): void {
+    const { fresh, next } = newlyWaiting(waiting, doc, Date.now());
+    waiting = next;
+    if (!auth.enabled || deps.suspended?.() || fresh.length === 0) return;
+    const paired = new Set(auth.devices().map((device) => device.id));
+    let keys;
+    try {
+      keys = push.keys();
+    } catch (error) {
+      console.error('[donel-dev] celular: sem chave de aviso:', error);
+      return;
+    }
+    for (const { deviceId, subscription } of push.subscriptions()) {
+      if (!paired.has(deviceId)) {
+        push.remove(deviceId); // aparelho revogado: não recebe mais nada
+        continue;
+      }
+      for (const item of fresh) {
+        void sendPush(subscription, pushMessageFor(item), keys, pushFetch).then((outcome) => {
+          if (outcome === 'gone') push.remove(deviceId);
+          else if (outcome === 'failed') console.error('[donel-dev] celular: o aviso não saiu para um aparelho.');
+        });
+      }
+    }
+  }
+
   // A Tailscale pode subir depois do app (ou trocar de endereço): confere de minuto em minuto.
   const timer = setInterval(() => {
     if (auth.enabled) void reconcile();
+    // Some items of the box are born with time alone (a letter stuck for 30 min, a delivery stopped for a day).
+    if (lastDoc) warnNewItems(lastDoc);
   }, 60_000);
   timer.unref?.();
 
   return {
+    state,
+    reconcile,
+    async setEnabled(enabled) {
+      auth.setEnabled(enabled);
+      await reconcile();
+      return state();
+    },
+    pair,
+    revoke(deviceId) {
+      auth.revoke(deviceId);
+      push.remove(deviceId);
+      return state();
+    },
     ledgerChanged(doc) {
-      const { fresh, next } = newlyWaiting(waiting, doc);
-      waiting = next;
-      if (!auth.enabled || fresh.length === 0) return;
-      const paired = new Set(auth.devices().map((device) => device.id));
-      let keys;
-      try {
-        keys = push.keys();
-      } catch (error) {
-        console.error('[donel-dev] celular: sem chave de aviso:', error);
-        return;
-      }
-      for (const { deviceId, subscription } of push.subscriptions()) {
-        if (!paired.has(deviceId)) {
-          push.remove(deviceId); // aparelho revogado: não recebe mais nada
-          continue;
-        }
-        for (const task of fresh) {
-          void sendPush(subscription, pushMessageFor(task), keys, pushFetch).then((outcome) => {
-            if (outcome === 'gone') push.remove(deviceId);
-            else if (outcome === 'failed') console.error('[donel-dev] celular: o aviso não saiu para um aparelho.');
-          });
-        }
-      }
+      lastDoc = doc;
+      warnNewItems(doc);
     },
     linkPedido: (pedidoId, tarefa) => pedidosStore.linkTask(pedidoId, tarefa),
     dispose: async () => {
@@ -249,5 +269,61 @@ export function createCelularService(deps: CelularServiceDeps): CelularService {
       transition = transition.then(stop);
       await transition;
     },
+  };
+}
+
+/** The PC's app: the core plus the Preferences' IPC (forwarded to the VPS when the Oráculo lives there). */
+export function createCelularService(deps: CelularServiceDeps): CelularService {
+  const core = createCelularCore({ ...deps, suspended: () => deps.remote?.() != null });
+  const guard = (sender: Electron.WebContents): void => {
+    if (!deps.isMainSender(sender)) throw new Error('forbidden');
+  };
+  deps.ipcMain.handle(CELULAR_CHANNELS.getState, async (event): Promise<CelularState> => {
+    guard(event.sender);
+    const remote = deps.remote?.();
+    if (remote) return remote.getState();
+    // A Tailscale pode ter subido ou mudado de endereço desde a última vez.
+    await core.reconcile();
+    return core.state();
+  });
+  deps.ipcMain.handle(CELULAR_CHANNELS.setEnabled, async (event, enabled: unknown): Promise<CelularState> => {
+    guard(event.sender);
+    const remote = deps.remote?.();
+    return remote ? remote.setEnabled(enabled === true) : core.setEnabled(enabled === true);
+  });
+  deps.ipcMain.handle(CELULAR_CHANNELS.pair, async (event): Promise<CelularPairResult> => {
+    guard(event.sender);
+    const remote = deps.remote?.();
+    return remote ? remote.pair() : core.pair();
+  });
+  deps.ipcMain.handle(CELULAR_CHANNELS.revoke, async (event, deviceId: unknown): Promise<CelularState> => {
+    guard(event.sender);
+    const remote = deps.remote?.();
+    if (typeof deviceId !== 'string') return remote ? remote.getState() : core.state();
+    return remote ? remote.revoke(deviceId) : core.revoke(deviceId);
+  });
+  deps.ipcMain.handle(CELULAR_CHANNELS.tailnet, async (event): Promise<CelularTailnet> => {
+    guard(event.sender);
+    return readTailnet();
+  });
+  deps.ipcMain.handle(CELULAR_CHANNELS.firewall, async (event): Promise<CelularFirewallRule> => {
+    guard(event.sender);
+    return readFirewallRule();
+  });
+  deps.ipcMain.handle(CELULAR_CHANNELS.allowFirewall, async (event): Promise<CelularAllowFirewallResult> => {
+    guard(event.sender);
+    return allowFirewallRule();
+  });
+  return {
+    ledgerChanged: (doc) => core.ledgerChanged(doc),
+    linkPedido(pedidoId, tarefa) {
+      const remote = deps.remote?.();
+      if (remote) {
+        void remote.linkPedido(pedidoId, tarefa);
+        return true;
+      }
+      return core.linkPedido(pedidoId, tarefa);
+    },
+    dispose: () => core.dispose(),
   };
 }

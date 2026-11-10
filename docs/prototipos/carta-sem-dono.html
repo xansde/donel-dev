@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Carta sem dono</title>
+<style>
+  :root {
+    --fundo: #121019;
+    --carta: #1d1a27;
+    --carta-borda: #4a4030;
+    --tinta: #efe6d2;
+    --tinta-suave: #b3a78f;
+    --ouro: #d2a44c;
+    --sim: #5fbf86;
+    --nao: #e0736a;
+    --naipe: #7fa6c9;
+    --sombra: 0 10px 30px rgba(0, 0, 0, 0.5), 0 2px 6px rgba(0, 0, 0, 0.4);
+    --serifa: 'Iowan Old Style', 'Palatino Linotype', Palatino, 'Book Antiqua', Georgia, serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--fundo); color: var(--tinta); font: 14px/1.45 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; }
+  .bar { display: flex; gap: 8px; align-items: center; padding: 12px 16px; border-bottom: 1px solid #2a2535; flex-wrap: wrap; }
+  .bar b { font-family: var(--serifa); font-size: 1rem; margin-right: auto; }
+  .bar button, .pill { border: 1px solid var(--carta-borda); background: transparent; color: var(--tinta-suave); border-radius: 999px; padding: 5px 12px; font: inherit; font-size: 0.8rem; cursor: pointer; }
+  .bar button[aria-pressed='true'] { color: var(--fundo); background: var(--ouro); border-color: var(--ouro); }
+  .stage { display: flex; gap: 28px; align-items: flex-start; justify-content: center; padding: 24px 16px 40px; }
+  .hand { display: flex; flex-direction: column; gap: 12px; width: 200px; flex: none; }
+  .mini { border-radius: 10px; background: var(--carta); border: 2px solid var(--naipe); color: var(--tinta); padding: 10px; text-align: left; box-shadow: var(--sombra); font: inherit; cursor: pointer; }
+  .mini.other { --naipe: #d98a5f; opacity: 0.7; }
+  .mini small { display: block; font-size: 0.62rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--naipe); }
+  .mini b { font-family: var(--serifa); font-size: 0.85rem; }
+  .mini[aria-current='true'] { outline: 2px solid var(--ouro); outline-offset: 3px; }
+  .table { width: 470px; max-width: 100%; perspective: 1600px; }
+  .phone .stage { padding-top: 12px; }
+  .phone .hand { display: none; }
+  .phone .table { width: 360px; }
+  .card { position: relative; transform-style: preserve-3d; transition: transform 0.6s ease; min-height: 640px; }
+  .card.flipped { transform: rotateY(180deg); }
+  .face { position: absolute; inset: 0; backface-visibility: hidden; border-radius: 18px; background: var(--carta); box-shadow: var(--sombra); padding: 9px; }
+  .back { transform: rotateY(180deg); }
+  .frame { height: 100%; border: 2px solid var(--naipe); border-radius: 12px; padding: 4px; }
+  .inner { height: 100%; border: 1px solid var(--carta-borda); border-radius: 9px; padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+  .head { display: flex; align-items: center; gap: 8px; color: var(--naipe); font-size: 0.7rem; letter-spacing: 0.16em; text-transform: uppercase; }
+  .head svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.6; }
+  .head .index { margin-left: auto; color: var(--tinta-suave); letter-spacing: 0.08em; }
+  .name { font-size: 0.72rem; color: var(--tinta-suave); text-transform: uppercase; letter-spacing: 0.12em; }
+  h3 { margin: 2px 0 0; font-family: var(--serifa); font-size: 1.35rem; line-height: 1.2; font-weight: 600; }
+  .scroll { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding-right: 2px; }
+  .summary { color: var(--tinta-suave); margin: 0; }
+  ul.tasks { list-style: none; margin: 0; padding: 0; border: 1px solid var(--carta-borda); border-radius: 10px; max-height: 176px; overflow-y: auto; flex: none; }
+  .one-by-one ul.tasks { max-height: none; }
+  ul.tasks li { padding: 8px 10px; border-top: 1px solid #2d2838; display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: center; }
+  ul.tasks li:first-child { border-top: none; }
+  ul.tasks .t { font-weight: 600; }
+  ul.tasks .w { grid-column: 1; color: var(--tinta-suave); font-size: 0.8rem; }
+  ul.tasks .acts { grid-column: 2; grid-row: 1 / span 2; display: none; gap: 6px; }
+  .one-by-one ul.tasks .acts { display: flex; }
+  ul.tasks li.done { opacity: 0.55; }
+  ul.tasks li.done .acts { display: none; }
+  ul.tasks .badge { grid-column: 2; grid-row: 1 / span 2; font-size: 0.72rem; color: var(--sim); display: none; }
+  ul.tasks li.done .badge { display: block; }
+  .small { border: 1px solid var(--carta-borda); background: transparent; color: var(--tinta); border-radius: 8px; padding: 4px 8px; font: inherit; font-size: 0.75rem; cursor: pointer; }
+  .small.go { border-color: var(--ouro); color: var(--ouro); }
+  .rec { margin: 0; font-size: 0.85rem; color: var(--tinta-suave); }
+  .rec b { color: var(--ouro); }
+  .options { display: flex; flex-direction: column; gap: 8px; }
+  .option { text-align: left; border: 1px solid var(--carta-borda); background: #221e2e; color: var(--tinta); border-radius: 10px; padding: 10px 12px; font: inherit; cursor: pointer; display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; }
+  .option b { font-family: var(--serifa); font-size: 1rem; }
+  .option em { justify-self: end; font-style: normal; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.12em; color: var(--ouro); }
+  .option span { grid-column: 1 / -1; color: var(--tinta-suave); font-size: 0.82rem; }
+  .option.rec { border-color: var(--ouro); }
+  .option.marked { outline: 2px solid var(--ouro); outline-offset: 2px; }
+  .result { border: 1px solid var(--sim); color: var(--sim); border-radius: 10px; padding: 10px 12px; display: none; }
+  .result.show { display: block; }
+  .foot { display: flex; align-items: center; gap: 10px; border-top: 1px solid #2d2838; padding-top: 10px; }
+  .seal { font-size: 0.75rem; color: var(--tinta-suave); }
+  .seal i { font-style: normal; color: var(--ouro); text-transform: uppercase; letter-spacing: 0.12em; margin-right: 6px; }
+  .flip { margin-left: auto; border: 1px solid var(--carta-borda); background: transparent; color: var(--tinta-suave); border-radius: 999px; padding: 4px 12px; font: inherit; font-size: 0.75rem; cursor: pointer; }
+  .back p { margin: 0 0 8px; color: var(--tinta-suave); }
+  .back h4 { margin: 8px 0 4px; font-family: var(--serifa); color: var(--tinta); font-size: 1rem; }
+  .log { font-size: 0.8rem; border: 1px solid var(--carta-borda); border-radius: 10px; padding: 8px 10px; color: var(--tinta-suave); }
+  .log div { padding: 3px 0; border-top: 1px dashed #2d2838; }
+  .log div:first-child { border-top: none; }
+  .note { max-width: 760px; margin: 0 auto 32px; padding: 0 16px; color: var(--tinta-suave); font-size: 0.85rem; }
+  .note b { color: var(--tinta); }
+  @media (max-width: 720px) { .hand { display: none; } .stage { padding: 12px 16px 32px; } }
+</style>
+</head>
+<body>
+<div class="bar">
+  <b>Protótipo: a carta das tarefas sem dono</b>
+  <button type="button" id="v-desk" aria-pressed="true">No computador</button>
+  <button type="button" id="v-phone" aria-pressed="false">No celular</button>
+  <button type="button" id="reset">Recomeçar</button>
+</div>
+
+<div id="view">
+  <div class="stage">
+    <div class="hand">
+      <button type="button" class="mini other"><small>Martelos · I</small><b>Botão verde na tela de login</b></button>
+      <button type="button" class="mini" aria-current="true"><small>Escudos · II</small><b>5 tarefas sem dono</b></button>
+      <button type="button" class="mini other"><small>Livros · III</small><b>Posso mandar no Slack em seu nome?</b></button>
+    </div>
+    <div class="table">
+      <div class="card" id="card">
+        <div class="face">
+          <div class="frame"><div class="inner">
+            <div class="head">
+              <svg viewBox="0 0 24 24"><path d="M12 2.8l7.5 3v5.4c0 5-3.6 8.6-7.5 10-3.9-1.4-7.5-5-7.5-10V5.8z"/><path d="M12 6.5v11M7.8 11h8.4"/></svg>
+              <span>Faxina do Oráculo</span>
+              <span class="index">II · III</span>
+            </div>
+            <div>
+              <div class="name">Quadro Donel Dev</div>
+              <h3 id="q">5 tarefas sem dono</h3>
+            </div>
+            <div class="scroll" id="scroll">
+              <p class="summary" id="sum">A sessão que fazia cada uma destas fechou ou nunca começou, e ninguém pegou a tarefa há mais de um dia.</p>
+              <ul class="tasks" id="tasks">
+                <li><span class="t">Corrige o envio de prova pela VPS</span><span class="w">A sessão Dev fechou · sem dono há 3 dias</span><span class="acts"><button class="small go" data-a="lider">Ao Líder</button><button class="small" data-a="cancel">Cancelar</button></span><span class="badge">feito</span></li>
+                <li><span class="t">Atalho para reabrir a última aba</span><span class="w">A sessão Dev fechou · sem dono há 2 dias</span><span class="acts"><button class="small go" data-a="lider">Ao Líder</button><button class="small" data-a="cancel">Cancelar</button></span><span class="badge">feito</span></li>
+                <li><span class="t">Pesquisa: limites do plano de contas</span><span class="w">A sessão Pesquisa nunca começou · sem dono há 2 dias</span><span class="acts"><button class="small go" data-a="lider">Ao Líder</button><button class="small" data-a="cancel">Cancelar</button></span><span class="badge">feito</span></li>
+                <li><span class="t">Revisar o texto das novidades</span><span class="w">A sessão Revisor fechou · rejeitada · sem dono há 30 horas</span><span class="acts"><button class="small go" data-a="lider">Ao Líder</button><button class="small" data-a="cancel">Cancelar</button></span><span class="badge">feito</span></li>
+                <li><span class="t">Ícone do Jobu no celular</span><span class="w">A sessão saiu do quadro · sem dono há 26 horas</span><span class="acts"><button class="small go" data-a="lider">Ao Líder</button><button class="small" data-a="cancel">Cancelar</button></span><span class="badge">feito</span></li>
+              </ul>
+              <p class="rec" id="rec">Recomendo <b>Passar ao Líder</b>: ele reparte para quem está aberto e avisa você do que não tiver como sair.</p>
+              <div class="options" id="opts">
+                <button type="button" class="option rec" data-o="lider"><b>Passar ao Líder</b><em>recomendo</em><span>As 5 vão para o Líder, com registro em cada uma. Ele recebe a lista no chat.</span></button>
+                <button type="button" class="option" data-o="one"><b>Ver uma a uma</b><span>Abre a lista com um botão em cada tarefa: passar ao Líder ou cancelar com motivo.</span></button>
+              </div>
+              <div class="result" id="res"></div>
+            </div>
+            <div class="foot">
+              <span class="seal"><i>Faxina</i>Nada se apaga: cada passagem fica no histórico da tarefa.</span>
+              <button type="button" class="flip" id="toBack">↻ Virar</button>
+            </div>
+          </div></div>
+        </div>
+        <div class="face back">
+          <div class="frame"><div class="inner">
+            <div class="head">
+              <svg viewBox="0 0 24 24"><path d="M12 2.8l7.5 3v5.4c0 5-3.6 8.6-7.5 10-3.9-1.4-7.5-5-7.5-10V5.8z"/><path d="M12 6.5v11M7.8 11h8.4"/></svg>
+              <span>O verso</span>
+              <button type="button" class="flip" id="toFront">↻ Frente</button>
+            </div>
+            <div class="scroll">
+              <h4>De onde vem esta carta</h4>
+              <p>Uma vez por noite, a faxina do Oráculo lê as tarefas sem usar modelo. Quando uma tarefa de risco baixo tem uma entrega cujo PR já entrou, ela a encerra como concluída. Uma tarefa de risco alto nunca se encerra sozinha.</p>
+              <p>O que continua sem dono há mais de um dia vira esta carta, uma só para todas, aqui e no celular.</p>
+              <h4>Esta noite</h4>
+              <div class="log">
+                <div>Encerrada como concluída: «Fila de avisos no celular», porque o PR dela entrou ontem.</div>
+                <div>Fica: «Trava de envio do Slack» é de risco alto e espera você.</div>
+                <div>Sem dono há mais de um dia: 5 tarefas, nesta carta.</div>
+              </div>
+              <h4>Nas três primeiras noites</h4>
+              <p>A faxina só anota o que faria, sem encerrar nem passar nada. Esta carta aparece mesmo assim, para você decidir à mão.</p>
+            </div>
+          </div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="note">
+    <b>Como ler este protótipo.</b> Na carta verdadeira, você clica uma vez para marcar e de novo para decidir, como nas outras cartas. «Ver uma a uma» abre os botões em cada linha. No celular, a carta fica sozinha na tela, sem a coluna das outras. Os nomes das tarefas aqui são de exemplo.
+  </div>
+</div>
+
+<script>
+(function () {
+  var view = document.getElementById('view');
+  var card = document.getElementById('card');
+  var desk = document.getElementById('v-desk');
+  var phone = document.getElementById('v-phone');
+  var marked = null;
+  var initial = document.getElementById('scroll').innerHTML;
+  function setView(isPhone) {
+    view.classList.toggle('phone', isPhone);
+    desk.setAttribute('aria-pressed', String(!isPhone));
+    phone.setAttribute('aria-pressed', String(isPhone));
+  }
+  desk.onclick = function () { setView(false); };
+  phone.onclick = function () { setView(true); };
+  document.getElementById('toBack').onclick = function () { card.classList.add('flipped'); };
+  document.getElementById('toFront').onclick = function () { card.classList.remove('flipped'); };
+  function left() { return document.querySelectorAll('#tasks li:not(.done)').length; }
+  function refresh() {
+    var n = left();
+    document.getElementById('q').textContent = n === 0 ? 'Nenhuma tarefa sem dono' : n + (n === 1 ? ' tarefa sem dono' : ' tarefas sem dono');
+  }
+  function bind() {
+    var scroll = document.getElementById('scroll');
+    scroll.querySelectorAll('.option').forEach(function (button) {
+      button.onclick = function () {
+        var o = button.getAttribute('data-o');
+        var res = document.getElementById('res');
+        if (o === 'one') {
+          scroll.classList.add('one-by-one');
+          res.className = 'result show';
+          res.style.borderColor = 'var(--carta-borda)';
+          res.style.color = 'var(--tinta-suave)';
+          res.textContent = 'Decida em cada linha. A carta some quando não sobrar nenhuma.';
+          return;
+        }
+        if (marked !== o) {
+          marked = o;
+          scroll.querySelectorAll('.option').forEach(function (b) { b.classList.toggle('marked', b === button); });
+          button.querySelector('span').textContent = 'Clique de novo para decidir.';
+          return;
+        }
+        scroll.querySelectorAll('#tasks li').forEach(function (li) { li.classList.add('done'); li.querySelector('.badge').textContent = 'com o Líder'; });
+        document.getElementById('opts').style.display = 'none';
+        document.getElementById('rec').style.display = 'none';
+        res.className = 'result show';
+        res.textContent = 'Passadas ao Líder: 5 tarefas. Ele recebeu a lista no chat, e cada tarefa guarda o registro.';
+        refresh();
+      };
+    });
+    scroll.querySelectorAll('#tasks .small').forEach(function (button) {
+      button.onclick = function () {
+        var li = button.closest('li');
+        if (button.getAttribute('data-a') === 'cancel') {
+          var why = window.prompt('Motivo para cancelar esta tarefa:', 'ninguém vai fazer');
+          if (!why) return;
+          li.querySelector('.badge').textContent = 'cancelada';
+        } else {
+          li.querySelector('.badge').textContent = 'com o Líder';
+        }
+        li.classList.add('done');
+        refresh();
+      };
+    });
+  }
+  document.getElementById('reset').onclick = function () {
+    document.getElementById('scroll').innerHTML = initial;
+    document.getElementById('scroll').classList.remove('one-by-one');
+    marked = null;
+    card.classList.remove('flipped');
+    refresh();
+    bind();
+  };
+  bind();
+})();
+</script>
+</body>
+</html>

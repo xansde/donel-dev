@@ -49,6 +49,8 @@ export interface SendDriverPorts {
   opensScreen?(): void;
   /** A send has just ended in `failed`: the gate detail for the diagnostics log (no message or screen text). */
   reportFailure?(detail: SendFailureDetail): void;
+  /** 08/11 — what the box held right before a session message cleared it (Esc Esc): kept for the owner. */
+  boxCleared?(text: string): void;
 }
 
 export interface SendRequest {
@@ -63,6 +65,12 @@ export interface SendRequest {
    * a message from another session). The owner always goes first; a `session` message waits for him (see the top).
    */
   readonly from?: SendFrom;
+  /**
+   * 07/11 — the same text sent again while the first send is still on its way (at most `DEDUPE_MS`) answers for it
+   * instead of going in twice. After the first one went in (or failed), the same text is a new message. For `sessao_enviar`: a sender that heard "não entrou" or a timeout while the message did go in
+   * sent it again, and the destination got it twice.
+   */
+  readonly dedupe?: boolean;
 }
 
 export type SendFrom = 'owner' | 'session';
@@ -136,12 +144,16 @@ const OWNER_HOLD_AFTER_ENTER_MS = 1_500;
  */
 const OWNER_HOLD_MAX_MS = 5_000;
 const MAX_ALIASES = 500;
+/** How long a deduped send answers for a resend of the same text. */
+const DEDUPE_MS = 10 * 60_000;
 
 /**
- * Bytes the terminal emits on its own (focus in/out, cursor and device reports, mouse): not the owner typing.
+ * Bytes the terminal emits on its own (focus in/out, cursor and device reports, mouse; and, 08/11, its answers to what
+ * tmux asks on every attach of a remote session: DA2 `ESC[>…c`, version `ESC P>|…`, colours `ESC]10/11;rgb:…`): not the owner typing.
  * Everything else that reaches the PTY from the terminal is (keys, Enter, Backspace, arrows, a paste).
  */
-const TERMINAL_REPORT = /^\x1b\[(?:I|O|\?[\d;]*c|\d+;\d+R|<[\d;]+[Mm]|M[\s\S]{3})$/;
+const TERMINAL_REPORT =
+  /^(?:\x1b\[(?:I|O|[?>][\d;]*c|\d+;\d+R|<[\d;]+[Mm]|M[\s\S]{3})|\x1bP>\|[^\x1b]*\x1b\\|\x1b\]1[01];rgb:[\da-fA-F/]+(?:\x07|\x1b\\))+$/; // several answers may come in one chunk
 export const isOwnerTyping = (data: string): boolean => data !== '' && !TERMINAL_REPORT.test(data);
 
 /** Session messages that can go in as one paste (plain text, no image, no command). */
@@ -247,13 +259,22 @@ export class SendDriver {
   private holdTimer: unknown = undefined;
   /** A session message merged into another: its id answers for the one that carries it (`carrierOf`). */
   private readonly aliases = new Map<string, string>();
+  /** Deduped sends by normalized text: the first id and when it was sent. */
+  private readonly recent = new Map<string, { readonly id: string; readonly at: number }>();
+  /** Ids that reached `accepted` or `queued` (`sendToTabAndWait` hears "entrou" for them after they leave the list). */
+  private readonly delivered = new Set<string>();
+  /** Some send of this tab was taken by the CLI. */
+  private took = false;
 
   constructor(private readonly ports: SendDriverPorts) {}
 
   // ------------------------------------------------------------------ public
 
   enqueue(request: SendRequest): string {
+    const resent = this.resendOf(request);
+    if (resent !== null) return resent;
     const id = `send-${++this.seq}-${this.ports.now().toString(36)}`;
+    if (request.dedupe === true) this.remember(request.text, id);
     const from = request.from ?? 'owner';
     this.items.push({
       id,
@@ -290,6 +311,38 @@ export class SendDriver {
   /** The send that carries `id`: itself, or the notice it was merged into while waiting for the owner. */
   carrierOf(id: string): string {
     return this.aliases.get(id) ?? id;
+  }
+
+  /** The CLI took some send of this tab (an acceptance signal, from a hook or the transcript, or a lookup). */
+  tookMessage(): boolean {
+    return this.took;
+  }
+
+  /** `id` (or its carrier) was taken by the CLI, even if it already left the list. */
+  wasDelivered(id: string): boolean {
+    return this.delivered.has(this.carrierOf(id));
+  }
+
+  /**
+   * A deduped send of the same text still on its way (not accepted, not failed): the id that answers for this one.
+   * Once the first went in, the same text again is a new message ("Siga de onde parou" after a second 429) and goes.
+   */
+  private resendOf(request: SendRequest): string | null {
+    if (request.dedupe !== true) return null;
+    const key = normalizePrompt(request.text);
+    const prev = this.recent.get(key);
+    if (prev === undefined || this.ports.now() - prev.at >= DEDUPE_MS) return null;
+    const carrier = this.carrierOf(prev.id);
+    const phase = this.items.find((i) => i.id === carrier)?.machine?.phase;
+    if (phase === undefined || phase === 'accepted' || phase === 'failed') return null;
+    return prev.id;
+  }
+
+  private remember(text: string, id: string): void {
+    const now = this.ports.now();
+    for (const [key, rec] of this.recent) if (now - rec.at >= DEDUPE_MS) this.recent.delete(key);
+    this.recent.set(normalizePrompt(text), { id, at: now });
+    while (this.recent.size > MAX_ALIASES) this.recent.delete(this.recent.keys().next().value as string);
   }
 
   /**
@@ -363,7 +416,7 @@ export class SendDriver {
     if (this.dedupeSignal(sig)) return;
     const at = Date.parse(sig.at);
     const now = this.ports.now();
-    const awaiting = this.items.filter((i) => i.machine !== null && (i.machine.step === 'await-ack' || i.machine.phase === 'queued'));
+    const awaiting = this.items.filter((i) => i.machine !== null && (i.machine.step === 'await-ack' || i.machine.step === 'verify' || i.machine.phase === 'queued'));
     if (awaiting.length === 0) return;
     const candidates = awaiting.map((i) => ({ item: i, text: i.machine!.text, cls: i.machine!.cls, createdAt: i.machine!.createdAt }));
     const textual = sig.signal === 'submit' || sig.signal === 'enqueue' || sig.signal === 'deliver';
@@ -487,6 +540,7 @@ export class SendDriver {
         firstPaste: this.sentCount === 0,
         opensScreen: next.request.opensScreen,
         customCommands: next.request.customCommands,
+        unattended: next.from === 'session',
       };
       this.sentCount += 1;
       const created = createSend(input, this.ports.now());
@@ -503,6 +557,13 @@ export class SendDriver {
     const before = item.machine.phase;
     const result = step(item.machine, event);
     item.machine = result.state;
+    if (result.state.phase === 'accepted' || result.state.phase === 'queued') {
+      this.took = true;
+      if (!this.delivered.has(item.id)) {
+        this.delivered.add(item.id);
+        while (this.delivered.size > MAX_ALIASES) this.delivered.delete(this.delivered.values().next().value as string);
+      }
+    }
     this.noteFailure(before, result.state);
     this.runEffects(item, result.effects);
   }
@@ -523,11 +584,17 @@ export class SendDriver {
         case 'write':
           if (effect.data === '\r' && item.from === 'session') {
             // An Enter written again (the first one looked lost) once a key of the owner reached the box would submit
-            // HIS text with it. Keys still held never reached it: then the Enter is safe, and wanted.
+            // HIS text with it. Keys still held never reached it: then the Enter is safe, and wanted. (The screen cannot
+            // clear him: his keys may still be on their way through ssh.)
             if (item.enterWrittenAt !== null && this.ownerWrittenAt !== null && this.ownerWrittenAt >= item.enterWrittenAt) break;
             item.enterWrittenAt ??= this.ports.now();
             item.lastEnterAt = this.ports.now();
           }
+          // The same for the Esc Esc an unattended send writes to clear its own text when it gives up (08/11): a key of
+          // the owner sent after its Enter may be in that box too, and must not be erased with it.
+          if (effect.data === '\x1b\x1b' && item.from === 'session' && item.enterWrittenAt !== null && this.ownerWrittenAt !== null && this.ownerWrittenAt >= item.enterWrittenAt)
+            break;
+          if (effect.data === '\x1b\x1b' && item.from === 'session') this.keepCleared();
           this.ports.write(effect.data);
           if (effect.data === '\r' && item.request.opensScreen === true) this.ports.opensScreen?.();
           break;
@@ -559,6 +626,21 @@ export class SendDriver {
           item.canDiscard = effect.canDiscard;
           break;
       }
+    }
+  }
+
+  /**
+   * 08/11 (Revisor, #333) — a session message is about to clear the box (its own text that never went in, or a leftover
+   * redrawn next to its paste). What the box shows goes to the owner first: it may be a draft of his. A long paste only
+   * shows as `[Pasted text #N]`; that marker is what is kept then.
+   */
+  private keepCleared(): void {
+    const text = readInputText(this.ports.readLines());
+    if (text === null || text.trim() === '') return;
+    try {
+      this.ports.boxCleared?.(text);
+    } catch {
+      // keeping it must never stop the send
     }
   }
 

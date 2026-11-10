@@ -197,7 +197,8 @@ export function leaderMessageFor(pedido: StoredPedido, audioPath?: string): stri
 export interface PedidoRouterDeps {
   readonly store: PedidosStore;
   /** Entrega ao Líder único; `true` = entrou (ou está entrando) no chat dele. */
-  readonly deliver: (text: string) => Promise<boolean>;
+  /** `pedidoId`: the request's own id (a retry of the same request is the same message). */
+  readonly deliver: (text: string, pedidoId: string) => Promise<boolean>;
   /** O caminho do áudio no PC, para o link na mensagem. */
   readonly audioPath?: (file: string) => string;
   readonly retryMs?: number;
@@ -222,7 +223,7 @@ export function createPedidoRouter(deps: PedidoRouterDeps): PedidoRouter {
         const audioPath = pedido.audio && deps.audioPath ? deps.audioPath(pedido.audio) : undefined;
         let ok = false;
         try {
-          ok = await deps.deliver(leaderMessageFor(pedido, audioPath));
+          ok = await deps.deliver(leaderMessageFor(pedido, audioPath), pedido.id);
         } catch {
           ok = false;
         }

@@ -63,30 +63,30 @@ const FOR_OWNER: LedgerForOwner = {
 };
 
 /** Uma entrega de risco alto, entregue pelo Dev com prova: espera o dono. */
-function deliveredTask(ledger: ReturnType<typeof createLedgerService>, request: string): string {
-  const created = ledger.apply(LIDER, { op: 'criar', projectPath: 'C:/proj/atlas', request, doneWhen: 'pronto', due: '2026-11-10', ownerPlaceId: 'p-dev', risk: 'alto' });
+async function deliveredTask(ledger: ReturnType<typeof createLedgerService>, request: string): Promise<string> {
+  const created = await ledger.apply(LIDER, { op: 'criar', projectPath: 'C:/proj/atlas', request, doneWhen: 'pronto', due: '2026-11-10', ownerPlaceId: 'p-dev', risk: 'alto' });
   if (!created.ok) throw new Error(created.reason);
   const id = created.task.id;
-  expect(ledger.apply(DEV, { op: 'assumir', id }).ok).toBe(true);
-  expect(ledger.apply(DEV, { op: 'entregar', id, proofs: [{ kind: 'texto', text: '4 passed' }], forOwner: FOR_OWNER }).ok).toBe(true);
+  expect((await ledger.apply(DEV, { op: 'assumir', id })).ok).toBe(true);
+  expect((await ledger.apply(DEV, { op: 'entregar', id, proofs: [{ kind: 'texto', text: '4 passed' }], forOwner: FOR_OWNER })).ok).toBe(true);
   return id;
 }
 
-function setup() {
+async function setup() {
   const io = memoryIo();
   const auth = createCelularAuth({ filePath: FILE, io });
   let seq = 0;
   const ledger = createLedgerService({ filePath: LEDGER, io, proofFs: noProofFs, newId: () => `t-${++seq}` });
-  const first = deliveredTask(ledger, 'quero salvar sem fechar');
-  const second = deliveredTask(ledger, 'a mensagem chegou duas vezes');
+  const first = await deliveredTask(ledger, 'quero salvar sem fechar');
+  const second = await deliveredTask(ledger, 'a mensagem chegou duas vezes');
   // A new handler over the same files is the app after a restart.
   let handle = createMobileHandler({ auth, ledger: () => createLedgerMobilePort(() => ledger), assets: {}, provasRoot: null });
   const restart = (): void => {
     handle = createMobileHandler({ auth, ledger: () => createLedgerMobilePort(() => createLedgerService({ filePath: LEDGER, io, proofFs: noProofFs })), assets: {}, provasRoot: null });
   };
-  const call = (method: string, url: string, token?: string | null, body?: unknown): MobileResponse =>
-    atOnce(handle({ method, url, authorization: token ? `Bearer ${token}` : undefined, body: body === undefined ? '' : JSON.stringify(body) }));
-  const pairWith = (code: string): MobileResponse => call('POST', '/api/parear', null, { codigo: code, aparelho: 'iPhone' });
+  const call = async (method: string, url: string, token?: string | null, body?: unknown): Promise<MobileResponse> =>
+    handle({ method, url, authorization: token ? `Bearer ${token}` : undefined, body: body === undefined ? '' : JSON.stringify(body) });
+  const pairWith = (code: string): Promise<MobileResponse> => call('POST', '/api/parear', null, { codigo: code, aparelho: 'iPhone' });
   const decisions = (id: string) => ledger.load().doc.tasks[id]!.events.filter((event) => event.kind === 'aceita' || event.kind === 'rejeitada');
   return { io, auth, ledger, first, second, decisions, call, pairWith, restart };
 }
@@ -132,33 +132,33 @@ describe('servidor do celular', () => {
     expect(pickTailscaleAddress({ Ethernet: [{ address: '192.168.0.10', family: 'IPv4', internal: false, netmask: '', mac: '', cidr: null }] })).toBeNull();
   });
 
-  it('recusa /api sem token válido; o código de pareamento vale uma vez; token revogado para de valer', () => {
-    const { auth, first, decisions, call, pairWith } = setup();
+  it('recusa /api sem token válido; o código de pareamento vale uma vez; token revogado para de valer', async () => {
+    const { auth, first, decisions, call, pairWith } = await setup();
 
-    expect(call('GET', '/api/fila').status).toBe(401);
-    expect(call('GET', '/api/fila', 'inventado').status).toBe(401);
-    expect(call('POST', '/api/decidir', null, { pedidoId: 'abcdefgh1', itemId: first, decisao: 'aceitar' }).status).toBe(401);
-    expect(call('GET', `/api/prova?item=${first}&prova=0`).status).toBe(401);
+    expect((await call('GET', '/api/fila')).status).toBe(401);
+    expect((await call('GET', '/api/fila', 'inventado')).status).toBe(401);
+    expect((await call('POST', '/api/decidir', null, { pedidoId: 'abcdefgh1', itemId: first, decisao: 'aceitar' })).status).toBe(401);
+    expect((await call('GET', `/api/prova?item=${first}&prova=0`)).status).toBe(401);
     expect(decisions(first)).toHaveLength(0);
 
     // sem convite aberto, nada pareia
-    expect(pairWith('qualquer').status).toBe(403);
+    expect((await pairWith('qualquer')).status).toBe(403);
     const { code } = auth.createPairingCode();
-    expect(pairWith('errado').status).toBe(403);
-    const paired = pairWith(code);
+    expect((await pairWith('errado')).status).toBe(403);
+    const paired = await pairWith(code);
     expect(paired.status).toBe(200);
     const token = bodyOf(paired).token as string;
-    expect(pairWith(code).status).toBe(403); // uso único
+    expect((await pairWith(code)).status).toBe(403); // uso único
 
-    const fila = call('GET', '/api/fila', token);
+    const fila = await call('GET', '/api/fila', token);
     expect(fila.status).toBe(200);
     expect((bodyOf(fila).itens as { id: string }[]).map((item) => item.id)).toEqual([first, expect.any(String)]);
     const [device] = auth.devices();
     auth.revoke(device.id);
-    expect(call('GET', '/api/fila', token).status).toBe(401);
+    expect((await call('GET', '/api/fila', token)).status).toBe(401);
   });
 
-  it('convite vencido não pareia', () => {
+  it('convite vencido não pareia', async () => {
     const io = memoryIo();
     let now = 1_000_000;
     const auth = createCelularAuth({ filePath: FILE, io, now: () => now });
@@ -167,29 +167,29 @@ describe('servidor do celular', () => {
     expect(auth.pair(code, 'Android')).toBeNull();
   });
 
-  it('aceitar pelo celular grava no ledger uma vez só, com autor dono', () => {
-    const { auth, ledger, first, decisions, call, pairWith, restart } = setup();
-    const token = bodyOf(pairWith(auth.createPairingCode().code)).token as string;
+  it('aceitar pelo celular grava no ledger uma vez só, com autor dono', async () => {
+    const { auth, ledger, first, decisions, call, pairWith, restart } = await setup();
+    const token = bodyOf(await pairWith(auth.createPairingCode().code)).token as string;
 
     const pedido = { pedidoId: 'pedido-0001', itemId: first, decisao: 'aceitar' };
-    const firstCall = call('POST', '/api/decidir', token, pedido);
-    const retry = call('POST', '/api/decidir', token, pedido); // a rede caiu e o celular reenviou
+    const firstCall = await call('POST', '/api/decidir', token, pedido);
+    const retry = await call('POST', '/api/decidir', token, pedido); // a rede caiu e o celular reenviou
     expect(firstCall.status).toBe(200);
     expect(retry.status).toBe(200);
     expect(bodyOf(retry)).toEqual(bodyOf(firstCall));
     restart(); // o pedidoId está no ledger, não na memória do servidor
-    expect(bodyOf(call('POST', '/api/decidir', token, pedido))).toEqual(bodyOf(firstCall));
+    expect(bodyOf(await call('POST', '/api/decidir', token, pedido))).toEqual(bodyOf(firstCall));
 
     // outro pedido para a mesma entrega (dois toques, outro celular): recusado, sem gravar
-    expect(call('POST', '/api/decidir', token, { ...pedido, pedidoId: 'pedido-0002', decisao: 'rejeitar', motivo: 'não' }).status).toBe(409);
+    expect((await call('POST', '/api/decidir', token, { ...pedido, pedidoId: 'pedido-0002', decisao: 'rejeitar', motivo: 'não' })).status).toBe(409);
 
     expect(decisions(first)).toEqual([expect.objectContaining({ kind: 'aceita', by: { kind: 'dono' } })]);
     expect(ledger.load().doc.tasks[first]!.state).toBe('aceita');
-    expect((bodyOf(call('GET', '/api/fila', token)).itens as { id: string }[]).some((item) => item.id === first)).toBe(false);
+    expect((bodyOf(await call('GET', '/api/fila', token)).itens as { id: string }[]).some((item) => item.id === first)).toBe(false);
   });
 
   it('escrever na carta: sai uma vez para quem fez e fica na carta; recusado, não grava e diz o motivo', async () => {
-    const { auth, ledger, first } = setup();
+    const { auth, ledger, first } = await setup();
     const sent: OwnerMessage[] = [];
     let closed = false;
     const writer = createCardWriter({
@@ -226,7 +226,7 @@ describe('servidor do celular', () => {
     expect(comments()).toHaveLength(2);
 
     // Falha: a carta já fechou. Não manda, não grava, e o motivo volta para o celular mostrar.
-    expect(ledger.apply({ kind: 'dono' }, { op: 'aceitar', id: first }).ok).toBe(true);
+    expect((await ledger.apply({ kind: 'dono' }, { op: 'aceitar', id: first })).ok).toBe(true);
     const refused = await write({ ...pedido, pedidoId: 'escrever-0003', texto: 'Tarde demais.' });
     expect(refused).toEqual({ status: 409, body: { erro: 'recusada', mensagem: expect.stringContaining('já foi aceita') } });
     // O app ainda abrindo (sem o escritor da carta): recusa com motivo, sem gravar.
@@ -238,21 +238,21 @@ describe('servidor do celular', () => {
     expect(comments()).toHaveLength(2);
   });
 
-  it('a fila leva só o começo da saída, sem segredo; a inteira vem mascarada ao abrir', () => {
-    const { auth, ledger, call, pairWith } = setup();
-    const token = bodyOf(pairWith(auth.createPairingCode().code)).token as string;
+  it('a fila leva só o começo da saída, sem segredo; a inteira vem mascarada ao abrir', async () => {
+    const { auth, ledger, call, pairWith } = await setup();
+    const token = bodyOf(await pairWith(auth.createPairingCode().code)).token as string;
     const secrets = ['sk-ant-api03-abcdefghijklmnopqrstuv', 'ghp_abcdefghijklmnopqrstuvwxyz0123', 'Bearer eyJhbGciOi.abcdefghijk.lmnopqrstuv', 'abcdef0123456789ABCDEF0123456789'];
     const output = [`ANTHROPIC_API_KEY=${secrets[0]}`, `token: ${secrets[1]}`, `Authorization: ${secrets[2]}`, `DB_URL_X=${secrets[3]}`, ...Array.from({ length: 40 }, (_, i) => `linha ${i}`)].join('\n');
-    const created = ledger.apply(LIDER, { op: 'criar', projectPath: 'C:/proj/atlas', request: 'r', doneWhen: 'd', due: '2026-11-10', ownerPlaceId: 'p-dev', risk: 'alto' });
+    const created = await ledger.apply(LIDER, { op: 'criar', projectPath: 'C:/proj/atlas', request: 'r', doneWhen: 'd', due: '2026-11-10', ownerPlaceId: 'p-dev', risk: 'alto' });
     if (!created.ok) throw new Error(created.reason);
     const id = created.task.id;
-    ledger.apply(DEV, { op: 'assumir', id });
-    ledger.apply(DEV, { op: 'entregar', id, proofs: [{ kind: 'texto', text: output }], forOwner: FOR_OWNER });
+    await ledger.apply(DEV, { op: 'assumir', id });
+    await ledger.apply(DEV, { op: 'entregar', id, proofs: [{ kind: 'texto', text: output }], forOwner: FOR_OWNER });
 
-    const item = (bodyOf(call('GET', '/api/fila', token)).itens as { id: string; provas: { texto: string; cortado?: boolean }[] }[]).find((entry) => entry.id === id)!;
+    const item = (bodyOf(await call('GET', '/api/fila', token)).itens as { id: string; provas: { texto: string; cortado?: boolean }[] }[]).find((entry) => entry.id === id)!;
     expect(item.provas[0]!.cortado).toBe(true);
     expect(item.provas[0]!.texto.length).toBeLessThan(500);
-    const full = call('GET', `/api/prova?item=${id}&prova=0`, token);
+    const full = await call('GET', `/api/prova?item=${id}&prova=0`, token);
     expect(full.status).toBe(200);
     const fullText = Buffer.from(full.body as Uint8Array).toString('utf8');
     expect(fullText).toContain('linha 39');
@@ -263,21 +263,21 @@ describe('servidor do celular', () => {
     }
   });
 
-  it('rejeitar sem motivo não grava; com motivo grava uma vez', () => {
-    const { auth, second, decisions, call, pairWith } = setup();
-    const token = bodyOf(pairWith(auth.createPairingCode().code)).token as string;
+  it('rejeitar sem motivo não grava; com motivo grava uma vez', async () => {
+    const { auth, second, decisions, call, pairWith } = await setup();
+    const token = bodyOf(await pairWith(auth.createPairingCode().code)).token as string;
 
-    expect(call('POST', '/api/decidir', token, { pedidoId: 'pedido-0003', itemId: second, decisao: 'rejeitar', motivo: '   ' }).status).toBe(400);
+    expect((await call('POST', '/api/decidir', token, { pedidoId: 'pedido-0003', itemId: second, decisao: 'rejeitar', motivo: '   ' })).status).toBe(400);
     expect(decisions(second)).toHaveLength(0);
 
     const pedido = { pedidoId: 'pedido-0004', itemId: second, decisao: 'rejeitar', motivo: 'falta o teste' };
-    expect(call('POST', '/api/decidir', token, pedido).status).toBe(200);
-    expect(call('POST', '/api/decidir', token, pedido).status).toBe(200);
+    expect((await call('POST', '/api/decidir', token, pedido)).status).toBe(200);
+    expect((await call('POST', '/api/decidir', token, pedido)).status).toBe(200);
     expect(decisions(second)).toEqual([expect.objectContaining({ kind: 'rejeitada', by: { kind: 'dono' }, text: 'falta o teste' })]);
   });
-  it('a carta A leva o nome do lugar e não o id; escolher a opção que rejeita grava a opção uma vez, sem motivo digitado', () => {
-    const { auth, ledger, second, decisions, call, pairWith } = setup();
-    const token = bodyOf(pairWith(auth.createPairingCode().code)).token as string;
+  it('a carta A leva o nome do lugar e não o id; escolher a opção que rejeita grava a opção uma vez, sem motivo digitado', async () => {
+    const { auth, ledger, second, decisions, call, pairWith } = await setup();
+    const token = bodyOf(await pairWith(auth.createPairingCode().code)).token as string;
     const port = createLedgerMobilePort(() => ledger, (projectPath, placeId) => (projectPath === 'C:/proj/atlas' && placeId === 'p-dev' ? 'painel do Jobu' : undefined));
     const item = port.pendentes().find((entry) => entry.id === second)!;
     expect(item.quemEntregou).toBe('Dev · painel do Jobu');
@@ -289,21 +289,21 @@ describe('servidor do celular', () => {
     expect(ids.join(' ')).toContain('p-dev');
 
     // Opção que não existe, ou que fecha do outro jeito: recusada sem gravar.
-    expect(call('POST', '/api/decidir', token, { pedidoId: 'pedido-0005', itemId: second, decisao: 'aceitar', opcao: 'Refazer' }).status).toBe(409);
+    expect((await call('POST', '/api/decidir', token, { pedidoId: 'pedido-0005', itemId: second, decisao: 'aceitar', opcao: 'Refazer' })).status).toBe(409);
     const escolha = { pedidoId: 'pedido-0006', itemId: second, decisao: 'rejeitar', opcao: 'Refazer' };
-    expect(call('POST', '/api/decidir', token, escolha).status).toBe(200);
-    expect(call('POST', '/api/decidir', token, escolha).status).toBe(200);
+    expect((await call('POST', '/api/decidir', token, escolha)).status).toBe(200);
+    expect((await call('POST', '/api/decidir', token, escolha)).status).toBe(200);
     expect(decisions(second)).toEqual([expect.objectContaining({ kind: 'rejeitada', by: { kind: 'dono' }, option: 'Refazer', text: 'Refazer' })]);
   });
-  it('o protótipo sai com a CSP sandbox allow-scripts, por bilhete de uso único que vence; donel-prova só serve nome de dentro das provas', () => {
+  it('o protótipo sai com a CSP sandbox allow-scripts, por bilhete de uso único que vence; donel-prova só serve nome de dentro das provas', async () => {
     const io = memoryIo();
     const auth = createCelularAuth({ filePath: FILE, io });
     const ledger = createLedgerService({ filePath: LEDGER, io, proofFs: noProofFs, newId: () => 't-proto' });
-    const created = ledger.apply(LIDER, { op: 'criar', projectPath: 'C:/proj/atlas', request: 'r', doneWhen: 'd', due: '2026-11-10', ownerPlaceId: 'p-dev', risk: 'alto' });
+    const created = await ledger.apply(LIDER, { op: 'criar', projectPath: 'C:/proj/atlas', request: 'r', doneWhen: 'd', due: '2026-11-10', ownerPlaceId: 'p-dev', risk: 'alto' });
     if (!created.ok) throw new Error(created.reason);
     const html = '2026-11-05-abcdef012345.html';
-    ledger.apply(DEV, { op: 'assumir', id: 't-proto' });
-    expect(ledger.apply(DEV, { op: 'entregar', id: 't-proto', proofs: [{ kind: 'arquivo', file: html, mediaType: 'text/html' }, { kind: 'texto', text: 'ok' }], forOwner: { ...FOR_OWNER, visual: { kind: 'prova', proof: 0 } } }).ok).toBe(true);
+    await ledger.apply(DEV, { op: 'assumir', id: 't-proto' });
+    expect((await ledger.apply(DEV, { op: 'entregar', id: 't-proto', proofs: [{ kind: 'arquivo', file: html, mediaType: 'text/html' }, { kind: 'texto', text: 'ok' }], forOwner: { ...FOR_OWNER, visual: { kind: 'prova', proof: 0 } } })).ok).toBe(true);
     let now = 1_000_000;
     const handle = createMobileHandler({ auth, ledger: () => createLedgerMobilePort(() => ledger), assets: {}, provasRoot: ledgerProofsDir(LEDGER), now: () => now });
     const token = (JSON.parse(atOnce(handle({ method: 'POST', url: '/api/parear', body: JSON.stringify({ codigo: auth.createPairingCode().code, aparelho: 'iPhone' }) })).body as string) as { token: string }).token;

@@ -268,6 +268,11 @@ export class ChatStore {
     void Promise.resolve(this.api.sendFailed(ptyId, detail)).catch(() => undefined);
   }
 
+  /** 08/11 — the app erased text from the terminal box (Esc Esc): the main keeps it for the owner (fire and forget). */
+  reportBoxCleared(ptyId: string, text: string): void {
+    void Promise.resolve(this.api.boxCleared?.(ptyId, text)).catch(() => undefined);
+  }
+
   /** The renderer's screen detectors report what needs the terminal (`null` = the input box is back). */
   reportScreenState(ptyId: string, terminalNeeded: TerminalNeededReason | null): void {
     void Promise.resolve(this.api.screenState(ptyId, terminalNeeded)).catch(() => undefined);

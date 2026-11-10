@@ -12,7 +12,9 @@ import {
   Toast,
   Toggle,
 } from '@donel-dev/design-system';
-import { Network, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Route, Settings } from 'lucide-react';
+import { DEFAULT_TEAM_PREFS } from '../../shared/teamPrefs';
+import type { LedgerTurnRecorded } from '../../shared/ledger/channels';
+import { PanelLeftClose, PanelLeftOpen, PanelRightClose, Settings } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type {
   AccountsViewDto,
@@ -78,57 +80,37 @@ import {
 import { sessionTabName } from '../../shared/sessions';
 // T021 (015-jobu-pet) — tab <-> PTY map and the `pet:tabs` payload (pure, tested in tests/pet-tab-pty-map.test.ts).
 import { buildChatFocusState, buildPetTabsPayload, tabPtyMap, type TabPtyMap } from '../../shared/pet/tabPtyMap';
-// Spec 010 / batch B6 — o Modo Dev continua sendo o mapa; a fonte dele passou
-// a ser o STORE (`esteiraMapView.ts`, puro e testado). Aqui fica só o
-// encanamento com PTY/IPC — nenhuma decisão de domínio, nenhuma frase de estado.
-import { DiscoveryMap } from './DevMode/DiscoveryMap';
-import { PhaseDetailsPanel } from './DevMode/PhaseDetailsPanel';
-import { buildMapView, parseEntityKey, tabToFocusFor, tasksArtifactFor, type MapSelection, type MapTrailStep } from './DevMode/esteiraMapView';
-import type { TasksRunningTogetherView } from './DevMode/PhaseDetailsPanel';
 import styles from './App.module.css';
 import { Launcher } from './Launcher';
 import { RolesEditor } from './RolesEditor';
+import { ChairScreen } from './ChairScreen';
 import type { LauncherLaunchOptions } from './Launcher';
-// Spec 010 — a esteira nova, AO LADO do mapa atual (`[P-5]`): nada aqui
-// desmonta ou altera o Modo Dev de hoje; a tela entra por cima, atrás de um
-// gesto interno, para dar para comparar as duas com o mesmo dado.
-import { EsteiraScreen } from './Esteira/EsteiraScreen';
+import { HillClimbBar } from './HillClimb/HillClimbBar';
+import { useHillClimb } from './HillClimb/useHillClimb';
 // Mindscape V1 — third mode of the shell (docs/design/mindscape.md).
 import { MindscapeScreen, type MindscapeLiveSession } from './Mindscape/MindscapeScreen';
+import { sameSemaphoreInfo } from './sameSemaphoreInfo';
 import { useMindscapeDoc } from './Mindscape/useMindscapeDoc';
 import { AgentBridge, type AgentBridgePorts } from './Mindscape/agentBridge';
+import type { FaxineiroLogEntry } from '../../shared/faxineiro/triggers';
 import { SpawnAskPanel, type SpawnAsk } from './Mindscape/SpawnAskPanel';
 import { appendConversation, findSessionBoard, placeSessionCards, roleOfSession, setBoardView, setPlaceConversation, writeSessionNote, type MindscapeDoc } from '../../shared/mindscape/model';
 import type { SessionRole } from '../../shared/roles';
 // Sessão renovada em voo (B36) — limit crossed at the end of a turn → handoff → new session in the same tab.
-import { DEFAULT_SESSION_RENEWAL_PREFS, renewalLaunchArgs, type SessionRenewalPrefs } from '../../shared/sessionRenewal';
+import { DEFAULT_SESSION_RENEWAL_PREFS, RENEWAL_HANDOFF_WAIT_MS, renewalHandoffDeliveryNotice, renewalLaunchArgs, type SessionRenewalPrefs } from '../../shared/sessionRenewal';
 import { useSessionRenewal, type RenewalTabInput } from './sessionRenewal/useSessionRenewal';
-import { RenewalStrip } from './sessionRenewal/RenewalStrip';
+import { RenewalDeliveryStrip, RenewalStrip } from './sessionRenewal/RenewalStrip';
 import type { BoardView } from '../../shared/mindscape/view';
-import { cardView, dispatchView, STORE_COMPATIBILITY_WARNING } from './Esteira/esteiraView';
 import {
   AUTO_START_NOT_READY_MESSAGE,
   autoStartGiveUpMessage,
   autoStartWriteSteps,
   classifyAutoStartSubmission,
-  esteiraTabName,
   isReadyForAutoStart,
   isSafeToSendEnter,
   nextAutoStartEnterAction,
-  resolveSessionCwd,
-  type EsteiraSessionRequest,
 } from './Esteira/esteiraSession';
-import { preparePhase } from './Esteira/preparePhase';
 import type { EsteiraSnapshotDto } from '../../shared/esteira/ipc';
-import type { EntityId } from '../../shared/esteira/store/storeFormat';
-// C3 — o parser do tasks.md (puro, testado) fica fora do domínio da esteira
-// de propósito: é interpretação de TEXTO de um artefato, não fato do store.
-import { parseTasksDoc, taskScope } from '../../shared/tasksDoc';
-// N7 (010, D1) — o mapa de nós em tela cheia: outra projeção do MESMO
-// snapshot da esteira (`esteiraState` acima), isolada de propósito na sua
-// própria pasta (nenhuma edição em EsteiraScreen/esteiraMapView) — ver o
-// comentário do estado `nodeGraphOpen` mais abaixo.
-import { NodeGraphOverlay } from './DevMode/NodeGraphOverlay';
 import { Preferences } from './Preferences';
 import { PreviousSessions } from './PreviousSessions';
 import { AccountsPanel } from './AccountsPanel';
@@ -144,10 +126,13 @@ import { BackgroundIndicator, type BackgroundSession } from './chat/BackgroundTa
 import { revealRow } from './chat/revealRow';
 import { runningCount } from '../../shared/chat/backgroundTasks';
 import { effectiveTabView, hasChatView, nextTabView, shouldHandleViewShortcut } from './chat/tabView';
-import { disposeTabSend, ownerTerminalInput, sendDriverFor, sendToTab, sendToTabAndWait } from './chat/composer/tabSend';
+import { disposeTabSend, ownerTerminalInput, sendDriverFor, sendToTab, pendingSendReason, sendToTabAndWait, tabTookMessage } from './chat/composer/tabSend';
 import { blockingScreen, readInputText } from '../../shared/chat/screen';
+import { withNoPipelineTag } from '../../shared/chat/noPipeline';
 import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../shared/lider/ipc';
 import { isLeaderOfAllTab, leaderHome } from '../../shared/mindscape/leader';
+import { DEFAULT_LEADER_PREFS, leaderRemoteId } from '../../shared/leaderPrefs';
+import { planLeaderDelivery, startLeaderMove, type LeaderMove } from '../../shared/lider/move';
 import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
 import { TerminalPane } from './TerminalPane';
 import { PatchNotes } from './patchnotes/PatchNotes';
@@ -337,6 +322,9 @@ function tabMarks(roleName: string | undefined, worktreeMark: string | undefined
   return marks.length > 0 ? marks.join(' ') : undefined;
 }
 
+/** How long the statusline readings of all tabs wait to land together (one render for all of them). */
+const STATUS_LINE_FLUSH_MS = 300;
+
 /** Remove uma chave de um record sem mutar o original — usado ao limpar `semaphoreStates`/`aliveTabs` no fechamento de aba. */
 function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
   if (!(key in record)) return record;
@@ -344,6 +332,9 @@ function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
   delete next[key];
   return next;
 }
+
+/** Líder único na VPS — how long the Líder on the new place has to take the first message (a cold CLI on a busy VPS). */
+const LIDER_MOVE_WAIT_MS = 240_000;
 
 export function App(): React.JSX.Element {
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
@@ -373,7 +364,6 @@ export function App(): React.JSX.Element {
   // (projetos/porta de entrada) e, no Modo Dev, o mapa da direita. Estado de
   // UI puro (não persiste no config de propósito).
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [rightCollapsed, setRightCollapsed] = useState(false);
   // CA-26 (009-modo-dev-v3) — índice de origem do arraste em andamento na
   // barra de abas; `null` fora de um arraste. Estado de UI puro (mesmo
   // espírito de `sidebarCollapsed` acima), a reordenação de verdade é
@@ -395,6 +385,19 @@ export function App(): React.JSX.Element {
   const [chatPtyIds, setChatPtyIds] = useState<Record<string, string>>({});
   // Aba cujo processo saiu (FR-034): alimenta a barra "Sessão encerrada" do chat.
   const [tabExits, setTabExits] = useState<Record<string, { exitCode: number | null }>>({});
+  // Sessões remotas — ptyIds whose ssh dropped while the session lives on the place ("sem ligação"; main/remote-link.ts).
+  const [linkLostPtys, setLinkLostPtys] = useState<Record<string, true>>({});
+  useEffect(
+    () =>
+      window.donel.pty.onLink?.((ptyId, linked) => {
+        setLinkLostPtys((prev) => (linked ? omitKey(prev, ptyId) : prev[ptyId] ? prev : { ...prev, [ptyId]: true }));
+      }),
+    [],
+  );
+  const tabLinkLost = (tabId: string): boolean => {
+    const ptyId = chatPtyIds[tabId];
+    return tabExits[tabId] === undefined && ptyId !== undefined && linkLostPtys[ptyId] === true;
+  };
   const tabIdCounter = useRef(0);
   // T1221 (011-contas-e-provedores, etapa 2) — `AccountsPanel` substitui o
   // `ProfileSwitcher` (dropdown de perfis) como fonte da statusbar/badge:
@@ -461,6 +464,10 @@ export function App(): React.JSX.Element {
   // confirmação (true) ou fecha direto (false/ausente — connecting sem PTY
   // ainda, ou já 'ended'/'claude-not-found').
   const [aliveTabs, setAliveTabs] = useState<Record<string, boolean>>({});
+  /** 07/11 — why a tab's terminal never started (read by the board's `startTrouble`). */
+  const startFailuresRef = useRef<Record<string, string>>({});
+  // Líder único na VPS — per new Líder tab of a move, what ends the wait for it (its start failed or its process left).
+  const liderTabDiedRef = useRef<Record<string, () => void>>({});
   // FIX (feedback E2E rodada 5) — epoch ms de quando cada aba ficou `alive`
   // pela ÚLTIMA vez (ref, não state — só alimenta o diagnóstico abaixo,
   // nunca o gate real de injeção). Usado por `possiblyBlockedOnPrompt` pra
@@ -529,52 +536,24 @@ export function App(): React.JSX.Element {
   // arquivadas, defaults) vive no ConfigStore via `devMode:*` (CA-21). O que
   // está abaixo é só estado de TELA (modo ligado, o que está expandido, o
   // comando armado) — some no restart, e deve mesmo.
-  // Mindscape V1 — the mode selector has three values; `devModeOn` stays as a
-  // derived flag so the Modo Dev reads exactly as before.
-  const [appMode, setAppMode] = useState<'geral' | 'dev' | 'mindscape'>('geral');
-  const devModeOn = appMode === 'dev';
+  // Mindscape V1 — the mode selector has three values. Hill climbing took the place of the Modo Dev (05/11):
+  // only the left bar's look stayed; the right bar and the old flow left.
+  const [appMode, setAppMode] = useState<'geral' | 'hill' | 'mindscape'>('geral');
+  const hillOn = appMode === 'hill';
+  const hillClimb = useHillClimb();
   const mindscape = useMindscapeDoc();
-  /** Spec 010 — tela da esteira nova (gesto interno: botão no titlebar do Modo Dev). */
-  const [esteiraOpen, setEsteiraOpen] = useState(false);
-  /**
-   * Spec 010 / N7 (D1) — o mapa de nós, em tela cheia. Estado de TELA isolado
-   * de propósito (só este booleano + o botão do titlebar + o overlay
-   * condicional lá embaixo): o componente e a projeção pura moram inteiros em
-   * `DevMode/NodeGraphOverlay.tsx`/`DevMode/nodeGraphView.ts` e não editam
-   * `EsteiraScreen`/`esteiraMapView` — a mesma casca de UI que outro batch
-   * (mapa de carrossel) também mexe.
-   */
-  const [nodeGraphOpen, setNodeGraphOpen] = useState(false);
   /**
    * Spec 010 / B6 — o mapa é PROJEÇÃO do store: o snapshot chega pronto do main
    * (macro etapa já derivada, D-13) e é empurrado a cada mudança. O renderer
    * nunca lê disco nem calcula etapa.
    */
   const [esteiraState, setEsteiraState] = useState<EsteiraSnapshotDto | null>(null);
-  /**
-   * O que está em foco em cada eixo do carrossel e qual nó/etapa o painel de
-   * detalhe mostra. Estado de TELA — nada aqui é domínio.
-   */
-  const [mapSelection, setMapSelection] = useState<MapSelection>({
-    discoveryId: null,
-    planId: null,
-    itemId: null,
-    nodeKey: null,
-    phase: null,
-  });
   /** D4 — Toast informativo (o que o gesto fez, por que foi recusado); nunca tem desfazer. */
   const [devModeToast, setDevModeToast] = useState<string | null>(null);
+  /** B36 — tabs whose new session did not confirm it got the handoff (until the owner dismisses it). */
+  const [renewalDeliveryNotices, setRenewalDeliveryNotices] = useState<Record<string, string>>({});
   // "Isolar em worktree" — a aba fechou e a worktree ficou por ter trabalho não enviado: aviso discreto com "Abrir pasta".
   const [worktreeKept, setWorktreeKept] = useState<WorktreeKeptPayload | null>(null);
-  /**
-   * C3 — cache do texto de tasks.md já lido, por caminho ABSOLUTO. `null` =
-   * já tentou e não achou/não leu (não refaz o IPC); ausente = ainda não
-   * tentou. `buildMapView` é síncrona e não lê disco (D-13 continua valendo
-   * pro resto do snapshot) — este cache vive fora dela de propósito.
-   */
-  const [taskDocByPath, setTaskDocByPath] = useState<Record<string, string | null>>({});
-  /** Evita reler o mesmo caminho enquanto o fetch está em voo (guard por ref, mesmo padrão de `armWatchersRef`). */
-  const taskDocFetchingRef = useRef<Set<string>>(new Set());
   /** Cleanup do watcher de prontidão em voo por aba (mesmo padrão de `pendingInjectionWatchersRef`). */
   const armWatchersRef = useRef<Record<string, (() => void) | undefined>>({});
   /**
@@ -591,8 +570,10 @@ export function App(): React.JSX.Element {
   const sessionAccountsRef = useRef<Record<string, { id: string; label: string } | undefined>>({});
   sessionAccountsRef.current = sessionAccounts;
 
+  // Peso do renderer (08/11) — the bridge repeats the same state on every hook of a working session; an equal
+  // state keeps the record, so the whole app does not render again for nothing.
   const handleSemaphoreChange = useCallback((tabId: string, info: SemaphoreStateInfo): void => {
-    setSemaphoreStates((prev) => ({ ...prev, [tabId]: info }));
+    setSemaphoreStates((prev) => (sameSemaphoreInfo(prev[tabId], info) ? prev : { ...prev, [tabId]: info }));
   }, []);
 
   const handleAliveChange = useCallback((tabId: string, alive: boolean): void => {
@@ -736,8 +717,10 @@ export function App(): React.JSX.Element {
   const closeTabImmediately = (tabId: string): void => {
     const index = tabs.findIndex((tab) => tab.id === tabId);
     if (index === -1) return;
-    const remaining = tabs.filter((tab) => tab.id !== tabId);
-    setTabs(remaining);
+    // t-e753b554 — the place of this tab, if it does not come back, passes its live tasks on (read before it leaves).
+    agentBridgeRef.current?.placeClosed(tabId);
+    // Functional on purpose: "Fechar marcadas" (gargalos) closes several tabs in one render.
+    setTabs((prev) => prev.filter((tab) => tab.id !== tabId));
     if (activeTabId === tabId) {
       // A hidden session (opened by another one) never takes the focus: it would come back to the tab bar.
       const fallback = listedFallback(tabs, tabId);
@@ -745,6 +728,7 @@ export function App(): React.JSX.Element {
     }
     setSemaphoreStates((prev) => omitKey(prev, tabId));
     setAliveTabs((prev) => omitKey(prev, tabId));
+    delete startFailuresRef.current[tabId];
     delete aliveSinceRef.current[tabId]; // FIX (feedback E2E rodada 5) — mesmo padrão de limpeza dos maps acima.
     setSessionAccounts((prev) => omitKey(prev, tabId)); // FIX (feedback E2E rodada 5) — idem.
     setSessionModelEffort((prev) => omitKey(prev, tabId));
@@ -774,6 +758,16 @@ export function App(): React.JSX.Element {
    * (que lê `tabs`/`activeTabId` do render corrente). Mesmo padrão de
    * `appConfigRef`/`tabsRef`.
    */
+  /**
+   * Gargalos do ambiente — "Fechar marcadas": the same close as `sessao_fechar` (the remote session ends with its tab),
+   * for several tabs at once. When the tab in focus is among them, the focus goes to one that stays.
+   */
+  const handleMindscapeCloseSessions = (tabIds: readonly string[]): void => {
+    const closing = new Set(tabIds);
+    for (const tabId of tabIds) closeTabImmediately(tabId);
+    if (closing.has(activeTabId)) setActiveTabId(tabs.find((tab) => !closing.has(tab.id) && (!tab.openedBySession || tab.shown))?.id ?? '');
+  };
+
   const closeTabImmediatelyRef = useRef(closeTabImmediately);
   closeTabImmediatelyRef.current = closeTabImmediately;
 
@@ -1231,6 +1225,7 @@ export function App(): React.JSX.Element {
    * apaga nada. Sem aviso na tela, como o CA-11 pede.
    */
   const handleTabProcessExit = (tab: TabState, info: { exitCode: number | undefined; msSinceSpawn: number }): void => {
+    liderTabDiedRef.current[tab.id]?.(); // Líder único na VPS — the new Líder of a move died: the old one stays
     // T057 (014-chat, FR-034) — a barra "Sessão encerrada (código N)" do chat.
     setTabExits((prev) => ({ ...prev, [tab.id]: { exitCode: info.exitCode ?? null } }));
     // Spec 010 / B1 — o processo da sessão morreu (saiu sozinho, ou foi morto).
@@ -1521,14 +1516,30 @@ export function App(): React.JSX.Element {
   // (leituras que chegaram antes da montagem). `snapshot: null` = a aba saiu.
   useEffect(() => {
     let disposed = false;
-    const unsubscribe = window.donel.statusLine.onChanged(({ ptyId, snapshot }) => {
+    // Peso do renderer (08/11) — each working session posts its statusline many times a second; the readings are
+    // gathered and land together a few times a second, so the app renders once for all of them.
+    let pending = new Map<string, StatusLineSnapshot | null>();
+    let flushTimer: number | undefined;
+    const flush = (): void => {
+      flushTimer = undefined;
+      const batch = pending;
+      pending = new Map();
       setStatusLines((prev) => {
-        if (snapshot) return { ...prev, [ptyId]: snapshot };
-        if (!(ptyId in prev)) return prev;
-        const next = { ...prev };
-        delete next[ptyId];
+        let next = prev;
+        for (const [ptyId, snapshot] of batch) {
+          if (snapshot) {
+            next = { ...next, [ptyId]: snapshot };
+          } else if (ptyId in next) {
+            next = { ...next };
+            delete next[ptyId];
+          }
+        }
         return next;
       });
+    };
+    const unsubscribe = window.donel.statusLine.onChanged(({ ptyId, snapshot }) => {
+      pending.set(ptyId, snapshot);
+      if (flushTimer === undefined) flushTimer = window.setTimeout(flush, STATUS_LINE_FLUSH_MS);
     });
     void window.donel.statusLine
       .getAll()
@@ -1539,6 +1550,7 @@ export function App(): React.JSX.Element {
     return () => {
       disposed = true;
       unsubscribe();
+      window.clearTimeout(flushTimer);
     };
   }, []);
   useEffect(() => {
@@ -1548,9 +1560,17 @@ export function App(): React.JSX.Element {
         // `updateTab`. Uma mesma sessão retomada pode estar em mais de uma aba.
         // Fix #19 — `cliColorName` entra no MESMO `.map`: é o mesmo evento, a
         // mesma chave, nenhum segundo caminho de estado.
-        setTabs((prev) =>
-          prev.map((tab) => (tab.claudeSessionId === sessionId ? { ...tab, customTitle, cliColorName } : tab)),
-        );
+        // Peso do renderer (08/11) — this arrives on every line a session writes: only a real change makes new
+        // tabs (a new array re-rendered the whole app, the Mindscape included, for each line of each session).
+        setTabs((prev) => {
+          let changed = false;
+          const next = prev.map((tab) => {
+            if (tab.claudeSessionId !== sessionId || (tab.customTitle === customTitle && tab.cliColorName === cliColorName)) return tab;
+            changed = true;
+            return { ...tab, customTitle, cliColorName };
+          });
+          return changed ? next : prev;
+        });
 
         // T610 (006) — MESMA assinatura, MESMO evento: a 006 só lê o segundo campo
         // do payload. Abrir uma segunda assinatura aqui era risco nomeado na
@@ -1650,18 +1670,6 @@ export function App(): React.JSX.Element {
   // neste arquivo hoje — `handleOpenEsteiraSession` (o único lugar do Modo Dev
   // que abria aba com comando pré-digitado) migrou para o auto-start no B5.
   // =========================================================================
-
-  /**
-   * Spec 010 / B6 — a projeção do store para o carrossel. Tudo que o mapa
-   * mostra sai daqui: níveis, cards, trilha, detalhe, breadcrumb e a frase do
-   * vazio. Nenhuma decisão de domínio acontece neste arquivo.
-   */
-  const mapView = useMemo(
-    () => buildMapView(esteiraState?.snapshot ?? null, mapSelection),
-    [esteiraState, mapSelection],
-  );
-  const storeWarning = esteiraState === null ? null : STORE_COMPATIBILITY_WARNING[esteiraState.compatibility];
-  const storeReadOnly = esteiraState !== null && esteiraState.compatibility !== 'read-write';
 
   /**
    * B3 — os `cliSessionId` que o store da Esteira reconhece como sessão de
@@ -1818,26 +1826,6 @@ export function App(): React.JSX.Element {
     check();
   }, []);
 
-  /**
-   * 014-chat / T071 (FR-020) — auto-start da Esteira com o chat ligado: o comando da fase entra pelo MESMO
-   * `sendDriver` da caixa do chat (fila única, espera o CLI ficar pronto, confirma por sinal de aceite e
-   * reenvia o Enter perdido sem duplicar). Com `chat.enabled` desligado, `armEsteiraAutoStart` (acima)
-   * segue intacto. Falha vira aviso: a mensagem fica visível no chat com "tentar de novo".
-   */
-  const armEsteiraDriverSend = useCallback((tabId: string, command: string): void => {
-    const source = { terminal: () => terminalRefs.current[tabId] ?? null };
-    const id = sendToTab(tabId, source, { text: command });
-    const driver = sendDriverFor(tabId, source);
-    const off = driver.subscribe(() => {
-      const item = driver.getItems().find((candidate) => candidate.id === id);
-      if (item === undefined || item.state === 'accepted' || item.state === 'queued') return off();
-      if (item.state === 'failed') {
-        off();
-        setDevModeToast(`Não consegui enviar o comando da fase (${item.reason ?? 'sem motivo'}). Use «tentar de novo» no chat da aba.`);
-      }
-    });
-  }, []);
-
   // =========================================================================
   // Sessão renovada em voo (B36, docs/refinamentos/sessao-renovada-em-voo.md).
   // The decisions are pure (`shared/sessionRenewal.ts`); the per-tab machine is
@@ -1866,9 +1854,11 @@ export function App(): React.JSX.Element {
   });
   /** One line to the session of `tabId` — same doors as the Esteira auto-start: the chat's send driver, or typed into the terminal. */
   /** `from: 'session'` — a notice or a message from another session: it waits for the owner (sendDriver, 06/11). */
-  const sendRenewalLine = (tabId: string, text: string, from?: 'session'): void => {
+  const sendRenewalLine = (tabId: string, rawText: string, from?: 'session'): void => {
     const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
     if (tab === undefined) return;
+    // Not the owner's request: the pipeline router leaves it alone (src/shared/chat/noPipeline.ts).
+    const text = from === 'session' ? withNoPipelineTag(rawText) : rawText;
     if (hasChatView(tab, chatEnabled)) sendToTab(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text, ...(from ? { from } : {}) });
     else armEsteiraAutoStart(tabId, text);
   };
@@ -1887,174 +1877,6 @@ export function App(): React.JSX.Element {
     },
     toast: (message) => setDevModeToast(message),
   });
-
-  /**
-   * Spec 010 / batch B1 — o "Preparar" da esteira nova abre a sessão de
-   * verdade. Mesma divisão do Modo Dev: a DECISÃO (onde abrir, com que comando)
-   * é pura e vive em `Esteira/esteiraSession.ts`; aqui só o encanamento —
-   * criar a aba e amarrá-la à sessão registrada no histórico.
-   *
-   * Batch B5 — o comando não fica só pré-digitado: `armEsteiraAutoStart`
-   * também aperta o Enter, sozinho, assim que o CLI prova que está pronto.
-   */
-  const handleOpenEsteiraSession = (request: EsteiraSessionRequest): void => {
-    const tabId = addTab({
-      name: request.tabName,
-      cwd: request.cwd,
-      projectName: projects.find((project) => project.path === request.cwd)?.name,
-      pinned: false,
-      // Sem `--model`/`--effort`: a fase da esteira nova não tem tabela de
-      // defaults (`run.phase` é string livre, `[P-4]`), e inventar um modelo
-      // aqui seria o app decidindo o que ninguém declarou.
-      launchArgs: [],
-      sessionType: 'claude',
-      // A fase pré-digita o comando e o auto-start aperta o Enter: quem acompanha precisa ver o terminal.
-      // Com o chat ligado a aba abre no chat: o comando aparece como mensagem enviada (T071).
-      ...(chatEnabled ? {} : { view: 'terminal' as const }),
-    });
-    esteiraTabSessionsRef.current[tabId] = request.sessionId;
-    if (chatEnabled) armEsteiraDriverSend(tabId, request.command);
-    else armEsteiraAutoStart(tabId, request.command);
-  };
-
-  /**
-   * Spec 010 / B6 — "⌁ Preparar" na trilha do mapa. É o MESMO gesto do painel
-   * do store: a orquestração inteira mora em `preparePhase` (resolver o cwd,
-   * disparar, abrir a aba com o comando escrito, dizer o que aconteceu). Duas
-   * orquestrações do mesmo disparo divergiriam no primeiro conserto — e
-   * divergir aqui significa uma tela abrindo sessão onde a outra recusa.
-   */
-  const handleMapPrepare = (step: MapTrailStep): void => {
-    const snapshot = esteiraState?.snapshot;
-    if (!snapshot) return;
-    const card = cardView(snapshot, mapView.focused.discoveryId ?? '');
-    if (card === null) return;
-    // Quem diz se esta fase pode rodar sobre este assunto é `dispatchView` (B2)
-    // — o mapa pergunta, nunca recalcula.
-    const oferta = dispatchView(card, { phase: step.phase, targetKey: `${step.subject.entity}:${step.subject.id}` });
-    if (oferta.target === null) return;
-    if (!oferta.canDispatch) {
-      setDevModeToast(oferta.blocked ?? oferta.hint);
-      return;
-    }
-    void preparePhase(
-      { card, phase: step.phase, target: oferta.target, projects },
-      { dispatch: (payload) => window.donel.esteira.dispatch(payload), openSession: handleOpenEsteiraSession },
-    ).then((result) => {
-      // `state: null` = recusa que nao gravou nada; manter o estado que ja esta
-      // na tela, em vez de zera-la para anunciar que nada aconteceu.
-      if (result.state !== null) setEsteiraState(result.state);
-      setDevModeToast(result.message);
-    });
-  };
-
-  /**
-   * B1 (batch N5) — "↺ Retomar" na trilha do mapa: reabre a ÚLTIMA sessão da
-   * cadeia daquele passo já FECHADO (`claude -r <cliSessionId>` no `cwd`
-   * dela — `step.resume` já vem resolvido de `esteiraMapView.trailFor`,
-   * pura). SEM dispatch novo, SEM mudar estado do card: quem muda estado é
-   * fato declarado por skill, nunca o gesto de abrir. Mesmo padrão de
-   * `handleFocusOrResumeFavoriteSession` (007): aba já aberta com essa
-   * sessão ganha foco, em vez de abrir outra.
-   */
-  const handleMapResume = (step: MapTrailStep): void => {
-    if (step.resume === null) return;
-    const { cliSessionId, cwd } = step.resume;
-    const existingTab = tabs.find((tab) => tab.claudeSessionId === cliSessionId);
-    if (existingTab) {
-      setActiveTabId(existingTab.id);
-      return;
-    }
-    const discoveryTitle = mapView.breadcrumb[0] ?? step.phase;
-    openWhereItLives(cliSessionId, cwd, (remote) => {
-      addTab({
-        name: esteiraTabName(step.phase, discoveryTitle),
-        cwd,
-        projectName: projects.find((project) => project.path === cwd)?.name,
-        pinned: false,
-        launchArgs: buildClaudeArgs({ continuation: { type: 'resume', sessionId: cliSessionId } }),
-        sessionType: 'claude',
-        ...remote,
-      });
-    });
-  };
-
-  /**
-   * B2 (batch N5) — navegar o mapa até um nó alterna para a aba da sessão
-   * VIVA dele, quando existe. `tabToFocusFor` (esteiraMapView, pura) é quem
-   * decide o FATO — `SessionSnapshot.endedAt === null` cruzado com as abas
-   * abertas; esta função só aplica o resultado. Nó sem sessão viva não rouba
-   * foco (`tabId` vem `null`, nada muda) — sessão fechada nunca é alvo de
-   * alternância; para isso existe o retomar explícito do B1.
-   */
-  const focusLiveSessionOf = (discoveryId: string, subject: EntityId): void => {
-    const tabId = tabToFocusFor(esteiraState?.snapshot ?? null, discoveryId, subject, tabs);
-    if (tabId !== null) setActiveTabId(tabId);
-  };
-
-  /**
-   * C3 — o artefato de tasks.md do nó em foco no detalhe, e o caminho
-   * ABSOLUTO resolvido pra lê-lo. `resolveSessionCwd` é a MESMA resolução
-   * repo→caminho local que já decide onde a sessão de terminal abre (D-6) —
-   * reusada aqui, não recalculada: um repo que o app não conhece não vira
-   * leitura silenciosa por palpite, do mesmo jeito que não vira sessão.
-   */
-  const tasksTarget = useMemo(() => {
-    const snapshot = esteiraState?.snapshot;
-    if (!snapshot || mapView.focused.discoveryId === null || mapView.detail === null) return null;
-    const card = cardView(snapshot, mapView.focused.discoveryId);
-    if (card === null) return null;
-    const artifact = tasksArtifactFor(card, mapView.detail.subject);
-    if (artifact === null || artifact.location !== 'repo' || artifact.repo === null) return null;
-    const resolved = resolveSessionCwd(artifact.repo, projects);
-    if (!resolved.ok) return null;
-    const separator = resolved.cwd.endsWith('/') || resolved.cwd.endsWith('\\') ? '' : '/';
-    return { path: `${resolved.cwd}${separator}${artifact.path}` };
-  }, [esteiraState, mapView.focused.discoveryId, mapView.detail, projects]);
-
-  useEffect(() => {
-    if (tasksTarget === null) return;
-    if (taskDocFetchingRef.current.has(tasksTarget.path)) return;
-    taskDocFetchingRef.current.add(tasksTarget.path);
-    void window.donel.esteira.readArtifactText({ path: tasksTarget.path }).then((result) => {
-      setTaskDocByPath((prev) => ({ ...prev, [tasksTarget.path]: result.ok ? result.text : null }));
-    });
-  }, [tasksTarget]);
-
-  /** C3 — o texto já lido (se houver) interpretado por `shared/tasksDoc` (puro): o painel de detalhe só desenha o que sai daqui. */
-  const tasksView = useMemo((): TasksRunningTogetherView | null => {
-    if (tasksTarget === null) return null;
-    const text = taskDocByPath[tasksTarget.path];
-    if (text === undefined || text === null) return null;
-    const tasks = parseTasksDoc(text);
-    const scope = taskScope(tasks);
-    return scope === null ? null : { scope, tasks };
-  }, [tasksTarget, taskDocByPath]);
-
-  /** D-11 — a trava é fato local, e sai num gesto. Nada de etiqueta órfã no board. */
-  const handleMapReleaseLock = (): void => {
-    const lock = mapView.detail?.lock;
-    const snapshot = esteiraState?.snapshot;
-    if (!lock || !snapshot) return;
-    const card = cardView(snapshot, mapView.focused.discoveryId ?? '');
-    if (card?.lock == null) return;
-    void window.donel.esteira
-      .releaseLock({ subject: card.lock.subject, phase: card.lock.phase })
-      .then(setEsteiraState)
-      .catch(() => undefined);
-  };
-
-  /** D-12 — reenviar o espelho é cortesia: não desbloqueia nada local, e a frase fala do board. */
-  const handleMapRetryMirror = (): void => {
-    void window.donel.esteira
-      .retryMirror()
-      .then((state) => {
-        setEsteiraState(state);
-        const pendente = state.snapshot.mirrorQueue.length;
-        setDevModeToast(pendente === 0 ? 'O board recebeu o que faltava.' : `${pendente} operação(ões) ainda não foram aceitas pelo board.`);
-      })
-      .catch(() => undefined);
-  };
 
   // T009 — antes do primeiro evento de hook chegar pra uma aba recém-criada,
   // assume 'working' (spike: estado inicial otimista) com stateEnteredAt=0
@@ -2239,13 +2061,17 @@ export function App(): React.JSX.Element {
               launchArgs: withResumeArgs(entry.launchArgs, entry.sessionId),
               remoteId: entry.remoteId,
               ...(entry.openedBy ? { openedBySession: true, openedBy: entry.openedBy } : {}),
+              // Líder único na VPS — it comes back as the Líder (the Jobu talks to it), not as an ordinary tab.
+              ...(entry.roleId ? { roleId: entry.roleId } : {}),
+              ...(entry.leaderOfAll ? { leaderOfAll: true } : {}),
             },
             false,
           );
           // Só os Líderes nas abas — a session a Líder opened on the remote stays out of the tab bar after a restart.
           if (entry.openedBy) agentBridgeRef.current.adoptOpened(id, entry.openedBy);
-          // A restore, not a gesture: it takes the focus as before, without leaving the Oráculo.
-          else setActiveTabId(id);
+          // A restore, not a gesture: it takes the focus as before, without leaving the Oráculo. The Líder único is
+          // reached through the Jobu: it never takes the focus.
+          else if (!entry.leaderOfAll) setActiveTabId(id);
         }
       })
       .catch(() => undefined);
@@ -2300,16 +2126,18 @@ export function App(): React.JSX.Element {
             stateEnteredAt: semaphore?.stateEnteredAt ?? 0,
             background: backgroundRunningOf(tab.id),
             ...(tab.roleId ? { roleId: tab.roleId } : {}),
+            ...(tab.remoteId ? { machineId: tab.remoteId } : {}),
             ...(!semaphore || semaphore.unconfirmed ? { unconfirmed: true } : {}),
             ...(semaphore?.pendingKinds ? { pendingKinds: semaphore.pendingKinds } : {}),
             ...(semaphore?.turnFailure ? { turnFailure: semaphore.turnFailure } : {}),
+            ...(tabLinkLost(tab.id) ? { linkLost: true } : {}),
             ...(engine ? { engine } : {}),
             ...(meter.usedTokens !== null ? { meter: { usedTokens: meter.usedTokens, maxTokens: meter.contextZone } } : {}),
           },
         ];
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [tabs, semaphoreStates, appConfig, backgroundByPty, chatPtyIds, tabExits, statusLines, sessionModels, contextTokens, sessionModelEffort, providers],
+    [tabs, semaphoreStates, appConfig, backgroundByPty, chatPtyIds, tabExits, linkLostPtys, statusLines, sessionModels, contextTokens, sessionModelEffort, providers],
   );
   // Mindscape, fatia 02 — last visit of the owner to each session, in memory
   // only (not persisted: the app is born without tabs). Stamped when a tab
@@ -2380,7 +2208,7 @@ export function App(): React.JSX.Element {
    * card (with its post-it and links) moves to the new session in the same place — BEFORE the tab
    * gets the new id, so the board never places a second card. Then the first message: read the handoff.
    */
-  const handleRenewedSession = (tab: TabState, previousSessionId: string, sessionId: string, firstPrompt: string): void => {
+  const handleRenewedSession = (tab: TabState, previousSessionId: string, sessionId: string, firstPrompt: string, handoffPath: string): void => {
     const stored = appConfigRef.current?.sessionNames[previousSessionId] ?? null;
     const effectiveName = resolveSessionName({ fallback: tab.name, customTitle: tab.customTitle ?? null, stored });
     // Item 12a — the new conversation is added to the same place (card, role, post-it, links).
@@ -2396,7 +2224,24 @@ export function App(): React.JSX.Element {
     if (tab.color && tab.color !== 'none') {
       void window.donel.tabs.setColor(sessionId, tab.color).then(setAppConfig).catch(() => undefined);
     }
-    sendRenewalLine(tab.id, firstPrompt);
+    // The handoff must reach the new session: with the chat, wait for its CLI to take the message and,
+    // when it does not, say so on the tab (never resent by itself). The terminal-only path types it as before.
+    const tabId = tab.id;
+    if (!hasChatView(tab, chatEnabled)) {
+      sendRenewalLine(tabId, firstPrompt);
+      return;
+    }
+    setRenewalDeliveryNotices((prev) => {
+      if (!(tabId in prev)) return prev;
+      const next = { ...prev };
+      delete next[tabId];
+      return next;
+    });
+    void sendToTabAndWait(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text: firstPrompt }, RENEWAL_HANDOFF_WAIT_MS).then((outcome) => {
+      const notice = renewalHandoffDeliveryNotice(outcome, handoffPath);
+      if (notice === null || !tabsRef.current.some((candidate) => candidate.id === tabId)) return;
+      setRenewalDeliveryNotices((prev) => ({ ...prev, [tabId]: notice }));
+    });
   };
   // Desenho, fatia 02 — what the sessions do goes through `applySession`: it
   // never enters the history (an undo does not take a session post-it away).
@@ -2417,6 +2262,9 @@ export function App(): React.JSX.Element {
   const [roles, setRoles] = useState<SessionRole[]>([]);
   // Item 12b — the screen to create and edit roles ("Papéis…" in the Mindscape and in the Launcher).
   const [rolesEditorOpen, setRolesEditorOpen] = useState(false);
+  /** Cadeiras, fatia 2 — the role whose chair screen (B1) is open, and the role the Papéis editor opens on. */
+  const [chairRoleId, setChairRoleId] = useState<string | null>(null);
+  const [rolesEditorRoleId, setRolesEditorRoleId] = useState<string | undefined>(undefined);
   useEffect(() => {
     void window.donel.roles
       ?.list()
@@ -2436,6 +2284,12 @@ export function App(): React.JSX.Element {
    * the role's suggestions (model, effort, permission, engine) and the role itself. A tab already
    * opening for that place is only focused. The place binds to the conversation when its id comes.
    */
+  /** Where the Líderes run (Preferences, "Onde o Líder roda"): a remote place, or `undefined` for this computer. */
+  const leaderPlace = (): string | undefined =>
+    leaderRemoteId(
+      appConfig?.leader ?? DEFAULT_LEADER_PREFS,
+      accountsView.remotes.map((remote) => ({ id: remote.id, hasAccount: Boolean(remote.activeAccountId) })),
+    );
   const handleMindscapeStartPlace = (placeId: string, projectPath: string): void => {
     const existingTab = tabs.find((tab) => tab.placeId === placeId);
     if (existingTab) {
@@ -2450,13 +2304,16 @@ export function App(): React.JSX.Element {
     const defaults = appConfig?.launcherDefaults;
     const project = projects.find((candidate) => candidate.path === projectPath);
     // "Onde roda" — same default as the Launcher (owner, 04/11): the last choice; without one, the first remote place with an account.
+    // A Líder of a board opens where the Líder único runs (owner, 08/11: the orchestrator on the VPS, the PC only with the app).
     const savedWhere = defaults?.where;
     const remoteId =
-      savedWhere === 'local'
-        ? undefined
-        : accountsView.remotes.some((remote) => remote.id === savedWhere)
-          ? savedWhere
-          : accountsView.remotes.find((remote) => remote.activeAccountId)?.id;
+      place.roleId === LIDER_ROLE_ID && !providerId
+        ? leaderPlace()
+        : savedWhere === 'local'
+          ? undefined
+          : accountsView.remotes.some((remote) => remote.id === savedWhere)
+            ? savedWhere
+            : accountsView.remotes.find((remote) => remote.activeAccountId)?.id;
     addTab({
       name: role?.name ?? 'Sessão',
       cwd: projectPath,
@@ -2506,27 +2363,41 @@ export function App(): React.JSX.Element {
     window.donel.lider.report(report);
   });
   const liderDeliverRef = useRef<(text: string) => LiderSendResult>(() => ({ ok: false, reason: 'O Donel ainda está abrindo.' }));
+  // Líder único na VPS — the move in progress (its messages wait for it). Async steps close tabs through a ref,
+  // never through a stale render.
+  const liderMoveRef = useRef<LeaderMove | null>(null);
   liderDeliverRef.current = (text: string): LiderSendResult => {
-    let tabId = findLiderTab()?.id;
-    if (tabId === undefined) {
-      const role = roles.find((candidate) => candidate.id === LIDER_ROLE_ID);
+    const sendTo = (tabId: string, message: string): void => {
+      sendToTab(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text: message });
+    };
+    if (liderMoveRef.current) {
+      liderMoveRef.current.enqueue(text);
+      return { ok: true };
+    }
+    const role = roles.find((candidate) => candidate.id === LIDER_ROLE_ID);
+    const providerId = role?.engine && providers.some((provider) => provider.id === role.engine) ? role.engine : undefined;
+    // Líder único na VPS (docs/planos/lider-na-vps.md) — where the owner wants it (Preferences). A provider of a third
+    // party does not run on a remote place (ADR 0006): that Líder stays here.
+    const wantedRemoteId = providerId ? undefined : leaderPlace();
+    const openLeader = (resume?: { readonly sessionId: string; readonly cwd: string | undefined }): string => {
       // Without the role there is no Líder único (it is the role + the mark below): say so instead of opening a plain session.
-      if (!role) return { ok: false, reason: 'O papel Líder não existe nesta máquina.' };
-      const providerId = role.engine && providers.some((provider) => provider.id === role.engine) ? role.engine : undefined;
+      if (!role) throw new Error('O papel Líder não existe nesta máquina.');
       const defaults = appConfig?.launcherDefaults;
-      const home = leaderHome(Object.keys(mindscape.doc.boards));
-      tabId = addTab({
+      const home = resume ? resume.cwd : leaderHome(Object.keys(mindscape.doc.boards));
+      const launchArgs = buildLauncherArgs({
+        providerId,
+        model: role.model ?? defaults?.model ?? DEFAULT_MODEL_ALIAS,
+        effort: role.effort ?? defaults?.effort ?? DEFAULT_EFFORT_LEVEL,
+        permissionMode: role.permissionMode ?? defaults?.permissionMode ?? 'acceptEdits',
+        sessionName: '',
+      });
+      return addTab({
         name: role.name,
         // No `projectName`: the Líder único belongs to no board.
         ...(home ? { cwd: home } : {}),
         pinned: false,
-        launchArgs: buildLauncherArgs({
-          providerId,
-          model: role.model ?? defaults?.model ?? DEFAULT_MODEL_ALIAS,
-          effort: role.effort ?? defaults?.effort ?? DEFAULT_EFFORT_LEVEL,
-          permissionMode: role.permissionMode ?? defaults?.permissionMode ?? 'acceptEdits',
-          sessionName: '',
-        }),
+        launchArgs: resume ? withResumeArgs(launchArgs, resume.sessionId) : launchArgs,
+        ...(wantedRemoteId ? { remoteId: wantedRemoteId } : {}),
         sessionType: 'claude',
         providerId,
         roleId: role.id,
@@ -2534,11 +2405,64 @@ export function App(): React.JSX.Element {
         leaderOfAll: true,
         // Oráculo no centro — the owner talks to it through the Jobu: it opens without taking the front.
       }, !layoutPrefsRef.current.oracleCenter);
-      liderTabRef.current = tabId;
+    };
+
+    // The live Líder; with none, the one whose process ended (the ssh dropped while the notebook slept).
+    const live = findLiderTab();
+    const remembered = liderTabRef.current ? tabs.find((tab) => tab.id === liderTabRef.current && isLeaderOfAllTab(tab)) : undefined;
+    const tab = live ?? remembered ?? tabs.find(isLeaderOfAllTab);
+    const plan = planLeaderDelivery(
+      tab ? { id: tab.id, remoteId: tab.remoteId, claudeSessionId: tab.claudeSessionId, state: semaphoreStates[tab.id]?.state, exited: tabExits[tab.id] !== undefined } : undefined,
+      wantedRemoteId,
+    );
+
+    if (plan.kind === 'send') {
+      sendTo(plan.tabId, text);
+      return { ok: true };
     }
-    const target = tabId;
-    sendToTab(target, { terminal: () => terminalRefs.current[target] ?? null }, { text });
-    return { ok: true };
+    if (plan.kind === 'reconnect') {
+      // The same conversation, where it was: on a remote place this reattaches to the same CLI in its tmux.
+      liderTabRef.current = plan.tabId;
+      terminalRefs.current[plan.tabId]?.respawn({ resume: plan.sessionId });
+      sendTo(plan.tabId, text);
+      return { ok: true };
+    }
+    if (plan.kind === 'move' && tab) {
+      const oldTabId = plan.tabId;
+      const cwd = tab.cwd;
+      const move = startLeaderMove(oldTabId, text, {
+        carry: () => window.donel.lider.carry({ sessionId: plan.sessionId, ...(cwd ? { cwd } : {}), ...(tab.remoteId ? { from: tab.remoteId } : {}), ...(wantedRemoteId ? { to: wantedRemoteId } : {}) }),
+        openNew: () => openLeader({ sessionId: plan.sessionId, cwd }),
+        deliverFirst: (tabId, first) =>
+          new Promise<boolean>((resolve) => {
+            liderTabDiedRef.current[tabId] = () => resolve(false);
+            void sendToTabAndWait(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text: first }, LIDER_MOVE_WAIT_MS).then((outcome) =>
+              resolve(outcome.kind === 'entrou' || outcome.kind === 'na-fila'),
+            );
+          }).finally(() => {
+            delete liderTabDiedRef.current[tabId];
+          }),
+        send: sendTo,
+        close: (tabId) => closeTabImmediatelyRef.current(tabId),
+        adopt: (tabId) => {
+          liderTabRef.current = tabId;
+        },
+        notify: (message) => setDevModeToast(message),
+      });
+      liderMoveRef.current = move;
+      void move.done.finally(() => {
+        if (liderMoveRef.current === move) liderMoveRef.current = null;
+      });
+      return { ok: true };
+    }
+    try {
+      const tabId = openLeader();
+      liderTabRef.current = tabId;
+      sendTo(tabId, text);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+    }
   };
   useEffect(() => window.donel.lider.onDeliver(({ text }, reply) => reply(liderDeliverRef.current(text))), []);
   useEffect(
@@ -2583,6 +2507,11 @@ export function App(): React.JSX.Element {
     tabs: () => tabsRef.current,
     tabOfPty: (ptyId) => tabsRef.current.find((tab) => chatPtyIds[tab.id] === ptyId),
     stateOf: (tabId) => (tabExits[tabId] !== undefined || !tabsRef.current.some((tab) => tab.id === tabId) ? undefined : (semaphoreStates[tabId]?.state ?? 'working')),
+    linkLost: (tabId) => tabLinkLost(tabId),
+    relinkTools: (tabId) => {
+      const ptyId = tabExits[tabId] === undefined ? chatPtyIds[tabId] : undefined;
+      return ptyId ? window.donel.pty.relinkTools(ptyId) : Promise.resolve({ ok: false, text: 'a aba dela não tem processo vivo.' });
+    },
     roles: () => roles,
     openSession: (request) => {
       const defaults = appConfig?.launcherDefaults;
@@ -2618,7 +2547,7 @@ export function App(): React.JSX.Element {
     deliverLine: (tabId, text, waitMs, from) => {
       const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
       if (tab !== undefined && hasChatView(tab, chatEnabled))
-        return sendToTabAndWait(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text, from }, waitMs);
+        return sendToTabAndWait(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text: from === 'session' ? withNoPipelineTag(text) : text, from }, waitMs);
       sendRenewalLine(tabId, text, from === 'session' ? 'session' : undefined);
       return Promise.resolve({ kind: 'pelo-terminal' as const });
     },
@@ -2626,10 +2555,16 @@ export function App(): React.JSX.Element {
       const lines = terminalRefs.current[tabId]?.readScreen().lines;
       return lines !== undefined && blockingScreen(lines)?.kind === 'permission';
     },
-    unconfirmed: (tabId) => semaphoreStates[tabId]?.unconfirmed === true || semaphoreStates[tabId] === undefined,
+    // No hook yet is not "never started" when the CLI already took a message (the transcript showed it): a session on a
+    // remote place whose hooks do not come back was told "não começou" with five answers in its transcript (07/11).
+    unconfirmed: (tabId) => (semaphoreStates[tabId]?.unconfirmed === true || semaphoreStates[tabId] === undefined) && !tabTookMessage(tabId),
     startTrouble: (tabId) => {
       if (tabExits[tabId] !== undefined) return 'o Claude de lá foi encerrado';
-      if (aliveTabs[tabId] !== true) return 'o terminal dela não chegou a abrir';
+      const failed = startFailuresRef.current[tabId];
+      if (failed !== undefined) return `o terminal dela não abriu (${failed})`;
+      const sending = pendingSendReason(tabId);
+      if (aliveTabs[tabId] !== true) return `o terminal dela não chegou a abrir${sending !== null ? '; o pedido espera por ele' : ''}`;
+      if (sending !== null) return `o pedido ainda está a caminho (${sending})`;
       const lines = terminalRefs.current[tabId]?.readScreen().lines;
       if (lines === undefined) return null;
       const dialog = blockingScreen(lines);
@@ -2648,10 +2583,59 @@ export function App(): React.JSX.Element {
     remoteLabel: (remoteId) => accountsView.remotes.find((remote) => remote.id === remoteId)?.label ?? remoteId,
     remotes: () => accountsView.remotes.map((remote) => ({ id: remote.id, label: remote.label })),
     projects: () => projects.map((project) => ({ path: project.path, name: project.name })),
+    passOn: (requests) => window.donel.ledger.passOn(requests),
+    stateEnteredAt: (tabId) => semaphoreStates[tabId]?.stateEnteredAt,
+    logFaxineiro: (entries) => window.donel.faxineiro.log(entries),
+    // 08/11 — the end of a turn goes to the ledger, not to a Líder's chat (Preferências can turn the old mode back on).
+    turnNotices: () => appConfig?.team.turnNotices ?? 'ledger',
+    recordTurn: (record) => window.donel.ledger.turnEnded(record).catch((): LedgerTurnRecorded => 'falhou'),
+    turnFailureOf: (tabId) => semaphoreStates[tabId]?.turnFailure,
   };
   const agentBridgeRef = useRef<AgentBridge>(null as unknown as AgentBridge);
   if (agentBridgeRef.current === null) agentBridgeRef.current = new AgentBridge(agentPorts);
   agentBridgeRef.current.setPorts(agentPorts);
+  // 08/11 — what cannot wait for the Líder's read of the ledger (a permission open, a failed turn) is told at once by
+  // the bridge, from the semaphore the app already has; the bridge tells each situation once.
+  useEffect(() => {
+    for (const tabId of Object.keys(semaphoreStates)) agentBridgeRef.current.attention(tabId);
+  }, [semaphoreStates]);
+  // A Líder that comes back from "sem ligação" changes no state: what waited for it is tried again every half minute.
+  useEffect(() => {
+    const timer = setInterval(() => agentBridgeRef.current.flushUrgent(), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+  // t-e753b554 — a place that never started passes its live tasks on (the main waits 30 min after the last event).
+  useEffect(() => {
+    const timer = setInterval(() => void agentBridgeRef.current.checkNotStarted(), 5 * 60_000);
+    return () => clearInterval(timer);
+  }, []);
+  // t-b3b26e60 — Faxineiro com gatilhos: once a minute the main judges the machines and the open sessions, and the
+  // bridge wakes the Faxineiro of a board (or closes one that finished its round). One round at a time.
+  useEffect(() => {
+    let running = false;
+    const round = async (): Promise<void> => {
+      if (running) return;
+      running = true;
+      try {
+        const bridge = agentBridgeRef.current;
+        const answer = await window.donel.faxineiro.round(bridge.faxineiroSessions());
+        bridge.setFullMachines(answer.fullMachines, answer.openingRoom);
+        const entries: FaxineiroLogEntry[] = [...bridge.drainQueue()];
+        for (const close of answer.closeIdle) {
+          const closed = bridge.closeIdleFaxineiro(close.projectPath, close.placeId);
+          if (closed) entries.push(closed);
+        }
+        for (const wake of answer.wakes) entries.push(await bridge.wakeFaxineiro(wake));
+        if (entries.length > 0) window.donel.faxineiro.log(entries);
+      } catch (error) {
+        console.error('[donel-dev] faxineiro: rodada falhou', error);
+      } finally {
+        running = false;
+      }
+    };
+    const timer = setInterval(() => void round(), 60_000);
+    return () => clearInterval(timer);
+  }, []);
   useEffect(() => {
     const bridge = agentBridgeRef.current;
     const off = window.donel.mindscape.onBoardRequest(({ requestId, ptyId, call }) => {
@@ -2675,7 +2659,8 @@ export function App(): React.JSX.Element {
     for (const [tabId, text] of Object.entries(pendingFirstMessagesRef.current)) {
       if (!tabs.some((tab) => tab.id === tabId)) continue;
       delete pendingFirstMessagesRef.current[tabId];
-      sendRenewalLine(tabId, text);
+      // The request of the session that opened it, not the owner's: the pipeline router leaves it alone.
+      sendRenewalLine(tabId, withNoPipelineTag(text));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tabs]);
@@ -3005,6 +2990,10 @@ export function App(): React.JSX.Element {
     return true;
   };
   const hiddenFromTabBar = (tab: TabState): boolean => oracleLayoutOn && isLeaderOfAllTab(tab) && (oracleShown || tab.id !== activeTabId);
+  // Ledger v5, fatia 1 — the orphans of the box "Esperando você" read the places as `tarefa_listar` does; before the
+  // board loads every place would look closed, so no orphan is called until then.
+  const ledgerPlaceStatesOf = (projectPaths: readonly string[]): Map<string, Map<string, string>> =>
+    mindscapeLoaded ? agentBridgeRef.current.placeStates(projectPaths) : new Map();
   const oraclePlaceName: PlaceNameOf = (projectPath, placeId) => {
     const card = mindscape.doc.boards[projectPath]?.cards[placeId];
     if (card?.kind !== 'session' || !card.sessionId) return undefined;
@@ -3160,10 +3149,10 @@ export function App(): React.JSX.Element {
           <SegmentedControl
             ariaLabel="Modo"
             value={appMode}
-            onChange={(next) => setAppMode(next === 'dev' || next === 'mindscape' ? next : 'geral')}
+            onChange={(next) => setAppMode(next === 'hill' || next === 'mindscape' ? next : 'geral')}
             options={[
               { value: 'geral', label: 'Uso geral' },
-              { value: 'dev', label: 'Dev' },
+              { value: 'hill', label: 'Hill climbing' },
               { value: 'mindscape', label: 'Mindscape' },
             ]}
           />
@@ -3196,58 +3185,6 @@ export function App(): React.JSX.Element {
             <PanelLeftClose size={16} strokeWidth={1.5} aria-hidden="true" />
           )}
         </button>
-        {devModeOn ? (
-          // FIX (feedback e2e 05/08, C4) — a versão de 30/07 deste comentário
-          // dizia que `rightCollapsed` devia zerar mapa E painel de detalhe
-          // juntos; era o próprio bug. "Recolher a barra direita" só pode
-          // recolher a barra direita: este botão agora afeta SÓ
-          // `PhaseDetailsPanel` (coluna direita, 316px) — o mapa
-          // (`DiscoveryMap`, coluna esquerda) nunca mais reage a este estado.
-          <button
-            type="button"
-            className={styles.preferencesButton}
-            onClick={() => setRightCollapsed((prev) => !prev)}
-            aria-label={rightCollapsed ? 'Mostrar painel de detalhes' : 'Recolher painel de detalhes'}
-            title={rightCollapsed ? 'Mostrar painel de detalhes' : 'Recolher painel de detalhes'}
-          >
-            {rightCollapsed ? (
-              <PanelRightOpen size={16} strokeWidth={1.5} aria-hidden="true" />
-            ) : (
-              <PanelRightClose size={16} strokeWidth={1.5} aria-hidden="true" />
-            )}
-          </button>
-        ) : null}
-        {/* Spec 010 — gesto interno para a esteira nova. Fica só no Modo Dev e
-            NÃO substitui o mapa: os dois convivem até o vertical fechar. */}
-        {devModeOn ? (
-          <button
-            type="button"
-            className={styles.preferencesButton}
-            onClick={() => setEsteiraOpen((prev) => !prev)}
-            aria-label={esteiraOpen ? 'Voltar ao mapa atual' : 'Abrir a esteira nova'}
-            title={esteiraOpen ? 'Voltar ao mapa atual' : 'Abrir a esteira nova (spec 010)'}
-            data-testid="esteira-toggle"
-          >
-            <Route size={16} strokeWidth={1.5} aria-hidden="true" />
-          </button>
-        ) : null}
-        {/* Spec 010 / N7 (D1) — navegação rápida: o mapa de nós, em tela
-            cheia, para acompanhar o trabalho de ponta a ponta (todos os
-            discoveries, não um card por vez). Só abre — fechar é gesto do
-            próprio overlay (botão "Fechar" ou Esc), porque ele cobre a
-            titlebar inteira enquanto está aberto. */}
-        {devModeOn ? (
-          <button
-            type="button"
-            className={styles.preferencesButton}
-            onClick={() => setNodeGraphOpen(true)}
-            aria-label="Abrir o mapa de nós"
-            title="Mapa de nós — visão geral e navegação rápida (spec 010, D1)"
-            data-testid="node-graph-toggle"
-          >
-            <Network size={16} strokeWidth={1.5} aria-hidden="true" />
-          </button>
-        ) : null}
         <button
           type="button"
           className={styles.preferencesButton}
@@ -3257,42 +3194,32 @@ export function App(): React.JSX.Element {
         >
           <Settings size={16} strokeWidth={1.5} aria-hidden="true" />
         </button>
-        {/* D11/CA-15 (009-modo-dev-v3) — "＋ Nova sessão" não pertence ao Modo
-            Dev: lá as sessões nascem da esteira (trilha do mapa, "⌁
-            Preparar"), nunca de um atalho ad-hoc. O modo clássico preserva o
-            gesto por inteiro. */}
-        {!devModeOn ? (
-          <SplitButton
-            label="＋ Nova sessão"
-            // FIX (teste manual 27/07) — o corpo do botão passa a ABRIR o
-            // Launcher (escolher modelo/esforço/projeto) em vez do quick-launch
-            // cego: pedido do dono ("sempre que eu aperte em Nova sessão
-            // apareça a barra lateral para escolher o modelo e afins"). O
-            // atalho rápido com a última config vira item do dropdown.
-            onClick={() => setLauncherOpen(true)}
-            items={[
-              { label: 'Rápida (última config)', onSelect: handleQuickNewClaudeSession },
-              // FIX (feedback E2E rodada 1, "terminal livre confuso") — rótulo
-              // explícito no dropdown; "Terminal" sozinho não deixava claro
-              // que era um shell livre (sem sessão claude nenhuma).
-              { label: 'Terminal (shell livre)', onSelect: handleNewFreeTerminal },
-            ]}
-          />
-        ) : null}
+        {/* "＋ Nova sessão" vale em todos os modos: o Escalador de uma missão é uma sessão comum. */}
+        <SplitButton
+          label="＋ Nova sessão"
+          // FIX (teste manual 27/07) — o corpo do botão passa a ABRIR o
+          // Launcher (escolher modelo/esforço/projeto) em vez do quick-launch
+          // cego: pedido do dono ("sempre que eu aperte em Nova sessão
+          // apareça a barra lateral para escolher o modelo e afins"). O
+          // atalho rápido com a última config vira item do dropdown.
+          onClick={() => setLauncherOpen(true)}
+          items={[
+            { label: 'Rápida (última config)', onSelect: handleQuickNewClaudeSession },
+            // FIX (feedback E2E rodada 1, "terminal livre confuso") — rótulo
+            // explícito no dropdown; "Terminal" sozinho não deixava claro
+            // que era um shell livre (sem sessão claude nenhuma).
+            { label: 'Terminal (shell livre)', onSelect: handleNewFreeTerminal },
+          ]}
+        />
       </header>
 
       <div
         className={[
           styles.body,
-          devModeOn ? styles.bodyDevMode : '',
+          hillOn ? styles.bodyDevMode : '',
           sidebarCollapsed ? styles.bodySidebarCollapsed : '',
           // Clássico sem Launcher: coluna direita (320px, Launcher) zerada.
-          !devModeOn && !launcherOpen ? styles.bodyRightCollapsed : '',
-          // FIX (feedback e2e 05/08, C4) — Modo Dev com painel de detalhe
-          // recolhido: só a coluna DIREITA zera (mesma classe do modo
-          // clássico). O mapa (coluna ESQUERDA, 480px) nunca depende deste
-          // estado — `.bodyMapCollapsed`, que zerava as duas, morreu.
-          devModeOn && rightCollapsed ? styles.bodyRightCollapsed : '',
+          !launcherOpen ? styles.bodyRightCollapsed : '',
         ]
           .filter(Boolean)
           .join(' ')}
@@ -3321,11 +3248,34 @@ export function App(): React.JSX.Element {
             roles={roles}
             onStartPlace={handleMindscapeStartPlace}
             onManageRoles={() => setRolesEditorOpen(true)}
+            onDefineChair={setChairRoleId}
+            ledgerPlaceStatesOf={ledgerPlaceStatesOf}
+            onCloseSessions={handleMindscapeCloseSessions}
           />
         ) : null}
-        {devModeOn && esteiraOpen ? (
-          <EsteiraScreen onClose={() => setEsteiraOpen(false)} projects={projects} onOpenSession={handleOpenEsteiraSession} />
-        ) : null}
+
+        {chairRoleId !== null
+          ? (() => {
+              // Cadeiras, fatia 2 — the chair screen (B1, read-only) over the middle, like the Mindscape.
+              const projectPath = tabs.find((tab) => tab.id === activeTabId)?.cwd;
+              return (
+                <ChairScreen
+                  roles={roles}
+                  roleId={chairRoleId}
+                  projectPath={projectPath}
+                  projectName={projectPath ? (mindscapeProjectNames[projectPath] ?? projectPath.split(/[\\/]/).filter(Boolean).pop()) : undefined}
+                  board={projectPath ? mindscape.doc.boards[projectPath] : undefined}
+                  onPick={setChairRoleId}
+                  onEditRole={(roleId) => {
+                    setRolesEditorRoleId(roleId);
+                    setRolesEditorOpen(true);
+                  }}
+                  onClose={() => setChairRoleId(null)}
+                  onSaved={setRoles}
+                />
+              );
+            })()
+          : null}
 
         {/* CA-20 — a tela de hoje continua MONTADA quando o Modo Dev liga
             (só oculta por CSS): nada de remontar sidebar/abas, nada de PTY
@@ -3336,10 +3286,10 @@ export function App(): React.JSX.Element {
             `Modal` portalizado: sem esconder esta zona também, o rótulo
             "PROJETOS" e a scrollbar da sidebar continuavam vivos por baixo
             e vazavam na borda inferior do print — mesmo princípio de
-            `devModeOn`, mais um caso que reorganiza o miolo por cima da
+            `hillOn`, mais um caso que reorganiza o miolo por cima da
             tela de hoje. */}
         <div
-          className={devModeOn || sidebarCollapsed || previousSessionsProject !== null ? styles.zoneHidden : styles.zone}
+          className={hillOn || sidebarCollapsed || previousSessionsProject !== null ? styles.zoneHidden : styles.zone}
           data-testid="today-sidebar"
         >
         <ProjectSidebar
@@ -3450,23 +3400,12 @@ export function App(): React.JSX.Element {
               o path cru do "consultar artefato" (Zona 2, acima) parecia ser
               o header. Uso geral mantém a condição antiga (nome+path só com
               aba aberta, lote 8). */}
-          {oracleShown ? <OracleCenter placeName={oraclePlaceName} /> : null}
-          {!oracleShown && (devModeOn ? mapView.breadcrumb.length > 0 : listedTabIds.size > 0) ? (
+          {oracleShown ? <OracleCenter placeName={oraclePlaceName} placeStatesOf={ledgerPlaceStatesOf} /> : null}
+          {!oracleShown && listedTabIds.size > 0 ? (
             <div className={styles.sessionHeader} data-testid="session-header">
               {/* Spec 010 / B6 — o breadcrumb passou a ser o dos nós novos:
                   discovery › plano › item. Ele vem pronto de `buildMapView`;
                   montá-lo aqui seria a terceira redação da mesma navegação. */}
-              {devModeOn && mapView.breadcrumb.length > 0 ? (
-                <>
-                  {mapView.breadcrumb.map((step, index) => (
-                    <span key={step} className={index === 0 ? styles.sessionHeaderId : styles.sessionHeaderTitle}>
-                      {index > 0 ? '› ' : ''}
-                      {step}
-                    </span>
-                  ))}
-                  {mapView.detail?.phase ? <span className={styles.sessionHeaderFase}>{mapView.detail.phase}</span> : null}
-                </>
-              ) : (
                 <>
                   <span className={styles.sessionHeaderTitle}>{activeTab ? resolveTabName(activeTab) : ''}</span>
                   {activeTab?.cwd ? <span className={styles.sessionHeaderPath}>{activeTab.cwd}</span> : null}
@@ -3485,7 +3424,6 @@ export function App(): React.JSX.Element {
                     </span>
                   ) : null}
                 </>
-              )}
               <div className={styles.sessionHeaderSpacer} />
               {activeChatTab && activeChatView ? (
                 <>
@@ -3528,6 +3466,21 @@ export function App(): React.JSX.Element {
               <RenewalStrip banner={sessionRenewal.banners[activeTab.id]!} onSnooze={() => sessionRenewal.snooze(activeTab.id)} />
             </div>
           ) : null}
+          {!oracleShown && activeTab && renewalDeliveryNotices[activeTab.id] ? (
+            <div className={styles.renewalStrip} data-testid="renewal-delivery-strip">
+              <RenewalDeliveryStrip
+                text={renewalDeliveryNotices[activeTab.id]!}
+                onDismiss={() => {
+                  const tabId = activeTab.id;
+                  setRenewalDeliveryNotices((prev) => {
+                    const next = { ...prev };
+                    delete next[tabId];
+                    return next;
+                  });
+                }}
+              />
+            </div>
+          ) : null}
           {/* Oráculo no centro — the terminals stay mounted (the PTYs live on), only out of sight. */}
           <div className={oracleShown ? styles.terminalHidden : styles.terminal}>
             {/* FIX (decisão A, 2026-07-23) — mesmo empty state pros dois
@@ -3543,7 +3496,7 @@ export function App(): React.JSX.Element {
                 esteira ("⌁ Preparar" na trilha do mapa), nunca de um atalho
                 ad-hoc — o botão nunca aparece lá (screenshot app-01/03
                 mostrava o contrário). */}
-            {listedTabIds.size === 0 && !devModeOn ? (
+            {listedTabIds.size === 0 && !hillOn ? (
               <div className={styles.emptyState} data-testid="empty-state">
                 <p className={styles.emptyStateTitle}>Nenhuma sessão aberta</p>
                 <p className={styles.emptyStateHint}>Escolha um projeto na barra lateral ou</p>
@@ -3556,19 +3509,6 @@ export function App(): React.JSX.Element {
                 <Button variant="primary" onClick={handleQuickNewClaudeSession}>
                   Nova sessão
                 </Button>
-              </div>
-            ) : null}
-            {/* Item 2 — vazio NEUTRO do Modo Dev sem sessão: só a moldura
-                (fundo + hairline do próprio `.terminal`); com etapa em foco,
-                um texto de condução que aponta pro mapa (nunca um narrativa
-                por etapa fabricada — não há fonte pra isso). */}
-            {listedTabIds.size === 0 && devModeOn ? (
-              <div className={styles.devModeTerminalEmpty} data-testid="devmode-terminal-empty">
-                {mapView.detail ? (
-                  <p className={styles.devModeHint}>
-                    — nenhuma sessão para esta etapa ainda — use "⌁ Preparar" na trilha do mapa.
-                  </p>
-                ) : null}
               </div>
             ) : null}
             {tabs.map((tab) => {
@@ -3608,6 +3548,7 @@ export function App(): React.JSX.Element {
                   accountLoginId={tab.accountLoginId}
                   roleId={tab.roleId}
                   leaderOfAll={isLeaderOfAllTab(tab)}
+                  placeId={tab.placeId}
                   ownerInputGate={(data, forward) => ownerTerminalInput(tab.id, data, forward)}
                   onStateChange={(info) => handleSemaphoreChange(tab.id, info)}
                   onAliveChange={(alive) => handleAliveChange(tab.id, alive)}
@@ -3619,7 +3560,7 @@ export function App(): React.JSX.Element {
                     // the Mindscape, and the new session reads the handoff first.
                     const renewal = sessionRenewal.takeCompletion(tab.id, claudeSessionId);
                     if (renewal && claudeSessionId) {
-                      handleRenewedSession(tab, renewal.previousSessionId, claudeSessionId, renewal.firstPrompt);
+                      handleRenewedSession(tab, renewal.previousSessionId, claudeSessionId, renewal.firstPrompt, renewal.handoffPath);
                     } else if (tab.placeId && tab.cwd && claudeSessionId && mindscapeLoaded) {
                       // Item 12a — the tab opened from a place that had not started: the place starts
                       // with this conversation, BEFORE the tab gets the id (no second card).
@@ -3655,6 +3596,11 @@ export function App(): React.JSX.Element {
                   // T710 (CA-11, 2º momento) — retomada que morre logo depois do
                   // spawn faz a entrada órfã sair da lista.
                   onProcessExit={(info) => handleTabProcessExit(tab, info)}
+                  onStartFailed={(message) => {
+                    startFailuresRef.current[tab.id] = message;
+                    liderTabDiedRef.current[tab.id]?.(); // Líder único na VPS — the new Líder of a move did not start
+                    agentBridgeRef.current?.startFailed(tab.id);
+                  }}
                   onCloseTab={() => handleRequestCloseTab(tab.id)}
                   onPtyChange={(ptyId) => {
                     setChatPtyIds((prev) => (prev[tab.id] === ptyId ? prev : { ...prev, [tab.id]: ptyId }));
@@ -3676,64 +3622,9 @@ export function App(): React.JSX.Element {
             Claude" do menu do "＋ Nova sessão", ou fechado ao lançar/Esc);
             fechado, o espaço vai pro `.center` (terminal), ver
             `styles.bodyPanelClosed` acima. */}
-        {/* Zona 3 — o mapa do discovery em foco (CA-7..CA-16). Lote 7: agora
-            na coluna ESQUERDA de 480px (a compressão da v2 saiu — o mapa não
-            divide coluna com o Launcher nunca mais). "Recolher mapa" (botão
-            do titlebar) zera essa coluna. */}
-        {/* FIX #15 (e2e 30/07, reincidente em 31/07) — "recolher a barra
-            lateral deixa o mapa desenhado POR CIMA do terminal": recolher só
-            zerava a COLUNA (`--col-left: 0px`) e o mapa continuava montado,
-            transbordando de uma caixa de largura zero. Colapsar a lateral
-            agora desmonta o mapa — preservado abaixo (`!sidebarCollapsed`).
-            FIX (feedback e2e 05/08, C4) — a versão anterior deste comentário
-            (batch N5) fazia `rightCollapsed` também encolher o mapa via prop
-            `collapsed` (largura 0 via CSS); era exatamente o bug relatado
-            ("ocultar a barra direita derruba o mapa"). O mapa não recebe mais
-            essa prop e não reage a `rightCollapsed` de forma alguma — só
-            `sidebarCollapsed` (acima) controla se ele está montado. */}
-        {devModeOn && !sidebarCollapsed ? (
-          <DiscoveryMap
-            view={mapView}
-            selection={mapSelection}
-            warning={storeWarning}
-            onFocusDiscovery={(discoveryId) => {
-              // Trocar de card zera o que pertence ao card: o plano, o item e o
-              // nó do detalhe apontariam para algo que não está mais na tela.
-              setMapSelection({ discoveryId, planId: null, itemId: null, nodeKey: null, phase: null });
-              // B2 — navegar até o discovery alterna para a aba da sessão viva
-              // DELE, quando existe (nó sem sessão viva não rouba foco).
-              focusLiveSessionOf(discoveryId, { entity: 'discovery', id: discoveryId });
-            }}
-            onFocusPlan={(planId) => {
-              setMapSelection((prev) => ({ ...prev, planId, itemId: null, nodeKey: null, phase: null }));
-              if (mapView.focused.discoveryId) focusLiveSessionOf(mapView.focused.discoveryId, { entity: 'plan', id: planId });
-            }}
-            onFocusItem={(itemId) => {
-              setMapSelection((prev) => ({ ...prev, itemId, nodeKey: `work_item:${itemId}`, phase: null }));
-              if (mapView.focused.discoveryId) focusLiveSessionOf(mapView.focused.discoveryId, { entity: 'work_item', id: itemId });
-            }}
-            onSelectNode={(nodeKey, phase) => setMapSelection((prev) => ({ ...prev, nodeKey, phase }))}
-            onPrepare={handleMapPrepare}
-            onResume={handleMapResume}
-            onNewDiscovery={() => setEsteiraOpen(true)}
-          />
-        ) : null}
-
-        {/* Painel de 316px à direita (CA-7) — o mapa NUNCA carrega o detalhe
-            dentro de si; esqueleto aqui, conteúdo rico no lote 8. Quando o
-            Launcher está aberto, ele ocupa esta mesma coluna (mesmo padrão
-            de antes). `!rightCollapsed`: o botão "Recolher painel de
-            detalhes" do titlebar desmonta só este painel — desde a correção
-            de 05/08 (C4) o mapa não é mais afetado por este estado. */}
-        {devModeOn && !launcherOpen && !rightCollapsed ? (
-          <PhaseDetailsPanel
-            detail={mapView.detail}
-            onReleaseLock={handleMapReleaseLock}
-            onRetryMirror={handleMapRetryMirror}
-            readOnly={storeReadOnly}
-            tasks={tasksView}
-          />
-        ) : null}
+        {/* Hill climbing — a barra esquerda (trilha + carrossel) que ficou do Modo Dev; não há barra direita.
+            Recolher a lateral desmonta a barra, como desmontava o mapa. */}
+        {hillOn && !sidebarCollapsed ? <HillClimbBar snapshot={hillClimb.snapshot} onGesture={hillClimb.gesture} /> : null}
 
         {launcherOpen ? (
           <aside className={styles.rightPanel} aria-label="Lançar sessão">
@@ -3814,7 +3705,22 @@ export function App(): React.JSX.Element {
       </div>
 
       {/* Item 12b — the roles: create and edit (text + suggestions). */}
-      <RolesEditor open={rolesEditorOpen} roles={roles} providers={providers} onClose={() => setRolesEditorOpen(false)} onSaved={setRoles} />
+      <RolesEditor
+        open={rolesEditorOpen}
+        roles={roles}
+        providers={providers}
+        initialRoleId={rolesEditorRoleId}
+        onClose={() => {
+          setRolesEditorOpen(false);
+          setRolesEditorRoleId(undefined);
+        }}
+        onSaved={setRoles}
+        onOpenChair={(roleId) => {
+          setRolesEditorOpen(false);
+          setRolesEditorRoleId(undefined);
+          setChairRoleId(roleId);
+        }}
+      />
 
       {/* T010 — FR-006, ui-spec §2 "fechar aba com sessão ativa": confirmação destrutiva antes de matar um PTY vivo. */}
       <Modal
@@ -3910,10 +3816,18 @@ export function App(): React.JSX.Element {
         }}
         openCap={appConfig?.team.openCap ?? null}
         onChangeOpenCap={(openCap) => {
-          void window.donel.config.setTeamPrefs({ openCap }).then(setAppConfig).catch(() => undefined);
+          void window.donel.config.setTeamPrefs({ ...(appConfig?.team ?? DEFAULT_TEAM_PREFS), openCap }).then(setAppConfig).catch(() => undefined);
+        }}
+        turnNotices={appConfig?.team.turnNotices ?? 'ledger'}
+        onChangeTurnNotices={(turnNotices) => {
+          void window.donel.config.setTeamPrefs({ ...(appConfig?.team ?? DEFAULT_TEAM_PREFS), turnNotices }).then(setAppConfig).catch(() => undefined);
         }}
         remotes={accountsView.remotes.map((place) => ({ id: place.id, label: place.label }))}
         launcherWhere={appConfig?.launcherDefaults.where}
+        leaderWhere={appConfig?.leader.where ?? DEFAULT_LEADER_PREFS.where}
+        onChangeLeaderWhere={(where) => {
+          void window.donel.config.setLeaderPrefs({ where }).then(setAppConfig).catch(() => undefined);
+        }}
         onChangeLauncherWhere={(where) => {
           if (!appConfig) return;
           const { where: _previous, ...rest } = appConfig.launcherDefaults;
@@ -3935,31 +3849,6 @@ export function App(): React.JSX.Element {
         onChangeOracleCenter={(oracleCenter) => changeLayoutPrefs(oracleCenter ? { oracleCenter, centerView: 'oracle' } : { oracleCenter })}
       />
 
-      {/* Spec 010 / N7→F25 (D1) — o mapa de nós. Renderizado condicionalmente
-          (monta/desmonta com `nodeGraphOpen`) para que o Esc do próprio
-          overlay só exista enquanto ele está na tela. `onNavigate` entrega o
-          MESMO alvo de seleção que o carrossel já consome (`mapSelection`) —
-          o grafo é controle de navegação, não só visualização — e fecha
-          qualquer tela que estivesse por cima do carrossel para o destino
-          ficar visível. F25 — o clique também alterna para a aba da sessão
-          VIVA do alvo, a mesma semântica de `onFocusDiscovery`/`onFocusPlan`
-          /`onFocusItem` logo acima: navegar pelo grafo não pode deixar o
-          usuário olhando pra aba errada enquanto o card certo aparece. */}
-      {nodeGraphOpen ? (
-        <NodeGraphOverlay
-          snapshot={esteiraState?.snapshot ?? null}
-          onClose={() => setNodeGraphOpen(false)}
-          onNavigate={(target) => {
-            setMapSelection(target);
-            setEsteiraOpen(false);
-            setNodeGraphOpen(false);
-            const subject = parseEntityKey(target.nodeKey);
-            if (target.discoveryId !== null && subject !== null) {
-              focusLiveSessionOf(target.discoveryId, subject);
-            }
-          }}
-        />
-      ) : null}
     </div>
   );
 }

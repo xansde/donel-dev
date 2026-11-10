@@ -1,0 +1,4 @@
+{
+  "title": "Validar entregas pelo celular",
+  "text": "Em Preferências, Celular, ligue \"App do celular para validar entregas\" e toque em \"Parear um celular\": aponte a câmera do celular para o QR e adicione a página à tela inicial. Cada entrega que espera você vira uma carta, uma por tela: arraste para a direita para aceitar ou para a esquerda para rejeitar, contando o motivo (dá para ditar). Os botões embaixo fazem o mesmo, e o que você decide pelo celular conta como validação sua. Só funciona pela sua Tailscale, nada sai para a internet, e você revoga um celular na mesma tela."
+}

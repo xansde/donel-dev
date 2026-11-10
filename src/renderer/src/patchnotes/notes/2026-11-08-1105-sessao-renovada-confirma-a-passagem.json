@@ -1,0 +1,4 @@
+{
+  "title": "Sessão renovada confirma que recebeu a passagem",
+  "text": "Quando uma sessão é renovada em voo, o app agora espera a sessão nova aceitar a primeira mensagem (ler a passagem de bastão). Se ela não entrar, a aba mostra um aviso no topo com o caminho do arquivo da passagem, para você decidir se reenvia. Antes, a sessão nova podia começar do zero sem ler a passagem e ninguém percebia."
+}

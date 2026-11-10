@@ -102,6 +102,13 @@ export const BRIDGE_HTTP_EVENTS: ReadonlyArray<{ readonly event: string; readonl
 export interface SessionHooksSettingsInput {
   readonly port: number;
   readonly token: string;
+  /**
+   * The file with the token header (`tokenHeaderFileContent`, mode 600), as the hook command names it (a remote
+   * session's may hold `$HOME`). The `curl` commands read the header from it (`-H @file`) and never carry the
+   * token: the CLI records a SessionStart hook's command line in the transcript (seen in 2.1.3xx,
+   * `hook_success.command`), and from there it reached collectors and subagents.
+   */
+  readonly tokenHeaderPath: string;
   /** Path (or bare name) of `curl.exe`; `null` when the boot did not find it — falls back to the PowerShell forwarder. */
   readonly curlPath: string | null;
   /** Required when `curlPath` is null: the `.ps1` written by `writeSessionHooksSettings`. */
@@ -118,23 +125,66 @@ export interface SessionHooksSettingsInput {
    * Only this session's file: the owner's `~/.claude/settings.json` is never touched.
    */
   readonly isolatedWorktree?: boolean;
-  /**
-   * Slack só com carta, fatia 4 — the command that runs `buildSlackOfflineGuardScript` (a remote session: it
-   * outlives the app). Absent = only the `http` hook, whose bridge lives and dies with a local session.
-   */
-  readonly slackOfflineGuardCommand?: string;
   /** Escopo do papel: the MCPs, plugins and skills this session keeps (role-scope.ts). Absent = everything. */
   readonly roleScope?: RoleScopeSettings | null;
+  /** The folders that hold this session's keys (`keyFileReadDenyRules`): the session's tools may not read them. */
+  readonly keyDirs?: readonly string[];
 }
 
 export interface SessionHooksSettingsContent extends RoleScopeSettings {
   readonly hooks: Record<string, ReadonlyArray<{ readonly matcher?: string; readonly hooks: ReadonlyArray<Record<string, unknown>> }>>;
   readonly statusLine?: StatusLineSetting;
   readonly worktree?: { readonly baseRef: 'head' };
+  readonly permissions?: KeyFilePermissions;
+}
+
+/** The `permissions` block that keeps the session's own tools away from the files holding its keys. */
+export interface KeyFilePermissions {
+  readonly deny: readonly string[];
+}
+
+/**
+ * Pure — deny rules that keep the session's tools from reading the files that hold its keys (hook token, MCP
+ * bearer): a session that opened `meta.json` or `mcp.json` copied the key into its transcript, and from there to
+ * collectors and subagents (08/11). Measured with the real CLI 2.1.319, in `bypassPermissions` too:
+ * - `Read(<dir>/**)` stops Read, Grep and the Bash commands the CLI knows read a file (`cat`, `head`, `cp`, also after
+ *   a `cd`); the CLI itself still reads `--settings`, `--mcp-config` and the role file from there, and hooks still run.
+ * - It does not stop an interpreter that opens the file itself (`python3 -c "open(...)"`): a Bash rule with a
+ *   wildcard on each side of `/<parent>/<dir>/` refuses any command naming a path below the folder. A leading separator keeps code searches for the folder's
+ *   name (`grep "\.donel/s/"`) working. Indirect reads (a script that builds the path) stay possible: best effort.
+ * A `~/` dir stays home-relative; an absolute one becomes `//<posix>` (Windows `C:\x` → `//c/x`, as the CLI matches).
+ */
+export function keyFileReadDenyRules(dirs: readonly string[]): string[] {
+  const rules: string[] = [];
+  for (const dir of dirs) {
+    const windows = /^[A-Za-z]:[\\/]/.test(dir);
+    const posix = dir.replaceAll('\\', '/').replace(/\/+$/, '');
+    const readPath = posix.startsWith('~/') ? posix : windows ? `//${posix[0].toLowerCase()}${posix.slice(2)}` : `/${posix}`;
+    rules.push(`Read(${readPath}/**)`);
+    const tail = posix.split('/').filter((part) => part !== '' && part !== '~').slice(-2);
+    rules.push(`Bash(*/${tail.join('/')}/*)`);
+    if (windows) rules.push(`Bash(*\\${tail.join('\\')}\\*)`);
+  }
+  return rules;
+}
+
+/** Pure — the `permissions` key of a session's `--settings` (absent when there is no key folder). */
+export function keyFilePermissions(dirs: readonly string[] | undefined): { permissions?: KeyFilePermissions } {
+  return dirs && dirs.length > 0 ? { permissions: { deny: keyFileReadDenyRules(dirs) } } : {};
 }
 
 function bridgeUrl(port: number, event: string): string {
   return `http://127.0.0.1:${port}/h/${event}`;
+}
+
+/** Pure — what the token header file holds: one header line, read by `curl -H @<file>`. */
+export function tokenHeaderFileContent(token: string): string {
+  return `X-Donel-Token: ${token}\n`;
+}
+
+/** Pure — the `-H` of a `curl` command that reads the token header from its file (forward slashes: Git Bash eats `\`). */
+function tokenHeaderArg(tokenHeaderPath: string): string {
+  return `-H "@${tokenHeaderPath.replaceAll('\\', '/')}"`;
 }
 
 /** Pure — the per-session `--settings` content. No `matcher` anywhere: every tool is observed. */
@@ -150,14 +200,11 @@ export function buildSessionHooksSettings(input: SessionHooksSettingsInput): Ses
   let command: string;
   if (curlPath !== null) {
     const exe = /\s/.test(curlPath) ? `"${curlPath}"` : curlPath;
-    command = `${exe} -s --data-binary @- -H "X-Donel-Token: ${token}" ${bridgeUrl(port, 'SessionStart')}`;
+    command = `${exe} -s --data-binary @- ${tokenHeaderArg(input.tokenHeaderPath)} ${bridgeUrl(port, 'SessionStart')}`;
   } else {
     command = `powershell -NoProfile -ExecutionPolicy Bypass -File "${forwarderScriptPath ?? ''}"`;
   }
   hooks.SessionStart = [{ hooks: [{ type: 'command', command, timeout: 10 }] }];
-  if (input.slackOfflineGuardCommand) {
-    hooks.PreToolUse = [...hooks.PreToolUse!, { matcher: SLACK_OFFLINE_GUARD_MATCHER, hooks: [{ type: 'command', command: input.slackOfflineGuardCommand, timeout: 10 }] }];
-  }
 
   const statusLine = input.statusLine ? buildStatusLineSetting(input.statusLine, input) : null;
   return {
@@ -165,47 +212,23 @@ export function buildSessionHooksSettings(input: SessionHooksSettingsInput): Ses
     ...(statusLine ? { statusLine } : {}),
     ...(input.isolatedWorktree ? { worktree: { baseRef: 'head' as const } } : {}),
     ...(input.roleScope ?? {}),
+    ...keyFilePermissions(input.keyDirs),
   };
 }
 
-// --- Slack só com carta, fatia 4: falha fechada --------------------------------
+// --- slack-guard.sh: só a marca do envio de arquivo -----------------------------
 //
-// A post to Slack is decided by the bridge (`preToolUseGuard`, answering the `http` PreToolUse hook). But an
-// `http` hook that gets no answer does NOT block: with the app down, the post would go out unchecked. A local
-// session dies with the app (its PTY is the app's child); a remote one lives on in tmux. So the remote session
-// also gets this command hook: it asks the bridge `/h/Ping` (app up AND this token known); if yes, it says
-// nothing and the bridge decides as usual; if not, and the call looks like a post to Slack, it REFUSES. The
-// offline test is deliberately broad (it refuses a Slack draft, or any call to the Slack Web API, even a read,
-// while the app is down): the owner's rule is
-// "a carta antes de qualquer coisa", so what cannot be checked does not go out.
+// Until 09/11 a remote session ran this file as a hook that refused posts to Slack while the app was down. Letters
+// never lock anymore (owner, 09/11: "Não quero que cartas travem nada também"), so no hook runs it. The file is still
+// written in the remote session folder, under the same name, because the Theo West MCP (VPS) reads its
+// `# carta-com-arquivo:` line to offer the file upload (`appKnowsFileLetter` in its servidor.js).
 
-export const SLACK_OFFLINE_GUARD_MATCHER = 'Bash|mcp__.*';
+/** The line the Theo West MCP looks for (it matches only the `carta-com-arquivo:` prefix). */
+export const SLACK_GUARD_FILE_LETTER_MARK = 'carta-com-arquivo: o envio de arquivo pelo MCP do Theo West está liberado';
 
-/** ERE over the hook payload (tool name + input), case-insensitive: anything that may post to Slack. */
-export const SLACK_OFFLINE_PATTERN =
-  'mcp__[^"]*slack[^"]*__[^"]*(send|post|repl|schedul|updat|edit|upload|file|share)|slack_[a-z_]*(send|post|repl|schedul|updat|edit|upload|file|share)|chat[._](postMessage|post_message|update|scheduleMessage|postEphemeral|meMessage)|files[._](upload|completeUpload|complete_upload|share)|slack\\.com/api/|hooks\\.slack\\.com|canal-produto';
-
-export const SLACK_OFFLINE_REFUSAL =
-  'Envio ao Slack bloqueado pelo Donel Dev: o app do Donel está fora do ar (ou não reconhece esta sessão), então não dá para confirmar a carta no Oráculo Harrow. Toda mensagem ao Slack em nome do dono precisa antes de uma carta aceita, e o que não se confirma não sai. Não tente outro caminho de envio. Diga ao dono que a mensagem está esperando o Donel voltar; quando ele voltar, crie a carta com carta_slack e espere a decisão.';
-
-/** Pure — the POSIX `sh` script of the offline guard (stdin: the hook payload; stdout: a deny, or nothing). */
-export function buildSlackOfflineGuardScript(input: { readonly port: number; readonly token: string }): string {
-  const deny = JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: SLACK_OFFLINE_REFUSAL } });
-  return [
-    '#!/bin/sh',
-    '# Donel Dev — Slack só com carta: com o app fora do ar, envio ao Slack é recusado (falha fechada).',
-    'payload=$(cat)',
-    `if curl -s -f --noproxy 127.0.0.1 --connect-timeout 2 --max-time 4 -o /dev/null -X POST -H "X-Donel-Token: ${input.token}" ${bridgeUrl(input.port, 'Ping')} 2>/dev/null; then`,
-    '  exit 0',
-    'fi',
-    `if printf '%s' "$payload" | grep -Eqi '${SLACK_OFFLINE_PATTERN}'; then`,
-    "  cat <<'DONEL_DENY'",
-    deny,
-    'DONEL_DENY',
-    'fi',
-    'exit 0',
-    '',
-  ].join('\n');
+/** Pure — the content of a remote session's `slack-guard.sh`: the mark, and nothing that refuses. */
+export function buildSlackMarkFile(): string {
+  return ['#!/bin/sh', '# Donel Dev — nada é recusado aqui: o arquivo existe só pela marca abaixo.', `# ${SLACK_GUARD_FILE_LETTER_MARK}`, 'cat >/dev/null', 'exit 0', ''].join('\n');
 }
 
 // --- Ponte da statusline ------------------------------------------------------
@@ -308,7 +331,7 @@ function powershellFile(scriptPath: string): string {
 /** Puro — o bloco `statusLine` do `--settings` da sessão. */
 export function buildStatusLineSetting(
   plan: StatusLineBridgePlan,
-  input: { readonly port: number; readonly token: string; readonly curlPath: string | null; readonly statusLineScriptPath?: string },
+  input: { readonly port: number; readonly tokenHeaderPath: string; readonly curlPath: string | null; readonly statusLineScriptPath?: string },
 ): StatusLineSetting {
   if (plan.kind === 'chain') {
     // `padding`, `refreshInterval` e `hideVimModeIndicator` do usuário viajam junto: a nossa substitui a dele.
@@ -324,7 +347,7 @@ export function buildStatusLineSetting(
     // A ponte responde com corpo vazio: o curl não imprime nada.
     return {
       type: 'command',
-      command: `${exe} -s --noproxy 127.0.0.1 --connect-timeout 1 --max-time 2 --data-binary "@-" -H "X-Donel-Token: ${input.token}" ${bridgeUrl(input.port, STATUS_LINE_ROUTE)}`,
+      command: `${exe} -s --noproxy 127.0.0.1 --connect-timeout 1 --max-time 2 --data-binary "@-" ${tokenHeaderArg(input.tokenHeaderPath)} ${bridgeUrl(input.port, STATUS_LINE_ROUTE)}`,
     };
   }
   return { type: 'command', command: powershellFile(input.statusLineScriptPath ?? '') };
@@ -396,6 +419,11 @@ export function buildByteSafeForwarderScript(input: { port: number; token: strin
   ].join('\r\n');
 }
 
+/** The folder of the per-session `--settings` files, token headers and forwarders. */
+export function sessionHookSettingsDir(userDataDir: string): string {
+  return join(userDataDir, HOOK_SETTINGS_DIR_NAME);
+}
+
 export function sessionHookSettingsPath(userDataDir: string, ptyId: string): string {
   return join(userDataDir, HOOK_SETTINGS_DIR_NAME, `${ptyId}.json`);
 }
@@ -408,10 +436,16 @@ function sessionStatusLineScriptPath(userDataDir: string, ptyId: string): string
   return join(userDataDir, HOOK_SETTINGS_DIR_NAME, `${ptyId}.statusline.ps1`);
 }
 
+function sessionTokenHeaderPath(userDataDir: string, ptyId: string): string {
+  return join(userDataDir, HOOK_SETTINGS_DIR_NAME, `${ptyId}.header`);
+}
+
 /** I/O — writes `userData/hook-settings/<ptyId>.json` (plus the forwarder script when there is no curl) and returns the settings path. */
-export function writeSessionHooksSettings(input: SessionHooksSettingsInput & { readonly userDataDir: string; readonly ptyId: string }): string {
+export function writeSessionHooksSettings(input: Omit<SessionHooksSettingsInput, 'tokenHeaderPath'> & { readonly userDataDir: string; readonly ptyId: string }): string {
   const { userDataDir, ptyId, port, token } = input;
   mkdirSync(join(userDataDir, HOOK_SETTINGS_DIR_NAME), { recursive: true });
+  const tokenHeaderPath = sessionTokenHeaderPath(userDataDir, ptyId);
+  writeFileSync(tokenHeaderPath, tokenHeaderFileContent(token), { encoding: 'utf8', mode: 0o600 });
 
   let forwarderScriptPath = input.forwarderScriptPath;
   if (input.curlPath === null) {
@@ -428,24 +462,29 @@ export function writeSessionHooksSettings(input: SessionHooksSettingsInput & { r
   }
 
   const path = sessionHookSettingsPath(userDataDir, ptyId);
-  writeFileSync(path, JSON.stringify(buildSessionHooksSettings({ ...input, forwarderScriptPath, statusLineScriptPath }), null, 2), 'utf8');
+  writeFileSync(path, JSON.stringify(buildSessionHooksSettings({ ...input, tokenHeaderPath, forwarderScriptPath, statusLineScriptPath }), null, 2), 'utf8');
   return path;
 }
 
 /**
- * I/O — the session's `--settings` with only the role scope, for a session whose hooks file could not be written
- * (same path, so `removeSessionHooksSettings` and the boot cleanup take it too).
+ * I/O — the session's `--settings` without hooks: the role scope (if any) and the key-file deny rules, for a session
+ * whose hooks file could not be written (same path, so `removeSessionHooksSettings` and the boot cleanup take it too).
  */
-export function writeSessionScopeOnlySettings(userDataDir: string, ptyId: string, roleScope: RoleScopeSettings): string {
+export function writeSessionScopeOnlySettings(userDataDir: string, ptyId: string, roleScope: RoleScopeSettings | null, keyDirs?: readonly string[]): string {
   mkdirSync(join(userDataDir, HOOK_SETTINGS_DIR_NAME), { recursive: true });
   const path = sessionHookSettingsPath(userDataDir, ptyId);
-  writeFileSync(path, JSON.stringify(roleScope, null, 2), 'utf8');
+  writeFileSync(path, JSON.stringify({ ...(roleScope ?? {}), ...keyFilePermissions(keyDirs) }, null, 2), 'utf8');
   return path;
 }
 
 /** I/O — removes the session's settings file and forwarder script; missing files are fine. */
 export function removeSessionHooksSettings(userDataDir: string, ptyId: string): void {
-  for (const path of [sessionHookSettingsPath(userDataDir, ptyId), sessionForwarderScriptPath(userDataDir, ptyId), sessionStatusLineScriptPath(userDataDir, ptyId)]) {
+  for (const path of [
+    sessionHookSettingsPath(userDataDir, ptyId),
+    sessionForwarderScriptPath(userDataDir, ptyId),
+    sessionStatusLineScriptPath(userDataDir, ptyId),
+    sessionTokenHeaderPath(userDataDir, ptyId),
+  ]) {
     try {
       unlinkSync(path);
     } catch {

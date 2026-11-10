@@ -6,6 +6,7 @@ import { axesLabel, needsLabel, type SessionAxes } from '../../../shared/mindsca
 import { OWNER_COLORS, type OwnerCardColor } from '../../../shared/mindscape/model';
 import type { TabColorToken } from '../../../shared/tabAppearance';
 import styles from './Mindscape.module.css';
+import envStyles from './EnvironmentPanel.module.css';
 
 /** Same glyphs as `TerminalTab` (`SESSION_STATE_ICON`, not exported by the design system). */
 const STATE_GLYPH: Record<SessionState, string> = {
@@ -63,12 +64,19 @@ export interface MindscapeSessionCardProps {
   readonly notStarted?: boolean;
   /** Item 12b — click on the seal of a place that has not started: choose another role. */
   readonly onRoleClick?: () => void;
+  /** t-cccce5e4 — how many demands this place takes in parallel (`null` = no limit), with the owner's menu to change it. */
+  readonly parallel?: number | null;
+  /** No number and not a Líder: the seal waits for the hover. */
+  readonly parallelIdle?: boolean;
+  readonly onParallelClick?: () => void;
   /** Item 04 — engine seal ("opus 5.5", "· provedor"); absent = no reading. */
   readonly engine?: string;
   /** Item 04 — context, same reading as the footer; absent = no reading. */
   readonly meter?: { readonly usedTokens: number; readonly maxTokens: number };
   /** Item 04 — the three axes and "precisa de você". */
   readonly axes?: SessionAxes;
+  /** Gargalos do ambiente — what the session is really doing ("travada · gateway fora do ar há 2 h"). */
+  readonly pulse?: { readonly text: string; readonly tone: string; readonly title?: string };
 }
 
 /** Item 04 — the ring around the glyph: what the session asks of the owner at a glance. */
@@ -110,9 +118,13 @@ export function MindscapeSessionCard({
   role,
   notStarted = false,
   onRoleClick,
+  parallel,
+  parallelIdle = false,
+  onParallelClick,
   engine,
   meter,
   axes,
+  pulse,
 }: MindscapeSessionCardProps): React.JSX.Element {
   // A place that has not started reads like a dormant one, with its own glyph and words.
   const closedLabel = notStarted ? `${NOT_STARTED_LABEL} · duplo clique abre` : closedLabelText;
@@ -186,6 +198,18 @@ export function MindscapeSessionCard({
           ＋ papel
         </button>
       ) : null}
+      {parallel !== undefined && onParallelClick ? (
+        <button
+          type="button"
+          className={`${styles.roleSeal} ${styles.roleSealButton} ${styles.parallelSeal}${parallelIdle ? ` ${styles.parallelSealIdle}` : ''}`}
+          title={parallel === null ? 'Toca quantas demandas em paralelo? Sem limite. Clique para mudar.' : `Toca até ${parallel} demanda(s) em paralelo. Clique para mudar.`}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={onParallelClick}
+          data-testid="mindscape-parallel"
+        >
+          ∥ {parallel === null ? '∞' : parallel}
+        </button>
+      ) : null}
       <div className={styles.sessionHead}>
         <span className={[styles.glyph, ring ? styles.ring : '', ring ? styles[`ring-${ring}`] : ''].filter(Boolean).join(' ')} aria-hidden="true" data-ring={ring}>
           {notStarted ? NOT_STARTED_GLYPH : dormant ? DORMANT_GLYPH : unknownActivity ? '?' : STATE_GLYPH[state]}
@@ -231,6 +255,11 @@ export function MindscapeSessionCard({
           {need}
         </div>
       ) : null}
+      {pulse && !dormant ? (
+        <div className={`${envStyles.cardPulse} ${envStyles[`tone_${pulse.tone}`] ?? ''}`} title={pulse.title ?? pulse.text} data-testid="mindscape-session-pulse">
+          {pulse.text}
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -247,8 +276,11 @@ export interface MindscapeNoteCardProps {
   readonly onArchive: () => void;
 }
 
+/** One formatter for every card: `toLocaleTimeString` built a new one per call, per card, per render. */
+const HOUR_FORMAT = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' });
+
 function formatHour(epochMs: number): string {
-  return new Date(epochMs).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  return HOUR_FORMAT.format(epochMs);
 }
 
 /** Mindscape, fatia 03 — the post-it written by the session: last answer of the turn and the hour. Stays after the tab closes, until archived. */

@@ -1,0 +1,4 @@
+{
+  "title": "Papel editado recebe as melhorias de fábrica",
+  "text": "Quando você editava um papel pronto (Dev, Revisor, Pesquisa, Líder, Faxineiro), ele ficava preso ao texto de fábrica daquele dia e as melhorias das versões novas não chegavam mais. Agora a sessão recebe sempre a orientação de fábrica atual, e o que você escreveu continua valendo, logo abaixo, como complemento."
+}

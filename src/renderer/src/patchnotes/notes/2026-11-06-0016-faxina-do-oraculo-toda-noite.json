@@ -1,0 +1,4 @@
+{
+  "title": "Faxina do Oráculo toda noite",
+  "text": "Uma vez por noite, o Oráculo faz uma faxina sozinho, sem usar modelo. Uma tarefa de risco baixo que foi entregue ou rejeitada e cujo PR já entrou é encerrada como concluída, com o número do PR e o dia. Uma tarefa de risco alto nunca se encerra sozinha. Uma tarefa sem dono há mais de um dia passa para quem está acima no quadro, ou para o Líder, e quem recebe é avisado. Nas três primeiras noites, a faxina só anota o que faria, sem mudar nada. O Líder também passa a ser avisado quando uma sessão lhe passa uma tarefa à mão."
+}

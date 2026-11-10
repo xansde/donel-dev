@@ -3,7 +3,7 @@ import type { SelectOption } from '@donel-dev/design-system';
 import { useEffect, useState, type CSSProperties } from 'react';
 import type { ProviderSummaryDto } from '../../shared';
 import type { EffortLevel, ModelAlias, PermissionMode } from '../../shared/commandBuilder';
-import { MAX_ROLE_GUIDANCE_CHARS, MAX_ROLE_NAME_CHARS, ROLE_COLORS, roleColorVar, roleIdFromName, type RoleColor, type RoleScope, type SessionRole } from '../../shared/roles';
+import { factoryRole, MAX_ROLE_GUIDANCE_CHARS, MAX_ROLE_NAME_CHARS, ROLE_COLORS, roleColorVar, roleIdFromName, type RoleColor, type RoleScope, type SessionRole } from '../../shared/roles';
 import styles from './RolesEditor.module.css';
 
 // Item 12b — the simple screen to create and edit roles: the text (guidance) and the suggestions.
@@ -35,6 +35,8 @@ interface Draft {
   readonly permissionMode: string;
   /** Not edited on this screen (it lives in the file's header); carried so a save keeps it. */
   readonly scope: RoleScope | undefined;
+  /** `lugar: qualquer` — not edited on this screen either; carried so a save keeps it. */
+  readonly anyPlace: boolean;
   readonly guidance: string;
 }
 
@@ -48,6 +50,7 @@ function draftOf(role: SessionRole | undefined): Draft {
     effort: role?.effort ?? NONE,
     permissionMode: role?.permissionMode ?? NONE,
     scope: role?.scope,
+    anyPlace: role?.anyPlace === true,
     guidance: role?.guidance ?? '',
   };
 }
@@ -59,15 +62,19 @@ export interface RolesEditorProps {
   readonly onClose: () => void;
   /** The list after a save. */
   readonly onSaved: (roles: SessionRole[]) => void;
+  /** Cadeiras, fatia 2 — the role shown when the screen opens (else the first). */
+  readonly initialRoleId?: string;
+  /** Cadeiras, fatia 2 — "Ver como cadeira ▸": the chair screen of the role in the editor. */
+  readonly onOpenChair?: (roleId: string) => void;
 }
 
-export function RolesEditor({ open, roles, providers, onClose, onSaved }: RolesEditorProps): React.JSX.Element | null {
+export function RolesEditor({ open, roles, providers, onClose, onSaved, initialRoleId, onOpenChair }: RolesEditorProps): React.JSX.Element | null {
   const [draft, setDraft] = useState<Draft>(() => draftOf(roles[0]));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   useEffect(() => {
     if (open) {
-      setDraft(draftOf(roles[0]));
+      setDraft(draftOf(roles.find((role) => role.id === initialRoleId) ?? roles[0]));
       setError(null);
     }
     // Only when the screen opens: the list changing under an edit must not drop the draft.
@@ -90,6 +97,7 @@ export function RolesEditor({ open, roles, providers, onClose, onSaved }: RolesE
       ...(draft.effort ? { effort: draft.effort as EffortLevel } : {}),
       ...(draft.permissionMode ? { permissionMode: draft.permissionMode as PermissionMode } : {}),
       ...(draft.scope ? { scope: draft.scope } : {}),
+      ...(draft.anyPlace ? { anyPlace: true } : {}),
       guidance: draft.guidance,
     };
     setSaving(true);
@@ -112,6 +120,17 @@ export function RolesEditor({ open, roles, providers, onClose, onSaved }: RolesE
       className={styles.dialog}
       actions={
         <>
+          {onOpenChair && draft.id !== null ? (
+            <Button
+              variant="secondary"
+              onClick={() => {
+                const id = draft.id;
+                if (id) onOpenChair(id);
+              }}
+            >
+              Ver como cadeira ▸
+            </Button>
+          ) : null}
           <Button variant="secondary" onClick={onClose}>
             Fechar
           </Button>
@@ -185,6 +204,9 @@ export function RolesEditor({ open, roles, providers, onClose, onSaved }: RolesE
 
       <label className={styles.field}>
         <span className={styles.label}>Orientação</span>
+        {draft.id !== null && factoryRole(draft.id) ? (
+          <span className={styles.note}>A parte de fábrica deste papel se atualiza sozinha a cada versão; o que você acrescentar ou mudar aqui vale como complemento.</span>
+        ) : null}
         <textarea
           className={styles.guidance}
           value={draft.guidance}

@@ -1,0 +1,4 @@
+{
+  "title": "Texto que sobrou na caixa não emenda mais na mensagem seguinte",
+  "text": "Depois de reiniciar o PC, o texto que tinha ficado preso na caixa de uma sessão na VPS podia voltar junto com a mensagem nova, e as duas saíam emendadas. Agora, quando o app vê a mensagem dele ao lado de um resto, não aperta Enter: numa mensagem entre sessões, limpa a caixa e cola de novo; numa mensagem sua, deixa a caixa para você resolver."
+}

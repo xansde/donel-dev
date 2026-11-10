@@ -14,9 +14,24 @@
 //   them) and everything below them, on any board, without the "Alcance" mark. The same hierarchy arrows count:
 //   an arrow a session draws neither hides a place from it nor puts anyone above it. A former Líder of a board
 //   is an ordinary place: its owner's arrows are ordinary hierarchy.
+// - Back up to the Líder único (06/11, t-52b31719): a session the Líder único opened, or one below it by the
+//   arrows, reaches the Líder único (a message, a task passed to it). Nobody else does: a place out of that chain
+//   talks to whoever is above it on its board.
+// - The Líder of a board (08/11, Líder único: "o líder do quadro … deve ser a palavra mestre de tudo"): the Líder
+//   the owner placed on a board (`isBoardOrchestrator`) reaches EVERY place of its own board, with or without an
+//   arrow, whoever opened it (the Líder único included). Nobody else gains reach by it: a common session still only
+//   reaches down its arrows, and a Líder a session made is a common session. And every place of a board talks up to
+//   that Líder (`sessao_enviar` with "lider-quadro", `boardOrchestrators`), as the chain of the Líder único talks to it.
+// - Back up to whoever opened me (08/11, homologação item 2): a place talks to the session that opened it with
+//   `sessao_abrir` (`sessao_enviar` with "quem-me-abriu", `openersOf`), with no arrow back. Only the opening arrow
+//   counts, and a session cannot draw one (quadro_aplicar never sets `opened`), so nobody makes itself an opener.
+// - Who takes the work of a place that is gone (06/11, t-e753b554): the first live place above it by the
+//   hierarchy arrows, the one that opened it first; none → the live Líder of its board (`boardLeaders`, dono 09/11);
+//   none → the Líder único.
 
-import { LEADER_ROLE_ID } from '../roles';
-import type { BoardReach, MindscapeBoard, MindscapeDoc, MindscapeLink } from './model';
+import { FAXINEIRO_ROLE_ID, LEADER_ROLE_ID } from '../roles';
+import { LEADER_OF_ALL } from './leader';
+import { placeHolding, type BoardReach, type MindscapeBoard, type MindscapeDoc, type MindscapeLink } from './model';
 
 export function boardReach(board: MindscapeBoard | undefined): BoardReach {
   return board?.reach === 'all' ? 'all' : 'own';
@@ -54,6 +69,23 @@ export function isOpenedBy(board: MindscapeBoard | undefined, from: string, to: 
   return hasPath(board, from, to, (link) => link.opened === true);
 }
 
+/**
+ * Super bypass das orquestradoras (dono, 09/11) — what the board says of a session at spawn, found by its place (a tab
+ * that has one, even before its first conversation) or by its conversation (a resume, a renewal): its role and whether
+ * its place is above another session place by a hierarchy arrow (it opened or directs sessions: an orchestrator,
+ * `isOrchestratorSpawn` in src/shared/launchPermission.ts). On no board: nothing.
+ */
+export function spawnFactsOf(doc: MindscapeDoc, of: { readonly placeId?: string; readonly sessionId?: string }): { roleId?: string; directsOthers: boolean } {
+  for (const board of Object.values(doc.boards)) {
+    const byPlace = of.placeId ? board.cards[of.placeId] : undefined;
+    const place = byPlace?.kind === 'session' ? byPlace : of.sessionId ? placeHolding(board, of.sessionId) : undefined;
+    if (!place) continue;
+    const directsOthers = board.links.some((link) => link.from === place.id && isHierarchyArrow(link) && board.cards[link.to]?.kind === 'session');
+    return { ...(place.roleId ? { roleId: place.roleId } : {}), directsOthers };
+  }
+  return { directsOthers: false };
+}
+
 export interface ReachEnd {
   readonly projectPath: string;
   readonly placeId: string;
@@ -67,6 +99,55 @@ export type ReachFrom = ReachEnd | typeof LEADER_OF_ALL_FROM;
 export function isTop(board: MindscapeBoard | undefined, placeId: string): boolean {
   if (board?.cards[placeId]?.kind !== 'session') return false;
   return !board.links.some((link) => link.to === placeId && isHierarchyArrow(link) && board.cards[link.from]?.kind === 'session');
+}
+
+/**
+ * The orchestrator of a board: a place with the Líder role that the OWNER put there. Never one a session opened or drew
+ * (`by: 'session'`): a role given by a session would let any Dev make itself a Líder (PR #305). What a session cannot
+ * forge is who made the place, so that is the line, here and in `canReach` across boards.
+ */
+export function isBoardOrchestrator(board: MindscapeBoard | undefined, placeId: string): boolean {
+  const card = board?.cards[placeId];
+  return card?.kind === 'session' && card.roleId === LEADER_ROLE_ID && card.by !== 'session';
+}
+
+/** `sessao_enviar` to the Líder of the caller's board, whoever it is: `"para": "lider-quadro"`. */
+export const BOARD_LEADER = 'lider-quadro';
+
+/** The orchestrators of a board (`isBoardOrchestrator`), in card order: whom "lider-quadro" means. */
+export function boardOrchestrators(board: MindscapeBoard | undefined): string[] {
+  return board ? Object.keys(board.cards).filter((id) => isBoardOrchestrator(board, id)) : [];
+}
+
+/**
+ * Who hears the chairs of a board and whom "lider-quadro" means (dono, 09/11: nothing of a chair reaches the Líder
+ * único): the Líderes the owner put there (`boardOrchestrators`); only when there is none, the places with the Líder
+ * role a session made (a Líder the Líder único opened before 07/11, or one the owner gave the role by hand). Only who HEARS: the
+ * power of a Líder (every place, other boards, liberating a folder) stays with `isBoardOrchestrator`. No session can
+ * make a Líder place today (`sessao_abrir` and `quadro_aplicar` refuse it), so nobody makes itself heard as one.
+ */
+export function boardLeaders(board: MindscapeBoard | undefined): string[] {
+  if (!board) return [];
+  const owners = boardOrchestrators(board);
+  if (owners.length > 0) return owners; // a Líder made by a session, next to the owner's, is a chair of the board
+  return Object.keys(board.cards).filter((id) => {
+    const card = board.cards[id];
+    return card?.kind === 'session' && card.roleId === LEADER_ROLE_ID;
+  });
+}
+
+/** `placeId` is a Líder of its board in the sense of `boardLeaders` (hears the chairs; not the power). */
+export function isBoardLeader(board: MindscapeBoard | undefined, placeId: string): boolean {
+  return boardLeaders(board).includes(placeId);
+}
+
+/** `sessao_enviar` to the session that opened the caller with `sessao_abrir`: `"para": "quem-me-abriu"`. */
+export const MY_OPENER = 'quem-me-abriu';
+
+/** The places that opened `placeId` (a `sessao_abrir` arrow straight to it), in link order. */
+export function openersOf(board: MindscapeBoard | undefined, placeId: string): string[] {
+  if (!board) return [];
+  return board.links.filter((link) => link.opened === true && link.arrow && link.to === placeId && board.cards[link.from]?.kind === 'session').map((link) => link.from);
 }
 
 /** The Líder único reaches `placeId`: a top place, or one below a top place by hierarchy arrows. */
@@ -88,15 +169,72 @@ export function canReach(doc: MindscapeDoc, from: ReachFrom, to: ReachEnd): Reac
   if (from.projectPath === to.projectPath && from.placeId === to.placeId) return { ok: false, reason: 'esta é a sua própria sessão.' };
   const fromBoard = doc.boards[from.projectPath];
   if (from.projectPath === to.projectPath) {
+    if (isBoardOrchestrator(fromBoard, from.placeId) && fromBoard?.cards[to.placeId]?.kind === 'session') return { ok: true };
     return isBelow(fromBoard, from.placeId, to.placeId)
       ? { ok: true }
       : { ok: false, reason: `"${to.placeId}" não está abaixo de você: falta seta (direta ou em cadeia) do seu lugar (${from.placeId}) para ela.` };
   }
   const self = fromBoard?.cards[from.placeId];
   if (self?.kind !== 'session' || self.roleId !== LEADER_ROLE_ID) return { ok: false, reason: 'ela está em outro quadro, e só o Líder alcança outros quadros.' };
-  if (self.by === 'session') return { ok: false, reason: 'ela está em outro quadro, e só o Líder que o dono pôs no quadro alcança outros quadros (você foi aberta por uma sessão).' };
+  if (!isBoardOrchestrator(fromBoard, from.placeId)) return { ok: false, reason: 'ela está em outro quadro, e só o Líder que o dono pôs no quadro alcança outros quadros (você foi aberta por uma sessão).' };
   if (boardReach(fromBoard) !== 'all') return { ok: false, reason: 'ela está em outro quadro, e o alcance do seu quadro é só ele mesmo (o dono muda em "Alcance", no quadro).' };
   return { ok: true };
+}
+
+/**
+ * May the session at `from` reach the Líder único: it was opened by the Líder único, or is below one that was (by
+ * hierarchy arrows). `openedByLeader` says which places of the board the Líder único opened (the board does not
+ * keep it: the tabs and the bridge do).
+ */
+export function canReachLeader(doc: MindscapeDoc, from: ReachEnd, openedByLeader: (placeId: string) => boolean): ReachVerdict {
+  const board = doc.boards[from.projectPath];
+  if (board?.cards[from.placeId]?.kind !== 'session') return { ok: false, reason: `"${from.placeId}" não é um lugar do quadro.` };
+  if (openedByLeader(from.placeId)) return { ok: true };
+  const above = Object.keys(board.cards).some((id) => board.cards[id]?.kind === 'session' && openedByLeader(id) && isBelow(board, id, from.placeId));
+  return above
+    ? { ok: true }
+    : { ok: false, reason: 'você não foi aberta pelo Líder único nem está abaixo, pelas setas, de uma sessão que ele abriu. Fale com quem está acima de você no quadro.' };
+}
+
+/**
+ * The first live place above `placeId` by hierarchy arrows, nearest first and, at the same distance, the one that
+ * opened it before an arrow of the owner; `undefined` = nobody live above (the work goes to the Líder único).
+ */
+export function firstLiveAbove(board: MindscapeBoard | undefined, placeId: string, isLive: (placeId: string) => boolean): string | undefined {
+  if (!board) return undefined;
+  const seen = new Set([placeId]);
+  let level = [placeId];
+  while (level.length > 0) {
+    const next: string[] = [];
+    for (const at of level) {
+      const up = board.links
+        .filter((link) => link.to === at && isHierarchyArrow(link) && board.cards[link.from]?.kind === 'session' && !seen.has(link.from))
+        .sort((a, b) => Number(b.opened === true) - Number(a.opened === true));
+      for (const link of up) {
+        if (seen.has(link.from)) continue;
+        seen.add(link.from);
+        next.push(link.from);
+      }
+    }
+    const live = next.find(isLive);
+    if (live) return live;
+    level = next;
+  }
+  return undefined;
+}
+
+/**
+ * Who hears a session (dono, 09/11: "não é nem configuração, é comportamento definido por nós nos mindscapes. Só mudar
+ * quem responde quem"): the ONE rule for the delivery and the lock of a session, and for whoever takes the tasks of a
+ * place that is gone. Read from the board at each notice, so an arrow drawn or erased counts at the next one:
+ * the first live place above it by the hierarchy arrows (the owner's, or the opening ones); none → the live Líder of
+ * its board (`boardLeaders`); none → the Líder único (`LEADER_OF_ALL`). End of turn and progress never ask it: they
+ * stay in the ledger. `isLive` is the caller's (an open tab that answers).
+ */
+export function whoHears(board: MindscapeBoard | undefined, placeId: string, isLive: (placeId: string) => boolean): string {
+  const above = firstLiveAbove(board, placeId, isLive);
+  if (above) return above;
+  return boardLeaders(board).find((id) => id !== placeId && isLive(id)) ?? LEADER_OF_ALL;
 }
 
 /** The board and place of a place id: the caller's board first, then every other one. */
@@ -104,4 +242,36 @@ export function findPlace(doc: MindscapeDoc, placeId: string, preferredPath: str
   const paths = [preferredPath, ...Object.keys(doc.boards).filter((path) => path !== preferredPath)];
   const projectPath = paths.find((path) => doc.boards[path]?.cards[placeId]?.kind === 'session');
   return projectPath ? { projectPath, placeId } : undefined;
+}
+
+/** What only the live tab tells (the board does not keep it), for `canFaxineiroClose`. */
+export interface CloseFacts {
+  /** Working, or not known yet. */
+  readonly working: boolean;
+  /** A permission on screen, a question, a plan, a usage limit or an error: the owner's. */
+  readonly needsOwner: boolean;
+  /** Another session (or the app) opened the tab; `false` = the owner opened it by hand. */
+  readonly openedBySession: boolean;
+}
+
+/**
+ * Faxineiro com gatilhos (t-b3b26e60) — the Faxineiro of a board closes the sessions of its own board with no arrow
+ * to them ("ele tem permissão para fechar sessões do próprio quadro"), and never: another board, itself, the Líder, a
+ * session working, one waiting for the owner, or a tab the owner opened by hand ("nunca fecha sessão trabalhando nem
+ * mexe no que é do dono"). Only a place with the Faxineiro role has this reach; the arrows of `canReach` still hold
+ * for everyone else.
+ */
+export function canFaxineiroClose(doc: MindscapeDoc, from: ReachEnd, to: ReachEnd, facts: CloseFacts): ReachVerdict {
+  const board = doc.boards[from.projectPath];
+  const self = board?.cards[from.placeId];
+  if (!board || self?.kind !== 'session' || self.roleId !== FAXINEIRO_ROLE_ID) return { ok: false, reason: 'só o Faxineiro do quadro fecha sem seta.' };
+  if (from.projectPath !== to.projectPath) return { ok: false, reason: 'ela está em outro quadro; o Faxineiro só fecha sessões do próprio quadro.' };
+  if (from.placeId === to.placeId) return { ok: false, reason: 'esta é a sua própria sessão.' };
+  const target = board.cards[to.placeId];
+  if (target?.kind !== 'session') return { ok: false, reason: `"${to.placeId}" não é um lugar do quadro.` };
+  if (target.roleId === LEADER_ROLE_ID) return { ok: false, reason: 'é o Líder do quadro; o Faxineiro não fecha o Líder.' };
+  if (facts.working) return { ok: false, reason: 'ela está trabalhando; o Faxineiro não corta turno.' };
+  if (facts.needsOwner) return { ok: false, reason: 'ela espera o dono (permissão, pergunta, plano, limite ou erro).' };
+  if (!facts.openedBySession) return { ok: false, reason: 'o dono abriu esta aba à mão; ela é dele.' };
+  return { ok: true };
 }

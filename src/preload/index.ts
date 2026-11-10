@@ -1,4 +1,5 @@
 import type { LayoutPrefs } from '../shared/layoutPrefs';
+import type { LeaderPrefs } from '../shared/leaderPrefs';
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 // G5 (batch N5) — guarda contra segundo assinante silencioso de canal IPC:
 // todo `onX` abaixo passa por aqui em vez de `ipcRenderer.on` direto.
@@ -13,6 +14,7 @@ import { HEALTH_CHANNELS } from '../shared/health/ipc';
 import type { KillProcessOutcome } from '../shared/health/ipc';
 import type { HealthReport } from '../shared/health/types';
 import type { RemoteHealthReport } from '../shared/health/remote';
+import { HOMOLOGACAO_CHANNELS, type FactoryMetricsView, type FactoryRigsView } from '../shared/homologacao/ipc';
 // B33 — atualizar de dentro do app.
 import { APP_UPDATE_CHANNELS, type AppUpdateApplyResult, type AppUpdateBoot, type AppUpdateStatus, type ResumeTab } from '../shared/appUpdate';
 // Sidebar — abrir no editor + branch atual.
@@ -87,6 +89,7 @@ import type {
   ProjectScanMode,
   PtyCreateOptions,
   PtyCreateResult,
+  RelinkToolsResult,
   RemoteAliveSession,
   PtyExitInfo,
   RemoteSwitchOutcome,
@@ -151,8 +154,11 @@ import {
 } from '../shared/esteira/ipc';
 
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
-import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerSnapshot } from '../shared/ledger/channels';
+import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerPrioritized, type LedgerSnapshot, type LedgerTurnRecord, type LedgerTurnRecorded } from '../shared/ledger/channels';
 import type { LedgerProof } from '../shared/ledger/contract';
+import { LEDGER_REMOTE_CHANNELS, type LedgerRemoteResult, type LedgerRemoteState } from '../shared/ledger/remote';
+import { LEDGER_MIRROR_CHANNELS, type LedgerMirrorConfigureResult, type LedgerMirrorState, type LedgerPlacesSnapshot } from '../shared/ledger/mirror';
+import { HILL_CLIMB_CHANNELS, type HillClimbGestureRequest, type HillClimbGestureResult, type HillClimbSnapshot } from '../shared/hillClimb/channels';
 import { LEARNING_CHANNELS, type RendererGesture } from '../shared/learning/gestures';
 import type {
   MindscapeBoardRequest,
@@ -174,8 +180,11 @@ import {
   type CelularTailnet,
 } from '../shared/celular';
 import { ROTINAS_CHANNELS, type ShadowEntry } from '../shared/rotinas/contract';
-import { LIDER_CHANNELS, type LiderReport, type LiderSendPayload, type LiderSendResult, type LiderState } from '../shared/lider/ipc';
+import { FAXINEIRO_CHANNELS, type FaxineiroRoundAnswer } from '../shared/faxineiro/ipc';
+import type { FaxineiroLogEntry, SessionView } from '../shared/faxineiro/triggers';
+import { LIDER_CHANNELS, type LiderCarryPayload, type LiderReport, type LiderSendPayload, type LiderSendResult, type LiderState } from '../shared/lider/ipc';
 import { ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
+import type { ClaudeInventory } from '../shared/role-scope';
 import type { TeamPrefs } from '../shared/teamPrefs';
 import { SESSION_RENEWAL_CHANNELS, type HandoffStatus, type RenewalPrepareInput, type RenewalPrepared, type SessionRenewalPrefs } from '../shared/sessionRenewal';
 
@@ -207,6 +216,8 @@ const donelApi: DonelApi = {
 
     remoteAlive: () => ipcRenderer.invoke(PTY_CHANNELS.remoteAlive) as Promise<RemoteAliveSession[]>,
 
+    relinkTools: (ptyId: string) => ipcRenderer.invoke(PTY_CHANNELS.relinkTools, ptyId) as Promise<RelinkToolsResult>,
+
     // NÃO passa por `subscribeChannel` (G5): este canal é broadcast DE
     // PROPÓSITO — uma aba, um `TerminalPane`, um listener, todos no MESMO
     // canal, cada um filtrando pelo próprio `ptyId`. Múltiplos assinantes
@@ -225,6 +236,12 @@ const donelApi: DonelApi = {
       };
       ipcRenderer.on(PTY_CHANNELS.exit, handler);
       return () => ipcRenderer.removeListener(PTY_CHANNELS.exit, handler);
+    },
+
+    onLink: (listener: (ptyId: string, linked: boolean) => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, ptyId: string, linked: boolean): void => listener(ptyId, linked);
+      ipcRenderer.on(PTY_CHANNELS.link, handler);
+      return () => ipcRenderer.removeListener(PTY_CHANNELS.link, handler);
     },
   },
 
@@ -435,6 +452,8 @@ const donelApi: DonelApi = {
       ipcRenderer.invoke(CONFIG_CHANNELS.setProjectYolo, projectPath, enabled) as Promise<AppConfigDto>,
     // Oráculo no centro — the new layout switch and the view the center shows.
     setLayoutPrefs: (prefs: Partial<LayoutPrefs>) => ipcRenderer.invoke(CONFIG_CHANNELS.setLayoutPrefs, prefs) as Promise<AppConfigDto>,
+    // Líder único na VPS — onde o Líder roda.
+    setLeaderPrefs: (prefs: Partial<LeaderPrefs>) => ipcRenderer.invoke(CONFIG_CHANNELS.setLeaderPrefs, prefs) as Promise<AppConfigDto>,
     setCollapsedFavorites: (collapsed: string[]) =>
       ipcRenderer.invoke(CONFIG_CHANNELS.setCollapsedFavorites, collapsed) as Promise<AppConfigDto>,
   },
@@ -475,6 +494,22 @@ const donelApi: DonelApi = {
     onRemoteChanged: (listener: (reports: readonly RemoteHealthReport[]) => void) => {
       const handler = (_event: unknown, reports: readonly RemoteHealthReport[]): void => listener(reports);
       return subscribeChannel(ipcRenderer, HEALTH_CHANNELS.remoteChanged, handler);
+    },
+  },
+
+  // Mindscape de homologação V1 — the factory's numbers, read-only.
+  homologacao: {
+    metricsGet: () => ipcRenderer.invoke(HOMOLOGACAO_CHANNELS.metricsGet) as Promise<FactoryMetricsView | null>,
+    metricsRefresh: () => ipcRenderer.invoke(HOMOLOGACAO_CHANNELS.metricsRefresh) as Promise<FactoryMetricsView | null>,
+    onMetricsChanged: (listener: (view: FactoryMetricsView | null) => void) => {
+      const handler = (_event: unknown, view: FactoryMetricsView | null): void => listener(view);
+      return subscribeChannel(ipcRenderer, HOMOLOGACAO_CHANNELS.metricsChanged, handler);
+    },
+    rigsGet: () => ipcRenderer.invoke(HOMOLOGACAO_CHANNELS.rigsGet) as Promise<FactoryRigsView | null>,
+    rigsRefresh: () => ipcRenderer.invoke(HOMOLOGACAO_CHANNELS.rigsRefresh) as Promise<FactoryRigsView | null>,
+    onRigsChanged: (listener: (view: FactoryRigsView | null) => void) => {
+      const handler = (_event: unknown, view: FactoryRigsView | null): void => listener(view);
+      return subscribeChannel(ipcRenderer, HOMOLOGACAO_CHANNELS.rigsChanged, handler);
     },
   },
 
@@ -546,13 +581,14 @@ const donelApi: DonelApi = {
     removeUploadDir: (ptyId: string, folder: string) => {
       ipcRenderer.send(BROWSER_CHANNELS.removeUploadDir, ptyId, folder);
     },
-    answerUploadRequest: (ptyId: string, allow: boolean, wideConfirmed?: boolean) => {
-      ipcRenderer.send(BROWSER_CHANNELS.answerUploadRequest, ptyId, allow, wideConfirmed === true);
-    },
     setDomains: (ptyId: string, mode: DomainMode, typed: string) => ipcRenderer.invoke(BROWSER_CHANNELS.setDomains, ptyId, mode, typed) as Promise<BrowserRulesResult>,
     onRules: (listener: (rules: BrowserAgentRules) => void) => {
       const handler = (_event: unknown, rules: BrowserAgentRules): void => listener(rules);
       return subscribeChannel(ipcRenderer, BROWSER_CHANNELS.rules, handler);
+    },
+    onFullscreenKey: (listener: (request: BrowserOpenRequest) => void) => {
+      const handler = (_event: unknown, request: BrowserOpenRequest): void => listener(request);
+      return subscribeChannel(ipcRenderer, BROWSER_CHANNELS.fullscreenKey, handler);
     },
   },
 
@@ -594,12 +630,42 @@ const donelApi: DonelApi = {
     openProof: (proof: LedgerProof) => ipcRenderer.invoke(LEDGER_CHANNELS.openProof, proof) as Promise<boolean>,
     proofImage: (taskId: string, proofIndex: number) => ipcRenderer.invoke(LEDGER_CHANNELS.proofImage, taskId, proofIndex) as Promise<string | null>,
     comment: (comment: LedgerComment) => ipcRenderer.invoke(LEDGER_CHANNELS.comment, comment) as Promise<LedgerCommentResult>,
+    passOn: (requests: readonly LedgerPassOnRequest[]) => ipcRenderer.invoke(LEDGER_CHANNELS.passOn, requests) as Promise<readonly LedgerPassedOn[]>,
+    turnEnded: (record: LedgerTurnRecord) => ipcRenderer.invoke(LEDGER_CHANNELS.turnEnded, record) as Promise<LedgerTurnRecorded>,
+    prioritize: (order: readonly string[]) => ipcRenderer.invoke(LEDGER_CHANNELS.prioritize, order) as Promise<LedgerPrioritized>,
+  },
+
+  // Hill climbing — `<userData>/hill-climb.json` (main is the only writer); gestures go as the owner.
+  hillClimb: {
+    load: () => ipcRenderer.invoke(HILL_CLIMB_CHANNELS.load) as Promise<HillClimbSnapshot>,
+    onChanged: (listener: (snapshot: HillClimbSnapshot) => void) => {
+      const handler = (_event: unknown, snapshot: HillClimbSnapshot): void => listener(snapshot);
+      return subscribeChannel(ipcRenderer, HILL_CLIMB_CHANNELS.changed, handler);
+    },
+    gesture: (request: HillClimbGestureRequest) => ipcRenderer.invoke(HILL_CLIMB_CHANNELS.gesture, request) as Promise<HillClimbGestureResult>,
+  },
+
+  // Espelho do Oráculo — the registry outside this PC. The key goes in (write-only); only "configured" comes back.
+  ledgerMirror: {
+    getState: () => ipcRenderer.invoke(LEDGER_MIRROR_CHANNELS.getState) as Promise<LedgerMirrorState>,
+    configure: (url: string, key: string, ownerName?: string) => ipcRenderer.invoke(LEDGER_MIRROR_CHANNELS.configure, url, key, ownerName) as Promise<LedgerMirrorConfigureResult>,
+    disable: () => ipcRenderer.invoke(LEDGER_MIRROR_CHANNELS.disable) as Promise<LedgerMirrorState>,
+    syncNow: () => ipcRenderer.invoke(LEDGER_MIRROR_CHANNELS.syncNow) as Promise<LedgerMirrorState>,
+    places: () => ipcRenderer.invoke(LEDGER_MIRROR_CHANNELS.places) as Promise<LedgerPlacesSnapshot>,
+  },
+
+  // Oráculo na VPS — where the ledger lives; the move and the way back.
+  ledgerRemote: {
+    getState: () => ipcRenderer.invoke(LEDGER_REMOTE_CHANNELS.getState) as Promise<LedgerRemoteState>,
+    move: (lugar: string) => ipcRenderer.invoke(LEDGER_REMOTE_CHANNELS.move, lugar) as Promise<LedgerRemoteResult>,
+    back: () => ipcRenderer.invoke(LEDGER_REMOTE_CHANNELS.back) as Promise<LedgerRemoteResult>,
   },
 
   // Papéis de sessão (item 12a) — `<userData>/papeis/` (main is the only writer).
   roles: {
     list: () => ipcRenderer.invoke(ROLES_CHANNELS.list) as Promise<SessionRole[]>,
     save: (role: SessionRole) => ipcRenderer.invoke(ROLES_CHANNELS.save, role) as Promise<RoleSaveResult>,
+    inventory: (cwd?: string) => ipcRenderer.invoke(ROLES_CHANNELS.inventory, cwd) as Promise<ClaudeInventory>,
   },
 
   // Diário de gestos — fire and forget; the main validates and stamps the time.
@@ -766,6 +832,7 @@ const donelApi: DonelApi = {
       ipcRenderer.invoke(CHAT_CHANNELS.screenState, { ptyId, terminalNeeded }) as Promise<void>,
     sendFailed: (ptyId: string, detail: SendFailureDetail) =>
       ipcRenderer.invoke(CHAT_CHANNELS.sendFailed, { ptyId, detail }) as Promise<void>,
+    boxCleared: (ptyId: string, text: string) => ipcRenderer.invoke(CHAT_CHANNELS.boxCleared, { ptyId, text }) as Promise<void>,
 
     // T076/T079 - pendencias e foco
     answer: (ptyId: string, pendingId: string, answer: PendingAnswer) =>
@@ -878,6 +945,7 @@ const donelApi: DonelApi = {
       const handler = (_event: unknown, payload: { readonly tabId: string }): void => listener(payload);
       return subscribeChannel(ipcRenderer, LIDER_CHANNELS.activateTab, handler);
     },
+    carry: (payload: LiderCarryPayload) => ipcRenderer.invoke(LIDER_CHANNELS.carry, payload) as Promise<LiderSendResult>,
     // --- pet window (the bubble of the Líder) ---
     getState: () => ipcRenderer.invoke(LIDER_CHANNELS.getState) as Promise<LiderState>,
     onState: (listener: (state: LiderState) => void) => {
@@ -905,6 +973,12 @@ const donelApi: DonelApi = {
   rotinas: {
     today: () => ipcRenderer.invoke(ROTINAS_CHANNELS.today) as Promise<ShadowEntry[]>,
     onChanged: (listener: () => void) => subscribeChannel(ipcRenderer, ROTINAS_CHANNELS.changed, () => listener()),
+  },
+
+  // t-b3b26e60 — Faxineiro com gatilhos: one round a minute, and what the bridge did with it.
+  faxineiro: {
+    round: (sessions: readonly SessionView[]) => ipcRenderer.invoke(FAXINEIRO_CHANNELS.round, sessions) as Promise<FaxineiroRoundAnswer>,
+    log: (entries: readonly FaxineiroLogEntry[]) => ipcRenderer.send(FAXINEIRO_CHANNELS.log, entries),
   },
 };
 

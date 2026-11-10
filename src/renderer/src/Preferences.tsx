@@ -4,7 +4,10 @@ import { Bell, FolderTree, MessagesSquare, PlayCircle, Search, Smartphone, Trash
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { NotificationPreference, ProjectScanMode } from '../../shared/config';
 import type { SessionRenewalPrefs } from '../../shared/sessionRenewal';
+import type { TurnNotices } from '../../shared/teamPrefs';
 import { CelularSection } from './CelularSection';
+import { EspelhoSection } from './EspelhoSection';
+import { OraculoVpsSection } from './OraculoVpsSection';
 import styles from './Preferences.module.css';
 
 // Preferências — tela cheia com menu lateral (pedido do dono, 04/11: "como popup não está vingando").
@@ -71,6 +74,9 @@ export interface PreferencesProps {
   /** Limite de sessões abertas por um Líder (`team.openCap`, `null` = sem limite); applies at once. */
   openCap: number | null;
   onChangeOpenCap: (openCap: number | null) => void;
+  /** 08/11 — where the end of a session's turn goes (`team.turnNotices`): the ledger (default) or the Líder's chat. */
+  turnNotices: TurnNotices;
+  onChangeTurnNotices: (turnNotices: TurnNotices) => void;
   /** "Modo auto nunca pede permissão" (`autoMode.neverAsks`); applies at once. */
   autoNeverAsks: boolean;
   onChangeAutoNeverAsks: (neverAsks: boolean) => void;
@@ -82,6 +88,9 @@ export interface PreferencesProps {
   /** `launcherDefaults.where`: `undefined` = last choice / first place with an account, `'local'` = this computer. */
   launcherWhere?: string;
   onChangeLauncherWhere?: (where: string | undefined) => void;
+  /** Líder único na VPS — `leader.where`: `'local'` or a remote place. The next message through the Jobu moves it. */
+  leaderWhere?: string;
+  onChangeLeaderWhere?: (where: string) => void;
   /** Papéis de sessão — opens the roles editor. */
   onManageRoles?: () => void;
 }
@@ -261,6 +270,21 @@ export function Preferences(props: PreferencesProps): React.JSX.Element | null {
       ),
     },
     {
+      id: 'turn-notices',
+      category: 'sessoes',
+      title: 'Avisos de fim de turno',
+      keywords: 'aviso terminou fim de turno líder ledger oráculo andamento notificar',
+      hint: 'Cada sessão grava o andamento no Oráculo e o Líder lê quando quiser. Só chegam na hora: sessão que precisa de você, travada (limite de uso, login, permissão aberta) e tarefa entregue para aceite. O modo antigo manda um aviso "◆ … terminou" ao Líder a cada turno.',
+      body: (
+        <Toggle
+          checked={props.turnNotices === 'chat'}
+          onChange={(checked) => props.onChangeTurnNotices(checked ? 'chat' : 'ledger')}
+          label="Modo antigo: avisar o Líder a cada turno"
+          description="Desligado, o andamento fica no Oráculo."
+        />
+      ),
+    },
+    {
       id: 'chat',
       category: 'chat',
       title: 'Chat',
@@ -303,6 +327,28 @@ export function Preferences(props: PreferencesProps): React.JSX.Element | null {
         />
       ),
     },
+    ...(remotes.length > 0 && props.onChangeLeaderWhere
+      ? [
+          {
+            id: 'leader-where',
+            category: 'avisos' as const,
+            title: 'Onde o Líder roda',
+            keywords: 'líder lider jobu onde roda vps remoto servidor ram memória',
+            hint: 'O Líder com quem você fala pelo Jobu e os Líderes dos quadros. Ao trocar, o do Jobu muda de lugar na próxima mensagem, com a mesma conversa; se estiver trabalhando, muda quando terminar. O de um quadro vale na próxima vez que abrir.',
+            body: (
+              <Select
+                value={props.leaderWhere !== undefined && (props.leaderWhere === 'local' || remotes.some((place) => place.id === props.leaderWhere)) ? props.leaderWhere : 'auto'}
+                options={[
+                  { value: 'auto', label: 'Numa VPS', description: 'padrão: o primeiro lugar remoto com conta' },
+                  { value: 'local', label: 'Este computador' },
+                  ...remotes.map((place) => ({ value: place.id, label: place.label })),
+                ]}
+                onChange={(value) => props.onChangeLeaderWhere?.(value)}
+              />
+            ),
+          },
+        ]
+      : []),
     {
       id: 'oracle-center',
       category: 'avisos',
@@ -325,6 +371,22 @@ export function Preferences(props: PreferencesProps): React.JSX.Element | null {
       keywords: 'celular telefone oráculo harrow ledger entregas validar aceitar rejeitar tailscale parear qr pwa firewall',
       hint: 'Valide as entregas que esperam você pelo celular, uma carta por tela: arraste para a direita para aceitar e para a esquerda para rejeitar com motivo.',
       body: <CelularSection />,
+    },
+    {
+      id: 'espelho',
+      category: 'celular',
+      title: 'Registro das tarefas fora do PC',
+      keywords: 'oráculo harrow tarefas registro histórico supabase espelho backup demandas planilha',
+      hint: 'Cada mudança no Oráculo vai, em até um minuto, para uma tabela no seu Supabase pessoal: o histórico sobrevive ao PC e abre no navegador ou no celular. Prints e vídeos ficam só aqui.',
+      body: <EspelhoSection />,
+    },
+    {
+      id: 'oraculo-vps',
+      category: 'celular',
+      title: 'Onde mora o Oráculo',
+      keywords: 'oráculo harrow vps servidor pc desligado registro tarefas remoto tailscale',
+      hint: 'Leve o Oráculo para a sua VPS: as cartas chegam ao celular e as sessões de lá seguem criando e entregando tarefas com o PC desligado.',
+      body: <OraculoVpsSection />,
     },
     ...(props.onManageRoles
       ? [

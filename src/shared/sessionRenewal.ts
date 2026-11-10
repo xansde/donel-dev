@@ -169,9 +169,13 @@ const CARRIED_PERMISSION_MODES: ReadonlySet<string> = new Set(['default', 'accep
  * switched permission mode, the new one starts in that mode (only the modes
  * that need no extra opt-in).
  */
-export function renewalLaunchArgs(args: readonly string[] | undefined, permissionMode: string | null): string[] {
+export function renewalLaunchArgs(args: readonly string[] | undefined, carried: string | null): string[] {
   const out: string[] = [];
   const source = args ?? [];
+  // "default" is also what the chat reads when the transcript records no mode change: it never lowers a launch that
+  // needed an opt-in (bypass, auto, dontAsk). The renewed session would stop on every prompt, and only the owner, inside
+  // that tab, could answer (t-1293c818). A Shift+Tab to plan or acceptEdits still carries.
+  const permissionMode = carried === 'default' && launchedWithOptIn(source) ? null : carried;
   for (let i = 0; i < source.length; i += 1) {
     const arg = source[i]!;
     if (arg === '-r' || arg === '--resume' || arg === '--session-id') {
@@ -194,6 +198,43 @@ export function renewalLaunchArgs(args: readonly string[] | undefined, permissio
     out.push('--permission-mode', permissionMode);
   }
   return out;
+}
+
+/** Permission modes of the launch that need an opt-in (no Shift+Tab gets back to them once lowered). */
+const OPT_IN_PERMISSION_MODES: ReadonlySet<string> = new Set(['bypassPermissions', 'auto', 'dontAsk']);
+
+function launchedWithOptIn(args: readonly string[]): boolean {
+  return args.some(
+    (arg, i) =>
+      arg === '--dangerously-skip-permissions' ||
+      (arg === '--permission-mode' && OPT_IN_PERMISSION_MODES.has(args[i + 1] ?? '')) ||
+      (arg.startsWith('--permission-mode=') && OPT_IN_PERMISSION_MODES.has(arg.slice('--permission-mode='.length))),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The first message of the new session (the handoff to read)
+// ---------------------------------------------------------------------------
+
+/** How long the renderer waits for the new session to take its first message before it tells the owner. */
+export const RENEWAL_HANDOFF_WAIT_MS = 120_000;
+
+/** How the first message of the new session ended (same shape as the send driver's outcome). */
+export type RenewalHandoffDelivery =
+  | { readonly kind: 'entrou' }
+  | { readonly kind: 'na-fila' }
+  | { readonly kind: 'nao-foi'; readonly reason: string }
+  | { readonly kind: 'enviando'; readonly reason?: string };
+
+/**
+ * `null` when the new session took (or queued) the "read the handoff" message. Otherwise the notice
+ * for the tab: the new session did not get the handoff and would start from scratch without anyone
+ * noticing. It names the handoff file and never resends by itself: the owner decides.
+ */
+export function renewalHandoffDeliveryNotice(outcome: RenewalHandoffDelivery, handoffPath: string): string | null {
+  if (outcome.kind === 'entrou' || outcome.kind === 'na-fila') return null;
+  const why = outcome.kind === 'nao-foi' ? `não entrou (${outcome.reason})` : `ainda não entrou${outcome.reason ? ` (${outcome.reason})` : ''}`;
+  return `A sessão nova não confirmou ter recebido a passagem de bastão: a primeira mensagem ${why}. A passagem está em ${handoffPath}. Confira antes de reenviar.`;
 }
 
 /** "250k" for the warning and the prompts. */

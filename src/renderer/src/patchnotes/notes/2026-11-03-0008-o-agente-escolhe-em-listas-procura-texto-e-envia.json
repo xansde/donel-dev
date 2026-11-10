@@ -1,0 +1,4 @@
+{
+  "title": "O agente escolhe em listas, procura texto e envia arquivos",
+  "text": "No navegador, o agente agora abre listas e escolhe uma opção, rola até um texto da página e coloca um arquivo num campo de envio. O envio só funciona de uma pasta que você autorizar em \"Regras\", no próprio navegador, e vale só para aquela sessão. Pastas com credenciais não podem ser autorizadas."
+}

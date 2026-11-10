@@ -1,0 +1,4 @@
+{
+  "title": "Aviso no celular quando uma carta espera você",
+  "text": "O app do Oráculo no celular ganhou um sino. Toque nele e permita as notificações: quando uma carta passar a esperar você, o celular avisa com o título dela, mesmo com o app fechado, e o toque abre a carta. O aviso precisa do endereço https da Tailscale: o passo a passo está nas Preferências do celular, e depois você pareia de novo pelo QR. No iPhone, adicione o Oráculo à Tela de Início antes de tocar no sino."
+}

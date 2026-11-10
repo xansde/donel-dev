@@ -14,7 +14,52 @@ export const LEDGER_CHANNELS = {
   proofImage: 'ledger:proof-image',
   /** Cartas forma A — the owner writes on a card (`LedgerComment` → `LedgerCommentResult`). */
   comment: 'ledger:comment',
+  /** 06/11 (t-e753b554) — a place is gone: its live tasks pass on (`LedgerPassOnRequest[]` → `LedgerPassedOn[]`). */
+  passOn: 'ledger:pass-on',
+  /** 08/11 — a session ended a turn: the record goes to its live task (`LedgerTurnRecord` → `LedgerTurnRecorded`). */
+  turnEnded: 'ledger:turn-ended',
+  /** 09/11 (t-5c0df1df) — the owner reorders his asks in "Seus pedidos" (`string[]`, first = most important → `LedgerPrioritized`). */
+  prioritize: 'ledger:prioritize',
 } as const;
+
+/**
+ * 08/11 (dono: "Eles devem atualizar diretamente o ledger") — the end of a turn of the session of `placeId`, written to
+ * its live task as an `andamento` record instead of a "◆ … terminou" in the Líder's chat.
+ */
+export interface LedgerTurnRecord {
+  readonly projectPath: string;
+  readonly placeId: string;
+  readonly text: string;
+  /**
+   * Not an end of turn: a situation that cannot wait (a permission open, a failed turn), recorded with this state and
+   * `text` as what it needs, whether or not a Líder could hear it yet (Revisor, #324).
+   */
+  readonly estado?: 'travada' | 'precisa-do-dono';
+}
+
+export type LedgerTurnRecorded = 'registrado' | 'ja-registrado' | 'sem-tarefa' | 'falhou';
+
+/**
+ * 06/11 (t-e753b554) — the renderer saw that a place is gone (its tab was closed and did not come back, or it never
+ * started) and names who takes its work: the first live place above it (`firstLiveAbove`, reach.ts) or the Líder
+ * único (`'lider'`). The main moves only the tasks that are aberta, em execução or rejeitada (a delivered one waits
+ * for whoever decides) and, for `nao-comecou`, only past the grace of `ownerGone`.
+ */
+export interface LedgerPassOnRequest {
+  readonly projectPath: string;
+  readonly placeId: string;
+  readonly gone: 'fechada' | 'nao-comecou';
+  /** A place id of the same board, or `'lider'`. */
+  readonly to: string;
+}
+
+/** What moved for one request: the tasks now owned by `to`. */
+export interface LedgerPassedOn {
+  readonly projectPath: string;
+  readonly placeId: string;
+  readonly to: string;
+  readonly tasks: readonly { readonly id: string; readonly title?: string }[];
+}
 
 export interface LedgerComment {
   readonly id: string;
@@ -49,6 +94,9 @@ export type LedgerOwnerDecision =
   | { readonly id: string; readonly accept: true; readonly option?: string; readonly text?: string }
   | { readonly id: string; readonly accept: false; readonly reason: string; readonly option?: string; readonly text?: string };
 
+/** How many priority marks were written; or why the order stopped (the marks before it stay). */
+export type LedgerPrioritized = { readonly ok: true; readonly written: number } | { readonly ok: false; readonly reason: string };
+
 export type LedgerApplyResult = { readonly ok: true; readonly task: LedgerTask } | { readonly ok: false; readonly reason: string };
 
 export interface DonelLedgerApi {
@@ -62,4 +110,10 @@ export interface DonelLedgerApi {
   proofImage(taskId: string, proofIndex: number): Promise<string | null>;
   /** The owner writes on a card: recorded and sent at once to whoever reads it. */
   comment(comment: LedgerComment): Promise<LedgerCommentResult>;
+  /** 06/11 — the live tasks of gone places pass on, with the record; answers what moved. */
+  passOn(requests: readonly LedgerPassOnRequest[]): Promise<readonly LedgerPassedOn[]>;
+  /** 08/11 — the end of a session's turn, recorded in the ledger. */
+  turnEnded(record: LedgerTurnRecord): Promise<LedgerTurnRecorded>;
+  /** 09/11 — the owner's asks in the order he wants them (task ids, first = most important). */
+  prioritize(order: readonly string[]): Promise<LedgerPrioritized>;
 }

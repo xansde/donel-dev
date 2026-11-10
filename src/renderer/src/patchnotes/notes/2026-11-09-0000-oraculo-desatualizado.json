@@ -1,0 +1,4 @@
+{
+  "title": "Oráculo da VPS desatualizado agora se explica",
+  "text": "Quando o Oráculo da VPS é mais antigo que o app e recusa um registro (como o andamento das sessões), a sessão passa a ver a causa e como atualizá-lo, em vez de \"op malformada\". Nada é gravado pela metade."
+}

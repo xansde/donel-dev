@@ -1,0 +1,4 @@
+{
+  "title": "Mensagem entre sessões chega sozinha",
+  "text": "A mensagem que uma sessão manda para outra, e o aviso de que uma sessão terminou, agora entram na hora, mesmo com a outra trabalhando: vão para a fila do próprio Claude de lá, como quando você digita no terminal com ele ocupado. Nada fica mais \"Retida\" esperando você abrir a aba. Só uma permissão aberta na tela de lá segura a mensagem, e ela entra sozinha quando a permissão fecha. Sessão que terminou o turno sem pedir nada não aparece mais como \"precisa de você\", e cada aviso de término chega uma vez só."
+}

@@ -7,6 +7,7 @@ import { IMAGE_PASTE_SEQUENCE, parseClaudeNotFound, resolveTerminalKeyAction } f
 import type { PtyExitInfo, SemaphoreStateInfo } from '../../shared';
 import type { ScreenSnapshot } from '../../shared/chat/screen';
 import { bufferLineToScreenLine, estimateGridSize, withResumeArgs } from '../../shared/terminalScreen';
+import { roleLaunchWarning } from '../../shared/roleLaunch';
 import { formatRingBufferPreview } from './ringBufferPreview';
 import styles from './TerminalPane.module.css';
 
@@ -143,6 +144,8 @@ export interface TerminalPaneProps {
   roleId?: string;
   /** Líder único — the Jobu's mark on the tab (see `PtyCreateOptions.leaderOfAll`). */
   leaderOfAll?: boolean;
+  /** Place of the tab on the board (see `PtyCreateOptions.placeId`). */
+  placeId?: string;
   /** Ação real de fechar a aba na barra de abas (T010): App.tsx remove a aba do array (unmount cuida do teardown do PTY). */
   onCloseTab?: () => void;
   /**
@@ -208,6 +211,8 @@ export interface TerminalPaneProps {
    * assunto, e tem estado próprio na vista).
    */
   onProcessExit?: (info: { exitCode: number | undefined; signal: number | undefined; msSinceSpawn: number }) => void;
+  /** 07/11 — the terminal never started (e.g. the ssh of a remote place failed): the literal reason. */
+  onStartFailed?: (message: string) => void;
   /**
    * T056 (014-chat) — o `ptyId` de cada geração, no instante em que nasce. O chat
    * da aba se liga ao PTY por ele (`useChatSession(ptyId)`) e PRECISA mantê-lo
@@ -304,6 +309,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     accountLoginId,
     roleId,
     leaderOfAll,
+    placeId,
     onCloseTab,
     ownerInputGate,
     onStateChange,
@@ -312,6 +318,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     onProviderResolved,
     onClaudeSessionIdResolved,
     onProcessExit,
+    onStartFailed,
     onPtyChange,
     resumeSessionId,
   },
@@ -354,6 +361,12 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   // handle acima pro porquê de ser evento, não poll).
   const renderListenersRef = useRef(new Set<() => void>());
   const screenListenersRef = useRef(new Set<() => void>());
+  /**
+   * Peso do renderer (08/11) — while the listeners of one parsed chunk run, the buffer cannot change (xterm parses
+   * later writes in a later task), so they share ONE read of the screen. Three readers per tab (working, permission
+   * mode, terminal needed) each walking every row on every chunk was a third of the window's CPU with tabs printing.
+   */
+  const sharedScreenRef = useRef<{ active: boolean; snapshot: ScreenSnapshot | null }>({ active: false, snapshot: null });
   /** T039 — argv efetivo do próximo spawn (respawn com `-r` o substitui); `undefined` = prop `args`. */
   const spawnArgsRef = useRef<string[] | undefined>(undefined);
   const respawnRef = useRef<(options?: { resume?: string }) => void>(() => undefined);
@@ -364,6 +377,8 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   roleIdRef.current = roleId;
   const leaderOfAllRef = useRef(leaderOfAll);
   leaderOfAllRef.current = leaderOfAll;
+  const placeIdRef = useRef(placeId);
+  placeIdRef.current = placeId;
   const [status, setStatus] = useState<PaneStatus>({ kind: 'connecting' });
 
   // Ref pra sempre chamar a versão mais recente do callback sem precisar
@@ -382,6 +397,8 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   onClaudeSessionIdResolvedRef.current = onClaudeSessionIdResolved;
   const onProcessExitRef = useRef(onProcessExit);
   onProcessExitRef.current = onProcessExit;
+  const onStartFailedRef = useRef(onStartFailed);
+  onStartFailedRef.current = onStartFailed;
   const onPtyChangeRef = useRef(onPtyChange);
   onPtyChangeRef.current = onPtyChange;
   const resumeSessionIdRef = useRef(resumeSessionId);
@@ -405,6 +422,38 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     onAliveChangeRef.current?.(status.kind === 'running');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status.kind]);
+
+  /** The visible screen as rows of text (the chat's screen readers); `sharedScreenRef` shares it within one chunk. */
+  const readScreenNow = (): ScreenSnapshot => {
+    const term = termRef.current;
+    if (!term) return { lines: [], bracketedPaste: false, altScreen: false, cols: 0, rows: 0 };
+    const buffer = term.buffer.active;
+    const scratch = buffer.getNullCell();
+    const lines: ScreenSnapshot['lines'][number][] = [];
+    for (let y = 0; y < term.rows; y += 1) {
+      const line = buffer.getLine(buffer.viewportY + y);
+      if (!line) {
+        lines.push({ text: '', dim: [] });
+        continue;
+      }
+      lines.push(
+        bufferLineToScreenLine({
+          cols: term.cols,
+          getCell: (x) => {
+            const cell = line.getCell(x, scratch);
+            return cell ? { chars: cell.getChars(), width: cell.getWidth(), dim: cell.isDim() !== 0 } : undefined;
+          },
+        })
+      );
+    }
+    return {
+      lines,
+      bracketedPaste: term.modes.bracketedPasteMode,
+      altScreen: buffer.type === 'alternate',
+      cols: term.cols,
+      rows: term.rows,
+    };
+  };
 
   // T011 (FR-011) — `injectCommand` lê `ptyIdRef` no momento da CHAMADA (não
   // captura o valor no momento em que o handle foi criado), por isso não
@@ -442,34 +491,11 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         return true;
       },
       readScreen: (): ScreenSnapshot => {
-        const term = termRef.current;
-        if (!term) return { lines: [], bracketedPaste: false, altScreen: false, cols: 0, rows: 0 };
-        const buffer = term.buffer.active;
-        const scratch = buffer.getNullCell();
-        const lines: ScreenSnapshot['lines'][number][] = [];
-        for (let y = 0; y < term.rows; y += 1) {
-          const line = buffer.getLine(buffer.viewportY + y);
-          if (!line) {
-            lines.push({ text: '', dim: [] });
-            continue;
-          }
-          lines.push(
-            bufferLineToScreenLine({
-              cols: term.cols,
-              getCell: (x) => {
-                const cell = line.getCell(x, scratch);
-                return cell ? { chars: cell.getChars(), width: cell.getWidth(), dim: cell.isDim() !== 0 } : undefined;
-              },
-            })
-          );
-        }
-        return {
-          lines,
-          bracketedPaste: term.modes.bracketedPasteMode,
-          altScreen: buffer.type === 'alternate',
-          cols: term.cols,
-          rows: term.rows,
-        };
+        const shared = sharedScreenRef.current;
+        if (shared.active && shared.snapshot) return shared.snapshot;
+        const snapshot = readScreenNow();
+        if (shared.active) shared.snapshot = snapshot;
+        return snapshot;
       },
       onScreenUpdate: (listener: () => void): (() => void) => {
         screenListenersRef.current.add(listener);
@@ -515,7 +541,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     renewalIdRef.current = null;
 
     void window.donel.pty
-      .create({ cols: term.cols, rows: term.rows, cwd, sessionType, args: spawnArgsRef.current ?? args, providerId, accountLoginId, renewalId, roleId: roleIdRef.current, ...(leaderOfAllRef.current ? { leaderOfAll: true } : {}), ...(remoteId ? { remoteId, tabName, projectName, ...(openedBy ? { openedBy } : {}) } : {}) })
+      .create({ cols: term.cols, rows: term.rows, cwd, sessionType, args: spawnArgsRef.current ?? args, providerId, accountLoginId, renewalId, roleId: roleIdRef.current, ...(leaderOfAllRef.current ? { leaderOfAll: true } : {}), ...(placeIdRef.current ? { placeId: placeIdRef.current } : {}), ...(remoteId ? { remoteId, tabName, projectName, ...(openedBy ? { openedBy } : {}) } : {}) })
       .then((result) => {
         if (requestEpoch !== mountEpochRef.current) {
           // Geração já descartada (StrictMode double-invoke em dev, ou a aba
@@ -576,6 +602,9 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
             // replay do ring buffer aqui só cuida de MOSTRAR pro usuário o
             // que já rodou antes de `onData` ser assinado (ver comentário de
             // topo de ringBufferPreview.ts).
+            // Papel não entregue — the launch asked for a role that did not reach the CLI: said in the tab, never silent.
+            const roleWarning = result.roleNotDelivered ? roleLaunchWarning(result.roleNotDelivered.roleId, result.roleNotDelivered.missing) : null;
+            if (roleWarning) term.write(`\x1b[33m[Donel Dev] ${roleWarning}\x1b[0m\r\n`);
             const preview = formatRingBufferPreview(lines);
             if (preview) term.write(preview);
 
@@ -588,8 +617,13 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
               // transiente ANTES do próximo redraw sobrescrever por cima
               // (ver comentário do handle acima).
               term.write(data, () => {
-                renderListenersRef.current.forEach((listener) => listener());
-                screenListenersRef.current.forEach((listener) => listener());
+                sharedScreenRef.current = { active: true, snapshot: null };
+                try {
+                  renderListenersRef.current.forEach((listener) => listener());
+                  screenListenersRef.current.forEach((listener) => listener());
+                } finally {
+                  sharedScreenRef.current = { active: false, snapshot: null };
+                }
               });
             });
           });
@@ -624,6 +658,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         const message = error instanceof Error ? error.message : String(error);
         term.write(`\r\n\x1b[31mFalha ao iniciar o terminal: ${message}\x1b[0m\r\n`);
         setStatus({ kind: 'ended', info: { exitCode: -1 } });
+        onStartFailedRef.current?.(message.replace(/^Error invoking remote method '[^']*': (Error: )?/, ''));
       });
   }, [cwd, sessionType, args, providerId, remoteId, accountLoginId]);
 

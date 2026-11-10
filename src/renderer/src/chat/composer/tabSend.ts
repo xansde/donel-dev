@@ -44,6 +44,10 @@ function buildPorts(w: () => Wired, store: ChatStore): SendDriverPorts {
       const ptyId = w().source.terminal()?.ptyId ?? w().ptyId;
       if (ptyId !== null) markOpensScreen(ptyId);
     },
+    boxCleared: (text) => {
+      const ptyId = w().source.terminal()?.ptyId ?? w().ptyId;
+      if (ptyId !== null) store.reportBoxCleared(ptyId, text);
+    },
     reportFailure: (detail) => {
       const ptyId = w().source.terminal()?.ptyId ?? w().ptyId;
       if (ptyId !== null) store.reportSendFailure(ptyId, detail);
@@ -140,7 +144,10 @@ export function sendToTabAndWait(tabId: string, source: TabTerminalSource, reque
       const item = driver.getItems().find((candidate) => candidate.id === carrier);
       if (item === undefined) {
         // A finished send leaves the list once the transcript row takes over: it went in.
-        if (last !== undefined && last.state !== 'failed') done({ kind: 'entrou' });
+        if ((last !== undefined && last.state !== 'failed') || driver.wasDelivered(id)) {
+          done({ kind: 'entrou' });
+          return true;
+        }
         return last !== undefined;
       }
       last = item;
@@ -150,13 +157,26 @@ export function sendToTabAndWait(tabId: string, source: TabTerminalSource, reque
       else return false;
       return true;
     };
-    const id = driver.enqueue(request);
+    // A resend of the same text (the sender heard a timeout) answers for the first one: never twice in the box.
+    const id = driver.enqueue({ ...request, dedupe: true });
     if (check()) return;
     off = driver.subscribe(() => {
       check();
     });
     timer = setTimeout(() => done({ kind: 'enviando', ...(last?.reason ? { reason: last.reason } : {}) }), waitMs);
   });
+}
+
+/** 07/11 — the CLI of this tab took some message (seen by a hook, the transcript or a lookup): it started. */
+export function tabTookMessage(tabId: string): boolean {
+  return wired.get(tabId)?.driver.tookMessage() === true;
+}
+
+/** 07/11 — why the oldest send of this tab is still on its way (`null`: none is): the board's "não começou" says it. */
+export function pendingSendReason(tabId: string): string | null {
+  const item = wired.get(tabId)?.driver.getItems().find((candidate) => candidate.state !== 'accepted' && candidate.state !== 'failed');
+  if (item === undefined) return null;
+  return item.reason ?? item.queuedReason ?? 'enviando';
 }
 
 /**

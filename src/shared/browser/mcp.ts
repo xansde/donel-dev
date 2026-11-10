@@ -8,13 +8,14 @@
 
 import { boardTools, isBoardToolName, parseBoardToolCall, type BoardToolCall } from '../mindscape/agent-tools';
 import { isLedgerToolName, LEDGER_TOOLS, parseLedgerToolCall, type LedgerToolCall } from '../ledger/tools';
+import { HILL_CLIMB_INSTRUCTIONS, HILL_CLIMB_TOOLS, isHillClimbToolName, parseHillClimbToolCall, type HillClimbToolCall } from '../hillClimb/tools';
 
 export const MCP_SERVER_NAME = 'donel';
 
 const BOARD_INSTRUCTIONS =
   'Quadro (Mindscape) do projeto desta sessão, que o dono vê e usa para falar com você desenhando: quadro_ler mostra lugares (sessões com papel), post-its, desenhos e ligações; quadro_aplicar monta o quadro ao vivo num gesto que o dono desfaz com Ctrl+Z (lugares com papel e pedido, post-its, ligações, retângulos, elipses, linhas, mover); papeis_listar dá os papéis. Mover, editar e apagar só no que uma sessão criou; nunca no que o dono fez (a ferramenta recusa). Prefira mostrar um fluxo no quadro a um texto longo. Time de sessões: sessao_quem_sou, sessao_listar, sessao_abrir (papel + pedido; nasce ligada a você por uma seta), sessao_enviar (só pelas setas do quadro) e sessao_ver_tela. Para falar com outra sessão do Donel use sessao_enviar, nunca um recurso de mensagens do próprio agente: o app entrega direto no chat dela, sem pedir aprovação. ';
 const LEDGER_INSTRUCTIONS =
-  'Oráculo Harrow (o registro de tarefas entre lugares): tarefa_criar (frase literal de quem pediu, critério, prazo, dono, risco), tarefa_assumir, tarefa_entregar (sempre com prova: print, vídeo, protótipo .html autocontido, saída de comando ou link do CI; no risco alto, com o bloco paraODono: a carta que o dono lê, em texto de gente, sem código), tarefa_ver (a prova inteira: leia antes de decidir), tarefa_aceitar e tarefa_rejeitar (Revisor só no risco baixo, no próprio quadro e de fora da cadeia de quem entregou; quem entregou nunca aceita), tarefa_listar. Mensagem ao Slack em nome do dono: SEMPRE antes uma carta_slack (destino, thread, texto exato, motivo) aceita pelo dono; sem ela o envio é bloqueado. ';
+  'Oráculo Harrow (o registro de tarefas entre lugares): tarefa_criar (frase literal de quem pediu, critério, prazo, dono, risco), tarefa_assumir, tarefa_entregar (sempre com prova: print, vídeo, protótipo .html autocontido, saída de comando ou link do CI; no risco alto, com o bloco paraODono: a carta que o dono lê, em texto de gente, sem código), tarefa_ver (a prova inteira: leia antes de decidir), tarefa_aceitar e tarefa_rejeitar (Revisor só no risco baixo, no próprio quadro e de fora da cadeia de quem entregou; quem entregou nunca aceita), tarefa_listar (por padrão só as vivas), tarefa_transferir (passa a tarefa adiante quando o lugar dono fechou ou outro vai fazer) e tarefa_cancelar (encerra com motivo o que não vai sair, como a carta substituída). Vale o risco declarado, também na tarefa que a sessão cria para si: risco baixo entregue com prova fecha pelo Revisor de fora da cadeia de quem entregou ou, sem Revisor vivo, sozinho com a prova, marcado no registro; só o risco alto vira carta do dono. Trabalho feito não se cancela para fugir do dono: entregue com prova. O andamento de cada sessão vai no Oráculo, não em aviso ao Líder: tarefa_andamento (estado, o que precisa, prova, próximo passo; travada e precisa-do-dono chegam na hora a quem está acima da sessão pelas setas, e sem seta ao Líder do quadro) e tarefa_novidades (o que mudou desde a sua última leitura, por sessão). Mensagem ao Slack em nome do dono sai direto, sem carta: carta_slack é opcional, só quando quiser que o dono confira o texto antes. ';
 export const MCP_ENDPOINT_PATH = '/mcp';
 /** Protocol versions this server answers with; a client asking for another one gets the newest of these. */
 export const SUPPORTED_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'] as const;
@@ -40,6 +41,7 @@ export type BrowserToolCall =
   | { readonly tool: 'navegador_trocar_aba'; readonly i: number }
   | { readonly tool: 'navegador_fechar_aba'; readonly i: number }
   | { readonly tool: 'navegador_enviar_arquivo'; readonly n: number; readonly caminho: string }
+  | { readonly tool: 'navegador_liberar_pasta'; readonly pasta: string; readonly quadro?: string }
   | { readonly tool: 'navegador_teclar'; readonly tecla: string }
   | { readonly tool: 'navegador_rolar'; readonly direcao: ScrollDirection }
   | { readonly tool: 'navegador_voltar' }
@@ -163,11 +165,26 @@ export const BROWSER_TOOLS: readonly ToolDefinition[] = [
     name: 'navegador_enviar_arquivo',
     title: 'Enviar um arquivo',
     description:
-      'Coloca um arquivo no campo de envio [N] (ou no campo de arquivo ligado a esse botão). Passe o caminho COMPLETO do arquivo. Só sai arquivo de uma pasta que o dono autorizou; se a pasta do arquivo ainda não está autorizada, esta ferramenta mesma mostra essa pasta ao dono no painel, com Permitir / Negar, e espera a resposta (até 30 min). Permitida, a pasta fica autorizada para as próximas vezes. Não use navegador_pedir_humano para pedir pasta.',
+      'Coloca um arquivo no campo de envio [N] (ou no campo de arquivo ligado a esse botão). Passe o caminho COMPLETO do arquivo. Saem os anexos do chat e os arquivos das pastas liberadas para o seu quadro (pelo dono ou pelo orquestrador do quadro). Pasta ainda não liberada: peça ao Líder do seu quadro (ou ao Líder único) que a libere com navegador_liberar_pasta; não peça ao dono. Arquivo de segredo (chaves, tokens, config com credenciais) nunca sai.',
     inputSchema: {
       type: 'object',
       properties: { n: ELEMENT_NUMBER, caminho: { type: 'string', description: 'Caminho completo do arquivo (relativo só vale dentro de uma pasta já autorizada).' } },
       required: ['n', 'caminho'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'navegador_liberar_pasta',
+    title: 'Liberar uma pasta de envio',
+    description:
+      'Só o orquestrador: o Líder que o dono pôs num quadro libera, para as sessões do próprio quadro, uma pasta de onde navegador_enviar_arquivo pode enviar; o Líder único libera em qualquer quadro, dizendo qual em "quadro". Fica registrado quem liberou e quando, e o dono vê e remove em Regras. A raiz do disco e a pasta de usuário inteira não são liberadas, e arquivo de segredo dentro da pasta continua recusado.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        pasta: { type: 'string', description: 'Caminho completo da pasta, neste computador.' },
+        quadro: { type: 'string', description: 'Só o Líder único: o quadro, pelo nome ou pela pasta do projeto.' },
+      },
+      required: ['pasta'],
       additionalProperties: false,
     },
   },
@@ -216,7 +233,7 @@ export const BROWSER_TOOLS: readonly ToolDefinition[] = [
     name: 'navegador_pedir_humano',
     title: 'Pedir ajuda ao dono',
     description:
-      'Pede ao dono que assuma o navegador (login, 2FA, captcha, uma decisão dele). O painel abre com o motivo e esta ferramenta só volta quando ele devolver o controle (até 30 min). Nunca peça senha ao dono pelo chat: ele digita na própria página. Para enviar arquivo não use esta: navegador_enviar_arquivo com o caminho completo já pede a pasta ao dono.',
+      'Pede ao dono que assuma o navegador (login, 2FA, captcha, uma decisão dele). O painel abre com o motivo e esta ferramenta só volta quando ele devolver o controle (até 30 min). Nunca peça senha ao dono pelo chat: ele digita na própria página. Para enviar arquivo não use esta: a pasta é liberada pelo orquestrador do quadro (navegador_liberar_pasta).',
     inputSchema: {
       type: 'object',
       properties: { motivo: { type: 'string', description: 'O que o dono precisa fazer, em uma frase.' } },
@@ -303,6 +320,18 @@ export function parseToolCall(name: string, rawArgs: unknown): ParsedToolCall {
       if (caminho.trim() === '') return { ok: false, reason: '"caminho" vazio.' };
       return { ok: true, call: { tool: name, n: args.n, caminho: caminho.trim() } };
     }
+    case 'navegador_liberar_pasta': {
+      const pasta = boundedText(args.pasta, 'pasta');
+      if (typeof pasta !== 'string') return { ok: false, reason: pasta.error };
+      if (pasta.trim() === '') return { ok: false, reason: '"pasta" vazia.' };
+      let quadro: string | undefined;
+      if (args.quadro !== undefined) {
+        const text = boundedText(args.quadro, 'quadro');
+        if (typeof text !== 'string') return { ok: false, reason: text.error };
+        quadro = text.trim() || undefined;
+      }
+      return { ok: true, call: { tool: name, pasta: pasta.trim(), ...(quadro ? { quadro } : {}) } };
+    }
     case 'navegador_teclar': {
       if (typeof args.tecla !== 'string' || args.tecla.trim() === '' || args.tecla.length > 64) return { ok: false, reason: '"tecla" tem de ser uma tecla, como "Enter" ou "Ctrl+A".' };
       return { ok: true, call: { tool: name, tecla: args.tecla } };
@@ -364,6 +393,8 @@ export interface McpHandlerContext {
   readonly openCap?: () => number | null;
   /** Ledger com prova (item 19) — the `tarefa_*` tools; absent = no ledger tools. */
   readonly ledgerExecutor?: (call: LedgerToolCall) => Promise<BrowserToolOutcome>;
+  /** Hill climbing — the `hillclimb_*` tools of the Escalador; absent = no hill climbing tools. */
+  readonly hillClimbExecutor?: (call: HillClimbToolCall) => Promise<BrowserToolOutcome>;
   readonly serverVersion: string;
 }
 
@@ -410,6 +441,7 @@ async function handleOne(message: unknown, ctx: McpHandlerContext): Promise<Json
           instructions:
             (ctx.boardExecutor ? BOARD_INSTRUCTIONS : '') +
             (ctx.ledgerExecutor ? LEDGER_INSTRUCTIONS : '') +
+            (ctx.hillClimbExecutor ? HILL_CLIMB_INSTRUCTIONS : '') +
             'Navegador integrado do Donel Dev, um por sessão, que o dono vê ao lado da conversa. Fluxo: navegador_abrir, navegador_ler (o que está na tela, elementos numerados [N]), navegador_clicar/navegador_digitar/navegador_teclar, e navegador_ler de novo. Para ler o conteúdo todo da página: navegador_extrair. Login, 2FA, captcha, campo de senha ou cartão e botão de comprar, pagar ou excluir são do dono: navegador_pedir_humano. O dono também pode limitar os domínios que o agente abre.',
         },
       };
@@ -419,7 +451,7 @@ async function handleOne(message: unknown, ctx: McpHandlerContext): Promise<Json
       return {
         jsonrpc: '2.0',
         id,
-        result: { tools: [...(ctx.boardExecutor ? boardTools(ctx.openCap?.() ?? null) : []), ...(ctx.ledgerExecutor ? LEDGER_TOOLS : []), ...BROWSER_TOOLS] },
+        result: { tools: [...(ctx.boardExecutor ? boardTools(ctx.openCap?.() ?? null) : []), ...(ctx.ledgerExecutor ? LEDGER_TOOLS : []), ...(ctx.hillClimbExecutor ? HILL_CLIMB_TOOLS : []), ...BROWSER_TOOLS] },
       };
     case 'tools/call': {
       const name = p.name;
@@ -444,6 +476,17 @@ async function handleOne(message: unknown, ctx: McpHandlerContext): Promise<Json
           ledgerOutcome = { kind: 'error', text: error instanceof Error ? error.message : String(error) };
         }
         return { jsonrpc: '2.0', id, result: toolResult(ledgerOutcome) };
+      }
+      if (typeof name === 'string' && ctx.hillClimbExecutor && isHillClimbToolName(name)) {
+        const climb = parseHillClimbToolCall(name, p.arguments);
+        if (!climb.ok) return { jsonrpc: '2.0', id, result: toolResult({ kind: 'error', text: climb.reason }) };
+        let climbOutcome: BrowserToolOutcome;
+        try {
+          climbOutcome = await ctx.hillClimbExecutor(climb.call);
+        } catch (error) {
+          climbOutcome = { kind: 'error', text: error instanceof Error ? error.message : String(error) };
+        }
+        return { jsonrpc: '2.0', id, result: toolResult(climbOutcome) };
       }
       if (typeof name !== 'string' || !TOOL_NAMES.has(name)) return errorResponse(id, JSON_RPC_ERRORS.invalidParams, `Unknown tool: ${String(name)}`);
       const parsed = parseToolCall(name, p.arguments);

@@ -1,0 +1,4 @@
+{
+  "title": "Branch e editor na barra lateral",
+  "text": "Cada sessão e cada favorito mostram em qual branch estão e têm um botão para abrir a pasta no VS Code (ou no Cursor)."
+}

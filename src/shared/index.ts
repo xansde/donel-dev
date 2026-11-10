@@ -13,6 +13,8 @@ import type { DonelPetApi } from './pet/ipc';
 import type { DonelLiderApi } from './lider/ipc';
 import type { DonelCelularApi } from './celular';
 import type { DonelRotinasApi } from './rotinas/contract';
+import type { DonelFaxineiroApi } from './faxineiro/ipc';
+import type { RoleLaunchGap } from './roleLaunch';
 import type { DonelEsteiraApi } from './esteira/ipc';
 import type { DonelGithubApi } from './github';
 import type { DonelProjectBindingApi } from './projectBinding';
@@ -23,10 +25,14 @@ import type { DonelSessionsApi } from './sessions';
 import type { DonelTabsApi } from './tabChannels';
 import type { DonelMindscapeApi } from './mindscape/channels';
 import type { DonelLedgerApi } from './ledger/channels';
+import type { DonelLedgerMirrorApi } from './ledger/mirror';
+import type { DonelLedgerRemoteApi } from './ledger/remote';
+import type { DonelHillClimbApi } from './hillClimb/channels';
 import type { DonelRolesApi } from './roles';
 import type { DonelRenewalApi } from './sessionRenewal';
 import type { DonelLearningApi } from './learning/gestures';
 import type { DonelHealthApi } from './health/ipc';
+import type { DonelHomologacaoApi } from './homologacao/ipc';
 import type { DonelAppUpdateApi } from './appUpdate';
 import type { DonelWorkspaceApi } from './workspace';
 import type { DonelBrowserApi } from './browser/ipc';
@@ -258,7 +264,17 @@ export const PTY_CHANNELS = {
   preview: 'pty:preview',
   /** Sessões remotas — sessions still alive on the remote places (boot reattach). */
   remoteAlive: 'pty:remoteAlive',
+  /** Sessões remotas — the ssh of a remote tab dropped (`false`, "sem ligação") or was relinked (`true`). */
+  link: 'pty:link',
+  /** `sessao_religar` (t-1293c818) — put the app's keys (hooks, MCP) back on a live session that lost them. */
+  relinkTools: 'pty:relinkTools',
 } as const;
+
+/** The one-line answer of `sessao_religar`. */
+export interface RelinkToolsResult {
+  readonly ok: boolean;
+  readonly text: string;
+}
 
 export interface PtyCreateOptions {
   /** Colunas iniciais (medidas pelo xterm/addon-fit no renderer). */
@@ -317,6 +333,11 @@ export interface PtyCreateOptions {
    */
   leaderOfAll?: boolean;
   /**
+   * Super bypass das orquestradoras (t-66cb0ce4) — the place of the tab on the board, when it has one: a place above
+   * another one by the arrows (it opened or directs sessions) is born in super bypass even before its first conversation.
+   */
+  placeId?: string;
+  /**
    * Sessões remotas — id of a remote place (`accounts.remotes`) where this session runs, inside a tmux
    * session that outlives the app. Absent = this computer. Only with `sessionType === 'claude'`.
    */
@@ -333,10 +354,14 @@ export interface RemoteAliveSession {
   readonly remoteId: string;
   readonly sessionId: string;
   readonly cwd: string;
-  readonly projectName: string;
+  /** Absent for the Líder único, which belongs to no board. */
+  readonly projectName?: string;
   readonly name: string;
   readonly launchArgs: readonly string[];
   readonly openedBy?: string;
+  /** Líder único na VPS — the role and the Jobu's mark of the session. */
+  readonly roleId?: string;
+  readonly leaderOfAll?: boolean;
 }
 
 /**
@@ -394,6 +419,11 @@ export interface PtyCreateResult {
    * nenhum valor de env sensível — `label` é o texto livre do operador.
    */
   provider?: { id: string; label: string };
+  /**
+   * Papel não entregue — the launch carried a role and part of it did not reach the CLI (`papel`: the guidance;
+   * `escopo`: the scope settings, so the session has everything). Absent when the role arrived whole or none was asked.
+   */
+  roleNotDelivered?: { roleId: string; missing: readonly RoleLaunchGap[] };
 }
 
 export interface PtyExitInfo {
@@ -411,10 +441,14 @@ export interface DonelPtyApi {
   getPreview(ptyId: string): Promise<string[]>;
   /** Sessões remotas — sessions still alive on the remote places, to reopen at boot. */
   remoteAlive(): Promise<RemoteAliveSession[]>;
+  /** `sessao_religar` — registers again the app's keys of a live session (hooks, MCP); relinks it when "sem ligação". */
+  relinkTools(ptyId: string): Promise<RelinkToolsResult>;
   /** Retorna função de unsubscribe. */
   onData(ptyId: string, listener: (data: string) => void): () => void;
   /** Retorna função de unsubscribe. */
   onExit(ptyId: string, listener: (info: PtyExitInfo) => void): () => void;
+  /** Sessões remotas — every tab whose link dropped (`linked: false`) or came back. Returns unsubscribe. */
+  onLink?(listener: (ptyId: string, linked: boolean) => void): () => void;
 }
 
 /** Nomes dos canais IPC do domínio semáforo (T009, FR-010). */
@@ -520,6 +554,12 @@ export interface DonelApi {
   mindscape: DonelMindscapeApi;
   /** Ledger com prova (item 19) — the tasks between places, in `ledger.json` (the main is the only writer). */
   ledger: DonelLedgerApi;
+  /** Espelho do Oráculo — the tasks copied to the owner's personal Supabase (Preferências → Celular). */
+  ledgerMirror: DonelLedgerMirrorApi;
+  /** Oráculo na VPS — where the ledger lives (docs/planos/oraculo-na-vps.md). */
+  ledgerRemote: DonelLedgerRemoteApi;
+  /** Hill climbing — the missions in `<userData>/hill-climb.json` (the main is the only writer) and the owner's gestures. */
+  hillClimb: DonelHillClimbApi;
   /** Papéis de sessão (item 12a) — the roles in `<userData>/papeis/` (the main is the only writer). */
   roles: DonelRolesApi;
   /** Diário de gestos — what the owner does, kept only on this machine as examples for a local model (B35). */
@@ -532,6 +572,8 @@ export interface DonelApi {
   celular: DonelCelularApi;
   /** Saúde do computador — RAM, disco e processos que estão pesando, com a ação de encerrar um processo. */
   health: DonelHealthApi;
+  /** Mindscape de homologação V1 — os números da factory, lidos por ssh (só leitura). */
+  homologacao: DonelHomologacaoApi;
   /** B33 — versão nova do alfa: atualizar de dentro do app e reabrir as abas depois. */
   appUpdate: DonelAppUpdateApi;
   /** Sidebar — "Abrir no editor" (VS Code/Cursor) e branch atual da pasta da sessão/projeto. */
@@ -542,4 +584,6 @@ export interface DonelApi {
   renewal: DonelRenewalApi;
   /** Item 20 — what the routines in shadow would have woken today. */
   rotinas: DonelRotinasApi;
+  /** t-b3b26e60 — the Faxineiro woken by trigger: a round a minute and its log. */
+  faxineiro: DonelFaxineiroApi;
 }

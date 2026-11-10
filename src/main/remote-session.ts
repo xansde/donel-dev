@@ -16,6 +16,8 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createWriteStream, mkdirSync, type WriteStream } from 'node:fs';
 import { basename, join, relative, sep, isAbsolute } from 'node:path';
+import { isBypassLaunch } from '../shared/launchPermission';
+import type { RemoteAliveSession } from '../shared';
 
 export const REMOTE_TMUX_SOCKET = 'donel';
 export const REMOTE_SESSIONS_DIR = '.donel/s';
@@ -54,6 +56,9 @@ export interface RemoteSessionMeta {
   readonly launchArgs: readonly string[];
   /** Place of the session that opened this one (`sessao_abrir`); absent when the owner opened it. */
   readonly openedBy?: string;
+  /** Líder único na VPS — the role and the Jobu's mark, so the tab that comes back after a restart is the Líder again. */
+  readonly roleId?: string;
+  readonly leaderOfAll?: boolean;
   readonly createdAt: string;
 }
 
@@ -121,6 +126,16 @@ export function remoteTranscriptPath(remoteDir: string, sid: string): string {
   return `.claude/projects/${remoteDir.replace(/[^a-zA-Z0-9]/g, '-')}/${sid}.jsonl`;
 }
 
+/**
+ * Pure — the env lines a bypass session needs on a remote place. Without them the CLI asks to confirm the bypass,
+ * and as root it refuses it outright unless `IS_SANDBOX=1` (checked on the place, at launch: the app does not
+ * know which user the ssh target is).
+ */
+function bypassEnvLines(claudeArgs: readonly string[]): string[] {
+  if (!isBypassLaunch(claudeArgs)) return [];
+  return ['export CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1', 'if [ "$(id -u)" = 0 ]; then export IS_SANDBOX=1; fi'];
+}
+
 function renderArg(arg: string): string {
   return arg.startsWith('@S/') ? `"$S"/${shQuote(arg.slice(3))}` : shQuote(arg);
 }
@@ -150,6 +165,7 @@ export function buildRemoteSetupScript(input: RemoteSetupInput): string {
     'export COLORTERM=truecolor',
     // Proxy de saída (scripts/proxy-saida): written by its VPS installer; only sessions started after the install pick it up.
     'if [ -r "$HOME/.donel/proxy-saida.env" ]; then . "$HOME/.donel/proxy-saida.env"; fi',
+    ...bypassEnvLines(input.claudeArgs),
     `exec claude ${input.claudeArgs.map(renderArg).join(' ')}`,
     '',
   ].join('\n');
@@ -194,6 +210,9 @@ export function buildRemoteSetupScript(input: RemoteSetupInput): string {
     `printf '%s' ${shQuote(b64(TMUX_CONF))} | base64 -d > "$HOME/.donel/tmux.conf"`,
     ...files.map((file) => `printf '%s' ${shQuote(b64(file.content))} | base64 -d > "$S"/${shQuote(file.name)} && chmod 600 "$S"/${shQuote(file.name)}`),
     '(cd "$D" && pwd) > "$S/dir"',
+    // Oráculo na VPS (fatia 4): with the daemon's MCP gate there, the session calls it instead of its tunnel; the gate
+    // passes the call on while the PC is on and answers who the session is and the tasks when it is off.
+    'if [ -f "$S/mcp.json" ] && [ -r "$HOME/.donel/oraculo/portao" ]; then P="$(tr -dc 0-9 < "$HOME/.donel/oraculo/portao")"; if [ -n "$P" ]; then sed -i "s#http://127.0.0.1:[0-9]*/mcp#http://127.0.0.1:$P/s/$SID/mcp#" "$S/mcp.json"; fi; fi',
     // The CLI on a fresh machine opens on onboarding (theme + login method) and asks to trust the folder,
     // even with the account already written there by the accounts engine. Mark both as done, atomically.
     `command -v python3 >/dev/null 2>&1 && python3 -c ${shQuote(MARK_ONBOARDED_PY)} "$(cat "$S/dir")" >/dev/null 2>&1 || true`,
@@ -203,7 +222,7 @@ export function buildRemoteSetupScript(input: RemoteSetupInput): string {
 }
 
 /** Pure — reads the answer of the setup script. */
-export function parseRemoteSetupOutput(stdout: string, code: number | null): RemoteSetupResult {
+export function parseRemoteSetupOutput(stdout: string, code: number | null, stderr = '', timedOut = false): RemoteSetupResult {
   const lines = stdout.split(/\r?\n/);
   const errLine = lines.find((line) => line.startsWith('DONEL_ERR'));
   if (errLine) return { kind: 'error', message: errLine.slice('DONEL_ERR'.length).trim() };
@@ -218,7 +237,28 @@ export function parseRemoteSetupOutput(stdout: string, code: number | null): Rem
       return { kind: 'error', message: 'O lugar remoto devolveu uma sessão ilegível.' };
     }
   }
-  return { kind: 'error', message: code === 255 ? 'Não consegui entrar no lugar remoto por ssh.' : 'O lugar remoto não respondeu como esperado.' };
+  // 07/11 — the ssh's own words (e.g. Tailscale SSH asking for an extra check) are the cause the owner needs.
+  const said = lastLine(stderr);
+  if (timedOut) return { kind: 'error', message: `O lugar remoto não respondeu em ${Math.round(SETUP_TIMEOUT_MS / 1000)} s${said ? ` (o ssh disse: ${said})` : ' (o ssh ficou esperando, sem dizer por quê)'}.` };
+  if (code === 255) return { kind: 'error', message: `Não consegui entrar no lugar remoto por ssh${said ? `: ${said}` : '.'}` };
+  return { kind: 'error', message: `O lugar remoto não respondeu como esperado${said ? `: ${said}` : '.'}` };
+}
+
+/**
+ * The ssh's last line, clean: it goes to a terminal and to another session's chat, so escape sequences (CSI, OSC)
+ * and every other control character are dropped, and a lone `\r` (a redrawn progress line) counts as a new line.
+ */
+function lastLine(text: string): string {
+  const clean = text
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?/g, '')
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b[@-_]?/g, '');
+  const lines = clean
+    .split(/\r\n|\r|\n/)
+    .map((line) => line.replace(/[\x00-\x1f\x7f-\x9f]/g, '').trim())
+    .filter((line) => line.length > 0);
+  const last = lines[lines.length - 1] ?? '';
+  return last.length > 300 ? `${last.slice(0, 300)}…` : last;
 }
 
 /** Pure — lists the live sessions with their meta. */
@@ -248,6 +288,41 @@ export function parseDiscoverOutput(stdout: string): RemoteSessionMeta[] {
   return metas;
 }
 
+/** Pure — the tab a live remote session comes back as. The Líder único comes back with its mark and no project. */
+export function remoteAliveFromMeta(remoteId: string, meta: RemoteSessionMeta): RemoteAliveSession {
+  const leaderOfAll = meta.leaderOfAll === true;
+  return {
+    remoteId,
+    sessionId: meta.sid,
+    cwd: meta.localCwd,
+    ...(leaderOfAll ? {} : { projectName: meta.projectName }),
+    name: meta.name,
+    launchArgs: meta.launchArgs,
+    ...(typeof meta.openedBy === 'string' && meta.openedBy !== '' ? { openedBy: meta.openedBy } : {}),
+    ...(typeof meta.roleId === 'string' && meta.roleId !== '' ? { roleId: meta.roleId } : {}),
+    ...(leaderOfAll ? { leaderOfAll: true } : {}),
+  };
+}
+
+/** Líder único na VPS — runs one command line on the place over ssh, with stdin and stdout piped (`lider/transfer.ts`). */
+export function sshRemoteCommand(sshTarget: string): (command: string) => ChildProcess {
+  return (command) => spawn('ssh', [...SSH_OPTIONS, '-T', '--', sshTarget, command], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+}
+
+/**
+ * "Sem ligação" — asks whether the tmux session of `sid` is still there. A place that prints neither marker (ssh
+ * failed, timeout) is unreachable, never "gone": only `gone` lets the app give the place as closed.
+ */
+export async function probeRemoteSession(sshTarget: string, sid: string): Promise<'alive' | 'gone' | 'unreachable'> {
+  assertSessionId(sid);
+  const script = `if tmux -L ${REMOTE_TMUX_SOCKET} has-session -t ${shQuote(`donel-${sid}`)} 2>/dev/null; then echo DONEL_LIVE; else echo DONEL_GONE; fi\n`;
+  const { stdout } = await runRemoteScript(sshTarget, script, 20_000);
+  const lines = stdout.split(/\r?\n/).map((line) => line.trim());
+  if (lines.includes('DONEL_LIVE')) return 'alive';
+  if (lines.includes('DONEL_GONE')) return 'gone';
+  return 'unreachable';
+}
+
 export function buildEndScript(sid: string): string {
   assertSessionId(sid);
   return [
@@ -257,29 +332,42 @@ export function buildEndScript(sid: string): string {
   ].join('\n');
 }
 
-/** Runs a script on the remote through stdin. */
-export function runRemoteScript(sshTarget: string, script: string, timeoutMs = SETUP_TIMEOUT_MS): Promise<{ code: number | null; stdout: string }> {
+/** Runs a script on the remote through stdin. `stderr` keeps the ssh's last words; `timedOut` when it was killed. */
+export function runRemoteScript(
+  sshTarget: string,
+  script: string,
+  timeoutMs = SETUP_TIMEOUT_MS,
+): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }> {
   return new Promise((resolve) => {
     let child: ChildProcess;
     try {
-      child = spawn('ssh', [...SSH_OPTIONS, '-T', '--', sshTarget, 'bash -l -s'], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
-    } catch {
-      resolve({ code: null, stdout: '' });
+      child = spawn('ssh', [...SSH_OPTIONS, '-T', '--', sshTarget, 'bash -l -s'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch (error) {
+      resolve({ code: null, stdout: '', stderr: error instanceof Error ? error.message : String(error), timedOut: false });
       return;
     }
     let stdout = '';
-    const timer = setTimeout(() => child.kill(), timeoutMs);
+    let stderr = '';
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill();
+    }, timeoutMs);
     child.stdout?.setEncoding('utf8');
     child.stdout?.on('data', (chunk: string) => {
       stdout += chunk;
     });
-    child.on('error', () => {
+    child.stderr?.setEncoding('utf8');
+    child.stderr?.on('data', (chunk: string) => {
+      stderr = (stderr + chunk).slice(-4096);
+    });
+    child.on('error', (error) => {
       clearTimeout(timer);
-      resolve({ code: null, stdout });
+      resolve({ code: null, stdout, stderr: stderr || error.message, timedOut });
     });
     child.on('close', (code) => {
       clearTimeout(timer);
-      resolve({ code, stdout });
+      resolve({ code, stdout, stderr, timedOut });
     });
     child.stdin?.end(script);
   });
@@ -295,6 +383,10 @@ export function buildAttachSshArgs(input: {
   return [
     '-t',
     ...SSH_OPTIONS,
+    // A relink right after a drop can find the old tunnel still held on the place (its sshd has not noticed the
+    // drop yet). Without this the ssh would attach with no tunnel at all, and hooks and MCP would stay refused;
+    // with it the ssh leaves, and the app tries again later (remote-link.ts) until the old tunnel is gone.
+    '-o', 'ExitOnForwardFailure=yes',
     ...input.tunnels.flatMap((tunnel) => ['-R', `127.0.0.1:${tunnel.remotePort}:127.0.0.1:${tunnel.localPort}`]),
     '--',
     input.sshTarget,
@@ -309,9 +401,13 @@ export function pickRemotePort(random: () => number = Math.random): number {
 
 interface LiveRemote {
   readonly sshTarget: string;
+  /** `~/.donel/s/<folder>`: the id the session was prepared with (it never follows `/clear`). */
+  readonly folder: string;
   sid: string;
   readonly remoteDir: string;
-  pump: { child: ChildProcess; out: WriteStream } | null;
+  /** The transcript the mirror follows (it moves with `/clear`); a relink resumes it where it stopped. */
+  transcript: string;
+  pump: { child: ChildProcess; out: WriteStream; bytes: number } | null;
 }
 
 /** The live remote tabs of this run of the app: transcript mirrors and the end of the remote session. */
@@ -336,9 +432,14 @@ export class RemoteSessionRegistry {
 
   /** The tab was spawned: starts mirroring the transcript; returns the local mirror path. */
   attach(ptyId: string, sshTarget: string, sid: string, remoteDir: string): string {
-    const entry: LiveRemote = { sshTarget, sid, remoteDir, pump: null };
+    const entry: LiveRemote = { sshTarget, folder: sid, sid, remoteDir, transcript: remoteTranscriptPath(remoteDir, sid), pump: null };
     this.live.set(ptyId, entry);
-    return this.startPump(entry, remoteTranscriptPath(remoteDir, sid), sid);
+    return this.startPump(entry, entry.transcript, sid);
+  }
+
+  /** Oráculo na VPS (fatia 4): the live remote tabs, by the folder their MCP gate knows them by. */
+  liveSessions(): { readonly ptyId: string; readonly folder: string }[] {
+    return [...this.live].map(([ptyId, entry]) => ({ ptyId, folder: entry.folder }));
   }
 
   /** `/clear`, `/resume` or fork inside the remote session: follow the new transcript. */
@@ -347,8 +448,30 @@ export class RemoteSessionRegistry {
     if (!entry) return null;
     if (entry.sid === sid && entry.pump) return this.mirrorPathFor(sid); // the hub and the main both follow the switch
     entry.sid = sid;
+    entry.transcript = remoteAbsoluteTranscript;
     this.stopPump(entry);
     return this.startPump(entry, remoteAbsoluteTranscript, sid);
+  }
+
+  /**
+   * "Sem ligação" — the ssh of the tab was spawned again: the mirror's ssh fell with the same link (or will, once its
+   * keepalive gives up), so a new one takes over from the byte the mirror already has. Appending, never rewriting:
+   * a mirror read again from the start would show the chat's messages twice.
+   */
+  resumePump(ptyId: string): void {
+    const entry = this.live.get(ptyId);
+    if (!entry) return;
+    const old = entry.pump;
+    const from = old?.bytes ?? 0;
+    entry.pump = null;
+    const start = (): void => {
+      if (this.live.get(ptyId) !== entry || entry.pump) return; // closed, or repointed, meanwhile
+      this.startPump(entry, entry.transcript, entry.sid, from);
+    };
+    if (!old) return start();
+    old.child.stdout?.unpipe(old.out);
+    old.child.kill();
+    old.out.end(start); // the old stream flushes before the new one appends
   }
 
   /** The PTY left (tab closed, app quitting or ssh dropped): stop mirroring. */
@@ -363,7 +486,9 @@ export class RemoteSessionRegistry {
   endRemote(ptyId: string): void {
     const entry = this.live.get(ptyId);
     if (!entry) return;
-    const sid = entry.sid;
+    // The tmux session and its folder are named after the id the session was prepared with, never after the
+    // conversation a `/clear` moved it to: ending by `entry.sid` left the tmux alive after the tab closed.
+    const sid = entry.folder;
     const ending = runRemoteScript(entry.sshTarget, buildEndScript(sid), 20_000).then(() => undefined);
     this.ending.set(sid, ending);
     void ending.finally(() => {
@@ -380,18 +505,22 @@ export class RemoteSessionRegistry {
     for (const ptyId of [...this.live.keys()]) this.onPtyExit(ptyId);
   }
 
-  private startPump(entry: LiveRemote, remoteTranscript: string, sid: string): string {
+  private startPump(entry: LiveRemote, remoteTranscript: string, sid: string, fromByte = 0): string {
     const mirror = this.mirrorPathFor(sid);
     mkdirSync(this.mirrorRoot, { recursive: true });
-    const out = createWriteStream(mirror, { flags: 'w' });
+    const out = createWriteStream(mirror, { flags: fromByte > 0 ? 'a' : 'w' });
     const target = remoteTranscript.startsWith('/') ? shQuote(remoteTranscript) : `"$HOME"/${shQuote(remoteTranscript)}`;
-    const child = spawn('ssh', [...SSH_OPTIONS, '-T', '--', entry.sshTarget, `tail -c +1 -F ${target} 2>/dev/null`], {
+    const child = spawn('ssh', [...SSH_OPTIONS, '-T', '--', entry.sshTarget, `tail -c +${fromByte + 1} -F ${target} 2>/dev/null`], {
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'ignore'],
     });
+    const pump = { child, out, bytes: fromByte };
+    child.stdout?.on('data', (chunk: Buffer) => {
+      pump.bytes += chunk.length;
+    });
     child.stdout?.pipe(out);
     child.on('error', () => out.end());
-    entry.pump = { child, out };
+    entry.pump = pump;
     return mirror;
   }
 

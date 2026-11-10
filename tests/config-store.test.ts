@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearSessionName,
@@ -72,13 +72,18 @@ describe('defaultAppConfig (puro)', () => {
       sweep: { lastSweepAt: null },
       // B36 — sessão renovada em voo: ligada, 250k de contexto.
       sessionRenewal: { enabled: true, limitTokens: 250_000 },
-      team: { openCap: null },
+      team: { openCap: null, turnNotices: 'ledger' },
       autoMode: { neverAsks: true },
       yolo: { projects: [] },
       // Oráculo no centro (06/11) — o layout novo é o padrão, com o Oráculo à vista.
       layout: { oracleCenter: true, centerView: 'oracle' },
+      leader: { where: 'auto' },
       appUpdate: { installersDir: null },
       browserUploads: { folders: [] },
+      browserUploadGrants: { grants: [] },
+      slackAgentBots: { servers: [] },
+      homologacao: null,
+      vigia: { cofre: null },
       unknownFields: {},
     });
   });
@@ -111,10 +116,11 @@ describe('toAppConfigDto (puro)', () => {
       chat: { enabled: false, focusMode: true },
       pet: { enabled: false, placement: null, size: 140 },
       sessionRenewal: { enabled: true, limitTokens: 250_000 },
-      team: { openCap: null },
+      team: { openCap: null, turnNotices: 'ledger' },
       autoMode: { neverAsks: true },
       yolo: { projects: [] },
       layout: { oracleCenter: true, centerView: 'oracle' },
+      leader: { where: 'auto' },
     });
   });
 
@@ -248,12 +254,17 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       pet: { enabled: true, placement: { x: 1830, y: 1040 }, size: 200 },
       sweep: { lastSweepAt: null },
       sessionRenewal: { enabled: false, limitTokens: 180_000 },
-      team: { openCap: 3 },
+      team: { openCap: 3, turnNotices: 'chat' },
       autoMode: { neverAsks: false },
       yolo: { projects: ['C:\\repos\\app'] },
       layout: { oracleCenter: false, centerView: 'terminals' },
+      leader: { where: 'vps-1' },
       appUpdate: { installersDir: 'D:\\instaladores' },
       browserUploads: { folders: [] },
+      browserUploadGrants: { grants: [] },
+      slackAgentBots: { servers: ['theo-west-slack', 'theo-slack'] },
+      homologacao: { lugar: 'factory-vps', metricas: '/srv/factory/metricas.json', rigs: null, quadro: 'atlas' },
+      vigia: { cofre: null },
       unknownFields: {},
     };
     expect(sanitizeAppConfig(valid, baseDefaults())).toEqual(valid);
@@ -352,8 +363,13 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       yolo: { projects: ['C:\\ok'] },
       // Oráculo no centro — o campo ruim cai no default só dele; a vista escolhida fica.
       layout: { oracleCenter: true, centerView: 'terminals' },
+      leader: defaults.leader,
       appUpdate: { installersDir: null },
       browserUploads: { folders: [] },
+      browserUploadGrants: { grants: [] },
+      slackAgentBots: { servers: [] },
+      homologacao: null,
+      vigia: { cofre: null },
       unknownFields: {}, // nenhuma chave desconhecida no objeto de entrada
     });
   });
@@ -589,9 +605,11 @@ describe('writeAppConfig (escrita atômica — fs mockado, DoD explícito da tas
 
   it('cria o diretório pai quando ele não existe', () => {
     const { io, calls } = makeMockIo({ existsSync: vi.fn(() => false) });
-    writeAppConfig('C:\\fake\\nested\\config.json', baseDefaults(), io, null);
+    // Caminho do sistema em que o teste roda: `dirname` de um `C:\\` fixo dá "." no Linux.
+    const nested = join(resolve('/fake'), 'nested');
+    writeAppConfig(join(nested, 'config.json'), baseDefaults(), io, null);
 
-    expect(calls[0]).toBe('mkdir:C:\\fake\\nested');
+    expect(calls[0]).toBe(`mkdir:${nested}`);
   });
 
   it('não cria diretório quando ele já existe', () => {
