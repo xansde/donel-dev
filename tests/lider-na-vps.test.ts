@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { carryTranscriptLocally } from '../src/main/lider/carry-transcript';
 import { fetchTranscriptFromRemote, sendTranscriptToRemote, type RemoteCommand } from '../src/main/lider/transfer';
 import { remoteAliveFromMeta, type RemoteSessionMeta } from '../src/main/remote-session';
+import { defaultAppConfig, sanitizeAppConfig } from '../src/main/config-store';
 import { leaderMoves, leaderRemoteId, sanitizeLeaderPrefs } from '../src/shared/leaderPrefs';
 import { planLeaderDelivery, startLeaderMove, type LeaderMoveDeps } from '../src/shared/lider/move';
 
@@ -69,6 +70,25 @@ describe('Líder único na VPS', () => {
     expect(leaderRemoteId({ where: 'vps-1' }, remotes)).toBe('vps-1');
     // Um lugar escolhido que foi removido: este computador, nunca outro lugar no escuro.
     expect(leaderRemoteId({ where: 'vps-removida', chosen: true }, remotes)).toBeUndefined();
+  });
+
+  it('"Este computador" escolhido sobrevive a um alfa antigo que regrava a config sem a marca', () => {
+    const remotes = [{ id: 'vps-1', hasAccount: true }];
+    const defaults = defaultAppConfig(['C:/seazone']);
+    // O dono escolhe "Este computador" no alfa novo: o que vai para o disco.
+    const written = { ...defaults, leader: { where: 'local', chosen: true }, leaderChoice: { where: 'local' } };
+    // O alfa 26.1108.2000 lê e regrava: `leader` só com `where` (a marca morre), a chave que ele não conhece fica intacta.
+    const { unknownFields: _bag, ...rest } = written;
+    const byOldAlfa = { ...rest, leader: { where: written.leader.where } };
+    const read = sanitizeAppConfig(JSON.parse(JSON.stringify(byOldAlfa)), defaults);
+    expect(read.leader).toEqual({ where: 'local', chosen: true });
+    expect(leaderRemoteId(read.leader, remotes)).toBeUndefined();
+    // O dono troca para a VPS no alfa antigo (só `leader` muda): vale a troca dele, não a escolha velha.
+    const changedThere = sanitizeAppConfig({ ...byOldAlfa, leader: { where: 'vps-1' } }, defaults);
+    expect(leaderRemoteId(changedThere.leader, remotes)).toBe('vps-1');
+    // Sem escolha nenhuma, o 'local' que o #296 gravava continua sendo o padrão antigo: VPS.
+    const legacy = sanitizeAppConfig({ ...rest, leader: { where: 'local' }, leaderChoice: undefined }, defaults);
+    expect(leaderRemoteId(legacy.leader, remotes)).toBe('vps-1');
   });
 
   it('troca de lugar só com o Líder parado; trabalhando ou pedindo permissão, ele fica onde está', () => {
