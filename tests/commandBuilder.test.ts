@@ -302,7 +302,17 @@ describe('Navegador integrado — entrega do MCP `donel` ao CLI da sessão', () 
     // Only the board and session tools are pre-authorized; the browser keeps the CLI's permission flow.
     expect(APP_MCP_PREAUTHORIZED_TOOLS.some((tool) => tool.includes('navegador'))).toBe(false);
     expect(JSON.parse(delivery.configFileContent ?? 'null')).toEqual({
-      mcpServers: { donel: { type: 'http', url: 'http://127.0.0.1:51234/mcp', headers: { Authorization: `Bearer ${'f'.repeat(32)}` } } },
+      mcpServers: {
+        donel: { type: 'http', url: 'http://127.0.0.1:51234/mcp', headers: { Authorization: `Bearer ${'f'.repeat(32)}` }, timeout: 35 * 60_000 },
+      },
     });
+  });
+
+  // 10/11 (t-58d7c191) — without `timeout`, Claude Code cuts an HTTP MCP call at 60 s ("The operation timed out.",
+  // measured with a server that answers at 75 s), while `sessao_enviar` may answer at 90 s and `sessao_abrir` waits up
+  // to 30 min for the owner: 60 sends from sessions of the Homologações place came back like that in 5 h.
+  it('the server timeout outlasts the longest wait of the app (the owner deciding, 30 min), never the CLI default of 60 s', () => {
+    const config = JSON.parse(mcpDeliveryFor('claude-code', endpoint, 'x.json').configFileContent ?? 'null');
+    expect(config.mcpServers.donel.timeout).toBeGreaterThan(30 * 60_000);
   });
 });
