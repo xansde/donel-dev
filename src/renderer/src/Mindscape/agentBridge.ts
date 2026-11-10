@@ -87,6 +87,15 @@ export const CLOSE_WAIT_MS = 20_000;
  */
 export const PASS_ON_GRACE_MS = 60_000;
 const CLOSE_POLL_MS = 500;
+/** `sessao_fechar` with `recusarPermissao`: how many queued requests it refuses, and how long it waits for each to clear. */
+const REFUSE_ROUNDS = 3;
+const REFUSE_WAIT_MS = 3_000;
+
+/** One line for the Líder: which tool and what it asks (never just "uma permissão"). */
+function describeAsk(ask: PermissionAsk): string {
+  const what = ask.what.replace(/\s+/g, ' ').trim();
+  return ask.tool ? `${ask.tool}: ${what}` : what;
+}
 
 export interface BridgeTab {
   readonly id: string;
@@ -155,6 +164,24 @@ export type DeliveryOutcome =
   /** A tab without the chat view: the line went to its terminal, and nothing reads back whether it entered. */
   | { readonly kind: 'pelo-terminal' };
 
+/**
+ * t-1293c818 (3) — a permission request open on a session's screen, as the Líder reads it before answering. `id` names
+ * THIS request (the held hook's pending, or the dialog as drawn): "permitir" answers only the id the Líder saw.
+ */
+export interface PermissionAsk {
+  readonly id: string;
+  /** `chat`: the hook the app holds (answered through it); `tela`: only drawn by the CLI (answered with a key). */
+  readonly source: 'chat' | 'tela';
+  /** The tool asked for, when the app knows it (the hook says; the screen only draws it inside `what`). */
+  readonly tool?: string;
+  /** What it asks: the command, the file, or the dialog as drawn. */
+  readonly what: string;
+  /** false = what was read is not all it asks (cut, or the dialog's top off the screen): only a refusal goes. */
+  readonly complete?: boolean;
+}
+
+export type PermissionAnswer = { readonly ok: true } | { readonly ok: false; readonly reason: string };
+
 export interface AgentBridgePorts {
   readonly loaded: boolean;
   doc(): MindscapeDoc;
@@ -185,6 +212,10 @@ export interface AgentBridgePorts {
   deliverLine(tabId: string, text: string, waitMs: number, from: SendFrom): Promise<DeliveryOutcome>;
   /** A permission prompt is drawn on that tab's screen right now (read from the screen, never from a mark). */
   permissionOnScreen(tabId: string): boolean;
+  /** The permission request open on that tab (the held hook first, else the dialog read from its screen); `null` = none. */
+  permissionAsk?(tabId: string): Promise<PermissionAsk | null>;
+  /** Answers the request `askId` of that tab; refuses when what is open now is another one (never answers blind). */
+  answerPermission?(tabId: string, askId: string, answer: 'allow' | 'deny'): Promise<PermissionAnswer>;
   /** No hook came from that session yet (no prompt submitted, no tool): its "working" is the birth guess, not a fact. */
   unconfirmed(tabId: string): boolean;
   /** Why that session is not taking its first message, read from its process and screen (`null` = nothing to see). */
@@ -822,6 +853,34 @@ export class AgentBridge {
     return { ok: true, text: 'Fechada.' };
   }
 
+  /** Why sessao_fechar did not close a session with a permission open: what it asks, and how to answer it. */
+  private async permissionRefusal(tabId: string): Promise<string> {
+    const ask = await this.ports.permissionAsk?.(tabId).catch(() => null);
+    const what = ask ? ` (${describeAsk(ask)})` : '';
+    return `ela tem um pedido de permissão aberto na tela${what}. Responda com sessao_permissao, ou feche com "recusarPermissao": true.`;
+  }
+
+  /**
+   * Refuses the permission requests open on that tab, one after another (parallel tool calls queue up), until its screen
+   * is clear. Answers `null` when clear, else why not.
+   */
+  private async refuseOpenPermissions(tabId: string): Promise<string | null> {
+    if (!this.ports.permissionAsk || !this.ports.answerPermission) return 'este app não sabe recusar permissões de outra sessão.';
+    for (let round = 0; round < REFUSE_ROUNDS && this.ports.permissionOnScreen(tabId); round += 1) {
+      const ask = await this.ports.permissionAsk(tabId);
+      if (!ask) break;
+      const result = await this.ports.answerPermission(tabId, ask.id, 'deny');
+      if (!result.ok) return `não consegui recusar o pedido aberto (${describeAsk(ask)}): ${result.reason}.`;
+      const deadline = Date.now() + REFUSE_WAIT_MS;
+      while (this.ports.permissionOnScreen(tabId) && Date.now() < deadline) {
+        const next = await this.ports.permissionAsk(tabId);
+        if (next === null || next.id !== ask.id) break;
+        await new Promise((resolve) => setTimeout(resolve, CLOSE_POLL_MS));
+      }
+    }
+    return this.ports.permissionOnScreen(tabId) ? 'recusei, e a tela dela ainda mostra um pedido de permissão; veja com sessao_permissao.' : null;
+  }
+
   /** What `sessao_enviar` answers once the line went (or not) to the tab of there. */
   private deliveryAnswer(outcome: DeliveryOutcome, targetId: string): Answer {
     if (outcome.kind === 'entrou') return { ok: true, text: 'Entregue: entrou no Claude de lá.' };
@@ -973,7 +1032,7 @@ export class AgentBridge {
         const waiting = this.urgentTarget(tab) ? '' : ' (aviso pendente: nenhum Líder aberto)';
         void Promise.resolve(this.ports.recordTurn?.({ projectPath: tab.cwd, placeId: place.id, text: `${situation}${waiting}`, estado: state === 'permission' ? 'precisa-do-dono' : 'travada' })).catch(() => undefined);
       }
-      this.queueUrgent(key, tabId, `${situation}. Veja a tela dela com sessao_ver_tela.`);
+      this.queueUrgent(key, tabId, state === 'permission' ? `${situation}. Leia o que ela pede e responda com sessao_permissao (ou feche com sessao_fechar e "recusarPermissao": true).` : `${situation}. Veja a tela dela com sessao_ver_tela.`);
       return;
     }
     this.flushUrgent();
@@ -1271,8 +1330,12 @@ export class AgentBridge {
         const target = this.tabOfPlace(where.projectPath, where.placeId);
         if (!target) return no(`"${where.placeId}" não está aberta agora.`);
         if (target.id === caller.id) return no('esta é a sua própria sessão.');
-        const permission = 'ela tem um pedido de permissão aberto na tela; o dono responde antes.';
-        if (this.ports.permissionOnScreen(target.id)) return no(permission);
+        if (this.ports.permissionOnScreen(target.id)) {
+          // t-1293c818 (3): the caller answers it (sessao_permissao) or refuses it here; the owner's click is not needed.
+          if (!call.recusarPermissao) return no(await this.permissionRefusal(target.id));
+          const cleared = await this.refuseOpenPermissions(target.id);
+          if (cleared !== null) return no(cleared);
+        }
         let cut = false;
         // "Sem ligação": no line reaches it, so there is no pause to wait for; closing ends its tmux on the place.
         if (this.ports.stateOf(target.id) === 'working' && !this.ports.linkLost?.(target.id)) {
@@ -1285,11 +1348,58 @@ export class AgentBridge {
         }
         const state = this.ports.stateOf(target.id);
         if (state === undefined) return { ok: true, text: 'Fechada.' }; // it left on its own meanwhile
-        if (this.ports.permissionOnScreen(target.id)) return no(permission);
+        if (this.ports.permissionOnScreen(target.id)) {
+          if (!call.recusarPermissao) return no(await this.permissionRefusal(target.id));
+          const cleared = await this.refuseOpenPermissions(target.id);
+          if (cleared !== null) return no(cleared);
+        }
         this.ports.closeTab(target.id);
         this.openedBy.delete(target.id);
         this.leaderHears.delete(target.id);
         return { ok: true, text: cut ? `Fechada (o turno não acabou em ${CLOSE_WAIT_MS / 1000} s; cortei).` : 'Fechada.' };
+      }
+
+      case 'sessao_permissao': {
+        const no = (why: string): Answer => fail(`Não respondi: ${why}`);
+        const from = scope.leader ? LEADER_OF_ALL_FROM : self ? { projectPath, placeId: self.id } : undefined;
+        if (!from) return no('seu lugar ainda não está no quadro; espere o primeiro turno terminar.');
+        // The same hierarchy as sessao_fechar (reach.ts): answering a dialog directs the session as much as closing it.
+        const doc = this.ports.doc();
+        const where = findPlace(doc, call.quem, projectPath);
+        if (!where) return no(`"${call.quem}" não é um lugar de nenhum quadro (veja sessao_listar).`);
+        const reach = canReach(doc, from, where);
+        if (!reach.ok) return no(reach.reason);
+        const target = this.tabOfPlace(where.projectPath, where.placeId);
+        if (!target) return no(`"${where.placeId}" não está aberta agora.`);
+        if (target.id === caller.id) return no('esta é a sua própria sessão.');
+        if (!this.ports.permissionAsk || !this.ports.answerPermission) return no('este app não sabe responder permissões de outra sessão.');
+        const ask = await this.ports.permissionAsk(target.id);
+        if (!ask) return no(`não há pedido de permissão aberto na tela de "${where.placeId}".`);
+        const asked = describeAsk(ask);
+        if (call.resposta === undefined) {
+          return {
+            ok: true,
+            text: json({
+              pedido: ask.id,
+              ...(ask.tool ? { ferramenta: ask.tool } : {}),
+              oQuePede: ask.what,
+              origem: ask.source === 'chat' ? 'pendência do chat (o app segura o pedido)' : 'diálogo na tela do CLI',
+              ...(ask.complete === false
+                ? { completo: false, comoResponder: `A leitura está incompleta (o pedido foi cortado ou o começo dele não está na tela): só "resposta": "recusar" vale por aqui.` }
+                : { comoResponder: `sessao_permissao com "resposta": "permitir" e "pedido": "${ask.id}", ou "resposta": "recusar".` }),
+            }),
+          };
+        }
+        if (call.pedido !== undefined && call.pedido !== ask.id)
+          return no(`o pedido aberto agora é outro (${ask.id}): ${asked}. Leia e responda de novo.`);
+        if (call.resposta === 'permitir' && call.pedido === undefined)
+          return no(`para permitir, diga o id do pedido que você leu ("pedido": "${ask.id}"). O pedido: ${asked}.`);
+        if (call.resposta === 'permitir' && ask.complete === false)
+          return no(`a leitura do pedido está incompleta (cortada, ou o começo dele não está na tela), e não se permite o que não se leu inteiro. Só "recusar" vale. O que se lê: ${asked}.`);
+        const answer = call.resposta === 'permitir' ? 'allow' : 'deny';
+        const result = await this.ports.answerPermission(target.id, ask.id, answer);
+        if (!result.ok) return no(`${result.reason}. O pedido era: ${asked}.`);
+        return { ok: true, text: `${answer === 'allow' ? 'Permitido' : 'Recusado'}: ${asked}.` };
       }
 
       case 'sessao_retomar': {

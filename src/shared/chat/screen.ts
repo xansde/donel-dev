@@ -8,7 +8,7 @@
 // the CLI text changes between versions. Detectors never read the byte stream:
 // in ConPTY a space is a cursor advance, not a character (see `cliInputBox.ts`).
 
-import { hasPermissionPrompt, locateInputBox, readInputBox } from '../cliInputBox';
+import { hasPermissionPrompt, isRulerLine, locateInputBox, readInputBox } from '../cliInputBox';
 import { lineText, type LineInput, type ScreenLine } from '../screenLine';
 import { trustDialogKind } from '../trustDialog';
 
@@ -242,6 +242,85 @@ export function blockingScreen(lines: readonly LineInput[]): BlockingScreen | nu
     if (title) return { kind: 'screen', title };
   }
   return null;
+}
+
+/** A permission dialog read from the screen (t-1293c818): what it asks, as drawn, and the key that answers "Yes". */
+export interface PermissionDialog {
+  /** The dialog from its top border down to its question ("Bash command / rm -rf build / … / Do you want to proceed?"). */
+  readonly text: string;
+  /** The digit of the option that is exactly "Yes" (allow once); `null` = none drawn (never guess another option). */
+  readonly yesKey: string | null;
+  /** false = the dialog's top is off the screen, or the text was cut: what was read is not all it asks. */
+  readonly complete: boolean;
+  /**
+   * The whole dialog as drawn, never cut: from its top down to its last option. What identifies THIS request (the
+   * footer under it, a status line that ticks, stays out, or the id would change by itself).
+   */
+  readonly whole: string;
+}
+
+const PERMISSION_QUESTION = /Do you want to\b.*\?|requires confirmation/i;
+const YES_OPTION = /^\s*(?:❯\s*)?(\d)\.\s+Yes\s*$/;
+const ANY_OPTION = /^\s*(?:❯\s*)?\d\.\s/;
+const DIALOG_TEXT_MAX = 8_000;
+/** Said first when the dialog's top border is not on the screen (a long command scrolled it off). */
+export const DIALOG_TOP_MISSING = '[o começo do pedido não está na tela]';
+
+function indentOf(line: string): number {
+  return line.length - line.trimStart().length;
+}
+
+/**
+ * Whether `plain[at]` is the permission dialog's top border. A line of `─` inside the command (`# ────`, a table in a
+ * heredoc) passed `isRulerLine` and cut the reading mid-command with a partial id, so the border must be the dialog's
+ * own: a full ruler from column 0 (the command is drawn indented, its lines never start there) whose first line below
+ * is the dialog's title, as indented as the question and less than the command (" Bash command" over "   rm -rf x").
+ */
+function isDialogTop(plain: readonly string[], at: number, question: number): boolean {
+  const border = plain[at].trimEnd();
+  if (border.length < 10 || /^\s/.test(border)) return false;
+  if (![...border].every((char) => char === '─') && ![...border].every((char) => char === BAR_CHAR)) return false;
+  for (let i = at + 1; i <= question; i += 1) {
+    if (plain[i].trim() === '') continue;
+    return !isRulerLine(plain[i]) && !isBarLine(plain[i]) && indentOf(plain[i]) <= indentOf(plain[question]);
+  }
+  return false;
+}
+
+/**
+ * The permission dialog on the screen, so a Líder can read what it asks before answering it from another session
+ * (`sessao_permissao`); `null` when `blockingScreen` sees no permission prompt. Refusing is Esc; allowing is `yesKey`.
+ */
+export function permissionDialog(lines: readonly LineInput[]): PermissionDialog | null {
+  if (blockingScreen(lines)?.kind !== 'permission') return null;
+  const plain = lines.map(lineText);
+  let question = -1;
+  for (let i = plain.length - 1; i >= 0; i -= 1) {
+    if (PERMISSION_QUESTION.test(plain[i])) {
+      question = i;
+      break;
+    }
+  }
+  if (question < 0) question = Math.max(0, plain.findIndex((line) => YES_OPTION.test(line)) - 1);
+  // Up to the dialog's top border, however long the command: a cap here hid the start of a long one (Revisor, #377).
+  // Only the dialog's own border counts, never a ruler drawn inside the command (Revisor, #377, 2nd round).
+  let top = question;
+  while (top > 0 && !isDialogTop(plain, top - 1, question)) top -= 1;
+  const topFound = top > 0;
+  const body: string[] = [];
+  for (const line of plain.slice(top, question + 1).map((row) => row.trimEnd())) {
+    if (line.trim() === '' && (body.length === 0 || body[body.length - 1] === '')) continue;
+    body.push(line);
+  }
+  while (body.length > 0 && body[body.length - 1] === '') body.pop();
+  const whole = body.join('\n');
+  const cut = whole.length > DIALOG_TEXT_MAX;
+  const text = `${topFound ? '' : `${DIALOG_TOP_MISSING}\n`}${cut ? `${whole.slice(0, DIALOG_TEXT_MAX)}\n[cortado: ${DIALOG_TEXT_MAX} de ${whole.length} letras]` : whole}`;
+  const yes = plain.slice(question + 1).map((line) => YES_OPTION.exec(line)).find((match) => match !== null);
+  let last = question;
+  for (let i = question + 1; i < plain.length && (ANY_OPTION.test(plain[i]) || plain[i].trim() === ''); i += 1) if (ANY_OPTION.test(plain[i])) last = i;
+  const drawn = plain.slice(top, last + 1).map((row) => row.trimEnd()).join('\n');
+  return { text, yesKey: yes ? yes[1] : null, complete: topFound && !cut, whole: drawn };
 }
 
 /** Footer present: the CLI printed something under the box (mode, hints). Typed text hides "? for shortcuts", so any text counts. */

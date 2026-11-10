@@ -6,6 +6,7 @@
 import type {
   ChatAckLookupOutput,
   ChatAnswerOutput,
+  ChatOpenPermissionsOutput,
   ChatCatalogOutput,
   ChatFilesOutput,
   ChatFocusPendingEvent,
@@ -56,6 +57,8 @@ export interface DonelChatApi {
 
   /** T076 - responde a pendência aberta; o renderer nunca monta o JSON do hook. */
   answer(ptyId: string, pendingId: string, answer: PendingAnswer): Promise<ChatAnswerOutput>;
+  /** t-1293c818 (3) — the permission requests the app holds open for the tab (a Líder reads and answers them). */
+  openPermissions(ptyId: string): Promise<ChatOpenPermissionsOutput>;
   /** T079 - aba ativa e nomes das abas, para a regra de notificação; o main lê o foco da janela por conta própria. */
   focusState(activePtyId: string | null, tabNames?: Readonly<Record<string, string>>): Promise<void>;
   /** T079 - clique na notificação de uma pendência. Um só assinante (o `App`). */

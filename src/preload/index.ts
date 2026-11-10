@@ -36,6 +36,7 @@ import type {
 import type {
   ChatAckLookupOutput,
   ChatAnswerOutput,
+  ChatOpenPermissionsOutput,
   ChatConversationSwitchedEvent,
   ChatFocusPendingEvent,
   ChatLiveEvent,
@@ -837,6 +838,7 @@ const donelApi: DonelApi = {
     // T076/T079 - pendencias e foco
     answer: (ptyId: string, pendingId: string, answer: PendingAnswer) =>
       ipcRenderer.invoke(CHAT_CHANNELS.answer, { ptyId, pendingId, answer }) as Promise<ChatAnswerOutput>,
+    openPermissions: (ptyId: string) => ipcRenderer.invoke(CHAT_CHANNELS.openPermissions, { ptyId }) as Promise<ChatOpenPermissionsOutput>,
     focusState: (activePtyId: string | null, tabNames?: Readonly<Record<string, string>>) =>
       ipcRenderer.invoke(CHAT_CHANNELS.focusState, { activePtyId, ...(tabNames !== undefined ? { tabNames } : {}) }) as Promise<void>,
     onFocusPending: (listener: (event: ChatFocusPendingEvent) => void) => {
