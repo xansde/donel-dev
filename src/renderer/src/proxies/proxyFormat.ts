@@ -20,6 +20,13 @@ export function healthText(proxy: ProxyView): string {
   }
 }
 
+/** The alert's line under "<proxy> está fora": `Desde 14:02 · HTTP 502.` */
+export function downDetail(proxy: ProxyView): string {
+  const h = proxy.health;
+  const parts = [h.downSince ? `Desde ${formatClock(h.downSince)}` : null, h.lastError].filter(Boolean);
+  return parts.length > 0 ? `${parts.join(' · ')}.` : '';
+}
+
 export function proxyOf(view: ProxiesViewDto, id: string | null): ProxyView | undefined {
   return id ? view.proxies.find((proxy) => proxy.entry.id === id) : undefined;
 }

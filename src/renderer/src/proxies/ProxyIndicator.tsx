@@ -7,7 +7,7 @@ import { Button, Modal, Select, TextInput } from '@donel-dev/design-system';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { MachineId, MachineView, ProxiesViewDto, ProxyKind, ProxyView } from '../../../shared/proxies';
 import healthStyles from '../health/HealthIndicator.module.css';
-import { downAlerts, formatClock, formatProxyIndicator, guessLabel, healthText, indicatorTone, keyResultText, proxyOf, switchOutcomeText, type IndicatorTone } from './proxyFormat';
+import { downAlerts, downDetail, formatClock, formatProxyIndicator, guessLabel, healthText, indicatorTone, keyResultText, proxyOf, switchOutcomeText, type IndicatorTone } from './proxyFormat';
 import styles from './ProxyIndicator.module.css';
 
 const TONE_CLASS: Record<IndicatorTone, string | undefined> = {
@@ -237,7 +237,7 @@ export function ProxyIndicator(): React.JSX.Element | null {
                 </strong>
               </div>
               <span className={healthStyles.detail}>
-                {healthText(alert.current)}. {alert.suggestion ? `${alert.suggestion.entry.label} está de pé.` : 'Nenhum outro proxy configurado para esta máquina está de pé agora.'}
+                {downDetail(alert.current)} {alert.suggestion ? `${alert.suggestion.entry.label} está de pé.` : 'Nenhum outro proxy configurado para esta máquina está de pé agora.'}
               </span>
               {alert.suggestion ? (
                 <div>
