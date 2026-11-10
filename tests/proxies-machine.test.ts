@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, existsSync } from 'node:fs';
+import { lstatSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync, existsSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -113,5 +113,14 @@ describe('programa da máquina (proxy da vez)', () => {
     expect(parseExportOutput(exported)).toEqual({ kind: 'ok', key: OTHER_KEY });
     const other = await run(buildMachineProgram({ op: 'export-key', claudeDir: null, expectBaseUrl: baseUrl }));
     expect(parseExportOutput(other)).toEqual({ kind: 'not-found' });
+  });
+
+  it('com o settings.json como link simbólico, grava no arquivo de destino e o link continua link', async () => {
+    const real = join(home, 'dotfiles-settings.json');
+    renameSync(settingsPath(), real);
+    symlinkSync(real, settingsPath());
+    expect(parseSwitchOutput(await switchTo('portal', baseUrl, GOOD_KEY)).kind).toBe('switched');
+    expect(lstatSync(settingsPath()).isSymbolicLink()).toBe(true);
+    expect(JSON.parse(readFileSync(real, 'utf8')).env.ANTHROPIC_BASE_URL).toBe(baseUrl);
   });
 });
