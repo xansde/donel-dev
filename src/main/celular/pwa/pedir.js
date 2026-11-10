@@ -19,6 +19,11 @@
   var microfone = document.getElementById('pedir-microfone');
   var microfoneRotulo = document.getElementById('pedir-microfone-rotulo');
   var arquivo = document.getElementById('pedir-arquivo');
+  var anexar = document.getElementById('pedir-anexar');
+  var ouvir = document.getElementById('pedir-ouvir');
+  var player = document.getElementById('pedir-audio');
+  var usar = document.getElementById('pedir-usar');
+  var descartar = document.getElementById('pedir-descartar');
   var estadoVoz = document.getElementById('pedir-voz');
   var enviar = document.getElementById('pedir-enviar');
   var lista = document.getElementById('pedir-lista');
@@ -27,7 +32,10 @@
   var pedidoId = null; // o mesmo enquanto o texto não muda: um reenvio não entra duas vezes
   var audioId = null; // o áudio guardado no PC, quando o pedido foi falado
   var gravacao = null; // { recorder, stream, partes, inicio, timer }
+  var ouvindo = null; // { blob, url }: o áudio gravado (ou anexado) esperando o dono ouvir e decidir
   var transcrevendo = false;
+  var enviando = false;
+  var compondo = false; // o teclado ainda está escrevendo no campo (palavra em composição, ditado)
 
   function token() {
     try { return localStorage.getItem(CHAVE_TOKEN); } catch (e) { return null; }
@@ -97,7 +105,8 @@
 
   function atualizarContador() {
     contador.textContent = texto.value.length + ' / ' + MAX_TEXTO;
-    enviar.disabled = transcrevendo || !texto.value.trim();
+    // Com uma gravação no ar ou esperando o dono ouvir, o envio espera: senão o áudio ficaria para trás.
+    enviar.disabled = transcrevendo || enviando || !!gravacao || !!ouvindo || !texto.value.trim();
   }
 
   function abrir() {
@@ -114,6 +123,7 @@
 
   function fechar() {
     if (gravacao) pararGravacao(false);
+    if (ouvindo) player.pause(); // o áudio por ouvir continua lá quando a folha abrir de novo
     guardarRascunho();
     fundo.hidden = true;
   }
@@ -127,6 +137,8 @@
     atualizarContador();
     guardarRascunho();
   });
+  texto.addEventListener('compositionstart', function () { compondo = true; });
+  texto.addEventListener('compositionend', function () { compondo = false; });
 
   // ---- "Seus pedidos" ----
 
@@ -165,22 +177,44 @@
 
   // ---- enviar ----
 
+  // O ditado pelo teclado (e a palavra que ele ainda está compondo) só termina de entrar no campo depois que o
+  // campo perde o foco. Ler o texto no mesmo instante do toque em "Enviar" mandava a frase pela metade (06/11:
+  // chegou ao Líder terminando em "po"). Então: tira o foco, espera a composição fechar e o último `input`.
+  function textoAssentado() {
+    texto.blur();
+    var limite = Date.now() + 1500;
+    return new Promise(function (pronto) {
+      (function esperar() {
+        if (compondo && Date.now() < limite) setTimeout(esperar, 50);
+        else setTimeout(pronto, 250);
+      })();
+    });
+  }
+
   form.addEventListener('submit', function (e) {
     e.preventDefault();
-    var valor = texto.value.trim();
-    if (!valor || transcrevendo) return;
-    if (!pedidoId) pedidoId = idAleatorio();
+    if (enviando || transcrevendo || gravacao || ouvindo || !texto.value.trim()) return;
+    enviando = true;
     enviar.disabled = true;
     enviar.textContent = 'Enviando…';
-    var corpo = { pedidoId: pedidoId, texto: valor };
-    if (audioId) corpo.audioId = audioId;
-    chamar('/api/pedidos', { method: 'POST', tipo: 'application/json', body: JSON.stringify(corpo) })
+    var enviado = '';
+    textoAssentado()
+      .then(function () {
+        enviado = texto.value;
+        var valor = enviado.trim();
+        if (!valor) throw new Error('vazio');
+        if (!pedidoId) pedidoId = idAleatorio();
+        var corpo = { pedidoId: pedidoId, texto: valor };
+        if (audioId) corpo.audioId = audioId;
+        return chamar('/api/pedidos', { method: 'POST', tipo: 'application/json', body: JSON.stringify(corpo) });
+      })
       .then(function (r) {
         if (!r.ok) {
           avisar('Não enviou: ' + ((r.dados && r.dados.mensagem) || 'tente de novo.'));
           return;
         }
-        texto.value = '';
+        // O que o teclado ainda escreveu depois da leitura não some: fica no campo para um próximo pedido.
+        texto.value = texto.value.indexOf(enviado) === 0 ? texto.value.slice(enviado.length).trim() : texto.value;
         pedidoId = null;
         audioId = null;
         guardarRascunho();
@@ -189,9 +223,11 @@
         carregarLista();
       })
       .catch(function (erro) {
+        if (erro && erro.message === 'vazio') return;
         avisar(erro && erro.message === 'nao-pareado' ? 'Este celular não está mais pareado.' : 'Sem conexão com o PC. Tente de novo (não sai duas vezes).');
       })
       .then(function () {
+        enviando = false;
         enviar.textContent = 'Enviar ao Líder';
         atualizarContador();
       });
@@ -199,8 +235,41 @@
 
   // ---- voz: grava aqui, converte aqui para WAV 16 kHz mono, transcreve no PC ----
 
+  // O navegador só libera o microfone para a página em https (o endereço `tailscale serve` do PC).
   var podeGravarAoVivo = !!(window.isSecureContext && navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
-  microfoneRotulo.textContent = podeGravarAoVivo ? 'Gravar' : 'Gravar áudio';
+
+  // ---- ouvir antes de usar ----
+
+  function mostrarOuvir(blob) {
+    fecharOuvir();
+    ouvindo = { blob: blob, url: URL.createObjectURL(blob) };
+    player.src = ouvindo.url;
+    ouvir.hidden = false;
+    mostrarVoz('Ouça e decida: usar este áudio ou descartar.', 'pronto');
+    atualizarContador();
+  }
+
+  function fecharOuvir() {
+    if (!ouvindo) return;
+    player.pause();
+    player.removeAttribute('src');
+    player.load();
+    URL.revokeObjectURL(ouvindo.url);
+    ouvindo = null;
+    ouvir.hidden = true;
+    atualizarContador();
+  }
+
+  usar.addEventListener('click', function () {
+    if (!ouvindo) return;
+    var blob = ouvindo.blob;
+    fecharOuvir();
+    transcrever(blob);
+  });
+  descartar.addEventListener('click', function () {
+    fecharOuvir();
+    mostrarVoz('Áudio descartado.');
+  });
 
   function mostrarVoz(frase, classe) {
     estadoVoz.textContent = frase || '';
@@ -258,6 +327,7 @@
     transcrevendo = true;
     atualizarContador();
     microfone.disabled = true;
+    anexar.disabled = true;
     mostrarVoz('Convertendo o áudio…', 'ocupado');
     paraWav(blob)
       .catch(function () { throw new Error('Não consegui ler este áudio aqui no celular. Grave de novo ou escreva.'); })
@@ -289,6 +359,7 @@
       .then(function () {
         transcrevendo = false;
         microfone.disabled = false;
+        anexar.disabled = false;
         atualizarContador();
       });
   }
@@ -306,7 +377,7 @@
       recorder.onstop = function () {
         stream.getTracks().forEach(function (t) { t.stop(); });
         if (!g.usar || g.partes.length === 0) { mostrarVoz(''); return; }
-        transcrever(new Blob(g.partes, { type: recorder.mimeType || 'audio/webm' }));
+        mostrarOuvir(new Blob(g.partes, { type: recorder.mimeType || 'audio/webm' }));
       };
       recorder.start();
       g.timer = setInterval(function () {
@@ -315,6 +386,7 @@
         if (passou >= MAX_GRAVACAO_MS) pararGravacao(true);
       }, 250);
       gravacao = g;
+      atualizarContador();
       microfone.classList.add('gravando');
       microfoneRotulo.textContent = 'Parar';
       mostrarVoz('● Gravando 0:00 · toque para parar', 'gravando');
@@ -332,6 +404,7 @@
     microfone.classList.remove('gravando');
     microfoneRotulo.textContent = 'Gravar';
     if (g.recorder.state !== 'inactive') g.recorder.stop();
+    atualizarContador();
   }
 
   // Tocar começa e outro toque para; segurar grava enquanto o dedo está no botão.
@@ -342,6 +415,7 @@
     if (!podeGravarAoVivo) return; // o clique abre o gravador do celular
     e.preventDefault();
     if (gravacao) { pararGravacao(true); return; }
+    fecharOuvir(); // gravar de novo troca o áudio que esperava ser ouvido
     apertouEm = Date.now();
     iniciou = comecarGravacao();
   });
@@ -354,14 +428,19 @@
   });
   microfone.addEventListener('contextmenu', function (e) { e.preventDefault(); });
   microfone.addEventListener('click', function () {
-    // Endereço http (sem https da Tailscale): o navegador não libera o microfone para a página; o celular grava
-    // pelo app de gravação dele e devolve o arquivo.
-    if (!podeGravarAoVivo && !microfone.disabled) arquivo.click();
+    // Endereço http (sem o https da Tailscale): o navegador esconde o microfone. Antes o toque abria o seletor
+    // de arquivos, que o dono leu como "abriu a pasta de áudios"; agora diz o porquê e deixa o anexo como plano B.
+    if (!podeGravarAoVivo && !microfone.disabled) {
+      mostrarVoz('Para gravar aqui, abra o Oráculo pelo endereço https do PC (Preferências → Celular → Parear). Por enquanto, anexe um arquivo de áudio.', 'erro');
+    }
+  });
+  anexar.addEventListener('click', function () {
+    if (!anexar.disabled) arquivo.click();
   });
   arquivo.addEventListener('change', function () {
     var f = arquivo.files && arquivo.files[0];
     arquivo.value = '';
-    if (f) transcrever(f);
+    if (f) mostrarOuvir(f);
   });
 
   document.addEventListener('visibilitychange', function () {

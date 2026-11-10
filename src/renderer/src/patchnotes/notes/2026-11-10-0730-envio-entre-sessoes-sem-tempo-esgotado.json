@@ -1,0 +1,4 @@
+{
+  "title": "Mensagem entre sessões não volta mais como tempo esgotado",
+  "text": "Quando uma sessão manda mensagem a outra e a entrega demora mais de um minuto, quem mandou agora recebe a resposta do app (entrou, na fila ou ainda não entrou) em vez de \"The operation timed out\". O mesmo vale para abrir sessão esperando a sua decisão. Vale para as sessões abertas depois de atualizar."
+}
