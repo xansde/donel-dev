@@ -30,20 +30,37 @@ export interface PermissionPortDeps {
   write(tabId: string, data: string): boolean;
 }
 
-/** The input of a tool in one readable piece, and whether it is all of it (`complete: false` = cut). */
-function describeInput(toolName: string, input: Readonly<Record<string, unknown>>): { readonly what: string; readonly complete: boolean } {
+/** The CLI's own tools, whose main field reads well alone. Any other tool (mcp__*, unknown) is shown whole. */
+const NATIVE_TOOLS: ReadonlySet<string> = new Set(['Bash', 'Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Glob', 'Grep', 'WebFetch', 'WebSearch']);
+/** Fields that only explain the call and decide nothing; left out of a native summary. */
+const ASIDE_KEYS: ReadonlySet<string> = new Set(['description']);
+
+/** A native tool's main reading and the fields it already covers. */
+function nativeHeadline(input: Readonly<Record<string, unknown>>): { readonly text: string; readonly used: readonly string[] } | undefined {
   const text = (key: string): string | undefined => (typeof input[key] === 'string' && (input[key] as string) !== '' ? (input[key] as string) : undefined);
-  const file = text('file_path') ?? text('notebook_path');
+  const fileKey = text('file_path') !== undefined ? 'file_path' : text('notebook_path') !== undefined ? 'notebook_path' : undefined;
+  if (fileKey !== undefined) {
+    const file = text(fileKey) as string;
+    // A write shows what it writes, not only where (Revisor, #377).
+    if (text('content') !== undefined) return { text: `${file}\n${text('content')}`, used: [fileKey, 'content'] };
+    if (text('old_string') !== undefined || text('new_string') !== undefined) {
+      return { text: `${file}\n- ${text('old_string') ?? ''}\n+ ${text('new_string') ?? ''}`, used: [fileKey, 'old_string', 'new_string'] };
+    }
+  }
+  const key = ['command', 'file_path', 'notebook_path', 'url', 'pattern', 'query', 'path', 'prompt'].find((k) => text(k)?.trim());
+  return key === undefined ? undefined : { text: text(key) as string, used: [key] };
+}
+
+/** The input of a tool in one readable piece, and whether it is all of it (`complete: false` = cut). Nothing that
+ *  decides is left out (Revisor, #377): a native tool shows its main field plus every other field it did not cover;
+ *  any other tool shows the whole input, since its first known field (a path, "git") can hide what it does. */
+function describeInput(toolName: string, input: Readonly<Record<string, unknown>>): { readonly what: string; readonly complete: boolean } {
+  const head = NATIVE_TOOLS.has(toolName) ? nativeHeadline(input) : undefined;
   let what: string;
-  // A write shows what it writes, not only where (Revisor, #377).
-  if (file !== undefined && text('content') !== undefined) what = `${file}\n${text('content')}`;
-  else if (file !== undefined && (text('old_string') !== undefined || text('new_string') !== undefined)) what = `${file}\n- ${text('old_string') ?? ''}\n+ ${text('new_string') ?? ''}`;
-  else if (file !== undefined && Object.keys(input).length > 1) {
-    const { file_path: _file, notebook_path: _notebook, ...rest } = input;
-    what = `${file}\n${JSON.stringify(rest)}`;
-  } else {
-    const plain = ['command', 'file_path', 'notebook_path', 'url', 'pattern', 'path', 'prompt'].map(text).find((value) => value !== undefined && value.trim() !== '');
-    what = plain ?? `${toolName} ${JSON.stringify(input)}`;
+  if (head === undefined) what = JSON.stringify(input);
+  else {
+    const rest = Object.fromEntries(Object.entries(input).filter(([key]) => !head.used.includes(key) && !ASIDE_KEYS.has(key)));
+    what = Object.keys(rest).length === 0 ? head.text : `${head.text}\n${JSON.stringify(rest)}`;
   }
   if (what.length <= WHAT_MAX) return { what, complete: true };
   return { what: `${what.slice(0, WHAT_MAX)}\n[cortado: ${WHAT_MAX} de ${what.length} letras]`, complete: false };
