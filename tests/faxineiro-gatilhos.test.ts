@@ -8,6 +8,8 @@ import {
   emptyFaxineiroState,
   evaluateFaxineiro,
   FAXINEIRO_OPENER,
+  faxineiroConfigSection,
+  readFaxineiroConfig,
   type FaxineiroInput,
   type FaxineiroState,
   type MachineReading,
@@ -19,6 +21,7 @@ import { FACTORY_ROLES, FAXINEIRO_ROLE_ID, LEADER_ROLE_ID, parseRoleFile, serial
 import { AgentBridge, type AgentBridgePorts, type BridgeTab, type OpenSessionRequest } from '../src/renderer/src/Mindscape/agentBridge';
 
 const MIN = 60_000;
+const GB = 1024 ** 3;
 const NOW = new Date(2026, 10, 7, 16, 0).getTime();
 
 const vps = (over: Partial<MachineReading> = {}): MachineReading => ({
@@ -27,7 +30,10 @@ const vps = (over: Partial<MachineReading> = {}): MachineReading => ({
   reachable: true,
   checkedAt: NOW,
   ramFreeRatio: 0.4,
+  ramAvailableBytes: 4 * GB,
   swapUsedRatio: 0,
+  swapInPerSec: 0,
+  swapOutPerSec: 0,
   load5PerCpu: 0.5,
   diskUsedRatio: 0.5,
   ...over,
@@ -63,15 +69,39 @@ describe('evaluateFaxineiro — triggers', () => {
   });
 
   it('each machine limit wakes the board with sessions there, avoiding that machine', () => {
-    for (const machine of [vps({ ramFreeRatio: 0.1 }), vps({ swapUsedRatio: 0.2 }), vps({ load5PerCpu: 2.5 }), vps({ diskUsedRatio: 0.9 })]) {
+    for (const machine of [vps({ ramFreeRatio: 0.1 }), vps({ swapUsedRatio: 0.2, swapOutPerSec: 5 }), vps({ load5PerCpu: 2.5 }), vps({ diskUsedRatio: 0.9 })]) {
       const round = evaluateFaxineiro(input({ machines: [machine] }), stateToday(), NOW);
       expect(round.wakes).toHaveLength(1);
       expect(round.wakes[0]).toMatchObject({ projectPath: '/p/atlas', avoidMachine: 'vps' });
     }
   });
 
-  it('swap below the limit is not a trigger (Linux keeps pages in swap on a healthy machine)', () => {
-    expect(evaluateFaxineiro(input({ machines: [vps({ swapUsedRatio: 0.05 })] }), stateToday(), NOW).wakes).toEqual([]);
+  it('swap parked (no paging, RAM to spare) is not a trigger, nor a full machine: the 08/11 reading, swap 18% with si/so 0 and 3,6 GB free', () => {
+    const parked = vps({ swapUsedRatio: 0.18, ramAvailableBytes: 3.6 * GB });
+    const round = evaluateFaxineiro(input({ machines: [parked] }), stateToday(), NOW);
+    expect(round.wakes).toEqual([]);
+    expect(round.fullMachines).toEqual({});
+  });
+
+  it('swap paging in or out wakes the Faxineiro', () => {
+    for (const machine of [vps({ swapUsedRatio: 0.18, swapInPerSec: 3 }), vps({ swapUsedRatio: 0.18, swapOutPerSec: 3 })]) {
+      const round = evaluateFaxineiro(input({ machines: [machine] }), stateToday(), NOW);
+      expect(round.wakes).toHaveLength(1);
+      expect(round.wakes[0]?.reasons.join(' ')).toContain('troca ativa');
+    }
+  });
+
+  it('swap in use with little RAM available wakes the Faxineiro', () => {
+    const round = evaluateFaxineiro(input({ machines: [vps({ swapUsedRatio: 0.18, ramAvailableBytes: 0.5 * GB })] }), stateToday(), NOW);
+    expect(round.wakes).toHaveLength(1);
+    expect(round.wakes[0]?.reasons.join(' ')).toContain('RAM disponível');
+  });
+
+  it('both swap limits come from the faxineiro section of config.json', () => {
+    const config = readFaxineiroConfig({ trocaAtivaMinimaPaginasPorSeg: 10, swapRamDisponivelMinimaMb: 256 });
+    const machines = [vps({ swapUsedRatio: 0.18, swapOutPerSec: 5, ramAvailableBytes: 0.5 * GB })];
+    expect(evaluateFaxineiro(input({ config, machines }), stateToday(), NOW).wakes).toEqual([]);
+    expect(faxineiroConfigSection()).toMatchObject({ trocaAtivaMinimaPaginasPorSeg: 0, swapRamDisponivelMinimaMb: 1024 });
   });
 
   it('"sem sinal" wakes only after two reads in a row without answer, and stale numbers never count', () => {
@@ -292,6 +322,70 @@ describe('fila de abertura', () => {
     expect(answer.ok).toBe(true);
     expect(opened).toHaveLength(1);
     expect(opened[0]!.remoteId).toBe('vps2');
+  });
+
+  // t-d1f072fd — a leitura de memória é de 60 s: sem contar o que abriu depois dela, quatro aberturas no mesmo minuto
+  // passavam do limite e levavam a VPS pessoal ao swap antes da leitura seguinte.
+  it('rajada: com vaga para 2 sessões, a terceira abertura do mesmo minuto espera na fila', async () => {
+    const { bridge, opened } = setupQueue();
+    bridge.setFullMachines({}, { vps: { sessions: 2, checkedAt: Date.now() } });
+    for (const pedido of ['a', 'b']) {
+      const answer = await bridge.handle('dev', { tool: 'sessao_abrir', papel: 'revisor', pedido });
+      expect(answer.ok).toBe(true);
+    }
+    expect(opened).toHaveLength(2);
+    const third = await bridge.handle('dev', { tool: 'sessao_abrir', papel: 'revisor', pedido: 'c' });
+    expect(third.ok).toBe(true);
+    expect(third.text).toContain('fila');
+    expect(third.text).toContain('2 aberturas desde a última leitura');
+    expect(opened).toHaveLength(2);
+
+    bridge.drainQueue(); // same reading: still no room
+    expect(opened).toHaveLength(2);
+    // a newer reading already sees the two sessions in the RAM it reports
+    bridge.setFullMachines({}, { vps: { sessions: 1, checkedAt: Date.now() + 2 * MIN } });
+    bridge.drainQueue();
+    expect(opened).toHaveLength(3);
+    expect(opened[2]).toMatchObject({ firstMessage: 'c', remoteId: 'vps' });
+  });
+
+  it('rajada: sem vaga nenhuma na leitura, a primeira abertura já espera', async () => {
+    const { bridge, opened } = setupQueue();
+    bridge.setFullMachines({}, { vps: { sessions: 0, checkedAt: Date.now() } });
+    const answer = await bridge.handle('dev', { tool: 'sessao_abrir', papel: 'revisor', pedido: 'a' });
+    expect(answer.text).toContain('fila');
+    expect(opened).toEqual([]);
+  });
+
+  it('rajada: papel com "lugar: qualquer" vai para a outra VPS quando a sua não tem vaga', async () => {
+    const free: SessionRole = { id: 'pesquisa-livre', name: 'Pesquisa livre', color: 'discovery', anyPlace: true, guidance: 'lê' };
+    const { bridge, opened } = setupQueue([free]);
+    bridge.setFullMachines({}, { vps: { sessions: 0, checkedAt: Date.now() }, vps2: { sessions: 3, checkedAt: Date.now() } });
+    await bridge.handle('dev', { tool: 'sessao_abrir', papel: 'pesquisa-livre', pedido: 'leia X' });
+    expect(opened).toHaveLength(1);
+    expect(opened[0]!.remoteId).toBe('vps2');
+  });
+});
+
+describe('vaga para abrir sessão (t-d1f072fd)', () => {
+  // VPS pessoal: 7,6 GiB; o limite de 15% de RAM livre fica em 1,14 GiB.
+  const personal = (availableGb: number): MachineReading => vps({ ramAvailableBytes: availableGb * GB, ramFreeRatio: availableGb / 7.6 });
+
+  it('conta quantas sessões de 400 MB cabem antes do limite de RAM livre', () => {
+    const round = evaluateFaxineiro(input({ machines: [personal(3.6)] }), stateToday(), NOW);
+    expect(round.fullMachines).toEqual({});
+    expect(round.openingRoom.vps).toEqual({ sessions: 6, checkedAt: NOW });
+  });
+
+  it('perto do limite (1,2 GiB disponíveis) não cabe nenhuma', () => {
+    const round = evaluateFaxineiro(input({ machines: [personal(1.2)] }), stateToday(), NOW);
+    expect(round.fullMachines).toEqual({});
+    expect(round.openingRoom.vps?.sessions).toBe(0);
+  });
+
+  it('máquina sem sinal ou sem leitura de RAM não tem vaga calculada', () => {
+    const round = evaluateFaxineiro(input({ machines: [vps({ reachable: false }), vps({ id: 'pc', label: 'PC', ramFreeRatio: null, ramAvailableBytes: null })] }), stateToday(), NOW);
+    expect(round.openingRoom).toEqual({});
   });
 });
 

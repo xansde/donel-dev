@@ -16,10 +16,15 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 const OWNER_DECISION_TIMEOUT_MS = 30 * 60_000;
 /** `sessao_fechar` may wait up to 20 s for the destination's turn to end. */
 const CLOSE_TIMEOUT_MS = 45_000;
-/** `sessao_enviar` waits up to 40 s for the destination's CLI to take the message (`agentBridge.ts`). */
-const SEND_TIMEOUT_MS = 50_000;
+/**
+ * `sessao_enviar`: the renderer waits up to 40 s for the destination's CLI to take the message (`agentBridge.ts`) and
+ * always answers then ("entrou", "na fila", "ainda não entrou"). This is only the net for a renderer that is not there.
+ * 09/11 (t-81ff5a82) — it was 50 s: with the PC and the tunnels loaded, the renderer's answer reached the main with a
+ * median of 45 s and a p90 of 65 s, and 88 sends in 48 h came back "não respondeu a tempo" with the message delivered.
+ */
+const SEND_TIMEOUT_MS = 180_000;
 /** What the owner wrote on a card: up to 40 s to the place, then up to 40 s to the Líder. */
-const OWNER_MESSAGE_TIMEOUT_MS = 2 * SEND_TIMEOUT_MS;
+const OWNER_MESSAGE_TIMEOUT_MS = 100_000;
 
 export interface BoardBridgeDeps {
   readonly ipcMain: IpcMain;

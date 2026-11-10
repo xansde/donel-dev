@@ -28,7 +28,7 @@ padrões na primeira rodada, como a `sessaoParada` de hoje):
 | Gatilho | Padrão | Observação |
 |---|---|---|
 | RAM livre | < 15% | "livre" = `MemAvailable` (o que a VPS já lê) |
-| Swap em uso | > 10% do swap | "swap > 0" dispararia sempre: o Linux deixa página no swap mesmo folgado (hoje: 1,6 GB de 8 GB) |
+| Swap | troca ativa (si ou so > 0 em 1 s) ou swap em uso com RAM disponível < 1 GB | trocado em 08/11 (t-e3e8698a): "> 10% do swap" disparava com swap parado (18%, si/so 0, 3,6 GB livres) a cada leitura, e a faxina só baixava 35 MB |
 | Carga | média de 5 min > 2 × CPUs | a média de 5 min já é o "por mais de 5 min"; só nas VPS |
 | Sem sinal | 2 leituras seguidas sem resposta | uma leitura perdida sob carga é comum |
 | Sessão parada | ≥ 30 min parada, sem pedir nada ao dono | o Faxineiro lê o último turno e decide se terminou |
@@ -65,6 +65,12 @@ Os gatilhos que dispararam (e os segurados pelos freios) vão para o mesmo log.
 2. senão, o lugar nasce no quadro marcado "na fila", e a resposta volta na hora ("na fila, posição N, a VPS está
    cheia"). Abre quando a máquina passar 2 leituras seguidas abaixo dos limites, na ordem de chegada.
 
+A leitura de memória é de 60 s, então o limite sozinho deixa passar uma rajada (t-d1f072fd: quatro aberturas no mesmo
+minuto, começando perto de 1,2 GiB disponíveis, levavam a VPS pessoal ao swap antes da leitura seguinte). Por isso cada
+leitura diz também quantas sessões de 400 MB cabem antes do limite de RAM livre, e o app conta o que abriu na máquina
+desde essa leitura (mais 60 s antes dela, porque a sessão recém-aberta ainda não cresceu). Esgotada a vaga, a próxima
+abertura vai para a fila do mesmo jeito, e a fila também respeita a vaga ao abrir.
+
 O Faxineiro também "põe na fila" uma sessão que ainda não começou: fechar pelo Faxineiro uma aba aberta que nunca
 teve turno devolve o pedido dela à fila, sem perder o pedido. A fila mora na memória do app; se o app fechar, os
 lugares da fila viram "não começou", que o Oráculo já trata.
@@ -89,7 +95,7 @@ e freios; a regra de quem o Faxineiro pode fechar; a fila não perde nem duplica
 
 ## Decisões que tomei (diga se alguma muda)
 
-- Swap conta acima de 10%, não "qualquer swap".
+- Swap conta quando troca agora (si/so) ou quando a RAM disponível está abaixo de 1 GB; o "acima de 10%" saiu em 08/11 (t-e3e8698a).
 - O Faxineiro roda fora da máquina em apuros, e o app fecha a sessão dele quando a ronda acaba.
 - "O que é do dono" = o Líder do quadro e toda aba que o dono abriu à mão. O Faxineiro só fecha o que uma sessão abriu.
 - Ligado por padrão (`faxineiro.ligado: true` na config), com os freios acima.

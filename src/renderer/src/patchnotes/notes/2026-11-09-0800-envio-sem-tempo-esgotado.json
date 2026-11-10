@@ -1,0 +1,4 @@
+{
+  "title": "Mensagem entre sessões não volta mais como \"não respondeu a tempo\" quando entrou",
+  "text": "Com o PC ocupado, uma sessão que mandava mensagem a outra às vezes ouvia \"o app não respondeu a tempo\" mesmo com a mensagem entregue, e mandava de novo. Agora o app espera mais pela confirmação e devolve a resposta certa: entrou, ficou na fila do Claude de lá ou ainda não entrou."
+}

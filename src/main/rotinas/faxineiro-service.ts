@@ -68,7 +68,10 @@ export function machineReadings(pc: HealthReport | null, remotes: readonly Remot
       reachable: true,
       checkedAt: pc.at,
       ramFreeRatio: pc.ram.totalBytes > 0 ? pc.ram.freeBytes / pc.ram.totalBytes : null,
+      ramAvailableBytes: pc.ram.totalBytes > 0 ? pc.ram.freeBytes : null,
       swapUsedRatio: null,
+      swapInPerSec: null,
+      swapOutPerSec: null,
       load5PerCpu: null,
       diskUsedRatio: pc.disk && pc.disk.totalBytes > 0 ? 1 - pc.disk.freeBytes / pc.disk.totalBytes : null,
     });
@@ -82,7 +85,10 @@ export function machineReadings(pc: HealthReport | null, remotes: readonly Remot
       reachable: report.status === 'ok',
       checkedAt: report.checkedAt,
       ramFreeRatio: reading?.ram ? reading.ram.freeBytes / reading.ram.totalBytes : null,
+      ramAvailableBytes: reading?.ram ? reading.ram.freeBytes : null,
       swapUsedRatio: reading?.swap ? 1 - reading.swap.freeBytes / reading.swap.totalBytes : null,
+      swapInPerSec: reading?.swapIo?.inPerSec ?? null,
+      swapOutPerSec: reading?.swapIo?.outPerSec ?? null,
       load5PerCpu: reading?.load && reading.cpus ? reading.load.five / reading.cpus : null,
       diskUsedRatio: reading?.disk ? 1 - reading.disk.freeBytes / reading.disk.totalBytes : null,
     });
@@ -137,7 +143,7 @@ export function createFaxineiroService(deps: FaxineiroServiceDeps): FaxineiroSer
       try {
         ensureDir();
         const state = readFaxineiroState(readJson(statePath));
-        if (state === null) return { wakes: [], closeIdle: [], fullMachines: {} }; // a newer channel owns the memory
+        if (state === null) return { wakes: [], closeIdle: [], fullMachines: {}, openingRoom: {} }; // a newer channel owns the memory
         const config = readConfig();
         const machines = machineReadings(deps.pcReport(), deps.remoteReports());
         const result = evaluateFaxineiro({ config, machines, sessions }, state, now());
@@ -147,10 +153,10 @@ export function createFaxineiroService(deps: FaxineiroServiceDeps): FaxineiroSer
           const remoteId = faxineiroPlace(wake.avoidMachine, machines, config);
           return { projectPath: wake.projectPath, text: wake.text, reasons: wake.reasons, ...(remoteId ? { remoteId } : {}) };
         });
-        return { wakes, closeIdle: result.closeIdle, fullMachines: result.fullMachines };
+        return { wakes, closeIdle: result.closeIdle, fullMachines: result.fullMachines, openingRoom: result.openingRoom };
       } catch (error) {
         console.error('[donel-dev] faxineiro: a rodada falhou:', error);
-        return { wakes: [], closeIdle: [], fullMachines: {} };
+        return { wakes: [], closeIdle: [], fullMachines: {}, openingRoom: {} };
       }
     },
     log,

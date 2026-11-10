@@ -18,6 +18,7 @@ import {
   frenteOf,
   isAgentBotRecord,
   isCancelled,
+  isClosed,
   lastDecision,
   lastDelivery,
   requestedByOf,
@@ -203,6 +204,27 @@ export function placesOfDoc(doc: LedgerDoc, places: PlaceInfoOf): LedgerPlacesMa
       add(task.projectPath, transfer.from);
       add(task.projectPath, transfer.to);
     }
+  }
+  return out;
+}
+
+/**
+ * t-5c0df1df (dono, 09/11: "uma coluna indicando um identificador da tarefa") — the session that runs a task: the
+ * conversa of the moment of its owner place, as the board has it (`sessionOf`). A closed task (accepted, cancelled)
+ * has none: nobody runs it. The tools (`tarefa_listar`, `tarefa_ver`) and the table of the Oráculo read it from here.
+ */
+export function liveSessionOf(task: LedgerTask, sessionOf: (projectPath: string, placeId: string) => string | undefined): string | undefined {
+  return isClosed(task) ? undefined : sessionOf(task.projectPath, task.ownerPlaceId);
+}
+
+/** Board → owner place → its session, for every live task of `doc` (`liveSessionOf`); built in the main for the table. */
+export type LedgerSessionsMap = Readonly<Record<string, Readonly<Record<string, string>>>>;
+
+export function ledgerSessionsOfDoc(doc: LedgerDoc, sessionOf: (projectPath: string, placeId: string) => string | undefined): LedgerSessionsMap {
+  const out: Record<string, Record<string, string>> = {};
+  for (const task of Object.values(doc.tasks)) {
+    const session = liveSessionOf(task, sessionOf);
+    if (session) (out[task.projectPath] ??= {})[task.ownerPlaceId] = session;
   }
   return out;
 }
@@ -413,6 +435,8 @@ export interface LedgerPlacesSnapshot {
   /** The owner's name set in the mirror ("Alexandre"); `null` = `DEFAULT_OWNER_NAME`. */
   readonly ownerName: string | null;
   readonly places: LedgerPlacesMap;
+  /** The session of each live task's owner (`ledgerSessionsOfDoc`); absent from an older main. */
+  readonly sessions?: LedgerSessionsMap;
 }
 
 /** What the Preferences show. The key never leaves the main: only whether it is in the vault. */

@@ -10,6 +10,7 @@ import { MAX_PROOF_FILE_BYTES, PROOF_FILE_TYPES, isProofFileName, maxProofBytes,
 import { checkLedgerImport, ledgerCount, ledgerProofFiles, sameLedger } from '../shared/ledger/remote-import';
 import { ledgerProofsDir, type LedgerService } from '../main/ledger-store';
 import { SERVICE_PATH, serviceActor, serviceOpRefusal, type ServiceOp } from './servicos';
+import { LIVRO_PATH, parseRascunho, type LivroStore } from './livro';
 
 export interface OracleRequest {
   readonly method: string;
@@ -103,7 +104,12 @@ export interface OracleApiDeps {
   readonly services?: () => ReadonlyMap<string, string>;
   /** The way back's mark (src/oraculo/devolvido.ts): set, every writer of the daemon refuses. */
   readonly returned?: { returned(): boolean; set(returned: boolean): void };
+  /** F6 do ledger bom — the journal (src/oraculo/livro.ts); absent = the daemon did not switch it on (no route). */
+  readonly livro?: LivroStore;
 }
+
+/** What a service may append to the journal: the same as its op route (create, take, deliver), by the same rule. */
+const SERVICE_LIVRO_TYPES: ReadonlySet<string> = new Set(['criar', 'assumir', 'entregar']);
 
 export function createOracleApiHandler(deps: OracleApiDeps): OracleApiHandler {
   const { ledger, ledgerFile } = deps;
@@ -182,12 +188,48 @@ export function createOracleApiHandler(deps: OracleApiDeps): OracleApiHandler {
     }
   }
 
+  /** F6: `GET ?ultimos=N` or `?desde=<seq>` (and `limite`) reads; `POST` appends one entry with its key. */
+  function livroRoute(livro: LivroStore, caller: OracleCaller, method: string, url: URL, body: string): OracleResponse {
+    const num = (name: string): number | undefined => {
+      const value = url.searchParams.get(name);
+      return value !== null && /^\d{1,9}$/.test(value) ? Number(value) : undefined;
+    };
+    try {
+      if (method === 'GET') return json(200, livro.ler({ desde: num('desde'), ultimos: num('ultimos'), limite: num('limite') }));
+      if (method !== 'POST') return json(405, { error: 'GET lê, POST lança' });
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(body);
+      } catch {
+        return json(400, { error: 'corpo não é JSON' });
+      }
+      const draft = parseRascunho(parsed, caller.kind === 'pc' ? ['quem'] : []);
+      if (typeof draft === 'string') return json(400, { error: draft });
+      let quem: LedgerActor;
+      if (caller.kind === 'servico') {
+        if (!SERVICE_LIVRO_TYPES.has(draft.tipo)) return json(403, { error: 'serviço só lança criar, assumir e entregar' });
+        const why = serviceOpRefusal({ ...draft.dados, op: draft.tipo });
+        if (why) return json(400, { error: why });
+        quem = serviceActor(caller.name);
+      } else {
+        const actor = parseActor((parsed as Record<string, unknown>).quem);
+        if (!actor) return json(400, { error: 'quem inválido' });
+        quem = actor;
+      }
+      const result = livro.lancar(quem, draft);
+      return result.ok ? json(200, { ok: true, novo: result.novo, lancamento: result.lancamento }) : json(result.status, { error: result.error });
+    } catch (error) {
+      return json(500, { error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+
   return async (request) => {
     const caller = callerOf(request.authorization, deps.tokenHash(), deps.services?.() ?? new Map());
     if (!caller) return json(401, { error: 'token' });
     const url = new URL(request.url, 'http://oraculo');
     const path = url.pathname;
     const { method } = request;
+    if (path === LIVRO_PATH) return deps.livro ? livroRoute(deps.livro, caller, method, url, request.body) : json(404, { error: 'rota' });
     if (caller.kind === 'servico') {
       if (method !== 'POST' || path !== SERVICE_PATH) return json(403, { error: 'credencial de serviço só cria, assume e entrega tarefas' });
       return serviceApply(caller.name, request.body);

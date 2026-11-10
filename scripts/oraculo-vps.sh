@@ -21,6 +21,8 @@ build() {
   mkdir -p "$DIR/bin" && chmod 700 "$DIR"
   # A cópia é do daemon, não do checkout: mexer no repo depois não muda o que está no ar.
   install -m 0644 "$REPO/out/oraculo/oraculo.mjs" "$DIR/bin/oraculo.mjs"
+  # F6 do ledger bom: o comando `livro` (ler e lançar no diário) para crons, workflows e bots.
+  install -m 0755 "$REPO/scripts/livro.mjs" "$DIR/bin/livro.mjs"
 }
 
 write_unit() {

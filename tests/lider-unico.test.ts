@@ -75,7 +75,7 @@ describe('Líder único', () => {
 
   it('only the tab with the Jobu mark reads "Líder único"; a Líder of a board reads the board guidance', () => {
     const lider = FACTORY_ROLES.find((role) => role.id === LEADER_ROLE_ID)!;
-    expect(rolePromptText(lider)).not.toContain('Líder único');
+    expect(rolePromptText(lider)).not.toContain('Você é o Líder único');
     expect(leaderOfAllPromptText(lider)).toContain('Você é o Líder único');
     expect(leaderOfAllPromptText({ ...lider, guidance: 'Fale curto.' })).toContain('Fale curto.');
   });
@@ -89,8 +89,12 @@ const THEO = 'place:theo';
 const DEV = 'place:dev';
 const OUTRO = 'place:outro';
 
-function team(): { bridge: AgentBridge; sent: { tabId: string; text: string }[]; tabs: BridgeTab[]; passOns: LedgerPassOnRequest[][] } {
+/** The Líder of the board the Líder único opened (a place made by a session), as on 09/11. */
+const LQ = 'place:lq';
+
+function team(options: { readonly boardLeader?: boolean; readonly muteLeader?: boolean } = {}): { bridge: AgentBridge; sent: { tabId: string; text: string }[]; tabs: BridgeTab[]; passOns: LedgerPassOnRequest[][] } {
   let doc = addPlace(emptyMindscapeDoc(), ATLAS, { id: THEO, roleId: 'dev', by: 'session' });
+  if (options.boardLeader) doc = setPlaceConversation(addPlace(doc, ATLAS, { id: LQ, roleId: 'lider', by: 'session' }), ATLAS, LQ, 'conv-lq');
   doc = addPlace(doc, ATLAS, { id: DEV, roleId: 'dev', by: 'session' });
   doc = addPlace(doc, ATLAS, { id: OUTRO, roleId: 'dev' });
   for (const [place, conv] of [[THEO, 'conv-theo'], [DEV, 'conv-dev'], [OUTRO, 'conv-outro']] as const) doc = setPlaceConversation(doc, ATLAS, place, conv);
@@ -102,6 +106,7 @@ function team(): { bridge: AgentBridge; sent: { tabId: string; text: string }[];
     { id: 'tab-theo', name: 'Theo', cwd: ATLAS, projectName: 'atlas', claudeSessionId: 'conv-theo', openedBy: 'lider', sessionType: 'claude' },
     { id: 'tab-dev', name: 'Dev', cwd: ATLAS, projectName: 'atlas', claudeSessionId: 'conv-dev', openedBy: THEO, sessionType: 'claude' },
     { id: 'tab-outro', name: 'Outro', cwd: ATLAS, projectName: 'atlas', claudeSessionId: 'conv-outro', sessionType: 'claude' },
+    ...(options.boardLeader ? [{ id: 'tab-lq', name: 'Líder', cwd: ATLAS, projectName: 'atlas', roleId: 'lider', claudeSessionId: 'conv-lq', openedBy: 'lider', sessionType: 'claude' as const }] : []),
   ];
   const ports: AgentBridgePorts = {
     loaded: true,
@@ -119,7 +124,7 @@ function team(): { bridge: AgentBridge; sent: { tabId: string; text: string }[];
       return { kind: 'entrou' };
     },
     permissionOnScreen: () => false,
-    unconfirmed: () => false,
+    unconfirmed: (tabId) => options.muteLeader === true && tabId === 'tab-lq',
     startTrouble: () => null,
     askOwner: async () => true,
     remoteLabel: (id) => id,
@@ -147,13 +152,20 @@ describe('Líder único recebe e lugar fechado passa adiante', () => {
 
   it('a session the Líder único opened, or one below it, sends to "lider"; one out of that chain is refused', async () => {
     const { bridge, sent } = team();
-    expect(await bridge.handle('theo', { tool: 'sessao_enviar', para: 'lider', texto: 'terminei a parte 1' })).toMatchObject({ ok: true });
-    expect(await bridge.handle('dev', { tool: 'sessao_enviar', para: 'lider', texto: 'travei no build' })).toMatchObject({ ok: true });
+    expect(await bridge.handle('theo', { tool: 'sessao_enviar', para: 'lider', texto: 'terminei a parte 1', motivo: 'tarefa-completa' })).toMatchObject({ ok: true });
+    expect(await bridge.handle('dev', { tool: 'sessao_enviar', para: 'lider', texto: 'travei no build', motivo: 'bloqueio' })).toMatchObject({ ok: true });
     expect(sent).toEqual([
-      { tabId: 'tab-lider', text: `◆ De Dev (${THEO}), quadro atlas: terminei a parte 1` },
-      { tabId: 'tab-lider', text: `◆ De Dev (${DEV}), quadro atlas: travei no build` },
+      { tabId: 'tab-lider', text: `◆ De Dev (${THEO}), quadro atlas, tarefa completa: terminei a parte 1` },
+      { tabId: 'tab-lider', text: `◆ De Dev (${DEV}), quadro atlas, bloqueio: travei no build` },
     ]);
-    const refused = await bridge.handle('outro', { tool: 'sessao_enviar', para: 'lider', texto: 'oi' });
+    // Dono, 09/11: to the Líder único only a finished task or a lock; progress stays in the ledger. The tool refuses
+    // the rest, by "lider" or by "quem-me-abriu" when the Líder único is the opener.
+    const chatter = await bridge.handle('theo', { tool: 'sessao_enviar', para: 'lider', texto: 'rodando o verify agora' });
+    expect(chatter).toMatchObject({ ok: false, text: expect.stringContaining('tarefa_andamento') });
+    const viaOpener = await bridge.handle('theo', { tool: 'sessao_enviar', para: 'quem-me-abriu', texto: 'li o código' });
+    expect(viaOpener).toMatchObject({ ok: false, text: expect.stringContaining('tarefa_andamento') });
+    expect(sent).toHaveLength(2);
+    const refused = await bridge.handle('outro', { tool: 'sessao_enviar', para: 'lider', texto: 'oi', motivo: 'bloqueio' });
     expect(refused).toMatchObject({ ok: false, text: expect.stringContaining('Sem ligação com o Líder único') });
     expect(sent).toHaveLength(2);
   });
@@ -171,6 +183,27 @@ describe('Líder único recebe e lugar fechado passa adiante', () => {
     await vi.advanceTimersByTimeAsync(PASS_ON_GRACE_MS);
     expect(passOns[1]).toEqual([{ projectPath: ATLAS, placeId: THEO, gone: 'fechada', to: 'lider' }]);
     expect(sent[1]).toEqual({ tabId: 'tab-lider', text: expect.stringContaining('quadro atlas') });
+  });
+
+  it('with nobody live above, the tasks go back to the Líder of the board, not to the Líder único (dono, 09/11)', async () => {
+    vi.useFakeTimers();
+    const { bridge, tabs, passOns } = team({ boardLeader: true });
+    close(tabs, bridge, 'tab-theo');
+    await vi.advanceTimersByTimeAsync(PASS_ON_GRACE_MS);
+    expect(passOns).toEqual([[{ projectPath: ATLAS, placeId: THEO, gone: 'fechada', to: LQ }]]);
+
+    // The Líder of the board itself closes: nobody is above it, so the Líder único holds its tasks.
+    close(tabs, bridge, 'tab-lq');
+    await vi.advanceTimersByTimeAsync(PASS_ON_GRACE_MS);
+    expect(passOns[1]).toEqual([{ projectPath: ATLAS, placeId: LQ, gone: 'fechada', to: 'lider' }]);
+  });
+
+  it('a Líder of the board mute since the app opened does not take them: they stay with the Líder único', async () => {
+    vi.useFakeTimers();
+    const { bridge, tabs, passOns } = team({ boardLeader: true, muteLeader: true });
+    close(tabs, bridge, 'tab-theo');
+    await vi.advanceTimersByTimeAsync(PASS_ON_GRACE_MS);
+    expect(passOns).toEqual([[{ projectPath: ATLAS, placeId: THEO, gone: 'fechada', to: 'lider' }]]);
   });
 
   it('closing the app before the grace, or a place that comes back, moves nothing', async () => {

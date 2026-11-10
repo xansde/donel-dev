@@ -89,6 +89,7 @@ import type {
   ProjectScanMode,
   PtyCreateOptions,
   PtyCreateResult,
+  RelinkToolsResult,
   RemoteAliveSession,
   PtyExitInfo,
   RemoteSwitchOutcome,
@@ -153,7 +154,7 @@ import {
 } from '../shared/esteira/ipc';
 
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
-import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerSnapshot, type LedgerTurnRecord, type LedgerTurnRecorded } from '../shared/ledger/channels';
+import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerPrioritized, type LedgerSnapshot, type LedgerTurnRecord, type LedgerTurnRecorded } from '../shared/ledger/channels';
 import type { LedgerProof } from '../shared/ledger/contract';
 import { LEDGER_REMOTE_CHANNELS, type LedgerRemoteResult, type LedgerRemoteState } from '../shared/ledger/remote';
 import { LEDGER_MIRROR_CHANNELS, type LedgerMirrorConfigureResult, type LedgerMirrorState, type LedgerPlacesSnapshot } from '../shared/ledger/mirror';
@@ -214,6 +215,8 @@ const donelApi: DonelApi = {
     getPreview: (ptyId: string) => ipcRenderer.invoke(PTY_CHANNELS.preview, ptyId) as Promise<string[]>,
 
     remoteAlive: () => ipcRenderer.invoke(PTY_CHANNELS.remoteAlive) as Promise<RemoteAliveSession[]>,
+
+    relinkTools: (ptyId: string) => ipcRenderer.invoke(PTY_CHANNELS.relinkTools, ptyId) as Promise<RelinkToolsResult>,
 
     // NÃO passa por `subscribeChannel` (G5): este canal é broadcast DE
     // PROPÓSITO — uma aba, um `TerminalPane`, um listener, todos no MESMO
@@ -629,6 +632,7 @@ const donelApi: DonelApi = {
     comment: (comment: LedgerComment) => ipcRenderer.invoke(LEDGER_CHANNELS.comment, comment) as Promise<LedgerCommentResult>,
     passOn: (requests: readonly LedgerPassOnRequest[]) => ipcRenderer.invoke(LEDGER_CHANNELS.passOn, requests) as Promise<readonly LedgerPassedOn[]>,
     turnEnded: (record: LedgerTurnRecord) => ipcRenderer.invoke(LEDGER_CHANNELS.turnEnded, record) as Promise<LedgerTurnRecorded>,
+    prioritize: (order: readonly string[]) => ipcRenderer.invoke(LEDGER_CHANNELS.prioritize, order) as Promise<LedgerPrioritized>,
   },
 
   // Hill climbing — `<userData>/hill-climb.json` (main is the only writer); gestures go as the owner.

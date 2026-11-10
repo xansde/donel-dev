@@ -6,7 +6,8 @@
 // PC's memory); `<dir>/url` is where this daemon listens, for the PC to read through the same ssh.
 //
 // Env: DONEL_ORACULO_DIR (default ~/.donel/oraculo), DONEL_ORACULO_HOST (default: this place's Tailscale address),
-// DONEL_ORACULO_PORT (default 47816).
+// DONEL_ORACULO_PORT (default 47816), DONEL_LIVRO_ARQUIVO (F6 do ledger bom: the journal file; unset = no journal
+// route, which is today's production until F4).
 
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, networkInterfaces } from 'node:os';
@@ -20,6 +21,7 @@ import { createRelay } from './relay';
 import { pickTailscaleAddress } from '../main/celular/tailscale';
 import { callerOf, createOracleApiHandler } from './api';
 import { readServiceHashes } from './servicos';
+import { createLivroStore } from './livro';
 import { createReturnGuard } from './devolvido';
 import { createGateHandler, GATE_PORT, mergePicture, startGateServer, tunnelForward, type BoardPicture } from './portao';
 import { ORACLE_PORT, startOracleServer, type OracleServer } from './server';
@@ -119,6 +121,7 @@ async function main(): Promise<void> {
       }
     },
     extra: createOracleAdminRoutes({ celular, relay, setPicture }),
+    ...(process.env.DONEL_LIVRO_ARQUIVO ? { livro: createLivroStore({ filePath: process.env.DONEL_LIVRO_ARQUIVO }) } : {}),
   });
   server = await startOracleServer({ host, port, caller: (authorization) => callerOf(authorization, tokenHash(), services()), handler });
   writeFileSync(join(dir, 'url'), `${server.url}\n`, { mode: 0o600 });

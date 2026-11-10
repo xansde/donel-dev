@@ -57,6 +57,11 @@ export class RemoteLinkSupervisor<Exit> {
     this.tracked.set(ptyId, { sshTarget, sid });
   }
 
+  /** The tmux session of every remote tab, by ptyId (`donel-<sid>`; it keeps the first id across a `/clear`). */
+  trackedSids(): ReadonlyMap<string, string> {
+    return new Map([...this.tracked].map(([ptyId, entry]) => [ptyId, entry.sid]));
+  }
+
   isLost(ptyId: string): boolean {
     return this.lost.has(ptyId);
   }
@@ -98,6 +103,15 @@ export class RemoteLinkSupervisor<Exit> {
     if (entry.timer !== null) this.deps.clearTimer(entry.timer);
     this.forget(ptyId);
     this.deps.finalize(ptyId, entry.exit, true);
+    return true;
+  }
+
+  /** `sessao_religar` (t-1293c818) — a tab "sem ligação" tries its relink now instead of waiting its turn. `false` = not lost. */
+  relinkNow(ptyId: string): boolean {
+    const entry = this.lost.get(ptyId);
+    if (!entry || this.stopped) return false;
+    if (entry.timer !== null) this.deps.clearTimer(entry.timer);
+    entry.timer = this.deps.setTimer(() => void this.tryRelink(ptyId, entry), 0);
     return true;
   }
 

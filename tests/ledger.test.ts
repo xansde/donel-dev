@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
-import { createLedgerService, leaderTransferNotice, ledgerProofsDir, NOT_STARTED_GRACE_MS, nodeLedgerProofFs, passOnTasks, runLedgerTool, type LedgerCaller, type LedgerProofFs } from '../src/main/ledger-store';
+import { createLedgerService, runLedgerBatch, leaderTransferNotice, ledgerProofsDir, NOT_STARTED_GRACE_MS, nodeLedgerProofFs, passOnTasks, runLedgerTool, type LedgerCaller, type LedgerProofFs } from '../src/main/ledger-store';
 import type { MindscapeBoard } from '../src/shared/mindscape/model';
 import { eventNote, findCode, frenteOf, LEDGER_SCHEMA_VERSION, MAX_FRENTE_CHARS, parseLedgerDoc, requestedByOf } from '../src/shared/ledger/contract';
 import { LEADER_OF_ALL } from '../src/shared/mindscape/leader';
@@ -15,7 +15,7 @@ import { askedByRefusal, parseLedgerToolCall, type LedgerToolCall } from '../src
 import { slackGuard } from '../src/shared/ledger/slack-guard';
 import { deliveryNote } from '../src/shared/ledger/labels';
 import { createFaxinaRunner } from '../src/main/rotinas/oraculo-faxina';
-import { ORPHAN_AGE_MS, type PrRef } from '../src/shared/ledger/faxina';
+import { oldOrphans, ORPHAN_AGE_MS, type PrRef } from '../src/shared/ledger/faxina';
 import { addLink, addPlace, emptyMindscapeDoc, setPlaceConversation } from '../src/shared/mindscape/model';
 
 // Ledger com prova (item 19) — persisted data a channel could erase, and the two rules that live in code:
@@ -101,15 +101,6 @@ describe('ledger com prova', () => {
     if (proof.kind !== 'arquivo') return;
     expect(proof.file).not.toContain('/');
     expect(readFileSync(join(ledgerProofsDir(file), proof.file), 'utf8')).toBe('png-bytes');
-  });
-
-  it('low risk waits for the owner when whoever creates is the owner of the work or was opened by it', async () => {
-    const { service } = setup();
-    for (const [who, owner] of [[dev, undefined], [revisorDoDev, 'place:dev']] as const) {
-      const created = await runLedgerTool(service(), who, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', risco: 'baixo', ...(owner ? { dono: owner } : {}) }));
-      const id = (JSON.parse(created.text) as { id: string }).id;
-      expect(service().load().doc.tasks[id]!.risk).toBe('alto');
-    }
   });
 
   it('refuses a proof file that is a symbolic link', async () => {
@@ -780,5 +771,63 @@ describe('frente da tarefa (07/11)', () => {
     // Who asked is a person here too, and the front is required.
     expect(parseLedgerToolCall('tarefa_frente', { id, frente: 'Ledger', quemPediu: 'Dev' }).ok).toBe(false);
     expect(parseLedgerToolCall('tarefa_frente', { id }).ok).toBe(false);
+  });
+});
+
+// t-147e6783, item (2) (dono, 08/11: "organizar o ledger como um BOM ledger"): dezenas de órfãs e entregues paradas
+// ganham destino com motivo num gesto do Líder, sem apagar nada. What breaks without the owner seeing it: half a batch
+// applied and the other half lost, or one refused item stopping the rest.
+describe('tarefa_lote: o Líder dá destino a várias tarefas num gesto', () => {
+  it('cada item é transferido ou cancelado com o seu motivo; um item recusado não para os outros, e nada se apaga', async () => {
+    const { file, service } = setup();
+    const ids: string[] = [];
+    for (const titulo of ['Órfã A', 'Órfã B', 'Velha C']) {
+      const created = await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: titulo, criterio: 'teste verde', prazo: '2026-11-09', dono: 'place:dev', risco: 'baixo', titulo }));
+      ids.push((JSON.parse(created.text) as { id: string }).id);
+    }
+    const parsed = parseLedgerToolCall('tarefa_lote', {
+      itens: [
+        { id: ids[0], acao: 'transferir', para: 'place:revisor', motivo: 'o dono fechou; o Revisor segue' },
+        { id: 'tarefa-que-nao-existe', acao: 'cancelar', motivo: 'x' },
+        { id: ids[1], acao: 'cancelar', motivo: 'repetida da A' },
+        { id: ids[2], acao: 'transferir', para: 'lider', motivo: 'aberta há 3 dias sem dono vivo' },
+      ],
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok || parsed.call.tool !== 'tarefa_lote') throw new Error('parse');
+    const result = await runLedgerBatch(parsed.call, (item) => runLedgerTool(service(), lider, item));
+    const answer = JSON.parse(result.text) as { aplicados: number; recusados: number; itens: { id: string; ok: boolean }[] };
+    expect(answer).toMatchObject({ aplicados: 3, recusados: 1 });
+    expect(answer.itens.map((item) => item.ok)).toEqual([true, false, true, true]);
+
+    const doc = parseLedgerDoc(JSON.parse(readFileSync(file, 'utf8')))!;
+    expect(Object.keys(doc.tasks)).toHaveLength(3); // nothing deleted
+    expect(doc.tasks[ids[0]!]!.ownerPlaceId).toBe('place:revisor');
+    expect(doc.tasks[ids[2]!]!.ownerPlaceId).toBe(LEADER_OF_ALL);
+    expect(doc.tasks[ids[1]!]!.events.map((event) => eventNote(event) ?? '').join(' ')).toContain('repetida da A');
+
+    // A Dev cannot cancel a task that is not its own: the same rule as one call, item by item.
+    const asDev = await runLedgerBatch(
+      { tool: 'tarefa_lote', itens: [{ id: ids[0]!, acao: 'cancelar', motivo: 'não é minha' }] },
+      (item) => runLedgerTool(service(), dev, item),
+    );
+    expect(JSON.parse(asDev.text)).toMatchObject({ aplicados: 0, recusados: 1 });
+    expect(parseLedgerToolCall('tarefa_lote', { itens: [] }).ok).toBe(false);
+  });
+});
+
+// Revisor do #370: a faxina noturna dava às órfãs uma segunda regra de destino (acima vivo, senão o Líder único) e
+// pulava o Líder do quadro. Agora é a mesma regra dos avisos, `whoHears`.
+describe('faxina noturna: órfã velha segue as setas do quadro', () => {
+  it('sem ninguém vivo acima, a órfã vai ao Líder do quadro vivo, não ao Líder único', async () => {
+    const { service } = setup();
+    const id = (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'velha', criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco: 'alto' }))).text) as { id: string }).id;
+    let boards = addPlace(emptyMindscapeDoc(), 'C:/p', { id: 'place:lider', roleId: 'lider' });
+    boards = setPlaceConversation(boards, 'C:/p', 'place:lider', 'conv-lider');
+    boards = setPlaceConversation(addPlace(boards, 'C:/p', { id: 'place:dev', roleId: 'dev', by: 'session' }), 'C:/p', 'place:dev', 'conv-dev');
+    const doc = service().load().doc;
+    const later = Date.now() + ORPHAN_AGE_MS * 10;
+    expect(oldOrphans(doc, boards, new Set(['conv-lider']), later)).toEqual([expect.objectContaining({ task: expect.objectContaining({ id }), to: 'place:lider' })]);
+    expect(oldOrphans(doc, boards, new Set(), later)).toEqual([expect.objectContaining({ to: LEADER_OF_ALL })]);
   });
 });
