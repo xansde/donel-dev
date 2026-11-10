@@ -94,6 +94,8 @@ export function ProxyIndicator(): React.JSX.Element | null {
       try {
         const outcome = await api.switch(machine.id, proxyId);
         say(switchOutcomeText(outcome, view, machine.label));
+        // The picked option was the one just applied: the select goes back to "the other one".
+        setPicked(({ [machine.id]: _done, ...rest }) => rest);
       } finally {
         setBusy(null);
       }
@@ -107,6 +109,7 @@ export function ProxyIndicator(): React.JSX.Element | null {
       setBusy('switch:all');
       try {
         const outcomes = await api.switchAll(proxyId);
+        setPicked({});
         say(...outcomes.map((outcome) => switchOutcomeText(outcome, view, view.machines.find((m) => m.id === outcome.machineId)?.label ?? outcome.machineId)));
       } finally {
         setBusy(null);
