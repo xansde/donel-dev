@@ -1,0 +1,4 @@
+{
+  "title": "Sessão sem pedir permissão não para mais esperando você",
+  "text": "Uma sessão que roda sem pedir permissão continua assim quando é renovada no meio do trabalho; antes ela podia voltar pedindo cada permissão e parar na primeira leitura. E o app deixa de dizer que ela tem uma permissão aberta só porque a tela mostra o texto de um diálogo: o Líder parava de receber avisos falsos de \"precisa do dono\"."
+}
