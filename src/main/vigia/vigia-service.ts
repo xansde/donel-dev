@@ -18,6 +18,7 @@ import {
   VIGIA_ROUND_MS,
   type PlaceProbe,
   type Trava,
+  type VigiaEntry,
   type VigiaState,
 } from '../../shared/vigia/travas';
 
@@ -84,15 +85,42 @@ function doneWhenOf(key: string | null): string {
   return key === null ? DONE_WHEN : `${DONE_WHEN} (chave da trava: ${key})`;
 }
 
-/** The vigia's live card for this lock (any vigia's: the PC and the daemon share the service place), or `null`. */
+function isLive(task: LedgerTask): boolean {
+  return task.state === 'aberta' || task.state === 'em-execucao' || task.state === 'entregue';
+}
+
+/** The vigia's live cards for this lock (any vigia's: the PC and the daemon share the service place). */
+function liveVigiaCards(tasks: readonly LedgerTask[], key: string): string[] {
+  return tasks
+    .filter((task) => task.ownerPlaceId === VIGIA_PLACE && isLive(task) && KEY_OF_DONE_WHEN.exec(task.doneWhen)?.[1] === key)
+    .map((task) => task.id);
+}
+
+/** The vigia's live card for this lock, or `null`. */
 export function liveVigiaCard(tasks: readonly LedgerTask[], key: string): string | null {
-  const live = tasks.find(
-    (task) =>
-      task.ownerPlaceId === VIGIA_PLACE &&
-      (task.state === 'aberta' || task.state === 'em-execucao' || task.state === 'entregue') &&
-      KEY_OF_DONE_WHEN.exec(task.doneWhen)?.[1] === key,
+  return liveVigiaCards(tasks, key)[0] ?? null;
+}
+
+/**
+ * The card in the state is checked against the Oráculo each round (the state may come from another ledger: during
+ * the Oráculo's return to the PC the daemon reads a stale copy). A dead card is swapped for the live one of the same
+ * lock; with none, a card the vigia itself cancelled is dropped, so the normal flow adopts or opens one. A card the
+ * owner closed stays: his decision holds while the lock lasts. An unknown card with no live one stays too.
+ */
+function reconcileCards(open: Readonly<Record<string, VigiaEntry>>, tasks: readonly LedgerTask[]): Record<string, VigiaEntry> {
+  const byId = new Map(tasks.map((task) => [task.id, task]));
+  return Object.fromEntries(
+    Object.entries(open).map(([key, entry]) => {
+      if (entry.cartaId === null || entry.endedAt !== null) return [key, entry];
+      const card = byId.get(entry.cartaId);
+      if (card && isLive(card)) return [key, entry];
+      const live = liveVigiaCard(tasks, key);
+      if (live !== null) return [key, { ...entry, cartaId: live }];
+      const last = card?.events[card.events.length - 1];
+      const cancelledByVigia = last?.kind === 'rejeitada' && last.by.kind === 'lugar' && last.by.placeId === VIGIA_PLACE;
+      return [key, cancelledByVigia ? { ...entry, cartaId: null } : entry];
+    }),
   );
-  return live?.id ?? null;
 }
 
 function lastLine(text: string): string {
@@ -244,18 +272,19 @@ export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
         // for the daemon to adopt. Only a lock that is gone is closed ("a trava passou sozinha").
         const handedOver = new Set(detected.filter(isDelegated).map((trava) => trava.key));
         const kept = Object.fromEntries(Object.entries(readState().open).filter(([key]) => !handedOver.has(key)));
-        const plan = planRound({ open: kept }, detected.filter((trava) => !isDelegated(trava)), at);
+        let tasks: readonly LedgerTask[] | null = null;
+        try {
+          tasks = deps.tasks ? deps.tasks() : null;
+        } catch {
+          tasks = null;
+        }
+        const checked = tasks ? reconcileCards(kept, tasks) : kept;
+        const plan = planRound({ open: checked }, detected.filter((trava) => !isDelegated(trava)), at);
         const open = { ...plan.state.open };
         const projectPath = deps.projectPath();
-        const adoptable = (key: string): string | null => {
-          try {
-            return deps.tasks ? liveVigiaCard(deps.tasks(), key) : null;
-          } catch {
-            return null;
-          }
-        };
         for (const { trava, firstSeen } of plan.toOpen) {
-          const id = adoptable(trava.key) ?? (projectPath === null ? null : await openCard(trava, projectPath, at, firstSeen));
+          const adopted = tasks ? liveVigiaCard(tasks, trava.key) : null;
+          const id = adopted ?? (projectPath === null ? null : await openCard(trava, projectPath, at, firstSeen));
           if (id !== null) {
             open[trava.key] = { ...open[trava.key]!, cartaId: id };
           } else if (!open[trava.key]!.notified) {
@@ -269,8 +298,11 @@ export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
           if (id !== null) delete open[key];
         }
         for (const closed of plan.toClose) {
-          const result = await deps.apply(ACTOR, { op: 'cancelar', id: closed.cartaId, reason: 'a trava passou sozinha' });
-          if (!result.ok) log(`[vigia] não cancelou a carta de uma trava que passou: ${result.reason}`);
+          // Also any other live card of the same lock (another vigia's), so none is left alive after the lock passed.
+          for (const id of new Set([closed.cartaId, ...(tasks ? liveVigiaCards(tasks, closed.key) : [])])) {
+            const result = await deps.apply(ACTOR, { op: 'cancelar', id, reason: 'a trava passou sozinha' });
+            if (!result.ok) log(`[vigia] não cancelou a carta de uma trava que passou: ${result.reason}`);
+          }
         }
         writeState({ open });
       } catch (error) {

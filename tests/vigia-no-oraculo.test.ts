@@ -2,7 +2,7 @@
 // do Oráculo ainda viram UMA carta urgente (o push sai do próprio daemon). Com o PC ligado, o PC não abre a mesma
 // carta de novo: ele deixa o cofre e as sessões daquela VPS para o daemon, e segue avisando se a VPS some.
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -200,6 +200,73 @@ describe('a delegação muda com a trava viva', () => {
     expect(cards()).toEqual([{ id: first, state: 'entregue' }]);
     world.cofre = 'unlocked';
     await rounds(2, { daemon: true });
+    expect(live()).toEqual([]);
+  });
+});
+
+// Re-revisão do #353: dois ledgers, como na vida real. Na volta ao PC o daemon segue rodando, lê o ledger da VPS (que
+// fica parado) e tem a escrita recusada. A trava passa e volta durante a volta; quando o Oráculo vai de novo à VPS, a
+// carta que o PC abriu não pode ficar viva para sempre.
+describe('a trava passa e volta durante a volta do Oráculo ao PC', () => {
+  it('o daemon troca a carta morta do estado dele pela viva da mesma chave, e nenhuma fica viva quando a trava passa', async () => {
+    const pcDir = temp();
+    const daemonDir = temp();
+    writeFileSync(join(daemonDir, VIGIA_CONFIG_FILE), JSON.stringify({ placeId: 'vps-pessoal', label: 'VPS pessoal', projectPath: 'C:/seazone/donel', cofre: { command: 'cofre-cli', sessionFile: '.cofre/sessao' } }));
+    const world = { clock: NOW, cofre: 'locked', where: 'vps' as 'vps' | 'pc' };
+    const ledgerAt = (dir: string) => createLedgerService({ filePath: join(dir, 'ledger.json'), io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs, now: () => world.clock });
+    const vps = ledgerAt(daemonDir);
+    const pcLedger = ledgerAt(pcDir);
+    const oracle = () => (world.where === 'vps' ? vps : pcLedger);
+    const move = (to: 'vps' | 'pc'): void => {
+      copyFileSync(join(world.where === 'vps' ? daemonDir : pcDir, 'ledger.json'), join(to === 'vps' ? daemonDir : pcDir, 'ledger.json'));
+      world.where = to;
+    };
+    const probe = (script: string) => ({ code: 0, stdout: script.includes('DONEL_COFRE') ? `DONEL_VIGIA_OK\nDONEL_COFRE ${world.cofre} 400\n` : '', stderr: '', timedOut: false });
+    // The return guard: with the Oráculo back on the PC, the daemon reads its stale ledger and cannot write.
+    const guarded = { ...vps, apply: async (...args: Parameters<typeof vps.apply>) => (world.where === 'vps' ? vps.apply(...args) : { ok: false as const, reason: 'o Oráculo voltou ao PC' }) };
+    const daemon = createDaemonVigia({ dir: daemonDir, ledger: () => guarded, run: async (script) => probe(script), now: () => world.clock });
+    const pc = createVigiaService({
+      places: () => [{ id: 'vps-pessoal', label: 'VPS pessoal', sshTarget: 'vps' }],
+      run: async (_target, script) => probe(script),
+      reports: () => [],
+      apply: async (actor, op) => {
+        const result = await oracle().apply(actor, op);
+        return result.ok ? { ok: true, task: { id: result.task.id } } : { ok: false, reason: result.reason };
+      },
+      tasks: () => Object.values(oracle().load().doc.tasks),
+      projectPath: () => 'C:/seazone/donel',
+      cofre: () => ({ command: 'cofre-cli', sessionFile: '.cofre/sessao' }),
+      notify: () => undefined,
+      statePath: join(pcDir, 'vigia-travas.json'),
+      now: () => world.clock,
+      delegated: () => (world.where === 'vps' ? 'vps-pessoal' : null),
+    });
+    const rounds = async (n: number): Promise<void> => {
+      for (let i = 0; i < n; i += 1) {
+        await daemon.round();
+        await pc.round();
+        world.clock += 5 * MIN;
+      }
+    };
+    const live = () => Object.values(oracle().load().doc.tasks).filter((task) => task.state === 'entregue').map((task) => task.id);
+
+    await rounds(3); // on the VPS: the daemon opens A
+    const [a] = live();
+    expect(a).toBeDefined();
+    move('pc');
+    await rounds(2); // the PC adopts A
+    world.cofre = 'unlocked';
+    await rounds(2); // the lock passes: the PC cancels A
+    world.cofre = 'locked';
+    await rounds(3); // it comes back: the PC opens B; the daemon re-adopts A, alive only in its stale ledger
+    const [b] = live();
+    expect(b).toBeDefined();
+    expect(b).not.toBe(a);
+    move('vps');
+    await rounds(3); // the PC hands B over to the daemon
+    expect(live()).toEqual([b]);
+    world.cofre = 'unlocked';
+    await rounds(2);
     expect(live()).toEqual([]);
   });
 });

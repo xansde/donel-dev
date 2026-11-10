@@ -89,6 +89,10 @@ nasce no ledger dele, e o push ao celular sai dali mesmo, sem o PC.
   serviço) procura uma carta viva do `servico:vigia` com essa chave e a **adota**. Quando o PC passa a delegar com a
   trava ainda viva, ele **passa** a carta adiante (tira do estado dele sem cancelar) e o daemon a adota; só a trava
   que sumiu é cancelada como "passou sozinha". Na volta do Oráculo ao PC, o PC adota a carta do daemon.
+- **A carta do estado é conferida a cada rodada** (re-revisão do #353): o estado pode vir de outro ledger (na volta ao
+  PC o daemon lê uma cópia parada da VPS). Carta morta vira a viva da mesma chave; sem uma viva, a que o próprio vigia
+  cancelou sai do estado (o fluxo normal adota ou abre outra), e a que o dono fechou fica (a decisão dele vale enquanto
+  a trava durar). Quando a trava passa, o vigia cancela também qualquer outra carta viva da mesma chave.
 - **Sem quadro, sem delegação:** o aperto de mão só responde `vigia-ativo` quando o PC tem um quadro para a carta. Sem
   ele, o daemon não vigiaria (`parseDaemonVigiaConfig` dá `null`) e o PC segue vigiando tudo.
 - **Ressalva — a config só chega no aperto de mão** (boot do app ou depois de um 401). Ligar o `vigia.cofre` ou trocar
@@ -104,3 +108,5 @@ Testes: `tests/vigia-no-oraculo.test.ts`.
 - Sem quadro, o aperto de mão não diz `vigia-ativo`.
 - PC e daemon no mesmo Oráculo: na volta ao PC, no liga e desliga da delegação e no começo dela com a carta do PC
   aberta, sai uma carta só, e ela fecha quando a trava passa.
+- Com dois ledgers (a VPS parada e o daemon com a escrita recusada na volta), a trava passa e volta: quando o Oráculo
+  vai de novo à VPS, nenhuma carta fica viva depois que a trava passa.
