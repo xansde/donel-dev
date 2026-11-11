@@ -94,3 +94,28 @@ describe('roteador de lugar sem config: a máquina de homologação é só da ho
     expect(routePlace(bare({ callerMachine: 'r-vps', roleId: 'homol-atestador' }))).toMatchObject({ machine: 'r-hom' });
   });
 });
+
+// Líder, 11/11 (ressalvas R1/R2 do Revisor 7aaec9b8 no #397): o PC só recebe com "onde" explícito, e a máquina de
+// homologação pedida pelo nome para outro trabalho é recusada com erro claro, nunca redirecionada em silêncio.
+describe('roteador de lugar: PC só com pedido explícito e homologação recusada', () => {
+  const machines = [
+    { id: 'pc', label: 'este computador', roomSessions: 99 },
+    { id: 'r-vps', label: 'VPS', roomSessions: 3 },
+    { id: 'r-hom', label: 'Homologações', roomSessions: 30 },
+  ];
+  const bare = (over: Partial<RouteInput> = {}): RouteInput => input({ rules: null, machines, projectPath: '/x/seazone/atlas', projectName: 'atlas', ...over });
+
+  it('sem config, quem roda no PC e abre sem "onde": a sessão nasce na VPS, ou espera vaga nela', () => {
+    expect(routePlace(bare({ callerMachine: 'pc' }))).toMatchObject({ machine: 'r-vps', queue: false });
+    const full = machines.map((m) => (m.id === 'r-vps' ? { ...m, waitReasons: FULL } : m));
+    expect(routePlace(bare({ callerMachine: 'pc', roleAnyPlace: true, machines: full }))).toMatchObject({ machine: 'r-vps', queue: true });
+    expect(routePlace(bare({ callerMachine: 'pc', explicit: 'pc' }))).toMatchObject({ machine: 'pc', queue: false });
+  });
+
+  it('"onde" apontando a homologação para outro projeto é recusado com erro claro', () => {
+    const route = routePlace(bare({ callerMachine: 'r-vps', explicit: 'r-hom' }));
+    expect(route.refused).toContain('Homologações é só para homologação');
+    expect(route.refused).toContain('use VPS');
+    expect(routePlace(bare({ explicit: 'r-hom', projectPath: '/x/seazone/Homologacao-beacon', projectName: 'Homologacao-beacon' })).refused).toBeUndefined();
+  });
+});
