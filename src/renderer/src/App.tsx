@@ -128,6 +128,7 @@ import { runningCount } from '../../shared/chat/backgroundTasks';
 import { effectiveTabView, hasChatView, nextTabView, shouldHandleViewShortcut } from './chat/tabView';
 import { disposeTabSend, ownerTerminalInput, sendDriverFor, sendToTab, pendingSendReason, sendToTabAndWait, tabTookMessage } from './chat/composer/tabSend';
 import { blockingScreen, readInputText } from '../../shared/chat/screen';
+import { LEADER_DENY_REASON, permissionPorts } from './Mindscape/permissionPorts';
 import { withNoPipelineTag } from '../../shared/chat/noPipeline';
 import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../shared/lider/ipc';
 import { isLeaderOfAllTab, leaderHome } from '../../shared/mindscape/leader';
@@ -137,7 +138,10 @@ import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
 import { TerminalPane } from './TerminalPane';
 import { PatchNotes } from './patchnotes/PatchNotes';
 import { HealthIndicator } from './health/HealthIndicator';
+import { ProxyIndicator } from './proxies/ProxyIndicator';
 import { BrowserPanel, BrowserToggleButton } from './browser/BrowserPanel'; // navegador interno
+import { LeaderBrowserPanel } from './browser/LeaderBrowserPanel';
+import type { BrowserDirectorySession } from '../../shared/browser/directory';
 import { OracleCenter } from './OracleCenter';
 import { DEFAULT_LAYOUT_PREFS, showsOracle, toggleCenterView, type LayoutPrefs } from '../../shared/layoutPrefs';
 import type { PlaceNameOf } from '../../shared/ledger/labels';
@@ -936,8 +940,12 @@ export function App(): React.JSX.Element {
    * so and opens nothing (an empty session on this computer would hide where the conversation is).
    */
   const resumingRef = useRef(new Set<string>());
-  const openWhereItLives = (sessionId: string, projectPath: string, open: (remote: { remoteId?: string }) => void): void => {
-    if (resumingRef.current.has(sessionId)) return;
+  /** `onFail` (t-1293c818, `sessao_retomar`): the caller hears why instead of the owner's toast. */
+  const openWhereItLives = (sessionId: string, projectPath: string, open: (remote: { remoteId?: string }) => void, onFail?: (reason: string) => void): void => {
+    if (resumingRef.current.has(sessionId)) {
+      onFail?.('ela já está sendo retomada');
+      return;
+    }
     resumingRef.current.add(sessionId);
     // The answer from this disk is instant; a slower one means the app is asking the remote places by ssh
     // (up to 20 s each). Without a word the click looked dead.
@@ -951,9 +959,9 @@ export function App(): React.JSX.Element {
           if (where.kind === 'unreachable') {
             const many = where.labels.length > 1;
             const names = where.labels.map((label) => `«${label}»`).join(' e ');
-            setDevModeToast(
-              `Não consegui retomar: a conversa não está neste computador, e ${many ? 'os lugares remotos' : 'o lugar remoto'} ${names} não ${many ? 'responderam' : 'respondeu'}. Confira se está ligado e tente de novo.`,
-            );
+            const why = `a conversa não está neste computador, e ${many ? 'os lugares remotos' : 'o lugar remoto'} ${names} não ${many ? 'responderam' : 'respondeu'}`;
+            if (onFail) onFail(why);
+            else setDevModeToast(`Não consegui retomar: ${why}. Confira se está ligado e tente de novo.`);
             return;
           }
           open(where.kind === 'remote' ? { remoteId: where.remoteId } : {});
@@ -1919,6 +1927,16 @@ export function App(): React.JSX.Element {
     });
   };
 
+  // Navegador do Líder (t-31e2b949) — every session with a PTY, also the ones opened by another session (off the tab
+  // bar): the Líder's browser panel lists their browsers by name, board and place.
+  const browserSessions: BrowserDirectorySession[] = tabs.flatMap((tab) => {
+    const ptyId = tab.sessionType === 'claude' ? chatPtyIds[tab.id] : undefined;
+    if (!ptyId) return [];
+    const board = tab.projectName ?? (tab.cwd ? tab.cwd.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || null : null);
+    const place = tab.remoteId ? (accountsView.remotes.find((remote) => remote.id === tab.remoteId)?.label ?? tab.remoteId) : 'Este computador';
+    return [{ ptyId, name: resolveTabName(tab), board, place }];
+  });
+
   // B33 — "Atualizar": the click only asks; the switch happens when no session is in the middle of a turn
   // or waiting on the owner (never ends a turn). The open tabs go to the main to be reopened after the update.
   const [updateRequested, setUpdateRequested] = useState(false);
@@ -2174,16 +2192,11 @@ export function App(): React.JSX.Element {
   }, []);
   // Lugar principal, rule 5 — a dormant session is resumed (`-r <id>`) in a new tab of the
   // board's project; a session already open in a tab is only focused (never opened twice).
-  const handleMindscapeResume = (sessionId: string, projectPath: string, name: string): void => {
-    const existingTab = tabs.find((tab) => tab.claudeSessionId === sessionId);
-    if (existingTab) {
-      handleMindscapeGoToTerminal(existingTab.id);
-      return;
-    }
+  /** The tab that resumes `sessionId` of a dormant place (the owner's double click, or `sessao_retomar`). */
+  const resumeTab = (sessionId: string, projectPath: string, name: string, remote: { remoteId?: string }, bySession?: { placeId: string; openedBy?: string }): string => {
     const project = projects.find((candidate) => candidate.path === projectPath);
-    openWhereItLives(sessionId, projectPath, (remote) => {
-      window.donel.learning?.record({ type: 'sessao-aberta', sessionId, via: 'retomar' });
-      addTab({
+    return addTab(
+      {
         name,
         cwd: projectPath,
         projectName: project?.name ?? projectPath.split(/[\\/]/).filter(Boolean).pop(),
@@ -2192,7 +2205,22 @@ export function App(): React.JSX.Element {
         sessionType: 'claude',
         ...remote,
         customTitle: null,
-      });
+        // Resumed by a session: out of the owner's tab bar and without his focus, like one opened by `sessao_abrir`. Its
+        // place goes along, so the bridge sees the place open before the conversation binds (seconds, on a remote place).
+        ...(bySession ? { placeId: bySession.placeId, openedBySession: true, ...(bySession.openedBy ? { openedBy: bySession.openedBy } : {}) } : {}),
+      },
+      !bySession,
+    );
+  };
+  const handleMindscapeResume = (sessionId: string, projectPath: string, name: string): void => {
+    const existingTab = tabs.find((tab) => tab.claudeSessionId === sessionId);
+    if (existingTab) {
+      handleMindscapeGoToTerminal(existingTab.id);
+      return;
+    }
+    openWhereItLives(sessionId, projectPath, (remote) => {
+      window.donel.learning?.record({ type: 'sessao-aberta', sessionId, via: 'retomar' });
+      resumeTab(sessionId, projectPath, name, remote);
       setSelectedProjectPath(projectPath);
       setAppMode('geral');
     });
@@ -2296,8 +2324,21 @@ export function App(): React.JSX.Element {
       handleMindscapeGoToTerminal(existingTab.id);
       return;
     }
+    if (!startPlaceTab(placeId, projectPath)) return;
+    setSelectedProjectPath(projectPath);
+    setAppMode('geral');
+  };
+  /**
+   * The first tab of a place that never started (the owner's double click, or `sessao_retomar` with `bySession`: then
+   * without his focus and out of his tab bar). `undefined` = no such place.
+   */
+  const startPlaceTab = (
+    placeId: string,
+    projectPath: string,
+    bySession?: { openedBy?: string; mayOpenOn(remoteId: string | undefined): string | undefined },
+  ): { tabId: string; remoteId?: string } | { refused: string } | undefined => {
     const place = mindscape.doc.boards[projectPath]?.cards[placeId];
-    if (place?.kind !== 'session') return;
+    if (place?.kind !== 'session') return undefined;
     const role = place.roleId ? roles.find((candidate) => candidate.id === place.roleId) : undefined;
     // A suggested engine that is not registered here is ignored: the session opens on the active account.
     const providerId = role?.engine && providers.some((provider) => provider.id === role.engine) ? role.engine : undefined;
@@ -2314,26 +2355,31 @@ export function App(): React.JSX.Element {
           : accountsView.remotes.some((remote) => remote.id === savedWhere)
             ? savedWhere
             : accountsView.remotes.find((remote) => remote.activeAccountId)?.id;
-    addTab({
-      name: role?.name ?? 'Sessão',
-      cwd: projectPath,
-      projectName: project?.name ?? projectPath.split(/[\\/]/).filter(Boolean).pop(),
-      pinned: false,
-      launchArgs: buildLauncherArgs({
+    const refused = bySession?.mayOpenOn(remoteId);
+    if (refused) return { refused };
+    const tabId = addTab(
+      {
+        name: role?.name ?? 'Sessão',
+        cwd: projectPath,
+        projectName: project?.name ?? projectPath.split(/[\\/]/).filter(Boolean).pop(),
+        pinned: false,
+        launchArgs: buildLauncherArgs({
+          providerId,
+          model: role?.model ?? defaults?.model ?? DEFAULT_MODEL_ALIAS,
+          effort: role?.effort ?? defaults?.effort ?? DEFAULT_EFFORT_LEVEL,
+          permissionMode: role?.permissionMode ?? defaults?.permissionMode ?? 'acceptEdits',
+          sessionName: '',
+        }),
+        sessionType: 'claude',
         providerId,
-        model: role?.model ?? defaults?.model ?? DEFAULT_MODEL_ALIAS,
-        effort: role?.effort ?? defaults?.effort ?? DEFAULT_EFFORT_LEVEL,
-        permissionMode: role?.permissionMode ?? defaults?.permissionMode ?? 'acceptEdits',
-        sessionName: '',
-      }),
-      sessionType: 'claude',
-      providerId,
-      ...(remoteId ? { remoteId } : {}),
-      ...(place.roleId ? { roleId: place.roleId } : {}),
-      placeId,
-    });
-    setSelectedProjectPath(projectPath);
-    setAppMode('geral');
+        ...(remoteId ? { remoteId } : {}),
+        ...(place.roleId ? { roleId: place.roleId } : {}),
+        placeId,
+        ...(bySession ? { openedBySession: true, ...(bySession.openedBy ? { openedBy: bySession.openedBy } : {}) } : {}),
+      },
+      !bySession,
+    );
+    return { tabId, ...(remoteId ? { remoteId } : {}) };
   };
 
   // Item 18 (PDA mindscape-openrig) + Líder único (ADR 0007) — the Jobu as the Líder of EVERY board, in a bubble that
@@ -2508,6 +2554,10 @@ export function App(): React.JSX.Element {
     tabOfPty: (ptyId) => tabsRef.current.find((tab) => chatPtyIds[tab.id] === ptyId),
     stateOf: (tabId) => (tabExits[tabId] !== undefined || !tabsRef.current.some((tab) => tab.id === tabId) ? undefined : (semaphoreStates[tabId]?.state ?? 'working')),
     linkLost: (tabId) => tabLinkLost(tabId),
+    relinkTools: (tabId) => {
+      const ptyId = tabExits[tabId] === undefined ? chatPtyIds[tabId] : undefined;
+      return ptyId ? window.donel.pty.relinkTools(ptyId) : Promise.resolve({ ok: false, text: 'a aba dela não tem processo vivo.' });
+    },
     roles: () => roles,
     openSession: (request) => {
       const defaults = appConfig?.launcherDefaults;
@@ -2538,6 +2588,30 @@ export function App(): React.JSX.Element {
       pendingFirstMessagesRef.current[tabId] = request.firstMessage;
       return tabId;
     },
+    // t-1293c818 — `sessao_retomar`: the owner's two clicks on a dormant place, without his focus.
+    resumePlace: (request) =>
+      new Promise((resolve) => {
+        const opener = request.openedBy ? { openedBy: request.openedBy } : {};
+        if (!request.sessionId) {
+          const started = startPlaceTab(request.placeId, request.projectPath, { ...opener, mayOpenOn: request.mayOpenOn });
+          if (!started) resolve({ ok: false, reason: 'o lugar não está mais no quadro' });
+          else if ('refused' in started) resolve({ ok: false, reason: started.refused });
+          else resolve({ ok: true, ...started });
+          return;
+        }
+        const sessionId = request.sessionId;
+        const name = appConfig?.sessionNames[sessionId]?.name ?? request.name;
+        openWhereItLives(
+          sessionId,
+          request.projectPath,
+          (remote) => {
+            const refused = request.mayOpenOn(remote.remoteId);
+            if (refused) resolve({ ok: false, reason: refused });
+            else resolve({ ok: true, tabId: resumeTab(sessionId, request.projectPath, name, remote, { placeId: request.placeId, ...opener }), ...remote });
+          },
+          (reason) => resolve({ ok: false, reason }),
+        );
+      }),
     closeTab: (tabId) => closeTabImmediatelyRef.current(tabId),
     sendLine: (tabId, text) => sendRenewalLine(tabId, text, 'session'),
     deliverLine: (tabId, text, waitMs, from) => {
@@ -2551,6 +2625,20 @@ export function App(): React.JSX.Element {
       const lines = terminalRefs.current[tabId]?.readScreen().lines;
       return lines !== undefined && blockingScreen(lines)?.kind === 'permission';
     },
+    // t-1293c818 (3) — the Líder reads and answers a permission open on this tab (the held hook first, else the screen).
+    ...permissionPorts({
+      held: async (tabId) => {
+        const ptyId = chatPtyIds[tabId];
+        return ptyId ? window.donel.chat.openPermissions(ptyId) : [];
+      },
+      answerHeld: async (tabId, pendingId, answer) => {
+        const ptyId = chatPtyIds[tabId];
+        if (!ptyId) return { ok: false };
+        return window.donel.chat.answer(ptyId, pendingId, answer === 'allow' ? { kind: 'allow' } : { kind: 'deny', reason: LEADER_DENY_REASON });
+      },
+      screen: (tabId) => terminalRefs.current[tabId]?.readScreen().lines,
+      write: (tabId, data) => terminalRefs.current[tabId]?.write(data) ?? false,
+    }),
     // No hook yet is not "never started" when the CLI already took a message (the transcript showed it): a session on a
     // remote place whose hooks do not come back was told "não começou" with five answers in its transcript (07/11).
     unconfirmed: (tabId) => (semaphoreStates[tabId]?.unconfirmed === true || semaphoreStates[tabId] === undefined) && !tabTookMessage(tabId),
@@ -2578,6 +2666,7 @@ export function App(): React.JSX.Element {
       }),
     remoteLabel: (remoteId) => accountsView.remotes.find((remote) => remote.id === remoteId)?.label ?? remoteId,
     remotes: () => accountsView.remotes.map((remote) => ({ id: remote.id, label: remote.label })),
+    routing: () => appConfig?.team.routing ?? null,
     projects: () => projects.map((project) => ({ path: project.path, name: project.name })),
     passOn: (requests) => window.donel.ledger.passOn(requests),
     stateEnteredAt: (tabId) => semaphoreStates[tabId]?.stateEnteredAt,
@@ -3447,7 +3536,7 @@ export function App(): React.JSX.Element {
                   <Kbd>Ctrl+`</Kbd>
                 </>
               ) : null}
-              {activeClaudeTab && chatPtyIds[activeClaudeTab.id] ? <BrowserToggleButton ptyId={chatPtyIds[activeClaudeTab.id]} /> : null}
+              {activeClaudeTab && chatPtyIds[activeClaudeTab.id] ? <BrowserToggleButton ptyId={chatPtyIds[activeClaudeTab.id]} leader={isLeaderOfAllTab(activeClaudeTab)} /> : null}
               {activeClaudeTab ? (
                 <StateDot
                   state={semaphoreStates[activeClaudeTab.id]?.state ?? 'working'}
@@ -3606,7 +3695,13 @@ export function App(): React.JSX.Element {
                 />
                 </div>
                 {/* Navegador interno — o painel desta sessão (null enquanto fechado). */}
-                {tab.sessionType === 'claude' && chatPtyIds[tab.id] ? <BrowserPanel ptyId={chatPtyIds[tab.id]} active={tab.id === activeTabId} /> : null}
+                {tab.sessionType === 'claude' && chatPtyIds[tab.id] ? (
+                  isLeaderOfAllTab(tab) ? (
+                    <LeaderBrowserPanel ownPtyId={chatPtyIds[tab.id]} active={tab.id === activeTabId} sessions={browserSessions} />
+                  ) : (
+                    <BrowserPanel ptyId={chatPtyIds[tab.id]} active={tab.id === activeTabId} />
+                  )
+                ) : null}
               </div>
               );
             })}
@@ -3697,6 +3792,7 @@ export function App(): React.JSX.Element {
           onDismissError={() => setUpdateError(null)}
         />
         <PatchNotes />
+        <ProxyIndicator />
         <HealthIndicator />
       </div>
 

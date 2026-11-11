@@ -25,6 +25,7 @@ import { createLivroStore } from './livro';
 import { createReturnGuard } from './devolvido';
 import { createGateHandler, GATE_PORT, mergePicture, startGateServer, tunnelForward, type BoardPicture } from './portao';
 import { ORACLE_PORT, startOracleServer, type OracleServer } from './server';
+import { createDaemonVigia } from './vigia';
 
 export const TOKEN_HASH_FILE = 'pc.token.sha256';
 
@@ -131,8 +132,12 @@ async function main(): Promise<void> {
   });
   // The setup of a remote session reads this to point its MCP at the gate.
   writeFileSync(join(dir, 'portao'), `${gate.port}\n`, { mode: 0o600 });
+  // t-ffbf8e7d — the vigia of this place's locks, with the PC off too (the PC hands its setup at each handshake).
+  const vigia = createDaemonVigia({ dir, ledger: () => ledger, log: (line) => console.log(line) });
+  vigia.start();
   console.log(`[oraculo] no ar em ${server.url} (${Object.keys(first.doc.tasks).length} tarefas${first.readOnly ? ', só leitura' : ''})`);
   const stop = (): void => {
+    vigia.stop();
     void Promise.all([server?.close(), celular?.dispose(), gate.close()]).then(() => process.exit(0));
   };
   process.on('SIGTERM', stop);

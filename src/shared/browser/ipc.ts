@@ -45,6 +45,8 @@ export const BROWSER_CHANNELS = {
   setDomains: 'browser:setDomains',
   /** main -> renderer: `BrowserAgentRules` every time they change. */
   rules: 'browser:rules',
+  /** invoke() -> `BrowserListResult`: every browser that exists and who drives it (Navegador do Líder). */
+  list: 'browser:list',
   /** main -> renderer: `BrowserOpenRequest` — F11 pressed with the focus on the page (navegador em tela cheia). */
   fullscreenKey: 'browser:fullscreenKey',
 } as const;
@@ -111,6 +113,12 @@ export interface BrowserControlState {
   readonly requestedByAgent: boolean;
 }
 
+/** Every browser of the app (one per PTY, of any board and place) and the control of each that has one. */
+export interface BrowserListResult {
+  readonly states: readonly BrowserPanelState[];
+  readonly controls: readonly BrowserControlState[];
+}
+
 /** One line of the panel's footer (D13): what the agent did in the browser. */
 export interface BrowserLogEntry {
   readonly ptyId: string;
@@ -151,6 +159,8 @@ export interface DonelBrowserApi {
   removeUploadDir(ptyId: string, folder: string): void;
   setDomains(ptyId: string, mode: DomainMode, typed: string): Promise<BrowserRulesResult>;
   onRules(listener: (rules: BrowserAgentRules) => void): () => void;
+  /** Every browser that exists now (the Líder's tab lists them). */
+  list(): Promise<BrowserListResult>;
   /** F11 pressed on the page of this PTY's browser (shared/browser/fullscreen.ts). */
   onFullscreenKey(listener: (request: BrowserOpenRequest) => void): () => void;
 }

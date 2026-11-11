@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { Button } from '@donel-dev/design-system';
-import { browserStore, usePtyBrowser } from './browserStore';
+import { browserStore, useAllBrowsers, usePtyBrowser } from './browserStore';
 import { isViewportCovered } from './coverage';
 import { agentAskedHelpLine } from '../../../shared/browser/ipc';
+import type { BrowserDirectoryEntry } from '../../../shared/browser/directory';
 import { browserFullscreenKey } from '../../../shared/browser/fullscreen';
 import type { BrowserFullscreenKeyFocus } from '../../../shared/browser/fullscreen';
 import type { DomainMode } from '../../../shared/browser/guardrails';
@@ -20,13 +21,38 @@ const COVER_CHECK_EVERY_MS = 120;
 /** Footer lines visible at once (the store keeps more; the newest stay). */
 const LOG_LINES_SHOWN = 4;
 
+/** Navegador do Líder: the list of every session's browser, on the Líder's tab only. */
+export interface BrowserPanelDirectory {
+  readonly entries: readonly BrowserDirectoryEntry[];
+  /** The Líder's own browser. */
+  readonly ownPtyId: string;
+  /** `null` = back to the Líder's own browser. */
+  readonly onPick: (ptyId: string | null) => void;
+  /** Closes the Líder's panel (whatever browser it is showing). */
+  readonly onClose: () => void;
+}
+
 export interface BrowserPanelProps {
   readonly ptyId: string;
   /** The tab is the active one (the view is only placed for the visible tab). */
   readonly active: boolean;
+  readonly directory?: BrowserPanelDirectory;
 }
 
-export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host || url;
+  } catch {
+    return url;
+  }
+}
+
+function entryLabel(entry: BrowserDirectoryEntry): string {
+  const where = [entry.board, entry.place].filter(Boolean).join(' · ');
+  return `${entry.name}${where ? ` (${where})` : ''} — ${entry.url ? hostOf(entry.url) : 'página em branco'}`;
+}
+
+export function BrowserPanel({ ptyId, active, directory }: BrowserPanelProps) {
   const browser = usePtyBrowser(ptyId);
   const panelRef = useRef<HTMLElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
@@ -177,6 +203,39 @@ export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
       data-fullscreen={fullscreen ? 'true' : 'false'}
       aria-label="Navegador"
     >
+      {directory ? (
+        <div className={styles.directory} data-testid="browser-directory">
+          {directory.entries
+            .filter((entry) => entry.help !== null && entry.ptyId !== ptyId)
+            .map((entry) => (
+              <button key={entry.ptyId} type="button" className={styles.helpRow} data-testid={`browser-help-${entry.ptyId}`} onClick={() => directory.onPick(entry.ptyId)}>
+                <strong>{entry.name}</strong>
+                {[entry.board, entry.place].filter(Boolean).length > 0 ? <span> ({[entry.board, entry.place].filter(Boolean).join(' · ')})</span> : null} pede sua mão: {entry.help}
+                <span className={styles.helpOpen}>Abrir</span>
+              </button>
+            ))}
+          <label className={styles.directoryPick}>
+            <span>Navegador</span>
+            <select
+              aria-label="Navegador mostrado"
+              data-testid="browser-directory-select"
+              value={ptyId}
+              onChange={(event) => directory.onPick(event.target.value === directory.ownPtyId ? null : event.target.value)}
+            >
+              <option value={directory.ownPtyId}>Meu navegador (Líder)</option>
+              {directory.entries.map((entry) => (
+                <option key={entry.ptyId} value={entry.ptyId}>
+                  {entry.help !== null ? '⚑ ' : ''}
+                  {entryLabel(entry)}
+                </option>
+              ))}
+            </select>
+            <span className={styles.directoryCount}>
+              {directory.entries.length === 1 ? '1 de outra sessão' : `${directory.entries.length} de outras sessões`}
+            </span>
+          </label>
+        </div>
+      ) : null}
       <form className={styles.toolbar} onSubmit={submit}>
         <Button type="button" variant="ghost" aria-label="Voltar" title="Voltar" disabled={!state?.canGoBack} onClick={() => window.donel.browser.history(ptyId, 'back')}>
           ◀
@@ -240,7 +299,7 @@ export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
         >
           {fullscreen ? '⤡' : '⤢'}
         </Button>
-        <Button type="button" variant="ghost" aria-label="Fechar navegador" title="Fechar navegador" onClick={() => browserStore.setOpen(ptyId, false)}>
+        <Button type="button" variant="ghost" aria-label="Fechar navegador" title="Fechar navegador" onClick={() => (directory ? directory.onClose() : browserStore.setOpen(ptyId, false))}>
           ×
         </Button>
       </form>
@@ -358,24 +417,36 @@ export function BrowserPanel({ ptyId, active }: BrowserPanelProps) {
 }
 
 /** "Navegador" in the session header: opens or closes the panel of the active tab. */
-export function BrowserToggleButton({ ptyId }: { readonly ptyId: string }) {
+export function BrowserToggleButton({ ptyId, leader = false }: { readonly ptyId: string; readonly leader?: boolean }) {
   const browser = usePtyBrowser(ptyId);
+  const { views } = useAllBrowsers();
+  // Navegador do Líder: on the Líder's tab the button also counts the other sessions waiting for the owner's hand.
+  let asking = 0;
+  if (leader) for (const [id, view] of views) if (id !== ptyId && view.control?.owner === 'human' && view.control.requestedByAgent) asking += 1;
   return (
     <Button
       variant={browser.open ? 'secondary' : 'ghost'}
       aria-pressed={browser.open}
       data-testid="browser-toggle"
       title={
-        browser.open
-          ? 'Fechar o navegador desta sessão'
-          : browser.unseen > 0
-            ? `O agente usou o navegador (${browser.unseen} ${browser.unseen === 1 ? 'registro novo' : 'registros novos'})`
-            : 'Abrir o navegador desta sessão (o agente também consegue usar)'
+        asking > 0
+          ? `${asking === 1 ? 'Uma sessão pede' : `${asking} sessões pedem`} sua mão no navegador`
+          : browser.open
+            ? 'Fechar o navegador desta sessão'
+            : browser.unseen > 0
+              ? `O agente usou o navegador (${browser.unseen} ${browser.unseen === 1 ? 'registro novo' : 'registros novos'})`
+              : leader
+                ? 'Abrir o navegador: daqui você alcança o de qualquer sessão'
+                : 'Abrir o navegador desta sessão (o agente também consegue usar)'
       }
-      onClick={() => browserStore.toggle(ptyId)}
+      onClick={() => (asking > 0 && !browser.open ? browserStore.setOpen(ptyId, true) : browserStore.toggle(ptyId))}
     >
       Navegador
-      {!browser.open && browser.unseen > 0 ? (
+      {asking > 0 ? (
+        <span className={`${styles.badge} ${styles.badgeHelp}`} data-testid="browser-help-count">
+          ⚑ {asking}
+        </span>
+      ) : !browser.open && browser.unseen > 0 ? (
         <span className={styles.badge} data-testid="browser-unseen">
           {browser.unseen > 99 ? '99+' : browser.unseen}
         </span>

@@ -1,0 +1,4 @@
+{
+  "title": "Pedido falado: ouça antes de mandar",
+  "text": "No \"Pedir\" do Oráculo pelo celular, depois de parar a gravação o áudio aparece para você ouvir. Aí você escolhe \"Usar este áudio\", e ele vira texto para você conferir, ou \"Descartar\" e grava de novo. Anexar um áudio que já está no celular continua possível, pelo link discreto embaixo do Gravar, e passa pelo mesmo ouvir antes de usar. Se a página estiver no endereço sem https, o Gravar explica que precisa do endereço https em vez de abrir a pasta de arquivos. E o texto ditado pelo teclado não chega mais cortado: ao tocar em Enviar, o Oráculo espera o teclado terminar de escrever antes de mandar."
+}

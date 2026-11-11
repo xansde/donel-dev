@@ -149,6 +149,12 @@ sensível.
   ativa em dois lugares (refresh token de uso único). Desenho no
   [ADR 0005](docs/adr/0005-contas-em-lugares-remotos.md). Continua proibido
   qualquer outro módulo tocar credencial.
+  **Proxy da vez — emenda do dono (10/11, "credencial guardada no cofre do
+  app")**: `src/main/proxies/` guarda no mesmo cofre a chave de cada proxy,
+  uma por máquina (`proxy:<id>:<máquina>`), e a entrega à máquina só pelo stdin
+  do node/ssh, num arquivo 600 que o `apiKeyHelper` lê. Nunca volta à tela, a
+  log ou a erro. Desenho no [ADR 0008](docs/adr/0008-proxy-da-vez.md). Fora
+  de `accounts/` e `proxies/`, segue proibido.
   **Navegador interno não é exceção** (30/10): login no painel é o dono
   digitando; o Chromium guarda os cookies da partição `persist:donel-browser`
   e o código do app não os lê nem grava (`docs/design/navegador-interno.md`).

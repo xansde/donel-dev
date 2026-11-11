@@ -34,9 +34,11 @@ import {
 /**
  * Why no session makes a place with the Líder role (PR #305): the Líder of a board is the owner's pick, and its powers
  * (liberating upload folders, reaching other boards) come from the place the owner put there (`isBoardOrchestrator`).
+ * One exception (t-1293c818, dono 09/11: "Essas sessões não podem depender de mim"): the Líder único, the owner's own
+ * orchestrator, opens or draws it for him, and that place is made as the owner's (no `by: 'session'`).
  */
 export const LEADER_PLACE_IS_THE_OWNERS =
-  'o papel Líder só o dono põe no quadro; uma sessão não abre nem desenha um Líder. Abra com outro papel, ou peça ao Líder do quadro.';
+  'o papel Líder só o dono (ou o Líder único, por ele) põe no quadro; uma sessão não abre nem desenha um Líder. Abra com outro papel, ou peça ao Líder do quadro.';
 
 export type BoardToolCall =
   | { readonly tool: 'quadro_ler'; readonly quadro?: string }
@@ -47,7 +49,10 @@ export type BoardToolCall =
   | { readonly tool: 'sessao_abrir'; readonly papel: string; readonly pedido: string; readonly nome?: string; readonly onde?: string; readonly quadro?: string }
   | { readonly tool: 'sessao_enviar'; readonly para: string; readonly texto: string; readonly quadro?: string; readonly motivo?: LeaderMessageReason }
   | { readonly tool: 'sessao_ver_tela'; readonly quem: string; readonly quadro?: string }
-  | { readonly tool: 'sessao_fechar'; readonly quem: string; readonly quadro?: string }
+  | { readonly tool: 'sessao_fechar'; readonly quem: string; readonly quadro?: string; readonly recusarPermissao?: boolean }
+  | { readonly tool: 'sessao_permissao'; readonly quem: string; readonly quadro?: string; readonly resposta?: PermissionReply; readonly pedido?: string }
+  | { readonly tool: 'sessao_retomar'; readonly quem: string; readonly quadro?: string }
+  | { readonly tool: 'sessao_religar'; readonly quem: string; readonly quadro?: string }
   /**
    * Internal, never an MCP tool (not in `BOARD_TOOLS`): the `estado` of every place of these boards (folders), the same
    * answer for whoever asks. The ledger's orphan count must not depend on who asks (t-04099af0).
@@ -67,6 +72,10 @@ export const LEADER_MESSAGE_REASONS = ['tarefa-completa', 'bloqueio'] as const;
 export type LeaderMessageReason = (typeof LEADER_MESSAGE_REASONS)[number];
 export const LEADER_MESSAGE_REFUSAL =
   'Não mandei: ao Líder único só vai tarefa completa ou bloqueio que o Líder do quadro não resolve (diga em "motivo": "tarefa-completa" ou "bloqueio"). Andamento fica no ledger: registre com tarefa_andamento.';
+
+/** t-1293c818 (3) — how the Líder answers a permission open on another session's screen (`sessao_permissao`). */
+export const PERMISSION_REPLIES = ['permitir', 'recusar'] as const;
+export type PermissionReply = (typeof PERMISSION_REPLIES)[number];
 
 /** The tools that act on ONE board: the Líder único names it with `quadro` (ADR 0007); the other sessions use their own. */
 export type BoardScopedCall = Exclude<BoardToolCall, { readonly tool: 'papeis_listar' | 'sessao_quem_sou' | 'estados_dos_lugares' | 'aviso_imediato' }>;
@@ -203,10 +212,10 @@ export const BOARD_TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        papel: { type: 'string', description: 'Id do papel (papeis_listar). Líder não: esse só o dono põe no quadro.' },
+        papel: { type: 'string', description: 'Id do papel (papeis_listar). Líder só o Líder único abre (ela vira o Líder do quadro); as outras sessões, não.' },
         pedido: { type: 'string', description: 'A primeira mensagem: o trabalho, completo e autossuficiente.' },
         nome: { type: 'string', description: 'Nome curto da aba (opcional).' },
-        onde: { type: 'string', description: 'Onde ela roda (opcional): "aqui" (padrão, onde você roda), "este computador" ou o nome de um lugar remoto (ex.: a VPS; veja sessao_quem_sou).' },
+        onde: { type: 'string', description: 'Onde ela roda (opcional): sem ele, "aqui" ou "auto", o app escolhe pela regra fixa da config (sem regra, onde você roda); "este computador" ou o nome de um lugar remoto (ex.: a VPS; veja sessao_quem_sou) prendem a sessão ali, e, cheio, ela espera vaga lá. A resposta diz o porquê em "porque".' },
         quadro: BOARD_REF,
       },
       required: ['papel', 'pedido'],
@@ -245,9 +254,51 @@ export const BOARD_TOOLS = [
     name: 'sessao_fechar',
     title: 'Fechar uma sessão que você dirige',
     description:
-      'Fecha a aba de outra sessão e encerra o processo dela. Só com hierarquia: no seu quadro, quem está abaixo de você pelas setas (sua → dela, direta ou em cadeia), ou qualquer sessão dele se você é o Líder que o dono pôs no quadro; em outro quadro, só se você é o Líder de um quadro com alcance "todos" (o dono marca no quadro). O Líder único fecha em qualquer quadro (diga qual em "quadro") quem está no topo dele ou abaixo do topo pelas setas. Nunca a sua. Se ela estiver trabalhando, recebe antes um aviso para pausar e a ferramenta espera o turno acabar (até 20 s). Com um pedido de permissão aberto na tela dela, não fecha. O lugar fica no quadro como "fechada" e o dono retoma com dois cliques: nada se apaga (registro, conversa, worktree). Responde em uma linha: "Fechada." ou "Não fechei: …".',
-    inputSchema: { type: 'object', properties: { quem: PLACE_REF, quadro: BOARD_REF }, required: ['quem'], additionalProperties: false },
+      'Fecha a aba de outra sessão e encerra o processo dela. Só com hierarquia: no seu quadro, quem está abaixo de você pelas setas (sua → dela, direta ou em cadeia), ou qualquer sessão dele se você é o Líder que o dono pôs no quadro; em outro quadro, só se você é o Líder de um quadro com alcance "todos" (o dono marca no quadro). O Líder único fecha em qualquer quadro (diga qual em "quadro") quem está no topo dele ou abaixo do topo pelas setas. Nunca a sua. Se ela estiver trabalhando, recebe antes um aviso para pausar e a ferramenta espera o turno acabar (até 20 s). Com um pedido de permissão aberto na tela dela, não fecha e diz o que ela pede: responda antes com sessao_permissao, ou passe "recusarPermissao": true para recusar o pedido e fechar. O lugar fica no quadro como "fechada" e volta com dois cliques do dono ou com sessao_retomar: nada se apaga (registro, conversa, worktree). Responde em uma linha: "Fechada." ou "Não fechei: …".',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        quem: PLACE_REF,
+        quadro: BOARD_REF,
+        recusarPermissao: { type: 'boolean', description: 'true: se houver um pedido de permissão aberto na tela dela, recusa-o e fecha.' },
+      },
+      required: ['quem'],
+      additionalProperties: false,
+    },
     annotations: { destructiveHint: true },
+  },
+  {
+    name: 'sessao_permissao',
+    title: 'Responder a permissão aberta em outra sessão',
+    description:
+      'Lê ou responde o pedido de permissão aberto na tela de outra sessão (o que hoje esperaria o clique do dono na aba dela). Mesma hierarquia de sessao_fechar: o Líder único alcança o topo de cada quadro e quem está abaixo dele pelas setas (diga o quadro em "quadro"). Sem "resposta": diz qual ferramenta e o que ela pede, com o id do pedido, e não responde nada. "recusar" recusa o pedido aberto. "permitir" exige o id do pedido que você leu ("pedido"): se o pedido na tela for outro, nada é respondido e você lê o novo. Nunca permita sem ler o que é pedido.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        quem: PLACE_REF,
+        quadro: BOARD_REF,
+        resposta: { type: 'string', enum: PERMISSION_REPLIES, description: 'permitir ou recusar. Sem ela, só lê o pedido.' },
+        pedido: { type: 'string', description: 'O id do pedido, como a leitura deu. Obrigatório para "permitir".' },
+      },
+      required: ['quem'],
+      additionalProperties: false,
+    },
+    annotations: { destructiveHint: true },
+  },
+  {
+    name: 'sessao_retomar',
+    title: 'Retomar uma sessão fechada',
+    description:
+      'Reabre a sessão de um lugar fechado do quadro, com a conversa de antes (o mesmo que os dois cliques do dono no cartão), sem tirar o foco do dono; um lugar que ainda não começou abre pela primeira vez. Só com hierarquia, a mesma do sessao_fechar: quem está abaixo de você pelas setas, ou qualquer lugar do seu quadro se você é o Líder que o dono pôs; o Líder único (diga o quadro em "quadro") retoma quem está no topo do quadro, um Líder de quadro inclusive, e quem está abaixo dele. Lugar já aberto não abre de novo. Para mandar trabalho depois: sessao_enviar.',
+    inputSchema: { type: 'object', properties: { quem: PLACE_REF, quadro: BOARD_REF }, required: ['quem'], additionalProperties: false },
+  },
+  {
+    name: 'sessao_religar',
+    title: 'Religar as ferramentas do Donel numa sessão',
+    description:
+      'Para a sessão que perdeu as ferramentas do Donel (o MCP donel responde "Host not allowed" ou "Unauthorized", os hooks 401): o app registra de novo as chaves que o CLI dela já tem e, se ela estiver sem ligação no lugar remoto, religa o ssh agora. O processo dela segue vivo, na mesma conversa, sem perder nada. Mesmo alcance de sessao_fechar (abaixo de você pelas setas; o Líder único, em qualquer quadro, dizendo qual em "quadro"); a sua própria também vale. Responde em uma linha o que fez.',
+    inputSchema: { type: 'object', properties: { quem: PLACE_REF, quadro: BOARD_REF }, required: ['quem'], additionalProperties: false },
+    annotations: { idempotentHint: true },
   },
 ] as const;
 
@@ -402,7 +453,27 @@ export function parseBoardToolCall(name: string, rawArgs: unknown): ParsedBoardC
     case 'sessao_fechar': {
       const quem = requiredText(args.quem, 'quem', 120);
       if (typeof quem === 'object') return { ok: false, reason: quem.error };
-      return { ok: true, call: { tool: 'sessao_fechar', quem, ...quadro } };
+      if (args.recusarPermissao !== undefined && typeof args.recusarPermissao !== 'boolean') return { ok: false, reason: '"recusarPermissao" é true ou false.' };
+      return { ok: true, call: { tool: 'sessao_fechar', quem, ...quadro, ...(args.recusarPermissao === true ? { recusarPermissao: true } : {}) } };
+    }
+    case 'sessao_permissao': {
+      const quem = requiredText(args.quem, 'quem', 120);
+      if (typeof quem === 'object') return { ok: false, reason: quem.error };
+      if (args.resposta !== undefined && !(PERMISSION_REPLIES as readonly unknown[]).includes(args.resposta)) return { ok: false, reason: `"resposta" tem de ser ${PERMISSION_REPLIES.join(' ou ')}.` };
+      const pedido = optionalText(args.pedido, 'pedido', 200);
+      if (typeof pedido === 'object') return { ok: false, reason: pedido.error };
+      const resposta = args.resposta as PermissionReply | undefined;
+      return { ok: true, call: { tool: 'sessao_permissao', quem, ...quadro, ...(resposta ? { resposta } : {}), ...(pedido?.trim() ? { pedido: pedido.trim() } : {}) } };
+    }
+    case 'sessao_retomar': {
+      const quem = requiredText(args.quem, 'quem', 120);
+      if (typeof quem === 'object') return { ok: false, reason: quem.error };
+      return { ok: true, call: { tool: 'sessao_retomar', quem, ...quadro } };
+    }
+    case 'sessao_religar': {
+      const quem = requiredText(args.quem, 'quem', 120);
+      if (typeof quem === 'object') return { ok: false, reason: quem.error };
+      return { ok: true, call: { tool: 'sessao_religar', quem, ...quadro } };
     }
     default:
       return { ok: false, reason: `Ferramenta desconhecida: ${name}` };
@@ -433,6 +504,11 @@ export interface BoardOpsContext {
   readonly roleIds: ReadonlySet<string>;
   /** The caller's place, if it has one on this board ("seu" in a link). */
   readonly selfPlaceId?: string;
+  /**
+   * The caller is the Líder único (t-1293c818): a "lugar" with the Líder role is allowed and made as the owner's (no
+   * `by: 'session'`), so it is the Líder of the board (`isBoardOrchestrator`). Every other caller is refused.
+   */
+  readonly leaderOfAll?: boolean;
 }
 
 export type BoardOpsResult =
@@ -480,9 +556,10 @@ export function applyBoardOps(doc: MindscapeDoc, projectPath: string, ops: reado
     switch (op.op) {
       case 'lugar': {
         if (op.papel && !ctx.roleIds.has(op.papel)) return { ok: false, reason: `${where}: papel "${op.papel}" não existe (veja papeis_listar).` };
-        if (op.papel === LEADER_ROLE_ID) return { ok: false, reason: `${where}: ${LEADER_PLACE_IS_THE_OWNERS}` };
+        const ownersLeader = op.papel === LEADER_ROLE_ID;
+        if (ownersLeader && !ctx.leaderOfAll) return { ok: false, reason: `${where}: ${LEADER_PLACE_IS_THE_OWNERS}` };
         const id = placeCardId(ctx.newId());
-        let next = addPlace(current, projectPath, { id, by: 'session', ...(op.papel ? { roleId: op.papel } : {}) });
+        let next = addPlace(current, projectPath, { id, ...(ownersLeader ? {} : { by: 'session' as const }), ...(op.papel ? { roleId: op.papel } : {}) });
         if (next === current) return { ok: false, reason: `${where}: o lugar não entrou.` };
         if (op.x !== undefined && op.y !== undefined) next = moveCard(next, projectPath, id, op.x, op.y);
         current = next;

@@ -4,6 +4,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron';
 // G5 (batch N5) — guarda contra segundo assinante silencioso de canal IPC:
 // todo `onX` abaixo passa por aqui em vez de `ipcRenderer.on` direto.
 import { subscribeChannel } from './subscribeChannel';
+import { PROXY_CHANNELS, type MachineId, type ProxiesViewDto, type ProxyId, type ProxyKeyResult, type ProxySwitchOutcome, type UpsertProxyInput, type UpsertProxyResult } from '../shared/proxies';
 import { CHAT_CHANNELS } from '../shared/chat/ipc';
 // 015-jobu-pet — the pet channels; same names as the contract (specs/015-jobu-pet/contracts/ipc-pet.md).
 import { PET_CHANNELS } from '../shared/pet/ipc';
@@ -22,7 +23,7 @@ import { WORKSPACE_CHANNELS } from '../shared/workspace';
 import type { EditorStatus, GitBranchResult, OpenInEditorResult, PullRequestRequestOptions, PullRequestStatusResult, WorktreeKeptPayload } from '../shared/workspace';
 // Navegador interno — the panel of each session tab.
 import { BROWSER_CHANNELS } from '../shared/browser/ipc';
-import type { BrowserAgentRules, BrowserRulesResult, BrowserTabAction } from '../shared/browser/ipc';
+import type { BrowserAgentRules, BrowserListResult, BrowserRulesResult, BrowserTabAction } from '../shared/browser/ipc';
 import type { DomainMode } from '../shared/browser/guardrails';
 import type {
   BrowserControlState,
@@ -36,6 +37,7 @@ import type {
 import type {
   ChatAckLookupOutput,
   ChatAnswerOutput,
+  ChatOpenPermissionsOutput,
   ChatConversationSwitchedEvent,
   ChatFocusPendingEvent,
   ChatLiveEvent,
@@ -89,6 +91,7 @@ import type {
   ProjectScanMode,
   PtyCreateOptions,
   PtyCreateResult,
+  RelinkToolsResult,
   RemoteAliveSession,
   PtyExitInfo,
   RemoteSwitchOutcome,
@@ -214,6 +217,8 @@ const donelApi: DonelApi = {
     getPreview: (ptyId: string) => ipcRenderer.invoke(PTY_CHANNELS.preview, ptyId) as Promise<string[]>,
 
     remoteAlive: () => ipcRenderer.invoke(PTY_CHANNELS.remoteAlive) as Promise<RemoteAliveSession[]>,
+
+    relinkTools: (ptyId: string) => ipcRenderer.invoke(PTY_CHANNELS.relinkTools, ptyId) as Promise<RelinkToolsResult>,
 
     // NÃO passa por `subscribeChannel` (G5): este canal é broadcast DE
     // PROPÓSITO — uma aba, um `TerminalPane`, um listener, todos no MESMO
@@ -476,6 +481,22 @@ const donelApi: DonelApi = {
       ipcRenderer.invoke(TAB_CHANNELS.setOrder, sessionId, order) as Promise<AppConfigDto>,
   },
 
+  // Proxy da vez (018) — the key goes in through `setKey` and never comes back.
+  proxies: {
+    view: () => ipcRenderer.invoke(PROXY_CHANNELS.view) as Promise<ProxiesViewDto>,
+    refresh: () => ipcRenderer.invoke(PROXY_CHANNELS.refresh) as Promise<ProxiesViewDto>,
+    upsert: (input: UpsertProxyInput) => ipcRenderer.invoke(PROXY_CHANNELS.upsert, input) as Promise<UpsertProxyResult>,
+    remove: (id: ProxyId) => ipcRenderer.invoke(PROXY_CHANNELS.remove, id) as Promise<ProxiesViewDto>,
+    setKey: (id: ProxyId, machineId: MachineId, value: string | null) => ipcRenderer.invoke(PROXY_CHANNELS.setKey, id, machineId, value) as Promise<ProxyKeyResult>,
+    importKey: (id: ProxyId, machineId: MachineId) => ipcRenderer.invoke(PROXY_CHANNELS.importKey, id, machineId) as Promise<ProxyKeyResult>,
+    switch: (machineId: MachineId, id: ProxyId) => ipcRenderer.invoke(PROXY_CHANNELS.switch, machineId, id) as Promise<ProxySwitchOutcome>,
+    switchAll: (id: ProxyId) => ipcRenderer.invoke(PROXY_CHANNELS.switchAll, id) as Promise<readonly ProxySwitchOutcome[]>,
+    onChanged: (listener: (view: ProxiesViewDto) => void) => {
+      const handler = (_event: unknown, view: ProxiesViewDto): void => listener(view);
+      return subscribeChannel(ipcRenderer, PROXY_CHANNELS.changed, handler);
+    },
+  },
+
   // Saúde do computador — the last report, its change event and the two actions.
   health: {
     get: () => ipcRenderer.invoke(HEALTH_CHANNELS.get) as Promise<HealthReport | null>,
@@ -562,6 +583,7 @@ const donelApi: DonelApi = {
       ipcRenderer.send(BROWSER_CHANNELS.handBack, ptyId, generation);
     },
     getControl: (ptyId: string) => ipcRenderer.invoke(BROWSER_CHANNELS.getControl, ptyId) as Promise<BrowserControlState | null>,
+    list: () => ipcRenderer.invoke(BROWSER_CHANNELS.list) as Promise<BrowserListResult>,
     onControl: (listener: (state: BrowserControlState) => void) => {
       const handler = (_event: unknown, state: BrowserControlState): void => listener(state);
       return subscribeChannel(ipcRenderer, BROWSER_CHANNELS.control, handler);
@@ -834,6 +856,7 @@ const donelApi: DonelApi = {
     // T076/T079 - pendencias e foco
     answer: (ptyId: string, pendingId: string, answer: PendingAnswer) =>
       ipcRenderer.invoke(CHAT_CHANNELS.answer, { ptyId, pendingId, answer }) as Promise<ChatAnswerOutput>,
+    openPermissions: (ptyId: string) => ipcRenderer.invoke(CHAT_CHANNELS.openPermissions, { ptyId }) as Promise<ChatOpenPermissionsOutput>,
     focusState: (activePtyId: string | null, tabNames?: Readonly<Record<string, string>>) =>
       ipcRenderer.invoke(CHAT_CHANNELS.focusState, { activePtyId, ...(tabNames !== undefined ? { tabNames } : {}) }) as Promise<void>,
     onFocusPending: (listener: (event: ChatFocusPendingEvent) => void) => {

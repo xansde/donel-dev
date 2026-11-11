@@ -7,7 +7,8 @@ import { createLedgerService, ledgerProofsDir, type LedgerProofFs } from '../src
 import { resolveProofUrl } from '../src/main/ledger-proof-protocol';
 import { proofUrl } from '../src/shared/ledger/channels';
 import type { LedgerActor, LedgerForOwner } from '../src/shared/ledger/contract';
-import { createMobileHandler, startMobileServer, TICKET_TTL_MS, type MobileResponse } from '../src/main/celular/server';
+import { createMobileHandler, fromTailnet, startMobileServer, TICKET_TTL_MS, type MobileResponse } from '../src/main/celular/server';
+import { httpsServeUrl } from '../src/main/celular/webpush';
 import { pickTailscaleAddress } from '../src/main/celular/tailscale';
 import { createCardWriter, type OwnerMessage } from '../src/main/ledger-card-writer';
 import type { EntregaCelular } from '../src/shared/celular';
@@ -101,6 +102,23 @@ function bodyOf(response: MobileResponse): Record<string, unknown> {
 }
 
 describe('servidor do celular', () => {
+  it('https pelo tailscale serve: só o 127.0.0.1 repassando a tailnet entra, e o QR só usa o serve que chega', () => {
+    const serve = { 'x-forwarded-for': '100.101.102.104', 'tailscale-user-login': 'dono@example.com' };
+    expect(fromTailnet('100.101.102.104', {})).toBe(true);
+    expect(fromTailnet('127.0.0.1', serve)).toBe(true);
+    expect(fromTailnet('127.0.0.1', { 'x-forwarded-for': '100.101.102.104' })).toBe(false);
+    expect(fromTailnet('127.0.0.1', { ...serve, 'x-forwarded-for': '192.168.0.10' })).toBe(false);
+    expect(fromTailnet('127.0.0.1', {})).toBe(false);
+    expect(fromTailnet('192.168.0.10', serve)).toBe(false);
+
+    const status = (proxy: string) => ({ Web: { 'pc.tail0000.ts.net:443': { Handlers: { '/': { Proxy: proxy } } } } });
+    expect(httpsServeUrl(status('http://127.0.0.1:47815'), 47815)).toBe('https://pc.tail0000.ts.net');
+    // O serve do Windows não alcança o IP Tailscale do próprio PC: esse endereço daria 502 no celular.
+    expect(httpsServeUrl(status('http://100.101.102.103:47815'), 47815)).toBeNull();
+    expect(httpsServeUrl(status('http://127.0.0.1:47816'), 47815)).toBeNull();
+    expect(httpsServeUrl({}, 47815)).toBeNull();
+  });
+
   it('recusa subir fora da Tailscale e só escolhe o endereço dela', async () => {
     for (const host of ['0.0.0.0', '127.0.0.1', '192.168.0.10', '::', '10.0.0.5', '100.128.0.1', '']) {
       await expect(startMobileServer({ host, port: 0, handler: () => ({ status: 200, headers: {}, body: '' }) })).rejects.toThrow(/Tailscale/);

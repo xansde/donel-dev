@@ -21,6 +21,7 @@ import type { DonelProjectBindingApi } from './projectBinding';
 import type { DonelProjectsApi } from './projects';
 import type { DonelStatusLineApi } from './statusLine';
 import type { DonelProvidersApi } from './providers';
+import type { DonelProxiesApi } from './proxies';
 import type { DonelSessionsApi } from './sessions';
 import type { DonelTabsApi } from './tabChannels';
 import type { DonelMindscapeApi } from './mindscape/channels';
@@ -266,7 +267,15 @@ export const PTY_CHANNELS = {
   remoteAlive: 'pty:remoteAlive',
   /** Sessões remotas — the ssh of a remote tab dropped (`false`, "sem ligação") or was relinked (`true`). */
   link: 'pty:link',
+  /** `sessao_religar` (t-1293c818) — put the app's keys (hooks, MCP) back on a live session that lost them. */
+  relinkTools: 'pty:relinkTools',
 } as const;
+
+/** The one-line answer of `sessao_religar`. */
+export interface RelinkToolsResult {
+  readonly ok: boolean;
+  readonly text: string;
+}
 
 export interface PtyCreateOptions {
   /** Colunas iniciais (medidas pelo xterm/addon-fit no renderer). */
@@ -433,6 +442,8 @@ export interface DonelPtyApi {
   getPreview(ptyId: string): Promise<string[]>;
   /** Sessões remotas — sessions still alive on the remote places, to reopen at boot. */
   remoteAlive(): Promise<RemoteAliveSession[]>;
+  /** `sessao_religar` — registers again the app's keys of a live session (hooks, MCP); relinks it when "sem ligação". */
+  relinkTools(ptyId: string): Promise<RelinkToolsResult>;
   /** Retorna função de unsubscribe. */
   onData(ptyId: string, listener: (data: string) => void): () => void;
   /** Retorna função de unsubscribe. */
@@ -524,6 +535,8 @@ export interface DonelApi {
   migration: DonelMigrationApi;
   /** 011-contas-e-provedores (etapa 3) — registry de providers classe A; nasce inerte (`providers.entries = []`). */
   providers: DonelProvidersApi;
+  /** Proxy da vez (018) — cadastro, seletor por máquina e saúde; chave só entra, nunca volta. */
+  proxies: DonelProxiesApi;
   /** T015 — ConfigStore (FR-007/FR-009); ver src/shared/config.ts. */
   config: DonelConfigApi;
   /** T504 (005-terminal-copy-paste) — clipboard-bridge no main, atrás de IPC. */

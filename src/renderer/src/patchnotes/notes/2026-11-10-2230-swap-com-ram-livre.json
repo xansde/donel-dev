@@ -1,0 +1,4 @@
+{
+  "title": "Máquina com memória de sobra não segura mais sessões na fila",
+  "text": "Um pouco de uso do swap deixava a máquina marcada como cheia mesmo com muita memória livre, e sessões novas esperavam à toa. Agora o swap só pesa quando a memória disponível também está baixa."
+}

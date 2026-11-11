@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { nextBrowserFullscreen } from '../../../shared/browser/fullscreen';
 import type { BrowserFullscreenAction } from '../../../shared/browser/fullscreen';
 import type { BrowserAgentRules, BrowserControlState, BrowserLogEntry, BrowserPanelState } from '../../../shared/browser/ipc';
+import { leaderTargetForRequest } from '../../../shared/browser/directory';
 
 // Navegador integrado — renderer-side state of each session's browser, keyed by `ptyId` (the same key the main
 // uses for the view and for the MCP token). One store for the whole window: the preload channels accept a
@@ -28,10 +29,55 @@ export interface PtyBrowserView {
 
 const EMPTY: PtyBrowserView = { open: false, state: null, control: null, log: [], unseen: 0, rules: null, fullscreen: false };
 
+/** Navegador do Líder: the Líder's tab and the browser of another session it is showing (`null` = its own). */
+export interface LeaderBrowserView {
+  readonly leaderPtyId: string | null;
+  readonly targetPtyId: string | null;
+}
+
 class BrowserStore {
   private readonly byPty = new Map<string, PtyBrowserView>();
   private readonly listeners = new Set<() => void>();
   private wired = false;
+  private leader: LeaderBrowserView = { leaderPtyId: null, targetPtyId: null };
+
+  /** Every browser the renderer knows, for the Líder's list. */
+  all(): ReadonlyMap<string, PtyBrowserView> {
+    return this.byPty;
+  }
+
+  getLeader(): LeaderBrowserView {
+    return this.leader;
+  }
+
+  /** The Líder's tab registers itself (its PTY) while it is mounted; `null` when it goes away. */
+  setLeader(leaderPtyId: string | null): void {
+    if (this.leader.leaderPtyId === leaderPtyId) return;
+    this.leader = { leaderPtyId, targetPtyId: leaderPtyId ? this.leader.targetPtyId : null };
+    this.emit();
+  }
+
+  /** Shows another session's browser on the Líder's panel (`null` = back to its own) and opens the panel. */
+  showOnLeader(targetPtyId: string | null): void {
+    const { leaderPtyId } = this.leader;
+    if (!leaderPtyId) return;
+    const target = targetPtyId === leaderPtyId ? null : targetPtyId;
+    this.leader = { leaderPtyId, targetPtyId: target };
+    if (!this.get(leaderPtyId).open) this.setOpen(leaderPtyId, true);
+    if (target && !this.get(target).open) this.setOpen(target, true);
+    this.emit();
+  }
+
+  /** Reads every browser that exists (sessions of other boards and places included). */
+  loadAll(): void {
+    void window.donel.browser
+      .list?.()
+      .then((result) => {
+        for (const state of result.states) this.patch(state.ptyId, { state });
+        for (const control of result.controls) this.patch(control.ptyId, { control });
+      })
+      .catch(() => undefined);
+  }
 
   get(ptyId: string): PtyBrowserView {
     return this.byPty.get(ptyId) ?? EMPTY;
@@ -79,6 +125,10 @@ class BrowserStore {
 
   protected patch(ptyId: string, partial: Partial<PtyBrowserView>): void {
     this.byPty.set(ptyId, { ...this.get(ptyId), ...partial });
+    this.emit();
+  }
+
+  private emit(): void {
     for (const listener of [...this.listeners]) listener();
   }
 
@@ -92,15 +142,42 @@ class BrowserStore {
     if (this.wired) return;
     this.wired = true;
     window.donel.browser.onState((state) => this.patch(state.ptyId, { state }));
-    window.donel.browser.onOpenRequest((request) => this.setOpen(request.ptyId, true));
+    window.donel.browser.onOpenRequest((request) => {
+      this.setOpen(request.ptyId, true);
+      // A session asking for the owner's hand may have no tab on screen (opened by another session): its
+      // browser goes to the Líder's tab too.
+      const target = leaderTargetForRequest(this.leader.leaderPtyId, request.ptyId);
+      if (target) this.showOnLeader(target);
+    });
     window.donel.browser.onControl((control) => this.patch(control.ptyId, { control }));
     window.donel.browser.onLog((entry) => this.appendLog(entry));
     window.donel.browser.onRules((rules) => this.patch(rules.ptyId, { rules }));
     window.donel.browser.onFullscreenKey((request) => this.fullscreen(request.ptyId, 'toggle'));
+    this.loadAll();
   }
 }
 
 export const browserStore = new BrowserStore();
+
+let leaderSnapshotKey = '';
+let leaderSnapshot: { readonly leader: LeaderBrowserView; readonly views: ReadonlyMap<string, PtyBrowserView> } | null = null;
+
+/** The Líder's view plus every browser (a new object only when something changed, for useSyncExternalStore). */
+export function useAllBrowsers(): { readonly leader: LeaderBrowserView; readonly views: ReadonlyMap<string, PtyBrowserView> } {
+  return useSyncExternalStore(
+    (listener) => browserStore.subscribe(listener),
+    () => {
+      const leader = browserStore.getLeader();
+      const views = browserStore.all();
+      const key = `${leader.leaderPtyId}|${leader.targetPtyId}|${[...views.values()].map((v) => `${v.state?.url}|${v.control?.owner}|${v.control?.generation}|${v.open}`).join(';')}|${views.size}`;
+      if (!leaderSnapshot || key !== leaderSnapshotKey) {
+        leaderSnapshotKey = key;
+        leaderSnapshot = { leader, views: new Map(views) };
+      }
+      return leaderSnapshot;
+    },
+  );
+}
 
 /** The browser of one session (`null` ptyId = a tab without PTY yet). */
 export function usePtyBrowser(ptyId: string | null): PtyBrowserView {

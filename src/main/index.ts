@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, Notification, protocol, safeStorage, screen, shell, webContents } from 'electron';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { execFile, execFileSync } from 'node:child_process';
+import { execFile, execFileSync, spawn } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
@@ -9,7 +9,7 @@ import { readUserDefaultPermissionMode, readUserStatusLine } from './cli-user-se
 import { createStatusLineStore } from './statusline-store';
 import { STATUS_LINE_CHANNELS, type StatusLineChangedPayload, type StatusLineSnapshot } from '../shared/statusLine';
 import { appMcpAllowArgs } from '../shared/commandBuilder';
-import { planLaunchPermission, type SpawnFacts } from '../shared/launchPermission';
+import { isBypassLaunch, planLaunchPermission, type SpawnFacts } from '../shared/launchPermission';
 import { spawnFactsOf } from '../shared/mindscape/reach';
 import { planRoleLaunch } from '../shared/roleLaunch';
 import type { DevModeBoardConfig } from '../shared/devMode';
@@ -101,6 +101,7 @@ import type {
   ProjectScanMode,
   PtyCreateOptions,
   PtyCreateResult,
+  RelinkToolsResult,
   RemoteAliveSession,
   PhaseArchivedPayload,
   PtyExitInfo,
@@ -250,6 +251,9 @@ import {
   type RemoteSessionMeta,
 } from './remote-session';
 import { RemoteLinkSupervisor } from './remote-link';
+import { runShutdownSteps, shutdownThenQuit } from './app-shutdown';
+import { createMainEventsLog, type MainEventLogger } from './main-events-log';
+import { SessionKeyRing } from './session-keys';
 import { createDiagnosticsLog } from './chat/diagnostics-log';
 import { resolveMainRepoRootSync } from './session-worktree';
 import { ATTACHMENT_MAX_AGE_MS, AttachmentStore } from './chat/attachments';
@@ -302,12 +306,15 @@ import { sanitizeLeaderPrefs, type LeaderPrefs } from '../shared/leaderPrefs';
 import { adoptRefreshedActivePair, applyAccountSwitch, createSystemClaudeStateIoDeps, readCurrentCredentialPair } from './accounts/claude-state';
 import { accountFingerprintFromClaudeJsonText } from './accounts/credentials-file';
 import { createLocalMod } from './accounts/mods/local-mod';
-import { createRemoteClaudeState } from './accounts/remote-claude-state';
+import { createRemoteClaudeState, createSystemSshRunner } from './accounts/remote-claude-state';
+import { createProxyService, type ProxyMachine, type ProxyService } from './proxies/proxy-service';
+import { probeProxy } from './proxies/proxy-probe';
+import { LOCAL_MACHINE_ID, PROXY_CHANNELS, type MachineId, type ProxiesViewDto, type ProxyId, type UpsertProxyInput } from '../shared/proxies';
 import { createSeazoneMod } from './accounts/mods/seazone-mod';
 import { createLocalWithPoolMod } from './accounts/mods/local-with-pool-mod';
 // 011-contas-e-provedores, etapa 3, Fase 1 (F2) — valida o par colado à mão (fallback do "conectar conta"; login isolado é a Fase 1.2).
 import { buildPastedPair } from './accounts/pasted-pair';
-import { createSystemVaultIoDeps, decryptVaultEntry, deleteVaultEntries, writeVaultEntry, type VaultLike } from './accounts/vault';
+import { createSystemVaultIoDeps, decryptVaultEntry, deleteVaultEntries, deleteVaultEntry, writeVaultEntry, type VaultLike } from './accounts/vault';
 // 011-contas-e-provedores, etapa 3, Fase 1 — faxina do cofre no boot
 // (plan-etapa-3.md §4.4): remove entrada de conta órfã + `seazone:session`,
 // nunca `provider:*`.
@@ -604,7 +611,12 @@ function globalClaudeJsonPathFor(home: string): string {
 // T009 — semáforo de sessões (FR-010). `getRecentLines` reaproveita o ring
 // buffer que o PtyManager já mantém (plan.md ponto 8) como sinal B da
 // heurística de fallback (spike §"Fallback heurístico").
-const semaphoreManager = new SessionSemaphoreManager({ getRecentLines: (ptyId) => ptyManager.getPreview(ptyId) });
+/** 10/11 — tabs launched in bypass: their CLI opens no tool permission dialog, so the semaphore's text heuristic is off. */
+const bypassPtyIds = new Set<string>();
+const semaphoreManager = new SessionSemaphoreManager({
+  getRecentLines: (ptyId) => ptyManager.getPreview(ptyId),
+  permissionPromptsPossible: (ptyId) => !bypassPtyIds.has(ptyId),
+});
 /**
  * T014/T015 (014-chat, P4) — transporte dos hooks. Padrão: ponte HTTP com token por
  * aba e um `--settings` por sessão. `DONEL_HOOKS_TRANSPORT=legacy` volta ao caminho
@@ -645,6 +657,8 @@ const remoteLinks = new RemoteLinkSupervisor<PtyExitInfo>({
   clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
   now: () => Date.now(),
 });
+/** `sessao_religar` (t-1293c818) — the hook and MCP keys each live session's CLI holds, to put back when the app lost them. */
+const sessionKeys = new SessionKeyRing();
 /** `curl.exe` achado no boot (`where.exe curl`); `null` = fallback no encaminhador PowerShell que lê bytes. */
 let curlPath: string | null = null;
 /**
@@ -1223,6 +1237,66 @@ app.setName('donel-dev');
 // Electron sem app.setAppUserModelId no Windows".
 app.setAppUserModelId('com.seazone.doneldev');
 
+/** `<userData>/main-events.log` (main-events-log.ts) — opened on the first event, after `setName` fixed the folder. */
+let mainEventsLog: MainEventLogger | null = null;
+
+function logMainEvent(event: string, detail?: Readonly<Record<string, unknown>>): void {
+  mainEventsLog ??= createMainEventsLog(join(app.getPath('userData'), 'main-events.log'));
+  mainEventsLog(event, detail);
+}
+
+// Instância única (10/11) — two copies of the app opened on the same userData after a reboot: both reattached the
+// same remote sessions, the second one's ssh found the tunnel port taken on the place and was spawned again and
+// again, and the PC ran out of memory. The lock is keyed on the userData folder, which the alfa, beta and stable
+// channels share on purpose (CLAUDE.md, "Canais instalados coexistindo"), so it holds across channels too: two
+// channels open at once would be the same two copies on the same data. A second launch hands over to the first
+// (`second-instance` brings its window to the front) and leaves before touching anything.
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  console.log('[donel-dev] outra janela do Donel Dev já está aberta; ela vem para a frente e esta sai.');
+  app.exit(0);
+} else {
+  app.on('second-instance', () => {
+    logMainEvent('second-instance');
+    const window = mainWindowRef;
+    if (!window || window.isDestroyed()) return;
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
+  });
+}
+
+// When the renderer of the main window dies, the app starts again (`relaunch`): a reload would boot the renderer
+// with the local PTYs of the dead one still alive in main, and the tabs would open a second `claude` on the same
+// sessions. Remote sessions outlive the restart (tmux) and are reattached on boot. One that crashes again within
+// two minutes of a restart is not restarted again: the app quits instead of looping.
+const RELAUNCHED_AFTER_CRASH_FLAG = '--donel-relaunched-after-renderer-gone';
+const RELAUNCH_LOOP_WINDOW_MS = 120_000;
+let rendererRestartStarted = false;
+
+function restartAfterRendererGone(): void {
+  if (rendererRestartStarted) return;
+  rendererRestartStarted = true;
+  const relaunchedRecently = process.argv.includes(RELAUNCHED_AFTER_CRASH_FLAG) && process.uptime() * 1000 < RELAUNCH_LOOP_WINDOW_MS;
+  if (relaunchedRecently) {
+    logMainEvent('renderer-gone-again-quitting');
+  } else {
+    logMainEvent('relaunching-after-renderer-gone');
+    const args = process.argv.slice(1).filter((arg) => arg !== RELAUNCHED_AFTER_CRASH_FLAG);
+    app.relaunch({ args: [...args, RELAUNCHED_AFTER_CRASH_FLAG] });
+  }
+  // Closing the windows runs the same teardown as the owner closing the app (`closed`, then `window-all-closed`,
+  // which quits). The timer is only a net: the main process must never stay alive without a window again.
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.destroy();
+  }
+  setTimeout(() => app.quit(), 5_000);
+}
+
+app.on('child-process-gone', (_event, details) => {
+  logMainEvent('child-process-gone', { type: details.type, reason: details.reason, exitCode: details.exitCode, name: details.name });
+});
+
 /**
  * C1 (015-jobu-pet, R5) — the main window. The app assumed a single window: "any window" served as the
  * main one for the focus and for the click on the notification. With the Jobu there is a second one, which is never the
@@ -1453,22 +1527,37 @@ function createMainWindow(): void {
   // Fechar a janela mata todos os PTYs dela — evita processos powershell.exe
   // órfãos (plan.md risco de vazamento, DoD do ciclo de vida chega em T010).
   mainWindow.on('closed', () => {
+    logMainEvent('main-window-closed');
     if (mainWindowRef === mainWindow) mainWindowRef = null; // C1
-    onMainWindowClosed(); // C1/R21 — the Jobu dies with the main window, BEFORE killAll
-    unsubscribeData();
-    unsubscribeExit();
-    unsubscribeSemaphore();
-    remoteLinks.stopAll(); // the app is going: nothing more is relinked (the remote sessions stay alive there)
-    // A janela morrendo mata os PTYs; os watchers deles vão junto (o `onExit`
-    // de cada um já daria baixa, mas não depender disso é o que garante zero
-    // handle sobrevivendo ao fechamento).
-    transcriptWatchers.disposeAll();
-    // T315 (003-modo-dev) — mesma higiene do registry de transcript: nenhum
-    // `fs.watch` sobrevive ao fechamento da janela.
-    disposeAllEsteiraResultWatchers();
-    browserService?.destroyAll(); // navegador interno
-    ptyManager.killAll();
+    // Each step on its own (app-shutdown.ts): one that throws must not leave the PTYs alive.
+    runShutdownSteps(
+      [
+        ['jobu', () => onMainWindowClosed()], // C1/R21 — the Jobu dies with the main window, BEFORE killAll
+        ['ptyData', () => unsubscribeData()],
+        ['ptyExit', () => unsubscribeExit()],
+        ['semaphoreUpdates', () => unsubscribeSemaphore()],
+        ['remoteLinks', () => remoteLinks.stopAll()], // the app is going: nothing more is relinked (the remote sessions stay alive there)
+        // A janela morrendo mata os PTYs; os watchers deles vão junto (o `onExit`
+        // de cada um já daria baixa, mas não depender disso é o que garante zero
+        // handle sobrevivendo ao fechamento).
+        ['transcriptWatchers', () => transcriptWatchers.disposeAll()],
+        // T315 (003-modo-dev) — mesma higiene do registry de transcript: nenhum
+        // `fs.watch` sobrevive ao fechamento da janela.
+        ['esteiraWatchers', () => disposeAllEsteiraResultWatchers()],
+        ['browser', () => browserService?.destroyAll()], // navegador interno
+        ['ptys', () => ptyManager.killAll()],
+      ],
+      (name, error) => logMainEvent('shutdown-step-failed', { step: name, error: String(error) }),
+    );
   });
+
+  // 10/11 — the window vanished with no trace. Each way the window can fail is written down (main-events.log).
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    logMainEvent('render-process-gone', { reason: details.reason, exitCode: details.exitCode });
+    if (details.reason !== 'clean-exit') restartAfterRendererGone();
+  });
+  mainWindow.on('unresponsive', () => logMainEvent('main-window-unresponsive'));
+  mainWindow.on('responsive', () => logMainEvent('main-window-responsive'));
 
   if (process.env.ELECTRON_RENDERER_URL) {
     void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
@@ -1500,6 +1589,7 @@ function finishPtyExit(ptyId: string, info: PtyExitInfo, closedByOwner: boolean)
     semaphoreManager.onProcessExit(ptyId, exitCode);
     semaphoreManager.unregisterSession(ptyId);
   }
+  bypassPtyIds.delete(ptyId);
 
   // T412 (004) — baixa do watcher de transcript. AQUI e não no `SessionEnd`:
   // kill forçado não dispara o hook, e um watcher sobrevivente é handle
@@ -1507,6 +1597,7 @@ function finishPtyExit(ptyId: string, info: PtyExitInfo, closedByOwner: boolean)
   transcriptWatchers.stop(ptyId);
   // T015 (014-chat) — baixa da ponte: apaga o `--settings` da sessão e esquece o token.
   // No-op para aba sem hooks (terminal livre, login isolado, transporte legado).
+  sessionKeys.forget(ptyId);
   hookBridge?.unregisterSession(ptyId);
   removeSessionHooksSettings(app.getPath('userData'), ptyId);
   statusLineStore.remove(ptyId);
@@ -1843,6 +1934,8 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     browserService?.releasePty(ptyId);
     if (live.mcpPort !== null && live.mcpToken !== null) browserService?.prepareRemoteSession(ptyId, live.mcpPort, live.mcpToken);
   }
+  const remoteMcpKey = browserService?.mcpKeyOf(ptyId) ?? null;
+  sessionKeys.remember(ptyId, { ...(hooksOn ? { hookToken: live.hookToken } : {}), ...(remoteMcpKey ? { mcp: remoteMcpKey } : {}) });
   const tunnels = [
     ...(hooksOn && hookBridge?.port ? [{ remotePort: live.hookPort, localPort: hookBridge.port }] : []),
     ...(live.mcpPort !== null && mcp ? [{ remotePort: live.mcpPort, localPort: mcp.localPort }] : []),
@@ -1860,6 +1953,7 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     remoteSpawns.set(ptyId, spawnSpec);
     remoteLinks.track(ptyId, place.sshTarget, correlationId);
   } catch (error) {
+    sessionKeys.forget(ptyId);
     hookBridge?.unregisterSession(ptyId);
     browserService?.releasePty(ptyId);
     throw error;
@@ -1867,6 +1961,7 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
 
   tabCwdByPty.set(ptyId, localCwd);
   activeSessionByPty.set(ptyId, correlationId);
+  if (isBypassLaunch(finalClaudeArgs)) bypassPtyIds.add(ptyId);
   if (hooksOn) {
     semaphoreManager.registerSession(ptyId, correlationId);
     petService?.onSessionRegistered(ptyId);
@@ -1941,8 +2036,30 @@ async function carryLeaderConversation(payload: LiderCarryPayload): Promise<Lide
   return { ok: true };
 }
 
+/**
+ * `sessao_religar` (t-1293c818, item 4) — the session lost the app's tools ("Host not allowed" in the MCP, 401 in the
+ * hooks) while its process lives: the keys its CLI holds go back on the same PTY, and a remote tab "sem ligação" tries
+ * its ssh again now. Nothing is killed, nothing is respawned here.
+ */
+function relinkSessionTools(ptyId: unknown): RelinkToolsResult {
+  if (typeof ptyId !== 'string' || ptyId === '') return { ok: false, text: 'pedido inválido.' };
+  const service = browserService;
+  const restored = sessionKeys.restore(ptyId, {
+    hooks: hookBridge,
+    mcp: service ? { registerSession: (id, token, tunnelPort) => service.restoreMcpKey(id, token, tunnelPort) } : null,
+  });
+  if (!restored) return { ok: false, text: 'esta sessão não tem chaves do app para religar (foi aberta sem hooks nem MCP, ou já encerrou).' };
+  const keys = [restored.hooks ? 'a chave dos hooks' : null, restored.mcp ? 'a do MCP donel' : null].filter(Boolean).join(' e ');
+  const relinking = remoteLinks.relinkNow(ptyId);
+  return {
+    ok: true,
+    text: `${keys ? `Registrei de novo ${keys}` : 'Nenhuma chave a registrar'}${relinking ? '; ela estava sem ligação e o ssh do lugar remoto religa agora' : ''}. O processo dela não foi tocado.`,
+  };
+}
+
 function registerPtyIpcHandlers(): void {
   remoteSessions = new RemoteSessionRegistry(join(app.getPath('userData'), 'remote-transcripts'));
+  ipcMain.handle(PTY_CHANNELS.relinkTools, (_event, ptyId: unknown): RelinkToolsResult => relinkSessionTools(ptyId));
   ipcMain.handle(PTY_CHANNELS.remoteAlive, async (): Promise<RemoteAliveSession[]> => {
     const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
     const found = await discoverRemoteSessions(places);
@@ -2084,6 +2201,7 @@ function registerPtyIpcHandlers(): void {
         if (hookBridge && hookBridge.port !== null) {
           try {
             const token = hookBridge.registerSession(plannedPtyId);
+            sessionKeys.remember(plannedPtyId, { hookToken: token });
             if (options.cwd) tabCwdByPty.set(plannedPtyId, options.cwd);
             sessionHooksSettingsPath = writeSessionHooksSettings({
               userDataDir: app.getPath('userData'),
@@ -2130,6 +2248,8 @@ function registerPtyIpcHandlers(): void {
       // Navegador integrado — o MCP do app (`donel`) entregue ao CLI da sessão pela função por CLI
       // (`mcpDeliveryFor`, emenda agnóstica). Por último: `--mcp-config` é variádico e só opções podem vir depois.
       const browserMcpArgs = browserService?.prepareSession(plannedPtyId, 'claude-code') ?? [];
+      const mcpKey = browserService?.mcpKeyOf(plannedPtyId) ?? null;
+      if (mcpKey) sessionKeys.remember(plannedPtyId, { mcp: mcpKey });
       const rolePromptPath = roleId ? (rolesStore?.promptFileFor(roleId, { leaderOfAll: options.leaderOfAll === true }) ?? null) : null;
       // Papel não entregue — what the role asked for and did not reach the CLI goes back to the tab, never silent.
       const rolePlan = planRoleLaunch('claude-code', {
@@ -2164,6 +2284,7 @@ function registerPtyIpcHandlers(): void {
         });
       } catch (error) {
         // O spawn falhou: nada de token nem arquivo órfão.
+        sessionKeys.forget(plannedPtyId);
         hookBridge?.unregisterSession(plannedPtyId);
         removeSessionHooksSettings(app.getPath('userData'), plannedPtyId);
         browserService?.releasePty(plannedPtyId);
@@ -2172,6 +2293,7 @@ function registerPtyIpcHandlers(): void {
       }
 
       activeSessionByPty.set(ptyId, correlationId);
+      if (isBypassLaunch(permissionPlan.args)) bypassPtyIds.add(ptyId);
       if (sessionHooksSettingsPath) {
         semaphoreManager.registerSession(ptyId, correlationId);
         // 015-jobu-pet (R2) — the semaphore announces a new session as `working` only because it is born
@@ -2988,6 +3110,91 @@ function registerTabIpcHandlers(): void {
   });
 }
 
+/** Proxy da vez (specs/018-proxy-da-vez) — `null` until whenReady and again after the app closes. */
+let proxyService: ProxyService | null = null;
+
+/** This computer: the app's own binary as node (`ELECTRON_RUN_AS_NODE`), program on stdin, one JSON line back. */
+function runLocalNodeProgram(program: string): Promise<string | null> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value: string | null): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const child = spawn(process.execPath, ['-'], { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, stdio: ['pipe', 'pipe', 'ignore'], windowsHide: true });
+    const timer = setTimeout(() => {
+      child.kill();
+      finish(null);
+    }, 60_000);
+    let stdout = '';
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk;
+    });
+    child.on('error', () => finish(null));
+    child.on('close', (code) => finish(code === 0 ? stdout : null));
+    child.stdin.on('error', () => undefined);
+    child.stdin.end(program);
+  });
+}
+
+function proxyMachines(): readonly ProxyMachine[] {
+  const remotes = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
+  return [{ id: LOCAL_MACHINE_ID, label: 'Este computador', sshTarget: null }, ...remotes.map((place) => ({ id: place.id, label: place.label, sshTarget: place.sshTarget }))];
+}
+
+function registerProxyIpcHandlers(): void {
+  const sshRunner = createSystemSshRunner();
+  proxyService = createProxyService({
+    getConfig: () => appConfig.proxies,
+    setConfig: (next) => {
+      appConfig = { ...appConfig, proxies: next };
+      persistAppConfig();
+    },
+    machines: proxyMachines,
+    run: (machine, program) => (machine.sshTarget === null ? runLocalNodeProgram(program) : sshRunner(machine.sshTarget, program)),
+    vault: {
+      available: () => accountsVaultPath !== null && safeStorage.isEncryptionAvailable(),
+      read: (key) => (accountsVaultPath ? decryptVaultEntry(accountsVaultPath, safeStorage, accountsVaultIo, key) : null),
+      write: (key, value) => (accountsVaultPath ? writeVaultEntry(accountsVaultPath, safeStorage, accountsVaultIo, key, value).kind === 'ok' : false),
+      delete: (key) => {
+        if (accountsVaultPath) deleteVaultEntry(accountsVaultPath, accountsVaultIo, key);
+      },
+    },
+    probe: (baseUrl) => probeProxy(baseUrl),
+    localClaudeDir: () => (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).claudeHome,
+    onChanged: (view) => {
+      const window = getMainWindow();
+      if (window) window.webContents.send(PROXY_CHANNELS.changed, view);
+    },
+    onProxyDown: (down) => {
+      if (!systemNotificationsSupported()) return;
+      const where = down.machines.join(', ');
+      const body = down.suggestion
+        ? `${where} usa este proxy. Abra o proxy na barra e troque para ${down.suggestion.label}, que está de pé.`
+        : `${where} usa este proxy, e nenhum outro cadastrado está de pé para trocar agora.`;
+      createSystemNotification({ title: `Proxy fora: ${down.proxy.label}`, body }).show();
+    },
+  });
+  proxyService.start();
+  ipcMain.handle(PROXY_CHANNELS.view, (): ProxiesViewDto | null => proxyService?.view() ?? null);
+  ipcMain.handle(PROXY_CHANNELS.refresh, async (): Promise<ProxiesViewDto | null> => (proxyService ? proxyService.refresh() : null));
+  ipcMain.handle(PROXY_CHANNELS.upsert, (_event, input: UpsertProxyInput) => proxyService?.upsert(input) ?? { kind: 'invalid', field: 'id' });
+  ipcMain.handle(PROXY_CHANNELS.remove, (_event, id: ProxyId) => proxyService?.remove(id) ?? null);
+  ipcMain.handle(PROXY_CHANNELS.setKey, (_event, id: ProxyId, machineId: MachineId, value: string | null) =>
+    proxyService ? proxyService.setKey(id, machineId, value) : { kind: 'vault-unavailable' },
+  );
+  ipcMain.handle(PROXY_CHANNELS.importKey, async (_event, id: ProxyId, machineId: MachineId) =>
+    proxyService ? proxyService.importKey(id, machineId) : { kind: 'vault-unavailable' },
+  );
+  ipcMain.handle(PROXY_CHANNELS.switch, async (_event, machineId: MachineId, id: ProxyId) =>
+    proxyService ? proxyService.switchMachine(machineId, id) : { kind: 'failed', machineId, reason: 'io' },
+  );
+  ipcMain.handle(PROXY_CHANNELS.switchAll, async (_event, id: ProxyId) => (proxyService ? proxyService.switchAll(id) : []));
+}
+
 /** Saúde do computador — `null` until the handlers are registered (whenReady) and again after the app closes. */
 let healthService: HealthService | null = null;
 /** Saúde das VPS — same life as `healthService`. */
@@ -3048,6 +3255,7 @@ function registerHealthIpcHandlers(): void {
       const result = await ledgerService.apply(actor, op);
       return result.ok ? { ok: true, task: { id: result.task.id } } : { ok: false, reason: result.reason };
     },
+    tasks: () => Object.values(ledgerService?.load().doc.tasks ?? {}),
     projectPath: () => appConfig.projectRoots[0] ?? null,
     cofre: () => appConfig.vigia.cofre,
     notify: (title, body) => {
@@ -3064,6 +3272,8 @@ function registerHealthIpcHandlers(): void {
       notification.show();
     },
     statePath: join(app.getPath('userData'), 'vigia-travas.json'),
+    // t-ffbf8e7d — with the Oráculo on a VPS whose daemon watches, that place's vault and sessions are the daemon's.
+    delegated: () => remoteOracleHost?.vigiaDelegada() ?? null,
     log: (line) => console.log(line),
   });
   vigiaService.start();
@@ -3385,6 +3595,7 @@ function registerLedgerIpcHandlers(): void {
     freeze: (reason) => switchable?.freeze(reason) ?? Promise.resolve(),
     onChange,
     deliver: () => deliverOwnerMessageViaBoard,
+    vigia: () => ({ projectPath: appConfig.projectRoots[0] ?? null, cofre: appConfig.vigia.cofre }),
     celularWanted: () => {
       const text = configIoDeps.readFileText(join(app.getPath('userData'), 'celular.json'));
       try {
@@ -4367,6 +4578,7 @@ function registerMigrationIpcHandlers(): void {
 }
 
 void app.whenReady().then(async () => {
+  if (!hasSingleInstanceLock) return; // a second copy is leaving (app.exit above): it starts nothing
   // T009 — sobe o servidor local do semáforo e grava o `--settings` ANTES de
   // registrar os handlers de PTY (o primeiro `pty:create` de uma sessão
   // claude já precisa do path pronto). Falha aqui não derruba o app —
@@ -4553,6 +4765,7 @@ void app.whenReady().then(async () => {
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
   }); // 015-jobu-pet
   registerHealthIpcHandlers(); // Saúde do computador
+  registerProxyIpcHandlers(); // Proxy da vez (018)
   registerHomologacaoIpcHandlers(); // Mindscape de homologação V1 — Números da factory
   registerRotinasIpcHandlers(); // Item 20 — rotinas em sombra
   registerFaxineiroIpcHandlers(); // t-b3b26e60 — Faxineiro com gatilhos
@@ -4674,35 +4887,66 @@ void app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  ptyManager.killAll();
-  isolatedLoginManager?.dispose(); // 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — DEPOIS do killAll (mesma ordem já vale pro PTY do login, que killAll já matou).
-  semaphoreManager.dispose();
-  chatHub?.dispose();
-  void hookBridge?.close();
-  esteiraService?.dispose();
-  esteiraService = null;
-  healthService?.stop();
-  healthService = null;
-  remoteHealthService?.stop();
-  vigiaService?.stop();
-  remoteHealthService = null;
-  factoryMetricsReader?.stop();
-  factoryMetricsReader = null;
-  factoryRigsReader?.stop();
-  factoryRigsReader = null;
-  routineRunner?.stop();
-  routineRunner = null;
-  faxinaRunner?.stop();
-  faxinaRunner = null;
-  appUpdateService?.stop();
-  void celularService?.dispose();
-  celularService = null;
-  // fix/renovacao-credencial (C6, research.md) — antes de descartar o motor,
-  // guarda no cofre o par que o CLI deixou em `.credentials.json` para a
-  // conta ativa. A gravação acontece dentro da chamada, sem esperar promessa.
-  void accountEngineHost.current()?.captureLivePairNow('quit');
-  accountEngineHost.dispose(); // T1125 — nenhum timer (keepAlive/poll) sobrevive ao fechamento do app.
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  logMainEvent('window-all-closed');
+  // Each step on its own (app-shutdown.ts): one that threw used to skip the rest AND the quit, leaving the main
+  // process alive with no window (10/11).
+  shutdownThenQuit(
+    [
+      ['ptys', () => ptyManager.killAll()],
+      ['isolatedLogin', () => isolatedLoginManager?.dispose()], // 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — DEPOIS do killAll (mesma ordem já vale pro PTY do login, que killAll já matou).
+      ['semaphore', () => semaphoreManager.dispose()],
+      ['chatHub', () => chatHub?.dispose()],
+      ['hookBridge', () => hookBridge?.close()],
+      ['esteira', () => {
+        esteiraService?.dispose();
+        esteiraService = null;
+      }],
+      ['health', () => {
+        healthService?.stop();
+        healthService = null;
+      }],
+      ['remoteHealth', () => {
+        remoteHealthService?.stop();
+        remoteHealthService = null;
+      }],
+      ['proxy', () => {
+        proxyService?.stop();
+        proxyService = null;
+      }],
+      ['vigia', () => vigiaService?.stop()],
+      ['factoryMetrics', () => {
+        factoryMetricsReader?.stop();
+        factoryMetricsReader = null;
+      }],
+      ['factoryRigs', () => {
+        factoryRigsReader?.stop();
+        factoryRigsReader = null;
+      }],
+      ['routines', () => {
+        routineRunner?.stop();
+        routineRunner = null;
+      }],
+      ['faxina', () => {
+        faxinaRunner?.stop();
+        faxinaRunner = null;
+      }],
+      ['appUpdate', () => appUpdateService?.stop()],
+      ['celular', () => {
+        const disposing = celularService?.dispose();
+        celularService = null;
+        return disposing;
+      }],
+      // fix/renovacao-credencial (C6, research.md) — antes de descartar o motor,
+      // guarda no cofre o par que o CLI deixou em `.credentials.json` para a
+      // conta ativa. A gravação acontece dentro da chamada, sem esperar promessa.
+      ['captureLivePair', () => accountEngineHost.current()?.captureLivePairNow('quit')],
+      ['accountEngine', () => accountEngineHost.dispose()], // T1125 — nenhum timer (keepAlive/poll) sobrevive ao fechamento do app.
+    ],
+    {
+      quit: () => {
+        if (process.platform !== 'darwin') app.quit();
+      },
+      onError: (name, error) => logMainEvent('shutdown-step-failed', { step: name, error: String(error) }),
+    },
+  );
 });

@@ -12,6 +12,7 @@
 import { randomBytes } from 'node:crypto';
 import { dirname } from 'node:path';
 import type { ConfigIoDeps } from '../config-store';
+import type { TranscriptionJobs } from './transcrever';
 
 export const PEDIDOS_SCHEMA_VERSION = 1;
 /** O limite do texto de um pedido (o celular corta antes; aqui recusa). */
@@ -297,5 +298,34 @@ export function pedidoCelular(pedido: StoredPedido, taskState?: (taskId: string)
     estado,
     ...(pedido.tarefa ? { tarefa: { titulo: pedido.tarefa.titulo, ...(taskEstado ? { estado: taskEstado } : {}) } } : {}),
     falado: pedido.audio !== undefined,
+  };
+}
+
+/**
+ * Os pedidos como o servidor do celular os vê: a fila, o roteador até o Líder e os áudios transcritos no PC.
+ * Um pedido falado só entra apontando para um áudio que o PC guardou.
+ */
+export function createMobilePedidosPort(deps: {
+  readonly store: PedidosStore;
+  readonly router: PedidoRouter;
+  readonly audio: TranscriptionJobs;
+  readonly taskState?: (taskId: string) => string | undefined;
+}): MobilePedidosPort {
+  return {
+    listar: () => deps.store.list(20).map((pedido) => pedidoCelular(pedido, deps.taskState)),
+    criar(input) {
+      const texto = cleanPedidoText(input.texto);
+      if (!texto) return { ok: false, mensagem: 'O pedido está vazio.' };
+      if (input.audioId && !deps.audio.has(input.audioId)) return { ok: false, mensagem: 'O áudio deste pedido não está no PC.' };
+      try {
+        const pedido = deps.router.submit({ requestId: input.pedidoId, texto, ...(input.audioId ? { audio: `${input.audioId}.wav` } : {}) });
+        return { ok: true, pedido: pedidoCelular(pedido, deps.taskState) };
+      } catch (error) {
+        console.error('[donel-dev] pedidos: não gravou:', error);
+        return { ok: false, mensagem: 'O PC não conseguiu guardar o pedido. Tente de novo.' };
+      }
+    },
+    transcrever: (wav) => deps.audio.start(wav),
+    transcricao: (audioId) => deps.audio.status(audioId),
   };
 }

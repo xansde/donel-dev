@@ -97,6 +97,11 @@ export class BrowserPanels {
     return entry;
   }
 
+  /** The PTYs that have a browser now. */
+  ptyIds(): string[] {
+    return [...this.entries.keys()].filter((ptyId) => this.get(ptyId) !== null);
+  }
+
   /** The browser of this PTY, created (hidden) when it does not exist. Throws when the window is gone or the ceiling is full. */
   ensure(ptyId: string): BrowserPanelEntry {
     const existing = this.get(ptyId);

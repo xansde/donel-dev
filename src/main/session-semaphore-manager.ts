@@ -73,6 +73,14 @@ export interface SessionSemaphoreManagerOptions {
   readonly now?: () => number;
   /** Ring buffer recente da sessão (ANSI-stripado) — normalmente `ptyManager.getPreview`. */
   readonly getRecentLines: (ptyId: string) => readonly string[];
+  /**
+   * 10/11 — whether the CLI of this tab can open a tool permission dialog at all; `false` for a session launched in
+   * bypass. The fallback heuristic reads TEXT ("Do you want to proceed?", "1. Yes"), and the tab's recent text quotes it
+   * often (a command's output, a message about another session's dialog): in bypass it only ever found that text, and
+   * the Líder heard "precisa do dono" every few minutes about idle or working sessions. The CLI's own `Notification`
+   * of a permission still counts. Absent = always possible (as before).
+   */
+  readonly permissionPromptsPossible?: (ptyId: string) => boolean;
 }
 
 /** Traduz `hook_event_name` do payload pro tipo de evento da máquina pura — `null` = evento que não nos interessa (o CLI pode disparar outros hooks configurados globalmente pelo usuário, ex. SubagentStop). */
@@ -162,12 +170,14 @@ export class SessionSemaphoreManager {
   private readonly permissionHeuristicTimeoutMs: number;
   private readonly now: () => number;
   private readonly getRecentLines: (ptyId: string) => readonly string[];
+  private readonly permissionPromptsPossible: (ptyId: string) => boolean;
 
   constructor(options: SessionSemaphoreManagerOptions) {
     this.tickIntervalMs = options.tickIntervalMs ?? 500;
     this.permissionHeuristicTimeoutMs = options.permissionHeuristicTimeoutMs ?? 2500;
     this.now = options.now ?? Date.now;
     this.getRecentLines = options.getRecentLines;
+    this.permissionPromptsPossible = options.permissionPromptsPossible ?? (() => true);
   }
 
   /** Sobe o servidor HTTP local (porta efêmera, 127.0.0.1) e o timer da heurística. Devolve a porta pra montar o `--settings` (hooks-settings.ts). */
@@ -419,6 +429,7 @@ export class SessionSemaphoreManager {
     const now = this.now();
     for (const [ptyId, current] of this.ptyState) {
       if (current.state !== 'working' || current.pendingToolSince === null) continue;
+      if (!this.permissionPromptsPossible(ptyId)) continue;
       const recentLines = this.getRecentLines(ptyId);
       const next = applyPermissionHeuristic(current, now, this.permissionHeuristicTimeoutMs, recentLines, defaultMatchesPermissionPrompt);
       if (next !== current) {

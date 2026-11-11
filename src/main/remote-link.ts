@@ -85,7 +85,10 @@ export class RemoteLinkSupervisor<Exit> {
     const entry: Lost<Exit> = { attempt, timer: null, exit, announced: !clean };
     this.lost.set(ptyId, entry);
     if (clean) {
-      entry.timer = this.deps.setTimer(() => void this.tryRelink(ptyId, entry), 0);
+      // The place is asked at once only the first time. A relinked ssh that leaves again right away (with 0 or
+      // not) is the same outage, and asking at once every time spun with no pause: each turn spawned a new ssh.
+      const delay = attempt === 0 ? 0 : RELINK_DELAYS_MS[Math.min(attempt, RELINK_DELAYS_MS.length - 1)];
+      entry.timer = this.deps.setTimer(() => void this.tryRelink(ptyId, entry), delay);
       return true;
     }
     this.deps.notify(ptyId, false);
@@ -103,6 +106,15 @@ export class RemoteLinkSupervisor<Exit> {
     if (entry.timer !== null) this.deps.clearTimer(entry.timer);
     this.forget(ptyId);
     this.deps.finalize(ptyId, entry.exit, true);
+    return true;
+  }
+
+  /** `sessao_religar` (t-1293c818) — a tab "sem ligação" tries its relink now instead of waiting its turn. `false` = not lost. */
+  relinkNow(ptyId: string): boolean {
+    const entry = this.lost.get(ptyId);
+    if (!entry || this.stopped) return false;
+    if (entry.timer !== null) this.deps.clearTimer(entry.timer);
+    entry.timer = this.deps.setTimer(() => void this.tryRelink(ptyId, entry), 0);
     return true;
   }
 

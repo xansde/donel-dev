@@ -12,6 +12,7 @@ import {
   type BrowserControlState,
   type BrowserHistoryAction,
   type BrowserAgentRules,
+  type BrowserListResult,
   type BrowserLogEntry,
   type BrowserNavigateResult,
   type BrowserPanelState,
@@ -92,6 +93,10 @@ export interface BrowserService {
    * Sessões remotas — the same MCP for a CLI on a remote place: it reaches the app through a reverse tunnel on`n   * `remotePort`. Returns the local port to tunnel to, the token and the config file content (written remotely),`n   * or `null` when the server is not up. `token` reuses the one a reattached session already holds.
    */
   prepareRemoteSession(ptyId: string, remotePort: number, token?: string): { localPort: number; token: string; configFileContent: string } | null;
+  /** `sessao_religar` (t-1293c818) — the MCP key the CLI of `ptyId` was given; `null` = none. */
+  mcpKeyOf(ptyId: string): { token: string; tunnelPort?: number } | null;
+  /** `sessao_religar` — puts that key back on `ptyId` (the session lives; only the app forgot it). */
+  restoreMcpKey(ptyId: string, token: string, tunnelPort?: number): void;
   /** A session was spawned: its browser may exist from now on. */
   registerPty(ptyId: string): void;
   /** The session's process left (or its spawn failed): browser, token, config file and control are gone. */
@@ -594,6 +599,20 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
     controls.get(ptyId)?.handBack(generation);
   });
 
+  // Navegador do Líder: every browser, of any session, so the Líder's tab can list and open them.
+  deps.ipcMain.handle(BROWSER_CHANNELS.list, (event): BrowserListResult => {
+    if (!deps.isMainSender(event.sender)) return { states: [], controls: [] };
+    const states: BrowserPanelState[] = [];
+    for (const ptyId of panels.ptyIds()) {
+      if (!livePtys.has(ptyId)) continue;
+      const state = panels.state(ptyId);
+      if (state) states.push(state);
+    }
+    const controlStates: BrowserControlState[] = [];
+    for (const [ptyId, control] of controls) if (livePtys.has(ptyId)) controlStates.push({ ptyId, ...control.snapshot() });
+    return { states, controls: controlStates };
+  });
+
   deps.ipcMain.handle(BROWSER_CHANNELS.getControl, (event, ptyId: unknown): BrowserControlState | null => {
     if (!known(event.sender, ptyId)) return null;
     const control = controls.get(ptyId);
@@ -695,6 +714,11 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
       const token = mcp.registerSession(ptyId, knownToken, remotePort);
       const endpoint = { name: MCP_SERVER_NAME, url: browserMcpUrl(remotePort), bearerToken: token };
       return { localPort: port, token, configFileContent: `${JSON.stringify(buildBrowserMcpConfig(endpoint), null, 2)}\n` };
+    },
+    mcpKeyOf: (ptyId) => mcp.keyOf(ptyId),
+    restoreMcpKey: (ptyId, token, tunnelPort) => {
+      mcp.registerSession(ptyId, token, tunnelPort);
+      livePtys.add(ptyId);
     },
     registerPty: (ptyId) => {
       livePtys.add(ptyId);

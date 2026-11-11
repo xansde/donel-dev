@@ -1,0 +1,4 @@
+{
+  "title": "Proxy da vez, com um clique",
+  "text": "Na barra de baixo aparece por qual proxy este computador sai agora e se ele está de pé. Clicando, você vê o proxy de cada máquina (este computador e as VPS) e troca qualquer uma, ou todas de uma vez, só entre os proxies que já têm endereço e chave. Antes de gravar, a máquina testa o proxy novo; se ele não responder, nada muda, e se cair logo depois de gravar, o caminho de antes volta sozinho. As sessões abertas seguem como estão; as novas já saem pelo proxy novo. O cadastro guarda a chave de cada máquina no cofre do app, e o que as máquinas já usam aparece como achado para cadastrar com um clique. Se o proxy em uso cair, o app avisa e sugere um que esteja de pé."
+}

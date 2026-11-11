@@ -193,13 +193,26 @@ export interface McpDelivery {
   readonly args: readonly string[];
 }
 
+/**
+ * Wall-clock limit of one call to the app's MCP, per server (`timeout` of the CLI's config). 10/11 (t-58d7c191) —
+ * without it Claude Code cuts an HTTP MCP call at 60 s ("The operation timed out."), below the app's own waits:
+ * `sessao_enviar` answers within 90 s and `sessao_abrir`/`navegador_pedir_humano` wait up to 30 min for the owner.
+ * Every tool keeps its own net in the app (`board-bridge.ts`), so this only has to outlast the longest one.
+ */
+export const APP_MCP_TOOL_TIMEOUT_MS = 35 * 60_000;
+
 /** Claude Code `--mcp-config` file: one HTTP server with the bearer header. */
 export function buildBrowserMcpConfig(endpoint: AppMcpEndpoint): {
-  mcpServers: Record<string, { type: 'http'; url: string; headers: Record<string, string> }>;
+  mcpServers: Record<string, { type: 'http'; url: string; headers: Record<string, string>; timeout: number }>;
 } {
   return {
     mcpServers: {
-      [endpoint.name]: { type: 'http', url: endpoint.url, headers: { Authorization: `Bearer ${endpoint.bearerToken}` } },
+      [endpoint.name]: {
+        type: 'http',
+        url: endpoint.url,
+        headers: { Authorization: `Bearer ${endpoint.bearerToken}` },
+        timeout: APP_MCP_TOOL_TIMEOUT_MS,
+      },
     },
   };
 }
@@ -228,6 +241,8 @@ export const APP_MCP_PREAUTHORIZED_TOOLS: readonly string[] = [
   'sessao_abrir',
   'sessao_enviar',
   'sessao_ver_tela',
+  'sessao_retomar',
+  'sessao_religar',
 ].map((tool) => `mcp__donel__${tool}`);
 
 export function appMcpAllowArgs(): string[] {

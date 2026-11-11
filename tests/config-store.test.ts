@@ -66,6 +66,7 @@ describe('defaultAppConfig (puro)', () => {
       },
       migration: { startedAt: null, completedAt: null, profiles: {}, archivedTo: null },
       providers: { version: 1, entries: [] },
+      proxies: { version: 1, entries: [{ id: 'outro-pc', label: 'Outro PC', kind: 'gateway', baseUrl: null, machines: [] }], seeded: true },
       chat: { enabled: false, focusMode: true },
       // T014 (015-jobu-pet) — desligado, sem posição lembrada, tamanho Médio.
       pet: { enabled: false, placement: null, size: 140 },
@@ -250,6 +251,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
           { id: 'meu-provider', label: 'Meu provider', class: 'A', command: null, env: { ANTHROPIC_BASE_URL: 'https://x.test' }, secretEnvKeys: ['ANTHROPIC_AUTH_TOKEN'], configDirName: 'meu-provider' },
         ],
       },
+      proxies: { version: 1, entries: [{ id: 'portal', label: 'Portal', kind: 'portal', baseUrl: 'https://portal.test', machines: ['local'] }], seeded: true },
       chat: { enabled: true, focusMode: false },
       pet: { enabled: true, placement: { x: 1830, y: 1040 }, size: 200 },
       sweep: { lastSweepAt: null },
@@ -354,6 +356,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       accounts: defaults.accounts, // ausente no objeto → default
       migration: defaults.migration, // ausente no objeto → default
       providers: defaults.providers, // ausente no objeto → default
+      proxies: defaults.proxies,
       chat: defaults.chat, // ausente no objeto → default
       pet: defaults.pet, // ausente no objeto → default
       sweep: defaults.sweep,

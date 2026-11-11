@@ -39,3 +39,134 @@ index 5f63978..b313af2 100644
        ]
      }, { # OS!="win"
        'targets': [
+diff --git a/node_modules/node-pty/src/win/conpty.cc b/node_modules/node-pty/src/win/conpty.cc
+index 7b286d3d..a7a5a9f8 100644
+--- a/node_modules/node-pty/src/win/conpty.cc
++++ b/node_modules/node-pty/src/win/conpty.cc
+@@ -17,6 +17,7 @@
+ #include <sstream>
+ #include <iostream>
+ #include <string>
++#include <mutex>
+ #include <thread>
+ #include <vector>
+ #include <Windows.h>
+@@ -45,10 +46,32 @@ struct pty_baton {
+   HPCON hpc;
+ 
+   HANDLE hShell;
++  bool useConptyDll = false;
+ 
+   pty_baton(int _id, HANDLE _hIn, HANDLE _hOut, HPCON _hpc) : id(_id), hIn(_hIn), hOut(_hOut), hpc(_hpc) {};
+ };
+ 
++// donel-dev: the exit thread and PtyKill both close the pseudoconsole; this guards the hand-off of `hpc` and the
++// erase of the baton, so a kill never touches a baton the exit thread already freed.
++static std::mutex g_ptyBatonMutex;
++
++// donel-dev: takes the pseudoconsole out of the baton, so it is closed only once. Call with g_ptyBatonMutex held.
++static HPCON TakePseudoConsole(pty_baton* baton) {
++  HPCON hpc = baton->hpc;
++  baton->hpc = nullptr;
++  return hpc;
++}
++
++// donel-dev: closes a pseudoconsole taken with TakePseudoConsole (outside the lock: on older Windows it waits for
++// conhost to drain its output, which the conout worker keeps reading).
++static void ClosePseudoConsoleTaken(HPCON hpc, HANDLE hLibrary, bool useConptyDll) {
++  if (hpc == nullptr || hLibrary == nullptr) return;
++  PFNCLOSEPSEUDOCONSOLE const pfnClosePseudoConsole = (PFNCLOSEPSEUDOCONSOLE)GetProcAddress(
++    (HMODULE)hLibrary,
++    useConptyDll ? "ConptyClosePseudoConsole" : "ClosePseudoConsole");
++  if (pfnClosePseudoConsole) pfnClosePseudoConsole(hpc);
++}
++
+ static std::vector<std::unique_ptr<pty_baton>> ptyHandles;
+ static volatile LONG ptyCounter;
+ 
+@@ -103,7 +126,18 @@ void SetupExitCallback(Napi::Env env, Napi::Function cb, pty_baton* baton) {
+     GetExitCodeProcess(baton->hShell, (LPDWORD)(&exit_event->exit_code));
+     // Clean up handles
+     CloseHandle(baton->hShell);
+-    assert(remove_pty_baton(baton->id));
++    // donel-dev: the process left by itself. Without closing the pseudoconsole its conhost.exe stays alive for as
++    // long as the app runs (~8 MB each): a ssh that dies at once in a relink loop left hundreds of them (10/11).
++    HPCON hpc = nullptr;
++    const bool useConptyDll = baton->useConptyDll;
++    {
++      std::lock_guard<std::mutex> lock(g_ptyBatonMutex);
++      hpc = TakePseudoConsole(baton);
++      remove_pty_baton(baton->id); // `baton` is freed here; nothing below touches it
++    }
++    if (!useConptyDll) {
++      ClosePseudoConsoleTaken(hpc, LoadLibraryExW(L"kernel32.dll", 0, 0), false);
++    }
+ 
+     auto status = tsfn.BlockingCall(exit_event, callback); // In main thread
+     switch (status) {
+@@ -301,8 +335,10 @@ static Napi::Value PtyStartProcess(const Napi::CallbackInfo& info) {
+     // We were able to instantiate a conpty
+     const int ptyId = InterlockedIncrement(&ptyCounter);
+     marshal.Set("pty", Napi::Number::New(env, ptyId));
+-    ptyHandles.emplace_back(
+-        std::make_unique<pty_baton>(ptyId, hIn, hOut, hpc));
++    auto baton = std::make_unique<pty_baton>(ptyId, hIn, hOut, hpc);
++    baton->useConptyDll = useConptyDll;
++    std::lock_guard<std::mutex> lock(g_ptyBatonMutex);
++    ptyHandles.emplace_back(std::move(baton));
+   } else {
+     throw Napi::Error::New(env, "Cannot launch conpty");
+   }
+@@ -544,25 +580,20 @@ static Napi::Value PtyKill(const Napi::CallbackInfo& info) {
+   int id = info[0].As<Napi::Number>().Int32Value();
+   const bool useConptyDll = info[1].As<Napi::Boolean>().Value();
+ 
+-  const pty_baton* handle = get_pty_baton(id);
+-
+-  if (handle != nullptr) {
+-    HANDLE hLibrary = LoadConptyDll(info, useConptyDll);
+-    bool fLoadedDll = hLibrary != nullptr;
+-    if (fLoadedDll)
+-    {
+-      PFNCLOSEPSEUDOCONSOLE const pfnClosePseudoConsole = (PFNCLOSEPSEUDOCONSOLE)GetProcAddress(
+-        (HMODULE)hLibrary,
+-        useConptyDll ? "ConptyClosePseudoConsole" : "ClosePseudoConsole");
+-      if (pfnClosePseudoConsole)
+-      {
+-        pfnClosePseudoConsole(handle->hpc);
++  HANDLE hLibrary = LoadConptyDll(info, useConptyDll);
++  // donel-dev: the baton is looked up and used under the lock; the exit thread may be erasing it right now.
++  HPCON hpc = nullptr;
++  {
++    std::lock_guard<std::mutex> lock(g_ptyBatonMutex);
++    pty_baton* handle = get_pty_baton(id);
++    if (handle != nullptr) {
++      hpc = TakePseudoConsole(handle);
++      if (useConptyDll) {
++        TerminateProcess(handle->hShell, 1);
+       }
+     }
+-    if (useConptyDll) {
+-      TerminateProcess(handle->hShell, 1);
+-    }
+   }
++  ClosePseudoConsoleTaken(hpc, hLibrary, useConptyDll);
+ 
+   return env.Undefined();
+ }
+diff --git a/node_modules/node-pty/lib/windowsPtyAgent.js b/node_modules/node-pty/lib/windowsPtyAgent.js
+index a358ffb1..86a031a9 100644
+--- a/node_modules/node-pty/lib/windowsPtyAgent.js
++++ b/node_modules/node-pty/lib/windowsPtyAgent.js
+@@ -243,6 +243,11 @@ var WindowsPtyAgent = /** @class */ (function () {
+         this._inSocket.readable = false;
+         this._outSocket.readable = false;
+         this._outSocket.destroy();
++        // donel-dev: the process left by itself. Let go of the conin pipe and of the conout worker as kill() does,
++        // or each exit leaves a worker thread in the app and the pipes holding the conhost.exe (10/11).
++        this._inSocket.on('error', function () { });
++        this._inSocket.destroy();
++        this._conoutSocketWorker.dispose();
+     };
+     return WindowsPtyAgent;
+ }());
