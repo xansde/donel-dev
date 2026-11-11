@@ -251,6 +251,8 @@ import {
   type RemoteSessionMeta,
 } from './remote-session';
 import { RemoteLinkSupervisor } from './remote-link';
+import { runShutdownSteps, shutdownThenQuit } from './app-shutdown';
+import { createMainEventsLog, type MainEventLogger } from './main-events-log';
 import { SessionKeyRing } from './session-keys';
 import { createDiagnosticsLog } from './chat/diagnostics-log';
 import { resolveMainRepoRootSync } from './session-worktree';
@@ -1235,6 +1237,66 @@ app.setName('donel-dev');
 // Electron sem app.setAppUserModelId no Windows".
 app.setAppUserModelId('com.seazone.doneldev');
 
+/** `<userData>/main-events.log` (main-events-log.ts) — opened on the first event, after `setName` fixed the folder. */
+let mainEventsLog: MainEventLogger | null = null;
+
+function logMainEvent(event: string, detail?: Readonly<Record<string, unknown>>): void {
+  mainEventsLog ??= createMainEventsLog(join(app.getPath('userData'), 'main-events.log'));
+  mainEventsLog(event, detail);
+}
+
+// Instância única (10/11) — two copies of the app opened on the same userData after a reboot: both reattached the
+// same remote sessions, the second one's ssh found the tunnel port taken on the place and was spawned again and
+// again, and the PC ran out of memory. The lock is keyed on the userData folder, which the alfa, beta and stable
+// channels share on purpose (CLAUDE.md, "Canais instalados coexistindo"), so it holds across channels too: two
+// channels open at once would be the same two copies on the same data. A second launch hands over to the first
+// (`second-instance` brings its window to the front) and leaves before touching anything.
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  console.log('[donel-dev] outra janela do Donel Dev já está aberta; ela vem para a frente e esta sai.');
+  app.exit(0);
+} else {
+  app.on('second-instance', () => {
+    logMainEvent('second-instance');
+    const window = mainWindowRef;
+    if (!window || window.isDestroyed()) return;
+    if (window.isMinimized()) window.restore();
+    window.show();
+    window.focus();
+  });
+}
+
+// When the renderer of the main window dies, the app starts again (`relaunch`): a reload would boot the renderer
+// with the local PTYs of the dead one still alive in main, and the tabs would open a second `claude` on the same
+// sessions. Remote sessions outlive the restart (tmux) and are reattached on boot. One that crashes again within
+// two minutes of a restart is not restarted again: the app quits instead of looping.
+const RELAUNCHED_AFTER_CRASH_FLAG = '--donel-relaunched-after-renderer-gone';
+const RELAUNCH_LOOP_WINDOW_MS = 120_000;
+let rendererRestartStarted = false;
+
+function restartAfterRendererGone(): void {
+  if (rendererRestartStarted) return;
+  rendererRestartStarted = true;
+  const relaunchedRecently = process.argv.includes(RELAUNCHED_AFTER_CRASH_FLAG) && process.uptime() * 1000 < RELAUNCH_LOOP_WINDOW_MS;
+  if (relaunchedRecently) {
+    logMainEvent('renderer-gone-again-quitting');
+  } else {
+    logMainEvent('relaunching-after-renderer-gone');
+    const args = process.argv.slice(1).filter((arg) => arg !== RELAUNCHED_AFTER_CRASH_FLAG);
+    app.relaunch({ args: [...args, RELAUNCHED_AFTER_CRASH_FLAG] });
+  }
+  // Closing the windows runs the same teardown as the owner closing the app (`closed`, then `window-all-closed`,
+  // which quits). The timer is only a net: the main process must never stay alive without a window again.
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!window.isDestroyed()) window.destroy();
+  }
+  setTimeout(() => app.quit(), 5_000);
+}
+
+app.on('child-process-gone', (_event, details) => {
+  logMainEvent('child-process-gone', { type: details.type, reason: details.reason, exitCode: details.exitCode, name: details.name });
+});
+
 /**
  * C1 (015-jobu-pet, R5) — the main window. The app assumed a single window: "any window" served as the
  * main one for the focus and for the click on the notification. With the Jobu there is a second one, which is never the
@@ -1465,22 +1527,37 @@ function createMainWindow(): void {
   // Fechar a janela mata todos os PTYs dela — evita processos powershell.exe
   // órfãos (plan.md risco de vazamento, DoD do ciclo de vida chega em T010).
   mainWindow.on('closed', () => {
+    logMainEvent('main-window-closed');
     if (mainWindowRef === mainWindow) mainWindowRef = null; // C1
-    onMainWindowClosed(); // C1/R21 — the Jobu dies with the main window, BEFORE killAll
-    unsubscribeData();
-    unsubscribeExit();
-    unsubscribeSemaphore();
-    remoteLinks.stopAll(); // the app is going: nothing more is relinked (the remote sessions stay alive there)
-    // A janela morrendo mata os PTYs; os watchers deles vão junto (o `onExit`
-    // de cada um já daria baixa, mas não depender disso é o que garante zero
-    // handle sobrevivendo ao fechamento).
-    transcriptWatchers.disposeAll();
-    // T315 (003-modo-dev) — mesma higiene do registry de transcript: nenhum
-    // `fs.watch` sobrevive ao fechamento da janela.
-    disposeAllEsteiraResultWatchers();
-    browserService?.destroyAll(); // navegador interno
-    ptyManager.killAll();
+    // Each step on its own (app-shutdown.ts): one that throws must not leave the PTYs alive.
+    runShutdownSteps(
+      [
+        ['jobu', () => onMainWindowClosed()], // C1/R21 — the Jobu dies with the main window, BEFORE killAll
+        ['ptyData', () => unsubscribeData()],
+        ['ptyExit', () => unsubscribeExit()],
+        ['semaphoreUpdates', () => unsubscribeSemaphore()],
+        ['remoteLinks', () => remoteLinks.stopAll()], // the app is going: nothing more is relinked (the remote sessions stay alive there)
+        // A janela morrendo mata os PTYs; os watchers deles vão junto (o `onExit`
+        // de cada um já daria baixa, mas não depender disso é o que garante zero
+        // handle sobrevivendo ao fechamento).
+        ['transcriptWatchers', () => transcriptWatchers.disposeAll()],
+        // T315 (003-modo-dev) — mesma higiene do registry de transcript: nenhum
+        // `fs.watch` sobrevive ao fechamento da janela.
+        ['esteiraWatchers', () => disposeAllEsteiraResultWatchers()],
+        ['browser', () => browserService?.destroyAll()], // navegador interno
+        ['ptys', () => ptyManager.killAll()],
+      ],
+      (name, error) => logMainEvent('shutdown-step-failed', { step: name, error: String(error) }),
+    );
   });
+
+  // 10/11 — the window vanished with no trace. Each way the window can fail is written down (main-events.log).
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    logMainEvent('render-process-gone', { reason: details.reason, exitCode: details.exitCode });
+    if (details.reason !== 'clean-exit') restartAfterRendererGone();
+  });
+  mainWindow.on('unresponsive', () => logMainEvent('main-window-unresponsive'));
+  mainWindow.on('responsive', () => logMainEvent('main-window-responsive'));
 
   if (process.env.ELECTRON_RENDERER_URL) {
     void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
@@ -4501,6 +4578,7 @@ function registerMigrationIpcHandlers(): void {
 }
 
 void app.whenReady().then(async () => {
+  if (!hasSingleInstanceLock) return; // a second copy is leaving (app.exit above): it starts nothing
   // T009 — sobe o servidor local do semáforo e grava o `--settings` ANTES de
   // registrar os handlers de PTY (o primeiro `pty:create` de uma sessão
   // claude já precisa do path pronto). Falha aqui não derruba o app —
@@ -4809,37 +4887,66 @@ void app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-  ptyManager.killAll();
-  isolatedLoginManager?.dispose(); // 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — DEPOIS do killAll (mesma ordem já vale pro PTY do login, que killAll já matou).
-  semaphoreManager.dispose();
-  chatHub?.dispose();
-  void hookBridge?.close();
-  esteiraService?.dispose();
-  esteiraService = null;
-  healthService?.stop();
-  healthService = null;
-  remoteHealthService?.stop();
-  proxyService?.stop();
-  proxyService = null;
-  vigiaService?.stop();
-  remoteHealthService = null;
-  factoryMetricsReader?.stop();
-  factoryMetricsReader = null;
-  factoryRigsReader?.stop();
-  factoryRigsReader = null;
-  routineRunner?.stop();
-  routineRunner = null;
-  faxinaRunner?.stop();
-  faxinaRunner = null;
-  appUpdateService?.stop();
-  void celularService?.dispose();
-  celularService = null;
-  // fix/renovacao-credencial (C6, research.md) — antes de descartar o motor,
-  // guarda no cofre o par que o CLI deixou em `.credentials.json` para a
-  // conta ativa. A gravação acontece dentro da chamada, sem esperar promessa.
-  void accountEngineHost.current()?.captureLivePairNow('quit');
-  accountEngineHost.dispose(); // T1125 — nenhum timer (keepAlive/poll) sobrevive ao fechamento do app.
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  logMainEvent('window-all-closed');
+  // Each step on its own (app-shutdown.ts): one that threw used to skip the rest AND the quit, leaving the main
+  // process alive with no window (10/11).
+  shutdownThenQuit(
+    [
+      ['ptys', () => ptyManager.killAll()],
+      ['isolatedLogin', () => isolatedLoginManager?.dispose()], // 011-contas-e-provedores, etapa 3, Fase 1, Bloco 2 — DEPOIS do killAll (mesma ordem já vale pro PTY do login, que killAll já matou).
+      ['semaphore', () => semaphoreManager.dispose()],
+      ['chatHub', () => chatHub?.dispose()],
+      ['hookBridge', () => hookBridge?.close()],
+      ['esteira', () => {
+        esteiraService?.dispose();
+        esteiraService = null;
+      }],
+      ['health', () => {
+        healthService?.stop();
+        healthService = null;
+      }],
+      ['remoteHealth', () => {
+        remoteHealthService?.stop();
+        remoteHealthService = null;
+      }],
+      ['proxy', () => {
+        proxyService?.stop();
+        proxyService = null;
+      }],
+      ['vigia', () => vigiaService?.stop()],
+      ['factoryMetrics', () => {
+        factoryMetricsReader?.stop();
+        factoryMetricsReader = null;
+      }],
+      ['factoryRigs', () => {
+        factoryRigsReader?.stop();
+        factoryRigsReader = null;
+      }],
+      ['routines', () => {
+        routineRunner?.stop();
+        routineRunner = null;
+      }],
+      ['faxina', () => {
+        faxinaRunner?.stop();
+        faxinaRunner = null;
+      }],
+      ['appUpdate', () => appUpdateService?.stop()],
+      ['celular', () => {
+        const disposing = celularService?.dispose();
+        celularService = null;
+        return disposing;
+      }],
+      // fix/renovacao-credencial (C6, research.md) — antes de descartar o motor,
+      // guarda no cofre o par que o CLI deixou em `.credentials.json` para a
+      // conta ativa. A gravação acontece dentro da chamada, sem esperar promessa.
+      ['captureLivePair', () => accountEngineHost.current()?.captureLivePairNow('quit')],
+      ['accountEngine', () => accountEngineHost.dispose()], // T1125 — nenhum timer (keepAlive/poll) sobrevive ao fechamento do app.
+    ],
+    {
+      quit: () => {
+        if (process.platform !== 'darwin') app.quit();
+      },
+      onError: (name, error) => logMainEvent('shutdown-step-failed', { step: name, error: String(error) }),
+    },
+  );
 });

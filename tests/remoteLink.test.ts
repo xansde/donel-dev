@@ -161,6 +161,25 @@ describe('sessão remota sem ligação', () => {
     expect(h.relinked).toEqual(['pty-1']);
   });
 
+  // 10/11 — two instances of the app reattached the same sessions; the second one's ssh left at once (the remote
+  // port of the tunnel was held by the first) and every turn spawned a new ssh. Whatever the exit code, a relinked
+  // ssh that leaves right away waits longer each time instead of being spawned again with no pause.
+  it.each([
+    ['sai com erro (porta remota ocupada)', false],
+    ['sai com 0', true],
+  ])('o ssh religado %s na hora: a próxima tentativa espera, cada vez mais', async (_label, clean) => {
+    const h = harness(Array(6).fill('alive'));
+    h.sup.track('pty-1', 'root@vps', 'sid-1');
+    h.sup.onPtyExit('pty-1', false, 'exit', clean);
+    for (let turn = 0; turn < 5; turn += 1) {
+      await h.tick();
+      expect(h.relinked).toHaveLength(turn + 1);
+      h.sup.onPtyExit('pty-1', false, 'exit', clean); // the relinked ssh leaves at once (same `now`)
+    }
+    const waits = h.timers.slice(1).map((timer) => timer.ms);
+    expect(waits).toEqual(RELINK_DELAYS_MS.slice(1).concat(RELINK_DELAYS_MS.at(-1)!));
+  });
+
   it('o dono fechou, ou o app está saindo: a saída não é segurada', () => {
     const h = harness([]);
     h.sup.track('pty-1', 'root@vps', 'sid-1');
