@@ -215,7 +215,7 @@ export const BOARD_TOOLS = [
         papel: { type: 'string', description: 'Id do papel (papeis_listar). Líder só o Líder único abre (ela vira o Líder do quadro); as outras sessões, não.' },
         pedido: { type: 'string', description: 'A primeira mensagem: o trabalho, completo e autossuficiente.' },
         nome: { type: 'string', description: 'Nome curto da aba (opcional).' },
-        onde: { type: 'string', description: 'Onde ela roda (opcional): "aqui" (padrão, onde você roda), "este computador" ou o nome de um lugar remoto (ex.: a VPS; veja sessao_quem_sou).' },
+        onde: { type: 'string', description: 'Onde ela roda (opcional): sem ele, "aqui" ou "auto", o app escolhe pela regra fixa da config (sem regra, onde você roda); "este computador" ou o nome de um lugar remoto (ex.: a VPS; veja sessao_quem_sou) prendem a sessão ali, e, cheio, ela espera vaga lá. A resposta diz o porquê em "porque".' },
         quadro: BOARD_REF,
       },
       required: ['papel', 'pedido'],
