@@ -1,0 +1,4 @@
+{
+  "title": "Uma janela só, e sem travar o computador",
+  "text": "Abrir o Donel Dev de novo com ele já aberto agora só traz a janela que já está aberta para a frente, em vez de abrir uma segunda cópia. Duas cópias juntas brigavam pelas mesmas sessões da VPS e iam enchendo a memória do computador até a janela sumir. Se a janela cair, o Donel Dev reabre sozinho e anota o motivo num registro, e fechar a janela sempre encerra o programa inteiro."
+}
