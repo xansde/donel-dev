@@ -1,4 +1,4 @@
 {
-  "title": "O PC guarda metade da memória para você",
-  "text": "Sessões abertas por outras sessões só começam no PC enquanto ele tiver mais da metade da memória livre; acima disso, esperam vaga. E quando a máquina escolhida está cheia, a sessão não vai mais parar na máquina reservada a outro projeto: espera vaga onde devia abrir."
+  "title": "Cada máquina recebe o trabalho dela",
+  "text": "A máquina de homologação só recebe trabalho de homologação, mesmo sem nenhuma regra na configuração: uma sessão de outro projeto aberta de lá vai para a outra VPS, ou espera vaga nela. O PC guarda metade da memória para você: sessões abertas por outras sessões só começam nele enquanto tiver mais da metade da memória livre. E quando a máquina escolhida está cheia, a sessão não vai mais parar na máquina de outro projeto."
 }

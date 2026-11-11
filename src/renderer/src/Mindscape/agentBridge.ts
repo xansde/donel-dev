@@ -1534,6 +1534,7 @@ export class AgentBridge {
           explicit,
           callerMachine: caller.remoteId ?? PC_MACHINE_ID,
           roleAnyPlace: role.anyPlace === true,
+          roleId: role.id,
           projectPath,
           projectName: scope.projectName ?? this.boardName(projectPath),
           request: call.pedido,

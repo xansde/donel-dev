@@ -67,3 +67,30 @@ describe('roteador de lugar', () => {
     expect(routePlace(input({ roleAnyPlace: true, machines: fullOn(['r-beacon', 'r-vega']) }))).toMatchObject({ machine: 'r-beacon', queue: true });
   });
 });
+
+// Líder, 11/11 (Revisor 7aaec9b8, B1/B2): sem config nenhuma, a máquina de homologação só recebe projeto de
+// homologação (pelo nome ou pasta do projeto, ou papel homol-*); o resto vai para a outra remota ou espera vaga nela.
+describe('roteador de lugar sem config: a máquina de homologação é só da homologação', () => {
+  const machines = [
+    { id: 'pc', label: 'este computador', roomSessions: 99 },
+    { id: 'r-vps', label: 'VPS', roomSessions: 3 },
+    { id: 'r-hom', label: 'Homologações', roomSessions: 30 },
+  ];
+  const bare = (over: Partial<RouteInput> = {}): RouteInput => input({ rules: null, machines, projectPath: '/x/seazone/atlas', projectName: 'atlas', ...over });
+
+  it('B1: quem roda na homologação abre sessão de outro projeto, sem "onde": vai para a outra remota', () => {
+    expect(routePlace(bare({ callerMachine: 'r-hom' }))).toMatchObject({ machine: 'r-vps', queue: false });
+    const full = machines.map((m) => (m.id === 'r-vps' ? { ...m, waitReasons: FULL } : m));
+    expect(routePlace(bare({ callerMachine: 'r-hom', roleAnyPlace: true, machines: full }))).toMatchObject({ machine: 'r-vps', queue: true });
+  });
+
+  it('B2: VPS cheia com papel que aceita qualquer lugar espera vaga nela, nunca vai para a homologação', () => {
+    const full = machines.map((m) => (m.id === 'r-vps' ? { ...m, waitReasons: FULL } : m));
+    expect(routePlace(bare({ callerMachine: 'r-vps', roleAnyPlace: true, machines: full }))).toMatchObject({ machine: 'r-vps', queue: true });
+  });
+
+  it('projeto ou papel de homologação vai para a máquina de homologação', () => {
+    expect(routePlace(bare({ callerMachine: 'r-vps', projectPath: '/x/seazone/Homologacao-beacon', projectName: 'Homologacao-beacon' }))).toMatchObject({ machine: 'r-hom' });
+    expect(routePlace(bare({ callerMachine: 'r-vps', roleId: 'homol-atestador' }))).toMatchObject({ machine: 'r-hom' });
+  });
+});

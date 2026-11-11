@@ -3,13 +3,15 @@
 // explicit `onde`, and 24 of 59 openings without `onde` landed where the owner did not want them.
 //
 // Pure: no React, IPC or fs. It never throws; a rule that names a place that does not exist says so in `reason` and
-// falls to the default. `rules` absent or `enabled: false` keeps the old behaviour, except that an explicit place no
-// longer overflows (R1).
+// falls to the default.
 //
 // Order:
 //   R1. explicit place → that machine; full → queue. Never overflows.
-//   R2. no rules (or disabled) → where the caller runs; full and the role is "lugar: qualquer" → the first other
-//       remote with room (as before); else queue.
+//   H.  with or without config (owner's rule, 11/11): the remote whose name says homologação takes only homologação
+//       work (project name or folder with "homolog", or a `homol-*` role), and that work goes there. Other work that
+//       would land there goes to the first remote not reserved; it never overflows there either.
+//   R2. no rules (or disabled) → where the caller runs (after H); full and the role is "lugar: qualquer" → the first
+//       other remote with room that is not reserved; else queue.
 //   R3. `pcWhenRequestHas` matches the request (any case) → the PC; full → queue.
 //   R4. `projects[].match` matches the project name or a piece of its path → that rule's place.
 //   R5. else `defaultPlace`; without it, where the caller runs.
@@ -50,6 +52,8 @@ export interface RouteInput {
   /** Where the caller runs (`pc` or a remote id). */
   readonly callerMachine: string;
   readonly roleAnyPlace: boolean;
+  /** The role id of the new session: `homol-*` is homologação work. */
+  readonly roleId?: string;
   readonly projectPath: string;
   readonly projectName?: string;
   readonly request: string;
@@ -71,6 +75,9 @@ export interface RouteResult {
 const fold = (text: string): string => text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().trim();
 
 const PC_WORDS = new Set(['este computador', 'local', 'pc']);
+
+/** The word that marks homologação work and its machine (folded: no case, no accents). */
+const HOMOLOGATION = 'homolog';
 
 function labelOf(machines: readonly RouteMachine[], id: string): string {
   if (id === PC_MACHINE_ID) return 'este computador';
@@ -98,58 +105,67 @@ function stay(machines: readonly RouteMachine[], id: string, why: string): Route
     : { machine: id, queue: false, reason: why };
 }
 
+/** The remote whose label or id says homologação ("Homologações", `homologacao-1`): it takes only homologação work. */
+function homologationPlace(machines: readonly RouteMachine[]): string | undefined {
+  return machines.find((machine) => machine.id !== PC_MACHINE_ID && (fold(machine.label).includes(HOMOLOGATION) || fold(machine.id).includes(HOMOLOGATION)))?.id;
+}
+
 function routeUnsafe(input: RouteInput): RouteResult {
   const { machines } = input;
 
   // R1 — an explicit place is kept, full or not.
   if (input.explicit !== undefined) return stay(machines, input.explicit, `você pediu ${labelOf(machines, input.explicit)}`);
 
-  // R2 — no rules: as before.
-  const rules = input.rules;
-  if (!rules || rules.enabled !== true) {
-    const here = input.callerMachine;
-    const why = `sem regra de lugar na config: onde você roda (${labelOf(machines, here)})`;
-    if (isFull(machines, here) && input.roleAnyPlace) {
-      const other = machines.find((machine) => machine.id !== PC_MACHINE_ID && machine.id !== here && !isFull(machines, machine.id));
-      if (other) return { machine: other.id, queue: false, reason: `${why} estava cheia; o papel permite outro lugar`, overflowFrom: labelOf(machines, here) };
-    }
-    return stay(machines, here, why);
-  }
-
-  // R3 — the request needs the PC.
-  const request = input.request.toLowerCase();
-  const word = (rules.pcWhenRequestHas ?? []).find((piece) => typeof piece === 'string' && piece.trim() !== '' && request.includes(piece.trim().toLowerCase()));
-  if (word !== undefined) return stay(machines, PC_MACHINE_ID, `o pedido fala em «${word.trim()}», que só existe neste computador`);
-
-  const warnings: string[] = [];
-  // The places `projects[]` gives to a project: they never take another project's overflow (R6).
-  const reserved = new Set<string>();
-  for (const rule of rules.projects ?? []) {
-    const place = typeof rule?.place === 'string' ? resolvePlace(machines, rule.place) : undefined;
-    if (place !== undefined) reserved.add(place);
-  }
-  let target: string | undefined;
-  let why = '';
-
-  // R4 — the project has its own place.
   const name = fold(input.projectName ?? '');
   const path = fold(input.projectPath);
-  for (const rule of rules.projects ?? []) {
-    if (typeof rule?.match !== 'string' || !fold(rule.match)) continue;
-    const match = fold(rule.match);
-    if (!name.includes(match) && !path.includes(match)) continue;
-    const place = resolvePlace(machines, rule.place);
-    if (place === undefined) {
-      warnings.push(`a regra do projeto «${rule.match}» aponta «${String(rule.place)}», que não existe`);
+  const homologPlace = homologationPlace(machines);
+  const homologWork = name.includes(HOMOLOGATION) || path.includes(HOMOLOGATION) || (input.roleId ?? '').toLowerCase().startsWith('homol-');
+  const warnings: string[] = [];
+  // Places that never take another project's work, nor its overflow: the homologação one (H) and `projects[]` ones.
+  const reserved = new Set<string>();
+  if (homologPlace !== undefined && !homologWork) reserved.add(homologPlace);
+  let target: string | undefined;
+  let why = '';
+  /** The target is this work's own place (its `projects[]` rule, or homologação work on the homologação place). */
+  let own = false;
+
+  const rules = input.rules && input.rules.enabled === true ? input.rules : null;
+  if (rules) {
+    // R3 — the request needs the PC.
+    const request = input.request.toLowerCase();
+    const word = (rules.pcWhenRequestHas ?? []).find((piece) => typeof piece === 'string' && piece.trim() !== '' && request.includes(piece.trim().toLowerCase()));
+    if (word !== undefined) return stay(machines, PC_MACHINE_ID, `o pedido fala em «${word.trim()}», que só existe neste computador`);
+
+    for (const rule of rules.projects ?? []) {
+      const place = typeof rule?.place === 'string' ? resolvePlace(machines, rule.place) : undefined;
+      if (place !== undefined) reserved.add(place);
+    }
+    // R4 — the project has its own place.
+    for (const rule of rules.projects ?? []) {
+      if (typeof rule?.match !== 'string' || !fold(rule.match)) continue;
+      const match = fold(rule.match);
+      if (!name.includes(match) && !path.includes(match)) continue;
+      const place = resolvePlace(machines, rule.place);
+      if (place === undefined) {
+        warnings.push(`a regra do projeto «${rule.match}» aponta «${String(rule.place)}», que não existe`);
+        break;
+      }
+      target = place;
+      own = true;
+      why = `regra do projeto «${rule.match}»: ${labelOf(machines, place)}`;
       break;
     }
-    target = place;
-    why = `regra do projeto «${rule.match}»: ${labelOf(machines, place)}`;
-    break;
   }
 
-  // R5 — the default place, or where the caller runs.
-  if (target === undefined && rules.defaultPlace !== undefined) {
+  // H — homologação work goes to the homologação place, with or without config.
+  if (target === undefined && homologWork && homologPlace !== undefined) {
+    target = homologPlace;
+    own = true;
+    why = `trabalho de homologação: ${labelOf(machines, homologPlace)}`;
+  }
+
+  // R5 — the default place; R2 (no config) and R5 without one: where the caller runs.
+  if (target === undefined && rules?.defaultPlace !== undefined) {
     const place = resolvePlace(machines, rules.defaultPlace);
     if (place === undefined) warnings.push(`o lugar padrão «${String(rules.defaultPlace)}» não existe`);
     else {
@@ -159,21 +175,39 @@ function routeUnsafe(input: RouteInput): RouteResult {
   }
   if (target === undefined) {
     target = input.callerMachine;
-    why = `sem regra que case: onde você roda (${labelOf(machines, target)})`;
+    why = rules ? `sem regra que case: onde você roda (${labelOf(machines, target)})` : `sem regra de lugar na config: onde você roda (${labelOf(machines, target)})`;
+  }
+
+  // H — a place reserved to other work never takes this one: the first remote free of reservation instead.
+  if (!own && reserved.has(target)) {
+    const from = labelOf(machines, target);
+    const whose = target === homologPlace ? 'trabalho de homologação' : 'o projeto da regra dele';
+    const other = machines.find((machine) => machine.id !== PC_MACHINE_ID && !reserved.has(machine.id));
+    if (other) {
+      target = other.id;
+      why = `${why}; ${from} só recebe ${whose}, então ${labelOf(machines, other.id)}`;
+    } else warnings.push(`${from} só recebe ${whose}, e não há outro lugar remoto`);
   }
   if (warnings.length > 0) why = `${why} (aviso: ${warnings.join('; ')})`;
 
-  // R6 — full: the remote with the most room, never the PC nor another project's place.
+  // Full, and the role is "lugar: qualquer": another remote, never the PC nor a reserved place.
   if (isFull(machines, target) && input.roleAnyPlace) {
     let best: RouteMachine | undefined;
     for (const machine of machines) {
       if (machine.id === PC_MACHINE_ID || machine.id === target || isFull(machines, machine.id) || reserved.has(machine.id)) continue;
+      if (!rules) {
+        // R2 — as before: the first other remote with room.
+        best = machine;
+        break;
+      }
+      // R6 — the one with the most room, by a memory read.
       if (machine.roomSessions === undefined || machine.roomSessions <= 0) continue;
       if (!best || machine.roomSessions > (best.roomSessions ?? 0)) best = machine;
     }
     if (best) {
       const from = labelOf(machines, target);
-      return { machine: best.id, queue: false, reason: `${why}; ${from} estava cheia, foi para ${best.label}, a de mais vaga`, overflowFrom: from };
+      const how = rules ? `foi para ${best.label}, a de mais vaga` : 'o papel permite outro lugar';
+      return { machine: best.id, queue: false, reason: `${why}; ${from} estava cheia, ${how}`, overflowFrom: from };
     }
   }
   return stay(machines, target, why);
