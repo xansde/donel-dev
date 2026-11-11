@@ -69,7 +69,7 @@ describe('evaluateFaxineiro — triggers', () => {
   });
 
   it('each machine limit wakes the board with sessions there, avoiding that machine', () => {
-    for (const machine of [vps({ ramFreeRatio: 0.1 }), vps({ swapUsedRatio: 0.2, swapOutPerSec: 5 }), vps({ load5PerCpu: 2.5 }), vps({ diskUsedRatio: 0.9 })]) {
+    for (const machine of [vps({ ramFreeRatio: 0.1 }), vps({ swapUsedRatio: 0.2, swapOutPerSec: 5, ramAvailableBytes: 0.5 * GB }), vps({ load5PerCpu: 2.5 }), vps({ diskUsedRatio: 0.9 })]) {
       const round = evaluateFaxineiro(input({ machines: [machine] }), stateToday(), NOW);
       expect(round.wakes).toHaveLength(1);
       expect(round.wakes[0]).toMatchObject({ projectPath: '/p/atlas', avoidMachine: 'vps' });
@@ -83,12 +83,23 @@ describe('evaluateFaxineiro — triggers', () => {
     expect(round.fullMachines).toEqual({});
   });
 
-  it('swap paging in or out wakes the Faxineiro', () => {
-    for (const machine of [vps({ swapUsedRatio: 0.18, swapInPerSec: 3 }), vps({ swapUsedRatio: 0.18, swapOutPerSec: 3 })]) {
+  it('swap paging in or out with little RAM wakes the Faxineiro', () => {
+    for (const machine of [vps({ swapUsedRatio: 0.18, swapInPerSec: 3, ramAvailableBytes: 0.5 * GB }), vps({ swapUsedRatio: 0.18, swapOutPerSec: 3, ramAvailableBytes: 0.5 * GB })]) {
       const round = evaluateFaxineiro(input({ machines: [machine] }), stateToday(), NOW);
       expect(round.wakes).toHaveLength(1);
       expect(round.wakes[0]?.reasons.join(' ')).toContain('troca ativa');
     }
+  });
+
+  // t-89f14324 — seis aberturas ficaram na fila de uma VPS de 31 GB com 22 a 25 GB livres por causa de paginação.
+  it('swap paginando com 20 GB livres não marca a máquina cheia; com 500 MB livres, marca', () => {
+    const roomy = vps({ swapUsedRatio: 0.05, swapInPerSec: 40, swapOutPerSec: 12, ramFreeRatio: 0.65, ramAvailableBytes: 20 * GB });
+    let round = evaluateFaxineiro(input({ machines: [roomy] }), stateToday(), NOW);
+    expect(round.wakes).toEqual([]);
+    expect(round.fullMachines).toEqual({});
+    const tight = vps({ swapUsedRatio: 0.05, swapInPerSec: 40, swapOutPerSec: 12, ramFreeRatio: 0.3, ramAvailableBytes: 0.5 * GB });
+    round = evaluateFaxineiro(input({ machines: [tight] }), stateToday(), NOW);
+    expect(round.fullMachines.vps?.join(' ')).toContain('troca ativa');
   });
 
   it('swap in use with little RAM available wakes the Faxineiro', () => {

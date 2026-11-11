@@ -53,8 +53,9 @@ export interface FaxineiroConfig {
 export const DEFAULT_FAXINEIRO_CONFIG: FaxineiroConfig = {
   enabled: true,
   ramFreeMinPct: 15,
-  // 0: any paging in the one-second window counts. A parked swap reads 0 exactly; a machine choking pages for seconds
-  // on end. The owner raises it in config.json if a stray page now and then wakes the Faxineiro.
+  // 0: any paging in the one-second window counts, while the RAM available is under `swapRamAvailableMinMb` (paging
+  // with RAM to spare never counts). A parked swap reads 0 exactly; a machine choking pages for seconds on end. The
+  // owner raises it in config.json if a stray page now and then wakes the Faxineiro.
   swapActiveMinPagesPerSec: 0,
   // 1 GB: room for two or three more Claude sessions (each takes 300 to 500 MB), so the Faxineiro wakes before the
   // paging starts. The 08/11 reading (3,6 GB) stays out. Absolute, not a percent: the RAM trigger above already is one.
@@ -289,7 +290,11 @@ export function machineReasons(machine: MachineReading, streak: number, config: 
   const swapIn = machine.swapInPerSec ?? 0;
   const swapOut = machine.swapOutPerSec ?? 0;
   const swapUsed = machine.swapUsedRatio !== null ? ` (swap em uso ${pct(machine.swapUsedRatio)})` : '';
-  if (swapIn > config.swapActiveMinPagesPerSec || swapOut > config.swapActiveMinPagesPerSec)
+  // t-89f14324 — paging with RAM to spare is the kernel moving cold pages, not a full machine: six openings waited on
+  // a 31 GB remote with 22 to 25 GB free. Active swap counts only when the RAM available is also under the swap
+  // limit (or unknown).
+  const ramShort = machine.ramAvailableBytes === null || machine.ramAvailableBytes < config.swapRamAvailableMinMb * 1024 * 1024;
+  if (ramShort && (swapIn > config.swapActiveMinPagesPerSec || swapOut > config.swapActiveMinPagesPerSec))
     reasons.push(`${machine.label}: troca ativa com o swap, ${swapIn} páginas/s entrando e ${swapOut} saindo${swapUsed} (limite ${config.swapActiveMinPagesPerSec})`);
   else if (machine.swapUsedRatio !== null && machine.swapUsedRatio > 0 && machine.ramAvailableBytes !== null && machine.ramAvailableBytes < config.swapRamAvailableMinMb * 1024 * 1024)
     reasons.push(`${machine.label}: swap em uso ${pct(machine.swapUsedRatio)} com só ${formatBytes(machine.ramAvailableBytes)} de RAM disponível (limite ${config.swapRamAvailableMinMb} MB)`);
