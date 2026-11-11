@@ -176,6 +176,7 @@ import {
   toggleFavorite,
   writeAppConfig,
   type AppConfig,
+  patchLeaderPrefs,
 } from './config-store';
 import { resolveCardRepo, resolveCardRepos, type CardRepoResolution } from './cardRepoResolver';
 import {
@@ -302,7 +303,7 @@ import type { AccountMod } from './accounts/account-mod';
 import { IsolatedLoginManager, type IsolatedLoginFsDeps } from './accounts/isolated-login';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
 import { sanitizeLayoutPrefs, type LayoutPrefs } from '../shared/layoutPrefs';
-import { sanitizeLeaderPrefs, type LeaderPrefs } from '../shared/leaderPrefs';
+import { type LeaderPrefs } from '../shared/leaderPrefs';
 import { adoptRefreshedActivePair, applyAccountSwitch, createSystemClaudeStateIoDeps, readCurrentCredentialPair } from './accounts/claude-state';
 import { accountFingerprintFromClaudeJsonText } from './accounts/credentials-file';
 import { createLocalMod } from './accounts/mods/local-mod';
@@ -2549,9 +2550,8 @@ function registerConfigIpcHandlers(): void {
   /** Onde o Líder roda — só lembra; o renderer muda o Líder de lugar na próxima mensagem pelo Jobu. */
   ipcMain.handle(CONFIG_CHANNELS.setLeaderPrefs, (_event, prefs: Partial<LeaderPrefs>): AppConfigDto => {
     const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
-    // A `where` from Preferences is the owner's choice: marked, so a 'local' he picks is never read as the old default.
-    const chosen = typeof patch.where === 'string' ? { chosen: true } : {};
-    appConfig = { ...appConfig, leader: sanitizeLeaderPrefs({ ...appConfig.leader, ...patch, ...chosen }, appConfig.leader) };
+    // Re-read from disk: `leader.home` may have been written by hand with the app open (patchLeaderPrefs).
+    appConfig = { ...appConfig, leader: patchLeaderPrefs(getAppConfigPath(), appConfig.leader, patch, configIoDeps) };
     persistAppConfig();
     return toAppConfigDto(appConfig);
   });
