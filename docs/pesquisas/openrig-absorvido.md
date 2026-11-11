@@ -1,8 +1,38 @@
 # OpenRig — registro de absorção
 
-Último commit absorvido: d5832cd90d5ac6f4a326f7cde4450d3aa4e97eff
+Último commit absorvido: 3a53a07a50fc3e73564c134b76f079a8f48f7589
 
 Referência de design do Mindscape (github.com/mvschwarz/openrig). Procedimento na skill `absorver-openrig`. Cada rodada lista o que virou PR, o que ficou adiado, o que espera o dono e o que foi descartado.
+
+## 2026-11-11 — d5832cd..3a53a07
+
+53 commits do OpenRig; versões novas: 0.7.11.
+
+### Vale → PR
+
+Nenhum.
+
+### Vale → adiado
+
+Nenhum (teto de 3 PRs não foi atingido).
+
+### Vale → pendente para o dono
+
+- Papel editado depois que o lugar abriu fica visível (commits `a5bda7f`, `85b4ccf`; itens 12 e 04 do plano): o OpenRig mostra no status do lugar se a orientação foi gravada antes ou depois de o agente carregá-la, sem afirmar que ele a leu. No Donel o papel chega só no lançamento (`roleLaunch.ts`, texto gravado para aquele lançamento). Hoje o único aviso é uma frase fixa no editor de papéis (`RolesEditor.tsx`: "Vale para os lugares que ainda vão abrir ou retomar"); um lugar vivo com o papel antigo não tem marca no cartão nem na aba. Pergunta: quando você edita um papel e há lugares vivos com a versão antiga, quer que o cartão e a aba deles mostrem "papel mudou depois que esta sessão abriu" (com renovar para pegar a versão nova)? Ou a frase do editor de papéis basta e a marca seria ruído?
+
+### Descartado
+
+- Pareamento de hosts e respostas a agente receptor: O Donel não pareia hosts por token de daemon: o lugar remoto é ssh por chave (ADR 0005, `remote-session.ts`). A parte "a resposta da pessoa vai a um agente que decide" é a mesma pergunta já pendente com o dono desde a rodada de 08/11 (responder o "esperando você" por uma sessão sua), ainda sem resposta. Não abro outra.
+- Permissão do runner decidida pelo agente receptor: É a mesma pergunta pendente desde 08/11 (uma sessão pode decidir em nome do dono?). No Donel, a permissão de outro lugar só se responde por `sessao_permissao`, com hierarquia (`reach.ts`), ou pelo dono na tela. O destino do Slack não se aplica: o Slack passa só pela Composio.
+- Entrega de mensagem: guarda contra diálogo e leitura da caixa do Claude: O Donel já tem igual ou melhor. O `evaluateGate` de `src/shared/chat/sendMachine.ts` lê a tela em todo envio (`blockingScreen` + `isReadyForInput`), sem o atalho de "hook ocioso recente" que causou o furo no OpenRig. A caixa é localizada pelas réguas (`locateInputBox`), então a dica de contexto abaixo do rodapé não a esconde. O ack-lookup confere o prompt no hook ou no transcript, o que já cobre a prova de entrega por send.
+- Fila e varredura de travados (stuck sweep): Contadores e desempenho da varredura do daemon/SQLite. A fila durável (continuação do item 13) não começou, e o filtro das rotinas (item 20) já tem dedup, histerese e teto por janela.
+- Lugar (seat): tipo resolvido numa fronteira e ciclo de vida por tipo: Refactor interno do daemon, sem ideia nova para o Donel.
+- Orientação ao lugar: ponteiro de skills, refocus e recap: O ponteiro de skills, ajuda e contexto e o recap-write pertencem ao CLI rig e ao LEARNED.md do OpenRig. No Donel, o escopo do papel já define MCPs, plugins e skills por lugar, e as ferramentas do MCP donel se descrevem sozinhas. O refocus entre hooks sobrepostos é coisa da skill refocusing. A parte "orientação gravada depois do carregamento" foi para pendentes do dono.
+- Restore, handover e aviso de restauração: Aviso de restore de compactação, rebuild do Codex e reserva de partida do daemon são mecânica do daemon tmux. A renovação em voo (item 07) já confirma a passagem (PR #321). O pré-lançamento que confia na raiz git canônica não afeta nenhum repo hoje: o lugar remoto já marca a pasta como confiável, e nenhum dos 8 repos em ~/seazone rastreia `.claude/settings.json` com `permissions.allow`, que é o gatilho do diálogo.
+- Lugar esperando uma pessoa: nome da pergunta na CLI: O Donel já tem melhor. O "precisa de você" é contagem com todos os motivos em ordem estável (`sessionAxes.ts`), então um erro antigo não esconde a pergunta viva. O resto (dica de rig send, skill loadout) é saída do CLI rig, sem equivalente.
+- Gateway Slack: resposta 200 ilegível pode ter postado: Fora do plano. O Slack do dono passa só pela Composio e pelo slack-guard, sem gateway próprio do app.
+- TUI: cobertura de saúde e configuração de pareamento: A TUI está fora de escopo (decisão do dono, 03/11).
+- Docs, skills, instalador, CI, testes e release 0.7.11: Packaging, release, CI e docs do próprio OpenRig, sem ideia de design nova.
 
 ## 2026-11-10 — 521405f..d5832cd
 
