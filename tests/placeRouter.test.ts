@@ -7,7 +7,7 @@ const FULL = ['RAM livre 5%'];
 const RULES: RoutingRules = {
   enabled: true,
   defaultPlace: 'beacon',
-  projects: [{ match: 'Homologacao', place: 'vega' }],
+  projects: [{ match: 'Laboratorio', place: 'vega' }],
   pcWhenRequestHas: ['PowerShell', '%APPDATA%'],
 };
 
@@ -44,9 +44,9 @@ describe('roteador de lugar', () => {
   });
 
   it('projeto com regra própria abre no lugar dela', () => {
-    const route = routePlace(input({ projectPath: '/home/x/seazone/Homologação', projectName: 'Homologação' }));
+    const route = routePlace(input({ projectPath: '/home/x/seazone/Laboratório', projectName: 'Laboratório' }));
     expect(route).toMatchObject({ machine: 'r-vega', queue: false });
-    expect(route.reason).toContain('Homologacao');
+    expect(route.reason).toContain('Laboratorio');
   });
 
   it('pedido que só o PC atende vai para o PC', () => {

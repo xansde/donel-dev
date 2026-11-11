@@ -1,4 +1,4 @@
-// Roteador de lugar (t-89f14324, item 2 do treinamento "Lideranças Tech"): the machine a `sessao_abrir` runs on is
+// Roteador de lugar (t-89f14324): the machine a `sessao_abrir` runs on is
 // chosen by a fixed rule from the config, never by the model. Measured 06–10/11: 10 of 14 overflows went over an
 // explicit `onde`, and 24 of 59 openings without `onde` landed where the owner did not want them.
 //
@@ -21,7 +21,7 @@ import { PC_MACHINE_ID } from './faxineiro/triggers';
 export interface RoutingProjectRule {
   /** Matched against the project name or a piece of its path (any case, accents ignored). */
   readonly match: string;
-  /** A place label or id ("VPS", "Homologações"), or "este computador". */
+  /** A place label or id ("VPS", "lab"), or "este computador". */
   readonly place: string;
 }
 
@@ -180,6 +180,8 @@ export function routePlace(input: RouteInput): RouteResult {
   }
 }
 
+const ROUTING_KEYS = new Set(['enabled', 'defaultPlace', 'projects', 'pcWhenRequestHas']);
+
 /** `team.routing` from `config.json`: keeps what is valid, drops the rest; anything else → `undefined` (off). */
 export function sanitizeRoutingRules(value: unknown): RoutingRules | undefined {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined;
@@ -192,7 +194,10 @@ export function sanitizeRoutingRules(value: unknown): RoutingRules | undefined {
         .map((item) => ({ match: item.match as string, place: item.place as string }))
     : undefined;
   const pcWhenRequestHas = Array.isArray(raw.pcWhenRequestHas) ? raw.pcWhenRequestHas.filter(text) : undefined;
+  // Keys a newer version may add are kept, so this one saving the prefs never drops them.
+  const unknownKeys = Object.fromEntries(Object.entries(raw).filter(([key]) => !ROUTING_KEYS.has(key)));
   return {
+    ...unknownKeys,
     enabled: raw.enabled === true,
     ...(text(raw.defaultPlace) ? { defaultPlace: raw.defaultPlace } : {}),
     ...(projects ? { projects } : {}),
