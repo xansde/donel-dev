@@ -54,14 +54,43 @@ describe('roteador de lugar', () => {
     expect(route).toMatchObject({ machine: 'pc', queue: false });
   });
 
-  it('lugar padrão cheio, com papel que aceita qualquer lugar, vai para a remota de mais vaga e nunca para o PC', () => {
-    const machines = [{ id: 'pc', label: 'este computador', roomSessions: 99 }, { id: 'r-beacon', label: 'beacon', waitReasons: FULL }, { id: 'r-x', label: 'x', roomSessions: 1 }, { id: 'r-vega', label: 'vega', roomSessions: 20 }];
+  // Revisor 7aaec9b8 (A1): o lugar reservado a um projeto nunca recebe o transbordo de outro, e o PC também não.
+  it('lugar padrão cheio, com papel que aceita qualquer lugar, vai para a remota livre de mais vaga, nunca para o PC nem para o lugar de outro projeto', () => {
+    const machines = [{ id: 'pc', label: 'este computador', roomSessions: 99 }, { id: 'r-beacon', label: 'beacon', waitReasons: FULL }, { id: 'r-x', label: 'x', roomSessions: 1 }, { id: 'r-y', label: 'y' }, { id: 'r-vega', label: 'vega', roomSessions: 20 }];
     const route = routePlace(input({ roleAnyPlace: true, machines }));
-    expect(route).toMatchObject({ machine: 'r-vega', queue: false, overflowFrom: 'beacon' });
+    expect(route).toMatchObject({ machine: 'r-x', queue: false, overflowFrom: 'beacon' });
   });
 
-  it('nenhuma remota livre: espera na fila do lugar da regra', () => {
-    const route = routePlace(input({ roleAnyPlace: true, machines: fullOn(['r-beacon', 'r-vega']) }));
-    expect(route).toMatchObject({ machine: 'r-beacon', queue: true });
+  it('nenhuma remota livre (a única com vaga é de outro projeto, ou não tem leitura de memória): espera na fila do lugar da regra', () => {
+    const machines = [{ id: 'pc', label: 'este computador', roomSessions: 99 }, { id: 'r-beacon', label: 'beacon', waitReasons: FULL }, { id: 'r-y', label: 'y' }, { id: 'r-vega', label: 'vega', roomSessions: 30 }];
+    expect(routePlace(input({ roleAnyPlace: true, machines }))).toMatchObject({ machine: 'r-beacon', queue: true });
+    expect(routePlace(input({ roleAnyPlace: true, machines: fullOn(['r-beacon', 'r-vega']) }))).toMatchObject({ machine: 'r-beacon', queue: true });
+  });
+});
+
+// Líder, 11/11 (Revisor 7aaec9b8, B1/B2): sem config nenhuma, a máquina de homologação só recebe projeto de
+// homologação (pelo nome ou pasta do projeto, ou papel homol-*); o resto vai para a outra remota ou espera vaga nela.
+describe('roteador de lugar sem config: a máquina de homologação é só da homologação', () => {
+  const machines = [
+    { id: 'pc', label: 'este computador', roomSessions: 99 },
+    { id: 'r-vps', label: 'VPS', roomSessions: 3 },
+    { id: 'r-hom', label: 'Homologações', roomSessions: 30 },
+  ];
+  const bare = (over: Partial<RouteInput> = {}): RouteInput => input({ rules: null, machines, projectPath: '/x/seazone/atlas', projectName: 'atlas', ...over });
+
+  it('B1: quem roda na homologação abre sessão de outro projeto, sem "onde": vai para a outra remota', () => {
+    expect(routePlace(bare({ callerMachine: 'r-hom' }))).toMatchObject({ machine: 'r-vps', queue: false });
+    const full = machines.map((m) => (m.id === 'r-vps' ? { ...m, waitReasons: FULL } : m));
+    expect(routePlace(bare({ callerMachine: 'r-hom', roleAnyPlace: true, machines: full }))).toMatchObject({ machine: 'r-vps', queue: true });
+  });
+
+  it('B2: VPS cheia com papel que aceita qualquer lugar espera vaga nela, nunca vai para a homologação', () => {
+    const full = machines.map((m) => (m.id === 'r-vps' ? { ...m, waitReasons: FULL } : m));
+    expect(routePlace(bare({ callerMachine: 'r-vps', roleAnyPlace: true, machines: full }))).toMatchObject({ machine: 'r-vps', queue: true });
+  });
+
+  it('projeto ou papel de homologação vai para a máquina de homologação', () => {
+    expect(routePlace(bare({ callerMachine: 'r-vps', projectPath: '/x/seazone/Homologacao-beacon', projectName: 'Homologacao-beacon' }))).toMatchObject({ machine: 'r-hom' });
+    expect(routePlace(bare({ callerMachine: 'r-vps', roleId: 'homol-atestador' }))).toMatchObject({ machine: 'r-hom' });
   });
 });
