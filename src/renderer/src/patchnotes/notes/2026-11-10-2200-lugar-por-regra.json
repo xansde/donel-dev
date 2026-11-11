@@ -1,0 +1,4 @@
+{
+  "title": "Sessões abrem na máquina certa por regra sua",
+  "text": "Quando uma sessão abre outra sem dizer onde, o app escolhe a máquina por uma regra fixa que você escreve na configuração: por projeto, um lugar padrão e palavras do pedido que só o PC atende. Sem regra escrita, tudo segue como antes. E quem pede uma máquina de propósito não é mais mandado para outra quando ela está cheia: a sessão espera vaga lá. A resposta de quem abriu diz o porquê da escolha."
+}

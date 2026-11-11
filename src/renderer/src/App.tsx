@@ -2666,6 +2666,7 @@ export function App(): React.JSX.Element {
       }),
     remoteLabel: (remoteId) => accountsView.remotes.find((remote) => remote.id === remoteId)?.label ?? remoteId,
     remotes: () => accountsView.remotes.map((remote) => ({ id: remote.id, label: remote.label })),
+    routing: () => appConfig?.team.routing ?? null,
     projects: () => projects.map((project) => ({ path: project.path, name: project.name })),
     passOn: (requests) => window.donel.ledger.passOn(requests),
     stateEnteredAt: (tabId) => semaphoreStates[tabId]?.stateEnteredAt,
