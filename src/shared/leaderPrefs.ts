@@ -6,6 +6,7 @@
 // A TOP-LEVEL key of config.json (`leader`), like `pet`: a channel without it keeps it in `unknownFields`.
 
 import type { SemaphoreState } from './index';
+import { leaderHome } from './mindscape/leader';
 
 export interface LeaderPrefs {
   /**
@@ -15,17 +16,28 @@ export interface LeaderPrefs {
   readonly where: string;
   /** The owner picked `where` in Preferences. Without it a stored `'local'` is the old default, not a choice. */
   readonly chosen?: true;
+  /**
+   * The folder the Líder único opens in (owner, 11/11: its own project, `…\seazone\_orquestradora`, with a lean
+   * settings). Set by hand in config.json; without it, the folder that holds the boards' projects (`leaderHome`).
+   */
+  readonly home?: string;
 }
 
 export const DEFAULT_LEADER_PREFS: LeaderPrefs = { where: 'auto' };
 
 export function sanitizeLeaderPrefs(value: unknown, fallback: LeaderPrefs = DEFAULT_LEADER_PREFS): LeaderPrefs {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return fallback;
-  const { where, chosen } = value as Record<string, unknown>;
+  const { where, chosen, home } = value as Record<string, unknown>;
   const valid = typeof where === 'string' && where.trim() !== '' && where.length <= 200 ? where : fallback.where;
-  if (chosen === true) return { where: valid, chosen: true };
+  const keptHome = typeof home === 'string' && home.trim() !== '' && home.length <= 1000 ? { home: home.trim() } : {};
+  if (chosen === true) return { where: valid, chosen: true, ...keptHome };
   // The first version (#296) wrote its default, 'local', on the first write of the config: that was never a choice.
-  return { where: valid === 'local' ? 'auto' : valid };
+  return { where: valid === 'local' ? 'auto' : valid, ...keptHome };
+}
+
+/** Where the Líder único opens: `leader.home` when the owner set it, else the folder that holds the boards' projects. */
+export function leaderCwd(prefs: LeaderPrefs, projectPaths: readonly string[]): string | undefined {
+  return prefs.home ?? leaderHome(projectPaths);
 }
 
 /** A remote place as the Líder's placement sees it. */
