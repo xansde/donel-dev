@@ -291,7 +291,7 @@ export function machineReasons(machine: MachineReading, streak: number, config: 
   const swapOut = machine.swapOutPerSec ?? 0;
   const swapUsed = machine.swapUsedRatio !== null ? ` (swap em uso ${pct(machine.swapUsedRatio)})` : '';
   // t-89f14324 — paging with RAM to spare is the kernel moving cold pages, not a full machine: six openings waited on
-  // the Homologações with 22 to 25 GB free. Active swap counts only when the RAM available is also under the swap
+  // a 31 GB remote with 22 to 25 GB free. Active swap counts only when the RAM available is also under the swap
   // limit (or unknown).
   const ramShort = machine.ramAvailableBytes === null || machine.ramAvailableBytes < config.swapRamAvailableMinMb * 1024 * 1024;
   if (ramShort && (swapIn > config.swapActiveMinPagesPerSec || swapOut > config.swapActiveMinPagesPerSec))

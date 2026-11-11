@@ -91,7 +91,7 @@ describe('evaluateFaxineiro — triggers', () => {
     }
   });
 
-  // t-89f14324 — seis aberturas ficaram na fila da Homologações com 22 a 25 GB livres por causa de paginação.
+  // t-89f14324 — seis aberturas ficaram na fila de uma VPS de 31 GB com 22 a 25 GB livres por causa de paginação.
   it('swap paginando com 20 GB livres não marca a máquina cheia; com 500 MB livres, marca', () => {
     const roomy = vps({ swapUsedRatio: 0.05, swapInPerSec: 40, swapOutPerSec: 12, ramFreeRatio: 0.65, ramAvailableBytes: 20 * GB });
     let round = evaluateFaxineiro(input({ machines: [roomy] }), stateToday(), NOW);
