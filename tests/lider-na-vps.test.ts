@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { carryTranscriptLocally } from '../src/main/lider/carry-transcript';
 import { fetchTranscriptFromRemote, sendTranscriptToRemote, type RemoteCommand } from '../src/main/lider/transfer';
 import { remoteAliveFromMeta, type RemoteSessionMeta } from '../src/main/remote-session';
-import { leaderMoves, leaderRemoteId, sanitizeLeaderPrefs } from '../src/shared/leaderPrefs';
+import { leaderCwd, leaderMoves, leaderRemoteId, sanitizeLeaderPrefs } from '../src/shared/leaderPrefs';
 import { planLeaderDelivery, startLeaderMove, type LeaderMoveDeps } from '../src/shared/lider/move';
 
 // Líder único na VPS (docs/planos/lider-na-vps.md): o que faria o Líder sumir ou perder a conversa sem o dono ver.
@@ -51,6 +51,18 @@ function bigTranscript(path: string, bytes: number): string {
 const sha = (text: string | Buffer): string => createHash('sha256').update(text).digest('hex');
 
 describe('Líder único na VPS', () => {
+  it('leader.home no config.json decide a pasta do Líder; sem ela, a pasta-mãe dos quadros (11/11)', () => {
+    const boards = ['C:\\Users\\a\\seazone\\Donel Dev', 'C:\\Users\\a\\seazone\\BizOps'];
+    const home = 'C:\\Users\\a\\seazone\\_orquestradora';
+    // Sobrevive à leitura do config.json e a uma troca de "onde roda" (que regrava o bloco `leader`).
+    const stored = sanitizeLeaderPrefs({ where: 'vps-1', chosen: true, home });
+    expect(stored).toEqual({ where: 'vps-1', chosen: true, home });
+    expect(sanitizeLeaderPrefs({ where: 'local', home })).toEqual({ where: 'auto', home });
+    expect(leaderCwd(stored, boards)).toBe(home);
+    expect(leaderCwd(sanitizeLeaderPrefs({ where: 'auto' }), boards)).toBe('C:\\Users\\a\\seazone');
+    expect(leaderCwd(sanitizeLeaderPrefs({ where: 'auto', home: '   ' }), boards)).toBe('C:\\Users\\a\\seazone');
+  });
+
   it('o Líder roda na VPS por padrão; "este computador" só quando o dono escolheu', () => {
     const remotes = [
       { id: 'vps-sem-conta', hasAccount: false },
