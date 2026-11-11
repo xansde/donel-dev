@@ -475,6 +475,7 @@ export class AgentBridge {
     this.launchedOn.set(machine, recent);
     if (recent.length < room.sessions) return undefined;
     const where = machine === PC_MACHINE_ID ? 'este computador' : this.ports.remoteLabel(machine);
+    if (room.sessions === 0) return [`${where}: sem vaga na última leitura de memória${machine === PC_MACHINE_ID ? ' (o PC guarda metade da RAM livre)' : ''}`];
     return [`${where}: ${recent.length} aberturas desde a última leitura de memória, e ela tinha vaga para ${room.sessions}`];
   }
 

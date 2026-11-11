@@ -54,14 +54,16 @@ describe('roteador de lugar', () => {
     expect(route).toMatchObject({ machine: 'pc', queue: false });
   });
 
-  it('lugar padrão cheio, com papel que aceita qualquer lugar, vai para a remota de mais vaga e nunca para o PC', () => {
-    const machines = [{ id: 'pc', label: 'este computador', roomSessions: 99 }, { id: 'r-beacon', label: 'beacon', waitReasons: FULL }, { id: 'r-x', label: 'x', roomSessions: 1 }, { id: 'r-vega', label: 'vega', roomSessions: 20 }];
+  // Revisor 7aaec9b8 (A1): o lugar reservado a um projeto nunca recebe o transbordo de outro, e o PC também não.
+  it('lugar padrão cheio, com papel que aceita qualquer lugar, vai para a remota livre de mais vaga, nunca para o PC nem para o lugar de outro projeto', () => {
+    const machines = [{ id: 'pc', label: 'este computador', roomSessions: 99 }, { id: 'r-beacon', label: 'beacon', waitReasons: FULL }, { id: 'r-x', label: 'x', roomSessions: 1 }, { id: 'r-y', label: 'y' }, { id: 'r-vega', label: 'vega', roomSessions: 20 }];
     const route = routePlace(input({ roleAnyPlace: true, machines }));
-    expect(route).toMatchObject({ machine: 'r-vega', queue: false, overflowFrom: 'beacon' });
+    expect(route).toMatchObject({ machine: 'r-x', queue: false, overflowFrom: 'beacon' });
   });
 
-  it('nenhuma remota livre: espera na fila do lugar da regra', () => {
-    const route = routePlace(input({ roleAnyPlace: true, machines: fullOn(['r-beacon', 'r-vega']) }));
-    expect(route).toMatchObject({ machine: 'r-beacon', queue: true });
+  it('nenhuma remota livre (a única com vaga é de outro projeto, ou não tem leitura de memória): espera na fila do lugar da regra', () => {
+    const machines = [{ id: 'pc', label: 'este computador', roomSessions: 99 }, { id: 'r-beacon', label: 'beacon', waitReasons: FULL }, { id: 'r-y', label: 'y' }, { id: 'r-vega', label: 'vega', roomSessions: 30 }];
+    expect(routePlace(input({ roleAnyPlace: true, machines }))).toMatchObject({ machine: 'r-beacon', queue: true });
+    expect(routePlace(input({ roleAnyPlace: true, machines: fullOn(['r-beacon', 'r-vega']) }))).toMatchObject({ machine: 'r-beacon', queue: true });
   });
 });

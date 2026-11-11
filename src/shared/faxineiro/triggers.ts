@@ -27,6 +27,11 @@ export interface FaxineiroConfig {
   /** RAM free under this percent → trigger. */
   readonly ramFreeMinPct: number;
   /**
+   * t-89f14324 (Revisor 7aaec9b8) — the RAM the PC keeps free before it takes one more session: the owner works on it,
+   * so it stays under half used. Only the room for openings; the Faxineiro is not woken by it.
+   */
+  readonly pcRamFreeMinPct: number;
+  /**
    * Swap paging (pages in or out per second, the `si`/`so` of `vmstat`) over this → trigger. Swap in use alone is not
    * one (t-e3e8698a, 08/11): Linux leaves pages parked in swap on a machine with RAM to spare, and a cleanup barely moves
    * them (swap at 18% with si/so 0 and 3,6 GB free woke the Faxineiro every read; the round freed 35 MB).
@@ -53,6 +58,7 @@ export interface FaxineiroConfig {
 export const DEFAULT_FAXINEIRO_CONFIG: FaxineiroConfig = {
   enabled: true,
   ramFreeMinPct: 15,
+  pcRamFreeMinPct: 50,
   // 0: any paging in the one-second window counts, while the RAM available is under `swapRamAvailableMinMb` (paging
   // with RAM to spare never counts). A parked swap reads 0 exactly; a machine choking pages for seconds on end. The
   // owner raises it in config.json if a stray page now and then wakes the Faxineiro.
@@ -73,6 +79,7 @@ export const DEFAULT_FAXINEIRO_CONFIG: FaxineiroConfig = {
 /** The pt-BR keys of the `faxineiro` section of `<userData>/rotinas/config.json` (the owner edits it by hand). */
 const CONFIG_KEYS: Readonly<Record<Exclude<keyof FaxineiroConfig, 'enabled'>, string>> = {
   ramFreeMinPct: 'ramLivreMinimaPct',
+  pcRamFreeMinPct: 'ramLivreMinimaPcPct',
   swapActiveMinPagesPerSec: 'trocaAtivaMinimaPaginasPorSeg',
   swapRamAvailableMinMb: 'swapRamDisponivelMinimaMb',
   loadPerCpuMax: 'cargaMaximaPorCpu',
@@ -249,7 +256,8 @@ export const OPENING_SESSION_RAM_MB = 400;
 export function openingRoomOf(machine: MachineReading, config: FaxineiroConfig): OpeningRoom | null {
   if (!machine.reachable || machine.checkedAt === null || machine.ramAvailableBytes === null || machine.ramFreeRatio === null || machine.ramFreeRatio <= 0) return null;
   const totalBytes = machine.ramAvailableBytes / machine.ramFreeRatio;
-  const spare = machine.ramAvailableBytes - (totalBytes * config.ramFreeMinPct) / 100;
+  const keepPct = machine.id === PC_MACHINE_ID ? Math.max(config.ramFreeMinPct, config.pcRamFreeMinPct) : config.ramFreeMinPct;
+  const spare = machine.ramAvailableBytes - (totalBytes * keepPct) / 100;
   return { sessions: Math.max(0, Math.floor(spare / (OPENING_SESSION_RAM_MB * 1024 * 1024))), checkedAt: machine.checkedAt };
 }
 

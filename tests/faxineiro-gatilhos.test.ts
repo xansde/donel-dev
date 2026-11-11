@@ -394,6 +394,16 @@ describe('vaga para abrir sessão (t-d1f072fd)', () => {
     expect(round.openingRoom.vps?.sessions).toBe(0);
   });
 
+  // Revisor 7aaec9b8 (A2): a RAM do PC fica abaixo de 50% usada; o limite global de 15% livre não basta para ele.
+  it('o PC só tem vaga com mais de 50% de RAM livre; uma VPS com a mesma folga tem', () => {
+    const pc = (freeRatio: number): MachineReading => vps({ id: 'pc', label: 'PC', ramFreeRatio: freeRatio, ramAvailableBytes: freeRatio * 32 * GB });
+    expect(evaluateFaxineiro(input({ machines: [pc(0.2)] }), stateToday(), NOW).openingRoom.pc?.sessions).toBe(0);
+    expect(evaluateFaxineiro(input({ machines: [pc(0.6)] }), stateToday(), NOW).openingRoom.pc?.sessions).toBe(8);
+    const config = readFaxineiroConfig({ ramLivreMinimaPcPct: 15 });
+    expect(evaluateFaxineiro(input({ config, machines: [pc(0.2)] }), stateToday(), NOW).openingRoom.pc?.sessions).toBe(4);
+    expect(evaluateFaxineiro(input({ machines: [vps({ ramFreeRatio: 0.2, ramAvailableBytes: 0.2 * 32 * GB })] }), stateToday(), NOW).openingRoom.vps?.sessions).toBe(4);
+  });
+
   it('máquina sem sinal ou sem leitura de RAM não tem vaga calculada', () => {
     const round = evaluateFaxineiro(input({ machines: [vps({ reachable: false }), vps({ id: 'pc', label: 'PC', ramFreeRatio: null, ramAvailableBytes: null })] }), stateToday(), NOW);
     expect(round.openingRoom).toEqual({});

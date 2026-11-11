@@ -13,8 +13,9 @@
 //   R3. `pcWhenRequestHas` matches the request (any case) → the PC; full → queue.
 //   R4. `projects[].match` matches the project name or a piece of its path → that rule's place.
 //   R5. else `defaultPlace`; without it, where the caller runs.
-//   R6. the R4/R5 machine full and the role "lugar: qualquer" → the remote (never the PC) with no wait reasons and the
-//       most room; none → queue.
+//   R6. the R4/R5 machine full and the role "lugar: qualquer" → the remote with no wait reasons and the most room,
+//       never the PC, a place that `projects[]` reserves to another project, or one without a memory read; none →
+//       queue (the owner's rule: a place full waits, it never spills into another project's machine).
 
 import { PC_MACHINE_ID } from './faxineiro/triggers';
 
@@ -121,6 +122,12 @@ function routeUnsafe(input: RouteInput): RouteResult {
   if (word !== undefined) return stay(machines, PC_MACHINE_ID, `o pedido fala em «${word.trim()}», que só existe neste computador`);
 
   const warnings: string[] = [];
+  // The places `projects[]` gives to a project: they never take another project's overflow (R6).
+  const reserved = new Set<string>();
+  for (const rule of rules.projects ?? []) {
+    const place = typeof rule?.place === 'string' ? resolvePlace(machines, rule.place) : undefined;
+    if (place !== undefined) reserved.add(place);
+  }
   let target: string | undefined;
   let why = '';
 
@@ -156,12 +163,13 @@ function routeUnsafe(input: RouteInput): RouteResult {
   }
   if (warnings.length > 0) why = `${why} (aviso: ${warnings.join('; ')})`;
 
-  // R6 — full: the remote with the most room, never the PC.
+  // R6 — full: the remote with the most room, never the PC nor another project's place.
   if (isFull(machines, target) && input.roleAnyPlace) {
     let best: RouteMachine | undefined;
     for (const machine of machines) {
-      if (machine.id === PC_MACHINE_ID || machine.id === target || isFull(machines, machine.id)) continue;
-      if (!best || (machine.roomSessions ?? -1) > (best.roomSessions ?? -1)) best = machine;
+      if (machine.id === PC_MACHINE_ID || machine.id === target || isFull(machines, machine.id) || reserved.has(machine.id)) continue;
+      if (machine.roomSessions === undefined || machine.roomSessions <= 0) continue;
+      if (!best || machine.roomSessions > (best.roomSessions ?? 0)) best = machine;
     }
     if (best) {
       const from = labelOf(machines, target);
