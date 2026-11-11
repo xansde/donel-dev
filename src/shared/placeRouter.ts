@@ -6,7 +6,9 @@
 // falls to the default.
 //
 // Order:
-//   R1. explicit place → that machine; full → queue. Never overflows.
+//   R1. explicit place → that machine; full → queue. Never overflows. The homologação place for other work → refused.
+//   P.  with or without config: a session is born on the PC only when asked ("este computador", or R3); one that would
+//       land there because the caller runs there goes to the first remote not reserved, or waits on it.
 //   H.  with or without config (owner's rule, 11/11): the remote whose name says homologação takes only homologação
 //       work (project name or folder with "homolog", or a `homol-*` role), and that work goes there. Other work that
 //       would land there goes to the first remote not reserved; it never overflows there either.
@@ -70,6 +72,8 @@ export interface RouteResult {
   readonly reason: string;
   /** The label of the machine that was full when the session went elsewhere. */
   readonly overflowFrom?: string;
+  /** The request is refused, with this pt-BR error: nothing opens (a homologação place asked for other work). */
+  readonly refused?: string;
 }
 
 const fold = (text: string): string => text.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase().trim();
@@ -113,13 +117,22 @@ function homologationPlace(machines: readonly RouteMachine[]): string | undefine
 function routeUnsafe(input: RouteInput): RouteResult {
   const { machines } = input;
 
-  // R1 — an explicit place is kept, full or not.
-  if (input.explicit !== undefined) return stay(machines, input.explicit, `você pediu ${labelOf(machines, input.explicit)}`);
 
   const name = fold(input.projectName ?? '');
   const path = fold(input.projectPath);
   const homologPlace = homologationPlace(machines);
   const homologWork = name.includes(HOMOLOGATION) || path.includes(HOMOLOGATION) || (input.roleId ?? '').toLowerCase().startsWith('homol-');
+
+  // R1 — an explicit place is kept, full or not; the homologação place asked by name for other work is refused, never
+  // moved in silence (the caller learns the rule and asks again).
+  if (input.explicit !== undefined) {
+    if (input.explicit === homologPlace && !homologWork) {
+      const other = machines.find((machine) => machine.id !== PC_MACHINE_ID && machine.id !== homologPlace);
+      const label = labelOf(machines, homologPlace);
+      return { machine: homologPlace, queue: false, reason: `${label} é só para homologação`, refused: `${label} é só para homologação; use ${other ? other.label : 'outro lugar'}.` };
+    }
+    return stay(machines, input.explicit, `você pediu ${labelOf(machines, input.explicit)}`);
+  }
   const warnings: string[] = [];
   // Places that never take another project's work, nor its overflow: the homologação one (H) and `projects[]` ones.
   const reserved = new Set<string>();
@@ -171,6 +184,15 @@ function routeUnsafe(input: RouteInput): RouteResult {
     else {
       target = place;
       why = `lugar padrão da config: ${labelOf(machines, place)}`;
+    }
+  }
+  // P — the PC takes a session only when asked by name (or by `pcWhenRequestHas`): one that would be born there because
+  // the caller runs there goes to the first remote not reserved, or waits for room on it.
+  if (target === undefined && input.callerMachine === PC_MACHINE_ID) {
+    const remote = machines.find((machine) => machine.id !== PC_MACHINE_ID && !reserved.has(machine.id));
+    if (remote) {
+      target = remote.id;
+      why = `você roda neste computador, e o PC só recebe sessão com "onde": "este computador": ${remote.label}`;
     }
   }
   if (target === undefined) {

@@ -1541,6 +1541,7 @@ export class AgentBridge {
           machines,
           rules: this.ports.routing?.() ?? null,
         });
+        if (route.refused) return fail(`Não abri: ${route.refused}`);
         const remoteId = route.machine === PC_MACHINE_ID ? undefined : route.machine;
         const movedFrom = route.overflowFrom;
         const full = route.queue ? (this.waitReasons(route.machine) ?? []) : undefined;
