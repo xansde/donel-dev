@@ -33,14 +33,27 @@ via `CLAUDE_CONFIG_DIR`.
   pré-requisito. Sempre `gh pr merge --merge`, nunca `--admin`. `main` e o
   repo público seguem no bloqueio total do bullet acima.
 - **Mesclou na `staging` → atualize o clone principal antes de remover a
-  worktree (12/11)**: quem mescla o PR (o Revisor, ou o Dev quando for ele) roda,
-  no clone principal da máquina, `git fetch origin && git pull --ff-only origin
-  staging` ANTES de remover a worktree. O coletor de uso de IA julga o código
-  escrito numa worktree pela cópia do clone principal; parado (em 12/11: HEAD
-  solto desde 07/11, 428 commits atrás na VPS pessoal e 636 na Homologações),
-  ~23 mil linhas escritas na semana creditaram ~5,5 mil. Nunca `reset`,
-  `checkout --` nem `stash pop` sobre arquivos sujos de outras sessões; se o
-  `--ff-only` recusar, não force: avise o Líder do quadro. Vale nas 2 VPS e no PC.
+  worktree (12/11)**: quem mescla o PR (o Revisor, ou o Dev quando for ele),
+  no clone principal da máquina, ANTES de remover a worktree, faz a `staging`
+  local andar, sem trocar de branch:
+  - `git -C <clone> branch --show-current` dá `staging`: `git -C <clone> fetch
+    origin && git -C <clone> pull --ff-only origin staging`.
+  - Dá outra branch ou nada (HEAD solto): `git -C <clone> fetch origin
+    staging:staging` (só avança se for fast-forward). Nunca o `pull` aqui: ele
+    avança a branch em que o clone estiver, sai sem erro e a `staging` local
+    fica parada.
+  - Prova: `git -C <clone> rev-parse staging origin/staging` dá o mesmo hash.
+    Se o fetch ou o pull recusar, não force: avise o Líder do quadro.
+  O coletor de uso de IA julga o código escrito numa worktree pela cópia do
+  clone principal: a pasta de trabalho, ou a branch padrão do remoto. Clone
+  parado (em 12/11: HEAD solto desde 07/11, 428 commits atrás na VPS pessoal e
+  636 na Homologações) fez ~23 mil linhas escritas na semana creditarem ~5,5
+  mil. Clone fora da `staging` (feature ou HEAD solto) não credita nem com a
+  `staging` local em dia: avise o Líder do quadro para quem trabalha nele
+  voltar à `staging`. Nunca `reset`, `checkout --` nem `stash pop` sobre
+  arquivos sujos de outras sessões. Vale nas 2 VPS e no PC, onde o clone
+  principal é o checkout do dono: lá, o mesmo procedimento, sem trocar a branch
+  dele.
 - **Canais instalados coexistindo (decisão de 2026-07-28)**: `npm run
   dist:alfa` / `dist:beta` / `dist` empacotam com identidade própria de
   INSTALADOR (`appId`/`productName`/atalho "Donel Dev Alfa"/"Donel Dev
