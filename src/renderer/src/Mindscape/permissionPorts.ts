@@ -8,9 +8,8 @@
 // screen the id covers the WHOLE dialog, never the cut text (Revisor, #377), and a reading that is not all the request
 // (cut, or the dialog's top scrolled off) only refuses.
 
-import { permissionDialog, type LineInput } from '../../../shared/chat/screen';
+import { permissionDialog, tmuxCopyMode, type LineInput } from '../../../shared/chat/screen';
 import type { ChatOpenPermission } from '../../../shared/chat/ipc';
-import type { SemaphoreState } from '../../../shared';
 import type { PermissionAnswer, PermissionAsk } from './agentBridge';
 
 const CHAT_PREFIX = 'chat:';
@@ -29,17 +28,15 @@ export interface PermissionPortDeps {
   screen(tabId: string): readonly LineInput[] | undefined;
   /** Raw bytes to the tab's PTY; false = no live process. */
   write(tabId: string, data: string): boolean;
-  /**
-   * The session's state from its hooks; `undefined` = none known (no hook came: a remote place, a session not yet heard).
-   * Only a stopped session ("waiting", "done") says a dialog on the screen is an old one (Revisor, #406). "working" does
-   * not: with sub-agents in parallel, another one finishing a tool brings the state back to "working" while X's dialog
-   * is still open (verificação adversarial do #414).
-   */
-  state?(tabId: string): SemaphoreState | undefined;
 }
 
-/** Why a dialog read from the screen does not count when the session's hooks say it stopped. */
-const STOPPED = 'a sessão está parada, esperando mensagem (o diálogo na tela é antigo, já respondido)';
+/**
+ * Why a screen that shows tmux's copy mode does not count: what is drawn is the scrolled history, and a key would go to
+ * tmux. The session's hook state is not read here on purpose (3ª rodada do #414): it lies both ways ("working" with a
+ * dialog open while sub-agents run in parallel, "waiting" stale on a remote tab without hooks), and the last-block rule
+ * read on the live bottom already drops an answered dialog.
+ */
+const COPY_MODE = 'a aba está rolada (modo de cópia do tmux); volte ao fim para responder';
 
 /** The CLI's own tools, whose main field reads well alone. Any other tool (mcp__*, unknown) is shown whole. */
 const NATIVE_TOOLS: ReadonlySet<string> = new Set(['Bash', 'Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Glob', 'Grep', 'WebFetch', 'WebSearch']);
@@ -98,15 +95,9 @@ export function permissionPorts(deps: PermissionPortDeps): {
   permissionAsk(tabId: string): Promise<PermissionAsk | null>;
   answerPermission(tabId: string, askId: string, answer: 'allow' | 'deny'): Promise<PermissionAnswer>;
 } {
-  /** The hooks say the session stopped (its turn ended): a dialog on the screen is certainly an old one. */
-  const stopped = (tabId: string): boolean => {
-    const state = deps.state?.(tabId);
-    return state === 'waiting' || state === 'done';
-  };
   const screenDialog = (tabId: string) => {
-    if (stopped(tabId)) return null;
     const lines = deps.screen(tabId);
-    return lines ? permissionDialog(lines) : null;
+    return lines && !tmuxCopyMode(lines) ? permissionDialog(lines) : null;
   };
   /** The open request, with the screen it was read from (the key that answers it comes from that same screen). */
   const read = async (tabId: string): Promise<{ readonly ask: PermissionAsk; readonly yesKey: string | null } | null> => {
@@ -126,8 +117,7 @@ export function permissionPorts(deps: PermissionPortDeps): {
       const open = await read(tabId);
       if (open === null) {
         const screen = deps.screen(tabId);
-        const stale = stopped(tabId) && screen !== undefined && permissionDialog(screen) !== null;
-        return { ok: false, reason: stale ? STOPPED : 'o pedido já não está aberto' };
+        return { ok: false, reason: screen !== undefined && tmuxCopyMode(screen) ? COPY_MODE : 'o pedido já não está aberto' };
       }
       if (open.ask.id !== askId) return { ok: false, reason: 'o pedido aberto agora é outro' };
       if (answer === 'allow' && open.ask.complete === false) return { ok: false, reason: 'a leitura do pedido está incompleta; só recusar' };

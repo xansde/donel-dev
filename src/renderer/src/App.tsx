@@ -2679,8 +2679,8 @@ export function App(): React.JSX.Element {
       return Promise.resolve({ kind: 'pelo-terminal' as const });
     },
     // t-1293c818 (3) — the Líder reads and answers a permission open on this tab (the held hook first, else the screen).
-    // `permissionOnScreen` comes from here too: only the dialog that is the last block of the screen, crossed with the
-    // session's hook state (Revisor, #406).
+    // `permissionOnScreen` comes from here too: only the dialog that is the last block of the live screen (Revisor, #406),
+    // never under tmux's copy mode.
     ...permissionPorts({
       held: async (tabId) => {
         const ptyId = chatPtyIds[tabId];
@@ -2695,7 +2695,6 @@ export function App(): React.JSX.Element {
       // the one open below (verificação adversarial do #414).
       screen: (tabId) => terminalRefs.current[tabId]?.readScreen({ live: true }).lines,
       write: (tabId, data) => terminalRefs.current[tabId]?.write(data) ?? false,
-      state: (tabId) => (semaphoreStates[tabId]?.unconfirmed ? undefined : semaphoreStates[tabId]?.state),
     }),
     // No hook yet is not "never started" when the CLI already took a message (the transcript showed it): a session on a
     // remote place whose hooks do not come back was told "não começou" with five answers in its transcript (07/11).

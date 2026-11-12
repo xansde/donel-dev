@@ -249,6 +249,22 @@ export function blockingScreen(lines: readonly LineInput[]): BlockingScreen | nu
   return null;
 }
 
+/**
+ * tmux's copy-mode position, drawn over the top-right corner of the pane's first row while it is scrolled: "[3/120]"
+ * (lines up / history), with the top line's time before it ("19:58:22 [2/54]", tmux 3.4) and search or timeout notes
+ * before or after it ("(11 results) … [12/54]", "(timed out) [7/90]", "[3/120] (2 results)").
+ */
+const TMUX_COPY_POSITION = /\[\d+\/\d+\](?:\s*\((?:timed out|\d+\+? results?)\))?\s*$/;
+
+/**
+ * Whether the screen is tmux scrolled into copy mode (a remote tab: `mouse on`, remote-session.ts). tmux redraws the
+ * alternate screen with its history, so even the live bottom of the buffer is the scrolled view, and a key typed goes to
+ * tmux, not to the CLI: nothing read from such a screen is the request open now.
+ */
+export function tmuxCopyMode(lines: readonly LineInput[]): boolean {
+  return lines.length > 0 && TMUX_COPY_POSITION.test(lineText(lines[0]));
+}
+
 /** A permission dialog read from the screen (t-1293c818): what it asks, as drawn, and the key that answers "Yes". */
 export interface PermissionDialog {
   /** The dialog from its top border down to its question ("Bash command / rm -rf build / … / Do you want to proceed?"). */
