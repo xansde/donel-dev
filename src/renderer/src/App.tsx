@@ -2443,7 +2443,8 @@ export function App(): React.JSX.Element {
   // comes out of him. One session with the role `lider` and the Jobu's mark (`isLeaderOfAllTab`): this window owns the tabs,
   // so it says which one it is (`lider:report`) and delivers what the owner writes there (`lider:deliver`) through the
   // tab's own send machine; with no live Líder, the first message opens one, on this computer, in the folder that holds
-  // the projects of the boards (`leaderHome`), or `leader.home` of config.json when set (`leaderCwd`).
+  // the projects of the boards (`leaderHome`) or its `_orquestradora` when it exists, or `leader.home` of config.json
+  // when set (`leaderCwd`).
   const liderTabRef = useRef<string | null>(null);
   const findLiderTab = (): TabState | undefined => {
     const alive = (tab: TabState): boolean => isLeaderOfAllTab(tab) && tabExits[tab.id] === undefined;
@@ -2482,11 +2483,13 @@ export function App(): React.JSX.Element {
     // Líder único na VPS (docs/planos/lider-na-vps.md) — where the owner wants it (Preferences). A provider of a third
     // party does not run on a remote place (ADR 0006): that Líder stays here.
     const wantedRemoteId = providerId ? undefined : leaderPlace();
+    // The orchestrator's project when it exists (owner, 12/11); the live Líder goes there too, stopped, with its conversation.
+    const wantedCwd = leaderCwd(appConfig?.leader ?? DEFAULT_LEADER_PREFS, Object.keys(mindscape.doc.boards), appConfig?.leaderHomes ?? []);
     const openLeader = (resume?: { readonly sessionId: string; readonly cwd: string | undefined }): string => {
       // Without the role there is no Líder único (it is the role + the mark below): say so instead of opening a plain session.
       if (!role) throw new Error('O papel Líder não existe nesta máquina.');
       const defaults = appConfig?.launcherDefaults;
-      const home = resume ? resume.cwd : leaderCwd(appConfig?.leader ?? DEFAULT_LEADER_PREFS, Object.keys(mindscape.doc.boards));
+      const home = resume ? resume.cwd : wantedCwd;
       const launchArgs = buildLauncherArgs({
         providerId,
         model: role.model ?? defaults?.model ?? DEFAULT_MODEL_ALIAS,
@@ -2515,8 +2518,11 @@ export function App(): React.JSX.Element {
     const remembered = liderTabRef.current ? tabs.find((tab) => tab.id === liderTabRef.current && isLeaderOfAllTab(tab)) : undefined;
     const tab = live ?? remembered ?? tabs.find(isLeaderOfAllTab);
     const plan = planLeaderDelivery(
-      tab ? { id: tab.id, remoteId: tab.remoteId, claudeSessionId: tab.claudeSessionId, state: semaphoreStates[tab.id]?.state, exited: tabExits[tab.id] !== undefined } : undefined,
+      tab
+        ? { id: tab.id, remoteId: tab.remoteId, claudeSessionId: tab.claudeSessionId, state: semaphoreStates[tab.id]?.state, exited: tabExits[tab.id] !== undefined, cwd: tab.cwd }
+        : undefined,
       wantedRemoteId,
+      wantedCwd,
     );
 
     if (plan.kind === 'send') {
@@ -2533,9 +2539,17 @@ export function App(): React.JSX.Element {
     if (plan.kind === 'move' && tab) {
       const oldTabId = plan.tabId;
       const cwd = tab.cwd;
+      const newCwd = wantedCwd ?? cwd;
       const move = startLeaderMove(oldTabId, text, {
-        carry: () => window.donel.lider.carry({ sessionId: plan.sessionId, ...(cwd ? { cwd } : {}), ...(tab.remoteId ? { from: tab.remoteId } : {}), ...(wantedRemoteId ? { to: wantedRemoteId } : {}) }),
-        openNew: () => openLeader({ sessionId: plan.sessionId, cwd }),
+        carry: () =>
+          window.donel.lider.carry({
+            sessionId: plan.sessionId,
+            ...(cwd ? { cwd } : {}),
+            ...(newCwd ? { toCwd: newCwd } : {}),
+            ...(tab.remoteId ? { from: tab.remoteId } : {}),
+            ...(wantedRemoteId ? { to: wantedRemoteId } : {}),
+          }),
+        openNew: () => openLeader({ sessionId: plan.sessionId, cwd: newCwd }),
         deliverFirst: (tabId, first) =>
           new Promise<boolean>((resolve) => {
             liderTabDiedRef.current[tabId] = () => resolve(false);

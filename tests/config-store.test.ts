@@ -98,7 +98,7 @@ describe('toAppConfigDto (puro)', () => {
       favorites: ['C:\\a'],
       activeProfileSlug: 'tecnologia-claude-2',
     };
-    expect(toAppConfigDto(config)).toEqual({
+    expect(toAppConfigDto(config, () => false)).toEqual({
       projectRoots: FAKE_ROOTS,
       projectScanMode: 'markers',
       launcherDefaults: { model: 'fable', effort: 'high', permissionMode: 'acceptEdits' },
@@ -123,6 +123,7 @@ describe('toAppConfigDto (puro)', () => {
       yolo: { projects: [] },
       layout: { oracleCenter: true, centerView: 'oracle' },
       leader: { where: 'auto' },
+      leaderHomes: [],
     });
   });
 

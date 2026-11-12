@@ -4,10 +4,11 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { carryTranscriptLocally } from '../src/main/lider/carry-transcript';
+import { carryLargestTranscript, carryTranscriptLocally } from '../src/main/lider/carry-transcript';
 import { fetchTranscriptFromRemote, sendTranscriptToRemote, type RemoteCommand } from '../src/main/lider/transfer';
 import { remoteAliveFromMeta, type RemoteSessionMeta } from '../src/main/remote-session';
-import { leaderCwd, leaderMoves, leaderRemoteId, sanitizeLeaderPrefs } from '../src/shared/leaderPrefs';
+import { isValidLiderCarryPayload } from '../src/shared/lider/ipc';
+import { leaderCwd, leaderMoves, leaderRemoteId, sameFolder, sanitizeLeaderPrefs } from '../src/shared/leaderPrefs';
 import { planLeaderDelivery, startLeaderMove, type LeaderMoveDeps } from '../src/shared/lider/move';
 
 // Líder único na VPS (docs/planos/lider-na-vps.md): o que faria o Líder sumir ou perder a conversa sem o dono ver.
@@ -61,6 +62,45 @@ describe('Líder único na VPS', () => {
     expect(leaderCwd(stored, boards)).toBe(home);
     expect(leaderCwd(sanitizeLeaderPrefs({ where: 'auto' }), boards)).toBe('C:\\Users\\a\\seazone');
     expect(leaderCwd(sanitizeLeaderPrefs({ where: 'auto', home: '   ' }), boards)).toBe('C:\\Users\\a\\seazone');
+  });
+
+  it('sem leader.home, o Líder roda na _orquestradora da pasta-mãe quando ela existe; senão, na pasta-mãe (12/11)', () => {
+    const win = ['C:\\Users\\a\\seazone\\Donel Dev', 'C:\\Users\\a\\seazone\\BizOps'];
+    const auto = sanitizeLeaderPrefs({ where: 'auto' });
+    // Existe no disco (a lista vem do main com a caixa e a barra que ele achou): o caminho com o separador da base.
+    expect(leaderCwd(auto, win, ['c:/users/a/SEAZONE/_orquestradora/'])).toBe('C:\\Users\\a\\seazone\\_orquestradora');
+    expect(leaderCwd(auto, ['/home/a/seazone/Donel Dev', '/home/a/seazone/BizOps'], ['/home/a/seazone/_orquestradora'])).toBe('/home/a/seazone/_orquestradora');
+    // Não existe (ou é a de outra raiz): a pasta-mãe, como antes.
+    expect(leaderCwd(auto, win, [])).toBe('C:\\Users\\a\\seazone');
+    expect(leaderCwd(auto, win, ['C:\\Users\\b\\seazone\\_orquestradora'])).toBe('C:\\Users\\a\\seazone');
+    expect(leaderCwd(auto, win)).toBe('C:\\Users\\a\\seazone');
+    // leader.home escrito à mão vence.
+    expect(leaderCwd({ where: 'auto', home: 'D:\\outro' }, win, ['C:\\Users\\a\\seazone\\_orquestradora'])).toBe('D:\\outro');
+    expect(sameFolder('C:\\Users\\a\\seazone\\', 'c:/users/a/seazone')).toBe(true);
+    expect(sameFolder(undefined, undefined)).toBe(true);
+    expect(sameFolder('/home/a', undefined)).toBe(false);
+  });
+
+  it('o pedido de cópia da conversa aceita a pasta nova (toCwd) e recusa uma inválida', () => {
+    expect(isValidLiderCarryPayload({ sessionId: sid, cwd: '/home/a/seazone', toCwd: '/home/a/seazone/_orquestradora' })).toBe(true);
+    expect(isValidLiderCarryPayload({ sessionId: sid, cwd: '/home/a/seazone' })).toBe(true);
+    expect(isValidLiderCarryPayload({ sessionId: sid, toCwd: '' })).toBe(false);
+    expect(isValidLiderCarryPayload({ sessionId: sid, toCwd: 42 })).toBe(false);
+    expect(isValidLiderCarryPayload({ sessionId: sid, toCwd: 'x'.repeat(1001) })).toBe(false);
+  });
+
+  it('a conversa vai da pasta antiga para a da orquestradora neste computador: a maior cópia, sem perder a de lá', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'lider-pasta-'));
+    const old = join(dir, 'projects', '-home-a-seazone', `${sid}.jsonl`);
+    const mirror = join(dir, 'espelho.jsonl');
+    const dest = join(dir, 'projects', '-home-a-seazone--orquestradora', `${sid}.jsonl`);
+    mkdirSync(join(dir, 'projects', '-home-a-seazone'), { recursive: true });
+    writeFileSync(old, 'a\nb\nc\n');
+    writeFileSync(mirror, 'a\n');
+    expect(carryLargestTranscript([old, undefined, mirror], dest)).toBe('carried');
+    expect(readFileSync(dest, 'utf8')).toBe('a\nb\nc\n');
+    expect(readFileSync(old, 'utf8')).toBe('a\nb\nc\n');
+    expect(carryLargestTranscript([join(dir, 'nada.jsonl')], join(dir, 'outro.jsonl'))).toBe('missing');
   });
 
   it('o Líder roda na VPS por padrão; "este computador" só quando o dono escolheu', () => {
@@ -259,19 +299,32 @@ describe('Líder único na VPS — a troca nunca fecha o Líder antigo antes do 
   });
 
   it('o Líder cuja ligação caiu (PC dormiu) é religado com a mesma conversa, nunca trocado por um novo', () => {
-    expect(planLeaderDelivery({ id: 't1', remoteId: 'vps-1', claudeSessionId: sid, state: undefined, exited: true }, 'vps-1')).toEqual({
+    expect(planLeaderDelivery({ id: 't1', remoteId: 'vps-1', claudeSessionId: sid, state: undefined, exited: true, cwd: undefined }, 'vps-1')).toEqual({
       kind: 'reconnect',
       tabId: 't1',
       sessionId: sid,
     });
     // Mesmo se o dono escolheu outro lugar: religa onde a conversa está; a troca vem na próxima mensagem.
-    expect(planLeaderDelivery({ id: 't1', remoteId: 'vps-1', claudeSessionId: sid, state: undefined, exited: true }, undefined)).toMatchObject({ kind: 'reconnect' });
+    expect(planLeaderDelivery({ id: 't1', remoteId: 'vps-1', claudeSessionId: sid, state: undefined, exited: true, cwd: undefined }, undefined)).toMatchObject({ kind: 'reconnect' });
     // Sem id de conversa não há o que religar: abre um novo.
-    expect(planLeaderDelivery({ id: 't1', remoteId: 'vps-1', claudeSessionId: undefined, state: undefined, exited: true }, 'vps-1')).toEqual({ kind: 'open' });
+    expect(planLeaderDelivery({ id: 't1', remoteId: 'vps-1', claudeSessionId: undefined, state: undefined, exited: true, cwd: undefined }, 'vps-1')).toEqual({ kind: 'open' });
     expect(planLeaderDelivery(undefined, 'vps-1')).toEqual({ kind: 'open' });
     // Vivo e parado em outro lugar: troca; vivo no lugar certo ou trabalhando: recebe a mensagem onde está.
-    expect(planLeaderDelivery({ id: 't1', remoteId: undefined, claudeSessionId: sid, state: 'waiting', exited: false }, 'vps-1')).toEqual({ kind: 'move', tabId: 't1', sessionId: sid });
-    expect(planLeaderDelivery({ id: 't1', remoteId: undefined, claudeSessionId: sid, state: 'working', exited: false }, 'vps-1')).toEqual({ kind: 'send', tabId: 't1' });
-    expect(planLeaderDelivery({ id: 't1', remoteId: 'vps-1', claudeSessionId: sid, state: 'waiting', exited: false }, 'vps-1')).toEqual({ kind: 'send', tabId: 't1' });
+    expect(planLeaderDelivery({ id: 't1', remoteId: undefined, claudeSessionId: sid, state: 'waiting', exited: false, cwd: undefined }, 'vps-1')).toEqual({ kind: 'move', tabId: 't1', sessionId: sid });
+    expect(planLeaderDelivery({ id: 't1', remoteId: undefined, claudeSessionId: sid, state: 'working', exited: false, cwd: undefined }, 'vps-1')).toEqual({ kind: 'send', tabId: 't1' });
+    expect(planLeaderDelivery({ id: 't1', remoteId: 'vps-1', claudeSessionId: sid, state: 'waiting', exited: false, cwd: undefined }, 'vps-1')).toEqual({ kind: 'send', tabId: 't1' });
+  });
+
+  it('o Líder vai para a pasta nova só parado, na próxima mensagem; no meio do turno ou na mesma pasta, fica', () => {
+    const at = (cwd: string | undefined, state: 'waiting' | 'working' | 'done' | 'error' | 'permission') =>
+      ({ id: 't1', remoteId: 'vps-1', claudeSessionId: sid, state, exited: false, cwd }) as const;
+    const orq = '/home/a/seazone/_orquestradora';
+    expect(planLeaderDelivery(at('/home/a/seazone', 'waiting'), 'vps-1', orq)).toEqual({ kind: 'move', tabId: 't1', sessionId: sid });
+    expect(planLeaderDelivery(at('/home/a/seazone', 'done'), 'vps-1', orq)).toEqual({ kind: 'move', tabId: 't1', sessionId: sid });
+    expect(planLeaderDelivery(at('/home/a/seazone', 'working'), 'vps-1', orq)).toEqual({ kind: 'send', tabId: 't1' });
+    expect(planLeaderDelivery(at('/home/a/seazone', 'permission'), 'vps-1', orq)).toEqual({ kind: 'send', tabId: 't1' });
+    expect(planLeaderDelivery(at('/HOME/a/seazone/_orquestradora/', 'waiting'), 'vps-1', orq)).toEqual({ kind: 'send', tabId: 't1' });
+    // Chamador sem a pasta: igual a antes.
+    expect(planLeaderDelivery(at('/home/a/seazone', 'waiting'), 'vps-1')).toEqual({ kind: 'send', tabId: 't1' });
   });
 });

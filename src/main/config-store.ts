@@ -1,12 +1,12 @@
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import type { AccountsConfig } from '../shared/accounts';
 import { defaultAccountsConfig } from '../shared/accounts';
 import type { EffortLevel, ModelAlias, PermissionMode } from '../shared/commandBuilder';
 import type { AppConfigDto, AppUpdatePrefs, AutoModePrefs, BrowserUploadPrefs, ChatPrefs, LauncherDefaultsDto, NotificationPreference, PetPrefs, ProjectScanMode, SessionNamesMap, SlackAgentBotPrefs, SweepPrefs, YoloPrefs } from '../shared/config';
 import { AGENT_BOT_SERVERS, isAgentBotServerName } from '../shared/ledger/slack-guard';
 import { DEFAULT_LAYOUT_PREFS, sanitizeLayoutPrefs, type LayoutPrefs } from '../shared/layoutPrefs';
-import { DEFAULT_LEADER_PREFS, sanitizeLeaderPrefs, type LeaderPrefs } from '../shared/leaderPrefs';
+import { DEFAULT_LEADER_PREFS, LEADER_HOME_FOLDER, sanitizeLeaderPrefs, type LeaderPrefs } from '../shared/leaderPrefs';
 // T014 (015-jobu-pet) — limits of the pet size: the same rule the window uses (placement.ts).
 import { PET_SIZE_DEFAULT, clampSize } from '../shared/pet/placement';
 import { withUploadFolder, withUploadGrant, type UploadGrant } from '../shared/browser/upload';
@@ -398,8 +398,20 @@ function defaultDevModeState(): DevModeState {
   };
 }
 
-/** Renderer só vê o subconjunto relevante (ver comentário de topo de src/shared/config.ts). */
-export function toAppConfigDto(config: AppConfig): AppConfigDto {
+function isDirectoryOnDisk(path: string): boolean {
+  try {
+    return statSync(path).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Renderer só vê o subconjunto relevante (ver comentário de topo de src/shared/config.ts). `leaderHomes` is read
+ * from the disk on every call and never stored in config.json: the `_orquestradora` folders that exist under the
+ * project roots (where the Líder único opens, `leaderCwd`).
+ */
+export function toAppConfigDto(config: AppConfig, isDirectory: (path: string) => boolean = isDirectoryOnDisk): AppConfigDto {
   return {
     projectRoots: config.projectRoots,
     projectScanMode: config.projectScanMode,
@@ -419,6 +431,7 @@ export function toAppConfigDto(config: AppConfig): AppConfigDto {
     yolo: config.yolo,
     layout: config.layout,
     leader: config.leader,
+    leaderHomes: config.projectRoots.map((root) => join(root, LEADER_HOME_FOLDER)).filter((path) => isDirectory(path)),
   };
 }
 

@@ -4,7 +4,7 @@
 // leaves the old one where it was, and every message goes to it.
 
 import type { SemaphoreState } from '../index';
-import { leaderMoves } from '../leaderPrefs';
+import { leaderMoves, leaderStopped, sameFolder } from '../leaderPrefs';
 import type { LiderSendResult } from './ipc';
 
 /** The Líder tab as the Jobu sees it. */
@@ -15,6 +15,8 @@ export interface LeaderTabView {
   readonly state: SemaphoreState | undefined;
   /** Its process ended (closed by itself, or the ssh dropped), but the tab is still there. */
   readonly exited: boolean;
+  /** The folder it runs in. */
+  readonly cwd: string | undefined;
 }
 
 export type LeaderPlan =
@@ -28,10 +30,13 @@ export type LeaderPlan =
  * brought back with the same conversation, where it was: on a remote place that reattaches to the same CLI. Only with
  * no conversation to resume does a new Líder open.
  */
-export function planLeaderDelivery(tab: LeaderTabView | undefined, wantedRemoteId: string | undefined): LeaderPlan {
+export function planLeaderDelivery(tab: LeaderTabView | undefined, wantedRemoteId: string | undefined, wantedCwd?: string): LeaderPlan {
   if (!tab) return { kind: 'open' };
   if (tab.exited) return tab.claudeSessionId ? { kind: 'reconnect', tabId: tab.id, sessionId: tab.claudeSessionId } : { kind: 'open' };
-  if (tab.claudeSessionId && leaderMoves({ remoteId: tab.remoteId, state: tab.state }, wantedRemoteId)) {
+  if (!tab.claudeSessionId) return { kind: 'send', tabId: tab.id };
+  // Another folder (the orchestrator's project, 12/11) is a move too, with the same rule: only while it is stopped.
+  const otherFolder = wantedCwd !== undefined && !sameFolder(tab.cwd, wantedCwd);
+  if (leaderMoves({ remoteId: tab.remoteId, state: tab.state }, wantedRemoteId) || (otherFolder && leaderStopped(tab.state))) {
     return { kind: 'move', tabId: tab.id, sessionId: tab.claudeSessionId };
   }
   return { kind: 'send', tabId: tab.id };
