@@ -1,4 +1,6 @@
 node_modules/
+# Sem barra: um link simbólico node_modules (worktree) também fica fora do git.
+node_modules
 dist/
 out/
 release/

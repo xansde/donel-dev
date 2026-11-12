@@ -156,9 +156,12 @@ Get-ChildItem "$out" -Filter 'Donel Dev Alfa-Setup-*.exe' | Sort-Object Name -De
    entre canais, então abas e config continuam.
 3. Abra o alfa e confira a versão (janela "O que mudou" na primeira abertura).
 
-## 6. Memória do Líder no PC (uma vez)
+## 6. Memória do Líder no PC (uma vez, só depois do #413)
 
-O PR `feature/lider-na-orquestradora` passa a rodar o Líder em `C:\Users\compu\seazone\_orquestradora`.
+**Só rode este passo depois que o PR #413 (`feature/lider-na-orquestradora`) estiver na staging e num alfa
+instalado.** Antes disso o Líder ainda roda em `C:\Users\compu\seazone`, e a cópia não serve a nada.
+
+O PR #413 passa a rodar o Líder em `C:\Users\compu\seazone\_orquestradora`.
 O Claude guarda a memória por pasta de trabalho, então o Líder passaria a enxergar uma pasta de memória nova
 e vazia. Copie a antiga **sem sobrescrever** nada:
 
