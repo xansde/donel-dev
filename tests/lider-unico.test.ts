@@ -92,7 +92,7 @@ const OUTRO = 'place:outro';
 /** The Líder of the board the Líder único opened (a place made by a session), as on 09/11. */
 const LQ = 'place:lq';
 
-function team(options: { readonly boardLeader?: boolean; readonly muteLeader?: boolean } = {}): { bridge: AgentBridge; sent: { tabId: string; text: string }[]; tabs: BridgeTab[]; passOns: LedgerPassOnRequest[][] } {
+function team(options: { readonly boardLeader?: boolean; readonly muteLeader?: boolean } = {}): { bridge: AgentBridge; sent: { tabId: string; text: string }[]; tabs: BridgeTab[]; passOns: LedgerPassOnRequest[][]; exited: Set<string>; permission: Set<string> } {
   let doc = addPlace(emptyMindscapeDoc(), ATLAS, { id: THEO, roleId: 'dev', by: 'session' });
   if (options.boardLeader) doc = setPlaceConversation(addPlace(doc, ATLAS, { id: LQ, roleId: 'lider', by: 'session' }), ATLAS, LQ, 'conv-lq');
   doc = addPlace(doc, ATLAS, { id: DEV, roleId: 'dev', by: 'session' });
@@ -101,6 +101,10 @@ function team(options: { readonly boardLeader?: boolean; readonly muteLeader?: b
   doc = addLink(doc, ATLAS, { id: 'l1', from: THEO, to: DEV, arrow: true, by: 'session', opened: true });
   const sent: { tabId: string; text: string }[] = [];
   const passOns: LedgerPassOnRequest[][] = [];
+  /** Tabs whose CLI process exited: still on screen, no state (App's `tabExits`). */
+  const exited = new Set<string>();
+  /** Tabs with a permission open on their screen. */
+  const permission = new Set<string>();
   const tabs: BridgeTab[] = [
     { id: 'tab-lider', name: 'Líder', cwd: 'C:/proj', roleId: 'lider', leaderOfAll: true, sessionType: 'claude' },
     { id: 'tab-theo', name: 'Theo', cwd: ATLAS, projectName: 'atlas', claudeSessionId: 'conv-theo', openedBy: 'lider', sessionType: 'claude' },
@@ -114,7 +118,7 @@ function team(options: { readonly boardLeader?: boolean; readonly muteLeader?: b
     applyGesture: () => undefined,
     tabs: () => tabs,
     tabOfPty: (ptyId) => tabs.find((tab) => tab.id === `tab-${ptyId}`),
-    stateOf: (tabId) => (tabs.some((tab) => tab.id === tabId) ? 'waiting' : undefined),
+    stateOf: (tabId) => (tabs.some((tab) => tab.id === tabId) && !exited.has(tabId) ? (permission.has(tabId) ? 'permission' : 'waiting') : undefined),
     roles: () => FACTORY_ROLES,
     openSession: () => 'tab-new',
     closeTab: () => undefined,
@@ -136,7 +140,7 @@ function team(options: { readonly boardLeader?: boolean; readonly muteLeader?: b
       return requests.map((request) => ({ ...request, tasks: [{ id: `t-${request.placeId.slice(6)}`, title: 'Corrige o envio' }] }));
     },
   };
-  return { bridge: new AgentBridge(ports), sent, tabs, passOns };
+  return { bridge: new AgentBridge(ports), sent, tabs, passOns, exited, permission };
 }
 
 /** Closes a tab the way the app does: the bridge hears it first, then it leaves the list. */
@@ -204,6 +208,66 @@ describe('Líder único recebe e lugar fechado passa adiante', () => {
     close(tabs, bridge, 'tab-theo');
     await vi.advanceTimersByTimeAsync(PASS_ON_GRACE_MS);
     expect(passOns).toEqual([[{ projectPath: ATLAS, placeId: THEO, gone: 'fechada', to: 'lider' }]]);
+  });
+
+  it('a chair whose CLI exited (the tab stays on screen) passes its tasks on like a closed one; one that comes back keeps them', async () => {
+    vi.useFakeTimers();
+    const { bridge, passOns, exited } = team({ boardLeader: true });
+    exited.add('tab-outro');
+    bridge.placeExited('tab-outro');
+    await vi.advanceTimersByTimeAsync(PASS_ON_GRACE_MS);
+    expect(passOns).toEqual([[{ projectPath: ATLAS, placeId: OUTRO, gone: 'fechada', to: LQ }]]);
+
+    // The CLI of the Dev exits and is back (onPtyChange clears the exit) within the grace: its task stays.
+    exited.add('tab-dev');
+    bridge.placeExited('tab-dev');
+    await vi.advanceTimersByTimeAsync(PASS_ON_GRACE_MS / 2);
+    exited.delete('tab-dev');
+    await vi.advanceTimersByTimeAsync(PASS_ON_GRACE_MS);
+    expect(passOns).toHaveLength(1);
+  });
+
+  it('with the Líder of the board open, a chair does not go over it to the Líder único; closed or mute, it does (dono, 12/11)', async () => {
+    const { bridge, sent, tabs } = team({ boardLeader: true });
+    const over = await bridge.handle('theo', { tool: 'sessao_enviar', para: 'lider', texto: 'travei no build', motivo: 'bloqueio' });
+    expect(over).toMatchObject({ ok: false, text: expect.stringContaining(`Líder aberto (${LQ})`) });
+    const viaOpener = await bridge.handle('theo', { tool: 'sessao_enviar', para: 'quem-me-abriu', texto: 'travei no build', motivo: 'bloqueio' });
+    expect(viaOpener).toMatchObject({ ok: false, text: expect.stringContaining('"para": "lider-quadro"') });
+    expect(sent).toEqual([]);
+
+    // The Líder of the board itself still reaches the Líder único.
+    expect(await bridge.handle('lq', { tool: 'sessao_enviar', para: 'lider', texto: 'quadro pronto', motivo: 'tarefa-completa' })).toMatchObject({ ok: true });
+    expect(sent).toEqual([{ tabId: 'tab-lider', text: `◆ De Líder (${LQ}), quadro atlas, tarefa completa: quadro pronto` }]);
+
+    // The Líder of the board open but stuck itself (a permission on its screen): the chair's blocker goes.
+    const stuck = team({ boardLeader: true });
+    stuck.permission.add('tab-lq');
+    expect(await stuck.bridge.handle('theo', { tool: 'sessao_enviar', para: 'lider', texto: 'travei no build', motivo: 'bloqueio' })).toMatchObject({ ok: true });
+
+    // The Líder of the board closed: the chair's blocker is one it cannot solve, so it goes.
+    tabs.splice(tabs.findIndex((tab) => tab.id === 'tab-lq'), 1);
+    expect(await bridge.handle('theo', { tool: 'sessao_enviar', para: 'lider', texto: 'travei no build', motivo: 'bloqueio' })).toMatchObject({ ok: true });
+    expect(sent[1]).toMatchObject({ tabId: 'tab-lider' });
+
+    // Mute since the app opened: it goes too.
+    const mute = team({ boardLeader: true, muteLeader: true });
+    expect(await mute.bridge.handle('theo', { tool: 'sessao_enviar', para: 'quem-me-abriu', texto: 'travei no build', motivo: 'bloqueio' })).toMatchObject({ ok: true });
+    expect(mute.sent).toEqual([{ tabId: 'tab-lider', text: expect.stringContaining('bloqueio: travei no build') }]);
+  });
+
+  it('with the Líder of the board open, a chair the Líder único opened still hands it the finished task; one below it does not', async () => {
+    const { bridge, sent } = team({ boardLeader: true });
+    expect(await bridge.handle('theo', { tool: 'sessao_enviar', para: 'lider', texto: 'parte 1 pronta', motivo: 'tarefa-completa' })).toMatchObject({ ok: true });
+    expect(await bridge.handle('theo', { tool: 'sessao_enviar', para: 'quem-me-abriu', texto: 'parte 2 pronta', motivo: 'tarefa-completa' })).toMatchObject({ ok: true });
+    expect(sent).toEqual([
+      { tabId: 'tab-lider', text: `◆ De Dev (${THEO}), quadro atlas, tarefa completa: parte 1 pronta` },
+      { tabId: 'tab-lider', text: `◆ De Dev (${THEO}), quadro atlas, tarefa completa: parte 2 pronta` },
+    ]);
+
+    // The Dev reaches the Líder único only by being below the Theo (the Theo opened it): it goes to the Líder of the board.
+    const below = await bridge.handle('dev', { tool: 'sessao_enviar', para: 'lider', texto: 'parte 3 pronta', motivo: 'tarefa-completa' });
+    expect(below).toMatchObject({ ok: false, text: expect.stringContaining(`Líder aberto (${LQ})`) });
+    expect(sent).toHaveLength(2);
   });
 
   it('closing the app before the grace, or a place that comes back, moves nothing', async () => {

@@ -108,7 +108,7 @@ async function team(options: { readonly liderDoUnico?: boolean; readonly segundo
   const tabs: BridgeTab[] = [
     { id: 'tab-unico', name: 'Líder', cwd: 'C:/proj', roleId: 'lider', leaderOfAll: true, sessionType: 'claude' },
     { id: 'tab-lider', name: 'Líder', cwd: BOARD, projectName: 'atlas', roleId: 'lider', claudeSessionId: 'conv-lider', ...(options.liderDoUnico ? { openedBy: LEADER_OF_ALL } : {}), sessionType: 'claude' },
-    ...DEVS.map((_dev, i): BridgeTab => ({ id: `tab-dev${i + 1}`, name: `Dev ${i + 1}`, cwd: BOARD, projectName: 'atlas', roleId: 'dev', claudeSessionId: `conv-dev${i + 1}`, openedBy: i === 2 ? 'lider' : LIDER, sessionType: 'claude' })),
+    ...DEVS.map((_dev, i): BridgeTab => ({ id: `tab-dev${i + 1}`, name: `Dev ${i + 1}`, cwd: BOARD, projectName: 'atlas', roleId: 'dev', claudeSessionId: `conv-dev${i + 1}`, openedBy: i === 2 ? 'lider' : LIDER, ...(i === 0 ? { remoteId: 'vps' } : {}), sessionType: 'claude' })),
     { id: 'tab-rev', name: 'Revisor', cwd: BOARD, projectName: 'atlas', roleId: 'revisor', claudeSessionId: 'conv-rev', openedBy: 'lider', sessionType: 'claude' },
     ...(options.segundoLider ? [{ id: 'tab-lider2', name: 'Líder 2', cwd: BOARD, projectName: 'atlas', roleId: 'lider', claudeSessionId: 'conv-lider2', openedBy: LEADER_OF_ALL, sessionType: 'claude' as const }] : []),
     { id: 'tab-fax', name: 'Faxineiro', cwd: BOARD, projectName: 'atlas', roleId: 'faxineiro', claudeSessionId: 'conv-fax', openedBy: FAXINEIRO_OPENER, sessionType: 'claude' },
@@ -244,23 +244,41 @@ describe('andamento no ledger, não no chat do Líder', () => {
     // is "receber término de tasks completas"), never an end of turn nor a round of the Faxineiro.
     t.sent.splice(0);
     t.closed.add('tab-lider');
+    // Dono, 12/11 (t-5c0df1df): a usage limit on a remote place (Dev 1 is on the VPS) is no blocker for the Líder único
+    // — the despertador wakes the session after the reset; it stays in the ledger and waits for the Líder of the board.
+    // A login that expired does reach it.
     t.states['tab-dev1'] = 'waiting';
     t.failures['tab-dev1'] = 'rate_limit';
     t.bridge.attention('tab-dev1');
+    t.states['tab-dev3'] = 'waiting';
+    t.failures['tab-dev3'] = 'authentication_failed';
+    t.bridge.attention('tab-dev3');
     t.bridge.turnEnded('conv-rev', 'Revisei o #330.');
     t.bridge.turnEnded('conv-fax', 'Ronda: 2 sessões paradas, nada a fechar.');
     await handleAs(t, 'pty-tab-dev2', { tool: 'aviso_imediato', texto: 'entregou a tarefa t-2 para aceite.' });
     await settle(t);
     expect(t.sent).toEqual([
-      { tabId: 'tab-unico', text: expect.stringMatching(/^◆ Dev Dev 1 \(place:dev1, quadro atlas\) está travada/) },
+      { tabId: 'tab-unico', text: expect.stringMatching(/^◆ Dev Dev 3 \(place:dev3, quadro atlas\) está travada: login expirado/) },
       { tabId: 'tab-unico', text: '◆ Dev Dev 2 (place:dev2, quadro atlas) entregou a tarefa t-2 para aceite.' },
     ]);
+    expect(progressRecords(t).find((each) => each.owner === 'place:dev1')?.progress).toMatchObject({ estado: 'travada', precisa: expect.stringContaining('(aviso pendente: nenhum Líder aberto)') });
 
-    // Neither the end of turn nor the round of the Faxineiro went to anyone, not even when the Líder comes back.
+    // Neither the end of turn nor the round of the Faxineiro went to anyone, not even when the Líder comes back; the
+    // usage limit that waited goes to it then.
     t.closed.delete('tab-lider');
     t.bridge.flushUrgent();
     await settle(t);
-    expect(t.sent).toHaveLength(2);
+    expect(t.sent.slice(2)).toEqual([{ tabId: 'tab-lider', text: expect.stringMatching(/^◆ Dev Dev 1 \(place:dev1\) está travada: limite de uso/) }]);
+  });
+
+  it('limite de uso de uma cadeira no PC, com o Líder do quadro fechado: chega ao Líder único (no PC nenhum despertador a acorda)', async () => {
+    const t = await team();
+    t.closed.add('tab-lider');
+    t.states['tab-dev2'] = 'waiting';
+    t.failures['tab-dev2'] = 'rate_limit';
+    t.bridge.attention('tab-dev2');
+    await settle(t);
+    expect(t.sent).toEqual([{ tabId: 'tab-unico', text: expect.stringMatching(/^◆ Dev Dev 2 \(place:dev2, quadro atlas\) está travada: limite de uso/) }]);
   });
 
   it('Líder do quadro aberto mas mudo desde que o app abriu: a trava da cadeira vai ao Líder único; o fim de turno não vai a ninguém', async () => {

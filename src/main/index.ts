@@ -10,7 +10,7 @@ import { createStatusLineStore } from './statusline-store';
 import { STATUS_LINE_CHANNELS, type StatusLineChangedPayload, type StatusLineSnapshot } from '../shared/statusLine';
 import { appMcpAllowArgs } from '../shared/commandBuilder';
 import { isBypassLaunch, planLaunchPermission, type SpawnFacts } from '../shared/launchPermission';
-import { spawnFactsOf } from '../shared/mindscape/reach';
+import { demandOwnerRefusal, hearingPlaceIds, spawnFactsOf } from '../shared/mindscape/reach';
 import { planRoleLaunch } from '../shared/roleLaunch';
 import type { DevModeBoardConfig } from '../shared/devMode';
 // Spec 010 — esteira nova: serviço (store + ingestão + disparo) e a fronteira IPC.
@@ -3848,7 +3848,13 @@ async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, cal
   if (call.tool === 'tarefa_criar' && (!call.dono || !reached.includes(call.dono)))
     return `O Líder único não faz a tarefa: diga em "dono" um lugar que você alcança neste quadro (${reached.join(', ') || 'nenhum'}).`;
   const saved = savedBoard(board.pasta);
-  const placeStates = new Map([[board.pasta, placeStatesOf(board.lugares)]]);
+  const states = placeStatesOf(board.lugares);
+  if (call.tool === 'tarefa_criar' && call.dono) {
+    // Dono, 12/11 (t-5c0df1df): a new demand goes to the board's live Líder; tarefa_transferir stays free.
+    const refusal = demandOwnerRefusal(saved, hearingPlaceIds(states), call.dono);
+    if (refusal) return refusal;
+  }
+  const placeStates = new Map([[board.pasta, states]]);
   return { caller: await withEveryBoard(boardBridge, ptyId, { ...base, projectPath: board.pasta, boardPlaceIds: reached, placeStates, ...(saved ? { board: saved } : {}) }, call), call };
 }
 
