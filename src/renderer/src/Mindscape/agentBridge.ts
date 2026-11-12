@@ -47,6 +47,7 @@ import { addLink, addPlace, noteCardId, placeCardId, placeHasStarted, placeOfSes
 import type { SemaphoreState } from '../../../shared';
 import { FAXINEIRO_ROLE_ID, LEADER_ROLE_ID, type SessionRole } from '../../../shared/roles';
 import type { SendFrom } from '../chat/sendDriver';
+import { returnReport, returnVerdict, type ReturnLine } from '../../../shared/sessionReturn';
 
 /**
  * A session opened by `sessao_abrir` that sent no hook in this long did not start: the gate waits up to 30 s for
@@ -151,6 +152,20 @@ export interface ResumePlaceRequest {
    * new place opens): why it must not open there now, or `undefined`. Undefined = the app opens and the bridge counts it.
    */
   mayOpenOn(remoteId: string | undefined): string | undefined;
+}
+
+/**
+ * Sessão durável (t-fb11c6cd) — a session that was open when the app closed to update, expected back on its
+ * conversation. Local: the tab reopened at boot (`tabId`). Remote: no tab id; it reattaches by itself (`remote`).
+ */
+export interface ReturnExpectation {
+  readonly tabId?: string;
+  readonly sessionId: string;
+  readonly projectPath: string;
+  readonly name: string;
+  readonly remote?: boolean;
+  /** Came back with `--session-id` (no message before the update): no resume sign to wait for. */
+  readonly fresh?: boolean;
 }
 
 export type ResumePlaceOutcome = { readonly ok: true; readonly tabId: string; readonly remoteId?: string } | { readonly ok: false; readonly reason: string };
@@ -332,6 +347,8 @@ export class AgentBridge {
   private readonly resuming = new Map<string, { readonly tabId: string | null; readonly at: number }>();
   /** t-b3b26e60 — what each tab opened by `sessao_abrir` was asked: a tab that never started can go back to the queue. */
   private readonly launched = new Map<string, QueuedOpen>();
+  /** Sessão durável — the boards whose team is coming back from an update, until their Líder heard who did. */
+  private readonly returning = new Map<string, { readonly since: number; readonly entries: readonly ReturnExpectation[]; sending: boolean }>();
 
   constructor(ports: AgentBridgePorts) {
     this.ports = ports;
@@ -1112,6 +1129,78 @@ export class AgentBridge {
           if (this.pendingUrgent.get(key) !== entry) return; // replaced by a newer situation meanwhile
           if (outcome.kind === 'nao-foi') entry.sending = false; // the next flush tries again
           else this.pendingUrgent.delete(key);
+        });
+    }
+    this.reportReturns();
+  }
+
+  /**
+   * Sessão durável (t-fb11c6cd) — the sessions reopened after an update. Once every one of a board came back or gave up
+   * (`returnVerdict`), the Líder of that board hears it in one message, or the Líder único when the board has none that
+   * hears. Judged at each `flushUrgent` (each state change and every half minute); it waits for a Líder like the urgent.
+   */
+  expectReturn(entries: readonly ReturnExpectation[]): void {
+    const since = Date.now();
+    const byBoard = new Map<string, ReturnExpectation[]>();
+    for (const entry of entries) byBoard.set(entry.projectPath, [...(byBoard.get(entry.projectPath) ?? []), entry]);
+    for (const [projectPath, list] of byBoard) {
+      const before = this.returning.get(projectPath);
+      this.returning.set(projectPath, { since: before?.since ?? since, entries: [...(before?.entries ?? []), ...list], sending: false });
+    }
+    this.flushUrgent();
+  }
+
+  private reportReturns(): void {
+    for (const [projectPath, report] of this.returning) {
+      if (report.sending) continue;
+      const board = this.board(projectPath);
+      if (!board) {
+        if (this.ports.loaded) this.returning.delete(projectPath); // a folder with no board: no team to tell
+        continue; // else the board has not loaded yet
+      }
+      const elapsedMs = Date.now() - report.since;
+      const lines: ReturnLine[] = [];
+      let pending = false;
+      for (const entry of report.entries) {
+        const tab = entry.remote
+          ? this.ports.tabs().find((candidate) => candidate.remoteId !== undefined && candidate.claudeSessionId === entry.sessionId)
+          : this.ports.tabs().find((candidate) => candidate.id === entry.tabId);
+        const verdict = returnVerdict(entry.sessionId, {
+          remote: entry.remote === true,
+          tabFound: tab !== undefined,
+          exited: tab !== undefined && this.ports.stateOf(tab.id) === undefined,
+          ...(tab?.claudeSessionId ? { sessionId: tab.claudeSessionId } : {}),
+          confirmed: tab !== undefined && !this.ports.unconfirmed(tab.id),
+          fresh: entry.fresh === true,
+          trouble: tab ? this.ports.startTrouble(tab.id) : null,
+          elapsedMs,
+        });
+        if (verdict.kind === 'pendente') {
+          pending = true;
+          break;
+        }
+        const place = placeOfSession(board, entry.sessionId);
+        if (!place) continue; // a tab out of every board belongs to no team
+        const role = this.roleName(place.roleId);
+        lines.push({ who: `${role ?? entry.name} (${place.id})`, verdict });
+      }
+      if (pending) continue;
+      if (lines.length === 0) {
+        this.returning.delete(projectPath);
+        continue;
+      }
+      const boardLeader = boardLeaders(board).find((id) => this.hears(projectPath, id));
+      const leaderOfAll = this.reachableTab(this.leaderTab());
+      const target = boardLeader ? this.tabOfPlace(projectPath, boardLeader) : leaderOfAll && !this.ports.unconfirmed(leaderOfAll.id) ? leaderOfAll : undefined;
+      if (!target) continue; // waits for a Líder
+      report.sending = true;
+      void this.ports
+        .deliverLine(target.id, returnReport(lines, boardLeader ? undefined : this.boardName(projectPath)), DELIVERY_WAIT_MS, 'session')
+        .catch((): DeliveryOutcome => ({ kind: 'nao-foi', reason: 'erro' }))
+        .then((outcome) => {
+          if (this.returning.get(projectPath) !== report) return;
+          if (outcome.kind === 'nao-foi') report.sending = false; // the next flush tries again
+          else this.returning.delete(projectPath);
         });
     }
   }

@@ -374,7 +374,7 @@ import type { LiveSessionSignal } from '../shared/rotinas/stalledSessions';
 // B33 — atualizar para a versão nova de dentro do app.
 import { autoUpdater } from 'electron-updater';
 import { createAppUpdateService, type AppUpdateService } from './app-update';
-import { APP_UPDATE_CHANNELS, type AppUpdateApplyResult, type AppUpdateBoot, type AppUpdateStatus } from '../shared/appUpdate';
+import { APP_UPDATE_CHANNELS, DEFAULT_FORCE_AFTER_MINUTES, respawnArgsFor, type AppUpdateApplyResult, type AppUpdateBoot, type AppUpdateStatus } from '../shared/appUpdate';
 import type { HealthReport } from '../shared/health/types';
 import { isValidPetPrefsInput } from '../shared/pet/ipc';
 import type { PetDisplay } from '../shared/pet/types';
@@ -2120,7 +2120,10 @@ function registerPtyIpcHandlers(): void {
 
       // T008 — argv do Launcher (CommandBuilder, FR-003/CA-1); vazio
       // preserva o comportamento antigo (T005: sessão sem flags).
-      const launcherArgs = options.args ?? [];
+      // Sessão durável — a tab that came back from an update with `--session-id <id>` resumes it once it has a transcript.
+      const launcherArgs = options.providerId
+        ? (options.args ?? [])
+        : respawnArgsFor(options.args ?? [], (sessionId) => localTranscriptExists(sessionId, options.cwd ?? homedir()));
 
       // T009 — correlação sessão<->aba (spike: `--session-id <uuid>`
       // determinístico) + hooks do semáforo (`--settings`, soma aditiva,
@@ -3435,18 +3438,21 @@ function registerAppUpdateIpcHandlers(): void {
     updater: () => autoUpdater,
     stateDir: join(app.getPath('userData'), 'app-update', channel),
     channel,
+    // Sessão durável — a conversation with no transcript yet comes back under the same id, not with a failing `-r`.
+    transcriptExists: (sessionId, cwd) => localTranscriptExists(sessionId, cwd ?? homedir()),
+    forceAfterMinutes: () => appConfig.appUpdate.forceAfterMinutes ?? DEFAULT_FORCE_AFTER_MINUTES,
     onChanged: (status) => {
       const window = getMainWindow();
       if (window && !window.isDestroyed()) window.webContents.send(APP_UPDATE_CHANNELS.changed, status);
     },
   });
   appUpdateService.start();
-  const disabled: AppUpdateStatus = { enabled: false, currentVersion: app.getVersion(), available: null, failure: null };
+  const disabled: AppUpdateStatus = { enabled: false, currentVersion: app.getVersion(), available: null, failure: null, forceAfterMs: DEFAULT_FORCE_AFTER_MINUTES * 60_000 };
   ipcMain.handle(APP_UPDATE_CHANNELS.get, (): AppUpdateStatus => appUpdateService?.status() ?? disabled);
-  ipcMain.handle(APP_UPDATE_CHANNELS.apply, (_event, tabs: unknown): AppUpdateApplyResult =>
-    appUpdateService ? appUpdateService.apply(tabs) : { ok: false, message: 'Atualização indisponível.' },
+  ipcMain.handle(APP_UPDATE_CHANNELS.apply, (_event, tabs: unknown, remotes: unknown): AppUpdateApplyResult =>
+    appUpdateService ? appUpdateService.apply(tabs, remotes ?? []) : { ok: false, message: 'Atualização indisponível.' },
   );
-  ipcMain.handle(APP_UPDATE_CHANNELS.takeBoot, (): AppUpdateBoot => appUpdateService?.takeBoot() ?? { tabs: [], failure: null });
+  ipcMain.handle(APP_UPDATE_CHANNELS.takeBoot, (): AppUpdateBoot => appUpdateService?.takeBoot() ?? { tabs: [], remotes: [], failure: null });
   ipcMain.handle(APP_UPDATE_CHANNELS.check, async (): Promise<void> => {
     await appUpdateService?.check();
   });
@@ -4002,8 +4008,11 @@ function spawnFactsFor(options: PtyCreateOptions, launcherArgs: readonly string[
   const leaderOfAll = options.leaderOfAll === true ? { leaderOfAll: true } : {};
   const resumeIndex = launcherArgs.indexOf('-r');
   const resumed = resumeIndex !== -1 && !launcherArgs.includes('--fork-session') ? launcherArgs[resumeIndex + 1] : undefined;
+  // Sessão durável — a conversation that came back from an update under its own id (`--session-id`) is on the board too.
+  const fixedIndex = launcherArgs.indexOf('--session-id');
+  const fixed = fixedIndex !== -1 ? launcherArgs[fixedIndex + 1] : undefined;
   const predecessor = options.renewalId ? sessionRenewal?.get(options.renewalId)?.previousSessionId : undefined;
-  const sessionId = resumed ?? predecessor;
+  const sessionId = resumed ?? fixed ?? predecessor;
   const alone: SpawnFacts = { ...(explicit ? { roleId: explicit } : {}), ...leaderOfAll };
   if (!sessionId && !options.placeId) return alone;
   try {

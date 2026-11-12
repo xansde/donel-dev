@@ -1,0 +1,4 @@
+{
+  "title": "Atualizar não espera para sempre, e o time volta onde parou",
+  "text": "Ao clicar em Atualizar, as sessões que estão trabalhando recebem um aviso para fechar o turno e salvar o estado, e a barra mostra quanto falta para reiniciar (5 minutos). Quem parar antes sai da conta; no fim do prazo o Donel reinicia mesmo assim. Na volta, cada sessão retoma a mesma conversa, inclusive a que ainda não tinha recebido mensagem, e o Líder recebe uma mensagem dizendo quem voltou e quem não voltou."
+}

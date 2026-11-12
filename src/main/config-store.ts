@@ -233,7 +233,7 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     yolo: defaultYoloPrefs(),
     layout: DEFAULT_LAYOUT_PREFS,
     leader: DEFAULT_LEADER_PREFS,
-    appUpdate: { installersDir: null },
+    appUpdate: { installersDir: null, forceAfterMinutes: null },
     browserUploads: { folders: [] },
     browserUploadGrants: { grants: [] },
     slackAgentBots: { servers: [...AGENT_BOT_SERVERS] },
@@ -296,9 +296,13 @@ export function sanitizeYoloPrefs(value: unknown): YoloPrefs {
 
 /** B33 — a non-empty path, or `null` (the default folder of the alpha). */
 export function sanitizeAppUpdatePrefs(value: unknown): AppUpdatePrefs {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return { installersDir: null };
-  const { installersDir } = value as Record<string, unknown>;
-  return { installersDir: typeof installersDir === 'string' && installersDir.trim() !== '' ? installersDir.trim() : null };
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return { installersDir: null, forceAfterMinutes: null };
+  const { installersDir, forceAfterMinutes } = value as Record<string, unknown>;
+  return {
+    installersDir: typeof installersDir === 'string' && installersDir.trim() !== '' ? installersDir.trim() : null,
+    // 1 to 120 minutes; anything else is the default.
+    forceAfterMinutes: typeof forceAfterMinutes === 'number' && Number.isFinite(forceAfterMinutes) && forceAfterMinutes >= 1 && forceAfterMinutes <= 120 ? forceAfterMinutes : null,
+  };
 }
 
 /**
