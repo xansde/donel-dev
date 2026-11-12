@@ -3,10 +3,11 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AgentBridge, type AgentBridgePorts, type BridgeTab, type PermissionAsk } from '../src/renderer/src/Mindscape/agentBridge';
 import { permissionPorts, summarizeToolInput } from '../src/renderer/src/Mindscape/permissionPorts';
-import { permissionDialog } from '../src/shared/chat/screen';
+import { blockingScreen, permissionDialog } from '../src/shared/chat/screen';
 import { parseBoardToolCall } from '../src/shared/mindscape/agent-tools';
 import { addLink, addPlace, emptyMindscapeDoc, setPlaceConversation, type MindscapeDoc } from '../src/shared/mindscape/model';
 import { FACTORY_ROLES } from '../src/shared/roles';
+import type { SemaphoreState } from '../src/shared';
 
 // t-1293c818 (3) — dono, 09/11: "precisa do meu clique uma ova. Essas sessões não podem depender de mim". A permission
 // open on another session's screen is answered (or refused) by the Líder único through a tool, and a session with one
@@ -382,5 +383,63 @@ describe('permissão na tela do CLI real', () => {
     expect(dialog?.text).toContain('Bash command');
     expect(dialog?.text).toContain('ls /tmp/nao-existe-377b');
     expect(dialog?.text).toContain('echo fim');
+  });
+});
+
+// Revisor, #406 (vem do #377): com a caixa fora da tela (terminal rolado, /model aberto, mais de 15 linhas coladas), um
+// diálogo de permissão JÁ RESPONDIDO que ainda aparecia na tela era lido como aberto, completo e com o "1" do Yes. O
+// Líder escrevia "1" numa sessão que trabalhava (com /model aberto, escolhia o modelo 1) ou mandava Esc nela. Só é
+// aberto o diálogo que é o ÚLTIMO bloco da tela: abaixo das opções, só linhas vazias e o rodapé dele.
+describe('diálogo de permissão antigo, já respondido', () => {
+  const R = '─'.repeat(60);
+  const old = ['● Vou limpar a pasta.', '', R, ' Bash command', '   rm -rf build', ' Do you want to proceed?', ' ❯ 1. Yes', '   2. No', ''];
+  const after = ['● Bash(rm -rf build)', '  ⎿  (No output)', '', '● Pronto, apaguei a pasta.'];
+
+  it('seguido de saída normal, sem a caixa na tela: não há pedido aberto', () => {
+    expect(permissionDialog([...old, ...after])).toBeNull();
+  });
+
+  it('com o /model aberto abaixo dele: é a tela do /model, não uma permissão', () => {
+    const model = ['▔'.repeat(60), ' Select model', ' Switch between Claude models.', '', ' ❯ 1. Default (recommended)  Opus', '   2. Sonnet', '   3. Haiku', '', ' Enter to confirm · Esc to exit'];
+    const lines = [...old, ...after, ...model];
+    expect(permissionDialog(lines)).toBeNull();
+    expect(blockingScreen(lines)?.kind).toBe('screen');
+  });
+
+  it('com mais de 15 linhas coladas na caixa: não há pedido aberto', () => {
+    const pasted = ['❯ linha 0', ...Array.from({ length: 16 }, (_, i) => `  linha ${i + 1}`)];
+    expect(permissionDialog([...old, ...after, R, ...pasted, R, '  ? for shortcuts'])).toBeNull();
+  });
+
+  it('um diálogo aberto abaixo de um antigo: lê o aberto, com a tecla do Yes dele', () => {
+    const open = [R, ' Bash command', '   ls /tmp', ' Do you want to proceed?', ' ❯ 1. Yes', '   2. No', '', ' Esc to cancel · Tab to amend', ''];
+    const dialog = permissionDialog([...old, ...after, ...open]);
+    expect(dialog).toMatchObject({ complete: true, yesKey: '1' });
+    expect(dialog?.text).toContain('ls /tmp');
+    expect(dialog?.text).not.toContain('rm -rf build');
+  });
+
+  it('as portas: com o estado da sessão conhecido e diferente de "permission", a tela não vale como pedido', async () => {
+    const screen = [R, ' Bash command', '   ls /tmp', ' Do you want to proceed?', ' ❯ 1. Yes', '   2. No', '', ' Esc to cancel · Tab to amend'];
+    let state: SemaphoreState | undefined = 'working';
+    const keys: string[] = [];
+    const doors = permissionPorts({ held: async () => [], answerHeld: async () => ({ ok: true }), screen: () => screen, write: (_t, d) => keys.push(d) > 0, state: () => state });
+    expect(permissionDialog(screen)).not.toBeNull();
+    expect(await doors.permissionAsk('t')).toBeNull();
+    expect(doors.permissionOnScreen('t')).toBe(false);
+    for (const answer of ['allow', 'deny'] as const) {
+      const result = await doors.answerPermission('t', 'tela:qualquer', answer);
+      expect(result.ok).toBe(false);
+      expect(result.ok ? '' : result.reason).toMatch(/não está parada numa permissão/);
+    }
+    expect(keys).toEqual([]);
+
+    state = undefined; // sem hooks (lugar remoto): segue a tela
+    const ask = await doors.permissionAsk('t');
+    expect(ask?.source).toBe('tela');
+    expect(doors.permissionOnScreen('t')).toBe(true);
+    state = 'permission';
+    expect(await doors.answerPermission('t', ask!.id, 'allow')).toEqual({ ok: true });
+    expect(keys).toEqual(['1']);
   });
 });

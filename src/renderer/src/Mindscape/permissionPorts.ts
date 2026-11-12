@@ -10,6 +10,7 @@
 
 import { permissionDialog, type LineInput } from '../../../shared/chat/screen';
 import type { ChatOpenPermission } from '../../../shared/chat/ipc';
+import type { SemaphoreState } from '../../../shared';
 import type { PermissionAnswer, PermissionAsk } from './agentBridge';
 
 const CHAT_PREFIX = 'chat:';
@@ -28,7 +29,15 @@ export interface PermissionPortDeps {
   screen(tabId: string): readonly LineInput[] | undefined;
   /** Raw bytes to the tab's PTY; false = no live process. */
   write(tabId: string, data: string): boolean;
+  /**
+   * The session's state from its hooks; `undefined` = none known (no hook came: a remote place, a session not yet heard).
+   * Known and other than "permission", a dialog on the screen is not open (Revisor, #406): what shows is an old one.
+   */
+  state?(tabId: string): SemaphoreState | undefined;
 }
+
+/** Why a dialog read from the screen does not count when the session's hooks say it is not on a permission. */
+const NOT_ON_PERMISSION = 'a sessão não está parada numa permissão (o diálogo na tela é antigo, já respondido)';
 
 /** The CLI's own tools, whose main field reads well alone. Any other tool (mcp__*, unknown) is shown whole. */
 const NATIVE_TOOLS: ReadonlySet<string> = new Set(['Bash', 'Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Glob', 'Grep', 'WebFetch', 'WebSearch']);
@@ -83,9 +92,20 @@ function screenId(whole: string): string {
 }
 
 export function permissionPorts(deps: PermissionPortDeps): {
+  permissionOnScreen(tabId: string): boolean;
   permissionAsk(tabId: string): Promise<PermissionAsk | null>;
   answerPermission(tabId: string, askId: string, answer: 'allow' | 'deny'): Promise<PermissionAnswer>;
 } {
+  /** The hooks know the session and say it is not on a permission: the screen's dialog is an old one. */
+  const notOnPermission = (tabId: string): boolean => {
+    const state = deps.state?.(tabId);
+    return state !== undefined && state !== 'permission';
+  };
+  const screenDialog = (tabId: string) => {
+    if (notOnPermission(tabId)) return null;
+    const lines = deps.screen(tabId);
+    return lines ? permissionDialog(lines) : null;
+  };
   /** The open request, with the screen it was read from (the key that answers it comes from that same screen). */
   const read = async (tabId: string): Promise<{ readonly ask: PermissionAsk; readonly yesKey: string | null } | null> => {
     const held = (await deps.held(tabId).catch(() => []))[0];
@@ -93,16 +113,20 @@ export function permissionPorts(deps: PermissionPortDeps): {
       const { what, complete } = describeInput(held.toolName, held.toolInput);
       return { ask: { id: `${CHAT_PREFIX}${held.id}`, source: 'chat', tool: held.toolName, what, ...(complete ? {} : { complete: false }) }, yesKey: null };
     }
-    const lines = deps.screen(tabId);
-    const dialog = lines ? permissionDialog(lines) : null;
-    if (!lines || !dialog) return null;
+    const dialog = screenDialog(tabId);
+    if (!dialog) return null;
     return { ask: { id: screenId(dialog.whole), source: 'tela', what: dialog.text, ...(dialog.complete ? {} : { complete: false }) }, yesKey: dialog.yesKey };
   };
   return {
+    permissionOnScreen: (tabId) => screenDialog(tabId) !== null,
     permissionAsk: async (tabId) => (await read(tabId))?.ask ?? null,
     async answerPermission(tabId, askId, answer) {
       const open = await read(tabId);
-      if (open === null) return { ok: false, reason: 'o pedido já não está aberto' };
+      if (open === null) {
+        const screen = deps.screen(tabId);
+        const stale = notOnPermission(tabId) && screen !== undefined && permissionDialog(screen) !== null;
+        return { ok: false, reason: stale ? NOT_ON_PERMISSION : 'o pedido já não está aberto' };
+      }
       if (open.ask.id !== askId) return { ok: false, reason: 'o pedido aberto agora é outro' };
       if (answer === 'allow' && open.ask.complete === false) return { ok: false, reason: 'a leitura do pedido está incompleta; só recusar' };
       if (open.ask.source === 'chat') {

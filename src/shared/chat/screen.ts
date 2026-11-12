@@ -8,7 +8,7 @@
 // the CLI text changes between versions. Detectors never read the byte stream:
 // in ConPTY a space is a cursor advance, not a character (see `cliInputBox.ts`).
 
-import { hasPermissionPrompt, isRulerLine, locateInputBox, readInputBox } from '../cliInputBox';
+import { hasPermissionPrompt, isRulerLine, locateInputBox, openPermissionAt, readInputBox } from '../cliInputBox';
 import { lineText, type LineInput, type ScreenLine } from '../screenLine';
 import { trustDialogKind } from '../trustDialog';
 
@@ -229,17 +229,22 @@ export function blockingScreen(lines: readonly LineInput[]): BlockingScreen | nu
     return { kind: 'question', title: question?.trim() ?? 'Question' };
   }
 
+  // The open permission dialog is the LAST block of the screen (Revisor, #406): one already answered that still shows
+  // above the tool's output is not open.
+  const open = openPermissionAt(lines);
+  if (open) return { kind: 'permission', title: plain[open.question].trim() };
+
   const box = readInputBox(lines);
   const boxVisible = box.kind === 'typed' || box.kind === 'empty';
+  if (boxVisible) return null;
 
-  // A permission prompt replaces the box. Its patterns are loose ("1. Yes"), so they only count when the box is gone.
-  if (!boxVisible && hasPermissionPrompt(lines)) {
+  const title = screenTitle(plain);
+  if (title) return { kind: 'screen', title };
+
+  // A veto only (never "a request is open"): with the box gone, any trace of a dialog keeps the chat from typing.
+  // Its patterns are loose ("1. Yes") and match an old dialog too, so nothing acts or warns on it (permissionDialog).
+  if (hasPermissionPrompt(lines)) {
     return { kind: 'permission', title: firstMatching(plain, /Do you want to\b.*\?/i) ?? firstMatching(plain, /requires confirmation/i) ?? 'Permission' };
-  }
-
-  if (!boxVisible) {
-    const title = screenTitle(plain);
-    if (title) return { kind: 'screen', title };
   }
   return null;
 }
@@ -259,9 +264,7 @@ export interface PermissionDialog {
   readonly whole: string;
 }
 
-const PERMISSION_QUESTION = /Do you want to\b.*\?|requires confirmation/i;
 const YES_OPTION = /^\s*(?:❯\s*)?(\d)\.\s+Yes\s*$/;
-const ANY_OPTION = /^\s*(?:❯\s*)?\d\.\s/;
 const DIALOG_TEXT_MAX = 8_000;
 /** Said first when the dialog's top border is not on the screen (a long command scrolled it off). */
 export const DIALOG_TOP_MISSING = '[o começo do pedido não está na tela]';
@@ -292,16 +295,11 @@ function isDialogTop(plain: readonly string[], at: number, question: number): bo
  * (`sessao_permissao`); `null` when `blockingScreen` sees no permission prompt. Refusing is Esc; allowing is `yesKey`.
  */
 export function permissionDialog(lines: readonly LineInput[]): PermissionDialog | null {
-  if (blockingScreen(lines)?.kind !== 'permission') return null;
+  // Only the dialog that is the last block of the screen (Revisor, #406), and never under a trust, plan or question one.
+  const open = openPermissionAt(lines);
+  if (!open || blockingScreen(lines)?.kind !== 'permission') return null;
   const plain = lines.map(lineText);
-  let question = -1;
-  for (let i = plain.length - 1; i >= 0; i -= 1) {
-    if (PERMISSION_QUESTION.test(plain[i])) {
-      question = i;
-      break;
-    }
-  }
-  if (question < 0) question = Math.max(0, plain.findIndex((line) => YES_OPTION.test(line)) - 1);
+  const { question, last } = open;
   // Up to the dialog's top border, however long the command: a cap here hid the start of a long one (Revisor, #377).
   // Only the dialog's own border counts, never a ruler drawn inside the command (Revisor, #377, 2nd round).
   let top = question;
@@ -316,9 +314,7 @@ export function permissionDialog(lines: readonly LineInput[]): PermissionDialog 
   const whole = body.join('\n');
   const cut = whole.length > DIALOG_TEXT_MAX;
   const text = `${topFound ? '' : `${DIALOG_TOP_MISSING}\n`}${cut ? `${whole.slice(0, DIALOG_TEXT_MAX)}\n[cortado: ${DIALOG_TEXT_MAX} de ${whole.length} letras]` : whole}`;
-  const yes = plain.slice(question + 1).map((line) => YES_OPTION.exec(line)).find((match) => match !== null);
-  let last = question;
-  for (let i = question + 1; i < plain.length && (ANY_OPTION.test(plain[i]) || plain[i].trim() === ''); i += 1) if (ANY_OPTION.test(plain[i])) last = i;
+  const yes = plain.slice(question + 1, last + 1).map((line) => YES_OPTION.exec(line)).find((match) => match !== null);
   const drawn = plain.slice(top, last + 1).map((row) => row.trimEnd()).join('\n');
   return { text, yesKey: yes ? yes[1] : null, complete: topFound && !cut, whole: drawn };
 }
