@@ -141,6 +141,12 @@ export interface SendMachineState {
   readonly resends: number;
   /** The gate read an empty box right before the paste: whatever placeholder shows up next is ours. */
   readonly boxEmptyAtPaste: boolean;
+  /** Our text was seen in the box at least once (an Enter written before that went blind). */
+  readonly pasteSeen: boolean;
+  /** Unattended `queued` reached only by a blind Enter and an empty box: the box is looked at until then. */
+  readonly blindUntil: number | null;
+  /** Next look at the box while `queued` and blind. */
+  readonly lookAt: number | null;
   /** Idle CLI, paste not drawn yet: when to give up on it (`TEXT_IDLE_EXTRA_MS` after the text deadline). */
   readonly textGiveUpAt: number | null;
   readonly idleAtEnter: boolean;
@@ -311,6 +317,9 @@ export function createSend(input: SendInput, now: number): StepResult {
     resendDone: false,
     resends: 0,
     boxEmptyAtPaste: false,
+    pasteSeen: false,
+    blindUntil: null,
+    lookAt: null,
     textGiveUpAt: null,
     idleAtEnter: true,
     verifyAt: null,
@@ -378,7 +387,7 @@ export function step(state: SendMachineState, event: SendEvent): StepResult {
       applyAction(s, event.action, now, fx);
       break;
   }
-  evaluate(s, now, fx);
+  evaluate(s, now, fx, event.type === 'screen');
   return finish(s, now, fx);
 }
 
@@ -402,6 +411,9 @@ function resetForRetry(s: Draft, now: number): void {
   s.resendDone = false;
   s.resends = 0;
   s.boxEmptyAtPaste = false;
+  s.pasteSeen = false;
+  s.blindUntil = null;
+  s.lookAt = null;
   s.textGiveUpAt = null;
   s.verifyAt = null;
   s.leftoverShown = null;
@@ -446,6 +458,8 @@ function applySignal(s: Draft, sig: PromptSignal): void {
     s.phase = 'queued';
     s.step = 'done';
     s.verifyAt = null;
+    s.blindUntil = null; // the CLI said it has it
+    s.lookAt = null;
   };
 
   if (sig.signal === 'unknown-command') {
@@ -573,6 +587,21 @@ function looksLikeOurs(box: string, text: string): boolean {
   return seen.length > ours.length ? startIsOurs && endIsOurs : startIsOurs || endIsOurs;
 }
 
+/**
+ * 11/11 — `queued`, and the box holds exactly our text: literally, or placeholders whose line counts add up to ours.
+ * Stricter than `textSeen` (which takes any placeholder after an empty box): by now another message may have been
+ * pasted, and its `[Pasted text #N]` must not get our Enter.
+ */
+function stillInBox(s: Draft, lines: readonly LineInput[]): boolean {
+  const raw = readInputText(lines);
+  if (raw === null) return false;
+  const box = collapse(raw.replace(/\[Image #\d+\]/g, ''));
+  if (box === '') return false;
+  if (squash(box) === squash(s.text)) return true;
+  if (!ONLY_PLACEHOLDERS.test(box)) return false;
+  return placeholderCounts(box).reduce<number>((sum, count) => sum + (count ?? 0), 0) === lineBreaks(s.text);
+}
+
 /** Text in the box is a prefix of ours (so a timeout may clean it without eating the owner's own typing). */
 function boxIsOurs(s: Draft, lines: readonly LineInput[]): boolean {
   const raw = readInputText(lines);
@@ -631,7 +660,38 @@ function enterConfirming(s: Draft, lines: readonly LineInput[], now: number, fx:
   }
 }
 
-function evaluate(s: Draft, now: number, fx: SendEffect[]): void {
+/**
+ * `queued` judged by the screen alone (no `enqueue`/`submit`). When the Enter went blind (our text never showed in the
+ * box), an empty box only says the paste was not drawn yet: an unattended send keeps looking (`blindUntil`).
+ */
+function queueFromScreen(s: Draft, now: number): void {
+  s.phase = 'queued';
+  s.step = 'done';
+  s.verifyAt = null;
+  if (s.unattended && !s.pasteSeen) {
+    s.blindUntil = now + UNATTENDED_TEXT_EXTRA_MS;
+    s.lookAt = now + RESEND_ENTER_MS;
+  }
+}
+
+/** The Enter did not take (our text sits in the box): the Enter again, never the text, and the box is checked again. */
+function enterAgain(s: Draft, lines: readonly LineInput[], now: number, fx: SendEffect[]): void {
+  fx.push({ type: 'write', data: '\r' });
+  s.phase = 'confirming';
+  s.step = 'await-ack';
+  s.pasteSeen = true;
+  s.idleAtEnter = !midTurn(s, lines);
+  s.resendAt = now + RESEND_ENTER_MS;
+  s.ackDeadline = now + ACK_MS;
+  s.resendDone = false;
+  s.resends = 0;
+  s.attempts += 1;
+  s.blindUntil = null;
+  s.lookAt = null;
+  s.verifyAt = null;
+}
+
+function evaluate(s: Draft, now: number, fx: SendEffect[], fresh = false): void {
   if (s.phase === 'accepted' || s.phase === 'failed') return;
   if (!s.alive && s.phase !== 'waiting-cli') {
     fail(s, 'o Claude foi encerrado');
@@ -648,7 +708,7 @@ function evaluate(s: Draft, now: number, fx: SendEffect[]): void {
       evaluateConfirming(s, now, fx);
       return;
     case 'queued':
-      evaluateQueued(s, now, fx);
+      evaluateQueued(s, now, fx, fresh);
       return;
     default:
       return;
@@ -659,9 +719,23 @@ function evaluate(s: Draft, now: number, fx: SendEffect[]): void {
  * `queued`: no deadline while the turn goes on (delivery depends on it). Once the turn is over (hooks), 15 s
  * without `submit`/`deliver` → look the prompt up in the stored hooks/transcript (`verify`): found → accepted,
  * not found → failed "o Claude não pegou a mensagem". A screen still showing the turn (`isWorking`) puts the check off.
+ *
+ * 11/11 — unattended: every fresh look at the screen while `queued` (the blind beat, the check at the end of the turn)
+ * first asks whether our text sits in the box. Then the Enter did not take, and nobody will press it: the Enter again.
+ * Before, the paste stayed there for hours and every later message waited behind it.
  */
-function evaluateQueued(s: Draft, now: number, fx: SendEffect[]): void {
+function evaluateQueued(s: Draft, now: number, fx: SendEffect[], fresh: boolean): void {
   if (s.step === 'verify') return;
+  if (fresh && s.unattended && s.lines !== null && stillInBox(s, s.lines)) {
+    enterAgain(s, s.lines, now, fx);
+    return;
+  }
+  if (s.blindUntil !== null && now < s.blindUntil) {
+    if (s.lookAt === null || now >= s.lookAt) s.lookAt = Math.min(now + RESEND_ENTER_MS, s.blindUntil);
+  } else {
+    s.blindUntil = null;
+    s.lookAt = null;
+  }
   if (s.working) {
     s.verifyAt = null;
     return;
@@ -820,6 +894,7 @@ function evaluateTyping(s: Draft, now: number, fx: SendEffect[]): void {
       return;
     }
     if (lines !== null && textSeen(s, lines)) {
+      s.pasteSeen = true;
       enterConfirming(s, lines, now, fx);
       return;
     }
@@ -902,10 +977,9 @@ function evaluateConfirming(s: Draft, now: number, fx: SendEffect[]): void {
     // Enter written mid-turn and our text is not in the box once the Enter resend window is over: the CLI took it
     // into its own queue (it only confirms on delivery; the signal may also just be late, as on a machine short
     // of RAM). It waits there like any `queued` send, and is checked when the turn ends.
+    if (lines !== null && textSeen(s, lines)) s.pasteSeen = true;
     if (!s.idleAtEnter && s.resendAt !== null && now >= s.resendAt && lines !== null && !textSeen(s, lines)) {
-      s.phase = 'queued';
-      s.step = 'done';
-      s.verifyAt = null;
+      queueFromScreen(s, now);
       return;
     }
     if (s.ackDeadline !== null && now >= s.ackDeadline) {
@@ -913,11 +987,8 @@ function evaluateConfirming(s: Draft, now: number, fx: SendEffect[]): void {
       // transcript, a machine at 100 %). Mid-turn on screen it waits like a queued send, checked when the turn ends;
       // idle, the transcript is asked now. Either way, never a new paste: a sender told "não foi" sent it twice.
       if (lines !== null && readInputText(lines) === '') {
-        if (isWorking(lines) || s.working) {
-          s.phase = 'queued';
-          s.step = 'done';
-          s.verifyAt = null;
-        } else {
+        if (isWorking(lines) || s.working) queueFromScreen(s, now);
+        else {
           s.step = 'verify';
           s.ackDeadline = null;
           fx.push({ type: 'ack-lookup', text: s.text, since: s.createdAt });
@@ -998,6 +1069,7 @@ function nextWake(s: Draft, now: number): number | null {
       break;
     case 'queued':
       if (s.verifyAt !== null) candidates.push(s.verifyAt);
+      if (s.lookAt !== null) candidates.push(s.lookAt);
       break;
     default:
       break;

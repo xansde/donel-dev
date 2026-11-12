@@ -969,6 +969,19 @@ function readRawConfigObject(filePath: string, io: ConfigIoDeps): Record<string,
   }
 }
 
+/**
+ * 11/11 (Revisor, #400) — the `leader` block after a change from Preferences. `leader.home` is written by hand in
+ * config.json while the app is open, so the block on disk wins over the copy in memory (which never saw it); the patch
+ * goes on top. A `where` from Preferences is the owner's choice: marked, so a 'local' he picks is never read as the old
+ * default.
+ */
+export function patchLeaderPrefs(filePath: string, inMemory: LeaderPrefs, patch: Partial<LeaderPrefs>, io: ConfigIoDeps): LeaderPrefs {
+  const onDisk = readRawConfigObject(filePath, io).leader;
+  const base = onDisk === undefined ? inMemory : sanitizeLeaderPrefs(onDisk, inMemory);
+  const chosen = typeof patch.where === 'string' ? { chosen: true } : {};
+  return sanitizeLeaderPrefs({ ...base, ...patch, ...chosen }, base);
+}
+
 /** Igualdade estrutural (objetos/arrays/primitivos — o bastante pro shape JSON deste arquivo; nunca precisa lidar com Date/Map/etc). Usada só para decidir, campo a campo, se ESTA sessão mudou o valor desde `baseline`. */
 function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;

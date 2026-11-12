@@ -131,8 +131,8 @@ import { blockingScreen, readInputText } from '../../shared/chat/screen';
 import { LEADER_DENY_REASON, permissionPorts } from './Mindscape/permissionPorts';
 import { withNoPipelineTag } from '../../shared/chat/noPipeline';
 import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../shared/lider/ipc';
-import { isLeaderOfAllTab, leaderHome } from '../../shared/mindscape/leader';
-import { DEFAULT_LEADER_PREFS, leaderRemoteId } from '../../shared/leaderPrefs';
+import { isLeaderOfAllTab } from '../../shared/mindscape/leader';
+import { DEFAULT_LEADER_PREFS, leaderCwd, leaderRemoteId } from '../../shared/leaderPrefs';
 import { planLeaderDelivery, startLeaderMove, type LeaderMove } from '../../shared/lider/move';
 import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
 import { TerminalPane } from './TerminalPane';
@@ -2386,7 +2386,7 @@ export function App(): React.JSX.Element {
   // comes out of him. One session with the role `lider` and the Jobu's mark (`isLeaderOfAllTab`): this window owns the tabs,
   // so it says which one it is (`lider:report`) and delivers what the owner writes there (`lider:deliver`) through the
   // tab's own send machine; with no live Líder, the first message opens one, on this computer, in the folder that holds
-  // the projects of the boards (`leaderHome`).
+  // the projects of the boards (`leaderHome`), or `leader.home` of config.json when set (`leaderCwd`).
   const liderTabRef = useRef<string | null>(null);
   const findLiderTab = (): TabState | undefined => {
     const alive = (tab: TabState): boolean => isLeaderOfAllTab(tab) && tabExits[tab.id] === undefined;
@@ -2429,7 +2429,7 @@ export function App(): React.JSX.Element {
       // Without the role there is no Líder único (it is the role + the mark below): say so instead of opening a plain session.
       if (!role) throw new Error('O papel Líder não existe nesta máquina.');
       const defaults = appConfig?.launcherDefaults;
-      const home = resume ? resume.cwd : leaderHome(Object.keys(mindscape.doc.boards));
+      const home = resume ? resume.cwd : leaderCwd(appConfig?.leader ?? DEFAULT_LEADER_PREFS, Object.keys(mindscape.doc.boards));
       const launchArgs = buildLauncherArgs({
         providerId,
         model: role.model ?? defaults?.model ?? DEFAULT_MODEL_ALIAS,
@@ -2666,6 +2666,7 @@ export function App(): React.JSX.Element {
       }),
     remoteLabel: (remoteId) => accountsView.remotes.find((remote) => remote.id === remoteId)?.label ?? remoteId,
     remotes: () => accountsView.remotes.map((remote) => ({ id: remote.id, label: remote.label })),
+    routing: () => appConfig?.team.routing ?? null,
     projects: () => projects.map((project) => ({ path: project.path, name: project.name })),
     passOn: (requests) => window.donel.ledger.passOn(requests),
     stateEnteredAt: (tabId) => semaphoreStates[tabId]?.stateEnteredAt,

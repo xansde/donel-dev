@@ -1,0 +1,4 @@
+{
+  "title": "Mensagem longa entre sessões não fica mais parada na caixa",
+  "text": "Quando uma sessão manda um texto longo a outra que está trabalhando, o Donel confere se ele saiu mesmo da caixa. Se o texto ficou lá sem ser enviado, o Donel dá o Enter de novo, e as mensagens seguintes não ficam mais represadas atrás dele."
+}

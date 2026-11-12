@@ -1251,3 +1251,78 @@ describe('Enter que entrou sem sinal de aceite (07/11)', () => {
     expect(sim.allWrites().filter((w) => w.includes('oi tudo bem'))).toHaveLength(1);
   });
 });
+
+// 11/11 (BizOps, Theo) — mensagem longa de outra sessão a um CLI remoto trabalhando: a colagem demorou mais de 3 s a
+// aparecer, o Enter saiu às cegas, a caixa ainda estava vazia 3 s depois e o envio virou "na fila". Dali em diante a
+// máquina não olhava mais a caixa: o `[Pasted text #N]` que apareceu sem ter ido ficou parado e travou as seguintes.
+describe('colado que aparece depois do "na fila" (11/11)', () => {
+  const LONG = Array.from({ length: 30 }, (_, i) => `linha ${i} do aviso do Líder`).join('\n');
+  const PLACEHOLDER = '[Pasted text #1 +29 lines]';
+  const enters = (sim: Sim) => sim.allWrites().filter((w) => w === '\r').length;
+
+  /** Sem ninguém olhando: colagem que não aparece em 3 s, Enter às cegas, caixa vazia → "na fila". */
+  function queuedBlind() {
+    const sim = new Sim({ text: LONG, unattended: true }, 0);
+    sim.ev({ type: 'env', now: 0, working: true });
+    sim.screen(workingEmpty(), 0);
+    sim.screen(workingEmpty(), 1000);
+    sim.tick(3000);
+    sim.tick(3080);
+    sim.screen(workingEmpty(), 6080);
+    expect(sim.phase).toBe('queued');
+    expect(enters(sim)).toBe(1);
+    return sim;
+  }
+
+  it('segue olhando a caixa e, quando o colado aparece parado nela, dá o Enter de novo (nunca o texto)', () => {
+    const sim = queuedBlind();
+    expect(sim.log).toContainEqual({ type: 'wake-at', at: 9080 });
+    sim.screen(screen(PLACEHOLDER, WORKING_FOOTER), 9080);
+    expect(sim.writes()).toEqual(['\r']);
+    expect(sim.phase).toBe('confirming');
+    expect(sim.allWrites().filter((w) => w.includes('linha 0'))).toHaveLength(1);
+  });
+
+  it('o Enter de novo não pegou: tenta outra vez em 3 s; a caixa esvaziou: volta a "na fila" e a entrega fecha', () => {
+    const sim = queuedBlind();
+    sim.screen(screen(PLACEHOLDER, WORKING_FOOTER), 9080);
+    sim.screen(screen(PLACEHOLDER, WORKING_FOOTER), 12_080);
+    expect(enters(sim)).toBe(3);
+    sim.screen(workingEmpty(), 15_080);
+    expect(sim.phase).toBe('queued');
+    sim.signal({ signal: 'deliver', text: LONG, at: 60_000 }, 60_000);
+    expect(sim.phase).toBe('accepted');
+  });
+
+  it('o turno acabou com o colado parado na caixa: Enter na conferência, em vez de "não foi" com a caixa ocupada', () => {
+    const sim = new Sim({ text: LONG, unattended: true }, 0);
+    sim.ev({ type: 'env', now: 0, working: true });
+    sim.screen(workingEmpty(), 0);
+    sim.screen(screen(PLACEHOLDER, WORKING_FOOTER), 500);
+    sim.tick(580);
+    sim.signal({ signal: 'enqueue', text: LONG, at: 700 }, 700);
+    expect(sim.phase).toBe('queued');
+    sim.ev({ type: 'env', now: 100_000, working: false });
+    const r = sim.screen(screen(PLACEHOLDER), 115_000);
+    expect(sim.writes(r.effects)).toEqual(['\r']);
+    expect(r.effects.some((e) => e.type === 'ack-lookup')).toBe(false);
+    expect(sim.phase).toBe('confirming');
+    sim.signal({ signal: 'submit', text: LONG, at: 115_200 }, 115_200);
+    expect(sim.phase).toBe('accepted');
+  });
+
+  it('caixa vazia na conferência: procura no transcript como antes, sem Enter', () => {
+    const sim = queuedBlind();
+    sim.ev({ type: 'env', now: 200_000, working: false });
+    const r = sim.screen(idleEmpty(), 215_000);
+    expect(r.effects.some((e) => e.type === 'ack-lookup')).toBe(true);
+    expect(enters(sim)).toBe(1);
+  });
+
+  it('outro texto na caixa (o colado de outra mensagem) não leva o nosso Enter', () => {
+    const sim = queuedBlind();
+    sim.screen(screen('[Pasted text #2 +4 lines]', WORKING_FOOTER), 9080);
+    expect(sim.writes()).toEqual([]);
+    expect(sim.phase).toBe('queued');
+  });
+});

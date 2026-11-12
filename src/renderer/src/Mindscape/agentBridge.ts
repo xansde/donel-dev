@@ -42,6 +42,7 @@ import type { FaxineiroWakeOrder } from '../../../shared/faxineiro/ipc';
 import type { LedgerPassedOn, LedgerPassOnRequest, LedgerTurnRecord, LedgerTurnRecorded } from '../../../shared/ledger/channels';
 import { failureReasonText } from '../../../shared/attention/rule';
 import type { TurnNotices } from '../../../shared/teamPrefs';
+import { routePlace, type RouteMachine, type RoutingRules } from '../../../shared/placeRouter';
 import { addLink, addPlace, noteCardId, placeCardId, placeHasStarted, placeOfSession, type MindscapeBoard, type MindscapeDoc, type SessionPlaceCard } from '../../../shared/mindscape/model';
 import type { SemaphoreState } from '../../../shared';
 import { FAXINEIRO_ROLE_ID, LEADER_ROLE_ID, type SessionRole } from '../../../shared/roles';
@@ -230,6 +231,8 @@ export interface AgentBridgePorts {
   remoteLabel(remoteId: string): string;
   /** The remote places the app knows (id + label), for `onde` of `sessao_abrir`. */
   remotes(): readonly { readonly id: string; readonly label: string }[];
+  /** t-89f14324 — `team.routing` of the config: the fixed rule for a `sessao_abrir` without `onde`. Absent = off. */
+  routing?(): RoutingRules | null | undefined;
   /** The projects of the sidebar (path + name): the Líder único may name one that has no board yet. */
   projects(): readonly { readonly path: string; readonly name: string }[];
   /** 06/11 — the live tasks of gone places pass on (the main writes the ledger); answers what moved. */
@@ -472,7 +475,17 @@ export class AgentBridge {
     this.launchedOn.set(machine, recent);
     if (recent.length < room.sessions) return undefined;
     const where = machine === PC_MACHINE_ID ? 'este computador' : this.ports.remoteLabel(machine);
+    if (room.sessions === 0) return [`${where}: sem vaga na última leitura de memória${machine === PC_MACHINE_ID ? ' (o PC guarda metade da RAM livre)' : ''}`];
     return [`${where}: ${recent.length} aberturas desde a última leitura de memória, e ela tinha vaga para ${room.sessions}`];
+  }
+
+  /** t-89f14324 — how many more sessions the last memory read left room for on this machine; `undefined` = no read. */
+  private roomLeft(machine: string): number | undefined {
+    const room = this.openingRoom.get(machine);
+    if (!room) return undefined;
+    const since = room.checkedAt - LAUNCH_SETTLE_MS;
+    const recent = (this.launchedOn.get(machine) ?? []).filter((at) => at >= since).length;
+    return Math.max(0, room.sessions - recent);
   }
 
   /**
@@ -1490,16 +1503,17 @@ export class AgentBridge {
         // t-1293c818 — only the Líder único opens a Líder: the owner's orchestrator, its place made as the owner's.
         const ownersLeader = role.id === LEADER_ROLE_ID;
         if (ownersLeader && !scope.leader) return fail(`Não abri: ${LEADER_PLACE_IS_THE_OWNERS}`);
-        // `onde` — absent or "aqui": where the caller runs; "este computador": local; else a remote place by label or id.
-        let remoteId = caller.remoteId;
+        // `onde` — absent, "aqui" or "auto": the router picks (t-89f14324); "este computador": local; else a remote
+        // place by label or id. A place asked by name is kept even when full (it waits there, never moves).
+        let explicit: string | undefined;
         const where = call.onde?.trim().toLowerCase();
-        if (where && where !== 'aqui') {
-          if (where === 'este computador' || where === 'local') remoteId = undefined;
+        if (where && where !== 'aqui' && where !== 'auto') {
+          if (where === 'este computador' || where === 'local') explicit = PC_MACHINE_ID;
           else {
             const remotes = this.ports.remotes();
             const found = remotes.find((remote) => remote.id.toLowerCase() === where || remote.label.toLowerCase() === where);
-            if (!found) return fail(`Lugar "${call.onde}" não existe. Use "aqui", "este computador" ou um destes: ${remotes.map((remote) => remote.label).join(', ') || '(nenhum lugar remoto)'}.`);
-            remoteId = found.id;
+            if (!found) return fail(`Lugar "${call.onde}" não existe. Use "aqui", "auto", "este computador" ou um destes: ${remotes.map((remote) => remote.label).join(', ') || '(nenhum lugar remoto)'}.`);
+            explicit = found.id;
           }
         }
         // The Líder único has a cap per board; a place, its own.
@@ -1509,16 +1523,28 @@ export class AgentBridge {
           const allowed = await this.ports.askOwner({ caller: caller.name, role: role.name, request: call.pedido, open });
           if (!allowed) return fail(`O dono negou abrir mais uma sessão (você já tem ${open} abertas${scope.leader ? ' neste quadro' : ''}). Use as que existem.`);
         }
-        // t-b3b26e60 — a full machine: another remote place when the role allows it ("lugar: qualquer"), else the queue.
-        let movedFrom: string | undefined;
-        const full = this.waitReasons(remoteId ?? PC_MACHINE_ID);
-        if (full && role.anyPlace) {
-          const other = this.ports.remotes().find((remote) => remote.id !== remoteId && !this.waitReasons(remote.id));
-          if (other) {
-            movedFrom = remoteId ? this.ports.remoteLabel(remoteId) : 'este computador';
-            remoteId = other.id;
-          }
-        }
+        // t-89f14324 — the machine by a fixed rule (`placeRouter.ts`); a full one queues, or, for a role with "lugar:
+        // qualquer" and no explicit place, goes to the remote with the most room (t-b3b26e60).
+        const machines: RouteMachine[] = [PC_MACHINE_ID, ...this.ports.remotes().map((remote) => remote.id)].map((id) => {
+          const reasons = this.waitReasons(id);
+          const room = this.roomLeft(id);
+          return { id, label: id === PC_MACHINE_ID ? 'este computador' : this.ports.remoteLabel(id), ...(reasons ? { waitReasons: reasons } : {}), ...(room !== undefined ? { roomSessions: room } : {}) };
+        });
+        const route = routePlace({
+          explicit,
+          callerMachine: caller.remoteId ?? PC_MACHINE_ID,
+          roleAnyPlace: role.anyPlace === true,
+          roleId: role.id,
+          projectPath,
+          projectName: scope.projectName ?? this.boardName(projectPath),
+          request: call.pedido,
+          machines,
+          rules: this.ports.routing?.() ?? null,
+        });
+        if (route.refused) return fail(`Não abri: ${route.refused}`);
+        const remoteId = route.machine === PC_MACHINE_ID ? undefined : route.machine;
+        const movedFrom = route.overflowFrom;
+        const full = route.queue ? (this.waitReasons(route.machine) ?? []) : undefined;
         const leadersBefore = ownersLeader ? boardLeaders(this.board(projectPath)) : [];
         const placeId = placeCardId(crypto.randomUUID());
         let made = false;
@@ -1544,7 +1570,7 @@ export class AgentBridge {
           queuedAt: Date.now(),
         };
         const roda = remoteId ? this.ports.remoteLabel(remoteId) : 'este computador';
-        if (full !== undefined && movedFrom === undefined) {
+        if (full !== undefined) {
           this.openQueue.push(entry);
           this.ports.logFaxineiro?.([{ at: entry.queuedAt, kind: 'fila', projectPath, placeId, summary: `${name} (${role.id}) espera vaga em ${roda}: ${full.join('; ')}` }]);
           return {
@@ -1556,6 +1582,7 @@ export class AgentBridge {
               papel: role.id,
               roda,
               fila: this.openQueue.filter((waiting) => (waiting.remoteId ?? PC_MACHINE_ID) === (remoteId ?? PC_MACHINE_ID)).length,
+              porque: route.reason,
               aviso: `Na fila: ${roda} está cheia (${full.join('; ')}). O lugar já está no quadro, e a sessão abre sozinha, com o seu pedido, quando a máquina tiver vaga. Não abra outra para o mesmo trabalho.`,
             }),
           };
@@ -1569,6 +1596,7 @@ export class AgentBridge {
             nome: name,
             papel: role.id,
             roda,
+            porque: route.reason,
             ...(movedFrom ? { mudouDeLugar: `${movedFrom} está cheia; o papel permite outro lugar.` } : {}),
             ...(leadersBefore.length > 0 ? { atencao: `o quadro já tinha Líder (${leadersBefore.join(', ')}). Se ele só estava fechado, sessao_retomar o traz de volta; feche o que sobrar.` } : {}),
             aviso: 'Você recebe um aviso a cada turno que ela terminar. Para mandar mais trabalho: sessao_enviar.',
