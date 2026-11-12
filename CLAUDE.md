@@ -174,6 +174,14 @@ sensível.
   - **Conflito com `staging` é do Dev, nunca do Revisor**: o Dev mescla a base,
     resolve e roda `npm run verify` de novo; PR com conflito volta ao Dev, e o
     Revisor só aprova e mergeia PR limpo.
+  - **Mesclou → pull no clone principal antes de remover a worktree** (12/11):
+    o coletor de uso de IA só credita o código que chega ao clone principal.
+    Depois do merge, rode `git -C <clone principal> fetch origin && git -C
+    <clone principal> pull --ff-only origin staging` (o clone fica em
+    `staging`, nunca em HEAD solto nem em branch de feature) e só então
+    `git worktree remove`. Arquivo solto no clone que impeça o pull vai para
+    um `git stash push -u -m "<motivo>" -- <arquivo>`; nunca `checkout --`
+    nem `reset --hard`.
   - `npm run test:smoke` (abre o app UMA vez, CLI falso) só quando mexer em
     main/preload/PTY ou em dependência nativa. **Nunca** rodar smokes em
     lote nem criar smoke novo sem o dono pedir: abrir instâncias do app
