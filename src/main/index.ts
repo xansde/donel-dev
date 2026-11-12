@@ -4802,12 +4802,29 @@ void app.whenReady().then(async () => {
   void remoteOracleHost?.drain();
   // Fatia 4: the picture of each VPS session on its board (who it is, the places, the saved board), for the MCP gate
   // that answers it when this PC is off. The board does not change while the PC is off, so the last one is right.
+  // 12/11 (t-58d7c191) — one round at a time, and only the sessions of the place whose gate reads the picture: the
+  // registry holds every remote tab (dozens at the Homologações, which has no gate), each costs two renderer calls of up
+  // to 15 s, and rounds every 30 s piled up on a renderer that answered a trivial call in 4 to 15+ s.
+  let picturing = false;
   const pushBoardPicture = async (): Promise<void> => {
     const host = remoteOracleHost;
     const registry = remoteSessions;
-    if (!host || !registry || host.state().mode !== 'remoto') return;
+    if (picturing || !host || !registry) return;
+    const oracle = host.state();
+    if (oracle.mode !== 'remoto') return;
+    const gateSsh = appConfig.accounts.remotes.find((place) => place.id === oracle.lugar)?.sshTarget;
+    if (!gateSsh) return;
+    picturing = true;
+    try {
+      await pushPictureRound(host, registry, gateSsh);
+    } finally {
+      picturing = false;
+    }
+  };
+  const pushPictureRound = async (host: NonNullable<typeof remoteOracleHost>, registry: NonNullable<typeof remoteSessions>, gateSsh: string): Promise<void> => {
     const sessoes: Record<string, unknown> = {};
     for (const { ptyId, folder } of registry.liveSessions()) {
+      if (registry.sshTargetOf(ptyId) !== gateSsh) continue;
       try {
         const who = await boardBridge.execute(ptyId, { tool: 'sessao_quem_sou' });
         if (who.kind !== 'text') continue;

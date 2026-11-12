@@ -45,10 +45,11 @@ export interface MindscapeOwnerMessageResponse {
  * The sender then sends again and the message goes in twice. So `sessao_enviar` answers well before 60 s, counted from
  * the call's arrival in the main (the clock nearest to the wire): the renderer stops waiting for the delivery at
  * `SEND_ANSWER_BY_MS` ("ainda não entrou; NÃO mande de novo"), and the main answers by itself at `SEND_NET_MS` when the
- * renderer did not. The rest (up to 60 s) is margin for the tunnel and a loaded place.
+ * renderer did not. The rest (up to 60 s) is margin: a busy renderer answered up to 25 s past its own wait (t-81ff5a82),
+ * and the round trip through a loaded VPS's gate took up to 21 s.
  */
-export const SEND_ANSWER_BY_MS = 35_000;
-export const SEND_NET_MS = 45_000;
+export const SEND_ANSWER_BY_MS = 25_000;
+export const SEND_NET_MS = 40_000;
 
 /** A board tool call of the session of `ptyId`; the renderer answers with the same `requestId`. */
 export interface MindscapeBoardRequest {
