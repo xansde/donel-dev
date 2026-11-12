@@ -39,11 +39,25 @@ export interface MindscapeOwnerMessageResponse {
   readonly deliveredTo: { readonly placeId: string } | 'lider' | null;
 }
 
+/**
+ * 12/11 (t-58d7c191) — the CLI cuts an MCP call at 60 s when its config has no `timeout` ("The operation timed out."):
+ * every session opened by an app older than #386 has none, and a live session keeps its config until it is born again.
+ * The sender then sends again and the message goes in twice. So `sessao_enviar` answers well before 60 s, counted from
+ * the call's arrival in the main (the clock nearest to the wire): the renderer stops waiting for the delivery at
+ * `SEND_ANSWER_BY_MS` ("ainda não entrou; NÃO mande de novo"), and the main answers by itself at `SEND_NET_MS` when the
+ * renderer did not. The rest (up to 60 s) is margin: a busy renderer answered up to 25 s past its own wait (t-81ff5a82),
+ * and the round trip through a loaded VPS's gate took up to 21 s.
+ */
+export const SEND_ANSWER_BY_MS = 25_000;
+export const SEND_NET_MS = 40_000;
+
 /** A board tool call of the session of `ptyId`; the renderer answers with the same `requestId`. */
 export interface MindscapeBoardRequest {
   readonly requestId: string;
   readonly ptyId: string;
   readonly call: BoardToolCall;
+  /** Epoch ms by which the renderer answers a call that waits (today `sessao_enviar`); absent = its own default. */
+  readonly answerBy?: number;
 }
 
 export interface MindscapeBoardResponse {
