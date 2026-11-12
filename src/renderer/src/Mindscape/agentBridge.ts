@@ -1396,6 +1396,10 @@ export class AgentBridge {
         if (!board || place?.kind !== 'session') return fail(`"${call.quem}" não é um lugar do quadro (veja sessao_listar).`);
         const sessions = [place.sessionId, ...place.previous.slice().reverse()].filter((id): id is string => id !== undefined);
         const note = sessions.map((id) => board.cards[`note:${id}`]).find((card) => card?.kind === 'session-note');
+        // t-2a9060dd (Líder único, 10/11: "O app não mostra ao Líder o que a permissão pede") — a session stopped on a
+        // permission shows what it asks, the same reading sessao_permissao answers.
+        const open = this.tabOfPlace(projectPath, place.id);
+        const ask = open && this.ports.permissionAsk ? await this.ports.permissionAsk(open.id).catch(() => null) : null;
         return {
           ok: true,
           text: json({
@@ -1403,6 +1407,17 @@ export class AgentBridge {
             ...(place.roleId ? { papelNome: this.roleName(place.roleId) } : {}),
             estado: this.stateName(projectPath, place),
             ultimoTurno: note?.kind === 'session-note' ? { texto: note.text, em: new Date(note.writtenAt).toISOString() } : null,
+            ...(ask
+              ? {
+                  permissaoAberta: {
+                    pedido: ask.id,
+                    ...(ask.tool ? { ferramenta: ask.tool } : {}),
+                    oQuePede: ask.what,
+                    ...(ask.complete === false ? { completo: false } : {}),
+                    comoResponder: `Quem a dirige responde com sessao_permissao ("quem": "${place.id}"), ou a fecha com sessao_fechar e "recusarPermissao": true.`,
+                  },
+                }
+              : {}),
           }),
         };
       }
