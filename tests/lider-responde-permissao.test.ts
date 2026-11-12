@@ -495,11 +495,32 @@ describe('diálogo de permissão antigo, já respondido', () => {
     expect(permissionDialog(screen)).not.toBeNull(); // a leitura da tela sozinha acharia o diálogo
     const { doors, keys } = doorsOn(screen, true);
     expect(await doors.permissionAsk('t')).toBeNull();
-    expect(doors.permissionOnScreen('t')).toBe(false);
+    // 5ª rodada: a trava de fechar não lê "sem pedido" numa tela que não se lê (abaixo).
+    expect(doors.permissionOnScreen('t')).toBe(true);
     for (const answer of ['allow', 'deny'] as const) {
       const result = await doors.answerPermission('t', 'tela:qualquer', answer);
       expect(result).toEqual({ ok: false, reason: 'a aba está rolada (modo de cópia do tmux); volte ao fim para responder' });
     }
+    expect(keys).toEqual([]);
+  });
+
+  // 5ª rodada (Revisor, #414): `permissionOnScreen` é também a trava do sessao_fechar e do Faxineiro. No modo de cópia o
+  // tmux desenha o histórico rolado e o fundo vivo, onde um pedido aberto estaria, não aparece: a tela não diz "não há
+  // pedido". Conta como pedido possível, e só as portas que AGEM recusam (COPY_MODE). Sem isso, uma aba de VPS rolada
+  // com uma permissão aberta era fechada sem a recusa que a t-1293c818 (3) exige.
+  it('as portas: aba remota rolada no tmux trava o fechar (pode haver pedido), mas não lê nem responde', async () => {
+    const dialog = ['Bash command', 'rm -rf build', 'Do you want to proceed?', '❯ 1. Yes', '2. No'];
+    const scrolled = [{ text: `${'x'.repeat(50)}[3/120]`, dim: [], toLastColumn: true }, ...dialog];
+    expect(blockingScreen(scrolled)?.kind).toBe('permission');
+    const { doors, keys } = doorsOn(scrolled, true);
+    expect(doors.permissionOnScreen('t')).toBe(true);
+    expect(await doors.permissionAsk('t')).toBeNull();
+    for (const answer of ['allow', 'deny'] as const) {
+      expect(await doors.answerPermission('t', 'tela:qualquer', answer)).toEqual({ ok: false, reason: 'a aba está rolada (modo de cópia do tmux); volte ao fim para responder' });
+    }
+    // Rolada para longe do pedido: o fundo vivo não está na vista, e a vista sozinha não prova que não há pedido.
+    const farUp = [edge(scrolledTop('[90/120]')), '● Vou limpar a pasta.', '  ⎿  ok', '', '❯ ', '  ? for shortcuts'];
+    expect(doorsOn(farUp, true).doors.permissionOnScreen('t')).toBe(true);
     expect(keys).toEqual([]);
   });
 

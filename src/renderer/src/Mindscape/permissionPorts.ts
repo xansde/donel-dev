@@ -115,7 +115,14 @@ export function permissionPorts(deps: PermissionPortDeps): {
     return { ask: { id: screenId(dialog.whole), source: 'tela', what: dialog.text, ...(dialog.complete ? {} : { complete: false }) }, yesKey: dialog.yesKey };
   };
   return {
-    permissionOnScreen: (tabId) => screenDialog(tabId) !== null,
+    // Also the lock of closing a session (sessao_fechar, the Faxineiro): a screen in tmux's copy mode shows scrolled
+    // history, never the live bottom where an open request sits, so it cannot say "no request" and counts as a possible
+    // one (5ª rodada do #414). Always, not only when the scrolled view happens to show a dialog: scrolled far up, the
+    // view has none and the bottom still may. Only the doors that ACT (ask, answer) refuse it, with COPY_MODE.
+    permissionOnScreen(tabId) {
+      const lines = deps.screen(tabId);
+      return lines !== undefined && (copyMode(tabId, lines) || permissionDialog(lines) !== null);
+    },
     permissionAsk: async (tabId) => (await read(tabId))?.ask ?? null,
     async answerPermission(tabId, askId, answer) {
       const open = await read(tabId);
