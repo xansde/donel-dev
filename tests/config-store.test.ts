@@ -7,6 +7,7 @@ import {
   createSystemConfigIoDeps,
   defaultAppConfig,
   mergeConfigForWrite,
+  patchLeaderPrefs,
   readAppConfig,
   sanitizeAppConfig,
   setSessionName,
@@ -1294,5 +1295,38 @@ describe('writeAppConfig (fs mockado) — G1 (issue 08): escrita concorrente sim
     expect(persisted.notificationPreference).toBe('all');
     // Nunca aninhada sob uma chave "unknownFields" literal.
     expect(persisted.unknownFields).toBeUndefined();
+  });
+});
+
+// 11/11 (Revisor, #400) — `leader.home` é escrita à mão no config.json com o app aberto. A troca de "onde o Líder roda"
+// gravava o bloco `leader` da memória (sem o home) por cima do disco e apagava a chave.
+describe('setLeaderPrefs relê o bloco leader do disco', () => {
+  it('trocar "onde" com o app aberto não apaga o home escrito à mão', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'leader-home-'));
+    const file = join(dir, 'config.json');
+    const io = createSystemConfigIoDeps();
+    try {
+      const boot = baseDefaults();
+      writeAppConfig(file, boot, io, null);
+      // O dono escreve a chave à mão, com o app aberto (a memória do app não a tem).
+      const onDisk = JSON.parse(readFileSync(file, 'utf8'));
+      writeFileSync(file, JSON.stringify({ ...onDisk, leader: { where: 'auto', home: 'C:\\Users\\a\\seazone\\_orquestradora' } }));
+      const leader = patchLeaderPrefs(file, boot.leader, { where: 'local' }, io);
+      expect(leader).toEqual({ where: 'local', chosen: true, home: 'C:\\Users\\a\\seazone\\_orquestradora' });
+      writeAppConfig(file, { ...boot, leader }, io, boot);
+      expect(JSON.parse(readFileSync(file, 'utf8')).leader).toEqual({ where: 'local', chosen: true, home: 'C:\\Users\\a\\seazone\\_orquestradora' });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('sem config.json ou sem bloco leader no disco: vale o que o app tem na memória', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'leader-home-'));
+    try {
+      const io = createSystemConfigIoDeps();
+      expect(patchLeaderPrefs(join(dir, 'config.json'), { where: 'auto', home: '/x' }, { where: 'vps-1' }, io)).toEqual({ where: 'vps-1', chosen: true, home: '/x' });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

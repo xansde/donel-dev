@@ -604,7 +604,11 @@ export class SendDriver {
           item.timer = this.ports.setTimeout(() => {
             item.timer = undefined;
             if (this.disposed || item.dismissed || item.machine === null) return;
-            this.feedScreen(item);
+            // A queued send looks at the box for its own text left there (11/11); not while another message is being
+            // pasted or entered, whose placeholder is not ours to Enter.
+            const othersWriting = item.machine.phase === 'queued' && this.items.some((i) => i !== item && i.machine !== null && (i.machine.phase === 'typing' || i.machine.phase === 'confirming'));
+            if (othersWriting) this.dispatch(item, { type: 'tick', now: this.ports.now() });
+            else this.feedScreen(item);
             this.pump();
             this.publish();
           }, delay);
