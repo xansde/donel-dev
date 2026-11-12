@@ -3,7 +3,7 @@ import type { BrowserWindow, IpcMain, WebContents } from 'electron';
 import type { BrowserToolOutcome } from '../shared/browser/mcp';
 import type { BoardToolCall } from '../shared/mindscape/agent-tools';
 import type { LedgerDeliveredTo } from '../shared/ledger/contract';
-import { MINDSCAPE_CHANNELS, type MindscapeBoardResponse, type MindscapeOwnerMessageResponse } from '../shared/mindscape/channels';
+import { MINDSCAPE_CHANNELS, SEND_ANSWER_BY_MS, SEND_NET_MS, type MindscapeBoardResponse, type MindscapeOwnerMessageResponse } from '../shared/mindscape/channels';
 import type { OwnerMessage } from './ledger-card-writer';
 
 // Quadro por MCP — the main only relays (ADR 0004: the renderer owns the Mindscape document and the tabs).
@@ -17,12 +17,12 @@ const OWNER_DECISION_TIMEOUT_MS = 30 * 60_000;
 /** `sessao_fechar` may wait up to 20 s for the destination's turn to end. */
 const CLOSE_TIMEOUT_MS = 45_000;
 /**
- * `sessao_enviar`: the renderer waits up to 40 s for the destination's CLI to take the message (`agentBridge.ts`) and
- * always answers then ("entrou", "na fila", "ainda não entrou"). This is only the net for a renderer that is not there.
- * 09/11 (t-81ff5a82) — it was 50 s: with the PC and the tunnels loaded, the renderer's answer reached the main with a
- * median of 45 s and a p90 of 65 s, and 88 sends in 48 h came back "não respondeu a tempo" with the message delivered.
+ * `sessao_enviar`: the renderer answers by `answerBy` ("entrou", "na fila", "ainda não entrou"); this net answers when it
+ * did not. Both stay under the CLI's 60 s cut (`SEND_NET_MS`, channels.ts). 09/11 (t-81ff5a82) raised it to 180 s and
+ * the renderer's wait to 90 s, past that cut: 12/11 (t-58d7c191), 150 sends at the Homologações came back
+ * "The operation timed out." (median 60,8 s) and were sent again.
  */
-const SEND_TIMEOUT_MS = 180_000;
+const SEND_TIMEOUT_MS = SEND_NET_MS;
 /** `sessao_retomar` may ask each remote place by ssh where the conversation lives (up to 20 s each). */
 const RESUME_TIMEOUT_MS = 90_000;
 /** What the owner wrote on a card: up to 40 s to the place, then up to 40 s to the Líder. */
@@ -107,7 +107,12 @@ export function createBoardBridge(deps: BoardBridgeDeps): BoardBridge {
           });
         }, timeoutMs);
         pending.set(requestId, { resolve, timer });
-        window.webContents.send(MINDSCAPE_CHANNELS.boardRequest, { requestId, ptyId, call });
+        window.webContents.send(MINDSCAPE_CHANNELS.boardRequest, {
+          requestId,
+          ptyId,
+          call,
+          ...(call.tool === 'sessao_enviar' ? { answerBy: Date.now() + SEND_ANSWER_BY_MS } : {}),
+        });
       }),
   };
 }

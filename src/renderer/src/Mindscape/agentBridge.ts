@@ -34,7 +34,7 @@ import {
   type BoardScopedCall,
   type BoardToolCall,
 } from '../../../shared/mindscape/agent-tools';
-import type { MindscapeBoardResponse } from '../../../shared/mindscape/channels';
+import { SEND_ANSWER_BY_MS, type MindscapeBoardResponse } from '../../../shared/mindscape/channels';
 import { LEADER_OF_ALL, isLeaderOfAllTab, knownBoards, resolveBoard, type KnownBoard } from '../../../shared/mindscape/leader';
 import { BOARD_LEADER, LEADER_OF_ALL_FROM, boardLeaders, canFaxineiroClose, canReach, canReachLeader, findPlace, isBoardLeader, isBoardOrchestrator, MY_OPENER, openersOf, whoHears } from '../../../shared/mindscape/reach';
 import { FAXINEIRO_OPENER, PC_MACHINE_ID, type FaxineiroLogEntry, type OpeningRoom, type SessionView } from '../../../shared/faxineiro/triggers';
@@ -61,11 +61,11 @@ const LAUNCH_SETTLE_MS = 60_000;
 /** `sessao_enviar` answers once the message went in, was queued, or failed; past this it says "ainda não entrou". */
 const DELIVERY_WAIT_MS = 40_000;
 /**
- * 09/11 (t-81ff5a82) — `sessao_enviar` waits longer for a definitive answer: in 48 h, a third of the answers took more than 40 s
- * to be taken (a destination mid-turn, a loaded PC), and the sender heard "ainda não entrou" or a timeout. The main's
- * net for this call (`board-bridge.ts`, 180 s) stays well above it, with the caller wait (20 s) on top.
+ * `sessao_enviar` answers by the `answerBy` the main stamped on the call (channels.ts, `SEND_ANSWER_BY_MS`), so the
+ * sender hears it before the CLI's 60 s cut; this is the least it still waits for the destination when the call reached
+ * the renderer late. 12/11 (t-58d7c191) — it waited 90 s (t-81ff5a82) plus the caller wait, past that cut.
  */
-const SEND_WAIT_MS = 90_000;
+const SEND_MIN_WAIT_MS = 1_000;
 /**
  * The end-of-turn notice carries the whole last turn up to this ceiling (06/11: at 600, squashed into one line, the
  * Líder acted on half of it). Past it, the cut is said in the notice, never a silent "…".
@@ -1122,15 +1122,16 @@ export class AgentBridge {
 
   // ---- the tools ---------------------------------------------------------------------------------------------
 
-  async handle(ptyId: string, call: BoardToolCall): Promise<Omit<MindscapeBoardResponse, 'requestId'>> {
+  /** `answerBy`: epoch ms by which a call that waits answers (the main stamps it on `sessao_enviar`). */
+  async handle(ptyId: string, call: BoardToolCall, answerBy?: number): Promise<Omit<MindscapeBoardResponse, 'requestId'>> {
     try {
-      return await this.run(ptyId, call);
+      return await this.run(ptyId, call, answerBy);
     } catch (error) {
       return { ok: false, text: error instanceof Error ? error.message : String(error) };
     }
   }
 
-  private async run(ptyId: string, call: BoardToolCall): Promise<Answer> {
+  private async run(ptyId: string, call: BoardToolCall, answerBy = Date.now() + SEND_ANSWER_BY_MS): Promise<Answer> {
     const fail = (text: string): Answer => ({ ok: false, text });
     if (!this.ports.loaded) return fail('O quadro ainda não abriu no app (ou falhou ao abrir). Tente de novo em instantes.');
     const caller = await this.callerTab(ptyId);
@@ -1270,6 +1271,8 @@ export class AgentBridge {
       }
 
       case 'sessao_enviar': {
+        // What is left of the time the main gave this call (the wait for the caller's tab and a late request count).
+        const sendWait = (): number => Math.max(SEND_MIN_WAIT_MS, answerBy - Date.now());
         if (!scope.leader && !self) return fail('Seu lugar ainda não está no quadro; espere o primeiro turno terminar.');
         // Back up to the Líder único (t-52b31719): only from a session it opened or one below it (reach.ts).
         if (!scope.leader && self && call.para.trim().toLowerCase() === LEADER_OF_ALL) {
@@ -1278,7 +1281,7 @@ export class AgentBridge {
           if (!call.motivo) return fail(LEADER_MESSAGE_REFUSAL);
           const leader = this.leaderTab();
           if (!leader) return fail('O Líder único não está aberto agora. Registre o que precisa no Oráculo (tarefa_criar ou tarefa_transferir com "para": "lider") e siga.');
-          const outcome = await this.ports.deliverLine(leader.id, `◆ De ${signature}, quadro ${scope.projectName ?? this.boardName(projectPath)}, ${LEADER_REASON_WORDS[call.motivo]}: ${call.texto}`, SEND_WAIT_MS, 'session');
+          const outcome = await this.ports.deliverLine(leader.id, `◆ De ${signature}, quadro ${scope.projectName ?? this.boardName(projectPath)}, ${LEADER_REASON_WORDS[call.motivo]}: ${call.texto}`, sendWait(), 'session');
           return this.deliveryAnswer(outcome, leader.id);
         }
         // Up to the Líder of the board (08/11): every place of the board, no arrow needed (reach.ts).
@@ -1289,7 +1292,7 @@ export class AgentBridge {
           if (leaders.length === 0) return fail('Este quadro não tem Líder. Fale com quem está acima de você pelas setas (ou "lider", se o Líder único abriu você).');
           const leader = leaders.map((id) => this.tabOfPlace(projectPath, id)).find((tab) => tab !== undefined);
           if (!leader) return fail('O Líder do quadro não está aberto agora. Registre o que precisa no Oráculo (tarefa_criar) e siga.');
-          const outcome = await this.ports.deliverLine(leader.id, `◆ De ${signature}: ${call.texto}`, SEND_WAIT_MS, 'session');
+          const outcome = await this.ports.deliverLine(leader.id, `◆ De ${signature}: ${call.texto}`, sendWait(), 'session');
           return this.deliveryAnswer(outcome, leader.id);
         }
         // Back up to whoever opened me (08/11): the opening arrow, no arrow back needed (reach.ts).
@@ -1300,13 +1303,13 @@ export class AgentBridge {
             if (!call.motivo) return fail(LEADER_MESSAGE_REFUSAL);
             const leader = this.leaderTab();
             if (!leader) return fail('Quem abriu você foi o Líder único, e ele não está aberto agora. Registre o que precisa no Oráculo (tarefa_criar ou tarefa_transferir com "para": "lider") e siga.');
-            const outcome = await this.ports.deliverLine(leader.id, `◆ De ${signature}, quadro ${scope.projectName ?? this.boardName(projectPath)}, ${LEADER_REASON_WORDS[call.motivo]}: ${call.texto}`, SEND_WAIT_MS, 'session');
+            const outcome = await this.ports.deliverLine(leader.id, `◆ De ${signature}, quadro ${scope.projectName ?? this.boardName(projectPath)}, ${LEADER_REASON_WORDS[call.motivo]}: ${call.texto}`, sendWait(), 'session');
             return this.deliveryAnswer(outcome, leader.id);
           }
           const opener = openers.map((id) => this.tabOfPlace(projectPath, id)).find((tab) => tab !== undefined);
           if (!opener) return fail(`Quem abriu você (${openers.join(', ')}) não está aberta agora. Registre o que precisa no Oráculo (tarefa_criar) e siga, ou fale com o Líder do quadro ("para": "${BOARD_LEADER}").`);
           if (this.ports.linkLost?.(opener.id)) return fail('Quem abriu você está sem ligação: o processo dela segue vivo no lugar remoto e o app está religando. Tente de novo em instantes.');
-          const outcome = await this.ports.deliverLine(opener.id, `◆ De ${signature}: ${call.texto}`, SEND_WAIT_MS, 'session');
+          const outcome = await this.ports.deliverLine(opener.id, `◆ De ${signature}: ${call.texto}`, sendWait(), 'session');
           return this.deliveryAnswer(outcome, opener.id);
         }
         const board = this.board(projectPath);
@@ -1324,7 +1327,7 @@ export class AgentBridge {
         if (this.ports.linkLost?.(target.id)) return fail(`"${place.id}" está sem ligação: o processo dela segue vivo no lugar remoto e o app está religando. Tente de novo em instantes; não abra outra no lugar dela.`);
         if (scope.leader) this.leaderHears.add(target.id);
         // 05/11 — "Entregue" only once the CLI of there took it: the answer waits for the send to end.
-        const outcome = await this.ports.deliverLine(target.id, `◆ De ${signature}: ${call.texto}`, SEND_WAIT_MS, 'session');
+        const outcome = await this.ports.deliverLine(target.id, `◆ De ${signature}: ${call.texto}`, sendWait(), 'session');
         return this.deliveryAnswer(outcome, target.id);
       }
 
