@@ -282,8 +282,11 @@ export interface TerminalPaneHandle {
   readScreen: () => ScreenSnapshot;
   /** T039 — avisa a cada chunk já processado pelo parser. Retorna unsubscribe. */
   onScreenUpdate: (listener: () => void) => () => void;
-  /** T039 — mata a PTY e sobe outra com os mesmos flags; `resume` acrescenta `-r <id>`. */
-  respawn: (options?: { resume?: string }) => void;
+  /**
+   * T039 — mata a PTY e sobe outra com os mesmos flags; `resume` acrescenta `-r <id>`. `cwd` (12/11, the Líder changing
+   * folder on the same remote place) spawns in that folder; the parent sets the tab's `cwd` to the same value.
+   */
+  respawn: (options?: RespawnOptions) => void;
   /**
    * B36 — sessão renovada em voo: ends the process and opens a NEW conversation in this same pane,
    * with `args` (the launch flags minus the old conversation, see `renewalLaunchArgs`). `renewalId`
@@ -294,6 +297,12 @@ export interface TerminalPaneHandle {
   focus: () => void;
   /** T039 — id da PTY viva (null sem processo). */
   readonly ptyId: string | null;
+}
+
+/** `TerminalPaneHandle.respawn`. */
+export interface RespawnOptions {
+  readonly resume?: string;
+  readonly cwd?: string;
 }
 
 export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(function TerminalPane(
@@ -369,7 +378,14 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   const sharedScreenRef = useRef<{ active: boolean; snapshot: ScreenSnapshot | null }>({ active: false, snapshot: null });
   /** T039 — argv efetivo do próximo spawn (respawn com `-r` o substitui); `undefined` = prop `args`. */
   const spawnArgsRef = useRef<string[] | undefined>(undefined);
-  const respawnRef = useRef<(options?: { resume?: string }) => void>(() => undefined);
+  const respawnRef = useRef<(options?: RespawnOptions) => void>(() => undefined);
+  /** The folder of the next spawns when a respawn named one (12/11); cleared when the `cwd` prop changes. */
+  const spawnCwdRef = useRef<string | undefined>(undefined);
+  const lastCwdPropRef = useRef(cwd);
+  if (lastCwdPropRef.current !== cwd) {
+    lastCwdPropRef.current = cwd;
+    spawnCwdRef.current = undefined;
+  }
   /** B36 — the renewal of the NEXT spawn only (consumed by `spawnSession`). */
   const renewalIdRef = useRef<string | null>(null);
   // Papéis de sessão (item 12a) — read at each spawn (launch and renewal), never a reason to respawn.
@@ -503,7 +519,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
           screenListenersRef.current.delete(listener);
         };
       },
-      respawn: (options?: { resume?: string }): void => respawnRef.current(options),
+      respawn: (options?: RespawnOptions): void => respawnRef.current(options),
       renew: (options: { args: string[]; renewalId: string }): void => {
         spawnArgsRef.current = options.args;
         renewalIdRef.current = options.renewalId;
@@ -541,7 +557,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     renewalIdRef.current = null;
 
     void window.donel.pty
-      .create({ cols: term.cols, rows: term.rows, cwd, sessionType, args: spawnArgsRef.current ?? args, providerId, accountLoginId, renewalId, roleId: roleIdRef.current, ...(leaderOfAllRef.current ? { leaderOfAll: true } : {}), ...(placeIdRef.current ? { placeId: placeIdRef.current } : {}), ...(remoteId ? { remoteId, tabName, projectName, ...(openedBy ? { openedBy } : {}) } : {}) })
+      .create({ cols: term.cols, rows: term.rows, cwd: spawnCwdRef.current ?? cwd, sessionType, args: spawnArgsRef.current ?? args, providerId, accountLoginId, renewalId, roleId: roleIdRef.current, ...(leaderOfAllRef.current ? { leaderOfAll: true } : {}), ...(placeIdRef.current ? { placeId: placeIdRef.current } : {}), ...(remoteId ? { remoteId, tabName, projectName, ...(openedBy ? { openedBy } : {}) } : {}) })
       .then((result) => {
         if (requestEpoch !== mountEpochRef.current) {
           // Geração já descartada (StrictMode double-invoke em dev, ou a aba
@@ -815,6 +831,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   // do kill, então não passa pelo estado "encerrada") e sobe outra, mesmos flags.
   respawnRef.current = (options) => {
     if (options?.resume) spawnArgsRef.current = withResumeArgs(spawnArgsRef.current ?? args, options.resume);
+    if (options?.cwd) spawnCwdRef.current = options.cwd;
     mountEpochRef.current += 1;
     teardownPty();
     termRef.current?.clear();

@@ -132,8 +132,8 @@ import { LEADER_DENY_REASON, permissionPorts } from './Mindscape/permissionPorts
 import { withNoPipelineTag } from '../../shared/chat/noPipeline';
 import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../shared/lider/ipc';
 import { isLeaderOfAllTab } from '../../shared/mindscape/leader';
-import { DEFAULT_LEADER_PREFS, leaderCwd, leaderRemoteId } from '../../shared/leaderPrefs';
-import { planLeaderDelivery, startLeaderMove, type LeaderMove } from '../../shared/lider/move';
+import { DEFAULT_LEADER_PREFS, leaderCwd, leaderMoveCwd, leaderRemoteId } from '../../shared/leaderPrefs';
+import { leaderFolderMoveKey, planLeaderDelivery, startLeaderMove, type LeaderMove, type LeaderMoveDeps } from '../../shared/lider/move';
 import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
 import { TerminalPane } from './TerminalPane';
 import { PatchNotes } from './patchnotes/PatchNotes';
@@ -2470,6 +2470,9 @@ export function App(): React.JSX.Element {
   // Líder único na VPS — the move in progress (its messages wait for it). Async steps close tabs through a ref,
   // never through a stale render.
   const liderMoveRef = useRef<LeaderMove | null>(null);
+  // Changes of folder of the Líder that failed in this run of the app (`leaderFolderMoveKey`): not tried again, so the
+  // owner hears the warning once, not on every message (the folder does not exist on the VPS, 12/11).
+  const liderFailedFolderMovesRef = useRef<Set<string>>(new Set());
   liderDeliverRef.current = (text: string): LiderSendResult => {
     const sendTo = (tabId: string, message: string): void => {
       sendToTab(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text: message });
@@ -2483,8 +2486,12 @@ export function App(): React.JSX.Element {
     // Líder único na VPS (docs/planos/lider-na-vps.md) — where the owner wants it (Preferences). A provider of a third
     // party does not run on a remote place (ADR 0006): that Líder stays here.
     const wantedRemoteId = providerId ? undefined : leaderPlace();
-    // The orchestrator's project when it exists (owner, 12/11); the live Líder goes there too, stopped, with its conversation.
-    const wantedCwd = leaderCwd(appConfig?.leader ?? DEFAULT_LEADER_PREFS, Object.keys(mindscape.doc.boards), appConfig?.leaderHomes ?? []);
+    // The orchestrator's project when it exists (owner, 12/11). A new Líder opens in `wantedCwd`; the live one moves,
+    // stopped and with its conversation, only TO the orchestrator or `leader.home` (`leaderMoveCwd`), never back.
+    const leaderPrefs = appConfig?.leader ?? DEFAULT_LEADER_PREFS;
+    const boardPaths = Object.keys(mindscape.doc.boards);
+    const wantedCwd = leaderCwd(leaderPrefs, boardPaths, appConfig?.leaderHomes ?? []);
+    const moveCwd = leaderMoveCwd(leaderPrefs, boardPaths, appConfig?.leaderHomes ?? []);
     const openLeader = (resume?: { readonly sessionId: string; readonly cwd: string | undefined }): string => {
       // Without the role there is no Líder único (it is the role + the mark below): say so instead of opening a plain session.
       if (!role) throw new Error('O papel Líder não existe nesta máquina.');
@@ -2522,7 +2529,8 @@ export function App(): React.JSX.Element {
         ? { id: tab.id, remoteId: tab.remoteId, claudeSessionId: tab.claudeSessionId, state: semaphoreStates[tab.id]?.state, exited: tabExits[tab.id] !== undefined, cwd: tab.cwd }
         : undefined,
       wantedRemoteId,
-      wantedCwd,
+      moveCwd,
+      liderFailedFolderMovesRef.current,
     );
 
     if (plan.kind === 'send') {
@@ -2539,7 +2547,25 @@ export function App(): React.JSX.Element {
     if (plan.kind === 'move' && tab) {
       const oldTabId = plan.tabId;
       const cwd = tab.cwd;
-      const newCwd = wantedCwd ?? cwd;
+      const newCwd = plan.cwd;
+      const folderChanges = !!newCwd && newCwd !== cwd;
+      const respawnIn = (folder: string | undefined): void => {
+        const terminal = terminalRefs.current[oldTabId];
+        if (!terminal) throw new Error('a aba do Líder não está aberta.');
+        updateTab(oldTabId, { cwd: folder });
+        terminal.respawn({ resume: plan.sessionId, ...(folder ? { cwd: folder } : {}) });
+      };
+      // The same remote place, only the folder (12/11): the same tab changes folder; a second Líder of the same id there
+      // would attach to the old CLI's tmux, in the old folder.
+      const inPlace: LeaderMoveDeps['inPlace'] = plan.inPlace
+        ? {
+            switchTo: () => respawnIn(newCwd),
+            switchBack: () => respawnIn(cwd),
+            redeliver: (tabId, first) => {
+              sendToTab(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text: first, dedupe: true });
+            },
+          }
+        : undefined;
       const move = startLeaderMove(oldTabId, text, {
         carry: () =>
           window.donel.lider.carry({
@@ -2564,8 +2590,17 @@ export function App(): React.JSX.Element {
         adopt: (tabId) => {
           liderTabRef.current = tabId;
         },
-        notify: (message) => setDevModeToast(message),
+        // A change of folder that failed is not tried again in this run: said once, with the folder it stays in.
+        notify: (message) =>
+          setDevModeToast(folderChanges ? `${message} Ele segue em ${cwd ?? '~'}; não tento de novo essa pasta até o app reiniciar.` : message),
+        ...(inPlace ? { inPlace } : {}),
       });
+      if (folderChanges && newCwd) {
+        const key = leaderFolderMoveKey(plan.sessionId, wantedRemoteId, newCwd);
+        void move.done.then((outcome) => {
+          if (outcome === 'stayed') liderFailedFolderMovesRef.current.add(key);
+        });
+      }
       liderMoveRef.current = move;
       void move.done.finally(() => {
         if (liderMoveRef.current === move) liderMoveRef.current = null;

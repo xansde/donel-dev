@@ -2036,7 +2036,11 @@ async function carryLeaderConversation(payload: LiderCarryPayload): Promise<Lide
     const to = placeOf(payload.to);
     const source = largestTranscript(localCopies);
     if (!source) return { ok: false, reason: 'a conversa do Líder não está neste computador.' };
-    const sent = await sendTranscriptToRemote(sshRemoteCommand(to.sshTarget), remoteDirFor(toCwd, appConfig.projectRoots), sid, source.path);
+    // The same place, another folder: the Líder there stays alive during the copy (its tab ends it when it resumes in
+    // the new folder); ending it here would leave a dead tab if anything after the copy failed.
+    const sent = await sendTranscriptToRemote(sshRemoteCommand(to.sshTarget), remoteDirFor(toCwd, appConfig.projectRoots), sid, source.path, {
+      keepSession: payload.from === payload.to,
+    });
     if (!sent.ok) return { ok: false, reason: `${to.label}: ${sent.reason}` };
   } else if (folderChanges) {
     try {
@@ -2405,6 +2409,10 @@ function registerPtyIpcHandlers(): void {
     // "Sem ligação" — there is no PTY to kill: the held exit happens now as a close by the owner (ends the tmux there).
     if (remoteLinks.kill(ptyId)) return;
     markKillRequested(ptyId); // C3 (015-jobu-pet) — mark BEFORE killing: the exit that follows is "the owner's"
+    // Sessões remotas — the tmux there ends now, not on the exit event: a respawn of the same conversation (Retomar, the
+    // Líder changing folder) is created right after this kill and waits for this end (`waitEnded`); started on the exit,
+    // the end could come after the new setup found the old tmux alive and attached to it, in the old folder.
+    remoteSessions?.endRemote(ptyId);
     ptyManager.kill(ptyId);
   });
 

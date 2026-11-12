@@ -38,7 +38,8 @@ export function sanitizeLeaderPrefs(value: unknown, fallback: LeaderPrefs = DEFA
 /** The orchestrator's own project, inside the folder that holds the boards' projects (owner, 12/11). */
 export const LEADER_HOME_FOLDER = '_orquestradora';
 
-function folderKey(path: string): string {
+/** A folder as a comparable key: case, the slash and a trailing slash do not matter. */
+export function folderKey(path: string): string {
   return path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
 }
 
@@ -54,12 +55,22 @@ export function sameFolder(a: string | undefined, b: string | undefined): boolea
  * folder that holds the boards' projects.
  */
 export function leaderCwd(prefs: LeaderPrefs, projectPaths: readonly string[], existingLeaderHomes: readonly string[] = []): string | undefined {
+  return leaderMoveCwd(prefs, projectPaths, existingLeaderHomes) ?? leaderHome(projectPaths);
+}
+
+/**
+ * The folder the LIVE Líder moves to (stopped, on its next message): only `leader.home` when the owner set it, or the
+ * orchestrator's project when it exists on disk. Never the boards' parent folder: a board out of the root (another
+ * parent) or one failed read of the disk (`existingLeaderHomes` empty) must not pull it out of `_orquestradora`.
+ * `undefined` = the live Líder stays in its folder. A new Líder opens in `leaderCwd`.
+ */
+export function leaderMoveCwd(prefs: LeaderPrefs, projectPaths: readonly string[], existingLeaderHomes: readonly string[]): string | undefined {
   if (prefs.home) return prefs.home;
   const base = leaderHome(projectPaths);
   if (base === undefined) return undefined;
   const sep = base.includes('\\') ? '\\' : '/';
   const orchestrator = `${base.replace(/[\\/]+$/, '')}${sep}${LEADER_HOME_FOLDER}`;
-  return existingLeaderHomes.some((home) => sameFolder(home, orchestrator)) ? orchestrator : base;
+  return existingLeaderHomes.some((home) => sameFolder(home, orchestrator)) ? orchestrator : undefined;
 }
 
 /** A remote place as the Líder's placement sees it. */
