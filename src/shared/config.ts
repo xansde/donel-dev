@@ -148,6 +148,11 @@ export interface SweepPrefs {
  */
 export interface AppUpdatePrefs {
   readonly installersDir: string | null;
+  /**
+   * Sessão durável (dono, 12/11) — minutes "Atualizar" waits for sessions in a turn before restarting anyway (they come
+   * back on the same conversation). `null` = the default (5).
+   */
+  readonly forceAfterMinutes: number | null;
 }
 
 /**

@@ -84,6 +84,26 @@ describe('detecção', () => {
     expect(detectTravas({ probes: [ok], reports: [report([recent, asking, longAnswer])], now: NOW })).toEqual([]);
   });
 
+  // Dono, 12/11 (t-5c0df1df): sessão parada por limite ou cota é rotina (o despertador a acorda depois do reset);
+  // não vira carta ao dono. Laço que não é cota (529, 5xx) segue travando.
+  it('limite de uso ou cota não é trava; 529 e 5xx seguem sendo', () => {
+    const keys = (sessions: RemoteSessionReading[]): string[] =>
+      detectTravas({ probes: [ok], reports: [report(sessions)], now: NOW }).map((trava) => trava.key);
+    const noBackground = { procs: 0, names: [], pendingTasks: 0 };
+    const limit = session({ last: 'error', background: noBackground, apiError: { kind: '', text: "You've hit your limit · resets 9pm", at: NOW - 30 * MIN } } as Partial<RemoteSessionReading>);
+    expect(keys([limit])).toEqual([]);
+    const quotaLoop = session({ sid: 's2', pane: 'busy', last: 'request', retry: { attempt: 9, at: NOW - 30 * MIN, text: '429 rate limit exceeded' } } as Partial<RemoteSessionReading>);
+    expect(keys([quotaLoop])).toEqual([]);
+    const overloaded = session({ sid: 's3', pane: 'busy', last: 'request', retry: { attempt: 9, at: NOW - 30 * MIN, text: '529 overloaded' } } as Partial<RemoteSessionReading>);
+    expect(keys([overloaded])).toEqual(['sessoes:vps']);
+    const serverError = session({ sid: 's4', name: 'Dev · 5xx', last: 'error', background: noBackground, apiError: { kind: 'server_error', text: '500 internal server error', at: NOW - 30 * MIN } } as Partial<RemoteSessionReading>);
+    const travas = detectTravas({ probes: [ok], reports: [report([limit, serverError])], now: NOW });
+    expect(travas.map((trava) => trava.key)).toEqual(['sessoes:vps']);
+    expect(travas[0]!.detail).toContain('uma sessão parada');
+    expect(travas[0]!.detail).toContain('Dev · 5xx');
+    expect(travas[0]!.detail).not.toContain('Dev · fatia');
+  });
+
   it('o erro do ssh separa "pedindo login" de "fora do ar"', () => {
     expect(classifySshFailure('# Tailscale SSH requires an additional check. To authenticate, visit: https://login.tailscale.com/a/x', false)).toBe('login');
     expect(classifySshFailure('root@vps: Permission denied (publickey).', false)).toBe('login');

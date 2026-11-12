@@ -8,6 +8,8 @@ import styles from './UpdateIndicator.module.css';
 interface UpdateIndicatorProps {
   /** The owner asked to update and the sessions are not idle yet. */
   readonly waiting: UpdateReadiness | null;
+  /** Until it restarts anyway (sessão durável, 12/11); `null` while the deadline is being read. */
+  readonly remainingMs: number | null;
   /** The app is closing to install. */
   readonly applying: boolean;
   /** The last update did not go through (the installer failed, or the switch could not start). */
@@ -17,15 +19,22 @@ interface UpdateIndicatorProps {
   readonly onDismissError: () => void;
 }
 
-function waitingText(waiting: UpdateReadiness): string {
+function clock(ms: number): string {
+  const seconds = Math.ceil(ms / 1_000);
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+function waitingText(waiting: UpdateReadiness, remainingMs: number | null): string {
   const parts = [
     waiting.working > 0 ? `${waiting.working} trabalhando` : null,
     waiting.waitingOnYou > 0 ? `${waiting.waitingOnYou} esperando você` : null,
   ].filter(Boolean);
-  return `Atualiza quando as sessões pararem${parts.length > 0 ? ` (${parts.join(' · ')})` : ''}`;
+  const who = parts.length > 0 ? ` (${parts.join(' · ')})` : '';
+  if (remainingMs === null) return `Atualiza quando as sessões pararem${who}`;
+  return `Reinicia em ${clock(remainingMs)} ou quando as sessões pararem${who}`;
 }
 
-export function UpdateIndicator({ waiting, applying, error, onUpdate, onCancel, onDismissError }: UpdateIndicatorProps): React.JSX.Element | null {
+export function UpdateIndicator({ waiting, remainingMs, applying, error, onUpdate, onCancel, onDismissError }: UpdateIndicatorProps): React.JSX.Element | null {
   const [status, setStatus] = useState<AppUpdateStatus | null>(null);
 
   useEffect(() => {
@@ -66,7 +75,12 @@ export function UpdateIndicator({ waiting, applying, error, onUpdate, onCancel, 
   if (waiting) {
     return (
       <span className={styles.indicator} data-testid="app-update-waiting">
-        <span className={styles.text}>{waitingText(waiting)}</span>
+        <span
+          className={styles.text}
+          title="As sessões trabalhando foram avisadas para fechar o turno e salvar o estado. No fim do prazo o app reinicia mesmo assim e cada uma volta na mesma conversa."
+        >
+          {waitingText(waiting, remainingMs)}
+        </span>
         <button type="button" className={styles.link} onClick={onCancel}>
           Cancelar
         </button>
@@ -81,7 +95,7 @@ export function UpdateIndicator({ waiting, applying, error, onUpdate, onCancel, 
         type="button"
         className={`${styles.indicator} ${styles.available}`}
         onClick={onUpdate}
-        title={`Versão ${available.version} baixada. Reinicia quando as sessões pararem e reabre as mesmas abas.`}
+        title={`Versão ${available.version} baixada. Avisa as sessões trabalhando, reinicia quando elas pararem (ou no fim do prazo) e reabre as mesmas abas, na mesma conversa.`}
         data-testid="app-update-available"
       >
         <span className={`${styles.dot} ${styles.pulse}`} aria-hidden="true" />
