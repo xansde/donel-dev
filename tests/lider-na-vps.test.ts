@@ -434,6 +434,18 @@ describe('Líder único na VPS — a troca nunca fecha o Líder antigo antes do 
     expect(planLeaderDelivery(at(undefined), 'vps-1')).toEqual({ kind: 'move', tabId: 't1', sessionId: sid, cwd: '/home/a/seazone', inPlace: false });
   });
 
+  it('aba do Líder sem pasta conhecida: não troca de pasta (a volta subiria na pasta nova); só o lugar, se mudar', () => {
+    const orq = '/home/a/seazone/_orquestradora';
+    const at = (remoteId: string | undefined) => ({ id: 't1', remoteId, claudeSessionId: sid, state: 'waiting', exited: false, cwd: undefined }) as const;
+    // Mesmo lugar remoto, sem cwd: a mensagem vai a ele onde está.
+    expect(planLeaderDelivery(at('vps-1'), 'vps-1', orq)).toEqual({ kind: 'send', tabId: 't1' });
+    // Este computador, sem cwd: idem.
+    expect(planLeaderDelivery(at(undefined), undefined, orq)).toEqual({ kind: 'send', tabId: 't1' });
+    // O lugar muda: só o move de lugar, na pasta da aba (nenhuma).
+    expect(planLeaderDelivery(at(undefined), 'vps-1', orq)).toEqual({ kind: 'move', tabId: 't1', sessionId: sid, cwd: undefined, inPlace: false });
+    expect(planLeaderDelivery(at('vps-1'), undefined, orq)).toEqual({ kind: 'move', tabId: 't1', sessionId: sid, cwd: undefined, inPlace: false });
+  });
+
   it('a mudança de pasta que falhou não se tenta de novo (mesma conversa, lugar e pasta); outra pasta ou lugar tenta', () => {
     const orq = '/home/a/seazone/_orquestradora';
     const tab = { id: 't1', remoteId: 'vps-1', claudeSessionId: sid, state: 'waiting', exited: false, cwd: '/home/a/seazone' } as const;

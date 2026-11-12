@@ -59,8 +59,12 @@ export function planLeaderDelivery(
   const sessionId = tab.claudeSessionId;
   if (!sessionId) return { kind: 'send', tabId: tab.id };
   // Another folder (the orchestrator's project, 12/11) is a move too, with the same rule: only while it is stopped.
+  // Only from a known folder: without one the way back (`switchBack`, respawn without cwd) would start in the new folder.
   const folder =
-    wantedCwd !== undefined && !sameFolder(tab.cwd, wantedCwd) && !failedFolderMoves.has(leaderFolderMoveKey(sessionId, wantedRemoteId, wantedCwd))
+    wantedCwd !== undefined &&
+    tab.cwd !== undefined &&
+    !sameFolder(tab.cwd, wantedCwd) &&
+    !failedFolderMoves.has(leaderFolderMoveKey(sessionId, wantedRemoteId, wantedCwd))
       ? wantedCwd
       : undefined;
   const placeMoves = leaderMoves({ remoteId: tab.remoteId, state: tab.state }, wantedRemoteId);
