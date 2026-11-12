@@ -70,3 +70,12 @@ export function worktreeNameFromArgs(args: readonly string[] | undefined): strin
   }
   return null;
 }
+
+/**
+ * t-58b67066 — the worktree of a session another session opens (`sessao_abrir`): on a remote place it always gets one
+ * (sessions there share the project folder, and one switching its branch pulled it from under the others); on this
+ * computer, none (the owner's own "Isolar em worktree" decides there). `taken` = names of the open tabs.
+ */
+export function agentOpenWorktree(remoteId: string | undefined, sessionName: string, now: Date, taken: readonly string[]): string | undefined {
+  return remoteId ? worktreeNameFor(sessionName, now, taken) : undefined;
+}

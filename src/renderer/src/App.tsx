@@ -46,7 +46,7 @@ import type { EffortLevel, ModelAlias } from '../../shared/commandBuilder';
 // entram no argv (sem provider) ou são omitidos (com provider); commandBuilder.ts
 // (buildClaudeArgs acima) continua intocado.
 import { buildLauncherArgs } from './launchArgsForProvider';
-import { cliWorktreeBranch, WORKTREE_TAB_MARK, worktreeNameFor, worktreeNameFromArgs } from '../../shared/sessionWorktree';
+import { agentOpenWorktree, cliWorktreeBranch, WORKTREE_TAB_MARK, worktreeNameFor, worktreeNameFromArgs } from '../../shared/sessionWorktree';
 import { projectOfFolders } from '../../shared/projectYolo';
 import type { WorktreeKeptPayload } from '../../shared/workspace';
 import { useWorkspaceInfo } from './useWorkspaceInfo';
@@ -2561,6 +2561,8 @@ export function App(): React.JSX.Element {
     roles: () => roles,
     openSession: (request) => {
       const defaults = appConfig?.launcherDefaults;
+      // t-58b67066 — on a remote place the new session gets a worktree of its own: the project folder there is shared.
+      const worktree = agentOpenWorktree(request.remoteId, request.name, new Date(), tabsRef.current.flatMap((tab) => worktreeNameFromArgs(tab.launchArgs) ?? []));
       const providerId = request.role.engine && providers.some((provider) => provider.id === request.role.engine) ? request.role.engine : undefined;
       const tabId = addTab(
         {
@@ -2574,6 +2576,7 @@ export function App(): React.JSX.Element {
             effort: request.role.effort ?? defaults?.effort ?? DEFAULT_EFFORT_LEVEL,
             permissionMode: request.role.permissionMode ?? defaults?.permissionMode ?? 'acceptEdits',
             sessionName: request.name,
+            worktree,
           }),
           sessionType: 'claude',
           providerId,

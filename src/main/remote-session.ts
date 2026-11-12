@@ -18,6 +18,7 @@ import { createWriteStream, mkdirSync, type WriteStream } from 'node:fs';
 import { basename, join, relative, sep, isAbsolute } from 'node:path';
 import { isBypassLaunch } from '../shared/launchPermission';
 import type { RemoteAliveSession } from '../shared';
+import { isSafeWorktreeName } from '../shared/sessionWorktree';
 
 export const REMOTE_TMUX_SOCKET = 'donel';
 export const REMOTE_SESSIONS_DIR = '.donel/s';
@@ -78,6 +79,13 @@ export interface RemoteSetupInput {
   /** Argv of `claude`; an argument starting with `@S/` is a file of the session folder. */
   readonly claudeArgs: readonly string[];
   readonly meta: RemoteSessionMeta;
+  /**
+   * t-58b67066 — a worktree of its own for the session (`<project>/.claude/worktrees/<name>`, branch
+   * `worktree-<name>` from the project's HEAD), created here when missing: sessions on a place share its project
+   * folder, and one switching the branch there pulled it from under the others. Absent = the project folder, except
+   * a conversation that was born in a worktree, which goes back to it.
+   */
+  readonly worktree?: string;
 }
 
 export type RemoteSetupResult =
@@ -156,10 +164,13 @@ const TMUX_CONF = [
 /** Pure — the setup script (sent on stdin). Last lines: `DONEL_NEW` + dir, `DONEL_ALIVE` + dir + meta, or `DONEL_ERR`. */
 export function buildRemoteSetupScript(input: RemoteSetupInput): string {
   assertSessionId(input.sid);
+  if (input.worktree !== undefined && !isSafeWorktreeName(input.worktree)) throw new Error('Nome de worktree inválido para lugar remoto.');
   const claudeScript = [
     '#!/usr/bin/env bash',
     `S="$HOME/${REMOTE_SESSIONS_DIR}/${input.sid}"`,
     `cd "$HOME"/${shQuote(input.homeRelativeDir)} || exit 1`,
+    // The folder the setup chose (the session's worktree, when it has one): the transcript is named after it.
+    'if [ -f "$S/dir" ]; then cd "$(cat "$S/dir")" || exit 1; fi',
     'export CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1',
     'export LANG="${LANG:-C.UTF-8}" LC_ALL="${LC_ALL:-C.UTF-8}"',
     'export COLORTERM=truecolor',
@@ -206,6 +217,7 @@ export function buildRemoteSetupScript(input: RemoteSetupInput): string {
     '    mkdir -p "$D"',
     '  fi',
     'fi',
+    ...worktreeLines(input.worktree ?? ''),
     'mkdir -p "$S" && chmod 700 "$HOME/.donel" "$HOME/.donel/s" "$S"',
     `printf '%s' ${shQuote(b64(TMUX_CONF))} | base64 -d > "$HOME/.donel/tmux.conf"`,
     ...files.map((file) => `printf '%s' ${shQuote(b64(file.content))} | base64 -d > "$S"/${shQuote(file.name)} && chmod 600 "$S"/${shQuote(file.name)}`),
@@ -219,6 +231,32 @@ export function buildRemoteSetupScript(input: RemoteSetupInput): string {
     'printf "DONEL_NEW\\n"; cat "$S/dir"',
     '',
   ].join('\n');
+}
+
+/**
+ * The setup lines that move `D` into the session's worktree. Asked for one (`WT`): created from the project's HEAD
+ * when missing, reused when it exists; a folder without git keeps the session in it. Without one, a conversation
+ * whose transcript is in a worktree of the project (a resume) goes back there.
+ */
+function worktreeLines(worktree: string): string[] {
+  return [
+    `WT=${shQuote(worktree)}`,
+    'if [ -n "$WT" ] && git -C "$D" rev-parse --git-dir >/dev/null 2>&1; then',
+    '  W="$D/.claude/worktrees/$WT"',
+    '  if [ ! -d "$W" ]; then',
+    '    git -C "$D" worktree add -q -b "worktree-$WT" "$W" HEAD >/dev/null 2>&1 || git -C "$D" worktree add -q "$W" "worktree-$WT" >/dev/null 2>&1 || { echo "DONEL_ERR Não consegui criar a worktree $WT da sessão no lugar remoto."; exit 5; }',
+    '  fi',
+    '  D="$W"',
+    'elif [ -z "$WT" ] && [ -d "$D/.claude/worktrees" ]; then',
+    '  SLUG=$(cd "$D" && pwd | sed "s/[^a-zA-Z0-9]/-/g")',
+    '  if [ ! -f "$HOME/.claude/projects/$SLUG/$SID.jsonl" ]; then',
+    '    for W in "$D"/.claude/worktrees/*/; do',
+    '      W="${W%/}"; [ -d "$W" ] || continue',
+    '      if [ -f "$HOME/.claude/projects/$(printf %s "$W" | sed "s/[^a-zA-Z0-9]/-/g")/$SID.jsonl" ]; then D="$W"; break; fi',
+    '    done',
+    '  fi',
+    'fi',
+  ];
 }
 
 /** Pure — reads the answer of the setup script. */
@@ -540,8 +578,12 @@ export function buildHasTranscriptScript(homeRelativeDir: string, sid: string): 
   assertSessionId(sid);
   return [
     `D=$(cd "$HOME"/${shQuote(homeRelativeDir)} 2>/dev/null && pwd) || { echo DONEL_HASNT; exit 0; }`,
-    'SLUG=$(printf %s "$D" | sed "s/[^a-zA-Z0-9]/-/g")',
-    `if [ -f "$HOME/.claude/projects/$SLUG/${sid}.jsonl" ]; then echo DONEL_HAS; else echo DONEL_HASNT; fi`,
+    // The project folder, then the worktrees of the project's sessions (t-58b67066).
+    'for F in "$D" "$D"/.claude/worktrees/*/; do',
+    '  F="${F%/}"; [ -d "$F" ] || continue',
+    `  if [ -f "$HOME/.claude/projects/$(printf %s "$F" | sed "s/[^a-zA-Z0-9]/-/g")/${sid}.jsonl" ]; then echo DONEL_HAS; exit 0; fi`,
+    'done',
+    'echo DONEL_HASNT',
     '',
   ].join('\n');
 }
