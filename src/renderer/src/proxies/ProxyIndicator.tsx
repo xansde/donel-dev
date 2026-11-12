@@ -37,6 +37,14 @@ interface EditState {
   readonly machines: readonly MachineId[];
 }
 
+/** Editing the address of a proxy that has an address drops its keys (proxy-service `upsert`). */
+function addressChangesKeys(view: ProxiesViewDto | null, edit: EditState): boolean {
+  if (!edit.id || !view) return false;
+  const current = view.proxies.find((proxy) => proxy.entry.id === edit.id);
+  if (!current?.entry.baseUrl || current.keyFor.length === 0) return false;
+  return edit.baseUrl.trim().replace(/\/+$/, '') !== current.entry.baseUrl;
+}
+
 const EMPTY_EDIT: EditState = { id: null, label: '', kind: 'gateway', baseUrl: '', machines: [] };
 
 export function ProxyIndicator(): React.JSX.Element | null {
@@ -351,7 +359,7 @@ export function ProxyIndicator(): React.JSX.Element | null {
                 placeholder="https://host ou http://host:porta"
                 value={edit.baseUrl}
                 onChange={(e) => setEdit({ ...edit, baseUrl: e.target.value })}
-                hint={editError ?? 'Vazio = ainda não configurado.'}
+                hint={editError ?? (addressChangesKeys(view, edit) ? 'Ao salvar, as chaves guardadas deste proxy saem: eram do endereço antigo.' : 'Vazio = ainda não configurado.')}
                 hintTone={editError ? 'danger' : 'muted'}
               />
               {view ? (
