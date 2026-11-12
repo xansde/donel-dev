@@ -233,8 +233,8 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
   };
 
   const uploadContext = { home: homedir(), userData: deps.userDataDir };
-  /** Documentos, Área de Trabalho, Downloads as the system names them (redirected to OneDrive or not). */
-  const knownWide = (['desktop', 'documents', 'downloads'] as const).flatMap((name) => {
+  /** Documentos, Área de Trabalho, Downloads, Imagens, Vídeos, Músicas as the system names them (redirected to OneDrive or not). */
+  const knownWide = (['desktop', 'documents', 'downloads', 'pictures', 'videos', 'music'] as const).flatMap((name) => {
     try {
       return [app.getPath(name)];
     } catch {

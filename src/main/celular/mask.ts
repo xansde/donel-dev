@@ -25,8 +25,15 @@ const NAMED_SECRET = /\b([A-Za-z0-9_.-]*(?:key|token|secret|senha|password|passw
 /** Any `NAME=value` whose value is long and token-like (no spaces, no path separators). */
 const LONG_ASSIGNMENT = /\b([A-Za-z_][A-Za-z0-9_]*=)([A-Za-z0-9+/_=-]{24,})/g;
 
+/** `postgres://user:password@host`: keeps scheme, user and host; the password goes (it may itself hold an `@`). */
+const URL_CREDENTIAL = /(\b[a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)([^\s/]+)(@)/gi;
+
+/** `curl -u user:password` / `--user=user:password` (quoted or not): keeps the user, the password goes. */
+const CURL_USER = /((?:^|\s)(?:-u|--user)(?:\s+|=)["']?[^\s:"']+:)([^\s"']+)/g;
+
 export function maskSecrets(text: string): string {
-  let out = text;
+  let out = text.replace(URL_CREDENTIAL, (_match, head: string, _password: string, at: string) => `${head}${HIDDEN}${at}`);
+  out = out.replace(CURL_USER, (_match, head: string) => `${head}${HIDDEN}`);
   for (const pattern of TOKEN_PATTERNS) out = out.replace(pattern, (match) => `${match.slice(0, 3)}${HIDDEN}`);
   out = out.replace(AUTH_HEADER, (_match, word: string, space: string) => `${word}${space}${HIDDEN}`);
   out = out.replace(NAMED_SECRET, (_match, name: string) => `${name}${HIDDEN}`);

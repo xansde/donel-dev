@@ -61,4 +61,16 @@ describe('pastas de envio na config', () => {
       expect(wideUploadFolder(narrow, context), narrow).toBeNull();
     }
   });
+
+  it('Imagens, Vídeos e Músicas (PT/EN, do sistema e no OneDrive) pedem confirmação', () => {
+    const context = { home: 'C:\\Users\\ana', userData: 'C:\\Users\\ana\\AppData\\Roaming\\donel-dev', known: ['F:\\Fotos'] };
+    for (const wide of [
+      'C:\\Users\\ana\\Pictures', 'C:\\Users\\ana\\Imagens', 'C:\\Users\\ana\\Videos', 'C:\\Users\\ana\\Vídeos',
+      'C:\\Users\\ana\\Music', 'C:\\Users\\ana\\Músicas', 'C:\\Users\\ana\\OneDrive\\Imagens', 'C:\\Users\\ana\\OneDrive - Empresa\\Pictures',
+      'F:\\Fotos',
+    ]) {
+      expect(wideUploadFolder(wide, context), wide).not.toBeNull();
+    }
+    expect(wideUploadFolder('C:\\Users\\ana\\Pictures\\envios', context)).toBeNull();
+  });
 });
