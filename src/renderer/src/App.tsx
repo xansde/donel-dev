@@ -2818,8 +2818,8 @@ export function App(): React.JSX.Element {
   }, []);
   useEffect(() => {
     const bridge = agentBridgeRef.current;
-    const off = window.donel.mindscape.onBoardRequest(({ requestId, ptyId, call }) => {
-      void bridge.handle(ptyId, call).then((answer) => window.donel.mindscape.respondBoard({ requestId, ...answer }));
+    const off = window.donel.mindscape.onBoardRequest(({ requestId, ptyId, call, answerBy }) => {
+      void bridge.handle(ptyId, call, answerBy).then((answer) => window.donel.mindscape.respondBoard({ requestId, ...answer }));
     });
     // Cartas forma A — what the owner wrote on a card goes to the session that owns the task (or the Líder).
     const offOwner = window.donel.mindscape.onOwnerMessage(({ requestId, ...message }) => {

@@ -1,0 +1,4 @@
+{
+  "title": "Envio entre sessões responde antes de um minuto",
+  "text": "Quando uma sessão manda mensagem a outra que demora a receber (ocupada, ou numa máquina carregada), a resposta chega em menos de um minuto dizendo se entrou, se está na fila ou se ainda está a caminho, em vez de \"tempo esgotado\". Assim ninguém manda a mesma mensagem duas vezes. Vale também para as sessões que já estavam abertas."
+}
