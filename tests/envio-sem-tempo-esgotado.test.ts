@@ -13,6 +13,8 @@ import { FACTORY_ROLES } from '../src/shared/roles';
 
 /** The CLI's own cut on an MCP call when its config brings no `timeout` (claude 2.1.3xx). */
 const CLI_CUT_MS = 60_000;
+/** The worst round trip measured through the gate of a loaded VPS (12/11, 21,5 s): the main's answer must leave room for it. */
+const GATE_ROUND_TRIP_MS = 22_000;
 
 afterEach(() => vi.useRealTimers());
 
@@ -80,14 +82,14 @@ it('o envio que ainda não entrou responde antes do corte de 60 s do CLI, mesmo 
   expect(answered!.text).toMatch(/NÃO mande de novo/);
 });
 
-it('com a tela travada de verdade, o main ainda responde antes do corte de 60 s, com o aviso de conferir antes de repetir', async () => {
+it('com a tela travada de verdade, o main responde a tempo de a resposta atravessar o portão de uma VPS carregada antes do corte de 60 s, com o aviso de conferir antes de repetir', async () => {
   vi.useFakeTimers();
   const bridge = bridgeWith(() => {});
   let answered: { kind: string; text: string } | undefined;
   void bridge.execute('pty-1', { tool: 'sessao_enviar', para: 'place:dev', texto: 'roda o verify' }).then((outcome) => {
     answered = outcome as { kind: string; text: string };
   });
-  await vi.advanceTimersByTimeAsync(CLI_CUT_MS - 5_000);
+  await vi.advanceTimersByTimeAsync(CLI_CUT_MS - GATE_ROUND_TRIP_MS);
   expect(answered?.kind).toBe('error');
   expect(answered?.text).toMatch(/pode ter entrado/);
 });

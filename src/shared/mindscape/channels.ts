@@ -49,7 +49,8 @@ export interface MindscapeOwnerMessageResponse {
  * and the round trip through a loaded VPS's gate took up to 21 s.
  */
 export const SEND_ANSWER_BY_MS = 25_000;
-export const SEND_NET_MS = 40_000;
+/** 12/11 (#407 review) — 40 s + the 21,5 s round trip through a loaded VPS's gate passed the 60 s cut. */
+export const SEND_NET_MS = 35_000;
 
 /** A board tool call of the session of `ptyId`; the renderer answers with the same `requestId`. */
 export interface MindscapeBoardRequest {
