@@ -45,7 +45,7 @@ export function sanitizeProxiesConfig(parsed: unknown): ProxiesConfig {
   return { ...defaults, entries, seeded: true };
 }
 
-/** Pure — a free id from the label (`Portal IA (Bill)` → `portal-ia-bill`, then `-2`, `-3`…). */
+/** Pure — a free id from the label (`Portal de API (time)` → `portal-de-api-time`, then `-2`, `-3`…). */
 export function proxyIdFromLabel(label: string, taken: ReadonlySet<string>): string {
   const base =
     label
