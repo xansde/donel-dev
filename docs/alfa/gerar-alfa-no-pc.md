@@ -4,7 +4,7 @@ Para uma sessão Claude rodando no PC Windows do dono (usuário `compu`). Escrit
 
 ## Por que existe
 
-O botão "Versão nova · Atualizar" do alfa só aparece quando há uma release do GitHub **mais nova** que a versão
+O botão de atualização do alfa ("Baixando versão nova" e depois "Versão nova pronta · Reiniciar") só aparece quando há uma release do GitHub **mais nova** que a versão
 instalada. Em 12/11 a release Latest de `xansde/donel-dev` era `alfa-26.1109.2251`, igual à instalada:
 `electron-updater` compara com `semver.eq` (`node_modules/electron-updater/out/AppUpdater.js:345`), emite
 `update-not-available`, `src/main/app-update.ts:137-141` zera `available` e `failure`, e o
@@ -38,25 +38,40 @@ git -C $repo diff --quiet origin/staging -- package-lock.json
 $LASTEXITCODE   # 0 = igual, siga para 1.5; 1 = difere, veja abaixo
 ```
 
+Na prática, este passo deve passar direto: em 12/11 não há mudança em `package.json` nem em `package-lock.json`
+entre `4127112c` (build anterior) e `origin/staging` (`git diff --stat 4127112c origin/staging -- package.json
+package-lock.json` sai vazio). Só siga abaixo se o `1.4` der 1.
+
 Se o lock **difere**, o script aborta com "as dependências de staging mudaram" (ele empresta o
-`node_modules` do clone principal por junção, e só vale com o mesmo lock). Só então, sem trocar de branch e
-sem apagar nada do dono, atualize as dependências **no clone principal**:
+`node_modules` do clone principal por junção, e só vale com o mesmo lock). Nunca mexa na branch, no índice nem
+no `node_modules` do dono às cegas. Siga a regra do `CLAUDE.md` do repo ("Mesclou na staging, atualize o clone
+principal"):
 
 ```powershell
-# O lock do clone é o do working tree do dono. Se ele tem alteração própria no package-lock/package.json
-# (git -C $repo status --short -- package.json package-lock.json), PARE e pergunte ao dono.
-# Senão, traga só esses dois arquivos de origin/staging (não mexe em mais nada, nem na branch):
-git -C $repo checkout origin/staging -- package.json package-lock.json
-Rename-Item "$repo\node_modules" 'node_modules.bak'   # guarda, não apaga
-npm --prefix $repo ci
+$branch = (git -C $repo branch --show-current).Trim()
+if ($branch -eq 'staging') {
+  git -C $repo fetch origin
+  git -C $repo pull --ff-only origin staging    # se recusar, não force: PARE e avise o dono
+  # Só agora, se o lock do clone ainda difere de origin/staging (não deveria), troque as dependências:
+  git -C $repo diff --quiet origin/staging -- package-lock.json
+  if ($LASTEXITCODE -ne 0) { throw 'lock ainda difere depois do pull: PARE e avise o dono' }
+  # Lock mudou entre o build anterior e agora? Então as dependências do node_modules estão velhas:
+  if (Test-Path "$repo\node_modules.bak") { throw 'node_modules.bak já existe: confira antes' }
+  Rename-Item "$repo\node_modules" 'node_modules.bak' -ErrorAction Stop   # guarda, não apaga
+  npm --prefix $repo ci
+} else {
+  # Outra branch ou HEAD solto: só avança a staging local (fast-forward), sem trocar de branch
+  git -C $repo fetch origin staging:staging
+  # PARE aqui. Avise o dono: o package-lock do clone difere do da staging. Não troque a branch,
+  # não faça checkout de arquivo, não mexa no índice.
+}
 ```
 
 Atenção: `npm ci` roda o postinstall que recompila o `node-pty`, e esta máquina não tem Visual Studio (nota no
 próprio script). Se falhar: `Remove-Item "$repo\node_modules" -Recurse -Force` só da pasta recém-criada que
-falhou, `Rename-Item "$repo\node_modules.bak" node_modules`, desfaça o `checkout` dos dois arquivos com
-`git -C $repo checkout HEAD -- package.json package-lock.json` (só se você os trouxe no passo acima) e
-peça ao dono. Dependência nova de módulo nativo precisa de decisão dele. Dá para conferir depois: `git -C $repo
-status` não deve mostrar nada novo além do que o dono já tinha.
+falhou, `Rename-Item "$repo\node_modules.bak" node_modules` e peça ao dono. Dependência nova de módulo nativo
+precisa de decisão dele. Dá para conferir depois: `git -C $repo status` não deve mostrar nada novo além do que o
+dono já tinha.
 
 ```powershell
 # 1.5 pasta de saída e último commit buildado
@@ -99,7 +114,8 @@ Onde olhar:
 
 - Log: `%USERPROFILE%\Donel Dev Alfa - diario\build.log`
 - Falha: `%USERPROFILE%\Donel Dev Alfa - diario\FALHOU.txt` (data e motivo; some no próximo build bom)
-- Fim bom: a última linha do log é `Pronto: <caminho do .exe> (<commit>)`.
+- Fim bom: o log termina com o rodapé do `Start-Transcript`, então a linha `Pronto: <caminho do .exe> (<commit>)`
+  não é a última. Confira com `Select-String -Path "$out\build.log" -Pattern '^Pronto: '`.
 
 ## 3. Conferir a release publicada
 
@@ -119,7 +135,7 @@ gh release download <tag> --repo xansde/donel-dev --pattern latest.yml --output 
   (`CHECK_EVERY_MS` e `FIRST_CHECK_AFTER_MS` em `src/main/app-update.ts:27-28`). Reabrir o app antecipa.
 - Aparece "Baixando versão nova" e depois "Versão nova pronta · Reiniciar" ao lado das Novidades na barra de
   status.
-- O clique em Atualizar (`UpdateIndicator onUpdate`, `src/renderer/src/App.tsx:3886-3889`) faz
+- O clique em "Versão nova pronta · Reiniciar" (`UpdateIndicator onUpdate`, `src/renderer/src/App.tsx:3886-3889`) faz
   `setUpdateRequested(true)`; `updateGo` (`src/shared/appUpdate.ts:116`) decide quando vai; então o renderer
   chama `appUpdate.apply` (`src/main/app-update.ts:200`), que grava as abas para retomar e chama
   `quitAndInstall`.
@@ -156,9 +172,10 @@ if ((Test-Path $old) -and (Get-ChildItem $old -File -ErrorAction SilentlyContinu
   # MEMORY.md existe nos dois: o robocopy o deixou como está; acrescente só as linhas que faltam
   $oldIdx = Join-Path $old 'MEMORY.md'; $newIdx = Join-Path $new 'MEMORY.md'
   if ((Test-Path $oldIdx) -and (Test-Path $newIdx)) {
-    $have = Get-Content $newIdx
-    $missing = Get-Content $oldIdx | Where-Object { $_.Trim() -and ($have -notcontains $_) }
-    if ($missing) { Add-Content -Path $newIdx -Value $missing -Encoding utf8 }
+    $have = Get-Content -Encoding UTF8 $newIdx
+    $missing = Get-Content -Encoding UTF8 $oldIdx | Where-Object { $_.Trim() -and ($have -cnotcontains $_) }
+    # No PowerShell 5.1, Add-Content -Encoding utf8 grava BOM; AppendAllLines com UTF8Encoding($false) não
+    if ($missing) { [IO.File]::AppendAllLines($newIdx, [string[]]$missing, (New-Object System.Text.UTF8Encoding($false))) }
   }
 } else { 'Sem memória antiga para copiar.' }
 ```
