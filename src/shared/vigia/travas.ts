@@ -4,7 +4,8 @@
 
 import type { RemoteHealthReport } from '../health/remote';
 import type { VigiaCofrePrefs } from './config';
-import { pulseOfRemote } from '../mindscape/bottlenecks';
+import type { RemoteSessionReading } from '../health/remoteSessions';
+import { apiFailureReason, pulseOfRemote, type SessionPulse } from '../mindscape/bottlenecks';
 
 export const VIGIA_ROUND_MS = 5 * 60_000;
 /** A session in a loop (retrying the API, login fallen, failed call) for longer than this is a lock. */
@@ -88,6 +89,21 @@ export function classifySshFailure(stderrLastLine: string, timedOut: boolean): '
   return /tailscale|authenticat|login|verif|permission denied|host key verification/i.test(stderrLastLine) ? 'login' : 'fora';
 }
 
+/** The causes that only wait on a usage limit or quota (`apiFailureReason`'s words). */
+export const QUOTA_REASONS: ReadonlySet<string> = new Set(['conta no limite', 'sem cota (429)', 'gateway sem cota (429)']);
+
+/**
+ * Dono, 12/11 (t-5c0df1df): a session stopped by a limit or quota is routine — the despertador wakes it after the
+ * reset — so it never opens a card to the owner. Login, 529 and 5xx loops still do.
+ */
+function waitsOnQuota(session: RemoteSessionReading, pulse: SessionPulse): boolean {
+  if (pulse.state === 'esperando-api' && session.retry) return QUOTA_REASONS.has(apiFailureReason('', session.retry.text));
+  if (pulse.state === 'travada' && session.pane !== 'login' && session.apiError && session.last === 'error') {
+    return QUOTA_REASONS.has(apiFailureReason(session.apiError.kind, session.apiError.text));
+  }
+  return false;
+}
+
 const COFRE_DETAIL: Record<CofreStatus, string> = {
   locked: 'o cofre de senhas está trancado',
   unauthenticated: 'o cofre de senhas está sem login',
@@ -122,7 +138,7 @@ export function detectTravas(input: { readonly probes: readonly PlaceProbe[]; re
       // "Esperando a API" counts only when the CLI is RETRYING a failed call (`retry`): a long, legitimate answer
       // also waits on the API for minutes, and a bigger threshold would only move the false alarm, not remove it.
       const loop = pulse.state === 'travada' || (pulse.state === 'esperando-api' && session.retry !== null);
-      return loop && pulse.since !== null && readAt - pulse.since >= SESSION_STUCK_MS;
+      return loop && !waitsOnQuota(session, pulse) && pulse.since !== null && readAt - pulse.since >= SESSION_STUCK_MS;
     });
     if (stuck.length > 0) {
       const names = stuck.map((session) => session.name || session.sid).join(', ');

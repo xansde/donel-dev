@@ -143,6 +143,29 @@ export function isBoardLeader(board: MindscapeBoard | undefined, placeId: string
   return boardLeaders(board).includes(placeId);
 }
 
+/**
+ * The `estado` of `sessao_listar` (agentBridge's STATE_NAMES) of a place whose session answers: open, linked, and heard
+ * from since the app opened. "sem ligação", "começando", "aberta, sem nenhum pedido ainda", "parada desde … (o app
+ * reabriu e ainda não ouviu dela)", "fechada" and "nao-comecou" are not.
+ */
+const HEARING_PLACE_STATES: ReadonlySet<string> = new Set(['trabalhando', 'parada', 'precisa do dono', 'parou com erro']);
+
+/** The places of a `sessao_listar` (id → estado) whose session answers now (`HEARING_PLACE_STATES`). */
+export function hearingPlaceIds(states: ReadonlyMap<string, string>): Set<string> {
+  return new Set([...states].filter(([, estado]) => HEARING_PLACE_STATES.has(estado)).map(([id]) => id));
+}
+
+/**
+ * Dono, 12/11 (t-5c0df1df): a new demand of the Líder único goes to the live Líder of the board, who pulls it by the
+ * priority of "Seus pedidos" and hands it out; never straight to a chair past him. Refusal text, or null when the board
+ * has no live Líder (`boardLeaders` in `liveIds`) or `dono` is one of them. Passing an existing task stays free.
+ */
+export function demandOwnerRefusal(board: MindscapeBoard | undefined, liveIds: ReadonlySet<string>, dono: string): string | null {
+  const live = boardLeaders(board).filter((id) => liveIds.has(id));
+  if (live.length === 0 || live.includes(dono)) return null;
+  return `Este quadro tem Líder aberto (${live.join(', ')}): a demanda nova vai para ele, com "dono": "${live[0]}"; ele reparte pela prioridade de "Seus pedidos". Para passar uma tarefa que já existe a um posto, use tarefa_transferir.`;
+}
+
 /** `sessao_enviar` to the session that opened the caller with `sessao_abrir`: `"para": "quem-me-abriu"`. */
 export const MY_OPENER = 'quem-me-abriu';
 

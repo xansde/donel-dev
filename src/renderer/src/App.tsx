@@ -1236,6 +1236,9 @@ export function App(): React.JSX.Element {
     liderTabDiedRef.current[tab.id]?.(); // Líder único na VPS — the new Líder of a move died: the old one stays
     // T057 (014-chat, FR-034) — a barra "Sessão encerrada (código N)" do chat.
     setTabExits((prev) => ({ ...prev, [tab.id]: { exitCode: info.exitCode ?? null } }));
+    // Dono, 12/11 (t-5c0df1df): its live tasks pass on as from a closed tab. Only on the PC: a remote tab's PTY is the
+    // ssh, which drops when the notebook sleeps while the CLI keeps working in the place's tmux.
+    if (!tab.remoteId) agentBridgeRef.current?.placeExited(tab.id);
     // Spec 010 / B1 — o processo da sessão morreu (saiu sozinho, ou foi morto).
     // A aba pode continuar na tela, mas a SESSÃO acabou: deixar o card dizendo
     // "em andamento" com nada rodando é a mesma inverdade que fechar a aba
