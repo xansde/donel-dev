@@ -255,6 +255,21 @@ describe('Líder único recebe e lugar fechado passa adiante', () => {
     expect(mute.sent).toEqual([{ tabId: 'tab-lider', text: expect.stringContaining('bloqueio: travei no build') }]);
   });
 
+  it('with the Líder of the board open, a chair the Líder único opened still hands it the finished task; one below it does not', async () => {
+    const { bridge, sent } = team({ boardLeader: true });
+    expect(await bridge.handle('theo', { tool: 'sessao_enviar', para: 'lider', texto: 'parte 1 pronta', motivo: 'tarefa-completa' })).toMatchObject({ ok: true });
+    expect(await bridge.handle('theo', { tool: 'sessao_enviar', para: 'quem-me-abriu', texto: 'parte 2 pronta', motivo: 'tarefa-completa' })).toMatchObject({ ok: true });
+    expect(sent).toEqual([
+      { tabId: 'tab-lider', text: `◆ De Dev (${THEO}), quadro atlas, tarefa completa: parte 1 pronta` },
+      { tabId: 'tab-lider', text: `◆ De Dev (${THEO}), quadro atlas, tarefa completa: parte 2 pronta` },
+    ]);
+
+    // The Dev reaches the Líder único only by being below the Theo (the Theo opened it): it goes to the Líder of the board.
+    const below = await bridge.handle('dev', { tool: 'sessao_enviar', para: 'lider', texto: 'parte 3 pronta', motivo: 'tarefa-completa' });
+    expect(below).toMatchObject({ ok: false, text: expect.stringContaining(`Líder aberto (${LQ})`) });
+    expect(sent).toHaveLength(2);
+  });
+
   it('closing the app before the grace, or a place that comes back, moves nothing', async () => {
     vi.useFakeTimers();
     const { bridge, tabs, passOns } = team();

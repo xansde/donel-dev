@@ -1327,7 +1327,9 @@ export class AgentBridge {
           const reach = canReachLeader(this.ports.doc(), { projectPath, placeId: self.id }, (id) => this.openedByLeader(projectPath, id));
           if (!reach.ok) return fail(`Sem ligação com o Líder único: ${reach.reason}`);
           if (!call.motivo) return fail(LEADER_MESSAGE_REFUSAL);
-          const over = this.liveBoardLeaderAbove(projectPath, self.id);
+          // A chair the Líder único opened hands it back the finished task even over a live Líder of the board.
+          const handsBack = call.motivo === 'tarefa-completa' && this.openedByLeader(projectPath, self.id);
+          const over = handsBack ? undefined : this.liveBoardLeaderAbove(projectPath, self.id);
           if (over) return fail(overBoardLeaderRefusal(over));
           const leader = this.leaderTab();
           if (!leader) return fail('O Líder único não está aberto agora. Registre o que precisa no Oráculo (tarefa_criar ou tarefa_transferir com "para": "lider") e siga.');
@@ -1351,7 +1353,8 @@ export class AgentBridge {
           if (openers.length === 0) {
             if (!this.openedByLeader(projectPath, self.id)) return fail(`Ninguém abriu você por sessao_abrir (foi o dono). Fale com o Líder do quadro ("para": "${BOARD_LEADER}") ou com quem está acima de você pelas setas.`);
             if (!call.motivo) return fail(LEADER_MESSAGE_REFUSAL);
-            const over = this.liveBoardLeaderAbove(projectPath, self.id);
+            // The Líder único opened me: the finished task goes back to it even over a live Líder of the board.
+            const over = call.motivo === 'tarefa-completa' ? undefined : this.liveBoardLeaderAbove(projectPath, self.id);
             if (over) return fail(overBoardLeaderRefusal(over));
             const leader = this.leaderTab();
             if (!leader) return fail('Quem abriu você foi o Líder único, e ele não está aberto agora. Registre o que precisa no Oráculo (tarefa_criar ou tarefa_transferir com "para": "lider") e siga.');
