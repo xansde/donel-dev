@@ -291,7 +291,11 @@ export function createProxyService(deps: ProxyServiceDeps): ProxyService {
       if (input.id !== undefined && (!PROXY_ID_PATTERN.test(input.id) || !existing)) return { kind: 'invalid', field: 'id' };
       const id = existing?.id ?? proxyIdFromLabel(label, new Set(config.entries.map((entry) => entry.id)));
       const next: ProxyEntry = { id, label, kind: input.kind, baseUrl, machines: [...new Set(machines)] };
-      if (existing && existing.baseUrl !== baseUrl) health.delete(id);
+      if (existing && existing.baseUrl !== baseUrl) {
+        health.delete(id);
+        // A key belongs to the address it was paired with: a new address starts without keys.
+        if (existing.baseUrl !== null) for (const machine of deps.machines()) deps.vault.delete(proxyVaultKey(id, machine.id));
+      }
       deps.setConfig({
         ...config,
         entries: existing ? config.entries.map((entry) => (entry.id === id ? next : entry)) : [...config.entries, next],

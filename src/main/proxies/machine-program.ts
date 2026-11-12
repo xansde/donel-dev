@@ -40,7 +40,8 @@ const os = require('os');
 const cp = require('child_process');
 const home = os.homedir();
 const claudeDir = INPUT.claudeDir || path.join(home, '.claude');
-const settingsPath = path.join(claudeDir, 'settings.json');
+// A symlinked settings.json (dotfiles) is written through: the link stays a link.
+const settingsPath = (() => { const p = path.join(claudeDir, 'settings.json'); try { return fs.realpathSync(p); } catch { return p; } })();
 const proxyDir = path.join(home, '.donel', 'proxy');
 const KEY_RE = ${PROXY_KEY_PATTERN.toString()};
 function readSettings() {
