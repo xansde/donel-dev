@@ -118,6 +118,32 @@ describe('sessao_permissao — o Líder único responde a permissão de outra se
   });
 });
 
+describe('sessao_ver_tela com permissão aberta (t-2a9060dd)', () => {
+  // Líder único, 10/11: "O app não mostra ao Líder o que a permissão pede". Looking at a stopped session shows what its
+  // open dialog asks, so whoever directs it decides without the owner opening that tab.
+  const verTela = (bridge: AgentBridge, from: string) => {
+    const parsed = parseBoardToolCall('sessao_ver_tela', { quem: NETO, quadro: 'atlas' });
+    if (!parsed.ok) throw new Error(parsed.reason);
+    return bridge.handle(from, parsed.call);
+  };
+
+  it('shows the tool and what the open request asks, and how to answer it', async () => {
+    const { bridge, answered } = setup();
+    const seen = await verTela(bridge, 'tab-unico');
+    expect(seen.ok).toBe(true);
+    const shown = JSON.parse(seen.text) as { permissaoAberta?: { ferramenta?: string; oQuePede: string; pedido: string } };
+    expect(shown.permissaoAberta).toMatchObject({ ferramenta: 'Bash', oQuePede: 'rm -rf build', pedido: RM.id });
+    expect(seen.text).toContain('sessao_permissao');
+    expect(answered).toEqual([]);
+  });
+
+  it('nothing open: no permissaoAberta', async () => {
+    const { bridge } = setup(null);
+    const seen = await verTela(bridge, 'tab-unico');
+    expect(JSON.parse(seen.text)).not.toHaveProperty('permissaoAberta');
+  });
+});
+
 describe('sessao_fechar com permissão aberta', () => {
   it('without recusarPermissao it refuses and says what is asked; with it, refuses the request and closes', async () => {
     const { answered, closed, bridge } = setup();
