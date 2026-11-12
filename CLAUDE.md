@@ -32,6 +32,15 @@ via `CLAUDE_CONFIG_DIR`.
   A bateria manual no alfa passa a ser validação **depois** do merge, não
   pré-requisito. Sempre `gh pr merge --merge`, nunca `--admin`. `main` e o
   repo público seguem no bloqueio total do bullet acima.
+- **Mesclou na `staging` → atualize o clone principal antes de remover a
+  worktree (12/11)**: quem mescla o PR (o Revisor, ou o Dev quando for ele) roda,
+  no clone principal da máquina, `git fetch origin && git pull --ff-only origin
+  staging` ANTES de remover a worktree. O coletor de uso de IA julga o código
+  escrito numa worktree pela cópia do clone principal; parado (em 12/11: HEAD
+  solto desde 07/11, 428 commits atrás na VPS pessoal e 636 na Homologações),
+  ~23 mil linhas escritas na semana creditaram ~5,5 mil. Nunca `reset`,
+  `checkout --` nem `stash pop` sobre arquivos sujos de outras sessões; se o
+  `--ff-only` recusar, não force: avise o Líder do quadro. Vale nas 2 VPS e no PC.
 - **Canais instalados coexistindo (decisão de 2026-07-28)**: `npm run
   dist:alfa` / `dist:beta` / `dist` empacotam com identidade própria de
   INSTALADOR (`appId`/`productName`/atalho "Donel Dev Alfa"/"Donel Dev
