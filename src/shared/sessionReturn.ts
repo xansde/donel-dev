@@ -16,6 +16,11 @@ export interface ReturnProbe {
   readonly sessionId?: string;
   /** A hook came from it (the resume's `SessionStart`) or it took a message. */
   readonly confirmed: boolean;
+  /**
+   * It came back with `--session-id` (no message yet, nothing to resume): its start is a `startup`, which leaves no
+   * sign until a first message. Alive on the expected id is back.
+   */
+  readonly fresh?: boolean;
   /** Why it is not answering, read from its process and screen (`startTrouble`), if anything. */
   readonly trouble?: string | null;
   readonly elapsedMs: number;
@@ -33,7 +38,7 @@ export function returnVerdict(expectedSessionId: string, probe: ReturnProbe): Re
   if (!probe.tabFound) return late ? { kind: 'nao-voltou', reason: 'a aba não reabriu' } : { kind: 'pendente' };
   if (probe.exited) return { kind: 'nao-voltou', reason: 'o Claude saiu antes de retomar a conversa' };
   if (probe.sessionId !== undefined && probe.sessionId !== expectedSessionId) return { kind: 'nao-voltou', reason: 'abriu em outra conversa' };
-  if (probe.confirmed && probe.sessionId === expectedSessionId) return { kind: 'voltou' };
+  if ((probe.confirmed || probe.fresh === true) && probe.sessionId === expectedSessionId) return { kind: 'voltou' };
   if (!late) return { kind: 'pendente' };
   return { kind: 'nao-voltou', reason: `não deu sinal em ${RETURN_TIMEOUT_MS / 60_000} min${probe.trouble ? ` (${probe.trouble})` : ''}` };
 }

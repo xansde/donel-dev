@@ -158,6 +158,8 @@ export interface ReturnExpectation {
   readonly projectPath: string;
   readonly name: string;
   readonly remote?: boolean;
+  /** Came back with `--session-id` (no message before the update): no resume sign to wait for. */
+  readonly fresh?: boolean;
 }
 
 export type ResumePlaceOutcome = { readonly ok: true; readonly tabId: string; readonly remoteId?: string } | { readonly ok: false; readonly reason: string };
@@ -1123,7 +1125,10 @@ export class AgentBridge {
     for (const [projectPath, report] of this.returning) {
       if (report.sending) continue;
       const board = this.board(projectPath);
-      if (!board) continue; // the board has not loaded yet
+      if (!board) {
+        if (this.ports.loaded) this.returning.delete(projectPath); // a folder with no board: no team to tell
+        continue; // else the board has not loaded yet
+      }
       const elapsedMs = Date.now() - report.since;
       const lines: ReturnLine[] = [];
       let pending = false;
@@ -1137,6 +1142,7 @@ export class AgentBridge {
           exited: tab !== undefined && this.ports.stateOf(tab.id) === undefined,
           ...(tab?.claudeSessionId ? { sessionId: tab.claudeSessionId } : {}),
           confirmed: tab !== undefined && !this.ports.unconfirmed(tab.id),
+          fresh: entry.fresh === true,
           trouble: tab ? this.ports.startTrouble(tab.id) : null,
           elapsedMs,
         });

@@ -1964,7 +1964,13 @@ export function App(): React.JSX.Element {
     [tabs, semaphoreStates, aliveTabs],
   );
   const updateSessions = useMemo(() => updateReadiness(updateSessionInputs), [updateSessionInputs]);
-  const updateTiming = updateDeadline ? updateGo(updateSessions, { ...updateDeadline, now: updateNow }) : null;
+  // Since when every session is free (the hold of `updateGo`); reset at each one that gets busy again.
+  const updateReadySinceRef = useRef<number | null>(null);
+  if (!updateSessions.ready) updateReadySinceRef.current = null;
+  else if (updateReadySinceRef.current === null) updateReadySinceRef.current = Date.now();
+  const updateTiming = updateDeadline
+    ? updateGo(updateSessions, { ...updateDeadline, now: updateNow, readyForMs: updateReadySinceRef.current === null ? 0 : Math.max(0, updateNow - updateReadySinceRef.current) })
+    : null;
   useEffect(() => {
     if (!updateRequested) {
       setUpdateDeadline(null);
@@ -2088,7 +2094,13 @@ export function App(): React.JSX.Element {
             if (entry.active) activeId = id;
           }
           if (entry.sessionType === 'claude' && entry.sessionId && entry.cwd && !entry.leaderOfAll)
-            expected.push({ tabId: id, sessionId: entry.sessionId, projectPath: entry.cwd, name: entry.name });
+            expected.push({
+              tabId: id,
+              sessionId: entry.sessionId,
+              projectPath: entry.cwd,
+              name: entry.name,
+              ...(entry.launchArgs?.includes('--session-id') ? { fresh: true } : {}),
+            });
         }
         for (const remote of boot.remotes ?? [])
           if (remote.cwd) expected.push({ sessionId: remote.sessionId, projectPath: remote.cwd, name: remote.name, remote: true });
@@ -2723,29 +2735,45 @@ export function App(): React.JSX.Element {
   agentBridgeRef.current.setPorts(agentPorts);
   // Sessão durável (dono, 12/11: "notificar todas as sessões trabalhando que impedem a nossa atualização") — once the
   // owner clicked Atualizar, each session in a turn is asked, once, to close it and save its state before the deadline.
+  // A chat tab takes the notice mid-turn (the CLI queues it). A terminal tab types only at an idle prompt and a new line
+  // there replaces one still waiting for it: it gets the notice once its turn ended and that line went.
   const updateWarnedRef = useRef<Set<string>>(new Set());
+  const updateBlockersRef = useRef<Set<string>>(new Set());
   const updateRemainingMs = updateTiming?.remainingMs;
   useEffect(() => {
-    if (!updateRequested || updateApplying || updateRemainingMs === undefined) {
-      if (!updateRequested) updateWarnedRef.current = new Set();
+    if (!updateRequested) {
+      updateWarnedRef.current = new Set();
+      updateBlockersRef.current = new Set();
       return;
     }
+    if (updateApplying || updateRemainingMs === undefined) return;
+    const inTurn = new Set(sessionsToWarn(updateSessionInputs));
+    for (const tabId of inTurn) updateBlockersRef.current.add(tabId);
     const minutes = Math.max(1, Math.ceil(updateRemainingMs / 60_000));
-    for (const tabId of sessionsToWarn(updateSessionInputs)) {
+    for (const tabId of updateBlockersRef.current) {
       if (updateWarnedRef.current.has(tabId)) continue;
+      const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
+      if (!tab || aliveTabs[tabId] !== true) continue;
+      if (!hasChatView(tab, chatEnabled) && (inTurn.has(tabId) || armWatchersRef.current[tabId] !== undefined)) continue;
       updateWarnedRef.current.add(tabId);
+      const retry = (): void => {
+        updateWarnedRef.current.delete(tabId);
+      };
       void agentPorts
         .deliverLine(
           tabId,
-          `◆ O app vai reiniciar para instalar a versão nova em até ${minutes} min. Feche este turno num ponto seguro e salve o estado: registre o andamento no ledger (tarefa_andamento) e atualize a sua nota de handoff, se tiver uma. Depois do reinício o app retoma esta mesma conversa; se o turno não fechar até lá, ele reinicia mesmo assim.`,
+          `◆ O app vai reiniciar para instalar a versão nova em até ${minutes} min. Feche o turno num ponto seguro e salve o estado agora: registre o andamento no ledger (tarefa_andamento) e atualize a sua nota de handoff, se tiver uma. Depois do reinício o app retoma esta mesma conversa; se o turno não fechar até lá, ele reinicia mesmo assim.`,
           60_000,
           'session',
         )
-        .catch(() => undefined);
+        .then((outcome) => {
+          if (outcome.kind === 'nao-foi') retry();
+        })
+        .catch(retry);
     }
-    // `agentPorts` is rebuilt every render; the warning goes once per session (the ref), when one starts blocking.
+    // `agentPorts` is rebuilt every render; each session is told once (the refs), retried only when it did not go in.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [updateRequested, updateApplying, updateRemainingMs === undefined, updateSessionInputs]);
+  }, [updateRequested, updateApplying, updateNow, updateSessionInputs]);
   // 08/11 — what cannot wait for the Líder's read of the ledger (a permission open, a failed turn) is told at once by
   // the bridge, from the semaphore the app already has; the bridge tells each situation once.
   useEffect(() => {
@@ -3848,7 +3876,7 @@ export function App(): React.JSX.Element {
         />
         <BackgroundIndicator sessions={backgroundSessions} onOpen={handleOpenBackground} />
         <UpdateIndicator
-          waiting={updateRequested && !updateApplying && !updateSessions.ready ? updateSessions : null}
+          waiting={updateRequested && !updateApplying ? updateSessions : null}
           remainingMs={updateTiming?.remainingMs ?? null}
           applying={updateApplying}
           error={updateError}

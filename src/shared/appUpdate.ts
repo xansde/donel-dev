@@ -113,9 +113,13 @@ export interface UpdateGo {
  * Sessão durável (dono, 12/11: "dar um tempo limite para reinicialização do sistema se elas não ficarem disponíveis
  * logo") — the update goes when every session is free, or when `forceAfterMs` has passed since the click.
  */
-export function updateGo(readiness: UpdateReadiness, timing: { readonly requestedAt: number; readonly now: number; readonly forceAfterMs: number }): UpdateGo {
+export function updateGo(
+  readiness: UpdateReadiness,
+  timing: { readonly requestedAt: number; readonly now: number; readonly forceAfterMs: number; readonly readyForMs: number },
+): UpdateGo {
   const remainingMs = Math.max(0, timing.requestedAt + timing.forceAfterMs - timing.now);
-  if (readiness.ready) return { go: true, forced: false, remainingMs };
+  // Between the end of a turn and the turn the notice opens, every session looks free for an instant: hold a little.
+  if (readiness.ready && timing.readyForMs >= UPDATE_READY_HOLD_MS) return { go: true, forced: false, remainingMs };
   return remainingMs === 0 ? { go: true, forced: true, remainingMs } : { go: false, forced: false, remainingMs };
 }
 
@@ -264,3 +268,19 @@ export function resumeArgsFor(launchArgs: readonly string[], sessionId: string, 
   args.splice(index, 2, '--session-id', sessionId);
   return args;
 }
+
+/**
+ * The other way, at each spawn: a tab that came back with `--session-id <id>` keeps that argv, and once the
+ * conversation has a transcript a respawn (Reabrir) must resume it (`-r <id>`): the CLI refuses a `--session-id` in use.
+ */
+export function respawnArgsFor(launchArgs: readonly string[], transcriptExists: (sessionId: string) => boolean): readonly string[] {
+  const index = launchArgs.indexOf('--session-id');
+  const sessionId = index !== -1 ? launchArgs[index + 1] : undefined;
+  if (!sessionId || launchArgs.includes('-r') || !transcriptExists(sessionId)) return launchArgs;
+  const args = [...launchArgs];
+  args.splice(index, 2, '-r', sessionId);
+  return args;
+}
+
+/** A session freshly free is held this long before the update goes: the warned one may be opening its saving turn. */
+export const UPDATE_READY_HOLD_MS = 5_000;

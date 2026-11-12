@@ -238,7 +238,8 @@ export function createAppUpdateService(options: AppUpdateServiceOptions): AppUpd
         remotes = parsed.remotes;
         // Each conversation comes back under its own id: `-r` when it has a transcript, else a new start with that id.
         tabs = parsed.tabs.map((tab) =>
-          tab.sessionId && tab.launchArgs && options.transcriptExists
+          // A provider's session keeps its transcript in the provider's home: its `-r` stays as it was.
+          tab.sessionId && tab.launchArgs && !tab.providerId && options.transcriptExists
             ? { ...tab, launchArgs: resumeArgsFor(tab.launchArgs, tab.sessionId, options.transcriptExists(tab.sessionId, tab.cwd)) }
             : tab,
         );

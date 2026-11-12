@@ -10,7 +10,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AppUpdater } from 'electron-updater';
 import { createAppUpdateService } from '../src/main/app-update';
 import { resolveClaudeCorrelation } from '../src/main/session-correlation';
-import { sessionsToWarn, updateGo, type ResumeRemote, type ResumeTab } from '../src/shared/appUpdate';
+import { respawnArgsFor, sessionsToWarn, updateGo, type ResumeRemote, type ResumeTab } from '../src/shared/appUpdate';
+import { returnVerdict } from '../src/shared/sessionReturn';
 import { AgentBridge, type AgentBridgePorts, type BridgeTab } from '../src/renderer/src/Mindscape/agentBridge';
 import { addLink, addPlace, emptyMindscapeDoc, setPlaceConversation } from '../src/shared/mindscape/model';
 import { FACTORY_ROLES, LEADER_ROLE_ID } from '../src/shared/roles';
@@ -29,9 +30,13 @@ describe('Atualizar com sessão trabalhando', () => {
     expect(sessionsToWarn(sessions)).toEqual(['a', 'b']);
 
     const busy = { ready: false, working: 2, waitingOnYou: 1 };
-    expect(updateGo(busy, { requestedAt: 1_000, now: 1_000 + 299_000, forceAfterMs: 300_000 })).toEqual({ go: false, forced: false, remainingMs: 1_000 });
-    expect(updateGo(busy, { requestedAt: 1_000, now: 1_000 + 300_000, forceAfterMs: 300_000 })).toEqual({ go: true, forced: true, remainingMs: 0 });
-    expect(updateGo({ ready: true, working: 0, waitingOnYou: 0 }, { requestedAt: 1_000, now: 2_000, forceAfterMs: 300_000 })).toMatchObject({ go: true, forced: false });
+    const timing = { requestedAt: 1_000, forceAfterMs: 300_000, readyForMs: 0 };
+    expect(updateGo(busy, { ...timing, now: 1_000 + 299_000 })).toEqual({ go: false, forced: false, remainingMs: 1_000 });
+    expect(updateGo(busy, { ...timing, now: 1_000 + 300_000 })).toEqual({ go: true, forced: true, remainingMs: 0 });
+    // Free for an instant is the gap between the end of a turn and the one the notice opens: it holds a few seconds.
+    const free = { ready: true, working: 0, waitingOnYou: 0 };
+    expect(updateGo(free, { ...timing, now: 2_000, readyForMs: 1_000 })).toMatchObject({ go: false });
+    expect(updateGo(free, { ...timing, now: 7_000, readyForMs: 5_000 })).toMatchObject({ go: true, forced: false });
   });
 });
 
@@ -91,6 +96,11 @@ describe('registro das sessões antes de sair e retomada pelo mesmo id', () => {
     expect(resolveClaudeCorrelation(['--model', 'opus', '-r', 'conv-a'], () => 'novo')).toEqual({ correlationId: 'conv-a', extraArgs: [] });
     expect(resolveClaudeCorrelation(['--model', 'sonnet', '--session-id', 'conv-b'], () => 'novo')).toEqual({ correlationId: 'conv-b', extraArgs: [] });
     expect(resolveClaudeCorrelation(['--model', 'sonnet'], () => 'novo')).toEqual({ correlationId: 'novo', extraArgs: ['--session-id', 'novo'] });
+    // Alive on its id is back: a start with no message leaves no resume sign to wait for.
+    expect(returnVerdict('conv-b', { remote: false, tabFound: true, exited: false, sessionId: 'conv-b', confirmed: false, fresh: true, elapsedMs: 1_000 })).toEqual({ kind: 'voltou' });
+    // Once it has a transcript, a respawn of that tab (Reabrir) resumes it: the CLI refuses a `--session-id` in use.
+    expect(respawnArgsFor(['--model', 'sonnet', '--session-id', 'conv-b'], () => true)).toEqual(['--model', 'sonnet', '-r', 'conv-b']);
+    expect(respawnArgsFor(['--model', 'sonnet', '--session-id', 'conv-b'], () => false)).toEqual(['--model', 'sonnet', '--session-id', 'conv-b']);
   });
 });
 
