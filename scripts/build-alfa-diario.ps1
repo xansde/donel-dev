@@ -1,7 +1,6 @@
-﻿# Build contínuo do canal alfa — a tarefa agendada "Donel Dev Alfa diario"
-# (registrada por scripts/registrar-alfa-diario.ps1) roda a cada 10 minutos:
-# entrou commit novo em staging, sai instalador novo (pedido do dono, 03/11:
-# "pra que esperar até as 06h30 se pode fazer agora").
+﻿# Build do canal alfa, SOB DEMANDA (dono, 03/11: "Eu vou falar quando eu quiser"). A tarefa agendada
+# "Donel Dev Alfa diario" (scripts/registrar-alfa-diario.ps1) está desativada; rode este script à mão.
+# Passo a passo: docs/alfa/gerar-alfa-no-pc.md.
 # Gera o instalador a partir de origin/staging numa worktree só dele e deixa
 # o .exe com a data no nome em "%USERPROFILE%\Donel Dev Alfa - diario".
 # Sem commit novo em staging desde o último build, não faz nada.
