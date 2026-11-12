@@ -232,7 +232,10 @@ export function blockingScreen(lines: readonly LineInput[]): BlockingScreen | nu
   // The open permission dialog is the LAST block of the screen (Revisor, #406): one already answered that still shows
   // above the tool's output is not open.
   const open = openPermissionAt(lines);
-  if (open) return { kind: 'permission', title: plain[open.question].trim() };
+  if (open) {
+    const title = plain.slice(open.question, open.questionEnd + 1).map((line) => line.trim()).join(' ');
+    return { kind: 'permission', title };
+  }
 
   const box = readInputBox(lines);
   const boxVisible = box.kind === 'typed' || box.kind === 'empty';
@@ -259,10 +262,15 @@ const TMUX_COPY_POSITION = /\[\d+\/\d+\](?:\s*\((?:timed out|\d+\+? results?)\))
 /**
  * Whether the screen is tmux scrolled into copy mode (a remote tab: `mouse on`, remote-session.ts). tmux redraws the
  * alternate screen with its history, so even the live bottom of the buffer is the scrolled view, and a key typed goes to
- * tmux, not to the CLI: nothing read from such a screen is the request open now.
+ * tmux, not to the CLI: nothing read from such a screen is the request open now. Only a REMOTE tab has tmux (the caller
+ * asks this only there), and tmux draws the position against the right margin: the first row must reach the last
+ * column (`toLastColumn`, read from the cells; 4ª rodada do #414). Output like "⎿  Rodando testes [3/12]" ends short of
+ * it, and a line without that reading (a plain string) never counts: no guess hides an open dialog.
  */
 export function tmuxCopyMode(lines: readonly LineInput[]): boolean {
-  return lines.length > 0 && TMUX_COPY_POSITION.test(lineText(lines[0]));
+  if (lines.length === 0) return false;
+  const first = lines[0];
+  return typeof first !== 'string' && first.toLastColumn === true && TMUX_COPY_POSITION.test(first.text);
 }
 
 /** A permission dialog read from the screen (t-1293c818): what it asks, as drawn, and the key that answers "Yes". */
@@ -315,14 +323,15 @@ export function permissionDialog(lines: readonly LineInput[]): PermissionDialog 
   const open = openPermissionAt(lines);
   if (!open || blockingScreen(lines)?.kind !== 'permission') return null;
   const plain = lines.map(lineText);
-  const { question, last } = open;
+  const { question, questionEnd, last } = open;
   // Up to the dialog's top border, however long the command: a cap here hid the start of a long one (Revisor, #377).
   // Only the dialog's own border counts, never a ruler drawn inside the command (Revisor, #377, 2nd round).
   let top = question;
   while (top > 0 && !isDialogTop(plain, top - 1, question)) top -= 1;
   const topFound = top > 0;
   const body: string[] = [];
-  for (const line of plain.slice(top, question + 1).map((row) => row.trimEnd())) {
+  // Down to the question's LAST line: a narrow tab wraps it (4ª rodada do #414).
+  for (const line of plain.slice(top, questionEnd + 1).map((row) => row.trimEnd())) {
     if (line.trim() === '' && (body.length === 0 || body[body.length - 1] === '')) continue;
     body.push(line);
   }
@@ -330,7 +339,7 @@ export function permissionDialog(lines: readonly LineInput[]): PermissionDialog 
   const whole = body.join('\n');
   const cut = whole.length > DIALOG_TEXT_MAX;
   const text = `${topFound ? '' : `${DIALOG_TOP_MISSING}\n`}${cut ? `${whole.slice(0, DIALOG_TEXT_MAX)}\n[cortado: ${DIALOG_TEXT_MAX} de ${whole.length} letras]` : whole}`;
-  const yes = plain.slice(question + 1, last + 1).map((line) => YES_OPTION.exec(line)).find((match) => match !== null);
+  const yes = plain.slice(questionEnd + 1, last + 1).map((line) => YES_OPTION.exec(line)).find((match) => match !== null);
   const drawn = plain.slice(top, last + 1).map((row) => row.trimEnd()).join('\n');
   return { text, yesKey: yes ? yes[1] : null, complete: topFound && !cut, whole: drawn };
 }

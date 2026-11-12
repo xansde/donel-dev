@@ -24,19 +24,23 @@ export interface RowLike {
  * (trailing blanks trimmed; empty interior cells are spaces); `dim` has one
  * flag per UTF-16 unit of `text`. Width-0 cells are skipped (their wide
  * neighbour already carries the glyph), so mask indices always match `text`.
+ * `toLastColumn` comes from the cells, the only place that knows where the right margin is.
  */
 export function bufferLineToScreenLine(row: RowLike): ScreenLine {
   let text = '';
   const dim: boolean[] = [];
+  /** Last column covered by a non-blank cell (a wide char covers two). */
+  let end = -1;
   for (let x = 0; x < row.cols; x += 1) {
     const cell = row.getCell(x);
     if (!cell || cell.width === 0) continue;
     const chars = cell.chars === '' ? ' ' : cell.chars;
     text += chars;
     for (let i = 0; i < chars.length; i += 1) dim.push(cell.dim);
+    if (chars.trim() !== '') end = x + Math.max(1, cell.width) - 1;
   }
   const trimmed = text.replace(/ +$/, '');
-  return { text: trimmed, dim: dim.slice(0, trimmed.length) };
+  return { text: trimmed, dim: dim.slice(0, trimmed.length), toLastColumn: row.cols > 0 && end === row.cols - 1 };
 }
 
 /** Minimal view of an xterm `IBuffer`: `baseY` = first row of the live bottom, `viewportY` = first row on display. */

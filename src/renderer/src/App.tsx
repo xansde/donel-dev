@@ -2694,6 +2694,8 @@ export function App(): React.JSX.Element {
       // The live bottom, never the scrolled viewport: scrolled onto an old dialog, its text showed and the "1" approved
       // the one open below (verificação adversarial do #414).
       screen: (tabId) => terminalRefs.current[tabId]?.readScreen({ live: true }).lines,
+      // Only a remote tab runs inside tmux, so only there can the screen be tmux's copy mode (4ª rodada do #414).
+      remote: (tabId) => Boolean(tabsRef.current.find((tab) => tab.id === tabId)?.remoteId),
       write: (tabId, data) => terminalRefs.current[tabId]?.write(data) ?? false,
     }),
     // No hook yet is not "never started" when the CLI already took a message (the transcript showed it): a session on a

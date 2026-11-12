@@ -26,6 +26,8 @@ export interface PermissionPortDeps {
   answerHeld(tabId: string, pendingId: string, answer: 'allow' | 'deny'): Promise<{ readonly ok: boolean }>;
   /** The tab's screen as rendered; `undefined` = no terminal. */
   screen(tabId: string): readonly LineInput[] | undefined;
+  /** Whether the tab runs on a remote place (inside tmux there): only then can its screen be tmux's copy mode. */
+  remote(tabId: string): boolean;
   /** Raw bytes to the tab's PTY; false = no live process. */
   write(tabId: string, data: string): boolean;
 }
@@ -95,9 +97,11 @@ export function permissionPorts(deps: PermissionPortDeps): {
   permissionAsk(tabId: string): Promise<PermissionAsk | null>;
   answerPermission(tabId: string, askId: string, answer: 'allow' | 'deny'): Promise<PermissionAnswer>;
 } {
+  /** A local tab has no tmux: a "[3/12]" there is output, never copy mode (4ª rodada do #414). */
+  const copyMode = (tabId: string, lines: readonly LineInput[]) => deps.remote(tabId) && tmuxCopyMode(lines);
   const screenDialog = (tabId: string) => {
     const lines = deps.screen(tabId);
-    return lines && !tmuxCopyMode(lines) ? permissionDialog(lines) : null;
+    return lines && !copyMode(tabId, lines) ? permissionDialog(lines) : null;
   };
   /** The open request, with the screen it was read from (the key that answers it comes from that same screen). */
   const read = async (tabId: string): Promise<{ readonly ask: PermissionAsk; readonly yesKey: string | null } | null> => {
@@ -117,7 +121,7 @@ export function permissionPorts(deps: PermissionPortDeps): {
       const open = await read(tabId);
       if (open === null) {
         const screen = deps.screen(tabId);
-        return { ok: false, reason: screen !== undefined && tmuxCopyMode(screen) ? COPY_MODE : 'o pedido já não está aberto' };
+        return { ok: false, reason: screen !== undefined && copyMode(tabId, screen) ? COPY_MODE : 'o pedido já não está aberto' };
       }
       if (open.ask.id !== askId) return { ok: false, reason: 'o pedido aberto agora é outro' };
       if (answer === 'allow' && open.ask.complete === false) return { ok: false, reason: 'a leitura do pedido está incompleta; só recusar' };

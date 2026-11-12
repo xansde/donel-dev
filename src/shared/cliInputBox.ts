@@ -180,6 +180,10 @@ export function hasPermissionPrompt(lines: readonly LineInput[]): boolean {
 // POSICIONAL. Um diálogo aberto é o ÚLTIMO bloco da tela: abaixo das opções só há linhas vazias e o rodapé dele.
 // Os espaços são opcionais nos padrões porque o main lê o fluxo de bytes sem ANSI, onde o ConPTY os perde.
 const OPEN_QUESTION = /Do\s*you\s*want\s*to\b.*\?|requires\s*confirmation/i;
+/** A pergunta inteira, já juntada das linhas em que a largura da aba a quebrou (4ª rodada do #414). */
+const WHOLE_QUESTION = /^Do\s*you\s*want\s*to\b[\s\S]*\?$|requires\s*confirmation/i;
+/** Quantas linhas uma pergunta quebrada pela largura pode ocupar logo acima das opções. */
+const MAX_QUESTION_LINES = 3;
 const OPEN_OPTION = /^\s*(?:❯\s*)?\d+\.\s*\S/;
 const OPEN_YES = /^\s*(?:❯\s*)?(\d)\.\s*Yes\s*$/;
 /** O rodapé que o CLI desenha sob as opções ("Esc to cancel · Tab to amend"). */
@@ -200,11 +204,30 @@ function blocksDialog(line: string): boolean {
 }
 
 /**
- * O diálogo de permissão ABERTO, lido de baixo para cima: `question` é a linha da pergunta e `last` a da última
- * opção; `null` = o último bloco da tela não é um diálogo de permissão. O topo dele pode estar fora da tela (comando
- * longo): isso continua sendo um diálogo aberto, só incompleto.
+ * Onde começa a pergunta que termina em `end`: numa aba estreita o CLI a quebra ("Do you want to make this edit to" /
+ * "permissionPorts.ts?"), então ela ocupa até `MAX_QUESTION_LINES` linhas contíguas não vazias, e vale a menor junção
+ * que é a pergunta inteira. `-1` = não há pergunta ali.
  */
-export function openPermissionAt(lines: readonly LineInput[]): { readonly question: number; readonly last: number } | null {
+function questionStart(plain: readonly string[], end: number): number {
+  const parts: string[] = [];
+  for (let start = end; start >= 0 && end - start < MAX_QUESTION_LINES; start -= 1) {
+    const line = plain[start];
+    if (line.trim() === '' || isRulerLine(line) || NOT_UNDER_DIALOG.test(line) || OPEN_OPTION.test(line)) break;
+    parts.unshift(line.trim());
+    if (WHOLE_QUESTION.test(parts.join(' '))) return start;
+  }
+  return -1;
+}
+
+/**
+ * O diálogo de permissão ABERTO, lido de baixo para cima: `question` é a 1ª linha da pergunta, `questionEnd` a última
+ * (a mesma, salvo quando a largura a quebrou) e `last` a da última opção; `null` = o último bloco da tela não é um
+ * diálogo de permissão. O topo dele pode estar fora da tela (comando longo): isso continua sendo um diálogo aberto, só
+ * incompleto.
+ */
+export function openPermissionAt(
+  lines: readonly LineInput[]
+): { readonly question: number; readonly questionEnd: number; readonly last: number } | null {
   const plain = lines.map(lineText);
   let last = plain.length - 1;
   while (last >= 0 && !OPEN_OPTION.test(plain[last])) {
@@ -226,7 +249,7 @@ export function openPermissionAt(lines: readonly LineInput[]): { readonly questi
     if (line.trim() !== '') continuation = false;
   }
   if (unknown > MAX_UNKNOWN_UNDER_DIALOG || (unknown > 0 && !footer)) return null;
-  // O bloco de opções, contíguo, com a opção "Yes"; acima dele (pulando linhas vazias), a pergunta.
+  // O bloco de opções, contíguo, com a opção "Yes"; acima dele (pulando linhas vazias), a pergunta, em até 3 linhas.
   let yes = false;
   let i = last;
   for (; i >= 0; i -= 1) {
@@ -239,8 +262,9 @@ export function openPermissionAt(lines: readonly LineInput[]): { readonly questi
   }
   if (!yes) return null;
   while (i >= 0 && plain[i].trim() === '') i -= 1;
-  if (i < 0 || !OPEN_QUESTION.test(plain[i])) return null;
-  return { question: i, last };
+  if (i < 0) return null;
+  const question = questionStart(plain, i);
+  return question < 0 ? null : { question, questionEnd: i, last };
 }
 
 /**
