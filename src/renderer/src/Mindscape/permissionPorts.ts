@@ -31,13 +31,15 @@ export interface PermissionPortDeps {
   write(tabId: string, data: string): boolean;
   /**
    * The session's state from its hooks; `undefined` = none known (no hook came: a remote place, a session not yet heard).
-   * Known and other than "permission", a dialog on the screen is not open (Revisor, #406): what shows is an old one.
+   * Only a stopped session ("waiting", "done") says a dialog on the screen is an old one (Revisor, #406). "working" does
+   * not: with sub-agents in parallel, another one finishing a tool brings the state back to "working" while X's dialog
+   * is still open (verificação adversarial do #414).
    */
   state?(tabId: string): SemaphoreState | undefined;
 }
 
-/** Why a dialog read from the screen does not count when the session's hooks say it is not on a permission. */
-const NOT_ON_PERMISSION = 'a sessão não está parada numa permissão (o diálogo na tela é antigo, já respondido)';
+/** Why a dialog read from the screen does not count when the session's hooks say it stopped. */
+const STOPPED = 'a sessão está parada, esperando mensagem (o diálogo na tela é antigo, já respondido)';
 
 /** The CLI's own tools, whose main field reads well alone. Any other tool (mcp__*, unknown) is shown whole. */
 const NATIVE_TOOLS: ReadonlySet<string> = new Set(['Bash', 'Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Glob', 'Grep', 'WebFetch', 'WebSearch']);
@@ -96,13 +98,13 @@ export function permissionPorts(deps: PermissionPortDeps): {
   permissionAsk(tabId: string): Promise<PermissionAsk | null>;
   answerPermission(tabId: string, askId: string, answer: 'allow' | 'deny'): Promise<PermissionAnswer>;
 } {
-  /** The hooks know the session and say it is not on a permission: the screen's dialog is an old one. */
-  const notOnPermission = (tabId: string): boolean => {
+  /** The hooks say the session stopped (its turn ended): a dialog on the screen is certainly an old one. */
+  const stopped = (tabId: string): boolean => {
     const state = deps.state?.(tabId);
-    return state !== undefined && state !== 'permission';
+    return state === 'waiting' || state === 'done';
   };
   const screenDialog = (tabId: string) => {
-    if (notOnPermission(tabId)) return null;
+    if (stopped(tabId)) return null;
     const lines = deps.screen(tabId);
     return lines ? permissionDialog(lines) : null;
   };
@@ -124,8 +126,8 @@ export function permissionPorts(deps: PermissionPortDeps): {
       const open = await read(tabId);
       if (open === null) {
         const screen = deps.screen(tabId);
-        const stale = notOnPermission(tabId) && screen !== undefined && permissionDialog(screen) !== null;
-        return { ok: false, reason: stale ? NOT_ON_PERMISSION : 'o pedido já não está aberto' };
+        const stale = stopped(tabId) && screen !== undefined && permissionDialog(screen) !== null;
+        return { ok: false, reason: stale ? STOPPED : 'o pedido já não está aberto' };
       }
       if (open.ask.id !== askId) return { ok: false, reason: 'o pedido aberto agora é outro' };
       if (answer === 'allow' && open.ask.complete === false) return { ok: false, reason: 'a leitura do pedido está incompleta; só recusar' };

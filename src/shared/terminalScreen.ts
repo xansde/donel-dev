@@ -39,6 +39,29 @@ export function bufferLineToScreenLine(row: RowLike): ScreenLine {
   return { text: trimmed, dim: dim.slice(0, trimmed.length) };
 }
 
+/** Minimal view of an xterm `IBuffer`: `baseY` = first row of the live bottom, `viewportY` = first row on display. */
+export interface BufferLike {
+  readonly baseY: number;
+  readonly viewportY: number;
+  getLine(y: number): RowLike | undefined;
+}
+
+/**
+ * `rows` rows of the buffer as `ScreenLine`s. By default from `viewportY` (what the user sees, scrolled or not);
+ * `live` reads from `baseY`, the bottom the CLI is drawing now. What decides a permission reads `live`: scrolled up
+ * onto an old dialog, the viewport shows the old one while a key would answer the one open below (verificação
+ * adversarial do #414).
+ */
+export function readBufferScreen(buffer: BufferLike, rows: number, options: { readonly live?: boolean } = {}): ScreenLine[] {
+  const start = options.live ? buffer.baseY : buffer.viewportY;
+  const lines: ScreenLine[] = [];
+  for (let y = 0; y < rows; y += 1) {
+    const row = buffer.getLine(start + y);
+    lines.push(row ? bufferLineToScreenLine(row) : { text: '', dim: [] });
+  }
+  return lines;
+}
+
 export interface GridArea {
   /** Pixel size of the (nearest visible) area the terminal will occupy. */
   readonly width: number;

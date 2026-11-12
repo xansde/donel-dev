@@ -2691,7 +2691,9 @@ export function App(): React.JSX.Element {
         if (!ptyId) return { ok: false };
         return window.donel.chat.answer(ptyId, pendingId, answer === 'allow' ? { kind: 'allow' } : { kind: 'deny', reason: LEADER_DENY_REASON });
       },
-      screen: (tabId) => terminalRefs.current[tabId]?.readScreen().lines,
+      // The live bottom, never the scrolled viewport: scrolled onto an old dialog, its text showed and the "1" approved
+      // the one open below (verificação adversarial do #414).
+      screen: (tabId) => terminalRefs.current[tabId]?.readScreen({ live: true }).lines,
       write: (tabId, data) => terminalRefs.current[tabId]?.write(data) ?? false,
       state: (tabId) => (semaphoreStates[tabId]?.unconfirmed ? undefined : semaphoreStates[tabId]?.state),
     }),
