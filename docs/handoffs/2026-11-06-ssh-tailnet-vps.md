@@ -46,6 +46,40 @@ Funciona tanto no `ssh` do Git quanto no `C:\Windows\System32\OpenSSH\ssh.exe`. 
 usuário são recusados (`Permission denied (publickey)`). Depois de `systemctl restart ssh.service`,
 a porta 2222 segue atendendo.
 
+## O que mudou depois (07/11) e o estado conferido em 12/11
+
+Conferido em 12/11 às 13h40, nas duas VPS, sem refazer nada:
+
+- `sshd-tailnet.service` está `active` nas duas. Ele escuta só no IP da tailnet: `100.110.135.26:2222` na pessoal e
+  `100.117.181.15:2222` na Homologações. O sshd principal continua na 22, com `PermitRootLogin no` e
+  `PasswordAuthentication no` em `sshd_config.d/10-vps.conf`; o `/etc/ssh/sshd_config` não foi alterado.
+- O `sshd -T -f /etc/ssh/sshd_tailnet_config` das duas devolve `authenticationmethods publickey`,
+  `passwordauthentication no`, `kbdinteractiveauthentication no` e `permitrootlogin without-password`.
+- Só no sshd da tailnet da **VPS pessoal**, em 07/11, para o app do PC falar com o lugar remoto "VPS" como o
+  usuário dono das sessões (backup em `/etc/ssh/sshd_tailnet_config.antes-2026-11-07`):
+
+  ```diff
+  -AllowUsers root
+  +AllowUsers root alexandrelentz
+  -AuthorizedKeysFile /etc/ssh/donel-tailnet/authorized_keys
+  +AuthorizedKeysFile /etc/ssh/donel-tailnet/authorized_keys .ssh/authorized_keys
+  ```
+
+  Para desfazer só isso: `cp /etc/ssh/sshd_tailnet_config.antes-2026-11-07 /etc/ssh/sshd_tailnet_config && systemctl restart sshd-tailnet`.
+- No `/etc/ssh/donel-tailnet/authorized_keys` da **Homologações** há uma segunda chave, `numeros-factory`. É a chave
+  da VPS pessoal: o alias `homologacoes-2222` de lá a usa. Para revogar só ela, apague a linha dela.
+- Uso real em 12/11 (`journalctl -u sshd-tailnet`, `Accepted publickey`): o PC (`100.76.108.30`, a mesma chave
+  ED25519 `SHA256:d9NJ…` nas duas) entrou como `root` na Homologações 1614 vezes e como `alexandrelentz` na pessoal
+  ao longo do dia; a VPS pessoal (`100.110.135.26`) entrou 749 vezes na Homologações. Nenhum desses acessos passou
+  pelo check da Tailscale, que só vale na porta 22 da tailnet.
+
+Prova pela VPS pessoal (12/11):
+
+```
+$ ssh -o BatchMode=yes homologacoes-2222 'echo ok $(hostname) $(whoami) porta=$(echo $SSH_CONNECTION | cut -d" " -f4)'
+ok vps-time-homologacoes root porta=2222
+```
+
 ## Como desfazer
 
 Em cada VPS (pelo caminho de sempre, `ssh root@<vps>` na porta 22 da tailnet):
