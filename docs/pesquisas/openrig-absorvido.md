@@ -1,8 +1,45 @@
 # OpenRig — registro de absorção
 
-Último commit absorvido: 3a53a07a50fc3e73564c134b76f079a8f48f7589
+Último commit absorvido: f06edfa4109bd56b337f646dbffb82dc5be39c1f
 
 Referência de design do Mindscape (github.com/mvschwarz/openrig). Procedimento na skill `absorver-openrig`. Cada rodada lista o que virou PR, o que ficou adiado, o que espera o dono e o que foi descartado.
+
+## 2026-11-12 — 3a53a07..f06edfa
+
+65 commits do OpenRig; versões novas: 0.7.12.
+
+### Vale → PR
+
+Nenhum.
+
+### Vale → adiado
+
+Nenhum (teto de 3 PRs não foi atingido).
+
+### Vale → pendente para o dono
+
+- Lugar parado por limite de uso espera o reset que a própria mensagem informa (itens 04 e 20 do plano: estado honesto e rotinas que acordam lugares; commits `a7b8a27`, `aae4395`): o OpenRig lê o horário de reset da mensagem de limite e estaciona o lugar até lá, retomando depois; mensagem sem reset claro mantém a nova tentativa a intervalo fixo. No Donel, `turnFailure === 'rate_limit'` vira só 'limite de uso' em `sessionAxes.ts`, sem horário. A rotina `sessao-parada` (`src/shared/rotinas/stalledSessions.ts`) avisa o Líder depois de 30 min, mesmo que o reset ainda esteja longe, e nada retoma o lugar quando o limite volta. A troca automática de conta (`src/main/accounts/auto-switch.ts`) cruza com isso e fica no perímetro proibido. Pergunta: quando uma sessão para por limite de uso, você quer (a) só mostrar no cartão e no aviso ao Líder 'volta às HH:MM', com a rotina sem avisar antes do reset, (b) além disso o app mandar 'continue' sozinho no reset, quando a troca automática de conta não tiver resolvido antes, ou (c) deixar como está, porque a troca automática de conta já resolve?
+
+### Descartado
+
+- Estado honesto: desconhecido vence resposta errada: O Donel já tem igual. O envio responde entrou/na-fila/não-foi/enviando (`tabSend.ts`). Uma leitura de statusline inválida vira `null` (sem medidor), nunca 0% (`statusLine.ts`). 'Trabalhando' sem sinal vira desconhecido (PR #313). O resto é escada de wake da fila do daemon, anel de host em rede, TUI e quadros do Codex.
+- Pausa de lugar até o reset do limite de uso: A ideia ficou nos pendentes do dono, com a pergunta. O banner do Codex com apóstrofo curvo (aae4395) não se aplica: o Donel não lê a tela do Codex.
+- Entrega de mensagem: rodapés de auto-update do Claude: O Donel já tem melhor. `hasFooter` (`src/shared/chat/screen.ts`) aceita qualquer texto abaixo da régua de base, e `readInputBox` acha a caixa só pela posição entre as duas réguas (`cliInputBox.ts`), sem lista de rodapés conhecidos. Por isso um '✘ Auto-update failed' cheio ou cortado não segura o envio.
+- Respostas da pessoa a um runner pelo agente receptor: É a mesma pergunta pendente com o dono desde 08/11 (uma sessão pode decidir em nome dele?), ainda sem resposta. Não abro outra. No Donel, a permissão de outro lugar só se responde por `sessao_permissao`, com hierarquia (`reach.ts`).
+- Conexão de lugar local a participante de hub (network): Hub e rede de daemons não existem no Donel. O lugar remoto é ssh por chave (ADR 0005, `remote-session.ts`).
+- Fila: custódia e wake falho com achados roteados: É a continuação da fila durável (item 13), pendente com o dono desde 10/11 e ainda não começada. A mecânica (achados, custódia, IDs de bloqueio) é do daemon/SQLite, sem onde encaixar hoje.
+- Rig down / unclaim: só para o terminal que prova ser do seat: É um problema de tmux compartilhado. O Donel é dono dos PTYs por ptyId, o lugar remoto anda pelo sid que o próprio app criou (`buildAttachSshArgs`), e a faxina e o kill guard já agem só no que o app abriu.
+- Handover: sucessor lançado mas não pronto: O Donel já tem igual. Na renovação em voo, quando a sessão nova não confirma a tempo, o aviso é 'A sessão nova não respondeu a tempo. Confira a aba: a passagem de bastão ficou salva.' (`useSessionRenewal.ts`). Ele não manda tentar de novo.
+- Assistente conectado: mostrar se está dando sinal: O Donel já tem igual. `agentBridge.ts` avisa 'Seu lugar ainda não está no quadro', e o desconhecido por silêncio veio no PR #313. O whoami durante o `rig up` e a TUI não têm equivalente.
+- Compactação gerenciada e refocus limitado: São docs e mecânica do refocus e da compactação do daemon, mais o limite de contexto do Codex. A renovação em voo (item 07) cobre o handoff, e o refocus é da skill `refocusing`.
+- Workflow/missões: leituras com escopo e rendimento: São comandos de workflow, slices e missões do daemon, sem ideia nova para o quadro. A esteira no Mindscape (item 15) não tem slices nem spec YAML.
+- Terminal/herdr-app: docs de attach e tile: São docs de tiles tmux/Herdr e do pi-runner. O Donel é dono dos PTYs pelo xterm, e a prévia do cartão (item 05) segue pendente de refinamento.
+- Daemon: esperas no thread principal e ssh/host: O Donel já tem igual. Todo ssh do app separa as opções do alvo com `--` (`remote-session.ts`, `buildAttachSshArgs`, `ledger-remote-proof.ts`). O recorder, o clipboard, as sondas TCP e o attach do tmux são do daemon.
+- TUI: fuso do Feed e linhas de instância: A TUI está fora de escopo (decisão do dono, 03/11).
+- CLI/config: correções pequenas: São pid do daemon, nome de rig com @ e chaves de config do CLI rig, sem equivalente no Donel.
+- Guidance e plugins: bloco gerenciado único e vendoring: O bloco gerenciado é a mesma pergunta pendente desde 07/11 (papel de fábrica editado congela), sem resposta do dono. O vendoring de plugin, as URLs e o ícone são empacotamento do OpenRig.
+- Release 0.7.12, roadmap e docs: É empacotamento, release e docs do próprio OpenRig, sem ideia de design.
+- Testes, scripts e infra interna do OpenRig: São CI, fixtures e scripts do próprio OpenRig, sem ideia de design.
 
 ## 2026-11-11 — d5832cd..3a53a07
 
