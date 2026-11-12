@@ -374,7 +374,7 @@ import type { LiveSessionSignal } from '../shared/rotinas/stalledSessions';
 // B33 — atualizar para a versão nova de dentro do app.
 import { autoUpdater } from 'electron-updater';
 import { createAppUpdateService, type AppUpdateService } from './app-update';
-import { APP_UPDATE_CHANNELS, type AppUpdateApplyResult, type AppUpdateBoot, type AppUpdateStatus } from '../shared/appUpdate';
+import { APP_UPDATE_CHANNELS, DEFAULT_FORCE_AFTER_MINUTES, type AppUpdateApplyResult, type AppUpdateBoot, type AppUpdateStatus } from '../shared/appUpdate';
 import type { HealthReport } from '../shared/health/types';
 import { isValidPetPrefsInput } from '../shared/pet/ipc';
 import type { PetDisplay } from '../shared/pet/types';
@@ -3435,18 +3435,21 @@ function registerAppUpdateIpcHandlers(): void {
     updater: () => autoUpdater,
     stateDir: join(app.getPath('userData'), 'app-update', channel),
     channel,
+    // Sessão durável — a conversation with no transcript yet comes back under the same id, not with a failing `-r`.
+    transcriptExists: (sessionId, cwd) => localTranscriptExists(sessionId, cwd ?? homedir()),
+    forceAfterMinutes: () => appConfig.appUpdate.forceAfterMinutes ?? DEFAULT_FORCE_AFTER_MINUTES,
     onChanged: (status) => {
       const window = getMainWindow();
       if (window && !window.isDestroyed()) window.webContents.send(APP_UPDATE_CHANNELS.changed, status);
     },
   });
   appUpdateService.start();
-  const disabled: AppUpdateStatus = { enabled: false, currentVersion: app.getVersion(), available: null, failure: null };
+  const disabled: AppUpdateStatus = { enabled: false, currentVersion: app.getVersion(), available: null, failure: null, forceAfterMs: DEFAULT_FORCE_AFTER_MINUTES * 60_000 };
   ipcMain.handle(APP_UPDATE_CHANNELS.get, (): AppUpdateStatus => appUpdateService?.status() ?? disabled);
-  ipcMain.handle(APP_UPDATE_CHANNELS.apply, (_event, tabs: unknown): AppUpdateApplyResult =>
-    appUpdateService ? appUpdateService.apply(tabs) : { ok: false, message: 'Atualização indisponível.' },
+  ipcMain.handle(APP_UPDATE_CHANNELS.apply, (_event, tabs: unknown, remotes: unknown): AppUpdateApplyResult =>
+    appUpdateService ? appUpdateService.apply(tabs, remotes ?? []) : { ok: false, message: 'Atualização indisponível.' },
   );
-  ipcMain.handle(APP_UPDATE_CHANNELS.takeBoot, (): AppUpdateBoot => appUpdateService?.takeBoot() ?? { tabs: [], failure: null });
+  ipcMain.handle(APP_UPDATE_CHANNELS.takeBoot, (): AppUpdateBoot => appUpdateService?.takeBoot() ?? { tabs: [], remotes: [], failure: null });
   ipcMain.handle(APP_UPDATE_CHANNELS.check, async (): Promise<void> => {
     await appUpdateService?.check();
   });

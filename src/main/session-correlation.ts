@@ -28,6 +28,13 @@ export function resolveClaudeCorrelation(args: readonly string[], generateId: ()
   if (resumeSessionId) {
     return { correlationId: resumeSessionId, extraArgs: [] };
   }
+  // Sessão durável — a conversation that came back after an update with no transcript yet starts again under its own
+  // id (`--session-id <id>`, appUpdate.ts `resumeArgsFor`): that id is the correlation, never a second one.
+  const fixedIndex = args.indexOf('--session-id');
+  const fixedSessionId = fixedIndex !== -1 ? args[fixedIndex + 1] : undefined;
+  if (fixedSessionId) {
+    return { correlationId: fixedSessionId, extraArgs: [] };
+  }
 
   const correlationId = generateId();
   return { correlationId, extraArgs: ['--session-id', correlationId] };

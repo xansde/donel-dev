@@ -32,7 +32,7 @@ import { cliColorNameToHex } from '../../shared/cliColor';
 // CA-26 (009-modo-dev-v3, lote 1) — reordenação pura da lista de abas por arraste.
 import { isTabColorToken, reorderTabs } from '../../shared/tabAppearance';
 // B33 — atualizar de dentro do app: esperar as sessões pararem e reabrir as abas depois.
-import { updateReadiness, type ResumeTab } from '../../shared/appUpdate';
+import { DEFAULT_FORCE_AFTER_MINUTES, sessionsToWarn, updateGo, updateReadiness, type ResumeRemote, type ResumeTab } from '../../shared/appUpdate';
 import { withResumeArgs } from '../../shared/terminalScreen';
 import { UpdateIndicator } from './appUpdate/UpdateIndicator';
 import {
@@ -91,7 +91,7 @@ import { useHillClimb } from './HillClimb/useHillClimb';
 import { MindscapeScreen, type MindscapeLiveSession } from './Mindscape/MindscapeScreen';
 import { sameSemaphoreInfo } from './sameSemaphoreInfo';
 import { useMindscapeDoc } from './Mindscape/useMindscapeDoc';
-import { AgentBridge, type AgentBridgePorts } from './Mindscape/agentBridge';
+import { AgentBridge, type AgentBridgePorts, type ReturnExpectation } from './Mindscape/agentBridge';
 import type { FaxineiroLogEntry } from '../../shared/faxineiro/triggers';
 import { SpawnAskPanel, type SpawnAsk } from './Mindscape/SpawnAskPanel';
 import { appendConversation, findSessionBoard, placeSessionCards, roleOfSession, setBoardView, setPlaceConversation, writeSessionNote, type MindscapeDoc } from '../../shared/mindscape/model';
@@ -1942,24 +1942,51 @@ export function App(): React.JSX.Element {
   const [updateRequested, setUpdateRequested] = useState(false);
   const [updateApplying, setUpdateApplying] = useState(false);
   const [updateError, setUpdateError] = useState<string | null>(null);
-  const updateSessions = useMemo(
+  // Sessão durável (dono, 12/11) — "Atualizar" no longer waits forever: the sessions in a turn are asked to close it
+  // and save their state, and when the deadline (`appUpdate.forceAfterMinutes`, 5 min) passes it restarts anyway.
+  const [updateDeadline, setUpdateDeadline] = useState<{ readonly requestedAt: number; readonly forceAfterMs: number } | null>(null);
+  const [updateNow, setUpdateNow] = useState(() => Date.now());
+  const updateSessionInputs = useMemo(
     () =>
-      updateReadiness(
-        tabs
-          .filter((tab) => tab.sessionType === 'claude')
-          .map((tab) => {
-            const info = semaphoreStates[tab.id];
-            return {
-              alive: aliveTabs[tab.id] === true,
-              state: info?.state,
-              unconfirmed: info?.unconfirmed,
-              pendingKinds: info?.pendingKinds,
-              awaitingBackgroundAgents: info?.awaitingBackgroundAgents,
-            };
-          }),
-      ),
+      tabs
+        .filter((tab) => tab.sessionType === 'claude')
+        .map((tab) => {
+          const info = semaphoreStates[tab.id];
+          return {
+            id: tab.id,
+            alive: aliveTabs[tab.id] === true,
+            state: info?.state,
+            unconfirmed: info?.unconfirmed,
+            pendingKinds: info?.pendingKinds,
+            awaitingBackgroundAgents: info?.awaitingBackgroundAgents,
+          };
+        }),
     [tabs, semaphoreStates, aliveTabs],
   );
+  const updateSessions = useMemo(() => updateReadiness(updateSessionInputs), [updateSessionInputs]);
+  const updateTiming = updateDeadline ? updateGo(updateSessions, { ...updateDeadline, now: updateNow }) : null;
+  useEffect(() => {
+    if (!updateRequested) {
+      setUpdateDeadline(null);
+      return undefined;
+    }
+    const requestedAt = Date.now();
+    setUpdateNow(requestedAt);
+    let alive = true;
+    const fallback = DEFAULT_FORCE_AFTER_MINUTES * 60_000;
+    void window.donel.appUpdate
+      .get()
+      .then((status) => status.forceAfterMs)
+      .catch(() => fallback)
+      .then((forceAfterMs) => {
+        if (alive) setUpdateDeadline({ requestedAt, forceAfterMs: forceAfterMs > 0 ? forceAfterMs : fallback });
+      });
+    const timer = setInterval(() => setUpdateNow(Date.now()), 1_000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [updateRequested]);
   const toResumeTab = (tab: TabState): ResumeTab[] => {
     if (tab.accountLoginId) return []; // a login in progress is not a session to come back to
     const common = {
@@ -1971,7 +1998,7 @@ export function App(): React.JSX.Element {
       ...(tab.id === activeTabId ? { active: true } : {}),
     };
     if (tab.sessionType === 'shell') return [{ sessionType: 'shell', ...common }];
-    // Sessões remotas — they keep running on the remote place; the next boot finds and reattaches them.
+    // Sessões remotas — they keep running on the remote place; the next boot finds and reattaches them (`toResumeRemote`).
     if (tab.remoteId) return [];
     const sessionId = tab.claudeSessionId;
     const launchArgs = sessionId ? withResumeArgs(tab.launchArgs, sessionId) : tab.launchArgs;
@@ -1992,24 +2019,32 @@ export function App(): React.JSX.Element {
       },
     ];
   };
+  /** A remote session that was open: listed only so the Líder hears whether it reattached after the update. */
+  const toResumeRemote = (tab: TabState): ResumeRemote[] =>
+    tab.remoteId && tab.claudeSessionId && tab.sessionType === 'claude' && !tab.leaderOfAll
+      ? [{ remoteId: tab.remoteId, sessionId: tab.claudeSessionId, name: resolveTabName(tab), ...(tab.cwd ? { cwd: tab.cwd } : {}) }]
+      : [];
   const toResumeTabRef = useRef(toResumeTab);
   toResumeTabRef.current = toResumeTab;
+  const updateGoes = updateTiming?.go === true;
   useEffect(() => {
-    if (!updateRequested || updateApplying || !updateSessions.ready) return;
+    if (!updateRequested || updateApplying || !updateGoes) return;
     setUpdateApplying(true);
     const resumeTabs = tabsRef.current.flatMap((tab) => toResumeTabRef.current(tab));
+    const resumeRemotes = tabsRef.current.flatMap(toResumeRemote);
     const fail = (message: string): void => {
       setUpdateApplying(false);
       setUpdateRequested(false);
       setUpdateError(message);
     };
     window.donel.appUpdate
-      .apply(resumeTabs)
+      .apply(resumeTabs, resumeRemotes)
       .then((result) => {
         if (!result.ok) fail(result.message);
       })
       .catch((error: unknown) => fail(error instanceof Error ? error.message : String(error)));
-  }, [updateRequested, updateApplying, updateSessions.ready]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [updateRequested, updateApplying, updateGoes]);
   // B33 — the first boot after an update: reopen the tabs that were open, in the same order, resuming each
   // conversation (`-r`), so its card stays where it was on the Mindscape. Only after an update: the general
   // restore on boot stays cancelled (the main hands the list once and deletes it).
@@ -2024,6 +2059,8 @@ export function App(): React.JSX.Element {
         let activeId: string | null = null;
         // A restore is not a gesture of the owner: it focuses as before, without leaving the Oráculo (`focus` false).
         let lastListedId: string | null = null;
+        // Sessão durável — who must come back on the same conversation; the Líder hears who did (agentBridge).
+        const expected: ReturnExpectation[] = [];
         for (const entry of boot.tabs) {
           const id = addTab(
             {
@@ -2050,7 +2087,12 @@ export function App(): React.JSX.Element {
             lastListedId = id;
             if (entry.active) activeId = id;
           }
+          if (entry.sessionType === 'claude' && entry.sessionId && entry.cwd && !entry.leaderOfAll)
+            expected.push({ tabId: id, sessionId: entry.sessionId, projectPath: entry.cwd, name: entry.name });
         }
+        for (const remote of boot.remotes ?? [])
+          if (remote.cwd) expected.push({ sessionId: remote.sessionId, projectPath: remote.cwd, name: remote.name, remote: true });
+        if (expected.length > 0) agentBridgeRef.current.expectReturn(expected);
         if (activeId ?? lastListedId) setActiveTabId((activeId ?? lastListedId)!);
       })
       .catch(() => undefined);
@@ -2679,6 +2721,31 @@ export function App(): React.JSX.Element {
   const agentBridgeRef = useRef<AgentBridge>(null as unknown as AgentBridge);
   if (agentBridgeRef.current === null) agentBridgeRef.current = new AgentBridge(agentPorts);
   agentBridgeRef.current.setPorts(agentPorts);
+  // Sessão durável (dono, 12/11: "notificar todas as sessões trabalhando que impedem a nossa atualização") — once the
+  // owner clicked Atualizar, each session in a turn is asked, once, to close it and save its state before the deadline.
+  const updateWarnedRef = useRef<Set<string>>(new Set());
+  const updateRemainingMs = updateTiming?.remainingMs;
+  useEffect(() => {
+    if (!updateRequested || updateApplying || updateRemainingMs === undefined) {
+      if (!updateRequested) updateWarnedRef.current = new Set();
+      return;
+    }
+    const minutes = Math.max(1, Math.ceil(updateRemainingMs / 60_000));
+    for (const tabId of sessionsToWarn(updateSessionInputs)) {
+      if (updateWarnedRef.current.has(tabId)) continue;
+      updateWarnedRef.current.add(tabId);
+      void agentPorts
+        .deliverLine(
+          tabId,
+          `◆ O app vai reiniciar para instalar a versão nova em até ${minutes} min. Feche este turno num ponto seguro e salve o estado: registre o andamento no ledger (tarefa_andamento) e atualize a sua nota de handoff, se tiver uma. Depois do reinício o app retoma esta mesma conversa; se o turno não fechar até lá, ele reinicia mesmo assim.`,
+          60_000,
+          'session',
+        )
+        .catch(() => undefined);
+    }
+    // `agentPorts` is rebuilt every render; the warning goes once per session (the ref), when one starts blocking.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [updateRequested, updateApplying, updateRemainingMs === undefined, updateSessionInputs]);
   // 08/11 — what cannot wait for the Líder's read of the ledger (a permission open, a failed turn) is told at once by
   // the bridge, from the semaphore the app already has; the bridge tells each situation once.
   useEffect(() => {
@@ -3782,6 +3849,7 @@ export function App(): React.JSX.Element {
         <BackgroundIndicator sessions={backgroundSessions} onOpen={handleOpenBackground} />
         <UpdateIndicator
           waiting={updateRequested && !updateApplying && !updateSessions.ready ? updateSessions : null}
+          remainingMs={updateTiming?.remainingMs ?? null}
           applying={updateApplying}
           error={updateError}
           onUpdate={() => {

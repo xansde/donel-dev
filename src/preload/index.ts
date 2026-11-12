@@ -17,7 +17,7 @@ import type { HealthReport } from '../shared/health/types';
 import type { RemoteHealthReport } from '../shared/health/remote';
 import { HOMOLOGACAO_CHANNELS, type FactoryMetricsView, type FactoryRigsView } from '../shared/homologacao/ipc';
 // B33 — atualizar de dentro do app.
-import { APP_UPDATE_CHANNELS, type AppUpdateApplyResult, type AppUpdateBoot, type AppUpdateStatus, type ResumeTab } from '../shared/appUpdate';
+import { APP_UPDATE_CHANNELS, type AppUpdateApplyResult, type AppUpdateBoot, type AppUpdateStatus, type ResumeRemote, type ResumeTab } from '../shared/appUpdate';
 // Sidebar — abrir no editor + branch atual.
 import { WORKSPACE_CHANNELS } from '../shared/workspace';
 import type { EditorStatus, GitBranchResult, OpenInEditorResult, PullRequestRequestOptions, PullRequestStatusResult, WorktreeKeptPayload } from '../shared/workspace';
@@ -538,7 +538,7 @@ const donelApi: DonelApi = {
       const handler = (_event: unknown, status: AppUpdateStatus): void => listener(status);
       return subscribeChannel(ipcRenderer, APP_UPDATE_CHANNELS.changed, handler);
     },
-    apply: (tabs: readonly ResumeTab[]) => ipcRenderer.invoke(APP_UPDATE_CHANNELS.apply, tabs) as Promise<AppUpdateApplyResult>,
+    apply: (tabs: readonly ResumeTab[], remotes: readonly ResumeRemote[]) => ipcRenderer.invoke(APP_UPDATE_CHANNELS.apply, tabs, remotes) as Promise<AppUpdateApplyResult>,
     takeBoot: () => ipcRenderer.invoke(APP_UPDATE_CHANNELS.takeBoot) as Promise<AppUpdateBoot>,
     check: () => ipcRenderer.invoke(APP_UPDATE_CHANNELS.check) as Promise<void>,
   },
