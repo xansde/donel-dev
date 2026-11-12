@@ -184,7 +184,8 @@ const OPEN_QUESTION = /Do\s*you\s*want\s*to\b.*\?|requires\s*confirmation/i;
 const WHOLE_QUESTION = /^Do\s*you\s*want\s*to\b[\s\S]*\?$|requires\s*confirmation/i;
 /** Quantas linhas uma pergunta quebrada pela largura pode ocupar logo acima das opções. */
 const MAX_QUESTION_LINES = 3;
-const OPEN_OPTION = /^\s*(?:❯\s*)?\d+\.\s*\S/;
+/** An option never ends in "?": a wrapped question's tail ("2026.11.09-notas.md?") is not one (Revisor's check, #414). */
+const OPEN_OPTION = /^\s*(?:❯\s*)?\d+\.\s*\S(?!.*\?\s*$)/;
 const OPEN_YES = /^\s*(?:❯\s*)?(\d)\.\s*Yes\s*$/;
 /** O rodapé que o CLI desenha sob as opções ("Esc to cancel · Tab to amend"). */
 const DIALOG_FOOTER = /Esc\s*to\s*cancel|Tab\s*to\s*amend|ctrl\+e\s*to\s*explain/i;

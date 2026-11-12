@@ -576,4 +576,10 @@ describe('pergunta quebrada pela largura', () => {
     expect(permissionDialog([...narrow, ...after])).toBeNull();
     expect(blockingScreen([...narrow, ...after])?.kind).toBe('permission'); // o veto de Enter segue achando o resto
   });
+
+  it('a 2ª linha da pergunta que começa com "número + ponto" (um arquivo datado) não vira opção', () => {
+    const dated = [R, ' Create file', '   2026.11.09-notas.md', '', ' Do you want to create', ' 2026.11.09-notas.md?', ' ❯ 1. Yes', '   2. Yes, allow all edits during this session', '   3. No', '', ' Esc to cancel · Tab to amend'];
+    expect(permissionDialog(dated)).toMatchObject({ complete: true, yesKey: '1' });
+    expect(permissionDialog(dated)?.text).toContain(' Do you want to create\n 2026.11.09-notas.md?');
+  });
 });
