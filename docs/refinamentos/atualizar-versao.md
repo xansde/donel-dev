@@ -7,6 +7,14 @@ participantes: ["Alexandre Lentz"]
 fechado-por: Claude por delegação de Alexandre Lentz, 2026-11-03
 ---
 
+> **Atualizado em 12/11.** O que está abaixo é o desenho de 03/11 e não vale mais em dois pontos. (1) A
+> detecção por `installersDir` e `ultimo-commit.txt` foi substituída por `electron-updater` lendo as releases
+> do GitHub (`src/main/app-update.ts`): há versão nova quando a release Latest tem `latest.yml` com versão
+> maior que a instalada, checada a cada 30 min (a primeira 15 s depois de abrir). (2) O `electron-updater`
+> deixou de estar "fora desta entrega". O clique em Atualizar espera as sessões ou o prazo
+> `appUpdate.forceAfterMinutes` (5 min por padrão). O build é sob demanda e o passo a passo para publicar o
+> alfa está em [docs/alfa/gerar-alfa-no-pc.md](../alfa/gerar-alfa-no-pc.md).
+
 # Refinamento — Atualizar para a versão nova de dentro do app (B33)
 
 ## Demanda
