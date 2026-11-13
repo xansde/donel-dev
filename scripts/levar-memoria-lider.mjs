@@ -14,14 +14,18 @@
 //   (já guardada igual: nada; esse nome com outra coisa, esse nome também na pasta antiga ou já reservado por outra
 //   cópia: lista e não grava NADA, sai com 1). Nomes comparam sem diferença de maiúsculas, como no Windows;
 // - MEMORY.md só na antiga: vai igual, byte a byte (BOM e fim de linha também), só com os links dos arquivos em
-//   conflito "(a.md)" trocados por "(a.do-projeto-antigo.md)";
-// - MEMORY.md nos dois: acrescenta, no fim, as linhas não vazias da antiga que faltam na nova. Entrada de índice
-//   ("- [Nome](arquivo.md) — ...", um link só) falta quando a nova não tem entrada com esse link; qualquer outra
-//   linha, quando a nova não tem esse texto (sem os espaços do fim). O que a nova já tinha fica byte a byte; o
-//   acrescentado vai no fim de linha dela, em UTF-8 sem BOM;
+//   conflito "(a.md)" / "(a.md#sec)" trocados por "(a.do-projeto-antigo.md)" / "(a.do-projeto-antigo.md#sec)";
+// - MEMORY.md nos dois: acrescenta, no fim, as linhas não vazias da antiga que faltam na nova. Entrada de índice é a
+//   linha de lista ("- [", "* [" ou "1. [") cujo primeiro link aponta um .md; o link compara sem maiúsculas e sem
+//   âncora. Entrada cujo link a nova não tem: entra. Mesmo link e mesmo texto: nada. Mesmo link com outro texto: não
+//   entra (não duplica) e vai aos conflitos, com as duas linhas, para o dono decidir. Qualquer outra linha entra
+//   quando a nova não tem esse texto (sem os espaços do fim). O que a nova já tinha fica byte a byte; o acrescentado
+//   vai no fim de linha dela, em UTF-8 sem BOM. MEMORY.md antigo que não é UTF-8 válido: PARADO, nada gravado;
 // - antes de gravar, confere cada destino (pasta que é arquivo, MEMORY.md que é pasta): um falhando, PARADO e nada
-//   gravado;
-// - a pasta antiga só é lida; rodar de novo não muda nada.
+//   gravado. Se mesmo assim uma gravação falhar no meio (permissão, arquivo preso), GRAVAÇÃO PARCIAL: lista o gravado
+//   e o que faltou e sai com 2; o MEMORY.md é o último, e rodar de novo depois de corrigir completa sem duplicar;
+// - link simbólico na pasta antiga não é seguido: aparece como ignorado;
+// - a pasta antiga só é lida; rodar de novo não muda nada. Limite: bloco de código (```) no índice é lido como texto.
 // Node puro, sem dependências: roda no PC antes de qualquer build.
 import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
@@ -47,17 +51,27 @@ function fold(name) {
   return name.toLowerCase();
 }
 
-/** The target of the first markdown link of a line, normalized; `null` when the line has none. */
-function linkOf(line) {
-  const match = LINK.exec(line);
-  return match ? normalizeLink(match[1]) : null;
+/** A link target without its anchor, normalized and folded: the file it points to, as names compare. */
+function fileKey(target) {
+  const hash = target.indexOf('#');
+  return fold(normalizeLink(hash < 0 ? target : target.slice(0, hash)));
 }
 
-/** An index entry: a list item that opens with its one link ("- [Nome](arquivo.md) — ..."). */
-function entryLinkOf(line) {
-  if (!/^\s*[-*] \[/.test(line)) return null;
-  const all = line.match(LINKS) ?? [];
-  return all.length === 1 ? linkOf(line) : null;
+/**
+ * An index entry: a list item ("- [", "* [" or "1. [") whose first link points to a `.md`. Answers the file it points
+ * to (folded, without anchor) and the line as compared (without the list marker and the blank at the end, with the
+ * link folded); `null` when the line is no entry.
+ */
+function entryOf(line) {
+  const marker = /^\s*(?:[-*]|\d+\.) (?=\[)/.exec(line);
+  if (!marker) return null;
+  const match = LINK.exec(line);
+  if (!match) return null;
+  const key = fileKey(match[1]);
+  if (!key.endsWith('.md')) return null;
+  const rest = line.slice(marker[0].length).trimEnd();
+  const at = match.index - marker[0].length;
+  return { key, text: `${rest.slice(0, at)}](${fold(normalizeLink(match[1]))})${rest.slice(at + match[0].length)}` };
 }
 
 function stripBom(text) {
@@ -70,11 +84,25 @@ function linesOf(text) {
     .map((line) => line.replace(/\r$/, ''));
 }
 
+/** `renamed` by folded name: a link finds its file whatever the case, as on Windows. */
+function foldRenamed(renamed) {
+  return new Map(Object.entries(renamed).map(([name, savedAs]) => [fold(name), savedAs]));
+}
+
+/** The target a link takes when its file was renamed (anchor kept); `null` when it stays. */
+function renamedTarget(target, byFold) {
+  const savedAs = byFold.get(fileKey(target));
+  if (savedAs === undefined) return null;
+  const hash = target.indexOf('#');
+  return hash < 0 ? savedAs : `${savedAs}${target.slice(hash)}`;
+}
+
 /** Every link to a renamed file, swapped for the name its old version was saved as. */
 function relink(line, renamed) {
+  const byFold = foldRenamed(renamed);
   return line.replace(LINKS, (whole, target) => {
-    const link = normalizeLink(target);
-    return Object.hasOwn(renamed, link) ? `](${renamed[link]})` : whole;
+    const next = renamedTarget(target, byFold);
+    return next === null ? whole : `](${next})`;
   });
 }
 
@@ -90,10 +118,11 @@ function savedName(name) {
  */
 export function copyMemoryIndex(oldBytes, renamed = {}) {
   if (Object.keys(renamed).length === 0) return Buffer.from(oldBytes);
+  const byFold = foldRenamed(renamed);
   const raw = Buffer.from(oldBytes).toString('latin1');
   const out = raw.replace(RAW_LINKS, (whole, target) => {
-    const link = normalizeLink(Buffer.from(target, 'latin1').toString('utf8'));
-    return Object.hasOwn(renamed, link) ? `](${Buffer.from(renamed[link], 'utf8').toString('latin1')})` : whole;
+    const next = renamedTarget(Buffer.from(target, 'latin1').toString('utf8'), byFold);
+    return next === null ? whole : `](${Buffer.from(next, 'utf8').toString('latin1')})`;
   });
   return Buffer.from(out, 'latin1');
 }
@@ -102,28 +131,39 @@ export function copyMemoryIndex(oldBytes, renamed = {}) {
  * Pure — the index of the new folder with the lines of the old one that it lacks. `renamed` maps a file of the old
  * folder to the name its old version was saved as (a conflict): its old lines come in pointing there. Lines are
  * checked against the new index only, never against each other: two old lines both missing in the new one both go.
- * Answers the new text and the lines added (empty: the text is the new one, byte for byte).
+ * An old entry for a file the new index has an entry for, with another text, is not added: it is a conflict (`old`
+ * and the first `new` entry of that file), for the owner to decide. Answers the new text, the lines added (empty:
+ * the text is the new one, byte for byte) and those conflicts.
  */
 export function mergeMemoryIndex(oldText, newText, renamed = {}) {
-  const links = new Set();
+  const entries = new Map();
   const texts = new Set();
   for (const line of linesOf(newText)) {
-    const link = entryLinkOf(line);
-    if (link !== null) links.add(link);
+    const entry = entryOf(line);
+    if (entry !== null) {
+      if (!entries.has(entry.key)) entries.set(entry.key, { line: line.trimEnd(), texts: new Set() });
+      entries.get(entry.key).texts.add(entry.text);
+    }
     texts.add(line.trimEnd());
   }
   const added = [];
+  const conflicts = [];
   for (const raw of linesOf(oldText)) {
     if (raw.trim() === '') continue;
     const line = relink(raw, renamed);
-    const link = entryLinkOf(line);
-    if (link !== null ? links.has(link) : texts.has(line.trimEnd())) continue;
+    const entry = entryOf(line);
+    if (entry !== null && entries.has(entry.key)) {
+      const known = entries.get(entry.key);
+      if (!known.texts.has(entry.text)) conflicts.push({ link: entry.key, old: line.trimEnd(), new: known.line });
+      continue;
+    }
+    if (entry === null && texts.has(line.trimEnd())) continue;
     added.push(line);
   }
-  if (added.length === 0) return { text: newText, added };
+  if (added.length === 0) return { text: newText, added, conflicts };
   const eol = (newText === '' ? oldText : newText).includes('\r\n') ? '\r\n' : '\n';
   const base = newText === '' || newText.endsWith('\n') ? newText : `${newText}${eol}`;
-  return { text: `${base}${added.join(eol)}${eol}`, added };
+  return { text: `${base}${added.join(eol)}${eol}`, added, conflicts };
 }
 
 function sha(file) {
@@ -155,17 +195,19 @@ function sameContent(a, b) {
   return sha(a) === sha(b);
 }
 
-/** Every file under `dir`, relative, with `/`, sorted. */
-function filesOf(dir) {
+/** Every file under `dir`, relative, with `/`, sorted. Symbolic links are not followed: they go to `links`. */
+function filesOf(dir, links = []) {
   const out = [];
   const walk = (at, rel) => {
     for (const entry of readdirSync(at, { withFileTypes: true })) {
       const key = rel ? `${rel}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) walk(path.join(at, entry.name), key);
+      if (entry.isSymbolicLink()) links.push(key);
+      else if (entry.isDirectory()) walk(path.join(at, entry.name), key);
       else if (entry.isFile()) out.push(key);
     }
   };
   walk(dir, '');
+  links.sort();
   return out.sort();
 }
 
@@ -195,7 +237,8 @@ export function carryMemory(oldDir, newDir, { apply }) {
   const stopped = [];
   const renamed = {};
   const toWrite = [];
-  const oldFiles = existsSync(oldDir) ? filesOf(oldDir) : [];
+  const ignored = [];
+  const oldFiles = existsSync(oldDir) ? filesOf(oldDir, ignored) : [];
   const oldFolded = new Set(oldFiles.map(fold));
   // The new folder as Windows sees it: a name finds its file whatever the case.
   const newByFold = new Map(isDir(newDir) ? filesOf(newDir).map((name) => [fold(name), name]) : []);
@@ -247,6 +290,7 @@ export function carryMemory(oldDir, newDir, { apply }) {
   }
 
   let index = null;
+  let indexConflicts = [];
   if (hasOldIndex) {
     const oldBytes = readFileSync(at(oldDir, INDEX));
     if (newIndexExists && !hadNewIndex) {
@@ -254,12 +298,21 @@ export function carryMemory(oldDir, newDir, { apply }) {
     } else if (!hadNewIndex) {
       index = { bytes: copyMemoryIndex(oldBytes, renamed), added: [] };
     } else {
-      const currentBytes = readFileSync(newIndex);
-      const current = currentBytes.toString('utf8');
-      const merged = mergeMemoryIndex(oldBytes.toString('utf8'), current, renamed);
-      // What the new index had stays byte for byte; only the lines added are encoded.
-      if (merged.added.length > 0) {
-        index = { bytes: Buffer.concat([currentBytes, Buffer.from(merged.text.slice(current.length), 'utf8')]), added: merged.added };
+      let oldText = null;
+      try {
+        oldText = STRICT_UTF8.decode(oldBytes);
+      } catch {
+        stopped.push({ name: INDEX, why: 'o MEMORY.md antigo não é UTF-8: converta-o para UTF-8 (ou junte à mão) e rode de novo' });
+      }
+      if (oldText !== null) {
+        const currentBytes = readFileSync(newIndex);
+        const current = currentBytes.toString('utf8');
+        const merged = mergeMemoryIndex(oldText, current, renamed);
+        indexConflicts = merged.conflicts;
+        // What the new index had stays byte for byte; only the lines added are encoded.
+        if (merged.added.length > 0) {
+          index = { bytes: Buffer.concat([currentBytes, Buffer.from(merged.text.slice(current.length), 'utf8')]), added: merged.added };
+        }
       }
     }
   }
@@ -271,19 +324,30 @@ export function carryMemory(oldDir, newDir, { apply }) {
   }
 
   const blocked = stopped.length > 0 || conflicts.some((conflict) => conflict.status === 'blocked');
-  const applied = apply && !blocked;
+  let applied = apply && !blocked;
+  let partial;
   if (applied) {
-    for (const { source, target } of toWrite) {
-      mkdirSync(path.dirname(target), { recursive: true });
-      copyFileSync(source, target);
-    }
-    if (index) {
-      mkdirSync(path.dirname(newIndex), { recursive: true });
-      writeFileSync(newIndex, index.bytes);
+    // One at a time, the index last: a write that fails midway leaves no index line pointing to a missing file.
+    const writes = [
+      ...toWrite.map(({ name, source, target }) => ({ name, run: () => copyFileSync(source, target), target })),
+      ...(index ? [{ name: INDEX, run: () => writeFileSync(newIndex, index.bytes), target: newIndex }] : []),
+    ];
+    const written = [];
+    for (const [at, write] of writes.entries()) {
+      try {
+        mkdirSync(path.dirname(write.target), { recursive: true });
+        write.run();
+        written.push(write.name);
+      } catch (error) {
+        const why = error instanceof Error ? error.message : String(error);
+        partial = { written, missing: writes.slice(at).map(({ name }) => name), failed: write.name, why };
+        applied = false;
+        break;
+      }
     }
   }
   // A fresh index is reported as copied, not line by line.
-  return { copied, same, conflicts, stopped, addedLines: index ? index.added : [], blocked, applied };
+  return { copied, same, conflicts, indexConflicts, stopped, ignored, addedLines: index ? index.added : [], blocked, applied, ...(partial ? { partial } : {}) };
 }
 const COLLISION_WORDS = 'PARADO: a pasta antiga também tem um arquivo chamado';
 
@@ -302,19 +366,32 @@ export function formatReport(report) {
   };
   list('Copiados', report.copied);
   list('Iguais, nada a fazer', report.same);
-  list(
-    'Conflitos (mesmo nome, conteúdo diferente; o da pasta nova fica)',
-    report.conflicts.map(
+  list('Conflitos (o da pasta nova fica; o dono decide)', [
+    ...report.conflicts.map(
       (conflict) => `${conflict.name}: ${conflict.reason === 'collision' ? COLLISION_WORDS : STATUS_WORDS[conflict.status]} ${conflict.savedAs}`,
     ),
-  );
+    ...(report.indexConflicts ?? []).map(
+      (conflict) =>
+        `${INDEX}, entrada de ${conflict.link} com outro texto (nada acrescentado; junte à mão se quiser o da antiga):\n` +
+        `      antiga: ${conflict.old}\n      nova:   ${conflict.new}`,
+    ),
+  ]);
   list(`Linhas acrescentadas ao ${INDEX}`, report.addedLines);
+  const ignored = report.ignored ?? [];
+  if (ignored.length) list('Ignorados', ignored.map((name) => `${name}: ignorado (link simbólico)`));
   const stopped = report.stopped ?? [];
   if (stopped.length) list('Destinos impossíveis', stopped.map((stop) => `${stop.name}: PARADO: ${stop.why}`));
-  if (report.blocked) out.push('Nada foi gravado: resolva os itens PARADO acima e rode de novo.');
+  if (report.partial) {
+    const { written, missing, failed, why } = report.partial;
+    out.push(`GRAVAÇÃO PARCIAL: a gravação de ${failed} falhou (${why}).`);
+    list('Gravados', written);
+    list('Faltaram', missing);
+    out.push('Corrija a causa (permissão, arquivo aberto em outro programa) e rode de novo com --aplicar: o que já foi gravado aparece como igual, e nada duplica. A pasta antiga ficou intacta.');
+  } else if (report.blocked) out.push('Nada foi gravado: resolva os itens PARADO acima e rode de novo.');
   else if (report.applied) {
     const wrote = report.copied.length > 0 || report.addedLines.length > 0 || report.conflicts.some((conflict) => conflict.status === 'save');
-    out.push(wrote ? 'Gravado. A pasta antiga ficou intacta.' : 'Nada a gravar: a pasta nova já tem tudo. A pasta antiga ficou intacta.');
+    const pending = (report.indexConflicts ?? []).length > 0 ? ' Os conflitos do MEMORY.md acima ficam para o dono decidir.' : '';
+    out.push(`${wrote ? 'Gravado.' : 'Nada a gravar: a pasta nova já tem tudo.'}${pending} A pasta antiga ficou intacta.`);
   }
   else out.push('Só o plano: nada foi gravado. Confira e rode de novo com --aplicar.');
   return out.join('\n');
@@ -327,7 +404,8 @@ function main(args) {
     console.error('uso: node scripts/levar-memoria-lider.mjs <pastaAntiga> <pastaNova> [--aplicar]');
     return 2;
   }
-  if (!existsSync(oldDir) || filesOf(oldDir).length === 0) {
+  const links = [];
+  if (!existsSync(oldDir) || (filesOf(oldDir, links).length === 0 && links.length === 0)) {
     console.log('Sem memória antiga para copiar.');
     return 0;
   }
@@ -339,6 +417,7 @@ function main(args) {
     return 1;
   }
   console.log(formatReport(report));
+  if (report.partial) return 2;
   return report.blocked ? 1 : 0;
 }
 

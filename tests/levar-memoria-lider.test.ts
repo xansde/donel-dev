@@ -2,7 +2,7 @@
 // pasta da orquestradora sem perder nada e sem duplicar nada (dono). É dado persistido do dono: o que se perdesse
 // aqui some da vista do Líder sem ninguém perceber.
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -47,10 +47,11 @@ describe('Memória do Líder no PC — nada se perde, nada duplica', () => {
     expect(second.addedLines).toEqual([]);
   });
 
-  it('a mesma entrada (mesmo arquivo) com outra descrição não duplica: o link decide', () => {
+  it('a mesma entrada (mesmo arquivo) com outra descrição não duplica: o link decide, e o gancho antigo vira conflito', () => {
     expect(mergeMemoryIndex('- [Hindsight](hindsight.md) — descrição antiga\n# Índice\n', '# Índice\n- [Hindsight é a memória](hindsight.md) — nova\n')).toEqual({
       text: '# Índice\n- [Hindsight é a memória](hindsight.md) — nova\n',
       added: [],
+      conflicts: [{ link: 'hindsight.md', old: '- [Hindsight](hindsight.md) — descrição antiga', new: '- [Hindsight é a memória](hindsight.md) — nova' }],
     });
   });
 
@@ -161,8 +162,8 @@ describe('Memória do Líder no PC — nada se perde, nada duplica', () => {
   });
 
   it('linha sem link que só difere por espaço no fim não duplica', () => {
-    expect(mergeMemoryIndex('# Titulo \n', '# Titulo\n')).toEqual({ text: '# Titulo\n', added: [] });
-    expect(mergeMemoryIndex('# Titulo\n', '# Titulo   \n')).toEqual({ text: '# Titulo   \n', added: [] });
+    expect(mergeMemoryIndex('# Titulo \n', '# Titulo\n')).toEqual({ text: '# Titulo\n', added: [], conflicts: [] });
+    expect(mergeMemoryIndex('# Titulo\n', '# Titulo   \n')).toEqual({ text: '# Titulo   \n', added: [], conflicts: [] });
   });
 
   it('a antiga já tem <nome>.do-projeto-antigo.md e o <nome> entra em conflito: PARADO, nada gravado, antiga intacta', () => {
@@ -317,5 +318,121 @@ describe('Memória do Líder no PC — nada se perde, nada duplica', () => {
     expect(report.applied).toBe(false);
     expect(report.conflicts).toContainEqual(expect.objectContaining({ name: 'A.md', status: 'blocked', reason: 'collision' }));
     expect(snapshot(next)).toEqual(before);
+  });
+  it('mesma entrada com gancho mais curto: o gancho antigo não some calado nem duplica; vira conflito com as duas linhas', () => {
+    const { old, next } = dirs();
+    writeFileSync(join(old, 'MEMORY.md'), '- [A](a.md) — gancho antigo detalhe\n');
+    writeFileSync(join(next, 'MEMORY.md'), '- [A](a.md) — gancho\n');
+    const before = snapshot(next);
+
+    const report = carryMemory(old, next, { apply: true });
+
+    expect(report.addedLines).toEqual([]);
+    expect(report.indexConflicts).toEqual([{ link: 'a.md', old: '- [A](a.md) — gancho antigo detalhe', new: '- [A](a.md) — gancho' }]);
+    expect(snapshot(next)).toEqual(before);
+    const text = formatReport(report);
+    expect(text).toContain('Conflitos');
+    expect(text).toContain('- [A](a.md) — gancho antigo detalhe');
+    expect(text).toContain('- [A](a.md) — gancho');
+  });
+
+  it('mesma entrada com o mesmo texto (só espaço no fim de diferença): nada, nem conflito', () => {
+    expect(mergeMemoryIndex('- [A](a.md) — g   \n', '- [A](a.md) — g\n')).toEqual({ text: '- [A](a.md) — g\n', added: [], conflicts: [] });
+  });
+
+  it('lista numerada também é entrada de índice: "1. [A](a.md)" contra "- [A](a.md)" com outro gancho é conflito, sem duplicar', () => {
+    expect(mergeMemoryIndex('1. [A](a.md) — g velho\n', '- [A](a.md) — g\n')).toEqual({
+      text: '- [A](a.md) — g\n',
+      added: [],
+      conflicts: [{ link: 'a.md', old: '1. [A](a.md) — g velho', new: '- [A](a.md) — g' }],
+    });
+  });
+
+  it('o link da entrada compara sem maiúsculas: "(Regra.md)" e "(regra.md)" são a mesma entrada', () => {
+    expect(mergeMemoryIndex('- [R](Regra.md) — r\n', '- [R](regra.md) — r\n')).toEqual({ text: '- [R](regra.md) — r\n', added: [], conflicts: [] });
+    const other = mergeMemoryIndex('- [R](Regra.md) — r antiga\n', '- [R](regra.md) — r\n');
+    expect(other.added).toEqual([]);
+    expect(other.conflicts).toHaveLength(1);
+  });
+
+  it('entrada cujo primeiro link é .md conta mesmo com outro link depois', () => {
+    const merged = mergeMemoryIndex('- [A](a.md) — ver também [B](b.md), antigo\n', '- [A](a.md) — ver também [B](b.md)\n');
+    expect(merged.added).toEqual([]);
+    expect(merged.conflicts).toHaveLength(1);
+  });
+
+  it('link com âncora para arquivo em conflito aponta a cópia antiga, com a âncora', () => {
+    const { old, next } = dirs();
+    writeFileSync(join(old, 'MEMORY.md'), '- [A](a.md#sec) — a\nVeja [A](a.md#outra)\n');
+    writeFileSync(join(old, 'a.md'), 'old');
+    writeFileSync(join(next, 'a.md'), 'new');
+
+    carryMemory(old, next, { apply: true });
+
+    expect(readFileSync(join(next, 'MEMORY.md'), 'utf8')).toBe('- [A](a.do-projeto-antigo.md#sec) — a\nVeja [A](a.do-projeto-antigo.md#outra)\n');
+    expect(mergeMemoryIndex('Veja [A](a.md#sec)\n', '# M\n', { 'a.md': 'a.do-projeto-antigo.md' }).added).toEqual(['Veja [A](a.do-projeto-antigo.md#sec)']);
+  });
+
+  it('MEMORY.md antigo fora do UTF-8 e a nova com índice: PARADO, nada gravado, dizendo que não é UTF-8', () => {
+    const { old, next } = dirs();
+    writeFileSync(join(old, 'MEMORY.md'), Buffer.concat([Buffer.from('- [B](b.md) — caf', 'utf8'), Buffer.from([0xe9, 0x0a])]));
+    writeFileSync(join(old, 'b.md'), 'b\n');
+    writeFileSync(join(next, 'MEMORY.md'), '- [A](a.md) — a\n');
+    const before = snapshot(next);
+
+    const report = carryMemory(old, next, { apply: true });
+
+    expect(report.blocked).toBe(true);
+    expect(report.applied).toBe(false);
+    expect(snapshot(next)).toEqual(before);
+    expect(formatReport(report)).toContain('PARADO');
+    expect(formatReport(report)).toContain('não é UTF-8');
+  });
+
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'gravação que falha no meio (pasta sem permissão): GRAVAÇÃO PARCIAL com o gravado e o que faltou, MEMORY.md por último; a 2ª rodada completa sem duplicar',
+    () => {
+      const { old, next } = dirs();
+      writeFileSync(join(old, 'MEMORY.md'), '- [A](a.md) — a\n- [X](sub/x.md) — x\n');
+      writeFileSync(join(old, 'a.md'), 'a\n');
+      mkdirSync(join(old, 'sub'));
+      writeFileSync(join(old, 'sub', 'x.md'), 'x\n');
+      writeFileSync(join(next, 'MEMORY.md'), '- [Z](z.md) — z\n');
+      mkdirSync(join(next, 'sub'));
+      chmodSync(join(next, 'sub'), 0o500);
+      try {
+        const report = carryMemory(old, next, { apply: true });
+
+        expect(report.applied).toBe(false);
+        expect(report.partial).toEqual(expect.objectContaining({ written: ['a.md'], missing: ['sub/x.md', 'MEMORY.md'] }));
+        expect(readFileSync(join(next, 'MEMORY.md'), 'utf8')).toBe('- [Z](z.md) — z\n');
+        const text = formatReport(report);
+        expect(text).toContain('GRAVAÇÃO PARCIAL');
+        expect(text).toContain('a.md');
+        expect(text).toContain('sub/x.md');
+        expect(text).toContain('rode de novo');
+      } finally {
+        chmodSync(join(next, 'sub'), 0o700);
+      }
+
+      const again = carryMemory(old, next, { apply: true });
+      expect(again.partial).toBeUndefined();
+      expect(again.applied).toBe(true);
+      expect(again.same).toContain('a.md');
+      expect(readFileSync(join(next, 'sub', 'x.md'), 'utf8')).toBe('x\n');
+      expect(readFileSync(join(next, 'MEMORY.md'), 'utf8')).toBe('- [Z](z.md) — z\n- [A](a.md) — a\n- [X](sub/x.md) — x\n');
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')('link simbólico na pasta antiga: não é seguido, e aparece como ignorado no relatório', () => {
+    const { old, next } = dirs();
+    writeFileSync(join(old, 'a.md'), 'a\n');
+    symlinkSync(join(old, 'a.md'), join(old, 'atalho.md'));
+
+    const report = carryMemory(old, next, { apply: true });
+
+    expect(report.ignored).toEqual(['atalho.md']);
+    expect(existsSync(join(next, 'atalho.md'))).toBe(false);
+    expect(formatReport(report)).toContain('atalho.md: ignorado (link simbólico)');
   });
 });

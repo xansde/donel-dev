@@ -170,13 +170,18 @@ leva a antiga para a nova **sem sobrescrever nem duplicar** nada:
 - mesmo nome com conteúdo **diferente** é um conflito: o da pasta nova fica, e a versão antiga vai ao lado como
   `<nome>.do-projeto-antigo.md` (se o índice antigo tinha entrada para ele, ela entra apontando para essa cópia);
 - sem `MEMORY.md` na nova, o da antiga vai igual (seções, linhas em branco, BOM e fim de linha), só com os links
-  dos conflitos apontando a cópia antiga;
-- com `MEMORY.md` nos dois, o da nova ganha no fim as linhas da antiga que faltam nele: uma entrada de índice
-  (`- [Nome](arquivo.md) — ...`) falta quando a nova não tem entrada para esse arquivo; qualquer outra linha (título,
-  nota com link no meio do texto), quando a nova não tem esse texto. O que a nova já tinha fica byte a byte;
-- nomes comparam sem diferença de maiúsculas, como no Windows, e antes de gravar o script confere todos os destinos:
-  se algum não cabe (uma pasta que na nova é arquivo, um `MEMORY.md` que é pasta), sai `PARADO` sem gravar nada;
-- a pasta antiga só é lida, e rodar de novo não muda nada.
+  dos conflitos apontando a cópia antiga (a âncora `#seção` fica);
+- com `MEMORY.md` nos dois, o da nova ganha no fim as linhas da antiga que faltam nele. Entrada de índice é a linha de
+  lista (`- [`, `* [` ou `1. [`) cujo primeiro link aponta um `.md`: se a nova não tem entrada para esse arquivo, ela
+  entra; se tem com o mesmo texto, nada; se tem com **outro texto** (outro gancho), não entra (não duplica) e vai aos
+  **Conflitos** com as duas linhas, para o dono decidir. Qualquer outra linha (título, nota com link no meio do
+  texto) entra quando a nova não tem esse texto. O que a nova já tinha fica byte a byte;
+- nomes e links comparam sem diferença de maiúsculas, como no Windows, e antes de gravar o script confere todos os
+  destinos: se algum não cabe (uma pasta que na nova é arquivo, um `MEMORY.md` que é pasta, um `MEMORY.md` antigo
+  que não é UTF-8), sai `PARADO` sem gravar nada;
+- link simbólico na pasta antiga não é seguido: aparece como "ignorado (link simbólico)";
+- a pasta antiga só é lida, e rodar de novo não muda nada. Limite: um bloco de código (```` ``` ````) dentro do
+  índice é lido linha a linha como texto comum.
 
 Primeiro, só o plano (não grava nada). O script vem da worktree que buildou o alfa (`origin/staging`, já com o
 #413); `$repo` é o do passo 1.3:
@@ -190,13 +195,20 @@ node $script $old $new
 ```
 
 Leia o plano: **Copiados**, **Iguais**, **Conflitos**, **Linhas acrescentadas ao MEMORY.md** e, se houver,
-**Destinos impossíveis**. Qualquer item `PARADO` (já existe `<nome>.do-projeto-antigo.md` com outro conteúdo, dois
+**Ignorados** e **Destinos impossíveis**. Qualquer item `PARADO` (já existe `<nome>.do-projeto-antigo.md` com outro conteúdo, dois
 arquivos indo para o mesmo nome, um destino que não cabe) faz o script sair com 1 e **não gravar nada**:
 compare os arquivos, mostre ao dono e só siga quando ele decidir. Sem `PARADO`, grave:
 
 ```powershell
 node $script $old $new --aplicar
-$LASTEXITCODE   # 0 = gravado; 1 = conflito PARADO, nada gravado
+$LASTEXITCODE   # 0 = gravado; 1 = conflito PARADO, nada gravado; 2 = GRAVAÇÃO PARCIAL
 ```
 
-Rodar de novo responde "Nada a gravar". Conte ao dono os conflitos listados: as duas versões ficaram lado a lado.
+Rodar de novo responde "Nada a gravar". Conte ao dono os conflitos listados: nos de arquivo, as duas versões
+ficaram lado a lado; nos de **entrada do MEMORY.md com outro texto**, o relatório mostra a linha antiga e a nova e
+nada foi acrescentado: o dono escolhe qual gancho fica (ou junta os dois) e edita o `MEMORY.md` da pasta nova à mão.
+
+Saída 2 (**GRAVAÇÃO PARCIAL**): uma gravação falhou no meio (sem permissão, arquivo aberto em outro programa). O
+relatório lista o que foi gravado e o que faltou; o `MEMORY.md` é sempre o último, então nenhuma linha nova aponta
+para arquivo que faltou. Corrija a causa e rode de novo com `--aplicar`: o já gravado aparece como igual e nada
+duplica.
