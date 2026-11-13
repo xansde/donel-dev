@@ -102,8 +102,18 @@ Revogar só a chave (perdeu o PC, por exemplo), sem desmontar o resto: esvaziar
 
 ## Reinstalar
 
-O script usado está em `scripts/instalar-sshd-tailnet.sh` (idempotente). Rodar como root na VPS,
-passando a chave pública:
+O script usado está em `scripts/instalar-sshd-tailnet.sh`. Desde 13/11 ele é idempotente **sem perda**: rodar de
+novo só ACRESCENTA a chave se ela faltar (as outras, como a `numeros-factory` da Homologações, ficam) e MANTÉM os
+usuários de `AllowUsers` e os arquivos de `AuthorizedKeysFile` que já existem (na VPS pessoal: `alexandrelentz` e
+`.ssh/authorized_keys`, mudança de 07/11). Antes de trocar um arquivo ele guarda `<arquivo>.bak-<data>` ao lado,
+valida a config nova com `sshd -t` antes de pô-la no lugar e, com o serviço de pé, só faz `reload` (não corta
+conexões). A versão de 06/11 sobrescrevia os dois arquivos: rodá-la hoje derrubaria o `alexandrelentz` na VPS
+pessoal e apagaria a `numeros-factory` na Homologações.
+
+Ensaio sem tocar o sistema (só arquivos sob um prefixo): `DONEL_SSH_ROOT=/tmp/ensaio DONEL_SSH_SO_ARQUIVOS=1
+DONEL_SSH_IP=100.64.0.9 sh scripts/instalar-sshd-tailnet.sh "<chave>"`.
+
+Rodar como root na VPS, passando a chave pública:
 
 ```sh
 ssh root@<vps> "cat > /root/i.sh && sh /root/i.sh '$(cat ~/.ssh/donel_vps_ed25519.pub)'; rm /root/i.sh" \
