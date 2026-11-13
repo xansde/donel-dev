@@ -922,6 +922,8 @@ export class AgentBridge {
     if (!this.ports.permissionAsk || !this.ports.answerPermission) return 'este app não sabe recusar permissões de outra sessão.';
     for (let round = 0; round < REFUSE_ROUNDS && this.ports.permissionOnScreen(tabId); round += 1) {
       const ask = await this.ports.permissionAsk(tabId);
+      // The lock says "maybe" and the door reads nothing: a screen that cannot be read (tmux's copy mode, #414 5ª rodada).
+      if (!ask && round === 0) return 'a tela dela não se deixa ler agora (aba rolada no tmux?) e pode ter um pedido de permissão aberto; nada foi recusado. Veja com sessao_ver_tela.';
       if (!ask) break;
       const result = await this.ports.answerPermission(tabId, ask.id, 'deny');
       if (!result.ok) return `não consegui recusar o pedido aberto (${describeAsk(ask)}): ${result.reason}.`;

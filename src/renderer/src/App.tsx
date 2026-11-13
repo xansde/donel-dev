@@ -2753,11 +2753,9 @@ export function App(): React.JSX.Element {
       if (queueForLeaderMove(tabId, text, (to) => void deliver(to).catch(() => undefined))) return Promise.resolve({ kind: 'na-fila' as const });
       return deliver(tabId);
     },
-    permissionOnScreen: (tabId) => {
-      const lines = terminalRefs.current[tabId]?.readScreen().lines;
-      return lines !== undefined && blockingScreen(lines)?.kind === 'permission';
-    },
     // t-1293c818 (3) — the Líder reads and answers a permission open on this tab (the held hook first, else the screen).
+    // `permissionOnScreen` comes from here too: only the dialog that is the last block of the live screen (Revisor, #406),
+    // never under tmux's copy mode.
     ...permissionPorts({
       held: async (tabId) => {
         const ptyId = chatPtyIds[tabId];
@@ -2768,7 +2766,11 @@ export function App(): React.JSX.Element {
         if (!ptyId) return { ok: false };
         return window.donel.chat.answer(ptyId, pendingId, answer === 'allow' ? { kind: 'allow' } : { kind: 'deny', reason: LEADER_DENY_REASON });
       },
-      screen: (tabId) => terminalRefs.current[tabId]?.readScreen().lines,
+      // The live bottom, never the scrolled viewport: scrolled onto an old dialog, its text showed and the "1" approved
+      // the one open below (verificação adversarial do #414).
+      screen: (tabId) => terminalRefs.current[tabId]?.readScreen({ live: true }).lines,
+      // Only a remote tab runs inside tmux, so only there can the screen be tmux's copy mode (4ª rodada do #414).
+      remote: (tabId) => Boolean(tabsRef.current.find((tab) => tab.id === tabId)?.remoteId),
       write: (tabId, data) => terminalRefs.current[tabId]?.write(data) ?? false,
     }),
     // No hook yet is not "never started" when the CLI already took a message (the transcript showed it): a session on a
