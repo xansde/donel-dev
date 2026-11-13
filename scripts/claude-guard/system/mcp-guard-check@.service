@@ -1,0 +1,6 @@
+[Unit]
+Description=mcp-guard: reconfere as descrições dos MCPs de %i
+
+[Service]
+Type=oneshot
+ExecStart=@NODE@ /etc/claude-code/mcp-guard/mcp-guard.mjs check --system --user %i
