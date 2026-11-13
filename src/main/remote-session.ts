@@ -20,7 +20,7 @@ import { isBypassLaunch } from '../shared/launchPermission';
 import type { RemoteAliveSession } from '../shared';
 import type { SessionWhereLives } from '../shared/sessions';
 import { isSafeWorktreeName } from '../shared/sessionWorktree';
-import { MirrorHub, sshMirrorSpawner, type SpawnMirror } from './remote-mirror';
+import { DEFAULT_MIRROR_TIMING, MirrorHub, sshMirrorSpawner, type MirrorHubTiming, type SpawnMirror } from './remote-mirror';
 
 export const REMOTE_TMUX_SOCKET = 'donel';
 export const REMOTE_SESSIONS_DIR = '.donel/s';
@@ -469,14 +469,26 @@ export class RemoteSessionRegistry {
   private readonly noMirrorHub = new Set<string>();
   private nextKey = 0;
   private readonly spawnMirror: SpawnMirror;
-  private readonly restartDelayMs: number;
+  private readonly timing: MirrorHubTiming;
+  private readonly spawnTail: (sshTarget: string, command: string) => ChildProcess;
+  private readonly onMirrorFallback: (sshTarget: string, reason: string) => void;
 
   constructor(
     private readonly mirrorRoot: string,
-    options: { readonly spawnMirror?: SpawnMirror; readonly restartDelayMs?: number } = {},
+    options: {
+      readonly spawnMirror?: SpawnMirror;
+      readonly timing?: Partial<MirrorHubTiming>;
+      /** The per-tab `ssh … tail -F` of a place whose shared mirror gave up (tests pass a fake). */
+      readonly spawnTail?: (sshTarget: string, command: string) => ChildProcess;
+      /** A place's shared mirror gave up: its transcripts went back to one tail per tab (the main logs why). */
+      readonly onMirrorFallback?: (sshTarget: string, reason: string) => void;
+    } = {},
   ) {
     this.spawnMirror = options.spawnMirror ?? sshMirrorSpawner(SSH_OPTIONS);
-    this.restartDelayMs = options.restartDelayMs ?? 3_000;
+    this.timing = { ...DEFAULT_MIRROR_TIMING, ...options.timing };
+    this.spawnTail =
+      options.spawnTail ?? ((sshTarget, command) => spawn('ssh', [...SSH_OPTIONS, '-T', '--', sshTarget, command], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }));
+    this.onMirrorFallback = options.onMirrorFallback ?? (() => undefined);
   }
 
   has(ptyId: string): boolean {
@@ -586,7 +598,7 @@ export class RemoteSessionRegistry {
     let hub = this.hubs.get(entry.sshTarget);
     if (!hub) {
       const target = entry.sshTarget;
-      hub = new MirrorHub(target, this.spawnMirror, this.restartDelayMs, () => this.fallBackToTails(target));
+      hub = new MirrorHub(target, this.spawnMirror, this.timing, (_follows, reason) => this.fallBackToTails(target, reason));
       this.hubs.set(target, hub);
     }
     const pump: MirrorPump = { kind: 'hub', key: String(++this.nextKey), hub, out, bytes: fromByte };
@@ -605,18 +617,16 @@ export class RemoteSessionRegistry {
   }
 
   /** A place without python3: each of its transcripts gets its own `ssh … tail -F`, as before the shared ssh. */
-  private fallBackToTails(sshTarget: string): void {
+  private fallBackToTails(sshTarget: string, reason: string): void {
     this.noMirrorHub.add(sshTarget);
+    this.onMirrorFallback(sshTarget, reason);
     this.hubs.delete(sshTarget);
     for (const entry of this.live.values()) if (entry.sshTarget === sshTarget && entry.pump?.kind === 'hub') this.restartPump(entry);
   }
 
   private startTail(entry: LiveRemote, remoteTranscript: string, out: WriteStream, fromByte: number): MirrorPump {
     const target = remoteTranscript.startsWith('/') ? shQuote(remoteTranscript) : `"$HOME"/${shQuote(remoteTranscript)}`;
-    const child = spawn('ssh', [...SSH_OPTIONS, '-T', '--', entry.sshTarget, `tail -c +${fromByte + 1} -F ${target} 2>/dev/null`], {
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
+    const child = this.spawnTail(entry.sshTarget, `tail -c +${fromByte + 1} -F ${target} 2>/dev/null`);
     const pump: MirrorPump = { kind: 'tail', child, out, bytes: fromByte };
     child.stdout?.on('data', (chunk: Buffer) => {
       pump.bytes += chunk.length;

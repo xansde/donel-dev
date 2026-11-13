@@ -2084,7 +2084,10 @@ function relinkSessionTools(ptyId: unknown): RelinkToolsResult {
 }
 
 function registerPtyIpcHandlers(): void {
-  remoteSessions = new RemoteSessionRegistry(join(app.getPath('userData'), 'remote-transcripts'));
+  remoteSessions = new RemoteSessionRegistry(join(app.getPath('userData'), 'remote-transcripts'), {
+    // t-9ab0ce2e — a place whose shared transcript mirror did not work went back to one tail per tab: say why.
+    onMirrorFallback: (sshTarget, reason) => logMainEvent('remote-mirror-fallback', { sshTarget, reason }),
+  });
   ipcMain.handle(PTY_CHANNELS.relinkTools, (_event, ptyId: unknown): RelinkToolsResult => relinkSessionTools(ptyId));
   ipcMain.handle(PTY_CHANNELS.remoteAlive, async (): Promise<RemoteAliveSession[]> => {
     const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
