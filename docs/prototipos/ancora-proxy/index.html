@@ -1,0 +1,369 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Âncora do proxy — protótipo</title>
+<style>
+  /* Tokens copiados de design-system/src/tokens.css (Donel Dev), sem alteração. */
+  :root {
+    --bg-app: #0e1116; --bg-panel: #151a21; --bg-raised: #1c232c; --border: #28303b;
+    --text-primary: #d7dde5; --text-muted: #828d9c; --accent: #4c9cf0;
+    --state-working: #4c9cf0; --state-waiting: #e8b44c; --state-permission: #f0684c; --state-done: #5e6873;
+    --zone-ok: #3dce8f; --zone-warn: #e8b44c; --zone-over: #f0684c;
+    --donel-accent: #e8b44c;
+    --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', monospace;
+    --text-body-size: 13px; --text-caption-size: 11px; --text-heading-size: 15px; --text-mono-size: 12.5px;
+    --weight-regular: 400; --weight-semibold: 600;
+    --space-half: 4px; --space-1: 8px; --space-2: 16px; --space-3: 24px; --space-4: 32px;
+    --radius-sm: 6px; --radius-md: 8px;
+    --list-row-height: 32px; --control-height: 30px; --panel-padding: 12px; --sidebar-width: 240px;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg-app); color: var(--text-primary); font: var(--text-body-size)/1.5 var(--font-ui); }
+  .mono { font-family: var(--font-mono); font-size: var(--text-mono-size); }
+  .muted { color: var(--text-muted); }
+  .cap { font-size: var(--text-caption-size); }
+  h1, h2, h3 { font-size: var(--text-heading-size); font-weight: var(--weight-semibold); margin: 0; }
+  button { font: inherit; color: var(--text-primary); background: var(--bg-raised); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); height: var(--control-height); padding: 0 var(--space-2); cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #0e1116; font-weight: var(--weight-semibold); }
+  button.danger { border-color: var(--state-permission); color: var(--state-permission); }
+  button:disabled { opacity: .45; cursor: default; }
+  select { font: inherit; color: var(--text-primary); background: var(--bg-raised); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); height: var(--control-height); padding: 0 var(--space-1); min-width: 260px; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  .ok { background: var(--zone-ok); } .warn { background: var(--zone-warn); } .bad { background: var(--zone-over); } .off { background: var(--state-done); }
+  .chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 8px; border-radius: var(--radius-sm);
+    background: var(--bg-raised); border: 1px solid var(--border); font-size: var(--text-caption-size); }
+  .chip.anchor { border-color: var(--donel-accent); color: var(--donel-accent); }
+  /* Casca do app (comum às variantes) */
+  .shell { display: grid; grid-template-columns: var(--sidebar-width) 1fr; min-height: 100vh; }
+  .side { background: var(--bg-panel); border-right: 1px solid var(--border); padding: var(--panel-padding); }
+  .side .item { height: var(--list-row-height); display: flex; align-items: center; padding: 0 var(--space-1); border-radius: var(--radius-sm); color: var(--text-muted); }
+  .side .item.on { background: var(--bg-raised); color: var(--text-primary); }
+  .main { padding: var(--space-3); padding-bottom: 96px; }
+  .statusbar { position: fixed; left: var(--sidebar-width); right: 0; bottom: 0; height: 28px; background: var(--bg-panel);
+    border-top: 1px solid var(--border); display: flex; align-items: center; gap: var(--space-2); padding: 0 var(--panel-padding); font-size: var(--text-caption-size); color: var(--text-muted); }
+  .card { background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--panel-padding); }
+  .row { display: flex; align-items: center; gap: var(--space-1); }
+  .grow { flex: 1; }
+  table { border-collapse: collapse; width: 100%; }
+  td, th { text-align: left; padding: 0 var(--space-1); height: var(--list-row-height); border-bottom: 1px solid var(--border); }
+  th { color: var(--text-muted); font-weight: var(--weight-regular); font-size: var(--text-caption-size); }
+  .banner { border-radius: var(--radius-md); padding: var(--space-1) var(--panel-padding); display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-2); }
+  .banner.bad { background: rgba(240,104,76,.12); border: 1px solid var(--state-permission); }
+  .banner.warn { background: rgba(232,180,76,.10); border: 1px solid var(--state-waiting); }
+  .steps { margin: var(--space-1) 0 0; padding: 0; list-style: none; }
+  .steps li { height: 24px; display: flex; align-items: center; gap: 6px; color: var(--text-muted); }
+  .steps li.done { color: var(--text-primary); }
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: none; align-items: center; justify-content: center; z-index: 50; }
+  .modal-bg.open { display: flex; }
+  .modal { width: 520px; background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-2); }
+</style>
+</head>
+<body>
+
+<!-- ================================================================= A -->
+<section class="proto-variant" data-variant="A" data-name="Uma linha em Preferências">
+  <div class="shell">
+    <aside class="side">
+      <div class="muted cap" style="margin-bottom:8px">PREFERÊNCIAS</div>
+      <div class="item">Geral</div><div class="item">Avisos</div><div class="item">Contas</div>
+      <div class="item on">Lugares remotos</div><div class="item">Navegador</div>
+    </aside>
+    <main class="main">
+      <h1 style="margin-bottom:16px">Lugares remotos</h1>
+
+      <div class="card" style="margin-bottom:12px">
+        <div class="row"><b>Onde o Líder roda</b><span class="grow"></span><select><option>Numa VPS (padrão)</option></select></div>
+      </div>
+
+      <div class="card" style="margin-bottom:12px">
+        <div class="row">
+          <div class="grow">
+            <b>Âncora do proxy</b>
+            <div class="muted cap">O PC de casa pelo qual as VPS falam com a Anthropic. Se ele cair, as VPS param: nunca saem pela nuvem.</div>
+          </div>
+          <select id="a-select">
+            <option value="seazone173">seazone173 · este computador</option>
+            <option value="pc-24h">pc-24h · ligado 24/7</option>
+          </select>
+          <button class="primary" id="a-apply" disabled>Trocar</button>
+        </div>
+        <table style="margin-top:12px">
+          <tr><th>VPS</th><th>Sai por</th><th>IP de saída</th><th>Desde</th></tr>
+          <tr><td>Homologações</td><td id="a-h-via"><span class="dot ok"></span>seazone173</td><td class="mono">186.236.19.220</td><td class="muted" id="a-h-since">14:25</td></tr>
+          <tr><td>VPS pessoal</td><td id="a-p-via"><span class="dot ok"></span>seazone173</td><td class="mono">186.236.19.220</td><td class="muted" id="a-p-since">14:31</td></tr>
+        </table>
+        <div id="a-progress" style="display:none; margin-top:12px">
+          <div class="muted cap">Trocando para <b id="a-target"></b></div>
+          <ul class="steps">
+            <li data-s="1"><span class="dot off"></span>pc-24h responde pela Tailscale nas duas VPS</li>
+            <li data-s="2"><span class="dot off"></span>mesmo IP de casa: 186.236.19.220 = 186.236.19.220</li>
+            <li data-s="3"><span class="dot off"></span>âncora gravada nas duas VPS e relay reiniciado</li>
+            <li data-s="4"><span class="dot off"></span>saída conferida: Homologações e VPS pessoal por pc-24h</li>
+          </ul>
+        </div>
+        <div class="row" style="margin-top:12px"><span class="muted cap grow">2 PCs na tailnet com o proxy instalado.</span><button>Acrescentar PC…</button></div>
+      </div>
+
+      <div class="card">
+        <div class="row"><b>Gateway dos modelos</b><span class="grow"></span><span class="chip">gateway da VPS · segue a âncora</span></div>
+        <div class="muted cap">Contas logadas no gateway da VPS: 0 de 4. Até lá, os modelos vêm do gateway do seazone173.</div>
+      </div>
+    </main>
+  </div>
+  <div class="statusbar"><span>Donel Dev Alfa 26.1108.2000</span><span class="grow"></span><span>RAM 47%</span></div>
+</section>
+
+<!-- ================================================================= B -->
+<section class="proto-variant" data-variant="B" data-name="Mapa das máquinas">
+  <div class="shell">
+    <aside class="side">
+      <div class="muted cap" style="margin-bottom:8px">SAÚDE</div>
+      <div class="item">Este computador</div><div class="item on">Máquinas e proxy</div><div class="item">VPS</div>
+    </aside>
+    <main class="main">
+      <div class="row" style="margin-bottom:16px"><h1 class="grow">Máquinas e proxy</h1><button id="b-sim">Simular queda da âncora</button></div>
+      <div id="b-banner"></div>
+      <div style="display:grid; grid-template-columns: 1fr 140px 1fr; gap: 16px; align-items: center">
+        <div style="display:grid; gap:12px">
+          <div class="card" id="b-pc-seazone173">
+            <div class="row"><b class="grow">seazone173</b><span class="chip anchor" data-anchor-chip>âncora</span></div>
+            <div class="muted cap">Windows · este computador · 100.76.108.30</div>
+            <table style="margin-top:8px">
+              <tr><td class="muted">Proxy</td><td data-proxy><span class="dot ok"></span>de pé</td></tr>
+              <tr><td class="muted">IP de casa</td><td class="mono">186.236.19.220</td></tr>
+              <tr><td class="muted">Gateway 8317</td><td><span class="dot ok"></span>4 contas</td></tr>
+              <tr><td class="muted">Ligado</td><td>quando você usa</td></tr>
+            </table>
+            <div class="row" style="margin-top:8px"><span class="grow"></span><button data-make="seazone173" disabled>É a âncora</button></div>
+          </div>
+          <div class="card" id="b-pc-pc-24h">
+            <div class="row"><b class="grow">pc-24h</b><span class="chip anchor" data-anchor-chip style="display:none">âncora</span></div>
+            <div class="muted cap">Windows · 100.101.44.7</div>
+            <table style="margin-top:8px">
+              <tr><td class="muted">Proxy</td><td data-proxy><span class="dot ok"></span>de pé</td></tr>
+              <tr><td class="muted">IP de casa</td><td class="mono">186.236.19.220 <span class="chip">igual</span></td></tr>
+              <tr><td class="muted">Gateway</td><td class="muted">nenhum (usa o da VPS)</td></tr>
+              <tr><td class="muted">Ligado</td><td><span class="dot ok"></span>24/7 · 6 dias sem parar</td></tr>
+            </table>
+            <div class="row" style="margin-top:8px"><span class="grow"></span><button class="primary" data-make="pc-24h">Tornar âncora</button></div>
+          </div>
+        </div>
+        <svg width="140" height="320" viewBox="0 0 140 320" aria-hidden="true">
+          <path id="b-line-top" d="M0 80 C 70 80, 70 110, 140 110" stroke="#e8b44c" stroke-width="2" fill="none"/>
+          <path id="b-line-top2" d="M0 80 C 70 80, 70 220, 140 220" stroke="#e8b44c" stroke-width="2" fill="none"/>
+          <path id="b-line-bot" d="M0 250 C 70 250, 70 110, 140 110" stroke="#28303b" stroke-width="2" fill="none" stroke-dasharray="4 4"/>
+          <path id="b-line-bot2" d="M0 250 C 70 250, 70 220, 140 220" stroke="#28303b" stroke-width="2" fill="none" stroke-dasharray="4 4"/>
+        </svg>
+        <div style="display:grid; gap:12px">
+          <div class="card"><div class="row"><b class="grow">Homologações</b><span data-vps class="chip"><span class="dot ok"></span>saindo</span></div>
+            <div class="muted cap">vps-time-homologacoes · relay 127.0.0.1:3128</div>
+            <div class="cap" style="margin-top:6px">Sai por <b data-via>seazone173</b> · <span class="mono">186.236.19.220</span></div>
+            <div class="muted cap">Direto seria 20.114.48.171 (Azure): bloqueado</div></div>
+          <div class="card"><div class="row"><b class="grow">VPS pessoal</b><span data-vps class="chip"><span class="dot ok"></span>saindo</span></div>
+            <div class="muted cap">vps-alexandrelentz · relay 127.0.0.1:3128</div>
+            <div class="cap" style="margin-top:6px">Sai por <b data-via>seazone173</b> · <span class="mono">186.236.19.220</span></div>
+            <div class="muted cap">Direto seria 20.59.28.197 (Azure): bloqueado</div></div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:16px">
+        <b>Trocas da âncora</b>
+        <table id="b-log" style="margin-top:6px">
+          <tr><th>Quando</th><th>De → para</th><th>Quem</th><th>Resultado</th></tr>
+          <tr><td class="mono">06/11 16:27</td><td>— → seazone173</td><td>instalação</td><td><span class="dot ok"></span>2 VPS</td></tr>
+        </table>
+      </div>
+    </main>
+  </div>
+  <div class="statusbar"><span>Donel Dev Alfa 26.1108.2000</span><span class="grow"></span><span>RAM 47%</span></div>
+</section>
+
+<!-- ================================================================= C -->
+<section class="proto-variant" data-variant="C" data-name="Chip na barra de status">
+  <div class="shell">
+    <aside class="side">
+      <div class="muted cap" style="margin-bottom:8px">PROJETOS</div>
+      <div class="item on">Donel Dev</div><div class="item">Homologação</div><div class="item">BizOps</div><div class="item">Seazone Studio</div>
+    </aside>
+    <main class="main">
+      <div id="c-banner"></div>
+      <div class="row" style="margin-bottom:12px"><h1 class="grow">Donel Dev · Mindscape</h1><button id="c-sim">Simular queda da âncora</button></div>
+      <div class="card" style="height:380px; position:relative; overflow:hidden">
+        <div class="muted cap">(quadro do projeto — só contexto)</div>
+        <div class="card" style="position:absolute; left:40px; top:60px; width:200px"><b>Líder do quadro</b><div class="muted cap">roda em Homologações · parado</div></div>
+        <div class="card" style="position:absolute; left:300px; top:150px; width:220px"><b>Dev · orquestradora</b><div class="muted cap">roda em Homologações · trabalhando</div></div>
+        <div class="card" style="position:absolute; left:560px; top:60px; width:200px"><b>Revisor</b><div class="muted cap">roda em Homologações · parado</div></div>
+      </div>
+    </main>
+  </div>
+  <div class="statusbar">
+    <span>Donel Dev Alfa 26.1108.2000</span><span class="grow"></span>
+    <span id="c-chip" class="chip" style="cursor:pointer"><span class="dot ok" id="c-dot"></span>Âncora: <b id="c-name">seazone173</b></span>
+    <span>RAM 47%</span>
+  </div>
+  <div id="c-pop" class="card" style="display:none; position:fixed; right:80px; bottom:36px; width:340px; z-index:20">
+    <b>Âncora do proxy</b>
+    <div class="muted cap" style="margin-bottom:8px">Por onde as VPS falam com a Anthropic. Sem âncora, elas param.</div>
+    <label class="row" style="height:32px"><input type="radio" name="c-a" value="seazone173" checked> <span class="grow">seazone173 · este computador</span><span class="dot ok"></span></label>
+    <label class="row" style="height:32px"><input type="radio" name="c-a" value="pc-24h"> <span class="grow">pc-24h · 24/7</span><span class="dot ok"></span></label>
+    <div class="muted cap" style="margin:6px 0">As duas saem por 186.236.19.220. Homologações e VPS pessoal trocam juntas.</div>
+    <div class="row"><span class="grow"></span><button id="c-close">Fechar</button><button class="primary" id="c-apply">Trocar</button></div>
+  </div>
+</section>
+
+<div class="modal-bg" id="confirm">
+  <div class="modal">
+    <h2 style="margin-bottom:8px">Trocar a âncora para <span id="m-target"></span>?</h2>
+    <div class="muted">As duas VPS reiniciam o relay (uns 5 s). O que estiver falando com a Anthropic nesse instante reconecta sozinho.</div>
+    <div class="banner warn" id="m-ipwarn" style="display:none; margin-top:12px">O IP de saída do PC novo é outro. Uma ferramenta que confere o IP pode pedir login de novo.</div>
+    <div class="row" style="margin-top:16px"><span class="grow"></span><button id="m-no">Cancelar</button><button class="primary" id="m-yes">Trocar</button></div>
+  </div>
+</div>
+
+<script>
+  // Navegação e estado visual apenas. Nada aqui fala com VPS de verdade.
+  var anchor = 'seazone173';
+  var pending = null, onConfirm = null;
+  function now() { var d = new Date(); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
+  function confirmSwitch(target, then) {
+    pending = target; onConfirm = then;
+    document.getElementById('m-target').textContent = target;
+    document.getElementById('confirm').classList.add('open');
+  }
+  document.getElementById('m-no').onclick = function () { document.getElementById('confirm').classList.remove('open'); };
+  document.getElementById('m-yes').onclick = function () { document.getElementById('confirm').classList.remove('open'); onConfirm && onConfirm(pending); };
+
+  // A
+  var aSel = document.getElementById('a-select'), aBtn = document.getElementById('a-apply');
+  aSel.onchange = function () { aBtn.disabled = aSel.value === anchor; };
+  aBtn.onclick = function () {
+    confirmSwitch(aSel.value, function (t) {
+      var box = document.getElementById('a-progress'); box.style.display = 'block';
+      document.getElementById('a-target').textContent = t;
+      var lis = box.querySelectorAll('li'); lis.forEach(function (li) { li.classList.remove('done'); li.querySelector('.dot').className = 'dot off'; });
+      lis.forEach(function (li, i) { setTimeout(function () { li.classList.add('done'); li.querySelector('.dot').className = 'dot ok'; if (i === lis.length - 1) finishA(t); }, 600 * (i + 1)); });
+    });
+  };
+  function finishA(t) {
+    anchor = t; aBtn.disabled = true;
+    ['a-h-via', 'a-p-via'].forEach(function (id) { document.getElementById(id).innerHTML = '<span class="dot ok"></span>' + t; });
+    ['a-h-since', 'a-p-since'].forEach(function (id) { document.getElementById(id).textContent = now(); });
+  }
+
+  // B
+  var bDown = false;
+  function paintB() {
+    ['seazone173', 'pc-24h'].forEach(function (pc) {
+      var card = document.getElementById('b-pc-' + pc);
+      card.querySelector('[data-anchor-chip]').style.display = pc === anchor ? '' : 'none';
+      var btn = card.querySelector('[data-make]');
+      btn.disabled = pc === anchor; btn.className = pc === anchor ? '' : 'primary';
+      btn.textContent = pc === anchor ? 'É a âncora' : 'Tornar âncora';
+      card.querySelector('[data-proxy]').innerHTML = (bDown && pc === anchor) ? '<span class="dot bad"></span>não responde há 2 min' : '<span class="dot ok"></span>de pé';
+    });
+    var top = anchor === 'seazone173';
+    var on = bDown ? '#f0684c' : '#e8b44c';
+    ['b-line-top', 'b-line-top2'].forEach(function (id) { var l = document.getElementById(id); l.setAttribute('stroke', top ? on : '#28303b'); l.setAttribute('stroke-dasharray', top ? '' : '4 4'); });
+    ['b-line-bot', 'b-line-bot2'].forEach(function (id) { var l = document.getElementById(id); l.setAttribute('stroke', top ? '#28303b' : on); l.setAttribute('stroke-dasharray', top ? '4 4' : ''); });
+    document.querySelectorAll('#b-pc-seazone173, #b-pc-pc-24h').forEach(function () {});
+    document.querySelectorAll('[data-via]').forEach(function (el) { el.textContent = anchor; });
+    document.querySelectorAll('[data-vps]').forEach(function (el) { el.innerHTML = bDown ? '<span class="dot bad"></span>parada' : '<span class="dot ok"></span>saindo'; });
+    var other = anchor === 'seazone173' ? 'pc-24h' : 'seazone173';
+    document.getElementById('b-banner').innerHTML = bDown
+      ? '<div class="banner bad"><span class="grow"><b>As VPS pararam:</b> a âncora ' + anchor + ' não responde. Nada saiu pela nuvem.</span><button class="primary" data-make="' + other + '">Passar para ' + other + '</button></div>'
+      : '';
+    bindMake();
+  }
+  function bindMake() {
+    document.querySelectorAll('section[data-variant="B"] [data-make]').forEach(function (btn) {
+      btn.onclick = function () {
+        var t = btn.getAttribute('data-make'); var from = anchor;
+        confirmSwitch(t, function () {
+          anchor = t; bDown = false; paintB();
+          var row = document.createElement('tr');
+          row.innerHTML = '<td class="mono">08/11 ' + now() + '</td><td>' + from + ' → ' + t + '</td><td>você</td><td><span class="dot ok"></span>2 VPS</td>';
+          document.getElementById('b-log').appendChild(row);
+        });
+      };
+    });
+  }
+  document.getElementById('b-sim').onclick = function () { bDown = !bDown; paintB(); };
+
+  // C
+  var cDown = false, pop = document.getElementById('c-pop');
+  document.getElementById('c-chip').onclick = function () { pop.style.display = pop.style.display === 'none' ? 'block' : 'none'; };
+  document.getElementById('c-close').onclick = function () { pop.style.display = 'none'; };
+  function paintC() {
+    document.getElementById('c-name').textContent = anchor;
+    document.getElementById('c-dot').className = 'dot ' + (cDown ? 'bad' : 'ok');
+    document.querySelectorAll('input[name="c-a"]').forEach(function (r) { r.checked = r.value === anchor; });
+    var other = anchor === 'seazone173' ? 'pc-24h' : 'seazone173';
+    document.getElementById('c-banner').innerHTML = cDown
+      ? '<div class="banner bad"><span class="dot bad"></span><span class="grow"><b>Sessões das VPS paradas.</b> A âncora ' + anchor + ' não responde desde ' + now() + '. Nada saiu pela nuvem.</span><button class="primary" id="c-swap">Passar para ' + other + '</button></div>'
+      : '';
+    var sw = document.getElementById('c-swap');
+    if (sw) sw.onclick = function () { confirmSwitch(other, function (t) { anchor = t; cDown = false; paintC(); }); };
+  }
+  document.getElementById('c-apply').onclick = function () {
+    var picked = document.querySelector('input[name="c-a"]:checked').value;
+    if (picked === anchor) { pop.style.display = 'none'; return; }
+    confirmSwitch(picked, function (t) { anchor = t; cDown = false; pop.style.display = 'none'; paintC(); });
+  };
+  document.getElementById('c-sim').onclick = function () { cDown = !cDown; paintC(); };
+
+  // Cada variante redesenha ao aparecer, com a âncora atual.
+  window.addEventListener('hashchange', function () { paintB(); paintC(); aSel.value = anchor; aBtn.disabled = true; });
+  paintB(); paintC();
+</script>
+
+<style>
+  .proto-variant { display: none; }
+  .proto-variant.proto-active { display: block; }
+  .proto-switcher {
+    position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 12px;
+    background: #111; color: #fff; padding: 8px 16px; border-radius: 999px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, .35); z-index: 9999;
+    font: 13px/1 system-ui, sans-serif; user-select: none;
+  }
+  .proto-switcher button { background: none; border: none; color: inherit; font-size: 16px; cursor: pointer; padding: 4px 8px; height: auto; }
+  .proto-switcher button:hover { color: #4fc3f7; }
+</style>
+<div class="proto-switcher">
+  <button type="button" data-proto-prev aria-label="Variante anterior">&#8592;</button>
+  <span data-proto-label></span>
+  <button type="button" data-proto-next aria-label="Próxima variante">&#8594;</button>
+</div>
+<script>
+  (function () {
+    var sections = Array.prototype.slice.call(document.querySelectorAll('.proto-variant'));
+    var keys = sections.map(function (s) { return s.dataset.variant; });
+    var label = document.querySelector('[data-proto-label]');
+    var current = 0;
+    function show(i) {
+      current = (i + keys.length) % keys.length;
+      sections.forEach(function (s, j) { s.classList.toggle('proto-active', j === current); });
+      var name = sections[current].dataset.name || '';
+      label.textContent = keys[current] + (name ? ' — ' + name : '');
+      location.hash = keys[current];
+      window.scrollTo(0, 0);
+    }
+    document.querySelector('[data-proto-prev]').addEventListener('click', function () { show(current - 1); });
+    document.querySelector('[data-proto-next]').addEventListener('click', function () { show(current + 1); });
+    document.addEventListener('keydown', function (e) {
+      var t = e.target;
+      if (t.matches && t.matches('input, textarea, select') || t.isContentEditable) return;
+      if (e.key === 'ArrowLeft') show(current - 1);
+      if (e.key === 'ArrowRight') show(current + 1);
+    });
+    var fromHash = keys.indexOf(location.hash.replace('#', ''));
+    show(fromHash >= 0 ? fromHash : 0);
+  })();
+</script>
+</body>
+</html>
