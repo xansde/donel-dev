@@ -1,0 +1,4 @@
+{
+  "title": "Sessão renovada várias vezes não perde as passagens antigas",
+  "text": "Quando uma aba renasce por contexto cheio pela segunda vez ou mais, a sessão nova lê primeiro a passagem atual e recebe a lista das passagens anteriores daquele lugar, da mais nova à mais velha, para abrir só se precisar do histórico. Antes ela só via a última passagem. Vale também nas VPS."
+}

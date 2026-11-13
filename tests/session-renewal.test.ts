@@ -7,6 +7,7 @@ import {
   renewalHandoffDeliveryNotice,
   type RenewalCheckInput,
 } from '../src/shared/sessionRenewal';
+import { createSessionRenewalService, type RenewalFs } from '../src/main/session-renewal';
 
 // Sessão renovada em voo (B36) — the two decisions that would end a process the
 // owner did not mean to end (or never end it). The card that keeps its place on the
@@ -86,5 +87,43 @@ describe('renewalHandoffDeliveryNotice — did the new session get the handoff?'
     const pending = renewalHandoffDeliveryNotice({ kind: 'enviando' }, path);
     expect(pending).toContain(path);
     expect(pending).not.toBeNull();
+  });
+});
+
+describe('prepare — a seat renewed more than once keeps the older handoffs', () => {
+  const memFs: RenewalFs = { mkdirSync: () => {}, writeFileSync: () => {}, readFileText: () => null };
+  let clock = Date.UTC(2026, 10, 10, 12, 0, 0);
+  let n = 0;
+  const service = createSessionRenewalService({ handoffsDir: '/home/atlas/handoffs', fs: memFs, now: () => (clock += 60_000), randomId: () => `r${++n}` });
+  const ask = (sessionId: string, openingHandoffPath?: string) => ({
+    sessionId,
+    transcriptPath: null,
+    cwd: '/home/atlas/seazone/beacon',
+    contextTokens: 260_000,
+    limitTokens: 250_000,
+    ...(openingHandoffPath ? { openingHandoffPath } : {}),
+  });
+
+  it('reads the current handoff first and lists the older ones, newest first, as optional history', () => {
+    const first = service.prepare(ask('aaaaaaaa-1111'));
+    expect(first.firstPrompt).not.toContain('histórico');
+    const second = service.prepare(ask('bbbbbbbb-2222', first.handoffPath));
+    const third = service.prepare(ask('cccccccc-3333', second.handoffPath));
+    expect(third.handoffChain).toEqual([third.handoffPath, second.handoffPath, first.handoffPath]);
+    const p = third.firstPrompt;
+    expect(p.indexOf(third.handoffPath)).toBeGreaterThan(-1);
+    expect(p.indexOf(third.handoffPath)).toBeLessThan(p.indexOf(second.handoffPath));
+    expect(p.indexOf(second.handoffPath)).toBeLessThan(p.indexOf(first.handoffPath));
+    expect(p).toContain('leia só se precisar do histórico deste lugar');
+  });
+
+  it('on a remote place the history is the paths ON the place, never the copies here', () => {
+    const remote = { sshTarget: 'vega', home: '/home/vega' };
+    const first = service.prepare(ask('dddddddd-4444'), remote);
+    // the chat knows the copy here; the new session on the place must read the place's file
+    const second = service.prepare(ask('eeeeeeee-5555', first.remote?.localCopyPath), remote);
+    expect(second.handoffChain).toEqual([second.handoffPath, first.handoffPath]);
+    expect(second.firstPrompt).toContain(first.handoffPath);
+    expect(second.firstPrompt).not.toContain(first.remote?.localCopyPath);
   });
 });
