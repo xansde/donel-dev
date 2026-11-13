@@ -82,13 +82,25 @@ describe('Líder único na VPS', () => {
     expect(sameFolder('/home/a', undefined)).toBe(false);
   });
 
+  it('o Líder único nasce na _orquestradora mesmo com um quadro na própria raiz ou em outra raiz (t-2456f611)', () => {
+    const auto = sanitizeLeaderPrefs({ where: 'auto' });
+    const orq = 'C:\\Users\\compu\\seazone\\_orquestradora';
+    const boards = ['C:\\Users\\compu\\seazone\\BizOps', 'C:\\Users\\compu\\seazone\\Donel Dev', 'C:\\Users\\compu\\seazone\\Homologação'];
+    // 13/11: o quadro da raiz (C:\Users\compu\seazone, onde o Líder único rodava) subia a pasta-mãe para C:\Users\compu.
+    expect(leaderCwd(auto, [...boards, 'C:\\Users\\compu\\seazone'], [orq])).toBe(orq);
+    expect(leaderCwd(auto, [...boards, 'D:\\outro\\x'], [orq])).toBe(orq);
+    expect(leaderMoveCwd(auto, [...boards, 'C:\\Users\\compu\\seazone'], [orq])).toBe(orq);
+    // Uma _orquestradora numa raiz sem quadro nenhum não é a do dono.
+    expect(leaderCwd(auto, boards, ['E:\\vazia\\_orquestradora'])).toBe('C:\\Users\\compu\\seazone');
+  });
+
   it('a pasta só leva o Líder vivo para a orquestradora ou para o leader.home; nunca de volta à pasta-mãe', () => {
     const auto = sanitizeLeaderPrefs({ where: 'auto' });
     const boards = ['/home/a/seazone/Donel Dev', '/home/a/seazone/BizOps'];
     const orq = '/home/a/seazone/_orquestradora';
     expect(leaderMoveCwd(auto, boards, [orq])).toBe(orq);
-    // Um quadro fora de ~/seazone muda a pasta-mãe: a orquestradora dela não existe, o Líder que está na _orquestradora fica.
-    expect(leaderMoveCwd(auto, [...boards, '/srv/outro'], [orq])).toBeUndefined();
+    // Um quadro fora de ~/seazone não tira o Líder da _orquestradora (t-2456f611: ela vem da raiz com os quadros).
+    expect(leaderMoveCwd(auto, [...boards, '/srv/outro'], [orq])).toBe(orq);
     // O statSync falhou uma vez (lista vazia): ninguém sai da _orquestradora para a pasta-mãe.
     expect(leaderMoveCwd(auto, boards, [])).toBeUndefined();
     expect(leaderMoveCwd(auto, [], [orq])).toBeUndefined();

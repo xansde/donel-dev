@@ -1,0 +1,1 @@
+{ "title": "Líder único abre na orquestradora de verdade", "text": "O Líder único passa a abrir sempre na pasta _orquestradora quando ela existe, mesmo que haja um quadro na própria pasta dos projetos ou fora dela. Antes, nesses casos, ele abria na sua pasta de usuário." }
