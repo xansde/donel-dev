@@ -370,6 +370,9 @@ aprovado, e tudo atrás de `chat.enabled` até a virada (Fase 7).
 - O vault `Claude Seazone/` segue intacto no PC, só como arquivo; `Privado/` nunca
   vai para o Hindsight. As filas `PROXIMO.md` e os `prompt.md` dos gatilhos acima
   ainda moram nele, só no PC (não estão no Hindsight nem na cópia da VPS).
+- As notas do vault importadas em 12/11 (`context.md`, `todo.md`, `log.md`,
+  `wiki-como-funciona.md`) seguem no Hindsight e a busca ainda devolve fatos
+  delas que mandam usar a wiki: são de antes de 12/11; vale o fato mais recente.
 
 ## Active Technologies
 - TypeScript 5.7 (main, preload e renderer), React 18.3.1, Node do Electron 43.2 + Electron 43.2, node-pty 1.1.0 (patch), @xterm/xterm 6.0.0; novas: react-markdown 10, remark-gfm 4, shiki 4 (núcleo + Oniguruma WASM) (014-chat)
