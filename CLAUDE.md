@@ -360,10 +360,16 @@ aprovado, e tudo atrás de `chat.enabled` até a virada (Fase 7).
 - **Alcance / hierarquia entre sessões** (dono, 04/11): dirigir outra sessão com poder de matar (hoje `sessao_fechar`) só com hierarquia — no quadro, abaixo pelas setas (direta ou em cadeia); entre quadros, só o Líder de um quadro com `reach: 'all'` (botão "Alcance" no Mindscape; ausente = só o próprio). O Líder que o dono pôs num quadro alcança **toda** sessão do próprio quadro, com ou sem seta (08/11), e qualquer sessão fala com ele por `"para": "lider-quadro"`. Duas setas opostas entre os mesmos dois lugares são duas ligações (ida e volta); o `schemaVersion` subiu para 7 por isso, porque o canal v6 apagava a seta de volta ao religar ligações (um `/clear` com post-it). A regra mora **só** em `src/shared/mindscape/reach.ts`; quem precisar de alcance reusa, não recria. O Líder único (aba marcada pelo Jobu, [ADR 0007](docs/adr/0007-lider-unico.md)) é um ramo dela: fica acima do topo de todo quadro, sem a marca "Alcance".
 - `mindscape.json`: campo novo no documento **sobe o `schemaVersion`**. O `parseMindscapeDoc` descarta o que não conhece e o `userData` é compartilhado entre canais, então um canal mais antigo gravaria por cima e apagaria o campo; com a versão maior ele fica read-only ([design do desenho](docs/design/mindscape-desenho.md)).
 
-## Vault
+## Memória (Hindsight) e vault
 
-Documentação viva em `Claude Seazone/Projects/donel-dev/` (context.md, todo.md).
-Atualizar ao concluir marcos.
+- Desde 12/11/2026 a memória do Líder e das sessões é o **Hindsight**, banco
+  `donel-lider`, na VPS pessoal (pedido do dono, 11/11): skill `memoria`
+  (`memoria buscar`, `memoria responder`, `memoria gravar`). Ao concluir um marco,
+  grave-o com `memoria gravar` (frase com data); não use `wiki-*-exec` nem
+  `/wiki synthesize`, e não atualize mais o `context.md`/`todo.md` do vault.
+- O vault `Claude Seazone/` segue intacto no PC, só como arquivo; `Privado/` nunca
+  vai para o Hindsight. As filas `PROXIMO.md` e os `prompt.md` dos gatilhos acima
+  ainda moram nele, só no PC (não estão no Hindsight nem na cópia da VPS).
 
 ## Active Technologies
 - TypeScript 5.7 (main, preload e renderer), React 18.3.1, Node do Electron 43.2 + Electron 43.2, node-pty 1.1.0 (patch), @xterm/xterm 6.0.0; novas: react-markdown 10, remark-gfm 4, shiki 4 (núcleo + Oniguruma WASM) (014-chat)
