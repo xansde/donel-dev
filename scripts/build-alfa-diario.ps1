@@ -71,7 +71,8 @@ try {
   $release = Join-Path $worktree 'release'
   $assets = @("DonelDevAlfa-Setup-$version.exe", "DonelDevAlfa-Setup-$version.exe.blockmap", 'latest.yml') | ForEach-Object { Join-Path $release $_ }
   foreach ($asset in $assets) { if (-not (Test-Path -LiteralPath $asset)) { throw "faltou no build: $asset" } }
-  gh release create "alfa-$version" @assets --repo "$owner/$repoName" --title "Alfa $version" --notes "staging $commit" --latest
+  # --target com o SHA completo: sem ele o gh cria a tag na ponta da main, não no commit buildado.
+  gh release create "alfa-$version" @assets --repo "$owner/$repoName" --target $commit --title "Alfa $version" --notes "staging $commit" --latest
   if ($LASTEXITCODE -ne 0) { throw "não consegui publicar a release alfa-$version" }
   # Guarda as 6 últimas versões no GitHub.
   $old = gh release list --repo "$owner/$repoName" --limit 100 --json tagName --jq '.[].tagName' | Where-Object { $_ -match '^alfa-\d+\.\d+\.\d+$' } | Sort-Object { [version]($_ -replace '^alfa-', '') } -Descending | Select-Object -Skip 6
