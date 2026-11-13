@@ -10,6 +10,7 @@ import {
   type SemaphoreMachineState,
 } from './semaphore-state-machine';
 import type { BridgeEvent, HookBridge } from './hook-bridge';
+import { signalIsStale } from '../shared/mindscape/sessionAxes';
 
 // T009 — camada de integração (I/O: servidor HTTP local + Maps + timer de
 // heurística) sobre a máquina de estados pura (semaphore-state-machine.ts).
@@ -52,6 +53,11 @@ export interface SemaphoreUpdate {
   readonly lastEventAt?: number;
   /** Tool calls still running, all origins summed; absent = none. */
   readonly openCalls?: number;
+  /**
+   * `working` with no hook for longer than `STALE_SIGNAL_MS` and no call running: the `Stop` may have been lost. The
+   * tick emits once when it turns on; the next hook clears it. The card of the board reads it as "desconhecido".
+   */
+  readonly signalStale?: true;
 }
 
 /**
@@ -145,6 +151,8 @@ export class SessionSemaphoreManager {
   private readonly turnFailureByPty = new Map<string, string>();
   /** Epoch ms of the last hook from each pty (see `SemaphoreUpdate.lastEventAt`). */
   private readonly lastEventAtByPty = new Map<string, number>();
+  /** Ptys whose last emitted update said `signalStale` (the tick emits only when this flips). */
+  private readonly staleSignalPtyIds = new Set<string>();
   private readonly listeners = new Set<(update: SemaphoreUpdate) => void>();
   /**
    * Emenda 22/09 (011-contas-e-provedores, etapa 3, Fase 2, item 4) —
@@ -239,6 +247,7 @@ export class SessionSemaphoreManager {
     this.heardPtyIds.delete(ptyId);
     this.turnFailureByPty.delete(ptyId);
     this.lastEventAtByPty.delete(ptyId);
+    this.staleSignalPtyIds.delete(ptyId);
     for (const [claudeSessionId, mappedPtyId] of this.sessionToPty) {
       if (mappedPtyId === ptyId) this.sessionToPty.delete(claudeSessionId);
     }
@@ -428,6 +437,7 @@ export class SessionSemaphoreManager {
   private tick(): void {
     const now = this.now();
     for (const [ptyId, current] of this.ptyState) {
+      if ((this.updateFor(ptyId, current).signalStale === true) !== this.staleSignalPtyIds.has(ptyId)) this.emit(ptyId);
       if (current.state !== 'working' || current.pendingToolSince === null) continue;
       if (!this.permissionPromptsPossible(ptyId)) continue;
       const recentLines = this.getRecentLines(ptyId);
@@ -463,6 +473,7 @@ export class SessionSemaphoreManager {
       ...(failure && publicState !== 'working' ? { turnFailure: failure } : {}),
       ...(lastEventAt !== undefined ? { lastEventAt } : {}),
       ...(openCalls > 0 ? { openCalls } : {}),
+      ...(publicState === 'working' && signalIsStale({ lastEventAt, openCalls, now: this.now() }) ? { signalStale: true as const } : {}),
     };
   }
 
@@ -470,6 +481,8 @@ export class SessionSemaphoreManager {
     const state = this.ptyState.get(ptyId);
     if (!state) return;
     const update = this.updateFor(ptyId, state);
+    if (update.signalStale) this.staleSignalPtyIds.add(ptyId);
+    else this.staleSignalPtyIds.delete(ptyId);
     for (const listener of this.listeners) listener(update);
   }
 }

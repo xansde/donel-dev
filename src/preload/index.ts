@@ -284,6 +284,7 @@ const donelApi: DonelApi = {
           ...(update.unconfirmed === true ? { unconfirmed: true } : {}),
           ...(update.pendingKinds && update.pendingKinds.length > 0 ? { pendingKinds: update.pendingKinds } : {}),
           ...(update.turnFailure ? { turnFailure: update.turnFailure } : {}),
+          ...(update.signalStale === true ? { signalStale: true } : {}),
         });
       };
       ipcRenderer.on(SEMAPHORE_CHANNELS.update, handler);

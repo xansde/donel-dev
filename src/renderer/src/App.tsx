@@ -2210,6 +2210,7 @@ export function App(): React.JSX.Element {
             ...(!semaphore || semaphore.unconfirmed ? { unconfirmed: true } : {}),
             ...(semaphore?.pendingKinds ? { pendingKinds: semaphore.pendingKinds } : {}),
             ...(semaphore?.turnFailure ? { turnFailure: semaphore.turnFailure } : {}),
+            ...(semaphore?.signalStale ? { signalStale: true } : {}),
             ...(tabLinkLost(tab.id) ? { linkLost: true } : {}),
             ...(engine ? { engine } : {}),
             ...(meter.usedTokens !== null ? { meter: { usedTokens: meter.usedTokens, maxTokens: meter.contextZone } } : {}),

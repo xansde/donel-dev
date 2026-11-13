@@ -37,6 +37,11 @@ export interface SessionAxesInput {
   readonly now?: number;
   /** Tool calls still running (any origin); a long build keeps the session "trabalhando". Absent = none. */
   readonly openCalls?: number;
+  /**
+   * The semaphore already read the signal as old (`SemaphoreUpdate.signalStale`): the same rule, judged by the main
+   * process on its own clock, for a reader that only hears updates (the card of the board).
+   */
+  readonly signalStale?: boolean;
   /** Remote session whose ssh dropped while its process lives on the place (main/remote-link.ts). */
   readonly linkLost?: boolean;
 }
@@ -52,7 +57,7 @@ export interface SessionAxes {
 /** A `working` with no hook for longer than this (and no call running) is no longer trusted. */
 export const STALE_SIGNAL_MS = 30 * 60_000;
 
-function signalIsStale(input: SessionAxesInput): boolean {
+export function signalIsStale(input: Pick<SessionAxesInput, 'lastEventAt' | 'now' | 'openCalls'>): boolean {
   if (input.lastEventAt === undefined || input.now === undefined) return false;
   return (input.openCalls ?? 0) === 0 && input.now - input.lastEventAt > STALE_SIGNAL_MS;
 }
@@ -68,7 +73,7 @@ export function deriveSessionAxes(input: SessionAxesInput): SessionAxes {
   let activity: ActivityAxis;
   if (process === 'fechada') activity = 'parada';
   else if (process === 'sem ligação' || input.state === undefined) activity = 'desconhecido'; // no hook can come through
-  else if (input.state === 'working') activity = input.unconfirmed || signalIsStale(input) ? 'desconhecido' : 'trabalhando';
+  else if (input.state === 'working') activity = input.unconfirmed || input.signalStale || signalIsStale(input) ? 'desconhecido' : 'trabalhando';
   else activity = 'parada';
 
   const resume: ResumeAxis =

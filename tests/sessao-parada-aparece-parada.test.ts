@@ -2,8 +2,9 @@
 // reopens, every session came back as working/unconfirmed until its first turn: an update waited on them and the
 // notices and the hand-over of tasks treated a live Líder as mute (`whoHears` wants a confirmed session).
 
-import { describe, expect, it } from 'vitest';
-import { SessionSemaphoreManager } from '../src/main/session-semaphore-manager';
+import { describe, expect, it, vi } from 'vitest';
+import { SessionSemaphoreManager, type SemaphoreUpdate } from '../src/main/session-semaphore-manager';
+import { STALE_SIGNAL_MS } from '../src/shared/mindscape/sessionAxes';
 import type { HookBridge } from '../src/main/hook-bridge';
 import { settledRemoteSessions, type RemoteHealthReport } from '../src/shared/health/remote';
 import type { RemoteSessionReading } from '../src/shared/health/remoteSessions';
@@ -136,5 +137,50 @@ describe('Jobu: a session found stopped is not a turn that ended', () => {
     let worked = reducePet(createPetState(), { type: 'sessions', sessions: [watched('working')] }, 0);
     worked = reducePet(worked, { type: 'sessions', sessions: [watched('waiting')] }, 1_000);
     expect(worked.bubble?.text).toMatch(/terminou/);
+  });
+});
+
+// OpenRig 4c4d0f8 — the card of the board reads "desconhecido" when a `working` session has sent no hook for a long
+// time and has no call running. The renderer only hears updates, so the semaphore itself says when the signal got old.
+describe('sessão trabalhando sem sinal há muito tempo avisa o quadro', () => {
+  it('the clock of the semaphore turns a silent working session into signalStale, and the next hook clears it', () => {
+    vi.useFakeTimers();
+    try {
+      const now = { at: 1_000 };
+      const { semaphore, hook } = manager(now);
+      const updates: SemaphoreUpdate[] = [];
+      semaphore.onUpdate((update) => updates.push(update));
+      hook('UserPromptSubmit');
+      expect(updates.at(-1)?.signalStale).toBeUndefined();
+      now.at += STALE_SIGNAL_MS + 1;
+      vi.advanceTimersByTime(60_000);
+      expect(updates.at(-1)).toMatchObject({ state: 'working', signalStale: true });
+      const count = updates.length;
+      vi.advanceTimersByTime(60_000);
+      expect(updates.length).toBe(count); // said once, not on every tick
+      hook('PreToolUse', { tool_name: 'Bash' });
+      expect(updates.at(-1)?.signalStale).toBeUndefined();
+      semaphore.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a long tool call still running keeps the session working', () => {
+    vi.useFakeTimers();
+    try {
+      const now = { at: 1_000 };
+      const { semaphore, hook } = manager(now);
+      const updates: SemaphoreUpdate[] = [];
+      semaphore.onUpdate((update) => updates.push(update));
+      hook('UserPromptSubmit');
+      hook('PreToolUse', { tool_name: 'Bash' });
+      now.at += STALE_SIGNAL_MS + 1;
+      vi.advanceTimersByTime(60_000);
+      expect(updates.some((update) => update.signalStale)).toBe(false);
+      semaphore.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
