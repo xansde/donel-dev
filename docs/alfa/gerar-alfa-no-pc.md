@@ -183,12 +183,36 @@ leva a antiga para a nova **sem sobrescrever nem duplicar** nada:
 - a pasta antiga só é lida, e rodar de novo não muda nada. Limite: um bloco de código (```` ``` ````) dentro do
   índice é lido linha a linha como texto comum.
 
-Primeiro, só o plano (não grava nada). O script vem da worktree que buildou o alfa (`origin/staging`, já com o
-#413); `$repo` é o do passo 1.3:
+Primeiro, ache o script. O alfa pode ter saído da VPS (skill `alfa-na-vps`), e aí o PC não tem a worktree
+`alfa-diario` em dia; por isso a busca vai em ordem, e o primeiro que existir vale (`$repo` é o do passo 1.3):
+
+1. o clone principal, `$repo\scripts\levar-memoria-lider.mjs` (existe quando a `staging` local já tem o #413);
+2. a worktree do alfa no PC, `$repo\.claude\worktrees\alfa-diario\scripts\levar-memoria-lider.mjs`;
+3. a `staging` no GitHub, baixada para uma pasta temporária. O script só importa módulos `node:` (nada local), então
+   o arquivo sozinho basta.
 
 ```powershell
-$script = "$repo\.claude\worktrees\alfa-diario\scripts\levar-memoria-lider.mjs"
-if (-not (Test-Path $script)) { throw 'script não encontrado: o alfa com o #413 ainda não foi buildado aqui' }
+$script = $null
+foreach ($candidate in @("$repo\scripts\levar-memoria-lider.mjs",
+                         "$repo\.claude\worktrees\alfa-diario\scripts\levar-memoria-lider.mjs")) {
+  if (Test-Path $candidate) { $script = $candidate; break }
+}
+if (-not $script) {
+  $dir = Join-Path $env:TEMP "levar-memoria-lider-$(Get-Date -Format yyyyMMddHHmmss)"
+  New-Item -ItemType Directory -Path $dir | Out-Null
+  $b64 = gh api "repos/xansde/donel-dev/contents/scripts/levar-memoria-lider.mjs?ref=staging" --jq .content
+  if ($LASTEXITCODE -ne 0 -or -not $b64) { throw 'script não encontrado no clone, na worktree alfa-diario nem na staging do GitHub' }
+  $text = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($b64 -join '')))
+  $script = Join-Path $dir 'levar-memoria-lider.mjs'
+  [IO.File]::WriteAllText($script, $text, (New-Object Text.UTF8Encoding($false)))
+}
+"Script usado: $script"   # diga ao dono qual dos três caminhos foi usado
+Select-String -Path $script -Pattern "^import .* from '(?!node:)" | ForEach-Object { throw "o script importa algo local: $($_.Line)" }
+```
+
+Depois, só o plano (não grava nada):
+
+```powershell
 $old = 'C:\Users\compu\.claude\projects\C--Users-compu-seazone\memory'
 $new = 'C:\Users\compu\.claude\projects\C--Users-compu-seazone--orquestradora\memory'
 node $script $old $new
@@ -210,5 +234,6 @@ nada foi acrescentado: o dono escolhe qual gancho fica (ou junta os dois) e edit
 
 Saída 2 (**GRAVAÇÃO PARCIAL**): uma gravação falhou no meio (sem permissão, arquivo aberto em outro programa). O
 relatório lista o que foi gravado e o que faltou; o `MEMORY.md` é sempre o último, então nenhuma linha nova aponta
-para arquivo que faltou. Corrija a causa e rode de novo com `--aplicar`: o já gravado aparece como igual e nada
-duplica.
+para arquivo que faltou. Cada arquivo é gravado num temporário ao lado (`<nome>.levando-<pid>`) e só renomeado
+quando completo, então uma escrita cortada no meio (disco cheio) não deixa o `MEMORY.md` pela metade: ele fica como
+estava. Corrija a causa e rode de novo com `--aplicar`: o já gravado aparece como igual e nada duplica.

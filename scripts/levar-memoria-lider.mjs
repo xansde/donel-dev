@@ -22,13 +22,16 @@
 //   quando a nova não tem esse texto (sem os espaços do fim). O que a nova já tinha fica byte a byte; o acrescentado
 //   vai no fim de linha dela, em UTF-8 sem BOM. MEMORY.md antigo que não é UTF-8 válido: PARADO, nada gravado;
 // - antes de gravar, confere cada destino (pasta que é arquivo, MEMORY.md que é pasta): um falhando, PARADO e nada
-//   gravado. Se mesmo assim uma gravação falhar no meio (permissão, arquivo preso), GRAVAÇÃO PARCIAL: lista o gravado
-//   e o que faltou e sai com 2; o MEMORY.md é o último, e rodar de novo depois de corrigir completa sem duplicar;
+//   gravado. Cada gravação vai a um temporário na mesma pasta (<destino>.levando-<pid>) e só então é renomeada para o
+//   destino: uma escrita cortada no meio (disco cheio, limite de tamanho) nunca deixa um MEMORY.md pela metade. Se
+//   mesmo assim uma gravação falhar (permissão, arquivo preso), o temporário é apagado e sai GRAVAÇÃO PARCIAL: lista
+//   o gravado e o que faltou e sai com 2; o MEMORY.md é o último, e rodar de novo depois de corrigir completa sem
+//   duplicar;
 // - link simbólico na pasta antiga não é seguido: aparece como ignorado;
 // - a pasta antiga só é lida; rodar de novo não muda nada. Limite: bloco de código (```) no índice é lido como texto.
 // Node puro, sem dependências: roda no PC antes de qualquer build.
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -227,6 +230,21 @@ function unwritable(target) {
 }
 
 /**
+ * Writes `target` whole or not at all: the bytes go to a temporary file in the same folder, renamed over `target` only
+ * once complete. A write cut midway removes the temporary file and throws; `target` keeps what it had.
+ */
+function writeWhole(target, write) {
+  const temporary = `${target}.levando-${process.pid}`;
+  try {
+    write(temporary);
+    renameSync(temporary, target);
+  } catch (error) {
+    rmSync(temporary, { force: true });
+    throw error;
+  }
+}
+
+/**
  * Plans and (with `apply`) carries the memory of `oldDir` into `newDir`. Never writes in `oldDir`; never overwrites a
  * file of `newDir` (only the index grows). Anything it cannot keep (`blocked`) stops everything: nothing is written.
  */
@@ -329,14 +347,14 @@ export function carryMemory(oldDir, newDir, { apply }) {
   if (applied) {
     // One at a time, the index last: a write that fails midway leaves no index line pointing to a missing file.
     const writes = [
-      ...toWrite.map(({ name, source, target }) => ({ name, run: () => copyFileSync(source, target), target })),
-      ...(index ? [{ name: INDEX, run: () => writeFileSync(newIndex, index.bytes), target: newIndex }] : []),
+      ...toWrite.map(({ name, source, target }) => ({ name, run: (to) => copyFileSync(source, to), target })),
+      ...(index ? [{ name: INDEX, run: (to) => writeFileSync(to, index.bytes), target: newIndex }] : []),
     ];
     const written = [];
     for (const [at, write] of writes.entries()) {
       try {
         mkdirSync(path.dirname(write.target), { recursive: true });
-        write.run();
+        writeWhole(write.target, write.run);
         written.push(write.name);
       } catch (error) {
         const why = error instanceof Error ? error.message : String(error);
@@ -421,6 +439,16 @@ function main(args) {
   return report.blocked ? 1 : 0;
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+/** The real path of a file (through symbolic links and junctions); the path itself when it cannot be resolved. */
+function realPath(file) {
+  try {
+    return realpathSync(file);
+  } catch {
+    return path.resolve(file);
+  }
+}
+
+// Run directly, also through a symbolic link or a junction: both sides compare by their real path.
+if (process.argv[1] && realPath(process.argv[1]) === realPath(fileURLToPath(import.meta.url))) {
   process.exitCode = main(process.argv.slice(2));
 }

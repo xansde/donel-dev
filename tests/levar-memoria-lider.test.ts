@@ -1,12 +1,16 @@
 // Memória do Líder no PC (#413, passo 6 de docs/alfa/gerar-alfa-no-pc.md): a memória do projeto antigo vai para a
 // pasta da orquestradora sem perder nada e sem duplicar nada (dono). É dado persistido do dono: o que se perdesse
 // aqui some da vista do Líder sem ninguém perceber.
+import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { carryMemory, formatReport, mergeMemoryIndex } from '../scripts/levar-memoria-lider.mjs';
+
+const SCRIPT = fileURLToPath(new URL('../scripts/levar-memoria-lider.mjs', import.meta.url));
 
 function dirs(): { old: string; next: string } {
   const root = mkdtempSync(join(tmpdir(), 'memoria-lider-'));
@@ -423,6 +427,49 @@ describe('Memória do Líder no PC — nada se perde, nada duplica', () => {
       expect(readFileSync(join(next, 'MEMORY.md'), 'utf8')).toBe('- [Z](z.md) — z\n- [A](a.md) — a\n- [X](sub/x.md) — x\n');
     },
   );
+
+  it.skipIf(process.platform === 'win32')(
+    'escrita cortada no meio do MEMORY.md (ulimit -f): o índice da nova fica inteiro, sem temporário, saída não 0; a 2ª rodada completa',
+    () => {
+      const { old, next } = dirs();
+      writeFileSync(join(old, 'MEMORY.md'), '- [B](b.md) — b\n');
+      const before = Array.from({ length: 60 }, (_, i) => `- [N${i}](n${i}.md) — nota ${i} da pasta nova\n`).join('');
+      writeFileSync(join(next, 'MEMORY.md'), before);
+      expect(Buffer.byteLength(before)).toBeGreaterThan(2048);
+      const run = (limit: string): ReturnType<typeof spawnSync> =>
+        spawnSync('bash', ['-c', `${limit}exec node "$0" "$1" "$2" --aplicar`, SCRIPT, old, next], { encoding: 'utf8' });
+
+      const cut = run('ulimit -f 1; ');
+
+      expect(cut.status).not.toBe(0);
+      expect(cut.stdout).toContain('GRAVAÇÃO PARCIAL');
+      expect(readFileSync(join(next, 'MEMORY.md'), 'utf8')).toBe(before);
+      expect(readdirSync(next).filter((name) => name.includes('.levando-'))).toEqual([]);
+
+      const again = run('');
+      expect(again.status).toBe(0);
+      expect(again.stdout).toContain('Gravado.');
+      expect(readFileSync(join(next, 'MEMORY.md'), 'utf8')).toBe(`${before}- [B](b.md) — b\n`);
+      expect(readdirSync(next).filter((name) => name.includes('.levando-'))).toEqual([]);
+    },
+  );
+
+  it.skipIf(process.platform === 'win32')('chamado por link simbólico: faz o trabalho e sai 0; sem trabalho, imprime o relatório (nunca sai calado)', () => {
+    const { old, next } = dirs();
+    writeFileSync(join(old, 'a.md'), 'a\n');
+    const bin = mkdtempSync(join(tmpdir(), 'memoria-lider-bin-'));
+    const link = join(bin, 'levar.mjs');
+    symlinkSync(SCRIPT, link);
+
+    const first = spawnSync(process.execPath, [link, old, next, '--aplicar'], { encoding: 'utf8' });
+    expect(first.status).toBe(0);
+    expect(readFileSync(join(next, 'a.md'), 'utf8')).toBe('a\n');
+    expect(first.stdout).toContain('Gravado.');
+
+    const second = spawnSync(process.execPath, [link, old, next, '--aplicar'], { encoding: 'utf8' });
+    expect(second.status).toBe(0);
+    expect(second.stdout).toContain('Nada a gravar');
+  });
 
   it.skipIf(process.platform === 'win32')('link simbólico na pasta antiga: não é seguido, e aparece como ignorado no relatório', () => {
     const { old, next } = dirs();
