@@ -99,7 +99,18 @@ function snapshotOf(value: unknown): LedgerSnapshot | null {
   return { doc: parseLedgerDoc(value.doc), readOnly: value.readOnly === true };
 }
 
-const UNREACHABLE = 'O Oráculo da VPS não respondeu; nada foi gravado. O PC mostra o último retrato só para ler até ela voltar.';
+/** The connection never opened (refused, no route, no name): the request did not leave, nothing was written. */
+function neverConnected(error: unknown): boolean {
+  const parts: unknown[] = [error];
+  if (isRecord(error) || error instanceof Error) parts.push((error as { cause?: unknown }).cause);
+  return parts.some((part) => {
+    if (!(part instanceof Error) && !isRecord(part)) return false;
+    const { code, message } = part as { code?: unknown; message?: unknown };
+    return /\b(ECONNREFUSED|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|EAI_AGAIN)\b/.test(`${typeof code === 'string' ? code : ''} ${typeof message === 'string' ? message : ''}`);
+  });
+}
+
+const UNREACHABLE ='O Oráculo da VPS não respondeu; nada foi gravado. O PC mostra o último retrato só para ler até ela voltar.';
 const MAX_INLINE_PROOF_BYTES = 5 * 1024 * 1024;
 
 export interface RemoteLedgerDeps {
@@ -202,8 +213,29 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
       return snapshot;
     },
     async apply(actor: LedgerActor, op: LedgerOp): Promise<LedgerApplyResult> {
-      const response = await call('POST', '/v1/apply', JSON.stringify({ actor, op }));
-      if (!response) return { ok: false, reason: UNREACHABLE };
+      const http = deps.http();
+      if (!http) {
+        setOnline(false);
+        return { ok: false, reason: UNREACHABLE };
+      }
+      const id = 'id' in op ? op.id : null;
+      const before = id ? JSON.stringify(cache?.doc.tasks[id] ?? null) : null;
+      // t-d7912fb9: the op went out and its answer was lost (network, or the timeout cutting the ~5 MB snapshot):
+      // the daemon may have written it. Never say "nada foi gravado" here — the session repeated `criar` and the
+      // task was born twice. An op on a task counts as written when the re-read task changed.
+      const unknown = async (what: string): Promise<LedgerApplyResult> => {
+        await service.refresh();
+        const after = id ? cache?.doc.tasks[id] : undefined;
+        if (after && JSON.stringify(after) !== before) return { ok: true, task: after };
+        return { ok: false, reason: `${what}: a operação pode ter sido gravada. Confira com ${id ? `tarefa_ver ${id}` : 'tarefa_listar'} antes de repetir.` };
+      };
+      let response: OracleResponseLike;
+      try {
+        response = await http('POST', '/v1/apply', JSON.stringify({ actor, op }));
+      } catch (error) {
+        setOnline(false);
+        return neverConnected(error) ? { ok: false, reason: UNREACHABLE } : unknown('O Oráculo da VPS não respondeu a tempo');
+      }
       const body = await readJson(response);
       if (response.status === 401) {
         setOnline(false);
@@ -213,15 +245,16 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
       // through); name the cause and the way out instead (the newer daemons answer `unknownOpReason` themselves).
       if (response.status === 400 && isRecord(body) && body.error === 'op malformada')
         return { ok: false, reason: `O Oráculo da VPS não conhece a operação "${op.op}" (respondeu "op malformada"): ele é de uma versão anterior à deste app. Na VPS, atualize-o com scripts/oraculo-vps.sh atualizar; nada foi gravado.` };
-      if (response.status !== 200 || !isRecord(body)) return { ok: false, reason: `O Oráculo da VPS recusou (${isRecord(body) && typeof body.error === 'string' ? body.error : response.status}); nada foi gravado.` };
+      if (response.status !== 200) return { ok: false, reason: `O Oráculo da VPS recusou (${isRecord(body) && typeof body.error === 'string' ? body.error : response.status}); nada foi gravado.` };
+      if (!isRecord(body)) return unknown('O Oráculo da VPS respondeu 200, mas a resposta não chegou inteira');
       if (body.ok !== true) return { ok: false, reason: typeof body.reason === 'string' ? body.reason : 'O Oráculo da VPS recusou.' };
       const snapshot = snapshotOf(body.snapshot);
-      const id = isRecord(body.task) && typeof body.task.id === 'string' ? body.task.id : null;
-      const task = id && snapshot ? snapshot.doc.tasks[id] : undefined;
+      const taskId = isRecord(body.task) && typeof body.task.id === 'string' ? body.task.id : null;
+      const task = taskId && snapshot ? snapshot.doc.tasks[taskId] : undefined;
       if (!snapshot || !task) {
         // Written on the VPS; the answer was odd: read it again.
         await service.refresh();
-        const again = id ? cache?.doc.tasks[id] : undefined;
+        const again = taskId ? cache?.doc.tasks[taskId] : undefined;
         return again ? { ok: true, task: again } : { ok: false, reason: 'O Oráculo da VPS gravou, mas a resposta veio estranha; confira com tarefa_listar.' };
       }
       accept(snapshot);
