@@ -9,7 +9,7 @@ import { fetchTranscriptFromRemote, sendTranscriptToRemote, type RemoteCommand }
 import { remoteAliveFromMeta, type RemoteSessionMeta } from '../src/main/remote-session';
 import { isValidLiderCarryPayload } from '../src/shared/lider/ipc';
 import { leaderCwd, leaderMoveCwd, leaderMoves, leaderRemoteId, sameFolder, sanitizeLeaderPrefs } from '../src/shared/leaderPrefs';
-import { leaderFolderMoveKey, planLeaderDelivery, startLeaderMove, type LeaderMoveDeps } from '../src/shared/lider/move';
+import { leaderFolderMoveKey, leaderLineRoute, planLeaderDelivery, startLeaderMove, type LeaderMoveDeps } from '../src/shared/lider/move';
 
 // Líder único na VPS (docs/planos/lider-na-vps.md): o que faria o Líder sumir ou perder a conversa sem o dono ver.
 const sid = '11111111-2222-4333-8444-555555555555';
@@ -314,6 +314,32 @@ describe('Líder único na VPS — a troca nunca fecha o Líder antigo antes do 
     move.enqueue('segunda');
     expect(await move.done).toBe('moved');
     expect(log).toEqual(['carry', 'open new', 'first new: oi', 'adopt new', 'close old', 'send new: segunda']);
+  });
+
+  it('aviso das sessões que chega durante a troca vai depois da primeira mensagem, na ordem, uma vez, a quem ficou', async () => {
+    const log: Log = [];
+    const notice = (text: string) => (tabId: string) => log.push(`aviso ${tabId}: ${text}`);
+    const move = startLeaderMove('old', 'oi', deps(log, {}));
+    move.enqueue('◆ De Dev: travada', notice('◆ De Dev: travada'));
+    move.enqueue('segunda');
+    move.enqueue('◆ não começou', notice('◆ não começou'));
+    expect(log.filter((line) => line.startsWith('aviso'))).toEqual([]);
+    expect(await move.done).toBe('moved');
+    expect(log).toEqual(['carry', 'open new', 'first new: oi', 'adopt new', 'close old', 'aviso new: ◆ De Dev: travada', 'send new: segunda', 'aviso new: ◆ não começou']);
+
+    const stayedLog: Log = [];
+    const stayed = startLeaderMove('old', 'oi', deps(stayedLog, { newTakes: false }));
+    stayed.enqueue('◆ aviso', (tabId) => stayedLog.push(`aviso ${tabId}`));
+    expect(await stayed.done).toBe('stayed');
+    expect(stayedLog.filter((line) => line.startsWith('send') || line.startsWith('aviso'))).toEqual(['send old: oi', 'aviso old']);
+  });
+
+  it('durante a troca, só a entrega à aba do Líder único vai para a fila; Líder de quadro e outras sessões recebem direto', () => {
+    expect(leaderLineRoute(true, { leaderOfAll: true })).toBe('fila');
+    expect(leaderLineRoute(true, { leaderOfAll: false })).toBe('direto');
+    expect(leaderLineRoute(true, {})).toBe('direto');
+    expect(leaderLineRoute(true, undefined)).toBe('direto');
+    expect(leaderLineRoute(false, { leaderOfAll: true })).toBe('direto');
   });
 
   it('a cópia falha: o Líder fica onde estava, com a conversa, e recebe as mensagens', async () => {

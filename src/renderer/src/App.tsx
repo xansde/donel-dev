@@ -91,7 +91,7 @@ import { useHillClimb } from './HillClimb/useHillClimb';
 import { MindscapeScreen, type MindscapeLiveSession } from './Mindscape/MindscapeScreen';
 import { sameSemaphoreInfo } from './sameSemaphoreInfo';
 import { useMindscapeDoc } from './Mindscape/useMindscapeDoc';
-import { AgentBridge, type AgentBridgePorts, type ReturnExpectation } from './Mindscape/agentBridge';
+import { AgentBridge, type AgentBridgePorts, type DeliveryOutcome, type ReturnExpectation } from './Mindscape/agentBridge';
 import type { FaxineiroLogEntry } from '../../shared/faxineiro/triggers';
 import { SpawnAskPanel, type SpawnAsk } from './Mindscape/SpawnAskPanel';
 import { appendConversation, findSessionBoard, placeSessionCards, roleOfSession, setBoardView, setPlaceConversation, writeSessionNote, type MindscapeDoc } from '../../shared/mindscape/model';
@@ -133,7 +133,7 @@ import { withNoPipelineTag } from '../../shared/chat/noPipeline';
 import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../shared/lider/ipc';
 import { isLeaderOfAllTab } from '../../shared/mindscape/leader';
 import { DEFAULT_LEADER_PREFS, leaderCwd, leaderMoveCwd, leaderRemoteId } from '../../shared/leaderPrefs';
-import { leaderFolderMoveKey, planLeaderDelivery, startLeaderMove, type LeaderMove, type LeaderMoveDeps } from '../../shared/lider/move';
+import { leaderFolderMoveKey, leaderLineRoute, planLeaderDelivery, startLeaderMove, type LeaderMove, type LeaderMoveDeps } from '../../shared/lider/move';
 import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
 import { TerminalPane } from './TerminalPane';
 import { PatchNotes } from './patchnotes/PatchNotes';
@@ -2652,6 +2652,14 @@ export function App(): React.JSX.Element {
   // the owner (one undoable gesture per batch) and opens tabs like a place of the board does.
   const [spawnAsks, setSpawnAsks] = useState<readonly SpawnAsk[]>([]);
   const pendingFirstMessagesRef = useRef<Record<string, string>>({});
+  /** A line of the bridge to the Líder único during its move: queued in the move (true), or not its business (false). */
+  const queueForLeaderMove = (tabId: string, text: string, deliver: (tabId: string) => void): boolean => {
+    const move = liderMoveRef.current;
+    const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
+    if (leaderLineRoute(move !== null, tab ? { leaderOfAll: isLeaderOfAllTab(tab) } : undefined) !== 'fila' || move === null) return false;
+    move.enqueue(text, deliver);
+    return true;
+  };
   const agentPorts: AgentBridgePorts = {
     loaded: mindscapeLoaded,
     doc: () => mindscape.doc,
@@ -2719,13 +2727,23 @@ export function App(): React.JSX.Element {
         );
       }),
     closeTab: (tabId) => closeTabImmediatelyRef.current(tabId),
-    sendLine: (tabId, text) => sendRenewalLine(tabId, text, 'session'),
+    // Every line of the bridge to the Líder único goes through these two doors. While a move of it lasts, a line to its
+    // tab waits in the move's queue and goes, in order, to whichever Líder is left (`leaderLineRoute`, 12/11).
+    sendLine: (tabId, text) => {
+      if (queueForLeaderMove(tabId, text, (to) => sendRenewalLine(to, text, 'session'))) return;
+      sendRenewalLine(tabId, text, 'session');
+    },
     deliverLine: (tabId, text, waitMs, from) => {
-      const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
-      if (tab !== undefined && hasChatView(tab, chatEnabled))
-        return sendToTabAndWait(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text: from === 'session' ? withNoPipelineTag(text) : text, from }, waitMs);
-      sendRenewalLine(tabId, text, from === 'session' ? 'session' : undefined);
-      return Promise.resolve({ kind: 'pelo-terminal' as const });
+      const deliver = (to: string): Promise<DeliveryOutcome> => {
+        const tab = tabsRef.current.find((candidate) => candidate.id === to);
+        if (tab !== undefined && hasChatView(tab, chatEnabled))
+          return sendToTabAndWait(to, { terminal: () => terminalRefs.current[to] ?? null }, { text: from === 'session' ? withNoPipelineTag(text) : text, from }, waitMs);
+        sendRenewalLine(to, text, from === 'session' ? 'session' : undefined);
+        return Promise.resolve({ kind: 'pelo-terminal' as const });
+      };
+      // Queued: the sender hears it is waiting in line (the move can take minutes, longer than its call may wait).
+      if (queueForLeaderMove(tabId, text, (to) => void deliver(to).catch(() => undefined))) return Promise.resolve({ kind: 'na-fila' as const });
+      return deliver(tabId);
     },
     permissionOnScreen: (tabId) => {
       const lines = terminalRefs.current[tabId]?.readScreen().lines;

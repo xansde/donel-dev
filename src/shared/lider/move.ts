@@ -102,19 +102,37 @@ export interface LeaderMoveDeps {
 }
 
 export interface LeaderMove {
-  /** A message that arrived during the move: it goes, in order, to whichever Líder is left. */
-  enqueue(text: string): void;
+  /**
+   * A message that arrived during the move: it goes, in order, to whichever Líder is left. `deliver` delivers it there
+   * the way its sender would have (a notice of the board's sessions, `leaderLineRoute`); without it, `deps.send`.
+   */
+  enqueue(text: string, deliver?: (tabId: string) => void): void;
   readonly done: Promise<'moved' | 'stayed'>;
+}
+
+/**
+ * Pure — where a line of the board's sessions to `tab` goes (12/11, Revisor do #413): while a move of the Líder único
+ * lasts, every line to its tab (the old one, or the new one not adopted yet) waits in the move's queue. Delivered
+ * straight, it would start a turn on the old tab that its close (or the respawn in the new folder) kills, and that the
+ * copied conversation never had. A Líder de quadro, or any other session, is not the one moving: it gets it at once.
+ */
+export function leaderLineRoute(moving: boolean, tab: { readonly leaderOfAll?: boolean } | undefined): 'fila' | 'direto' {
+  return moving && tab?.leaderOfAll === true ? 'fila' : 'direto';
 }
 
 /** Moves the Líder of `oldTabId`, carrying `firstText`. Never throws; never loses or repeats a message. */
 export function startLeaderMove(oldTabId: string, firstText: string, deps: LeaderMoveDeps): LeaderMove {
-  const queue: string[] = [];
+  const queue: { readonly text: string; readonly deliver: ((tabId: string) => void) | undefined }[] = [];
   let target: string | null = null;
+
+  const deliverTo = (tabId: string, text: string, deliver: ((tabId: string) => void) | undefined): void => {
+    if (deliver) deliver(tabId);
+    else deps.send(tabId, text);
+  };
 
   const flushTo = (tabId: string): void => {
     target = tabId;
-    for (const text of queue.splice(0)) deps.send(tabId, text);
+    for (const item of queue.splice(0)) deliverTo(tabId, item.text, item.deliver);
   };
 
   const stay = (reason: string, newTabId: string | null): 'stayed' => {
@@ -176,9 +194,9 @@ export function startLeaderMove(oldTabId: string, firstText: string, deps: Leade
   };
 
   return {
-    enqueue: (text) => {
-      if (target !== null) deps.send(target, text);
-      else queue.push(text);
+    enqueue: (text, deliver) => {
+      if (target !== null) deliverTo(target, text, deliver);
+      else queue.push({ text, deliver });
     },
     done: run(),
   };
