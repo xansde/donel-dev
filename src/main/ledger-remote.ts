@@ -13,7 +13,7 @@
 
 import { createHash, randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
-import { emptyLedgerDoc, isHttpUrl, parseLedgerDoc, type LedgerActor, type LedgerDoc, type LedgerOp, type LedgerProof } from '../shared/ledger/contract';
+import { emptyLedgerDoc, isHttpUrl, parseLedgerDoc, sameActor, type LedgerActor, type LedgerDoc, type LedgerEventKind, type LedgerOp, type LedgerProof } from '../shared/ledger/contract';
 import type { LedgerApplyResult, LedgerSnapshot } from '../shared/ledger/channels';
 import { checkLedgerImport, ledgerProofFiles, sameLedger } from '../shared/ledger/remote-import';
 import type { ConfigIoDeps } from './config-store';
@@ -110,7 +110,24 @@ function neverConnected(error: unknown): boolean {
   });
 }
 
-const UNREACHABLE ='O Oráculo da VPS não respondeu; nada foi gravado. O PC mostra o último retrato só para ler até ela voltar.';
+const UNREACHABLE = 'O Oráculo da VPS não respondeu; nada foi gravado. O PC mostra o último retrato só para ler até ela voltar.';
+/** The event kinds each op on an existing task appends (contract.ts `applyLedgerOp`); the ops left out cannot be proven. */
+const OP_EVENT_KINDS: Partial<Record<LedgerOp['op'], readonly LedgerEventKind[]>> = {
+  assumir: ['assumida'],
+  entregar: ['entregue'],
+  aceitar: ['aceita', 'conferida'],
+  'decidir-outra': ['aceita', 'rejeitada'],
+  rejeitar: ['rejeitada'],
+  cancelar: ['rejeitada'],
+  comentar: ['comentada'],
+  andamento: ['comentada'],
+  transferir: ['criada'],
+  frente: ['criada'],
+  priorizar: ['criada'],
+  'slack-enviada': ['enviada'],
+  'slack-resultado': ['enviada'],
+};
+
 const MAX_INLINE_PROOF_BYTES = 5 * 1024 * 1024;
 
 export interface RemoteLedgerDeps {
@@ -219,14 +236,17 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
         return { ok: false, reason: UNREACHABLE };
       }
       const id = 'id' in op ? op.id : null;
-      const before = id ? JSON.stringify(cache?.doc.tasks[id] ?? null) : null;
+      const seen = id ? cache?.doc.tasks[id]?.events.length : undefined;
       // t-d7912fb9: the op went out and its answer was lost (network, or the timeout cutting the ~5 MB snapshot):
       // the daemon may have written it. Never say "nada foi gravado" here — the session repeated `criar` and the
-      // task was born twice. An op on a task counts as written when the re-read task changed.
+      // task was born twice. Nor "gravado" because the task changed: another session's `andamento` changes it too.
+      // It counts as written only when the re-read task has a new event of the kind this op appends, by this actor.
       const unknown = async (what: string): Promise<LedgerApplyResult> => {
         await service.refresh();
+        const kinds = OP_EVENT_KINDS[op.op];
         const after = id ? cache?.doc.tasks[id] : undefined;
-        if (after && JSON.stringify(after) !== before) return { ok: true, task: after };
+        if (after && kinds && seen !== undefined && after.events.slice(seen).some((event) => kinds.includes(event.kind) && sameActor(event.by, actor)))
+          return { ok: true, task: after };
         return { ok: false, reason: `${what}: a operação pode ter sido gravada. Confira com ${id ? `tarefa_ver ${id}` : 'tarefa_listar'} antes de repetir.` };
       };
       let response: OracleResponseLike;

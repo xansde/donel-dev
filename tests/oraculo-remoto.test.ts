@@ -163,8 +163,13 @@ describe('Oráculo na VPS — o PC em modo remoto', { timeout: 30_000 }, () => {
     const pc = await pcWithLedger();
     const remote = vps();
     await moveLedgerToRemote({ http: remote.http, ledgerFile: pc.file, io, proofFs: nodeLedgerProofFs, marker });
-    let cut: 'corpo' | 'rede' = 'corpo';
+    let cut: 'corpo' | 'rede' | 'antes' = 'antes';
     const slow: OracleHttp = async (method, path, body) => {
+      if (path === '/v1/apply' && cut === 'antes') {
+        // The op never reaches the daemon, while another session writes on the same task: that is not "gravado".
+        await remote.ledger.apply(DEV, { op: 'andamento', id: pc.id, progress: { estado: 'trabalhando', proximo: 'outro escritor' } });
+        throw new Error('The operation was aborted due to timeout');
+      }
       const response = await remote.http(method, path, body);
       if (path !== '/v1/apply') return response;
       if (cut === 'rede') throw new Error('The operation was aborted due to timeout');
@@ -173,6 +178,11 @@ describe('Oráculo na VPS — o PC em modo remoto', { timeout: 30_000 }, () => {
     const service = createRemoteLedgerService({ http: () => slow, ledgerFile: pc.file, io, proofFs: nodeLedgerProofFs, marker });
     expect(await service.refresh()).toBe(true);
 
+    const lost = await service.apply({ kind: 'dono' }, { op: 'aceitar', id: pc.id });
+    expect(JSON.parse(readFileSync(remote.file, 'utf8')).tasks[pc.id].state).toBe('entregue');
+    expect(lost).toMatchObject({ ok: false, reason: expect.stringMatching(new RegExp(`pode ter sido gravada.*tarefa_ver ${pc.id}`, 's')) });
+
+    cut = 'corpo';
     const created = await service.apply(LIDER, { op: 'criar', projectPath: '/p', request: 'nova', doneWhen: 'x', due: '2026-11-10', ownerPlaceId: 'place:dev', risk: 'baixo' });
     expect(Object.keys(JSON.parse(readFileSync(remote.file, 'utf8')).tasks)).toHaveLength(2);
     expect(created).toMatchObject({ ok: false, reason: expect.stringMatching(/pode ter sido gravada.*tarefa_listar/s) });
