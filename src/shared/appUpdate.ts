@@ -13,7 +13,7 @@ export const APP_UPDATE_CHANNELS = {
   get: 'appUpdate:get',
   /** main -> renderer, when the status changes (check, download progress, ready, error). */
   changed: 'appUpdate:changed',
-  /** invoke(tabs: ResumeTab[]) -> `AppUpdateApplyResult`. On `ok` the app restarts into the new version. */
+  /** invoke(tabs: ResumeTab[], remotes: ResumeRemote[]) -> `AppUpdateApplyResult`. On `ok` the app restarts into the new version. */
   apply: 'appUpdate:apply',
   /** invoke -> `AppUpdateBoot`: the tabs to reopen and the error of a failed update, once (the file is deleted). */
   takeBoot: 'appUpdate:takeBoot',
@@ -36,12 +36,21 @@ export interface AppUpdateStatus {
   readonly available: AppUpdateAvailable | null;
   /** The last check or download failed (e.g. `gh` not logged in): shown quietly, with "tentar de novo". */
   readonly failure: string | null;
+  /**
+   * Sessão durável (dono, 12/11) — how long "Atualizar" waits for the sessions in a turn before restarting anyway
+   * (`appUpdate.forceAfterMinutes` of the config, 5 min by default). They come back on the same conversation.
+   */
+  readonly forceAfterMs: number;
 }
+
+export const DEFAULT_FORCE_AFTER_MINUTES = 5;
 
 export type AppUpdateApplyResult = { readonly ok: true } | { readonly ok: false; readonly message: string };
 
 export interface AppUpdateBoot {
   readonly tabs: readonly ResumeTab[];
+  /** The sessions on a remote place that were open: they reattach by themselves; listed so the Líder hears who did not. */
+  readonly remotes: readonly ResumeRemote[];
   /** The installer failed and the old version was opened again: what went wrong. */
   readonly failure: string | null;
 }
@@ -49,7 +58,7 @@ export interface AppUpdateBoot {
 export interface DonelAppUpdateApi {
   get(): Promise<AppUpdateStatus>;
   onChanged(listener: (status: AppUpdateStatus) => void): () => void;
-  apply(tabs: readonly ResumeTab[]): Promise<AppUpdateApplyResult>;
+  apply(tabs: readonly ResumeTab[], remotes: readonly ResumeRemote[]): Promise<AppUpdateApplyResult>;
   takeBoot(): Promise<AppUpdateBoot>;
   check(): Promise<void>;
 }
@@ -88,6 +97,32 @@ export function updateReadiness(sessions: readonly UpdateSessionInput[]): Update
   return { ready: working === 0 && waitingOnYou === 0, working, waitingOnYou };
 }
 
+/** The sessions in the middle of a turn (the same count as `working`): each is asked to close it and save its state. */
+export function sessionsToWarn(sessions: readonly (UpdateSessionInput & { readonly id: string })[]): string[] {
+  return sessions.filter((session) => updateReadiness([session]).working > 0).map((session) => session.id);
+}
+
+export interface UpdateGo {
+  readonly go: boolean;
+  /** Going with sessions still busy: the deadline passed (they come back on the same conversation). */
+  readonly forced: boolean;
+  readonly remainingMs: number;
+}
+
+/**
+ * Sessão durável (dono, 12/11: "dar um tempo limite para reinicialização do sistema se elas não ficarem disponíveis
+ * logo") — the update goes when every session is free, or when `forceAfterMs` has passed since the click.
+ */
+export function updateGo(
+  readiness: UpdateReadiness,
+  timing: { readonly requestedAt: number; readonly now: number; readonly forceAfterMs: number; readonly readyForMs: number },
+): UpdateGo {
+  const remainingMs = Math.max(0, timing.requestedAt + timing.forceAfterMs - timing.now);
+  // Between the end of a turn and the turn the notice opens, every session looks free for an instant: hold a little.
+  if (readiness.ready && timing.readyForMs >= UPDATE_READY_HOLD_MS) return { go: true, forced: false, remainingMs };
+  return remainingMs === 0 ? { go: true, forced: true, remainingMs } : { go: false, forced: false, remainingMs };
+}
+
 // ---------------------------------------------------------------------------
 // The tabs to reopen after the update
 // ---------------------------------------------------------------------------
@@ -123,16 +158,28 @@ export interface ResumeTab {
   readonly active?: boolean;
 }
 
+/**
+ * A session on a remote place that was open when the app closed. It keeps running there and reattaches on the next
+ * boot (`pty.remoteAlive`); it is kept apart from `tabs` so an older build never spawns it here.
+ */
+export interface ResumeRemote {
+  readonly remoteId: string;
+  readonly sessionId: string;
+  readonly name: string;
+  readonly cwd?: string;
+}
+
 export interface ResumeFile {
   readonly version: number;
   /** `alfa` | `beta` | `stable` | `dev`: the channels share `userData`, only the one that closed restores. */
   readonly channel: string;
   readonly writtenAt: number;
   readonly tabs: readonly ResumeTab[];
+  readonly remotes?: readonly ResumeRemote[];
 }
 
-export function serializeResumeFile(channel: string, tabs: readonly ResumeTab[], now: number): string {
-  const file: ResumeFile = { version: RESUME_FILE_VERSION, channel, writtenAt: now, tabs };
+export function serializeResumeFile(channel: string, tabs: readonly ResumeTab[], now: number, remotes: readonly ResumeRemote[] = []): string {
+  const file: ResumeFile = { version: RESUME_FILE_VERSION, channel, writtenAt: now, tabs, ...(remotes.length > 0 ? { remotes } : {}) };
   return `${JSON.stringify(file, null, 2)}\n`;
 }
 
@@ -174,17 +221,66 @@ function parseResumeTab(value: unknown): ResumeTab | null {
  * tab is skipped without taking the others with it.
  */
 export function parseResumeFile(text: string | null, options: { readonly channel: string; readonly now: number }): readonly ResumeTab[] {
-  if (text === null) return [];
+  return parseResume(text, options).tabs;
+}
+
+function parseResumeRemote(value: unknown): ResumeRemote | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const remoteId = optionalString(raw.remoteId);
+  const sessionId = optionalString(raw.sessionId);
+  if (!remoteId || !sessionId || typeof raw.name !== 'string') return null;
+  const cwd = optionalString(raw.cwd);
+  return { remoteId, sessionId, name: raw.name, ...(cwd ? { cwd } : {}) };
+}
+
+/** `parseResumeFile` with the remote sessions too; the same checks (channel, age, format) drop both. */
+export function parseResume(
+  text: string | null,
+  options: { readonly channel: string; readonly now: number },
+): { readonly tabs: readonly ResumeTab[]; readonly remotes: readonly ResumeRemote[] } {
+  const none = { tabs: [], remotes: [] };
+  if (text === null) return none;
   let parsed: unknown;
   try {
     parsed = JSON.parse(text.replace(/^﻿/, ''));
   } catch {
-    return [];
+    return none;
   }
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return [];
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return none;
   const file = parsed as Record<string, unknown>;
-  if (file.version !== RESUME_FILE_VERSION || file.channel !== options.channel) return [];
-  if (typeof file.writtenAt !== 'number' || options.now - file.writtenAt > RESUME_MAX_AGE_MS || file.writtenAt - options.now > 60_000) return [];
-  if (!Array.isArray(file.tabs)) return [];
-  return file.tabs.map(parseResumeTab).filter((tab): tab is ResumeTab => tab !== null);
+  if (file.version !== RESUME_FILE_VERSION || file.channel !== options.channel) return none;
+  if (typeof file.writtenAt !== 'number' || options.now - file.writtenAt > RESUME_MAX_AGE_MS || file.writtenAt - options.now > 60_000) return none;
+  if (!Array.isArray(file.tabs)) return none;
+  const remotes = Array.isArray(file.remotes) ? file.remotes.map(parseResumeRemote).filter((remote): remote is ResumeRemote => remote !== null) : [];
+  return { tabs: file.tabs.map(parseResumeTab).filter((tab): tab is ResumeTab => tab !== null), remotes };
 }
+
+/**
+ * A conversation opened but never written to has no transcript: `claude -r <id>` would answer "No conversation found"
+ * and exit. It starts again under the same id (`--session-id`), so its place on the Mindscape keeps the same thread.
+ */
+export function resumeArgsFor(launchArgs: readonly string[], sessionId: string, transcriptExists: boolean): string[] {
+  const args = [...launchArgs];
+  if (transcriptExists) return args;
+  const index = args.indexOf('-r');
+  if (index === -1 || args[index + 1] !== sessionId) return args;
+  args.splice(index, 2, '--session-id', sessionId);
+  return args;
+}
+
+/**
+ * The other way, at each spawn: a tab that came back with `--session-id <id>` keeps that argv, and once the
+ * conversation has a transcript a respawn (Reabrir) must resume it (`-r <id>`): the CLI refuses a `--session-id` in use.
+ */
+export function respawnArgsFor(launchArgs: readonly string[], transcriptExists: (sessionId: string) => boolean): readonly string[] {
+  const index = launchArgs.indexOf('--session-id');
+  const sessionId = index !== -1 ? launchArgs[index + 1] : undefined;
+  if (!sessionId || launchArgs.includes('-r') || !transcriptExists(sessionId)) return launchArgs;
+  const args = [...launchArgs];
+  args.splice(index, 2, '-r', sessionId);
+  return args;
+}
+
+/** A session freshly free is held this long before the update goes: the warned one may be opening its saving turn. */
+export const UPDATE_READY_HOLD_MS = 5_000;

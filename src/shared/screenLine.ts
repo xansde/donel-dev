@@ -17,6 +17,12 @@ export type DimMask = readonly DimRange[] | readonly boolean[];
 export interface ScreenLine {
   readonly text: string;
   readonly dim: DimMask;
+  /**
+   * Read from the buffer's cells only: whether the line's last non-blank cell is the row's last column. `text` drops the
+   * trailing blanks, and a wide char takes two columns, so its length says nothing about the right margin (tmux draws
+   * its copy-mode position there; 4ª rodada do #414). Absent = not known.
+   */
+  readonly toLastColumn?: boolean;
 }
 
 /** Detectors accept plain strings (legacy callers, no dim information) or `ScreenLine`s. */

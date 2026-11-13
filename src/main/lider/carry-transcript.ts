@@ -38,3 +38,9 @@ export function carryTranscriptLocally(source: string, dest: string): 'carried' 
   renameSync(tmp, dest);
   return 'carried';
 }
+
+/** Copies the largest existing copy among `sources` to `dest` (the Líder changes folder on this computer, 12/11). */
+export function carryLargestTranscript(sources: readonly (string | undefined)[], dest: string): 'carried' | 'kept' | 'missing' {
+  const source = largestTranscript(sources);
+  return source ? carryTranscriptLocally(source.path, dest) : 'missing';
+}

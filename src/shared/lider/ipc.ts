@@ -54,6 +54,8 @@ export interface LiderCarryPayload {
   readonly cwd?: string;
   readonly from?: string;
   readonly to?: string;
+  /** The folder the Líder opens in at `to`, when it changes (the orchestrator's project, 12/11). Absent = `cwd`. */
+  readonly toCwd?: string;
 }
 
 export const EMPTY_LIDER_REPORT: LiderReport = { tabId: null, ptyId: null, name: null, roleAvailable: false };
@@ -90,7 +92,8 @@ export function isValidLiderCarryPayload(value: unknown): value is LiderCarryPay
     /^[A-Za-z0-9-]{1,64}$/.test(value.sessionId) &&
     (value.cwd === undefined || (typeof value.cwd === 'string' && value.cwd.length > 0 && value.cwd.length <= 4096)) &&
     optionalId(value.from) &&
-    optionalId(value.to)
+    optionalId(value.to) &&
+    (value.toCwd === undefined || (typeof value.toCwd === 'string' && value.toCwd.length > 0 && value.toCwd.length <= 1000))
   );
 }
 

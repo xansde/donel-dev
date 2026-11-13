@@ -1,0 +1,1 @@
+{ "title": "Pedido entre sessões abre com a tarefa", "text": "Quando uma sessão manda trabalho a outra dizendo de qual tarefa se trata, a mensagem chega começando pela tarefa: o código, o título e o objetivo em uma frase, antes do resto do pedido, que segue igual." }

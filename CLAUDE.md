@@ -32,6 +32,28 @@ via `CLAUDE_CONFIG_DIR`.
   A bateria manual no alfa passa a ser validação **depois** do merge, não
   pré-requisito. Sempre `gh pr merge --merge`, nunca `--admin`. `main` e o
   repo público seguem no bloqueio total do bullet acima.
+- **Mesclou na `staging` → atualize o clone principal antes de remover a
+  worktree (12/11)**: quem mescla o PR (o Revisor, ou o Dev quando for ele),
+  no clone principal da máquina, ANTES de remover a worktree, faz a `staging`
+  local andar, sem trocar de branch:
+  - `git -C <clone> branch --show-current` dá `staging`: `git -C <clone> fetch
+    origin && git -C <clone> pull --ff-only origin staging`.
+  - Dá outra branch ou nada (HEAD solto): `git -C <clone> fetch origin
+    staging:staging` (só avança se for fast-forward). Nunca o `pull` aqui: ele
+    avança a branch em que o clone estiver, sai sem erro e a `staging` local
+    fica parada.
+  - Prova: `git -C <clone> rev-parse staging origin/staging` dá o mesmo hash.
+    Se o fetch ou o pull recusar, não force: avise o Líder do quadro.
+  O coletor de uso de IA julga o código escrito numa worktree pela cópia do
+  clone principal: a pasta de trabalho, ou a branch padrão do remoto. Clone
+  parado (em 12/11: HEAD solto desde 07/11, 428 commits atrás na VPS pessoal e
+  636 na Homologações) fez ~23 mil linhas escritas na semana creditarem ~5,5
+  mil. Clone fora da `staging` (feature ou HEAD solto) não credita nem com a
+  `staging` local em dia: avise o Líder do quadro para quem trabalha nele
+  voltar à `staging`. Nunca `reset`, `checkout --` nem `stash pop` sobre
+  arquivos sujos de outras sessões. Vale nas 2 VPS e no PC, onde o clone
+  principal é o checkout do dono: lá, o mesmo procedimento, sem trocar a branch
+  dele.
 - **Canais instalados coexistindo (decisão de 2026-07-28)**: `npm run
   dist:alfa` / `dist:beta` / `dist` empacotam com identidade própria de
   INSTALADOR (`appId`/`productName`/atalho "Donel Dev Alfa"/"Donel Dev
@@ -338,10 +360,19 @@ aprovado, e tudo atrás de `chat.enabled` até a virada (Fase 7).
 - **Alcance / hierarquia entre sessões** (dono, 04/11): dirigir outra sessão com poder de matar (hoje `sessao_fechar`) só com hierarquia — no quadro, abaixo pelas setas (direta ou em cadeia); entre quadros, só o Líder de um quadro com `reach: 'all'` (botão "Alcance" no Mindscape; ausente = só o próprio). O Líder que o dono pôs num quadro alcança **toda** sessão do próprio quadro, com ou sem seta (08/11), e qualquer sessão fala com ele por `"para": "lider-quadro"`. Duas setas opostas entre os mesmos dois lugares são duas ligações (ida e volta); o `schemaVersion` subiu para 7 por isso, porque o canal v6 apagava a seta de volta ao religar ligações (um `/clear` com post-it). A regra mora **só** em `src/shared/mindscape/reach.ts`; quem precisar de alcance reusa, não recria. O Líder único (aba marcada pelo Jobu, [ADR 0007](docs/adr/0007-lider-unico.md)) é um ramo dela: fica acima do topo de todo quadro, sem a marca "Alcance".
 - `mindscape.json`: campo novo no documento **sobe o `schemaVersion`**. O `parseMindscapeDoc` descarta o que não conhece e o `userData` é compartilhado entre canais, então um canal mais antigo gravaria por cima e apagaria o campo; com a versão maior ele fica read-only ([design do desenho](docs/design/mindscape-desenho.md)).
 
-## Vault
+## Memória (Hindsight) e vault
 
-Documentação viva em `Claude Seazone/Projects/donel-dev/` (context.md, todo.md).
-Atualizar ao concluir marcos.
+- Desde 12/11/2026 a memória do Líder e das sessões é o **Hindsight**, banco
+  `donel-lider`, na VPS pessoal (pedido do dono, 11/11): skill `memoria`
+  (`memoria buscar`, `memoria responder`, `memoria gravar`). Ao concluir um marco,
+  grave-o com `memoria gravar` (frase com data); não use `wiki-*-exec` nem
+  `/wiki synthesize`, e não atualize mais o `context.md`/`todo.md` do vault.
+- O vault `Claude Seazone/` segue intacto no PC, só como arquivo; `Privado/` nunca
+  vai para o Hindsight. As filas `PROXIMO.md` e os `prompt.md` dos gatilhos acima
+  ainda moram nele, só no PC (não estão no Hindsight nem na cópia da VPS).
+- As notas do vault importadas em 12/11 (`context.md`, `todo.md`, `log.md`,
+  `wiki-como-funciona.md`) seguem no Hindsight e a busca ainda devolve fatos
+  delas que mandam usar a wiki: são de antes de 12/11; vale o fato mais recente.
 
 ## Active Technologies
 - TypeScript 5.7 (main, preload e renderer), React 18.3.1, Node do Electron 43.2 + Electron 43.2, node-pty 1.1.0 (patch), @xterm/xterm 6.0.0; novas: react-markdown 10, remark-gfm 4, shiki 4 (núcleo + Oniguruma WASM) (014-chat)

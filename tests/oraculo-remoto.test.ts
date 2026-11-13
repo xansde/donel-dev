@@ -158,6 +158,46 @@ describe('Oráculo na VPS — o PC em modo remoto', { timeout: 30_000 }, () => {
     expect(refused).toMatchObject({ ok: false, reason: expect.stringMatching(/não conhece a operação "andamento".*versão anterior.*scripts\/oraculo-vps\.sh atualizar.*nada foi gravado/s) });
   });
 
+  it('a VPS gravou mas a resposta não chegou inteira: nunca diz "nada foi gravado" (a sessão repetia e duplicava a tarefa)', async () => {
+    // t-d7912fb9: 12/11, t-706e8d28 gravada na VPS e o PC disse "recusou (200); nada foi gravado" — a nova tentativa criou t-c09dae04.
+    const pc = await pcWithLedger();
+    const remote = vps();
+    await moveLedgerToRemote({ http: remote.http, ledgerFile: pc.file, io, proofFs: nodeLedgerProofFs, marker });
+    let cut: 'corpo' | 'rede' | 'antes' = 'antes';
+    const slow: OracleHttp = async (method, path, body) => {
+      if (path === '/v1/apply' && cut === 'antes') {
+        // The op never reaches the daemon, while another session writes on the same task: that is not "gravado".
+        await remote.ledger.apply(DEV, { op: 'andamento', id: pc.id, progress: { estado: 'trabalhando', proximo: 'outro escritor' } });
+        throw new Error('The operation was aborted due to timeout');
+      }
+      const response = await remote.http(method, path, body);
+      if (path !== '/v1/apply') return response;
+      if (cut === 'rede') throw new Error('The operation was aborted due to timeout');
+      return { status: 200, text: async () => Promise.reject(new Error('The operation was aborted due to timeout')), bytes: response.bytes };
+    };
+    const service = createRemoteLedgerService({ http: () => slow, ledgerFile: pc.file, io, proofFs: nodeLedgerProofFs, marker });
+    expect(await service.refresh()).toBe(true);
+
+    const lost = await service.apply({ kind: 'dono' }, { op: 'aceitar', id: pc.id });
+    expect(JSON.parse(readFileSync(remote.file, 'utf8')).tasks[pc.id].state).toBe('entregue');
+    expect(lost).toMatchObject({ ok: false, reason: expect.stringMatching(new RegExp(`pode ter sido gravada.*tarefa_ver ${pc.id}`, 's')) });
+
+    cut = 'corpo';
+    const created = await service.apply(LIDER, { op: 'criar', projectPath: '/p', request: 'nova', doneWhen: 'x', due: '2026-11-10', ownerPlaceId: 'place:dev', risk: 'baixo' });
+    expect(Object.keys(JSON.parse(readFileSync(remote.file, 'utf8')).tasks)).toHaveLength(2);
+    expect(created).toMatchObject({ ok: false, reason: expect.stringMatching(/pode ter sido gravada.*tarefa_listar/s) });
+    expect(created.ok ? '' : created.reason).not.toMatch(/nada foi gravado/);
+
+    const accepted = await service.apply({ kind: 'dono' }, { op: 'aceitar', id: pc.id });
+    expect(accepted).toMatchObject({ ok: true, task: { id: pc.id, state: 'aceita' } });
+
+    cut = 'rede';
+    const again = await service.apply(LIDER, { op: 'criar', projectPath: '/p', request: 'outra', doneWhen: 'x', due: '2026-11-10', ownerPlaceId: 'place:dev', risk: 'baixo' });
+    expect(Object.keys(JSON.parse(readFileSync(remote.file, 'utf8')).tasks)).toHaveLength(3);
+    expect(again).toMatchObject({ ok: false, reason: expect.stringMatching(/pode ter sido gravada/) });
+    expect(again.ok ? '' : again.reason).not.toMatch(/nada foi gravado/);
+  });
+
   it('a prova entregue pelo PC vai à VPS e fica também na cópia do PC', async () => {
     const pc = await pcWithLedger();
     const remote = vps();

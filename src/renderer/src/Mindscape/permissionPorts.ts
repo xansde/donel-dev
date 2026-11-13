@@ -8,7 +8,7 @@
 // screen the id covers the WHOLE dialog, never the cut text (Revisor, #377), and a reading that is not all the request
 // (cut, or the dialog's top scrolled off) only refuses.
 
-import { permissionDialog, type LineInput } from '../../../shared/chat/screen';
+import { permissionDialog, tmuxCopyMode, type LineInput } from '../../../shared/chat/screen';
 import type { ChatOpenPermission } from '../../../shared/chat/ipc';
 import type { PermissionAnswer, PermissionAsk } from './agentBridge';
 
@@ -26,9 +26,19 @@ export interface PermissionPortDeps {
   answerHeld(tabId: string, pendingId: string, answer: 'allow' | 'deny'): Promise<{ readonly ok: boolean }>;
   /** The tab's screen as rendered; `undefined` = no terminal. */
   screen(tabId: string): readonly LineInput[] | undefined;
+  /** Whether the tab runs on a remote place (inside tmux there): only then can its screen be tmux's copy mode. */
+  remote(tabId: string): boolean;
   /** Raw bytes to the tab's PTY; false = no live process. */
   write(tabId: string, data: string): boolean;
 }
+
+/**
+ * Why a screen that shows tmux's copy mode does not count: what is drawn is the scrolled history, and a key would go to
+ * tmux. The session's hook state is not read here on purpose (3ª rodada do #414): it lies both ways ("working" with a
+ * dialog open while sub-agents run in parallel, "waiting" stale on a remote tab without hooks), and the last-block rule
+ * read on the live bottom already drops an answered dialog.
+ */
+const COPY_MODE = 'a aba está rolada (modo de cópia do tmux); volte ao fim para responder';
 
 /** The CLI's own tools, whose main field reads well alone. Any other tool (mcp__*, unknown) is shown whole. */
 const NATIVE_TOOLS: ReadonlySet<string> = new Set(['Bash', 'Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Glob', 'Grep', 'WebFetch', 'WebSearch']);
@@ -83,9 +93,16 @@ function screenId(whole: string): string {
 }
 
 export function permissionPorts(deps: PermissionPortDeps): {
+  permissionOnScreen(tabId: string): boolean;
   permissionAsk(tabId: string): Promise<PermissionAsk | null>;
   answerPermission(tabId: string, askId: string, answer: 'allow' | 'deny'): Promise<PermissionAnswer>;
 } {
+  /** A local tab has no tmux: a "[3/12]" there is output, never copy mode (4ª rodada do #414). */
+  const copyMode = (tabId: string, lines: readonly LineInput[]) => deps.remote(tabId) && tmuxCopyMode(lines);
+  const screenDialog = (tabId: string) => {
+    const lines = deps.screen(tabId);
+    return lines && !copyMode(tabId, lines) ? permissionDialog(lines) : null;
+  };
   /** The open request, with the screen it was read from (the key that answers it comes from that same screen). */
   const read = async (tabId: string): Promise<{ readonly ask: PermissionAsk; readonly yesKey: string | null } | null> => {
     const held = (await deps.held(tabId).catch(() => []))[0];
@@ -93,16 +110,26 @@ export function permissionPorts(deps: PermissionPortDeps): {
       const { what, complete } = describeInput(held.toolName, held.toolInput);
       return { ask: { id: `${CHAT_PREFIX}${held.id}`, source: 'chat', tool: held.toolName, what, ...(complete ? {} : { complete: false }) }, yesKey: null };
     }
-    const lines = deps.screen(tabId);
-    const dialog = lines ? permissionDialog(lines) : null;
-    if (!lines || !dialog) return null;
+    const dialog = screenDialog(tabId);
+    if (!dialog) return null;
     return { ask: { id: screenId(dialog.whole), source: 'tela', what: dialog.text, ...(dialog.complete ? {} : { complete: false }) }, yesKey: dialog.yesKey };
   };
   return {
+    // Also the lock of closing a session (sessao_fechar, the Faxineiro): a screen in tmux's copy mode shows scrolled
+    // history, never the live bottom where an open request sits, so it cannot say "no request" and counts as a possible
+    // one (5ª rodada do #414). Always, not only when the scrolled view happens to show a dialog: scrolled far up, the
+    // view has none and the bottom still may. Only the doors that ACT (ask, answer) refuse it, with COPY_MODE.
+    permissionOnScreen(tabId) {
+      const lines = deps.screen(tabId);
+      return lines !== undefined && (copyMode(tabId, lines) || permissionDialog(lines) !== null);
+    },
     permissionAsk: async (tabId) => (await read(tabId))?.ask ?? null,
     async answerPermission(tabId, askId, answer) {
       const open = await read(tabId);
-      if (open === null) return { ok: false, reason: 'o pedido já não está aberto' };
+      if (open === null) {
+        const screen = deps.screen(tabId);
+        return { ok: false, reason: screen !== undefined && copyMode(tabId, screen) ? COPY_MODE : 'o pedido já não está aberto' };
+      }
       if (open.ask.id !== askId) return { ok: false, reason: 'o pedido aberto agora é outro' };
       if (answer === 'allow' && open.ask.complete === false) return { ok: false, reason: 'a leitura do pedido está incompleta; só recusar' };
       if (open.ask.source === 'chat') {

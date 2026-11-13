@@ -6,7 +6,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { IMAGE_PASTE_SEQUENCE, parseClaudeNotFound, resolveTerminalKeyAction } from '../../shared';
 import type { PtyExitInfo, SemaphoreStateInfo } from '../../shared';
 import type { ScreenSnapshot } from '../../shared/chat/screen';
-import { bufferLineToScreenLine, estimateGridSize, withResumeArgs } from '../../shared/terminalScreen';
+import { estimateGridSize, readBufferScreen, withResumeArgs } from '../../shared/terminalScreen';
 import { roleLaunchWarning } from '../../shared/roleLaunch';
 import { formatRingBufferPreview } from './ringBufferPreview';
 import styles from './TerminalPane.module.css';
@@ -278,12 +278,18 @@ export interface TerminalPaneHandle {
   onRenderedUpdate: (listener: () => void) => () => void;
   /** T039 — bytes crus para a PTY (colagem, Enter, Esc). `false` sem processo vivo. */
   write: (data: string) => boolean;
-  /** T039 — tela atual (viewport ativo) lida do BUFFER do xterm; `dim` por caractere UTF-16 (`isDim()`). */
-  readScreen: () => ScreenSnapshot;
+  /**
+   * T039 — tela atual (viewport ativo) lida do BUFFER do xterm; `dim` por caractere UTF-16 (`isDim()`). `live` lê o
+   * fundo vivo (a partir de `baseY`), não o viewport rolado: só o que decide permissão (verificação do #414).
+   */
+  readScreen: (options?: { live?: boolean }) => ScreenSnapshot;
   /** T039 — avisa a cada chunk já processado pelo parser. Retorna unsubscribe. */
   onScreenUpdate: (listener: () => void) => () => void;
-  /** T039 — mata a PTY e sobe outra com os mesmos flags; `resume` acrescenta `-r <id>`. */
-  respawn: (options?: { resume?: string }) => void;
+  /**
+   * T039 — mata a PTY e sobe outra com os mesmos flags; `resume` acrescenta `-r <id>`. `cwd` (12/11, the Líder changing
+   * folder on the same remote place) spawns in that folder; the parent sets the tab's `cwd` to the same value.
+   */
+  respawn: (options?: RespawnOptions) => void;
   /**
    * B36 — sessão renovada em voo: ends the process and opens a NEW conversation in this same pane,
    * with `args` (the launch flags minus the old conversation, see `renewalLaunchArgs`). `renewalId`
@@ -294,6 +300,12 @@ export interface TerminalPaneHandle {
   focus: () => void;
   /** T039 — id da PTY viva (null sem processo). */
   readonly ptyId: string | null;
+}
+
+/** `TerminalPaneHandle.respawn`. */
+export interface RespawnOptions {
+  readonly resume?: string;
+  readonly cwd?: string;
 }
 
 export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(function TerminalPane(
@@ -369,7 +381,14 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   const sharedScreenRef = useRef<{ active: boolean; snapshot: ScreenSnapshot | null }>({ active: false, snapshot: null });
   /** T039 — argv efetivo do próximo spawn (respawn com `-r` o substitui); `undefined` = prop `args`. */
   const spawnArgsRef = useRef<string[] | undefined>(undefined);
-  const respawnRef = useRef<(options?: { resume?: string }) => void>(() => undefined);
+  const respawnRef = useRef<(options?: RespawnOptions) => void>(() => undefined);
+  /** The folder of the next spawns when a respawn named one (12/11); cleared when the `cwd` prop changes. */
+  const spawnCwdRef = useRef<string | undefined>(undefined);
+  const lastCwdPropRef = useRef(cwd);
+  if (lastCwdPropRef.current !== cwd) {
+    lastCwdPropRef.current = cwd;
+    spawnCwdRef.current = undefined;
+  }
   /** B36 — the renewal of the NEXT spawn only (consumed by `spawnSession`). */
   const renewalIdRef = useRef<string | null>(null);
   // Papéis de sessão (item 12a) — read at each spawn (launch and renewal), never a reason to respawn.
@@ -423,29 +442,34 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status.kind]);
 
-  /** The visible screen as rows of text (the chat's screen readers); `sharedScreenRef` shares it within one chunk. */
-  const readScreenNow = (): ScreenSnapshot => {
+  /**
+   * The visible screen as rows of text (the chat's screen readers); `sharedScreenRef` shares it within one chunk.
+   * `live` reads the bottom the CLI is drawing (from `baseY`), never the scrolled viewport: what decides a permission.
+   */
+  const readScreenNow = (live = false): ScreenSnapshot => {
     const term = termRef.current;
     if (!term) return { lines: [], bracketedPaste: false, altScreen: false, cols: 0, rows: 0 };
     const buffer = term.buffer.active;
     const scratch = buffer.getNullCell();
-    const lines: ScreenSnapshot['lines'][number][] = [];
-    for (let y = 0; y < term.rows; y += 1) {
-      const line = buffer.getLine(buffer.viewportY + y);
-      if (!line) {
-        lines.push({ text: '', dim: [] });
-        continue;
-      }
-      lines.push(
-        bufferLineToScreenLine({
-          cols: term.cols,
-          getCell: (x) => {
-            const cell = line.getCell(x, scratch);
-            return cell ? { chars: cell.getChars(), width: cell.getWidth(), dim: cell.isDim() !== 0 } : undefined;
-          },
-        })
-      );
-    }
+    const lines = readBufferScreen(
+      {
+        baseY: buffer.baseY,
+        viewportY: buffer.viewportY,
+        getLine: (y) => {
+          const line = buffer.getLine(y);
+          if (!line) return undefined;
+          return {
+            cols: term.cols,
+            getCell: (x) => {
+              const cell = line.getCell(x, scratch);
+              return cell ? { chars: cell.getChars(), width: cell.getWidth(), dim: cell.isDim() !== 0 } : undefined;
+            },
+          };
+        },
+      },
+      term.rows,
+      { live }
+    );
     return {
       lines,
       bracketedPaste: term.modes.bracketedPasteMode,
@@ -490,7 +514,9 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         window.donel.pty.input(ptyIdRef.current, data);
         return true;
       },
-      readScreen: (): ScreenSnapshot => {
+      readScreen: (options?: { live?: boolean }): ScreenSnapshot => {
+        // The chunk's shared snapshot is the viewport one; a live read is its own (rare: the permission doors).
+        if (options?.live) return readScreenNow(true);
         const shared = sharedScreenRef.current;
         if (shared.active && shared.snapshot) return shared.snapshot;
         const snapshot = readScreenNow();
@@ -503,7 +529,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
           screenListenersRef.current.delete(listener);
         };
       },
-      respawn: (options?: { resume?: string }): void => respawnRef.current(options),
+      respawn: (options?: RespawnOptions): void => respawnRef.current(options),
       renew: (options: { args: string[]; renewalId: string }): void => {
         spawnArgsRef.current = options.args;
         renewalIdRef.current = options.renewalId;
@@ -541,7 +567,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     renewalIdRef.current = null;
 
     void window.donel.pty
-      .create({ cols: term.cols, rows: term.rows, cwd, sessionType, args: spawnArgsRef.current ?? args, providerId, accountLoginId, renewalId, roleId: roleIdRef.current, ...(leaderOfAllRef.current ? { leaderOfAll: true } : {}), ...(placeIdRef.current ? { placeId: placeIdRef.current } : {}), ...(remoteId ? { remoteId, tabName, projectName, ...(openedBy ? { openedBy } : {}) } : {}) })
+      .create({ cols: term.cols, rows: term.rows, cwd: spawnCwdRef.current ?? cwd, sessionType, args: spawnArgsRef.current ?? args, providerId, accountLoginId, renewalId, roleId: roleIdRef.current, ...(leaderOfAllRef.current ? { leaderOfAll: true } : {}), ...(placeIdRef.current ? { placeId: placeIdRef.current } : {}), ...(remoteId ? { remoteId, tabName, projectName, ...(openedBy ? { openedBy } : {}) } : {}) })
       .then((result) => {
         if (requestEpoch !== mountEpochRef.current) {
           // Geração já descartada (StrictMode double-invoke em dev, ou a aba
@@ -815,6 +841,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   // do kill, então não passa pelo estado "encerrada") e sobe outra, mesmos flags.
   respawnRef.current = (options) => {
     if (options?.resume) spawnArgsRef.current = withResumeArgs(spawnArgsRef.current ?? args, options.resume);
+    if (options?.cwd) spawnCwdRef.current = options.cwd;
     mountEpochRef.current += 1;
     teardownPty();
     termRef.current?.clear();

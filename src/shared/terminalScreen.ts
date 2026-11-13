@@ -24,19 +24,46 @@ export interface RowLike {
  * (trailing blanks trimmed; empty interior cells are spaces); `dim` has one
  * flag per UTF-16 unit of `text`. Width-0 cells are skipped (their wide
  * neighbour already carries the glyph), so mask indices always match `text`.
+ * `toLastColumn` comes from the cells, the only place that knows where the right margin is.
  */
 export function bufferLineToScreenLine(row: RowLike): ScreenLine {
   let text = '';
   const dim: boolean[] = [];
+  /** Last column covered by a non-blank cell (a wide char covers two). */
+  let end = -1;
   for (let x = 0; x < row.cols; x += 1) {
     const cell = row.getCell(x);
     if (!cell || cell.width === 0) continue;
     const chars = cell.chars === '' ? ' ' : cell.chars;
     text += chars;
     for (let i = 0; i < chars.length; i += 1) dim.push(cell.dim);
+    if (chars.trim() !== '') end = x + Math.max(1, cell.width) - 1;
   }
   const trimmed = text.replace(/ +$/, '');
-  return { text: trimmed, dim: dim.slice(0, trimmed.length) };
+  return { text: trimmed, dim: dim.slice(0, trimmed.length), toLastColumn: row.cols > 0 && end === row.cols - 1 };
+}
+
+/** Minimal view of an xterm `IBuffer`: `baseY` = first row of the live bottom, `viewportY` = first row on display. */
+export interface BufferLike {
+  readonly baseY: number;
+  readonly viewportY: number;
+  getLine(y: number): RowLike | undefined;
+}
+
+/**
+ * `rows` rows of the buffer as `ScreenLine`s. By default from `viewportY` (what the user sees, scrolled or not);
+ * `live` reads from `baseY`, the bottom the CLI is drawing now. What decides a permission reads `live`: scrolled up
+ * onto an old dialog, the viewport shows the old one while a key would answer the one open below (verificação
+ * adversarial do #414).
+ */
+export function readBufferScreen(buffer: BufferLike, rows: number, options: { readonly live?: boolean } = {}): ScreenLine[] {
+  const start = options.live ? buffer.baseY : buffer.viewportY;
+  const lines: ScreenLine[] = [];
+  for (let y = 0; y < rows; y += 1) {
+    const row = buffer.getLine(start + y);
+    lines.push(row ? bufferLineToScreenLine(row) : { text: '', dim: [] });
+  }
+  return lines;
 }
 
 export interface GridArea {

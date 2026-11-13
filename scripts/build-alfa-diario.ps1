@@ -1,7 +1,6 @@
-﻿# Build contínuo do canal alfa — a tarefa agendada "Donel Dev Alfa diario"
-# (registrada por scripts/registrar-alfa-diario.ps1) roda a cada 10 minutos:
-# entrou commit novo em staging, sai instalador novo (pedido do dono, 03/11:
-# "pra que esperar até as 06h30 se pode fazer agora").
+﻿# Build do canal alfa, SOB DEMANDA (dono, 03/11: "Eu vou falar quando eu quiser"). A tarefa agendada
+# "Donel Dev Alfa diario" (scripts/registrar-alfa-diario.ps1) está desativada; rode este script à mão.
+# Passo a passo: docs/alfa/gerar-alfa-no-pc.md.
 # Gera o instalador a partir de origin/staging numa worktree só dele e deixa
 # o .exe com a data no nome em "%USERPROFILE%\Donel Dev Alfa - diario".
 # Sem commit novo em staging desde o último build, não faz nada.
@@ -72,7 +71,8 @@ try {
   $release = Join-Path $worktree 'release'
   $assets = @("DonelDevAlfa-Setup-$version.exe", "DonelDevAlfa-Setup-$version.exe.blockmap", 'latest.yml') | ForEach-Object { Join-Path $release $_ }
   foreach ($asset in $assets) { if (-not (Test-Path -LiteralPath $asset)) { throw "faltou no build: $asset" } }
-  gh release create "alfa-$version" @assets --repo "$owner/$repoName" --title "Alfa $version" --notes "staging $commit" --latest
+  # --target com o SHA completo: sem ele o gh cria a tag na ponta da main, não no commit buildado.
+  gh release create "alfa-$version" @assets --repo "$owner/$repoName" --target $commit --title "Alfa $version" --notes "staging $commit" --latest
   if ($LASTEXITCODE -ne 0) { throw "não consegui publicar a release alfa-$version" }
   # Guarda as 6 últimas versões no GitHub.
   $old = gh release list --repo "$owner/$repoName" --limit 100 --json tagName --jq '.[].tagName' | Where-Object { $_ -match '^alfa-\d+\.\d+\.\d+$' } | Sort-Object { [version]($_ -replace '^alfa-', '') } -Descending | Select-Object -Skip 6

@@ -12,6 +12,7 @@ import { jobuProgress, movedFrontOrder, movedOrder } from '../src/shared/pet/pro
 import * as v4 from './fixtures/ledger/contract-v4';
 import { ledgerSessionsOfDoc, liveSessionOf } from '../src/shared/ledger/mirror';
 import { sessionCell } from '../src/shared/ledger/table';
+import { demandOwnerRefusal, hearingPlaceIds } from '../src/shared/mindscape/reach';
 
 // t-5c0df1df (dono, 09/11: "Mantenha o status de cada tarefa e uma coluna indicando um identificador da tarefa. Assim
 // poderá botar um watchdog verificando se aquelas sessões estão acordadas ou não."). What breaks without the owner
@@ -252,5 +253,44 @@ describe('quanto cada Líder toca em paralelo', () => {
     const listing = async (caller: LedgerCaller) => JSON.parse((await runLedgerTool(s, { ...caller, board: board.boards[BOARD]! }, call('tarefa_listar', {}))).text) as { paralelo?: unknown };
     expect((await listing(at('place:coord', 'coordenador'))).paralelo).toEqual({ limite: 2, tocando: 1, podePuxar: 1 });
     expect(await listing(at('lider', 'lider'))).not.toHaveProperty('paralelo');
+  });
+});
+
+// t-5c0df1df (dono, 12/11: o Líder único só "recebe término de tasks completas, adiciona novas demandas" e "o líder de
+// cada board busca novas demandas, de acordo com a prioridade dada"). A new demand of the Líder único goes to the live
+// Líder of the board, never straight to a chair. What breaks without the owner seeing it: the Líder único handing work
+// to a Dev past the board's Líder, who then pulls by a priority that no longer holds.
+describe('demanda nova do Líder único vai ao Líder do quadro aberto', () => {
+  const withLeader = (by?: 'session') => addPlace(addPlace(emptyMindscapeDoc(), BOARD, { id: 'place:lider', roleId: 'lider', ...(by ? { by } : {}) }), BOARD, { id: 'place:dev', roleId: 'dev', by: 'session' });
+
+  it('com Líder aberto: recusa um Dev como dono e aceita o Líder', () => {
+    const board = withLeader().boards[BOARD];
+    const live = new Set(['place:lider', 'place:dev']);
+    const refusal = demandOwnerRefusal(board, live, 'place:dev');
+    expect(refusal).toContain('"dono": "place:lider"');
+    expect(refusal).toContain('tarefa_transferir');
+    expect(demandOwnerRefusal(board, live, 'place:lider')).toBeNull();
+  });
+
+  it('Líder fechado ou quadro sem Líder: o dono pode ser o posto', () => {
+    expect(demandOwnerRefusal(withLeader().boards[BOARD], new Set(['place:dev']), 'place:dev')).toBeNull();
+    const noLeader = addPlace(emptyMindscapeDoc(), BOARD, { id: 'place:dev', roleId: 'dev' }).boards[BOARD];
+    expect(demandOwnerRefusal(noLeader, new Set(['place:dev']), 'place:dev')).toBeNull();
+    expect(demandOwnerRefusal(undefined, new Set(['place:dev']), 'place:dev')).toBeNull();
+  });
+
+  it('Líder sem ligação, mudo desde que o app reabriu ou começando não conta como aberto', () => {
+    const board = withLeader().boards[BOARD];
+    for (const estado of ['sem ligação', 'parada desde 09:50 (último fim de turno; o app reabriu e ainda não ouviu dela)', 'aberta, sem nenhum pedido ainda', 'começando', 'fechada', 'nao-comecou'])
+      expect(demandOwnerRefusal(board, hearingPlaceIds(new Map([['place:lider', estado], ['place:dev', 'parada']])), 'place:dev')).toBeNull();
+    for (const estado of ['trabalhando', 'parada', 'precisa do dono'])
+      expect(demandOwnerRefusal(board, hearingPlaceIds(new Map([['place:lider', estado], ['place:dev', 'parada']])), 'place:dev')).toContain('place:lider');
+  });
+
+  it('só conta o Líder que o dono pôs: o feito por sessão, ao lado dele, é um posto', () => {
+    const doc = addPlace(withLeader(), BOARD, { id: 'place:lider2', roleId: 'lider', by: 'session' });
+    const live = new Set(['place:lider', 'place:lider2', 'place:dev']);
+    expect(demandOwnerRefusal(doc.boards[BOARD], live, 'place:lider2')).toContain('"dono": "place:lider"');
+    expect(demandOwnerRefusal(doc.boards[BOARD], live, 'place:lider')).toBeNull();
   });
 });

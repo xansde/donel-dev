@@ -35,9 +35,42 @@ export function sanitizeLeaderPrefs(value: unknown, fallback: LeaderPrefs = DEFA
   return { where: valid === 'local' ? 'auto' : valid, ...keptHome };
 }
 
-/** Where the Líder único opens: `leader.home` when the owner set it, else the folder that holds the boards' projects. */
-export function leaderCwd(prefs: LeaderPrefs, projectPaths: readonly string[]): string | undefined {
-  return prefs.home ?? leaderHome(projectPaths);
+/** The orchestrator's own project, inside the folder that holds the boards' projects (owner, 12/11). */
+export const LEADER_HOME_FOLDER = '_orquestradora';
+
+/** A folder as a comparable key: case, the slash and a trailing slash do not matter. */
+export function folderKey(path: string): string {
+  return path.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
+}
+
+/** The same folder, whatever the case, the slash (`/` or `\`) or a trailing slash. Two absent folders are the same. */
+export function sameFolder(a: string | undefined, b: string | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return folderKey(a) === folderKey(b);
+}
+
+/**
+ * Where the Líder único opens: `leader.home` when the owner set it; else the orchestrator's project
+ * (`<boards' parent>/_orquestradora`) when it exists on disk (`existingLeaderHomes`, from the main process); else the
+ * folder that holds the boards' projects.
+ */
+export function leaderCwd(prefs: LeaderPrefs, projectPaths: readonly string[], existingLeaderHomes: readonly string[] = []): string | undefined {
+  return leaderMoveCwd(prefs, projectPaths, existingLeaderHomes) ?? leaderHome(projectPaths);
+}
+
+/**
+ * The folder the LIVE Líder moves to (stopped, on its next message): only `leader.home` when the owner set it, or the
+ * orchestrator's project when it exists on disk. Never the boards' parent folder: a board out of the root (another
+ * parent) or one failed read of the disk (`existingLeaderHomes` empty) must not pull it out of `_orquestradora`.
+ * `undefined` = the live Líder stays in its folder. A new Líder opens in `leaderCwd`.
+ */
+export function leaderMoveCwd(prefs: LeaderPrefs, projectPaths: readonly string[], existingLeaderHomes: readonly string[]): string | undefined {
+  if (prefs.home) return prefs.home;
+  const base = leaderHome(projectPaths);
+  if (base === undefined) return undefined;
+  const sep = base.includes('\\') ? '\\' : '/';
+  const orchestrator = `${base.replace(/[\\/]+$/, '')}${sep}${LEADER_HOME_FOLDER}`;
+  return existingLeaderHomes.some((home) => sameFolder(home, orchestrator)) ? orchestrator : undefined;
 }
 
 /** A remote place as the Líder's placement sees it. */
@@ -57,5 +90,10 @@ export function leaderRemoteId(prefs: LeaderPrefs, remotes: readonly LeaderPlace
 /** The live Líder goes to the chosen place now: it runs elsewhere and is stopped (never in the middle of a turn). */
 export function leaderMoves(live: { readonly remoteId: string | undefined; readonly state: SemaphoreState | undefined }, wanted: string | undefined): boolean {
   if (live.remoteId === wanted) return false;
-  return live.state === 'waiting' || live.state === 'done' || live.state === 'error';
+  return leaderStopped(live.state);
+}
+
+/** Stopped (waiting, done or failed): never in the middle of a turn nor asking permission. */
+export function leaderStopped(state: SemaphoreState | undefined): boolean {
+  return state === 'waiting' || state === 'done' || state === 'error';
 }
