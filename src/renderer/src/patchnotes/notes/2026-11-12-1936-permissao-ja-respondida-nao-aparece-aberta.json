@@ -1,0 +1,4 @@
+{
+  "title": "Permissão já respondida não aparece aberta",
+  "text": "Um pedido de permissão que você ou o Líder já respondeu e que ainda aparece na tela de uma sessão (terminal rolado para cima, /model aberto ou um texto longo colado) não conta mais como aberto. A sessão deixa de aparecer como \"precisa de você\", o Líder não é avisado à toa e nenhuma tecla é enviada a ela por causa desse pedido antigo."
+}

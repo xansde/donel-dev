@@ -80,7 +80,7 @@ describe('defaultAppConfig (puro)', () => {
       // Oráculo no centro (06/11) — o layout novo é o padrão, com o Oráculo à vista.
       layout: { oracleCenter: true, centerView: 'oracle' },
       leader: { where: 'auto' },
-      appUpdate: { installersDir: null },
+      appUpdate: { installersDir: null, forceAfterMinutes: null },
       browserUploads: { folders: [] },
       browserUploadGrants: { grants: [] },
       slackAgentBots: { servers: [] },
@@ -98,7 +98,7 @@ describe('toAppConfigDto (puro)', () => {
       favorites: ['C:\\a'],
       activeProfileSlug: 'tecnologia-claude-2',
     };
-    expect(toAppConfigDto(config)).toEqual({
+    expect(toAppConfigDto(config, () => false)).toEqual({
       projectRoots: FAKE_ROOTS,
       projectScanMode: 'markers',
       launcherDefaults: { model: 'fable', effort: 'high', permissionMode: 'acceptEdits' },
@@ -123,6 +123,7 @@ describe('toAppConfigDto (puro)', () => {
       yolo: { projects: [] },
       layout: { oracleCenter: true, centerView: 'oracle' },
       leader: { where: 'auto' },
+      leaderHomes: [],
     });
   });
 
@@ -262,7 +263,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       yolo: { projects: ['C:\\repos\\app'] },
       layout: { oracleCenter: false, centerView: 'terminals' },
       leader: { where: 'vps-1' },
-      appUpdate: { installersDir: 'D:\\instaladores' },
+      appUpdate: { installersDir: 'D:\\instaladores', forceAfterMinutes: 10 },
       browserUploads: { folders: [] },
       browserUploadGrants: { grants: [] },
       slackAgentBots: { servers: ['theo-west-slack', 'theo-slack'] },
@@ -368,7 +369,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       // Oráculo no centro — o campo ruim cai no default só dele; a vista escolhida fica.
       layout: { oracleCenter: true, centerView: 'terminals' },
       leader: defaults.leader,
-      appUpdate: { installersDir: null },
+      appUpdate: { installersDir: null, forceAfterMinutes: null },
       browserUploads: { folders: [] },
       browserUploadGrants: { grants: [] },
       slackAgentBots: { servers: [] },

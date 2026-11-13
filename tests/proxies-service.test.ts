@@ -104,6 +104,17 @@ describe('serviço do proxy da vez', () => {
   });
 });
 
+describe('chave de proxy com endereço novo', () => {
+  it('mudar o endereço de um proxy apaga as chaves dele (eram do endereço antigo); mudar só o nome as mantém', () => {
+    const { service, vault } = setup({});
+    service.setKey('portal', 'vps', 'sk-vps-portal-00001');
+    service.upsert({ id: 'portal', label: 'Portal novo nome', kind: 'portal', baseUrl: 'https://portal.example' });
+    expect(vault.store.has(proxyVaultKey('portal', 'vps'))).toBe(true);
+    service.upsert({ id: 'portal', label: 'Portal', kind: 'portal', baseUrl: 'https://outro-portal.example' });
+    expect(vault.store.has(proxyVaultKey('portal', 'vps'))).toBe(false);
+  });
+});
+
 describe('config proxies', () => {
   it('descarta só a entrada ruim e traz o lugar "Outro PC" uma vez só', () => {
     const first = sanitizeProxiesConfig({ entries: [{ id: 'ok', label: 'Ok', kind: 'portal', baseUrl: 'https://a.example' }, { id: 'Ruim!', label: 'x', kind: 'portal' }] });

@@ -148,6 +148,11 @@ export interface SweepPrefs {
  */
 export interface AppUpdatePrefs {
   readonly installersDir: string | null;
+  /**
+   * Sessão durável (dono, 12/11) — minutes "Atualizar" waits for sessions in a turn before restarting anyway (they come
+   * back on the same conversation). `null` = the default (5).
+   */
+  readonly forceAfterMinutes: number | null;
 }
 
 /**
@@ -224,6 +229,11 @@ export interface AppConfigDto {
   readonly layout: LayoutPrefs;
   /** Onde o Líder roda (`leaderPrefs.ts`). */
   readonly leader: LeaderPrefs;
+  /**
+   * Read-only, from the disk on each read, never in config.json: the `_orquestradora` folders that exist under the
+   * project roots — the Líder único opens in one of them (`leaderCwd`, owner 12/11).
+   */
+  readonly leaderHomes: readonly string[];
 }
 
 /** API tipada exposta pelo preload em `window.donel.config`. */

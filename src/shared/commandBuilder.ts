@@ -196,7 +196,8 @@ export interface McpDelivery {
 /**
  * Wall-clock limit of one call to the app's MCP, per server (`timeout` of the CLI's config). 10/11 (t-58d7c191) —
  * without it Claude Code cuts an HTTP MCP call at 60 s ("The operation timed out."), below the app's own waits:
- * `sessao_enviar` answers within 90 s and `sessao_abrir`/`navegador_pedir_humano` wait up to 30 min for the owner.
+ * `sessao_abrir`/`navegador_pedir_humano` wait up to 30 min for the owner. A session opened before this, or still alive
+ * from then, keeps the 60 s cut: that is why `sessao_enviar` answers within it anyway (channels.ts, 12/11).
  * Every tool keeps its own net in the app (`board-bridge.ts`), so this only has to outlast the longest one.
  */
 export const APP_MCP_TOOL_TIMEOUT_MS = 35 * 60_000;

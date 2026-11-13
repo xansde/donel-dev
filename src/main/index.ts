@@ -10,7 +10,7 @@ import { createStatusLineStore } from './statusline-store';
 import { STATUS_LINE_CHANNELS, type StatusLineChangedPayload, type StatusLineSnapshot } from '../shared/statusLine';
 import { appMcpAllowArgs } from '../shared/commandBuilder';
 import { isBypassLaunch, planLaunchPermission, type SpawnFacts } from '../shared/launchPermission';
-import { spawnFactsOf } from '../shared/mindscape/reach';
+import { demandOwnerRefusal, hearingPlaceIds, spawnFactsOf } from '../shared/mindscape/reach';
 import { planRoleLaunch } from '../shared/roleLaunch';
 import type { DevModeBoardConfig } from '../shared/devMode';
 // Spec 010 — esteira nova: serviço (store + ingestão + disparo) e a fronteira IPC.
@@ -303,7 +303,7 @@ import type { AccountMod } from './accounts/account-mod';
 import { IsolatedLoginManager, type IsolatedLoginFsDeps } from './accounts/isolated-login';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
 import { sanitizeLayoutPrefs, type LayoutPrefs } from '../shared/layoutPrefs';
-import { type LeaderPrefs } from '../shared/leaderPrefs';
+import { sameFolder, type LeaderPrefs } from '../shared/leaderPrefs';
 import { adoptRefreshedActivePair, applyAccountSwitch, createSystemClaudeStateIoDeps, readCurrentCredentialPair } from './accounts/claude-state';
 import { accountFingerprintFromClaudeJsonText } from './accounts/credentials-file';
 import { createLocalMod } from './accounts/mods/local-mod';
@@ -374,7 +374,7 @@ import type { LiveSessionSignal } from '../shared/rotinas/stalledSessions';
 // B33 — atualizar para a versão nova de dentro do app.
 import { autoUpdater } from 'electron-updater';
 import { createAppUpdateService, type AppUpdateService } from './app-update';
-import { APP_UPDATE_CHANNELS, type AppUpdateApplyResult, type AppUpdateBoot, type AppUpdateStatus } from '../shared/appUpdate';
+import { APP_UPDATE_CHANNELS, DEFAULT_FORCE_AFTER_MINUTES, respawnArgsFor, type AppUpdateApplyResult, type AppUpdateBoot, type AppUpdateStatus } from '../shared/appUpdate';
 import type { HealthReport } from '../shared/health/types';
 import { isValidPetPrefsInput } from '../shared/pet/ipc';
 import type { PetDisplay } from '../shared/pet/types';
@@ -383,7 +383,7 @@ import type { PetDisplay } from '../shared/pet/types';
 import { hasImage, readText, writeText } from './clipboard-bridge';
 import { CLIPBOARD_CHANNELS } from '../shared';
 import { resolveClaudeCorrelation } from './session-correlation';
-import { carryTranscriptLocally, largestTranscript } from './lider/carry-transcript';
+import { carryLargestTranscript, carryTranscriptLocally, largestTranscript } from './lider/carry-transcript';
 import { fetchTranscriptFromRemote, sendTranscriptToRemote } from './lider/transfer';
 import { LIDER_CHANNELS, isValidLiderCarryPayload, type LiderCarryPayload, type LiderSendResult } from '../shared/lider/ipc';
 import { defaultClaudeHome, indexProjectSessions, resolveProjectSessionsDir } from './session-indexer';
@@ -1999,10 +1999,15 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
  * Líder único na VPS — copies the Líder's conversation from where it runs (`from`) to where it goes (`to`);
  * `undefined` = this computer. Coming from a place, the place's own file comes down (never only the mirror that
  * arrived here), checked by hash, and the larger of it and the copy here stays. Going to a place, the largest copy
- * here goes up, checked there. Nothing is closed here: a failure leaves the Líder where it is.
+ * here goes up, checked there. When the folder changes too (`toCwd`, the orchestrator's project, 12/11), the
+ * conversation goes to the new folder's project: on a place, its folder there; here, copied beside (`-r` needs it in
+ * the project of the folder it opens in). Nothing is closed here: a failure leaves the Líder where it is.
  */
 async function carryLeaderConversation(payload: LiderCarryPayload): Promise<LiderSendResult> {
-  if (payload.from === payload.to) return { ok: true };
+  const cwd = payload.cwd ?? homedir();
+  const toCwd = payload.toCwd ?? cwd;
+  const folderChanges = !sameFolder(cwd, toCwd);
+  if (payload.from === payload.to && !folderChanges) return { ok: true };
   const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
   const placeOf = (id: string): { readonly sshTarget: string; readonly label: string } => {
     const place = places.find((candidate) => candidate.id === id);
@@ -2010,7 +2015,6 @@ async function carryLeaderConversation(payload: LiderCarryPayload): Promise<Lide
     return place;
   };
   const sid = payload.sessionId;
-  const cwd = payload.cwd ?? homedir();
   const homeRelativeDir = remoteDirFor(cwd, appConfig.projectRoots);
   const localTranscript = resolveTranscriptPath(sid, cwd, undefined);
 
@@ -2027,12 +2031,24 @@ async function carryLeaderConversation(payload: LiderCarryPayload): Promise<Lide
     }
   }
 
+  const localCopies = [localTranscript, spawnedTranscriptPaths.get(sid), remoteSessions?.mirrorPathFor(sid)];
   if (payload.to !== undefined) {
     const to = placeOf(payload.to);
-    const source = largestTranscript([localTranscript, spawnedTranscriptPaths.get(sid), remoteSessions?.mirrorPathFor(sid)]);
+    const source = largestTranscript(localCopies);
     if (!source) return { ok: false, reason: 'a conversa do Líder não está neste computador.' };
-    const sent = await sendTranscriptToRemote(sshRemoteCommand(to.sshTarget), homeRelativeDir, sid, source.path);
+    // The same place, another folder: the Líder there stays alive during the copy (its tab ends it when it resumes in
+    // the new folder); ending it here would leave a dead tab if anything after the copy failed.
+    const sent = await sendTranscriptToRemote(sshRemoteCommand(to.sshTarget), remoteDirFor(toCwd, appConfig.projectRoots), sid, source.path, {
+      keepSession: payload.from === payload.to,
+    });
     if (!sent.ok) return { ok: false, reason: `${to.label}: ${sent.reason}` };
+  } else if (folderChanges) {
+    try {
+      const carried = carryLargestTranscript(localCopies, resolveTranscriptPath(sid, toCwd, undefined));
+      if (carried === 'missing') return { ok: false, reason: 'a conversa do Líder não está neste computador.' };
+    } catch (error) {
+      return { ok: false, reason: `a conversa não foi copiada para a pasta nova: ${error instanceof Error ? error.message : String(error)}` };
+    }
   }
   return { ok: true };
 }
@@ -2120,7 +2136,10 @@ function registerPtyIpcHandlers(): void {
 
       // T008 — argv do Launcher (CommandBuilder, FR-003/CA-1); vazio
       // preserva o comportamento antigo (T005: sessão sem flags).
-      const launcherArgs = options.args ?? [];
+      // Sessão durável — a tab that came back from an update with `--session-id <id>` resumes it once it has a transcript.
+      const launcherArgs = options.providerId
+        ? (options.args ?? [])
+        : respawnArgsFor(options.args ?? [], (sessionId) => localTranscriptExists(sessionId, options.cwd ?? homedir()));
 
       // T009 — correlação sessão<->aba (spike: `--session-id <uuid>`
       // determinístico) + hooks do semáforo (`--settings`, soma aditiva,
@@ -2390,6 +2409,10 @@ function registerPtyIpcHandlers(): void {
     // "Sem ligação" — there is no PTY to kill: the held exit happens now as a close by the owner (ends the tmux there).
     if (remoteLinks.kill(ptyId)) return;
     markKillRequested(ptyId); // C3 (015-jobu-pet) — mark BEFORE killing: the exit that follows is "the owner's"
+    // Sessões remotas — the tmux there ends now, not on the exit event: a respawn of the same conversation (Retomar, the
+    // Líder changing folder) is created right after this kill and waits for this end (`waitEnded`); started on the exit,
+    // the end could come after the new setup found the old tmux alive and attached to it, in the old folder.
+    remoteSessions?.endRemote(ptyId);
     ptyManager.kill(ptyId);
   });
 
@@ -3435,18 +3458,21 @@ function registerAppUpdateIpcHandlers(): void {
     updater: () => autoUpdater,
     stateDir: join(app.getPath('userData'), 'app-update', channel),
     channel,
+    // Sessão durável — a conversation with no transcript yet comes back under the same id, not with a failing `-r`.
+    transcriptExists: (sessionId, cwd) => localTranscriptExists(sessionId, cwd ?? homedir()),
+    forceAfterMinutes: () => appConfig.appUpdate.forceAfterMinutes ?? DEFAULT_FORCE_AFTER_MINUTES,
     onChanged: (status) => {
       const window = getMainWindow();
       if (window && !window.isDestroyed()) window.webContents.send(APP_UPDATE_CHANNELS.changed, status);
     },
   });
   appUpdateService.start();
-  const disabled: AppUpdateStatus = { enabled: false, currentVersion: app.getVersion(), available: null, failure: null };
+  const disabled: AppUpdateStatus = { enabled: false, currentVersion: app.getVersion(), available: null, failure: null, forceAfterMs: DEFAULT_FORCE_AFTER_MINUTES * 60_000 };
   ipcMain.handle(APP_UPDATE_CHANNELS.get, (): AppUpdateStatus => appUpdateService?.status() ?? disabled);
-  ipcMain.handle(APP_UPDATE_CHANNELS.apply, (_event, tabs: unknown): AppUpdateApplyResult =>
-    appUpdateService ? appUpdateService.apply(tabs) : { ok: false, message: 'Atualização indisponível.' },
+  ipcMain.handle(APP_UPDATE_CHANNELS.apply, (_event, tabs: unknown, remotes: unknown): AppUpdateApplyResult =>
+    appUpdateService ? appUpdateService.apply(tabs, remotes ?? []) : { ok: false, message: 'Atualização indisponível.' },
   );
-  ipcMain.handle(APP_UPDATE_CHANNELS.takeBoot, (): AppUpdateBoot => appUpdateService?.takeBoot() ?? { tabs: [], failure: null });
+  ipcMain.handle(APP_UPDATE_CHANNELS.takeBoot, (): AppUpdateBoot => appUpdateService?.takeBoot() ?? { tabs: [], remotes: [], failure: null });
   ipcMain.handle(APP_UPDATE_CHANNELS.check, async (): Promise<void> => {
     await appUpdateService?.check();
   });
@@ -3848,7 +3874,13 @@ async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, cal
   if (call.tool === 'tarefa_criar' && (!call.dono || !reached.includes(call.dono)))
     return `O Líder único não faz a tarefa: diga em "dono" um lugar que você alcança neste quadro (${reached.join(', ') || 'nenhum'}).`;
   const saved = savedBoard(board.pasta);
-  const placeStates = new Map([[board.pasta, placeStatesOf(board.lugares)]]);
+  const states = placeStatesOf(board.lugares);
+  if (call.tool === 'tarefa_criar' && call.dono) {
+    // Dono, 12/11 (t-5c0df1df): a new demand goes to the board's live Líder; tarefa_transferir stays free.
+    const refusal = demandOwnerRefusal(saved, hearingPlaceIds(states), call.dono);
+    if (refusal) return refusal;
+  }
+  const placeStates = new Map([[board.pasta, states]]);
   return { caller: await withEveryBoard(boardBridge, ptyId, { ...base, projectPath: board.pasta, boardPlaceIds: reached, placeStates, ...(saved ? { board: saved } : {}) }, call), call };
 }
 
@@ -3996,8 +4028,11 @@ function spawnFactsFor(options: PtyCreateOptions, launcherArgs: readonly string[
   const leaderOfAll = options.leaderOfAll === true ? { leaderOfAll: true } : {};
   const resumeIndex = launcherArgs.indexOf('-r');
   const resumed = resumeIndex !== -1 && !launcherArgs.includes('--fork-session') ? launcherArgs[resumeIndex + 1] : undefined;
+  // Sessão durável — a conversation that came back from an update under its own id (`--session-id`) is on the board too.
+  const fixedIndex = launcherArgs.indexOf('--session-id');
+  const fixed = fixedIndex !== -1 ? launcherArgs[fixedIndex + 1] : undefined;
   const predecessor = options.renewalId ? sessionRenewal?.get(options.renewalId)?.previousSessionId : undefined;
-  const sessionId = resumed ?? predecessor;
+  const sessionId = resumed ?? fixed ?? predecessor;
   const alone: SpawnFacts = { ...(explicit ? { roleId: explicit } : {}), ...leaderOfAll };
   if (!sessionId && !options.placeId) return alone;
   try {
@@ -4802,12 +4837,29 @@ void app.whenReady().then(async () => {
   void remoteOracleHost?.drain();
   // Fatia 4: the picture of each VPS session on its board (who it is, the places, the saved board), for the MCP gate
   // that answers it when this PC is off. The board does not change while the PC is off, so the last one is right.
+  // 12/11 (t-58d7c191) — one round at a time, and only the sessions of the place whose gate reads the picture: the
+  // registry holds every remote tab (dozens at the Homologações, which has no gate), each costs two renderer calls of up
+  // to 15 s, and rounds every 30 s piled up on a renderer that answered a trivial call in 4 to 15+ s.
+  let picturing = false;
   const pushBoardPicture = async (): Promise<void> => {
     const host = remoteOracleHost;
     const registry = remoteSessions;
-    if (!host || !registry || host.state().mode !== 'remoto') return;
+    if (picturing || !host || !registry) return;
+    const oracle = host.state();
+    if (oracle.mode !== 'remoto') return;
+    const gateSsh = appConfig.accounts.remotes.find((place) => place.id === oracle.lugar)?.sshTarget;
+    if (!gateSsh) return;
+    picturing = true;
+    try {
+      await pushPictureRound(host, registry, gateSsh);
+    } finally {
+      picturing = false;
+    }
+  };
+  const pushPictureRound = async (host: NonNullable<typeof remoteOracleHost>, registry: NonNullable<typeof remoteSessions>, gateSsh: string): Promise<void> => {
     const sessoes: Record<string, unknown> = {};
     for (const { ptyId, folder } of registry.liveSessions()) {
+      if (registry.sshTargetOf(ptyId) !== gateSsh) continue;
       try {
         const who = await boardBridge.execute(ptyId, { tool: 'sessao_quem_sou' });
         if (who.kind !== 'text') continue;

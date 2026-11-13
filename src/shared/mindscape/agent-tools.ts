@@ -246,7 +246,7 @@ export const BOARD_TOOLS = [
   {
     name: 'sessao_ver_tela',
     title: 'Ver o que outra sessão fez',
-    description: 'O estado de uma sessão do quadro e o post-it do fim do último turno dela (o resumo do que fez).',
+    description: 'O estado de uma sessão do quadro, o post-it do fim do último turno dela (o resumo do que fez) e, quando ela está parada num pedido de permissão, o que esse pedido pede (ferramenta e comando ou arquivo).',
     inputSchema: { type: 'object', properties: { quem: PLACE_REF, quadro: BOARD_REF }, required: ['quem'], additionalProperties: false },
     annotations: { readOnlyHint: true },
   },

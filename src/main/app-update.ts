@@ -11,13 +11,16 @@ import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from '
 import { join } from 'node:path';
 import type { AppUpdater } from 'electron-updater';
 import {
-  parseResumeFile,
+  DEFAULT_FORCE_AFTER_MINUTES,
+  parseResume,
+  resumeArgsFor,
   RESUME_MAX_AGE_MS,
   serializeResumeFile,
   type AppUpdateApplyResult,
   type AppUpdateAvailable,
   type AppUpdateBoot,
   type AppUpdateStatus,
+  type ResumeRemote,
   type ResumeTab,
 } from '../shared/appUpdate';
 
@@ -39,6 +42,12 @@ export interface AppUpdateServiceOptions {
   /** Lets the app save what it must before the restart (accounts, sessions). */
   readonly beforeRestart?: () => void;
   readonly now?: () => number;
+  /** Sessão durável — the conversation has a transcript on this computer (else it starts again under the same id). */
+  readonly transcriptExists?: (sessionId: string, cwd: string | undefined) => boolean;
+  /** Minutes "Atualizar" waits for sessions in a turn (`appUpdate.forceAfterMinutes`), read at each status. */
+  readonly forceAfterMinutes?: () => number;
+  /** The token of the `gh` of this PC (tests pass their own). */
+  readonly ghToken?: () => Promise<string | null>;
 }
 
 export interface AppUpdateService {
@@ -46,7 +55,7 @@ export interface AppUpdateService {
   stop(): void;
   status(): AppUpdateStatus;
   check(): Promise<void>;
-  apply(tabs: unknown): AppUpdateApplyResult;
+  apply(tabs: unknown, remotes?: unknown): AppUpdateApplyResult;
   takeBoot(): AppUpdateBoot;
 }
 
@@ -67,6 +76,10 @@ function removeQuietly(path: string): void {
 }
 
 function isResumeTabList(value: unknown): value is ResumeTab[] {
+  return Array.isArray(value) && value.length <= 100;
+}
+
+function isResumeRemoteList(value: unknown): value is ResumeRemote[] {
   return Array.isArray(value) && value.length <= 100;
 }
 
@@ -102,7 +115,11 @@ export function createAppUpdateService(options: AppUpdateServiceOptions): AppUpd
   const resumePath = join(options.stateDir, RESUME_FILE);
   const resultPath = join(options.stateDir, RESULT_FILE);
 
-  const status = (): AppUpdateStatus => ({ enabled: options.enabled, currentVersion: options.currentVersion, available, failure });
+  const forceAfterMs = (): number => {
+    const minutes = options.forceAfterMinutes?.() ?? DEFAULT_FORCE_AFTER_MINUTES;
+    return (Number.isFinite(minutes) && minutes > 0 ? minutes : DEFAULT_FORCE_AFTER_MINUTES) * 60_000;
+  };
+  const status = (): AppUpdateStatus => ({ enabled: options.enabled, currentVersion: options.currentVersion, available, failure, forceAfterMs: forceAfterMs() });
   const emit = (): void => options.onChanged(status());
 
   const updater = (): AppUpdater => {
@@ -147,7 +164,7 @@ export function createAppUpdateService(options: AppUpdateServiceOptions): AppUpd
     if (!options.enabled || checking || applying || available?.ready) return;
     checking = true;
     try {
-      const token = await ghToken();
+      const token = await (options.ghToken ?? ghToken)();
       if (!token) {
         failure = 'entre no GitHub com o gh nesta máquina (gh auth login) para receber versões novas';
         emit();
@@ -180,17 +197,17 @@ export function createAppUpdateService(options: AppUpdateServiceOptions): AppUpd
     },
     status,
     check,
-    apply(tabs) {
+    apply(tabs, remotes = []) {
       if (applying) return { ok: false, message: 'A atualização já está em andamento.' };
       if (!available?.ready) return { ok: false, message: 'A versão nova ainda está baixando.' };
-      if (!isResumeTabList(tabs)) return { ok: false, message: 'Não deu para guardar as abas abertas.' };
+      if (!isResumeTabList(tabs) || !isResumeRemoteList(remotes)) return { ok: false, message: 'Não deu para guardar as abas abertas.' };
       try {
         mkdirSync(options.stateDir, { recursive: true });
         // Round trip through the parser: only what will be read back is written.
-        const text = serializeResumeFile(options.channel, tabs, now());
-        const checked = parseResumeFile(text, { channel: options.channel, now: now() });
+        const text = serializeResumeFile(options.channel, tabs, now(), remotes);
+        const checked = parseResume(text, { channel: options.channel, now: now() });
         const temp = `${resumePath}.tmp`;
-        writeFileSync(temp, serializeResumeFile(options.channel, checked, now()), 'utf8');
+        writeFileSync(temp, serializeResumeFile(options.channel, checked.tabs, now(), checked.remotes), 'utf8');
         renameSync(temp, resumePath);
         removeQuietly(resultPath);
       } catch (error) {
@@ -215,8 +232,17 @@ export function createAppUpdateService(options: AppUpdateServiceOptions): AppUpd
     takeBoot() {
       const text = readText(resumePath);
       let tabs: readonly ResumeTab[] = [];
+      let remotes: readonly ResumeRemote[] = [];
       if (text !== null) {
-        tabs = parseResumeFile(text, { channel: options.channel, now: now() });
+        const parsed = parseResume(text, { channel: options.channel, now: now() });
+        remotes = parsed.remotes;
+        // Each conversation comes back under its own id: `-r` when it has a transcript, else a new start with that id.
+        tabs = parsed.tabs.map((tab) =>
+          // A provider's session keeps its transcript in the provider's home: its `-r` stays as it was.
+          tab.sessionId && tab.launchArgs && !tab.providerId && options.transcriptExists
+            ? { ...tab, launchArgs: resumeArgsFor(tab.launchArgs, tab.sessionId, options.transcriptExists(tab.sessionId, tab.cwd)) }
+            : tab,
+        );
         // Restored or not (too old, broken), the file is used once: the general restore on boot stays cancelled.
         removeQuietly(resumePath);
       }
@@ -232,7 +258,7 @@ export function createAppUpdateService(options: AppUpdateServiceOptions): AppUpd
         }
         removeQuietly(resultPath);
       }
-      return { tabs, failure: bootFailure };
+      return { tabs, remotes, failure: bootFailure };
     },
   };
 }

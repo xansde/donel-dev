@@ -18,7 +18,7 @@
 // caso hipotético de uma versão do CLI ou um hook drop em que ela não
 // dispare).
 
-import { hasPermissionPrompt } from '../shared/cliInputBox';
+import { openPermissionAt } from '../shared/cliInputBox';
 
 export type SemaphoreState = 'working' | 'waiting' | 'permission' | 'done';
 
@@ -274,6 +274,9 @@ export function applyPermissionHeuristic(
 // (wi-esteira4-enter-confirmado): o auto-start da esteira precisa do MESMO
 // veto para nunca escrever `\r` sobre um prompt de permissão, e um fato só
 // mora num lugar só. Comportamento aqui inalterado — só a origem da lista.
+// Revisor, #406: só o diálogo que é o ÚLTIMO bloco do texto recente. O padrão frouxo achava um diálogo já respondido
+// acima da saída da ferramenta e marcava "permissão" a cada ferramenta longa ("precisa do dono" repetido ao Líder).
+// Um falso negativo aqui custa pouco: o `Notification` do CLI é o sinal primário.
 export function defaultMatchesPermissionPrompt(recentLines: readonly string[]): boolean {
-  return hasPermissionPrompt(recentLines);
+  return openPermissionAt(recentLines) !== null;
 }
