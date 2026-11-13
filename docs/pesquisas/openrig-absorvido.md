@@ -1,8 +1,42 @@
 # OpenRig — registro de absorção
 
-Último commit absorvido: f06edfa4109bd56b337f646dbffb82dc5be39c1f
+Último commit absorvido: c4b933e9c4cad5fecc4197cf4c47f6270ef85f48
 
 Referência de design do Mindscape (github.com/mvschwarz/openrig). Procedimento na skill `absorver-openrig`. Cada rodada lista o que virou PR, o que ficou adiado, o que espera o dono e o que foi descartado.
+
+## 2026-11-13 — f06edfa..c4b933e
+
+71 commits do OpenRig; versões novas: v0.7.13 e claude-directory-v0.1.1.
+
+### Vale → PR
+
+- **Cartão do quadro mostra "desconhecido" quando a sessão está sem sinal há muito tempo** (plano: item 04 Cartão rico e estado em três eixos, "desconhecido vence resposta confiante e errada"). Origem: OpenRig `4c4d0f8`. PR: https://github.com/xansde/donel-dev/pull/417. Teste primeiro: em `tests/sessao-parada-aparece-parada.test.ts`, o caso de uma sessão trabalhando sem hook além de `STALE_SIGNAL_MS` falhou antes da implementação (o tique não emitia `signalStale`); o caso de uma ferramenta longa aberta, que segue sem a marca, também está no arquivo. A regra roda no tique do semáforo no processo principal e o renderer recebe só a marca `signalStale`; levar `lastEventAt` e `openCalls` ao renderer faria o app renderizar a cada hook, porque o `sameSemaphoreInfo` só guarda o que muda. Verify verde pela fila, em dia com `origin/staging` (110 arquivos, 1443 testes, build ok).
+
+### Vale → adiado
+
+Nenhum (teto de 3 PRs não foi atingido).
+
+### Vale → pendente para o dono
+
+Nenhum novo. Seguem abertas as perguntas das seções anteriores (resposta do "esperando você" em nome do dono, desde 08/11; pausa até o reset do limite de uso, desde 12/11).
+
+### Descartado
+
+- Pessoa: resposta clicada e leitura do "precisa de você" por link: é a mesma pergunta que está com o dono desde 08/11 (uma sessão pode responder o "esperando você" em nome dele?) e ainda não tem resposta, então não abro outra. A resposta parcial como evento e o `needs-me.read` são da fila e do daemon do OpenRig.
+- Entrega de mensagem: nova checagem da caixa de entrada e guardas de diálogo: o Donel já faz igual ou melhor. "Select model" está em `SCREEN_TITLES` (`src/shared/chat/screen.ts`), então o envio comum não digita no seletor. O app nunca responde sozinho o diálogo de confiança (auto-aceite removido em 23/07, `TerminalPane.tsx`; `trustDialog.ts` só detecta). A guarda de digitação vem das teclas que passam pelo app, sem raspar a tela do tmux (`sendDriver`/`tabSend`). Broadcast não existe, e os avisos fixos pós-hold são da fila do daemon.
+- Estado do lugar: desconhecido, atividade do agente e inventário: a parte que vale (desconhecido também no grafo, `4c4d0f8`) virou o PR #417. O resto não se aplica: os tiles Rex por OSC 7501 são tmux/Rex, e os turnos do inventário, a varredura da execution view e os seats Codex são desempenho do daemon.
+- Assistentes conectados: check-in na TUI, `rig ps` e `rig_team`: o Donel já tem igual. `agentBridge.ts` avisa "Seu lugar ainda não está no quadro", e o silêncio vira desconhecido desde o PR #313. A TUI está fora de escopo (dono, 03/11), e `rig ps`/`rig_team` são do CLI rig.
+- Fila durável: varredura de travados, filtros e custódia: é a continuação do item 13 (fila durável), pendente com o dono desde 10/11 e ainda não começada. A mecânica (stuck sweep, avisos por pai, índices, wakes de park) é daemon/SQLite, sem onde encaixar hoje.
+- Handover, renovação e reconstrução do lugar: no Donel a tarefa do ledger é do lugar, não da conversa, e a renovação em voo mantém o mesmo lugar (item 07, PRs #161/#321/#385), então não sobram claims do ocupante que sai para limpar. Snapshot e restore dependem do item 09, ainda pendente. AGENTS.md do Codex, diagnóstico de compactação e materialização sem launch são mecânica do daemon.
+- Suíte de conformância da entrega de mensagens (harness com modelos de mentira): testes enxutos (dono, 03/11): nada de harness novo nem smoke em lote sem pedido do dono. A entrega já tem os testes do `sendMachine`. É engenharia de teste do próprio OpenRig, sem ideia de produto.
+- Rede: inscrever em conta e conectar lugares por nome, pareamento: hub e rede de daemons não existem no Donel. O lugar remoto é ssh por chave (ADR 0005, `remote-session.ts`), e o Herdr workspace é da régua do B28 (só referência).
+- MCP: limite de uso justo de grant service e permissão do runner: grant service e uso justo são do daemon do OpenRig. No Donel, limite e troca de conta tocam `src/main/accounts/` e `src/main/proxies/`, o perímetro proibido. A pausa até o reset do limite já está com o dono desde 12/11.
+- Onboarding e setup: oferta de registrar a pessoa, times ajustados aos logins: operador do kernel e setup do rig com topologia do OpenRig, sem equivalente. No Donel o time é montado no quadro e os logins passam pelo motor de contas (`src/main/accounts/`, perímetro proibido).
+- Config: entradas navegáveis com tipo, escolhas, faixa e rota de escrita: são o navegador de config e o validate do CLI rig (pins de harness, pressão de contexto do daemon). O Donel não tem CLI equivalente, e a config dele é a tela de configurações.
+- Skills e docs de operação: promessas com escopo, hold após compactação, relay binding: são docs e skills do próprio OpenRig, sem ideia de design. Hold, relay e restore de skill são mecânica do daemon. "Continuar trabalhando com ask aberto" é orientação de papel que não pede mudança no app.
+- Plugin edição de skills para o diretório do Claude: packaging e distribuição de plugin do OpenRig (claude-directory 0.1.1/0.1.2, LICENSE, `pack:release`), sem ideia de design.
+- Release 0.7.13 e changelog: empacotamento, changelog e roadmap do próprio OpenRig, sem ideia de design.
+- Infra de CI/testes e tmux: CI, fixtures e tmux do OpenRig (timeout, DNS, fuso, ulimit, hooks do Codex). A régua descarta CI do OpenRig e tmux.
 
 ## 2026-11-12 — 3a53a07..f06edfa
 
