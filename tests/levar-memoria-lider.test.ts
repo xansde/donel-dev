@@ -213,4 +213,109 @@ describe('Memória do Líder no PC — nada se perde, nada duplica', () => {
     expect(report.copied).toEqual(['MEMORY.md', 'a.md']);
     expect(readFileSync(join(target, 'MEMORY.md'), 'utf8')).toBe('- [A](a.md) — a\n');
   });
+
+  const INDEX_WITH_SECTIONS = '# Memória\n\n## Regras\n- [A](a.md) — primeira\nVeja também [A](a.md) — nota só aqui\n\n## Outras\n- [B](b.md) — b\n';
+
+  it('pasta nova sem MEMORY.md: o índice antigo vai igual, com seções, linhas em branco e a 2ª linha do mesmo link', () => {
+    const { old, next } = dirs();
+    writeFileSync(join(old, 'MEMORY.md'), INDEX_WITH_SECTIONS);
+    writeFileSync(join(old, 'b.md'), 'b\n');
+
+    carryMemory(old, next, { apply: true });
+
+    expect(readFileSync(join(next, 'MEMORY.md'), 'utf8')).toBe(INDEX_WITH_SECTIONS);
+  });
+
+  it('pasta nova sem MEMORY.md: BOM e \\r\\n do índice antigo ficam, e só o link do conflito muda', () => {
+    const { old, next } = dirs();
+    const oldIndex = '﻿# M\r\n\r\n- [A](a.md) — a\r\nVeja também [A](a.md) — nota\r\n';
+    writeFileSync(join(old, 'MEMORY.md'), oldIndex);
+    writeFileSync(join(old, 'a.md'), 'old');
+    writeFileSync(join(next, 'a.md'), 'new');
+
+    carryMemory(old, next, { apply: true });
+
+    expect(readFileSync(join(next, 'MEMORY.md')).equals(Buffer.from(oldIndex.replace(/\(a\.md\)/g, '(a.do-projeto-antigo.md)'), 'utf8'))).toBe(true);
+    const after = snapshot(next);
+    expect(carryMemory(old, next, { apply: true }).addedLines).toEqual([]);
+    expect(snapshot(next)).toEqual(after);
+  });
+
+  it('pasta nova com a entrada de A: a entrada antiga de A é pulada, a nota "Veja também" com o mesmo link entra', () => {
+    const { old, next } = dirs();
+    writeFileSync(join(old, 'MEMORY.md'), INDEX_WITH_SECTIONS);
+    writeFileSync(join(next, 'MEMORY.md'), '- [A](a.md) — primeira\n');
+
+    const report = carryMemory(old, next, { apply: true });
+
+    expect(report.addedLines).toEqual(['# Memória', '## Regras', 'Veja também [A](a.md) — nota só aqui', '## Outras', '- [B](b.md) — b']);
+    expect(readFileSync(join(next, 'MEMORY.md'), 'utf8')).toBe(
+      '- [A](a.md) — primeira\n# Memória\n## Regras\nVeja também [A](a.md) — nota só aqui\n## Outras\n- [B](b.md) — b\n',
+    );
+    const after = snapshot(next);
+    expect(carryMemory(old, next, { apply: true }).addedLines).toEqual([]);
+    expect(snapshot(next)).toEqual(after);
+  });
+
+  it('duas entradas da antiga com o mesmo link, ausente na nova: entram as duas', () => {
+    expect(mergeMemoryIndex('- [A](a.md) — um\n- [A](a.md) — dois\n', '- [Z](z.md) — z\n').added).toEqual(['- [A](a.md) — um', '- [A](a.md) — dois']);
+  });
+
+  it('.md que não é UTF-8 válido compara byte a byte: "caf\\xE9" e "caf\\xE8" são um conflito, não iguais', () => {
+    const { old, next } = dirs();
+    writeFileSync(join(old, 'a.md'), Buffer.from([0x63, 0x61, 0x66, 0xe9]));
+    writeFileSync(join(next, 'a.md'), Buffer.from([0x63, 0x61, 0x66, 0xe8]));
+
+    const report = carryMemory(old, next, { apply: true });
+
+    expect(report.same).toEqual([]);
+    expect(report.conflicts).toEqual([{ name: 'a.md', savedAs: 'a.do-projeto-antigo.md', status: 'save' }]);
+    expect(readFileSync(join(next, 'a.do-projeto-antigo.md')).equals(Buffer.from([0x63, 0x61, 0x66, 0xe9]))).toBe(true);
+  });
+
+  it('destino que precisa ser pasta e é arquivo: PARADO, nada gravado (nem o que caberia), sem exceção', () => {
+    const { old, next } = dirs();
+    writeFileSync(join(old, 'a.md'), 'a\n');
+    mkdirSync(join(old, 'sub'));
+    writeFileSync(join(old, 'sub', 'x.md'), 'x\n');
+    writeFileSync(join(next, 'sub'), 'sou um arquivo\n');
+    const before = snapshot(next);
+
+    const report = carryMemory(old, next, { apply: true });
+
+    expect(report.blocked).toBe(true);
+    expect(report.applied).toBe(false);
+    expect(snapshot(next)).toEqual(before);
+    expect(existsSync(join(next, 'a.md'))).toBe(false);
+    expect(formatReport(report)).toContain('PARADO');
+    expect(formatReport(report)).toContain('sub/x.md');
+  });
+
+  it('MEMORY.md da pasta nova é uma pasta: PARADO, nada gravado, sem exceção', () => {
+    const { old, next } = dirs();
+    writeFileSync(join(old, 'MEMORY.md'), '- [A](a.md) — a\n');
+    writeFileSync(join(old, 'a.md'), 'a\n');
+    mkdirSync(join(next, 'MEMORY.md'));
+    const before = snapshot(next);
+
+    const report = carryMemory(old, next, { apply: true });
+
+    expect(report.blocked).toBe(true);
+    expect(snapshot(next)).toEqual(before);
+  });
+
+  it('Windows não diferencia maiúsculas: A.md em conflito e a.do-projeto-antigo.md na antiga é colisão, PARADO', () => {
+    const { old, next } = dirs();
+    writeFileSync(join(old, 'A.md'), 'A antiga\n');
+    writeFileSync(join(old, 'a.do-projeto-antigo.md'), 'outra nota\n');
+    writeFileSync(join(next, 'A.md'), 'A nova\n');
+    const before = snapshot(next);
+
+    const report = carryMemory(old, next, { apply: true });
+
+    expect(report.blocked).toBe(true);
+    expect(report.applied).toBe(false);
+    expect(report.conflicts).toContainEqual(expect.objectContaining({ name: 'A.md', status: 'blocked', reason: 'collision' }));
+    expect(snapshot(next)).toEqual(before);
+  });
 });

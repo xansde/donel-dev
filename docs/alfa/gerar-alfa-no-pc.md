@@ -169,8 +169,13 @@ leva a antiga para a nova **sem sobrescrever nem duplicar** nada:
 - arquivo que só existe na antiga é copiado; mesmo nome e mesmo conteúdo, nada;
 - mesmo nome com conteúdo **diferente** é um conflito: o da pasta nova fica, e a versão antiga vai ao lado como
   `<nome>.do-projeto-antigo.md` (se o índice antigo tinha entrada para ele, ela entra apontando para essa cópia);
-- o `MEMORY.md` ganha só as entradas da antiga cujo arquivo (o link `(arquivo.md)`) a nova ainda não tem, cada uma
-  na sua linha, no fim de linha do arquivo e em UTF-8 sem BOM;
+- sem `MEMORY.md` na nova, o da antiga vai igual (seções, linhas em branco, BOM e fim de linha), só com os links
+  dos conflitos apontando a cópia antiga;
+- com `MEMORY.md` nos dois, o da nova ganha no fim as linhas da antiga que faltam nele: uma entrada de índice
+  (`- [Nome](arquivo.md) — ...`) falta quando a nova não tem entrada para esse arquivo; qualquer outra linha (título,
+  nota com link no meio do texto), quando a nova não tem esse texto. O que a nova já tinha fica byte a byte;
+- nomes comparam sem diferença de maiúsculas, como no Windows, e antes de gravar o script confere todos os destinos:
+  se algum não cabe (uma pasta que na nova é arquivo, um `MEMORY.md` que é pasta), sai `PARADO` sem gravar nada;
 - a pasta antiga só é lida, e rodar de novo não muda nada.
 
 Primeiro, só o plano (não grava nada). O script vem da worktree que buildou o alfa (`origin/staging`, já com o
@@ -184,8 +189,9 @@ $new = 'C:\Users\compu\.claude\projects\C--Users-compu-seazone--orquestradora\me
 node $script $old $new
 ```
 
-Leia o plano: **Copiados**, **Iguais**, **Conflitos** e **Linhas acrescentadas ao MEMORY.md**. Um conflito marcado
-`PARADO` (já existe `<nome>.do-projeto-antigo.md` com outro conteúdo) faz o script sair com 1 e **não gravar nada**:
+Leia o plano: **Copiados**, **Iguais**, **Conflitos**, **Linhas acrescentadas ao MEMORY.md** e, se houver,
+**Destinos impossíveis**. Qualquer item `PARADO` (já existe `<nome>.do-projeto-antigo.md` com outro conteúdo, dois
+arquivos indo para o mesmo nome, um destino que não cabe) faz o script sair com 1 e **não gravar nada**:
 compare os arquivos, mostre ao dono e só siga quando ele decidir. Sem `PARADO`, grave:
 
 ```powershell
