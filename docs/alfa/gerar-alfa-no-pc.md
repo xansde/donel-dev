@@ -163,24 +163,34 @@ instalado.** Antes disso o Líder ainda roda em `C:\Users\compu\seazone`, e a c�
 
 O PR #413 passa a rodar o Líder em `C:\Users\compu\seazone\_orquestradora`.
 O Claude guarda a memória por pasta de trabalho, então o Líder passaria a enxergar uma pasta de memória nova
-e vazia. Copie a antiga **sem sobrescrever** nada:
+e vazia. O script `scripts/levar-memoria-lider.mjs` (Node puro, testado em `tests/levar-memoria-lider.test.ts`)
+leva a antiga para a nova **sem sobrescrever nem duplicar** nada:
+
+- arquivo que só existe na antiga é copiado; mesmo nome e mesmo conteúdo, nada;
+- mesmo nome com conteúdo **diferente** é um conflito: o da pasta nova fica, e a versão antiga vai ao lado como
+  `<nome>.do-projeto-antigo.md` (se o índice antigo tinha entrada para ele, ela entra apontando para essa cópia);
+- o `MEMORY.md` ganha só as entradas da antiga cujo arquivo (o link `(arquivo.md)`) a nova ainda não tem, cada uma
+  na sua linha, no fim de linha do arquivo e em UTF-8 sem BOM;
+- a pasta antiga só é lida, e rodar de novo não muda nada.
+
+Primeiro, só o plano (não grava nada). O script vem da worktree que buildou o alfa (`origin/staging`, já com o
+#413); `$repo` é o do passo 1.3:
 
 ```powershell
+$script = "$repo\.claude\worktrees\alfa-diario\scripts\levar-memoria-lider.mjs"
+if (-not (Test-Path $script)) { throw 'script não encontrado: o alfa com o #413 ainda não foi buildado aqui' }
 $old = 'C:\Users\compu\.claude\projects\C--Users-compu-seazone\memory'
 $new = 'C:\Users\compu\.claude\projects\C--Users-compu-seazone--orquestradora\memory'
-if ((Test-Path $old) -and (Get-ChildItem $old -File -ErrorAction SilentlyContinue)) {
-  # /XC /XN /XO: não toca em arquivo que já existe no destino (nem mais novo, nem mais antigo, nem diferente)
-  robocopy $old $new /E /XC /XN /XO /NFL /NDL
-  if ($LASTEXITCODE -ge 8) { throw "robocopy falhou ($LASTEXITCODE)" }   # 0 a 7 = ok
-  # MEMORY.md existe nos dois: o robocopy o deixou como está; acrescente só as linhas que faltam
-  $oldIdx = Join-Path $old 'MEMORY.md'; $newIdx = Join-Path $new 'MEMORY.md'
-  if ((Test-Path $oldIdx) -and (Test-Path $newIdx)) {
-    $have = Get-Content -Encoding UTF8 $newIdx
-    $missing = Get-Content -Encoding UTF8 $oldIdx | Where-Object { $_.Trim() -and ($have -cnotcontains $_) }
-    # No PowerShell 5.1, Add-Content -Encoding utf8 grava BOM; AppendAllLines com UTF8Encoding($false) não
-    if ($missing) { [IO.File]::AppendAllLines($newIdx, [string[]]$missing, (New-Object System.Text.UTF8Encoding($false))) }
-  }
-} else { 'Sem memória antiga para copiar.' }
+node $script $old $new
 ```
 
-A pasta antiga fica intacta (é cópia, não move). Rodar duas vezes não duplica nada.
+Leia o plano: **Copiados**, **Iguais**, **Conflitos** e **Linhas acrescentadas ao MEMORY.md**. Um conflito marcado
+`PARADO` (já existe `<nome>.do-projeto-antigo.md` com outro conteúdo) faz o script sair com 1 e **não gravar nada**:
+compare os arquivos, mostre ao dono e só siga quando ele decidir. Sem `PARADO`, grave:
+
+```powershell
+node $script $old $new --aplicar
+$LASTEXITCODE   # 0 = gravado; 1 = conflito PARADO, nada gravado
+```
+
+Rodar de novo responde "Nada a gravar". Conte ao dono os conflitos listados: as duas versões ficaram lado a lado.
