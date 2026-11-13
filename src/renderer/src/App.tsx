@@ -946,7 +946,7 @@ export function App(): React.JSX.Element {
    */
   const resumingRef = useRef(new Set<string>());
   /** `onFail` (t-1293c818, `sessao_retomar`): the caller hears why instead of the owner's toast. */
-  const openWhereItLives = (sessionId: string, projectPath: string, open: (remote: { remoteId?: string }) => void, onFail?: (reason: string) => void): void => {
+  const openWhereItLives = (sessionId: string, projectPath: string, open: (remote: { remoteId?: string }) => void, onFail?: (reason: string, missing?: true) => void): void => {
     if (resumingRef.current.has(sessionId)) {
       onFail?.('ela já está sendo retomada');
       return;
@@ -961,6 +961,15 @@ export function App(): React.JSX.Element {
       .whereLives(sessionId, projectPath)
       .then(
         (where) => {
+          if (where.kind === 'nowhere') {
+            // t-e72ca49e — never an empty `claude -r` here: the caller tries the place's previous conversations.
+            const many = where.labels.length > 1;
+            const names = where.labels.map((label) => `«${label}»`).join(' e ');
+            const why = `a conversa não está em lugar nenhum: nem neste computador, nem ${many ? 'nos lugares remotos' : 'no lugar remoto'} ${names}`;
+            if (onFail) onFail(why, true);
+            else setDevModeToast(`Não consegui retomar: ${why}.`);
+            return;
+          }
           if (where.kind === 'unreachable') {
             const many = where.labels.length > 1;
             const names = where.labels.map((label) => `«${label}»`).join(' e ');
@@ -971,7 +980,12 @@ export function App(): React.JSX.Element {
           }
           open(where.kind === 'remote' ? { remoteId: where.remoteId } : {});
         },
-        () => open({}),
+        // t-e72ca49e — a lookup that failed says nothing about where it lives: never fall back to this computer.
+        () => {
+          const why = 'não consegui procurar onde a conversa está';
+          if (onFail) onFail(why);
+          else setDevModeToast(`Não consegui retomar: ${why}. Tente de novo.`);
+        },
       )
       .finally(() => {
         resumingRef.current.delete(sessionId);
@@ -2734,7 +2748,7 @@ export function App(): React.JSX.Element {
             if (refused) resolve({ ok: false, reason: refused });
             else resolve({ ok: true, tabId: resumeTab(sessionId, request.projectPath, name, remote, { placeId: request.placeId, ...opener }), ...remote });
           },
-          (reason) => resolve({ ok: false, reason }),
+          (reason, missing) => resolve({ ok: false, reason, ...(missing ? { missing } : {}) }),
         );
       }),
     closeTab: (tabId) => closeTabImmediatelyRef.current(tabId),

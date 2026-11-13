@@ -245,6 +245,7 @@ import {
   pickRemotePort,
   REMOTE_SESSIONS_DIR,
   remoteDirFor,
+  decideWhereLives,
   RemoteSessionRegistry,
   probeRemoteSession,
   runRemoteScript,
@@ -3057,13 +3058,8 @@ function registerSessionIpcHandlers(): void {
     if (typeof sessionId !== 'string' || typeof projectPath !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(sessionId)) return { kind: 'local' };
     if (localTranscriptExists(sessionId, projectPath)) return { kind: 'local' };
     const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
-    if (places.length === 0) return { kind: 'local' };
-    const answers = await findRemoteTranscript(places, remoteDirFor(projectPath, appConfig.projectRoots), sessionId);
-    const found = answers.find((answer) => answer.answer === 'has');
-    if (found) return { kind: 'remote', remoteId: found.id };
-    const silent = answers.filter((answer) => answer.answer === 'unreachable');
-    if (silent.length > 0) return { kind: 'unreachable', labels: silent.map((answer) => places.find((place) => place.id === answer.id)?.label ?? answer.id) };
-    return { kind: 'local' };
+    const answers = places.length === 0 ? [] : await findRemoteTranscript(places, remoteDirFor(projectPath, appConfig.projectRoots), sessionId);
+    return decideWhereLives(false, answers, places);
   });
 
   /**
