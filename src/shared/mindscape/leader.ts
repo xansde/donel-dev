@@ -26,6 +26,21 @@ export function isLeaderOfAllTab(tab: LeaderTabLike): boolean {
 }
 
 /**
+ * The live tab of the Líder único: the remembered one when it is still open, else the first open one with the mark.
+ * `open` answers false for a tab whose process ended AND for one the app is closing: right after a move closes the
+ * old Líder, the list of tabs still holds it until the next render, and a notice must not go to a closed tab (#413).
+ */
+export function liveLeaderOfAllTab<T extends LeaderTabLike & { readonly id: string }>(
+  tabs: readonly T[],
+  open: (tabId: string) => boolean,
+  rememberedId?: string | null,
+): T | undefined {
+  const live = (tab: T): boolean => isLeaderOfAllTab(tab) && open(tab.id);
+  const remembered = rememberedId ? tabs.find((tab) => tab.id === rememberedId && live(tab)) : undefined;
+  return remembered ?? tabs.find(live);
+}
+
+/**
  * Where the Líder único runs: the folder that holds every board's project (`…\seazone` for `…\seazone\Donel Dev` and
  * `…\seazone\BizOps`), so it reads any of them without leaving its folder. One project → its parent folder; none, or
  * nothing in common but the drive → `undefined` (the home folder).

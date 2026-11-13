@@ -131,7 +131,7 @@ import { blockingScreen, readInputText } from '../../shared/chat/screen';
 import { LEADER_DENY_REASON, permissionPorts } from './Mindscape/permissionPorts';
 import { withNoPipelineTag } from '../../shared/chat/noPipeline';
 import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../shared/lider/ipc';
-import { isLeaderOfAllTab } from '../../shared/mindscape/leader';
+import { isLeaderOfAllTab, liveLeaderOfAllTab } from '../../shared/mindscape/leader';
 import { DEFAULT_LEADER_PREFS, leaderCwd, leaderMoveCwd, leaderRemoteId } from '../../shared/leaderPrefs';
 import { leaderFolderMoveKey, leaderLineRoute, planLeaderDelivery, startLeaderMove, type LeaderMove, type LeaderMoveDeps } from '../../shared/lider/move';
 import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
@@ -459,6 +459,10 @@ export function App(): React.JSX.Element {
   // da sessão que mudou, não o do primeiro render.
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
+  // #413 — tabs `closeTabImmediately` already closed while `tabs`/`tabsRef` still hold them (until the next render): they
+  // are not open for anyone who picks a tab in between (the Líder único right after a move). Pruned once they are gone.
+  const closingTabIdsRef = useRef<Set<string>>(new Set());
+  for (const id of closingTabIdsRef.current) if (!tabs.some((tab) => tab.id === id)) closingTabIdsRef.current.delete(id);
   // T707 — debounce de ~10s POR SESSÃO (chave = claudeSessionId): última
   // gravação (epoch ms) + o que foi gravado, pra `shouldRecordVisit` decidir
   // sem reler o ConfigStore inteiro a cada turn.
@@ -721,6 +725,7 @@ export function App(): React.JSX.Element {
   const closeTabImmediately = (tabId: string): void => {
     const index = tabs.findIndex((tab) => tab.id === tabId);
     if (index === -1) return;
+    closingTabIdsRef.current.add(tabId);
     // t-e753b554 — the place of this tab, if it does not come back, passes its live tasks on (read before it leaves).
     agentBridgeRef.current?.placeClosed(tabId);
     // Functional on purpose: "Fechar marcadas" (gargalos) closes several tabs in one render.
@@ -2447,9 +2452,8 @@ export function App(): React.JSX.Element {
   // when set (`leaderCwd`).
   const liderTabRef = useRef<string | null>(null);
   const findLiderTab = (): TabState | undefined => {
-    const alive = (tab: TabState): boolean => isLeaderOfAllTab(tab) && tabExits[tab.id] === undefined;
-    const remembered = liderTabRef.current ? tabs.find((tab) => tab.id === liderTabRef.current && alive(tab)) : undefined;
-    return remembered ?? tabs.find(alive);
+    const open = (tabId: string): boolean => tabExits[tabId] === undefined && !closingTabIdsRef.current.has(tabId);
+    return liveLeaderOfAllTab(tabs, open, liderTabRef.current);
   };
   const liderTab = findLiderTab();
   const liderRoleAvailable = roles.some((role) => role.id === LIDER_ROLE_ID);
@@ -2522,8 +2526,9 @@ export function App(): React.JSX.Element {
 
     // The live Líder; with none, the one whose process ended (the ssh dropped while the notebook slept).
     const live = findLiderTab();
-    const remembered = liderTabRef.current ? tabs.find((tab) => tab.id === liderTabRef.current && isLeaderOfAllTab(tab)) : undefined;
-    const tab = live ?? remembered ?? tabs.find(isLeaderOfAllTab);
+    const notClosing = (candidate: TabState): boolean => isLeaderOfAllTab(candidate) && !closingTabIdsRef.current.has(candidate.id);
+    const remembered = liderTabRef.current ? tabs.find((candidate) => candidate.id === liderTabRef.current && notClosing(candidate)) : undefined;
+    const tab = live ?? remembered ?? tabs.find(notClosing);
     const plan = planLeaderDelivery(
       tab
         ? { id: tab.id, remoteId: tab.remoteId, claudeSessionId: tab.claudeSessionId, state: semaphoreStates[tab.id]?.state, exited: tabExits[tab.id] !== undefined, cwd: tab.cwd }
@@ -2666,7 +2671,10 @@ export function App(): React.JSX.Element {
     applyGesture: (projectPath, reducer) => applyMindscape(projectPath, reducer),
     tabs: () => tabsRef.current,
     tabOfPty: (ptyId) => tabsRef.current.find((tab) => chatPtyIds[tab.id] === ptyId),
-    stateOf: (tabId) => (tabExits[tabId] !== undefined || !tabsRef.current.some((tab) => tab.id === tabId) ? undefined : (semaphoreStates[tabId]?.state ?? 'working')),
+    stateOf: (tabId) =>
+      tabExits[tabId] !== undefined || closingTabIdsRef.current.has(tabId) || !tabsRef.current.some((tab) => tab.id === tabId)
+        ? undefined
+        : (semaphoreStates[tabId]?.state ?? 'working'),
     linkLost: (tabId) => tabLinkLost(tabId),
     relinkTools: (tabId) => {
       const ptyId = tabExits[tabId] === undefined ? chatPtyIds[tabId] : undefined;

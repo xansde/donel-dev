@@ -8,6 +8,7 @@ import { carryLargestTranscript, carryTranscriptLocally } from '../src/main/lide
 import { fetchTranscriptFromRemote, sendTranscriptToRemote, type RemoteCommand } from '../src/main/lider/transfer';
 import { remoteAliveFromMeta, type RemoteSessionMeta } from '../src/main/remote-session';
 import { isValidLiderCarryPayload } from '../src/shared/lider/ipc';
+import { liveLeaderOfAllTab } from '../src/shared/mindscape/leader';
 import { leaderCwd, leaderMoveCwd, leaderMoves, leaderRemoteId, sameFolder, sanitizeLeaderPrefs } from '../src/shared/leaderPrefs';
 import { leaderFolderMoveKey, leaderLineRoute, planLeaderDelivery, startLeaderMove, type LeaderMoveDeps } from '../src/shared/lider/move';
 
@@ -489,5 +490,22 @@ describe('Líder único na VPS — a troca nunca fecha o Líder antigo antes do 
       cwd: '/home/a/seazone',
       inPlace: false,
     });
+  });
+});
+
+describe('a aba do Líder único logo depois da troca', () => {
+  const leader = (id: string) => ({ id, sessionType: 'claude' as const, roleId: 'lider', leaderOfAll: true });
+  it('a aba antiga que o app já está fechando não conta: o aviso vai à nova, mesmo com a lista de abas ainda velha', () => {
+    const tabs = [leader('antiga'), leader('nova')];
+    const closing = new Set(['antiga']);
+    expect(liveLeaderOfAllTab(tabs, (id) => !closing.has(id))?.id).toBe('nova');
+    expect(liveLeaderOfAllTab(tabs, (id) => !closing.has(id), 'antiga')?.id).toBe('nova');
+    expect(liveLeaderOfAllTab([leader('antiga')], (id) => !closing.has(id))).toBeUndefined();
+  });
+  it('a lembrada vence a primeira da lista; uma aba sem a marca nunca é o Líder', () => {
+    const tabs = [leader('a'), leader('b'), { id: 'c', sessionType: 'claude' as const, roleId: 'lider' }];
+    expect(liveLeaderOfAllTab(tabs, () => true, 'b')?.id).toBe('b');
+    expect(liveLeaderOfAllTab(tabs, () => true)?.id).toBe('a');
+    expect(liveLeaderOfAllTab(tabs, (id) => id === 'c')).toBeUndefined();
   });
 });
