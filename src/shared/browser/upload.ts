@@ -233,11 +233,14 @@ export function uploadGrantAuthority(caller: UploadCaller, quadro: string | unde
 }
 
 /** The usual wide folders of a user, by name: under the home and under a OneDrive folder of the home. */
-const WIDE_NAMES = ['desktop', 'área de trabalho', 'documents', 'documentos', 'downloads'];
+const WIDE_NAMES = [
+  'desktop', 'área de trabalho', 'documents', 'documentos', 'downloads',
+  'pictures', 'imagens', 'videos', 'vídeos', 'music', 'músicas',
+];
 
 /**
  * A folder the owner may authorize, but only after an explicit confirmation: Documentos, Área de Trabalho,
- * Downloads (the system's own `known` paths and the usual names, also inside OneDrive), a OneDrive root, or a
+ * Downloads, Imagens, Vídeos, Músicas (the system's own `known` paths and the usual names, also inside OneDrive), a OneDrive root, or a
  * folder that holds one of them. Returns the warning to show; `null` = a narrow folder, one click is enough.
  * (The disk root and the whole home are refused outright by `refusedUploadFolder`.)
  */
