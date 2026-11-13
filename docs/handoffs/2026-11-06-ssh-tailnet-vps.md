@@ -107,7 +107,9 @@ novo só ACRESCENTA a chave se ela faltar (as outras, como a `numeros-factory` d
 usuários de `AllowUsers` e os arquivos de `AuthorizedKeysFile` que já existem (na VPS pessoal: `alexandrelentz` e
 `.ssh/authorized_keys`, mudança de 07/11). Antes de trocar um arquivo ele guarda `<arquivo>.bak-<data>` ao lado,
 valida a config nova com `sshd -t` antes de pô-la no lugar e, com o serviço de pé, só faz `reload` (não corta
-conexões). A versão de 06/11 sobrescrevia os dois arquivos: rodá-la hoje derrubaria o `alexandrelentz` na VPS
+conexões). Atenção: só `AllowUsers` e `AuthorizedKeysFile` são mesclados; qualquer outra diretiva posta à mão
+na `sshd_tailnet_config` volta ao padrão do script (fica só no `.bak`): confira o `.bak` e reponha antes do
+`reload`. A versão de 06/11 sobrescrevia os dois arquivos: rodá-la hoje derrubaria o `alexandrelentz` na VPS
 pessoal e apagaria a `numeros-factory` na Homologações.
 
 Ensaio sem tocar o sistema (só arquivos sob um prefixo): `DONEL_SSH_ROOT=/tmp/ensaio DONEL_SSH_SO_ARQUIVOS=1
