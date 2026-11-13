@@ -46,8 +46,8 @@ export type BoardToolCall =
   | { readonly tool: 'quadro_aplicar'; readonly ops: readonly BoardOp[]; readonly quadro?: string }
   | { readonly tool: 'sessao_quem_sou' }
   | { readonly tool: 'sessao_listar'; readonly quadro?: string }
-  | { readonly tool: 'sessao_abrir'; readonly papel: string; readonly pedido: string; readonly nome?: string; readonly onde?: string; readonly quadro?: string }
-  | { readonly tool: 'sessao_enviar'; readonly para: string; readonly texto: string; readonly quadro?: string; readonly motivo?: LeaderMessageReason }
+  | { readonly tool: 'sessao_abrir'; readonly papel: string; readonly pedido: string; readonly nome?: string; readonly onde?: string; readonly quadro?: string; readonly tarefa?: string }
+  | { readonly tool: 'sessao_enviar'; readonly para: string; readonly texto: string; readonly quadro?: string; readonly motivo?: LeaderMessageReason; readonly tarefa?: string }
   | { readonly tool: 'sessao_ver_tela'; readonly quem: string; readonly quadro?: string }
   | { readonly tool: 'sessao_fechar'; readonly quem: string; readonly quadro?: string; readonly recusarPermissao?: boolean }
   | { readonly tool: 'sessao_permissao'; readonly quem: string; readonly quadro?: string; readonly resposta?: PermissionReply; readonly pedido?: string }
@@ -119,6 +119,10 @@ const PLACE_REF = { type: 'string', description: 'Id do lugar (sessao_listar ou 
 const BOARD_REF = {
   type: 'string',
   description: 'Só o Líder único (que não tem quadro): o quadro, pelo nome ou pela pasta do projeto. Sem ele, o Líder recebe a lista de quadros. As outras sessões usam sempre o próprio quadro.',
+};
+const TASK_REF = {
+  type: 'string',
+  description: 'Id da tarefa (t-...) deste trabalho: o app abre a mensagem com "[t-xxxx] título: objetivo" tirado do Oráculo. Sem ele, comece você o texto com essa linha.',
 };
 const BOARD_ONLY = { type: 'object', properties: { quadro: BOARD_REF }, additionalProperties: false };
 
@@ -215,6 +219,7 @@ export const BOARD_TOOLS = [
         papel: { type: 'string', description: 'Id do papel (papeis_listar). Líder só o Líder único abre (ela vira o Líder do quadro); as outras sessões, não.' },
         pedido: { type: 'string', description: 'A primeira mensagem: o trabalho, completo e autossuficiente.' },
         nome: { type: 'string', description: 'Nome curto da aba (opcional).' },
+        tarefa: TASK_REF,
         onde: { type: 'string', description: 'Onde ela roda (opcional): sem ele, "aqui" ou "auto", o app escolhe pela regra fixa da config (sem regra, onde você roda); "este computador" ou o nome de um lugar remoto (ex.: a VPS; veja sessao_quem_sou) prendem a sessão ali, e, cheio, ela espera vaga lá. A resposta diz o porquê em "porque".' },
         quadro: BOARD_REF,
       },
@@ -232,6 +237,7 @@ export const BOARD_TOOLS = [
       properties: {
         para: PLACE_REF,
         texto: { type: 'string', description: 'A mensagem.' },
+        tarefa: TASK_REF,
         quadro: BOARD_REF,
         motivo: {
           type: 'string',
@@ -322,6 +328,14 @@ export type ParsedBoardCall = { readonly ok: true; readonly call: BoardToolCall 
 
 function isCoord(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= MAX_COORD;
+}
+
+/** t-057bf559 — the task a message is about: "t-" and its id, nothing else. */
+function taskRef(value: unknown): string | undefined | { error: string } {
+  const text = optionalText(value, 'tarefa', 40);
+  if (typeof text === 'object' || !text?.trim()) return typeof text === 'object' ? text : undefined;
+  const id = text.trim();
+  return /^t-[0-9a-z]+$/i.test(id) ? id : { error: '"tarefa" é o id de uma tarefa (t-..., veja tarefa_listar).' };
 }
 
 function optionalText(value: unknown, field: string, max: number): string | undefined | { error: string } {
@@ -434,7 +448,9 @@ export function parseBoardToolCall(name: string, rawArgs: unknown): ParsedBoardC
       if (typeof nome === 'object') return { ok: false, reason: nome.error };
       const onde = optionalText(args.onde, 'onde', 80);
       if (typeof onde === 'object') return { ok: false, reason: onde.error };
-      return { ok: true, call: { tool: 'sessao_abrir', papel, pedido, ...(nome?.trim() ? { nome: nome.trim() } : {}), ...(onde?.trim() ? { onde: onde.trim() } : {}), ...quadro } };
+      const tarefa = taskRef(args.tarefa);
+      if (typeof tarefa === 'object') return { ok: false, reason: tarefa.error };
+      return { ok: true, call: { tool: 'sessao_abrir', papel, pedido, ...(nome?.trim() ? { nome: nome.trim() } : {}), ...(onde?.trim() ? { onde: onde.trim() } : {}), ...quadro, ...(tarefa ? { tarefa } : {}) } };
     }
     case 'sessao_enviar': {
       const para = requiredText(args.para, 'para', 120);
@@ -443,7 +459,9 @@ export function parseBoardToolCall(name: string, rawArgs: unknown): ParsedBoardC
       if (typeof texto === 'object') return { ok: false, reason: texto.error };
       if (args.motivo !== undefined && !(LEADER_MESSAGE_REASONS as readonly unknown[]).includes(args.motivo)) return { ok: false, reason: `"motivo" tem de ser ${LEADER_MESSAGE_REASONS.join(' ou ')}.` };
       const motivo = args.motivo as LeaderMessageReason | undefined;
-      return { ok: true, call: { tool: 'sessao_enviar', para, texto, ...quadro, ...(motivo ? { motivo } : {}) } };
+      const tarefa = taskRef(args.tarefa);
+      if (typeof tarefa === 'object') return { ok: false, reason: tarefa.error };
+      return { ok: true, call: { tool: 'sessao_enviar', para, texto, ...quadro, ...(motivo ? { motivo } : {}), ...(tarefa ? { tarefa } : {}) } };
     }
     case 'sessao_ver_tela': {
       const quem = requiredText(args.quem, 'quem', 120);

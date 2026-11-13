@@ -403,6 +403,8 @@ import { isProcessAlive } from './process-alive';
 import { createPullRequestStatusService, createSystemPullRequestStatusDeps, openPullRequestUrl } from './pull-request-status';
 // Navegador interno — painel com WebContentsView por sessão (docs/design/navegador-interno.md).
 import { browserMcpConfigDir, createBrowserService, type BrowserService } from './browser/browser-service';
+import type { BoardToolCall } from '../shared/mindscape/agent-tools';
+import { hasTaskHeader, taskHeaderSourceOf, withTaskHeader } from '../shared/mindscape/task-header';
 import { createBoardBridge } from './board-bridge';
 
 // Scaffold T003 — janela única com o layout do shell (ui-spec §2).
@@ -3912,6 +3914,21 @@ async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: Led
   return { caller: await withEveryBoard(boardBridge, ptyId, caller, call), call };
 }
 
+/**
+ * t-057bf559 — a message between sessions that names its task opens with "[t-xxxx] título: objetivo", read from the
+ * ledger, so the collector (which keeps 300 characters of each request) sees the task. No task named, or not found:
+ * the text goes as it came; the app never guesses one.
+ */
+async function withTaskHeaderOf(boardBridge: BoardBridge, ptyId: string, call: BoardToolCall): Promise<BoardToolCall> {
+  if ((call.tool !== 'sessao_enviar' && call.tool !== 'sessao_abrir') || !call.tarefa) return call;
+  const text = call.tool === 'sessao_enviar' ? call.texto : call.pedido;
+  if (hasTaskHeader(text)) return call;
+  const seen = await executeLedgerTool(boardBridge, ptyId, { tool: 'tarefa_ver', id: call.tarefa }).catch(() => null);
+  const source = seen?.kind === 'text' ? taskHeaderSourceOf(seen.text) : null;
+  if (!source) return call;
+  return call.tool === 'sessao_enviar' ? { ...call, texto: withTaskHeader(call.texto, source) } : { ...call, pedido: withTaskHeader(call.pedido, source) };
+}
+
 async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<BrowserToolOutcome> {
   if (!ledgerService) return { kind: 'error', text: 'O Oráculo Harrow não abriu neste app.' };
   // 07/11, owner: "quem pediu" is a person, never a role; the parse knows the factory roles, this app's own here.
@@ -4898,7 +4915,7 @@ void app.whenReady().then(async () => {
     userDataDir: app.getPath('userData'),
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
     appVersion: app.getVersion(),
-    executeBoard: (ptyId, call) => boardBridge.execute(ptyId, call),
+    executeBoard: async (ptyId, call) => boardBridge.execute(ptyId, await withTaskHeaderOf(boardBridge, ptyId, call)),
     openCap: () => appConfig.team.openCap,
     uploadFolders: {
       get: () => appConfig.browserUploads.folders,
