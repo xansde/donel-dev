@@ -397,7 +397,7 @@ import { isTabColorToken, setTabColor, setTabOrder } from '../shared/tabAppearan
 import { WORKSPACE_CHANNELS } from '../shared/workspace';
 import { createSystemWorkspaceToolsDeps, createWorkspaceTools } from './workspace-tools';
 import { createSessionWorktreeService } from './session-worktree-service';
-import { worktreeNameFromArgs } from '../shared/sessionWorktree';
+import { isSafeWorktreeName, worktreeNameFromArgs } from '../shared/sessionWorktree';
 import { projectOfFolders, tabFolders, withProjectYolo } from '../shared/projectYolo';
 import { isProcessAlive } from './process-alive';
 import { createPullRequestStatusService, createSystemPullRequestStatusDeps, openPullRequestUrl } from './pull-request-status';
@@ -1799,7 +1799,10 @@ function localGitInfo(cwd: string): { repoUrl: string | null; branch: string | n
   return { repoUrl: read(['remote', 'get-url', 'origin']), branch: read(['branch', '--show-current']) };
 }
 
-/** Drops `--worktree <name>` (the remote session runs in the project folder; the mirror follows that transcript). */
+/**
+ * Drops `--worktree <name>`: on a remote place the setup script makes the worktree (`RemoteSetupInput.worktree`) and the
+ * CLI runs inside it, so the mirror follows the transcript of that folder.
+ */
 function withoutWorktreeArgs(args: readonly string[]): string[] {
   const out: string[] = [];
   for (let i = 0; i < args.length; i++) {
@@ -1914,9 +1917,11 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
 
   await remoteSessions.waitEnded(correlationId);
   const git = localGitInfo(localCwd);
+  const worktree = worktreeNameFromArgs(options.args);
   const script = buildRemoteSetupScript({
     sid: correlationId,
     homeRelativeDir: remoteDirFor(localCwd, appConfig.projectRoots),
+    ...(worktree !== null && isSafeWorktreeName(worktree) ? { worktree } : {}),
     repoUrl: git.repoUrl,
     branch: git.branch,
     files,
