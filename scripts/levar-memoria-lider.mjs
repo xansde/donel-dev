@@ -12,7 +12,8 @@
 // - mesmo nome e conteúdo diferente: não sobrescreve; a versão antiga fica ao lado como <nome>.do-projeto-antigo.md
 //   (já guardada igual: nada; esse nome com outra coisa: lista e não grava NADA);
 // - MEMORY.md nos dois: acrescenta só as entradas da antiga cujo link "(arquivo.md)" a nova não tem (linha sem link:
-//   pelo texto exato), com quebra de linha antes, no fim de linha do destino, em UTF-8 sem BOM;
+//   pelo texto, sem os espaços do fim), com quebra de linha antes, no fim de linha do destino, em UTF-8 sem BOM;
+// - MEMORY.md só na antiga: entra pelo mesmo caminho, com as entradas dos conflitos apontando a cópia antiga;
 // - a pasta antiga só é lida; rodar de novo não muda nada.
 // Node puro, sem dependências: roda no PC antes de qualquer build.
 import { createHash } from 'node:crypto';
@@ -60,7 +61,7 @@ export function mergeMemoryIndex(oldText, newText, renamed = {}) {
   for (const line of have) {
     const link = linkOf(line);
     if (link !== null) links.add(link);
-    else texts.add(line);
+    else texts.add(line.trimEnd());
   }
   const added = [];
   for (const raw of linesOf(oldText)) {
@@ -75,13 +76,13 @@ export function mergeMemoryIndex(oldText, newText, renamed = {}) {
       if (links.has(link)) continue;
       links.add(link);
     } else {
-      if (texts.has(line)) continue;
-      texts.add(line);
+      if (texts.has(line.trimEnd())) continue;
+      texts.add(line.trimEnd());
     }
     added.push(line);
   }
   if (added.length === 0) return { text: newText, added };
-  const eol = newText.includes('\r\n') ? '\r\n' : '\n';
+  const eol = (newText === '' ? oldText : newText).includes('\r\n') ? '\r\n' : '\n';
   const base = newText === '' || newText.endsWith('\n') ? newText : `${newText}${eol}`;
   return { text: `${base}${added.join(eol)}${eol}`, added };
 }
@@ -117,10 +118,16 @@ export function carryMemory(oldDir, newDir, { apply }) {
   const oldFiles = existsSync(oldDir) ? filesOf(oldDir) : [];
   const at = (dir, rel) => path.join(dir, ...rel.split('/'));
   const newIndex = at(newDir, INDEX);
-  const mergesIndex = oldFiles.includes(INDEX) && existsSync(newIndex);
+  // The old index never goes over as a plain copy: it always goes through mergeMemoryIndex, so the entry of a file in
+  // conflict points to the old version saved beside it (otherwise that version would be out of the index).
+  const hasOldIndex = oldFiles.includes(INDEX);
+  const hadNewIndex = existsSync(newIndex);
 
   for (const name of oldFiles) {
-    if (name === INDEX && mergesIndex) continue;
+    if (name === INDEX) {
+      if (!hadNewIndex) copied.push(name);
+      continue;
+    }
     const source = at(oldDir, name);
     const target = at(newDir, name);
     if (!existsSync(target)) {
@@ -146,10 +153,10 @@ export function carryMemory(oldDir, newDir, { apply }) {
   }
 
   let index = null;
-  if (mergesIndex) {
-    const current = readFileSync(newIndex, 'utf8');
+  if (hasOldIndex) {
+    const current = hadNewIndex ? readFileSync(newIndex, 'utf8') : '';
     const merged = mergeMemoryIndex(readFileSync(at(oldDir, INDEX), 'utf8'), current, renamed);
-    if (merged.added.length > 0) index = merged;
+    if (!hadNewIndex || merged.added.length > 0) index = merged;
   }
 
   const blocked = conflicts.some((conflict) => conflict.status === 'blocked');
@@ -159,9 +166,13 @@ export function carryMemory(oldDir, newDir, { apply }) {
       mkdirSync(path.dirname(target), { recursive: true });
       copyFileSync(source, target);
     }
-    if (index) writeFileSync(newIndex, index.text, 'utf8');
+    if (index) {
+      mkdirSync(path.dirname(newIndex), { recursive: true });
+      writeFileSync(newIndex, index.text, 'utf8');
+    }
   }
-  return { copied, same, conflicts, addedLines: index ? index.added : [], blocked, applied };
+  // A fresh index is reported as copied, not line by line.
+  return { copied, same, conflicts, addedLines: index && hadNewIndex ? index.added : [], blocked, applied };
 }
 
 const STATUS_WORDS = {

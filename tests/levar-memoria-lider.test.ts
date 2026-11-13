@@ -140,6 +140,31 @@ describe('Memória do Líder no PC — nada se perde, nada duplica', () => {
     expect(index.match(/\(b\.md\)/g)).toHaveLength(1);
   });
 
+  it('pasta nova sem MEMORY.md e com a.md diferente: o índice levado aponta a cópia antiga, e a 2ª rodada não muda nada', () => {
+    const { old, next } = dirs();
+    writeFileSync(join(old, 'MEMORY.md'), '- [A](a.md) — a\n');
+    writeFileSync(join(old, 'a.md'), 'old');
+    writeFileSync(join(next, 'a.md'), 'new');
+
+    carryMemory(old, next, { apply: true });
+    const index = readFileSync(join(next, 'MEMORY.md'), 'utf8');
+    expect(readFileSync(join(next, 'a.md'), 'utf8')).toBe('new');
+    expect(readFileSync(join(next, 'a.do-projeto-antigo.md'), 'utf8')).toBe('old');
+    expect(index).toContain('(a.do-projeto-antigo.md)');
+    expect(index).toBe('- [A](a.do-projeto-antigo.md) — a\n');
+
+    const after = snapshot(next);
+    const second = carryMemory(old, next, { apply: true });
+    expect(snapshot(next)).toEqual(after);
+    expect(second.copied).toEqual([]);
+    expect(second.addedLines).toEqual([]);
+  });
+
+  it('linha sem link que só difere por espaço no fim não duplica', () => {
+    expect(mergeMemoryIndex('# Titulo \n', '# Titulo\n')).toEqual({ text: '# Titulo\n', added: [] });
+    expect(mergeMemoryIndex('# Titulo\n', '# Titulo   \n')).toEqual({ text: '# Titulo   \n', added: [] });
+  });
+
   it('pasta nova que ainda não existe: é criada e recebe a memória toda', () => {
     const { old, next } = dirs();
     const target = join(next, 'ainda-nao-existe');
