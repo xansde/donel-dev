@@ -25,7 +25,8 @@ function timeoutFor(bytes: number): number {
 function transcriptPathLines(homeRelativeDir: string, sid: string): string[] {
   if (!SESSION_ID_PATTERN.test(sid)) throw new Error('Id de sessão inválido para lugar remoto.');
   return [
-    `D=$(cd "$HOME"/${shQuote(homeRelativeDir)} 2>/dev/null && pwd) || { echo "DONEL_ERR A pasta do Líder não existe no lugar remoto."; exit 3; }`,
+    // Never created here: an empty folder would cost the Líder its CLAUDE.md and its memory. Said by its name.
+    `D=$(cd "$HOME"/${shQuote(homeRelativeDir)} 2>/dev/null && pwd) || { echo ${shQuote(`DONEL_ERR A pasta ~/${homeRelativeDir.replace(/[\r\n]/g, ' ')} não existe no lugar remoto.`)}; exit 3; }`,
     'SLUG=$(printf %s "$D" | sed "s/[^a-zA-Z0-9]/-/g")',
     'P="$HOME/.claude/projects/$SLUG"',
     `T="$P/${sid}.jsonl"`,
@@ -118,12 +119,27 @@ function failure(ran: Ran, what: string): string {
   return said ? `${what} falhou (${said}).` : `${what} falhou.`;
 }
 
+export interface SendTranscriptOptions {
+  /**
+   * The Líder of this conversation runs on this same place and only changes folder (12/11): it is not ended here. The
+   * tab ends it when it resumes in the new folder, after the copy; a copy that fails leaves it alive, where it was.
+   */
+  readonly keepSession?: boolean;
+}
+
 /**
  * Ida — copies the local transcript `sourcePath` to the CLI's transcript of `sid` on the place. Before it, the old
  * Líder of the same conversation that may still run there (a way back that could not end it) is ended: the new one
- * must never attach to it. Only a larger copy replaces the one there, which stays as `.bak-<time>`.
+ * must never attach to it (unless `keepSession`). Only a larger copy replaces the one there, which stays as
+ * `.bak-<time>`.
  */
-export async function sendTranscriptToRemote(run: RemoteCommand, homeRelativeDir: string, sid: string, sourcePath: string): Promise<SendTranscriptResult> {
+export async function sendTranscriptToRemote(
+  run: RemoteCommand,
+  homeRelativeDir: string,
+  sid: string,
+  sourcePath: string,
+  options: SendTranscriptOptions = {},
+): Promise<SendTranscriptResult> {
   let size: number;
   try {
     size = statSync(sourcePath).size;
@@ -134,7 +150,7 @@ export async function sendTranscriptToRemote(run: RemoteCommand, homeRelativeDir
   const script = [
     'set -u',
     ...transcriptPathLines(homeRelativeDir, sid),
-    `tmux -L donel kill-session -t ${shQuote(`donel-${sid}`)} >/dev/null 2>&1 || true`,
+    ...(options.keepSession ? [] : [`tmux -L donel kill-session -t ${shQuote(`donel-${sid}`)} >/dev/null 2>&1 || true`]),
     'mkdir -p "$P" || exit 4',
     'cat > "$T.chegando" || { rm -f "$T.chegando"; exit 4; }',
     'N=$(wc -c < "$T.chegando" | tr -d " ")',

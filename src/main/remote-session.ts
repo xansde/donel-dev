@@ -408,6 +408,8 @@ interface LiveRemote {
   /** The transcript the mirror follows (it moves with `/clear`); a relink resumes it where it stopped. */
   transcript: string;
   pump: { child: ChildProcess; out: WriteStream; bytes: number } | null;
+  /** Its remote session was ended already (on the kill of the tab): the exit that follows does not end it again. */
+  ended?: true;
 }
 
 /** The live remote tabs of this run of the app: transcript mirrors and the end of the remote session. */
@@ -485,7 +487,9 @@ export class RemoteSessionRegistry {
   /** The owner closed the tab: the remote session ends too. */
   endRemote(ptyId: string): void {
     const entry = this.live.get(ptyId);
-    if (!entry) return;
+    if (!entry || entry.ended) return;
+    // Once per tab: a second end, after a respawn of the same id was set up, would end the new tmux.
+    entry.ended = true;
     // The tmux session and its folder are named after the id the session was prepared with, never after the
     // conversation a `/clear` moved it to: ending by `entry.sid` left the tmux alive after the tab closed.
     const sid = entry.folder;

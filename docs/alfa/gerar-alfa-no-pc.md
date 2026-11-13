@@ -163,24 +163,77 @@ instalado.** Antes disso o Líder ainda roda em `C:\Users\compu\seazone`, e a c�
 
 O PR #413 passa a rodar o Líder em `C:\Users\compu\seazone\_orquestradora`.
 O Claude guarda a memória por pasta de trabalho, então o Líder passaria a enxergar uma pasta de memória nova
-e vazia. Copie a antiga **sem sobrescrever** nada:
+e vazia. O script `scripts/levar-memoria-lider.mjs` (Node puro, testado em `tests/levar-memoria-lider.test.ts`)
+leva a antiga para a nova **sem sobrescrever nem duplicar** nada:
+
+- arquivo que só existe na antiga é copiado; mesmo nome e mesmo conteúdo, nada;
+- mesmo nome com conteúdo **diferente** é um conflito: o da pasta nova fica, e a versão antiga vai ao lado como
+  `<nome>.do-projeto-antigo.md` (se o índice antigo tinha entrada para ele, ela entra apontando para essa cópia);
+- sem `MEMORY.md` na nova, o da antiga vai igual (seções, linhas em branco, BOM e fim de linha), só com os links
+  dos conflitos apontando a cópia antiga (a âncora `#seção` fica);
+- com `MEMORY.md` nos dois, o da nova ganha no fim as linhas da antiga que faltam nele. Entrada de índice é a linha de
+  lista (`- [`, `* [` ou `1. [`) cujo primeiro link aponta um `.md`: se a nova não tem entrada para esse arquivo, ela
+  entra; se tem com o mesmo texto, nada; se tem com **outro texto** (outro gancho), não entra (não duplica) e vai aos
+  **Conflitos** com as duas linhas, para o dono decidir. Qualquer outra linha (título, nota com link no meio do
+  texto) entra quando a nova não tem esse texto. O que a nova já tinha fica byte a byte;
+- nomes e links comparam sem diferença de maiúsculas, como no Windows, e antes de gravar o script confere todos os
+  destinos: se algum não cabe (uma pasta que na nova é arquivo, um `MEMORY.md` que é pasta, um `MEMORY.md` antigo
+  que não é UTF-8), sai `PARADO` sem gravar nada;
+- link simbólico na pasta antiga não é seguido: aparece como "ignorado (link simbólico)";
+- a pasta antiga só é lida, e rodar de novo não muda nada. Limite: um bloco de código (```` ``` ````) dentro do
+  índice é lido linha a linha como texto comum.
+
+Primeiro, ache o script. O alfa pode ter saído da VPS (skill `alfa-na-vps`), e aí o PC não tem a worktree
+`alfa-diario` em dia; por isso a busca vai em ordem, e o primeiro que existir vale (`$repo` é o do passo 1.3):
+
+1. o clone principal, `$repo\scripts\levar-memoria-lider.mjs` (existe quando a `staging` local já tem o #413);
+2. a worktree do alfa no PC, `$repo\.claude\worktrees\alfa-diario\scripts\levar-memoria-lider.mjs`;
+3. a `staging` no GitHub, baixada para uma pasta temporária. O script só importa módulos `node:` (nada local), então
+   o arquivo sozinho basta.
+
+```powershell
+$script = $null
+foreach ($candidate in @("$repo\scripts\levar-memoria-lider.mjs",
+                         "$repo\.claude\worktrees\alfa-diario\scripts\levar-memoria-lider.mjs")) {
+  if (Test-Path $candidate) { $script = $candidate; break }
+}
+if (-not $script) {
+  $dir = Join-Path $env:TEMP "levar-memoria-lider-$(Get-Date -Format yyyyMMddHHmmss)"
+  New-Item -ItemType Directory -Path $dir | Out-Null
+  $b64 = gh api "repos/xansde/donel-dev/contents/scripts/levar-memoria-lider.mjs?ref=staging" --jq .content
+  if ($LASTEXITCODE -ne 0 -or -not $b64) { throw 'script não encontrado no clone, na worktree alfa-diario nem na staging do GitHub' }
+  $text = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(($b64 -join '')))
+  $script = Join-Path $dir 'levar-memoria-lider.mjs'
+  [IO.File]::WriteAllText($script, $text, (New-Object Text.UTF8Encoding($false)))
+}
+"Script usado: $script"   # diga ao dono qual dos três caminhos foi usado
+Select-String -Path $script -Pattern "^import .* from '(?!node:)" | ForEach-Object { throw "o script importa algo local: $($_.Line)" }
+```
+
+Depois, só o plano (não grava nada):
 
 ```powershell
 $old = 'C:\Users\compu\.claude\projects\C--Users-compu-seazone\memory'
 $new = 'C:\Users\compu\.claude\projects\C--Users-compu-seazone--orquestradora\memory'
-if ((Test-Path $old) -and (Get-ChildItem $old -File -ErrorAction SilentlyContinue)) {
-  # /XC /XN /XO: não toca em arquivo que já existe no destino (nem mais novo, nem mais antigo, nem diferente)
-  robocopy $old $new /E /XC /XN /XO /NFL /NDL
-  if ($LASTEXITCODE -ge 8) { throw "robocopy falhou ($LASTEXITCODE)" }   # 0 a 7 = ok
-  # MEMORY.md existe nos dois: o robocopy o deixou como está; acrescente só as linhas que faltam
-  $oldIdx = Join-Path $old 'MEMORY.md'; $newIdx = Join-Path $new 'MEMORY.md'
-  if ((Test-Path $oldIdx) -and (Test-Path $newIdx)) {
-    $have = Get-Content -Encoding UTF8 $newIdx
-    $missing = Get-Content -Encoding UTF8 $oldIdx | Where-Object { $_.Trim() -and ($have -cnotcontains $_) }
-    # No PowerShell 5.1, Add-Content -Encoding utf8 grava BOM; AppendAllLines com UTF8Encoding($false) não
-    if ($missing) { [IO.File]::AppendAllLines($newIdx, [string[]]$missing, (New-Object System.Text.UTF8Encoding($false))) }
-  }
-} else { 'Sem memória antiga para copiar.' }
+node $script $old $new
 ```
 
-A pasta antiga fica intacta (é cópia, não move). Rodar duas vezes não duplica nada.
+Leia o plano: **Copiados**, **Iguais**, **Conflitos**, **Linhas acrescentadas ao MEMORY.md** e, se houver,
+**Ignorados** e **Destinos impossíveis**. Qualquer item `PARADO` (já existe `<nome>.do-projeto-antigo.md` com outro conteúdo, dois
+arquivos indo para o mesmo nome, um destino que não cabe) faz o script sair com 1 e **não gravar nada**:
+compare os arquivos, mostre ao dono e só siga quando ele decidir. Sem `PARADO`, grave:
+
+```powershell
+node $script $old $new --aplicar
+$LASTEXITCODE   # 0 = gravado; 1 = conflito PARADO, nada gravado; 2 = GRAVAÇÃO PARCIAL
+```
+
+Rodar de novo responde "Nada a gravar". Conte ao dono os conflitos listados: nos de arquivo, as duas versões
+ficaram lado a lado; nos de **entrada do MEMORY.md com outro texto**, o relatório mostra a linha antiga e a nova e
+nada foi acrescentado: o dono escolhe qual gancho fica (ou junta os dois) e edita o `MEMORY.md` da pasta nova à mão.
+
+Saída 2 (**GRAVAÇÃO PARCIAL**): uma gravação falhou no meio (sem permissão, arquivo aberto em outro programa). O
+relatório lista o que foi gravado e o que faltou; o `MEMORY.md` é sempre o último, então nenhuma linha nova aponta
+para arquivo que faltou. Cada arquivo é gravado num temporário ao lado (`<nome>.levando-<pid>`) e só renomeado
+quando completo, então uma escrita cortada no meio (disco cheio) não deixa o `MEMORY.md` pela metade: ele fica como
+estava. Corrija a causa e rode de novo com `--aplicar`: o já gravado aparece como igual e nada duplica.

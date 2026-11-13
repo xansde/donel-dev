@@ -303,7 +303,7 @@ import type { AccountMod } from './accounts/account-mod';
 import { IsolatedLoginManager, type IsolatedLoginFsDeps } from './accounts/isolated-login';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
 import { sanitizeLayoutPrefs, type LayoutPrefs } from '../shared/layoutPrefs';
-import { type LeaderPrefs } from '../shared/leaderPrefs';
+import { sameFolder, type LeaderPrefs } from '../shared/leaderPrefs';
 import { adoptRefreshedActivePair, applyAccountSwitch, createSystemClaudeStateIoDeps, readCurrentCredentialPair } from './accounts/claude-state';
 import { accountFingerprintFromClaudeJsonText } from './accounts/credentials-file';
 import { createLocalMod } from './accounts/mods/local-mod';
@@ -383,7 +383,7 @@ import type { PetDisplay } from '../shared/pet/types';
 import { hasImage, readText, writeText } from './clipboard-bridge';
 import { CLIPBOARD_CHANNELS } from '../shared';
 import { resolveClaudeCorrelation } from './session-correlation';
-import { carryTranscriptLocally, largestTranscript } from './lider/carry-transcript';
+import { carryLargestTranscript, carryTranscriptLocally, largestTranscript } from './lider/carry-transcript';
 import { fetchTranscriptFromRemote, sendTranscriptToRemote } from './lider/transfer';
 import { LIDER_CHANNELS, isValidLiderCarryPayload, type LiderCarryPayload, type LiderSendResult } from '../shared/lider/ipc';
 import { defaultClaudeHome, indexProjectSessions, resolveProjectSessionsDir } from './session-indexer';
@@ -1999,10 +1999,15 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
  * Líder único na VPS — copies the Líder's conversation from where it runs (`from`) to where it goes (`to`);
  * `undefined` = this computer. Coming from a place, the place's own file comes down (never only the mirror that
  * arrived here), checked by hash, and the larger of it and the copy here stays. Going to a place, the largest copy
- * here goes up, checked there. Nothing is closed here: a failure leaves the Líder where it is.
+ * here goes up, checked there. When the folder changes too (`toCwd`, the orchestrator's project, 12/11), the
+ * conversation goes to the new folder's project: on a place, its folder there; here, copied beside (`-r` needs it in
+ * the project of the folder it opens in). Nothing is closed here: a failure leaves the Líder where it is.
  */
 async function carryLeaderConversation(payload: LiderCarryPayload): Promise<LiderSendResult> {
-  if (payload.from === payload.to) return { ok: true };
+  const cwd = payload.cwd ?? homedir();
+  const toCwd = payload.toCwd ?? cwd;
+  const folderChanges = !sameFolder(cwd, toCwd);
+  if (payload.from === payload.to && !folderChanges) return { ok: true };
   const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
   const placeOf = (id: string): { readonly sshTarget: string; readonly label: string } => {
     const place = places.find((candidate) => candidate.id === id);
@@ -2010,7 +2015,6 @@ async function carryLeaderConversation(payload: LiderCarryPayload): Promise<Lide
     return place;
   };
   const sid = payload.sessionId;
-  const cwd = payload.cwd ?? homedir();
   const homeRelativeDir = remoteDirFor(cwd, appConfig.projectRoots);
   const localTranscript = resolveTranscriptPath(sid, cwd, undefined);
 
@@ -2027,12 +2031,24 @@ async function carryLeaderConversation(payload: LiderCarryPayload): Promise<Lide
     }
   }
 
+  const localCopies = [localTranscript, spawnedTranscriptPaths.get(sid), remoteSessions?.mirrorPathFor(sid)];
   if (payload.to !== undefined) {
     const to = placeOf(payload.to);
-    const source = largestTranscript([localTranscript, spawnedTranscriptPaths.get(sid), remoteSessions?.mirrorPathFor(sid)]);
+    const source = largestTranscript(localCopies);
     if (!source) return { ok: false, reason: 'a conversa do Líder não está neste computador.' };
-    const sent = await sendTranscriptToRemote(sshRemoteCommand(to.sshTarget), homeRelativeDir, sid, source.path);
+    // The same place, another folder: the Líder there stays alive during the copy (its tab ends it when it resumes in
+    // the new folder); ending it here would leave a dead tab if anything after the copy failed.
+    const sent = await sendTranscriptToRemote(sshRemoteCommand(to.sshTarget), remoteDirFor(toCwd, appConfig.projectRoots), sid, source.path, {
+      keepSession: payload.from === payload.to,
+    });
     if (!sent.ok) return { ok: false, reason: `${to.label}: ${sent.reason}` };
+  } else if (folderChanges) {
+    try {
+      const carried = carryLargestTranscript(localCopies, resolveTranscriptPath(sid, toCwd, undefined));
+      if (carried === 'missing') return { ok: false, reason: 'a conversa do Líder não está neste computador.' };
+    } catch (error) {
+      return { ok: false, reason: `a conversa não foi copiada para a pasta nova: ${error instanceof Error ? error.message : String(error)}` };
+    }
   }
   return { ok: true };
 }
@@ -2393,6 +2409,10 @@ function registerPtyIpcHandlers(): void {
     // "Sem ligação" — there is no PTY to kill: the held exit happens now as a close by the owner (ends the tmux there).
     if (remoteLinks.kill(ptyId)) return;
     markKillRequested(ptyId); // C3 (015-jobu-pet) — mark BEFORE killing: the exit that follows is "the owner's"
+    // Sessões remotas — the tmux there ends now, not on the exit event: a respawn of the same conversation (Retomar, the
+    // Líder changing folder) is created right after this kill and waits for this end (`waitEnded`); started on the exit,
+    // the end could come after the new setup found the old tmux alive and attached to it, in the old folder.
+    remoteSessions?.endRemote(ptyId);
     ptyManager.kill(ptyId);
   });
 

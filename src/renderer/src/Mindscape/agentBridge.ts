@@ -35,7 +35,7 @@ import {
   type BoardToolCall,
 } from '../../../shared/mindscape/agent-tools';
 import { SEND_ANSWER_BY_MS, type MindscapeBoardResponse } from '../../../shared/mindscape/channels';
-import { LEADER_OF_ALL, isLeaderOfAllTab, knownBoards, resolveBoard, type KnownBoard } from '../../../shared/mindscape/leader';
+import { LEADER_OF_ALL, isLeaderOfAllTab, knownBoards, liveLeaderOfAllTab, resolveBoard, type KnownBoard } from '../../../shared/mindscape/leader';
 import { BOARD_LEADER, LEADER_OF_ALL_FROM, boardLeaders, canFaxineiroClose, canReach, canReachLeader, findPlace, isBoardLeader, isBoardOrchestrator, MY_OPENER, openersOf, whoHears } from '../../../shared/mindscape/reach';
 import { FAXINEIRO_OPENER, PC_MACHINE_ID, type FaxineiroLogEntry, type OpeningRoom, type SessionView } from '../../../shared/faxineiro/triggers';
 import type { FaxineiroWakeOrder } from '../../../shared/faxineiro/ipc';
@@ -838,7 +838,7 @@ export class AgentBridge {
 
   /** The open tab of the Líder único, if any. */
   private leaderTab(): BridgeTab | undefined {
-    return this.ports.tabs().find((tab) => isLeaderOfAllTab(tab) && this.ports.stateOf(tab.id) !== undefined);
+    return liveLeaderOfAllTab(this.ports.tabs(), (tabId) => this.ports.stateOf(tabId) !== undefined);
   }
 
   /** The Líder único reaches `placeId` of `projectPath` — the one rule (reach.ts). */

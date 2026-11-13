@@ -229,6 +229,11 @@ export interface AppConfigDto {
   readonly layout: LayoutPrefs;
   /** Onde o Líder roda (`leaderPrefs.ts`). */
   readonly leader: LeaderPrefs;
+  /**
+   * Read-only, from the disk on each read, never in config.json: the `_orquestradora` folders that exist under the
+   * project roots — the Líder único opens in one of them (`leaderCwd`, owner 12/11).
+   */
+  readonly leaderHomes: readonly string[];
 }
 
 /** API tipada exposta pelo preload em `window.donel.config`. */

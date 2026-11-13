@@ -91,7 +91,7 @@ import { useHillClimb } from './HillClimb/useHillClimb';
 import { MindscapeScreen, type MindscapeLiveSession } from './Mindscape/MindscapeScreen';
 import { sameSemaphoreInfo } from './sameSemaphoreInfo';
 import { useMindscapeDoc } from './Mindscape/useMindscapeDoc';
-import { AgentBridge, type AgentBridgePorts, type ReturnExpectation } from './Mindscape/agentBridge';
+import { AgentBridge, type AgentBridgePorts, type DeliveryOutcome, type ReturnExpectation } from './Mindscape/agentBridge';
 import type { FaxineiroLogEntry } from '../../shared/faxineiro/triggers';
 import { SpawnAskPanel, type SpawnAsk } from './Mindscape/SpawnAskPanel';
 import { appendConversation, findSessionBoard, placeSessionCards, roleOfSession, setBoardView, setPlaceConversation, writeSessionNote, type MindscapeDoc } from '../../shared/mindscape/model';
@@ -131,9 +131,9 @@ import { blockingScreen, readInputText } from '../../shared/chat/screen';
 import { LEADER_DENY_REASON, permissionPorts } from './Mindscape/permissionPorts';
 import { withNoPipelineTag } from '../../shared/chat/noPipeline';
 import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../shared/lider/ipc';
-import { isLeaderOfAllTab } from '../../shared/mindscape/leader';
-import { DEFAULT_LEADER_PREFS, leaderCwd, leaderRemoteId } from '../../shared/leaderPrefs';
-import { planLeaderDelivery, startLeaderMove, type LeaderMove } from '../../shared/lider/move';
+import { isLeaderOfAllTab, liveLeaderOfAllTab } from '../../shared/mindscape/leader';
+import { DEFAULT_LEADER_PREFS, leaderCwd, leaderMoveCwd, leaderRemoteId } from '../../shared/leaderPrefs';
+import { leaderFolderMoveKey, leaderLineRoute, planLeaderDelivery, startLeaderMove, type LeaderMove, type LeaderMoveDeps } from '../../shared/lider/move';
 import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
 import { TerminalPane } from './TerminalPane';
 import { PatchNotes } from './patchnotes/PatchNotes';
@@ -459,6 +459,10 @@ export function App(): React.JSX.Element {
   // da sessão que mudou, não o do primeiro render.
   const tabsRef = useRef(tabs);
   tabsRef.current = tabs;
+  // #413 — tabs `closeTabImmediately` already closed while `tabs`/`tabsRef` still hold them (until the next render): they
+  // are not open for anyone who picks a tab in between (the Líder único right after a move). Pruned once they are gone.
+  const closingTabIdsRef = useRef<Set<string>>(new Set());
+  for (const id of closingTabIdsRef.current) if (!tabs.some((tab) => tab.id === id)) closingTabIdsRef.current.delete(id);
   // T707 — debounce de ~10s POR SESSÃO (chave = claudeSessionId): última
   // gravação (epoch ms) + o que foi gravado, pra `shouldRecordVisit` decidir
   // sem reler o ConfigStore inteiro a cada turn.
@@ -721,6 +725,7 @@ export function App(): React.JSX.Element {
   const closeTabImmediately = (tabId: string): void => {
     const index = tabs.findIndex((tab) => tab.id === tabId);
     if (index === -1) return;
+    closingTabIdsRef.current.add(tabId);
     // t-e753b554 — the place of this tab, if it does not come back, passes its live tasks on (read before it leaves).
     agentBridgeRef.current?.placeClosed(tabId);
     // Functional on purpose: "Fechar marcadas" (gargalos) closes several tabs in one render.
@@ -2443,12 +2448,12 @@ export function App(): React.JSX.Element {
   // comes out of him. One session with the role `lider` and the Jobu's mark (`isLeaderOfAllTab`): this window owns the tabs,
   // so it says which one it is (`lider:report`) and delivers what the owner writes there (`lider:deliver`) through the
   // tab's own send machine; with no live Líder, the first message opens one, on this computer, in the folder that holds
-  // the projects of the boards (`leaderHome`), or `leader.home` of config.json when set (`leaderCwd`).
+  // the projects of the boards (`leaderHome`) or its `_orquestradora` when it exists, or `leader.home` of config.json
+  // when set (`leaderCwd`).
   const liderTabRef = useRef<string | null>(null);
   const findLiderTab = (): TabState | undefined => {
-    const alive = (tab: TabState): boolean => isLeaderOfAllTab(tab) && tabExits[tab.id] === undefined;
-    const remembered = liderTabRef.current ? tabs.find((tab) => tab.id === liderTabRef.current && alive(tab)) : undefined;
-    return remembered ?? tabs.find(alive);
+    const open = (tabId: string): boolean => tabExits[tabId] === undefined && !closingTabIdsRef.current.has(tabId);
+    return liveLeaderOfAllTab(tabs, open, liderTabRef.current);
   };
   const liderTab = findLiderTab();
   const liderRoleAvailable = roles.some((role) => role.id === LIDER_ROLE_ID);
@@ -2469,6 +2474,9 @@ export function App(): React.JSX.Element {
   // Líder único na VPS — the move in progress (its messages wait for it). Async steps close tabs through a ref,
   // never through a stale render.
   const liderMoveRef = useRef<LeaderMove | null>(null);
+  // Changes of folder of the Líder that failed in this run of the app (`leaderFolderMoveKey`): not tried again, so the
+  // owner hears the warning once, not on every message (the folder does not exist on the VPS, 12/11).
+  const liderFailedFolderMovesRef = useRef<Set<string>>(new Set());
   liderDeliverRef.current = (text: string): LiderSendResult => {
     const sendTo = (tabId: string, message: string): void => {
       sendToTab(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text: message });
@@ -2482,11 +2490,17 @@ export function App(): React.JSX.Element {
     // Líder único na VPS (docs/planos/lider-na-vps.md) — where the owner wants it (Preferences). A provider of a third
     // party does not run on a remote place (ADR 0006): that Líder stays here.
     const wantedRemoteId = providerId ? undefined : leaderPlace();
+    // The orchestrator's project when it exists (owner, 12/11). A new Líder opens in `wantedCwd`; the live one moves,
+    // stopped and with its conversation, only TO the orchestrator or `leader.home` (`leaderMoveCwd`), never back.
+    const leaderPrefs = appConfig?.leader ?? DEFAULT_LEADER_PREFS;
+    const boardPaths = Object.keys(mindscape.doc.boards);
+    const wantedCwd = leaderCwd(leaderPrefs, boardPaths, appConfig?.leaderHomes ?? []);
+    const moveCwd = leaderMoveCwd(leaderPrefs, boardPaths, appConfig?.leaderHomes ?? []);
     const openLeader = (resume?: { readonly sessionId: string; readonly cwd: string | undefined }): string => {
       // Without the role there is no Líder único (it is the role + the mark below): say so instead of opening a plain session.
       if (!role) throw new Error('O papel Líder não existe nesta máquina.');
       const defaults = appConfig?.launcherDefaults;
-      const home = resume ? resume.cwd : leaderCwd(appConfig?.leader ?? DEFAULT_LEADER_PREFS, Object.keys(mindscape.doc.boards));
+      const home = resume ? resume.cwd : wantedCwd;
       const launchArgs = buildLauncherArgs({
         providerId,
         model: role.model ?? defaults?.model ?? DEFAULT_MODEL_ALIAS,
@@ -2512,11 +2526,16 @@ export function App(): React.JSX.Element {
 
     // The live Líder; with none, the one whose process ended (the ssh dropped while the notebook slept).
     const live = findLiderTab();
-    const remembered = liderTabRef.current ? tabs.find((tab) => tab.id === liderTabRef.current && isLeaderOfAllTab(tab)) : undefined;
-    const tab = live ?? remembered ?? tabs.find(isLeaderOfAllTab);
+    const notClosing = (candidate: TabState): boolean => isLeaderOfAllTab(candidate) && !closingTabIdsRef.current.has(candidate.id);
+    const remembered = liderTabRef.current ? tabs.find((candidate) => candidate.id === liderTabRef.current && notClosing(candidate)) : undefined;
+    const tab = live ?? remembered ?? tabs.find(notClosing);
     const plan = planLeaderDelivery(
-      tab ? { id: tab.id, remoteId: tab.remoteId, claudeSessionId: tab.claudeSessionId, state: semaphoreStates[tab.id]?.state, exited: tabExits[tab.id] !== undefined } : undefined,
+      tab
+        ? { id: tab.id, remoteId: tab.remoteId, claudeSessionId: tab.claudeSessionId, state: semaphoreStates[tab.id]?.state, exited: tabExits[tab.id] !== undefined, cwd: tab.cwd }
+        : undefined,
       wantedRemoteId,
+      moveCwd,
+      liderFailedFolderMovesRef.current,
     );
 
     if (plan.kind === 'send') {
@@ -2533,9 +2552,35 @@ export function App(): React.JSX.Element {
     if (plan.kind === 'move' && tab) {
       const oldTabId = plan.tabId;
       const cwd = tab.cwd;
+      const newCwd = plan.cwd;
+      const folderChanges = !!newCwd && newCwd !== cwd;
+      const respawnIn = (folder: string | undefined): void => {
+        const terminal = terminalRefs.current[oldTabId];
+        if (!terminal) throw new Error('a aba do Líder não está aberta.');
+        updateTab(oldTabId, { cwd: folder });
+        terminal.respawn({ resume: plan.sessionId, ...(folder ? { cwd: folder } : {}) });
+      };
+      // The same remote place, only the folder (12/11): the same tab changes folder; a second Líder of the same id there
+      // would attach to the old CLI's tmux, in the old folder.
+      const inPlace: LeaderMoveDeps['inPlace'] = plan.inPlace
+        ? {
+            switchTo: () => respawnIn(newCwd),
+            switchBack: () => respawnIn(cwd),
+            redeliver: (tabId, first) => {
+              sendToTab(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text: first, dedupe: true });
+            },
+          }
+        : undefined;
       const move = startLeaderMove(oldTabId, text, {
-        carry: () => window.donel.lider.carry({ sessionId: plan.sessionId, ...(cwd ? { cwd } : {}), ...(tab.remoteId ? { from: tab.remoteId } : {}), ...(wantedRemoteId ? { to: wantedRemoteId } : {}) }),
-        openNew: () => openLeader({ sessionId: plan.sessionId, cwd }),
+        carry: () =>
+          window.donel.lider.carry({
+            sessionId: plan.sessionId,
+            ...(cwd ? { cwd } : {}),
+            ...(newCwd ? { toCwd: newCwd } : {}),
+            ...(tab.remoteId ? { from: tab.remoteId } : {}),
+            ...(wantedRemoteId ? { to: wantedRemoteId } : {}),
+          }),
+        openNew: () => openLeader({ sessionId: plan.sessionId, cwd: newCwd }),
         deliverFirst: (tabId, first) =>
           new Promise<boolean>((resolve) => {
             liderTabDiedRef.current[tabId] = () => resolve(false);
@@ -2550,8 +2595,17 @@ export function App(): React.JSX.Element {
         adopt: (tabId) => {
           liderTabRef.current = tabId;
         },
-        notify: (message) => setDevModeToast(message),
+        // A change of folder that failed is not tried again in this run: said once, with the folder it stays in.
+        notify: (message) =>
+          setDevModeToast(folderChanges ? `${message} Ele segue em ${cwd ?? '~'}; não tento de novo essa pasta até o app reiniciar.` : message),
+        ...(inPlace ? { inPlace } : {}),
       });
+      if (folderChanges && newCwd) {
+        const key = leaderFolderMoveKey(plan.sessionId, wantedRemoteId, newCwd);
+        void move.done.then((outcome) => {
+          if (outcome === 'stayed') liderFailedFolderMovesRef.current.add(key);
+        });
+      }
       liderMoveRef.current = move;
       void move.done.finally(() => {
         if (liderMoveRef.current === move) liderMoveRef.current = null;
@@ -2603,13 +2657,24 @@ export function App(): React.JSX.Element {
   // the owner (one undoable gesture per batch) and opens tabs like a place of the board does.
   const [spawnAsks, setSpawnAsks] = useState<readonly SpawnAsk[]>([]);
   const pendingFirstMessagesRef = useRef<Record<string, string>>({});
+  /** A line of the bridge to the Líder único during its move: queued in the move (true), or not its business (false). */
+  const queueForLeaderMove = (tabId: string, text: string, deliver: (tabId: string) => void): boolean => {
+    const move = liderMoveRef.current;
+    const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
+    if (leaderLineRoute(move !== null, tab ? { leaderOfAll: isLeaderOfAllTab(tab) } : undefined) !== 'fila' || move === null) return false;
+    move.enqueue(text, deliver);
+    return true;
+  };
   const agentPorts: AgentBridgePorts = {
     loaded: mindscapeLoaded,
     doc: () => mindscape.doc,
     applyGesture: (projectPath, reducer) => applyMindscape(projectPath, reducer),
     tabs: () => tabsRef.current,
     tabOfPty: (ptyId) => tabsRef.current.find((tab) => chatPtyIds[tab.id] === ptyId),
-    stateOf: (tabId) => (tabExits[tabId] !== undefined || !tabsRef.current.some((tab) => tab.id === tabId) ? undefined : (semaphoreStates[tabId]?.state ?? 'working')),
+    stateOf: (tabId) =>
+      tabExits[tabId] !== undefined || closingTabIdsRef.current.has(tabId) || !tabsRef.current.some((tab) => tab.id === tabId)
+        ? undefined
+        : (semaphoreStates[tabId]?.state ?? 'working'),
     linkLost: (tabId) => tabLinkLost(tabId),
     relinkTools: (tabId) => {
       const ptyId = tabExits[tabId] === undefined ? chatPtyIds[tabId] : undefined;
@@ -2670,13 +2735,23 @@ export function App(): React.JSX.Element {
         );
       }),
     closeTab: (tabId) => closeTabImmediatelyRef.current(tabId),
-    sendLine: (tabId, text) => sendRenewalLine(tabId, text, 'session'),
+    // Every line of the bridge to the Líder único goes through these two doors. While a move of it lasts, a line to its
+    // tab waits in the move's queue and goes, in order, to whichever Líder is left (`leaderLineRoute`, 12/11).
+    sendLine: (tabId, text) => {
+      if (queueForLeaderMove(tabId, text, (to) => sendRenewalLine(to, text, 'session'))) return;
+      sendRenewalLine(tabId, text, 'session');
+    },
     deliverLine: (tabId, text, waitMs, from) => {
-      const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
-      if (tab !== undefined && hasChatView(tab, chatEnabled))
-        return sendToTabAndWait(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text: from === 'session' ? withNoPipelineTag(text) : text, from }, waitMs);
-      sendRenewalLine(tabId, text, from === 'session' ? 'session' : undefined);
-      return Promise.resolve({ kind: 'pelo-terminal' as const });
+      const deliver = (to: string): Promise<DeliveryOutcome> => {
+        const tab = tabsRef.current.find((candidate) => candidate.id === to);
+        if (tab !== undefined && hasChatView(tab, chatEnabled))
+          return sendToTabAndWait(to, { terminal: () => terminalRefs.current[to] ?? null }, { text: from === 'session' ? withNoPipelineTag(text) : text, from }, waitMs);
+        sendRenewalLine(to, text, from === 'session' ? 'session' : undefined);
+        return Promise.resolve({ kind: 'pelo-terminal' as const });
+      };
+      // Queued: the sender hears it is waiting in line (the move can take minutes, longer than its call may wait).
+      if (queueForLeaderMove(tabId, text, (to) => void deliver(to).catch(() => undefined))) return Promise.resolve({ kind: 'na-fila' as const });
+      return deliver(tabId);
     },
     // t-1293c818 (3) — the Líder reads and answers a permission open on this tab (the held hook first, else the screen).
     // `permissionOnScreen` comes from here too: only the dialog that is the last block of the live screen (Revisor, #406),
