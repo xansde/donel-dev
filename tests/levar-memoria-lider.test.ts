@@ -165,6 +165,45 @@ describe('Memória do Líder no PC — nada se perde, nada duplica', () => {
     expect(mergeMemoryIndex('# Titulo\n', '# Titulo   \n')).toEqual({ text: '# Titulo   \n', added: [] });
   });
 
+  it('a antiga já tem <nome>.do-projeto-antigo.md e o <nome> entra em conflito: PARADO, nada gravado, antiga intacta', () => {
+    const { old, next } = dirs();
+    writeFileSync(join(old, 'MEMORY.md'), '- [A](a.md) — a\n- [Aold](a.do-projeto-antigo.md) — a de antes\n');
+    writeFileSync(join(old, 'a.md'), 'a antiga\n');
+    writeFileSync(join(old, 'a.do-projeto-antigo.md'), 'a de antes, guardada na antiga\n');
+    writeFileSync(join(next, 'MEMORY.md'), '- [A](a.md) — a\n');
+    writeFileSync(join(next, 'a.md'), 'a nova\n');
+    const oldBefore = snapshot(old);
+    const nextBefore = snapshot(next);
+
+    const report = carryMemory(old, next, { apply: true });
+
+    expect(report.blocked).toBe(true);
+    expect(report.applied).toBe(false);
+    expect(report.conflicts).toContainEqual(expect.objectContaining({ name: 'a.md', savedAs: 'a.do-projeto-antigo.md', status: 'blocked' }));
+    expect(snapshot(next)).toEqual(nextBefore);
+    expect(snapshot(old)).toEqual(oldBefore);
+    expect(formatReport(report)).toContain('PARADO');
+    expect(formatReport(report)).toContain('a.do-projeto-antigo.md');
+    expect(formatReport(report)).toContain('Nada foi gravado');
+  });
+
+  it('mesmo texto com fim de linha ou BOM diferente é igual: sem cópia ao lado e sem entrada nova no índice', () => {
+    const { old, next } = dirs();
+    writeFileSync(join(old, 'MEMORY.md'), '- [A](a.md) — a\n');
+    writeFileSync(join(old, 'a.md'), 'x\r\n');
+    writeFileSync(join(next, 'MEMORY.md'), '- [A](a.md) — a\n');
+    writeFileSync(join(next, 'a.md'), '﻿x\n');
+    const before = snapshot(next);
+
+    const report = carryMemory(old, next, { apply: true });
+
+    expect(report.same).toEqual(['a.md']);
+    expect(report.conflicts).toEqual([]);
+    expect(report.addedLines).toEqual([]);
+    expect(existsSync(join(next, 'a.do-projeto-antigo.md'))).toBe(false);
+    expect(snapshot(next)).toEqual(before);
+  });
+
   it('pasta nova que ainda não existe: é criada e recebe a memória toda', () => {
     const { old, next } = dirs();
     const target = join(next, 'ainda-nao-existe');

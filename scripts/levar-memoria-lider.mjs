@@ -8,9 +8,11 @@
 //
 // Regras:
 // - arquivo que só existe na antiga: copia;
-// - mesmo nome e mesmo conteúdo (sha256): nada;
+// - mesmo nome e mesmo conteúdo: nada (.md compara o texto sem BOM, com \r\n como \n e sem o branco do fim; o resto,
+//   sha256 byte a byte);
 // - mesmo nome e conteúdo diferente: não sobrescreve; a versão antiga fica ao lado como <nome>.do-projeto-antigo.md
-//   (já guardada igual: nada; esse nome com outra coisa: lista e não grava NADA);
+//   (já guardada igual: nada; esse nome com outra coisa, esse nome também na pasta antiga ou já reservado por outra
+//   cópia: lista e não grava NADA, sai com 1);
 // - MEMORY.md nos dois: acrescenta só as entradas da antiga cujo link "(arquivo.md)" a nova não tem (linha sem link:
 //   pelo texto, sem os espaços do fim), com quebra de linha antes, no fim de linha do destino, em UTF-8 sem BOM;
 // - MEMORY.md só na antiga: entra pelo mesmo caminho, com as entradas dos conflitos apontando a cópia antiga;
@@ -91,6 +93,18 @@ function sha(file) {
   return createHash('sha256').update(readFileSync(file)).digest('hex');
 }
 
+/** The text of a memory note as compared: without BOM, `\r\n` as `\n`, without the blank at the end. */
+function normalizedText(file) {
+  return stripBom(readFileSync(file, 'utf8')).replace(/\r\n/g, '\n').trimEnd();
+}
+
+/** Same content: `.md` by normalized text (line ending or BOM alone is no conflict), anything else byte for byte. */
+function sameContent(a, b) {
+  if (!statSync(b).isFile()) return false;
+  if (path.extname(a).toLowerCase() === '.md') return normalizedText(a) === normalizedText(b);
+  return sha(a) === sha(b);
+}
+
 /** Every file under `dir`, relative, with `/`, sorted. */
 function filesOf(dir) {
   const out = [];
@@ -122,6 +136,8 @@ export function carryMemory(oldDir, newDir, { apply }) {
   // conflict points to the old version saved beside it (otherwise that version would be out of the index).
   const hasOldIndex = oldFiles.includes(INDEX);
   const hadNewIndex = existsSync(newIndex);
+  // Every target already promised to a write: a second write there would erase the first one.
+  const reserved = new Set();
 
   for (const name of oldFiles) {
     if (name === INDEX) {
@@ -133,19 +149,24 @@ export function carryMemory(oldDir, newDir, { apply }) {
     if (!existsSync(target)) {
       copied.push(name);
       toWrite.push({ source, target });
+      reserved.add(name);
       continue;
     }
-    if (statSync(target).isFile() && sha(source) === sha(target)) {
+    if (sameContent(source, target)) {
       same.push(name);
       continue;
     }
     const savedAs = savedName(name);
     const savedPath = at(newDir, savedAs);
     renamed[name] = savedAs;
-    if (!existsSync(savedPath)) {
+    if (reserved.has(savedAs) || oldFiles.includes(savedAs)) {
+      // The old folder has a file with that name too: both would go to the same place, and one would be lost.
+      conflicts.push({ name, savedAs, status: 'blocked', reason: 'collision' });
+    } else if (!existsSync(savedPath)) {
       conflicts.push({ name, savedAs, status: 'save' });
       toWrite.push({ source, target: savedPath });
-    } else if (statSync(savedPath).isFile() && sha(source) === sha(savedPath)) {
+      reserved.add(savedAs);
+    } else if (sameContent(source, savedPath)) {
       conflicts.push({ name, savedAs, status: 'already-saved' });
     } else {
       conflicts.push({ name, savedAs, status: 'blocked' });
@@ -175,6 +196,8 @@ export function carryMemory(oldDir, newDir, { apply }) {
   return { copied, same, conflicts, addedLines: index && hadNewIndex ? index.added : [], blocked, applied };
 }
 
+const COLLISION_WORDS = 'PARADO: a pasta antiga também tem um arquivo chamado';
+
 const STATUS_WORDS = {
   save: 'a versão antiga fica ao lado como',
   'already-saved': 'a versão antiga já está guardada como',
@@ -192,7 +215,9 @@ export function formatReport(report) {
   list('Iguais, nada a fazer', report.same);
   list(
     'Conflitos (mesmo nome, conteúdo diferente; o da pasta nova fica)',
-    report.conflicts.map((conflict) => `${conflict.name}: ${STATUS_WORDS[conflict.status]} ${conflict.savedAs}`),
+    report.conflicts.map(
+      (conflict) => `${conflict.name}: ${conflict.reason === 'collision' ? COLLISION_WORDS : STATUS_WORDS[conflict.status]} ${conflict.savedAs}`,
+    ),
   );
   list(`Linhas acrescentadas ao ${INDEX}`, report.addedLines);
   if (report.blocked) out.push('Nada foi gravado: resolva os conflitos PARADO acima (compare os dois arquivos) e rode de novo.');
