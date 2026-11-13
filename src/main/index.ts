@@ -406,6 +406,7 @@ import { createPullRequestStatusService, createSystemPullRequestStatusDeps, open
 import { browserMcpConfigDir, createBrowserService, type BrowserService } from './browser/browser-service';
 import type { BoardToolCall } from '../shared/mindscape/agent-tools';
 import { withTaskHeaderOnCall } from '../shared/mindscape/task-header';
+import { lastLaunchAt, silenceNotice } from '../shared/ledger/ritmo';
 import { createBoardBridge } from './board-bridge';
 
 // Scaffold T003 — janela única com o layout do shell (ui-spec §2).
@@ -4897,6 +4898,33 @@ void app.whenReady().then(async () => {
   hillClimbNotify = (message) => void boardBridge.deliverOwnerMessage(message).catch(() => null);
   // No place: the renderer sends it straight to the Líder único (or answers `null`: closed, the request waits).
   deliverPedidoToLeader = (text) => boardBridge.deliverOwnerMessage({ projectPath: '', placeId: '', text, leaderText: text }).then((to) => to === 'lider');
+  // t-23f0297d — the ledger quiet for 1 h while sessions work: the Líder único hears it once per silence. A Líder
+  // único closed misses nothing: the notice is not marked as heard, and the next round tries again.
+  let silenceAlertedFor: number | null = null;
+  let silenceChecking = false;
+  setInterval(() => {
+    const service = ledgerService;
+    const deliver = deliverPedidoToLeader;
+    if (silenceChecking || !service || !deliver) return;
+    let last: number | null;
+    try {
+      last = lastLaunchAt(service.load().doc);
+    } catch {
+      return;
+    }
+    const working = [...activeSessionByPty.keys()].filter((ptyId) => semaphoreManager.getSnapshot(ptyId)?.state === 'working').length;
+    const notice = silenceNotice({ lastLaunchAt: last, working, now: Date.now(), alertedFor: silenceAlertedFor });
+    if (!notice) return;
+    silenceChecking = true;
+    void deliver(notice)
+      .then((heard) => {
+        if (heard) silenceAlertedFor = last;
+      })
+      .catch(() => null)
+      .finally(() => {
+        silenceChecking = false;
+      });
+  }, 5 * 60_000).unref();
   // Faxina noturna do Oráculo (t-2c18d666) — in shadow for its first nights; who gets a task hears it here.
   faxinaRunner = createFaxinaRunner({
     dir: join(app.getPath('userData'), 'rotinas'),
