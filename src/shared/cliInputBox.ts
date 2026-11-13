@@ -174,6 +174,100 @@ export function hasPermissionPrompt(lines: readonly LineInput[]): boolean {
   return PERMISSION_PROMPT_PATTERNS.some((pattern) => pattern.test(joined));
 }
 
+// Revisor, #406 (vem do #377): `hasPermissionPrompt` acha QUALQUER resto de diálogo na tela, inclusive um já
+// respondido que segue visível acima da saída da ferramenta (terminal rolado, /model aberto, colagem longa que tira
+// a caixa da leitura). Serve de veto de Enter, nunca para dizer "há um pedido aberto": por isso esta regra estrita,
+// POSICIONAL. Um diálogo aberto é o ÚLTIMO bloco da tela: abaixo das opções só há linhas vazias e o rodapé dele.
+// Os espaços são opcionais nos padrões porque o main lê o fluxo de bytes sem ANSI, onde o ConPTY os perde.
+const OPEN_QUESTION = /Do\s*you\s*want\s*to\b.*\?|requires\s*confirmation/i;
+/** A pergunta inteira, já juntada das linhas em que a largura da aba a quebrou (4ª rodada do #414). */
+const WHOLE_QUESTION = /^Do\s*you\s*want\s*to\b[\s\S]*\?$|requires\s*confirmation/i;
+/** Quantas linhas uma pergunta quebrada pela largura pode ocupar logo acima das opções. */
+const MAX_QUESTION_LINES = 3;
+/** An option never ends in "?": a wrapped question's tail ("2026.11.09-notas.md?") is not one (Revisor's check, #414). */
+const OPEN_OPTION = /^\s*(?:❯\s*)?\d+\.\s*\S(?!.*\?\s*$)/;
+const OPEN_YES = /^\s*(?:❯\s*)?(\d)\.\s*Yes\s*$/;
+/** O rodapé que o CLI desenha sob as opções ("Esc to cancel · Tab to amend"). */
+const DIALOG_FOOTER = /Esc\s*to\s*cancel|Tab\s*to\s*amend|ctrl\+e\s*to\s*explain/i;
+/** Linhas que nunca estão sob um diálogo aberto: resposta, saída de ferramenta, prompt, spinner. */
+const NOT_UNDER_DIALOG = /^\s*(?:[●⎿❯>]|[·✢✳✶✻✽*]\s)/u;
+/** Linhas desconhecidas (uma statusLine) aceitas sob as opções, e só junto do rodapé do diálogo. */
+const MAX_UNKNOWN_UNDER_DIALOG = 2;
+/** Recuo mínimo da continuação de uma opção quebrada pela largura (a opção começa na coluna 1 a 3). */
+const OPTION_CONTINUATION_INDENT = 4;
+
+function indentWidth(line: string): number {
+  return line.length - line.trimStart().length;
+}
+
+function blocksDialog(line: string): boolean {
+  return isRulerLine(line) || NOT_UNDER_DIALOG.test(line) || OPEN_QUESTION.test(line) || /▔{10}/.test(line);
+}
+
+/**
+ * Onde começa a pergunta que termina em `end`: numa aba estreita o CLI a quebra ("Do you want to make this edit to" /
+ * "permissionPorts.ts?"), então ela ocupa até `MAX_QUESTION_LINES` linhas contíguas não vazias, e vale a menor junção
+ * que é a pergunta inteira. `-1` = não há pergunta ali.
+ */
+function questionStart(plain: readonly string[], end: number): number {
+  const parts: string[] = [];
+  for (let start = end; start >= 0 && end - start < MAX_QUESTION_LINES; start -= 1) {
+    const line = plain[start];
+    if (line.trim() === '' || isRulerLine(line) || NOT_UNDER_DIALOG.test(line) || OPEN_OPTION.test(line)) break;
+    parts.unshift(line.trim());
+    if (WHOLE_QUESTION.test(parts.join(' '))) return start;
+  }
+  return -1;
+}
+
+/**
+ * O diálogo de permissão ABERTO, lido de baixo para cima: `question` é a 1ª linha da pergunta, `questionEnd` a última
+ * (a mesma, salvo quando a largura a quebrou) e `last` a da última opção; `null` = o último bloco da tela não é um
+ * diálogo de permissão. O topo dele pode estar fora da tela (comando longo): isso continua sendo um diálogo aberto, só
+ * incompleto.
+ */
+export function openPermissionAt(
+  lines: readonly LineInput[]
+): { readonly question: number; readonly questionEnd: number; readonly last: number } | null {
+  const plain = lines.map(lineText);
+  let last = plain.length - 1;
+  while (last >= 0 && !OPEN_OPTION.test(plain[last])) {
+    if (plain[last].trim() !== '' && blocksDialog(plain[last])) return null;
+    last -= 1;
+  }
+  if (last < 0) return null;
+  // Debaixo da última opção: a continuação dela (colada e mais recuada), linhas vazias, o rodapé, e no máximo duas
+  // linhas desconhecidas se o rodapé está lá.
+  let footer = false;
+  let unknown = 0;
+  let continuation = true;
+  for (let i = last + 1; i < plain.length; i += 1) {
+    const line = plain[i];
+    if (line.trim() === '') continuation = false;
+    else if (continuation && indentWidth(line) >= OPTION_CONTINUATION_INDENT) continue;
+    else if (DIALOG_FOOTER.test(line)) footer = true;
+    else unknown += 1;
+    if (line.trim() !== '') continuation = false;
+  }
+  if (unknown > MAX_UNKNOWN_UNDER_DIALOG || (unknown > 0 && !footer)) return null;
+  // O bloco de opções, contíguo, com a opção "Yes"; acima dele (pulando linhas vazias), a pergunta, em até 3 linhas.
+  let yes = false;
+  let i = last;
+  for (; i >= 0; i -= 1) {
+    const line = plain[i];
+    if (OPEN_OPTION.test(line)) {
+      if (OPEN_YES.test(line)) yes = true;
+      continue;
+    }
+    if (line.trim() === '' || blocksDialog(line) || indentWidth(line) < OPTION_CONTINUATION_INDENT) break;
+  }
+  if (!yes) return null;
+  while (i >= 0 && plain[i].trim() === '') i -= 1;
+  if (i < 0) return null;
+  const question = questionStart(plain, i);
+  return question < 0 ? null : { question, questionEnd: i, last };
+}
+
 /**
  * VETO. `false` = não escrever `\r`, ponto. É um predicado SEPARADO da
  * confirmação de propósito: um prova que falta enviar, o outro prova que

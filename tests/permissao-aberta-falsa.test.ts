@@ -32,12 +32,13 @@ describe('renovação em voo herda o bypass da sessão anterior', () => {
 describe('semáforo: texto de diálogo na saída não é permissão aberta numa sessão em bypass', () => {
   afterEach(() => vi.useRealTimers());
 
-  function setup(bypass: boolean) {
+  const OPEN = ['  ⎿  $ ./mostra.sh', ' Do you want to proceed?', ' ❯ 1. Yes', '   2. No', ' Esc to cancel · Tab to amend'];
+
+  function setup(bypass: boolean, screen: readonly string[] = OPEN) {
     vi.useFakeTimers();
     let clock = 1_000_000;
     const listeners: BridgeListener[] = [];
     const bridge = { onAny: (listener: BridgeListener) => (listeners.push(listener), () => undefined) } as unknown as HookBridge;
-    const screen = ['  ⎿  $ ./mostra.sh', ' Do you want to proceed?', ' ❯ 1. Yes', '   2. No', ' Esc to cancel · Tab to amend'];
     const manager = new SessionSemaphoreManager({
       now: () => clock,
       tickIntervalMs: 500,
@@ -71,6 +72,17 @@ describe('semáforo: texto de diálogo na saída não é permissão aberta numa 
     hook('PreToolUse', { tool_name: 'Bash' });
     wait(10_000);
     expect(manager.getSnapshot('pty-1')?.state).toBe('permission');
+  });
+
+  // Revisor, #406: um diálogo já respondido no texto recente, seguido da saída da ferramenta, marcava "permissão" a cada
+  // ferramenta de mais de 2,5 s, e o Líder ouvia "precisa do dono" cinco vezes de uma sessão sem diálogo nenhum.
+  it('fora do bypass, um diálogo já respondido seguido de saída normal não é permissão aberta', () => {
+    const answered = [' Do you want to proceed?', ' ❯ 1. Yes', '   2. No', '', '● Bash(rm -rf build)', '  ⎿  (No output)', '● Pronto.'];
+    const { manager, hook, wait } = setup(false, answered);
+    hook('UserPromptSubmit');
+    hook('PreToolUse', { tool_name: 'Bash' });
+    wait(10_000);
+    expect(manager.getSnapshot('pty-1')?.state).toBe('working');
   });
 
   it('em bypass, o aviso do próprio CLI (Notification de permissão) ainda marca "permissão"', () => {
