@@ -168,7 +168,10 @@ export interface ReturnExpectation {
   readonly fresh?: boolean;
 }
 
-export type ResumePlaceOutcome = { readonly ok: true; readonly tabId: string; readonly remoteId?: string } | { readonly ok: false; readonly reason: string };
+/** `missing` (t-e72ca49e): that conversation is on no machine; the bridge tries the place's previous ones. */
+export type ResumePlaceOutcome =
+  | { readonly ok: true; readonly tabId: string; readonly remoteId?: string }
+  | { readonly ok: false; readonly reason: string; readonly missing?: true };
 
 /** A `sessao_abrir` waiting for room on a full machine (t-b3b26e60), or the launch of one that opened. */
 interface QueuedOpen extends OpenSessionRequest {
@@ -1595,29 +1598,36 @@ export class AgentBridge {
         if (this.tabOfPlace(where.projectPath, place.id) || this.resumeInFlight(key)) return { ok: true, text: `"${place.id}" já está aberta (ou abrindo); nada a retomar. Para mandar trabalho: sessao_enviar.` };
         if (this.isQueued(where.projectPath, place.id)) return { ok: true, text: `"${place.id}" espera vaga na fila e abre sozinha quando a máquina tiver vaga.` };
         if (!this.ports.resumePlace) return no('este app não retoma sessões por ferramenta.');
-        const sessionId = place.sessionId ?? place.previous[place.previous.length - 1];
+        // t-e72ca49e — the current conversation first, then the previous ones, newest first: a renewal or `/clear` on a
+        // remote place can leave the current id with no transcript anywhere, while the one before it lives there.
+        const candidates = [...new Set([...(place.sessionId ? [place.sessionId] : []), ...[...place.previous].reverse()])];
+        let sessionId: string | undefined = candidates[0];
         const note = sessionId ? this.board(where.projectPath)?.cards[`note:${sessionId}`] : undefined;
         const opener = this.openerOf(where.projectPath, place.id, undefined);
         const known = this.boards().find((board) => board.projectPath === where.projectPath);
         this.resuming.set(key, { tabId: null, at: Date.now() });
-        let outcome: ResumePlaceOutcome;
+        let outcome: ResumePlaceOutcome = { ok: false, reason: 'nada a retomar' };
         try {
-          outcome = await this.ports.resumePlace({
-            projectPath: where.projectPath,
-            ...(known ? { projectName: known.name } : {}),
-            placeId: place.id,
-            ...(sessionId ? { sessionId } : {}),
-            name: note?.kind === 'session-note' ? note.sessionName : (this.roleName(place.roleId) ?? 'Sessão'),
-            ...(opener ? { openedBy: opener } : {}),
-            // #375 — the same brake as `sessao_abrir`; an opening that passes counts for the next one.
-            mayOpenOn: (remoteId) => {
-              const machine = remoteId ?? PC_MACHINE_ID;
-              const full = this.waitReasons(machine);
-              if (full) return `a máquina não tem vaga agora (${full.join('; ')}). Tente de novo quando o Faxineiro liberar vaga.`;
-              this.launchedOn.set(machine, [...(this.launchedOn.get(machine) ?? []), Date.now()]);
-              return undefined;
-            },
-          });
+          for (const candidate of candidates.length > 0 ? candidates : [undefined]) {
+            sessionId = candidate;
+            outcome = await this.ports.resumePlace({
+              projectPath: where.projectPath,
+              ...(known ? { projectName: known.name } : {}),
+              placeId: place.id,
+              ...(sessionId ? { sessionId } : {}),
+              name: note?.kind === 'session-note' ? note.sessionName : (this.roleName(place.roleId) ?? 'Sessão'),
+              ...(opener ? { openedBy: opener } : {}),
+              // #375 — the same brake as `sessao_abrir`; an opening that passes counts for the next one.
+              mayOpenOn: (remoteId) => {
+                const machine = remoteId ?? PC_MACHINE_ID;
+                const full = this.waitReasons(machine);
+                if (full) return `a máquina não tem vaga agora (${full.join('; ')}). Tente de novo quando o Faxineiro liberar vaga.`;
+                this.launchedOn.set(machine, [...(this.launchedOn.get(machine) ?? []), Date.now()]);
+                return undefined;
+              },
+            });
+            if (outcome.ok || !outcome.missing) break;
+          }
         } catch (error) {
           this.resuming.delete(key);
           throw error;

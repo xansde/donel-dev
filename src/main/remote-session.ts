@@ -18,6 +18,7 @@ import { createWriteStream, mkdirSync, type WriteStream } from 'node:fs';
 import { basename, join, relative, sep, isAbsolute } from 'node:path';
 import { isBypassLaunch } from '../shared/launchPermission';
 import type { RemoteAliveSession } from '../shared';
+import type { SessionWhereLives } from '../shared/sessions';
 
 export const REMOTE_TMUX_SOCKET = 'donel';
 export const REMOTE_SESSIONS_DIR = '.donel/s';
@@ -558,6 +559,26 @@ export function parseHasTranscriptOutput(stdout: string): RemoteTranscriptAnswer
   if (lines.includes('DONEL_HAS')) return 'has';
   if (lines.includes('DONEL_HASNT')) return 'hasnt';
   return 'unreachable';
+}
+
+/**
+ * Pure — B39, where a conversation to resume lives, from what this disk and each remote place answered. Without
+ * remote places it is this computer; with them, a conversation none of them has is `nowhere`, never this computer.
+ */
+export function decideWhereLives(
+  local: boolean,
+  answers: ReadonlyArray<{ readonly id: string; readonly answer: RemoteTranscriptAnswer }>,
+  places: ReadonlyArray<{ readonly id: string; readonly label: string }>,
+): SessionWhereLives {
+  if (local) return { kind: 'local' };
+  if (places.length === 0) return { kind: 'local' };
+  const found = answers.find((answer) => answer.answer === 'has');
+  if (found) return { kind: 'remote', remoteId: found.id };
+  const labelOf = (id: string): string => places.find((place) => place.id === id)?.label ?? id;
+  const silent = answers.filter((answer) => answer.answer === 'unreachable');
+  if (silent.length > 0) return { kind: 'unreachable', labels: silent.map((answer) => labelOf(answer.id)) };
+  // t-e72ca49e — every place said "hasn't": the old `local` opened an empty `claude -r` on this computer.
+  return { kind: 'nowhere', labels: places.map((place) => place.label) };
 }
 
 /** B39 — asks each place whether the conversation `sid` of the project folder `homeRelativeDir` lives there. */

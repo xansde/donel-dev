@@ -1,0 +1,4 @@
+{
+  "title": "Retomar uma sessão da VPS não abre mais vazia no PC",
+  "text": "Ao retomar uma sessão que rodava na VPS, o app procura a conversa dela lá e, se a mais recente sumiu, volta à conversa anterior do mesmo lugar. Quando não acha a conversa em nenhum lugar, avisa em vez de abrir uma sessão vazia neste computador."
+}
