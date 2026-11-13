@@ -439,6 +439,11 @@ export function pickRemotePort(random: () => number = Math.random): number {
   return 20000 + Math.floor(random() * 20000);
 }
 
+/** How a transcript reaches its mirror: the place's shared ssh, or (a place without python3) a tail of its own. */
+type MirrorPump =
+  | { readonly kind: 'hub'; readonly key: string; readonly hub: MirrorHub; readonly out: WriteStream; bytes: number }
+  | { readonly kind: 'tail'; readonly child: ChildProcess; readonly out: WriteStream; bytes: number };
+
 interface LiveRemote {
   readonly sshTarget: string;
   /** `~/.donel/s/<folder>`: the id the session was prepared with (it never follows `/clear`). */
@@ -447,7 +452,9 @@ interface LiveRemote {
   readonly remoteDir: string;
   /** The transcript the mirror follows (it moves with `/clear`); a relink resumes it where it stopped. */
   transcript: string;
-  pump: { key: string; hub: MirrorHub; out: WriteStream; bytes: number } | null;
+  pump: MirrorPump | null;
+  /** `resumePump` is between ending the old mirror stream and appending with the new one. */
+  restarting?: true;
   /** Its remote session was ended already (on the kill of the tab): the exit that follows does not end it again. */
   ended?: true;
 }
@@ -458,6 +465,8 @@ export class RemoteSessionRegistry {
   private readonly ending = new Map<string, Promise<void>>();
   /** One shared mirror ssh per place (t-9ab0ce2e). */
   private readonly hubs = new Map<string, MirrorHub>();
+  /** Places without python3: one tail per transcript there. */
+  private readonly noMirrorHub = new Set<string>();
   private nextKey = 0;
   private readonly spawnMirror: SpawnMirror;
   private readonly restartDelayMs: number;
@@ -499,7 +508,8 @@ export class RemoteSessionRegistry {
   repoint(ptyId: string, sid: string, remoteAbsoluteTranscript: string): string | null {
     const entry = this.live.get(ptyId);
     if (!entry) return null;
-    if (entry.sid === sid && entry.pump) return this.mirrorPathFor(sid); // the hub and the main both follow the switch
+    // The hub and the main both follow the switch; a restart under way already follows this transcript.
+    if (entry.sid === sid && (entry.pump || entry.restarting)) return this.mirrorPathFor(sid);
     entry.sid = sid;
     entry.transcript = remoteAbsoluteTranscript;
     this.stopPump(entry);
@@ -513,17 +523,7 @@ export class RemoteSessionRegistry {
    */
   resumePump(ptyId: string): void {
     const entry = this.live.get(ptyId);
-    if (!entry) return;
-    const old = entry.pump;
-    const from = old?.bytes ?? 0;
-    entry.pump = null;
-    const start = (): void => {
-      if (this.live.get(ptyId) !== entry || entry.pump) return; // closed, or repointed, meanwhile
-      this.startPump(entry, entry.transcript, entry.sid, from);
-    };
-    if (!old) return start();
-    old.hub.remove(old.key);
-    old.out.end(start); // the old stream flushes before the new one appends
+    if (entry) this.restartPump(entry);
   }
 
   /** The PTY left (tab closed, app quitting or ssh dropped): stop mirroring. */
@@ -559,16 +559,37 @@ export class RemoteSessionRegistry {
     for (const ptyId of [...this.live.keys()]) this.onPtyExit(ptyId);
   }
 
+  /** A new mirror stream from the byte the old one had, once the old one flushed (appending, never rewriting). */
+  private restartPump(entry: LiveRemote): void {
+    const old = entry.pump;
+    const from = old?.bytes ?? 0;
+    entry.pump = null;
+    const start = (): void => {
+      delete entry.restarting;
+      if (![...this.live.values()].includes(entry) || entry.pump) return; // closed, or repointed, meanwhile
+      this.startPump(entry, entry.transcript, entry.sid, from);
+    };
+    if (!old) return start();
+    entry.restarting = true;
+    this.detach(entry, old);
+    old.out.end(start); // the old stream flushes before the new one appends
+  }
+
   private startPump(entry: LiveRemote, remoteTranscript: string, sid: string, fromByte = 0): string {
     const mirror = this.mirrorPathFor(sid);
     mkdirSync(this.mirrorRoot, { recursive: true });
     const out = createWriteStream(mirror, { flags: fromByte > 0 ? 'a' : 'w' });
+    if (this.noMirrorHub.has(entry.sshTarget)) {
+      entry.pump = this.startTail(entry, remoteTranscript, out, fromByte);
+      return mirror;
+    }
     let hub = this.hubs.get(entry.sshTarget);
     if (!hub) {
-      hub = new MirrorHub(entry.sshTarget, this.spawnMirror, this.restartDelayMs);
-      this.hubs.set(entry.sshTarget, hub);
+      const target = entry.sshTarget;
+      hub = new MirrorHub(target, this.spawnMirror, this.restartDelayMs, () => this.fallBackToTails(target));
+      this.hubs.set(target, hub);
     }
-    const pump = { key: String(++this.nextKey), hub, out, bytes: fromByte };
+    const pump: MirrorPump = { kind: 'hub', key: String(++this.nextKey), hub, out, bytes: fromByte };
     entry.pump = pump;
     hub.add({
       key: pump.key,
@@ -583,13 +604,45 @@ export class RemoteSessionRegistry {
     return mirror;
   }
 
+  /** A place without python3: each of its transcripts gets its own `ssh … tail -F`, as before the shared ssh. */
+  private fallBackToTails(sshTarget: string): void {
+    this.noMirrorHub.add(sshTarget);
+    this.hubs.delete(sshTarget);
+    for (const entry of this.live.values()) if (entry.sshTarget === sshTarget && entry.pump?.kind === 'hub') this.restartPump(entry);
+  }
+
+  private startTail(entry: LiveRemote, remoteTranscript: string, out: WriteStream, fromByte: number): MirrorPump {
+    const target = remoteTranscript.startsWith('/') ? shQuote(remoteTranscript) : `"$HOME"/${shQuote(remoteTranscript)}`;
+    const child = spawn('ssh', [...SSH_OPTIONS, '-T', '--', entry.sshTarget, `tail -c +${fromByte + 1} -F ${target} 2>/dev/null`], {
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const pump: MirrorPump = { kind: 'tail', child, out, bytes: fromByte };
+    child.stdout?.on('data', (chunk: Buffer) => {
+      pump.bytes += chunk.length;
+    });
+    child.stdout?.pipe(out);
+    child.on('error', () => out.end());
+    return pump;
+  }
+
+  /** Stops what feeds a mirror, leaving its stream to the caller. */
+  private detach(entry: LiveRemote, pump: MirrorPump): void {
+    if (pump.kind === 'tail') {
+      pump.child.stdout?.unpipe(pump.out);
+      pump.child.kill();
+      return;
+    }
+    pump.hub.remove(pump.key);
+    if (pump.hub.size === 0 && this.hubs.get(entry.sshTarget) === pump.hub) this.hubs.delete(entry.sshTarget);
+  }
+
   private stopPump(entry: LiveRemote): void {
-    if (!entry.pump) return;
-    const { hub, key, out } = entry.pump;
+    const pump = entry.pump;
+    if (!pump) return;
     entry.pump = null;
-    hub.remove(key);
-    if (hub.size === 0 && this.hubs.get(entry.sshTarget) === hub) this.hubs.delete(entry.sshTarget);
-    out.end();
+    this.detach(entry, pump);
+    pump.out.end();
   }
 }
 

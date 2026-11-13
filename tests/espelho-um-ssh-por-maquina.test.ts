@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 import { RemoteSessionRegistry } from '../src/main/remote-session';
-import { encodeMirrorFrame } from '../src/main/remote-mirror';
+import { encodeMirrorFrame, MIRROR_NO_PYTHON_EXIT, MirrorHub } from '../src/main/remote-mirror';
 
 // t-9ab0ce2e (13/11) — the PC at 89% of RAM with 108 ssh: one `ssh … tail -F` per remote tab, on top of the tab's own
 // ssh. The transcript mirror must use ONE ssh per remote place, and a mirror must never lose or repeat bytes (the
@@ -63,12 +63,27 @@ describe('espelho do transcript: um ssh por máquina', () => {
     expect(readFileSync(b, 'utf8')).toBe('{"b":1}\n');
 
     // The shared ssh falls (link lost): one new ssh, each transcript asked again from the byte its mirror has.
-    hom.child.emit('exit', 255);
+    // A late frame of the falling ssh is dropped (it was never counted: the new ssh asks for it again).
+    hom.child.emit('close', 255);
+    hom.child.stdout.write(encodeMirrorFrame('1', Buffer.from('{"atrasado":1}\n')));
     await tick();
     const again = spawned.filter((s) => s.target === 'root@hom');
     expect(again).toHaveLength(2);
     const readds = again[1]!.commands.filter((line) => line.startsWith('A '));
     expect(readds.map((line) => line.split(' ')[2]).sort()).toEqual(['16', '8']);
+    expect(readFileSync(a, 'utf8')).toBe('{"a":1}\n{"a":2}\n');
+
+    // One tail ended on the place (killed): that transcript alone is asked again, from its byte.
+    again[1]!.child.stdout.write(encodeMirrorFrame('2', Buffer.alloc(0), 'E'));
+    await tick();
+    expect(again[1]!.commands.filter((line) => line.startsWith('A 2 '))).toEqual([expect.stringMatching(/^A 2 8 /), expect.stringMatching(/^A 2 8 /)]);
+
+    // The tab's ssh came back ("sem ligação"): its mirror restarts from its byte; a repoint to the same transcript
+    // meanwhile must not rewrite the mirror from zero.
+    registry.resumePump('pty-a');
+    registry.repoint('pty-a', SID_A, '/root/.claude/projects/x/' + SID_A + '.jsonl');
+    await tick();
+    expect(readFileSync(a, 'utf8')).toBe('{"a":1}\n{"a":2}\n');
 
     // The tab closes: its transcript leaves the shared ssh; the last tab of a place ends that ssh.
     registry.onPtyExit('pty-a');
@@ -78,5 +93,20 @@ describe('espelho do transcript: um ssh por máquina', () => {
     await tick();
     expect(again[1]!.child.killed).toBe(true);
     registry.stopAll();
+  });
+
+  it('VPS sem python3: o ssh compartilhado desiste uma vez e devolve as conversas, sem ficar reabrindo ssh', async () => {
+    const { spawned, spawn } = fakeSpawner();
+    let moved: string[] = [];
+    const hub = new MirrorHub('eu@sem-python', spawn, 0, (follows) => {
+      moved = follows.map((follow) => follow.key);
+    });
+    hub.add({ key: '9', path: 'x.jsonl', bytes: () => 0, write: () => undefined });
+    spawned[0]!.child.emit('close', MIRROR_NO_PYTHON_EXIT);
+    await tick();
+    await tick();
+    expect(moved).toEqual(['9']);
+    expect(spawned).toHaveLength(1);
+    expect(hub.isUnavailable).toBe(true);
   });
 });
