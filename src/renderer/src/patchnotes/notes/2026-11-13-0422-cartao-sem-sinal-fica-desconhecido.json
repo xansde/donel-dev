@@ -1,0 +1,4 @@
+{
+  "title": "Cartão sem sinal fica desconhecido",
+  "text": "No quadro, a sessão que segue \"trabalhando\" sem dar sinal há mais de 30 minutos, e sem nenhuma ferramenta rodando, passa a aparecer como \"desconhecido\", igual ao que a rotina já acusava. Uma ferramenta longa ainda aberta mantém \"trabalhando\", e o primeiro sinal novo devolve o estado real."
+}

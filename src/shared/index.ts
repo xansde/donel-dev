@@ -480,6 +480,8 @@ export interface SemaphoreUpdate {
   readonly pendingKinds?: readonly string[];
   /** Item 04 — see `SemaphoreStateInfo.turnFailure`. */
   readonly turnFailure?: string;
+  /** See `SemaphoreStateInfo.signalStale`. */
+  readonly signalStale?: true;
 }
 
 /** Payload do listener FILTRADO por ptyId (mesmo padrão de `PtyExitInfo`/`pty.onExit` — o `ptyId` já é conhecido pelo chamador, não precisa vir de novo dentro do payload). */
@@ -494,6 +496,8 @@ export interface SemaphoreStateInfo {
   readonly pendingKinds?: readonly string[];
   /** Item 04 — the last turn ended in `StopFailure` with this code (`rate_limit`…, or `unknown`). */
   readonly turnFailure?: string;
+  /** `working` with no hook for a long time and no call running (the `Stop` may be lost): the card says "desconhecido". */
+  readonly signalStale?: boolean;
 }
 
 /** API tipada exposta pelo preload em `window.donel.semaphore` (contextBridge). */

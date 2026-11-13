@@ -92,6 +92,8 @@ export interface MindscapeLiveSession {
   readonly pendingKinds?: readonly string[];
   /** Item 04 — `StopFailure` code of the last turn. */
   readonly turnFailure?: string;
+  /** `working` with no hook for a long time and no call running (OpenRig 4c4d0f8): the card says "desconhecido". */
+  readonly signalStale?: boolean;
   /** Sessões remotas — the ssh dropped while the process lives on the place: "sem ligação" (the app relinks). */
   readonly linkLost?: boolean;
   /** Item 04 — engine seal: the short model label read from the session (and the provider); absent = no reading. */
@@ -473,6 +475,7 @@ export function MindscapeScreen({
       unconfirmed: session.unconfirmed,
       pendingKinds: session.pendingKinds,
       turnFailure: session.turnFailure,
+      signalStale: session.signalStale,
       linkLost: session.linkLost,
       transcriptFound: transcriptFound(session.sessionId),
     });
