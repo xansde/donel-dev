@@ -1,0 +1,4 @@
+{
+  "title": "Mensagem a sessão fechada diz como retomar",
+  "text": "Quando uma sessão tenta mandar mensagem a outra que está fechada, a resposta agora diz o caminho: retomar a sessão e mandar de novo, esperar a vaga se ela está na fila, ou registrar a tarefa e falar com o Líder do quadro quando não dá para retomá-la."
+}
