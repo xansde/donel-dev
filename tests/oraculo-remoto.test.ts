@@ -325,6 +325,31 @@ describe('Oráculo na VPS — o PC em modo remoto', { timeout: 30_000 }, () => {
     expect(Object.keys(tasksOnVps())).toHaveLength(5);
   });
 
+  it('uma leitura que chega atrasada, com o registro de antes, não tira da visão a tarefa que já tinha chegado', async () => {
+    // t-530129bf: a releitura de 6 MB termina depois da resposta de uma gravação feita no meio dela.
+    const pc = await pcWithLedger();
+    const remote = vps();
+    await moveLedgerToRemote({ http: remote.http, ledgerFile: pc.file, io, proofFs: nodeLedgerProofFs, marker });
+    let hold: ((value: void) => void) | null = null;
+    const slow: OracleHttp = async (method, path, body) => {
+      const response = await remote.http(method, path, body);
+      if (path === '/v1/ledger' && hold === null) await new Promise((release) => (hold = release));
+      return response;
+    };
+    const service = createRemoteLedgerService({ http: () => slow, ledgerFile: pc.file, io, proofFs: nodeLedgerProofFs, marker });
+    hold = () => undefined; // the first read goes through
+    expect(await service.refresh()).toBe(true);
+    hold = null;
+    const late = service.refresh(); // reads the ledger as it is now, and is held
+    while (hold === null) await new Promise((tick) => setTimeout(tick, 5));
+    const created = await service.apply(LIDER, { op: 'criar', projectPath: '/p', request: 'nova', doneWhen: 'x', due: '2026-11-15', ownerPlaceId: 'place:dev', risk: 'baixo' });
+    if (!created.ok) throw new Error(created.reason);
+    (hold as unknown as () => void)();
+    await late;
+    expect(service.load().doc.tasks[created.task.id]).toMatchObject({ request: 'nova' });
+    expect(JSON.parse(readFileSync(pc.file, 'utf8')).tasks[created.task.id]).toBeDefined();
+  });
+
   it('a prova entregue pelo PC vai à VPS e fica também na cópia do PC', async () => {
     const pc = await pcWithLedger();
     const remote = vps();

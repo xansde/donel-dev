@@ -208,14 +208,10 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
   let readAgain: Promise<boolean> | null = null;
   /** t-530129bf — keys of calls whose answer was lost and the re-read did not settle (key → when). */
   const unsure = new Map<string, number>();
-  /** Tasks a light answer put in the view, with the count of reads started before (`reads`). */
-  const patched = new Map<string, { task: LedgerTask; readsBefore: number }>();
-  let reads = 0;
-  /** `reads` at the last write this PC saw answered: a read started before it may bring the ledger before the write. */
-  let writeMark = 0;
   /** The daemon answered light: it knows the call's key and checks the repeat on the real ledger, not on this view. */
   let daemonKnowsKeys = false;
-  const eventCount = (doc: LedgerDoc): number => Object.values(doc.tasks).reduce((sum, task) => sum + task.events.length, 0);
+  /** The view already came from this daemon (not only from the mirror on disk). */
+  let fromDaemon = false;
 
   // Before the daemon answers: the mirror on disk, read-only.
   const mirror = io.readFileText(ledgerFile);
@@ -238,51 +234,49 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
   }
 
   /**
-   * `startedAt`: the count of reads when this read started. A read started before a light answer may end after it
-   * with the ledger as it was: the patched task stays on top until a read started after the patch brings it.
+   * t-530129bf — the reads, the full answers and the light answers come back in any order (a 6 MB body takes longer
+   * than a small one started after it). The daemon's ledger only grows (no task is removed, events are only
+   * appended), so a late snapshot never takes back what the view already has: per task, the version with more events
+   * stays. The mirror on disk is not merged (it may be of another ledger): the first answer of the daemon replaces it.
    */
-  function accept(snapshot: LedgerSnapshot, startedAt = reads): void {
-    let doc = snapshot.doc;
-    for (const [id, entry] of patched) {
-      if (entry.readsBefore < startedAt) {
-        patched.delete(id);
-        continue;
-      }
-      const there = doc.tasks[id];
-      if (!there || there.events.length < entry.task.events.length) doc = { ...doc, tasks: { ...doc.tasks, [id]: entry.task } };
+  function merged(next: LedgerDoc): LedgerDoc {
+    if (!cache || !fromDaemon) return next;
+    let tasks: Record<string, LedgerTask> | null = null;
+    for (const [id, task] of Object.entries(cache.doc.tasks)) {
+      const there = next.tasks[id];
+      if (there && there.events.length >= task.events.length) continue;
+      tasks ??= { ...next.tasks };
+      tasks[id] = task;
     }
-    snapshot = { doc, readOnly: snapshot.readOnly };
-    cache = snapshot;
+    return tasks ? { ...next, tasks } : next;
+  }
+
+  function accept(snapshot: LedgerSnapshot): void {
+    cache = { doc: merged(snapshot.doc), readOnly: snapshot.readOnly };
+    fromDaemon = true;
     online = true;
-    writeRemoteMirror(io, ledgerFile, snapshot.doc, deps.marker);
-    deps.onChange?.({ doc: snapshot.doc, readOnly: snapshot.readOnly });
+    writeRemoteMirror(io, ledgerFile, cache.doc, deps.marker);
+    deps.onChange?.({ doc: cache.doc, readOnly: cache.readOnly });
     void service.syncProofs();
   }
 
   /** A light answer's task goes into the view at once (tarefa_ver finds it); the whole ledger comes with the re-read. */
   function patch(task: LedgerTask): void {
     if (!cache) return;
-    patched.set(task.id, { task, readsBefore: reads });
-    writeMark = reads;
-    cache = { doc: { ...cache.doc, tasks: { ...cache.doc.tasks, [task.id]: task } }, readOnly: cache.readOnly };
+    const there = cache.doc.tasks[task.id];
+    if (!there || there.events.length < task.events.length) cache = { doc: { ...cache.doc, tasks: { ...cache.doc.tasks, [task.id]: task } }, readOnly: cache.readOnly };
     online = true;
     deps.onChange?.({ doc: cache.doc, readOnly: cache.readOnly });
   }
 
   async function readLedger(): Promise<boolean> {
-    const startedAt = ++reads;
     const response = await call('GET', '/v1/ledger');
     const snapshot = response && response.status === 200 ? snapshotOf(await readJson(response)) : null;
     if (!snapshot) {
       setOnline(false);
       return false;
     }
-    // Started before a write this PC already holds, and behind it (the ledger only grows): keep the view.
-    if (startedAt <= writeMark && cache && eventCount(snapshot.doc) < eventCount(cache.doc)) {
-      setOnline(true);
-      return true;
-    }
-    accept(snapshot, startedAt);
+    accept(snapshot);
     return true;
   }
 
@@ -365,11 +359,11 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
         if (key && !reread) unsure.set(key, now());
         return { ok: false, reason: `${what}: a operação pode ter sido gravada. Confira com ${id ? `tarefa_ver ${id}` : 'tarefa_listar'} antes de repetir.` };
       };
+      // `leve`: a daemon that knows it answers the task without the whole ledger (t-530129bf); an older one ignores it.
+      // A replacement changes two tasks; the light answer brings one: that op still gets the whole ledger back.
+      const askLight = !(op.op === 'criar' && op.replaces);
       let response: OracleResponseLike;
       try {
-        // `leve`: a daemon that knows it answers the task without the whole ledger (t-530129bf); an older one ignores it.
-        // A replacement changes two tasks; the light answer brings one: that op still gets the whole ledger back.
-        const askLight = !(op.op === 'criar' && op.replaces);
         response = await http('POST', '/v1/apply', JSON.stringify({ actor, op, ...(askLight ? { leve: true } : {}) }));
       } catch (error) {
         setOnline(false);
@@ -404,9 +398,10 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
         const again = taskId ? cache?.doc.tasks[taskId] : undefined;
         return again ? { ok: true, task: again } : { ok: false, reason: 'O Oráculo da VPS gravou, mas a resposta veio estranha; confira com tarefa_listar.' };
       }
-      writeMark = reads;
+      // Asked light and got the whole ledger: an older daemon (again), which does not know the key.
+      if (askLight) daemonKnowsKeys = false;
       accept(snapshot);
-      return { ok: true, task, ...repeated };
+      return { ok: true, task: cache?.doc.tasks[task.id] ?? task, ...repeated };
     },
     async importProof(input, remote?: RemoteProofFetch) {
       if (input.tipo === 'texto') return { kind: 'texto', text: input.texto };
