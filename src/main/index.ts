@@ -1929,8 +1929,9 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     files.push({ name: 'mcp.json', content: mcp.configFileContent });
     claudeArgs.push(...appMcpAllowArgs(), '--mcp-config', '@S/mcp.json');
   }
-  // Super bypass das orquestradoras (t-66cb0ce4): the env goes in the claude.sh (`bypassEnvLines`), read from these args.
-  const finalClaudeArgs = planLaunchPermission(claudeArgs, spawnFacts, readUserDefaultPermissionMode(undefined)).args;
+  // Super bypass (t-66cb0ce4, t-2a9060dd): every session on a remote place is born in it, new, opened or renewed. The
+  // env goes in the claude.sh (`bypassEnvLines`), read from these args.
+  const finalClaudeArgs = planLaunchPermission(claudeArgs, { ...spawnFacts, remote: true }, undefined).args;
 
   await remoteSessions.waitEnded(correlationId);
   const git = localGitInfo(localCwd);

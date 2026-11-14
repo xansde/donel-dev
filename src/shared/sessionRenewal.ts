@@ -181,7 +181,9 @@ export function renewalLaunchArgs(args: readonly string[] | undefined, carried: 
   // "default" is also what the chat reads when the transcript records no mode change: it never lowers a launch that
   // needed an opt-in (bypass, auto, dontAsk). The renewed session would stop on every prompt, and only the owner, inside
   // that tab, could answer (t-1293c818). A Shift+Tab to plan or acceptEdits still carries.
-  const permissionMode = carried === 'default' && launchedWithOptIn(source) ? null : carried;
+  // Nor is it written over a launch with no explicit mode (a tab reattached after an update has no launch args): the
+  // explicit flag would beat the CLI user default the launch resolved to, bypass on the PC and on the VPS (t-2a9060dd).
+  const permissionMode = carried === 'default' && (launchedWithOptIn(source) || !hasPermissionMode(source)) ? null : carried;
   for (let i = 0; i < source.length; i += 1) {
     const arg = source[i]!;
     if (arg === '-r' || arg === '--resume' || arg === '--session-id') {
@@ -208,6 +210,10 @@ export function renewalLaunchArgs(args: readonly string[] | undefined, carried: 
 
 /** Permission modes of the launch that need an opt-in (no Shift+Tab gets back to them once lowered). */
 const OPT_IN_PERMISSION_MODES: ReadonlySet<string> = new Set(['bypassPermissions', 'auto', 'dontAsk']);
+
+function hasPermissionMode(args: readonly string[]): boolean {
+  return args.some((arg) => arg === '--permission-mode' || arg.startsWith('--permission-mode=') || arg === '--dangerously-skip-permissions');
+}
 
 function launchedWithOptIn(args: readonly string[]): boolean {
   return args.some(
