@@ -709,7 +709,7 @@ export async function runLedgerBatch(call: Extract<LedgerToolCall, { tool: 'tare
  * made from the op, not from the call's words: a repeat that adds the id the first one found, or says "seu" for the
  * owner it meant, is still the same write.
  */
-export function withCallKey<T extends LedgerOp>(actor: LedgerActor, op: T): T {
+export function withCallKey<T extends LedgerOp>(actor: LedgerActor, op: T): T & { readonly requestId: string } {
   return { ...op, requestId: `k${createHash('sha256').update(JSON.stringify([actor, op])).digest('hex').slice(0, 40)}` };
 }
 
@@ -778,7 +778,10 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       if (to !== LEADER_OF_ALL && !caller.boardPlaceIds.includes(to)) return { ok: false, text: `"${to}" não é um lugar deste quadro que você alcança (veja sessao_listar), nem "lider" (o Líder único).` };
       const gone = ownerGone(caller, task, service.now());
       const risk = riskAfterTransfer(task);
-      const result = await service.apply(actor, withCallKey(actor, { op: 'transferir', id: task.id, to, reason: gone && !call.motivo.includes(gone) ? `${call.motivo} (${gone})` : call.motivo, ...(gone ? { ownerGone: true } : {}), ...(risk !== task.risk ? { risk } : {}) }));
+      // The key is the call's (id, to, reason): `gone` and the risk come from the task as it is, and change once the
+      // first transfer is written, so a repeat built from them would get another key.
+      const { requestId } = withCallKey(actor, { op: 'transferir', id: task.id, to, reason: call.motivo });
+      const result = await service.apply(actor, { op: 'transferir', id: task.id, to, reason: gone && !call.motivo.includes(gone) ? `${call.motivo} (${gone})` : call.motivo, ...(gone ? { ownerGone: true } : {}), ...(risk !== task.risk ? { risk } : {}), requestId });
       if (!result.ok) return { ok: false, text: result.reason };
       if (result.repeated) return answer(result, 'transferida');
       return {

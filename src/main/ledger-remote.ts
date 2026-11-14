@@ -211,6 +211,11 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
   /** Tasks a light answer put in the view, with the count of reads started before (`reads`). */
   const patched = new Map<string, { task: LedgerTask; readsBefore: number }>();
   let reads = 0;
+  /** `reads` at the last write this PC saw answered: a read started before it may bring the ledger before the write. */
+  let writeMark = 0;
+  /** The daemon answered light: it knows the call's key and checks the repeat on the real ledger, not on this view. */
+  let daemonKnowsKeys = false;
+  const eventCount = (doc: LedgerDoc): number => Object.values(doc.tasks).reduce((sum, task) => sum + task.events.length, 0);
 
   // Before the daemon answers: the mirror on disk, read-only.
   const mirror = io.readFileText(ledgerFile);
@@ -258,6 +263,7 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
   function patch(task: LedgerTask): void {
     if (!cache) return;
     patched.set(task.id, { task, readsBefore: reads });
+    writeMark = reads;
     cache = { doc: { ...cache.doc, tasks: { ...cache.doc.tasks, [task.id]: task } }, readOnly: cache.readOnly };
     online = true;
     deps.onChange?.({ doc: cache.doc, readOnly: cache.readOnly });
@@ -270,6 +276,11 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
     if (!snapshot) {
       setOnline(false);
       return false;
+    }
+    // Started before a write this PC already holds, and behind it (the ledger only grows): keep the view.
+    if (startedAt <= writeMark && cache && eventCount(snapshot.doc) < eventCount(cache.doc)) {
+      setOnline(true);
+      return true;
     }
     accept(snapshot, startedAt);
     return true;
@@ -330,8 +341,9 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
       if (key) {
         // The first call's fate is unknown and the PC cannot read the ledger: sending again could write it twice on
         // a daemon that does not know the key yet.
-        if (unsure.has(key) && !(await service.refresh())) return { ok: false, reason: NOT_SETTLED };
-        const prior = online && cache ? repeatedWrite(cache.doc, actor, op, now()) : null;
+        // A daemon that knows the key settles it on the real ledger: the call goes to it. An older one does not.
+        if (!daemonKnowsKeys && unsure.has(key) && !(await service.refresh())) return { ok: false, reason: NOT_SETTLED };
+        const prior = !daemonKnowsKeys && online && cache ? repeatedWrite(cache.doc, actor, op, now()) : null;
         unsure.delete(key);
         if (prior) return { ok: true, task: prior, repeated: true };
       }
@@ -381,6 +393,7 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
       const task = taskId && snapshot ? snapshot.doc.tasks[taskId] : undefined;
       const light = !snapshot && body.snapshot === undefined ? taskOf(body.task) : null;
       if (light) {
+        daemonKnowsKeys = true;
         patch(light);
         void service.refresh();
         return { ok: true, task: light, ...repeated };
@@ -391,6 +404,7 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
         const again = taskId ? cache?.doc.tasks[taskId] : undefined;
         return again ? { ok: true, task: again } : { ok: false, reason: 'O Oráculo da VPS gravou, mas a resposta veio estranha; confira com tarefa_listar.' };
       }
+      writeMark = reads;
       accept(snapshot);
       return { ok: true, task, ...repeated };
     },

@@ -228,7 +228,8 @@ describe('Oráculo na VPS — o PC em modo remoto', { timeout: 30_000 }, () => {
     await expect(stalled.text()).rejects.toThrow();
   });
 
-  it('a resposta se perde depois de gravar e a sessão repete a chamada: devolve o mesmo id e grava uma vez só', async () => {
+  // `antigo`: the daemon of 09/11 in production (no key, no light answer): the PC itself must not send the repeat.
+  it.each(['novo', 'antigo'] as const)('a resposta se perde depois de gravar e a sessão repete a chamada: devolve o mesmo id e grava uma vez só (daemon %s)', async (daemon) => {
     // t-530129bf (14/11): em meia hora, 4 cópias da mesma tarefa, 2 de outra e o mesmo andamento seis vezes.
     const pc = await pcWithLedger();
     const remote = vps();
@@ -236,7 +237,15 @@ describe('Oráculo na VPS — o PC em modo remoto', { timeout: 30_000 }, () => {
     let cut: 'nada' | 'resposta' | 'resposta-e-releitura' = 'nada';
     const posts: string[] = [];
     const lossy: OracleHttp = async (method, path, body) => {
-      if (path === '/v1/apply' && typeof body === 'string') posts.push((JSON.parse(body) as { op: { op: string } }).op.op);
+      if (path === '/v1/apply' && typeof body === 'string') {
+        const sent = JSON.parse(body) as { op: { op: string; requestId?: string }; leve?: boolean };
+        posts.push(sent.op.op);
+        if (daemon === 'antigo') {
+          delete sent.leve;
+          delete sent.op.requestId;
+          body = JSON.stringify(sent);
+        }
+      }
       const response = await remote.http(method, path, body);
       const lose = (cut === 'resposta' && path === '/v1/apply') || (cut === 'resposta-e-releitura' && (path === '/v1/apply' || path === '/v1/ledger'));
       return lose ? { status: 200, text: () => Promise.reject(new Error('The operation was aborted due to timeout')), bytes: () => Promise.reject(new Error('aborted')) } : response;
@@ -253,6 +262,10 @@ describe('Oráculo na VPS — o PC em modo remoto', { timeout: 30_000 }, () => {
     };
     const tasksOnVps = (): Record<string, { events: { kind: string; text?: string }[]; ownerPlaceId: string; state: string }> => JSON.parse(readFileSync(remote.file, 'utf8')).tasks;
     const idOf = (text: string): string => (JSON.parse(text) as { id: string }).id;
+    // With the old daemon the PC holds the repeat back; the new one gets it and answers from the real ledger.
+    const sentOnce = (op: string): void => {
+      if (daemon === 'antigo') expect(posts.filter((sent) => sent === op)).toHaveLength(1);
+    };
 
     // The answer AND the re-read are lost: the PC cannot tell. The repeat is not sent again (no second task).
     cut = 'resposta-e-releitura';
@@ -279,7 +292,7 @@ describe('Oráculo na VPS — o PC em modo remoto', { timeout: 30_000 }, () => {
     const andamento = tool('tarefa_andamento', { id, estado: 'trabalhando', proximo: 'registro diário 4/5' });
     for (let i = 0; i < 3; i++) expect((await runLedgerTool(service, dev, andamento)).ok).toBe(true);
     expect(tasksOnVps()[id]!.events.filter((event) => event.kind === 'comentada')).toHaveLength(1);
-    expect(posts.filter((op) => op === 'andamento')).toHaveLength(1);
+    sentOnce('andamento');
     // Not a repeat when something changed since: a progress that goes A → B → A records all three.
     cut = 'nada';
     expect(await runLedgerTool(service, dev, tool('tarefa_andamento', { id, estado: 'travada', precisa: 'acesso ao banco' }))).toMatchObject({ ok: true });
@@ -290,12 +303,12 @@ describe('Oráculo na VPS — o PC em modo remoto', { timeout: 30_000 }, () => {
     const transferir = tool('tarefa_transferir', { id, para: 'place:rev', motivo: 'o Revisor fecha' });
     for (let i = 0; i < 2; i++) expect(await runLedgerTool(service, lider, transferir)).toMatchObject({ ok: true });
     expect(tasksOnVps()[id]!.ownerPlaceId).toBe('place:rev');
-    expect(posts.filter((op) => op === 'transferir')).toHaveLength(1);
+    sentOnce('transferir');
 
     const cancelar = tool('tarefa_cancelar', { id, motivo: 'cópia de outra' });
     for (let i = 0; i < 2; i++) expect(await runLedgerTool(service, lider, cancelar)).toMatchObject({ ok: true, text: expect.stringMatching(new RegExp(id)) });
     expect(tasksOnVps()[id]!.events.filter((event) => event.kind === 'rejeitada')).toHaveLength(1);
-    expect(posts.filter((op) => op === 'cancelar')).toHaveLength(1);
+    sentOnce('cancelar');
     // The same request for another owner, or again after the cancel, is a new task.
     cut = 'nada';
     const forRev = await runLedgerTool(service, lider, tool('tarefa_criar', { pedido: 'conserta o Oráculo', criterio: 'grava uma vez', prazo: '2026-11-15', dono: 'place:rev', risco: 'baixo' }));
