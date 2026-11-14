@@ -635,7 +635,10 @@ describe('órfãs e substituição (06/11)', () => {
     expect(await make(service, dev, {})).toMatchObject({ ok: true });
   });
 
-  it('the nightly cleanup: low risk with a merged PR ends done, high risk and no PR stay; 3 nights in shadow, then it acts', async () => {
+  // t-dfb78dc5 (14/11): the round used to cancel a delivered or rejected task with a merged PR AS ITS OWNER PLACE
+  // ("concluída: PRs ... mesclados", by the Dev who never called tarefa_cancelar), skipping the Revisor. It never
+  // closes one now: it tells the live Líder of the board once, and the decision stays with the Revisor or the Líder.
+  it('the nightly cleanup: a merged PR never closes a task, it tells the Líder of the board once; 3 nights in shadow, then it acts', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ledger-'));
     dirs.push(dir);
     let clock = new Date(2026, 10, 7, 10).getTime(); // 10:00 local: past the night's hour
@@ -649,6 +652,7 @@ describe('órfãs e substituição (06/11)', () => {
       return id;
     };
     const lowMerged = await deliver('baixo', [{ tipo: 'link', url: 'https://github.com/acme/atlas/pull/255' }], true);
+    const deliveredMerged = await deliver('baixo', [{ tipo: 'link', url: 'https://github.com/acme/atlas/pull/256' }], false);
     const highMerged = await deliver('alto', [{ tipo: 'texto', texto: 'PR https://github.com/acme/atlas/pull/257 e 4 passed' }], true);
     const lowOpenPr = await deliver('baixo', [{ tipo: 'link', url: 'https://github.com/acme/atlas/pull/258' }], false);
     const noPr = await deliver('baixo', [{ tipo: 'texto', texto: '4 passed' }], true);
@@ -660,6 +664,7 @@ describe('órfãs e substituição (06/11)', () => {
     let boards = addPlace(emptyMindscapeDoc(), 'C:/p', { id: 'place:lider', roleId: 'lider' });
     for (const id of ['place:dev', 'place:revisor']) boards = addPlace(boards, 'C:/p', { id, roleId: 'dev' });
     boards = setPlaceConversation(boards, 'C:/p', 'place:revisor', 'conv-revisor');
+    boards = setPlaceConversation(boards, 'C:/p', 'place:lider', 'conv-lider');
     boards = addLink(boards, 'C:/p', { id: 'l1', from: 'place:dev', to: 'place:revisor', arrow: true, by: 'session', opened: true });
     boards = setPlaceConversation(boards, 'C:/p', 'place:dev', 'conv-dev');
     const asked: string[] = [];
@@ -668,41 +673,58 @@ describe('órfãs e substituição (06/11)', () => {
       dir: join(dir, 'rotinas'),
       ledger: () => service,
       loadBoards: () => boards,
-      liveSessionIds: () => new Set(['conv-dev']),
+      liveSessionIds: () => new Set(['conv-dev', 'conv-lider']),
       prState: async (pr: PrRef) => (asked.push(pr.url), pr.number === 258 ? { merged: false } : { merged: true, mergedAt: '2026-11-05T18:00:00Z' }),
       tell: (_board, to, text) => told.push({ to, text }),
       now: () => clock,
     });
     clock += ORPHAN_AGE_MS + 60_000;
+    const before = JSON.stringify(service.load().doc.tasks);
 
-    // Three nights in shadow: everything written, nothing changed.
+    // Three nights in shadow: everything written, nothing changed, nobody told.
     for (let night = 1; night <= 3; night += 1) {
       const entries = await runner.runNight();
-      expect(entries.find((entry) => entry.tarefa === lowMerged)).toMatchObject({ acao: 'cancelaria', sombra: true, motivo: 'concluída: PR #255 mesclado em 2026-11-05' });
+      expect(entries.find((entry) => entry.tarefa === lowMerged)).toMatchObject({ acao: 'avisaria', sombra: true, para: 'place:lider', motivo: expect.stringContaining('PR #255 mesclado em 2026-11-05') });
+      expect(entries.find((entry) => entry.tarefa === deliveredMerged)).toMatchObject({ acao: 'avisaria', sombra: true, para: 'place:lider' });
       expect(entries.find((entry) => entry.tarefa === highMerged)).toMatchObject({ acao: 'fica-risco-alto' });
       expect(entries.find((entry) => entry.tarefa === orphan)).toMatchObject({ acao: 'passaria', de: 'place:revisor', para: 'place:dev' });
       expect(entries.some((entry) => [lowOpenPr, noPr, stacked, citedOnly].includes(entry.tarefa ?? ''))).toBe(false);
       expect(await runner.runNight()).toEqual([]); // once a night
       clock += 24 * 60 * 60 * 1000;
     }
-    expect(service.load().doc.tasks[lowMerged]).toMatchObject({ state: 'rejeitada', ownerPlaceId: 'place:dev' });
-    expect(service.load().doc.tasks[orphan]).toMatchObject({ ownerPlaceId: 'place:revisor' });
+    expect(JSON.stringify(service.load().doc.tasks)).toBe(before);
     expect(told).toEqual([]);
     expect(readFileSync(join(dir, 'rotinas', 'faxina.log'), 'utf8').trim().split('\n').filter((line) => line.includes('"resumo"'))).toHaveLength(3);
 
-    // The fourth night acts.
+    // The fourth night acts: the merged ones stay as they were, and the Líder of the board hears of them once.
     const entries = await runner.runNight();
-    expect(entries.find((entry) => entry.tarefa === lowMerged)).toMatchObject({ acao: 'cancelada', sombra: false });
+    expect(entries.find((entry) => entry.tarefa === lowMerged)).toMatchObject({ acao: 'avisada', sombra: false });
+    expect(entries.find((entry) => entry.tarefa === deliveredMerged)).toMatchObject({ acao: 'avisada', sombra: false });
     const view = async (id: string) => JSON.parse((await runLedgerTool(service, lider, call('tarefa_ver', { id }))).text) as Record<string, any>;
-    expect(await view(lowMerged)).toMatchObject({ estado: 'cancelada', decisao: { tipo: 'cancelada', motivo: 'concluída: PR #255 mesclado em 2026-11-05' } });
+    expect((await view(deliveredMerged)).estado).toBe('entregue');
+    expect((await view(lowMerged)).estado).toBe('rejeitada');
     expect((await view(highMerged)).estado).toBe('rejeitada');
     expect((await view(lowOpenPr)).estado).toBe('entregue');
     expect((await view(noPr)).estado).toBe('rejeitada');
     expect((await view(stacked)).estado).toBe('rejeitada');
     expect((await view(citedOnly)).estado).toBe('rejeitada');
+    // No event of any task was written in the name of its owner place by the round, other than the orphan's pass.
+    for (const id of [lowMerged, deliveredMerged, highMerged]) expect(service.load().doc.tasks[id]!.events.at(-1)!.text ?? '').not.toContain('concluída');
     expect(await view(orphan)).toMatchObject({ dono: 'place:dev', transferencias: [expect.objectContaining({ de: 'place:revisor', para: 'place:dev', motivo: expect.stringContaining('passada sozinha pela faxina') })] });
-    expect(told).toEqual([{ to: 'place:dev', text: expect.stringContaining(orphan) }]);
-    expect(new Set(asked)).toEqual(new Set(['https://github.com/acme/atlas/pull/255', 'https://github.com/acme/atlas/pull/257', 'https://github.com/acme/atlas/pull/258']));
+    const merged = told.filter((notice) => notice.to === 'place:lider');
+    expect(merged).toHaveLength(1);
+    expect(merged[0]!.text).toContain(lowMerged);
+    expect(merged[0]!.text).toContain(deliveredMerged);
+    expect(merged[0]!.text).not.toContain(highMerged);
+    expect(told).toContainEqual({ to: 'place:dev', text: expect.stringContaining(orphan) });
+    expect(new Set(asked)).toEqual(new Set(['https://github.com/acme/atlas/pull/255', 'https://github.com/acme/atlas/pull/256', 'https://github.com/acme/atlas/pull/257', 'https://github.com/acme/atlas/pull/258']));
+
+    // The next night the same deliveries are not told again.
+    clock += 24 * 60 * 60 * 1000;
+    const next = await runner.runNight();
+    expect(next.some((entry) => entry.acao === 'avisada')).toBe(false);
+    expect(told.filter((notice) => notice.to === 'place:lider')).toHaveLength(1);
+    expect((await view(deliveredMerged)).estado).toBe('entregue');
   });
 
   it('a task passed to the Líder único by hand tells it who passed what and why', async () => {

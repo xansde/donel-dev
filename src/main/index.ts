@@ -4955,9 +4955,10 @@ void app.whenReady().then(async () => {
     loadBoards: () => createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load(),
     liveSessionIds: () => new Set(activeSessionByPty.values()),
     prState: ghPrState,
-    tell: (projectPath, to, text) => {
-      // 08/11 — with the notices in the ledger, the passage is read there (tarefa_novidades), not in a chat.
-      if (appConfig.team.turnNotices === 'ledger') return;
+    tell: (projectPath, to, text, kind) => {
+      // 08/11 — with the notices in the ledger, an orphan's passage is read there (tarefa_novidades), not in a chat. A
+      // merged PR is on no ledger event (the round never closes the task, t-dfb78dc5): it is always said.
+      if (kind === 'orfas' && appConfig.team.turnNotices === 'ledger') return;
       void boardBridge.deliverOwnerMessage({ projectPath, placeId: to === LEADER_OF_ALL ? '' : to, text, leaderText: text }).catch(() => null);
     },
   });
