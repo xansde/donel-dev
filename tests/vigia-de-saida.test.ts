@@ -45,10 +45,24 @@ describe('vigia de saída', () => {
       calls.push(file);
       return { unref() {} };
     };
-    const arm = createExitWatchdog(fakeSpawn, 'win32');
-    expect(arm({ pid: 1234, startedAtMs: 1_700_000_000_000, graceSeconds: 20 })).toBe(true);
-    expect(arm({ pid: 1234, startedAtMs: 1_700_000_000_000, graceSeconds: 20 })).toBe(false);
-    expect(createExitWatchdog(fakeSpawn, 'linux')({ pid: 1234, startedAtMs: 1_700_000_000_000, graceSeconds: 20 })).toBe(false);
+    const watchdog = createExitWatchdog(fakeSpawn, 'win32');
+    expect(watchdog.arm({ pid: 1234, startedAtMs: 1_700_000_000_000, graceSeconds: 20 })).toBe(true);
+    expect(watchdog.arm({ pid: 1234, startedAtMs: 1_700_000_000_000, graceSeconds: 20 })).toBe(false);
+    expect(createExitWatchdog(fakeSpawn, 'linux').arm({ pid: 1234, startedAtMs: 1_700_000_000_000, graceSeconds: 20 })).toBe(false);
     expect(calls).toEqual(['powershell.exe']);
+  });
+
+  // Revisão do #428: no Atualizar, o electron-updater lança o instalador como filho do app ANTES do app.quit(). Um
+  // `taskkill /T` no app travado derrubaria o instalador no meio da instalação.
+  it('não arma quando a saída é para atualizar, para não derrubar o instalador', () => {
+    const calls: string[] = [];
+    const fakeSpawn = (file: string) => {
+      calls.push(file);
+      return { unref() {} };
+    };
+    const watchdog = createExitWatchdog(fakeSpawn, 'win32');
+    watchdog.exitingForUpdate();
+    expect(watchdog.arm({ pid: 1234, startedAtMs: 1_700_000_000_000, graceSeconds: 20 })).toBe(false);
+    expect(calls).toEqual([]);
   });
 });

@@ -46,20 +46,28 @@ export function buildExitWatchdogCommand(options: ExitWatchdogOptions): { file: 
 }
 
 /**
- * Arms the watchdog once per process (Windows only). Returns whether it was armed now. Never throws: failing to
- * arm it must not hold the app's own teardown back.
+ * The watchdog of this process. `arm` arms it once (Windows only) and returns whether it was armed now; it never
+ * throws, because failing to arm it must not hold the app's own teardown back. `exitingForUpdate` stands it down for
+ * good: on "Atualizar" the electron-updater spawns the installer as a child of the app before `app.quit()`, and the
+ * `taskkill /T` of a slow exit would end the installer midway (review of #428).
  */
 export function createExitWatchdog(spawn: WatchdogSpawn, platform: NodeJS.Platform = process.platform) {
   let armed = false;
-  return (options: ExitWatchdogOptions): boolean => {
-    if (armed || platform !== 'win32') return false;
-    try {
-      const { file, args } = buildExitWatchdogCommand(options);
-      spawn(file, args, { detached: true, windowsHide: true, stdio: 'ignore' }).unref();
-      armed = true;
-      return true;
-    } catch {
-      return false;
-    }
+  let forUpdate = false;
+  return {
+    arm(options: ExitWatchdogOptions): boolean {
+      if (armed || forUpdate || platform !== 'win32') return false;
+      try {
+        const { file, args } = buildExitWatchdogCommand(options);
+        spawn(file, args, { detached: true, windowsHide: true, stdio: 'ignore' }).unref();
+        armed = true;
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    exitingForUpdate(): void {
+      forUpdate = true;
+    },
   };
 }

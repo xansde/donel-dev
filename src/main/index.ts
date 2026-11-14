@@ -1250,7 +1250,7 @@ let mainEventsLog: MainEventLogger | null = null;
 const PROCESS_STARTED_AT_MS = Math.round(Date.now() - process.uptime() * 1000);
 /** How long the app may take to exit after the main window closed before the vigia de saída ends it. */
 const EXIT_GRACE_SECONDS = 20;
-const armExitWatchdog = createExitWatchdog(spawn);
+const exitWatchdog = createExitWatchdog(spawn);
 
 function logMainEvent(event: string, detail?: Readonly<Record<string, unknown>>): void {
   mainEventsLog ??= createMainEventsLog(join(app.getPath('userData'), 'main-events.log'));
@@ -1542,7 +1542,7 @@ function createMainWindow(): void {
     logMainEvent('main-window-closed');
     // Vigia de saída (exit-watchdog.ts): with the main window gone the app is ending; a copy that never finishes
     // exiting is ended from outside instead of sitting on memory with no window for hours (13/11).
-    if (armExitWatchdog({ pid: process.pid, startedAtMs: PROCESS_STARTED_AT_MS, graceSeconds: EXIT_GRACE_SECONDS })) {
+    if (exitWatchdog.arm({ pid: process.pid, startedAtMs: PROCESS_STARTED_AT_MS, graceSeconds: EXIT_GRACE_SECONDS })) {
       logMainEvent('exit-watchdog-armed', { graceSeconds: EXIT_GRACE_SECONDS });
     }
     if (mainWindowRef === mainWindow) mainWindowRef = null; // C1
@@ -3483,6 +3483,11 @@ function registerAppUpdateIpcHandlers(): void {
     // Sessão durável — a conversation with no transcript yet comes back under the same id, not with a failing `-r`.
     transcriptExists: (sessionId, cwd) => localTranscriptExists(sessionId, cwd ?? homedir()),
     forceAfterMinutes: () => appConfig.appUpdate.forceAfterMinutes ?? DEFAULT_FORCE_AFTER_MINUTES,
+    // The installer is about to start as a child of this process: the vigia de saída's `taskkill /T` would end it.
+    beforeRestart: () => {
+      exitWatchdog.exitingForUpdate();
+      logMainEvent('exit-watchdog-off-for-update');
+    },
     onChanged: (status) => {
       const window = getMainWindow();
       if (window && !window.isDestroyed()) window.webContents.send(APP_UPDATE_CHANNELS.changed, status);
