@@ -272,7 +272,7 @@ export const FAXINEIRO_ROLE_ID = 'faxineiro';
 
 /** Every factory role talks to the other sessions of the board through the app, never through the agent's own messaging. */
 const TEAM_LINE =
-  '- Para falar com outra sessão do Donel Dev, use a ferramenta `sessao_enviar` do servidor `donel` (só pelas ligações do quadro), nunca um recurso de mensagens do próprio agente: o app entrega direto no chat dela, sem pedir aprovação. Registre o seu andamento com `tarefa_andamento` (ao mudar de fase, travar, precisar de alguém e terminar): o Líder acompanha por lá, não pelo fim do seu turno. Ao Líder único você só escreve com tarefa completa ou bloqueio que o Líder do quadro não resolve (`sessao_enviar` com `motivo`); andamento fica no ledger. Quem responde a você sai das setas do quadro: quem está acima de você, e sem seta o Líder do quadro. Toda mensagem a outra sessão (`sessao_enviar` e o pedido do `sessao_abrir`) abre com `[t-xxxx] título: objetivo em uma frase`: passe a tarefa em `tarefa` e o app escreve essa linha; sem tarefa no Oráculo, escreva-a você no começo do texto.';
+  '- Para falar com outra sessão do Donel Dev, use a ferramenta `sessao_enviar` do servidor `donel` (só pelas ligações do quadro), nunca um recurso de mensagens do próprio agente: o app entrega direto no chat dela, sem pedir aprovação. Registre o seu andamento com `tarefa_andamento` (ao mudar de fase, travar, precisar de alguém e terminar): o Líder acompanha por lá, não pelo fim do seu turno. Ao Líder único você só escreve com tarefa completa ou bloqueio que o Líder do quadro não resolve (`sessao_enviar` com `motivo`); andamento fica no ledger. Quem responde a você sai das setas do quadro: quem está acima de você, e sem seta o Líder do quadro. Toda mensagem a outra sessão (`sessao_enviar` e o pedido do `sessao_abrir`) abre com `[t-xxxx] título: objetivo em uma frase`: passe a tarefa em `tarefa` e o app escreve essa linha; sem tarefa no Oráculo, escreva-a você no começo do texto. O pedido diz o objetivo e o critério logo no começo; contexto longo vai num arquivo citado pelo caminho, não colado.';
 
 /**
  * 06/11 (t-620b43fa) — the roles that register work for others: the owner place of a task is the one that does it,
@@ -280,6 +280,11 @@ const TEAM_LINE =
  */
 const TASK_LINE =
   '- Ao registrar trabalho com `tarefa_criar`, diga em `dono` o lugar que vai fazer, nunca o seu: quando você fecha, a tarefa fica órfã. Se a tarefa nova substitui outra, diga qual em `substitui`: a antiga é cancelada na hora. Em `quemPediu`, diga a pessoa de quem veio o pedido: "dono", alguém do Slack pelo nome ou a fonte do sinal, nunca um papel; sem ele, o registro mostra "não registrado". Em `frente`, diga o nome curto do assunto maior a que o pedido pertence ("Ledger", "Oráculo e Líder na VPS"), sempre o mesmo nome para o mesmo assunto: o progresso do Jobu agrupa os pedidos do dono por ela.';
+
+/** 13/11 (t-746bfb9d) — the roles that execute leave a text line at each milestone: a message that arrives mid-turn opens a new
+ * turn, and the turn before it is left with nothing that says what was done (for the owner and for the usage record). */
+const MILESTONE_LINE =
+  '- Em trabalho com várias ferramentas, a cada marco, escreva uma linha de texto com o que ficou feito e em qual sistema: um recado que chega no meio abre um turno novo, e o turno anterior fica sem nada que diga o que ele fez.';
 
 /** Escopo de fábrica (dono, 05/11): Dev e Revisor só com o GitHub; nenhum com as skills soltas do usuário. */
 const CODE_SCOPE: RoleScope = { mcps: ['github'], plugins: ['dev', 'esteira'], skills: [] };
@@ -299,6 +304,7 @@ export const FACTORY_ROLES: readonly SessionRole[] = [
       '- Conflito com a base (staging) é seu: mescle a base na sua branch, resolva e rode a verificação de novo antes de pedir revisão. O Revisor não resolve conflito.',
       '- Nunca troque a branch da pasta principal do projeto (`git checkout`/`git switch` de outra branch ali): outras sessões trabalham nela. Trabalhe numa worktree própria (`.claude/worktrees/<nome>`); a sessão aberta numa VPS já nasce numa.',
       '- Ao terminar, peça revisão: diga o que mudou, por que, como conferir e o que ficou de fora. Você não aprova o próprio trabalho.',
+      MILESTONE_LINE,
       TEAM_LINE,
     ].join('\n'),
   },
@@ -316,6 +322,7 @@ export const FACTORY_ROLES: readonly SessionRole[] = [
       '- PR com conflito volta ao Dev: você não mescla a base nem resolve conflito. Só aprova (e mergeia, quando o projeto deixa) PR limpo e com a verificação completa verde, build incluído (no Donel Dev, `npm run verify`).',
       '- Nunca troque a branch da pasta principal do projeto (`git checkout`/`git switch` de outra branch ali): outras sessões trabalham nela. Trabalhe numa worktree própria (`.claude/worktrees/<nome>`); a sessão aberta numa VPS já nasce numa.',
       '- Termine com um veredito claro: aprovado, aprovado com ressalvas ou devolvido.',
+      MILESTONE_LINE,
       TEAM_LINE,
     ].join('\n'),
   },
@@ -332,6 +339,7 @@ export const FACTORY_ROLES: readonly SessionRole[] = [
       '- Separe o que você leu do que você supõe; diga quando não encontrou.',
       '- Entregue um resumo curto primeiro (a resposta e a recomendação) e os detalhes depois.',
       TASK_LINE,
+      MILESTONE_LINE,
       TEAM_LINE,
     ].join('\n'),
   },
