@@ -295,7 +295,7 @@ export interface TerminalPaneHandle {
    * with `args` (the launch flags minus the old conversation, see `renewalLaunchArgs`). `renewalId`
    * goes to `pty:create` once, so the main links the new conversation to the old one.
    */
-  renew: (options: { args: string[]; renewalId: string }) => void;
+  renew: (options: { args: string[]; renewalId: string; cwd?: string }) => void;
   /** T056 — devolve o foco do teclado ao terminal (ao alternar do chat para a vista Terminal). */
   focus: () => void;
   /** T039 — id da PTY viva (null sem processo). */
@@ -530,10 +530,10 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
         };
       },
       respawn: (options?: RespawnOptions): void => respawnRef.current(options),
-      renew: (options: { args: string[]; renewalId: string }): void => {
+      renew: (options: { args: string[]; renewalId: string; cwd?: string }): void => {
         spawnArgsRef.current = options.args;
         renewalIdRef.current = options.renewalId;
-        respawnRef.current();
+        respawnRef.current(options.cwd ? { cwd: options.cwd } : undefined);
       },
       focus: (): void => termRef.current?.focus(),
       get ptyId(): string | null {
