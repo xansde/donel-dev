@@ -318,7 +318,9 @@ describe('ledger com prova', () => {
 
   it('lists only the live tasks by default, and the orphan ones apart, without erasing anything', async () => {
     const { service } = setup();
-    const make = async (dono: string) => (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: dono, criterio: 'y', prazo: '2026-11-06', dono, risco: 'alto' }))).text) as { id: string }).id;
+    // Each call a different request: the same call twice in 30 min is a repeat and answers the first task (t-530129bf).
+    let n = 0;
+    const make = async (dono: string) => (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: `${dono} ${++n}`, criterio: 'y', prazo: '2026-11-06', dono, risco: 'alto' }))).text) as { id: string }).id;
     const alive = await make('place:dev');
     const orphan = await make('place:revisor');
     const gone = await make('place:rev-do-dev');
@@ -357,7 +359,9 @@ describe('ledger com prova', () => {
 
   it('what the current code writes, the v4 code of the installed Alfa reads and rewrites without losing or blocking anything', async () => {
     const { file, service } = setup();
-    const create = async (dono: string) => (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', dono, risco: 'alto' }))).text) as { id: string }).id;
+    // Each call a different request: the same call twice in 30 min is a repeat and answers the first task (t-530129bf).
+    let n = 0;
+    const create = async (dono: string) => (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: `x${++n}`, criterio: 'y', prazo: '2026-11-06', dono, risco: 'alto' }))).text) as { id: string }).id;
     const moved = await create('place:dev');
     await runLedgerTool(service(), lider, call('tarefa_transferir', { id: moved, para: 'place:revisor', motivo: 'o Dev fechou' }));
     const done = await create('place:dev');
@@ -455,7 +459,9 @@ describe('ledger com prova', () => {
 
   it('a place that closed passes its open, running and rejected tasks up, with the record; a delivered one stays', async () => {
     const { file, service } = setup();
-    const make = async () => (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco: 'baixo' }))).text) as { id: string }).id;
+    // Each call a different request: the same call twice in 30 min is a repeat and answers the first task (t-530129bf).
+    let n = 0;
+    const make = async () => (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: `x${++n}`, criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco: 'baixo' }))).text) as { id: string }).id;
     const open = await make();
     const running = await make();
     await runLedgerTool(service(), dev, call('tarefa_assumir', { id: running }));
@@ -561,7 +567,7 @@ describe('órfãs e substituição (06/11)', () => {
     expect(service().load().doc.tasks[mine]!.state).toBe('aberta');
     // A task that does not exist, or one already closed, is not replaced either.
     expect(await make(service, lider, { dono: 'place:dev', substitui: 't-nao-existe' })).toMatchObject({ ok: false });
-    expect(await make(service, lider, { dono: 'place:dev', substitui: old })).toMatchObject({ ok: false, text: expect.stringContaining('fechada') });
+    expect(await make(service, lider, { pedido: 'outra vez', dono: 'place:dev', substitui: old })).toMatchObject({ ok: false, text: expect.stringContaining('fechada') });
   });
 
   it('keeps who asked (a person, not a role) in the file, next to the task it replaces, readable by a v4 app', async () => {
@@ -643,8 +649,9 @@ describe('órfãs e substituição (06/11)', () => {
     dirs.push(dir);
     let clock = new Date(2026, 10, 7, 10).getTime(); // 10:00 local: past the night's hour
     const service = createLedgerService({ filePath: join(dir, 'ledger.json'), io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs, now: () => clock });
+    let n = 0;
     const deliver = async (risco: 'baixo' | 'alto', provas: unknown[], reject: boolean) => {
-      const id = (JSON.parse((await runLedgerTool(service, lider, call('tarefa_criar', { pedido: risco, criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco }))).text) as { id: string }).id;
+      const id = (JSON.parse((await runLedgerTool(service, lider, call('tarefa_criar', { pedido: `${risco} ${++n}`, criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco }))).text) as { id: string }).id;
       await runLedgerTool(service, dev, call('tarefa_assumir', { id }));
       const paraODono = { pergunta: 'Aceito?', resumo: 'Feito.', opcoes: [{ rotulo: 'Aceitar', efeito: 'Fecha.', fecha: 'aceita', recomendada: true }, { rotulo: 'Refazer', efeito: 'Volta.', fecha: 'rejeitada' }], porque: 'Testes.', risco: 'Baixo.' };
       expect(await runLedgerTool(service, dev, call('tarefa_entregar', { id, provas, ...(risco === 'alto' ? { paraODono } : {}) }))).toMatchObject({ ok: true });

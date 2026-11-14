@@ -97,7 +97,8 @@ export type LedgerOwnerDecision =
 /** How many priority marks were written; or why the order stopped (the marks before it stay). */
 export type LedgerPrioritized = { readonly ok: true; readonly written: number } | { readonly ok: false; readonly reason: string };
 
-export type LedgerApplyResult = { readonly ok: true; readonly task: LedgerTask } | { readonly ok: false; readonly reason: string };
+/** `repeated`: the same call had already been written; nothing new was (t-530129bf, `repeatedWrite`). */
+export type LedgerApplyResult = { readonly ok: true; readonly task: LedgerTask; readonly repeated?: true } | { readonly ok: false; readonly reason: string };
 
 export interface DonelLedgerApi {
   /** Missing file → empty ledger; rejects when the file exists but cannot be read. */

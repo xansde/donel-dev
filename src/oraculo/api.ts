@@ -261,6 +261,10 @@ export function createOracleApiHandler(deps: OracleApiDeps): OracleApiHandler {
       try {
         const result = await ledger.apply(actor, op);
         if (!result.ok) return json(200, result);
+        // t-530129bf: the app since 14/11 asks for the task only (`leve`). The whole ledger in every answer (6.4 MB on
+        // 14/11) did not reach the PC within its limit: the write went through, the answer was cut, the session
+        // called again and the task was born twice. The PC re-reads the ledger on the events stream.
+        if (isRecord(body) && body.leve === true) return json(200, result);
         return json(200, { ...result, snapshot: ledger.load() });
       } catch {
         // A malformed op from the PC (an older or newer app) throws inside the pure apply: nothing was written.
