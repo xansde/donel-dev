@@ -8,6 +8,8 @@
 //   the session stops on a prompt that only the owner, inside its tab, can answer (the Theo renewed in flight, 09/11).
 // - Orchestrator: the Líder role (of a board, or the Líder único), the Jobu's mark, or a place above another one on its
 //   board (it opened or directs sessions: `spawnFactsOf`, src/shared/mindscape/reach.ts).
+// - A session on a remote place (VPS) is born in super bypass too, whatever its role (owner's rule; t-2a9060dd, 14/11:
+//   the Revisor and the Dev renewed in flight came back `--permission-mode default` and stopped on every command).
 // - Every other session keeps its mode (launcher > CLI user default > `default`, T018). Any session that ends up in
 //   bypass gets the env too, here as on a remote place: without it the CLI asks to confirm the bypass.
 // The hook guards (pretooluse-safety-check) are untouched: they run in any permission mode.
@@ -25,6 +27,8 @@ export interface SpawnFacts {
   readonly leaderOfAll?: boolean;
   /** Its place is above another one on the board (it opened or directs sessions). */
   readonly directsOthers?: boolean;
+  /** It runs on a remote place (VPS), not on this computer. */
+  readonly remote?: boolean;
 }
 
 export function isOrchestratorSpawn(facts: SpawnFacts): boolean {
@@ -64,6 +68,6 @@ export interface LaunchPermissionPlan {
 
 /** The argv and env a `claude` session is born with. `userDefault`: `permissions.defaultMode` of the CLI user (T018). */
 export function planLaunchPermission(argv: readonly string[], facts: SpawnFacts, userDefault: string | undefined): LaunchPermissionPlan {
-  const args = isOrchestratorSpawn(facts) ? withBypassMode(argv) : withResolvedPermissionMode(argv, userDefault);
+  const args = isOrchestratorSpawn(facts) || facts.remote === true ? withBypassMode(argv) : withResolvedPermissionMode(argv, userDefault);
   return { args, env: isBypassLaunch(args) ? SUPER_BYPASS_ENV : {} };
 }
