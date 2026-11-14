@@ -48,6 +48,8 @@ import type { SemaphoreState } from '../../../shared';
 import { FAXINEIRO_ROLE_ID, LEADER_ROLE_ID, type SessionRole } from '../../../shared/roles';
 import type { SendFrom } from '../chat/sendDriver';
 import { returnReport, returnVerdict, type ReturnLine } from '../../../shared/sessionReturn';
+import type { LedgerDoc } from '../../../shared/ledger/contract';
+import { noticeTaskOf, RECEIVED_TASKS_KEPT, taskHeaderLine, type TaskHeaderSource } from '../../../shared/mindscape/task-header';
 
 /**
  * A session opened by `sessao_abrir` that sent no hook in this long did not start: the gate waits up to 30 s for
@@ -271,6 +273,11 @@ export interface AgentBridgePorts {
   recordTurn?(record: LedgerTurnRecord): Promise<LedgerTurnRecorded> | void;
   /** The `StopFailure` code of the last turn of that tab (`rate_limit`…), if it failed; read, never computed here. */
   turnFailureOf?(tabId: string): string | undefined;
+  /**
+   * t-e5575f78 — the ledger as the main has it, for the "[t-xxxx] título: objetivo" a notice about a session opens with.
+   * Absent, or `null` (unreadable): the notice goes as it came.
+   */
+  ledgerDoc?(): Promise<LedgerDoc | null>;
 }
 
 /** Sessões remotas — the process lives on the place but its ssh dropped (main/remote-link.ts); never "fechada". */
@@ -286,6 +293,15 @@ const STATE_NAMES: Readonly<Record<SemaphoreState, string>> = {
 
 function json(value: unknown): string {
   return JSON.stringify(value, null, 1);
+}
+
+/**
+ * t-e5575f78 — a notice the app writes about a session: `◆ <quem> <words>`, or, with its task, `◆ <quem>: [t-xxxx]
+ * título: objetivo`, a blank line and `<name> <words>` (the shape of a `sessao_enviar` that names its task, so the task
+ * sits in the 300 characters the usage collector reads).
+ */
+function noticeLine(head: string, name: string, words: string, source: TaskHeaderSource | null): string {
+  return source ? `${head}: ${taskHeaderLine(source)}\n\n${name} ${words}` : `${head} ${words}`;
 }
 
 function lastSegment(path: string): string {
@@ -332,7 +348,13 @@ export class AgentBridge {
   /** Tab → the urgent situation already queued (permission, failure): queued once until it clears. */
   private readonly toldUrgent = new Map<string, string>();
   /** What cannot wait and was not taken yet by a Líder's CLI (`tab:<id>` for a situation, `n:<seq>` for the rest). */
-  private readonly pendingUrgent = new Map<string, { readonly tabId: string; readonly words: string; readonly transient: boolean; sending: boolean }>();
+  private readonly pendingUrgent = new Map<string, { readonly tabId: string; readonly words: string; readonly transient: boolean; readonly taskId?: string; sending: boolean }>();
+  /**
+   * t-e5575f78 — `projectPath\nplaceId` → the tasks that reached that place by `tarefa` of `sessao_enviar` /
+   * `sessao_abrir`, newest last: a notice about a place that owns no live task carries the newest still open. Memory
+   * only: after a restart it fills again with the next message that names a task.
+   */
+  private readonly receivedTasks = new Map<string, string[]>();
   private urgentSeq = 0;
   /** t-b3b26e60 — machines where a new session waits for room (`pc` or a remote id → why), from the minute round. */
   private fullMachines = new Map<string, readonly string[]>();
@@ -391,6 +413,7 @@ export class AgentBridge {
   dispose(): void {
     this.toldUrgent.clear();
     this.pendingUrgent.clear();
+    this.receivedTasks.clear();
     this.lastNoticeFrom.clear();
     this.lastNoticeText.clear();
     this.leaderHears.clear();
@@ -788,7 +811,8 @@ export class AgentBridge {
       if (this.ports.stateOf(tabId) !== 'working' || !this.ports.unconfirmed(tabId)) return false;
       const opener = openerPlace === LEADER_OF_ALL ? this.leaderTab() : this.tabOfPlace(projectPath, openerPlace);
       if (!opener) return false;
-      this.ports.sendLine(opener.id, `◆ ${name} (${placeId}) ${this.startState(tabId)}. Veja a tela dela com sessao_ver_tela ou peça ao dono.`);
+      const words = `${this.startState(tabId)}. Veja a tela dela com sessao_ver_tela ou peça ao dono.`;
+      this.withNoticeTask(projectPath, placeId, undefined, (source) => this.ports.sendLine(opener.id, noticeLine(`◆ ${name} (${placeId})`, name, words, source)));
       return true;
     };
     const timer = setTimeout(() => {
@@ -941,7 +965,12 @@ export class AgentBridge {
   }
 
   /** What `sessao_enviar` answers once the line went (or not) to the tab of there. */
-  private deliveryAnswer(outcome: DeliveryOutcome, targetId: string): Answer {
+  private deliveryAnswer(outcome: DeliveryOutcome, targetId: string, tarefa?: string): Answer {
+    if (tarefa && outcome.kind !== 'nao-foi') {
+      const tab = this.ports.tabs().find((candidate) => candidate.id === targetId);
+      const place = tab ? this.placeOfTab(tab) : undefined;
+      if (tab?.cwd && place) this.rememberTask(tab.cwd, place.id, tarefa);
+    }
     if (outcome.kind === 'entrou') return { ok: true, text: 'Entregue: entrou no Claude de lá.' };
     if (outcome.kind === 'na-fila') return { ok: true, text: 'Entregue à fila do Claude de lá: ela está trabalhando e o próprio CLI a entrega no próximo passo.' };
     if (outcome.kind === 'nao-foi') return { ok: false, text: `Não entrou: ${outcome.reason}. Veja a tela dela com sessao_ver_tela, ou peça ao dono.` };
@@ -1102,8 +1131,8 @@ export class AgentBridge {
   }
 
   /** Something of the session of `tabId` that cannot wait: it stays here until a Líder's CLI took it. */
-  private queueUrgent(key: string, tabId: string, words: string, transient = false): void {
-    this.pendingUrgent.set(key, { tabId, words, transient, sending: false });
+  private queueUrgent(key: string, tabId: string, words: string, transient = false, taskId?: string): void {
+    this.pendingUrgent.set(key, { tabId, words, transient, ...(taskId ? { taskId } : {}), sending: false });
     this.flushUrgent();
   }
 
@@ -1126,9 +1155,13 @@ export class AgentBridge {
       entry.sending = true;
       const role = this.roleName(place.roleId ?? tab.roleId);
       const where = route.leader ? `, quadro ${tab.projectName ?? this.boardName(tab.cwd)}` : '';
-      const line = `◆ ${role ? `${role} ` : ''}${tab.name} (${place.id}${where}) ${entry.words}`;
-      void this.ports
-        .deliverLine(route.target.id, line, DELIVERY_WAIT_MS, 'session')
+      const head = `◆ ${role ? `${role} ` : ''}${tab.name} (${place.id}${where})`;
+      const target = route.target.id;
+      const name = tab.name;
+      const cwd = tab.cwd;
+      const send = (source: TaskHeaderSource | null): Promise<DeliveryOutcome> => this.ports.deliverLine(target, noticeLine(head, name, entry.words, source), DELIVERY_WAIT_MS, 'session');
+      // With no ledger to read, the send goes at once, as before t-e5575f78.
+      void (this.ports.ledgerDoc ? this.noticeTask(cwd, place.id, entry.taskId).then(send) : send(null))
         .catch((): DeliveryOutcome => ({ kind: 'nao-foi', reason: 'erro' }))
         .then((outcome) => {
           if (this.pendingUrgent.get(key) !== entry) return; // replaced by a newer situation meanwhile
@@ -1210,6 +1243,41 @@ export class AgentBridge {
     }
   }
 
+  /** t-e5575f78 — a task that reached the place by `tarefa` (newest last, at most RECEIVED_TASKS_KEPT). */
+  private rememberTask(projectPath: string, placeId: string, taskId: string): void {
+    const key = `${projectPath}\n${placeId}`;
+    const list = (this.receivedTasks.get(key) ?? []).filter((id) => id !== taskId);
+    this.receivedTasks.set(key, [...list, taskId].slice(-RECEIVED_TASKS_KEPT));
+  }
+
+  /** t-e5575f78 — the task a notice about the place carries (`noticeTaskOf`); null = none, or no ledger to read. */
+  private async noticeTask(projectPath: string, placeId: string, named?: string): Promise<TaskHeaderSource | null> {
+    try {
+      const doc = (await this.ports.ledgerDoc?.()) ?? null;
+      return doc ? noticeTaskOf(doc, projectPath, placeId, { ...(named ? { named } : {}), received: this.receivedTasks.get(`${projectPath}\n${placeId}`) ?? [] }) : null;
+    } catch {
+      return null; // the ledger did not answer: the notice goes as it came
+    }
+  }
+
+  /** Runs `send` with the task of the notice; with no ledger port, at once (no wait added where there is nothing to read). */
+  private withNoticeTask(projectPath: string, placeId: string, named: string | undefined, send: (source: TaskHeaderSource | null) => void): void {
+    if (!this.ports.ledgerDoc) {
+      send(null);
+      return;
+    }
+    void this.noticeTask(projectPath, placeId, named).then(send);
+  }
+
+  /** The "[t-xxxx] título: objetivo" of the task a notice about the session of `tabId` carries; null = none. */
+  async noticeTaskLine(tabId: string): Promise<string | null> {
+    const tab = this.ports.tabs().find((candidate) => candidate.id === tabId);
+    const place = tab ? this.placeOfTab(tab) : undefined;
+    if (!tab?.cwd || !place) return null;
+    const source = await this.noticeTask(tab.cwd, place.id);
+    return source ? taskHeaderLine(source) : null;
+  }
+
   /** A Líder tab that can take a line now: open, and not "sem ligação". */
   private reachableTab(tab: BridgeTab | undefined): BridgeTab | undefined {
     return tab && !this.ports.linkLost?.(tab.id) ? tab : undefined;
@@ -1288,7 +1356,7 @@ export class AgentBridge {
     if (call.tool === 'aviso_imediato') {
       if (this.chatMode()) return { ok: true, text: 'modo antigo: o aviso vai no fim do turno' };
       const heard = this.urgentTarget(caller) !== undefined;
-      this.queueUrgent(`n:${++this.urgentSeq}`, caller.id, call.texto);
+      this.queueUrgent(`n:${++this.urgentSeq}`, caller.id, call.texto, false, call.tarefa);
       return { ok: true, text: heard ? 'avisado' : 'guardado: vai quando um Líder abrir' };
     }
 
@@ -1443,7 +1511,7 @@ export class AgentBridge {
           const leader = this.leaderTab();
           if (!leader) return fail('O Líder único não está aberto agora. Registre o que precisa no Oráculo (tarefa_criar ou tarefa_transferir com "para": "lider") e siga.');
           const outcome = await this.ports.deliverLine(leader.id, `◆ De ${signature}, quadro ${scope.projectName ?? this.boardName(projectPath)}, ${LEADER_REASON_WORDS[call.motivo]}: ${call.texto}`, sendWait(), 'session');
-          return this.deliveryAnswer(outcome, leader.id);
+          return this.deliveryAnswer(outcome, leader.id, call.tarefa);
         }
         // Up to the Líder of the board (08/11): every place of the board, no arrow needed (reach.ts).
         if (!scope.leader && self && call.para.trim().toLowerCase() === BOARD_LEADER) {
@@ -1454,7 +1522,7 @@ export class AgentBridge {
           const leader = leaders.map((id) => this.tabOfPlace(projectPath, id)).find((tab) => tab !== undefined);
           if (!leader) return fail('O Líder do quadro não está aberto agora. Registre o que precisa no Oráculo (tarefa_criar) e siga.');
           const outcome = await this.ports.deliverLine(leader.id, `◆ De ${signature}: ${call.texto}`, sendWait(), 'session');
-          return this.deliveryAnswer(outcome, leader.id);
+          return this.deliveryAnswer(outcome, leader.id, call.tarefa);
         }
         // Back up to whoever opened me (08/11): the opening arrow, no arrow back needed (reach.ts).
         if (!scope.leader && self && call.para.trim().toLowerCase() === MY_OPENER) {
@@ -1468,13 +1536,13 @@ export class AgentBridge {
             const leader = this.leaderTab();
             if (!leader) return fail('Quem abriu você foi o Líder único, e ele não está aberto agora. Registre o que precisa no Oráculo (tarefa_criar ou tarefa_transferir com "para": "lider") e siga.');
             const outcome = await this.ports.deliverLine(leader.id, `◆ De ${signature}, quadro ${scope.projectName ?? this.boardName(projectPath)}, ${LEADER_REASON_WORDS[call.motivo]}: ${call.texto}`, sendWait(), 'session');
-            return this.deliveryAnswer(outcome, leader.id);
+            return this.deliveryAnswer(outcome, leader.id, call.tarefa);
           }
           const opener = openers.map((id) => this.tabOfPlace(projectPath, id)).find((tab) => tab !== undefined);
           if (!opener) return fail(`Quem abriu você (${openers.join(', ')}) não está aberta agora. Registre o que precisa no Oráculo (tarefa_criar) e siga, ou fale com o Líder do quadro ("para": "${BOARD_LEADER}").`);
           if (this.ports.linkLost?.(opener.id)) return fail('Quem abriu você está sem ligação: o processo dela segue vivo no lugar remoto e o app está religando. Tente de novo em instantes.');
           const outcome = await this.ports.deliverLine(opener.id, `◆ De ${signature}: ${call.texto}`, sendWait(), 'session');
-          return this.deliveryAnswer(outcome, opener.id);
+          return this.deliveryAnswer(outcome, opener.id, call.tarefa);
         }
         const board = this.board(projectPath);
         const place = board?.cards[call.para];
@@ -1492,7 +1560,7 @@ export class AgentBridge {
         if (scope.leader) this.leaderHears.add(target.id);
         // 05/11 — "Entregue" only once the CLI of there took it: the answer waits for the send to end.
         const outcome = await this.ports.deliverLine(target.id, `◆ De ${signature}: ${call.texto}`, sendWait(), 'session');
-        return this.deliveryAnswer(outcome, target.id);
+        return this.deliveryAnswer(outcome, target.id, call.tarefa);
       }
 
       case 'sessao_fechar': {
@@ -1519,7 +1587,9 @@ export class AgentBridge {
         let cut = false;
         // "Sem ligação": no line reaches it, so there is no pause to wait for; closing ends its tmux on the place.
         if (this.ports.stateOf(target.id) === 'working' && !this.ports.linkLost?.(target.id)) {
-          this.ports.sendLine(target.id, `◆ De ${signature}: pause agora e não comece nada novo. Esta sessão vai ser fechada em instantes (o dono pode retomá-la depois).`);
+          const pause = 'pause agora e não comece nada novo. Esta sessão vai ser fechada em instantes (o dono pode retomá-la depois).';
+          const source = this.ports.ledgerDoc ? await this.noticeTask(where.projectPath, where.placeId) : null;
+          this.ports.sendLine(target.id, `◆ De ${signature}: ${source ? `${taskHeaderLine(source)}\n\n${pause[0]!.toUpperCase()}${pause.slice(1)}` : pause}`);
           const deadline = Date.now() + CLOSE_WAIT_MS;
           while (this.ports.stateOf(target.id) === 'working' && Date.now() < deadline) {
             await new Promise((resolve) => setTimeout(resolve, CLOSE_POLL_MS));
@@ -1744,6 +1814,7 @@ export class AgentBridge {
           queuedAt: Date.now(),
         };
         const roda = remoteId ? this.ports.remoteLabel(remoteId) : 'este computador';
+        if (call.tarefa) this.rememberTask(projectPath, placeId, call.tarefa);
         if (full !== undefined) {
           this.openQueue.push(entry);
           this.ports.logFaxineiro?.([{ at: entry.queuedAt, kind: 'fila', projectPath, placeId, summary: `${name} (${role.id}) espera vaga em ${roda}: ${full.join('; ')}` }]);

@@ -5,7 +5,8 @@
 // role's rule tells the sender to write the line. Pure: the main gives the ledger it already has in memory. Never
 // through `tarefa_ver`: that marks the proof as read (the accept gate) and answers a print as an image (Revisor, #420).
 
-import type { LedgerDoc } from '../ledger/contract';
+import { isClosed, type LedgerDoc } from '../ledger/contract';
+import { progressTaskOf } from '../ledger/novidades';
 import type { BoardToolCall } from './agent-tools';
 
 /** The line fits in the 300 the collector reads, with room for the "◆ De …, quadro …, motivo:" prefix (60 to 100). */
@@ -66,4 +67,27 @@ export function withTaskHeaderOnCall(call: BoardToolCall, doc: LedgerDoc | null)
   const source = taskHeaderSourceOfDoc(doc, call.tarefa);
   if (!source) return call;
   return call.tool === 'sessao_enviar' ? { ...call, texto: withTaskHeader(call.texto, source) } : { ...call, pedido: withTaskHeader(call.pedido, source) };
+}
+
+/** How many tasks that reached a place by `tarefa` the app keeps (the newest last), for `noticeTaskOf`. */
+export const RECEIVED_TASKS_KEPT = 8;
+
+/**
+ * t-e5575f78 — the task a notice the app writes about a session carries ("precisa do dono", "está travada", "vai
+ * reiniciar"…), so it opens with "[t-xxxx] título: objetivo" like any message between sessions: the task the notice
+ * names (a delivery, a record); else the live task the place owns (the one `tarefa_andamento` writes on); else the
+ * newest still-open task that reached it by `tarefa` of `sessao_enviar` / `sessao_abrir` (a Revisor reviews a task of
+ * someone else; Líder do quadro, 14/11). None: null, and the notice goes as it came (the collector has no "system"
+ * mark a typed notice could use, so none is invented).
+ */
+export function noticeTaskOf(doc: LedgerDoc, projectPath: string, placeId: string, options: { readonly named?: string; readonly received?: readonly string[] } = {}): TaskHeaderSource | null {
+  const named = options.named ? taskHeaderSourceOfDoc(doc, options.named) : null;
+  if (named) return named;
+  const own = progressTaskOf(doc, projectPath, placeId);
+  if (!('reason' in own)) return taskHeaderSourceOfDoc(doc, own.id);
+  for (const id of [...(options.received ?? [])].reverse()) {
+    const task = doc.tasks[id];
+    if (task && task.projectPath === projectPath && !task.slack && !isClosed(task)) return taskHeaderSourceOfDoc(doc, id);
+  }
+  return null;
 }

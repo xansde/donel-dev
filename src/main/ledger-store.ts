@@ -455,6 +455,16 @@ export function urgentLedgerNotice(call: LedgerToolCall, answerText: string): st
   return null;
 }
 
+/** t-e5575f78 — the task a ledger answer is about (`id`), for the notice that follows it; undefined = none. */
+export function answerTaskId(answerText: string): string | undefined {
+  try {
+    const answer = JSON.parse(answerText) as { id?: unknown };
+    return typeof answer.id === 'string' ? answer.id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** A first `tarefa_novidades` (no read yet in this run of the app) looks this far back. */
 export const FIRST_NEWS_READ_MS = 24 * 60 * 60 * 1000;
 /** The last `tarefa_novidades` of each reader (place + board, or `*` for every board): memory only, like `proofSeen`. */

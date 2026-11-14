@@ -2866,6 +2866,8 @@ export function App(): React.JSX.Element {
     turnNotices: () => appConfig?.team.turnNotices ?? 'ledger',
     recordTurn: (record) => window.donel.ledger.turnEnded(record).catch((): LedgerTurnRecorded => 'falhou'),
     turnFailureOf: (tabId) => semaphoreStates[tabId]?.turnFailure,
+    // t-e5575f78 — a notice about a session opens with the "[t-xxxx] título: objetivo" of its task, read from here.
+    ledgerDoc: () => window.donel.ledger.load().then((snapshot) => snapshot.doc).catch(() => null),
   };
   const agentBridgeRef = useRef<AgentBridge>(null as unknown as AgentBridge);
   if (agentBridgeRef.current === null) agentBridgeRef.current = new AgentBridge(agentPorts);
@@ -2896,13 +2898,12 @@ export function App(): React.JSX.Element {
       const retry = (): void => {
         updateWarnedRef.current.delete(tabId);
       };
-      void agentPorts
-        .deliverLine(
-          tabId,
-          `◆ O app vai reiniciar para instalar a versão nova em até ${minutes} min. Feche o turno num ponto seguro e salve o estado agora: registre o andamento no ledger (tarefa_andamento) e atualize a sua nota de handoff, se tiver uma. Depois do reinício o app retoma esta mesma conversa; se o turno não fechar até lá, ele reinicia mesmo assim.`,
-          60_000,
-          'session',
-        )
+      const words = `O app vai reiniciar para instalar a versão nova em até ${minutes} min. Feche o turno num ponto seguro e salve o estado agora: registre o andamento no ledger (tarefa_andamento) e atualize a sua nota de handoff, se tiver uma. Depois do reinício o app retoma esta mesma conversa; se o turno não fechar até lá, ele reinicia mesmo assim.`;
+      // t-e5575f78 — with a task, the notice opens with its "[t-xxxx] título: objetivo" (the usage collector reads 300).
+      void agentBridgeRef.current
+        .noticeTaskLine(tabId)
+        .catch(() => null)
+        .then((task) => agentPorts.deliverLine(tabId, task ? `◆ ${task}\n\n${words}` : `◆ ${words}`, 60_000, 'session'))
         .then((outcome) => {
           if (outcome.kind === 'nao-foi') retry();
         })
