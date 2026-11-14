@@ -315,6 +315,7 @@ export function createRemoteOracleHost(deps: RemoteOracleHostDeps): RemoteOracle
   function startRemote(id: string, marker: RemoteMarker, linked: { url: string; token: string } | null = null): RemoteLedgerService {
     generation++;
     stream?.abort();
+    remote?.retire();
     link = linked;
     lugar = id;
     remote = createRemoteLedgerService({ http: () => httpOf(link), ledgerFile, io, proofFs: deps.proofFs, marker, onChange: deps.onChange });
@@ -325,6 +326,7 @@ export function createRemoteOracleHost(deps: RemoteOracleHostDeps): RemoteOracle
   function stopRemote(): void {
     generation++;
     stream?.abort();
+    remote?.retire();
     remote = null;
     link = null;
     lugar = null;

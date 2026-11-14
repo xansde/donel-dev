@@ -193,6 +193,12 @@ export interface RemoteLedgerService extends LedgerService {
   connected(): boolean;
   /** Copies the proofs the PC does not have yet (in the background after each refresh). */
   syncProofs(): Promise<void>;
+  /**
+   * The app left this service (the way back, another place): an answer still in flight writes nothing after this.
+   * Before t-530129bf the 20 s cut ended a late read; now a body that keeps coming is read to the end, and its
+   * mirror would land over the PC's own `ledger.json` the way back just wrote.
+   */
+  retire(): void;
 }
 
 export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerService {
@@ -212,6 +218,9 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
   let daemonKnowsKeys = false;
   /** The view already came from this daemon (not only from the mirror on disk). */
   let fromDaemon = false;
+  /** Tasks a light answer brought before the first read of the daemon (the mirror is not merged, these are). */
+  const early = new Set<string>();
+  let retired = false;
 
   // Before the daemon answers: the mirror on disk, read-only.
   const mirror = io.readFileText(ledgerFile);
@@ -227,6 +236,8 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
   const view = (): LedgerSnapshot | null => (cache ? { doc: cache.doc, readOnly: cache.readOnly || !online } : null);
 
   function setOnline(next: boolean): void {
+    // Away and back may be another daemon (an older one): its knowing the key is proven again by a light answer.
+    if (!next) daemonKnowsKeys = false;
     if (online === next) return;
     online = next;
     const snapshot = view();
@@ -240,9 +251,10 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
    * stays. The mirror on disk is not merged (it may be of another ledger): the first answer of the daemon replaces it.
    */
   function merged(next: LedgerDoc): LedgerDoc {
-    if (!cache || !fromDaemon) return next;
+    if (!cache) return next;
     let tasks: Record<string, LedgerTask> | null = null;
     for (const [id, task] of Object.entries(cache.doc.tasks)) {
+      if (!fromDaemon && !early.has(id)) continue;
       const there = next.tasks[id];
       if (there && there.events.length >= task.events.length) continue;
       tasks ??= { ...next.tasks };
@@ -252,8 +264,10 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
   }
 
   function accept(snapshot: LedgerSnapshot): void {
+    if (retired) return;
     cache = { doc: merged(snapshot.doc), readOnly: snapshot.readOnly };
     fromDaemon = true;
+    early.clear();
     online = true;
     writeRemoteMirror(io, ledgerFile, cache.doc, deps.marker);
     deps.onChange?.({ doc: cache.doc, readOnly: cache.readOnly });
@@ -262,7 +276,8 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
 
   /** A light answer's task goes into the view at once (tarefa_ver finds it); the whole ledger comes with the re-read. */
   function patch(task: LedgerTask): void {
-    if (!cache) return;
+    if (!cache || retired) return;
+    if (!fromDaemon) early.add(task.id);
     const there = cache.doc.tasks[task.id];
     if (!there || there.events.length < task.events.length) cache = { doc: { ...cache.doc, tasks: { ...cache.doc.tasks, [task.id]: task } }, readOnly: cache.readOnly };
     online = true;
@@ -347,6 +362,8 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
       // task was born twice. Nor "gravado" because the task changed: another session's `andamento` changes it too.
       // It counts as written only when the re-read task has a new event of the kind this op appends, by this actor.
       const unknown = async (what: string): Promise<LedgerApplyResult> => {
+        // The answer was lost: which daemon got it is not known, so the repeat is held back as with an older one.
+        daemonKnowsKeys = false;
         const reread = await service.refresh();
         // t-530129bf: what this call wrote (its key, or the same request / progress / cancel / transfer by this actor).
         const written = cache ? repeatedWrite(cache.doc, actor, op, now()) : null;
@@ -485,6 +502,9 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
       return readAgain;
     },
     connected: () => online,
+    retire() {
+      retired = true;
+    },
     syncProofs() {
       if (syncing) return syncing;
       const files = cache ? ledgerProofFiles(cache.doc) : [];
