@@ -14,6 +14,7 @@ import {
 } from '@donel-dev/design-system';
 import { DEFAULT_TEAM_PREFS } from '../../shared/teamPrefs';
 import type { LedgerTurnRecorded } from '../../shared/ledger/channels';
+import type { LedgerDoc } from '../../shared/ledger/contract';
 import { PanelLeftClose, PanelLeftOpen, PanelRightClose, Settings } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type {
@@ -2719,6 +2720,10 @@ export function App(): React.JSX.Element {
     move.enqueue(text, deliver);
     return true;
   };
+  // t-e5575f78 — the ledger a notice about a session reads its task from: loaded once, then kept by the change events
+  // (each notice would otherwise parse the whole ledger.json in the main and clone it over IPC).
+  const ledgerDocRef = useRef<LedgerDoc | null>(null);
+  useEffect(() => window.donel?.ledger?.onChanged((snapshot) => (ledgerDocRef.current = snapshot.doc)), []);
   const agentPorts: AgentBridgePorts = {
     loaded: mindscapeLoaded,
     doc: () => mindscape.doc,
@@ -2867,7 +2872,13 @@ export function App(): React.JSX.Element {
     recordTurn: (record) => window.donel.ledger.turnEnded(record).catch((): LedgerTurnRecorded => 'falhou'),
     turnFailureOf: (tabId) => semaphoreStates[tabId]?.turnFailure,
     // t-e5575f78 — a notice about a session opens with the "[t-xxxx] título: objetivo" of its task, read from here.
-    ledgerDoc: () => window.donel.ledger.load().then((snapshot) => snapshot.doc).catch(() => null),
+    ledgerDoc: () =>
+      ledgerDocRef.current
+        ? Promise.resolve(ledgerDocRef.current)
+        : window.donel.ledger
+            .load()
+            .then((snapshot) => (ledgerDocRef.current = snapshot.doc))
+            .catch(() => null),
   };
   const agentBridgeRef = useRef<AgentBridge>(null as unknown as AgentBridge);
   if (agentBridgeRef.current === null) agentBridgeRef.current = new AgentBridge(agentPorts);
