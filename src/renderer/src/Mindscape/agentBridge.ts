@@ -1487,7 +1487,22 @@ export class AgentBridge {
           );
         const target = this.tabOfPlace(projectPath, place.id);
         if (!target && this.resumeInFlight(`${projectPath}\n${place.id}`)) return fail(`"${place.id}" está abrindo (sessao_retomar); tente de novo em instantes. Não retome de novo.`);
-        if (!target) return fail(`"${place.id}" não está aberta agora.`);
+        if (!target) {
+          // OpenRig 835526b — a refusal names the way back, so the caller is not left in a dead end. Text only: nothing wakes.
+          if (this.isQueued(projectPath, place.id)) return fail(`"${place.id}" não está aberta agora: espera vaga na fila e abre sozinha quando a máquina tiver vaga. Mande de novo depois que ela abrir.`);
+          const from = scope.leader ? LEADER_OF_ALL_FROM : self ? { projectPath, placeId: self.id } : undefined;
+          const resumable =
+            this.ports.resumePlace !== undefined &&
+            (place.sessionId !== undefined || place.previous.length > 0) &&
+            from !== undefined &&
+            canReach(this.ports.doc(), from, { projectPath, placeId: place.id }).ok;
+          if (resumable) return fail(`"${place.id}" não está aberta agora. Para retomá-la: sessao_retomar com "quem": "${place.id}" e depois sessao_enviar.`);
+          return fail(
+            scope.leader
+              ? `"${place.id}" não está aberta agora, e não há conversa dela que você possa retomar. Registre o que precisa no Oráculo (tarefa_criar) e siga.`
+              : `"${place.id}" não está aberta agora, e não há conversa dela que você possa retomar. Registre o que precisa no Oráculo (tarefa_criar) e siga, ou fale com o Líder do quadro ("para": "${BOARD_LEADER}").`,
+          );
+        }
         if (this.ports.linkLost?.(target.id)) return fail(`"${place.id}" está sem ligação: o processo dela segue vivo no lugar remoto e o app está religando. Tente de novo em instantes; não abra outra no lugar dela.`);
         if (scope.leader) this.leaderHears.add(target.id);
         // 05/11 — "Entregue" only once the CLI of there took it: the answer waits for the send to end.
