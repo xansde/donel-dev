@@ -133,7 +133,7 @@ import { withNoPipelineTag } from '../../shared/chat/noPipeline';
 import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../shared/lider/ipc';
 import { isLeaderOfAllTab, liveLeaderOfAllTab } from '../../shared/mindscape/leader';
 import { DEFAULT_LEADER_PREFS, leaderCwd, leaderMoveCwd, leaderRemoteId } from '../../shared/leaderPrefs';
-import { leaderFolderMoveKey, leaderLineRoute, planLeaderDelivery, startLeaderMove, type LeaderMove, type LeaderMoveDeps } from '../../shared/lider/move';
+import { leaderComebackCwd, leaderFolderMoveKey, leaderLineRoute, type LeaderMove, type LeaderMoveDeps, planLeaderDelivery, startLeaderMove } from '../../shared/lider/move';
 import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
 import { TerminalPane } from './TerminalPane';
 import { PatchNotes } from './patchnotes/PatchNotes';
@@ -550,6 +550,9 @@ export function App(): React.JSX.Element {
   const hillOn = appMode === 'hill';
   const hillClimb = useHillClimb();
   const mindscape = useMindscapeDoc();
+  /** Where the live Líder único moves to (the orchestrator's project or `leader.home`), with the boards read now. */
+  const leaderMoveCwdNow = (): string | undefined =>
+    leaderMoveCwd(appConfig?.leader ?? DEFAULT_LEADER_PREFS, Object.keys(mindscape.doc.boards), appConfig?.leaderHomes ?? []);
   /**
    * Spec 010 / B6 — o mapa é PROJEÇÃO do store: o snapshot chega pronto do main
    * (macro etapa já derivada, D-13) e é empurrado a cada mudança. O renderer
@@ -1902,7 +1905,10 @@ export function App(): React.JSX.Element {
       const ptyId = handle.ptyId;
       const chat = ptyId ? getChatStore().getState(ptyId) : null;
       const mode = chat !== null && chat.status === 'ready' ? chat.permissionMode : null;
-      handle.renew({ args: renewalLaunchArgs(tab.launchArgs, mode), renewalId });
+      // t-2456f611 — the Líder único's new conversation starts in the orchestrator's project, not its old folder.
+      const folder = leaderComebackCwd({ leaderOfAll: isLeaderOfAllTab(tab), cwd: tab.cwd, remoteId: tab.remoteId }, leaderMoveCwdNow());
+      if (folder) updateTab(tabId, { cwd: folder });
+      handle.renew({ args: renewalLaunchArgs(tab.launchArgs, mode), renewalId, ...(folder ? { cwd: folder } : {}) });
       return true;
     },
     toast: (message) => setDevModeToast(message),
@@ -2077,6 +2083,29 @@ export function App(): React.JSX.Element {
   // conversation (`-r`), so its card stays where it was on the Mindscape. Only after an update: the general
   // restore on boot stays cancelled (the main hands the list once and deletes it).
   const updateBootTakenRef = useRef(false);
+  // t-2456f611 — the Líder único of the update boot waits for the boards (they say where the orchestrator is).
+  const [pendingLeaderBoot, setPendingLeaderBoot] = useState<{ readonly entry: ResumeTab; readonly restore: (entry: ResumeTab, cwd: string | undefined) => string } | null>(null);
+  useEffect(() => {
+    const pending = pendingLeaderBoot;
+    if (!pending || (!mindscape.loaded && mindscape.alert === null)) return;
+    setPendingLeaderBoot(null);
+    const { entry, restore } = pending;
+    const folder = leaderComebackCwd({ leaderOfAll: true, cwd: entry.cwd }, mindscape.loaded ? leaderMoveCwdNow() : undefined);
+    if (!folder || !entry.sessionId) {
+      restore(entry, entry.cwd);
+      return;
+    }
+    // The conversation goes with it (`-r` finds the transcript by folder); when the copy fails it comes back where it
+    // was, and the next comeback tries again.
+    void window.donel.lider
+      .carry({ sessionId: entry.sessionId, ...(entry.cwd ? { cwd: entry.cwd } : {}), toCwd: folder })
+      .then((result) => {
+        if (!result.ok) setDevModeToast(`O Líder único voltou na pasta de antes: ${result.reason}`);
+        restore(entry, result.ok ? folder : entry.cwd);
+      })
+      .catch(() => restore(entry, entry.cwd));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingLeaderBoot, mindscape.loaded, mindscape.alert]);
   useEffect(() => {
     if (!appConfig || updateBootTakenRef.current || !window.donel.appUpdate) return;
     updateBootTakenRef.current = true;
@@ -2089,11 +2118,11 @@ export function App(): React.JSX.Element {
         let lastListedId: string | null = null;
         // Sessão durável — who must come back on the same conversation; the Líder hears who did (agentBridge).
         const expected: ReturnExpectation[] = [];
-        for (const entry of boot.tabs) {
+        const restore = (entry: ResumeTab, cwd: string | undefined): string => {
           const id = addTab(
             {
             name: entry.name,
-            cwd: entry.cwd,
+            cwd,
             projectName: entry.projectName,
             pinned: entry.pinned === true,
             sessionType: entry.sessionType,
@@ -2111,7 +2140,16 @@ export function App(): React.JSX.Element {
           );
           // Só os Líderes nas abas — the team comes back to the Mindscape, not to the tab bar.
           if (entry.openedBy) agentBridgeRef.current.adoptOpened(id, entry.openedBy);
-          else {
+          return id;
+        };
+        for (const entry of boot.tabs) {
+          // t-2456f611 — the Líder único comes back once the boards are read: it may move to the orchestrator first.
+          if (entry.leaderOfAll && entry.sessionType === 'claude' && entry.sessionId) {
+            setPendingLeaderBoot({ entry, restore });
+            continue;
+          }
+          const id = restore(entry, entry.cwd);
+          if (!entry.openedBy) {
             lastListedId = id;
             if (entry.active) activeId = id;
           }
@@ -2559,6 +2597,8 @@ export function App(): React.JSX.Element {
     if (plan.kind === 'reconnect') {
       // The same conversation, where it was: on a remote place this reattaches to the same CLI in its tmux.
       liderTabRef.current = plan.tabId;
+      // A comeback: a change of folder that failed before is tried again on the next message (t-2456f611).
+      liderFailedFolderMovesRef.current.clear();
       terminalRefs.current[plan.tabId]?.respawn({ resume: plan.sessionId });
       sendTo(plan.tabId, text);
       return { ok: true };
