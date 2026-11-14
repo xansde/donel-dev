@@ -228,10 +228,11 @@ export function createRemoteOracleHost(deps: RemoteOracleHostDeps): RemoteOracle
               while ((cut = buffer.indexOf('\n\n')) >= 0) {
                 const block = buffer.slice(0, cut);
                 buffer = buffer.slice(cut + 2);
-                if (/^event: ledger$/m.test(block)) {
-                  const ok = await remote?.refresh();
-                  erro = ok ? null : 'o Oráculo da VPS não respondeu';
-                }
+                // t-530129bf: not awaited: a burst of writes becomes one or two reads (`refresh` joins them), not one each.
+                if (/^event: ledger$/m.test(block) && remote)
+                  void remote.refresh().then((ok) => {
+                    erro = ok ? null : 'o Oráculo da VPS não respondeu';
+                  });
                 if (/^event: fila$/m.test(block)) void drain();
               }
             }

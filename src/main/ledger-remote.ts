@@ -13,7 +13,7 @@
 
 import { createHash, randomBytes } from 'node:crypto';
 import { dirname, join } from 'node:path';
-import { emptyLedgerDoc, isHttpUrl, parseLedgerDoc, sameActor, type LedgerActor, type LedgerDoc, type LedgerEventKind, type LedgerOp, type LedgerProof } from '../shared/ledger/contract';
+import { emptyLedgerDoc, isHttpUrl, isRequestId, parseLedgerDoc, REPEAT_WRITE_WINDOW_MS, repeatedWrite, sameActor, type LedgerActor, type LedgerDoc, type LedgerEventKind, type LedgerOp, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
 import type { LedgerApplyResult, LedgerSnapshot } from '../shared/ledger/channels';
 import { checkLedgerImport, ledgerProofFiles, sameLedger } from '../shared/ledger/remote-import';
 import type { ConfigIoDeps } from './config-store';
@@ -39,15 +39,54 @@ export interface OracleResponseLike {
 /** One call to the daemon; throws when it does not answer (network, timeout). */
 export type OracleHttp = (method: string, path: string, body?: string | Uint8Array) => Promise<OracleResponseLike>;
 
+/**
+ * `timeoutMs` is how long the daemon may stay SILENT: until the answer starts, then between two pieces of the body.
+ * t-530129bf (14/11): it was a limit on the whole call, body included, and the body of `GET /v1/ledger` (and of
+ * `/v1/apply` on a daemon older than the light answer) is the whole ledger, 6.4 MB on 14/11. Over the PC's link it
+ * took longer than 20 s: every write was cut after the daemon wrote it (21 s, then 41 s with the re-read), the session
+ * heard "não chegou inteira" and called again. A body that keeps coming is read to the end.
+ */
 export function fetchOracleHttp(baseUrl: string, token: string, fetchImpl: typeof fetch = fetch, timeoutMs = 20_000): OracleHttp {
   return async (method, path, body) => {
-    const response = await fetchImpl(`${baseUrl}${path}`, {
-      method,
-      headers: { Authorization: `Bearer ${token}`, ...(typeof body === 'string' ? { 'Content-Type': 'application/json' } : body ? { 'Content-Type': 'application/octet-stream' } : {}) },
-      ...(body !== undefined ? { body } : {}),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    return { status: response.status, text: () => response.text(), bytes: async () => new Uint8Array(await response.arrayBuffer()) };
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const arm = (): void => {
+      clearTimeout(timer);
+      timer = setTimeout(() => controller.abort(new Error(`o Oráculo da VPS ficou ${timeoutMs / 1000} s sem mandar nada`)), timeoutMs);
+    };
+    arm();
+    let response: Response;
+    try {
+      response = await fetchImpl(`${baseUrl}${path}`, {
+        method,
+        headers: { Authorization: `Bearer ${token}`, ...(typeof body === 'string' ? { 'Content-Type': 'application/json' } : body ? { 'Content-Type': 'application/octet-stream' } : {}) },
+        ...(body !== undefined ? { body } : {}),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      clearTimeout(timer);
+      throw error;
+    }
+    let read: Promise<Uint8Array> | null = null;
+    const readAll = (): Promise<Uint8Array> =>
+      (read ??= (async () => {
+        try {
+          arm();
+          if (!response.body) return new Uint8Array(await response.arrayBuffer());
+          const reader = response.body.getReader();
+          const parts: Uint8Array[] = [];
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            arm();
+            parts.push(value);
+          }
+          return new Uint8Array(Buffer.concat(parts));
+        } finally {
+          clearTimeout(timer);
+        }
+      })());
+    return { status: response.status, text: async () => Buffer.from(await readAll()).toString('utf8'), bytes: readAll };
   };
 }
 
@@ -94,6 +133,12 @@ async function readJson(response: OracleResponseLike): Promise<unknown> {
   }
 }
 
+/** The task of a light answer (`{ ok, task }` without the snapshot), checked by the same parse as the ledger. */
+function taskOf(value: unknown): LedgerTask | null {
+  if (!isRecord(value) || typeof value.id !== 'string') return null;
+  return parseLedgerDoc({ ...emptyLedgerDoc(), tasks: { [value.id]: value } }).tasks[value.id] ?? null;
+}
+
 function snapshotOf(value: unknown): LedgerSnapshot | null {
   if (!isRecord(value) || !isRecord(value.doc) || !isRecord(value.doc.tasks)) return null;
   return { doc: parseLedgerDoc(value.doc), readOnly: value.readOnly === true };
@@ -111,6 +156,7 @@ function neverConnected(error: unknown): boolean {
 }
 
 const UNREACHABLE = 'O Oráculo da VPS não respondeu; nada foi gravado. O PC mostra o último retrato só para ler até ela voltar.';
+const NOT_SETTLED = 'Esta mesma chamada já foi ao Oráculo da VPS e a resposta se perdeu; ainda não consegui reler o registro para saber se gravou, e não mandei de novo (gravaria em dobro). Repita em 1 minuto: a resposta sai do registro.';
 /** The event kinds each op on an existing task appends (contract.ts `applyLedgerOp`); the ops left out cannot be proven. */
 const OP_EVENT_KINDS: Partial<Record<LedgerOp['op'], readonly LedgerEventKind[]>> = {
   assumir: ['assumida'],
@@ -158,6 +204,10 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
   let cache: LedgerSnapshot | null = null;
   let online = false;
   let syncing: Promise<void> | null = null;
+  let reading: Promise<boolean> | null = null;
+  let readAgain: Promise<boolean> | null = null;
+  /** t-530129bf — keys of calls whose answer was lost and the re-read did not settle (key → when). */
+  const unsure = new Map<string, number>();
 
   // Before the daemon answers: the mirror on disk, read-only.
   const mirror = io.readFileText(ledgerFile);
@@ -185,6 +235,25 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
     writeRemoteMirror(io, ledgerFile, snapshot.doc, deps.marker);
     deps.onChange?.({ doc: snapshot.doc, readOnly: snapshot.readOnly });
     void service.syncProofs();
+  }
+
+  /** A light answer's task goes into the view at once (tarefa_ver finds it); the whole ledger comes with the re-read. */
+  function patch(task: LedgerTask): void {
+    if (!cache) return;
+    cache = { doc: { ...cache.doc, tasks: { ...cache.doc.tasks, [task.id]: task } }, readOnly: cache.readOnly };
+    online = true;
+    deps.onChange?.({ doc: cache.doc, readOnly: cache.readOnly });
+  }
+
+  async function readLedger(): Promise<boolean> {
+    const response = await call('GET', '/v1/ledger');
+    const snapshot = response && response.status === 200 ? snapshotOf(await readJson(response)) : null;
+    if (!snapshot) {
+      setOnline(false);
+      return false;
+    }
+    accept(snapshot);
+    return true;
   }
 
   async function call(method: string, path: string, body?: string | Uint8Array): Promise<OracleResponseLike | null> {
@@ -236,22 +305,39 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
         return { ok: false, reason: UNREACHABLE };
       }
       const id = 'id' in op ? op.id : null;
+      // t-530129bf: the same call again (its key) answers what the first one wrote, even from a daemon without the key.
+      const key = 'requestId' in op && isRequestId(op.requestId) ? op.requestId : null;
+      for (const [old, at] of unsure) if (now() - at > REPEAT_WRITE_WINDOW_MS) unsure.delete(old);
+      if (key) {
+        // The first call's fate is unknown and the PC cannot read the ledger: sending again could write it twice on
+        // a daemon that does not know the key yet.
+        if (unsure.has(key) && !(await service.refresh())) return { ok: false, reason: NOT_SETTLED };
+        const prior = online && cache ? repeatedWrite(cache.doc, actor, op, now()) : null;
+        unsure.delete(key);
+        if (prior) return { ok: true, task: prior, repeated: true };
+      }
       const seen = id ? cache?.doc.tasks[id]?.events.length : undefined;
       // t-d7912fb9: the op went out and its answer was lost (network, or the timeout cutting the ~5 MB snapshot):
       // the daemon may have written it. Never say "nada foi gravado" here — the session repeated `criar` and the
       // task was born twice. Nor "gravado" because the task changed: another session's `andamento` changes it too.
       // It counts as written only when the re-read task has a new event of the kind this op appends, by this actor.
       const unknown = async (what: string): Promise<LedgerApplyResult> => {
-        await service.refresh();
+        const reread = await service.refresh();
+        // t-530129bf: what this call wrote (its key, or the same request / progress / cancel / transfer by this actor).
+        const written = cache ? repeatedWrite(cache.doc, actor, op, now()) : null;
+        if (written) return { ok: true, task: written };
         const kinds = OP_EVENT_KINDS[op.op];
         const after = id ? cache?.doc.tasks[id] : undefined;
         if (after && kinds && seen !== undefined && after.events.slice(seen).some((event) => kinds.includes(event.kind) && sameActor(event.by, actor)))
           return { ok: true, task: after };
+        // Re-read and not there: the daemon writes before it answers, so it was not written. Not re-read: unsure.
+        if (key && !reread) unsure.set(key, now());
         return { ok: false, reason: `${what}: a operação pode ter sido gravada. Confira com ${id ? `tarefa_ver ${id}` : 'tarefa_listar'} antes de repetir.` };
       };
       let response: OracleResponseLike;
       try {
-        response = await http('POST', '/v1/apply', JSON.stringify({ actor, op }));
+        // `leve`: a daemon that knows it answers the task without the whole ledger (t-530129bf); an older one ignores it.
+        response = await http('POST', '/v1/apply', JSON.stringify({ actor, op, leve: true }));
       } catch (error) {
         setOnline(false);
         return neverConnected(error) ? { ok: false, reason: UNREACHABLE } : unknown('O Oráculo da VPS não respondeu a tempo');
@@ -268,9 +354,16 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
       if (response.status !== 200) return { ok: false, reason: `O Oráculo da VPS recusou (${isRecord(body) && typeof body.error === 'string' ? body.error : response.status}); nada foi gravado.` };
       if (!isRecord(body)) return unknown('O Oráculo da VPS respondeu 200, mas a resposta não chegou inteira');
       if (body.ok !== true) return { ok: false, reason: typeof body.reason === 'string' ? body.reason : 'O Oráculo da VPS recusou.' };
+      const repeated = body.repeated === true ? ({ repeated: true } as const) : {};
       const snapshot = snapshotOf(body.snapshot);
       const taskId = isRecord(body.task) && typeof body.task.id === 'string' ? body.task.id : null;
       const task = taskId && snapshot ? snapshot.doc.tasks[taskId] : undefined;
+      const light = !snapshot && body.snapshot === undefined ? taskOf(body.task) : null;
+      if (light) {
+        patch(light);
+        void service.refresh();
+        return { ok: true, task: light, ...repeated };
+      }
       if (!snapshot || !task) {
         // Written on the VPS; the answer was odd: read it again.
         await service.refresh();
@@ -278,7 +371,7 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
         return again ? { ok: true, task: again } : { ok: false, reason: 'O Oráculo da VPS gravou, mas a resposta veio estranha; confira com tarefa_listar.' };
       }
       accept(snapshot);
-      return { ok: true, task };
+      return { ok: true, task, ...repeated };
     },
     async importProof(input, remote?: RemoteProofFetch) {
       if (input.tipo === 'texto') return { kind: 'texto', text: input.texto };
@@ -343,15 +436,23 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
       return seen.has(seenKey(placeId, taskId, deliveredAt));
     },
     now,
-    async refresh() {
-      const response = await call('GET', '/v1/ledger');
-      const snapshot = response && response.status === 200 ? snapshotOf(await readJson(response)) : null;
-      if (!snapshot) {
-        setOnline(false);
-        return false;
+    // t-530129bf: one read at a time. A burst of writes on the VPS sent one event each and the PC read the whole
+    // ledger once per event, in a row: the view fell a minute behind. A call during a read waits for ONE more read,
+    // started after it (it sees every write before the call), shared by every call that came meanwhile.
+    refresh() {
+      if (!reading) {
+        reading = readLedger().finally(() => {
+          reading = null;
+        });
+        return reading;
       }
-      accept(snapshot);
-      return true;
+      readAgain ??= reading
+        .catch(() => false)
+        .then(() => {
+          readAgain = null;
+          return service.refresh();
+        });
+      return readAgain;
     },
     connected: () => online,
     syncProofs() {

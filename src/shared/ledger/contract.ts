@@ -531,6 +531,8 @@ export type LedgerOp =
       readonly frente?: string;
       /** 08/11 — low was asked and the rule forced high: kept in the birth mark, so a transfer can give low back. */
       readonly lowAsked?: true;
+      /** 14/11 — the call's key (`repeatedWrite`): the same call again answers this task instead of a second one. */
+      readonly requestId?: string;
     }
   /** 07/11 — the Líder (or the owner) names the front of a task already made, and who asked, if it says. */
   | { readonly op: 'frente'; readonly id: string; readonly frente: string; readonly requestedBy?: string }
@@ -576,26 +578,74 @@ export type LedgerOp =
       readonly ownerGone?: boolean;
       /** 08/11 — the risk recalculated for the new owner by whoever knows the board (`ledger-store`); absent = kept. */
       readonly risk?: LedgerRisk;
+      /** 14/11 — the call's key (`repeatedWrite`). */
+      readonly requestId?: string;
     }
   /**
    * 06/11 — the task stops for good (a letter replaced by a new one, work nobody will do). The Líder, the owner or the
    * owner place; any task not closed, and an accepted Slack letter never sent. It ends `rejeitada` (v4 reads it and a
    * letter there frees no send) with the mark `cancelada`; nobody takes it again.
    */
-  | { readonly op: 'cancelar'; readonly id: string; readonly reason: string }
+  | { readonly op: 'cancelar'; readonly id: string; readonly reason: string; /** 14/11 — the call's key (`repeatedWrite`). */ readonly requestId?: string }
   /** The answer of the send in flight: Slack took it, or it failed EXPLICITLY (`why`). An `enviada` with `SEND_ANSWER` text. */
   | { readonly op: 'slack-resultado'; readonly id: string; readonly outcome: 'confirmado' | 'falhou'; readonly why?: string }
   /** The record of a post by an agent's OWN bot, which needs no letter (`AGENT_BOT_MARK`). Written by the guard. */
   | { readonly op: 'slack-bot'; readonly projectPath: string; readonly bot: AgentBotRecord }
   /** 08/11 — the owner place records how the work goes (`andamento.ts`): a marked `comentada`, the state unchanged. */
-  | { readonly op: 'andamento'; readonly id: string; readonly progress: LedgerProgress };
+  | { readonly op: 'andamento'; readonly id: string; readonly progress: LedgerProgress; /** 14/11 — the call's key (`repeatedWrite`). */ readonly requestId?: string };
 
 export interface LedgerOpContext {
   readonly now: number;
   readonly newId: () => string;
 }
 
-export type LedgerOpResult = { readonly ok: true; readonly doc: LedgerDoc; readonly task: LedgerTask } | { readonly ok: false; readonly reason: string };
+/** `repeated`: the same call was already written (`repeatedWrite`); `doc` is unchanged and `task` is the one it wrote. */
+export type LedgerOpResult = { readonly ok: true; readonly doc: LedgerDoc; readonly task: LedgerTask; readonly repeated?: true } | { readonly ok: false; readonly reason: string };
+
+/**
+ * t-530129bf (14/11) — how long a repeated call answers the write it already made instead of writing again. The
+ * PC's answer from the Oráculo da VPS could be lost after the write (a timeout cutting the body): the session,
+ * told it might not have been written, called again and the task was born four times. Half an hour covers the
+ * retries seen (minutes apart) and stays short of a progress line legitimately said again later.
+ */
+export const REPEAT_WRITE_WINDOW_MS = 30 * 60 * 1000;
+
+/** The ops a session repeats when it does not know whether the first call was written. */
+const REPEATABLE_OPS: ReadonlySet<LedgerOp['op']> = new Set(['criar', 'andamento', 'cancelar', 'transferir']);
+
+/**
+ * The task a repeat of `op` by `actor` already wrote, within `REPEAT_WRITE_WINDOW_MS` of `now`; `null` = not written.
+ * An event recorded with the call's key (`requestId`) matches by the key. An event without a key (written by a daemon
+ * older than the key, which drops it) matches by what the call wrote: the same request and criterion on the same
+ * board, the same progress text, the same cancel reason, the same transfer to the same place.
+ */
+export function repeatedWrite(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, now: number): LedgerTask | null {
+  if (!REPEATABLE_OPS.has(op.op)) return null;
+  const key = 'requestId' in op && isRequestId(op.requestId) ? op.requestId : undefined;
+  const recent = (event: LedgerEvent | undefined): event is LedgerEvent => event !== undefined && sameActor(event.by, actor) && Math.abs(now - event.at) <= REPEAT_WRITE_WINDOW_MS;
+  const matches = (event: LedgerEvent | undefined, same: (event: LedgerEvent) => boolean): boolean =>
+    recent(event) && (event.requestId !== undefined ? key !== undefined && event.requestId === key : same(event));
+  if (op.op === 'criar') {
+    for (const task of Object.values(doc.tasks)) {
+      const birth = task.events[0];
+      if (birth?.kind !== 'criada' || task.slack) continue;
+      if (matches(birth, () => task.projectPath === op.projectPath && task.request === op.request && task.doneWhen === op.doneWhen && task.due === op.due)) return task;
+    }
+    return null;
+  }
+  if (!('id' in op)) return null;
+  const task = doc.tasks[op.id];
+  if (!task) return null;
+  const same: (event: LedgerEvent) => boolean =
+    op.op === 'andamento'
+      ? (event) => event.kind === 'comentada' && event.text === progressText(op.progress)
+      : op.op === 'cancelar'
+        ? (event) => event.kind === 'rejeitada' && event.text === withMark('cancelada', op.reason.trim())
+        : op.op === 'transferir'
+          ? (event) => event.kind === 'criada' && task.ownerPlaceId === op.to.trim() && (event.text ?? '').startsWith(`${MARK_OPEN}transferida de `) && (event.text ?? '').includes(` para ${op.to.trim()}⟧`)
+          : () => false;
+  return task.events.some((event) => matches(event, same)) ? task : null;
+}
 
 function withTask(doc: LedgerDoc, task: LedgerTask): LedgerDoc {
   return { ...doc, startedAt: doc.startedAt ?? task.createdAt, tasks: { ...doc.tasks, [task.id]: task } };
@@ -660,6 +710,11 @@ export function unknownOpReason(name: string): string {
 export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, ctx: LedgerOpContext): LedgerOpResult {
   const fail = (reason: string): LedgerOpResult => ({ ok: false, reason });
   if (!Object.prototype.hasOwnProperty.call(KNOWN_OPS, op.op)) return fail(unknownOpReason(String(op.op)));
+  // t-530129bf: a call with its key, made again, answers what the first one wrote.
+  if ('requestId' in op && isRequestId(op.requestId)) {
+    const written = repeatedWrite(doc, actor, op, ctx.now);
+    if (written) return { ok: true, doc, task: written, repeated: true };
+  }
   if (op.op === 'criar') {
     if (!op.request.trim()) return fail('"pedido" é obrigatório: a frase literal de quem pediu.');
     if (startsWithMark(op.request)) return fail(`"pedido" não pode começar com "${MARK_OPEN}".`);
@@ -688,7 +743,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       risk: replaced?.risk === 'alto' ? 'alto' : op.risk,
       state: 'aberta',
       createdAt: ctx.now,
-      events: [{ kind: 'criada', at: ctx.now, by: actor, ...birthTagsOf(replaced?.id, op.requestedBy, op.frente?.trim() || (replaced && frenteOf(replaced)), op.lowAsked === true && op.risk === 'alto') }],
+      events: [{ kind: 'criada', at: ctx.now, by: actor, ...birthTagsOf(replaced?.id, op.requestedBy, op.frente?.trim() || (replaced && frenteOf(replaced)), op.lowAsked === true && op.risk === 'alto'), ...requestOf(op) }],
     };
     if (!replaced) return { ok: true, doc: withTask(doc, task), task };
     // One write: the new task and the old one cancelled, or neither.
@@ -780,7 +835,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       if (isClosed(task) || task.slack) return fail('A tarefa já fechou: o andamento vai numa tarefa viva.');
       const why = progressRefusal(op.progress);
       if (why) return fail(why);
-      return done(step(task, task.state, { kind: 'comentada', at: ctx.now, by: actor, text: progressText(op.progress) }));
+      return done(step(task, task.state, { kind: 'comentada', at: ctx.now, by: actor, text: progressText(op.progress), ...requestOf(op) }));
     }
 
     case 'comentar': {
@@ -820,7 +875,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       const risk = op.risk ?? task.risk;
       // The transfer mark is parsed as is (`transfersOf`): the risk change goes in the reason, never in the mark.
       const note = risk === task.risk ? reason : `${reason} (risco passou a ${risk})`;
-      return done({ ...step(task, state, { kind: 'criada', at: ctx.now, by: actor, text: withMark(`transferida de ${task.ownerPlaceId} para ${to}`, note) }), ownerPlaceId: to, risk });
+      return done({ ...step(task, state, { kind: 'criada', at: ctx.now, by: actor, text: withMark(`transferida de ${task.ownerPlaceId} para ${to}`, note), ...requestOf(op) }), ownerPlaceId: to, risk });
     }
 
     case 'frente': {
@@ -844,7 +899,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       if (startsWithMark(reason)) return fail(`"motivo" não pode começar com "${MARK_OPEN}".`);
       if (isClosed(task)) return fail(`A tarefa já está "${viewState(task)}" e fechada; não há o que cancelar.`);
       if (!(actor.kind === 'dono' || isOwnerPlace || isLeaderRole(actor.roleId))) return fail(`Só o Líder, o dono ou o lugar dono (${task.ownerPlaceId}) cancela esta tarefa.`);
-      return done(step(task, 'rejeitada', { kind: 'rejeitada', at: ctx.now, by: actor, text: withMark('cancelada', reason) }));
+      return done(step(task, 'rejeitada', { kind: 'rejeitada', at: ctx.now, by: actor, text: withMark('cancelada', reason), ...requestOf(op) }));
     }
 
     case 'slack-enviada':
