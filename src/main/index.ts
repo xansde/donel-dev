@@ -255,6 +255,7 @@ import {
 import { RemoteLinkSupervisor } from './remote-link';
 import { runShutdownSteps, shutdownThenQuit } from './app-shutdown';
 import { createMainEventsLog, type MainEventLogger } from './main-events-log';
+import { createExitWatchdog } from './exit-watchdog';
 import { SessionKeyRing } from './session-keys';
 import { createDiagnosticsLog } from './chat/diagnostics-log';
 import { resolveMainRepoRootSync } from './session-worktree';
@@ -1245,6 +1246,12 @@ app.setAppUserModelId('com.seazone.doneldev');
 /** `<userData>/main-events.log` (main-events-log.ts) — opened on the first event, after `setName` fixed the folder. */
 let mainEventsLog: MainEventLogger | null = null;
 
+/** When this process started (epoch ms): the vigia de saída only ends the process that has this start. */
+const PROCESS_STARTED_AT_MS = Math.round(Date.now() - process.uptime() * 1000);
+/** How long the app may take to exit after the main window closed before the vigia de saída ends it. */
+const EXIT_GRACE_SECONDS = 20;
+const armExitWatchdog = createExitWatchdog(spawn);
+
 function logMainEvent(event: string, detail?: Readonly<Record<string, unknown>>): void {
   mainEventsLog ??= createMainEventsLog(join(app.getPath('userData'), 'main-events.log'));
   mainEventsLog(event, detail);
@@ -1533,6 +1540,11 @@ function createMainWindow(): void {
   // órfãos (plan.md risco de vazamento, DoD do ciclo de vida chega em T010).
   mainWindow.on('closed', () => {
     logMainEvent('main-window-closed');
+    // Vigia de saída (exit-watchdog.ts): with the main window gone the app is ending; a copy that never finishes
+    // exiting is ended from outside instead of sitting on memory with no window for hours (13/11).
+    if (armExitWatchdog({ pid: process.pid, startedAtMs: PROCESS_STARTED_AT_MS, graceSeconds: EXIT_GRACE_SECONDS })) {
+      logMainEvent('exit-watchdog-armed', { graceSeconds: EXIT_GRACE_SECONDS });
+    }
     if (mainWindowRef === mainWindow) mainWindowRef = null; // C1
     // Each step on its own (app-shutdown.ts): one that throws must not leave the PTYs alive.
     runShutdownSteps(
@@ -1542,6 +1554,9 @@ function createMainWindow(): void {
         ['ptyExit', () => unsubscribeExit()],
         ['semaphoreUpdates', () => unsubscribeSemaphore()],
         ['remoteLinks', () => remoteLinks.stopAll()], // the app is going: nothing more is relinked (the remote sessions stay alive there)
+        // The mirror ssh of each place closes with the window: `ptyExit` was unsubscribed above, so the exit of each
+        // PTY no longer reaches `remoteSessions.onPtyExit`, and the mirrors would live as long as the process.
+        ['remoteMirrors', () => remoteSessions?.stopAll()],
         // A janela morrendo mata os PTYs; os watchers deles vão junto (o `onExit`
         // de cada um já daria baixa, mas não depender disso é o que garante zero
         // handle sobrevivendo ao fechamento).
