@@ -55,7 +55,9 @@ export const SESSION_CHANNELS = {
 export type SessionWhereLives =
   | { readonly kind: 'local' }
   | { readonly kind: 'remote'; readonly remoteId: string }
-  | { readonly kind: 'unreachable'; readonly labels: readonly string[] };
+  | { readonly kind: 'unreachable'; readonly labels: readonly string[] }
+  /** t-e72ca49e — not on this disk and every remote place answered it has not it: never resumed on this computer. */
+  | { readonly kind: 'nowhere'; readonly labels: readonly string[] };
 
 /**
  * T412 (004) + T608 (006) + Fix #19 — push do `main` quando o transcript de

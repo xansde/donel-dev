@@ -245,6 +245,7 @@ import {
   pickRemotePort,
   REMOTE_SESSIONS_DIR,
   remoteDirFor,
+  decideWhereLives,
   RemoteSessionRegistry,
   probeRemoteSession,
   runRemoteScript,
@@ -397,12 +398,15 @@ import { isTabColorToken, setTabColor, setTabOrder } from '../shared/tabAppearan
 import { WORKSPACE_CHANNELS } from '../shared/workspace';
 import { createSystemWorkspaceToolsDeps, createWorkspaceTools } from './workspace-tools';
 import { createSessionWorktreeService } from './session-worktree-service';
-import { worktreeNameFromArgs } from '../shared/sessionWorktree';
+import { isSafeWorktreeName, worktreeNameFromArgs } from '../shared/sessionWorktree';
 import { projectOfFolders, tabFolders, withProjectYolo } from '../shared/projectYolo';
 import { isProcessAlive } from './process-alive';
 import { createPullRequestStatusService, createSystemPullRequestStatusDeps, openPullRequestUrl } from './pull-request-status';
 // Navegador interno — painel com WebContentsView por sessão (docs/design/navegador-interno.md).
 import { browserMcpConfigDir, createBrowserService, type BrowserService } from './browser/browser-service';
+import type { BoardToolCall } from '../shared/mindscape/agent-tools';
+import { withTaskHeaderOnCall } from '../shared/mindscape/task-header';
+import { lastLaunchAt, silenceNotice } from '../shared/ledger/ritmo';
 import { createBoardBridge } from './board-bridge';
 
 // Scaffold T003 — janela única com o layout do shell (ui-spec §2).
@@ -1797,7 +1801,10 @@ function localGitInfo(cwd: string): { repoUrl: string | null; branch: string | n
   return { repoUrl: read(['remote', 'get-url', 'origin']), branch: read(['branch', '--show-current']) };
 }
 
-/** Drops `--worktree <name>` (the remote session runs in the project folder; the mirror follows that transcript). */
+/**
+ * Drops `--worktree <name>`: on a remote place the setup script makes the worktree (`RemoteSetupInput.worktree`) and the
+ * CLI runs inside it, so the mirror follows the transcript of that folder.
+ */
 function withoutWorktreeArgs(args: readonly string[]): string[] {
   const out: string[] = [];
   for (let i = 0; i < args.length; i++) {
@@ -1912,9 +1919,11 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
 
   await remoteSessions.waitEnded(correlationId);
   const git = localGitInfo(localCwd);
+  const worktree = worktreeNameFromArgs(options.args);
   const script = buildRemoteSetupScript({
     sid: correlationId,
     homeRelativeDir: remoteDirFor(localCwd, appConfig.projectRoots),
+    ...(worktree !== null && isSafeWorktreeName(worktree) ? { worktree } : {}),
     repoUrl: git.repoUrl,
     branch: git.branch,
     files,
@@ -2075,7 +2084,10 @@ function relinkSessionTools(ptyId: unknown): RelinkToolsResult {
 }
 
 function registerPtyIpcHandlers(): void {
-  remoteSessions = new RemoteSessionRegistry(join(app.getPath('userData'), 'remote-transcripts'));
+  remoteSessions = new RemoteSessionRegistry(join(app.getPath('userData'), 'remote-transcripts'), {
+    // t-9ab0ce2e — a place whose shared transcript mirror did not work went back to one tail per tab: say why.
+    onMirrorFallback: (sshTarget, reason) => logMainEvent('remote-mirror-fallback', { sshTarget, reason }),
+  });
   ipcMain.handle(PTY_CHANNELS.relinkTools, (_event, ptyId: unknown): RelinkToolsResult => relinkSessionTools(ptyId));
   ipcMain.handle(PTY_CHANNELS.remoteAlive, async (): Promise<RemoteAliveSession[]> => {
     const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
@@ -3050,13 +3062,8 @@ function registerSessionIpcHandlers(): void {
     if (typeof sessionId !== 'string' || typeof projectPath !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(sessionId)) return { kind: 'local' };
     if (localTranscriptExists(sessionId, projectPath)) return { kind: 'local' };
     const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
-    if (places.length === 0) return { kind: 'local' };
-    const answers = await findRemoteTranscript(places, remoteDirFor(projectPath, appConfig.projectRoots), sessionId);
-    const found = answers.find((answer) => answer.answer === 'has');
-    if (found) return { kind: 'remote', remoteId: found.id };
-    const silent = answers.filter((answer) => answer.answer === 'unreachable');
-    if (silent.length > 0) return { kind: 'unreachable', labels: silent.map((answer) => places.find((place) => place.id === answer.id)?.label ?? answer.id) };
-    return { kind: 'local' };
+    const answers = places.length === 0 ? [] : await findRemoteTranscript(places, remoteDirFor(projectPath, appConfig.projectRoots), sessionId);
+    return decideWhereLives(false, answers, places);
   });
 
   /**
@@ -3910,6 +3917,22 @@ async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: Led
     sessionOf: sessionsSnapshot(),
   };
   return { caller: await withEveryBoard(boardBridge, ptyId, caller, call), call };
+}
+
+/**
+ * t-057bf559 — a message between sessions that names its task opens with "[t-xxxx] título: objetivo", read from the
+ * ledger in memory (never `tarefa_ver`: it marks the proof as read and answers a print as an image), so the collector
+ * (which keeps 300 characters of each request) sees the task. No task named, or not found: the text goes as it came.
+ */
+function withTaskHeaderOf(call: BoardToolCall): BoardToolCall {
+  if ((call.tool !== 'sessao_enviar' && call.tool !== 'sessao_abrir') || !call.tarefa) return call;
+  let doc: LedgerDoc | null = null;
+  try {
+    doc = ledgerService?.load().doc ?? null;
+  } catch {
+    // the ledger is unreadable: the text goes as it came
+  }
+  return withTaskHeaderOnCall(call, doc);
 }
 
 async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<BrowserToolOutcome> {
@@ -4878,6 +4901,33 @@ void app.whenReady().then(async () => {
   hillClimbNotify = (message) => void boardBridge.deliverOwnerMessage(message).catch(() => null);
   // No place: the renderer sends it straight to the Líder único (or answers `null`: closed, the request waits).
   deliverPedidoToLeader = (text) => boardBridge.deliverOwnerMessage({ projectPath: '', placeId: '', text, leaderText: text }).then((to) => to === 'lider');
+  // t-23f0297d — the ledger quiet for 1 h while sessions work: the Líder único hears it once per silence. A Líder
+  // único closed misses nothing: the notice is not marked as heard, and the next round tries again.
+  let silenceAlertedFor: number | null = null;
+  let silenceChecking = false;
+  setInterval(() => {
+    const service = ledgerService;
+    const deliver = deliverPedidoToLeader;
+    if (silenceChecking || !service || !deliver) return;
+    let last: number | null;
+    try {
+      last = lastLaunchAt(service.load().doc);
+    } catch {
+      return;
+    }
+    const working = [...activeSessionByPty.keys()].filter((ptyId) => semaphoreManager.getSnapshot(ptyId)?.state === 'working').length;
+    const notice = silenceNotice({ lastLaunchAt: last, working, now: Date.now(), alertedFor: silenceAlertedFor });
+    if (!notice) return;
+    silenceChecking = true;
+    void deliver(notice)
+      .then((heard) => {
+        if (heard) silenceAlertedFor = last;
+      })
+      .catch(() => null)
+      .finally(() => {
+        silenceChecking = false;
+      });
+  }, 5 * 60_000).unref();
   // Faxina noturna do Oráculo (t-2c18d666) — in shadow for its first nights; who gets a task hears it here.
   faxinaRunner = createFaxinaRunner({
     dir: join(app.getPath('userData'), 'rotinas'),
@@ -4898,7 +4948,7 @@ void app.whenReady().then(async () => {
     userDataDir: app.getPath('userData'),
     isMainSender: (sender) => getMainWindow()?.webContents.id === sender.id,
     appVersion: app.getVersion(),
-    executeBoard: (ptyId, call) => boardBridge.execute(ptyId, call),
+    executeBoard: (ptyId, call) => boardBridge.execute(ptyId, withTaskHeaderOf(call)),
     openCap: () => appConfig.team.openCap,
     uploadFolders: {
       get: () => appConfig.browserUploads.folders,

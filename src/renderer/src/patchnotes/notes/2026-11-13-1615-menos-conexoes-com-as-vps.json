@@ -1,0 +1,1 @@
+{ "title": "Menos conexões com as VPS", "text": "As conversas das sessões que rodam numa VPS agora chegam ao chat por uma conexão só por máquina, em vez de uma por sessão. Com muitas sessões abertas nas VPS, o computador gasta bem menos memória, e nenhuma sessão é derrubada por isso." }

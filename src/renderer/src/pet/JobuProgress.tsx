@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { emptyLedgerDoc, type LedgerDoc } from '../../../shared/ledger/contract';
+import { hourlyRhythm, type RhythmHour } from '../../../shared/ledger/ritmo';
 import { dueLabel, jobuProgress, movedFrontOrder, movedOrder, type Front, type FrontTask, type FrontTaskState, type JobuProgress as Progress } from '../../../shared/pet/progress';
 import styles from './JobuProgress.module.css';
 
@@ -39,6 +40,8 @@ function clock(at: number): string {
 
 export interface JobuProgressState {
   readonly progress: Progress;
+  /** t-23f0297d — every launch in the ledger per hour, last 24 h: the rhythm, not only the tasks born. */
+  readonly rhythm: readonly RhythmHour[];
   /** When it was last recomputed (ms). */
   readonly computedAt: number;
   /** The ledger could not be read. */
@@ -86,6 +89,7 @@ export function useJobuProgress(eventKey: string): JobuProgressState {
   useEffect(() => setComputedAt(Date.now()), [eventKey]);
 
   const progress = useMemo(() => jobuProgress(doc, computedAt), [doc, computedAt]);
+  const rhythm = useMemo(() => hourlyRhythm(doc, computedAt, RHYTHM_HOURS), [doc, computedAt]);
 
   const setOpen = useCallback(
     (next: boolean): void => {
@@ -103,7 +107,44 @@ export function useJobuProgress(eventKey: string): JobuProgressState {
     writeStored(SEEN_KEY, String(changedAt));
   }, [changedAt, seenAt]);
 
-  return { progress, computedAt, failed, unseen: changedAt !== null && changedAt > seenAt, open, setOpen, markSeen };
+  return { progress, rhythm, computedAt, failed, unseen: changedAt !== null && changedAt > seenAt, open, setOpen, markSeen };
+}
+
+const RHYTHM_HOURS = 24;
+
+function hourLabel(hour: RhythmHour): string {
+  const { criada, andamento, entrega, decisao, outro } = hour.counts;
+  const parts = [
+    criada ? plural(criada, 'criada', 'criadas') : '',
+    andamento ? plural(andamento, 'andamento', 'andamentos') : '',
+    entrega ? plural(entrega, 'entrega', 'entregas') : '',
+    decisao ? plural(decisao, 'decisão', 'decisões') : '',
+    outro ? plural(outro, 'outro', 'outros') : '',
+  ].filter(Boolean);
+  return `${String(new Date(hour.start).getHours()).padStart(2, '0')}h: ${parts.length ? parts.join(', ') : 'nada lançado'}`;
+}
+
+/** The ledger's rhythm: one bar per hour, every launch (born, progress, delivery, decision), so a quiet hour shows. */
+function RhythmStrip({ hours }: { readonly hours: readonly RhythmHour[] }): React.JSX.Element {
+  const top = Math.max(1, ...hours.map((hour) => hour.total));
+  const sum = (kind: keyof RhythmHour['counts']): number => hours.reduce((total, hour) => total + hour.counts[kind], 0);
+  const quiet = hours.filter((hour) => hour.total === 0).length;
+  return (
+    <div className={styles.rhythm} data-testid="pet-progress-rhythm">
+      <div className={styles.rhythmHead}>
+        <span>Ritmo do Oráculo · 24 h</span>
+        <span>{quiet ? plural(quiet, 'hora parada', 'horas paradas') : 'nenhuma hora parada'}</span>
+      </div>
+      <div className={styles.rhythmBars} role="img" aria-label={hours.map(hourLabel).join('; ')}>
+        {hours.map((hour) => (
+          <span key={hour.start} className={styles.rhythmBar} data-quiet={hour.total === 0 ? 'true' : undefined} title={hourLabel(hour)} style={{ height: `${hour.total === 0 ? 0 : Math.max(12, (100 * hour.total) / top)}%` }} />
+        ))}
+      </div>
+      <div className={styles.rhythmTotals}>
+        {plural(sum('criada'), 'criada', 'criadas')} · {plural(sum('andamento'), 'andamento', 'andamentos')} · {plural(sum('entrega'), 'entrega', 'entregas')} · {plural(sum('decisao'), 'decisão', 'decisões')}
+      </div>
+    </div>
+  );
 }
 
 const STATE_LABEL: Readonly<Record<FrontTaskState, string>> = {
@@ -267,12 +308,14 @@ export function JobuProgressPanel({ state }: { readonly state: JobuProgressState
     },
   };
   const { counts, doneToday } = progress;
+  const { rhythm } = state;
   return (
     <div className={styles.panel} data-testid="pet-progress">
       <div className={styles.head}>
         <span>Progresso · seus pedidos</span>
         <span className={styles.stamp}>{failed ? 'não consegui ler o Oráculo' : moveFailed ? `ordem não gravada: ${moveFailed}` : `atualizado às ${clock(computedAt)}`}</span>
       </div>
+      <RhythmStrip hours={rhythm} />
       {progress.fronts.length === 0 ? (
         <p className={styles.empty}>Nenhum pedido seu em aberto.</p>
       ) : (

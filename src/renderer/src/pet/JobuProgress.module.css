@@ -270,3 +270,42 @@
 .move:disabled {
   visibility: hidden;
 }
+
+/* t-23f0297d — the ledger's rhythm per hour (every launch, not only the tasks born). */
+.rhythm {
+  padding: 8px 0 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.rhythmHead {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
+.rhythmBars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 36px;
+  margin: 6px 0 4px;
+}
+
+.rhythmBar {
+  flex: 1;
+  min-width: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--state-working);
+}
+
+.rhythmBar[data-quiet='true'] {
+  height: 3px !important;
+  background: color-mix(in srgb, var(--state-permission) 70%, transparent);
+}
+
+.rhythmTotals {
+  color: var(--text-muted);
+  font-size: 0.85em;
+}

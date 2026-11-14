@@ -63,14 +63,28 @@ export function leaderCwd(prefs: LeaderPrefs, projectPaths: readonly string[], e
  * orchestrator's project when it exists on disk. Never the boards' parent folder: a board out of the root (another
  * parent) or one failed read of the disk (`existingLeaderHomes` empty) must not pull it out of `_orquestradora`.
  * `undefined` = the live Líder stays in its folder. A new Líder opens in `leaderCwd`.
+ *
+ * t-2456f611 (13/11) — the orchestrator is the `_orquestradora` that exists under a project root holding the boards
+ * (the one holding the most, the first on a tie), not the one under the boards' common parent: a board on the root
+ * itself (`…\seazone`, where the Líder único used to run) or under another root moved that parent up, and the Líder
+ * opened in the user's folder (`C:\Users\<u>`) instead of its project.
  */
 export function leaderMoveCwd(prefs: LeaderPrefs, projectPaths: readonly string[], existingLeaderHomes: readonly string[]): string | undefined {
   if (prefs.home) return prefs.home;
-  const base = leaderHome(projectPaths);
-  if (base === undefined) return undefined;
-  const sep = base.includes('\\') ? '\\' : '/';
-  const orchestrator = `${base.replace(/[\\/]+$/, '')}${sep}${LEADER_HOME_FOLDER}`;
-  return existingLeaderHomes.some((home) => sameFolder(home, orchestrator)) ? orchestrator : undefined;
+  const parentKey = (path: string): string => folderKey(path).replace(/\/[^/]*$/, '');
+  const under = (path: string, rootKey: string): boolean => folderKey(path) === rootKey || folderKey(path).startsWith(`${rootKey}/`);
+  let best: { readonly rootKey: string; readonly boards: readonly string[] } | undefined;
+  for (const home of existingLeaderHomes) {
+    const rootKey = parentKey(home);
+    const boards = projectPaths.filter((path) => under(path, rootKey));
+    if (boards.length > 0 && (!best || boards.length > best.boards.length)) best = { rootKey, boards };
+  }
+  if (!best) return undefined;
+  // Spelled like the boards (case and separator), as the rest of the app sees the folder.
+  const board = best.boards[0]!.replace(/[\\/]+$/, '');
+  const sep = board.includes('\\') ? '\\' : '/';
+  const depth = best.rootKey.split('/').length;
+  return [...board.split(/[\\/]/).slice(0, depth), LEADER_HOME_FOLDER].join(sep);
 }
 
 /** A remote place as the Líder's placement sees it. */

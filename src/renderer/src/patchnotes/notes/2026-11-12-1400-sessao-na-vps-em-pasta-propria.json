@@ -1,0 +1,4 @@
+{
+  "title": "Sessão aberta na VPS trabalha numa cópia própria do projeto",
+  "text": "Quando uma sessão abre outra numa VPS, a nova ganha uma cópia própria do projeto lá. Assim, uma sessão que troca de branch não mexe mais no trabalho das outras. Retomar essa conversa depois volta para a mesma cópia."
+}

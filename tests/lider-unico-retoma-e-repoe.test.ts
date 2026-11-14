@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { AgentBridge, type AgentBridgePorts, type BridgeTab, type ResumePlaceRequest } from '../src/renderer/src/Mindscape/agentBridge';
+import { AgentBridge, type AgentBridgePorts, type BridgeTab, type ResumePlaceOutcome, type ResumePlaceRequest } from '../src/renderer/src/Mindscape/agentBridge';
+import { decideWhereLives } from '../src/main/remote-session';
 import { parseBoardToolCall } from '../src/shared/mindscape/agent-tools';
 import { addLink, addPlace, emptyMindscapeDoc, setPlaceConversation, type MindscapeDoc } from '../src/shared/mindscape/model';
 import { isBoardOrchestrator } from '../src/shared/mindscape/reach';
@@ -16,7 +17,7 @@ const DEV = 'place:dev'; // below the Líder, open
 const NETO = 'place:neto'; // below the Dev, closed
 const NOVO = 'place:novo'; // drawn, never started
 
-function setup(): { bridge: AgentBridge; doc: () => MindscapeDoc; tabs: BridgeTab[]; resumed: ResumePlaceRequest[]; opened: string[] } {
+function setup(resume?: (request: ResumePlaceRequest) => Promise<ResumePlaceOutcome>): { bridge: AgentBridge; doc: () => MindscapeDoc; renew: (place: string, conv: string) => void; tabs: BridgeTab[]; resumed: ResumePlaceRequest[]; opened: string[] } {
   let doc = addPlace(emptyMindscapeDoc(), ATLAS, { id: LIDER, roleId: LEADER_ROLE_ID });
   doc = addPlace(doc, ATLAS, { id: DEV, roleId: 'dev' });
   doc = addPlace(doc, ATLAS, { id: NETO, roleId: 'revisor', by: 'session' });
@@ -49,6 +50,7 @@ function setup(): { bridge: AgentBridge; doc: () => MindscapeDoc; tabs: BridgeTa
     // Like the app: the place's machine is known only after locating the conversation, then the guard; the tab shows
     // up in the list only on a later render.
     resumePlace: async (request) => {
+      if (resume) return resume(request);
       const full = request.mayOpenOn(undefined);
       if (full) return { ok: false, reason: full };
       resumed.push(request);
@@ -65,7 +67,7 @@ function setup(): { bridge: AgentBridge; doc: () => MindscapeDoc; tabs: BridgeTa
     remotes: () => [],
     projects: () => [{ path: ATLAS, name: 'atlas' }],
   };
-  return { bridge: new AgentBridge(ports), doc: () => doc, tabs, resumed, opened };
+  return { bridge: new AgentBridge(ports), doc: () => doc, renew: (place, conv) => (doc = setPlaceConversation(doc, ATLAS, place, conv)), tabs, resumed, opened };
 }
 
 describe('Líder único retoma uma sessão fechada (t-1293c818, item 1)', () => {
@@ -94,6 +96,34 @@ describe('Líder único retoma uma sessão fechada (t-1293c818, item 1)', () => 
     expect(await bridge.handle('dev', { tool: 'sessao_retomar', quem: LIDER })).toMatchObject({ ok: false });
     expect(await bridge.handle('dev', { tool: 'sessao_retomar', quem: NETO })).toMatchObject({ ok: true });
     expect(resumed.map((request) => request.placeId)).toEqual([NETO]);
+  });
+});
+
+describe('sessao_retomar de um lugar da VPS não abre no PC (t-e72ca49e)', () => {
+  it('a conversation found nowhere never resolves to this computer; the bridge falls back to `previous`, else says why', async () => {
+    // whereLives: not on this disk and the place answered "hasn't" → nowhere (before: `local`, an empty `claude -r` on the PC).
+    const vps = [{ id: 'vps', label: 'VPS' }];
+    expect(decideWhereLives(false, [{ id: 'vps', answer: 'hasnt' }], vps)).toEqual({ kind: 'nowhere', labels: ['VPS'] });
+    expect(decideWhereLives(false, [{ id: 'vps', answer: 'has' }], vps)).toEqual({ kind: 'remote', remoteId: 'vps' });
+    expect(decideWhereLives(true, [], [])).toEqual({ kind: 'local' });
+    // The bridge: the Líder was renewed on the VPS; its current conversation is missing everywhere, the previous one
+    // lives on the VPS → resumed there, with that conversation.
+    const tried: Array<string | undefined> = [];
+    const missing: ResumePlaceOutcome = { ok: false, reason: 'a conversa não está em lugar nenhum', missing: true };
+    const found = setup(async (request) => {
+      tried.push(request.sessionId);
+      return request.sessionId === 'conv-lider' ? { ok: true, tabId: 'tab-x', remoteId: 'vps' } : missing;
+    });
+    found.renew(LIDER, 'conv-lider-nova');
+    const answer = await found.bridge.handle('unico', { tool: 'sessao_retomar', quem: LIDER, quadro: 'atlas' });
+    expect(tried).toEqual(['conv-lider-nova', 'conv-lider']);
+    expect(answer).toMatchObject({ ok: true, text: expect.stringContaining('"roda": "vps"') });
+    // Nothing anywhere: a clear refusal, never "roda: este computador".
+    const none = setup(async () => missing);
+    none.renew(LIDER, 'conv-lider-nova');
+    const refused = await none.bridge.handle('unico', { tool: 'sessao_retomar', quem: LIDER, quadro: 'atlas' });
+    expect(refused).toMatchObject({ ok: false, text: expect.stringContaining('não está em lugar nenhum') });
+    expect(JSON.stringify(refused)).not.toContain('roda');
   });
 });
 
