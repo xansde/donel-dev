@@ -214,7 +214,11 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
   let readAgain: Promise<boolean> | null = null;
   /** t-530129bf — keys of calls whose answer was lost and the re-read did not settle (key → when). */
   const unsure = new Map<string, number>();
-  /** The daemon answered light: it knows the call's key and checks the repeat on the real ledger, not on this view. */
+  /**
+   * The daemon answered light: it knows the call's key and checks the repeat on the real ledger, not on this view
+   * (which may be a read behind). It goes back to false only when a light request gets the whole ledger (an older
+   * daemon again): a network blip must not send the repeats back to this view's older picture.
+   */
   let daemonKnowsKeys = false;
   /** The view already came from this daemon (not only from the mirror on disk). */
   let fromDaemon = false;
@@ -236,9 +240,7 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
   const view = (): LedgerSnapshot | null => (cache ? { doc: cache.doc, readOnly: cache.readOnly || !online } : null);
 
   function setOnline(next: boolean): void {
-    // Away and back may be another daemon (an older one): its knowing the key is proven again by a light answer.
-    if (!next) daemonKnowsKeys = false;
-    if (online === next) return;
+    if (retired || online === next) return;
     online = next;
     const snapshot = view();
     if (snapshot) deps.onChange?.(snapshot);
@@ -362,8 +364,6 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
       // task was born twice. Nor "gravado" because the task changed: another session's `andamento` changes it too.
       // It counts as written only when the re-read task has a new event of the kind this op appends, by this actor.
       const unknown = async (what: string): Promise<LedgerApplyResult> => {
-        // The answer was lost: which daemon got it is not known, so the repeat is held back as with an older one.
-        daemonKnowsKeys = false;
         const reread = await service.refresh();
         // t-530129bf: what this call wrote (its key, or the same request / progress / cancel / transfer by this actor).
         const written = cache ? repeatedWrite(cache.doc, actor, op, now()) : null;
