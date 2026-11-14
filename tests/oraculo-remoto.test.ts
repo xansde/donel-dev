@@ -280,6 +280,12 @@ describe('Oráculo na VPS — o PC em modo remoto', { timeout: 30_000 }, () => {
     for (let i = 0; i < 3; i++) expect((await runLedgerTool(service, dev, andamento)).ok).toBe(true);
     expect(tasksOnVps()[id]!.events.filter((event) => event.kind === 'comentada')).toHaveLength(1);
     expect(posts.filter((op) => op === 'andamento')).toHaveLength(1);
+    // Not a repeat when something changed since: a progress that goes A → B → A records all three.
+    cut = 'nada';
+    expect(await runLedgerTool(service, dev, tool('tarefa_andamento', { id, estado: 'travada', precisa: 'acesso ao banco' }))).toMatchObject({ ok: true });
+    expect(JSON.parse((await runLedgerTool(service, dev, andamento)).text)).not.toHaveProperty('jaGravada');
+    expect(tasksOnVps()[id]!.events.filter((event) => event.kind === 'comentada')).toHaveLength(3);
+    cut = 'resposta';
 
     const transferir = tool('tarefa_transferir', { id, para: 'place:rev', motivo: 'o Revisor fecha' });
     for (let i = 0; i < 2; i++) expect(await runLedgerTool(service, lider, transferir)).toMatchObject({ ok: true });
@@ -290,13 +296,20 @@ describe('Oráculo na VPS — o PC em modo remoto', { timeout: 30_000 }, () => {
     for (let i = 0; i < 2; i++) expect(await runLedgerTool(service, lider, cancelar)).toMatchObject({ ok: true, text: expect.stringMatching(new RegExp(id)) });
     expect(tasksOnVps()[id]!.events.filter((event) => event.kind === 'rejeitada')).toHaveLength(1);
     expect(posts.filter((op) => op === 'cancelar')).toHaveLength(1);
+    // The same request for another owner, or again after the cancel, is a new task.
+    cut = 'nada';
+    const forRev = await runLedgerTool(service, lider, tool('tarefa_criar', { pedido: 'conserta o Oráculo', criterio: 'grava uma vez', prazo: '2026-11-15', dono: 'place:rev', risco: 'baixo' }));
+    const reborn = await runLedgerTool(service, lider, criar);
+    expect([idOf(forRev.text), idOf(reborn.text)]).not.toContain(id);
+    expect(idOf(forRev.text)).not.toBe(idOf(reborn.text));
+    expect(Object.keys(tasksOnVps())).toHaveLength(4);
 
     // On the VPS itself (the gate, or a PC whose view is behind): the call's key answers the task it already wrote.
     const outra = { op: 'criar' as const, projectPath: '/p', request: 'outra coisa', doneWhen: 'x', due: '2026-11-15', ownerPlaceId: 'place:dev', risk: 'baixo' as const, requestId: 'k-teste-0001' };
     const a = await remote.ledger.apply(LIDER, outra);
     const b = await remote.ledger.apply(LIDER, outra);
     expect(b).toMatchObject({ ok: true, repeated: true, task: { id: a.ok ? a.task.id : '' } });
-    expect(Object.keys(tasksOnVps())).toHaveLength(3);
+    expect(Object.keys(tasksOnVps())).toHaveLength(5);
   });
 
   it('a prova entregue pelo PC vai à VPS e fica também na cópia do PC', async () => {

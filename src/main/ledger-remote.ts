@@ -208,6 +208,9 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
   let readAgain: Promise<boolean> | null = null;
   /** t-530129bf — keys of calls whose answer was lost and the re-read did not settle (key → when). */
   const unsure = new Map<string, number>();
+  /** Tasks a light answer put in the view, with the count of reads started before (`reads`). */
+  const patched = new Map<string, { task: LedgerTask; readsBefore: number }>();
+  let reads = 0;
 
   // Before the daemon answers: the mirror on disk, read-only.
   const mirror = io.readFileText(ledgerFile);
@@ -229,7 +232,21 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
     if (snapshot) deps.onChange?.(snapshot);
   }
 
-  function accept(snapshot: LedgerSnapshot): void {
+  /**
+   * `startedAt`: the count of reads when this read started. A read started before a light answer may end after it
+   * with the ledger as it was: the patched task stays on top until a read started after the patch brings it.
+   */
+  function accept(snapshot: LedgerSnapshot, startedAt = reads): void {
+    let doc = snapshot.doc;
+    for (const [id, entry] of patched) {
+      if (entry.readsBefore < startedAt) {
+        patched.delete(id);
+        continue;
+      }
+      const there = doc.tasks[id];
+      if (!there || there.events.length < entry.task.events.length) doc = { ...doc, tasks: { ...doc.tasks, [id]: entry.task } };
+    }
+    snapshot = { doc, readOnly: snapshot.readOnly };
     cache = snapshot;
     online = true;
     writeRemoteMirror(io, ledgerFile, snapshot.doc, deps.marker);
@@ -240,19 +257,21 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
   /** A light answer's task goes into the view at once (tarefa_ver finds it); the whole ledger comes with the re-read. */
   function patch(task: LedgerTask): void {
     if (!cache) return;
+    patched.set(task.id, { task, readsBefore: reads });
     cache = { doc: { ...cache.doc, tasks: { ...cache.doc.tasks, [task.id]: task } }, readOnly: cache.readOnly };
     online = true;
     deps.onChange?.({ doc: cache.doc, readOnly: cache.readOnly });
   }
 
   async function readLedger(): Promise<boolean> {
+    const startedAt = ++reads;
     const response = await call('GET', '/v1/ledger');
     const snapshot = response && response.status === 200 ? snapshotOf(await readJson(response)) : null;
     if (!snapshot) {
       setOnline(false);
       return false;
     }
-    accept(snapshot);
+    accept(snapshot, startedAt);
     return true;
   }
 
@@ -337,7 +356,9 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
       let response: OracleResponseLike;
       try {
         // `leve`: a daemon that knows it answers the task without the whole ledger (t-530129bf); an older one ignores it.
-        response = await http('POST', '/v1/apply', JSON.stringify({ actor, op, leve: true }));
+        // A replacement changes two tasks; the light answer brings one: that op still gets the whole ledger back.
+        const askLight = !(op.op === 'criar' && op.replaces);
+        response = await http('POST', '/v1/apply', JSON.stringify({ actor, op, ...(askLight ? { leve: true } : {}) }));
       } catch (error) {
         setOnline(false);
         return neverConnected(error) ? { ok: false, reason: UNREACHABLE } : unknown('O Oráculo da VPS não respondeu a tempo');

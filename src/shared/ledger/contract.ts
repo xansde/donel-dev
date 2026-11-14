@@ -615,36 +615,64 @@ const REPEATABLE_OPS: ReadonlySet<LedgerOp['op']> = new Set(['criar', 'andamento
 
 /**
  * The task a repeat of `op` by `actor` already wrote, within `REPEAT_WRITE_WINDOW_MS` of `now`; `null` = not written.
- * An event recorded with the call's key (`requestId`) matches by the key. An event without a key (written by a daemon
- * older than the key, which drops it) matches by what the call wrote: the same request and criterion on the same
- * board, the same progress text, the same cancel reason, the same transfer to the same place.
+ * A repeat is the same call with NOTHING changed since: the written event is the latest of its sort and the task is
+ * still as it left it (the new task not cancelled, the progress line the actor's last one, the task still cancelled,
+ * still with the place it was passed to). A progress that goes A → B → A, a task re-created after a cancel, or a
+ * transfer made again after the task came back are new writes.
+ * The event matches by the call's key (`requestId`); an event without a key (written by a daemon older than the key,
+ * which drops it) matches by what the call wrote: the same request, criterion, due date, owner and replaced task on
+ * the same board, the same progress text, the same cancel reason, the same transfer to the same place.
  */
 export function repeatedWrite(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, now: number): LedgerTask | null {
   if (!REPEATABLE_OPS.has(op.op)) return null;
   const key = 'requestId' in op && isRequestId(op.requestId) ? op.requestId : undefined;
-  const recent = (event: LedgerEvent | undefined): event is LedgerEvent => event !== undefined && sameActor(event.by, actor) && Math.abs(now - event.at) <= REPEAT_WRITE_WINDOW_MS;
   const matches = (event: LedgerEvent | undefined, same: (event: LedgerEvent) => boolean): boolean =>
-    recent(event) && (event.requestId !== undefined ? key !== undefined && event.requestId === key : same(event));
+    event !== undefined &&
+    sameActor(event.by, actor) &&
+    Math.abs(now - event.at) <= REPEAT_WRITE_WINDOW_MS &&
+    (event.requestId !== undefined ? key !== undefined && event.requestId === key : same(event));
+  const latest = (task: LedgerTask, sort: (event: LedgerEvent) => boolean): LedgerEvent | undefined => [...task.events].reverse().find(sort);
+  const isTransfer = (event: LedgerEvent): boolean => event.kind === 'criada' && (event.text ?? '').startsWith(`${MARK_OPEN}transferida de `);
   if (op.op === 'criar') {
+    const replaces = op.replaces?.trim();
     for (const task of Object.values(doc.tasks)) {
       const birth = task.events[0];
-      if (birth?.kind !== 'criada' || task.slack) continue;
-      if (matches(birth, () => task.projectPath === op.projectPath && task.request === op.request && task.doneWhen === op.doneWhen && task.due === op.due)) return task;
+      if (birth?.kind !== 'criada' || task.slack || isCancelled(task)) continue;
+      const born = birth.text ?? '';
+      const owner = latest(task, isTransfer) ? undefined : task.ownerPlaceId;
+      if (
+        matches(
+          birth,
+          () =>
+            task.projectPath === op.projectPath &&
+            task.request === op.request &&
+            task.doneWhen === op.doneWhen &&
+            task.due === op.due &&
+            owner === op.ownerPlaceId &&
+            (replaces ? born.includes(`${MARK_OPEN}substitui ${replaces}⟧`) : !born.includes(`${MARK_OPEN}substitui `)),
+        )
+      )
+        return task;
     }
     return null;
   }
   if (!('id' in op)) return null;
   const task = doc.tasks[op.id];
   if (!task) return null;
-  const same: (event: LedgerEvent) => boolean =
-    op.op === 'andamento'
-      ? (event) => event.kind === 'comentada' && event.text === progressText(op.progress)
-      : op.op === 'cancelar'
-        ? (event) => event.kind === 'rejeitada' && event.text === withMark('cancelada', op.reason.trim())
-        : op.op === 'transferir'
-          ? (event) => event.kind === 'criada' && task.ownerPlaceId === op.to.trim() && (event.text ?? '').startsWith(`${MARK_OPEN}transferida de `) && (event.text ?? '').includes(` para ${op.to.trim()}⟧`)
-          : () => false;
-  return task.events.some((event) => matches(event, same)) ? task : null;
+  if (op.op === 'andamento') {
+    const last = latest(task, (event) => event.kind === 'comentada' && sameActor(event.by, actor));
+    return matches(last, (event) => event.text === progressText(op.progress)) ? task : null;
+  }
+  if (op.op === 'cancelar') {
+    if (!isCancelled(task)) return null;
+    return matches(latest(task, (event) => event.kind === 'rejeitada'), (event) => event.text === withMark('cancelada', op.reason.trim())) ? task : null;
+  }
+  if (op.op === 'transferir') {
+    const to = op.to.trim();
+    if (task.ownerPlaceId !== to) return null;
+    return matches(latest(task, isTransfer), (event) => (event.text ?? '').includes(` para ${to}⟧`)) ? task : null;
+  }
+  return null;
 }
 
 function withTask(doc: LedgerDoc, task: LedgerTask): LedgerDoc {

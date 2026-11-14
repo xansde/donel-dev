@@ -704,11 +704,13 @@ export async function runLedgerBatch(call: Extract<LedgerToolCall, { tool: 'tare
 }
 
 /**
- * t-530129bf — the key of one call (`requestId` of the op): the same caller making the same call again gets the same
- * key, so the writer answers the task it already wrote (`repeatedWrite`) instead of writing it twice.
+ * t-530129bf — the op with the key of its call (`requestId`): the same caller asking for the same write again gets the
+ * same key, so the writer answers the task it already wrote (`repeatedWrite`) instead of writing it twice. The key is
+ * made from the op, not from the call's words: a repeat that adds the id the first one found, or says "seu" for the
+ * owner it meant, is still the same write.
  */
-export function ledgerCallKey(caller: LedgerCaller, call: LedgerToolCall, taskId?: string): string {
-  return `k${createHash('sha256').update(JSON.stringify([caller.placeId, caller.projectPath, taskId ?? null, call])).digest('hex').slice(0, 40)}`;
+export function withCallKey<T extends LedgerOp>(actor: LedgerActor, op: T): T {
+  return { ...op, requestId: `k${createHash('sha256').update(JSON.stringify([actor, op])).digest('hex').slice(0, 40)}` };
 }
 
 /** What a repeated call answers (the session stops repeating). */
@@ -727,7 +729,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
     case 'tarefa_criar': {
       const owner = call.dono === undefined || call.dono === 'seu' ? caller.placeId : call.dono;
       if (!caller.boardPlaceIds.includes(owner)) return { ok: false, text: `"${owner}" não é um lugar deste quadro (veja sessao_listar).` };
-      const result = await service.apply(actor, {
+      const result = await service.apply(actor, withCallKey(actor, {
         op: 'criar',
         projectPath: caller.projectPath,
         request: call.pedido,
@@ -740,8 +742,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         // Who asked: what the creator said, or the owner when the task came from his phone's "Pedir".
         ...(call.quemPediu ? { requestedBy: call.quemPediu } : call.pedidoDoDono ? { requestedBy: ASKED_BY_OWNER } : {}),
         ...(call.frente ? { frente: call.frente } : {}),
-        requestId: ledgerCallKey(caller, call),
-      });
+      }));
       if (!result.ok || result.task.risk === call.risco || result.repeated) return answer(result, 'criada');
       return { ok: true, text: JSON.stringify({ criada: true, id: result.task.id, estado: result.task.state, risco: result.task.risk, aviso: 'Ela substitui uma tarefa de risco alto e herda o risco: a entrega espera o dono.' }) };
     }
@@ -771,13 +772,13 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       const task = doc.tasks[call.id];
       if (!task) return { ok: false, text: `Não existe tarefa "${call.id}" (veja tarefa_listar).` };
       if (task.projectPath !== caller.projectPath) return { ok: false, text: 'A tarefa é de outro quadro; só se mexe em tarefa do próprio quadro.' };
-      if (call.tool === 'tarefa_cancelar') return answer(await service.apply(actor, { op: 'cancelar', id: task.id, reason: call.motivo, requestId: ledgerCallKey(caller, call) }), 'cancelada');
+      if (call.tool === 'tarefa_cancelar') return answer(await service.apply(actor, withCallKey(actor, { op: 'cancelar', id: task.id, reason: call.motivo })), 'cancelada');
       const to = call.para === 'seu' ? caller.placeId : call.para;
       // The Líder único has no place, but owns tasks too (t-52b31719): "lider" is a destination of every board.
       if (to !== LEADER_OF_ALL && !caller.boardPlaceIds.includes(to)) return { ok: false, text: `"${to}" não é um lugar deste quadro que você alcança (veja sessao_listar), nem "lider" (o Líder único).` };
       const gone = ownerGone(caller, task, service.now());
       const risk = riskAfterTransfer(task);
-      const result = await service.apply(actor, { op: 'transferir', id: task.id, to, reason: gone && !call.motivo.includes(gone) ? `${call.motivo} (${gone})` : call.motivo, ...(gone ? { ownerGone: true } : {}), ...(risk !== task.risk ? { risk } : {}), requestId: ledgerCallKey(caller, call) });
+      const result = await service.apply(actor, withCallKey(actor, { op: 'transferir', id: task.id, to, reason: gone && !call.motivo.includes(gone) ? `${call.motivo} (${gone})` : call.motivo, ...(gone ? { ownerGone: true } : {}), ...(risk !== task.risk ? { risk } : {}) }));
       if (!result.ok) return { ok: false, text: result.reason };
       if (result.repeated) return answer(result, 'transferida');
       return {
@@ -903,7 +904,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         ...(call.prova ? { prova: call.prova } : {}),
         ...(call.proximo ? { proximo: call.proximo } : {}),
       };
-      const result = await service.apply(actor, { op: 'andamento', id: task.id, progress, requestId: ledgerCallKey(caller, call, task.id) });
+      const result = await service.apply(actor, withCallKey(actor, { op: 'andamento', id: task.id, progress }));
       if (!result.ok) return { ok: false, text: `Nada registrado. ${result.reason}` };
       if (result.repeated) return { ok: true, text: JSON.stringify({ registrado: true, id: result.task.id, estado: call.estado, jaGravada: REPEATED_NOTE }) };
       return {
