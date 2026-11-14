@@ -1,8 +1,40 @@
 # OpenRig — registro de absorção
 
-Último commit absorvido: c4b933e9c4cad5fecc4197cf4c47f6270ef85f48
+Último commit absorvido: b958a75eddeb6c9d9b3880e5164963f40264127c
 
 Referência de design do Mindscape (github.com/mvschwarz/openrig). Procedimento na skill `absorver-openrig`. Cada rodada lista o que virou PR, o que ficou adiado, o que espera o dono e o que foi descartado.
+
+## 2026-11-14 — c4b933e..b958a75
+
+49 commits do OpenRig; versões novas: v0.7.14 e claude-directory-v0.1.2.
+
+### Vale → PR
+
+- **`sessao_enviar` a lugar fechado diz como retomá-lo** (plano: item 13, conexões entre sessões com significado; mensagem a lugar adormecido, passo antes do "acorda o lugar antes de entregar"). Origem: OpenRig `835526b`, `f809178`, `0a6d575`, `eae973d`, `3b32f76`, `dd02787`. PR: https://github.com/xansde/donel-dev/pull/427. Teste primeiro: não houve; a mudança altera só o texto da recusa do `sessao_enviar`, e a regra "Testes enxutos" do projeto não dá teste a texto (dito no PR). Verify verde pela fila, com `origin/staging` mesclada (115 arquivos, 1464 testes, build ok).
+
+### Vale → adiado
+
+Nenhum (teto de 3 PRs não foi atingido).
+
+### Vale → pendente para o dono
+
+Nenhum novo. Seguem abertas as perguntas das seções anteriores (resposta do "esperando você" em nome do dono, desde 08/11; pausa até o reset do limite de uso, desde 12/11).
+
+### Descartado
+
+- Entrega de mensagem e rascunho do operador: o Donel já tem igual ou melhor. O `sendDriver` (`src/renderer/src/chat/sendDriver.ts`, `runEffects` e `sessionWriting`) segura as teclas do dono enquanto a sessão escreve e não manda Enter quando há tecla dele depois do Enter. A leitura da caixa e a escrita são síncronas, sem await no meio. O `sendMachine` recusa caixa maior que o nosso texto (`looksLikeOurs`/`stillInBox`). O envelope do Donel não leva dica de resposta para endereço humano.
+- Fila: park/close com resumo e evidência: fila/inbox não pedida. O ledger do Donel já exige prova para entregar (`src/shared/ledger/contract.ts`, `applyLedgerOp`). O wake ladder é desempenho de daemon/SQLite.
+- Watchdog de contexto e identidade do remetente: o Donel já tem. Quem chama o MCP é o lugar resolvido pelo quadro, nunca um argumento (`agentBridge`/`ledger-store`). A rotina "sessão parada" já trata sem sinal como achado, sem descartar o desconhecido (`src/main/rotinas/`). Posse de tmux e contagem de cerimônia são mecânica de daemon.
+- MCP: escolha de assistente, host e ensino: não se aplica. O MCP donel resolve o lugar pela aba e não tem vários assistentes por pessoa nem hosts registrados. O resto é texto de ensino das skills do OpenRig.
+- Credenciais de runner e política Codex por lugar: credencial de runner exigiria mexer em `src/main/accounts/`. O resto é política e hook do Codex no daemon do OpenRig.
+- Daemon: inventário, snapshot e desempenho: daemon, tmux e ps do OpenRig, mecânica interna sem ideia nova para o Donel.
+- Workflows: filtro de instâncias por escopo: rotas de workflow do daemon e work-install, refactor interno sem ideia nova para o Mindscape.
+- Slack do OpenRig: integração Slack própria do OpenRig, fora do plano. O Donel fala com o Slack por Composio/Theo, fora do app.
+- Descoberta de skills (frontmatter CRLF): o Donel já tem. `parseFrontmatter` em `src/shared/chat/commandCatalog.ts` divide as linhas com `/\r?\n/` e tira o BOM, então skill com CRLF já é lida.
+- TUI: início só do daemon: TUI e daemon estão fora de escopo.
+- Relatório de portabilidade `--strict`: script interno do repositório OpenRig (CI/packaging).
+- Docs, skills e plugins: docs e skills do próprio OpenRig (rigs, instalador, Copilot CLI, versão mínima do plugin), sem comportamento novo para levar.
+- Testes de CI em runner carregado: CI do próprio OpenRig.
 
 ## 2026-11-13 — f06edfa..c4b933e
 
