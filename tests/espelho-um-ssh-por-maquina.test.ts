@@ -158,7 +158,7 @@ describe('espelho do transcript: um ssh por máquina', () => {
     expect(spawned.length).toBe(1 + MIRROR_MAX_FAILURES - 1);
     expect(reasons).toHaveLength(1);
     expect(reasons[0]).toMatch(/^root@hom: 3 tentativas seguidas sem funcionar; a última: não subiu em 0 s/);
-    // Back to one tail per tab, each from the byte its mirror has; and no shared ssh again for that place.
+    // Back to one tail per tab, each from the byte its mirror has; no shared ssh for that place until the later try.
     expect(tails.map((tail) => tail.command.split(' ').slice(0, 3).join(' ')).sort()).toEqual(['tail -c +1', 'tail -c +9']);
     tails.find((tail) => tail.command.startsWith('tail -c +9'))!.child.stdout.write('{"a":2}\n');
     await tick();
@@ -166,6 +166,55 @@ describe('espelho do transcript: um ssh por máquina', () => {
     registry.attach('pty-c', 'root@hom', SID_C, 'seazone/x');
     expect(spawned.length).toBe(MIRROR_MAX_FAILURES);
     expect(tails).toHaveLength(3);
+    registry.stopAll();
+  });
+
+  // t-f0fb2f2e (15/11) — a Homologações sob carga 50 não subiu o espelho em 20 s três vezes seguidas, e o app ficou com um
+  // tail por aba (~60 ssh a mais) até reiniciar. Agora o lugar é perguntado de novo depois de um tempo.
+  it('depois de desistir, o app tenta o espelho de novo mais tarde; subiu, as abas voltam a ele do byte certo', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'espelho-'));
+    const { spawned, spawn } = fakeSpawner();
+    const { tails, spawnTail } = fakeTails();
+    const reasons: string[] = [];
+    const backs: string[] = [];
+    const registry = new RemoteSessionRegistry(dir, {
+      spawnMirror: spawn,
+      spawnTail,
+      timing: { startupTimeoutMs: 100, backoffMs: [0, 0, 0], retryAfterMs: 300 },
+      onMirrorFallback: (_target, reason) => reasons.push(reason),
+      onMirrorBack: (target) => backs.push(target),
+    });
+    const a = registry.attach('pty-a', 'root@hom', SID_A, 'seazone/x');
+    await tick();
+    spawned[0]!.child.emit('close', 1);
+    await tick(300); // the 2nd and 3rd tries never come up: the place goes to one tail per tab
+    expect(reasons).toHaveLength(1);
+    expect(spawned).toHaveLength(MIRROR_MAX_FAILURES);
+    expect(tails).toHaveLength(1);
+    tails[0]!.child.stdout.write('{"a":1}\n');
+    // The later try: one ssh with nothing on it. It fails, the tails stay, and it is tried again later.
+    await tick(250);
+    expect(spawned).toHaveLength(MIRROR_MAX_FAILURES + 1);
+    expect(spawned[MIRROR_MAX_FAILURES]!.commands[0]).toMatch(/^command -v python3 /);
+    expect(spawned[MIRROR_MAX_FAILURES]!.commands).toHaveLength(1);
+    spawned[MIRROR_MAX_FAILURES]!.child.emit('close', 255);
+    await tick(20);
+    expect(tails[0]!.child.killed).toBe(false);
+    expect(backs).toEqual([]);
+    await tick(300);
+    const trial = spawned[MIRROR_MAX_FAILURES + 1]!;
+    up(trial.child);
+    await tick(60);
+    expect(trial.child.killed).toBe(true);
+    expect(backs).toEqual(['root@hom']);
+    // The tab left its tail and the shared ssh asks for its transcript from the byte the mirror already has.
+    expect(tails[0]!.child.killed).toBe(true);
+    const hub = spawned[MIRROR_MAX_FAILURES + 2]!;
+    expect(hub.commands.filter((line) => line.startsWith('A ')).map((line) => line.split(' ')[2])).toEqual(['8']);
+    up(hub.child);
+    hub.child.stdout.write(encodeMirrorFrame(hub.commands.find((line) => line.startsWith('A '))!.split(' ')[1]!, Buffer.from('{"a":2}\n')));
+    await tick();
+    expect(readFileSync(a, 'utf8')).toBe('{"a":1}\n{"a":2}\n');
     registry.stopAll();
   });
 

@@ -20,7 +20,7 @@ import { isBypassLaunch } from '../shared/launchPermission';
 import type { RemoteAliveSession } from '../shared';
 import type { SessionWhereLives } from '../shared/sessions';
 import { isSafeWorktreeName } from '../shared/sessionWorktree';
-import { DEFAULT_MIRROR_TIMING, MirrorHub, sshMirrorSpawner, type MirrorHubTiming, type SpawnMirror } from './remote-mirror';
+import { DEFAULT_MIRROR_TIMING, MirrorHub, probeMirror, sshMirrorSpawner, type MirrorHubTiming, type SpawnMirror } from './remote-mirror';
 
 export const REMOTE_TMUX_SOCKET = 'donel';
 export const REMOTE_SESSIONS_DIR = '.donel/s';
@@ -223,7 +223,9 @@ export function buildRemoteSetupScript(input: RemoteSetupInput): string {
     'mkdir -p "$S" && chmod 700 "$HOME/.donel" "$HOME/.donel/s" "$S"',
     `printf '%s' ${shQuote(b64(TMUX_CONF))} | base64 -d > "$HOME/.donel/tmux.conf"`,
     ...files.map((file) => `printf '%s' ${shQuote(b64(file.content))} | base64 -d > "$S"/${shQuote(file.name)} && chmod 600 "$S"/${shQuote(file.name)}`),
-    '(cd "$D" && pwd) > "$S/dir"',
+    // `pwd -P`: the CLI names the transcript folder after its physical cwd (a symlinked project folder, as
+    // `~/seazone/Homologação` → `/opt/homologacao/Homologacao`, is never the name it uses; t-f0fb2f2e).
+    '(cd "$D" && pwd -P) > "$S/dir"',
     // Oráculo na VPS (fatia 4): with the daemon's MCP gate there, the session calls it instead of its tunnel; the gate
     // passes the call on while the PC is on and answers who the session is and the tasks when it is off.
     'if [ -f "$S/mcp.json" ] && [ -r "$HOME/.donel/oraculo/portao" ]; then P="$(tr -dc 0-9 < "$HOME/.donel/oraculo/portao")"; if [ -n "$P" ]; then sed -i "s#http://127.0.0.1:[0-9]*/mcp#http://127.0.0.1:$P/s/$SID/mcp#" "$S/mcp.json"; fi; fi',
@@ -250,7 +252,8 @@ function worktreeLines(worktree: string): string[] {
     '  fi',
     '  D="$W"',
     'elif [ -z "$WT" ] && [ -d "$D/.claude/worktrees" ]; then',
-    '  SLUG=$(cd "$D" && pwd | sed "s/[^a-zA-Z0-9]/-/g")',
+    '  D=$(cd "$D" && pwd -P)',
+    '  SLUG=$(printf %s "$D" | sed "s/[^a-zA-Z0-9]/-/g")',
     '  if [ ! -f "$HOME/.claude/projects/$SLUG/$SID.jsonl" ]; then',
     '    for W in "$D"/.claude/worktrees/*/; do',
     '      W="${W%/}"; [ -d "$W" ] || continue',
@@ -465,13 +468,17 @@ export class RemoteSessionRegistry {
   private readonly ending = new Map<string, Promise<void>>();
   /** One shared mirror ssh per place (t-9ab0ce2e). */
   private readonly hubs = new Map<string, MirrorHub>();
-  /** Places without python3: one tail per transcript there. */
+  /** Places whose shared mirror gave up: one tail per transcript there (until a later try brings the mirror back). */
   private readonly noMirrorHub = new Set<string>();
+  /** The next try of the shared mirror of a place that gave up, by ssh target. */
+  private readonly mirrorRetries = new Map<string, ReturnType<typeof setTimeout>>();
+  private stopped = false;
   private nextKey = 0;
   private readonly spawnMirror: SpawnMirror;
   private readonly timing: MirrorHubTiming;
   private readonly spawnTail: (sshTarget: string, command: string) => ChildProcess;
   private readonly onMirrorFallback: (sshTarget: string, reason: string) => void;
+  private readonly onMirrorBack: (sshTarget: string) => void;
 
   constructor(
     private readonly mirrorRoot: string,
@@ -482,6 +489,8 @@ export class RemoteSessionRegistry {
       readonly spawnTail?: (sshTarget: string, command: string) => ChildProcess;
       /** A place's shared mirror gave up: its transcripts went back to one tail per tab (the main logs why). */
       readonly onMirrorFallback?: (sshTarget: string, reason: string) => void;
+      /** A later try found the place's shared mirror working: its tabs went back to it (the main logs it). */
+      readonly onMirrorBack?: (sshTarget: string) => void;
     } = {},
   ) {
     this.spawnMirror = options.spawnMirror ?? sshMirrorSpawner(SSH_OPTIONS);
@@ -489,6 +498,7 @@ export class RemoteSessionRegistry {
     this.spawnTail =
       options.spawnTail ?? ((sshTarget, command) => spawn('ssh', [...SSH_OPTIONS, '-T', '--', sshTarget, command], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }));
     this.onMirrorFallback = options.onMirrorFallback ?? (() => undefined);
+    this.onMirrorBack = options.onMirrorBack ?? (() => undefined);
   }
 
   has(ptyId: string): boolean {
@@ -573,6 +583,9 @@ export class RemoteSessionRegistry {
   }
 
   stopAll(): void {
+    this.stopped = true;
+    for (const timer of this.mirrorRetries.values()) clearTimeout(timer);
+    this.mirrorRetries.clear();
     for (const ptyId of [...this.live.keys()]) this.onPtyExit(ptyId);
   }
 
@@ -603,7 +616,7 @@ export class RemoteSessionRegistry {
     let hub = this.hubs.get(entry.sshTarget);
     if (!hub) {
       const target = entry.sshTarget;
-      hub = new MirrorHub(target, this.spawnMirror, this.timing, (_follows, reason) => this.fallBackToTails(target, reason));
+      hub = new MirrorHub(target, this.spawnMirror, this.timing, (_follows, reason, permanent) => this.fallBackToTails(target, reason, permanent));
       this.hubs.set(target, hub);
     }
     const pump: MirrorPump = { kind: 'hub', key: String(++this.nextKey), hub, out, bytes: fromByte };
@@ -621,12 +634,42 @@ export class RemoteSessionRegistry {
     return mirror;
   }
 
-  /** A place without python3: each of its transcripts gets its own `ssh … tail -F`, as before the shared ssh. */
-  private fallBackToTails(sshTarget: string, reason: string): void {
+  /**
+   * The shared mirror of a place gave up: each of its transcripts gets its own `ssh … tail -F`, as before the shared
+   * ssh. Unless the place has no python3, the mirror is asked again later (`retryAfterMs`).
+   */
+  private fallBackToTails(sshTarget: string, reason: string, permanent: boolean): void {
     this.noMirrorHub.add(sshTarget);
     this.onMirrorFallback(sshTarget, reason);
     this.hubs.delete(sshTarget);
     for (const entry of this.live.values()) if (entry.sshTarget === sshTarget && entry.pump?.kind === 'hub') this.restartPump(entry);
+    if (!permanent) this.scheduleMirrorRetry(sshTarget);
+  }
+
+  /**
+   * One try of the place's shared mirror, with nothing on it: the tails keep the chat going meanwhile, so a try that
+   * fails costs one ssh and no tab loses a byte. Up → every tail of the place moves back to the shared ssh, from the
+   * byte its mirror has. Not up → the place is asked again after the same wait.
+   */
+  private scheduleMirrorRetry(sshTarget: string): void {
+    if (this.stopped || this.mirrorRetries.has(sshTarget)) return;
+    const timer = setTimeout(() => {
+      if (![...this.live.values()].some((entry) => entry.sshTarget === sshTarget)) {
+        // No tab left there: the next one starts the shared mirror as any place would.
+        this.mirrorRetries.delete(sshTarget);
+        this.noMirrorHub.delete(sshTarget);
+        return;
+      }
+      void probeMirror(this.spawnMirror, sshTarget, this.timing.startupTimeoutMs).then((up) => {
+        this.mirrorRetries.delete(sshTarget);
+        if (this.stopped || !this.noMirrorHub.has(sshTarget)) return;
+        if (!up) return this.scheduleMirrorRetry(sshTarget);
+        this.noMirrorHub.delete(sshTarget);
+        this.onMirrorBack(sshTarget);
+        for (const entry of this.live.values()) if (entry.sshTarget === sshTarget && entry.pump?.kind === 'tail') this.restartPump(entry);
+      });
+    }, this.timing.retryAfterMs);
+    this.mirrorRetries.set(sshTarget, timer);
   }
 
   private startTail(entry: LiveRemote, remoteTranscript: string, out: WriteStream, fromByte: number): MirrorPump {
@@ -668,7 +711,8 @@ export class RemoteSessionRegistry {
 export function buildHasTranscriptScript(homeRelativeDir: string, sid: string): string {
   assertSessionId(sid);
   return [
-    `D=$(cd "$HOME"/${shQuote(homeRelativeDir)} 2>/dev/null && pwd) || { echo DONEL_HASNT; exit 0; }`,
+    // Physical path: the CLI's folder slug comes from its real cwd, never from a symlink on the way (t-f0fb2f2e).
+    `D=$(cd "$HOME"/${shQuote(homeRelativeDir)} 2>/dev/null && pwd -P) || { echo DONEL_HASNT; exit 0; }`,
     // The project folder, then the worktrees of the project's sessions (t-58b67066).
     'for F in "$D" "$D"/.claude/worktrees/*/; do',
     '  F="${F%/}"; [ -d "$F" ] || continue',

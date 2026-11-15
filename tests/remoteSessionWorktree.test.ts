@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -97,6 +97,35 @@ describe.skipIf(process.platform === 'win32')('sessão aberta na VPS numa worktr
     const env = { ...process.env, HOME: home, PATH: `${join(home, 'bin')}:${process.env.PATH ?? ''}` };
     expect(setup(env, sidA, 'dev-a-1112-1400', 'seazone/solta')).toEqual({ kind: 'new', remoteDir: plain });
     expect(readFileSync(join(home, '.donel', 's', sidA, 'dir'), 'utf8').trim()).toBe(plain);
+  });
+
+  // t-f0fb2f2e (15/11) — na Homologações, ~/seazone/Homologação é symlink para /opt/homologacao/Homologacao. O CLI
+  // grava a conversa pelo caminho físico; o retomar procurava pelo lógico e dizia "a conversa não está em lugar nenhum".
+  it('pasta do projeto atrás de symlink: a busca acha a conversa pelo caminho físico, e o retomar volta à worktree dela', () => {
+    const { env, repo } = sandbox();
+    const real = join(home, 'opt', 'proj');
+    mkdirSync(join(home, 'opt'));
+    execFileSync('mv', [repo, real]);
+    symlinkSync(real, repo);
+    const slugOf = (dir: string): string => dir.replace(/[^a-zA-Z0-9]/g, '-');
+    const transcript = (dir: string, sid: string): void => {
+      mkdirSync(join(home, '.claude', 'projects', slugOf(dir)), { recursive: true });
+      writeFileSync(join(home, '.claude', 'projects', slugOf(dir), `${sid}.jsonl`), '{}\n');
+    };
+    const has = (sid: string): string =>
+      parseHasTranscriptOutput(execFileSync('bash', ['-s'], { input: buildHasTranscriptScript('seazone/proj', sid), env, encoding: 'utf8' }));
+    // Conversa na pasta do projeto, gravada como o CLI grava: pelo caminho físico.
+    transcript(real, sidA);
+    expect(has(sidA)).toBe('has');
+    expect(setup(env, sidA)).toEqual({ kind: 'new', remoteDir: real });
+    // Conversa numa worktree do projeto: a busca acha e o retomar volta para ela.
+    const wt = join(real, '.claude', 'worktrees', 'dev-b-1115-1300');
+    mkdirSync(wt, { recursive: true });
+    transcript(wt, sidB);
+    expect(has(sidB)).toBe('has');
+    expect(setup(env, sidB)).toEqual({ kind: 'new', remoteDir: wt });
+    expect(runClaudeSh(env, sidB)).toBe(wt);
+    expect(has('cccccccc-3333-4333-8333-333333333333')).toBe('hasnt');
   });
 
   it('o nome que vira pasta e branch só sai do app, nunca do texto livre', () => {

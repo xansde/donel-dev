@@ -2096,6 +2096,8 @@ function registerPtyIpcHandlers(): void {
   remoteSessions = new RemoteSessionRegistry(join(app.getPath('userData'), 'remote-transcripts'), {
     // t-9ab0ce2e — a place whose shared transcript mirror did not work went back to one tail per tab: say why.
     onMirrorFallback: (sshTarget, reason) => logMainEvent('remote-mirror-fallback', { sshTarget, reason }),
+    // t-f0fb2f2e — a later try found that place's shared mirror working again: its tabs left their own tails.
+    onMirrorBack: (sshTarget) => logMainEvent('remote-mirror-back', { sshTarget }),
   });
   ipcMain.handle(PTY_CHANNELS.relinkTools, (_event, ptyId: unknown): RelinkToolsResult => relinkSessionTools(ptyId));
   ipcMain.handle(PTY_CHANNELS.remoteAlive, async (): Promise<RemoteAliveSession[]> => {
