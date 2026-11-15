@@ -98,7 +98,7 @@ function progressRecords(t: Team): { owner: string; progress: NonNullable<Return
   }));
 }
 
-async function team(options: { readonly liderDoUnico?: boolean; readonly segundoLider?: boolean } = {}): Promise<Team> {
+async function team(options: { readonly liderDoUnico?: boolean; readonly segundoLider?: boolean; readonly comLedger?: boolean } = {}): Promise<Team> {
   const dir = mkdtempSync(join(tmpdir(), 'andamento-'));
   dirs.push(dir);
   const file = join(dir, 'ledger.json');
@@ -153,6 +153,7 @@ async function team(options: { readonly liderDoUnico?: boolean; readonly segundo
       return written;
     },
     turnFailureOf: (tabId) => failures[tabId],
+    ...(options.comLedger ? { ledgerDoc: async () => service.load().doc } : {}),
   };
   const bridge = new AgentBridge(ports);
   if (options.liderDoUnico) bridge.adoptOpened('tab-lider', LEADER_OF_ALL);
@@ -447,5 +448,59 @@ describe('andamento no ledger, não no chat do Líder', () => {
     t.bridge.turnEnded('conv-dev1', 'turno no modo antigo');
     expect(t.records).toEqual([]);
     expect(t.sent).toEqual([{ tabId: 'tab-lider', text: '◆ Dev Dev 1 (place:dev1) terminou: turno no modo antigo' }]);
+  });
+});
+
+// t-e5575f78 — the app's own notices about a session ("precisa do dono", "está travada", a delivery) open with the
+// "[t-xxxx] título: objetivo" of its task, inside the 300 characters the usage collector keeps of each request. Before
+// it, 87 notices a day reached the Líderes with no task at all.
+describe('aviso do app sobre uma sessão abre com a tarefa dela', () => {
+  function taskOf(t: Team, owner: string): string {
+    const doc = parseLedgerDoc(JSON.parse(readFileSync(t.file, 'utf8')));
+    return Object.values(doc.tasks).find((task) => task.ownerPlaceId === owner)!.id;
+  }
+  async function permission(t: Team, tabId: string): Promise<string> {
+    t.states[tabId] = 'working';
+    t.bridge.attention(tabId);
+    t.states[tabId] = 'permission';
+    t.bridge.attention(tabId);
+    await settle(t);
+    return t.sent.at(-1)!.text;
+  }
+
+  it('tarefa viva da sessão; sem ela, a última aberta que chegou por "tarefa"; sem nenhuma, como antes', async () => {
+    const t = await team({ comLedger: true });
+    const parte1 = taskOf(t, 'place:dev1');
+    const parte2 = taskOf(t, 'place:dev2');
+
+    // The Dev 2 owns "Parte 2": its permission opens with that task, once.
+    const dev2 = await permission(t, 'tab-dev2');
+    expect(t.sent).toHaveLength(1);
+    expect(dev2).toBe(`◆ Dev Dev 2 (place:dev2): [${parte2}] Parte 2: teste verde\n\nDev 2 precisa do dono: há uma permissão aberta na tela dela. Leia o que ela pede e responda com sessao_permissao (ou feche com sessao_fechar e "recusarPermissao": true).`);
+    expect(dev2.slice(0, 300)).toContain(`[${parte2}] Parte 2: teste verde`);
+
+    // A failed turn too.
+    t.states['tab-dev3'] = 'waiting';
+    t.failures['tab-dev3'] = 'rate_limit';
+    t.bridge.attention('tab-dev3');
+    await settle(t);
+    expect(t.sent.at(-1)!.text).toMatch(/^◆ Dev Dev 3 \(place:dev3\): \[t-[0-9a-f]+\] Parte 3: teste verde\n\nDev 3 está travada: limite de uso/);
+
+    // The Revisor owns no task and got none: as before, no task invented.
+    expect(await permission(t, 'tab-rev')).toMatch(/^◆ Revisor Revisor \(place:rev\) precisa do dono/);
+    expect(t.sent.at(-1)!.text).not.toContain('[t-');
+
+    // The Líder hands it the Parte 1 to review by "tarefa": its next permission carries that task.
+    await handleAs(t, 'pty-tab-lider', { tool: 'sessao_enviar', para: REV, texto: 'Revise o PR da Parte 1.', tarefa: parte1 });
+    expect(await permission(t, 'tab-rev')).toMatch(new RegExp(`^◆ Revisor Revisor \\(place:rev\\): \\[${parte1}\\] Parte 1: teste verde\n\nRevisor precisa do dono`));
+
+    // A notice that names its task (a delivery) carries that one, not the sender's own.
+    await handleAs(t, 'pty-tab-dev3', { tool: 'aviso_imediato', texto: `entregou a tarefa ${parte1} para aceite.`, tarefa: parte1 });
+    await settle(t);
+    expect(t.sent.at(-1)!.text).toBe(`◆ Dev Dev 3 (place:dev3): [${parte1}] Parte 1: teste verde\n\nDev 3 entregou a tarefa ${parte1} para aceite.`);
+
+    // The task the Revisor got closes: back to no task.
+    expect(await runLedgerTool(t.service, caller(LIDER, 'lider'), call('tarefa_cancelar', { id: parte1, motivo: 'não vai mais acontecer' }))).toMatchObject({ ok: true });
+    expect(await permission(t, 'tab-rev')).toMatch(/^◆ Revisor Revisor \(place:rev\) precisa do dono/);
   });
 });

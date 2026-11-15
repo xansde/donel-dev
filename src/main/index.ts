@@ -26,7 +26,7 @@ import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { createRemoteOracleHost } from './ledger-remote-host';
 import { createSwitchableLedger, type SwitchableLedger } from './ledger-remote';
 import { LEDGER_REMOTE_CHANNELS, type LedgerRemoteResult, type LedgerRemoteState } from '../shared/ledger/remote';
-import { createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, prioritizeAsks, recordTurnEnd, runLedgerBatch, runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService } from './ledger-store';
+import { answerTaskId, createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, prioritizeAsks, recordTurnEnd, runLedgerBatch, runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService } from './ledger-store';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerPrioritized, type LedgerSnapshot, type LedgerTurnRecord, type LedgerTurnRecorded } from '../shared/ledger/channels';
 import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, MAX_PRIORITY, OWN_OPTION, type LedgerDeliveredTo, type LedgerDoc, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
 import { askedByRefusal, type LedgerToolCall } from '../shared/ledger/tools';
@@ -3981,7 +3981,10 @@ async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: 
   // delivery for acceptance, and a record of "travada" or "precisa-do-dono". Everything else stays in the ledger.
   if (appConfig.team.turnNotices === 'ledger' && resolved.caller.placeId !== LEADER_OF_ALL) {
     const urgent = urgentLedgerNotice(call, result.text);
-    if (urgent) void boardBridge.execute(ptyId, { tool: 'aviso_imediato', texto: urgent }).catch(() => null);
+    if (urgent) {
+      const tarefa = answerTaskId(result.text);
+      void boardBridge.execute(ptyId, { tool: 'aviso_imediato', texto: urgent, ...(tarefa ? { tarefa } : {}) }).catch(() => null);
+    }
   }
   // A task passed to the Líder único by hand: it hears it, as when a place that closes passes one (t-2c18d666). With
   // the notices in the ledger (08/11), the transfer is read there (tarefa_novidades), not in its chat.

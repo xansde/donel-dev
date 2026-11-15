@@ -1,0 +1,4 @@
+{
+  "title": "Avisos do app com a tarefa da sessão",
+  "text": "Quando o app avisa o Líder que uma sessão precisa de você, travou, entregou ou não começou, e quando pede a uma sessão que feche o turno antes de atualizar ou de ser fechada, o aviso agora abre com a tarefa dela: o número, o título e o objetivo. Uma sessão sem tarefa própria, como um Revisor, mostra a última tarefa aberta que mandaram a ela. Sem nenhuma, o aviso sai como antes."
+}
