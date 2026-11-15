@@ -1,0 +1,73 @@
+[
+  {
+    "server": "github",
+    "tools": [
+      { "name": "get_file_contents", "description": "Get the contents of a file or directory from a GitHub repository" },
+      { "name": "list_pull_requests", "description": "List pull requests in a GitHub repository" },
+      { "name": "create_pull_request", "description": "Create a new pull request in a GitHub repository" },
+      { "name": "create_branch", "description": "Create a new branch in a GitHub repository" },
+      { "name": "push_files", "description": "Push multiple files to a GitHub repository in a single commit" },
+      { "name": "create_or_update_file", "description": "Create or update a single file in a GitHub repository" },
+      { "name": "delete_file", "description": "Delete a file from a GitHub repository" },
+      { "name": "merge_pull_request", "description": "Merge a pull request in a GitHub repository" },
+      { "name": "create_repository", "description": "Create a new GitHub repository in your account" },
+      { "name": "add_issue_comment", "description": "Add a comment to a specific issue in a GitHub repository" },
+      { "name": "search_code", "description": "Search for code across GitHub repositories" }
+    ]
+  },
+  {
+    "server": "supabase",
+    "tools": [
+      { "name": "list_tables", "description": "Lists all tables in one or more schemas." },
+      { "name": "execute_sql", "description": "Executes raw SQL in the Postgres database." },
+      { "name": "apply_migration", "description": "Applies a migration to the database." },
+      { "name": "deploy_edge_function", "description": "Deploys an Edge Function to a Supabase project." },
+      { "name": "get_logs", "description": "Gets logs for a Supabase project by service type." }
+    ]
+  },
+  {
+    "server": "taskdex",
+    "tools": [
+      { "name": "list_tasks", "description": "List tasks of a TaskDex board" },
+      { "name": "get_task", "description": "Get one task with its history" },
+      { "name": "create_task", "description": "Create a task on a TaskDex board" },
+      { "name": "update_task", "description": "Update fields or move a task between columns" },
+      { "name": "add_comment", "description": "Comment on a task" }
+    ]
+  },
+  {
+    "server": "composio",
+    "tools": [
+      { "name": "COMPOSIO_SEARCH_TOOLS", "description": "Search Composio tools for a use case" },
+      { "name": "COMPOSIO_MULTI_EXECUTE_TOOL", "description": "Execute one or more Composio tools by slug with arguments" },
+      { "name": "COMPOSIO_REMOTE_WORKBENCH", "description": "Run Python code in a remote sandbox that can call Composio tools" }
+    ]
+  },
+  {
+    "server": "donel",
+    "tools": [
+      { "name": "quadro_ler", "description": "Lê o quadro do projeto" },
+      { "name": "quadro_aplicar", "description": "Monta o quadro ao vivo" },
+      { "name": "sessao_enviar", "description": "Envia texto a outra sessão pelas setas do quadro" },
+      { "name": "sessao_fechar", "description": "Fecha uma sessão abaixo na hierarquia" },
+      { "name": "carta_slack", "description": "Cria a carta de uma mensagem ao Slack para o dono decidir" },
+      { "name": "tarefa_criar", "description": "Cria uma tarefa no Oráculo Harrow" },
+      { "name": "tarefa_cancelar", "description": "Encerra com motivo uma tarefa que não vai sair" },
+      { "name": "navegador_clicar", "description": "Clica num elemento do navegador integrado" },
+      { "name": "navegador_fechar_aba", "description": "Fecha uma aba do navegador integrado" }
+    ]
+  },
+  {
+    "server": "slack",
+    "tools": [
+      { "name": "slack_list_channels", "description": "List public channels in the workspace" },
+      { "name": "slack_post_message", "description": "Post a new message to a Slack channel" }
+    ]
+  },
+  {
+    "server": "theo-slack",
+    "tools": [
+      { "name": "enviar_mensagem", "description": "Envia mensagem no Slack como o bot Theo" }
+    ]
+  }
+]
