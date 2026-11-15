@@ -392,6 +392,41 @@ export function renewalHandoffDeliveryNotice(outcome: RenewalHandoffDelivery, ha
   return `A sessão nova não confirmou ter recebido a passagem de bastão: a primeira mensagem ${why}. A passagem está em ${handoffPath}. Confira antes de reenviar.`;
 }
 
+// ---------------------------------------------------------------------------
+// Closing the renewal: the new session reported its id
+// ---------------------------------------------------------------------------
+
+/** What the renewal needs to close when the new session of the tab reports its id. */
+export interface RenewalInFlight {
+  /**
+   * `swapping`: the new process is starting and has the wait (`SWAP_TIMEOUT_MS`) to report its id.
+   * `late`: the wait ran out. The old process was already ended in the swap, so the only one alive in
+   * the tab is the successor: when it does report, it is adopted (idea from OpenRig's
+   * `rig seat handover --recover`, which adopts the live successor of a failed handover).
+   */
+  readonly kind: 'swapping' | 'late';
+  readonly prepared: Pick<RenewalPrepared, 'previousSessionId' | 'handoffPath' | 'firstPrompt'>;
+}
+
+export interface RenewalCompletion {
+  readonly previousSessionId: string;
+  readonly handoffPath: string;
+  readonly firstPrompt: string;
+  /** The new session reported after the wait ran out (the tab says so). */
+  readonly late: boolean;
+}
+
+/**
+ * The tab reported a session id: is it the new session of the renewal in flight? `null` when nothing
+ * is pending (the tab was closed, a new renewal replaced it), without an id, or with the id of the
+ * session that left (the old process reporting once more).
+ */
+export function completeRenewal(inFlight: RenewalInFlight | null, sessionId: string | null | undefined): RenewalCompletion | null {
+  if (inFlight === null || !sessionId || sessionId === inFlight.prepared.previousSessionId) return null;
+  const { previousSessionId, handoffPath, firstPrompt } = inFlight.prepared;
+  return { previousSessionId, handoffPath, firstPrompt, late: inFlight.kind === 'late' };
+}
+
 /** "250k" for the warning and the prompts. */
 export function formatTokensK(tokens: number): string {
   return `${Math.round(tokens / 1000)}k`;

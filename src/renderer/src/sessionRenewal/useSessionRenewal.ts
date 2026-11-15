@@ -3,6 +3,11 @@
 //   idle ──(limit crossed at the end of a turn)──▶ preparing ──▶ asked ──(handoff written,
 //   nothing alive, turn over)──▶ swapping ──(new session id resolved)──▶ idle
 //
+// When the new process does not report its id within SWAP_TIMEOUT_MS the tab goes back to idle, but the
+// renewal stays pending as "late" (beside the machine): the old process was already ended, so the first
+// new id the same tab reports is its successor and closes the renewal as if on time (card, name, color,
+// model and handoff). Closing the tab or starting another renewal drops it.
+//
 // `asked`: the session got the request and is writing the handoff. `swapping`: the old process was
 // ended and the new one is starting in the same pane. Every judgement is pure
 // (`shared/sessionRenewal.ts`); here only timers, IPC and the per-tab memory. "Agora não" moves
@@ -12,10 +17,12 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { SemaphoreState } from '../../../shared';
 import {
   checkRenewal,
+  completeRenewal,
   decideSwap,
   renewalThreshold,
   renewalTrace,
   snoozeMark,
+  type RenewalCompletion,
   type RenewalPrepared,
   type RenewalTraceEntry,
   type SessionRenewalPrefs,
@@ -51,11 +58,7 @@ export type RenewalBanner =
   | { readonly kind: 'live-work'; readonly liveWork: string }
   | { readonly kind: 'swapping' };
 
-export interface RenewalCompletion {
-  readonly previousSessionId: string;
-  readonly handoffPath: string;
-  readonly firstPrompt: string;
-}
+export type { RenewalCompletion };
 
 export interface SessionRenewalHandle {
   readonly banners: Readonly<Record<string, RenewalBanner>>;
@@ -118,6 +121,8 @@ export function useSessionRenewal(inputs: readonly RenewalTabInput[], prefs: Ses
   const inputsRef = useRef(new Map<string, RenewalTabInput>());
   /** The key of the last trace line sent per tab (`renewalTrace`); dropped when the tab goes back under the threshold. */
   const traced = useRef(new Map<string, string>());
+  /** Renewals whose new session did not report within SWAP_TIMEOUT_MS: adopted when it does (`completeRenewal`). */
+  const late = useRef(new Map<string, RenewalPrepared>());
   const prefsRef = useRef(prefs);
   prefsRef.current = prefs;
   const portsRef = useRef(ports);
@@ -146,6 +151,7 @@ export function useSessionRenewal(inputs: readonly RenewalTabInput[], prefs: Ses
       });
       if (verdict === 'renew' && input.ptyId !== null && input.contextTokens !== null) {
         const preparing: Machine = { phase: 'preparing', sessionId: input.sessionId, snoozedUntil: machine.snoozedUntil };
+        late.current.delete(tabId); // a new renewal replaces one still waiting for its session
         machine = preparing;
         const contextTokens = input.contextTokens;
         void window.donel.renewal
@@ -223,8 +229,9 @@ export function useSessionRenewal(inputs: readonly RenewalTabInput[], prefs: Ses
           });
       }
     } else if (machine.phase === 'swapping' && Date.now() - machine.startedAt > SWAP_TIMEOUT_MS) {
+      late.current.set(tabId, machine.prepared);
       machine = idle(input.sessionId);
-      portsRef.current.toast('A sessão nova não respondeu a tempo. Confira a aba: a passagem de bastão ficou salva.');
+      portsRef.current.toast('A sessão nova ainda não respondeu. Se ela responder, esta aba a adota e entrega a passagem de bastão, que ficou salva.');
     }
     machines.current.set(tabId, machine);
     const trace = renewalTrace({
@@ -285,13 +292,18 @@ export function useSessionRenewal(inputs: readonly RenewalTabInput[], prefs: Ses
   const takeCompletion = useCallback(
     (tabId: string, sessionId: string | undefined): RenewalCompletion | null => {
       const machine = machines.current.get(tabId);
-      if (machine === undefined || machine.phase !== 'swapping' || !sessionId || sessionId === machine.prepared.previousSessionId) return null;
-      const completion: RenewalCompletion = {
-        previousSessionId: machine.prepared.previousSessionId,
-        handoffPath: machine.prepared.handoffPath,
-        firstPrompt: machine.prepared.firstPrompt,
-      };
+      const pendingLate = late.current.get(tabId);
+      const inFlight =
+        machine?.phase === 'swapping'
+          ? ({ kind: 'swapping', prepared: machine.prepared } as const)
+          : pendingLate !== undefined
+            ? ({ kind: 'late', prepared: pendingLate } as const)
+            : null;
+      const completion = completeRenewal(inFlight, sessionId);
+      if (completion === null || !sessionId) return null;
+      late.current.delete(tabId);
       machines.current.set(tabId, idle(sessionId));
+      if (completion.late) portsRef.current.toast('A sessão nova demorou, mas foi adotada nesta aba: o cartão segue o mesmo e a passagem de bastão vai para ela agora.');
       setRenewed((prev) => ({ ...prev, [tabId]: completion }));
       bump();
       return completion;
@@ -301,6 +313,7 @@ export function useSessionRenewal(inputs: readonly RenewalTabInput[], prefs: Ses
 
   const forget = useCallback((tabId: string): void => {
     machines.current.delete(tabId);
+    late.current.delete(tabId);
     traced.current.delete(tabId);
     setRenewed((prev) => {
       if (!(tabId in prev)) return prev;

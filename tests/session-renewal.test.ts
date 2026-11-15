@@ -141,3 +141,24 @@ describe('renewalLaunchArgs — the renewed session keeps the name and the model
     expect(renewalLaunchArgs(['-r', 'old'], null, { name: '  ', model: null })).toEqual([]);
   });
 });
+
+import { completeRenewal, type RenewalInFlight } from '../src/shared/sessionRenewal';
+
+describe('completeRenewal — the new session of a renewal is adopted, even past the wait', () => {
+  const prepared = { previousSessionId: 'old-atlas', handoffPath: '/handoffs/atlas.md', firstPrompt: 'Leia a passagem.' };
+
+  it('a new id while swapping closes the renewal on time', () => {
+    expect(completeRenewal({ kind: 'swapping', prepared }, 'new-atlas')).toEqual({ ...prepared, late: false });
+  });
+
+  it('a new id after the wait ran out still closes it: the old process is gone, the only one alive is the successor', () => {
+    const late: RenewalInFlight = { kind: 'late', prepared };
+    expect(completeRenewal(late, 'new-atlas')).toEqual({ ...prepared, late: true });
+  });
+
+  it('the same id as before, no id, or nothing pending (tab closed, a new renewal started) adopts nothing', () => {
+    expect(completeRenewal({ kind: 'late', prepared }, 'old-atlas')).toBeNull();
+    expect(completeRenewal({ kind: 'swapping', prepared }, undefined)).toBeNull();
+    expect(completeRenewal(null, 'new-atlas')).toBeNull();
+  });
+});
