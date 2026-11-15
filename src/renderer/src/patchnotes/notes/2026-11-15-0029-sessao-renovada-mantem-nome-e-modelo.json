@@ -1,0 +1,4 @@
+{
+  "title": "Sessão renovada mantém nome e modelo",
+  "text": "Quando uma sessão passa do limite de contexto e o app a renova, a sessão nova nasce com o mesmo nome e o mesmo modelo da anterior, também quando a aba voltou depois de atualizar o app ou foi retomada. Antes, nesses casos, ela nascia sem nome e no modelo padrão."
+}
