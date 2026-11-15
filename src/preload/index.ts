@@ -188,7 +188,7 @@ import { LIDER_CHANNELS, type LiderCarryPayload, type LiderReport, type LiderSen
 import { ROLES_CHANNELS, type RoleSaveResult, type SessionRole } from '../shared/roles';
 import type { ClaudeInventory } from '../shared/role-scope';
 import type { TeamPrefs } from '../shared/teamPrefs';
-import { SESSION_RENEWAL_CHANNELS, type HandoffStatus, type RenewalPrepareInput, type RenewalPrepared, type SessionRenewalPrefs } from '../shared/sessionRenewal';
+import { SESSION_RENEWAL_CHANNELS, type HandoffStatus, type RenewalPrepareInput, type RenewalPrepared, type RenewalTraceEntry, type SessionRenewalPrefs } from '../shared/sessionRenewal';
 
 // contextIsolation: true + sem nodeIntegration (src/main/index.ts) — este
 // arquivo é o único ponto por onde o renderer alcança o main process, via
@@ -698,6 +698,7 @@ const donelApi: DonelApi = {
   renewal: {
     prepare: (input: RenewalPrepareInput) => ipcRenderer.invoke(SESSION_RENEWAL_CHANNELS.prepare, input) as Promise<RenewalPrepared | null>,
     status: (renewalId: string) => ipcRenderer.invoke(SESSION_RENEWAL_CHANNELS.status, renewalId) as Promise<HandoffStatus>,
+    trace: (entry: RenewalTraceEntry) => ipcRenderer.send(SESSION_RENEWAL_CHANNELS.trace, entry),
   },
 
   devMode: {

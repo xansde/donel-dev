@@ -33,17 +33,9 @@ import { askedByRefusal, type LedgerToolCall } from '../shared/ledger/tools';
 import type { BoardBridge } from './board-bridge';
 import { MCP_SERVER_NAME, type BrowserToolOutcome } from '../shared/browser/mcp';
 // Sessão renovada em voo (B36).
-import {
-  buildRemoteHomeScript,
-  buildRemoteReadScript,
-  buildRemoteWriteScript,
-  createSessionRenewalService,
-  parseRemoteHome,
-  parseRemoteRead,
-  type SessionRenewalService,
-} from './session-renewal';
+import { buildRemoteReadScript, createSessionRenewalService, parseRemoteRead, prepareRenewalForPty, type SessionRenewalService } from './session-renewal';
 import { sanitizeTeamPrefs } from '../shared/teamPrefs';
-import { parseHandoffHeader, SESSION_RENEWAL_CHANNELS, sanitizeSessionRenewalPrefs, type HandoffStatus, type RenewalPrepared, type SessionRenewalPrefs } from '../shared/sessionRenewal';
+import { parseHandoffHeader, SESSION_RENEWAL_CHANNELS, sanitizeRenewalTrace, sanitizeSessionRenewalPrefs, type HandoffStatus, type RenewalPrepared, type SessionRenewalPrefs } from '../shared/sessionRenewal';
 import { LEARNING_CHANNELS, parseRendererGesture, type GestureEvent } from '../shared/learning/gestures';
 import { createGestureDiary, type GestureDiary } from './gesture-diary';
 import type { MindscapeReadImageResult, MindscapeSaveImageResult, MindscapeSaveResult, MindscapeTurnEndedPayload } from '../shared/mindscape/channels';
@@ -4106,41 +4098,27 @@ const RENEWAL_SSH_TIMEOUT_MS = 20_000;
 function registerSessionRenewalIpcHandlers(): void {
   const service = createSessionRenewalService({ handoffsDir: join(app.getPath('userData'), 'handoffs'), randomId: randomUUID });
   sessionRenewal = service;
-  ipcMain.handle(SESSION_RENEWAL_CHANNELS.prepare, async (_event, input: unknown): Promise<RenewalPrepared | null> => {
-    if (typeof input !== 'object' || input === null) return null;
-    const { ptyId, contextTokens, limitTokens } = input as Record<string, unknown>;
-    if (typeof ptyId !== 'string' || typeof contextTokens !== 'number' || typeof limitTokens !== 'number') return null;
-    const sessionId = activeSessionByPty.get(ptyId);
-    const initial = initialChatSourceByPty.get(ptyId);
-    if (!sessionId || !initial) return null;
-    const transcriptPath = chatHub?.transcriptPathOf(ptyId) ?? spawnedTranscriptPaths.get(sessionId) ?? null;
-    const request = { sessionId, transcriptPath, cwd: chatHub?.cwdOf(ptyId) ?? initial.cwd, contextTokens, limitTokens };
-    try {
-      // A session on a remote place reads and writes the handoff THERE (a path of this computer does not exist on it).
-      const sshTarget = remoteSessions?.sshTargetOf(ptyId);
-      let record;
-      if (sshTarget) {
-        const home = parseRemoteHome((await runRemoteScript(sshTarget, buildRemoteHomeScript(), RENEWAL_SSH_TIMEOUT_MS)).stdout);
-        if (!home) throw new Error('o lugar remoto não respondeu');
-        const dir = remoteSessions?.remoteDirOf(ptyId);
-        record = service.prepare(request, { sshTarget, home, ...(dir ? { dir } : {}) });
-        const written = await runRemoteScript(sshTarget, buildRemoteWriteScript(record.instructionsPath, record.instructions), RENEWAL_SSH_TIMEOUT_MS);
-        if (!written.stdout.includes('DONEL_OK')) throw new Error('as instruções não gravaram no lugar remoto');
-      } else {
-        record = service.prepare(request);
-      }
-      return {
-        renewalId: record.id,
-        previousSessionId: record.previousSessionId,
-        // What the chat's "abrir" opens: on a remote place, the copy here (written when the handoff is read ready).
-        handoffPath: record.remote?.localCopyPath ?? record.handoffPath,
-        requestPrompt: record.requestPrompt,
-        firstPrompt: record.firstPrompt,
-      };
-    } catch (error) {
-      console.error('[donel-dev] renovação: as instruções da passagem não gravaram:', error instanceof Error ? error.message : error);
-      return null;
-    }
+  // t-028deaf0 — every prepare leaves its outcome in `main-events.log` (before, a failure only reached the console).
+  ipcMain.handle(SESSION_RENEWAL_CHANNELS.prepare, (_event, input: unknown): Promise<RenewalPrepared | null> =>
+    prepareRenewalForPty(
+      {
+        service,
+        activeSessionOf: (ptyId) => activeSessionByPty.get(ptyId),
+        sourceCwdOf: (ptyId) => initialChatSourceByPty.get(ptyId)?.cwd,
+        transcriptPathOf: (ptyId, sessionId) => chatHub?.transcriptPathOf(ptyId) ?? spawnedTranscriptPaths.get(sessionId) ?? null,
+        cwdOf: (ptyId) => chatHub?.cwdOf(ptyId) ?? undefined,
+        sshTargetOf: (ptyId) => remoteSessions?.sshTargetOf(ptyId),
+        remoteDirOf: (ptyId) => remoteSessions?.remoteDirOf(ptyId),
+        runRemote: (sshTarget, script) => runRemoteScript(sshTarget, script, RENEWAL_SSH_TIMEOUT_MS),
+        log: logMainEvent,
+      },
+      input,
+    ),
+  );
+  // The verdict of a tab past the limit, when it changes (`renewalTrace` in the renderer): only the known fields.
+  ipcMain.on(SESSION_RENEWAL_CHANNELS.trace, (_event, raw: unknown) => {
+    const entry = sanitizeRenewalTrace(raw);
+    if (entry) logMainEvent('renewal-verdict', { ...entry });
   });
   ipcMain.handle(SESSION_RENEWAL_CHANNELS.status, async (_event, renewalId: unknown): Promise<HandoffStatus> => {
     if (typeof renewalId !== 'string') return { kind: 'missing' };
