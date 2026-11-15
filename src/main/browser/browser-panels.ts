@@ -257,8 +257,10 @@ export class BrowserPanels {
     const entry = this.get(ptyId);
     if (!entry) return false;
     entry.lastUsedAt = this.now();
-    if (byOwner) this.focusKeeper.ownerNavigates(entry.contents);
     const nav = entry.contents.navigationHistory;
+    // Only a navigation that will happen: a stop, or back with nothing behind, would leave the mark for the agent's next.
+    const navigates = action === 'reload' || (action === 'back' && nav.canGoBack()) || (action === 'forward' && nav.canGoForward());
+    if (byOwner && navigates) this.focusKeeper.ownerNavigates(entry.contents);
     switch (action) {
       case 'back':
         if (!nav.canGoBack()) return false;

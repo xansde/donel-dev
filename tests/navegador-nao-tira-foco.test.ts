@@ -1,16 +1,17 @@
 // t-af678813 — the owner typing in the chat or the terminal lost the caret whenever an agent drove the internal
 // browser. Measured in Electron 43 (xvfb, 15/11): every main-frame, cross-document navigation of a panel view
 // (`navegador_abrir`, a click on a link, Enter that submits a form, reload, back) moves the keyboard focus to the
-// view a few milliseconds before `did-navigate`, even while the view is hidden. The keeper gives it back to where
-// the owner had it, and leaves alone the focus the owner gives the page.
+// view before `did-navigate`, even while the view is hidden. The keeper gives it back to where the owner had it,
+// and leaves alone the focus the owner gives the page with a click.
 
 import { EventEmitter } from 'node:events';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PanelFocusKeeper, STEAL_WINDOW_MS, type FocusPage } from '../src/main/browser/panel-focus';
+import { describe, expect, it } from 'vitest';
+import { PanelFocusKeeper, type FocusPage } from '../src/main/browser/panel-focus';
 
 /** The pages of one window; `focusOn` is what Chromium does: the page gets the focus and says so. */
 function setup() {
   let focused: FakePage | null = null;
+  let clock = 0;
   class FakePage extends EventEmitter implements FocusPage {
     focusCalls = 0;
     destroyed = false;
@@ -29,8 +30,14 @@ function setup() {
     focused = page;
     page.emit('focus');
   };
+  /** A real click: the focus first, then the mouse press reaches the page (measured order). */
+  const click = (page: FakePage): void => {
+    focusOn(page);
+    page.emit('input-event', {}, { type: 'mouseDown' });
+    page.emit('input-event', {}, { type: 'mouseUp' });
+  };
   const later: Array<() => void> = [];
-  const keeper = new PanelFocusKeeper({ defer: (fn) => later.push(fn) });
+  const keeper = new PanelFocusKeeper({ defer: (fn) => later.push(fn), now: () => clock });
   const chat = new FakePage();
   focused = chat;
   keeper.watchWindow(chat);
@@ -52,30 +59,51 @@ function setup() {
   const tick = (): void => {
     for (const fn of later.splice(0)) fn();
   };
-  return { keeper, chat, panel, focusOn, startNavigation, commit, tick, focused: () => focused };
+  const wait = (ms: number): void => {
+    clock += ms;
+  };
+  return { keeper, chat, panel, focusOn, click, startNavigation, commit, tick, wait, focused: () => focused };
 }
-
-beforeEach(() => vi.useFakeTimers());
-afterEach(() => vi.useRealTimers());
 
 describe('the internal browser does not take the focus of the owner (t-af678813)', () => {
   it("an agent's navigation, hidden or not, gives the focus back to the chat", () => {
     const { chat, panel, startNavigation, commit, tick, focused } = setup();
     const page = panel();
     startNavigation(page);
-    vi.advanceTimersByTime(800); // the site takes its time to answer
     commit(page);
     expect(focused()).toBe(page); // a focus() inside the focus event is undone by Chromium: one tick later
     tick();
     expect(focused()).toBe(chat);
   });
 
-  it('the owner clicking the page while it loads keeps the focus on the page', () => {
-    const { chat, panel, focusOn, startNavigation, commit, tick, focused } = setup();
+  it('a busy page that commits long after taking the focus still gives it back', () => {
+    const { chat, panel, focusOn, startNavigation, tick, wait, focused } = setup();
     const page = panel();
     startNavigation(page);
-    focusOn(page); // the owner's click, long before the commit
-    vi.advanceTimersByTime(STEAL_WINDOW_MS + 500);
+    focusOn(page);
+    wait(600); // measured: a renderer with long tasks commits up to 600 ms after the focus
+    page.emit('did-navigate');
+    tick();
+    expect(focused()).toBe(chat);
+  });
+
+  it('the owner typing while the focus is stolen does not hand it to the page', () => {
+    const { chat, panel, focusOn, startNavigation, tick, focused } = setup();
+    const page = panel();
+    startNavigation(page);
+    focusOn(page);
+    page.emit('input-event', {}, { type: 'rawKeyDown' });
+    page.emit('input-event', {}, { type: 'char' });
+    page.emit('did-navigate');
+    tick();
+    expect(focused()).toBe(chat);
+  });
+
+  it('the owner clicking the page while it loads keeps the focus on the page', () => {
+    const { chat, panel, click, startNavigation, commit, tick, focused } = setup();
+    const page = panel();
+    startNavigation(page);
+    click(page);
     commit(page);
     tick();
     expect(focused()).toBe(page);
@@ -83,23 +111,22 @@ describe('the internal browser does not take the focus of the owner (t-af678813)
   });
 
   it('the owner coming back to the chat while the page loads gets the focus back at the commit', () => {
-    const { chat, panel, focusOn, startNavigation, commit, tick, focused } = setup();
+    const { chat, panel, click, startNavigation, commit, tick, focused } = setup();
     const page = panel();
-    focusOn(page); // the navigation starts with the owner on the page
+    click(page); // the navigation starts with the owner on the page
     startNavigation(page);
-    vi.advanceTimersByTime(STEAL_WINDOW_MS + 500);
-    focusOn(chat);
+    click(chat);
     commit(page);
     tick();
     expect(focused()).toBe(chat);
   });
 
   it('the focus goes back to the panel the owner is using, not to the one that navigates', () => {
-    const { panel, focusOn, startNavigation, commit, tick, focused } = setup();
+    const { panel, click, startNavigation, commit, tick, focused } = setup();
     const used = panel();
     const driven = panel();
     startNavigation(driven);
-    focusOn(used);
+    click(used);
     commit(driven);
     tick();
     expect(focused()).toBe(used);
@@ -116,13 +143,31 @@ describe('the internal browser does not take the focus of the owner (t-af678813)
     expect(chat.focusCalls).toBe(0);
   });
 
+  it("a mark of the owner that no navigation used (stop, an anchor) does not free the agent's next one", () => {
+    const { keeper, chat, panel, startNavigation, commit, tick, focused } = setup();
+    const page = panel();
+    keeper.ownerNavigates(page);
+    page.emit('did-stop-loading'); // the owner pressed stop
+    startNavigation(page);
+    commit(page);
+    tick();
+    expect(focused()).toBe(chat);
+
+    keeper.ownerNavigates(page);
+    startNavigation(page, { sameDocument: true }); // the owner typed #section
+    startNavigation(page);
+    commit(page);
+    tick();
+    expect(focused()).toBe(chat);
+  });
+
   it('same-document navigations and frames do not move anything back', () => {
     const { chat, panel, startNavigation, focusOn, tick, focused } = setup();
     const page = panel();
     startNavigation(page, { sameDocument: true });
     startNavigation(page, { mainFrame: false });
-    focusOn(page); // the owner clicks the page
-    vi.advanceTimersByTime(STEAL_WINDOW_MS + 1);
+    focusOn(page);
+    page.emit('did-navigate');
     tick();
     expect(focused()).toBe(page);
     expect(chat.focusCalls).toBe(0);
@@ -139,17 +184,17 @@ describe('the internal browser does not take the focus of the owner (t-af678813)
   });
 
   it('nothing is focused when the owner already moved, or the old place is gone', () => {
-    const { chat, panel, focusOn, startNavigation, commit, tick, focused } = setup();
+    const { chat, panel, click, startNavigation, commit, tick, focused } = setup();
     const page = panel();
-    const terminalOfAnotherPanel = panel();
+    const other = panel();
     startNavigation(page);
     commit(page);
-    focusOn(terminalOfAnotherPanel); // the owner clicked elsewhere before the tick
+    click(other); // the owner clicked elsewhere before the tick
     tick();
-    expect(focused()).toBe(terminalOfAnotherPanel);
+    expect(focused()).toBe(other);
     expect(chat.focusCalls).toBe(0);
 
-    focusOn(chat);
+    click(chat);
     startNavigation(page);
     chat.destroyed = true;
     commit(page);

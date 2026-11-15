@@ -8,17 +8,20 @@
 // or anything while the window is inactive. Electron has no switch to keep a view from taking it, so the keeper
 // gives it back.
 //
-// What tells the commit's focus from the owner's click on the page: the commit's comes a few milliseconds before
-// `did-navigate` (measured: 1 to 12 ms). A focus that arrives while a navigation is pending is held as a candidate;
-// if the navigation commits (or fails, or stops) within `STEAL_WINDOW_MS`, it was the commit and the focus goes back
-// to the last place the owner had it; otherwise it was the owner and the page keeps it. "The last place" follows
+// What tells the commit's focus from the owner's click on the page: the owner's comes with a mouse press on the
+// page (`input-event` `mouseDown`, right after the `focus`, measured). A focus that arrives while a navigation is
+// pending is held as a candidate; a mouse press on the page makes it the owner's, and the page keeps it; otherwise,
+// when the navigation commits (or fails, or stops), the focus goes back to the last place the owner had it. Not a
+// time window: a busy renderer commits up to 600 ms after the focus (measured), and a busy main process runs a timer
+// late. Keys do not count: while the focus is stolen, the owner's typing lands on the page. "The last place" follows
 // every focus of the main window's page and of the panels, not only the one at the start of the navigation: the
 // owner may come back to the chat, or click another panel, while the page loads. The give-back runs one tick later:
 // a `focus()` inside the `focus` event is undone by Chromium (measured). Navigations the owner starts from the
 // panel's own bar (address, back, forward, reload) keep the page's focus, as before.
 //
-// Limit, named: the focus does leave for a moment (one `blur` in the main window per navigation), so a key typed in
-// that tick is lost and an `onBlur` of the renderer still fires.
+// Limits, named: the focus does leave for a moment (one `blur` in the main window per navigation), so a key typed in
+// that tick is lost and an `onBlur` of the renderer still fires. An agent's CDP click on the page in the few
+// milliseconds between the commit's focus and `did-navigate` would count as the owner's.
 
 /** A page that can hold the keyboard focus: the main window's `webContents` or a panel tab's (a `WebContents` fits). */
 export interface FocusPage {
@@ -29,10 +32,10 @@ export interface FocusPage {
   on(event: string, listener: (...args: any[]) => void): unknown;
 }
 
-/** How long before the commit a focus of the page still counts as the commit's (the owner's click comes earlier). */
-export const STEAL_WINDOW_MS = 250;
 /** A navigation the owner asked for from the panel's bar starts within this long. */
-const OWNER_NAVIGATION_MS = 2_000;
+const OWNER_NAVIGATION_MS = 1_000;
+/** Input events that mean the owner's hand on the page (never keys: see above). */
+const OWNER_POINTER_EVENTS = new Set(['mouseDown', 'touchStart', 'gestureTapDown']);
 
 export interface PanelFocusDeps {
   /** Runs `fn` after the current focus change settles (default: `setImmediate`). */
@@ -43,7 +46,8 @@ export interface PanelFocusDeps {
 interface PanelState {
   pending: boolean;
   ownerUntil: number;
-  candidate: { readonly previous: FocusPage | null; readonly timer: ReturnType<typeof setTimeout> } | null;
+  /** A focus that arrived while a navigation was pending: where the focus was before it. */
+  candidate: { readonly previous: FocusPage | null } | null;
 }
 
 export class PanelFocusKeeper {
@@ -63,7 +67,8 @@ export class PanelFocusKeeper {
   watchWindow(page: FocusPage): void {
     if (this.watched.has(page)) return;
     this.watched.add(page);
-    if (this.current === null && page.isFocused()) this.current = page;
+    // A new main window (macOS reopens it from the Dock) replaces the old one, which may be destroyed.
+    if (page.isFocused() || this.current === null || this.current.isDestroyed()) this.current = page;
     page.on('focus', () => {
       this.current = page;
     });
@@ -77,9 +82,10 @@ export class PanelFocusKeeper {
     this.panels.set(page, state);
 
     page.on('did-start-navigation', (_event: unknown, _url: string, isSameDocument: boolean, isMainFrame: boolean) => {
-      if (!isMainFrame || isSameDocument) return;
-      const byOwner = this.now() <= state.ownerUntil;
+      if (!isMainFrame) return;
+      const byOwner = state.ownerUntil > 0 && this.now() <= state.ownerUntil;
       state.ownerUntil = 0;
+      if (isSameDocument) return;
       state.pending = !byOwner;
     });
     page.on('focus', () => {
@@ -88,20 +94,18 @@ export class PanelFocusKeeper {
         return;
       }
       // Chromium may blur and focus the new document twice: the first candidate holds the place to go back to.
-      if (state.candidate !== null) return;
-      const previous = this.current;
-      const timer = setTimeout(() => {
-        // No commit right after: the owner clicked the page.
-        state.candidate = null;
-        if (page.isFocused()) this.current = page;
-      }, STEAL_WINDOW_MS);
-      state.candidate = { previous, timer };
+      if (state.candidate === null) state.candidate = { previous: this.current };
+    });
+    page.on('input-event', (_event: unknown, input: { type?: string }) => {
+      if (state.candidate === null || !OWNER_POINTER_EVENTS.has(input.type ?? '')) return;
+      // The owner clicked the page while it loads: the focus is theirs.
+      state.candidate = null;
+      this.current = page;
     });
     const settled = (): void => {
       state.pending = false;
       const candidate = state.candidate;
       if (candidate === null) return;
-      clearTimeout(candidate.timer);
       state.candidate = null;
       const back = candidate.previous;
       if (back === null || back === page) {
@@ -114,7 +118,11 @@ export class PanelFocusKeeper {
       });
     };
     page.on('did-navigate', settled);
-    page.on('did-stop-loading', settled);
+    page.on('did-stop-loading', () => {
+      // A mark the owner left without a navigation (stop, a load refused before it started) dies with the load.
+      state.ownerUntil = 0;
+      settled();
+    });
     page.on('did-fail-load', (_event: unknown, _code: number, _description: string, _url: string, isMainFrame: boolean) => {
       if (isMainFrame) settled();
     });
