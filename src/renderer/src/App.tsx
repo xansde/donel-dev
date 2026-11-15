@@ -1912,13 +1912,11 @@ export function App(): React.JSX.Element {
       const folder = leaderComebackCwd({ leaderOfAll: isLeaderOfAllTab(tab), cwd: tab.cwd, remoteId: tab.remoteId }, leaderMoveCwdNow());
       if (folder) updateTab(tabId, { cwd: folder });
       // t-408339e0 — a tab reattached after an update (or resumed by `-r` alone) has no `-n` nor `--model` in its args: the
-      // new process takes the name the tab shows and the model the session really ran (a provider keeps its own).
+      // new process takes the name the tab shows and the model the session really ran (a provider keeps its own). Without
+      // a reading, no `--model`: the toolbar's default would be a guess, not what the session ran.
       const sessionId = tab.claudeSessionId ?? null;
       const observedModel = sessionId ? (statusLineForSession(ptyId ? statusLines[ptyId] : null, sessionId)?.model?.id ?? sessionModels[sessionId]) : null;
-      const identity = {
-        name: resolveTabName(tab),
-        model: tab.providerId ? null : (observedModel ?? sessionModelEffort[tab.id]?.model ?? null),
-      };
+      const identity = { name: resolveTabName(tab), model: tab.providerId ? null : (observedModel ?? null) };
       handle.renew({ args: renewalLaunchArgs(tab.launchArgs, mode, identity), renewalId, ...(folder ? { cwd: folder } : {}) });
       return true;
     },

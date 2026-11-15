@@ -196,7 +196,7 @@ const CARRIED_PERMISSION_MODES: ReadonlySet<string> = new Set(['default', 'accep
 /**
  * What the tab knows of the session it renews, for the flags its launch args may lack (t-408339e0): a tab reattached
  * after an update, or resumed by `-r` alone, has neither `-n` nor `--model`, and the renewed process was born nameless
- * and on the CLI's default model. `model` is the one the session really ran (statusline, else transcript, else launch).
+ * and on the CLI's default model. `model` is the one the session really ran (statusline, else transcript).
  */
 export interface RenewalIdentity {
   readonly name?: string | null;
