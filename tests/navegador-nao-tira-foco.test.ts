@@ -161,6 +161,17 @@ describe('the internal browser does not take the focus of the owner (t-af678813)
     expect(focused()).toBe(chat);
   });
 
+  it("after the page's renderer dies, the next load gives the focus back too", () => {
+    const { chat, panel, focusOn, startNavigation, tick, focused } = setup();
+    const page = panel();
+    page.emit('render-process-gone', {}, { reason: 'crashed' });
+    focusOn(page); // the new renderer takes the focus before the navigation starts (measured)
+    startNavigation(page);
+    page.emit('did-navigate');
+    tick();
+    expect(focused()).toBe(chat);
+  });
+
   it('same-document navigations and frames do not move anything back', () => {
     const { chat, panel, startNavigation, focusOn, tick, focused } = setup();
     const page = panel();

@@ -19,6 +19,9 @@
 // a `focus()` inside the `focus` event is undone by Chromium (measured). Navigations the owner starts from the
 // panel's own bar (address, back, forward, reload) keep the page's focus, as before.
 //
+// A renderer that died (crash, out of memory) is the same case: the new renderer of the next load takes the focus
+// before the navigation starts, so the page counts as navigating from the crash on.
+//
 // Limits, named: the focus does leave for a moment (one `blur` in the main window per navigation), so a key typed in
 // that tick is lost and an `onBlur` of the renderer still fires. An agent's CDP click on the page in the few
 // milliseconds between the commit's focus and `did-navigate` would count as the owner's.
@@ -87,6 +90,13 @@ export class PanelFocusKeeper {
       state.ownerUntil = 0;
       if (isSameDocument) return;
       state.pending = !byOwner;
+      // The owner's navigation of a page whose renderer died: the focus the new renderer took is theirs.
+      if (byOwner) state.candidate = null;
+    });
+    // After a crash, the next load's new renderer takes the focus BEFORE `did-start-navigation` (measured): the
+    // page counts as navigating from the crash on.
+    page.on('render-process-gone', () => {
+      state.pending = true;
     });
     page.on('focus', () => {
       if (!state.pending) {
