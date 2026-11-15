@@ -57,7 +57,7 @@ export interface RenewalCheckInput {
   readonly backgroundAgents: boolean;
   /** "Agora não": the renewal only comes back from this many tokens on. `null` = not postponed. */
   readonly snoozedUntilTokens: number | null;
-  /** A plain session tab with a live process (not a login tab, not an isolated worktree). */
+  /** `renewalEligible`: a plain session tab with a live process (not a login tab, not a worktree on this computer). */
   readonly eligible: boolean;
 }
 
@@ -83,6 +83,31 @@ export function checkRenewal(input: RenewalCheckInput): RenewalVerdict {
   if (input.contextTokens < threshold) return 'near';
   if (input.turn !== 'waiting' || input.backgroundAgents) return 'due-wait';
   return 'renew';
+}
+
+/** What a tab is, for `renewalEligible`. */
+export interface RenewalEligibilityFacts {
+  readonly sessionType: 'claude' | 'shell';
+  /** An isolated login in progress (`accountLoginId`). */
+  readonly loginTab: boolean;
+  readonly hasSessionId: boolean;
+  /** The process of the tab ended (the chat's "Sessão encerrada"). */
+  readonly exited: boolean;
+  /** Launched with `--worktree`. */
+  readonly worktree: boolean;
+  /** Runs on a remote place (`remoteId`). */
+  readonly remote: boolean;
+}
+
+/**
+ * A plain session tab with a live process. A worktree only blocks on this computer: there the app releases it when the
+ * process ends (`session-worktree.ts`), and renewing would race that cleanup. On a remote place the setup script made
+ * the worktree and nothing removes it; the new session opens in the same one (`remoteSpawnWorktree`; t-62f0fa0b: a
+ * session opened by `sessao_abrir` on the VPS is born in a worktree and, before this, grew without limit).
+ */
+export function renewalEligible(facts: RenewalEligibilityFacts): boolean {
+  if (facts.sessionType !== 'claude' || facts.loginTab || !facts.hasSessionId || facts.exited) return false;
+  return !facts.worktree || facts.remote;
 }
 
 /** Where the "Agora não" mark goes: one snooze past what the session has now (or past the limit, before it). */

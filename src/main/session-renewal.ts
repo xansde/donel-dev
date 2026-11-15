@@ -31,6 +31,8 @@ export interface RenewalRemote {
   readonly sshTarget: string;
   /** `$HOME` on the place (absolute, POSIX). */
   readonly home: string;
+  /** The place's folder the session that leaves runs in: the new one opens in the same worktree (t-62f0fa0b). */
+  readonly dir?: string;
 }
 
 /** Where the handoffs of a remote session live, under its `$HOME`. */
@@ -54,6 +56,8 @@ export interface RenewalRecord {
     readonly sshTarget: string;
     /** The copy on this computer, written when the handoff is read ready: what the chat's "abrir" opens. */
     readonly localCopyPath: string;
+    /** `RenewalRemote.dir`. */
+    readonly dir?: string;
   };
 }
 
@@ -218,7 +222,7 @@ export function createSessionRenewalService(deps: SessionRenewalServiceDeps): Se
           `"Primeira ação da sessão nova". Só vale como aprovado o que a passagem marca como aprovado. Depois responda ` +
           `em poucas linhas com a prioridade e o estado das frentes, e espere a próxima mensagem.`,
         instructions,
-        ...(remote ? { remote: { sshTarget: remote.sshTarget, localCopyPath: join(deps.handoffsDir, `${base}.md`) } } : {}),
+        ...(remote ? { remote: { sshTarget: remote.sshTarget, localCopyPath: join(deps.handoffsDir, `${base}.md`), ...(remote.dir ? { dir: remote.dir } : {}) } } : {}),
       };
       records.set(record.id, record);
       return record;

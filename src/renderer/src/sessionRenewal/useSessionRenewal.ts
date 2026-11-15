@@ -23,7 +23,7 @@ export interface RenewalTabInput {
   readonly tabId: string;
   readonly ptyId: string | null;
   readonly sessionId: string | null;
-  /** A plain session tab with a live process (not a login tab, not an isolated worktree). */
+  /** `renewalEligible`: a plain session tab with a live process (not a login tab, not a worktree on this computer). */
   readonly eligible: boolean;
   readonly contextTokens: number | null;
   readonly turn: SemaphoreState | null;

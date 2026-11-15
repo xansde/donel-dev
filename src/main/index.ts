@@ -399,7 +399,7 @@ import { isTabColorToken, setTabColor, setTabOrder } from '../shared/tabAppearan
 import { WORKSPACE_CHANNELS } from '../shared/workspace';
 import { createSystemWorkspaceToolsDeps, createWorkspaceTools } from './workspace-tools';
 import { createSessionWorktreeService } from './session-worktree-service';
-import { isSafeWorktreeName, worktreeNameFromArgs } from '../shared/sessionWorktree';
+import { isSafeWorktreeName, remoteSpawnWorktree, worktreeNameFromArgs } from '../shared/sessionWorktree';
 import { projectOfFolders, tabFolders, withProjectYolo } from '../shared/projectYolo';
 import { isProcessAlive } from './process-alive';
 import { createPullRequestStatusService, createSystemPullRequestStatusDeps, openPullRequestUrl } from './pull-request-status';
@@ -1935,7 +1935,8 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
 
   await remoteSessions.waitEnded(correlationId);
   const git = localGitInfo(localCwd);
-  const worktree = worktreeNameFromArgs(options.args);
+  // A renewal goes back to the worktree of the session it replaces, also when its args do not name one (t-62f0fa0b).
+  const worktree = remoteSpawnWorktree(options.args, options.renewalId ? sessionRenewal?.get(options.renewalId)?.remote?.dir : null);
   const script = buildRemoteSetupScript({
     sid: correlationId,
     homeRelativeDir: remoteDirFor(localCwd, appConfig.projectRoots),
@@ -4121,7 +4122,8 @@ function registerSessionRenewalIpcHandlers(): void {
       if (sshTarget) {
         const home = parseRemoteHome((await runRemoteScript(sshTarget, buildRemoteHomeScript(), RENEWAL_SSH_TIMEOUT_MS)).stdout);
         if (!home) throw new Error('o lugar remoto não respondeu');
-        record = service.prepare(request, { sshTarget, home });
+        const dir = remoteSessions?.remoteDirOf(ptyId);
+        record = service.prepare(request, { sshTarget, home, ...(dir ? { dir } : {}) });
         const written = await runRemoteScript(sshTarget, buildRemoteWriteScript(record.instructionsPath, record.instructions), RENEWAL_SSH_TIMEOUT_MS);
         if (!written.stdout.includes('DONEL_OK')) throw new Error('as instruções não gravaram no lugar remoto');
       } else {
