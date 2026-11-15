@@ -574,13 +574,13 @@ export function createBrowserService(deps: BrowserServiceDeps): BrowserService {
     if (!known(event.sender, ptyId)) return { ok: false, reason: 'Sessão desconhecida para o navegador.' };
     const target = normalizeBrowserUrl(typeof typed === 'string' ? typed : '');
     if (!target.ok) return target;
-    const loaded = await panels.load(ptyId, target.url);
+    const loaded = await panels.load(ptyId, target.url, true);
     return loaded.ok ? { ok: true, url: target.url } : { ok: false, reason: `A página não abriu: ${loaded.error}` };
   });
 
   deps.ipcMain.on(BROWSER_CHANNELS.history, (event, ptyId: unknown, action: unknown) => {
     if (!known(event.sender, ptyId)) return;
-    if (action === 'back' || action === 'forward' || action === 'reload' || action === 'stop') panels.history(ptyId, action as BrowserHistoryAction);
+    if (action === 'back' || action === 'forward' || action === 'reload' || action === 'stop') panels.history(ptyId, action as BrowserHistoryAction, true);
   });
 
   deps.ipcMain.handle(BROWSER_CHANNELS.snapshot, async (event, ptyId: unknown): Promise<string | null> => {

@@ -1,0 +1,4 @@
+{
+  "title": "Navegador do agente não tira mais o foco",
+  "text": "Quando um agente abria uma página, clicava num link, enviava um formulário ou voltava no navegador da sessão, a caixa onde você digitava, no chat ou no terminal, perdia o cursor no meio da frase, mesmo com o painel fechado. Agora o cursor fica onde você está digitando. Se você mesmo estiver usando o navegador, ele continua com o foco."
+}
