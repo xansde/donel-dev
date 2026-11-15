@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildHasTranscriptScript, buildRemoteSetupScript, parseHasTranscriptOutput, parseRemoteSetupOutput } from '../src/main/remote-session';
-import { agentOpenWorktree } from '../src/shared/sessionWorktree';
+import { agentOpenWorktree, remoteSpawnWorktree } from '../src/shared/sessionWorktree';
 
 // t-58b67066 — sessões abertas na VPS dividiam a pasta do projeto: uma trocou a branch dela embaixo da outra.
 // Cada sessão aberta lá nasce numa worktree própria; a pasta principal nunca troca de branch.
@@ -111,5 +111,23 @@ describe('sessão aberta por outra sessão (sessao_abrir)', () => {
     expect(agentOpenWorktree('vps', 'Dev', now, [])).toBe('dev-1112-1400');
     expect(agentOpenWorktree('vps', 'Dev', now, ['dev-1112-1400'])).toBe('dev-1112-1400-2');
     expect(agentOpenWorktree(undefined, 'Dev', now, [])).toBeUndefined();
+  });
+});
+
+// t-62f0fa0b — a renewed session on the VPS gets a new id and loses `-r`: without `--worktree` in the args (a conversation
+// resumed by `sessao_retomar`, `-r <id>` alone) the setup cannot find it by the transcript and it fell on the project's
+// shared checkout, where other sessions work. It goes back to the worktree the session it replaces ran in.
+describe('worktree da sessão nova num lugar remoto', () => {
+  const wt = '/home/u/seazone/proj/.claude/worktrees/dev-1112-1400';
+  it('a renovada volta para a worktree em que a anterior rodava, quando os args não dizem', () => {
+    expect(remoteSpawnWorktree(['-n', 'Dev'], wt)).toBe('dev-1112-1400');
+    expect(remoteSpawnWorktree(['-n', 'Dev'], `${wt}/`)).toBe('dev-1112-1400');
+  });
+
+  it('o --worktree dos args vence; fora de worktree, ou nome que o app não faria, nenhuma', () => {
+    expect(remoteSpawnWorktree(['--worktree', 'outra'], wt)).toBe('outra');
+    expect(remoteSpawnWorktree(['-n', 'Dev'], '/home/u/seazone/proj')).toBeNull();
+    expect(remoteSpawnWorktree(['-n', 'Dev'], '/home/u/seazone/proj/.claude/worktrees/Fora do Padrao')).toBeNull();
+    expect(remoteSpawnWorktree(['-n', 'Dev'], null)).toBeNull();
   });
 });

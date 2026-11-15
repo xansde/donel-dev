@@ -8,6 +8,7 @@ import {
   renewalLaunchArgs,
   type RenewalCheckInput,
 } from '../src/shared/sessionRenewal';
+import { renewalEligible, type RenewalEligibilityFacts } from '../src/shared/sessionRenewal';
 
 // Sessão renovada em voo (B36) — the two decisions that would end a process the
 // owner did not mean to end (or never end it). The card that keeps its place on the
@@ -44,6 +45,26 @@ describe('checkRenewal — renew now?', () => {
     expect(checkRenewal({ ...base, prefs: { ...base.prefs, enabled: false } })).toBe('off');
     expect(checkRenewal({ ...base, contextTokens: null })).toBe('off');
     expect(checkRenewal({ ...base, eligible: false })).toBe('off');
+  });
+});
+
+// t-62f0fa0b — a session opened by `sessao_abrir` on the VPS is born in a worktree and never renewed: it grew without
+// limit. The rule against worktrees is for this computer, where the app removes the worktree when the process ends. On a
+// remote place the setup script made it and nothing removes it; the renewal keeps `--worktree` and the setup reuses it.
+describe('renewalEligible — which tabs may be renewed', () => {
+  const plain: RenewalEligibilityFacts = { sessionType: 'claude', loginTab: false, hasSessionId: true, exited: false, worktree: false, remote: false };
+
+  it('a remote session in its worktree renews; a local one in a worktree does not (it would race the cleanup)', () => {
+    expect(renewalEligible({ ...plain, worktree: true, remote: true })).toBe(true);
+    expect(renewalEligible({ ...plain, worktree: true, remote: false })).toBe(false);
+  });
+
+  it('never a terminal, a login tab, a tab without a session or a process that ended', () => {
+    expect(renewalEligible(plain)).toBe(true);
+    expect(renewalEligible({ ...plain, remote: true, sessionType: 'shell' })).toBe(false);
+    expect(renewalEligible({ ...plain, remote: true, loginTab: true })).toBe(false);
+    expect(renewalEligible({ ...plain, remote: true, hasSessionId: false })).toBe(false);
+    expect(renewalEligible({ ...plain, remote: true, exited: true })).toBe(false);
   });
 });
 

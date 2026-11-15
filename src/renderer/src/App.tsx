@@ -98,7 +98,7 @@ import { SpawnAskPanel, type SpawnAsk } from './Mindscape/SpawnAskPanel';
 import { appendConversation, findSessionBoard, placeSessionCards, roleOfSession, setBoardView, setPlaceConversation, writeSessionNote, type MindscapeDoc } from '../../shared/mindscape/model';
 import type { SessionRole } from '../../shared/roles';
 // Sessão renovada em voo (B36) — limit crossed at the end of a turn → handoff → new session in the same tab.
-import { DEFAULT_SESSION_RENEWAL_PREFS, RENEWAL_HANDOFF_WAIT_MS, renewalHandoffDeliveryNotice, renewalLaunchArgs, type SessionRenewalPrefs } from '../../shared/sessionRenewal';
+import { DEFAULT_SESSION_RENEWAL_PREFS, RENEWAL_HANDOFF_WAIT_MS, renewalEligible, renewalHandoffDeliveryNotice, renewalLaunchArgs, type SessionRenewalPrefs } from '../../shared/sessionRenewal';
 import { useSessionRenewal, type RenewalTabInput } from './sessionRenewal/useSessionRenewal';
 import { RenewalDeliveryStrip, RenewalStrip } from './sessionRenewal/RenewalStrip';
 import type { BoardView } from '../../shared/mindscape/view';
@@ -1873,13 +1873,15 @@ export function App(): React.JSX.Element {
       tabId: tab.id,
       ptyId: chatPtyIds[tab.id] ?? null,
       sessionId: tab.claudeSessionId ?? null,
-      // An isolated worktree is released when its process ends: renewing it would race the cleanup.
-      eligible:
-        tab.sessionType === 'claude' &&
-        !tab.accountLoginId &&
-        !!tab.claudeSessionId &&
-        tabExits[tab.id] === undefined &&
-        worktreeNameFromArgs(tab.launchArgs) === null,
+      // A worktree on this computer is released when its process ends (renewing would race the cleanup); on a remote place it stays.
+      eligible: renewalEligible({
+        sessionType: tab.sessionType,
+        loginTab: !!tab.accountLoginId,
+        hasSessionId: !!tab.claudeSessionId,
+        exited: tabExits[tab.id] !== undefined,
+        worktree: worktreeNameFromArgs(tab.launchArgs) !== null,
+        remote: !!tab.remoteId,
+      }),
       contextTokens: tab.claudeSessionId ? (contextTokens[tab.claudeSessionId] ?? null) : null,
       turn: semaphore?.state ?? null,
       stateEnteredAt: semaphore?.stateEnteredAt ?? 0,
@@ -1910,13 +1912,11 @@ export function App(): React.JSX.Element {
       const folder = leaderComebackCwd({ leaderOfAll: isLeaderOfAllTab(tab), cwd: tab.cwd, remoteId: tab.remoteId }, leaderMoveCwdNow());
       if (folder) updateTab(tabId, { cwd: folder });
       // t-408339e0 — a tab reattached after an update (or resumed by `-r` alone) has no `-n` nor `--model` in its args: the
-      // new process takes the name the tab shows and the model the session really ran (a provider keeps its own).
+      // new process takes the name the tab shows and the model the session really ran (a provider keeps its own). Without
+      // a reading, no `--model`: the toolbar's default would be a guess, not what the session ran.
       const sessionId = tab.claudeSessionId ?? null;
       const observedModel = sessionId ? (statusLineForSession(ptyId ? statusLines[ptyId] : null, sessionId)?.model?.id ?? sessionModels[sessionId]) : null;
-      const identity = {
-        name: resolveTabName(tab),
-        model: tab.providerId ? null : (observedModel ?? sessionModelEffort[tab.id]?.model ?? null),
-      };
+      const identity = { name: resolveTabName(tab), model: tab.providerId ? null : (observedModel ?? null) };
       handle.renew({ args: renewalLaunchArgs(tab.launchArgs, mode, identity), renewalId, ...(folder ? { cwd: folder } : {}) });
       return true;
     },
