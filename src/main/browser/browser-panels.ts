@@ -1,12 +1,12 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { WebContentsView, net, session as electronSession, webContents, type BrowserWindow, type Session, type WebContents } from 'electron';
+import { WebContentsView, net, session as electronSession, type BrowserWindow, type Session, type WebContents } from 'electron';
 import { guardBrowserPanelNavigation } from '../navigation-guard';
 import { canServeLocalFile, isAllowedLocalFileUrl, isAllowedPanelUrl } from '../../shared/browser/url';
 import type { BrowserPanelState, BrowserRect, BrowserTabInfo } from '../../shared/browser/ipc';
 import { cleanUserAgent, uniqueDownloadName } from './panel-helpers';
 import { browserFullscreenKey } from '../../shared/browser/fullscreen';
-import { keepFocusOnNavigation } from './panel-focus';
+import { PanelFocusKeeper } from './panel-focus';
 
 // Navegador interno — the `WebContentsView`s of the panel (docs/design/navegador-interno.md).
 //
@@ -82,6 +82,8 @@ export class BrowserPanels {
   private sweepTimer: NodeJS.Timeout | null = null;
   private nextTabId = 1;
   private readonly now: () => number;
+  /** Gives the owner's keyboard focus back when a page's navigation takes it (t-af678813). */
+  private readonly focusKeeper = new PanelFocusKeeper();
 
   constructor(private readonly deps: BrowserPanelsDeps) {
     this.now = deps.now ?? Date.now;
@@ -127,10 +129,12 @@ export class BrowserPanels {
     if (!entry || this.deps.blockNavigation?.(ptyId, url)) return;
     const window = this.deps.getWindow();
     if (!window || entry.tabs.length >= MAX_TABS_PER_BROWSER) {
+      if (entry.contents.isFocused()) this.focusKeeper.ownerNavigates(entry.contents);
       void entry.contents.loadURL(url).catch(() => undefined);
       return;
     }
-    const tab = this.createTab(entry, window);
+    // A popup of the page the owner is using is theirs: the new tab may take the focus.
+    const tab = this.createTab(entry, window, entry.contents.isFocused());
     this.activate(entry, tab.id);
     void tab.contents.loadURL(url).catch(() => undefined);
   }
@@ -229,13 +233,15 @@ export class BrowserPanels {
 
   /**
    * Loads an already validated URL in the active tab. Resolves when the load finishes or fails (never rejects).
-   * The only door to a local file (page, image or PDF): a page never navigates to `file:` by itself.
+   * The only door to a local file (page, image or PDF): a page never navigates to `file:` by itself. `byOwner`: the
+   * owner typed it in the panel's bar, so the page may take the keyboard focus (an agent's load gives it back).
    */
-  async load(ptyId: string, url: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  async load(ptyId: string, url: string, byOwner = false): Promise<{ ok: true } | { ok: false; error: string }> {
     const entry = this.ensure(ptyId);
     const local = isAllowedLocalFileUrl(url);
     if (!isAllowedPanelUrl(url) && !local) return { ok: false, error: 'Endereço não permitido.' };
     if (local) this.openedLocalFiles.add(url);
+    if (byOwner) this.focusKeeper.ownerNavigates(entry.contents);
     try {
       await entry.contents.loadURL(url);
       return { ok: true };
@@ -247,10 +253,11 @@ export class BrowserPanels {
     }
   }
 
-  history(ptyId: string, action: 'back' | 'forward' | 'reload' | 'stop'): boolean {
+  history(ptyId: string, action: 'back' | 'forward' | 'reload' | 'stop', byOwner = false): boolean {
     const entry = this.get(ptyId);
     if (!entry) return false;
     entry.lastUsedAt = this.now();
+    if (byOwner) this.focusKeeper.ownerNavigates(entry.contents);
     const nav = entry.contents.navigationHistory;
     switch (action) {
       case 'back':
@@ -306,8 +313,9 @@ export class BrowserPanels {
     }
   }
 
-  private createTab(entry: BrowserPanelEntry, window: BrowserWindow): BrowserTab {
+  private createTab(entry: BrowserPanelEntry, window: BrowserWindow, byOwner = false): BrowserTab {
     const { ptyId } = entry;
+    this.focusKeeper.watchWindow(window.webContents);
     const view = new WebContentsView({
       webPreferences: {
         session: this.partition(),
@@ -348,8 +356,8 @@ export class BrowserPanels {
       this.deps.onNavigated?.(ptyId, url);
     });
     contents.on('render-process-gone', emit);
-    // A navigation of the page (the agent's or not) takes the keyboard focus at commit, even hidden: give it back.
-    keepFocusOnNavigation(contents, { focused: () => webContents.getFocusedWebContents() });
+    // A navigation of the page takes the keyboard focus at commit, even hidden: the keeper gives it back.
+    this.focusKeeper.watchPanel(contents);
     // Navegador em tela cheia: with the focus on the page the key never reaches the app's renderer. Esc stays
     // with the page (a site's dialog); F11 is the panel's.
     contents.on('before-input-event', (event, input) => {
@@ -362,6 +370,7 @@ export class BrowserPanels {
     // A page may close itself (`window.close()` of a popup): the neighbor tab takes over.
     contents.once('destroyed', () => this.onTabGone(ptyId, tab));
 
+    if (byOwner) this.focusKeeper.ownerNavigates(contents);
     window.contentView.addChildView(view);
     view.setBounds(entry.lastBounds);
     view.setVisible(false);
