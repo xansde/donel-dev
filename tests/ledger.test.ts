@@ -318,7 +318,9 @@ describe('ledger com prova', () => {
 
   it('lists only the live tasks by default, and the orphan ones apart, without erasing anything', async () => {
     const { service } = setup();
-    const make = async (dono: string) => (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: dono, criterio: 'y', prazo: '2026-11-06', dono, risco: 'alto' }))).text) as { id: string }).id;
+    // Each call a different request: the same call twice in 30 min is a repeat and answers the first task (t-530129bf).
+    let n = 0;
+    const make = async (dono: string) => (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: `${dono} ${++n}`, criterio: 'y', prazo: '2026-11-06', dono, risco: 'alto' }))).text) as { id: string }).id;
     const alive = await make('place:dev');
     const orphan = await make('place:revisor');
     const gone = await make('place:rev-do-dev');
@@ -357,7 +359,9 @@ describe('ledger com prova', () => {
 
   it('what the current code writes, the v4 code of the installed Alfa reads and rewrites without losing or blocking anything', async () => {
     const { file, service } = setup();
-    const create = async (dono: string) => (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', dono, risco: 'alto' }))).text) as { id: string }).id;
+    // Each call a different request: the same call twice in 30 min is a repeat and answers the first task (t-530129bf).
+    let n = 0;
+    const create = async (dono: string) => (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: `x${++n}`, criterio: 'y', prazo: '2026-11-06', dono, risco: 'alto' }))).text) as { id: string }).id;
     const moved = await create('place:dev');
     await runLedgerTool(service(), lider, call('tarefa_transferir', { id: moved, para: 'place:revisor', motivo: 'o Dev fechou' }));
     const done = await create('place:dev');
@@ -455,7 +459,9 @@ describe('ledger com prova', () => {
 
   it('a place that closed passes its open, running and rejected tasks up, with the record; a delivered one stays', async () => {
     const { file, service } = setup();
-    const make = async () => (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco: 'baixo' }))).text) as { id: string }).id;
+    // Each call a different request: the same call twice in 30 min is a repeat and answers the first task (t-530129bf).
+    let n = 0;
+    const make = async () => (JSON.parse((await runLedgerTool(service(), lider, call('tarefa_criar', { pedido: `x${++n}`, criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco: 'baixo' }))).text) as { id: string }).id;
     const open = await make();
     const running = await make();
     await runLedgerTool(service(), dev, call('tarefa_assumir', { id: running }));
@@ -561,7 +567,7 @@ describe('órfãs e substituição (06/11)', () => {
     expect(service().load().doc.tasks[mine]!.state).toBe('aberta');
     // A task that does not exist, or one already closed, is not replaced either.
     expect(await make(service, lider, { dono: 'place:dev', substitui: 't-nao-existe' })).toMatchObject({ ok: false });
-    expect(await make(service, lider, { dono: 'place:dev', substitui: old })).toMatchObject({ ok: false, text: expect.stringContaining('fechada') });
+    expect(await make(service, lider, { pedido: 'outra vez', dono: 'place:dev', substitui: old })).toMatchObject({ ok: false, text: expect.stringContaining('fechada') });
   });
 
   it('keeps who asked (a person, not a role) in the file, next to the task it replaces, readable by a v4 app', async () => {
@@ -635,13 +641,17 @@ describe('órfãs e substituição (06/11)', () => {
     expect(await make(service, dev, {})).toMatchObject({ ok: true });
   });
 
-  it('the nightly cleanup: low risk with a merged PR ends done, high risk and no PR stay; 3 nights in shadow, then it acts', async () => {
+  // t-dfb78dc5 (14/11): the round used to cancel a delivered or rejected task with a merged PR AS ITS OWNER PLACE
+  // ("concluída: PRs ... mesclados", by the Dev who never called tarefa_cancelar), skipping the Revisor. It never
+  // closes one now: it tells the live Líder of the board once, and the decision stays with the Revisor or the Líder.
+  it('the nightly cleanup: a merged PR never closes a task, it tells the Líder of the board once; 3 nights in shadow, then it acts', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'ledger-'));
     dirs.push(dir);
     let clock = new Date(2026, 10, 7, 10).getTime(); // 10:00 local: past the night's hour
     const service = createLedgerService({ filePath: join(dir, 'ledger.json'), io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs, now: () => clock });
+    let n = 0;
     const deliver = async (risco: 'baixo' | 'alto', provas: unknown[], reject: boolean) => {
-      const id = (JSON.parse((await runLedgerTool(service, lider, call('tarefa_criar', { pedido: risco, criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco }))).text) as { id: string }).id;
+      const id = (JSON.parse((await runLedgerTool(service, lider, call('tarefa_criar', { pedido: `${risco} ${++n}`, criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco }))).text) as { id: string }).id;
       await runLedgerTool(service, dev, call('tarefa_assumir', { id }));
       const paraODono = { pergunta: 'Aceito?', resumo: 'Feito.', opcoes: [{ rotulo: 'Aceitar', efeito: 'Fecha.', fecha: 'aceita', recomendada: true }, { rotulo: 'Refazer', efeito: 'Volta.', fecha: 'rejeitada' }], porque: 'Testes.', risco: 'Baixo.' };
       expect(await runLedgerTool(service, dev, call('tarefa_entregar', { id, provas, ...(risco === 'alto' ? { paraODono } : {}) }))).toMatchObject({ ok: true });
@@ -649,6 +659,7 @@ describe('órfãs e substituição (06/11)', () => {
       return id;
     };
     const lowMerged = await deliver('baixo', [{ tipo: 'link', url: 'https://github.com/acme/atlas/pull/255' }], true);
+    const deliveredMerged = await deliver('baixo', [{ tipo: 'link', url: 'https://github.com/acme/atlas/pull/256' }], false);
     const highMerged = await deliver('alto', [{ tipo: 'texto', texto: 'PR https://github.com/acme/atlas/pull/257 e 4 passed' }], true);
     const lowOpenPr = await deliver('baixo', [{ tipo: 'link', url: 'https://github.com/acme/atlas/pull/258' }], false);
     const noPr = await deliver('baixo', [{ tipo: 'texto', texto: '4 passed' }], true);
@@ -660,6 +671,7 @@ describe('órfãs e substituição (06/11)', () => {
     let boards = addPlace(emptyMindscapeDoc(), 'C:/p', { id: 'place:lider', roleId: 'lider' });
     for (const id of ['place:dev', 'place:revisor']) boards = addPlace(boards, 'C:/p', { id, roleId: 'dev' });
     boards = setPlaceConversation(boards, 'C:/p', 'place:revisor', 'conv-revisor');
+    boards = setPlaceConversation(boards, 'C:/p', 'place:lider', 'conv-lider');
     boards = addLink(boards, 'C:/p', { id: 'l1', from: 'place:dev', to: 'place:revisor', arrow: true, by: 'session', opened: true });
     boards = setPlaceConversation(boards, 'C:/p', 'place:dev', 'conv-dev');
     const asked: string[] = [];
@@ -668,41 +680,58 @@ describe('órfãs e substituição (06/11)', () => {
       dir: join(dir, 'rotinas'),
       ledger: () => service,
       loadBoards: () => boards,
-      liveSessionIds: () => new Set(['conv-dev']),
+      liveSessionIds: () => new Set(['conv-dev', 'conv-lider']),
       prState: async (pr: PrRef) => (asked.push(pr.url), pr.number === 258 ? { merged: false } : { merged: true, mergedAt: '2026-11-05T18:00:00Z' }),
       tell: (_board, to, text) => told.push({ to, text }),
       now: () => clock,
     });
     clock += ORPHAN_AGE_MS + 60_000;
+    const before = JSON.stringify(service.load().doc.tasks);
 
-    // Three nights in shadow: everything written, nothing changed.
+    // Three nights in shadow: everything written, nothing changed, nobody told.
     for (let night = 1; night <= 3; night += 1) {
       const entries = await runner.runNight();
-      expect(entries.find((entry) => entry.tarefa === lowMerged)).toMatchObject({ acao: 'cancelaria', sombra: true, motivo: 'concluída: PR #255 mesclado em 2026-11-05' });
+      expect(entries.find((entry) => entry.tarefa === lowMerged)).toMatchObject({ acao: 'avisaria', sombra: true, para: 'place:lider', motivo: expect.stringContaining('PR #255 mesclado em 2026-11-05') });
+      expect(entries.find((entry) => entry.tarefa === deliveredMerged)).toMatchObject({ acao: 'avisaria', sombra: true, para: 'place:lider' });
       expect(entries.find((entry) => entry.tarefa === highMerged)).toMatchObject({ acao: 'fica-risco-alto' });
       expect(entries.find((entry) => entry.tarefa === orphan)).toMatchObject({ acao: 'passaria', de: 'place:revisor', para: 'place:dev' });
       expect(entries.some((entry) => [lowOpenPr, noPr, stacked, citedOnly].includes(entry.tarefa ?? ''))).toBe(false);
       expect(await runner.runNight()).toEqual([]); // once a night
       clock += 24 * 60 * 60 * 1000;
     }
-    expect(service.load().doc.tasks[lowMerged]).toMatchObject({ state: 'rejeitada', ownerPlaceId: 'place:dev' });
-    expect(service.load().doc.tasks[orphan]).toMatchObject({ ownerPlaceId: 'place:revisor' });
+    expect(JSON.stringify(service.load().doc.tasks)).toBe(before);
     expect(told).toEqual([]);
     expect(readFileSync(join(dir, 'rotinas', 'faxina.log'), 'utf8').trim().split('\n').filter((line) => line.includes('"resumo"'))).toHaveLength(3);
 
-    // The fourth night acts.
+    // The fourth night acts: the merged ones stay as they were, and the Líder of the board hears of them once.
     const entries = await runner.runNight();
-    expect(entries.find((entry) => entry.tarefa === lowMerged)).toMatchObject({ acao: 'cancelada', sombra: false });
+    expect(entries.find((entry) => entry.tarefa === lowMerged)).toMatchObject({ acao: 'avisada', sombra: false });
+    expect(entries.find((entry) => entry.tarefa === deliveredMerged)).toMatchObject({ acao: 'avisada', sombra: false });
     const view = async (id: string) => JSON.parse((await runLedgerTool(service, lider, call('tarefa_ver', { id }))).text) as Record<string, any>;
-    expect(await view(lowMerged)).toMatchObject({ estado: 'cancelada', decisao: { tipo: 'cancelada', motivo: 'concluída: PR #255 mesclado em 2026-11-05' } });
+    expect((await view(deliveredMerged)).estado).toBe('entregue');
+    expect((await view(lowMerged)).estado).toBe('rejeitada');
     expect((await view(highMerged)).estado).toBe('rejeitada');
     expect((await view(lowOpenPr)).estado).toBe('entregue');
     expect((await view(noPr)).estado).toBe('rejeitada');
     expect((await view(stacked)).estado).toBe('rejeitada');
     expect((await view(citedOnly)).estado).toBe('rejeitada');
+    // No event of any task was written in the name of its owner place by the round, other than the orphan's pass.
+    for (const id of [lowMerged, deliveredMerged, highMerged]) expect(service.load().doc.tasks[id]!.events.at(-1)!.text ?? '').not.toContain('concluída');
     expect(await view(orphan)).toMatchObject({ dono: 'place:dev', transferencias: [expect.objectContaining({ de: 'place:revisor', para: 'place:dev', motivo: expect.stringContaining('passada sozinha pela faxina') })] });
-    expect(told).toEqual([{ to: 'place:dev', text: expect.stringContaining(orphan) }]);
-    expect(new Set(asked)).toEqual(new Set(['https://github.com/acme/atlas/pull/255', 'https://github.com/acme/atlas/pull/257', 'https://github.com/acme/atlas/pull/258']));
+    const merged = told.filter((notice) => notice.to === 'place:lider');
+    expect(merged).toHaveLength(1);
+    expect(merged[0]!.text).toContain(lowMerged);
+    expect(merged[0]!.text).toContain(deliveredMerged);
+    expect(merged[0]!.text).not.toContain(highMerged);
+    expect(told).toContainEqual({ to: 'place:dev', text: expect.stringContaining(orphan) });
+    expect(new Set(asked)).toEqual(new Set(['https://github.com/acme/atlas/pull/255', 'https://github.com/acme/atlas/pull/256', 'https://github.com/acme/atlas/pull/257', 'https://github.com/acme/atlas/pull/258']));
+
+    // The next night the same deliveries are not told again.
+    clock += 24 * 60 * 60 * 1000;
+    const next = await runner.runNight();
+    expect(next.some((entry) => entry.acao === 'avisada')).toBe(false);
+    expect(told.filter((notice) => notice.to === 'place:lider')).toHaveLength(1);
+    expect((await view(deliveredMerged)).estado).toBe('entregue');
   });
 
   it('a task passed to the Líder único by hand tells it who passed what and why', async () => {

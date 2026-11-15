@@ -1,0 +1,4 @@
+{
+  "title": "Sessão da VPS em worktree também renova",
+  "text": "Uma sessão aberta por outra na VPS, que nasce na própria worktree, agora renova quando passa do limite de contexto, como as outras: escreve a passagem de bastão e a sessão nova continua na mesma worktree. Antes ela nunca renovava e crescia sem limite. Uma conversa retomada numa worktree da VPS também renova nela, e não mais na pasta principal do projeto. As sessões em worktree deste computador seguem sem renovar, porque a worktree delas sai quando o processo termina."
+}

@@ -500,6 +500,11 @@ export class RemoteSessionRegistry {
     return this.live.get(ptyId)?.sshTarget;
   }
 
+  /** The place's folder a live remote tab runs in (its worktree, when it has one): a renewal goes back to it. */
+  remoteDirOf(ptyId: string): string | undefined {
+    return this.live.get(ptyId)?.remoteDir;
+  }
+
   mirrorPathFor(sid: string): string {
     return join(this.mirrorRoot, `${sid}.jsonl`);
   }

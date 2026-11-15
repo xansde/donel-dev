@@ -26,24 +26,16 @@ import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { createRemoteOracleHost } from './ledger-remote-host';
 import { createSwitchableLedger, type SwitchableLedger } from './ledger-remote';
 import { LEDGER_REMOTE_CHANNELS, type LedgerRemoteResult, type LedgerRemoteState } from '../shared/ledger/remote';
-import { createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, prioritizeAsks, recordTurnEnd, runLedgerBatch, runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService } from './ledger-store';
+import { answerTaskId, createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, prioritizeAsks, recordTurnEnd, runLedgerBatch, runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService } from './ledger-store';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerPrioritized, type LedgerSnapshot, type LedgerTurnRecord, type LedgerTurnRecorded } from '../shared/ledger/channels';
 import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, MAX_PRIORITY, OWN_OPTION, type LedgerDeliveredTo, type LedgerDoc, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
 import { askedByRefusal, type LedgerToolCall } from '../shared/ledger/tools';
 import type { BoardBridge } from './board-bridge';
 import { MCP_SERVER_NAME, type BrowserToolOutcome } from '../shared/browser/mcp';
 // Sessão renovada em voo (B36).
-import {
-  buildRemoteHomeScript,
-  buildRemoteReadScript,
-  buildRemoteWriteScript,
-  createSessionRenewalService,
-  parseRemoteHome,
-  parseRemoteRead,
-  type SessionRenewalService,
-} from './session-renewal';
+import { buildRemoteReadScript, createSessionRenewalService, parseRemoteRead, prepareRenewalForPty, type SessionRenewalService } from './session-renewal';
 import { sanitizeTeamPrefs } from '../shared/teamPrefs';
-import { parseHandoffHeader, SESSION_RENEWAL_CHANNELS, sanitizeSessionRenewalPrefs, type HandoffStatus, type RenewalPrepared, type SessionRenewalPrefs } from '../shared/sessionRenewal';
+import { parseHandoffHeader, SESSION_RENEWAL_CHANNELS, sanitizeRenewalTrace, sanitizeSessionRenewalPrefs, type HandoffStatus, type RenewalPrepared, type SessionRenewalPrefs } from '../shared/sessionRenewal';
 import { LEARNING_CHANNELS, parseRendererGesture, type GestureEvent } from '../shared/learning/gestures';
 import { createGestureDiary, type GestureDiary } from './gesture-diary';
 import type { MindscapeReadImageResult, MindscapeSaveImageResult, MindscapeSaveResult, MindscapeTurnEndedPayload } from '../shared/mindscape/channels';
@@ -255,6 +247,7 @@ import {
 import { RemoteLinkSupervisor } from './remote-link';
 import { runShutdownSteps, shutdownThenQuit } from './app-shutdown';
 import { createMainEventsLog, type MainEventLogger } from './main-events-log';
+import { createExitWatchdog } from './exit-watchdog';
 import { SessionKeyRing } from './session-keys';
 import { createDiagnosticsLog } from './chat/diagnostics-log';
 import { resolveMainRepoRootSync } from './session-worktree';
@@ -398,7 +391,7 @@ import { isTabColorToken, setTabColor, setTabOrder } from '../shared/tabAppearan
 import { WORKSPACE_CHANNELS } from '../shared/workspace';
 import { createSystemWorkspaceToolsDeps, createWorkspaceTools } from './workspace-tools';
 import { createSessionWorktreeService } from './session-worktree-service';
-import { isSafeWorktreeName, worktreeNameFromArgs } from '../shared/sessionWorktree';
+import { isSafeWorktreeName, remoteSpawnWorktree, worktreeNameFromArgs } from '../shared/sessionWorktree';
 import { projectOfFolders, tabFolders, withProjectYolo } from '../shared/projectYolo';
 import { isProcessAlive } from './process-alive';
 import { createPullRequestStatusService, createSystemPullRequestStatusDeps, openPullRequestUrl } from './pull-request-status';
@@ -1245,6 +1238,12 @@ app.setAppUserModelId('com.seazone.doneldev');
 /** `<userData>/main-events.log` (main-events-log.ts) — opened on the first event, after `setName` fixed the folder. */
 let mainEventsLog: MainEventLogger | null = null;
 
+/** When this process started (epoch ms): the vigia de saída only ends the process that has this start. */
+const PROCESS_STARTED_AT_MS = Math.round(Date.now() - process.uptime() * 1000);
+/** How long the app may take to exit after the main window closed before the vigia de saída ends it. */
+const EXIT_GRACE_SECONDS = 20;
+const exitWatchdog = createExitWatchdog(spawn);
+
 function logMainEvent(event: string, detail?: Readonly<Record<string, unknown>>): void {
   mainEventsLog ??= createMainEventsLog(join(app.getPath('userData'), 'main-events.log'));
   mainEventsLog(event, detail);
@@ -1533,6 +1532,11 @@ function createMainWindow(): void {
   // órfãos (plan.md risco de vazamento, DoD do ciclo de vida chega em T010).
   mainWindow.on('closed', () => {
     logMainEvent('main-window-closed');
+    // Vigia de saída (exit-watchdog.ts): with the main window gone the app is ending; a copy that never finishes
+    // exiting is ended from outside instead of sitting on memory with no window for hours (13/11).
+    if (exitWatchdog.arm({ pid: process.pid, startedAtMs: PROCESS_STARTED_AT_MS, graceSeconds: EXIT_GRACE_SECONDS })) {
+      logMainEvent('exit-watchdog-armed', { graceSeconds: EXIT_GRACE_SECONDS });
+    }
     if (mainWindowRef === mainWindow) mainWindowRef = null; // C1
     // Each step on its own (app-shutdown.ts): one that throws must not leave the PTYs alive.
     runShutdownSteps(
@@ -1542,6 +1546,9 @@ function createMainWindow(): void {
         ['ptyExit', () => unsubscribeExit()],
         ['semaphoreUpdates', () => unsubscribeSemaphore()],
         ['remoteLinks', () => remoteLinks.stopAll()], // the app is going: nothing more is relinked (the remote sessions stay alive there)
+        // The mirror ssh of each place closes with the window: `ptyExit` was unsubscribed above, so the exit of each
+        // PTY no longer reaches `remoteSessions.onPtyExit`, and the mirrors would live as long as the process.
+        ['remoteMirrors', () => remoteSessions?.stopAll()],
         // A janela morrendo mata os PTYs; os watchers deles vão junto (o `onExit`
         // de cada um já daria baixa, mas não depender disso é o que garante zero
         // handle sobrevivendo ao fechamento).
@@ -1914,12 +1921,14 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     files.push({ name: 'mcp.json', content: mcp.configFileContent });
     claudeArgs.push(...appMcpAllowArgs(), '--mcp-config', '@S/mcp.json');
   }
-  // Super bypass das orquestradoras (t-66cb0ce4): the env goes in the claude.sh (`bypassEnvLines`), read from these args.
-  const finalClaudeArgs = planLaunchPermission(claudeArgs, spawnFacts, readUserDefaultPermissionMode(undefined)).args;
+  // Super bypass (t-66cb0ce4, t-2a9060dd): every session on a remote place is born in it, new, opened or renewed. The
+  // env goes in the claude.sh (`bypassEnvLines`), read from these args.
+  const finalClaudeArgs = planLaunchPermission(claudeArgs, { ...spawnFacts, remote: true }, undefined).args;
 
   await remoteSessions.waitEnded(correlationId);
   const git = localGitInfo(localCwd);
-  const worktree = worktreeNameFromArgs(options.args);
+  // A renewal goes back to the worktree of the session it replaces, also when its args do not name one (t-62f0fa0b).
+  const worktree = remoteSpawnWorktree(options.args, options.renewalId ? sessionRenewal?.get(options.renewalId)?.remote?.dir : null);
   const script = buildRemoteSetupScript({
     sid: correlationId,
     homeRelativeDir: remoteDirFor(localCwd, appConfig.projectRoots),
@@ -3468,6 +3477,11 @@ function registerAppUpdateIpcHandlers(): void {
     // Sessão durável — a conversation with no transcript yet comes back under the same id, not with a failing `-r`.
     transcriptExists: (sessionId, cwd) => localTranscriptExists(sessionId, cwd ?? homedir()),
     forceAfterMinutes: () => appConfig.appUpdate.forceAfterMinutes ?? DEFAULT_FORCE_AFTER_MINUTES,
+    // The installer is about to start as a child of this process: the vigia de saída's `taskkill /T` would end it.
+    beforeRestart: () => {
+      exitWatchdog.exitingForUpdate();
+      logMainEvent('exit-watchdog-off-for-update');
+    },
     onChanged: (status) => {
       const window = getMainWindow();
       if (window && !window.isDestroyed()) window.webContents.send(APP_UPDATE_CHANNELS.changed, status);
@@ -3960,7 +3974,10 @@ async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: 
   // delivery for acceptance, and a record of "travada" or "precisa-do-dono". Everything else stays in the ledger.
   if (appConfig.team.turnNotices === 'ledger' && resolved.caller.placeId !== LEADER_OF_ALL) {
     const urgent = urgentLedgerNotice(call, result.text);
-    if (urgent) void boardBridge.execute(ptyId, { tool: 'aviso_imediato', texto: urgent }).catch(() => null);
+    if (urgent) {
+      const tarefa = answerTaskId(result.text);
+      void boardBridge.execute(ptyId, { tool: 'aviso_imediato', texto: urgent, ...(tarefa ? { tarefa } : {}) }).catch(() => null);
+    }
   }
   // A task passed to the Líder único by hand: it hears it, as when a place that closes passes one (t-2c18d666). With
   // the notices in the ledger (08/11), the transfer is read there (tarefa_novidades), not in its chat.
@@ -4081,40 +4098,27 @@ const RENEWAL_SSH_TIMEOUT_MS = 20_000;
 function registerSessionRenewalIpcHandlers(): void {
   const service = createSessionRenewalService({ handoffsDir: join(app.getPath('userData'), 'handoffs'), randomId: randomUUID });
   sessionRenewal = service;
-  ipcMain.handle(SESSION_RENEWAL_CHANNELS.prepare, async (_event, input: unknown): Promise<RenewalPrepared | null> => {
-    if (typeof input !== 'object' || input === null) return null;
-    const { ptyId, contextTokens, limitTokens } = input as Record<string, unknown>;
-    if (typeof ptyId !== 'string' || typeof contextTokens !== 'number' || typeof limitTokens !== 'number') return null;
-    const sessionId = activeSessionByPty.get(ptyId);
-    const initial = initialChatSourceByPty.get(ptyId);
-    if (!sessionId || !initial) return null;
-    const transcriptPath = chatHub?.transcriptPathOf(ptyId) ?? spawnedTranscriptPaths.get(sessionId) ?? null;
-    const request = { sessionId, transcriptPath, cwd: chatHub?.cwdOf(ptyId) ?? initial.cwd, contextTokens, limitTokens };
-    try {
-      // A session on a remote place reads and writes the handoff THERE (a path of this computer does not exist on it).
-      const sshTarget = remoteSessions?.sshTargetOf(ptyId);
-      let record;
-      if (sshTarget) {
-        const home = parseRemoteHome((await runRemoteScript(sshTarget, buildRemoteHomeScript(), RENEWAL_SSH_TIMEOUT_MS)).stdout);
-        if (!home) throw new Error('o lugar remoto não respondeu');
-        record = service.prepare(request, { sshTarget, home });
-        const written = await runRemoteScript(sshTarget, buildRemoteWriteScript(record.instructionsPath, record.instructions), RENEWAL_SSH_TIMEOUT_MS);
-        if (!written.stdout.includes('DONEL_OK')) throw new Error('as instruções não gravaram no lugar remoto');
-      } else {
-        record = service.prepare(request);
-      }
-      return {
-        renewalId: record.id,
-        previousSessionId: record.previousSessionId,
-        // What the chat's "abrir" opens: on a remote place, the copy here (written when the handoff is read ready).
-        handoffPath: record.remote?.localCopyPath ?? record.handoffPath,
-        requestPrompt: record.requestPrompt,
-        firstPrompt: record.firstPrompt,
-      };
-    } catch (error) {
-      console.error('[donel-dev] renovação: as instruções da passagem não gravaram:', error instanceof Error ? error.message : error);
-      return null;
-    }
+  // t-028deaf0 — every prepare leaves its outcome in `main-events.log` (before, a failure only reached the console).
+  ipcMain.handle(SESSION_RENEWAL_CHANNELS.prepare, (_event, input: unknown): Promise<RenewalPrepared | null> =>
+    prepareRenewalForPty(
+      {
+        service,
+        activeSessionOf: (ptyId) => activeSessionByPty.get(ptyId),
+        sourceCwdOf: (ptyId) => initialChatSourceByPty.get(ptyId)?.cwd,
+        transcriptPathOf: (ptyId, sessionId) => chatHub?.transcriptPathOf(ptyId) ?? spawnedTranscriptPaths.get(sessionId) ?? null,
+        cwdOf: (ptyId) => chatHub?.cwdOf(ptyId) ?? undefined,
+        sshTargetOf: (ptyId) => remoteSessions?.sshTargetOf(ptyId),
+        remoteDirOf: (ptyId) => remoteSessions?.remoteDirOf(ptyId),
+        runRemote: (sshTarget, script) => runRemoteScript(sshTarget, script, RENEWAL_SSH_TIMEOUT_MS),
+        log: logMainEvent,
+      },
+      input,
+    ),
+  );
+  // The verdict of a tab past the limit, when it changes (`renewalTrace` in the renderer): only the known fields.
+  ipcMain.on(SESSION_RENEWAL_CHANNELS.trace, (_event, raw: unknown) => {
+    const entry = sanitizeRenewalTrace(raw);
+    if (entry) logMainEvent('renewal-verdict', { ...entry });
   });
   ipcMain.handle(SESSION_RENEWAL_CHANNELS.status, async (_event, renewalId: unknown): Promise<HandoffStatus> => {
     if (typeof renewalId !== 'string') return { kind: 'missing' };
@@ -4935,9 +4939,10 @@ void app.whenReady().then(async () => {
     loadBoards: () => createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load(),
     liveSessionIds: () => new Set(activeSessionByPty.values()),
     prState: ghPrState,
-    tell: (projectPath, to, text) => {
-      // 08/11 — with the notices in the ledger, the passage is read there (tarefa_novidades), not in a chat.
-      if (appConfig.team.turnNotices === 'ledger') return;
+    tell: (projectPath, to, text, kind) => {
+      // 08/11 — with the notices in the ledger, an orphan's passage is read there (tarefa_novidades), not in a chat. A
+      // merged PR is on no ledger event (the round never closes the task, t-dfb78dc5): it is always said.
+      if (kind === 'orfas' && appConfig.team.turnNotices === 'ledger') return;
       void boardBridge.deliverOwnerMessage({ projectPath, placeId: to === LEADER_OF_ALL ? '' : to, text, leaderText: text }).catch(() => null);
     },
   });

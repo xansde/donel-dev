@@ -1,0 +1,1 @@
+{ "title": "Sessões na VPS não param mais em permissão", "text": "Toda sessão aberta numa VPS nasce sem pedir permissão, também quando é renovada no meio do trabalho. Antes, a renovada voltava no modo manual e parava em cada comando, esperando alguém clicar na tela dela." }

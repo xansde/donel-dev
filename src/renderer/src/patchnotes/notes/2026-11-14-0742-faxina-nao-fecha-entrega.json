@@ -1,0 +1,4 @@
+{
+  "title": "A faxina da noite não fecha mais entrega",
+  "text": "Uma tarefa entregue cujo PR já entrou ficava \"concluída\" sozinha de madrugada, em nome de quem entregou, sem passar pelo Revisor. Agora a faxina não fecha nada: ela avisa o Líder do quadro uma vez, e a tarefa espera o aceite do Revisor ou a decisão do Líder."
+}

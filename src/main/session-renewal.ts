@@ -11,7 +11,7 @@ import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, join, posix } from 'node:path';
 import { shQuote } from './remote-session';
-import { formatTokensK, HANDOFF_FORMAT_MARKER, parseHandoffHeader, type HandoffStatus } from '../shared/sessionRenewal';
+import { formatTokensK, HANDOFF_FORMAT_MARKER, parseHandoffHeader, type HandoffStatus, type RenewalPrepared } from '../shared/sessionRenewal';
 
 export interface RenewalPrepareRequest {
   readonly sessionId: string;
@@ -31,6 +31,8 @@ export interface RenewalRemote {
   readonly sshTarget: string;
   /** `$HOME` on the place (absolute, POSIX). */
   readonly home: string;
+  /** The place's folder the session that leaves runs in: the new one opens in the same worktree (t-62f0fa0b). */
+  readonly dir?: string;
 }
 
 /** Where the handoffs of a remote session live, under its `$HOME`. */
@@ -54,6 +56,8 @@ export interface RenewalRecord {
     readonly sshTarget: string;
     /** The copy on this computer, written when the handoff is read ready: what the chat's "abrir" opens. */
     readonly localCopyPath: string;
+    /** `RenewalRemote.dir`. */
+    readonly dir?: string;
   };
 }
 
@@ -218,7 +222,7 @@ export function createSessionRenewalService(deps: SessionRenewalServiceDeps): Se
           `"Primeira ação da sessão nova". Só vale como aprovado o que a passagem marca como aprovado. Depois responda ` +
           `em poucas linhas com a prioridade e o estado das frentes, e espere a próxima mensagem.`,
         instructions,
-        ...(remote ? { remote: { sshTarget: remote.sshTarget, localCopyPath: join(deps.handoffsDir, `${base}.md`) } } : {}),
+        ...(remote ? { remote: { sshTarget: remote.sshTarget, localCopyPath: join(deps.handoffsDir, `${base}.md`), ...(remote.dir ? { dir: remote.dir } : {}) } } : {}),
       };
       records.set(record.id, record);
       return record;
@@ -276,4 +280,120 @@ export function buildRemoteReadScript(path: string): string {
 export function parseRemoteRead(stdout: string): string | null {
   const at = stdout.indexOf(`${FILE_MARK}\n`);
   return at === -1 ? null : stdout.slice(at + FILE_MARK.length + 1);
+}
+
+// ---------------------------------------------------------------------------
+// `renewal:prepare` (t-028deaf0): the whole step, with one line in `main-events.log` for each call
+// ---------------------------------------------------------------------------
+
+const LOG_ID = /^[A-Za-z0-9-]{1,64}$/;
+
+/** A Node error code (`ENOSPC`, `EACCES`, `ETIMEDOUT`): a fixed word, never the message (which may carry a path). */
+function errorCode(error: unknown): string | null {
+  const code = typeof error === 'object' && error !== null ? (error as { code?: unknown }).code : undefined;
+  return typeof code === 'string' && /^[A-Z0-9_]{1,32}$/.test(code) ? code : null;
+}
+
+/** Why a prepare ended. Fixed words only: the line never carries a path, a key or the instructions. */
+export type RenewalPrepareOutcome = 'ok' | 'entrada-invalida' | 'sem-sessao' | 'sem-fonte' | 'ssh-home' | 'write';
+
+export interface PrepareRenewalDeps {
+  readonly service: SessionRenewalService;
+  /** The conversation running in the pty now (`/clear` and `/resume` move it). */
+  activeSessionOf(ptyId: string): string | undefined;
+  /** The folder of the chat source the pty was spawned with; `undefined` = the main does not know this pty. */
+  sourceCwdOf(ptyId: string): string | undefined;
+  transcriptPathOf(ptyId: string, sessionId: string): string | null;
+  /** The chat's current folder of the pty, when the chat follows it. */
+  cwdOf?(ptyId: string): string | undefined;
+  sshTargetOf(ptyId: string): string | undefined;
+  remoteDirOf(ptyId: string): string | undefined;
+  /** One script on the place over ssh (`runRemoteScript`, stdin). `code` and `timedOut` go to the log line on a failure. */
+  runRemote(sshTarget: string, script: string): Promise<{ readonly stdout: string; readonly code?: number | null; readonly timedOut?: boolean }>;
+  log(event: string, detail: Readonly<Record<string, unknown>>): void;
+}
+
+/**
+ * Writes the handoff instructions for the session in `ptyId` and names its handoff (on a remote place, over ssh: a path
+ * of this computer does not exist there). `null` when it could not; either way `main-events.log` gets the outcome.
+ */
+export async function prepareRenewalForPty(deps: PrepareRenewalDeps, input: unknown): Promise<RenewalPrepared | null> {
+  const raw = typeof input === 'object' && input !== null ? (input as Record<string, unknown>) : {};
+  const { ptyId, contextTokens, limitTokens } = raw;
+  const remote = typeof ptyId === 'string' && deps.sshTargetOf(ptyId) !== undefined;
+  // What tells one failure from another, never text: the ssh's exit code and timeout, or a Node error code (ENOSPC).
+  const done = (outcome: RenewalPrepareOutcome, why: { readonly sshExit?: number | null; readonly timedOut?: boolean; readonly error?: unknown } = {}): void => {
+    const code = errorCode(why.error);
+    deps.log('renewal-prepare', {
+      ptyId: typeof ptyId === 'string' && LOG_ID.test(ptyId) ? ptyId : null,
+      outcome,
+      remote,
+      contextTokens: typeof contextTokens === 'number' ? contextTokens : null,
+      limitTokens: typeof limitTokens === 'number' ? limitTokens : null,
+      ...(why.sshExit !== undefined ? { sshExit: why.sshExit } : {}),
+      ...(why.timedOut !== undefined ? { timedOut: why.timedOut } : {}),
+      ...(code ? { errorCode: code } : {}),
+    });
+    if (outcome !== 'ok' && why.error !== undefined)
+      console.error('[donel-dev] renovação: as instruções da passagem não gravaram:', why.error instanceof Error ? why.error.message : why.error);
+  };
+  if (typeof ptyId !== 'string' || typeof contextTokens !== 'number' || typeof limitTokens !== 'number') {
+    done('entrada-invalida');
+    return null;
+  }
+  const sessionId = deps.activeSessionOf(ptyId);
+  if (!sessionId) {
+    done('sem-sessao');
+    return null;
+  }
+  const sourceCwd = deps.sourceCwdOf(ptyId);
+  if (sourceCwd === undefined) {
+    done('sem-fonte');
+    return null;
+  }
+  const request = { sessionId, transcriptPath: deps.transcriptPathOf(ptyId, sessionId), cwd: deps.cwdOf?.(ptyId) ?? sourceCwd, contextTokens, limitTokens };
+  let record: RenewalRecord;
+  const sshTarget = deps.sshTargetOf(ptyId);
+  if (sshTarget) {
+    let answer: { readonly stdout: string; readonly code?: number | null; readonly timedOut?: boolean };
+    try {
+      answer = await deps.runRemote(sshTarget, buildRemoteHomeScript());
+    } catch (error) {
+      done('ssh-home', { error });
+      return null;
+    }
+    const home = parseRemoteHome(answer.stdout);
+    if (!home) {
+      done('ssh-home', { sshExit: answer.code ?? null, timedOut: answer.timedOut === true });
+      return null;
+    }
+    try {
+      const dir = deps.remoteDirOf(ptyId);
+      record = deps.service.prepare(request, { sshTarget, home, ...(dir ? { dir } : {}) });
+      answer = await deps.runRemote(sshTarget, buildRemoteWriteScript(record.instructionsPath, record.instructions));
+    } catch (error) {
+      done('write', { error });
+      return null;
+    }
+    if (!answer.stdout.includes('DONEL_OK')) {
+      done('write', { sshExit: answer.code ?? null, timedOut: answer.timedOut === true });
+      return null;
+    }
+  } else {
+    try {
+      record = deps.service.prepare(request);
+    } catch (error) {
+      done('write', { error });
+      return null;
+    }
+  }
+  done('ok');
+  return {
+    renewalId: record.id,
+    previousSessionId: record.previousSessionId,
+    // What the chat's "abrir" opens: on a remote place, the copy here (written when the handoff is read ready).
+    handoffPath: record.remote?.localCopyPath ?? record.handoffPath,
+    requestPrompt: record.requestPrompt,
+    firstPrompt: record.firstPrompt,
+  };
 }

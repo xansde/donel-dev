@@ -82,6 +82,23 @@ describe('sessão orquestradora nasce em super bypass', () => {
     expect(plan.env).toEqual({});
   });
 
+  // t-2a9060dd (14/11, ps da VPS): o Revisor e o Dev renovados em voo nasciam `claude --permission-mode default
+  // --session-id <novo>` e paravam em cada comando. Regra do dono: toda sessão num lugar remoto nasce em super bypass.
+  for (const papel of ['dev', 'revisor', 'pesquisa'] as const) {
+    it(`${papel} num lugar remoto nasce em super bypass, nova, aberta por outra ou renovada`, () => {
+      // A tab reattached after an update has no launch args: its renewal carried only the "default" the chat read.
+      const reattachedRenewal = ['--permission-mode', 'default', '--session-id', 'novo'];
+      for (const argv of [bornArgs('dono'), bornArgs('sessao_abrir'), bornArgs('renovada'), reattachedRenewal]) {
+        const plan = planLaunchPermission(argv, { roleId: papel, remote: true }, undefined);
+        expect(modesOf(plan.args)).toEqual(['bypassPermissions']);
+        expect(plan.env).toEqual(SUPER_BYPASS_ENV);
+        const claudeSh = claudeShOf(plan.args);
+        expect(claudeSh).toContain('export CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1');
+        expect(claudeSh).toContain(`'--permission-mode' 'bypassPermissions'`);
+      }
+    });
+  }
+
   it('qualquer sessão lançada em bypass ganha a env também no PC (antes só a VPS tinha)', () => {
     const plan = planLaunchPermission(['--model', 'opus', '--permission-mode', 'bypassPermissions'], { roleId: 'dev' }, undefined);
     expect(modesOf(plan.args)).toEqual(['bypassPermissions']);

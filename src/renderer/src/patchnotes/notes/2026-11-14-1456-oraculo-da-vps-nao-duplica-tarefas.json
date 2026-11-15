@@ -1,0 +1,4 @@
+{
+  "title": "Oráculo da VPS não duplica mais tarefas",
+  "text": "Quando a resposta do Oráculo da VPS demorava, a gravação dava certo mas a sessão ouvia que talvez não tivesse gravado, repetia e a tarefa nascia em dobro. Agora o app espera a resposta enquanto ela segue chegando, a mesma chamada repetida devolve a tarefa que já existe, e uma tarefa recém-criada aparece na hora."
+}

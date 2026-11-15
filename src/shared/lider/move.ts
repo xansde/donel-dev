@@ -74,6 +74,22 @@ export function planLeaderDelivery(
   return { kind: 'send', tabId: tab.id };
 }
 
+/**
+ * t-2456f611 (14/11) — the folder a Líder único that COMES BACK goes to: resumed on the first boot after an update, or
+ * renewed in flight. `moveCwd` is `leaderMoveCwd` (the orchestrator's project or `leader.home`). Before, it came back
+ * in its old folder every time, and only a message through the Jobu's bubble while it was stopped moved it. Only on
+ * this computer: on a remote place the folder changes through the move (`planLeaderDelivery`, `inPlace`). A resumed
+ * conversation needs its transcript carried to the new folder first; when that fails it stays, and the next comeback
+ * tries again (nothing is remembered between them).
+ */
+export function leaderComebackCwd(
+  tab: { readonly leaderOfAll?: boolean; readonly cwd: string | undefined; readonly remoteId?: string },
+  moveCwd: string | undefined,
+): string | undefined {
+  if (!tab.leaderOfAll || tab.remoteId !== undefined || moveCwd === undefined || tab.cwd === undefined) return undefined;
+  return sameFolder(tab.cwd, moveCwd) ? undefined : moveCwd;
+}
+
 export interface LeaderMoveDeps {
   /** Copies the conversation to the new place and checks it there (size and hash). */
   carry(): Promise<LiderSendResult>;

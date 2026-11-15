@@ -14,6 +14,7 @@ import {
 } from '@donel-dev/design-system';
 import { DEFAULT_TEAM_PREFS } from '../../shared/teamPrefs';
 import type { LedgerTurnRecorded } from '../../shared/ledger/channels';
+import type { LedgerDoc } from '../../shared/ledger/contract';
 import { PanelLeftClose, PanelLeftOpen, PanelRightClose, Settings } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type {
@@ -97,7 +98,7 @@ import { SpawnAskPanel, type SpawnAsk } from './Mindscape/SpawnAskPanel';
 import { appendConversation, findSessionBoard, placeSessionCards, roleOfSession, setBoardView, setPlaceConversation, writeSessionNote, type MindscapeDoc } from '../../shared/mindscape/model';
 import type { SessionRole } from '../../shared/roles';
 // Sessão renovada em voo (B36) — limit crossed at the end of a turn → handoff → new session in the same tab.
-import { DEFAULT_SESSION_RENEWAL_PREFS, RENEWAL_HANDOFF_WAIT_MS, renewalHandoffDeliveryNotice, renewalLaunchArgs, type SessionRenewalPrefs } from '../../shared/sessionRenewal';
+import { DEFAULT_SESSION_RENEWAL_PREFS, RENEWAL_HANDOFF_WAIT_MS, renewalEligible, renewalHandoffDeliveryNotice, renewalLaunchArgs, type SessionRenewalPrefs } from '../../shared/sessionRenewal';
 import { useSessionRenewal, type RenewalTabInput } from './sessionRenewal/useSessionRenewal';
 import { RenewalDeliveryStrip, RenewalStrip } from './sessionRenewal/RenewalStrip';
 import type { BoardView } from '../../shared/mindscape/view';
@@ -133,7 +134,7 @@ import { withNoPipelineTag } from '../../shared/chat/noPipeline';
 import { LIDER_ROLE_ID, type LiderReport, type LiderSendResult } from '../../shared/lider/ipc';
 import { isLeaderOfAllTab, liveLeaderOfAllTab } from '../../shared/mindscape/leader';
 import { DEFAULT_LEADER_PREFS, leaderCwd, leaderMoveCwd, leaderRemoteId } from '../../shared/leaderPrefs';
-import { leaderFolderMoveKey, leaderLineRoute, planLeaderDelivery, startLeaderMove, type LeaderMove, type LeaderMoveDeps } from '../../shared/lider/move';
+import { leaderComebackCwd, leaderFolderMoveKey, leaderLineRoute, type LeaderMove, type LeaderMoveDeps, planLeaderDelivery, startLeaderMove } from '../../shared/lider/move';
 import type { ChatView as ChatViewMode } from '../../shared/chat/rows';
 import { TerminalPane } from './TerminalPane';
 import { PatchNotes } from './patchnotes/PatchNotes';
@@ -550,6 +551,9 @@ export function App(): React.JSX.Element {
   const hillOn = appMode === 'hill';
   const hillClimb = useHillClimb();
   const mindscape = useMindscapeDoc();
+  /** Where the live Líder único moves to (the orchestrator's project or `leader.home`), with the boards read now. */
+  const leaderMoveCwdNow = (): string | undefined =>
+    leaderMoveCwd(appConfig?.leader ?? DEFAULT_LEADER_PREFS, Object.keys(mindscape.doc.boards), appConfig?.leaderHomes ?? []);
   /**
    * Spec 010 / B6 — o mapa é PROJEÇÃO do store: o snapshot chega pronto do main
    * (macro etapa já derivada, D-13) e é empurrado a cada mudança. O renderer
@@ -1869,17 +1873,20 @@ export function App(): React.JSX.Element {
       tabId: tab.id,
       ptyId: chatPtyIds[tab.id] ?? null,
       sessionId: tab.claudeSessionId ?? null,
-      // An isolated worktree is released when its process ends: renewing it would race the cleanup.
-      eligible:
-        tab.sessionType === 'claude' &&
-        !tab.accountLoginId &&
-        !!tab.claudeSessionId &&
-        tabExits[tab.id] === undefined &&
-        worktreeNameFromArgs(tab.launchArgs) === null,
+      // A worktree on this computer is released when its process ends (renewing would race the cleanup); on a remote place it stays.
+      eligible: renewalEligible({
+        sessionType: tab.sessionType,
+        loginTab: !!tab.accountLoginId,
+        hasSessionId: !!tab.claudeSessionId,
+        exited: tabExits[tab.id] !== undefined,
+        worktree: worktreeNameFromArgs(tab.launchArgs) !== null,
+        remote: !!tab.remoteId,
+      }),
       contextTokens: tab.claudeSessionId ? (contextTokens[tab.claudeSessionId] ?? null) : null,
       turn: semaphore?.state ?? null,
       stateEnteredAt: semaphore?.stateEnteredAt ?? 0,
       backgroundAgents: semaphore?.awaitingBackgroundAgents === true,
+      remote: !!tab.remoteId,
     };
   });
   /** One line to the session of `tabId` — same doors as the Esteira auto-start: the chat's send driver, or typed into the terminal. */
@@ -1902,10 +1909,21 @@ export function App(): React.JSX.Element {
       const ptyId = handle.ptyId;
       const chat = ptyId ? getChatStore().getState(ptyId) : null;
       const mode = chat !== null && chat.status === 'ready' ? chat.permissionMode : null;
-      handle.renew({ args: renewalLaunchArgs(tab.launchArgs, mode), renewalId });
+      // t-2456f611 — the Líder único's new conversation starts in the orchestrator's project, not its old folder.
+      const folder = leaderComebackCwd({ leaderOfAll: isLeaderOfAllTab(tab), cwd: tab.cwd, remoteId: tab.remoteId }, leaderMoveCwdNow());
+      if (folder) updateTab(tabId, { cwd: folder });
+      // t-408339e0 — a tab reattached after an update (or resumed by `-r` alone) has no `-n` nor `--model` in its args: the
+      // new process takes the name the tab shows and the model the session really ran (a provider keeps its own). Without
+      // a reading, no `--model`: the toolbar's default would be a guess, not what the session ran.
+      const sessionId = tab.claudeSessionId ?? null;
+      const observedModel = sessionId ? (statusLineForSession(ptyId ? statusLines[ptyId] : null, sessionId)?.model?.id ?? sessionModels[sessionId]) : null;
+      const identity = { name: resolveTabName(tab), model: tab.providerId ? null : (observedModel ?? null) };
+      handle.renew({ args: renewalLaunchArgs(tab.launchArgs, mode, identity), renewalId, ...(folder ? { cwd: folder } : {}) });
       return true;
     },
     toast: (message) => setDevModeToast(message),
+    // t-028deaf0 — a tab past the limit leaves its verdict in `main-events.log` when it changes.
+    trace: (entry) => window.donel.renewal.trace?.(entry),
   });
 
   // T009 — antes do primeiro evento de hook chegar pra uma aba recém-criada,
@@ -2077,6 +2095,29 @@ export function App(): React.JSX.Element {
   // conversation (`-r`), so its card stays where it was on the Mindscape. Only after an update: the general
   // restore on boot stays cancelled (the main hands the list once and deletes it).
   const updateBootTakenRef = useRef(false);
+  // t-2456f611 — the Líder único of the update boot waits for the boards (they say where the orchestrator is).
+  const [pendingLeaderBoot, setPendingLeaderBoot] = useState<{ readonly entry: ResumeTab; readonly restore: (entry: ResumeTab, cwd: string | undefined) => string } | null>(null);
+  useEffect(() => {
+    const pending = pendingLeaderBoot;
+    if (!pending || (!mindscape.loaded && mindscape.alert === null)) return;
+    setPendingLeaderBoot(null);
+    const { entry, restore } = pending;
+    const folder = leaderComebackCwd({ leaderOfAll: true, cwd: entry.cwd }, mindscape.loaded ? leaderMoveCwdNow() : undefined);
+    if (!folder || !entry.sessionId) {
+      restore(entry, entry.cwd);
+      return;
+    }
+    // The conversation goes with it (`-r` finds the transcript by folder); when the copy fails it comes back where it
+    // was, and the next comeback tries again.
+    void window.donel.lider
+      .carry({ sessionId: entry.sessionId, ...(entry.cwd ? { cwd: entry.cwd } : {}), toCwd: folder })
+      .then((result) => {
+        if (!result.ok) setDevModeToast(`O Líder único voltou na pasta de antes: ${result.reason}`);
+        restore(entry, result.ok ? folder : entry.cwd);
+      })
+      .catch(() => restore(entry, entry.cwd));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingLeaderBoot, mindscape.loaded, mindscape.alert]);
   useEffect(() => {
     if (!appConfig || updateBootTakenRef.current || !window.donel.appUpdate) return;
     updateBootTakenRef.current = true;
@@ -2089,11 +2130,11 @@ export function App(): React.JSX.Element {
         let lastListedId: string | null = null;
         // Sessão durável — who must come back on the same conversation; the Líder hears who did (agentBridge).
         const expected: ReturnExpectation[] = [];
-        for (const entry of boot.tabs) {
+        const restore = (entry: ResumeTab, cwd: string | undefined): string => {
           const id = addTab(
             {
             name: entry.name,
-            cwd: entry.cwd,
+            cwd,
             projectName: entry.projectName,
             pinned: entry.pinned === true,
             sessionType: entry.sessionType,
@@ -2111,7 +2152,16 @@ export function App(): React.JSX.Element {
           );
           // Só os Líderes nas abas — the team comes back to the Mindscape, not to the tab bar.
           if (entry.openedBy) agentBridgeRef.current.adoptOpened(id, entry.openedBy);
-          else {
+          return id;
+        };
+        for (const entry of boot.tabs) {
+          // t-2456f611 — the Líder único comes back once the boards are read: it may move to the orchestrator first.
+          if (entry.leaderOfAll && entry.sessionType === 'claude' && entry.sessionId) {
+            setPendingLeaderBoot({ entry, restore });
+            continue;
+          }
+          const id = restore(entry, entry.cwd);
+          if (!entry.openedBy) {
             lastListedId = id;
             if (entry.active) activeId = id;
           }
@@ -2559,6 +2609,8 @@ export function App(): React.JSX.Element {
     if (plan.kind === 'reconnect') {
       // The same conversation, where it was: on a remote place this reattaches to the same CLI in its tmux.
       liderTabRef.current = plan.tabId;
+      // A comeback: a change of folder that failed before is tried again on the next message (t-2456f611).
+      liderFailedFolderMovesRef.current.clear();
       terminalRefs.current[plan.tabId]?.respawn({ resume: plan.sessionId });
       sendTo(plan.tabId, text);
       return { ok: true };
@@ -2679,6 +2731,10 @@ export function App(): React.JSX.Element {
     move.enqueue(text, deliver);
     return true;
   };
+  // t-e5575f78 — the ledger a notice about a session reads its task from: loaded once, then kept by the change events
+  // (each notice would otherwise parse the whole ledger.json in the main and clone it over IPC).
+  const ledgerDocRef = useRef<LedgerDoc | null>(null);
+  useEffect(() => window.donel?.ledger?.onChanged((snapshot) => (ledgerDocRef.current = snapshot.doc)), []);
   const agentPorts: AgentBridgePorts = {
     loaded: mindscapeLoaded,
     doc: () => mindscape.doc,
@@ -2826,6 +2882,14 @@ export function App(): React.JSX.Element {
     turnNotices: () => appConfig?.team.turnNotices ?? 'ledger',
     recordTurn: (record) => window.donel.ledger.turnEnded(record).catch((): LedgerTurnRecorded => 'falhou'),
     turnFailureOf: (tabId) => semaphoreStates[tabId]?.turnFailure,
+    // t-e5575f78 — a notice about a session opens with the "[t-xxxx] título: objetivo" of its task, read from here.
+    ledgerDoc: () =>
+      ledgerDocRef.current
+        ? Promise.resolve(ledgerDocRef.current)
+        : window.donel.ledger
+            .load()
+            .then((snapshot) => (ledgerDocRef.current = snapshot.doc))
+            .catch(() => null),
   };
   const agentBridgeRef = useRef<AgentBridge>(null as unknown as AgentBridge);
   if (agentBridgeRef.current === null) agentBridgeRef.current = new AgentBridge(agentPorts);
@@ -2856,13 +2920,12 @@ export function App(): React.JSX.Element {
       const retry = (): void => {
         updateWarnedRef.current.delete(tabId);
       };
-      void agentPorts
-        .deliverLine(
-          tabId,
-          `◆ O app vai reiniciar para instalar a versão nova em até ${minutes} min. Feche o turno num ponto seguro e salve o estado agora: registre o andamento no ledger (tarefa_andamento) e atualize a sua nota de handoff, se tiver uma. Depois do reinício o app retoma esta mesma conversa; se o turno não fechar até lá, ele reinicia mesmo assim.`,
-          60_000,
-          'session',
-        )
+      const words = `O app vai reiniciar para instalar a versão nova em até ${minutes} min. Feche o turno num ponto seguro e salve o estado agora: registre o andamento no ledger (tarefa_andamento) e atualize a sua nota de handoff, se tiver uma. Depois do reinício o app retoma esta mesma conversa; se o turno não fechar até lá, ele reinicia mesmo assim.`;
+      // t-e5575f78 — with a task, the notice opens with its "[t-xxxx] título: objetivo" (the usage collector reads 300).
+      void agentBridgeRef.current
+        .noticeTaskLine(tabId)
+        .catch(() => null)
+        .then((task) => agentPorts.deliverLine(tabId, task ? `◆ ${task}\n\n${words}` : `◆ ${words}`, 60_000, 'session'))
         .then((outcome) => {
           if (outcome.kind === 'nao-foi') retry();
         })

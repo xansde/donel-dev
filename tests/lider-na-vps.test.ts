@@ -10,7 +10,7 @@ import { remoteAliveFromMeta, type RemoteSessionMeta } from '../src/main/remote-
 import { isValidLiderCarryPayload } from '../src/shared/lider/ipc';
 import { liveLeaderOfAllTab } from '../src/shared/mindscape/leader';
 import { leaderCwd, leaderMoveCwd, leaderMoves, leaderRemoteId, sameFolder, sanitizeLeaderPrefs } from '../src/shared/leaderPrefs';
-import { leaderFolderMoveKey, leaderLineRoute, planLeaderDelivery, startLeaderMove, type LeaderMoveDeps } from '../src/shared/lider/move';
+import { leaderComebackCwd, leaderFolderMoveKey, leaderLineRoute, planLeaderDelivery, startLeaderMove, type LeaderMoveDeps } from '../src/shared/lider/move';
 
 // Líder único na VPS (docs/planos/lider-na-vps.md): o que faria o Líder sumir ou perder a conversa sem o dono ver.
 const sid = '11111111-2222-4333-8444-555555555555';
@@ -461,6 +461,22 @@ describe('Líder único na VPS — a troca nunca fecha o Líder antigo antes do 
     expect(planLeaderDelivery(at('/HOME/a/seazone/_orquestradora/', 'waiting'), 'vps-1', orq)).toEqual({ kind: 'send', tabId: 't1' });
     // Chamador sem a pasta: igual a antes.
     expect(planLeaderDelivery(at('/home/a/seazone', 'waiting'), 'vps-1')).toEqual({ kind: 'send', tabId: 't1' });
+  });
+
+  // t-2456f611 (14/11): o Líder único que nasceu na raiz voltava na raiz em toda retomada (boot depois do Atualizar) e
+  // em toda renovação em voo; só a mensagem pela bolha do Jobu, com ele parado, o levava à _orquestradora.
+  it('o Líder único que volta (retomada ou renovação) vai para a _orquestradora; outra aba, outro lugar ou a mesma pasta ficam', () => {
+    const orq = 'C:\\Users\\u\\seazone\\_orquestradora';
+    const root = 'C:\\Users\\u\\seazone';
+    expect(leaderComebackCwd({ leaderOfAll: true, cwd: root }, orq)).toBe(orq);
+    expect(leaderComebackCwd({ leaderOfAll: true, cwd: 'c:/users/u/seazone/_orquestradora/' }, orq)).toBeUndefined();
+    expect(leaderComebackCwd({ leaderOfAll: false, cwd: root }, orq)).toBeUndefined();
+    expect(leaderComebackCwd({ cwd: root }, orq)).toBeUndefined();
+    // On a remote place the folder is the move's (planLeaderDelivery, inPlace), never a path of this computer.
+    expect(leaderComebackCwd({ leaderOfAll: true, cwd: '/home/a/seazone', remoteId: 'vps-1' }, orq)).toBeUndefined();
+    // No orchestrator (nor leader.home), or no known folder: it stays.
+    expect(leaderComebackCwd({ leaderOfAll: true, cwd: root }, undefined)).toBeUndefined();
+    expect(leaderComebackCwd({ leaderOfAll: true, cwd: undefined }, orq)).toBeUndefined();
   });
 
   it('no mesmo lugar remoto, só a pasta muda: a troca é na mesma aba; entre lugares, aba nova', () => {

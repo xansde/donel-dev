@@ -5,8 +5,10 @@ import {
   DEFAULT_SESSION_RENEWAL_PREFS,
   parseHandoffHeader,
   renewalHandoffDeliveryNotice,
+  renewalLaunchArgs,
   type RenewalCheckInput,
 } from '../src/shared/sessionRenewal';
+import { renewalEligible, type RenewalEligibilityFacts } from '../src/shared/sessionRenewal';
 
 // Sessão renovada em voo (B36) — the two decisions that would end a process the
 // owner did not mean to end (or never end it). The card that keeps its place on the
@@ -43,6 +45,26 @@ describe('checkRenewal — renew now?', () => {
     expect(checkRenewal({ ...base, prefs: { ...base.prefs, enabled: false } })).toBe('off');
     expect(checkRenewal({ ...base, contextTokens: null })).toBe('off');
     expect(checkRenewal({ ...base, eligible: false })).toBe('off');
+  });
+});
+
+// t-62f0fa0b — a session opened by `sessao_abrir` on the VPS is born in a worktree and never renewed: it grew without
+// limit. The rule against worktrees is for this computer, where the app removes the worktree when the process ends. On a
+// remote place the setup script made it and nothing removes it; the renewal keeps `--worktree` and the setup reuses it.
+describe('renewalEligible — which tabs may be renewed', () => {
+  const plain: RenewalEligibilityFacts = { sessionType: 'claude', loginTab: false, hasSessionId: true, exited: false, worktree: false, remote: false };
+
+  it('a remote session in its worktree renews; a local one in a worktree does not (it would race the cleanup)', () => {
+    expect(renewalEligible({ ...plain, worktree: true, remote: true })).toBe(true);
+    expect(renewalEligible({ ...plain, worktree: true, remote: false })).toBe(false);
+  });
+
+  it('never a terminal, a login tab, a tab without a session or a process that ended', () => {
+    expect(renewalEligible(plain)).toBe(true);
+    expect(renewalEligible({ ...plain, remote: true, sessionType: 'shell' })).toBe(false);
+    expect(renewalEligible({ ...plain, remote: true, loginTab: true })).toBe(false);
+    expect(renewalEligible({ ...plain, remote: true, hasSessionId: false })).toBe(false);
+    expect(renewalEligible({ ...plain, remote: true, exited: true })).toBe(false);
   });
 });
 
@@ -86,5 +108,36 @@ describe('renewalHandoffDeliveryNotice — did the new session get the handoff?'
     const pending = renewalHandoffDeliveryNotice({ kind: 'enviando' }, path);
     expect(pending).toContain(path);
     expect(pending).not.toBeNull();
+  });
+});
+
+// t-408339e0 — a tab reattached after an update (or resumed by `-r` alone) has no `-n` nor `--model` in its launch args.
+// The renewed process was born `claude --session-id <new>`: nameless on the board and on the CLI's default model.
+describe('renewalLaunchArgs — the renewed session keeps the name and the model of the one it replaces', () => {
+  it('fills -n and --model from the tab when the launch args do not carry them', () => {
+    expect(renewalLaunchArgs(['-r', 'old'], null, { name: 'Dev · Faixa preta', model: 'claude-opus-5-5' })).toEqual([
+      '--model',
+      'claude-opus-5-5',
+      '-n',
+      'Dev · Faixa preta',
+    ]);
+    expect(renewalLaunchArgs(undefined, 'bypassPermissions', { name: 'Revisor', model: 'opus' })).toEqual([
+      '--model',
+      'opus',
+      '-n',
+      'Revisor',
+      '--permission-mode',
+      'bypassPermissions',
+    ]);
+  });
+
+  it('never duplicates nor overrides what the launch args already say', () => {
+    const launched = ['--model', 'sonnet', '-n', 'Antigo', '--session-id', 'old'];
+    expect(renewalLaunchArgs(launched, null, { name: 'Outro', model: 'claude-opus-5-5' })).toEqual(['--model', 'sonnet', '-n', 'Antigo']);
+    expect(renewalLaunchArgs(['--model=haiku', '--name=X'], null, { name: 'Y', model: 'opus' })).toEqual(['--model=haiku', '--name=X']);
+  });
+
+  it('leaves out what the tab does not know', () => {
+    expect(renewalLaunchArgs(['-r', 'old'], null, { name: '  ', model: null })).toEqual([]);
   });
 });

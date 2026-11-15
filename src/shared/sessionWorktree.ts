@@ -54,6 +54,19 @@ export function isSafeWorktreeName(name: string): boolean {
   return /^[a-z0-9][a-z0-9-]{0,63}$/.test(name);
 }
 
+/**
+ * The worktree a session on a remote place opens in: the `--worktree` of its args, else (a renewal, t-62f0fa0b) the
+ * worktree the session it replaces ran in (`renewedFromDir`, the place's folder of that session). A renewed session has
+ * a new id and no `-r`, so the setup cannot find its worktree by the transcript; without this, a conversation resumed
+ * by `-r <id>` alone renewed into the project's shared checkout.
+ */
+export function remoteSpawnWorktree(args: readonly string[] | undefined, renewedFromDir: string | null | undefined): string | null {
+  const fromArgs = worktreeNameFromArgs(args);
+  if (fromArgs !== null) return fromArgs;
+  const name = renewedFromDir ? /\/\.claude\/worktrees\/([^/]+)\/?$/.exec(renewedFromDir)?.[1] : undefined;
+  return name !== undefined && isSafeWorktreeName(name) ? name : null;
+}
+
 /** The worktree name in an argv built by `buildClaudeArgs` (`--worktree <name>` or `--worktree=<name>`); `null` without one. */
 export function worktreeNameFromArgs(args: readonly string[] | undefined): string | null {
   if (!args) return null;

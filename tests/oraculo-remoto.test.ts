@@ -7,8 +7,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
-import { createLedgerService, ledgerProofsDir, nodeLedgerProofFs } from '../src/main/ledger-store';
-import { bringLedgerBack, createRemoteLedgerService, LEDGER_BEFORE_REMOTE, moveLedgerToRemote, readRemoteMarker, REMOTE_MIRROR_VERSION, type OracleHttp } from '../src/main/ledger-remote';
+import { createLedgerService, ledgerProofsDir, nodeLedgerProofFs, runLedgerTool, type LedgerCaller } from '../src/main/ledger-store';
+import { parseLedgerToolCall, type LedgerToolCall } from '../src/shared/ledger/tools';
+import { bringLedgerBack, createRemoteLedgerService, fetchOracleHttp, LEDGER_BEFORE_REMOTE, moveLedgerToRemote, readRemoteMarker, REMOTE_MIRROR_VERSION, type OracleHttp } from '../src/main/ledger-remote';
 import { createOracleApiHandler } from '../src/oraculo/api';
 import { createRemoteOracleHost, REMOTE_CONFIG_FILE } from '../src/main/ledger-remote-host';
 import { createSwitchableLedger } from '../src/main/ledger-remote';
@@ -125,7 +126,9 @@ describe('Oráculo na VPS — o PC em modo remoto', { timeout: 30_000 }, () => {
 
     const accepted = await service.apply({ kind: 'dono' }, { op: 'aceitar', id: pc.id });
     expect(accepted.ok).toBe(true);
+    expect(service.load().doc.tasks[pc.id]!.state, 'a resposta leve põe a tarefa na visão na hora').toBe('aceita');
     expect(JSON.parse(readFileSync(remote.file, 'utf8')).tasks[pc.id].state).toBe('aceita');
+    await service.refresh(); // the mirror comes with the re-read (the light answer carries only the task)
     expect(JSON.parse(readFileSync(pc.file, 'utf8')).tasks[pc.id].state).toBe('aceita');
     expect(JSON.parse(readFileSync(pc.file, 'utf8')).schemaVersion).toBe(REMOTE_MIRROR_VERSION);
 
@@ -185,8 +188,8 @@ describe('Oráculo na VPS — o PC em modo remoto', { timeout: 30_000 }, () => {
     cut = 'corpo';
     const created = await service.apply(LIDER, { op: 'criar', projectPath: '/p', request: 'nova', doneWhen: 'x', due: '2026-11-10', ownerPlaceId: 'place:dev', risk: 'baixo' });
     expect(Object.keys(JSON.parse(readFileSync(remote.file, 'utf8')).tasks)).toHaveLength(2);
-    expect(created).toMatchObject({ ok: false, reason: expect.stringMatching(/pode ter sido gravada.*tarefa_listar/s) });
-    expect(created.ok ? '' : created.reason).not.toMatch(/nada foi gravado/);
+    // t-530129bf: the re-read finds what this call wrote (same request, same criterion, by this actor).
+    expect(created).toMatchObject({ ok: true, task: { request: 'nova', ownerPlaceId: 'place:dev' } });
 
     const accepted = await service.apply({ kind: 'dono' }, { op: 'aceitar', id: pc.id });
     expect(accepted).toMatchObject({ ok: true, task: { id: pc.id, state: 'aceita' } });
@@ -194,8 +197,157 @@ describe('Oráculo na VPS — o PC em modo remoto', { timeout: 30_000 }, () => {
     cut = 'rede';
     const again = await service.apply(LIDER, { op: 'criar', projectPath: '/p', request: 'outra', doneWhen: 'x', due: '2026-11-10', ownerPlaceId: 'place:dev', risk: 'baixo' });
     expect(Object.keys(JSON.parse(readFileSync(remote.file, 'utf8')).tasks)).toHaveLength(3);
-    expect(again).toMatchObject({ ok: false, reason: expect.stringMatching(/pode ter sido gravada/) });
-    expect(again.ok ? '' : again.reason).not.toMatch(/nada foi gravado/);
+    expect(again).toMatchObject({ ok: true, task: { request: 'outra' } });
+  });
+
+  it('o limite de tempo vale para o silêncio, não para o corpo inteiro: o ledger grande que segue chegando é lido até o fim', async () => {
+    // t-530129bf (14/11): o corpo era o ledger inteiro (6,4 MB) e o limite de 20 s cortava a leitura depois de o daemon
+    // gravar. Toda gravação pelo PC falhava em 21 s (e em 41 s com a releitura): a sessão repetia e duplicava.
+    const pieces = ['{"tasks":', '{"t-1":', '"1234"', '}', '}'];
+    const trickle = (gapMs: number): typeof fetch =>
+      (async (_url: unknown, init?: RequestInit) => {
+        const signal = init!.signal!;
+        const body = new ReadableStream<Uint8Array>({
+          async start(controller) {
+            signal.addEventListener('abort', () => controller.error(signal.reason));
+            for (const piece of pieces) {
+              await new Promise((done) => setTimeout(done, gapMs));
+              if (signal.aborted) return;
+              controller.enqueue(new TextEncoder().encode(piece));
+            }
+            controller.close();
+          },
+        });
+        return new Response(body, { status: 200 });
+      }) as typeof fetch;
+    // 5 pieces 40 ms apart (200 ms in all) under a 100 ms limit: read to the end.
+    const flowing = await fetchOracleHttp('http://vps', TOKEN, trickle(40), 100)('GET', '/v1/ledger');
+    expect(await flowing.text()).toBe('{"tasks":{"t-1":"1234"}}');
+    // Silent longer than the limit: cut.
+    const stalled = await fetchOracleHttp('http://vps', TOKEN, trickle(250), 100)('GET', '/v1/ledger');
+    await expect(stalled.text()).rejects.toThrow();
+  });
+
+  // `antigo`: the daemon of 09/11 in production (no key, no light answer): the PC itself must not send the repeat.
+  it.each(['novo', 'antigo'] as const)('a resposta se perde depois de gravar e a sessão repete a chamada: devolve o mesmo id e grava uma vez só (daemon %s)', async (daemon) => {
+    // t-530129bf (14/11): em meia hora, 4 cópias da mesma tarefa, 2 de outra e o mesmo andamento seis vezes.
+    const pc = await pcWithLedger();
+    const remote = vps();
+    await moveLedgerToRemote({ http: remote.http, ledgerFile: pc.file, io, proofFs: nodeLedgerProofFs, marker });
+    let cut: 'nada' | 'resposta' | 'resposta-e-releitura' = 'nada';
+    const posts: string[] = [];
+    const lossy: OracleHttp = async (method, path, body) => {
+      if (path === '/v1/apply' && typeof body === 'string') {
+        const sent = JSON.parse(body) as { op: { op: string; requestId?: string }; leve?: boolean };
+        posts.push(sent.op.op);
+        if (daemon === 'antigo') {
+          delete sent.leve;
+          delete sent.op.requestId;
+          body = JSON.stringify(sent);
+        }
+      }
+      const response = await remote.http(method, path, body);
+      const lose = (cut === 'resposta' && path === '/v1/apply') || (cut === 'resposta-e-releitura' && (path === '/v1/apply' || path === '/v1/ledger'));
+      return lose ? { status: 200, text: () => Promise.reject(new Error('The operation was aborted due to timeout')), bytes: () => Promise.reject(new Error('aborted')) } : response;
+    };
+    const service = createRemoteLedgerService({ http: () => lossy, ledgerFile: pc.file, io, proofFs: nodeLedgerProofFs, marker });
+    expect(await service.refresh()).toBe(true);
+    const board = ['place:lider', 'place:dev', 'place:rev'];
+    const lider: LedgerCaller = { projectPath: '/p', placeId: 'place:lider', roleId: 'lider', boardPlaceIds: board };
+    const dev: LedgerCaller = { projectPath: '/p', placeId: 'place:dev', boardPlaceIds: board };
+    const tool = (name: string, args: unknown): LedgerToolCall => {
+      const parsed = parseLedgerToolCall(name, args);
+      if (!parsed.ok) throw new Error(parsed.reason);
+      return parsed.call;
+    };
+    const tasksOnVps = (): Record<string, { events: { kind: string; text?: string }[]; ownerPlaceId: string; state: string }> => JSON.parse(readFileSync(remote.file, 'utf8')).tasks;
+    const idOf = (text: string): string => (JSON.parse(text) as { id: string }).id;
+    // With the old daemon the PC holds the repeat back; the new one gets it and answers from the real ledger.
+    const sentOnce = (op: string): void => {
+      if (daemon === 'antigo') expect(posts.filter((sent) => sent === op)).toHaveLength(1);
+    };
+
+    // The answer AND the re-read are lost: the PC cannot tell. The repeat is not sent again (no second task).
+    cut = 'resposta-e-releitura';
+    const criar = tool('tarefa_criar', { pedido: 'conserta o Oráculo', criterio: 'grava uma vez', prazo: '2026-11-15', dono: 'place:dev', risco: 'baixo' });
+    const first = await runLedgerTool(service, lider, criar);
+    expect(first.ok).toBe(false);
+    expect(first.text).toMatch(/pode ter sido gravada/);
+    const second = await runLedgerTool(service, lider, criar);
+    expect(second).toMatchObject({ ok: false, text: expect.stringMatching(/não mandei de novo/) });
+    expect(Object.keys(tasksOnVps())).toHaveLength(2);
+    expect(posts.filter((op) => op === 'criar')).toHaveLength(1);
+    // The link is back: the same call answers the task the first one wrote.
+    cut = 'nada';
+    const third = await runLedgerTool(service, lider, criar);
+    expect(third.ok).toBe(true);
+    const id = idOf(third.text);
+    expect(JSON.parse(third.text)).toMatchObject({ criada: true, jaGravada: expect.stringMatching(/mesmo id/) });
+    expect(Object.keys(tasksOnVps())).toHaveLength(2);
+    expect(posts.filter((op) => op === 'criar')).toHaveLength(1);
+
+    // Only the answer is lost: the re-read settles it, and the repeat answers from the ledger without writing.
+    await runLedgerTool(service, dev, tool('tarefa_assumir', { id }));
+    cut = 'resposta';
+    const andamento = tool('tarefa_andamento', { id, estado: 'trabalhando', proximo: 'registro diário 4/5' });
+    for (let i = 0; i < 3; i++) expect((await runLedgerTool(service, dev, andamento)).ok).toBe(true);
+    expect(tasksOnVps()[id]!.events.filter((event) => event.kind === 'comentada')).toHaveLength(1);
+    sentOnce('andamento');
+    // Not a repeat when something changed since: a progress that goes A → B → A records all three.
+    cut = 'nada';
+    expect(await runLedgerTool(service, dev, tool('tarefa_andamento', { id, estado: 'travada', precisa: 'acesso ao banco' }))).toMatchObject({ ok: true });
+    expect(JSON.parse((await runLedgerTool(service, dev, andamento)).text)).not.toHaveProperty('jaGravada');
+    expect(tasksOnVps()[id]!.events.filter((event) => event.kind === 'comentada')).toHaveLength(3);
+    cut = 'resposta';
+
+    const transferir = tool('tarefa_transferir', { id, para: 'place:rev', motivo: 'o Revisor fecha' });
+    for (let i = 0; i < 2; i++) expect(await runLedgerTool(service, lider, transferir)).toMatchObject({ ok: true });
+    expect(tasksOnVps()[id]!.ownerPlaceId).toBe('place:rev');
+    sentOnce('transferir');
+
+    const cancelar = tool('tarefa_cancelar', { id, motivo: 'cópia de outra' });
+    for (let i = 0; i < 2; i++) expect(await runLedgerTool(service, lider, cancelar)).toMatchObject({ ok: true, text: expect.stringMatching(new RegExp(id)) });
+    expect(tasksOnVps()[id]!.events.filter((event) => event.kind === 'rejeitada')).toHaveLength(1);
+    sentOnce('cancelar');
+    // The same request for another owner, or again after the cancel, is a new task.
+    cut = 'nada';
+    const forRev = await runLedgerTool(service, lider, tool('tarefa_criar', { pedido: 'conserta o Oráculo', criterio: 'grava uma vez', prazo: '2026-11-15', dono: 'place:rev', risco: 'baixo' }));
+    const reborn = await runLedgerTool(service, lider, criar);
+    expect([idOf(forRev.text), idOf(reborn.text)]).not.toContain(id);
+    expect(idOf(forRev.text)).not.toBe(idOf(reborn.text));
+    expect(Object.keys(tasksOnVps())).toHaveLength(4);
+
+    // On the VPS itself (the gate, or a PC whose view is behind): the call's key answers the task it already wrote.
+    const outra = { op: 'criar' as const, projectPath: '/p', request: 'outra coisa', doneWhen: 'x', due: '2026-11-15', ownerPlaceId: 'place:dev', risk: 'baixo' as const, requestId: 'k-teste-0001' };
+    const a = await remote.ledger.apply(LIDER, outra);
+    const b = await remote.ledger.apply(LIDER, outra);
+    expect(b).toMatchObject({ ok: true, repeated: true, task: { id: a.ok ? a.task.id : '' } });
+    expect(Object.keys(tasksOnVps())).toHaveLength(5);
+  });
+
+  it('uma leitura que chega atrasada, com o registro de antes, não tira da visão a tarefa que já tinha chegado', async () => {
+    // t-530129bf: a releitura de 6 MB termina depois da resposta de uma gravação feita no meio dela.
+    const pc = await pcWithLedger();
+    const remote = vps();
+    await moveLedgerToRemote({ http: remote.http, ledgerFile: pc.file, io, proofFs: nodeLedgerProofFs, marker });
+    let hold: ((value: void) => void) | null = null;
+    const slow: OracleHttp = async (method, path, body) => {
+      const response = await remote.http(method, path, body);
+      if (path === '/v1/ledger' && hold === null) await new Promise((release) => (hold = release));
+      return response;
+    };
+    const service = createRemoteLedgerService({ http: () => slow, ledgerFile: pc.file, io, proofFs: nodeLedgerProofFs, marker });
+    hold = () => undefined; // the first read goes through
+    expect(await service.refresh()).toBe(true);
+    hold = null;
+    const late = service.refresh(); // reads the ledger as it is now, and is held
+    while (hold === null) await new Promise((tick) => setTimeout(tick, 5));
+    const created = await service.apply(LIDER, { op: 'criar', projectPath: '/p', request: 'nova', doneWhen: 'x', due: '2026-11-15', ownerPlaceId: 'place:dev', risk: 'baixo' });
+    if (!created.ok) throw new Error(created.reason);
+    (hold as unknown as () => void)();
+    await late;
+    expect(service.load().doc.tasks[created.task.id]).toMatchObject({ request: 'nova' });
+    expect(JSON.parse(readFileSync(pc.file, 'utf8')).tasks[created.task.id]).toBeDefined();
   });
 
   it('a prova entregue pelo PC vai à VPS e fica também na cópia do PC', async () => {

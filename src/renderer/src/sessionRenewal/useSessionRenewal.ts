@@ -14,8 +14,10 @@ import {
   checkRenewal,
   decideSwap,
   renewalThreshold,
+  renewalTrace,
   snoozeMark,
   type RenewalPrepared,
+  type RenewalTraceEntry,
   type SessionRenewalPrefs,
 } from '../../../shared/sessionRenewal';
 
@@ -23,12 +25,14 @@ export interface RenewalTabInput {
   readonly tabId: string;
   readonly ptyId: string | null;
   readonly sessionId: string | null;
-  /** A plain session tab with a live process (not a login tab, not an isolated worktree). */
+  /** `renewalEligible`: a plain session tab with a live process (not a login tab, not a worktree on this computer). */
   readonly eligible: boolean;
   readonly contextTokens: number | null;
   readonly turn: SemaphoreState | null;
   readonly stateEnteredAt: number;
   readonly backgroundAgents: boolean;
+  /** Runs on a remote place (only for the trace in `main-events.log`). */
+  readonly remote?: boolean;
 }
 
 export interface RenewalPorts {
@@ -37,6 +41,8 @@ export interface RenewalPorts {
   /** Ends the process and opens the new conversation in the same pane; `false` without a pane. */
   renew(tabId: string, renewalId: string): boolean;
   toast(message: string): void;
+  /** t-028deaf0 — the verdict of a tab past the limit changed: one line in `main-events.log`. */
+  trace?(entry: RenewalTraceEntry): void;
 }
 
 export type RenewalBanner =
@@ -110,6 +116,8 @@ function sameBanner(a: RenewalBanner | undefined, b: RenewalBanner | null): bool
 export function useSessionRenewal(inputs: readonly RenewalTabInput[], prefs: SessionRenewalPrefs, ports: RenewalPorts): SessionRenewalHandle {
   const machines = useRef(new Map<string, Machine>());
   const inputsRef = useRef(new Map<string, RenewalTabInput>());
+  /** The key of the last trace line sent per tab (`renewalTrace`); dropped when the tab goes back under the threshold. */
+  const traced = useRef(new Map<string, string>());
   const prefsRef = useRef(prefs);
   prefsRef.current = prefs;
   const portsRef = useRef(ports);
@@ -219,6 +227,23 @@ export function useSessionRenewal(inputs: readonly RenewalTabInput[], prefs: Ses
       portsRef.current.toast('A sessão nova não respondeu a tempo. Confira a aba: a passagem de bastão ficou salva.');
     }
     machines.current.set(tabId, machine);
+    const trace = renewalTrace({
+      prefs: current,
+      snoozedUntilTokens: machine.snoozedUntil,
+      contextTokens: input.contextTokens,
+      turn: input.turn,
+      backgroundAgents: input.backgroundAgents,
+      eligible: input.eligible,
+      ptyId: input.ptyId,
+      sessionId: input.sessionId,
+      remote: input.remote === true,
+      phase: machine.phase,
+    });
+    if (trace === null) traced.current.delete(tabId);
+    else if (traced.current.get(tabId) !== trace.key) {
+      traced.current.set(tabId, trace.key);
+      portsRef.current.trace?.(trace.entry);
+    }
   }, [bump]);
 
   // Key of what the decisions read: re-evaluate only when it changes (or an async step bumps).
@@ -276,6 +301,7 @@ export function useSessionRenewal(inputs: readonly RenewalTabInput[], prefs: Ses
 
   const forget = useCallback((tabId: string): void => {
     machines.current.delete(tabId);
+    traced.current.delete(tabId);
     setRenewed((prev) => {
       if (!(tabId in prev)) return prev;
       const next = { ...prev };

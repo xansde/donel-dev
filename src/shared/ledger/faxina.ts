@@ -2,9 +2,11 @@
 // runner (`src/main/rotinas/oraculo-faxina.ts`) gives the ledger, the boards, the live sessions and what `gh` says of
 // each PR, and writes what these rules decide.
 //
-// 1. A LOW risk task, delivered or rejected, whose current delivery carries a PR that GitHub says merged, ends as
-//    cancelled with "concluída: PR #n mesclado em AAAA-MM-DD" (a rejected task whose PR went in later stayed
-//    rejected forever: t-c86b9505, t-12786061). HIGH risk never ends by itself: it is only written to the log.
+// 1. A LOW risk task, delivered or rejected, whose current delivery carries a PR that GitHub says merged, is TOLD to
+//    the live Líder of its board, once per delivery (a rejected task whose PR went in later stayed rejected forever:
+//    t-c86b9505, t-12786061). The round never closes it: until 14/11 it cancelled it AS ITS OWNER PLACE ("concluída:
+//    PR #n mesclado"), so a delivery skipped the Revisor and the Dev was the author of a cancel it never made
+//    (t-dfb78dc5). HIGH risk is only written to the log: the owner decides.
 // 2. A task open, running or rejected whose owner place is gone (closed, never started, out of the board) and that
 //    nobody touched for ORPHAN_AGE_MS passes to the first live place above it, else the live Líder of its board, else the Líder único — the same
 //    rule as the pass-on of a place that closes (`whoHears`, reach.ts), for the orphans that rule never saw.
@@ -67,17 +69,23 @@ export function prCandidates(doc: LedgerDoc): { readonly task: LedgerTask; reado
   });
 }
 
+/** What the notice says of the PRs of a delivery: "PR #n mesclado em AAAA-MM-DD". */
 export function mergedReason(prs: readonly PrRef[], mergedAt: string): string {
-  return `concluída: ${prs.length === 1 ? 'PR' : 'PRs'} ${prs.map((pr) => `#${pr.number}`).join(', ')} ${prs.length === 1 ? 'mesclado' : 'mesclados'} em ${mergedAt.slice(0, 10)}`;
+  return `${prs.length === 1 ? 'PR' : 'PRs'} ${prs.map((pr) => `#${pr.number}`).join(', ')} ${prs.length === 1 ? 'mesclado' : 'mesclados'} em ${mergedAt.slice(0, 10)}`;
+}
+
+/** One notice per delivery: the task and when its current delivery was made. */
+export function mergedNoticeKey(task: LedgerTask): string {
+  return `${task.id}@${lastDelivery(task)?.at ?? 0}`;
 }
 
 export type MergedDecision =
-  | { readonly kind: 'cancelar'; readonly task: LedgerTask; readonly pr: PrRef; readonly reason: string }
+  | { readonly kind: 'avisar'; readonly task: LedgerTask; readonly pr: PrRef; readonly reason: string }
   | { readonly kind: 'fica-risco-alto'; readonly task: LedgerTask; readonly pr: PrRef; readonly mergedAt: string };
 
 /**
- * Rule 1: every PR of the delivery merged → low risk ends done, high risk stays (logged); any PR of it not merged (or
- * unknown) → nothing. `pr` is the last one merged, `mergedAt` its date.
+ * Rule 1: every PR of the delivery merged → low risk is told to the Líder, high risk stays (logged); any PR of it not
+ * merged (or unknown) → nothing. No decision closes a task. `pr` is the last one merged, `mergedAt` its date.
  */
 export function mergedDecisions(doc: LedgerDoc, states: ReadonlyMap<string, PrState>): MergedDecision[] {
   return prCandidates(doc).flatMap(({ task, refs }): MergedDecision[] => {
@@ -87,7 +95,7 @@ export function mergedDecisions(doc: LedgerDoc, states: ReadonlyMap<string, PrSt
       .map(({ pr, state }) => ({ pr, mergedAt: (state as { mergedAt: string }).mergedAt }))
       .sort((a, b) => a.mergedAt.localeCompare(b.mergedAt))
       .at(-1)!;
-    return [task.risk === 'baixo' ? { kind: 'cancelar', task, pr: last.pr, reason: mergedReason(refs, last.mergedAt) } : { kind: 'fica-risco-alto', task, pr: last.pr, mergedAt: last.mergedAt }];
+    return [task.risk === 'baixo' ? { kind: 'avisar', task, pr: last.pr, reason: mergedReason(refs, last.mergedAt) } : { kind: 'fica-risco-alto', task, pr: last.pr, mergedAt: last.mergedAt }];
   });
 }
 
