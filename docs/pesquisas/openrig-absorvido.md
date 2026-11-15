@@ -1,8 +1,44 @@
 # OpenRig — registro de absorção
 
-Último commit absorvido: b958a75eddeb6c9d9b3880e5164963f40264127c
+Último commit absorvido: df98bcde9b5406de69a2b4fe18b9f4e16e0b325a
 
 Referência de design do Mindscape (github.com/mvschwarz/openrig). Procedimento na skill `absorver-openrig`. Cada rodada lista o que virou PR, o que ficou adiado, o que espera o dono e o que foi descartado.
+
+## 2026-11-15 — b958a75..df98bcd
+
+47 commits do OpenRig; versões novas: v0.7.15.
+
+### Vale → PR
+
+- **Renovação adota a sessão nova que responde depois do prazo** (plano: item 07, sessão renovada em voo, B36; sessão que não morre). Origem: OpenRig `c9e7f35`, `d245b87`. PR: https://github.com/xansde/donel-dev/pull/439. Teste primeiro: 3 testes novos de `completeRenewal` em `tests/session-renewal.test.ts` falharam antes ("completeRenewal is not a function") e o arquivo passou inteiro depois (17/17). O erro antigo no hook (`takeCompletion` só aceitava a fase `swapping`) não tem teste próprio, pela regra de testes enxutos; o PR diz isso. Verify verde pela fila, em dia com `origin/staging` (118 arquivos, 1504 testes, build ok). Pode conflitar com o PR #385 em `tests/session-renewal.test.ts` (este só acrescenta um bloco no fim). A pendência "atrasada" não expira sozinha: só cai com um id novo, com a aba fechada ou com outra renovação.
+
+### Vale → adiado
+
+Nenhum (teto de 3 PRs não foi atingido).
+
+### Vale → pendente para o dono
+
+- **Fila durável do item 13: mensagem a lugar ausente ou fechado.** Origem: OpenRig `bbcefee`, `2fae9e2`, `9b11c3c` (grava no outbox do remetente, desfecho recorded/sent false/persisted true; falha de gravação vira "não confirmada"). No Donel o PR #427 (aberto) só melhora o texto da recusa do `sessao_enviar` a lugar fechado. Pergunta: a fila durável do item 13 começa agora? Se sim, `sessao_enviar` a lugar fechado deve guardar a mensagem (com id e desfecho, sobrevivendo ao restart) e entregar quando o lugar reabrir, ou o app deve acordar o lugar antes de entregar, como o plano descreve?
+- Seguem abertas as perguntas das seções anteriores (resposta do "esperando você" em nome do dono, desde 08/11; pausa até o reset do limite de uso, desde 12/11).
+
+### Descartado
+
+- Entrega de mensagem: leitura da caixa de entrada e diálogos do Claude/Codex: já igual ou melhor. `blockingScreen` em `src/shared/chat/screen.ts:226` trata como pergunta qualquer tela com "Enter to select" e "to navigate", o que cobre várias perguntas, o atalho de editor e a prévia; `remoteSessions.ts` usa "Enter to select". A caixa vazia e o Codex são captura de tmux do OpenRig.
+- Lugar: pasta de runtime (runtime home) da conversa de um lugar existente: daemon/SQLite (migração 169). No Donel cada máquina tem um `~/.claude` só desde a demolição dos perfis (011, etapa 2), e o lugar já guarda conversa atual e anteriores. A retomada honesta já está no `sessao_retomar` e no PR #427.
+- Compactação: aviso de recuperação a quem pode agir quando o lugar não tem pai: o Donel não tem compactação gerenciada nem fila de avisos do daemon. O caminho "quem age sem pai" já existe pelo Líder do quadro (`lider-quadro`) e pela rotina "sessão parada e ninguém vê" (item 20).
+- Estado do lugar: atividade e sessão (`activityState` em `rig ps`, polling, episódios de cerimônia): CLI `rig ps` e daemon. O Donel já tem os três eixos em `src/shared/mindscape/sessionAxes.ts` e o "desconhecido" honesto (PR #313 mesclado, #417 aberto).
+- MCP: nomes de pessoa para time e membros, rotação de token de grant: grants com token e rosters são do daemon. No Donel quem chama o MCP é o lugar resolvido pelo quadro, sem token por grant. O filtro de bidi e caracteres de controle em rótulo é só curiosidade, porque os nomes vêm do dono.
+- MCP: rótulo de quem agiu num item de fila separado do chamador externo: já existe. O ledger grava o autor em todo evento, e quem chama é o lugar resolvido pelo quadro, nunca um argumento (item 19, `LedgerService.apply(ator, op)`).
+- Troca de conta e token do Claude: aplicar token com painel que não é shell, capturar token adotado: toca credencial e troca de conta, o perímetro proibido `src/main/accounts/`, além de ser mecânica de shell do tmux.
+- Lançamento: Claude recusado por `disableSideloadFlags`, lugar pausado que não bloqueia, nomes de sessão: tmux, sondagem de painel e flags do daemon. No Donel a recusa do CLI aparece no terminal da aba, que o dono vê, e o aviso de papel não entregue já existe (PR #311). Não há caso de managed settings com `disableSideloadFlags` nas máquinas do dono.
+- Skills de lugar empacotadas sobrevivem a upgrade; guias de operação do lugar: docs, skills e packaging do OpenRig. Permissão do lugar chegar ao dono como pergunta já está coberta por `sessao_permissao` e pelo "precisa de você".
+- Permissões: padrão do time mantido para política padrão ou aberta: política gravada no daemon/SQLite. No Donel o modo vem do papel e do Launcher (`src/shared/roleLaunch.ts`), e a renovação mantém o bypass (`tests/renovacao-mantem-bypass.test.ts`).
+- Workflow e esteira: dependências, saídas em pacote de fronteira, adoção de sucessor: daemon/SQLite de workflow, com slices e spec em YAML (topologia à mão, fora de escopo). A esteira do Donel no quadro (item 15) não tem pacotes de fronteira.
+- TUI: visão de topologia de rig remoto e Projects de frota entre hosts: TUI fora de escopo (dono, 03/11).
+- pi-runner: painel nomeia seu lugar e marca as próprias linhas: específico do runner Pi em tmux, sem equivalente no Donel.
+- CLI: validação de bundle e nomes de roster: bundle e roster da CLI `rig`, sem equivalente no Donel. O filtro de caracteres invisíveis é só curiosidade de sanitização.
+- Testes e docs de teste do OpenRig: infra de teste do próprio OpenRig; o Donel segue a regra de testes enxutos.
+- Release 0.7.15, README, roadmap e mapa de capacidades: packaging, release e docs do OpenRig.
 
 ## 2026-11-14 — c4b933e..b958a75
 
