@@ -85,6 +85,105 @@ export function checkRenewal(input: RenewalCheckInput): RenewalVerdict {
   return 'renew';
 }
 
+// ---------------------------------------------------------------------------
+// The trace (t-028deaf0): one line in `main-events.log` when a tab past the limit changes verdict
+// ---------------------------------------------------------------------------
+
+/** Where the renderer's machine of the tab is (`useSessionRenewal`). */
+export type RenewalPhase = 'idle' | 'preparing' | 'asked' | 'swapping';
+
+export interface RenewalTraceInput {
+  readonly prefs: SessionRenewalPrefs;
+  readonly snoozedUntilTokens: number | null;
+  readonly contextTokens: number | null;
+  readonly turn: RenewalTurnState | null;
+  readonly backgroundAgents: boolean;
+  readonly eligible: boolean;
+  readonly ptyId: string | null;
+  readonly sessionId: string | null;
+  readonly remote: boolean;
+  readonly phase: RenewalPhase;
+}
+
+/** What the line says: the verdict and every input that decided it. No path, no key, no text of the session. */
+export interface RenewalTraceEntry {
+  readonly verdict: RenewalVerdict;
+  readonly contextTokens: number;
+  readonly threshold: number;
+  readonly ptyId: string | null;
+  readonly claudeSessionId: string | null;
+  readonly remote: boolean;
+  readonly eligible: boolean;
+  readonly turn: RenewalTurnState | null;
+  readonly phase: RenewalPhase;
+}
+
+/**
+ * `null` while the tab is under the threshold (or without a reading): nothing to say. Past it, the entry and a `key`
+ * the renderer compares with the last line it sent: the turn coming and going (`due-wait` ↔ `renew`) and the context
+ * growing keep the key, so a session that sits past the limit writes one line, not one per turn.
+ */
+export function renewalTrace(input: RenewalTraceInput): { readonly key: string; readonly entry: RenewalTraceEntry } | null {
+  const threshold = renewalThreshold(input.prefs, input.snoozedUntilTokens);
+  if (input.contextTokens === null || input.contextTokens < threshold) return null;
+  const verdict = checkRenewal({
+    prefs: input.prefs,
+    contextTokens: input.contextTokens,
+    turn: input.turn ?? 'working',
+    backgroundAgents: input.backgroundAgents,
+    snoozedUntilTokens: input.snoozedUntilTokens,
+    eligible: input.eligible,
+  });
+  const due = verdict === 'renew' || verdict === 'due-wait';
+  const key = [due ? 'due' : verdict, input.eligible, input.ptyId !== null, input.remote, input.sessionId, threshold, input.phase].join('|');
+  return {
+    key,
+    entry: {
+      verdict,
+      contextTokens: input.contextTokens,
+      threshold,
+      ptyId: input.ptyId,
+      claudeSessionId: input.sessionId,
+      remote: input.remote,
+      eligible: input.eligible,
+      turn: input.turn,
+      phase: input.phase,
+    },
+  };
+}
+
+const TRACE_VERDICTS: ReadonlySet<string> = new Set(['off', 'near', 'due-wait', 'renew']);
+const TRACE_TURNS: ReadonlySet<string> = new Set(['working', 'waiting', 'permission', 'error', 'done']);
+const TRACE_PHASES: ReadonlySet<string> = new Set(['idle', 'preparing', 'asked', 'swapping']);
+const SHORT_ID = /^[A-Za-z0-9-]{1,64}$/;
+
+/** The main writes only the known fields, each with its type; anything else from the renderer is dropped. */
+export function sanitizeRenewalTrace(value: unknown): RenewalTraceEntry | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return null;
+  const raw = value as Record<string, unknown>;
+  const id = (candidate: unknown): string | null | undefined =>
+    candidate === null ? null : typeof candidate === 'string' && SHORT_ID.test(candidate) ? candidate : undefined;
+  const ptyId = id(raw.ptyId);
+  const claudeSessionId = id(raw.claudeSessionId);
+  const finite = (candidate: unknown): candidate is number => typeof candidate === 'number' && Number.isFinite(candidate);
+  if (typeof raw.verdict !== 'string' || !TRACE_VERDICTS.has(raw.verdict)) return null;
+  if (!finite(raw.contextTokens) || !finite(raw.threshold) || ptyId === undefined || claudeSessionId === undefined) return null;
+  if (typeof raw.remote !== 'boolean' || typeof raw.eligible !== 'boolean') return null;
+  if (raw.turn !== null && (typeof raw.turn !== 'string' || !TRACE_TURNS.has(raw.turn))) return null;
+  if (typeof raw.phase !== 'string' || !TRACE_PHASES.has(raw.phase)) return null;
+  return {
+    verdict: raw.verdict as RenewalVerdict,
+    contextTokens: raw.contextTokens,
+    threshold: raw.threshold,
+    ptyId,
+    claudeSessionId,
+    remote: raw.remote,
+    eligible: raw.eligible,
+    turn: raw.turn as RenewalTurnState | null,
+    phase: raw.phase as RenewalPhase,
+  };
+}
+
 /** What a tab is, for `renewalEligible`. */
 export interface RenewalEligibilityFacts {
   readonly sessionType: 'claude' | 'shell';
@@ -307,6 +406,8 @@ export const SESSION_RENEWAL_CHANNELS = {
   prepare: 'renewal:prepare',
   /** renderer → main: read the header of the handoff back. */
   status: 'renewal:status',
+  /** renderer → main (send): the verdict of a tab past the limit changed (`renewalTrace`), one line in `main-events.log`. */
+  trace: 'renewal:trace',
 } as const;
 
 export interface RenewalPrepareInput {
@@ -329,4 +430,6 @@ export interface DonelRenewalApi {
   /** `null` when the main does not know the session of `ptyId` (it has not started, or it already ended). */
   prepare(input: RenewalPrepareInput): Promise<RenewalPrepared | null>;
   status(renewalId: string): Promise<HandoffStatus>;
+  /** One line in `main-events.log` (t-028deaf0). Fire and forget. */
+  trace(entry: RenewalTraceEntry): void;
 }

@@ -1886,6 +1886,7 @@ export function App(): React.JSX.Element {
       turn: semaphore?.state ?? null,
       stateEnteredAt: semaphore?.stateEnteredAt ?? 0,
       backgroundAgents: semaphore?.awaitingBackgroundAgents === true,
+      remote: !!tab.remoteId,
     };
   });
   /** One line to the session of `tabId` — same doors as the Esteira auto-start: the chat's send driver, or typed into the terminal. */
@@ -1921,6 +1922,8 @@ export function App(): React.JSX.Element {
       return true;
     },
     toast: (message) => setDevModeToast(message),
+    // t-028deaf0 — a tab past the limit leaves its verdict in `main-events.log` when it changes.
+    trace: (entry) => window.donel.renewal.trace?.(entry),
   });
 
   // T009 — antes do primeiro evento de hook chegar pra uma aba recém-criada,
