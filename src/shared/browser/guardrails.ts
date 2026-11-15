@@ -7,6 +7,7 @@
 //   domain and all of its subdomains.
 // - Trava: the agent does not type in password or card fields and does not click buy/pay/delete buttons. It gets an
 //   error asking for `navegador_pedir_humano`, and the owner does it himself in the page.
+// - Login Google: the agent neither clicks "Entrar com Google" nor reaches accounts.google.com (see below).
 //
 // The trava is a heuristic over what the page declares about itself, not a security boundary against a hostile page:
 // a field with no hint that it holds a password goes through. It exists so that an agent acting in good faith (or
@@ -63,6 +64,7 @@ function matches(host: string, domain: string): boolean {
  * that is not a readable http(s) URL fails closed.
  */
 export function agentMayNavigate(rules: DomainRules, url: string): boolean {
+  if (isGoogleSignIn(url)) return false;
   if (rules.mode === 'all' || url === 'about:blank' || isAllowedLocalFileUrl(url)) return true;
   const host = /^https?:/i.test(url) ? hostname(url) : null;
   if (host === null) return false;
@@ -75,7 +77,20 @@ export function displayHost(url: string): string {
   return hostname(url) ?? url.slice(0, 80);
 }
 
+// Login Google (dono, 12/11): on this computer the Google sign-in page asks Windows for a passkey, and Windows opens a
+// modal "Escolher uma chave de acesso" in front of the owner (one stayed 43 min). The agent never reaches that page,
+// whatever the owner's domain list says; the owner signs in himself after `navegador_pedir_humano`.
+const GOOGLE_SIGN_IN_HOST = 'accounts.google.com';
+const GOOGLE_LOGIN_MESSAGE =
+  'Travado: login com Google é do dono. A página de login do Google abre neste computador a janela de chave de acesso do Windows, que trava a tela dele. Chame navegador_pedir_humano para o dono entrar, se ele pediu.';
+
+function isGoogleSignIn(url: string): boolean {
+  const host = /^https?:/i.test(url) ? hostname(url) : null;
+  return host !== null && matches(host, GOOGLE_SIGN_IN_HOST);
+}
+
 export function domainBlockMessage(url: string): string {
+  if (isGoogleSignIn(url)) return GOOGLE_LOGIN_MESSAGE;
   return `Bloqueado: o dono não liberou ${displayHost(url)} para o agente nesta sessão. Se precisar desse site, peça a ele com navegador_pedir_humano.`;
 }
 
@@ -159,10 +174,17 @@ const LOCKED_ANYWHERE = new RegExp(
   ].join('|'),
 );
 
-/** `true` for a label that buys, pays or deletes. */
+/** "Entrar com Google", "Continuar com o Google", "Sign in with Google"... (the click that leads to the Google sign-in). */
+const GOOGLE_LOGIN_LABEL = /\b(entrar|login|logar|fazer login|acessar|continuar|cadastrar(-se)?|sign in|sign up|log in|continue) (com|with|pelo|usando|using) (o |a conta do )?google$/;
+
+function isGoogleLoginLabel(label: string): boolean {
+  return GOOGLE_LOGIN_LABEL.test(plain(label).replace(/^[^\p{L}]+/u, ''));
+}
+
+/** `true` for a label that buys, pays, deletes or signs in with Google. */
 export function isLockedLabel(label: string): boolean {
   const text = plain(label).replace(/^[^\p{L}]+/u, '');
-  return LOCKED_START.test(text) || LOCKED_ANYWHERE.test(text);
+  return LOCKED_START.test(text) || LOCKED_ANYWHERE.test(text) || isGoogleLoginLabel(label);
 }
 
 /** The label that locks this element for a click, or `null`. Only buttons, links and menu items are looked at. */
@@ -186,6 +208,7 @@ export function fieldLockMessage(kind: SensitiveField): string {
 }
 
 export function actionLockMessage(label: string): string {
+  if (isGoogleLoginLabel(label)) return GOOGLE_LOGIN_MESSAGE;
   return `Travado: "${label.slice(0, 80)}" compra, paga ou apaga algo, e o agente não aciona isso. Chame navegador_pedir_humano para o dono decidir.`;
 }
 

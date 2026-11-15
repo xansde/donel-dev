@@ -1,6 +1,6 @@
 // Navegador integrado — what stops the agent without the owner watching. A hole here would not show up using the app.
 import { describe, expect, it } from 'vitest';
-import { agentMayNavigate, isLockedLabel, keyEffect, lockedAction, lockedKeyAction, parseDomainList, sensitiveField, type DomainRules, type ElementFacts } from '../src/shared/browser/guardrails';
+import { actionLockMessage, agentMayNavigate, domainBlockMessage, isLockedLabel, keyEffect, lockedAction, lockedKeyAction, parseDomainList, sensitiveField, type DomainRules, type ElementFacts } from '../src/shared/browser/guardrails';
 import { parseKeyCombo } from '../src/shared/browser/keys';
 import { refusedUploadFile, refusedUploadFolder } from '../src/shared/browser/upload';
 
@@ -93,6 +93,34 @@ describe('vigia de domínio', () => {
     expect(agentMayNavigate(rules, 'https://outro.com/')).toBe(true);
     expect(agentMayNavigate(rules, 'https://banco.com/')).toBe(false);
     expect(agentMayNavigate(rules, 'https://www.banco.com./extrato')).toBe(false);
+  });
+});
+
+// 12/11: um agente clicou "Entrar com Google" no navegador do PC e a página do Google abriu a janela de chave de
+// acesso do Windows, que ficou 43 min na frente do dono. Login Google é dele: o agente para antes e pede o humano.
+describe('login Google é do dono', () => {
+  it('o agente não vai à página de login do Google, nem com tudo liberado nem se o dono listar o domínio', () => {
+    const signin = 'https://accounts.google.com/v3/signin/identifier?hd=seazone.com.br&redirect_uri=https%3A%2F%2Fslack.com%2Fsso%2Fgoogle';
+    expect(agentMayNavigate({ mode: 'all', domains: [] }, signin)).toBe(false);
+    expect(agentMayNavigate({ mode: 'only', domains: ['accounts.google.com'] }, signin)).toBe(false);
+    expect(agentMayNavigate({ mode: 'all', domains: [] }, 'https://ACCOUNTS.google.com./o/oauth2/auth')).toBe(false);
+    expect(domainBlockMessage(signin)).toMatch(/navegador_pedir_humano/);
+    expect(domainBlockMessage(signin)).toMatch(/Google/);
+    for (const free of ['https://www.google.com/search?q=x', 'https://docs.google.com/document/d/1', 'https://accounts.google.com.evil.com/', 'https://slack.com/sso/google']) {
+      expect(agentMayNavigate({ mode: 'all', domains: [] }, free), free).toBe(true);
+    }
+  });
+
+  it('para no botão de entrar com Google, em pt e en, antes do clique', () => {
+    for (const label of [' Entrar com Google', 'ENTRAR COM GOOGLE', 'Entrar com o Google', 'Fazer login com o Google', 'Continuar com Google', 'Sign in with Google', 'Continue with Google', 'Log in with Google']) {
+      expect(isLockedLabel(label), label).toBe(true);
+      expect(actionLockMessage(label), label).toMatch(/Google/);
+    }
+    expect(lockedAction(button(' Entrar com Google', { tag: 'a', role: 'link' }))).toBe(' Entrar com Google');
+    expect(lockedKeyAction(field({ name: 'x' }, { formSubmitLabel: 'Sign in with Google' }))).toBe('Sign in with Google');
+    for (const label of ['Entrar', 'Google Drive', 'Pesquisa Google', 'Entrar com e-mail', 'Abrir no Google Docs']) {
+      expect(isLockedLabel(label), label).toBe(false);
+    }
   });
 });
 
