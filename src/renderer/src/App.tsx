@@ -1911,7 +1911,15 @@ export function App(): React.JSX.Element {
       // t-2456f611 — the Líder único's new conversation starts in the orchestrator's project, not its old folder.
       const folder = leaderComebackCwd({ leaderOfAll: isLeaderOfAllTab(tab), cwd: tab.cwd, remoteId: tab.remoteId }, leaderMoveCwdNow());
       if (folder) updateTab(tabId, { cwd: folder });
-      handle.renew({ args: renewalLaunchArgs(tab.launchArgs, mode), renewalId, ...(folder ? { cwd: folder } : {}) });
+      // t-408339e0 — a tab reattached after an update (or resumed by `-r` alone) has no `-n` nor `--model` in its args: the
+      // new process takes the name the tab shows and the model the session really ran (a provider keeps its own).
+      const sessionId = tab.claudeSessionId ?? null;
+      const observedModel = sessionId ? (statusLineForSession(ptyId ? statusLines[ptyId] : null, sessionId)?.model?.id ?? sessionModels[sessionId]) : null;
+      const identity = {
+        name: resolveTabName(tab),
+        model: tab.providerId ? null : (observedModel ?? sessionModelEffort[tab.id]?.model ?? null),
+      };
+      handle.renew({ args: renewalLaunchArgs(tab.launchArgs, mode, identity), renewalId, ...(folder ? { cwd: folder } : {}) });
       return true;
     },
     toast: (message) => setDevModeToast(message),

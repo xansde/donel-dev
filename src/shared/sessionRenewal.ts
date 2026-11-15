@@ -194,13 +194,24 @@ export function decideSwap(input: SwapCheckInput): SwapVerdict {
 const CARRIED_PERMISSION_MODES: ReadonlySet<string> = new Set(['default', 'acceptEdits', 'plan', 'bypassPermissions']);
 
 /**
+ * What the tab knows of the session it renews, for the flags its launch args may lack (t-408339e0): a tab reattached
+ * after an update, or resumed by `-r` alone, has neither `-n` nor `--model`, and the renewed process was born nameless
+ * and on the CLI's default model. `model` is the one the session really ran (statusline, else transcript, else launch).
+ */
+export interface RenewalIdentity {
+  readonly name?: string | null;
+  readonly model?: string | null;
+}
+
+/**
  * Same flags as the launch, minus what points at the OLD conversation
  * (`-r`, `--resume`, `--session-id`, `--fork-session`, `-c`, `--continue`): the
  * main gives the new process its own `--session-id`. When the old process had
  * switched permission mode, the new one starts in that mode (only the modes
- * that need no extra opt-in).
+ * that need no extra opt-in). A `--model` or `-n` the launch lacks comes from
+ * `identity`; one the launch has always wins.
  */
-export function renewalLaunchArgs(args: readonly string[] | undefined, carried: string | null): string[] {
+export function renewalLaunchArgs(args: readonly string[] | undefined, carried: string | null, identity: RenewalIdentity = {}): string[] {
   const out: string[] = [];
   const source = args ?? [];
   // "default" is also what the chat reads when the transcript records no mode change: it never lowers a launch that
@@ -227,6 +238,10 @@ export function renewalLaunchArgs(args: readonly string[] | undefined, carried: 
     }
     out.push(arg);
   }
+  const model = identity.model?.trim();
+  if (model && !hasFlag(out, '--model')) out.push('--model', model);
+  const name = identity.name?.trim();
+  if (name && !hasFlag(out, '-n') && !hasFlag(out, '--name')) out.push('-n', name);
   if (permissionMode !== null && CARRIED_PERMISSION_MODES.has(permissionMode) && !out.includes('--dangerously-skip-permissions')) {
     out.push('--permission-mode', permissionMode);
   }
@@ -235,6 +250,10 @@ export function renewalLaunchArgs(args: readonly string[] | undefined, carried: 
 
 /** Permission modes of the launch that need an opt-in (no Shift+Tab gets back to them once lowered). */
 const OPT_IN_PERMISSION_MODES: ReadonlySet<string> = new Set(['bypassPermissions', 'auto', 'dontAsk']);
+
+function hasFlag(args: readonly string[], flag: string): boolean {
+  return args.some((arg) => arg === flag || arg.startsWith(`${flag}=`));
+}
 
 function hasPermissionMode(args: readonly string[]): boolean {
   return args.some((arg) => arg === '--permission-mode' || arg.startsWith('--permission-mode=') || arg === '--dangerously-skip-permissions');

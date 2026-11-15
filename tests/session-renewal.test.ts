@@ -5,6 +5,7 @@ import {
   DEFAULT_SESSION_RENEWAL_PREFS,
   parseHandoffHeader,
   renewalHandoffDeliveryNotice,
+  renewalLaunchArgs,
   type RenewalCheckInput,
 } from '../src/shared/sessionRenewal';
 import { renewalEligible, type RenewalEligibilityFacts } from '../src/shared/sessionRenewal';
@@ -107,5 +108,36 @@ describe('renewalHandoffDeliveryNotice — did the new session get the handoff?'
     const pending = renewalHandoffDeliveryNotice({ kind: 'enviando' }, path);
     expect(pending).toContain(path);
     expect(pending).not.toBeNull();
+  });
+});
+
+// t-408339e0 — a tab reattached after an update (or resumed by `-r` alone) has no `-n` nor `--model` in its launch args.
+// The renewed process was born `claude --session-id <new>`: nameless on the board and on the CLI's default model.
+describe('renewalLaunchArgs — the renewed session keeps the name and the model of the one it replaces', () => {
+  it('fills -n and --model from the tab when the launch args do not carry them', () => {
+    expect(renewalLaunchArgs(['-r', 'old'], null, { name: 'Dev · Faixa preta', model: 'claude-opus-5-5' })).toEqual([
+      '--model',
+      'claude-opus-5-5',
+      '-n',
+      'Dev · Faixa preta',
+    ]);
+    expect(renewalLaunchArgs(undefined, 'bypassPermissions', { name: 'Revisor', model: 'opus' })).toEqual([
+      '--model',
+      'opus',
+      '-n',
+      'Revisor',
+      '--permission-mode',
+      'bypassPermissions',
+    ]);
+  });
+
+  it('never duplicates nor overrides what the launch args already say', () => {
+    const launched = ['--model', 'sonnet', '-n', 'Antigo', '--session-id', 'old'];
+    expect(renewalLaunchArgs(launched, null, { name: 'Outro', model: 'claude-opus-5-5' })).toEqual(['--model', 'sonnet', '-n', 'Antigo']);
+    expect(renewalLaunchArgs(['--model=haiku', '--name=X'], null, { name: 'Y', model: 'opus' })).toEqual(['--model=haiku', '--name=X']);
+  });
+
+  it('leaves out what the tab does not know', () => {
+    expect(renewalLaunchArgs(['-r', 'old'], null, { name: '  ', model: null })).toEqual([]);
   });
 });
