@@ -1,11 +1,12 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { WebContentsView, net, session as electronSession, type BrowserWindow, type Session, type WebContents } from 'electron';
+import { WebContentsView, net, session as electronSession, webContents, type BrowserWindow, type Session, type WebContents } from 'electron';
 import { guardBrowserPanelNavigation } from '../navigation-guard';
 import { canServeLocalFile, isAllowedLocalFileUrl, isAllowedPanelUrl } from '../../shared/browser/url';
 import type { BrowserPanelState, BrowserRect, BrowserTabInfo } from '../../shared/browser/ipc';
 import { cleanUserAgent, uniqueDownloadName } from './panel-helpers';
 import { browserFullscreenKey } from '../../shared/browser/fullscreen';
+import { keepFocusOnNavigation } from './panel-focus';
 
 // Navegador interno — the `WebContentsView`s of the panel (docs/design/navegador-interno.md).
 //
@@ -347,6 +348,8 @@ export class BrowserPanels {
       this.deps.onNavigated?.(ptyId, url);
     });
     contents.on('render-process-gone', emit);
+    // A navigation of the page (the agent's or not) takes the keyboard focus at commit, even hidden: give it back.
+    keepFocusOnNavigation(contents, { focused: () => webContents.getFocusedWebContents() });
     // Navegador em tela cheia: with the focus on the page the key never reaches the app's renderer. Esc stays
     // with the page (a site's dialog); F11 is the panel's.
     contents.on('before-input-event', (event, input) => {
