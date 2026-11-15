@@ -1,40 +1,42 @@
 // Slack letters — the matcher, pure. NOT a lock since 09/11 (owner: "Não quero que cartas travem nada também"): the
 // hook bridge still asks it on every `PreToolUse` of a session the Donel opened, but only to know which accepted
 // letter (`SlackLetter`, contract.ts) a send uses (same destination, thread and exact text), to mark it sent, and
-// whether the post is an agent's own bot, to record it. A `deny` verdict just means "no letter matches": the bridge
-// lets the call go on. The notes below are the history of how a send is read (owner, 05/11 to 08/11).
+// whether the post is an agent's own bot, to record it. Nothing is refused: a `deny` verdict just means "no letter
+// matches" and the bridge lets the call go on (`ledger-store.ts`). The notes below say how a send is read, that is,
+// when a send can match a letter (owner, 05/11 to 08/11; until 09/11 "no match" blocked the send).
 //
-// Only a STRUCTURED call can be approved: an MCP tool of a Slack server, or a Composio `SLACK_*` action (direct or
-// inside an execute call), whose fields are read one by one. Every field must be the letter's (destination,
-// thread, text) or a harmless option; `blocks`, attachments, files, scheduling or anything else the letter does
-// not show is refused, because Slack would show it and the owner never saw it (review of #241, case F).
+// Only a STRUCTURED call can match: an MCP tool of a Slack server, or a Composio `SLACK_*` action (direct or inside
+// an execute call), whose fields are read one by one. Every field must be the letter's (destination, thread, text)
+// or a harmless option; `blocks`, attachments, files, scheduling or anything else the letter does not show means no
+// match, because Slack would show it and the owner never saw it in the letter (review of #241, case F).
 //
-// A shell command, a script, Composio's workbench or any other tool whose input carries a Slack post is NEVER
-// approved: there is nothing to read field by field (a decoy text, a prefix-matching channel, a loop — cases A, B,
+// A shell command, a script, Composio's workbench or any other tool whose input carries a Slack post NEVER matches
+// a letter: there is nothing to read field by field (a decoy text, a prefix-matching channel, a loop — cases A, B,
 // C). Recognising one is deliberately broad: any write method of the Slack Web API (also assembled, `chat.$M`),
 // an incoming webhook, a Composio `SLACK_*` posting slug, the SDK post calls, and any mention of `canal-produto`.
 //
 // Tool names in Portuguese are sends too (owner, 06/11: the Theo West MCP has `slack_enviar_arquivo`): a message
-// (`slack_enviar_mensagem`, `responder_thread`) needs a letter; a file (`slack_enviar_arquivo`) is refused, like
-// any upload, unless an accepted letter carries that file (see below). Reading (`slack_baixar_arquivo`) is not a send.
+// (`slack_enviar_mensagem`, `responder_thread`) matches a letter without a file; a file (`slack_enviar_arquivo`),
+// like any upload, matches only an accepted letter that carries that file (see below). Reading
+// (`slack_baixar_arquivo`) is not a send.
 //
 // A file (owner, 06/11: "preciso que o theo west seja capaz de ler e enviar arquivos pelo slack"): an UPLOAD tool
-// of a Slack MCP server is read the same way (destination, thread, comment, local path, file name) and passes only
-// with an accepted letter that carries that same file (`SlackLetter.file`). Only `comment`, `initial_comment` and
-// `comentario` are the comment: `text`, `content`, `body` or anything else in an upload is refused, because
-// Slack may show it (or it IS the file) and the letter never did. A letter with a file frees only an upload, one
-// without frees only a message. Composio's uploads (content inline) stay refused: nothing to compare.
+// of a Slack MCP server is read the same way (destination, thread, comment, local path, file name) and matches only
+// an accepted letter that carries that same file (`SlackLetter.file`). Only `comment`, `initial_comment` and
+// `comentario` are the comment: `text`, `content`, `body` or anything else in an upload means no match, because
+// Slack may show it (or it IS the file) and the letter never did. A letter with a file matches only an upload, one
+// without matches only a message. Composio's uploads (content inline) never match: nothing to compare.
 //
 // The letter is for what goes out in the OWNER's name (owner, 06/11: "o envio de cartas era para eu validar as
 // mensagens, agora ele me tornou gargalo"). An agent's OWN bot (the Theo West MCP, its own bot token) does not speak
-// for the owner: a call to one of the servers listed in the config (`slackAgentBots.servers`, empty by default) passes without a letter, upload
-// included, and is recorded in the Oráculo as "enviado pelo bot do agente" for the owner to see later. The decision
-// is by WHO sends (the MCP server), never by the verb: Composio, the user-token `slack` MCP, curl and any upload by
-// the owner's account still need a letter, and an unknown server is still refused.
+// for the owner: a call to one of the servers listed in the config (`slackAgentBots.servers`, empty by default) is
+// not matched against letters, upload included, and is recorded in the Oráculo as "enviado pelo bot do agente" for
+// the owner to see later. The decision is by WHO sends (the MCP server), never by the verb: Composio, the user-token
+// `slack` MCP, curl and any upload by the owner's account are matched against letters, and so is an unknown server.
 //
 // Limit, named on purpose: a hook only sees the call, not what a script written earlier does when it runs
-// (`bash /tmp/posta.sh`), nor which token an MCP server named like a bot really holds. The guarantee is against a
-// mistake, not against a session set on going around it.
+// (`bash /tmp/posta.sh`), nor which token an MCP server named like a bot really holds. A letter can stay unmarked
+// when the send went out by one of those ways.
 
 import { slackLetterSent, slackLetterText, type LedgerDoc, type LedgerTask } from './contract';
 
@@ -52,7 +54,7 @@ export type SlackSendDetection =
   | { readonly kind: 'none' }
   /** Structured: every send of the call, with its fields read, or the reason it cannot be read. */
   | { readonly kind: 'structured'; readonly sends: ReadonlyArray<SlackSend | { readonly unreadable: string }> }
-  /** A post whose content cannot be checked (shell, script, workbench code): always refused. */
+  /** A post whose content cannot be checked (shell, script, workbench code): never matches a letter. */
   | { readonly kind: 'unreadable'; readonly why: string };
 
 /** What the agent's own bot sent (read leniently: it is a record for the owner, not a check). */
@@ -80,7 +82,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const DESTINATION_KEYS = ['channel_id', 'channel', 'channelId', 'conversation_id', 'conversation', 'user_id', 'user', 'recipient', 'to', 'destino', 'canal'];
 const THREAD_KEYS = ['thread_ts', 'threadTs', 'thread_id', 'thread', 'ts_thread'];
 const TEXT_KEYS = ['text', 'message', 'markdown_text', 'markdown', 'content', 'body', 'texto', 'mensagem'];
-/** Options that change nothing the owner reads. Anything else in a send is refused. */
+/** Options that change nothing the owner reads. Anything else in a send means no letter matches. */
 const HARMLESS_KEYS = ['unfurl_links', 'unfurl_media', 'mrkdwn', 'link_names', 'parse'];
 /** An upload's comment. Never `text`/`content`/`body`: in an upload those may be the file itself, or a second text. */
 const COMMENT_KEYS = ['comment', 'initial_comment', 'comentario'];
@@ -344,8 +346,9 @@ function sameSend(task: LedgerTask, send: SlackSend): boolean {
 
 
 /**
- * The decision on one tool call, given the ledger. `doc` null = the ledger could not be read (refuse). `botServers`:
- * the MCP servers of the agents' own bots, whose posts need no letter. Pure.
+ * The decision on one tool call, given the ledger. `doc` null = the ledger could not be read: `deny`, no letter to
+ * mark (the send still goes on). `botServers`: the MCP servers of the agents' own bots, whose posts are recorded
+ * instead of matched. Pure.
  */
 export function slackGuard(doc: LedgerDoc | null, toolName: string, toolInput: unknown, botServers: readonly string[] = AGENT_BOT_SERVERS): SlackGuardVerdict {
   const bot = detectAgentBotSend(toolName, toolInput, botServers);
