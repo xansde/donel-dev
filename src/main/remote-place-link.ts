@@ -86,7 +86,7 @@ def end_chan(key, code, hup=True):
     if pid:
         if hup:
             try:
-                os.kill(pid, signal.SIGHUP)
+                os.killpg(pid, signal.SIGHUP)
             except Exception:
                 pass
         try:
@@ -114,9 +114,14 @@ def open_chan(key, spec):
         end_chan(key, 255)
         return
     cols, rows = int(spec.get('cols', 80)), int(spec.get('rows', 24))
-    pid, fd = pty.fork()
+    try:
+        pid, fd = pty.fork()
+    except Exception:
+        end_chan(key, 255)
+        return
     if pid == 0:
         try:
+            os.closerange(3, 65536)
             winsize(0, cols, rows)
             os.environ['TERM'] = spec.get('term') or 'xterm-256color'
             os.environ.pop('TMUX', None)
@@ -127,6 +132,7 @@ def open_chan(key, spec):
             os.execvp('/bin/sh', ['sh', '-c', spec['cmd']])
         finally:
             os._exit(127)
+    os.set_inheritable(fd, False)
     os.set_blocking(fd, False)
     ch['pid'] = pid
     ch['fd'] = fd
@@ -136,7 +142,10 @@ def queue(fd, data):
         pend[fd] = pend.get(fd, b'') + data
 def handle(kind, key, data):
     if kind == b'T':
-        open_chan(key, json.loads(data.decode('utf-8')))
+        try:
+            open_chan(key, json.loads(data.decode('utf-8')))
+        except Exception:
+            end_chan(key, 255)
     elif kind == b'I':
         ch = chans.get(key)
         if ch and ch['fd'] is not None:
@@ -166,6 +175,7 @@ def handle(kind, key, data):
                 except Exception:
                     drop_conn(key, True)
 inbuf = b''
+out.write(b'\n')
 frame(b'R', b'0')
 while True:
     rl = [stdin_fd] + list(ptys) + list(lsns) + [c['sock'].fileno() for c in conns.values() if not c.get('rdone')]
@@ -551,7 +561,7 @@ export class PlaceLink {
       child = this.deps.spawnLink(this.sshTarget);
     } catch (error) {
       release();
-      this.fell(null, false, `não consegui abrir o ssh (${error instanceof Error ? error.message : String(error)})`);
+      this.fell(null, false, `não consegui abrir o ssh (${error instanceof Error ? error.message : String(error)})`, false);
       return;
     }
     this.child = child;
@@ -598,13 +608,17 @@ export class PlaceLink {
   }
 
   /** The ssh ended: every tab on it ends as its own ssh would have (255). A try that never came up counts. */
-  private fell(code: number | null, wasUp: boolean, reason: string): void {
+  private fell(code: number | null, wasUp: boolean, reason: string, mayCount = true): void {
     this.queue = [];
     for (const conn of this.conns.values()) conn.socket.destroy();
     this.conns.clear();
     const tabs = [...this.channels.values()];
     if (this.stopped) return;
-    if (!wasUp) {
+    // Only a try that shows the link cannot work on this place counts: no python3, the multiplexer failing (any code
+    // but ssh's own 255) or never answering. An ssh that could not connect (255, or no spawn) is the place being
+    // down, not the link being broken: its tabs relink as before, on the link again.
+    const linkBroken = mayCount && code !== LINK_LOST_EXIT;
+    if (!wasUp && linkBroken) {
       this.failures += 1;
       const noPython = code === LINK_NO_PYTHON_EXIT;
       if (noPython || this.failures >= this.timing.maxFailures) {

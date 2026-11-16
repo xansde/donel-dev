@@ -197,18 +197,31 @@ describe('sessões remotas: uma ligação ssh por lugar, não uma por aba', () =
     expect(links.linkFor('root@hom')).not.toBeNull();
   });
 
-  it('duas tentativas seguidas sem a ligação subir também devolvem o lugar ao ssh por aba', async () => {
+  it('duas tentativas seguidas com o multiplexador falhando também devolvem o lugar ao ssh por aba', async () => {
     const { spawned, links } = fakePlaces();
     stoppers.push(() => links.stopAll());
     links.linkFor('root@hom')!.openTerminal(spec('sid-a'));
     await tick();
-    spawned[0]!.child.emit('close', 255);
+    spawned[0]!.child.emit('close', 1);
     links.linkFor('root@hom')!.openTerminal(spec('sid-a'));
     await tick();
     expect(links.linkFor('root@hom')).not.toBeNull();
-    spawned[1]!.child.emit('close', 255);
+    spawned[1]!.child.emit('close', 1);
     await tick();
     expect(links.linkFor('root@hom')).toBeNull();
+  });
+
+  it('o lugar fora do ar (o ssh não conecta, 255) não tira o lugar da ligação: as abas religam nela quando ele volta', async () => {
+    const { spawned, links } = fakePlaces();
+    stoppers.push(() => links.stopAll());
+    for (let i = 0; i < 3; i += 1) {
+      const seen = collect(links.linkFor('root@hom')!.openTerminal(spec('sid-a')));
+      await tick();
+      spawned[i]!.child.emit('close', LINK_LOST_EXIT);
+      await tick();
+      expect(seen.exits).toEqual([{ exitCode: LINK_LOST_EXIT }]);
+    }
+    expect(links.linkFor('root@hom')).not.toBeNull();
   });
 
   it('desligada (DONEL_SSH_LINK=off), nenhuma aba usa a ligação', () => {
