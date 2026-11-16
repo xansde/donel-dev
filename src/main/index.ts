@@ -245,6 +245,7 @@ import {
   type RemoteSessionMeta,
 } from './remote-session';
 import { RemoteLinkSupervisor } from './remote-link';
+import { sshGate } from './ssh-gate';
 import { runShutdownSteps, shutdownThenQuit } from './app-shutdown';
 import { createMainEventsLog, type MainEventLogger } from './main-events-log';
 import { createExitWatchdog } from './exit-watchdog';
@@ -634,14 +635,34 @@ const remoteSpawns = new Map<string, { cwd: string; command: string; args: strin
  * "Sem ligação" (main/remote-link.ts) — an ssh of a remote tab that drops with the tmux alive is not the end of the
  * session: the exit is held back, the place reads "sem ligação" and the app relinks it.
  */
+/**
+ * t-eb9a736a — the login slot (ssh-gate.ts) each remote tab's ssh holds until its first byte or its exit: a place that
+ * stalls drops every tab at once, and their new ssh go out a few at a time instead of dozens together.
+ */
+const sshLoginByPty = new Map<string, () => void>();
+function holdSshLogin(ptyId: string, loggedIn: () => void): void {
+  sshLoginByPty.get(ptyId)?.();
+  sshLoginByPty.set(ptyId, loggedIn);
+}
+function sshLoggedIn(ptyId: string): void {
+  const loggedIn = sshLoginByPty.get(ptyId);
+  if (!loggedIn) return;
+  sshLoginByPty.delete(ptyId);
+  loggedIn();
+}
+ptyManager.onData((ptyId) => sshLoggedIn(ptyId));
+ptyManager.onExit((ptyId) => sshLoggedIn(ptyId));
 const remoteLinks = new RemoteLinkSupervisor<PtyExitInfo>({
   probe: (sshTarget, sid) => probeRemoteSession(sshTarget, sid),
-  relink: (ptyId) => {
+  acquire: (sshTarget) => sshGate.acquire(sshTarget),
+  relink: (ptyId, loggedIn) => {
     const spawnSpec = remoteSpawns.get(ptyId);
     if (!spawnSpec) return false;
     try {
+      holdSshLogin(ptyId, loggedIn);
       ptyManager.create({ id: ptyId, ...spawnSpec });
     } catch {
+      sshLoggedIn(ptyId);
       return false;
     }
     remoteSessions?.resumePump(ptyId);
@@ -1967,11 +1988,14 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     command: process.platform === 'win32' ? 'ssh.exe' : 'ssh',
     args: buildAttachSshArgs({ sshTarget: place.sshTarget, sid: correlationId, tunnels }),
   };
+  // t-eb9a736a — the tab's ssh takes a login slot of the place: the boot opens every remote tab at once.
+  holdSshLogin(ptyId, await sshGate.acquire(place.sshTarget));
   try {
     ptyManager.create({ id: ptyId, ...spawnSpec });
     remoteSpawns.set(ptyId, spawnSpec);
     remoteLinks.track(ptyId, place.sshTarget, correlationId);
   } catch (error) {
+    sshLoggedIn(ptyId);
     sessionKeys.forget(ptyId);
     hookBridge?.unregisterSession(ptyId);
     browserService?.releasePty(ptyId);

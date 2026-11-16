@@ -164,6 +164,7 @@ describe('espelho do transcript: um ssh por máquina', () => {
     await tick();
     expect(readFileSync(a, 'utf8')).toBe('{"a":1}\n{"a":2}\n');
     registry.attach('pty-c', 'root@hom', SID_C, 'seazone/x');
+    await tick(); // the tail waits for a login slot of the place (t-eb9a736a)
     expect(spawned.length).toBe(MIRROR_MAX_FAILURES);
     expect(tails).toHaveLength(3);
     registry.stopAll();

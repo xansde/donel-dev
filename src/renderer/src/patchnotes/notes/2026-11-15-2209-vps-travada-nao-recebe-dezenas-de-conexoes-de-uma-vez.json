@@ -1,0 +1,4 @@
+{
+  "title": "VPS travada não recebe dezenas de conexões de uma vez",
+  "text": "Quando uma VPS ficava lenta e todas as sessões dela caíam juntas, o app tentava religar todas ao mesmo tempo, e a avalanche de conexões deixava a VPS ainda mais lenta para voltar. Agora o app abre no máximo seis conexões por vez em cada VPS: as sessões voltam em fila, uma logo atrás da outra, e o chat e as ferramentas do Donel nelas voltam mais rápido."
+}

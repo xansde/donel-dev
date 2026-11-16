@@ -21,6 +21,7 @@ import type { RemoteAliveSession } from '../shared';
 import type { SessionWhereLives } from '../shared/sessions';
 import { isSafeWorktreeName } from '../shared/sessionWorktree';
 import { DEFAULT_MIRROR_TIMING, MirrorHub, probeMirror, sshMirrorSpawner, type MirrorHubTiming, type SpawnMirror } from './remote-mirror';
+import { sshGate, type SshGate } from './ssh-gate';
 
 export const REMOTE_TMUX_SOCKET = 'donel';
 export const REMOTE_SESSIONS_DIR = '.donel/s';
@@ -375,17 +376,23 @@ export function buildEndScript(sid: string): string {
   ].join('\n');
 }
 
-/** Runs a script on the remote through stdin. `stderr` keeps the ssh's last words; `timedOut` when it was killed. */
-export function runRemoteScript(
+/**
+ * Runs a script on the remote through stdin. `stderr` keeps the ssh's last words; `timedOut` when it was killed.
+ * The login waits for a slot of the place (ssh-gate.ts); the timeout counts from the spawn, not from the wait.
+ */
+export async function runRemoteScript(
   sshTarget: string,
   script: string,
   timeoutMs = SETUP_TIMEOUT_MS,
+  gate: SshGate = sshGate,
 ): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }> {
+  const release = await gate.acquire(sshTarget);
   return new Promise((resolve) => {
     let child: ChildProcess;
     try {
       child = spawn('ssh', [...SSH_OPTIONS, '-T', '--', sshTarget, 'bash -l -s'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     } catch (error) {
+      release();
       resolve({ code: null, stdout: '', stderr: error instanceof Error ? error.message : String(error), timedOut: false });
       return;
     }
@@ -398,6 +405,7 @@ export function runRemoteScript(
     }, timeoutMs);
     child.stdout?.setEncoding('utf8');
     child.stdout?.on('data', (chunk: string) => {
+      release(); // the script runs there: the login is done
       stdout += chunk;
     });
     child.stderr?.setEncoding('utf8');
@@ -405,10 +413,12 @@ export function runRemoteScript(
       stderr = (stderr + chunk).slice(-4096);
     });
     child.on('error', (error) => {
+      release();
       clearTimeout(timer);
       resolve({ code: null, stdout, stderr: stderr || error.message, timedOut });
     });
     child.on('close', (code) => {
+      release();
       clearTimeout(timer);
       resolve({ code, stdout, stderr, timedOut });
     });
@@ -445,7 +455,8 @@ export function pickRemotePort(random: () => number = Math.random): number {
 /** How a transcript reaches its mirror: the place's shared ssh, or (a place without python3) a tail of its own. */
 type MirrorPump =
   | { readonly kind: 'hub'; readonly key: string; readonly hub: MirrorHub; readonly out: WriteStream; bytes: number }
-  | { readonly kind: 'tail'; readonly child: ChildProcess; readonly out: WriteStream; bytes: number };
+  /** `child` is null while the tail waits for a login slot of the place; `stopped` once detached. */
+  | { readonly kind: 'tail'; child: ChildProcess | null; readonly out: WriteStream; bytes: number; stopped?: true };
 
 interface LiveRemote {
   readonly sshTarget: string;
@@ -479,6 +490,7 @@ export class RemoteSessionRegistry {
   private readonly spawnTail: (sshTarget: string, command: string) => ChildProcess;
   private readonly onMirrorFallback: (sshTarget: string, reason: string) => void;
   private readonly onMirrorBack: (sshTarget: string) => void;
+  private readonly gate: SshGate;
 
   constructor(
     private readonly mirrorRoot: string,
@@ -491,6 +503,8 @@ export class RemoteSessionRegistry {
       readonly onMirrorFallback?: (sshTarget: string, reason: string) => void;
       /** A later try found the place's shared mirror working: its tabs went back to it (the main logs it). */
       readonly onMirrorBack?: (sshTarget: string) => void;
+      /** The place's login slots (the app's one gate by default). */
+      readonly gate?: SshGate;
     } = {},
   ) {
     this.spawnMirror = options.spawnMirror ?? sshMirrorSpawner(SSH_OPTIONS);
@@ -499,6 +513,7 @@ export class RemoteSessionRegistry {
       options.spawnTail ?? ((sshTarget, command) => spawn('ssh', [...SSH_OPTIONS, '-T', '--', sshTarget, command], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }));
     this.onMirrorFallback = options.onMirrorFallback ?? (() => undefined);
     this.onMirrorBack = options.onMirrorBack ?? (() => undefined);
+    this.gate = options.gate ?? sshGate;
   }
 
   has(ptyId: string): boolean {
@@ -672,23 +687,44 @@ export class RemoteSessionRegistry {
     this.mirrorRetries.set(sshTarget, timer);
   }
 
+  /**
+   * One `ssh … tail -F` for one transcript. It waits for a login slot of the place first (t-eb9a736a): when a
+   * place's shared mirror gives up, every tab there moves to a tail at once, and those logins are spread out.
+   */
   private startTail(entry: LiveRemote, remoteTranscript: string, out: WriteStream, fromByte: number): MirrorPump {
     const target = remoteTranscript.startsWith('/') ? shQuote(remoteTranscript) : `"$HOME"/${shQuote(remoteTranscript)}`;
-    const child = this.spawnTail(entry.sshTarget, `tail -c +${fromByte + 1} -F ${target} 2>/dev/null`);
-    const pump: MirrorPump = { kind: 'tail', child, out, bytes: fromByte };
-    child.stdout?.on('data', (chunk: Buffer) => {
-      pump.bytes += chunk.length;
+    const pump: MirrorPump & { kind: 'tail' } = { kind: 'tail', child: null, out, bytes: fromByte };
+    void this.gate.acquire(entry.sshTarget).then((release) => {
+      if (pump.stopped) return release(); // detached (tab closed, repointed) while it waited
+      let child: ChildProcess;
+      try {
+        child = this.spawnTail(entry.sshTarget, `tail -c +${fromByte + 1} -F ${target} 2>/dev/null`);
+      } catch {
+        release();
+        out.end();
+        return;
+      }
+      pump.child = child;
+      child.stdout?.on('data', (chunk: Buffer) => {
+        release();
+        pump.bytes += chunk.length;
+      });
+      child.stdout?.pipe(out);
+      child.on('close', release);
+      child.on('error', () => {
+        release();
+        out.end();
+      });
     });
-    child.stdout?.pipe(out);
-    child.on('error', () => out.end());
     return pump;
   }
 
   /** Stops what feeds a mirror, leaving its stream to the caller. */
   private detach(entry: LiveRemote, pump: MirrorPump): void {
     if (pump.kind === 'tail') {
-      pump.child.stdout?.unpipe(pump.out);
-      pump.child.kill();
+      pump.stopped = true;
+      pump.child?.stdout?.unpipe(pump.out);
+      pump.child?.kill();
       return;
     }
     pump.hub.remove(pump.key);
