@@ -29,6 +29,38 @@ export interface CardRow {
   readonly owner_reason: string | null;
   readonly done_summary: string | null;
   readonly version: number;
+  readonly woken_at?: string | null;
+  readonly charged_at?: string | null;
+  readonly charge_count?: number;
+  readonly leader_noticed_at?: string | null;
+}
+
+export interface LaneRow {
+  readonly project_id: string;
+  readonly leader_place: string | null;
+  readonly leader_session: string | null;
+  readonly leader_seen_at: string | null;
+}
+
+export interface LeaderRequestRow {
+  readonly id: number;
+  readonly project_id: string;
+  readonly actor: string;
+  readonly created_at: string;
+}
+
+/** What the cron on the VPS needs (src/board-cron/main.ts). */
+export interface BoardCronStore {
+  /** Cards in Fazendo or Travado: the only ones the cron and the vigia look at. */
+  parkedOrDoing(): Promise<readonly CardRow[]>;
+  lanes(): Promise<readonly LaneRow[]>;
+  pendingLeaderRequests(): Promise<readonly LeaderRequestRow[]>;
+  markCron(cardId: string, kind: 'woken' | 'charged' | 'leader'): Promise<void>;
+  resolveLeaderRequest(id: number, status: 'done' | 'failed', reason: string): Promise<void>;
+  touchLane(projectId: string, leaderPlace: string, leaderSession: string | undefined): Promise<void>;
+  overview(): Promise<readonly import('../shared/board/page').OverviewRow[]>;
+  /** Every card not done, plus the ones done in the last 3 days, for the page. */
+  pageCards(): Promise<readonly import('../shared/board/page').PageCard[]>;
 }
 
 export interface CreateCardArgs {
@@ -81,7 +113,8 @@ export interface BoardConfig {
 export function readBoardConfig(file: string): BoardConfig | null {
   try {
     const raw = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
-    if (typeof raw.url !== 'string' || !/^https:\/\/[^/\s]+$/.test(raw.url.replace(/\/+$/, ''))) return null;
+    // https, or plain http only on this machine (the end-to-end test's local PostgREST): the key never leaves in clear.
+    if (typeof raw.url !== 'string' || !/^(https:\/\/[^/\s]+|http:\/\/(127\.0\.0\.1|localhost)(:\d+)?)$/.test(raw.url.replace(/\/+$/, ''))) return null;
     if (typeof raw.serviceKeyFile !== 'string' || !raw.serviceKeyFile) return null;
     return { url: raw.url.replace(/\/+$/, ''), serviceKeyFile: raw.serviceKeyFile };
   } catch {
@@ -99,7 +132,7 @@ export class BoardError extends Error {}
 
 type Fetch = typeof fetch;
 
-export function createBoardClient(config: BoardConfig, doFetch: Fetch = fetch): BoardStore {
+export function createBoardClient(config: BoardConfig, doFetch: Fetch = fetch): BoardStore & BoardCronStore {
   const key = (): string => readFileSync(config.serviceKeyFile, 'utf8').trim();
 
   async function call<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
@@ -158,5 +191,17 @@ export function createBoardClient(config: BoardConfig, doFetch: Fetch = fetch): 
     async touchLane(projectId, leaderPlace, leaderSession) {
       await rpc('touch_lane', { p_project_id: projectId, p_leader_place: leaderPlace, ...(leaderSession ? { p_leader_session: leaderSession } : {}) });
     },
+    parkedOrDoing: () => call<CardRow[]>('GET', 'cards?stage=in.(doing,blocked)&limit=1000'),
+    lanes: () => call<LaneRow[]>('GET', 'lanes?select=project_id,leader_place,leader_session,leader_seen_at'),
+    pendingLeaderRequests: () => call<LeaderRequestRow[]>('GET', 'leader_requests?status=eq.pending&select=id,project_id,actor,created_at&order=id'),
+    async markCron(cardId, kind) {
+      await rpc('mark_cron', { p_card_id: cardId, p_kind: kind });
+    },
+    async resolveLeaderRequest(id, status, reason) {
+      await rpc('resolve_leader_request', { p_id: id, p_status: status, p_reason: reason });
+    },
+    overview: () => call('GET', 'overview?order=project_id'),
+    pageCards: () =>
+      call('GET', `project_cards?or=(stage.neq.done,updated_at.gt.${q(new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString())})&limit=2000`),
   };
 }

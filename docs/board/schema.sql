@@ -315,6 +315,34 @@ begin
   return v_req;
 end $$;
 
+-- The cron (PR 3) marks what it did, without bumping the card's version (it is not a move, and a session that read
+-- the card must still be able to move it).
+alter table board.cards add column if not exists leader_noticed_at timestamptz;
+
+create or replace function board.mark_cron(p_card_id text, p_kind text)
+returns void language plpgsql set search_path = board, pg_temp as $$
+begin
+  if p_kind not in ('woken', 'charged', 'leader') then raise exception 'marca desconhecida: %', p_kind; end if;
+  update board.cards set
+    woken_at = case when p_kind = 'woken' then now() else woken_at end,
+    charged_at = case when p_kind = 'charged' then now() else charged_at end,
+    charge_count = case when p_kind = 'charged' then charge_count + 1 else charge_count end,
+    leader_noticed_at = case when p_kind = 'leader' then now() else leader_noticed_at end
+  where id = p_card_id;
+end $$;
+
+-- The vigia answers a request for a lane's Líder: done (woken) or failed (why not).
+create or replace function board.resolve_leader_request(p_id bigint, p_status text, p_reason text default null)
+returns board.leader_requests language plpgsql set search_path = board, pg_temp as $$
+declare v_req board.leader_requests;
+begin
+  if p_status not in ('done', 'failed') then raise exception 'estado desconhecido: %', p_status; end if;
+  update board.leader_requests set status = p_status, reason = left(p_reason, 300), handled_at = now()
+   where id = p_id and status = 'pending'
+  returning * into v_req;
+  return v_req;
+end $$;
+
 -- Views: the read API of every client (phone, page, PC service).
 create or replace view board.overview with (security_invoker = true) as
 select p.id as project_id, p.name, p.host,

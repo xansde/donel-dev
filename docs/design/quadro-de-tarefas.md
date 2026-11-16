@@ -165,6 +165,24 @@ não):
 - Peça 6 pede vigia e crons em Rust: começo em TS (reusa `src/shared/board/`, uma regra só) e o porte a Rust entra
   junto do serviço Rust da VPS. Se o dono preferir Rust já, a regra em SQL não muda.
 
+### Implementação (PR 3)
+
+- `src/shared/board/cron.ts` (decisões puras: `planJustify`, `planVigia`, campo livre da tela), `src/shared/board/page.ts`
+  (a página) e `src/board-cron/main.ts`, construído em `out/board-cron/board-cron.mjs` (`npm run build:quadro`).
+- `board-cron.mjs ronda` (*/15): justificativa, vigia, raias vivas (`touch_lane` do Líder com turno nos últimos 30 min) e
+  página. `board-cron.mjs lider` (*/1): pedidos do PC. Marcas sem subir a versão do cartão: `board.mark_cron`,
+  `board.resolve_leader_request`.
+- Configuração em `~/.donel/board/`: `supabase.json` (`{url, serviceKeyFile}`; sem ele o cron sai com 0) e `cron.json`
+  (`{vigiaSombra, slackReader, pagina}`). **`vigiaSombra` vale `true` por padrão**: o vigia só registra o que faria, até
+  rodar um dia ao lado da `ronda` do despertador com a mesma saída ou melhor.
+- Instalação (só com o ok do dono para a migração): copiar o bundle para `~/.donel/board/bin/`, escrever os dois
+  arquivos e duas linhas no crontab, cada uma com o script próprio:
+  `*/15 * * * * /usr/bin/flock -n /tmp/cron-board-ronda.lock node ~/.donel/board/bin/board-cron.mjs ronda >> ~/.donel/board/cron-stdout.log 2>&1`
+  e `* * * * * /usr/bin/flock -n /tmp/cron-board-lider.lock node ~/.donel/board/bin/board-cron.mjs lider >> ~/.donel/board/cron-stdout.log 2>&1`.
+  Volta: tirar as duas linhas e o `supabase.json`.
+- Reabrir sessão fechada sem o app ainda não existe: o cron leva ao Líder do quadro (que usa `sessao_retomar`), e o
+  pedido de Líder com a sessão fechada sai `failed` com o motivo.
+
 ## 7. Tela (prova do critério 1)
 
 O desktop vai sair e o app do celular ainda não tem código. Recomendação: **página na VPS** em
