@@ -63,6 +63,8 @@ export interface MoveRequest {
   readonly justification?: Justification;
   readonly ownerReason?: OwnerReason;
   readonly doneSummary?: string;
+  /** Only the Líder gives a card to another place. */
+  readonly assignPlace?: string;
 }
 
 export type MoveCheck = { readonly ok: true } | { readonly ok: false; readonly error: string };
@@ -101,6 +103,9 @@ export function checkMove(req: MoveRequest): MoveCheck {
     if (!isOwnerReason(req.ownerReason)) {
       return refuse(`"Esperando você" só por: ${OWNER_REASONS.join(', ')}`);
     }
+  }
+  if (req.assignPlace && (!req.lane.leaderPlace || req.actor !== req.lane.leaderPlace)) {
+    return refuse('só o Líder do quadro dá o cartão a outro lugar');
   }
   if (req.to === 'blocked' && !isValidJustification(req.justification, req.now)) {
     return refuse('"Travado" exige justificativa: o motivo, o link onde a resposta vai chegar e um prazo no futuro');

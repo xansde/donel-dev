@@ -7,6 +7,8 @@
 //   `sessao_listar` from the last picture of the board the PC left (the board lives on the PC and does not change
 //   while it is off), and the `tarefa_*` tools on this daemon's ledger, as that place. A proof file is read here, on
 //   the VPS. Every other tool says the PC is off.
+// - quadro de tarefas (t-1e354d15): when the board is configured, the `card_*` tools are answered HERE, PC on or off
+//   (the board lives in the owner's Supabase, not on the PC), and the PC's tool list gets them appended.
 
 import { timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -18,6 +20,10 @@ import type { MindscapeBoard } from '../shared/mindscape/model';
 import type { LedgerToolCall } from '../shared/ledger/tools';
 import { askedByRefusal } from '../shared/ledger/tools';
 import { runLedgerTool, type LedgerCaller, type LedgerService } from '../main/ledger-store';
+import { CARD_TOOLS, isCardToolName, type CardToolCall } from '../shared/board/tools';
+import { isBoardOrchestrator } from '../shared/mindscape/reach';
+import type { BoardStore } from './board-client';
+import { runCardTool } from './board-tools';
 
 export const GATE_PORT = 47817;
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -74,6 +80,9 @@ export interface GateDeps {
   readonly picture: () => BoardPicture | null;
   readonly forward: GateForward;
   readonly serverVersion: string;
+  /** The task board's client; absent or null = no `card_*` tools (the board is off). */
+  readonly cards?: () => BoardStore | null;
+  readonly now?: () => number;
 }
 
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } as const;
@@ -105,10 +114,36 @@ function placeStatesOf(places: readonly unknown[]): Map<string, string> {
   return states;
 }
 
+/** The one JSON-RPC message of a body, when it is a single one (the CLI never batches). */
+function singleMessage(body: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(body) as unknown;
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function isCardCall(body: string): boolean {
+  const message = singleMessage(body);
+  return message?.method === 'tools/call' && isRecord(message.params) && typeof message.params.name === 'string' && isCardToolName(message.params.name);
+}
+
+/** The PC's answer to `tools/list`, with the board's tools appended (the PC does not know them). */
+export function withCardTools(requestBody: string, answer: GateResponse): GateResponse {
+  if (answer.status !== 200 || singleMessage(requestBody)?.method !== 'tools/list') return answer;
+  const parsed = singleMessage(answer.body);
+  const result = parsed && isRecord(parsed.result) ? parsed.result : null;
+  if (!parsed || !result || !Array.isArray(result.tools)) return answer;
+  const names = new Set(result.tools.map((tool) => (isRecord(tool) ? tool.name : null)));
+  const tools = [...result.tools, ...CARD_TOOLS.filter((tool) => !names.has(tool.name))];
+  return { ...answer, body: JSON.stringify({ ...parsed, result: { ...result, tools } }) };
+}
+
 const hhmm = (at: number): string => new Date(at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
 
 export function createGateHandler(deps: GateDeps): (request: GateRequest) => Promise<GateResponse> {
-  async function local(sid: string, body: string): Promise<GateResponse> {
+  async function local(sid: string, body: string, cards: BoardStore | null): Promise<GateResponse> {
     const parsed = parseMcpBody(body);
     if (!parsed.ok) return { status: 400, headers: JSON_HEADERS, body: JSON.stringify(parsed.response) };
     const picture = deps.picture();
@@ -150,10 +185,31 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
       return result.image ? { kind: 'image', base64: result.image.base64, mimeType: result.image.mimeType, text: result.text } : { kind: 'text', text: result.text };
     };
 
+    const card = async (call: CardToolCall): Promise<BrowserToolOutcome> => {
+      if (!mine || !cards) return { kind: 'error', text: noPicture };
+      const who = mine.quemSou;
+      if (who.liderUnico === true) return { kind: 'error', text: 'O Líder único não tem raia no quadro de tarefas: quem move os cartões é o Líder de cada quadro.' };
+      if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string') return { kind: 'error', text: noPicture };
+      const place = mine.board?.cards[who.lugar];
+      const outcome = await runCardTool(
+        cards,
+        {
+          placeId: who.lugar,
+          projectPath: who.pasta,
+          ...(place?.kind === 'session' && place.sessionId ? { sessionId: place.sessionId } : {}),
+          isLeader: mine.board ? isBoardOrchestrator(mine.board, who.lugar) : who.orquestrador === true,
+        },
+        call,
+        (deps.now ?? Date.now)(),
+      );
+      return outcome.ok ? { kind: 'text', text: outcome.text } : { kind: 'error', text: outcome.text };
+    };
+
     const answer = await handleMcpPayload(parsed.payload, {
       executor: async () => ({ kind: 'error', text: PC_OFF }),
       boardExecutor: board,
       ledgerExecutor: ledger,
+      ...(cards ? { cardExecutor: card } : {}),
       openCap: () => null,
       serverVersion: deps.serverVersion,
     });
@@ -167,10 +223,13 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     const meta = readMeta(deps.sessionsDir, sid);
     const bearer = request.authorization?.startsWith('Bearer ') ? request.authorization.slice('Bearer '.length) : '';
     if (!meta || !bearer || !sameToken(bearer, meta.mcpToken)) return { status: 401, headers: {}, body: '' };
+    const cards = deps.cards?.() ?? null;
+    // The board answers here even with the PC on: it is not the PC's.
+    if (cards && request.method === 'POST' && isCardCall(request.body)) return local(sid, request.body, cards);
     const forwarded = await deps.forward(meta.mcpPort, request);
-    if (forwarded !== 'desligado') return forwarded;
+    if (forwarded !== 'desligado') return cards ? withCardTools(request.body, forwarded) : forwarded;
     if (request.method !== 'POST') return { status: 405, headers: { Allow: 'POST' }, body: '' };
-    return local(sid, request.body);
+    return local(sid, request.body, cards);
   };
 }
 

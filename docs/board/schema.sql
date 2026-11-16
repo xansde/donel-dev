@@ -157,10 +157,10 @@ begin
     v_note := 'projeto desconhecido: ' || coalesce(p_project_id, '(nenhum)');
     v_project := 'sem-projeto';
   end if;
-  if p_stage = 'todo' and not exists (
+  if (p_stage = 'todo' or p_place_id is not null) and not exists (
     select 1 from board.lanes where project_id = v_project and leader_place = p_actor
   ) then
-    raise exception 'só o Líder do quadro cria direto em "A fazer"; crie na Entrada';
+    raise exception 'só o Líder do quadro cria direto em "A fazer" ou dá o lugar; crie na Entrada';
   end if;
   insert into board.cards (project_id, front, title, owner_request, criterion, requested_by, stage, note,
                            place_id, session_id, due, risk, oraculo_id, client_ref, created_by)
@@ -184,7 +184,8 @@ end $$;
 create or replace function board.move_card(
   p_card_id text, p_to text, p_actor text, p_expected_version integer, p_note text default null,
   p_justification text default null, p_justification_link text default null, p_justification_due timestamptz default null,
-  p_owner_reason text default null, p_done_summary text default null
+  p_owner_reason text default null, p_done_summary text default null,
+  p_place_id text default null, p_session_id text default null
 ) returns board.cards language plpgsql set search_path = board, pg_temp as $$
 declare
   v_card board.cards;
@@ -216,6 +217,9 @@ begin
   if p_to = 'done' and coalesce(btrim(p_done_summary), '') = '' then
     raise exception '"Feito" exige o resumo do que foi entregue';
   end if;
+  if p_place_id is not null and (v_leader is null or p_actor <> v_leader) then
+    raise exception 'só o Líder do quadro dá o cartão a outro lugar';
+  end if;
   if p_justification is not null and not v_justified then
     raise exception 'justificativa incompleta: motivo, link http(s) e prazo no futuro';
   end if;
@@ -234,6 +238,11 @@ begin
     woken_at = case when v_changed then null else woken_at end,
     charged_at = case when v_changed or v_justified then null else charged_at end,
     charge_count = case when v_changed or v_justified then 0 else charge_count end,
+    -- "Fazendo" is whoever moves it there (with its conversation, to wake it); the Líder may assign another place
+    place_id = case when p_place_id is not null then p_place_id
+                    when p_to = 'doing' and v_changed then p_actor else place_id end,
+    session_id = case when p_place_id is not null then case when p_place_id = p_actor then p_session_id end
+                      when p_to = 'doing' and v_changed then p_session_id else session_id end,
     version = version + 1,
     updated_at = now()
   where id = p_card_id

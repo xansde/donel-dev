@@ -8,6 +8,7 @@
 
 import { boardTools, isBoardToolName, parseBoardToolCall, type BoardToolCall } from '../mindscape/agent-tools';
 import { isLedgerToolName, LEDGER_TOOLS, parseLedgerToolCall, type LedgerToolCall } from '../ledger/tools';
+import { CARD_TOOLS, isCardToolName, parseCardToolCall, type CardToolCall } from '../board/tools';
 import { HILL_CLIMB_INSTRUCTIONS, HILL_CLIMB_TOOLS, isHillClimbToolName, parseHillClimbToolCall, type HillClimbToolCall } from '../hillClimb/tools';
 
 export const MCP_SERVER_NAME = 'donel';
@@ -395,6 +396,8 @@ export interface McpHandlerContext {
   readonly ledgerExecutor?: (call: LedgerToolCall) => Promise<BrowserToolOutcome>;
   /** Hill climbing — the `hillclimb_*` tools of the Escalador; absent = no hill climbing tools. */
   readonly hillClimbExecutor?: (call: HillClimbToolCall) => Promise<BrowserToolOutcome>;
+  /** Quadro de tarefas — the `card_*` tools, run by the daemon on the VPS; absent = no card tools. */
+  readonly cardExecutor?: (call: CardToolCall) => Promise<BrowserToolOutcome>;
   readonly serverVersion: string;
 }
 
@@ -451,7 +454,7 @@ async function handleOne(message: unknown, ctx: McpHandlerContext): Promise<Json
       return {
         jsonrpc: '2.0',
         id,
-        result: { tools: [...(ctx.boardExecutor ? boardTools(ctx.openCap?.() ?? null) : []), ...(ctx.ledgerExecutor ? LEDGER_TOOLS : []), ...(ctx.hillClimbExecutor ? HILL_CLIMB_TOOLS : []), ...BROWSER_TOOLS] },
+        result: { tools: [...(ctx.boardExecutor ? boardTools(ctx.openCap?.() ?? null) : []), ...(ctx.ledgerExecutor ? LEDGER_TOOLS : []), ...(ctx.hillClimbExecutor ? HILL_CLIMB_TOOLS : []), ...(ctx.cardExecutor ? CARD_TOOLS : []), ...BROWSER_TOOLS] },
       };
     case 'tools/call': {
       const name = p.name;
@@ -487,6 +490,17 @@ async function handleOne(message: unknown, ctx: McpHandlerContext): Promise<Json
           climbOutcome = { kind: 'error', text: error instanceof Error ? error.message : String(error) };
         }
         return { jsonrpc: '2.0', id, result: toolResult(climbOutcome) };
+      }
+      if (typeof name === 'string' && ctx.cardExecutor && isCardToolName(name)) {
+        const card = parseCardToolCall(name, p.arguments);
+        if (!card.ok) return { jsonrpc: '2.0', id, result: toolResult({ kind: 'error', text: card.reason }) };
+        let cardOutcome: BrowserToolOutcome;
+        try {
+          cardOutcome = await ctx.cardExecutor(card.call);
+        } catch (error) {
+          cardOutcome = { kind: 'error', text: error instanceof Error ? error.message : String(error) };
+        }
+        return { jsonrpc: '2.0', id, result: toolResult(cardOutcome) };
       }
       if (typeof name !== 'string' || !TOOL_NAMES.has(name)) return errorResponse(id, JSON_RPC_ERRORS.invalidParams, `Unknown tool: ${String(name)}`);
       const parsed = parseToolCall(name, p.arguments);

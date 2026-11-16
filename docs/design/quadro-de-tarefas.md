@@ -121,6 +121,13 @@ migração (antes disso, 406). Os parâmetros das RPCs têm prefixo `p_` (ver `d
 - `card_create` (cai em `inbox`, ou em `todo` se quem cria é o Líder), `card_move {id, to, note, justification?,
   owner_reason?, done_summary?}`, `card_justify {id, text, link, due}`, `card_list {project?, stage?}`.
 - O ator é o lugar da sessão (do retrato), nunca um argumento. `waiting_owner` recusado para quem não é Líder.
+- Implementação (PR 2): `src/shared/board/tools.ts` (argumentos em pt-BR, como as `tarefa_*`), `src/oraculo/board-tools.ts`
+  e `board-client.ts`. O portão responde as `card_*` **antes** do túnel, com o PC ligado ou não, e acrescenta as
+  `card_*` à lista de ferramentas que o PC devolve. Desligado sem `~/.donel/board/supabase.json`
+  (`{url, serviceKeyFile}`): nada fixo no código, que vai ao repo público. Fazendo é de quem move (grava lugar e
+  conversa); só o Líder dá o cartão a outro lugar (`lugar`).
+- Atenção no deploy: o bundle instalado do daemon é de 09/11. Um bundle novo leva tudo o que entrou desde então
+  (inclusive o vigia de travas da fase 2), não só as `card_*`.
 - **Andamento passa a ser `card_move`.** O `tarefa_andamento` do Oráculo fica para quem tem carta lá. Trocar a
   regra nas instruções (CLAUDE.md global e do servidor `donel`) é decisão do Líder/dono, depois que as tools existirem;
   até lá nada muda para as sessões.
