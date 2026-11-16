@@ -250,6 +250,7 @@ def alertas(atual: dict, est: dict, seco: bool) -> dict:
     memo = est.setdefault("faixas", {})  # chave -> {faixa, envio}
     sql, eventos = [], []
     for chave, c in conds.items():
+        c["chave"] = chave
         nivel = "grave" if c["faixa"] >= 2 else "aviso"
         m = memo.get(chave)
         if chave not in abertos:
@@ -275,22 +276,76 @@ def alertas(atual: dict, est: dict, seco: bool) -> dict:
         if fora[chave] >= 10:  # histerese: 10 rodadas seguidas sem a condição
             sql.append(f"update saude.alerta set fim = now() where chave = {lit(chave)} and inicio = {lit(a['inicio'])};")
             fechados.append(chave)
-            eventos.append(("fechou", {"alvo": a["alvo"], "texto": a["texto"]}))
+            eventos.append(("fechou", {"chave": chave, "alvo": a["alvo"], "texto": texto_resolvido(chave, a, atual)}))
             fora.pop(chave, None)
             memo.pop(chave, None)
-    enviados = {}
-    por_quadro: dict[str, list[str]] = {}
-    for ev, c in eventos:
-        q = QUADRO.get(c["alvo"], "Donel Dev")
-        rot = {"abriu": "", "piorou": "piorou: ", "ainda": "ainda: ", "fechou": "resolvido: "}[ev]
-        por_quadro.setdefault(q, []).append(f"- {rot}{c['texto']}")
-    for q, linhas in por_quadro.items():
-        texto = f"{TAREFA} Para o Líder do quadro (não ao dono):\n" + "\n".join(linhas) + f"\nSérie e picos: {PAGINA}"
-        enviados[q] = "seco" if seco else enviar(q, texto)
-        sql.append(f"update saude.alerta set enviado_a = {lit(q + ': ' + enviados[q])} where fim is null and enviado_a is null;")
+    # Grava antes de avisar: se o banco falhar, nada é enviado e a próxima rodada refaz o mesmo evento uma vez só.
     if sql and not seco:
         psql("\n".join(sql))
-    return {"abertos": len(conds), "eventos": [(e, c["texto"][:60]) for e, c in eventos], "fechados": fechados, "envio": enviados}
+    # Dedup por chave do alerta + evento (+ faixa/hora): um evento sai uma vez, mesmo que a rodada se repita.
+    ja = est.setdefault("enviados", {})
+    for k in [k for k, t in ja.items() if agora - t > 3 * 86400]:
+        ja.pop(k)
+    por_quadro: dict[str, list[tuple[str, str]]] = {}
+    for q, pend in est.setdefault("pendentes", {}).items():
+        por_quadro.setdefault(q, []).extend((k, ln) for k, ln in pend)
+    est["pendentes"] = {}
+    for ev, c in eventos:
+        k = f"{c.get('chave') or c['alvo']}|{ev}|{c.get('faixa', '')}|{int(agora // 3600) if ev == 'ainda' else ''}"
+        if k in ja or any(k == x for x, _ in por_quadro.get(QUADRO.get(c["alvo"], "Donel Dev"), [])):
+            continue
+        rot = {"abriu": "", "piorou": "piorou: ", "ainda": "ainda: ", "fechou": "resolvido: "}[ev]
+        por_quadro.setdefault(QUADRO.get(c["alvo"], "Donel Dev"), []).append((k, f"- {rot}{c['texto']}"))
+    enviados = {}
+    for q, itens in por_quadro.items():
+        if not itens:
+            continue
+        texto = f"{TAREFA} Para o Líder do quadro (não ao dono):\n" + "\n".join(ln for _, ln in itens) + f"\nSérie e picos: {PAGINA}"
+        r = "seco" if seco else enviar(q, texto)
+        enviados[q] = r
+        if r == "sem-emissor":  # nada foi tentado: guarda e tenta na próxima rodada
+            est["pendentes"].setdefault(q, []).extend(itens)
+            continue
+        for k, _ in itens:
+            ja[k] = agora  # entregue, app-tentando ou incerto: não reenvia (incerto pode ter entrado)
+        if not seco:
+            psql(f"update saude.alerta set enviado_a = {lit(q + ': ' + r)} where fim is null and enviado_a is null;")
+    return {"abertos": len(conds), "eventos": [(e, c["texto"][:80]) for e, c in eventos], "fechados": fechados, "envio": enviados}
+
+
+METRICA = {"ram": ("ram_pct", "RAM", "%"), "swap": ("swap_pct", "swap", "%"), "disco": ("disco_pct", "disco", "%"),
+           "carga": ("carga1", "carga", "")}
+DE = {"pc": "do PC", "vps-pessoal": "da VPS pessoal", "homologacoes": "da Homologações"}
+
+
+def texto_resolvido(chave: str, a: dict, atual: dict) -> str:
+    """Texto do "resolvido" com o valor de agora e o pico do alerta (não repete o valor da abertura)."""
+    tipo, _, alvo = chave.partition(":")
+    try:
+        if tipo in METRICA:
+            col, rot, un = METRICA[tipo]
+            m = next((x for x in atual["maquinas"] if x["maquina"] == alvo), {})
+            pico, quando = psql(
+                f"select round(max({col})::numeric, 1), to_char((array_agg(em order by {col} desc nulls last))[1] "
+                f"at time zone 'America/Sao_Paulo', 'HH24:MI') from saude.maquina_minuto where maquina = {lit(alvo)} "
+                f"and em >= {lit(a['inicio'])}::timestamptz - interval '15 minutes';").split("|")
+            agora_v = m.get(col)
+            agora_txt = f"{agora_v:g}" if isinstance(agora_v, (int, float)) else "?"
+            return f"{rot} {DE.get(alvo, alvo)} em {agora_txt}{un} (pico {float(pico):g}{un} às {quando})"
+        if tipo == "silencio":
+            return f"{NOMES.get(alvo, alvo)} voltou a mandar dados"
+        gw = alvo.split(":")[0]
+        g = next((x for x in atual["gateways"] if x["gateway"] == gw), {})
+        rot = NOMES.get("gw:" + gw, gw)
+        if tipo == "cota":
+            return f"{rot} com {g.get('com_cota')} contas com cota ({g.get('esgotadas')} esgotadas, {g.get('fora')} fora)"
+        if tipo == "ativa":
+            return f"{rot}: a conta ativa saiu do 429 (agora {g.get('conta_ativa')})"
+        if tipo == "caiu":
+            return f"{rot}: a conta {alvo.split(':', 1)[1]} voltou ou saiu do pool"
+    except Exception:  # noqa: BLE001 - texto de reserva
+        pass
+    return a["texto"]
 
 
 def enviar(quadro: str, texto: str) -> str:

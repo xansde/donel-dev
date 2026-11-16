@@ -2,7 +2,7 @@
 """Manda um aviso ao Líder de um quadro do Donel ("lider-quadro") por uma sessão local desse quadro (t-16393812).
 
 Mesmo caminho do despertador: acha uma sessão viva do quadro no tmux "donel", que não seja o próprio Líder, e chama o
-sessao_enviar pelo MCP dela. Texto pelo stdin. Imprime uma palavra: entregue, app-tentando, incerto, falhou ou sem-emissor.
+sessao_enviar pelo MCP dela. Texto pelo stdin. Imprime uma palavra: entregue, app-tentando, incerto ou sem-emissor (só este quer dizer que nada foi enviado).
 uso: echo "texto" | saude_avisar.py --quadro "Donel Dev" [--seco]
 Lê só mcpPort/mcpToken/projectName do meta.json de cada sessão, dentro do processo; nada disso sai na saída.
 """
@@ -12,7 +12,6 @@ import argparse
 import json
 import subprocess
 import sys
-import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -51,31 +50,25 @@ def mcp(m: dict, tool: str, args: dict, timeout: int):
 
 
 def avisar(quadro: str, texto: str) -> str:
-    tentativas = 0
+    """Um envio só: escolhe a 1ª sessão viva do quadro que não é o Líder e manda por ela. Se o envio falhar ou demorar,
+    NÃO tenta por outra sessão (em 16/11 um "resolvido" chegou 2 vezes, por duas sessões, porque a 1ª tinha entregue
+    e devolvido erro): devolve "incerto". Só "sem-emissor" quer dizer que nada foi tentado."""
     for u in sessoes_vivas():
         m = meta(u)
         if m.get("projectName") != quadro or not m.get("mcpPort") or not m.get("mcpToken"):
             continue
         try:
             quem = json.loads(mcp(m, "sessao_quem_sou", {}, 8))
-        except Exception:  # noqa: BLE001 - MCP fora: tenta a próxima
+        except Exception:  # noqa: BLE001 - MCP fora: ainda não enviou nada, pode tentar a próxima
             continue
         if quem.get("papel") == "lider":
             continue  # "lider-quadro" recusa o próprio Líder
-        tentativas += 1
         try:
             r = mcp(m, "sessao_enviar", {"para": "lider-quadro", "texto": texto}, 45)
-            return "entregue" if r.startswith("Entregue") else ("app-tentando" if "segue tentando" in r else "incerto")
-        except TimeoutError:
+        except Exception:  # noqa: BLE001 - pode ter entrado: não repete por outra sessão
             return "incerto"
-        except urllib.error.URLError as e:
-            if isinstance(getattr(e, "reason", None), TimeoutError):
-                return "incerto"
-        except Exception:  # noqa: BLE001
-            pass
-        if tentativas >= 2:
-            return "falhou"
-    return "sem-emissor" if tentativas == 0 else "falhou"
+        return "entregue" if r.startswith("Entregue") else ("app-tentando" if "segue tentando" in r else "incerto")
+    return "sem-emissor"
 
 
 def main() -> int:
