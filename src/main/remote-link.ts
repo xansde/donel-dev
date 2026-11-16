@@ -15,8 +15,16 @@ export type RemoteLinkProbe = 'alive' | 'gone' | 'unreachable';
 export interface RemoteLinkDeps<Exit> {
   /** Asks the place whether the tmux session of `sid` is still there. */
   probe(sshTarget: string, sid: string): Promise<RemoteLinkProbe>;
-  /** Spawns the ssh of the tab again, on the same ptyId; `false` when the spawn threw. */
-  relink(ptyId: string): boolean;
+  /**
+   * Spawns the ssh of the tab again, on the same ptyId; `false` when the spawn threw. `loggedIn` gives the place's
+   * login slot back: call it on the ssh's first byte or exit (the gate frees it anyway after its hold time).
+   */
+  relink(ptyId: string, loggedIn: () => void): boolean;
+  /**
+   * t-eb9a736a — waits for a login slot of the place before the relink's ssh (ssh-gate.ts): when a place stalls,
+   * every tab there drops at once, and their relinks go out a few at a time. Without it, no wait.
+   */
+  acquire?(sshTarget: string): Promise<() => void>;
   /** The exit that was held back happens now (teardown, "fechada"); `closedByOwner` ends the remote session too. */
   finalize(ptyId: string, exit: Exit, closedByOwner: boolean): void;
   /** The tab lost (`false`) or got back (`true`) its link. */
@@ -136,6 +144,19 @@ export class RemoteLinkSupervisor<Exit> {
     entry.timer = this.deps.setTimer(() => void this.tryRelink(ptyId, entry), delay);
   }
 
+  /** The relink's ssh, once the place gives it a login slot; `false` when it threw or the tab went meanwhile. */
+  private async relinkGated(ptyId: string, sshTarget: string, entry: Lost<Exit>): Promise<boolean> {
+    const loggedIn = (await this.deps.acquire?.(sshTarget)) ?? (() => undefined);
+    // Closed by the owner, or the app quit, while it waited for the slot.
+    if (this.stopped || this.lost.get(ptyId) !== entry) {
+      loggedIn();
+      return false;
+    }
+    const spawned = this.deps.relink(ptyId, loggedIn);
+    if (!spawned) loggedIn();
+    return spawned;
+  }
+
   private async tryRelink(ptyId: string, entry: Lost<Exit>): Promise<void> {
     entry.timer = null;
     const tracked = this.tracked.get(ptyId);
@@ -148,7 +169,9 @@ export class RemoteLinkSupervisor<Exit> {
       this.deps.finalize(ptyId, entry.exit, false);
       return;
     }
-    if (answer === 'alive' && this.deps.relink(ptyId)) {
+    const relinked = answer === 'alive' && (await this.relinkGated(ptyId, tracked.sshTarget, entry));
+    if (this.stopped || this.lost.get(ptyId) !== entry) return; // went while it waited for a login slot
+    if (relinked) {
       this.lost.delete(ptyId);
       this.relinkedAt.set(ptyId, { at: this.deps.now(), attempt: entry.attempt });
       if (entry.announced) this.deps.notify(ptyId, true);
