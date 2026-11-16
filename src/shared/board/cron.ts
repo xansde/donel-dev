@@ -3,8 +3,9 @@
 // sessions and the links, and does what these functions return.
 //
 // - justify: a card with a justification (Travado, or Fazendo parked on purpose). A response on its link after the
-//   reference time wakes its session; a deadline gone charges it, every CHARGE_EVERY_MS, CHARGE_MAX times; after that
-//   the lane's Líder hears it once.
+//   reference time wakes its session; a deadline gone charges it, every CHARGE_EVERY_MS, CHARGE_MAX times; one interval
+//   after the last charge the lane's Líder hears it, once per stage. A session not open on this machine goes straight
+//   to the Líder (charging it would never land).
 // - vigia: only a card in Fazendo with NO justification whose session had no turn for STALL_MS (`isStalled`). A live
 //   session is woken (at most VIGIA_MAX_PER_DAY in 24 h, with a growing pause); a closed one, or one past the cap,
 //   goes to the lane's Líder, who reopens it. Every other stage is left alone.
@@ -29,14 +30,19 @@ export interface CronCard extends BoardCard {
   readonly chargedAt: number | null;
   readonly chargeCount: number;
   readonly leaderNoticedAt: number | null;
+  /** When the current justification was given (a justification in the same stage does not move `stageSince`). */
+  readonly justifiedAt: number | null;
 }
 
 /** What the runner knows of a conversation on this machine. */
 export interface SessionState {
   /** Its tmux session is open. */
   readonly alive: boolean;
-  /** Epoch ms of its last user/assistant turn (transcript), or null when unknown. */
-  readonly lastTurnAt: number | null;
+  /**
+   * Epoch ms since when it is idle: its last entry is the assistant's finished turn (end_turn). Null when it is working
+   * (a tool call running, a turn not finished) or unknown: the vigia never wakes those.
+   */
+  readonly idleSince: number | null;
 }
 
 export type LinkKind =
@@ -58,22 +64,23 @@ export type CronAction =
 
 const minutes = (ms: number): number => Math.round(ms / 60_000);
 
-/** The reference a response must be newer than: the justification's stage start, or the last time we woke for one. */
+/** The reference a response must be newer than: the justification (or its stage), or the last time we woke for one. */
 export function responseSince(card: CronCard): number {
-  return Math.max(card.stageSince, card.wokenAt ?? 0);
+  return Math.max(card.stageSince, card.justifiedAt ?? 0, card.wokenAt ?? 0);
 }
 
 /**
  * The justification round for one card. `responded` is what the runner found on the link after `responseSince`
  * (null when the link cannot be read: only the deadline counts then).
  */
-export function planJustify(card: CronCard, responded: boolean | null, now: number): CronAction {
+export function planJustify(card: CronCard, responded: boolean | null, session: SessionState | null, now: number): CronAction {
   if (!card.justification) return { do: 'skip', card: card.id, why: 'sem justificativa' };
   const { link, due, text } = card.justification;
+  const reachable = Boolean(card.sessionId && session?.alive);
   if (!isValidJustification(card.justification, now)) {
+    if (card.chargedAt !== null && now - card.chargedAt < CHARGE_EVERY_MS) return { do: 'skip', card: card.id, why: 'cobrado há pouco' };
     if (card.chargeCount < CHARGE_MAX) {
-      if (card.chargedAt !== null && now - card.chargedAt < CHARGE_EVERY_MS) return { do: 'skip', card: card.id, why: 'cobrado há pouco' };
-      if (!card.sessionId) return leaderOnce(card, now, `o prazo da justificativa venceu e o cartão não tem conversa para cobrar`);
+      if (!reachable) return leaderOnce(card, now, `o prazo da justificativa venceu e a sessão do cartão não está aberta nesta máquina`, 'once');
       return {
         do: 'wake',
         card: card.id,
@@ -82,10 +89,10 @@ export function planJustify(card: CronCard, responded: boolean | null, now: numb
         text: `${LABEL} O prazo do cartão ${card.id} ("${card.title}") venceu: você esperava "${text}" em ${link}. Confira o link e mova o cartão (card_move) ou dê uma justificativa nova com outro prazo (card_justify).`,
       };
     }
-    return leaderOnce(card, now, `o prazo venceu e a sessão foi cobrada ${CHARGE_MAX} vezes sem mexer no cartão`);
+    return leaderOnce(card, now, `o prazo venceu e a sessão foi cobrada ${CHARGE_MAX} vezes sem mexer no cartão`, 'once');
   }
   if (!responded) return { do: 'skip', card: card.id, why: responded === null ? 'link sem leitura; espera o prazo' : 'sem resposta nova' };
-  if (!card.sessionId) return leaderOnce(card, now, `chegou resposta em ${link}, mas o cartão não tem conversa para acordar`);
+  if (!reachable) return leaderOnce(card, now, `chegou resposta em ${link}, mas a sessão do cartão não está aberta nesta máquina`, 'every');
   return {
     do: 'wake',
     card: card.id,
@@ -95,8 +102,9 @@ export function planJustify(card: CronCard, responded: boolean | null, now: numb
   };
 }
 
-function leaderOnce(card: CronCard, now: number, why: string): CronAction {
-  if (card.leaderNoticedAt !== null && now - card.leaderNoticedAt < LEADER_NOTICE_EVERY_MS) return { do: 'skip', card: card.id, why: 'Líder já avisado há pouco' };
+/** `once`: the Líder hears it once in this stage (`leader_noticed_at` is cleared when the card moves); `every`: again every LEADER_NOTICE_EVERY_MS. */
+function leaderOnce(card: CronCard, now: number, why: string, repeat: 'once' | 'every'): CronAction {
+  if (card.leaderNoticedAt !== null && (repeat === 'once' || now - card.leaderNoticedAt < LEADER_NOTICE_EVERY_MS)) return { do: 'skip', card: card.id, why: 'Líder já avisado' };
   return {
     do: 'leader',
     card: card.id,
@@ -108,15 +116,18 @@ function leaderOnce(card: CronCard, now: number, why: string): CronAction {
 export type WakeLog = readonly number[];
 
 export function planVigia(card: CronCard, session: SessionState | null, wakes: WakeLog, now: number): CronAction {
-  const lastTurn = session?.lastTurnAt ?? card.stageSince;
+  const open = Boolean(card.sessionId && session?.alive);
+  // An open session that is working (a long tool call) or whose transcript says nothing is never woken.
+  if (open && session!.idleSince === null) return { do: 'skip', card: card.id, why: 'sessão trabalhando' };
+  const lastTurn = open ? session!.idleSince! : card.stageSince;
   if (!isStalled(card, lastTurn, now)) return { do: 'skip', card: card.id, why: 'não está parado sem justificativa' };
   const idle = minutes(now - Math.max(lastTurn, card.stageSince));
-  if (!card.sessionId || !session?.alive) {
-    return leaderOnce(card, now, `está em Fazendo, parado há ${idle} min, sem justificativa, e a sessão dele está fechada`);
+  if (!open) {
+    return leaderOnce(card, now, `está em Fazendo, parado há ${idle} min, sem justificativa, e a sessão dele não está aberta nesta máquina`, 'every');
   }
   const recent = wakes.filter((at) => now - at < 24 * 60 * 60 * 1000);
   if (recent.length >= VIGIA_MAX_PER_DAY) {
-    return leaderOnce(card, now, `está em Fazendo, parado há ${idle} min, sem justificativa, e já foi acordado ${recent.length} vezes hoje`);
+    return leaderOnce(card, now, `está em Fazendo, parado há ${idle} min, sem justificativa, e já foi acordado ${recent.length} vezes hoje`, 'every');
   }
   const last = recent[recent.length - 1];
   if (last !== undefined && now - last < VIGIA_PAUSE_MS * 2 ** (recent.length - 1)) return { do: 'skip', card: card.id, why: 'recuo' };

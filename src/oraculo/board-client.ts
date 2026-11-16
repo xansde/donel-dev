@@ -33,6 +33,7 @@ export interface CardRow {
   readonly charged_at?: string | null;
   readonly charge_count?: number;
   readonly leader_noticed_at?: string | null;
+  readonly justified_at?: string | null;
 }
 
 export interface LaneRow {
@@ -51,10 +52,10 @@ export interface LeaderRequestRow {
 
 /** What the cron on the VPS needs (src/board-cron/main.ts). */
 export interface BoardCronStore {
-  /** Cards in Fazendo or Travado: the only ones the cron and the vigia look at. */
-  parkedOrDoing(): Promise<readonly CardRow[]>;
-  lanes(): Promise<readonly LaneRow[]>;
-  pendingLeaderRequests(): Promise<readonly LeaderRequestRow[]>;
+  /** Cards in Fazendo or Travado of the projects that run on `host`: the only ones this machine's cron looks at. */
+  parkedOrDoing(host: string): Promise<readonly CardRow[]>;
+  lanes(host: string): Promise<readonly LaneRow[]>;
+  pendingLeaderRequests(host: string): Promise<readonly LeaderRequestRow[]>;
   markCron(cardId: string, kind: 'woken' | 'charged' | 'leader'): Promise<void>;
   resolveLeaderRequest(id: number, status: 'done' | 'failed', reason: string): Promise<void>;
   touchLane(projectId: string, leaderPlace: string, leaderSession: string | undefined): Promise<void>;
@@ -142,11 +143,16 @@ export function createBoardClient(config: BoardConfig, doFetch: Fetch = fetch): 
       headers['Content-Profile'] = 'board';
       headers['Content-Type'] = 'application/json';
     }
-    let res: Response;
-    try {
-      res = await doFetch(`${config.url}/rest/v1/${path}`, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(15_000) });
-    } catch (error) {
-      throw new BoardError(`o quadro de tarefas não respondeu (${error instanceof Error ? error.name : 'erro'}); tente de novo`);
+    let res: Response | null = null;
+    for (let attempt = 0; !res; attempt++) {
+      try {
+        res = await doFetch(`${config.url}/rest/v1/${path}`, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(15_000) });
+      } catch (error) {
+        // A kept-alive socket the server already closed fails before the request goes out: one retry on a fresh one.
+        const code = (error as { cause?: { code?: string } } | null)?.cause?.code;
+        if (attempt === 0 && (code === 'UND_ERR_SOCKET' || code === 'ECONNRESET')) continue;
+        throw new BoardError(`o quadro de tarefas não respondeu (${error instanceof Error ? error.name : 'erro'}); tente de novo`);
+      }
     }
     const text = await res.text();
     if (!res.ok) {
@@ -191,9 +197,11 @@ export function createBoardClient(config: BoardConfig, doFetch: Fetch = fetch): 
     async touchLane(projectId, leaderPlace, leaderSession) {
       await rpc('touch_lane', { p_project_id: projectId, p_leader_place: leaderPlace, ...(leaderSession ? { p_leader_session: leaderSession } : {}) });
     },
-    parkedOrDoing: () => call<CardRow[]>('GET', 'cards?stage=in.(doing,blocked)&limit=1000'),
-    lanes: () => call<LaneRow[]>('GET', 'lanes?select=project_id,leader_place,leader_session,leader_seen_at'),
-    pendingLeaderRequests: () => call<LeaderRequestRow[]>('GET', 'leader_requests?status=eq.pending&select=id,project_id,actor,created_at&order=id'),
+    // `projects!inner(host)` + `projects.host=eq.<host>`: only the projects that run on this machine (projects.host)
+    parkedOrDoing: (host) => call<CardRow[]>('GET', `cards?select=*,projects!inner(host)&stage=in.(doing,blocked)&projects.host=eq.${q(host)}&limit=1000`),
+    lanes: (host) => call<LaneRow[]>('GET', `lanes?select=project_id,leader_place,leader_session,leader_seen_at,projects!inner(host)&projects.host=eq.${q(host)}`),
+    pendingLeaderRequests: (host) =>
+      call<LeaderRequestRow[]>('GET', `leader_requests?select=id,project_id,actor,created_at,projects!inner(host)&status=eq.pending&projects.host=eq.${q(host)}&order=id`),
     async markCron(cardId, kind) {
       await rpc('mark_cron', { p_card_id: cardId, p_kind: kind });
     },

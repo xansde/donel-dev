@@ -77,6 +77,11 @@ create table if not exists board.cards (
   constraint cards_done_summary check (stage <> 'done' or done_summary is not null)
 );
 create index if not exists cards_project_stage on board.cards (project_id, stage);
+-- PR 3 (the cron): when the Líder was last told about the card in this stage, and when the current justification was
+-- given (a justification in the same stage does not move stage_since; a response older than it was already seen).
+alter table board.cards add column if not exists leader_noticed_at timestamptz;
+alter table board.cards add column if not exists justified_at timestamptz;
+
 
 -- Moves: append-only history; the andamento IS this table. `id` is the cursor clients follow: every insert here takes
 -- board.lock_moves() first and is the last write of its transaction, so ids become visible in commit order and a
@@ -254,6 +259,8 @@ begin
     woken_at = case when v_changed then null else woken_at end,
     charged_at = case when v_changed or v_new_j then null else charged_at end,
     charge_count = case when v_changed or v_new_j then 0 else charge_count end,
+    justified_at = case when v_new_j then now() when v_changed then null else justified_at end,
+    leader_noticed_at = case when v_changed or v_new_j then null else leader_noticed_at end,
     -- "Fazendo" is whoever moves it there (with its conversation, to wake it); the Líder may assign another place,
     -- and the place it was given records its own conversation on its first move.
     place_id = case when p_place_id is not null then p_place_id
@@ -317,7 +324,6 @@ end $$;
 
 -- The cron (PR 3) marks what it did, without bumping the card's version (it is not a move, and a session that read
 -- the card must still be able to move it).
-alter table board.cards add column if not exists leader_noticed_at timestamptz;
 
 create or replace function board.mark_cron(p_card_id text, p_kind text)
 returns void language plpgsql set search_path = board, pg_temp as $$

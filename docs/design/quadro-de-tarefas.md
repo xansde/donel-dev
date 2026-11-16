@@ -175,11 +175,16 @@ não):
 - Configuração em `~/.donel/board/`: `supabase.json` (`{url, serviceKeyFile}`; sem ele o cron sai com 0) e `cron.json`
   (`{vigiaSombra, slackReader, pagina}`). **`vigiaSombra` vale `true` por padrão**: o vigia só registra o que faria, até
   rodar um dia ao lado da `ronda` do despertador com a mesma saída ou melhor.
-- Instalação (só com o ok do dono para a migração): copiar o bundle para `~/.donel/board/bin/`, escrever os dois
-  arquivos e duas linhas no crontab, cada uma com o script próprio:
-  `*/15 * * * * /usr/bin/flock -n /tmp/cron-board-ronda.lock node ~/.donel/board/bin/board-cron.mjs ronda >> ~/.donel/board/cron-stdout.log 2>&1`
-  e `* * * * * /usr/bin/flock -n /tmp/cron-board-lider.lock node ~/.donel/board/bin/board-cron.mjs lider >> ~/.donel/board/cron-stdout.log 2>&1`.
+- `cron.json` tem também `host` (padrão `vps-pessoal`): o cron só olha os projetos que rodam nesta máquina
+  (`projects.host`); sessão de outra máquina não está neste tmux, e lê-la como fechada daria ao Líder uma notícia falsa.
+- Instalação (só com o ok do dono para a migração): copiar `out/board-cron/board-cron.mjs` e
+  `scripts/quadro/quadro-{ronda,lider}.sh` para `~/.donel/board/bin/`, escrever os dois arquivos de configuração e duas
+  linhas no crontab, cada uma começando pelo script de nome único da rotina (o `flock` e o `nice` moram dentro dele):
+  `*/15 * * * * /home/<usuário>/.donel/board/bin/quadro-ronda.sh >> /home/<usuário>/.donel/board/cron-stdout.log 2>&1`
+  e `* * * * * /home/<usuário>/.donel/board/bin/quadro-lider.sh >> /home/<usuário>/.donel/board/cron-stdout.log 2>&1`.
   Volta: tirar as duas linhas e o `supabase.json`.
+- Limite conhecido: a conta do `gh` e a do Slack são as mesmas das sessões; um comentário que a própria sessão faz no
+  link DEPOIS de justificar conta como resposta. Faça a pergunta antes de justificar.
 - Reabrir sessão fechada sem o app ainda não existe: o cron leva ao Líder do quadro (que usa `sessao_retomar`), e o
   pedido de Líder com a sessão fechada sai `failed` com o motivo.
 

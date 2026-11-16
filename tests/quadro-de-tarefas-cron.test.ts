@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CHARGE_EVERY_MS, CHARGE_MAX, fieldIsFree, linkKind, planJustify, planVigia, VIGIA_MAX_PER_DAY, type CronCard } from '../src/shared/board/cron';
+import { CHARGE_EVERY_MS, CHARGE_MAX, fieldIsFree, linkKind, planJustify, planVigia, responseSince, VIGIA_MAX_PER_DAY, type CronCard } from '../src/shared/board/cron';
 import { STALL_MS } from '../src/shared/board/rules';
 import { renderBoardPage } from '../src/shared/board/page';
 
@@ -24,23 +24,27 @@ function card(over: Partial<CronCard> = {}): CronCard {
     chargedAt: null,
     chargeCount: 0,
     leaderNoticedAt: null,
+    justifiedAt: null,
     ...over,
   };
 }
 
-const idle = { alive: true, lastTurnAt: NOW - STALL_MS - 60_000 };
+const idle = { alive: true, idleSince: NOW - STALL_MS - 60_000 };
+const closed = { alive: false, idleSince: null };
 const justification = (due: number) => ({ text: 'esperando o Fazolin', link: 'https://seazone.slack.com/archives/C1/p1700000000000100', due });
 
 describe('vigia', () => {
   it('acorda Fazendo parado sem justificativa; justificado, ocupado ou em outra coluna fica quieto', () => {
     expect(planVigia(card(), idle, [], NOW)).toMatchObject({ do: 'wake', session: SESSION, mark: 'woken' });
     expect(planVigia(card({ justification: justification(NOW + 3600_000) }), idle, [], NOW).do).toBe('skip');
-    expect(planVigia(card(), { alive: true, lastTurnAt: NOW - 60_000 }, [], NOW).do).toBe('skip');
+    expect(planVigia(card(), { alive: true, idleSince: NOW - 60_000 }, [], NOW).do).toBe('skip');
+    // a long tool call (no finished turn) is working, not stopped
+    expect(planVigia(card(), { alive: true, idleSince: null }, [], NOW).do).toBe('skip');
     expect(planVigia(card({ stage: 'blocked', justification: justification(NOW + 1) }), idle, [], NOW).do).toBe('skip');
   });
 
   it('sessão fechada ou no teto do dia vai ao Líder, uma vez a cada 2 h', () => {
-    expect(planVigia(card(), { alive: false, lastTurnAt: idle.lastTurnAt }, [], NOW).do).toBe('leader');
+    expect(planVigia(card(), closed, [], NOW).do).toBe('leader');
     const wakes = Array.from({ length: VIGIA_MAX_PER_DAY }, (_, i) => NOW - (i + 1) * 3600_000).reverse();
     expect(planVigia(card(), idle, wakes, NOW).do).toBe('leader');
     expect(planVigia(card({ leaderNoticedAt: NOW - 60_000 }), idle, wakes, NOW).do).toBe('skip');
@@ -50,17 +54,30 @@ describe('vigia', () => {
 describe('cron de justificativa', () => {
   it('resposta nova no link acorda; sem resposta espera o prazo', () => {
     const parked = card({ stage: 'blocked', justification: justification(NOW + 3600_000) });
-    expect(planJustify(parked, true, NOW)).toMatchObject({ do: 'wake', mark: 'woken' });
-    expect(planJustify(parked, false, NOW).do).toBe('skip');
-    expect(planJustify(parked, null, NOW).do).toBe('skip');
+    expect(planJustify(parked, true, idle, NOW)).toMatchObject({ do: 'wake', mark: 'woken' });
+    expect(planJustify(parked, false, idle, NOW).do).toBe('skip');
+    expect(planJustify(parked, null, idle, NOW).do).toBe('skip');
+  });
+
+  it('a resposta conta só depois da justificativa, mesmo sem mudar de coluna', () => {
+    const justifiedLater = card({ justification: justification(NOW + 3600_000), justifiedAt: NOW - 10 * 60_000 });
+    expect(responseSince(justifiedLater)).toBe(NOW - 10 * 60_000);
   });
 
   it('prazo vencido cobra a cada 2 h, até 3 vezes; depois avisa o Líder', () => {
     const late = card({ stage: 'blocked', justification: justification(NOW - 60_000) });
-    expect(planJustify(late, null, NOW)).toMatchObject({ do: 'wake', mark: 'charged' });
-    expect(planJustify({ ...late, chargeCount: 1, chargedAt: NOW - 60_000 }, null, NOW).do).toBe('skip');
-    expect(planJustify({ ...late, chargeCount: 1, chargedAt: NOW - CHARGE_EVERY_MS - 1 }, null, NOW).do).toBe('wake');
-    expect(planJustify({ ...late, chargeCount: CHARGE_MAX, chargedAt: NOW - CHARGE_EVERY_MS - 1 }, null, NOW).do).toBe('leader');
+    expect(planJustify(late, null, idle, NOW)).toMatchObject({ do: 'wake', mark: 'charged' });
+    expect(planJustify({ ...late, chargeCount: 1, chargedAt: NOW - 60_000 }, null, idle, NOW).do).toBe('skip');
+    expect(planJustify({ ...late, chargeCount: 1, chargedAt: NOW - CHARGE_EVERY_MS - 1 }, null, idle, NOW).do).toBe('wake');
+    // after the last charge, one more interval before the Líder; and the Líder hears it once in this stage
+    expect(planJustify({ ...late, chargeCount: CHARGE_MAX, chargedAt: NOW - 60_000 }, null, idle, NOW).do).toBe('skip');
+    expect(planJustify({ ...late, chargeCount: CHARGE_MAX, chargedAt: NOW - CHARGE_EVERY_MS - 1 }, null, idle, NOW).do).toBe('leader');
+    expect(planJustify({ ...late, chargeCount: CHARGE_MAX, chargedAt: NOW - 9 * CHARGE_EVERY_MS, leaderNoticedAt: NOW - 8 * CHARGE_EVERY_MS }, null, idle, NOW).do).toBe('skip');
+  });
+
+  it('sessão que não está aberta aqui vai direto ao Líder, em vez de cobrar no vazio', () => {
+    const late = card({ stage: 'blocked', justification: justification(NOW - 60_000) });
+    expect(planJustify(late, null, closed, NOW).do).toBe('leader');
   });
 
   it('reconhece link de PR do GitHub e de fio do Slack', () => {

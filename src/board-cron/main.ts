@@ -6,7 +6,9 @@
 //
 // Config (nothing hardcoded: the repo goes public):
 //   ~/.donel/board/supabase.json  {url, serviceKeyFile}             missing = the board is off, the cron exits 0
-//   ~/.donel/board/cron.json      {vigiaSombra?, slackReader?, pagina?}
+//   ~/.donel/board/cron.json      {host?, vigiaSombra?, slackReader?, pagina?}
+//     host (default "vps-pessoal"): only the projects that run here (projects.host); another machine's sessions are
+//       not in this tmux, and reading them as closed would tell the Líder something false.
 //     vigiaSombra (default true): the vigia only LOGS what it would do. It runs one day beside the despertador's
 //       `ronda` with the same output or better before it acts (Líder do quadro, 16/11); turning it on is a separate step.
 //     slackReader: a script that prints a Slack thread with "(ts <epoch>)" per message (ler_fio.py); missing = Slack
@@ -18,7 +20,7 @@
 // is empty, and confirming it in the transcript — the despertador's way (~/bin/rotinas/despertador_sessoes.py).
 
 import { spawnSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, closeSync, renameSync, statSync, writeFileSync, fstatSync } from 'node:fs';
+import { appendFileSync, existsSync, rmdirSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, closeSync, renameSync, statSync, writeFileSync, fstatSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createBoardClient, readBoardConfig, type CardRow, type LaneRow } from '../oraculo/board-client';
@@ -35,6 +37,7 @@ const LEADER_ALIVE_MS = 30 * 60 * 1000;
 const LABEL_ASCII = LABEL.slice(0, LABEL.indexOf(' ·'));
 
 interface CronConfig {
+  readonly host: string;
   readonly vigiaSombra: boolean;
   readonly slackReader?: string;
   readonly pagina?: string;
@@ -44,12 +47,13 @@ function readCronConfig(): CronConfig {
   try {
     const raw = JSON.parse(readFileSync(join(DIR, 'cron.json'), 'utf8')) as Record<string, unknown>;
     return {
+      host: typeof raw.host === 'string' && raw.host ? raw.host : 'vps-pessoal',
       vigiaSombra: raw.vigiaSombra !== false,
       ...(typeof raw.slackReader === 'string' && raw.slackReader ? { slackReader: raw.slackReader } : {}),
       ...(typeof raw.pagina === 'string' && raw.pagina ? { pagina: raw.pagina } : {}),
     };
   } catch {
-    return { vigiaSombra: true };
+    return { host: 'vps-pessoal', vigiaSombra: true };
   }
 }
 
@@ -128,24 +132,33 @@ function tail(path: string, bytes: number): string {
   }
 }
 
-function lastTurnAt(uuid: string): number | null {
+/**
+ * Since when the conversation is idle: its last main entry is the assistant's finished turn (end_turn, as the
+ * despertador's `ronda`). A tool call still running, a turn not finished or a user line not answered = null (busy or
+ * unknown: never woken by the vigia).
+ */
+function idleSince(uuid: string): number | null {
   const path = transcriptOf(uuid);
   if (!path) return null;
   const lines = tail(path, 400_000).split('\n').reverse();
   for (const line of lines) {
+    let entry: { type?: string; isSidechain?: boolean; isApiErrorMessage?: boolean; timestamp?: string; message?: { stop_reason?: string | null } };
     try {
-      const entry = JSON.parse(line) as { type?: string; isSidechain?: boolean; timestamp?: string };
-      if ((entry.type === 'user' || entry.type === 'assistant') && !entry.isSidechain && entry.timestamp) return Date.parse(entry.timestamp);
+      entry = JSON.parse(line);
     } catch {
-      // a cut line at the start of the tail
+      continue; // a cut line at the start of the tail
     }
+    if ((entry.type !== 'user' && entry.type !== 'assistant') || entry.isSidechain) continue;
+    if (entry.type !== 'assistant' || entry.isApiErrorMessage || !entry.timestamp) return null;
+    const stop = entry.message?.stop_reason;
+    return stop === 'end_turn' || stop === 'stop_sequence' || stop === null || stop === undefined ? Date.parse(entry.timestamp) : null;
   }
   return null;
 }
 
 function sessionState(uuid: string | null): SessionState | null {
   if (!uuid || !UUID.test(uuid)) return null;
-  return { alive: tmux(['has-session', '-t', `donel-${uuid}`]).ok, lastTurnAt: lastTurnAt(uuid) };
+  return { alive: tmux(['has-session', '-t', `donel-${uuid}`]).ok, idleSince: idleSince(uuid) };
 }
 
 function fieldFree(uuid: string): { free: boolean; why: string } {
@@ -154,6 +167,44 @@ function fieldFree(uuid: string): { free: boolean; why: string } {
   if (!mode.ok) return { free: false, why: 'tmux não respondeu' };
   if (!['', '0'].includes(mode.out.trim())) return { free: false, why: 'tela em modo cópia' };
   return fieldIsFree(tmux(['capture-pane', '-e', '-p', '-t', target]).out);
+}
+
+/**
+ * One writer at a time per session among this cron's modes (ronda every 15 min and lider every minute run under different flocks): a
+ * directory made atomically, left behind only by a crash and then taken after 2 min. The despertador has no such lock;
+ * its own check of the field is what keeps the two apart.
+ */
+function withTypingLock<T>(uuid: string, run: () => T): T | 'ocupado' {
+  const dir = join(DIR, 'digitando', uuid);
+  mkdirSync(join(DIR, 'digitando'), { recursive: true });
+  try {
+    mkdirSync(dir);
+  } catch {
+    try {
+      if (Date.now() - statSync(dir).mtimeMs < 2 * 60 * 1000) return 'ocupado';
+    } catch {
+      return 'ocupado';
+    }
+  }
+  try {
+    return run();
+  } finally {
+    try {
+      rmdirSync(dir);
+    } catch {
+      // gone already
+    }
+  }
+}
+
+/** Checks the field and types; 'campo: …' when it was not free (nothing typed). */
+function wakeSession(uuid: string, text: string): 'enviado' | 'nao-confirmado' | `campo: ${string}` {
+  const result = withTypingLock(uuid, () => {
+    const field = fieldFree(uuid);
+    if (!field.free) return `campo: ${field.why}` as const;
+    return typeInto(uuid, text);
+  });
+  return result === 'ocupado' ? 'campo: outro aviso sendo digitado' : result;
 }
 
 /** Types into the session and confirms it in the transcript, as the despertador does. */
@@ -223,6 +274,8 @@ function responded(link: string, since: number, config: CronConfig): boolean | n
     if (kind.kind === 'slack' && config.slackReader) {
       const r = spawnSync('python3', ['-I', config.slackReader, link], { encoding: 'utf8', timeout: 120_000 });
       if (r.status !== 0) return null;
+      // not a thread: the reader shows the channel around the message, and any of it would read as a response
+      if ((r.stderr ?? '').includes('não um fio')) return null;
       return [...(r.stdout ?? '').matchAll(/\(ts (\d+(?:\.\d+)?)\)/g)].some((m) => Number(m[1]) * 1000 > since);
     }
   } catch (error) {
@@ -253,6 +306,7 @@ function cronCard(row: CardRow): CronCard {
     chargedAt: ms(row.charged_at),
     chargeCount: row.charge_count ?? 0,
     leaderNoticedAt: ms(row.leader_noticed_at),
+    justifiedAt: ms(row.justified_at),
   };
 }
 
@@ -266,16 +320,13 @@ async function act(client: Client, lanes: readonly LaneRow[], card: CronCard, ac
       log(`${tag}${who}: acordaria a sessão ${action.session} (cartão ${card.id}, ${action.mark})`);
       return;
     }
-    const field = fieldFree(action.session);
-    if (!field.free) {
-      log(`${who}: não acordou ${action.session} (cartão ${card.id}): ${field.why}`);
-      return;
-    }
-    const result = typeInto(action.session, action.text);
-    log(`${who}: acordou a sessão ${action.session} (cartão ${card.id}, ${action.mark}): ${result}`);
-    if (result === 'enviado') {
-      await client.markCron(card.id, action.mark);
+    const result = wakeSession(action.session, action.text);
+    log(`${who}: acordar a sessão ${action.session} (cartão ${card.id}, ${action.mark}): ${result}`);
+    // Typed counts even unconfirmed (the text is on the screen): the cap and the pause must hold, as in the despertador.
+    if (!result.startsWith('campo:')) {
+      // the local cap first: it holds even if the mark below fails
       if (who === 'vigia') state.wakes[card.id] = [...(state.wakes[card.id] ?? []), now];
+      await client.markCron(card.id, action.mark);
     }
     return;
   }
@@ -286,26 +337,22 @@ async function act(client: Client, lanes: readonly LaneRow[], card: CronCard, ac
     return;
   }
   if (!leader || !tmux(['has-session', '-t', `donel-${leader}`]).ok) {
-    log(`${who}: cartão ${card.id} precisa do Líder, mas a raia ${card.projectId} está sem Líder vivo (${lane?.leader_place ?? 'nenhum'})`);
-    await client.markCron(card.id, 'leader');
+    // Not marked: nobody was told, and the next round tries again (a Líder back in 5 min hears it then).
+    log(`${who}: cartão ${card.id} precisa do Líder, mas a raia ${card.projectId} está sem Líder aberto aqui (${lane?.leader_place ?? 'nenhum'})`);
     return;
   }
-  const field = fieldFree(leader);
-  if (!field.free) {
-    log(`${who}: não avisou o Líder ${lane?.leader_place} (cartão ${card.id}): ${field.why}`);
-    return;
-  }
-  const result = typeInto(leader, action.text);
-  log(`${who}: avisou o Líder ${lane?.leader_place} (cartão ${card.id}): ${result}`);
-  if (result === 'enviado') await client.markCron(card.id, 'leader');
+  const result = wakeSession(leader, action.text);
+  log(`${who}: avisar o Líder ${lane?.leader_place} (cartão ${card.id}): ${result}`);
+  if (!result.startsWith('campo:')) await client.markCron(card.id, 'leader');
 }
 
 /** Lanes whose Líder is alive in tmux and had a turn in the last 30 min stay alive in `board.lanes`. */
 async function touchLiveLeaders(client: Client, lanes: readonly LaneRow[], now: number): Promise<void> {
   for (const lane of lanes) {
-    if (!lane.leader_place || !lane.leader_session) continue;
+    if (!lane.leader_place || !lane.leader_session || !UUID.test(lane.leader_session)) continue;
     const session = sessionState(lane.leader_session);
-    if (session?.alive && session.lastTurnAt !== null && now - session.lastTurnAt < LEADER_ALIVE_MS) {
+    // open and busy (no finished turn yet) is alive too; open and idle counts if it worked in the last 30 min
+    if (session?.alive && (session.idleSince === null || now - session.idleSince < LEADER_ALIVE_MS)) {
       await client.touchLane(lane.project_id, lane.leader_place, lane.leader_session);
     }
   }
@@ -314,14 +361,15 @@ async function touchLiveLeaders(client: Client, lanes: readonly LaneRow[], now: 
 async function ronda(client: Client, config: CronConfig): Promise<void> {
   const now = Date.now();
   const state = readState();
-  const [rows, lanes] = await Promise.all([client.parkedOrDoing(), client.lanes()]);
+  const [rows, lanes] = await Promise.all([client.parkedOrDoing(config.host), client.lanes(config.host)]);
   let woke = 0;
   for (const row of rows) {
     const card = cronCard(row);
     try {
       if (card.justification) {
+        const session = sessionState(card.sessionId);
         const answer = now < card.justification.due ? responded(card.justification.link, responseSince(card), config) : null;
-        const action = planJustify(card, answer, now);
+        const action = planJustify(card, answer, session, now);
         if (action.do !== 'skip') woke++;
         await act(client, lanes, card, action, 'justificativa', false, state, now);
       } else {
@@ -345,10 +393,10 @@ async function ronda(client: Client, config: CronConfig): Promise<void> {
   log(`ronda: ${rows.length} cartões em Fazendo/Travado, ${woke} com ação${config.vigiaSombra ? ' (vigia em sombra)' : ''}`);
 }
 
-async function lider(client: Client): Promise<void> {
-  const requests = await client.pendingLeaderRequests();
+async function lider(client: Client, config: CronConfig): Promise<void> {
+  const requests = await client.pendingLeaderRequests(config.host);
   if (requests.length === 0) return;
-  const lanes = await client.lanes();
+  const lanes = await client.lanes(config.host);
   for (const request of requests) {
     const lane = lanes.find((l) => l.project_id === request.project_id);
     const leader = lane?.leader_session && UUID.test(lane.leader_session) ? lane.leader_session : null;
@@ -362,17 +410,17 @@ async function lider(client: Client): Promise<void> {
       log(`lider: pedido ${request.id} (${request.project_id}): sessão do Líder fechada`);
       continue;
     }
-    const field = fieldFree(leader);
-    if (!field.free) {
-      // still alive and busy: try again next minute, but do not hold the request forever
+    const result = wakeSession(leader, `${LABEL} O ${request.actor} pediu o Líder da raia ${request.project_id}. Veja a Entrada e o que espera por você no quadro (card_list).`);
+    if (result.startsWith('campo:')) {
+      // alive and busy: try again next minute, but do not hold the request forever
       if (Date.now() - Date.parse(request.created_at) > 10 * 60 * 1000) {
-        await client.resolveLeaderRequest(request.id, 'done', `Líder vivo e ocupado (${field.why})`);
-        log(`lider: pedido ${request.id} (${request.project_id}): Líder vivo e ocupado há 10 min; dado como atendido`);
+        await client.resolveLeaderRequest(request.id, 'done', `Líder aberto e ocupado (${result})`);
+        log(`lider: pedido ${request.id} (${request.project_id}): Líder aberto e ocupado há 10 min; dado como atendido`);
       }
       continue;
     }
-    const result = typeInto(leader, `${LABEL} O ${request.actor} pediu o Líder da raia ${request.project_id}. Veja a Entrada e o que espera por você no quadro (card_list).`);
-    if (result === 'enviado') await client.resolveLeaderRequest(request.id, 'done', 'Líder acordado');
+    // typed (confirmed or not): answered, so it is not typed again every minute
+    await client.resolveLeaderRequest(request.id, 'done', result === 'enviado' ? 'Líder acordado' : 'aviso digitado; não confirmado no transcript');
     log(`lider: pedido ${request.id} (${request.project_id}): ${result}`);
   }
 }
@@ -383,12 +431,18 @@ async function main(): Promise<number> {
     console.error('uso: board-cron.mjs ronda|lider');
     return 2;
   }
+  const configFile = process.env.DONEL_BOARD_CONFIG || join(DIR, 'supabase.json');
+  if (!existsSync(configFile)) return 0; // the board is off: nothing touched
+  const boardConfig = readBoardConfig(configFile);
+  if (!boardConfig) {
+    console.error(`[quadro] ${configFile} existe mas é inválido: precisa de {"url": "https://…", "serviceKeyFile": "…"}`);
+    return 1;
+  }
   mkdirSync(DIR, { recursive: true });
-  const boardConfig = readBoardConfig(process.env.DONEL_BOARD_CONFIG || join(DIR, 'supabase.json'));
-  if (!boardConfig) return 0; // the board is off
   const client = createBoardClient(boardConfig);
-  if (mode === 'ronda') await ronda(client, readCronConfig());
-  else await lider(client);
+  const config = readCronConfig();
+  if (mode === 'ronda') await ronda(client, config);
+  else await lider(client, config);
   return 0;
 }
 
