@@ -756,10 +756,19 @@ export class RemoteSessionRegistry {
 /**
  * Pure — answers `DONEL_HAS` when the transcript of `sid` exists for the project folder (`homeRelativeDir`, as
  * `remoteDirFor` gives it). The CLI names the transcript folder after the absolute path, so the slug is taken there.
+ * `otherIds` (t-205b44c8): the place's other conversations; each one whose tmux is alive there (the setup's ALIVE test)
+ * comes first as `DONEL_LIVE <id>`: after a `/clear` that tmux still runs the CLI, now on `sid`.
  */
-export function buildHasTranscriptScript(homeRelativeDir: string, sid: string): string {
+export function buildHasTranscriptScript(homeRelativeDir: string, sid: string, otherIds: readonly string[] = []): string {
   assertSessionId(sid);
+  const others = otherIds.filter((id) => id !== sid);
+  others.forEach(assertSessionId);
+  const folder = (id: string): string => `"$HOME/${REMOTE_SESSIONS_DIR}/${id}`;
   return [
+    ...others.map(
+      (id) =>
+        `if [ -f ${folder(id)}/meta.json" ] && [ -f ${folder(id)}/dir" ] && tmux -L ${REMOTE_TMUX_SOCKET} has-session -t ${shQuote(`donel-${id}`)} 2>/dev/null; then echo DONEL_LIVE ${id}; fi`,
+    ),
     // Physical path: the CLI's folder slug comes from its real cwd, never from a symlink on the way (t-f0fb2f2e).
     `D=$(cd "$HOME"/${shQuote(homeRelativeDir)} 2>/dev/null && pwd -P) || { echo DONEL_HASNT; exit 0; }`,
     // The project folder, then the worktrees of the project's sessions (t-58b67066).
@@ -782,17 +791,37 @@ export function parseHasTranscriptOutput(stdout: string): RemoteTranscriptAnswer
   return 'unreachable';
 }
 
+/** Pure — the first of the place's other conversations whose tmux is alive there (`DONEL_LIVE <id>`), if any. */
+function parseLiveSessionId(stdout: string): string | undefined {
+  for (const line of stdout.split(/\r?\n/)) {
+    const match = /^DONEL_LIVE ([A-Za-z0-9-]{1,64})$/.exec(line.trim());
+    if (match) return match[1];
+  }
+  return undefined;
+}
+
+export interface RemoteTranscriptPlaceAnswer {
+  readonly id: string;
+  readonly answer: RemoteTranscriptAnswer;
+  /** t-205b44c8 — another conversation of the place whose tmux is alive there (its CLI went on past a `/clear`). */
+  readonly liveSessionId?: string;
+}
+
 /**
  * Pure — B39, where a conversation to resume lives, from what this disk and each remote place answered. Without
  * remote places it is this computer; with them, a conversation none of them has is `nowhere`, never this computer.
+ * A place where another conversation of the same board place still runs in tmux wins (t-205b44c8): the resume attaches
+ * to that tmux instead of starting a second CLI on the conversation it carries now.
  */
 export function decideWhereLives(
   local: boolean,
-  answers: ReadonlyArray<{ readonly id: string; readonly answer: RemoteTranscriptAnswer }>,
+  answers: ReadonlyArray<RemoteTranscriptPlaceAnswer>,
   places: ReadonlyArray<{ readonly id: string; readonly label: string }>,
 ): SessionWhereLives {
   if (local) return { kind: 'local' };
   if (places.length === 0) return { kind: 'local' };
+  const running = answers.find((answer) => answer.liveSessionId !== undefined);
+  if (running?.liveSessionId) return { kind: 'remote', remoteId: running.id, liveSessionId: running.liveSessionId };
   const found = answers.find((answer) => answer.answer === 'has');
   if (found) return { kind: 'remote', remoteId: found.id };
   const labelOf = (id: string): string => places.find((place) => place.id === id)?.label ?? id;
@@ -802,17 +831,23 @@ export function decideWhereLives(
   return { kind: 'nowhere', labels: places.map((place) => place.label) };
 }
 
-/** B39 — asks each place whether the conversation `sid` of the project folder `homeRelativeDir` lives there. */
+/**
+ * B39 — asks each place whether the conversation `sid` of the project folder `homeRelativeDir` lives there, and in the
+ * same ssh whether one of the board place's `otherIds` still runs in tmux there (t-205b44c8).
+ */
 export async function findRemoteTranscript(
   places: ReadonlyArray<{ readonly id: string; readonly sshTarget: string }>,
   homeRelativeDir: string,
   sid: string,
-): Promise<Array<{ readonly id: string; readonly answer: RemoteTranscriptAnswer }>> {
-  const script = buildHasTranscriptScript(homeRelativeDir, sid);
+  otherIds: readonly string[] = [],
+  run: RunDiscover = (sshTarget, script, timeoutMs) => runRemoteScript(sshTarget, script, timeoutMs),
+): Promise<RemoteTranscriptPlaceAnswer[]> {
+  const script = buildHasTranscriptScript(homeRelativeDir, sid, otherIds);
   return Promise.all(
     places.map(async (place) => {
-      const { stdout } = await runRemoteScript(place.sshTarget, script, 20_000);
-      return { id: place.id, answer: parseHasTranscriptOutput(stdout) };
+      const { stdout } = await run(place.sshTarget, script, 20_000);
+      const liveSessionId = parseLiveSessionId(stdout);
+      return { id: place.id, answer: parseHasTranscriptOutput(stdout), ...(liveSessionId ? { liveSessionId } : {}) };
     }),
   );
 }

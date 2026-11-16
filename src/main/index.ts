@@ -3118,11 +3118,13 @@ function registerSessionIpcHandlers(): void {
    * remote place is asked by ssh, and the one that has it runs the resume. A place that does not answer makes
    * the answer `unreachable`: the renderer says so instead of opening an empty session on this computer.
    */
-  ipcMain.handle(SESSION_CHANNELS.whereLives, async (_event, sessionId: unknown, projectPath: unknown): Promise<SessionWhereLives> => {
+  ipcMain.handle(SESSION_CHANNELS.whereLives, async (_event, sessionId: unknown, projectPath: unknown, otherIds: unknown): Promise<SessionWhereLives> => {
     if (typeof sessionId !== 'string' || typeof projectPath !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(sessionId)) return { kind: 'local' };
     if (localTranscriptExists(sessionId, projectPath)) return { kind: 'local' };
     const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
-    const answers = places.length === 0 ? [] : await findRemoteTranscript(places, remoteDirFor(projectPath, appConfig.projectRoots), sessionId);
+    // t-205b44c8 — the other conversations of its board place: one may still run in tmux there, past a `/clear`.
+    const others = Array.isArray(otherIds) ? otherIds.filter((id): id is string => typeof id === 'string' && /^[A-Za-z0-9-]{1,64}$/.test(id)).slice(-50) : [];
+    const answers = places.length === 0 ? [] : await findRemoteTranscript(places, remoteDirFor(projectPath, appConfig.projectRoots), sessionId, others);
     return decideWhereLives(false, answers, places);
   });
 
