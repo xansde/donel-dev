@@ -1,0 +1,413 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Saúde das máquinas</title>
+<style>
+:root {
+  color-scheme: light;
+  --surface-0: #f4f3f0; --surface-1: #fcfcfb; --line: #e4e3df; --grid: #ebeae6;
+  --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #8a8984;
+  --series-1: #2a78d6; --series-2: #eb6834; --wash-1: rgba(42,120,214,.12);
+  --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+  --off: #b9b8b2;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --surface-0: #121211; --surface-1: #1a1a19; --line: #2e2e2c; --grid: #262624;
+    --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+    --series-1: #3987e5; --series-2: #d95926; --wash-1: rgba(57,135,229,.16); --off: #4a4a46;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-0: #121211; --surface-1: #1a1a19; --line: #2e2e2c; --grid: #262624;
+  --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+  --series-1: #3987e5; --series-2: #d95926; --wash-1: rgba(57,135,229,.16); --off: #4a4a46;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--surface-0); color: var(--text-primary);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 1280px; margin: 0 auto; padding: 16px; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-bottom: 12px; }
+h1 { font-size: 20px; margin: 0; font-weight: 650; }
+h2 { font-size: 16px; margin: 0; font-weight: 650; }
+.sub { color: var(--text-secondary); font-size: 13px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin-left: auto; }
+.seg button { background: var(--surface-1); color: var(--text-secondary); border: 0; padding: 6px 14px; font: inherit; cursor: pointer; }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--text-primary); color: var(--surface-1); }
+.card { background: var(--surface-1); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin-bottom: 14px; }
+.card.off { opacity: .92; }
+.head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin-bottom: 10px; }
+.badge { font-size: 12px; padding: 1px 8px; border-radius: 99px; border: 1px solid var(--line); color: var(--text-secondary); }
+.badge.ok::before, .badge.bad::before, .badge.warn::before, .badge.idle::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+.badge.ok::before { background: var(--good); } .badge.bad::before { background: var(--critical); }
+.badge.warn::before { background: var(--warning); } .badge.idle::before { background: var(--off); }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 8px; margin-bottom: 12px; }
+.tile { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+.tile .l { font-size: 12px; color: var(--text-secondary); }
+.tile .v { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.tile .v small { font-size: 12px; font-weight: 400; color: var(--text-muted); }
+.tile.alert .l::after { content: " ▲"; color: var(--critical); }
+.tile.proof { border-color: var(--series-1); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 10px 14px; }
+.chart { position: relative; min-width: 0; }
+.chart .t { font-size: 12.5px; color: var(--text-secondary); display: flex; gap: 10px; align-items: center; }
+.chart .t .key { display: inline-flex; align-items: center; gap: 4px; color: var(--text-muted); }
+.chart .t .key i { width: 12px; height: 2px; display: inline-block; }
+.chart svg { display: block; width: 100%; height: 120px; overflow: visible; touch-action: pan-y; }
+.chart .empty { height: 120px; display: grid; place-items: center; color: var(--text-muted); font-size: 12px; border: 1px dashed var(--line); border-radius: 8px; }
+.tip { position: fixed; pointer-events: none; z-index: 5; background: var(--text-primary); color: var(--surface-1); border-radius: 6px; padding: 5px 8px; font-size: 12px; white-space: nowrap; display: none; }
+.alerts { border-color: var(--critical); }
+.alerts li { margin: 2px 0; }
+.alerts ul { margin: 6px 0 0; padding-left: 18px; }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+th { color: var(--text-secondary); font-weight: 600; cursor: pointer; user-select: none; position: sticky; top: 0; background: var(--surface-1); }
+th[aria-sort="ascending"]::after { content: " ↑"; } th[aria-sort="descending"]::after { content: " ↓"; }
+tr.warn td:first-child { box-shadow: inset 3px 0 var(--critical); }
+.bar { display: inline-block; width: 60px; height: 6px; border-radius: 3px; background: var(--grid); vertical-align: middle; margin-right: 6px; overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--series-1); border-radius: 3px; }
+.bar i.full { background: var(--critical); }
+.tablewrap { overflow: auto; max-height: 560px; border: 1px solid var(--line); border-radius: 8px; }
+input[type=search] { font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-1); color: var(--text-primary); width: min(320px, 100%); }
+.tools { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin: 12px 0 8px; }
+footer { color: var(--text-muted); font-size: 12px; margin: 18px 0 30px; }
+.err { color: var(--critical); }
+@media (max-width: 520px) {
+  main { padding: 12px 16px; }
+  .seg { margin-left: 0; }
+  .grid { grid-template-columns: 1fr; }
+  .tiles { grid-template-columns: repeat(2, 1fr); }
+}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Saúde das máquinas</h1>
+      <div class="sub" id="gerado">carregando…</div>
+    </div>
+    <div class="seg" role="group" aria-label="Janela">
+      <button data-j="24h">24 h</button><button data-j="7d">7 d</button><button data-j="30d">30 d</button>
+    </div>
+  </header>
+  <div id="alertas"></div>
+  <div id="maquinas"></div>
+  <h2 style="margin:22px 0 10px">Contas Claude por gateway</h2>
+  <div id="gateways"></div>
+  <div class="card">
+    <div class="head"><h2>Contas</h2><span class="sub" id="contas-resumo"></span></div>
+    <div class="tools">
+      <input type="search" id="filtro" placeholder="Filtrar conta ou gateway" aria-label="Filtrar contas">
+      <label class="sub"><input type="checkbox" id="so-problema"> só esgotadas ou fora</label>
+    </div>
+    <div class="tablewrap"><table id="contas"><thead></thead><tbody></tbody></table></div>
+  </div>
+  <footer>Gerado na VPS pessoal a partir do Supabase (schema <code>saude</code>), coletores de 1 min em cada máquina.
+    Contrato de leitura: <code>scripts/saude/CONTRATO.md</code> no repo Donel Dev.</footer>
+</main>
+<div class="tip" id="tip"></div>
+<script>
+"use strict";
+const ORDEM = ["pc", "vps-pessoal", "homologacoes", "people"];
+const NS = "http://www.w3.org/2000/svg";
+let janela = "24h";
+try { const j = localStorage.getItem("saude.janela"); if (["24h", "7d", "30d"].includes(j)) janela = j; } catch (e) {}
+let atual = null, serie = null, ordem = { k: "uso5h", dir: 1 };
+
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const tz = { timeZone: "America/Sao_Paulo" };
+const hora = (d) => d ? new Date(d).toLocaleString("pt-BR", { ...tz, day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }) : "";
+const num = (v, c = 0) => v == null || isNaN(v) ? "–" : Number(v).toLocaleString("pt-BR", { maximumFractionDigits: c, minimumFractionDigits: 0 });
+const compact = (v) => v == null ? "–" : Math.abs(v) >= 10000 ? num(v / 1000, 0) + " mil" : num(v, v < 10 ? 1 : 0);
+const idade = (s) => s < 120 ? "agora" : s < 3600 ? `há ${Math.round(s / 60)} min` : s < 172800 ? `há ${Math.round(s / 3600)} h` : `há ${Math.round(s / 86400)} d`;
+
+async function pega(nome) {
+  const r = await fetch(`dados/${nome}?t=${Date.now()}`, { cache: "no-store" });
+  if (!r.ok) throw new Error(`${nome}: HTTP ${r.status}`);
+  return r.json();
+}
+
+async function carregar() {
+  try {
+    [atual, serie] = await Promise.all([pega("atual.json"), pega(`serie-${janela}.json`)]);
+    desenhar();
+  } catch (e) {
+    document.getElementById("gerado").innerHTML = `<span class="err">Não consegui ler os dados: ${esc(e.message)}</span>`;
+  }
+}
+
+function desenhar() {
+  document.querySelectorAll(".seg button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.j === janela));
+  document.getElementById("gerado").textContent = `Atualizado ${hora(atual.gerado_em)} (Brasília) · janela ${rotJanela()} · recarrega a cada minuto`;
+  desenharAlertas();
+  desenharMaquinas();
+  desenharGateways();
+  desenharContas();
+}
+const rotJanela = () => ({ "24h": "24 horas, passo de 5 min", "7d": "7 dias, passo de 1 h", "30d": "30 dias, passo de 4 h" }[janela]);
+
+function desenharAlertas() {
+  const el = document.getElementById("alertas");
+  const a = atual.alertas || [];
+  el.innerHTML = a.length ? `<div class="card alerts"><h2>Alertas abertos (${a.length})</h2><ul>${a.map((x) =>
+    `<li><span class="badge ${x.nivel === "grave" ? "bad" : "warn"}">${x.nivel === "grave" ? "grave" : "aviso"}</span> ${esc(x.texto)} <span class="sub">desde ${hora(x.inicio)}</span></li>`).join("")}</ul></div>` : "";
+}
+
+function tile(l, v, extra = "", cls = "") { return `<div class="tile ${cls}"><div class="l">${l}</div><div class="v">${v}${extra ? ` <small>${extra}</small>` : ""}</div></div>`; }
+
+function desenharMaquinas() {
+  const L = atual.limites;
+  const porNome = Object.fromEntries((atual.maquinas || []).map((m) => [m.maquina, m]));
+  const nomes = [...new Set([...ORDEM.filter((n) => porNome[n] || serie.maquinas[n]), ...Object.keys(porNome), ...Object.keys(serie.maquinas)])];
+  const el = document.getElementById("maquinas");
+  el.innerHTML = "";
+  for (const n of nomes) {
+    const m = porNome[n], s = serie.maquinas[n];
+    const nome = (m && m.nome) || (s && s.nome) || n;
+    const parado = !m || m.idade_s > L.silencio_s;
+    const card = document.createElement("section");
+    card.className = "card" + (parado ? " off" : "");
+    const status = !m ? `<span class="badge idle">sem dados ainda</span>` :
+      parado ? `<span class="badge idle">sem dados ${idade(m.idade_s)}${n === "pc" ? " · desligado?" : ""}</span>` : `<span class="badge ok">coletando · ${idade(m.idade_s)}</span>`;
+    let tiles = "";
+    if (m) {
+      const cargaLim = L.carga_por_cpu * (m.ncpu || 1);
+      tiles = tile("CPU", num(m.cpu_pct, 0) + "%", "", m.cpu_pct > L.cpu_pct ? "alert" : "") +
+        tile("RAM", num(m.ram_pct, 0) + "%", `${num(m.ram_usada_mb / 1024, 1)} de ${num(m.ram_total_mb / 1024, 0)} GB`, m.ram_pct > L.ram_pct ? "alert" : "") +
+        tile("Swap", num(m.swap_pct, 0) + "%", m.swap_total_mb ? `${num(m.swap_total_mb / 1024, 0)} GB` : "", m.swap_pct > L.swap_pct ? "alert" : "") +
+        tile("Disco", num(m.disco_pct, 0) + "%", `${num(m.disco_total_gb, 0)} GB`, m.disco_pct > L.disco_pct ? "alert" : "") +
+        tile(n === "pc" ? "Carga (equiv.)" : "Carga", num(m.carga1, 1), `${m.ncpu} núcleos`, m.carga1 > cargaLim ? "alert" : "") +
+        tile("Rede ↓ / ↑", `${compact(m.rede_rx_kb_s)} / ${compact(m.rede_tx_kb_s)}`, "KB/s") +
+        tile("Sessões Claude", num(m.sessoes_claude)) +
+        tile("RAM do coletor", num(m.coletor_rss_mb, 1), "MB", "proof");
+    }
+    card.innerHTML = `<div class="head"><h2>${esc(nome)}</h2>${status}${m && m.top ? `<span class="sub">mais RAM: ${m.top.slice(0, 3).map((t) => `${esc(t.nome)} ${compact(t.mb)} MB`).join(" · ")}</span>` : ""}</div>
+      ${tiles ? `<div class="tiles">${tiles}</div>` : ""}<div class="grid"></div>`;
+    const g = card.querySelector(".grid");
+    const ncpu = (s && s.ncpu) || (m && m.ncpu) || 1;
+    const picos = (serie.picos || []).filter((p) => p.alvo === n);
+    const pk = (metrica) => picos.filter((p) => p.metrica === metrica);
+    if (!s || !s.t.length) {
+      g.innerHTML = `<div class="chart"><div class="empty">sem série nesta janela</div></div>`;
+    } else {
+      g.append(
+        grafico("CPU %", s.t, [{ v: s.cpu, max: s.cpu_max }], { max: 100, lim: L.cpu_pct, picos: pk("cpu_pct"), un: "%" }),
+        grafico("RAM %", s.t, [{ v: s.ram_pct, max: s.ram_pct_max }], { max: 100, lim: L.ram_pct, picos: pk("ram_pct"), un: "%" }),
+        grafico("Swap %", s.t, [{ v: s.swap_pct, max: s.swap_pct_max }], { max: 100, lim: L.swap_pct, picos: pk("swap_pct"), un: "%" }),
+        grafico(`Carga (${ncpu} núcleos${n === "pc" ? ", equivalente" : ""})`, s.t, [{ v: s.carga1, max: s.carga1_max }], { lim: L.carga_por_cpu * ncpu, picos: pk("carga1"), un: "" }),
+        grafico("Disco %", s.t, [{ v: s.disco_pct }], { max: 100, lim: L.disco_pct, picos: pk("disco_pct"), un: "%" }),
+        grafico("Rede KB/s", s.t, [{ v: s.rx, nome: "recebido" }, { v: s.tx, nome: "enviado", cor: "var(--series-2)" }], { un: " KB/s" }),
+        grafico("Sessões Claude", s.t, [{ v: s.sessoes, max: s.sessoes_max }], { un: "" }),
+        grafico("RAM do coletor (MB)", s.t, [{ v: s.coletor_rss_mb }], { un: " MB" }),
+      );
+    }
+    el.append(card);
+  }
+}
+
+function desenharGateways() {
+  const el = document.getElementById("gateways");
+  el.innerHTML = "";
+  const porId = Object.fromEntries((atual.gateways || []).map((g) => [g.gateway, g]));
+  const ids = [...new Set([...Object.keys(porId), ...Object.keys(serie.gateways || {})])].sort((a, b) => (a === "pc" ? -1 : b === "pc" ? 1 : a.localeCompare(b)));
+  for (const id of ids) {
+    const g = porId[id], s = (serie.gateways || {})[id];
+    const card = document.createElement("section");
+    card.className = "card";
+    const nome = (g && g.nome) || (s && s.nome) || id;
+    const st = !g ? `<span class="badge idle">sem dados</span>` : !g.alcancavel ? `<span class="badge bad">não responde${g.erro ? " · " + esc(g.erro) : ""}</span>` :
+      g.idade_s > 600 ? `<span class="badge idle">sem dados ${idade(g.idade_s)}</span>` : `<span class="badge ok">respondendo · ${idade(g.idade_s)}</span>`;
+    let tiles = "";
+    if (g && g.alcancavel) {
+      const pouca = g.contas > 0 && g.com_cota <= atual.limites.cota_min;
+      const volta = g.proxima_volta ? `próxima ${hora(g.proxima_volta)} · ${num(g.voltam_1h)} em 1 h` : "";
+      tiles = tile("Contas no pool", num(g.contas)) + tile("Com cota agora", num(g.com_cota), "", pouca ? "alert" : "") +
+        tile("Esgotadas (renovam)", num(g.esgotadas), volta) + tile("Fora (Reconectar)", num(g.fora), "", g.fora > 0 ? "alert" : "") +
+        tile("Pedidos ok (1 h)", num(g.req_ok_1h)) + tile("Falhas (1 h)", num(g.req_falha_1h), "", g.req_falha_1h > 0 ? "alert" : "");
+    }
+    card.innerHTML = `<div class="head"><h2>${esc(nome)}</h2>${st}${g && g.conta_ativa ? `<span class="sub">conta ativa: ${esc(g.conta_ativa)}</span>` : ""}</div>
+      ${tiles ? `<div class="tiles">${tiles}</div>` : ""}<div class="grid"></div>`;
+    const gr = card.querySelector(".grid");
+    if (!s || !s.t.length) gr.innerHTML = `<div class="chart"><div class="empty">sem série nesta janela</div></div>`;
+    else gr.append(
+      grafico("Contas com cota", s.t, [{ v: s.com_cota, min: s.com_cota_min }], { lim: atual.limites.cota_min, limBaixo: true, un: "" }),
+      grafico("Contas esgotadas (renovam)", s.t, [{ v: s.esgotadas || s.em_429 }], { un: "" }),
+      grafico("Contas fora (Reconectar)", s.t, [{ v: s.fora || [] }], { un: "" }),
+      grafico(`Pedidos por ${janela === "24h" ? "5 min" : janela === "7d" ? "hora" : "4 h"}`, s.t, [{ v: s.req_ok, nome: "ok" }, { v: s.req_falha, nome: "falha", cor: "var(--series-2)" }], { un: "" }),
+    );
+    el.append(card);
+  }
+}
+
+const COLS = [
+  ["conta", "Conta"], ["gateway", "Gateway"], ["classe", "Situação"], ["uso5h", "5 h"], ["volta5h", "Volta 5 h"],
+  ["uso7d", "7 dias"], ["volta7d", "Volta 7 dias"], ["cooldown_ate", "429 até"], ["req_ok_24h", "Pedidos 24 h"], ["ultimo_uso", "Último uso"],
+];
+const CLASSE = { com_cota: "com cota", esgotada: "esgotada (renova)", fora: "<b>fora · Reconectar</b>" };
+function barra(v) { if (v == null) return "–"; const p = Math.max(0, Math.min(100, v)); return `<span class="bar"><i class="${p >= 100 ? "full" : ""}" style="width:${p}%"></i></span>${num(v, 0)}%`; }
+function desenharContas() {
+  const contas = atual.contas || [];
+  const filtro = document.getElementById("filtro").value.trim().toLowerCase();
+  const so = document.getElementById("so-problema").checked;
+  let linhas = contas.filter((c) => (!filtro || `${c.conta} ${c.gateway}`.toLowerCase().includes(filtro)) && (!so || c.classe !== "com_cota"));
+  const { k, dir } = ordem;
+  linhas.sort((a, b) => {
+    const x = a[k], y = b[k];
+    if (x == null && y == null) return 0; if (x == null) return 1; if (y == null) return -1;
+    return (x > y ? 1 : x < y ? -1 : 0) * dir;
+  });
+  const n = (k) => contas.filter((c) => c.classe === k).length;
+  document.getElementById("contas-resumo").textContent = `${contas.length} contas: ${n("com_cota")} com cota, ${n("esgotada")} esgotadas (renovam), ${n("fora")} fora · mostrando ${linhas.length}`;
+  const t = document.getElementById("contas");
+  t.tHead.innerHTML = `<tr>${COLS.map(([c, r]) => `<th data-k="${c}" aria-sort="${c === k ? (dir > 0 ? "ascending" : "descending") : "none"}">${r}</th>`).join("")}</tr>`;
+  t.tBodies[0].innerHTML = linhas.map((c) => `<tr class="${c.classe === "fora" ? "warn" : ""}">
+    <td>${esc(c.conta)}</td><td>${esc(c.gateway)}</td><td>${CLASSE[c.classe] || (c.tem_cota ? "com cota" : "sem cota")}</td>
+    <td>${barra(c.uso5h)}</td><td>${hora(c.volta5h)}</td><td>${barra(c.uso7d)}</td><td>${hora(c.volta7d)}</td>
+    <td>${c.em_429 ? hora(c.cooldown_ate) || "sim" : ""}</td><td>${num(c.req_ok_24h)}${c.req_falha_24h ? ` <span class="sub">(${num(c.req_falha_24h)} falhas)</span>` : ""}</td>
+    <td>${hora(c.ultimo_uso)}</td></tr>`).join("");
+}
+document.getElementById("contas").addEventListener("click", (e) => {
+  const th = e.target.closest("th"); if (!th) return;
+  ordem = { k: th.dataset.k, dir: ordem.k === th.dataset.k ? -ordem.dir : 1 };
+  desenharContas();
+});
+document.getElementById("filtro").addEventListener("input", desenharContas);
+document.getElementById("so-problema").addEventListener("change", desenharContas);
+
+// ---------------------------------------------------------------- gráfico de linha (SVG)
+const tip = document.getElementById("tip");
+function el(tag, at) { const e = document.createElementNS(NS, tag); for (const k in at) e.setAttribute(k, at[k]); return e; }
+
+// series: [{v, max?, min?, nome?, cor?}]; op: {max?, lim?, limBaixo?, picos?, un}
+function grafico(titulo, t, series, op) {
+  const box = document.createElement("div");
+  box.className = "chart";
+  const keys = series.length > 1 ? series.map((s) => `<span class="key"><i style="background:${s.cor || "var(--series-1)"}"></i>${esc(s.nome)}</span>`).join("") : "";
+  box.innerHTML = `<div class="t"><span>${esc(titulo)}</span>${keys}</div>`;
+  const W = 300, H = 120, ml = 34, mr = 6, mt = 8, mb = 18;
+  const passo = serie.passo_s;
+  const t0 = Math.floor(Date.now() / 1000) - { "24h": 86400, "7d": 604800, "30d": 2592000 }[janela];
+  const t1 = Math.floor(Date.now() / 1000);
+  let ymax = 0;
+  for (const s of series) for (const arr of [s.v, s.max]) if (arr) for (const v of arr) if (v != null && v > ymax) ymax = v;
+  if (op.lim != null && !op.limBaixo) ymax = Math.max(ymax, op.lim * 1.05);
+  if (op.max) ymax = Math.min(Math.max(ymax, 10), op.max * 1.0);
+  ymax = niceMax(ymax || 1);
+  const x = (tt) => ml + (W - ml - mr) * (tt - t0) / (t1 - t0);
+  const y = (v) => mt + (H - mt - mb) * (1 - v / ymax);
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: "none", role: "img", "aria-label": titulo });
+  // grade
+  for (const f of [0, .5, 1]) {
+    const v = ymax * f, yy = y(v);
+    svg.append(el("line", { x1: ml, x2: W - mr, y1: yy, y2: yy, stroke: "var(--grid)", "stroke-width": 1, "vector-effect": "non-scaling-stroke" }));
+    const tx = el("text", { x: ml - 4, y: yy + 3, "text-anchor": "end", "font-size": 9, fill: "var(--text-muted)" });
+    tx.textContent = compact(v); svg.append(tx);
+  }
+  for (const [tt, rot] of eixoX(t0, t1)) {
+    const tx = el("text", { x: x(tt), y: H - 4, "text-anchor": "middle", "font-size": 9, fill: "var(--text-muted)" });
+    tx.textContent = rot; svg.append(tx);
+  }
+  if (op.lim != null && op.lim <= ymax) {
+    svg.append(el("line", { x1: ml, x2: W - mr, y1: y(op.lim), y2: y(op.lim), stroke: "var(--critical)", "stroke-width": 1, "stroke-dasharray": "3 3", "vector-effect": "non-scaling-stroke", opacity: .7 }));
+  }
+  // trechos contínuos (quebra em null ou buraco > 2 passos)
+  const trechos = (arr) => {
+    const out = []; let cur = [];
+    for (let i = 0; i < t.length; i++) {
+      const v = arr[i];
+      if (v == null || (cur.length && t[i] - cur[cur.length - 1][0] > 2 * passo)) { if (cur.length) out.push(cur); cur = []; }
+      if (v != null) cur.push([t[i], v]);
+    }
+    if (cur.length) out.push(cur);
+    return out;
+  };
+  const caminho = (pts) => pts.map((p, i) => `${i ? "L" : "M"}${x(p[0]).toFixed(1)},${y(p[1]).toFixed(1)}`).join("");
+  for (const s of series) {
+    const extremo = s.max || s.min;
+    if (extremo) {
+      // faixa entre a média e o pior minuto do intervalo
+      for (const tr of trechos(t.map((_, i) => (s.v[i] != null && extremo[i] != null) ? i : null))) {
+        const idx = tr.map((p) => p[1]);
+        const d = idx.map((i, k) => `${k ? "L" : "M"}${x(t[i]).toFixed(1)},${y(extremo[i]).toFixed(1)}`).join("") +
+          idx.slice().reverse().map((i) => `L${x(t[i]).toFixed(1)},${y(s.v[i]).toFixed(1)}`).join("") + "Z";
+        svg.append(el("path", { d, fill: "var(--wash-1)", stroke: "none" }));
+      }
+    }
+    for (const tr of trechos(s.v)) {
+      if (tr.length === 1) svg.append(el("circle", { cx: x(tr[0][0]), cy: y(tr[0][1]), r: 2, fill: s.cor || "var(--series-1)" }));
+      else svg.append(el("path", { d: caminho(tr), fill: "none", stroke: s.cor || "var(--series-1)", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round", "vector-effect": "non-scaling-stroke" }));
+    }
+  }
+  box.append(svg);
+  // picos: pontos sobre o SVG (em HTML, para ficarem redondos com preserveAspectRatio none)
+  const pontos = [];
+  for (const p of op.picos || []) {
+    if (p.t < t0) continue;
+    const d = document.createElement("div");
+    d.style.cssText = `position:absolute;width:9px;height:9px;border-radius:50%;background:var(--critical);box-shadow:0 0 0 2px var(--surface-1);transform:translate(-50%,-50%);pointer-events:none`;
+    pontos.push([d, p]);
+    box.append(d);
+  }
+  const posiciona = () => {
+    const r = svg.getBoundingClientRect(), b = box.getBoundingClientRect();
+    for (const [d, p] of pontos) {
+      d.style.left = (r.left - b.left + x(p.t) / W * r.width) + "px";
+      d.style.top = (r.top - b.top + y(Math.min(p.valor, ymax)) / H * r.height) + "px";
+    }
+  };
+  requestAnimationFrame(posiciona);
+  new ResizeObserver(posiciona).observe(svg);
+  // hover: régua + dica
+  const regua = el("line", { y1: mt, y2: H - mb, stroke: "var(--text-muted)", "stroke-width": 1, "vector-effect": "non-scaling-stroke", visibility: "hidden" });
+  svg.append(regua);
+  const mover = (ev) => {
+    const r = svg.getBoundingClientRect();
+    const px = (ev.clientX - r.left) / r.width * W;
+    const tt = t0 + (px - ml) / (W - ml - mr) * (t1 - t0);
+    let best = -1, dist = Infinity;
+    for (let i = 0; i < t.length; i++) { const dd = Math.abs(t[i] - tt); if (dd < dist) { dist = dd; best = i; } }
+    if (best < 0 || dist > 3 * passo) { sair(); return; }
+    regua.setAttribute("x1", x(t[best])); regua.setAttribute("x2", x(t[best])); regua.setAttribute("visibility", "visible");
+    const partes = series.map((s) => {
+      const nome = s.nome ? `${s.nome}: ` : "";
+      const ext = s.max ? ` (pior ${num(s.max[best], 1)}${op.un})` : s.min ? ` (mín. ${num(s.min[best], 0)})` : "";
+      return `${nome}${num(s.v[best], 1)}${op.un}${ext}`;
+    });
+    tip.innerHTML = `${hora(t[best] * 1000)}<br>${partes.map(esc).join("<br>")}`;
+    tip.style.display = "block";
+    const tx = Math.min(ev.clientX + 12, window.innerWidth - tip.offsetWidth - 8);
+    tip.style.left = tx + "px"; tip.style.top = (ev.clientY + 14) + "px";
+  };
+  const sair = () => { regua.setAttribute("visibility", "hidden"); tip.style.display = "none"; };
+  svg.addEventListener("pointermove", mover);
+  svg.addEventListener("pointerdown", mover);
+  svg.addEventListener("pointerleave", sair);
+  return box;
+}
+function niceMax(v) { const e = Math.pow(10, Math.floor(Math.log10(v))); for (const m of [1, 2, 2.5, 5, 10]) if (m * e >= v) return m * e; return 10 * e; }
+function eixoX(t0, t1) {
+  const out = [];
+  if (janela === "24h") {
+    const s = 6 * 3600; for (let tt = Math.ceil(t0 / s) * s; tt <= t1; tt += s) out.push([tt, new Date(tt * 1000).toLocaleTimeString("pt-BR", { ...tz, hour: "2-digit", minute: "2-digit" })]);
+  } else {
+    const s = (janela === "7d" ? 1 : 7) * 86400; for (let tt = Math.ceil(t0 / s) * s; tt <= t1; tt += s) out.push([tt, new Date(tt * 1000).toLocaleDateString("pt-BR", { ...tz, day: "2-digit", month: "2-digit" })]);
+  }
+  return out;
+}
+
+document.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => {
+  janela = b.dataset.j;
+  try { localStorage.setItem("saude.janela", janela); } catch (e) {}
+  carregar();
+}));
+carregar();
+setInterval(carregar, 60000);
+</script>
+</body>
+</html>

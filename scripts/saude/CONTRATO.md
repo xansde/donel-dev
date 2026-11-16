@@ -29,7 +29,7 @@ O central regrava a cada 5 min (`atual.json` a cada 1 min). Horas em ISO 8601 UT
 ```json
 {
   "gerado_em": "2026-11-16T21:00:05Z",
-  "limites": {"cpu_pct": 90, "ram_pct": 85, "swap_pct": 50, "disco_pct": 90, "carga_por_cpu": 2, "silencio_s": 600, "cota_min": 5},
+  "limites": {"cpu_pct": 90, "ram_pct": 85, "swap_pct": 80, "disco_pct": 90, "carga_por_cpu": 2, "silencio_s": 600, "cota_min": 5},
   "maquinas": [
     {"maquina": "vps-pessoal", "nome": "VPS pessoal", "em": "…", "idade_s": 42, "cpu_pct": 71.2, "carga1": 29.1, "carga5": 25.0,
      "carga15": 20.3, "ncpu": 4, "ram_pct": 61.0, "ram_usada_mb": 9750, "ram_total_mb": 15983, "swap_pct": 50.0,
@@ -40,12 +40,14 @@ O central regrava a cada 5 min (`atual.json` a cada 1 min). Horas em ISO 8601 UT
   "gateways": [
     {"gateway": "pc", "nome": "Gateway do PC", "em": "…", "idade_s": 40, "alcancavel": true, "contas": 295, "ativas": 29,
      "com_cota": 28, "em_429": 265, "com_erro": 0, "desligadas": 1, "req_ok": 12, "req_falha": 0,
-     "contas_no_minuto": 3, "conta_ativa": "tecnologia.claude176@seazone.com.br", "req_ok_1h": 640, "req_falha_1h": 2, "erro": null}
+     "contas_no_minuto": 3, "conta_ativa": "tecnologia.claude176@seazone.com.br", "req_ok_1h": 640, "req_falha_1h": 2, "erro": null,
+     "esgotadas": 257, "fora": 3, "proxima_volta": "…", "voltam_1h": 26}
   ],
   "contas": [
     {"gateway": "pc", "conta": "…@seazone.com.br", "em": "…", "estado": "active", "disponivel": true, "tem_cota": true,
      "uso5h": 4.0, "volta5h": "…", "uso7d": 95.0, "volta7d": "…", "status_cota": "allowed_warning",
-     "em_429": false, "cooldown_ate": null, "motivo": "", "req_ok_24h": 310, "req_falha_24h": 1, "ultimo_uso": "…"}
+     "em_429": false, "cooldown_ate": null, "motivo": "", "req_ok_24h": 310, "req_falha_24h": 1, "ultimo_uso": "…",
+     "classe": "com_cota"}
   ],
   "alertas": [
     {"chave": "ram:vps-pessoal", "nivel": "aviso", "alvo": "vps-pessoal", "inicio": "…", "texto": "RAM acima de 85% há 10 min (91%)"}
@@ -55,6 +57,9 @@ O central regrava a cada 5 min (`atual.json` a cada 1 min). Horas em ISO 8601 UT
 - `idade_s` > 600 numa máquina = coletor parado ou máquina desligada (o PC desligado aparece assim, sem erro).
 - `uso5h`/`uso7d` em % (0–100). `volta5h`/`volta7d` = quando a janela renova. `tem_cota` = disponível e as duas < 100%.
 - `em_429` = a conta está em espera por cota ou 429 até `cooldown_ate`.
+- `classe` (desde 16/11 18h): `com_cota` (pode atender), `esgotada` (em espera; renova em `cooldown_ate`, `volta5h` ou
+  `volta7d`) ou `fora` (desligada ou login morto: precisa Reconectar). No gateway: `com_cota` + `esgotadas` + `fora` = `contas`;
+  `proxima_volta` = a esgotada que renova primeiro; `voltam_1h` = quantas renovam na próxima hora.
 - `top` = os 5 nomes de processo que mais somam RAM (MB).
 
 ### `serie-24h.json`, `serie-7d.json`, `serie-30d.json`
@@ -72,7 +77,7 @@ valor ausente = `null`.
   },
   "gateways": {
     "pc": {"nome": "Gateway do PC", "t": [], "alcancavel_pct": [], "contas": [], "com_cota": [], "com_cota_min": [],
-           "ativas": [], "em_429": [], "em_429_max": [], "req_ok": [], "req_falha": []}
+           "ativas": [], "em_429": [], "em_429_max": [], "req_ok": [], "req_falha": [], "esgotadas": [], "fora": []}
   },
   "contas": {
     "pc": {"tecnologia.claude176@seazone.com.br": {"t": [], "uso5h": [], "uso7d": [], "req_ok": [], "req_falha": [], "teve_429": []}}
@@ -85,7 +90,7 @@ valor ausente = `null`.
 ```
 - `*_max` = o pior minuto do intervalo (é ele que marca pico); o sem sufixo é a média.
 - `contas` traz só as que atenderam ou tiveram 429 na janela (até 60, as de mais tráfego); `contas_omitidas` diz quantas ficaram de fora.
-- `picos` = intervalos em que um `*_max` passou do limite (RAM > 85%, CPU > 90%, swap > 50%, disco > 90%,
+- `picos` = intervalos em que um `*_max` passou do limite (RAM > 85%, CPU > 90%, swap > 80%, disco > 90%,
   carga1 > 2 × ncpu), um por trecho contínuo (o ponto mais alto do trecho).
 
 ## Caminho 2 — Postgres, papel só-leitura (Supabase oraculo-harrow, schema `saude`)

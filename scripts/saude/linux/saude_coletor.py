@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import resource
 import secrets
 import subprocess
@@ -44,13 +45,15 @@ TABELAS = {
                        "ram_pct", "swap_total_mb", "swap_usada_mb", "swap_pct", "disco_total_gb", "disco_usado_gb",
                        "disco_pct", "rede_rx_kb_s", "rede_tx_kb_s", "sessoes_claude", "coletor_rss_mb", "extra"],
     "gateway_minuto": ["gateway", "em", "alcancavel", "contas", "ativas", "com_cota", "em_429", "com_erro", "desligadas",
-                       "req_ok", "req_falha", "contas_no_minuto", "conta_ativa", "erro"],
+                       "req_ok", "req_falha", "contas_no_minuto", "conta_ativa", "erro", "esgotadas", "fora", "proxima_volta",
+                       "voltam_1h"],
     "conta_amostra": ["gateway", "conta", "em", "foto", "estado", "disponivel", "desligada", "uso5h", "volta5h", "uso7d",
                       "volta7d", "status_cota", "em_429", "cooldown_ate", "motivo", "req_ok", "req_falha", "ok_total",
-                      "falha_total"],
+                      "falha_total", "classe"],
 }
 MAX_PENDENTE_BYTES = 40 * 1024 * 1024  # por tabela; passou disso, descarta as mais antigas
 REDE_FORA = ("lo", "docker", "veth", "br-", "virbr", "cni", "flannel")
+RE_MORTA = re.compile(r"invalid|revok|unauthori|expired|refresh|grant|forbidden|401|403", re.IGNORECASE)
 BACKOFF_CHAVE_S = 1800  # 401/403 da gestão: 5 erradas banem o IP por 30 min, então para de tentar por 30 min
 
 
@@ -236,10 +239,21 @@ def conta_de(f: dict, now: datetime) -> dict:
     indisp = bool(f.get("unavailable"))
     em429 = bool(cooldown) or (indisp and "quota" in str(f.get("status_message") or "").lower())
     estado = str(f.get("status") or "")
+    motivo = str(f.get("status_message") or "")
+    disponivel = estado == "active" and not desligada and not indisp and not em429
+    # fora = desligada ou login morto (precisa Reconectar); esgotada = em espera por cota, renova em cooldown_ate/volta
+    if desligada or (estado == "error" and RE_MORTA.search(motivo)) or (indisp and not em429):
+        classe = "fora"
+    elif em429 or (uso5h or 0) >= 100 or (uso7d or 0) >= 100:
+        classe = "esgotada"
+    elif disponivel:
+        classe = "com_cota"
+    else:
+        classe = "fora"
     return {
         "conta": str(f.get("email") or f.get("account") or f.get("name") or "?").lower(),
         "estado": estado, "desligada": desligada,
-        "disponivel": estado == "active" and not desligada and not indisp and not em429,
+        "disponivel": disponivel, "classe": classe,
         "uso5h": uso5h, "volta5h": iso(volta5h), "uso7d": uso7d, "volta7d": iso(volta7d),
         "status_cota": sig.get("Anthropic-Ratelimit-Unified-Status"), "em_429": em429, "cooldown_ate": iso(cooldown),
         "motivo": str(f.get("status_message") or "")[:120], "ok_total": int(f.get("success") or 0),
@@ -283,8 +297,9 @@ def amostrar_gateway(gw: dict, em: datetime, now: datetime, est: dict) -> tuple[
         if dok > 0:
             no_minuto.append((dok, c["conta"]))
         assin = [c["estado"], c["disponivel"], c["desligada"], c["uso5h"], c["uso7d"], c["em_429"], c["cooldown_ate"],
-                 c["status_cota"], c["ok_total"], c["falha_total"]]
-        novas[c["conta"]] = {"ok": c["ok_total"], "falha": c["falha_total"], "a": assin}
+                 c["status_cota"], c["ok_total"], c["falha_total"], c["classe"]]
+        novas[c["conta"]] = {"ok": c["ok_total"], "falha": c["falha_total"], "a": assin, "volta": c["cooldown_ate"]
+                             or (c["volta5h"] if (c["uso5h"] or 0) >= 100 else None) or c["volta7d"]}
         if foto or a is None or a.get("a") != assin:
             linhas.append({"gateway": gw["id"], "em": iso(em), "foto": foto, "req_ok": dok, "req_falha": dfa, **c})
     eg["contas"] = novas
@@ -300,7 +315,13 @@ def amostrar_gateway(gw: dict, em: datetime, now: datetime, est: dict) -> tuple[
         "com_erro": sum(1 for c in cs if c["estado"] == "error"), "desligadas": sum(1 for c in cs if c["desligada"]),
         "req_ok": req_ok, "req_falha": req_falha, "contas_no_minuto": len(no_minuto),
         "conta_ativa": eg.get("conta_ativa"), "erro": None,
+        "esgotadas": sum(1 for v in novas.values() if v["a"][10] == "esgotada"),
+        "fora": sum(1 for v in novas.values() if v["a"][10] == "fora"),
     }
+    voltas = sorted(v["volta"] for v in novas.values() if v["a"][10] == "esgotada" and v["volta"])
+    linha_gw["proxima_volta"] = voltas[0] if voltas else None
+    limite_1h = iso(datetime.fromtimestamp(now.timestamp() + 3600, timezone.utc))
+    linha_gw["voltam_1h"] = sum(1 for v in voltas if v <= limite_1h)
     return linha_gw, linhas
 
 
