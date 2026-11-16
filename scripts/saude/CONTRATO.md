@@ -10,14 +10,14 @@ Tudo aqui é **só leitura**. Quem grava são os coletores e o central (ver `REA
 | `pc` | PC | binário C# em tarefa agendada oculta; manda por ssh à VPS pessoal |
 | `vps-pessoal` | VPS pessoal | cron de 1 min (`~/bin/rotinas/saude/`) |
 | `homologacoes` | Homologações | cron de 1 min (root) |
-| `people` | vps-people | cron de 1 min (time-people) |
+| `people` | vps-people | **fora desde 16/11 18:29** (saída da VPS de People, t-2abb614a): sem coletor nem alerta |
 
 | `gateway` | o que é |
 |---|---|
 | `pc` | CLIProxyAPI do PC (`seazone173:8317`), o pool de contas do dono |
 | `homolog` | CLIProxyAPI da Homologações (`:8327`); hoje sem contas (a máquina sai pelo Portal IA) |
 
-A vps-people não tem gateway nem Claude (16/11): só aparece em máquinas. Gateway novo entra por `~/.donel/contas/gateways.json`
+A vps-people saiu do escopo em 16/11 18:29 (t-2abb614a); `saude.alvo_fora` e `atual.json` → `fora` listam o que saiu e desde quando. Gateway novo entra por `~/.donel/contas/gateways.json`
 na VPS pessoal, sem mudar o contrato.
 
 ## Caminho 1 — arquivos JSON na tailnet (o mais simples para o app)
@@ -113,6 +113,7 @@ valor ausente = `null`.
 | `saude.maquina_minuto`, `gateway_minuto`, `conta_amostra` | bruto de 1 min (7 dias) |
 | `saude.maquina_hora`, `gateway_hora`, `conta_hora` | agregado por hora (90 dias) |
 | `saude.alerta` | histórico de alertas |
+| `saude.alvo_fora` | máquinas e gateways fora do escopo (`alvo`, `desde`, `motivo`) |
 
 Exemplo: `select * from saude.maquina_serie('24h') where maquina = 'pc';`
 

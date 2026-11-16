@@ -32,7 +32,7 @@ PAGINA = "https://vps-alexandrelentz.tail8629f1.ts.net/entregas/saude/"
 TAREFA = "[t-16393812] Saúde das máquinas: alerta automático do coletor."
 
 NOMES = {"pc": "PC", "vps-pessoal": "VPS pessoal", "homologacoes": "Homologações", "people": "vps-people",
-         "gw:pc": "Gateway do PC", "gw:homolog": "Gateway da Homologações"}
+         "gw:pc": "Gateway do PC", "gw:homolog": "Gateway da Homologações", "gw:people": "Gateway da People"}
 ORDEM = ["pc", "vps-pessoal", "homologacoes", "people"]
 LIMITES = {"cpu_pct": 90, "ram_pct": 85, "swap_pct": 80, "disco_pct": 90, "carga_por_cpu": 2, "silencio_s": 600, "cota_min": 5}
 QUADRO = {"homologacoes": "Homologação"}  # o resto vai ao Líder do quadro Donel Dev
@@ -82,7 +82,8 @@ select json_build_object(
  'janela_gw', (select coalesce(json_agg(w), '[]') from (
     select gateway, count(*) n, max(com_cota) com_cota_max, max(contas) contas, bool_or(alcancavel) algum_alcancavel
     from saude.gateway_minuto where em > now() - interval '10 minutes' group by 1) w),
- 'abertos', (select coalesce(json_agg(a), '[]') from saude.v_alerta_aberto a)
+ 'abertos', (select coalesce(json_agg(a), '[]') from saude.v_alerta_aberto a),
+ 'fora', (select coalesce(json_agg(f), '[]') from saude.alvo_fora f)
 );
 """
 
@@ -177,7 +178,10 @@ def condicoes(atual: dict, est_429: dict | None = None) -> dict[str, dict]:
     jan = {w["maquina"]: w for w in atual["janela"]}
     gws = {g["gateway"]: g for g in atual["gateways"]}
     jg = {w["gateway"]: w for w in atual["janela_gw"]}
+    fora = {f["alvo"] for f in atual.get("fora") or []}  # saíram do escopo: sem alerta
     for nome in ORDEM:
+        if nome in fora:
+            continue
         m, w = maq.get(nome), jan.get(nome)
         rot = NOMES[nome]
         if m is None or m["idade_s"] > LIMITES["silencio_s"]:
@@ -210,7 +214,7 @@ def condicoes(atual: dict, est_429: dict | None = None) -> dict[str, dict]:
     com_contas = []
     for gid, g in gws.items():
         w = jg.get(gid)
-        if not w:
+        if not w or f"gw:{gid}" in fora:
             continue
         rot = NOMES.get("gw:" + gid, gid)
         if (w.get("contas") or 0) > 0 and g.get("alcancavel"):
@@ -329,9 +333,13 @@ def main() -> int:
     pub = {"gerado_em": atual["gerado_em"], "limites": LIMITES,
            "maquinas": sorted(atual["maquinas"], key=lambda m: ORDEM.index(m["maquina"]) if m["maquina"] in ORDEM else 99),
            "gateways": atual["gateways"], "contas": atual["contas"],
-           "alertas": [{k: x[k] for k in ("chave", "nivel", "alvo", "inicio", "texto")} for x in atual["abertos"]]}
+           "alertas": [{k: x[k] for k in ("chave", "nivel", "alvo", "inicio", "texto")} for x in atual["abertos"]],
+           "fora": [dict(f, nome=NOMES.get(f["alvo"], f["alvo"])) for f in atual.get("fora") or []]}
+    fora = {f["alvo"]: f for f in pub["fora"]}
     for m in pub["maquinas"]:
         m["nome"] = NOMES.get(m["maquina"], m["maquina"])
+        if m["maquina"] in fora:
+            m["fora"] = {"desde": fora[m["maquina"]]["desde"], "motivo": fora[m["maquina"]]["motivo"]}
     for g in pub["gateways"]:
         g["nome"] = NOMES.get("gw:" + g["gateway"], g["gateway"])
     if not a.seco:

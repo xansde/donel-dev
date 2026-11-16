@@ -173,6 +173,11 @@ function desenharMaquinas() {
     const parado = !m || m.idade_s > L.silencio_s;
     const card = document.createElement("section");
     card.className = "card" + (parado ? " off" : "");
+    if (m && m.fora) {
+      card.innerHTML = `<div class="head"><h2>${esc(nome)}</h2><span class="badge idle">fora desde ${hora(m.fora.desde)} (${esc(m.fora.motivo)})</span><span class="sub">sem alerta; a série antiga some em 7 dias</span></div>`;
+      el.append(card);
+      continue;
+    }
     const status = !m ? `<span class="badge idle">sem dados ainda</span>` :
       parado ? `<span class="badge idle">sem dados ${idade(m.idade_s)}${n === "pc" ? " · desligado?" : ""}</span>` : `<span class="badge ok">coletando · ${idade(m.idade_s)}</span>`;
     let tiles = "";
@@ -215,6 +220,12 @@ function desenharGateways() {
   const el = document.getElementById("gateways");
   el.innerHTML = "";
   const porId = Object.fromEntries((atual.gateways || []).map((g) => [g.gateway, g]));
+  for (const f of (atual.fora || []).filter((x) => x.alvo.startsWith("gw:") && !porId[x.alvo.slice(3)])) {
+    const card = document.createElement("section");
+    card.className = "card off";
+    card.innerHTML = `<div class="head"><h2>${esc(f.nome)}</h2><span class="badge idle">fora desde ${hora(f.desde)} (${esc(f.motivo)})</span></div>`;
+    el.append(card);
+  }
   const ids = [...new Set([...Object.keys(porId), ...Object.keys(serie.gateways || {})])].sort((a, b) => (a === "pc" ? -1 : b === "pc" ? 1 : a.localeCompare(b)));
   for (const id of ids) {
     const g = porId[id], s = (serie.gateways || {})[id];

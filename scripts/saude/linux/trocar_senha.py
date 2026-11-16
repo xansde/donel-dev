@@ -2,7 +2,7 @@
 """Troca a senha de um papel do schema saude (saude_gravador ou saude_leitor), na VPS pessoal (t-16393812).
 
 Gera a senha nova dentro do processo, aplica o ALTER ROLE como dono do banco (senha por stdin/PGPASSWORD, nunca argv),
-grava ~/.config/donel-saude/<papel> (600) aqui e, para o gravador, nas outras VPS (Homologações e vps-people) por scp
+grava ~/.config/donel-saude/<papel> (600) aqui e, para o gravador, na Homologações por scp
 de um arquivo 600. Confere que a senha antiga é recusada e a nova entra. Imprime só linhas de status, nenhum valor.
 uso: trocar_senha.py gravador|leitor
 """
@@ -10,15 +10,15 @@ import os
 import secrets
 import subprocess
 import sys
-import tempfile
+import time
 from pathlib import Path
 
 REF = "hotkktdvbjpibkigpopq"
 HOST = "aws-1-sa-east-1.pooler.supabase.com"
 CFG = Path.home() / ".config" / "donel-saude"
 ADMIN = Path.home() / ".config" / "donel-espelho" / "db-password"
-REMOTOS = {"gravador": [("homologacoes-2222", "/root/.config/donel-saude/gravador"),
-                        ("vps-people", "/home/time-people/.config/donel-saude/gravador")], "leitor": []}
+# vps-people saiu em 16/11 (t-2abb614a): nada mais é gravado lá
+REMOTOS = {"gravador": [("homologacoes-2222", "/root/.config/donel-saude/gravador")], "leitor": []}
 
 
 def entra(papel: str, senha: str) -> str:
@@ -64,9 +64,15 @@ def main() -> int:
                                 f"chmod 600 {destino}.novo && mv {destino}.novo {destino} && stat -c %a {destino}"],
                                capture_output=True, text=True, timeout=60)
         print(f"{alias} {destino}: {'trocado (' + r.stdout.strip() + ')' if r.returncode == 0 else 'FALHOU rc ' + str(r.returncode)}")
-    # 4. prova
-    print(f"senha antiga: {entra(papel, antiga)}")
-    print(f"senha nova: {entra(papel, nova)}")
+    # 4. prova. O pooler do Supabase (Supavisor) guarda a senha em cache por alguns segundos depois do ALTER ROLE:
+    #    tenta por até 2 min até a antiga ser recusada e a nova entrar (em 16/11 19h40 a 1ª leitura ainda via a antiga).
+    for _ in range(12):
+        a, n = entra(papel, antiga), entra(papel, nova)
+        if a == "recusada" and n == "entra":
+            break
+        time.sleep(10)
+    print(f"senha antiga: {a}")
+    print(f"senha nova: {n}")
     return 0
 
 
