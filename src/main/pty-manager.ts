@@ -13,9 +13,12 @@ import { appendToRingBuffer } from './ring-buffer';
 const BATCH_INTERVAL_MS = 16;
 const RING_BUFFER_LINES = 50;
 
+/** What the manager uses of a process: node-pty's IPty, or a remote tab's terminal on its place's link (remote-place-link.ts). */
+export type PtyProcess = Pick<IPty, 'onData' | 'onExit' | 'write' | 'resize' | 'kill'>;
+
 interface PtyRecord {
   id: string;
-  pty: IPty;
+  pty: PtyProcess;
   pendingChunks: string[];
   flushTimer: ReturnType<typeof setTimeout> | null;
   ringBuffer: string[];
@@ -56,6 +59,11 @@ export interface PtyCreateOptions {
    * é ignorado, ver `buildPtyEnv`).
    */
   envOverrides?: Record<string, string>;
+  /**
+   * t-9accc989 (3) — the process is not spawned here: a remote tab's terminal rides its place's one ssh
+   * (remote-place-link.ts). `command`/`args`/env are ignored then.
+   */
+  backend?: () => PtyProcess;
 }
 
 /**
@@ -201,15 +209,17 @@ export class PtyManager {
     // a aba nascia morta com uma mensagem inescrutável (ou nenhuma). O
     // renderer já mostra qualquer rejeição no terminal (TerminalPane, catch
     // genérico) — daqui sai uma mensagem que diz O QUE tentar.
-    let ptyProcess: IPty;
+    let ptyProcess: PtyProcess;
     try {
-      ptyProcess = spawn(command, args, {
-        name: 'xterm-color',
-        cols: options.cols,
-        rows: options.rows,
-        cwd: options.cwd ?? os.homedir(),
-        env: buildPtyEnv(process.env, options.claudeConfigDir, options.envOverrides),
-      });
+      ptyProcess = options.backend
+        ? options.backend()
+        : spawn(command, args, {
+            name: 'xterm-color',
+            cols: options.cols,
+            rows: options.rows,
+            cwd: options.cwd ?? os.homedir(),
+            env: buildPtyEnv(process.env, options.claudeConfigDir, options.envOverrides),
+          });
     } catch (error) {
       throw new Error(buildSpawnFailureMessage(command, options.cwd, error));
     }

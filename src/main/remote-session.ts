@@ -42,7 +42,7 @@ const MARK_ONBOARDED_PY = [
   'f=open(t,"w");json.dump(d,f,indent=2);f.close();os.chmod(t,0o600);os.replace(t,p)',
 ].join('\n');
 
-const SSH_OPTIONS = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=4'];
+export const SSH_OPTIONS = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=4'];
 const SETUP_TIMEOUT_MS = 180_000; // a clone can take a while
 const SESSION_ID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
 
@@ -509,8 +509,14 @@ export function buildAttachSshArgs(input: {
     ...input.tunnels.flatMap((tunnel) => ['-R', `127.0.0.1:${tunnel.remotePort}:127.0.0.1:${tunnel.localPort}`]),
     '--',
     input.sshTarget,
-    `bash -l "$HOME/${REMOTE_SESSIONS_DIR}/${input.sid}/run.sh"`,
+    remoteAttachCommand(input.sid),
   ];
+}
+
+/** Pure — what the place runs to show a tab's tmux: its own ssh's command, or its terminal on the place's link. */
+export function remoteAttachCommand(sid: string): string {
+  assertSessionId(sid);
+  return `bash -l "$HOME/${REMOTE_SESSIONS_DIR}/${sid}/run.sh"`;
 }
 
 /** A free-looking port on the remote, for one reverse tunnel. */
