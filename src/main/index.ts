@@ -242,6 +242,7 @@ import {
   remoteFolderAlreadyLive,
   probeRemoteSession,
   runRemoteScript,
+  runSetupWithRetry,
   type RemoteFile,
   type RemoteSessionMeta,
 } from './remote-session';
@@ -286,7 +287,7 @@ import { AccountEngine } from './accounts/account-engine';
 import { AccountEngineHost } from './accounts/account-engine-host';
 // 011-contas-e-provedores, etapa 3, Fase 2 (D3) — registro em memória
 // compartilhado entre reconstruções do motor (item 1 do Bloco 3).
-import { createReconnectRegistry } from './accounts/reconnect-registry';
+import { createFileReconnectStore, createReconnectRegistry } from './accounts/reconnect-registry';
 // Fase 2 (revisão, R1) — uma renovação por conta de cada vez entre reconstruções do motor.
 import { createRefreshCoordinator } from './accounts/refresh-coordinator';
 // 011-contas-e-provedores, etapa 3, Fase 1 — planos PUROS de "remover conta"
@@ -1117,7 +1118,9 @@ function broadcastAccountsChanged(view: AccountsViewDto): void {
  * `createEngine` criasse o seu próprio, um rebuild (add/remove conta,
  * troca de mod) perderia toda marca de "precisa reconectar" pendente.
  */
-const accountsReconnectRegistry = createReconnectRegistry();
+// t-205b44c8 (16/11) — persisted in `<userData>/accounts-reconnect.json` (ids only), so reopening the app does not
+// refresh again an account already known dead. The path is resolved on first use, after `app.setName`.
+const accountsReconnectRegistry = createReconnectRegistry({ store: createFileReconnectStore(() => join(app.getPath('userData'), 'accounts-reconnect.json')) });
 
 /** Lugares remotos — `ssh` do sistema, sem senha (a rede da pessoa autentica: Tailscale, chave). */
 const accountsRemoteClaudeState = createRemoteClaudeState();
@@ -2005,11 +2008,21 @@ async function spawnRemoteClaudeSession(
       meta,
       ...(folder !== correlationId ? { attachOnly: true } : {}),
     });
-    const setup = await runRemoteScript(place.sshTarget, script);
+    // t-205b44c8 (a) — a launch that names its conversation (a reattach after a restart, a resume) tries the setup again
+    // when only the ssh transport failed (the place's sshd busy at boot: 255 'kex_exchange_identification: Connection
+    // reset'), inside this same pty.create: the same tab, never a second one. A brand-new session fails at once: it
+    // has no live tmux to lose. A transport failure never reads as `gone` (that is only the place's DONEL_GONE).
+    const runSetup = (): ReturnType<typeof runRemoteScript> => runRemoteScript(place.sshTarget, script);
+    const setup =
+      extraArgs.length === 0
+        ? await runSetupWithRetry(runSetup, {
+            onRetry: (attempt, said) => logMainEvent('remote-setup-retry', { sshTarget: place.sshTarget, sid: folder, attempt, said }),
+          })
+        : await runSetup();
     return parseRemoteSetupOutput(setup.stdout, setup.code, setup.stderr, setup.timedOut);
   };
-  // t-205b44c8 — the tmux that carries this conversation past a `/clear` is attached to (it never starts a second CLI
-  // on it); gone since the lookup, the conversation is set up in its own folder, as before.
+  // t-205b44c8 (b) — the tmux that carries this conversation past a `/clear` is attached to (it never starts a second
+  // CLI on it); gone since the lookup, the conversation is set up in its own folder, as before.
   let folder = attachFolder ?? correlationId;
   let answer = await setUp(folder);
   if (answer.kind === 'gone') {
@@ -4533,6 +4546,7 @@ function registerAccountsIpcHandlers(): void {
     appConfig = { ...appConfig, accounts: plan.config };
     persistAppConfig();
     applyAccountsEngineConfig();
+    accountsReconnectRegistry.clear(id); // t-205b44c8 — the persisted mark of a removed account goes with it.
 
     if (accountsVaultPath) {
       try {
