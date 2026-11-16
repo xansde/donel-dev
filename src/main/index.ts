@@ -241,6 +241,7 @@ import {
   RemoteSessionRegistry,
   probeRemoteSession,
   runRemoteScript,
+  runSetupWithRetry,
   type RemoteFile,
   type RemoteSessionMeta,
 } from './remote-session';
@@ -1980,7 +1981,17 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     claudeArgs: finalClaudeArgs,
     meta,
   });
-  const setup = await runRemoteScript(place.sshTarget, script);
+  // t-205b44c8 — a launch that names its conversation (a reattach after a restart, a resume) tries the setup again when
+  // only the ssh transport failed (the place's sshd busy at boot: 255 'kex_exchange_identification: Connection
+  // reset'), inside this same pty.create: the same tab, never a second one. A brand-new session fails at once: it
+  // has no live tmux to lose, and its timeout is often a long clone still running there.
+  const runSetup = (): ReturnType<typeof runRemoteScript> => runRemoteScript(place.sshTarget, script);
+  const setup =
+    extraArgs.length === 0
+      ? await runSetupWithRetry(runSetup, {
+          onRetry: (attempt, said) => logMainEvent('remote-setup-retry', { sshTarget: place.sshTarget, sid: correlationId, attempt, said }),
+        })
+      : await runSetup();
   const answer = parseRemoteSetupOutput(setup.stdout, setup.code, setup.stderr, setup.timedOut);
   if (answer.kind === 'error') {
     browserService?.releasePty(ptyId);
