@@ -92,7 +92,7 @@ import type {
   PtyCreateOptions,
   PtyCreateResult,
   RelinkToolsResult,
-  RemoteAliveSession,
+  RemoteAliveAnswer,
   PtyExitInfo,
   RemoteSwitchOutcome,
   RemoveAccountOutcome,
@@ -216,7 +216,7 @@ const donelApi: DonelApi = {
 
     getPreview: (ptyId: string) => ipcRenderer.invoke(PTY_CHANNELS.preview, ptyId) as Promise<string[]>,
 
-    remoteAlive: () => ipcRenderer.invoke(PTY_CHANNELS.remoteAlive) as Promise<RemoteAliveSession[]>,
+    remoteAlive: (placeIds?: readonly string[]) => ipcRenderer.invoke(PTY_CHANNELS.remoteAlive, placeIds) as Promise<RemoteAliveAnswer>,
 
     relinkTools: (ptyId: string) => ipcRenderer.invoke(PTY_CHANNELS.relinkTools, ptyId) as Promise<RelinkToolsResult>,
 

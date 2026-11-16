@@ -20,7 +20,8 @@ import { isBypassLaunch } from '../shared/launchPermission';
 import type { RemoteAliveSession } from '../shared';
 import type { SessionWhereLives } from '../shared/sessions';
 import { isSafeWorktreeName } from '../shared/sessionWorktree';
-import { DEFAULT_MIRROR_TIMING, MirrorHub, sshMirrorSpawner, type MirrorHubTiming, type SpawnMirror } from './remote-mirror';
+import { DEFAULT_MIRROR_TIMING, MirrorHub, probeMirror, sshMirrorSpawner, type MirrorHubTiming, type SpawnMirror } from './remote-mirror';
+import { sshGate, type SshGate } from './ssh-gate';
 
 export const REMOTE_TMUX_SOCKET = 'donel';
 export const REMOTE_SESSIONS_DIR = '.donel/s';
@@ -205,7 +206,9 @@ export function buildRemoteSetupScript(input: RemoteSetupInput): string {
     `S="$HOME/${REMOTE_SESSIONS_DIR}/$SID"`,
     `D="$HOME"/${shQuote(input.homeRelativeDir)}`,
     `if [ -f "$S/meta.json" ] && [ -f "$S/dir" ] && tmux -L ${REMOTE_TMUX_SOCKET} has-session -t "donel-$SID" 2>/dev/null; then`,
-    '  printf "DONEL_ALIVE\\n"; cat "$S/dir"; tr -d "\\n" < "$S/meta.json"; printf "\\n"; exit 0',
+    // `pwd -P` here too (t-fe46929a): a session born before #440 wrote its logical folder in `$S/dir`, and the mirror
+    // of the reattached tab would follow a transcript folder the CLI never wrote (it names it after the physical cwd).
+    '  printf "DONEL_ALIVE\\n"; { (cd "$(cat "$S/dir")" 2>/dev/null && pwd -P) || cat "$S/dir"; }; tr -d "\\n" < "$S/meta.json"; printf "\\n"; exit 0',
     'fi',
     'command -v tmux >/dev/null 2>&1 || { echo "DONEL_ERR O tmux não está instalado no lugar remoto."; exit 3; }',
     'command -v claude >/dev/null 2>&1 || { echo "DONEL_ERR O claude não está instalado no lugar remoto."; exit 3; }',
@@ -223,7 +226,9 @@ export function buildRemoteSetupScript(input: RemoteSetupInput): string {
     'mkdir -p "$S" && chmod 700 "$HOME/.donel" "$HOME/.donel/s" "$S"',
     `printf '%s' ${shQuote(b64(TMUX_CONF))} | base64 -d > "$HOME/.donel/tmux.conf"`,
     ...files.map((file) => `printf '%s' ${shQuote(b64(file.content))} | base64 -d > "$S"/${shQuote(file.name)} && chmod 600 "$S"/${shQuote(file.name)}`),
-    '(cd "$D" && pwd) > "$S/dir"',
+    // `pwd -P`: the CLI names the transcript folder after its physical cwd (a symlinked project folder, as
+    // `~/seazone/Homologação` → `/opt/homologacao/Homologacao`, is never the name it uses; t-f0fb2f2e).
+    '(cd "$D" && pwd -P) > "$S/dir"',
     // Oráculo na VPS (fatia 4): with the daemon's MCP gate there, the session calls it instead of its tunnel; the gate
     // passes the call on while the PC is on and answers who the session is and the tasks when it is off.
     'if [ -f "$S/mcp.json" ] && [ -r "$HOME/.donel/oraculo/portao" ]; then P="$(tr -dc 0-9 < "$HOME/.donel/oraculo/portao")"; if [ -n "$P" ]; then sed -i "s#http://127.0.0.1:[0-9]*/mcp#http://127.0.0.1:$P/s/$SID/mcp#" "$S/mcp.json"; fi; fi',
@@ -250,7 +255,8 @@ function worktreeLines(worktree: string): string[] {
     '  fi',
     '  D="$W"',
     'elif [ -z "$WT" ] && [ -d "$D/.claude/worktrees" ]; then',
-    '  SLUG=$(cd "$D" && pwd | sed "s/[^a-zA-Z0-9]/-/g")',
+    '  D=$(cd "$D" && pwd -P)',
+    '  SLUG=$(printf %s "$D" | sed "s/[^a-zA-Z0-9]/-/g")',
     '  if [ ! -f "$HOME/.claude/projects/$SLUG/$SID.jsonl" ]; then',
     '    for W in "$D"/.claude/worktrees/*/; do',
     '      W="${W%/}"; [ -d "$W" ] || continue',
@@ -301,7 +307,9 @@ function lastLine(text: string): string {
   return last.length > 300 ? `${last.slice(0, 300)}…` : last;
 }
 
-/** Pure — lists the live sessions with their meta. */
+const DISCOVER_END = 'DONEL_DISCOVER_END';
+
+/** Pure — lists the live sessions with their meta, then the end mark. */
 export function buildDiscoverScript(): string {
   return [
     `for m in "$HOME"/${REMOTE_SESSIONS_DIR}/*/meta.json; do`,
@@ -310,8 +318,17 @@ export function buildDiscoverScript(): string {
     `  tmux -L ${REMOTE_TMUX_SOCKET} has-session -t "donel-$sid" 2>/dev/null || continue`,
     '  printf "DONEL_META "; tr -d "\\n" < "$m"; printf "\\n"',
     'done',
+    `printf "${DISCOVER_END}\\n"`,
     '',
   ].join('\n');
+}
+
+/**
+ * t-fe46929a — the place listed all its live sessions. Without the mark, an ssh that failed, timed out or was cut
+ * midway read as "no live session there", and the place's tabs did not come back after a restart.
+ */
+export function discoverAnswered(stdout: string): boolean {
+  return stdout.split(/\r?\n/).some((line) => line.trim() === DISCOVER_END);
 }
 
 export function parseDiscoverOutput(stdout: string): RemoteSessionMeta[] {
@@ -372,17 +389,23 @@ export function buildEndScript(sid: string): string {
   ].join('\n');
 }
 
-/** Runs a script on the remote through stdin. `stderr` keeps the ssh's last words; `timedOut` when it was killed. */
-export function runRemoteScript(
+/**
+ * Runs a script on the remote through stdin. `stderr` keeps the ssh's last words; `timedOut` when it was killed.
+ * The login waits for a slot of the place (ssh-gate.ts); the timeout counts from the spawn, not from the wait.
+ */
+export async function runRemoteScript(
   sshTarget: string,
   script: string,
   timeoutMs = SETUP_TIMEOUT_MS,
+  gate: SshGate = sshGate,
 ): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }> {
+  const release = await gate.acquire(sshTarget);
   return new Promise((resolve) => {
     let child: ChildProcess;
     try {
       child = spawn('ssh', [...SSH_OPTIONS, '-T', '--', sshTarget, 'bash -l -s'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     } catch (error) {
+      release();
       resolve({ code: null, stdout: '', stderr: error instanceof Error ? error.message : String(error), timedOut: false });
       return;
     }
@@ -395,6 +418,7 @@ export function runRemoteScript(
     }, timeoutMs);
     child.stdout?.setEncoding('utf8');
     child.stdout?.on('data', (chunk: string) => {
+      release(); // the script runs there: the login is done
       stdout += chunk;
     });
     child.stderr?.setEncoding('utf8');
@@ -402,10 +426,12 @@ export function runRemoteScript(
       stderr = (stderr + chunk).slice(-4096);
     });
     child.on('error', (error) => {
+      release();
       clearTimeout(timer);
       resolve({ code: null, stdout, stderr: stderr || error.message, timedOut });
     });
     child.on('close', (code) => {
+      release();
       clearTimeout(timer);
       resolve({ code, stdout, stderr, timedOut });
     });
@@ -442,7 +468,8 @@ export function pickRemotePort(random: () => number = Math.random): number {
 /** How a transcript reaches its mirror: the place's shared ssh, or (a place without python3) a tail of its own. */
 type MirrorPump =
   | { readonly kind: 'hub'; readonly key: string; readonly hub: MirrorHub; readonly out: WriteStream; bytes: number }
-  | { readonly kind: 'tail'; readonly child: ChildProcess; readonly out: WriteStream; bytes: number };
+  /** `child` is null while the tail waits for a login slot of the place; `stopped` once detached. */
+  | { readonly kind: 'tail'; child: ChildProcess | null; readonly out: WriteStream; bytes: number; stopped?: true };
 
 interface LiveRemote {
   readonly sshTarget: string;
@@ -465,13 +492,18 @@ export class RemoteSessionRegistry {
   private readonly ending = new Map<string, Promise<void>>();
   /** One shared mirror ssh per place (t-9ab0ce2e). */
   private readonly hubs = new Map<string, MirrorHub>();
-  /** Places without python3: one tail per transcript there. */
+  /** Places whose shared mirror gave up: one tail per transcript there (until a later try brings the mirror back). */
   private readonly noMirrorHub = new Set<string>();
+  /** The next try of the shared mirror of a place that gave up, by ssh target. */
+  private readonly mirrorRetries = new Map<string, ReturnType<typeof setTimeout>>();
+  private stopped = false;
   private nextKey = 0;
   private readonly spawnMirror: SpawnMirror;
   private readonly timing: MirrorHubTiming;
   private readonly spawnTail: (sshTarget: string, command: string) => ChildProcess;
   private readonly onMirrorFallback: (sshTarget: string, reason: string) => void;
+  private readonly onMirrorBack: (sshTarget: string) => void;
+  private readonly gate: SshGate;
 
   constructor(
     private readonly mirrorRoot: string,
@@ -482,6 +514,10 @@ export class RemoteSessionRegistry {
       readonly spawnTail?: (sshTarget: string, command: string) => ChildProcess;
       /** A place's shared mirror gave up: its transcripts went back to one tail per tab (the main logs why). */
       readonly onMirrorFallback?: (sshTarget: string, reason: string) => void;
+      /** A later try found the place's shared mirror working: its tabs went back to it (the main logs it). */
+      readonly onMirrorBack?: (sshTarget: string) => void;
+      /** The place's login slots (the app's one gate by default). */
+      readonly gate?: SshGate;
     } = {},
   ) {
     this.spawnMirror = options.spawnMirror ?? sshMirrorSpawner(SSH_OPTIONS);
@@ -489,6 +525,8 @@ export class RemoteSessionRegistry {
     this.spawnTail =
       options.spawnTail ?? ((sshTarget, command) => spawn('ssh', [...SSH_OPTIONS, '-T', '--', sshTarget, command], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }));
     this.onMirrorFallback = options.onMirrorFallback ?? (() => undefined);
+    this.onMirrorBack = options.onMirrorBack ?? (() => undefined);
+    this.gate = options.gate ?? sshGate;
   }
 
   has(ptyId: string): boolean {
@@ -573,6 +611,9 @@ export class RemoteSessionRegistry {
   }
 
   stopAll(): void {
+    this.stopped = true;
+    for (const timer of this.mirrorRetries.values()) clearTimeout(timer);
+    this.mirrorRetries.clear();
     for (const ptyId of [...this.live.keys()]) this.onPtyExit(ptyId);
   }
 
@@ -603,7 +644,7 @@ export class RemoteSessionRegistry {
     let hub = this.hubs.get(entry.sshTarget);
     if (!hub) {
       const target = entry.sshTarget;
-      hub = new MirrorHub(target, this.spawnMirror, this.timing, (_follows, reason) => this.fallBackToTails(target, reason));
+      hub = new MirrorHub(target, this.spawnMirror, this.timing, (_follows, reason, permanent) => this.fallBackToTails(target, reason, permanent));
       this.hubs.set(target, hub);
     }
     const pump: MirrorPump = { kind: 'hub', key: String(++this.nextKey), hub, out, bytes: fromByte };
@@ -621,31 +662,82 @@ export class RemoteSessionRegistry {
     return mirror;
   }
 
-  /** A place without python3: each of its transcripts gets its own `ssh … tail -F`, as before the shared ssh. */
-  private fallBackToTails(sshTarget: string, reason: string): void {
+  /**
+   * The shared mirror of a place gave up: each of its transcripts gets its own `ssh … tail -F`, as before the shared
+   * ssh. Unless the place has no python3, the mirror is asked again later (`retryAfterMs`).
+   */
+  private fallBackToTails(sshTarget: string, reason: string, permanent: boolean): void {
     this.noMirrorHub.add(sshTarget);
     this.onMirrorFallback(sshTarget, reason);
     this.hubs.delete(sshTarget);
     for (const entry of this.live.values()) if (entry.sshTarget === sshTarget && entry.pump?.kind === 'hub') this.restartPump(entry);
+    if (!permanent) this.scheduleMirrorRetry(sshTarget);
   }
 
+  /**
+   * One try of the place's shared mirror, with nothing on it: the tails keep the chat going meanwhile, so a try that
+   * fails costs one ssh and no tab loses a byte. Up → every tail of the place moves back to the shared ssh, from the
+   * byte its mirror has. Not up → the place is asked again after the same wait.
+   */
+  private scheduleMirrorRetry(sshTarget: string): void {
+    if (this.stopped || this.mirrorRetries.has(sshTarget)) return;
+    const timer = setTimeout(() => {
+      if (![...this.live.values()].some((entry) => entry.sshTarget === sshTarget)) {
+        // No tab left there: the next one starts the shared mirror as any place would.
+        this.mirrorRetries.delete(sshTarget);
+        this.noMirrorHub.delete(sshTarget);
+        return;
+      }
+      void probeMirror(this.spawnMirror, sshTarget, this.timing.startupTimeoutMs).then((up) => {
+        this.mirrorRetries.delete(sshTarget);
+        if (this.stopped || !this.noMirrorHub.has(sshTarget)) return;
+        if (!up) return this.scheduleMirrorRetry(sshTarget);
+        this.noMirrorHub.delete(sshTarget);
+        this.onMirrorBack(sshTarget);
+        for (const entry of this.live.values()) if (entry.sshTarget === sshTarget && entry.pump?.kind === 'tail') this.restartPump(entry);
+      });
+    }, this.timing.retryAfterMs);
+    this.mirrorRetries.set(sshTarget, timer);
+  }
+
+  /**
+   * One `ssh … tail -F` for one transcript. It waits for a login slot of the place first (t-eb9a736a): when a
+   * place's shared mirror gives up, every tab there moves to a tail at once, and those logins are spread out.
+   */
   private startTail(entry: LiveRemote, remoteTranscript: string, out: WriteStream, fromByte: number): MirrorPump {
     const target = remoteTranscript.startsWith('/') ? shQuote(remoteTranscript) : `"$HOME"/${shQuote(remoteTranscript)}`;
-    const child = this.spawnTail(entry.sshTarget, `tail -c +${fromByte + 1} -F ${target} 2>/dev/null`);
-    const pump: MirrorPump = { kind: 'tail', child, out, bytes: fromByte };
-    child.stdout?.on('data', (chunk: Buffer) => {
-      pump.bytes += chunk.length;
+    const pump: MirrorPump & { kind: 'tail' } = { kind: 'tail', child: null, out, bytes: fromByte };
+    void this.gate.acquire(entry.sshTarget).then((release) => {
+      if (pump.stopped) return release(); // detached (tab closed, repointed) while it waited
+      let child: ChildProcess;
+      try {
+        child = this.spawnTail(entry.sshTarget, `tail -c +${fromByte + 1} -F ${target} 2>/dev/null`);
+      } catch {
+        release();
+        out.end();
+        return;
+      }
+      pump.child = child;
+      child.stdout?.on('data', (chunk: Buffer) => {
+        release();
+        pump.bytes += chunk.length;
+      });
+      child.stdout?.pipe(out);
+      child.on('close', release);
+      child.on('error', () => {
+        release();
+        out.end();
+      });
     });
-    child.stdout?.pipe(out);
-    child.on('error', () => out.end());
     return pump;
   }
 
   /** Stops what feeds a mirror, leaving its stream to the caller. */
   private detach(entry: LiveRemote, pump: MirrorPump): void {
     if (pump.kind === 'tail') {
-      pump.child.stdout?.unpipe(pump.out);
-      pump.child.kill();
+      pump.stopped = true;
+      pump.child?.stdout?.unpipe(pump.out);
+      pump.child?.kill();
       return;
     }
     pump.hub.remove(pump.key);
@@ -668,7 +760,8 @@ export class RemoteSessionRegistry {
 export function buildHasTranscriptScript(homeRelativeDir: string, sid: string): string {
   assertSessionId(sid);
   return [
-    `D=$(cd "$HOME"/${shQuote(homeRelativeDir)} 2>/dev/null && pwd) || { echo DONEL_HASNT; exit 0; }`,
+    // Physical path: the CLI's folder slug comes from its real cwd, never from a symlink on the way (t-f0fb2f2e).
+    `D=$(cd "$HOME"/${shQuote(homeRelativeDir)} 2>/dev/null && pwd -P) || { echo DONEL_HASNT; exit 0; }`,
     // The project folder, then the worktrees of the project's sessions (t-58b67066).
     'for F in "$D" "$D"/.claude/worktrees/*/; do',
     '  F="${F%/}"; [ -d "$F" ] || continue',
@@ -724,13 +817,51 @@ export async function findRemoteTranscript(
   );
 }
 
-/** Live sessions of each place. A place that does not answer is left out. */
-export async function discoverRemoteSessions(places: ReadonlyArray<{ readonly id: string; readonly sshTarget: string }>): Promise<RemoteDiscovered[]> {
-  const found = await Promise.all(
+/** How one place answered the discover (main-events.log keeps it: a silent place is why its tabs did not come back). */
+export interface DiscoverPlaceOutcome {
+  readonly id: string;
+  readonly sshTarget: string;
+  /** The place listed all its live sessions (the end mark came). */
+  readonly answered: boolean;
+  readonly found: number;
+  readonly code: number | null;
+  readonly timedOut: boolean;
+  /** The ssh's last words, when the place did not answer. */
+  readonly said?: string;
+}
+
+export interface DiscoverResult {
+  readonly sessions: RemoteDiscovered[];
+  readonly places: DiscoverPlaceOutcome[];
+}
+
+type RunDiscover = (sshTarget: string, script: string, timeoutMs: number) => ReturnType<typeof runRemoteScript>;
+
+/**
+ * Live sessions of each place. A place that did not answer (ssh failed, timed out, cut midway) is said so in `places`,
+ * with whatever sessions it did list: the caller asks it again instead of taking it for a place with nothing alive.
+ */
+export async function discoverRemoteSessions(
+  places: ReadonlyArray<{ readonly id: string; readonly sshTarget: string }>,
+  run: RunDiscover = (sshTarget, script, timeoutMs) => runRemoteScript(sshTarget, script, timeoutMs),
+): Promise<DiscoverResult> {
+  const answers = await Promise.all(
     places.map(async (place) => {
-      const { stdout } = await runRemoteScript(place.sshTarget, buildDiscoverScript(), 20_000);
-      return parseDiscoverOutput(stdout).map((meta) => ({ remoteId: place.id, meta }));
+      const ran = await run(place.sshTarget, buildDiscoverScript(), 20_000);
+      const sessions = parseDiscoverOutput(ran.stdout).map((meta) => ({ remoteId: place.id, meta }));
+      const answered = !ran.timedOut && discoverAnswered(ran.stdout);
+      const said = answered ? '' : lastLine(ran.stderr);
+      const outcome: DiscoverPlaceOutcome = {
+        id: place.id,
+        sshTarget: place.sshTarget,
+        answered,
+        found: sessions.length,
+        code: ran.code,
+        timedOut: ran.timedOut,
+        ...(said ? { said } : {}),
+      };
+      return { sessions, outcome };
     }),
   );
-  return found.flat();
+  return { sessions: answers.flatMap((answer) => answer.sessions), places: answers.map((answer) => answer.outcome) };
 }

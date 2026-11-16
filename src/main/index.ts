@@ -94,7 +94,7 @@ import type {
   PtyCreateOptions,
   PtyCreateResult,
   RelinkToolsResult,
-  RemoteAliveSession,
+  RemoteAliveAnswer,
   PhaseArchivedPayload,
   PtyExitInfo,
   RemoteSwitchOutcome,
@@ -245,8 +245,10 @@ import {
   type RemoteSessionMeta,
 } from './remote-session';
 import { RemoteLinkSupervisor } from './remote-link';
+import { sshGate } from './ssh-gate';
 import { runShutdownSteps, shutdownThenQuit } from './app-shutdown';
 import { createMainEventsLog, type MainEventLogger } from './main-events-log';
+import { createRunTrail } from './run-trail';
 import { createExitWatchdog } from './exit-watchdog';
 import { SessionKeyRing } from './session-keys';
 import { createDiagnosticsLog } from './chat/diagnostics-log';
@@ -634,14 +636,34 @@ const remoteSpawns = new Map<string, { cwd: string; command: string; args: strin
  * "Sem ligação" (main/remote-link.ts) — an ssh of a remote tab that drops with the tmux alive is not the end of the
  * session: the exit is held back, the place reads "sem ligação" and the app relinks it.
  */
+/**
+ * t-eb9a736a — the login slot (ssh-gate.ts) each remote tab's ssh holds until its first byte or its exit: a place that
+ * stalls drops every tab at once, and their new ssh go out a few at a time instead of dozens together.
+ */
+const sshLoginByPty = new Map<string, () => void>();
+function holdSshLogin(ptyId: string, loggedIn: () => void): void {
+  sshLoginByPty.get(ptyId)?.();
+  sshLoginByPty.set(ptyId, loggedIn);
+}
+function sshLoggedIn(ptyId: string): void {
+  const loggedIn = sshLoginByPty.get(ptyId);
+  if (!loggedIn) return;
+  sshLoginByPty.delete(ptyId);
+  loggedIn();
+}
+ptyManager.onData((ptyId) => sshLoggedIn(ptyId));
+ptyManager.onExit((ptyId) => sshLoggedIn(ptyId));
 const remoteLinks = new RemoteLinkSupervisor<PtyExitInfo>({
   probe: (sshTarget, sid) => probeRemoteSession(sshTarget, sid),
-  relink: (ptyId) => {
+  acquire: (sshTarget) => sshGate.acquire(sshTarget),
+  relink: (ptyId, loggedIn) => {
     const spawnSpec = remoteSpawns.get(ptyId);
     if (!spawnSpec) return false;
     try {
+      holdSshLogin(ptyId, loggedIn);
       ptyManager.create({ id: ptyId, ...spawnSpec });
     } catch {
+      sshLoggedIn(ptyId);
       return false;
     }
     remoteSessions?.resumePump(ptyId);
@@ -1243,6 +1265,8 @@ const PROCESS_STARTED_AT_MS = Math.round(Date.now() - process.uptime() * 1000);
 /** How long the app may take to exit after the main window closed before the vigia de saída ends it. */
 const EXIT_GRACE_SECONDS = 20;
 const exitWatchdog = createExitWatchdog(spawn);
+/** How often `main-running.json` records that this run is alive (run-trail.ts). */
+const RUN_TRAIL_BEAT_MS = 60_000;
 
 function logMainEvent(event: string, detail?: Readonly<Record<string, unknown>>): void {
   mainEventsLog ??= createMainEventsLog(join(app.getPath('userData'), 'main-events.log'));
@@ -1260,6 +1284,21 @@ if (!hasSingleInstanceLock) {
   console.log('[donel-dev] outra janela do Donel Dev já está aberta; ela vem para a frente e esta sai.');
   app.exit(0);
 } else {
+  // t-fe46929a (16/11) — the start and the end of each run leave a line, and a run ended from outside (no quit
+  // path ran) is named at the next boot with the last minute it was seen alive (run-trail.ts).
+  const runTrail = createRunTrail(join(app.getPath('userData'), 'main-running.json'), {
+    pid: process.pid,
+    version: app.getVersion(),
+    startedAtMs: PROCESS_STARTED_AT_MS,
+  });
+  const previousRun = runTrail.start();
+  logMainEvent('app-started', { pid: process.pid, version: app.getVersion(), argv: process.argv.slice(1) });
+  if (previousRun) logMainEvent('previous-run-ended-without-quit', { ...previousRun });
+  setInterval(() => runTrail.beat(), RUN_TRAIL_BEAT_MS).unref();
+  app.on('will-quit', () => {
+    logMainEvent('app-quitting');
+    runTrail.end();
+  });
   app.on('second-instance', () => {
     logMainEvent('second-instance');
     const window = mainWindowRef;
@@ -1967,11 +2006,14 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     command: process.platform === 'win32' ? 'ssh.exe' : 'ssh',
     args: buildAttachSshArgs({ sshTarget: place.sshTarget, sid: correlationId, tunnels }),
   };
+  // t-eb9a736a — the tab's ssh takes a login slot of the place: the boot opens every remote tab at once.
+  holdSshLogin(ptyId, await sshGate.acquire(place.sshTarget));
   try {
     ptyManager.create({ id: ptyId, ...spawnSpec });
     remoteSpawns.set(ptyId, spawnSpec);
     remoteLinks.track(ptyId, place.sshTarget, correlationId);
   } catch (error) {
+    sshLoggedIn(ptyId);
     sessionKeys.forget(ptyId);
     hookBridge?.unregisterSession(ptyId);
     browserService?.releasePty(ptyId);
@@ -2096,12 +2138,21 @@ function registerPtyIpcHandlers(): void {
   remoteSessions = new RemoteSessionRegistry(join(app.getPath('userData'), 'remote-transcripts'), {
     // t-9ab0ce2e — a place whose shared transcript mirror did not work went back to one tail per tab: say why.
     onMirrorFallback: (sshTarget, reason) => logMainEvent('remote-mirror-fallback', { sshTarget, reason }),
+    // t-f0fb2f2e — a later try found that place's shared mirror working again: its tabs left their own tails.
+    onMirrorBack: (sshTarget) => logMainEvent('remote-mirror-back', { sshTarget }),
   });
   ipcMain.handle(PTY_CHANNELS.relinkTools, (_event, ptyId: unknown): RelinkToolsResult => relinkSessionTools(ptyId));
-  ipcMain.handle(PTY_CHANNELS.remoteAlive, async (): Promise<RemoteAliveSession[]> => {
-    const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
-    const found = await discoverRemoteSessions(places);
-    return found.map(({ remoteId, meta }) => remoteAliveFromMeta(remoteId, meta));
+  ipcMain.handle(PTY_CHANNELS.remoteAlive, async (_event, placeIds: unknown): Promise<RemoteAliveAnswer> => {
+    const all = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
+    const only = Array.isArray(placeIds) ? new Set(placeIds.filter((id): id is string => typeof id === 'string')) : null;
+    const places = only ? all.filter((place) => only.has(place.id)) : all;
+    const { sessions, places: outcomes } = await discoverRemoteSessions(places);
+    // t-fe46929a — one line per place: a place that did not answer is why its tabs did not come back.
+    for (const outcome of outcomes) logMainEvent('remote-discover', { ...outcome });
+    return {
+      sessions: sessions.map(({ remoteId, meta }) => remoteAliveFromMeta(remoteId, meta)),
+      silent: outcomes.filter((outcome) => !outcome.answered).map((outcome) => outcome.id),
+    };
   });
 
   // Líder único na VPS — the conversation goes to the place the Líder moves to BEFORE it opens there, by stream and
