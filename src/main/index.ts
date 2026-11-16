@@ -248,6 +248,7 @@ import { RemoteLinkSupervisor } from './remote-link';
 import { sshGate } from './ssh-gate';
 import { runShutdownSteps, shutdownThenQuit } from './app-shutdown';
 import { createMainEventsLog, type MainEventLogger } from './main-events-log';
+import { createRunTrail } from './run-trail';
 import { createExitWatchdog } from './exit-watchdog';
 import { SessionKeyRing } from './session-keys';
 import { createDiagnosticsLog } from './chat/diagnostics-log';
@@ -1264,6 +1265,8 @@ const PROCESS_STARTED_AT_MS = Math.round(Date.now() - process.uptime() * 1000);
 /** How long the app may take to exit after the main window closed before the vigia de saída ends it. */
 const EXIT_GRACE_SECONDS = 20;
 const exitWatchdog = createExitWatchdog(spawn);
+/** How often `main-running.json` records that this run is alive (run-trail.ts). */
+const RUN_TRAIL_BEAT_MS = 60_000;
 
 function logMainEvent(event: string, detail?: Readonly<Record<string, unknown>>): void {
   mainEventsLog ??= createMainEventsLog(join(app.getPath('userData'), 'main-events.log'));
@@ -1281,6 +1284,21 @@ if (!hasSingleInstanceLock) {
   console.log('[donel-dev] outra janela do Donel Dev já está aberta; ela vem para a frente e esta sai.');
   app.exit(0);
 } else {
+  // t-fe46929a (16/11) — the start and the end of each run leave a line, and a run ended from outside (no quit
+  // path ran) is named at the next boot with the last minute it was seen alive (run-trail.ts).
+  const runTrail = createRunTrail(join(app.getPath('userData'), 'main-running.json'), {
+    pid: process.pid,
+    version: app.getVersion(),
+    startedAtMs: PROCESS_STARTED_AT_MS,
+  });
+  const previousRun = runTrail.start();
+  logMainEvent('app-started', { pid: process.pid, version: app.getVersion(), argv: process.argv.slice(1) });
+  if (previousRun) logMainEvent('previous-run-ended-without-quit', { ...previousRun });
+  setInterval(() => runTrail.beat(), RUN_TRAIL_BEAT_MS).unref();
+  app.on('will-quit', () => {
+    logMainEvent('app-quitting');
+    runTrail.end();
+  });
   app.on('second-instance', () => {
     logMainEvent('second-instance');
     const window = mainWindowRef;
