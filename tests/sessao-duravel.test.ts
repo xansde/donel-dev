@@ -102,6 +102,18 @@ describe('registro das sessões antes de sair e retomada pelo mesmo id', () => {
     expect(respawnArgsFor(['--model', 'sonnet', '--session-id', 'conv-b'], () => true)).toEqual(['--model', 'sonnet', '-r', 'conv-b']);
     expect(respawnArgsFor(['--model', 'sonnet', '--session-id', 'conv-b'], () => false)).toEqual(['--model', 'sonnet', '--session-id', 'conv-b']);
   });
+
+  it('lugar remoto calado na abertura não vira sessão morta no relato ao Líder', () => {
+    const late = { remote: true, tabFound: false, exited: false, confirmed: false, elapsedMs: 4 * 60_000 };
+    // The boot still asks that place again: the report waits.
+    expect(returnVerdict('conv-r', { ...late, placeSilence: 'retrying' })).toEqual({ kind: 'pendente' });
+    // The tries ended with no answer: not back, without claiming the session died.
+    const gaveUp = returnVerdict('conv-r', { ...late, placeSilence: 'gave-up' });
+    expect(gaveUp.kind).toBe('nao-voltou');
+    expect(gaveUp.kind === 'nao-voltou' && gaveUp.reason).toBe('a máquina remota não respondeu na abertura; a sessão pode seguir viva lá');
+    // The place answered and the session was not there: that one is gone.
+    expect(returnVerdict('conv-r', late)).toEqual({ kind: 'nao-voltou', reason: 'a sessão não estava mais viva na máquina remota' });
+  });
 });
 
 describe('o Líder sabe quem voltou depois de Atualizar', () => {

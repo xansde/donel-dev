@@ -1,0 +1,4 @@
+{
+  "title": "Máquina remota calada na abertura não vira sessão morta",
+  "text": "Quando uma máquina remota demora a responder na abertura do app, o relato ao Líder espera as novas tentativas em vez de dar as sessões de lá como mortas. Se ela seguir calada até o fim, você recebe um aviso com o nome da máquina, e o Líder fica sabendo que as sessões podem seguir vivas lá."
+}
