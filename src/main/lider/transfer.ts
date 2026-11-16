@@ -26,7 +26,8 @@ function transcriptPathLines(homeRelativeDir: string, sid: string): string[] {
   if (!SESSION_ID_PATTERN.test(sid)) throw new Error('Id de sessão inválido para lugar remoto.');
   return [
     // Never created here: an empty folder would cost the Líder its CLAUDE.md and its memory. Said by its name.
-    `D=$(cd "$HOME"/${shQuote(homeRelativeDir)} 2>/dev/null && pwd) || { echo ${shQuote(`DONEL_ERR A pasta ~/${homeRelativeDir.replace(/[\r\n]/g, ' ')} não existe no lugar remoto.`)}; exit 3; }`,
+    // `pwd -P`: the CLI names the folder after its physical cwd, also behind a symlink (t-fe46929a, as #440).
+    `D=$(cd "$HOME"/${shQuote(homeRelativeDir)} 2>/dev/null && pwd -P) || { echo ${shQuote(`DONEL_ERR A pasta ~/${homeRelativeDir.replace(/[\r\n]/g, ' ')} não existe no lugar remoto.`)}; exit 3; }`,
     'SLUG=$(printf %s "$D" | sed "s/[^a-zA-Z0-9]/-/g")',
     'P="$HOME/.claude/projects/$SLUG"',
     `T="$P/${sid}.jsonl"`,
