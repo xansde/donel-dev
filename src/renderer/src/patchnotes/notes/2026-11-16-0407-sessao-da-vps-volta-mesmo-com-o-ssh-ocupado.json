@@ -1,0 +1,4 @@
+{
+  "title": "Sessão da VPS volta mesmo com o ssh ocupado",
+  "text": "Ao reabrir o app, uma sessão que segue viva na VPS e encontra o ssh do lugar ocupado não fica mais em \"Falha ao iniciar o terminal\": a aba espera um pouco e tenta de novo sozinha, por até cerca de 45 segundos, sem abrir uma segunda aba."
+}

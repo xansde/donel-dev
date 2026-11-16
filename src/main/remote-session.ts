@@ -439,6 +439,47 @@ export async function runRemoteScript(
   });
 }
 
+type RemoteScriptAnswer = Awaited<ReturnType<typeof runRemoteScript>>;
+
+/** Waits before each new try of a setup that fell on the ssh transport (t-205b44c8): about 45 s in all. */
+export const SETUP_RETRY_DELAYS_MS: readonly number[] = [1_000, 3_000, 10_000, 30_000];
+
+/**
+ * Pure — whether a setup answer is the ssh transport failing (the script never answered), never the place saying no:
+ * an exit 255 (ssh's own code, e.g. `kex_exchange_identification: Connection reset`), a timeout, or a spawn that
+ * never ran. Any `DONEL_` line means the script ran there, and its answer stands.
+ */
+export function isSetupTransportFailure(answer: RemoteScriptAnswer): boolean {
+  if (answer.stdout.split(/\r?\n/).some((line) => line.startsWith('DONEL_'))) return false;
+  if (answer.code === 255 || answer.timedOut) return true;
+  return answer.code === null && answer.stdout.trim() === '';
+}
+
+/**
+ * Runs the setup and, while it fails by ssh transport only (`isSetupTransportFailure`), waits and runs it again; every
+ * try takes the place's login slot again (`runRemoteScript`). Returns the first answer that is not a transport
+ * failure, or the last failure once `delays` ran out. The setup script is idempotent: a live session answers from a
+ * read-only branch, and the rest rewrites the same files, reuses the folder and the worktree when they exist.
+ */
+export async function runSetupWithRetry(
+  run: () => Promise<RemoteScriptAnswer>,
+  options: {
+    readonly delays?: readonly number[];
+    readonly sleep?: (ms: number) => Promise<void>;
+    readonly onRetry?: (attempt: number, said: string) => void;
+  } = {},
+): Promise<RemoteScriptAnswer> {
+  const delays = options.delays ?? SETUP_RETRY_DELAYS_MS;
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  let answer = await run();
+  for (let attempt = 1; attempt <= delays.length && isSetupTransportFailure(answer); attempt += 1) {
+    options.onRetry?.(attempt, lastLine(answer.stderr));
+    await sleep(delays[attempt - 1]);
+    answer = await run();
+  }
+  return answer;
+}
+
 /** Pure — argv of the tab's PTY (`ssh` with the reverse tunnels). */
 export function buildAttachSshArgs(input: {
   readonly sshTarget: string;
