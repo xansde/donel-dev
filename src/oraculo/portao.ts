@@ -200,6 +200,7 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
           projectPath: who.pasta,
           ...(place?.kind === 'session' && place.sessionId ? { sessionId: place.sessionId } : {}),
           isLeader: mine.board ? isBoardOrchestrator(mine.board, who.lugar) : who.orquestrador === true,
+          boardPlaces: new Set(mine.board ? Object.keys(mine.board.cards) : []),
         },
         call,
         (deps.now ?? Date.now)(),

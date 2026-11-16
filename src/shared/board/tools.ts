@@ -32,6 +32,7 @@ export type CardToolCall =
       readonly motivoDono?: OwnerReason;
       readonly resumo?: string;
       readonly lugar?: string;
+      readonly frente?: string;
       readonly versao?: number;
     }
   | { readonly tool: 'card_justify'; readonly id: string; readonly justificativa: CardJustificationArg; readonly versao?: number }
@@ -89,7 +90,8 @@ export const CARD_TOOLS = [
         justificativa: JUSTIFICATION_SCHEMA,
         motivoDono: { type: 'string', enum: [...OWNER_REASONS], description: 'Só para "Esperando você", só o Líder.' },
         resumo: { type: 'string', description: 'Só para Feito: o que foi entregue.' },
-        lugar: { type: 'string', description: 'Só o Líder, em "A fazer": o lugar que vai fazer.' },
+        lugar: { type: 'string', description: 'Só o Líder: o lugar que vai fazer (um lugar do seu quadro).' },
+        frente: { type: 'string', description: 'Só o Líder, na triagem: a frente do cartão (até 40 caracteres; vazio tira).' },
         versao: { type: 'number', description: 'A versão que você leu (card_list); sem ela, vale a atual.' },
       },
       required: ['id', 'para'],
@@ -206,6 +208,8 @@ export function parseCardToolCall(name: CardToolName, raw: unknown): Parsed {
         const nota = text(args, 'nota', MAX_CARD_NOTE_CHARS, false);
         const resumo = text(args, 'resumo', MAX_CARD_TEXT_CHARS, false);
         const lugar = text(args, 'lugar', 128, false);
+        const frente = typeof args.frente === 'string' ? (args.frente.trim().length > 40 ? undefined : args.frente.trim()) : undefined;
+        if (typeof args.frente === 'string' && frente === undefined) throw new ArgError('"frente" passa de 40 caracteres.');
         const j = justification(args.justificativa, false);
         const v = version(args.versao);
         return {
@@ -219,6 +223,7 @@ export function parseCardToolCall(name: CardToolName, raw: unknown): Parsed {
             ...(motivo ? { motivoDono: motivo as OwnerReason } : {}),
             ...(resumo ? { resumo } : {}),
             ...(lugar ? { lugar } : {}),
+            ...(frente !== undefined ? { frente } : {}),
             ...(v ? { versao: v } : {}),
           },
         };

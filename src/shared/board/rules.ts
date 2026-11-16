@@ -56,15 +56,24 @@ export interface MoveRequest {
   readonly to: Stage;
   /** Who moves: a place id, `jobu`, `servico:<nome>`. Never taken from a session's own argument. */
   readonly actor: string;
-  readonly lane: BoardLane;
+  /**
+   * The actor is the board's Líder the OWNER put there, as the board's picture shows it now (`isBoardOrchestrator`):
+   * a new Líder has the power at once and one that lost the role loses it. Sent to the database as `p_as_leader`.
+   */
+  readonly actorIsLeader: boolean;
   readonly now: number;
   /** Compare-and-swap: the version the caller read. */
   readonly expectedVersion: number;
+  /** A justification the caller sends now. */
   readonly justification?: Justification;
+  /** The one the card already has, which still counts for a note edit in the same stage. */
+  readonly keptJustification?: Justification;
   readonly ownerReason?: OwnerReason;
   readonly doneSummary?: string;
   /** Only the Líder gives a card to another place. */
   readonly assignPlace?: string;
+  /** Only the Líder changes the front. */
+  readonly front?: string;
 }
 
 export type MoveCheck = { readonly ok: true } | { readonly ok: false; readonly error: string };
@@ -80,41 +89,53 @@ function isOwnerReason(value: unknown): value is OwnerReason {
   return typeof value === 'string' && (OWNER_REASONS as readonly string[]).includes(value);
 }
 
-/** Text, an http(s) link and a deadline still ahead. */
+/** Something besides blanks (space, tab, newline): `board.has_text` in SQL. */
+export const hasText = (value: string | null | undefined): boolean => /\S/.test(value ?? '');
+
+/** Text, an http(s) link (as sent: no trimming, as the database) and a deadline still ahead. */
 export function isValidJustification(j: Justification | null | undefined, now: number): j is Justification {
   if (!j) return false;
-  if (!j.text.trim()) return false;
-  if (!/^https?:\/\/\S+$/.test(j.link.trim())) return false;
+  if (!hasText(j.text)) return false;
+  if (!/^https?:\/\/\S+$/.test(j.link)) return false;
   return Number.isFinite(j.due) && j.due > now;
 }
 
 const refuse = (error: string): MoveCheck => ({ ok: false, error });
 
-/** Whether a move may happen; the error is what the session reads. Mirrors `board.move_card`. */
+/**
+ * Whether a move may happen; the error is what the session reads. Mirrors `board.move_card`, including who moves
+ * (design §2): the Líder anything; "Entrada", "A fazer", "Esperando você", giving a place and the front are his only;
+ * anyone else moves only a card that is theirs, or takes an unowned one from "A fazer" to "Fazendo".
+ */
 export function checkMove(req: MoveRequest): MoveCheck {
   if (!isStage(req.to)) return refuse(`coluna desconhecida: ${String(req.to)}`);
+  if (!hasText(req.actor)) return refuse('quem move é obrigatório (actor)');
   if (req.card.version !== req.expectedVersion) {
     return refuse('o cartão mudou desde a sua leitura; leia de novo antes de mover');
   }
-  if (req.to === 'waiting_owner') {
-    if (!req.lane.leaderPlace || req.actor !== req.lane.leaderPlace) {
-      return refuse('só o Líder do quadro põe um cartão em "Esperando você"; peça a ele');
-    }
-    if (!isOwnerReason(req.ownerReason)) {
-      return refuse(`"Esperando você" só por: ${OWNER_REASONS.join(', ')}`);
+  const same = req.to === req.card.stage;
+  if (!req.actorIsLeader) {
+    if (req.to === 'waiting_owner') return refuse('só o Líder do quadro põe um cartão em "Esperando você"; peça a ele');
+    if (req.to === 'inbox' || req.to === 'todo') return refuse('só o Líder do quadro tria (Entrada e A fazer); peça a ele');
+    if (req.assignPlace) return refuse('só o Líder do quadro dá o cartão a outro lugar');
+    if (req.front !== undefined) return refuse('só o Líder do quadro muda a frente do cartão');
+    if (req.card.placeId && req.card.placeId !== req.actor) return refuse(`o cartão é de ${req.card.placeId}: só ele ou o Líder do quadro o move`);
+    if (!req.card.placeId && !(req.to === 'doing' && req.card.stage === 'todo')) {
+      return refuse('cartão sem dono: pegue-o de "A fazer" para "Fazendo", ou peça ao Líder');
     }
   }
-  if (req.assignPlace && (!req.lane.leaderPlace || req.actor !== req.lane.leaderPlace)) {
-    return refuse('só o Líder do quadro dá o cartão a outro lugar');
+  if (req.to === 'waiting_owner' && !isOwnerReason(req.ownerReason)) {
+    return refuse(`"Esperando você" só por: ${OWNER_REASONS.join(', ')}`);
   }
-  if (req.to === 'blocked' && !isValidJustification(req.justification, req.now)) {
+  const justification = req.justification ?? (same ? req.keptJustification : undefined);
+  if (req.to === 'blocked' && !isValidJustification(justification, req.now)) {
     return refuse('"Travado" exige justificativa: o motivo, o link onde a resposta vai chegar e um prazo no futuro');
+  }
+  if (req.to === 'done' && !hasText(req.doneSummary)) {
+    return refuse('"Feito" exige o resumo do que foi entregue');
   }
   if (req.justification && !isValidJustification(req.justification, req.now)) {
     return refuse('justificativa incompleta: motivo, link http(s) e prazo no futuro');
-  }
-  if (req.to === 'done' && !req.doneSummary?.trim()) {
-    return refuse('"Feito" exige o resumo do que foi entregue');
   }
   return { ok: true };
 }

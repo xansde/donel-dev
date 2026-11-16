@@ -130,9 +130,17 @@ async function main(): Promise<void> {
   // The task board: read at each call, so writing the config turns it on without a restart.
   const boardConfigFile = process.env.DONEL_BOARD_CONFIG || join(homedir(), '.donel', 'board', 'supabase.json');
   let boardStore: { readonly key: string; readonly store: BoardStore } | null = null;
+  let boardConfigWarned = false;
   const cards = (): BoardStore | null => {
     const config = readBoardConfig(boardConfigFile);
-    if (!config) return null;
+    if (!config) {
+      if (!boardConfigWarned && existsSync(boardConfigFile)) {
+        boardConfigWarned = true;
+        console.error(`[oraculo] ${boardConfigFile} existe mas é inválido ({url https, serviceKeyFile}); quadro de tarefas desligado.`);
+      }
+      return null;
+    }
+    boardConfigWarned = false;
     const key = `${config.url}|${config.serviceKeyFile}`;
     if (boardStore?.key !== key) boardStore = { key, store: createBoardClient(config) };
     return boardStore.store;
