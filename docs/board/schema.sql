@@ -181,6 +181,9 @@ begin
 end $$;
 
 -- Move a card (or, to the same stage, update its note/justification). Mirrors checkMove in src/shared/board/rules.ts.
+-- Its first version (PR 1) had 10 parameters: `create or replace` with more makes a second overload, and PostgREST
+-- could not choose (PGRST203). Drop it so re-running this file over that one leaves a single move_card.
+drop function if exists board.move_card(text, text, text, integer, text, text, text, timestamptz, text, text);
 create or replace function board.move_card(
   p_card_id text, p_to text, p_actor text, p_expected_version integer, p_note text default null,
   p_justification text default null, p_justification_link text default null, p_justification_due timestamptz default null,
@@ -192,8 +195,13 @@ declare
   v_leader text;
   v_changed boolean;
   v_from text;
-  v_justified boolean := board.valid_justification(p_justification, p_justification_link, p_justification_due)
-                         and p_justification_due > now();
+  v_new_j boolean := p_justification is not null;
+  v_j_text text;
+  v_j_link text;
+  v_j_due timestamptz;
+  v_justified boolean;
+  v_reason text;
+  v_summary text;
 begin
   select * into v_card from board.cards where id = p_card_id for update;
   if not found then raise exception 'cartão % não existe', p_card_id; end if;
@@ -202,47 +210,58 @@ begin
   if p_expected_version is null or v_card.version <> p_expected_version then
     raise exception 'o cartão mudou desde a sua leitura; leia de novo antes de mover';
   end if;
+  v_changed := p_to <> v_card.stage;
+  -- In the same stage (a note edit), what the card already has still counts: its justification, reason, summary.
+  v_j_text := case when v_new_j then p_justification when not v_changed then v_card.justification end;
+  v_j_link := case when v_new_j then p_justification_link when not v_changed then v_card.justification_link end;
+  v_j_due := case when v_new_j then p_justification_due when not v_changed then v_card.justification_due end;
+  v_justified := board.valid_justification(v_j_text, v_j_link, v_j_due) and v_j_due > now();
+  v_reason := coalesce(p_owner_reason, case when not v_changed then v_card.owner_reason end);
+  v_summary := coalesce(p_done_summary, case when not v_changed then v_card.done_summary end);
+
   select leader_place into v_leader from board.lanes where project_id = v_card.project_id;
   if p_to = 'waiting_owner' then
     if v_leader is null or p_actor <> v_leader then
       raise exception 'só o Líder do quadro põe um cartão em "Esperando você"; peça a ele';
     end if;
-    if p_owner_reason is null or p_owner_reason not in ('main_prod', 'new_credential', 'money', 'laya') then
+    if v_reason is null or v_reason not in ('main_prod', 'new_credential', 'money', 'laya') then
       raise exception '"Esperando você" só por: main_prod, new_credential, money, laya';
     end if;
   end if;
   if p_to = 'blocked' and not v_justified then
     raise exception '"Travado" exige justificativa: o motivo, o link onde a resposta vai chegar e um prazo no futuro';
   end if;
-  if p_to = 'done' and coalesce(btrim(p_done_summary), '') = '' then
+  if p_to = 'done' and coalesce(btrim(v_summary), '') = '' then
     raise exception '"Feito" exige o resumo do que foi entregue';
   end if;
   if p_place_id is not null and (v_leader is null or p_actor <> v_leader) then
     raise exception 'só o Líder do quadro dá o cartão a outro lugar';
   end if;
-  if p_justification is not null and not v_justified then
+  if v_new_j and not v_justified then
     raise exception 'justificativa incompleta: motivo, link http(s) e prazo no futuro';
   end if;
 
-  v_changed := p_to <> v_card.stage;
   update board.cards set
     stage = p_to,
     stage_since = case when v_changed then now() else stage_since end,
     note = coalesce(left(p_note, 200), case when v_changed then null else note end),
     -- a justification lives in its stage: it goes away on a stage change unless a new one comes along
-    justification = case when v_justified then p_justification when v_changed then null else justification end,
-    justification_link = case when v_justified then p_justification_link when v_changed then null else justification_link end,
-    justification_due = case when v_justified then p_justification_due when v_changed then null else justification_due end,
-    owner_reason = case when p_to = 'waiting_owner' then p_owner_reason else null end,
-    done_summary = case when p_to = 'done' then p_done_summary else null end,
+    justification = case when v_new_j or v_changed then case when v_justified then v_j_text end else justification end,
+    justification_link = case when v_new_j or v_changed then case when v_justified then v_j_link end else justification_link end,
+    justification_due = case when v_new_j or v_changed then case when v_justified then v_j_due end else justification_due end,
+    owner_reason = case when p_to = 'waiting_owner' then v_reason end,
+    done_summary = case when p_to = 'done' then v_summary end,
     woken_at = case when v_changed then null else woken_at end,
-    charged_at = case when v_changed or v_justified then null else charged_at end,
-    charge_count = case when v_changed or v_justified then 0 else charge_count end,
-    -- "Fazendo" is whoever moves it there (with its conversation, to wake it); the Líder may assign another place
+    charged_at = case when v_changed or v_new_j then null else charged_at end,
+    charge_count = case when v_changed or v_new_j then 0 else charge_count end,
+    -- "Fazendo" is whoever moves it there (with its conversation, to wake it); the Líder may assign another place,
+    -- and the place it was given records its own conversation on its first move.
     place_id = case when p_place_id is not null then p_place_id
                     when p_to = 'doing' and v_changed then p_actor else place_id end,
     session_id = case when p_place_id is not null then case when p_place_id = p_actor then p_session_id end
-                      when p_to = 'doing' and v_changed then p_session_id else session_id end,
+                      when p_to = 'doing' and v_changed then p_session_id
+                      when p_actor = place_id and p_session_id is not null then p_session_id
+                      else session_id end,
     version = version + 1,
     updated_at = now()
   where id = p_card_id
@@ -258,7 +277,7 @@ begin
   return v_card;
 end $$;
 
--- The Líder (or the vigia that saw him) says he is alive; also sets who the lane's Líder is.
+-- The Líder (or the vigia that saw him) says he is alive; sets who the lane's Líder is when it has none alive.
 create or replace function board.touch_lane(p_project_id text, p_leader_place text, p_leader_session text default null)
 returns board.lanes language sql set search_path = board, pg_temp as $$
   insert into board.lanes (project_id, leader_place, leader_session, leader_seen_at)
@@ -267,6 +286,12 @@ returns board.lanes language sql set search_path = board, pg_temp as $$
     leader_place = excluded.leader_place,
     leader_session = coalesce(excluded.leader_session, board.lanes.leader_session),
     leader_seen_at = now()
+  -- The lane has ONE Líder. Another Líder (a second board on the same project, another machine's alias) takes it
+  -- only when the current one is gone (not seen for 30 min); otherwise nothing changes and the lane stays his.
+  where board.lanes.leader_place is null
+     or board.lanes.leader_place = excluded.leader_place
+     or board.lanes.leader_seen_at is null
+     or board.lanes.leader_seen_at < now() - interval '30 minutes'
   returning *
 $$;
 

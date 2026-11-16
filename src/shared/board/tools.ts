@@ -84,7 +84,7 @@ export const CARD_TOOLS = [
       type: 'object',
       properties: {
         id: { type: 'string', description: 'Id do cartão (c-…).' },
-        para: { type: 'string', enum: [...STAGES], description: 'A coluna de destino; a mesma coluna só troca a nota.' },
+        para: { type: 'string', enum: [...STAGES], description: 'A coluna de destino. A mesma coluna troca só a nota e mantém justificativa, motivo e resumo que o cartão já tem.' },
         nota: { type: 'string', description: `Uma linha (até ${MAX_CARD_NOTE_CHARS}): o que mudou.` },
         justificativa: JUSTIFICATION_SCHEMA,
         motivoDono: { type: 'string', enum: [...OWNER_REASONS], description: 'Só para "Esperando você", só o Líder.' },

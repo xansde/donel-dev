@@ -39,6 +39,7 @@ export interface CreateCardArgs {
   readonly p_front?: string;
   readonly p_requested_by: string;
   readonly p_actor: string;
+  readonly p_client_ref?: string;
   readonly p_stage?: 'inbox' | 'todo';
   readonly p_place_id?: string;
   readonly p_session_id?: string;

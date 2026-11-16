@@ -3,6 +3,7 @@
 // from the arguments. The rules are checked here first (src/shared/board/rules.ts) for a clear refusal, and again by
 // the database (`board.move_card`), which is the one that counts.
 
+import { createHash } from 'node:crypto';
 import { checkMove, STAGE_LABELS, type Justification, type Stage } from '../shared/board/rules';
 import type { CardJustificationArg, CardToolCall } from '../shared/board/tools';
 import { BoardError, type BoardStore, type CardRow } from './board-client';
@@ -67,7 +68,15 @@ async function moveChecked(
   if (to === 'same' && target !== 'doing' && target !== 'blocked') return fail('justificar vale para cartão em Fazendo ou Travado');
   const lane = await store.getLane(projectId);
   const expectedVersion = extra.versao ?? card.version;
-  const justification = extra.justificativa ? toJustification(extra.justificativa) : undefined;
+  // In the same stage (a note edit) what the card already carries still counts, as in `board.move_card`.
+  const same = target === card.stage;
+  const kept: Justification | undefined =
+    same && card.justification && card.justification_link && card.justification_due
+      ? { text: card.justification, link: card.justification_link, due: Date.parse(card.justification_due) }
+      : undefined;
+  const justification = extra.justificativa ? toJustification(extra.justificativa) : kept;
+  const ownerReason = extra.motivoDono ?? (same ? card.owner_reason ?? undefined : undefined);
+  const doneSummary = extra.resumo ?? (same ? card.done_summary ?? undefined : undefined);
   const check = checkMove({
     card: { id: card.id, projectId: card.project_id, stage: card.stage, stageSince: Date.parse(card.stage_since), placeId: card.place_id, version: card.version },
     to: target,
@@ -76,8 +85,8 @@ async function moveChecked(
     now,
     expectedVersion,
     ...(justification ? { justification } : {}),
-    ...(extra.motivoDono ? { ownerReason: extra.motivoDono as never } : {}),
-    ...(extra.resumo ? { doneSummary: extra.resumo } : {}),
+    ...(ownerReason ? { ownerReason: ownerReason as never } : {}),
+    ...(doneSummary ? { doneSummary } : {}),
     ...(extra.lugar ? { assignPlace: extra.lugar } : {}),
   });
   if (!check.ok) return fail(check.error);
@@ -112,6 +121,8 @@ export async function runCardTool(store: BoardStore, caller: CardCaller, call: C
           p_owner_request: call.pedido,
           p_requested_by: call.quemPediu,
           p_actor: caller.placeId,
+          // A retry after a timeout (the insert may have committed) must not make a second card.
+          p_client_ref: `auto:${createHash('sha256').update(`${projectId}\n${caller.placeId}\n${call.titulo}\n${call.pedido}`).digest('hex').slice(0, 32)}`,
           ...(call.criterio ? { p_criterion: call.criterio } : {}),
           ...(call.frente ? { p_front: call.frente } : {}),
           ...(call.coluna ? { p_stage: call.coluna } : {}),

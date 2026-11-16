@@ -186,10 +186,12 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     };
 
     const card = async (call: CardToolCall): Promise<BrowserToolOutcome> => {
-      if (!mine || !cards) return { kind: 'error', text: noPicture };
+      // With the PC on too: a session the PC has not pictured yet (it sends one every ~30 s).
+      const notYet = 'Sem retrato do quadro desta sessão ainda: o app manda um a cada meio minuto. Tente de novo em um minuto.';
+      if (!mine || !cards) return { kind: 'error', text: notYet };
       const who = mine.quemSou;
       if (who.liderUnico === true) return { kind: 'error', text: 'O Líder único não tem raia no quadro de tarefas: quem move os cartões é o Líder de cada quadro.' };
-      if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string') return { kind: 'error', text: noPicture };
+      if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string') return { kind: 'error', text: notYet };
       const place = mine.board?.cards[who.lugar];
       const outcome = await runCardTool(
         cards,
