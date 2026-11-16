@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { fetchTranscriptFromRemote, type RemoteCommand } from '../src/main/lider/transfer';
 import { buildDiscoverScript, discoverAnswered, discoverRemoteSessions } from '../src/main/remote-session';
+import { remoteSessionAlreadyOpen } from '../src/shared/remoteBoot';
 
 const sidA = 'aaaaaaaa-1111-4111-8111-111111111111';
 const sidB = 'bbbbbbbb-2222-4222-8222-222222222222';
@@ -39,6 +40,16 @@ describe('busca das sessões vivas no boot', () => {
     expect(result.places.filter((p) => !p.answered).map((p) => p.id)).toEqual(['ssh', 'cortado']);
     expect(result.places.find((p) => p.id === 'ssh')).toMatchObject({ code: 255, found: 0, said: 'kex_exchange_identification: Connection reset by peer' });
     expect(result.places.find((p) => p.id === 'vazio')).toMatchObject({ answered: true, found: 0 });
+  });
+
+  it('a nova tentativa nunca abre uma segunda aba no mesmo tmux: ainda conectando, depois de /clear ou já trazida', () => {
+    const none = new Set<string>();
+    // Aba ainda conectando (o id da conversa só chega depois do ssh): o -r dela já diz qual sessão é.
+    expect(remoteSessionAlreadyOpen(sidA, [{ launchArgs: ['--model', 'opus', '-r', sidA] }], none)).toBe(true);
+    // Depois de /clear a aba leva outra conversa, mas a sessão do tmux é a mesma que o boot já trouxe.
+    expect(remoteSessionAlreadyOpen(sidA, [{ claudeSessionId: sidB, launchArgs: ['-r', sidB] }], new Set([sidA]))).toBe(true);
+    expect(remoteSessionAlreadyOpen(sidA, [{ claudeSessionId: sidA }], none)).toBe(true);
+    expect(remoteSessionAlreadyOpen(sidA, [{ claudeSessionId: sidB, launchArgs: ['-r', sidB] }], none)).toBe(false);
   });
 
   it.skipIf(process.platform === 'win32')('o script de verdade termina com a marca, com e sem sessões vivas', () => {

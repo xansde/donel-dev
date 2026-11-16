@@ -63,6 +63,7 @@ import { sortProjects } from '../../shared';
 // T710 (007/CA-11 2º momento) — o sinal de "a retomada falhou" é o exit code do
 // PTY (medido em specs/008-fechar-pendencias/medicao-t710.md), não texto de CLI.
 import { resumedSessionIdFromArgs, shouldForgetOnResumeFailure } from '../../shared/resumeFailure';
+import { remoteSessionAlreadyOpen } from '../../shared/remoteBoot';
 import { computeSessionAccountLabel } from '../../shared/sessionAccountLabel';
 // T709 (007) — pior estado do grupo (CA-6), mesma precedência de sortSessions.
 import { sortSessions, worstState } from '../../shared/sessionOrdering';
@@ -2210,9 +2211,11 @@ export function App(): React.JSX.Element {
           if (delay !== undefined) window.setTimeout(() => ask(placeIds, attempt + 1), delay);
         });
     };
+    const broughtBack = new Set<string>();
     const addAlive = (alive: readonly RemoteAliveSession[], takeFocus: boolean): void => {
       for (const entry of alive) {
-        if (tabsRef.current.some((tab) => tab.claudeSessionId === entry.sessionId)) continue;
+        if (remoteSessionAlreadyOpen(entry.sessionId, tabsRef.current, broughtBack)) continue;
+        broughtBack.add(entry.sessionId);
         const id = addTab(
           {
             name: entry.name,
