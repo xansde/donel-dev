@@ -14,8 +14,9 @@
 --   3. Clients send `Accept-Profile: board` (GET) / `Content-Profile: board` (POST, rpc).
 -- ROLLBACK: `pg_dump -n board` (keep the file) and then `drop schema board cascade;`. Nothing outside `board` is touched.
 --
--- Writes go ONLY through the functions below (create_card, move_card, touch_lane, request_leader): the service key
--- bypasses RLS, so the rules live here, not in the client. RLS is on and has no policy: anon/authenticated see nothing.
+-- Writes go ONLY through the functions below (create_card, move_card, reclassify_card, touch_lane, request_leader,
+-- mark_cron, resolve_leader_request): the service key bypasses RLS, so the rules live here, and the key has no write
+-- grant on the tables (last block). RLS is on and has no policy: anon/authenticated see nothing.
 
 create schema if not exists board;
 
@@ -77,6 +78,10 @@ create table if not exists board.cards (
   constraint cards_done_summary check (stage <> 'done' or done_summary is not null)
 );
 create index if not exists cards_project_stage on board.cards (project_id, stage);
+-- For the cron: when the Líder was last told about the card in this stage, and when the current justification was
+-- given (a justification in the same stage does not move stage_since; a response older than it was already seen).
+alter table board.cards add column if not exists leader_noticed_at timestamptz;
+alter table board.cards add column if not exists justified_at timestamptz;
 
 -- Moves: append-only history; the andamento IS this table. `id` is the cursor clients follow: every insert here takes
 -- board.lock_moves() first and is the last write of its transaction, so ids become visible in commit order and a
@@ -116,11 +121,13 @@ alter table board.cards enable row level security;
 alter table board.moves enable row level security;
 alter table board.leader_requests enable row level security;
 
+-- Text that has something besides blanks (space, tab, newline): the same test as `/\S/` in rules.ts.
+create or replace function board.has_text(p text)
+returns boolean language sql immutable as $$ select coalesce(p ~ '\S', false) $$;
+
 create or replace function board.valid_justification(p_text text, p_link text, p_due timestamptz)
 returns boolean language sql immutable as $$
-  select coalesce(btrim(p_text), '') <> ''
-     and coalesce(btrim(p_link), '') ~ '^https?://\S+$'
-     and p_due is not null
+  select board.has_text(p_text) and coalesce(p_link ~ '^https?://\S+$', false) and p_due is not null
 $$;
 
 create or replace function board.lock_moves()
@@ -128,17 +135,24 @@ returns void language sql as $$ select pg_advisory_xact_lock(hashtext('board.mov
 
 create or replace function board.stage_rank(p_stage text)
 returns integer language sql immutable as $$
-  select array_position(array['inbox', 'todo', 'doing', 'blocked', 'waiting_owner', 'done'], p_stage)
+  select array_position(array -- stages
+    ['inbox', 'todo', 'doing', 'blocked', 'waiting_owner', 'done'], p_stage)
 $$;
 
--- Create a card. Idempotent by client_ref. Unknown project → 'sem-projeto' (the Líder reclassifies).
--- 'todo' only when the actor is the lane's Líder; everyone else lands in 'inbox'.
+-- WHO IS THE LÍDER. The caller vouches for it (`p_as_leader`): only the service key reaches these functions, and its
+-- holders are the daemon (which reads it from the board's picture: the Líder the OWNER put there, `isBoardOrchestrator`),
+-- the cron and the PC service (never Líder). So the picture decides: a new Líder takes the lane at once, and one that
+-- lost the role loses the power on its next call. Sessions never hold the key.
+
+-- Create a card. Idempotent by client_ref. Unknown project → 'sem-projeto' (reclassify_card moves it).
+-- 'todo' and a place only from the Líder; everyone else lands in 'inbox'.
+drop function if exists board.create_card(text, text, text, text, text, text, text, text, text, text, text, date, text, text);
 create or replace function board.create_card(
   p_project_id text, p_title text, p_owner_request text, p_criterion text default null, p_front text default null,
   p_requested_by text default null, p_actor text default null, p_client_ref text default null, p_stage text default 'inbox',
   p_place_id text default null, p_session_id text default null, p_due date default null,
-  p_risk text default 'baixo', p_oraculo_id text default null
-) returns board.cards language plpgsql set search_path = board, pg_temp as $$
+  p_risk text default 'baixo', p_oraculo_id text default null, p_as_leader boolean default false
+) returns board.cards language plpgsql security definer set search_path = board, pg_temp as $$
 declare
   v_card board.cards;
   v_project text := p_project_id;
@@ -148,25 +162,23 @@ begin
     select * into v_card from board.cards where client_ref = p_client_ref;
     if found then return v_card; end if;
   end if;
-  if coalesce(btrim(p_title), '') = '' then raise exception 'título é obrigatório'; end if;
-  if coalesce(btrim(p_owner_request), '') = '' then raise exception 'a frase do pedido é obrigatória'; end if;
-  if coalesce(btrim(p_requested_by), '') = '' then raise exception 'quem pediu é obrigatório (requested_by)'; end if;
-  if coalesce(btrim(p_actor), '') = '' then raise exception 'quem cria é obrigatório (actor)'; end if;
-  if p_stage not in ('inbox', 'todo') then raise exception 'cartão novo entra em inbox ou todo, não em %', p_stage; end if;
+  if not board.has_text(p_actor) then raise exception 'quem cria é obrigatório (actor)'; end if;
+  if not board.has_text(p_title) then raise exception 'título é obrigatório'; end if;
+  if not board.has_text(p_owner_request) then raise exception 'a frase do pedido é obrigatória'; end if;
+  if not board.has_text(p_requested_by) then raise exception 'quem pediu é obrigatório (requested_by)'; end if;
+  if p_stage is null or p_stage not in ('inbox', 'todo') then raise exception 'cartão novo entra em inbox ou todo, não em %', p_stage; end if;
+  if (p_stage = 'todo' or p_place_id is not null) and not coalesce(p_as_leader, false) then
+    raise exception 'só o Líder do quadro cria direto em "A fazer" ou dá o lugar; crie na Entrada';
+  end if;
   if not exists (select 1 from board.projects where id = v_project) then
     v_note := 'projeto desconhecido: ' || coalesce(p_project_id, '(nenhum)');
     v_project := 'sem-projeto';
   end if;
-  if (p_stage = 'todo' or p_place_id is not null) and not exists (
-    select 1 from board.lanes where project_id = v_project and leader_place = p_actor
-  ) then
-    raise exception 'só o Líder do quadro cria direto em "A fazer" ou dá o lugar; crie na Entrada';
-  end if;
   insert into board.cards (project_id, front, title, owner_request, criterion, requested_by, stage, note,
                            place_id, session_id, due, risk, oraculo_id, client_ref, created_by)
   values (v_project, left(nullif(btrim(p_front), ''), 40), left(btrim(p_title), 120), p_owner_request, p_criterion,
-          p_requested_by, p_stage, left(v_note, 200), p_place_id, p_session_id, p_due, p_risk, p_oraculo_id,
-          p_client_ref, p_actor)
+          p_requested_by, p_stage, left(v_note, 200), p_place_id, case when p_place_id = p_actor then p_session_id end,
+          p_due, p_risk, p_oraculo_id, p_client_ref, p_actor)
   on conflict (client_ref) do nothing
   returning * into v_card;
   if v_card.id is null then
@@ -181,18 +193,21 @@ begin
 end $$;
 
 -- Move a card (or, to the same stage, update its note/justification). Mirrors checkMove in src/shared/board/rules.ts.
--- Its first version (PR 1) had 10 parameters: `create or replace` with more makes a second overload, and PostgREST
--- could not choose (PGRST203). Drop it so re-running this file over that one leaves a single move_card.
+-- Who moves (design §2): the Líder anything; "Entrada", "A fazer", "Esperando você", giving a place and the front are
+-- his only. Anyone else moves only a card that is theirs (place_id), or takes an unowned one from "A fazer" to "Fazendo".
+-- Earlier versions had fewer parameters: `create or replace` with more makes a second overload, and PostgREST could not
+-- choose (PGRST203). Drop them so re-running this file leaves a single move_card.
 drop function if exists board.move_card(text, text, text, integer, text, text, text, timestamptz, text, text);
+drop function if exists board.move_card(text, text, text, integer, text, text, text, timestamptz, text, text, text, text);
 create or replace function board.move_card(
   p_card_id text, p_to text, p_actor text, p_expected_version integer, p_note text default null,
   p_justification text default null, p_justification_link text default null, p_justification_due timestamptz default null,
   p_owner_reason text default null, p_done_summary text default null,
-  p_place_id text default null, p_session_id text default null
-) returns board.cards language plpgsql set search_path = board, pg_temp as $$
+  p_place_id text default null, p_session_id text default null, p_front text default null, p_as_leader boolean default false
+) returns board.cards language plpgsql security definer set search_path = board, pg_temp as $$
 declare
   v_card board.cards;
-  v_leader text;
+  v_leader boolean := coalesce(p_as_leader, false);
   v_changed boolean;
   v_from text;
   v_new_j boolean := p_justification is not null;
@@ -203,6 +218,7 @@ declare
   v_reason text;
   v_summary text;
 begin
+  if not board.has_text(p_actor) then raise exception 'quem move é obrigatório (actor)'; end if;
   select * into v_card from board.cards where id = p_card_id for update;
   if not found then raise exception 'cartão % não existe', p_card_id; end if;
   v_from := v_card.stage;
@@ -219,23 +235,27 @@ begin
   v_reason := coalesce(p_owner_reason, case when not v_changed then v_card.owner_reason end);
   v_summary := coalesce(p_done_summary, case when not v_changed then v_card.done_summary end);
 
-  select leader_place into v_leader from board.lanes where project_id = v_card.project_id;
-  if p_to = 'waiting_owner' then
-    if v_leader is null or p_actor <> v_leader then
-      raise exception 'só o Líder do quadro põe um cartão em "Esperando você"; peça a ele';
+  if not v_leader then
+    if p_to = 'waiting_owner' then raise exception 'só o Líder do quadro põe um cartão em "Esperando você"; peça a ele'; end if;
+    if p_to in ('inbox', 'todo') then raise exception 'só o Líder do quadro tria (Entrada e A fazer); peça a ele'; end if;
+    if p_place_id is not null then raise exception 'só o Líder do quadro dá o cartão a outro lugar'; end if;
+    if p_front is not null then raise exception 'só o Líder do quadro muda a frente do cartão'; end if;
+    if v_card.place_id is not null and v_card.place_id is distinct from p_actor then
+      raise exception 'o cartão é de %: só ele ou o Líder do quadro o move', v_card.place_id;
     end if;
-    if v_reason is null or v_reason not in ('main_prod', 'new_credential', 'money', 'laya') then
-      raise exception '"Esperando você" só por: main_prod, new_credential, money, laya';
+    if v_card.place_id is null and not (p_to = 'doing' and v_card.stage = 'todo') then
+      raise exception 'cartão sem dono: pegue-o de "A fazer" para "Fazendo", ou peça ao Líder';
     end if;
+  end if;
+  if p_to = 'waiting_owner' and (v_reason is null or v_reason not in -- owner_reasons
+    ('main_prod', 'new_credential', 'money', 'laya')) then
+    raise exception '"Esperando você" só por: main_prod, new_credential, money, laya';
   end if;
   if p_to = 'blocked' and not v_justified then
     raise exception '"Travado" exige justificativa: o motivo, o link onde a resposta vai chegar e um prazo no futuro';
   end if;
-  if p_to = 'done' and coalesce(btrim(v_summary), '') = '' then
+  if p_to = 'done' and not board.has_text(v_summary) then
     raise exception '"Feito" exige o resumo do que foi entregue';
-  end if;
-  if p_place_id is not null and (v_leader is null or p_actor <> v_leader) then
-    raise exception 'só o Líder do quadro dá o cartão a outro lugar';
   end if;
   if v_new_j and not v_justified then
     raise exception 'justificativa incompleta: motivo, link http(s) e prazo no futuro';
@@ -245,6 +265,7 @@ begin
     stage = p_to,
     stage_since = case when v_changed then now() else stage_since end,
     note = coalesce(left(p_note, 200), case when v_changed then null else note end),
+    front = case when p_front is not null then left(nullif(btrim(p_front), ''), 40) else front end,
     -- a justification lives in its stage: it goes away on a stage change unless a new one comes along
     justification = case when v_new_j or v_changed then case when v_justified then v_j_text end else justification end,
     justification_link = case when v_new_j or v_changed then case when v_justified then v_j_link end else justification_link end,
@@ -254,6 +275,8 @@ begin
     woken_at = case when v_changed then null else woken_at end,
     charged_at = case when v_changed or v_new_j then null else charged_at end,
     charge_count = case when v_changed or v_new_j then 0 else charge_count end,
+    justified_at = case when v_new_j then now() when v_changed then null else justified_at end,
+    leader_noticed_at = case when v_changed or v_new_j then null else leader_noticed_at end,
     -- "Fazendo" is whoever moves it there (with its conversation, to wake it); the Líder may assign another place,
     -- and the place it was given records its own conversation on its first move.
     place_id = case when p_place_id is not null then p_place_id
@@ -267,8 +290,8 @@ begin
   where id = p_card_id
   returning * into v_card;
 
-  if v_leader is not null and p_actor = v_leader then
-    update board.lanes set leader_seen_at = now() where project_id = v_card.project_id;
+  if v_leader then
+    update board.lanes set leader_seen_at = now() where project_id = v_card.project_id and leader_place = p_actor;
   end if;
 
   perform board.lock_moves();
@@ -277,18 +300,42 @@ begin
   return v_card;
 end $$;
 
--- The Líder (or the vigia that saw him) says he is alive; sets who the lane's Líder is when it has none alive.
-create or replace function board.touch_lane(p_project_id text, p_leader_place text, p_leader_session text default null)
-returns board.lanes language sql set search_path = board, pg_temp as $$
+-- A card that fell in 'sem-projeto' (unknown folder) goes to its real project. Not a session tool: the PC service or
+-- the Líder único (by the PC) does it.
+create or replace function board.reclassify_card(p_card_id text, p_project_id text, p_actor text)
+returns board.cards language plpgsql security definer set search_path = board, pg_temp as $$
+declare v_card board.cards;
+begin
+  if not board.has_text(p_actor) then raise exception 'quem reclassifica é obrigatório (actor)'; end if;
+  if not exists (select 1 from board.projects where id = p_project_id) or p_project_id = 'sem-projeto' then
+    raise exception 'projeto % não existe', p_project_id;
+  end if;
+  update board.cards set project_id = p_project_id, note = left('projeto: ' || p_project_id, 200), version = version + 1, updated_at = now()
+   where id = p_card_id and project_id = 'sem-projeto'
+  returning * into v_card;
+  if v_card.id is null then raise exception 'só cartão em sem-projeto se reclassifica (%)', p_card_id; end if;
+  perform board.lock_moves();
+  insert into board.moves (card_id, project_id, from_stage, to_stage, note, actor)
+  values (v_card.id, v_card.project_id, v_card.stage, v_card.stage, v_card.note, p_actor);
+  return v_card;
+end $$;
+
+-- The lane's Líder says he is alive, or the vigia that saw him does. `p_force` (the daemon, for the Líder the picture
+-- shows) takes the lane at once; without it another place takes it only when the current Líder is gone (not seen for
+-- 30 min). A new Líder never inherits the previous one's conversation.
+drop function if exists board.touch_lane(text, text, text);
+create or replace function board.touch_lane(p_project_id text, p_leader_place text, p_leader_session text default null, p_force boolean default false)
+returns board.lanes language sql security definer set search_path = board, pg_temp as $$
   insert into board.lanes (project_id, leader_place, leader_session, leader_seen_at)
   values (p_project_id, p_leader_place, p_leader_session, now())
   on conflict (project_id) do update set
     leader_place = excluded.leader_place,
-    leader_session = coalesce(excluded.leader_session, board.lanes.leader_session),
+    leader_session = case when board.lanes.leader_place = excluded.leader_place
+                          then coalesce(excluded.leader_session, board.lanes.leader_session)
+                          else excluded.leader_session end,
     leader_seen_at = now()
-  -- The lane has ONE Líder. Another Líder (a second board on the same project, another machine's alias) takes it
-  -- only when the current one is gone (not seen for 30 min); otherwise nothing changes and the lane stays his.
-  where board.lanes.leader_place is null
+  where p_force
+     or board.lanes.leader_place is null
      or board.lanes.leader_place = excluded.leader_place
      or board.lanes.leader_seen_at is null
      or board.lanes.leader_seen_at < now() - interval '30 minutes'
@@ -297,9 +344,10 @@ $$;
 
 -- Ask the vigia to (re)open a lane's Líder. Idempotent by client_ref, and by project while one is pending.
 create or replace function board.request_leader(p_project_id text, p_actor text, p_client_ref text)
-returns board.leader_requests language plpgsql set search_path = board, pg_temp as $$
+returns board.leader_requests language plpgsql security definer set search_path = board, pg_temp as $$
 declare v_req board.leader_requests;
 begin
+  if not board.has_text(p_actor) then raise exception 'quem pede é obrigatório (actor)'; end if;
   select * into v_req from board.leader_requests
    where client_ref = p_client_ref or (project_id = p_project_id and status = 'pending')
    order by (client_ref = p_client_ref) desc limit 1;
@@ -315,7 +363,35 @@ begin
   return v_req;
 end $$;
 
+-- The cron marks what it did, without bumping the card's version (it is not a move, and a session that read the card
+-- must still be able to move it).
+create or replace function board.mark_cron(p_card_id text, p_kind text)
+returns void language plpgsql security definer set search_path = board, pg_temp as $$
+begin
+  if p_kind not in ('woken', 'charged', 'leader') then raise exception 'marca desconhecida: %', p_kind; end if;
+  update board.cards set
+    woken_at = case when p_kind = 'woken' then now() else woken_at end,
+    charged_at = case when p_kind = 'charged' then now() else charged_at end,
+    charge_count = case when p_kind = 'charged' then charge_count + 1 else charge_count end,
+    leader_noticed_at = case when p_kind = 'leader' then now() else leader_noticed_at end
+  where id = p_card_id;
+end $$;
+
+-- The vigia answers a request for a lane's Líder: done (woken) or failed (why not).
+create or replace function board.resolve_leader_request(p_id bigint, p_status text, p_reason text default null)
+returns board.leader_requests language plpgsql security definer set search_path = board, pg_temp as $$
+declare v_req board.leader_requests;
+begin
+  if p_status not in ('done', 'failed') then raise exception 'estado desconhecido: %', p_status; end if;
+  update board.leader_requests set status = p_status, reason = left(p_reason, 300), handled_at = now()
+   where id = p_id and status = 'pending'
+  returning * into v_req;
+  return v_req;
+end $$;
+
 -- Views: the read API of every client (phone, page, PC service).
+-- Dropped first: `project_cards` is `c.*`, and a new column in cards cannot be folded into the old view in place.
+drop view if exists board.owner_feed, board.lanes_without_leader, board.project_cards, board.overview;
 create or replace view board.overview with (security_invoker = true) as
 select p.id as project_id, p.name, p.host,
        count(c.id) filter (where c.stage = 'inbox')         as inbox,
@@ -346,7 +422,7 @@ where p.id <> 'sem-projeto'
 -- What reaches the Jobu: every move to "Esperando você", and owner's requests that reached "Feito".
 create or replace view board.owner_feed with (security_invoker = true) as
 select m.id, m.card_id, m.project_id, m.to_stage, m.note, m.owner_reason, m.done_summary,
-       c.owner_request, c.requested_by, c.oraculo_id, m.at
+       c.title, c.owner_request, c.requested_by, c.oraculo_id, m.at
 from board.moves m
 join board.cards c on c.id = m.card_id
 where m.from_stage is distinct from m.to_stage   -- a note or justification edit in place is not news
@@ -360,7 +436,11 @@ revoke execute on all functions in schema board from public;
 revoke all on schema board from anon, authenticated;
 revoke all on all tables in schema board from anon, authenticated;
 revoke execute on all functions in schema board from anon, authenticated;
+-- The service key READS the tables and views and WRITES only through the functions (security definer, fixed
+-- search_path): a PATCH/POST straight to a table with the same key is refused, so no write skips the rules or the
+-- history in `moves` (Revisor, #449).
 grant usage on schema board to service_role;
-grant all on all tables in schema board to service_role;
-grant all on all sequences in schema board to service_role;
+revoke all on all tables in schema board from service_role;
+revoke all on all sequences in schema board from service_role;
+grant select on all tables in schema board to service_role;
 grant execute on all functions in schema board to service_role;

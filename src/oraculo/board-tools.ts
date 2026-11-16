@@ -14,9 +14,20 @@ export interface CardCaller {
   readonly projectPath: string;
   /** Its conversation, to wake or resume it. */
   readonly sessionId?: string;
-  /** The board's Líder, as the owner put it (`isBoardOrchestrator`). */
+  /**
+   * The board's Líder, as the owner put it (`isBoardOrchestrator` on the picture): it decides, not the lane in the
+   * database, so a new Líder has the power at once and one that lost the role loses it on its next call.
+   */
   readonly isLeader: boolean;
+  /** The places of the caller's board (the picture): the only ones the Líder may give a card to. */
+  readonly boardPlaces: ReadonlySet<string>;
 }
+
+/** A retry after a timeout must not make a second card; the same request days later is a new card. */
+export const CREATE_RETRY_WINDOW_MS = 10 * 60 * 1000;
+
+const NO_PROJECT =
+  'Esta pasta não é de nenhum projeto do quadro (board.projects.aliases): os cartões dela caem em sem-projeto, que nenhuma sessão lista nem move. Crie o cartão (card_create) e peça ao Líder único que cadastre a pasta e reclassifique.';
 
 export type CardOutcome = { readonly ok: true; readonly text: string } | { readonly ok: false; readonly text: string };
 
@@ -58,7 +69,7 @@ async function moveChecked(
   projectId: string,
   id: string,
   to: Stage | 'same',
-  extra: { nota?: string; justificativa?: CardJustificationArg; motivoDono?: string; resumo?: string; lugar?: string; versao?: number },
+  extra: { nota?: string; justificativa?: CardJustificationArg; motivoDono?: string; resumo?: string; lugar?: string; frente?: string; versao?: number },
   now: number,
 ): Promise<CardOutcome> {
   const card = await store.getCard(id);
@@ -66,7 +77,7 @@ async function moveChecked(
   if (card.project_id !== projectId) return fail(`o cartão ${id} é de outro projeto (${card.project_id}); mexa só nos do seu`);
   const target: Stage = to === 'same' ? card.stage : to;
   if (to === 'same' && target !== 'doing' && target !== 'blocked') return fail('justificar vale para cartão em Fazendo ou Travado');
-  const lane = await store.getLane(projectId);
+  if (extra.lugar && caller.isLeader && !caller.boardPlaces.has(extra.lugar)) return fail(`o lugar ${extra.lugar} não está no seu quadro (sessao_listar dá os lugares)`);
   const expectedVersion = extra.versao ?? card.version;
   // In the same stage (a note edit) what the card already carries still counts, as in `board.move_card`.
   const same = target === card.stage;
@@ -74,20 +85,21 @@ async function moveChecked(
     same && card.justification && card.justification_link && card.justification_due
       ? { text: card.justification, link: card.justification_link, due: Date.parse(card.justification_due) }
       : undefined;
-  const justification = extra.justificativa ? toJustification(extra.justificativa) : kept;
   const ownerReason = extra.motivoDono ?? (same ? card.owner_reason ?? undefined : undefined);
   const doneSummary = extra.resumo ?? (same ? card.done_summary ?? undefined : undefined);
   const check = checkMove({
     card: { id: card.id, projectId: card.project_id, stage: card.stage, stageSince: Date.parse(card.stage_since), placeId: card.place_id, version: card.version },
     to: target,
     actor: caller.placeId,
-    lane,
+    actorIsLeader: caller.isLeader,
     now,
     expectedVersion,
-    ...(justification ? { justification } : {}),
+    ...(extra.justificativa ? { justification: toJustification(extra.justificativa) } : {}),
+    ...(kept ? { keptJustification: kept } : {}),
     ...(ownerReason ? { ownerReason: ownerReason as never } : {}),
     ...(doneSummary ? { doneSummary } : {}),
     ...(extra.lugar ? { assignPlace: extra.lugar } : {}),
+    ...(extra.frente !== undefined ? { front: extra.frente } : {}),
   });
   if (!check.ok) return fail(check.error);
   const moved = await store.moveCard({
@@ -102,7 +114,9 @@ async function moveChecked(
     ...(extra.motivoDono ? { p_owner_reason: extra.motivoDono } : {}),
     ...(extra.resumo ? { p_done_summary: extra.resumo } : {}),
     ...(extra.lugar ? { p_place_id: extra.lugar } : {}),
+    ...(extra.frente !== undefined ? { p_front: extra.frente } : {}),
     ...(caller.sessionId ? { p_session_id: caller.sessionId } : {}),
+    ...(caller.isLeader ? { p_as_leader: true } : {}),
   });
   return { ok: true, text: cardText(moved) };
 }
@@ -110,11 +124,15 @@ async function moveChecked(
 export async function runCardTool(store: BoardStore, caller: CardCaller, call: CardToolCall, now: number): Promise<CardOutcome> {
   try {
     const projectId = await store.projectOf(caller.projectPath);
-    // The Líder is alive and is this lane's Líder: the database's rules ("Esperando você", "A fazer") read the lane.
-    if (caller.isLeader && projectId !== 'sem-projeto') await store.touchLane(projectId, caller.placeId, caller.sessionId);
+    // A folder of no project: it may drop a card in sem-projeto, never read or move what is there (other repos' cards).
+    if (projectId === 'sem-projeto' && call.tool !== 'card_create') return fail(NO_PROJECT);
+    // The Líder the picture shows takes the lane at once (its conversation is what the vigia resumes).
+    if (caller.isLeader && projectId !== 'sem-projeto') await store.touchLane(projectId, caller.placeId, caller.sessionId, true);
     switch (call.tool) {
       case 'card_create': {
         if ((call.coluna === 'todo' || call.lugar) && !caller.isLeader) return fail('só o Líder do quadro cria direto em "A fazer" ou dá o lugar; crie na Entrada');
+        if (call.lugar && !caller.boardPlaces.has(call.lugar)) return fail(`o lugar ${call.lugar} não está no seu quadro (sessao_listar dá os lugares)`);
+        const window = Math.floor(now / CREATE_RETRY_WINDOW_MS);
         const card = await store.createCard({
           p_project_id: projectId,
           p_title: call.titulo,
@@ -122,11 +140,12 @@ export async function runCardTool(store: BoardStore, caller: CardCaller, call: C
           p_requested_by: call.quemPediu,
           p_actor: caller.placeId,
           // A retry after a timeout (the insert may have committed) must not make a second card.
-          p_client_ref: `auto:${createHash('sha256').update(`${projectId}\n${caller.placeId}\n${call.titulo}\n${call.pedido}`).digest('hex').slice(0, 32)}`,
+          p_client_ref: `auto:${createHash('sha256').update(`${window}\n${projectId}\n${caller.placeId}\n${call.titulo}\n${call.pedido}\n${call.coluna ?? ''}\n${call.lugar ?? ''}`).digest('hex').slice(0, 32)}`,
           ...(call.criterio ? { p_criterion: call.criterio } : {}),
           ...(call.frente ? { p_front: call.frente } : {}),
           ...(call.coluna ? { p_stage: call.coluna } : {}),
           ...(call.lugar ? { p_place_id: call.lugar } : {}),
+          ...(caller.isLeader ? { p_as_leader: true } : {}),
         });
         return { ok: true, text: cardText(card) };
       }

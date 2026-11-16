@@ -7,7 +7,7 @@
 // Writes go only through the RPCs, where the rules live; reads go to the tables and views.
 
 import { readFileSync } from 'node:fs';
-import type { BoardLane, Stage } from '../shared/board/rules';
+import type { Stage } from '../shared/board/rules';
 
 /** A row of `board.cards`, as PostgREST gives it. */
 export interface CardRow {
@@ -43,6 +43,8 @@ export interface CreateCardArgs {
   readonly p_stage?: 'inbox' | 'todo';
   readonly p_place_id?: string;
   readonly p_session_id?: string;
+  /** The board's picture shows the caller as the Líder the owner put there (see docs/board/schema.sql). */
+  readonly p_as_leader?: boolean;
 }
 
 export interface MoveCardArgs {
@@ -58,6 +60,8 @@ export interface MoveCardArgs {
   readonly p_done_summary?: string;
   readonly p_place_id?: string;
   readonly p_session_id?: string;
+  readonly p_front?: string;
+  readonly p_as_leader?: boolean;
 }
 
 /** What the card tools need from the board; the tests give a fake. */
@@ -65,11 +69,11 @@ export interface BoardStore {
   /** The project id of a folder (aliases of `board.projects`, worktree suffix removed); 'sem-projeto' when unknown. */
   projectOf(projectPath: string): Promise<string>;
   getCard(id: string): Promise<CardRow | null>;
-  getLane(projectId: string): Promise<BoardLane>;
   listCards(projectId: string, options: { readonly stage?: Stage; readonly includeDone?: boolean }): Promise<readonly CardRow[]>;
   createCard(args: CreateCardArgs): Promise<CardRow>;
   moveCard(args: MoveCardArgs): Promise<CardRow>;
-  touchLane(projectId: string, leaderPlace: string, leaderSession: string | undefined): Promise<void>;
+  /** `force`: the Líder the picture shows takes the lane at once (only the daemon passes it). */
+  touchLane(projectId: string, leaderPlace: string, leaderSession: string | undefined, force?: boolean): Promise<void>;
 }
 
 export interface BoardConfig {
@@ -100,7 +104,14 @@ export class BoardError extends Error {}
 type Fetch = typeof fetch;
 
 export function createBoardClient(config: BoardConfig, doFetch: Fetch = fetch): BoardStore {
-  const key = (): string => readFileSync(config.serviceKeyFile, 'utf8').trim();
+  // Read at each call; an unreadable file says so without its path (someone might paste the key in the path field).
+  const key = (): string => {
+    try {
+      return readFileSync(config.serviceKeyFile, 'utf8').trim();
+    } catch {
+      throw new BoardError('a chave do quadro de tarefas não pôde ser lida (serviceKeyFile em ~/.donel/board/supabase.json)');
+    }
+  };
 
   async function call<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
     const secret = key();
@@ -115,7 +126,12 @@ export function createBoardClient(config: BoardConfig, doFetch: Fetch = fetch): 
     } catch (error) {
       throw new BoardError(`o quadro de tarefas não respondeu (${error instanceof Error ? error.name : 'erro'}); tente de novo`);
     }
-    const text = await res.text();
+    let text: string;
+    try {
+      text = await res.text();
+    } catch (error) {
+      throw new BoardError(`o quadro de tarefas não terminou de responder (${error instanceof Error ? error.name : 'erro'}); tente de novo`);
+    }
     if (!res.ok) {
       let message = `o quadro de tarefas recusou (HTTP ${res.status})`;
       try {
@@ -126,7 +142,11 @@ export function createBoardClient(config: BoardConfig, doFetch: Fetch = fetch): 
       }
       throw new BoardError(message);
     }
-    return (text ? JSON.parse(text) : null) as T;
+    try {
+      return (text ? JSON.parse(text) : null) as T;
+    } catch {
+      throw new BoardError('o quadro de tarefas respondeu algo que não é JSON (HTTP ' + res.status + ')');
+    }
   }
 
   const rpc = <T>(fn: string, args: object): Promise<T> => call<T>('POST', `rpc/${fn}`, args);
@@ -143,10 +163,6 @@ export function createBoardClient(config: BoardConfig, doFetch: Fetch = fetch): 
       const rows = await call<CardRow[]>('GET', `cards?id=eq.${q(id)}&limit=1`);
       return rows[0] ?? null;
     },
-    async getLane(projectId) {
-      const rows = await call<{ leader_place: string | null }[]>('GET', `lanes?project_id=eq.${q(projectId)}&select=leader_place&limit=1`);
-      return { projectId, leaderPlace: rows[0]?.leader_place ?? null };
-    },
     async listCards(projectId, options) {
       const filters = [`project_id=eq.${q(projectId)}`];
       if (options.stage) filters.push(`stage=eq.${q(options.stage)}`);
@@ -155,8 +171,8 @@ export function createBoardClient(config: BoardConfig, doFetch: Fetch = fetch): 
     },
     createCard: (args) => rpc<CardRow>('create_card', args),
     moveCard: (args) => rpc<CardRow>('move_card', args),
-    async touchLane(projectId, leaderPlace, leaderSession) {
-      await rpc('touch_lane', { p_project_id: projectId, p_leader_place: leaderPlace, ...(leaderSession ? { p_leader_session: leaderSession } : {}) });
+    async touchLane(projectId, leaderPlace, leaderSession, force) {
+      await rpc('touch_lane', { p_project_id: projectId, p_leader_place: leaderPlace, ...(leaderSession ? { p_leader_session: leaderSession } : {}), ...(force ? { p_force: true } : {}) });
     },
   };
 }

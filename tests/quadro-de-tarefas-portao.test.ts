@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, nodeLedgerProofFs } from '../src/main/ledger-store';
 import { createGateHandler, type GateForward } from '../src/oraculo/portao';
-import { projectFolderOf, type BoardStore, type CardRow, type MoveCardArgs } from '../src/oraculo/board-client';
+import { BoardError, createBoardClient, projectFolderOf, type BoardStore, type CardRow, type MoveCardArgs } from '../src/oraculo/board-client';
 import { emptyMindscapeDoc } from '../src/shared/mindscape/model';
 import { LEADER_ROLE_ID } from '../src/shared/roles';
 
@@ -29,22 +29,25 @@ function fakeStore() {
     justification_link: null, justification_due: null, owner_reason: null, done_summary: null, version: 2,
   };
   const moves: MoveCardArgs[] = [];
+  const touches: { place: string; force: boolean | undefined }[] = [];
   const store: BoardStore = {
     projectOf: async (path) => (projectFolderOf(path) === PROJECT ? 'atlas' : 'sem-projeto'),
     getCard: async (id) => (id === card.id ? card : null),
-    getLane: async (projectId) => ({ projectId, leaderPlace: LEADER }),
     listCards: async () => [card],
     createCard: async () => card,
     moveCard: async (args) => {
       moves.push(args);
       return { ...card, stage: args.p_to, version: card.version + 1, place_id: args.p_actor };
     },
-    touchLane: async () => undefined,
+    touchLane: async (_project, place, _session, force) => {
+      touches.push({ place, force });
+    },
   };
-  return { store, moves };
+  return { store, moves, touches };
 }
 
-function setup(store: BoardStore | null, forward: GateForward) {
+/** `me`: who calls; `leaderBy`: who put the Líder on the board (`'session'` = a session drew it: no power). */
+function setup(store: BoardStore | null, forward: GateForward, me = DEV, folder = `${PROJECT}\\.claude\\worktrees\\x`, leaderBy?: 'session') {
   const dir = mkdtempSync(join(tmpdir(), 'portao-quadro-'));
   dirs.push(dir);
   const sessions = join(dir, 's');
@@ -56,12 +59,12 @@ function setup(store: BoardStore | null, forward: GateForward) {
     ...board,
     cards: {
       [DEV]: { kind: 'session', id: DEV, roleId: 'dev', sessionId: CONVERSA, x: 0, y: 0 },
-      [LEADER]: { kind: 'session', id: LEADER, roleId: LEADER_ROLE_ID, x: 0, y: 0 },
+      [LEADER]: { kind: 'session', id: LEADER, roleId: LEADER_ROLE_ID, x: 0, y: 0, ...(leaderBy ? { by: leaderBy } : {}) },
     },
   } as never;
   const picture = {
     at: NOW,
-    sessoes: { [SID]: { quemSou: { pasta: `${PROJECT}\\.claude\\worktrees\\x`, lugar: DEV, papel: 'dev' }, listar: [], board: mindscape } },
+    sessoes: { [SID]: { quemSou: { pasta: folder, lugar: me, papel: me === LEADER ? 'lider' : 'dev' }, listar: [], board: mindscape } },
   };
   const handle = createGateHandler({ sessionsDir: sessions, ledger: () => ledger, picture: () => picture, forward, serverVersion: 'teste', cards: () => store, now: () => NOW });
   const rpc = async (method: string, params: unknown) => {
@@ -89,6 +92,30 @@ describe('card_* no portão do daemon', () => {
     expect(answer.result.isError).toBeUndefined();
     expect(forwarded).toBe(0);
     expect(moves).toEqual([expect.objectContaining({ p_to: 'doing', p_actor: DEV, p_session_id: CONVERSA, p_expected_version: 2, p_note: 'comecei' })]);
+    expect(moves[0]!.p_as_leader).toBeUndefined();
+  });
+
+  it('o Líder posto pelo dono manda e toma a raia na hora; o que perdeu o papel não', async () => {
+    const leader = fakeStore();
+    const asLeader = await setup(leader.store, PC_ON, LEADER).rpc('tools/call', { name: 'card_move', arguments: { id: 'c-000000000001', para: 'waiting_owner', motivoDono: 'money' } });
+    expect(asLeader.result.isError).toBeUndefined();
+    expect(leader.touches).toEqual([{ place: LEADER, force: true }]);
+    expect(leader.moves).toEqual([expect.objectContaining({ p_actor: LEADER, p_as_leader: true, p_owner_reason: 'money' })]);
+
+    const demoted = fakeStore();
+    const answer = await setup(demoted.store, PC_ON, LEADER, undefined, 'session').rpc('tools/call', { name: 'card_move', arguments: { id: 'c-000000000001', para: 'waiting_owner', motivoDono: 'money' } });
+    expect(answer.result.isError).toBe(true);
+    expect(demoted.touches).toEqual([]);
+    expect(demoted.moves).toEqual([]);
+  });
+
+  it('o Líder só dá o cartão a um lugar do próprio quadro; pasta sem projeto não lista nem move', async () => {
+    const { store, moves } = fakeStore();
+    const far = await setup(store, PC_ON, LEADER).rpc('tools/call', { name: 'card_move', arguments: { id: 'c-000000000001', para: 'todo', lugar: 'place:de-outro-quadro' } });
+    expect(far.result.isError).toBe(true);
+    const unknown = await setup(store, PC_ON, DEV, 'C:\\Users\\dono\\seazone\\outro-repo').rpc('tools/call', { name: 'card_list', arguments: {} });
+    expect(unknown.result.isError).toBe(true);
+    expect(moves).toEqual([]);
   });
 
   it('Dev não põe em "Esperando você": recusado antes do banco', async () => {
@@ -105,5 +132,28 @@ describe('card_* no portão do daemon', () => {
     expect(withBoard.result.tools!.map((tool) => tool.name)).toEqual(['tarefa_ver', 'card_create', 'card_move', 'card_justify', 'card_list']);
     const without = await setup(null, PC_ON).rpc('tools/list', {});
     expect(without.result.tools!.map((tool) => tool.name)).toEqual(['tarefa_ver']);
+  });
+});
+
+describe('cliente do quadro (PostgREST)', () => {
+  it('fala com o schema board pela chave de serviço e não põe o caminho nem a chave no erro', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'quadro-chave-'));
+    dirs.push(dir);
+    const keyFile = join(dir, 'k');
+    writeFileSync(keyFile, 'sb_secret_TESTE\n');
+    const seen: { url: string; headers: Record<string, string> }[] = [];
+    const fakeFetch = (async (url: string, init: { headers: Record<string, string> }) => {
+      seen.push({ url, headers: init.headers });
+      return new Response('{"message":"só o Líder do quadro tria (Entrada e A fazer); peça a ele"}', { status: 400 });
+    }) as unknown as typeof fetch;
+    const client = createBoardClient({ url: 'https://ref.supabase.co', serviceKeyFile: keyFile }, fakeFetch);
+    await expect(client.moveCard({ p_card_id: 'c-1', p_to: 'todo', p_actor: DEV, p_expected_version: 1 })).rejects.toThrow('só o Líder do quadro tria');
+    expect(seen[0]!.url).toBe('https://ref.supabase.co/rest/v1/rpc/move_card');
+    expect(seen[0]!.headers).toMatchObject({ 'Content-Profile': 'board', 'Accept-Profile': 'board', apikey: 'sb_secret_TESTE', Authorization: 'Bearer sb_secret_TESTE' });
+
+    const missing = createBoardClient({ url: 'https://ref.supabase.co', serviceKeyFile: '/caminho/sb_secret_COLADO_NO_CAMPO' }, fakeFetch);
+    const error = await missing.getCard('c-1').catch((e: Error) => e);
+    expect(error).toBeInstanceOf(BoardError);
+    expect((error as Error).message).not.toContain('sb_secret_COLADO_NO_CAMPO');
   });
 });
