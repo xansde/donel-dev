@@ -84,7 +84,7 @@ export function planJustify(card: CronCard, responded: boolean | null, session: 
       return {
         do: 'wake',
         card: card.id,
-        session: card.sessionId,
+        session: card.sessionId!,
         mark: 'charged',
         text: `${LABEL} O prazo do cartão ${card.id} ("${card.title}") venceu: você esperava "${text}" em ${link}. Confira o link e mova o cartão (card_move) ou dê uma justificativa nova com outro prazo (card_justify).`,
       };
@@ -96,7 +96,7 @@ export function planJustify(card: CronCard, responded: boolean | null, session: 
   return {
     do: 'wake',
     card: card.id,
-    session: card.sessionId,
+    session: card.sessionId!,
     mark: 'woken',
     text: `${LABEL} Chegou resposta em ${link}, onde o cartão ${card.id} ("${card.title}") esperava "${text}" (prazo ${new Date(due).toISOString()}). Leia e siga; mova o cartão com card_move.`,
   };
@@ -134,7 +134,7 @@ export function planVigia(card: CronCard, session: SessionState | null, wakes: W
   return {
     do: 'wake',
     card: card.id,
-    session: card.sessionId,
+    session: card.sessionId!,
     mark: 'woken',
     text: `${LABEL} O cartão ${card.id} ("${card.title}") está em Fazendo, parado há ${idle} min, sem justificativa. Continue de onde parou. Se estiver esperando alguém, diga por quê, onde e até quando com card_justify (ou mova para Travado).`,
   };
