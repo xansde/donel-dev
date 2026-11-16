@@ -8,6 +8,8 @@ import { resumedSessionIdFromArgs } from './resumeFailure';
 export interface RemoteBootTab {
   readonly claudeSessionId?: string;
   readonly launchArgs?: readonly string[];
+  /** t-205b44c8 — the tmux the tab attached to when it is not its conversation's own (a resume past a `/clear`). */
+  readonly remoteAttachFolder?: string;
 }
 
 /**
@@ -16,5 +18,5 @@ export interface RemoteBootTab {
  */
 export function remoteSessionAlreadyOpen(sid: string, tabs: readonly RemoteBootTab[], broughtBack: ReadonlySet<string>): boolean {
   if (broughtBack.has(sid)) return true;
-  return tabs.some((tab) => tab.claudeSessionId === sid || resumedSessionIdFromArgs(tab.launchArgs) === sid);
+  return tabs.some((tab) => tab.claudeSessionId === sid || tab.remoteAttachFolder === sid || resumedSessionIdFromArgs(tab.launchArgs) === sid);
 }

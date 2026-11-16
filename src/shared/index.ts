@@ -348,6 +348,11 @@ export interface PtyCreateOptions {
   projectName?: string;
   /** Sessões remotas — place of the session that opened this one (`sessao_abrir`), kept so the next boot leaves it out of the tab bar. */
   openedBy?: string;
+  /**
+   * t-205b44c8 — the id of the live tmux on the place (`donel-<id>`) that carries this conversation past a `/clear`:
+   * the tab attaches to it, while its conversation (`-r`, mirror, board place) stays the one in `args`.
+   */
+  remoteAttachFolder?: string;
 }
 
 /** Sessões remotas — a session still alive on a remote place, found at boot. */

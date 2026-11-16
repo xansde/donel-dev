@@ -239,6 +239,7 @@ import {
   remoteDirFor,
   decideWhereLives,
   RemoteSessionRegistry,
+  remoteFolderAlreadyLive,
   probeRemoteSession,
   runRemoteScript,
   runSetupWithRetry,
@@ -246,6 +247,8 @@ import {
   type RemoteSessionMeta,
 } from './remote-session';
 import { RemoteLinkSupervisor } from './remote-link';
+import { RESUME_OTHER_IDS_MAX } from '../shared/sessions';
+import type { RemotePlace } from '../shared/accounts';
 import { sshGate } from './ssh-gate';
 import { runShutdownSteps, shutdownThenQuit } from './app-shutdown';
 import { createMainEventsLog, type MainEventLogger } from './main-events-log';
@@ -1877,10 +1880,32 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
   if (!place) throw new Error('Lugar remoto não encontrado — pode ter sido removido no painel Contas.');
   if (options.providerId) throw new Error('Provedor de terceiro ainda não roda em lugar remoto.');
   if (!remoteSessions) throw new Error('Sessões remotas ainda não estão prontas.');
-  const localCwd = options.cwd ?? homedir();
+  const registry = remoteSessions;
 
   const launcherArgs = withoutWorktreeArgs(options.args ?? []);
-  const { correlationId, extraArgs } = resolveClaudeCorrelation(launcherArgs, randomUUID);
+  const correlation = resolveClaudeCorrelation(launcherArgs, randomUUID);
+  // t-205b44c8 — the live tmux of the place that carries this conversation past a `/clear` (the renderer's lookup).
+  const attach = options.remoteAttachFolder;
+  if (attach !== undefined && (typeof attach !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(attach))) throw new Error('Id de sessão inválido para lugar remoto.');
+  const attachFolder = attach !== undefined && attach !== correlation.correlationId ? attach : null;
+  // One tab per tmux there, whatever path opens it (Retomar, sessao_retomar, the boot and its retries): a second client
+  // of the same CLI would end it under the other on close.
+  const held = registry.heldFolders();
+  if ([attachFolder, correlation.correlationId].some((folder) => folder !== null && remoteFolderAlreadyLive(held, place.sshTarget, folder))) {
+    throw new Error('Essa sessão já está aberta em outra aba deste app.');
+  }
+  return spawnRemoteClaudeSession(options, place, registry, launcherArgs, correlation, attachFolder);
+}
+
+async function spawnRemoteClaudeSession(
+  options: PtyCreateOptions,
+  place: RemotePlace,
+  remoteSessions: RemoteSessionRegistry,
+  launcherArgs: string[],
+  { correlationId, extraArgs }: ReturnType<typeof resolveClaudeCorrelation>,
+  attachFolder: string | null,
+): Promise<PtyCreateResult> {
+  const localCwd = options.cwd ?? homedir();
   const ptyId = randomUUID();
 
   // Fresh tokens and ports; a live remote session answers with the ones its CLI already holds.
@@ -1943,6 +1968,8 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
       statusLine: planStatusLineBridge({ mode: statusLineBridgeModeSetting, userStatusLine: null, chatEnabled: appConfig.chat.enabled }),
       roleScope,
       keyDirs: remoteKeyDirs,
+      // t-205b44c8 — which conversation this tmux carries now (a `/clear` moves it on); a resume reads it there.
+      conversationMarkPath: `$HOME/${REMOTE_SESSIONS_DIR}/${correlationId}/current`,
     });
     files.push({ name: 'settings.json', content: `${JSON.stringify(settings, null, 2)}\n` });
   } else {
@@ -1967,35 +1994,46 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
   // env goes in the claude.sh (`bypassEnvLines`), read from these args.
   const finalClaudeArgs = planLaunchPermission(claudeArgs, { ...spawnFacts, remote: true }, undefined).args;
 
-  await remoteSessions.waitEnded(correlationId);
   const git = localGitInfo(localCwd);
   // A renewal goes back to the worktree of the session it replaces, also when its args do not name one (t-62f0fa0b).
   const worktree = remoteSpawnWorktree(options.args, options.renewalId ? sessionRenewal?.get(options.renewalId)?.remote?.dir : null);
-  const script = buildRemoteSetupScript({
-    sid: correlationId,
-    homeRelativeDir: remoteDirFor(localCwd, appConfig.projectRoots),
-    ...(worktree !== null && isSafeWorktreeName(worktree) ? { worktree } : {}),
-    repoUrl: git.repoUrl,
-    branch: git.branch,
-    files,
-    claudeArgs: finalClaudeArgs,
-    meta,
-  });
-  // t-205b44c8 — a launch that names its conversation (a reattach after a restart, a resume) tries the setup again when
-  // only the ssh transport failed (the place's sshd busy at boot: 255 'kex_exchange_identification: Connection
-  // reset'), inside this same pty.create: the same tab, never a second one. A brand-new session fails at once: it
-  // has no live tmux to lose, and its timeout is often a long clone still running there.
-  const runSetup = (): ReturnType<typeof runRemoteScript> => runRemoteScript(place.sshTarget, script);
-  const setup =
-    extraArgs.length === 0
-      ? await runSetupWithRetry(runSetup, {
-          onRetry: (attempt, said) => logMainEvent('remote-setup-retry', { sshTarget: place.sshTarget, sid: correlationId, attempt, said }),
-        })
-      : await runSetup();
-  const answer = parseRemoteSetupOutput(setup.stdout, setup.code, setup.stderr, setup.timedOut);
-  if (answer.kind === 'error') {
+  const setUp = async (folder: string) => {
+    await remoteSessions.waitEnded(folder);
+    const script = buildRemoteSetupScript({
+      sid: folder,
+      homeRelativeDir: remoteDirFor(localCwd, appConfig.projectRoots),
+      ...(worktree !== null && isSafeWorktreeName(worktree) ? { worktree } : {}),
+      repoUrl: git.repoUrl,
+      branch: git.branch,
+      files,
+      claudeArgs: finalClaudeArgs,
+      meta,
+      ...(folder !== correlationId ? { attachOnly: true } : {}),
+    });
+    // t-205b44c8 (a) — a launch that names its conversation (a reattach after a restart, a resume) tries the setup again
+    // when only the ssh transport failed (the place's sshd busy at boot: 255 'kex_exchange_identification: Connection
+    // reset'), inside this same pty.create: the same tab, never a second one. A brand-new session fails at once: it
+    // has no live tmux to lose. A transport failure never reads as `gone` (that is only the place's DONEL_GONE).
+    const runSetup = (): ReturnType<typeof runRemoteScript> => runRemoteScript(place.sshTarget, script);
+    const setup =
+      extraArgs.length === 0
+        ? await runSetupWithRetry(runSetup, {
+            onRetry: (attempt, said) => logMainEvent('remote-setup-retry', { sshTarget: place.sshTarget, sid: folder, attempt, said }),
+          })
+        : await runSetup();
+    return parseRemoteSetupOutput(setup.stdout, setup.code, setup.stderr, setup.timedOut);
+  };
+  // t-205b44c8 (b) — the tmux that carries this conversation past a `/clear` is attached to (it never starts a second
+  // CLI on it); gone since the lookup, the conversation is set up in its own folder, as before.
+  let folder = attachFolder ?? correlationId;
+  let answer = await setUp(folder);
+  if (answer.kind === 'gone') {
+    folder = correlationId;
+    answer = await setUp(folder);
+  }
+  if (answer.kind === 'error' || answer.kind === 'gone') {
     browserService?.releasePty(ptyId);
-    throw new Error(`${place.label}: ${answer.message}`);
+    throw new Error(`${place.label}: ${answer.kind === 'error' ? answer.message : 'o lugar remoto não respondeu como esperado.'}`);
   }
   const live = answer.kind === 'alive' ? answer.meta : meta;
 
@@ -2017,14 +2055,14 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     rows: options.rows,
     cwd: localCwd,
     command: process.platform === 'win32' ? 'ssh.exe' : 'ssh',
-    args: buildAttachSshArgs({ sshTarget: place.sshTarget, sid: correlationId, tunnels }),
+    args: buildAttachSshArgs({ sshTarget: place.sshTarget, sid: folder, tunnels }),
   };
   // t-eb9a736a — the tab's ssh takes a login slot of the place: the boot opens every remote tab at once.
   holdSshLogin(ptyId, await sshGate.acquire(place.sshTarget));
   try {
     ptyManager.create({ id: ptyId, ...spawnSpec });
     remoteSpawns.set(ptyId, spawnSpec);
-    remoteLinks.track(ptyId, place.sshTarget, correlationId);
+    remoteLinks.track(ptyId, place.sshTarget, folder);
   } catch (error) {
     sshLoggedIn(ptyId);
     sessionKeys.forget(ptyId);
@@ -2044,7 +2082,7 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
   accountsLiveSessionPtyIds.add(ptyId);
   browserService?.registerPty(ptyId);
 
-  const mirror = remoteSessions.attach(ptyId, place.sshTarget, correlationId, answer.remoteDir);
+  const mirror = remoteSessions.attach(ptyId, place.sshTarget, correlationId, answer.remoteDir, folder);
   spawnedTranscriptPaths.set(correlationId, mirror);
   // B36 on a place — the renewed session keeps the old conversation above a divider, whose "abrir" opens the copy here.
   const renewed = options.renewalId ? sessionRenewal?.get(options.renewalId) : undefined;
@@ -3131,11 +3169,13 @@ function registerSessionIpcHandlers(): void {
    * remote place is asked by ssh, and the one that has it runs the resume. A place that does not answer makes
    * the answer `unreachable`: the renderer says so instead of opening an empty session on this computer.
    */
-  ipcMain.handle(SESSION_CHANNELS.whereLives, async (_event, sessionId: unknown, projectPath: unknown): Promise<SessionWhereLives> => {
+  ipcMain.handle(SESSION_CHANNELS.whereLives, async (_event, sessionId: unknown, projectPath: unknown, otherIds: unknown): Promise<SessionWhereLives> => {
     if (typeof sessionId !== 'string' || typeof projectPath !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(sessionId)) return { kind: 'local' };
     if (localTranscriptExists(sessionId, projectPath)) return { kind: 'local' };
     const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
-    const answers = places.length === 0 ? [] : await findRemoteTranscript(places, remoteDirFor(projectPath, appConfig.projectRoots), sessionId);
+    // t-205b44c8 — the other conversations of its board place: one may still run in tmux there, past a `/clear`.
+    const others = Array.isArray(otherIds) ? otherIds.filter((id): id is string => typeof id === 'string' && /^[A-Za-z0-9-]{1,64}$/.test(id)).slice(0, RESUME_OTHER_IDS_MAX) : [];
+    const answers = places.length === 0 ? [] : await findRemoteTranscript(places, remoteDirFor(projectPath, appConfig.projectRoots), sessionId, others);
     return decideWhereLives(false, answers, places);
   });
 

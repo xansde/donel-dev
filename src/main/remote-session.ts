@@ -89,11 +89,18 @@ export interface RemoteSetupInput {
    * a conversation that was born in a worktree, which goes back to it.
    */
   readonly worktree?: string;
+  /**
+   * t-205b44c8 — only attach to the live tmux of `sid` (a resume of the conversation it carries past a `/clear`): when
+   * it is gone, the setup answers `gone` and prepares nothing in its folder.
+   */
+  readonly attachOnly?: boolean;
 }
 
 export type RemoteSetupResult =
   | { readonly kind: 'new'; readonly remoteDir: string }
   | { readonly kind: 'alive'; readonly remoteDir: string; readonly meta: RemoteSessionMeta }
+  /** t-205b44c8 — `attachOnly` and the tmux was not there: nothing was prepared. */
+  | { readonly kind: 'gone' }
   | { readonly kind: 'error'; readonly message: string };
 
 export interface RemoteDiscovered {
@@ -210,6 +217,7 @@ export function buildRemoteSetupScript(input: RemoteSetupInput): string {
     // of the reattached tab would follow a transcript folder the CLI never wrote (it names it after the physical cwd).
     '  printf "DONEL_ALIVE\\n"; { (cd "$(cat "$S/dir")" 2>/dev/null && pwd -P) || cat "$S/dir"; }; tr -d "\\n" < "$S/meta.json"; printf "\\n"; exit 0',
     'fi',
+    ...(input.attachOnly ? ['echo DONEL_GONE; exit 0'] : []),
     'command -v tmux >/dev/null 2>&1 || { echo "DONEL_ERR O tmux não está instalado no lugar remoto."; exit 3; }',
     'command -v claude >/dev/null 2>&1 || { echo "DONEL_ERR O claude não está instalado no lugar remoto."; exit 3; }',
     'if [ ! -d "$D" ]; then',
@@ -272,6 +280,7 @@ export function parseRemoteSetupOutput(stdout: string, code: number | null, stde
   const lines = stdout.split(/\r?\n/);
   const errLine = lines.find((line) => line.startsWith('DONEL_ERR'));
   if (errLine) return { kind: 'error', message: errLine.slice('DONEL_ERR'.length).trim() };
+  if (lines.includes('DONEL_GONE')) return { kind: 'gone' };
   const newAt = lines.indexOf('DONEL_NEW');
   if (newAt !== -1 && lines[newAt + 1]) return { kind: 'new', remoteDir: lines[newAt + 1].trim() };
   const aliveAt = lines.indexOf('DONEL_ALIVE');
@@ -530,6 +539,19 @@ interface LiveRemote {
   ended?: true;
 }
 
+export interface RemoteHeldFolder {
+  readonly sshTarget: string;
+  readonly folder: string;
+}
+
+/**
+ * Pure — t-205b44c8: another tab of this app already holds the tmux `donel-<folder>` on that place. A second one there
+ * would be two clients of the same CLI, and closing either would end it under the other.
+ */
+export function remoteFolderAlreadyLive(held: readonly RemoteHeldFolder[], sshTarget: string, folder: string): boolean {
+  return held.some((entry) => entry.sshTarget === sshTarget && entry.folder === folder);
+}
+
 /** The live remote tabs of this run of the app: transcript mirrors and the end of the remote session. */
 export class RemoteSessionRegistry {
   private readonly live = new Map<string, LiveRemote>();
@@ -591,9 +613,12 @@ export class RemoteSessionRegistry {
     return join(this.mirrorRoot, `${sid}.jsonl`);
   }
 
-  /** The tab was spawned: starts mirroring the transcript; returns the local mirror path. */
-  attach(ptyId: string, sshTarget: string, sid: string, remoteDir: string): string {
-    const entry: LiveRemote = { sshTarget, folder: sid, sid, remoteDir, transcript: remoteTranscriptPath(remoteDir, sid), pump: null };
+  /**
+   * The tab was spawned: starts mirroring the transcript of `sid`; returns the local mirror path. `folder` is the tmux
+   * session the tab attached to, when it is not the conversation's own (t-205b44c8: one that carries `sid` past a `/clear`).
+   */
+  attach(ptyId: string, sshTarget: string, sid: string, remoteDir: string, folder: string = sid): string {
+    const entry: LiveRemote = { sshTarget, folder, sid, remoteDir, transcript: remoteTranscriptPath(remoteDir, sid), pump: null };
     this.live.set(ptyId, entry);
     return this.startPump(entry, entry.transcript, sid);
   }
@@ -601,6 +626,11 @@ export class RemoteSessionRegistry {
   /** Oráculo na VPS (fatia 4): the live remote tabs, by the folder their MCP gate knows them by. */
   liveSessions(): { readonly ptyId: string; readonly folder: string }[] {
     return [...this.live].map(([ptyId, entry]) => ({ ptyId, folder: entry.folder }));
+  }
+
+  /** t-205b44c8 — the tmux folder each live remote tab holds, by place; one whose end was already asked is let go. */
+  heldFolders(): RemoteHeldFolder[] {
+    return [...this.live.values()].filter((entry) => !entry.ended).map((entry) => ({ sshTarget: entry.sshTarget, folder: entry.folder }));
   }
 
   /** `/clear`, `/resume` or fork inside the remote session: follow the new transcript. */
@@ -800,10 +830,21 @@ export class RemoteSessionRegistry {
 /**
  * Pure — answers `DONEL_HAS` when the transcript of `sid` exists for the project folder (`homeRelativeDir`, as
  * `remoteDirFor` gives it). The CLI names the transcript folder after the absolute path, so the slug is taken there.
+ * `otherIds` (t-205b44c8): the place's other conversations; each one whose tmux is alive there (the setup's ALIVE test)
+ * AND whose CLI is on `sid` now comes first as `DONEL_LIVE <id>`: after a `/clear` that tmux still runs the CLI, on
+ * `sid`. "On `sid`" is the `current` mark its SessionStart hook writes (`conversationMarkCommand`): a tmux left alive
+ * on its own conversation (a renewal whose `endRemote` failed) or born before the mark existed is never attached to.
  */
-export function buildHasTranscriptScript(homeRelativeDir: string, sid: string): string {
+export function buildHasTranscriptScript(homeRelativeDir: string, sid: string, otherIds: readonly string[] = []): string {
   assertSessionId(sid);
+  const others = otherIds.filter((id) => id !== sid);
+  others.forEach(assertSessionId);
+  const folder = (id: string): string => `"$HOME/${REMOTE_SESSIONS_DIR}/${id}`;
   return [
+    ...others.map(
+      (id) =>
+        `if [ -f ${folder(id)}/meta.json" ] && [ -f ${folder(id)}/dir" ] && [ "$(cat ${folder(id)}/current" 2>/dev/null)" = ${shQuote(sid)} ] && tmux -L ${REMOTE_TMUX_SOCKET} has-session -t ${shQuote(`donel-${id}`)} 2>/dev/null; then echo DONEL_LIVE ${id}; fi`,
+    ),
     // Physical path: the CLI's folder slug comes from its real cwd, never from a symlink on the way (t-f0fb2f2e).
     `D=$(cd "$HOME"/${shQuote(homeRelativeDir)} 2>/dev/null && pwd -P) || { echo DONEL_HASNT; exit 0; }`,
     // The project folder, then the worktrees of the project's sessions (t-58b67066).
@@ -826,17 +867,37 @@ export function parseHasTranscriptOutput(stdout: string): RemoteTranscriptAnswer
   return 'unreachable';
 }
 
+/** Pure — the first of the place's other conversations whose tmux is alive there (`DONEL_LIVE <id>`), if any. */
+function parseLiveSessionId(stdout: string): string | undefined {
+  for (const line of stdout.split(/\r?\n/)) {
+    const match = /^DONEL_LIVE ([A-Za-z0-9-]{1,64})$/.exec(line.trim());
+    if (match) return match[1];
+  }
+  return undefined;
+}
+
+export interface RemoteTranscriptPlaceAnswer {
+  readonly id: string;
+  readonly answer: RemoteTranscriptAnswer;
+  /** t-205b44c8 — another conversation of the place whose tmux is alive there (its CLI went on past a `/clear`). */
+  readonly liveSessionId?: string;
+}
+
 /**
  * Pure — B39, where a conversation to resume lives, from what this disk and each remote place answered. Without
  * remote places it is this computer; with them, a conversation none of them has is `nowhere`, never this computer.
+ * A place where another conversation of the same board place still runs in tmux wins (t-205b44c8): the resume attaches
+ * to that tmux instead of starting a second CLI on the conversation it carries now.
  */
 export function decideWhereLives(
   local: boolean,
-  answers: ReadonlyArray<{ readonly id: string; readonly answer: RemoteTranscriptAnswer }>,
+  answers: ReadonlyArray<RemoteTranscriptPlaceAnswer>,
   places: ReadonlyArray<{ readonly id: string; readonly label: string }>,
 ): SessionWhereLives {
   if (local) return { kind: 'local' };
   if (places.length === 0) return { kind: 'local' };
+  const running = answers.find((answer) => answer.liveSessionId !== undefined);
+  if (running?.liveSessionId) return { kind: 'remote', remoteId: running.id, liveSessionId: running.liveSessionId };
   const found = answers.find((answer) => answer.answer === 'has');
   if (found) return { kind: 'remote', remoteId: found.id };
   const labelOf = (id: string): string => places.find((place) => place.id === id)?.label ?? id;
@@ -846,17 +907,23 @@ export function decideWhereLives(
   return { kind: 'nowhere', labels: places.map((place) => place.label) };
 }
 
-/** B39 — asks each place whether the conversation `sid` of the project folder `homeRelativeDir` lives there. */
+/**
+ * B39 — asks each place whether the conversation `sid` of the project folder `homeRelativeDir` lives there, and in the
+ * same ssh whether one of the board place's `otherIds` still runs in tmux there (t-205b44c8).
+ */
 export async function findRemoteTranscript(
   places: ReadonlyArray<{ readonly id: string; readonly sshTarget: string }>,
   homeRelativeDir: string,
   sid: string,
-): Promise<Array<{ readonly id: string; readonly answer: RemoteTranscriptAnswer }>> {
-  const script = buildHasTranscriptScript(homeRelativeDir, sid);
+  otherIds: readonly string[] = [],
+  run: RunDiscover = (sshTarget, script, timeoutMs) => runRemoteScript(sshTarget, script, timeoutMs),
+): Promise<RemoteTranscriptPlaceAnswer[]> {
+  const script = buildHasTranscriptScript(homeRelativeDir, sid, otherIds);
   return Promise.all(
     places.map(async (place) => {
-      const { stdout } = await runRemoteScript(place.sshTarget, script, 20_000);
-      return { id: place.id, answer: parseHasTranscriptOutput(stdout) };
+      const { stdout } = await run(place.sshTarget, script, 20_000);
+      const liveSessionId = parseLiveSessionId(stdout);
+      return { id: place.id, answer: parseHasTranscriptOutput(stdout), ...(liveSessionId ? { liveSessionId } : {}) };
     }),
   );
 }

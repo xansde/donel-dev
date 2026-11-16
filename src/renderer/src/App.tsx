@@ -80,7 +80,7 @@ import {
   reconcileStoredName,
   resolveSessionName,
 } from '../../shared/sessionName';
-import { sessionTabName } from '../../shared/sessions';
+import { resumeOtherIds, sessionTabName } from '../../shared/sessions';
 // T021 (015-jobu-pet) — tab <-> PTY map and the `pet:tabs` payload (pure, tested in tests/pet-tab-pty-map.test.ts).
 import { buildChatFocusState, buildPetTabsPayload, tabPtyMap, type TabPtyMap } from '../../shared/pet/tabPtyMap';
 import styles from './App.module.css';
@@ -97,7 +97,7 @@ import { useMindscapeDoc } from './Mindscape/useMindscapeDoc';
 import { AgentBridge, type AgentBridgePorts, type DeliveryOutcome, type ReturnExpectation } from './Mindscape/agentBridge';
 import type { FaxineiroLogEntry } from '../../shared/faxineiro/triggers';
 import { SpawnAskPanel, type SpawnAsk } from './Mindscape/SpawnAskPanel';
-import { appendConversation, findSessionBoard, placeSessionCards, roleOfSession, setBoardView, setPlaceConversation, writeSessionNote, type MindscapeDoc } from '../../shared/mindscape/model';
+import { appendConversation, findSessionBoard, placeHolding, placeSessionCards, roleOfSession, setBoardView, setPlaceConversation, writeSessionNote, type MindscapeDoc } from '../../shared/mindscape/model';
 import type { SessionRole } from '../../shared/roles';
 // Sessão renovada em voo (B36) — limit crossed at the end of a turn → handoff → new session in the same tab.
 import { DEFAULT_SESSION_RENEWAL_PREFS, RENEWAL_HANDOFF_WAIT_MS, renewalEligible, renewalHandoffDeliveryNotice, renewalLaunchArgs, type SessionRenewalPrefs } from '../../shared/sessionRenewal';
@@ -228,6 +228,8 @@ interface TabState {
   leaderOfAll?: boolean;
   /** Sessões remotas — remote place (`accounts.remotes`) where this tab's CLI runs; `undefined` = this computer. */
   remoteId?: string;
+  /** t-205b44c8 — the live tmux there that carries this tab's conversation past a `/clear` (attached to, never a second CLI). */
+  remoteAttachFolder?: string;
   /**
    * T404/T408 — id da sessão do Claude desta aba (o mesmo que nomeia o
    * `.jsonl`), devolvido por `pty.create` e levantado pelo TerminalPane. É a
@@ -954,8 +956,20 @@ export function App(): React.JSX.Element {
    * so and opens nothing (an empty session on this computer would hide where the conversation is).
    */
   const resumingRef = useRef(new Set<string>());
-  /** `onFail` (t-1293c818, `sessao_retomar`): the caller hears why instead of the owner's toast. */
-  const openWhereItLives = (sessionId: string, projectPath: string, open: (remote: { remoteId?: string }) => void, onFail?: (reason: string, missing?: true) => void): void => {
+  /**
+   * `onFail` (t-1293c818, `sessao_retomar`): the caller hears why instead of the owner's toast. `remote` may name the
+   * tmux to attach to (t-205b44c8): after a `/clear` on a remote place, the tmux of the place's earlier conversation
+   * still runs the CLI on this one, and the tab attaches to it instead of starting a second CLI on the same
+   * conversation; the tab still carries `sessionId` (`-r`, chat, board place).
+   */
+  const openWhereItLives = (
+    sessionId: string,
+    projectPath: string,
+    open: (remote: { remoteId?: string; remoteAttachFolder?: string }) => void,
+    onFail?: (reason: string, missing?: true) => void,
+    // A fork starts a NEW conversation from this one: it never attaches to the CLI that still runs it.
+    attachToLive = true,
+  ): void => {
     if (resumingRef.current.has(sessionId)) {
       onFail?.('ela já está sendo retomada');
       return;
@@ -966,8 +980,11 @@ export function App(): React.JSX.Element {
     const places = accountsView.remotes.map((remote) => `«${remote.label}»`).join(' e ');
     const waiting = `Procurando a conversa em ${places || 'outro lugar'}… pode levar até 20 s.`;
     const waitingTimer = places ? window.setTimeout(() => setDevModeToast(waiting), 600) : null;
+    const board = mindscape.doc.boards[projectPath];
+    // Only a resume of the place's current conversation: an older one resumed on purpose is not what that tmux carries.
+    const otherIds = attachToLive ? resumeOtherIds(board ? placeHolding(board, sessionId) : undefined, sessionId) : [];
     void window.donel.sessions
-      .whereLives(sessionId, projectPath)
+      .whereLives(sessionId, projectPath, otherIds)
       .then(
         (where) => {
           if (where.kind === 'nowhere') {
@@ -987,7 +1004,15 @@ export function App(): React.JSX.Element {
             else setDevModeToast(`Não consegui retomar: ${why}. Confira se está ligado e tente de novo.`);
             return;
           }
-          open(where.kind === 'remote' ? { remoteId: where.remoteId } : {});
+          // The main refuses a second tab on the same tmux in any case; this only says it sooner.
+          const live = where.kind === 'remote' && attachToLive ? where.liveSessionId : undefined;
+          if (live && remoteSessionAlreadyOpen(live, tabsRef.current, new Set())) {
+            const why = 'ela segue viva em outra aba deste app';
+            if (onFail) onFail(why);
+            else setDevModeToast(`Não retomei: ${why}.`);
+            return;
+          }
+          open(where.kind === 'remote' ? { remoteId: where.remoteId, ...(live ? { remoteAttachFolder: live } : {}) } : {});
         },
         // t-e72ca49e — a lookup that failed says nothing about where it lives: never fall back to this computer.
         () => {
@@ -1011,7 +1036,6 @@ export function App(): React.JSX.Element {
   const handleResumeSession = (session: SessionSummaryDto): void => {
     if (!previousSessionsProject) return;
     const project = previousSessionsProject;
-    const args = buildClaudeArgs({ continuation: { type: 'resume', sessionId: session.id } });
     setPreviousSessionsProject(null);
     openWhereItLives(session.id, project.path, (remote) => {
       addTab({
@@ -1019,7 +1043,7 @@ export function App(): React.JSX.Element {
         cwd: project.path,
         projectName: project.name,
         pinned: false,
-        launchArgs: args,
+        launchArgs: buildClaudeArgs({ continuation: { type: 'resume', sessionId: session.id } }),
         sessionType: 'claude',
         ...remote,
         // T403/T408 (004) — o `/rename` que esta sessão levou no CLI já veio no
@@ -1054,7 +1078,7 @@ export function App(): React.JSX.Element {
         customTitle: session.customTitle,
       });
       setSelectedProjectPath(project.path);
-    });
+    }, undefined, false);
   };
 
   // T008 — Launcher (ui-spec §4, FR-003, CA-1): monta o argv via
@@ -1231,14 +1255,13 @@ export function App(): React.JSX.Element {
     if (!entry) return;
 
     const project = projects.find((candidate) => candidate.path === entry.projectPath);
-    const args = buildClaudeArgs({ continuation: { type: 'resume', sessionId } });
     openWhereItLives(sessionId, entry.projectPath, (remote) => {
       addTab({
         name: entry.label,
         cwd: entry.projectPath,
         projectName: project?.name,
         pinned: false,
-        launchArgs: args,
+        launchArgs: buildClaudeArgs({ continuation: { type: 'resume', sessionId } }),
         sessionType: 'claude',
         ...remote,
         customTitle: null,
@@ -2341,7 +2364,7 @@ export function App(): React.JSX.Element {
   // Lugar principal, rule 5 — a dormant session is resumed (`-r <id>`) in a new tab of the
   // board's project; a session already open in a tab is only focused (never opened twice).
   /** The tab that resumes `sessionId` of a dormant place (the owner's double click, or `sessao_retomar`). */
-  const resumeTab = (sessionId: string, projectPath: string, name: string, remote: { remoteId?: string }, bySession?: { placeId: string; openedBy?: string }): string => {
+  const resumeTab = (sessionId: string, projectPath: string, name: string, remote: { remoteId?: string; remoteAttachFolder?: string }, bySession?: { placeId: string; openedBy?: string }): string => {
     const project = projects.find((candidate) => candidate.path === projectPath);
     return addTab(
       {
@@ -2824,7 +2847,7 @@ export function App(): React.JSX.Element {
           (remote) => {
             const refused = request.mayOpenOn(remote.remoteId);
             if (refused) resolve({ ok: false, reason: refused });
-            else resolve({ ok: true, tabId: resumeTab(sessionId, request.projectPath, name, remote, { placeId: request.placeId, ...opener }), ...remote });
+            else resolve({ ok: true, tabId: resumeTab(sessionId, request.projectPath, name, remote, { placeId: request.placeId, ...opener }), ...(remote.remoteId ? { remoteId: remote.remoteId } : {}) });
           },
           (reason, missing) => resolve({ ok: false, reason, ...(missing ? { missing } : {}) }),
         );
@@ -3904,6 +3927,7 @@ export function App(): React.JSX.Element {
                   args={tab.launchArgs}
                   providerId={tab.providerId}
                   remoteId={tab.remoteId}
+                  remoteAttachFolder={tab.remoteAttachFolder}
                   tabName={tab.name}
                   projectName={tab.projectName}
                   openedBy={tab.openedBy}
