@@ -2180,7 +2180,7 @@ export function App(): React.JSX.Element {
             });
         }
         for (const remote of boot.remotes ?? [])
-          if (remote.cwd) expected.push({ sessionId: remote.sessionId, projectPath: remote.cwd, name: remote.name, remote: true });
+          if (remote.cwd) expected.push({ sessionId: remote.sessionId, projectPath: remote.cwd, name: remote.name, remote: true, remoteId: remote.remoteId });
         if (expected.length > 0) agentBridgeRef.current.expectReturn(expected);
         if (activeId ?? lastListedId) setActiveTabId((activeId ?? lastListedId)!);
       })
@@ -2194,21 +2194,38 @@ export function App(): React.JSX.Element {
   // t-fe46929a — a place that did not answer at boot (ssh failed or slow, network still coming up) is asked again on
   // REMOTE_BOOT_RETRY_MS, only that place: before, it read as "nothing alive there" and all its places stayed
   // "fechada" until resumed one by one. A session that already has a tab is never added twice.
+  // A place still silent after the last try is said once to the owner (and to the Líder in the return report), never
+  // left as cards "fechada" with no word: its sessions may still be alive there.
   const remoteBootTakenRef = useRef(false);
+  const remoteLabelsRef = useRef(accountsView.remotes);
+  remoteLabelsRef.current = accountsView.remotes;
   useEffect(() => {
     if (!appConfig || remoteBootTakenRef.current || !window.donel.pty.remoteAlive) return;
     remoteBootTakenRef.current = true;
+    const sayGaveUp = (placeIds: readonly string[] | undefined): void => {
+      const labels = (placeIds ?? remoteLabelsRef.current.map((remote) => remote.id)).map(
+        (id) => `«${remoteLabelsRef.current.find((remote) => remote.id === id)?.label ?? id}»`,
+      );
+      const who = labels.length > 0 ? labels.join(' e ') : 'As máquinas remotas';
+      const verb = labels.length > 1 || labels.length === 0 ? 'não responderam' : 'não respondeu';
+      setDevModeToast(`${who} ${verb} na abertura: as sessões de lá ficam fechadas no quadro, mas podem seguir vivas. Retome quando a máquina voltar.`);
+    };
     const ask = (placeIds: readonly string[] | undefined, attempt: number): void => {
+      agentBridgeRef.current.noteRemoteBoot(placeIds, 'all', true);
       void window.donel.pty
         .remoteAlive(placeIds)
         .then((answer) => {
           addAlive(answer.sessions, attempt === 0);
           const delay = REMOTE_BOOT_RETRY_MS[attempt];
+          agentBridgeRef.current.noteRemoteBoot(placeIds, answer.silent, delay !== undefined);
           if (answer.silent.length > 0 && delay !== undefined) window.setTimeout(() => ask(answer.silent, attempt + 1), delay);
+          else if (answer.silent.length > 0) sayGaveUp(answer.silent);
         })
         .catch(() => {
           const delay = REMOTE_BOOT_RETRY_MS[attempt];
+          agentBridgeRef.current.noteRemoteBoot(placeIds, 'all', delay !== undefined);
           if (delay !== undefined) window.setTimeout(() => ask(placeIds, attempt + 1), delay);
+          else sayGaveUp(placeIds);
         });
     };
     const broughtBack = new Set<string>();

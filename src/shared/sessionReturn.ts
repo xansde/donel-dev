@@ -23,8 +23,15 @@ export interface ReturnProbe {
   readonly fresh?: boolean;
   /** Why it is not answering, read from its process and screen (`startTrouble`), if anything. */
   readonly trouble?: string | null;
+  /**
+   * Remote only — its place has not answered the boot yet: `retrying` while the boot still asks it again, `gave-up`
+   * once the tries ended. Absent = the place answered (or there is no remote boot to wait for).
+   */
+  readonly placeSilence?: PlaceSilence;
   readonly elapsedMs: number;
 }
+
+export type PlaceSilence = 'retrying' | 'gave-up';
 
 export type ReturnVerdict = { readonly kind: 'voltou' } | { readonly kind: 'nao-voltou'; readonly reason: string } | { readonly kind: 'pendente' };
 
@@ -32,6 +39,9 @@ export function returnVerdict(expectedSessionId: string, probe: ReturnProbe): Re
   const late = probe.elapsedMs >= RETURN_TIMEOUT_MS;
   if (probe.remote) {
     if (probe.tabFound) return { kind: 'voltou' };
+    // A silent place says nothing about its sessions: unknown wins over a confident "dead" (OpenRig restore roll call).
+    if (probe.placeSilence === 'retrying') return { kind: 'pendente' };
+    if (probe.placeSilence === 'gave-up' && late) return { kind: 'nao-voltou', reason: 'a máquina remota não respondeu na abertura; a sessão pode seguir viva lá' };
     return late ? { kind: 'nao-voltou', reason: 'a sessão não estava mais viva na máquina remota' } : { kind: 'pendente' };
   }
   // A tab added a moment ago reaches the list only on a later render.

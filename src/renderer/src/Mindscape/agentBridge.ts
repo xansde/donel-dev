@@ -47,7 +47,7 @@ import { addLink, addPlace, noteCardId, placeCardId, placeHasStarted, placeOfSes
 import type { SemaphoreState } from '../../../shared';
 import { FAXINEIRO_ROLE_ID, LEADER_ROLE_ID, type SessionRole } from '../../../shared/roles';
 import type { SendFrom } from '../chat/sendDriver';
-import { returnReport, returnVerdict, type ReturnLine } from '../../../shared/sessionReturn';
+import { returnReport, returnVerdict, type PlaceSilence, type ReturnLine } from '../../../shared/sessionReturn';
 import type { LedgerDoc } from '../../../shared/ledger/contract';
 import { noticeTaskOf, RECEIVED_TASKS_KEPT, taskHeaderLine, type TaskHeaderSource } from '../../../shared/mindscape/task-header';
 
@@ -166,6 +166,8 @@ export interface ReturnExpectation {
   readonly projectPath: string;
   readonly name: string;
   readonly remote?: boolean;
+  /** The remote place it runs on: while that place stays silent at boot, the report says so instead of "dead". */
+  readonly remoteId?: string;
   /** Came back with `--session-id` (no message before the update): no resume sign to wait for. */
   readonly fresh?: boolean;
 }
@@ -374,6 +376,9 @@ export class AgentBridge {
   private readonly launched = new Map<string, QueuedOpen>();
   /** Sessão durável — the boards whose team is coming back from an update, until their Líder heard who did. */
   private readonly returning = new Map<string, { readonly since: number; readonly entries: readonly ReturnExpectation[]; sending: boolean }>();
+  /** The remote places that did not answer the boot yet (`noteRemoteBoot`); `bootSilenceAll` = every place, no answer at all yet. */
+  private readonly bootSilence = new Map<string, PlaceSilence>();
+  private bootSilenceAll: PlaceSilence | undefined;
 
   constructor(ports: AgentBridgePorts) {
     this.ports = ports;
@@ -1188,6 +1193,22 @@ export class AgentBridge {
     this.flushUrgent();
   }
 
+  /**
+   * The boot asking the remote places for their live sessions (t-fe46929a). `asked` undefined = every place; `silent`
+   * = the ones that did not answer (`'all'`: none answered yet, or the ask failed); `willRetry` = the boot asks them
+   * again later. A session of a silent place is not judged dead while the boot still tries (`returnVerdict`).
+   */
+  noteRemoteBoot(asked: readonly string[] | undefined, silent: readonly string[] | 'all', willRetry: boolean): void {
+    const state: PlaceSilence = willRetry ? 'retrying' : 'gave-up';
+    if (asked === undefined) this.bootSilenceAll = silent === 'all' ? state : undefined;
+    if (silent === 'all') for (const id of asked ?? []) this.bootSilence.set(id, state);
+    else {
+      for (const id of asked ?? [...this.bootSilence.keys()]) this.bootSilence.delete(id);
+      for (const id of silent) this.bootSilence.set(id, state);
+    }
+    this.flushUrgent();
+  }
+
   private reportReturns(): void {
     for (const [projectPath, report] of this.returning) {
       if (report.sending) continue;
@@ -1211,6 +1232,7 @@ export class AgentBridge {
           confirmed: tab !== undefined && !this.ports.unconfirmed(tab.id),
           fresh: entry.fresh === true,
           trouble: tab ? this.ports.startTrouble(tab.id) : null,
+          ...(entry.remote ? placeSilenceOf((entry.remoteId !== undefined ? this.bootSilence.get(entry.remoteId) : undefined) ?? this.bootSilenceAll) : {}),
           elapsedMs,
         });
         if (verdict.kind === 'pendente') {
@@ -1850,4 +1872,8 @@ export class AgentBridge {
       }
     }
   }
+}
+
+function placeSilenceOf(silence: PlaceSilence | undefined): { readonly placeSilence?: PlaceSilence } {
+  return silence ? { placeSilence: silence } : {};
 }
