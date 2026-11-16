@@ -89,11 +89,18 @@ export interface RemoteSetupInput {
    * a conversation that was born in a worktree, which goes back to it.
    */
   readonly worktree?: string;
+  /**
+   * t-205b44c8 — only attach to the live tmux of `sid` (a resume of the conversation it carries past a `/clear`): when
+   * it is gone, the setup answers `gone` and prepares nothing in its folder.
+   */
+  readonly attachOnly?: boolean;
 }
 
 export type RemoteSetupResult =
   | { readonly kind: 'new'; readonly remoteDir: string }
   | { readonly kind: 'alive'; readonly remoteDir: string; readonly meta: RemoteSessionMeta }
+  /** t-205b44c8 — `attachOnly` and the tmux was not there: nothing was prepared. */
+  | { readonly kind: 'gone' }
   | { readonly kind: 'error'; readonly message: string };
 
 export interface RemoteDiscovered {
@@ -210,6 +217,7 @@ export function buildRemoteSetupScript(input: RemoteSetupInput): string {
     // of the reattached tab would follow a transcript folder the CLI never wrote (it names it after the physical cwd).
     '  printf "DONEL_ALIVE\\n"; { (cd "$(cat "$S/dir")" 2>/dev/null && pwd -P) || cat "$S/dir"; }; tr -d "\\n" < "$S/meta.json"; printf "\\n"; exit 0',
     'fi',
+    ...(input.attachOnly ? ['echo DONEL_GONE; exit 0'] : []),
     'command -v tmux >/dev/null 2>&1 || { echo "DONEL_ERR O tmux não está instalado no lugar remoto."; exit 3; }',
     'command -v claude >/dev/null 2>&1 || { echo "DONEL_ERR O claude não está instalado no lugar remoto."; exit 3; }',
     'if [ ! -d "$D" ]; then',
@@ -272,6 +280,7 @@ export function parseRemoteSetupOutput(stdout: string, code: number | null, stde
   const lines = stdout.split(/\r?\n/);
   const errLine = lines.find((line) => line.startsWith('DONEL_ERR'));
   if (errLine) return { kind: 'error', message: errLine.slice('DONEL_ERR'.length).trim() };
+  if (lines.includes('DONEL_GONE')) return { kind: 'gone' };
   const newAt = lines.indexOf('DONEL_NEW');
   if (newAt !== -1 && lines[newAt + 1]) return { kind: 'new', remoteDir: lines[newAt + 1].trim() };
   const aliveAt = lines.indexOf('DONEL_ALIVE');
@@ -486,6 +495,19 @@ interface LiveRemote {
   ended?: true;
 }
 
+export interface RemoteHeldFolder {
+  readonly sshTarget: string;
+  readonly folder: string;
+}
+
+/**
+ * Pure — t-205b44c8: another tab of this app already holds the tmux `donel-<folder>` on that place. A second one there
+ * would be two clients of the same CLI, and closing either would end it under the other.
+ */
+export function remoteFolderAlreadyLive(held: readonly RemoteHeldFolder[], sshTarget: string, folder: string): boolean {
+  return held.some((entry) => entry.sshTarget === sshTarget && entry.folder === folder);
+}
+
 /** The live remote tabs of this run of the app: transcript mirrors and the end of the remote session. */
 export class RemoteSessionRegistry {
   private readonly live = new Map<string, LiveRemote>();
@@ -547,9 +569,12 @@ export class RemoteSessionRegistry {
     return join(this.mirrorRoot, `${sid}.jsonl`);
   }
 
-  /** The tab was spawned: starts mirroring the transcript; returns the local mirror path. */
-  attach(ptyId: string, sshTarget: string, sid: string, remoteDir: string): string {
-    const entry: LiveRemote = { sshTarget, folder: sid, sid, remoteDir, transcript: remoteTranscriptPath(remoteDir, sid), pump: null };
+  /**
+   * The tab was spawned: starts mirroring the transcript of `sid`; returns the local mirror path. `folder` is the tmux
+   * session the tab attached to, when it is not the conversation's own (t-205b44c8: one that carries `sid` past a `/clear`).
+   */
+  attach(ptyId: string, sshTarget: string, sid: string, remoteDir: string, folder: string = sid): string {
+    const entry: LiveRemote = { sshTarget, folder, sid, remoteDir, transcript: remoteTranscriptPath(remoteDir, sid), pump: null };
     this.live.set(ptyId, entry);
     return this.startPump(entry, entry.transcript, sid);
   }
@@ -557,6 +582,11 @@ export class RemoteSessionRegistry {
   /** Oráculo na VPS (fatia 4): the live remote tabs, by the folder their MCP gate knows them by. */
   liveSessions(): { readonly ptyId: string; readonly folder: string }[] {
     return [...this.live].map(([ptyId, entry]) => ({ ptyId, folder: entry.folder }));
+  }
+
+  /** t-205b44c8 — the tmux folder each live remote tab holds, by place; one whose end was already asked is let go. */
+  heldFolders(): RemoteHeldFolder[] {
+    return [...this.live.values()].filter((entry) => !entry.ended).map((entry) => ({ sshTarget: entry.sshTarget, folder: entry.folder }));
   }
 
   /** `/clear`, `/resume` or fork inside the remote session: follow the new transcript. */
