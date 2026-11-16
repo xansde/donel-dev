@@ -58,7 +58,7 @@ export interface BoardCronStore {
   pendingLeaderRequests(host: string): Promise<readonly LeaderRequestRow[]>;
   markCron(cardId: string, kind: 'woken' | 'charged' | 'leader'): Promise<void>;
   resolveLeaderRequest(id: number, status: 'done' | 'failed', reason: string): Promise<void>;
-  touchLane(projectId: string, leaderPlace: string, leaderSession: string | undefined): Promise<void>;
+  touchLane(projectId: string, leaderPlace: string, leaderSession: string | undefined, force?: boolean): Promise<void>;
   overview(): Promise<readonly import('../shared/board/page').OverviewRow[]>;
   /** Every card not done, plus the ones done in the last 3 days, for the page. */
   pageCards(): Promise<readonly import('../shared/board/page').PageCard[]>;
