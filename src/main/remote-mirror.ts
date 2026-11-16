@@ -167,9 +167,15 @@ export interface MirrorHubTiming {
   readonly startupTimeoutMs: number;
   /** Waits before each new try, by tries in a row (the last one repeats): as the tab's own relink. */
   readonly backoffMs: readonly number[];
+  /**
+   * A place whose shared mirror gave up (not for lack of python3) is asked again this long after, and again each
+   * time it still does not come up: a slow minute on the place no longer leaves it on one tail per tab until the app
+   * restarts (t-f0fb2f2e, 15/11).
+   */
+  readonly retryAfterMs: number;
 }
 
-export const DEFAULT_MIRROR_TIMING: MirrorHubTiming = { startupTimeoutMs: 20_000, backoffMs: RELINK_DELAYS_MS };
+export const DEFAULT_MIRROR_TIMING: MirrorHubTiming = { startupTimeoutMs: 20_000, backoffMs: RELINK_DELAYS_MS, retryAfterMs: 10 * 60_000 };
 
 /**
  * The shared ssh of one place and the transcripts it follows. A try that ends without a single transcript byte (it
@@ -193,7 +199,8 @@ export class MirrorHub {
     private readonly sshTarget: string,
     private readonly spawnMirror: SpawnMirror,
     private readonly timing: MirrorHubTiming,
-    private readonly onGiveUp: (follows: readonly MirrorFollow[], reason: string) => void = () => undefined,
+    /** `permanent`: the place has no python3, so asking it again later is no use. */
+    private readonly onGiveUp: (follows: readonly MirrorFollow[], reason: string, permanent: boolean) => void = () => undefined,
   ) {}
 
   get size(): number {
@@ -239,13 +246,13 @@ export class MirrorHub {
     return list[Math.min(Math.max(tries, 1), list.length) - 1] ?? 0;
   }
 
-  private giveUp(reason: string): void {
+  private giveUp(reason: string, permanent = false): void {
     if (this.gaveUp) return;
     this.gaveUp = true;
     this.close();
     const moved = [...this.follows.values()];
     this.follows.clear();
-    this.onGiveUp(moved, reason);
+    this.onGiveUp(moved, reason, permanent);
   }
 
   /** Starts the shared ssh when there is none; true when it was already running (the caller sends its own line). */
@@ -311,7 +318,7 @@ export class MirrorHub {
   /** One try ended. `worked`: it carried transcript bytes (a dropped link, not a broken mirror). */
   private failed(code: number | null, reason: string, worked: boolean): void {
     if (this.closed || this.follows.size === 0) return;
-    if (code === MIRROR_NO_PYTHON_EXIT) return this.giveUp('o lugar não tem python3');
+    if (code === MIRROR_NO_PYTHON_EXIT) return this.giveUp('o lugar não tem python3', true);
     this.failures = worked ? 1 : this.failures + 1;
     if (!worked && this.failures >= MIRROR_MAX_FAILURES) return this.giveUp(`${this.failures} tentativas seguidas sem funcionar; a última: ${reason}`);
     this.restartTimer = setTimeout(() => {
@@ -339,6 +346,40 @@ export class MirrorHub {
     const stdin = this.child?.stdin;
     if (stdin && !stdin.destroyed && stdin.writable) stdin.write(line);
   }
+}
+
+/**
+ * One try of the shared ssh with nothing to follow: `true` once the multiplexer says it is up (`R`), `false` when it
+ * exits, fails or stays silent for `timeoutMs`. The try is ended either way; it never carries a transcript.
+ */
+export function probeMirror(spawnMirror: SpawnMirror, sshTarget: string, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    let child: MirrorChild;
+    try {
+      child = spawnMirror(sshTarget);
+    } catch {
+      resolve(false);
+      return;
+    }
+    let settled = false;
+    const finish = (up: boolean): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.stdin?.end();
+      child.kill();
+      resolve(up);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    const decoder = new MirrorFrameDecoder();
+    child.stdin?.on('error', () => undefined);
+    child.stdout?.on('data', (chunk: Buffer) =>
+      decoder.push(chunk, { frame: () => undefined, ended: () => undefined, ready: () => finish(true) }),
+    );
+    child.on('close', () => finish(false));
+    child.on('error', () => finish(false));
+    if (child.stdin && !child.stdin.destroyed && child.stdin.writable) child.stdin.write(mirrorBootLine());
+  });
 }
 
 /** The real shared ssh: `ssh … bash -l -s` with stdin and stdout piped, keepalive like the tab's. */

@@ -1,0 +1,4 @@
+{
+  "title": "Retomar acha a conversa em pasta com atalho na VPS",
+  "text": "Quando a pasta do projeto na VPS era um atalho para outra pasta, como a da Homologação, retomar um lugar fechado dizia que a conversa não estava em lugar nenhum, mesmo com ela lá. Agora o retomar acha a conversa, inclusive a que estava numa worktree. E, se o espelho do chat de uma VPS cair num momento de carga, o app volta a tentá-lo sozinho a cada 10 minutos, sem precisar ser reiniciado."
+}
