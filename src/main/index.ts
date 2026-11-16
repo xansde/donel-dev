@@ -283,7 +283,7 @@ import { AccountEngine } from './accounts/account-engine';
 import { AccountEngineHost } from './accounts/account-engine-host';
 // 011-contas-e-provedores, etapa 3, Fase 2 (D3) — registro em memória
 // compartilhado entre reconstruções do motor (item 1 do Bloco 3).
-import { createReconnectRegistry } from './accounts/reconnect-registry';
+import { createFileReconnectStore, createReconnectRegistry } from './accounts/reconnect-registry';
 // Fase 2 (revisão, R1) — uma renovação por conta de cada vez entre reconstruções do motor.
 import { createRefreshCoordinator } from './accounts/refresh-coordinator';
 // 011-contas-e-provedores, etapa 3, Fase 1 — planos PUROS de "remover conta"
@@ -1114,7 +1114,9 @@ function broadcastAccountsChanged(view: AccountsViewDto): void {
  * `createEngine` criasse o seu próprio, um rebuild (add/remove conta,
  * troca de mod) perderia toda marca de "precisa reconectar" pendente.
  */
-const accountsReconnectRegistry = createReconnectRegistry();
+// t-205b44c8 (16/11) — persisted in `<userData>/accounts-reconnect.json` (ids only), so reopening the app does not
+// refresh again an account already known dead. The path is resolved on first use, after `app.setName`.
+const accountsReconnectRegistry = createReconnectRegistry({ store: createFileReconnectStore(() => join(app.getPath('userData'), 'accounts-reconnect.json')) });
 
 /** Lugares remotos — `ssh` do sistema, sem senha (a rede da pessoa autentica: Tailscale, chave). */
 const accountsRemoteClaudeState = createRemoteClaudeState();
@@ -4495,6 +4497,7 @@ function registerAccountsIpcHandlers(): void {
     appConfig = { ...appConfig, accounts: plan.config };
     persistAppConfig();
     applyAccountsEngineConfig();
+    accountsReconnectRegistry.clear(id); // t-205b44c8 — the persisted mark of a removed account goes with it.
 
     if (accountsVaultPath) {
       try {
