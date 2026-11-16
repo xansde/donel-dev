@@ -446,20 +446,23 @@ export const SETUP_RETRY_DELAYS_MS: readonly number[] = [1_000, 3_000, 10_000, 3
 
 /**
  * Pure — whether a setup answer is the ssh transport failing (the script never answered), never the place saying no:
- * an exit 255 (ssh's own code, e.g. `kex_exchange_identification: Connection reset`), a timeout, or a spawn that
- * never ran. Any `DONEL_` line means the script ran there, and its answer stands.
+ * an exit 255 (ssh's own code, e.g. `kex_exchange_identification: Connection reset`) or a spawn that never ran. Any
+ * `DONEL_` line means the script ran there, and its answer stands. A timeout is not retried: the try already waited
+ * 180 s (a login waiting for a Tailscale check, a clone still running there), and four more would hold the tab
+ * "connecting" for a quarter of an hour and take the place's login slot each time.
  */
 export function isSetupTransportFailure(answer: RemoteScriptAnswer): boolean {
+  if (answer.timedOut) return false;
   if (answer.stdout.split(/\r?\n/).some((line) => line.startsWith('DONEL_'))) return false;
-  if (answer.code === 255 || answer.timedOut) return true;
+  if (answer.code === 255) return true;
   return answer.code === null && answer.stdout.trim() === '';
 }
 
 /**
  * Runs the setup and, while it fails by ssh transport only (`isSetupTransportFailure`), waits and runs it again; every
  * try takes the place's login slot again (`runRemoteScript`). Returns the first answer that is not a transport
- * failure, or the last failure once `delays` ran out. The setup script is idempotent: a live session answers from a
- * read-only branch, and the rest rewrites the same files, reuses the folder and the worktree when they exist.
+ * failure, or the last failure once `delays` ran out. A transport failure means the script never started there, so
+ * the next try starts from the same state.
  */
 export async function runSetupWithRetry(
   run: () => Promise<RemoteScriptAnswer>,

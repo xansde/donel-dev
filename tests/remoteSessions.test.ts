@@ -112,11 +112,15 @@ describe('sessões remotas', () => {
       expect(retries).toEqual([]);
     });
 
-    it('tempo esgotado depois de um DONEL_NEW parcial não tenta de novo', async () => {
+    it('tempo esgotado não tenta de novo, com ou sem resposta parcial', async () => {
       const partial: Answer = { code: null, stdout: 'DONEL_NEW\n', stderr: '', timedOut: true };
       const fake = runOf([partial, alive]);
       expect(await runSetupWithRetry(fake.run, opts([], []))).toEqual(partial);
       expect(fake.calls()).toBe(1);
+      const silent: Answer = { code: null, stdout: '', stderr: '', timedOut: true };
+      const again = runOf([silent, alive]);
+      expect(await runSetupWithRetry(again.run, opts([], []))).toEqual(silent);
+      expect(again.calls()).toBe(1);
     });
 
     it('esgotadas as esperas, devolve a última falha', async () => {
