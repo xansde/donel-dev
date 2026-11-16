@@ -1968,6 +1968,8 @@ async function spawnRemoteClaudeSession(
       statusLine: planStatusLineBridge({ mode: statusLineBridgeModeSetting, userStatusLine: null, chatEnabled: appConfig.chat.enabled }),
       roleScope,
       keyDirs: remoteKeyDirs,
+      // t-205b44c8 — which conversation this tmux carries now (a `/clear` moves it on); a resume reads it there.
+      conversationMarkPath: `$HOME/${REMOTE_SESSIONS_DIR}/${correlationId}/current`,
     });
     files.push({ name: 'settings.json', content: `${JSON.stringify(settings, null, 2)}\n` });
   } else {

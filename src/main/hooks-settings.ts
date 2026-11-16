@@ -129,6 +129,17 @@ export interface SessionHooksSettingsInput {
   readonly roleScope?: RoleScopeSettings | null;
   /** The folders that hold this session's keys (`keyFileReadDenyRules`): the session's tools may not read them. */
   readonly keyDirs?: readonly string[];
+  /**
+   * t-205b44c8 — remote sessions only (a posix shell runs the hook): the file where each SessionStart writes the
+   * conversation the CLI is on now (`startup`, `resume`, `clear`). The tmux keeps the id it was born with; this says
+   * which conversation it carries, so a resume never attaches to a tmux that runs another one.
+   */
+  readonly conversationMarkPath?: string;
+}
+
+/** Pure — the SessionStart command that writes the hook's `session_id` to `path` (atomic; empty when absent). */
+export function conversationMarkCommand(path: string): string {
+  return `sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\\([A-Za-z0-9-]*\\)".*/\\1/p' | head -n 1 > "${path}.tmp" && mv "${path}.tmp" "${path}"`;
 }
 
 export interface SessionHooksSettingsContent extends RoleScopeSettings {
@@ -204,7 +215,14 @@ export function buildSessionHooksSettings(input: SessionHooksSettingsInput): Ses
   } else {
     command = `powershell -NoProfile -ExecutionPolicy Bypass -File "${forwarderScriptPath ?? ''}"`;
   }
-  hooks.SessionStart = [{ hooks: [{ type: 'command', command, timeout: 10 }] }];
+  hooks.SessionStart = [
+    {
+      hooks: [
+        { type: 'command', command, timeout: 10 },
+        ...(input.conversationMarkPath ? [{ type: 'command', command: conversationMarkCommand(input.conversationMarkPath), timeout: 5 }] : []),
+      ],
+    },
+  ];
 
   const statusLine = input.statusLine ? buildStatusLineSetting(input.statusLine, input) : null;
   return {

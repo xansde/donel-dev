@@ -831,7 +831,9 @@ export class RemoteSessionRegistry {
  * Pure — answers `DONEL_HAS` when the transcript of `sid` exists for the project folder (`homeRelativeDir`, as
  * `remoteDirFor` gives it). The CLI names the transcript folder after the absolute path, so the slug is taken there.
  * `otherIds` (t-205b44c8): the place's other conversations; each one whose tmux is alive there (the setup's ALIVE test)
- * comes first as `DONEL_LIVE <id>`: after a `/clear` that tmux still runs the CLI, now on `sid`.
+ * AND whose CLI is on `sid` now comes first as `DONEL_LIVE <id>`: after a `/clear` that tmux still runs the CLI, on
+ * `sid`. "On `sid`" is the `current` mark its SessionStart hook writes (`conversationMarkCommand`): a tmux left alive
+ * on its own conversation (a renewal whose `endRemote` failed) or born before the mark existed is never attached to.
  */
 export function buildHasTranscriptScript(homeRelativeDir: string, sid: string, otherIds: readonly string[] = []): string {
   assertSessionId(sid);
@@ -841,7 +843,7 @@ export function buildHasTranscriptScript(homeRelativeDir: string, sid: string, o
   return [
     ...others.map(
       (id) =>
-        `if [ -f ${folder(id)}/meta.json" ] && [ -f ${folder(id)}/dir" ] && tmux -L ${REMOTE_TMUX_SOCKET} has-session -t ${shQuote(`donel-${id}`)} 2>/dev/null; then echo DONEL_LIVE ${id}; fi`,
+        `if [ -f ${folder(id)}/meta.json" ] && [ -f ${folder(id)}/dir" ] && [ "$(cat ${folder(id)}/current" 2>/dev/null)" = ${shQuote(sid)} ] && tmux -L ${REMOTE_TMUX_SOCKET} has-session -t ${shQuote(`donel-${id}`)} 2>/dev/null; then echo DONEL_LIVE ${id}; fi`,
     ),
     // Physical path: the CLI's folder slug comes from its real cwd, never from a symlink on the way (t-f0fb2f2e).
     `D=$(cd "$HOME"/${shQuote(homeRelativeDir)} 2>/dev/null && pwd -P) || { echo DONEL_HASNT; exit 0; }`,

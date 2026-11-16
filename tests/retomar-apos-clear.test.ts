@@ -4,7 +4,7 @@
 // se liga a ele, mas a aba segue levando B (o espelho, o lugar no quadro). Roda os scripts de verdade (bash), com tmux
 // falso no PATH.
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { EventEmitter } from 'node:events';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -20,6 +20,7 @@ import {
   remoteTranscriptPath,
 } from '../src/main/remote-session';
 import { resumeOtherIds } from '../src/shared/sessions';
+import { conversationMarkCommand } from '../src/main/hooks-settings';
 
 const sidA = 'aaaaaaaa-1111-4111-8111-111111111111';
 const sidB = 'bbbbbbbb-2222-4222-8222-222222222222';
@@ -33,8 +34,11 @@ afterEach(() => {
   home = '';
 });
 
-/** A place where `donel-<alive>` runs (folder and meta of it there) and the transcript of B exists for the project. */
-function place(alive: string | null): NodeJS.ProcessEnv {
+/**
+ * A place where `donel-<alive>` runs (folder and meta of it there) and the transcript of B exists for the project.
+ * `current`: the conversation that tmux's CLI is on (the mark its SessionStart hook writes); `null` = no mark.
+ */
+function place(alive: string | null, current: string | null = sidB): NodeJS.ProcessEnv {
   home = realpathSync(mkdtempSync(join(tmpdir(), 'donel-clear-')));
   const bin = join(home, 'bin');
   mkdirSync(bin);
@@ -53,6 +57,7 @@ function place(alive: string | null): NodeJS.ProcessEnv {
     mkdirSync(s, { recursive: true });
     writeFileSync(join(s, 'meta.json'), `${JSON.stringify(meta(alive))}\n`);
     writeFileSync(join(s, 'dir'), project);
+    if (current) writeFileSync(join(s, 'current'), `${current}\n`);
   }
   return { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH ?? ''}` };
 }
@@ -102,6 +107,26 @@ function fakeMirror() {
 }
 
 describe.skipIf(process.platform === 'win32')('retomar depois de /clear num lugar remoto', () => {
+  // Revisão do #447: o tmux de A ficou vivo na própria conversa A (renovação cujo endRemote falhou), ou nasceu antes da
+  // marca. A retomada de B não pode se colar nele: a tela mostraria A e o texto digitado iria para a conversa errada.
+  it('tmux de A vivo mas levando A (ou sem marca): a retomada de B não se liga a ele', async () => {
+    for (const current of [sidA, null]) {
+      const env = place(sidA, current);
+      const answers = await findRemoteTranscript(places, 'seazone/proj', sidB, [sidA], bash(env));
+      expect(decideWhereLives(false, answers, places)).toEqual({ kind: 'remote', remoteId: 'homolog' });
+    }
+  });
+
+  it('o hook SessionStart grava a conversa em que o CLI está, e a troca no /clear', () => {
+    home = realpathSync(mkdtempSync(join(tmpdir(), 'donel-mark-')));
+    const mark = join(home, 'current');
+    const hook = (payload: string) => execFileSync('sh', ['-c', conversationMarkCommand(mark)], { input: payload, encoding: 'utf8' });
+    hook(JSON.stringify({ session_id: sidA, transcript_path: '/x/a b/ç.jsonl', hook_event_name: 'SessionStart', source: 'startup' }));
+    expect(readFileSync(mark, 'utf8').trim()).toBe(sidA);
+    hook(JSON.stringify({ session_id: sidB, hook_event_name: 'SessionStart', source: 'clear' }));
+    expect(readFileSync(mark, 'utf8').trim()).toBe(sidB);
+  });
+
   it('com donel-A vivo levando B, a retomada de B se liga ao tmux de A, mas a aba espelha o transcript de B', async () => {
     const env = place(sidA);
     const answers = await findRemoteTranscript(places, 'seazone/proj', sidB, [sidA], bash(env));
