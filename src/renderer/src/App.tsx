@@ -24,6 +24,7 @@ import type {
   ProjectInfo,
   ProjectScanMode,
   ProviderSummaryDto,
+  RemoteAliveSession,
   SemaphoreStateInfo,
   SessionSummaryDto,
   TabColorToken,
@@ -340,6 +341,9 @@ function omitKey<T>(record: Record<string, T>, key: string): Record<string, T> {
 
 /** Líder único na VPS — how long the Líder on the new place has to take the first message (a cold CLI on a busy VPS). */
 const LIDER_MOVE_WAIT_MS = 240_000;
+
+/** t-fe46929a — waits before asking again a remote place that did not answer at boot (about 18 min in all). */
+const REMOTE_BOOT_RETRY_MS = [10_000, 30_000, 60_000, 120_000, 300_000, 600_000];
 
 export function App(): React.JSX.Element {
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
@@ -2186,39 +2190,54 @@ export function App(): React.JSX.Element {
 
   // Sessões remotas — sessions that kept running on a remote place while the app was closed come back as
   // tabs, attached to the same tmux session (`-r` only matters if it ended in the meantime).
+  // t-fe46929a — a place that did not answer at boot (ssh failed or slow, network still coming up) is asked again on
+  // REMOTE_BOOT_RETRY_MS, only that place: before, it read as "nothing alive there" and all its places stayed
+  // "fechada" until resumed one by one. A session that already has a tab is never added twice.
   const remoteBootTakenRef = useRef(false);
   useEffect(() => {
     if (!appConfig || remoteBootTakenRef.current || !window.donel.pty.remoteAlive) return;
     remoteBootTakenRef.current = true;
-    void window.donel.pty
-      .remoteAlive()
-      .then((alive) => {
-        for (const entry of alive) {
-          if (tabsRef.current.some((tab) => tab.claudeSessionId === entry.sessionId)) continue;
-          const id = addTab(
-            {
-              name: entry.name,
-              cwd: entry.cwd,
-              projectName: entry.projectName,
-              pinned: false,
-              sessionType: 'claude',
-              launchArgs: withResumeArgs(entry.launchArgs, entry.sessionId),
-              remoteId: entry.remoteId,
-              ...(entry.openedBy ? { openedBySession: true, openedBy: entry.openedBy } : {}),
-              // Líder único na VPS — it comes back as the Líder (the Jobu talks to it), not as an ordinary tab.
-              ...(entry.roleId ? { roleId: entry.roleId } : {}),
-              ...(entry.leaderOfAll ? { leaderOfAll: true } : {}),
-            },
-            false,
-          );
-          // Só os Líderes nas abas — a session a Líder opened on the remote stays out of the tab bar after a restart.
-          if (entry.openedBy) agentBridgeRef.current.adoptOpened(id, entry.openedBy);
-          // A restore, not a gesture: it takes the focus as before, without leaving the Oráculo. The Líder único is
-          // reached through the Jobu: it never takes the focus.
-          else if (!entry.leaderOfAll) setActiveTabId(id);
-        }
-      })
-      .catch(() => undefined);
+    const ask = (placeIds: readonly string[] | undefined, attempt: number): void => {
+      void window.donel.pty
+        .remoteAlive(placeIds)
+        .then((answer) => {
+          addAlive(answer.sessions, attempt === 0);
+          const delay = REMOTE_BOOT_RETRY_MS[attempt];
+          if (answer.silent.length > 0 && delay !== undefined) window.setTimeout(() => ask(answer.silent, attempt + 1), delay);
+        })
+        .catch(() => {
+          const delay = REMOTE_BOOT_RETRY_MS[attempt];
+          if (delay !== undefined) window.setTimeout(() => ask(placeIds, attempt + 1), delay);
+        });
+    };
+    const addAlive = (alive: readonly RemoteAliveSession[], takeFocus: boolean): void => {
+      for (const entry of alive) {
+        if (tabsRef.current.some((tab) => tab.claudeSessionId === entry.sessionId)) continue;
+        const id = addTab(
+          {
+            name: entry.name,
+            cwd: entry.cwd,
+            projectName: entry.projectName,
+            pinned: false,
+            sessionType: 'claude',
+            launchArgs: withResumeArgs(entry.launchArgs, entry.sessionId),
+            remoteId: entry.remoteId,
+            ...(entry.openedBy ? { openedBySession: true, openedBy: entry.openedBy } : {}),
+            // Líder único na VPS — it comes back as the Líder (the Jobu talks to it), not as an ordinary tab.
+            ...(entry.roleId ? { roleId: entry.roleId } : {}),
+            ...(entry.leaderOfAll ? { leaderOfAll: true } : {}),
+          },
+          false,
+        );
+        // Só os Líderes nas abas — a session a Líder opened on the remote stays out of the tab bar after a restart.
+        if (entry.openedBy) agentBridgeRef.current.adoptOpened(id, entry.openedBy);
+        // A restore, not a gesture: it takes the focus as before, without leaving the Oráculo. The Líder único is
+        // reached through the Jobu: it never takes the focus. A place that answered only on a later try does not take
+        // it either: the owner is already working in another tab by then.
+        else if (!entry.leaderOfAll && takeFocus) setActiveTabId(id);
+      }
+    };
+    ask(undefined, 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appConfig]);
 

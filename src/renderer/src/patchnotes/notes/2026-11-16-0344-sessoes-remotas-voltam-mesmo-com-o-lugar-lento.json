@@ -1,0 +1,1 @@
+{ "title": "Sessões remotas voltam mesmo com o lugar lento", "text": "Quando o app reabre e um lugar remoto demora a responder, as sessões vivas dele não ficam mais como fechadas: o app pergunta de novo sozinho por alguns minutos e as abas voltam ligadas à mesma sessão, sem abrir outra. As que nasceram numa pasta com atalho voltam mostrando a conversa." }

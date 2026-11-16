@@ -206,7 +206,9 @@ export function buildRemoteSetupScript(input: RemoteSetupInput): string {
     `S="$HOME/${REMOTE_SESSIONS_DIR}/$SID"`,
     `D="$HOME"/${shQuote(input.homeRelativeDir)}`,
     `if [ -f "$S/meta.json" ] && [ -f "$S/dir" ] && tmux -L ${REMOTE_TMUX_SOCKET} has-session -t "donel-$SID" 2>/dev/null; then`,
-    '  printf "DONEL_ALIVE\\n"; cat "$S/dir"; tr -d "\\n" < "$S/meta.json"; printf "\\n"; exit 0',
+    // `pwd -P` here too (t-fe46929a): a session born before #440 wrote its logical folder in `$S/dir`, and the mirror
+    // of the reattached tab would follow a transcript folder the CLI never wrote (it names it after the physical cwd).
+    '  printf "DONEL_ALIVE\\n"; { (cd "$(cat "$S/dir")" 2>/dev/null && pwd -P) || cat "$S/dir"; }; tr -d "\\n" < "$S/meta.json"; printf "\\n"; exit 0',
     'fi',
     'command -v tmux >/dev/null 2>&1 || { echo "DONEL_ERR O tmux não está instalado no lugar remoto."; exit 3; }',
     'command -v claude >/dev/null 2>&1 || { echo "DONEL_ERR O claude não está instalado no lugar remoto."; exit 3; }',
@@ -305,7 +307,9 @@ function lastLine(text: string): string {
   return last.length > 300 ? `${last.slice(0, 300)}…` : last;
 }
 
-/** Pure — lists the live sessions with their meta. */
+const DISCOVER_END = 'DONEL_DISCOVER_END';
+
+/** Pure — lists the live sessions with their meta, then the end mark. */
 export function buildDiscoverScript(): string {
   return [
     `for m in "$HOME"/${REMOTE_SESSIONS_DIR}/*/meta.json; do`,
@@ -314,8 +318,17 @@ export function buildDiscoverScript(): string {
     `  tmux -L ${REMOTE_TMUX_SOCKET} has-session -t "donel-$sid" 2>/dev/null || continue`,
     '  printf "DONEL_META "; tr -d "\\n" < "$m"; printf "\\n"',
     'done',
+    `printf "${DISCOVER_END}\\n"`,
     '',
   ].join('\n');
+}
+
+/**
+ * t-fe46929a — the place listed all its live sessions. Without the mark, an ssh that failed, timed out or was cut
+ * midway read as "no live session there", and the place's tabs did not come back after a restart.
+ */
+export function discoverAnswered(stdout: string): boolean {
+  return stdout.split(/\r?\n/).some((line) => line.trim() === DISCOVER_END);
 }
 
 export function parseDiscoverOutput(stdout: string): RemoteSessionMeta[] {
@@ -804,13 +817,51 @@ export async function findRemoteTranscript(
   );
 }
 
-/** Live sessions of each place. A place that does not answer is left out. */
-export async function discoverRemoteSessions(places: ReadonlyArray<{ readonly id: string; readonly sshTarget: string }>): Promise<RemoteDiscovered[]> {
-  const found = await Promise.all(
+/** How one place answered the discover (main-events.log keeps it: a silent place is why its tabs did not come back). */
+export interface DiscoverPlaceOutcome {
+  readonly id: string;
+  readonly sshTarget: string;
+  /** The place listed all its live sessions (the end mark came). */
+  readonly answered: boolean;
+  readonly found: number;
+  readonly code: number | null;
+  readonly timedOut: boolean;
+  /** The ssh's last words, when the place did not answer. */
+  readonly said?: string;
+}
+
+export interface DiscoverResult {
+  readonly sessions: RemoteDiscovered[];
+  readonly places: DiscoverPlaceOutcome[];
+}
+
+type RunDiscover = (sshTarget: string, script: string, timeoutMs: number) => ReturnType<typeof runRemoteScript>;
+
+/**
+ * Live sessions of each place. A place that did not answer (ssh failed, timed out, cut midway) is said so in `places`,
+ * with whatever sessions it did list: the caller asks it again instead of taking it for a place with nothing alive.
+ */
+export async function discoverRemoteSessions(
+  places: ReadonlyArray<{ readonly id: string; readonly sshTarget: string }>,
+  run: RunDiscover = (sshTarget, script, timeoutMs) => runRemoteScript(sshTarget, script, timeoutMs),
+): Promise<DiscoverResult> {
+  const answers = await Promise.all(
     places.map(async (place) => {
-      const { stdout } = await runRemoteScript(place.sshTarget, buildDiscoverScript(), 20_000);
-      return parseDiscoverOutput(stdout).map((meta) => ({ remoteId: place.id, meta }));
+      const ran = await run(place.sshTarget, buildDiscoverScript(), 20_000);
+      const sessions = parseDiscoverOutput(ran.stdout).map((meta) => ({ remoteId: place.id, meta }));
+      const answered = !ran.timedOut && discoverAnswered(ran.stdout);
+      const said = answered ? '' : lastLine(ran.stderr);
+      const outcome: DiscoverPlaceOutcome = {
+        id: place.id,
+        sshTarget: place.sshTarget,
+        answered,
+        found: sessions.length,
+        code: ran.code,
+        timedOut: ran.timedOut,
+        ...(said ? { said } : {}),
+      };
+      return { sessions, outcome };
     }),
   );
-  return found.flat();
+  return { sessions: answers.flatMap((answer) => answer.sessions), places: answers.map((answer) => answer.outcome) };
 }

@@ -365,6 +365,12 @@ export interface RemoteAliveSession {
   readonly leaderOfAll?: boolean;
 }
 
+/** `pty.remoteAlive` — the live sessions found and the places that did not answer (asked again later; t-fe46929a). */
+export interface RemoteAliveAnswer {
+  readonly sessions: readonly RemoteAliveSession[];
+  readonly silent: readonly string[];
+}
+
 /**
  * Prefixo reconhecido pelo renderer (TerminalPane) para distinguir o erro
  * "claude não encontrado" (CA-5) de qualquer outra falha de `pty:create`.
@@ -440,8 +446,11 @@ export interface DonelPtyApi {
   kill(ptyId: string): void;
   /** Ring buffer de ~50 linhas (ANSI stripado) — plan.md ponto 8, hover-preview futuro. */
   getPreview(ptyId: string): Promise<string[]>;
-  /** Sessões remotas — sessions still alive on the remote places, to reopen at boot. */
-  remoteAlive(): Promise<RemoteAliveSession[]>;
+  /**
+   * Sessões remotas — sessions still alive on the remote places, to reopen at boot. `placeIds` asks only those places
+   * (the ones that did not answer before); `silent` are the places that did not answer this time.
+   */
+  remoteAlive(placeIds?: readonly string[]): Promise<RemoteAliveAnswer>;
   /** `sessao_religar` — registers again the app's keys of a live session (hooks, MCP); relinks it when "sem ligação". */
   relinkTools(ptyId: string): Promise<RelinkToolsResult>;
   /** Retorna função de unsubscribe. */

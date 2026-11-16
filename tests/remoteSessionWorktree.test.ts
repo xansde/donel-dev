@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, w
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { buildHasTranscriptScript, buildRemoteSetupScript, parseHasTranscriptOutput, parseRemoteSetupOutput } from '../src/main/remote-session';
+import { buildHasTranscriptScript, buildRemoteSetupScript, parseHasTranscriptOutput, parseRemoteSetupOutput, remoteTranscriptPath } from '../src/main/remote-session';
 import { agentOpenWorktree, remoteSpawnWorktree } from '../src/shared/sessionWorktree';
 
 // t-58b67066 — sessões abertas na VPS dividiam a pasta do projeto: uma trocou a branch dela embaixo da outra.
@@ -126,6 +126,23 @@ describe.skipIf(process.platform === 'win32')('sessão aberta na VPS numa worktr
     expect(setup(env, sidB)).toEqual({ kind: 'new', remoteDir: wt });
     expect(runClaudeSh(env, sidB)).toBe(wt);
     expect(has('cccccccc-3333-4333-8333-333333333333')).toBe('hasnt');
+  });
+
+  // t-fe46929a (16/11) — as sessões vivas da Homologações nasceram antes do #440, com a pasta lógica gravada. Ao religar
+  // na reabertura do app (tmux vivo), o espelho tem de seguir a conversa pelo caminho físico, onde o CLI a grava.
+  it('sessão viva que nasceu com a pasta lógica: o religamento devolve o caminho físico e se gruda no tmux vivo', () => {
+    const { env, repo } = sandbox();
+    const real = join(home, 'opt', 'proj');
+    mkdirSync(join(home, 'opt'));
+    execFileSync('mv', [repo, real]);
+    symlinkSync(real, repo);
+    expect(setup(env, sidA)).toEqual({ kind: 'new', remoteDir: real });
+    // O que o setup antigo gravava (pwd lógico), e agora o tmux da sessão está vivo.
+    writeFileSync(join(home, '.donel', 's', sidA, 'dir'), `${repo}\n`);
+    writeFileSync(join(home, 'bin', 'tmux'), '#!/bin/sh\nexit 0\n');
+    const alive = setup(env, sidA);
+    expect(alive).toMatchObject({ kind: 'alive', remoteDir: real, meta: { sid: sidA } });
+    expect(remoteTranscriptPath(alive.kind === 'alive' ? alive.remoteDir : '', sidA)).toBe(`.claude/projects/${real.replace(/[^a-zA-Z0-9]/g, '-')}/${sidA}.jsonl`);
   });
 
   it('o nome que vira pasta e branch só sai do app, nunca do texto livre', () => {

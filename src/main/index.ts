@@ -94,7 +94,7 @@ import type {
   PtyCreateOptions,
   PtyCreateResult,
   RelinkToolsResult,
-  RemoteAliveSession,
+  RemoteAliveAnswer,
   PhaseArchivedPayload,
   PtyExitInfo,
   RemoteSwitchOutcome,
@@ -2124,10 +2124,17 @@ function registerPtyIpcHandlers(): void {
     onMirrorBack: (sshTarget) => logMainEvent('remote-mirror-back', { sshTarget }),
   });
   ipcMain.handle(PTY_CHANNELS.relinkTools, (_event, ptyId: unknown): RelinkToolsResult => relinkSessionTools(ptyId));
-  ipcMain.handle(PTY_CHANNELS.remoteAlive, async (): Promise<RemoteAliveSession[]> => {
-    const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
-    const found = await discoverRemoteSessions(places);
-    return found.map(({ remoteId, meta }) => remoteAliveFromMeta(remoteId, meta));
+  ipcMain.handle(PTY_CHANNELS.remoteAlive, async (_event, placeIds: unknown): Promise<RemoteAliveAnswer> => {
+    const all = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
+    const only = Array.isArray(placeIds) ? new Set(placeIds.filter((id): id is string => typeof id === 'string')) : null;
+    const places = only ? all.filter((place) => only.has(place.id)) : all;
+    const { sessions, places: outcomes } = await discoverRemoteSessions(places);
+    // t-fe46929a — one line per place: a place that did not answer is why its tabs did not come back.
+    for (const outcome of outcomes) logMainEvent('remote-discover', { ...outcome });
+    return {
+      sessions: sessions.map(({ remoteId, meta }) => remoteAliveFromMeta(remoteId, meta)),
+      silent: outcomes.filter((outcome) => !outcome.answered).map((outcome) => outcome.id),
+    };
   });
 
   // Líder único na VPS — the conversation goes to the place the Líder moves to BEFORE it opens there, by stream and
