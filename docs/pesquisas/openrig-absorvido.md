@@ -1,8 +1,41 @@
 # OpenRig — registro de absorção
 
-Último commit absorvido: df98bcde9b5406de69a2b4fe18b9f4e16e0b325a
+Último commit absorvido: 0b25d8612b1f5df7400196f1a7965c2d81202048
 
 Referência de design do Mindscape (github.com/mvschwarz/openrig). Procedimento na skill `absorver-openrig`. Cada rodada lista o que virou PR, o que ficou adiado, o que espera o dono e o que foi descartado.
+
+## 2026-11-16 — df98bcd..0b25d86
+
+61 commits do OpenRig; versões novas: v0.7.16.
+
+### Vale → PR
+
+- **Lugar remoto que não respondeu na reabertura é dito como sem resposta, nunca como sessão morta** (plano: item 09, salvar e reabrir o quadro inteiro, "diz, por cartão, o que voltou", com a régua do item 04: desconhecido vence resposta confiante e errada; sessão que não morre). Origem: OpenRig `e20c1f9`, `669be28`, `b93e6a3`, `021032b`. PR: https://github.com/xansde/donel-dev/pull/446. Teste primeiro: em `tests/sessao-duravel.test.ts`, "lugar remoto calado na abertura não vira sessão morta no relato ao Líder" falhou antes (com `placeSilence` "retrying", `returnVerdict` dava nao-voltou "a sessão não estava mais viva na máquina remota" em vez de pendente) e passou depois. Verify verde pela fila (`flock ~/.donel/verify.lock`), na árvore mesclada com `origin/staging` f3d4e51d: 121 arquivos, 1514 testes (1 pulado), build ok.
+
+### Vale → adiado
+
+Nenhum (teto de 3 PRs não foi atingido).
+
+### Vale → pendente para o dono
+
+Nenhum novo. Seguem abertas as perguntas das seções anteriores (fila durável do item 13, desde 10/11; resposta do "esperando você" em nome do dono, desde 08/11; pausa até o reset do limite de uso, desde 12/11).
+
+### Descartado
+
+- Restore/snapshot, resultado honesto por nó (shell vazio, rollback, retomada em subconjunto): a ideia que vale (dizer o desconhecido em vez de afirmar morte) virou o PR #446. O resto o Donel já tem: o relato único ao Líder com "voltaram / não voltaram + motivo" (`sessionReturn.ts`, `agentBridge.expectReturn`). Shell vazio não ocorre, porque o tmux remoto roda `exec claude` (`remote-session.ts`) e, quando o claude sai, a sessão do tmux morre junto. Rollback de stop e prova por argumentos do Codex são mecânica de tmux/daemon.
+- Recuperação/handover, sucessor e retomada da conversa original: no Donel o lugar segue o mesmo na renovação em voo. A passagem já é confirmada (PR #321) e a sessão nova que responde atrasada já é adotada pelo id (PR #439, aberto). Pai do fork pelo processo, pertença de painel e `CLAUDE_CONFIG_DIR` relativo são mecânica de tmux/daemon. O `a323172` é só doc.
+- Fila durável: acordar, handoff e etiquetas: continuação do item 13. A pergunta já está com o dono desde 10/11 (repetida em 15/11) e sem resposta, então não se abre outra. A mecânica (wake no binding atual, custódia, tags, sucessor na lista, varredura de travados) é daemon/SQLite, sem onde encaixar hoje.
+- Conexões declaram capacidades e rotulam desfecho de entrega: o Donel já tem igual. O envio devolve desfecho tipado (`DeliveryOutcome` entrou / na-fila / não-foi em `tabSend`/`agentBridge`) e a passagem da renovação só conta como confirmada com prova (PR #321). O watchdog de contexto com arquivo nomeado é do daemon; no Donel o limite da renovação lê a statusline da própria aba.
+- Estado honesto: diálogo de confiança e leitura de tela: o Donel já tem igual ou melhor. `blockingScreen` (`src/shared/chat/screen.ts:217`) checa o `trustDialogKind` antes de tudo e não usa o cabeçalho "Claude Code v" como marca de pronto. A tela de um lugar sem processo já não é lida. A recusa de login do Codex não se aplica, porque o Donel não lê a tela do Codex.
+- Down/release de seat: problema de tmux compartilhado e de sessão adotada por fora. O Donel é dono dos PTYs por `ptyId` e do tmux remoto que ele mesmo criou; o kill guard e a faxina só agem no que o app abriu.
+- Workflow, execution view e scope: slices e SPEC em YAML/frontmatter e auditoria de escopo do CLI rig (topologia escrita à mão, fora de escopo). A esteira no Mindscape (item 15) não tem slices nem lista de Requirements R.
+- Compaction: o Donel não tem compactação gerenciada nem runner Pi. A renovação em voo (item 07) cobre o handoff, e o falso alarme de "readiness desconhecida" é da fila de avisos do daemon.
+- Onboarding, operador e skills de mensagem ao humano: docs e skills do próprio OpenRig (instalador, operador, relay no painel do tmux). O "mandar só o que mudou" o Donel já tem nas rotinas do item 20 (dedup, histerese e teto por janela). Responder o ask em nome do dono é a pergunta que está com ele desde 08/11. Os commits `e783652` e `2f8756` nem resolvem no clone.
+- MCP e CLI: mensagens e ajuda: textos de instrução do MCP e do CLI rig (ask-which, roster, seletor de modelo, URLs de hub, política herdada do time), sem equivalente: o MCP donel resolve o lugar pela aba e não tem roster, grant nem hub. O bearer ao gate do Mission Control é do daemon.
+- Daemon: tmux, telemetria e desempenho: mecânica interna do daemon (socket tmux, telemetria de runner, fases de startup, log do Codex, worker OpenShell, layout do Codex 0.167), sem ideia nova para o Donel.
+- Slack opt-in do OpenRig: integração própria do OpenRig, fora do plano. O Slack do dono passa só pela Composio e pelo Theo, fora do app.
+- Release, docs e roadmap: packaging, release, pins e docs do próprio OpenRig (0.7.16, openrig-core 0.1.31).
+- Testes e infra de CI: CI, fixtures de tmux e migração de Vitest do próprio OpenRig. O Donel segue a regra de testes enxutos.
 
 ## 2026-11-15 — b958a75..df98bcd
 
