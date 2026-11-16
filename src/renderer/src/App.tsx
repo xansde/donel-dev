@@ -967,6 +967,8 @@ export function App(): React.JSX.Element {
     projectPath: string,
     open: (remote: { remoteId?: string; remoteAttachFolder?: string }) => void,
     onFail?: (reason: string, missing?: true) => void,
+    // A fork starts a NEW conversation from this one: it never attaches to the CLI that still runs it.
+    attachToLive = true,
   ): void => {
     if (resumingRef.current.has(sessionId)) {
       onFail?.('ela já está sendo retomada');
@@ -980,7 +982,7 @@ export function App(): React.JSX.Element {
     const waitingTimer = places ? window.setTimeout(() => setDevModeToast(waiting), 600) : null;
     const board = mindscape.doc.boards[projectPath];
     // Only a resume of the place's current conversation: an older one resumed on purpose is not what that tmux carries.
-    const otherIds = resumeOtherIds(board ? placeHolding(board, sessionId) : undefined, sessionId);
+    const otherIds = attachToLive ? resumeOtherIds(board ? placeHolding(board, sessionId) : undefined, sessionId) : [];
     void window.donel.sessions
       .whereLives(sessionId, projectPath, otherIds)
       .then(
@@ -1003,7 +1005,7 @@ export function App(): React.JSX.Element {
             return;
           }
           // The main refuses a second tab on the same tmux in any case; this only says it sooner.
-          const live = where.kind === 'remote' ? where.liveSessionId : undefined;
+          const live = where.kind === 'remote' && attachToLive ? where.liveSessionId : undefined;
           if (live && remoteSessionAlreadyOpen(live, tabsRef.current, new Set())) {
             const why = 'ela segue viva em outra aba deste app';
             if (onFail) onFail(why);
@@ -1076,7 +1078,7 @@ export function App(): React.JSX.Element {
         customTitle: session.customTitle,
       });
       setSelectedProjectPath(project.path);
-    });
+    }, undefined, false);
   };
 
   // T008 — Launcher (ui-spec §4, FR-003, CA-1): monta o argv via
