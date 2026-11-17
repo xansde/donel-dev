@@ -5,7 +5,8 @@
 // The key is read at each call and never logged, never put in an error message.
 //
 // The schema `celular` is not exposed in PostgREST: two RPCs in `public`, security definer, that only the service_role
-// runs (supabase/004-celular-oraculo-consome.sql in the phone app's repo):
+// runs (supabase/004-celular-oraculo-consome.sql in the phone app's repo; 005-celular-decisao-assinada.sql adds the
+// signature and the delivery he saw to what `tomar` returns):
 // - `celular_decisoes_tomar(p_limite)` takes the pending rows (`aplicada_em is null`) and reserves them for 10 min;
 // - `celular_decisao_marcar(p_pedido, p_resultado)` closes a row, only while `aplicada_em` is still empty.
 //
@@ -34,6 +35,8 @@ const TAKE_LIMIT = 10;
 const BATCH_BUDGET_MS = 9 * 60_000;
 export const STALE_DECISION = 'a entrega mudou depois da decisão no celular';
 export const UNSIGNED_DECISION = 'sem assinatura';
+/** A signed row that arrives while the phone is switched off in Preferences: refused for that, not for its signature. */
+export const PHONE_OFF = 'o celular está desligado nas Preferências do Oráculo';
 /** A side without a label on a card whose options close that way: the decision does not say which path. */
 export const OPTION_REQUIRED = 'a carta tem opções e a decisão não disse qual';
 /** The first field of the signed message: a new scheme gets a new name, never a new meaning for this one. */
@@ -220,10 +223,12 @@ export type DecisaoPlano =
  * - `opcao` the exact generic of the side ("Aceitar"/"Rejeitar") while no option closes that way → the side, without an
  *   option (on `nao`, his words or the label are the reason);
  * - any other label speaks of a card that is no longer there → refused ("a entrega mudou");
- * - no `opcao` is the generic of the side too: decided only while no option closes that way; otherwise refused, since
- *   a card with paths (main or the alfa) never closes without saying which one.
- * `comentario` is his own option ("Escreva no lugar do arraste") on a delivered card; on the Revisor's sample (an
- * accepted task still before him) there is nothing to decide, so his words go on the card.
+ * - no `opcao` is the generic of the side too: decided only while no option closes that way; otherwise refused
+ *   (OPTION_REQUIRED), since a card with paths (main or the alfa) never closes without saying which one. A named
+ *   generic on such a card is a label of a card that is no longer there (STALE_DECISION);
+ * - the Revisor's sample (an accepted task still before him) is a card without options, as the port draws it.
+ * `comentario` is his own option ("Escreva no lugar do arraste") on a delivered card; on the sample there is nothing to
+ * decide, so his words go on the card. Any other state is left to the ledger, which refuses it.
  */
 export function planoDe(row: DecisaoRow, task: LedgerTask | undefined): DecisaoPlano {
   const notes = paginasTexto(row.paginas);
@@ -231,7 +236,7 @@ export function planoDe(row: DecisaoRow, task: LedgerTask | undefined): DecisaoP
   const base = { pedidoId: row.pedido, itemId: row.tarefa };
   if (row.lado === 'comentario') {
     const texto = joinLines(words, notes);
-    if (task && task.state !== 'entregue') return { kind: 'comentar', input: { ...base, texto } };
+    if (task && task.state === 'aceita') return { kind: 'comentar', input: { ...base, texto } };
     return { kind: 'decidir', input: { ...base, decisao: 'aceitar', motivo: null, opcao: OWN_OPTION, texto } };
   }
   const closes = row.lado === 'sim' ? 'aceita' : 'rejeitada';
@@ -245,7 +250,8 @@ export function planoDe(row: DecisaoRow, task: LedgerTask | undefined): DecisaoP
   const label = cleanText(row.opcao).trim();
   // No task: the port says it is gone.
   if (!task) return decide(null, words || label || null);
-  const options = lastDelivery(task)?.forOwner?.options ?? [];
+  // The Revisor's sample shows the old card, without options (the port draws it with `forOwner` undefined).
+  const options = task.state === 'aceita' ? [] : (lastDelivery(task)?.forOwner?.options ?? []);
   if (label) {
     const option = options.find((entry) => entry.label.trim() === label);
     if (option) return option.closes === closes ? decide(option.label, words || null) : { kind: 'recusar', message: STALE_DECISION };
@@ -301,6 +307,8 @@ export interface DecisoesConsumerDeps {
   readonly port: Pick<MobileLedgerPort, 'decidir' | 'comentar'>;
   /** The paired phones' signature check; null while the phone's core is not up (rows wait, never refused for it). */
   readonly verifier: () => DecisaoVerifier | null;
+  /** The phone is switched on in Preferences (off = no signature counts; the row says so). Absent = on. */
+  readonly phoneOn?: () => boolean;
   readonly ledger: () => LedgerService;
   /** The ledger went back to the PC: nothing is applied nor marked here. */
   readonly returned: () => boolean;
@@ -407,6 +415,10 @@ export function createDecisoesConsumer(deps: DecisoesConsumerDeps): DecisoesCons
     if (!row.assinatura) {
       deps.log?.(`[decisoes] ${row.tarefa}: linha sem assinatura, recusada.`);
       return { mark: `recusada: ${UNSIGNED_DECISION}` };
+    }
+    if (deps.phoneOn && !deps.phoneOn()) {
+      deps.log?.(`[decisoes] ${row.tarefa}: o celular está desligado nas Preferências, recusada.`);
+      return { mark: `recusada: ${PHONE_OFF}` };
     }
     const signer = verify(decisaoMessage(row), row.assinatura);
     if (!signer) {
