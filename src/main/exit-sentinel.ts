@@ -114,7 +114,12 @@ const RULES: readonly KillRule[] = [
     find: String.raw`${WORD_START}wmic(?:\.exe)?${WORD_END}[^&|;<>\r\n]{0,200}?(?:delete|terminate)`,
     keep: String.raw`^wmic(?:\.exe)?|(?<=[\s"'(])(?:process|where|delete|call|terminate)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:processid|parentprocessid|handle)\s*=\s*['"]?[0-9]{1,10}|(?<![A-Za-z0-9_])(?:name|caption)\s*(?:=|like)\s*(?:${QUOTED})|(?<=\s)/node:[A-Za-z0-9._-]{1,63}`,
   },
-  // a script run by the process: the file and at most two folders above it, never its arguments nor a URL
+  // a script run by the process: the file and at most two folders above it, never its arguments nor a URL; a quoted
+  // path that starts like one (C:\, \\srv, /, ./, ~) may have spaces
+  {
+    find: String.raw`(?<=["'])(?:[A-Za-z]:[\\/]|\\\\|\.{0,2}[\\/]|~[\\/])[^"'|&;<>\r\n]{0,200}\.(?:ps1|psm1|sh|bash|js|mjs|cjs|ts|py|cmd|bat|vbs)(?=["'])`,
+    keep: String.raw`(?:[^\\/]{1,80}[\\/]){0,2}[^\\/]{1,80}$`,
+  },
   {
     find: String.raw`(?<![^\s"'=(,])(?![A-Za-z][A-Za-z0-9+.-]*://)[^\s"'|&;<>()]{1,200}\.(?:ps1|psm1|sh|bash|js|mjs|cjs|ts|py|cmd|bat|vbs)(?![A-Za-z0-9])`,
     keep: String.raw`(?:[^\\/]{1,80}[\\/]){0,2}[^\\/]{1,80}$`,

@@ -118,6 +118,11 @@ const IDENTITY_LINES: ReadonlyArray<readonly [string, string]> = [
   ['powershell.exe -NoProfile -File C:/Users/compu/seazone/scripts/limpa.ps1', 'seazone/scripts/limpa.ps1'],
   ['powershell.exe -File C:\\Users\\compu\\seazone\\scripts\\kill-orphan-electron-processes.ps1', 'seazone\\scripts\\kill-orphan-electron-processes.ps1'],
   ['node.exe scripts/killDonelProcess.js 6700', 'scripts/killDonelProcess.js'],
+  ['cmd.exe /c "C:\\tools\\mata app.cmd"', 'C:\\tools\\mata app.cmd'],
+  [
+    '"C:\\Program Files\\nodejs\\node.exe" "C:\\Program Files\\nodejs\\node_modules\\@anthropic-ai\\claude-code\\cli.js"',
+    '@anthropic-ai\\claude-code\\cli.js',
+  ],
   ['bash.exe -c "$HOME/seazone/donel/scripts/kill.sh 6700"', 'donel/scripts/kill.sh'],
   ['bash.exe -c "pkill -f donel-dev-alfa-electron-main"', 'pkill -f donel-dev-alfa-electron-main'],
   ['bash.exe -c "pkill -f \\"Donel Dev Alfa\\""', 'pkill -f \\"Donel Dev Alfa\\"'],
