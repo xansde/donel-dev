@@ -35,6 +35,8 @@ import type { BoardConfig } from './board-client';
 import { RETURNED_REASON } from './devolvido';
 
 export const DECISOES_CONFIG_FILE = 'decisoes.json';
+/** Beside `decisoes.json`: one JSON line per marked row with page notes (`NotasPaginasEntry`), mode 600, append only. */
+export const NOTAS_PAGINAS_FILE = 'notas-paginas.jsonl';
 const TIMEOUT_MS = 15_000;
 const FIRST_DELAY_MS = 5_000;
 const ROUND_MS = 15_000;
@@ -259,30 +261,46 @@ export function importNote(criadaEm: string): string {
 /** The comment of a `conferir` gets its own repeat key, never the decision's (the uuid plus a suffix no uuid has). */
 export const importCommentKey = (pedido: string): string => `${pedido}-c`;
 
+/** One page's 👍/👎 as the owner left it on the card. */
+export interface NotaPagina {
+  readonly pagina: number;
+  readonly nome: string;
+  readonly nota: 'up' | 'down';
+}
+
+/** What `notas-paginas.jsonl` keeps per row (the bridge cron writes the same shape, without `resultado`). */
+export interface NotasPaginasEntry {
+  readonly tarefa: string;
+  readonly pedido: string;
+  readonly criada_em: string;
+  readonly paginas: readonly NotaPagina[];
+  /** The mark the row got in the queue (applied or refused). */
+  readonly resultado: string;
+}
+
 /**
- * The owner's 👍/👎 per page as one line of plain text (it rides in the decision's own text, no new field in the
- * ledger): `Notas por página: 👍 p1 capa · 👎 p3 provas`. Only pages 1–12 with `up`/`down`; the name is cleaned to
- * letters, digits, spaces and hyphens. '' when there is no valid note. The line never starts with a mark.
+ * The owner's 👍/👎 per page (t-8762b0ac, 17/11): design feedback, kept apart from the decision. They never ride in a
+ * decision's or a comment's text (that text is the message to whoever did the task); they go to `notas-paginas.jsonl`.
+ * Only pages 1–12 with `up`/`down`; the name is cleaned to letters, digits, spaces and hyphens. Sorted by page.
  */
-export function paginasTexto(paginas: unknown): string {
-  if (!Array.isArray(paginas)) return '';
-  const notes = paginas
+export function paginasNotas(paginas: unknown): NotaPagina[] {
+  if (!Array.isArray(paginas)) return [];
+  return paginas
     .slice(0, MAX_PAGES)
-    .flatMap((entry): { pagina: number; text: string }[] => {
+    .flatMap((entry): NotaPagina[] => {
       if (!isRecord(entry)) return [];
       const { pagina, nota } = entry;
       if (typeof pagina !== 'number' || !Number.isInteger(pagina) || pagina < 1 || pagina > MAX_PAGES) return [];
       if (nota !== 'up' && nota !== 'down') return [];
       const nome = typeof entry.nome === 'string' ? entry.nome.replace(/[^\p{L}\p{N} -]/gu, '').replace(/\s+/g, ' ').trim().slice(0, MAX_PAGE_NAME).trim() : '';
-      return [{ pagina, text: `${nota === 'up' ? '👍' : '👎'} p${pagina}${nome ? ` ${nome}` : ''}` }];
+      return [{ pagina, nome, nota }];
     })
     .sort((a, b) => a.pagina - b.pagina);
-  return notes.length ? `Notas por página: ${notes.map((note) => note.text).join(' · ')}` : '';
 }
 
-/** The owner's words cut so that words + notes fit the ledger's limit: the cut falls on the words, never the notes. */
-function fitWords(words: string, notes: string): string {
-  const budget = MAX_COMMENT_CHARS - (notes ? notes.length + 1 : 0);
+/** The owner's words cut so that words + tail fit the ledger's limit: the cut falls on the words, never the tail. */
+function fitWords(words: string, tail = ''): string {
+  const budget = MAX_COMMENT_CHARS - (tail ? tail.length + 1 : 0);
   // Cut in UTF-16 units (the ledger's measure), never leaving half of a surrogate pair (jsonb refuses it).
   return words.trim().slice(0, Math.max(0, budget)).replace(/[\uD800-\uDBFF]$/, '').trim();
 }
@@ -338,21 +356,19 @@ export type DecisaoPlano =
  * decide, so his words go on the card. Any other state is left to the ledger, which refuses it.
  */
 export function planoDe(row: DecisaoRow, task: LedgerTask | undefined): DecisaoPlano {
-  const notes = paginasTexto(row.paginas);
-  const words = fitWords(cleanText(row.comentario), notes);
+  const words = fitWords(cleanText(row.comentario));
   const base = { pedidoId: row.pedido, itemId: row.tarefa };
   if (row.lado === 'comentario') {
-    const texto = joinLines(words, notes);
-    if (task && task.state === 'aceita') return { kind: 'comentar', input: { ...base, texto } };
-    return { kind: 'decidir', input: { ...base, decisao: 'aceitar', motivo: null, opcao: OWN_OPTION, texto } };
+    if (task && task.state === 'aceita') return { kind: 'comentar', input: { ...base, texto: words } };
+    return { kind: 'decidir', input: { ...base, decisao: 'aceitar', motivo: null, opcao: OWN_OPTION, texto: words } };
   }
   const closes = row.lado === 'sim' ? 'aceita' : 'rejeitada';
   const decide = (opcao: string | null, motivo: string | null): DecisaoPlano => ({
     kind: 'decidir',
     input:
       closes === 'rejeitada'
-        ? { ...base, decisao: 'rejeitar', motivo, ...(opcao ? { opcao } : {}), texto: notes }
-        : { ...base, decisao: 'aceitar', motivo: null, ...(opcao ? { opcao } : {}), texto: joinLines(words, notes) },
+        ? { ...base, decisao: 'rejeitar', motivo, ...(opcao ? { opcao } : {}) }
+        : { ...base, decisao: 'aceitar', motivo: null, ...(opcao ? { opcao } : {}), texto: words },
   });
   const label = cleanText(row.opcao).trim();
   // No task: the port says it is gone.
@@ -421,6 +437,8 @@ export interface DecisoesConsumerDeps {
   readonly returned: () => boolean;
   /** The Líder's list of rows to import (`importar` in `decisoes.json`), read at each round. Absent = none. */
   readonly importar?: () => ImportList;
+  /** Appends a marked row's page notes to `notas-paginas.jsonl` (only rows with valid notes). A failure is a log line. */
+  readonly guardarNotas?: (entry: NotasPaginasEntry) => void | Promise<void>;
   readonly log?: (line: string) => void;
 }
 
@@ -510,6 +528,18 @@ export function createDecisoesConsumer(deps: DecisoesConsumerDeps): DecisoesCons
       // false = closed meanwhile. The guard against an annulment racing the ledger is in the SQL, not here: an annulment
       // (not written yet) must respect `tomada_em`, and the batch stops before the 10-min reservation ends.
       deps.log?.(`[decisoes] ${row.tarefa} ${resultado}${outcome.note ? ` (${outcome.note})` : ''}${marked ? '' : ' (a linha já estava marcada por outro)'}`);
+      if (marked) await keepNotes(row, resultado);
+    }
+  }
+
+  /** The row's page notes, recorded beside the decision (never in its text); a failure never undoes the mark. */
+  async function keepNotes(row: DecisaoRow, resultado: string): Promise<void> {
+    const paginas = paginasNotas(row.paginas);
+    if (!paginas.length || !deps.guardarNotas) return;
+    try {
+      await deps.guardarNotas({ tarefa: row.tarefa, pedido: row.pedido, criada_em: row.criada_em, paginas, resultado });
+    } catch (error) {
+      deps.log?.(`[decisoes] ${row.tarefa}: as notas por página não foram guardadas: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -543,8 +573,7 @@ export function createDecisoesConsumer(deps: DecisoesConsumerDeps): DecisoesCons
    * already recorded. No signature, delivery or mapping check runs, and the verifier is never asked.
    */
   async function importRow(row: DecisaoRow, item: ImportItem, task: LedgerTask | undefined): Promise<RowOutcome> {
-    const pageNotes = paginasTexto(row.paginas);
-    const tail = joinLines(pageNotes, importNote(row.criada_em));
+    const tail = importNote(row.criada_em);
     const words = fitWords(item.texto ?? cleanText(row.comentario), tail);
     const base = { pedidoId: row.pedido, itemId: row.tarefa };
     const suffix = ' (importação)';

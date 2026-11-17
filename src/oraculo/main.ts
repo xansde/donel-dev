@@ -11,9 +11,10 @@
 // ~/.donel/board/supabase.json; missing = no `card_*` tools).
 // `<dir>/decisoes.json` (t-52bf8b45, same shape as the board's config): the phone app's decision queue in Supabase,
 // applied to the ledger here; missing = the queue is off. Its optional `importar` (t-8762b0ac) lists the unsigned rows
-// the Líder vouched for (`readImportList` in decisoes.ts).
+// the Líder vouched for (`readImportList` in decisoes.ts). The owner's per-page notes of each marked row go to
+// `<dir>/notas-paginas.jsonl`, never into a decision's text.
 
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { createSystemConfigIoDeps } from '../main/config-store';
@@ -32,7 +33,7 @@ import { createGateHandler, GATE_PORT, mergePicture, startGateServer, tunnelForw
 import { ORACLE_PORT, startOracleServer, type OracleServer } from './server';
 import { createDaemonVigia } from './vigia';
 import { createBoardClient, readBoardConfig, type BoardStore } from './board-client';
-import { createDecisoesConsumer, createDecisoesQueue, DECISOES_CONFIG_FILE, readImportList } from './decisoes';
+import { createDecisoesConsumer, createDecisoesQueue, DECISOES_CONFIG_FILE, NOTAS_PAGINAS_FILE, readImportList } from './decisoes';
 
 export const TOKEN_HASH_FILE = 'pc.token.sha256';
 
@@ -175,6 +176,8 @@ async function main(): Promise<void> {
     phoneOn: () => celular?.state().enabled ?? false,
     // t-8762b0ac — the rows the Líder vouched for (`importar`), applied without a signature, read at each round too.
     importar: () => readImportList(join(dir, DECISOES_CONFIG_FILE)),
+    // t-8762b0ac (17/11) — the owner's per-page notes are design feedback: kept here, beside the decision, never in a message.
+    guardarNotas: (entry) => appendFileSync(join(dir, NOTAS_PAGINAS_FILE), `${JSON.stringify(entry)}\n`, { mode: 0o600 }),
     ledger: () => ledger,
     returned: guard.returned,
     log: (line) => console.log(line),
