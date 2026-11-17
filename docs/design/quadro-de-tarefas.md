@@ -25,9 +25,15 @@ ajustes de contrato do serviço do PC (t-c3fbe852). Base: `~/seazone/_docs/arqui
 - **Supabase pessoal `hotkktdvbjpibkigpopq`, schema novo `board`** (exposto no PostgREST; cabeçalhos
   `Accept-Profile`/`Content-Profile: board`). Não o staging Seazone compartilhado.
 - **Escrita só por funções (RPC)**, nunca `insert/update` direto: a chave de serviço passa por cima da RLS, então as
-  regras moram no banco (`board.create_card`, `board.move_card`, `board.touch_lane`, `board.request_leader`; justificar é `move_card` para a
-  mesma coluna). A mesma
-  regra existe em TS puro em `src/shared/board/` para teste e para recusar cedo.
+  regras moram no banco (`create_card`, `move_card`, `reclassify_card`, `touch_lane`, `request_leader`, `mark_cron`,
+  `resolve_leader_request`; justificar é `move_card` para a mesma coluna). As funções são `security definer` com
+  `search_path` fixo e a chave só tem `select` nas tabelas: um PATCH direto é recusado (`permission denied`). A mesma
+  regra existe em TS puro em `src/shared/board/` para teste e para recusar cedo; `docs/board/probe.sql` prova as
+  regras num banco (transação com ROLLBACK, roda até no de produção sem deixar rastro).
+- **Quem é o Líder:** quem chama atesta (`p_as_leader`). Só a chave de serviço alcança as funções, e quem a tem é o
+  daemon (que lê do retrato: o Líder que o DONO pôs, `isBoardOrchestrator`), o cron e o serviço do PC (nunca Líder).
+  O retrato manda: Líder novo tem o poder na hora e toma a raia (`touch_lane` com `p_force`), quem perdeu o papel perde
+  o poder na próxima chamada, e o Líder novo nunca herda a conversa do anterior.
 - **Chave:** a que já existe na VPS (`~/.config/donel-espelho/service-key`, usada pela ponte) e a do cofre do PC.
   Nenhuma credencial nova na V1. Papel Postgres restrito ao schema `board` fica como melhoria (é credencial nova:
   pede OK do dono).
@@ -80,10 +86,13 @@ board.lanes(                -- uma raia por projeto
 )
 ```
 
-Regras no banco (`move_card` recusa com erro legível):
+Regras no banco (`move_card` recusa com erro legível), as mesmas de `checkMove`:
+- **Quem move:** o Líder move qualquer cartão; Entrada, A fazer, Esperando você, dar o lugar e a frente são só dele.
+  Os outros só movem cartão seu (`place_id`), ou pegam um sem dono de A fazer para Fazendo.
 - `blocked` sem `justification` + `justification_link` + `justification_due` futuro.
-- `waiting_owner` se `actor <> lanes.leader_place` do projeto, ou sem `owner_reason` na lista.
-- `done` sem `done_summary`. Movimento com `version` velha (corrida).
+- `waiting_owner` sem o Líder ou sem `owner_reason` na lista.
+- `done` sem `done_summary`. Movimento com `version` velha (corrida) ou sem ator.
+- Texto só de brancos (espaço, tab, quebra de linha) não conta, igual no SQL (`board.has_text`) e no TS (`/\S/`).
 - Cartão em `doing` pode carregar justificativa ("parado de propósito"); ela some ao mudar de stage.
 
 Views (a API de leitura de qualquer cliente: celular, página, PC):
@@ -93,7 +102,10 @@ Views (a API de leitura de qualquer cliente: celular, página, PC):
 - `board.lanes_without_leader`: raias com `leader_place` nulo ou `leader_seen_at` há mais de 30 min, com
   `leader_place` e `leader_session` (para retomar em vez de abrir outro).
 - `board.owner_feed`: o que chega ao Jobu numa consulta só: todo movimento para `waiting_owner` e os pedidos do dono
-  (`requested_by='dono'`) que chegaram a `done`, com `owner_reason`, `done_summary`, `owner_request`, ordenado por id.
+  (`requested_by='dono'`) que chegaram a `done`, com `title`, `owner_reason`, `done_summary`, `owner_request`,
+  ordenado por id.
+- `board.reclassify_card(card, project, actor)`: tira um cartão de `sem-projeto` (pasta sem alias). Não é tool de
+  sessão: pasta sem projeto cria o cartão, mas não lista nem move nada lá.
 
 ## 3. Contrato para o serviço do PC (Dev 65ef0caf, t-c3fbe852)
 
@@ -118,9 +130,20 @@ migração (antes disso, 406). Os parâmetros das RPCs têm prefixo `p_` (ver `d
 
 ## 4. Tools das sessões (servidas pelo daemon da VPS; `card_*`, não `quadro_*`, que é do Mindscape)
 
-- `card_create` (cai em `inbox`, ou em `todo` se quem cria é o Líder), `card_move {id, to, note, justification?,
-  owner_reason?, done_summary?}`, `card_justify {id, text, link, due}`, `card_list {project?, stage?}`.
-- O ator é o lugar da sessão (do retrato), nunca um argumento. `waiting_owner` recusado para quem não é Líder.
+- `card_create {titulo, pedido, quemPediu, criterio?, frente?, coluna?, lugar?}` (cai em `inbox`; o Líder pode pedir
+  `todo` e um lugar do próprio quadro), `card_move {id, para, nota?, justificativa?, motivoDono?, resumo?, lugar?,
+  frente?, versao?}`, `card_justify {id, justificativa, versao?}`, `card_list {coluna?, todos?}` (sempre o projeto da
+  própria pasta).
+- O ator é o lugar da sessão (do retrato), nunca um argumento, e o "é Líder" também sai do retrato.
+- `card_create` repetido em até 10 min com o mesmo conteúdo devolve o mesmo cartão (reenvio depois de timeout); o
+  mesmo pedido mais tarde é cartão novo.
+- Implementação (PR 2): `src/shared/board/tools.ts` (argumentos em pt-BR, como as `tarefa_*`), `src/oraculo/board-tools.ts`
+  e `board-client.ts`. O portão responde as `card_*` **antes** do túnel, com o PC ligado ou não, e acrescenta as
+  `card_*` à lista de ferramentas que o PC devolve. Desligado sem `~/.donel/board/supabase.json`
+  (`{url, serviceKeyFile}`): nada fixo no código, que vai ao repo público. Fazendo é de quem move (grava lugar e
+  conversa); só o Líder dá o cartão a outro lugar (`lugar`).
+- Atenção no deploy: o bundle instalado do daemon é de 09/11. Um bundle novo leva tudo o que entrou desde então
+  (inclusive o vigia de travas da fase 2), não só as `card_*`.
 - **Andamento passa a ser `card_move`.** O `tarefa_andamento` do Oráculo fica para quem tem carta lá. Trocar a
   regra nas instruções (CLAUDE.md global e do servidor `donel`) é decisão do Líder/dono, depois que as tools existirem;
   até lá nada muda para as sessões.
@@ -142,7 +165,8 @@ não):
 
 ## 6. Vigia (VPS, mesmo script, modo `vigia`, a cada 15 min)
 
-- Só olha `doing` **sem** justificativa válida, com a sessão do cartão parada (último turno `end_turn` há ≥ 30 min).
+- Só olha `doing` **sem nenhuma** justificativa (a vencida é do cron, que cobra), com a sessão do cartão parada
+  (último turno `end_turn` há ≥ 30 min).
 - Sessão viva no tmux → digita "retome o cartão c-…" (teto 2 por 24 h, recuo 15/30/60).
 - Sessão morta → reabre no tmux da VPS com `claude --resume <session_id>` no cwd do lugar; sem sessão viável ou no
   teto → acorda o Líder do quadro e grava a nota "vigia: parado sem justificativa" (move_card para a mesma coluna).
