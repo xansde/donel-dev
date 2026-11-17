@@ -1,4 +1,6 @@
 import { createHash, createHmac } from 'node:crypto';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ConfigIoDeps } from '../src/main/config-store';
@@ -15,7 +17,11 @@ import { createCardWriter, type OwnerMessage } from '../src/main/ledger-card-wri
 import type { EntregaCelular } from '../src/shared/celular';
 import {
   createDecisoesConsumer,
+  createDecisoesQueue,
   decisaoMessage,
+  importCommentKey,
+  parseImportList,
+  readImportList,
   OPTION_REQUIRED,
   STALE_DECISION,
   UNSIGNED_DECISION,
@@ -23,6 +29,7 @@ import {
   type DecisaoRow,
   type DecisaoVerifier,
   type DecisoesQueue,
+  type TarefaEspelho,
 } from '../src/oraculo/decisoes';
 
 // Ledger no celular — o que quebraria sem o dono ver: o servidor aceitar quem não pareou, subir fora da
@@ -354,6 +361,7 @@ describe('servidor do celular', () => {
     const failMark = new Set(['1', '2']);
     const queue: DecisoesQueue = {
       tomar: async () => rows.filter((entry) => !entry.resultado),
+      atualizarTarefa: async () => undefined,
       marcar: async (pedido, resultado) => {
         if (failMark.delete(pedido.slice(-1))) throw new Error('sem rede');
         const target = rows.find((entry) => entry.pedido === pedido)!;
@@ -556,6 +564,7 @@ describe('servidor do celular', () => {
     const failMark = new Set([rows[13]!.pedido]);
     const queue: DecisoesQueue = {
       tomar: async () => rows.filter((entry) => !entry.resultado),
+      atualizarTarefa: async () => undefined,
       marcar: async (pedido, resultado) => {
         if (failMark.delete(pedido)) throw new Error('sem rede');
         const target = rows.find((entry) => entry.pedido === pedido)!;
@@ -630,6 +639,164 @@ describe('servidor do celular', () => {
 
     expect(result(11)).toBe('aplicada: aceita');
     expect(decisions(second)).toEqual([expect.objectContaining({ kind: 'aceita', by: { kind: 'dono' }, option: 'Aceitar' })]);
+  });
+
+  it('a importação do Líder aplica as linhas sem assinatura uma vez, com a nota, e tira a carta do espelho', async () => {
+    const { auth, ledger, first, second, decisions } = await setup();
+    const noted = await deliveredTask(ledger, 'carta em que ele só escreve');
+    const sample = await deliveredTask(ledger, 'amostra do Revisor', null);
+    expect((await ledger.apply({ kind: 'lugar', placeId: 'p-rev', roleId: 'revisor' }, { op: 'aceitar', id: sample })).ok).toBe(true);
+    const outside = await deliveredTask(ledger, 'fora da lista');
+    // As the real rows: made by an APK that did not sign nor say which delivery he saw.
+    const row = (n: number, tarefa: string, lado: DecisaoRow['lado'], rest: Partial<DecisaoRow> = {}): DecisaoRow & { resultado?: string } => ({
+      pedido: `00000000-0000-4000-8000-0000000000${String(n).padStart(2, '0')}`,
+      tarefa,
+      lado,
+      opcao: null,
+      comentario: null,
+      paginas: null,
+      criada_em: `2026-11-17T09:${String(7 + n).padStart(2, '0')}:30.000+00:00`, // 06:08… in São Paulo
+      entrega_vista: null,
+      assinatura: null,
+      ...rest,
+    });
+    const rows = [
+      row(1, first, 'sim', { paginas: [{ pagina: 2, nome: 'provas', nota: 'up' }] }),
+      row(2, second, 'nao'),
+      row(3, noted, 'comentario', { comentario: 'texto da linha' }),
+      row(4, sample, 'sim'),
+      row(5, outside, 'sim'),
+    ];
+    const list = parseImportList([
+      { pedido: rows[0]!.pedido, acao: 'aceitar', texto: 'Pode seguir' },
+      { pedido: rows[1]!.pedido, acao: 'rejeitar', texto: 'Falta o print' },
+      { pedido: rows[2]!.pedido, acao: 'comentar', texto: 'Gostei' },
+      { pedido: rows[3]!.pedido, acao: 'conferir', texto: 'Vi a amostra' },
+    ]);
+    expect(list.ok).toBe(true);
+    const result = (n: number): string | undefined => rows[n - 1]!.resultado;
+    const failMark = new Set([rows[0]!.pedido, rows[3]!.pedido]);
+    const patched: { id: string; campos: TarefaEspelho }[] = [];
+    let failPatch = true;
+    const queue: DecisoesQueue = {
+      tomar: async () => rows.filter((entry) => !entry.resultado),
+      marcar: async (pedido, resultado) => {
+        if (failMark.delete(pedido)) throw new Error('sem rede');
+        const target = rows.find((entry) => entry.pedido === pedido)!;
+        if (target.resultado) return false;
+        target.resultado = resultado;
+        return true;
+      },
+      atualizarTarefa: async (id, campos) => {
+        if (failPatch) {
+          failPatch = false;
+          throw new Error('o espelho de tarefas recusou (HTTP 500)');
+        }
+        patched.push({ id, campos });
+      },
+    };
+    const sent: OwnerMessage[] = [];
+    const writer = createCardWriter({ service: () => ledger, deliver: async (message) => (sent.push(message), { placeId: message.placeId }) });
+    const port = createLedgerMobilePort(() => ledger, undefined, () => writer);
+    let verifier: DecisaoVerifier | null = null;
+    let verifierAsked = 0;
+    const logs: string[] = [];
+    const consumer = createDecisoesConsumer({
+      queue: () => queue,
+      port,
+      verifier: () => {
+        verifierAsked += 1;
+        return verifier;
+      },
+      phoneOn: () => false,
+      importar: () => list,
+      ledger: () => ledger,
+      returned: () => false,
+      log: (line) => logs.push(line),
+    });
+
+    // Round 1: the phone's core is not up and the phone is off; the listed rows apply anyway, the one outside waits.
+    await consumer.round();
+    expect(verifierAsked).toBe(1); // only for the row outside the list
+    expect(result(1)).toBeUndefined(); // applied, mark failed
+    expect(result(2)).toBe('aplicada: rejeitada (importação)');
+    expect(result(3)).toBe('aplicada: comentário (importação)');
+    expect(result(4)).toBeUndefined(); // applied, mark failed
+    expect(result(5)).toBeUndefined();
+    // The first mirror patch failed: a log line, and the decision stands.
+    expect(logs.some((line) => line.includes('o espelho de tarefas não atualizou'))).toBe(true);
+
+    // Rounds 2 and 3: the repeats answer what is recorded; nothing is written twice.
+    verifier = verifierOf(auth);
+    await consumer.round();
+    const before = JSON.stringify(ledger.load().doc);
+    await consumer.round();
+    expect(JSON.stringify(ledger.load().doc)).toBe(before);
+    expect(result(1)).toBe('aplicada: aceita (importação)');
+    expect(result(4)).toBe('aplicada: aceita (importação)');
+    for (const n of [1, 2, 3, 4]) expect(result(n)).not.toContain(UNSIGNED_DECISION);
+    expect(result(5)).toBe(`recusada: ${UNSIGNED_DECISION}`);
+    expect(decisions(outside)).toHaveLength(0);
+
+    const note = (hhmm: string): string => `Decisão do dono pelo celular às ${hhmm} de 17/11 (importada; feita antes da decisão assinada).`;
+    expect(decisions(first)).toEqual([expect.objectContaining({ kind: 'aceita', by: { kind: 'dono' }, requestId: rows[0]!.pedido, text: `Pode seguir\nNotas por página: 👍 p2 provas\n${note('06:08')}` })]);
+    expect(decisions(first)[0]).not.toHaveProperty('option');
+    expect(decisions(second)).toEqual([expect.objectContaining({ kind: 'rejeitada', by: { kind: 'dono' }, text: `Falta o print\n${note('06:09')}` })]);
+    const comments = (id: string) => ledger.load().doc.tasks[id]!.events.filter((event) => event.kind === 'comentada');
+    expect(comments(noted)).toEqual([expect.objectContaining({ by: { kind: 'dono' }, requestId: rows[2]!.pedido, text: `Gostei\n${note('06:10')}` })]);
+    expect(ledger.load().doc.tasks[noted]!.state).toBe('entregue');
+    // The sample: his words on the card (once, under their own key), then checked, never reopened.
+    expect(comments(sample)).toEqual([expect.objectContaining({ requestId: importCommentKey(rows[3]!.pedido), text: `Vi a amostra\n${note('06:11')}` })]);
+    expect(sent.filter((message) => message.text.includes('Vi a amostra'))).toHaveLength(1);
+    expect(importCommentKey(rows[3]!.pedido)).not.toBe(rows[3]!.pedido);
+    expect(importCommentKey(rows[3]!.pedido)).toMatch(/^[A-Za-z0-9_-]{8,64}$/);
+    const sampleTask = ledger.load().doc.tasks[sample]!;
+    expect(sampleTask.state).toBe('aceita');
+    expect(sampleTask.events.filter((event) => event.kind === 'conferida')).toEqual([expect.objectContaining({ requestId: rows[3]!.pedido })]);
+
+    // The mirror: every decided task leaves the owner's view; the note alone changes nothing there.
+    expect(new Set(patched.map((entry) => entry.id))).toEqual(new Set([first, second, sample]));
+    for (const { id, campos } of patched) {
+      expect(campos).toEqual({ estado: id === second ? 'rejeitada' : 'aceita', esperando_dono: false, atualizado_em: expect.any(String) });
+    }
+
+    // The list is all or nothing.
+    const ok = { pedido: rows[0]!.pedido, acao: 'aceitar' };
+    for (const bad of [
+      [ok, ok],
+      [{ ...ok, pedido: 't-123456789' }],
+      [{ ...ok, acao: 'aprovar' }],
+      [{ ...ok, acao: 'rejeitar' }],
+      [{ ...ok, texto: '⟦marca⟧ oi' }],
+      [{ ...ok, texto: 'x'.repeat(2001) }],
+      Array.from({ length: 101 }, (_, index) => ({ ...ok, pedido: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}` })),
+      'aceitar tudo',
+    ]) {
+      expect(parseImportList(bad).ok).toBe(false);
+    }
+    const dir = mkdtempSync(join(tmpdir(), 'decisoes-'));
+    writeFileSync(join(dir, 'decisoes.json'), JSON.stringify({ url: 'https://exemplo.supabase.co', serviceKeyFile: join(dir, 'k'), importar: [ok] }));
+    expect(readImportList(join(dir, 'decisoes.json'))).toEqual({ ok: true, items: new Map([[ok.pedido, ok]]) });
+
+    // The patch itself: the mirror's table, the key only in the headers, never in an error.
+    writeFileSync(join(dir, 'k'), 'chave-de-teste-123\n');
+    const calls: { url: string; init: RequestInit }[] = [];
+    let status = 204;
+    const http = createDecisoesQueue({ url: 'https://exemplo.supabase.co', serviceKeyFile: join(dir, 'k') }, (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(status === 204 ? null : 'erro com chave-de-teste-123', { status });
+    }) as typeof fetch);
+    const campos: TarefaEspelho = { estado: 'aceita', esperando_dono: false, atualizado_em: '2026-11-17T10:00:00.000Z' };
+    await http.atualizarTarefa(first, campos);
+    expect(calls[0]!.url).toBe(`https://exemplo.supabase.co/rest/v1/tarefas?id=eq.${first}`);
+    expect(calls[0]!.init.method).toBe('PATCH');
+    expect(JSON.parse(calls[0]!.init.body as string)).toEqual(campos);
+    expect(calls[0]!.init.headers).toMatchObject({ apikey: 'chave-de-teste-123', Authorization: 'Bearer chave-de-teste-123' });
+    status = 500;
+    const error = await http.atualizarTarefa(first, campos).catch((thrown: unknown) => thrown as Error);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('HTTP 500');
+    expect((error as Error).message).not.toContain('chave-de-teste-123');
   });
 
   it('o protótipo sai com a CSP sandbox allow-scripts, por bilhete de uso único que vence; donel-prova só serve nome de dentro das provas', async () => {

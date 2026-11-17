@@ -10,7 +10,8 @@
 // route, which is today's production until F4), DONEL_BOARD_CONFIG (quadro de tarefas, t-1e354d15: default
 // ~/.donel/board/supabase.json; missing = no `card_*` tools).
 // `<dir>/decisoes.json` (t-52bf8b45, same shape as the board's config): the phone app's decision queue in Supabase,
-// applied to the ledger here; missing = the queue is off.
+// applied to the ledger here; missing = the queue is off. Its optional `importar` (t-8762b0ac) lists the unsigned rows
+// the Líder vouched for (`readImportList` in decisoes.ts).
 
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, networkInterfaces } from 'node:os';
@@ -31,7 +32,7 @@ import { createGateHandler, GATE_PORT, mergePicture, startGateServer, tunnelForw
 import { ORACLE_PORT, startOracleServer, type OracleServer } from './server';
 import { createDaemonVigia } from './vigia';
 import { createBoardClient, readBoardConfig, type BoardStore } from './board-client';
-import { createDecisoesConsumer, createDecisoesQueue, DECISOES_CONFIG_FILE } from './decisoes';
+import { createDecisoesConsumer, createDecisoesQueue, DECISOES_CONFIG_FILE, readImportList } from './decisoes';
 
 export const TOKEN_HASH_FILE = 'pc.token.sha256';
 
@@ -172,6 +173,8 @@ async function main(): Promise<void> {
     // Only a row signed by a phone paired here is the owner's (the APK's queue password is not).
     verifier: () => (celular ? (message, signature) => celular?.verifyDecisionSignature(message, signature) ?? null : null),
     phoneOn: () => celular?.state().enabled ?? false,
+    // t-8762b0ac — the rows the Líder vouched for (`importar`), applied without a signature, read at each round too.
+    importar: () => readImportList(join(dir, DECISOES_CONFIG_FILE)),
     ledger: () => ledger,
     returned: guard.returned,
     log: (line) => console.log(line),
