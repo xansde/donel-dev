@@ -140,6 +140,7 @@ export function createLedgerMirrorService(deps: LedgerMirrorServiceDeps): Ledger
   const currentSink = (): MirrorSink | null => {
     if (!settings?.enabled) return null;
     if (sinkUrl !== settings.url) {
+      sink?.dispose?.();
       sink = createSupabaseSink({ url: settings.url, key: readKey, log, ...(deps.proofsDir ? { readProof: createProofReader(deps.proofsDir) } : {}) });
       sinkUrl = settings.url;
     }
@@ -197,6 +198,10 @@ export function createLedgerMirrorService(deps: LedgerMirrorServiceDeps): Ledger
     configure,
     disable() {
       if (settings) writeSettings({ ...settings, enabled: false });
+      // Off means nothing more leaves, the cards' retry included.
+      sink?.dispose?.();
+      sink = null;
+      sinkUrl = null;
       log('desligado');
     },
     async syncNow() {
@@ -204,6 +209,9 @@ export function createLedgerMirrorService(deps: LedgerMirrorServiceDeps): Ledger
       return state();
     },
     placesSnapshot: (doc) => ({ ownerName: settings?.ownerName ?? null, places: doc ? placesOfDoc(doc, places()) : {} }),
-    dispose: () => mirror.dispose(),
+    dispose: () => {
+      mirror.dispose();
+      sink?.dispose?.();
+    },
   };
 }

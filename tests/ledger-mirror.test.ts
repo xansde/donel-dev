@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { createLedgerMirror, type MirrorSink, type MirrorTimers } from '../src/main/ledger-mirror/mirror';
 import { createSupabaseSink } from '../src/main/ledger-mirror/supabase-sink';
-import { MAX_CARD_IMAGE_BYTES, type ProofReader } from '../src/main/ledger-mirror/cartas';
+import { MAX_CARD_IMAGE_BYTES, MAX_PROOF_UPLOAD_FAILURES, createProofReader, type ProofReader, type ProofReaderFs } from '../src/main/ledger-mirror/cartas';
 import { cartaRows, maskSecrets, tarefaRows, withPlaceMemory, type PlaceInfo, type PlaceInfoOf, type TarefaRow } from '../src/shared/ledger/mirror';
 import { LEADER_OF_ALL } from '../src/shared/mindscape/leader';
 import { LEDGER_SCHEMA_VERSION, type LedgerDoc, type LedgerTask } from '../src/shared/ledger/contract';
@@ -548,12 +548,13 @@ describe('espelho do Oráculo', () => {
     const sha = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex');
 
     /** A Supabase that records each POST and answers each RPC from `answers`. */
-    function fakeSupabase(answers: { cartas?: () => Response; prova?: () => Response } = {}) {
+    function fakeSupabase(answers: { cartas?: () => Response; prova?: (body: any) => Response | Promise<Response> } = {}) {
       const calls: Array<{ url: string; body: any }> = [];
       const fetchFn = (async (url: string, init: RequestInit) => {
-        calls.push({ url, body: JSON.parse(String(init.body)) });
+        const body = JSON.parse(String(init.body));
+        calls.push({ url, body });
         if (url.endsWith('/rpc/celular_cartas_gravar')) return answers.cartas?.() ?? Response.json([]);
-        if (url.endsWith('/rpc/celular_prova_gravar')) return answers.prova?.() ?? Response.json(true);
+        if (url.endsWith('/rpc/celular_prova_gravar')) return answers.prova?.(body) ?? Response.json(true);
         return new Response(null, { status: 201 });
       }) as unknown as typeof fetch;
       return { calls, fetchFn };
@@ -568,6 +569,7 @@ describe('espelho do Oráculo', () => {
       const sink = createSupabaseSink({ url: 'https://abcdefgh.supabase.co', key: () => key, fetch: supabase.fetchFn, readProof: reader, log: (line) => lines.push(line) });
       const cartas = cartaRows(ledgerDoc).rows;
       await sink.push(tarefaRows(ledgerDoc).rows, cartas);
+      await sink.idle();
 
       expect(supabase.calls.map((call) => call.url.replace('https://abcdefgh.supabase.co/rest/v1/', ''))).toEqual([
         'tarefas?on_conflict=id',
@@ -603,7 +605,9 @@ describe('espelho do Oráculo', () => {
       const quiet = fakeSupabase();
       const again = createSupabaseSink({ url: 'https://abcdefgh.supabase.co', key: () => key, fetch: quiet.fetchFn, readProof: reader });
       await again.push([], cartas);
+      await again.idle();
       await again.push([], cartas);
+      await again.idle();
       expect(quiet.calls.map((call) => call.url.split('/').pop())).toEqual(['celular_cartas_gravar', 'celular_cartas_gravar']);
       expect(reader.reads.filter((file) => file === files.print)).toHaveLength(1);
     });
@@ -612,11 +616,17 @@ describe('espelho do Oráculo', () => {
       let arrived = false;
       const late: ProofReader = async () => (arrived ? { kind: 'ok', bytes: printBytes } : { kind: 'sumiu' });
       const supabase = fakeSupabase();
-      const sink = createSupabaseSink({ url: 'https://abcdefgh.supabase.co', key: () => key, fetch: supabase.fetchFn, readProof: late });
+      const sinkTimers = fakeTimers();
+      const sink = createSupabaseSink({ url: 'https://abcdefgh.supabase.co', key: () => key, fetch: supabase.fetchFn, readProof: late, timers: sinkTimers });
       const cartas = cartaRows(doc(sample)).rows;
       await sink.push([], cartas);
+      await sink.idle();
+      // Not here yet: the cards try again on their own, with no change of the ledger.
+      expect(sinkTimers.pending()).toEqual([60_000]);
       arrived = true;
-      await sink.push([], cartas);
+      await sinkTimers.fire();
+      await sink.idle();
+      expect(sinkTimers.pending()).toEqual([]);
       const proofOf = (n: number) => (supabase.calls[n]!.body as { p_cartas: Array<{ provas: unknown[] }> }).p_cartas[0]!.provas[0];
       expect(proofOf(0)).toMatchObject({ sha256: null, tamanho: null, sem_arquivo: true });
       expect(proofOf(1)).toMatchObject({ sha256: sha(printBytes), tamanho: printBytes.length, sem_arquivo: false });
@@ -624,29 +634,168 @@ describe('espelho do Oráculo', () => {
 
     it('with no card waiting the list goes empty (the phone drops the old ones)', async () => {
       const supabase = fakeSupabase();
-      await createSupabaseSink({ url: 'https://abcdefgh.supabase.co', key: () => key, fetch: supabase.fetchFn }).push([], cartaRows(doc(lowRisk)).rows);
+      const sink = createSupabaseSink({ url: 'https://abcdefgh.supabase.co', key: () => key, fetch: supabase.fetchFn });
+      await sink.push([], cartaRows(doc(lowRisk)).rows);
+      await sink.idle();
       expect(supabase.calls).toEqual([{ url: 'https://abcdefgh.supabase.co/rest/v1/rpc/celular_cartas_gravar', body: { p_cartas: [] } }]);
     });
 
     it('a failure of the cards (the RPC not created yet) never stops the tasks, nor shows the key', async () => {
       const lines: string[] = [];
       const supabase = fakeSupabase({ cartas: () => new Response(`função ausente, chave ${key}`, { status: 404 }) });
-      const sink = createSupabaseSink({ url: 'https://abcdefgh.supabase.co', key: () => key, fetch: supabase.fetchFn, readProof: reader, log: (line) => lines.push(line) });
+      const sinkTimers = fakeTimers();
+      const sink = createSupabaseSink({ url: 'https://abcdefgh.supabase.co', key: () => key, fetch: supabase.fetchFn, readProof: reader, log: (line) => lines.push(line), timers: sinkTimers });
       const timers = fakeTimers();
       const mirror = createLedgerMirror({ sink: () => sink, timers });
       mirror.changed(ledgerDoc);
       await timers.fire();
       for (let i = 0; i < 20; i += 1) await Promise.resolve();
       await mirror.flush();
+      await sink.idle();
       expect(supabase.calls[0]!.url).toContain('/rest/v1/tarefas?on_conflict=id');
       expect((supabase.calls[0]!.body as TarefaRow[]).map((row) => row.id)).toEqual(['t-1', 't-2', 't-3', 't-4']);
       // The tasks went: no retry, no error on the screen; the log says what failed, without the key.
       expect(mirror.status()).toMatchObject({ pending: false, lastError: null });
       expect(timers.pending()).toEqual([]);
+      // The cards alone try again (the 006 may be applied with the app open), bounded.
+      expect(sinkTimers.pending()).toEqual([60_000]);
       const failure = lines.find((line) => line.startsWith('cartas do celular'));
       expect(failure).toContain('404');
       expect(lines.join('\n')).not.toContain(key);
       expect(supabase.calls.some((call) => call.url.includes('celular_prova_gravar'))).toBe(false);
+    });
+
+    it('a proof whose upload fails never stops the next ones, and the same bytes wait their backoff, then stop', async () => {
+      let clock = 0;
+      const lines: string[] = [];
+      const two = { ...waiting, id: 't-9' };
+      const ask = Response.json([{ tarefa: 't-1', ordem: 0 }, { tarefa: 't-1', ordem: 2 }, { tarefa: 't-9', ordem: 0 }]);
+      // The print of t-1 is too big for the gateway; the prototype comes back `false`; t-9's print goes.
+      const supabase = fakeSupabase({
+        cartas: () => ask.clone(),
+        prova: (body) => (body.p_tarefa === 't-1' && body.p_ordem === 0 ? new Response('payload too large', { status: 413 }) : Response.json(body.p_tarefa === 't-9')),
+      });
+      const sinkTimers = fakeTimers();
+      const sink = createSupabaseSink({ url: 'https://abcdefgh.supabase.co', key: () => key, fetch: supabase.fetchFn, readProof: reader, log: (line) => lines.push(line), timers: sinkTimers, now: () => clock });
+      const cartas = cartaRows(doc(waiting, two)).rows;
+      const uploads = () => supabase.calls.filter((call) => call.url.endsWith('celular_prova_gravar')).map((call) => `${call.body.p_tarefa}/${call.body.p_ordem}`);
+
+      await sink.push([], cartas);
+      await sink.idle();
+      expect(uploads()).toEqual(['t-1/0', 't-1/2', 't-9/0']);
+      expect(lines).toContain('prova não foi ao celular: tarefa t-1, prova 0 (Supabase respondeu 413: payload too large); tento de novo depois');
+      expect(lines).toContain('prova não foi ao celular: tarefa t-1, prova 2 (o Supabase recusou); tento de novo depois');
+      expect(lines).toContain(`prova enviada ao celular: tarefa t-9, prova 0 (${printBytes.length} bytes)`);
+
+      // A change of the ledger right after: the failed bytes wait their backoff, the list still goes.
+      supabase.calls.length = 0;
+      await sink.push([], cartas);
+      await sink.idle();
+      expect(uploads()).toEqual(['t-9/0']);
+
+      // Past each backoff they go again, and after the last failure they stop until the file changes.
+      for (let n = 1; n < MAX_PROOF_UPLOAD_FAILURES; n += 1) {
+        clock += 60 * 60_000;
+        await sink.push([], cartas);
+        await sink.idle();
+      }
+      supabase.calls.length = 0;
+      clock += 60 * 60_000;
+      await sink.push([], cartas);
+      await sink.idle();
+      expect(uploads()).toEqual(['t-9/0']);
+      expect(lines.filter((line) => line.includes('desisto dela até o arquivo mudar'))).toHaveLength(2);
+      expect(lines.join('\n')).not.toContain(key);
+    });
+
+    it('an upload that hangs never holds the next push of the tasks', async () => {
+      const supabase = fakeSupabase({ cartas: () => Response.json([{ tarefa: 't-1', ordem: 0 }]), prova: () => new Promise<Response>(() => undefined) });
+      const sink = createSupabaseSink({ url: 'https://abcdefgh.supabase.co', key: () => key, fetch: supabase.fetchFn, readProof: reader, timers: fakeTimers() });
+      const timers = fakeTimers();
+      const mirror = createLedgerMirror({ sink: () => sink, timers });
+      mirror.changed(ledgerDoc);
+      await mirror.flush();
+      mirror.changed(doc(waiting));
+      await mirror.flush();
+      const tasks = supabase.calls.filter((call) => call.url.includes('/tarefas?'));
+      expect(tasks).toHaveLength(2);
+      expect(mirror.status()).toMatchObject({ pending: false, lastError: null });
+      // The newer list waits for the hung upload (bounded by its timeout), never in front of the tasks.
+      expect(supabase.calls.filter((call) => call.url.endsWith('celular_cartas_gravar'))).toHaveLength(1);
+      sink.dispose();
+    });
+
+    it('a prototype saved in UTF-16 is masked too, and goes up in UTF-8', async () => {
+      const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(protoHtml, 'utf16le')]);
+      const read: ProofReader = async () => ({ kind: 'ok', bytes: utf16 });
+      const supabase = fakeSupabase({ cartas: () => Response.json([{ tarefa: 't-1', ordem: 2 }]) });
+      const sink = createSupabaseSink({ url: 'https://abcdefgh.supabase.co', key: () => key, fetch: supabase.fetchFn, readProof: read, timers: fakeTimers() });
+      await sink.push([], cartaRows(doc(waiting)).rows);
+      await sink.idle();
+      const upload = supabase.calls.find((call) => call.url.endsWith('celular_prova_gravar'))!.body;
+      expect(Buffer.from(upload.p_dados, 'base64').toString('utf8')).toBe(maskSecrets(protoHtml).text);
+      // Without a mark, NUL between the letters: no scan can read it, so it goes only as a mention.
+      const bare: ProofReader = async () => ({ kind: 'ok', bytes: Buffer.from(protoHtml, 'utf16le') });
+      const quiet = fakeSupabase({ cartas: () => Response.json([{ tarefa: 't-1', ordem: 2 }]) });
+      const other = createSupabaseSink({ url: 'https://abcdefgh.supabase.co', key: () => key, fetch: quiet.fetchFn, readProof: bare, timers: fakeTimers() });
+      await other.push([], cartaRows(doc(waiting)).rows);
+      await other.idle();
+      expect(quiet.calls[0]!.body.p_cartas[0].provas[1]).toMatchObject({ ordem: 2, sha256: null, sem_arquivo: true });
+      expect(quiet.calls.some((call) => call.url.endsWith('celular_prova_gravar'))).toBe(false);
+    });
+
+    it('the proof reader never follows a link, never reads past the limit, and reads the very file it looked at', async () => {
+      const dir = '/provas';
+      type Fake = { link?: boolean; size: number; ino: number; openIno?: number; content: Buffer; device?: boolean };
+      function fakeFs(files: Record<string, Fake>): ProofReaderFs & { opened: string[] } {
+        const opened: string[] = [];
+        const of = (path: string): Fake => {
+          const file = files[path.replace(/\\/g, '/').split('/').pop()!];
+          if (!file) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+          return file;
+        };
+        return {
+          opened,
+          lstat: async (path) => {
+            const file = of(path);
+            return { isSymbolicLink: () => file.link === true, isFile: () => !file.link, size: file.size, dev: 1, ino: file.ino };
+          },
+          open: async (path) => {
+            opened.push(path);
+            const file = of(path);
+            return {
+              stat: async () => ({ isFile: () => !file.device, size: file.size, dev: 1, ino: file.openIno ?? file.ino }),
+              read: async (buffer, offset, length, position) => {
+                const bytesRead = file.content.copy(buffer, offset, position, Math.min(file.content.length, position + length));
+                return { bytesRead };
+              },
+              close: async () => undefined,
+            };
+          },
+        };
+      }
+      const ok = Buffer.from('png!');
+      const io = fakeFs({
+        '2026-11-17-aaaaaaaaaaaa.png': { size: 4, ino: 1, content: ok },
+        '2026-11-17-bbbbbbbbbbbb.png': { link: true, size: 4, ino: 2, content: ok },
+        '2026-11-17-cccccccccccc.png': { size: 11, ino: 3, content: Buffer.alloc(11) },
+        '2026-11-17-dddddddddddd.png': { size: 4, ino: 4, content: Buffer.alloc(11) },
+        '2026-11-17-eeeeeeeeeeee.png': { size: 4, ino: 5, openIno: 99, content: ok },
+        '2026-11-17-ffffffffffff.png': { size: 4, ino: 6, content: ok, device: true },
+      });
+      const read = createProofReader(dir, io);
+      expect(await read('2026-11-17-aaaaaaaaaaaa.png', 10)).toEqual({ kind: 'ok', bytes: ok });
+      expect(await read('2026-11-17-bbbbbbbbbbbb.png', 10)).toEqual({ kind: 'sumiu' });
+      // Over the limit by the look: never opened.
+      expect(await read('2026-11-17-cccccccccccc.png', 10)).toEqual({ kind: 'grande', size: 11 });
+      expect(io.opened.some((path) => path.includes('cccccccccccc'))).toBe(false);
+      // It grew after the look: at most limit + 1 read.
+      expect(await read('2026-11-17-dddddddddddd.png', 10)).toEqual({ kind: 'grande', size: 11 });
+      // Swapped after the look (another file, a device): nothing goes.
+      expect(await read('2026-11-17-eeeeeeeeeeee.png', 10)).toEqual({ kind: 'sumiu' });
+      expect(await read('2026-11-17-ffffffffffff.png', 10)).toEqual({ kind: 'sumiu' });
+      expect(await read('../segredo.png', 10)).toEqual({ kind: 'sumiu' });
+      expect(await read('2026-11-17-gggggggggggg.png', 10)).toEqual({ kind: 'sumiu' });
     });
   });
 });

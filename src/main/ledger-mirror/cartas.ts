@@ -6,7 +6,7 @@
 // Oráculo". The prototype is masked as text before its hash (the hash is of what goes up); a print cannot be scanned.
 
 import { createHash } from 'node:crypto';
-import { promises as fs } from 'node:fs';
+import { constants, promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { MAX_PROOF_HTML_BYTES, isProofFileName } from '../../shared/ledger/contract';
 import { maskSecrets, type CartaProvaRef, type CartaProvaTipo, type CartaRow } from '../../shared/ledger/mirror';
@@ -21,12 +21,39 @@ export type ProofRead = { readonly kind: 'ok'; readonly bytes: Buffer } | { read
 /** Reads `file` (a name inside `ledger-provas/`) when it has at most `maxBytes`; never follows a link. */
 export type ProofReader = (file: string, maxBytes: number) => Promise<ProofRead>;
 
-export interface ProofReaderFs {
-  lstat(path: string): Promise<{ isSymbolicLink(): boolean; isFile(): boolean; size: number }>;
-  readFile(path: string): Promise<Buffer>;
+export interface ProofStat {
+  isFile(): boolean;
+  readonly size: number;
+  readonly dev: number;
+  readonly ino: number;
 }
 
-const nodeProofReaderFs: ProofReaderFs = { lstat: (path) => fs.lstat(path), readFile: (path) => fs.readFile(path) };
+export interface ProofFileHandle {
+  stat(): Promise<ProofStat>;
+  read(buffer: Buffer, offset: number, length: number, position: number): Promise<{ bytesRead: number }>;
+  close(): Promise<void>;
+}
+
+export interface ProofReaderFs {
+  lstat(path: string): Promise<ProofStat & { isSymbolicLink(): boolean }>;
+  /** Read-only; refuses a link where the OS can (O_NOFOLLOW) and never waits on a FIFO (O_NONBLOCK). */
+  open(path: string): Promise<ProofFileHandle>;
+}
+
+// Windows has neither flag (`undefined` there): the same-file check below covers the link there.
+const OPEN_FLAGS = constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0);
+
+const nodeProofReaderFs: ProofReaderFs = {
+  lstat: (path) => fs.lstat(path),
+  open: async (path) => {
+    const handle = await fs.open(path, OPEN_FLAGS);
+    return {
+      stat: () => handle.stat(),
+      read: (buffer, offset, length, position) => handle.read(buffer, offset, length, position),
+      close: () => handle.close(),
+    };
+  },
+};
 
 /** The reader over `ledger-provas/` (the main's own copies; in the remote mode, the ones `syncProofs` brought). */
 export function createProofReader(proofsDir: string, io: ProofReaderFs = nodeProofReaderFs): ProofReader {
@@ -34,15 +61,31 @@ export function createProofReader(proofsDir: string, io: ProofReaderFs = nodePro
     // Only a name the main gave: no folder, no `..`, a known extension.
     if (!isProofFileName(file)) return { kind: 'sumiu' };
     const path = join(proofsDir, file);
+    let handle: ProofFileHandle | null = null;
     try {
-      const info = await io.lstat(path);
-      if (info.isSymbolicLink() || !info.isFile()) return { kind: 'sumiu' };
+      const seen = await io.lstat(path);
+      if (seen.isSymbolicLink() || !seen.isFile()) return { kind: 'sumiu' };
+      if (seen.size > maxBytes) return { kind: 'grande', size: seen.size };
+      // The look and the read are about the same file: what is open is still that regular file (not a link, a
+      // device or a FIFO swapped in since the look), and at most `maxBytes + 1` is read from it.
+      handle = await io.open(path);
+      const info = await handle.stat();
+      if (!info.isFile() || info.dev !== seen.dev || info.ino !== seen.ino) return { kind: 'sumiu' };
       if (info.size > maxBytes) return { kind: 'grande', size: info.size };
-      const bytes = await io.readFile(path);
+      const buffer = Buffer.alloc(maxBytes + 1);
+      let total = 0;
+      while (total < buffer.length) {
+        const { bytesRead } = await handle.read(buffer, total, buffer.length - total, total);
+        if (bytesRead === 0) break;
+        total += bytesRead;
+      }
       // It grew between the look and the read.
-      return bytes.length > maxBytes ? { kind: 'grande', size: bytes.length } : { kind: 'ok', bytes };
+      if (total > maxBytes) return { kind: 'grande', size: total };
+      return { kind: 'ok', bytes: Buffer.from(buffer.subarray(0, total)) };
     } catch {
       return { kind: 'sumiu' };
+    } finally {
+      await handle?.close().catch(() => undefined);
     }
   };
 }
@@ -69,11 +112,32 @@ export interface PreparedProof {
   readonly bytes?: Buffer;
   /** What the prototype's scan replaced (kinds only). */
   readonly kinds: readonly string[];
+  /** A prototype in no text encoding the scan can read: it goes only as a mention. */
+  readonly undecodable?: true;
 }
 
 const noBytes = (tamanho: number | null): PreparedProof => ({ sha256: null, tamanho, sem_arquivo: true, kinds: [] });
 
-/** The bytes of a proof as they go up: a prototype masked, the hash of the result. */
+/**
+ * The prototype as text, by its byte-order mark (UTF-16 is what the Windows PowerShell `>` writes), else strict
+ * UTF-8. `null` when it is neither, or has a NUL: UTF-16 without a mark passes as "valid" UTF-8 with a NUL between
+ * every letter, where no pattern matches and the secret would go up unmasked.
+ */
+export function decodeHtml(bytes: Buffer): string | null {
+  try {
+    let text: string;
+    if (bytes[0] === 0xff && bytes[1] === 0xfe) text = new TextDecoder('utf-16le', { fatal: true }).decode(bytes);
+    else if (bytes[0] === 0xfe && bytes[1] === 0xff) {
+      if (bytes.length % 2 !== 0) return null;
+      text = new TextDecoder('utf-16le', { fatal: true }).decode(Buffer.from(bytes).swap16());
+    } else text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    return text.includes('\0') ? null : text;
+  } catch {
+    return null;
+  }
+}
+
+/** The bytes of a proof as they go up: a prototype masked and always in UTF-8, the hash of the result. */
 export async function prepareProof(ref: CartaProvaRef, read: ProofReader): Promise<PreparedProof> {
   if (ref.tipo === 'video') return noBytes(null);
   const max = ref.tipo === 'prototipo' ? MAX_CARD_PROTOTYPE_BYTES : MAX_CARD_IMAGE_BYTES;
@@ -83,15 +147,26 @@ export async function prepareProof(ref: CartaProvaRef, read: ProofReader): Promi
   let bytes = got.bytes;
   let kinds: string[] = [];
   if (ref.tipo === 'prototipo') {
-    const masked = maskSecrets(bytes.toString('utf8'));
-    if (masked.hits.length > 0) {
-      bytes = Buffer.from(masked.text, 'utf8');
-      kinds = [...new Set(masked.hits.map((hit) => hit.kind))];
-      if (bytes.length > max) return { ...noBytes(bytes.length), kinds };
-    }
+    const text = decodeHtml(bytes);
+    if (text === null) return { ...noBytes(bytes.length), undecodable: true };
+    const masked = maskSecrets(text);
+    kinds = [...new Set(masked.hits.map((hit) => hit.kind))];
+    bytes = Buffer.from(masked.text, 'utf8');
+    if (bytes.length > max) return { ...noBytes(bytes.length), kinds };
   }
   return { sha256: createHash('sha256').update(bytes).digest('hex'), tamanho: bytes.length, sem_arquivo: false, bytes, kinds };
 }
+
+/** The failed uploads of one content (`tarefa`, `ordem`, `sha256`): how many, and not before when to try again. */
+export interface UploadFailure {
+  readonly count: number;
+  readonly until: number;
+}
+
+/** After this many failures of the same bytes the upload stops until the file changes (a body the API refuses). */
+export const MAX_PROOF_UPLOAD_FAILURES = 4;
+const PROOF_RETRY_MS = 60_000;
+const MAX_PROOF_RETRY_MS = 30 * 60_000;
 
 export interface CartasPushDeps {
   /** POST `/rest/v1/rpc/<fn>` with the service key; resolves to the parsed JSON answer, rejects free of secrets. */
@@ -103,6 +178,16 @@ export interface CartasPushDeps {
    * writes it exclusively), so a push reads only the new ones, and the upload checks the hash again.
    */
   readonly cache: Map<string, PreparedProof>;
+  /** `tarefa\nordem\nsha256` → its failed uploads, kept between pushes (the sink's). */
+  readonly failures: Map<string, UploadFailure>;
+  readonly now: () => number;
+  /** A newer list is waiting: stop uploading for this one (that list asks again for what is still missing). */
+  readonly stale?: () => boolean;
+}
+
+export interface CartasPushResult {
+  /** Something may still go on a later try: a file not on this PC yet, an upload that failed or waits its turn. */
+  readonly incomplete: boolean;
 }
 
 export const CARTAS_RPC = 'celular_cartas_gravar';
@@ -116,11 +201,19 @@ function wanted(answer: unknown): Array<{ tarefa: string; ordem: number }> {
   });
 }
 
-/** Sends the whole list (an empty one clears the phone), then the bytes it asks for. Rejects on the first failure. */
-export async function pushCartas(cartas: readonly CartaRow[], deps: CartasPushDeps): Promise<void> {
+const uploadKey = (tarefa: string, ordem: number, sha: string): string => `${tarefa}\n${ordem}\n${sha}`;
+
+/**
+ * Sends the whole list (an empty one clears the phone), then the bytes it asks for. Rejects only when the list does
+ * not go; a proof that fails is logged and the next ones still go, and the same bytes are not sent again before
+ * their backoff, nor after `MAX_PROOF_UPLOAD_FAILURES`.
+ */
+export async function pushCartas(cartas: readonly CartaRow[], deps: CartasPushDeps): Promise<CartasPushResult> {
   const keyOf = (ref: CartaProvaRef): string => `${ref.tipo}\n${ref.file}`;
   const inUse = new Set<string>();
   const wire: CartaWire[] = [];
+  // A file not on this PC yet (in the remote mode the copy may still be on its way from the VPS): try again later.
+  let incomplete = false;
   for (const carta of cartas) {
     const provas: ProvaWire[] = [];
     for (const ref of carta.provas) {
@@ -130,10 +223,11 @@ export async function pushCartas(cartas: readonly CartaRow[], deps: CartasPushDe
       if (!prepared) {
         prepared = await prepareProof(ref, deps.read);
         if (prepared.kinds.length > 0) deps.log(`mascarado: tarefa ${carta.id}, campo prova ${ref.ordem} (protótipo) (${prepared.kinds.join(', ')})`);
-        // Never keep the bytes between pushes: the upload reads them again. A missing file is looked for again next
-        // time (in the remote mode the copy may still be on its way from the VPS).
+        if (prepared.undecodable) deps.log(`protótipo fora de UTF-8/UTF-16: tarefa ${carta.id}, prova ${ref.ordem} vai só como menção`);
+        // Never keep the bytes between pushes: the upload reads them again. A missing file is looked for again.
         const missing = prepared.sem_arquivo && prepared.tamanho === null && ref.tipo !== 'video';
-        if (!missing) deps.cache.set(key, { sha256: prepared.sha256, tamanho: prepared.tamanho, sem_arquivo: prepared.sem_arquivo, kinds: prepared.kinds });
+        if (missing) incomplete = true;
+        else deps.cache.set(key, { sha256: prepared.sha256, tamanho: prepared.tamanho, sem_arquivo: prepared.sem_arquivo, kinds: prepared.kinds });
       }
       provas.push({ ordem: ref.ordem, tipo: ref.tipo, media_type: ref.media_type, rotulo: ref.rotulo, sha256: prepared.sha256, tamanho: prepared.tamanho, sem_arquivo: prepared.sem_arquivo });
     }
@@ -141,19 +235,45 @@ export async function pushCartas(cartas: readonly CartaRow[], deps: CartasPushDe
     wire.push({ ...card, provas });
   }
   for (const key of [...deps.cache.keys()]) if (!inUse.has(key)) deps.cache.delete(key);
+  const current = new Set(wire.flatMap((carta) => carta.provas.flatMap((prova) => (prova.sha256 ? [uploadKey(carta.id, prova.ordem, prova.sha256)] : []))));
+  for (const key of [...deps.failures.keys()]) if (!current.has(key)) deps.failures.delete(key);
 
   const asked = wanted(await deps.rpc(CARTAS_RPC, { p_cartas: wire }));
   for (const { tarefa, ordem } of asked) {
+    if (deps.stale?.()) return { incomplete: true };
     const ref = cartas.find((carta) => carta.id === tarefa)?.provas.find((prova) => prova.ordem === ordem);
     const sent = wire.find((carta) => carta.id === tarefa)?.provas.find((prova) => prova.ordem === ordem);
-    if (!ref || !sent || sent.sem_arquivo) continue;
-    const prepared = await prepareProof(ref, deps.read);
-    if (!prepared.bytes || prepared.sha256 !== sent.sha256) {
-      // The file changed or left since the list went: the next push sends its new state.
-      deps.cache.delete(keyOf(ref));
+    if (!ref || !sent || sent.sem_arquivo || !sent.sha256) continue;
+    const failKey = uploadKey(tarefa, ordem, sent.sha256);
+    const failed = deps.failures.get(failKey);
+    if (failed && failed.count >= MAX_PROOF_UPLOAD_FAILURES) continue; // given up until the file changes
+    if (failed && deps.now() < failed.until) {
+      incomplete = true;
       continue;
     }
-    const ok = await deps.rpc(PROVA_RPC, { p_tarefa: tarefa, p_ordem: ordem, p_sha256: prepared.sha256, p_dados: prepared.bytes.toString('base64') });
-    deps.log(ok === true ? `prova enviada ao celular: tarefa ${tarefa}, prova ${ordem} (${prepared.tamanho} bytes)` : `prova recusada pelo Supabase: tarefa ${tarefa}, prova ${ordem}`);
+    try {
+      const prepared = await prepareProof(ref, deps.read);
+      if (!prepared.bytes || prepared.sha256 !== sent.sha256) {
+        // The file changed or left since the list went: the next try sends its new state.
+        deps.cache.delete(keyOf(ref));
+        incomplete = true;
+        continue;
+      }
+      const ok = await deps.rpc(PROVA_RPC, { p_tarefa: tarefa, p_ordem: ordem, p_sha256: prepared.sha256, p_dados: prepared.bytes.toString('base64') });
+      if (ok !== true) throw new Error('o Supabase recusou');
+      deps.failures.delete(failKey);
+      deps.log(`prova enviada ao celular: tarefa ${tarefa}, prova ${ordem} (${prepared.tamanho} bytes)`);
+    } catch (error) {
+      const count = (failed?.count ?? 0) + 1;
+      deps.failures.set(failKey, { count, until: deps.now() + Math.min(PROOF_RETRY_MS * 2 ** (count - 1), MAX_PROOF_RETRY_MS) });
+      const reason = error instanceof Error ? error.message : 'falhou';
+      if (count >= MAX_PROOF_UPLOAD_FAILURES) {
+        deps.log(`prova não foi ao celular: tarefa ${tarefa}, prova ${ordem} (${reason}); desisto dela até o arquivo mudar`);
+      } else {
+        incomplete = true;
+        deps.log(`prova não foi ao celular: tarefa ${tarefa}, prova ${ordem} (${reason}); tento de novo depois`);
+      }
+    }
   }
+  return { incomplete };
 }

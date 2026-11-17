@@ -10,11 +10,13 @@ import type { LedgerDoc } from '../../shared/ledger/contract';
 
 /**
  * Where the rows go. `push` gets every row (an upsert); it rejects on failure, with a message free of secrets.
- * `cartas` (t-36a99827) is the whole list of cards waiting for the owner; a sink that cannot ship them right now
- * logs it and still resolves — the tasks went, and the next push tries the cards again.
+ * `cartas` (t-36a99827) is the whole list of cards waiting for the owner; the sink ships them behind the tasks,
+ * on its own retry, and never fails the push for them.
  */
 export interface MirrorSink {
   push(rows: readonly TarefaRow[], cartas?: readonly CartaRow[]): Promise<void>;
+  /** Stops what the sink still runs on its own (the cards' retry) when it is replaced or the mirror is off. */
+  dispose?(): void;
 }
 
 export interface MirrorTimers {
@@ -59,7 +61,7 @@ export const DEFAULT_MIRROR_DELAY_MS = 45_000;
 const DEFAULT_RETRY_MS = 60_000;
 const DEFAULT_MAX_RETRY_MS = 15 * 60_000;
 
-const nodeTimers: MirrorTimers = {
+export const nodeTimers: MirrorTimers = {
   set: (fn, ms) => {
     const handle = setTimeout(fn, ms);
     // Never keeps the process alive on quit.
