@@ -333,7 +333,7 @@ async function act(client: Client, lanes: readonly LaneRow[], card: CronCard, ac
   const lane = lanes.find((l) => l.project_id === card.projectId);
   const leader = lane?.leader_session && UUID.test(lane.leader_session) ? lane.leader_session : null;
   if (shadow) {
-    log(`${tag}${who}: avisaria o Líder ${lane?.leader_place ?? '(sem Líder)'} (cartão ${card.id})`);
+    log(`${tag}${who}: avisaria o Líder ${lane?.leader_place ?? '(sem Líder)'} (cartão ${card.id})${who === 'vigia' ? ' e gravaria a nota no cartão' : ''}`);
     return;
   }
   if (!leader || !tmux(['has-session', '-t', `donel-${leader}`]).ok) {
@@ -343,7 +343,13 @@ async function act(client: Client, lanes: readonly LaneRow[], card: CronCard, ac
   }
   const result = wakeSession(leader, action.text);
   log(`${who}: avisar o Líder ${lane?.leader_place} (cartão ${card.id}): ${result}`);
-  if (!result.startsWith('campo:')) await client.markCron(card.id, 'leader');
+  if (result.startsWith('campo:')) return;
+  await client.markCron(card.id, 'leader');
+  // Design §6: the card itself says why the Líder was called (board.vigia_note: the vigia is not the card's place).
+  if (who === 'vigia') {
+    const written = await client.vigiaNote(card.id, 'parado sem justificativa; Líder do quadro avisado');
+    log(`vigia: nota no cartão ${card.id}: ${written ? 'gravada' : 'não gravada (saiu de Fazendo)'}`);
+  }
 }
 
 /** Lanes whose Líder is alive in tmux and had a turn in the last 30 min stay alive in `board.lanes`. */

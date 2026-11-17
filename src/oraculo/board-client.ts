@@ -57,6 +57,8 @@ export interface BoardCronStore {
   lanes(host: string): Promise<readonly LaneRow[]>;
   pendingLeaderRequests(host: string): Promise<readonly LeaderRequestRow[]>;
   markCron(cardId: string, kind: 'woken' | 'charged' | 'leader'): Promise<void>;
+  /** The vigia's note on a card in Fazendo (board.vigia_note); false when the card is no longer there. */
+  vigiaNote(cardId: string, note: string): Promise<boolean>;
   resolveLeaderRequest(id: number, status: 'done' | 'failed', reason: string): Promise<void>;
   touchLane(projectId: string, leaderPlace: string, leaderSession: string | undefined, force?: boolean): Promise<void>;
   overview(): Promise<readonly import('../shared/board/page').OverviewRow[]>;
@@ -103,6 +105,8 @@ export interface BoardStore {
   projectOf(projectPath: string): Promise<string>;
   getCard(id: string): Promise<CardRow | null>;
   listCards(projectId: string, options: { readonly stage?: Stage; readonly includeDone?: boolean }): Promise<readonly CardRow[]>;
+  /** The card a create_card with this client_ref made, if any. */
+  cardByClientRef(ref: string): Promise<CardRow | null>;
   createCard(args: CreateCardArgs): Promise<CardRow>;
   moveCard(args: MoveCardArgs): Promise<CardRow>;
   /** `force`: the Líder the picture shows takes the lane at once (only the daemon passes it). */
@@ -208,6 +212,10 @@ export function createBoardClient(config: BoardConfig, doFetch: Fetch = fetch): 
       else if (!options.includeDone) filters.push('stage=neq.done');
       return call<CardRow[]>('GET', `project_cards?${filters.join('&')}&limit=200`);
     },
+    async cardByClientRef(ref) {
+      const rows = await call<CardRow[]>('GET', `cards?client_ref=eq.${q(ref)}&limit=1`);
+      return rows[0] ?? null;
+    },
     createCard: (args) => rpc<CardRow>('create_card', args),
     moveCard: (args) => rpc<CardRow>('move_card', args),
     async touchLane(projectId, leaderPlace, leaderSession, force) {
@@ -221,6 +229,7 @@ export function createBoardClient(config: BoardConfig, doFetch: Fetch = fetch): 
     async markCron(cardId, kind) {
       await rpc('mark_cron', { p_card_id: cardId, p_kind: kind });
     },
+    vigiaNote: (cardId, note) => rpc<boolean>('vigia_note', { p_card_id: cardId, p_note: note }),
     async resolveLeaderRequest(id, status, reason) {
       await rpc('resolve_leader_request', { p_id: id, p_status: status, p_reason: reason });
     },

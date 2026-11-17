@@ -169,7 +169,9 @@ não):
   (último turno `end_turn` há ≥ 30 min).
 - Sessão viva no tmux → digita "retome o cartão c-…" (teto 2 por 24 h, recuo 15/30/60).
 - Sessão morta → reabre no tmux da VPS com `claude --resume <session_id>` no cwd do lugar; sem sessão viável ou no
-  teto → acorda o Líder do quadro e grava a nota "vigia: parado sem justificativa" (move_card para a mesma coluna).
+  teto → acorda o Líder do quadro e grava a nota "vigia: parado sem justificativa" (`board.vigia_note`, que só
+  escreve a nota de um cartão em Fazendo: o `move_card` recusa quem não é o lugar do cartão, e `p_as_leader` daria ao
+  vigia o poder inteiro do Líder).
   O vigia não move para `blocked`: Travado exige justificativa com link, que só quem trabalha no cartão tem.
 - Cartão com justificativa, mesmo vencida, é do cron de justificativa (que cobra e depois avisa o Líder); o vigia
   não acorda a mesma sessão de novo.

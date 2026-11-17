@@ -21,6 +21,7 @@ const DEV = 'place:dev-vps';
 const LEADER = 'place:lider';
 const CONVERSA = '99999999-aaaa-4bbb-8ccc-dddddddddddd';
 const NOW = Date.parse('2026-11-16T18:00:00Z');
+let clock = NOW;
 
 function fakeStore() {
   const card: CardRow = {
@@ -30,11 +31,16 @@ function fakeStore() {
   };
   const moves: MoveCardArgs[] = [];
   const touches: { place: string; force: boolean | undefined }[] = [];
+  const creates: (string | undefined)[] = [];
   const store: BoardStore = {
     projectOf: async (path) => (projectFolderOf(path) === PROJECT ? 'atlas' : 'sem-projeto'),
     getCard: async (id) => (id === card.id ? card : null),
     listCards: async () => [card],
-    createCard: async () => card,
+    createCard: async (args) => {
+      creates.push(args.p_client_ref);
+      return card;
+    },
+    cardByClientRef: async (ref) => (creates.includes(ref) ? card : null),
     moveCard: async (args) => {
       moves.push(args);
       return { ...card, stage: args.p_to, version: card.version + 1, place_id: args.p_actor };
@@ -43,7 +49,7 @@ function fakeStore() {
       touches.push({ place, force });
     },
   };
-  return { store, moves, touches };
+  return { store, moves, touches, creates };
 }
 
 /** `me`: who calls; `leaderBy`: who put the Líder on the board (`'session'` = a session drew it: no power). */
@@ -66,7 +72,7 @@ function setup(store: BoardStore | null, forward: GateForward, me = DEV, folder 
     at: NOW,
     sessoes: { [SID]: { quemSou: { pasta: folder, lugar: me, papel: me === LEADER ? 'lider' : 'dev' }, listar: [], board: mindscape } },
   };
-  const handle = createGateHandler({ sessionsDir: sessions, ledger: () => ledger, picture: () => picture, forward, serverVersion: 'teste', cards: () => store, now: () => NOW });
+  const handle = createGateHandler({ sessionsDir: sessions, ledger: () => ledger, picture: () => picture, forward, serverVersion: 'teste', cards: () => store, now: () => clock });
   const rpc = async (method: string, params: unknown) => {
     const res = await handle({ method: 'POST', path: `/s/${SID}/mcp`, authorization: `Bearer ${TOKEN}`, headers: {}, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }) });
     return JSON.parse(res.body) as { result: { content?: { text: string }[]; isError?: boolean; tools?: { name: string }[] } };
@@ -75,6 +81,7 @@ function setup(store: BoardStore | null, forward: GateForward, me = DEV, folder 
 }
 
 afterEach(() => {
+  clock = NOW;
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -116,6 +123,20 @@ describe('card_* no portão do daemon', () => {
     const unknown = await setup(store, PC_ON, DEV, 'C:\\Users\\dono\\seazone\\outro-repo').rpc('tools/call', { name: 'card_list', arguments: {} });
     expect(unknown.result.isError).toBe(true);
     expect(moves).toEqual([]);
+  });
+
+  it('reenvio do card_create depois de timeout não cria segundo cartão, mesmo cruzando a borda dos 10 min', async () => {
+    const { store, creates } = fakeStore();
+    const g = setup(store, PC_ON);
+    const ask = { name: 'card_create', arguments: { titulo: 'Quadro', pedido: 'pedido', quemPediu: 'dono' } };
+    clock = NOW - 5_000; // 17:59:55, the bucket ends at 18:00
+    expect((await g.rpc('tools/call', ask)).result.isError).toBeUndefined();
+    clock = NOW + 10_000; // the retry after the 15 s timeout
+    expect((await g.rpc('tools/call', ask)).result.isError).toBeUndefined();
+    expect(creates).toHaveLength(1);
+    clock = NOW + 25 * 60 * 1000; // the same request much later is a new card
+    await g.rpc('tools/call', ask);
+    expect(creates).toHaveLength(2);
   });
 
   it('Dev não põe em "Esperando você": recusado antes do banco', async () => {

@@ -15,7 +15,7 @@
 -- ROLLBACK: `pg_dump -n board` (keep the file) and then `drop schema board cascade;`. Nothing outside `board` is touched.
 --
 -- Writes go ONLY through the functions below (create_card, move_card, reclassify_card, touch_lane, request_leader,
--- mark_cron, resolve_leader_request): the service key bypasses RLS, so the rules live here, and the key has no write
+-- mark_cron, vigia_note, resolve_leader_request): the service key bypasses RLS, so the rules live here, and the key has no write
 -- grant on the tables (last block). RLS is on and has no policy: anon/authenticated see nothing.
 
 create schema if not exists board;
@@ -375,6 +375,26 @@ begin
     charge_count = case when p_kind = 'charged' then charge_count + 1 else charge_count end,
     leader_noticed_at = case when p_kind = 'leader' then now() else leader_noticed_at end
   where id = p_card_id;
+end $$;
+
+-- The vigia's note on a card in "Fazendo" (design §6: "vigia: parado sem justificativa"). Its own function, not
+-- move_card: the card belongs to the place working on it, and move_card refuses any other actor unless it is the Líder;
+-- passing p_as_leader would give the vigia the whole power of the Líder. This writes only the note, on a card still in
+-- "Fazendo", without bumping the version (the session that read the card must still move it), and logs it in moves
+-- (same stage: not news in owner_feed). False when there is nothing to write on (card gone or no longer in Fazendo).
+create or replace function board.vigia_note(p_card_id text, p_note text)
+returns boolean language plpgsql security definer set search_path = board, pg_temp as $$
+declare v_card board.cards;
+begin
+  if not board.has_text(p_note) then raise exception 'a nota do vigia é obrigatória'; end if;
+  update board.cards set note = left('vigia: ' || btrim(p_note), 200), updated_at = now()
+   where id = p_card_id and stage = 'doing'
+  returning * into v_card;
+  if v_card.id is null then return false; end if;
+  perform board.lock_moves();
+  insert into board.moves (card_id, project_id, from_stage, to_stage, note, actor)
+  values (v_card.id, v_card.project_id, 'doing', 'doing', v_card.note, 'vigia');
+  return true;
 end $$;
 
 -- The vigia answers a request for a lane's Líder: done (woken) or failed (why not).

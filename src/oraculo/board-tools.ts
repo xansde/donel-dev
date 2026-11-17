@@ -23,7 +23,7 @@ export interface CardCaller {
   readonly boardPlaces: ReadonlySet<string>;
 }
 
-/** A retry after a timeout must not make a second card; the same request days later is a new card. */
+/** A retry after a timeout must not make a second card (same or previous bucket: 10 to 20 min); later, a new card. */
 export const CREATE_RETRY_WINDOW_MS = 10 * 60 * 1000;
 
 const NO_PROJECT =
@@ -132,15 +132,20 @@ export async function runCardTool(store: BoardStore, caller: CardCaller, call: C
       case 'card_create': {
         if ((call.coluna === 'todo' || call.lugar) && !caller.isLeader) return fail('só o Líder do quadro cria direto em "A fazer" ou dá o lugar; crie na Entrada');
         if (call.lugar && !caller.boardPlaces.has(call.lugar)) return fail(`o lugar ${call.lugar} não está no seu quadro (sessao_listar dá os lugares)`);
+        // A retry after a timeout (the insert may have committed) must not make a second card. The window is a bucket
+        // of the clock, so a retry that crosses its edge looks in the previous bucket too.
         const window = Math.floor(now / CREATE_RETRY_WINDOW_MS);
+        const ref = (w: number): string =>
+          `auto:${createHash('sha256').update(`${w}\n${projectId}\n${caller.placeId}\n${call.titulo}\n${call.pedido}\n${call.coluna ?? ''}\n${call.lugar ?? ''}`).digest('hex').slice(0, 32)}`;
+        const earlier = await store.cardByClientRef(ref(window - 1));
+        if (earlier) return { ok: true, text: cardText(earlier) };
         const card = await store.createCard({
           p_project_id: projectId,
           p_title: call.titulo,
           p_owner_request: call.pedido,
           p_requested_by: call.quemPediu,
           p_actor: caller.placeId,
-          // A retry after a timeout (the insert may have committed) must not make a second card.
-          p_client_ref: `auto:${createHash('sha256').update(`${window}\n${projectId}\n${caller.placeId}\n${call.titulo}\n${call.pedido}\n${call.coluna ?? ''}\n${call.lugar ?? ''}`).digest('hex').slice(0, 32)}`,
+          p_client_ref: ref(window),
           ...(call.criterio ? { p_criterion: call.criterio } : {}),
           ...(call.frente ? { p_front: call.frente } : {}),
           ...(call.coluna ? { p_stage: call.coluna } : {}),
