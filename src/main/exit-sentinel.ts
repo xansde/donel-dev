@@ -67,10 +67,11 @@ export function buildExitSentinelCommand(options: ExitSentinelOptions): { file: 
     `$since = (Get-Date).AddSeconds(-${RECENT_WINDOW_SECONDS})`,
     '$recent = @(Get-CimInstance Win32_Process | Where-Object { $_.CreationDate -gt $since } | Sort-Object CreationDate |' +
       ` Select-Object -Last ${RECENT_MAX} | ForEach-Object {` +
-      " $cl = [string]$_.CommandLine; if ($cl.Length -gt 300) { $cl = $cl.Substring(0, 300) };" +
+      // a token on a command line never reaches the disk (redactSecrets does the same on read)
+      " $cl = [string]$_.CommandLine -replace '[A-Za-z0-9_+/=-]{24,}', '***'; if ($cl.Length -gt 300) { $cl = $cl.Substring(0, 300) };" +
       " [ordered]@{ pid = [int]$_.ProcessId; ppid = [int]$_.ParentProcessId; name = [string]$_.Name;" +
       " startedAt = $_.CreationDate.ToUniversalTime().ToString('o'); commandLine = $cl } })",
-    `$record = [ordered]@{ pid = ${pid}; startedAtMs = ${startedAt}; exitCode = [int64]$code; endedAt = (Get-Date).ToUniversalTime().ToString('o'); recent = $recent }`,
+    `$record = [ordered]@{ pid = ${pid}; startedAtMs = ${startedAt}; exitCode = $code; endedAt = (Get-Date).ToUniversalTime().ToString('o'); recent = $recent }`,
     '$json = ConvertTo-Json -InputObject $record -Depth 4 -Compress',
     `[IO.File]::WriteAllText(${temp}, $json, (New-Object Text.UTF8Encoding $false))`,
     `Move-Item -LiteralPath ${temp} -Destination ${target} -Force`,
@@ -110,11 +111,17 @@ export function discardExitRecord(path: string): void {
   }
 }
 
+/** Long runs of token-like characters (keys, tokens, hashes) become `***`. */
+export function redactSecrets(text: string): string {
+  return text.replace(/[A-Za-z0-9_+/=-]{24,}/g, '***');
+}
+
 /**
- * The record of the run `run`, removed once read; `null` when there is none yet, it is unreadable or it belongs to
- * another run (left in place). Never throws: the boot must not fail on it.
+ * The record of the run `run` (of any run when `run` is omitted), removed once read; `null` when there is none yet,
+ * it is unreadable, its exit code was not read, or it belongs to another run (left in place). Never throws: the boot
+ * must not fail on it.
  */
-export function takeExitRecord(path: string, run: { readonly pid: number; readonly startedAtMs: number }): ExitRecord | null {
+export function takeExitRecord(path: string, run?: { readonly pid: number; readonly startedAtMs: number }): ExitRecord | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(path, 'utf8').replace(/^﻿/, ''));
@@ -123,16 +130,20 @@ export function takeExitRecord(path: string, run: { readonly pid: number; readon
   }
   if (typeof parsed !== 'object' || parsed === null) return null;
   const v = parsed as Record<string, unknown>;
-  if (v.pid !== run.pid || v.startedAtMs !== run.startedAtMs || typeof v.exitCode !== 'number') return null;
+  if (typeof v.pid !== 'number' || typeof v.startedAtMs !== 'number' || typeof v.exitCode !== 'number') return null;
+  if (run && (v.pid !== run.pid || v.startedAtMs !== run.startedAtMs)) return null;
   try {
     unlinkSync(path);
   } catch {
     // already gone
   }
-  const recent = Array.isArray(v.recent) ? (v.recent as RecentProcess[]) : [];
+  const recent = (Array.isArray(v.recent) ? (v.recent as RecentProcess[]) : []).map((p) => ({
+    ...p,
+    commandLine: redactSecrets(String(p?.commandLine ?? '')),
+  }));
   return {
-    pid: run.pid,
-    startedAtMs: run.startedAtMs,
+    pid: v.pid,
+    startedAtMs: v.startedAtMs,
     exitCode: v.exitCode,
     cause: classifyExitCode(v.exitCode),
     endedAt: typeof v.endedAt === 'string' ? v.endedAt : '',

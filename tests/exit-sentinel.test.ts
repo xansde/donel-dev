@@ -54,6 +54,24 @@ describe('exit sentinel', () => {
 
     writeFileSync(path, '{not json', 'utf8');
     expect(takeExitRecord(path, run)).toBeNull();
+
+    // an exit code the sentinel could not read is not a quit
+    writeFileSync(path, JSON.stringify({ ...run, exitCode: null, endedAt: 'b', recent: [] }), 'utf8');
+    expect(takeExitRecord(path, run)).toBeNull();
+  });
+
+  it('hands over a record of any run when asked without one, and never logs a secret from a command line', () => {
+    const path = recordPath();
+    const token = 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
+    writeFileSync(
+      path,
+      JSON.stringify({ pid: 5, startedAtMs: 9, exitCode: 1, endedAt: 'c', recent: [{ pid: 1, ppid: 2, name: 'cmd.exe', startedAt: 'd', commandLine: `gh auth login --with-token ${token}` }] }),
+      'utf8',
+    );
+    const record = takeExitRecord(path);
+    expect(record?.cause).toBe('killed');
+    expect(record?.recent[0].commandLine).toBe('gh auth login --with-token ***');
+    expect(JSON.stringify(record)).not.toContain(token);
   });
 
   it('runs outside the app tree and refuses a bad pid', () => {

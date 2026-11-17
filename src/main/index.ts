@@ -1316,6 +1316,7 @@ const exitWatchdog = createExitWatchdog(spawn);
 const RUN_TRAIL_BEAT_MS = 60_000;
 /** A second look for the previous run's exit record, when its sentinel had not written it yet at boot. */
 const EXIT_RECORD_RETRY_MS = 20_000;
+const EXIT_RECORD_RETRIES = 6;
 
 function logMainEvent(event: string, detail?: Readonly<Record<string, unknown>>): void {
   mainEventsLog ??= createMainEventsLog(join(app.getPath('userData'), 'main-events.log'));
@@ -1356,8 +1357,18 @@ if (!hasSingleInstanceLock) {
       if (record) logMainEvent('previous-run-exit', { ...record });
       return record !== null;
     };
-    if (!logExit()) setTimeout(() => void (logExit() || logMainEvent('previous-run-exit-unknown', { pid: run.pid })), EXIT_RECORD_RETRY_MS).unref();
+    let tries = 0;
+    const retry = (): void => {
+      if (logExit()) return;
+      if (++tries < EXIT_RECORD_RETRIES) setTimeout(retry, EXIT_RECORD_RETRY_MS).unref();
+      else logMainEvent('previous-run-exit-unknown', { pid: run.pid });
+    };
+    if (!logExit()) setTimeout(retry, EXIT_RECORD_RETRY_MS).unref();
   } else {
+    // The previous run passed `will-quit`; a record that is not a plain quit (a copy that hung after it and was
+    // ended, an older run's record found late) is still worth a line before it goes.
+    const stray = takeExitRecord(exitRecordPath);
+    if (stray && stray.cause !== 'quit') logMainEvent('earlier-run-exit', { ...stray });
     discardExitRecord(exitRecordPath);
   }
   if (process.platform === 'win32') {
@@ -1365,7 +1376,9 @@ if (!hasSingleInstanceLock) {
       // Not `detached`: a detached PowerShell 5.1 with no console and ignored stdio exits 0 without running anything.
       // The sentinel leaves the app's tree through its own hop (Start-Process), so the main exiting never takes it.
       const { file, args } = buildExitSentinelCommand({ pid: process.pid, startedAtMs: PROCESS_STARTED_AT_MS, recordPath: exitRecordPath });
-      spawn(file, args, { windowsHide: true, stdio: 'ignore' }).unref();
+      spawn(file, args, { windowsHide: true, stdio: 'ignore' })
+        .on('error', (error) => logMainEvent('exit-sentinel-failed', { error: String(error) }))
+        .unref();
     } catch (error) {
       logMainEvent('exit-sentinel-failed', { error: String(error) });
     }
