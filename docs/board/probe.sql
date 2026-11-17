@@ -44,6 +44,13 @@ do $$ begin
   if not board.vigia_note((pg_temp.card('probe-1')).id, 'parado sem justificativa') then raise exception 'PROBE FALHOU: vigia_note não gravou em Fazendo'; end if;
   if (pg_temp.card('probe-1')).note <> 'vigia: parado sem justificativa' or (pg_temp.card('probe-1')).version <> 3 then raise exception 'PROBE FALHOU: nota do vigia ou versão'; end if;
 end $$;
+-- a card justified meanwhile keeps its own note: "parado sem justificativa" would be false
+select board.create_card('probe', 'T2', 'pedido', null, null, 'dono', 'place:devA', 'probe-2');
+select board.move_card((pg_temp.card('probe-2')).id, 'todo', 'place:lider', 1, p_as_leader => true);
+select board.move_card((pg_temp.card('probe-2')).id, 'doing', 'place:devA', 2, p_note => 'esperando o PR', p_justification => 'revisão', p_justification_link => 'https://x.y', p_justification_due => now() + interval '1 hour');
+do $$ begin
+  if board.vigia_note((pg_temp.card('probe-2')).id, 'parado sem justificativa') or (pg_temp.card('probe-2')).note <> 'esperando o PR' then raise exception 'PROBE FALHOU: vigia_note por cima de justificativa'; end if;
+end $$;
 
 -- "Esperando você": Líder and reason
 select pg_temp.refused(format($q$select board.move_card(%L, 'waiting_owner', 'place:devA', 3, p_owner_reason => 'money')$q$, (pg_temp.card('probe-1')).id), 'só o Líder do quadro põe');

@@ -381,14 +381,14 @@ end $$;
 -- move_card: the card belongs to the place working on it, and move_card refuses any other actor unless it is the Líder;
 -- passing p_as_leader would give the vigia the whole power of the Líder. This writes only the note, on a card still in
 -- "Fazendo", without bumping the version (the session that read the card must still move it), and logs it in moves
--- (same stage: not news in owner_feed). False when there is nothing to write on (card gone or no longer in Fazendo).
+-- (same stage: not news in owner_feed). False when there is nothing to write on (card gone, no longer in Fazendo, or justified meanwhile).
 create or replace function board.vigia_note(p_card_id text, p_note text)
 returns boolean language plpgsql security definer set search_path = board, pg_temp as $$
 declare v_card board.cards;
 begin
   if not board.has_text(p_note) then raise exception 'a nota do vigia é obrigatória'; end if;
   update board.cards set note = left('vigia: ' || btrim(p_note), 200), updated_at = now()
-   where id = p_card_id and stage = 'doing'
+   where id = p_card_id and stage = 'doing' and justification is null  -- a justification given meanwhile wins
   returning * into v_card;
   if v_card.id is null then return false; end if;
   perform board.lock_moves();
