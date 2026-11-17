@@ -20,6 +20,7 @@ import {
   createDecisoesQueue,
   decisaoMessage,
   importCommentKey,
+  NOT_THE_SAMPLE,
   parseImportList,
   readImportList,
   OPTION_REQUIRED,
@@ -29,6 +30,7 @@ import {
   type DecisaoRow,
   type DecisaoVerifier,
   type DecisoesQueue,
+  type ImportList,
   type TarefaEspelho,
 } from '../src/oraculo/decisoes';
 
@@ -647,6 +649,9 @@ describe('servidor do celular', () => {
     const sample = await deliveredTask(ledger, 'amostra do Revisor', null);
     expect((await ledger.apply({ kind: 'lugar', placeId: 'p-rev', roleId: 'revisor' }, { op: 'aceitar', id: sample })).ok).toBe(true);
     const outside = await deliveredTask(ledger, 'fora da lista');
+    const notSample = await deliveredTask(ledger, 'conferir fora da amostra');
+    const sample2 = await deliveredTask(ledger, 'outra amostra', null);
+    expect((await ledger.apply({ kind: 'lugar', placeId: 'p-rev', roleId: 'revisor' }, { op: 'aceitar', id: sample2 })).ok).toBe(true);
     // As the real rows: made by an APK that did not sign nor say which delivery he saw.
     const row = (n: number, tarefa: string, lado: DecisaoRow['lado'], rest: Partial<DecisaoRow> = {}): DecisaoRow & { resultado?: string } => ({
       pedido: `00000000-0000-4000-8000-0000000000${String(n).padStart(2, '0')}`,
@@ -666,20 +671,27 @@ describe('servidor do celular', () => {
       row(3, noted, 'comentario', { comentario: 'texto da linha' }),
       row(4, sample, 'sim'),
       row(5, outside, 'sim'),
+      row(6, notSample, 'sim'),
+      row(7, sample2, 'sim'),
     ];
-    const list = parseImportList([
+    const items = [
       { pedido: rows[0]!.pedido, acao: 'aceitar', texto: 'Pode seguir' },
       { pedido: rows[1]!.pedido, acao: 'rejeitar', texto: 'Falta o print' },
       { pedido: rows[2]!.pedido, acao: 'comentar', texto: 'Gostei' },
       { pedido: rows[3]!.pedido, acao: 'conferir', texto: 'Vi a amostra' },
-    ]);
-    expect(list.ok).toBe(true);
+      { pedido: rows[5]!.pedido, acao: 'conferir' },
+      { pedido: rows[6]!.pedido, acao: 'aceitar', texto: 'Ok da amostra' },
+    ];
+    // First a bad list (one repeated item): it must hold the whole queue, never send the listed rows to the signature check.
+    let list: ImportList = parseImportList([...items, items[0]]);
+    expect(list.ok).toBe(false);
     const result = (n: number): string | undefined => rows[n - 1]!.resultado;
     const failMark = new Set([rows[0]!.pedido, rows[3]!.pedido]);
     const patched: { id: string; campos: TarefaEspelho }[] = [];
     let failPatch = true;
+    let taken = 0;
     const queue: DecisoesQueue = {
-      tomar: async () => rows.filter((entry) => !entry.resultado),
+      tomar: async () => (taken++, rows.filter((entry) => !entry.resultado)),
       marcar: async (pedido, resultado) => {
         if (failMark.delete(pedido)) throw new Error('sem rede');
         const target = rows.find((entry) => entry.pedido === pedido)!;
@@ -698,7 +710,7 @@ describe('servidor do celular', () => {
     const sent: OwnerMessage[] = [];
     const writer = createCardWriter({ service: () => ledger, deliver: async (message) => (sent.push(message), { placeId: message.placeId }) });
     const port = createLedgerMobilePort(() => ledger, undefined, () => writer);
-    let verifier: DecisaoVerifier | null = null;
+    let verifier: DecisaoVerifier | null = verifierOf(auth);
     let verifierAsked = 0;
     const logs: string[] = [];
     const consumer = createDecisoesConsumer({
@@ -714,6 +726,17 @@ describe('servidor do celular', () => {
       returned: () => false,
       log: (line) => logs.push(line),
     });
+
+    // Round 0: the bad list, the phone's core up. Nothing is taken nor marked; one log line says why.
+    await consumer.round();
+    await consumer.round();
+    expect(taken).toBe(0);
+    expect(verifierAsked).toBe(0);
+    for (const entry of rows) expect(entry.resultado).toBeUndefined();
+    expect(logs.filter((line) => line.includes('pedido repetido'))).toHaveLength(1);
+    list = parseImportList(items);
+    expect(list.ok).toBe(true);
+    verifier = null;
 
     // Round 1: the phone's core is not up and the phone is off; the listed rows apply anyway, the one outside waits.
     await consumer.round();
@@ -737,6 +760,11 @@ describe('servidor do celular', () => {
     for (const n of [1, 2, 3, 4]) expect(result(n)).not.toContain(UNSIGNED_DECISION);
     expect(result(5)).toBe(`recusada: ${UNSIGNED_DECISION}`);
     expect(decisions(outside)).toHaveLength(0);
+    // `conferir` off the sample is refused, never a full accept; `aceitar` on a sample keeps the words and checks it.
+    expect(result(6)).toBe(`recusada: ${NOT_THE_SAMPLE}`);
+    expect(ledger.load().doc.tasks[notSample]!.state).toBe('entregue');
+    expect(decisions(notSample)).toHaveLength(0);
+    expect(result(7)).toBe('aplicada: aceita (importação)');
 
     const note = (hhmm: string): string => `Decisão do dono pelo celular às ${hhmm} de 17/11 (importada; feita antes da decisão assinada).`;
     expect(decisions(first)).toEqual([expect.objectContaining({ kind: 'aceita', by: { kind: 'dono' }, requestId: rows[0]!.pedido, text: `Pode seguir\nNotas por página: 👍 p2 provas\n${note('06:08')}` })]);
@@ -753,9 +781,12 @@ describe('servidor do celular', () => {
     const sampleTask = ledger.load().doc.tasks[sample]!;
     expect(sampleTask.state).toBe('aceita');
     expect(sampleTask.events.filter((event) => event.kind === 'conferida')).toEqual([expect.objectContaining({ requestId: rows[3]!.pedido })]);
+    expect(comments(sample2)).toEqual([expect.objectContaining({ requestId: importCommentKey(rows[6]!.pedido), text: `Ok da amostra\n${note('06:14')}` })]);
+    expect(ledger.load().doc.tasks[sample2]!.state).toBe('aceita');
+    expect(ledger.load().doc.tasks[sample2]!.events.filter((event) => event.kind === 'conferida')).toEqual([expect.objectContaining({ requestId: rows[6]!.pedido })]);
 
     // The mirror: every decided task leaves the owner's view; the note alone changes nothing there.
-    expect(new Set(patched.map((entry) => entry.id))).toEqual(new Set([first, second, sample]));
+    expect(new Set(patched.map((entry) => entry.id))).toEqual(new Set([first, second, sample, sample2]));
     for (const { id, campos } of patched) {
       expect(campos).toEqual({ estado: id === second ? 'rejeitada' : 'aceita', esperando_dono: false, atualizado_em: expect.any(String) });
     }
@@ -777,6 +808,9 @@ describe('servidor do celular', () => {
     const dir = mkdtempSync(join(tmpdir(), 'decisoes-'));
     writeFileSync(join(dir, 'decisoes.json'), JSON.stringify({ url: 'https://exemplo.supabase.co', serviceKeyFile: join(dir, 'k'), importar: [ok] }));
     expect(readImportList(join(dir, 'decisoes.json'))).toEqual({ ok: true, items: new Map([[ok.pedido, ok]]) });
+    // A half-written file (a non-atomic rewrite between the round's two reads) holds the queue, never an empty list.
+    writeFileSync(join(dir, 'meio.json'), '{"url": "https://exemplo.supabase.co", "importar": [');
+    expect(readImportList(join(dir, 'meio.json')).ok).toBe(false);
 
     // The patch itself: the mirror's table, the key only in the headers, never in an error.
     writeFileSync(join(dir, 'k'), 'chave-de-teste-123\n');

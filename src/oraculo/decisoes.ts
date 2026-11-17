@@ -29,7 +29,7 @@
 import { readFileSync } from 'node:fs';
 import type { ComentarInput, DecisaoInput, DecisaoOutcome, MobileLedgerPort } from '../main/celular/ledger-port';
 import { LEDGER_NEWER, LEDGER_NOT_OPEN, LEDGER_READ_FAILED, LEDGER_WRITE_FAILED, type LedgerService } from '../main/ledger-store';
-import { commentOfRequest, decisionOfRequest, isRequestId, lastDelivery, MAX_COMMENT_CHARS, OWN_OPTION, startsWithMark, waitsForOwner, type LedgerTask } from '../shared/ledger/contract';
+import { commentOfRequest, decisionOfRequest, isRequestId, lastDecision, lastDelivery, MAX_COMMENT_CHARS, OWN_OPTION, startsWithMark, waitsForOwner, type LedgerTask } from '../shared/ledger/contract';
 import { tarefaRow } from '../shared/ledger/mirror';
 import type { BoardConfig } from './board-client';
 import { RETURNED_REASON } from './devolvido';
@@ -41,6 +41,8 @@ const ROUND_MS = 15_000;
 const TAKE_LIMIT = 10;
 /** The SQL reserves a taken row for 10 min; past this, the batch stops before the reservation can end under it. */
 const BATCH_BUDGET_MS = 9 * 60_000;
+/** A `conferir` the Líder listed for a task that is not the Revisor's sample (accepting it would be a full accept). */
+export const NOT_THE_SAMPLE = 'a tarefa não é a amostra do Revisor';
 export const STALE_DECISION = 'a entrega mudou depois da decisão no celular';
 export const UNSIGNED_DECISION = 'sem assinatura';
 /** A signed row that arrives while the phone is switched off in Preferences: refused for that, not for its signature. */
@@ -199,8 +201,7 @@ export type ImportList = { readonly ok: true; readonly items: ReadonlyMap<string
 export const MAX_IMPORT_ITEMS = 100;
 const IMPORT_ACOES: readonly ImportAcao[] = ['aceitar', 'rejeitar', 'comentar', 'conferir'];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const NO_IMPORTS_MAP: ReadonlyMap<string, ImportItem> = new Map();
-const NO_IMPORTS: ImportList = { ok: true, items: NO_IMPORTS_MAP };
+const NO_IMPORTS: ImportList = { ok: true, items: new Map() };
 
 /**
  * The field `importar` of `decisoes.json`: `[{ "pedido": "<uuid>", "acao": "aceitar"|"rejeitar"|"comentar"|"conferir",
@@ -230,15 +231,19 @@ export function parseImportList(raw: unknown): ImportList {
   return { ok: true, items };
 }
 
-/** Reads `importar` from the config file at each round; a missing or unreadable file is an empty list (the queue is off). */
+/**
+ * Reads `importar` from the config file at each round. It is read only while the queue is on, so a file that is gone
+ * or does not parse here changed under the round (a non-atomic rewrite): `ok: false`, and the round holds the queue,
+ * never an empty list that would send the listed rows to the signature check.
+ */
 export function readImportList(file: string): ImportList {
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(file, 'utf8')) as unknown;
   } catch {
-    return NO_IMPORTS;
+    return { ok: false, reason: `${DECISOES_CONFIG_FILE} não pôde ser lido como JSON` };
   }
-  return isRecord(raw) ? parseImportList(raw.importar) : NO_IMPORTS;
+  return isRecord(raw) ? parseImportList(raw.importar) : { ok: false, reason: `${DECISOES_CONFIG_FILE} não é um objeto` };
 }
 
 const SAO_PAULO = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
@@ -442,10 +447,16 @@ export function createDecisoesConsumer(deps: DecisoesConsumerDeps): DecisoesCons
       return;
     }
     offLogged = false;
+    // A bad list holds the whole queue: with it dropped, the rows it lists would reach the signature check and be
+    // refused for good ("sem assinatura"). Nothing is taken until the Líder fixes it.
     const list = deps.importar?.() ?? NO_IMPORTS;
-    if (!list.ok && importLogged !== list.reason) deps.log?.(`[decisoes] ${list.reason}; a importação fica ignorada inteira.`);
-    importLogged = list.ok ? '' : list.reason;
-    const imports = list.ok ? list.items : NO_IMPORTS_MAP;
+    if (!list.ok) {
+      if (importLogged !== list.reason) deps.log?.(`[decisoes] ${list.reason}; a fila do celular fica parada até a lista "importar" ser corrigida.`);
+      importLogged = list.reason;
+      return;
+    }
+    importLogged = '';
+    const imports = list.items;
     const takenAt = Date.now();
     const rows = [...(await queue.tomar(TAKE_LIMIT))].sort((a, b) => a.criada_em.localeCompare(b.criada_em));
     if (!rows.length) return;
@@ -474,7 +485,7 @@ export function createDecisoesConsumer(deps: DecisoesConsumerDeps): DecisoesCons
       let outcome: RowOutcome;
       try {
         const item = imports.get(row.pedido);
-        outcome = item ? await importRow(row, item) : await applyRow(row, task);
+        outcome = item ? await importRow(row, item, task) : await applyRow(row, task);
       } catch (error) {
         // One row that throws does not hold the batch: it stays reserved and comes back when the reservation ends.
         deps.log?.(`[decisoes] ${row.tarefa} falhou e fica na fila: ${error instanceof Error ? error.message : String(error)}`);
@@ -531,12 +542,22 @@ export function createDecisoesConsumer(deps: DecisoesConsumerDeps): DecisoesCons
    * A row the Líder listed (t-8762b0ac): applied as listed through the same port, which answers a repeat with what it
    * already recorded. No signature, delivery or mapping check runs, and the verifier is never asked.
    */
-  async function importRow(row: DecisaoRow, item: ImportItem): Promise<RowOutcome> {
+  async function importRow(row: DecisaoRow, item: ImportItem, task: LedgerTask | undefined): Promise<RowOutcome> {
     const pageNotes = paginasTexto(row.paginas);
     const tail = joinLines(pageNotes, importNote(row.criada_em));
     const words = fitWords(item.texto ?? cleanText(row.comentario), tail);
     const base = { pedidoId: row.pedido, itemId: row.tarefa };
     const suffix = ' (importação)';
+    // Already decided by this row: the port answers what it recorded, whatever the task became since.
+    if (item.acao !== 'comentar' && task && decisionOfRequest(task, row.pedido)) return decide({ ...base, decisao: item.acao === 'rejeitar' ? 'rejeitar' : 'aceitar', motivo: null }, suffix);
+    // On the Revisor's sample the ledger turns an accept into `conferida`, an event without text: the words and the note
+    // ride on a comment first. Off the sample, a `conferir` would be a full accept, which the row did not ask for.
+    const sample = task !== undefined && task.state === 'aceita' && lastDecision(task)?.by.kind === 'lugar';
+    if (sample && (item.acao === 'aceitar' || item.acao === 'conferir')) {
+      const noted = await comment({ ...base, pedidoId: importCommentKey(row.pedido), texto: joinLines(words, tail) });
+      if (!('mark' in noted) || noted.mark.startsWith('recusada')) return noted;
+      return decide({ ...base, decisao: 'aceitar', motivo: null }, suffix);
+    }
     switch (item.acao) {
       case 'aceitar':
         return decide({ ...base, decisao: 'aceitar', motivo: null, texto: joinLines(words, tail) }, suffix);
@@ -544,11 +565,8 @@ export function createDecisoesConsumer(deps: DecisoesConsumerDeps): DecisoesCons
         return decide({ ...base, decisao: 'rejeitar', motivo: words, texto: tail }, suffix);
       case 'comentar':
         return comment({ ...base, texto: joinLines(words, tail) }, suffix);
-      case 'conferir': {
-        const noted = await comment({ ...base, pedidoId: importCommentKey(row.pedido), texto: joinLines(words, tail) });
-        if (!('mark' in noted) || noted.mark.startsWith('recusada')) return noted;
-        return decide({ ...base, decisao: 'aceitar', motivo: null }, suffix);
-      }
+      case 'conferir':
+        return { mark: `recusada: ${NOT_THE_SAMPLE}` }; // the sample took the branch above
     }
   }
 
