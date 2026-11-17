@@ -38,29 +38,43 @@ export function classifyExitCode(code: number): ExitCause {
  * so the .NET and the JS engines read them the same way. They mask more than needed (`-Path` loses its value): a
  * readable command line is worth less than a password left in a log.
  */
+const SECRET_WORD = '(?:password|passwd|pass|pwd|pw|secret|token|apikey|api-key|key|auth|credential)';
+
 export const COMMAND_LINE_MASKS: ReadonlyArray<{ readonly source: string; readonly to: string }> = [
   // scheme://user:password@host
-  { source: '(://[^/\\s:@"]+:)[^@\\s"]+@', to: '$1***@' },
-  // curl -u user:password, --user=user:password
-  { source: '((?:^|\\s)(?:-u|--user)(?:=|\\s+)[^\\s:"]+:)\\S+', to: '$1***' },
-  // -pSenha, -p Senha (mysql, sshpass), --password=x, --token x, --api-key x
-  { source: '((?:^|\\s)--?(?:p|pw|pwd|pass|passwd|password|token|secret|apikey|api-key|key)(?:=|\\s+)?)("[^"]*"|\\S+)', to: '$1***' },
-  // Bearer <token>
-  { source: '(bearer\\s+)\\S+', to: '$1***' },
+  { source: `(://[^/\\s:@"']+:)[^@\\s"']+@`, to: '$1***@' },
+  // Authorization: Bearer <token> / Basic <base64>
+  { source: '((?:bearer|basic)\\s+)\\S+', to: '$1***' },
+  // curl -u user:password, -u "user:password", -uuser:password, --user=user:password
+  { source: `((?:^|\\s)(?:-u|--user)(?:=|\\s*)["']?[^\\s:"']+:)[^\\s"']+`, to: '$1***' },
+  // PGPASSWORD=x, set TOKEN=x, $env:TOKEN='x', --password=x, --db-password=x
+  { source: `((?:\\$env:)?[\\w.-]*${SECRET_WORD}[\\w.-]*\\s*=\\s*)("[^"]*"|'[^']*'|[^\\s&|;"']+)`, to: '$1***' },
+  // --password x, --db-password "x y", --client-secret x, --token x, --pw x
+  { source: `((?:^|\\s)--?[\\w-]*${SECRET_WORD}[\\w-]*\\s+)("[^"]*"|'[^']*'|\\S+)`, to: '$1***' },
+  // -pSenha, -p Senha (mysql, sshpass)
+  { source: `((?:^|\\s)-p\\s*)("[^"]*"|'[^']*'|[^\\s-]\\S*)`, to: '$1***' },
+  // /p:Senha, /password:Senha (Windows tools)
+  { source: '((?:^|\\s)/(?:p|pw|pwd|pass|password)[:=])("[^"]*"|\\S+)', to: '$1***' },
   // AWS access key ids, 20 characters
   { source: '\\b(?:AKIA|ASIA)[A-Z0-9]{16}\\b', to: '***' },
   // any long run of token-like characters (keys, tokens, base64)
   { source: '[A-Za-z0-9_+/=-]{24,}', to: '***' },
 ];
 
-export function maskCommandLine(text: string): string {
+/** What the PowerShell does to a command line before the disk: the command-line masks alone. */
+export function maskForDisk(text: string): string {
   let out = text;
   for (const mask of COMMAND_LINE_MASKS) out = out.replace(new RegExp(mask.source, 'gi'), mask.to);
-  return maskSecrets(out).text;
+  return out;
+}
+
+/** What reaches the log: the disk masks again, then the ledger's maskSecrets. */
+export function maskCommandLine(text: string): string {
+  return maskSecrets(maskForDisk(text)).text;
 }
 
 /** Image names whose command line may say who ended the main; any other process keeps only its name. */
-const KILLER_CANDIDATES = '^(taskkill|powershell|pwsh|cmd|wscript|cscript|node|electron|bash|sh|python[0-9.]*|Donel Dev.*)\\.exe$';
+export const KILLER_CANDIDATES = '^(taskkill|powershell|pwsh|cmd|wscript|cscript|node|electron|bash|sh|python[0-9.]*|Donel Dev.*)\\.exe$';
 
 export interface ExitSentinelOptions {
   readonly pid: number;
@@ -112,14 +126,18 @@ export function buildExitSentinelCommand(options: ExitSentinelOptions): { file: 
     // The exit code reaches the disk first: the process query below may be slow or hang with WMI.
     `$record = [ordered]@{ pid = ${pid}; startedAtMs = ${startedAt}; exitCode = $code; endedAt = (Get-Date).ToUniversalTime().ToString('o'); aliveAfterExit = @() }`,
     ...save,
-    `$since = (Get-Date).AddSeconds(-${RECENT_WINDOW_SECONDS})`,
-    '$record.aliveAfterExit = @(Get-CimInstance Win32_Process | Where-Object { $_.CreationDate -gt $since } | Sort-Object CreationDate |' +
+    // only processes started before the end: a quick reopen's own children must not take the places
+    '$end = Get-Date',
+    `$since = $end.AddSeconds(-${RECENT_WINDOW_SECONDS})`,
+    '$record.aliveAfterExit = @(Get-CimInstance Win32_Process | Where-Object { $_.CreationDate -gt $since -and $_.CreationDate -le $end } | Sort-Object CreationDate |' +
       ` Select-Object -Last ${RECENT_MAX} | ForEach-Object {` +
       // only a candidate to killer (or a child of the main) keeps its command line, masked before the disk
       ` $cl = ''; if ($_.Name -match ${psQuote(KILLER_CANDIDATES)} -or $_.ParentProcessId -eq ${pid}) { $cl = [string]$_.CommandLine${masks} };` +
       " if ($cl.Length -gt 300) { $cl = $cl.Substring(0, 300) };" +
       " [ordered]@{ pid = [int]$_.ProcessId; ppid = [int]$_.ParentProcessId; name = [string]$_.Name;" +
       " startedAt = $_.CreationDate.ToUniversalTime().ToString('o'); commandLine = $cl } })",
+    // the next boot may have read (and removed) the first write already: then it was told, and is not written again
+    `if (-not (Test-Path -LiteralPath ${target})) { exit 0 }`,
     ...save,
   ].join('\n');
   const hop =
@@ -154,7 +172,7 @@ interface RunId {
   readonly startedAtMs: number;
 }
 
-const RECORD_NAME = /^main-exit-(\d+)-(\d+)\.json$/;
+const RECORD_NAME = /^main-exit-(\d+)-(\d+)\.json(\.tmp)?$/;
 
 /** `<dir>/main-exit-<pid>-<start>.json`: one record per run. */
 export function exitRecordPath(dir: string, run: RunId): string {
@@ -215,7 +233,8 @@ export function takeStrayExitRecords(dir: string, keep: RunId | null): ExitRecor
     if (!match) continue;
     if (keep && Number(match[1]) === keep.pid && Number(match[2]) === keep.startedAtMs) continue;
     const path = join(dir, name);
-    const record = takeExitRecord(path);
+    // a `.tmp` left by a sentinel that stopped between the write and the move is only cleared
+    const record = match[3] ? null : takeExitRecord(path);
     if (record) records.push(record);
     else {
       try {

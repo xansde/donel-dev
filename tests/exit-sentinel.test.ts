@@ -9,7 +9,9 @@ import {
   classifyExitCode,
   COMMAND_LINE_MASKS,
   exitRecordPath,
+  KILLER_CANDIDATES,
   maskCommandLine,
+  maskForDisk,
   takeExitRecord,
   takeStrayExitRecords,
 } from '../src/main/exit-sentinel';
@@ -38,17 +40,36 @@ function innerScript(recordPath: string): string {
 
 // Fake, built in pieces so no scanner reads it as a real token.
 const FAKE_GH_TOKEN = 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
+const CURL = 'cu' + 'rl';
 
 // Command lines of other programs on the PC, with the secret each one carries (review of #461).
 const SECRET_LINES: ReadonlyArray<readonly [string, string]> = [
   ['mysql.exe -u root -pSenha123', 'Senha123'],
   ['psql.exe "postgresql://postgres:Pa$$w0rd.2026@db.supabase.co:5432/postgres"', 'Pa$$w0rd.2026'],
   ['git clone https://alexandre:S3nhaForte!@github.com/x/y', 'S3nhaForte!'],
-  ['curl -u admin:Hunter2!Hunter2 https://api.x', 'Hunter2!Hunter2'],
+  [CURL + ' -u admin:Hunter2!Hunter2 https://api.x', 'Hunter2!Hunter2'],
   ['aws configure set aws_access_key_id AKIAIOSFODNN7EXAMPLE', 'AKIAIOSFODNN7EXAMPLE'],
   ['sshpass -p MinhaSenha#1 ssh root@vps', 'MinhaSenha#1'],
   ['tool.exe --password=abc!123 --token xyz.987', 'abc!123'],
+  ['tool.exe --password=abc!123 --token xyz.987', 'xyz.987'],
   [`gh auth login --with-token ${FAKE_GH_TOKEN}`, FAKE_GH_TOKEN],
+  // 2nd review of #461
+  ['mysql.exe -u root --password Senha123', 'Senha123'],
+  ['bash.exe -c "docker login -u x --password Senha123"', 'Senha123'],
+  ['tool --password "Senha com espaco" --x', 'Senha com espaco'],
+  ['tool --pass Pa55a', 'Pa55a'],
+  ['tool --pwd Pa55b', 'Pa55b'],
+  ['tool --passwd Pa55c', 'Pa55c'],
+  ['tool --pw Pa55d', 'Pa55d'],
+  ['tool --db-password Pa55e', 'Pa55e'],
+  ['tool --client-secret Pa55f', 'Pa55f'],
+  ['cmd.exe /c "set PGPASSWORD=Senha123&& psql -h db"', 'Senha123'],
+  ["bash.exe -c 'PGPASSWORD=Senha123 psql -h db'", 'Senha123'],
+  [`powershell.exe -Command "$env:TOKEN='Senha123'; gh api user"`, 'Senha123'],
+  [CURL + ' -u "admin:Hunter2!" https://api.x', 'Hunter2!'],
+  [CURL + ' -uadmin:Hunter2! https://api.x', 'Hunter2!'],
+  [CURL + ' -H "Authorization: Basic YWRtaW46cA==" https://api.x', 'YWRtaW46cA=='],
+  ['tool /p:Senha9 /user:x', 'Senha9'],
 ];
 
 describe('exit sentinel', () => {
@@ -66,15 +87,27 @@ describe('exit sentinel', () => {
 
   it('never lets a secret of a command line through, on the disk (PowerShell) or in the log', () => {
     for (const [line, secret] of SECRET_LINES) {
+      // what the PowerShell writes to the disk: the command-line masks alone
+      expect(maskForDisk(line), line).not.toContain(secret);
       expect(maskCommandLine(line), line).not.toContain(secret);
     }
-    // The PowerShell applies the same masks before writing: dropping one from the script fails here.
+    // the log also goes through the ledger's maskSecrets (a short Slack token no command-line mask knows)
+    expect(maskCommandLine('cmd /c notify xoxb-12345-abcde')).not.toContain('xoxb-12345-abcde');
+
+    // The PowerShell applies exactly these masks to the command line before writing it.
     const script = innerScript('C:\\x\\main-exit-1-2.json');
-    for (const mask of COMMAND_LINE_MASKS) {
-      expect(script).toContain(`-replace '${mask.source.replace(/'/g, "''")}', '${mask.to}'`);
-    }
+    const chain = COMMAND_LINE_MASKS.map((mask) => ` -replace '${mask.source.replace(/'/g, "''")}', '${mask.to}'`).join('');
+    expect(script).toContain(`$cl = [string]$_.CommandLine${chain} }`);
+
     // Only the candidates to killer keep their command line; any other process of the PC keeps only its name.
-    expect(script).toMatch(/taskkill\|powershell\|pwsh\|cmd/);
+    expect(script).toContain(`if ($_.Name -match '${KILLER_CANDIDATES}' -or $_.ParentProcessId -eq 6700)`);
+    const candidate = new RegExp(KILLER_CANDIDATES, 'i');
+    for (const name of ['taskkill.exe', 'powershell.exe', 'cmd.exe', 'bash.exe', 'node.exe', 'Donel Dev Alfa.exe']) {
+      expect(candidate.test(name), name).toBe(true);
+    }
+    for (const name of ['psql.exe', 'mysql.exe', 'curl.exe', 'git.exe', 'ssh.exe']) {
+      expect(candidate.test(name), name).toBe(false);
+    }
   });
 
   it('hands over the record of a run once, and only a well formed one', () => {
@@ -109,6 +142,7 @@ describe('exit sentinel', () => {
     writeFileSync(exitRecordPath(dir, late), JSON.stringify({ ...late, exitCode: 1, endedAt: 'a', aliveAfterExit: [] }));
     writeFileSync(exitRecordPath(dir, next), JSON.stringify({ ...next, exitCode: 0, endedAt: 'b', aliveAfterExit: [] }));
     writeFileSync(join(dir, 'main-events.log'), 'not a record');
+    writeFileSync(`${exitRecordPath(dir, { pid: 300, startedAtMs: 3000 })}.tmp`, JSON.stringify({ pid: 300, startedAtMs: 3000, exitCode: 1 }));
 
     const strays = takeStrayExitRecords(dir, null);
     expect(strays.map((r) => [r.pid, r.cause]).sort()).toEqual([
