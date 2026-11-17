@@ -163,9 +163,10 @@ export function createBoardClient(config: BoardConfig, doFetch: Fetch = fetch): 
       try {
         res = await doFetch(`${config.url}/rest/v1/${path}`, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(15_000) });
       } catch (error) {
-        // A kept-alive socket the server already closed fails before the request goes out: one retry on a fresh one.
+        // A kept-alive socket the server already closed: one retry on a fresh one, for reads only. A POST is not
+        // retried, since it may have reached the database (mark_cron 'charged' would count twice); its caller sees
+        // the error (the cron types the notice again next round rather than count twice).
         const code = (error as { cause?: { code?: string } } | null)?.cause?.code;
-        // Only reads: a POST may have reached the database (mark_cron 'charged' would count twice).
         if (attempt === 0 && method === 'GET' && (code === 'UND_ERR_SOCKET' || code === 'ECONNRESET')) continue;
         throw new BoardError(`o quadro de tarefas não respondeu (${error instanceof Error ? error.name : 'erro'}); tente de novo`);
       }
