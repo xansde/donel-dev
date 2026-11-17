@@ -20,7 +20,7 @@ import {
   type LedgerVisual,
 } from '../../shared/ledger/contract';
 import { isProgressEvent } from '../../shared/ledger/andamento';
-import { actorLabel, deliveryNote, naipeDoPapel, reciboDe, type PlaceNameOf } from '../../shared/ledger/labels';
+import { actorLabel, deliveryNote, naipeDaCarta, reciboDe, type PlaceNameOf } from '../../shared/ledger/labels';
 import type { CardWriter } from '../ledger-card-writer';
 import { LEDGER_NOT_OPEN, LEDGER_READ_FAILED, type LedgerService } from '../ledger-store';
 import { maskSecrets, summarize } from './mask';
@@ -142,7 +142,7 @@ function entregaCelular(task: LedgerTask, placeName: PlaceNameOf | undefined): E
   return {
     id: task.id,
     origem: sample ? 'amostra-revisor' : 'esperando-voce',
-    naipe: naipeDoPapel(deliveredBy?.kind === 'lugar' ? deliveredBy.roleId : undefined),
+    naipe: naipeDaCarta(task, deliveredBy?.kind === 'lugar' ? deliveredBy.roleId : undefined),
     titulo: delivery?.forOwner?.title ?? task.title ?? `${quadro} · prazo ${prazo}`,
     pedido: task.request,
     criterio: task.doneWhen,

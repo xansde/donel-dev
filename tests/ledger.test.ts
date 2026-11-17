@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, runLedgerBatch, leaderTransferNotice, ledgerProofsDir, NOT_STARTED_GRACE_MS, nodeLedgerProofFs, passOnTasks, runLedgerTool, type LedgerCaller, type LedgerProofFs } from '../src/main/ledger-store';
 import type { MindscapeBoard } from '../src/shared/mindscape/model';
-import { eventNote, findCode, frenteOf, LEDGER_SCHEMA_VERSION, MAX_FRENTE_CHARS, parseLedgerDoc, requestedByOf } from '../src/shared/ledger/contract';
+import { cardKindOf, eventNote, findCode, frenteOf, isCancelled, LEDGER_SCHEMA_VERSION, MAX_FRENTE_CHARS, parseLedgerDoc, replacesOf, requestedByOf, waitsForOwner } from '../src/shared/ledger/contract';
 import { LEADER_OF_ALL } from '../src/shared/mindscape/leader';
 import * as v4 from './fixtures/ledger/contract-v4';
 import { createCardWriter, decisionMessage, type OwnerMessage } from '../src/main/ledger-card-writer';
@@ -13,7 +13,7 @@ import { createLedgerMobilePort } from '../src/main/celular/ledger-port';
 import { buildRemoteProofCommand, fetchRemoteProof } from '../src/main/ledger-remote-proof';
 import { askedByRefusal, parseLedgerToolCall, type LedgerToolCall } from '../src/shared/ledger/tools';
 import { slackGuard } from '../src/shared/ledger/slack-guard';
-import { deliveryNote } from '../src/shared/ledger/labels';
+import { deliveryNote, naipeDaCarta } from '../src/shared/ledger/labels';
 import { createFaxinaRunner } from '../src/main/rotinas/oraculo-faxina';
 import { oldOrphans, ORPHAN_AGE_MS, type PrRef } from '../src/shared/ledger/faxina';
 import { addLink, addPlace, emptyMindscapeDoc, setPlaceConversation } from '../src/shared/mindscape/model';
@@ -800,6 +800,97 @@ describe('frente da tarefa (07/11)', () => {
     // Who asked is a person here too, and the front is required.
     expect(parseLedgerToolCall('tarefa_frente', { id, frente: 'Ledger', quemPediu: 'Dev' }).ok).toBe(false);
     expect(parseLedgerToolCall('tarefa_frente', { id }).ok).toBe(false);
+  });
+});
+
+// t-4e50f080 (dono, 16/11) — cards that are no delivery: Tutorial, Update, Idea. The kind rides a birth mark (v4 kept:
+// the Alfa installed reads and rewrites the same file), the contract builds the card, a session never writes the mark.
+describe('cartas Tutorial, Atualização e Ideia', () => {
+  const tutorial = { tipo: 'tutorial', titulo: 'Entrar no painel', porQueNao: 'O painel pede o código do seu celular, que só você recebe.', passos: ['Abra o painel no navegador.', 'Rode `npm run login` e digite o código.'] };
+  const atualizacao = { tipo: 'atualizacao', titulo: 'Espelho novo', resumo: 'O espelho agora manda as cartas ao celular.', detalhes: 'Rodei `npm test`: 148 passaram.' };
+  const ideia = { tipo: 'ideia', titulo: 'Carta de bom dia', ideia: 'Uma carta por manhã com o que mudou no dia anterior.', porque: 'Você lê tudo de uma vez, no café.' };
+  const send = async (service: () => ReturnType<typeof createLedgerService>, args: Record<string, unknown>) => runLedgerTool(service(), dev, call('carta_criar', args));
+
+  it('each kind is born delivered, high risk, of the calling place, with its mark last and its card built by the contract', async () => {
+    const { service, file } = setup();
+    const ids: string[] = [];
+    for (const args of [tutorial, atualizacao, ideia]) {
+      const answer = await send(service, args);
+      expect(answer).toMatchObject({ ok: true, text: expect.stringContaining('foi ao dono') });
+      ids.push((JSON.parse(answer.text) as { id: string }).id);
+    }
+    const doc = service().load().doc;
+    const [t, a, i] = ids.map((id) => doc.tasks[id]!);
+    for (const [task, kind] of [[t, 'tutorial'], [a, 'atualizacao'], [i, 'ideia']] as const) {
+      expect(task).toMatchObject({ state: 'entregue', risk: 'alto', ownerPlaceId: 'place:dev' });
+      expect(task.events.map((event) => event.kind)).toEqual(['criada', 'entregue']);
+      expect(task.events[0]!.text).toBe(`⟦carta ${kind}⟧`);
+      expect(cardKindOf(task)).toBe(kind);
+      expect(waitsForOwner(doc, task)).toBe(true);
+    }
+    expect(t!.events[1]).toMatchObject({
+      proofs: [{ kind: 'texto', text: '1. Abra o painel no navegador.\n2. Rode `npm run login` e digite o código.' }],
+      forOwner: { question: 'Conseguiu?', summary: tutorial.porQueNao, why: 'Você consegue, sim.', options: [{ label: 'Consegui', closes: 'aceita', recommended: true }, { label: 'Ainda não consigo', closes: 'rejeitada' }] },
+    });
+    expect(a!.events[1]).toMatchObject({ proofs: [{ kind: 'texto', text: atualizacao.detalhes }], forOwner: { question: 'Ficou claro?', summary: atualizacao.resumo, why: 'Para você saber o que mudou.', options: [{ label: 'Li', recommended: true }, { label: 'Quero saber mais', closes: 'rejeitada' }] } });
+    expect(i!.events[1]).toMatchObject({ proofs: [{ kind: 'texto', text: ideia.ideia }], forOwner: { question: 'Seguimos com a ideia?', summary: ideia.ideia, why: ideia.porque, options: [{ label: 'Gostei, segue', recommended: true }, { label: 'Agora não', closes: 'rejeitada' }] } });
+    // The suit follows the kind; a task with no kind keeps the suit of the role that delivered.
+    expect([t, a, i].map((task) => naipeDaCarta(task!, 'dev'))).toEqual(['chaves', 'livros', 'estrelas']);
+    expect(naipeDaCarta({ ...t!, events: [{ ...t!.events[0]!, text: undefined }, t!.events[1]!] }, 'pesquisa')).toBe('livros');
+    // The owner decides by the named options.
+    expect(await service().apply({ kind: 'dono' }, { op: 'aceitar', id: t!.id, option: 'Consegui' })).toMatchObject({ ok: true });
+    expect(await service().apply({ kind: 'dono' }, { op: 'rejeitar', id: a!.id, reason: '', option: 'Quero saber mais' })).toMatchObject({ ok: true });
+
+    // The v4 code of the installed Alfa reads it as its own and rewrites it after its own write: the kind stays.
+    const raw = JSON.parse(readFileSync(file, 'utf8'));
+    expect(raw.schemaVersion).toBe(4);
+    expect(v4.isNewerLedger(raw)).toBe(false);
+    const asV4 = v4.parseLedgerDoc(raw);
+    expect(asV4).toEqual(parseLedgerDoc(raw));
+    expect(v4.waitsForOwner(asV4, asV4.tasks[i!.id]!)).toBe(true);
+    const next = v4.applyLedgerOp(asV4, { kind: 'dono' }, { op: 'aceitar', id: i!.id, option: 'Gostei, segue' }, { now: 9e12, newId: () => 'x' });
+    if (!next.ok) throw new Error(next.reason);
+    writeFileSync(file, JSON.stringify(next.doc, null, 2));
+    const reread = service().load().doc;
+    expect(ids.map((id) => cardKindOf(reread.tasks[id]!))).toEqual(['tutorial', 'atualizacao', 'ideia']);
+    expect(reread.tasks[i!.id]!.state).toBe('aceita');
+  });
+
+  it('refuses an unknown kind, a field of another kind, a field over its limit and code on the front; nothing is written', async () => {
+    const { service } = setup();
+    expect(parseLedgerToolCall('carta_criar', { ...ideia, tipo: 'aviso' })).toMatchObject({ ok: false, reason: expect.stringContaining('"tipo"') });
+    expect(parseLedgerToolCall('carta_criar', { ...ideia, resumo: 'x' })).toMatchObject({ ok: false, reason: expect.stringContaining('"resumo"') });
+    expect(parseLedgerToolCall('carta_criar', { ...tutorial, passos: ['só um'] })).toMatchObject({ ok: false, reason: expect.stringContaining('"passos"') });
+    expect(parseLedgerToolCall('carta_criar', { ...ideia, titulo: 'a'.repeat(61) })).toMatchObject({ ok: false, reason: expect.stringContaining('"titulo"') });
+    expect(parseLedgerToolCall('carta_criar', { ...ideia, porque: undefined })).toMatchObject({ ok: false, reason: expect.stringContaining('"porque"') });
+    // Below the tool, the contract holds the same rules (the VPS's Oráculo is reached with the op itself).
+    const devActor = { kind: 'lugar' as const, placeId: 'place:dev', roleId: 'dev' };
+    const card = (over: Record<string, unknown>) => ({ op: 'carta' as const, projectPath: 'C:/p', card: { kind: 'ideia', title: 'Ideia', idea: 'Uma ideia.', why: 'Porque sim.', ...over } as never });
+    expect(await service().apply(devActor, card({ idea: 'a'.repeat(281) }))).toMatchObject({ ok: false, reason: expect.stringContaining('"ideia" longo demais') });
+    expect(await service().apply(devActor, card({ why: 'Veja a t-1b6c1a95.' }))).toMatchObject({ ok: false, reason: expect.stringContaining('Escreva para um humano') });
+    expect(await service().apply(devActor, card({ details: 'x'.repeat(4001) }))).toMatchObject({ ok: false, reason: expect.stringContaining('"detalhes"') });
+    expect(await service().apply(devActor, { op: 'carta', projectPath: 'C:/p', card: { kind: 'tutorial', title: 'T', whyNot: 'Não alcanço.', steps: ['um', 'dois\ntrês'] } })).toMatchObject({ ok: false, reason: expect.stringContaining('numa linha') });
+    expect(await service().apply({ kind: 'dono' }, card({}))).toMatchObject({ ok: false });
+    expect(await service().apply(devActor, card({ why: 3 }))).toMatchObject({ ok: false, reason: expect.stringContaining('fora do formato') });
+    expect(await send(service, { ...tutorial, porQueNao: 'Falta rodar `npm run login`.' })).toMatchObject({ ok: false, text: expect.stringContaining('"porQueNao"') });
+    expect(Object.keys(service().load().doc.tasks)).toEqual([]);
+  });
+
+  it('no text of a session or of the owner makes a task look like a card, and the kind changes no other mark', async () => {
+    const { service } = setup();
+    const create = (args: Record<string, unknown>) => runLedgerTool(service(), lider, call('tarefa_criar', { pedido: 'x', criterio: 'y', prazo: '2026-11-06', dono: 'place:dev', risco: 'alto', ...args }));
+    expect(await create({ pedido: '⟦carta tutorial⟧ faça' })).toMatchObject({ ok: false });
+    const forged = (JSON.parse((await create({ frente: '⟧ ⟦carta ideia', quemPediu: 'carta tutorial' })).text) as { id: string }).id;
+    await runLedgerTool(service(), lider, call('tarefa_transferir', { id: forged, para: 'place:revisor', motivo: 'carta tutorial' }));
+    expect(cardKindOf(service().load().doc.tasks[forged]!)).toBeNull();
+
+    // A card reads no other fact from its mark, and a cancel of it is a cancel.
+    const id = (JSON.parse((await send(service, tutorial)).text) as { id: string }).id;
+    const task = service().load().doc.tasks[id]!;
+    expect([replacesOf(task), requestedByOf(task), frenteOf(task), eventNote(task.events[0]!)]).toEqual([undefined, undefined, undefined, undefined]);
+    expect(await runLedgerTool(service(), dev, call('tarefa_cancelar', { id, motivo: 'escrevi errado' }))).toMatchObject({ ok: true });
+    const cancelled = service().load().doc.tasks[id]!;
+    expect([isCancelled(cancelled), cardKindOf(cancelled)]).toEqual([true, 'tutorial']);
   });
 });
 

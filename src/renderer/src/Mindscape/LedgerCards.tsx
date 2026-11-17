@@ -20,7 +20,7 @@ import {
 } from '../../../shared/ledger/contract';
 import { isProgressEvent } from '../../../shared/ledger/andamento';
 import { proofUrl } from '../../../shared/ledger/channels';
-import { actorLabel, deliveryNote, mandarDaCarta, naipeDoPapel, notasDaFrente, reciboDe, type PlaceNameOf } from '../../../shared/ledger/labels';
+import { actorLabel, deliveryNote, mandarDaCarta, naipeDaCarta, notasDaFrente, reciboDe, type PlaceNameOf } from '../../../shared/ledger/labels';
 import type { Naipe } from '../../../shared/celular';
 import styles from './LedgerCards.module.css';
 
@@ -593,7 +593,7 @@ export function LedgerCards({
   const index = Math.max(0, queue.findIndex((task) => task.id === selected));
   const task = queue[index]!;
   const delivery = lastDelivery(task);
-  const naipe = naipeDoPapel(delivery?.by.kind === 'lugar' ? delivery.by.roleId : undefined);
+  const naipe = naipeDaCarta(task, delivery?.by.kind === 'lugar' ? delivery.by.roleId : undefined);
   // A new event remounts the card (a new delivery is a new card); the Líder naming the front is no new event for the
   // owner, so it never throws away what he is typing.
   const cardKey = `${task.id}:${task.events.filter((event) => !isFrontMark(task, event)).length}`;
@@ -615,7 +615,7 @@ export function LedgerCards({
         <div className={styles.hand}>
           {queue.map((item) => {
             const itemDelivery = lastDelivery(item);
-            const itemNaipe = naipeDoPapel(itemDelivery?.by.kind === 'lugar' ? itemDelivery.by.roleId : undefined);
+            const itemNaipe = naipeDaCarta(item, itemDelivery?.by.kind === 'lugar' ? itemDelivery.by.roleId : undefined);
             const block = item.state === 'aceita' ? undefined : itemDelivery?.forOwner;
             return (
               <button key={item.id} type="button" className={styles.mini} data-naipe={itemNaipe} aria-current={item.id === task.id} onClick={() => setSelected(item.id)}>

@@ -15,6 +15,7 @@
 import {
   ASKED_BY_OWNER,
   HTML_MEDIA_TYPE,
+  cardKindOf,
   awaitsSend,
   doneByOf,
   eventNote,
@@ -29,6 +30,7 @@ import {
   transfersOf,
   viewState,
   waitsForOwner,
+  type CardKind,
   type LedgerActor,
   type LedgerDoc,
   type LedgerTask,
@@ -416,7 +418,14 @@ export interface CartaRow {
   readonly risco: string | null;
   readonly visual: CartaVisual | null;
   readonly provas: readonly CartaProvaRef[];
+  /** 17/11 — the kind of a card made by `carta_criar` (`cardKindOf`); `null` = a decision, a letter, a sample. */
+  readonly tipo: CardKind | null;
+  /** 17/11 — the text proof of a typed card (the numbered steps, the details), masked, up to `MAX_CARD_BODY_CHARS`. */
+  readonly corpo: string | null;
 }
+
+/** The longest `corpo` that goes to the phone (the column's limit). */
+export const MAX_CARD_BODY_CHARS = 4000;
 
 function cartaVisual(visual: LedgerVisual | undefined, mask: (field: string, value: string) => string): CartaVisual | null {
   if (!visual) return null;
@@ -448,9 +457,12 @@ export function cartaRow(task: LedgerTask, masked: MaskNote[]): CartaRow {
   const provas = (delivery?.proofs ?? []).flatMap((proof, ordem): CartaProvaRef[] =>
     proof.kind === 'arquivo' ? [{ ordem, ...cartaProvaTipo(proof.mediaType), media_type: proof.mediaType, file: proof.file }] : [],
   );
+  const tipo = cardKindOf(task);
+  const body = tipo ? delivery?.proofs?.find((proof) => proof.kind === 'texto') : undefined;
+  const typed = { tipo, corpo: body?.kind === 'texto' ? mask('carta.corpo', body.text).slice(0, MAX_CARD_BODY_CHARS) : null };
   // The Revisor's sample is already accepted: the phone draws the old card (Confirmo / Rejeitar), never options.
   const forOwner = task.state === 'aceita' ? undefined : delivery?.forOwner;
-  if (!forOwner) return { id: task.id, titulo: null, pergunta: null, resumo: null, opcoes: [], porque: null, risco: null, visual: null, provas };
+  if (!forOwner) return { id: task.id, titulo: null, pergunta: null, resumo: null, opcoes: [], porque: null, risco: null, visual: null, provas, ...typed };
   return {
     id: task.id,
     titulo: forOwner.title ? mask('carta.titulo', forOwner.title) : null,
@@ -467,6 +479,7 @@ export function cartaRow(task: LedgerTask, masked: MaskNote[]): CartaRow {
     risco: mask('carta.risco', forOwner.risk),
     visual: cartaVisual(forOwner.visual, mask),
     provas,
+    ...typed,
   };
 }
 

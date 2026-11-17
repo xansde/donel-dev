@@ -5,7 +5,7 @@ import { createSupabaseSink } from '../src/main/ledger-mirror/supabase-sink';
 import { MAX_CARD_IMAGE_BYTES, MAX_PROOF_UPLOAD_FAILURES, PROOF_GIVE_UP_MS, createProofReader, type ProofReader, type ProofReaderFs } from '../src/main/ledger-mirror/cartas';
 import { cartaRows, maskSecrets, tarefaRows, withPlaceMemory, type PlaceInfo, type PlaceInfoOf, type TarefaRow } from '../src/shared/ledger/mirror';
 import { LEADER_OF_ALL } from '../src/shared/mindscape/leader';
-import { LEDGER_SCHEMA_VERSION, type LedgerDoc, type LedgerTask } from '../src/shared/ledger/contract';
+import { LEDGER_SCHEMA_VERSION, applyLedgerOp, emptyLedgerDoc, type LedgerDoc, type LedgerTask } from '../src/shared/ledger/contract';
 
 // Espelho do Oráculo — the tasks leave the PC: a burst goes as one registry, no network never loses a change nor
 // blocks, nothing secret leaves, and each row says what the owner reads in the table.
@@ -773,6 +773,8 @@ describe('espelho do Oráculo', () => {
           { ordem: 3, tipo: 'video', media_type: 'video/mp4', rotulo: 'Vídeo', file: files.video },
           { ordem: 4, tipo: 'imagem', media_type: 'image/png', rotulo: 'Print', file: files.big },
         ],
+        tipo: null,
+        corpo: null,
       });
       expect(rows[1]).toEqual({
         id: 't-2',
@@ -784,8 +786,18 @@ describe('espelho do Oráculo', () => {
         risco: null,
         visual: null,
         provas: [{ ordem: 0, tipo: 'imagem', media_type: 'image/png', rotulo: 'Print', file: files.print }],
+        tipo: null,
+        corpo: null,
       });
       expect(masked).toEqual([{ taskId: 't-1', field: 'carta.resumo', kinds: ['e-mail'] }]);
+    });
+
+    it('a Tutorial, an Update or an Idea goes with its kind and its text, masked', () => {
+      const made = applyLedgerOp(emptyLedgerDoc(), dev, { op: 'carta', projectPath: 'C:/p', card: { kind: 'atualizacao', title: 'Chave nova', summary: 'Troquei a chave do espelho.', details: `export KEY=${secret}` } }, { now: T0, newId: () => 't-9' });
+      if (!made.ok) throw new Error(made.reason);
+      const { rows, masked } = cartaRows(made.doc);
+      expect(rows[0]).toMatchObject({ id: 't-9', tipo: 'atualizacao', corpo: 'export KEY=[segredo]', pergunta: 'Ficou claro?', resumo: 'Troquei a chave do espelho.' });
+      expect(masked).toEqual([{ taskId: 't-9', field: 'carta.corpo', kinds: ['token GitHub'] }]);
     });
 
     it('checks on the front are masked too', () => {
