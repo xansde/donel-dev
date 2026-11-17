@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, runLedgerBatch, leaderTransferNotice, ledgerProofsDir, NOT_STARTED_GRACE_MS, nodeLedgerProofFs, passOnTasks, runLedgerTool, type LedgerCaller, type LedgerProofFs } from '../src/main/ledger-store';
 import type { MindscapeBoard } from '../src/shared/mindscape/model';
-import { cardKindOf, eventNote, findCode, frenteOf, isCancelled, LEDGER_SCHEMA_VERSION, MAX_FRENTE_CHARS, parseLedgerDoc, replacesOf, requestedByOf, waitsForOwner } from '../src/shared/ledger/contract';
+import { cardKindOf, eventNote, findCode, frenteOf, isCancelled, isClosed, LEDGER_SCHEMA_VERSION, MAX_FRENTE_CHARS, parseLedgerDoc, replacesOf, requestedByOf, waitsForOwner } from '../src/shared/ledger/contract';
 import { LEADER_OF_ALL } from '../src/shared/mindscape/leader';
 import * as v4 from './fixtures/ledger/contract-v4';
 import { createCardWriter, decisionMessage, type OwnerMessage } from '../src/main/ledger-card-writer';
@@ -891,6 +891,47 @@ describe('cartas Tutorial, Atualização e Ideia', () => {
     expect(await runLedgerTool(service(), dev, call('tarefa_cancelar', { id, motivo: 'escrevi errado' }))).toMatchObject({ ok: true });
     const cancelled = service().load().doc.tasks[id]!;
     expect([isCancelled(cancelled), cardKindOf(cancelled)]).toEqual([true, 'tutorial']);
+  });
+
+  it('a card is never taken again nor delivered again: the session is told to cancel it, and the owner\'s words on a tutorial go back', async () => {
+    const { service } = setup();
+    const devActor = { kind: 'lugar' as const, placeId: 'place:dev', roleId: 'dev' };
+    const idOf = async (args: Record<string, unknown>) => (JSON.parse((await send(service, args)).text) as { id: string }).id;
+    const proofs = [{ kind: 'texto' as const, text: 'npm ERR! 401' }];
+    const forOwner = { question: 'Posso tentar outro caminho?', summary: 'Outro caminho.', options: [{ label: 'Sim', effect: 'Sigo.', closes: 'aceita' as const, recommended: true as const }, { label: 'Não', effect: 'Paro.', closes: 'rejeitada' as const }], why: 'Travou.', risk: 'Nenhum.' };
+    // Rejected by its option: no retake, and the notice says cancel (an Idea: do not go on with it).
+    const t = await idOf(tutorial);
+    const rejected = await service().apply({ kind: 'dono' }, { op: 'rejeitar', id: t, reason: '', option: 'Ainda não consigo' });
+    if (!rejected.ok) throw new Error(rejected.reason);
+    expect(await service().apply(devActor, { op: 'assumir', id: t })).toMatchObject({ ok: false, reason: expect.stringContaining('carta_criar') });
+    expect(decisionMessage(rejected.task, undefined)!.text).toMatch(/tarefa_cancelar[^]*carta_criar/);
+    expect(decisionMessage(rejected.task, undefined)!.text).not.toContain('tarefa_assumir');
+    const i = await idOf(ideia);
+    const no = await service().apply({ kind: 'dono' }, { op: 'rejeitar', id: i, reason: '', option: 'Agora não' });
+    if (!no.ok) throw new Error(no.reason);
+    expect(decisionMessage(no.task, undefined)!.text).toContain('Não siga com a ideia');
+    // Answering the owner's words on the card is not a new free delivery under the kind's suit either.
+    const a = await idOf(atualizacao);
+    await service().apply({ kind: 'dono' }, { op: 'comentar', id: a, text: 'Não entendi o fim.', deliveredTo: null });
+    expect(await service().apply(devActor, { op: 'entregar', id: a, proofs, forOwner })).toMatchObject({ ok: false, reason: expect.stringContaining('carta_criar') });
+    // His own words: a doubt on a tutorial goes back (never "Consegui"), the card stays open to be cancelled; on an Idea they decide.
+    const t2 = await idOf({ ...tutorial, titulo: 'Outro tutorial' });
+    const doubt = await service().apply({ kind: 'dono' }, { op: 'decidir-outra', id: t2, text: 'Travei no passo 2, não aparece o botão.' });
+    expect(doubt).toMatchObject({ ok: true, task: { state: 'rejeitada' } });
+    expect(isClosed((doubt as { task: Parameters<typeof isClosed>[0] }).task)).toBe(false);
+    const i2 = await idOf({ ...ideia, titulo: 'Outra ideia' });
+    expect(await service().apply({ kind: 'dono' }, { op: 'decidir-outra', id: i2, text: 'Sim, mas só no celular.' })).toMatchObject({ ok: true, task: { state: 'aceita' } });
+  });
+
+  it('the same carta_criar again answers the card it already wrote', async () => {
+    const { service } = setup();
+    const first = JSON.parse((await send(service, tutorial)).text) as { id: string };
+    const again = JSON.parse((await send(service, tutorial)).text) as { id: string; jaGravada?: string };
+    expect(again).toMatchObject({ id: first.id, jaGravada: expect.any(String) });
+    expect(Object.keys(service().load().doc.tasks)).toEqual([first.id]);
+    // Cancelled, the same card again is a new one.
+    await runLedgerTool(service(), dev, call('tarefa_cancelar', { id: first.id, motivo: 'escrevi errado' }));
+    expect(JSON.parse((await send(service, tutorial)).text)).not.toMatchObject({ id: first.id });
   });
 });
 

@@ -841,9 +841,10 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
     }
     case 'carta_criar': {
       // The caller's place owns it, like a Slack letter: the answer of the owner comes back to it.
-      const result = await service.apply(actor, { op: 'carta', projectPath: caller.projectPath, card: call.carta });
+      // The call's key: the same call again (the answer was lost) answers the card it already wrote, never a second one.
+      const result = await service.apply(actor, withCallKey(actor, { op: 'carta', projectPath: caller.projectPath, card: call.carta }));
       if (!result.ok) return { ok: false, text: result.reason };
-      return { ok: true, text: JSON.stringify({ criada: true, id: result.task.id, aviso: `A carta foi ao dono; a resposta dele aparece em tarefa_ver ${result.task.id}.` }) };
+      return { ok: true, text: JSON.stringify({ criada: true, id: result.task.id, aviso: `A carta foi ao dono; a resposta dele aparece em tarefa_ver ${result.task.id}.`, ...(result.repeated ? { jaGravada: REPEATED_NOTE } : {}) }) };
     }
     case 'tarefa_entregar': {
       if (call.feitoPor && !caller.boardPlaceIds.includes(call.feitoPor)) return { ok: false, text: `Nada foi entregue. "feitoPor": "${call.feitoPor}" não é um lugar deste quadro (veja sessao_listar).` };

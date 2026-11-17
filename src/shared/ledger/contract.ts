@@ -590,7 +590,7 @@ export type LedgerOp =
   /** v4 — a place asks the owner to send a Slack message (born `entregue`, high risk). */
   | { readonly op: 'carta-slack'; readonly projectPath: string; readonly slack: SlackLetter }
   /** 17/11 — a place sends the owner a Tutorial, an Update or an Idea (born `entregue`, high risk; `createOwnerCard`). */
-  | { readonly op: 'carta'; readonly projectPath: string; readonly card: OwnerCard }
+  | { readonly op: 'carta'; readonly projectPath: string; readonly card: OwnerCard; /** The call's key (`repeatedWrite`). */ readonly requestId?: string }
   /** v4 — the guard let the one send of an accepted letter through. */
   | { readonly op: 'slack-enviada'; readonly id: string }
   /**
@@ -639,7 +639,7 @@ export type LedgerOpResult = { readonly ok: true; readonly doc: LedgerDoc; reado
 export const REPEAT_WRITE_WINDOW_MS = 30 * 60 * 1000;
 
 /** The ops a session repeats when it does not know whether the first call was written. */
-const REPEATABLE_OPS: ReadonlySet<LedgerOp['op']> = new Set(['criar', 'andamento', 'cancelar', 'transferir']);
+const REPEATABLE_OPS: ReadonlySet<LedgerOp['op']> = new Set(['criar', 'carta', 'andamento', 'cancelar', 'transferir']);
 
 /**
  * The task a repeat of `op` by `actor` already wrote, within `REPEAT_WRITE_WINDOW_MS` of `now`; `null` = not written.
@@ -681,6 +681,19 @@ export function repeatedWrite(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
         )
       )
         return task;
+    }
+    return null;
+  }
+  if (op.op === 'carta') {
+    // A card still as it was born (delivered, not cancelled): the same kind, title and built card on the same board.
+    if (!ownerCardShaped(op.card) || ownerCardRefusal(op.card)) return null;
+    const parts = ownerCardParts(op.card);
+    const built = JSON.stringify([parts.forOwner, [{ kind: 'texto', text: parts.proof }]]);
+    for (const task of Object.values(doc.tasks)) {
+      const birth = task.events[0];
+      if (birth?.kind !== 'criada' || cardKindOf(task) !== op.card.kind || task.state !== 'entregue' || isCancelled(task)) continue;
+      const delivery = lastDelivery(task);
+      if (matches(birth, () => task.projectPath === op.projectPath && task.title === op.card.title.trim() && JSON.stringify([delivery?.forOwner, delivery?.proofs]) === built)) return task;
     }
     return null;
   }
@@ -820,12 +833,15 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
   switch (op.op) {
     case 'assumir':
       if (task.slack) return fail('Carta de Slack não se retoma: crie outra com carta_slack, com o texto ajustado.');
+      if (cardKindOf(task)) return fail(CARD_NOT_RETAKEN);
       if (isCancelled(task)) return fail(`A tarefa foi cancelada (${eventNote(lastDecision(task)!) ?? 'sem motivo'}); crie outra se o trabalho voltar.`);
       if (task.state !== 'aberta' && task.state !== 'rejeitada') return fail(`A tarefa está "${task.state}"; só se assume uma aberta ou rejeitada.`);
       if (!isOwnerPlace) return fail(`Só o lugar dono (${task.ownerPlaceId}) assume esta tarefa.`);
       return done(step(task, 'em-execucao', { kind: 'assumida', at: ctx.now, by: actor }));
 
     case 'entregar':
+      // t-4e50f080 — a card's block is the contract's, from typed fields: a new delivery would bring a free one under its kind.
+      if (cardKindOf(task)) return fail(CARD_NOT_RETAKEN);
       // Answering what the owner wrote on the card is a new delivery (a new card), without taking the task again.
       if (task.state !== 'em-execucao' && !(task.state === 'entregue' && ownerWroteSinceDelivery(task)))
         return fail(
@@ -1138,6 +1154,23 @@ export const DEFAULT_CHEER = 'Você consegue, sim.';
 
 const CARD_NAMES: Readonly<Record<CardKind, string>> = { tutorial: 'Tutorial', atualizacao: 'Atualização', ideia: 'Ideia' };
 
+/** A card is not taken again nor delivered again (its block is built by the contract): it is replaced. */
+export const CARD_NOT_RETAKEN = 'Carta não se retoma nem se entrega de novo: encerre esta com tarefa_cancelar e, se for o caso, mande outra com carta_criar, com o ajuste.';
+
+/** The op may come raw from another app (the VPS's Oráculo): a field of the wrong type is refused, never thrown on. */
+function ownerCardShaped(value: unknown): value is OwnerCard {
+  if (!isRecord(value) || !CARD_KINDS.includes(value.kind as CardKind)) return false;
+  const optional = (key: string): boolean => value[key] === undefined || str(value[key]);
+  return (
+    str(value.title) &&
+    (value.kind === 'tutorial'
+      ? str(value.whyNot) && Array.isArray(value.steps) && value.steps.every(str) && optional('cheer')
+      : value.kind === 'atualizacao'
+        ? str(value.summary) && optional('details')
+        : str(value.idea) && str(value.why) && optional('details'))
+  );
+}
+
 /** Why the session's fields cannot make a card; `null` = they can. The field names are the tool's (`carta_criar`). */
 function ownerCardRefusal(card: OwnerCard): string | null {
   const plain: [string, string, number][] = [['titulo', card.title, MAX_TITLE_CHARS]];
@@ -1217,17 +1250,7 @@ function ownerCardParts(card: OwnerCard): { forOwner: LedgerForOwner; proof: str
 function createOwnerCard(doc: LedgerDoc, actor: LedgerActor, op: Extract<LedgerOp, { op: 'carta' }>, ctx: LedgerOpContext): LedgerOpResult {
   if (actor.kind !== 'lugar') return { ok: false, reason: 'A carta é de uma sessão ao dono.' };
   if (!isRecord(op.card) || !CARD_KINDS.includes(op.card.kind)) return { ok: false, reason: `"tipo" tem de ser ${CARD_KINDS.join(', ')}.` };
-  // The op may come raw from another app (the VPS's Oráculo): a field of the wrong type is refused, never thrown on.
-  const card = op.card as unknown as Record<string, unknown>;
-  const optional = (key: string): boolean => card[key] === undefined || str(card[key]);
-  const shaped =
-    str(card.title) &&
-    (op.card.kind === 'tutorial'
-      ? str(card.whyNot) && Array.isArray(card.steps) && card.steps.every(str) && optional('cheer')
-      : op.card.kind === 'atualizacao'
-        ? str(card.summary) && optional('details')
-        : str(card.idea) && str(card.why) && optional('details'));
-  if (!shaped) return { ok: false, reason: 'Carta recusada: faltam campos do tipo, ou vieram fora do formato.' };
+  if (!ownerCardShaped(op.card)) return { ok: false, reason: 'Carta recusada: faltam campos do tipo, ou vieram fora do formato.' };
   const problem = ownerCardRefusal(op.card);
   if (problem) return { ok: false, reason: `Carta recusada: ${problem}` };
   const { forOwner, proof } = ownerCardParts(op.card);
@@ -1248,7 +1271,7 @@ function createOwnerCard(doc: LedgerDoc, actor: LedgerActor, op: Extract<LedgerO
     state: 'entregue',
     createdAt: ctx.now,
     events: [
-      { kind: 'criada', at: ctx.now, by: actor, ...birthTagsOf(undefined, undefined, undefined, false, op.card.kind) },
+      { kind: 'criada', at: ctx.now, by: actor, ...birthTagsOf(undefined, undefined, undefined, false, op.card.kind), ...requestOf(op) },
       { kind: 'entregue', at: ctx.now, by: actor, proofs, forOwner },
     ],
   };
@@ -1360,7 +1383,11 @@ export const OWN_OPTION = 'Outra';
  * rejected (not sent).
  */
 export function ownOptionCloses(task: LedgerTask): LedgerOption['closes'] {
-  return task.slack ? 'rejeitada' : 'aceita';
+  if (task.slack) return 'rejeitada';
+  // t-4e50f080 — on a Tutorial or an Update his words are a doubt ("travei no passo 3"), never "Consegui"/"Li": they go
+  // back to whoever wrote it, as the option that closes rejected does. On an Idea they are his decision about it.
+  const kind = cardKindOf(task);
+  return kind === 'tutorial' || kind === 'atualizacao' ? 'rejeitada' : 'aceita';
 }
 
 /** Why the owner may not pick `option` (closing as `closes`) on the current delivery; `null` = may (or no option). */

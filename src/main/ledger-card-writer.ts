@@ -9,7 +9,7 @@
 // send is reported as such ("enviado, mas não gravou"), never retried into a second message.
 
 import { randomUUID } from 'node:crypto';
-import { commentOfRequest, commentRefusal, lastDelivery, OWN_OPTION, type LedgerDeliveredTo, type LedgerTask } from '../shared/ledger/contract';
+import { cardKindOf, commentOfRequest, commentRefusal, lastDelivery, OWN_OPTION, type LedgerDeliveredTo, type LedgerTask } from '../shared/ledger/contract';
 import type { PlaceNameOf } from '../shared/ledger/labels';
 import type { LedgerService } from './ledger-store';
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
@@ -60,7 +60,10 @@ function cardTitle(task: LedgerTask): string {
 }
 
 export function ownerMessage(task: LedgerTask, text: string, placeName?: PlaceNameOf): OwnerMessage {
-  const answer = `(responda entregando a tarefa ${task.id} de novo, ou com tarefa_ver para reler)`;
+  // A card (Tutorial, Update, Idea) is not delivered again: the answer is another card.
+  const answer = cardKindOf(task)
+    ? `(a carta ${task.id} não se entrega de novo: para responder, mande outra com carta_criar e encerre esta com tarefa_cancelar; tarefa_ver para reler)`
+    : `(responda entregando a tarefa ${task.id} de novo, ou com tarefa_ver para reler)`;
   const owner = placeName?.(task.projectPath, task.ownerPlaceId)?.trim() || 'o lugar dono';
   return {
     projectPath: task.projectPath,
@@ -77,20 +80,28 @@ export function ownerMessage(task: LedgerTask, text: string, placeName?: PlaceNa
 export function decisionMessage(task: LedgerTask, words: string | undefined, placeName?: PlaceNameOf): OwnerMessage | null {
   const last = task.events.at(-1);
   if (!last || last.by.kind !== 'dono' || (last.kind !== 'aceita' && last.kind !== 'rejeitada' && last.kind !== 'conferida')) return null;
-  const what = task.slack ? 'a carta de Slack' : 'a tarefa';
+  const kind = cardKindOf(task);
+  const what = task.slack ? 'a carta de Slack' : kind ? 'a carta' : 'a tarefa';
   const own = last.kind !== 'conferida' && last.option === OWN_OPTION;
+  // t-4e50f080 — a card is never taken again: an Idea turned down stops; a Tutorial or an Update is answered by another card.
+  const cardBack =
+    kind === 'ideia'
+      ? ` Não siga com a ideia; encerre a carta com tarefa_cancelar ${task.id}.`
+      : ` Não retome esta carta: encerre-a com tarefa_cancelar ${task.id} e, se for o caso, mande outra com carta_criar, com o ajuste.`;
   const option = last.option && !own ? ` (escolheu «${last.option}»)` : '';
   const said = words?.trim() && last.kind !== 'rejeitada' && !own ? ` Palavras do dono: ${words.trim()}` : '';
   // 07/11 — his own option: the decision IS his words; the session goes on from them.
   const verdict = own
     ? last.kind === 'aceita'
       ? `decidiu ${what} «${cardTitle(task)}» com a própria opção, nas palavras dele: «${last.text ?? ''}». Siga a partir disso; se precisar dele de novo, crie outra tarefa.`
-      : `não aprovou ${what} «${cardTitle(task)}» e escreveu a própria opção: «${last.text ?? ''}». Não envie esta carta. Siga a partir do que ele escreveu; outro texto no Slack é outra carta com carta_slack.`
+      : kind
+        ? `respondeu ${what} «${cardTitle(task)}» com as próprias palavras: «${last.text ?? ''}».${cardBack}`
+        : `não aprovou ${what} «${cardTitle(task)}» e escreveu a própria opção: «${last.text ?? ''}». Não envie esta carta. Siga a partir do que ele escreveu; outro texto no Slack é outra carta com carta_slack.`
     : last.kind === 'conferida'
       ? `conferiu o aceite ${task.slack ? 'da carta de Slack' : 'da tarefa'} «${cardTitle(task)}».`
       : last.kind === 'aceita'
         ? `aceitou ${what} «${cardTitle(task)}»${option}.${task.slack ? ' Envie agora o texto exato da carta, ao mesmo destino e thread, uma vez só.' : ''}`
-        : `rejeitou ${what} «${cardTitle(task)}»${option}: ${last.text ?? 'sem motivo'}.${task.slack ? ' Não envie; ajuste o texto e crie outra carta com carta_slack.' : ' Assuma de novo com tarefa_assumir e refaça.'}`;
+        : `rejeitou ${what} «${cardTitle(task)}»${option}: ${last.text ?? 'sem motivo'}.${task.slack ? ' Não envie; ajuste o texto e crie outra carta com carta_slack.' : kind ? cardBack : ' Assuma de novo com tarefa_assumir e refaça.'}`;
   const line = `(tarefa ${task.id}; tarefa_ver para reler)`;
   const text = `◆ O dono ${verdict}${said}\n${line}`;
   // The Líder único has no place: its own letter goes straight to it.

@@ -401,7 +401,7 @@ export const LEDGER_TOOLS = [
     name: 'carta_criar',
     title: 'Mandar ao dono uma carta de Tutorial, Atualização ou Ideia',
     description:
-      'Manda ao dono, no Oráculo Harrow (desktop e celular), uma carta que não é entrega de trabalho: "tutorial" (o que ele precisa fazer e você não consegue: por que você não consegue, o passo a passo e um incentivo), "atualizacao" (o que mudou) ou "ideia" (uma sugestão e o porquê). O app monta a carta, as opções e o naipe: você só manda os campos do tipo. A tarefa nasce entregue, sua, esperando o dono; a resposta dele aparece em tarefa_ver. Texto da frente sem código (sem id, caminho, branch, link ou crase); os passos e os detalhes podem ter comando.',
+      'Manda ao dono, no Oráculo Harrow (desktop e celular), uma carta que não é entrega de trabalho: "tutorial" (o que ele precisa fazer e você não consegue: por que você não consegue, o passo a passo e um incentivo), "atualizacao" (o que mudou) ou "ideia" (uma sugestão e o porquê). O app monta a carta, as opções e o naipe: você só manda os campos do tipo. A tarefa nasce entregue, sua, esperando o dono; a resposta dele aparece em tarefa_ver. A carta não se retoma nem se entrega de novo: se ele recusar ou escrever nela, encerre-a com tarefa_cancelar e, se for o caso, mande outra. Texto da frente sem código (sem id, caminho, branch, link ou crase); os passos e os detalhes podem ter comando.',
     inputSchema: {
       type: 'object',
       properties: {
