@@ -211,6 +211,23 @@ describe('espelho do Oráculo', () => {
       ['senha em entidade HTML', '<pre>{&quot;password&quot;: &quot;hunter2secret&quot;}</pre>', 'hunter2secret', '{&quot;password&quot;: &quot;[segredo]&quot;}'],
       ['senha em JSON escapado duas vezes', 'x = "{\\\\\\"secret\\\\\\": \\\\\\"zzzz9999\\\\\\"}"', 'zzzz9999', '\\\\\\"secret\\\\\\": \\\\\\"[segredo]\\\\\\"'],
       ['senha entre &#39;', "{&#39;senha&#39;: &#39;s3nh4F0rte&#39;}", 's3nh4F0rte', '{&#39;senha&#39;: &#39;[segredo]&#39;}'],
+      // The next escaped forms (second round of the review): \u0022 and \x22, numeric references with zeros or without
+      // `;`, a backslash before an entity, a double encoding, and an escaped quote inside the value.
+      ['token entre \\u0022', '"{\\u0022token\\u0022: \\u0022fakefakefake\\u0022}"', 'fakefakefake', '\\u0022[segredo]\\u0022'],
+      ['token entre \\x22', '"{\\x22token\\x22: \\x22tok9f8e7d6c5b4a\\x22}"', 'tok9f8e7d6c5b4a', '\\x22[segredo]\\x22'],
+      ['token entre \\u0027', "'{\\u0027token\\u0027: \\u0027fakefakefake\\u0027}'", 'fakefakefake', '\\u0027[segredo]\\u0027'],
+      ['nome escapado, valor não', '"{\\"token\\": "tok9f8e7d6c5b4a"}"', 'tok9f8e7d6c5b4a', '"[segredo]"'],
+      ['nome não, valor escapado', '"{"token": \\"tok9f8e7d6c5b4a\\"}"', 'tok9f8e7d6c5b4a', '\\"[segredo]\\"'],
+      ['senha entre &#039;', '{&#039;password&#039;: &#039;hunter2secret&#039;}', 'hunter2secret', '&#039;[segredo]&#039;'],
+      ['senha entre &#034;', '{&#034;password&#034;: &#034;hunter2secret&#034;}', 'hunter2secret', '&#034;[segredo]&#034;'],
+      ['senha entre &#x022;', '{&#x022;password&#x022;: &#x022;hunter2secret&#x022;}', 'hunter2secret', '&#x022;[segredo]&#x022;'],
+      ['senha entre &#x0022;', '{&#x0022;password&#x0022;: &#x0022;hunter2secret&#x0022;}', 'hunter2secret', '&#x0022;[segredo]&#x0022;'],
+      ['senha entre &quot sem ;', '{&quotpassword&quot: &quothunter2secret&quot}', 'hunter2secret', '&quot[segredo]&quot'],
+      ['senha entre &#34 sem ;', '{&#34password&#34: &#34hunter2secret&#34}', 'hunter2secret', '&#34[segredo]&#34'],
+      ['JSON em string JSON em atributo', '<div data-cfg="&quot;{\\&quot;token\\&quot;:\\&quot;tok9f8e7d6c5b4a\\&quot;}&quot;">', 'tok9f8e7d6c5b4a', '\\&quot;[segredo]\\&quot;'],
+      ['senha codificada duas vezes', '{&amp;quot;password&amp;quot;: &amp;quot;hunter2secret&amp;quot;}', 'hunter2secret', '&amp;quot;[segredo]&amp;quot;'],
+      ['aspa escapada no valor', '"password": "hun\\"ter2secret"', 'ter2secret', '"password": "[segredo]"'],
+      ['aspa escapada no valor escapado', '"{\\"password\\": \\"hun\\\\\\"ter2secret\\"}"', 'ter2secret', '\\"password\\": \\"[segredo]\\"}'],
     ])('masks %s', (_name, input, secret, expected) => {
       const masked = maskSecrets(input);
       expect(masked.text).not.toContain(secret);
@@ -254,6 +271,21 @@ describe('espelho do Oráculo', () => {
       ['barras invertidas', () => fill('\\')],
       ['aspas escapadas sem fim', () => `token\\": \\"${fill('a')}`],
       ['entidades', () => fill('password&quot;: &quot;x')],
+      ['zeros numa entidade', () => fill('password&#0000000000')],
+      ['&amp; sem fim', () => fill('token:&amp;')],
+      ['dígitos hex sem fim', () => `token: &#x${fill('f')}`],
+      ['\\u00 sem fim', () => fill('token\\u00')],
+      ['barras no valor sem fim', () => `token: "${fill('\\a')}`],
+      ['aspas de cada nível sem fechar', () => {
+        let line = '';
+        for (let d = 1; d < 1 << 17; d = d * 2 + 1) for (const q of ['"', "'", '&quot;', '&#39;', '&amp;quot;', 'u0022', 'x27']) line += `token: ${'\\'.repeat(d)}${q}a `;
+        return line + fill('a', MB2 - line.length);
+      }],
+      ['aspas fora da escada', () => {
+        let line = '';
+        for (let k = 2; line.length < MB2; k += 1) line += `token: ${'\\'.repeat(k)}"a `;
+        return line;
+      }],
       ['mistura', () => fill('pass_token.a-b@c.d:e//f=g"h\'i\\j&k;')],
     ])('scans %s in linear time', (_name, make) => {
       const input = make();
@@ -268,7 +300,7 @@ describe('espelho do Oráculo', () => {
     const PIECES = [
       'a', 'Z', '0', '9', '_', '-', '.', '@', ':', '/', '=', '"', "'", '\\', '&', ';', ' ', '\n', '\t', '%', '+', ',', '\u00a0', 'é',
       'eyJ', 'password', 'PASSWORD', 'token', 'senha', 'secret', 'api_key', 'api-key', 'apiKey', 'passwd', 'x://', '://', 'com', 'co',
-      '[segredo]', '[SEGREDO]', '&quot;', '&#39;', '&apos;', '\\"', '\\\\\\"', '12345678', '123.456.789-00', 'Bearer ', 'sk-', 'ghp_',
+      '[segredo]', '[SEGREDO]', '&quot;', '&#39;', '&apos;', '\\"', '\\\\\\"', '&quot', '&#039;', '&#x22', '&amp;quot;', '\\u0022', '\\x27', '12345678', '123.456.789-00', 'Bearer ', 'sk-', 'ghp_',
       'abcdefgh', 'abcd', 'a@b.co', 'x.y@ab.cd', 'eyJabcdefgh.', 'abcdefgh.', 'postgres://u:p@', ':p@h', '@h.com', 'hunter22', '": "', "': '",
     ];
     function corpus(): string[] {
@@ -296,7 +328,7 @@ describe('espelho do Oráculo', () => {
     }
 
     it('never masks less than the regexes it replaced, and is the same where nothing is escaped', () => {
-      const escapedQuote = /\\+["']|&(?:quot|#34|#x22|#39|#x27|apos);/i;
+      const escapedQuote = /\\+(?:["']|u00(?:22|27)|x(?:22|27))|&(?:amp;)?(?:quot|apos|#)/i;
       let escaped = 0;
       for (const input of corpus()) {
         const now = maskSecrets(input);

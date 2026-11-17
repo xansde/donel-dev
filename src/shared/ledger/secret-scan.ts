@@ -184,9 +184,9 @@ function urlPasswordFinder(): Finder {
 //   (?!["']?\[segredo\])("[^"\n]+"|'[^'\n]+'|[^\s"',;&]{4,})/gi
 // The keyword is made of name characters, and what follows the name never is one, so the name is always its whole
 // run: a start matches when a keyword begins at or after it inside the run, and the run's tail (separator, value)
-// matches. With `escaped`, the quotes may also be `\"`, `\'` (any number of backslashes), `&quot;`, `&#34;`,
-// `&#x22;`, `&#39;`, `&#x27;`, `&apos;`, and the tail must use at least one of them (the plain form is the pass
-// before).
+// matches. With `escaped`, the quotes may also be escaped (see `escapedQuoteAt`), and the tail must use at least one
+// escaped quote (the plain form is the pass before). A quoted value skips what is escaped inside it (`"hun\"ter"`):
+// it closes only on a quote at its own level.
 
 const isNameChar = (c: number): boolean => isWord(c) || c === 46 || c === 45;
 const KEYWORDS = ['password', 'passwd', 'senha', 'secret', 'token', 'apikey', 'api_key', 'api-key'];
@@ -211,26 +211,86 @@ function lastKeyword(t: string, a: number, r: number): number {
   return -1;
 }
 
-const ENTITIES: ReadonlyArray<readonly [string, number]> = [
-  ['&quot;', QUOTE],
-  ['&#34;', QUOTE],
-  ['&#x22;', QUOTE],
-  ['&#39;', APOS],
-  ['&#x27;', APOS],
-  ['&apos;', APOS],
-];
+const isHex = (c: number): boolean => isDigit(c) || ((c | 32) >= 97 && (c | 32) <= 102);
+/** The quote a character code stands for, or 0. */
+const quoteOf = (code: number): number => (code === QUOTE || code === APOS ? code : 0);
 
-/** An escaped quote at `i`: its length and which quote it stands for, or null. */
-function escapedQuoteAt(t: string, i: number): { length: number; quote: number } | null {
+/**
+ * A quote written as an HTML character reference at `i` (`&quot;`, `&apos;`, `&#34;`, `&#039;`, `&#x22;`, `&#x0027;`,
+ * the `;` optional as HTML allows), maybe encoded once more (`&amp;quot;`): its end and quote, or null. The digits are
+ * one run, read once.
+ */
+function entityQuoteAt(t: string, i: number): { end: number; quote: number; amp: boolean } | null {
+  if (t.charCodeAt(i) !== 38) return null;
+  let p = i + 1;
+  const amp = wordIs(t, p, 'amp;');
+  if (amp) p += 4;
+  let quote = 0;
+  if (wordIs(t, p, 'quot')) {
+    quote = QUOTE;
+    p += 4;
+  } else if (wordIs(t, p, 'apos')) {
+    quote = APOS;
+    p += 4;
+  } else if (t.charCodeAt(p) === 35) {
+    const hex = (t.charCodeAt(p + 1) | 32) === 120;
+    const d = p + (hex ? 2 : 1);
+    const e = runEnd(t, d, hex ? isHex : isDigit);
+    if (e === d) return null;
+    let code = 0;
+    for (let k = d; k < e && code <= 0xffff; k += 1) code = code * (hex ? 16 : 10) + parseInt(t[k]!, 16);
+    quote = quoteOf(code);
+    p = e;
+  }
+  if (!quote) return null;
+  if (t.charCodeAt(p) === 59) p += 1;
+  return { end: p, quote, amp };
+}
+
+interface EscapedQuote {
+  readonly length: number;
+  readonly quote: number;
+  /** Backslashes before it: the level of escaping (0 for a bare entity). */
+  readonly slashes: number;
+  readonly amp: boolean;
+}
+
+/**
+ * An escaped quote at `i`, or null: backslashes (any number) before `"`, `'`, `u0022`/`u0027`, `x22`/`x27` or an
+ * entity quote; or a bare entity quote.
+ */
+function escapedQuoteAt(t: string, i: number): EscapedQuote | null {
   const c = t.charCodeAt(i);
   if (c === BACKSLASH) {
     const q = runEnd(t, i, (x) => x === BACKSLASH);
+    const slashes = q - i;
     const after = t.charCodeAt(q);
-    return isQuote(after) ? { length: q + 1 - i, quote: after } : null;
+    if (isQuote(after)) return { length: slashes + 1, quote: after, slashes, amp: false };
+    const lower = after | 32;
+    if (lower === 117 && wordIs(t, q + 1, '00') && (wordIs(t, q + 3, '22') || wordIs(t, q + 3, '27'))) {
+      return { length: slashes + 5, quote: t.charCodeAt(q + 4) === 50 ? QUOTE : APOS, slashes, amp: false };
+    }
+    if (lower === 120 && (wordIs(t, q + 1, '22') || wordIs(t, q + 1, '27'))) {
+      return { length: slashes + 3, quote: t.charCodeAt(q + 2) === 50 ? QUOTE : APOS, slashes, amp: false };
+    }
+    const entity = entityQuoteAt(t, q);
+    return entity ? { length: entity.end - i, quote: entity.quote, slashes, amp: entity.amp } : null;
   }
-  if (c === 38) for (const [entity, quote] of ENTITIES) if (wordIs(t, i, entity)) return { length: entity.length, quote };
-  return null;
+  const entity = entityQuoteAt(t, i);
+  return entity ? { length: entity.end - i, quote: entity.quote, slashes: 0, amp: entity.amp } : null;
 }
+
+/**
+ * Each level of escaping doubles the backslashes and adds one: 0, 1, 3, 7… An opening quote off that ladder is not
+ * taken (it is no real escaping, and many distinct levels on a line would each scan the line).
+ */
+const onLadder = (d: number): boolean => ((d + 1) & d) === 0;
+
+/**
+ * Whether `k` backslashes before a quote close a value opened at level `d` (on the ladder): inside `\"…\"`, `\\\"` is
+ * an escaped quote and `\\\\\"` a backslash then the closing quote.
+ */
+const closesAt = (k: number, d: number): boolean => k % (2 * (d + 1)) === d;
 
 /** `[segredo]` at `i`, ASCII case-insensitive (the regex has `/i`). */
 const maskedAt = (t: string, i: number): boolean => wordIs(t, i, '[segredo]');
@@ -238,6 +298,40 @@ const maskedAt = (t: string, i: number): boolean => wordIs(t, i, '[segredo]');
 /** `[^\s"',;&]`: an unquoted value; the escaped pass stops before a backslash too (the `\"` closing it). */
 const isBareValueChar = (c: number): boolean => !isSpace(c) && c !== QUOTE && c !== APOS && c !== 44 && c !== 59 && c !== 38;
 const isBareEscapedValueChar = (c: number): boolean => isBareValueChar(c) && c !== BACKSLASH;
+
+/** Where the value opened by the plain quote at `v` closes (skipping `\x` inside it), or -1 at the line's end. */
+function plainQuotedEnd(t: string, v: number): number {
+  const n = t.length;
+  const open = t.charCodeAt(v);
+  for (let y = v + 1; y < n; y += 1) {
+    const c = t.charCodeAt(y);
+    if (c === 10) return -1;
+    if (c === open) return y;
+    if (c === BACKSLASH) {
+      if (t.charCodeAt(y + 1) === 10) return -1;
+      y += 1;
+    }
+  }
+  return -1;
+}
+
+/** Where the closing quote of the value opened by the escaped quote `open` at `v` begins, or -1. */
+function escapedQuotedEnd(t: string, v: number, open: EscapedQuote): number {
+  const n = t.length;
+  for (let y = v + open.length; y < n; y += 1) {
+    const c = t.charCodeAt(y);
+    if (c === 10) return -1;
+    if (c !== BACKSLASH && c !== 38) continue;
+    const q = escapedQuoteAt(t, y);
+    if (q && q.quote === open.quote && q.amp === open.amp && closesAt(q.slashes, open.slashes)) {
+      return y === v + open.length ? -1 : y;
+    }
+    // Skip it whole: a quote at another level, or a backslash run (its last backslash may open the closing quote).
+    if (q) y += q.length - 1;
+    else if (c === BACKSLASH) y = runEnd(t, y, (x) => x === BACKSLASH) - 1;
+  }
+  return -1;
+}
 
 interface ValueTail {
   /** Where the value begins (the separator is [r, value)). */
@@ -248,7 +342,6 @@ interface ValueTail {
 }
 
 function valueTail(t: string, r: number, escaped: boolean): ValueTail | null {
-  const n = t.length;
   let usedEscape = false;
   let q = r;
   if (isQuote(t.charCodeAt(q))) q += 1;
@@ -267,29 +360,21 @@ function valueTail(t: string, r: number, escaped: boolean): ValueTail | null {
   // (?!["']?\[segredo\]) — already masked.
   if (maskedAt(t, v) || (isQuote(first) && maskedAt(t, v + 1))) return null;
   if (isQuote(first)) {
-    let y = v + 1;
-    while (y < n && t.charCodeAt(y) !== first && t.charCodeAt(y) !== 10) y += 1;
-    if (y === n || t.charCodeAt(y) !== first || y === v + 1) return null;
+    const y = plainQuotedEnd(t, v);
+    if (y === -1 || y === v + 1) return null;
     if (escaped && !usedEscape) return null;
     return { value: v, end: y + 1, open: t[v]!, close: t[y]! };
   }
   if (escaped) {
     const open = escapedQuoteAt(t, v);
     if (open) {
-      if (maskedAt(t, v + open.length)) return null;
+      if (!onLadder(open.slashes)) return null;
       const start = v + open.length;
-      for (let y = start; y < n; y += 1) {
-        const c = t.charCodeAt(y);
-        if (c === 10) return null;
-        const close = c === BACKSLASH || c === 38 ? escapedQuoteAt(t, y) : null;
-        if (close && close.quote === open.quote) {
-          if (y === start) return null;
-          return { value: v, end: y + close.length, open: t.slice(v, start), close: t.slice(y, y + close.length) };
-        }
-        // Skip a backslash run as a whole: its last backslash may open the closing quote.
-        if (c === BACKSLASH) y = runEnd(t, y, (x) => x === BACKSLASH) - 1;
-      }
-      return null;
+      if (maskedAt(t, start)) return null;
+      const y = escapedQuotedEnd(t, v, open);
+      if (y === -1) return null;
+      const closeLength = escapedQuoteAt(t, y)!.length;
+      return { value: v, end: y + closeLength, open: t.slice(v, start), close: t.slice(y, y + closeLength) };
     }
     if (!usedEscape) return null;
   }
