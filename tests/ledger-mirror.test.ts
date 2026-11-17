@@ -232,6 +232,10 @@ describe('espelho do Oráculo', () => {
       ['aspa escapada no valor, depois outro par', '"password": "hun\\"ter2" "token": "abc12345"', 'ter2', '"password": "[segredo]" "token": "[segredo]"'],
       ['aspa escapada que engoliria outro par', 'password: "hun\\"ter2 token: abc12345"', 'abc12345', 'password: "[segredo]"ter2 token: [segredo]"'],
       ['aspa escapada no valor escapado', '"{\\"password\\": \\"hun\\\\\\"ter2secret\\"}"', 'ter2secret', '\\"password\\": \\"[segredo]\\"}'],
+      // The escaped pass looks for the close within a window: a value of a hash, and one at the window's very edge
+      // (4096 after the opening `\"`, its close's backslash included).
+      ['valor escapado de 64 caracteres', `"{\\"token\\": \\"${'9f8e7d6c'.repeat(8)}\\"}"`, '9f8e7d6c', '\\"token\\": \\"[segredo]\\"}'],
+      ['valor escapado no limite da janela', `"{\\"token\\": \\"${'f'.repeat(4094)}\\"}"`, 'ffffffff', '\\"token\\": \\"[segredo]\\"}'],
     ])('masks %s', (_name, input, secret, expected) => {
       const masked = maskSecrets(input);
       expect(masked.text).not.toContain(secret);
@@ -245,11 +249,22 @@ describe('espelho do Oráculo', () => {
       ["senha='abc\\'", "senha='[segredo]'"],
       ['SECRET_DIR="C:\\keys\\" DB_PASSWORD="hunter2" fim', 'SECRET_DIR="[segredo]" DB_PASSWORD="[segredo]" fim'],
       ['token="C:\\dir\\" password="hunter2"', 'token="[segredo]" password="[segredo]"'],
+      // What lies past the backslash holds another pair: a quoted name, spaces around the separator, a name right
+      // after the quote, a name run that starts with no word character (each one a guard that let SEC1 out).
+      ['token="C:\\dir\\" \'password\'="SEC1" fim', 'token="[segredo]" \'password\'="[segredo]" fim'],
+      ['token="C:\\dir\\" password = "SEC1" fim', 'token="[segredo]" password = "[segredo]" fim'],
+      ['token="C:\\dir\\"password="SEC1" fim', 'token="[segredo]"password="[segredo]" fim'],
+      ['token="C:\\dir\\" --password="SEC1" fim', 'token="[segredo]" --password="[segredo]" fim'],
     ])('masks %s as the regexes did', (input, expected) => {
       const masked = maskSecrets(input);
       expect(masked.text).toBe(expected);
       expect(masked.text).toBe(stagingMask(input).text);
       expect(masked.hits.map((hit) => hit.kind)).toEqual(stagingMask(input).kinds);
+    });
+
+    // The same in the escaped pass (the regexes found no pair here): the next pair's name is escaped too.
+    it('masks a value with a backslash before its quote, then an escaped pair, each on its own', () => {
+      expect(maskSecrets('\\"token\\": "C:\\dir\\" \\"password\\": "SEC1" fim').text).toBe('\\"token\\": "[segredo]" \\"password\\": "[segredo]" fim');
     });
 
     // Each shape that made a regex retry a long run from every start inside it: linear now, so 2 MB in well under 1 s.
@@ -329,6 +344,14 @@ describe('espelho do Oráculo', () => {
           ['34 aberturas e 2 MB de barras', () => `${openings}${'\\'.repeat(2e6)}z`],
         ] as [string, () => string][];
       })(),
+      // One unclosed opening of each class (quote x `&amp;` x 6 levels) every ~4 KB, a bit more than the window apart
+      // (closer, an opening may close on the next block's), then entities with 8 zeros: each opening reading its own
+      // window added up to 1.3–1.7 s over the 2 MB.
+      ['24 aberturas sem fecho a cada 4 KB', () => {
+        let block = '';
+        for (const d of [0, 1, 3, 7, 15, 31]) for (const q of ['quot', 'apos']) for (const amp of ['&', '&amp;']) block += `\\"token\\": ${'\\'.repeat(d)}${amp}${q};a `;
+        return fill(block + fill('\\&#00000000', 4300 - block.length));
+      }],
       ['aspas fora da escada', () => {
         let line = '';
         for (let k = 2; line.length < MB2; k += 1) line += `token: ${'\\'.repeat(k)}"a `;
@@ -356,11 +379,17 @@ describe('espelho do Oráculo', () => {
     const TOKEN = /zq[0-9a-z]+qz/g;
     let tokens = 0;
     const token = (): string => `zq${(tokens++).toString(36)}qz`;
+    // Which pair shapes the corpus holds, counted below: every one must be there (an LCG's `seed % n`, its low bits of
+    // short period, once left out the quoted names, the spaced separators and the single-quoted and bare values).
+    const shapes = { pair: new Set<string>(), next: new Set<string>(), name: new Set<string>(), pairs: new Set<number>() };
     function corpus(): string[] {
+      // mulberry32: every bit of its output is good, so `% n` reaches every choice in every mix.
       let seed = 36;
       const next = (n: number): number => {
-        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
-        return seed % n;
+        seed = (seed + 0x6d2b79f5) | 0;
+        let x = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+        x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+        return ((x ^ (x >>> 14)) >>> 0) % n;
       };
       const out: string[] = [];
       for (let i = 0; i < 30_000; i += 1) {
@@ -374,7 +403,7 @@ describe('espelho do Oráculo', () => {
       }
       // Pairs as a log line or an `.env` carries them: a value with a backslash before its quote, a Windows path, an
       // escaped quote inside, an unclosed one; two or three on a line.
-      const names = ['password', 'DB_PASSWORD', 'SECRET_DIR', 'token', 'apiKey', 'senha', 'x', 'path', 'my.secret-key', 'API_KEY_FILE'];
+      const names = ['password', 'DB_PASSWORD', 'SECRET_DIR', 'token', 'apiKey', 'senha', 'x', 'path', 'my.secret-key', 'API_KEY_FILE', '--password'];
       const nameQuotes = ['', '', '"', "'"];
       const seps = ['=', ':', ' = ', ': '];
       const quotes = ['"', '"', "'", ''];
@@ -386,13 +415,24 @@ describe('espelho do Oráculo', () => {
       const joins = [' ', ', ', '; ', '&', '\t', '', ' fim ', '\n'];
       for (let i = 0; i < 40_000; i += 1) {
         const pairs = 1 + next(3);
+        shapes.pairs.add(pairs);
         let line = '';
+        let slashBefore = false;
         for (let j = 0; j < pairs; j += 1) {
           const nq = nameQuotes[next(nameQuotes.length)]!;
           const q = quotes[next(quotes.length)]!;
           const close = closes(q);
-          line += `${nq}${names[next(names.length)]}${nq}${seps[next(seps.length)]}${q}${values[next(values.length)]!(token())}${close[next(close.length)]}`;
-          line += joins[next(joins.length)];
+          const name = names[next(names.length)]!;
+          const sep = seps[next(seps.length)]!;
+          const value = next(values.length);
+          const end = close[next(close.length)]!;
+          const pair = `${nq}${name}${nq}${sep}${q}${values[value]!(token())}${end}`;
+          shapes.pair.add(JSON.stringify([nq, sep, q, value, end]));
+          shapes.name.add(JSON.stringify([nq, name]));
+          // A pair after a value with a backslash right before its quote: what a guard must find past that quote.
+          if (j > 0 && slashBefore) shapes.next.add(JSON.stringify([nq, sep, q]));
+          slashBefore = q !== '' && pair.endsWith(`\\${q}`);
+          line += pair + joins[next(joins.length)];
         }
         out.push(line);
       }
@@ -429,6 +469,12 @@ describe('espelho do Oráculo', () => {
       }
       expect(escaped).toBeGreaterThan(10_000);
       expect(erased).toBeGreaterThan(20_000);
+      // Every pair shape (name quote x separator x value quote x value x close: 3 x 4 x (2 x 9 x 4 + 9 x 2) = 1080), every
+      // name with every name quote, and every next pair after a backslash before the quote (3 x 4 x 3), with 1 to 3 pairs.
+      expect(shapes.pair.size).toBe(1080);
+      expect(shapes.name.size).toBe(33);
+      expect(shapes.next.size).toBe(36);
+      expect([...shapes.pairs].sort()).toEqual([1, 2, 3]);
     });
   });
 

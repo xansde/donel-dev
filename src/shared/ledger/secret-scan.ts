@@ -187,7 +187,7 @@ function urlPasswordFinder(): Finder {
 // matches. With `escaped`, the quotes may also be escaped (see `escapedQuoteAt`), and the tail must use at least one
 // escaped quote (the plain form is the pass before). A plain quoted value may also skip what is escaped inside it
 // (`"hun\"ter"`), but never masks less than the regex did (see `valueTail`); an escaped one closes only on a quote at
-// its own level, within `MAX_ESCAPED_VALUE`.
+// its own level, within `MAX_ESCAPED_VALUE` (found through `EscapedIndex`, so the pass stays linear in the text).
 
 const isNameChar = (c: number): boolean => isWord(c) || c === 46 || c === 45;
 const KEYWORDS = ['password', 'passwd', 'senha', 'secret', 'token', 'apikey', 'api_key', 'api-key'];
@@ -263,13 +263,13 @@ const isBackslash = (c: number): boolean => c === BACKSLASH;
 
 /**
  * An escaped quote at `i`, or null: backslashes (any number) before `"`, `'`, `u0022`/`u0027`, `x22`/`x27` or an
- * entity quote; or a bare entity quote. The backslashes are read no further than `limit`: a run reaching it is null.
+ * entity quote; or a bare entity quote.
  */
-function escapedQuoteAt(t: string, i: number, limit = t.length): EscapedQuote | null {
+function escapedQuoteAt(t: string, i: number): EscapedQuote | null {
   const c = t.charCodeAt(i);
   if (c === BACKSLASH) {
-    const q = runEnd(t, i, isBackslash, limit);
-    if (q >= limit) return null;
+    const q = runEnd(t, i, isBackslash);
+    if (q >= t.length) return null;
     const slashes = q - i;
     const after = t.charCodeAt(q);
     if (isQuote(after)) return { length: slashes + 1, quote: after, slashes, amp: false };
@@ -289,15 +289,21 @@ function escapedQuoteAt(t: string, i: number, limit = t.length): EscapedQuote | 
 
 /**
  * Each level of escaping doubles the backslashes and adds one: 0, 1, 3, 7… An opening quote off that ladder is not
- * taken (it is no real escaping, and many distinct levels on a line would each scan the line).
+ * taken (it is no real escaping).
  */
 const onLadder = (d: number): boolean => ((d + 1) & d) === 0;
 
 /**
- * Whether `k` backslashes before a quote close a value opened at level `d` (on the ladder): inside `\"…\"`, `\\\"` is
- * an escaped quote and `\\\\\"` a backslash then the closing quote.
+ * `k` backslashes before a quote close a value opened at level `d` (on the ladder) when `k % (2 * (d + 1)) === d`:
+ * inside `\"…\"`, `\\\"` is an escaped quote and `\\\\\"` a backslash then the closing quote. For `d = 2^m - 1`
+ * that is: `k` ends in exactly `m` one bits. So each escaped quote closes exactly one level, and its class (quote,
+ * `&amp;`, trailing one bits of its backslashes) is the class of the openings it closes.
  */
-const closesAt = (k: number, d: number): boolean => k % (2 * (d + 1)) === d;
+function classOf(q: EscapedQuote): number {
+  let m = 0;
+  while ((q.slashes >>> m) & 1) m += 1;
+  return m * 4 + (q.amp ? 2 : 0) + (q.quote === QUOTE ? 1 : 0);
+}
 
 /** `[segredo]` at `i`, ASCII case-insensitive (the regex has `/i`). */
 const maskedAt = (t: string, i: number): boolean => wordIs(t, i, '[segredo]');
@@ -331,24 +337,65 @@ function plainQuotedEnds(t: string, v: number): { first: number; skip: number } 
 const MAX_ESCAPED_VALUE = 4096;
 
 /**
- * Where the closing quote of the value opened by the escaped quote `open` at `v` begins, or -1. Nothing past the window
- * is read, not even to finish a run of backslashes or digits: each unclosed opening reads its window once.
+ * The escaped quotes of a text, read once from left to right: at a backslash run or an `&`, an escaped quote is taken
+ * whole and skipped; a backslash run before no quote is skipped whole. A read that starts after an opening quote lines
+ * up with this one at once (no opening ends in a backslash, and an escaped quote holds a `&` or a backslash only at
+ * its start or right after its own backslashes), so the first quote of the opening's class past it is its close. Each opening then costs a
+ * binary search, not a read of its window: openings repeated all along a 2 MB line read it once.
  */
-function escapedQuotedEnd(t: string, v: number, open: EscapedQuote): number {
-  const n = Math.min(t.length, v + open.length + MAX_ESCAPED_VALUE);
-  for (let y = v + open.length; y < n; y += 1) {
+interface EscapedIndex {
+  /** By class (`classOf`): where each quote begins, and where its backslashes end (the quote character proper). */
+  readonly byClass: Map<number, { readonly at: number[]; readonly quoteAt: number[] }>;
+  readonly newlines: number[];
+}
+
+function escapedIndex(t: string): EscapedIndex {
+  const byClass = new Map<number, { at: number[]; quoteAt: number[] }>();
+  const newlines: number[] = [];
+  for (let y = 0; y < t.length; y += 1) {
     const c = t.charCodeAt(y);
-    if (c === 10) return -1;
+    if (c === 10) newlines.push(y);
     if (c !== BACKSLASH && c !== 38) continue;
-    const q = escapedQuoteAt(t, y, n);
-    if (q && q.quote === open.quote && q.amp === open.amp && closesAt(q.slashes, open.slashes)) {
-      return y === v + open.length ? -1 : y;
-    }
-    // Skip it whole: a quote at another level, or a backslash run (its last backslash may open the closing quote).
-    if (q) y += q.length - 1;
-    else if (c === BACKSLASH) y = runEnd(t, y, isBackslash, n) - 1;
+    const q = escapedQuoteAt(t, y);
+    if (q) {
+      const key = classOf(q);
+      let list = byClass.get(key);
+      if (!list) byClass.set(key, (list = { at: [], quoteAt: [] }));
+      list.at.push(y);
+      list.quoteAt.push(y + q.slashes);
+      y += q.length - 1;
+    } else if (c === BACKSLASH) y = runEnd(t, y, isBackslash) - 1;
   }
-  return -1;
+  return { byClass, newlines };
+}
+
+/** The first index of the sorted `list` whose value is at least `x` (`list.length` when none). */
+function lowerBound(list: readonly number[], x: number): number {
+  let lo = 0;
+  let hi = list.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >>> 1;
+    if (list[mid]! < x) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+/**
+ * Where the closing quote of the value opened by the escaped quote `open` at `v` begins, or -1: the first quote of its
+ * class after it, when its quote character is inside the window, no line ends before it, and the value is not empty.
+ */
+function escapedQuotedEnd(index: EscapedIndex, t: string, v: number, open: EscapedQuote): number {
+  const start = v + open.length;
+  const n = Math.min(t.length, start + MAX_ESCAPED_VALUE);
+  const list = index.byClass.get(classOf(open));
+  if (!list) return -1;
+  const k = lowerBound(list.at, start);
+  if (k === list.at.length) return -1;
+  const y = list.at[k]!;
+  if (y === start || list.quoteAt[k]! >= n) return -1;
+  const line = lowerBound(index.newlines, start);
+  return line < index.newlines.length && index.newlines[line]! < y ? -1 : y;
 }
 
 /**
@@ -400,7 +447,10 @@ interface ValueTail {
   readonly close: string;
 }
 
-function valueTail(t: string, r: number, escaped: boolean): ValueTail | null {
+/** The escaped quotes of the text the pass reads (made once, on the first escaped opening). */
+type IndexOf = (t: string) => EscapedIndex;
+
+function valueTail(t: string, r: number, escaped: boolean, indexOf: IndexOf): ValueTail | null {
   const separator = separatorAt(t, r, escaped);
   if (!separator) return null;
   const { usedEscape } = separator;
@@ -424,7 +474,7 @@ function valueTail(t: string, r: number, escaped: boolean): ValueTail | null {
       if (!onLadder(open.slashes)) return null;
       const start = v + open.length;
       if (maskedAt(t, start)) return null;
-      const y = escapedQuotedEnd(t, v, open);
+      const y = escapedQuotedEnd(indexOf(t), t, v, open);
       if (y === -1) return null;
       const closeLength = escapedQuoteAt(t, y)!.length;
       return { value: v, end: y + closeLength, open: t.slice(v, start), close: t.slice(y, y + closeLength) };
@@ -436,6 +486,15 @@ function valueTail(t: string, r: number, escaped: boolean): ValueTail | null {
 }
 
 function namedSecretFinder(escaped: boolean): Finder {
+  let indexed: string | null = null;
+  let index: EscapedIndex | null = null;
+  const indexOf: IndexOf = (t) => {
+    if (indexed !== t || !index) {
+      indexed = t;
+      index = escapedIndex(t);
+    }
+    return index;
+  };
   return (t, from) => {
     const n = t.length;
     let a = from;
@@ -448,7 +507,7 @@ function namedSecretFinder(escaped: boolean): Finder {
         let s = a;
         while (s <= last && !boundary(t, s)) s += 1;
         if (s <= last) {
-          const tail = valueTail(t, r, escaped);
+          const tail = valueTail(t, r, escaped, indexOf);
           if (tail) return { start: s, end: tail.end, text: `${t.slice(s, tail.value)}${tail.open}[segredo]${tail.close}` };
         }
       }
