@@ -14,7 +14,8 @@
 //     slackReader: a script that prints a Slack thread with "(ts <epoch>)" per message (ler_fio.py); missing = Slack
 //       links count only by their deadline.
 //     pagina: folder of the page (index.html); missing = no page.
-// State ~/.donel/board/estado.json (the vigia's wakes per card); log ~/.donel/board/cron.log.
+// State ~/.donel/board/estado.json (the vigia's wakes per card, busy fields in a row, and the shadow's own wakes, busy
+// fields and Líder notices, so its log shows the cap, the pause and the Líder as acting would); log ~/.donel/board/cron.log.
 //
 // Waking a session = typing into its tmux (`tmux -L donel`, session `donel-<conversation>`) only when its input field
 // is empty, and confirming it in the transcript — the despertador's way (~/bin/rotinas/despertador_sessoes.py).
@@ -24,7 +25,7 @@ import { appendFileSync, existsSync, rmdirSync, mkdirSync, openSync, readFileSyn
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createBoardClient, readBoardConfig, type CardRow, type LaneRow } from '../oraculo/board-client';
-import { fieldIsFree, LABEL, linkKind, planJustify, planVigia, responseSince, type CronAction, type CronCard, type SessionState } from '../shared/board/cron';
+import { afterBusyField, fieldIsFree, LABEL, linkKind, planJustify, planVigia, responseSince, withShadowNotice, type CronAction, type CronCard, type SessionState, type ShadowNotice } from '../shared/board/cron';
 import { renderBoardPage } from '../shared/board/page';
 
 const HOME = homedir();
@@ -67,25 +68,44 @@ function log(line: string): void {
   }
 }
 
-interface State {
+/** What the runner remembers per card between rounds: the vigia's wakes (cap and pause) and busy fields in a row. */
+interface Memory {
   wakes: Record<string, number[]>;
+  busy: Record<string, number>;
 }
+
+interface State extends Memory {
+  /** The vigia in shadow: what it would have done, kept apart so turning the shadow off starts from a clean count. */
+  sombra: Memory & { leader: Record<string, ShadowNotice> };
+}
+
+const record = (value: unknown): Record<string, never> => (value && typeof value === 'object' ? (value as Record<string, never>) : {});
 
 function readState(): State {
   try {
-    const raw = JSON.parse(readFileSync(STATE, 'utf8')) as State;
-    return { wakes: raw.wakes && typeof raw.wakes === 'object' ? raw.wakes : {} };
+    const raw = JSON.parse(readFileSync(STATE, 'utf8')) as Partial<State>;
+    const sombra = record(raw.sombra) as Partial<State['sombra']>;
+    return {
+      wakes: record(raw.wakes),
+      busy: record(raw.busy),
+      sombra: { wakes: record(sombra.wakes), busy: record(sombra.busy), leader: record(sombra.leader) },
+    };
   } catch {
-    return { wakes: {} };
+    return { wakes: {}, busy: {}, sombra: { wakes: {}, busy: {}, leader: {} } };
   }
 }
 
-function writeState(state: State, now: number): void {
-  for (const [card, list] of Object.entries(state.wakes)) {
-    const kept = list.filter((at) => now - at < 24 * 60 * 60 * 1000);
-    if (kept.length) state.wakes[card] = kept;
-    else delete state.wakes[card];
+function writeState(state: State, now: number, live: ReadonlySet<string>): void {
+  for (const memory of [state, state.sombra]) {
+    for (const [card, list] of Object.entries(memory.wakes)) {
+      const kept = list.filter((at) => now - at < 24 * 60 * 60 * 1000);
+      if (kept.length) memory.wakes[card] = kept;
+      else delete memory.wakes[card];
+    }
+    // a card no longer in Fazendo/Travado has nothing to count
+    for (const card of Object.keys(memory.busy)) if (!live.has(card)) delete memory.busy[card];
   }
+  for (const card of Object.keys(state.sombra.leader)) if (!live.has(card)) delete state.sombra.leader[card];
   writeFileSync(`${STATE}.tmp`, JSON.stringify(state));
   renameSync(`${STATE}.tmp`, STATE);
 }
@@ -212,7 +232,10 @@ function typeInto(uuid: string, text: string): 'enviado' | 'nao-confirmado' {
   const target = `donel-${uuid}`;
   const path = transcriptOf(uuid);
   const before = path ? statSync(path).size : 0;
-  if (!tmux(['send-keys', '-t', target, '-l', text]).ok) return 'nao-confirmado';
+  // Card text (title, justification, link) comes from sessions: a \r would send the notice cut in half, and \x03/\x1b
+  // would reach the screen as Ctrl+C/Esc. Typed literally, control characters become spaces.
+  const safe = text.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ');
+  if (!tmux(['send-keys', '-t', target, '-l', safe]).ok) return 'nao-confirmado';
   pause(400);
   if (!tmux(['send-keys', '-t', target, 'Enter']).ok) return 'nao-confirmado';
   const landed = (): boolean => {
@@ -314,31 +337,45 @@ type Client = ReturnType<typeof createBoardClient>;
 
 async function act(client: Client, lanes: readonly LaneRow[], card: CronCard, action: CronAction, who: string, shadow: boolean, state: State, now: number): Promise<void> {
   if (action.do === 'skip') return;
+  // The shadow goes through the same steps (it reads the field and the Líder's tmux, which changes nothing) and keeps
+  // its own marks, so its log shows the cap, the pause and the Líder exactly where acting would.
   const tag = shadow ? '[sombra] ' : '';
+  const memory: Memory = shadow ? state.sombra : state;
   if (action.do === 'wake') {
-    if (shadow) {
-      log(`${tag}${who}: acordaria a sessão ${action.session} (cartão ${card.id}, ${action.mark})`);
+    const result = shadow ? (() => {
+      const field = fieldFree(action.session);
+      return field.free ? ('enviado' as const) : (`campo: ${field.why}` as const);
+    })() : wakeSession(action.session, action.text);
+    log(`${tag}${who}: ${shadow ? 'acordaria' : 'acordar'} a sessão ${action.session} (cartão ${card.id}, ${action.mark}): ${shadow && result === 'enviado' ? 'campo livre' : result}`);
+    if (result.startsWith('campo:')) {
+      // Nothing typed and nothing marked; after BUSY_MAX rounds in a row the Líder hears it.
+      const busy = (memory.busy[card.id] ?? 0) + 1;
+      memory.busy[card.id] = busy;
+      const next = afterBusyField(card, busy, result.slice('campo: '.length), now);
+      if (next.do === 'leader') {
+        delete memory.busy[card.id];
+        await act(client, lanes, card, next, who, shadow, state, now);
+      }
       return;
     }
-    const result = wakeSession(action.session, action.text);
-    log(`${who}: acordar a sessão ${action.session} (cartão ${card.id}, ${action.mark}): ${result}`);
+    delete memory.busy[card.id];
     // Typed counts even unconfirmed (the text is on the screen): the cap and the pause must hold, as in the despertador.
-    if (!result.startsWith('campo:')) {
-      // the local cap first: it holds even if the mark below fails
-      if (who === 'vigia') state.wakes[card.id] = [...(state.wakes[card.id] ?? []), now];
-      await client.markCron(card.id, action.mark);
-    }
+    // The local cap first: it holds even if the mark below fails.
+    if (who === 'vigia') memory.wakes[card.id] = [...(memory.wakes[card.id] ?? []), now];
+    if (!shadow) await client.markCron(card.id, action.mark);
     return;
   }
   const lane = lanes.find((l) => l.project_id === card.projectId);
   const leader = lane?.leader_session && UUID.test(lane.leader_session) ? lane.leader_session : null;
-  if (shadow) {
-    log(`${tag}${who}: avisaria o Líder ${lane?.leader_place ?? '(sem Líder)'} (cartão ${card.id})${who === 'vigia' ? ' e gravaria a nota no cartão' : ''}`);
-    return;
-  }
   if (!leader || !tmux(['has-session', '-t', `donel-${leader}`]).ok) {
     // Not marked: nobody was told, and the next round tries again (a Líder back in 5 min hears it then).
-    log(`${who}: cartão ${card.id} precisa do Líder, mas a raia ${card.projectId} está sem Líder aberto aqui (${lane?.leader_place ?? 'nenhum'})`);
+    log(`${tag}${who}: cartão ${card.id} precisa do Líder, mas a raia ${card.projectId} está sem Líder aberto aqui (${lane?.leader_place ?? 'nenhum'})`);
+    return;
+  }
+  if (shadow) {
+    const field = fieldFree(leader);
+    log(`${tag}${who}: avisaria o Líder ${lane?.leader_place} (cartão ${card.id}) e gravaria a nota no cartão: ${field.free ? 'campo livre' : `campo: ${field.why}`}`);
+    if (field.free) state.sombra.leader[card.id] = { at: now, stageSince: card.stageSince };
     return;
   }
   const result = wakeSession(leader, action.text);
@@ -348,7 +385,7 @@ async function act(client: Client, lanes: readonly LaneRow[], card: CronCard, ac
   // Design §6: the card itself says why the Líder was called (board.vigia_note: the vigia is not the card's place).
   if (who === 'vigia') {
     const written = await client.vigiaNote(card.id, 'parado sem justificativa; Líder do quadro avisado');
-    log(`vigia: nota no cartão ${card.id}: ${written ? 'gravada' : 'não gravada (saiu de Fazendo)'}`);
+    log(`vigia: nota no cartão ${card.id}: ${written ? 'gravada' : 'não gravada (saiu de Fazendo ou ganhou justificativa)'}`);
   }
 }
 
@@ -379,15 +416,17 @@ async function ronda(client: Client, config: CronConfig): Promise<void> {
         if (action.do !== 'skip') woke++;
         await act(client, lanes, card, action, 'justificativa', false, state, now);
       } else {
-        const action = planVigia(card, sessionState(card.sessionId), state.wakes[card.id] ?? [], now);
+        const shadow = config.vigiaSombra;
+        const view = shadow ? withShadowNotice(card, state.sombra.leader[card.id]) : card;
+        const action = planVigia(view, sessionState(card.sessionId), (shadow ? state.sombra : state).wakes[card.id] ?? [], now);
         if (action.do !== 'skip') woke++;
-        await act(client, lanes, card, action, 'vigia', config.vigiaSombra, state, now);
+        await act(client, lanes, view, action, 'vigia', shadow, state, now);
       }
     } catch (error) {
       log(`cartão ${card.id}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  writeState(state, now);
+  writeState(state, now, new Set(rows.map((row) => row.id)));
   await touchLiveLeaders(client, lanes, now);
   if (config.pagina) {
     const [overview, cards] = await Promise.all([client.overview(), client.pageCards()]);

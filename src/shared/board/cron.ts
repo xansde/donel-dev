@@ -112,6 +112,30 @@ function leaderOnce(card: CronCard, now: number, why: string, repeat: 'once' | '
   };
 }
 
+/** Rounds in a row a wake found the session's field busy (draft, dialog, copy mode) before the Líder hears it. */
+export const BUSY_MAX = 3;
+
+/**
+ * A wake that found the field busy marks nothing (nothing was typed), so without this the charge count and the vigia's
+ * cap never grow and the card never reaches the Líder (the despertador's MAX_REENVIO_TURNO does the same). `busy` is
+ * how many rounds in a row it was busy, this one included.
+ */
+export function afterBusyField(card: CronCard, busy: number, why: string, now: number): CronAction {
+  if (busy < BUSY_MAX) return { do: 'skip', card: card.id, why: `campo ocupado (${busy} de ${BUSY_MAX})` };
+  return leaderOnce(card, now, `o aviso à sessão ${card.sessionId ?? '(sem sessão)'} não entrou em ${busy} rondas seguidas: ${why}`, 'every');
+}
+
+/** The Líder notice the vigia's shadow would have marked on the card (cleared, as the real one, when the card moves). */
+export interface ShadowNotice {
+  readonly at: number;
+  readonly stageSince: number;
+}
+
+/** The card as the vigia in shadow sees it: its own simulated notice to the Líder in place of the database's. */
+export function withShadowNotice(card: CronCard, notice: ShadowNotice | undefined): CronCard {
+  return { ...card, leaderNoticedAt: notice && notice.stageSince === card.stageSince ? notice.at : null };
+}
+
 /** The vigia's wakes of a card in the last 24 h (epoch ms, oldest first), kept by the runner. */
 export type WakeLog = readonly number[];
 

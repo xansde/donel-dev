@@ -46,6 +46,7 @@ files:
   - "!release/**"
   - "!*.md"
   - "!electron.vite.config.*"
+  - "!*.vite.config.ts"
   - "!electron-builder.yml"
   - "!vitest.config.ts"
   - "!tsconfig*.json"
