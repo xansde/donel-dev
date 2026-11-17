@@ -1,8 +1,44 @@
 # OpenRig — registro de absorção
 
-Último commit absorvido: 0b25d8612b1f5df7400196f1a7965c2d81202048
+Último commit absorvido: 2a94dc34d09077abe497f2cc13dbf704b319f666
 
 Referência de design do Mindscape (github.com/mvschwarz/openrig). Procedimento na skill `absorver-openrig`. Cada rodada lista o que virou PR, o que ficou adiado, o que espera o dono e o que foi descartado.
+
+## 2026-11-17 — 0b25d86..2a94dc3
+
+57 commits do OpenRig; versões novas: v0.7.17.
+
+### Vale → PR
+
+Nenhum. Nada do intervalo trouxe ideia nova que o Donel ainda não tenha.
+
+### Vale → adiado
+
+Nenhum.
+
+### Vale → pendente para o dono
+
+Nenhum novo. Seguem abertas as perguntas das seções anteriores (fila durável do item 13, desde 10/11; resposta do "esperando você" em nome do dono, desde 08/11; pausa até o reset do limite de uso, desde 12/11).
+
+### Descartado
+
+- Fila: respostas de prompt do lugar voltam à conversa escolhida pela pessoa: É a continuação do item 13 (fila durável), e a pergunta sobre ela está com o dono desde 10/11 sem resposta, então não abro outra. Rota de volta, histórico de respostas pelo Slack, contagem de goals e varredura de sucessores são da fila do daemon e do SQLite. A rotina "sessão parada e ninguém vê" (item 20) conta de propósito o lugar que precisa do dono.
+- Restore/export: resultado honesto por lugar, cwd, pasta salva ausente, conversa compartilhada: O Donel já tem igual. moveConversation (src/shared/mindscape/model.ts:288) junta num lugar só o cartão que tinha a mesma conversa, então dois lugares não dividem uma conversa. O sessao_retomar já recusa um lugar aberto ou abrindo (agentBridge.ts:1668), e openWhereItLives recusa uma conversa "viva em outra aba". A retomada usa a pasta do projeto, e um spawn numa pasta que não existe dá erro com o nome dela (buildSpawnFailureMessage, pty-manager.ts:170). O relato por lugar na reabertura é o PR #446. Shell vazio, recibos de tentativa, plugin de uma instalação movida e process_limits do export são mecânica de tmux e daemon.
+- Estado honesto do lugar: atividade de lugar adotado, compactação, nomes de sessão, token comparado em tempo constante: O Donel já tem. O hook-bridge guarda o estado pelo token de cada PTY, e não por geração, então a sessão adotada na renovação (PR #439) segue com os próprios hooks. O Donel não tem compactação gerenciada; a renovação em voo (item 07) cobre o handoff. O token do hook é um aleatório de 128 bits buscado num Map, só em localhost, sem comparação com !==. A celular, o Oráculo e o portão já usam timingSafeEqual. O limite de recent-transitions é da fila do daemon.
+- Acordar lugares Claude por ponte de hook própria do lançamento e entrada nativa ordenada: O Donel já tem. Cada lançamento ganha a própria ponte de hook, com token por sessão (hook-bridge.ts e session-keys.ts), e a entrega ordenada com desfecho tipado vem do sendDriver/tabSend (DeliveryOutcome). O anel de wake com assinatura Standard Webhooks é de membro hospedado do daemon e não existe no Donel.
+- MCP e rig_team para assistentes de rede: O roster, os assistentes de rede e o rig_queue_show são do daemon e do CLI rig. O MCP donel acha o lugar pela aba, sem roster, e o "desconhecido" do silêncio já existe (PRs #313 e #417).
+- Papel/orientação: refocus e autoMode por lugar: O Donel já tem. O papel é reinjetado a cada lançamento, e o modo vem do papel e do Launcher (src/shared/roleLaunch.ts); a renovação mantém o bypass. O refocus a partir do baton tipado é do daemon.
+- Limite de tarefas por lugar (TasksMax) em hosts Linux/systemd: Só existe no Linux com systemd e mexe com o tmux do OpenRig. No Donel, o teto por máquina é a "vaga" do sessao_abrir e do sessao_retomar (waitReasons e openingRoom).
+- Escopo/slices e workflow: close in-place, route adota segundo handoff: Slices e workflow do CLI rig dependem de topologia escrita à mão, que está fora de escopo. A esteira do item 15 não tem slices nem pacotes de handoff.
+- Terminal: célula herdr sem painel não dimensiona o lugar: É mecânica de tmux e do Herdr. O Donel é dono dos próprios PTYs e dimensiona pelo xterm de cada aba.
+- TUI: A TUI está fora de escopo (dono, 03/11).
+- CLI: robustez de partida e saída JSON: Robustez do CLI rig e do daemon do OpenRig (archive, listener secundário, bearer, UTF-8 do ACP), sem ideia nova para o Mindscape.
+- Daemon: /api/attention barato para o badge 'precisa de você': É desempenho do daemon. No Donel o "precisa de você" sai do semáforo e dos hooks, já no app, sem polling HTTP caro.
+- Slack opt-in do OpenRig: É uma integração própria do OpenRig, fora do plano. O Slack do dono passa só pela Composio e pelo Theo, fora do app.
+- Docs e skills do OpenRig: São docs e skills do próprio OpenRig. Responder a pessoa onde ela escreveu é a pergunta que está com o dono desde 08/11 (responder o "esperando você" em nome dele).
+- Release 0.7.17, changelog e baseline de plugins: Packaging, release e changelog do próprio OpenRig.
+- CI e scripts: pins de actions e bootstrap: CI e scripts do próprio OpenRig.
+- Rótulo de lugar Codex: Política do Codex no daemon. O Donel não lê a configuração workspace-write do Codex.
 
 ## 2026-11-16 — df98bcd..0b25d86
 
