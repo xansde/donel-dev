@@ -66,6 +66,12 @@ import { AGENT_BOT_SERVERS, detectAgentBotSend, detectSlackSend, fileNameOf, sla
 
 /** Smoke/test override: isolates the ledger from the real one. */
 export const LEDGER_FILE_ENV_VAR = 'DONEL_LEDGER_FILE';
+/** The refusals that say the ledger was not there to answer (nothing about the decision): the phone's queue keeps a
+ * row refused with one of them (src/oraculo/decisoes.ts). Change the text here, never inline. */
+export const LEDGER_NOT_OPEN = 'O Oráculo Harrow não abriu neste app.';
+export const LEDGER_READ_FAILED = 'Não consegui ler o Oráculo Harrow';
+export const LEDGER_NEWER = 'O Oráculo Harrow foi gravado por uma versão mais nova do Donel Dev; esta só lê.';
+export const LEDGER_WRITE_FAILED = 'Não consegui gravar o Oráculo Harrow; nada mudou.';
 
 export function ledgerFilePath(env: Record<string, string | undefined>, userDataPath: string): string {
   const override = env[LEDGER_FILE_ENV_VAR];
@@ -219,13 +225,13 @@ export function createLedgerService(deps: LedgerServiceDeps): LedgerService {
       try {
         snapshot = load();
       } catch (error) {
-        return { ok: false, reason: `Não consegui ler o Oráculo Harrow (${error instanceof Error ? error.message : String(error)}); nada foi gravado.` };
+        return { ok: false, reason: `${LEDGER_READ_FAILED} (${error instanceof Error ? error.message : String(error)}); nada foi gravado.` };
       }
-      if (snapshot.readOnly) return { ok: false, reason: 'O Oráculo Harrow foi gravado por uma versão mais nova do Donel Dev; esta só lê.' };
+      if (snapshot.readOnly) return { ok: false, reason: LEDGER_NEWER };
       const result = applyLedgerOp(snapshot.doc, actor, op, { now: now(), newId });
       if (!result.ok) return result;
       if (result.repeated) return { ok: true, task: result.task, repeated: true };
-      if (!write(result.doc)) return { ok: false, reason: 'Não consegui gravar o Oráculo Harrow; nada mudou.' };
+      if (!write(result.doc)) return { ok: false, reason: LEDGER_WRITE_FAILED };
       deps.onChange?.({ doc: result.doc, readOnly: false });
       return { ok: true, task: result.task };
     },

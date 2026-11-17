@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { ConfigIoDeps } from '../src/main/config-store';
 import { createCelularAuth } from '../src/main/celular/auth';
 import { createLedgerMobilePort } from '../src/main/celular/ledger-port';
-import { createLedgerService, ledgerProofsDir, type LedgerProofFs } from '../src/main/ledger-store';
+import { createLedgerService, LEDGER_WRITE_FAILED, ledgerProofsDir, type LedgerProofFs } from '../src/main/ledger-store';
 import { resolveProofUrl } from '../src/main/ledger-proof-protocol';
 import { proofUrl } from '../src/shared/ledger/channels';
 import type { LedgerActor, LedgerForOwner } from '../src/shared/ledger/contract';
@@ -12,6 +12,7 @@ import { httpsServeUrl } from '../src/main/celular/webpush';
 import { pickTailscaleAddress } from '../src/main/celular/tailscale';
 import { createCardWriter, type OwnerMessage } from '../src/main/ledger-card-writer';
 import type { EntregaCelular } from '../src/shared/celular';
+import { createDecisoesConsumer, STALE_DECISION, type DecisaoRow, type DecisoesQueue } from '../src/oraculo/decisoes';
 
 // Ledger no celular — o que quebraria sem o dono ver: o servidor aceitar quem não pareou, subir fora da
 // Tailscale, ou uma decisão do celular gravar duas vezes no ledger.
@@ -294,6 +295,93 @@ describe('servidor do celular', () => {
     expect((await call('POST', '/api/decidir', token, escolha)).status).toBe(200);
     expect((await call('POST', '/api/decidir', token, escolha)).status).toBe(200);
     expect(decisions(second)).toEqual([expect.objectContaining({ kind: 'rejeitada', by: { kind: 'dono' }, option: 'Refazer', text: 'Refazer' })]);
+  });
+  it('a fila do celular aplica uma vez, não duplica, não some', async () => {
+    const { ledger, first, second, decisions } = await setup();
+    const t0 = Date.now();
+    const row = (n: number, tarefa: string, lado: DecisaoRow['lado'], rest: Partial<DecisaoRow> = {}): DecisaoRow =>
+      ({ pedido: `00000000-0000-4000-8000-00000000000${n}`, tarefa, lado, opcao: null, comentario: null, paginas: null, criada_em: new Date(t0 + n * 1000).toISOString(), ...rest });
+    // The Supabase queue in memory: `tomar` hands the rows not yet marked (sorted by the consumer, not here).
+    const rows: (DecisaoRow & { resultado?: string })[] = [
+      row(1, first, 'sim', { opcao: 'Aceitar', paginas: [{ pagina: 1, nome: 'capa', nota: 'down' }, { pagina: 99, nota: 'up' }] }),
+      // "Rejeitar" is the phone's generic side, not an option of the card: rejected with it as the reason.
+      row(2, second, 'nao', { opcao: 'Rejeitar' }),
+      row(4, 't-99', 'sim'),
+      row(3, 't-98', 'sim'), // annulled between `tomar` and `marcar`
+      // Decided before the last delivery: a card he never saw, never applied.
+      row(5, second, 'sim', { opcao: 'Aceitar', criada_em: new Date(t0 - 3_600_000).toISOString() }),
+    ];
+    const result = (n: number): string | undefined => rows.find((entry) => entry.pedido.endsWith(String(n)))!.resultado;
+    let failMark = true;
+    const queue: DecisoesQueue = {
+      tomar: async () => rows.filter((entry) => !entry.resultado),
+      marcar: async (pedido, resultado) => {
+        if (pedido.endsWith('1') && failMark) {
+          failMark = false;
+          throw new Error('sem rede');
+        }
+        const target = rows.find((entry) => entry.pedido === pedido)!;
+        if (target.resultado) return false;
+        target.resultado = resultado;
+        return true;
+      },
+    };
+    let failWrite = false;
+    const port = createLedgerMobilePort(() => ({
+      ...ledger,
+      apply: async (actor, op) => (failWrite ? ((failWrite = false), { ok: false as const, reason: LEDGER_WRITE_FAILED }) : ledger.apply(actor, op)),
+    }));
+    const asked: string[] = [];
+    let returned = true;
+    const consumer = createDecisoesConsumer({
+      queue: () => queue,
+      port: {
+        decidir: (input) => {
+          asked.push(input.pedidoId);
+          if (input.pedidoId.endsWith('3')) rows.find((entry) => entry.pedido === input.pedidoId)!.resultado = 'anulada pelo dono';
+          return port.decidir(input);
+        },
+      },
+      ledger: () => ledger,
+      returned: () => returned,
+    });
+
+    // The ledger went back to the PC: nothing is taken, applied or marked (not lost).
+    await consumer.round();
+    expect(asked).toEqual([]);
+    expect(rows.map((entry) => entry.resultado)).toEqual([undefined, undefined, undefined, undefined, undefined]);
+
+    // Round 1: the stale row is refused without reaching the ledger; the write fails on the next one, which stays.
+    returned = false;
+    failWrite = true;
+    await consumer.round();
+    expect(result(5)).toBe(`recusada: ${STALE_DECISION}`);
+    expect(decisions(second)).toHaveLength(0);
+    expect(result(1)).toBeUndefined();
+    expect(decisions(first)).toHaveLength(0);
+    expect(result(2)).toBeUndefined();
+
+    // Round 2: applied, but its mark fails; the batch goes on. The refusals are marked, the annulled row is not overwritten.
+    await consumer.round();
+    expect(decisions(first)).toEqual([expect.objectContaining({ kind: 'aceita', by: { kind: 'dono' }, option: 'Aceitar', text: 'Notas por página: 👎 p1 capa' })]);
+    expect(result(1)).toBeUndefined();
+    expect(decisions(second)).toEqual([expect.objectContaining({ kind: 'rejeitada', by: { kind: 'dono' }, text: 'Rejeitar' })]);
+    expect(decisions(second)[0]).not.toHaveProperty('option');
+    expect(result(2)).toBe('aplicada: rejeitada');
+    expect(result(3)).toBe('anulada pelo dono');
+    expect(result(4)).toBe('recusada: Esta entrega não existe mais.');
+
+    // Round 3: the same row again does not write twice; it is marked.
+    await consumer.round();
+    expect(decisions(first)).toHaveLength(1);
+    expect(result(1)).toBe('aplicada: aceita');
+
+    // Round 4: nothing left, nothing changes; the stale row never reached the ledger.
+    const before = JSON.stringify(ledger.load().doc);
+    await consumer.round();
+    expect(JSON.stringify(ledger.load().doc)).toBe(before);
+    expect(asked).not.toContain(rows[4]!.pedido);
+    expect(asked).toHaveLength(6);
   });
   it('o protótipo sai com a CSP sandbox allow-scripts, por bilhete de uso único que vence; donel-prova só serve nome de dentro das provas', async () => {
     const io = memoryIo();
