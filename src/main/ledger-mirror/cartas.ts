@@ -93,7 +93,8 @@ export function createProofReader(proofsDir: string, io: ProofReaderFs = nodePro
 /** One proof as `celular_cartas_gravar` receives it (no file name, no bytes). */
 export interface ProvaWire {
   readonly ordem: number;
-  readonly tipo: CartaProvaTipo;
+  /** `arquivo`: a prototype in no text encoding the scan reads; the phone says "Formato que o celular não abre". */
+  readonly tipo: CartaProvaTipo | 'arquivo';
   readonly media_type: string;
   readonly rotulo: string;
   /** Hex sha256 of the bytes that go up; `null` when no bytes go (`sem_arquivo`). */
@@ -163,8 +164,12 @@ export interface UploadFailure {
   readonly until: number;
 }
 
-/** After this many failures of the same bytes the upload stops until the file changes (a body the API refuses). */
+/**
+ * After this many failures of the same bytes the upload stops for `PROOF_GIVE_UP_MS` (a body the API refuses), then
+ * tries again on a later push: a proof file never changes, so "until the file changes" would be until a restart.
+ */
 export const MAX_PROOF_UPLOAD_FAILURES = 4;
+export const PROOF_GIVE_UP_MS = 6 * 60 * 60_000;
 const PROOF_RETRY_MS = 60_000;
 const MAX_PROOF_RETRY_MS = 30 * 60_000;
 
@@ -206,7 +211,7 @@ const uploadKey = (tarefa: string, ordem: number, sha: string): string => `${tar
 /**
  * Sends the whole list (an empty one clears the phone), then the bytes it asks for. Rejects only when the list does
  * not go; a proof that fails is logged and the next ones still go, and the same bytes are not sent again before
- * their backoff, nor after `MAX_PROOF_UPLOAD_FAILURES`.
+ * their backoff, nor for `PROOF_GIVE_UP_MS` after `MAX_PROOF_UPLOAD_FAILURES`.
  */
 export async function pushCartas(cartas: readonly CartaRow[], deps: CartasPushDeps): Promise<CartasPushResult> {
   const keyOf = (ref: CartaProvaRef): string => `${ref.tipo}\n${ref.file}`;
@@ -227,9 +232,9 @@ export async function pushCartas(cartas: readonly CartaRow[], deps: CartasPushDe
         // Never keep the bytes between pushes: the upload reads them again. A missing file is looked for again.
         const missing = prepared.sem_arquivo && prepared.tamanho === null && ref.tipo !== 'video';
         if (missing) incomplete = true;
-        else deps.cache.set(key, { sha256: prepared.sha256, tamanho: prepared.tamanho, sem_arquivo: prepared.sem_arquivo, kinds: prepared.kinds });
+        else deps.cache.set(key, { sha256: prepared.sha256, tamanho: prepared.tamanho, sem_arquivo: prepared.sem_arquivo, kinds: prepared.kinds, ...(prepared.undecodable ? { undecodable: true as const } : {}) });
       }
-      provas.push({ ordem: ref.ordem, tipo: ref.tipo, media_type: ref.media_type, rotulo: ref.rotulo, sha256: prepared.sha256, tamanho: prepared.tamanho, sem_arquivo: prepared.sem_arquivo });
+      provas.push({ ordem: ref.ordem, tipo: prepared.undecodable ? 'arquivo' : ref.tipo, media_type: ref.media_type, rotulo: ref.rotulo, sha256: prepared.sha256, tamanho: prepared.tamanho, sem_arquivo: prepared.sem_arquivo });
     }
     const { provas: _refs, ...card } = carta;
     wire.push({ ...card, provas });
@@ -246,9 +251,9 @@ export async function pushCartas(cartas: readonly CartaRow[], deps: CartasPushDe
     if (!ref || !sent || sent.sem_arquivo || !sent.sha256) continue;
     const failKey = uploadKey(tarefa, ordem, sent.sha256);
     const failed = deps.failures.get(failKey);
-    if (failed && failed.count >= MAX_PROOF_UPLOAD_FAILURES) continue; // given up until the file changes
     if (failed && deps.now() < failed.until) {
-      incomplete = true;
+      // Waiting its backoff (the cards' retry comes back for it), or given up for a while (a later push does).
+      if (failed.count < MAX_PROOF_UPLOAD_FAILURES) incomplete = true;
       continue;
     }
     try {
@@ -265,10 +270,11 @@ export async function pushCartas(cartas: readonly CartaRow[], deps: CartasPushDe
       deps.log(`prova enviada ao celular: tarefa ${tarefa}, prova ${ordem} (${prepared.tamanho} bytes)`);
     } catch (error) {
       const count = (failed?.count ?? 0) + 1;
-      deps.failures.set(failKey, { count, until: deps.now() + Math.min(PROOF_RETRY_MS * 2 ** (count - 1), MAX_PROOF_RETRY_MS) });
+      const wait = count >= MAX_PROOF_UPLOAD_FAILURES ? PROOF_GIVE_UP_MS : Math.min(PROOF_RETRY_MS * 2 ** (count - 1), MAX_PROOF_RETRY_MS);
+      deps.failures.set(failKey, { count, until: deps.now() + wait });
       const reason = error instanceof Error ? error.message : 'falhou';
       if (count >= MAX_PROOF_UPLOAD_FAILURES) {
-        deps.log(`prova não foi ao celular: tarefa ${tarefa}, prova ${ordem} (${reason}); desisto dela até o arquivo mudar`);
+        deps.log(`prova não foi ao celular: tarefa ${tarefa}, prova ${ordem} (${reason}); desisto dela por 6 h`);
       } else {
         incomplete = true;
         deps.log(`prova não foi ao celular: tarefa ${tarefa}, prova ${ordem} (${reason}); tento de novo depois`);

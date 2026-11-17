@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { createLedgerMirror, type MirrorSink, type MirrorTimers } from '../src/main/ledger-mirror/mirror';
 import { createSupabaseSink } from '../src/main/ledger-mirror/supabase-sink';
-import { MAX_CARD_IMAGE_BYTES, MAX_PROOF_UPLOAD_FAILURES, createProofReader, type ProofReader, type ProofReaderFs } from '../src/main/ledger-mirror/cartas';
+import { MAX_CARD_IMAGE_BYTES, MAX_PROOF_UPLOAD_FAILURES, PROOF_GIVE_UP_MS, createProofReader, type ProofReader, type ProofReaderFs } from '../src/main/ledger-mirror/cartas';
 import { cartaRows, maskSecrets, tarefaRows, withPlaceMemory, type PlaceInfo, type PlaceInfoOf, type TarefaRow } from '../src/shared/ledger/mirror';
 import { LEADER_OF_ALL } from '../src/shared/mindscape/leader';
 import { LEDGER_SCHEMA_VERSION, type LedgerDoc, type LedgerTask } from '../src/shared/ledger/contract';
@@ -156,6 +156,163 @@ describe('espelho do Oráculo', () => {
 
   it('keeps an ordinary link and port as they are', () => {
     expect(maskSecrets('https://github.com/xansde/donel-dev/pull/260 e http://localhost:5173/').hits).toEqual([]);
+  });
+
+  // t-36a99827 — the whole prototype (2 MB) goes through the scan in the main: it must never mask less than the
+  // regexes it replaced (copied here as they were on staging), and never take more than linear time.
+  describe('varredura de segredos', () => {
+    type Keep = (match: string, ...groups: string[]) => string;
+    const STAGING: ReadonlyArray<readonly [string, RegExp, Keep?]> = [
+      ['chave privada', /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g],
+      ['token GitHub', /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g],
+      ['chave Anthropic/OpenAI', /\bsk-(?:ant-)?[A-Za-z0-9_-]{16,}/g],
+      ['token Supabase', /\b(?:sbp_[A-Za-z0-9]{20,}|sb_secret_[A-Za-z0-9_-]{10,})/g],
+      ['chave Stripe', /\b(?:(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{10,}|whsec_[A-Za-z0-9]{16,})/g],
+      ['token Slack', /\bxox[abposr]-[A-Za-z0-9-]{10,}/g],
+      ['webhook Slack', /\b(https?:\/\/hooks\.slack\.com\/)(?:services|workflows|triggers)\/[A-Za-z0-9_/-]+/g, (_m, base) => `${base}[segredo]`],
+      ['chave AWS', /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g],
+      ['chave Google', /\bAIza[A-Za-z0-9_-]{30,}/g],
+      ['JWT', /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g],
+      ['Bearer', /\b(Bearer)\s+[A-Za-z0-9._~+/=-]{16,}/gi, (_m, word) => `${word} [segredo]`],
+      ['senha', /\b([a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)[^\s@/]+@/gi, (_m, head) => `${head}[segredo]@`],
+      [
+        'senha',
+        /\b([A-Za-z0-9_.-]*(?:password|passwd|senha|secret|token|api[_-]?key)[A-Za-z0-9_.-]*)(["']?\s*[:=]\s*)(?!["']?\[segredo\])("[^"\n]+"|'[^'\n]+'|[^\s"',;&]{4,})/gi,
+        (_m, name, sep, value) => {
+          const quote = value!.startsWith('"') || value!.startsWith("'") ? value![0] : '';
+          return `${name}${sep}${quote}[segredo]${quote}`;
+        },
+      ],
+      ['e-mail', /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, () => '[e-mail]'],
+      ['CPF', /\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g, () => '[cpf]'],
+    ];
+    function stagingMask(text: string): { text: string; kinds: string[] } {
+      const kinds: string[] = [];
+      let out = text;
+      for (const [kind, re, keep] of STAGING) {
+        out = out.replace(re, (...args: unknown[]) => {
+          kinds.push(kind);
+          const groups = args.slice(1, -2).map((g) => (typeof g === 'string' ? g : ''));
+          return keep ? keep(String(args[0]), ...groups) : '[segredo]';
+        });
+      }
+      return { text: out, kinds };
+    }
+
+    // The 4 limits where the bounded regexes let a secret out (the Revisor's table), and the 3 escaped forms.
+    const longLocal = 'a'.repeat(70);
+    it.each([
+      ['prefixo > 64', `SEAZONE_OPERACOES_INTERNAS_INTEGRACAO_COM_PARCEIRO_EXTERNO_PRODUCAO_API_KEY=${'abcd'}1234efgh`, 'abcd1234efgh', '_API_KEY=[segredo]'],
+      ['sufixo > 64', `DB_PASSWORD_${'X'.repeat(65)}=hunter2secret`, 'hunter2secret', `${'X'.repeat(65)}=[segredo]`],
+      ['esquema > 32', `${'x'.repeat(30)}postgres://app:p4ssw0rd@10.0.0.5/db`, 'p4ssw0rd', 'postgres://app:[segredo]@10.0.0.5/db'],
+      ['e-mail com parte local > 64', `avisei ${longLocal}@empresa.com.br hoje`, longLocal, 'avisei [e-mail] hoje'],
+      ['token em JSON dentro de string JS', '<script>window.cfg = "{\\"token\\": \\"tok_live_9f8e7d6c5b4a\\"}";</script>', 'tok_live', '{\\"token\\": \\"[segredo]\\"}'],
+      ['apiKey em JSON.parse', 'JSON.parse("{\\"apiKey\\": \\"abc123secretvalue\\"}")', 'abc123secretvalue', '{\\"apiKey\\": \\"[segredo]\\"}'],
+      ['senha em entidade HTML', '<pre>{&quot;password&quot;: &quot;hunter2secret&quot;}</pre>', 'hunter2secret', '{&quot;password&quot;: &quot;[segredo]&quot;}'],
+      ['senha em JSON escapado duas vezes', 'x = "{\\\\\\"secret\\\\\\": \\\\\\"zzzz9999\\\\\\"}"', 'zzzz9999', '\\\\\\"secret\\\\\\": \\\\\\"[segredo]\\\\\\"'],
+      ['senha entre &#39;', "{&#39;senha&#39;: &#39;s3nh4F0rte&#39;}", 's3nh4F0rte', '{&#39;senha&#39;: &#39;[segredo]&#39;}'],
+    ])('masks %s', (_name, input, secret, expected) => {
+      const masked = maskSecrets(input);
+      expect(masked.text).not.toContain(secret);
+      expect(masked.text).toContain(expected);
+    });
+
+    // Each shape that made a regex retry a long run from every start inside it: linear now, so 2 MB in well under 1 s.
+    const MB2 = 2 * 1024 * 1024;
+    const fill = (unit: string, size = MB2): string => unit.repeat(Math.ceil(size / unit.length)).slice(0, size);
+    const base64url = (): string => {
+      const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+      const out: string[] = [];
+      let x = 7;
+      for (let i = 0; i < MB2; i += 1) {
+        x = (x * 1103515245 + 12345) & 0x7fffffff;
+        out.push(alphabet[x % 64]!);
+      }
+      return out.join('');
+    };
+    it.each([
+      ['eyJ- (200 KB)', () => 'eyJ-'.repeat(50_000)],
+      ['eyJ- (2 MB)', () => fill('eyJ-')],
+      ['segmentos de JWT sem fim', () => fill('eyJaaaaaaaa.')],
+      ['a. (2 MB)', () => 'a.'.repeat(1_000_000)],
+      ['base64url (2 MB)', base64url],
+      ['a@', () => fill('a@')],
+      ['e-mail sem domínio', () => fill('.a@b.')],
+      ['domínio sem fim', () => `a@${fill('b.')}`],
+      ['password', () => fill('password')],
+      ['password- ', () => fill('password-')],
+      ['token:"', () => fill('token:"')],
+      ['token:"…\\n', () => fill('token:"a\n')],
+      ['x://', () => fill('x://')],
+      ['esquema com hífen', () => fill('a-')],
+      ['usuário sem fim', () => `x://${fill('u')}`],
+      ['senha da URL sem @', () => `x://u:${fill('p:')}`],
+      ['Bearer', () => fill('Bearer ')],
+      ['Bearer e espaços', () => `Bearer${' '.repeat(MB2)}`],
+      ['CPF', () => fill('123.')],
+      ['chave privada sem fim', () => `-----BEGIN ${fill('A ')}`],
+      ['barras invertidas', () => fill('\\')],
+      ['aspas escapadas sem fim', () => `token\\": \\"${fill('a')}`],
+      ['entidades', () => fill('password&quot;: &quot;x')],
+      ['mistura', () => fill('pass_token.a-b@c.d:e//f=g"h\'i\\j&k;')],
+    ])('scans %s in linear time', (_name, make) => {
+      const input = make();
+      // CPU time, not the clock: a busy machine (other tests, other sessions) stretches the clock, not the work.
+      const started = process.cpuUsage();
+      maskSecrets(input);
+      const spent = process.cpuUsage(started);
+      expect((spent.user + spent.system) / 1000).toBeLessThan(1000);
+    });
+
+    // A deterministic corpus of small texts, from pieces that hit every boundary of the regexes.
+    const PIECES = [
+      'a', 'Z', '0', '9', '_', '-', '.', '@', ':', '/', '=', '"', "'", '\\', '&', ';', ' ', '\n', '\t', '%', '+', ',', '\u00a0', 'é',
+      'eyJ', 'password', 'PASSWORD', 'token', 'senha', 'secret', 'api_key', 'api-key', 'apiKey', 'passwd', 'x://', '://', 'com', 'co',
+      '[segredo]', '[SEGREDO]', '&quot;', '&#39;', '&apos;', '\\"', '\\\\\\"', '12345678', '123.456.789-00', 'Bearer ', 'sk-', 'ghp_',
+      'abcdefgh', 'abcd', 'a@b.co', 'x.y@ab.cd', 'eyJabcdefgh.', 'abcdefgh.', 'postgres://u:p@', ':p@h', '@h.com', 'hunter22', '": "', "': '",
+    ];
+    function corpus(): string[] {
+      let seed = 36;
+      const next = (n: number): number => {
+        seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+        return seed % n;
+      };
+      const out: string[] = [];
+      for (let i = 0; i < 30_000; i += 1) {
+        const length = 1 + next(14);
+        let text = '';
+        for (let j = 0; j < length; j += 1) text += PIECES[next(PIECES.length)];
+        out.push(text);
+      }
+      const bases = [
+        `SEAZONE_OPERACOES_API_KEY=${'abcd'}1234efgh`, `DB_PASSWORD_${'X'.repeat(65)}=hunter2secret`, `${'x'.repeat(30)}postgres://app:p4ssw0rd@10.0.0.5/db`,
+        `${longLocal}@empresa.com.br`, '{\\"token\\": \\"tok_live_9f8e7d6c5b4a\\"}', '{&quot;password&quot;: &quot;hunter2secret&quot;}',
+        'eyJhbGciOiJI.eyJzdWIiOiIx.c2lnbmF0dXJl', 'Bearer abcdefghijklmnopqrstuvwxyz',
+        // Segments one short of the minimum, one at a time.
+        `eyJ${'a'.repeat(7)}.${'b'.repeat(8)}.${'c'.repeat(8)}`, `eyJ${'a'.repeat(8)}.${'b'.repeat(7)}.${'c'.repeat(8)}`, `eyJ${'a'.repeat(8)}.${'b'.repeat(8)}.${'c'.repeat(7)}`,
+      ];
+      for (const base of bases) for (const left of PIECES) for (const right of PIECES) out.push(`${left}${base}${right}`);
+      return out;
+    }
+
+    it('never masks less than the regexes it replaced, and is the same where nothing is escaped', () => {
+      const escapedQuote = /\\+["']|&(?:quot|#34|#x22|#39|#x27|apos);/i;
+      let escaped = 0;
+      for (const input of corpus()) {
+        const now = maskSecrets(input);
+        const old = stagingMask(input);
+        if (!escapedQuote.test(input)) {
+          expect(now.text, JSON.stringify(input)).toBe(old.text);
+          expect(now.hits.map((hit) => hit.kind)).toEqual(old.kinds);
+          continue;
+        }
+        // Escaped: it may mask more. Where the old regexes find nothing more in their own text, they find nothing in
+        // the new one either (a second run is not always quiet: `x://a@b.com:p@h` turns into a URL with a password).
+        escaped += 1;
+        if (stagingMask(old.text).text === old.text) expect(stagingMask(now.text).text, JSON.stringify(input)).toBe(now.text);
+      }
+      expect(escaped).toBeGreaterThan(1000);
+    });
   });
 
   it('sends a masked proof and logs where', async () => {
@@ -665,7 +822,7 @@ describe('espelho do Oráculo', () => {
       expect(supabase.calls.some((call) => call.url.includes('celular_prova_gravar'))).toBe(false);
     });
 
-    it('a proof whose upload fails never stops the next ones, and the same bytes wait their backoff, then stop', async () => {
+    it('a proof whose upload fails never stops the next ones, and the same bytes wait their backoff, then stop for 6 h', async () => {
       let clock = 0;
       const lines: string[] = [];
       const two = { ...waiting, id: 't-9' };
@@ -704,7 +861,13 @@ describe('espelho do Oráculo', () => {
       await sink.push([], cartas);
       await sink.idle();
       expect(uploads()).toEqual(['t-9/0']);
-      expect(lines.filter((line) => line.includes('desisto dela até o arquivo mudar'))).toHaveLength(2);
+      expect(lines.filter((line) => line.includes('desisto dela por 6 h'))).toHaveLength(2);
+      // The file never changes: after the 6 h they go again (a restart is not the only way back).
+      supabase.calls.length = 0;
+      clock += PROOF_GIVE_UP_MS;
+      await sink.push([], cartas);
+      await sink.idle();
+      expect(uploads()).toEqual(['t-1/0', 't-1/2', 't-9/0']);
       expect(lines.join('\n')).not.toContain(key);
     });
 
@@ -725,6 +888,51 @@ describe('espelho do Oráculo', () => {
       sink.dispose();
     });
 
+    it('the cards retry on their own 6 times at most, and dispose stops the timer', async () => {
+      const lines: string[] = [];
+      const supabase = fakeSupabase({ cartas: () => new Response('ausente', { status: 404 }) });
+      const sinkTimers = fakeTimers();
+      const sink = createSupabaseSink({ url: 'https://abcdefgh.supabase.co', key: () => key, fetch: supabase.fetchFn, log: (line) => lines.push(line), timers: sinkTimers });
+      await sink.push([], cartaRows(ledgerDoc).rows);
+      await sink.idle();
+      const waits: number[][] = [sinkTimers.pending()];
+      for (let i = 0; i < 7; i += 1) {
+        await sinkTimers.fire();
+        await sink.idle();
+        waits.push(sinkTimers.pending());
+      }
+      expect(waits).toEqual([[60_000], [120_000], [240_000], [480_000], [900_000], [900_000], [], []]);
+      expect(supabase.calls).toHaveLength(7);
+      expect(lines).toContain('cartas do celular: paro de tentar até a próxima mudança do Oráculo');
+
+      // A change of the ledger starts over; dispose clears the timer it left.
+      await sink.push([], cartaRows(ledgerDoc).rows);
+      await sink.idle();
+      expect(sinkTimers.pending()).toEqual([60_000]);
+      sink.dispose();
+      expect(sinkTimers.pending()).toEqual([]);
+    });
+
+    it('a newer list replaces the one uploading: the old one stops before its next proof', async () => {
+      let release: (response: Response) => void = () => undefined;
+      const supabase = fakeSupabase({
+        cartas: () => Response.json([{ tarefa: 't-1', ordem: 0 }, { tarefa: 't-1', ordem: 2 }]),
+        prova: (body) => (body.p_ordem === 0 && !supabase.calls.some((call) => call.url.endsWith('celular_cartas_gravar') && call.body.p_cartas.length === 0) ? new Promise<Response>((resolve) => (release = resolve)) : Response.json(true)),
+      });
+      const sink = createSupabaseSink({ url: 'https://abcdefgh.supabase.co', key: () => key, fetch: supabase.fetchFn, readProof: reader, timers: fakeTimers() });
+      await sink.push([], cartaRows(doc(waiting)).rows);
+      for (let i = 0; i < 50 && !supabase.calls.some((call) => call.url.endsWith('celular_prova_gravar')); i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+      // While the print of the old list uploads, the owner decides: the new list has no card.
+      await sink.push([], []);
+      release(Response.json(true));
+      await sink.idle();
+      expect(supabase.calls.map((call) => `${call.url.split('/').pop()}${call.body.p_ordem === undefined ? `(${call.body.p_cartas.length})` : `/${call.body.p_ordem}`}`)).toEqual([
+        'celular_cartas_gravar(1)',
+        'celular_prova_gravar/0',
+        'celular_cartas_gravar(0)',
+      ]);
+    });
+
     it('a prototype saved in UTF-16 is masked too, and goes up in UTF-8', async () => {
       const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(protoHtml, 'utf16le')]);
       const read: ProofReader = async () => ({ kind: 'ok', bytes: utf16 });
@@ -740,7 +948,8 @@ describe('espelho do Oráculo', () => {
       const other = createSupabaseSink({ url: 'https://abcdefgh.supabase.co', key: () => key, fetch: quiet.fetchFn, readProof: bare, timers: fakeTimers() });
       await other.push([], cartaRows(doc(waiting)).rows);
       await other.idle();
-      expect(quiet.calls[0]!.body.p_cartas[0].provas[1]).toMatchObject({ ordem: 2, sha256: null, sem_arquivo: true });
+      // As a file the phone does not open ("Formato que o celular não abre"), never as one too big.
+      expect(quiet.calls[0]!.body.p_cartas[0].provas[1]).toMatchObject({ ordem: 2, tipo: 'arquivo', sha256: null, sem_arquivo: true });
       expect(quiet.calls.some((call) => call.url.endsWith('celular_prova_gravar'))).toBe(false);
     });
 

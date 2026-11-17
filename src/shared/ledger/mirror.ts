@@ -38,6 +38,7 @@ import {
 import { CLOSING_LABELS, closingOf, withoutMarks } from './closing';
 import { deliveryNote } from './labels';
 import { LEADER_OF_ALL } from '../mindscape/leader';
+import { maskSecrets } from './secret-scan';
 
 /**
  * One row of the table `tarefas` (docs/oraculo-espelho/supabase.sql), in the order a person reads it. Dates are
@@ -90,63 +91,8 @@ export const MAX_ROW_SUMMARY_CHARS = 300;
 /** How the owner is named when the main does not say. */
 export const DEFAULT_OWNER_NAME = 'Dono';
 
-// ---------------------------------------------------------------------------------------------------------------
-// Secret scan — before anything leaves the PC. A hit is replaced in place and reported (never its value).
-
-export interface MaskHit {
-  readonly kind: string;
-}
-
-// Order matters: whole-token shapes first, then the connection string (before the e-mail, which would eat
-// `senha@host`), then a secret-looking name with its value, then personal data.
-const SECRET_PATTERNS: ReadonlyArray<{ kind: string; re: RegExp; keep?: (match: string, ...groups: string[]) => string }> = [
-  { kind: 'chave privada', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g },
-  { kind: 'token GitHub', re: /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g },
-  { kind: 'chave Anthropic/OpenAI', re: /\bsk-(?:ant-)?[A-Za-z0-9_-]{16,}/g },
-  { kind: 'token Supabase', re: /\b(?:sbp_[A-Za-z0-9]{20,}|sb_secret_[A-Za-z0-9_-]{10,})/g },
-  { kind: 'chave Stripe', re: /\b(?:(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{10,}|whsec_[A-Za-z0-9]{16,})/g },
-  { kind: 'token Slack', re: /\bxox[abposr]-[A-Za-z0-9-]{10,}/g },
-  {
-    kind: 'webhook Slack',
-    re: /\b(https?:\/\/hooks\.slack\.com\/)(?:services|workflows|triggers)\/[A-Za-z0-9_/-]+/g,
-    keep: (_m, base) => `${base}[segredo]`,
-  },
-  { kind: 'chave AWS', re: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g },
-  { kind: 'chave Google', re: /\bAIza[A-Za-z0-9_-]{30,}/g },
-  { kind: 'JWT', re: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g },
-  { kind: 'Bearer', re: /\b(Bearer)\s+[A-Za-z0-9._~+/=-]{16,}/gi, keep: (_m, word) => `${word} [segredo]` },
-  // `postgres://app:p4ss!word@10.0.0.5/db` — any host (IP or name), any character but `@`, `/` and space.
-  { kind: 'senha', re: /\b([a-z][a-z0-9+.-]{0,31}:\/\/[^\s:/@]+:)[^\s@/]+@/gi, keep: (_m, head) => `${head}[segredo]@` },
-  // `PGPASSWORD=…`, `DB_PASSWORD=…`, `"password": "…"`, `"apiKey": "…"`, `senha: …`: the name stays, the value goes.
-  // The name is bounded on both sides (so are the scheme above and the e-mail's parts below): an unbounded run is
-  // quadratic on a long `[A-Za-z0-9_.-]` stretch — a base64 blob or `a.a.a.` in a 2 MB prototype held the main
-  // thread for minutes (t-36a99827).
-  {
-    kind: 'senha',
-    re: /\b([A-Za-z0-9_.-]{0,64}(?:password|passwd|senha|secret|token|api[_-]?key)[A-Za-z0-9_.-]{0,64})(["']?\s*[:=]\s*)(?!["']?\[segredo\])("[^"\n]+"|'[^'\n]+'|[^\s"',;&]{4,})/gi,
-    keep: (_m, name, sep, value) => {
-      const quote = value!.startsWith('"') || value!.startsWith("'") ? value![0] : '';
-      return `${name}${sep}${quote}[segredo]${quote}`;
-    },
-  },
-  { kind: 'e-mail', re: /\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,255}\.[A-Za-z]{2,}\b/g, keep: () => '[e-mail]' },
-  // With or without the dots: `123.456.789-00` and `12345678900`.
-  { kind: 'CPF', re: /\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g, keep: () => '[cpf]' },
-];
-
-/** Replaces every secret-looking piece of `text`; `hits` says what was found (never the value). */
-export function maskSecrets(text: string): { text: string; hits: MaskHit[] } {
-  const hits: MaskHit[] = [];
-  let out = text;
-  for (const { kind, re, keep } of SECRET_PATTERNS) {
-    out = out.replace(re, (...args: unknown[]) => {
-      hits.push({ kind });
-      const groups = args.slice(1, -2).map((g) => (typeof g === 'string' ? g : ''));
-      return keep ? keep(String(args[0]), ...groups) : '[segredo]';
-    });
-  }
-  return { text: out, hits };
-}
+// Secret scan (`secret-scan.ts`) — before anything leaves the PC.
+export { maskSecrets, type MaskHit } from './secret-scan';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Places — by name, never by id. The session registry forgets a closed session (it keeps the last few), so the
