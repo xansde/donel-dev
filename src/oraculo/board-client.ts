@@ -29,6 +29,41 @@ export interface CardRow {
   readonly owner_reason: string | null;
   readonly done_summary: string | null;
   readonly version: number;
+  readonly woken_at?: string | null;
+  readonly charged_at?: string | null;
+  readonly charge_count?: number;
+  readonly leader_noticed_at?: string | null;
+  readonly justified_at?: string | null;
+}
+
+export interface LaneRow {
+  readonly project_id: string;
+  readonly leader_place: string | null;
+  readonly leader_session: string | null;
+  readonly leader_seen_at: string | null;
+}
+
+export interface LeaderRequestRow {
+  readonly id: number;
+  readonly project_id: string;
+  readonly actor: string;
+  readonly created_at: string;
+}
+
+/** What the cron on the VPS needs (src/board-cron/main.ts). */
+export interface BoardCronStore {
+  /** Cards in Fazendo or Travado of the projects that run on `host`: the only ones this machine's cron looks at. */
+  parkedOrDoing(host: string): Promise<readonly CardRow[]>;
+  lanes(host: string): Promise<readonly LaneRow[]>;
+  pendingLeaderRequests(host: string): Promise<readonly LeaderRequestRow[]>;
+  markCron(cardId: string, kind: 'woken' | 'charged' | 'leader'): Promise<void>;
+  /** The vigia's note on a card in Fazendo (board.vigia_note); false when the card is no longer there. */
+  vigiaNote(cardId: string, note: string): Promise<boolean>;
+  resolveLeaderRequest(id: number, status: 'done' | 'failed', reason: string): Promise<void>;
+  touchLane(projectId: string, leaderPlace: string, leaderSession: string | undefined, force?: boolean): Promise<void>;
+  overview(): Promise<readonly import('../shared/board/page').OverviewRow[]>;
+  /** Every card not done, plus the ones done in the last 3 days, for the page. */
+  pageCards(): Promise<readonly import('../shared/board/page').PageCard[]>;
 }
 
 export interface CreateCardArgs {
@@ -70,6 +105,8 @@ export interface BoardStore {
   projectOf(projectPath: string): Promise<string>;
   getCard(id: string): Promise<CardRow | null>;
   listCards(projectId: string, options: { readonly stage?: Stage; readonly includeDone?: boolean }): Promise<readonly CardRow[]>;
+  /** The card a create_card with this client_ref made, if any. */
+  cardByClientRef(ref: string): Promise<CardRow | null>;
   createCard(args: CreateCardArgs): Promise<CardRow>;
   moveCard(args: MoveCardArgs): Promise<CardRow>;
   /** `force`: the Líder the picture shows takes the lane at once (only the daemon passes it). */
@@ -85,7 +122,8 @@ export interface BoardConfig {
 export function readBoardConfig(file: string): BoardConfig | null {
   try {
     const raw = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
-    if (typeof raw.url !== 'string' || !/^https:\/\/[^/\s]+$/.test(raw.url.replace(/\/+$/, ''))) return null;
+    // https, or plain http only on this machine (the end-to-end test's local PostgREST): the key never leaves in clear.
+    if (typeof raw.url !== 'string' || !/^(https:\/\/[^/\s]+|http:\/\/(127\.0\.0\.1|localhost)(:\d+)?)$/.test(raw.url.replace(/\/+$/, ''))) return null;
     if (typeof raw.serviceKeyFile !== 'string' || !raw.serviceKeyFile) return null;
     return { url: raw.url.replace(/\/+$/, ''), serviceKeyFile: raw.serviceKeyFile };
   } catch {
@@ -103,7 +141,7 @@ export class BoardError extends Error {}
 
 type Fetch = typeof fetch;
 
-export function createBoardClient(config: BoardConfig, doFetch: Fetch = fetch): BoardStore {
+export function createBoardClient(config: BoardConfig, doFetch: Fetch = fetch): BoardStore & BoardCronStore {
   // Read at each call; an unreadable file says so without its path (someone might paste the key in the path field).
   const key = (): string => {
     try {
@@ -120,11 +158,16 @@ export function createBoardClient(config: BoardConfig, doFetch: Fetch = fetch): 
       headers['Content-Profile'] = 'board';
       headers['Content-Type'] = 'application/json';
     }
-    let res: Response;
-    try {
-      res = await doFetch(`${config.url}/rest/v1/${path}`, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(15_000) });
-    } catch (error) {
-      throw new BoardError(`o quadro de tarefas não respondeu (${error instanceof Error ? error.name : 'erro'}); tente de novo`);
+    let res: Response | null = null;
+    for (let attempt = 0; !res; attempt++) {
+      try {
+        res = await doFetch(`${config.url}/rest/v1/${path}`, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(15_000) });
+      } catch (error) {
+        // A kept-alive socket the server already closed fails before the request goes out: one retry on a fresh one.
+        const code = (error as { cause?: { code?: string } } | null)?.cause?.code;
+        if (attempt === 0 && (code === 'UND_ERR_SOCKET' || code === 'ECONNRESET')) continue;
+        throw new BoardError(`o quadro de tarefas não respondeu (${error instanceof Error ? error.name : 'erro'}); tente de novo`);
+      }
     }
     let text: string;
     try {
@@ -169,10 +212,29 @@ export function createBoardClient(config: BoardConfig, doFetch: Fetch = fetch): 
       else if (!options.includeDone) filters.push('stage=neq.done');
       return call<CardRow[]>('GET', `project_cards?${filters.join('&')}&limit=200`);
     },
+    async cardByClientRef(ref) {
+      const rows = await call<CardRow[]>('GET', `cards?client_ref=eq.${q(ref)}&limit=1`);
+      return rows[0] ?? null;
+    },
     createCard: (args) => rpc<CardRow>('create_card', args),
     moveCard: (args) => rpc<CardRow>('move_card', args),
     async touchLane(projectId, leaderPlace, leaderSession, force) {
       await rpc('touch_lane', { p_project_id: projectId, p_leader_place: leaderPlace, ...(leaderSession ? { p_leader_session: leaderSession } : {}), ...(force ? { p_force: true } : {}) });
     },
+    // `projects!inner(host)` + `projects.host=eq.<host>`: only the projects that run on this machine (projects.host)
+    parkedOrDoing: (host) => call<CardRow[]>('GET', `cards?select=*,projects!inner(host)&stage=in.(doing,blocked)&projects.host=eq.${q(host)}&limit=1000`),
+    lanes: (host) => call<LaneRow[]>('GET', `lanes?select=project_id,leader_place,leader_session,leader_seen_at,projects!inner(host)&projects.host=eq.${q(host)}`),
+    pendingLeaderRequests: (host) =>
+      call<LeaderRequestRow[]>('GET', `leader_requests?select=id,project_id,actor,created_at,projects!inner(host)&status=eq.pending&projects.host=eq.${q(host)}&order=id`),
+    async markCron(cardId, kind) {
+      await rpc('mark_cron', { p_card_id: cardId, p_kind: kind });
+    },
+    vigiaNote: (cardId, note) => rpc<boolean>('vigia_note', { p_card_id: cardId, p_note: note }),
+    async resolveLeaderRequest(id, status, reason) {
+      await rpc('resolve_leader_request', { p_id: id, p_status: status, p_reason: reason });
+    },
+    overview: () => call('GET', 'overview?order=project_id'),
+    pageCards: () =>
+      call('GET', `project_cards?or=(stage.neq.done,updated_at.gt.${q(new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString())})&limit=2000`),
   };
 }

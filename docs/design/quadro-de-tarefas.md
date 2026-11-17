@@ -169,7 +169,9 @@ não):
   (último turno `end_turn` há ≥ 30 min).
 - Sessão viva no tmux → digita "retome o cartão c-…" (teto 2 por 24 h, recuo 15/30/60).
 - Sessão morta → reabre no tmux da VPS com `claude --resume <session_id>` no cwd do lugar; sem sessão viável ou no
-  teto → acorda o Líder do quadro e grava a nota "vigia: parado sem justificativa" (move_card para a mesma coluna).
+  teto → acorda o Líder do quadro e grava a nota "vigia: parado sem justificativa" (`board.vigia_note`, que só
+  escreve a nota de um cartão em Fazendo: o `move_card` recusa quem não é o lugar do cartão, e `p_as_leader` daria ao
+  vigia o poder inteiro do Líder).
   O vigia não move para `blocked`: Travado exige justificativa com link, que só quem trabalha no cartão tem.
 - Cartão com justificativa, mesmo vencida, é do cron de justificativa (que cobra e depois avisa o Líder); o vigia
   não acorda a mesma sessão de novo.
@@ -181,6 +183,29 @@ não):
   (cartas de infraestrutura no Oráculo) não muda.
 - Peça 6 pede vigia e crons em Rust: começo em TS (reusa `src/shared/board/`, uma regra só) e o porte a Rust entra
   junto do serviço Rust da VPS. Se o dono preferir Rust já, a regra em SQL não muda.
+
+### Implementação (PR 3)
+
+- `src/shared/board/cron.ts` (decisões puras: `planJustify`, `planVigia`, campo livre da tela), `src/shared/board/page.ts`
+  (a página) e `src/board-cron/main.ts`, construído em `out/board-cron/board-cron.mjs` (`npm run build:quadro`).
+- `board-cron.mjs ronda` (*/15): justificativa, vigia, raias vivas (`touch_lane` do Líder com turno nos últimos 30 min) e
+  página. `board-cron.mjs lider` (*/1): pedidos do PC. Marcas sem subir a versão do cartão: `board.mark_cron`,
+  `board.resolve_leader_request`.
+- Configuração em `~/.donel/board/`: `supabase.json` (`{url, serviceKeyFile}`; sem ele o cron sai com 0) e `cron.json`
+  (`{vigiaSombra, slackReader, pagina}`). **`vigiaSombra` vale `true` por padrão**: o vigia só registra o que faria, até
+  rodar um dia ao lado da `ronda` do despertador com a mesma saída ou melhor.
+- `cron.json` tem também `host` (padrão `vps-pessoal`): o cron só olha os projetos que rodam nesta máquina
+  (`projects.host`); sessão de outra máquina não está neste tmux, e lê-la como fechada daria ao Líder uma notícia falsa.
+- Instalação (só com o ok do dono para a migração): copiar `out/board-cron/board-cron.mjs` e
+  `scripts/quadro/quadro-{ronda,lider}.sh` para `~/.donel/board/bin/`, escrever os dois arquivos de configuração e duas
+  linhas no crontab, cada uma começando pelo script de nome único da rotina (o `flock` e o `nice` moram dentro dele):
+  `*/15 * * * * /home/<usuário>/.donel/board/bin/quadro-ronda.sh >> /home/<usuário>/.donel/board/cron-stdout.log 2>&1`
+  e `* * * * * /home/<usuário>/.donel/board/bin/quadro-lider.sh >> /home/<usuário>/.donel/board/cron-stdout.log 2>&1`.
+  Volta: tirar as duas linhas e o `supabase.json`.
+- Limite conhecido: a conta do `gh` e a do Slack são as mesmas das sessões; um comentário que a própria sessão faz no
+  link DEPOIS de justificar conta como resposta. Faça a pergunta antes de justificar.
+- Reabrir sessão fechada sem o app ainda não existe: o cron leva ao Líder do quadro (que usa `sessao_retomar`), e o
+  pedido de Líder com a sessão fechada sai `failed` com o motivo.
 
 ## 7. Tela (prova do critério 1)
 

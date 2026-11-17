@@ -38,6 +38,13 @@ select board.move_card((pg_temp.card('probe-1')).id, 'doing', 'place:devA', 2, p
 select pg_temp.refused(format($q$select board.move_card(%L, 'done', 'place:devB', 3, p_done_summary => 'fechei')$q$, (pg_temp.card('probe-1')).id), 'o cartão é de place:devA');
 select pg_temp.refused(format($q$select board.move_card(%L, 'doing', 'place:devB', 3, p_justification => 'x', p_justification_link => 'https://x.y', p_justification_due => now() + interval '1 hour')$q$, (pg_temp.card('probe-1')).id), 'o cartão é de place:devA');
 
+-- the vigia notes a card in "Fazendo" of another place without the Líder's power and without bumping the version
+select pg_temp.refused(format($q$select board.vigia_note(%L, E' \t')$q$, (pg_temp.card('probe-1')).id), 'nota do vigia');
+do $$ begin
+  if not board.vigia_note((pg_temp.card('probe-1')).id, 'parado sem justificativa') then raise exception 'PROBE FALHOU: vigia_note não gravou em Fazendo'; end if;
+  if (pg_temp.card('probe-1')).note <> 'vigia: parado sem justificativa' or (pg_temp.card('probe-1')).version <> 3 then raise exception 'PROBE FALHOU: nota do vigia ou versão'; end if;
+end $$;
+
 -- "Esperando você": Líder and reason
 select pg_temp.refused(format($q$select board.move_card(%L, 'waiting_owner', 'place:devA', 3, p_owner_reason => 'money')$q$, (pg_temp.card('probe-1')).id), 'só o Líder do quadro põe');
 select pg_temp.refused(format($q$select board.move_card(%L, 'waiting_owner', 'place:lider', 3, p_owner_reason => 'parece', p_as_leader => true)$q$, (pg_temp.card('probe-1')).id), 'só por');
@@ -49,6 +56,7 @@ select pg_temp.refused(format($q$select board.move_card(%L, 'blocked', 'place:de
 select pg_temp.refused(format($q$select board.move_card(%L, 'done', null, 3, p_done_summary => 'x')$q$, (pg_temp.card('probe-1')).id), 'quem move é obrigatório');
 select pg_temp.refused(format($q$select board.move_card(%L, 'done', 'place:devA', null, p_done_summary => 'x')$q$, (pg_temp.card('probe-1')).id), 'mudou desde a sua leitura');
 select board.move_card((pg_temp.card('probe-1')).id, 'done', 'place:devA', 3, p_done_summary => 'entregue');
+do $$ begin if board.vigia_note((pg_temp.card('probe-1')).id, 'x') then raise exception 'PROBE FALHOU: vigia_note fora de Fazendo'; end if; end $$;
 
 -- the lane: the Líder the picture shows takes it at once and never inherits the old conversation; without force, a
 -- live Líder keeps it
@@ -62,7 +70,7 @@ end $$;
 
 -- the history: every move is in moves, and the feed sees the owner's request done
 do $$ begin
-  if (select count(*) from board.moves m join board.cards c on c.id = m.card_id where c.client_ref = 'probe-1') <> 4 then raise exception 'PROBE FALHOU: moves não tem os 4 movimentos'; end if;
+  if (select count(*) from board.moves m join board.cards c on c.id = m.card_id where c.client_ref = 'probe-1') <> 5 then raise exception 'PROBE FALHOU: moves não tem os 4 movimentos e a nota do vigia'; end if;
   if not exists (select 1 from board.owner_feed f join board.cards c on c.id = f.card_id where c.client_ref = 'probe-1' and f.to_stage = 'done') then raise exception 'PROBE FALHOU: owner_feed sem o Feito do dono'; end if;
 end $$;
 
