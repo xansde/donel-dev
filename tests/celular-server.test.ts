@@ -16,6 +16,7 @@ import type { EntregaCelular } from '../src/shared/celular';
 import {
   createDecisoesConsumer,
   decisaoMessage,
+  OPTION_REQUIRED,
   STALE_DECISION,
   UNSIGNED_DECISION,
   type DecisaoRow,
@@ -320,6 +321,7 @@ describe('servidor do celular', () => {
   });
   it('a fila do celular aplica uma vez, não duplica, não some', async () => {
     const { auth, ledger, first, second, decisions } = await setup();
+    auth.setEnabled(true);
     const key = keyOf(auth.pair(auth.createPairingCode().code, 'Android')!.token);
     const t0 = Date.now();
     const seen: Record<string, string> = { [first]: seenOf(ledger, first), [second]: seenOf(ledger, second) };
@@ -470,6 +472,19 @@ describe('servidor do celular', () => {
     const sample = await deliveredTask(ledger, 'aceita pelo Revisor', null);
     expect((await ledger.apply({ kind: 'lugar', placeId: 'p-rev', roleId: 'revisor' }, { op: 'aceitar', id: sample })).ok).toBe(true);
 
+    // A rejected card he still writes on, delivered again later (a note read again after the new delivery).
+    const fourth = await deliveredTask(ledger, 'rejeitada e entregue de novo');
+    expect((await ledger.apply({ kind: 'dono' }, { op: 'rejeitar', id: fourth, reason: 'falta o teste' })).ok).toBe(true);
+    // A label recorded with spaces around it: the phone sends it trimmed.
+    const fifth = await deliveredTask(ledger, 'rótulo com espaço', {
+      ...FOR_OWNER,
+      options: [
+        { label: ' Seguir ', effect: 'Vai para o alfa.', closes: 'aceita', recommended: true },
+        { label: 'Refazer', effect: 'Volta para quem fez.', closes: 'rejeitada' },
+      ],
+    });
+
+    auth.setEnabled(true);
     const keyA = keyOf(auth.pair(auth.createPairingCode().code, 'Android')!.token);
     const paired = auth.pair(auth.createPairingCode().code, 'Antigo')!;
     const keyB = keyOf(paired.token);
@@ -506,11 +521,17 @@ describe('servidor do celular', () => {
       row(9, third, 'nao', { opcao: 'Rejeitar', comentario: 'Falta o teste\u0007' }),
       row(10, sample, 'comentario', { comentario: 'Gostei da capa' }),
       row(11, second, 'sim', { opcao: 'Aceitar' }),
+      row(12, first, 'sim', { opcao: 'Aceitar', entrega_vista: null }), // does not say which card he saw
+      row(13, first, 'sim'), // no label, on a card whose "Aceitar" closes as accepted
+      row(14, fourth, 'comentario', { comentario: 'Faltou o print' }),
+      row(15, fifth, 'sim', { opcao: 'Seguir' }),
     ];
     const result = (n: number): string | undefined => rows[n - 1]!.resultado;
+    const failMark = new Set([rows[13]!.pedido]);
     const queue: DecisoesQueue = {
       tomar: async () => rows.filter((entry) => !entry.resultado),
       marcar: async (pedido, resultado) => {
+        if (failMark.delete(pedido)) throw new Error('sem rede');
         const target = rows.find((entry) => entry.pedido === pedido)!;
         if (target.resultado) return false;
         target.resultado = resultado;
@@ -543,11 +564,31 @@ describe('servidor do celular', () => {
     await consumer.round();
 
     for (const n of [1, 2, 3, 8]) expect(result(n)).toBe(`recusada: ${UNSIGNED_DECISION}`);
-    for (const n of [4, 5, 6, 7]) expect(result(n)).toBe(`recusada: ${STALE_DECISION}`);
+    for (const n of [4, 5, 6, 7, 12]) expect(result(n)).toBe(`recusada: ${STALE_DECISION}`);
+    expect(result(13)).toBe(`recusada: ${OPTION_REQUIRED}`);
     expect(decisions(first)).toHaveLength(0);
     expect(ledger.load().doc.tasks[first]!.state).toBe('entregue');
     // Only the rows that passed every check reached the ledger.
-    expect(decided).toEqual([rows[8]!.pedido, rows[10]!.pedido]);
+    expect(decided).toEqual([rows[8]!.pedido, rows[10]!.pedido, rows[14]!.pedido]);
+
+    expect(result(15)).toBe('aplicada: aceita');
+    expect(decisions(fifth)).toEqual([expect.objectContaining({ kind: 'aceita', by: { kind: 'dono' }, option: ' Seguir ' })]);
+
+    // The note on `fourth` went out but its mark failed; the Dev delivers again before the row is read again. The
+    // note already on the card is answered as applied, not refused for the new delivery, and goes out once.
+    expect(result(14)).toBeUndefined();
+    expect((await ledger.apply(DEV, { op: 'assumir', id: fourth })).ok).toBe(true);
+    expect((await ledger.apply(DEV, { op: 'entregar', id: fourth, proofs: [{ kind: 'texto', text: '5 passed' }], forOwner: FOR_OWNER })).ok).toBe(true);
+    await consumer.round();
+    expect(result(14)).toBe('aplicada: comentário');
+    expect(sent.filter((message) => message.text.includes('Faltou o print'))).toHaveLength(1);
+
+    // The phone switched off in Preferences: a row its paired phone signed is not applied.
+    auth.setEnabled(false);
+    rows.push(row(16, fourth, 'sim', { opcao: 'Aceitar' }));
+    await consumer.round();
+    expect(result(16)).toBe(`recusada: ${UNSIGNED_DECISION}`);
+    expect(decisions(fourth).filter((event) => event.kind === 'aceita')).toHaveLength(0);
 
     expect(result(9)).toBe('aplicada: rejeitada');
     expect(decisions(third)).toEqual([expect.objectContaining({ kind: 'rejeitada', by: { kind: 'dono' }, text: 'Falta o teste' })]);

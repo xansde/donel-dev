@@ -34,6 +34,8 @@ const TAKE_LIMIT = 10;
 const BATCH_BUDGET_MS = 9 * 60_000;
 export const STALE_DECISION = 'a entrega mudou depois da decisão no celular';
 export const UNSIGNED_DECISION = 'sem assinatura';
+/** A side without a label on a card whose options close that way: the decision does not say which path. */
+export const OPTION_REQUIRED = 'a carta tem opções e a decisão não disse qual';
 /** The first field of the signed message: a new scheme gets a new name, never a new meaning for this one. */
 export const SIGNATURE_SCHEME = 'donel-decisao-v1';
 /** The phone's side when no option of the card closes that way (`lados` in donel-nucleo's oraculo.rs). */
@@ -218,7 +220,8 @@ export type DecisaoPlano =
  * - `opcao` the exact generic of the side ("Aceitar"/"Rejeitar") while no option closes that way → the side, without an
  *   option (on `nao`, his words or the label are the reason);
  * - any other label speaks of a card that is no longer there → refused ("a entrega mudou");
- * - no `opcao` (an old APK) → the side, as before.
+ * - no `opcao` is the generic of the side too: decided only while no option closes that way; otherwise refused, since
+ *   a card with paths (main or the alfa) never closes without saying which one.
  * `comentario` is his own option ("Escreva no lugar do arraste") on a delivered card; on the Revisor's sample (an
  * accepted task still before him) there is nothing to decide, so his words go on the card.
  */
@@ -241,12 +244,16 @@ export function planoDe(row: DecisaoRow, task: LedgerTask | undefined): DecisaoP
   });
   const label = cleanText(row.opcao).trim();
   // No task: the port says it is gone.
-  if (!label || !task) return decide(null, words || label || null);
+  if (!task) return decide(null, words || label || null);
   const options = lastDelivery(task)?.forOwner?.options ?? [];
-  const option = options.find((entry) => entry.label.trim() === label);
-  if (option) return option.closes === closes ? decide(option.label, words || null) : { kind: 'recusar', message: STALE_DECISION };
-  if (label === GENERIC_LABEL[row.lado] && !options.some((entry) => entry.closes === closes)) return decide(null, words || label);
-  return { kind: 'recusar', message: STALE_DECISION };
+  if (label) {
+    const option = options.find((entry) => entry.label.trim() === label);
+    if (option) return option.closes === closes ? decide(option.label, words || null) : { kind: 'recusar', message: STALE_DECISION };
+    if (label !== GENERIC_LABEL[row.lado]) return { kind: 'recusar', message: STALE_DECISION };
+  }
+  // The generic of the side (named, or no label at all): only on a card with no option closing that way.
+  if (options.some((entry) => entry.closes === closes)) return { kind: 'recusar', message: label ? STALE_DECISION : OPTION_REQUIRED };
+  return decide(null, words || label || null);
 }
 
 /** The delivery he saw is not the task's last one (or the row does not say): a card he never saw. */
@@ -403,7 +410,7 @@ export function createDecisoesConsumer(deps: DecisoesConsumerDeps): DecisoesCons
     }
     const signer = verify(decisaoMessage(row), row.assinatura);
     if (!signer) {
-      deps.log?.(`[decisoes] ${row.tarefa}: assinatura que nenhum celular pareado fez, recusada.`);
+      deps.log?.(`[decisoes] ${row.tarefa}: assinatura que nenhum celular pareado e ligado fez, recusada.`);
       return { mark: `recusada: ${UNSIGNED_DECISION}` };
     }
     const note = `assinada por ${signer.deviceName}`;

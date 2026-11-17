@@ -67,7 +67,8 @@ export interface CelularAuth {
   verify(token: string | null | undefined): CelularDevice | null;
   /**
    * t-52bf8b45 — the paired phone that signed `message` (HMAC-SHA256 keyed by the raw sha256 of its token, the 32
-   * bytes behind `tokenHash`), or `null`. A revoked phone is no longer in the file, so its signatures stop counting.
+   * bytes behind `tokenHash`), or `null`. A revoked phone is no longer in the file, so its signatures stop counting;
+   * with the phone switched off (`enabled` false) no signature counts.
    */
   verifySignature(message: string, signatureHex: string): CelularDevice | null;
   revoke(deviceId: string): void;
@@ -167,6 +168,8 @@ export function createCelularAuth(deps: CelularAuthDeps): CelularAuth {
       return toPublic(device);
     },
     verifySignature(message, signatureHex) {
+      // The phone switched off in Preferences decides nothing, as the PWA (its server is down then).
+      if (!file.enabled) return null;
       if (typeof message !== 'string' || typeof signatureHex !== 'string' || !/^[0-9a-f]{64}$/.test(signatureHex)) return null;
       const presented = Buffer.from(signatureHex, 'hex');
       // Every device is tried (no early exit on a match) so the time does not say which one signed.
