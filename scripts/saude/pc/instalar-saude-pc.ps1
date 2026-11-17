@@ -1,7 +1,7 @@
 ﻿<#
 .SYNOPSIS
   Instala (ou atualiza) o coletor de saúde do PC (t-16393812): compila saude-coletor.cs com o csc do Windows,
-  acha a chave ssh que já fala com a VPS pessoal, testa, e registra a tarefa agendada oculta DonelSaudeColetor.
+  acha a chave ssh e o destino (porta 2222) que já falam com a VPS pessoal, testa, e registra a tarefa agendada oculta DonelSaudeColetor.
 .EXAMPLE
   powershell -NoProfile -ExecutionPolicy Bypass -File instalar-saude-pc.ps1
   powershell -NoProfile -ExecutionPolicy Bypass -File instalar-saude-pc.ps1 -Chave C:\Users\compu\.ssh\id_ed25519
@@ -9,7 +9,8 @@
 #>
 param(
   [string]$Chave,
-  [string]$Destino = 'alexandrelentz@100.110.135.26',
+  [string]$Destino,
+  [int]$Porta = 2222,
   [switch]$Desinstalar
 )
 $ErrorActionPreference = 'Stop'
@@ -66,21 +67,29 @@ Get-ChildItem (Join-Path $env:USERPROFILE '.ssh') -File -ErrorAction SilentlyCon
   Where-Object { $_.Extension -eq '' -and (Test-Path ($_.FullName + '.pub')) } |
   ForEach-Object { $candidatas.Add($_.FullName) }
 
+# Destino: o alias vps-pessoal-donel-user do ~/.ssh/config do PC (17/11) ou o IP da tailnet; porta 2222, porque a 22
+# passa pelo check do Tailscale SSH e trava em BatchMode.
+$destinos = @()
+if ($Destino) { $destinos += $Destino }
+$destinos += 'vps-pessoal-donel-user', 'alexandrelentz@100.110.135.26'
 $achada = $null
-foreach ($c in ($candidatas | Select-Object -Unique)) {
-  $c = [Environment]::ExpandEnvironmentVariables($c)
-  if (-not (Test-Path $c)) { continue }
-  & $ssh -i $c -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new $Destino 'true' 2>$null
-  if ($LASTEXITCODE -eq 0) { $achada = $c; break }
+:fora foreach ($d in ($destinos | Select-Object -Unique)) {
+  foreach ($c in ($candidatas | Select-Object -Unique)) {
+    $c = [Environment]::ExpandEnvironmentVariables($c)
+    if (-not (Test-Path $c)) { continue }
+    & $ssh -i $c -p $Porta -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new $d 'true' 2>$null
+    if ($LASTEXITCODE -eq 0) { $achada = $c; $Destino = $d; break fora }
+  }
 }
-if (-not $achada) { throw "nenhuma chave ssh entrou em $Destino (testadas: $($candidatas -join ', '))" }
-"2. Chave ssh que entra na VPS: $achada"
+if (-not $achada) { throw "nenhuma chave ssh entrou na VPS pela porta $Porta (destinos: $($destinos -join ', '); chaves: $($candidatas -join ', '))" }
+"2. Chave ssh que entra na VPS: $achada (destino $Destino, porta $Porta)"
 
 @"
 # saude-coletor (t-16393812) - gerado por instalar-saude-pc.ps1
 ssh_exe=$ssh
 ssh_chave=$achada
 destino=$Destino
+porta=$Porta
 comando_remoto=$remoto
 "@ | Set-Content -Encoding ASCII (Join-Path $dir 'saude-coletor.ini')
 
@@ -91,7 +100,7 @@ Start-Process -FilePath $exe -ArgumentList '--uma-vez' -Wait -WindowStyle Hidden
 if (-not (Test-Path $amostra)) { throw "a amostra de teste não saiu (veja $dir\coletor.log)" }
 "3. Amostra de teste:"
 Get-Content $amostra -Raw
-$resp = Get-Content $amostra -Raw | & $ssh -i $achada -o BatchMode=yes -o ConnectTimeout=15 $Destino $remoto
+$resp = Get-Content $amostra -Raw | & $ssh -i $achada -p $Porta -o BatchMode=yes -o ConnectTimeout=15 $Destino $remoto
 if ($LASTEXITCODE -ne 0) { throw "a VPS não recebeu a amostra de teste" }
 "   Envio de teste: $resp"
 

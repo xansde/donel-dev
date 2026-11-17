@@ -114,10 +114,41 @@ def rede_bytes() -> tuple[int, int]:
     return rx, tx
 
 
-def processos() -> tuple[int, list[dict]]:
-    """Sessões Claude (processo `claude` cujo pai não é `claude`) e os 5 nomes que mais somam RAM."""
+MAX_SESSOES = 150
+HZ = os.sysconf("SC_CLK_TCK")
+
+
+def _argv(pid: int) -> list[str]:
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as fh:
+            return [x.decode("utf-8", "replace") for x in fh.read().split(b"\0") if x]
+    except OSError:
+        return []
+
+
+def _opcao(argv: list[str], *nomes: str) -> str | None:
+    for k, x in enumerate(argv[:-1]):
+        if x in nomes:
+            return argv[k + 1]
+    return None
+
+
+def _meta_sessao(sid: str | None) -> dict:
+    """Do registro de sessões do Donel lê só nome, papel e projeto (o meta.json também guarda token: nunca sai daqui)."""
+    if not sid or not re.fullmatch(r"[0-9a-f-]{36}", sid):
+        return {}
+    try:
+        d = json.loads((HOME / ".donel" / "s" / sid / "meta.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {"nome": d.get("name"), "papel": d.get("roleId"), "projeto": d.get("projectName")}
+
+
+def processos(est: dict | None = None, t: float | None = None) -> tuple[int, list[dict], list[dict], int]:
+    """Sessões Claude (processo `claude` cujo pai não é `claude`), os 5 nomes que mais somam RAM e uma linha por
+    sessão (mapa do rig: id, nome, papel, projeto, modelo, desde, estado, CPU e RAM da árvore)."""
     pagina_kb = os.sysconf("SC_PAGE_SIZE") // 1024
-    info: dict[int, tuple[str, int, int]] = {}
+    info: dict[int, tuple[str, int, int, int, int]] = {}
     for d in os.listdir("/proc"):
         if not d.isdigit():
             continue
@@ -128,13 +159,62 @@ def processos() -> tuple[int, list[dict]]:
             continue
         i, j = s.find("("), s.rfind(")")
         resto = s[j + 2:].split()
-        info[int(d)] = (s[i + 1:j], int(resto[1]), int(resto[21]) * pagina_kb)  # comm, ppid, rss kB
-    sessoes = sum(1 for comm, ppid, _ in info.values() if comm == "claude" and info.get(ppid, ("",))[0] != "claude")
+        # comm, ppid, rss kB, ticks de CPU (utime+stime), início (ticks desde o boot)
+        info[int(d)] = (s[i + 1:j], int(resto[1]), int(resto[21]) * pagina_kb, int(resto[11]) + int(resto[12]), int(resto[19]))
+    raizes = [pid for pid, v in info.items() if v[0] == "claude" and info.get(v[1], ("",))[0] != "claude"]
     soma: dict[str, int] = {}
-    for comm, _, rss in info.values():
-        soma[comm] = soma.get(comm, 0) + rss
+    for v in info.values():
+        soma[v[0]] = soma.get(v[0], 0) + v[2]
     top = sorted(soma.items(), key=lambda kv: kv[1], reverse=True)[:5]
-    return sessoes, [{"nome": n, "mb": round(kb / 1024)} for n, kb in top]
+    top = [{"nome": n, "mb": round(kb / 1024)} for n, kb in top]
+    if est is None:
+        return len(raizes), top, [], 0
+    filhos: dict[int, list[int]] = {}
+    for pid, v in info.items():
+        filhos.setdefault(v[1], []).append(pid)
+    try:
+        with open("/proc/stat", encoding="ascii") as fh:
+            boot = next(int(ln.split()[1]) for ln in fh if ln.startswith("btime"))
+    except (OSError, StopIteration):
+        boot = 0
+    t = t or time.time()
+    ant = est.get("sessoes_ticks") or {}
+    dt = t - est.get("sessoes_t", 0)
+    novos, linhas = {}, []
+    for pid in raizes:
+        pilha, rss, ticks = [pid], 0, 0
+        while pilha:
+            p = pilha.pop()
+            v = info.get(p)
+            if not v:
+                continue
+            rss += v[2]
+            ticks += v[3]
+            pilha.extend(filhos.get(p, []))
+        argv = _argv(pid)
+        sid = _opcao(argv, "--session-id", "-r", "--resume")
+        chave = sid or f"pid:{pid}"
+        meta = _meta_sessao(sid)
+        try:
+            cwd = os.readlink(f"/proc/{pid}/cwd")
+        except OSError:
+            cwd = ""
+        rel = cwd[len(str(HOME / "seazone")) + 1:] if cwd.startswith(str(HOME / "seazone") + "/") else ""
+        cpu = None
+        if chave in ant and 5 < dt < 600:
+            cpu = round(max(ticks - ant[chave], 0) / HZ / dt * 100, 1)
+        novos[chave] = ticks
+        linhas.append({
+            "id": sid or str(pid), "nome": _opcao(argv, "-n", "--name") or meta.get("nome") or os.path.basename(cwd) or str(pid),
+            "papel": meta.get("papel"), "projeto": meta.get("projeto") or (rel.split("/")[0] if rel else None),
+            "modelo": _opcao(argv, "--model"),
+            "desde": iso(datetime.fromtimestamp(boot + info[pid][4] / HZ, timezone.utc)) if boot else None,
+            "estado": None if cpu is None else ("trabalhando" if cpu >= 2 else "parada"),
+            "cpu_pct": cpu, "rss_mb": round(rss / 1024),
+        })
+    est["sessoes_ticks"], est["sessoes_t"] = novos, t
+    linhas.sort(key=lambda x: x["cpu_pct"] or 0, reverse=True)
+    return len(raizes), top, linhas[:MAX_SESSOES], max(0, len(linhas) - MAX_SESSOES)
 
 
 def medir_maquina(maquina: str, est: dict, em: datetime) -> dict:
@@ -166,7 +246,7 @@ def medir_maquina(maquina: str, est: dict, em: datetime) -> dict:
     d_tot = vf.f_blocks * vf.f_frsize
     d_usado = (vf.f_blocks - vf.f_bfree) * vf.f_frsize
     d_livre = vf.f_bavail * vf.f_frsize
-    sessoes, top = processos()
+    sessoes, top, linhas_sessao, omitidas = processos(est)
     rss = max(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss, est.get("rss_filhos_kb", 0)) / 1024
     return {
         "maquina": maquina, "em": iso(em), "cpu_pct": max(0.0, min(cpu, 100.0)) if cpu is not None else None,
@@ -176,7 +256,7 @@ def medir_maquina(maquina: str, est: dict, em: datetime) -> dict:
         "disco_total_gb": round(d_tot / 1e9, 1), "disco_usado_gb": round(d_usado / 1e9, 1),
         "disco_pct": round(100.0 * d_usado / (d_usado + d_livre), 1) if d_usado + d_livre else None,
         "rede_rx_kb_s": round(max(drx, 0) / 1024 / dt, 1), "rede_tx_kb_s": round(max(dtx, 0) / 1024 / dt, 1),
-        "sessoes_claude": sessoes, "coletor_rss_mb": round(rss, 1), "extra": {"top": top},
+        "sessoes_claude": sessoes, "coletor_rss_mb": round(rss, 1), "extra": {"top": top, "sessoes": linhas_sessao, **({"sessoes_omitidas": omitidas} if omitidas else {})},
     }
 
 

@@ -67,11 +67,14 @@ select json_build_object(
  'maquinas', (select coalesce(json_agg(m), '[]') from (
     select maquina, em, idade_s, cpu_pct, carga1, carga5, carga15, ncpu, ram_pct, ram_usada_mb, ram_total_mb, swap_pct,
            swap_usada_mb, swap_total_mb, disco_pct, disco_usado_gb, disco_total_gb, rede_rx_kb_s, rede_tx_kb_s,
-           sessoes_claude, coletor_rss_mb, extra->'top' as top from saude.v_maquina_atual) m),
+           sessoes_claude, coletor_rss_mb, extra->'top' as top, extra->'sessoes' as sessoes,
+           extra->'sessoes_omitidas' as sessoes_omitidas from saude.v_maquina_atual) m),
  'gateways', (select coalesce(json_agg(g), '[]') from (
     select a.gateway, a.em, a.idade_s, a.alcancavel, a.contas, a.ativas, a.com_cota, a.em_429, a.com_erro, a.desligadas,
            a.req_ok, a.req_falha, a.contas_no_minuto, a.conta_ativa, a.erro, a.esgotadas, a.fora, a.proxima_volta,
-           a.voltam_1h, h.req_ok_1h, h.req_falha_1h
+           a.voltam_1h, h.req_ok_1h, h.req_falha_1h,
+           (select max(x.em) from saude.gateway_minuto x where x.gateway = a.gateway
+              and (x.alcancavel or x.erro like 'HTTP %')) as ultima_resposta
     from saude.v_gateway_atual a left join (
       select gateway, sum(req_ok)::bigint req_ok_1h, sum(req_falha)::bigint req_falha_1h from saude.gateway_minuto
       where em > now() - interval '1 hour' group by 1) h using (gateway)) g),
@@ -382,6 +385,7 @@ def main() -> int:
         est["compactou_tudo"] = time.time()
     elif not a.seco and agora.minute % 5 == 2:
         resumo["compactar"] = json.loads(psql("select saude.compactar(3);"))
+        resumo["podadas"] = int(psql("select saude.podar_sessoes();") or 0)
 
     atual = json.loads(psql(SQL_ATUAL))
     resumo["alertas"] = alertas(atual, est, a.seco)
@@ -393,6 +397,9 @@ def main() -> int:
     fora = {f["alvo"]: f for f in pub["fora"]}
     for m in pub["maquinas"]:
         m["nome"] = NOMES.get(m["maquina"], m["maquina"])
+        for k in ("sessoes", "sessoes_omitidas"):  # sem lista (PC, amostra antiga): o app usa a contagem
+            if m.get(k) is None:
+                m.pop(k, None)
         if m["maquina"] in fora:
             m["fora"] = {"desde": fora[m["maquina"]]["desde"], "motivo": fora[m["maquina"]]["motivo"]}
     for g in pub["gateways"]:

@@ -61,6 +61,14 @@ O central regrava a cada 5 min (`atual.json` a cada 1 min). Horas em ISO 8601 UT
   `volta7d`) ou `fora` (desligada ou login morto: precisa Reconectar). No gateway: `com_cota` + `esgotadas` + `fora` = `contas`;
   `proxima_volta` = a esgotada que renova primeiro; `voltam_1h` = quantas renovam na próxima hora.
 - `top` = os 5 nomes de processo que mais somam RAM (MB).
+- `sessoes` (desde 17/11, só no `atual.json` e só nas VPS; o PC segue só com `sessoes_claude`): uma linha por sessão Claude
+  (processo `claude` de topo), no máximo 150, as de mais CPU primeiro; `sessoes_omitidas` = quantas ficaram de fora.
+  `{"id", "nome", "papel", "projeto", "modelo", "desde", "estado", "cpu_pct", "rss_mb"}`: `id` = `--session-id`/`-r` do argv
+  (sem ele, o pid); `nome` = `-n` do argv ou o nome no registro de sessões do Donel; `papel` e `projeto` do registro do Donel
+  (projeto cai para a pasta abaixo de `~/seazone/`); `estado` = `trabalhando` com CPU da árvore ≥ 2% no último minuto, senão
+  `parada` (null na 1ª amostra); `cpu_pct` em % de um núcleo e `rss_mb` somam o processo e os filhos. Nunca argv inteiro.
+- `gateways[].ultima_resposta` = a última amostra em que o gateway respondeu (alcançável ou com erro HTTP): com o PC
+  desligado, diz desde quando o gateway do PC está fora.
 
 ### `serie-24h.json`, `serie-7d.json`, `serie-30d.json`
 Passo: 24h = 5 min (300 s), 7d = 1 h, 30d = 4 h. Cada série é um conjunto de arrays alinhados por índice com `t`;

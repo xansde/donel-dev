@@ -155,6 +155,7 @@ namespace DonelSaude
             Cfg["ssh_exe"] = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), @"OpenSSH\ssh.exe");
             Cfg["ssh_chave"] = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), @".ssh\id_ed25519");
             Cfg["destino"] = "alexandrelentz@100.110.135.26";
+            Cfg["porta"] = "2222"; // a 22 da VPS passa pelo check do Tailscale SSH e trava em BatchMode (17/11)
             Cfg["comando_remoto"] = "/home/alexandrelentz/bin/rotinas/saude/saude_receber.sh pc";
             string ini = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "saude-coletor.ini");
             if (!File.Exists(ini)) return;
@@ -496,7 +497,7 @@ namespace DonelSaude
 
             ProcessStartInfo psi = new ProcessStartInfo();
             psi.FileName = Cfg["ssh_exe"];
-            psi.Arguments = "-i \"" + Cfg["ssh_chave"] + "\" -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=10 " +
+            psi.Arguments = "-i \"" + Cfg["ssh_chave"] + "\" -p " + Cfg["porta"] + " -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=10 " +
                             "-o StrictHostKeyChecking=accept-new " + Cfg["destino"] + " " + Cfg["comando_remoto"];
             psi.UseShellExecute = false;
             psi.CreateNoWindow = true;
