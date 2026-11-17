@@ -128,6 +128,11 @@ const IDENTITY_LINES: ReadonlyArray<readonly [string, string]> = [
     'Get-CimInstance Win32_Process ProcessId=6700 | Invoke-CimMethod Terminate',
   ],
   ["cmd.exe /c \"wmic process where \"name='Donel Dev Alfa.exe'\" delete\"", "wmic process where name='Donel Dev Alfa.exe' delete"],
+  ['powershell.exe -Command "$p = 6700; Stop-Process -Id $p -Force"', 'Stop-Process -Id $p -Force'],
+  ["bash.exe -c \"pid=$(pgrep -f 'Donel Dev'); kill $pid\"", "kill $pid | pgrep -f 'Donel Dev'"],
+  ["powershell.exe -Command \"Get-Process | Where-Object { $_.Name -like 'Donel*' } | Stop-Process -Force\"", "$_.Name -like 'Donel*'"],
+  ['powershell.exe -Command "[Diagnostics.Process]::GetProcessById(6700).Kill()"', 'GetProcessById(6700).Kill()'],
+  ['node.exe -e "process.kill(Number(process.argv[1]))" 6700', 'process.kill(Number(process.argv[1]))'],
   // the real shape of a Claude Code Bash-tool process: the command sits past a ~480-character wrapper
   [
     '"C:\\Program Files\\Git\\usr\\bin\\bash.exe" -c "source /c/Users/compu/.claude/shell-snapshots/snapshot-bash-1794909251041-vuvkav.sh 2>/dev/null || true && export TEMP=\'C:\\Users\\compu\\AppData\\Local\\Temp\' && { \\builtin unalias -- \'which\'; } >/dev/null 2>&1 || true && eval \'kill -9 6700\' < /dev/null && pwd -P >| /c/Users/compu/AppData/Local/Temp/claude-f650-cwd"',
@@ -138,6 +143,7 @@ const IDENTITY_LINES: ReadonlyArray<readonly [string, string]> = [
   [`powershell.exe -ec ${utf16Base64('Stop-Process -Id 6700')}`, 'Stop-Process -Id 6700'],
   [`pwsh.exe --EncodedCommand ${utf16Base64('Stop-Process -Id 6700')}`, 'Stop-Process -Id 6700'],
   [`powershell.exe -enco ${utf16Base64('Stop-Process -Id 6700')}`, 'Stop-Process -Id 6700'],
+  [`powershell.exe -EncodedCommand:${utf16Base64('Stop-Process -Id 6700')}`, 'Stop-Process -Id 6700'],
   [`powershell.exe -e ${utf16Base64('Write-Host hi')}; powershell.exe -enc ${utf16Base64('taskkill /PID 6700 /F')}`, 'taskkill /PID 6700 /F'],
   // a Start-Process hop, like the sentinel's own: the inner block is decoded too
   [
@@ -154,6 +160,8 @@ const ALL_LINES = [
   ...IDENTITY_LINES.map(([line]) => line),
   CUT_LINE,
   'node.exe server.js --port 16700',
+  // more blocks than ENCODED_MAX: the PowerShell stops decoding where this side does
+  `powershell.exe ${[1, 2, 3, 4].map((n) => `-ec ${utf16Base64(`Write-Host ${n}`)}`).join(' ')} -ec ${utf16Base64('taskkill /PID 6700 /F')}`,
 ];
 
 /** powershell.exe on Windows, pwsh elsewhere when installed; null when there is none. */
@@ -221,7 +229,7 @@ describe('exit sentinel', () => {
 
     // Only the candidates to killer are searched; any other process of the PC keeps only its name.
     const candidate = new RegExp(KILLER_CANDIDATES, 'i');
-    for (const name of ['taskkill.exe', 'wmic.exe', 'powershell.exe', 'cmd.exe', 'bash.exe', 'node.exe', 'Donel Dev Alfa.exe']) {
+    for (const name of ['taskkill.exe', 'wmic.exe', 'py.exe', 'pythonw.exe', 'powershell.exe', 'cmd.exe', 'bash.exe', 'node.exe', 'Donel Dev Alfa.exe']) {
       expect(candidate.test(name), name).toBe(true);
     }
     for (const name of ['psql.exe', 'mysql.exe', 'curl.exe', 'git.exe', 'ssh.exe']) {

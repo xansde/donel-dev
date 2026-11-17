@@ -39,10 +39,13 @@ export function classifyExitCode(code: number): ExitCause {
 }
 
 // The pieces of the rules below. Every regex is read the same by .NET `[regex]` and JS (flag `i`): ASCII classes,
-// bounded lengths, no `\b`/`\d`/`\w` (Unicode-aware in .NET), so a long line costs a linear pass per rule.
+// bounded lengths, no `\b`/`\d`/`\w` (Unicode-aware in .NET) and `\s` spelled out (`portable`): a long line costs a
+// linear pass per rule.
 /** -Id 6700, -Id:6700 */
 const SEP = String.raw`(?:\s*:\s*|\s+)`;
 const NUMS = String.raw`[0-9]{1,10}(?:\s*,\s*[0-9]{1,10}){0,7}`;
+/** A variable's name ($p, $pid), never what it holds; `$env:X` is not one. */
+const VAR = String.raw`\$[A-Za-z_][A-Za-z0-9_]{0,40}(?=[\s"',]|$)`;
 /** What a token may be followed by: a separator, a quote, a list comma or the end of the command. */
 const AFTER = String.raw`(?=[\s"',]|$)`;
 /** A name that can be quoted (also with \" from a nested shell): a process, an image, a filter. */
@@ -57,9 +60,9 @@ const WORD_END = String.raw`(?![A-Za-z0-9_-])`;
 const REST = String.raw`(?:(?!\$\()[^&|;<>(){}#\x60\r\n]){0,200}`;
 /** Stop-Process / Get-Process / PowerShell's kill: -Id, -Name, -InputObject and the switches. */
 const PS_PROCESS_PARAMS = [
-  String.raw`${FLAG_AT}-(?:id|i)${SEP}${NUMS}${AFTER}`,
+  String.raw`${FLAG_AT}-(?:id|i)${SEP}(?:${NUMS}${AFTER}|${VAR})`,
   String.raw`${FLAG_AT}-(?:processname|name|nam|na|n|pn)${SEP}${VALUES}`,
-  String.raw`${FLAG_AT}-inputobject${SEP}\$[A-Za-z_][A-Za-z0-9_]{0,40}`,
+  String.raw`${FLAG_AT}-inputobject${SEP}${VAR}`,
   String.raw`${FLAG_AT}-(?:id|name|inputobject|force|passthru|whatif|confirm)${WORD_END}`,
 ].join('|');
 
@@ -74,7 +77,7 @@ export interface KillRule {
   readonly keep?: string;
 }
 
-export const KILL_RULES: readonly KillRule[] = [
+const RULES: readonly KillRule[] = [
   // taskkill /PID 6700 /T /F, /IM x, /FI "…", /S host; /U and /P are never kept
   {
     find: String.raw`${WORD_START}taskkill(?:\.exe)?${WORD_END}${REST}`,
@@ -82,7 +85,7 @@ export const KILL_RULES: readonly KillRule[] = [
   },
   {
     find: String.raw`${WORD_START}(?:Stop-Process|spps)${WORD_END}${REST}`,
-    keep: String.raw`^(?:Stop-Process|spps)(?:\s+${NUMS}${AFTER})?|${PS_PROCESS_PARAMS}`,
+    keep: String.raw`^(?:Stop-Process|spps)(?:\s+(?:${NUMS}${AFTER}|${VAR}))?|${PS_PROCESS_PARAMS}`,
   },
   {
     find: String.raw`${WORD_START}(?:Get-Process|gps)${WORD_END}${REST}`,
@@ -91,17 +94,21 @@ export const KILL_RULES: readonly KillRule[] = [
   // kill -9 6700, kill -s KILL %1, PowerShell's kill -Id 6700
   {
     find: String.raw`${WORD_START}kill(?=\s)${REST}`,
-    keep: String.raw`^kill|${PS_PROCESS_PARAMS}|${FLAG_AT}-(?:s|signal)\s+[A-Za-z0-9]{1,10}${AFTER}|${FLAG_AT}-(?:[0-9]{1,2}|[A-Za-z]{1,12})${AFTER}|(?<=\s)%?${NUMS}${AFTER}`,
+    keep: String.raw`^kill|${PS_PROCESS_PARAMS}|${FLAG_AT}-(?:s|signal)\s+[A-Za-z0-9]{1,10}${AFTER}|${FLAG_AT}-(?:[0-9]{1,2}|[A-Za-z]{1,12})${AFTER}|(?<=\s)(?:%?${NUMS}${AFTER}|${VAR})`,
   },
-  // pkill -f "Donel Dev", killall electron
+  // pkill -f "Donel Dev", killall electron, and the pgrep/pidof that finds the pid for a kill
   {
-    find: String.raw`${WORD_START}(?:pkill|killall)(?=\s)${REST}`,
-    keep: String.raw`^(?:pkill|killall)|${FLAG_AT}--?[A-Za-z][A-Za-z-]{0,20}(?=[\s"',=]|$)|(?<=[\s=])${VALUE}`,
+    find: String.raw`${WORD_START}(?:pkill|killall|pgrep|pidof)(?=\s)${REST}`,
+    keep: String.raw`^(?:pkill|killall|pgrep|pidof)|${FLAG_AT}--?[A-Za-z][A-Za-z-]{0,20}(?=[\s"',=]|$)|(?<=[\s=])${VALUE}`,
   },
-  { find: String.raw`(?<![A-Za-z0-9_])process\.kill\((?:\s*[A-Za-z0-9_.$]{1,40}\s*(?:,\s*['"]?[A-Za-z0-9_]{1,20}['"]?\s*)?\))?` },
+  // process.kill(6700), process.kill(Number(process.argv[1])): names and brackets only, never a string
+  { find: String.raw`(?<![A-Za-z0-9_])process\.kill\((?:\s*[A-Za-z0-9_.$()[\]]{1,60}\s*(?:,\s*['"]?[A-Za-z0-9_]{1,20}['"]?\s*)?\))?` },
   { find: String.raw`(?<![A-Za-z0-9_])os\.kill\((?:\s*[A-Za-z0-9_.]{1,40}\s*(?:,\s*[A-Za-z0-9_.]{1,30}\s*)?\))?` },
   { find: String.raw`(?<![A-Za-z0-9_])psutil\.Process\((?:\s*[A-Za-z0-9_.]{0,40}\s*\))?(?:\.(?:kill|terminate)\(\))?` },
-  { find: String.raw`[A-Za-z0-9_$.\])]{1,60}\.(?:Kill|Terminate)\(\)` },
+  { find: String.raw`(?<![A-Za-z0-9_])GetProcessById\(\s*[A-Za-z0-9_$.]{1,40}\s*\)(?:\.Kill\(\))?` },
+  { find: String.raw`[A-Za-z0-9_$.\]]{0,60}\.(?:Kill|Terminate)\(\)` },
+  // Where-Object { $_.Name -like 'Donel*' }, ? Name -like 'x': the filter that picks what a pipeline stops
+  { find: String.raw`(?<![A-Za-z0-9_])(?:\$_\.)?(?:Name|ProcessName)\s+-i?(?:like|eq|match)\s+(?:${QUOTED}|[A-Za-z0-9_.*-]{1,80}${AFTER})` },
   // wmic /node:pc process where "name='x'" delete, … where processid=6700 call terminate; /user and /password never
   {
     find: String.raw`${WORD_START}wmic(?:\.exe)?${WORD_END}[^&|;<>\r\n]{0,200}?(?:delete|terminate)`,
@@ -119,6 +126,34 @@ export const KILL_RULES: readonly KillRule[] = [
   },
 ];
 
+const WHITESPACE = ' \\t\\n\\v\\f\\r\\u00a0';
+
+/**
+ * The regex with `\s`/`\S` spelled out as one fixed set: .NET and JS disagree on what else is whitespace (U+0085,
+ * U+FEFF), and the disk must say what the tests saw.
+ */
+function portable(source: string): string {
+  let out = '';
+  let inClass = false;
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i];
+    if (ch === '\\') {
+      const next = source[++i];
+      if (next === 's') out += inClass ? WHITESPACE : `[${WHITESPACE}]`;
+      else if (next === 'S' && !inClass) out += `[^${WHITESPACE}]`;
+      else if (next === 'S') throw new Error('portable: \\S inside a class');
+      else out += ch + next;
+      continue;
+    }
+    if (ch === '[' && !inClass) inClass = true;
+    else if (ch === ']' && inClass) inClass = false;
+    out += ch;
+  }
+  return out;
+}
+
+export const KILL_RULES: readonly KillRule[] = RULES.map((rule) => ({ find: portable(rule.find), keep: rule.keep && portable(rule.keep) }));
+
 /** `encodedcommand` and every prefix of it, as PowerShell accepts them (-e, -en, -enc, … -EncodedCommand). */
 const ENCODED_FLAG = [...'encodedcommand'].reverse().reduce((rest, ch) => (rest ? `${ch}(?:${rest})?` : ch), '');
 
@@ -126,7 +161,9 @@ const ENCODED_FLAG = [...'encodedcommand'].reverse().reduce((rest, ch) => (rest 
  * The base64 of a `powershell -EncodedCommand` in any of its spellings (-ec, -e, -enc, --EncodedCommand, /enc, and
  * the `'-EncodedCommand','…'` of a Start-Process), decoded and searched like the line itself.
  */
-export const ENCODED_COMMAND_PATTERN = String.raw`(?:^|[\s"',])(?:--?|/)(?:ec|${ENCODED_FLAG})['"]?(?:\s*,\s*|\s+)['"]?([A-Za-z0-9+/]{8,}={0,2})(?![A-Za-z0-9+/=])`;
+export const ENCODED_COMMAND_PATTERN = portable(
+  String.raw`(?:^|[\s"',])(?:--?|/)(?:ec|${ENCODED_FLAG})['"]?(?:\s*[,:]\s*|\s+)['"]?([A-Za-z0-9+/]{8,}={0,2})(?![A-Za-z0-9+/=])`,
+);
 /** At most this many base64 blocks are decoded per command line, a decoded one included. */
 export const ENCODED_MAX = 4;
 
@@ -143,7 +180,7 @@ const SECRET_WORD = '(?:password|passwd|pass|pwd|pw|secret|token|apikey|api-key|
  * is made of listed parts only, but a quoted name (a `pkill -f "…"` pattern) or a folder can still carry a secret.
  * They are the masks the whole command line had before (#461), so the disk never masks less than it did.
  */
-export const EVIDENCE_MASKS: ReadonlyArray<{ readonly source: string; readonly to: string }> = [
+const MASKS: ReadonlyArray<{ readonly source: string; readonly to: string }> = [
   // scheme://user:password@host
   { source: String.raw`(://[^/\s:@"']+:)[^@\s"']+@`, to: '$1***@' },
   // Authorization: Bearer <token> / Basic <base64>
@@ -164,6 +201,8 @@ export const EVIDENCE_MASKS: ReadonlyArray<{ readonly source: string; readonly t
   { source: String.raw`(?<![A-Za-z0-9_+=-])(?=[A-Za-z_+=-]*[0-9])(?=[0-9_+=-]*[A-Za-z])[A-Za-z0-9_+=-]{24,}`, to: '***' },
 ];
 
+export const EVIDENCE_MASKS = MASKS.map((mask) => ({ source: portable(mask.source), to: mask.to }));
+
 /** What the PowerShell does to a piece of evidence before the disk. */
 export function maskEvidence(text: string): string {
   let out = text.length > EVIDENCE_PIECE_MAX ? text.slice(0, EVIDENCE_PIECE_MAX) : text;
@@ -177,6 +216,14 @@ export interface KillEvidence {
   readonly mentionsMain: boolean;
 }
 
+/** `[Text.Encoding]::Unicode.GetString([Convert]::FromBase64String(b64))`: a lone byte or surrogate becomes U+FFFD. */
+function decodeUtf16Base64(b64: string): string {
+  const bytes = Buffer.from(b64, 'base64');
+  const odd = bytes.length % 2 === 1;
+  const text = bytes.subarray(0, bytes.length - (odd ? 1 : 0)).toString('utf16le') + (odd ? '\ufffd' : '');
+  return text.replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, '\ufffd');
+}
+
 /** What the PowerShell records of a candidate's command line; mirrors Get-KillEvidence, which the tests run. */
 export function extractKillEvidence(commandLine: string, mainPid: number): KillEvidence {
   const line = commandLine.length > COMMAND_LINE_CUT ? commandLine.slice(0, COMMAND_LINE_CUT) : commandLine;
@@ -188,7 +235,7 @@ export function extractKillEvidence(commandLine: string, mainPid: number): KillE
       // .NET's FromBase64String refuses a length that is not a multiple of 4; Node would decode it anyway
       if (match[1].length % 4 !== 0) continue;
       decodes++;
-      const decoded = Buffer.from(match[1], 'base64').toString('utf16le');
+      const decoded = decodeUtf16Base64(match[1]);
       if (decoded) texts.push(decoded);
     }
   }
@@ -212,7 +259,7 @@ export function maskForLog(text: string): string {
 }
 
 /** Image names whose command line may say who ended the main; any other process keeps only its name. */
-export const KILLER_CANDIDATES = '^(taskkill|wmic|powershell|pwsh|cmd|wscript|cscript|node|electron|bash|sh|python[0-9.]*|Donel Dev.*)\\.exe$';
+export const KILLER_CANDIDATES = '^(taskkill|wmic|powershell|pwsh|cmd|wscript|cscript|node|electron|bash|sh|pythonw?[0-9.]*|pyw?|Donel Dev.*)\\.exe$';
 
 export interface ExitSentinelOptions {
   readonly pid: number;
