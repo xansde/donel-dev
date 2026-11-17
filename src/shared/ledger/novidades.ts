@@ -1,7 +1,7 @@
 // Andamento no ledger (08/11) — where a session's record goes, and the compact read the Líder makes when it wants
 // (`tarefa_novidades`), instead of one "◆ … terminou" per turn in its chat. Pure: the main gives the clock.
 
-import { eventNote, isClosed, lastWorkAt, priorityMarkOf, transfersOf, viewState, type LedgerDoc, type LedgerEvent, type LedgerTask } from './contract';
+import { cardKindOf, eventNote, isClosed, lastWorkAt, priorityMarkOf, transfersOf, viewState, type LedgerDoc, type LedgerEvent, type LedgerTask } from './contract';
 import { isProgressEvent, progressOf, type LedgerProgress } from './andamento';
 
 /** The latest moment the task moved: a front or priority mark is no work (`lastWorkAt`), so the owner reordering never pulls a session's record to another task. */
@@ -17,7 +17,9 @@ export function progressTaskOf(doc: LedgerDoc, projectPath: string, placeId: str
     if (task.projectPath !== projectPath) return { reason: 'A tarefa é de outro quadro; o andamento vai numa tarefa do seu quadro.' };
     return task;
   }
-  const live = Object.values(doc.tasks).filter((task) => task.projectPath === projectPath && task.ownerPlaceId === placeId && !task.slack && !isClosed(task));
+  // A letter to the owner (Slack, or a typed card: tutorial, update, idea) is no work in progress: a record there would
+  // look like the work stopped and remount the card on the owner's table.
+  const live = Object.values(doc.tasks).filter((task) => task.projectPath === projectPath && task.ownerPlaceId === placeId && !task.slack && !cardKindOf(task) && !isClosed(task));
   if (!live.length) return { reason: 'Você não é dono de nenhuma tarefa viva neste quadro: crie uma com tarefa_criar (dono: você) e registre nela.' };
   return live.reduce((latest, task) => (lastActivity(task) > lastActivity(latest) ? task : latest));
 }

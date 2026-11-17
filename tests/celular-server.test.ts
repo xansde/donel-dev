@@ -1,17 +1,39 @@
+import { createHash, createHmac } from 'node:crypto';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ConfigIoDeps } from '../src/main/config-store';
-import { createCelularAuth } from '../src/main/celular/auth';
+import { createCelularAuth, type CelularAuth } from '../src/main/celular/auth';
 import { createLedgerMobilePort } from '../src/main/celular/ledger-port';
-import { createLedgerService, ledgerProofsDir, type LedgerProofFs } from '../src/main/ledger-store';
+import { createLedgerService, LEDGER_WRITE_FAILED, ledgerProofsDir, type LedgerProofFs } from '../src/main/ledger-store';
 import { resolveProofUrl } from '../src/main/ledger-proof-protocol';
 import { proofUrl } from '../src/shared/ledger/channels';
-import type { LedgerActor, LedgerForOwner } from '../src/shared/ledger/contract';
+import { lastDelivery, type LedgerActor, type LedgerForOwner } from '../src/shared/ledger/contract';
 import { createMobileHandler, fromTailnet, startMobileServer, TICKET_TTL_MS, type MobileResponse } from '../src/main/celular/server';
 import { httpsServeUrl } from '../src/main/celular/webpush';
 import { pickTailscaleAddress } from '../src/main/celular/tailscale';
 import { createCardWriter, type OwnerMessage } from '../src/main/ledger-card-writer';
 import type { EntregaCelular } from '../src/shared/celular';
+import {
+  createDecisoesConsumer,
+  createDecisoesQueue,
+  decisaoMessage,
+  importCommentKey,
+  NOT_THE_SAMPLE,
+  parseImportList,
+  readImportList,
+  OPTION_REQUIRED,
+  STALE_DECISION,
+  UNSIGNED_DECISION,
+  PHONE_OFF,
+  type DecisaoRow,
+  type DecisaoVerifier,
+  type DecisoesQueue,
+  type ImportList,
+  type NotasPaginasEntry,
+  type TarefaEspelho,
+} from '../src/oraculo/decisoes';
 
 // Ledger no celular — o que quebraria sem o dono ver: o servidor aceitar quem não pareou, subir fora da
 // Tailscale, ou uma decisão do celular gravar duas vezes no ledger.
@@ -63,14 +85,27 @@ const FOR_OWNER: LedgerForOwner = {
 };
 
 /** Uma entrega de risco alto, entregue pelo Dev com prova: espera o dono. */
-async function deliveredTask(ledger: ReturnType<typeof createLedgerService>, request: string): Promise<string> {
-  const created = await ledger.apply(LIDER, { op: 'criar', projectPath: 'C:/proj/atlas', request, doneWhen: 'pronto', due: '2026-11-10', ownerPlaceId: 'p-dev', risk: 'alto' });
+async function deliveredTask(ledger: ReturnType<typeof createLedgerService>, request: string, forOwner: LedgerForOwner | null = FOR_OWNER): Promise<string> {
+  const created = await ledger.apply(LIDER, { op: 'criar', projectPath: 'C:/proj/atlas', request, doneWhen: 'pronto', due: '2026-11-10', ownerPlaceId: 'p-dev', risk: forOwner ? 'alto' : 'baixo' });
   if (!created.ok) throw new Error(created.reason);
   const id = created.task.id;
   expect((await ledger.apply(DEV, { op: 'assumir', id })).ok).toBe(true);
-  expect((await ledger.apply(DEV, { op: 'entregar', id, proofs: [{ kind: 'texto', text: '4 passed' }], forOwner: FOR_OWNER })).ok).toBe(true);
+  expect((await ledger.apply(DEV, { op: 'entregar', id, proofs: [{ kind: 'texto', text: '4 passed' }], ...(forOwner ? { forOwner } : {}) })).ok).toBe(true);
   return id;
 }
+
+/** The key a paired phone keeps (sha256 of its token) and its signature over a queue row (scheme donel-decisao-v1). */
+const keyOf = (token: string): Buffer => createHash('sha256').update(token, 'utf8').digest();
+const signWith = (key: Buffer, row: DecisaoRow): string => createHmac('sha256', key).update(decisaoMessage(row), 'utf8').digest('hex');
+const verifierOf =
+  (auth: CelularAuth): DecisaoVerifier =>
+  (message, signature) => {
+    const device = auth.verifySignature(message, signature);
+    return device ? { deviceName: device.name } : null;
+  };
+/** The delivery the phone shows on the card, as PostgREST hands a timestamptz back. */
+const seenOf = (ledger: ReturnType<typeof createLedgerService>, id: string): string =>
+  new Date(lastDelivery(ledger.load().doc.tasks[id]!)!.at).toISOString().replace('Z', '+00:00');
 
 async function setup() {
   const io = memoryIo();
@@ -295,6 +330,537 @@ describe('servidor do celular', () => {
     expect((await call('POST', '/api/decidir', token, escolha)).status).toBe(200);
     expect(decisions(second)).toEqual([expect.objectContaining({ kind: 'rejeitada', by: { kind: 'dono' }, option: 'Refazer', text: 'Refazer' })]);
   });
+  it('a fila do celular aplica uma vez, não duplica, não some', async () => {
+    const { auth, ledger, first, second, decisions } = await setup();
+    auth.setEnabled(true);
+    const key = keyOf(auth.pair(auth.createPairingCode().code, 'Android')!.token);
+    const t0 = Date.now();
+    const seen: Record<string, string> = { [first]: seenOf(ledger, first), [second]: seenOf(ledger, second) };
+    const row = (n: number, tarefa: string, lado: DecisaoRow['lado'], rest: Partial<DecisaoRow> = {}): DecisaoRow => {
+      const unsigned: DecisaoRow = {
+        pedido: `00000000-0000-4000-8000-00000000000${n}`,
+        tarefa,
+        lado,
+        opcao: null,
+        comentario: null,
+        paginas: null,
+        criada_em: new Date(t0 + n * 1000).toISOString(),
+        entrega_vista: seen[tarefa] ?? new Date(t0).toISOString(),
+        assinatura: null,
+        ...rest,
+      };
+      return { ...unsigned, assinatura: signWith(key, unsigned) };
+    };
+    // The Supabase queue in memory: `tomar` hands the rows not yet marked (sorted by the consumer, not here).
+    const rows: (DecisaoRow & { resultado?: string })[] = [
+      row(1, first, 'sim', { opcao: 'Aceitar', paginas: [{ pagina: 1, nome: 'capa', nota: 'down' }, { pagina: 99, nota: 'up' }] }),
+      row(2, second, 'nao', { opcao: 'Refazer' }),
+      row(4, 't-99', 'sim'),
+      row(3, 't-98', 'sim'), // annulled between `tomar` and `marcar`
+      // Decided on a card older than the last delivery: a card he never saw, never applied.
+      row(5, second, 'sim', { opcao: 'Aceitar', entrega_vista: new Date(Date.parse(seen[second]!) - 60_000).toISOString(), criada_em: new Date(t0 - 3_600_000).toISOString() }),
+    ];
+    const result = (n: number): string | undefined => rows.find((entry) => entry.pedido.endsWith(String(n)))!.resultado;
+    const failMark = new Set(['1', '2']);
+    const queue: DecisoesQueue = {
+      tomar: async () => rows.filter((entry) => !entry.resultado),
+      atualizarTarefa: async () => undefined,
+      marcar: async (pedido, resultado) => {
+        if (failMark.delete(pedido.slice(-1))) throw new Error('sem rede');
+        const target = rows.find((entry) => entry.pedido === pedido)!;
+        if (target.resultado) return false;
+        target.resultado = resultado;
+        return true;
+      },
+    };
+    let failWrite = false;
+    const port = createLedgerMobilePort(() => ({
+      ...ledger,
+      apply: async (actor, op) => (failWrite ? ((failWrite = false), { ok: false as const, reason: LEDGER_WRITE_FAILED }) : ledger.apply(actor, op)),
+    }));
+    const asked: string[] = [];
+    let returned = true;
+    let verifier: DecisaoVerifier | null = null;
+    const notas: NotasPaginasEntry[] = [];
+    const consumer = createDecisoesConsumer({
+      queue: () => queue,
+      port: {
+        decidir: (input) => {
+          asked.push(input.pedidoId);
+          if (input.pedidoId.endsWith('3')) rows.find((entry) => entry.pedido === input.pedidoId)!.resultado = 'anulada pelo dono';
+          return port.decidir(input);
+        },
+        comentar: (input) => port.comentar(input),
+      },
+      verifier: () => verifier,
+      ledger: () => ledger,
+      returned: () => returned,
+      guardarNotas: (entry) => {
+        notas.push(entry);
+      },
+    });
+
+    // The ledger went back to the PC: nothing is taken, applied or marked (not lost).
+    await consumer.round();
+    // The phone's core is not up: nothing can be checked, so nothing is applied nor refused.
+    returned = false;
+    await consumer.round();
+    expect(asked).toEqual([]);
+    expect(rows.map((entry) => entry.resultado)).toEqual([undefined, undefined, undefined, undefined, undefined]);
+
+    // Round 1: the stale row is refused without reaching the ledger; the write fails on the next one, which stays.
+    verifier = verifierOf(auth);
+    failWrite = true;
+    await consumer.round();
+    expect(result(5)).toBe(`recusada: ${STALE_DECISION}`);
+    expect(decisions(second)).toHaveLength(0);
+    expect(result(1)).toBeUndefined();
+    expect(decisions(first)).toHaveLength(0);
+    expect(result(2)).toBeUndefined();
+
+    // Round 2: applied, but two marks fail; the batch goes on. The refusals are marked, the annulled row is not overwritten.
+    await consumer.round();
+    // The page notes are design feedback: never in the decision's text (it is the message to whoever did the task).
+    expect(decisions(first)).toEqual([expect.objectContaining({ kind: 'aceita', by: { kind: 'dono' }, option: 'Aceitar' })]);
+    expect(decisions(first)[0]).not.toHaveProperty('text');
+    expect(result(1)).toBeUndefined();
+    expect(notas).toEqual([]); // applied but not marked: recorded only with the mark
+    expect(decisions(second)).toEqual([expect.objectContaining({ kind: 'rejeitada', by: { kind: 'dono' }, option: 'Refazer', text: 'Refazer' })]);
+    expect(result(2)).toBeUndefined();
+    expect(result(3)).toBe('anulada pelo dono');
+    expect(result(4)).toBe('recusada: Esta entrega não existe mais.');
+
+    // The Dev delivers `second` again before the rejection's mark went through: the row read again is already in the
+    // ledger, so the new delivery does not turn it into a refusal (and nothing is written twice).
+    expect((await ledger.apply(DEV, { op: 'assumir', id: second })).ok).toBe(true);
+    expect((await ledger.apply(DEV, { op: 'entregar', id: second, proofs: [{ kind: 'texto', text: '5 passed' }], forOwner: FOR_OWNER })).ok).toBe(true);
+
+    // Round 3: the same rows again do not write twice; they are marked.
+    await consumer.round();
+    expect(decisions(first)).toHaveLength(1);
+    expect(decisions(second)).toHaveLength(1);
+    expect(result(1)).toBe('aplicada: aceita');
+    expect(result(2)).toBe('aplicada: rejeitada');
+    expect(ledger.load().doc.tasks[second]!.state).toBe('entregue');
+    // Recorded once, with the mark: only the valid pages.
+    expect(notas).toEqual([{ tarefa: first, pedido: rows[0]!.pedido, criada_em: rows[0]!.criada_em, paginas: [{ pagina: 1, nome: 'capa', nota: 'down' }], resultado: 'aplicada: aceita' }]);
+
+    // Round 4: nothing left, nothing changes; the stale row never reached the ledger.
+    const before = JSON.stringify(ledger.load().doc);
+    await consumer.round();
+    expect(JSON.stringify(ledger.load().doc)).toBe(before);
+    expect(asked).not.toContain(rows[4]!.pedido);
+    expect(asked).toHaveLength(7);
+  });
+
+  it('a fila do celular só aplica o que um celular pareado assinou, na carta que ele viu, com um lado da carta', async () => {
+    // The scheme's vector: the phone (donel-nucleo's assinatura.rs) asserts the same key, bytes and signature, and a
+    // phone paired with that token is the one the Oráculo finds.
+    const vectorToken = 'tok_exemplo_nao_secreto_0123456789abcdef';
+    const vectorKey = keyOf(vectorToken);
+    expect(vectorKey.toString('hex')).toBe('d6118f5b53abaf6e629249b695a40f4a2ce2e7e0899e5b20799ebbab0f828bf4');
+    const vectorRow: DecisaoRow = {
+      pedido: '0b1e5c1a-7f3d-4c2a-9e8b-1d2c3b4a5f60',
+      tarefa: 't-52bf8b45',
+      lado: 'nao',
+      opcao: 'Refazer',
+      comentario: 'Falta o teste\nda página 3 — ação',
+      paginas: [{ pagina: 1, nota: 'down', nome: 'capa' }, { pagina: 3, nota: 'up', nome: 'provas' }],
+      criada_em: '2026-11-17T01:06:20.000+00:00',
+      entrega_vista: '2026-11-17T01:06:11.128+00:00', // 1794877571128 ms
+      assinatura: 'c848862f6f2328dfd518a8c057481d0de824063874c31f0fa1f30700febabe71',
+    };
+    expect(decisaoMessage(vectorRow)).toBe(
+      '16:donel-decisao-v1\n36:0b1e5c1a-7f3d-4c2a-9e8b-1d2c3b4a5f60\n10:t-52bf8b45\n3:nao\n7:Refazer\n37:Falta o teste\nda página 3 — ação\n13:1794877571128\n23:1:down:capa;3:up:provas\n',
+    );
+    expect(signWith(vectorKey, vectorRow)).toBe(vectorRow.assinatura);
+    const vectorIo = memoryIo();
+    vectorIo.writeFileText(FILE, JSON.stringify({ schemaVersion: 1, enabled: true, devices: [{ id: 'd1', name: 'Android', tokenHash: vectorKey.toString('hex'), pairedAt: '2026-11-16T00:00:00.000Z' }] }));
+    const vectorAuth = createCelularAuth({ filePath: FILE, io: vectorIo });
+    expect(vectorAuth.verifySignature(decisaoMessage(vectorRow), vectorRow.assinatura!)?.name).toBe('Android');
+    expect(vectorAuth.verifySignature(decisaoMessage({ ...vectorRow, lado: 'sim' }), vectorRow.assinatura!)).toBeNull();
+
+    const { auth, ledger, first, second, decisions } = await setup();
+    // No option closes as rejected: the phone draws the generic "Rejeitar" on the left.
+    const third = await deliveredTask(ledger, 'só opções que aceitam', {
+      ...FOR_OWNER,
+      options: [
+        { label: 'Aceitar', effect: 'Vai para o alfa.', closes: 'aceita', recommended: true },
+        { label: 'Aceitar e seguir', effect: 'Vai para o alfa e segue.', closes: 'aceita' },
+      ],
+    });
+    // The Revisor's accept, still before the owner (the daily sample): nothing to decide, words go on the card.
+    const sample = await deliveredTask(ledger, 'aceita pelo Revisor', null);
+    expect((await ledger.apply({ kind: 'lugar', placeId: 'p-rev', roleId: 'revisor' }, { op: 'aceitar', id: sample })).ok).toBe(true);
+
+    // A card the owner already rejected on the PC before the row was read: his words were a decision, not a note.
+    const rejectedOnPc = await deliveredTask(ledger, 'rejeitada pelo PC');
+    expect((await ledger.apply({ kind: 'dono' }, { op: 'rejeitar', id: rejectedOnPc, reason: 'falta o teste' })).ok).toBe(true);
+    // A delivered card decided while the phone is switched off in Preferences.
+    const fourth = await deliveredTask(ledger, 'entregue, celular desligado');
+    // The Revisor's sample of a delivery that came with a card: the owner sees the old card, without options.
+    const lowWithCard = await ledger.apply(LIDER, { op: 'criar', projectPath: 'C:/proj/atlas', request: 'amostra com carta', doneWhen: 'pronto', due: '2026-11-10', ownerPlaceId: 'p-dev', risk: 'baixo' });
+    if (!lowWithCard.ok) throw new Error(lowWithCard.reason);
+    const sampleCard = lowWithCard.task.id;
+    expect((await ledger.apply(DEV, { op: 'assumir', id: sampleCard })).ok).toBe(true);
+    expect((await ledger.apply(DEV, { op: 'entregar', id: sampleCard, proofs: [{ kind: 'texto', text: '4 passed' }], forOwner: FOR_OWNER })).ok).toBe(true);
+    expect((await ledger.apply({ kind: 'lugar', placeId: 'p-rev', roleId: 'revisor' }, { op: 'aceitar', id: sampleCard })).ok).toBe(true);
+    // A second sample he writes on: the note goes out, its mark fails, and the row is read again after the phone is
+    // switched off (an applied note is answered as applied, not refused by a later check).
+    const sampleNote = await deliveredTask(ledger, 'amostra com recado', null);
+    expect((await ledger.apply({ kind: 'lugar', placeId: 'p-rev', roleId: 'revisor' }, { op: 'aceitar', id: sampleNote })).ok).toBe(true);
+    // A card of its own, with no option closing as rejected, that nothing else decides: an unknown label on its
+    // left side is refused, never turned into the generic "Rejeitar".
+    const unknownLabel = await deliveredTask(ledger, 'rótulo desconhecido', {
+      ...FOR_OWNER,
+      options: [
+        { label: 'Aceitar', effect: 'Vai para o alfa.', closes: 'aceita', recommended: true },
+        { label: 'Aceitar e seguir', effect: 'Vai para o alfa e segue.', closes: 'aceita' },
+      ],
+    });
+    // A label recorded with spaces around it: the phone sends it trimmed.
+    const fifth = await deliveredTask(ledger, 'rótulo com espaço', {
+      ...FOR_OWNER,
+      options: [
+        { label: ' Seguir ', effect: 'Vai para o alfa.', closes: 'aceita', recommended: true },
+        { label: 'Refazer', effect: 'Volta para quem fez.', closes: 'rejeitada' },
+      ],
+    });
+
+    auth.setEnabled(true);
+    const keyA = keyOf(auth.pair(auth.createPairingCode().code, 'Android')!.token);
+    const paired = auth.pair(auth.createPairingCode().code, 'Antigo')!;
+    const keyB = keyOf(paired.token);
+    auth.revoke(paired.deviceId);
+    const stranger = keyOf('nunca-pareado-com-este-oraculo');
+
+    const t0 = Date.now();
+    const seen = (id: string): string => seenOf(ledger, id);
+    const row = (n: number, tarefa: string, lado: DecisaoRow['lado'], rest: Partial<DecisaoRow> = {}, key: Buffer | null = keyA): DecisaoRow => {
+      const unsigned: DecisaoRow = {
+        pedido: `00000000-0000-4000-8000-0000000000${String(n).padStart(2, '0')}`,
+        tarefa,
+        lado,
+        opcao: null,
+        comentario: null,
+        paginas: null,
+        criada_em: new Date(t0 + n * 1000).toISOString(),
+        entrega_vista: seen(tarefa),
+        assinatura: null,
+        ...rest,
+      };
+      return { ...unsigned, assinatura: key ? signWith(key, unsigned) : null };
+    };
+    const tampered = row(8, first, 'sim', { opcao: 'Aceitar', comentario: 'ok' });
+    const rows: (DecisaoRow & { resultado?: string })[] = [
+      row(1, first, 'sim', { opcao: 'Aceitar' }, null), // an old APK, or the password alone
+      row(2, first, 'sim', { opcao: 'Aceitar' }, stranger),
+      row(3, first, 'sim', { opcao: 'Aceitar' }, keyB), // a revoked phone
+      row(4, first, 'sim', { opcao: 'Aceitar', entrega_vista: new Date(Date.parse(seen(first)) + 1).toISOString() }),
+      row(5, first, 'sim', { opcao: 'Aceitar como está' }), // a label of another card
+      row(6, first, 'nao', { opcao: 'Aceitar' }), // an option that closes the other way
+      row(7, first, 'nao', { opcao: 'Rejeitar' }), // the generic, while "Refazer" closes as rejected
+      { ...tampered, comentario: 'outra coisa' }, // changed after signing
+      row(9, third, 'nao', { opcao: 'Rejeitar', comentario: 'Falta o teste\u0007', paginas: [{ pagina: 2, nome: 'prova', nota: 'down' }] }),
+      row(10, sample, 'comentario', { comentario: 'Gostei da capa', paginas: [{ pagina: 1, nome: 'capa', nota: 'up' }] }),
+      row(11, second, 'sim', { opcao: 'Aceitar' }),
+      row(12, first, 'sim', { opcao: 'Aceitar', entrega_vista: null }), // does not say which card he saw
+      row(13, first, 'sim'), // no label, on a card whose "Aceitar" closes as accepted
+      row(14, sampleNote, 'comentario', { comentario: 'Faltou o print' }),
+      row(15, fifth, 'sim', { opcao: 'Seguir' }),
+      row(16, unknownLabel, 'nao', { opcao: 'Refazer tudo' }), // unknown label, on a card with no option closing as rejected
+      row(17, sampleCard, 'sim'), // the owner confirms the Revisor's accept
+      row(18, rejectedOnPc, 'comentario', { comentario: 'Pode seguir assim' }),
+    ];
+    const result = (n: number): string | undefined => rows[n - 1]!.resultado;
+    const failMark = new Set([rows[13]!.pedido]);
+    const queue: DecisoesQueue = {
+      tomar: async () => rows.filter((entry) => !entry.resultado),
+      atualizarTarefa: async () => undefined,
+      marcar: async (pedido, resultado) => {
+        if (failMark.delete(pedido)) throw new Error('sem rede');
+        const target = rows.find((entry) => entry.pedido === pedido)!;
+        if (target.resultado) return false;
+        target.resultado = resultado;
+        return true;
+      },
+    };
+    const sent: OwnerMessage[] = [];
+    const writer = createCardWriter({
+      service: () => ledger,
+      deliver: async (message) => {
+        sent.push(message);
+        return { placeId: message.placeId };
+      },
+    });
+    const port = createLedgerMobilePort(() => ledger, undefined, () => writer);
+    const decided: string[] = [];
+    const consumer = createDecisoesConsumer({
+      queue: () => queue,
+      port: {
+        decidir: (input) => {
+          decided.push(input.pedidoId);
+          return port.decidir(input);
+        },
+        comentar: (input) => port.comentar(input),
+      },
+      verifier: () => verifierOf(auth),
+      phoneOn: () => auth.enabled,
+      ledger: () => ledger,
+      returned: () => false,
+    });
+    await consumer.round();
+
+    for (const n of [1, 2, 3, 8]) expect(result(n)).toBe(`recusada: ${UNSIGNED_DECISION}`);
+    for (const n of [4, 5, 6, 7, 12, 16]) expect(result(n)).toBe(`recusada: ${STALE_DECISION}`);
+    expect(result(13)).toBe(`recusada: ${OPTION_REQUIRED}`);
+    expect(decisions(first)).toHaveLength(0);
+    expect(ledger.load().doc.tasks[first]!.state).toBe('entregue');
+    expect(decisions(unknownLabel)).toHaveLength(0);
+    expect(ledger.load().doc.tasks[unknownLabel]!.state).toBe('entregue');
+    // Only the rows that passed every check reached the ledger.
+    expect(decided).toEqual([rows[8]!.pedido, rows[10]!.pedido, rows[14]!.pedido, rows[16]!.pedido, rows[17]!.pedido]);
+    expect(result(17)).toBe('aplicada: aceita');
+    expect(result(18)).toMatch(/^recusada: /);
+    expect(sent.filter((message) => message.text.includes('Pode seguir assim'))).toHaveLength(0);
+    expect(ledger.load().doc.tasks[sampleCard]!.state).toBe('aceita');
+
+    expect(result(15)).toBe('aplicada: aceita');
+    expect(decisions(fifth)).toEqual([expect.objectContaining({ kind: 'aceita', by: { kind: 'dono' }, option: ' Seguir ' })]);
+
+    // The note on `sampleNote` went out but its mark failed. The phone is switched off in Preferences before the row is
+    // read again: the note already on the card is answered as applied, and goes out once; a new signed row is refused
+    // for the phone being off, never applied.
+    expect(result(14)).toBeUndefined();
+    auth.setEnabled(false);
+    rows.push(row(19, fourth, 'sim', { opcao: 'Aceitar' }));
+    await consumer.round();
+    expect(result(14)).toBe('aplicada: comentário');
+    expect(sent.filter((message) => message.text.includes('Faltou o print'))).toHaveLength(1);
+    expect(result(19)).toBe(`recusada: ${PHONE_OFF}`);
+    expect(decisions(fourth).filter((event) => event.kind === 'aceita')).toHaveLength(0);
+
+    expect(result(9)).toBe('aplicada: rejeitada');
+    expect(decisions(third)).toEqual([expect.objectContaining({ kind: 'rejeitada', by: { kind: 'dono' }, text: 'Falta o teste' })]);
+    expect(decisions(third)[0]).not.toHaveProperty('option');
+
+    expect(result(10)).toBe('aplicada: comentário');
+    expect(ledger.load().doc.tasks[sample]!.state).toBe('aceita');
+    expect(ledger.load().doc.tasks[sample]!.events.filter((event) => event.kind === 'comentada')).toEqual([expect.objectContaining({ by: { kind: 'dono' }, text: 'Gostei da capa' })]);
+    expect(sent.filter((message) => message.text.includes('Gostei da capa'))).toHaveLength(1);
+
+    expect(result(11)).toBe('aplicada: aceita');
+    expect(decisions(second)).toEqual([expect.objectContaining({ kind: 'aceita', by: { kind: 'dono' }, option: 'Aceitar' })]);
+    // The page notes never ride on a message (the rejection on `third`, the comment on `sample`).
+    expect(sent.some((message) => message.text.includes('Falta o teste'))).toBe(true);
+    for (const message of sent) expect(`${message.text}${message.leaderText}`).not.toMatch(/Notas por página|👍|👎/);
+  });
+
+  it('a importação do Líder aplica as linhas sem assinatura uma vez, com a nota, e tira a carta do espelho', async () => {
+    const { auth, ledger, first, second, decisions } = await setup();
+    const noted = await deliveredTask(ledger, 'carta em que ele só escreve');
+    const sample = await deliveredTask(ledger, 'amostra do Revisor', null);
+    expect((await ledger.apply({ kind: 'lugar', placeId: 'p-rev', roleId: 'revisor' }, { op: 'aceitar', id: sample })).ok).toBe(true);
+    const outside = await deliveredTask(ledger, 'fora da lista');
+    const notSample = await deliveredTask(ledger, 'conferir fora da amostra');
+    const sample2 = await deliveredTask(ledger, 'outra amostra', null);
+    expect((await ledger.apply({ kind: 'lugar', placeId: 'p-rev', roleId: 'revisor' }, { op: 'aceitar', id: sample2 })).ok).toBe(true);
+    // As the real rows: made by an APK that did not sign nor say which delivery he saw.
+    const row = (n: number, tarefa: string, lado: DecisaoRow['lado'], rest: Partial<DecisaoRow> = {}): DecisaoRow & { resultado?: string } => ({
+      pedido: `00000000-0000-4000-8000-0000000000${String(n).padStart(2, '0')}`,
+      tarefa,
+      lado,
+      opcao: null,
+      comentario: null,
+      paginas: null,
+      criada_em: `2026-11-17T09:${String(7 + n).padStart(2, '0')}:30.000+00:00`, // 06:08… in São Paulo
+      entrega_vista: null,
+      assinatura: null,
+      ...rest,
+    });
+    const rows = [
+      row(1, first, 'sim', { paginas: [{ pagina: 2, nome: 'provas', nota: 'up' }] }),
+      row(2, second, 'nao', { paginas: [{ pagina: 3, nome: 'Prova', nota: 'down' }] }),
+      row(3, noted, 'comentario', { comentario: 'texto da linha' }),
+      row(4, sample, 'sim'),
+      // Unsigned and off the list: not the owner's, so its page notes are not his either (the bridge reopens it later).
+      row(5, outside, 'sim', { paginas: [{ pagina: 1, nome: 'capa', nota: 'down' }] }),
+      row(6, notSample, 'sim'),
+      row(7, sample2, 'sim'),
+    ];
+    const items = [
+      { pedido: rows[0]!.pedido, acao: 'aceitar', texto: 'Pode seguir' },
+      { pedido: rows[1]!.pedido, acao: 'rejeitar', texto: 'Falta o print' },
+      { pedido: rows[2]!.pedido, acao: 'comentar', texto: 'Gostei' },
+      { pedido: rows[3]!.pedido, acao: 'conferir', texto: 'Vi a amostra' },
+      { pedido: rows[5]!.pedido, acao: 'conferir' },
+      { pedido: rows[6]!.pedido, acao: 'aceitar', texto: 'Ok da amostra' },
+    ];
+    // First a bad list (one repeated item): it must hold the whole queue, never send the listed rows to the signature check.
+    let list: ImportList = parseImportList([...items, items[0]]);
+    expect(list.ok).toBe(false);
+    const result = (n: number): string | undefined => rows[n - 1]!.resultado;
+    const failMark = new Set([rows[0]!.pedido, rows[3]!.pedido]);
+    const patched: { id: string; campos: TarefaEspelho }[] = [];
+    let failPatch = true;
+    let taken = 0;
+    const queue: DecisoesQueue = {
+      tomar: async () => (taken++, rows.filter((entry) => !entry.resultado)),
+      marcar: async (pedido, resultado) => {
+        if (failMark.delete(pedido)) throw new Error('sem rede');
+        const target = rows.find((entry) => entry.pedido === pedido)!;
+        if (target.resultado) return false;
+        target.resultado = resultado;
+        return true;
+      },
+      atualizarTarefa: async (id, campos) => {
+        if (failPatch) {
+          failPatch = false;
+          throw new Error('o espelho de tarefas recusou (HTTP 500)');
+        }
+        patched.push({ id, campos });
+      },
+    };
+    const sent: OwnerMessage[] = [];
+    const writer = createCardWriter({ service: () => ledger, deliver: async (message) => (sent.push(message), { placeId: message.placeId }) });
+    const port = createLedgerMobilePort(() => ledger, undefined, () => writer);
+    let verifier: DecisaoVerifier | null = verifierOf(auth);
+    let verifierAsked = 0;
+    const logs: string[] = [];
+    const notas: NotasPaginasEntry[] = [];
+    let failNotas = true;
+    const consumer = createDecisoesConsumer({
+      queue: () => queue,
+      port,
+      verifier: () => {
+        verifierAsked += 1;
+        return verifier;
+      },
+      phoneOn: () => false,
+      importar: () => list,
+      ledger: () => ledger,
+      returned: () => false,
+      log: (line) => logs.push(line),
+      guardarNotas: (entry) => {
+        if (failNotas) {
+          failNotas = false;
+          throw new Error('disco cheio');
+        }
+        notas.push(entry);
+      },
+    });
+
+    // Round 0: the bad list, the phone's core up. Nothing is taken nor marked; one log line says why.
+    await consumer.round();
+    await consumer.round();
+    expect(taken).toBe(0);
+    expect(verifierAsked).toBe(0);
+    for (const entry of rows) expect(entry.resultado).toBeUndefined();
+    expect(logs.filter((line) => line.includes('pedido repetido'))).toHaveLength(1);
+    list = parseImportList(items);
+    expect(list.ok).toBe(true);
+    verifier = null;
+
+    // Round 1: the phone's core is not up and the phone is off; the listed rows apply anyway, the one outside waits.
+    await consumer.round();
+    expect(verifierAsked).toBe(1); // only for the row outside the list
+    expect(result(1)).toBeUndefined(); // applied, mark failed
+    expect(result(2)).toBe('aplicada: rejeitada (importação)');
+    expect(logs.some((line) => line.includes('disco cheio'))).toBe(true);
+    expect(result(3)).toBe('aplicada: comentário (importação)');
+    expect(result(4)).toBeUndefined(); // applied, mark failed
+    expect(result(5)).toBeUndefined();
+    // The first mirror patch failed: a log line, and the decision stands.
+    expect(logs.some((line) => line.includes('o espelho de tarefas não atualizou'))).toBe(true);
+
+    // Rounds 2 and 3: the repeats answer what is recorded; nothing is written twice.
+    verifier = verifierOf(auth);
+    await consumer.round();
+    const before = JSON.stringify(ledger.load().doc);
+    await consumer.round();
+    expect(JSON.stringify(ledger.load().doc)).toBe(before);
+    expect(result(1)).toBe('aplicada: aceita (importação)');
+    expect(result(4)).toBe('aplicada: aceita (importação)');
+    for (const n of [1, 2, 3, 4]) expect(result(n)).not.toContain(UNSIGNED_DECISION);
+    expect(result(5)).toBe(`recusada: ${UNSIGNED_DECISION}`);
+    expect(decisions(outside)).toHaveLength(0);
+    // `conferir` off the sample is refused, never a full accept; `aceitar` on a sample keeps the words and checks it.
+    expect(result(6)).toBe(`recusada: ${NOT_THE_SAMPLE}`);
+    expect(ledger.load().doc.tasks[notSample]!.state).toBe('entregue');
+    expect(decisions(notSample)).toHaveLength(0);
+    expect(result(7)).toBe('aplicada: aceita (importação)');
+
+    const note = (hhmm: string): string => `Decisão do dono pelo celular às ${hhmm} de 17/11 (importada; feita antes da decisão assinada).`;
+    expect(decisions(first)).toEqual([expect.objectContaining({ kind: 'aceita', by: { kind: 'dono' }, requestId: rows[0]!.pedido, text: `Pode seguir\n${note('06:08')}` })]);
+    // The page notes: in the jsonl with the mark, never in a message. A failed write is a log line, the row stays marked.
+    expect(sent.some((message) => message.text.includes('Pode seguir'))).toBe(true);
+    for (const message of sent) expect(`${message.text}${message.leaderText}`).not.toMatch(/Notas por página|👍|👎/);
+    expect(notas).toEqual([{ tarefa: first, pedido: rows[0]!.pedido, criada_em: rows[0]!.criada_em, paginas: [{ pagina: 2, nome: 'provas', nota: 'up' }], resultado: 'aplicada: aceita (importação)' }]);
+    expect(decisions(first)[0]).not.toHaveProperty('option');
+    expect(decisions(second)).toEqual([expect.objectContaining({ kind: 'rejeitada', by: { kind: 'dono' }, text: `Falta o print\n${note('06:09')}` })]);
+    const comments = (id: string) => ledger.load().doc.tasks[id]!.events.filter((event) => event.kind === 'comentada');
+    expect(comments(noted)).toEqual([expect.objectContaining({ by: { kind: 'dono' }, requestId: rows[2]!.pedido, text: `Gostei\n${note('06:10')}` })]);
+    expect(ledger.load().doc.tasks[noted]!.state).toBe('entregue');
+    // The sample: his words on the card (once, under their own key), then checked, never reopened.
+    expect(comments(sample)).toEqual([expect.objectContaining({ requestId: importCommentKey(rows[3]!.pedido), text: `Vi a amostra\n${note('06:11')}` })]);
+    expect(sent.filter((message) => message.text.includes('Vi a amostra'))).toHaveLength(1);
+    expect(importCommentKey(rows[3]!.pedido)).not.toBe(rows[3]!.pedido);
+    expect(importCommentKey(rows[3]!.pedido)).toMatch(/^[A-Za-z0-9_-]{8,64}$/);
+    const sampleTask = ledger.load().doc.tasks[sample]!;
+    expect(sampleTask.state).toBe('aceita');
+    expect(sampleTask.events.filter((event) => event.kind === 'conferida')).toEqual([expect.objectContaining({ requestId: rows[3]!.pedido })]);
+    expect(comments(sample2)).toEqual([expect.objectContaining({ requestId: importCommentKey(rows[6]!.pedido), text: `Ok da amostra\n${note('06:14')}` })]);
+    expect(ledger.load().doc.tasks[sample2]!.state).toBe('aceita');
+    expect(ledger.load().doc.tasks[sample2]!.events.filter((event) => event.kind === 'conferida')).toEqual([expect.objectContaining({ requestId: rows[6]!.pedido })]);
+
+    // The mirror: every decided task leaves the owner's view; the note alone changes nothing there.
+    expect(new Set(patched.map((entry) => entry.id))).toEqual(new Set([first, second, sample, sample2]));
+    for (const { id, campos } of patched) {
+      expect(campos).toEqual({ estado: id === second ? 'rejeitada' : 'aceita', esperando_dono: false, atualizado_em: expect.any(String) });
+    }
+
+    // The list is all or nothing.
+    const ok = { pedido: rows[0]!.pedido, acao: 'aceitar' };
+    for (const bad of [
+      [ok, ok],
+      [{ ...ok, pedido: 't-123456789' }],
+      [{ ...ok, acao: 'aprovar' }],
+      [{ ...ok, acao: 'rejeitar' }],
+      [{ ...ok, texto: '⟦marca⟧ oi' }],
+      [{ ...ok, texto: 'x'.repeat(2001) }],
+      Array.from({ length: 101 }, (_, index) => ({ ...ok, pedido: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}` })),
+      'aceitar tudo',
+    ]) {
+      expect(parseImportList(bad).ok).toBe(false);
+    }
+    const dir = mkdtempSync(join(tmpdir(), 'decisoes-'));
+    writeFileSync(join(dir, 'decisoes.json'), JSON.stringify({ url: 'https://exemplo.supabase.co', serviceKeyFile: join(dir, 'k'), importar: [ok] }));
+    expect(readImportList(join(dir, 'decisoes.json'))).toEqual({ ok: true, items: new Map([[ok.pedido, ok]]) });
+    // A half-written file (a non-atomic rewrite between the round's two reads) holds the queue, never an empty list.
+    writeFileSync(join(dir, 'meio.json'), '{"url": "https://exemplo.supabase.co", "importar": [');
+    expect(readImportList(join(dir, 'meio.json')).ok).toBe(false);
+
+    // The patch itself: the mirror's table, the key only in the headers, never in an error.
+    writeFileSync(join(dir, 'k'), 'chave-de-teste-123\n');
+    const calls: { url: string; init: RequestInit }[] = [];
+    let status = 204;
+    const http = createDecisoesQueue({ url: 'https://exemplo.supabase.co', serviceKeyFile: join(dir, 'k') }, (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      return new Response(status === 204 ? null : 'erro com chave-de-teste-123', { status });
+    }) as typeof fetch);
+    const campos: TarefaEspelho = { estado: 'aceita', esperando_dono: false, atualizado_em: '2026-11-17T10:00:00.000Z' };
+    await http.atualizarTarefa(first, campos);
+    expect(calls[0]!.url).toBe(`https://exemplo.supabase.co/rest/v1/tarefas?id=eq.${first}`);
+    expect(calls[0]!.init.method).toBe('PATCH');
+    expect(JSON.parse(calls[0]!.init.body as string)).toEqual(campos);
+    expect(calls[0]!.init.headers).toMatchObject({ apikey: 'chave-de-teste-123', Authorization: 'Bearer chave-de-teste-123' });
+    status = 500;
+    const error = await http.atualizarTarefa(first, campos).catch((thrown: unknown) => thrown as Error);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toContain('HTTP 500');
+    expect((error as Error).message).not.toContain('chave-de-teste-123');
+  });
+
   it('o protótipo sai com a CSP sandbox allow-scripts, por bilhete de uso único que vence; donel-prova só serve nome de dentro das provas', async () => {
     const io = memoryIo();
     const auth = createCelularAuth({ filePath: FILE, io });

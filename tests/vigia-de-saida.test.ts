@@ -15,7 +15,33 @@ function alive(pid: number): boolean {
   }
 }
 
+async function waitDead(pid: number, timeoutMs: number): Promise<boolean> {
+  const until = Date.now() + timeoutMs;
+  while (Date.now() < until) {
+    if (!alive(pid)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  return !alive(pid);
+}
+
 describe('vigia de saída', () => {
+  // t-f2dcadf5 (17/11) — armado pelo app, o vigia nunca rodava: o PowerShell 5.1 lançado `detached`, sem console e com
+  // stdio ignorado, sai com 0 sem executar nada. Aqui ele é armado como o app arma, com o spawn de verdade.
+  it.runIf(process.platform === 'win32')(
+    'armado como o app arma, encerra mesmo o processo depois do prazo',
+    async () => {
+      const victim = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
+      try {
+        const watchdog = createExitWatchdog(spawn, 'win32');
+        expect(watchdog.arm({ pid: victim.pid!, startedAtMs: Date.now(), graceSeconds: 1 })).toBe(true);
+        expect(await waitDead(victim.pid!, 30_000)).toBe(true);
+      } finally {
+        victim.kill();
+      }
+    },
+    60_000,
+  );
+
   it.runIf(process.platform === 'win32')(
     'encerra o processo com o pid e o início dados, e poupa o pid cujo início não bate',
     async () => {
@@ -28,8 +54,9 @@ describe('vigia de saída', () => {
         const keep = buildExitWatchdogCommand({ pid: spared.pid!, startedAtMs: startedAtMs - 3_600_000, graceSeconds: 1 });
         spawnSync(kill.file, kill.args, { windowsHide: true, timeout: 60_000 });
         spawnSync(keep.file, keep.args, { windowsHide: true, timeout: 60_000 });
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        expect(alive(victim.pid!)).toBe(false);
+        // the command only starts the watchdog (Start-Process) and leaves; the watchdog itself waits the grace first
+        expect(await waitDead(victim.pid!, 30_000)).toBe(true);
+        await new Promise((resolve) => setTimeout(resolve, 3_000));
         expect(alive(spared.pid!)).toBe(true);
       } finally {
         victim.kill();

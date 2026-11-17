@@ -258,6 +258,7 @@ import { runShutdownSteps, shutdownThenQuit } from './app-shutdown';
 import { createMainEventsLog, type MainEventLogger } from './main-events-log';
 import { createRunTrail } from './run-trail';
 import { createExitWatchdog } from './exit-watchdog';
+import { buildExitSentinelCommand, exitRecordPath, takeExitRecord, takeStrayExitRecords } from './exit-sentinel';
 import { SessionKeyRing } from './session-keys';
 import { createDiagnosticsLog } from './chat/diagnostics-log';
 import { resolveMainRepoRootSync } from './session-worktree';
@@ -1313,6 +1314,9 @@ const EXIT_GRACE_SECONDS = 20;
 const exitWatchdog = createExitWatchdog(spawn);
 /** How often `main-running.json` records that this run is alive (run-trail.ts). */
 const RUN_TRAIL_BEAT_MS = 60_000;
+/** A second look for the previous run's exit record, when its sentinel had not written it yet at boot. */
+const EXIT_RECORD_RETRY_MS = 20_000;
+const EXIT_RECORD_RETRIES = 6;
 
 function logMainEvent(event: string, detail?: Readonly<Record<string, unknown>>): void {
   mainEventsLog ??= createMainEventsLog(join(app.getPath('userData'), 'main-events.log'));
@@ -1328,6 +1332,10 @@ function logMainEvent(event: string, detail?: Readonly<Record<string, unknown>>)
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
   console.log('[donel-dev] outra janela do Donel Dev já está aberta; ela vem para a frente e esta sai.');
+  // t-d4f5879c — every second launch that hands over to the first copy leaves a line with who started it (ppid).
+  // (One that finds the first copy hung with no visible window ends it inside the call above, with exit code 2, and
+  // keeps the lock: it does not come here, it boots and logs `app-started` with its ppid.)
+  logMainEvent('second-copy-leaving', { pid: process.pid, ppid: process.ppid, argv: process.argv.slice(1) });
   app.exit(0);
 } else {
   // t-fe46929a (16/11) — the start and the end of each run leave a line, and a run ended from outside (no quit
@@ -1338,8 +1346,43 @@ if (!hasSingleInstanceLock) {
     startedAtMs: PROCESS_STARTED_AT_MS,
   });
   const previousRun = runTrail.start();
-  logMainEvent('app-started', { pid: process.pid, version: app.getVersion(), argv: process.argv.slice(1) });
+  logMainEvent('app-started', { pid: process.pid, ppid: process.ppid, version: app.getVersion(), argv: process.argv.slice(1) });
   if (previousRun) logMainEvent('previous-run-ended-without-quit', { ...previousRun });
+  // t-d4f5879c — how the previous run ended (exit-sentinel.ts, Windows only). Its sentinel may still be writing when
+  // a second copy that ended it boots, so a missing record is looked up again for two minutes. Records of older runs
+  // (written too late for their next boot) are told once, unless they were a plain quit.
+  if (process.platform === 'win32') {
+    const userData = app.getPath('userData');
+    const previous = previousRun ? { pid: previousRun.pid, startedAtMs: Date.parse(previousRun.startedAt) } : null;
+    for (const stray of takeStrayExitRecords(userData, previous)) {
+      if (stray.cause !== 'quit') logMainEvent('earlier-run-exit', { ...stray });
+    }
+    if (previous) {
+      const logExit = (): boolean => {
+        const record = takeExitRecord(exitRecordPath(userData, previous), previous);
+        if (record) logMainEvent('previous-run-exit', { ...record });
+        return record !== null;
+      };
+      let tries = 0;
+      const retry = (): void => {
+        if (logExit()) return;
+        if (++tries < EXIT_RECORD_RETRIES) setTimeout(retry, EXIT_RECORD_RETRY_MS).unref();
+        else logMainEvent('previous-run-exit-unknown', { pid: previous.pid });
+      };
+      if (!logExit()) setTimeout(retry, EXIT_RECORD_RETRY_MS).unref();
+    }
+    try {
+      // Not `detached`: a detached PowerShell 5.1 with no console and ignored stdio exits 0 without running anything.
+      // The sentinel leaves the app's tree through its own hop (Start-Process), so the main exiting never takes it.
+      const recordPath = exitRecordPath(userData, { pid: process.pid, startedAtMs: PROCESS_STARTED_AT_MS });
+      const { file, args } = buildExitSentinelCommand({ pid: process.pid, startedAtMs: PROCESS_STARTED_AT_MS, recordPath });
+      spawn(file, args, { windowsHide: true, stdio: 'ignore' })
+        .on('error', (error) => logMainEvent('exit-sentinel-failed', { error: String(error) }))
+        .unref();
+    } catch (error) {
+      logMainEvent('exit-sentinel-failed', { error: String(error) });
+    }
+  }
   setInterval(() => runTrail.beat(), RUN_TRAIL_BEAT_MS).unref();
   app.on('will-quit', () => {
     logMainEvent('app-quitting');
@@ -3715,6 +3758,8 @@ function registerLedgerMirror(): void {
     safeStorage,
     vaultIo: accountsVaultIo,
     places: placesSnapshot,
+    // The same folder in the remote mode: the PC keeps the copies `syncProofs` brings.
+    proofsDir: ledgerProofsDir(ledgerFilePath(process.env, app.getPath('userData'))),
     loadDoc: () => {
       try {
         return ledgerService?.load().doc ?? null;
