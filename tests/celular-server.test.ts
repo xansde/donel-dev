@@ -31,6 +31,7 @@ import {
   type DecisaoVerifier,
   type DecisoesQueue,
   type ImportList,
+  type NotasPaginasEntry,
   type TarefaEspelho,
 } from '../src/oraculo/decisoes';
 
@@ -380,6 +381,7 @@ describe('servidor do celular', () => {
     const asked: string[] = [];
     let returned = true;
     let verifier: DecisaoVerifier | null = null;
+    const notas: NotasPaginasEntry[] = [];
     const consumer = createDecisoesConsumer({
       queue: () => queue,
       port: {
@@ -393,6 +395,9 @@ describe('servidor do celular', () => {
       verifier: () => verifier,
       ledger: () => ledger,
       returned: () => returned,
+      guardarNotas: (entry) => {
+        notas.push(entry);
+      },
     });
 
     // The ledger went back to the PC: nothing is taken, applied or marked (not lost).
@@ -415,8 +420,11 @@ describe('servidor do celular', () => {
 
     // Round 2: applied, but two marks fail; the batch goes on. The refusals are marked, the annulled row is not overwritten.
     await consumer.round();
-    expect(decisions(first)).toEqual([expect.objectContaining({ kind: 'aceita', by: { kind: 'dono' }, option: 'Aceitar', text: 'Notas por página: 👎 p1 capa' })]);
+    // The page notes are design feedback: never in the decision's text (it is the message to whoever did the task).
+    expect(decisions(first)).toEqual([expect.objectContaining({ kind: 'aceita', by: { kind: 'dono' }, option: 'Aceitar' })]);
+    expect(decisions(first)[0]).not.toHaveProperty('text');
     expect(result(1)).toBeUndefined();
+    expect(notas).toEqual([]); // applied but not marked: recorded only with the mark
     expect(decisions(second)).toEqual([expect.objectContaining({ kind: 'rejeitada', by: { kind: 'dono' }, option: 'Refazer', text: 'Refazer' })]);
     expect(result(2)).toBeUndefined();
     expect(result(3)).toBe('anulada pelo dono');
@@ -434,6 +442,8 @@ describe('servidor do celular', () => {
     expect(result(1)).toBe('aplicada: aceita');
     expect(result(2)).toBe('aplicada: rejeitada');
     expect(ledger.load().doc.tasks[second]!.state).toBe('entregue');
+    // Recorded once, with the mark: only the valid pages.
+    expect(notas).toEqual([{ tarefa: first, pedido: rows[0]!.pedido, criada_em: rows[0]!.criada_em, paginas: [{ pagina: 1, nome: 'capa', nota: 'down' }], resultado: 'aplicada: aceita' }]);
 
     // Round 4: nothing left, nothing changes; the stale row never reached the ledger.
     const before = JSON.stringify(ledger.load().doc);
@@ -551,8 +561,8 @@ describe('servidor do celular', () => {
       row(6, first, 'nao', { opcao: 'Aceitar' }), // an option that closes the other way
       row(7, first, 'nao', { opcao: 'Rejeitar' }), // the generic, while "Refazer" closes as rejected
       { ...tampered, comentario: 'outra coisa' }, // changed after signing
-      row(9, third, 'nao', { opcao: 'Rejeitar', comentario: 'Falta o teste\u0007' }),
-      row(10, sample, 'comentario', { comentario: 'Gostei da capa' }),
+      row(9, third, 'nao', { opcao: 'Rejeitar', comentario: 'Falta o teste\u0007', paginas: [{ pagina: 2, nome: 'prova', nota: 'down' }] }),
+      row(10, sample, 'comentario', { comentario: 'Gostei da capa', paginas: [{ pagina: 1, nome: 'capa', nota: 'up' }] }),
       row(11, second, 'sim', { opcao: 'Aceitar' }),
       row(12, first, 'sim', { opcao: 'Aceitar', entrega_vista: null }), // does not say which card he saw
       row(13, first, 'sim'), // no label, on a card whose "Aceitar" closes as accepted
@@ -641,6 +651,9 @@ describe('servidor do celular', () => {
 
     expect(result(11)).toBe('aplicada: aceita');
     expect(decisions(second)).toEqual([expect.objectContaining({ kind: 'aceita', by: { kind: 'dono' }, option: 'Aceitar' })]);
+    // The page notes never ride on a message (the rejection on `third`, the comment on `sample`).
+    expect(sent.some((message) => message.text.includes('Falta o teste'))).toBe(true);
+    for (const message of sent) expect(`${message.text}${message.leaderText}`).not.toMatch(/Notas por página|👍|👎/);
   });
 
   it('a importação do Líder aplica as linhas sem assinatura uma vez, com a nota, e tira a carta do espelho', async () => {
@@ -667,10 +680,11 @@ describe('servidor do celular', () => {
     });
     const rows = [
       row(1, first, 'sim', { paginas: [{ pagina: 2, nome: 'provas', nota: 'up' }] }),
-      row(2, second, 'nao'),
+      row(2, second, 'nao', { paginas: [{ pagina: 3, nome: 'Prova', nota: 'down' }] }),
       row(3, noted, 'comentario', { comentario: 'texto da linha' }),
       row(4, sample, 'sim'),
-      row(5, outside, 'sim'),
+      // Unsigned and off the list: not the owner's, so its page notes are not his either (the bridge reopens it later).
+      row(5, outside, 'sim', { paginas: [{ pagina: 1, nome: 'capa', nota: 'down' }] }),
       row(6, notSample, 'sim'),
       row(7, sample2, 'sim'),
     ];
@@ -713,6 +727,8 @@ describe('servidor do celular', () => {
     let verifier: DecisaoVerifier | null = verifierOf(auth);
     let verifierAsked = 0;
     const logs: string[] = [];
+    const notas: NotasPaginasEntry[] = [];
+    let failNotas = true;
     const consumer = createDecisoesConsumer({
       queue: () => queue,
       port,
@@ -725,6 +741,13 @@ describe('servidor do celular', () => {
       ledger: () => ledger,
       returned: () => false,
       log: (line) => logs.push(line),
+      guardarNotas: (entry) => {
+        if (failNotas) {
+          failNotas = false;
+          throw new Error('disco cheio');
+        }
+        notas.push(entry);
+      },
     });
 
     // Round 0: the bad list, the phone's core up. Nothing is taken nor marked; one log line says why.
@@ -743,6 +766,7 @@ describe('servidor do celular', () => {
     expect(verifierAsked).toBe(1); // only for the row outside the list
     expect(result(1)).toBeUndefined(); // applied, mark failed
     expect(result(2)).toBe('aplicada: rejeitada (importação)');
+    expect(logs.some((line) => line.includes('disco cheio'))).toBe(true);
     expect(result(3)).toBe('aplicada: comentário (importação)');
     expect(result(4)).toBeUndefined(); // applied, mark failed
     expect(result(5)).toBeUndefined();
@@ -767,7 +791,11 @@ describe('servidor do celular', () => {
     expect(result(7)).toBe('aplicada: aceita (importação)');
 
     const note = (hhmm: string): string => `Decisão do dono pelo celular às ${hhmm} de 17/11 (importada; feita antes da decisão assinada).`;
-    expect(decisions(first)).toEqual([expect.objectContaining({ kind: 'aceita', by: { kind: 'dono' }, requestId: rows[0]!.pedido, text: `Pode seguir\nNotas por página: 👍 p2 provas\n${note('06:08')}` })]);
+    expect(decisions(first)).toEqual([expect.objectContaining({ kind: 'aceita', by: { kind: 'dono' }, requestId: rows[0]!.pedido, text: `Pode seguir\n${note('06:08')}` })]);
+    // The page notes: in the jsonl with the mark, never in a message. A failed write is a log line, the row stays marked.
+    expect(sent.some((message) => message.text.includes('Pode seguir'))).toBe(true);
+    for (const message of sent) expect(`${message.text}${message.leaderText}`).not.toMatch(/Notas por página|👍|👎/);
+    expect(notas).toEqual([{ tarefa: first, pedido: rows[0]!.pedido, criada_em: rows[0]!.criada_em, paginas: [{ pagina: 2, nome: 'provas', nota: 'up' }], resultado: 'aplicada: aceita (importação)' }]);
     expect(decisions(first)[0]).not.toHaveProperty('option');
     expect(decisions(second)).toEqual([expect.objectContaining({ kind: 'rejeitada', by: { kind: 'dono' }, text: `Falta o print\n${note('06:09')}` })]);
     const comments = (id: string) => ledger.load().doc.tasks[id]!.events.filter((event) => event.kind === 'comentada');
