@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   buildExitSentinelCommand,
   classifyExitCode,
+  COMMAND_LINE_CUT,
   COMMAND_LINE_MASKS,
   exitRecordPath,
   KILLER_CANDIDATES,
@@ -70,6 +71,32 @@ const SECRET_LINES: ReadonlyArray<readonly [string, string]> = [
   [CURL + ' -uadmin:Hunter2! https://api.x', 'Hunter2!'],
   [CURL + ' -H "Authorization: Basic YWRtaW46cA==" https://api.x', 'YWRtaW46cA=='],
   ['tool /p:Senha9 /user:x', 'Senha9'],
+  // 3rd review of #461 (t-c1b710c2)
+  ['bash.exe -c "export GH_TOKEN=\\"Senha123\\"; gh api user"', 'Senha123'],
+  ['powershell.exe -Command "$env:X_TOKEN = \\"Senha124\\"; gh api"', 'Senha124'],
+  ['cmd /c "set DB_PASSWORD=\\"Senha125\\""', 'Senha125'],
+  ['powershell.exe -Command "$c = @{Password=\\"Senha126\\"}"', 'Senha126'],
+  ["powershell.exe -Command \"$s = ConvertTo-SecureString 'Senha127' -AsPlainText -Force\"", 'Senha127'],
+  ["powershell.exe -Command \"New-LocalUser x -Password (ConvertTo-SecureString 'Senha128' -AsPlainText -Force)\"", 'Senha128'],
+  [CURL + " -H 'X-API-Key: Senha129' https://api.x", 'Senha129'],
+  [CURL + " -H 'PRIVATE-TOKEN: Senha130' https://api.x", 'Senha130'],
+  [CURL + ` -d '{"password":"Senha131"}' https://api.x`, 'Senha131'],
+  ["node.exe -e \"connect({user:'root',password:'Senha132'})\"", 'Senha132'],
+  ["powershell.exe -Command \"@{'x-api-key'='Senha133'}\"", 'Senha133'],
+  [CURL + ' -H "Authorization: token Senha134" https://api.x', 'Senha134'],
+  // the generic rule alone: no flag, no name in front
+  ['cmd /c echo q7Rk2pL9_xW4mZ8n-B3vC6tY1hJ5', 'q7Rk2pL9_xW4mZ8n-B3vC6tY1hJ5'],
+  ['cmd /c echo wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY', 'wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'],
+];
+
+// What says who ended the main must survive the masks (3rd review of #461, item 4).
+const IDENTITY_LINES: ReadonlyArray<readonly [string, string]> = [
+  ['node.exe -p "process.kill(6700)"', 'process.kill(6700)'],
+  ['powershell.exe -Command "Stop-Process -PassThru -Id 6700"', 'Stop-Process -PassThru -Id 6700'],
+  ['powershell.exe -NoProfile -File C:/Users/compu/seazone/scripts/limpa.ps1', 'C:/Users/compu/seazone/scripts/limpa.ps1'],
+  ['"C:/Program Files/nodejs/node.exe" C:/Users/compu/AppData/Roaming/npm/node_modules/x/cli.js', 'C:/Users/compu/AppData/Roaming/npm/node_modules/x/cli.js'],
+  ['bash.exe -c "/home/alexandrelentz/seazone/donel/killall.sh"', '/home/alexandrelentz/seazone/donel/killall.sh'],
+  ['taskkill.exe /PID 6700 /T /F', 'taskkill.exe /PID 6700 /T /F'],
 ];
 
 describe('exit sentinel', () => {
@@ -94,10 +121,12 @@ describe('exit sentinel', () => {
     // the log also goes through the ledger's maskSecrets (a short Slack token no command-line mask knows)
     expect(maskCommandLine('cmd /c notify xoxb-12345-abcde')).not.toContain('xoxb-12345-abcde');
 
-    // The PowerShell applies exactly these masks to the command line before writing it.
+    // The PowerShell applies exactly these masks to the command line, cut first, before writing it.
     const script = innerScript('C:\\x\\main-exit-1-2.json');
-    const chain = COMMAND_LINE_MASKS.map((mask) => ` -replace '${mask.source.replace(/'/g, "''")}', '${mask.to}'`).join('');
-    expect(script).toContain(`$cl = [string]$_.CommandLine${chain} }`);
+    const chain = COMMAND_LINE_MASKS.map(
+      (mask) => ` ${mask.caseSensitive ? '-creplace' : '-replace'} '${mask.source.replace(/'/g, "''")}', '${mask.to}'`,
+    ).join('');
+    expect(script).toContain(`if ($cl.Length -gt ${COMMAND_LINE_CUT}) { $cl = $cl.Substring(0, ${COMMAND_LINE_CUT}) }; $cl = $cl${chain} }`);
 
     // Only the candidates to killer keep their command line; any other process of the PC keeps only its name.
     expect(script).toContain(`if ($_.Name -match '${KILLER_CANDIDATES}' -or $_.ParentProcessId -eq 6700)`);
@@ -107,6 +136,19 @@ describe('exit sentinel', () => {
     }
     for (const name of ['psql.exe', 'mysql.exe', 'curl.exe', 'git.exe', 'ssh.exe']) {
       expect(candidate.test(name), name).toBe(false);
+    }
+  });
+
+  it('keeps legible what says who ended the main, and masks a long line in linear-ish time', () => {
+    for (const [line, kept] of IDENTITY_LINES) {
+      expect(maskForDisk(line), line).toContain(kept);
+      expect(maskCommandLine(line), line).toContain(kept);
+    }
+    // the worst cases of the 3rd review, at the length the PowerShell cuts to
+    for (const line of ['pw'.repeat(COMMAND_LINE_CUT / 2), 'a'.repeat(COMMAND_LINE_CUT), `x=${'pw'.repeat(COMMAND_LINE_CUT / 2 - 1)}`]) {
+      const started = performance.now();
+      maskForDisk(line);
+      expect(performance.now() - started, line.slice(0, 12)).toBeLessThan(1000);
     }
   });
 

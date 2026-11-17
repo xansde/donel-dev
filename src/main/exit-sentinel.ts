@@ -34,37 +34,61 @@ export function classifyExitCode(code: number): ExitCause {
 }
 
 /**
- * Masks for a command line, applied by the PowerShell (`-replace`, case-insensitive) and here (flag `gi`); written
- * so the .NET and the JS engines read them the same way. They mask more than needed (`-Path` loses its value): a
- * readable command line is worth less than a password left in a log.
+ * Masks for a command line, applied by the PowerShell (`-replace`, or `-creplace` when `caseSensitive`) and here (flag
+ * `gi`, or `g`). Written in ASCII classes (no `\w`, no `\b`) so the .NET and the JS engines read them the same way,
+ * and with each name anchored where a word starts, so a long line costs at most a square of its length (it is cut to
+ * COMMAND_LINE_CUT first). They mask more than needed: a readable command line is worth less than a password left in
+ * a log; but what says who ended the main stays (`node -p "process.kill(N)"`, `-PassThru -Id N`, script paths).
  */
 const SECRET_WORD = '(?:password|passwd|pass|pwd|pw|secret|token|apikey|api-key|key|auth|credential)';
+/** A value: `\"x\"` (quotes escaped inside a quoted argument, as Node quotes them on Windows), `"x"` or `'x'`. */
+const QUOTED = `\\\\"[^"]*?\\\\"|"[^"]*"|'[^']*'`;
 
-export const COMMAND_LINE_MASKS: ReadonlyArray<{ readonly source: string; readonly to: string }> = [
+export interface CommandLineMask {
+  readonly source: string;
+  readonly to: string;
+  readonly caseSensitive?: boolean;
+}
+
+export const COMMAND_LINE_MASKS: readonly CommandLineMask[] = [
   // scheme://user:password@host
   { source: `(://[^/\\s:@"']+:)[^@\\s"']+@`, to: '$1***@' },
-  // Authorization: Bearer <token> / Basic <base64>
-  { source: '((?:bearer|basic)\\s+)\\S+', to: '$1***' },
+  // ConvertTo-SecureString 'x' -AsPlainText (also inside -Password (...) and PSCredential(...))
+  { source: `(ConvertTo-SecureString\\s+(?:-String\\s+)?)(${QUOTED}|[^\\s)]+)`, to: '$1***' },
+  // Authorization: Bearer <token> / Basic <base64> / token <token>
+  { source: `((?<![A-Za-z0-9_])(?:bearer|basic|token)\\s+)[^\\s"'=:][^\\s"']*`, to: '$1***' },
   // curl -u user:password, -u "user:password", -uuser:password, --user=user:password
   { source: `((?:^|\\s)(?:-u|--user)(?:=|\\s*)["']?[^\\s:"']+:)[^\\s"']+`, to: '$1***' },
-  // PGPASSWORD=x, set TOKEN=x, $env:TOKEN='x', --password=x, --db-password=x
-  { source: `((?:\\$env:)?[\\w.-]*${SECRET_WORD}[\\w.-]*\\s*=\\s*)("[^"]*"|'[^']*'|[^\\s&|;"']+)`, to: '$1***' },
-  // --password x, --db-password "x y", --client-secret x, --token x, --pw x
-  { source: `((?:^|\\s)--?[\\w-]*${SECRET_WORD}[\\w-]*\\s+)("[^"]*"|'[^']*'|\\S+)`, to: '$1***' },
-  // -pSenha, -p Senha (mysql, sshpass)
-  { source: `((?:^|\\s)-p\\s*)("[^"]*"|'[^']*'|[^\\s-]\\S*)`, to: '$1***' },
+  // PGPASSWORD=x, set TOKEN=x, $env:TOKEN='x', --password=x, @{'x-api-key'='x'}, environ['DB_PASSWORD']='x', auth=('u','x')
+  {
+    source: `((?<![A-Za-z0-9_.$:-])(?:\\$env:)?[A-Za-z0-9_.-]*${SECRET_WORD}[A-Za-z0-9_.-]*["']?\\]?\\s*=\\s*)(${QUOTED}|\\([^)]*\\)|[^\\s&|;"'}]+)`,
+    to: '$1***',
+  },
+  // X-API-Key: x, PRIVATE-TOKEN: x, "password":"x", {password:'x'}
+  { source: `((?<![A-Za-z0-9_.-])[A-Za-z0-9_.-]*${SECRET_WORD}[A-Za-z0-9_.-]*["']?\\s*:\\s*)(${QUOTED}|[^\\s,;}"']+)`, to: '$1***' },
+  // --password x, --db-password "x y", --client-secret x, --with-token x, --pw x (a whole flag: -PassThru is not one)
+  { source: `((?:^|\\s)--?(?:[A-Za-z0-9_]+-)*${SECRET_WORD}(?:-[A-Za-z0-9_]+)*\\s+)(${QUOTED}|\\S+)`, to: '$1***' },
+  // mysql -pSenha (attached, lowercase: `node -p "..."` and `-PassThru` stay)
+  { source: `((?:^|\\s)-p)([^\\s"'-][^\\s"']*)`, to: '$1***', caseSensitive: true },
+  // sshpass -p Senha
+  { source: `((?:^|\\s)sshpass(?:\\.exe)?\\s+-p\\s*)(${QUOTED}|\\S+)`, to: '$1***' },
   // /p:Senha, /password:Senha (Windows tools)
   { source: '((?:^|\\s)/(?:p|pw|pwd|pass|password)[:=])("[^"]*"|\\S+)', to: '$1***' },
   // AWS access key ids, 20 characters
-  { source: '\\b(?:AKIA|ASIA)[A-Z0-9]{16}\\b', to: '***' },
-  // any long run of token-like characters (keys, tokens, base64)
-  { source: '[A-Za-z0-9_+/=-]{24,}', to: '***' },
+  { source: '(?<![A-Za-z0-9_])(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Za-z0-9_])', to: '***' },
+  // any long run of token-like characters without a slash (keys, tokens, base64url, hex)
+  { source: '[A-Za-z0-9_+=-]{24,}', to: '***' },
+  // base64 with slashes (an AWS secret), but never a piece of a path: it may not start right after / \ : . or a letter
+  { source: '(?<![A-Za-z0-9_+/=:.\\\\-])[A-Za-z0-9+=][A-Za-z0-9+/=]{23,}', to: '***' },
 ];
 
-/** What the PowerShell does to a command line before the disk: the command-line masks alone. */
+/** The command line is cut to this before the masks: a long one would cost the PowerShell seconds per process. */
+export const COMMAND_LINE_CUT = 2048;
+
+/** What the PowerShell does to a command line before the disk: the cut, then the command-line masks alone. */
 export function maskForDisk(text: string): string {
-  let out = text;
-  for (const mask of COMMAND_LINE_MASKS) out = out.replace(new RegExp(mask.source, 'gi'), mask.to);
+  let out = text.length > COMMAND_LINE_CUT ? text.slice(0, COMMAND_LINE_CUT) : text;
+  for (const mask of COMMAND_LINE_MASKS) out = out.replace(new RegExp(mask.source, mask.caseSensitive ? 'g' : 'gi'), mask.to);
   return out;
 }
 
@@ -107,7 +131,9 @@ export function buildExitSentinelCommand(options: ExitSentinelOptions): { file: 
   }
   const target = psQuote(options.recordPath);
   const temp = psQuote(`${options.recordPath}.tmp`);
-  const masks = COMMAND_LINE_MASKS.map((mask) => ` -replace ${psQuote(mask.source)}, '${mask.to}'`).join('');
+  const masks = COMMAND_LINE_MASKS.map(
+    (mask) => ` ${mask.caseSensitive ? '-creplace' : '-replace'} ${psQuote(mask.source)}, '${mask.to}'`,
+  ).join('');
   const save = [
     '$json = ConvertTo-Json -InputObject $record -Depth 4 -Compress',
     `[IO.File]::WriteAllText(${temp}, $json, (New-Object Text.UTF8Encoding $false))`,
@@ -132,7 +158,8 @@ export function buildExitSentinelCommand(options: ExitSentinelOptions): { file: 
     '$record.aliveAfterExit = @(Get-CimInstance Win32_Process | Where-Object { $_.CreationDate -gt $since -and $_.CreationDate -le $end } | Sort-Object CreationDate |' +
       ` Select-Object -Last ${RECENT_MAX} | ForEach-Object {` +
       // only a candidate to killer (or a child of the main) keeps its command line, masked before the disk
-      ` $cl = ''; if ($_.Name -match ${psQuote(KILLER_CANDIDATES)} -or $_.ParentProcessId -eq ${pid}) { $cl = [string]$_.CommandLine${masks} };` +
+      ` $cl = ''; if ($_.Name -match ${psQuote(KILLER_CANDIDATES)} -or $_.ParentProcessId -eq ${pid}) { $cl = [string]$_.CommandLine;` +
+      ` if ($cl.Length -gt ${COMMAND_LINE_CUT}) { $cl = $cl.Substring(0, ${COMMAND_LINE_CUT}) }; $cl = $cl${masks} };` +
       " if ($cl.Length -gt 300) { $cl = $cl.Substring(0, 300) };" +
       " [ordered]@{ pid = [int]$_.ProcessId; ppid = [int]$_.ParentProcessId; name = [string]$_.Name;" +
       " startedAt = $_.CreationDate.ToUniversalTime().ToString('o'); commandLine = $cl } })",
