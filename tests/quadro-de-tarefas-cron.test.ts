@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CHARGE_EVERY_MS, CHARGE_MAX, fieldIsFree, linkKind, planJustify, planVigia, responseSince, VIGIA_MAX_PER_DAY, type CronCard } from '../src/shared/board/cron';
+import { afterBusyField, BUSY_MAX, CHARGE_EVERY_MS, CHARGE_MAX, fieldIsFree, linkKind, planJustify, planVigia, responseSince, VIGIA_MAX_PER_DAY, withShadowNotice, type CronCard } from '../src/shared/board/cron';
 import { STALL_MS } from '../src/shared/board/rules';
 import { renderBoardPage } from '../src/shared/board/page';
 
@@ -41,6 +41,21 @@ describe('vigia', () => {
     // a long tool call (no finished turn) is working, not stopped
     expect(planVigia(card(), { alive: true, idleSince: null }, [], NOW).do).toBe('skip');
     expect(planVigia(card({ stage: 'blocked', justification: justification(NOW + 1) }), idle, [], NOW).do).toBe('skip');
+  });
+
+  it('campo ocupado rodada após rodada chega ao Líder, em vez de travar a cobrança para sempre', () => {
+    for (let busy = 1; busy < BUSY_MAX; busy++) expect(afterBusyField(card(), busy, 'campo com texto', NOW).do).toBe('skip');
+    expect(afterBusyField(card(), BUSY_MAX, 'campo com texto', NOW)).toMatchObject({ do: 'leader' });
+    expect(afterBusyField(card({ leaderNoticedAt: NOW - 60_000 }), BUSY_MAX, 'campo com texto', NOW).do).toBe('skip');
+  });
+
+  it('em sombra, o aviso simulado ao Líder segura a repetição até o cartão mudar de coluna', () => {
+    const wakes = Array.from({ length: VIGIA_MAX_PER_DAY }, (_, i) => NOW - (i + 1) * 3600_000).reverse();
+    const notice = { at: NOW - 60_000, stageSince: card().stageSince };
+    expect(planVigia(withShadowNotice(card({ leaderNoticedAt: null }), notice), idle, wakes, NOW).do).toBe('skip');
+    expect(planVigia(withShadowNotice(card({ stageSince: NOW - 90 * 60_000 }), notice), idle, wakes, NOW).do).toBe('leader');
+    // the real mark (from the database) does not count in shadow: the shadow keeps its own
+    expect(planVigia(withShadowNotice(card({ leaderNoticedAt: NOW - 60_000 }), undefined), idle, wakes, NOW).do).toBe('leader');
   });
 
   it('sessão fechada ou no teto do dia vai ao Líder, uma vez a cada 2 h', () => {

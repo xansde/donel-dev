@@ -165,7 +165,8 @@ export function createBoardClient(config: BoardConfig, doFetch: Fetch = fetch): 
       } catch (error) {
         // A kept-alive socket the server already closed fails before the request goes out: one retry on a fresh one.
         const code = (error as { cause?: { code?: string } } | null)?.cause?.code;
-        if (attempt === 0 && (code === 'UND_ERR_SOCKET' || code === 'ECONNRESET')) continue;
+        // Only reads: a POST may have reached the database (mark_cron 'charged' would count twice).
+        if (attempt === 0 && method === 'GET' && (code === 'UND_ERR_SOCKET' || code === 'ECONNRESET')) continue;
         throw new BoardError(`o quadro de tarefas não respondeu (${error instanceof Error ? error.name : 'erro'}); tente de novo`);
       }
     }
