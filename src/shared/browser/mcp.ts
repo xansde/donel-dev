@@ -8,6 +8,7 @@
 
 import { boardTools, isBoardToolName, parseBoardToolCall, type BoardToolCall } from '../mindscape/agent-tools';
 import { isLedgerToolName, LEDGER_TOOLS, parseLedgerToolCall, type LedgerToolCall } from '../ledger/tools';
+import { CARD_TOOLS, isCardToolName, parseCardToolCall, type CardToolCall } from '../board/tools';
 import { HILL_CLIMB_INSTRUCTIONS, HILL_CLIMB_TOOLS, isHillClimbToolName, parseHillClimbToolCall, type HillClimbToolCall } from '../hillClimb/tools';
 
 export const MCP_SERVER_NAME = 'donel';
@@ -15,7 +16,7 @@ export const MCP_SERVER_NAME = 'donel';
 const BOARD_INSTRUCTIONS =
   'Quadro (Mindscape) do projeto desta sessão, que o dono vê e usa para falar com você desenhando: quadro_ler mostra lugares (sessões com papel), post-its, desenhos e ligações; quadro_aplicar monta o quadro ao vivo num gesto que o dono desfaz com Ctrl+Z (lugares com papel e pedido, post-its, ligações, retângulos, elipses, linhas, mover); papeis_listar dá os papéis. Mover, editar e apagar só no que uma sessão criou; nunca no que o dono fez (a ferramenta recusa). Prefira mostrar um fluxo no quadro a um texto longo. Time de sessões: sessao_quem_sou, sessao_listar, sessao_abrir (papel + pedido; nasce ligada a você por uma seta), sessao_enviar (só pelas setas do quadro) e sessao_ver_tela. Para falar com outra sessão do Donel use sessao_enviar, nunca um recurso de mensagens do próprio agente: o app entrega direto no chat dela, sem pedir aprovação. ';
 const LEDGER_INSTRUCTIONS =
-  'Oráculo Harrow (o registro de tarefas entre lugares): tarefa_criar (frase literal de quem pediu, critério, prazo, dono, risco), tarefa_assumir, tarefa_entregar (sempre com prova: print, vídeo, protótipo .html autocontido, saída de comando ou link do CI; no risco alto, com o bloco paraODono: a carta que o dono lê, em texto de gente, sem código), tarefa_ver (a prova inteira: leia antes de decidir), tarefa_aceitar e tarefa_rejeitar (Revisor só no risco baixo, no próprio quadro e de fora da cadeia de quem entregou; quem entregou nunca aceita), tarefa_listar (por padrão só as vivas), tarefa_transferir (passa a tarefa adiante quando o lugar dono fechou ou outro vai fazer) e tarefa_cancelar (encerra com motivo o que não vai sair, como a carta substituída). Vale o risco declarado, também na tarefa que a sessão cria para si: risco baixo entregue com prova fecha pelo Revisor de fora da cadeia de quem entregou ou, sem Revisor vivo, sozinho com a prova, marcado no registro; só o risco alto vira carta do dono. Trabalho feito não se cancela para fugir do dono: entregue com prova. O andamento de cada sessão vai no Oráculo, não em aviso ao Líder: tarefa_andamento (estado, o que precisa, prova, próximo passo; travada e precisa-do-dono chegam na hora a quem está acima da sessão pelas setas, e sem seta ao Líder do quadro) e tarefa_novidades (o que mudou desde a sua última leitura, por sessão). Mensagem ao Slack em nome do dono sai direto, sem carta: carta_slack é opcional, só quando quiser que o dono confira o texto antes. ';
+  'Oráculo Harrow (o registro de tarefas entre lugares): tarefa_criar (frase literal de quem pediu, critério, prazo, dono, risco), tarefa_assumir, tarefa_entregar (sempre com prova: print, vídeo, protótipo .html autocontido, saída de comando ou link do CI; no risco alto, com o bloco paraODono: a carta que o dono lê, em texto de gente, sem código), tarefa_ver (a prova inteira: leia antes de decidir), tarefa_aceitar e tarefa_rejeitar (Revisor só no risco baixo, no próprio quadro e de fora da cadeia de quem entregou; quem entregou nunca aceita), tarefa_listar (por padrão só as vivas), tarefa_transferir (passa a tarefa adiante quando o lugar dono fechou ou outro vai fazer) e tarefa_cancelar (encerra com motivo o que não vai sair, como a carta substituída). Vale o risco declarado, também na tarefa que a sessão cria para si: risco baixo entregue com prova fecha pelo Revisor de fora da cadeia de quem entregou ou, sem Revisor vivo, sozinho com a prova, marcado no registro; só o risco alto vira carta do dono. Trabalho feito não se cancela para fugir do dono: entregue com prova. O andamento de cada sessão vai no Oráculo, não em aviso ao Líder: tarefa_andamento (estado, o que precisa, prova, próximo passo; travada e precisa-do-dono chegam na hora a quem está acima da sessão pelas setas, e sem seta ao Líder do quadro) e tarefa_novidades (o que mudou desde a sua última leitura, por sessão). Mensagem ao Slack em nome do dono sai direto, sem carta: carta_slack é opcional, só quando quiser que o dono confira o texto antes. Para mandar ao dono um Tutorial (o que ele faz e você não consegue, passo a passo), uma Atualização (o que mudou) ou uma Ideia, use carta_criar com o tipo: o app monta a carta. ';
 export const MCP_ENDPOINT_PATH = '/mcp';
 /** Protocol versions this server answers with; a client asking for another one gets the newest of these. */
 export const SUPPORTED_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'] as const;
@@ -395,6 +396,8 @@ export interface McpHandlerContext {
   readonly ledgerExecutor?: (call: LedgerToolCall) => Promise<BrowserToolOutcome>;
   /** Hill climbing — the `hillclimb_*` tools of the Escalador; absent = no hill climbing tools. */
   readonly hillClimbExecutor?: (call: HillClimbToolCall) => Promise<BrowserToolOutcome>;
+  /** Quadro de tarefas — the `card_*` tools, run by the daemon on the VPS; absent = no card tools. */
+  readonly cardExecutor?: (call: CardToolCall) => Promise<BrowserToolOutcome>;
   readonly serverVersion: string;
 }
 
@@ -451,7 +454,7 @@ async function handleOne(message: unknown, ctx: McpHandlerContext): Promise<Json
       return {
         jsonrpc: '2.0',
         id,
-        result: { tools: [...(ctx.boardExecutor ? boardTools(ctx.openCap?.() ?? null) : []), ...(ctx.ledgerExecutor ? LEDGER_TOOLS : []), ...(ctx.hillClimbExecutor ? HILL_CLIMB_TOOLS : []), ...BROWSER_TOOLS] },
+        result: { tools: [...(ctx.boardExecutor ? boardTools(ctx.openCap?.() ?? null) : []), ...(ctx.ledgerExecutor ? LEDGER_TOOLS : []), ...(ctx.hillClimbExecutor ? HILL_CLIMB_TOOLS : []), ...(ctx.cardExecutor ? CARD_TOOLS : []), ...BROWSER_TOOLS] },
       };
     case 'tools/call': {
       const name = p.name;
@@ -487,6 +490,17 @@ async function handleOne(message: unknown, ctx: McpHandlerContext): Promise<Json
           climbOutcome = { kind: 'error', text: error instanceof Error ? error.message : String(error) };
         }
         return { jsonrpc: '2.0', id, result: toolResult(climbOutcome) };
+      }
+      if (typeof name === 'string' && ctx.cardExecutor && isCardToolName(name)) {
+        const card = parseCardToolCall(name, p.arguments);
+        if (!card.ok) return { jsonrpc: '2.0', id, result: toolResult({ kind: 'error', text: card.reason }) };
+        let cardOutcome: BrowserToolOutcome;
+        try {
+          cardOutcome = await ctx.cardExecutor(card.call);
+        } catch (error) {
+          cardOutcome = { kind: 'error', text: error instanceof Error ? error.message : String(error) };
+        }
+        return { jsonrpc: '2.0', id, result: toolResult(cardOutcome) };
       }
       if (typeof name !== 'string' || !TOOL_NAMES.has(name)) return errorResponse(id, JSON_RPC_ERRORS.invalidParams, `Unknown tool: ${String(name)}`);
       const parsed = parseToolCall(name, p.arguments);

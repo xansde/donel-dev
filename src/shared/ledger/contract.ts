@@ -278,6 +278,8 @@ export function lastDecision(task: LedgerTask): LedgerEvent | undefined {
 //               front); a replacement with no front of its own inherits the replaced one's. The Líder marks a task
 //               already made with op `frente`: one more `criada` event "⟦frente <name>⟧ ⟦pedido por <who>⟧" (not a
 //               transfer: no "transferida" mark); the last front, and the last "pedido por", win
+//   card kind → the birth `criada` of a card made by op `carta` "⟦carta tutorial|atualizacao|ideia⟧" (17/11,
+//               t-4e50f080), the LAST birth mark (`cardKindOf`); only the contract writes it, from a typed field
 //   priority  → a later `criada` event by the OWNER "⟦priorizada <n>⟧" (09/11, t-5c0df1df: the owner orders his asks
 //               in "Seus pedidos" and the Líder of each board reads the next one by that order). `n` is the place in
 //               the owner's single list (1 = first); the name and "the last one wins" are those of `priorizada` in
@@ -296,11 +298,20 @@ function markOf(text: string | undefined): { tag: string; rest: string } | null 
   return match ? { tag: match[1]!, rest: text!.slice(match[0].length) } : null;
 }
 
-/** The text of a birth event (or of a front mark): `{}` when there is nothing to mark. */
-function birthTagsOf(replaces: string | undefined, requestedBy: string | undefined, front?: string, lowAsked?: boolean): { text?: string } {
+/**
+ * The text of a birth event (or of a front mark): `{}` when there is nothing to mark. The card kind goes last: the
+ * alfa/beta before it read the first mark whole.
+ */
+function birthTagsOf(replaces: string | undefined, requestedBy: string | undefined, front?: string, lowAsked?: boolean, cardKind?: CardKind): { text?: string } {
   const asked = requestedBy ? cleanAskedBy(requestedBy) : '';
   const named = front ? cleanFrente(front) : '';
-  const tags = [...(replaces ? [`substitui ${replaces}`] : []), ...(asked ? [`${ASKED_BY}${asked}`] : []), ...(named ? [`${FRONT}${named}`] : []), ...(lowAsked ? [LOW_ASKED] : [])];
+  const tags = [
+    ...(replaces ? [`substitui ${replaces}`] : []),
+    ...(asked ? [`${ASKED_BY}${asked}`] : []),
+    ...(named ? [`${FRONT}${named}`] : []),
+    ...(lowAsked ? [LOW_ASKED] : []),
+    ...(cardKind ? [`${CARD_TAG}${cardKind}`] : []),
+  ];
   return tags.length ? { text: tags.reduceRight((rest, tag) => withMark(tag, rest), '') } : {};
 }
 
@@ -366,6 +377,21 @@ export function lowRiskAsked(task: LedgerTask): boolean {
   return tagsOf(task.events[0]?.text).includes(LOW_ASKED);
 }
 const ASKED_BY = 'pedido por ';
+
+/** 17/11 (t-4e50f080) — the kinds of card a session sends the owner with op `carta`, beyond a decision and a letter. */
+export type CardKind = 'tutorial' | 'atualizacao' | 'ideia';
+export const CARD_KINDS: readonly CardKind[] = ['tutorial', 'atualizacao', 'ideia'];
+const CARD_TAG = 'carta ';
+
+/** The kind of a card made by op `carta` (its last birth mark); `null` = any other task. */
+export function cardKindOf(task: LedgerTask): CardKind | null {
+  for (const tag of birthTags(task)) {
+    const kind = tag.startsWith(CARD_TAG) ? (tag.slice(CARD_TAG.length) as CardKind) : null;
+    if (kind && CARD_KINDS.includes(kind)) return kind;
+  }
+  return null;
+}
+
 /** `quemPediu` = the owner: the mirror writes the owner's name. */
 export const ASKED_BY_OWNER = 'dono';
 export const MAX_ASKED_BY_CHARS = 80;
@@ -563,6 +589,8 @@ export type LedgerOp =
   | { readonly op: 'rejeitar'; readonly id: string; readonly reason: string; readonly requestId?: string; readonly option?: string }
   /** v4 — a place asks the owner to send a Slack message (born `entregue`, high risk). */
   | { readonly op: 'carta-slack'; readonly projectPath: string; readonly slack: SlackLetter }
+  /** 17/11 — a place sends the owner a Tutorial, an Update or an Idea (born `entregue`, high risk; `createOwnerCard`). */
+  | { readonly op: 'carta'; readonly projectPath: string; readonly card: OwnerCard; /** The call's key (`repeatedWrite`). */ readonly requestId?: string }
   /** v4 — the guard let the one send of an accepted letter through. */
   | { readonly op: 'slack-enviada'; readonly id: string }
   /**
@@ -611,7 +639,7 @@ export type LedgerOpResult = { readonly ok: true; readonly doc: LedgerDoc; reado
 export const REPEAT_WRITE_WINDOW_MS = 30 * 60 * 1000;
 
 /** The ops a session repeats when it does not know whether the first call was written. */
-const REPEATABLE_OPS: ReadonlySet<LedgerOp['op']> = new Set(['criar', 'andamento', 'cancelar', 'transferir']);
+const REPEATABLE_OPS: ReadonlySet<LedgerOp['op']> = new Set(['criar', 'carta', 'andamento', 'cancelar', 'transferir']);
 
 /**
  * The task a repeat of `op` by `actor` already wrote, within `REPEAT_WRITE_WINDOW_MS` of `now`; `null` = not written.
@@ -637,7 +665,7 @@ export function repeatedWrite(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
     const replaces = op.replaces?.trim();
     for (const task of Object.values(doc.tasks)) {
       const birth = task.events[0];
-      if (birth?.kind !== 'criada' || task.slack || isCancelled(task)) continue;
+      if (birth?.kind !== 'criada' || task.slack || cardKindOf(task) || isCancelled(task)) continue;
       const born = birth.text ?? '';
       const owner = latest(task, isTransfer) ? undefined : task.ownerPlaceId;
       if (
@@ -653,6 +681,19 @@ export function repeatedWrite(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
         )
       )
         return task;
+    }
+    return null;
+  }
+  if (op.op === 'carta') {
+    // A card still as it was born (delivered, not cancelled): the same kind, title and built card on the same board.
+    if (!ownerCardShaped(op.card) || ownerCardRefusal(op.card)) return null;
+    const parts = ownerCardParts(op.card);
+    const built = JSON.stringify([parts.forOwner, [{ kind: 'texto', text: parts.proof }]]);
+    for (const task of Object.values(doc.tasks)) {
+      const birth = task.events[0];
+      if (birth?.kind !== 'criada' || cardKindOf(task) !== op.card.kind || task.state !== 'entregue' || isCancelled(task)) continue;
+      const delivery = lastDelivery(task);
+      if (matches(birth, () => task.projectPath === op.projectPath && task.title === op.card.title.trim() && JSON.stringify([delivery?.forOwner, delivery?.proofs]) === built)) return task;
     }
     return null;
   }
@@ -718,6 +759,7 @@ const KNOWN_OPS: Readonly<Record<LedgerOp['op'], true>> = {
   comentar: true,
   rejeitar: true,
   'carta-slack': true,
+  carta: true,
   'slack-enviada': true,
   transferir: true,
   cancelar: true,
@@ -780,6 +822,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
     return { ok: true, doc: cancelled.doc, task };
   }
   if (op.op === 'carta-slack') return createSlackLetter(doc, actor, op, ctx);
+  if (op.op === 'carta') return createOwnerCard(doc, actor, op, ctx);
   if (op.op === 'slack-bot') return createAgentBotRecord(doc, actor, op, ctx);
 
   const task = doc.tasks[op.id];
@@ -790,12 +833,15 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
   switch (op.op) {
     case 'assumir':
       if (task.slack) return fail('Carta de Slack não se retoma: crie outra com carta_slack, com o texto ajustado.');
+      if (cardKindOf(task)) return fail(CARD_NOT_RETAKEN);
       if (isCancelled(task)) return fail(`A tarefa foi cancelada (${eventNote(lastDecision(task)!) ?? 'sem motivo'}); crie outra se o trabalho voltar.`);
       if (task.state !== 'aberta' && task.state !== 'rejeitada') return fail(`A tarefa está "${task.state}"; só se assume uma aberta ou rejeitada.`);
       if (!isOwnerPlace) return fail(`Só o lugar dono (${task.ownerPlaceId}) assume esta tarefa.`);
       return done(step(task, 'em-execucao', { kind: 'assumida', at: ctx.now, by: actor }));
 
     case 'entregar':
+      // t-4e50f080 — a card's block is the contract's, from typed fields: a new delivery would bring a free one under its kind.
+      if (cardKindOf(task)) return fail(CARD_NOT_RETAKEN);
       // Answering what the owner wrote on the card is a new delivery (a new card), without taking the task again.
       if (task.state !== 'em-execucao' && !(task.state === 'entregue' && ownerWroteSinceDelivery(task)))
         return fail(
@@ -1091,6 +1137,148 @@ function createSlackLetter(doc: LedgerDoc, actor: LedgerActor, op: Extract<Ledge
 }
 
 // ---------------------------------------------------------------------------------------------------------------
+// Cards a session sends the owner (17/11, t-4e50f080): Tutorial, Update, Idea. The session gives typed fields; the
+// contract builds the card (the "para o dono" block, a text proof and the kind's birth mark), so a session never
+// writes a mark nor picks the options. Born `entregue` and high risk: only the high risk reaches the owner.
+
+/** What a session sends for each kind. Texts the owner reads on the front have no code; the steps and the details are
+ * the card's text proof, where a command is normal. */
+export type OwnerCard =
+  | { readonly kind: 'tutorial'; readonly title: string; readonly whyNot: string; readonly steps: readonly string[]; readonly cheer?: string }
+  | { readonly kind: 'atualizacao'; readonly title: string; readonly summary: string; readonly details?: string }
+  | { readonly kind: 'ideia'; readonly title: string; readonly idea: string; readonly why: string; readonly details?: string };
+
+export const CARD_LIMITS = { whyNot: 280, step: 200, minSteps: 2, maxSteps: 10, cheer: 200, summary: 280, idea: 280, why: 200, details: 4000 } as const;
+/** The cheer of a tutorial when the session gives none. */
+export const DEFAULT_CHEER = 'Você consegue, sim.';
+
+const CARD_NAMES: Readonly<Record<CardKind, string>> = { tutorial: 'Tutorial', atualizacao: 'Atualização', ideia: 'Ideia' };
+
+/** A card is not taken again nor delivered again (its block is built by the contract): it is replaced. */
+export const CARD_NOT_RETAKEN = 'Carta não se retoma nem se entrega de novo: encerre esta com tarefa_cancelar e, se for o caso, mande outra com carta_criar, com o ajuste.';
+
+/** The op may come raw from another app (the VPS's Oráculo): a field of the wrong type is refused, never thrown on. */
+function ownerCardShaped(value: unknown): value is OwnerCard {
+  if (!isRecord(value) || !CARD_KINDS.includes(value.kind as CardKind)) return false;
+  const optional = (key: string): boolean => value[key] === undefined || str(value[key]);
+  return (
+    str(value.title) &&
+    (value.kind === 'tutorial'
+      ? str(value.whyNot) && Array.isArray(value.steps) && value.steps.every(str) && optional('cheer')
+      : value.kind === 'atualizacao'
+        ? str(value.summary) && optional('details')
+        : str(value.idea) && str(value.why) && optional('details'))
+  );
+}
+
+/** Why the session's fields cannot make a card; `null` = they can. The field names are the tool's (`carta_criar`). */
+function ownerCardRefusal(card: OwnerCard): string | null {
+  const plain: [string, string, number][] = [['titulo', card.title, MAX_TITLE_CHARS]];
+  const raw: [string, string, number][] = [];
+  if (card.kind === 'tutorial') {
+    plain.push(['porQueNao', card.whyNot, CARD_LIMITS.whyNot]);
+    if (card.cheer !== undefined) plain.push(['incentivo', card.cheer, CARD_LIMITS.cheer]);
+    if (card.steps.length < CARD_LIMITS.minSteps || card.steps.length > CARD_LIMITS.maxSteps) return `"passos": de ${CARD_LIMITS.minSteps} a ${CARD_LIMITS.maxSteps} frases.`;
+    card.steps.forEach((step, i) => raw.push([`passos[${i + 1}]`, step, CARD_LIMITS.step]));
+    if (card.steps.some((step) => /[\r\n]/.test(step))) return '"passos": cada passo numa linha só.';
+  } else if (card.kind === 'atualizacao') {
+    plain.push(['resumo', card.summary, CARD_LIMITS.summary]);
+  } else {
+    plain.push(['ideia', card.idea, CARD_LIMITS.idea], ['porque', card.why, CARD_LIMITS.why]);
+  }
+  if (card.kind !== 'tutorial' && card.details !== undefined) raw.push(['detalhes', card.details, CARD_LIMITS.details]);
+  for (const [field, value, max] of plain) {
+    const why = textRefusal(field, value, max);
+    if (why) return why;
+  }
+  for (const [field, value, max] of raw) {
+    if (!value.trim()) return `"${field}" é obrigatório.`;
+    if (value.length > max) return `"${field}" longo demais (máximo ${max} caracteres).`;
+  }
+  return null;
+}
+
+/** The block and the text proof of a card, by kind (texts already checked by `ownerCardRefusal`). */
+function ownerCardParts(card: OwnerCard): { forOwner: LedgerForOwner; proof: string } {
+  const back = (label: string, effect: string): LedgerOption => ({ label, effect, closes: 'rejeitada' });
+  switch (card.kind) {
+    case 'tutorial':
+      return {
+        forOwner: {
+          question: 'Conseguiu?',
+          summary: card.whyNot.trim(),
+          options: [
+            { label: 'Consegui', effect: 'Fecha o tutorial.', closes: 'aceita', recommended: true },
+            back('Ainda não consigo', 'Volta para quem escreveu, com o que travou.'),
+          ],
+          why: card.cheer?.trim() || DEFAULT_CHEER,
+          risk: 'Nenhum: é um passo a passo para você fazer.',
+        },
+        proof: card.steps.map((step, i) => `${i + 1}. ${step.trim()}`).join('\n'),
+      };
+    case 'atualizacao':
+      return {
+        forOwner: {
+          question: 'Ficou claro?',
+          summary: card.summary.trim(),
+          options: [
+            { label: 'Li', effect: 'Fecha a carta.', closes: 'aceita', recommended: true },
+            back('Quero saber mais', 'Volta para quem escreveu, para explicar melhor.'),
+          ],
+          why: 'Para você saber o que mudou.',
+          risk: 'Nenhum: é só um aviso.',
+        },
+        proof: card.details?.trim() || card.summary.trim(),
+      };
+    case 'ideia':
+      return {
+        forOwner: {
+          question: 'Seguimos com a ideia?',
+          summary: card.idea.trim(),
+          options: [
+            { label: 'Gostei, segue', effect: 'Quem sugeriu segue com a ideia.', closes: 'aceita', recommended: true },
+            back('Agora não', 'Volta para quem sugeriu; ela pode cancelar.'),
+          ],
+          why: card.why.trim(),
+          risk: 'Nenhum por enquanto: nada muda sem você dizer que segue.',
+        },
+        proof: card.details?.trim() || card.idea.trim(),
+      };
+  }
+}
+
+function createOwnerCard(doc: LedgerDoc, actor: LedgerActor, op: Extract<LedgerOp, { op: 'carta' }>, ctx: LedgerOpContext): LedgerOpResult {
+  if (actor.kind !== 'lugar') return { ok: false, reason: 'A carta é de uma sessão ao dono.' };
+  if (!isRecord(op.card) || !CARD_KINDS.includes(op.card.kind)) return { ok: false, reason: `"tipo" tem de ser ${CARD_KINDS.join(', ')}.` };
+  if (!ownerCardShaped(op.card)) return { ok: false, reason: 'Carta recusada: faltam campos do tipo, ou vieram fora do formato.' };
+  const problem = ownerCardRefusal(op.card);
+  if (problem) return { ok: false, reason: `Carta recusada: ${problem}` };
+  const { forOwner, proof } = ownerCardParts(op.card);
+  const proofs: LedgerProof[] = [{ kind: 'texto', text: proof }];
+  // A backstop: the block the contract built obeys the same rules as one a session writes.
+  const why = forOwnerRefusal(forOwner, proofs);
+  if (why) return { ok: false, reason: `Carta recusada: ${why}` };
+  const title = op.card.title.trim();
+  const task: LedgerTask = {
+    id: ctx.newId(),
+    projectPath: op.projectPath,
+    title,
+    request: `${CARD_NAMES[op.card.kind]} para o dono: ${title}`,
+    doneWhen: 'O dono lê a carta e responde.',
+    due: new Date(ctx.now).toISOString().slice(0, 10),
+    ownerPlaceId: actor.placeId,
+    risk: 'alto',
+    state: 'entregue',
+    createdAt: ctx.now,
+    events: [
+      { kind: 'criada', at: ctx.now, by: actor, ...birthTagsOf(undefined, undefined, undefined, false, op.card.kind), ...requestOf(op) },
+      { kind: 'entregue', at: ctx.now, by: actor, proofs, forOwner },
+    ],
+  };
+  return { ok: true, doc: withTask(doc, task), task };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
 // Posts by an agent's own bot (owner, 06/11: the letter is for what goes out in HIS name). No letter: a record.
 
 /**
@@ -1195,7 +1383,11 @@ export const OWN_OPTION = 'Outra';
  * rejected (not sent).
  */
 export function ownOptionCloses(task: LedgerTask): LedgerOption['closes'] {
-  return task.slack ? 'rejeitada' : 'aceita';
+  if (task.slack) return 'rejeitada';
+  // t-4e50f080 — on a Tutorial or an Update his words are a doubt ("travei no passo 3"), never "Consegui"/"Li": they go
+  // back to whoever wrote it, as the option that closes rejected does. On an Idea they are his decision about it.
+  const kind = cardKindOf(task);
+  return kind === 'tutorial' || kind === 'atualizacao' ? 'rejeitada' : 'aceita';
 }
 
 /** Why the owner may not pick `option` (closing as `closes`) on the current delivery; `null` = may (or no option). */

@@ -431,6 +431,22 @@ describe('andamento no ledger, não no chat do Líder', () => {
     expect(await Promise.all(t.records.splice(0))).toEqual(['registrado']);
   });
 
+  it('carta ao dono (tutorial, atualização, ideia) não pega o andamento: o fim de turno vai para a tarefa de trabalho', async () => {
+    const t = await team();
+    t.bridge.turnEnded('conv-dev1', 'turno 1');
+    await Promise.all(t.records.splice(0));
+    const work = Object.values(parseLedgerDoc(JSON.parse(readFileSync(t.file, 'utf8'))).tasks).find((task) => task.ownerPlaceId === 'place:dev1')!.id;
+    const card = await runLedgerTool(t.service, caller('place:dev1', 'dev'), call('carta_criar', { tipo: 'tutorial', titulo: 'Login', porQueNao: 'O login pede o seu celular.', passos: ['Abra o app', 'Toque em entrar'] }));
+    expect(card.ok).toBe(true);
+    const cardId = (JSON.parse(card.text) as { id: string }).id;
+    t.bridge.turnEnded('conv-dev1', 'turno 2');
+    await Promise.all(t.records.splice(0));
+    await runLedgerTool(t.service, caller('place:dev1', 'dev'), call('tarefa_andamento', { estado: 'trabalhando', proximo: 'seguir' }));
+    const tasks = parseLedgerDoc(JSON.parse(readFileSync(t.file, 'utf8'))).tasks;
+    expect(tasks[cardId]!.events.filter((event) => progressOf(event))).toEqual([]);
+    expect(tasks[work]!.events.filter((event) => progressOf(event)).map((event) => progressOf(event)!.estado)).toEqual(['turno-encerrado', 'turno-encerrado', 'trabalhando']);
+  });
+
   it('só o lugar dono registra, e um Alfa v4 aberto ao lado lê e regrava o registro sem perdê-lo', async () => {
     const t = await team();
     const other = await runLedgerTool(t.service, caller('place:dev2', 'dev'), call('tarefa_andamento', { estado: 'trabalhando', id: Object.values(parseLedgerDoc(JSON.parse(readFileSync(t.file, 'utf8'))).tasks).find((task) => task.ownerPlaceId === 'place:dev1')!.id }));

@@ -335,8 +335,8 @@ const donelApi: DonelApi = {
     seedProject: (projectPath: string) => ipcRenderer.invoke(SESSION_CHANNELS.seedProject, projectPath) as Promise<AppConfigDto>,
 
     // B39 — where a conversation to resume lives (this computer or a remote place).
-    whereLives: (sessionId: string, projectPath: string) =>
-      ipcRenderer.invoke(SESSION_CHANNELS.whereLives, sessionId, projectPath) as Promise<SessionWhereLives>,
+    whereLives: (sessionId: string, projectPath: string, otherIds?: readonly string[]) =>
+      ipcRenderer.invoke(SESSION_CHANNELS.whereLives, sessionId, projectPath, otherIds ?? []) as Promise<SessionWhereLives>,
   },
 
   // 011-contas-e-provedores (etapa 1) — motor de contas + mods (nasce inerte,

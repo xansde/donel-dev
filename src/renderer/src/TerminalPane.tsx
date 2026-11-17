@@ -128,6 +128,8 @@ export interface TerminalPaneProps {
   providerId?: string;
   /** Sessões remotas — remote place where the CLI runs (fixed per tab, read only at spawn). */
   remoteId?: string;
+  /** t-205b44c8 — the live tmux there to attach to (`PtyCreateOptions.remoteAttachFolder`), read only at spawn. */
+  remoteAttachFolder?: string;
   /** Sessões remotas — kept on the remote so the next boot reopens the tab with its names. */
   tabName?: string;
   projectName?: string;
@@ -315,6 +317,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     args,
     providerId,
     remoteId,
+    remoteAttachFolder,
     tabName,
     projectName,
     openedBy,
@@ -398,6 +401,8 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
   leaderOfAllRef.current = leaderOfAll;
   const placeIdRef = useRef(placeId);
   placeIdRef.current = placeId;
+  const remoteAttachFolderRef = useRef(remoteAttachFolder);
+  remoteAttachFolderRef.current = remoteAttachFolder;
   const [status, setStatus] = useState<PaneStatus>({ kind: 'connecting' });
 
   // Ref pra sempre chamar a versão mais recente do callback sem precisar
@@ -567,7 +572,7 @@ export const TerminalPane = forwardRef<TerminalPaneHandle, TerminalPaneProps>(fu
     renewalIdRef.current = null;
 
     void window.donel.pty
-      .create({ cols: term.cols, rows: term.rows, cwd: spawnCwdRef.current ?? cwd, sessionType, args: spawnArgsRef.current ?? args, providerId, accountLoginId, renewalId, roleId: roleIdRef.current, ...(leaderOfAllRef.current ? { leaderOfAll: true } : {}), ...(placeIdRef.current ? { placeId: placeIdRef.current } : {}), ...(remoteId ? { remoteId, tabName, projectName, ...(openedBy ? { openedBy } : {}) } : {}) })
+      .create({ cols: term.cols, rows: term.rows, cwd: spawnCwdRef.current ?? cwd, sessionType, args: spawnArgsRef.current ?? args, providerId, accountLoginId, renewalId, roleId: roleIdRef.current, ...(leaderOfAllRef.current ? { leaderOfAll: true } : {}), ...(placeIdRef.current ? { placeId: placeIdRef.current } : {}), ...(remoteId ? { remoteId, tabName, projectName, ...(openedBy ? { openedBy } : {}), ...(remoteAttachFolderRef.current ? { remoteAttachFolder: remoteAttachFolderRef.current } : {}) } : {}) })
       .then((result) => {
         if (requestEpoch !== mountEpochRef.current) {
           // Geração já descartada (StrictMode double-invoke em dev, ou a aba

@@ -2,7 +2,7 @@
 // ("Dev · painel do Jobu"; without a name, the role: "Dev"). Shared by the phone and the desktop cards.
 
 import { naipeDoTipo, type Naipe } from '../celular';
-import { doneByOf, eventNote, lastDelivery, type LedgerActor, type LedgerDeliveredTo, type LedgerEvent, type LedgerTask } from './contract';
+import { cardKindOf, doneByOf, eventNote, lastDelivery, type CardKind, type LedgerActor, type LedgerDeliveredTo, type LedgerEvent, type LedgerTask } from './contract';
 import type { LedgerCommentResult } from './channels';
 
 const ROLE_LABELS: Readonly<Record<string, string>> = {
@@ -50,6 +50,15 @@ export function naipeDoPapel(roleId: string | undefined): Naipe {
   if (role === 'seguranca') return naipeDoTipo('seguranca');
   if (role === 'correcao' || role === 'fix') return naipeDoTipo('correcao');
   return naipeDoTipo('construcao');
+}
+
+/** The suit of each kind of card (owner, 16/11: Chaves Tutorial, Livros Atualização, Estrelas Ideia). */
+const NAIPE_DO_TIPO_DA_CARTA: Readonly<Record<CardKind, Naipe>> = { tutorial: 'chaves', atualizacao: 'livros', ideia: 'estrelas' };
+
+/** The suit of a card: its kind (`cardKindOf`) wins; without one, the role of who delivered (`naipeDoPapel`). */
+export function naipeDaCarta(task: LedgerTask, roleId: string | undefined): Naipe {
+  const kind = cardKindOf(task);
+  return kind ? NAIPE_DO_TIPO_DA_CARTA[kind] : naipeDoPapel(roleId);
 }
 
 /** The receipt of what the owner wrote on a card, by where it went (`deliveredTo`). */

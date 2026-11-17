@@ -7,11 +7,15 @@
 // names PEOPLE (who asked: the owner, someone from Slack, the source of a signal) and PLACES by their name
 // ("Dev · Mindscape de cadeiras"), never a role alone nor an id; the id is the last column.
 //
-// What never leaves: proof files (prints, videos, prototypes — size, and they can show sensitive data). A text
-// proof and a link do go, after `maskSecrets` (tokens, keys, passwords, e-mails, CPF).
+// What never leaves in a row: proof files. A text proof and a link do go, after `maskSecrets` (tokens, keys,
+// passwords, e-mails, CPF). t-36a99827 — the cards waiting for the owner go too (`cartaRows`), for the phone app: the
+// "para o dono" block, masked, and the delivery's print and prototype files (the prototype masked as text; a print
+// cannot be scanned — it is the same print the owner sees in the Oráculo). Videos stay only as a mention.
 
 import {
   ASKED_BY_OWNER,
+  HTML_MEDIA_TYPE,
+  cardKindOf,
   awaitsSend,
   doneByOf,
   eventNote,
@@ -26,14 +30,17 @@ import {
   transfersOf,
   viewState,
   waitsForOwner,
+  type CardKind,
   type LedgerActor,
   type LedgerDoc,
   type LedgerTask,
   type LedgerViewState,
+  type LedgerVisual,
 } from './contract';
 import { CLOSING_LABELS, closingOf, withoutMarks } from './closing';
 import { deliveryNote } from './labels';
 import { LEADER_OF_ALL } from '../mindscape/leader';
+import { maskSecrets } from './secret-scan';
 
 /**
  * One row of the table `tarefas` (docs/oraculo-espelho/supabase.sql), in the order a person reads it. Dates are
@@ -86,60 +93,8 @@ export const MAX_ROW_SUMMARY_CHARS = 300;
 /** How the owner is named when the main does not say. */
 export const DEFAULT_OWNER_NAME = 'Dono';
 
-// ---------------------------------------------------------------------------------------------------------------
-// Secret scan — before anything leaves the PC. A hit is replaced in place and reported (never its value).
-
-export interface MaskHit {
-  readonly kind: string;
-}
-
-// Order matters: whole-token shapes first, then the connection string (before the e-mail, which would eat
-// `senha@host`), then a secret-looking name with its value, then personal data.
-const SECRET_PATTERNS: ReadonlyArray<{ kind: string; re: RegExp; keep?: (match: string, ...groups: string[]) => string }> = [
-  { kind: 'chave privada', re: /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g },
-  { kind: 'token GitHub', re: /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g },
-  { kind: 'chave Anthropic/OpenAI', re: /\bsk-(?:ant-)?[A-Za-z0-9_-]{16,}/g },
-  { kind: 'token Supabase', re: /\b(?:sbp_[A-Za-z0-9]{20,}|sb_secret_[A-Za-z0-9_-]{10,})/g },
-  { kind: 'chave Stripe', re: /\b(?:(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{10,}|whsec_[A-Za-z0-9]{16,})/g },
-  { kind: 'token Slack', re: /\bxox[abposr]-[A-Za-z0-9-]{10,}/g },
-  {
-    kind: 'webhook Slack',
-    re: /\b(https?:\/\/hooks\.slack\.com\/)(?:services|workflows|triggers)\/[A-Za-z0-9_/-]+/g,
-    keep: (_m, base) => `${base}[segredo]`,
-  },
-  { kind: 'chave AWS', re: /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g },
-  { kind: 'chave Google', re: /\bAIza[A-Za-z0-9_-]{30,}/g },
-  { kind: 'JWT', re: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g },
-  { kind: 'Bearer', re: /\b(Bearer)\s+[A-Za-z0-9._~+/=-]{16,}/gi, keep: (_m, word) => `${word} [segredo]` },
-  // `postgres://app:p4ss!word@10.0.0.5/db` — any host (IP or name), any character but `@`, `/` and space.
-  { kind: 'senha', re: /\b([a-z][a-z0-9+.-]*:\/\/[^\s:/@]+:)[^\s@/]+@/gi, keep: (_m, head) => `${head}[segredo]@` },
-  // `PGPASSWORD=…`, `DB_PASSWORD=…`, `"password": "…"`, `"apiKey": "…"`, `senha: …`: the name stays, the value goes.
-  {
-    kind: 'senha',
-    re: /\b([A-Za-z0-9_.-]*(?:password|passwd|senha|secret|token|api[_-]?key)[A-Za-z0-9_.-]*)(["']?\s*[:=]\s*)(?!["']?\[segredo\])("[^"\n]+"|'[^'\n]+'|[^\s"',;&]{4,})/gi,
-    keep: (_m, name, sep, value) => {
-      const quote = value!.startsWith('"') || value!.startsWith("'") ? value![0] : '';
-      return `${name}${sep}${quote}[segredo]${quote}`;
-    },
-  },
-  { kind: 'e-mail', re: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g, keep: () => '[e-mail]' },
-  // With or without the dots: `123.456.789-00` and `12345678900`.
-  { kind: 'CPF', re: /\b\d{3}\.?\d{3}\.?\d{3}-?\d{2}\b/g, keep: () => '[cpf]' },
-];
-
-/** Replaces every secret-looking piece of `text`; `hits` says what was found (never the value). */
-export function maskSecrets(text: string): { text: string; hits: MaskHit[] } {
-  const hits: MaskHit[] = [];
-  let out = text;
-  for (const { kind, re, keep } of SECRET_PATTERNS) {
-    out = out.replace(re, (...args: unknown[]) => {
-      hits.push({ kind });
-      const groups = args.slice(1, -2).map((g) => (typeof g === 'string' ? g : ''));
-      return keep ? keep(String(args[0]), ...groups) : '[segredo]';
-    });
-  }
-  return { text: out, hits };
-}
+// Secret scan (`secret-scan.ts`) — before anything leaves the PC.
+export { maskSecrets, type MaskHit } from './secret-scan';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Places — by name, never by id. The session registry forgets a closed session (it keeps the last few), so the
@@ -415,6 +370,126 @@ export function tarefaRows(doc: LedgerDoc, places?: PlaceInfoOf, options: Tarefa
   const rows = Object.values(doc.tasks)
     .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
     .map((task) => tarefaRow(doc, task, places, masked, options));
+  return { rows, masked };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Cards for the phone (t-36a99827) — what `celular_cartas_gravar` receives, one per task waiting for the owner. The
+// shape is the phone's (`src/shared/celular.ts`: `CartaCelular`), with the visual's proofs as numbers.
+
+export interface CartaOpcao {
+  readonly rotulo: string;
+  readonly efeito: string;
+  readonly risco?: string;
+  readonly fecha: 'aceita' | 'rejeitada';
+  readonly recomendada?: true;
+}
+
+/** The front of the card. `prova`, `antes` and `depois` are `ordem`s of `provas` (positions in the delivery's proofs). */
+export type CartaVisual =
+  | { readonly tipo: 'prova'; readonly prova: number }
+  | { readonly tipo: 'antes-depois'; readonly antes: number; readonly depois: number }
+  | { readonly tipo: 'checagens'; readonly itens: ReadonlyArray<{ readonly nome: string; readonly ok: boolean; readonly frase: string }> };
+
+export type CartaProvaTipo = 'imagem' | 'prototipo' | 'video';
+
+/** A proof file of the card's delivery; the destination reads `file` from `ledger-provas/` and never ships the name. */
+export interface CartaProvaRef {
+  /** Position in the delivery's proofs (the same number the visual uses). */
+  readonly ordem: number;
+  readonly tipo: CartaProvaTipo;
+  readonly media_type: string;
+  readonly rotulo: string;
+  readonly file: string;
+}
+
+/**
+ * One task waiting for the owner. Without a card (the Revisor's daily sample — already accepted —, or a delivery
+ * with no "para o dono" block) every card field is `null` and `opcoes` is empty: only the proofs go.
+ */
+export interface CartaRow {
+  readonly id: string;
+  /** The card's own title (`forOwner.title`); `null` = the task's title (`tarefas.titulo`). */
+  readonly titulo: string | null;
+  readonly pergunta: string | null;
+  readonly resumo: string | null;
+  readonly opcoes: readonly CartaOpcao[];
+  readonly porque: string | null;
+  readonly risco: string | null;
+  readonly visual: CartaVisual | null;
+  readonly provas: readonly CartaProvaRef[];
+  /** 17/11 — the kind of a card made by `carta_criar` (`cardKindOf`); `null` = a decision, a letter, a sample. */
+  readonly tipo: CardKind | null;
+  /** 17/11 — the text proof of a typed card (the numbered steps, the details), masked, up to `MAX_CARD_BODY_CHARS`. */
+  readonly corpo: string | null;
+}
+
+/** The longest `corpo` that goes to the phone (the column's limit). */
+export const MAX_CARD_BODY_CHARS = 4000;
+
+function cartaVisual(visual: LedgerVisual | undefined, mask: (field: string, value: string) => string): CartaVisual | null {
+  if (!visual) return null;
+  switch (visual.kind) {
+    case 'prova':
+      return { tipo: 'prova', prova: visual.proof };
+    case 'antes-depois':
+      return { tipo: 'antes-depois', antes: visual.before, depois: visual.after };
+    case 'checagens':
+      return {
+        tipo: 'checagens',
+        itens: visual.checks.map((check, i) => ({ nome: mask(`carta.visual.itens[${i}].nome`, check.name), ok: check.ok, frase: mask(`carta.visual.itens[${i}].frase`, check.sentence) })),
+      };
+  }
+}
+
+function cartaProvaTipo(mediaType: string): { tipo: CartaProvaTipo; rotulo: string } {
+  if (mediaType === HTML_MEDIA_TYPE) return { tipo: 'prototipo', rotulo: 'Protótipo' };
+  return mediaType.startsWith('video/') ? { tipo: 'video', rotulo: 'Vídeo' } : { tipo: 'imagem', rotulo: 'Print' };
+}
+
+export function cartaRow(task: LedgerTask, masked: MaskNote[]): CartaRow {
+  const mask = (field: string, value: string): string => {
+    const result = maskSecrets(value);
+    if (result.hits.length > 0) masked.push({ taskId: task.id, field, kinds: [...new Set(result.hits.map((hit) => hit.kind))] });
+    return result.text;
+  };
+  const delivery = lastDelivery(task);
+  const provas = (delivery?.proofs ?? []).flatMap((proof, ordem): CartaProvaRef[] =>
+    proof.kind === 'arquivo' ? [{ ordem, ...cartaProvaTipo(proof.mediaType), media_type: proof.mediaType, file: proof.file }] : [],
+  );
+  const tipo = cardKindOf(task);
+  const body = tipo ? delivery?.proofs?.find((proof) => proof.kind === 'texto') : undefined;
+  const typed = { tipo, corpo: body?.kind === 'texto' ? mask('carta.corpo', body.text).slice(0, MAX_CARD_BODY_CHARS) : null };
+  // The Revisor's sample is already accepted: the phone draws the old card (Confirmo / Rejeitar), never options.
+  const forOwner = task.state === 'aceita' ? undefined : delivery?.forOwner;
+  if (!forOwner) return { id: task.id, titulo: null, pergunta: null, resumo: null, opcoes: [], porque: null, risco: null, visual: null, provas, ...typed };
+  return {
+    id: task.id,
+    titulo: forOwner.title ? mask('carta.titulo', forOwner.title) : null,
+    pergunta: mask('carta.pergunta', forOwner.question),
+    resumo: mask('carta.resumo', forOwner.summary),
+    opcoes: forOwner.options.map((option, i) => ({
+      rotulo: mask(`carta.opcoes[${i}].rotulo`, option.label),
+      efeito: mask(`carta.opcoes[${i}].efeito`, option.effect),
+      ...(option.risk ? { risco: mask(`carta.opcoes[${i}].risco`, option.risk) } : {}),
+      fecha: option.closes,
+      ...(option.recommended ? { recomendada: true as const } : {}),
+    })),
+    porque: mask('carta.porque', forOwner.why),
+    risco: mask('carta.risco', forOwner.risk),
+    visual: cartaVisual(forOwner.visual, mask),
+    provas,
+    ...typed,
+  };
+}
+
+/** Every task waiting for the owner (`waitsForOwner`), oldest first. The list is whole: what is not in it leaves the phone. */
+export function cartaRows(doc: LedgerDoc): { rows: CartaRow[]; masked: MaskNote[] } {
+  const masked: MaskNote[] = [];
+  const rows = Object.values(doc.tasks)
+    .filter((task) => waitsForOwner(doc, task))
+    .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+    .map((task) => cartaRow(task, masked));
   return { rows, masked };
 }
 

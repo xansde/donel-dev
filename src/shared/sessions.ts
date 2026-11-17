@@ -54,10 +54,30 @@ export const SESSION_CHANNELS = {
  */
 export type SessionWhereLives =
   | { readonly kind: 'local' }
-  | { readonly kind: 'remote'; readonly remoteId: string }
+  /**
+   * `liveSessionId` (t-205b44c8): another conversation of the same board place still runs in tmux there (its CLI went
+   * on past a `/clear`); the resume attaches to it instead of starting a second CLI on the same conversation.
+   */
+  | { readonly kind: 'remote'; readonly remoteId: string; readonly liveSessionId?: string }
   | { readonly kind: 'unreachable'; readonly labels: readonly string[] }
   /** t-e72ca49e — not on this disk and every remote place answered it has not it: never resumed on this computer. */
   | { readonly kind: 'nowhere'; readonly labels: readonly string[] };
+
+/** How many of a place's earlier conversations a resume asks about (`whereLives`, one ssh line each). */
+export const RESUME_OTHER_IDS_MAX = 50;
+
+/**
+ * t-205b44c8 — the other conversations of the board place a resume of `sessionId` asks whether their tmux still runs
+ * (past a `/clear`, the tmux of an earlier one carries the place's current conversation). Only for a resume of the
+ * place's CURRENT conversation: an older one resumed on purpose is not what that tmux carries. Newest first, capped.
+ */
+export function resumeOtherIds(place: { readonly sessionId?: string; readonly previous: readonly string[] } | undefined, sessionId: string): string[] {
+  if (!place || place.sessionId !== sessionId) return [];
+  return [...place.previous]
+    .reverse()
+    .filter((id) => id !== sessionId)
+    .slice(0, RESUME_OTHER_IDS_MAX);
+}
 
 /**
  * T412 (004) + T608 (006) + Fix #19 — push do `main` quando o transcript de
@@ -172,8 +192,11 @@ export interface DonelSessionsApi {
   forgetIfOrphan(sessionId: string): Promise<AppConfigDto>;
   /** T706/CA-8 — semeadura única de um projeto sem NENHUMA entrada no registro. */
   seedProject(projectPath: string): Promise<AppConfigDto>;
-  /** B39 — where the conversation `sessionId` of `projectPath` lives, to resume it there. */
-  whereLives(sessionId: string, projectPath: string): Promise<SessionWhereLives>;
+  /**
+   * B39 — where the conversation `sessionId` of `projectPath` lives, to resume it there. `otherIds`: the other
+   * conversations of its board place, asked whether one still runs in tmux there (t-205b44c8).
+   */
+  whereLives(sessionId: string, projectPath: string, otherIds?: readonly string[]): Promise<SessionWhereLives>;
 }
 
 const TAB_NAME_MAX_LENGTH = 40;

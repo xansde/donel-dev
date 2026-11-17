@@ -1,0 +1,4 @@
+{
+  "title": "Retomar depois de /clear volta para a mesma sessão",
+  "text": "Numa sessão do lugar remoto que passou por /clear e continua rodando lá, Retomar agora se liga a ela, em vez de abrir uma segunda cópia da mesma conversa. Se ela já está aberta em outra aba, o app avisa e não abre de novo."
+}

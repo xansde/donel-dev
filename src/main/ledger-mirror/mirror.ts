@@ -5,12 +5,18 @@
 // pending and tries again later, growing the wait; the next change goes too. The ledger file stays the source:
 // after a restart the main simply mirrors it once more.
 
-import { tarefaRows, type MaskNote, type PlaceInfoOf, type TarefaRow } from '../../shared/ledger/mirror';
+import { cartaRows, tarefaRows, type CartaRow, type MaskNote, type PlaceInfoOf, type TarefaRow } from '../../shared/ledger/mirror';
 import type { LedgerDoc } from '../../shared/ledger/contract';
 
-/** Where the rows go. `push` gets every row (an upsert); it rejects on failure, with a message free of secrets. */
+/**
+ * Where the rows go. `push` gets every row (an upsert); it rejects on failure, with a message free of secrets.
+ * `cartas` (t-36a99827) is the whole list of cards waiting for the owner; the sink ships them behind the tasks,
+ * on its own retry, and never fails the push for them.
+ */
 export interface MirrorSink {
-  push(rows: readonly TarefaRow[]): Promise<void>;
+  push(rows: readonly TarefaRow[], cartas?: readonly CartaRow[]): Promise<void>;
+  /** Stops what the sink still runs on its own (the cards' retry) when it is replaced or the mirror is off. */
+  dispose?(): void;
 }
 
 export interface MirrorTimers {
@@ -55,7 +61,7 @@ export const DEFAULT_MIRROR_DELAY_MS = 45_000;
 const DEFAULT_RETRY_MS = 60_000;
 const DEFAULT_MAX_RETRY_MS = 15 * 60_000;
 
-const nodeTimers: MirrorTimers = {
+export const nodeTimers: MirrorTimers = {
   set: (fn, ms) => {
     const handle = setTimeout(fn, ms);
     // Never keeps the process alive on quit.
@@ -105,8 +111,9 @@ export function createLedgerMirror(deps: LedgerMirrorDeps): LedgerMirror {
     inFlight = (async () => {
       try {
         const { rows, masked } = tarefaRows(doc, deps.places?.(), { ownerName: deps.ownerName?.() });
-        for (const note of masked) log(logMasked(note));
-        await sink.push(rows);
+        const cartas = cartaRows(doc);
+        for (const note of [...masked, ...cartas.masked]) log(logMasked(note));
+        await sink.push(rows, cartas.rows);
         failures = 0;
         lastError = null;
         lastSyncAt = now();

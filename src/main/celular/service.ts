@@ -59,6 +59,8 @@ export interface CelularCore extends CelularService {
   setEnabled(enabled: boolean): Promise<CelularState>;
   pair(): Promise<CelularPairResult>;
   revoke(deviceId: string): CelularState;
+  /** t-52bf8b45 — the paired phone that signed a decision of the app's queue (only its name), or `null`. */
+  verifyDecisionSignature(message: string, signatureHex: string): { readonly deviceName: string } | null;
 }
 
 /** What the PC's Preferences call when the Oráculo lives on the VPS: the daemon's phone, through its API. */
@@ -257,6 +259,10 @@ export function createCelularCore(deps: CelularCoreDeps): CelularCore {
       auth.revoke(deviceId);
       push.remove(deviceId);
       return state();
+    },
+    verifyDecisionSignature(message, signatureHex) {
+      const device = auth.verifySignature(message, signatureHex);
+      return device ? { deviceName: device.name } : null;
     },
     ledgerChanged(doc) {
       lastDoc = doc;

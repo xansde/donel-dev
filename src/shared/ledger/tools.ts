@@ -5,6 +5,9 @@
 
 import { FACTORY_ROLES } from '../roles';
 import {
+  CARD_KINDS,
+  CARD_LIMITS,
+  DEFAULT_CHEER,
   FOR_OWNER_LIMITS,
   MAX_CHECKS,
   MAX_OPTIONS,
@@ -18,12 +21,14 @@ import {
   MAX_ASKED_BY_CHARS,
   MAX_FRENTE_CHARS,
   MIN_OPTIONS,
+  type CardKind,
   type LedgerCheck,
   type LedgerForOwner,
   type LedgerOption,
   type LedgerRisk,
   type LedgerViewState,
   type LedgerVisual,
+  type OwnerCard,
 } from './contract';
 import { PROGRESS_FIELD_CHARS, PROGRESS_STATES } from './andamento';
 
@@ -80,6 +85,8 @@ export type LedgerToolCall =
       readonly arquivo?: string;
       readonly arquivoNome?: string;
     }
+  /** 17/11 — a Tutorial, an Update or an Idea for the owner (op `carta`): the contract builds the card from these fields. */
+  | { readonly tool: 'carta_criar'; readonly carta: OwnerCard }
   /** 08/11 — the session records how its work goes (`andamento.ts`), instead of a notice to the Líder. */
   | { readonly tool: 'tarefa_andamento'; readonly id?: string; readonly estado: (typeof PROGRESS_STATES)[number]; readonly precisa?: string; readonly prova?: string; readonly proximo?: string }
   /** 08/11 — what changed in the ledger since the caller's last read, grouped by session (`novidades.ts`). */
@@ -390,6 +397,32 @@ export const LEDGER_TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'carta_criar',
+    title: 'Mandar ao dono uma carta de Tutorial, Atualização ou Ideia',
+    description:
+      'Manda ao dono, no Oráculo Harrow (desktop e celular), uma carta que não é entrega de trabalho: "tutorial" (o que ele precisa fazer e você não consegue: por que você não consegue, o passo a passo e um incentivo), "atualizacao" (o que mudou) ou "ideia" (uma sugestão e o porquê). O app monta a carta, as opções e o naipe: você só manda os campos do tipo. A tarefa nasce entregue, sua, esperando o dono; a resposta dele aparece em tarefa_ver. A carta não se retoma nem se entrega de novo: se ele recusar ou escrever nela, encerre-a com tarefa_cancelar e, se for o caso, mande outra. Texto da frente sem código (sem id, caminho, branch, link ou crase); os passos e os detalhes podem ter comando.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tipo: { type: 'string', enum: CARD_KINDS, description: 'tutorial, atualizacao ou ideia.' },
+        titulo: { type: 'string', description: `O nome da carta, até ${MAX_TITLE_CHARS} caracteres, sem código.` },
+        porQueNao: { type: 'string', description: `Só tutorial: por que você não consegue fazer sozinha, até ${CARD_LIMITS.whyNot} caracteres, sem código.` },
+        passos: {
+          type: 'array',
+          items: { type: 'string' },
+          description: `Só tutorial: de ${CARD_LIMITS.minSteps} a ${CARD_LIMITS.maxSteps} passos, uma frase de até ${CARD_LIMITS.step} caracteres cada, numa linha; o app numera. Pode ter comando.`,
+        },
+        incentivo: { type: 'string', description: `Só tutorial, opcional: a frase de incentivo, até ${CARD_LIMITS.cheer} caracteres. Sem ela: "${DEFAULT_CHEER}"` },
+        resumo: { type: 'string', description: `Só atualizacao: o que mudou, até ${CARD_LIMITS.summary} caracteres, sem código.` },
+        ideia: { type: 'string', description: `Só ideia: a ideia, até ${CARD_LIMITS.idea} caracteres, sem código.` },
+        porque: { type: 'string', description: `Só ideia: por que vale, até ${CARD_LIMITS.why} caracteres, sem código.` },
+        detalhes: { type: 'string', description: `Atualizacao ou ideia, opcional: o texto inteiro, até ${CARD_LIMITS.details} caracteres. Pode ter código.` },
+      },
+      required: ['tipo', 'titulo'],
+      additionalProperties: false,
+    },
+  },
 ] as const;
 
 const NAMES: ReadonlySet<string> = new Set(LEDGER_TOOLS.map((tool) => tool.name));
@@ -500,6 +533,54 @@ function parseForOwnerInput(raw: unknown): LedgerForOwner | string {
     risk: texts.risco!,
     ...(visual ? { visual } : {}),
   };
+}
+
+/** The fields of each kind of `carta_criar`; a field of another kind is refused, never dropped in silence. */
+const CARD_FIELDS: Readonly<Record<CardKind, readonly string[]>> = {
+  tutorial: ['porQueNao', 'passos', 'incentivo'],
+  atualizacao: ['resumo', 'detalhes'],
+  ideia: ['ideia', 'porque', 'detalhes'],
+};
+
+/** The shape of `carta_criar` (types, required keys, sizes). The rules of the card are the contract's (`createOwnerCard`). */
+function parseOwnerCardInput(args: Record<string, unknown>): OwnerCard | string {
+  const kind = args.tipo as CardKind;
+  if (!CARD_KINDS.includes(kind)) return `"tipo" tem de ser ${CARD_KINDS.join(', ')}.`;
+  const foreign = Object.keys(args).find((key) => key !== 'tipo' && key !== 'titulo' && !CARD_FIELDS[kind].includes(key));
+  if (foreign) return `"${foreign}" não vai numa carta de ${kind}: ela leva ${['titulo', ...CARD_FIELDS[kind]].join(', ')}.`;
+  const fields: Record<string, string | undefined> = {};
+  const limits: Record<string, [number, boolean]> = {
+    titulo: [MAX_TITLE_CHARS, true],
+    porQueNao: [CARD_LIMITS.whyNot, kind === 'tutorial'],
+    incentivo: [CARD_LIMITS.cheer, false],
+    resumo: [CARD_LIMITS.summary, kind === 'atualizacao'],
+    ideia: [CARD_LIMITS.idea, kind === 'ideia'],
+    porque: [CARD_LIMITS.why, kind === 'ideia'],
+    detalhes: [CARD_LIMITS.details, false],
+  };
+  for (const key of ['titulo', ...CARD_FIELDS[kind]]) {
+    if (key === 'passos') continue;
+    const [max, required] = limits[key]!;
+    const value = text(args[key], key, max, required);
+    if (typeof value === 'object') return value.error;
+    fields[key] = value?.trim() ? value.trim() : undefined;
+  }
+  const title = fields.titulo!;
+  if (kind === 'tutorial') {
+    const raw = args.passos;
+    if (!Array.isArray(raw) || raw.length < CARD_LIMITS.minSteps || raw.length > CARD_LIMITS.maxSteps)
+      return `"passos" é uma lista de ${CARD_LIMITS.minSteps} a ${CARD_LIMITS.maxSteps} frases.`;
+    const steps: string[] = [];
+    for (const [i, step] of raw.entries()) {
+      const value = text(step, `passos[${i + 1}]`, CARD_LIMITS.step, true);
+      if (typeof value === 'object' || value === undefined) return typeof value === 'object' ? value.error : `"passos[${i + 1}]" é obrigatório (texto).`;
+      steps.push(value.trim());
+    }
+    return { kind, title, whyNot: fields.porQueNao!, steps, ...(fields.incentivo ? { cheer: fields.incentivo } : {}) };
+  }
+  const details = fields.detalhes ? { details: fields.detalhes } : {};
+  if (kind === 'atualizacao') return { kind, title, summary: fields.resumo!, ...details };
+  return { kind, title, idea: fields.ideia!, why: fields.porque!, ...details };
 }
 
 /** A role, never a person: the factory ones, the Curador and the Líder único (the main adds the owner's own roles). */
@@ -647,6 +728,10 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
           ...(caminho ? { arquivo: caminho, ...(typeof arquivoNome === 'string' && arquivoNome.trim() ? { arquivoNome: arquivoNome.trim() } : {}) } : {}),
         },
       };
+    }
+    case 'carta_criar': {
+      const carta = parseOwnerCardInput(args);
+      return typeof carta === 'string' ? fail(carta) : { ok: true, call: { tool: 'carta_criar', carta } };
     }
     case 'tarefa_andamento': {
       const ref = text(args.id, 'id', 120, false);

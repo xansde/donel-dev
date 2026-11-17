@@ -7,7 +7,10 @@
 //
 // Env: DONEL_ORACULO_DIR (default ~/.donel/oraculo), DONEL_ORACULO_HOST (default: this place's Tailscale address),
 // DONEL_ORACULO_PORT (default 47816), DONEL_LIVRO_ARQUIVO (F6 do ledger bom: the journal file; unset = no journal
-// route, which is today's production until F4).
+// route, which is today's production until F4), DONEL_BOARD_CONFIG (quadro de tarefas, t-1e354d15: default
+// ~/.donel/board/supabase.json; missing = no `card_*` tools).
+// `<dir>/decisoes.json` (t-52bf8b45, same shape as the board's config): the phone app's decision queue in Supabase,
+// applied to the ledger here; missing = the queue is off.
 
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, networkInterfaces } from 'node:os';
@@ -16,6 +19,7 @@ import { createSystemConfigIoDeps } from '../main/config-store';
 import { createLedgerService, ledgerProofsDir, nodeLedgerProofFs } from '../main/ledger-store';
 import { createCardWriter, type CardWriter } from '../main/ledger-card-writer';
 import { createCelularCore } from '../main/celular/service';
+import { createLedgerMobilePort } from '../main/celular/ledger-port';
 import { createOracleAdminRoutes } from './admin';
 import { createRelay } from './relay';
 import { pickTailscaleAddress } from '../main/celular/tailscale';
@@ -26,6 +30,8 @@ import { createReturnGuard } from './devolvido';
 import { createGateHandler, GATE_PORT, mergePicture, startGateServer, tunnelForward, type BoardPicture } from './portao';
 import { ORACLE_PORT, startOracleServer, type OracleServer } from './server';
 import { createDaemonVigia } from './vigia';
+import { createBoardClient, readBoardConfig, type BoardStore } from './board-client';
+import { createDecisoesConsumer, createDecisoesQueue, DECISOES_CONFIG_FILE } from './decisoes';
 
 export const TOKEN_HASH_FILE = 'pc.token.sha256';
 
@@ -81,6 +87,9 @@ async function main(): Promise<void> {
       return to === 'pendente' ? null : to;
     },
   });
+  // t-52bf8b45 — the phone app's queue decides through the same port as the PWA (dedup by pedido, owner queue check),
+  // over the guarded ledger, never `raw`.
+  const decisoesPort = createLedgerMobilePort(() => ledger, undefined, () => cardWriter);
   celular = createCelularCore({
     userDataDir: dir,
     io,
@@ -125,19 +134,53 @@ async function main(): Promise<void> {
   });
   server = await startOracleServer({ host, port, caller: (authorization) => callerOf(authorization, tokenHash(), services()), handler });
   writeFileSync(join(dir, 'url'), `${server.url}\n`, { mode: 0o600 });
+  // The task board: read at each call, so writing the config turns it on without a restart.
+  const boardConfigFile = process.env.DONEL_BOARD_CONFIG || join(homedir(), '.donel', 'board', 'supabase.json');
+  let boardStore: { readonly key: string; readonly store: BoardStore } | null = null;
+  let boardConfigWarned = false;
+  const cards = (): BoardStore | null => {
+    const config = readBoardConfig(boardConfigFile);
+    if (!config) {
+      if (!boardConfigWarned && existsSync(boardConfigFile)) {
+        boardConfigWarned = true;
+        console.error(`[oraculo] ${boardConfigFile} existe mas é inválido ({url https, serviceKeyFile}); quadro de tarefas desligado.`);
+      }
+      return null;
+    }
+    boardConfigWarned = false;
+    const key = `${config.url}|${config.serviceKeyFile}`;
+    if (boardStore?.key !== key) boardStore = { key, store: createBoardClient(config) };
+    return boardStore.store;
+  };
   const gatePort = Number(process.env.DONEL_ORACULO_PORTAO_PORT) || GATE_PORT;
   const gate = await startGateServer({
     port: gatePort,
-    handler: createGateHandler({ sessionsDir: join(homedir(), '.donel', 's'), ledger: () => ledger, picture: () => picture, forward: tunnelForward, serverVersion: 'oraculo-vps' }),
+    handler: createGateHandler({ sessionsDir: join(homedir(), '.donel', 's'), ledger: () => ledger, picture: () => picture, forward: tunnelForward, serverVersion: 'oraculo-vps', cards }),
   });
   // The setup of a remote session reads this to point its MCP at the gate.
   writeFileSync(join(dir, 'portao'), `${gate.port}\n`, { mode: 0o600 });
   // t-ffbf8e7d — the vigia of this place's locks, with the PC off too (the PC hands its setup at each handshake).
   const vigia = createDaemonVigia({ dir, ledger: () => ledger, log: (line) => console.log(line) });
   vigia.start();
+  // t-52bf8b45 — the config is read at each round: writing `decisoes.json` turns the queue on without a restart.
+  const decisoes = createDecisoesConsumer({
+    queue: () => {
+      const config = readBoardConfig(join(dir, DECISOES_CONFIG_FILE));
+      return config ? createDecisoesQueue(config) : null;
+    },
+    port: decisoesPort,
+    // Only a row signed by a phone paired here is the owner's (the APK's queue password is not).
+    verifier: () => (celular ? (message, signature) => celular?.verifyDecisionSignature(message, signature) ?? null : null),
+    phoneOn: () => celular?.state().enabled ?? false,
+    ledger: () => ledger,
+    returned: guard.returned,
+    log: (line) => console.log(line),
+  });
+  decisoes.start();
   console.log(`[oraculo] no ar em ${server.url} (${Object.keys(first.doc.tasks).length} tarefas${first.readOnly ? ', só leitura' : ''})`);
   const stop = (): void => {
     vigia.stop();
+    decisoes.stop();
     void Promise.all([server?.close(), celular?.dispose(), gate.close()]).then(() => process.exit(0));
   };
   process.on('SIGTERM', stop);

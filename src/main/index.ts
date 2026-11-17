@@ -239,13 +239,21 @@ import {
   remoteDirFor,
   decideWhereLives,
   RemoteSessionRegistry,
+  remoteFolderAlreadyLive,
   probeRemoteSession,
+  remoteAttachCommand,
   runRemoteScript,
+  runSetupWithRetry,
+  SSH_OPTIONS,
   type RemoteFile,
   type RemoteSessionMeta,
 } from './remote-session';
 import { RemoteLinkSupervisor } from './remote-link';
+import { RESUME_OTHER_IDS_MAX } from '../shared/sessions';
+import type { RemotePlace } from '../shared/accounts';
 import { sshGate } from './ssh-gate';
+import { sshMirrorSpawner } from './remote-mirror';
+import { DEFAULT_LINK_TIMING, PlaceLinks, placeLinkEnabled, type LinkTunnel } from './remote-place-link';
 import { runShutdownSteps, shutdownThenQuit } from './app-shutdown';
 import { createMainEventsLog, type MainEventLogger } from './main-events-log';
 import { createRunTrail } from './run-trail';
@@ -283,7 +291,7 @@ import { AccountEngine } from './accounts/account-engine';
 import { AccountEngineHost } from './accounts/account-engine-host';
 // 011-contas-e-provedores, etapa 3, Fase 2 (D3) — registro em memória
 // compartilhado entre reconstruções do motor (item 1 do Bloco 3).
-import { createReconnectRegistry } from './accounts/reconnect-registry';
+import { createFileReconnectStore, createReconnectRegistry } from './accounts/reconnect-registry';
 // Fase 2 (revisão, R1) — uma renovação por conta de cada vez entre reconstruções do motor.
 import { createRefreshCoordinator } from './accounts/refresh-coordinator';
 // 011-contas-e-provedores, etapa 3, Fase 1 — planos PUROS de "remover conta"
@@ -630,8 +638,26 @@ let hooksSettingsPath: string | null = null;
 let hookBridge: HookBridge | null = null;
 /** Sessões remotas — live remote tabs of this run (transcript mirrors, end of the remote session). */
 let remoteSessions: RemoteSessionRegistry | null = null;
-/** "Sem ligação" — how to spawn the ssh of each remote tab again (same id, same tunnels). */
-const remoteSpawns = new Map<string, { cwd: string; command: string; args: string[]; cols: number; rows: number }>();
+/** How a remote tab's terminal is spawned: on its place's link, or (place left out) as its own ssh with these argv. */
+interface RemoteSpawnSpec {
+  cwd: string;
+  command: string;
+  args: string[];
+  cols: number;
+  rows: number;
+  link: { readonly sshTarget: string; readonly sid: string; readonly tunnels: readonly LinkTunnel[] };
+}
+/** "Sem ligação" — how to spawn the terminal of each remote tab again (same id, same tunnels). */
+const remoteSpawns = new Map<string, RemoteSpawnSpec>();
+/**
+ * t-9accc989 (3) — the remote tabs of one place ride ONE ssh (remote-place-link.ts), not one each. A place where it
+ * does not work (no python3, or it never comes up) is left out for a while and its tabs spawn their own ssh, as
+ * before; `DONEL_SSH_LINK=off` does that for every place.
+ */
+const placeLinks = new PlaceLinks({ spawnLink: sshMirrorSpawner(SSH_OPTIONS), acquire: (sshTarget) => sshGate.acquire(sshTarget) }, DEFAULT_LINK_TIMING, {
+  enabled: placeLinkEnabled(process.env.DONEL_SSH_LINK),
+  onEvent: (sshTarget, event) => logMainEvent('place-link', { sshTarget, ...event }),
+});
 /**
  * "Sem ligação" (main/remote-link.ts) — an ssh of a remote tab that drops with the tmux alive is not the end of the
  * session: the exit is held back, the place reads "sem ligação" and the app relinks it.
@@ -653,15 +679,33 @@ function sshLoggedIn(ptyId: string): void {
 }
 ptyManager.onData((ptyId) => sshLoggedIn(ptyId));
 ptyManager.onExit((ptyId) => sshLoggedIn(ptyId));
+/**
+ * The terminal of a remote tab: a channel of its place's link when there is one (no login of its own: `loggedIn` is
+ * given back at once), else its own ssh, holding the login slot until its first byte or its exit.
+ */
+function createRemoteTabPty(ptyId: string, spec: RemoteSpawnSpec, loggedIn: () => void): void {
+  const link = placeLinks.linkFor(spec.link.sshTarget);
+  if (link) {
+    loggedIn();
+    const terminal = { command: remoteAttachCommand(spec.link.sid), cols: spec.cols, rows: spec.rows, tunnels: spec.link.tunnels };
+    ptyManager.create({ id: ptyId, cwd: spec.cwd, cols: spec.cols, rows: spec.rows, backend: () => link.openTerminal(terminal) });
+    return;
+  }
+  holdSshLogin(ptyId, loggedIn);
+  ptyManager.create({ id: ptyId, cwd: spec.cwd, command: spec.command, args: spec.args, cols: spec.cols, rows: spec.rows });
+}
+/** A login slot for a tab's own ssh; a tab on its place's link needs none. */
+function remoteTabLoginSlot(sshTarget: string): Promise<() => void> {
+  return placeLinks.linkFor(sshTarget) ? Promise.resolve(() => undefined) : sshGate.acquire(sshTarget);
+}
 const remoteLinks = new RemoteLinkSupervisor<PtyExitInfo>({
   probe: (sshTarget, sid) => probeRemoteSession(sshTarget, sid),
-  acquire: (sshTarget) => sshGate.acquire(sshTarget),
+  acquire: (sshTarget) => remoteTabLoginSlot(sshTarget),
   relink: (ptyId, loggedIn) => {
     const spawnSpec = remoteSpawns.get(ptyId);
     if (!spawnSpec) return false;
     try {
-      holdSshLogin(ptyId, loggedIn);
-      ptyManager.create({ id: ptyId, ...spawnSpec });
+      createRemoteTabPty(ptyId, spawnSpec, loggedIn);
     } catch {
       sshLoggedIn(ptyId);
       return false;
@@ -1114,7 +1158,9 @@ function broadcastAccountsChanged(view: AccountsViewDto): void {
  * `createEngine` criasse o seu próprio, um rebuild (add/remove conta,
  * troca de mod) perderia toda marca de "precisa reconectar" pendente.
  */
-const accountsReconnectRegistry = createReconnectRegistry();
+// t-205b44c8 (16/11) — persisted in `<userData>/accounts-reconnect.json` (ids only), so reopening the app does not
+// refresh again an account already known dead. The path is resolved on first use, after `app.setName`.
+const accountsReconnectRegistry = createReconnectRegistry({ store: createFileReconnectStore(() => join(app.getPath('userData'), 'accounts-reconnect.json')) });
 
 /** Lugares remotos — `ssh` do sistema, sem senha (a rede da pessoa autentica: Tailscale, chave). */
 const accountsRemoteClaudeState = createRemoteClaudeState();
@@ -1597,6 +1643,7 @@ function createMainWindow(): void {
         ['esteiraWatchers', () => disposeAllEsteiraResultWatchers()],
         ['browser', () => browserService?.destroyAll()], // navegador interno
         ['ptys', () => ptyManager.killAll()],
+        ['placeLinks', () => placeLinks.stopAll()], // after the PTYs: each tab's terminal hangs up first
       ],
       (name, error) => logMainEvent('shutdown-step-failed', { step: name, error: String(error) }),
     );
@@ -1874,10 +1921,32 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
   if (!place) throw new Error('Lugar remoto não encontrado — pode ter sido removido no painel Contas.');
   if (options.providerId) throw new Error('Provedor de terceiro ainda não roda em lugar remoto.');
   if (!remoteSessions) throw new Error('Sessões remotas ainda não estão prontas.');
-  const localCwd = options.cwd ?? homedir();
+  const registry = remoteSessions;
 
   const launcherArgs = withoutWorktreeArgs(options.args ?? []);
-  const { correlationId, extraArgs } = resolveClaudeCorrelation(launcherArgs, randomUUID);
+  const correlation = resolveClaudeCorrelation(launcherArgs, randomUUID);
+  // t-205b44c8 — the live tmux of the place that carries this conversation past a `/clear` (the renderer's lookup).
+  const attach = options.remoteAttachFolder;
+  if (attach !== undefined && (typeof attach !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(attach))) throw new Error('Id de sessão inválido para lugar remoto.');
+  const attachFolder = attach !== undefined && attach !== correlation.correlationId ? attach : null;
+  // One tab per tmux there, whatever path opens it (Retomar, sessao_retomar, the boot and its retries): a second client
+  // of the same CLI would end it under the other on close.
+  const held = registry.heldFolders();
+  if ([attachFolder, correlation.correlationId].some((folder) => folder !== null && remoteFolderAlreadyLive(held, place.sshTarget, folder))) {
+    throw new Error('Essa sessão já está aberta em outra aba deste app.');
+  }
+  return spawnRemoteClaudeSession(options, place, registry, launcherArgs, correlation, attachFolder);
+}
+
+async function spawnRemoteClaudeSession(
+  options: PtyCreateOptions,
+  place: RemotePlace,
+  remoteSessions: RemoteSessionRegistry,
+  launcherArgs: string[],
+  { correlationId, extraArgs }: ReturnType<typeof resolveClaudeCorrelation>,
+  attachFolder: string | null,
+): Promise<PtyCreateResult> {
+  const localCwd = options.cwd ?? homedir();
   const ptyId = randomUUID();
 
   // Fresh tokens and ports; a live remote session answers with the ones its CLI already holds.
@@ -1940,6 +2009,8 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
       statusLine: planStatusLineBridge({ mode: statusLineBridgeModeSetting, userStatusLine: null, chatEnabled: appConfig.chat.enabled }),
       roleScope,
       keyDirs: remoteKeyDirs,
+      // t-205b44c8 — which conversation this tmux carries now (a `/clear` moves it on); a resume reads it there.
+      conversationMarkPath: `$HOME/${REMOTE_SESSIONS_DIR}/${correlationId}/current`,
     });
     files.push({ name: 'settings.json', content: `${JSON.stringify(settings, null, 2)}\n` });
   } else {
@@ -1964,25 +2035,46 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
   // env goes in the claude.sh (`bypassEnvLines`), read from these args.
   const finalClaudeArgs = planLaunchPermission(claudeArgs, { ...spawnFacts, remote: true }, undefined).args;
 
-  await remoteSessions.waitEnded(correlationId);
   const git = localGitInfo(localCwd);
   // A renewal goes back to the worktree of the session it replaces, also when its args do not name one (t-62f0fa0b).
   const worktree = remoteSpawnWorktree(options.args, options.renewalId ? sessionRenewal?.get(options.renewalId)?.remote?.dir : null);
-  const script = buildRemoteSetupScript({
-    sid: correlationId,
-    homeRelativeDir: remoteDirFor(localCwd, appConfig.projectRoots),
-    ...(worktree !== null && isSafeWorktreeName(worktree) ? { worktree } : {}),
-    repoUrl: git.repoUrl,
-    branch: git.branch,
-    files,
-    claudeArgs: finalClaudeArgs,
-    meta,
-  });
-  const setup = await runRemoteScript(place.sshTarget, script);
-  const answer = parseRemoteSetupOutput(setup.stdout, setup.code, setup.stderr, setup.timedOut);
-  if (answer.kind === 'error') {
+  const setUp = async (folder: string) => {
+    await remoteSessions.waitEnded(folder);
+    const script = buildRemoteSetupScript({
+      sid: folder,
+      homeRelativeDir: remoteDirFor(localCwd, appConfig.projectRoots),
+      ...(worktree !== null && isSafeWorktreeName(worktree) ? { worktree } : {}),
+      repoUrl: git.repoUrl,
+      branch: git.branch,
+      files,
+      claudeArgs: finalClaudeArgs,
+      meta,
+      ...(folder !== correlationId ? { attachOnly: true } : {}),
+    });
+    // t-205b44c8 (a) — a launch that names its conversation (a reattach after a restart, a resume) tries the setup again
+    // when only the ssh transport failed (the place's sshd busy at boot: 255 'kex_exchange_identification: Connection
+    // reset'), inside this same pty.create: the same tab, never a second one. A brand-new session fails at once: it
+    // has no live tmux to lose. A transport failure never reads as `gone` (that is only the place's DONEL_GONE).
+    const runSetup = (): ReturnType<typeof runRemoteScript> => runRemoteScript(place.sshTarget, script);
+    const setup =
+      extraArgs.length === 0
+        ? await runSetupWithRetry(runSetup, {
+            onRetry: (attempt, said) => logMainEvent('remote-setup-retry', { sshTarget: place.sshTarget, sid: folder, attempt, said }),
+          })
+        : await runSetup();
+    return parseRemoteSetupOutput(setup.stdout, setup.code, setup.stderr, setup.timedOut);
+  };
+  // t-205b44c8 (b) — the tmux that carries this conversation past a `/clear` is attached to (it never starts a second
+  // CLI on it); gone since the lookup, the conversation is set up in its own folder, as before.
+  let folder = attachFolder ?? correlationId;
+  let answer = await setUp(folder);
+  if (answer.kind === 'gone') {
+    folder = correlationId;
+    answer = await setUp(folder);
+  }
+  if (answer.kind === 'error' || answer.kind === 'gone') {
     browserService?.releasePty(ptyId);
-    throw new Error(`${place.label}: ${answer.message}`);
+    throw new Error(`${place.label}: ${answer.kind === 'error' ? answer.message : 'o lugar remoto não respondeu como esperado.'}`);
   }
   const live = answer.kind === 'alive' ? answer.meta : meta;
 
@@ -1999,19 +2091,20 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
     ...(live.mcpPort !== null && mcp ? [{ remotePort: live.mcpPort, localPort: mcp.localPort }] : []),
   ];
 
-  const spawnSpec = {
+  const spawnSpec: RemoteSpawnSpec = {
     cols: options.cols,
     rows: options.rows,
     cwd: localCwd,
     command: process.platform === 'win32' ? 'ssh.exe' : 'ssh',
-    args: buildAttachSshArgs({ sshTarget: place.sshTarget, sid: correlationId, tunnels }),
+    args: buildAttachSshArgs({ sshTarget: place.sshTarget, sid: folder, tunnels }),
+    link: { sshTarget: place.sshTarget, sid: folder, tunnels },
   };
-  // t-eb9a736a — the tab's ssh takes a login slot of the place: the boot opens every remote tab at once.
-  holdSshLogin(ptyId, await sshGate.acquire(place.sshTarget));
+  // t-eb9a736a — a tab's own ssh takes a login slot of the place: the boot opens every remote tab at once.
+  const loggedIn = await remoteTabLoginSlot(place.sshTarget);
   try {
-    ptyManager.create({ id: ptyId, ...spawnSpec });
+    createRemoteTabPty(ptyId, spawnSpec, loggedIn);
     remoteSpawns.set(ptyId, spawnSpec);
-    remoteLinks.track(ptyId, place.sshTarget, correlationId);
+    remoteLinks.track(ptyId, place.sshTarget, folder);
   } catch (error) {
     sshLoggedIn(ptyId);
     sessionKeys.forget(ptyId);
@@ -2031,7 +2124,7 @@ async function createRemoteClaudeSession(options: PtyCreateOptions): Promise<Pty
   accountsLiveSessionPtyIds.add(ptyId);
   browserService?.registerPty(ptyId);
 
-  const mirror = remoteSessions.attach(ptyId, place.sshTarget, correlationId, answer.remoteDir);
+  const mirror = remoteSessions.attach(ptyId, place.sshTarget, correlationId, answer.remoteDir, folder);
   spawnedTranscriptPaths.set(correlationId, mirror);
   // B36 on a place — the renewed session keeps the old conversation above a divider, whose "abrir" opens the copy here.
   const renewed = options.renewalId ? sessionRenewal?.get(options.renewalId) : undefined;
@@ -3118,11 +3211,13 @@ function registerSessionIpcHandlers(): void {
    * remote place is asked by ssh, and the one that has it runs the resume. A place that does not answer makes
    * the answer `unreachable`: the renderer says so instead of opening an empty session on this computer.
    */
-  ipcMain.handle(SESSION_CHANNELS.whereLives, async (_event, sessionId: unknown, projectPath: unknown): Promise<SessionWhereLives> => {
+  ipcMain.handle(SESSION_CHANNELS.whereLives, async (_event, sessionId: unknown, projectPath: unknown, otherIds: unknown): Promise<SessionWhereLives> => {
     if (typeof sessionId !== 'string' || typeof projectPath !== 'string' || !/^[A-Za-z0-9-]{1,64}$/.test(sessionId)) return { kind: 'local' };
     if (localTranscriptExists(sessionId, projectPath)) return { kind: 'local' };
     const places = (accountEngineHost.current()?.getConfig() ?? appConfig.accounts).remotes;
-    const answers = places.length === 0 ? [] : await findRemoteTranscript(places, remoteDirFor(projectPath, appConfig.projectRoots), sessionId);
+    // t-205b44c8 — the other conversations of its board place: one may still run in tmux there, past a `/clear`.
+    const others = Array.isArray(otherIds) ? otherIds.filter((id): id is string => typeof id === 'string' && /^[A-Za-z0-9-]{1,64}$/.test(id)).slice(0, RESUME_OTHER_IDS_MAX) : [];
+    const answers = places.length === 0 ? [] : await findRemoteTranscript(places, remoteDirFor(projectPath, appConfig.projectRoots), sessionId, others);
     return decideWhereLives(false, answers, places);
   });
 
@@ -3620,6 +3715,8 @@ function registerLedgerMirror(): void {
     safeStorage,
     vaultIo: accountsVaultIo,
     places: placesSnapshot,
+    // The same folder in the remote mode: the PC keeps the copies `syncProofs` brings.
+    proofsDir: ledgerProofsDir(ledgerFilePath(process.env, app.getPath('userData'))),
     loadDoc: () => {
       try {
         return ledgerService?.load().doc ?? null;
@@ -4495,6 +4592,7 @@ function registerAccountsIpcHandlers(): void {
     appConfig = { ...appConfig, accounts: plan.config };
     persistAppConfig();
     applyAccountsEngineConfig();
+    accountsReconnectRegistry.clear(id); // t-205b44c8 — the persisted mark of a removed account goes with it.
 
     if (accountsVaultPath) {
       try {

@@ -29,6 +29,7 @@ files:
   - "!src/**"
   # O Oráculo da VPS (docs/planos/oraculo-na-vps.md) roda fora do app: não vai no instalador.
   - "!out/oraculo/**"
+  - "!out/board-cron/**"
   - "!tests/**"
   - "!patches/**"
   # Material de trabalho do repo (processo, rascunhos, protótipos, skills):
@@ -45,6 +46,7 @@ files:
   - "!release/**"
   - "!*.md"
   - "!electron.vite.config.*"
+  - "!*.vite.config.ts"
   - "!electron-builder.yml"
   - "!vitest.config.ts"
   - "!tsconfig*.json"

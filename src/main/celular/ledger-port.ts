@@ -20,9 +20,9 @@ import {
   type LedgerVisual,
 } from '../../shared/ledger/contract';
 import { isProgressEvent } from '../../shared/ledger/andamento';
-import { actorLabel, deliveryNote, naipeDoPapel, reciboDe, type PlaceNameOf } from '../../shared/ledger/labels';
+import { actorLabel, deliveryNote, naipeDaCarta, reciboDe, type PlaceNameOf } from '../../shared/ledger/labels';
 import type { CardWriter } from '../ledger-card-writer';
-import type { LedgerService } from '../ledger-store';
+import { LEDGER_NOT_OPEN, LEDGER_READ_FAILED, type LedgerService } from '../ledger-store';
 import { maskSecrets, summarize } from './mask';
 
 export interface DecisaoInput {
@@ -142,7 +142,7 @@ function entregaCelular(task: LedgerTask, placeName: PlaceNameOf | undefined): E
   return {
     id: task.id,
     origem: sample ? 'amostra-revisor' : 'esperando-voce',
-    naipe: naipeDoPapel(deliveredBy?.kind === 'lugar' ? deliveredBy.roleId : undefined),
+    naipe: naipeDaCarta(task, deliveredBy?.kind === 'lugar' ? deliveredBy.roleId : undefined),
     titulo: delivery?.forOwner?.title ?? task.title ?? `${quadro} · prazo ${prazo}`,
     pedido: task.request,
     criterio: task.doneWhen,
@@ -176,12 +176,12 @@ export function createLedgerMobilePort(getService: () => LedgerService | null, p
     },
     async decidir(input) {
       const service = getService();
-      if (!service) return { ok: false, reason: 'recusada', message: 'O Oráculo Harrow não abriu neste app.' };
+      if (!service) return { ok: false, reason: 'recusada', message: LEDGER_NOT_OPEN };
       let current;
       try {
         current = service.load().doc;
       } catch (error) {
-        return { ok: false, reason: 'recusada', message: `Não consegui ler o Oráculo Harrow (${error instanceof Error ? error.message : String(error)}).` };
+        return { ok: false, reason: 'recusada', message: `${LEDGER_READ_FAILED} (${error instanceof Error ? error.message : String(error)}).` };
       }
       const task = current.tasks[input.itemId];
       if (!task) return { ok: false, reason: 'nao-encontrada', message: 'Esta entrega não existe mais.' };
