@@ -489,6 +489,15 @@ describe('servidor do celular', () => {
     // switched off (an applied note is answered as applied, not refused by a later check).
     const sampleNote = await deliveredTask(ledger, 'amostra com recado', null);
     expect((await ledger.apply({ kind: 'lugar', placeId: 'p-rev', roleId: 'revisor' }, { op: 'aceitar', id: sampleNote })).ok).toBe(true);
+    // A card of its own, with no option closing as rejected, that nothing else decides: an unknown label on its
+    // left side is refused, never turned into the generic "Rejeitar".
+    const unknownLabel = await deliveredTask(ledger, 'rótulo desconhecido', {
+      ...FOR_OWNER,
+      options: [
+        { label: 'Aceitar', effect: 'Vai para o alfa.', closes: 'aceita', recommended: true },
+        { label: 'Aceitar e seguir', effect: 'Vai para o alfa e segue.', closes: 'aceita' },
+      ],
+    });
     // A label recorded with spaces around it: the phone sends it trimmed.
     const fifth = await deliveredTask(ledger, 'rótulo com espaço', {
       ...FOR_OWNER,
@@ -539,7 +548,7 @@ describe('servidor do celular', () => {
       row(13, first, 'sim'), // no label, on a card whose "Aceitar" closes as accepted
       row(14, sampleNote, 'comentario', { comentario: 'Faltou o print' }),
       row(15, fifth, 'sim', { opcao: 'Seguir' }),
-      row(16, third, 'nao', { opcao: 'Refazer tudo' }), // unknown label, on a card with no option closing as rejected
+      row(16, unknownLabel, 'nao', { opcao: 'Refazer tudo' }), // unknown label, on a card with no option closing as rejected
       row(17, sampleCard, 'sim'), // the owner confirms the Revisor's accept
       row(18, rejectedOnPc, 'comentario', { comentario: 'Pode seguir assim' }),
     ];
@@ -586,6 +595,8 @@ describe('servidor do celular', () => {
     expect(result(13)).toBe(`recusada: ${OPTION_REQUIRED}`);
     expect(decisions(first)).toHaveLength(0);
     expect(ledger.load().doc.tasks[first]!.state).toBe('entregue');
+    expect(decisions(unknownLabel)).toHaveLength(0);
+    expect(ledger.load().doc.tasks[unknownLabel]!.state).toBe('entregue');
     // Only the rows that passed every check reached the ledger.
     expect(decided).toEqual([rows[8]!.pedido, rows[10]!.pedido, rows[14]!.pedido, rows[16]!.pedido, rows[17]!.pedido]);
     expect(result(17)).toBe('aplicada: aceita');

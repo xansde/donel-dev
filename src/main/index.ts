@@ -3715,6 +3715,8 @@ function registerLedgerMirror(): void {
     safeStorage,
     vaultIo: accountsVaultIo,
     places: placesSnapshot,
+    // The same folder in the remote mode: the PC keeps the copies `syncProofs` brings.
+    proofsDir: ledgerProofsDir(ledgerFilePath(process.env, app.getPath('userData'))),
     loadDoc: () => {
       try {
         return ledgerService?.load().doc ?? null;
