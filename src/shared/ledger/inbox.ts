@@ -11,9 +11,13 @@
 //   carta-parada     a letter accepted and not sent for 30 min   → it still has to go out
 //   conferir-envio   a send with no answer, or one that failed (a letter, or a post of an agent's own bot)
 //   amostra-revisor  the daily sample of the Revisor's accepts (D2)
+//   decisao-parada   t-66ee824e: a decision of the owner stopped outside a card — the last andamento says
+//                    "precisa-do-dono", or the task sits with the Líder único, or a high-risk one sits with someone who
+//                    does not do the work (a board's Líder, Curador, Pesquisa, a service), for DECISION_STOPPED_MS
 // Order: what blocks someone, then the due date, then the age.
 
 import { LEADER_OF_ALL } from '../mindscape/leader';
+import { isProgressEvent, progressOf } from './andamento';
 import {
   agentBotOutcome,
   awaitsSend,
@@ -21,6 +25,7 @@ import {
   isCancelled,
   isClosed,
   isServicePlace,
+  registersForOthers,
   lastDecision,
   lastDelivery,
   lastWorkAt,
@@ -62,7 +67,15 @@ export function orphanReasonIn(places: PlaceStates | undefined, task: LedgerTask
   return isClosed(task) || task.state === 'entregue' || awaitsSend(task) ? null : ownerGoneIn(places, task, now);
 }
 
-export type OwnerInboxKind = 'decidir-entrega' | 'aprovar-carta' | 'entrega-parada' | 'para-repassar' | 'carta-parada' | 'conferir-envio' | 'amostra-revisor';
+export type OwnerInboxKind =
+  | 'decidir-entrega'
+  | 'aprovar-carta'
+  | 'entrega-parada'
+  | 'para-repassar'
+  | 'carta-parada'
+  | 'conferir-envio'
+  | 'amostra-revisor'
+  | 'decisao-parada';
 
 /** Kinds where someone (a session, the person a letter is for) stands still until the owner acts. */
 const BLOCKS: Readonly<Record<OwnerInboxKind, boolean>> = {
@@ -73,6 +86,7 @@ const BLOCKS: Readonly<Record<OwnerInboxKind, boolean>> = {
   'carta-parada': true,
   'conferir-envio': false,
   'amostra-revisor': false,
+  'decisao-parada': true,
 };
 
 /** A low-risk delivery the Revisor did not decide in this long goes up to the owner. */
@@ -81,6 +95,9 @@ export const STALE_DELIVERY_MS = 24 * 60 * 60 * 1000;
 export const STUCK_LETTER_MS = 30 * 60 * 1000;
 /** The answer of a send comes in seconds; no answer after this long means nobody knows if it arrived. */
 export const SEND_ANSWER_GRACE_MS = 10 * 60 * 1000;
+
+/** A task with the Líder único, or a high-risk one with someone who does not do the work, is a stopped decision after this long. */
+export const DECISION_STOPPED_MS = 2 * 60 * 60 * 1000;
 
 /** The kinds decided on the card (`LedgerCards`): the box and the table open the card on them. */
 export const CARD_KINDS: ReadonlySet<OwnerInboxKind> = new Set<OwnerInboxKind>(['decidir-entrega', 'aprovar-carta', 'entrega-parada', 'amostra-revisor']);
@@ -102,8 +119,42 @@ function lastSendAt(task: LedgerTask): number {
 
 const SEND_WHY = { 'sem-confirmacao': 'saiu sem resposta do Slack', falhou: 'o Slack recusou o envio', esgotada: 'o Slack recusou o envio duas vezes' } as const;
 
+/** The role each place signed its events with (a task does not keep its owner's role). */
+function placeRoles(doc: LedgerDoc): ReadonlyMap<string, string> {
+  const roles = new Map<string, string>();
+  for (const task of Object.values(doc.tasks)) for (const event of task.events) if (event.by.kind === 'lugar' && event.by.roleId) roles.set(event.by.placeId, event.by.roleId);
+  return roles;
+}
+
+/** The last thing done on the task, leaving out the app's own end-of-turn records (they say nothing was decided). */
+function lastMoveAt(task: LedgerTask): number {
+  let at = task.createdAt;
+  for (const event of task.events) if (progressOf(event)?.estado !== 'turno-encerrado') at = Math.max(at, event.at);
+  return at;
+}
+
+/** Why `task` is a decision of the owner stopped outside a card (t-66ee824e), or `null`. Not for a delivered task: that one is a card. */
+function stoppedDecision(task: LedgerTask, now: number, roles: ReadonlyMap<string, string>): { since: number; why: string } | null {
+  if (isClosed(task) || task.state === 'entregue' || task.slack) return null;
+  for (let i = task.events.length - 1; i >= 0; i -= 1) {
+    const event = task.events[i]!;
+    if (!isProgressEvent(event)) continue;
+    const progress = progressOf(event);
+    if (!progress || progress.estado === 'turno-encerrado') continue;
+    if (progress.estado === 'precisa-do-dono') return { since: event.at, why: progress.precisa ? `pediu você: ${progress.precisa}` : 'a sessão disse que precisa de você' };
+    break;
+  }
+  const idle = now - lastMoveAt(task);
+  if (idle < DECISION_STOPPED_MS) return null;
+  if (task.ownerPlaceId === LEADER_OF_ALL) return { since: lastMoveAt(task), why: 'parada com o Líder único, sem carta' };
+  const notDoer = isServicePlace(task.ownerPlaceId) || registersForOthers(roles.get(task.ownerPlaceId));
+  if (task.risk === 'alto' && (task.state === 'aberta' || task.state === 'em-execucao') && notDoer)
+    return { since: lastMoveAt(task), why: 'risco alto parado com quem não executa, sem carta' };
+  return null;
+}
+
 /** The one item of `task`, or `null` when nothing of it waits for the owner. */
-function itemOf(doc: LedgerDoc, task: LedgerTask, now: number, places: PlaceStates | undefined): OwnerInboxItem | null {
+function itemOf(doc: LedgerDoc, task: LedgerTask, now: number, places: PlaceStates | undefined, roles: ReadonlyMap<string, string>): OwnerInboxItem | null {
   const item = (kind: OwnerInboxKind, since: number, why?: string): OwnerInboxItem => ({ kind, task, since, blocks: BLOCKS[kind], ...(why ? { why } : {}) });
   if (isCancelled(task)) return null;
   if (task.state === 'entregue') {
@@ -123,6 +174,8 @@ function itemOf(doc: LedgerDoc, task: LedgerTask, now: number, places: PlaceStat
   const bot = agentBotOutcome(task);
   if (bot === 'falhou' || bot === 'sem-confirmacao') return item('conferir-envio', lastDelivery(task)?.at ?? task.createdAt, bot === 'falhou' ? 'o envio pelo bot do agente falhou' : 'saiu pelo bot do agente sem resposta do Slack');
   if (inDailySample(doc, task)) return item('amostra-revisor', lastDecision(task)?.at ?? task.createdAt);
+  const stopped = stoppedDecision(task, now, roles);
+  if (stopped) return item('decisao-parada', stopped.since, stopped.why);
   const orphan = orphanReasonIn(places, task, now);
   return orphan ? item('para-repassar', task.events.at(-1)?.at ?? task.createdAt, orphan) : null;
 }
@@ -133,9 +186,10 @@ function itemOf(doc: LedgerDoc, task: LedgerTask, now: number, places: PlaceStat
  */
 export function ownerInbox(doc: LedgerDoc, projectPath: string | null, now: number, places?: PlaceStates): OwnerInboxItem[] {
   const items: OwnerInboxItem[] = [];
+  const roles = placeRoles(doc);
   for (const task of Object.values(doc.tasks)) {
     if (projectPath !== null && task.projectPath !== projectPath) continue;
-    const item = itemOf(doc, task, now, places);
+    const item = itemOf(doc, task, now, places, roles);
     if (item) items.push(item);
   }
   return items.sort((a, b) => Number(b.blocks) - Number(a.blocks) || a.task.due.localeCompare(b.task.due) || a.since - b.since || a.task.id.localeCompare(b.task.id));

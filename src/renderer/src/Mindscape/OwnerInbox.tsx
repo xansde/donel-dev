@@ -46,6 +46,12 @@ const KINDS: Readonly<Record<OwnerInboxKind, KindView>> = {
   },
   'conferir-envio': { label: 'Conferir envio', glyph: '⚠', verb: 'Ver o envio', hint: 'Confira no Slack se a mensagem chegou.' },
   'amostra-revisor': { label: 'Amostra do Revisor', glyph: '✓', verb: 'Conferir' },
+  'decisao-parada': {
+    label: 'Decisão parada',
+    glyph: '!',
+    verb: 'Ver detalhes',
+    hint: 'Esperava você fora de uma carta. A rotina de decisões abre a carta em até meia hora; ou decida pelo Jobu.',
+  },
 };
 
 function folder(projectPath: string): string {

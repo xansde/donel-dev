@@ -154,6 +154,7 @@ const BODIES: Readonly<Record<OwnerInboxKind, string>> = {
   'carta-parada': 'Você aceitou e a mensagem ainda não saiu.',
   'conferir-envio': 'Confira no Slack se a mensagem chegou.',
   'para-repassar': 'Ninguém está fazendo: peça ao Líder para repassar.',
+  'decisao-parada': 'Uma decisão sua parada fora de uma carta: veja no Oráculo Harrow.',
 };
 
 /** The warning of one item: a card kind opens its card; the others open the app (the box is there). */

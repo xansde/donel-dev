@@ -101,3 +101,37 @@ describe('caixa "Esperando você": every kind derivable from v4, in order', () =
     expect(items.map((item) => item.task.id)).not.toContain('orfa');
   });
 });
+
+// t-66ee824e — a decision of the owner that stopped where he never looks: an andamento "precisa-do-dono", a task left
+// with the Líder único, a high-risk task stopped with someone who does not do the work (a board's Líder, a service).
+describe('caixa: decisão do dono parada fora de uma carta', () => {
+  const lider = { kind: 'lugar', placeId: 'place:lider-q', roleId: 'lider' } as const;
+  const progress = (at: number, estado: string, by: LedgerEvent['by'] = dev, precisa?: string): LedgerEvent => ({
+    kind: 'comentada',
+    at,
+    by,
+    text: `⟦andamento⟧ estado: ${estado}${precisa ? `\nprecisa: ${precisa}` : ''}`,
+  });
+  const tasks = [
+    task('pede-o-dono', { state: 'em-execucao', events: [born, progress(NOW - HOUR, 'precisa-do-dono', dev, 'ok para apagar'), progress(NOW - 30 * 60_000, 'turno-encerrado')] }),
+    task('com-o-lider-unico', { ownerPlaceId: 'lider', events: [born] }),
+    task('alto-com-o-lider', { risk: 'alto', ownerPlaceId: 'place:lider-q', events: [born, { kind: 'comentada', at: T0 + HOUR, by: lider, text: 'vejo depois' }] }),
+    task('alto-com-servico', { risk: 'alto', ownerPlaceId: 'servico:vigia', events: [born] }),
+    // Out: a Dev doing high-risk work, a precisa-do-dono already answered, the Líder único holding it for a moment.
+    task('dev-fazendo-alto', { risk: 'alto', state: 'em-execucao', events: [born, { kind: 'assumida', at: T0 + HOUR, by: dev }] }),
+    task('ja-respondido', { state: 'em-execucao', events: [born, progress(NOW - 3 * HOUR, 'precisa-do-dono'), progress(NOW - HOUR, 'trabalhando')] }),
+    task('lider-unico-agora', { ownerPlaceId: 'lider', events: [{ kind: 'criada', at: NOW - 30 * 60_000, by: { kind: 'dono' } }] }),
+  ];
+
+  it('enters the box as a blocking item with why, and pushes like any other', () => {
+    const items = ownerInbox(doc(...tasks), BOARD, NOW, new Map([[BOARD, new Map([['place:dev', 'trabalhando'], ['place:lider-q', 'trabalhando']])]]));
+    expect(Object.fromEntries(items.map((item) => [item.task.id, item.kind]))).toEqual({
+      'pede-o-dono': 'decisao-parada',
+      'com-o-lider-unico': 'decisao-parada',
+      'alto-com-o-lider': 'decisao-parada',
+      'alto-com-servico': 'decisao-parada',
+    });
+    expect(items.every((item) => item.blocks)).toBe(true);
+    expect(items.find((item) => item.task.id === 'pede-o-dono')!.why).toContain('ok para apagar');
+  });
+});
