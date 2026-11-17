@@ -12,11 +12,16 @@
 // Nothing duplicates: the row's `pedido` is the `requestId` in the ledger, so a row read again after a crash between
 // the ledger and the mark is answered by `decisionOfRequest` without a second write. Nothing is lost: a row is marked
 // only when the ledger answered; a passing failure leaves it reserved, and it comes back when the reservation ends.
+//
+// Only the owner's phone decides (the Líder's call on PR #455): the queue's password ships inside the APK, so a row
+// counts only when it carries an HMAC made with the key of a phone paired with this Oráculo (`decisaoMessage`, the
+// scheme `donel-decisao-v1`). A row without it, or with a bad one, is marked refused and never reaches the ledger. The
+// row also says which delivery he saw (`entrega_vista`): a decision taken on an older card is refused too.
 
 import { readFileSync } from 'node:fs';
-import type { DecisaoInput, DecisaoOutcome, MobileLedgerPort } from '../main/celular/ledger-port';
+import type { ComentarInput, DecisaoInput, DecisaoOutcome, MobileLedgerPort } from '../main/celular/ledger-port';
 import { LEDGER_NEWER, LEDGER_NOT_OPEN, LEDGER_READ_FAILED, LEDGER_WRITE_FAILED, type LedgerService } from '../main/ledger-store';
-import { decisionOfRequest, isRequestId, lastDelivery, MAX_COMMENT_CHARS, OWN_OPTION, type LedgerTask } from '../shared/ledger/contract';
+import { commentOfRequest, decisionOfRequest, isRequestId, lastDelivery, MAX_COMMENT_CHARS, OWN_OPTION, type LedgerTask } from '../shared/ledger/contract';
 import type { BoardConfig } from './board-client';
 import { RETURNED_REASON } from './devolvido';
 
@@ -27,9 +32,12 @@ const ROUND_MS = 15_000;
 const TAKE_LIMIT = 10;
 /** The SQL reserves a taken row for 10 min; past this, the batch stops before the reservation can end under it. */
 const BATCH_BUDGET_MS = 9 * 60_000;
-/** Clock skew between Supabase (`criada_em`) and this machine (the delivery's `at`). */
-const CLOCK_SLACK_MS = 5_000;
 export const STALE_DECISION = 'a entrega mudou depois da decisão no celular';
+export const UNSIGNED_DECISION = 'sem assinatura';
+/** The first field of the signed message: a new scheme gets a new name, never a new meaning for this one. */
+export const SIGNATURE_SCHEME = 'donel-decisao-v1';
+/** The phone's side when no option of the card closes that way (`lados` in donel-nucleo's oraculo.rs). */
+const GENERIC_LABEL = { sim: 'Aceitar', nao: 'Rejeitar' } as const;
 /** The phone draws at most 12 pages in a card (the SQL refuses more). */
 const MAX_PAGES = 12;
 const MAX_PAGE_NAME = 24;
@@ -46,6 +54,10 @@ export interface DecisaoRow {
   /** `[{ pagina, nome, nota: 'up'|'down' }]` as the phone sends it; anything else is ignored. */
   readonly paginas: unknown;
   readonly criada_em: string;
+  /** The delivery he saw on the card (timestamptz), or null (an old APK). */
+  readonly entrega_vista: string | null;
+  /** hex HMAC-SHA256 of `decisaoMessage(row)` with the paired phone's key, or null (an old APK). */
+  readonly assinatura: string | null;
 }
 
 export interface DecisoesQueue {
@@ -61,7 +73,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-const optionalText = (value: unknown): string | null => (typeof value === 'string' && value.trim() ? value : null);
+// Kept raw: the signature is checked over the row exactly as recorded; the cleaning comes after.
+const rawText = (value: unknown): string | null => (typeof value === 'string' ? value : null);
 
 /** A row from the network, or null when its shape is not the queue's. */
 function parseRow(value: unknown): DecisaoRow | null {
@@ -73,10 +86,12 @@ function parseRow(value: unknown): DecisaoRow | null {
     pedido,
     tarefa,
     lado,
-    opcao: optionalText(value.opcao),
-    comentario: optionalText(value.comentario),
+    opcao: rawText(value.opcao),
+    comentario: rawText(value.comentario),
     paginas: value.paginas ?? null,
     criada_em: typeof value.criada_em === 'string' ? value.criada_em : '',
+    entrega_vista: rawText(value.entrega_vista),
+    assinatura: rawText(value.assinatura),
   };
 }
 
@@ -162,37 +177,83 @@ function fitWords(words: string, notes: string): string {
 
 const joinLines = (...parts: string[]): string => parts.filter((part) => part.trim()).join('\n');
 
-/**
- * The row as the phone port's decision (the same path the PWA uses: dedup by `pedido`, owner queue check, the right
- * op). `comentario` is his own option ("Escreva no lugar do arraste"); `sim`/`nao` with an option of the last delivery
- * close the way the option closes. A label that is not an option is the phone's generic side ("Aceitar"/"Rejeitar",
- * drawn when no option closes that way): the side decides without an option, and on `nao` the label is the reason
- * when he wrote nothing.
- */
-export function decisaoDe(row: DecisaoRow, task: LedgerTask | undefined): DecisaoInput {
-  const notes = paginasTexto(row.paginas);
-  const words = fitWords(row.comentario ?? '', notes);
-  const base = { pedidoId: row.pedido, itemId: row.tarefa };
-  if (row.lado === 'comentario') return { ...base, decisao: 'aceitar', motivo: null, opcao: OWN_OPTION, texto: joinLines(words, notes) };
-  const option = row.opcao ? task && lastDelivery(task)?.forOwner?.options.find((entry) => entry.label === row.opcao) : undefined;
-  const rejects = option ? option.closes === 'rejeitada' : row.lado === 'nao';
-  const opcao = option ? { opcao: option.label } : {};
-  return rejects
-    ? { ...base, decisao: 'rejeitar', motivo: words || (option ? null : row.opcao), ...opcao, texto: notes }
-    : { ...base, decisao: 'aceitar', motivo: null, ...opcao, texto: joinLines(words, notes) };
+/** Each field as `<UTF-8 length>:<value>\n`, so no value can pass for another field. */
+const signedField = (value: string): string => `${Buffer.byteLength(value, 'utf8')}:${value}\n`;
+
+/** The delivery he saw, in ms since the epoch ('' when absent or unreadable). */
+function entregaMs(value: string | null): string {
+  const ms = value ? Date.parse(value) : Number.NaN;
+  return Number.isFinite(ms) ? String(ms) : '';
 }
 
+const scalar = (value: unknown): string => (typeof value === 'number' || typeof value === 'string' ? String(value) : '');
+
 /**
- * The row speaks of a delivery older than the task's last one (the queue does not say which delivery he saw): a new
- * delivery after his gesture is a card he never saw, so the row is refused. A row the ledger already applied (crash
- * between the ledger and the mark) is never stale: the port answers it without writing.
+ * The message the phone signs (scheme `donel-decisao-v1`), from the row's raw values: the scheme, pedido, tarefa,
+ * lado, opcao, comentario ('' when null), the delivery he saw in ms, and the pages as `<pagina>:<nota>:<nome>` joined
+ * by `;`. The phone builds the same bytes (donel-nucleo's assinatura.rs); both sides test the same vector.
  */
-export function staleDecision(row: DecisaoRow, task: LedgerTask | undefined): boolean {
-  if (!task || decisionOfRequest(task, row.pedido)) return false;
-  const decidedAt = Date.parse(row.criada_em);
-  if (!Number.isFinite(decidedAt)) return true;
-  const deliveredAt = lastDelivery(task)?.at;
-  return deliveredAt !== undefined && deliveredAt > decidedAt + CLOCK_SLACK_MS;
+export function decisaoMessage(row: DecisaoRow): string {
+  const paginas = Array.isArray(row.paginas)
+    ? row.paginas.map((entry) => (isRecord(entry) ? `${scalar(entry.pagina)}:${scalar(entry.nota)}:${typeof entry.nome === 'string' ? entry.nome : ''}` : '')).join(';')
+    : '';
+  return [SIGNATURE_SCHEME, row.pedido, row.tarefa, row.lado, row.opcao ?? '', row.comentario ?? '', entregaMs(row.entrega_vista), paginas].map(signedField).join('');
+}
+
+/** Control characters out (but line breaks and tabs) before the owner's words reach the ledger and the relay. */
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS = /[\u0000-\u0008\u000B-\u001F\u007F-\u009F]/g;
+const cleanText = (value: string | null): string => (value ?? '').replace(CONTROL_CHARS, '');
+
+/** What a row becomes: a decision through the port, words on the card (comentar), or a refusal of its own. */
+export type DecisaoPlano =
+  | { readonly kind: 'decidir'; readonly input: DecisaoInput }
+  | { readonly kind: 'comentar'; readonly input: ComentarInput }
+  | { readonly kind: 'recusar'; readonly message: string };
+
+/**
+ * The row as the phone port's call (the same path the PWA uses: dedup by `pedido`, owner queue check, the right op).
+ * The mapping is strict, as the phone draws its sides (`lados`): `sim` closes `aceita`, `nao` closes `rejeitada`.
+ * - `opcao` an option of the last delivery that closes as the side → decided with it; closing the other way → refused;
+ * - `opcao` the exact generic of the side ("Aceitar"/"Rejeitar") while no option closes that way → the side, without an
+ *   option (on `nao`, his words or the label are the reason);
+ * - any other label speaks of a card that is no longer there → refused ("a entrega mudou");
+ * - no `opcao` (an old APK) → the side, as before.
+ * `comentario` is his own option ("Escreva no lugar do arraste") on a delivered card; on the Revisor's sample (an
+ * accepted task still before him) there is nothing to decide, so his words go on the card.
+ */
+export function planoDe(row: DecisaoRow, task: LedgerTask | undefined): DecisaoPlano {
+  const notes = paginasTexto(row.paginas);
+  const words = fitWords(cleanText(row.comentario), notes);
+  const base = { pedidoId: row.pedido, itemId: row.tarefa };
+  if (row.lado === 'comentario') {
+    const texto = joinLines(words, notes);
+    if (task && task.state !== 'entregue') return { kind: 'comentar', input: { ...base, texto } };
+    return { kind: 'decidir', input: { ...base, decisao: 'aceitar', motivo: null, opcao: OWN_OPTION, texto } };
+  }
+  const closes = row.lado === 'sim' ? 'aceita' : 'rejeitada';
+  const decide = (opcao: string | null, motivo: string | null): DecisaoPlano => ({
+    kind: 'decidir',
+    input:
+      closes === 'rejeitada'
+        ? { ...base, decisao: 'rejeitar', motivo, ...(opcao ? { opcao } : {}), texto: notes }
+        : { ...base, decisao: 'aceitar', motivo: null, ...(opcao ? { opcao } : {}), texto: joinLines(words, notes) },
+  });
+  const label = cleanText(row.opcao).trim();
+  // No task: the port says it is gone.
+  if (!label || !task) return decide(null, words || label || null);
+  const options = lastDelivery(task)?.forOwner?.options ?? [];
+  const option = options.find((entry) => entry.label.trim() === label);
+  if (option) return option.closes === closes ? decide(option.label, words || null) : { kind: 'recusar', message: STALE_DECISION };
+  if (label === GENERIC_LABEL[row.lado] && !options.some((entry) => entry.closes === closes)) return decide(null, words || label);
+  return { kind: 'recusar', message: STALE_DECISION };
+}
+
+/** The delivery he saw is not the task's last one (or the row does not say): a card he never saw. */
+export function entregaMudou(row: DecisaoRow, task: LedgerTask): boolean {
+  const seen = row.entrega_vista ? Date.parse(row.entrega_vista) : Number.NaN;
+  const last = lastDelivery(task)?.at;
+  return !Number.isFinite(seen) || last === undefined || seen !== last;
 }
 
 /**
@@ -211,10 +272,28 @@ function passing(outcome: DecisaoOutcome & { ok: false }): boolean {
   );
 }
 
+/** The card writer wraps the ledger's reason in its own words: the same passing failures, found inside the text. */
+function passingComment(message: string): boolean {
+  return (
+    message.startsWith('O app ainda está abrindo') ||
+    message.startsWith('O Oráculo Harrow não abriu') ||
+    message.startsWith('Não consegui ler o Oráculo Harrow') ||
+    [RETURNED_REASON, LEDGER_NOT_OPEN, LEDGER_NEWER, LEDGER_WRITE_FAILED, LEDGER_READ_FAILED].some((text) => message.includes(text))
+  );
+}
+
+/** Who signed a row: the paired phone's name, or null (no such phone, or a bad signature). */
+export type DecisaoVerifier = (message: string, signatureHex: string) => { readonly deviceName: string } | null;
+
+/** One row's answer: marked with `resultado`, or left in the queue (`passing`) with why. */
+type RowOutcome = { readonly mark: string; readonly note?: string } | { readonly passing: string };
+
 export interface DecisoesConsumerDeps {
   /** The queue, or null while `decisoes.json` is missing or invalid (read at each round: writing it turns this on). */
   readonly queue: () => DecisoesQueue | null;
-  readonly port: Pick<MobileLedgerPort, 'decidir'>;
+  readonly port: Pick<MobileLedgerPort, 'decidir' | 'comentar'>;
+  /** The paired phones' signature check; null while the phone's core is not up (rows wait, never refused for it). */
+  readonly verifier: () => DecisaoVerifier | null;
   readonly ledger: () => LedgerService;
   /** The ledger went back to the PC: nothing is applied nor marked here. */
   readonly returned: () => boolean;
@@ -268,15 +347,20 @@ export function createDecisoesConsumer(deps: DecisoesConsumerDeps): DecisoesCons
       } catch {
         return;
       }
-      const outcome: DecisaoOutcome = staleDecision(row, task)
-        ? { ok: false, reason: 'recusada', message: STALE_DECISION }
-        : await deps.port.decidir(decisaoDe(row, task));
-      if (deps.returned() || (!outcome.ok && passing(outcome))) {
+      let outcome: RowOutcome;
+      try {
+        outcome = await applyRow(row, task);
+      } catch (error) {
+        // One row that throws does not hold the batch: it stays reserved and comes back when the reservation ends.
+        deps.log?.(`[decisoes] ${row.tarefa} falhou e fica na fila: ${error instanceof Error ? error.message : String(error)}`);
+        continue;
+      }
+      if (deps.returned() || 'passing' in outcome) {
         // Not marked: the reservation ends and the row is read again (by this daemon or, after the way back, never).
-        deps.log?.(`[decisoes] ${row.tarefa} fica na fila: ${outcome.ok ? 'o Oráculo voltou para o PC' : outcome.message}`);
+        deps.log?.(`[decisoes] ${row.tarefa} fica na fila: ${'passing' in outcome ? outcome.passing : 'o Oráculo voltou para o PC'}`);
         return;
       }
-      const resultado = outcome.ok ? `aplicada: ${outcome.estado}` : `recusada: ${outcome.message}`;
+      const resultado = outcome.mark;
       let marked: boolean;
       try {
         marked = await queue.marcar(row.pedido, resultado);
@@ -288,8 +372,47 @@ export function createDecisoesConsumer(deps: DecisoesConsumerDeps): DecisoesCons
       }
       // false = closed meanwhile. The guard against an annulment racing the ledger is in the SQL, not here: an annulment
       // (not written yet) must respect `tomada_em`, and the batch stops before the 10-min reservation ends.
-      deps.log?.(`[decisoes] ${row.tarefa} ${resultado}${marked ? '' : ' (a linha já estava marcada por outro)'}`);
+      deps.log?.(`[decisoes] ${row.tarefa} ${resultado}${outcome.note ? ` (${outcome.note})` : ''}${marked ? '' : ' (a linha já estava marcada por outro)'}`);
     }
+  }
+
+  async function decide(input: DecisaoInput): Promise<RowOutcome> {
+    const outcome = await deps.port.decidir(input);
+    if (outcome.ok) return { mark: `aplicada: ${outcome.estado}` };
+    return passing(outcome) ? { passing: outcome.message } : { mark: `recusada: ${outcome.message}` };
+  }
+
+  async function comment(input: ComentarInput): Promise<RowOutcome> {
+    const outcome = await deps.port.comentar(input);
+    if (outcome.ok) return { mark: 'aplicada: comentário' };
+    return passingComment(outcome.mensagem) ? { passing: outcome.mensagem } : { mark: `recusada: ${outcome.mensagem}` };
+  }
+
+  /** In order: already applied, signed by a paired phone, the delivery he saw, the strict mapping. */
+  async function applyRow(row: DecisaoRow, task: LedgerTask | undefined): Promise<RowOutcome> {
+    // (a) Already in the ledger (a crash between the ledger and the mark): the port answers it without writing, and
+    // no later check (a new delivery since) may turn an applied decision into a refused row.
+    if (task && decisionOfRequest(task, row.pedido)) return decide({ pedidoId: row.pedido, itemId: row.tarefa, decisao: row.lado === 'nao' ? 'rejeitar' : 'aceitar', motivo: null });
+    if (task && commentOfRequest(task, row.pedido)) return comment({ pedidoId: row.pedido, itemId: row.tarefa, texto: '' });
+    // (b) Only a paired phone decides for the owner.
+    const verify = deps.verifier();
+    if (!verify) return { passing: 'o celular do Oráculo não está pronto para conferir a assinatura' };
+    if (!row.assinatura) {
+      deps.log?.(`[decisoes] ${row.tarefa}: linha sem assinatura, recusada.`);
+      return { mark: `recusada: ${UNSIGNED_DECISION}` };
+    }
+    const signer = verify(decisaoMessage(row), row.assinatura);
+    if (!signer) {
+      deps.log?.(`[decisoes] ${row.tarefa}: assinatura que nenhum celular pareado fez, recusada.`);
+      return { mark: `recusada: ${UNSIGNED_DECISION}` };
+    }
+    const note = `assinada por ${signer.deviceName}`;
+    // (c) The card he saw is the task's last delivery (no task: the port says it is gone).
+    if (task && entregaMudou(row, task)) return { mark: `recusada: ${STALE_DECISION}`, note };
+    // (d) The strict mapping.
+    const plano = planoDe(row, task);
+    const outcome = plano.kind === 'recusar' ? { mark: `recusada: ${plano.message}` } : plano.kind === 'comentar' ? await comment(plano.input) : await decide(plano.input);
+    return 'mark' in outcome ? { ...outcome, note } : outcome;
   }
 
   function schedule(ms: number): void {

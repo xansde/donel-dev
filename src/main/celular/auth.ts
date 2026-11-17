@@ -3,7 +3,7 @@
 // `<userData>/celular.json`, gravado só pelo main (temp → rename, como o mindscape-store). O dono revoga
 // um celular nas Preferências. Nenhuma credencial do CLI passa por aqui.
 
-import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { dirname } from 'node:path';
 import type { ConfigIoDeps } from '../config-store';
 import type { CelularDevice } from '../../shared/celular';
@@ -65,6 +65,11 @@ export interface CelularAuth {
   pair(code: string, deviceName: string): { token: string; deviceId: string } | null;
   /** O celular dono do token, ou `null` (token ausente, errado ou revogado). */
   verify(token: string | null | undefined): CelularDevice | null;
+  /**
+   * t-52bf8b45 — the paired phone that signed `message` (HMAC-SHA256 keyed by the raw sha256 of its token, the 32
+   * bytes behind `tokenHash`), or `null`. A revoked phone is no longer in the file, so its signatures stop counting.
+   */
+  verifySignature(message: string, signatureHex: string): CelularDevice | null;
   revoke(deviceId: string): void;
   /** O arquivo é de um canal mais novo: lido, nunca gravado. */
   readonly readOnly: boolean;
@@ -160,6 +165,17 @@ export function createCelularAuth(deps: CelularAuthDeps): CelularAuth {
         return toPublic(seen);
       }
       return toPublic(device);
+    },
+    verifySignature(message, signatureHex) {
+      if (typeof message !== 'string' || typeof signatureHex !== 'string' || !/^[0-9a-f]{64}$/.test(signatureHex)) return null;
+      const presented = Buffer.from(signatureHex, 'hex');
+      // Every device is tried (no early exit on a match) so the time does not say which one signed.
+      let signer: StoredDevice | null = null;
+      for (const device of file.devices) {
+        const expected = createHmac('sha256', Buffer.from(device.tokenHash, 'hex')).update(message, 'utf8').digest();
+        if (timingSafeEqual(presented, expected) && !signer) signer = device;
+      }
+      return signer ? toPublic(signer) : null;
     },
     revoke(deviceId) {
       if (!file.devices.some((d) => d.id === deviceId)) return;

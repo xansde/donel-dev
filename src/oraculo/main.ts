@@ -169,6 +169,8 @@ async function main(): Promise<void> {
       return config ? createDecisoesQueue(config) : null;
     },
     port: decisoesPort,
+    // Only a row signed by a phone paired here is the owner's (the APK's queue password is not).
+    verifier: () => (celular ? (message, signature) => celular?.verifyDecisionSignature(message, signature) ?? null : null),
     ledger: () => ledger,
     returned: guard.returned,
     log: (line) => console.log(line),
