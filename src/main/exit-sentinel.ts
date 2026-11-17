@@ -43,21 +43,29 @@ export function classifyExitCode(code: number): ExitCause {
 // linear pass per rule.
 /** -Id 6700, -Id:6700 */
 const SEP = String.raw`(?:\s*:\s*|\s+)`;
+/** -Id 6700 and also an argument list: '/PID', '6700' (python's subprocess, Start-Process -ArgumentList, execFile) */
+const SEP_LIST = String.raw`(?:\s*:\s*|\s+|['"]\s*,\s*(?=['"]))`;
 const NUMS = String.raw`[0-9]{1,10}(?:\s*,\s*[0-9]{1,10}){0,7}`;
-/** A variable's name ($p, $pid), never what it holds; `$env:X` is not one. */
-const VAR = String.raw`\$[A-Za-z_][A-Za-z0-9_]{0,40}(?=[\s"',]|$)`;
+/** A variable's name ($p, $pid, $_.ProcessId), never what it holds; `$env:X` is not one. */
+const VAR = String.raw`\$[A-Za-z_][A-Za-z0-9_]{0,40}(?:\.[A-Za-z_][A-Za-z0-9_]{0,40})?(?=[\s"',]|$)`;
 /** What a token may be followed by: a separator, a quote, a list comma or the end of the command. */
 const AFTER = String.raw`(?=[\s"',]|$)`;
-/** A name that can be quoted (also with \" from a nested shell): a process, an image, a filter. */
-const QCHARS = String.raw`A-Za-z0-9_ .*\\/:-`;
-const QUOTED = String.raw`\\?"[${QCHARS}]{1,80}\\?"|\\?'[${QCHARS}]{1,80}\\?'`;
+/**
+ * A name that can be quoted (also with \" or \\\" from nested shells): a process, an image, a filter, a WQL `like`
+ * with % and _.
+ */
+const QCHARS = String.raw`A-Za-z0-9_ .*%\\/:-`;
+const QUOTED = String.raw`\\{0,3}"[${QCHARS}]{1,80}\\{0,3}"|\\{0,3}'[${QCHARS}]{1,80}\\{0,3}'`;
 const VALUE = String.raw`(?:${QUOTED}|[A-Za-z0-9_.*\\/:][A-Za-z0-9_.*\\/:-]{0,79}${AFTER})`;
 const VALUES = String.raw`${VALUE}(?:\s*,\s*${VALUE}){0,7}`;
 const FLAG_AT = String.raw`(?<=[\s"'])`;
 const WORD_START = String.raw`(?<![A-Za-z0-9_.-])`;
 const WORD_END = String.raw`(?![A-Za-z0-9_-])`;
-/** The rest of one command: it stops where another command, a subexpression, a block or a comment begins. */
-const REST = String.raw`(?:(?!\$\()[^&|;<>(){}#\x60\r\n]){0,200}`;
+/**
+ * The rest of one command: it stops where another command, a subexpression, a block or a comment begins, and, when it
+ * runs past 200 characters, at the last whitespace before that, so a token is never kept cut in half.
+ */
+const REST = String.raw`(?:(?!\$\()[^&|;<>(){}#\x60\r\n]){0,200}(?=[&|;<>(){}#\x60\r\n]|\$\(|\s|$)`;
 /** Stop-Process / Get-Process / PowerShell's kill: -Id, -Name, -InputObject and the switches. */
 const PS_PROCESS_PARAMS = [
   String.raw`${FLAG_AT}-(?:id|i)${SEP}(?:${NUMS}${AFTER}|${VAR})`,
@@ -65,6 +73,13 @@ const PS_PROCESS_PARAMS = [
   String.raw`${FLAG_AT}-inputobject${SEP}${VAR}`,
   String.raw`${FLAG_AT}-(?:id|name|inputobject|force|passthru|whatif|confirm)${WORD_END}`,
 ].join('|');
+/** One word of a pkill/pgrep pattern: no digit, no `=`, no `@`, not an option, so an argument is never one. */
+const PATTERN_WORD = String.raw`[A-Za-z_.*/:][A-Za-z_.*\\/:-]{0,60}(?<!\\)(?=[\s"'\\]|$)`;
+const SCRIPT_EXT = '(?:ps1|psm1|sh|bash|js|mjs|cjs|ts|py|cmd|bat|vbs)';
+/** No URL and no user:password@ anywhere in the token a script path is taken from. */
+const NO_CREDENTIAL_URL = String.raw`(?![^\s"'|&;<>()]{0,200}?(?:://|:[^\\/\s"'@]{0,100}@))`;
+/** The file and at most two folders above it. */
+const LAST_SEGMENTS = String.raw`(?:[^\\/]{1,80}[\\/]){0,2}[^\\/]{1,80}$`;
 
 /**
  * What says who ended a process. `find` is one command in a command line; when the rule has `keep`, the evidence is
@@ -78,10 +93,10 @@ export interface KillRule {
 }
 
 const RULES: readonly KillRule[] = [
-  // taskkill /PID 6700 /T /F, /IM x, /FI "…", /S host; /U and /P are never kept
+  // taskkill /PID 6700 /T /F, /IM x, /FI "…", /S host, and the '/IM', 'x' of an argument list; /U and /P never
   {
     find: String.raw`${WORD_START}taskkill(?:\.exe)?${WORD_END}${REST}`,
-    keep: String.raw`^taskkill(?:\.exe)?|${FLAG_AT}[/-]{1,2}(?:pid${SEP}[0-9]{1,10}${AFTER}|im${SEP}${VALUE}|fi${SEP}(?:${QUOTED})|s${SEP}[A-Za-z0-9._-]{1,63}${AFTER}|[ft]${AFTER})`,
+    keep: String.raw`^taskkill(?:\.exe)?|${FLAG_AT}[/-]{1,2}(?:pid${SEP_LIST}['"]?(?:[0-9]{1,10}|%%?[A-Za-z]|\$[A-Za-z_][A-Za-z0-9_]{0,40})${AFTER}|im${SEP_LIST}${VALUE}|fi${SEP_LIST}\\{0,3}["']?(?:IMAGENAME|PID|STATUS|USERNAME|SERVICES|MODULES|WINDOWTITLE|SESSIONNAME|SESSION)\s+(?:eq|ne|gt|lt|ge|le)\s+(?:[0-9]{1,10}|${PATTERN_WORD}(?: ${PATTERN_WORD}){0,3})|s${SEP}[A-Za-z0-9._-]{1,63}${AFTER}|[ft]${AFTER})`,
   },
   {
     find: String.raw`${WORD_START}(?:Stop-Process|spps)${WORD_END}${REST}`,
@@ -91,44 +106,54 @@ const RULES: readonly KillRule[] = [
     find: String.raw`${WORD_START}(?:Get-Process|gps)${WORD_END}${REST}`,
     keep: String.raw`^(?:Get-Process|gps)(?:\s+${VALUES})?|${PS_PROCESS_PARAMS}`,
   },
-  // kill -9 6700, kill -s KILL %1, PowerShell's kill -Id 6700
+  // kill -9 6700, kill -s KILL %1, kill $pid, PowerShell's kill -Id 6700 and `… | kill`: only the run of signals and
+  // pids right after the verb, so a number given to another option is never one; not the /kill of a URL
   {
-    find: String.raw`${WORD_START}kill(?=\s)${REST}`,
-    keep: String.raw`^kill|${PS_PROCESS_PARAMS}|${FLAG_AT}-(?:s|signal)\s+[A-Za-z0-9]{1,10}${AFTER}|${FLAG_AT}-(?:[0-9]{1,2}|[A-Za-z]{1,12})${AFTER}|(?<=\s)(?:%?${NUMS}${AFTER}|${VAR})`,
+    find: String.raw`(?<![A-Za-z0-9_.\\/:-])kill(?=[\s"'|;)}]|$)${REST}`,
+    keep: String.raw`^kill(?:\s+(?:-(?:processname|name|nam|na|n|pn)${SEP}${VALUES}|-(?:id|i)${SEP}(?:${NUMS}${AFTER}|${VAR})|-(?:s|signal)\s+[A-Za-z0-9]{1,10}${AFTER}|-(?:[0-9]{1,2}|[A-Za-z]{1,12})${AFTER}|%?${NUMS}${AFTER}|${VAR}))*`,
   },
-  // pkill -f "Donel Dev", killall electron, and the pgrep/pidof that finds the pid for a kill
+  // pkill -f "Donel Dev", killall electron, and the pgrep/pidof that finds the pid for a kill: the switches and the
+  // first words of the pattern, up to the first argument of the program it names
   {
     find: String.raw`${WORD_START}(?:pkill|killall|pgrep|pidof)(?=\s)${REST}`,
-    keep: String.raw`^(?:pkill|killall|pgrep|pidof)|${FLAG_AT}--?[A-Za-z][A-Za-z-]{0,20}(?=[\s"',=]|$)|(?<=[\s=])${VALUE}`,
+    keep: String.raw`^(?:pkill|killall|pgrep|pidof)|${FLAG_AT}--?[A-Za-z][A-Za-z-]{0,20}(?=[\s"',=]|$)|(?<=^(?:pkill|killall|pgrep|pidof)(?:\s+--?[A-Za-z][A-Za-z-]{0,20})*\s+\\{0,3}["']?)${PATTERN_WORD}(?: ${PATTERN_WORD}){0,3}`,
   },
   // process.kill(6700), process.kill(Number(process.argv[1])): names and brackets only, never a string
   { find: String.raw`(?<![A-Za-z0-9_])process\.kill\((?:\s*[A-Za-z0-9_.$()[\]]{1,60}\s*(?:,\s*['"]?[A-Za-z0-9_]{1,20}['"]?\s*)?\))?` },
   { find: String.raw`(?<![A-Za-z0-9_])os\.kill\((?:\s*[A-Za-z0-9_.]{1,40}\s*(?:,\s*[A-Za-z0-9_.]{1,30}\s*)?\))?` },
   { find: String.raw`(?<![A-Za-z0-9_])psutil\.Process\((?:\s*[A-Za-z0-9_.]{0,40}\s*\))?(?:\.(?:kill|terminate)\(\))?` },
   { find: String.raw`(?<![A-Za-z0-9_])GetProcessById\(\s*[A-Za-z0-9_$.]{1,40}\s*\)(?:\.Kill\(\))?` },
+  { find: String.raw`(?<![A-Za-z0-9_])GetProcessesByName\(\s*(?:${QUOTED})\s*\)` },
   { find: String.raw`[A-Za-z0-9_$.\]]{0,60}\.(?:Kill|Terminate)\(\)` },
-  // Where-Object { $_.Name -like 'Donel*' }, ? Name -like 'x': the filter that picks what a pipeline stops
-  { find: String.raw`(?<![A-Za-z0-9_])(?:\$_\.)?(?:Name|ProcessName)\s+-i?(?:like|eq|match)\s+(?:${QUOTED}|[A-Za-z0-9_.*-]{1,80}${AFTER})` },
+  { find: String.raw`(?<![A-Za-z0-9_-])(?:%|ForEach-Object)\s+(?:-MemberName\s+)?(?:Kill|Terminate)(?![A-Za-z0-9_])` },
+  // the node packages that kill a process tree or a port
+  { find: String.raw`(?<![A-Za-z0-9_-])(?:tree-kill|fkill(?:-cli)?|kill-port)(?![A-Za-z0-9_-])(?:['"]?\)?\(?\s*[0-9]{1,10})?` },
+  // Where-Object { $_.Name -like 'Donel*' }, ? Path -like '*Donel*': the filter that picks what a pipeline stops
+  {
+    find: String.raw`(?<![A-Za-z0-9_])(?:\$_\.)?(?:Name|ProcessName|Path|MainWindowTitle|Id)\s+-i?(?:like|eq|match)\s+(?:${QUOTED}|[A-Za-z0-9_.*-]{1,80}${AFTER})`,
+  },
   // wmic /node:pc process where "name='x'" delete, … where processid=6700 call terminate; /user and /password never
   {
     find: String.raw`${WORD_START}wmic(?:\.exe)?${WORD_END}[^&|;<>\r\n]{0,200}?(?:delete|terminate)`,
     keep: String.raw`^wmic(?:\.exe)?|(?<=[\s"'(])(?:process|where|delete|call|terminate)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:processid|parentprocessid|handle)\s*=\s*['"]?[0-9]{1,10}|(?<![A-Za-z0-9_])(?:name|caption)\s*(?:=|like)\s*(?:${QUOTED})|(?<=\s)/node:[A-Za-z0-9._-]{1,63}`,
   },
-  // a script run by the process: the file and at most two folders above it, never its arguments nor a URL; a quoted
-  // path that starts like one (C:\, \\srv, /, ./, ~) may have spaces
+  // a script run by the process: the file and at most two folders above it, never its arguments nor a URL. A quoted
+  // path that starts like one (C:\, \\srv, /, ./, ~) may have spaces, but not a space before an option or another path.
   {
-    find: String.raw`(?<=["'])(?:[A-Za-z]:[\\/]|\\\\|\.{0,2}[\\/]|~[\\/])[^"'|&;<>\r\n]{0,200}\.(?:ps1|psm1|sh|bash|js|mjs|cjs|ts|py|cmd|bat|vbs)(?=["'])`,
-    keep: String.raw`(?:[^\\/]{1,80}[\\/]){0,2}[^\\/]{1,80}$`,
+    find: String.raw`(?<=["'])${NO_CREDENTIAL_URL}(?:[A-Za-z]:[\\/]|\\\\|\.{0,2}[\\/]|~[\\/])(?:(?!\s+(?:[-/.~\\]|[A-Za-z]:))[^"'|&;<>\r\n]){0,200}\.${SCRIPT_EXT}(?=["'])`,
+    keep: LAST_SEGMENTS,
   },
   {
-    find: String.raw`(?<![^\s"'=(,])(?![A-Za-z][A-Za-z0-9+.-]*://)[^\s"'|&;<>()]{1,200}\.(?:ps1|psm1|sh|bash|js|mjs|cjs|ts|py|cmd|bat|vbs)(?![A-Za-z0-9])`,
-    keep: String.raw`(?:[^\\/]{1,80}[\\/]){0,2}[^\\/]{1,80}$`,
+    find: String.raw`(?<![^\s"'=(,])${NO_CREDENTIAL_URL}[^\s"'|&;<>()=,]{1,200}\.${SCRIPT_EXT}(?![A-Za-z0-9])`,
+    keep: LAST_SEGMENTS,
   },
-  // Invoke-CimMethod -MethodName Terminate, Get-CimInstance Win32_Process -Filter "ProcessId=6700"
+  // Invoke-CimMethod -MethodName Terminate, Get-CimInstance Win32_Process -Filter "ProcessId=6700" | Remove-CimInstance
   {
-    find: String.raw`${WORD_START}(?:Invoke-CimMethod|Invoke-WmiMethod|Get-CimInstance|Get-WmiObject|icim|iwmi|gcim|gwmi)${WORD_END}${REST}`,
-    keep: String.raw`^[A-Za-z-]{4,20}|(?<![A-Za-z0-9_])(?:Terminate|Win32_Process)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:ProcessId|Handle)\s*=\s*['"]?[0-9]{1,10}|(?<![A-Za-z0-9_])(?:Name|Caption)\s*(?:=|like)\s*(?:${QUOTED})`,
+    find: String.raw`${WORD_START}(?:Invoke-CimMethod|Invoke-WmiMethod|Get-CimInstance|Get-WmiObject|Remove-CimInstance|Remove-WmiObject|icim|iwmi|gcim|gwmi|rcim|rwmi)${WORD_END}${REST}`,
+    keep: String.raw`^[A-Za-z-]{4,20}|(?<![A-Za-z0-9_])(?:Terminate|Win32_Process)(?![A-Za-z0-9_])|(?<![A-Za-z0-9_])(?:ParentProcessId|ProcessId|Handle)\s*=\s*['"]?[0-9]{1,10}|(?<![A-Za-z0-9_])(?:Name|Caption)\s*(?:=|like)\s*(?:${QUOTED})`,
   },
+  // an agent's PowerShell tool: its command lives in an environment variable, out of reach, but the tool is known
+  { find: String.raw`CLAUDE_CODE_SHELL_LAUNCHER_SCRIPT` },
 ];
 
 const WHITESPACE = ' \\t\\n\\v\\f\\r\\u00a0';
@@ -178,7 +203,7 @@ export const EVIDENCE_PIECE_MAX = 200;
 /** The command line is cut to this before the search. */
 export const COMMAND_LINE_CUT = 8192;
 
-const SECRET_WORD = '(?:password|passwd|pass|pwd|pw|secret|token|apikey|api-key|key|auth|credential)';
+const SECRET_WORD = '(?:password|passwd|pass|pwd|pw|secret|token|apikey|api-key|key|auth|credential|otp)';
 
 /**
  * Masks for a piece of evidence, applied by the PowerShell (`-replace`) and here (flag `gi`). A second layer: a piece
@@ -188,6 +213,8 @@ const SECRET_WORD = '(?:password|passwd|pass|pwd|pw|secret|token|apikey|api-key|
 const MASKS: ReadonlyArray<{ readonly source: string; readonly to: string }> = [
   // scheme://user:password@host
   { source: String.raw`(://[^/\s:@"']+:)[^@\s"']+@`, to: '$1***@' },
+  // user:password@host with no scheme before it (scp, a URL cut by a script path)
+  { source: String.raw`([^\s/\\:@"']+:)[^@\s/\\"']+@`, to: '$1***@' },
   // Authorization: Bearer <token> / Basic <base64>
   { source: String.raw`((?:bearer|basic)\s+)[^\s"']+`, to: '$1***' },
   // curl -u user:password, -u "user:password", -uuser:password, --user=user:password
@@ -196,6 +223,8 @@ const MASKS: ReadonlyArray<{ readonly source: string; readonly to: string }> = [
   { source: String.raw`((?:\$env:)?[A-Za-z0-9_.-]*${SECRET_WORD}[A-Za-z0-9_.-]*\s*[=:]\s*)("[^"]*"|'[^']*'|[^\s&|;"']+)`, to: '$1***' },
   // --password x, -Password x, --client-secret x, -Credential x (a following switch is not a value)
   { source: String.raw`((?:^|\s)--?[A-Za-z0-9_-]*${SECRET_WORD}[A-Za-z0-9_-]*\s+)("[^"]*"|'[^']*'|[^\s-]\S*)`, to: '$1***' },
+  // -Pat x, -Pin x: an option in -p… with its value apart (before the next mask, which would take "at" for the value)
+  { source: String.raw`((?:^|\s)-p(?!(?:id|assthru|n|rocessname)(?![A-Za-z0-9_]))[A-Za-z]{1,20}\s+)("[^"]*"|'[^']*'|[^\s-]\S*)`, to: '$1***' },
   // -pSenha, -p Senha (mysql, sshpass, taskkill -p); the switches a kill rule keeps (-pid, -PassThru, -pn) are not one
   { source: String.raw`((?:^|\s)-p(?!(?:id|assthru|n|rocessname)(?![A-Za-z0-9_]))\s*)("[^"]*"|'[^']*'|[^\s-]\S*)`, to: '$1***' },
   // taskkill /P x, //P x (Git Bash), /p:x, wmic /password:x
@@ -208,12 +237,17 @@ const MASKS: ReadonlyArray<{ readonly source: string; readonly to: string }> = [
 
 export const EVIDENCE_MASKS = MASKS.map((mask) => ({ source: portable(mask.source), to: mask.to }));
 
-/** What the PowerShell does to a piece of evidence before the disk. */
+/** What the PowerShell does to a piece of evidence before the disk: masked whole, then cut. */
 export function maskEvidence(text: string): string {
-  let out = text.length > EVIDENCE_PIECE_MAX ? text.slice(0, EVIDENCE_PIECE_MAX) : text;
+  let out = text;
   for (const mask of EVIDENCE_MASKS) out = out.replace(new RegExp(mask.source, 'gi'), mask.to);
-  return out;
+  return out.length > EVIDENCE_PIECE_MAX ? out.slice(0, EVIDENCE_PIECE_MAX) : out;
 }
+
+/** The Claude Code Bash tool writes each ' inside its eval '…' as '\"'\"' (or '"'"'): read back as one quote. */
+export const SHELL_QUOTE_ESCAPES: readonly string[] = [`'\\"'\\"'`, `'"'"'`];
+
+const LONE_SURROGATE = /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g;
 
 export interface KillEvidence {
   readonly evidence: readonly string[];
@@ -226,7 +260,7 @@ function decodeUtf16Base64(b64: string): string {
   const bytes = Buffer.from(b64, 'base64');
   const odd = bytes.length % 2 === 1;
   const text = bytes.subarray(0, bytes.length - (odd ? 1 : 0)).toString('utf16le') + (odd ? '\ufffd' : '');
-  return text.replace(/[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/g, '\ufffd');
+  return text.replace(LONE_SURROGATE, '\ufffd');
 }
 
 /** What the PowerShell records of a candidate's command line; mirrors Get-KillEvidence, which the tests run. */
@@ -245,7 +279,8 @@ export function extractKillEvidence(commandLine: string, mainPid: number): KillE
     }
   }
   const found: string[] = [];
-  for (const text of texts) {
+  for (const raw of texts) {
+    const text = SHELL_QUOTE_ESCAPES.reduce((t, escape) => t.split(escape).join("'"), raw);
     for (const rule of KILL_RULES) {
       for (const match of text.matchAll(new RegExp(rule.find, 'gi'))) {
         const piece = rule.keep ? [...match[0].matchAll(new RegExp(rule.keep, 'gi'))].map((part) => part[0]).join(' ') : match[0];
@@ -253,7 +288,8 @@ export function extractKillEvidence(commandLine: string, mainPid: number): KillE
       }
     }
   }
-  const evidence = [...new Set(found)].slice(0, EVIDENCE_MAX).map(maskEvidence);
+  // a lone surrogate (also one the cut split) reaches the disk as U+FFFD, through ConvertTo-Json and UTF-8
+  const evidence = [...new Set(found)].slice(0, EVIDENCE_MAX).map((piece) => maskEvidence(piece).replace(LONE_SURROGATE, '�'));
   const mentionsMain = texts.some((text) => new RegExp(`(?<![0-9])${Math.trunc(mainPid)}(?![0-9])`).test(text));
   return { evidence, mentionsMain };
 }
@@ -303,13 +339,16 @@ export function evidenceFunctionScript(mainPid: number): string {
     `  for ($i = 0; $i -lt $texts.Count; $i++) { foreach ($m in [regex]::Matches($texts[$i], ${psQuote(ENCODED_COMMAND_PATTERN)}, 'IgnoreCase')) {` +
       ` if ($decodes -ge ${ENCODED_MAX}) { break }; $b = $m.Groups[1].Value; if ($b.Length % 4 -ne 0) { continue }; $decodes++;` +
       ' try { $dec = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($b)); if ($dec) { $texts.Add($dec) } } catch {} } }',
-    `  $finds = @(${finds})`,
+    // compiled once: a pipeline per match costs seconds on a long line (red-team of #465)
+    `  $finds = @(foreach ($f in @(${finds})) { [regex]::new($f, [Text.RegularExpressions.RegexOptions]::IgnoreCase) })`,
     `  $keeps = @(${keeps})`,
+    `  $keepRx = @(foreach ($k in $keeps) { [regex]::new($k, [Text.RegularExpressions.RegexOptions]::IgnoreCase) })`,
+    `  $escapes = @(${SHELL_QUOTE_ESCAPES.map(psQuote).join(', ')})`,
     '  $found = New-Object System.Collections.Generic.List[string]',
-    "  foreach ($t in $texts) { for ($r = 0; $r -lt $finds.Count; $r++) { foreach ($m in [regex]::Matches($t, $finds[$r], 'IgnoreCase')) {" +
-      " $piece = $m.Value; if ($keeps[$r]) { $piece = @([regex]::Matches($piece, $keeps[$r], 'IgnoreCase') | ForEach-Object { $_.Value }) -join ' ' };" +
+    "  foreach ($raw in $texts) { $t = $raw; foreach ($e in $escapes) { $t = $t.Replace($e, \"'\") }; for ($r = 0; $r -lt $finds.Count; $r++) { foreach ($m in $finds[$r].Matches($t)) {" +
+      " $piece = $m.Value; if ($keeps[$r]) { $piece = @(foreach ($k in $keepRx[$r].Matches($piece)) { $k.Value }) -join ' ' };" +
       ' if ($piece -and -not $found.Contains($piece)) { $found.Add($piece) } } } }',
-    `  $evidence = @($found | Select-Object -First ${EVIDENCE_MAX} | ForEach-Object { $s = $_; if ($s.Length -gt ${EVIDENCE_PIECE_MAX}) { $s = $s.Substring(0, ${EVIDENCE_PIECE_MAX}) }; $s${masks} })`,
+    `  $evidence = @($found | Select-Object -First ${EVIDENCE_MAX} | ForEach-Object { $s = $_${masks}; if ($s.Length -gt ${EVIDENCE_PIECE_MAX}) { $s = $s.Substring(0, ${EVIDENCE_PIECE_MAX}) }; $s })`,
     `  $mentions = [bool]($texts | Where-Object { $_ -match '(?<![0-9])${Math.trunc(mainPid)}(?![0-9])' })`,
     '  return @{ evidence = $evidence; mentionsMain = $mentions }',
     '}',

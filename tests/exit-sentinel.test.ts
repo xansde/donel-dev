@@ -89,6 +89,15 @@ const SECRET_LINES: ReadonlyArray<readonly [string, string]> = [
     "powershell.exe -Command \"Invoke-Command -ComputerName srv -ScriptBlock { Stop-Process -Id 6700 -Force } -Credential (New-Object PSCredential('u', (ConvertTo-SecureString 'Senha312' -AsPlainText -Force)))\"",
     'Senha312',
   ],
+  // the red-team of #465: a pattern, a URL, a number or an argument the rules used to copy
+  ['bash.exe -c "kill $(pgrep -f \\"node server.js --api_key=Senha401\\")"', 'Senha401'],
+  ['bash.exe -c "pkill -f \'redis-cli -a Senha402\'"', 'Senha402'],
+  ['bash.exe -c "pkill -f \'az devops login -Pat Senha403\'"', 'Senha403'],
+  ['powershell.exe -c "Invoke-WebRequest -Uri:https://admin:Senha404@host/a/x.ps1 -OutFile x.ps1"', 'Senha404'],
+  ['node.exe dl.js --from=ftp://ci:Senha405@ftp.example/x.sh', 'Senha405'],
+  ['bash.exe -c "' + CURL + ' -X POST http://localhost:3000/kill -H \\"X-Admin-Pin: 482913\\""', '482913'],
+  ['bash.exe -c "./login.sh admin Senha406 ./kill.sh"', 'Senha406'],
+  ['cmd.exe /c taskkill /FI "WINDOWTITLE eq mysql -u root -a Senha407" /F', 'Senha407'],
 ];
 
 // A kill command that carries a password: the kill stays, the password does not.
@@ -125,7 +134,7 @@ const IDENTITY_LINES: ReadonlyArray<readonly [string, string]> = [
   ],
   ['bash.exe -c "$HOME/seazone/donel/scripts/kill.sh 6700"', 'donel/scripts/kill.sh'],
   ['bash.exe -c "pkill -f donel-dev-alfa-electron-main"', 'pkill -f donel-dev-alfa-electron-main'],
-  ['bash.exe -c "pkill -f \\"Donel Dev Alfa\\""', 'pkill -f \\"Donel Dev Alfa\\"'],
+  ['bash.exe -c "pkill -f \\"Donel Dev Alfa\\""', 'pkill -f Donel Dev Alfa'],
   ['python.exe -c "import os, signal; os.kill(6700, signal.SIGTERM)"', 'os.kill(6700, signal.SIGTERM)'],
   ['python.exe -c "import psutil; psutil.Process(6700).kill()"', 'psutil.Process(6700).kill()'],
   [
@@ -134,10 +143,21 @@ const IDENTITY_LINES: ReadonlyArray<readonly [string, string]> = [
   ],
   ["cmd.exe /c \"wmic process where \"name='Donel Dev Alfa.exe'\" delete\"", "wmic process where name='Donel Dev Alfa.exe' delete"],
   ['powershell.exe -Command "$p = 6700; Stop-Process -Id $p -Force"', 'Stop-Process -Id $p -Force'],
-  ["bash.exe -c \"pid=$(pgrep -f 'Donel Dev'); kill $pid\"", "kill $pid | pgrep -f 'Donel Dev'"],
+  ["bash.exe -c \"pid=$(pgrep -f 'Donel Dev'); kill $pid\"", 'kill $pid | pgrep -f Donel Dev'],
   ["powershell.exe -Command \"Get-Process | Where-Object { $_.Name -like 'Donel*' } | Stop-Process -Force\"", "$_.Name -like 'Donel*'"],
   ['powershell.exe -Command "[Diagnostics.Process]::GetProcessById(6700).Kill()"', 'GetProcessById(6700).Kill()'],
   ['node.exe -e "process.kill(Number(process.argv[1]))" 6700', 'process.kill(Number(process.argv[1]))'],
+  ["python.exe -c \"import subprocess; subprocess.run(['taskkill', '/F', '/PID', '6700'])\"", "taskkill /F /PID', '6700"],
+  ["powershell.exe -c \"Get-CimInstance Win32_Process -Filter 'ProcessId=6700' | Remove-CimInstance\"", 'Remove-CimInstance'],
+  [
+    `bash.exe -c "source /c/Users/x/.claude/shell-snapshots/s.sh && eval 'powershell -Command \\"Stop-Process -Name '\\"'\\"'Donel Dev Alfa'\\"'\\"' -Force\\"' < /dev/null"`,
+    "Stop-Process -Name 'Donel Dev Alfa' -Force",
+  ],
+  [
+    'powershell.exe -NoProfile -NonInteractive -Command "$__claudeCodeScript = $env:CLAUDE_CODE_SHELL_LAUNCHER_SCRIPT; & ([scriptblock]::Create($__claudeCodeScript))"',
+    'CLAUDE_CODE_SHELL_LAUNCHER_SCRIPT',
+  ],
+  ['cmd.exe /c taskkill /FI "IMAGENAME eq Donel Dev*" /F', 'taskkill /FI "IMAGENAME eq Donel Dev*'],
   // the real shape of a Claude Code Bash-tool process: the command sits past a ~480-character wrapper
   [
     '"C:\\Program Files\\Git\\usr\\bin\\bash.exe" -c "source /c/Users/compu/.claude/shell-snapshots/snapshot-bash-1794909251041-vuvkav.sh 2>/dev/null || true && export TEMP=\'C:\\Users\\compu\\AppData\\Local\\Temp\' && { \\builtin unalias -- \'which\'; } >/dev/null 2>&1 || true && eval \'kill -9 6700\' < /dev/null && pwd -P >| /c/Users/compu/AppData/Local/Temp/claude-f650-cwd"',
