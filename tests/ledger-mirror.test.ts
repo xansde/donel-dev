@@ -311,6 +311,24 @@ describe('espelho do Oráculo', () => {
         for (let d = 0; d < 1 << 13; d = d * 2 + 1) for (const q of ['&quot;', '&#39;', '&amp;quot;', '&amp;#39;']) line += `\\"token\\": ${'\\'.repeat(d)}${q}a `;
         return line + fill('&', MB2 - line.length);
       }],
+      // One unclosed opening of each class (quote x `&amp;` x level), then one 2 MB run of entity digits or backslashes:
+      // each look inside the window used to read the run to its end (1.7–3.1 s).
+      ...(() => {
+        const openings = [255, 127, 63, 31, 15, 7, 3, 1, 0]
+          .flatMap((d) => ['quot', 'apos'].flatMap((q) => [false, true].map((amp) => {
+            const ent = `${amp ? '&amp;' : '&'}${q};`;
+            if (d === 1 && q === 'quot' && !amp) return '';
+            return ` token\\": ${d === 0 ? ent : '\\'.repeat(d) + (amp ? ent : q === 'quot' ? '"' : "'")}x`;
+          })))
+          .join('');
+        const few = [' token=&quot;x', ' token=&apos;x', ' token=&amp;quot;x', ' token=&amp;apos;x', " token=\\'x"].join('');
+        return [
+          ['34 aberturas e \\&# com 2 MB de zeros', () => `${openings}\\&#${'0'.repeat(2e6)}z`],
+          ['34 aberturas e &#x com 2 MB de zeros', () => `${openings}&#x${'0'.repeat(2e6)}z`],
+          ['5 aberturas e \\&# com 2 MB de zeros', () => `${few}\\&#${'0'.repeat(2e6)}z`],
+          ['34 aberturas e 2 MB de barras', () => `${openings}${'\\'.repeat(2e6)}z`],
+        ] as [string, () => string][];
+      })(),
       ['aspas fora da escada', () => {
         let line = '';
         for (let k = 2; line.length < MB2; k += 1) line += `token: ${'\\'.repeat(k)}"a `;

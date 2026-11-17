@@ -40,9 +40,9 @@ function boundary(t: string, i: number): boolean {
   return wordAt(t, i - 1) !== wordAt(t, i);
 }
 
-/** Where the run of `cls` starting at `i` ends (`i` when `t[i]` is not in it). */
-function runEnd(t: string, i: number, cls: (c: number) => boolean): number {
-  const n = t.length;
+/** Where the run of `cls` starting at `i` ends (`i` when `t[i]` is not in it), read no further than `limit`. */
+function runEnd(t: string, i: number, cls: (c: number) => boolean, limit = t.length): number {
+  const n = Math.min(t.length, limit);
   while (i < n && cls(t.charCodeAt(i))) i += 1;
   return i;
 }
@@ -216,10 +216,13 @@ const isHex = (c: number): boolean => isDigit(c) || ((c | 32) >= 97 && (c | 32) 
 /** The quote a character code stands for, or 0. */
 const quoteOf = (code: number): number => (code === QUOTE || code === APOS ? code : 0);
 
+/** A numeric character reference with more digits than this (leading zeros counted) is not taken as a quote. */
+const MAX_ENTITY_DIGITS = 8;
+
 /**
  * A quote written as an HTML character reference at `i` (`&quot;`, `&apos;`, `&#34;`, `&#039;`, `&#x22;`, `&#x0027;`,
  * the `;` optional as HTML allows), maybe encoded once more (`&amp;quot;`): its end and quote, or null. The digits are
- * one run, read once.
+ * read no further than `MAX_ENTITY_DIGITS` (a run of zeros would otherwise be read whole by every look at it).
  */
 function entityQuoteAt(t: string, i: number): { end: number; quote: number; amp: boolean } | null {
   if (t.charCodeAt(i) !== 38) return null;
@@ -236,8 +239,8 @@ function entityQuoteAt(t: string, i: number): { end: number; quote: number; amp:
   } else if (t.charCodeAt(p) === 35) {
     const hex = (t.charCodeAt(p + 1) | 32) === 120;
     const d = p + (hex ? 2 : 1);
-    const e = runEnd(t, d, hex ? isHex : isDigit);
-    if (e === d) return null;
+    const e = runEnd(t, d, hex ? isHex : isDigit, d + MAX_ENTITY_DIGITS + 1);
+    if (e === d || e - d > MAX_ENTITY_DIGITS) return null;
     let code = 0;
     for (let k = d; k < e && code <= 0xffff; k += 1) code = code * (hex ? 16 : 10) + parseInt(t[k]!, 16);
     quote = quoteOf(code);
@@ -256,14 +259,17 @@ interface EscapedQuote {
   readonly amp: boolean;
 }
 
+const isBackslash = (c: number): boolean => c === BACKSLASH;
+
 /**
  * An escaped quote at `i`, or null: backslashes (any number) before `"`, `'`, `u0022`/`u0027`, `x22`/`x27` or an
- * entity quote; or a bare entity quote.
+ * entity quote; or a bare entity quote. The backslashes are read no further than `limit`: a run reaching it is null.
  */
-function escapedQuoteAt(t: string, i: number): EscapedQuote | null {
+function escapedQuoteAt(t: string, i: number, limit = t.length): EscapedQuote | null {
   const c = t.charCodeAt(i);
   if (c === BACKSLASH) {
-    const q = runEnd(t, i, (x) => x === BACKSLASH);
+    const q = runEnd(t, i, isBackslash, limit);
+    if (q >= limit) return null;
     const slashes = q - i;
     const after = t.charCodeAt(q);
     if (isQuote(after)) return { length: slashes + 1, quote: after, slashes, amp: false };
@@ -324,20 +330,23 @@ function plainQuotedEnds(t: string, v: number): { first: number; skip: number } 
 /** The escaped pass looks this far for a closing quote (and never past the line): a value is no bigger. */
 const MAX_ESCAPED_VALUE = 4096;
 
-/** Where the closing quote of the value opened by the escaped quote `open` at `v` begins, or -1. */
+/**
+ * Where the closing quote of the value opened by the escaped quote `open` at `v` begins, or -1. Nothing past the window
+ * is read, not even to finish a run of backslashes or digits: each unclosed opening reads its window once.
+ */
 function escapedQuotedEnd(t: string, v: number, open: EscapedQuote): number {
   const n = Math.min(t.length, v + open.length + MAX_ESCAPED_VALUE);
   for (let y = v + open.length; y < n; y += 1) {
     const c = t.charCodeAt(y);
     if (c === 10) return -1;
     if (c !== BACKSLASH && c !== 38) continue;
-    const q = escapedQuoteAt(t, y);
+    const q = escapedQuoteAt(t, y, n);
     if (q && q.quote === open.quote && q.amp === open.amp && closesAt(q.slashes, open.slashes)) {
       return y === v + open.length ? -1 : y;
     }
     // Skip it whole: a quote at another level, or a backslash run (its last backslash may open the closing quote).
     if (q) y += q.length - 1;
-    else if (c === BACKSLASH) y = runEnd(t, y, (x) => x === BACKSLASH) - 1;
+    else if (c === BACKSLASH) y = runEnd(t, y, isBackslash, n) - 1;
   }
   return -1;
 }
