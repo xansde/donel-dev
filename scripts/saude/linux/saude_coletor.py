@@ -53,7 +53,12 @@ TABELAS = {
 }
 MAX_PENDENTE_BYTES = 40 * 1024 * 1024  # por tabela; passou disso, descarta as mais antigas
 REDE_FORA = ("lo", "docker", "veth", "br-", "virbr", "cni", "flannel")
-RE_MORTA = re.compile(r"invalid|revok|unauthori|expired|refresh|grant|forbidden|401|403", re.IGNORECASE)
+# Conta "fora" é só a que precisa de login (Reconectar). Limite de uso, 429 e sobrecarga são passageiros: a conta
+# renova sozinha e conta como esgotada (16/11: "rate_limit_error" marcava fora e disparou "caiu" à toa).
+RE_PASSAGEIRO = re.compile(r"rate[_ ]?limit|\b429\b|overload|\b529\b|quota|too many requests|\b50[0-4]\b|api_error|timeout",
+                           re.IGNORECASE)
+RE_LOGIN = re.compile(r"invalid[_ ]grant|invalid[_ ]token|revok|unauthori[sz]ed|authentication_error|permission_error|"
+                      r"token (?:has )?expired|refresh[_ ]token|\b401\b|\b403\b", re.IGNORECASE)
 BACKOFF_CHAVE_S = 1800  # 401/403 da gestão: 5 erradas banem o IP por 30 min, então para de tentar por 30 min
 
 
@@ -237,19 +242,12 @@ def conta_de(f: dict, now: datetime) -> dict:
     cooldown = max(vigentes) if vigentes else None
     desligada = bool(f.get("disabled"))
     indisp = bool(f.get("unavailable"))
-    em429 = bool(cooldown) or (indisp and "quota" in str(f.get("status_message") or "").lower())
     estado = str(f.get("status") or "")
     motivo = str(f.get("status_message") or "")
+    passageiro = bool(RE_PASSAGEIRO.search(motivo))
+    em429 = bool(cooldown) or (indisp and passageiro)
     disponivel = estado == "active" and not desligada and not indisp and not em429
-    # fora = desligada ou login morto (precisa Reconectar); esgotada = em espera por cota, renova em cooldown_ate/volta
-    if desligada or (estado == "error" and RE_MORTA.search(motivo)) or (indisp and not em429):
-        classe = "fora"
-    elif em429 or (uso5h or 0) >= 100 or (uso7d or 0) >= 100:
-        classe = "esgotada"
-    elif disponivel:
-        classe = "com_cota"
-    else:
-        classe = "fora"
+    classe = classe_de(desligada, estado, motivo, em429, indisp, disponivel, uso5h, uso7d)
     return {
         "conta": str(f.get("email") or f.get("account") or f.get("name") or "?").lower(),
         "estado": estado, "desligada": desligada,
@@ -259,6 +257,21 @@ def conta_de(f: dict, now: datetime) -> dict:
         "motivo": str(f.get("status_message") or "")[:120], "ok_total": int(f.get("success") or 0),
         "falha_total": int(f.get("failed") or 0),
     }
+
+
+def classe_de(desligada: bool, estado: str, motivo: str, em429: bool, indisp: bool, disponivel: bool,
+              uso5h, uso7d) -> str:
+    """fora = precisa de login (desligada, invalid_grant, 401/403 de auth); esgotada = espera e renova sozinha (cota,
+    rate_limit, 429, sobrecarga, erro sem causa de login); com_cota = pode atender agora."""
+    if desligada:
+        return "fora"
+    if RE_PASSAGEIRO.search(motivo):
+        return "esgotada"
+    if RE_LOGIN.search(motivo):
+        return "fora"
+    if em429 or indisp or (uso5h or 0) >= 100 or (uso7d or 0) >= 100:
+        return "esgotada"
+    return "com_cota" if disponivel else "esgotada"
 
 
 def tem_cota(c: dict) -> bool:
