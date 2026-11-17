@@ -5,12 +5,16 @@
 // pending and tries again later, growing the wait; the next change goes too. The ledger file stays the source:
 // after a restart the main simply mirrors it once more.
 
-import { tarefaRows, type MaskNote, type PlaceInfoOf, type TarefaRow } from '../../shared/ledger/mirror';
+import { cartaRows, tarefaRows, type CartaRow, type MaskNote, type PlaceInfoOf, type TarefaRow } from '../../shared/ledger/mirror';
 import type { LedgerDoc } from '../../shared/ledger/contract';
 
-/** Where the rows go. `push` gets every row (an upsert); it rejects on failure, with a message free of secrets. */
+/**
+ * Where the rows go. `push` gets every row (an upsert); it rejects on failure, with a message free of secrets.
+ * `cartas` (t-36a99827) is the whole list of cards waiting for the owner; a sink that cannot ship them right now
+ * logs it and still resolves — the tasks went, and the next push tries the cards again.
+ */
 export interface MirrorSink {
-  push(rows: readonly TarefaRow[]): Promise<void>;
+  push(rows: readonly TarefaRow[], cartas?: readonly CartaRow[]): Promise<void>;
 }
 
 export interface MirrorTimers {
@@ -105,8 +109,9 @@ export function createLedgerMirror(deps: LedgerMirrorDeps): LedgerMirror {
     inFlight = (async () => {
       try {
         const { rows, masked } = tarefaRows(doc, deps.places?.(), { ownerName: deps.ownerName?.() });
-        for (const note of masked) log(logMasked(note));
-        await sink.push(rows);
+        const cartas = cartaRows(doc);
+        for (const note of [...masked, ...cartas.masked]) log(logMasked(note));
+        await sink.push(rows, cartas.rows);
         failures = 0;
         lastError = null;
         lastSyncAt = now();

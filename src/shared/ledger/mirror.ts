@@ -7,11 +7,14 @@
 // names PEOPLE (who asked: the owner, someone from Slack, the source of a signal) and PLACES by their name
 // ("Dev · Mindscape de cadeiras"), never a role alone nor an id; the id is the last column.
 //
-// What never leaves: proof files (prints, videos, prototypes — size, and they can show sensitive data). A text
-// proof and a link do go, after `maskSecrets` (tokens, keys, passwords, e-mails, CPF).
+// What never leaves in a row: proof files. A text proof and a link do go, after `maskSecrets` (tokens, keys,
+// passwords, e-mails, CPF). t-36a99827 — the cards waiting for the owner go too (`cartaRows`), for the phone app: the
+// "para o dono" block, masked, and the delivery's print and prototype files (the prototype masked as text; a print
+// cannot be scanned — it is the same print the owner sees in the Oráculo). Videos stay only as a mention.
 
 import {
   ASKED_BY_OWNER,
+  HTML_MEDIA_TYPE,
   awaitsSend,
   doneByOf,
   eventNote,
@@ -30,6 +33,7 @@ import {
   type LedgerDoc,
   type LedgerTask,
   type LedgerViewState,
+  type LedgerVisual,
 } from './contract';
 import { CLOSING_LABELS, closingOf, withoutMarks } from './closing';
 import { deliveryNote } from './labels';
@@ -415,6 +419,115 @@ export function tarefaRows(doc: LedgerDoc, places?: PlaceInfoOf, options: Tarefa
   const rows = Object.values(doc.tasks)
     .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
     .map((task) => tarefaRow(doc, task, places, masked, options));
+  return { rows, masked };
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Cards for the phone (t-36a99827) — what `celular_cartas_gravar` receives, one per task waiting for the owner. The
+// shape is the phone's (`src/shared/celular.ts`: `CartaCelular`), with the visual's proofs as numbers.
+
+export interface CartaOpcao {
+  readonly rotulo: string;
+  readonly efeito: string;
+  readonly risco?: string;
+  readonly fecha: 'aceita' | 'rejeitada';
+  readonly recomendada?: true;
+}
+
+/** The front of the card. `prova`, `antes` and `depois` are `ordem`s of `provas` (positions in the delivery's proofs). */
+export type CartaVisual =
+  | { readonly tipo: 'prova'; readonly prova: number }
+  | { readonly tipo: 'antes-depois'; readonly antes: number; readonly depois: number }
+  | { readonly tipo: 'checagens'; readonly itens: ReadonlyArray<{ readonly nome: string; readonly ok: boolean; readonly frase: string }> };
+
+export type CartaProvaTipo = 'imagem' | 'prototipo' | 'video';
+
+/** A proof file of the card's delivery; the destination reads `file` from `ledger-provas/` and never ships the name. */
+export interface CartaProvaRef {
+  /** Position in the delivery's proofs (the same number the visual uses). */
+  readonly ordem: number;
+  readonly tipo: CartaProvaTipo;
+  readonly media_type: string;
+  readonly rotulo: string;
+  readonly file: string;
+}
+
+/**
+ * One task waiting for the owner. Without a card (the Revisor's daily sample — already accepted —, or a delivery
+ * with no "para o dono" block) every card field is `null` and `opcoes` is empty: only the proofs go.
+ */
+export interface CartaRow {
+  readonly id: string;
+  /** The card's own title (`forOwner.title`); `null` = the task's title (`tarefas.titulo`). */
+  readonly titulo: string | null;
+  readonly pergunta: string | null;
+  readonly resumo: string | null;
+  readonly opcoes: readonly CartaOpcao[];
+  readonly porque: string | null;
+  readonly risco: string | null;
+  readonly visual: CartaVisual | null;
+  readonly provas: readonly CartaProvaRef[];
+}
+
+function cartaVisual(visual: LedgerVisual | undefined, mask: (field: string, value: string) => string): CartaVisual | null {
+  if (!visual) return null;
+  switch (visual.kind) {
+    case 'prova':
+      return { tipo: 'prova', prova: visual.proof };
+    case 'antes-depois':
+      return { tipo: 'antes-depois', antes: visual.before, depois: visual.after };
+    case 'checagens':
+      return {
+        tipo: 'checagens',
+        itens: visual.checks.map((check, i) => ({ nome: mask(`carta.visual.itens[${i}].nome`, check.name), ok: check.ok, frase: mask(`carta.visual.itens[${i}].frase`, check.sentence) })),
+      };
+  }
+}
+
+function cartaProvaTipo(mediaType: string): { tipo: CartaProvaTipo; rotulo: string } {
+  if (mediaType === HTML_MEDIA_TYPE) return { tipo: 'prototipo', rotulo: 'Protótipo' };
+  return mediaType.startsWith('video/') ? { tipo: 'video', rotulo: 'Vídeo' } : { tipo: 'imagem', rotulo: 'Print' };
+}
+
+export function cartaRow(task: LedgerTask, masked: MaskNote[]): CartaRow {
+  const mask = (field: string, value: string): string => {
+    const result = maskSecrets(value);
+    if (result.hits.length > 0) masked.push({ taskId: task.id, field, kinds: [...new Set(result.hits.map((hit) => hit.kind))] });
+    return result.text;
+  };
+  const delivery = lastDelivery(task);
+  const provas = (delivery?.proofs ?? []).flatMap((proof, ordem): CartaProvaRef[] =>
+    proof.kind === 'arquivo' ? [{ ordem, ...cartaProvaTipo(proof.mediaType), media_type: proof.mediaType, file: proof.file }] : [],
+  );
+  // The Revisor's sample is already accepted: the phone draws the old card (Confirmo / Rejeitar), never options.
+  const forOwner = task.state === 'aceita' ? undefined : delivery?.forOwner;
+  if (!forOwner) return { id: task.id, titulo: null, pergunta: null, resumo: null, opcoes: [], porque: null, risco: null, visual: null, provas };
+  return {
+    id: task.id,
+    titulo: forOwner.title ? mask('carta.titulo', forOwner.title) : null,
+    pergunta: mask('carta.pergunta', forOwner.question),
+    resumo: mask('carta.resumo', forOwner.summary),
+    opcoes: forOwner.options.map((option, i) => ({
+      rotulo: mask(`carta.opcoes[${i}].rotulo`, option.label),
+      efeito: mask(`carta.opcoes[${i}].efeito`, option.effect),
+      ...(option.risk ? { risco: mask(`carta.opcoes[${i}].risco`, option.risk) } : {}),
+      fecha: option.closes,
+      ...(option.recommended ? { recomendada: true as const } : {}),
+    })),
+    porque: mask('carta.porque', forOwner.why),
+    risco: mask('carta.risco', forOwner.risk),
+    visual: cartaVisual(forOwner.visual, mask),
+    provas,
+  };
+}
+
+/** Every task waiting for the owner (`waitsForOwner`), oldest first. The list is whole: what is not in it leaves the phone. */
+export function cartaRows(doc: LedgerDoc): { rows: CartaRow[]; masked: MaskNote[] } {
+  const masked: MaskNote[] = [];
+  const rows = Object.values(doc.tasks)
+    .filter((task) => waitsForOwner(doc, task))
+    .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id))
+    .map((task) => cartaRow(task, masked));
   return { rows, masked };
 }
 

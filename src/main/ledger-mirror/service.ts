@@ -20,6 +20,7 @@ import {
 } from '../../shared/ledger/mirror';
 import { createLedgerMirror, type LedgerMirror, type MirrorSink } from './mirror';
 import { createSupabaseSink } from './supabase-sink';
+import { createProofReader } from './cartas';
 
 export const MIRROR_VAULT_KEY = 'mirror:supabase:service-key';
 const LOG_MAX_BYTES = 512 * 1024;
@@ -63,6 +64,8 @@ export interface LedgerMirrorServiceDeps {
   readonly places?: () => PlaceInfoOf;
   /** The current ledger, for the first sync after configuring. */
   readonly loadDoc: () => LedgerDoc | null;
+  /** t-36a99827 — `ledger-provas/` of the ledger the app shows (the cards' prints and prototypes go to the phone). */
+  readonly proofsDir?: string;
 }
 
 export interface LedgerMirrorService {
@@ -137,7 +140,7 @@ export function createLedgerMirrorService(deps: LedgerMirrorServiceDeps): Ledger
   const currentSink = (): MirrorSink | null => {
     if (!settings?.enabled) return null;
     if (sinkUrl !== settings.url) {
-      sink = createSupabaseSink({ url: settings.url, key: readKey });
+      sink = createSupabaseSink({ url: settings.url, key: readKey, log, ...(deps.proofsDir ? { readProof: createProofReader(deps.proofsDir) } : {}) });
       sinkUrl = settings.url;
     }
     return sink;

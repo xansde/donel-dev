@@ -1,7 +1,9 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { createLedgerMirror, type MirrorSink, type MirrorTimers } from '../src/main/ledger-mirror/mirror';
 import { createSupabaseSink } from '../src/main/ledger-mirror/supabase-sink';
-import { maskSecrets, tarefaRows, withPlaceMemory, type PlaceInfo, type PlaceInfoOf, type TarefaRow } from '../src/shared/ledger/mirror';
+import { MAX_CARD_IMAGE_BYTES, type ProofReader } from '../src/main/ledger-mirror/cartas';
+import { cartaRows, maskSecrets, tarefaRows, withPlaceMemory, type PlaceInfo, type PlaceInfoOf, type TarefaRow } from '../src/shared/ledger/mirror';
 import { LEADER_OF_ALL } from '../src/shared/mindscape/leader';
 import { LEDGER_SCHEMA_VERSION, type LedgerDoc, type LedgerTask } from '../src/shared/ledger/contract';
 
@@ -405,5 +407,246 @@ describe('espelho do Oráculo', () => {
       );
     expect(failed).toContain('401');
     expect(failed).not.toContain(key);
+  });
+
+  // t-36a99827 — the phone shows the card's options, the recommended one and the delivery's print and prototype.
+  describe('cartas do celular', () => {
+    const dev = { kind: 'lugar' as const, placeId: 'place:dev', roleId: 'dev' };
+    const secret = 'ghp_' + 'z'.repeat(36);
+    const files = {
+      print: '2026-11-17-aaaaaaaaaaaa.png',
+      proto: '2026-11-17-bbbbbbbbbbbb.html',
+      video: '2026-11-17-cccccccccccc.mp4',
+      big: '2026-11-17-dddddddddddd.png',
+    };
+    const printBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+    const protoHtml = `<html><body><script>const token = "${secret}";</script>ok</body></html>`;
+    const waiting = task('t-1', {
+      risk: 'alto',
+      state: 'entregue',
+      events: [
+        { kind: 'criada', at: T0, by: { kind: 'dono' } },
+        {
+          kind: 'entregue',
+          at: T0 + 1,
+          by: dev,
+          proofs: [
+            { kind: 'arquivo', file: files.print, mediaType: 'image/png' },
+            { kind: 'texto', text: '4 passed' },
+            { kind: 'arquivo', file: files.proto, mediaType: 'text/html' },
+            { kind: 'arquivo', file: files.video, mediaType: 'video/mp4' },
+            { kind: 'arquivo', file: files.big, mediaType: 'image/png' },
+          ],
+          forOwner: {
+            title: 'Botão verde',
+            question: 'Aceito o botão verde?',
+            summary: `Feito; avisei cliente@empresa.com.br`,
+            options: [
+              { label: 'Aceitar', effect: 'Vai para o alfa.', closes: 'aceita', recommended: true },
+              { label: 'Refazer', effect: 'Volta para o Dev.', risk: 'Atrasa um dia.', closes: 'rejeitada' },
+            ],
+            why: 'O print bate com o pedido.',
+            risk: 'Baixo.',
+            visual: { kind: 'antes-depois', before: 0, after: 2 },
+          },
+        },
+      ],
+    });
+    // A Revisor's accept in the daily sample: it came with a card, but the phone draws the old one, without options.
+    const sample = task('t-2', {
+      state: 'aceita',
+      events: [
+        { kind: 'criada', at: T0, by: { kind: 'dono' } },
+        {
+          kind: 'entregue',
+          at: T0 + 1,
+          by: dev,
+          proofs: [{ kind: 'arquivo', file: files.print, mediaType: 'image/png' }],
+          forOwner: { question: 'q?', summary: 's', options: [{ label: 'A', effect: 'e', closes: 'aceita', recommended: true }, { label: 'B', effect: 'e', closes: 'rejeitada' }], why: 'w', risk: 'r', visual: { kind: 'prova', proof: 0 } },
+        },
+        { kind: 'aceita', at: T0 + 2, by: { kind: 'lugar', placeId: 'place:rev', roleId: 'revisor' } },
+      ],
+    });
+    // Not waiting: a low-risk delivery, and one the owner already decided.
+    const lowRisk = task('t-3', { state: 'entregue', events: [{ kind: 'criada', at: T0, by: { kind: 'dono' } }, { kind: 'entregue', at: T0 + 1, by: dev, proofs: [{ kind: 'texto', text: 'ok' }] }] });
+    const decided = task('t-4', {
+      risk: 'alto',
+      state: 'aceita',
+      events: [...waiting.events, { kind: 'aceita', at: T0 + 2, by: { kind: 'dono' }, option: 'Aceitar' }],
+    });
+    const ledgerDoc = doc(waiting, sample, lowRisk, decided);
+
+    it('a card waiting for the owner goes with its options, the recommended one, the visual and the proof files, masked', () => {
+      const { rows, masked } = cartaRows(ledgerDoc);
+      // Only what waits for the owner; the sample goes without a card but with its print.
+      expect(rows.map((row) => row.id)).toEqual(['t-1', 't-2']);
+      expect(rows[0]).toEqual({
+        id: 't-1',
+        titulo: 'Botão verde',
+        pergunta: 'Aceito o botão verde?',
+        resumo: 'Feito; avisei [e-mail]',
+        opcoes: [
+          { rotulo: 'Aceitar', efeito: 'Vai para o alfa.', fecha: 'aceita', recomendada: true },
+          { rotulo: 'Refazer', efeito: 'Volta para o Dev.', risco: 'Atrasa um dia.', fecha: 'rejeitada' },
+        ],
+        porque: 'O print bate com o pedido.',
+        risco: 'Baixo.',
+        visual: { tipo: 'antes-depois', antes: 0, depois: 2 },
+        // `ordem` is the place in the delivery's proofs (the text proof keeps its number 1).
+        provas: [
+          { ordem: 0, tipo: 'imagem', media_type: 'image/png', rotulo: 'Print', file: files.print },
+          { ordem: 2, tipo: 'prototipo', media_type: 'text/html', rotulo: 'Protótipo', file: files.proto },
+          { ordem: 3, tipo: 'video', media_type: 'video/mp4', rotulo: 'Vídeo', file: files.video },
+          { ordem: 4, tipo: 'imagem', media_type: 'image/png', rotulo: 'Print', file: files.big },
+        ],
+      });
+      expect(rows[1]).toEqual({
+        id: 't-2',
+        titulo: null,
+        pergunta: null,
+        resumo: null,
+        opcoes: [],
+        porque: null,
+        risco: null,
+        visual: null,
+        provas: [{ ordem: 0, tipo: 'imagem', media_type: 'image/png', rotulo: 'Print', file: files.print }],
+      });
+      expect(masked).toEqual([{ taskId: 't-1', field: 'carta.resumo', kinds: ['e-mail'] }]);
+    });
+
+    it('checks on the front are masked too', () => {
+      const checks = task('t-5', {
+        risk: 'alto',
+        state: 'entregue',
+        events: [
+          { kind: 'criada', at: T0, by: { kind: 'dono' } },
+          {
+            kind: 'entregue',
+            at: T0 + 1,
+            by: dev,
+            proofs: [{ kind: 'texto', text: 'ok' }],
+            forOwner: { ...waiting.events[1]!.forOwner!, summary: 'ok', visual: { kind: 'checagens', checks: [{ name: 'deploy', ok: true, sentence: `saiu com ${secret}` }] } },
+          },
+        ],
+      });
+      const { rows, masked } = cartaRows(doc(checks));
+      expect(rows[0]!.visual).toEqual({ tipo: 'checagens', itens: [{ nome: 'deploy', ok: true, frase: 'saiu com [segredo]' }] });
+      expect(masked).toEqual([{ taskId: 't-5', field: 'carta.visual.itens[0].frase', kinds: ['token GitHub'] }]);
+    });
+
+    const key = 'sb_secret_' + 'k'.repeat(30);
+    const reader: ProofReader & { reads: string[] } = Object.assign(
+      async (file: string, max: number) => {
+        reader.reads.push(file);
+        if (file === files.print) return { kind: 'ok' as const, bytes: printBytes };
+        if (file === files.proto) return { kind: 'ok' as const, bytes: Buffer.from(protoHtml, 'utf8') };
+        if (file === files.big) return { kind: 'grande' as const, size: max + 1 };
+        throw new Error(`the video is never read: ${file}`);
+      },
+      { reads: [] as string[] },
+    );
+    const sha = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex');
+
+    /** A Supabase that records each POST and answers each RPC from `answers`. */
+    function fakeSupabase(answers: { cartas?: () => Response; prova?: () => Response } = {}) {
+      const calls: Array<{ url: string; body: any }> = [];
+      const fetchFn = (async (url: string, init: RequestInit) => {
+        calls.push({ url, body: JSON.parse(String(init.body)) });
+        if (url.endsWith('/rpc/celular_cartas_gravar')) return answers.cartas?.() ?? Response.json([]);
+        if (url.endsWith('/rpc/celular_prova_gravar')) return answers.prova?.() ?? Response.json(true);
+        return new Response(null, { status: 201 });
+      }) as unknown as typeof fetch;
+      return { calls, fetchFn };
+    }
+
+    it('the sink records the cards after the tasks and uploads only the proofs asked for, with the right hash', async () => {
+      reader.reads = [];
+      const lines: string[] = [];
+      // The database asks for every proof of t-1, the video and the big print included: those never go as bytes.
+      const ask = Response.json([0, 2, 3, 4].map((ordem) => ({ tarefa: 't-1', ordem })));
+      const supabase = fakeSupabase({ cartas: () => ask.clone() });
+      const sink = createSupabaseSink({ url: 'https://abcdefgh.supabase.co', key: () => key, fetch: supabase.fetchFn, readProof: reader, log: (line) => lines.push(line) });
+      const cartas = cartaRows(ledgerDoc).rows;
+      await sink.push(tarefaRows(ledgerDoc).rows, cartas);
+
+      expect(supabase.calls.map((call) => call.url.replace('https://abcdefgh.supabase.co/rest/v1/', ''))).toEqual([
+        'tarefas?on_conflict=id',
+        'rpc/celular_cartas_gravar',
+        'rpc/celular_prova_gravar',
+        'rpc/celular_prova_gravar',
+      ]);
+      const maskedHtml = Buffer.from(maskSecrets(protoHtml).text, 'utf8');
+      const body = supabase.calls[1]!.body as { p_cartas: Array<Record<string, unknown>> };
+      expect(body.p_cartas.map((carta) => carta.id)).toEqual(['t-1', 't-2']);
+      expect(body.p_cartas[0]).toMatchObject({ pergunta: 'Aceito o botão verde?', opcoes: [expect.objectContaining({ rotulo: 'Aceitar', recomendada: true }), expect.not.objectContaining({ recomendada: true })] });
+      expect(body.p_cartas[0]!.provas).toEqual([
+        { ordem: 0, tipo: 'imagem', media_type: 'image/png', rotulo: 'Print', sha256: sha(printBytes), tamanho: printBytes.length, sem_arquivo: false },
+        { ordem: 2, tipo: 'prototipo', media_type: 'text/html', rotulo: 'Protótipo', sha256: sha(maskedHtml), tamanho: maskedHtml.length, sem_arquivo: false },
+        { ordem: 3, tipo: 'video', media_type: 'video/mp4', rotulo: 'Vídeo', sha256: null, tamanho: null, sem_arquivo: true },
+        { ordem: 4, tipo: 'imagem', media_type: 'image/png', rotulo: 'Print', sha256: null, tamanho: MAX_CARD_IMAGE_BYTES + 1, sem_arquivo: true },
+      ]);
+      // No file name, no path, no secret in what the cards' RPC receives.
+      expect(JSON.stringify(body)).not.toMatch(/2026-11-17-|ledger-provas|ghp_|cliente@/);
+
+      const [print, proto] = [supabase.calls[2]!.body, supabase.calls[3]!.body];
+      expect(print).toEqual({ p_tarefa: 't-1', p_ordem: 0, p_sha256: sha(printBytes), p_dados: printBytes.toString('base64') });
+      expect(proto).toMatchObject({ p_tarefa: 't-1', p_ordem: 2, p_sha256: sha(maskedHtml) });
+      const uploaded = Buffer.from(proto.p_dados as string, 'base64').toString('utf8');
+      expect(uploaded).not.toContain(secret);
+      expect(uploaded).toContain('const token = "[segredo]"');
+      expect(lines).toContain('mascarado: tarefa t-1, campo prova 2 (protótipo) (token GitHub)');
+      // What goes only as a mention is never read for an upload, even when asked.
+      expect(reader.reads.filter((file) => file === files.big)).toHaveLength(1);
+
+      // The next push: nothing asked, nothing uploaded, and the files already hashed are not read again.
+      reader.reads = [];
+      const quiet = fakeSupabase();
+      const again = createSupabaseSink({ url: 'https://abcdefgh.supabase.co', key: () => key, fetch: quiet.fetchFn, readProof: reader });
+      await again.push([], cartas);
+      await again.push([], cartas);
+      expect(quiet.calls.map((call) => call.url.split('/').pop())).toEqual(['celular_cartas_gravar', 'celular_cartas_gravar']);
+      expect(reader.reads.filter((file) => file === files.print)).toHaveLength(1);
+    });
+
+    it('a print not on this PC yet (remote mode) goes as a mention, and with its bytes once it arrives', async () => {
+      let arrived = false;
+      const late: ProofReader = async () => (arrived ? { kind: 'ok', bytes: printBytes } : { kind: 'sumiu' });
+      const supabase = fakeSupabase();
+      const sink = createSupabaseSink({ url: 'https://abcdefgh.supabase.co', key: () => key, fetch: supabase.fetchFn, readProof: late });
+      const cartas = cartaRows(doc(sample)).rows;
+      await sink.push([], cartas);
+      arrived = true;
+      await sink.push([], cartas);
+      const proofOf = (n: number) => (supabase.calls[n]!.body as { p_cartas: Array<{ provas: unknown[] }> }).p_cartas[0]!.provas[0];
+      expect(proofOf(0)).toMatchObject({ sha256: null, tamanho: null, sem_arquivo: true });
+      expect(proofOf(1)).toMatchObject({ sha256: sha(printBytes), tamanho: printBytes.length, sem_arquivo: false });
+    });
+
+    it('with no card waiting the list goes empty (the phone drops the old ones)', async () => {
+      const supabase = fakeSupabase();
+      await createSupabaseSink({ url: 'https://abcdefgh.supabase.co', key: () => key, fetch: supabase.fetchFn }).push([], cartaRows(doc(lowRisk)).rows);
+      expect(supabase.calls).toEqual([{ url: 'https://abcdefgh.supabase.co/rest/v1/rpc/celular_cartas_gravar', body: { p_cartas: [] } }]);
+    });
+
+    it('a failure of the cards (the RPC not created yet) never stops the tasks, nor shows the key', async () => {
+      const lines: string[] = [];
+      const supabase = fakeSupabase({ cartas: () => new Response(`função ausente, chave ${key}`, { status: 404 }) });
+      const sink = createSupabaseSink({ url: 'https://abcdefgh.supabase.co', key: () => key, fetch: supabase.fetchFn, readProof: reader, log: (line) => lines.push(line) });
+      const timers = fakeTimers();
+      const mirror = createLedgerMirror({ sink: () => sink, timers });
+      mirror.changed(ledgerDoc);
+      await timers.fire();
+      for (let i = 0; i < 20; i += 1) await Promise.resolve();
+      await mirror.flush();
+      expect(supabase.calls[0]!.url).toContain('/rest/v1/tarefas?on_conflict=id');
+      expect((supabase.calls[0]!.body as TarefaRow[]).map((row) => row.id)).toEqual(['t-1', 't-2', 't-3', 't-4']);
+      // The tasks went: no retry, no error on the screen; the log says what failed, without the key.
+      expect(mirror.status()).toMatchObject({ pending: false, lastError: null });
+      expect(timers.pending()).toEqual([]);
+      const failure = lines.find((line) => line.startsWith('cartas do celular'));
+      expect(failure).toContain('404');
+      expect(lines.join('\n')).not.toContain(key);
+      expect(supabase.calls.some((call) => call.url.includes('celular_prova_gravar'))).toBe(false);
+    });
   });
 });
