@@ -120,11 +120,12 @@ describe('caixa: decisão do dono parada fora de uma carta', () => {
     // Out: a Dev doing high-risk work, a precisa-do-dono already answered, the Líder único holding it for a moment.
     task('dev-fazendo-alto', { risk: 'alto', state: 'em-execucao', events: [born, { kind: 'assumida', at: T0 + HOUR, by: dev }] }),
     task('ja-respondido', { state: 'em-execucao', events: [born, progress(NOW - 3 * HOUR, 'precisa-do-dono'), progress(NOW - HOUR, 'trabalhando')] }),
+    task('de-outro-dono', { state: 'aberta', ownerPlaceId: 'place:novo', events: [born, progress(NOW - 3 * HOUR, 'precisa-do-dono'), { kind: 'criada', at: NOW - HOUR, by: lider, text: '⟦transferida de place:dev para place:novo⟧ decidido' }] }),
     task('lider-unico-agora', { ownerPlaceId: 'lider', events: [{ kind: 'criada', at: NOW - 30 * 60_000, by: { kind: 'dono' } }] }),
   ];
 
   it('enters the box as a blocking item with why, and pushes like any other', () => {
-    const items = ownerInbox(doc(...tasks), BOARD, NOW, new Map([[BOARD, new Map([['place:dev', 'trabalhando'], ['place:lider-q', 'trabalhando']])]]));
+    const items = ownerInbox(doc(...tasks), BOARD, NOW, new Map([[BOARD, new Map([['place:dev', 'trabalhando'], ['place:lider-q', 'trabalhando'], ['place:novo', 'trabalhando']])]]));
     expect(Object.fromEntries(items.map((item) => [item.task.id, item.kind]))).toEqual({
       'pede-o-dono': 'decisao-parada',
       'com-o-lider-unico': 'decisao-parada',

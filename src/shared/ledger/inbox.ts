@@ -141,6 +141,8 @@ function stoppedDecision(task: LedgerTask, now: number, roles: ReadonlyMap<strin
     if (!isProgressEvent(event)) continue;
     const progress = progressOf(event);
     if (!progress || progress.estado === 'turno-encerrado') continue;
+    // Said by whoever had it before a transfer: the place that got it decides again (often the Líder already did).
+    if (event.by.kind !== 'lugar' || event.by.placeId !== task.ownerPlaceId) break;
     if (progress.estado === 'precisa-do-dono') return { since: event.at, why: progress.precisa ? `pediu você: ${progress.precisa}` : 'a sessão disse que precisa de você' };
     break;
   }
