@@ -1,4 +1,4 @@
-// Sentinela de saída (t-d4f5879c, 17/11) — how the main process ended.
+// Sentinela de saída (t-d4f5879c, 17/11) — how the main process ended, and what around it looked like a killer.
 // At 06:22 of 17/11 the app on the owner's PC was ended from outside (third time): no quit path ran, no dump, no
 // Application Error, and Windows keeps no record of who called TerminateProcess unless process auditing is on
 // (auditpol, needs admin). The run trail (run-trail.ts) proves THAT the run ended without quitting; this says HOW,
@@ -12,9 +12,12 @@
 // short-lived killer (taskkill.exe, the host of a Stop-Process) is usually gone by then: only its long-lived parent
 // may show. Catching the killer itself needs process-creation auditing or ETW, both admin-only; a 1 s WMI poll was
 // tried and caught taskkill 2 times in 5, at a constant WMI cost, so it was left out.
-// Only the candidates to killer keep their command line, masked (maskCommandLine) both in the PowerShell, before the
-// disk, and here, before the log. It is started through a hop that leaves at once, so it is not a descendant of the
-// main and a `taskkill /T` on the main does not take it along.
+// The full command line never reaches the disk (t-c1b710c2): masking a whole line either leaves a password readable
+// or erases who did the kill. Of each candidate to killer only the EVIDENCE is kept — the kill commands it carries
+// (taskkill, Stop-Process, kill/pkill, process.kill, wmic … delete, .Kill()), the scripts it runs, also inside a
+// -EncodedCommand, and whether it names the main's pid — each piece masked for passwords (taskkill /P, wmic /password).
+// It is started through a hop that leaves at once, so it is not a descendant of the main and a `taskkill /T` on the
+// main does not take it along.
 
 import { readdirSync, readFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
@@ -34,67 +37,80 @@ export function classifyExitCode(code: number): ExitCause {
 }
 
 /**
- * Masks for a command line, applied by the PowerShell (`-replace`, or `-creplace` when `caseSensitive`) and here (flag
- * `gi`, or `g`). Written in ASCII classes (no `\w`, no `\b`) so the .NET and the JS engines read them the same way,
- * and with each name anchored where a word starts, so a long line costs at most a square of its length (it is cut to
- * COMMAND_LINE_CUT first). They mask more than needed: a readable command line is worth less than a password left in
- * a log; but what says who ended the main stays (`node -p "process.kill(N)"`, `-PassThru -Id N`, script paths).
+ * What says who ended a process, found in a command line (case-insensitive; .NET `[regex]::Matches` and JS `matchAll`
+ * read them the same way: ASCII classes, bounded lengths, so a long line costs a linear pass per pattern).
  */
-const SECRET_WORD = '(?:password|passwd|pass|pwd|pw|secret|token|apikey|api-key|key|auth|credential)';
-/** A value: `\"x\"` (quotes escaped inside a quoted argument, as Node quotes them on Windows), `"x"` or `'x'`. */
-const QUOTED = `\\\\"[^"]*?\\\\"|"[^"]*"|'[^']*'`;
-
-export interface CommandLineMask {
-  readonly source: string;
-  readonly to: string;
-  readonly caseSensitive?: boolean;
-}
-
-export const COMMAND_LINE_MASKS: readonly CommandLineMask[] = [
-  // scheme://user:password@host
-  { source: `(://[^/\\s:@"']+:)[^@\\s"']+@`, to: '$1***@' },
-  // ConvertTo-SecureString 'x' -AsPlainText (also inside -Password (...) and PSCredential(...))
-  { source: `(ConvertTo-SecureString\\s+(?:-String\\s+)?)(${QUOTED}|[^\\s)]+)`, to: '$1***' },
-  // Authorization: Bearer <token> / Basic <base64> / token <token>
-  { source: `((?<![A-Za-z0-9_])(?:bearer|basic|token)\\s+)[^\\s"'=:][^\\s"']*`, to: '$1***' },
-  // curl -u user:password, -u "user:password", -uuser:password, --user=user:password
-  { source: `((?:^|\\s)(?:-u|--user)(?:=|\\s*)["']?[^\\s:"']+:)[^\\s"']+`, to: '$1***' },
-  // PGPASSWORD=x, set TOKEN=x, $env:TOKEN='x', --password=x, @{'x-api-key'='x'}, environ['DB_PASSWORD']='x', auth=('u','x')
-  {
-    source: `((?<![A-Za-z0-9_.$:-])(?:\\$env:)?[A-Za-z0-9_.-]*${SECRET_WORD}[A-Za-z0-9_.-]*["']?\\]?\\s*=\\s*)(${QUOTED}|\\([^)]*\\)|[^\\s&|;"'}]+)`,
-    to: '$1***',
-  },
-  // X-API-Key: x, PRIVATE-TOKEN: x, "password":"x", {password:'x'}
-  { source: `((?<![A-Za-z0-9_.-])[A-Za-z0-9_.-]*${SECRET_WORD}[A-Za-z0-9_.-]*["']?\\s*:\\s*)(${QUOTED}|[^\\s,;}"']+)`, to: '$1***' },
-  // --password x, --db-password "x y", --client-secret x, --with-token x, --pw x (a whole flag: -PassThru is not one)
-  { source: `((?:^|\\s)--?(?:[A-Za-z0-9_]+-)*${SECRET_WORD}(?:-[A-Za-z0-9_]+)*\\s+)(${QUOTED}|\\S+)`, to: '$1***' },
-  // mysql -pSenha (attached, lowercase: `node -p "..."` and `-PassThru` stay)
-  { source: `((?:^|\\s)-p)([^\\s"'-][^\\s"']*)`, to: '$1***', caseSensitive: true },
-  // sshpass -p Senha
-  { source: `((?:^|\\s)sshpass(?:\\.exe)?\\s+-p\\s*)(${QUOTED}|\\S+)`, to: '$1***' },
-  // /p:Senha, /password:Senha (Windows tools)
-  { source: '((?:^|\\s)/(?:p|pw|pwd|pass|password)[:=])("[^"]*"|\\S+)', to: '$1***' },
-  // AWS access key ids, 20 characters
-  { source: '(?<![A-Za-z0-9_])(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Za-z0-9_])', to: '***' },
-  // any long run of token-like characters without a slash (keys, tokens, base64url, hex)
-  { source: '[A-Za-z0-9_+=-]{24,}', to: '***' },
-  // base64 with slashes (an AWS secret), but never a piece of a path: it may not start right after / \ : . or a letter
-  { source: '(?<![A-Za-z0-9_+/=:.\\\\-])[A-Za-z0-9+=][A-Za-z0-9+/=]{23,}', to: '***' },
+export const KILL_EVIDENCE_PATTERNS: readonly string[] = [
+  String.raw`taskkill(?:\.exe)?[^&|;<>\r\n]{0,160}`,
+  String.raw`(?:Stop-Process|spps)[^;|"\r\n]{0,160}`,
+  String.raw`Get-Process[^;|"\r\n]{0,120}`,
+  String.raw`(?<![A-Za-z0-9_.-])(?:kill|pkill|killall)\s+[^'"&|;<>\r\n]{1,160}`,
+  String.raw`process\.kill\([^)\r\n]{0,80}\)`,
+  String.raw`[A-Za-z0-9_$.\])]{1,60}\.Kill\(\)`,
+  String.raw`wmic[^&|<>\r\n]{0,160}?(?:delete|terminate)`,
+  // a script run by the process: the path only, never its arguments
+  String.raw`(?<![^\s"'=(])[^\s"'|&;<>()]{1,200}\.(?:ps1|psm1|sh|bash|js|mjs|cjs|ts|py|cmd|bat|vbs)(?![A-Za-z0-9])`,
 ];
 
-/** The command line is cut to this before the masks: a long one would cost the PowerShell seconds per process. */
-export const COMMAND_LINE_CUT = 2048;
+/** The base64 of a `powershell -EncodedCommand` (or -enc / -e), decoded and searched like the line itself. */
+export const ENCODED_COMMAND_PATTERN = String.raw`(?:^|\s)-e(?:nc(?:odedcommand)?)?\s+([A-Za-z0-9+/=]{8,})`;
 
-/** What the PowerShell does to a command line before the disk: the cut, then the command-line masks alone. */
-export function maskForDisk(text: string): string {
-  let out = text.length > COMMAND_LINE_CUT ? text.slice(0, COMMAND_LINE_CUT) : text;
-  for (const mask of COMMAND_LINE_MASKS) out = out.replace(new RegExp(mask.source, mask.caseSensitive ? 'g' : 'gi'), mask.to);
+/** At most this many pieces of evidence per process, each cut to EVIDENCE_PIECE_MAX characters. */
+export const EVIDENCE_MAX = 8;
+export const EVIDENCE_PIECE_MAX = 200;
+/** The command line is cut to this before the search. */
+export const COMMAND_LINE_CUT = 8192;
+
+/**
+ * Masks for a piece of evidence, applied by the PowerShell (`-replace`) and here (flag `gi`): the passwords a kill
+ * command can carry. A piece is short and never a whole command line, so no blanket mask erases what it shows.
+ */
+export const EVIDENCE_MASKS: ReadonlyArray<{ readonly source: string; readonly to: string }> = [
+  // scheme://user:password@host
+  { source: String.raw`(://[^/\s:@"']+:)[^@\s"']+@`, to: '$1***@' },
+  // taskkill /S pc /U user /P password, wmic /password x, /p:x
+  { source: String.raw`((?:^|\s)/(?:p|pw|pwd|pass|password)(?:[:=]|\s+))("[^"]*"|'[^']*'|\S+)`, to: '$1***' },
+  // -Password x, --password x, -Credential x
+  { source: String.raw`((?:^|\s)--?(?:password|passwd|pass|pwd|pw|credential|token|secret)(?:=|\s+))("[^"]*"|'[^']*'|\S+)`, to: '$1***' },
+];
+
+/** What the PowerShell does to a piece of evidence before the disk. */
+export function maskEvidence(text: string): string {
+  let out = text.length > EVIDENCE_PIECE_MAX ? text.slice(0, EVIDENCE_PIECE_MAX) : text;
+  for (const mask of EVIDENCE_MASKS) out = out.replace(new RegExp(mask.source, 'gi'), mask.to);
   return out;
 }
 
-/** What reaches the log: the disk masks again, then the ledger's maskSecrets. */
-export function maskCommandLine(text: string): string {
-  return maskSecrets(maskForDisk(text)).text;
+export interface KillEvidence {
+  readonly evidence: readonly string[];
+  /** The command line names the main's pid as a whole number. */
+  readonly mentionsMain: boolean;
+}
+
+/** What the PowerShell records of a candidate's command line; mirrors the script, so the tests prove the disk. */
+export function extractKillEvidence(commandLine: string, mainPid: number): KillEvidence {
+  const line = commandLine.length > COMMAND_LINE_CUT ? commandLine.slice(0, COMMAND_LINE_CUT) : commandLine;
+  const texts = [line];
+  const encoded = new RegExp(ENCODED_COMMAND_PATTERN, 'i').exec(line);
+  // .NET's FromBase64String refuses a length that is not a multiple of 4; Node would decode it anyway
+  if (encoded && encoded[1].length % 4 === 0) {
+    const decoded = Buffer.from(encoded[1], 'base64').toString('utf16le');
+    if (decoded) texts.push(decoded);
+  }
+  const found: string[] = [];
+  for (const text of texts) {
+    for (const pattern of KILL_EVIDENCE_PATTERNS) {
+      for (const match of text.matchAll(new RegExp(pattern, 'gi'))) found.push(match[0]);
+    }
+  }
+  const evidence = [...new Set(found)].slice(0, EVIDENCE_MAX).map(maskEvidence);
+  const mentionsMain = texts.some((text) => new RegExp(`(?<![0-9])${Math.trunc(mainPid)}(?![0-9])`).test(text));
+  return { evidence, mentionsMain };
+}
+
+/** What reaches the log: the evidence masks again, then the ledger's maskSecrets. */
+export function maskForLog(text: string): string {
+  return maskSecrets(maskEvidence(text)).text;
 }
 
 /** Image names whose command line may say who ended the main; any other process keeps only its name. */
@@ -123,6 +139,25 @@ function encode(script: string): string {
   return Buffer.from(script, 'utf16le').toString('base64');
 }
 
+/** The PowerShell function that mirrors extractKillEvidence + maskEvidence (`Get-KillEvidence $commandLine`). */
+export function evidenceFunctionScript(mainPid: number): string {
+  const patterns = KILL_EVIDENCE_PATTERNS.map(psQuote).join(', ');
+  const masks = EVIDENCE_MASKS.map((mask) => ` -replace ${psQuote(mask.source)}, '${mask.to}'`).join('');
+  return [
+    'function Get-KillEvidence([string]$cl) {',
+    `  if ($cl.Length -gt ${COMMAND_LINE_CUT}) { $cl = $cl.Substring(0, ${COMMAND_LINE_CUT}) }`,
+    '  $texts = @($cl)',
+    `  $enc = [regex]::Match($cl, ${psQuote(ENCODED_COMMAND_PATTERN)}, 'IgnoreCase')`,
+    '  if ($enc.Success) { try { $dec = [Text.Encoding]::Unicode.GetString([Convert]::FromBase64String($enc.Groups[1].Value)); if ($dec) { $texts += $dec } } catch {} }',
+    '  $found = New-Object System.Collections.Generic.List[string]',
+    `  foreach ($t in $texts) { foreach ($pat in @(${patterns})) { foreach ($m in [regex]::Matches($t, $pat, 'IgnoreCase')) { if (-not $found.Contains($m.Value)) { $found.Add($m.Value) } } } }`,
+    `  $evidence = @($found | Select-Object -First ${EVIDENCE_MAX} | ForEach-Object { $s = $_; if ($s.Length -gt ${EVIDENCE_PIECE_MAX}) { $s = $s.Substring(0, ${EVIDENCE_PIECE_MAX}) }; $s${masks} })`,
+    `  $mentions = [bool]($texts | Where-Object { $_ -match '(?<![0-9])${Math.trunc(mainPid)}(?![0-9])' })`,
+    '  return @{ evidence = $evidence; mentionsMain = $mentions }',
+    '}',
+  ].join('\n');
+}
+
 export function buildExitSentinelCommand(options: ExitSentinelOptions): { file: string; args: string[] } {
   const pid = Math.trunc(options.pid);
   const startedAt = Math.trunc(options.startedAtMs);
@@ -131,11 +166,8 @@ export function buildExitSentinelCommand(options: ExitSentinelOptions): { file: 
   }
   const target = psQuote(options.recordPath);
   const temp = psQuote(`${options.recordPath}.tmp`);
-  const masks = COMMAND_LINE_MASKS.map(
-    (mask) => ` ${mask.caseSensitive ? '-creplace' : '-replace'} ${psQuote(mask.source)}, '${mask.to}'`,
-  ).join('');
   const save = [
-    '$json = ConvertTo-Json -InputObject $record -Depth 4 -Compress',
+    '$json = ConvertTo-Json -InputObject $record -Depth 5 -Compress',
     `[IO.File]::WriteAllText(${temp}, $json, (New-Object Text.UTF8Encoding $false))`,
     `Move-Item -LiteralPath ${temp} -Destination ${target} -Force`,
   ];
@@ -152,17 +184,16 @@ export function buildExitSentinelCommand(options: ExitSentinelOptions): { file: 
     // The exit code reaches the disk first: the process query below may be slow or hang with WMI.
     `$record = [ordered]@{ pid = ${pid}; startedAtMs = ${startedAt}; exitCode = $code; endedAt = (Get-Date).ToUniversalTime().ToString('o'); aliveAfterExit = @() }`,
     ...save,
+    evidenceFunctionScript(pid),
     // only processes started before the end: a quick reopen's own children must not take the places
     '$end = Get-Date',
     `$since = $end.AddSeconds(-${RECENT_WINDOW_SECONDS})`,
     '$record.aliveAfterExit = @(Get-CimInstance Win32_Process | Where-Object { $_.CreationDate -gt $since -and $_.CreationDate -le $end } | Sort-Object CreationDate |' +
       ` Select-Object -Last ${RECENT_MAX} | ForEach-Object {` +
-      // only a candidate to killer (or a child of the main) keeps its command line, masked before the disk
-      ` $cl = ''; if ($_.Name -match ${psQuote(KILLER_CANDIDATES)} -or $_.ParentProcessId -eq ${pid}) { $cl = [string]$_.CommandLine;` +
-      ` if ($cl.Length -gt ${COMMAND_LINE_CUT}) { $cl = $cl.Substring(0, ${COMMAND_LINE_CUT}) }; $cl = $cl${masks} };` +
-      " if ($cl.Length -gt 300) { $cl = $cl.Substring(0, 300) };" +
+      // only a candidate to killer (or a child of the main) is searched; the command line itself is never written
+      ` $ev = @{ evidence = @(); mentionsMain = $false }; if ($_.Name -match ${psQuote(KILLER_CANDIDATES)} -or $_.ParentProcessId -eq ${pid}) { $ev = Get-KillEvidence ([string]$_.CommandLine) };` +
       " [ordered]@{ pid = [int]$_.ProcessId; ppid = [int]$_.ParentProcessId; name = [string]$_.Name;" +
-      " startedAt = $_.CreationDate.ToUniversalTime().ToString('o'); commandLine = $cl } })",
+      " startedAt = $_.CreationDate.ToUniversalTime().ToString('o'); evidence = @($ev.evidence); mentionsMain = $ev.mentionsMain } })",
     // the next boot may have read (and removed) the first write already: then it was told, and is not written again
     `if (-not (Test-Path -LiteralPath ${target})) { exit 0 }`,
     ...save,
@@ -181,7 +212,9 @@ export interface AliveProcess {
   readonly ppid: number;
   readonly name: string;
   readonly startedAt: string;
-  readonly commandLine: string;
+  /** What in its command line looked like a kill (masked); empty for a process that is not a candidate. */
+  readonly evidence: readonly string[];
+  readonly mentionsMain: boolean;
 }
 
 export interface ExitRecord {
@@ -226,12 +259,13 @@ export function takeExitRecord(path: string, run?: RunId): ExitRecord | null {
   } catch {
     // already gone
   }
-  const alive = (Array.isArray(v.aliveAfterExit) ? (v.aliveAfterExit as AliveProcess[]) : []).map((p) => ({
+  const alive = (Array.isArray(v.aliveAfterExit) ? (v.aliveAfterExit as Partial<AliveProcess>[]) : []).map((p) => ({
     pid: Number(p?.pid),
     ppid: Number(p?.ppid),
     name: String(p?.name ?? ''),
     startedAt: String(p?.startedAt ?? ''),
-    commandLine: maskCommandLine(String(p?.commandLine ?? '')),
+    evidence: (Array.isArray(p?.evidence) ? p.evidence : []).slice(0, EVIDENCE_MAX).map((piece) => maskForLog(String(piece))),
+    mentionsMain: p?.mentionsMain === true,
   }));
   return {
     pid: v.pid,
