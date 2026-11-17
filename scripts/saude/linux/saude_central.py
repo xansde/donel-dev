@@ -259,14 +259,17 @@ def alertas(atual: dict, est: dict, seco: bool) -> dict:
         if chave not in abertos:
             sql.append(f"insert into saude.alerta (chave, inicio, nivel, alvo, texto) values ({lit(chave)}, now(), "
                        f"{lit(nivel)}, {lit(c['alvo'])}, {lit(c['texto'])}) on conflict do nothing;")
+            c["vez"] = int(agora)  # cada abertura é um evento novo, mesmo com a mesma chave e faixa de antes
             eventos.append(("abriu", c))
-            memo[chave] = {"faixa": c["faixa"], "envio": agora}
+            memo[chave] = {"faixa": c["faixa"], "envio": agora, "vez": c["vez"]}
         elif m is None or c["faixa"] > m["faixa"]:
+            c["vez"] = (m or {}).get("vez", 0)
             eventos.append(("piorou", c))
-            memo[chave] = {"faixa": c["faixa"], "envio": agora}
+            memo[chave] = {"faixa": c["faixa"], "envio": agora, "vez": c["vez"]}
         elif agora - m["envio"] >= 3600:
+            c["vez"] = m.get("vez", 0)
             eventos.append(("ainda", c))
-            memo[chave] = {"faixa": c["faixa"], "envio": agora}
+            memo[chave] = {"faixa": c["faixa"], "envio": agora, "vez": c["vez"]}
         else:
             m["faixa"] = c["faixa"]  # melhorou ou igual: guarda, sem avisar
     fora = est.setdefault("fora", {})
@@ -279,7 +282,8 @@ def alertas(atual: dict, est: dict, seco: bool) -> dict:
         if fora[chave] >= 10:  # histerese: 10 rodadas seguidas sem a condição
             sql.append(f"update saude.alerta set fim = now() where chave = {lit(chave)} and inicio = {lit(a['inicio'])};")
             fechados.append(chave)
-            eventos.append(("fechou", {"chave": chave, "alvo": a["alvo"], "texto": texto_resolvido(chave, a, atual)}))
+            eventos.append(("fechou", {"chave": chave, "vez": a["inicio"], "alvo": a["alvo"],
+                                       "texto": texto_resolvido(chave, a, atual)}))
             fora.pop(chave, None)
             memo.pop(chave, None)
     # Grava antes de avisar: se o banco falhar, nada é enviado e a próxima rodada refaz o mesmo evento uma vez só.
@@ -294,7 +298,8 @@ def alertas(atual: dict, est: dict, seco: bool) -> dict:
         por_quadro.setdefault(q, []).extend((k, ln) for k, ln in pend)
     est["pendentes"] = {}
     for ev, c in eventos:
-        k = f"{c.get('chave') or c['alvo']}|{ev}|{c.get('faixa', '')}|{int(agora // 3600) if ev == 'ainda' else ''}"
+        # chave + abertura (vez) + evento (+ faixa, + hora no lembrete): a 2ª abertura do mesmo alerta no dia também sai
+        k = f"{c.get('chave') or c['alvo']}|{c.get('vez', '')}|{ev}|{c.get('faixa', '')}|{int(agora // 3600) if ev == 'ainda' else ''}"
         if k in ja or any(k == x for x, _ in por_quadro.get(QUADRO.get(c["alvo"], "Donel Dev"), [])):
             continue
         rot = {"abriu": "", "piorou": "piorou: ", "ainda": "ainda: ", "fechou": "resolvido: "}[ev]

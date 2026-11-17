@@ -49,6 +49,20 @@ class TestAlertas(unittest.TestCase):
         self.assertIn("swap acima de 80%", self.envios[0][1])
         self.assertIn("resolvido: swap da VPS pessoal em 41% (pico 93.7% às 20:03)", self.envios[1][1])
 
+    def test_mesmo_alerta_aberto_de_novo_depois_sai_de_novo(self):
+        est: dict = {}
+        aberto = [{"chave": "swap:vps-pessoal", "inicio": "2026-11-17T10:00:00+00:00", "alvo": "vps-pessoal", "texto": "t"}]
+        c.alertas(atual(85, 93, []), est, seco=False)                # 1ª abertura
+        for i in range(10):
+            c.alertas(atual(40, 41, aberto), est, seco=False)        # fecha
+        c.time.time = lambda: 2_000_000_000.0                         # mais tarde no mesmo dia
+        try:
+            c.alertas(atual(85, 93, []), est, seco=False)            # 2ª abertura: tem que sair
+        finally:
+            import time as _t
+            c.time.time = _t.time
+        self.assertEqual([t.count("swap acima de 80%") for _, t in self.envios], [1, 0, 1])
+
     def test_sem_emissor_guarda_e_manda_depois_uma_vez(self):
         est: dict = {}
         c.enviar = lambda q, texto: self.envios.append((q, texto)) or "sem-emissor"
