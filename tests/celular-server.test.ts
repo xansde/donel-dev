@@ -19,6 +19,7 @@ import {
   OPTION_REQUIRED,
   STALE_DECISION,
   UNSIGNED_DECISION,
+  PHONE_OFF,
   type DecisaoRow,
   type DecisaoVerifier,
   type DecisoesQueue,
@@ -472,9 +473,22 @@ describe('servidor do celular', () => {
     const sample = await deliveredTask(ledger, 'aceita pelo Revisor', null);
     expect((await ledger.apply({ kind: 'lugar', placeId: 'p-rev', roleId: 'revisor' }, { op: 'aceitar', id: sample })).ok).toBe(true);
 
-    // A rejected card he still writes on, delivered again later (a note read again after the new delivery).
-    const fourth = await deliveredTask(ledger, 'rejeitada e entregue de novo');
-    expect((await ledger.apply({ kind: 'dono' }, { op: 'rejeitar', id: fourth, reason: 'falta o teste' })).ok).toBe(true);
+    // A card the owner already rejected on the PC before the row was read: his words were a decision, not a note.
+    const rejectedOnPc = await deliveredTask(ledger, 'rejeitada pelo PC');
+    expect((await ledger.apply({ kind: 'dono' }, { op: 'rejeitar', id: rejectedOnPc, reason: 'falta o teste' })).ok).toBe(true);
+    // A delivered card decided while the phone is switched off in Preferences.
+    const fourth = await deliveredTask(ledger, 'entregue, celular desligado');
+    // The Revisor's sample of a delivery that came with a card: the owner sees the old card, without options.
+    const lowWithCard = await ledger.apply(LIDER, { op: 'criar', projectPath: 'C:/proj/atlas', request: 'amostra com carta', doneWhen: 'pronto', due: '2026-11-10', ownerPlaceId: 'p-dev', risk: 'baixo' });
+    if (!lowWithCard.ok) throw new Error(lowWithCard.reason);
+    const sampleCard = lowWithCard.task.id;
+    expect((await ledger.apply(DEV, { op: 'assumir', id: sampleCard })).ok).toBe(true);
+    expect((await ledger.apply(DEV, { op: 'entregar', id: sampleCard, proofs: [{ kind: 'texto', text: '4 passed' }], forOwner: FOR_OWNER })).ok).toBe(true);
+    expect((await ledger.apply({ kind: 'lugar', placeId: 'p-rev', roleId: 'revisor' }, { op: 'aceitar', id: sampleCard })).ok).toBe(true);
+    // A second sample he writes on: the note goes out, its mark fails, and the row is read again after the phone is
+    // switched off (an applied note is answered as applied, not refused by a later check).
+    const sampleNote = await deliveredTask(ledger, 'amostra com recado', null);
+    expect((await ledger.apply({ kind: 'lugar', placeId: 'p-rev', roleId: 'revisor' }, { op: 'aceitar', id: sampleNote })).ok).toBe(true);
     // A label recorded with spaces around it: the phone sends it trimmed.
     const fifth = await deliveredTask(ledger, 'rótulo com espaço', {
       ...FOR_OWNER,
@@ -523,8 +537,11 @@ describe('servidor do celular', () => {
       row(11, second, 'sim', { opcao: 'Aceitar' }),
       row(12, first, 'sim', { opcao: 'Aceitar', entrega_vista: null }), // does not say which card he saw
       row(13, first, 'sim'), // no label, on a card whose "Aceitar" closes as accepted
-      row(14, fourth, 'comentario', { comentario: 'Faltou o print' }),
+      row(14, sampleNote, 'comentario', { comentario: 'Faltou o print' }),
       row(15, fifth, 'sim', { opcao: 'Seguir' }),
+      row(16, third, 'nao', { opcao: 'Refazer tudo' }), // unknown label, on a card with no option closing as rejected
+      row(17, sampleCard, 'sim'), // the owner confirms the Revisor's accept
+      row(18, rejectedOnPc, 'comentario', { comentario: 'Pode seguir assim' }),
     ];
     const result = (n: number): string | undefined => rows[n - 1]!.resultado;
     const failMark = new Set([rows[13]!.pedido]);
@@ -558,36 +575,37 @@ describe('servidor do celular', () => {
         comentar: (input) => port.comentar(input),
       },
       verifier: () => verifierOf(auth),
+      phoneOn: () => auth.enabled,
       ledger: () => ledger,
       returned: () => false,
     });
     await consumer.round();
 
     for (const n of [1, 2, 3, 8]) expect(result(n)).toBe(`recusada: ${UNSIGNED_DECISION}`);
-    for (const n of [4, 5, 6, 7, 12]) expect(result(n)).toBe(`recusada: ${STALE_DECISION}`);
+    for (const n of [4, 5, 6, 7, 12, 16]) expect(result(n)).toBe(`recusada: ${STALE_DECISION}`);
     expect(result(13)).toBe(`recusada: ${OPTION_REQUIRED}`);
     expect(decisions(first)).toHaveLength(0);
     expect(ledger.load().doc.tasks[first]!.state).toBe('entregue');
     // Only the rows that passed every check reached the ledger.
-    expect(decided).toEqual([rows[8]!.pedido, rows[10]!.pedido, rows[14]!.pedido]);
+    expect(decided).toEqual([rows[8]!.pedido, rows[10]!.pedido, rows[14]!.pedido, rows[16]!.pedido, rows[17]!.pedido]);
+    expect(result(17)).toBe('aplicada: aceita');
+    expect(result(18)).toMatch(/^recusada: /);
+    expect(sent.filter((message) => message.text.includes('Pode seguir assim'))).toHaveLength(0);
+    expect(ledger.load().doc.tasks[sampleCard]!.state).toBe('aceita');
 
     expect(result(15)).toBe('aplicada: aceita');
     expect(decisions(fifth)).toEqual([expect.objectContaining({ kind: 'aceita', by: { kind: 'dono' }, option: ' Seguir ' })]);
 
-    // The note on `fourth` went out but its mark failed; the Dev delivers again before the row is read again. The
-    // note already on the card is answered as applied, not refused for the new delivery, and goes out once.
+    // The note on `sampleNote` went out but its mark failed. The phone is switched off in Preferences before the row is
+    // read again: the note already on the card is answered as applied, and goes out once; a new signed row is refused
+    // for the phone being off, never applied.
     expect(result(14)).toBeUndefined();
-    expect((await ledger.apply(DEV, { op: 'assumir', id: fourth })).ok).toBe(true);
-    expect((await ledger.apply(DEV, { op: 'entregar', id: fourth, proofs: [{ kind: 'texto', text: '5 passed' }], forOwner: FOR_OWNER })).ok).toBe(true);
+    auth.setEnabled(false);
+    rows.push(row(19, fourth, 'sim', { opcao: 'Aceitar' }));
     await consumer.round();
     expect(result(14)).toBe('aplicada: comentário');
     expect(sent.filter((message) => message.text.includes('Faltou o print'))).toHaveLength(1);
-
-    // The phone switched off in Preferences: a row its paired phone signed is not applied.
-    auth.setEnabled(false);
-    rows.push(row(16, fourth, 'sim', { opcao: 'Aceitar' }));
-    await consumer.round();
-    expect(result(16)).toBe(`recusada: ${UNSIGNED_DECISION}`);
+    expect(result(19)).toBe(`recusada: ${PHONE_OFF}`);
     expect(decisions(fourth).filter((event) => event.kind === 'aceita')).toHaveLength(0);
 
     expect(result(9)).toBe('aplicada: rejeitada');
