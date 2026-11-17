@@ -217,6 +217,58 @@ def processos(est: dict | None = None, t: float | None = None) -> tuple[int, lis
     return len(raizes), top, linhas[:MAX_SESSOES], max(0, len(linhas) - MAX_SESSOES)
 
 
+def psi() -> dict:
+    """Pressão (PSI) de CPU, memória e IO: % do tempo em espera, médias de 10 e 60 s (t-6a3a9a2c)."""
+    out = {}
+    for r in ("cpu", "memory", "io"):
+        try:
+            for ln in Path(f"/proc/pressure/{r}").read_text(encoding="ascii").splitlines():
+                p = ln.split()
+                for kv in p[1:3]:
+                    k, _, v = kv.partition("=")
+                    out[f"{r}_{p[0]}{k[3:]}"] = float(v)
+        except (OSError, ValueError, IndexError):
+            continue
+    return out
+
+
+def fila_pesada() -> dict | None:
+    """Quem segura ~/.donel/build-pesado.lock e quantos esperam (de /proc/locks), e as recusas do limitador na última
+    hora. None quando o limitador não está nesta máquina."""
+    lock = HOME / ".donel" / "build-pesado.lock"
+    if not lock.exists():
+        return None
+    ino = lock.stat().st_ino
+    dono, esperando = None, 0
+    try:
+        for ln in Path("/proc/locks").read_text().splitlines():
+            c = ln.split()
+            espera = "->" in c
+            if espera:
+                c.remove("->")
+            if len(c) > 5 and c[5].split(":")[-1] == str(ino):
+                if espera:
+                    esperando += 1
+                elif c[4].isdigit():
+                    try:
+                        cmd = Path(f"/proc/{c[4]}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+                    except OSError:
+                        cmd = ""
+                    dono = {"pid": int(c[4]), "cmd": re.sub(r"\s+", " ", cmd)[:120]}
+    except OSError:
+        pass
+    recusas = 0
+    ev = HOME / ".donel" / "limitador" / "eventos.jsonl"
+    if ev.exists():
+        limite = datetime.fromtimestamp(time.time() - 3600).astimezone().isoformat(timespec="seconds")
+        with ev.open("rb") as fh:
+            fh.seek(max(0, ev.stat().st_size - 200_000))
+            for ln in fh.read().decode(errors="replace").splitlines()[1:]:
+                if '"recusa"' in ln and ln[8:33] >= limite:
+                    recusas += 1
+    return {"dono": dono, "esperando": esperando, "recusas_1h": recusas}
+
+
 def medir_maquina(maquina: str, est: dict, em: datetime) -> dict:
     t = time.time()
     total, ocioso = cpu_tempos()
@@ -256,7 +308,8 @@ def medir_maquina(maquina: str, est: dict, em: datetime) -> dict:
         "disco_total_gb": round(d_tot / 1e9, 1), "disco_usado_gb": round(d_usado / 1e9, 1),
         "disco_pct": round(100.0 * d_usado / (d_usado + d_livre), 1) if d_usado + d_livre else None,
         "rede_rx_kb_s": round(max(drx, 0) / 1024 / dt, 1), "rede_tx_kb_s": round(max(dtx, 0) / 1024 / dt, 1),
-        "sessoes_claude": sessoes, "coletor_rss_mb": round(rss, 1), "extra": {"top": top, "sessoes": linhas_sessao, **({"sessoes_omitidas": omitidas} if omitidas else {})},
+        "sessoes_claude": sessoes, "coletor_rss_mb": round(rss, 1), "extra": {"top": top, "sessoes": linhas_sessao, **({"sessoes_omitidas": omitidas} if omitidas else {}),
+                  "psi": psi(), **({"fila_pesada": f} if (f := fila_pesada()) else {})},
     }
 
 
