@@ -229,10 +229,12 @@ export async function pushCartas(cartas: readonly CartaRow[], deps: CartasPushDe
         prepared = await prepareProof(ref, deps.read);
         if (prepared.kinds.length > 0) deps.log(`mascarado: tarefa ${carta.id}, campo prova ${ref.ordem} (protótipo) (${prepared.kinds.join(', ')})`);
         if (prepared.undecodable) deps.log(`protótipo fora de UTF-8/UTF-16: tarefa ${carta.id}, prova ${ref.ordem} vai só como menção`);
-        // Never keep the bytes between pushes: the upload reads them again. A missing file is looked for again.
+        // Never keep the bytes between pushes: the upload reads them again. A missing file is looked for again, and so
+        // is one the scan could not read: in the remote mode it may be a copy still being written (cut in the middle
+        // of a character), so it is read again on the cards' retry instead of staying "arquivo" until a restart.
         const missing = prepared.sem_arquivo && prepared.tamanho === null && ref.tipo !== 'video';
-        if (missing) incomplete = true;
-        else deps.cache.set(key, { sha256: prepared.sha256, tamanho: prepared.tamanho, sem_arquivo: prepared.sem_arquivo, kinds: prepared.kinds, ...(prepared.undecodable ? { undecodable: true as const } : {}) });
+        if (missing || prepared.undecodable) incomplete = true;
+        else deps.cache.set(key, { sha256: prepared.sha256, tamanho: prepared.tamanho, sem_arquivo: prepared.sem_arquivo, kinds: prepared.kinds });
       }
       provas.push({ ordem: ref.ordem, tipo: prepared.undecodable ? 'arquivo' : ref.tipo, media_type: ref.media_type, rotulo: ref.rotulo, sha256: prepared.sha256, tamanho: prepared.tamanho, sem_arquivo: prepared.sem_arquivo });
     }

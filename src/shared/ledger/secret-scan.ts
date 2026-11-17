@@ -185,8 +185,9 @@ function urlPasswordFinder(): Finder {
 // The keyword is made of name characters, and what follows the name never is one, so the name is always its whole
 // run: a start matches when a keyword begins at or after it inside the run, and the run's tail (separator, value)
 // matches. With `escaped`, the quotes may also be escaped (see `escapedQuoteAt`), and the tail must use at least one
-// escaped quote (the plain form is the pass before). A quoted value skips what is escaped inside it (`"hun\"ter"`):
-// it closes only on a quote at its own level.
+// escaped quote (the plain form is the pass before). A plain quoted value may also skip what is escaped inside it
+// (`"hun\"ter"`), but never masks less than the regex did (see `valueTail`); an escaped one closes only on a quote at
+// its own level, within `MAX_ESCAPED_VALUE`.
 
 const isNameChar = (c: number): boolean => isWord(c) || c === 46 || c === 45;
 const KEYWORDS = ['password', 'passwd', 'senha', 'secret', 'token', 'apikey', 'api_key', 'api-key'];
@@ -299,25 +300,33 @@ const maskedAt = (t: string, i: number): boolean => wordIs(t, i, '[segredo]');
 const isBareValueChar = (c: number): boolean => !isSpace(c) && c !== QUOTE && c !== APOS && c !== 44 && c !== 59 && c !== 38;
 const isBareEscapedValueChar = (c: number): boolean => isBareValueChar(c) && c !== BACKSLASH;
 
-/** Where the value opened by the plain quote at `v` closes (skipping `\x` inside it), or -1 at the line's end. */
-function plainQuotedEnd(t: string, v: number): number {
+/**
+ * The value opened by the plain quote at `v`: where the regex closed it (`"[^"\n]+"`: the first such quote on the
+ * line) and where it closes when what is escaped inside it is skipped (`"hun\"ter"`); -1 when there is none.
+ */
+function plainQuotedEnds(t: string, v: number): { first: number; skip: number } {
   const n = t.length;
   const open = t.charCodeAt(v);
+  let first = -1;
+  let escapedNext = false;
   for (let y = v + 1; y < n; y += 1) {
     const c = t.charCodeAt(y);
-    if (c === 10) return -1;
-    if (c === open) return y;
-    if (c === BACKSLASH) {
-      if (t.charCodeAt(y + 1) === 10) return -1;
-      y += 1;
+    if (c === 10) break;
+    if (c === open) {
+      if (first === -1) first = y;
+      if (!escapedNext) return { first, skip: y };
     }
+    escapedNext = !escapedNext && c === BACKSLASH;
   }
-  return -1;
+  return { first, skip: -1 };
 }
+
+/** The escaped pass looks this far for a closing quote (and never past the line): a value is no bigger. */
+const MAX_ESCAPED_VALUE = 4096;
 
 /** Where the closing quote of the value opened by the escaped quote `open` at `v` begins, or -1. */
 function escapedQuotedEnd(t: string, v: number, open: EscapedQuote): number {
-  const n = t.length;
+  const n = Math.min(t.length, v + open.length + MAX_ESCAPED_VALUE);
   for (let y = v + open.length; y < n; y += 1) {
     const c = t.charCodeAt(y);
     if (c === 10) return -1;
@@ -333,15 +342,11 @@ function escapedQuotedEnd(t: string, v: number, open: EscapedQuote): number {
   return -1;
 }
 
-interface ValueTail {
-  /** Where the value begins (the separator is [r, value)). */
-  readonly value: number;
-  readonly end: number;
-  readonly open: string;
-  readonly close: string;
-}
-
-function valueTail(t: string, r: number, escaped: boolean): ValueTail | null {
+/**
+ * After a name ending at `r`: where its separator (`["']?\s*[:=]`) is, and whether an escaped quote stood for the
+ * quote (only with `escaped`); null when none follows.
+ */
+function separatorAt(t: string, r: number, escaped: boolean): { sep: number; usedEscape: boolean } | null {
   let usedEscape = false;
   let q = r;
   if (isQuote(t.charCodeAt(q))) q += 1;
@@ -354,15 +359,54 @@ function valueTail(t: string, r: number, escaped: boolean): ValueTail | null {
   }
   q = runEnd(t, q, isSpace);
   const sep = t.charCodeAt(q);
-  if (sep !== 58 && sep !== 61) return null;
-  const v = runEnd(t, q + 1, isSpace);
+  return sep === 58 || sep === 61 ? { sep: q, usedEscape } : null;
+}
+
+/**
+ * Whether a secret name with its separator begins in [from, to): a superset of where the regex could match again
+ * (its value aside). `t[to]` is a quote, so no name run crosses `to`.
+ */
+function nameWithSeparatorIn(t: string, from: number, to: number, escaped: boolean): boolean {
+  let a = from;
+  while (a < to) {
+    while (a < to && !isNameChar(t.charCodeAt(a))) a += 1;
+    if (a >= to) return false;
+    const r = runEnd(t, a, isNameChar);
+    const last = lastKeyword(t, a, r);
+    if (last !== -1) {
+      let s = a;
+      while (s <= last && !boundary(t, s)) s += 1;
+      if (s <= last && separatorAt(t, r, escaped)) return true;
+    }
+    a = r;
+  }
+  return false;
+}
+
+interface ValueTail {
+  /** Where the value begins (the separator is [r, value)). */
+  readonly value: number;
+  readonly end: number;
+  readonly open: string;
+  readonly close: string;
+}
+
+function valueTail(t: string, r: number, escaped: boolean): ValueTail | null {
+  const separator = separatorAt(t, r, escaped);
+  if (!separator) return null;
+  const { usedEscape } = separator;
+  const v = runEnd(t, separator.sep + 1, isSpace);
   const first = t.charCodeAt(v);
   // (?!["']?\[segredo\]) — already masked.
   if (maskedAt(t, v) || (isQuote(first) && maskedAt(t, v + 1))) return null;
   if (isQuote(first)) {
-    const y = plainQuotedEnd(t, v);
-    if (y === -1 || y === v + 1) return null;
+    // Never less than the regex: its close (the first quote) unless the one past `\"` reaches further and swallows
+    // no other secret name with its separator (`SECRET_DIR="C:\keys\" DB_PASSWORD="…"` closes where the regex
+    // closed, and the next pair is masked on its own; `"hun\"ter"` is masked whole).
+    const { first: f, skip } = plainQuotedEnds(t, v);
+    if (f === -1 || f === v + 1) return null;
     if (escaped && !usedEscape) return null;
+    const y = skip > f && !nameWithSeparatorIn(t, f + 1, skip, escaped) ? skip : f;
     return { value: v, end: y + 1, open: t[v]!, close: t[y]! };
   }
   if (escaped) {

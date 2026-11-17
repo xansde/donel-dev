@@ -226,12 +226,30 @@ describe('espelho do Oráculo', () => {
       ['senha entre &#34 sem ;', '{&#34password&#34: &#34hunter2secret&#34}', 'hunter2secret', '&#34[segredo]&#34'],
       ['JSON em string JSON em atributo', '<div data-cfg="&quot;{\\&quot;token\\&quot;:\\&quot;tok9f8e7d6c5b4a\\&quot;}&quot;">', 'tok9f8e7d6c5b4a', '\\&quot;[segredo]\\&quot;'],
       ['senha codificada duas vezes', '{&amp;quot;password&amp;quot;: &amp;quot;hunter2secret&amp;quot;}', 'hunter2secret', '&amp;quot;[segredo]&amp;quot;'],
+      // An escaped quote inside the value is skipped (masked whole) only when what it reaches holds no other secret
+      // name with its separator; otherwise the value closes where the regexes closed it, and the next pair goes alone.
       ['aspa escapada no valor', '"password": "hun\\"ter2secret"', 'ter2secret', '"password": "[segredo]"'],
+      ['aspa escapada no valor, depois outro par', '"password": "hun\\"ter2" "token": "abc12345"', 'ter2', '"password": "[segredo]" "token": "[segredo]"'],
+      ['aspa escapada que engoliria outro par', 'password: "hun\\"ter2 token: abc12345"', 'abc12345', 'password: "[segredo]"ter2 token: [segredo]"'],
       ['aspa escapada no valor escapado', '"{\\"password\\": \\"hun\\\\\\"ter2secret\\"}"', 'ter2secret', '\\"password\\": \\"[segredo]\\"}'],
     ])('masks %s', (_name, input, secret, expected) => {
       const masked = maskSecrets(input);
       expect(masked.text).not.toContain(secret);
       expect(masked.text).toContain(expected);
+    });
+
+    // A backslash right before the closing quote (a Windows path, an `.env` pasted in a proof): the regexes closed on
+    // that quote, so the value is masked there and the next pair on the line on its own (third round of the review).
+    it.each([
+      ['password="hunter2\\"', 'password="[segredo]"'],
+      ["senha='abc\\'", "senha='[segredo]'"],
+      ['SECRET_DIR="C:\\keys\\" DB_PASSWORD="hunter2" fim', 'SECRET_DIR="[segredo]" DB_PASSWORD="[segredo]" fim'],
+      ['token="C:\\dir\\" password="hunter2"', 'token="[segredo]" password="[segredo]"'],
+    ])('masks %s as the regexes did', (input, expected) => {
+      const masked = maskSecrets(input);
+      expect(masked.text).toBe(expected);
+      expect(masked.text).toBe(stagingMask(input).text);
+      expect(masked.hits.map((hit) => hit.kind)).toEqual(stagingMask(input).kinds);
     });
 
     // Each shape that made a regex retry a long run from every start inside it: linear now, so 2 MB in well under 1 s.
@@ -281,6 +299,18 @@ describe('espelho do Oráculo', () => {
         for (let d = 1; d < 1 << 17; d = d * 2 + 1) for (const q of ['"', "'", '&quot;', '&#39;', '&amp;quot;', 'u0022', 'x27']) line += `token: ${'\\'.repeat(d)}${q}a `;
         return line + fill('a', MB2 - line.length);
       }],
+      // Every class of escaped opening (quote x `&amp;` x level) once after an escaped name, none closed, then a 2 MB
+      // line of `\&#1` or `&`: each opening looks for its close only so far (unbounded, 2.4–3.4 s).
+      ['52 aberturas escapadas sem fecho', () => {
+        let line = '';
+        for (let d = 0; d < 1 << 13; d = d * 2 + 1) for (const q of ['&quot;', '&#39;', '&amp;quot;', '&amp;#39;']) line += `\\"token\\": ${'\\'.repeat(d)}${q}a `;
+        return line + fill('\\&#1', MB2 - line.length);
+      }],
+      ['52 aberturas escapadas sem fecho, resto de &', () => {
+        let line = '';
+        for (let d = 0; d < 1 << 13; d = d * 2 + 1) for (const q of ['&quot;', '&#39;', '&amp;quot;', '&amp;#39;']) line += `\\"token\\": ${'\\'.repeat(d)}${q}a `;
+        return line + fill('&', MB2 - line.length);
+      }],
       ['aspas fora da escada', () => {
         let line = '';
         for (let k = 2; line.length < MB2; k += 1) line += `token: ${'\\'.repeat(k)}"a `;
@@ -302,7 +332,12 @@ describe('espelho do Oráculo', () => {
       'eyJ', 'password', 'PASSWORD', 'token', 'senha', 'secret', 'api_key', 'api-key', 'apiKey', 'passwd', 'x://', '://', 'com', 'co',
       '[segredo]', '[SEGREDO]', '&quot;', '&#39;', '&apos;', '\\"', '\\\\\\"', '&quot', '&#039;', '&#x22', '&amp;quot;', '\\u0022', '\\x27', '12345678', '123.456.789-00', 'Bearer ', 'sk-', 'ghp_',
       'abcdefgh', 'abcd', 'a@b.co', 'x.y@ab.cd', 'eyJabcdefgh.', 'abcdefgh.', 'postgres://u:p@', ':p@h', '@h.com', 'hunter22', '": "', "': '",
+      'C:\\', 'TOKEN', 'TOKEN',
     ];
+    // Each `TOKEN` becomes a text found nowhere else in the corpus: where the old regexes erase it, the new scan must too.
+    const TOKEN = /zq[0-9a-z]+qz/g;
+    let tokens = 0;
+    const token = (): string => `zq${(tokens++).toString(36)}qz`;
     function corpus(): string[] {
       let seed = 36;
       const next = (n: number): number => {
@@ -313,8 +348,35 @@ describe('espelho do Oráculo', () => {
       for (let i = 0; i < 30_000; i += 1) {
         const length = 1 + next(14);
         let text = '';
-        for (let j = 0; j < length; j += 1) text += PIECES[next(PIECES.length)];
+        for (let j = 0; j < length; j += 1) {
+          const piece = PIECES[next(PIECES.length)]!;
+          text += piece === 'TOKEN' ? token() : piece;
+        }
         out.push(text);
+      }
+      // Pairs as a log line or an `.env` carries them: a value with a backslash before its quote, a Windows path, an
+      // escaped quote inside, an unclosed one; two or three on a line.
+      const names = ['password', 'DB_PASSWORD', 'SECRET_DIR', 'token', 'apiKey', 'senha', 'x', 'path', 'my.secret-key', 'API_KEY_FILE'];
+      const nameQuotes = ['', '', '"', "'"];
+      const seps = ['=', ':', ' = ', ': '];
+      const quotes = ['"', '"', "'", ''];
+      const values = [
+        (k: string) => k, (k: string) => `C:\\dir\\${k}\\`, (k: string) => `${k}\\`, (k: string) => `hun\\"${k}`, (k: string) => `hun\\'${k}`,
+        (k: string) => `C:\\keys\\${k}`, (k: string) => `${k}\\\\`, (k: string) => `a b ${k}`, (k: string) => `${k}\\"x`,
+      ];
+      const closes = (q: string): string[] => (q ? [q, q, `\\${q}`, '', `${q}${q}`] : ['', '\\']);
+      const joins = [' ', ', ', '; ', '&', '\t', '', ' fim ', '\n'];
+      for (let i = 0; i < 40_000; i += 1) {
+        const pairs = 1 + next(3);
+        let line = '';
+        for (let j = 0; j < pairs; j += 1) {
+          const nq = nameQuotes[next(nameQuotes.length)]!;
+          const q = quotes[next(quotes.length)]!;
+          const close = closes(q);
+          line += `${nq}${names[next(names.length)]}${nq}${seps[next(seps.length)]}${q}${values[next(values.length)]!(token())}${close[next(close.length)]}`;
+          line += joins[next(joins.length)];
+        }
+        out.push(line);
       }
       const bases = [
         `SEAZONE_OPERACOES_API_KEY=${'abcd'}1234efgh`, `DB_PASSWORD_${'X'.repeat(65)}=hunter2secret`, `${'x'.repeat(30)}postgres://app:p4ssw0rd@10.0.0.5/db`,
@@ -330,20 +392,25 @@ describe('espelho do Oráculo', () => {
     it('never masks less than the regexes it replaced, and is the same where nothing is escaped', () => {
       const escapedQuote = /\\+(?:["']|u00(?:22|27)|x(?:22|27))|&(?:amp;)?(?:quot|apos|#)/i;
       let escaped = 0;
+      let erased = 0;
       for (const input of corpus()) {
         const now = maskSecrets(input);
         const old = stagingMask(input);
+        // By value: every token the old regexes erased (whole or in part) is gone from the new text too.
+        for (const [found] of input.matchAll(TOKEN)) {
+          if (old.text.includes(found)) continue;
+          erased += 1;
+          expect(now.text, `${JSON.stringify(input)} deixou ${found}`).not.toContain(found);
+        }
         if (!escapedQuote.test(input)) {
           expect(now.text, JSON.stringify(input)).toBe(old.text);
           expect(now.hits.map((hit) => hit.kind)).toEqual(old.kinds);
           continue;
         }
-        // Escaped: it may mask more. Where the old regexes find nothing more in their own text, they find nothing in
-        // the new one either (a second run is not always quiet: `x://a@b.com:p@h` turns into a URL with a password).
         escaped += 1;
-        if (stagingMask(old.text).text === old.text) expect(stagingMask(now.text).text, JSON.stringify(input)).toBe(now.text);
       }
-      expect(escaped).toBeGreaterThan(1000);
+      expect(escaped).toBeGreaterThan(10_000);
+      expect(erased).toBeGreaterThan(20_000);
     });
   });
 
@@ -872,6 +939,8 @@ describe('espelho do Oráculo', () => {
       await sink.push([], cartas);
       await sink.idle();
       expect(uploads()).toEqual(['t-1/0', 't-1/2', 't-9/0']);
+      // The failed ones bring the cards back on their own.
+      expect(sinkTimers.pending()).toEqual([60_000]);
       expect(lines).toContain('prova não foi ao celular: tarefa t-1, prova 0 (Supabase respondeu 413: payload too large); tento de novo depois');
       expect(lines).toContain('prova não foi ao celular: tarefa t-1, prova 2 (o Supabase recusou); tento de novo depois');
       expect(lines).toContain(`prova enviada ao celular: tarefa t-9, prova 0 (${printBytes.length} bytes)`);
@@ -881,6 +950,8 @@ describe('espelho do Oráculo', () => {
       await sink.push([], cartas);
       await sink.idle();
       expect(uploads()).toEqual(['t-9/0']);
+      // Still waiting their backoff: the cards come back for them.
+      expect(sinkTimers.pending()).toEqual([60_000]);
 
       // Past each backoff they go again, and after the last failure they stop until the file changes.
       for (let n = 1; n < MAX_PROOF_UPLOAD_FAILURES; n += 1) {
@@ -894,9 +965,17 @@ describe('espelho do Oráculo', () => {
       await sink.idle();
       expect(uploads()).toEqual(['t-9/0']);
       expect(lines.filter((line) => line.includes('desisto dela por 6 h'))).toHaveLength(2);
-      // The file never changes: after the 6 h they go again (a restart is not the only way back).
+      // The file never changes: 6 h after the last failure they go again (a restart is not the only way back).
+      const sixHours = 6 * 60 * 60_000;
+      expect(PROOF_GIVE_UP_MS).toBe(sixHours);
+      const lastFailure = MAX_PROOF_UPLOAD_FAILURES - 1;
       supabase.calls.length = 0;
-      clock += PROOF_GIVE_UP_MS;
+      clock = lastFailure * 60 * 60_000 + sixHours - 1;
+      await sink.push([], cartas);
+      await sink.idle();
+      expect(uploads()).toEqual(['t-9/0']);
+      supabase.calls.length = 0;
+      clock += 1;
       await sink.push([], cartas);
       await sink.idle();
       expect(uploads()).toEqual(['t-1/0', 't-1/2', 't-9/0']);
@@ -963,6 +1042,41 @@ describe('espelho do Oráculo', () => {
         'celular_prova_gravar/0',
         'celular_cartas_gravar(0)',
       ]);
+    });
+
+    it('dispose stops an upload in course before its next proof, and no list goes after it', async () => {
+      let release: (response: Response) => void = () => undefined;
+      const supabase = fakeSupabase({
+        cartas: () => Response.json([{ tarefa: 't-1', ordem: 0 }, { tarefa: 't-1', ordem: 2 }]),
+        prova: (body) => (body.p_ordem === 0 ? new Promise<Response>((resolve) => (release = resolve)) : Response.json(true)),
+      });
+      const sink = createSupabaseSink({ url: 'https://abcdefgh.supabase.co', key: () => key, fetch: supabase.fetchFn, readProof: reader, timers: fakeTimers() });
+      await sink.push([], cartaRows(doc(waiting)).rows);
+      for (let i = 0; i < 50 && !supabase.calls.some((call) => call.url.endsWith('celular_prova_gravar')); i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+      sink.dispose();
+      release(Response.json(true));
+      await sink.idle();
+      await sink.push([], cartaRows(doc(waiting)).rows);
+      await sink.idle();
+      expect(supabase.calls.map((call) => `${call.url.split('/').pop()}${call.body.p_ordem === undefined ? '' : `/${call.body.p_ordem}`}`)).toEqual(['celular_cartas_gravar', 'celular_prova_gravar/0']);
+    });
+
+    it('a prototype cut in the middle of a character (a copy still arriving) is read again, never kept as a file', async () => {
+      const whole = Buffer.from(`${protoHtml}ç`, 'utf8');
+      let reads = 0;
+      const arriving: ProofReader = async (file, max) => (file === files.proto ? { kind: 'ok', bytes: reads++ === 0 ? whole.subarray(0, whole.length - 1) : whole } : reader(file, max));
+      const supabase = fakeSupabase();
+      const sinkTimers = fakeTimers();
+      const sink = createSupabaseSink({ url: 'https://abcdefgh.supabase.co', key: () => key, fetch: supabase.fetchFn, readProof: arriving, timers: sinkTimers });
+      await sink.push([], cartaRows(doc(waiting)).rows);
+      await sink.idle();
+      expect(sinkTimers.pending()).toEqual([60_000]);
+      await sinkTimers.fire();
+      await sink.idle();
+      const prototypeOf = (n: number) => supabase.calls[n]!.body.p_cartas[0].provas[1];
+      expect(prototypeOf(0)).toMatchObject({ ordem: 2, tipo: 'arquivo', sha256: null });
+      expect(prototypeOf(1)).toMatchObject({ ordem: 2, tipo: 'prototipo', sha256: sha(Buffer.from(maskSecrets(whole.toString('utf8')).text, 'utf8')) });
+      expect(reads).toBe(2);
     });
 
     it('a prototype saved in UTF-16 is masked too, and goes up in UTF-8', async () => {
