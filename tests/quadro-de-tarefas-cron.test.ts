@@ -43,10 +43,21 @@ describe('vigia', () => {
     expect(planVigia(card({ stage: 'blocked', justification: justification(NOW + 1) }), idle, [], NOW).do).toBe('skip');
   });
 
-  it('campo ocupado rodada após rodada chega ao Líder, em vez de travar a cobrança para sempre', () => {
-    for (let busy = 1; busy < BUSY_MAX; busy++) expect(afterBusyField(card(), busy, 'campo com texto', NOW).do).toBe('skip');
-    expect(afterBusyField(card(), BUSY_MAX, 'campo com texto', NOW)).toMatchObject({ do: 'leader' });
-    expect(afterBusyField(card({ leaderNoticedAt: NOW - 60_000 }), BUSY_MAX, 'campo com texto', NOW).do).toBe('skip');
+  it('campo ocupado em 3 rondas seguidas chega ao Líder, sem calar o aviso de cobrança esgotada', () => {
+    expect(BUSY_MAX).toBe(3);
+    for (let busy = 1; busy < BUSY_MAX; busy++) expect(afterBusyField(card(), busy, 'campo com texto', null, NOW).do).toBe('skip');
+    const escalated = afterBusyField(card(), BUSY_MAX, 'campo com texto', null, NOW);
+    expect(escalated).toMatchObject({ do: 'leader', via: 'busy' });
+    // the Líder not reached yet: still escalating from the 4th round on, not 3 rounds later
+    expect(afterBusyField(card(), BUSY_MAX + 1, 'campo com texto', null, NOW).do).toBe('leader');
+    // heard: again only after 2 h, by its own mark
+    expect(afterBusyField(card(), BUSY_MAX, 'campo com texto', NOW - 60_000, NOW).do).toBe('skip');
+    expect(afterBusyField(card(), BUSY_MAX, 'campo com texto', NOW - 3 * 3600_000, NOW).do).toBe('leader');
+    // the card's leader mark (written by the once-per-stage notices) is not the busy one's business, and vice versa:
+    // a charge run out still reaches the Líder after a busy escalation (which marks nothing on the card)
+    expect(afterBusyField(card({ leaderNoticedAt: NOW - 60_000 }), BUSY_MAX, 'campo com texto', null, NOW).do).toBe('leader');
+    const runOut = card({ justification: justification(NOW - 60_000), chargeCount: CHARGE_MAX, chargedAt: NOW - CHARGE_EVERY_MS - 1 });
+    expect(planJustify(runOut, null, idle, NOW).do).toBe('leader');
   });
 
   it('em sombra, o aviso simulado ao Líder segura a repetição até o cartão mudar de coluna', () => {

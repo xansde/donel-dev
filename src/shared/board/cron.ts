@@ -59,7 +59,8 @@ export function linkKind(link: string): LinkKind {
 
 export type CronAction =
   | { readonly do: 'wake'; readonly card: string; readonly session: string; readonly mark: 'woken' | 'charged'; readonly text: string }
-  | { readonly do: 'leader'; readonly card: string; readonly text: string }
+  /** `via: 'busy'`: the session's field stayed busy; this notice keeps its own mark, never the card's (`leader_noticed_at`). */
+  | { readonly do: 'leader'; readonly card: string; readonly text: string; readonly via?: 'busy' }
   | { readonly do: 'skip'; readonly card: string; readonly why: string };
 
 const minutes = (ms: number): number => Math.round(ms / 60_000);
@@ -118,11 +119,19 @@ export const BUSY_MAX = 3;
 /**
  * A wake that found the field busy marks nothing (nothing was typed), so without this the charge count and the vigia's
  * cap never grow and the card never reaches the Líder (the despertador's MAX_REENVIO_TURNO does the same). `busy` is
- * how many rounds in a row it was busy, this one included.
+ * how many rounds in a row it was busy, this one included; it keeps counting until the Líder hears it, so a Líder
+ * closed or busy is tried again the next round. `heardAt`: when the Líder last heard this (the runner's own mark,
+ * never the card's `leader_noticed_at`, which would silence the once-per-stage notices of a charge run out).
  */
-export function afterBusyField(card: CronCard, busy: number, why: string, now: number): CronAction {
+export function afterBusyField(card: CronCard, busy: number, why: string, heardAt: number | null, now: number): CronAction {
   if (busy < BUSY_MAX) return { do: 'skip', card: card.id, why: `campo ocupado (${busy} de ${BUSY_MAX})` };
-  return leaderOnce(card, now, `o aviso à sessão ${card.sessionId ?? '(sem sessão)'} não entrou em ${busy} rondas seguidas: ${why}`, 'every');
+  if (heardAt !== null && now - heardAt < LEADER_NOTICE_EVERY_MS) return { do: 'skip', card: card.id, why: 'Líder já avisado do campo ocupado' };
+  return {
+    do: 'leader',
+    via: 'busy',
+    card: card.id,
+    text: `${LABEL} Cartão ${card.id} ("${card.title}", ${STAGE_LABELS[card.stage]}, lugar ${card.placeId ?? 'sem lugar'}): o aviso à sessão ${card.sessionId ?? '(sem sessão)'} não entrou em ${busy} rondas seguidas (${why}). Veja a tela dela (sessao_ver_tela) ou mova o cartão.`,
+  };
 }
 
 /** The Líder notice the vigia's shadow would have marked on the card (cleared, as the real one, when the card moves). */

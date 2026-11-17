@@ -68,10 +68,15 @@ function log(line: string): void {
   }
 }
 
-/** What the runner remembers per card between rounds: the vigia's wakes (cap and pause) and busy fields in a row. */
+/**
+ * What the runner remembers per card between rounds: the vigia's wakes (cap and pause), busy fields in rounds in a
+ * row, and when the Líder last heard of a busy field (its own mark: the card's `leader_noticed_at` belongs to the
+ * once-per-stage notices).
+ */
 interface Memory {
   wakes: Record<string, number[]>;
   busy: Record<string, number>;
+  busyHeard: Record<string, number>;
 }
 
 interface State extends Memory {
@@ -79,20 +84,33 @@ interface State extends Memory {
   sombra: Memory & { leader: Record<string, ShadowNotice> };
 }
 
-const record = (value: unknown): Record<string, never> => (value && typeof value === 'object' ? (value as Record<string, never>) : {});
+// The state file is ours, but a hand edit or a cut write must not stop every round: keep only well-typed entries.
+const isObject = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+const isTime = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+
+function entries<T>(value: unknown, keep: (item: unknown) => item is T): Record<string, T> {
+  const out: Record<string, T> = {};
+  if (isObject(value)) for (const [key, item] of Object.entries(value)) if (keep(item)) out[key] = item;
+  return out;
+}
+
+const isTimes = (value: unknown): value is number[] => Array.isArray(value) && value.every(isTime);
+const isNotice = (value: unknown): value is ShadowNotice => isObject(value) && isTime(value.at) && isTime(value.stageSince);
+
+function readMemory(raw: unknown): Memory {
+  const memory = isObject(raw) ? raw : {};
+  return { wakes: entries(memory.wakes, isTimes), busy: entries(memory.busy, isTime), busyHeard: entries(memory.busyHeard, isTime) };
+}
 
 function readState(): State {
+  let raw: unknown = {};
   try {
-    const raw = JSON.parse(readFileSync(STATE, 'utf8')) as Partial<State>;
-    const sombra = record(raw.sombra) as Partial<State['sombra']>;
-    return {
-      wakes: record(raw.wakes),
-      busy: record(raw.busy),
-      sombra: { wakes: record(sombra.wakes), busy: record(sombra.busy), leader: record(sombra.leader) },
-    };
+    raw = JSON.parse(readFileSync(STATE, 'utf8'));
   } catch {
-    return { wakes: {}, busy: {}, sombra: { wakes: {}, busy: {}, leader: {} } };
+    // missing or cut: start clean
   }
+  const sombra = isObject(raw) ? raw.sombra : undefined;
+  return { ...readMemory(raw), sombra: { ...readMemory(sombra), leader: entries(isObject(sombra) ? sombra.leader : undefined, isNotice) } };
 }
 
 function writeState(state: State, now: number, live: ReadonlySet<string>): void {
@@ -104,6 +122,7 @@ function writeState(state: State, now: number, live: ReadonlySet<string>): void 
     }
     // a card no longer in Fazendo/Travado has nothing to count
     for (const card of Object.keys(memory.busy)) if (!live.has(card)) delete memory.busy[card];
+    for (const card of Object.keys(memory.busyHeard)) if (!live.has(card)) delete memory.busyHeard[card];
   }
   for (const card of Object.keys(state.sombra.leader)) if (!live.has(card)) delete state.sombra.leader[card];
   writeFileSync(`${STATE}.tmp`, JSON.stringify(state));
@@ -194,6 +213,17 @@ function fieldFree(uuid: string): { free: boolean; why: string } {
  * directory made atomically, left behind only by a crash and then taken after 2 min. The despertador has no such lock;
  * its own check of the field is what keeps the two apart.
  */
+const TYPING_LOCK_MS = 2 * 60 * 1000;
+
+/** Another mode is typing into this session now (the lock below); the shadow reads it without taking it. */
+function typingLocked(uuid: string): boolean {
+  try {
+    return Date.now() - statSync(join(DIR, 'digitando', uuid)).mtimeMs < TYPING_LOCK_MS;
+  } catch {
+    return false;
+  }
+}
+
 function withTypingLock<T>(uuid: string, run: () => T): T | 'ocupado' {
   const dir = join(DIR, 'digitando', uuid);
   mkdirSync(join(DIR, 'digitando'), { recursive: true });
@@ -201,7 +231,7 @@ function withTypingLock<T>(uuid: string, run: () => T): T | 'ocupado' {
     mkdirSync(dir);
   } catch {
     try {
-      if (Date.now() - statSync(dir).mtimeMs < 2 * 60 * 1000) return 'ocupado';
+      if (Date.now() - statSync(dir).mtimeMs < TYPING_LOCK_MS) return 'ocupado';
     } catch {
       return 'ocupado';
     }
@@ -335,58 +365,72 @@ function cronCard(row: CardRow): CronCard {
 
 type Client = ReturnType<typeof createBoardClient>;
 
-async function act(client: Client, lanes: readonly LaneRow[], card: CronCard, action: CronAction, who: string, shadow: boolean, state: State, now: number): Promise<void> {
-  if (action.do === 'skip') return;
-  // The shadow goes through the same steps (it reads the field and the Líder's tmux, which changes nothing) and keeps
-  // its own marks, so its log shows the cap, the pause and the Líder exactly where acting would.
+/** What typing into a session would do, read only (the shadow): the same checks as `wakeSession`, nothing typed. */
+function wouldWake(uuid: string): 'campo livre' | `campo: ${string}` {
+  if (typingLocked(uuid)) return 'campo: outro aviso sendo digitado';
+  const field = fieldFree(uuid);
+  return field.free ? 'campo livre' : `campo: ${field.why}`;
+}
+
+/** Does the action; true when its notice reached someone (in shadow: would have). */
+async function act(client: Client, lanes: readonly LaneRow[], card: CronCard, action: CronAction, who: string, shadow: boolean, state: State, now: number): Promise<boolean> {
+  if (action.do === 'skip') return false;
+  // The shadow goes through the same steps (it reads the field, the typing lock and the Líder's tmux, which changes
+  // nothing) and keeps its own marks, so its log shows the cap, the pause and the Líder exactly where acting would.
   const tag = shadow ? '[sombra] ' : '';
   const memory: Memory = shadow ? state.sombra : state;
   if (action.do === 'wake') {
-    const result = shadow ? (() => {
-      const field = fieldFree(action.session);
-      return field.free ? ('enviado' as const) : (`campo: ${field.why}` as const);
-    })() : wakeSession(action.session, action.text);
-    log(`${tag}${who}: ${shadow ? 'acordaria' : 'acordar'} a sessão ${action.session} (cartão ${card.id}, ${action.mark}): ${shadow && result === 'enviado' ? 'campo livre' : result}`);
+    const result = shadow ? wouldWake(action.session) : wakeSession(action.session, action.text);
+    log(`${tag}${who}: ${shadow ? 'acordaria' : 'acordar'} a sessão ${action.session} (cartão ${card.id}, ${action.mark}): ${result}`);
     if (result.startsWith('campo:')) {
-      // Nothing typed and nothing marked; after BUSY_MAX rounds in a row the Líder hears it.
+      // Nothing typed and nothing marked. From BUSY_MAX rounds in a row on, the Líder hears it; the count goes back to
+      // zero only when the Líder did (closed or busy, the next round tries again).
       const busy = (memory.busy[card.id] ?? 0) + 1;
       memory.busy[card.id] = busy;
-      const next = afterBusyField(card, busy, result.slice('campo: '.length), now);
-      if (next.do === 'leader') {
-        delete memory.busy[card.id];
-        await act(client, lanes, card, next, who, shadow, state, now);
+      const next = afterBusyField(card, busy, result.slice('campo: '.length), memory.busyHeard[card.id] ?? null, now);
+      if (next.do === 'skip') {
+        log(`${tag}${who}: cartão ${card.id}: ${next.why}`);
+        return false;
       }
-      return;
+      if (await act(client, lanes, card, next, who, shadow, state, now)) {
+        delete memory.busy[card.id];
+        memory.busyHeard[card.id] = now;
+      }
+      return false;
     }
     delete memory.busy[card.id];
     // Typed counts even unconfirmed (the text is on the screen): the cap and the pause must hold, as in the despertador.
     // The local cap first: it holds even if the mark below fails.
     if (who === 'vigia') memory.wakes[card.id] = [...(memory.wakes[card.id] ?? []), now];
     if (!shadow) await client.markCron(card.id, action.mark);
-    return;
+    return true;
   }
   const lane = lanes.find((l) => l.project_id === card.projectId);
   const leader = lane?.leader_session && UUID.test(lane.leader_session) ? lane.leader_session : null;
   if (!leader || !tmux(['has-session', '-t', `donel-${leader}`]).ok) {
     // Not marked: nobody was told, and the next round tries again (a Líder back in 5 min hears it then).
     log(`${tag}${who}: cartão ${card.id} precisa do Líder, mas a raia ${card.projectId} está sem Líder aberto aqui (${lane?.leader_place ?? 'nenhum'})`);
-    return;
+    return false;
   }
+  const busyField = action.via === 'busy';
   if (shadow) {
-    const field = fieldFree(leader);
-    log(`${tag}${who}: avisaria o Líder ${lane?.leader_place} (cartão ${card.id}) e gravaria a nota no cartão: ${field.free ? 'campo livre' : `campo: ${field.why}`}`);
-    if (field.free) state.sombra.leader[card.id] = { at: now, stageSince: card.stageSince };
-    return;
+    const result = wouldWake(leader);
+    log(`${tag}${who}: avisaria o Líder ${lane?.leader_place} (cartão ${card.id}${busyField ? ', campo ocupado' : ''})${who === 'vigia' ? ' e gravaria a nota no cartão' : ''}: ${result}`);
+    if (result.startsWith('campo:')) return false;
+    if (!busyField) state.sombra.leader[card.id] = { at: now, stageSince: card.stageSince };
+    return true;
   }
   const result = wakeSession(leader, action.text);
-  log(`${who}: avisar o Líder ${lane?.leader_place} (cartão ${card.id}): ${result}`);
-  if (result.startsWith('campo:')) return;
-  await client.markCron(card.id, 'leader');
+  log(`${who}: avisar o Líder ${lane?.leader_place} (cartão ${card.id}${busyField ? ', campo ocupado' : ''}): ${result}`);
+  if (result.startsWith('campo:')) return false;
+  // A busy field keeps its own mark (the caller's busyHeard): leader_noticed_at would silence the once-per-stage notices.
+  if (!busyField) await client.markCron(card.id, 'leader');
   // Design §6: the card itself says why the Líder was called (board.vigia_note: the vigia is not the card's place).
   if (who === 'vigia') {
-    const written = await client.vigiaNote(card.id, 'parado sem justificativa; Líder do quadro avisado');
+    const written = await client.vigiaNote(card.id, busyField ? 'parado sem justificativa; aviso à sessão não entrou (campo ocupado); Líder do quadro avisado' : 'parado sem justificativa; Líder do quadro avisado');
     log(`vigia: nota no cartão ${card.id}: ${written ? 'gravada' : 'não gravada (saiu de Fazendo ou ganhou justificativa)'}`);
   }
+  return true;
 }
 
 /** Lanes whose Líder is alive in tmux and had a turn in the last 30 min stay alive in `board.lanes`. */
@@ -413,13 +457,17 @@ async function ronda(client: Client, config: CronConfig): Promise<void> {
         const session = sessionState(card.sessionId);
         const answer = now < card.justification.due ? responded(card.justification.link, responseSince(card), config) : null;
         const action = planJustify(card, answer, session, now);
-        if (action.do !== 'skip') woke++;
+        // "rounds in a row": a round with nothing to type (working, waiting, pause) breaks the busy streak
+        if (action.do === 'skip') delete state.busy[card.id];
+        else woke++;
         await act(client, lanes, card, action, 'justificativa', false, state, now);
       } else {
         const shadow = config.vigiaSombra;
         const view = shadow ? withShadowNotice(card, state.sombra.leader[card.id]) : card;
-        const action = planVigia(view, sessionState(card.sessionId), (shadow ? state.sombra : state).wakes[card.id] ?? [], now);
-        if (action.do !== 'skip') woke++;
+        const memory = shadow ? state.sombra : state;
+        const action = planVigia(view, sessionState(card.sessionId), memory.wakes[card.id] ?? [], now);
+        if (action.do === 'skip') delete memory.busy[card.id];
+        else woke++;
         await act(client, lanes, view, action, 'vigia', shadow, state, now);
       }
     } catch (error) {
