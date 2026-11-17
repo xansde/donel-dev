@@ -258,6 +258,7 @@ import { runShutdownSteps, shutdownThenQuit } from './app-shutdown';
 import { createMainEventsLog, type MainEventLogger } from './main-events-log';
 import { createRunTrail } from './run-trail';
 import { createExitWatchdog } from './exit-watchdog';
+import { buildExitSentinelCommand, discardExitRecord, takeExitRecord } from './exit-sentinel';
 import { SessionKeyRing } from './session-keys';
 import { createDiagnosticsLog } from './chat/diagnostics-log';
 import { resolveMainRepoRootSync } from './session-worktree';
@@ -1313,6 +1314,8 @@ const EXIT_GRACE_SECONDS = 20;
 const exitWatchdog = createExitWatchdog(spawn);
 /** How often `main-running.json` records that this run is alive (run-trail.ts). */
 const RUN_TRAIL_BEAT_MS = 60_000;
+/** A second look for the previous run's exit record, when its sentinel had not written it yet at boot. */
+const EXIT_RECORD_RETRY_MS = 20_000;
 
 function logMainEvent(event: string, detail?: Readonly<Record<string, unknown>>): void {
   mainEventsLog ??= createMainEventsLog(join(app.getPath('userData'), 'main-events.log'));
@@ -1328,6 +1331,9 @@ function logMainEvent(event: string, detail?: Readonly<Record<string, unknown>>)
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
   console.log('[donel-dev] outra janela do Donel Dev já está aberta; ela vem para a frente e esta sai.');
+  // t-d4f5879c — a second copy that finds the first one hung, with no visible window, ends it inside the call above
+  // (Chromium ProcessSingleton, exit code 2). The line names every second launch and who started it (ppid).
+  logMainEvent('second-copy-leaving', { pid: process.pid, ppid: process.ppid, argv: process.argv.slice(1) });
   app.exit(0);
 } else {
   // t-fe46929a (16/11) — the start and the end of each run leave a line, and a run ended from outside (no quit
@@ -1338,8 +1344,32 @@ if (!hasSingleInstanceLock) {
     startedAtMs: PROCESS_STARTED_AT_MS,
   });
   const previousRun = runTrail.start();
-  logMainEvent('app-started', { pid: process.pid, version: app.getVersion(), argv: process.argv.slice(1) });
+  logMainEvent('app-started', { pid: process.pid, ppid: process.ppid, version: app.getVersion(), argv: process.argv.slice(1) });
   if (previousRun) logMainEvent('previous-run-ended-without-quit', { ...previousRun });
+  // t-d4f5879c — how the previous run ended (exit-sentinel.ts): its sentinel may still be writing when a second copy
+  // that ended it boots, so a missing record is looked up once more a little later.
+  const exitRecordPath = join(app.getPath('userData'), 'main-exit.json');
+  if (previousRun) {
+    const run = { pid: previousRun.pid, startedAtMs: Date.parse(previousRun.startedAt) };
+    const logExit = (): boolean => {
+      const record = takeExitRecord(exitRecordPath, run);
+      if (record) logMainEvent('previous-run-exit', { ...record });
+      return record !== null;
+    };
+    if (!logExit()) setTimeout(() => void (logExit() || logMainEvent('previous-run-exit-unknown', { pid: run.pid })), EXIT_RECORD_RETRY_MS).unref();
+  } else {
+    discardExitRecord(exitRecordPath);
+  }
+  if (process.platform === 'win32') {
+    try {
+      // Not `detached`: a detached PowerShell 5.1 with no console and ignored stdio exits 0 without running anything.
+      // The sentinel leaves the app's tree through its own hop (Start-Process), so the main exiting never takes it.
+      const { file, args } = buildExitSentinelCommand({ pid: process.pid, startedAtMs: PROCESS_STARTED_AT_MS, recordPath: exitRecordPath });
+      spawn(file, args, { windowsHide: true, stdio: 'ignore' }).unref();
+    } catch (error) {
+      logMainEvent('exit-sentinel-failed', { error: String(error) });
+    }
+  }
   setInterval(() => runTrail.beat(), RUN_TRAIL_BEAT_MS).unref();
   app.on('will-quit', () => {
     logMainEvent('app-quitting');
