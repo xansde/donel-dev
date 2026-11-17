@@ -7,7 +7,8 @@
 //
 // Env: DONEL_ORACULO_DIR (default ~/.donel/oraculo), DONEL_ORACULO_HOST (default: this place's Tailscale address),
 // DONEL_ORACULO_PORT (default 47816), DONEL_LIVRO_ARQUIVO (F6 do ledger bom: the journal file; unset = no journal
-// route, which is today's production until F4).
+// route, which is today's production until F4), DONEL_BOARD_CONFIG (quadro de tarefas, t-1e354d15: default
+// ~/.donel/board/supabase.json; missing = no `card_*` tools).
 
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, networkInterfaces } from 'node:os';
@@ -26,6 +27,7 @@ import { createReturnGuard } from './devolvido';
 import { createGateHandler, GATE_PORT, mergePicture, startGateServer, tunnelForward, type BoardPicture } from './portao';
 import { ORACLE_PORT, startOracleServer, type OracleServer } from './server';
 import { createDaemonVigia } from './vigia';
+import { createBoardClient, readBoardConfig, type BoardStore } from './board-client';
 
 export const TOKEN_HASH_FILE = 'pc.token.sha256';
 
@@ -125,10 +127,28 @@ async function main(): Promise<void> {
   });
   server = await startOracleServer({ host, port, caller: (authorization) => callerOf(authorization, tokenHash(), services()), handler });
   writeFileSync(join(dir, 'url'), `${server.url}\n`, { mode: 0o600 });
+  // The task board: read at each call, so writing the config turns it on without a restart.
+  const boardConfigFile = process.env.DONEL_BOARD_CONFIG || join(homedir(), '.donel', 'board', 'supabase.json');
+  let boardStore: { readonly key: string; readonly store: BoardStore } | null = null;
+  let boardConfigWarned = false;
+  const cards = (): BoardStore | null => {
+    const config = readBoardConfig(boardConfigFile);
+    if (!config) {
+      if (!boardConfigWarned && existsSync(boardConfigFile)) {
+        boardConfigWarned = true;
+        console.error(`[oraculo] ${boardConfigFile} existe mas é inválido ({url https, serviceKeyFile}); quadro de tarefas desligado.`);
+      }
+      return null;
+    }
+    boardConfigWarned = false;
+    const key = `${config.url}|${config.serviceKeyFile}`;
+    if (boardStore?.key !== key) boardStore = { key, store: createBoardClient(config) };
+    return boardStore.store;
+  };
   const gatePort = Number(process.env.DONEL_ORACULO_PORTAO_PORT) || GATE_PORT;
   const gate = await startGateServer({
     port: gatePort,
-    handler: createGateHandler({ sessionsDir: join(homedir(), '.donel', 's'), ledger: () => ledger, picture: () => picture, forward: tunnelForward, serverVersion: 'oraculo-vps' }),
+    handler: createGateHandler({ sessionsDir: join(homedir(), '.donel', 's'), ledger: () => ledger, picture: () => picture, forward: tunnelForward, serverVersion: 'oraculo-vps', cards }),
   });
   // The setup of a remote session reads this to point its MCP at the gate.
   writeFileSync(join(dir, 'portao'), `${gate.port}\n`, { mode: 0o600 });

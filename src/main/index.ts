@@ -241,8 +241,10 @@ import {
   RemoteSessionRegistry,
   remoteFolderAlreadyLive,
   probeRemoteSession,
+  remoteAttachCommand,
   runRemoteScript,
   runSetupWithRetry,
+  SSH_OPTIONS,
   type RemoteFile,
   type RemoteSessionMeta,
 } from './remote-session';
@@ -250,6 +252,8 @@ import { RemoteLinkSupervisor } from './remote-link';
 import { RESUME_OTHER_IDS_MAX } from '../shared/sessions';
 import type { RemotePlace } from '../shared/accounts';
 import { sshGate } from './ssh-gate';
+import { sshMirrorSpawner } from './remote-mirror';
+import { DEFAULT_LINK_TIMING, PlaceLinks, placeLinkEnabled, type LinkTunnel } from './remote-place-link';
 import { runShutdownSteps, shutdownThenQuit } from './app-shutdown';
 import { createMainEventsLog, type MainEventLogger } from './main-events-log';
 import { createRunTrail } from './run-trail';
@@ -634,8 +638,26 @@ let hooksSettingsPath: string | null = null;
 let hookBridge: HookBridge | null = null;
 /** Sessões remotas — live remote tabs of this run (transcript mirrors, end of the remote session). */
 let remoteSessions: RemoteSessionRegistry | null = null;
-/** "Sem ligação" — how to spawn the ssh of each remote tab again (same id, same tunnels). */
-const remoteSpawns = new Map<string, { cwd: string; command: string; args: string[]; cols: number; rows: number }>();
+/** How a remote tab's terminal is spawned: on its place's link, or (place left out) as its own ssh with these argv. */
+interface RemoteSpawnSpec {
+  cwd: string;
+  command: string;
+  args: string[];
+  cols: number;
+  rows: number;
+  link: { readonly sshTarget: string; readonly sid: string; readonly tunnels: readonly LinkTunnel[] };
+}
+/** "Sem ligação" — how to spawn the terminal of each remote tab again (same id, same tunnels). */
+const remoteSpawns = new Map<string, RemoteSpawnSpec>();
+/**
+ * t-9accc989 (3) — the remote tabs of one place ride ONE ssh (remote-place-link.ts), not one each. A place where it
+ * does not work (no python3, or it never comes up) is left out for a while and its tabs spawn their own ssh, as
+ * before; `DONEL_SSH_LINK=off` does that for every place.
+ */
+const placeLinks = new PlaceLinks({ spawnLink: sshMirrorSpawner(SSH_OPTIONS), acquire: (sshTarget) => sshGate.acquire(sshTarget) }, DEFAULT_LINK_TIMING, {
+  enabled: placeLinkEnabled(process.env.DONEL_SSH_LINK),
+  onEvent: (sshTarget, event) => logMainEvent('place-link', { sshTarget, ...event }),
+});
 /**
  * "Sem ligação" (main/remote-link.ts) — an ssh of a remote tab that drops with the tmux alive is not the end of the
  * session: the exit is held back, the place reads "sem ligação" and the app relinks it.
@@ -657,15 +679,33 @@ function sshLoggedIn(ptyId: string): void {
 }
 ptyManager.onData((ptyId) => sshLoggedIn(ptyId));
 ptyManager.onExit((ptyId) => sshLoggedIn(ptyId));
+/**
+ * The terminal of a remote tab: a channel of its place's link when there is one (no login of its own: `loggedIn` is
+ * given back at once), else its own ssh, holding the login slot until its first byte or its exit.
+ */
+function createRemoteTabPty(ptyId: string, spec: RemoteSpawnSpec, loggedIn: () => void): void {
+  const link = placeLinks.linkFor(spec.link.sshTarget);
+  if (link) {
+    loggedIn();
+    const terminal = { command: remoteAttachCommand(spec.link.sid), cols: spec.cols, rows: spec.rows, tunnels: spec.link.tunnels };
+    ptyManager.create({ id: ptyId, cwd: spec.cwd, cols: spec.cols, rows: spec.rows, backend: () => link.openTerminal(terminal) });
+    return;
+  }
+  holdSshLogin(ptyId, loggedIn);
+  ptyManager.create({ id: ptyId, cwd: spec.cwd, command: spec.command, args: spec.args, cols: spec.cols, rows: spec.rows });
+}
+/** A login slot for a tab's own ssh; a tab on its place's link needs none. */
+function remoteTabLoginSlot(sshTarget: string): Promise<() => void> {
+  return placeLinks.linkFor(sshTarget) ? Promise.resolve(() => undefined) : sshGate.acquire(sshTarget);
+}
 const remoteLinks = new RemoteLinkSupervisor<PtyExitInfo>({
   probe: (sshTarget, sid) => probeRemoteSession(sshTarget, sid),
-  acquire: (sshTarget) => sshGate.acquire(sshTarget),
+  acquire: (sshTarget) => remoteTabLoginSlot(sshTarget),
   relink: (ptyId, loggedIn) => {
     const spawnSpec = remoteSpawns.get(ptyId);
     if (!spawnSpec) return false;
     try {
-      holdSshLogin(ptyId, loggedIn);
-      ptyManager.create({ id: ptyId, ...spawnSpec });
+      createRemoteTabPty(ptyId, spawnSpec, loggedIn);
     } catch {
       sshLoggedIn(ptyId);
       return false;
@@ -1603,6 +1643,7 @@ function createMainWindow(): void {
         ['esteiraWatchers', () => disposeAllEsteiraResultWatchers()],
         ['browser', () => browserService?.destroyAll()], // navegador interno
         ['ptys', () => ptyManager.killAll()],
+        ['placeLinks', () => placeLinks.stopAll()], // after the PTYs: each tab's terminal hangs up first
       ],
       (name, error) => logMainEvent('shutdown-step-failed', { step: name, error: String(error) }),
     );
@@ -2050,17 +2091,18 @@ async function spawnRemoteClaudeSession(
     ...(live.mcpPort !== null && mcp ? [{ remotePort: live.mcpPort, localPort: mcp.localPort }] : []),
   ];
 
-  const spawnSpec = {
+  const spawnSpec: RemoteSpawnSpec = {
     cols: options.cols,
     rows: options.rows,
     cwd: localCwd,
     command: process.platform === 'win32' ? 'ssh.exe' : 'ssh',
     args: buildAttachSshArgs({ sshTarget: place.sshTarget, sid: folder, tunnels }),
+    link: { sshTarget: place.sshTarget, sid: folder, tunnels },
   };
-  // t-eb9a736a — the tab's ssh takes a login slot of the place: the boot opens every remote tab at once.
-  holdSshLogin(ptyId, await sshGate.acquire(place.sshTarget));
+  // t-eb9a736a — a tab's own ssh takes a login slot of the place: the boot opens every remote tab at once.
+  const loggedIn = await remoteTabLoginSlot(place.sshTarget);
   try {
-    ptyManager.create({ id: ptyId, ...spawnSpec });
+    createRemoteTabPty(ptyId, spawnSpec, loggedIn);
     remoteSpawns.set(ptyId, spawnSpec);
     remoteLinks.track(ptyId, place.sshTarget, folder);
   } catch (error) {
