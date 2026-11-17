@@ -11,10 +11,15 @@ export interface VigiaCofrePrefs {
 
 export interface VigiaPrefs {
   readonly cofre: VigiaCofrePrefs | null;
+  /**
+   * t-5839d76b — the board (its folder, as the Mindscape keys it) where a lock's card is filed. Missing, or not a
+   * board, = the app picks one (`vigiaBoardOf`). A lock is a machine's, and a machine has no board of its own.
+   */
+  readonly quadro: string | null;
 }
 
 export function defaultVigiaPrefs(): VigiaPrefs {
-  return { cofre: null };
+  return { cofre: null, quadro: null };
 }
 
 const PROGRAM = /^[A-Za-z0-9._-]{1,64}$/;
@@ -22,9 +27,12 @@ const HOME_FILE = /^[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+){0,7}$/;
 
 /** Anything not exactly a program name and a plain relative path (no `..`, no spaces, no quotes) turns the vault check off. */
 export function sanitizeVigiaPrefs(value: unknown): VigiaPrefs {
-  const cofre = (value as { cofre?: unknown } | null)?.cofre as { command?: unknown; sessionFile?: unknown } | undefined;
+  const raw = value as { cofre?: unknown; quadro?: unknown } | null;
+  const quadroRaw = typeof raw?.quadro === 'string' ? raw.quadro.trim() : '';
+  const quadro = quadroRaw && quadroRaw.length <= 1024 ? quadroRaw : null;
+  const cofre = raw?.cofre as { command?: unknown; sessionFile?: unknown } | undefined;
   const command = typeof cofre?.command === 'string' ? cofre.command.trim() : '';
   const sessionFile = typeof cofre?.sessionFile === 'string' ? cofre.sessionFile.trim() : '';
-  if (!PROGRAM.test(command) || !HOME_FILE.test(sessionFile) || sessionFile.split('/').some((part) => part === '..' || part === '.')) return defaultVigiaPrefs();
-  return { cofre: { command, sessionFile } };
+  if (!PROGRAM.test(command) || !HOME_FILE.test(sessionFile) || sessionFile.split('/').some((part) => part === '..' || part === '.')) return { cofre: null, quadro };
+  return { cofre: { command, sessionFile }, quadro };
 }

@@ -333,6 +333,16 @@ export interface LedgerCaller {
   readonly sessionOf?: (projectPath: string, placeId: string) => string | undefined;
 }
 
+/**
+ * t-5839d76b — the Líder único on a task whose board is no board (nobody's folder: the vigia filed its cards on the
+ * projects' folder before the fix). It may still cancel it, name its front or pass it to itself ("lider"); with no
+ * board there is no place to pass it to. `null` for every other tool (they need a board).
+ */
+export function leaderCallerOffBoard(base: Pick<LedgerCaller, 'placeId' | 'roleId' | 'sessionOf'>, taskBoard: string, tool: LedgerToolCall['tool']): LedgerCaller | null {
+  if (tool !== 'tarefa_cancelar' && tool !== 'tarefa_transferir' && tool !== 'tarefa_frente') return null;
+  return { ...base, projectPath: taskBoard, boardPlaceIds: [] };
+}
+
 /** Why a task is orphan (not closed, its owner place gone); `null` = alive, closed or unknown. The rule is shared with the box. */
 export function orphanReason(caller: LedgerCaller, task: LedgerTask, now: number): string | null {
   return orphanReasonIn(caller.placeStates, task, now);

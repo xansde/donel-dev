@@ -85,7 +85,7 @@ describe('defaultAppConfig (puro)', () => {
       browserUploadGrants: { grants: [] },
       slackAgentBots: { servers: [] },
       homologacao: null,
-      vigia: { cofre: null },
+      vigia: { cofre: null, quadro: null },
       unknownFields: {},
     });
   });
@@ -268,7 +268,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       browserUploadGrants: { grants: [] },
       slackAgentBots: { servers: ['theo-west-slack', 'theo-slack'] },
       homologacao: { lugar: 'factory-vps', metricas: '/srv/factory/metricas.json', rigs: null, quadro: 'atlas' },
-      vigia: { cofre: null },
+      vigia: { cofre: null, quadro: null },
       unknownFields: {},
     };
     expect(sanitizeAppConfig(valid, baseDefaults())).toEqual(valid);
@@ -374,7 +374,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       browserUploadGrants: { grants: [] },
       slackAgentBots: { servers: [] },
       homologacao: null,
-      vigia: { cofre: null },
+      vigia: { cofre: null, quadro: null },
       unknownFields: {}, // nenhuma chave desconhecida no objeto de entrada
     });
   });

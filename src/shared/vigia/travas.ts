@@ -113,7 +113,13 @@ const COFRE_DETAIL: Record<CofreStatus, string> = {
 };
 
 /** Pure — the locks of this round. `reports` are the remote health's (sessions); `now` only orders nothing here. */
-export function detectTravas(input: { readonly probes: readonly PlaceProbe[]; readonly reports: readonly RemoteHealthReport[]; readonly now: number }): Trava[] {
+export function detectTravas(input: {
+  readonly probes: readonly PlaceProbe[];
+  readonly reports: readonly RemoteHealthReport[];
+  readonly now: number;
+  /** The board (its name) of a session, when known: the card of a loop names them, since it goes to one board only. */
+  readonly boardOfSession?: (sid: string) => string | undefined;
+}): Trava[] {
   const travas: Trava[] = [];
   for (const probe of input.probes) {
     const base = { placeId: probe.placeId, label: probe.label };
@@ -142,7 +148,9 @@ export function detectTravas(input: { readonly probes: readonly PlaceProbe[]; re
     });
     if (stuck.length > 0) {
       const names = stuck.map((session) => session.name || session.sid).join(', ');
-      travas.push({ ...base, key: `sessoes:${probe.placeId}`, kind: 'sessoes', detail: `${stuck.length === 1 ? 'uma sessão parada' : `${stuck.length} sessões paradas`} há mais de 10 min em ${probe.label}: ${names}` });
+      const boards = [...new Set(stuck.map((session) => input.boardOfSession?.(session.sid)).filter((board): board is string => !!board))].sort();
+      const where = boards.length === 0 ? '' : ` (${boards.length === 1 ? 'quadro' : 'quadros'} ${boards.join(', ')})`;
+      travas.push({ ...base, key: `sessoes:${probe.placeId}`, kind: 'sessoes', detail: `${stuck.length === 1 ? 'uma sessão parada' : `${stuck.length} sessões paradas`} há mais de 10 min em ${probe.label}: ${names}${where}` });
     }
   }
   return travas;
