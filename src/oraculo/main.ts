@@ -14,7 +14,7 @@
 // the Líder vouched for (`readImportList` in decisoes.ts). The owner's per-page notes of each marked row go to
 // `<dir>/notas-paginas.jsonl`, never into a decision's text.
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { createSystemConfigIoDeps } from '../main/config-store';
@@ -177,7 +177,12 @@ async function main(): Promise<void> {
     // t-8762b0ac — the rows the Líder vouched for (`importar`), applied without a signature, read at each round too.
     importar: () => readImportList(join(dir, DECISOES_CONFIG_FILE)),
     // t-8762b0ac (17/11) — the owner's per-page notes are design feedback: kept here, beside the decision, never in a message.
-    guardarNotas: (entry) => appendFileSync(join(dir, NOTAS_PAGINAS_FILE), `${JSON.stringify(entry)}\n`, { mode: 0o600 }),
+    // The mode only applies on creation (the bridge may create the file first), hence the chmod.
+    guardarNotas: (entry) => {
+      const file = join(dir, NOTAS_PAGINAS_FILE);
+      appendFileSync(file, `${JSON.stringify(entry)}\n`, { mode: 0o600 });
+      chmodSync(file, 0o600);
+    },
     ledger: () => ledger,
     returned: guard.returned,
     log: (line) => console.log(line),

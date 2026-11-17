@@ -683,7 +683,8 @@ describe('servidor do celular', () => {
       row(2, second, 'nao', { paginas: [{ pagina: 3, nome: 'Prova', nota: 'down' }] }),
       row(3, noted, 'comentario', { comentario: 'texto da linha' }),
       row(4, sample, 'sim'),
-      row(5, outside, 'sim'),
+      // Unsigned and off the list: not the owner's, so its page notes are not his either (the bridge reopens it later).
+      row(5, outside, 'sim', { paginas: [{ pagina: 1, nome: 'capa', nota: 'down' }] }),
       row(6, notSample, 'sim'),
       row(7, sample2, 'sim'),
     ];

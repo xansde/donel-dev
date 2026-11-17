@@ -532,10 +532,14 @@ export function createDecisoesConsumer(deps: DecisoesConsumerDeps): DecisoesCons
     }
   }
 
-  /** The row's page notes, recorded beside the decision (never in its text); a failure never undoes the mark. */
+  /**
+   * The row's page notes, recorded beside the decision (never in its text); a failure never undoes the mark. A row
+   * refused for its signature is not the owner's, so neither are its notes (and the bridge reopens such a row, which
+   * would record them twice).
+   */
   async function keepNotes(row: DecisaoRow, resultado: string): Promise<void> {
     const paginas = paginasNotas(row.paginas);
-    if (!paginas.length || !deps.guardarNotas) return;
+    if (!paginas.length || !deps.guardarNotas || resultado === `recusada: ${UNSIGNED_DECISION}`) return;
     try {
       await deps.guardarNotas({ tarefa: row.tarefa, pedido: row.pedido, criada_em: row.criada_em, paginas, resultado });
     } catch (error) {
