@@ -10,14 +10,13 @@
 // - `celular_lider_estacionadas(p_resultado, p_limite)` lists the parked rows not delivered yet;
 // - `celular_lider_entregue(p_id, p_resultado)` closes a row, parked or not.
 //
-// Two consumers, one queue: the desktop router also calls `celular_lider_tomar`. The 10 min reservation only keeps
-// them apart while the PC delivers within it; with the PC off (or no Líder único open) longer than that, the desktop
-// would take the row again when the reservation ends and the Líder would get it twice (once from the desktop, once from
-// the relay). So a row that stays pending in the relay is PARKED (`resultado` set, `entregue_em` still null): `tomar`
-// never hands a row with `resultado`, so from then on the row is only this daemon's, and each round asks the relay
-// about it again with the same key (it joins the queued item, never a second one) and closes it once the PC acked.
-// What still overlaps: a row taken but not parked (the park RPC failed) goes back to `tomar` when its reservation ends,
-// and either consumer may take it then; the relay key keeps this daemon from queueing it twice.
+// Two consumers, one queue: the desktop router also calls `celular_lider_tomar`. The 10 min reservation alone would
+// not keep them apart (PC off longer than that: the desktop retakes the row and the relay delivers it too). So every
+// row this daemon takes is PARKED (`resultado` set, `entregue_em` still null) BEFORE its message goes to the relay;
+// `tomar` never hands a row with `resultado`, so from then on the row is only this daemon's: each round asks the relay
+// about the parked rows with the same key (it joins the queued item, never a second one; a row parked by a daemon that
+// died before sending is queued then) and closes each once the PC acked. A row whose park failed is not sent: its
+// reservation ends and whoever takes it next delivers it, once.
 // Nothing is lost: a row is only closed after the PC's ack; a failure leaves it reserved or parked.
 
 import type { BoardConfig } from './board-client';
@@ -128,26 +127,33 @@ export function createChatCelularConsumer(deps: ChatCelularConsumerDeps): ChatCe
     return deps.relay.send({ projectPath: '', placeId: '', text, leaderText: text, key: chatKey(row.id) }, waitMs);
   };
 
-  /** The PC acked: closes the row. A failure parks it (if not yet), so the next round closes it and nobody retakes it. */
-  async function mark(queue: ChatCelularQueue, row: ChatCelularRow, to: Exclude<SendResult, 'pendente'>, parked: boolean): Promise<void> {
+  /** The PC acked: closes the row (always parked by then). A failure leaves it parked, for the next round to close. */
+  async function mark(queue: ChatCelularQueue, row: ChatCelularRow, to: Exclude<SendResult, 'pendente'>): Promise<void> {
     // With placeId '' the PC answers 'lider'; anything else still went somewhere, and the row says where.
     const note = to === 'lider' ? DELIVERED_NOTE : `entregue pela VPS a ${typeof to === 'object' ? to.placeId : String(to)}`;
     try {
       const marked = await queue.entregue(row.id, note);
       log(`${phoneMarker(row.id)} ${note}${marked ? '' : ' (a linha já estava marcada)'}`);
     } catch (error) {
+      // The row is parked: the next round asks the relay again (same key) and closes it.
       log(`${phoneMarker(row.id)} chegou ao Líder único, mas não marquei: ${errorText(error)}`);
-      if (!parked) await park(queue, row);
     }
   }
 
-  /** The message waits in the relay: the row leaves `tomar`, so the desktop router never delivers it a second time. */
-  async function park(queue: ChatCelularQueue, row: ChatCelularRow): Promise<void> {
+  /**
+   * Parks a taken row BEFORE its message goes to the relay: from then on `tomar` never hands it, so the desktop router
+   * cannot deliver it a second time, even if this daemon dies in the middle (step 1 of the next round sends it). False =
+   * not parked (the RPC failed, or the row was already closed): the message does not go now; the reservation ends in
+   * 10 min and whoever takes the row then delivers it once.
+   */
+  async function park(queue: ChatCelularQueue, row: ChatCelularRow): Promise<boolean> {
     try {
-      await queue.estacionar(row.id, PARKED);
+      if (await queue.estacionar(row.id, PARKED)) return true;
+      log(`${phoneMarker(row.id)} já estava fechada ou estacionada; não mandei`);
+      return false;
     } catch (error) {
-      // The reservation still holds for 10 min; the next taking joins the same relay item (same key).
-      log(`${phoneMarker(row.id)} não estacionei: ${errorText(error)}`);
+      log(`${phoneMarker(row.id)} não estacionei, não mandei agora: ${errorText(error)}`);
+      return false;
     }
   }
 
@@ -181,7 +187,7 @@ export function createChatCelularConsumer(deps: ChatCelularConsumerDeps): ChatCe
             log(`${phoneMarker(row.id)} não entrou na fila do PC: ${errorText(error)}`);
             return;
           }
-          if (to !== 'pendente') await mark(queue, row, to, true);
+          if (to !== 'pendente') await mark(queue, row, to);
         }
       }
       // 2. The new rows.
@@ -195,20 +201,21 @@ export function createChatCelularConsumer(deps: ChatCelularConsumerDeps): ChatCe
       // Once one waits (the PC is off), the rest go in the queue without waiting each for the ack.
       let wait = deps.waitMs;
       for (const row of rows) {
+        if (!(await park(queue, row))) continue;
         let to: SendResult;
         try {
           to = await send(row, wait);
         } catch (error) {
+          // Parked: step 1 of the next round sends it.
           log(`${phoneMarker(row.id)} não entrou na fila do PC: ${errorText(error)}`);
           return;
         }
         if (to === 'pendente') {
           wait = 0;
           log(`${phoneMarker(row.id)} na fila do PC, esperando ele entregar ao Líder único`);
-          await park(queue, row);
           continue;
         }
-        await mark(queue, row, to, false);
+        await mark(queue, row, to);
       }
     } finally {
       inRound = false;

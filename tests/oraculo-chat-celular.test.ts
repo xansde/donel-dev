@@ -145,25 +145,53 @@ describe('chat do celular ao Líder único pelo Oráculo da VPS', () => {
     expect(w.row.entregue_em).not.toBeNull();
   });
 
-  it('falha ao estacionar ou ao marcar não perde a linha nem a entrega duas vezes', async () => {
+  it('estacionar falha: a mensagem não sai pela VPS, e o desktop a entrega uma vez quando a reserva vence', async () => {
     const w = world();
     w.db.fail.add('celular_lider_estacionar');
-    await w.vps.round(); // queued in the relay, not parked: the reservation still holds
-    expect(w.row.resultado).toBeNull();
     await w.vps.round();
-    expect(w.relay.pending()).toHaveLength(1);
+    expect(w.row.resultado).toBeNull();
+    expect(w.relay.pending()).toHaveLength(0);
     w.db.fail.delete('celular_lider_estacionar');
     w.clock.now += 11 * MIN;
-    await w.vps.round(); // taken again: the same key joins the queued item, and now it parks
-    expect(w.relay.pending()).toHaveLength(1);
-    expect(w.row.resultado).toBe(PARKED);
+    await w.desktop.poll(); // the desktop takes it first
+    await w.vps.round();
     w.pcDrains();
-    w.db.fail.add('celular_lider_entregue');
-    await w.vps.round(); // delivered but not closed: it stays parked
-    expect(w.row.resultado).toBe(PARKED);
-    w.db.fail.delete('celular_lider_entregue');
+    await w.vps.round();
+    expect(w.toLider).toHaveLength(1);
+    expect(w.row.entregue_em).not.toBeNull();
+  });
+
+  it('daemon morre entre estacionar e mandar: o novo manda a estacionada uma vez, e o desktop não a toma', async () => {
+    const w = world();
+    await w.db.rpc('celular_lider_tomar', { p_limite: 10 });
+    await w.db.rpc('celular_lider_estacionar', { p_id: ID, p_resultado: PARKED }); // and then the process died
+    await w.vps.round(); // the new daemon, PC off
+    expect(w.relay.pending()).toHaveLength(1);
+    w.clock.now += 11 * MIN;
     await w.desktop.poll();
     await w.vps.round();
+    expect(w.relay.pending()).toHaveLength(1);
+    w.pcDrains();
+    await w.vps.round();
+    expect(w.toLider).toHaveLength(1);
+    expect(w.row.resultado).toBe(DELIVERED_NOTE);
+  });
+
+  it('chegou mas a marca falhou: fica estacionada, ninguém reentrega, e a rodada seguinte fecha', async () => {
+    const w = world();
+    const vps = createChatCelularConsumer({
+      queue: () => chatCelularQueueOver(w.db.rpc),
+      relay: { pending: () => w.relay.pending(), send: (message, waitMs) => (queueMicrotask(w.pcDrains), w.relay.send(message, waitMs)) },
+      waitMs: 1_000,
+    });
+    w.db.fail.add('celular_lider_entregue');
+    await vps.round();
+    expect(w.toLider).toHaveLength(1);
+    expect(w.row.resultado).toBe(PARKED);
+    w.db.fail.delete('celular_lider_entregue');
+    w.clock.now += 11 * MIN;
+    await w.desktop.poll();
+    await vps.round();
     expect(w.toLider).toHaveLength(1);
     expect(w.row.resultado).toBe(DELIVERED_NOTE);
   });

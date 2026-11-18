@@ -24,7 +24,7 @@
 // only, with the tasks on the personal VPS (`<dir>/portao.token`, satelite.ts).
 
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { homedir, hostname, networkInterfaces } from 'node:os';
+import { homedir, hostname, networkInterfaces, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { createSystemConfigIoDeps } from '../main/config-store';
 import { createLedgerService, ledgerProofsDir, nodeLedgerProofFs } from '../main/ledger-store';
@@ -503,7 +503,7 @@ async function main(): Promise<void> {
     },
     relay,
     waitMs: RELAY_WAIT_MS,
-    replyHint: (shortId) => `Para responder no celular: ssh ${hostname()} python3 ${replyScript} responder ${shortId} - <<'FIM'\n<sua resposta>\nFIM`,
+    replyHint: (shortId) => `Para responder no celular: ssh ${userInfo().username}@${hostname()} python3 ${replyScript} responder ${shortId} - <<'FIM'\n<sua resposta>\nFIM`,
     log: (line) => console.log(line),
   });
   chatCelular.start();
