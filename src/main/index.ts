@@ -8,7 +8,6 @@ import { basename, dirname, join } from 'node:path';
 import { readUserDefaultPermissionMode, readUserStatusLine } from './cli-user-settings';
 import { createStatusLineStore } from './statusline-store';
 import { STATUS_LINE_CHANNELS, type StatusLineChangedPayload, type StatusLineSnapshot } from '../shared/statusLine';
-import { appMcpAllowArgs } from '../shared/commandBuilder';
 import { isBypassLaunch, planLaunchPermission, type SpawnFacts } from '../shared/launchPermission';
 import { demandOwnerRefusal, hearingPlaceIds, spawnFactsOf } from '../shared/mindscape/reach';
 import { planRoleLaunch } from '../shared/roleLaunch';
@@ -24,6 +23,7 @@ import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { createRemoteOracleHost } from './ledger-remote-host';
+import { planRemoteLaunch } from './remote-launch-plan';
 import { createSwitchableLedger, type SwitchableLedger } from './ledger-remote';
 import { LEDGER_REMOTE_CHANNELS, type LedgerRemoteResult, type LedgerRemoteState } from '../shared/ledger/remote';
 import { answerTaskId, createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderCallerOffBoard, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, prioritizeAsks, recordTurnEnd, reviewLedgerNotices, runLedgerBatch, runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService, type ReviewLedgerNotice } from './ledger-store';
@@ -202,16 +202,12 @@ import {
 } from './taskdex-board-client';
 import { createJsonRpcCallTool, createSystemHttpPostJson } from './taskdex-mcp-transport';
 import {
-  buildSessionHooksSettings,
-  buildSlackMarkFile,
   cleanupStaleHookSettings,
-  keyFilePermissions,
   planStatusLineBridge,
   removeSessionHooksSettings,
   sessionHookSettingsDir,
   statusLineBridgeMode,
   writeHooksSettingsFile,
-  tokenHeaderFileContent,
   writeSessionHooksSettings,
   writeSessionScopeOnlySettings,
 } from './hooks-settings';
@@ -228,14 +224,12 @@ import {
 import { createHookBridge, type BridgeEvent, type HookBridge } from './hook-bridge';
 import {
   buildAttachSshArgs,
-  buildRemoteSetupScript,
   discoverRemoteSessions,
   sshRemoteCommand,
   remoteAliveFromMeta,
   findRemoteTranscript,
   parseRemoteSetupOutput,
   pickRemotePort,
-  REMOTE_SESSIONS_DIR,
   remoteDirFor,
   decideWhereLives,
   RemoteSessionRegistry,
@@ -245,8 +239,6 @@ import {
   runRemoteScript,
   runSetupWithRetry,
   SSH_OPTIONS,
-  type RemoteFile,
-  type RemoteSessionMeta,
 } from './remote-session';
 import { RemoteLinkSupervisor } from './remote-link';
 import { RESUME_OTHER_IDS_MAX } from '../shared/sessions';
@@ -405,7 +397,7 @@ import { isTabColorToken, setTabColor, setTabOrder } from '../shared/tabAppearan
 import { WORKSPACE_CHANNELS } from '../shared/workspace';
 import { createSystemWorkspaceToolsDeps, createWorkspaceTools } from './workspace-tools';
 import { createSessionWorktreeService } from './session-worktree-service';
-import { isSafeWorktreeName, remoteSpawnWorktree, worktreeNameFromArgs } from '../shared/sessionWorktree';
+import { remoteSpawnWorktree, worktreeNameFromArgs } from '../shared/sessionWorktree';
 import { projectOfFolders, tabFolders, withProjectYolo } from '../shared/projectYolo';
 import { isProcessAlive } from './process-alive';
 import { createPullRequestStatusService, createSystemPullRequestStatusDeps, openPullRequestUrl } from './pull-request-status';
@@ -1996,30 +1988,17 @@ async function spawnRemoteClaudeSession(
   const ptyId = randomUUID();
 
   // Fresh tokens and ports; a live remote session answers with the ones its CLI already holds.
-  const fresh: RemoteSessionMeta = {
-    sid: correlationId,
-    hookToken: randomBytes(16).toString('hex'),
-    hookPort: pickRemotePort(),
-    mcpToken: null,
-    mcpPort: pickRemotePort(),
-    localCwd,
-    projectName: options.projectName ?? localCwd,
-    name: options.tabName ?? options.projectName ?? localCwd,
-    launchArgs: options.args ?? [],
-    ...(options.openedBy ? { openedBy: options.openedBy } : {}),
-    createdAt: new Date().toISOString(),
-  };
-  const files: RemoteFile[] = [];
-  const claudeArgs: string[] = [...launcherArgs, ...extraArgs];
+  const hookToken = randomBytes(16).toString('hex');
+  const hookPort = pickRemotePort();
+  const mcpPort = pickRemotePort();
 
   const spawnFacts = spawnFactsFor(options, launcherArgs);
   const roleId = spawnFacts.roleId;
   const rolePromptPath = roleId ? (rolesStore?.promptFileFor(roleId, { leaderOfAll: options.leaderOfAll === true }) ?? null) : null;
-  let remoteRolePath: string | null = null;
+  let rolePromptText: string | null = null;
   if (rolePromptPath) {
     try {
-      files.push({ name: 'role.md', content: readFileSync(rolePromptPath, 'utf8') });
-      remoteRolePath = '@S/role.md';
+      rolePromptText = readFileSync(rolePromptPath, 'utf8');
     } catch {
       // the session opens without the role, as a local one would — and the tab is told (papel não entregue)
     }
@@ -2033,70 +2012,42 @@ async function spawnRemoteClaudeSession(
     remoteInventory = parseRemoteInventoryOutput(listed.stdout) ?? EMPTY_INVENTORY;
   }
   const roleScope = roleScopeSettingsFor(roleId, () => remoteInventory);
-  // Papel não entregue — the remote settings.json always carries the scope when there is one.
-  const rolePlan = planRoleLaunch('claude-code', { roleId, promptPath: remoteRolePath, scope, scopeDelivered: roleScope !== null });
-  claudeArgs.push(...rolePlan.args);
 
   const hooksOn = hookBridge !== null && hookBridge.port !== null;
-  // The session folder holds its keys (`meta.json`, `hook-header`, `mcp.json`, `settings.json`): its tools may not read it.
-  const remoteKeyDirs = [`~/${REMOTE_SESSIONS_DIR}`];
-  if (hooksOn) {
-    // The token goes in a file of its own (600, like every file of the session folder): a hook command never carries it.
-    const tokenHeaderPath = `$HOME/${REMOTE_SESSIONS_DIR}/${correlationId}/hook-header`;
-    files.push({ name: 'hook-header', content: tokenHeaderFileContent(fresh.hookToken) });
-    // Letters never lock (owner, 09/11): no offline Slack guard runs as a hook. The file is still written because the
-    // Theo West MCP reads its "carta-com-arquivo" mark to offer the file upload.
-    files.push({ name: 'slack-guard.sh', content: buildSlackMarkFile() });
-    const settings = buildSessionHooksSettings({
-      port: fresh.hookPort,
-      token: fresh.hookToken,
-      tokenHeaderPath,
-      curlPath: 'curl',
-      statusLine: planStatusLineBridge({ mode: statusLineBridgeModeSetting, userStatusLine: null, chatEnabled: appConfig.chat.enabled }),
-      roleScope,
-      keyDirs: remoteKeyDirs,
-      // t-205b44c8 — which conversation this tmux carries now (a `/clear` moves it on); a resume reads it there.
-      conversationMarkPath: `$HOME/${REMOTE_SESSIONS_DIR}/${correlationId}/current`,
-    });
-    files.push({ name: 'settings.json', content: `${JSON.stringify(settings, null, 2)}\n` });
-  } else {
-    // `meta.json` (and `mcp.json`) hold keys even without hooks: the deny rules go in any case.
-    files.push({ name: 'settings.json', content: `${JSON.stringify({ ...(roleScope ?? {}), ...keyFilePermissions(remoteKeyDirs) }, null, 2)}\n` });
-  }
-  claudeArgs.push('--settings', '@S/settings.json');
-  const mcp = fresh.mcpPort !== null ? (browserService?.prepareRemoteSession(ptyId, fresh.mcpPort) ?? null) : null;
-  const meta: RemoteSessionMeta = {
-    ...fresh,
-    mcpToken: mcp?.token ?? null,
-    mcpPort: mcp ? fresh.mcpPort : null,
-    // Líder único na VPS — the tab that comes back after a restart is the Líder again (`remoteAliveFromMeta`).
-    ...(roleId ? { roleId } : {}),
-    ...(options.leaderOfAll === true ? { leaderOfAll: true } : {}),
-  };
-  if (mcp) {
-    files.push({ name: 'mcp.json', content: mcp.configFileContent });
-    claudeArgs.push(...appMcpAllowArgs(), '--mcp-config', '@S/mcp.json');
-  }
-  // Super bypass (t-66cb0ce4, t-2a9060dd): every session on a remote place is born in it, new, opened or renewed. The
-  // env goes in the claude.sh (`bypassEnvLines`), read from these args.
-  const finalClaudeArgs = planLaunchPermission(claudeArgs, { ...spawnFacts, remote: true }, undefined).args;
-
+  const mcp = browserService?.prepareRemoteSession(ptyId, mcpPort) ?? null;
   const git = localGitInfo(localCwd);
-  // A renewal goes back to the worktree of the session it replaces, also when its args do not name one (t-62f0fa0b).
-  const worktree = remoteSpawnWorktree(options.args, options.renewalId ? sessionRenewal?.get(options.renewalId)?.remote?.dir : null);
+  // t-1a3f7150 — the files and the argv are a pure plan (remote-launch-plan.ts), shared with the daemon on the place.
+  const plan = planRemoteLaunch({
+    sid: correlationId,
+    launcherArgs,
+    extraArgs,
+    launchArgs: options.args ?? [],
+    facts: spawnFacts,
+    role: { promptText: rolePromptText, scope, scopeSettings: roleScope },
+    hooks: {
+      on: hooksOn,
+      port: hookPort,
+      token: hookToken,
+      statusLine: hooksOn ? planStatusLineBridge({ mode: statusLineBridgeModeSetting, userStatusLine: null, chatEnabled: appConfig.chat.enabled }) : null,
+    },
+    mcp: mcp ? { port: mcpPort, token: mcp.token } : null,
+    localCwd,
+    projectName: options.projectName ?? localCwd,
+    name: options.tabName ?? options.projectName ?? localCwd,
+    ...(options.openedBy ? { openedBy: options.openedBy } : {}),
+    createdAt: new Date().toISOString(),
+    homeRelativeDir: remoteDirFor(localCwd, appConfig.projectRoots),
+    // A renewal goes back to the worktree of the session it replaces, also when its args do not name one (t-62f0fa0b).
+    worktree: remoteSpawnWorktree(options.args, options.renewalId ? sessionRenewal?.get(options.renewalId)?.remote?.dir : null),
+    repoUrl: git.repoUrl,
+    branch: git.branch,
+  });
+  const meta = plan.meta;
+  const finalClaudeArgs = plan.claudeArgs;
+
   const setUp = async (folder: string) => {
     await remoteSessions.waitEnded(folder);
-    const script = buildRemoteSetupScript({
-      sid: folder,
-      homeRelativeDir: remoteDirFor(localCwd, appConfig.projectRoots),
-      ...(worktree !== null && isSafeWorktreeName(worktree) ? { worktree } : {}),
-      repoUrl: git.repoUrl,
-      branch: git.branch,
-      files,
-      claudeArgs: finalClaudeArgs,
-      meta,
-      ...(folder !== correlationId ? { attachOnly: true } : {}),
-    });
+    const script = plan.setupScript(folder);
     // t-205b44c8 (a) — a launch that names its conversation (a reattach after a restart, a resume) tries the setup again
     // when only the ssh transport failed (the place's sshd busy at boot: 255 'kex_exchange_identification: Connection
     // reset'), inside this same pty.create: the same tab, never a second one. A brand-new session fails at once: it
@@ -2190,7 +2141,7 @@ async function spawnRemoteClaudeSession(
     ptyId,
     claudeSessionId: correlationId,
     ...(accountId && accountLabel ? { account: { id: accountId, label: accountLabel } } : {}),
-    ...(roleId && rolePlan.missing.length > 0 ? { roleNotDelivered: { roleId, missing: rolePlan.missing } } : {}),
+    ...(roleId && plan.roleMissing.length > 0 ? { roleNotDelivered: { roleId, missing: plan.roleMissing } } : {}),
   };
 }
 
