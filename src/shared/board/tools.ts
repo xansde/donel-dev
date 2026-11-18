@@ -67,7 +67,7 @@ export const CARD_TOOLS = [
       type: 'object',
       properties: {
         titulo: { type: 'string', description: `Nome curto (até ${MAX_CARD_TITLE_CHARS} caracteres).` },
-        pedido: { type: 'string', description: 'A frase literal de quem pediu.' },
+        pedido: { type: 'string', description: 'O pedido como veio de quem pediu.' },
         quemPediu: { type: 'string', description: 'A PESSOA de quem veio o pedido: "dono", "Fulano (Slack)", "sinal do X".' },
         criterio: { type: 'string', description: 'Quando está pronto.' },
         frente: { type: 'string', description: 'A frente de trabalho (até 40 caracteres): agrupa os cartões na tabela do projeto.' },

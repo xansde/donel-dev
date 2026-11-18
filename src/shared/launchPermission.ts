@@ -5,7 +5,7 @@
 //
 // - An orchestrator is born in super bypass, whatever the role, the launcher default or a mode carried by a renewal
 //   say: `--permission-mode bypassPermissions` AND `CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS=1`. Without it
-//   the session stops on a prompt that only the owner, inside its tab, can answer (the Theo renewed in flight, 09/11).
+//   the session stops on a prompt that only the owner, inside its tab, can answer (the Theo West renewed in flight, 09/11).
 // - Orchestrator: the Líder role (of a board, or the Líder único), the Jobu's mark, or a place above another one on its
 //   board (it opened or directs sessions: `spawnFactsOf`, src/shared/mindscape/reach.ts).
 // - A session on a remote place (VPS) is born in super bypass too, whatever its role (owner's rule; t-2a9060dd, 14/11:
