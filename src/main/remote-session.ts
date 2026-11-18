@@ -64,6 +64,11 @@ export interface RemoteSessionMeta {
   /** Líder único na VPS — the role and the Jobu's mark, so the tab that comes back after a restart is the Líder again. */
   readonly roleId?: string;
   readonly leaderOfAll?: boolean;
+  /**
+   * t-1a3f7150 — the place opened this session while the PC was off (its daemon wrote this meta); the PC gives it its
+   * board place `session:<sid>` when it finds it. Absent on every session the PC opened.
+   */
+  readonly abertaSemPc?: boolean;
   readonly createdAt: string;
 }
 
@@ -371,6 +376,7 @@ export function remoteAliveFromMeta(remoteId: string, meta: RemoteSessionMeta): 
     ...(typeof meta.openedBy === 'string' && meta.openedBy !== '' ? { openedBy: meta.openedBy } : {}),
     ...(typeof meta.roleId === 'string' && meta.roleId !== '' ? { roleId: meta.roleId } : {}),
     ...(leaderOfAll ? { leaderOfAll: true } : {}),
+    ...(meta.abertaSemPc === true ? { openedWithoutPc: true } : {}),
   };
 }
 

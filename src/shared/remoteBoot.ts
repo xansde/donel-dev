@@ -20,3 +20,23 @@ export function remoteSessionAlreadyOpen(sid: string, tabs: readonly RemoteBootT
   if (broughtBack.has(sid)) return true;
   return tabs.some((tab) => tab.claudeSessionId === sid || tab.remoteAttachFolder === sid || resumedSessionIdFromArgs(tab.launchArgs) === sid);
 }
+
+/** t-1a3f7150 — every live-session id a remote tab stands for (its conversation, the tmux it attached to, its `-r`). */
+export function remoteTabSessionIds(tab: RemoteBootTab): string[] {
+  const resumed = resumedSessionIdFromArgs(tab.launchArgs);
+  return [tab.claudeSessionId, tab.remoteAttachFolder, resumed].filter((id): id is string => typeof id === 'string' && id !== '');
+}
+
+/**
+ * t-1a3f7150 — the boot asks again later (every few minutes and when a place relinks), so a session the place opened
+ * while the PC was off becomes a tab. Only the ones with no tab yet, each once: `known` holds every id that had a tab
+ * in this run (a tab the owner closed may still find its tmux alive for a few seconds) and the ones already brought.
+ */
+export function remoteSessionsToOpen<T extends { readonly sessionId: string }>(alive: readonly T[], tabs: readonly RemoteBootTab[], known: ReadonlySet<string>): T[] {
+  const taken = new Set<string>();
+  return alive.filter((entry) => {
+    if (taken.has(entry.sessionId) || remoteSessionAlreadyOpen(entry.sessionId, tabs, known)) return false;
+    taken.add(entry.sessionId);
+    return true;
+  });
+}

@@ -368,6 +368,8 @@ export interface RemoteAliveSession {
   /** Líder único na VPS — the role and the Jobu's mark of the session. */
   readonly roleId?: string;
   readonly leaderOfAll?: boolean;
+  /** t-1a3f7150 — the place opened it while the PC was off (`abertaSemPc` in its meta): the board adopts its place. */
+  readonly openedWithoutPc?: boolean;
 }
 
 /** `pty.remoteAlive` — the live sessions found and the places that did not answer (asked again later; t-fe46929a). */
