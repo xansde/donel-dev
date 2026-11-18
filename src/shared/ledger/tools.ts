@@ -30,7 +30,7 @@ import {
   type LedgerVisual,
   type OwnerCard,
 } from './contract';
-import { PROGRESS_FIELD_CHARS, PROGRESS_STATES } from './andamento';
+import { MOTIVOS_DO_DONO, PROGRESS_FIELD_CHARS, PROGRESS_STATES } from './andamento';
 
 /** A proof as the session sends it. A file is a path on the session's computer; the main copies it in. */
 export type ProofInput =
@@ -62,16 +62,18 @@ export type LedgerToolCall =
       readonly quemPediu?: string;
       /** 07/11 — a frente de trabalho ("Ledger", "Oráculo na VPS"); o Jobu agrupa o progresso por ela. */
       readonly frente?: string;
+      /** 18/11 (t-e195b35c) — the session's own key of this call: the same key again answers the first write. */
+      readonly chave?: string;
     }
-  | { readonly tool: 'tarefa_frente'; readonly id: string; readonly frente: string; readonly quemPediu?: string }
-  | { readonly tool: 'tarefa_assumir'; readonly id: string }
-  | { readonly tool: 'tarefa_entregar'; readonly id: string; readonly provas: readonly ProofInput[]; readonly nota?: string; readonly paraODono?: LedgerForOwner; readonly feitoPor?: string }
-  | { readonly tool: 'tarefa_aceitar'; readonly id: string }
-  | { readonly tool: 'tarefa_rejeitar'; readonly id: string; readonly motivo: string }
+  | { readonly tool: 'tarefa_frente'; readonly id: string; readonly frente: string; readonly quemPediu?: string; readonly chave?: string }
+  | { readonly tool: 'tarefa_assumir'; readonly id: string; readonly chave?: string }
+  | { readonly tool: 'tarefa_entregar'; readonly id: string; readonly provas: readonly ProofInput[]; readonly nota?: string; readonly paraODono?: LedgerForOwner; readonly feitoPor?: string; readonly chave?: string }
+  | { readonly tool: 'tarefa_aceitar'; readonly id: string; readonly chave?: string }
+  | { readonly tool: 'tarefa_rejeitar'; readonly id: string; readonly motivo: string; readonly chave?: string }
   | { readonly tool: 'tarefa_listar'; readonly estado?: LedgerViewState; readonly todos?: boolean; readonly quadro?: string; readonly situacao?: LedgerListScope }
   | { readonly tool: 'tarefa_ver'; readonly id: string }
-  | { readonly tool: 'tarefa_transferir'; readonly id: string; readonly para: string; readonly motivo: string }
-  | { readonly tool: 'tarefa_cancelar'; readonly id: string; readonly motivo: string }
+  | { readonly tool: 'tarefa_transferir'; readonly id: string; readonly para: string; readonly motivo: string; readonly chave?: string }
+  | { readonly tool: 'tarefa_cancelar'; readonly id: string; readonly motivo: string; readonly chave?: string }
   | { readonly tool: 'tarefa_lote'; readonly itens: readonly LedgerBatchItem[] }
   | {
       readonly tool: 'carta_slack';
@@ -88,13 +90,28 @@ export type LedgerToolCall =
   /** 17/11 — a Tutorial, an Update or an Idea for the owner (op `carta`): the contract builds the card from these fields. */
   | { readonly tool: 'carta_criar'; readonly carta: OwnerCard }
   /** 08/11 — the session records how its work goes (`andamento.ts`), instead of a notice to the Líder. */
-  | { readonly tool: 'tarefa_andamento'; readonly id?: string; readonly estado: (typeof PROGRESS_STATES)[number]; readonly precisa?: string; readonly prova?: string; readonly proximo?: string }
+  | {
+      readonly tool: 'tarefa_andamento';
+      readonly id?: string;
+      readonly estado: (typeof PROGRESS_STATES)[number];
+      readonly precisa?: string;
+      readonly prova?: string;
+      readonly proximo?: string;
+      /** 18/11 (t-e195b35c) — why the owner, with "precisa-do-dono": one of `MOTIVOS_DO_DONO` (checked by `runLedgerTool`). */
+      readonly motivo?: string;
+      readonly chave?: string;
+    }
   /** 08/11 — what changed in the ledger since the caller's last read, grouped by session (`novidades.ts`). */
   | { readonly tool: 'tarefa_novidades'; readonly quadro?: string; readonly horas?: number };
 
 export type LedgerToolName = LedgerToolCall['tool'];
 
 const ID = { type: 'string', description: 'Id da tarefa (tarefa_listar).' };
+export const MAX_CALL_KEY_CHARS = 80;
+const KEY = {
+  type: 'string',
+  description: `Opcional, até ${MAX_CALL_KEY_CHARS} caracteres: uma chave sua para esta chamada. Repetir com a mesma chave (a resposta não chegou) devolve o que a primeira gravou, com "repetida": true, sem gravar de novo.`,
+};
 const BOARD = { type: 'string', description: 'Só o Líder único (que não tem quadro): o quadro, pelo nome ou pela pasta do projeto. As outras sessões usam sempre o próprio.' };
 const STATES: readonly LedgerViewState[] = ['aberta', 'em-execucao', 'entregue', 'aceita', 'rejeitada', 'cancelada'];
 
@@ -134,6 +151,7 @@ export const LEDGER_TOOLS = [
         pedidoDoDono: { type: 'string', description: 'Quando a tarefa nasce de um "◆ Pedido do dono pelo Oráculo", o id que veio nele (pd-…): o dono vê no celular que o pedido virou esta tarefa.' },
         quemPediu: { type: 'string', description: ASKED_BY_DESCRIPTION },
         frente: { ...FRONT_FIELD, description: `${FRONT_FIELD.description} Sem ela, uma tarefa que substitui outra herda a frente da antiga.` },
+        chave: KEY,
       },
       required: ['pedido', 'criterio', 'prazo', 'risco'],
       additionalProperties: false,
@@ -143,7 +161,7 @@ export const LEDGER_TOOLS = [
     name: 'tarefa_assumir',
     title: 'Assumir tarefa',
     description: 'O lugar dono começa (ou retoma, depois de rejeitada) a tarefa: vai para "em execução".',
-    inputSchema: { type: 'object', properties: { id: ID }, required: ['id'], additionalProperties: false },
+    inputSchema: { type: 'object', properties: { id: ID, chave: KEY }, required: ['id'], additionalProperties: false },
   },
   {
     name: 'tarefa_entregar',
@@ -225,6 +243,7 @@ export const LEDGER_TOOLS = [
           required: ['pergunta', 'resumo', 'opcoes', 'porque', 'risco'],
           additionalProperties: false,
         },
+        chave: KEY,
       },
       required: ['id', 'provas'],
       additionalProperties: false,
@@ -235,7 +254,7 @@ export const LEDGER_TOOLS = [
     title: 'Aceitar entrega',
     description:
       'Aceita uma entrega. ANTES, leia a prova com tarefa_ver (sem isso o aceite é recusado) e confira que ela mostra o critério. Só um lugar com papel Revisor, só risco baixo, só do seu quadro e de fora da cadeia de quem entregou (não aberto por ele nem abaixo dele); quem entregou nunca aceita. Risco alto espera o dono; risco baixo sem Revisor fecha sozinho na entrega.',
-    inputSchema: { type: 'object', properties: { id: ID }, required: ['id'], additionalProperties: false },
+    inputSchema: { type: 'object', properties: { id: ID, chave: KEY }, required: ['id'], additionalProperties: false },
   },
   {
     name: 'tarefa_rejeitar',
@@ -243,7 +262,7 @@ export const LEDGER_TOOLS = [
     description: 'Rejeita uma entrega com motivo, depois de ler a prova com tarefa_ver (mesma regra de quem aceita). O lugar dono pode assumir de novo.',
     inputSchema: {
       type: 'object',
-      properties: { id: ID, motivo: { type: 'string', description: 'O que falta ou está errado.' } },
+      properties: { id: ID, motivo: { type: 'string', description: 'O que falta ou está errado.' }, chave: KEY },
       required: ['id', 'motivo'],
       additionalProperties: false,
     },
@@ -260,6 +279,7 @@ export const LEDGER_TOOLS = [
         id: ID,
         para: { type: 'string', description: 'Id do lugar que fica com a tarefa (sessao_listar), "lider" (o Líder único) ou "seu".' },
         motivo: { type: 'string', description: 'Por que a tarefa muda de dono (ex.: o lugar dono fechou).' },
+        chave: KEY,
       },
       required: ['id', 'para', 'motivo'],
       additionalProperties: false,
@@ -272,7 +292,7 @@ export const LEDGER_TOOLS = [
       'Encerra de vez uma tarefa que não vai mais acontecer, com motivo: uma carta de Slack substituída por outra (aceita e nunca enviada, ou ainda esperando o dono), um trabalho que ninguém vai fazer. Cancelada, a carta não libera envio e a tarefa não se assume de novo; o histórico fica. Quem pode: o Líder, o lugar dono ou o dono. Tarefa aceita (fora carta não enviada) não se cancela. Trabalho feito não se cancela para não cair no dono: entregue com prova, que o risco baixo fecha sem carta.',
     inputSchema: {
       type: 'object',
-      properties: { id: ID, motivo: { type: 'string', description: 'Por que acaba (ex.: substituída pela carta nova).' } },
+      properties: { id: ID, motivo: { type: 'string', description: 'Por que acaba (ex.: substituída pela carta nova).' }, chave: KEY },
       required: ['id', 'motivo'],
       additionalProperties: false,
     },
@@ -313,7 +333,7 @@ export const LEDGER_TOOLS = [
       'Só o Líder: diz a frente de trabalho de uma tarefa que já existe (e, se faltar, quem pediu), para o progresso do Jobu agrupar os pedidos do dono por frente. Não muda estado nem dono; a última frente dita vale. Para tarefa nova, use "frente" no tarefa_criar.',
     inputSchema: {
       type: 'object',
-      properties: { id: ID, frente: FRONT_FIELD, quemPediu: { type: 'string', description: `${ASKED_BY_DESCRIPTION} Opcional: só quando a tarefa ainda não diz.` } },
+      properties: { id: ID, frente: FRONT_FIELD, quemPediu: { type: 'string', description: `${ASKED_BY_DESCRIPTION} Opcional: só quando a tarefa ainda não diz.` }, chave: KEY },
       required: ['id', 'frente'],
       additionalProperties: false,
     },
@@ -357,6 +377,12 @@ export const LEDGER_TOOLS = [
         precisa: { type: 'string', description: `O que falta para seguir e de quem (até ${PROGRESS_FIELD_CHARS}).` },
         prova: { type: 'string', description: `Onde está a evidência: saída de teste, PR, caminho do print (até ${PROGRESS_FIELD_CHARS}).` },
         proximo: { type: 'string', description: `O próximo passo (até ${PROGRESS_FIELD_CHARS}).` },
+        motivo: {
+          type: 'string',
+          enum: MOTIVOS_DO_DONO,
+          description: 'Obrigatório com "precisa-do-dono": por que só o dono resolve. Só estes cinco; o resto o time decide sozinho (registre "travada" ou "esperando" e siga).',
+        },
+        chave: KEY,
       },
       required: ['estado'],
       additionalProperties: false,
@@ -614,6 +640,9 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
   const board = text(args.quadro, 'quadro', 260, false);
   if (typeof board === 'object') return fail(board.error);
   const quadro = board?.trim() ? { quadro: board.trim() } : {};
+  const callKey = text(args.chave, 'chave', MAX_CALL_KEY_CHARS, false);
+  if (typeof callKey === 'object') return fail(callKey.error);
+  const chave = callKey?.trim() ? { chave: callKey.trim() } : {};
   switch (name) {
     case 'tarefa_criar': {
       const pedido = text(args.pedido, 'pedido', MAX_REQUEST_CHARS, true);
@@ -632,7 +661,7 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       const fromOwner = typeof args.pedidoDoDono === 'string' ? { pedidoDoDono: args.pedidoDoDono } : {};
       return {
         ok: true,
-        call: { tool: 'tarefa_criar', pedido: pedido as string, criterio: criterio as string, prazo: (prazo as string).trim(), ...(typeof dono === 'string' && dono.trim() ? { dono: dono.trim() } : {}), risco: args.risco, ...quadro, ...(typeof titulo === 'string' && titulo.trim() ? { titulo: titulo.trim() } : {}), ...(typeof substitui === 'string' && substitui.trim() ? { substitui: substitui.trim() } : {}), ...(typeof quemPediu === 'string' && quemPediu.trim() ? { quemPediu: quemPediu.trim() } : {}), ...(typeof frente === 'string' && frente.trim() ? { frente: frente.trim() } : {}), ...fromOwner },
+        call: { tool: 'tarefa_criar', pedido: pedido as string, criterio: criterio as string, prazo: (prazo as string).trim(), ...(typeof dono === 'string' && dono.trim() ? { dono: dono.trim() } : {}), risco: args.risco, ...quadro, ...(typeof titulo === 'string' && titulo.trim() ? { titulo: titulo.trim() } : {}), ...(typeof substitui === 'string' && substitui.trim() ? { substitui: substitui.trim() } : {}), ...(typeof quemPediu === 'string' && quemPediu.trim() ? { quemPediu: quemPediu.trim() } : {}), ...(typeof frente === 'string' && frente.trim() ? { frente: frente.trim() } : {}), ...fromOwner, ...chave },
       };
     }
     case 'tarefa_frente': {
@@ -643,10 +672,12 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       if (typeof frente !== 'string' || !frente.trim()) return fail('"frente" é obrigatório: o nome da frente (ex.: Ledger).');
       const askedRefused = typeof quemPediu === 'string' && quemPediu.trim() ? askedByRefusal(quemPediu) : null;
       if (askedRefused) return fail(askedRefused);
-      return { ok: true, call: { tool: 'tarefa_frente', id: id.trim(), frente: frente.trim(), ...(typeof quemPediu === 'string' && quemPediu.trim() ? { quemPediu: quemPediu.trim() } : {}) } };
+      return { ok: true, call: { tool: 'tarefa_frente', id: id.trim(), frente: frente.trim(), ...(typeof quemPediu === 'string' && quemPediu.trim() ? { quemPediu: quemPediu.trim() } : {}), ...chave } };
     }
     case 'tarefa_assumir':
     case 'tarefa_aceitar':
+      if (typeof id === 'object' || id === undefined) return fail('"id" é obrigatório.');
+      return { ok: true, call: { tool: name, id: id.trim(), ...chave } };
     case 'tarefa_ver':
       if (typeof id === 'object' || id === undefined) return fail('"id" é obrigatório.');
       return { ok: true, call: { tool: name, id: id.trim() } };
@@ -666,7 +697,7 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       if (typeof feitoPor === 'object') return fail(feitoPor.error);
       const paraODono = args.paraODono === undefined ? undefined : parseForOwnerInput(args.paraODono);
       if (typeof paraODono === 'string') return fail(paraODono);
-      return { ok: true, call: { tool: 'tarefa_entregar', id: id.trim(), provas, ...(nota?.trim() ? { nota } : {}), ...(paraODono ? { paraODono } : {}), ...(feitoPor?.trim() ? { feitoPor: feitoPor.trim() } : {}) } };
+      return { ok: true, call: { tool: 'tarefa_entregar', id: id.trim(), provas, ...(nota?.trim() ? { nota } : {}), ...(paraODono ? { paraODono } : {}), ...(feitoPor?.trim() ? { feitoPor: feitoPor.trim() } : {}), ...chave } };
     }
     case 'tarefa_cancelar':
     case 'tarefa_rejeitar': {
@@ -674,7 +705,7 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       const motivo = text(args.motivo, 'motivo', MAX_REQUEST_CHARS, true);
       if (typeof motivo === 'object' && isTooLong(args.motivo, MAX_REQUEST_CHARS)) return fail(motivo.error);
       if (typeof motivo === 'object' || motivo === undefined) return fail(`"motivo" é obrigatório para ${name === 'tarefa_cancelar' ? 'cancelar' : 'rejeitar'}.`);
-      return { ok: true, call: { tool: name, id: id.trim(), motivo } };
+      return { ok: true, call: { tool: name, id: id.trim(), motivo, ...chave } };
     }
     case 'tarefa_lote': {
       if (!Array.isArray(args.itens) || args.itens.length === 0) return fail('"itens" é obrigatório: de 1 a 50 tarefas.');
@@ -697,7 +728,7 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
       if (typeof para === 'object' || para === undefined) return fail('"para" é obrigatório: o lugar que fica com a tarefa, ou "seu".');
       if (typeof motivo === 'object' && isTooLong(args.motivo, MAX_REQUEST_CHARS)) return fail(motivo.error);
       if (typeof motivo === 'object' || motivo === undefined) return fail('"motivo" é obrigatório: por que a tarefa muda de dono.');
-      return { ok: true, call: { tool: 'tarefa_transferir', id: id.trim(), para: para.trim(), motivo: motivo.trim() } };
+      return { ok: true, call: { tool: 'tarefa_transferir', id: id.trim(), para: para.trim(), motivo: motivo.trim(), ...chave } };
     }
     case 'tarefa_listar': {
       if (args.estado !== undefined && !STATES.includes(args.estado as LedgerViewState)) return fail(`"estado" tem de ser ${STATES.join(', ')}.`);
@@ -743,7 +774,13 @@ export function parseLedgerToolCall(name: string, rawArgs: unknown): ParsedLedge
         if (typeof value === 'object') return fail(value.error);
         if (value?.trim()) fields[key] = value.trim();
       }
-      return { ok: true, call: { tool: 'tarefa_andamento', ...(ref?.trim() ? { id: ref.trim() } : {}), estado: args.estado as (typeof PROGRESS_STATES)[number], ...fields } };
+      // The reason is checked by the tool (`runLedgerTool`), which names the list; here only its shape.
+      const motivo = text(args.motivo, 'motivo', 60, false);
+      if (typeof motivo === 'object') return fail(motivo.error);
+      return {
+        ok: true,
+        call: { tool: 'tarefa_andamento', ...(ref?.trim() ? { id: ref.trim() } : {}), estado: args.estado as (typeof PROGRESS_STATES)[number], ...fields, ...(motivo?.trim() ? { motivo: motivo.trim() } : {}), ...chave },
+      };
     }
     case 'tarefa_novidades': {
       if (args.horas !== undefined && (typeof args.horas !== 'number' || !Number.isFinite(args.horas) || args.horas < 1 || args.horas > 72)) return fail('"horas" é um número de 1 a 72.');

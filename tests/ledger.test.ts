@@ -184,8 +184,13 @@ describe('ledger com prova', () => {
     await runLedgerTool(service(), dev, call('tarefa_assumir', { id }));
     const deliver = () => runLedgerTool(service(), dev, call('tarefa_entregar', { id, provas: [{ tipo: 'texto', texto: '4 passed' }] }));
     expect(await deliver()).toMatchObject({ ok: true });
-    // Delivered: no second delivery until the owner writes on the card.
-    expect(await deliver()).toMatchObject({ ok: false, text: expect.stringContaining('escreveu na carta') });
+    // Delivered: the same delivery again is the first one answered back (t-e195b35c), never a second delivery.
+    const again = await deliver();
+    expect(again.ok).toBe(true);
+    expect(JSON.parse(again.text)).toMatchObject({ repetida: true });
+    expect(service().load().doc.tasks[id]!.events.filter((event) => event.kind === 'entregue')).toHaveLength(1);
+    // Another delivery waits until the owner writes on the card.
+    expect(await runLedgerTool(service(), dev, call('tarefa_entregar', { id, provas: [{ tipo: 'texto', texto: '5 passed' }] }))).toMatchObject({ ok: false, text: expect.stringContaining('escreveu na carta') });
 
     const sent: OwnerMessage[] = [];
     let release: () => void = () => undefined;

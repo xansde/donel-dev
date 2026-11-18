@@ -574,10 +574,10 @@ export type LedgerOp =
       readonly via?: CreatedVia;
     }
   /** 07/11 — the Líder (or the owner) names the front of a task already made, and who asked, if it says. */
-  | { readonly op: 'frente'; readonly id: string; readonly frente: string; readonly requestedBy?: string }
+  | { readonly op: 'frente'; readonly id: string; readonly frente: string; readonly requestedBy?: string; /** 18/11 — the call's key (`repeatedWrite`). */ readonly requestId?: string }
   /** 09/11 — the owner puts the task at `posicao` in his list (`priorityOf`). */
   | { readonly op: 'priorizar'; readonly id: string; readonly posicao: number }
-  | { readonly op: 'assumir'; readonly id: string }
+  | { readonly op: 'assumir'; readonly id: string; /** 18/11 — the call's key (`repeatedWrite`). */ readonly requestId?: string }
   /** `doneBy` (06/11): the place that really did the work, when it is not the owner place that delivers. */
   | {
       readonly op: 'entregar';
@@ -588,6 +588,8 @@ export type LedgerOp =
       readonly doneBy?: string;
       /** 09/11 — low risk, no live Revisor out of the deliverer's chain: the delivery closes itself (`CLOSED_ALONE`). */
       readonly closeAlone?: true;
+      /** 18/11 — the call's key (`repeatedWrite`). */
+      readonly requestId?: string;
     }
   /** `option`: the label of an option of the current delivery's block, closing as `aceita`; `text`: the owner's words with it. */
   | { readonly op: 'aceitar'; readonly id: string; readonly requestId?: string; readonly option?: string; readonly text?: string }
@@ -651,8 +653,12 @@ export type LedgerOpResult = { readonly ok: true; readonly doc: LedgerDoc; reado
  */
 export const REPEAT_WRITE_WINDOW_MS = 30 * 60 * 1000;
 
-/** The ops a session repeats when it does not know whether the first call was written. */
-const REPEATABLE_OPS: ReadonlySet<LedgerOp['op']> = new Set(['criar', 'carta', 'andamento', 'cancelar', 'transferir']);
+/**
+ * The ops a session repeats when it does not know whether the first call was written. 18/11 (t-e195b35c): assumir,
+ * entregar, aceitar, rejeitar and frente too, by a place only (the owner's decisions have their own request id,
+ * `decisionOfRequest`) and by the key only (`keyedRepeat`).
+ */
+const REPEATABLE_OPS: ReadonlySet<LedgerOp['op']> = new Set(['criar', 'carta', 'andamento', 'cancelar', 'transferir', 'assumir', 'entregar', 'aceitar', 'rejeitar', 'frente']);
 
 /**
  * The task a repeat of `op` by `actor` already wrote, within `REPEAT_WRITE_WINDOW_MS` of `now`; `null` = not written.
@@ -713,6 +719,7 @@ export function repeatedWrite(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
   if (!('id' in op)) return null;
   const task = doc.tasks[op.id];
   if (!task) return null;
+  if (op.op === 'assumir' || op.op === 'entregar' || op.op === 'aceitar' || op.op === 'rejeitar' || op.op === 'frente') return keyedRepeat(task, actor, op, key, now);
   if (op.op === 'andamento') {
     const last = latest(task, (event) => event.kind === 'comentada' && sameActor(event.by, actor));
     return matches(last, (event) => event.text === progressText(op.progress)) ? task : null;
@@ -727,6 +734,33 @@ export function repeatedWrite(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
     return matches(latest(task, isTransfer), (event) => (event.text ?? '').includes(` para ${to}⟧`)) ? task : null;
   }
   return null;
+}
+
+/**
+ * 18/11 (t-e195b35c) — the repeat of a step of a place (assumir, entregar, aceitar, rejeitar, frente): the latest event
+ * of that step carries this call's key, by this actor, within the window, and the task is still where that step left it
+ * (assumida → em execução; entregue → delivered or accepted, the owner wrote nothing since; aceita / rejeitada → still
+ * so; frente → the same front). Only by the key: these events were never written with one before, so an event without
+ * it is a write of its own, never a repeat.
+ */
+function keyedRepeat(task: LedgerTask, actor: LedgerActor, op: Extract<LedgerOp, { op: 'assumir' | 'entregar' | 'aceitar' | 'rejeitar' | 'frente' }>, key: string | undefined, now: number): LedgerTask | null {
+  if (actor.kind !== 'lugar' || key === undefined) return null;
+  const last = (kind: LedgerEvent['kind']): LedgerEvent | undefined => [...task.events].reverse().find((event) => event.kind === kind);
+  const mine = (event: LedgerEvent | undefined): boolean => event !== undefined && event.requestId === key && sameActor(event.by, actor) && Math.abs(now - event.at) <= REPEAT_WRITE_WINDOW_MS;
+  switch (op.op) {
+    case 'assumir':
+      return task.state === 'em-execucao' && mine(last('assumida')) ? task : null;
+    case 'entregar':
+      return (task.state === 'entregue' || task.state === 'aceita') && !ownerWroteSinceDelivery(task) && mine(last('entregue')) ? task : null;
+    case 'aceitar':
+      return task.state === 'aceita' && mine(last('aceita')) ? task : null;
+    case 'rejeitar':
+      return task.state === 'rejeitada' && !isCancelled(task) && mine(last('rejeitada')) ? task : null;
+    case 'frente': {
+      const front = [...task.events].reverse().find((event) => event.kind === 'criada' && event.requestId === key);
+      return mine(front) && frenteOf(task) === cleanFrente(op.frente) ? task : null;
+    }
+  }
 }
 
 function withTask(doc: LedgerDoc, task: LedgerTask): LedgerDoc {
@@ -853,7 +887,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       if (isCancelled(task)) return fail(`A tarefa foi cancelada (${eventNote(lastDecision(task)!) ?? 'sem motivo'}); crie outra se o trabalho voltar.`);
       if (task.state !== 'aberta' && task.state !== 'rejeitada') return fail(`A tarefa está "${task.state}"; só se assume uma aberta ou rejeitada.`);
       if (!isOwnerPlace) return fail(`Só o lugar dono (${task.ownerPlaceId}) assume esta tarefa.`);
-      return done(step(task, 'em-execucao', { kind: 'assumida', at: ctx.now, by: actor }));
+      return done(step(task, 'em-execucao', { kind: 'assumida', at: ctx.now, by: actor, ...requestOf(op) }));
 
     case 'entregar':
       // t-4e50f080 — a card's block is the contract's, from typed fields: a new delivery would bring a free one under its kind.
@@ -885,6 +919,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
         kind: 'entregue',
         at: ctx.now,
         by: actor,
+        ...requestOf(op),
         proofs: op.proofs,
         ...(note ? { text: note } : {}),
         ...(op.forOwner ? { forOwner: op.forOwner } : {}),
@@ -974,7 +1009,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       const front = cleanFrente(op.frente);
       if (!front) return fail('"frente" é obrigatório: o nome da frente (ex.: Ledger).');
       if (!(actor.kind === 'dono' || isLeaderRole(actor.roleId))) return fail('Só o Líder ou o dono diz a frente de uma tarefa.');
-      return done(step(task, task.state, { kind: 'criada', at: ctx.now, by: actor, ...birthTagsOf(undefined, op.requestedBy, front) }));
+      return done(step(task, task.state, { kind: 'criada', at: ctx.now, by: actor, ...birthTagsOf(undefined, op.requestedBy, front), ...requestOf(op) }));
     }
 
     case 'priorizar': {

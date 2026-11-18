@@ -20,6 +20,18 @@ export type ProgressState = 'trabalhando' | 'esperando' | 'travada' | 'precisa-d
 export const PROGRESS_STATES = ['trabalhando', 'esperando', 'travada', 'precisa-do-dono', 'pronta'] as const satisfies readonly ProgressState[];
 const ALL_STATES: readonly ProgressState[] = [...PROGRESS_STATES, 'turno-encerrado'];
 
+/**
+ * t-e195b35c (item 4 of the week's report) — the only reasons a session may stop on the owner ("precisa-do-dono"):
+ * everything else the team decides. Checked by the tool (`runLedgerTool`), never by the contract: an app that does not
+ * pass the field on yet still writes the record.
+ */
+export const MOTIVOS_DO_DONO = ['credencial-nova', 'pagamento', 'dado-do-dono', 'main-ou-producao-sem-pedido', 'repo-publico'] as const;
+export type MotivoDoDono = (typeof MOTIVOS_DO_DONO)[number];
+
+export function isMotivoDoDono(value: unknown): value is MotivoDoDono {
+  return typeof value === 'string' && (MOTIVOS_DO_DONO as readonly string[]).includes(value);
+}
+
 /** Each field is short: one line, this many characters at most (the summary of a turn a bit more). */
 export const PROGRESS_FIELD_CHARS = 200;
 export const PROGRESS_SUMMARY_CHARS = 280;

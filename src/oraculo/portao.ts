@@ -9,26 +9,43 @@
 //   the VPS. Every other tool says the PC is off.
 // - quadro de tarefas (t-1e354d15): when the board is configured, the `card_*` tools are answered HERE, PC on or off
 //   (the board lives in the owner's Supabase, not on the PC), and the PC's tool list gets them appended.
+//
+// Canal do Donel fora do PC (t-e195b35c, docs/planos/canal-fora-do-pc.md; the freeze of 18/11, 08h13-08h45, when the
+// PC's app froze with the tunnel alive and every VPS session hung on it):
+// - with the session's picture, every `tarefa_*` is answered HERE, PC on or off: the ledger is this daemon's, the PC
+//   only relayed it (and froze). The PC's tool list gets this gate's `tarefa_*` definitions (the key, the reason).
+// - `sessao_enviar` goes to the recados queue (`GateRecados`) when there is one; a target off this machine goes on.
+// - the tunnel must connect within `CONNECT_MS` (else: the PC is off, nothing was sent); what can be answered here
+//   without harm (initialize, the tool list, ping, notifications, `sessao_quem_sou`, `sessao_listar`) is answered here
+//   when the PC is silent for `LOCAL_ANSWER_MS`. Any other tool waits for the PC as before; a 502 stays a 502.
+// - `POST /recados/<evento>`: the VPS's user-level hooks, loopback only, no MCP token.
 
 import { timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { connect as netConnect, type Socket } from 'node:net';
 import { join } from 'node:path';
 import { handleMcpPayload, parseMcpBody, type BrowserToolOutcome } from '../shared/browser/mcp';
 import type { BoardToolCall } from '../shared/mindscape/agent-tools';
 import type { MindscapeBoard } from '../shared/mindscape/model';
 import type { LedgerToolCall } from '../shared/ledger/tools';
-import { askedByRefusal } from '../shared/ledger/tools';
-import { runLedgerTool, type LedgerCaller, type LedgerService } from '../main/ledger-store';
+import { askedByRefusal, isLedgerToolName, LEDGER_TOOLS } from '../shared/ledger/tools';
+import { runLedgerTool, type LedgerCaller, type LedgerService, type LedgerToolAnswer } from '../main/ledger-store';
 import { CARD_TOOLS, isCardToolName, type CardToolCall } from '../shared/board/tools';
 import { isBoardOrchestrator } from '../shared/mindscape/reach';
 import type { BoardStore } from './board-client';
 import { runCardTool } from './board-tools';
+import type { GateRecados } from './gate-recados';
 
 export const GATE_PORT = 47817;
 const MAX_BODY_BYTES = 1024 * 1024;
 const SID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
 const FORWARD_TIMEOUT_MS = 10 * 60_000;
+/** The tunnel's TCP connection must complete within this; else the PC is off (nothing was sent). */
+export const CONNECT_MS = 2_000;
+/** How long a call that can be answered here without harm waits for the PC before it is. */
+export const LOCAL_ANSWER_MS = 3_000;
+const HOOK_PATH = /^\/recados\/([a-z-]{1,40})$/;
 
 /** One VPS session as the PC last saw it on its board. */
 export interface PictureSession {
@@ -83,10 +100,19 @@ export interface GateDeps {
   /** The task board's client; absent or null = no `card_*` tools (the board is off). */
   readonly cards?: () => BoardStore | null;
   readonly now?: () => number;
+  /** The recados queue (`sessao_enviar` here, the notices after a task, the hooks' route); absent = none. */
+  readonly recados?: GateRecados;
+  /** Runs a `tarefa_*` as `caller`; default: `runLedgerTool` on this daemon's ledger. */
+  readonly runLedger?: (caller: LedgerCaller, call: LedgerToolCall) => Promise<LedgerToolAnswer>;
+  readonly timeouts?: { readonly localAnswerMs?: number };
+  readonly log?: (line: string) => void;
 }
 
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' } as const;
 const PC_OFF = 'O PC está desligado: esta ferramenta volta quando ele ligar. Com o PC desligado, esta sessão tem sessao_quem_sou, sessao_listar e as tarefa_* do Oráculo.';
+const NO_PICTURE = 'Sem retrato do quadro desta sessão: o PC não mandou um desde que ela abriu, e com ele desligado não sei quem ela é. Tente quando o PC ligar.';
+const LEADER_OF_ALL_WAITS = 'O Líder único decide pelos quadros do PC; com o PC desligado, as tarefas dele esperam.';
+const BAD_GATEWAY: GateResponse = { status: 502, headers: {}, body: '' };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -124,64 +150,120 @@ function singleMessage(body: string): Record<string, unknown> | null {
   }
 }
 
-function isCardCall(body: string): boolean {
-  const message = singleMessage(body);
-  return message?.method === 'tools/call' && isRecord(message.params) && typeof message.params.name === 'string' && isCardToolName(message.params.name);
+/** The tool a single `tools/call` message names, with its arguments. */
+function toolCallOf(message: Record<string, unknown> | null): { readonly name: string; readonly args: Record<string, unknown> } | null {
+  if (message?.method !== 'tools/call' || !isRecord(message.params) || typeof message.params.name !== 'string') return null;
+  return { name: message.params.name, args: isRecord(message.params.arguments) ? message.params.arguments : {} };
 }
 
-/** The PC's answer to `tools/list`, with the board's tools appended (the PC does not know them). */
-export function withCardTools(requestBody: string, answer: GateResponse): GateResponse {
+/**
+ * The PC's answer to `tools/list` as this gate serves it: the `tarefa_*` definitions are this gate's (it answers them,
+ * with fields an older app does not know), and the board's tools appended (the PC does not know them).
+ */
+export function withGateTools(requestBody: string, answer: GateResponse, withCards: boolean): GateResponse {
   if (answer.status !== 200 || singleMessage(requestBody)?.method !== 'tools/list') return answer;
   const parsed = singleMessage(answer.body);
   const result = parsed && isRecord(parsed.result) ? parsed.result : null;
   if (!parsed || !result || !Array.isArray(result.tools)) return answer;
-  const names = new Set(result.tools.map((tool) => (isRecord(tool) ? tool.name : null)));
-  const tools = [...result.tools, ...CARD_TOOLS.filter((tool) => !names.has(tool.name))];
+  const ledgerTools = new Map<string, unknown>(LEDGER_TOOLS.map((tool) => [tool.name, tool]));
+  const served: unknown[] = result.tools.map((tool: unknown) => (isRecord(tool) && typeof tool.name === 'string' && ledgerTools.has(tool.name) ? ledgerTools.get(tool.name) : tool));
+  const names = new Set(served.map((tool) => (isRecord(tool) ? tool.name : null)));
+  const tools = withCards ? [...served, ...CARD_TOOLS.filter((tool) => !names.has(tool.name))] : served;
   return { ...answer, body: JSON.stringify({ ...parsed, result: { ...result, tools } }) };
+}
+
+/**
+ * Who the session is for the ledger, from its picture; a string = why not (the Líder único decides on the PC, or the
+ * picture does not say the place).
+ */
+export function callerFromPicture(mine: PictureSession): LedgerCaller | string {
+  const who = mine.quemSou;
+  if (who.liderUnico === true) return LEADER_OF_ALL_WAITS;
+  if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string') return NO_PICTURE;
+  const pasta = who.pasta;
+  const ids = mine.listar.map((place) => (isRecord(place) ? place.id : null)).filter((id): id is string => typeof id === 'string');
+  return {
+    projectPath: pasta,
+    placeId: who.lugar,
+    ...(typeof who.papel === 'string' ? { roleId: who.papel } : {}),
+    boardPlaceIds: ids,
+    placeStates: new Map([[pasta, placeStatesOf(mine.listar)]]),
+    ...(mine.board ? { board: mine.board } : {}),
+    sessionOf: (projectPath, placeId) => {
+      const card = projectPath === pasta ? mine.board?.cards[placeId] : undefined;
+      return card?.kind === 'session' ? card.sessionId : undefined;
+    },
+  };
+}
+
+/** A call that may be answered here when the PC is silent: it only reads, or it is the handshake. */
+function answersWithoutPc(message: Record<string, unknown>, mine: PictureSession | null): boolean {
+  const method = message.method;
+  if (method === 'initialize' || method === 'ping' || method === 'tools/list' || (typeof method === 'string' && method.startsWith('notifications/'))) return true;
+  const call = toolCallOf(message);
+  if (!call || !mine) return false;
+  return call.name === 'sessao_quem_sou' || (call.name === 'sessao_listar' && call.args.quadro === undefined);
 }
 
 const hhmm = (at: number): string => new Date(at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
 
+/** How the PC is for a call answered here: off (nothing listens), silent (it did not answer in time), or on. */
+type PcState = 'desligado' | 'sem-resposta' | 'ligado';
+
 export function createGateHandler(deps: GateDeps): (request: GateRequest) => Promise<GateResponse> {
-  async function local(sid: string, body: string, cards: BoardStore | null): Promise<GateResponse> {
+  const log = deps.log ?? ((line: string) => console.log(line));
+  const runLedger = deps.runLedger ?? ((caller: LedgerCaller, call: LedgerToolCall) => runLedgerTool(deps.ledger(), caller, call));
+  const localAnswerMs = deps.timeouts?.localAnswerMs ?? LOCAL_ANSWER_MS;
+
+  /** Answers the call here. `passOn`: the recados queue said the target is not on this machine (`useRecados`). */
+  async function local(sid: string, body: string, cards: BoardStore | null, pc: PcState, useRecados = false): Promise<{ readonly response: GateResponse; readonly passOn: boolean }> {
     const parsed = parseMcpBody(body);
-    if (!parsed.ok) return { status: 400, headers: JSON_HEADERS, body: JSON.stringify(parsed.response) };
+    if (!parsed.ok) return { response: { status: 400, headers: JSON_HEADERS, body: JSON.stringify(parsed.response) }, passOn: false };
     const picture = deps.picture();
     const mine = picture?.sessoes[sid] ?? null;
-    const noPicture = 'Sem retrato do quadro desta sessão: o PC não mandou um desde que ela abriu, e com ele desligado não sei quem ela é. Tente quando o PC ligar.';
-    const offline = picture ? `desligado; quadro de ${hhmm(picture.at)}` : 'desligado';
+    const label = pc === 'sem-resposta' ? `não respondeu em ${Math.round(localAnswerMs / 1000)} s` : pc;
+    const pcNow = picture ? `${label}; quadro de ${hhmm(picture.at)}` : label;
+    let passOn = false;
 
     const board = async (call: BoardToolCall): Promise<BrowserToolOutcome> => {
-      if (!mine) return { kind: 'error', text: noPicture };
-      if (call.tool === 'sessao_quem_sou') return { kind: 'text', text: JSON.stringify({ ...mine.quemSou, pc: offline }, null, 1) };
+      if (!mine) return { kind: 'error', text: NO_PICTURE };
+      if (call.tool === 'sessao_enviar' && useRecados && deps.recados) {
+        const sent = await deps.recados.enviar(sid, mine, call);
+        if (sent !== 'repassar') return sent;
+        passOn = true;
+        return { kind: 'error', text: PC_OFF };
+      }
+      if (call.tool === 'sessao_quem_sou') return { kind: 'text', text: JSON.stringify({ ...mine.quemSou, pc: pcNow }, null, 1) };
       if (call.tool === 'sessao_listar' && !call.quadro) return { kind: 'text', text: JSON.stringify(mine.listar, null, 1) };
       return { kind: 'error', text: PC_OFF };
     };
 
     const ledger = async (call: LedgerToolCall): Promise<BrowserToolOutcome> => {
-      if (!mine) return { kind: 'error', text: noPicture };
-      const who = mine.quemSou;
-      if (who.liderUnico === true) return { kind: 'error', text: 'O Líder único decide pelos quadros do PC; com o PC desligado, as tarefas dele esperam.' };
+      if (!mine) return { kind: 'error', text: NO_PICTURE };
+      const caller = callerFromPicture(mine);
+      if (typeof caller === 'string') return { kind: 'error', text: caller };
       if ((call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' || call.tool === 'tarefa_novidades') && call.quadro) return { kind: 'error', text: 'Só o Líder único escolhe o quadro. Esta sessão usa sempre o próprio quadro (chame sem "quadro").' };
-      if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string') return { kind: 'error', text: noPicture };
       const refused = call.tool === 'tarefa_criar' && call.quemPediu ? askedByRefusal(call.quemPediu) : null;
       if (refused) return { kind: 'error', text: refused };
-      const ids = mine.listar.map((place) => (isRecord(place) ? place.id : null)).filter((id): id is string => typeof id === 'string');
-      const caller: LedgerCaller = {
-        projectPath: who.pasta,
-        placeId: who.lugar,
-        ...(typeof who.papel === 'string' ? { roleId: who.papel } : {}),
-        boardPlaceIds: ids,
-        placeStates: new Map([[who.pasta, placeStatesOf(mine.listar)]]),
-        ...(mine.board ? { board: mine.board } : {}),
-        sessionOf: (projectPath, placeId) => {
-          const card = projectPath === who.pasta ? mine.board?.cards[placeId] : undefined;
-          return card?.kind === 'session' ? card.sessionId : undefined;
-        },
-      };
+      if (deps.recados) {
+        try {
+          await deps.recados.antesDaTarefa(caller, mine, call);
+        } catch (error) {
+          log(`[oraculo] portão: antes de ${call.tool} falhou: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
       // No `remote`: the proof files named by a VPS session are here, on this machine.
-      const result = await runLedgerTool(deps.ledger(), caller, call);
+      const result = await runLedger(caller, call);
       if (!result.ok) return { kind: 'error', text: result.text };
+      if (deps.recados) {
+        // The notices never hold the answer, nor fail it.
+        const failed = (error: unknown): void => log(`[oraculo] portão: aviso depois de ${call.tool} falhou: ${error instanceof Error ? error.message : String(error)}`);
+        try {
+          void Promise.resolve(deps.recados.depoisDaTarefa(sid, mine, caller, call, result.text) as unknown).catch(failed);
+        } catch (error) {
+          failed(error);
+        }
+      }
       return result.image ? { kind: 'image', base64: result.image.base64, mimeType: result.image.mimeType, text: result.text } : { kind: 'text', text: result.text };
     };
 
@@ -212,14 +294,23 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
       executor: async () => ({ kind: 'error', text: PC_OFF }),
       boardExecutor: board,
       ledgerExecutor: ledger,
+      // Listed like the PC lists them (a tool list answered here is the session's for good); they run on the PC.
+      hillClimbExecutor: async () => ({ kind: 'error', text: PC_OFF }),
       ...(cards ? { cardExecutor: card } : {}),
       openCap: () => null,
       serverVersion: deps.serverVersion,
     });
-    return answer === null ? { status: 202, headers: {}, body: '' } : { status: 200, headers: JSON_HEADERS, body: JSON.stringify(answer) };
+    const response: GateResponse = answer === null ? { status: 202, headers: {}, body: '' } : { status: 200, headers: JSON_HEADERS, body: JSON.stringify(answer) };
+    return { response, passOn };
   }
 
   return async (request) => {
+    const hook = HOOK_PATH.exec(request.path);
+    if (hook) {
+      // The loopback is the server's check; the hooks carry no MCP token.
+      if (!deps.recados || request.method !== 'POST') return { status: 404, headers: {}, body: '' };
+      return deps.recados.hook(hook[1]!, request.headers, request.body);
+    }
     const match = /^\/s\/([^/]+)\/mcp$/.exec(request.path);
     if (!match || !SID_PATTERN.test(match[1]!)) return { status: 404, headers: {}, body: '' };
     const sid = match[1]!;
@@ -227,44 +318,106 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     const bearer = request.authorization?.startsWith('Bearer ') ? request.authorization.slice('Bearer '.length) : '';
     if (!meta || !bearer || !sameToken(bearer, meta.mcpToken)) return { status: 401, headers: {}, body: '' };
     const cards = deps.cards?.() ?? null;
+    const message = request.method === 'POST' ? singleMessage(request.body) : null;
+    const call = toolCallOf(message);
+    const mine = deps.picture()?.sessoes[sid] ?? null;
     // The board answers here even with the PC on: it is not the PC's.
-    if (cards && request.method === 'POST' && isCardCall(request.body)) return local(sid, request.body, cards);
-    const forwarded = await deps.forward(meta.mcpPort, request);
-    if (forwarded !== 'desligado') return cards ? withCardTools(request.body, forwarded) : forwarded;
+    if (cards && call && isCardToolName(call.name)) return (await local(sid, request.body, cards, 'ligado')).response;
+    // The ledger is this daemon's: with the session's picture its tasks never wait on the PC (the Líder único's, and a
+    // picture that does not say the place, still go to the PC, which knows them).
+    if (call && isLedgerToolName(call.name) && mine && typeof callerFromPicture(mine) !== 'string') return (await local(sid, request.body, cards, 'ligado')).response;
+    let recadosTried = false;
+    if (call?.name === 'sessao_enviar' && mine && deps.recados) {
+      const sent = await local(sid, request.body, cards, 'ligado', true);
+      if (!sent.passOn) return sent.response;
+      recadosTried = true;
+    }
+    const forwarding = deps.forward(meta.mcpPort, request).catch((): GateResponse => BAD_GATEWAY);
+    let forwarded: GateResponse | 'desligado';
+    if (message && answersWithoutPc(message, mine)) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const silent = new Promise<'sem-resposta'>((resolve) => {
+        timer = setTimeout(() => resolve('sem-resposta'), localAnswerMs);
+      });
+      const first = await Promise.race([forwarding, silent]);
+      clearTimeout(timer);
+      if (first === 'sem-resposta') {
+        log(`[oraculo] portão: o PC não respondeu ${String(message.method)} da sessão ${sid} em ${localAnswerMs} ms; respondi daqui.`);
+        return (await local(sid, request.body, cards, 'sem-resposta')).response;
+      }
+      forwarded = first;
+    } else {
+      forwarded = await forwarding;
+    }
+    if (forwarded !== 'desligado') return withGateTools(request.body, forwarded, cards !== null);
     if (request.method !== 'POST') return { status: 405, headers: { Allow: 'POST' }, body: '' };
-    return local(sid, request.body, cards);
+    return (await local(sid, request.body, cards, 'desligado', !recadosTried)).response;
   };
 }
 
-/** The real forward: the session's reverse tunnel on this machine (`127.0.0.1:<mcpPort>/mcp`), as its CLI would call. */
-export const tunnelForward: GateForward = (port, request) =>
-  new Promise((resolve) => {
-    let answered = false;
-    const headers: Record<string, string> = { Host: `127.0.0.1:${port}` };
-    for (const [name, value] of Object.entries(request.headers)) headers[name] = value;
-    if (request.authorization) headers.Authorization = request.authorization;
-    if (request.body) headers['Content-Length'] = String(Buffer.byteLength(request.body));
-    const outgoing = httpRequest({ host: '127.0.0.1', port, path: '/mcp', method: request.method, headers, timeout: FORWARD_TIMEOUT_MS }, (res) => {
-      answered = true;
-      const chunks: Buffer[] = [];
-      res.on('data', (chunk: Buffer) => chunks.push(chunk));
-      res.on('end', () => {
-        const passOn: Record<string, string> = {};
-        for (const name of ['content-type', 'mcp-session-id', 'cache-control', 'allow']) {
-          const value = res.headers[name];
-          if (typeof value === 'string') passOn[name] = value;
-        }
-        resolve({ status: res.statusCode ?? 502, headers: passOn, body: Buffer.concat(chunks).toString('utf8') });
+export interface TunnelForwardOptions {
+  /** The TCP connection must complete within this (default `CONNECT_MS`). */
+  readonly connectMs?: number;
+  /** The whole answer, once connected (default 10 min: a tool may run that long on the PC). */
+  readonly timeoutMs?: number;
+  /** Opens the connection (the tests give a socket that never connects). */
+  readonly connect?: (port: number) => Socket;
+}
+
+/**
+ * The real forward: the session's reverse tunnel on this machine (`127.0.0.1:<mcpPort>/mcp`), as its CLI would call.
+ * Only "the connection never completed" (refused, unreachable, or not within `connectMs`: nothing was sent) is the PC
+ * off. Any failure after it connected (a reset after the call went out, a timeout, a pipe broken mid-answer) is a
+ * 502: the call may have run on the PC, and running it again here would make a task or a delivery twice (revisão do #302).
+ */
+export function createTunnelForward(options: TunnelForwardOptions = {}): GateForward {
+  const connectMs = options.connectMs ?? CONNECT_MS;
+  const timeoutMs = options.timeoutMs ?? FORWARD_TIMEOUT_MS;
+  const open = options.connect ?? ((port: number) => netConnect({ host: '127.0.0.1', port }));
+  return (port, request) =>
+    new Promise((resolve) => {
+      let settled = false;
+      const finish = (value: GateResponse | 'desligado'): void => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+      const socket = open(port);
+      const notConnected = (): void => {
+        clearTimeout(connectTimer);
+        socket.destroy();
+        finish('desligado');
+      };
+      const connectTimer = setTimeout(notConnected, connectMs);
+      socket.once('error', notConnected);
+      socket.once('connect', () => {
+        clearTimeout(connectTimer);
+        socket.off('error', notConnected);
+        const headers: Record<string, string> = { Host: `127.0.0.1:${port}` };
+        for (const [name, value] of Object.entries(request.headers)) if (!name.startsWith('x-donel-')) headers[name] = value;
+        if (request.authorization) headers.Authorization = request.authorization;
+        if (request.body) headers['Content-Length'] = String(Buffer.byteLength(request.body));
+        const outgoing = httpRequest({ host: '127.0.0.1', port, path: '/mcp', method: request.method, headers, timeout: timeoutMs, createConnection: () => socket }, (res) => {
+          const chunks: Buffer[] = [];
+          res.on('data', (chunk: Buffer) => chunks.push(chunk));
+          res.on('end', () => {
+            const passOn: Record<string, string> = {};
+            for (const name of ['content-type', 'mcp-session-id', 'cache-control', 'allow']) {
+              const value = res.headers[name];
+              if (typeof value === 'string') passOn[name] = value;
+            }
+            finish({ status: res.statusCode ?? 502, headers: passOn, body: Buffer.concat(chunks).toString('utf8') });
+          });
+          res.on('error', () => finish(BAD_GATEWAY));
+        });
+        outgoing.on('timeout', () => outgoing.destroy(new Error('timeout')));
+        outgoing.on('error', () => finish(BAD_GATEWAY));
+        outgoing.end(request.body);
       });
-      res.on('error', () => resolve({ status: 502, headers: {}, body: '' }));
     });
-    outgoing.on('timeout', () => outgoing.destroy(new Error('timeout')));
-    // Only "nobody listens on the tunnel" (ECONNREFUSED: nothing was sent) is the PC off. Any other failure (a reset
-    // after the call went out, a timeout, a pipe broken mid-answer) is a 502: the call may have run on the PC, and
-    // running it again here would make a task or a delivery twice (revisão do #302).
-    outgoing.on('error', (error: NodeJS.ErrnoException) => resolve(!answered && error.code === 'ECONNREFUSED' ? 'desligado' : { status: 502, headers: {}, body: '' }));
-    outgoing.end(request.body);
-  });
+}
+
+export const tunnelForward: GateForward = createTunnelForward();
 
 const PASS_HEADERS = ['content-type', 'accept', 'mcp-protocol-version', 'mcp-session-id', 'last-event-id'];
 
@@ -295,6 +448,8 @@ export function startGateServer(options: { readonly port: number; readonly handl
         const value = req.headers[name];
         if (typeof value === 'string') headers[name] = value;
       }
+      // The recados hooks say which session they come from (`X-Donel-Tmux`, ...).
+      for (const [name, value] of Object.entries(req.headers)) if (name.startsWith('x-donel-') && typeof value === 'string') headers[name] = value;
       try {
         const answer = await options.handler({
           method: req.method ?? 'GET',
