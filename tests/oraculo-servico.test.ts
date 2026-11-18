@@ -133,5 +133,9 @@ describe('carta de serviço no Oráculo da VPS', () => {
     expect(JSON.parse(readFileSync(file, 'utf8')).tasks[id].ownerPlaceId).toBe('place:fechado');
     expect(JSON.parse((await as(REC, passa)).body as string)).toMatchObject({ ok: true, estado: 'aberta' });
     expect(JSON.parse(readFileSync(file, 'utf8')).tasks[id].ownerPlaceId).toBe('lider');
+    // O alerta da SRE vira tarefa do Líder único pela mesma credencial.
+    const alerta = JSON.parse((await as(REC, { ...criar, request: 'alerta SRE: disco cheio', ownerPlaceId: 'lider', requestedBy: 'SRE' })).body as string);
+    expect(alerta).toMatchObject({ ok: true, estado: 'aberta' });
+    expect(JSON.parse(readFileSync(file, 'utf8')).tasks[alerta.id].ownerPlaceId).toBe('lider');
   });
 });
