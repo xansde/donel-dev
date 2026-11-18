@@ -310,7 +310,19 @@ async function main(): Promise<void> {
   const gatePort = Number(process.env.DONEL_ORACULO_PORTAO_PORT) || GATE_PORT;
   const gate = await startGateServer({
     port: gatePort,
-    handler: createGateHandler({ sessionsDir: join(homedir(), '.donel', 's'), ledger: () => ledger, picture: () => picture, forward: tunnelForward, serverVersion: 'oraculo-vps', cards }),
+    handler: createGateHandler({
+      sessionsDir: join(homedir(), '.donel', 's'),
+      ledger: () => ledger,
+      picture: () => picture,
+      forward: tunnelForward,
+      serverVersion: 'oraculo-vps',
+      cards,
+      // The phone's server lives here: a task a VPS session creates from an owner's request shows on his phone.
+      linkPedido: (pedidoId, tarefa) => void celular?.linkPedido(pedidoId, tarefa),
+      // Until the recados queue is wired here, the notices after a task (a delivery, a "travada") go to the PC's
+      // relay, which today's app delivers when it answers: a frozen PC holds the notice, never the session.
+      relayNotice: (message) => void relay.send(message, 0).catch((error: unknown) => console.error('[oraculo] portão: aviso não entrou na fila:', error)),
+    }),
   });
   // The setup of a remote session reads this to point its MCP at the gate.
   writeFileSync(join(dir, 'portao'), `${gate.port}\n`, { mode: 0o600 });

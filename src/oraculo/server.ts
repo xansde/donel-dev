@@ -1,6 +1,8 @@
 // Oráculo na VPS — the socket around `createOracleApiHandler`. Listens ONLY on the place's Tailscale address and
 // refuses a connection that does not come from the tailnet (the same rule as the phone's server). Besides the API,
-// `GET /v1/eventos` is a server-sent-events stream: one `ledger` event per write, so the PC re-reads the ledger.
+// `GET /v1/eventos` is a server-sent-events stream: a `ledger` event after writes, so the PC re-reads the ledger.
+// t-e195b35c (the freeze of 18/11, 08h13–08h45): 107 writes in 38 min each made the PC download the whole ledger again;
+// now at most one `ledger` every `LEDGER_EVENT_WINDOW_MS` (the first at once, the rest of the window as one at its end).
 
 import { createReadStream } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
@@ -11,6 +13,39 @@ import { isBinaryRoute, MAX_JSON_BYTES, MAX_UPLOAD_BYTES, type OracleApiHandler,
 export const ORACLE_PORT = 47816;
 export const EVENTS_PATH = '/v1/eventos';
 const HEARTBEAT_MS = 25_000;
+export const LEDGER_EVENT_WINDOW_MS = 2_000;
+
+/**
+ * At most one `send` per `windowMs`: a fire after a quiet window goes at once; the fires inside a window become ONE
+ * send at its end (never lost, never one per fire).
+ */
+export function createThrottle(send: () => void, windowMs: number, now: () => number = Date.now): { fire(): void; dispose(): void } {
+  let lastAt = Number.NEGATIVE_INFINITY;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const go = (): void => {
+    lastAt = now();
+    send();
+  };
+  return {
+    fire() {
+      if (timer) return;
+      const wait = lastAt + windowMs - now();
+      if (wait <= 0) {
+        go();
+        return;
+      }
+      timer = setTimeout(() => {
+        timer = null;
+        go();
+      }, wait);
+      timer.unref?.();
+    },
+    dispose() {
+      if (timer) clearTimeout(timer);
+      timer = null;
+    },
+  };
+}
 
 export interface OracleServer {
   readonly url: string;
@@ -23,6 +58,10 @@ export function startOracleServer(options: { readonly host: string; readonly por
   const { host, port, handler, caller } = options;
   if (!isTailscaleAddress(host)) return Promise.reject(new Error(`recusado: ${host} não é um endereço da Tailscale`));
   const streams = new Set<ServerResponse>();
+  const broadcast = (event: 'ledger' | 'fila'): void => {
+    for (const stream of streams) stream.write(`event: ${event}\ndata: {}\n\n`);
+  };
+  const ledgerEvents = createThrottle(() => broadcast('ledger'), LEDGER_EVENT_WINDOW_MS);
 
   const onRequest = (req: IncomingMessage, res: ServerResponse): void => {
     if (!isTailscaleAddress(req.socket.remoteAddress)) {
@@ -113,11 +152,13 @@ export function startOracleServer(options: { readonly host: string; readonly por
       resolvePromise({
         url: `http://${host.includes(':') ? `[${host}]` : host}:${(server.address() as AddressInfo).port}`,
         notify(event) {
-          for (const stream of streams) stream.write(`event: ${event}\ndata: {}\n\n`);
+          if (event === 'ledger') ledgerEvents.fire();
+          else broadcast(event);
         },
         close: () =>
           new Promise<void>((done) => {
             clearInterval(heartbeat);
+            ledgerEvents.dispose();
             for (const stream of streams) stream.end();
             streams.clear();
             server.closeAllConnections?.();
