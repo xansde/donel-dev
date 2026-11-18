@@ -192,7 +192,9 @@ export function planRound(
   const open: Record<string, VigiaEntry> = {};
   const toOpen: Array<{ trava: Trava; firstSeen: number }> = [];
   for (const trava of travas) {
-    const before = state.open[trava.key];
+    // A lock that passed with no card (kept only for its record) and came back is a new lock: new warning, new card.
+    const kept = state.open[trava.key];
+    const before = kept && kept.endedAt === null ? kept : undefined;
     const entry: VigiaEntry = {
       firstSeen: before?.firstSeen ?? now,
       rounds: (before?.rounds ?? 0) + 1,
