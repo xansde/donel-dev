@@ -19,6 +19,24 @@ const BATCH = 200;
 const CARDS_RETRY_MS = 60_000;
 const MAX_CARDS_RETRY_MS = 15 * 60_000;
 const MAX_CARDS_RETRIES = 6;
+/**
+ * t-ba2bb4f9 — columns added to `tarefas` after it was made (docs/oraculo-espelho/tarefas-dod.sql). A table that has
+ * not got them yet answers 400 PGRST204 to the whole batch; the rows then go without them (and a log line says to run
+ * the SQL), so a missing column never stops the mirror. The next push tries them again.
+ */
+export const LATE_COLUMNS = ['criterio', 'ultimo_andamento', 'ultimo_andamento_em'] as const;
+
+/** PostgREST's "Could not find the 'criterio' column of 'tarefas' in the schema cache", for a late column. */
+function missingLateColumn(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : '';
+  return message.includes('PGRST204') && LATE_COLUMNS.some((column) => message.includes(`'${column}'`));
+}
+
+function withoutLateColumns(row: Record<string, unknown>): Record<string, unknown> {
+  const rest = { ...row };
+  for (const column of LATE_COLUMNS) delete rest[column];
+  return rest;
+}
 
 export interface SupabaseSinkDeps {
   /** `https://<ref>.supabase.co`. */
@@ -161,9 +179,22 @@ export function createSupabaseSink(deps: SupabaseSinkDeps): SupabaseSink {
     async push(rows, cartas) {
       const key = deps.key();
       if (!key) throw new Error('a chave do Supabase não está no cofre');
+      let lateMissing = false;
       for (let start = 0; start < rows.length; start += BATCH) {
-        const batch = rows.slice(start, start + BATCH);
-        await post(endpoint, key, batch.map((row) => ({ ...row, atualizado_em: new Date().toISOString() })), TIMEOUT_MS, 'resolution=merge-duplicates,return=minimal');
+        const batch = rows.slice(start, start + BATCH).map((row) => ({ ...row, atualizado_em: new Date().toISOString() }));
+        const send = (body: readonly Record<string, unknown>[]): Promise<Response> => post(endpoint, key, body, TIMEOUT_MS, 'resolution=merge-duplicates,return=minimal');
+        if (lateMissing) {
+          await send(batch.map(withoutLateColumns));
+          continue;
+        }
+        try {
+          await send(batch);
+        } catch (error) {
+          if (!missingLateColumn(error)) throw error;
+          lateMissing = true;
+          log(`tarefas sem as colunas ${LATE_COLUMNS.join(', ')}: vão sem elas até rodar docs/oraculo-espelho/tarefas-dod.sql`);
+          await send(batch.map(withoutLateColumns));
+        }
       }
       if (!cartas || disposed) return;
       // After the tasks (the phone's view joins the cards to them), and not awaited: the cards run behind, and a

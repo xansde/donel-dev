@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { createLedgerMirror, type MirrorSink, type MirrorTimers } from '../src/main/ledger-mirror/mirror';
 import { createSupabaseSink } from '../src/main/ledger-mirror/supabase-sink';
 import { MAX_CARD_IMAGE_BYTES, MAX_PROOF_UPLOAD_FAILURES, PROOF_GIVE_UP_MS, createProofReader, type ProofReader, type ProofReaderFs } from '../src/main/ledger-mirror/cartas';
-import { cartaRows, maskSecrets, tarefaRows, withPlaceMemory, type PlaceInfo, type PlaceInfoOf, type TarefaRow } from '../src/shared/ledger/mirror';
+import { MAX_ROW_PROGRESS_CHARS, cartaRows, maskSecrets, tarefaRow, tarefaRows, withPlaceMemory, type MaskNote, type PlaceInfo, type PlaceInfoOf, type TarefaRow } from '../src/shared/ledger/mirror';
+import { progressText } from '../src/shared/ledger/andamento';
 import { LEADER_OF_ALL } from '../src/shared/mindscape/leader';
 import { LEDGER_SCHEMA_VERSION, applyLedgerOp, emptyLedgerDoc, type LedgerDoc, type LedgerTask } from '../src/shared/ledger/contract';
 
@@ -540,6 +541,7 @@ describe('espelho do Oráculo', () => {
       // Created by a Líder who did not say who asked: no guess (owner, 07/11).
       quem_pediu: 'não registrado',
       pedido: 'Quero ver as cadeiras do Mindscape',
+      criterio: 'print',
       quem_faz_agora: 'Dev · Mindscape de cadeiras',
       quem_criou: 'Líder · leva do dia',
       risco: 'baixo',
@@ -552,6 +554,9 @@ describe('espelho do Oráculo', () => {
       entregue_em: new Date(T0 + 2000).toISOString(),
       decidida_em: new Date(T0 + 3000).toISOString(),
       prova_texto: '(1 arquivo de prova só no app)',
+      // No `tarefa_andamento` on this task.
+      ultimo_andamento: null,
+      ultimo_andamento_em: null,
       id: 't-1',
     });
     // Nothing in a row is an id but the id itself.
@@ -699,6 +704,57 @@ describe('espelho do Oráculo', () => {
     expect(tarefaRows(owned('place:a'), lookup()).rows[0]!.quem_faz_agora).toBe('Dev (sem nome)');
     expect(tarefaRows(owned('place:b'), lookup()).rows[0]!.quem_faz_agora).toBe('Theo West');
     expect(tarefaRows(owned('place:dev'), lookup()).rows[0]!.quem_pediu).toBe('Dono');
+  });
+
+  // t-ba2bb4f9 (dono, 18/11: "tem coluna de DoD lá? Acho importante") — the DoD and the last progress, for the phone.
+  it('sends the DoD and the last progress record, masked and cut; without a record, null', () => {
+    const secret = `sk-ant-${'x'.repeat(30)}`;
+    const record = (at: number, text: string) => ({ kind: 'comentada' as const, at, by: by('place:dev', 'dev'), text });
+    const working = task('t-5', {
+      doneWhen: `deploy com ${secret} e print`,
+      events: [
+        { kind: 'criada', at: T0, by: { kind: 'dono' } },
+        record(T0 + 1000, progressText({ estado: 'trabalhando', proximo: 'abrir o PR' })),
+        record(T0 + 2000, progressText({ estado: 'travada', precisa: `a chave ${secret}`, prova: 'p'.repeat(200), proximo: 'n'.repeat(200) })),
+        // The owner's words on the card are not a progress record.
+        { kind: 'comentada', at: T0 + 3000, by: { kind: 'dono' }, text: 'e aí?' },
+      ],
+    });
+    const masked: MaskNote[] = [];
+    const [row, none] = tarefaRows(doc(working, task('t-6'))).rows;
+    const one = tarefaRow(doc(working), working, undefined, masked);
+    expect(row!.criterio).toBe('deploy com [segredo] e print');
+    expect(row!.ultimo_andamento).toMatch(/^travada; precisa: a chave \[segredo\]; prova: p+/);
+    expect(row!.ultimo_andamento).not.toContain('sk-ant-');
+    expect(Array.from(row!.ultimo_andamento!)).toHaveLength(MAX_ROW_PROGRESS_CHARS);
+    expect(row!.ultimo_andamento!.endsWith('…')).toBe(true);
+    expect(row!.ultimo_andamento_em).toBe(new Date(T0 + 2000).toISOString());
+    expect(masked.map((note) => note.field)).toEqual(['criterio', 'ultimo_andamento']);
+    expect(one).toEqual(row);
+    expect(none!.criterio).toBe('print');
+    expect(none!.ultimo_andamento).toBeNull();
+    expect(none!.ultimo_andamento_em).toBeNull();
+  });
+
+  it('a table without the DoD columns still gets the rows, without them', async () => {
+    const bodies: Array<Array<Record<string, unknown>>> = [];
+    const lines: string[] = [];
+    const oldTable = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as Array<Record<string, unknown>>;
+      bodies.push(body);
+      return 'criterio' in body[0]!
+        ? new Response(JSON.stringify({ code: 'PGRST204', message: "Could not find the 'criterio' column of 'tarefas' in the schema cache" }), { status: 400 })
+        : new Response(null, { status: 201 });
+    }) as unknown as typeof fetch;
+    const sink = createSupabaseSink({ url: 'https://abcdefgh.supabase.co', key: () => 'k', fetch: oldTable, log: (line) => lines.push(line) });
+    await sink.push(tarefaRows(doc(task('t-1'))).rows);
+    expect(bodies).toHaveLength(2);
+    expect(bodies[1]![0]).not.toHaveProperty('criterio');
+    expect(bodies[1]![0]).toMatchObject({ id: 't-1', pedido: 'Põe o botão verde' });
+    expect(lines.join('\n')).toContain('tarefas-dod.sql');
+    // Any other refusal still fails the push (the mirror's own retry takes it).
+    const refused = (async () => new Response('{"code":"PGRST204","message":"Could not find the \'outra\' column"}', { status: 400 })) as unknown as typeof fetch;
+    await expect(createSupabaseSink({ url: 'https://abcdefgh.supabase.co', key: () => 'k', fetch: refused }).push(tarefaRows(doc(task('t-1'))).rows)).rejects.toThrow('400');
   });
 
   it('the Supabase sink upserts by id and never puts the key in an error', async () => {
