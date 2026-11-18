@@ -302,7 +302,7 @@ function markOf(text: string | undefined): { tag: string; rest: string } | null 
  * The text of a birth event (or of a front mark): `{}` when there is nothing to mark. The card kind goes last: the
  * alfa/beta before it read the first mark whole.
  */
-function birthTagsOf(replaces: string | undefined, requestedBy: string | undefined, front?: string, lowAsked?: boolean, cardKind?: CardKind): { text?: string } {
+function birthTagsOf(replaces: string | undefined, requestedBy: string | undefined, front?: string, lowAsked?: boolean, cardKind?: CardKind, via?: CreatedVia): { text?: string } {
   const asked = requestedBy ? cleanAskedBy(requestedBy) : '';
   const named = front ? cleanFrente(front) : '';
   const tags = [
@@ -311,6 +311,7 @@ function birthTagsOf(replaces: string | undefined, requestedBy: string | undefin
     ...(named ? [`${FRONT}${named}`] : []),
     ...(lowAsked ? [LOW_ASKED] : []),
     ...(cardKind ? [`${CARD_TAG}${cardKind}`] : []),
+    ...(via ? [VIA_TAGS[via]] : []),
   ];
   return tags.length ? { text: tags.reduceRight((rest, tag) => withMark(tag, rest), '') } : {};
 }
@@ -377,6 +378,16 @@ export function lowRiskAsked(task: LedgerTask): boolean {
   return tagsOf(task.events[0]?.text).includes(LOW_ASKED);
 }
 const ASKED_BY = 'pedido por ';
+
+/** 18/11 (t-2eedda0d) — where a task came from, when not from a session or the app: the phone (contract 015). */
+export type CreatedVia = 'celular';
+const VIA_TAGS: Readonly<Record<CreatedVia, string>> = { celular: 'criada pelo dono no celular' };
+
+/** The origin a task was born with (`criar` with `via`), if any. */
+export function createdViaOf(task: LedgerTask): CreatedVia | undefined {
+  const tags = tagsOf(task.events[0]?.text);
+  return (Object.keys(VIA_TAGS) as CreatedVia[]).find((via) => tags.includes(VIA_TAGS[via]));
+}
 
 /** 17/11 (t-4e50f080) — the kinds of card a session sends the owner with op `carta`, beyond a decision and a letter. */
 export type CardKind = 'tutorial' | 'atualizacao' | 'ideia';
@@ -559,6 +570,8 @@ export type LedgerOp =
       readonly lowAsked?: true;
       /** 14/11 — the call's key (`repeatedWrite`): the same call again answers this task instead of a second one. */
       readonly requestId?: string;
+      /** 18/11 — the task came from the phone's queue (t-2eedda0d): kept in the birth mark (`createdViaOf`). */
+      readonly via?: CreatedVia;
     }
   /** 07/11 — the Líder (or the owner) names the front of a task already made, and who asked, if it says. */
   | { readonly op: 'frente'; readonly id: string; readonly frente: string; readonly requestedBy?: string }
@@ -796,6 +809,9 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
     const replaced = op.replaces?.trim() ? doc.tasks[op.replaces.trim()] : undefined;
     if (op.replaces?.trim() && !replaced) return fail(`Não criei: "substitui" aponta para "${op.replaces.trim()}", que não existe (veja tarefa_listar).`);
     if (replaced && replaced.projectPath !== op.projectPath) return fail(`Não criei: a ${replaced.id} é de outro quadro; uma tarefa só substitui outra do mesmo quadro.`);
+    // The origin mark speaks for the owner: only the owner's own write carries it, and only a known origin (a service
+    // or a session could otherwise forge "criada pelo dono no celular"; an unknown one would be an empty mark).
+    if (op.via !== undefined && (!Object.hasOwn(VIA_TAGS, op.via) || actor.kind !== 'dono')) return fail('Não criei: só a fila do celular, em nome do dono, marca a origem da tarefa ("via").');
     const title = op.title?.trim();
     if (title) {
       const why = textRefusal('titulo', title, MAX_TITLE_CHARS);
@@ -813,7 +829,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       risk: replaced?.risk === 'alto' ? 'alto' : op.risk,
       state: 'aberta',
       createdAt: ctx.now,
-      events: [{ kind: 'criada', at: ctx.now, by: actor, ...birthTagsOf(replaced?.id, op.requestedBy, op.frente?.trim() || (replaced && frenteOf(replaced)), op.lowAsked === true && op.risk === 'alto'), ...requestOf(op) }],
+      events: [{ kind: 'criada', at: ctx.now, by: actor, ...birthTagsOf(replaced?.id, op.requestedBy, op.frente?.trim() || (replaced && frenteOf(replaced)), op.lowAsked === true && op.risk === 'alto', undefined, op.via), ...requestOf(op) }],
     };
     if (!replaced) return { ok: true, doc: withTask(doc, task), task };
     // One write: the new task and the old one cancelled, or neither.

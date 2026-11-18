@@ -14,7 +14,7 @@
 // the Líder vouched for (`readImportList` in decisoes.ts); its optional `"semAssinatura": "aceitar"` (the owner's order,
 // 17/11, t-2eedda0d) applies every unsigned row, with a note in the ledger (`readUnsignedPolicy`). The owner's
 // per-page notes of each marked row go to `<dir>/notas-paginas.jsonl`, never into a decision's text. The same file
-// turns on the queue of tasks the owner asks for in the phone (t-2eedda0d, tarefas-pedidas.ts); its optional
+// turns on the queue of tasks the owner asks for in the phone (t-2eedda0d, tarefas-pedidas.ts) once its
 // `quadroTarefas` names the board they land on.
 
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -358,6 +358,9 @@ async function main(): Promise<void> {
       return config ? createTarefasPedidasQueue(config) : null;
     },
     quadro: () => readQuadroTarefas(join(dir, DECISOES_CONFIG_FILE)),
+    // With the ledger's source in the Supabase the daemon's mirror writes the new task's row (with place names).
+    hasMirror: mirror !== null,
+    ownerName: () => process.env.ESPELHO_DONO || 'Alexandre',
     ledger: () => ledger,
     returned: guard.returned,
     log: (line) => console.log(line),
