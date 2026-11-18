@@ -1,8 +1,11 @@
 // T006 — config mínima do vitest para os módulos puros de src/shared
 // (ver plan.md: "TDD com escopo" — CommandBuilder/SessionIndexer/perfis).
 import { defineConfig } from 'vitest/config';
+import { gitPatchNotes } from './src/renderer/src/patchnotes/gitNotes';
 
 export default defineConfig({
+  // `patchnotes/notes.ts` importa as novidades geradas do git log.
+  plugins: [gitPatchNotes()],
   test: {
     // `.test.mjs` cobre os scripts standalone de `scripts/` (ex.:
     // esteira-custo-fase.mjs) — eles rodam via `node` puro, sem passar pelo

@@ -24,6 +24,8 @@ import type { TeamPrefs } from './teamPrefs';
 import type { LayoutPrefs } from './layoutPrefs';
 // Líder único na VPS (07/11) — `leader`, top-level key like `pet`.
 import type { LeaderPrefs } from './leaderPrefs';
+// Desktop roteador (18/11) — `router`, top-level key like `pet`.
+import type { RouterPrefs } from './routerPrefs';
 // CA-26/CA-27 (009-modo-dev-v3) — cor+ordem da aba v3 por sessão claude, ver
 // src/shared/tabAppearance.ts (lógica pura) e src/shared/tabChannels.ts
 // (canais `tabs:*`).
@@ -54,6 +56,8 @@ export const CONFIG_CHANNELS = {
   setLayoutPrefs: 'config:setLayoutPrefs',
   /** Líder único na VPS — `leader.where`; the next message through the Jobu moves the Líder. */
   setLeaderPrefs: 'config:setLeaderPrefs',
+  /** Desktop roteador — `router.enabled`; applies at once. */
+  setRouterPrefs: 'config:setRouterPrefs',
 } as const;
 
 /**
@@ -229,6 +233,8 @@ export interface AppConfigDto {
   readonly layout: LayoutPrefs;
   /** Onde o Líder roda (`leaderPrefs.ts`). */
   readonly leader: LeaderPrefs;
+  /** Desktop roteador (`routerPrefs.ts`): only the Chat do Líder and the Conexões. */
+  readonly router: RouterPrefs;
   /**
    * Read-only, from the disk on each read, never in config.json: the `_orquestradora` folders that exist under the
    * project roots — the Líder único opens in one of them (`leaderCwd`, owner 12/11).
@@ -264,4 +270,6 @@ export interface DonelConfigApi {
   setLayoutPrefs(prefs: Partial<LayoutPrefs>): Promise<AppConfigDto>;
   /** Onde o Líder roda — an invalid value keeps the current one. */
   setLeaderPrefs(prefs: Partial<LeaderPrefs>): Promise<AppConfigDto>;
+  /** Desktop roteador — partial update; an invalid field is ignored. */
+  setRouterPrefs(prefs: Partial<RouterPrefs>): Promise<AppConfigDto>;
 }

@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, Notification, protocol, safeStorage, scree
 import { randomBytes, randomUUID } from 'node:crypto';
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { appendFile } from 'node:fs/promises';
+import { appendFile, stat as statFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { readUserDefaultPermissionMode, readUserStatusLine } from './cli-user-settings';
@@ -26,7 +26,7 @@ import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { createRemoteOracleHost } from './ledger-remote-host';
 import { createSwitchableLedger, type SwitchableLedger } from './ledger-remote';
 import { LEDGER_REMOTE_CHANNELS, type LedgerRemoteResult, type LedgerRemoteState } from '../shared/ledger/remote';
-import { answerTaskId, createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, prioritizeAsks, recordTurnEnd, runLedgerBatch, runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService } from './ledger-store';
+import { answerTaskId, createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderCallerOffBoard, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, prioritizeAsks, recordTurnEnd, runLedgerBatch, runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService } from './ledger-store';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerPrioritized, type LedgerSnapshot, type LedgerTurnRecord, type LedgerTurnRecorded } from '../shared/ledger/channels';
 import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, MAX_PRIORITY, OWN_OPTION, type LedgerDeliveredTo, type LedgerDoc, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
 import { askedByRefusal, type LedgerToolCall } from '../shared/ledger/tools';
@@ -258,6 +258,7 @@ import { runShutdownSteps, shutdownThenQuit } from './app-shutdown';
 import { createMainEventsLog, type MainEventLogger } from './main-events-log';
 import { createRunTrail } from './run-trail';
 import { createExitWatchdog } from './exit-watchdog';
+import { buildExitSentinelCommand, exitRecordPath, takeExitRecord, takeStrayExitRecords } from './exit-sentinel';
 import { SessionKeyRing } from './session-keys';
 import { createDiagnosticsLog } from './chat/diagnostics-log';
 import { resolveMainRepoRootSync } from './session-worktree';
@@ -307,6 +308,7 @@ import type { AccountMod } from './accounts/account-mod';
 import { IsolatedLoginManager, type IsolatedLoginFsDeps } from './accounts/isolated-login';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
 import { sanitizeLayoutPrefs, type LayoutPrefs } from '../shared/layoutPrefs';
+import { sanitizeRouterPrefs, type RouterPrefs } from '../shared/routerPrefs';
 import { sameFolder, type LeaderPrefs } from '../shared/leaderPrefs';
 import { adoptRefreshedActivePair, applyAccountSwitch, createSystemClaudeStateIoDeps, readCurrentCredentialPair } from './accounts/claude-state';
 import { accountFingerprintFromClaudeJsonText } from './accounts/credentials-file';
@@ -349,6 +351,7 @@ import { consumeKillRequested, markKillRequested } from './pty-kill-intent';
 import { guardNavigation } from './navigation-guard';
 import { registerPetIpcHandlers } from './pet/pet-ipc';
 import { createLiderService, type LiderService } from './lider/lider-service';
+import { createCelularLiderChat, createSupabaseRpc, parseCelularChatState, type SupabaseAccess } from './lider/celular-chat';
 import { createPetService, type PetService } from './pet/pet-service';
 import { createPetWindow } from './pet/pet-window';
 import { readPetSeams } from './pet/pet-seams';
@@ -368,6 +371,7 @@ import { HOMOLOGACAO_CHANNELS, type FactoryMetricsView, type FactoryRigsView } f
 import { parseRigsFile, type RigsParse } from '../shared/homologacao/rigs';
 import { createRoutineRunner, type RoutineRunner } from './rotinas/routine-runner';
 import { createVigiaService, type VigiaService } from './vigia/vigia-service';
+import { boardName, vigiaBoardOf } from '../shared/vigia/board';
 import { createFaxineiroService, type FaxineiroService } from './rotinas/faxineiro-service';
 import { FAXINEIRO_CHANNELS, type FaxineiroRoundAnswer } from '../shared/faxineiro/ipc';
 import type { FaxineiroLogEntry, SessionView } from '../shared/faxineiro/triggers';
@@ -390,7 +394,7 @@ import { resolveClaudeCorrelation } from './session-correlation';
 import { carryLargestTranscript, carryTranscriptLocally, largestTranscript } from './lider/carry-transcript';
 import { fetchTranscriptFromRemote, sendTranscriptToRemote } from './lider/transfer';
 import { LIDER_CHANNELS, isValidLiderCarryPayload, type LiderCarryPayload, type LiderSendResult } from '../shared/lider/ipc';
-import { defaultClaudeHome, indexProjectSessions, resolveProjectSessionsDir } from './session-indexer';
+import { defaultClaudeHome, indexProjectSessions, readFileTail, resolveProjectSessionsDir } from './session-indexer';
 import { seedProject } from './session-seed';
 import { SessionSemaphoreManager } from './session-semaphore-manager';
 import { readTranscriptLastAssistantText, TranscriptWatcherRegistry } from './transcript-watcher';
@@ -1313,6 +1317,9 @@ const EXIT_GRACE_SECONDS = 20;
 const exitWatchdog = createExitWatchdog(spawn);
 /** How often `main-running.json` records that this run is alive (run-trail.ts). */
 const RUN_TRAIL_BEAT_MS = 60_000;
+/** A second look for the previous run's exit record, when its sentinel had not written it yet at boot. */
+const EXIT_RECORD_RETRY_MS = 20_000;
+const EXIT_RECORD_RETRIES = 6;
 
 function logMainEvent(event: string, detail?: Readonly<Record<string, unknown>>): void {
   mainEventsLog ??= createMainEventsLog(join(app.getPath('userData'), 'main-events.log'));
@@ -1328,6 +1335,10 @@ function logMainEvent(event: string, detail?: Readonly<Record<string, unknown>>)
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
   console.log('[donel-dev] outra janela do Donel Dev já está aberta; ela vem para a frente e esta sai.');
+  // t-d4f5879c — every second launch that hands over to the first copy leaves a line with who started it (ppid).
+  // (One that finds the first copy hung with no visible window ends it inside the call above, with exit code 2, and
+  // keeps the lock: it does not come here, it boots and logs `app-started` with its ppid.)
+  logMainEvent('second-copy-leaving', { pid: process.pid, ppid: process.ppid, argv: process.argv.slice(1) });
   app.exit(0);
 } else {
   // t-fe46929a (16/11) — the start and the end of each run leave a line, and a run ended from outside (no quit
@@ -1338,8 +1349,43 @@ if (!hasSingleInstanceLock) {
     startedAtMs: PROCESS_STARTED_AT_MS,
   });
   const previousRun = runTrail.start();
-  logMainEvent('app-started', { pid: process.pid, version: app.getVersion(), argv: process.argv.slice(1) });
+  logMainEvent('app-started', { pid: process.pid, ppid: process.ppid, version: app.getVersion(), argv: process.argv.slice(1) });
   if (previousRun) logMainEvent('previous-run-ended-without-quit', { ...previousRun });
+  // t-d4f5879c — how the previous run ended (exit-sentinel.ts, Windows only). Its sentinel may still be writing when
+  // a second copy that ended it boots, so a missing record is looked up again for two minutes. Records of older runs
+  // (written too late for their next boot) are told once, unless they were a plain quit.
+  if (process.platform === 'win32') {
+    const userData = app.getPath('userData');
+    const previous = previousRun ? { pid: previousRun.pid, startedAtMs: Date.parse(previousRun.startedAt) } : null;
+    for (const stray of takeStrayExitRecords(userData, previous)) {
+      if (stray.cause !== 'quit') logMainEvent('earlier-run-exit', { ...stray });
+    }
+    if (previous) {
+      const logExit = (): boolean => {
+        const record = takeExitRecord(exitRecordPath(userData, previous), previous);
+        if (record) logMainEvent('previous-run-exit', { ...record });
+        return record !== null;
+      };
+      let tries = 0;
+      const retry = (): void => {
+        if (logExit()) return;
+        if (++tries < EXIT_RECORD_RETRIES) setTimeout(retry, EXIT_RECORD_RETRY_MS).unref();
+        else logMainEvent('previous-run-exit-unknown', { pid: previous.pid });
+      };
+      if (!logExit()) setTimeout(retry, EXIT_RECORD_RETRY_MS).unref();
+    }
+    try {
+      // Not `detached`: a detached PowerShell 5.1 with no console and ignored stdio exits 0 without running anything.
+      // The sentinel leaves the app's tree through its own hop (Start-Process), so the main exiting never takes it.
+      const recordPath = exitRecordPath(userData, { pid: process.pid, startedAtMs: PROCESS_STARTED_AT_MS });
+      const { file, args } = buildExitSentinelCommand({ pid: process.pid, startedAtMs: PROCESS_STARTED_AT_MS, recordPath });
+      spawn(file, args, { windowsHide: true, stdio: 'ignore' })
+        .on('error', (error) => logMainEvent('exit-sentinel-failed', { error: String(error) }))
+        .unref();
+    } catch (error) {
+      logMainEvent('exit-sentinel-failed', { error: String(error) });
+    }
+  }
   setInterval(() => runTrail.beat(), RUN_TRAIL_BEAT_MS).unref();
   app.on('will-quit', () => {
     logMainEvent('app-quitting');
@@ -2735,6 +2781,14 @@ function registerConfigIpcHandlers(): void {
     return toAppConfigDto(appConfig);
   });
 
+  /** Desktop roteador — atualização parcial; o renderer aplica na hora e isto só lembra. */
+  ipcMain.handle(CONFIG_CHANNELS.setRouterPrefs, (_event, prefs: Partial<RouterPrefs>): AppConfigDto => {
+    const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
+    appConfig = { ...appConfig, router: sanitizeRouterPrefs({ ...appConfig.router, ...patch }, appConfig.router) };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
   /** Onde o Líder roda — só lembra; o renderer muda o Líder de lugar na próxima mensagem pelo Jobu. */
   ipcMain.handle(CONFIG_CHANNELS.setLeaderPrefs, (_event, prefs: Partial<LeaderPrefs>): AppConfigDto => {
     const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
@@ -3441,7 +3495,9 @@ function registerHealthIpcHandlers(): void {
       return result.ok ? { ok: true, task: { id: result.task.id } } : { ok: false, reason: result.reason };
     },
     tasks: () => Object.values(ledgerService?.load().doc.tasks ?? {}),
-    projectPath: () => appConfig.projectRoots[0] ?? null,
+    // t-5839d76b — a board that exists (`vigia.quadro`, else the one picked), never the projects' folder.
+    projectPath: vigiaBoard,
+    boardOfSession: boardNameOfSession,
     cofre: () => appConfig.vigia.cofre,
     notify: (title, body) => {
       if (!systemNotificationsSupported()) return;
@@ -3790,7 +3846,7 @@ function registerLedgerIpcHandlers(): void {
     freeze: (reason) => switchable?.freeze(reason) ?? Promise.resolve(),
     onChange,
     deliver: () => deliverOwnerMessageViaBoard,
-    vigia: () => ({ projectPath: appConfig.projectRoots[0] ?? null, cofre: appConfig.vigia.cofre }),
+    vigia: () => ({ projectPath: vigiaBoard(), cofre: appConfig.vigia.cofre }),
     celularWanted: () => {
       const text = configIoDeps.readFileText(join(app.getPath('userData'), 'celular.json'));
       try {
@@ -3923,6 +3979,28 @@ function registerLedgerIpcHandlers(): void {
  * give a task only to a place it reaches (`podeMandar` of its `sessao_listar`, which is reach.ts).
  */
 /** Who opened whom and the arrows of a board (low risk and the Revisor's chain), as the renderer saved it. */
+/** t-5839d76b — the board of the vigia's cards (`vigiaBoardOf`); `null` = none: the vigia warns on the PC only. */
+function vigiaBoard(): string | null {
+  try {
+    return vigiaBoardOf(createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load().boards, appConfig.vigia.quadro);
+  } catch {
+    return null;
+  }
+}
+
+/** The name of the board a conversation's place is on, for the card of sessions stuck in a loop. */
+function boardNameOfSession(sid: string): string | undefined {
+  try {
+    const boards = createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load().boards;
+    for (const [folder, board] of Object.entries(boards)) {
+      if (Object.values(board.cards).some((card) => card.kind === 'session' && card.sessionId === sid)) return boardName(folder);
+    }
+  } catch {
+    // unreadable: the card names the sessions only
+  }
+  return undefined;
+}
+
 function savedBoard(projectPath: string): MindscapeBoard | undefined {
   try {
     return createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load().boards[projectPath];
@@ -4036,7 +4114,12 @@ async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, cal
     return { caller: await withEveryBoard(boardBridge, ptyId, { ...base, projectPath: '', boardPlaceIds: [] }, { ...call, todos: true }), call: { ...call, todos: true } };
   }
   const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar', quadro });
-  if (list.kind !== 'text') return list.kind === 'error' ? list.text : 'Não consegui ler o quadro.';
+  if (list.kind !== 'text') {
+    // t-5839d76b — a task on a folder that is no board (the vigia's old cards): the Líder único still cancels it.
+    const offBoard = list.kind === 'error' && !savedBoard(quadro) && call.tool !== 'tarefa_criar' && call.tool !== 'tarefa_listar' && call.tool !== 'tarefa_novidades' ? leaderCallerOffBoard(base, quadro, call.tool) : null;
+    if (offBoard) return { caller: offBoard, call };
+    return list.kind === 'error' ? list.text : 'Não consegui ler o quadro.';
+  }
   const board = JSON.parse(list.text) as { pasta?: unknown; lugares?: { id?: unknown; podeMandar?: unknown }[] };
   if (typeof board.pasta !== 'string' || !Array.isArray(board.lugares)) return 'Não consegui ler o quadro.';
   const reached = board.lugares.filter((place) => place.podeMandar === true).map((place) => place.id).filter((id): id is string => typeof id === 'string');
@@ -4315,6 +4398,69 @@ function registerGestureDiary(): void {
     const sessionId = activeSessionByPty.get(ptyId);
     if (sessionId) recordGesture({ type: 'pedido-enviado', sessionId, promptLength, at: Date.now() });
   });
+}
+
+/**
+ * Chat do Líder pelo celular (plano 18/11, item 11) — every 5 s, the owner's messages from the phone go to the Líder
+ * único and his answer goes back (`lider/celular-chat.ts`). Only while the Oráculo's mirror to Supabase is on, and
+ * only once the main window reported (the Líder's tab is there). One line per event in the mirror's log.
+ */
+const CELULAR_CHAT_POLL_MS = 5_000;
+/** The tail of the Líder's transcript read at the end of a turn: enough to hold the turn that read a phone message. */
+const CELULAR_CHAT_TAIL_BYTES = 512 * 1024;
+function registerCelularLiderChat(): void {
+  const log = (line: string): void => ledgerMirrorService?.log(`chat do celular: ${line}`);
+  const statePath = (): string => join(app.getPath('userData'), 'celular-chat.json');
+  // Test seam (like `DONEL_CLAUDE_EXECUTABLE_FIXTURE`): a JSON file `{ "url", "keyFile" }` gives the chat its own
+  // Supabase, without turning the mirror on (which would push this app's ledger and cards). Absent outside tests.
+  const fixture = ((): SupabaseAccess | null => {
+    const path = process.env.DONEL_CELULAR_CHAT_FIXTURE;
+    if (!path) return null;
+    try {
+      const { url, keyFile } = JSON.parse(configIoDeps.readFileText(path) ?? '') as { url?: unknown; keyFile?: unknown };
+      if (typeof url !== 'string' || typeof keyFile !== 'string') return null;
+      return { url, key: () => configIoDeps.readFileText(keyFile)?.trim() || null };
+    } catch {
+      return null;
+    }
+  })();
+  const access = (): SupabaseAccess | null => fixture ?? ledgerMirrorService?.supabaseAccess() ?? null;
+  const chat = createCelularLiderChat({
+    rpc: createSupabaseRpc(access),
+    deliver: (text) => (liderService ? liderService.deliver(text) : Promise.resolve({ ok: false, reason: 'A janela do Donel ainda não abriu.' })),
+    log,
+    load: () => parseCelularChatState(configIoDeps.readFileText(statePath())),
+    save: (state) => {
+      const tmp = `${statePath()}.tmp`;
+      configIoDeps.writeFileText(tmp, JSON.stringify(state));
+      configIoDeps.renameFile(tmp, statePath());
+    },
+  });
+  semaphoreManager.onTurnEnded((ptyId, lastAssistantMessage, hookTranscriptPath) => {
+    if (liderService === null || liderService.report().ptyId !== ptyId) return;
+    void (async () => {
+      const sessionId = activeSessionByPty.get(ptyId);
+      // A Líder on a remote place (the default, `leader.where: 'auto'`): the hook names the path on the VPS; the tail is
+      // read from the local mirror of that transcript, which the pump fills a moment after the Stop.
+      const remote = remoteSessions?.has(ptyId) === true;
+      const transcriptPath = remote ? (sessionId ? spawnedTranscriptPaths.get(sessionId) : undefined) : (hookTranscriptPath ?? (sessionId ? spawnedTranscriptPaths.get(sessionId) : undefined));
+      if (!transcriptPath) return;
+      const readTail = async (): Promise<string | null> => {
+        const size = await statFile(transcriptPath).then((info) => info.size).catch(() => null);
+        return size === null ? null : readFileTail(transcriptPath, size, CELULAR_CHAT_TAIL_BYTES);
+      };
+      for (const waitMs of remote ? [3_000, 10_000, 30_000] : [0]) {
+        if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+        // Remote: the mirror counts only once it holds the answer the Stop carried (no text in the middle of the turn).
+        if (await chat.turnEnded(await readTail(), remote ? lastAssistantMessage : null)) break;
+      }
+    })().catch(() => undefined);
+  });
+  const timer = setInterval(() => {
+    if (liderService === null || access() === null) return;
+    void chat.poll().catch(() => undefined);
+  }, CELULAR_CHAT_POLL_MS);
+  timer.unref?.();
 }
 
 function registerMindscapeTurnEnded(): void {
@@ -4965,6 +5111,7 @@ void app.whenReady().then(async () => {
   registerHillClimbIpcHandlers(); // Hill climbing (no lugar do Modo Dev)
   registerRolesIpcHandlers(); // Papéis de sessão (item 12a)
   registerMindscapeTurnEnded(); // Mindscape, fatia 03
+  registerCelularLiderChat(); // Chat do Líder pelo celular (18/11)
   registerSessionRenewalIpcHandlers(); // Sessão renovada em voo (B36)
   registerGestureDiary(); // Diário de gestos (B35)
   registerProjectBindingIpcHandlers(); // CA-23 (009-modo-dev-v3, lote 3)

@@ -1,0 +1,1 @@
+{ "title": "O app sem janela fecha de verdade", "text": "Quando você fecha a janela e o Donel Dev trava no fim do encerramento, ele agora é encerrado sozinho alguns segundos depois. Antes, essa proteção nunca chegava a rodar, e uma cópia sem janela podia ficar aberta por horas." }

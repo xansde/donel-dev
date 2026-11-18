@@ -46,8 +46,10 @@ export interface VigiaServiceDeps {
    * lock instead of opening a second one (t-ffbf8e7d). Absent or throwing = nothing to adopt.
    */
   readonly tasks?: () => readonly LedgerTask[];
-  /** Where the card is filed (any board path; the owner sees it in the Oráculo and on the phone). */
+  /** The board of the cards (`vigiaBoardOf`); `null` = no board: no card, the native warning only. */
   readonly projectPath: () => string | null;
+  /** The board (its name) of a session, for the card of a loop. */
+  readonly boardOfSession?: (sid: string) => string | undefined;
   /** The optional vault adapter (`vigia.cofre` in the config); `null` = no vault check at all. */
   readonly cofre: () => VigiaCofrePrefs | null;
   /**
@@ -286,7 +288,7 @@ export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
         const at = now();
         const delegated = deps.delegated?.() ?? null;
         const isDelegated = (trava: Trava): boolean => trava.placeId === delegated && (trava.kind === 'cofre' || trava.kind === 'sessoes');
-        const detected = detectTravas({ probes, reports: deps.reports(), now: at });
+        const detected = detectTravas({ probes, reports: deps.reports(), now: at, ...(deps.boardOfSession ? { boardOfSession: deps.boardOfSession } : {}) });
         // A lock that is still there but now belongs to the daemon is handed over, not closed: its card stays alive
         // for the daemon to adopt. Only a lock that is gone is closed ("a trava passou sozinha"). The PC still sees
         // the handed-over lock, so it keeps when it first saw it (with no card): if the lock comes back to it, it can

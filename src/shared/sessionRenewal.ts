@@ -287,7 +287,7 @@ export function decideSwap(input: SwapCheckInput): SwapVerdict {
  * Permission modes worth carrying from the old process (a mode switched with Shift+Tab lives only in it). 10/11 —
  * `bypassPermissions` too: the chat reads it from the old transcript, so it is the mode the old process really ran in,
  * and the tab's own args may not say it (a tab reattached or restored, a mode the main resolved at spawn). Without it
- * the Theo and the Líder único renewed in `default` and stopped on the Read of their own handoff, outside the project.
+ * the Theo West and the Líder único renewed in `default` and stopped on the Read of their own handoff, outside the project.
  * The main gives the bypass its env (`planLaunchPermission`). `auto` and `dontAsk` keep their own opt-in: not carried.
  */
 const CARRIED_PERMISSION_MODES: ReadonlySet<string> = new Set(['default', 'acceptEdits', 'plan', 'bypassPermissions']);

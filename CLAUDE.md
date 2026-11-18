@@ -72,19 +72,24 @@ via `CLAUDE_CONFIG_DIR`.
 
 - O dono quer um instalador novo do alfa pronto quando pedir e uma janela "O que
   mudou" na primeira abertura de cada versão.
-- **Todo PR que muda algo visível acrescenta uma novidade**, e cada novidade é
-  um **arquivo novo** (desde 07/11; antes era um item no `notes.ts`, e cada
-  merge dava conflito no PR seguinte):
-  - Crie `src/renderer/src/patchnotes/notes/AAAA-MM-DD-HHMM-slug.json` com
-    `{ "title": "...", "text": "..." }`. Data e hora são as de quando você
-    escreve (hora local, 24h); o slug é o título em minúsculas, sem acento,
-    com hífens.
-  - A janela agrupa por data, o dia mais novo primeiro e, no dia, o `HHMM`
-    maior primeiro. Nunca edite o `notes.ts` nem o arquivo de outro PR para
-    acrescentar a sua; corrigir o texto de uma novidade é editar o arquivo dela.
-  - Nome fora do padrão ou arquivo sem `title`/`text` quebra o `npm test` e o
-    build com o nome do arquivo.
-  - Texto de usuário: o que muda para ele, sem arquivo, PR ou jargão.
+- **As novidades saem do git log no build (desde 18/11)**: cada PR `feat:` ou
+  `fix:` mesclado que mexe no app (`src/main`, `src/preload` ou `src/renderer`)
+  vira **uma** novidade (`src/renderer/src/patchnotes/gitNotes.ts`), com a hora
+  do merge. O PR **não cria arquivo**; escreva para o dono ler:
+  - **Título do PR** em pt-BR, dizendo o que muda para ele (é o título da
+    novidade; o build tira prefixo, escopo, `(t-…)` e `(#N)`).
+  - O 1º parágrafo do corpo do commit `feat`/`fix` **mais antigo** do PR vira o
+    texto, escrito sem arquivo, PR ou jargão. Sem corpo, ou com crase, flag,
+    caminho, id de tarefa ou identificador de código, a novidade fica só com o
+    título.
+  - Não viram novidade: os `fix:` das rodadas de revisão dentro do PR; PR
+    `chore`/`test`/`docs`/`refactor`/`ci`; PR só no servidor (`src/oraculo`,
+    `src/board-cron`), só em `src/shared` ou fora de `src/`; PR desfeito por
+    `Revert`; merge que não é de PR do GitHub. Commit `feat:`/`fix:` feito
+    direto na branch, sem PR, vira novidade sozinho.
+  - Os JSON antigos de `patchnotes/notes/` seguem valendo (não apague). PR que
+    ainda acrescenta um JSON ali não ganha a novidade gerada (sairia em dobro).
+  - Sem git (checkout sem histórico) o build segue só com os JSON.
 - Build **sob demanda** (dono, 03/11: "Desliga essa automação. Eu vou falar quando eu
   quiser"; antes houve 06:30 diário e, por uma hora, a cada 10 min — os dois
   derrubados). A tarefa agendada "Donel Dev Alfa diario" fica **desativada**. O

@@ -66,10 +66,11 @@ export function PatchNotes(): React.JSX.Element {
               <section key={day.date} className={styles.day}>
                 <h3 className={styles.date}>{formatNoteDate(day.date)}</h3>
                 <ul className={styles.list}>
-                  {day.items.map((item) => (
-                    <li key={item.title} className={styles.item}>
+                  {/* Título repete no mesmo dia (JSON e PR, duas rodadas de fix): a chave é a posição. */}
+                  {day.items.map((item, index) => (
+                    <li key={`${day.date}-${index}`} className={styles.item}>
                       <span className={styles.itemTitle}>{item.title}</span>
-                      <span className={styles.itemText}>{item.text}</span>
+                      {item.text !== item.title ? <span className={styles.itemText}>{item.text}</span> : null}
                     </li>
                   ))}
                 </ul>

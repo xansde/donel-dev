@@ -129,6 +129,15 @@ describe('rodadas: uma carta por trava', () => {
     // Back again: it may warn again (after two rounds).
     expect(planRound(planRound(gone.state, [trava], NOW).state, [trava], NOW).toOpen).toHaveLength(1);
   });
+
+  it('sem carta (sem quadro ou Oráculo fora): a trava que passou e volta é uma trava nova, com aviso novo', () => {
+    const warned: VigiaState = { open: { 'cofre:vps': { firstSeen: NOW, rounds: 2, cartaId: null, notified: true, endedAt: null, trava } } };
+    const passed = planRound(warned, [], NOW + 5 * MIN);
+    expect(passed.state.open['cofre:vps']!.endedAt).toBe(NOW + 5 * MIN);
+    const back = planRound(passed.state, [trava], NOW + 60 * MIN);
+    expect(back.state.open['cofre:vps']).toMatchObject({ firstSeen: NOW + 60 * MIN, rounds: 1, notified: false, endedAt: null });
+    expect(planRound(back.state, [trava], NOW + 65 * MIN).toOpen).toEqual([{ trava, firstSeen: NOW + 60 * MIN }]);
+  });
 });
 
 const COFRE = { command: 'cofre-cli', sessionFile: '.cofre/sessao' };
@@ -237,10 +246,10 @@ describe('serviço: uma carta por trava, aviso no PC quando o Oráculo não resp
     await t.rounds(t.make(), 3);
     expect(t.scripts.every((script) => !script.includes('DONEL_COFRE'))).toBe(true);
     expect(t.ops).toEqual([]);
-    expect(sanitizeVigiaPrefs(undefined)).toEqual({ cofre: null });
-    expect(sanitizeVigiaPrefs({ cofre: { command: 'x; rm', sessionFile: 'a' } })).toEqual({ cofre: null });
-    expect(sanitizeVigiaPrefs({ cofre: { command: 'cofre-cli', sessionFile: '../fora' } })).toEqual({ cofre: null });
-    expect(sanitizeVigiaPrefs({ cofre: COFRE })).toEqual({ cofre: COFRE });
+    expect(sanitizeVigiaPrefs(undefined)).toEqual({ cofre: null, quadro: null });
+    expect(sanitizeVigiaPrefs({ cofre: { command: 'x; rm', sessionFile: 'a' } })).toEqual({ cofre: null, quadro: null });
+    expect(sanitizeVigiaPrefs({ cofre: { command: 'cofre-cli', sessionFile: '../fora' } })).toEqual({ cofre: null, quadro: null });
+    expect(sanitizeVigiaPrefs({ cofre: COFRE })).toEqual({ cofre: COFRE, quadro: null });
   });
 
   it('a carta de cada tipo de trava, aberta ou já passada, passa na regra do Oráculo (texto de gente, sem código)', () => {

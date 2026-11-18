@@ -76,6 +76,10 @@ export interface LedgerMirrorService {
   syncNow(): Promise<LedgerMirrorState>;
   /** Ledger v5, fatia 3 — the places by name (the boards, completed by the memory) and the owner's name, for the table. */
   placesSnapshot(doc: LedgerDoc | null): LedgerPlacesSnapshot;
+  /** Chat do Líder pelo celular — the same Supabase and key, while the mirror is on; `null` = off. */
+  supabaseAccess(): { readonly url: string; readonly key: () => string | null } | null;
+  /** One line in the mirror's log (never a secret). */
+  log(line: string): void;
   dispose(): void;
 }
 
@@ -196,6 +200,8 @@ export function createLedgerMirrorService(deps: LedgerMirrorServiceDeps): Ledger
     changed: (doc) => mirror.changed(doc),
     state,
     configure,
+    supabaseAccess: () => (settings?.enabled ? { url: settings.url, key: readKey } : null),
+    log,
     disable() {
       if (settings) writeSettings({ ...settings, enabled: false });
       // Off means nothing more leaves, the cards' retry included.

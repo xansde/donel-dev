@@ -11,7 +11,7 @@ ajustes de contrato do serviço do PC (t-c3fbe852). Base: `~/seazone/_docs/arqui
   na VPS. Não há tabela de quadro, coluna, justificativa nem projeto. Portanto o quadro é **novo**, com tabelas
   próprias, e nada dele toca `public.tarefas`, o `ledger.json` nem as tools `tarefa_*` (Oráculo = mesa do dono).
 - **Cron de justificativa:** o `despertador_resposta.py` (*/5) é o embrião, mas não confere link nenhum: lê o log da
-  escuta do Theo e procura qualquer mensagem do autor. Em 16/11: 999 eventos, 988 "campo ocupado", nenhuma resposta
+  escuta do Theo West e procura qualquer mensagem do autor. Em 16/11: 999 eventos, 988 "campo ocupado", nenhuma resposta
   detectada. O mecanismo de acordar (tmux com campo livre, teto e recuo, aviso ao Líder do quadro) se reaproveita;
   a conferência do link precisa ser escrita (Slack por `ler_fio.py`, GitHub por `gh`).
 - **Vigia:** o vigia do repo só cria carta de trava no Oráculo e, na VPS, nem roda (bundle de 09/11 sem ele). Quem

@@ -104,6 +104,8 @@ export interface OracleApiDeps {
   readonly services?: () => ReadonlyMap<string, string>;
   /** The way back's mark (src/oraculo/devolvido.ts): set, every writer of the daemon refuses. */
   readonly returned?: { returned(): boolean; set(returned: boolean): void };
+  /** t-89279f84 — set when the Supabase is the source: the PC's move (import) is refused with this reason. */
+  readonly importRefused?: string;
   /** F6 do ledger bom — the journal (src/oraculo/livro.ts); absent = the daemon did not switch it on (no route). */
   readonly livro?: LivroStore;
 }
@@ -178,7 +180,7 @@ export function createOracleApiHandler(deps: OracleApiDeps): OracleApiHandler {
       return json(400, { error: 'corpo não é JSON' });
     }
     const op = isRecord(parsed) ? parsed.op : undefined;
-    const why = serviceOpRefusal(op);
+    const why = serviceOpRefusal(op, name);
     if (why) return json(400, { error: why });
     try {
       const result = await ledger.apply(serviceActor(name), op as ServiceOp);
@@ -273,6 +275,7 @@ export function createOracleApiHandler(deps: OracleApiDeps): OracleApiHandler {
     }
 
     if (method === 'POST' && path === IMPORT_PATH) {
+      if (deps.importRefused) return json(409, { error: deps.importRefused });
       if (!request.bytes) return json(400, { error: 'sem corpo' });
       const se = url.searchParams.get('se');
       return importLedger(request.bytes, se && /^[0-9a-f]{64}$/.test(se) ? se : null);
@@ -282,6 +285,8 @@ export function createOracleApiHandler(deps: OracleApiDeps): OracleApiHandler {
     // when the way back failed half way.
     if (method === 'POST' && (path === '/v1/devolver' || path === '/v1/retomar')) {
       if (!deps.returned) return json(404, { error: 'rota' });
+      // t-89279f84 — with the Supabase as the source there is no way back to the PC's file.
+      if (deps.importRefused && path === '/v1/devolver') return json(409, { error: deps.importRefused });
       deps.returned.set(path === '/v1/devolver');
       deps.changed?.();
       return json(200, { ok: true, devolvido: deps.returned.returned() });
