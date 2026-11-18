@@ -171,6 +171,18 @@ const TMUX_CONF = [
   '',
 ].join('\n');
 
+/**
+ * Shell function: whether what `tmux has-session` said on stderr is a positive absence (the session is not there, no
+ * server runs on the socket, the socket is missing or refuses). Anything else (permission denied, tmux not found, a
+ * server that does not answer) is a tmux that could not be read, never a session that ended.
+ */
+const TMUX_ABSENT_FN = [
+  'donel_tmux_absent() {',
+  `  case "$1" in *"can't find session"*|*"no server running on "*|*"error connecting to "*"(No such file or directory)"*|*"error connecting to "*"(Connection refused)"*) return 0 ;; esac`,
+  '  return 1',
+  '}',
+].join('\n');
+
 /** Pure — the setup script (sent on stdin). Last lines: `DONEL_NEW` + dir, `DONEL_ALIVE` + dir + meta, or `DONEL_ERR`. */
 export function buildRemoteSetupScript(input: RemoteSetupInput): string {
   assertSessionId(input.sid);
@@ -212,12 +224,24 @@ export function buildRemoteSetupScript(input: RemoteSetupInput): string {
     `SID=${shQuote(input.sid)}`,
     `S="$HOME/${REMOTE_SESSIONS_DIR}/$SID"`,
     `D="$HOME"/${shQuote(input.homeRelativeDir)}`,
-    `if [ -f "$S/meta.json" ] && [ -f "$S/dir" ] && tmux -L ${REMOTE_TMUX_SOCKET} has-session -t "donel-$SID" 2>/dev/null; then`,
+    TMUX_ABSENT_FN,
+    'UNREAD=0; TE=""',
+    'if [ -f "$S/meta.json" ] && [ -f "$S/dir" ]; then',
+    `  if TE=$(tmux -L ${REMOTE_TMUX_SOCKET} has-session -t "donel-$SID" 2>&1 >/dev/null); then`,
     // `pwd -P` here too (t-fe46929a): a session born before #440 wrote its logical folder in `$S/dir`, and the mirror
     // of the reattached tab would follow a transcript folder the CLI never wrote (it names it after the physical cwd).
-    '  printf "DONEL_ALIVE\\n"; { (cd "$(cat "$S/dir")" 2>/dev/null && pwd -P) || cat "$S/dir"; }; tr -d "\\n" < "$S/meta.json"; printf "\\n"; exit 0',
+    '    printf "DONEL_ALIVE\\n"; { (cd "$(cat "$S/dir")" 2>/dev/null && pwd -P) || cat "$S/dir"; }; tr -d "\\n" < "$S/meta.json"; printf "\\n"; exit 0',
+    '  fi',
+    '  donel_tmux_absent "$TE" || UNREAD=1',
     'fi',
-    ...(input.attachOnly ? ['echo DONEL_GONE; exit 0'] : []),
+    // OpenRig 487f80d — a tmux that could not be read (socket permission, a stuck server, no tmux in the PATH) is not a
+    // session that ended: `gone` here would set up a second CLI beside the live tmux.
+    ...(input.attachOnly
+      ? [
+          'if [ "$UNREAD" = 1 ]; then echo "DONEL_ERR Não consegui ler o tmux do lugar remoto ($(printf %s "${TE:-sem mensagem}" | head -n 1)); a sessão pode seguir viva lá."; exit 0; fi',
+          'echo DONEL_GONE; exit 0',
+        ]
+      : []),
     'command -v tmux >/dev/null 2>&1 || { echo "DONEL_ERR O tmux não está instalado no lugar remoto."; exit 3; }',
     'command -v claude >/dev/null 2>&1 || { echo "DONEL_ERR O claude não está instalado no lugar remoto."; exit 3; }',
     'if [ ! -d "$D" ]; then',
@@ -380,9 +404,27 @@ export function sshRemoteCommand(sshTarget: string): (command: string) => ChildP
  * failed, timeout) is unreachable, never "gone": only `gone` lets the app give the place as closed.
  */
 export async function probeRemoteSession(sshTarget: string, sid: string): Promise<'alive' | 'gone' | 'unreachable'> {
+  const { stdout } = await runRemoteScript(sshTarget, buildProbeScript(sid), 20_000);
+  return parseProbeOutput(stdout);
+}
+
+/**
+ * Pure — the script `probeRemoteSession` sends on stdin. `DONEL_GONE` only when tmux itself says the session or its
+ * server is not there (OpenRig 487f80d); any other failure of `has-session` is `DONEL_UNREADABLE`, read as unreachable.
+ */
+export function buildProbeScript(sid: string): string {
   assertSessionId(sid);
-  const script = `if tmux -L ${REMOTE_TMUX_SOCKET} has-session -t ${shQuote(`donel-${sid}`)} 2>/dev/null; then echo DONEL_LIVE; else echo DONEL_GONE; fi\n`;
-  const { stdout } = await runRemoteScript(sshTarget, script, 20_000);
+  return [
+    TMUX_ABSENT_FN,
+    `if E=$(tmux -L ${REMOTE_TMUX_SOCKET} has-session -t ${shQuote(`donel-${sid}`)} 2>&1 >/dev/null); then echo DONEL_LIVE`,
+    'elif donel_tmux_absent "$E"; then echo DONEL_GONE',
+    'else echo DONEL_UNREADABLE; fi',
+    '',
+  ].join('\n');
+}
+
+/** Pure — reads the probe's answer. */
+export function parseProbeOutput(stdout: string): 'alive' | 'gone' | 'unreachable' {
   const lines = stdout.split(/\r?\n/).map((line) => line.trim());
   if (lines.includes('DONEL_LIVE')) return 'alive';
   if (lines.includes('DONEL_GONE')) return 'gone';
