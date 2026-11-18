@@ -1,10 +1,19 @@
 # T016 — Empacotamento (electron-builder, NSIS, Windows).
 #
-# appId casa com `app.setAppUserModelId('com.seazone.doneldev')` em
-# src/main/index.ts — precisam ficar em sincronia (risco do plan.md: notificação
-# do Windows atribuída a "Electron" em vez de "Donel Dev" se divergirem).
-appId: com.seazone.doneldev
-productName: Donel Dev
+# Branch `server`: este instalador é o "Donel Dev Server", que convive com o
+# Alfa no mesmo PC. appId, productName, shortcutName, extraMetadata.name e o
+# começo do artifactName casam com src/shared/appIdentity.ts (o app usa os
+# mesmos valores em `setAppUserModelId`/`setName`); tests/server-identidade.test.ts
+# guarda a sincronia. Release e atualização: docs/canal-server.md.
+appId: com.seazone.doneldev.server
+productName: Donel Dev Server
+# O `name` do package.json dentro do instalador decide duas pastas: o cache do
+# atualizador (`%LOCALAPPDATA%\<name>-updater`, onde fica a cópia do
+# instalador) e a que o desinstalador apaga com "apagar dados do app"
+# (`%APPDATA%\<name>`). Com `donel-dev`, desinstalar o Server apagaria os dados
+# do Alfa (`%APPDATA%\donel-dev`); por isso o Server tem o seu.
+extraMetadata:
+  name: donel-dev-server
 copyright: Copyright (c) 2026 Seazone
 
 directories:
@@ -92,5 +101,5 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: always
   createStartMenuShortcut: true
-  shortcutName: Donel Dev
-  artifactName: ${productName}-Setup-${version}.${ext}
+  shortcutName: Donel Dev Server
+  artifactName: DonelDevServer-Setup-${version}.${ext}

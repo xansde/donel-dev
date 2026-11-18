@@ -16,6 +16,10 @@ via `CLAUDE_CONFIG_DIR`.
   - `main` → canal **beta**: sobe quando o Alexandre validou o alfa e confia.
   - `xansde/donel` (repo público) → canal **stable**: só release fechado e
     versionado — ver a seção abaixo.
+  - `server` (desde 18/11, só nesta branch) → o app **Donel Dev Server**, que
+    instala ao lado do Alfa com appId, pasta de dados e atualização próprios;
+    release como pre-release `server-*`, nunca Latest. Recebe a `staging` por
+    merge. Tudo em `docs/canal-server.md`.
 - Versão anterior deste modelo (24/07, pré-repo público) chamava `main` de
   stable; o público assumiu esse papel e o `main` privado desceu para beta.
 - **Regra dura (inalterada)**: push/PR/merge em `main` e publicação no repo

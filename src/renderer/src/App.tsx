@@ -152,6 +152,7 @@ import { DEFAULT_ROUTER_PREFS, type RouterView } from '../../shared/routerPrefs'
 import { RouterConnections } from './RouterConnections';
 import type { PlaceNameOf } from '../../shared/ledger/labels';
 import type { TerminalPaneHandle } from './TerminalPane';
+import { APP_IDENTITY } from '../../shared/appIdentity';
 
 // FIX (feedback E2E, batch 3 achado "notificar toda transição vira spam") —
 // default conservador local, usado enquanto `appConfig` ainda não chegou de
@@ -3532,7 +3533,7 @@ export function App(): React.JSX.Element {
       <header className={styles.titlebar}>
         <div className={styles.brand}>
           <span aria-hidden="true">◆</span>
-          <span>Donel Dev</span>
+          <span>{APP_IDENTITY.productName}</span>
         </div>
         {/* CA-30 (009-modo-dev-v3, lote 9) — o seletor vive no titlebar, fora
             da coluna da sidebar (que fica oculta no Modo Dev, `zoneHidden`

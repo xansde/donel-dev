@@ -382,6 +382,7 @@ import type { LiveSessionSignal } from '../shared/rotinas/stalledSessions';
 // B33 — atualizar para a versão nova de dentro do app.
 import { autoUpdater } from 'electron-updater';
 import { createAppUpdateService, type AppUpdateService } from './app-update';
+import { APP_IDENTITY, isOwnUpdate } from '../shared/appIdentity';
 import { APP_UPDATE_CHANNELS, DEFAULT_FORCE_AFTER_MINUTES, respawnArgsFor, type AppUpdateApplyResult, type AppUpdateBoot, type AppUpdateStatus } from '../shared/appUpdate';
 import type { HealthReport } from '../shared/health/types';
 import { isValidPetPrefsInput } from '../shared/pet/ipc';
@@ -1300,12 +1301,13 @@ function triggerAccountsAutoSwitchOnStopFailure(): void {
 // pasta genérica compartilhada por QUALQUER outro app Electron mal-nomeado
 // nesta máquina. `setName` força o nome certo em todo modo de execução,
 // antes de qualquer `getPath('userData')`.
-app.setName('donel-dev');
+// Branch `server`: own data folder (`donel-dev-server`), so the Server and the Alfa on the same PC never share config.
+app.setName(APP_IDENTITY.appName);
 
 // Windows: sem isso, `new Notification()` sai atribuída a "Electron" (ou
 // falha em silêncio fora do dev) — plan.md, risco "Notification API do
 // Electron sem app.setAppUserModelId no Windows".
-app.setAppUserModelId('com.seazone.doneldev');
+app.setAppUserModelId(APP_IDENTITY.appId);
 
 /** `<userData>/main-events.log` (main-events-log.ts) — opened on the first event, after `setName` fixed the folder. */
 let mainEventsLog: MainEventLogger | null = null;
@@ -3047,6 +3049,7 @@ let esteiraService: EsteiraService | null = null;
  */
 function appChannelName(): string {
   const executable = process.execPath.toLowerCase();
+  if (executable.includes(APP_IDENTITY.edition)) return APP_IDENTITY.edition;
   if (executable.includes('alfa')) return 'alfa';
   if (executable.includes('beta')) return 'beta';
   return app.isPackaged ? 'stable' : 'dev';
@@ -3669,11 +3672,18 @@ let appUpdateService: AppUpdateService | null = null;
  */
 function registerAppUpdateIpcHandlers(): void {
   const channel = appChannelName();
-  const applies = app.isPackaged && channel === 'alfa';
+  // Branch `server`: only the packaged Server updates, from its own prereleases (docs/canal-server.md).
+  const applies = app.isPackaged && channel === APP_IDENTITY.edition;
   appUpdateService = createAppUpdateService({
     enabled: applies,
     currentVersion: app.getVersion(),
-    updater: () => autoUpdater,
+    updater: () => {
+      // The Alfa reads the "Latest" release; the Server reads the newest prerelease (tag `server-*`) and takes it
+      // only when its installer is a Server one, so it never installs the Alfa over itself.
+      autoUpdater.allowPrerelease = true;
+      autoUpdater.isUpdateSupported = (info) => isOwnUpdate(info);
+      return autoUpdater;
+    },
     stateDir: join(app.getPath('userData'), 'app-update', channel),
     channel,
     // Sessão durável — a conversation with no transcript yet comes back under the same id, not with a failing `-r`.
@@ -3864,9 +3874,9 @@ function registerLedgerIpcHandlers(): void {
   // The night's version (Líder único, 08/11): the first open takes the ledger to the VPS that has the Oráculo, with
   // no click; a failure brings it back to this PC and tries again next open (AUTO_MOVE_FILE: once, ever). A little
   // after the start, so the window is up before the writes freeze for the copy.
-  setTimeout(() => {
-    void remoteHost.autoMove().then((result) => console.log(`[oraculo] ida automática: ${result.ok ? `levado para ${result.state.lugarNome ?? result.state.lugar}` : result.reason}`));
-  }, 15_000).unref();
+  // Branch `server`: no automatic move. The handshake rewrites the VPS daemon's single PC token, so a Server opening
+  // next to the Alfa would lock the Alfa's sessions out of the Oráculo (docs/canal-server.md). The move stays in the
+  // Preferences, by the owner's click.
   const remoteState = (event: Electron.IpcMainInvokeEvent): void => {
     if (getMainWindow()?.webContents.id !== event.sender.id) throw new Error('forbidden');
   };
