@@ -12,6 +12,7 @@
 // answer that goes back. What is waiting survives a restart of the app (`save`).
 
 import { randomUUID } from 'node:crypto';
+import { unwrapPastedContent } from '../../shared/chat/promptMatch';
 import type { LiderSendResult } from '../../shared/lider/ipc';
 
 /** The text the Líder reads before the owner's message; it is also how the transcript is matched to the message. */
@@ -64,7 +65,7 @@ export interface CelularLiderChat {
    * A turn of the Líder ended: `transcriptTail` is the end of his transcript (`null` = not read). `false` = messages wait
    * and none was answered by this tail (a mirror still behind may be read again).
    */
-  turnEnded(transcriptTail: string | null): Promise<boolean>;
+  turnEnded(transcriptTail: string | null, lastAnswer?: string | null): Promise<boolean>;
 }
 
 interface TakenRow {
@@ -97,10 +98,11 @@ function textOf(content: unknown): string {
 function readText(entry: Record<string, unknown>): string | null {
   if (entry.type === 'attachment') {
     const attachment = entry.attachment as { type?: unknown; prompt?: unknown } | undefined;
-    return attachment?.type === 'queued_command' ? textOf(attachment.prompt) : null;
+    return attachment?.type === 'queued_command' ? unwrapPastedContent(textOf(attachment.prompt)) : null;
   }
   if (entry.type !== 'user' || entry.isMeta === true) return null;
-  const text = textOf((entry.message as { content?: unknown } | undefined)?.content).trim();
+  // A long or multi-line message goes by bracketed paste, and the CLI records it as `<pasted_content id=…>…`.
+  const text = unwrapPastedContent(textOf((entry.message as { content?: unknown } | undefined)?.content)).trim();
   // Tool results carry no text block; `<task-notification>`, `<command-name>` and the like are not the owner's.
   return text && !text.startsWith('<') ? text : null;
 }
@@ -179,7 +181,7 @@ export function createCelularLiderChat(deps: CelularLiderChatDeps): CelularLider
     }
   };
 
-  const flush = async (): Promise<boolean> => {
+  const sendReplies = async (): Promise<boolean> => {
     while (outbox.length > 0) {
       const reply = outbox[0]!;
       try {
@@ -188,11 +190,28 @@ export function createCelularLiderChat(deps: CelularLiderChatDeps): CelularLider
         persist();
         log(`resposta enviada ao celular (${phoneMarker(reply.p_em_resposta_a)})`);
       } catch (error) {
-        log(`resposta ao celular não foi: ${error instanceof Error ? error.message : 'erro'}`);
+        const reason = error instanceof Error ? error.message : 'erro';
+        if (error instanceof RpcRefused) {
+          // Refused for good (the message it answers is gone, a text the database does not take): dropped, so it
+          // never holds the queue of the phone behind it.
+          outbox.shift();
+          persist();
+          log(`resposta ao celular recusada e descartada (${phoneMarker(reply.p_em_resposta_a)}): ${reason}`);
+          continue;
+        }
+        log(`resposta ao celular não foi: ${reason}`);
         return false;
       }
     }
     return true;
+  };
+  /** One send of the answers at a time (the poll and the end of a turn both call it). */
+  let sending: Promise<boolean> | null = null;
+  const flush = (): Promise<boolean> => {
+    sending ??= sendReplies().finally(() => {
+      sending = null;
+    });
+    return sending;
   };
 
   return {
@@ -234,9 +253,11 @@ export function createCelularLiderChat(deps: CelularLiderChatDeps): CelularLider
       }
     },
 
-    async turnEnded(transcriptTail) {
+    async turnEnded(transcriptTail, lastAnswer) {
       if (waiting.length === 0) return true;
       if (transcriptTail === null) return false;
+      // The tail of a remote Líder is a mirror that may still be behind the Stop: wait until it holds his last answer.
+      if (lastAnswer && !transcriptTail.includes(JSON.stringify(lastAnswer.trim()).slice(1, -1).slice(-160))) return false;
       const answers = answersIn(
         transcriptTail,
         waiting.map((entry) => entry.id),
@@ -266,6 +287,9 @@ export interface SupabaseAccess {
 
 const RPC_TIMEOUT_MS = 15_000;
 
+/** The database answered and refused the call (4xx other than auth, timeout or rate limit): trying again will not help. */
+export class RpcRefused extends Error {}
+
 /** One RPC by PostgREST with the service key. The error says what happened, never the key nor the body. */
 export function createSupabaseRpc(access: () => SupabaseAccess | null, doFetch: typeof fetch = fetch): CelularLiderChatDeps['rpc'] {
   return async (fn, args) => {
@@ -288,7 +312,11 @@ export function createSupabaseRpc(access: () => SupabaseAccess | null, doFetch: 
     } finally {
       clearTimeout(timer);
     }
-    if (!response.ok) throw new Error(`Supabase respondeu ${response.status} em ${fn}`);
+    if (!response.ok) {
+      const message = `Supabase respondeu ${response.status} em ${fn}`;
+      const permanent = response.status >= 400 && response.status < 500 && ![401, 403, 408, 429].includes(response.status);
+      throw permanent ? new RpcRefused(message) : new Error(message);
+    }
     const body = await response.text();
     return body ? (JSON.parse(body) as unknown) : null;
   };

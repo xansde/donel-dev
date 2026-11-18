@@ -4436,7 +4436,7 @@ function registerCelularLiderChat(): void {
       configIoDeps.renameFile(tmp, statePath());
     },
   });
-  semaphoreManager.onTurnEnded((ptyId, _lastAssistantMessage, hookTranscriptPath) => {
+  semaphoreManager.onTurnEnded((ptyId, lastAssistantMessage, hookTranscriptPath) => {
     if (liderService === null || liderService.report().ptyId !== ptyId) return;
     void (async () => {
       const sessionId = activeSessionByPty.get(ptyId);
@@ -4451,7 +4451,8 @@ function registerCelularLiderChat(): void {
       };
       for (const waitMs of remote ? [3_000, 10_000, 30_000] : [0]) {
         if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
-        if (await chat.turnEnded(await readTail())) break;
+        // Remote: the mirror counts only once it holds the answer the Stop carried (no text in the middle of the turn).
+        if (await chat.turnEnded(await readTail(), remote ? lastAssistantMessage : null)) break;
       }
     })().catch(() => undefined);
   });

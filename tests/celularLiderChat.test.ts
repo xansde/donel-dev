@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { answeredIds, answersIn, createCelularLiderChat, parseCelularChatState, phoneMarker, type CelularChatState, type CelularLiderChatDeps } from '../src/main/lider/celular-chat';
+import { RpcRefused, answeredIds, answersIn, createCelularLiderChat, parseCelularChatState, phoneMarker, type CelularChatState, type CelularLiderChatDeps } from '../src/main/lider/celular-chat';
 
 // Chat do Líder pelo celular (plano 18/11, item 11) — the desktop takes the owner's messages from the phone's queue in
 // Supabase, gives them to the Líder único and sends his answer back. What would break without the owner noticing: a
@@ -156,6 +156,52 @@ describe('chat do Líder pelo celular', () => {
     const toolResult = JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } });
     const notice = JSON.stringify({ type: 'user', message: { role: 'user', content: '<task-notification>feito</task-notification>' } });
     expect(answersIn(tail(user(`${phoneMarker(A)} oi`), tool(), toolResult, notice, said('oi, dono')), [A])).toEqual(new Map([[A, 'oi, dono']]));
+  });
+
+  it('mensagem longa ou de várias linhas, gravada pelo CLI como colagem, conta como lida', () => {
+    // The reviewer's case (round 3): the app delivers by bracketed paste, the CLI records `<pasted_content id=…>`.
+    const pasted = `\n\n<pasted_content id="f39d">\n${phoneMarker(A)} linha 1\nlinha 2\nlinha 3\nlinha 4\n</pasted_content id="f39d">\n`;
+    expect(answersIn(tail(user(pasted), said('oi, dono')), [A]).get(A)).toBe('oi, dono');
+    expect(answersIn(tail(queued(pasted), said('oi, dono')), [A]).get(A)).toBe('oi, dono');
+  });
+
+  it('espelho da VPS atrasado (sem a última fala ainda) não responde com texto do meio do turno', async () => {
+    const { chat, replies } = setup([{ id: A, texto: 'oi' }]);
+    await chat.poll();
+    expect(await chat.turnEnded(tail(user(`${phoneMarker(A)} oi`), said('vou checar')), 'Tudo certo, dono.')).toBe(false);
+    expect(replies()).toEqual([]);
+    expect(await chat.turnEnded(tail(user(`${phoneMarker(A)} oi`), said('vou checar'), tool(), said('Tudo certo, dono.')), 'Tudo certo, dono.')).toBe(true);
+    expect(replies().map((reply) => reply.p_texto)).toEqual(['Tudo certo, dono.']);
+  });
+
+  it('resposta recusada pelo banco sai da fila e não trava as mensagens novas; envio nunca roda duas vezes junto', async () => {
+    const calls: Call[] = [];
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let next = 0;
+    const chat = createCelularLiderChat({
+      rpc: async (fn, args) => {
+        calls.push({ fn, args });
+        if (fn === 'celular_lider_tomar') return calls.filter((call) => call.fn === 'celular_lider_tomar').length === 1 ? [{ id: A, texto: 'oi' }, { id: B, texto: 'e aí' }] : [];
+        if (fn === 'celular_lider_responder' && args.p_em_resposta_a === A) throw new RpcRefused('Supabase respondeu 400 em celular_lider_responder');
+        if (fn === 'celular_lider_responder') await gate;
+        return true;
+      },
+      deliver: async () => ({ ok: true }),
+      newId: () => `reply-${++next}`,
+      log: () => undefined,
+    });
+    await chat.poll();
+    const ending = chat.turnEnded(tail(user(`${phoneMarker(A)} oi`), said('resposta A'), user(`${phoneMarker(B)} e aí`), said('resposta B')));
+    const polling = chat.poll();
+    release();
+    await Promise.all([ending, polling]);
+    const sent = calls.filter((call) => call.fn === 'celular_lider_responder').map((call) => call.args.p_em_resposta_a);
+    // A refused once and dropped; B sent once, not by both senders; the next poll took the queue again.
+    expect(sent).toEqual([A, B]);
+    expect(calls.filter((call) => call.fn === 'celular_lider_tomar').length).toBe(2);
   });
 
   it('linha cortada no começo da cauda e conversa de subagente não contam', () => {
