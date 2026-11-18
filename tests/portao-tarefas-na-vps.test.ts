@@ -12,6 +12,8 @@ import { createLedgerService, nodeLedgerProofFs } from '../src/main/ledger-store
 import { progressOf } from '../src/shared/ledger/andamento';
 import { createGateHandler, createTunnelForward, type GateForward } from '../src/oraculo/portao';
 import type { GateRecados } from '../src/oraculo/gate-recados';
+import type { OwnerMessage } from '../src/main/ledger-card-writer';
+import type { MindscapeBoard } from '../src/shared/mindscape/model';
 import { createThrottle } from '../src/oraculo/server';
 
 const io = createSystemConfigIoDeps();
@@ -34,7 +36,30 @@ function stubRecados(notices: string[]): GateRecados {
   };
 }
 
-function setup(forward: GateForward, options: { readonly recados?: GateRecados | null; readonly linked?: { pedidoId: string; id: string }[] } = {}) {
+/** The board of the test: the owner's Líder opened this Dev. */
+const BOARD: MindscapeBoard = {
+  projectPath: PROJECT,
+  pan: { x: 0, y: 0 },
+  zoom: 1,
+  cards: {
+    'place:lider': { kind: 'session', id: 'place:lider', previous: [], roleId: 'lider', x: 0, y: 0 },
+    [ME]: { kind: 'session', id: ME, previous: [], roleId: 'dev', x: 0, y: 0, by: 'session' },
+  },
+  links: [{ id: 'l>d', from: 'place:lider', to: ME, arrow: true, by: 'session', opened: true }],
+  drawings: [],
+};
+
+interface SetupOptions {
+  readonly recados?: GateRecados | null;
+  readonly linked?: { pedidoId: string; id: string }[];
+  /** The notices that went to the PC's relay. */
+  readonly relayed?: OwnerMessage[];
+  readonly board?: MindscapeBoard;
+  /** No picture of this session (it just opened). */
+  readonly noPicture?: boolean;
+}
+
+function setup(forward: GateForward, options: SetupOptions = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'portao-vps-'));
   dirs.push(dir);
   const sessions = join(dir, 's');
@@ -50,6 +75,7 @@ function setup(forward: GateForward, options: { readonly recados?: GateRecados |
           { id: ME, papel: 'dev', estado: 'trabalhando', podeMandar: false },
           { id: 'place:lider', papel: 'lider', estado: 'parada', podeMandar: true },
         ],
+        ...(options.board ? { board: options.board } : {}),
       },
     },
   };
@@ -59,7 +85,7 @@ function setup(forward: GateForward, options: { readonly recados?: GateRecados |
   const handle = createGateHandler({
     sessionsDir: sessions,
     ledger: () => ledger,
-    picture: () => picture,
+    picture: () => (options.noPicture ? null : picture),
     forward: (port, request, signal) => {
       forwarded++;
       if (signal) signals.push(signal);
@@ -68,6 +94,7 @@ function setup(forward: GateForward, options: { readonly recados?: GateRecados |
     serverVersion: 'teste',
     ...(recados ? { recados } : {}),
     linkPedido: (pedidoId, tarefa) => void options.linked?.push({ pedidoId, id: tarefa.id }),
+    relayNotice: (message) => void options.relayed?.push(message),
     timeouts: { localAnswerMs: 30 },
   });
   const rpc = async (method: string, params: unknown) => {
@@ -119,11 +146,35 @@ describe('Portão: tarefas sempre na VPS', () => {
     expect(g.signals.map((signal) => signal.aborted)).toEqual([true, true]);
   });
 
-  it('sem a fila de recados (os avisos ao Líder), com o PC ligado a tarefa vai ao PC; com ele fora, responde aqui', async () => {
+  it('sem a fila de recados, com o PC ligado a tarefa é respondida aqui e o aviso ao Líder vai pelo relay do PC, uma vez só', async () => {
     const pcAnswer = { status: 200, headers: { 'content-type': 'application/json' }, body: '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"{}"}]}}' };
-    const on = setup(async () => pcAnswer, { recados: null });
-    await on.tool('tarefa_listar', {});
+    const relayed: OwnerMessage[] = [];
+    const g = setup(async () => pcAnswer, { recados: null, relayed, board: BOARD });
+    const id = await newTask(g);
+    expect((await g.tool('tarefa_assumir', { id })).error).toBe(false);
+    const stuck = { id, estado: 'travada', precisa: 'o build quebrou', chave: 'trava-1' };
+    expect((await g.tool('tarefa_andamento', stuck)).error).toBe(false);
+    expect(JSON.parse((await g.tool('tarefa_andamento', stuck)).text)).toMatchObject({ repetida: true });
+    expect(g.forwarded()).toBe(0);
+    expect(relayed).toEqual([expect.objectContaining({ projectPath: PROJECT, placeId: 'place:lider', text: expect.stringMatching(/está travada.*o build quebrou/), key: expect.stringMatching(/^aviso:tarefa_andamento:/) })]);
+    // Progress that is not urgent stays in the ledger.
+    await g.tool('tarefa_andamento', { id, estado: 'trabalhando', proximo: 'seguir' });
+    expect(relayed).toHaveLength(1);
+  });
+
+  it('sem retrato a tarefa vai ao PC, e a lista não promete chave nem motivo (o app atual do PC os ignora)', async () => {
+    const pcList = { status: 200, headers: { 'content-type': 'application/json' }, body: '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"tarefa_andamento","inputSchema":{"properties":{"estado":{}}}}]}}' };
+    const on = setup(async () => pcList, { noPicture: true });
+    await on.rpc('tools/call', { name: 'tarefa_listar', arguments: {} });
     expect(on.forwarded()).toBe(1);
+    expect(Object.keys((await on.rpc('tools/list', {})).json!.result!.tools![0]!.inputSchema.properties)).toEqual(['estado']);
+    const silent = setup(HUNG, { noPicture: true });
+    const local = (await silent.rpc('tools/list', {})).json!.result!.tools!;
+    const progress = local.find((t) => t.name === 'tarefa_andamento')!;
+    expect(Object.keys(progress.inputSchema.properties)).not.toContain('chave');
+    expect(Object.keys(progress.inputSchema.properties)).not.toContain('motivo');
+    // The reason of a rejection is the tool's own, and required: it stays.
+    expect(Object.keys(local.find((t) => t.name === 'tarefa_rejeitar')!.inputSchema.properties)).toEqual(['id', 'motivo']);
     const off = setup(async () => 'desligado', { recados: null });
     await newTask(off);
     expect(Object.keys(off.ledger.load().doc.tasks)).toHaveLength(1);
@@ -220,6 +271,17 @@ describe('chave contra duplicata', () => {
     expect(next.text).toMatch(/nada foi gravado.*outra chave/);
     expect((await g.tool('tarefa_andamento', { id, estado: 'travada', precisa: 'o build quebrou', chave: 'andamento-2' })).error).toBe(false);
     expect(g.ledger.load().doc.tasks[id]!.events.map(progressOf).filter(Boolean).map((p) => p!.estado)).toEqual(['trabalhando', 'travada']);
+  });
+
+  it('o mesmo passo repetido com a mesma chave depois de a tarefa andar responde que já foi gravado, sem gravar', async () => {
+    const g = setup(HUNG);
+    const id = await newTask(g);
+    expect((await g.tool('tarefa_assumir', { id, chave: 'assumir-a' })).error).toBe(false);
+    expect((await g.tool('tarefa_entregar', { id, provas: [{ tipo: 'texto', texto: 'verde' }] })).error).toBe(false);
+    const late = await g.tool('tarefa_assumir', { id, chave: 'assumir-a' });
+    expect(late.error, late.text).toBe(false);
+    expect(JSON.parse(late.text)).toMatchObject({ repetida: true, jaGravada: expect.stringMatching(/andou/), tarefa: { id, estado: expect.not.stringMatching(/em-execucao/) } });
+    expect(g.ledger.load().doc.tasks[id]!.events.filter((event) => event.kind === 'assumida')).toHaveLength(1);
   });
 
   it('sem chave, assumir de novo a tarefa já assumida devolve repetida em vez de erro', async () => {

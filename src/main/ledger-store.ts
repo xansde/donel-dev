@@ -46,6 +46,7 @@ import {
   maxProofBytes,
   parseLedgerDoc,
   PROOF_FILE_TYPES,
+  keyedStepWritten,
   keyTakenBy,
   repeatedWrite,
   waitsForOwner,
@@ -783,8 +784,14 @@ export function sessionCallKey(placeId: string, tool: string, chave: string): st
 /** What a repeated call answers (the session stops repeating). */
 const REPEATED_NOTE = 'Esta mesma chamada já tinha sido gravada: devolvi o mesmo id e nada foi gravado de novo. Não repita.';
 
-function repeatedFields(result: LedgerApplyResult): { repetida?: true; jaGravada?: string } {
-  return result.ok && result.repeated ? { repetida: true, jaGravada: REPEATED_NOTE } : {};
+/** The same step repeated with its key after the task moved on (`keyedStepWritten`). */
+const MOVED_ON_NOTE = 'Esta mesma chamada (a mesma chave) já tinha sido gravada, e a tarefa andou desde então: veja em "tarefa" como ela está agora. Nada foi gravado de novo. Se você quer um passo novo, chame com outra chave.';
+
+/** A write as the key check answers it: `movedOn` = the same step already written, the task moved since. */
+type KeyedApplyResult = LedgerApplyResult & { readonly movedOn?: true };
+
+function repeatedFields(result: KeyedApplyResult): { repetida?: true; jaGravada?: string } {
+  return result.ok && result.repeated ? { repetida: true, jaGravada: result.movedOn ? MOVED_ON_NOTE : REPEATED_NOTE } : {};
 }
 
 /**
@@ -816,24 +823,28 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
   const chave = 'chave' in call && call.chave ? call.chave : undefined;
   // The session's own key when it named one, else the key of the call's op (t-530129bf).
   const keyed = <T extends LedgerOp>(op: T): T & { readonly requestId: string } => (chave ? { ...op, requestId: sessionCallKey(caller.placeId, call.tool, chave) } : withCallKey(actor, op));
-  // One key, one write (revisão do #483): the session's key already wrote something else → refused, nothing written.
-  const keyTaken = (op: LedgerOp): string | null => {
+  // One key, one write (revisão do #483): the session's key already wrote something else → refused, nothing written;
+  // the same step written with it, the task moved since → answered as written (repeated late), nothing written.
+  const keyTaken = (op: LedgerOp): { readonly repeat: LedgerTask } | { readonly refusal: string } | null => {
     if (!chave) return null;
     try {
       const doc = service.load().doc;
       const now = service.now();
       if (repeatedWrite(doc, actor, op, now)) return null;
+      const step = keyedStepWritten(doc, actor, op, now);
+      if (step) return { repeat: step };
       const taken = keyTakenBy(doc, actor, op, now);
-      return taken ? keyTakenRefusal(chave, call.tool, taken.id) : null;
+      return taken ? { refusal: keyTakenRefusal(chave, call.tool, taken.id) } : null;
     } catch {
       return null;
     }
   };
-  const applyKeyed = async (op: LedgerOp): Promise<LedgerApplyResult> => {
+  const applyKeyed = async (op: LedgerOp): Promise<KeyedApplyResult> => {
     const taken = keyTaken(op);
-    return taken ? { ok: false, reason: taken } : service.apply(actor, op);
+    if (taken && 'repeat' in taken) return { ok: true, task: taken.repeat, repeated: true, movedOn: true };
+    return taken ? { ok: false, reason: taken.refusal } : service.apply(actor, op);
   };
-  const answer = (result: LedgerApplyResult, what: string): { ok: boolean; text: string } =>
+  const answer = (result: KeyedApplyResult, what: string): { ok: boolean; text: string } =>
     result.ok ? { ok: true, text: JSON.stringify({ [what]: true, id: result.task.id, estado: result.task.state, ...repeatedFields(result), ...rereadTask(service, result.task) }) } : { ok: false, text: result.reason };
 
   switch (call.tool) {
@@ -963,7 +974,8 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       })();
       if (already) return answer({ ok: true, task: already, repeated: true }, 'entregue');
       const taken = keyTaken({ op: 'entregar', id: call.id, proofs: [], requestId });
-      if (taken) return { ok: false, text: `Nada foi entregue. ${taken}` };
+      if (taken && 'repeat' in taken) return answer({ ok: true, task: taken.repeat, repeated: true, movedOn: true }, 'entregue');
+      if (taken) return { ok: false, text: `Nada foi entregue. ${taken.refusal}` };
       const proofs: LedgerProof[] = [];
       for (const input of call.provas) {
         const proof = await service.importProof(input, remote);

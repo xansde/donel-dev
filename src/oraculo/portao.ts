@@ -12,15 +12,20 @@
 //
 // Canal do Donel fora do PC (t-e195b35c, docs/planos/canal-fora-do-pc.md; the freeze of 18/11, 08h13-08h45, when the
 // PC's app froze with the tunnel alive and every VPS session hung on it):
-// - with the session's picture and the recados queue (which gives the notices the PC gave after a task), every
-//   `tarefa_*` is answered HERE, PC on or off: the ledger is this daemon's, the PC only relayed it (and froze). Without
-//   the queue, the PC on still answers them. The PC's tool list gets this gate's `tarefa_*` definitions (the key, the
-//   reason). A task born of an owner's request is linked to it on his phone here too (`linkPedido`).
+// - with the session's picture, every `tarefa_*` is answered HERE, PC on or off: the ledger is this daemon's, the PC
+//   only relayed it (and froze). The notices the PC gave after a task (a delivery, a "travada", a "precisa-do-dono" to
+//   whoever hears the session) go to the recados queue when there is one, else to the PC's relay (`fila.json`), which
+//   today's app delivers when it answers (`relayNotice`). The tool list promises this gate's `tarefa_*` definitions
+//   (the key, the reason) only to a session whose tasks are answered here; any other keeps the PC's. A task born of an
+//   owner's request is linked to it on his phone here too (`linkPedido`).
 // - a forward that connected and then hears nothing for 10 min is a 502; one the gate answered itself is let go.
 // - `sessao_enviar` goes to the recados queue (`GateRecados`) when there is one; a target off this machine goes on.
-// - the tunnel must connect within `CONNECT_MS` (else: the PC is off, nothing was sent); what can be answered here
-//   without harm (initialize, the tool list, ping, notifications, `sessao_quem_sou`, `sessao_listar`) is answered here
-//   when the PC is silent for `LOCAL_ANSWER_MS`. Any other tool waits for the PC as before; a 502 stays a 502.
+// - the tunnel must connect within `CONNECT_MS` (else: the PC is off, nothing was sent). The tunnel's listener is the
+//   VPS's own sshd (`ssh -R`): with the tunnel alive it takes the connection at once even when the PC's app is frozen
+//   or closed, so this only tells a tunnel that is down; a frozen app is what the answers here are for. What can be
+//   answered here without harm (initialize, the tool list, ping, notifications, `sessao_quem_sou`, `sessao_listar`)
+//   is answered here when the PC is silent for `LOCAL_ANSWER_MS`. Any other tool waits for the PC as before; a 502
+//   stays a 502.
 // - `POST /recados/<evento>`: the VPS's user-level hooks, loopback only, no MCP token.
 
 import { timingSafeEqual } from 'node:crypto';
@@ -33,9 +38,11 @@ import type { BoardToolCall } from '../shared/mindscape/agent-tools';
 import type { MindscapeBoard } from '../shared/mindscape/model';
 import type { LedgerToolCall } from '../shared/ledger/tools';
 import { askedByRefusal, isLedgerToolName, LEDGER_TOOLS } from '../shared/ledger/tools';
-import { runLedgerTool, type LedgerCaller, type LedgerService, type LedgerToolAnswer } from '../main/ledger-store';
+import { runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService, type LedgerToolAnswer } from '../main/ledger-store';
+import type { OwnerMessage } from '../main/ledger-card-writer';
+import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { CARD_TOOLS, isCardToolName, type CardToolCall } from '../shared/board/tools';
-import { isBoardOrchestrator } from '../shared/mindscape/reach';
+import { hearingPlaceIds, isBoardOrchestrator, whoHears } from '../shared/mindscape/reach';
 import type { BoardStore } from './board-client';
 import { runCardTool } from './board-tools';
 import type { GateRecados } from './gate-recados';
@@ -110,6 +117,11 @@ export interface GateDeps {
   readonly recados?: GateRecados;
   /** Pedir pelo Oráculo: the task born of an owner's request (`pedidoDoDono`) shows on his phone as "virou tarefa". */
   readonly linkPedido?: (pedidoId: string, tarefa: { readonly id: string; readonly titulo: string }) => void;
+  /**
+   * Without the recados queue: a notice the PC gave after a task (`urgentLedgerNotice`), for the PC's relay
+   * (`fila.json`), which today's app delivers to that place, or to the Líder único, when it answers. Absent = logged.
+   */
+  readonly relayNotice?: (message: OwnerMessage) => void;
   /** Runs a `tarefa_*` as `caller`; default: `runLedgerTool` on this daemon's ledger. */
   readonly runLedger?: (caller: LedgerCaller, call: LedgerToolCall) => Promise<LedgerToolAnswer>;
   readonly timeouts?: { readonly localAnswerMs?: number };
@@ -165,19 +177,45 @@ function toolCallOf(message: Record<string, unknown> | null): { readonly name: s
 }
 
 /**
- * The PC's answer to `tools/list` as this gate serves it: the `tarefa_*` definitions are this gate's (it answers them,
- * with fields an older app does not know), and the board's tools appended (the PC does not know them).
+ * A field of a `tarefa_*` tool only this gate honors (today's app on the PC drops it): the key everywhere, the owner's
+ * reason of `tarefa_andamento` (the `motivo` of rejeitar, cancelar and transferir is theirs, and required).
  */
-export function withGateTools(requestBody: string, answer: GateResponse, withCards: boolean): GateResponse {
-  if (answer.status !== 200 || singleMessage(requestBody)?.method !== 'tools/list') return answer;
+function gateOnlyField(tool: string, field: string): boolean {
+  return field === 'chave' || (tool === 'tarefa_andamento' && field === 'motivo');
+}
+
+/** A `tarefa_*` definition without the fields only this gate honors: what a session whose tasks go to the PC sees. */
+function withoutGateFields(tool: unknown): unknown {
+  if (!isRecord(tool) || typeof tool.name !== 'string' || !isLedgerToolName(tool.name) || !isRecord(tool.inputSchema) || !isRecord(tool.inputSchema.properties)) return tool;
+  const name = tool.name;
+  const properties = Object.fromEntries(Object.entries(tool.inputSchema.properties).filter(([field]) => !gateOnlyField(name, field)));
+  return { ...tool, inputSchema: { ...tool.inputSchema, properties } };
+}
+
+/** A tool list answer (the PC's or this gate's) with each tool mapped; `null` = not a tool list. */
+function mapToolList(answer: GateResponse, map: (tools: unknown[]) => unknown[]): GateResponse | null {
   const parsed = singleMessage(answer.body);
   const result = parsed && isRecord(parsed.result) ? parsed.result : null;
-  if (!parsed || !result || !Array.isArray(result.tools)) return answer;
+  if (!parsed || !result || !Array.isArray(result.tools)) return null;
+  return { ...answer, body: JSON.stringify({ ...parsed, result: { ...result, tools: map(result.tools) } }) };
+}
+
+/**
+ * The PC's answer to `tools/list` as this gate serves it: the board's tools appended (the PC does not know them) and,
+ * when `tasksHere` (this session's `tarefa_*` are answered by this gate), the `tarefa_*` definitions are this gate's,
+ * with the fields an older app does not know. Otherwise they stay the PC's: the schema never promises the key or the
+ * reason to a call that goes to an app that drops them (revisão do #483).
+ */
+export function withGateTools(requestBody: string, answer: GateResponse, withCards: boolean, tasksHere = true): GateResponse {
+  if (answer.status !== 200 || singleMessage(requestBody)?.method !== 'tools/list') return answer;
+  return mapToolList(answer, (tools) => servedTools(tools, withCards, tasksHere)) ?? answer;
+}
+
+function servedTools(tools: readonly unknown[], withCards: boolean, tasksHere: boolean): unknown[] {
   const ledgerTools = new Map<string, unknown>(LEDGER_TOOLS.map((tool) => [tool.name, tool]));
-  const served: unknown[] = result.tools.map((tool: unknown) => (isRecord(tool) && typeof tool.name === 'string' && ledgerTools.has(tool.name) ? ledgerTools.get(tool.name) : tool));
+  const served: unknown[] = tasksHere ? tools.map((tool: unknown) => (isRecord(tool) && typeof tool.name === 'string' && ledgerTools.has(tool.name) ? ledgerTools.get(tool.name) : tool)) : [...tools];
   const names = new Set(served.map((tool) => (isRecord(tool) ? tool.name : null)));
-  const tools = withCards ? [...served, ...CARD_TOOLS.filter((tool) => !names.has(tool.name))] : served;
-  return { ...answer, body: JSON.stringify({ ...parsed, result: { ...result, tools } }) };
+  return withCards ? [...served, ...CARD_TOOLS.filter((tool) => !names.has(tool.name))] : served;
 }
 
 /**
@@ -201,6 +239,51 @@ export function callerFromPicture(mine: PictureSession): LedgerCaller | string {
       const card = projectPath === pasta ? mine.board?.cards[placeId] : undefined;
       return card?.kind === 'session' ? card.sessionId : undefined;
     },
+  };
+}
+
+/** This session's `tarefa_*` are answered by this gate: it has a picture that says its place (not the Líder único). */
+function tasksAnsweredHere(mine: PictureSession | null): mine is PictureSession {
+  return mine !== null && typeof callerFromPicture(mine) !== 'string';
+}
+
+function nameOf(who: Record<string, unknown>): string {
+  for (const key of ['papelNome', 'nome', 'papel'] as const) if (typeof who[key] === 'string' && who[key]) return who[key] as string;
+  return 'sessão';
+}
+
+function lastSegment(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
+}
+
+/**
+ * The notice the PC gave after a task answered here (a delivery for acceptance, a "travada", a "precisa-do-dono"), as
+ * a message of the PC's relay: to whoever hears the session (`whoHears`, from its picture), the Líder único when nobody
+ * on the board does. The same words and key as the recados queue's notice to a place off its machine, so the two never
+ * make it twice. `null` = nothing to tell, or a repeat (the first call told it).
+ */
+export function relayedTaskNotice(mine: PictureSession, caller: LedgerCaller, call: LedgerToolCall, answerText: string): OwnerMessage | null {
+  const urgent = urgentLedgerNotice(call, answerText);
+  if (!urgent) return null;
+  let answer: { id?: unknown; repetida?: unknown; tarefa?: { ultimoEvento?: { em?: unknown } } };
+  try {
+    answer = JSON.parse(answerText) as typeof answer;
+  } catch {
+    return null;
+  }
+  if (typeof answer.id !== 'string' || answer.repetida === true) return null;
+  const live = hearingPlaceIds(placeStatesOf(mine.listar));
+  const target = whoHears(mine.board, caller.placeId, (id) => live.has(id));
+  const em = answer.tarefa?.ultimoEvento?.em;
+  const eventAt = typeof em === 'string' && Number.isFinite(Date.parse(em)) ? Date.parse(em) : Date.now();
+  const words = `${nameOf(mine.quemSou)} (${caller.placeId}) ${urgent}`;
+  const board = lastSegment(caller.projectPath);
+  return {
+    projectPath: caller.projectPath,
+    placeId: target === LEADER_OF_ALL ? '' : target,
+    text: `◆ Oráculo: ${words}`,
+    leaderText: `◆ Oráculo, quadro ${board}${target === LEADER_OF_ALL ? '' : ` (para ${target}, que não está aberta)`}: ${words}`,
+    key: `aviso:${call.tool}:${answer.id}:${target}:${eventAt}`,
   };
 }
 
@@ -272,14 +355,18 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
           log(`[oraculo] portão: ligar o pedido ${call.pedidoDoDono} à tarefa falhou: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
-      if (deps.recados) {
-        // The notices never hold the answer, nor fail it.
-        const failed = (error: unknown): void => log(`[oraculo] portão: aviso depois de ${call.tool} falhou: ${error instanceof Error ? error.message : String(error)}`);
-        try {
+      // The notices never hold the answer, nor fail it.
+      const failed = (error: unknown): void => log(`[oraculo] portão: aviso depois de ${call.tool} falhou: ${error instanceof Error ? error.message : String(error)}`);
+      try {
+        if (deps.recados) {
           void Promise.resolve(deps.recados.depoisDaTarefa(sid, mine, caller, call, result.text) as unknown).catch(failed);
-        } catch (error) {
-          failed(error);
+        } else {
+          const notice = relayedTaskNotice(mine, caller, call, result.text);
+          if (notice && deps.relayNotice) deps.relayNotice(notice);
+          else if (notice) log(`[oraculo] portão: aviso de ${call.tool} sem relay: ${notice.text.slice(0, 80)}`);
         }
+      } catch (error) {
+        failed(error);
       }
       return result.image ? { kind: 'image', base64: result.image.base64, mimeType: result.image.mimeType, text: result.text } : { kind: 'text', text: result.text };
     };
@@ -318,6 +405,8 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
       serverVersion: deps.serverVersion,
     });
     const response: GateResponse = answer === null ? { status: 202, headers: {}, body: '' } : { status: 200, headers: JSON_HEADERS, body: JSON.stringify(answer) };
+    // The list a session keeps for good: no key nor reason promised while its tasks would go to the PC.
+    if (!tasksAnsweredHere(mine) && singleMessage(body)?.method === 'tools/list') return { response: mapToolList(response, (tools) => tools.map(withoutGateFields)) ?? response, passOn };
     return { response, passOn };
   }
 
@@ -341,10 +430,9 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     // The board answers here even with the PC on: it is not the PC's.
     if (cards && call && isCardToolName(call.name)) return (await local(sid, request.body, cards, 'ligado')).response;
     // The ledger is this daemon's: with the session's picture its tasks never wait on the PC (the Líder único's, and a
-    // picture that does not say the place, still go to the PC, which knows them). Only with the recados queue: it
-    // gives the notices the PC gives after a task (the Líder hears a delivery, a "travada"); without it, the PC on
-    // answers, as before, so no notice is lost (revisão do #483).
-    if (call && isLedgerToolName(call.name) && mine && deps.recados && typeof callerFromPicture(mine) !== 'string') return (await local(sid, request.body, cards, 'ligado')).response;
+    // picture that does not say the place, still go to the PC, which knows them). The notices the PC gave after a task
+    // go to the recados queue or, without it, to the PC's relay (revisão do #483).
+    if (call && isLedgerToolName(call.name) && tasksAnsweredHere(mine)) return (await local(sid, request.body, cards, 'ligado')).response;
     let recadosTried = false;
     if (call?.name === 'sessao_enviar' && mine && deps.recados) {
       const sent = await local(sid, request.body, cards, 'ligado', true);
@@ -370,7 +458,7 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     } else {
       forwarded = await forwarding;
     }
-    if (forwarded !== 'desligado') return withGateTools(request.body, forwarded, cards !== null);
+    if (forwarded !== 'desligado') return withGateTools(request.body, forwarded, cards !== null, tasksAnsweredHere(mine));
     if (request.method !== 'POST') return { status: 405, headers: { Allow: 'POST' }, body: '' };
     return (await local(sid, request.body, cards, 'desligado', !recadosTried)).response;
   };

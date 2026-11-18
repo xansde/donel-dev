@@ -757,6 +757,28 @@ export function keyTakenBy(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, now
   return Object.values(doc.tasks).find(used) ?? null;
 }
 
+const STEP_EVENT: Readonly<Record<'assumir' | 'entregar' | 'aceitar' | 'rejeitar' | 'frente', LedgerEvent['kind']>> = {
+  assumir: 'assumida',
+  entregar: 'entregue',
+  aceitar: 'aceita',
+  rejeitar: 'rejeitada',
+  frente: 'criada',
+};
+
+/**
+ * 18/11 (revisão do #483) — the task where `actor` already wrote this very step (assumir, entregar, aceitar, rejeitar,
+ * frente) with `op`'s key, within the window, though the task moved on since (`keyedRepeat` said no): the same call
+ * repeated late, answered as written, never refused as another write. `null` for any other op or key.
+ */
+export function keyedStepWritten(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, now: number): LedgerTask | null {
+  if (actor.kind !== 'lugar' || !(op.op in STEP_EVENT) || !('id' in op)) return null;
+  const key = 'requestId' in op && isRequestId(op.requestId) ? op.requestId : undefined;
+  const task = doc.tasks[op.id];
+  if (!task || key === undefined) return null;
+  const kind = STEP_EVENT[op.op as keyof typeof STEP_EVENT];
+  return task.events.some((event) => event.kind === kind && event.requestId === key && sameActor(event.by, actor) && Math.abs(now - event.at) <= REPEAT_WRITE_WINDOW_MS) ? task : null;
+}
+
 /**
  * 18/11 (t-e195b35c) — the repeat of a step of a place (assumir, entregar, aceitar, rejeitar, frente): the latest event
  * of that step carries this call's key, by this actor, within the window, and the task is still where that step left it
