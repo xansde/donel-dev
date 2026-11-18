@@ -15,8 +15,13 @@ export interface GateHookResponse {
 }
 
 export interface GateRecados {
-  /** sessao_enviar of session `sid` (its picture `mine`): answered here, or 'repassar' (the target is not on this machine). */
-  enviar(sid: string, mine: PictureSession, call: SendCall): Promise<BrowserToolOutcome | 'repassar'>;
+  /**
+   * sessao_enviar of session `sid` (its picture `mine`): answered here, or 'repassar' (the PC decides). With the PC on
+   * (`pc` 'ligado', the default) anything the picture alone cannot send goes on to it: a target off this machine, and a
+   * place or an arrow the picture does not know yet (opened or drawn after it). With the PC off ('desligado') it never
+   * passes on: the picture answers, and a target off this machine goes to the PC's relay.
+   */
+  enviar(sid: string, mine: PictureSession, call: SendCall, pc?: 'ligado' | 'desligado'): Promise<BrowserToolOutcome | 'repassar'>;
   /** Before a tarefa_* answered here (item 13: a task of a closed place follows its successor). */
   antesDaTarefa(caller: LedgerCaller, mine: PictureSession, call: LedgerToolCall): Promise<void>;
   /** After a tarefa_* answered here: the notices the PC used to give (delivery, travada/precisa-do-dono, verdict). */

@@ -138,6 +138,9 @@ const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8', 'Cache
 
 const HOW = 'entra no fim do turno dela, ou na hora se ela estiver parada; a entrega fica registrada';
 const ANSWER_LINE = 'Responda a quem mandou pelo sessao_enviar se precisar.';
+const RELAY_HOW = 'o PC está fora e esse lugar não roda nesta máquina: o recado espera no Oráculo e o app entrega quando o PC voltar';
+const NO_RELAY = 'O PC está fora e esse lugar não roda nesta máquina; o recado não saiu. Tente quando o PC ligar.';
+const NOT_PICTURED = 'Sem retrato do quadro desta sessão (lugar e setas): com o PC fora, o recado não sai daqui. Tente quando o PC ligar.';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -578,6 +581,31 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     }
   }
 
+  /**
+   * A message for a place off this machine (or the Líder único) with the PC off: the PC's relay, which today's app
+   * delivers when it comes back. The same message inside `JOIN_MS` has the same key: the relay joins it.
+   */
+  async function relayed(projectPath: string, me: string, name: string, placeId: string, words: string): Promise<BrowserToolOutcome> {
+    if (!deps.relay) return { kind: 'error', text: NO_RELAY };
+    const board = lastSegment(projectPath);
+    const toLeader = placeId === LEADER_OF_ALL;
+    const chave = createHash('sha256').update(JSON.stringify([projectPath, me, placeId, words, Math.floor(now() / JOIN_MS)])).digest('hex').slice(0, 32);
+    const signature = `${name} (${me})`;
+    try {
+      await deps.relay({
+        projectPath,
+        placeId: toLeader ? '' : placeId,
+        text: `◆ Recado de ${signature}, guardado com o PC fora: ${words}`,
+        leaderText: `◆ Recado, quadro ${board}${toLeader ? '' : ` (para ${placeId}, que não está aberta)`}, de ${signature}: ${words}`,
+        key: `recado:${chave}`,
+      });
+    } catch (error) {
+      log(`recado de ${me} para ${placeId} não entrou no relay: ${error instanceof Error ? error.message : String(error)}`);
+      return { kind: 'error', text: NO_RELAY };
+    }
+    return { kind: 'text', text: JSON.stringify({ entregue: 'pelo-relay', para: toLeader ? 'lider' : placeId, como: RELAY_HOW }) };
+  }
+
   async function tick(): Promise<void> {
     if (ticking) return;
     ticking = true;
@@ -655,34 +683,38 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
   }
 
   return {
-    async enviar(sid, mine, call: SendCall): Promise<BrowserToolOutcome | 'repassar'> {
+    async enviar(sid, mine, call: SendCall, pc = 'ligado'): Promise<BrowserToolOutcome | 'repassar'> {
+      // With the PC on, what the picture cannot send goes to it: the picture may be minutes old (the probe's), and a
+      // place opened or an arrow drawn after it is the PC's to know (revisão do #486). With the PC off it is all there is.
+      const pcOn = pc === 'ligado';
       const who = mine.quemSou;
       const board = mine.board;
       // Who the caller is, or its board, unknown here: the PC decides.
-      if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string' || !board) return 'repassar';
+      if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string' || !board) return pcOn ? 'repassar' : { kind: 'error', text: NOT_PICTURED };
       const me = who.lugar;
       const projectPath = who.pasta;
       const places = listedPlaces(mine.listar);
       const target = resolveAddress(board, places, me, call.para);
-      if ('erro' in target) return { kind: 'error', text: target.erro };
-      if ('liderUnico' in target) return 'repassar';
+      if ('erro' in target) return pcOn ? 'repassar' : { kind: 'error', text: target.erro };
+      const words = `${call.tarefa ? `[${call.tarefa}] ` : ''}${call.texto}`;
+      if ('liderUnico' in target) return pcOn ? 'repassar' : relayed(projectPath, me, nameOf(who), LEADER_OF_ALL, words);
       const word = call.para.trim().toLowerCase();
       // A renewed place's old id: the link the caller had to it holds for its successor.
       const renewedFrom = 'renovadoDe' in target ? target.renovadoDe : undefined;
       if (word !== BOARD_LEADER && word !== MY_OPENER && !drawnLink(projectPath, board, me, target.placeId) && !(renewedFrom && drawnLink(projectPath, board, me, renewedFrom))) {
         const review = [await reviewLinked(mine, places, me, target.placeId), renewedFrom ? await reviewLinked(mine, places, me, renewedFrom) : false];
         if (!review.includes(true)) {
-          // The ledger's machine did not answer: the PC, which also knows the review link, decides.
-          if (review.includes(null)) return 'repassar';
+          // An arrow drawn after the picture, or the review link the ledger's machine did not answer: the PC decides.
+          if (pcOn) return 'repassar';
           return {
             kind: 'error',
-            text: `Sem ligação: não há seta do seu lugar (${me}) para "${target.placeId}". Peça ao dono, ou use sessao_abrir. Para o Líder do quadro, "para": "${BOARD_LEADER}"; para quem abriu você, "para": "${MY_OPENER}".`,
+            text: `Sem ligação: não há seta do seu lugar (${me}) para "${target.placeId}". Peça ao dono, ou use sessao_abrir. Para o Líder do quadro, "para": "${BOARD_LEADER}"; para quem abriu você, "para": "${MY_OPENER}".${review.includes(null) ? ' (O Oráculo da VPS pessoal não respondeu para conferir a ligação de revisão: tente de novo em um minuto.)' : ''}`,
           };
         }
       }
       const targetSid = sidOfPlace(projectPath, target.placeId, await localSessions());
-      if (!targetSid) return 'repassar';
-      const item = enqueue({ lugar: me, nome: nameOf(who), sid }, { lugar: target.placeId, sid: targetSid }, `${call.tarefa ? `[${call.tarefa}] ` : ''}${call.texto}`);
+      if (!targetSid) return pcOn ? 'repassar' : relayed(projectPath, me, nameOf(who), target.placeId, words);
+      const item = enqueue({ lugar: me, nome: nameOf(who), sid }, { lugar: target.placeId, sid: targetSid }, words);
       return {
         kind: 'text',
         text: JSON.stringify({

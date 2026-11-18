@@ -180,6 +180,24 @@ describe('Portão: tarefas sempre na VPS', () => {
     expect(Object.keys(off.ledger.load().doc.tasks)).toHaveLength(1);
   });
 
+  it('sessao_enviar que os recados repassam: vai ao PC; com o PC fora, os recados respondem com o PC fora (o relay), uma vez', async () => {
+    const asked: string[] = [];
+    const recados: GateRecados = {
+      ...stubRecados([]),
+      enviar: async (_sid, _mine, _call, pc = 'ligado') => {
+        asked.push(pc);
+        return pc === 'ligado' ? 'repassar' : { kind: 'text', text: '{"entregue":"pelo-relay"}' };
+      },
+    };
+    const on = setup(async () => ({ status: 200, headers: {}, body: '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"do PC"}]}}' }), { recados });
+    expect((await on.tool('sessao_enviar', { para: 'place:novo', texto: 'oi' })).text).toBe('do PC');
+    expect(asked).toEqual(['ligado']);
+    asked.length = 0;
+    const off = setup(async () => 'desligado', { recados });
+    expect(await off.tool('sessao_enviar', { para: 'place:novo', texto: 'oi' })).toEqual({ error: false, text: '{"entregue":"pelo-relay"}' });
+    expect(asked).toEqual(['ligado', 'desligado']);
+  });
+
   it('a tarefa criada de um pedido do dono pelo celular fica ligada ao pedido', async () => {
     const linked: { pedidoId: string; id: string }[] = [];
     const g = setup(HUNG, { linked });

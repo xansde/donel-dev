@@ -22,7 +22,7 @@ import { whoHears } from '../src/shared/mindscape/reach';
 import { callerOf, createOracleApiHandler, type OracleRequest } from '../src/oraculo/api';
 import { createGateToolRoutes, GATE_TOOL_PATH, readGateHashes } from '../src/oraculo/portoes';
 import { boardFromProbe, createProbe } from '../src/oraculo/sonda';
-import { createSatelliteLedger, createSatelliteReviewLink, createSatelliteTaskMemory, SATELLITE_DOWN, type SatellitePost } from '../src/oraculo/satelite';
+import { createSatelliteLedger, createSatelliteNotice, createSatelliteReviewLink, createSatelliteTaskMemory, SATELLITE_DOWN, type SatellitePost } from '../src/oraculo/satelite';
 import { callerFromPicture, type PictureSession } from '../src/oraculo/portao';
 import { createGateRecados } from '../src/oraculo/recados';
 
@@ -214,7 +214,7 @@ describe('satélite: Dev e Revisor de fora (item 5) com o registro na VPS pessoa
   it('sem seta, falam enquanto a entrega espera veredito; a entrega avisa o Revisor e a devolução avisa o Dev', async () => {
     const g = api();
     const s = satellite(g.post);
-    expect(await s.send(SID_REV, rev, ME)).toMatch(/^Sem ligação/); // nothing delivered yet
+    expect(await s.send(SID_REV, rev, ME)).toBe('repassar'); // nothing delivered yet: the PC, which knows the board now, decides
 
     const { id } = await s.tool(SID_DEV, dev, 'tarefa_criar', { pedido: 'faz', criterio: 'feito', prazo: '2026-11-20', risco: 'baixo' });
     await s.tool(SID_DEV, dev, 'tarefa_assumir', { id });
@@ -235,6 +235,30 @@ describe('satélite: Dev e Revisor de fora (item 5) com o registro na VPS pessoa
   it('com a VPS pessoal fora do ar, o recado sem seta vai ao PC decidir (nunca "Sem ligação" por falta de resposta)', async () => {
     const s = satellite(async () => 'sem-conexao');
     expect(await s.send(SID_REV, rev, ME)).toBe('repassar');
+  });
+});
+
+describe('satélite: aviso para outra máquina', () => {
+  it('com a VPS pessoal fora, o aviso fica em disco e sai uma vez quando ela volta (até depois de reiniciar)', async () => {
+    const dir = tempDir('avisos-sat-');
+    const file = join(dir, 'avisos-pendentes.json');
+    let up = false;
+    const posted: { key?: string; placeId: string }[] = [];
+    const post = async (_url: string, _token: string, body: string): Promise<SatellitePost> => {
+      if (!up) return 'sem-conexao';
+      posted.push((JSON.parse(body) as { aviso: { key?: string; placeId: string } }).aviso);
+      return { status: 200, body: '{"ok":true}' };
+    };
+    const make = () => createSatelliteNotice({ url: 'http://vps-pessoal:47816', token: () => GATE, post, file, io: createSystemConfigIoDeps(), log: () => undefined });
+    const message = { projectPath: PROJECT, placeId: 'place:lider', text: '◆ Oráculo: travada', leaderText: '◆ Oráculo: travada', key: 'aviso:tarefa_andamento:t-1:place:lider:1' };
+    await make().send(message); // never throws: it waits on disk
+    await make().send(message); // a repeat joins it
+    expect(posted).toEqual([]);
+    up = true;
+    const after = make(); // a restart reads it from disk
+    await after.flush();
+    await after.flush();
+    expect(posted).toEqual([expect.objectContaining({ placeId: 'place:lider', key: message.key })]);
   });
 });
 

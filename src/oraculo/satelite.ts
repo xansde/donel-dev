@@ -18,10 +18,12 @@ import { promises as fsp } from 'node:fs';
 import { request as httpRequest } from 'node:http';
 import { checkLocalProofFile, nodeLedgerProofFs, type LedgerCaller, type LedgerToolAnswer } from '../main/ledger-store';
 import type { OwnerMessage } from '../main/ledger-card-writer';
+import type { ConfigIoDeps } from '../main/config-store';
 import type { LedgerTask } from '../shared/ledger/contract';
 import type { LedgerToolCall } from '../shared/ledger/tools';
 import type { GateLedgerContext, PictureSession } from './portao';
 import { GATE_LINK_PATH, GATE_NOTICE_PATH, GATE_TOOL_PATH } from './portoes';
+import { createRelay } from './relay';
 
 export const SATELLITE_TIMEOUT_MS = 15_000;
 /** The proof files of one delivery, together (base64 grows it by a third; the route takes 64 MB). */
@@ -178,19 +180,69 @@ export function createSatelliteReviewLink(deps: SatelliteDeps): (mine: PictureSe
   };
 }
 
-/** The satellite's recados `relay`: a notice for another machine (or the Líder único) to the personal VPS's relay. */
-export function createSatelliteNotice(deps: SatelliteDeps): (message: OwnerMessage) => Promise<unknown> {
+export interface SatelliteNotices {
+  /** Queues the notice on disk (a repeat of the same key joins it) and tries to send what waits; never throws for the network. */
+  send(message: OwnerMessage): Promise<unknown>;
+  /** One round: what waits goes to the personal VPS's relay, oldest first; the first failure ends the round. */
+  flush(): Promise<void>;
+  start(): void;
+  stop(): void;
+}
+
+const NOTICE_RETRY_MS = 15_000;
+
+/**
+ * The satellite's recados `relay`: a notice for another machine (or the Líder único) to the personal VPS's relay. It
+ * waits on disk first (`file`, the relay's own format: temp → rename, an unreadable file set aside), so a personal
+ * VPS that is down or oscillating loses nothing: what waits goes every 15 s, and after a restart (revisão do #486).
+ * The personal VPS's relay joins a repeat of the same key, so a send whose answer was lost is safe to send again.
+ */
+export function createSatelliteNotice(deps: SatelliteDeps & { readonly file: string; readonly io: ConfigIoDeps; readonly log?: (line: string) => void }): SatelliteNotices {
   const post = deps.post ?? postJson;
   const timeoutMs = deps.timeoutMs ?? SATELLITE_TIMEOUT_MS;
   const url = `${deps.url.replace(/\/+$/, '')}${GATE_NOTICE_PATH}`;
-  return async (message) => {
+  const log = deps.log ?? ((line: string) => console.error(`[oraculo] satélite: ${line}`));
+  const outbox = createRelay({ filePath: deps.file, io: deps.io });
+  let flushing: Promise<void> | null = null;
+  let timer: ReturnType<typeof setInterval> | null = null;
+
+  async function round(): Promise<void> {
     const token = deps.token();
-    if (!token) throw new Error('sem portao.token');
-    const body = JSON.stringify({ aviso: message });
-    // The relay joins a repeat of the same key: one more try after a cut is safe.
-    let result = await post(url, token, body, timeoutMs);
-    if (result === 'caiu') result = await post(url, token, body, timeoutMs);
-    if (typeof result !== 'object' || result.status !== 200) throw new Error(`aviso não entrou no Oráculo da VPS pessoal (${typeof result === 'object' ? `HTTP ${result.status}` : result})`);
-    return result;
+    if (!token) return;
+    for (const item of outbox.pending()) {
+      const result = await post(url, token, JSON.stringify({ aviso: { ...item.message, key: item.key } }), timeoutMs);
+      if (typeof result !== 'object' || result.status !== 200) {
+        log(`aviso ${item.id} espera: o Oráculo da VPS pessoal ${typeof result === 'object' ? `respondeu HTTP ${result.status}` : 'não respondeu'}.`);
+        return;
+      }
+      outbox.ack(item.id, item.message.placeId ? { placeId: item.message.placeId } : 'lider');
+    }
+  }
+
+  const flush = (): Promise<void> => {
+    flushing ??= round()
+      .catch((error: unknown) => log(`avisos pendentes: ${error instanceof Error ? error.message : String(error)}`))
+      .finally(() => {
+        flushing = null;
+      });
+    return flushing;
+  };
+
+  return {
+    async send(message) {
+      const sent = await outbox.send(message, 0);
+      await flush();
+      return sent;
+    },
+    flush,
+    start() {
+      if (timer) return;
+      timer = setInterval(() => void flush(), NOTICE_RETRY_MS);
+      timer.unref?.();
+    },
+    stop() {
+      if (timer) clearInterval(timer);
+      timer = null;
+    },
   };
 }

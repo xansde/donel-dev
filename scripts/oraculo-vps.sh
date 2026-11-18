@@ -72,7 +72,8 @@ case "${1:-}" in
     systemctl --user --no-pager status "$UNIT" | head -5
     ;;
   voltar)
-    ANTES="$(ls -1t "$DIR"/bin/oraculo.mjs.antes-* 2>/dev/null | head -1)"
+    # Sem nenhuma cópia, o `ls` falha e o pipefail sairia do script antes da mensagem: o `|| true` a deixa aparecer.
+    ANTES="$(ls -1t "$DIR"/bin/oraculo.mjs.antes-* 2>/dev/null | head -1 || true)"
     [ -n "$ANTES" ] || { echo "sem bundle anterior em $DIR/bin" >&2; exit 1; }
     install -m 0644 "$ANTES" "$DIR/bin/oraculo.mjs"
     systemctl --user restart "$UNIT"

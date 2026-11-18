@@ -151,7 +151,8 @@ function readGateToken(dir: string): string | null {
 /**
  * The satellite (`DONEL_PORTAO_SATELITE`): only the MCP gate of this machine's sessions, the probe that pictures them
  * and the recados between them. No ledger, phone, mirror, vigia nor events here: the tasks go to the personal VPS's
- * Oráculo; a message for a place off this machine goes on to the PC through the session's tunnel.
+ * Oráculo; a message for a place off this machine goes on to the PC through the session's tunnel, and with the PC off
+ * to the personal VPS's relay (as the notices do), waiting on disk here while that machine does not answer.
  */
 async function runSatellite(dir: string, url: string): Promise<void> {
   const io = createSystemConfigIoDeps();
@@ -161,6 +162,8 @@ async function runSatellite(dir: string, url: string): Promise<void> {
   // Item 5 with the ledger on the personal VPS: the task each call left (its answer brings it) for the notices after it,
   // and the review link of a message with no arrow asked there.
   const tasks = createSatelliteTaskMemory();
+  // A notice for another machine waits on disk until the personal VPS takes it (revisão do #486).
+  const notices = createSatelliteNotice({ ...remote, file: join(dir, 'avisos-pendentes.json'), io });
   const recados = createGateRecados({
     file: join(dir, 'recados.json'),
     io,
@@ -168,7 +171,7 @@ async function runSatellite(dir: string, url: string): Promise<void> {
     taskOf: tasks.taskOf,
     reviewLinked: createSatelliteReviewLink(remote),
     picture: pictures.get,
-    relay: createSatelliteNotice(remote),
+    relay: notices.send,
   });
   const gatePort = Number(process.env.DONEL_ORACULO_PORTAO_PORT) || GATE_PORT;
   const gate = await startGateServer({
@@ -187,6 +190,7 @@ async function runSatellite(dir: string, url: string): Promise<void> {
   });
   writeFileSync(join(dir, 'portao'), `${gate.port}\n`, { mode: 0o600 });
   recados.start();
+  notices.start();
   const probe = createProbe({ sessionsDir, liveSessions: tmuxLocalSessions, picture: pictures.get, setSession: pictures.setSession });
   probe.start();
   if (!readGateToken(dir)) console.error(`[oraculo] satélite: sem ${join(dir, 'portao.token')}; as tarefas desta máquina são recusadas até ele existir.`);
@@ -194,6 +198,7 @@ async function runSatellite(dir: string, url: string): Promise<void> {
   const stop = (): void => {
     probe.stop();
     recados.stop();
+    notices.stop();
     void gate.close().then(() => process.exit(0));
   };
   process.on('SIGTERM', stop);
@@ -326,8 +331,9 @@ async function main(): Promise<void> {
   const pictures = createPictureStore(dir);
   const setPicture = pictures.set;
   const sessionsDir = join(homedir(), '.donel', 's');
-  // t-e195b35c — the recados of this machine's sessions; a notice for a place off it goes to the PC's relay.
-  const recados = createGateRecados({ file: join(dir, 'recados.json'), io, ledger: () => ledger, picture: pictures.get, relay: (message) => relay.send(message, RELAY_WAIT_MS) });
+  // t-e195b35c — the recados of this machine's sessions; a notice or message for a place off it goes to the PC's relay
+  // (queued on disk, no wait: nothing reads where it went, and a sessao_enviar with the PC off answers at once).
+  const recados = createGateRecados({ file: join(dir, 'recados.json'), io, ledger: () => ledger, picture: pictures.get, relay: (message) => relay.send(message, 0) });
   // Fails here, not on the first call, when the file is there but unreadable (it would be written over).
   const first = raw.load();
   if (sbDeps) {

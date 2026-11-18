@@ -19,7 +19,9 @@
 //   (the key, the reason) only to a session whose tasks are answered here; any other keeps the PC's. A task born of an
 //   owner's request is linked to it on his phone here too (`linkPedido`).
 // - a forward that connected and then hears nothing for 10 min is a 502; one the gate answered itself is let go.
-// - `sessao_enviar` goes to the recados queue (`GateRecados`) when there is one; a target off this machine goes on.
+// - `sessao_enviar` goes to the recados queue (`GateRecados`) when there is one; what the picture cannot send (a
+//   target off this machine, a place or an arrow newer than the picture) goes on to the PC, and with the PC off the
+//   recados answer from the picture (a target off this machine: the PC's relay).
 // - the tunnel must connect within `CONNECT_MS` (else: the PC is off, nothing was sent). The tunnel's listener is the
 //   VPS's own sshd (`ssh -R`): with the tunnel alive it takes the connection at once even when the PC's app is frozen
 //   or closed, so this only tells a tunnel that is down; a frozen app is what the answers here are for. What can be
@@ -336,7 +338,8 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     const board = async (call: BoardToolCall): Promise<BrowserToolOutcome> => {
       if (!mine) return { kind: 'error', text: NO_PICTURE };
       if (call.tool === 'sessao_enviar' && useRecados && deps.recados) {
-        const sent = await deps.recados.enviar(sid, mine, call);
+        // With the PC off the recados never pass it on: the picture answers, a target off this machine goes to the relay.
+        const sent = await deps.recados.enviar(sid, mine, call, pc === 'desligado' ? 'desligado' : 'ligado');
         if (sent !== 'repassar') return sent;
         passOn = true;
         return { kind: 'error', text: PC_OFF };
@@ -450,11 +453,9 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     // picture that does not say the place, still go to the PC, which knows them). The notices the PC gave after a task
     // go to the recados queue or, without it, to the PC's relay (revisão do #483).
     if (call && isLedgerToolName(call.name) && tasksAnsweredHere(mine)) return (await local(sid, request.body, cards, 'ligado')).response;
-    let recadosTried = false;
     if (call?.name === 'sessao_enviar' && mine && deps.recados) {
       const sent = await local(sid, request.body, cards, 'ligado', true);
       if (!sent.passOn) return sent.response;
-      recadosTried = true;
     }
     const letGo = new AbortController();
     const forwarding = deps.forward(meta.mcpPort, request, letGo.signal).catch((): GateResponse => BAD_GATEWAY);
@@ -477,7 +478,8 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     }
     if (forwarded !== 'desligado') return withGateTools(request.body, forwarded, cards !== null, tasksAnsweredHere(mine));
     if (request.method !== 'POST') return { status: 405, headers: { Allow: 'POST' }, body: '' };
-    return (await local(sid, request.body, cards, 'desligado', !recadosTried)).response;
+    // Nothing reached the PC: a `sessao_enviar` the recados passed on is theirs again, now with the PC off.
+    return (await local(sid, request.body, cards, 'desligado', true)).response;
   };
 }
 
