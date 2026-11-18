@@ -168,6 +168,8 @@ export interface TarefasPedidasConsumerDeps {
   readonly quadro?: () => string;
   /** The daemon's own mirror already writes `public.tarefas` at every change: no upsert from here. */
   readonly hasMirror?: boolean;
+  /** How the mirror names the owner (the daemon's mirror uses the same); absent = the mirror's default. */
+  readonly ownerName?: () => string;
   readonly log?: (line: string) => void;
 }
 
@@ -245,7 +247,7 @@ export function createTarefasPedidasConsumer(deps: TarefasPedidasConsumerDeps): 
       const { doc } = deps.ledger().load();
       const task = doc.tasks[id];
       // Without place names (the daemon has none); masked as the PC's mirror masks.
-      if (task) await queue.espelhar(tarefaRow(doc, task, undefined, []));
+      if (task) await queue.espelhar(tarefaRow(doc, task, undefined, [], { ownerName: deps.ownerName?.() }));
     } catch (error) {
       log(`${id}: o espelho de tarefas não recebeu a tarefa nova: ${errorText(error)}`);
     }

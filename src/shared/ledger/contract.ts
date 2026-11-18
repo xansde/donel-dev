@@ -809,6 +809,9 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
     const replaced = op.replaces?.trim() ? doc.tasks[op.replaces.trim()] : undefined;
     if (op.replaces?.trim() && !replaced) return fail(`Não criei: "substitui" aponta para "${op.replaces.trim()}", que não existe (veja tarefa_listar).`);
     if (replaced && replaced.projectPath !== op.projectPath) return fail(`Não criei: a ${replaced.id} é de outro quadro; uma tarefa só substitui outra do mesmo quadro.`);
+    // The origin mark speaks for the owner: only the owner's own write carries it, and only a known origin (a service
+    // or a session could otherwise forge "criada pelo dono no celular"; an unknown one would be an empty mark).
+    if (op.via !== undefined && (!Object.hasOwn(VIA_TAGS, op.via) || actor.kind !== 'dono')) return fail('Não criei: só a fila do celular, em nome do dono, marca a origem da tarefa ("via").');
     const title = op.title?.trim();
     if (title) {
       const why = textRefusal('titulo', title, MAX_TITLE_CHARS);

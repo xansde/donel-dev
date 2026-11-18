@@ -356,6 +356,7 @@ async function main(): Promise<void> {
     quadro: () => readQuadroTarefas(join(dir, DECISOES_CONFIG_FILE)),
     // With the ledger's source in the Supabase the daemon's mirror writes the new task's row (with place names).
     hasMirror: mirror !== null,
+    ownerName: () => process.env.ESPELHO_DONO || 'Alexandre',
     ledger: () => ledger,
     returned: guard.returned,
     log: (line) => console.log(line),

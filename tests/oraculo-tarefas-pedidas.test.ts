@@ -182,6 +182,18 @@ describe('tarefas pedidas no celular', () => {
   });
 });
 
+describe('marca de origem "criada pelo dono no celular"', () => {
+  it('só o dono a grava, e só com uma origem conhecida', async () => {
+    const { ledger } = setup();
+    const base = { op: 'criar' as const, projectPath: 'C:/proj/atlas', request: 'forjada', doneWhen: 'pronto', due: '2026-11-30', ownerPlaceId: 'lider', risk: 'baixo' as const };
+    const bot: LedgerActor = { kind: 'lugar', placeId: 'servico:bot', roleId: 'servico' };
+    expect((await ledger.apply(bot, { ...base, via: 'celular' })).ok).toBe(false);
+    expect((await ledger.apply(LIDER, { ...base, via: 'celular' })).ok).toBe(false);
+    expect((await ledger.apply({ kind: 'dono' }, { ...base, via: 'xyz' as 'celular' })).ok).toBe(false);
+    expect(Object.keys(ledger.load().doc.tasks)).toEqual([]);
+  });
+});
+
 describe('decisão do dono numa entrega de risco baixo', () => {
   it('o lado sim aceita e o lado nao rejeita a entrega que esperava o Revisor, como decisão do dono', async () => {
     const { ledger } = setup();
