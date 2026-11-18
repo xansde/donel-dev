@@ -19,6 +19,10 @@ function fakeSupabase() {
   const tasks = new Map<string, unknown>();
   let meta: { schema_version: number; started_at: number | null } | null = null;
   let down = false;
+  let posted = 0;
+  // jsonb devolve as chaves na ordem dele, não na de quem gravou.
+  const shuffled = (value: unknown): unknown =>
+    Array.isArray(value) ? value.map(shuffled) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).reverse().map(([k, v]) => [k, shuffled(v)])) : value;
   const fetch: typeof globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
     const url = new URL(String(input));
     const method = init?.method ?? 'GET';
@@ -32,7 +36,10 @@ function fakeSupabase() {
       return Response.json(rows.slice(from, to! + 1));
     }
     if (method === 'POST' && table === 'ledger_tarefas') {
-      for (const row of JSON.parse(String(init?.body)) as Array<{ id: string; doc: unknown }>) tasks.set(row.id, JSON.parse(JSON.stringify(row.doc)));
+      for (const row of JSON.parse(String(init?.body)) as Array<{ id: string; doc: unknown }>) {
+        tasks.set(row.id, shuffled(row.doc));
+        posted += 1;
+      }
       return new Response(null, { status: 201 });
     }
     if (method === 'POST' && table === 'ledger_meta') {
@@ -46,7 +53,7 @@ function fakeSupabase() {
     }
     return new Response('rota', { status: 404 });
   }) as typeof globalThis.fetch;
-  return { tasks, meta: () => meta, setDown: (value: boolean) => (down = value), fetch };
+  return { tasks, meta: () => meta, posted: () => posted, setDown: (value: boolean) => (down = value), fetch };
 }
 
 const criar = (n: number) => ({ op: 'criar' as const, projectPath: 'C:/p', request: `pedido ${n}`, doneWhen: 'feito', due: '2026-11-20', ownerPlaceId: 'place:dev', risk: 'baixo' as const });
@@ -75,6 +82,11 @@ describe('ledger com o Supabase como fonte', () => {
 
     const restarted = createLedgerService({ filePath: '/nunca/lido.json', io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs, store: createSupabaseLedgerStore(deps, await readSupabaseLedger(deps)) });
     expect(restarted.load().doc).toEqual(service.load().doc);
+    // Depois de reiniciar, uma op manda só a tarefa que mudou, não o registro inteiro de novo.
+    expect((await restarted.apply({ kind: 'dono' }, criar(2))).ok).toBe(true);
+    const before = fake.posted();
+    expect((await restarted.apply({ kind: 'dono' }, criar(3))).ok).toBe(true);
+    expect(fake.posted() - before).toBe(1);
   });
 
   it('o Supabase fora recusa a op e nada muda; quando volta, a op seguinte grava', async () => {

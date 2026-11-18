@@ -28,6 +28,15 @@ export interface SupabaseLedgerStore extends LedgerStore {
   count(): number;
 }
 
+/** JSON with the keys sorted: `jsonb` keeps its own key order, so a plain `JSON.stringify` never matches what came back. */
+export function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, inner: unknown) =>
+    inner && typeof inner === 'object' && !Array.isArray(inner)
+      ? Object.fromEntries(Object.keys(inner as Record<string, unknown>).sort().map((k) => [k, (inner as Record<string, unknown>)[k]]))
+      : inner,
+  );
+}
+
 type RawDoc = { schemaVersion: unknown; startedAt: unknown; tasks: Record<string, unknown> };
 
 function client(deps: SupabaseLedgerDeps) {
@@ -82,7 +91,7 @@ export async function readSupabaseLedger(deps: SupabaseLedgerDeps): Promise<RawD
 export function createSupabaseLedgerStore(deps: SupabaseLedgerDeps, initial: RawDoc & { exists: boolean }): SupabaseLedgerStore {
   const call = client(deps);
   const log = deps.log ?? (() => undefined);
-  const persisted = new Map<string, string>(Object.entries(initial.tasks).map(([id, task]) => [id, JSON.stringify(task)]));
+  const persisted = new Map<string, string>(Object.entries(initial.tasks).map(([id, task]) => [id, canonicalJson(task)]));
   let current: RawDoc | null = initial.exists || persisted.size > 0 ? { schemaVersion: initial.schemaVersion, startedAt: initial.startedAt, tasks: { ...initial.tasks } } : null;
   let head = initial.exists ? JSON.stringify([initial.schemaVersion, initial.startedAt]) : null;
 
@@ -92,7 +101,7 @@ export function createSupabaseLedgerStore(deps: SupabaseLedgerDeps, initial: Raw
     async write(doc: LedgerDoc): Promise<boolean> {
       const changed: Array<{ id: string; doc: unknown; json: string }> = [];
       for (const [id, task] of Object.entries(doc.tasks)) {
-        const json = JSON.stringify(task);
+        const json = canonicalJson(task);
         if (persisted.get(id) !== json) changed.push({ id, doc: task, json });
       }
       const gone = [...persisted.keys()].filter((id) => !(id in doc.tasks));

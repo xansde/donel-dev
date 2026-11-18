@@ -34,7 +34,7 @@ import { ORACLE_PORT, startOracleServer, type OracleServer } from './server';
 import { createDaemonVigia } from './vigia';
 import { boardName } from '../shared/vigia/board';
 import { createBoardClient, readBoardConfig, type BoardStore } from './board-client';
-import { createSupabaseLedgerStore, readSupabaseLedger, type SupabaseLedgerDeps, type SupabaseLedgerStore } from './ledger-supabase';
+import { canonicalJson, createSupabaseLedgerStore, readSupabaseLedger, type SupabaseLedgerDeps, type SupabaseLedgerStore } from './ledger-supabase';
 import { createLedgerMirror, type LedgerMirror } from '../main/ledger-mirror/mirror';
 import { createSupabaseSink } from '../main/ledger-mirror/supabase-sink';
 import { createProofReader } from '../main/ledger-mirror/cartas';
@@ -81,7 +81,7 @@ async function seedSupabase(dir: string, ledgerFile: string): Promise<number> {
   if (!(await store.write(local))) return 1;
   const back = await readSupabaseLedger(deps);
   const ids = Object.keys(local.tasks);
-  const diff = ids.filter((id) => JSON.stringify(back.tasks[id]) !== JSON.stringify(local.tasks[id]));
+  const diff = ids.filter((id) => canonicalJson(back.tasks[id]) !== canonicalJson(local.tasks[id]));
   console.log(JSON.stringify({ ledgerJson: ids.length, supabase: Object.keys(back.tasks).length, diferentes: diff.length, schemaVersion: back.schemaVersion, startedAt: back.startedAt }));
   return diff.length === 0 && Object.keys(back.tasks).length === ids.length ? 0 : 1;
 }
