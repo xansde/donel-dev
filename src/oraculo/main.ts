@@ -24,6 +24,7 @@
 // only, with the tasks on the personal VPS (`<dir>/portao.token`, satelite.ts).
 
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { open as openFile } from 'node:fs/promises';
 import { homedir, hostname, networkInterfaces, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { createSystemConfigIoDeps } from '../main/config-store';
@@ -39,7 +40,8 @@ import { readServiceHashes } from './servicos';
 import { createLivroStore } from './livro';
 import { createReturnGuard } from './devolvido';
 import { createGateHandler, GATE_PORT, mergePicture, startGateServer, tunnelForward, type BoardPicture, type PictureSession } from './portao';
-import { createGateRecados, tmuxLocalSessions } from './recados';
+import { createGateRecados, findTranscript, tmuxLocalSessions } from './recados';
+import { createLocalLeaderFinder, currentConversation } from './lider-local';
 import { createGateToolRoutes, readGateHashes } from './portoes';
 import { createProbe } from './sonda';
 import { createSatelliteLedger, createSatelliteNotice, createSatelliteReviewLink, createSatelliteTaskMemory } from './satelite';
@@ -55,7 +57,7 @@ import { withPlaceMemory, type PlaceInfo, type PlaceInfoOf } from '../shared/led
 import { SERVICE_PLACE_PREFIX, SERVICE_ROLE } from '../shared/ledger/contract';
 import { createDecisoesConsumer, createDecisoesQueue, DECISOES_CONFIG_FILE, NOTAS_PAGINAS_FILE, readImportList, readUnsignedPolicy } from './decisoes';
 import { createTarefasPedidasConsumer, createTarefasPedidasQueue, readQuadroTarefas } from './tarefas-pedidas';
-import { createChatCelularConsumer, createChatCelularQueue } from './chat-celular';
+import { createChatCelularConsumer, createChatCelularQueue, parseChatReplies, type ChatCelularReplies } from './chat-celular';
 
 export const TOKEN_HASH_FILE = 'pc.token.sha256';
 /** t-89279f84 — `{url, serviceKeyFile}`: present, the Supabase is the ledger's source (ledger.json is not read). */
@@ -110,6 +112,44 @@ export function readTokenHash(dir: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** The end of the Líder's transcript read for his answers to the phone: enough to hold the turn that read one. */
+const CHAT_TAIL_BYTES = 512 * 1024;
+
+/** The last `bytes` of a file; `null` = unreadable. */
+async function readTail(path: string, bytes: number): Promise<string | null> {
+  try {
+    const handle = await openFile(path, 'r');
+    try {
+      const { size } = await handle.stat();
+      const length = Math.min(size, bytes);
+      const buffer = Buffer.alloc(length);
+      await handle.read(buffer, 0, length, size - length);
+      return buffer.toString('utf8');
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+/** The phone chat's wait for answers on disk (temp → rename, 600); an unreadable file starts empty. */
+function jsonStore(file: string): { load(): ChatCelularReplies | null; save(state: ChatCelularReplies): void } {
+  return {
+    load: () => {
+      try {
+        return parseChatReplies(readFileSync(file, 'utf8'));
+      } catch {
+        return null;
+      }
+    },
+    save: (state) => {
+      writeFileSync(`${file}.tmp`, JSON.stringify(state), { mode: 0o600 });
+      renameSync(`${file}.tmp`, file);
+    },
+  };
 }
 
 /**
@@ -313,15 +353,28 @@ async function main(): Promise<void> {
   const pictures = createPictureStore(dir);
   const setPicture = pictures.set;
   const sessionsDir = join(homedir(), '.donel', 's');
+  // t-c3fbe852 — the Líder único alive in this machine's tmux (the app's mark in its session folder, or the picture).
+  const localLeader = createLocalLeaderFinder({ sessionsDir, liveSessions: tmuxLocalSessions, picture: pictures.get });
   // t-e195b35c — the recados of this machine's sessions; a notice or message for a place off it goes to the PC's relay
   // (queued on disk, no wait: nothing reads where it went, and a sessao_enviar with the PC off answers at once).
-  const recados = createGateRecados({ file: join(dir, 'recados.json'), io, ledger: () => ledger, picture: pictures.get, relay: (message) => relay.send(message, 0) });
+  const recados = createGateRecados({
+    file: join(dir, 'recados.json'),
+    io,
+    ledger: () => ledger,
+    picture: pictures.get,
+    relay: (message) => relay.send(message, 0),
+    leader: localLeader,
+    // A session resumed from another conversation (the Líder that came over with `-r`) writes that one's transcript.
+    transcriptOf: async (sid) => (await findTranscript(currentConversation(sessionsDir, sid) ?? sid)) ?? findTranscript(sid),
+  });
   // t-4c60b815 — the owner's word or decision reaches a session of this machine through its recados, with the PC off;
-  // only a place off this machine (or the Líder único) waits in the PC's relay.
+  // only a place off this machine waits in the PC's relay. t-c3fbe852: the Líder único too, when he lives here.
   const cardWriter: CardWriter = createCardWriter({
     service: () => ledger,
     deliver: deliverLocalFirst(recados.deliverLocal, relay, RELAY_WAIT_MS),
   });
+  /** What goes to the Líder único: his own queue when he lives here, else the PC's relay (no wait). */
+  const toLeader = deliverLocalFirst(recados.deliverLocal, relay, 0);
   // t-52bf8b45 — the phone app's queue decides through the same port as the PWA (dedup by pedido, owner queue check),
   // over the guarded ledger, never `raw`.
   const decisoesPort = createLedgerMobilePort(() => ledger, undefined, () => cardWriter);
@@ -332,7 +385,7 @@ async function main(): Promise<void> {
     provasRoot: ledgerProofsDir(ledgerFile),
     cardWriter: () => cardWriter,
     deliverToLeader: () => async (text, pedidoId) =>
-      (await relay.send({ projectPath: '', placeId: '', text, leaderText: text, ...(pedidoId ? { key: `pedido:${pedidoId}` } : {}) }, RELAY_WAIT_MS)) === 'lider',
+      (await deliverLocalFirst(recados.deliverLocal, relay, RELAY_WAIT_MS)({ projectPath: '', placeId: '', text, leaderText: text, ...(pedidoId ? { key: `pedido:${pedidoId}` } : {}) })) === 'lider',
   });
   // Fails here, not on the first call, when the file is there but unreadable (it would be written over).
   const first = raw.load();
@@ -390,11 +443,12 @@ async function main(): Promise<void> {
       ledger: () => ledger,
       recados,
       linkPedido: (pedidoId, tarefa) => void celular?.linkPedido(pedidoId, tarefa),
-      notice: (message) => relay.send(message, 0),
+      notice: toLeader,
     }),
     ...(process.env.DONEL_LIVRO_ARQUIVO ? { livro: createLivroStore({ filePath: process.env.DONEL_LIVRO_ARQUIVO }) } : {}),
     // t-cddc62fc — the reconciliador's notices reach the Líder único by the relay, out of the owner's phone chat.
-    avisarLider: (texto, chave) => relay.send({ projectPath: '', placeId: '', text: texto, leaderText: texto, key: `reconciliador:${chave}` }, 0),
+    // t-c3fbe852: his own queue when he lives here.
+    avisarLider: async (texto, chave) => (await toLeader({ projectPath: '', placeId: '', text: texto, leaderText: texto, key: `reconciliador:${chave}` })) ?? 'pendente',
   });
   server = await startOracleServer({ host, port, caller: (authorization) => callerOf(authorization, tokenHash(), services(), gates()), handler });
   writeFileSync(join(dir, 'url'), `${server.url}\n`, { mode: 0o600 });
@@ -488,6 +542,8 @@ async function main(): Promise<void> {
     ownerName: () => process.env.ESPELHO_DONO || 'Alexandre',
     ledger: () => ledger,
     returned: guard.returned,
+    // t-c3fbe852 — the Líder único hears of the task the owner asked for (his queue here, else the PC's relay).
+    avisarLider: toLeader,
     log: (line) => console.log(line),
   });
   tarefasPedidas.start();
@@ -502,6 +558,16 @@ async function main(): Promise<void> {
     },
     relay,
     waitMs: RELAY_WAIT_MS,
+    // t-c3fbe852 — with the Líder único alive here: his own queue, and his answer read from his transcript here.
+    local: {
+      deliver: recados.deliverLocal,
+      state: recados.stateOf,
+      tail: async (sid) => {
+        const path = await recados.transcriptOf(sid);
+        return path ? readTail(path, CHAT_TAIL_BYTES) : null;
+      },
+    },
+    store: jsonStore(join(dir, 'chat-celular-respostas.json')),
     replyHint: (shortId) => `Para responder no celular: ssh ${userInfo().username}@${hostname()} python3 ${replyScript} responder ${shortId} - <<'FIM'\n<sua resposta>\nFIM`,
     log: (line) => console.log(line),
   });

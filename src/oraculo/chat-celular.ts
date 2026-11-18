@@ -18,11 +18,23 @@
 // died before sending is queued then) and closes each once the PC acked. A row whose park failed is not sent: its
 // reservation ends and whoever takes it next delivers it, once.
 // Nothing is lost: a row is only closed after the PC's ack; a failure leaves it reserved or parked.
+//
+// Etapa 2 (t-c3fbe852) — with the Líder único alive in this machine's tmux (`local`), the parked row's message goes to
+// its recados queue instead of the relay (the same key), and the row is closed only once the queue says the Líder got
+// it (end of turn, or typed and confirmed). His answer comes from his transcript here: when a turn that read the
+// marker has ended, what he wrote after it goes back (`celular_lider_responder`, the attribution of the desktop
+// router, `answersIn`), once per row (the reply id is kept, and the RPC never writes the same id twice). A key that went
+// to the relay (the Líder left before reading it, or it was there before he came) stays the relay's: never both ways.
+// No Líder here: the relay, as before.
 
+import { randomUUID } from 'node:crypto';
 import type { BoardConfig } from './board-client';
 import { createServiceRequest, type ServiceRequest } from './decisoes';
 import type { Relay } from './relay';
-import { phoneMarker } from '../main/lider/celular-chat';
+import { answersIn, phoneMarker } from '../main/lider/celular-chat';
+import type { OwnerMessage } from '../main/ledger-card-writer';
+import type { LedgerDeliveredTo } from '../shared/ledger/contract';
+import type { RecadoState } from './recados';
 
 const FIRST_DELAY_MS = 5_000;
 const ROUND_MS = 15_000;
@@ -30,6 +42,13 @@ const TAKE_LIMIT = 10;
 const PARKED_LIMIT = 50;
 /** The owner's words given whole up to this; the SQL keeps up to 4000. */
 const MAX_TEXT = 3500;
+/** `celular.lider_mensagens.texto` holds up to 4000 characters. */
+const MAX_REPLY = 4000;
+/** A row delivered here and never answered in this long leaves the wait (the transcript lost it). */
+const MAX_WAIT_MS = 24 * 60 * 60_000;
+const JOINED_REPLY = '↳ respondi junto com a mensagem seguinte.';
+/** Under the owner's words when the Líder reads them here: nothing to run, his answer goes back by itself. */
+export const LOCAL_REPLY_HINT = 'Responda aqui mesmo: o que você escrever ao fim deste turno volta sozinho ao celular.';
 export const DELIVERED_NOTE = 'entregue ao Líder único pela VPS';
 /** `resultado` of a row whose message waits in the relay: `celular_lider_tomar` no longer hands it (019 of donel-celular). */
 export const PARKED = 'na fila do Oráculo da VPS para o Líder único';
@@ -51,6 +70,8 @@ export interface ChatCelularQueue {
   estacionar(id: string, resultado: string): Promise<boolean>;
   /** The rows parked with `resultado` and not delivered yet, oldest first. */
   estacionadas(resultado: string, limit: number): Promise<readonly ChatCelularRow[]>;
+  /** The Líder's answer to `emRespostaA`, under the id `id` (the same id is never written twice). */
+  responder(id: string, emRespostaA: string, texto: string): Promise<void>;
 }
 
 function parseRow(value: unknown): ChatCelularRow | null {
@@ -80,6 +101,9 @@ export function chatCelularQueueOver(rpc: ServiceRequest['rpc']): ChatCelularQue
     async estacionadas(resultado, limit) {
       return parseRows(await rpc('celular_lider_estacionadas', { p_resultado: resultado, p_limite: limit }));
     },
+    async responder(id, emRespostaA, texto) {
+      await rpc('celular_lider_responder', { p_id: id, p_em_resposta_a: emRespostaA, p_texto: texto });
+    },
   };
 }
 
@@ -95,14 +119,91 @@ export function chatText(row: ChatCelularRow, replyHint?: (shortId: string) => s
   return `◆ Do dono, pelo chat do celular ${phoneMarker(row.id)}: «${fitted}»${hint ? `\n${hint}` : ''}`;
 }
 
+/** The Líder único's own queue on this machine (recados.ts) and his transcript. */
+export interface ChatCelularLocal {
+  /**
+   * Queues the message for the Líder único alive here (he reads `localText`; the message itself is what goes to the
+   * relay should he leave before reading it): `'lider'`; `null` = none here (or the key is the relay's).
+   */
+  readonly deliver: (message: OwnerMessage, localText: string) => Promise<LedgerDeliveredTo>;
+  /** The item a key made: its state and the session it went to. */
+  readonly state: (key: string) => { readonly estado: RecadoState; readonly sid: string } | undefined;
+  /** The end of the transcript of that session (`null` = not readable now). */
+  readonly tail: (sid: string) => Promise<string | null>;
+}
+
+/** What waits for the Líder's answer, and the answers that did not go yet (kept across a restart by `store`). */
+export interface ChatCelularReplies {
+  readonly waiting: ReadonlyArray<{ readonly id: string; readonly at: number }>;
+  readonly outbox: ReadonlyArray<{ readonly id: string; readonly emRespostaA: string; readonly texto: string }>;
+}
+
+/** The kept wait, validated: anything else is dropped. */
+export function parseChatReplies(text: string | null): ChatCelularReplies | null {
+  if (!text) return null;
+  try {
+    const raw = JSON.parse(text) as { waiting?: unknown; outbox?: unknown };
+    const waiting = Array.isArray(raw.waiting) ? raw.waiting.filter((entry): entry is { id: string; at: number } => typeof entry?.id === 'string' && typeof entry?.at === 'number') : [];
+    const outbox = Array.isArray(raw.outbox)
+      ? raw.outbox.filter(
+          (reply): reply is { id: string; emRespostaA: string; texto: string } =>
+            typeof reply?.id === 'string' && typeof reply?.emRespostaA === 'string' && typeof reply?.texto === 'string',
+        )
+      : [];
+    return { waiting, outbox };
+  } catch {
+    return null;
+  }
+}
+
+/** A "Stop hook feedback" prompt (how an end-of-turn delivery is recorded) as the plain prompt the Líder read. */
+export function withStopFeedbackRead(tail: string): string {
+  return tail
+    .split('\n')
+    .map((line) => {
+      if (!line.includes('Stop hook feedback')) return line;
+      try {
+        const entry = JSON.parse(line) as { type?: unknown; isMeta?: unknown; message?: { content?: unknown } };
+        const content = entry.message?.content;
+        if (entry.type !== 'user' || entry.isMeta !== true || typeof content !== 'string' || !content.startsWith('Stop hook feedback:')) return line;
+        return JSON.stringify({ ...entry, isMeta: false, message: { ...entry.message, content: content.slice('Stop hook feedback:'.length).trim() } });
+      } catch {
+        return line;
+      }
+    })
+    .join('\n');
+}
+
+/** The last main user/assistant entry of the tail is an assistant's end of turn: nothing he writes now is half done. */
+export function turnEndedIn(tail: string): boolean {
+  const lines = tail.split('\n');
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    let entry: { type?: unknown; isSidechain?: unknown; message?: { stop_reason?: unknown } };
+    try {
+      entry = JSON.parse(lines[index]!) as typeof entry;
+    } catch {
+      continue;
+    }
+    if ((entry.type !== 'user' && entry.type !== 'assistant') || entry.isSidechain === true) continue;
+    return entry.type === 'assistant' && (entry.message?.stop_reason === 'end_turn' || entry.message?.stop_reason === 'stop_sequence');
+  }
+  return false;
+}
+
 export interface ChatCelularConsumerDeps {
   /** The queue, or null while `decisoes.json` is missing or invalid (read at each round). */
   readonly queue: () => ChatCelularQueue | null;
-  readonly relay: Pick<Relay, 'send' | 'pending'>;
+  readonly relay: Pick<Relay, 'send' | 'pending'> & Partial<Pick<Relay, 'byKey'>>;
   /** How long a message waits for the PC's ack before the round moves on (it stays queued either way). */
   readonly waitMs: number;
   /** The line under the owner's words telling the Líder how to answer on the phone; absent = none. */
   readonly replyHint?: (shortId: string) => string;
+  /** t-c3fbe852 — the Líder único's own queue here; absent = always the relay. */
+  readonly local?: ChatCelularLocal;
+  /** Where the wait for answers survives a restart; absent = memory only. */
+  readonly store?: { load(): ChatCelularReplies | null; save(state: ChatCelularReplies): void };
+  readonly newId?: () => string;
+  readonly now?: () => number;
   /** One line per event: never the key, never the owner's text. */
   readonly log?: (line: string) => void;
 }
@@ -126,6 +227,102 @@ export function createChatCelularConsumer(deps: ChatCelularConsumerDeps): ChatCe
     const text = chatText(row, deps.replyHint);
     return deps.relay.send({ projectPath: '', placeId: '', text, leaderText: text, key: chatKey(row.id) }, waitMs);
   };
+  const now = deps.now ?? Date.now;
+  const newId = deps.newId ?? randomUUID;
+  const saved = (() => {
+    try {
+      return deps.store?.load() ?? null;
+    } catch {
+      return null;
+    }
+  })();
+  let waiting: Array<{ id: string; at: number }> = [...(saved?.waiting ?? [])];
+  const outbox: Array<{ id: string; emRespostaA: string; texto: string }> = [...(saved?.outbox ?? [])];
+  const persist = (): void => {
+    try {
+      deps.store?.save({ waiting, outbox });
+    } catch (error) {
+      log(`não gravei a espera das respostas: ${errorText(error)}`);
+    }
+  };
+
+  /** Whether the relay holds `key`; an unreadable fila.json = not known (the local queue still checks the key). */
+  const relayKnows = (key: string): boolean => {
+    try {
+      return deps.relay.byKey?.(key) !== undefined;
+    } catch {
+      return false;
+    }
+  };
+
+  /** To the Líder único alive here (his queue, same key): true = queued (or already there). */
+  async function toLocal(row: ChatCelularRow): Promise<boolean> {
+    if (!deps.local) return false;
+    const relayText = chatText(row, deps.replyHint);
+    try {
+      return (await deps.local.deliver({ projectPath: '', placeId: '', text: relayText, leaderText: relayText, key: chatKey(row.id) }, `${chatText(row)}\n${LOCAL_REPLY_HINT}`)) === 'lider';
+    } catch (error) {
+      log(`${phoneMarker(row.id)} não entrou na fila do Líder único daqui: ${errorText(error)}`);
+      return false;
+    }
+  }
+
+  /** The Líder read it here: the row is closed and waits for his answer. */
+  async function markLocal(queue: ChatCelularQueue, row: ChatCelularRow): Promise<void> {
+    if (!waiting.some((entry) => entry.id === row.id)) {
+      waiting.push({ id: row.id, at: now() });
+      persist();
+    }
+    await mark(queue, row, 'lider');
+  }
+
+  /** The answers that did not go, then the ones the Líder's transcript holds now. A failure keeps them for the next round. */
+  async function answers(queue: ChatCelularQueue): Promise<void> {
+    if (!deps.local) return;
+    const before = waiting.length;
+    waiting = waiting.filter((entry) => now() - entry.at < MAX_WAIT_MS);
+    if (waiting.length !== before) {
+      log(`${before - waiting.length} mensagem(ns) do celular sem resposta do Líder em 24 h saíram da espera`);
+      persist();
+    }
+    const bySid = new Map<string, string[]>();
+    for (const entry of waiting) {
+      const sid = deps.local.state(chatKey(entry.id))?.sid;
+      if (sid) bySid.set(sid, [...(bySid.get(sid) ?? []), entry.id]);
+    }
+    for (const [sid, ids] of bySid) {
+      let tail: string | null;
+      try {
+        tail = await deps.local.tail(sid);
+      } catch {
+        tail = null;
+      }
+      if (!tail || !turnEndedIn(tail)) continue;
+      const found = answersIn(withStopFeedbackRead(tail), ids);
+      if (!found.size) continue;
+      const answered = ids.filter((id) => found.has(id));
+      waiting = waiting.filter((entry) => !found.has(entry.id));
+      // Read together (nothing written between them): the whole answer on the newest, the others point to it.
+      answered.forEach((id, index) => {
+        const text = found.get(id)!.trim();
+        const joined = answered.slice(index + 1).some((other) => found.get(other)!.trim() === text);
+        outbox.push({ id: newId(), emRespostaA: id, texto: joined ? JOINED_REPLY : text.length <= MAX_REPLY ? text : `${text.slice(0, MAX_REPLY - 1)}…` });
+      });
+      persist();
+    }
+    while (outbox.length) {
+      const reply = outbox[0]!;
+      try {
+        await queue.responder(reply.id, reply.emRespostaA, reply.texto);
+      } catch (error) {
+        log(`${phoneMarker(reply.emRespostaA)} resposta do Líder não foi ao celular: ${errorText(error)}`);
+        return;
+      }
+      outbox.shift();
+      persist();
+      log(`${phoneMarker(reply.emRespostaA)} resposta do Líder único enviada ao celular`);
+    }
+  }
 
   /** The PC acked: closes the row (always parked by then). A failure leaves it parked, for the next round to close. */
   async function mark(queue: ChatCelularQueue, row: ChatCelularRow, to: Exclude<SendResult, 'pendente'>): Promise<void> {
@@ -168,57 +365,84 @@ export function createChatCelularConsumer(deps: ChatCelularConsumerDeps): ChatCe
         return;
       }
       offLogged = false;
-      // 1. The parked rows: the relay answers where each went once the PC acked (the key joins, nothing new is queued).
-      let parked: readonly ChatCelularRow[] = [];
+      await deliverRows(queue);
+      // 3. His answers, from his transcript here.
+      await answers(queue);
+    } finally {
+      inRound = false;
+    }
+  }
+
+  /** Steps 1 and 2: the parked rows, then the new ones. */
+  async function deliverRows(queue: ChatCelularQueue): Promise<void> {
+    // 1. The parked rows: the relay answers where each went once the PC acked (the key joins, nothing new is queued).
+    let parked: readonly ChatCelularRow[] = [];
+    try {
+      parked = await queue.estacionadas(PARKED, PARKED_LIMIT);
+    } catch (error) {
+      log(`não li as mensagens estacionadas: ${errorText(error)}`);
+    }
+    if (parked.length) {
+      // Still pending in the relay: nothing to ask (and no new notice to the PC every round).
+      // An unreadable fila.json (it throws) does not stop the rows in the Líder's queue here from closing.
+      let pendingKeys: ReadonlySet<string> = new Set();
       try {
-        parked = await queue.estacionadas(PARKED, PARKED_LIMIT);
+        pendingKeys = new Set(deps.relay.pending().map((item) => item.key));
       } catch (error) {
-        log(`não li as mensagens estacionadas: ${errorText(error)}`);
+        log(`não li a fila do PC: ${errorText(error)}`);
       }
-      if (parked.length) {
-        // Still pending in the relay: nothing to ask (and no new notice to the PC every round).
-        const pendingKeys = new Set(deps.relay.pending().map((item) => item.key));
-        for (const row of parked) {
-          if (pendingKeys.has(chatKey(row.id))) continue;
-          let to: SendResult;
-          try {
-            to = await send(row, 0);
-          } catch (error) {
-            log(`${phoneMarker(row.id)} não entrou na fila do PC: ${errorText(error)}`);
-            return;
-          }
-          if (to !== 'pendente') await mark(queue, row, to);
+      for (const row of parked) {
+        // In the Líder's queue here: closed once he got it; still waiting there, nothing to do. Gone back to the relay:
+        // the relay's from now on.
+        const here = deps.local?.state(chatKey(row.id));
+        if (here?.estado === 'entregue') {
+          await markLocal(queue, row);
+          continue;
         }
-      }
-      // 2. The new rows.
-      let rows: ChatCelularRow[];
-      try {
-        rows = [...(await queue.tomar(TAKE_LIMIT))].sort((a, b) => a.criada_em.localeCompare(b.criada_em));
-      } catch (error) {
-        log(`não li a fila do chat: ${errorText(error)}`);
-        return;
-      }
-      // Once one waits (the PC is off), the rest go in the queue without waiting each for the ack.
-      let wait = deps.waitMs;
-      for (const row of rows) {
-        if (!(await park(queue, row))) continue;
+        if (here && here.estado !== 'devolvido') continue;
+        if (pendingKeys.has(chatKey(row.id))) continue;
+        // Parked by a daemon that died before sending it, with the Líder here: his queue (unless the relay knows the key).
+        if (!here && !relayKnows(chatKey(row.id)) && (await toLocal(row))) continue;
         let to: SendResult;
         try {
-          to = await send(row, wait);
+          to = await send(row, 0);
         } catch (error) {
-          // Parked: step 1 of the next round sends it.
           log(`${phoneMarker(row.id)} não entrou na fila do PC: ${errorText(error)}`);
           return;
         }
-        if (to === 'pendente') {
-          wait = 0;
-          log(`${phoneMarker(row.id)} na fila do PC, esperando ele entregar ao Líder único`);
-          continue;
-        }
-        await mark(queue, row, to);
+        if (to !== 'pendente') await mark(queue, row, to);
       }
-    } finally {
-      inRound = false;
+    }
+    // 2. The new rows.
+    let rows: ChatCelularRow[];
+    try {
+      rows = [...(await queue.tomar(TAKE_LIMIT))].sort((a, b) => a.criada_em.localeCompare(b.criada_em));
+    } catch (error) {
+      log(`não li a fila do chat: ${errorText(error)}`);
+      return;
+    }
+    // Once one waits (the PC is off), the rest go in the queue without waiting each for the ack.
+    let wait = deps.waitMs;
+    for (const row of rows) {
+      if (!(await park(queue, row))) continue;
+      if (await toLocal(row)) {
+        log(`${phoneMarker(row.id)} na fila do Líder único desta VPS`);
+        continue;
+      }
+      let to: SendResult;
+      try {
+        to = await send(row, wait);
+      } catch (error) {
+        // Parked: step 1 of the next round sends it.
+        log(`${phoneMarker(row.id)} não entrou na fila do PC: ${errorText(error)}`);
+        return;
+      }
+      if (to === 'pendente') {
+        wait = 0;
+        log(`${phoneMarker(row.id)} na fila do PC, esperando ele entregar ao Líder único`);
+        continue;
+      }
+      await mark(queue, row, to);
     }
   }
 

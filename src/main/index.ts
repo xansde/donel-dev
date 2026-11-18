@@ -344,7 +344,7 @@ import { consumeKillRequested, markKillRequested } from './pty-kill-intent';
 import { guardNavigation } from './navigation-guard';
 import { registerPetIpcHandlers } from './pet/pet-ipc';
 import { createLiderService, type LiderService } from './lider/lider-service';
-import { createCelularLiderChat, createSupabaseRpc, parseCelularChatState, type SupabaseAccess } from './lider/celular-chat';
+import { createCelularLiderChat, createSupabaseRpc, desktopTakesPhoneQueue, parseCelularChatState, type SupabaseAccess } from './lider/celular-chat';
 import { createPetService, type PetService } from './pet/pet-service';
 import { createPetWindow } from './pet/pet-window';
 import { readPetSeams } from './pet/pet-seams';
@@ -4465,6 +4465,15 @@ function registerCelularLiderChat(): void {
   const chat = createCelularLiderChat({
     rpc: createSupabaseRpc(access),
     deliver: (text) => (liderService ? liderService.deliver(text) : Promise.resolve({ ok: false, reason: 'A janela do Donel ainda não abriu.' })),
+    // t-c3fbe852 — not while the Líder único lives on the Oráculo's machine: the daemon there takes the queue. No Líder
+    // open, here or on another machine: this desktop takes it (and opens one), as before.
+    mayTake: () =>
+      desktopTakesPhoneQueue({
+        leaderPtyId: liderService?.report().ptyId ?? null,
+        sshTargetOf: (ptyId) => remoteSessions?.sshTargetOf(ptyId),
+        oracle: remoteOracleHost?.state() ?? null,
+        remotes: appConfig.accounts.remotes,
+      }),
     log,
     load: () => parseCelularChatState(configIoDeps.readFileText(statePath())),
     save: (state) => {

@@ -31,6 +31,8 @@ export interface Relay {
    */
   send(message: OwnerMessage, waitMs: number): Promise<Exclude<LedgerDeliveredTo, null> | 'pendente'>;
   pending(): RelayItem[];
+  /** The item of `key`, pending or delivered (kept 7 days); `undefined` = the relay never had it. */
+  byKey(key: string): RelayItem | undefined;
   /** The PC delivered `id`; `null` (nobody open) keeps it queued. `true` = this ack took it out. */
   ack(id: string, deliveredTo: LedgerDeliveredTo): boolean;
 }
@@ -126,6 +128,9 @@ export function createRelay(deps: { readonly filePath: string; readonly io: Conf
     pending() {
       return read().filter((item) => !item.deliveredTo);
     },
+    byKey(key) {
+      return read().find((item) => item.key === key);
+    },
     ack(id, deliveredTo) {
       if (deliveredTo === null) return false;
       const items = read();
@@ -143,11 +148,22 @@ export function createRelay(deps: { readonly filePath: string; readonly io: Conf
 /**
  * t-4c60b815 — the card writer's way out on the VPS: the session that owns the task, when it runs on this machine,
  * hears it from `local` (its recados), with the PC off; only what runs elsewhere (or the Líder único) waits for the PC
- * in the relay. A key the relay already holds stays there (it joins), so one message never goes both ways.
+ * in the relay. A key the relay already holds stays there (it joins, or answers where the PC delivered it), so one
+ * message never goes both ways. The Líder único alive here takes `placeId: ''` the same way (t-c3fbe852).
  */
-export function deliverLocalFirst(local: DeliverOwnerMessage, relay: Relay, waitMs: number): DeliverOwnerMessage {
+/** Whether the relay holds `key` (pending or delivered); an unreadable `fila.json` = not known. */
+function known(relay: Pick<Relay, 'byKey'>, key: string): boolean {
+  try {
+    return relay.byKey(key) !== undefined;
+  } catch {
+    return false;
+  }
+}
+
+export function deliverLocalFirst(local: DeliverOwnerMessage, relay: Pick<Relay, 'send' | 'byKey'>, waitMs: number): DeliverOwnerMessage {
   return async (message) => {
-    const queued = message.key !== undefined && relay.pending().some((item) => item.key === message.key);
+    // An unreadable fila.json (it throws) does not stop the local queue: the key is checked there too.
+    const queued = message.key !== undefined && known(relay, message.key);
     // A local queue that failed (disk, an unreadable recados.json) is not the end: the relay still takes it.
     const here = queued ? null : await local(message).catch(() => null);
     if (here) return here;
