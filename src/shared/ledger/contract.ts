@@ -786,7 +786,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
     if (written) return { ok: true, doc, task: written, repeated: true };
   }
   if (op.op === 'criar') {
-    if (!op.request.trim()) return fail('"pedido" é obrigatório: a frase literal de quem pediu.');
+    if (!op.request.trim()) return fail('"pedido" é obrigatório: o pedido como veio de quem pediu.');
     if (startsWithMark(op.request)) return fail(`"pedido" não pode começar com "${MARK_OPEN}".`);
     if (!op.doneWhen.trim()) return fail('"criterio" é obrigatório: quando a tarefa está pronta.');
     if (!isDueDate(op.due)) return fail('"prazo" tem de ser uma data AAAA-MM-DD.');

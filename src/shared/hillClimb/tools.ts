@@ -48,7 +48,7 @@ export const HILL_CLIMB_TOOLS = [
       type: 'object',
       properties: {
         titulo: { type: 'string', description: `Nome humano da missão (até ${MAX_MISSION_TITLE_CHARS} caracteres, sem código).` },
-        pedido: { type: 'string', description: 'A frase literal de quem pediu.' },
+        pedido: { type: 'string', description: 'O pedido como veio de quem pediu.' },
         alvo: { type: 'string', description: 'O que é "melhor" nesta missão, em texto de gente. O dono e você leem; os juízes NÃO (só o laço compara com o corte).' },
         leitor: {
           type: 'string',
