@@ -110,7 +110,7 @@ const ID = { type: 'string', description: 'Id da tarefa (tarefa_listar).' };
 export const MAX_CALL_KEY_CHARS = 80;
 const KEY = {
   type: 'string',
-  description: `Opcional, até ${MAX_CALL_KEY_CHARS} caracteres: uma chave sua para esta chamada. Repetir com a mesma chave (a resposta não chegou) devolve o que a primeira gravou, com "repetida": true, sem gravar de novo.`,
+  description: `Opcional, até ${MAX_CALL_KEY_CHARS} caracteres: uma chave sua para esta chamada, nova a cada gravação. Repetir a mesma chamada com a mesma chave (a resposta não chegou) devolve o que a primeira gravou, com "repetida": true, sem gravar de novo; a mesma chave numa gravação diferente é recusada.`,
 };
 const BOARD = { type: 'string', description: 'Só o Líder único (que não tem quadro): o quadro, pelo nome ou pela pasta do projeto. As outras sessões usam sempre o próprio.' };
 const STATES: readonly LedgerViewState[] = ['aberta', 'em-execucao', 'entregue', 'aceita', 'rejeitada', 'cancelada'];

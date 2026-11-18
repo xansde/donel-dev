@@ -12,8 +12,11 @@
 //
 // Canal do Donel fora do PC (t-e195b35c, docs/planos/canal-fora-do-pc.md; the freeze of 18/11, 08h13-08h45, when the
 // PC's app froze with the tunnel alive and every VPS session hung on it):
-// - with the session's picture, every `tarefa_*` is answered HERE, PC on or off: the ledger is this daemon's, the PC
-//   only relayed it (and froze). The PC's tool list gets this gate's `tarefa_*` definitions (the key, the reason).
+// - with the session's picture and the recados queue (which gives the notices the PC gave after a task), every
+//   `tarefa_*` is answered HERE, PC on or off: the ledger is this daemon's, the PC only relayed it (and froze). Without
+//   the queue, the PC on still answers them. The PC's tool list gets this gate's `tarefa_*` definitions (the key, the
+//   reason). A task born of an owner's request is linked to it on his phone here too (`linkPedido`).
+// - a forward that connected and then hears nothing for 10 min is a 502; one the gate answered itself is let go.
 // - `sessao_enviar` goes to the recados queue (`GateRecados`) when there is one; a target off this machine goes on.
 // - the tunnel must connect within `CONNECT_MS` (else: the PC is off, nothing was sent); what can be answered here
 //   without harm (initialize, the tool list, ping, notifications, `sessao_quem_sou`, `sessao_listar`) is answered here
@@ -87,8 +90,11 @@ export interface GateResponse {
   readonly body: string;
 }
 
-/** Passes a call to the session's tunnel; `'desligado'` = nothing answered there (the PC is off). */
-export type GateForward = (port: number, request: GateRequest) => Promise<GateResponse | 'desligado'>;
+/**
+ * Passes a call to the session's tunnel; `'desligado'` = nothing answered there (the PC is off). `signal`: the gate
+ * answered the call itself (the PC was silent), so the pending forward is let go.
+ */
+export type GateForward = (port: number, request: GateRequest, signal?: AbortSignal) => Promise<GateResponse | 'desligado'>;
 
 export interface GateDeps {
   /** `~/.donel/s`. */
@@ -102,6 +108,8 @@ export interface GateDeps {
   readonly now?: () => number;
   /** The recados queue (`sessao_enviar` here, the notices after a task, the hooks' route); absent = none. */
   readonly recados?: GateRecados;
+  /** Pedir pelo Oráculo: the task born of an owner's request (`pedidoDoDono`) shows on his phone as "virou tarefa". */
+  readonly linkPedido?: (pedidoId: string, tarefa: { readonly id: string; readonly titulo: string }) => void;
   /** Runs a `tarefa_*` as `caller`; default: `runLedgerTool` on this daemon's ledger. */
   readonly runLedger?: (caller: LedgerCaller, call: LedgerToolCall) => Promise<LedgerToolAnswer>;
   readonly timeouts?: { readonly localAnswerMs?: number };
@@ -255,6 +263,15 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
       // No `remote`: the proof files named by a VPS session are here, on this machine.
       const result = await runLedger(caller, call);
       if (!result.ok) return { kind: 'error', text: result.text };
+      // As the PC does (executeLedgerTool): the owner's phone shows "virou tarefa" with its name.
+      if (call.tool === 'tarefa_criar' && call.pedidoDoDono && deps.linkPedido) {
+        try {
+          const created = JSON.parse(result.text) as { id?: unknown };
+          if (typeof created.id === 'string') deps.linkPedido(call.pedidoDoDono, { id: created.id, titulo: call.titulo ?? call.pedido.slice(0, 80) });
+        } catch (error) {
+          log(`[oraculo] portão: ligar o pedido ${call.pedidoDoDono} à tarefa falhou: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
       if (deps.recados) {
         // The notices never hold the answer, nor fail it.
         const failed = (error: unknown): void => log(`[oraculo] portão: aviso depois de ${call.tool} falhou: ${error instanceof Error ? error.message : String(error)}`);
@@ -324,15 +341,18 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     // The board answers here even with the PC on: it is not the PC's.
     if (cards && call && isCardToolName(call.name)) return (await local(sid, request.body, cards, 'ligado')).response;
     // The ledger is this daemon's: with the session's picture its tasks never wait on the PC (the Líder único's, and a
-    // picture that does not say the place, still go to the PC, which knows them).
-    if (call && isLedgerToolName(call.name) && mine && typeof callerFromPicture(mine) !== 'string') return (await local(sid, request.body, cards, 'ligado')).response;
+    // picture that does not say the place, still go to the PC, which knows them). Only with the recados queue: it
+    // gives the notices the PC gives after a task (the Líder hears a delivery, a "travada"); without it, the PC on
+    // answers, as before, so no notice is lost (revisão do #483).
+    if (call && isLedgerToolName(call.name) && mine && deps.recados && typeof callerFromPicture(mine) !== 'string') return (await local(sid, request.body, cards, 'ligado')).response;
     let recadosTried = false;
     if (call?.name === 'sessao_enviar' && mine && deps.recados) {
       const sent = await local(sid, request.body, cards, 'ligado', true);
       if (!sent.passOn) return sent.response;
       recadosTried = true;
     }
-    const forwarding = deps.forward(meta.mcpPort, request).catch((): GateResponse => BAD_GATEWAY);
+    const letGo = new AbortController();
+    const forwarding = deps.forward(meta.mcpPort, request, letGo.signal).catch((): GateResponse => BAD_GATEWAY);
     let forwarded: GateResponse | 'desligado';
     if (message && answersWithoutPc(message, mine)) {
       let timer: ReturnType<typeof setTimeout> | undefined;
@@ -342,6 +362,7 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
       const first = await Promise.race([forwarding, silent]);
       clearTimeout(timer);
       if (first === 'sem-resposta') {
+        letGo.abort();
         log(`[oraculo] portão: o PC não respondeu ${String(message.method)} da sessão ${sid} em ${localAnswerMs} ms; respondi daqui.`);
         return (await local(sid, request.body, cards, 'sem-resposta')).response;
       }
@@ -358,7 +379,7 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
 export interface TunnelForwardOptions {
   /** The TCP connection must complete within this (default `CONNECT_MS`). */
   readonly connectMs?: number;
-  /** The whole answer, once connected (default 10 min: a tool may run that long on the PC). */
+  /** Silence on the connection once connected (default 10 min: a tool may run that long on the PC); then a 502. */
   readonly timeoutMs?: number;
   /** Opens the connection (the tests give a socket that never connects). */
   readonly connect?: (port: number) => Socket;
@@ -374,15 +395,24 @@ export function createTunnelForward(options: TunnelForwardOptions = {}): GateFor
   const connectMs = options.connectMs ?? CONNECT_MS;
   const timeoutMs = options.timeoutMs ?? FORWARD_TIMEOUT_MS;
   const open = options.connect ?? ((port: number) => netConnect({ host: '127.0.0.1', port }));
-  return (port, request) =>
+  return (port, request, signal) =>
     new Promise((resolve) => {
       let settled = false;
+      const socket = open(port);
       const finish = (value: GateResponse | 'desligado'): void => {
         if (settled) return;
         settled = true;
+        signal?.removeEventListener('abort', letGo);
+        socket.setTimeout(0);
         resolve(value);
       };
-      const socket = open(port);
+      // The gate answered it itself: drop the connection (a 502 nobody reads).
+      const letGo = (): void => {
+        socket.destroy();
+        finish(BAD_GATEWAY);
+      };
+      if (signal?.aborted) return letGo();
+      signal?.addEventListener('abort', letGo, { once: true });
       const notConnected = (): void => {
         clearTimeout(connectTimer);
         socket.destroy();
@@ -393,11 +423,16 @@ export function createTunnelForward(options: TunnelForwardOptions = {}): GateFor
       socket.once('connect', () => {
         clearTimeout(connectTimer);
         socket.off('error', notConnected);
+        // The socket is handed to the request already connected, so the request's own `timeout` never fires (revisão
+        // do #483): the silence is watched on the socket itself. A PC that took the call and froze is a 502, never
+        // the PC off: the call may have run there.
+        socket.setTimeout(timeoutMs, () => socket.destroy(new Error('timeout')));
+        socket.once('error', () => finish(BAD_GATEWAY));
         const headers: Record<string, string> = { Host: `127.0.0.1:${port}` };
         for (const [name, value] of Object.entries(request.headers)) if (!name.startsWith('x-donel-')) headers[name] = value;
         if (request.authorization) headers.Authorization = request.authorization;
         if (request.body) headers['Content-Length'] = String(Buffer.byteLength(request.body));
-        const outgoing = httpRequest({ host: '127.0.0.1', port, path: '/mcp', method: request.method, headers, timeout: timeoutMs, createConnection: () => socket }, (res) => {
+        const outgoing = httpRequest({ host: '127.0.0.1', port, path: '/mcp', method: request.method, headers, createConnection: () => socket }, (res) => {
           const chunks: Buffer[] = [];
           res.on('data', (chunk: Buffer) => chunks.push(chunk));
           res.on('end', () => {
@@ -410,7 +445,6 @@ export function createTunnelForward(options: TunnelForwardOptions = {}): GateFor
           });
           res.on('error', () => finish(BAD_GATEWAY));
         });
-        outgoing.on('timeout', () => outgoing.destroy(new Error('timeout')));
         outgoing.on('error', () => finish(BAD_GATEWAY));
         outgoing.end(request.body);
       });

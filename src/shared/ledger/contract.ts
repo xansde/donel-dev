@@ -668,16 +668,18 @@ const REPEATABLE_OPS: ReadonlySet<LedgerOp['op']> = new Set(['criar', 'carta', '
  * transfer made again after the task came back are new writes.
  * The event matches by the call's key (`requestId`); an event without a key (written by a daemon older than the key,
  * which drops it) matches by what the call wrote: the same request, criterion, due date, owner and replaced task on
- * the same board, the same progress text, the same cancel reason, the same transfer to the same place.
+ * the same board, the same progress text, the same cancel reason, the same transfer to the same place. A key matches
+ * only a write of the same thing too (revisão do #483): the same literal request on the same board, the same progress
+ * text, the same cancel reason; the key reused for another write is `keyTakenBy`'s, never a silent repeat.
  */
 export function repeatedWrite(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, now: number): LedgerTask | null {
   if (!REPEATABLE_OPS.has(op.op)) return null;
   const key = 'requestId' in op && isRequestId(op.requestId) ? op.requestId : undefined;
-  const matches = (event: LedgerEvent | undefined, same: (event: LedgerEvent) => boolean): boolean =>
+  const matches = (event: LedgerEvent | undefined, same: (event: LedgerEvent) => boolean, sameKeyed: (event: LedgerEvent) => boolean = same): boolean =>
     event !== undefined &&
     sameActor(event.by, actor) &&
     Math.abs(now - event.at) <= REPEAT_WRITE_WINDOW_MS &&
-    (event.requestId !== undefined ? key !== undefined && event.requestId === key : same(event));
+    (event.requestId !== undefined ? key !== undefined && event.requestId === key && sameKeyed(event) : same(event));
   const latest = (task: LedgerTask, sort: (event: LedgerEvent) => boolean): LedgerEvent | undefined => [...task.events].reverse().find(sort);
   const isTransfer = (event: LedgerEvent): boolean => event.kind === 'criada' && (event.text ?? '').startsWith(`${MARK_OPEN}transferida de `);
   if (op.op === 'criar') {
@@ -697,6 +699,8 @@ export function repeatedWrite(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
             task.due === op.due &&
             owner === op.ownerPlaceId &&
             (replaces ? born.includes(`${MARK_OPEN}substitui ${replaces}⟧`) : !born.includes(`${MARK_OPEN}substitui `)),
+          // By the key: the same literal request on the same board (the rest may be worded again).
+          () => task.projectPath === op.projectPath && task.request === op.request,
         )
       )
         return task;
@@ -731,9 +735,26 @@ export function repeatedWrite(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
   if (op.op === 'transferir') {
     const to = op.to.trim();
     if (task.ownerPlaceId !== to) return null;
-    return matches(latest(task, isTransfer), (event) => (event.text ?? '').includes(` para ${to}⟧`)) ? task : null;
+    return matches(latest(task, isTransfer), (event) => (event.text ?? '').includes(` para ${to}⟧`), () => true) ? task : null;
   }
   return null;
+}
+
+/**
+ * 18/11 (revisão do #483) — the task where `actor` already wrote with `op`'s key, within the window, when that write is
+ * not this one (`repeatedWrite` said no): a session that reuses a short key ("andamento") for another write. One key,
+ * one write: the caller refuses it, so nothing is lost silently nor written twice. A step on a task looks at that task
+ * only; a new task looks at every task.
+ */
+export function keyTakenBy(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, now: number): LedgerTask | null {
+  const key = 'requestId' in op && isRequestId(op.requestId) ? op.requestId : undefined;
+  if (key === undefined) return null;
+  const used = (task: LedgerTask): boolean => task.events.some((event) => event.requestId === key && sameActor(event.by, actor) && Math.abs(now - event.at) <= REPEAT_WRITE_WINDOW_MS);
+  if ('id' in op) {
+    const task = doc.tasks[op.id];
+    return task && used(task) ? task : null;
+  }
+  return Object.values(doc.tasks).find(used) ?? null;
 }
 
 /**
