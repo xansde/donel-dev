@@ -43,10 +43,23 @@ export function serviceActor(name: string): LedgerActor {
   return { kind: 'lugar', placeId: `${SERVICE_PLACE_PREFIX}${name}`, roleId: SERVICE_ROLE };
 }
 
+/**
+ * t-ac3f20c6 — the reconciliador (cron of the VPS, item 13 of the lean structure) hands the Líder único the live task
+ * of a place it saw closed. That transfer is the one thing it does beyond the other services: to "lider" only, with
+ * `ownerGone`, and the ledger checks the same rule (contract.ts, `transferir`).
+ */
+export const RECONCILER_SERVICE = 'reconciliador';
+
 /** Why a service may not send `op`; `null` = may (the ledger's rules still apply after). */
-export function serviceOpRefusal(op: unknown): string | null {
+export function serviceOpRefusal(op: unknown, name?: string): string | null {
   if (typeof op !== 'object' || op === null || typeof (op as { op?: unknown }).op !== 'string') return 'op inválida';
   const { op: kind, proofs, doneBy, requestedBy, closeAlone } = op as { op: string; proofs?: unknown; doneBy?: unknown; requestedBy?: unknown; closeAlone?: unknown };
+  if (kind === 'transferir' && name === RECONCILER_SERVICE) {
+    const { to, ownerGone, reason } = op as { to?: unknown; ownerGone?: unknown; reason?: unknown };
+    if (to !== 'lider' || ownerGone !== true) return 'o reconciliador só passa ao Líder único ("lider") a tarefa de um lugar fechado (ownerGone)';
+    if ((op as { risk?: unknown }).risk !== undefined) return 'o reconciliador não muda o risco: quem decide é o Líder';
+    return typeof reason === 'string' && reason.trim() ? null : 'motivo obrigatório';
+  }
   if (!SERVICE_OPS.has(kind)) return 'serviço só cria, assume e entrega tarefas';
   // The owner's mark puts the task in the owner's progress (Jobu); a service names the person, never the owner.
   if (typeof requestedBy === 'string' && cleanAskedBy(requestedBy).toLowerCase() === ASKED_BY_OWNER) return 'serviço não marca pedido do dono';
@@ -58,4 +71,4 @@ export function serviceOpRefusal(op: unknown): string | null {
   return null;
 }
 
-export type ServiceOp = Extract<LedgerOp, { op: 'criar' | 'assumir' | 'entregar' }>;
+export type ServiceOp = Extract<LedgerOp, { op: 'criar' | 'assumir' | 'entregar' | 'transferir' }>;

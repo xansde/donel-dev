@@ -942,7 +942,9 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       if (to === task.ownerPlaceId) return fail(`A tarefa já é de ${to}.`);
       if (!reason) return fail('"motivo" é obrigatório: por que a tarefa muda de dono.');
       if (startsWithMark(reason)) return fail(`"motivo" não pode começar com "${MARK_OPEN}".`);
-      const may = actor.kind === 'dono' || isOwnerPlace || isLeaderRole(actor.roleId) || (op.ownerGone === true && actor.placeId === to);
+      // t-ac3f20c6 — the reconciliador service passes a closed place's task to the Líder único ("lider").
+      const reconciler = op.ownerGone === true && to === 'lider' && op.risk === undefined && actor.kind === 'lugar' && actor.placeId === `${SERVICE_PLACE_PREFIX}reconciliador`;
+      const may = actor.kind === 'dono' || isOwnerPlace || isLeaderRole(actor.roleId) || (op.ownerGone === true && actor.placeId === to) || reconciler;
       if (!may)
         return fail(`Só o Líder, o dono, o lugar dono (${task.ownerPlaceId}) ou, com o lugar dono fechado ou fora do quadro, quem assume o trabalho passa a tarefa adiante.`);
       const state: LedgerTaskState = task.state === 'em-execucao' ? 'aberta' : task.state;
