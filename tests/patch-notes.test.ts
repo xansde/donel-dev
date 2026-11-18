@@ -88,7 +88,7 @@ describe('novidades geradas do git log', () => {
       ['src/a.ts', 'fix: ressalvas do revisor\n\nTexto interno da revisão.'],
       ['src/a.ts', 'fix: ressalvas do revisor'],
     ]);
-    pr(2, 'fix: trava que volta avisa de novo', [['src/b.ts', 'fix: trava\n\nNota: o aviso volta quando a trava volta.']]);
+    pr(2, 'fix: trava que volta avisa de novo', [['src/b.ts', 'fix: trava\n\nt-2eedda0d, Nota: o aviso volta quando a trava volta.']]);
     pr(3, 'feat: novidade já escrita à mão', [
       ['src/c.ts', 'feat: c'],
       ['src/renderer/src/patchnotes/notes/2026-11-18-0700-c.json', 'fix: novidade'],

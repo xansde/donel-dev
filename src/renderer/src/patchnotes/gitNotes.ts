@@ -70,6 +70,8 @@ export const GIT_LOG_FORMAT = `${RECORD}%H${FIELD}%P${FIELD}%cI${FIELD}%B${FIELD
 
 const SUBJECT = /^(feat|fix)(\([^)]*\))?!?:\s*(.+)$/;
 const TASK_ID = /\s*\(t-[0-9a-z]+\)/gi;
+// Id de tarefa solto no começo do texto ("t-89279f84, item 4: …").
+const LEADING_TASK_ID = /^t-[0-9a-f]{8}\b[,:;]?\s*/i;
 const PR_REF = /\s*\((?:#|PR\s*#?)\d+\)/gi;
 const GITHUB_MERGE = /^Merge pull request #\d+ from \S+/;
 const REVERTS = /This reverts commit ([0-9a-f]{7,40})/g;
@@ -151,7 +153,7 @@ function sourceOf(change: GitChange): { subject: string; bodyFrom: string } | nu
 }
 
 function clean(text: string): string {
-  return text.replace(TASK_ID, '').replace(PR_REF, '').trim();
+  return text.replace(TASK_ID, '').replace(PR_REF, '').trim().replace(LEADING_TASK_ID, '');
 }
 
 /** Hashes desfeitos por um `Revert` (`This reverts commit <hash>`) em qualquer mensagem. */
