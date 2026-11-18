@@ -51,6 +51,8 @@ export interface LedgerPassOnRequest {
   readonly gone: 'fechada' | 'nao-comecou';
   /** A place id of the same board, or `'lider'`. */
   readonly to: string;
+  /** 18/11 (t-e195b35c, item 13): `to` is the successor of the closed place (same role, same opener); the record says "renovação". */
+  readonly renewal?: true;
 }
 
 /** What moved for one request: the tasks now owned by `to`. */

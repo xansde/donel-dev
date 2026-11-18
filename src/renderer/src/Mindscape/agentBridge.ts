@@ -36,7 +36,9 @@ import {
 } from '../../../shared/mindscape/agent-tools';
 import { SEND_ANSWER_BY_MS, type MindscapeBoardResponse } from '../../../shared/mindscape/channels';
 import { LEADER_OF_ALL, isLeaderOfAllTab, knownBoards, liveLeaderOfAllTab, resolveBoard, type KnownBoard } from '../../../shared/mindscape/leader';
-import { BOARD_LEADER, LEADER_OF_ALL_FROM, boardLeaders, canFaxineiroClose, canReach, canReachLeader, findPlace, isBoardLeader, isBoardOrchestrator, MY_OPENER, openersOf, whoHears } from '../../../shared/mindscape/reach';
+import { BOARD_LEADER, LEADER_OF_ALL_FROM, boardLeaders, canFaxineiroClose, canReach, canReachLeader, findPlace, isBoardLeader, isBoardOrchestrator, MY_OPENER, openersOf, successorOf, whoHears, type ListedPlace } from '../../../shared/mindscape/reach';
+import { resolveAddress } from '../../../shared/mindscape/address';
+import { reviewLink } from '../../../shared/ledger/revisao';
 import { FAXINEIRO_OPENER, PC_MACHINE_ID, type FaxineiroLogEntry, type OpeningRoom, type SessionView } from '../../../shared/faxineiro/triggers';
 import type { FaxineiroWakeOrder } from '../../../shared/faxineiro/ipc';
 import type { LedgerPassedOn, LedgerPassOnRequest, LedgerTurnRecord, LedgerTurnRecorded } from '../../../shared/ledger/channels';
@@ -283,6 +285,9 @@ export interface AgentBridgePorts {
 /** Sessões remotas — the process lives on the place but its ssh dropped (main/remote-link.ts); never "fechada". */
 const LINK_LOST = 'sem ligação';
 
+/** `estado` of a place whose session is gone: a notice for it has nobody to reach. */
+const NOT_LIVE_STATES: ReadonlySet<string> = new Set(['fechada', 'nao-comecou']);
+
 const STATE_NAMES: Readonly<Record<SemaphoreState, string>> = {
   working: 'trabalhando',
   waiting: 'parada',
@@ -309,6 +314,18 @@ function lastSegment(path: string): string {
 }
 
 type Answer = Omit<MindscapeBoardResponse, 'requestId'>;
+
+/** 18/11 (t-e195b35c, item 5) — the place a signed notice goes to (`aviso_imediato` with `para`), not `whoHears`. */
+interface NoticeTarget {
+  readonly projectPath: string;
+  readonly placeId: string;
+}
+
+/** A notice the Oráculo signs itself (`para`): with its task, it opens with "[t-xxxx] título: objetivo" too. */
+function signedNoticeLine(words: string, source: TaskHeaderSource | null): string {
+  const text = `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
+  return source ? `◆ ${taskHeaderLine(source)}\n\n${text}` : `◆ ${text}`;
+}
 
 /** How a message to the Líder único says why it came (`motivo` of `sessao_enviar`). */
 const LEADER_REASON_WORDS: Readonly<Record<LeaderMessageReason, string>> = { 'tarefa-completa': 'tarefa completa', bloqueio: 'bloqueio' };
@@ -348,7 +365,7 @@ export class AgentBridge {
   /** Tab → the urgent situation already queued (permission, failure): queued once until it clears. */
   private readonly toldUrgent = new Map<string, string>();
   /** What cannot wait and was not taken yet by a Líder's CLI (`tab:<id>` for a situation, `n:<seq>` for the rest). */
-  private readonly pendingUrgent = new Map<string, { readonly tabId: string; readonly words: string; readonly transient: boolean; readonly taskId?: string; sending: boolean }>();
+  private readonly pendingUrgent = new Map<string, { readonly tabId: string; readonly words: string; readonly transient: boolean; readonly taskId?: string; readonly to?: NoticeTarget; sending: boolean }>();
   /**
    * t-e5575f78 — `projectPath\nplaceId` → the tasks that reached that place by `tarefa` of `sessao_enviar` /
    * `sessao_abrir`, newest last: a notice about a place that owns no live task carries the newest still open. Memory
@@ -492,9 +509,15 @@ export class AgentBridge {
   /** Names who takes the work of each gone place, has the main move it, and tells whoever got something. */
   private async passOn(gone: readonly Omit<LedgerPassOnRequest, 'to'>[]): Promise<void> {
     if (!this.ports.passOn || gone.length === 0) return;
-    // Dono, 09/11: the same rule as the notices (`whoHears`): the first live place above by the arrows, else the Líder
-    // of the board, else the Líder único.
-    const requests = gone.map((request) => ({ ...request, to: whoHears(this.board(request.projectPath), request.placeId, (id) => this.hears(request.projectPath, id)) }));
+    // 18/11 (t-e195b35c, item 13): a closed place that renewed into a new place (same role, opened by the same place:
+    // `successorOf`) passes its tasks to it. Else, dono 09/11: the same rule as the notices (`whoHears`): the first live
+    // place above by the arrows, else the Líder of the board, else the Líder único.
+    const requests: LedgerPassOnRequest[] = gone.map((request) => {
+      const board = this.board(request.projectPath);
+      const successor = request.gone === 'fechada' ? successorOf(board, this.listedPlaces(request.projectPath), request.placeId) : undefined;
+      if (successor) return { ...request, to: successor, renewal: true };
+      return { ...request, to: whoHears(board, request.placeId, (id) => this.hears(request.projectPath, id)) };
+    });
     let passed: readonly LedgerPassedOn[] = [];
     try {
       passed = await this.ports.passOn(requests);
@@ -511,7 +534,8 @@ export class AgentBridge {
       const role = card?.kind === 'session' ? this.roleName(card.roleId) : undefined;
       const which = moved.tasks.map((task) => `${task.id}${task.title ? ` «${task.title}»` : ''}`).join(', ');
       const where = leader ? `, quadro ${this.boardName(moved.projectPath)}` : '';
-      const why = gone.find((request) => request.projectPath === moved.projectPath && request.placeId === moved.placeId)?.gone === 'nao-comecou' ? 'não começou' : 'fechou';
+      const request = requests.find((candidate) => candidate.projectPath === moved.projectPath && candidate.placeId === moved.placeId);
+      const why = request?.renewal ? 'fechou e você é o lugar que o sucede' : request?.gone === 'nao-comecou' ? 'não começou' : 'fechou';
       this.ports.sendLine(
         target.id,
         `◆ O lugar ${role ? `${role} ` : ''}(${moved.placeId}${where}) ${why}, e ${moved.tasks.length === 1 ? 'esta tarefa passou' : 'estas tarefas passaram'} para você: ${which}. Leia com tarefa_ver e assuma com tarefa_assumir (ou passe adiante com tarefa_transferir).`,
@@ -762,6 +786,18 @@ export class AgentBridge {
     });
   }
 
+  /** The places of a board as `sessao_listar` gives them (role, state, who opened it), for address.ts and reach.ts. */
+  private listedPlaces(projectPath: string): ListedPlace[] {
+    const board = this.board(projectPath);
+    if (!board) return [];
+    return Object.values(board.cards)
+      .filter((card): card is SessionPlaceCard => card.kind === 'session')
+      .map((card) => {
+        const opener = this.openerOf(projectPath, card.id, this.tabOfPlace(projectPath, card.id));
+        return { id: card.id, ...(card.roleId ? { papel: card.roleId } : {}), estado: this.stateName(projectPath, card), ...(opener ? { abertaPor: opener } : {}) };
+      });
+  }
+
   /**
    * 08/11 (BizOps, item 11) — the PTY a tool call comes from is not on a tab yet: right after the app restarts, the
    * remote sessions are attached again and their calls arrive before the renderer has their new PTY. Wait for the tab
@@ -997,6 +1033,16 @@ export class AgentBridge {
     return isBoardOrchestrator(board, scope.self.id) && canReach(this.ports.doc(), { projectPath: here, placeId: scope.self.id }, { projectPath: here, placeId }).ok;
   }
 
+  /** Item 5 — the review link (revisao.ts), read from the ledger the main has; unreadable = no link. */
+  private async reviewLinked(board: MindscapeBoard | undefined, listed: readonly ListedPlace[], from: string, to: string): Promise<boolean> {
+    try {
+      const doc = (await this.ports.ledgerDoc?.()) ?? null;
+      return doc !== null && reviewLink(doc, board, listed, from, to);
+    } catch {
+      return false;
+    }
+  }
+
   private boards(): KnownBoard[] {
     return knownBoards(this.ports.doc(), this.ports.projects());
   }
@@ -1131,8 +1177,8 @@ export class AgentBridge {
   }
 
   /** Something of the session of `tabId` that cannot wait: it stays here until a Líder's CLI took it. */
-  private queueUrgent(key: string, tabId: string, words: string, transient = false, taskId?: string): void {
-    this.pendingUrgent.set(key, { tabId, words, transient, ...(taskId ? { taskId } : {}), sending: false });
+  private queueUrgent(key: string, tabId: string, words: string, transient = false, taskId?: string, to?: NoticeTarget): void {
+    this.pendingUrgent.set(key, { tabId, words, transient, ...(taskId ? { taskId } : {}), ...(to ? { to } : {}), sending: false });
     this.flushUrgent();
   }
 
@@ -1143,6 +1189,10 @@ export class AgentBridge {
   flushUrgent(): void {
     for (const [key, entry] of this.pendingUrgent) {
       if (entry.sending) continue;
+      if (entry.to) {
+        this.flushSignedNotice(key, entry, entry.to);
+        continue;
+      }
       const tab = this.ports.tabs().find((candidate) => candidate.id === entry.tabId);
       const place = tab ? this.placeOfTab(tab) : undefined;
       if (!tab?.cwd || !place) {
@@ -1170,6 +1220,38 @@ export class AgentBridge {
         });
     }
     this.reportReturns();
+  }
+
+  /**
+   * A signed notice to its place (`to`): it goes once that place hears; a place that closed or left the board drops it
+   * (the ledger keeps the step, tarefa_novidades shows it).
+   */
+  private flushSignedNotice(key: string, entry: { readonly words: string; readonly taskId?: string; sending: boolean }, to: NoticeTarget): void {
+    const card = this.board(to.projectPath)?.cards[to.placeId];
+    if (card?.kind !== 'session' || NOT_LIVE_STATES.has(this.stateName(to.projectPath, card))) {
+      this.pendingUrgent.delete(key);
+      return;
+    }
+    const target = this.hears(to.projectPath, to.placeId) ? this.tabOfPlace(to.projectPath, to.placeId) : undefined;
+    if (!target) return; // waits for it to answer again
+    entry.sending = true;
+    const send = (source: TaskHeaderSource | null): Promise<DeliveryOutcome> => this.ports.deliverLine(target.id, signedNoticeLine(entry.words, source), DELIVERY_WAIT_MS, 'session');
+    const named = async (): Promise<TaskHeaderSource | null> => {
+      try {
+        const doc = entry.taskId ? ((await this.ports.ledgerDoc?.()) ?? null) : null;
+        return doc && entry.taskId ? noticeTaskOf(doc, to.projectPath, to.placeId, { named: entry.taskId }) : null;
+      } catch {
+        return null;
+      }
+    };
+    void named()
+      .then(send)
+      .catch((): DeliveryOutcome => ({ kind: 'nao-foi', reason: 'erro' }))
+      .then((outcome) => {
+        if (this.pendingUrgent.get(key) !== entry) return;
+        if (outcome.kind === 'nao-foi') entry.sending = false; // the next flush tries again
+        else this.pendingUrgent.delete(key);
+      });
   }
 
   /**
@@ -1355,6 +1437,13 @@ export class AgentBridge {
 
     if (call.tool === 'aviso_imediato') {
       if (this.chatMode()) return { ok: true, text: 'modo antigo: o aviso vai no fim do turno' };
+      if (call.para !== undefined) {
+        // A signed notice to one place of the caller's board (a delivery to a Revisor, a verdict to the Dev).
+        const projectPath = caller.cwd;
+        if (!projectPath || this.board(projectPath)?.cards[call.para]?.kind !== 'session') return { ok: true, text: 'sem lugar: fica no registro' };
+        this.queueUrgent(`n:${++this.urgentSeq}`, caller.id, call.texto, false, call.tarefa, { projectPath, placeId: call.para });
+        return { ok: true, text: 'avisado' };
+      }
       const heard = this.urgentTarget(caller) !== undefined;
       this.queueUrgent(`n:${++this.urgentSeq}`, caller.id, call.texto, false, call.tarefa);
       return { ok: true, text: heard ? 'avisado' : 'guardado: vai quando um Líder abrir' };
@@ -1545,9 +1634,18 @@ export class AgentBridge {
           return this.deliveryAnswer(outcome, opener.id, call.tarefa);
         }
         const board = this.board(projectPath);
-        const place = board?.cards[call.para];
+        // 18/11 (t-e195b35c, item 13): a role ("revisor", or a board's own role) names the one live place with it, and
+        // the id of a place that closed names its successor (address.ts, the same rule as the VPS gate).
+        const listed = this.listedPlaces(projectPath);
+        const address = board?.cards[call.para]?.kind === 'session' && !NOT_LIVE_STATES.has(listed.find((entry) => entry.id === call.para)?.estado ?? '') ? { placeId: call.para } : resolveAddress(board, listed, self?.id ?? LEADER_OF_ALL, call.para);
+        if ('erro' in address) return fail(address.erro);
+        if (!('placeId' in address)) return fail('Você é o Líder único: "lider" é você mesmo.');
+        const place = board?.cards[address.placeId];
         if (place?.kind !== 'session') return fail(`"${call.para}" não é um lugar do quadro (veja sessao_listar).`);
-        if (!this.canSend(scope, board, place.id))
+        const renewedFrom = address.renovadoDe;
+        // Item 5: the Dev that delivered and a Revisor of outside its chain talk with no arrow while the delivery waits.
+        const linked = this.canSend(scope, board, place.id) || (renewedFrom !== undefined && this.canSend(scope, board, renewedFrom)) || (!scope.leader && self !== undefined && (await this.reviewLinked(board, listed, self.id, place.id)));
+        if (!linked)
           return fail(
             scope.leader
               ? `Sem ligação: "${place.id}" não está no topo do quadro ${scope.projectName ?? projectPath} nem abaixo dele pelas setas do dono. Peça ao dono.`
@@ -1560,7 +1658,8 @@ export class AgentBridge {
         if (scope.leader) this.leaderHears.add(target.id);
         // 05/11 — "Entregue" only once the CLI of there took it: the answer waits for the send to end.
         const outcome = await this.ports.deliverLine(target.id, `◆ De ${signature}: ${call.texto}`, sendWait(), 'session');
-        return this.deliveryAnswer(outcome, target.id, call.tarefa);
+        const delivered = this.deliveryAnswer(outcome, target.id, call.tarefa);
+        return renewedFrom ? { ...delivered, text: `${delivered.text} (${renewedFrom} fechou; foi para o lugar que o sucede, ${place.id}. Use esse id daqui em diante.)` } : delivered;
       }
 
       case 'sessao_fechar': {

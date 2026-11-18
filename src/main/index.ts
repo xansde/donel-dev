@@ -26,7 +26,7 @@ import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { createRemoteOracleHost } from './ledger-remote-host';
 import { createSwitchableLedger, type SwitchableLedger } from './ledger-remote';
 import { LEDGER_REMOTE_CHANNELS, type LedgerRemoteResult, type LedgerRemoteState } from '../shared/ledger/remote';
-import { answerTaskId, createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderCallerOffBoard, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, prioritizeAsks, recordTurnEnd, runLedgerBatch, runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService } from './ledger-store';
+import { answerTaskId, createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderCallerOffBoard, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, prioritizeAsks, recordTurnEnd, reviewLedgerNotices, runLedgerBatch, runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService, type ReviewLedgerNotice } from './ledger-store';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerPrioritized, type LedgerSnapshot, type LedgerTurnRecord, type LedgerTurnRecorded } from '../shared/ledger/channels';
 import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, MAX_PRIORITY, OWN_OPTION, type LedgerDeliveredTo, type LedgerDoc, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
 import { askedByRefusal, type LedgerToolCall } from '../shared/ledger/tools';
@@ -3914,7 +3914,7 @@ function registerLedgerIpcHandlers(): void {
       (item): item is LedgerPassOnRequest =>
         typeof item === 'object' && item !== null &&
         typeof item.projectPath === 'string' && typeof item.placeId === 'string' && typeof item.to === 'string' &&
-        (item.gone === 'fechada' || item.gone === 'nao-comecou'),
+        (item.gone === 'fechada' || item.gone === 'nao-comecou') && (item.renewal === undefined || item.renewal === true),
     );
     return passOnTasks(service, requests);
   });
@@ -4216,6 +4216,20 @@ function withTaskHeaderOf(call: BoardToolCall): BoardToolCall {
   return withTaskHeaderOnCall(call, doc);
 }
 
+/** The review notices of a ledger answer (`reviewLedgerNotices`), signed with the caller's role name and place. */
+function reviewNoticesOf(caller: LedgerCaller, call: LedgerToolCall, answerText: string): ReviewLedgerNotice[] {
+  if (call.tool !== 'tarefa_entregar' && call.tool !== 'tarefa_aceitar' && call.tool !== 'tarefa_rejeitar') return [];
+  let doc: LedgerDoc;
+  try {
+    if (!ledgerService) return [];
+    doc = ledgerService.load().doc;
+  } catch {
+    return [];
+  }
+  const role = caller.roleId ? (rolesStore?.get(caller.roleId)?.name ?? caller.roleId) : 'sessão';
+  return reviewLedgerNotices(caller, call, answerText, doc, `${role} (${caller.placeId})`);
+}
+
 async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<BrowserToolOutcome> {
   if (!ledgerService) return { kind: 'error', text: 'O Oráculo Harrow não abriu neste app.' };
   // 07/11, owner: "quem pediu" is a person, never a role; the parse knows the factory roles, this app's own here.
@@ -4245,6 +4259,9 @@ async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: 
       const tarefa = answerTaskId(result.text);
       void boardBridge.execute(ptyId, { tool: 'aviso_imediato', texto: urgent, ...(tarefa ? { tarefa } : {}) }).catch(() => null);
     }
+    // 18/11 (t-e195b35c, item 5): a delivery also reaches the Revisores of outside the chain, and a verdict the owner of
+    // the task and who did it, each at its own place (no arrow needed).
+    for (const notice of reviewNoticesOf(resolved.caller, call, result.text)) void boardBridge.execute(ptyId, { tool: 'aviso_imediato', texto: notice.text, tarefa: notice.taskId, para: notice.placeId }).catch(() => null);
   }
   // A task passed to the Líder único by hand: it hears it, as when a place that closes passes one (t-2c18d666). With
   // the notices in the ledger (08/11), the transfer is read there (tarefa_novidades), not in its chat.
