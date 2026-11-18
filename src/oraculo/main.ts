@@ -12,7 +12,8 @@
 // `<dir>/decisoes.json` (t-52bf8b45, same shape as the board's config): the phone app's decision queue in Supabase,
 // applied to the ledger here; missing = the queue is off. Its optional `importar` (t-8762b0ac) lists the unsigned rows
 // the Líder vouched for (`readImportList` in decisoes.ts). The owner's per-page notes of each marked row go to
-// `<dir>/notas-paginas.jsonl`, never into a decision's text.
+// `<dir>/notas-paginas.jsonl`, never into a decision's text. The same file turns on the queue of tasks the owner asks
+// for in the phone (t-2eedda0d, tarefas-pedidas.ts); its optional `quadroTarefas` names the board they land on.
 
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, networkInterfaces } from 'node:os';
@@ -40,6 +41,7 @@ import { createSupabaseSink } from '../main/ledger-mirror/supabase-sink';
 import { createProofReader } from '../main/ledger-mirror/cartas';
 import { withPlaceMemory, type PlaceInfo, type PlaceInfoOf } from '../shared/ledger/mirror';
 import { createDecisoesConsumer, createDecisoesQueue, DECISOES_CONFIG_FILE, NOTAS_PAGINAS_FILE, readImportList } from './decisoes';
+import { createTarefasPedidasConsumer, createTarefasPedidasQueue, readQuadroTarefas } from './tarefas-pedidas';
 
 export const TOKEN_HASH_FILE = 'pc.token.sha256';
 /** t-89279f84 — `{url, serviceKeyFile}`: present, the Supabase is the ledger's source (ledger.json is not read). */
@@ -306,10 +308,23 @@ async function main(): Promise<void> {
     log: (line) => console.log(line),
   });
   decisoes.start();
+  // t-2eedda0d — the tasks the owner asks for in the phone app (`celular.tarefas_pedidas`), same config and round.
+  const tarefasPedidas = createTarefasPedidasConsumer({
+    queue: () => {
+      const config = readBoardConfig(join(dir, DECISOES_CONFIG_FILE));
+      return config ? createTarefasPedidasQueue(config) : null;
+    },
+    quadro: () => readQuadroTarefas(join(dir, DECISOES_CONFIG_FILE)),
+    ledger: () => ledger,
+    returned: guard.returned,
+    log: (line) => console.log(line),
+  });
+  tarefasPedidas.start();
   console.log(`[oraculo] no ar em ${server.url} (${Object.keys(first.doc.tasks).length} tarefas${first.readOnly ? ', só leitura' : ''}, fonte: ${store ? 'Supabase' : 'ledger.json'})`);
   const stop = (): void => {
     vigia.stop();
     decisoes.stop();
+    tarefasPedidas.stop();
     mirror?.dispose();
     void Promise.all([server?.close(), celular?.dispose(), gate.close()]).then(() => process.exit(0));
   };

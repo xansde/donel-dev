@@ -36,3 +36,18 @@ O daemon só usa o Supabase quando existe o `~/.donel/oraculo/ledger-supabase.js
 4. Se a volta for por defeito do código novo, reponha o `bin/oraculo.mjs.antes-<...>`.
 5. Rode `systemctl --user enable --now donel-espelho` (a ponte antiga lê o ledger.json) e depois
    `systemctl --user start donel-oraculo`.
+
+## Cuidados
+
+- O `--semear-supabase --forcar` grava o ledger.json por cima e APAGA do Supabase toda tarefa que não está no arquivo.
+  Só use na virada, com o daemon parado e o ledger.json do momento. Depois da virada, nunca use: a fonte é o Supabase,
+  e um arquivo velho apagaria as tarefas criadas depois.
+- Ninguém grava direto em `ledger_tarefas`/`ledger_meta`: o daemon guarda o ledger em memória e se desencontraria.
+  Para gravar, use o Oráculo (MCP, `/v1/servico/apply` ou livro). Para ler sem MCP, use
+  `~/bin/rotinas/ledger_fonte.py` (`carregar()`), que já atende estado_derivado, painel-rig, ledger_resumo e
+  espelho_contagem.
+- Uma op que precisa de mais de um lote (mais de 200 tarefas mudando de uma vez, o que só o semear faz) pode deixar
+  lotes gravados se o Supabase cair no meio. A op é recusada, e a escrita seguinte manda a diferença de novo.
+- A porta 47990, o 2º Oráculo, era um daemon de teste solto: foi encerrado em 18/11 e não há unidade que o suba.
+- A réplica do PC (`<userData>/ledger.json` do app do PC em modo remoto) fica só como cache do app. A VPS não a lê
+  mais e recusa a cópia dela, nos caminhos `/v1/ledger` e `/v1/devolver`.
