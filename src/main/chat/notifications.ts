@@ -6,6 +6,7 @@
 import type { NotificationPreference } from '../../shared/config';
 import type { Pending } from '../../shared/chat/rows';
 import { pendingNotificationBody } from '../../shared/chat/pendingText';
+import { APP_IDENTITY } from '../../shared/appIdentity';
 
 export interface NotifyDecisionInput {
   readonly preference: NotificationPreference;
@@ -50,7 +51,7 @@ export interface PendingNotifier {
   notifyPending(ptyId: string, pending: Pending): boolean;
 }
 
-const FALLBACK_TITLE = 'Donel Dev';
+const FALLBACK_TITLE = APP_IDENTITY.productName;
 
 export function createPendingNotifier(deps: PendingNotifierDeps): PendingNotifier {
   let activePtyId: string | null = null;
