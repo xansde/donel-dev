@@ -17,7 +17,8 @@
 // Review of PR #469: without `quadroTarefas` the queue is not even taken — a task born outside a board could only be
 // cancelled (the Líder único transfers within a board), so the rows wait. The task carries the birth mark "criada pelo
 // dono no celular" (`via`). After it is made, its row in the mirror (`public.tarefas`) is upserted from here, so the
-// phone's list shows it with the PC off; the PC's mirror rewrites the row (with place names) when it is back.
+// phone's list shows it with the PC off; the PC's mirror rewrites the row (with place names) when it is back. When the
+// daemon runs its own mirror (the ledger's source in the Supabase, t-89279f84), that mirror writes the row instead.
 
 import { readFileSync } from 'node:fs';
 import type { LedgerService } from '../main/ledger-store';
@@ -165,6 +166,8 @@ export interface TarefasPedidasConsumerDeps {
   readonly returned: () => boolean;
   /** The board folder the tasks land on (`quadroTarefas` in `decisoes.json`); '' = none named: the queue is not taken. */
   readonly quadro?: () => string;
+  /** The daemon's own mirror already writes `public.tarefas` at every change: no upsert from here. */
+  readonly hasMirror?: boolean;
   readonly log?: (line: string) => void;
 }
 
@@ -232,7 +235,7 @@ export function createTarefasPedidasConsumer(deps: TarefasPedidasConsumerDeps): 
         continue;
       }
       log(`${row.pedido} ${outcome.mark}${outcome.tarefa ? ` ${outcome.tarefa} (criada pelo dono no celular)` : ''}${marked ? '' : ' (a linha já estava marcada)'}`);
-      if (outcome.tarefa) await mirror(queue, outcome.tarefa);
+      if (outcome.tarefa && !deps.hasMirror) await mirror(queue, outcome.tarefa);
     }
   }
 
