@@ -18,6 +18,8 @@ import { successorOf } from '../src/shared/mindscape/reach';
 import { reviewLink } from '../src/shared/ledger/revisao';
 import type { BoardPicture, PictureSession } from '../src/oraculo/portao';
 import { createGateRecados, fieldIsFree, type RecadosTmux } from '../src/oraculo/recados';
+import { createRelay, deliverLocalFirst } from '../src/oraculo/relay';
+import { createCardWriter } from '../src/main/ledger-card-writer';
 
 const io = createSystemConfigIoDeps();
 const dirs: string[] = [];
@@ -580,5 +582,41 @@ describe('fieldIsFree: o campo do Claude Code na tela', () => {
     expect(fieldIsFree(screen('algo')).free).toBe(false);
     expect(fieldIsFree(screen('\x1b[2mtry "fix the bug"\x1b[0m')).free).toBe(true);
     expect(fieldIsFree('nada de campo aqui').free).toBe(false);
+  });
+});
+
+describe('Decisão do dono pelo celular com o PC desligado', () => {
+  it('o aviso vai à sessão dona que roda nesta máquina (recados.json), não à fila do PC; a de fora segue pela fila; uma vez só', async () => {
+    const g = setup();
+    const recados = g.make();
+    const relay = createRelay({ filePath: join(g.dir, 'fila.json'), io });
+    const writer = createCardWriter({ service: () => g.ledger, deliver: deliverLocalFirst(recados.deliverLocal, relay, 0) });
+    const id = await deliveredTask(g.ledger!);
+    const rejected = await g.ledger!.apply({ kind: 'dono' }, { op: 'rejeitar', id, reason: 'falta o caso vazio' });
+    expect(rejected.ok).toBe(true);
+    if (!rejected.ok) return;
+
+    expect(await writer.tellDecision(rejected.task)).toEqual({ placeId: DEV });
+    // The same decision again (same event = same key): joins, never a second item.
+    expect(await writer.tellDecision(rejected.task)).toEqual({ placeId: DEV });
+    expect(relay.pending()).toHaveLength(0);
+    const stop = JSON.parse((await recados.hook('fim-de-turno', tmuxHeader(SID_DEV), hookBody(SID_DEV))).body) as { decision?: string; reason?: string };
+    expect(stop.decision).toBe('block');
+    expect(stop.reason).toContain('falta o caso vazio');
+    expect(stop.reason!.split('falta o caso vazio')).toHaveLength(2);
+    // Delivered at the end of the turn, a late retry still does not queue it again.
+    expect(await writer.tellDecision(rejected.task)).toEqual({ placeId: DEV });
+    expect(JSON.parse((await recados.hook('fim-de-turno', tmuxHeader(SID_DEV), hookBody(SID_DEV))).body)).toEqual({});
+
+    // The owner's words on a card of a place that does not run here: the PC's relay, pending until it comes back.
+    const comment = await writer.write({ id, text: 'e o caso vazio?', requestId: 'pedido-1' });
+    expect(comment).toMatchObject({ ok: true, deliveredTo: { placeId: DEV } });
+    const away = await g.ledger!.apply({ kind: 'dono' }, { op: 'aceitar', id: (await deliveredTask(g.ledger!)), requestId: 'p-2' });
+    expect(away.ok).toBe(true);
+    if (!away.ok) return;
+    expect(await writer.tellDecision({ ...away.task, ownerPlaceId: LIDER })).toBeNull();
+    expect(relay.pending()).toEqual([expect.objectContaining({ message: expect.objectContaining({ placeId: LIDER }) })]);
+    expect(await writer.tellDecision({ ...away.task, ownerPlaceId: LIDER })).toBeNull();
+    expect(relay.pending(), 'a repetição junta na fila').toHaveLength(1);
   });
 });

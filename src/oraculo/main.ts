@@ -32,7 +32,7 @@ import { createCardWriter, type CardWriter } from '../main/ledger-card-writer';
 import { createCelularCore } from '../main/celular/service';
 import { createLedgerMobilePort } from '../main/celular/ledger-port';
 import { createOracleAdminRoutes } from './admin';
-import { createRelay } from './relay';
+import { createRelay, deliverLocalFirst } from './relay';
 import { pickTailscaleAddress } from '../main/celular/tailscale';
 import { callerOf, createOracleApiHandler } from './api';
 import { readServiceHashes } from './servicos';
@@ -309,12 +309,18 @@ async function main(): Promise<void> {
   // the ledger was returned to the PC, nothing writes here.
   const guard = createReturnGuard(raw, dir);
   const ledger = guard.ledger;
+  // Fatia 4: the last picture of the board the PC left (kept across a restart), for the MCP gate of the VPS's sessions.
+  const pictures = createPictureStore(dir);
+  const setPicture = pictures.set;
+  const sessionsDir = join(homedir(), '.donel', 's');
+  // t-e195b35c — the recados of this machine's sessions; a notice or message for a place off it goes to the PC's relay
+  // (queued on disk, no wait: nothing reads where it went, and a sessao_enviar with the PC off answers at once).
+  const recados = createGateRecados({ file: join(dir, 'recados.json'), io, ledger: () => ledger, picture: pictures.get, relay: (message) => relay.send(message, 0) });
+  // t-4c60b815 — the owner's word or decision reaches a session of this machine through its recados, with the PC off;
+  // only a place off this machine (or the Líder único) waits in the PC's relay.
   const cardWriter: CardWriter = createCardWriter({
     service: () => ledger,
-    deliver: async (message) => {
-      const to = await relay.send(message, RELAY_WAIT_MS);
-      return to === 'pendente' ? null : to;
-    },
+    deliver: deliverLocalFirst(recados.deliverLocal, relay, RELAY_WAIT_MS),
   });
   // t-52bf8b45 — the phone app's queue decides through the same port as the PWA (dedup by pedido, owner queue check),
   // over the guarded ledger, never `raw`.
@@ -328,13 +334,6 @@ async function main(): Promise<void> {
     deliverToLeader: () => async (text, pedidoId) =>
       (await relay.send({ projectPath: '', placeId: '', text, leaderText: text, ...(pedidoId ? { key: `pedido:${pedidoId}` } : {}) }, RELAY_WAIT_MS)) === 'lider',
   });
-  // Fatia 4: the last picture of the board the PC left (kept across a restart), for the MCP gate of the VPS's sessions.
-  const pictures = createPictureStore(dir);
-  const setPicture = pictures.set;
-  const sessionsDir = join(homedir(), '.donel', 's');
-  // t-e195b35c — the recados of this machine's sessions; a notice or message for a place off it goes to the PC's relay
-  // (queued on disk, no wait: nothing reads where it went, and a sessao_enviar with the PC off answers at once).
-  const recados = createGateRecados({ file: join(dir, 'recados.json'), io, ledger: () => ledger, picture: pictures.get, relay: (message) => relay.send(message, 0) });
   // Fails here, not on the first call, when the file is there but unreadable (it would be written over).
   const first = raw.load();
   if (sbDeps) {

@@ -30,7 +30,7 @@ import { listedPlaces, resolveAddress } from '../shared/mindscape/address';
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { BOARD_LEADER, canReach, isBoardOrchestrator, isLiveListedPlace, MY_OPENER, successorOf, whoHears, type ListedPlace } from '../shared/mindscape/reach';
 import type { MindscapeBoard } from '../shared/mindscape/model';
-import type { LedgerTask } from '../shared/ledger/contract';
+import type { LedgerDeliveredTo, LedgerTask } from '../shared/ledger/contract';
 import type { LedgerToolCall } from '../shared/ledger/tools';
 import { deliverersOf, reviewersOutsideChain, reviewLink, reviewRequestNotice, verdictNotice, verdictTargets } from '../shared/ledger/revisao';
 import { followRenewal, urgentLedgerNotice, type LedgerCaller, type LedgerService } from '../main/ledger-store';
@@ -108,6 +108,12 @@ export interface GateRecadosDeps {
 }
 
 export interface GateRecadosHandle extends GateRecados {
+  /**
+   * t-4c60b815 — the owner's word on a card or his decision (the card writer), when the session that owns the task runs
+   * here: queued in `recados.json` (the same key joins, even after delivered) and answered as delivered to it. `null` =
+   * it does not run here (or it is the Líder único): the caller sends it to the PC's relay.
+   */
+  deliverLocal(message: OwnerMessage): Promise<LedgerDeliveredTo>;
   /** One round of the typing loop (the vitest calls it; `start` runs it every 2 s). */
   tick(): Promise<void>;
   start(): void;
@@ -477,12 +483,18 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     return changed;
   }
 
-  /** Queues `words` for `para` (or joins the same message of the last 2 min). */
-  function enqueue(de: RecadoItem['de'], para: RecadoItem['para'], words: string): RecadoItem {
+  /**
+   * Queues `words` for `para` (or joins the same message of the last 2 min). With `key` (what makes the message one: a
+   * decision event, the phone's request id) the same key joins for as long as the item is kept, delivered or not.
+   */
+  function enqueue(de: RecadoItem['de'], para: RecadoItem['para'], words: string, key?: string): RecadoItem {
     const at = now();
-    const chave = createHash('sha256').update(JSON.stringify([de.lugar, para.lugar, words])).digest('hex').slice(0, 32);
+    const chave = createHash('sha256')
+      .update(JSON.stringify(key ? ['chave', key] : [de.lugar, para.lugar, words]))
+      .digest('hex')
+      .slice(0, 32);
     const items = read();
-    const same = items.find((item) => item.chave === chave && item.para.sid === para.sid && at - item.criado < JOIN_MS);
+    const same = items.find((item) => item.chave === chave && (key !== undefined || (item.para.sid === para.sid && at - item.criado < JOIN_MS)));
     if (same) return same;
     const id = `r-${randomBytes(4).toString('hex')}`;
     const item: RecadoItem = { id, chave, de, para, texto: `${labelOf(id, de)} ${words}`, criado: at, estado: 'fila', tentativas: 0 };
@@ -683,6 +695,15 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
   }
 
   return {
+    async deliverLocal(message) {
+      if (!message.placeId || message.placeId === LEADER_OF_ALL) return null;
+      const sid = sidOfPlace(message.projectPath, message.placeId, await localSessions());
+      if (!sid) return null;
+      // The label already opens with ◆; the message's own one would be a second.
+      enqueue({ lugar: '', nome: 'Oráculo' }, { lugar: message.placeId, sid }, message.text.replace(/^◆\s*/, ''), message.key);
+      return { placeId: message.placeId };
+    },
+
     async enviar(sid, mine, call: SendCall, pc = 'ligado'): Promise<BrowserToolOutcome | 'repassar'> {
       // With the PC on, what the picture cannot send goes to it: the picture may be minutes old (the probe's), and a
       // place opened or an arrow drawn after it is the PC's to know (revisão do #486). With the PC off it is all there is.
