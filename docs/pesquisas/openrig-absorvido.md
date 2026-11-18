@@ -1,8 +1,41 @@
 # OpenRig — registro de absorção
 
-Último commit absorvido: 2a94dc34d09077abe497f2cc13dbf704b319f666
+Último commit absorvido: 6254affd9479ff7ef5eaec4c276404fecaf1bc39
 
 Referência de design do Mindscape (github.com/mvschwarz/openrig). Procedimento na skill `absorver-openrig`. Cada rodada lista o que virou PR, o que ficou adiado, o que espera o dono e o que foi descartado.
+
+## 2026-11-18 — 2a94dc3..6254aff
+
+54 commits do OpenRig; versões novas: v0.7.18.
+
+### Vale → PR
+
+- **Aba remota: tmux que não deu para ler fica "sem resposta", nunca "sessão encerrada"** (plano: item 04, cartão rico e estado em três eixos, desconhecido vence resposta confiante e errada; e sessão que não morre, item 09, reabrir dizendo o que voltou). Origem: OpenRig `487f80d`. PR: https://github.com/xansde/donel-dev/pull/478. Teste primeiro: `tests/remoteTmuxIlegivel.test.ts` roda os scripts reais em bash com um tmux falso no PATH (pulado no win32); antes da correção os dois testes falharam (a sonda dava `gone` em vez de `unreachable` com "Permission denied" no socket, e o preparo attachOnly dava `gone` em vez de `error`); depois passam, e as quatro mensagens de ausência (can't find session, no server running on, socket inexistente, conexão recusada) seguem dando `gone`. Conferido também com o tmux 3.4 real da VPS: sessão inexistente dá DONEL_GONE. Verify verde pela fila, na árvore em dia com `origin/staging` bfa81ae9: 134 arquivos, 1705 testes (2 pulados), build ok.
+
+### Vale → adiado
+
+Nenhum (teto de 3 PRs não foi atingido).
+
+### Vale → pendente para o dono
+
+Nenhum novo. Seguem abertas as perguntas das seções anteriores (fila durável do item 13, desde 10/11; resposta do "esperando você" em nome do dono, desde 08/11; pausa até o reset do limite de uso, desde 12/11).
+
+### Descartado
+
+- Permissão e prompts: alerta de prompt em lugar sem trabalho, prompts atrás de recuperação, decisão de permissão, cancelar invocação após retirada: O Donel já tem. A permissão aberta vira 'precisa de você' sem depender de tarefa, pelos hooks e pelo semáforo (src/shared/attention/rule.ts:92, sessionAxes.ts), e a rotina 'sessão parada e ninguém vê' (src/shared/rotinas/stalledSessions.ts) acha qualquer pendência acima de M minutos. A escada de alertas, a checagem de autoridade e o cancelamento de invocação nativa são do daemon e do runner Pi.
+- Restore/reabertura honesta: pasta ausente, home movida, hooks pulados, cwd: O Donel já tem o que cabe nele. No PC, um spawn numa pasta que não existe dá erro com o nome dela (buildSpawnFailureMessage, pty-manager.ts). No remoto, o mkdir/clone de pasta ausente é deliberado, para a sessão nova num projeto que ainda não está na VPS. O relato por lugar na reabertura é o PR #446. Hooks salvos, AGENTS.md do Codex/Pi e --cwd do rig up são mecânica do restore do daemon.
+- Estado do lugar: tmux sumido = parado/desconhecido, census, zumbi Codex, relançar fresh: A ideia que vale (487f80d: só a ausência positiva conta como parado) virou PR. O resto é mecânica de tmux e de process table do daemon: census em duas leituras, zumbi do Codex, launch --fresh sobre shell vazio e reabrir o servidor tmux depois que o host reinicia. No Donel, o remoto roda `exec claude` (não sobra shell vazio), e o retomar cria o tmux de novo pelo script de preparo.
+- Entrega de mensagem: motivo na ficha de entrega, interrupção opt-in, hook via node:http, exec de comandos de hook: O Donel já tem igual. A entrega devolve desfecho tipado com motivo (DeliveryOutcome no tabSend/agentBridge), e a guarda de digitação do sendDriver segura o envio enquanto o dono digita. Lembrete de watchdog em fila, hook por node:http e exec de statusline são do daemon e dos hooks do OpenRig.
+- Handover/renovação e renomeação de conversa Claude: Não se aplica. A renovação em voo do Donel adota a sessão nova pelo session id dos hooks (PR #439), nunca pelo título da conversa, então /rename não a quebra. O cutover por identidade de painel tmux e os avisos da compactação gerenciada são do daemon; o Donel não tem compactação gerenciada.
+- Fila e lembretes: reinício não encerra lembrete só-fila, sucessores de qitems, watchdog duplicado/histórico, parked rows: É mecânica da fila, do watchdog e do SQLite do daemon. A fila durável do item 13 é a pergunta que está com o dono desde 10/11, sem resposta, e não se abre outra.
+- Sender externo/Slack e job de resposta humana para apps: O Slack opt-in é uma integração própria do OpenRig, fora do plano. O Slack do dono passa só pela Composio e pelo Theo, fora do app. Responder em nome do dono é a pergunta aberta desde 08/11.
+- Limites por lugar: MemoryMax opt-in, aviso de process-limits, sonda memory_max: Só existe no Linux com systemd e mexe com o tmux do OpenRig. No Donel, o teto por máquina é a vaga do sessao_abrir e do sessao_retomar, mais o limitador da VPS.
+- Rótulo de conta Claude configurada nos lugares: Exige ler a conta e a credencial do lugar, o perímetro proibido de src/main/accounts/. O motor de contas já mostra a conta ativa por lugar.
+- Workflow e missões: resume --owner, missão ligada ao escopo pai, perf de proof-policy: Slices, missões e workflow do CLI rig dependem de topologia escrita à mão, que está fora de escopo. A esteira do item 15 não tem missões nem proof-policy.
+- CLI e terminal: viewers locais, daemon stop, resumo em massa, JSON em transcript, grep fora do event loop: É robustez do CLI rig, do tmux e do daemon do OpenRig, sem ideia nova para o Mindscape.
+- Runners Pi/OMP: sidecar e input ligado à run: São runners específicos do OpenRig, sem equivalente no Donel.
+- TUI e gate: pistas do Pulse, teto de corte velho como aviso: A TUI está fora de escopo (dono, 03/11). O gate de corte é do CI e do release do OpenRig.
+- Docs de rigs, release 0.7.18, CI e testes: Docs, packaging, release, pins e CI do próprio OpenRig.
 
 ## 2026-11-17 — 0b25d86..2a94dc3
 
