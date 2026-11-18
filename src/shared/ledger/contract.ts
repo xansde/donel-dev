@@ -302,7 +302,7 @@ function markOf(text: string | undefined): { tag: string; rest: string } | null 
  * The text of a birth event (or of a front mark): `{}` when there is nothing to mark. The card kind goes last: the
  * alfa/beta before it read the first mark whole.
  */
-function birthTagsOf(replaces: string | undefined, requestedBy: string | undefined, front?: string, lowAsked?: boolean, cardKind?: CardKind): { text?: string } {
+function birthTagsOf(replaces: string | undefined, requestedBy: string | undefined, front?: string, lowAsked?: boolean, cardKind?: CardKind, via?: CreatedVia): { text?: string } {
   const asked = requestedBy ? cleanAskedBy(requestedBy) : '';
   const named = front ? cleanFrente(front) : '';
   const tags = [
@@ -311,6 +311,7 @@ function birthTagsOf(replaces: string | undefined, requestedBy: string | undefin
     ...(named ? [`${FRONT}${named}`] : []),
     ...(lowAsked ? [LOW_ASKED] : []),
     ...(cardKind ? [`${CARD_TAG}${cardKind}`] : []),
+    ...(via ? [VIA_TAGS[via]] : []),
   ];
   return tags.length ? { text: tags.reduceRight((rest, tag) => withMark(tag, rest), '') } : {};
 }
@@ -377,6 +378,16 @@ export function lowRiskAsked(task: LedgerTask): boolean {
   return tagsOf(task.events[0]?.text).includes(LOW_ASKED);
 }
 const ASKED_BY = 'pedido por ';
+
+/** 18/11 (t-2eedda0d) — where a task came from, when not from a session or the app: the phone (contract 015). */
+export type CreatedVia = 'celular';
+const VIA_TAGS: Readonly<Record<CreatedVia, string>> = { celular: 'criada pelo dono no celular' };
+
+/** The origin a task was born with (`criar` with `via`), if any. */
+export function createdViaOf(task: LedgerTask): CreatedVia | undefined {
+  const tags = tagsOf(task.events[0]?.text);
+  return (Object.keys(VIA_TAGS) as CreatedVia[]).find((via) => tags.includes(VIA_TAGS[via]));
+}
 
 /** 17/11 (t-4e50f080) — the kinds of card a session sends the owner with op `carta`, beyond a decision and a letter. */
 export type CardKind = 'tutorial' | 'atualizacao' | 'ideia';
@@ -559,6 +570,8 @@ export type LedgerOp =
       readonly lowAsked?: true;
       /** 14/11 — the call's key (`repeatedWrite`): the same call again answers this task instead of a second one. */
       readonly requestId?: string;
+      /** 18/11 — the task came from the phone's queue (t-2eedda0d): kept in the birth mark (`createdViaOf`). */
+      readonly via?: CreatedVia;
     }
   /** 07/11 — the Líder (or the owner) names the front of a task already made, and who asked, if it says. */
   | { readonly op: 'frente'; readonly id: string; readonly frente: string; readonly requestedBy?: string }
@@ -813,7 +826,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
       risk: replaced?.risk === 'alto' ? 'alto' : op.risk,
       state: 'aberta',
       createdAt: ctx.now,
-      events: [{ kind: 'criada', at: ctx.now, by: actor, ...birthTagsOf(replaced?.id, op.requestedBy, op.frente?.trim() || (replaced && frenteOf(replaced)), op.lowAsked === true && op.risk === 'alto'), ...requestOf(op) }],
+      events: [{ kind: 'criada', at: ctx.now, by: actor, ...birthTagsOf(replaced?.id, op.requestedBy, op.frente?.trim() || (replaced && frenteOf(replaced)), op.lowAsked === true && op.risk === 'alto', undefined, op.via), ...requestOf(op) }],
     };
     if (!replaced) return { ok: true, doc: withTask(doc, task), task };
     // One write: the new task and the old one cancelled, or neither.

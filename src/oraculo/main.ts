@@ -13,7 +13,7 @@
 // applied to the ledger here; missing = the queue is off. Its optional `importar` (t-8762b0ac) lists the unsigned rows
 // the Líder vouched for (`readImportList` in decisoes.ts). The owner's per-page notes of each marked row go to
 // `<dir>/notas-paginas.jsonl`, never into a decision's text. The same file turns on the queue of tasks the owner asks
-// for in the phone (t-2eedda0d, tarefas-pedidas.ts); its optional `quadroTarefas` names the board they land on.
+// for in the phone (t-2eedda0d, tarefas-pedidas.ts) once its `quadroTarefas` names the board they land on.
 
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, networkInterfaces } from 'node:os';

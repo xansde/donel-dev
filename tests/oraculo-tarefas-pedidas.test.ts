@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { ConfigIoDeps } from '../src/main/config-store';
 import { createLedgerMobilePort } from '../src/main/celular/ledger-port';
 import { createLedgerService, LEDGER_WRITE_FAILED, type LedgerProofFs } from '../src/main/ledger-store';
-import { lastDelivery, requestedByOf, type LedgerActor } from '../src/shared/ledger/contract';
+import { createdViaOf, lastDelivery, requestedByOf, type LedgerActor } from '../src/shared/ledger/contract';
+import type { TarefaRow } from '../src/shared/ledger/mirror';
 import { createDecisoesConsumer, type DecisaoRow, type DecisoesQueue } from '../src/oraculo/decisoes';
 import { createTarefasPedidasConsumer, DEFAULT_CRITERIO, type TarefaPedidaRow, type TarefasPedidasQueue } from '../src/oraculo/tarefas-pedidas';
 
@@ -57,8 +58,13 @@ type QueueRow = TarefaPedidaRow & { resultado?: string; tarefa?: string | null }
 /** The Supabase queue in memory: `tomar` hands what is not marked yet. */
 function memoryQueue(rows: QueueRow[]) {
   let failMark = false;
+  let taken = 0;
+  const mirrored: TarefaRow[] = [];
   const queue: TarefasPedidasQueue = {
-    tomar: async () => rows.filter((row) => row.resultado === undefined),
+    tomar: async () => {
+      taken += 1;
+      return rows.filter((row) => row.resultado === undefined);
+    },
     marcar: async (pedido, resultado, tarefa) => {
       if (failMark) {
         failMark = false;
@@ -70,8 +76,11 @@ function memoryQueue(rows: QueueRow[]) {
       row.tarefa = tarefa;
       return true;
     },
+    espelhar: async (row) => {
+      mirrored.push(row);
+    },
   };
-  return { queue, failNextMark: () => (failMark = true) };
+  return { queue, failNextMark: () => (failMark = true), mirrored, taken: () => taken };
 }
 
 const row = (n: number, rest: Partial<TarefaPedidaRow> = {}): TarefaPedidaRow => ({
@@ -89,7 +98,7 @@ describe('tarefas pedidas no celular', () => {
   it('a linha válida vira uma tarefa e é marcada com o id; relida, não cria a segunda', async () => {
     const { ledger, advance } = setup();
     const rows: QueueRow[] = [row(1)];
-    const { queue, failNextMark } = memoryQueue(rows);
+    const { queue, failNextMark, mirrored } = memoryQueue(rows);
     const consumer = createTarefasPedidasConsumer({ queue: () => queue, ledger: () => ledger, returned: () => false, quadro: () => 'C:/proj/atlas' });
 
     // Created, but the mark fails: the row stays in the queue.
@@ -110,6 +119,7 @@ describe('tarefas pedidas no celular', () => {
     });
     expect(task.events[0]).toMatchObject({ kind: 'criada', by: { kind: 'dono' }, requestId: rows[0]!.pedido });
     expect(requestedByOf(task)).toBe('dono');
+    expect(createdViaOf(task)).toBe('celular');
     expect(rows[0]!.resultado).toBeUndefined();
 
     // Read again long after the ledger's repeat window: the task born with this pedido is found, nothing new.
@@ -117,6 +127,8 @@ describe('tarefas pedidas no celular', () => {
     await consumer.round();
     expect(Object.keys(ledger.load().doc.tasks)).toEqual([task.id]);
     expect(rows[0]).toMatchObject({ resultado: 'criada', tarefa: task.id });
+    // The phone's list (public.tarefas) gets the task with the PC off.
+    expect(mirrored.map((entry) => [entry.id, entry.estado, entry.pedido])).toEqual([[task.id, 'aberta', rows[0]!.texto]]);
 
     // Marked: the queue no longer hands it, nothing changes.
     const before = JSON.stringify(ledger.load().doc);
@@ -128,13 +140,24 @@ describe('tarefas pedidas no celular', () => {
     const { ledger } = setup();
     const rows: QueueRow[] = [row(1, { titulo: 'oi' }), row(2, { prazo: '18/11/2026' }), row(3, { texto: '   ' })];
     const { queue } = memoryQueue(rows);
-    const consumer = createTarefasPedidasConsumer({ queue: () => queue, ledger: () => ledger, returned: () => false });
+    const consumer = createTarefasPedidasConsumer({ queue: () => queue, ledger: () => ledger, returned: () => false, quadro: () => 'C:/proj/atlas' });
     await consumer.round();
     expect(Object.keys(ledger.load().doc.tasks)).toEqual([]);
     expect(rows.map((entry) => entry.tarefa)).toEqual([null, null, null]);
     expect(rows[0]!.resultado).toMatch(/título/);
     expect(rows[1]!.resultado).toMatch(/prazo/);
     expect(rows[2]!.resultado).toMatch(/texto/);
+  });
+
+  it('sem quadro em decisoes.json a fila não é tomada: nada nasce fora de um quadro e nada é marcado', async () => {
+    const { ledger } = setup();
+    const rows: QueueRow[] = [row(1), row(2, { titulo: 'oi' })];
+    const { queue, taken } = memoryQueue(rows);
+    const consumer = createTarefasPedidasConsumer({ queue: () => queue, ledger: () => ledger, returned: () => false, quadro: () => '' });
+    await consumer.round();
+    expect(taken()).toBe(0);
+    expect(Object.keys(ledger.load().doc.tasks)).toEqual([]);
+    expect(rows.map((entry) => entry.resultado)).toEqual([undefined, undefined]);
   });
 
   it('a falha do ledger não marca: a linha volta e cria uma vez só', async () => {
@@ -146,7 +169,7 @@ describe('tarefas pedidas no celular', () => {
       ...ledger,
       apply: async (...args: Parameters<typeof ledger.apply>) => (failWrite ? ((failWrite = false), { ok: false as const, reason: LEDGER_WRITE_FAILED }) : ledger.apply(...args)),
     };
-    const consumer = createTarefasPedidasConsumer({ queue: () => queue, ledger: () => flaky, returned: () => false });
+    const consumer = createTarefasPedidasConsumer({ queue: () => queue, ledger: () => flaky, returned: () => false, quadro: () => 'C:/proj/atlas' });
     await consumer.round();
     expect(rows[0]!.resultado).toBeUndefined();
     expect(Object.keys(ledger.load().doc.tasks)).toEqual([]);

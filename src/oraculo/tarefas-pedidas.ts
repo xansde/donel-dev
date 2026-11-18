@@ -13,10 +13,16 @@
 // Nothing duplicates: the row's `pedido` is the `requestId` of the creation, and a row read again (a crash between the
 // ledger and the mark) finds the task born with it and is only marked. Nothing is lost: a bad row is marked with why
 // and never reaches the ledger; a passing failure (the ledger not there to answer) leaves the row reserved.
+//
+// Review of PR #469: without `quadroTarefas` the queue is not even taken — a task born outside a board could only be
+// cancelled (the Líder único transfers within a board), so the rows wait. The task carries the birth mark "criada pelo
+// dono no celular" (`via`). After it is made, its row in the mirror (`public.tarefas`) is upserted from here, so the
+// phone's list shows it with the PC off; the PC's mirror rewrites the row (with place names) when it is back.
 
 import { readFileSync } from 'node:fs';
 import type { LedgerService } from '../main/ledger-store';
 import { ASKED_BY_OWNER, isDueDate, isRequestId, MAX_FRENTE_CHARS, MAX_TITLE_CHARS, type LedgerTask } from '../shared/ledger/contract';
+import { tarefaRow, type TarefaRow } from '../shared/ledger/mirror';
 import { parseLedgerToolCall } from '../shared/ledger/tools';
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import type { BoardConfig } from './board-client';
@@ -57,6 +63,8 @@ export interface TarefasPedidasQueue {
   tomar(limit: number): Promise<readonly TarefaPedidaRow[]>;
   /** Closes the row with `resultado` (and the task made, if any); false = it was already closed. */
   marcar(pedido: string, resultado: string, tarefa: string | null): Promise<boolean>;
+  /** Upserts the task's row in the mirror (`public.tarefas`, by id), as the PC's mirror writes it. */
+  espelhar(row: TarefaRow): Promise<void>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -71,7 +79,7 @@ function parseRow(value: unknown): TarefaPedidaRow | null {
 }
 
 export function createTarefasPedidasQueue(config: BoardConfig, doFetch: typeof fetch = fetch): TarefasPedidasQueue {
-  const { rpc } = createServiceRequest(config, doFetch);
+  const { request, rpc } = createServiceRequest(config, doFetch);
   return {
     async tomar(limit) {
       const rows = await rpc('celular_tarefas_pedidas_tomar', { p_limite: limit });
@@ -80,6 +88,10 @@ export function createTarefasPedidasQueue(config: BoardConfig, doFetch: typeof f
     },
     async marcar(pedido, resultado, tarefa) {
       return (await rpc('celular_tarefa_pedida_marcar', { p_pedido: pedido, p_resultado: resultado, p_tarefa: tarefa })) === true;
+    },
+    async espelhar(row) {
+      // The same upsert as the PC's mirror (supabase-sink.ts): the table is in `public`, the key is `id`.
+      await request('tarefas?on_conflict=id', 'POST', [{ ...row, atualizado_em: new Date().toISOString() }], 'o espelho de tarefas', 'resolution=merge-duplicates,return=minimal');
     },
   };
 }
@@ -151,7 +163,7 @@ export interface TarefasPedidasConsumerDeps {
   readonly ledger: () => LedgerService;
   /** The ledger went back to the PC: nothing is created nor marked here. */
   readonly returned: () => boolean;
-  /** The board folder the tasks land on (`quadroTarefas` in `decisoes.json`); '' = none named. Absent = ''. */
+  /** The board folder the tasks land on (`quadroTarefas` in `decisoes.json`); '' = none named: the queue is not taken. */
   readonly quadro?: () => string;
   readonly log?: (line: string) => void;
 }
@@ -179,6 +191,13 @@ export function createTarefasPedidasConsumer(deps: TarefasPedidasConsumerDeps): 
       return;
     }
     offLogged = false;
+    const quadro = deps.quadro?.() ?? '';
+    if (!quadro) {
+      if (!noBoardLogged) log('sem "quadroTarefas" em decisoes.json; os pedidos do celular esperam na fila até ele existir.');
+      noBoardLogged = true;
+      return;
+    }
+    noBoardLogged = false;
     const takenAt = Date.now();
     const rows = [...(await queue.tomar(TAKE_LIMIT))].sort((a, b) => a.criada_em.localeCompare(b.criada_em));
     if (!rows.length) return;
@@ -187,9 +206,6 @@ export function createTarefasPedidasConsumer(deps: TarefasPedidasConsumerDeps): 
     } catch {
       return;
     }
-    const quadro = deps.quadro?.() ?? '';
-    if (!quadro && !noBoardLogged) log('sem "quadroTarefas" em decisoes.json; as tarefas do celular nascem fora de um quadro.');
-    noBoardLogged = !quadro;
     for (const row of rows) {
       if (deps.returned()) return;
       if (Date.now() - takenAt > BATCH_BUDGET_MS) {
@@ -216,6 +232,19 @@ export function createTarefasPedidasConsumer(deps: TarefasPedidasConsumerDeps): 
         continue;
       }
       log(`${row.pedido} ${outcome.mark}${outcome.tarefa ? ` ${outcome.tarefa} (criada pelo dono no celular)` : ''}${marked ? '' : ' (a linha já estava marcada)'}`);
+      if (outcome.tarefa) await mirror(queue, outcome.tarefa);
+    }
+  }
+
+  /** The new task's row in the mirror; a failure is a log line and undoes nothing (the PC's mirror writes it later). */
+  async function mirror(queue: TarefasPedidasQueue, id: string): Promise<void> {
+    try {
+      const { doc } = deps.ledger().load();
+      const task = doc.tasks[id];
+      // Without place names (the daemon has none); masked as the PC's mirror masks.
+      if (task) await queue.espelhar(tarefaRow(doc, task, undefined, []));
+    } catch (error) {
+      log(`${id}: o espelho de tarefas não recebeu a tarefa nova: ${errorText(error)}`);
     }
   }
 
@@ -253,6 +282,7 @@ export function createTarefasPedidasConsumer(deps: TarefasPedidasConsumerDeps): 
         ...(call.quemPediu ? { requestedBy: call.quemPediu } : {}),
         ...(call.frente ? { frente: call.frente } : {}),
         requestId: row.pedido,
+        via: 'celular',
       },
     );
     if (result.ok) return { mark: CREATED, tarefa: result.task.id };

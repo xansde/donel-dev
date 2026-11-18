@@ -123,7 +123,8 @@ function parseRow(value: unknown): DecisaoRow | null {
 
 /** The service_role's calls over PostgREST (the queue's RPCs, the mirror's PATCH); shared with tarefas-pedidas.ts. */
 export interface ServiceRequest {
-  request(path: string, method: 'POST' | 'PATCH', args: object, what: string): Promise<string>;
+  /** `prefer` = PostgREST's Prefer header (a PATCH always sends `return=minimal`). */
+  request(path: string, method: 'POST' | 'PATCH', args: object, what: string, prefer?: string): Promise<string>;
   rpc(fn: string, args: object): Promise<unknown>;
 }
 
@@ -139,7 +140,7 @@ export function createServiceRequest(config: BoardConfig, doFetch: Fetch = fetch
     throw new Error('a chave da fila do celular não pôde ser lida (serviceKeyFile em decisoes.json)');
   };
 
-  async function request(path: string, method: 'POST' | 'PATCH', args: object, what: string): Promise<string> {
+  async function request(path: string, method: 'POST' | 'PATCH', args: object, what: string, prefer?: string): Promise<string> {
     const secret = key();
     let res: Response;
     try {
@@ -150,7 +151,7 @@ export function createServiceRequest(config: BoardConfig, doFetch: Fetch = fetch
           Authorization: `Bearer ${secret}`,
           'Content-Type': 'application/json',
           Accept: 'application/json',
-          ...(method === 'PATCH' ? { Prefer: 'return=minimal' } : {}),
+          ...(prefer ? { Prefer: prefer } : method === 'PATCH' ? { Prefer: 'return=minimal' } : {}),
         },
         body: JSON.stringify(args),
         signal: AbortSignal.timeout(TIMEOUT_MS),
