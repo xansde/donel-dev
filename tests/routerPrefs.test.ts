@@ -56,10 +56,12 @@ describe('desktop roteador (flag router.enabled)', () => {
     const defaults = defaultAppConfig([]);
     writeAppConfig(FILE, { ...defaults, router: { enabled: false } }, io, null);
 
-    // An older channel: it does not know `router`, keeps it among the unknown keys and writes it back.
-    const { router: _unknown, ...olderDefaults } = defaults;
-    const older = readAppConfig(FILE, olderDefaults as typeof defaults, LEGACY, io);
-    writeAppConfig(FILE, { ...older, favorites: ['C:\\b'] }, io, older);
+    // An older channel: its AppConfig has no `router` (its sanitize put the key among the unknown ones) and it writes
+    // the whole config with no baseline, as on its first save.
+    const { router, ...known } = readAppConfig(FILE, defaults, LEGACY, io);
+    const older = { ...known, favorites: ['C:\\b'], unknownFields: { router } };
+    writeAppConfig(FILE, older as unknown as typeof defaults, io, null);
+    expect(JSON.parse(files[FILE]!).favorites).toEqual(['C:\\b']);
     expect(JSON.parse(files[FILE]!).router).toEqual({ enabled: false });
     expect(readAppConfig(FILE, defaults, LEGACY, io).router).toEqual({ enabled: false });
   });

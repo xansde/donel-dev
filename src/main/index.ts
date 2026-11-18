@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, Notification, protocol, safeStorage, scree
 import { randomBytes, randomUUID } from 'node:crypto';
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { appendFile } from 'node:fs/promises';
+import { appendFile, stat as statFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { readUserDefaultPermissionMode, readUserStatusLine } from './cli-user-settings';
@@ -351,7 +351,7 @@ import { consumeKillRequested, markKillRequested } from './pty-kill-intent';
 import { guardNavigation } from './navigation-guard';
 import { registerPetIpcHandlers } from './pet/pet-ipc';
 import { createLiderService, type LiderService } from './lider/lider-service';
-import { createCelularLiderChat, createSupabaseRpc } from './lider/celular-chat';
+import { createCelularLiderChat, createSupabaseRpc, parseCelularChatState, type SupabaseAccess } from './lider/celular-chat';
 import { createPetService, type PetService } from './pet/pet-service';
 import { createPetWindow } from './pet/pet-window';
 import { readPetSeams } from './pet/pet-seams';
@@ -394,7 +394,7 @@ import { resolveClaudeCorrelation } from './session-correlation';
 import { carryLargestTranscript, carryTranscriptLocally, largestTranscript } from './lider/carry-transcript';
 import { fetchTranscriptFromRemote, sendTranscriptToRemote } from './lider/transfer';
 import { LIDER_CHANNELS, isValidLiderCarryPayload, type LiderCarryPayload, type LiderSendResult } from '../shared/lider/ipc';
-import { defaultClaudeHome, indexProjectSessions, resolveProjectSessionsDir } from './session-indexer';
+import { defaultClaudeHome, indexProjectSessions, readFileTail, resolveProjectSessionsDir } from './session-indexer';
 import { seedProject } from './session-seed';
 import { SessionSemaphoreManager } from './session-semaphore-manager';
 import { readTranscriptLastAssistantText, TranscriptWatcherRegistry } from './transcript-watcher';
@@ -4406,31 +4406,52 @@ function registerGestureDiary(): void {
  * only once the main window reported (the Líder's tab is there). One line per event in the mirror's log.
  */
 const CELULAR_CHAT_POLL_MS = 5_000;
+/** The tail of the Líder's transcript read at the end of a turn: enough to hold the turn that read a phone message. */
+const CELULAR_CHAT_TAIL_BYTES = 512 * 1024;
 function registerCelularLiderChat(): void {
   const log = (line: string): void => ledgerMirrorService?.log(`chat do celular: ${line}`);
+  const statePath = (): string => join(app.getPath('userData'), 'celular-chat.json');
+  // Test seam (like `DONEL_CLAUDE_EXECUTABLE_FIXTURE`): a JSON file `{ "url", "keyFile" }` gives the chat its own
+  // Supabase, without turning the mirror on (which would push this app's ledger and cards). Absent outside tests.
+  const fixture = ((): SupabaseAccess | null => {
+    const path = process.env.DONEL_CELULAR_CHAT_FIXTURE;
+    if (!path) return null;
+    try {
+      const { url, keyFile } = JSON.parse(configIoDeps.readFileText(path) ?? '') as { url?: unknown; keyFile?: unknown };
+      if (typeof url !== 'string' || typeof keyFile !== 'string') return null;
+      return { url, key: () => configIoDeps.readFileText(keyFile)?.trim() || null };
+    } catch {
+      return null;
+    }
+  })();
+  const access = (): SupabaseAccess | null => fixture ?? ledgerMirrorService?.supabaseAccess() ?? null;
   const chat = createCelularLiderChat({
-    rpc: createSupabaseRpc(() => ledgerMirrorService?.supabaseAccess() ?? null),
+    rpc: createSupabaseRpc(access),
     deliver: (text) => (liderService ? liderService.deliver(text) : Promise.resolve({ ok: false, reason: 'A janela do Donel ainda não abriu.' })),
     log,
-  });
-  const liderPty = (ptyId: string): boolean => liderService !== null && liderService.report().ptyId === ptyId;
-  semaphoreManager.onPromptSubmitted((ptyId, _length, prompt) => {
-    if (liderPty(ptyId)) chat.promptSubmitted(prompt);
+    load: () => parseCelularChatState(configIoDeps.readFileText(statePath())),
+    save: (state) => {
+      const tmp = `${statePath()}.tmp`;
+      configIoDeps.writeFileText(tmp, JSON.stringify(state));
+      configIoDeps.renameFile(tmp, statePath());
+    },
   });
   semaphoreManager.onTurnEnded((ptyId, lastAssistantMessage, hookTranscriptPath) => {
-    if (!liderPty(ptyId)) return;
+    if (liderService === null || liderService.report().ptyId !== ptyId) return;
     void (async () => {
-      let text = lastAssistantMessage;
-      if (text === null) {
-        const sessionId = activeSessionByPty.get(ptyId);
-        const transcriptPath = hookTranscriptPath ?? (sessionId ? spawnedTranscriptPaths.get(sessionId) : undefined);
-        text = transcriptPath ? await readTranscriptLastAssistantText(transcriptPath) : null;
+      const sessionId = activeSessionByPty.get(ptyId);
+      const transcriptPath = hookTranscriptPath ?? (sessionId ? spawnedTranscriptPaths.get(sessionId) : undefined);
+      let tail: string | null = null;
+      if (transcriptPath) {
+        const size = await statFile(transcriptPath).then((info) => info.size).catch(() => null);
+        tail = size === null ? null : await readFileTail(transcriptPath, size, CELULAR_CHAT_TAIL_BYTES);
       }
-      await chat.turnEnded(text);
+      const text = lastAssistantMessage ?? (transcriptPath ? await readTranscriptLastAssistantText(transcriptPath) : null);
+      await chat.turnEnded(text, tail);
     })().catch(() => undefined);
   });
   const timer = setInterval(() => {
-    if (liderService === null || ledgerMirrorService?.supabaseAccess() == null) return;
+    if (liderService === null || access() === null) return;
     void chat.poll().catch(() => undefined);
   }, CELULAR_CHAT_POLL_MS);
   timer.unref?.();
