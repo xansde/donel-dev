@@ -48,21 +48,21 @@ describe('novidades por arquivo', () => {
 
 describe('novidades geradas do git log', () => {
   const log = [
-    ['a1b2c3d', '2026-11-18-0412', 'feat(main): mostra o placar no celular (t-2eedda0d)\n\nO placar agora aparece na tela inicial,\nsem abrir o quadro.\n\nDetalhe técnico.\n\nCo-Authored-By: Claude <noreply@anthropic.com>'],
-    ['b2c3d4e', '2026-11-18-0930', 'fix: trava que volta avisa de novo\n\nCo-Authored-By: Claude <noreply@anthropic.com>'],
-    ['0a1b2c3', '2026-11-17-2300', 'fix(main): sentinela não grava segredo\n\n- main.ts: mascara a flag\n- log.ts: um registro por execução'],
-    ['c3d4e5f', '2026-11-18-1000', 'chore: atualiza dependências'],
-    ['d4e5f6a', '2026-11-18-1001', 'test: cobre o placar'],
-    ['e5f6a7b', '2026-11-18-1002', 'docs: explica o placar'],
-    ['f6a7b8c', '2026-11-18-1003', 'refactor: separa o placar'],
-    ['a7b8c9d', '2026-11-18-1004', 'ci: roda o verify'],
-    ['b8c9d0e', '2026-11-18-1005', "Merge pull request #470 from xansde/feat/placar"],
-    ['c9d0e1f', '2026-11-18-1006', 'feature: não é feat'],
+    ['a1b2c3d', '2026-11-18T07:12:00Z', 'feat(main): mostra o placar no celular (t-2eedda0d)\n\nO placar agora aparece na tela inicial,\nsem abrir o quadro.\n\nDetalhe técnico.\n\nCo-Authored-By: Claude <noreply@anthropic.com>'],
+    ['b2c3d4e', '2026-11-18T09:30:00-03:00', 'fix: trava que volta avisa de novo\n\nCo-Authored-By: Claude <noreply@anthropic.com>'],
+    ['0a1b2c3', '2026-11-18T02:00:00Z', 'fix(main): sentinela não grava segredo\n\n- main.ts: mascara a flag\n- log.ts: um registro por execução'],
+    ['c3d4e5f', '2026-11-18T10:00:00-03:00', 'chore: atualiza dependências'],
+    ['d4e5f6a', '2026-11-18T10:01:00-03:00', 'test: cobre o placar'],
+    ['e5f6a7b', '2026-11-18T10:02:00-03:00', 'docs: explica o placar'],
+    ['f6a7b8c', '2026-11-18T10:03:00-03:00', 'refactor: separa o placar'],
+    ['a7b8c9d', '2026-11-18T10:04:00-03:00', 'ci: roda o verify'],
+    ['b8c9d0e', '2026-11-18T10:05:00-03:00', "Merge pull request #470 from xansde/feat/placar"],
+    ['c9d0e1f', '2026-11-18T10:06:00-03:00', 'feature: não é feat'],
   ]
     .map(([hash, stamp, message]) => `\x1e${hash}\x1f${stamp}\x1f${message}\n`)
     .join('');
 
-  it('transforma feat e fix em novidades e ignora o resto', () => {
+  it('transforma feat e fix em novidades, na hora de São Paulo, e ignora o resto', () => {
     expect(commitsToNotes(parseGitLog(log))).toEqual({
       './git/2026-11-18-0412-a1b2c3d.json': {
         title: 'Mostra o placar no celular',

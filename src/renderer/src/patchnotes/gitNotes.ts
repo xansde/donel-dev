@@ -8,13 +8,33 @@ import type { Plugin } from 'vite';
 import type { PatchNoteItem } from './notes';
 
 /**
- * Commits a partir daqui viram novidade; os anteriores já têm o seu JSON em
- * `./notes/` e, sem este corte, apareceriam duas vezes.
+ * Commits a partir daqui viram novidade: logo depois do último JSON em
+ * `./notes/` (2026-11-17-2119), para nada aparecer duas vezes nem sumir.
  */
-export const GIT_NOTES_SINCE = '2026-11-18T01:30:00-03:00';
+export const GIT_NOTES_SINCE = '2026-11-17T21:20:00-03:00';
 
-/** Hora local do dono: a janela agrupa por dia e o dia vira à meia-noite dele. */
-const NOTES_TIME_ZONE = 'America/Sao_Paulo';
+/**
+ * Hora local do dono: a janela agrupa por dia e o dia vira à meia-noite dele.
+ * Convertida no JS, não por `TZ` do git: o git do Windows (build do PC) não
+ * entende nome de fuso IANA e cairia em UTC.
+ */
+const STAMP_FORMAT = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/Sao_Paulo',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+});
+
+/** `AAAA-MM-DD-HHMM` em São Paulo a partir da data ISO do git (`%cI`); `null` se inválida. */
+export function localStamp(iso: string): string | null {
+  const time = Date.parse(iso);
+  if (Number.isNaN(time)) return null;
+  const part = Object.fromEntries(STAMP_FORMAT.formatToParts(time).map((p) => [p.type, p.value]));
+  return `${part.year}-${part.month}-${part.day}-${part.hour}${part.minute}`;
+}
 
 export interface GitCommit {
   readonly hash: string;
@@ -26,7 +46,7 @@ export interface GitCommit {
 
 const RECORD = '\x1e';
 const FIELD = '\x1f';
-export const GIT_LOG_FORMAT = `${RECORD}%h${FIELD}%cd${FIELD}%B`;
+export const GIT_LOG_FORMAT = `${RECORD}%h${FIELD}%cI${FIELD}%B`;
 
 const SUBJECT = /^(feat|fix)(\([^)]*\))?!?:\s*(.+)$/;
 const TASK_ID = /\s*\(t-[0-9a-z]+\)/gi;
@@ -35,13 +55,14 @@ const LIST_ITEM = /^[-*]\s/;
 const STAMP = /^\d{4}-\d{2}-\d{2}-\d{4}$/;
 const HASH = /^[0-9a-f]+$/;
 
-/** Saída de `git log --format=GIT_LOG_FORMAT` em commits. Registro torto é ignorado. */
+/** Saída de `git log --format=GIT_LOG_FORMAT` em commits. Registro torto ou data inválida é ignorado. */
 export function parseGitLog(raw: string): GitCommit[] {
   return raw
     .split(RECORD)
     .map((record) => record.split(FIELD))
-    .filter((fields) => fields.length === 3 && HASH.test(fields[0].trim()) && STAMP.test(fields[1].trim()))
-    .map(([hash, stamp, message]) => ({ hash: hash.trim(), stamp: stamp.trim(), message: message.trim() }));
+    .filter((fields) => fields.length === 3 && HASH.test(fields[0].trim()))
+    .map(([hash, date, message]) => ({ hash: hash.trim(), stamp: localStamp(date.trim()), message: message.trim() }))
+    .filter((commit): commit is GitCommit => commit.stamp !== null && STAMP.test(commit.stamp));
 }
 
 function firstParagraph(lines: readonly string[]): string {
@@ -85,11 +106,10 @@ export function readGitCommits(cwd: string, since: string = GIT_NOTES_SINCE): Gi
   try {
     const raw = execFileSync(
       'git',
-      ['log', '--no-merges', `--since=${since}`, '--date=format-local:%Y-%m-%d-%H%M', `--format=${GIT_LOG_FORMAT}`, 'HEAD'],
+      ['log', '--no-merges', `--since=${since}`, `--format=${GIT_LOG_FORMAT}`, 'HEAD'],
       {
         cwd,
         encoding: 'utf8',
-        env: { ...process.env, TZ: NOTES_TIME_ZONE },
         stdio: ['ignore', 'pipe', 'ignore'],
         timeout: 15_000,
         maxBuffer: 32 * 1024 * 1024,
