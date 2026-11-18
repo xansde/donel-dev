@@ -237,10 +237,10 @@ describe('serviço: uma carta por trava, aviso no PC quando o Oráculo não resp
     await t.rounds(t.make(), 3);
     expect(t.scripts.every((script) => !script.includes('DONEL_COFRE'))).toBe(true);
     expect(t.ops).toEqual([]);
-    expect(sanitizeVigiaPrefs(undefined)).toEqual({ cofre: null });
-    expect(sanitizeVigiaPrefs({ cofre: { command: 'x; rm', sessionFile: 'a' } })).toEqual({ cofre: null });
-    expect(sanitizeVigiaPrefs({ cofre: { command: 'cofre-cli', sessionFile: '../fora' } })).toEqual({ cofre: null });
-    expect(sanitizeVigiaPrefs({ cofre: COFRE })).toEqual({ cofre: COFRE });
+    expect(sanitizeVigiaPrefs(undefined)).toEqual({ cofre: null, quadro: null });
+    expect(sanitizeVigiaPrefs({ cofre: { command: 'x; rm', sessionFile: 'a' } })).toEqual({ cofre: null, quadro: null });
+    expect(sanitizeVigiaPrefs({ cofre: { command: 'cofre-cli', sessionFile: '../fora' } })).toEqual({ cofre: null, quadro: null });
+    expect(sanitizeVigiaPrefs({ cofre: COFRE })).toEqual({ cofre: COFRE, quadro: null });
   });
 
   it('a carta de cada tipo de trava, aberta ou já passada, passa na regra do Oráculo (texto de gente, sem código)', () => {

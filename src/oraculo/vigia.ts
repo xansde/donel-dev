@@ -77,6 +77,8 @@ export interface DaemonVigiaDeps {
   readonly run?: (script: string, timeoutMs: number) => Promise<RunResult>;
   readonly now?: () => number;
   readonly log?: (line: string) => void;
+  /** The board (its name) of a session of this place, from the picture the PC left: the card of a loop names them. */
+  readonly boardOfSession?: (sid: string) => string | undefined;
 }
 
 export interface DaemonVigia {
@@ -111,6 +113,7 @@ export function createDaemonVigia(deps: DaemonVigiaDeps): DaemonVigia {
     },
     tasks: () => Object.values(deps.ledger().load().doc.tasks),
     projectPath: () => config?.projectPath ?? null,
+    ...(deps.boardOfSession ? { boardOfSession: deps.boardOfSession } : {}),
     cofre: () => config?.cofre ?? null,
     // No screen here: the card's push to the phone is the warning. A card that cannot be made is logged.
     notify: (title, body) => deps.log?.(`[vigia] ${title}: ${body}`),

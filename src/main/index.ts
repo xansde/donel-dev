@@ -26,7 +26,7 @@ import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { createRemoteOracleHost } from './ledger-remote-host';
 import { createSwitchableLedger, type SwitchableLedger } from './ledger-remote';
 import { LEDGER_REMOTE_CHANNELS, type LedgerRemoteResult, type LedgerRemoteState } from '../shared/ledger/remote';
-import { answerTaskId, createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, prioritizeAsks, recordTurnEnd, runLedgerBatch, runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService } from './ledger-store';
+import { answerTaskId, createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderCallerOffBoard, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, prioritizeAsks, recordTurnEnd, runLedgerBatch, runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService } from './ledger-store';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerPrioritized, type LedgerSnapshot, type LedgerTurnRecord, type LedgerTurnRecorded } from '../shared/ledger/channels';
 import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, MAX_PRIORITY, OWN_OPTION, type LedgerDeliveredTo, type LedgerDoc, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
 import { askedByRefusal, type LedgerToolCall } from '../shared/ledger/tools';
@@ -369,6 +369,7 @@ import { HOMOLOGACAO_CHANNELS, type FactoryMetricsView, type FactoryRigsView } f
 import { parseRigsFile, type RigsParse } from '../shared/homologacao/rigs';
 import { createRoutineRunner, type RoutineRunner } from './rotinas/routine-runner';
 import { createVigiaService, type VigiaService } from './vigia/vigia-service';
+import { boardName, vigiaBoardOf } from '../shared/vigia/board';
 import { createFaxineiroService, type FaxineiroService } from './rotinas/faxineiro-service';
 import { FAXINEIRO_CHANNELS, type FaxineiroRoundAnswer } from '../shared/faxineiro/ipc';
 import type { FaxineiroLogEntry, SessionView } from '../shared/faxineiro/triggers';
@@ -3484,7 +3485,9 @@ function registerHealthIpcHandlers(): void {
       return result.ok ? { ok: true, task: { id: result.task.id } } : { ok: false, reason: result.reason };
     },
     tasks: () => Object.values(ledgerService?.load().doc.tasks ?? {}),
-    projectPath: () => appConfig.projectRoots[0] ?? null,
+    // t-5839d76b — a board that exists (`vigia.quadro`, else the one picked), never the projects' folder.
+    projectPath: vigiaBoard,
+    boardOfSession: boardNameOfSession,
     cofre: () => appConfig.vigia.cofre,
     notify: (title, body) => {
       if (!systemNotificationsSupported()) return;
@@ -3833,7 +3836,7 @@ function registerLedgerIpcHandlers(): void {
     freeze: (reason) => switchable?.freeze(reason) ?? Promise.resolve(),
     onChange,
     deliver: () => deliverOwnerMessageViaBoard,
-    vigia: () => ({ projectPath: appConfig.projectRoots[0] ?? null, cofre: appConfig.vigia.cofre }),
+    vigia: () => ({ projectPath: vigiaBoard(), cofre: appConfig.vigia.cofre }),
     celularWanted: () => {
       const text = configIoDeps.readFileText(join(app.getPath('userData'), 'celular.json'));
       try {
@@ -3966,6 +3969,28 @@ function registerLedgerIpcHandlers(): void {
  * give a task only to a place it reaches (`podeMandar` of its `sessao_listar`, which is reach.ts).
  */
 /** Who opened whom and the arrows of a board (low risk and the Revisor's chain), as the renderer saved it. */
+/** t-5839d76b — the board of the vigia's cards (`vigiaBoardOf`); `null` = none: the vigia warns on the PC only. */
+function vigiaBoard(): string | null {
+  try {
+    return vigiaBoardOf(createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load().boards, appConfig.vigia.quadro);
+  } catch {
+    return null;
+  }
+}
+
+/** The name of the board a conversation's place is on, for the card of sessions stuck in a loop. */
+function boardNameOfSession(sid: string): string | undefined {
+  try {
+    const boards = createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load().boards;
+    for (const [folder, board] of Object.entries(boards)) {
+      if (Object.values(board.cards).some((card) => card.kind === 'session' && card.sessionId === sid)) return boardName(folder);
+    }
+  } catch {
+    // unreadable: the card names the sessions only
+  }
+  return undefined;
+}
+
 function savedBoard(projectPath: string): MindscapeBoard | undefined {
   try {
     return createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load().boards[projectPath];
@@ -4079,7 +4104,12 @@ async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, cal
     return { caller: await withEveryBoard(boardBridge, ptyId, { ...base, projectPath: '', boardPlaceIds: [] }, { ...call, todos: true }), call: { ...call, todos: true } };
   }
   const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar', quadro });
-  if (list.kind !== 'text') return list.kind === 'error' ? list.text : 'Não consegui ler o quadro.';
+  if (list.kind !== 'text') {
+    // t-5839d76b — a task on a folder that is no board (the vigia's old cards): the Líder único still cancels it.
+    const offBoard = list.kind === 'error' && !savedBoard(quadro) && call.tool !== 'tarefa_criar' && call.tool !== 'tarefa_listar' && call.tool !== 'tarefa_novidades' ? leaderCallerOffBoard(base, quadro, call.tool) : null;
+    if (offBoard) return { caller: offBoard, call };
+    return list.kind === 'error' ? list.text : 'Não consegui ler o quadro.';
+  }
   const board = JSON.parse(list.text) as { pasta?: unknown; lugares?: { id?: unknown; podeMandar?: unknown }[] };
   if (typeof board.pasta !== 'string' || !Array.isArray(board.lugares)) return 'Não consegui ler o quadro.';
   const reached = board.lugares.filter((place) => place.podeMandar === true).map((place) => place.id).filter((id): id is string => typeof id === 'string');

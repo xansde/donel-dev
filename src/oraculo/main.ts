@@ -32,6 +32,7 @@ import { createReturnGuard } from './devolvido';
 import { createGateHandler, GATE_PORT, mergePicture, startGateServer, tunnelForward, type BoardPicture } from './portao';
 import { ORACLE_PORT, startOracleServer, type OracleServer } from './server';
 import { createDaemonVigia } from './vigia';
+import { boardName } from '../shared/vigia/board';
 import { createBoardClient, readBoardConfig, type BoardStore } from './board-client';
 import { createDecisoesConsumer, createDecisoesQueue, DECISOES_CONFIG_FILE, NOTAS_PAGINAS_FILE, readImportList } from './decisoes';
 
@@ -162,7 +163,15 @@ async function main(): Promise<void> {
   // The setup of a remote session reads this to point its MCP at the gate.
   writeFileSync(join(dir, 'portao'), `${gate.port}\n`, { mode: 0o600 });
   // t-ffbf8e7d — the vigia of this place's locks, with the PC off too (the PC hands its setup at each handshake).
-  const vigia = createDaemonVigia({ dir, ledger: () => ledger, log: (line) => console.log(line) });
+  const vigia = createDaemonVigia({
+    dir,
+    ledger: () => ledger,
+    log: (line) => console.log(line),
+    boardOfSession: (sid) => {
+      const pasta = picture?.sessoes[sid]?.quemSou?.pasta;
+      return typeof pasta === 'string' && pasta ? boardName(pasta) : undefined;
+    },
+  });
   vigia.start();
   // t-52bf8b45 — the config is read at each round: writing `decisoes.json` turns the queue on without a restart.
   const decisoes = createDecisoesConsumer({
