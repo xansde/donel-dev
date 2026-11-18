@@ -72,14 +72,20 @@ via `CLAUDE_CONFIG_DIR`.
 
 - O dono quer um instalador novo do alfa pronto quando pedir e uma janela "O que
   mudou" na primeira abertura de cada versão.
-- **As novidades saem do git log no build (desde 18/11)**: todo commit `feat:`
-  ou `fix:` vira uma novidade (`src/renderer/src/patchnotes/gitNotes.ts`). O PR
-  **não cria arquivo**; escreva o commit para o dono ler:
-  - Título em pt-BR, dizendo o que muda para ele; o build tira prefixo, escopo e
-    `(t-…)`. O 1º parágrafo do corpo vira o texto (sem corpo, repete o título).
-  - `chore`, `test`, `docs`, `refactor`, `ci` e merges não viram novidade.
-  - Os JSON antigos de `patchnotes/notes/` seguem valendo (não apague). Corrigir
-    uma novidade antiga é editar o arquivo dela; uma nova, só um commit novo.
+- **As novidades saem do git log no build (desde 18/11)**: cada PR `feat:` ou
+  `fix:` mesclado que mexe em `src/` vira **uma** novidade
+  (`src/renderer/src/patchnotes/gitNotes.ts`), com a hora do merge. O PR **não
+  cria arquivo**; escreva para o dono ler:
+  - **Título do PR** em pt-BR, dizendo o que muda para ele (é o título da
+    novidade; o build tira prefixo, escopo, `(t-…)` e `(#N)`).
+  - O 1º parágrafo do corpo do commit `feat`/`fix` **mais antigo** do PR vira o
+    texto (sem corpo, repete o título): escreva-o sem arquivo, PR ou jargão.
+  - Os `fix:` das rodadas de revisão dentro do PR não viram novidade; PR
+    `chore`/`test`/`docs`/`refactor`/`ci`, só fora de `src/` ou desfeito por um
+    `Revert` também não. Commit `feat:`/`fix:` feito direto na branch, sem PR,
+    vira novidade sozinho.
+  - Os JSON antigos de `patchnotes/notes/` seguem valendo (não apague). PR que
+    ainda acrescenta um JSON ali não ganha a novidade gerada (sairia em dobro).
   - Sem git (checkout sem histórico) o build segue só com os JSON.
 - Build **sob demanda** (dono, 03/11: "Desliga essa automação. Eu vou falar quando eu
   quiser"; antes houve 06:30 diário e, por uma hora, a cada 10 min — os dois
