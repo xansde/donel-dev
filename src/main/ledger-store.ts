@@ -21,7 +21,6 @@ import {
   isHttpUrl,
   cannotDecide,
   closedAlone,
-  isReviewerRole,
   isNewerLedger,
   lastDelivery,
   slackLetterSent,
@@ -62,6 +61,7 @@ import type { LedgerToolCall, ProofInput } from '../shared/ledger/tools';
 import { NOT_STARTED_GRACE_MS, orphanReasonIn, ownerGoneIn } from '../shared/ledger/inbox';
 import { byPanelThenPriority, inBoardQueue, panelPlaces, priorityWrites } from '../shared/ledger/prioridade';
 import { liveSessionOf } from '../shared/ledger/mirror';
+import { reviewersOutsideChain } from '../shared/ledger/revisao';
 import { AGENT_BOT_SERVERS, detectAgentBotSend, detectSlackSend, fileNameOf, slackGuard, slackMessageLink, slackSendOutcome, type AgentBotSend } from '../shared/ledger/slack-guard';
 
 /** Smoke/test override: isolates the ledger from the real one. */
@@ -427,6 +427,36 @@ export async function passOnTasks(service: LedgerService, requests: readonly Led
   return passed;
 }
 
+/** The words of the record of a task that follows the renewal of its place (item 13). */
+export const RENEWAL_REASON = 'renovação: a tarefa segue o lugar novo do mesmo papel';
+
+/**
+ * 18/11 (t-e195b35c, item 13) — the tasks of a closed place follow its successor (`successorOf`, reach.ts), the live
+ * place of the same role opened by the same place, instead of going up to `whoHears`. Same tasks and same signature as
+ * `passOnTasks` (aberta, em execução or rejeitada, signed by the closed place); `ids` limits it to those tasks. The
+ * ids passed.
+ */
+export async function followRenewal(service: LedgerService, request: { readonly projectPath: string; readonly placeId: string; readonly to: string; readonly ids?: readonly string[] }): Promise<string[]> {
+  if (request.to === request.placeId) return [];
+  let doc: LedgerDoc;
+  try {
+    const snapshot = service.load();
+    if (snapshot.readOnly) return [];
+    doc = snapshot.doc;
+  } catch {
+    return [];
+  }
+  const passed: string[] = [];
+  for (const task of Object.values(doc.tasks)) {
+    if (task.projectPath !== request.projectPath || task.ownerPlaceId !== request.placeId || task.slack) continue;
+    if (request.ids && !request.ids.includes(task.id)) continue;
+    if (isClosed(task) || (task.state !== 'aberta' && task.state !== 'em-execucao' && task.state !== 'rejeitada')) continue;
+    const result = await service.apply({ kind: 'lugar', placeId: request.placeId }, { op: 'transferir', id: task.id, to: request.to, reason: RENEWAL_REASON, ownerGone: true });
+    if (result.ok) passed.push(task.id);
+  }
+  return passed;
+}
+
 /**
  * t-2c18d666 — the line the Líder único reads when a place passed it a task by hand (`tarefa_transferir` with
  * "lider"); `null` when the answer is not a transfer to it.
@@ -557,18 +587,13 @@ const NOT_LIVE: ReadonlySet<string> = new Set(['fechada', 'nao-comecou']);
  * and who did the work): neither opened by them nor below them. `null` = unknown (the board or its places could not be
  * read): nothing closes alone on a guess.
  */
-function liveReviewersOutside(caller: LedgerCaller, from: readonly string[]): string[] | null {
+export function liveReviewersOutside(caller: LedgerCaller, from: readonly string[]): string[] | null {
   const states = caller.placeStates?.get(caller.projectPath);
   if (!caller.board || !states) return null;
-  const board = caller.board;
-  return Object.values(board.cards)
-    .filter((card) => card.kind === 'session' && isReviewerRole(card.roleId))
-    .map((card) => card.id)
-    .filter((id) => {
-      const state = states.get(id);
-      if (state === undefined || NOT_LIVE.has(state)) return false;
-      return from.every((placeId) => placeId !== id && !isOpenedBy(board, placeId, id) && !isBelow(board, placeId, id));
-    });
+  return reviewersOutsideChain(caller.board, (id) => {
+    const state = states.get(id);
+    return state !== undefined && !NOT_LIVE.has(state);
+  }, from);
 }
 
 /**
