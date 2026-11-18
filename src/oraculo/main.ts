@@ -494,7 +494,8 @@ async function main(): Promise<void> {
   tarefasPedidas.start();
   // t-cddc62fc — the owner's messages to the Líder único in the phone app (`celular.lider_mensagens`), same config and
   // round, delivered by the relay so a PC without the desktop router (before the alfa 26.1118.428) gets them too.
-  const replyScript = process.env.DONEL_CHAT_RESPONDER || '~/bin/rotinas/chat-lider/chat_lider.py';
+  // The answer goes by stdin (`-` + heredoc): no '~' for the remote shell to expand, no owner text in its argv.
+  const replyScript = process.env.DONEL_CHAT_RESPONDER || join(homedir(), 'bin', 'rotinas', 'chat-lider', 'chat_lider.py');
   const chatCelular = createChatCelularConsumer({
     queue: () => {
       const config = readBoardConfig(join(dir, DECISOES_CONFIG_FILE));
@@ -502,7 +503,7 @@ async function main(): Promise<void> {
     },
     relay,
     waitMs: RELAY_WAIT_MS,
-    replyHint: (shortId) => `Para responder no celular: ssh ${hostname()} python3 ${replyScript} responder ${shortId} "<sua resposta>"`,
+    replyHint: (shortId) => `Para responder no celular: ssh ${hostname()} python3 ${replyScript} responder ${shortId} - <<'FIM'\n<sua resposta>\nFIM`,
     log: (line) => console.log(line),
   });
   chatCelular.start();

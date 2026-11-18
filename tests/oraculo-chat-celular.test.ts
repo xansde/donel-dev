@@ -1,6 +1,7 @@
 // Chat do Líder pelo celular via Oráculo da VPS (t-cddc62fc) — o que quebraria sem o dono ver: a mensagem dele ao
-// Líder único sumir (marcada sem chegar, ou perdida numa falha) ou chegar duas vezes (a reserva vence com o PC
-// desligado e a linha é tomada de novo); e o aviso do reconciliador ao Líder sair por outra credencial.
+// Líder único sumir (marcada sem chegar, ou perdida numa falha) ou chegar duas vezes (o PC fica fora mais que a reserva
+// de 10 min e o roteador do desktop, #470, toma a mesma linha que já espera no relay); e o aviso do reconciliador ao
+// Líder sair por outra credencial.
 import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -8,13 +9,15 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps, type ConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, nodeLedgerProofFs } from '../src/main/ledger-store';
+import { createCelularLiderChat } from '../src/main/lider/celular-chat';
 import { createOracleApiHandler, type OracleRequest } from '../src/oraculo/api';
-import { createChatCelularConsumer, DELIVERED_NOTE, type ChatCelularQueue, type ChatCelularRow } from '../src/oraculo/chat-celular';
+import { chatCelularQueueOver, createChatCelularConsumer, DELIVERED_NOTE, PARKED } from '../src/oraculo/chat-celular';
 import { createRelay, type Relay } from '../src/oraculo/relay';
 import { readServiceHashes, SERVICE_PATH } from '../src/oraculo/servicos';
 
 const FILA = 'C:/data/fila.json';
 const ID = '9c4a90af-1111-4222-8333-444455556666';
+const MIN = 60_000;
 
 function memoryIo(): ConfigIoDeps {
   const files: Record<string, string> = {};
@@ -35,91 +38,134 @@ function memoryIo(): ConfigIoDeps {
   };
 }
 
-/** The PC: on, it delivers what the relay tells it about to the Líder único right away. */
-function setup() {
-  let pcOn = true;
-  const delivered: string[] = [];
-  const relay: Relay = createRelay({
-    filePath: FILA,
-    io: memoryIo(),
-    notify: () =>
-      queueMicrotask(() => {
-        if (pcOn) pcDelivers();
-      }),
-  });
-  const pcDelivers = (): void => {
+interface Row {
+  id: string;
+  texto: string;
+  criada_em: string;
+  autor: 'dono' | 'lider';
+  entregue_em: number | null;
+  resultado: string | null;
+  tomada_em: number | null;
+}
+
+/** `celular.lider_mensagens` and its RPCs (014 + 019 of donel-celular) as the SQL does them, on a clock the test moves. */
+function fakeSupabase(clock: { now: number }) {
+  const rows: Row[] = [{ id: ID, texto: 'Dê acesso a Raiza à VPS de homologação', criada_em: '2026-11-18T12:25:00Z', autor: 'dono', entregue_em: null, resultado: null, tomada_em: null }];
+  const fail = new Set<string>();
+  const out = (row: Row) => ({ id: row.id, texto: row.texto, criada_em: row.criada_em });
+  const rpc = async (fn: string, args: object): Promise<unknown> => {
+    if (fail.has(fn)) throw new Error('a fila do celular não respondeu (ECONNRESET)');
+    const a = args as Record<string, unknown>;
+    const own = (row: Row) => row.autor === 'dono' && row.entregue_em === null;
+    switch (fn) {
+      case 'celular_lider_tomar': {
+        const taken = rows
+          .filter((row) => own(row) && row.resultado === null && (row.tomada_em === null || row.tomada_em < clock.now - 10 * MIN))
+          .slice(0, Math.max(1, Math.min(a.p_limite as number, 50)));
+        for (const row of taken) row.tomada_em = clock.now;
+        return taken.map(out);
+      }
+      case 'celular_lider_entregue': {
+        const row = rows.find((r) => r.id === a.p_id && own(r));
+        if (!row) return null;
+        row.entregue_em = clock.now;
+        row.resultado = String(a.p_resultado).slice(0, 300);
+        return true;
+      }
+      case 'celular_lider_estacionar': {
+        const row = rows.find((r) => r.id === a.p_id && own(r) && r.resultado === null);
+        if (!row) return null;
+        row.resultado = String(a.p_resultado).slice(0, 300);
+        return true;
+      }
+      case 'celular_lider_estacionadas':
+        return rows.filter((row) => own(row) && row.resultado === a.p_resultado).map(out);
+      default:
+        throw new Error(`rpc desconhecida ${fn}`);
+    }
+  };
+  return { rows, rpc, fail };
+}
+
+/** The PC (old app): on, it delivers what the relay holds to the Líder único and acks. The relay runs on the same clock. */
+function world() {
+  const clock = { now: Date.parse('2026-11-18T12:25:05Z') };
+  const db = fakeSupabase(clock);
+  const toLider: string[] = [];
+  const relay: Relay = createRelay({ filePath: FILA, io: memoryIo(), now: () => clock.now });
+  const pcDrains = (): void => {
     for (const item of relay.pending()) {
-      delivered.push(item.message.leaderText);
+      toLider.push(item.message.leaderText);
       relay.ack(item.id, 'lider');
     }
   };
-  return { relay, delivered, pcDelivers, setPc: (on: boolean) => (pcOn = on) };
-}
-
-/** `celular.lider_mensagens` in memory: `tomar` hands what is not delivered yet (the reservation already ended). */
-function memoryQueue(rows: ChatCelularRow[]) {
-  const marked = new Map<string, string>();
-  const fail = { tomar: false, entregue: false };
-  const queue: ChatCelularQueue = {
-    tomar: async () => {
-      if (fail.tomar) throw new Error('sem rede');
-      return rows.filter((row) => !marked.has(row.id));
+  const vps = createChatCelularConsumer({ queue: () => chatCelularQueueOver(db.rpc), relay, waitMs: 5 });
+  // The desktop router (#470), on the same Supabase, delivering to the same Líder.
+  const desktop = createCelularLiderChat({
+    rpc: db.rpc,
+    now: () => clock.now,
+    deliver: async (text) => {
+      toLider.push(text);
+      return { ok: true };
     },
-    entregue: async (id, resultado) => {
-      if (fail.entregue) throw new Error('sem rede');
-      if (marked.has(id)) return false;
-      marked.set(id, resultado);
-      return true;
-    },
-  };
-  return { queue, marked, fail };
+  });
+  return { clock, db, relay, toLider, pcDrains, vps, desktop, row: db.rows[0]! };
 }
-
-const row: ChatCelularRow = { id: ID, texto: 'Dê acesso a Raiza à VPS de homologação', criada_em: '2026-11-18T12:25:00Z' };
 
 describe('chat do celular ao Líder único pelo Oráculo da VPS', () => {
   it('entrega ao Líder único e marca quando o PC responde que chegou', async () => {
-    const pc = setup();
-    const q = memoryQueue([row]);
-    const consumer = createChatCelularConsumer({ queue: () => q.queue, relay: pc.relay, waitMs: 1_000 });
-    await consumer.round();
-    expect(pc.delivered).toHaveLength(1);
-    expect(pc.delivered[0]).toContain('[celular #9c4a90af]');
-    expect(pc.delivered[0]).toContain(row.texto);
-    expect(q.marked.get(ID)).toBe(DELIVERED_NOTE);
+    const w = world();
+    const vps = createChatCelularConsumer({
+      queue: () => chatCelularQueueOver(w.db.rpc),
+      relay: { pending: () => w.relay.pending(), send: (message, waitMs) => (queueMicrotask(w.pcDrains), w.relay.send(message, waitMs)) },
+      waitMs: 1_000,
+    });
+    await vps.round();
+    expect(w.toLider).toHaveLength(1);
+    expect(w.toLider[0]).toContain('[celular #9c4a90af]');
+    expect(w.toLider[0]).toContain(w.row.texto);
+    expect(w.row.resultado).toBe(DELIVERED_NOTE);
+    expect(w.row.entregue_em).not.toBeNull();
   });
 
-  it('com o PC desligado não marca, não duplica quando a linha volta, e marca quando o PC entrega', async () => {
-    const pc = setup();
-    pc.setPc(false);
-    const q = memoryQueue([row]);
-    const consumer = createChatCelularConsumer({ queue: () => q.queue, relay: pc.relay, waitMs: 5 });
-    await consumer.round();
-    await consumer.round(); // the reservation ended: the same row is taken again
-    expect(q.marked.size).toBe(0);
-    expect(pc.relay.pending()).toHaveLength(1);
-    pc.setPc(true);
-    pc.pcDelivers();
-    await consumer.round();
-    expect(pc.delivered).toHaveLength(1);
-    expect(q.marked.get(ID)).toBe(DELIVERED_NOTE);
+  it('PC fora mais que a reserva: o roteador do desktop não toma a linha que espera no relay, e ela chega uma vez só', async () => {
+    const w = world();
+    await w.vps.round(); // PC off: the message waits in the relay and the row is parked
+    expect(w.row.resultado).toBe(PARKED);
+    expect(w.row.entregue_em).toBeNull();
+    w.clock.now += 11 * MIN; // the reservation ended
+    await w.desktop.poll(); // the alfa 26.1118.428+ on the PC comes back
+    await w.vps.round();
+    expect(w.relay.pending()).toHaveLength(1);
+    w.pcDrains(); // the relay's queue reaches the Líder
+    await w.desktop.poll();
+    await w.vps.round(); // the ack landed: the parked row is closed
+    expect(w.toLider).toHaveLength(1);
+    expect(w.row.resultado).toBe(DELIVERED_NOTE);
+    expect(w.row.entregue_em).not.toBeNull();
   });
 
-  it('falha da fila não perde a mensagem nem a entrega duas vezes', async () => {
-    const pc = setup();
-    const q = memoryQueue([row]);
-    const consumer = createChatCelularConsumer({ queue: () => q.queue, relay: pc.relay, waitMs: 1_000 });
-    q.fail.tomar = true;
-    await consumer.round();
-    expect(pc.delivered).toHaveLength(0);
-    q.fail.tomar = false;
-    q.fail.entregue = true;
-    await consumer.round();
-    expect(q.marked.size).toBe(0);
-    q.fail.entregue = false;
-    await consumer.round();
-    expect(q.marked.get(ID)).toBe(DELIVERED_NOTE);
-    expect(pc.delivered).toHaveLength(1);
+  it('falha ao estacionar ou ao marcar não perde a linha nem a entrega duas vezes', async () => {
+    const w = world();
+    w.db.fail.add('celular_lider_estacionar');
+    await w.vps.round(); // queued in the relay, not parked: the reservation still holds
+    expect(w.row.resultado).toBeNull();
+    await w.vps.round();
+    expect(w.relay.pending()).toHaveLength(1);
+    w.db.fail.delete('celular_lider_estacionar');
+    w.clock.now += 11 * MIN;
+    await w.vps.round(); // taken again: the same key joins the queued item, and now it parks
+    expect(w.relay.pending()).toHaveLength(1);
+    expect(w.row.resultado).toBe(PARKED);
+    w.pcDrains();
+    w.db.fail.add('celular_lider_entregue');
+    await w.vps.round(); // delivered but not closed: it stays parked
+    expect(w.row.resultado).toBe(PARKED);
+    w.db.fail.delete('celular_lider_entregue');
+    await w.desktop.poll();
+    await w.vps.round();
+    expect(w.toLider).toHaveLength(1);
+    expect(w.row.resultado).toBe(DELIVERED_NOTE);
   });
 });
 
