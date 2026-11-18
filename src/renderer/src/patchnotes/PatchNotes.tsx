@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { PATCH_NOTES } from './notes';
 import { formatNoteDate, latestNoteDate, recentNotes, unseenNotes } from './patchNotesModel';
 import styles from './PatchNotes.module.css';
+import { APP_IDENTITY } from '../../../shared/appIdentity';
 
 const LAST_SEEN_KEY = 'donel.patchNotes.lastSeen';
 /** Quantos dias o botão Novidades reabre. */
@@ -56,7 +57,7 @@ export function PatchNotes(): React.JSX.Element {
       >
         Novidades
       </button>
-      <Modal open={open} onClose={close} title="O que mudou no Donel Dev" className={styles.dialog}>
+      <Modal open={open} onClose={close} title={`O que mudou no ${APP_IDENTITY.productName}`} className={styles.dialog}>
         <div className={styles.body} data-testid="patch-notes">
           <p className={styles.intro}>
             {reopened ? 'As novidades das últimas versões.' : 'Novidades desde a última vez que você abriu.'}
