@@ -11,7 +11,7 @@
 import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 import type { LedgerDeliveredTo } from '../shared/ledger/contract';
-import type { OwnerMessage } from '../main/ledger-card-writer';
+import type { DeliverOwnerMessage, OwnerMessage } from '../main/ledger-card-writer';
 import type { ConfigIoDeps } from '../main/config-store';
 
 export interface RelayItem {
@@ -137,5 +137,21 @@ export function createRelay(deps: { readonly filePath: string; readonly io: Conf
       waiters.delete(id);
       return true;
     },
+  };
+}
+
+/**
+ * t-4c60b815 — the card writer's way out on the VPS: the session that owns the task, when it runs on this machine,
+ * hears it from `local` (its recados), with the PC off; only what runs elsewhere (or the Líder único) waits for the PC
+ * in the relay. A key the relay already holds stays there (it joins), so one message never goes both ways.
+ */
+export function deliverLocalFirst(local: DeliverOwnerMessage, relay: Relay, waitMs: number): DeliverOwnerMessage {
+  return async (message) => {
+    const queued = message.key !== undefined && relay.pending().some((item) => item.key === message.key);
+    // A local queue that failed (disk, an unreadable recados.json) is not the end: the relay still takes it.
+    const here = queued ? null : await local(message).catch(() => null);
+    if (here) return here;
+    const to = await relay.send(message, waitMs);
+    return to === 'pendente' ? null : to;
   };
 }
