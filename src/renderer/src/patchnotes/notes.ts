@@ -1,7 +1,7 @@
 // Novidades da versão — o que o dono vê na primeira abertura depois de atualizar.
 //
-// Desde 18/11 as novidades saem do git log no build (`gitNotes.ts`: cada commit
-// `feat:`/`fix:` vira uma). As anteriores moram cada uma num arquivo,
+// Desde 18/11 as novidades saem do git log no build (`gitNotes.ts`: cada PR
+// `feat:`/`fix:` mesclado vira uma). As anteriores moram cada uma num arquivo,
 // `./notes/AAAA-MM-DD-HHMM-slug.json` (`{ "title": "...", "text": "..." }`), e
 // continuam valendo. Este módulo só monta a lista: um dia por data, o mais novo
 // primeiro, e, dentro do dia, o `HHMM` maior primeiro. Regra: CLAUDE.md, seção

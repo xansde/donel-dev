@@ -80,6 +80,7 @@ describe('defaultAppConfig (puro)', () => {
       // Oráculo no centro (06/11) — o layout novo é o padrão, com o Oráculo à vista.
       layout: { oracleCenter: true, centerView: 'oracle' },
       leader: { where: 'auto' },
+      router: { enabled: true },
       appUpdate: { installersDir: null, forceAfterMinutes: null },
       browserUploads: { folders: [] },
       browserUploadGrants: { grants: [] },
@@ -123,6 +124,7 @@ describe('toAppConfigDto (puro)', () => {
       yolo: { projects: [] },
       layout: { oracleCenter: true, centerView: 'oracle' },
       leader: { where: 'auto' },
+      router: { enabled: true },
       leaderHomes: [],
     });
   });
@@ -263,6 +265,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       yolo: { projects: ['C:\\repos\\app'] },
       layout: { oracleCenter: false, centerView: 'terminals' },
       leader: { where: 'vps-1' },
+      router: { enabled: false },
       appUpdate: { installersDir: 'D:\\instaladores', forceAfterMinutes: 10 },
       browserUploads: { folders: [] },
       browserUploadGrants: { grants: [] },
@@ -369,6 +372,7 @@ describe('sanitizeAppConfig (puro — validação de schema)', () => {
       // Oráculo no centro — o campo ruim cai no default só dele; a vista escolhida fica.
       layout: { oracleCenter: true, centerView: 'terminals' },
       leader: defaults.leader,
+      router: defaults.router,
       appUpdate: { installersDir: null, forceAfterMinutes: null },
       browserUploads: { folders: [] },
       browserUploadGrants: { grants: [] },

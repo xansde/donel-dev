@@ -14,10 +14,14 @@
 // the ledger and the mark is answered by `decisionOfRequest` without a second write. Nothing is lost: a row is marked
 // only when the ledger answered; a passing failure leaves it reserved, and it comes back when the reservation ends.
 //
-// Only the owner's phone decides (the Líder's call on PR #455): the queue's password ships inside the APK, so a row
-// counts only when it carries an HMAC made with the key of a phone paired with this Oráculo (`decisaoMessage`, the
-// scheme `donel-decisao-v1`). A row without it, or with a bad one, is marked refused and never reaches the ledger. The
-// row also says which delivery he saw (`entrega_vista`): a decision taken on an older card is refused too.
+// The signature (the Líder's call on PR #455): the queue's password ships inside the APK, so a signed row counts only
+// when its HMAC was made with the key of a phone paired with this Oráculo (`decisaoMessage`, the scheme
+// `donel-decisao-v1`); a bad signature is marked refused and never reaches the ledger. A row WITHOUT a signature is
+// refused too, unless `decisoes.json` says `"semAssinatura": "aceitar"` — the owner's order of 17/11 ("Quero que vá
+// direto, sem passos extras", t-2eedda0d): then it goes the normal way (delivery he saw, option mapping) without the
+// HMAC check nor the phone being paired or switched on, and its ledger event says so in a note (UNSIGNED_NOTE). The
+// gap this opens (whoever has the APK decides for him) is t-412f81cd's to close (a key per device in the Keystore).
+// The row also says which delivery he saw (`entrega_vista`): a decision taken on an older card is refused too.
 //
 // The one exception is explicit and recorded (t-8762b0ac): `decisoes.json` may carry `importar`, a list of rows the
 // Líder vouched for — decisions the owner made with an APK that did not sign yet. Those are applied as listed, before
@@ -47,6 +51,8 @@ const BATCH_BUDGET_MS = 9 * 60_000;
 export const NOT_THE_SAMPLE = 'a tarefa não é a amostra do Revisor';
 export const STALE_DECISION = 'a entrega mudou depois da decisão no celular';
 export const UNSIGNED_DECISION = 'sem assinatura';
+/** The note an unsigned row's ledger event carries when `semAssinatura` is `aceitar` (the owner's order, 17/11). */
+export const UNSIGNED_NOTE = 'sem assinatura do aparelho (ordem do dono, 17/11)';
 /** A signed row that arrives while the phone is switched off in Preferences: refused for that, not for its signature. */
 export const PHONE_OFF = 'o celular está desligado nas Preferências do Oráculo';
 /** A side without a label on a card whose options close that way: the decision does not say which path. */
@@ -260,6 +266,24 @@ export function readImportList(file: string): ImportList {
   return isRecord(raw) ? parseImportList(raw.importar) : { ok: false, reason: `${DECISOES_CONFIG_FILE} não é um objeto` };
 }
 
+/** `semAssinatura` in `decisoes.json`: `aceitar` lets an unsigned row through; anything else (or absent) refuses it. */
+export type UnsignedPolicy = 'aceitar' | 'recusar';
+
+/**
+ * Reads `semAssinatura` from the config file at each round. Null = the file did not parse (a non-atomic rewrite): the
+ * round holds the queue, never reads it as `recusar`, which would refuse the owner's unsigned rows for good.
+ */
+export function readUnsignedPolicy(file: string): UnsignedPolicy | null {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(file, 'utf8')) as unknown;
+  } catch {
+    return null;
+  }
+  if (!isRecord(raw)) return null;
+  return raw.semAssinatura === 'aceitar' ? 'aceitar' : 'recusar';
+}
+
 const SAO_PAULO = new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 
 /** The note every imported event carries, with the time the owner decided (São Paulo time, from the row). */
@@ -397,6 +421,27 @@ export function planoDe(row: DecisaoRow, task: LedgerTask | undefined): DecisaoP
   return decide(null, words || label || null);
 }
 
+/**
+ * An unsigned row's plan with UNSIGNED_NOTE as the last line of the text the ledger records (the owner's words cut to
+ * fit). Words the ledger requires (a rejection without option, his own option, a comment) are never made of the note
+ * alone: without them the plan is left as is, and the ledger refuses it as it would a signed one.
+ */
+export function withUnsignedNote(plano: DecisaoPlano): DecisaoPlano {
+  if (plano.kind === 'recusar') return plano;
+  if (plano.kind === 'comentar') {
+    if (!plano.input.texto.trim()) return plano;
+    return { kind: 'comentar', input: { ...plano.input, texto: joinLines(fitWords(plano.input.texto, UNSIGNED_NOTE), UNSIGNED_NOTE) } };
+  }
+  const { input } = plano;
+  if (input.opcao === OWN_OPTION && !input.texto?.trim()) return plano;
+  if (input.decisao === 'rejeitar') {
+    const motivo = input.motivo ? fitWords(input.motivo, UNSIGNED_NOTE) : '';
+    if (!motivo && !input.opcao) return plano;
+    return { kind: 'decidir', input: { ...input, motivo: motivo || null, texto: UNSIGNED_NOTE } };
+  }
+  return { kind: 'decidir', input: { ...input, texto: joinLines(fitWords(input.texto ?? '', UNSIGNED_NOTE), UNSIGNED_NOTE) } };
+}
+
 /** The delivery he saw is not the task's last one (or the row does not say): a card he never saw. */
 export function entregaMudou(row: DecisaoRow, task: LedgerTask): boolean {
   const seen = row.entrega_vista ? Date.parse(row.entrega_vista) : Number.NaN;
@@ -452,6 +497,8 @@ export interface DecisoesConsumerDeps {
   readonly returned: () => boolean;
   /** The Líder's list of rows to import (`importar` in `decisoes.json`), read at each round. Absent = none. */
   readonly importar?: () => ImportList;
+  /** `semAssinatura` in `decisoes.json`, read at each round; null = unreadable (the round waits). Absent = `recusar`. */
+  readonly semAssinatura?: () => UnsignedPolicy | null;
   /** Appends a marked row's page notes to `notas-paginas.jsonl` (only rows with valid notes). A failure is a log line. */
   readonly guardarNotas?: (entry: NotasPaginasEntry) => void | Promise<void>;
   readonly log?: (line: string) => void;
@@ -469,6 +516,7 @@ export function createDecisoesConsumer(deps: DecisoesConsumerDeps): DecisoesCons
   let running = false;
   let offLogged = false;
   let importLogged = '';
+  let policyLogged = false;
 
   async function round(): Promise<void> {
     if (deps.returned()) return;
@@ -490,6 +538,14 @@ export function createDecisoesConsumer(deps: DecisoesConsumerDeps): DecisoesCons
     }
     importLogged = '';
     const imports = list.items;
+    const policy = deps.semAssinatura ? deps.semAssinatura() : 'recusar';
+    if (policy === null) {
+      if (!policyLogged) deps.log?.(`[decisoes] ${DECISOES_CONFIG_FILE} não pôde ser lido; a fila do celular espera a próxima rodada.`);
+      policyLogged = true;
+      return;
+    }
+    policyLogged = false;
+    const acceptUnsigned = policy === 'aceitar';
     const takenAt = Date.now();
     const rows = [...(await queue.tomar(TAKE_LIMIT))].sort((a, b) => a.criada_em.localeCompare(b.criada_em));
     if (!rows.length) return;
@@ -518,7 +574,7 @@ export function createDecisoesConsumer(deps: DecisoesConsumerDeps): DecisoesCons
       let outcome: RowOutcome;
       try {
         const item = imports.get(row.pedido);
-        outcome = item ? await importRow(row, item, task) : await applyRow(row, task);
+        outcome = item ? await importRow(row, item, task) : await applyRow(row, task, acceptUnsigned);
       } catch (error) {
         // One row that throws does not hold the batch: it stays reserved and comes back when the reservation ends.
         deps.log?.(`[decisoes] ${row.tarefa} falhou e fica na fila: ${error instanceof Error ? error.message : String(error)}`);
@@ -618,13 +674,22 @@ export function createDecisoesConsumer(deps: DecisoesConsumerDeps): DecisoesCons
     }
   }
 
-  /** In order: already applied, signed by a paired phone, the delivery he saw, the strict mapping. */
-  async function applyRow(row: DecisaoRow, task: LedgerTask | undefined): Promise<RowOutcome> {
+  /** In order: already applied, signed by a paired phone (or unsigned, by the owner's order), the delivery he saw, the strict mapping. */
+  async function applyRow(row: DecisaoRow, task: LedgerTask | undefined, acceptUnsigned: boolean): Promise<RowOutcome> {
     // (a) Already in the ledger (a crash between the ledger and the mark): the port answers it without writing, and
     // no later check (a new delivery since) may turn an applied decision into a refused row.
     if (task && decisionOfRequest(task, row.pedido)) return decide({ pedidoId: row.pedido, itemId: row.tarefa, decisao: row.lado === 'nao' ? 'rejeitar' : 'aceitar', motivo: null });
     if (task && commentOfRequest(task, row.pedido)) return comment({ pedidoId: row.pedido, itemId: row.tarefa, texto: '' });
-    // (b) Only a paired phone decides for the owner.
+    // (b) Unsigned, with `semAssinatura: aceitar` (the owner's order, 17/11): no HMAC, nor a paired or switched-on
+    // phone; the rest of the path is the same, and the ledger event carries the note.
+    if (!row.assinatura && acceptUnsigned) {
+      if (task && entregaMudou(row, task)) return { mark: `recusada: ${STALE_DECISION}`, note: UNSIGNED_NOTE };
+      const plano = withUnsignedNote(planoDe(row, task));
+      const suffix = ' (sem assinatura)';
+      const outcome = plano.kind === 'recusar' ? { mark: `recusada: ${plano.message}` } : plano.kind === 'comentar' ? await comment(plano.input, suffix) : await decide(plano.input, suffix);
+      return 'mark' in outcome ? { ...outcome, note: UNSIGNED_NOTE } : outcome;
+    }
+    // (b) Otherwise only a paired phone decides for the owner.
     const verify = deps.verifier();
     if (!verify) return { passing: 'o celular do Oráculo não está pronto para conferir a assinatura' };
     if (!row.assinatura) {
