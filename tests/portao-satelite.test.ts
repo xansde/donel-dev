@@ -393,6 +393,68 @@ describe('sonda do retrato', () => {
     await probe.round();
     expect(asked.length).toBeGreaterThan(11);
   });
+
+  it('uma sessão que nunca responde não trava a sonda: espera sozinha, e as outras seguem com retrato novo', async () => {
+    // 18/11: the oldest session timed out every round, the probe paused 2 min and started with it again, so no other
+    // picture moved for hours and their recados went to the PC.
+    const home = tempDir('sonda-muda-');
+    const sids = Array.from({ length: 3 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`);
+    sids.forEach((sid, i) => {
+      mkdirSync(join(home, sid), { recursive: true });
+      writeFileSync(join(home, sid, 'meta.json'), JSON.stringify({ sid, mcpPort: 40000 + i, mcpToken: 't'.repeat(43) }));
+    });
+    let now = 9_000_000;
+    const asked: number[] = [];
+    let pcUp = true;
+    const kept: Record<string, PictureSession> = {};
+    // The mute one has the oldest picture: it is always first in line.
+    kept[sids[0]!] = { quemSou: { pasta: PROJECT, lugar: 'x' }, listar: [], at: now - 3_600_000 };
+    kept[sids[1]!] = { quemSou: { pasta: PROJECT, lugar: 'x' }, listar: [], at: now - 600_000 };
+    kept[sids[2]!] = { quemSou: { pasta: PROJECT, lugar: 'x' }, listar: [], at: now - 600_000 };
+    const probe = createProbe({
+      sessionsDir: home,
+      liveSessions: async () => new Set(sids),
+      picture: () => ({ at: 0, sessoes: kept }),
+      setSession: (folder, session) => void (kept[folder] = session),
+      call: async (port, _token, tool) => {
+        if (tool === 'sessao_quem_sou') asked.push(port);
+        if (port === 40000 || !pcUp) {
+          now += 5_000; // the timeout
+          return null;
+        }
+        return tool === 'sessao_quem_sou' ? { pasta: PROJECT, lugar: ME } : tool === 'sessao_listar' ? listar : quadro;
+      },
+      now: () => now,
+      gapMs: 0,
+      log: () => undefined,
+    });
+    await probe.round();
+    expect(asked).toEqual([40000]);
+    now += 15_000;
+    await probe.round();
+    // The next round goes on with the others: their pictures move.
+    expect(asked).toEqual([40000, 40001, 40002]);
+    expect(kept[sids[1]!]!.at).toBe(now);
+    expect(kept[sids[2]!]!.at).toBe(now);
+    // Past the 2 min the mute one is not first again: it waits longer each time it fails.
+    now += 130_000;
+    await probe.round();
+    expect(asked).toEqual([40000, 40001, 40002, 40001, 40002]);
+    now += 600_000;
+    await probe.round();
+    expect(asked.slice(5)).toEqual([40000]);
+    // The PC off: two sessions in a row with no answer, and the probe leaves it alone for a while.
+    pcUp = false;
+    now += 15_000;
+    await probe.round();
+    expect(asked.slice(6)).toEqual([40001]);
+    now += 15_000;
+    await probe.round();
+    expect(asked.slice(6)).toEqual([40001, 40002]);
+    now += 60_000;
+    await probe.round();
+    expect(asked).toHaveLength(8);
+  });
 });
 
 describe('claude embrulhado na VPS', () => {

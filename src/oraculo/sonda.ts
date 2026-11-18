@@ -7,8 +7,11 @@
 // Gentle with the PC (each call waits in the line of its window, the one that stalled on 18/11): a session is asked
 // only when its picture is over 2 min old and its last probe too; at most 6 sessions a minute for the whole machine,
 // those with no picture first, then the oldest; one at a time with a pause between them; the first failure ends the
-// round, and a PC that took over 3 s for one session is left alone for 2 min. A failed probe keeps the last picture.
-// No token is ever logged.
+// round, and a PC that took over 3 s to answer one session is left alone for 2 min. A failed probe keeps the last
+// picture. A session that does not answer waits longer each time (2, 4, 8, 16, 32 min) and never holds the others: on
+// 18/11 one mute session, always the oldest, was asked first every round, its 5 s timeout paused the probe, and no
+// other picture moved for hours (their recados went to the PC). Two sessions that answered before failing in a row is
+// the PC off or stalled: 2 min alone. No token is ever logged.
 
 import { readFileSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
@@ -25,6 +28,10 @@ const PAUSE_MS = 2 * 60_000;
 const TIMEOUT_MS = 5_000;
 const GAP_MS = 500;
 const ROUND_MS = 15_000;
+/** A session that failed `n` times in a row waits `STALE_MS * 2^min(n, MAX_BACKOFF)` since its last probe. */
+const MAX_BACKOFF = 4;
+/** This many sessions that had answered failing in a row: the PC itself is off or stalled. */
+const PC_DOWN_AFTER = 2;
 const SID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -176,6 +183,10 @@ export function createProbe(deps: ProbeDeps): Probe {
   const log = deps.log ?? ((line: string) => console.log(line));
   const perMinute = deps.perMinute ?? PER_MINUTE;
   const lastProbe = new Map<string, number>();
+  /** Failures in a row of each session (none = it answered last time). */
+  const failures = new Map<string, number>();
+  /** Sessions that had answered, failing one after the other: `PC_DOWN_AFTER` of them pauses the probe. */
+  let downStreak = 0;
   /** When each probe of the last minute started (the budget). */
   let recent: number[] = [];
   let pausedUntil = 0;
@@ -205,8 +216,9 @@ export function createProbe(deps: ProbeDeps): Probe {
         return mine && picture ? at - (mine.at ?? picture.at) : Number.POSITIVE_INFINITY;
       };
       // No picture first, then the oldest.
+      const waitOf = (sid: string): number => staleMs * 2 ** Math.min(failures.get(sid) ?? 0, MAX_BACKOFF);
       const due = [...(await deps.liveSessions())]
-        .filter((sid) => SID_PATTERN.test(sid) && ageOf(sid) >= staleMs && at - (lastProbe.get(sid) ?? Number.NEGATIVE_INFINITY) >= staleMs)
+        .filter((sid) => SID_PATTERN.test(sid) && ageOf(sid) >= staleMs && at - (lastProbe.get(sid) ?? Number.NEGATIVE_INFINITY) >= waitOf(sid))
         .sort((a, b) => ageOf(b) - ageOf(a) || a.localeCompare(b));
       let first = true;
       for (const sid of due) {
@@ -223,15 +235,27 @@ export function createProbe(deps: ProbeDeps): Probe {
         lastProbe.set(sid, started);
         recent.push(started);
         const session = await probe(meta.port, meta.token);
-        if (session) deps.setSession(sid, session);
+        if (!session) {
+          // This session waits longer before the next try; the others go on next round. Only sessions that answered
+          // before, failing in a row, say the PC itself is off.
+          const failed = (failures.get(sid) ?? 0) + 1;
+          failures.set(sid, failed);
+          if (failed === 1) downStreak += 1;
+          if (downStreak >= PC_DOWN_AFTER) {
+            downStreak = 0;
+            pausedUntil = now() + PAUSE_MS;
+            log(`[oraculo] sonda: ${PC_DOWN_AFTER} sessões seguidas sem resposta pelo túnel; a sonda espera ${PAUSE_MS / 60_000} min.`);
+          } else {
+            log(`[oraculo] sonda: a sessão ${sid} não respondeu pelo túnel (${failed}ª vez seguida); fica o retrato anterior e ela espera ${Math.round(waitOf(sid) / 60_000)} min.`);
+          }
+          break;
+        }
+        failures.delete(sid);
+        downStreak = 0;
+        deps.setSession(sid, session);
         if (now() - started >= SLOW_MS) {
           pausedUntil = now() + PAUSE_MS;
           log(`[oraculo] sonda: o PC levou ${Math.round((now() - started) / 1000)} s para a sessão ${sid}; a sonda espera ${PAUSE_MS / 60_000} min.`);
-          break;
-        }
-        if (!session) {
-          // The PC is off or busy: the rest waits for the next round.
-          log(`[oraculo] sonda: a sessão ${sid} não respondeu pelo túnel; fica o retrato anterior.`);
           break;
         }
       }
