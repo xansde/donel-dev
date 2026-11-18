@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 import type { Plugin } from 'vite';
+import { gitPatchNotes } from './src/renderer/src/patchnotes/gitNotes';
 
 /**
  * 015-jobu-pet (T028): the click test of the pet reads the alpha of the art from a canvas, and a
@@ -82,6 +83,6 @@ export default defineConfig({
   },
   renderer: {
     root: resolve(__dirname, 'src/renderer'),
-    plugins: [react(), inlinePetArt(), xtermScrollWithoutSelection()],
+    plugins: [react(), inlinePetArt(), xtermScrollWithoutSelection(), gitPatchNotes()],
   },
 });
