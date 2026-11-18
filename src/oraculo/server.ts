@@ -9,6 +9,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net';
 import { isTailscaleAddress } from '../main/celular/tailscale';
 import { isBinaryRoute, MAX_JSON_BYTES, MAX_UPLOAD_BYTES, type OracleApiHandler, type OracleCaller } from './api';
+import { GATE_TOOL_PATH, MAX_GATE_BODY_BYTES } from './portoes';
 
 export const ORACLE_PORT = 47816;
 export const EVENTS_PATH = '/v1/eventos';
@@ -92,7 +93,8 @@ export function startOracleServer(options: { readonly host: string; readonly por
       return;
     }
     const isUpload = isBinaryRoute(req.method ?? 'GET', path);
-    const maxBytes = isUpload ? MAX_UPLOAD_BYTES : MAX_JSON_BYTES;
+    // A gate's tool call may carry the delivery's proof files (t-e195b35c); only a gate's credential gets this far.
+    const maxBytes = isUpload ? MAX_UPLOAD_BYTES : who.kind === 'portao' && path === GATE_TOOL_PATH ? MAX_GATE_BODY_BYTES : MAX_JSON_BYTES;
     const chunks: Buffer[] = [];
     let size = 0;
     let tooBig = false;

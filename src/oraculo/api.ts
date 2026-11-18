@@ -11,6 +11,7 @@ import { checkLedgerImport, ledgerCount, ledgerProofFiles, sameLedger } from '..
 import { ledgerProofsDir, type LedgerService } from '../main/ledger-store';
 import { SERVICE_PATH, serviceActor, serviceOpRefusal, type ServiceOp } from './servicos';
 import { LIVRO_PATH, parseRascunho, type LivroStore } from './livro';
+import { GATE_PATH_PREFIX, type GateRoutes } from './portoes';
 
 export interface OracleRequest {
   readonly method: string;
@@ -59,12 +60,16 @@ export function bearerMatches(authorization: string | undefined, tokenHash: stri
   return timingSafeEqual(Buffer.from(sha256Hex(authorization.slice('Bearer '.length)), 'hex'), Buffer.from(tokenHash, 'hex'));
 }
 
-/** Who is calling: the PC (every route) or a headless service (only `SERVICE_PATH`, src/oraculo/servicos.ts). */
-export type OracleCaller = { readonly kind: 'pc' } | { readonly kind: 'servico'; readonly name: string };
+/**
+ * Who is calling: the PC (every route but the gates'), a headless service (only `SERVICE_PATH`, src/oraculo/servicos.ts)
+ * or another machine's MCP gate (only `/v1/portao/*`, src/oraculo/portoes.ts).
+ */
+export type OracleCaller = { readonly kind: 'pc' } | { readonly kind: 'servico'; readonly name: string } | { readonly kind: 'portao'; readonly name: string };
 
-export function callerOf(authorization: string | undefined, tokenHash: string | null, services: ReadonlyMap<string, string>): OracleCaller | null {
+export function callerOf(authorization: string | undefined, tokenHash: string | null, services: ReadonlyMap<string, string>, gates: ReadonlyMap<string, string> = new Map()): OracleCaller | null {
   if (bearerMatches(authorization, tokenHash)) return { kind: 'pc' };
   for (const [name, hash] of services) if (bearerMatches(authorization, hash)) return { kind: 'servico', name };
+  for (const [name, hash] of gates) if (bearerMatches(authorization, hash)) return { kind: 'portao', name };
   return null;
 }
 
@@ -108,6 +113,10 @@ export interface OracleApiDeps {
   readonly importRefused?: string;
   /** F6 do ledger bom — the journal (src/oraculo/livro.ts); absent = the daemon did not switch it on (no route). */
   readonly livro?: LivroStore;
+  /** t-e195b35c — the other machines' gate token hashes (name → sha256), read at each call; absent = none. */
+  readonly gates?: () => ReadonlyMap<string, string>;
+  /** t-e195b35c — what a gate's credential may call (src/oraculo/portoes.ts); absent = nothing. */
+  readonly gateRoutes?: GateRoutes;
 }
 
 /** What a service may append to the journal: the same as its op route (create, take, deliver), by the same rule. */
@@ -226,11 +235,14 @@ export function createOracleApiHandler(deps: OracleApiDeps): OracleApiHandler {
   }
 
   return async (request) => {
-    const caller = callerOf(request.authorization, deps.tokenHash(), deps.services?.() ?? new Map());
+    const caller = callerOf(request.authorization, deps.tokenHash(), deps.services?.() ?? new Map(), deps.gates?.() ?? new Map());
     if (!caller) return json(401, { error: 'token' });
     const url = new URL(request.url, 'http://oraculo');
     const path = url.pathname;
     const { method } = request;
+    // A gate's credential opens its routes only, and only it opens them (the PC's token is not a gate's).
+    if (caller.kind === 'portao') return (await deps.gateRoutes?.(caller.name, request, path)) ?? json(403, { error: 'credencial de portão só chama /v1/portao/*' });
+    if (path.startsWith(GATE_PATH_PREFIX)) return json(403, { error: 'só a credencial de um portão chama /v1/portao/*' });
     if (path === LIVRO_PATH) return deps.livro ? livroRoute(deps.livro, caller, method, url, request.body) : json(404, { error: 'rota' });
     if (caller.kind === 'servico') {
       if (method !== 'POST' || path !== SERVICE_PATH) return json(403, { error: 'credencial de serviço só cria, assume e entrega tarefas' });

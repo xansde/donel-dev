@@ -227,15 +227,15 @@ describe('Recados em fila', () => {
     const g = setup();
     const recados = g.make();
     const mine = g.picture.sessoes[SID_DEV]!;
-    // No arrow Dev → owner's Revisor and nothing delivered: refused with the app's words.
-    expect(textOf(await recados.enviar(SID_DEV, mine, { tool: 'sessao_enviar', para: REV, texto: 'oi' }))).toMatch(/^Sem ligação/);
+    // No arrow Dev → owner's Revisor and nothing delivered: with the PC off, refused with the app's words.
+    expect(textOf(await recados.enviar(SID_DEV, mine, { tool: 'sessao_enviar', para: REV, texto: 'oi' }, 'desligado'))).toMatch(/^Sem ligação/);
     // Revisor → Dev by role, with nothing delivered yet: no link either.
-    const sent = await recados.enviar(SID_REV, g.picture.sessoes[SID_REV]!, { tool: 'sessao_enviar', para: 'dev', texto: 'olha o PR 12', tarefa: 't-abc12345' });
+    const sent = await recados.enviar(SID_REV, g.picture.sessoes[SID_REV]!, { tool: 'sessao_enviar', para: 'dev', texto: 'olha o PR 12', tarefa: 't-abc12345' }, 'desligado');
     expect(textOf(sent)).toMatch(/^Sem ligação/);
 
     await deliveredTask(g.ledger!);
     // By role: two live Revisores (the owner's and the one in the Dev's chain) = an error naming both.
-    expect(textOf(await recados.enviar(SID_DEV, mine, { tool: 'sessao_enviar', para: 'revisor', texto: 'pode revisar?' }))).toContain(REV_CHAIN);
+    expect(textOf(await recados.enviar(SID_DEV, mine, { tool: 'sessao_enviar', para: 'revisor', texto: 'pode revisar?' }, 'desligado'))).toContain(REV_CHAIN);
     const ok = await recados.enviar(SID_DEV, mine, { tool: 'sessao_enviar', para: REV, texto: 'pode revisar?', tarefa: 't-abc12345' });
     const answer = JSON.parse(textOf(ok)) as { entregue: string; id: string; para: string };
     expect(answer).toMatchObject({ entregue: 'na-fila', para: REV });
@@ -264,6 +264,34 @@ describe('Recados em fila', () => {
     const g = setup();
     const recados = g.make();
     expect(await recados.enviar(SID_DEV, g.picture.sessoes[SID_DEV]!, { tool: 'sessao_enviar', para: 'lider-quadro', texto: 'oi' })).toBe('repassar');
+  });
+
+  it('retrato velho com o PC ligado: lugar que ele não conhece, ou sem seta nele, vai ao PC decidir; nada entra na fila', async () => {
+    const g = setup();
+    const recados = g.make();
+    const mine = g.picture.sessoes[SID_DEV]!;
+    // A place opened after the last picture (sessao_abrir, then a message right away), and an arrow drawn after it.
+    expect(await recados.enviar(SID_DEV, mine, { tool: 'sessao_enviar', para: 'place:recem-aberto', texto: 'oi' })).toBe('repassar');
+    expect(await recados.enviar(SID_DEV, mine, { tool: 'sessao_enviar', para: REV, texto: 'oi' })).toBe('repassar');
+    expect(await recados.enviar(SID_DEV, mine, { tool: 'sessao_enviar', para: 'revisor', texto: 'oi' })).toBe('repassar');
+    expect(existsSync(g.file)).toBe(false);
+    // With the PC off the picture is all there is: the same answer as the app's.
+    expect(textOf(await recados.enviar(SID_DEV, mine, { tool: 'sessao_enviar', para: 'place:recem-aberto', texto: 'oi' }, 'desligado'))).toContain('não é um lugar do quadro');
+  });
+
+  it('PC fora e alvo fora desta máquina: vai ao relay uma vez (a repetição junta), e quem mandou sabe', async () => {
+    const g = setup();
+    const recados = g.make();
+    const mine = g.picture.sessoes[SID_DEV]!;
+    const first = JSON.parse(textOf(await recados.enviar(SID_DEV, mine, { tool: 'sessao_enviar', para: 'lider-quadro', texto: 'acabei o PR', tarefa: 't-abc12345' }, 'desligado'))) as { entregue: string; para: string };
+    expect(first).toMatchObject({ entregue: 'pelo-relay', para: LIDER });
+    await recados.enviar(SID_DEV, mine, { tool: 'sessao_enviar', para: 'lider-quadro', texto: 'acabei o PR', tarefa: 't-abc12345' }, 'desligado');
+    expect(g.relayed).toHaveLength(2);
+    const [a, b] = g.relayed as { placeId: string; text: string; key: string }[];
+    expect(a).toMatchObject({ placeId: LIDER, text: expect.stringContaining('[t-abc12345] acabei o PR') });
+    expect(a!.text).toContain(`Dev (${DEV})`);
+    expect(b!.key).toBe(a!.key); // the relay joins the same key: delivered once
+    expect(existsSync(g.file)).toBe(false);
   });
 
   it('sessão parada: digita só com o campo livre, uma vez por recado, e confirma pelo prompt', async () => {
