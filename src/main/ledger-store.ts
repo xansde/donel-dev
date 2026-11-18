@@ -112,8 +112,19 @@ export const nodeLedgerProofFs: LedgerProofFs = {
   unlink: (path) => fs.unlink(path),
 };
 
+/**
+ * t-89279f84 — where the document lives when it is not the file (the daemon's Supabase, src/oraculo/ledger-supabase.ts):
+ * `read` gives the raw document as the source has it (`null` = none yet), `write` persists it before the op answers.
+ */
+export interface LedgerStore {
+  read(): unknown;
+  write(doc: LedgerDoc): Promise<boolean>;
+}
+
 export interface LedgerServiceDeps {
+  /** The ledger file; with `store`, only the place of `ledger-provas/` beside it. */
   readonly filePath: string;
+  readonly store?: LedgerStore;
   readonly io: ConfigIoDeps;
   readonly proofFs: LedgerProofFs;
   readonly now?: () => number;
@@ -185,6 +196,10 @@ export function createLedgerService(deps: LedgerServiceDeps): LedgerService {
   const seenKey = (placeId: string, taskId: string, deliveredAt: number): string => `${placeId}\n${taskId}\n${deliveredAt}`;
 
   function readRaw(): { raw: unknown; exists: boolean } {
+    if (deps.store) {
+      const raw = deps.store.read();
+      return raw === null || raw === undefined ? { raw: null, exists: false } : { raw, exists: true };
+    }
     const text = io.readFileText(filePath);
     if (text === null) {
       if (io.existsSync(filePath)) throw new Error('ledger.json existe mas não pôde ser lido');
@@ -204,7 +219,8 @@ export function createLedgerService(deps: LedgerServiceDeps): LedgerService {
     return { doc: parseLedgerDoc(raw), readOnly: isNewerLedger(raw) };
   }
 
-  function write(doc: LedgerDoc): boolean {
+  function write(doc: LedgerDoc): boolean | Promise<boolean> {
+    if (deps.store) return deps.store.write(doc);
     const tmpPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     try {
       const dir = dirname(filePath);
@@ -218,22 +234,33 @@ export function createLedgerService(deps: LedgerServiceDeps): LedgerService {
     }
   }
 
+  // With a store the write is awaited: one op at a time, or two would read the same document and the second would
+  // write over the first.
+  let queue: Promise<unknown> = Promise.resolve();
+  async function applyNow(actor: LedgerActor, op: LedgerOp): Promise<LedgerApplyResult> {
+    let snapshot: LedgerSnapshot;
+    try {
+      snapshot = load();
+    } catch (error) {
+      return { ok: false, reason: `${LEDGER_READ_FAILED} (${error instanceof Error ? error.message : String(error)}); nada foi gravado.` };
+    }
+    if (snapshot.readOnly) return { ok: false, reason: LEDGER_NEWER };
+    const result = applyLedgerOp(snapshot.doc, actor, op, { now: now(), newId });
+    if (!result.ok) return result;
+    if (result.repeated) return { ok: true, task: result.task, repeated: true };
+    if (!(await write(result.doc))) return { ok: false, reason: LEDGER_WRITE_FAILED };
+    deps.onChange?.({ doc: result.doc, readOnly: false });
+    return { ok: true, task: result.task };
+  }
+
   return {
     load,
-    async apply(actor, op) {
-      let snapshot: LedgerSnapshot;
-      try {
-        snapshot = load();
-      } catch (error) {
-        return { ok: false, reason: `${LEDGER_READ_FAILED} (${error instanceof Error ? error.message : String(error)}); nada foi gravado.` };
-      }
-      if (snapshot.readOnly) return { ok: false, reason: LEDGER_NEWER };
-      const result = applyLedgerOp(snapshot.doc, actor, op, { now: now(), newId });
-      if (!result.ok) return result;
-      if (result.repeated) return { ok: true, task: result.task, repeated: true };
-      if (!write(result.doc)) return { ok: false, reason: LEDGER_WRITE_FAILED };
-      deps.onChange?.({ doc: result.doc, readOnly: false });
-      return { ok: true, task: result.task };
+    apply(actor, op) {
+      // The file is written synchronously inside the call (callers read right after): no queue there.
+      if (!deps.store) return applyNow(actor, op);
+      const run = queue.then(() => applyNow(actor, op));
+      queue = run.catch(() => undefined);
+      return run;
     },
     async importProof(input, remote) {
       if (input.tipo === 'texto') return { kind: 'texto', text: input.texto };
