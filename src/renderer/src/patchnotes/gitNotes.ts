@@ -79,7 +79,8 @@ const TASK_ID = /\s*\(t-[0-9a-z]+\)/gi;
 // Corpo com id de tarefa, flag, caminho, arquivo, crase ou identificador de
 // código é texto para quem programa: a novidade fica só com o título.
 const JARGON =
-  /`|(^|\s)--?[a-z]|\bt-[0-9a-f]{6,}\b|\b[a-z]+[A-Z]\w*|\b\w+_\w+\b|\w\/\w|\.(ts|tsx|js|mjs|cjs|json|sql|md|py|sh|ps1|css|yml|yaml)\b/;const PR_REF = /\s*\((?:#|PR\s*#?)\d+\)/gi;
+  /`|(^|\s)--?[a-z]|\bt-[0-9a-f]{6,}\b|\b[a-z]+[A-Z]\w*|\b\w+_\w+\b|\w\/\w|\.(ts|tsx|js|mjs|cjs|json|sql|md|py|sh|ps1|css|yml|yaml)\b/;
+const PR_REF = /\s*\((?:#|PR\s*#?)\d+\)/gi;
 const GITHUB_MERGE = /^Merge pull request #\d+ from \S+/;
 const REVERTS = /This reverts commit ([0-9a-f]{7,40})/g;
 // Só trailers conhecidos: "Nota: a tela muda" é texto para o dono, não trailer.
@@ -145,7 +146,8 @@ function isFeatOrFix(message: string): boolean {
 /**
  * Título (`feat:`/`fix:`) e mensagem de onde sai o texto:
  * - merge do GitHub: o título do PR (3ª linha) e o commit `feat`/`fix` mais antigo do PR;
- * - outro merge: o commit `feat`/`fix` mais antigo do PR, nos dois papéis;
+ * - outro merge (`Merge branch …` empurrado à mão): nenhum, porque o intervalo
+ *   dele pode trazer commits de PRs que já viraram novidade;
  * - commit direto: ele mesmo.
  */
 function sourceOf(change: GitChange): { subject: string; bodyFrom: string } | null {
@@ -156,7 +158,7 @@ function sourceOf(change: GitChange): { subject: string; bodyFrom: string } | nu
     const prTitle = rest.find((line) => line.trim() !== '')?.trim() ?? '';
     return { subject: prTitle, bodyFrom: oldest ?? '' };
   }
-  return oldest === undefined ? null : { subject: lines(oldest)[0].trim(), bodyFrom: oldest };
+  return null;
 }
 
 function capitalize(text: string): string {
