@@ -116,4 +116,30 @@ describe('carta de serviço no Oráculo da VPS', () => {
     const task = { id: 't-1', projectPath: '/p', request: 'r', doneWhen: 'd', due: '2026-11-10', ownerPlaceId: 'servico:mencoes', risk: 'baixo' as const, state: 'aberta' as const, createdAt: 0, events: [] };
     expect(ownerGone({ projectPath: '/p', placeId: 'place:x', boardPlaceIds: [], placeStates: new Map([['/p', new Map()]]) }, task, 10 ** 12)).toBeNull();
   });
+
+  it('o reconciliador só passa ao Líder único a tarefa de lugar fechado; nenhum outro serviço transfere', async () => {
+    const { dir, file, ledger, handle } = setup();
+    const REC = 'r'.repeat(64);
+    writeFileSync(join(dir, 'servicos', 'reconciliador.sha256'), `${hash(REC)}\n`);
+    const created = await ledger.apply({ kind: 'dono' }, { op: 'criar', projectPath: '/p', request: 'x', doneWhen: 'y', due: '2026-11-20', ownerPlaceId: 'place:fechado', risk: 'baixo' });
+    if (!created.ok) throw new Error(created.reason);
+    const id = created.task.id;
+    const as = (token: string, op: unknown) => handle(req({ method: 'POST', url: SERVICE_PATH, body: JSON.stringify({ op }), authorization: `Bearer ${token}` }));
+    const passa = { op: 'transferir', id, to: 'lider', ownerGone: true, reason: 'lugar fechado' };
+    expect((await as(SVC, passa)).status).toBe(400);
+    expect((await as(REC, { ...passa, to: 'place:outro' })).status).toBe(400);
+    expect((await as(REC, { ...passa, ownerGone: undefined })).status).toBe(400);
+    expect((await as(REC, { op: 'cancelar', id, reason: 'x' })).status).toBe(400);
+    expect((await as(REC, { ...passa, risk: 'alto' })).status).toBe(400);
+    // Nem pelo contrato: o ramo do reconciliador não aceita mudar o risco.
+    const pelaPorta = await ledger.apply({ kind: 'lugar', placeId: 'servico:reconciliador', roleId: 'servico' }, { op: 'transferir', id, to: 'lider', ownerGone: true, reason: 'x', risk: 'alto' });
+    expect(pelaPorta.ok).toBe(false);
+    expect(JSON.parse(readFileSync(file, 'utf8')).tasks[id].ownerPlaceId).toBe('place:fechado');
+    expect(JSON.parse((await as(REC, passa)).body as string)).toMatchObject({ ok: true, estado: 'aberta' });
+    expect(JSON.parse(readFileSync(file, 'utf8')).tasks[id].ownerPlaceId).toBe('lider');
+    // O alerta da SRE vira tarefa do Líder único pela mesma credencial.
+    const alerta = JSON.parse((await as(REC, { ...criar, request: 'alerta SRE: disco cheio', ownerPlaceId: 'lider', requestedBy: 'SRE' })).body as string);
+    expect(alerta).toMatchObject({ ok: true, estado: 'aberta' });
+    expect(JSON.parse(readFileSync(file, 'utf8')).tasks[alerta.id].ownerPlaceId).toBe('lider');
+  });
 });
