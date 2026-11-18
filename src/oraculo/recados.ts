@@ -294,10 +294,16 @@ export function typeable(text: string): string {
 
 // ---- the real tmux and transcript --------------------------------------------------------------------------------
 
-function runTmux(args: readonly string[]): Promise<{ readonly code: number; readonly stdout: string }> {
+interface TmuxRun {
+  readonly code: number;
+  readonly stdout: string;
+  readonly stderr: string;
+}
+
+function runTmux(args: readonly string[]): Promise<TmuxRun> {
   return new Promise((resolve) => {
-    execFile('tmux', ['-L', TMUX_SOCKET, ...args], { timeout: 3_000, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
-      resolve({ code: error ? 1 : 0, stdout: typeof stdout === 'string' ? stdout : '' });
+    execFile('tmux', ['-L', TMUX_SOCKET, ...args], { timeout: 3_000, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
+      resolve({ code: error ? 1 : 0, stdout: typeof stdout === 'string' ? stdout : '', stderr: typeof stderr === 'string' ? stderr : '' });
     });
   });
 }
@@ -327,16 +333,35 @@ export const systemRecadosTmux: RecadosTmux = {
   },
 };
 
-export async function tmuxLocalSessions(): Promise<ReadonlySet<string>> {
-  const listed = await runTmux(['ls', '-F', '#{session_name}']);
-  return new Set(
-    listed.stdout
-      .split('\n')
-      .map((name) => name.trim())
-      .filter((name) => name.startsWith(TMUX_PREFIX))
-      .map((name) => name.slice(TMUX_PREFIX.length)),
-  );
+/** What tmux says when its server is not running at all (the socket is gone or refused): truly no session. */
+const TMUX_NO_SERVER = /no server running|error connecting to/i;
+
+/**
+ * The sessions alive in this machine's tmux. A `tmux ls` that fails (a timeout, a busy server) is not "every session
+ * closed": it answers the last set it knew, so nothing goes back to the relay on a hiccup (t-c3fbe852). Only tmux saying
+ * its server is not running empties it.
+ */
+export function createTmuxLocalSessions(run: (args: readonly string[]) => Promise<TmuxRun> = runTmux): () => Promise<ReadonlySet<string>> {
+  let last: ReadonlySet<string> = new Set();
+  return async () => {
+    const listed = await run(['ls', '-F', '#{session_name}']);
+    if (listed.code !== 0) {
+      if (TMUX_NO_SERVER.test(listed.stderr)) last = new Set();
+      return new Set(last);
+    }
+    last = new Set(
+      listed.stdout
+        .split('\n')
+        .map((name) => name.trim())
+        .filter((name) => name.startsWith(TMUX_PREFIX))
+        .map((name) => name.slice(TMUX_PREFIX.length)),
+    );
+    return new Set(last);
+  };
 }
+
+/** This machine's tmux sessions (one memory for every caller of the daemon). */
+export const tmuxLocalSessions = createTmuxLocalSessions();
 
 /** The label in the last 512 KB of the transcript. */
 async function transcriptTailHas(path: string, label: string): Promise<boolean> {
@@ -614,7 +639,8 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     const task = taskOf(taskId);
     const signature = `${nameOf(mine.quemSou)} (${caller.placeId})`;
     const notes = new Map<string, string>();
-    const urgent = urgentLedgerNotice(call, answerText);
+    // As on the PC: the Líder único's own "travada" or delivery is no urgent notice (it would come back to him).
+    const urgent = caller.placeId === LEADER_OF_ALL ? null : urgentLedgerNotice(call, answerText);
     if (urgent) notes.set(whoHears(board, caller.placeId, isLive), `${signature} ${urgent}`);
     // The Revisores out of the chain hear a delivery for acceptance (their words replace the generic one).
     if (call.tool === 'tarefa_entregar' && answer.entregue === true && task?.state === 'entregue' && board)
@@ -896,7 +922,8 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
         // The typed item came in (or one that went back to the queue after all entered late): delivered, never again.
         if (prompt.includes('◆ Recado '))
           update(
-            (item) => item.para.sid === sid && item.estado !== 'entregue' && item.tentativas > 0 && prompt.includes(tagOf(item.id)),
+            // Never one that went back to the relay: the PC delivers that one (it would arrive twice).
+            (item) => item.para.sid === sid && (item.estado === 'fila' || item.estado === 'digitado') && item.tentativas > 0 && prompt.includes(tagOf(item.id)),
             (item) => ({ ...item, estado: 'entregue', via: 'tela', entregueEm: now() }),
           );
         return answerHook({});

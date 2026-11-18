@@ -246,6 +246,15 @@ export function createChatCelularConsumer(deps: ChatCelularConsumerDeps): ChatCe
     }
   };
 
+  /** Whether the relay holds `key`; an unreadable fila.json = not known (the local queue still checks the key). */
+  const relayKnows = (key: string): boolean => {
+    try {
+      return deps.relay.byKey?.(key) !== undefined;
+    } catch {
+      return false;
+    }
+  };
+
   /** To the Líder único alive here (his queue, same key): true = queued (or already there). */
   async function toLocal(row: ChatCelularRow): Promise<boolean> {
     if (!deps.local) return false;
@@ -375,7 +384,13 @@ export function createChatCelularConsumer(deps: ChatCelularConsumerDeps): ChatCe
     }
     if (parked.length) {
       // Still pending in the relay: nothing to ask (and no new notice to the PC every round).
-      const pendingKeys = new Set(deps.relay.pending().map((item) => item.key));
+      // An unreadable fila.json (it throws) does not stop the rows in the Líder's queue here from closing.
+      let pendingKeys: ReadonlySet<string> = new Set();
+      try {
+        pendingKeys = new Set(deps.relay.pending().map((item) => item.key));
+      } catch (error) {
+        log(`não li a fila do PC: ${errorText(error)}`);
+      }
       for (const row of parked) {
         // In the Líder's queue here: closed once he got it; still waiting there, nothing to do. Gone back to the relay:
         // the relay's from now on.
@@ -387,7 +402,7 @@ export function createChatCelularConsumer(deps: ChatCelularConsumerDeps): ChatCe
         if (here && here.estado !== 'devolvido') continue;
         if (pendingKeys.has(chatKey(row.id))) continue;
         // Parked by a daemon that died before sending it, with the Líder here: his queue (unless the relay knows the key).
-        if (!here && !deps.relay.byKey?.(chatKey(row.id)) && (await toLocal(row))) continue;
+        if (!here && !relayKnows(chatKey(row.id)) && (await toLocal(row))) continue;
         let to: SendResult;
         try {
           to = await send(row, 0);

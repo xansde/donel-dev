@@ -23,14 +23,26 @@ export interface LeaderMeta {
 
 const SID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
 
+/** The PC pushes its picture every 30 s: one this recent says the PC is on and shows where the Líder único is now. */
+export const PICTURE_FRESH_MS = 2 * 60_000;
+
 /**
  * The Líder único among `live` (this machine's tmux): marked by the app in its meta, or `liderUnico` in the picture.
  * Two at once (a move half done): the one the picture names, then the newest. `null` = none alive here.
+ *
+ * With a recent picture (`now`, the PC on) only what it shows now counts: the app may have taken the Líder back to the
+ * PC and an old tmux stayed here with its mark, or with an old entry the merge kept. With the picture old or missing
+ * (the PC off), the mark in the session folder is enough.
  */
-export function pickLocalLeader(live: ReadonlySet<string>, picture: BoardPicture | null, metaOf: (sid: string) => LeaderMeta | null): LocalLeader | null {
+export function pickLocalLeader(live: ReadonlySet<string>, picture: BoardPicture | null, metaOf: (sid: string) => LeaderMeta | null, now?: number): LocalLeader | null {
+  const at = now ?? 0;
+  const pcOn = picture !== null && now !== undefined && at - picture.at <= PICTURE_FRESH_MS;
   const candidates: Array<{ sid: string; pictured: boolean; at: string }> = [];
   for (const sid of live) {
-    const pictured = picture?.sessoes[sid]?.quemSou.liderUnico === true;
+    const session = picture?.sessoes[sid];
+    const shownAt = session?.at ?? session?.pcAt ?? 0;
+    const pictured = session?.quemSou.liderUnico === true && (!pcOn || at - shownAt <= PICTURE_FRESH_MS);
+    if (pcOn && !pictured) continue;
     const meta = metaOf(sid);
     if (!pictured && meta?.leaderOfAll !== true) continue;
     candidates.push({ sid, pictured, at: meta?.createdAt ?? '' });
@@ -68,6 +80,7 @@ export function createLocalLeaderFinder(deps: {
   readonly sessionsDir: string;
   readonly liveSessions: () => Promise<ReadonlySet<string>>;
   readonly picture: () => BoardPicture | null;
+  readonly now?: () => number;
 }): () => Promise<LocalLeader | null> {
-  return async () => pickLocalLeader(await deps.liveSessions(), deps.picture(), (sid) => readLeaderMeta(deps.sessionsDir, sid));
+  return async () => pickLocalLeader(await deps.liveSessions(), deps.picture(), (sid) => readLeaderMeta(deps.sessionsDir, sid), (deps.now ?? Date.now)());
 }

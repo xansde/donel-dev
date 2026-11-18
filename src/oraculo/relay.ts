@@ -151,9 +151,19 @@ export function createRelay(deps: { readonly filePath: string; readonly io: Conf
  * in the relay. A key the relay already holds stays there (it joins, or answers where the PC delivered it), so one
  * message never goes both ways. The Líder único alive here takes `placeId: ''` the same way (t-c3fbe852).
  */
+/** Whether the relay holds `key` (pending or delivered); an unreadable `fila.json` = not known. */
+function known(relay: Pick<Relay, 'byKey'>, key: string): boolean {
+  try {
+    return relay.byKey(key) !== undefined;
+  } catch {
+    return false;
+  }
+}
+
 export function deliverLocalFirst(local: DeliverOwnerMessage, relay: Pick<Relay, 'send' | 'byKey'>, waitMs: number): DeliverOwnerMessage {
   return async (message) => {
-    const queued = message.key !== undefined && relay.byKey(message.key) !== undefined;
+    // An unreadable fila.json (it throws) does not stop the local queue: the key is checked there too.
+    const queued = message.key !== undefined && known(relay, message.key);
     // A local queue that failed (disk, an unreadable recados.json) is not the end: the relay still takes it.
     const here = queued ? null : await local(message).catch(() => null);
     if (here) return here;

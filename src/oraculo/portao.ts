@@ -74,6 +74,11 @@ export interface PictureSession {
   readonly board?: MindscapeBoard;
   /** When this session was pictured by the probe (sonda.ts); absent = the PC's push, as old as the picture's `at`. */
   readonly at?: number;
+  /**
+   * t-c3fbe852 — the `at` of the last PC push that carried this session (stamped by `mergePicture`). A session the PC
+   * stopped sending keeps its old entry, and this tells it apart from one the PC still shows.
+   */
+  readonly pcAt?: number;
 }
 
 /** What the PC pushes (`POST /v1/retrato`): every VPS session it has open. */
@@ -87,7 +92,9 @@ export interface BoardPicture {
  * session whose folder is gone (`~/.donel/s/<folder>`, closed) leaves it, so the file does not grow forever.
  */
 export function mergePicture(previous: BoardPicture | null, next: BoardPicture, folderExists: (folder: string) => boolean): BoardPicture {
-  const sessoes = Object.fromEntries(Object.entries({ ...(previous?.sessoes ?? {}), ...next.sessoes }).filter(([folder]) => folderExists(folder)));
+  // The PC's own sessions (no probe `at`) carry when it last showed them.
+  const stamped = Object.fromEntries(Object.entries(next.sessoes).map(([folder, session]) => [folder, session.at === undefined ? { ...session, pcAt: next.at } : session]));
+  const sessoes = Object.fromEntries(Object.entries({ ...(previous?.sessoes ?? {}), ...stamped }).filter(([folder]) => folderExists(folder)));
   return { at: next.at, sessoes };
 }
 
@@ -418,6 +425,32 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
       return { kind: 'error', text: PC_OFF };
     };
 
+    /** The notices after a task step: they never hold the answer, nor fail it. */
+    const afterTask = (mine: PictureSession, caller: LedgerCaller, call: LedgerToolCall, answerText: string): void => {
+      const failed = (error: unknown): void => log(`[oraculo] portão: aviso depois de ${call.tool} falhou: ${error instanceof Error ? error.message : String(error)}`);
+      try {
+        if (deps.recados) {
+          void Promise.resolve(deps.recados.depoisDaTarefa(sid, mine, caller, call, answerText) as unknown).catch(failed);
+        } else {
+          const notice = relayedTaskNotice(mine, caller, call, answerText);
+          if (notice && deps.relayNotice) deps.relayNotice(notice);
+          else if (notice) log(`[oraculo] portão: aviso de ${call.tool} sem relay: ${notice.text.slice(0, 80)}`);
+        }
+      } catch (error) {
+        failed(error);
+      }
+    };
+
+    /** The renewal step before a task step (a failure is a log line). */
+    const beforeTask = async (mine: PictureSession, caller: LedgerCaller, call: LedgerToolCall): Promise<void> => {
+      if (!deps.recados) return;
+      try {
+        await deps.recados.antesDaTarefa(caller, mine, call);
+      } catch (error) {
+        log(`[oraculo] portão: antes de ${call.tool} falhou: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    };
+
     const ledger = async (call: LedgerToolCall): Promise<BrowserToolOutcome> => {
       if (!mine) return { kind: 'error', text: NO_PICTURE };
       if (mine.quemSou.liderUnico === true && pc !== 'ligado') return leaderLedger(mine, call);
@@ -425,13 +458,7 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
       if (typeof caller === 'string') return { kind: 'error', text: caller };
       const refused = ledgerCallRefusal(call);
       if (refused) return { kind: 'error', text: refused };
-      if (deps.recados) {
-        try {
-          await deps.recados.antesDaTarefa(caller, mine, call);
-        } catch (error) {
-          log(`[oraculo] portão: antes de ${call.tool} falhou: ${error instanceof Error ? error.message : String(error)}`);
-        }
-      }
+      await beforeTask(mine, caller, call);
       // No `remote`: the proof files named by a VPS session are here, on this machine.
       const raw = toolCallOf(singleMessage(body));
       const result = await runLedger(caller, call, { mine, args: raw?.name === call.tool ? raw.args : {} });
@@ -445,37 +472,33 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
           log(`[oraculo] portão: ligar o pedido ${call.pedidoDoDono} à tarefa falhou: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
-      // The notices never hold the answer, nor fail it.
-      const failed = (error: unknown): void => log(`[oraculo] portão: aviso depois de ${call.tool} falhou: ${error instanceof Error ? error.message : String(error)}`);
-      try {
-        if (deps.recados) {
-          void Promise.resolve(deps.recados.depoisDaTarefa(sid, mine, caller, call, result.text) as unknown).catch(failed);
-        } else {
-          const notice = relayedTaskNotice(mine, caller, call, result.text);
-          if (notice && deps.relayNotice) deps.relayNotice(notice);
-          else if (notice) log(`[oraculo] portão: aviso de ${call.tool} sem relay: ${notice.text.slice(0, 80)}`);
-        }
-      } catch (error) {
-        failed(error);
-      }
+      afterTask(mine, caller, call, result.text);
       return result.image ? { kind: 'image', base64: result.image.base64, mimeType: result.image.mimeType, text: result.text } : { kind: 'text', text: result.text };
     };
 
     /** t-c3fbe852 — the Líder único's `tarefa_*` with the PC off, on the boards the picture has. */
     const leaderLedger = async (mine: PictureSession, asked: LedgerToolCall): Promise<BrowserToolOutcome> => {
-      const resolved = leaderCallerFromPicture(picture, asked, (id) => {
+      const taskBoard = (id: string): string | undefined => {
         try {
           return deps.ledger().load().doc.tasks[id]?.projectPath;
         } catch {
           return undefined;
         }
-      });
+      };
+      const resolved = leaderCallerFromPicture(picture, asked, taskBoard);
       if (typeof resolved === 'string') return { kind: 'error', text: resolved };
       const { caller, call } = resolved;
       if (call.tool === 'tarefa_criar' && call.quemPediu) {
         const refused = askedByRefusal(call.quemPediu);
         if (refused) return { kind: 'error', text: refused };
       }
+      // The steps around it see the task's board (its places and arrows), as a session of that board does: the Líder's
+      // own picture has none, and his caller has no board for a step on a task id (the PC's rule).
+      const pasta = caller.projectPath || ('id' in call && typeof call.id === 'string' ? taskBoard(call.id) : undefined);
+      const pictured = pasta ? picturedBoards(picture).get(pasta) : undefined;
+      const onBoard: PictureSession = { quemSou: mine.quemSou, listar: pictured?.listar ?? [], ...(pictured?.board ? { board: pictured.board } : {}) };
+      const aroundCaller: LedgerCaller = pasta ? { ...caller, projectPath: pasta, ...(pictured?.board ? { board: pictured.board } : {}) } : caller;
+      await beforeTask(onBoard, aroundCaller, call);
       const raw = toolCallOf(singleMessage(body));
       const result = await runLedger(caller, call, { mine, args: raw?.name === call.tool ? raw.args : {} });
       if (!result.ok) return { kind: 'error', text: result.text };
@@ -487,6 +510,7 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
           log(`[oraculo] portão: ligar o pedido ${call.pedidoDoDono} à tarefa falhou: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
+      afterTask(onBoard, aroundCaller, call, result.text);
       return result.image ? { kind: 'image', base64: result.image.base64, mimeType: result.image.mimeType, text: result.text } : { kind: 'text', text: result.text };
     };
 

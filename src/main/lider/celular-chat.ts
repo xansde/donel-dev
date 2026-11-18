@@ -45,14 +45,36 @@ export interface CelularChatState {
   readonly outbox: readonly Reply[];
 }
 
+/**
+ * Etapa 2 (t-c3fbe852) — whether this desktop takes the phone's queue now. It always does, except when the Líder único
+ * lives in a remote tab on the machine of the Oráculo (the VPS whose daemon holds the ledger): that daemon takes the
+ * queue and hands it to him there, with the PC off too. No Líder open: this desktop takes it and `deliver` opens one,
+ * as before. A Líder on this PC, or on another machine (the Homologações), is this desktop's: the Oráculo would only
+ * park the line in the relay, and his answer would not come back by itself.
+ */
+export function desktopTakesPhoneQueue(input: {
+  readonly leaderPtyId: string | null;
+  /** The ssh target of a remote tab; `undefined` = a tab of this PC. */
+  readonly sshTargetOf: (ptyId: string) => string | undefined;
+  /** Where the ledger lives (`remoto` on `lugar`); `null` = not known yet. */
+  readonly oracle: { readonly mode: 'local' | 'remoto'; readonly lugar: string | null } | null;
+  readonly remotes: readonly { readonly id: string; readonly sshTarget: string }[];
+}): boolean {
+  if (input.leaderPtyId === null) return true;
+  const leaderAt = input.sshTargetOf(input.leaderPtyId);
+  if (!leaderAt || input.oracle?.mode !== 'remoto' || !input.oracle.lugar) return true;
+  const oracleAt = input.remotes.find((place) => place.id === input.oracle!.lugar)?.sshTarget;
+  return !oracleAt || oracleAt !== leaderAt;
+}
+
 export interface CelularLiderChatDeps {
   /** One RPC in `public`; throws when it did not run (no network, HTTP error). */
   rpc(fn: string, args: Record<string, unknown>): Promise<unknown>;
   /** Gives the text to the Líder único (opens one when none is open). */
   deliver(text: string): Promise<LiderSendResult>;
   /**
-   * Etapa 2 (t-c3fbe852) — whether this desktop takes the phone's queue now: only while the Líder único runs on this
-   * computer. With him on the VPS the Oráculo there is the only one to take it. Absent = always.
+   * Etapa 2 (t-c3fbe852) — whether this desktop takes the phone's queue now (`desktopTakesPhoneQueue`): not while the
+   * Líder único lives on the Oráculo's machine, whose daemon is then the only one to take it. Absent = always.
    */
   mayTake?: () => boolean;
   newId?: () => string;

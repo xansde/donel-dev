@@ -3,18 +3,18 @@
 // resposta dele volta ao celular a partir do transcript local. O que quebraria sem o dono ver: a mensagem dele ao Líder
 // sumir ou chegar duas vezes (dois tomadores, a volta ao relay quando o Líder sai daqui), a linha marcada como entregue
 // antes de o Líder ler, ou a resposta de outro assunto voltando ao celular.
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, nodeLedgerProofFs, runLedgerTool, type LedgerCaller } from '../src/main/ledger-store';
-import { createCelularLiderChat } from '../src/main/lider/celular-chat';
+import { createCelularLiderChat, desktopTakesPhoneQueue } from '../src/main/lider/celular-chat';
 import type { MindscapeBoard, MindscapeCard } from '../src/shared/mindscape/model';
 import { chatCelularQueueOver, chatKey, createChatCelularConsumer, DELIVERED_NOTE, PARKED } from '../src/oraculo/chat-celular';
-import { pickLocalLeader } from '../src/oraculo/lider-local';
-import { createGateHandler, type BoardPicture, type GateForward, type PictureSession } from '../src/oraculo/portao';
-import { createGateRecados, type RecadosTmux } from '../src/oraculo/recados';
+import { pickLocalLeader, PICTURE_FRESH_MS } from '../src/oraculo/lider-local';
+import { createGateHandler, mergePicture, type BoardPicture, type GateForward, type PictureSession } from '../src/oraculo/portao';
+import { createGateRecados, createTmuxLocalSessions, type RecadosTmux } from '../src/oraculo/recados';
 import { createRelay, deliverLocalFirst } from '../src/oraculo/relay';
 import { createTarefasPedidasConsumer, type TarefaPedidaRow, type TarefasPedidasQueue } from '../src/oraculo/tarefas-pedidas';
 
@@ -367,6 +367,31 @@ describe('portão: tarefa_* do Líder único com o PC fora', () => {
     expect((await g.tool('tarefa_cancelar', { id, motivo: 'era teste' })).error).toBe(false);
   });
 
+  it('a entrega do Líder com o PC fora avisa o Revisor de fora da cadeia pela fila local, como o caminho normal', async () => {
+    const g = gate(async () => 'desligado');
+    // The board with a live Revisor on this VPS.
+    const REV = 'place:rev';
+    const SID_REV = '99999999-2222-4333-8444-555555555555';
+    const board: MindscapeBoard = { ...BOARD, cards: { ...BOARD.cards, [REV]: card(REV, 'revisor') } };
+    const listar = [...LISTAR, { id: REV, papel: 'revisor', estado: 'trabalhando' }];
+    const sessoes = g.picture.sessoes as Record<string, PictureSession>;
+    sessoes[SID_DEV] = { ...DEV_SESSION, listar, board };
+    sessoes[SID_REV] = { quemSou: { nome: 'Revisor · atlas', pasta: PROJECT, lugar: REV, papel: 'revisor', papelNome: 'Revisor' }, listar, board };
+    g.live.add(SID_REV);
+    const created = await g.tool('tarefa_criar', { quadro: 'atlas', dono: DEV, titulo: 'Sem PC', pedido: 'faz sem o PC', criterio: 'x', prazo: '2026-11-30', risco: 'baixo' });
+    const id = (JSON.parse(created.text) as { id: string }).id;
+    expect((await g.tool('tarefa_transferir', { id, para: 'seu', motivo: 'eu faço' })).error).toBe(false);
+    expect((await g.tool('tarefa_assumir', { id })).error).toBe(false);
+    const delivered = await g.tool('tarefa_entregar', { id, provas: [{ tipo: 'texto', texto: 'verde' }] });
+    expect(delivered.error, delivered.text).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const stop = await g.endTurn(SID_REV);
+    expect(stop.reason).toContain(`entregou a tarefa ${id}`);
+    // Nothing of his own step comes back to him, nor goes to the PC's relay.
+    expect((await g.endTurn(SID_LIDER)).decision).toBeUndefined();
+    expect(g.relay.pending()).toHaveLength(0);
+  });
+
   it('com o PC ligado, seguem ao PC como hoje', async () => {
     const seen: string[] = [];
     const g = gate(async (_port, request) => {
@@ -378,16 +403,36 @@ describe('portão: tarefa_* do Líder único com o PC fora', () => {
   });
 });
 
-describe('app do desktop: só toma a fila do celular com o Líder único no PC', () => {
-  it('Líder fora do PC: não toma (a VPS é o único tomador); no PC: toma', async () => {
+describe('app do desktop: quando toma a fila do celular', () => {
+  const VPS = { id: 'vps-pessoal', sshTarget: 'dono@vps-pessoal' };
+  const HOMOLOG = { id: 'homologacoes', sshTarget: 'dono@homologacoes' };
+  const remotes = [VPS, HOMOLOG];
+  const oracle = { mode: 'remoto' as const, lugar: VPS.id };
+  const tabs = new Map([
+    ['pty-vps', VPS.sshTarget],
+    ['pty-homolog', HOMOLOG.sshTarget],
+  ]);
+  const sshTargetOf = (ptyId: string): string | undefined => tabs.get(ptyId);
+
+  it('sem Líder aberto toma (e abre um); Líder no PC toma; Líder na Homologações toma; só o Líder na máquina do Oráculo deixa a fila ao Oráculo', () => {
+    expect(desktopTakesPhoneQueue({ leaderPtyId: null, sshTargetOf, oracle, remotes })).toBe(true);
+    expect(desktopTakesPhoneQueue({ leaderPtyId: 'pty-local', sshTargetOf, oracle, remotes })).toBe(true);
+    expect(desktopTakesPhoneQueue({ leaderPtyId: 'pty-homolog', sshTargetOf, oracle, remotes })).toBe(true);
+    expect(desktopTakesPhoneQueue({ leaderPtyId: 'pty-vps', sshTargetOf, oracle, remotes })).toBe(false);
+    // The ledger on this PC (no Oráculo away): nobody else takes the queue.
+    expect(desktopTakesPhoneQueue({ leaderPtyId: 'pty-vps', sshTargetOf, oracle: { mode: 'local', lugar: null }, remotes })).toBe(true);
+    expect(desktopTakesPhoneQueue({ leaderPtyId: 'pty-vps', sshTargetOf, oracle: null, remotes })).toBe(true);
+  });
+
+  it('com o Líder fechado, o desktop toma e entrega (o deliver abre o Líder, como no #470); com ele na VPS do Oráculo, não toma', async () => {
     const clock = { now: Date.parse('2026-11-18T12:25:05Z') };
     const db = fakeSupabase(clock);
-    let leaderHere = false;
+    let leaderPtyId: string | null = 'pty-vps';
     const delivered: string[] = [];
     const desktop = createCelularLiderChat({
       rpc: db.rpc,
       now: () => clock.now,
-      mayTake: () => leaderHere,
+      mayTake: () => desktopTakesPhoneQueue({ leaderPtyId, sshTargetOf, oracle, remotes }),
       deliver: async (text) => {
         delivered.push(text);
         return { ok: true };
@@ -395,8 +440,124 @@ describe('app do desktop: só toma a fila do celular com o Líder único no PC',
     });
     await desktop.poll();
     expect(db.taken).toHaveLength(0);
-    leaderHere = true;
+    leaderPtyId = null;
     await desktop.poll();
     expect(delivered).toHaveLength(1);
+  });
+});
+
+describe('Líder órfão: retrato do PC recente sem Líder nesta VPS', () => {
+  const at = Date.parse('2026-11-18T12:00:00Z');
+  const meta = (sid: string) => (sid === SID_LIDER ? { leaderOfAll: true } : null);
+  const live = new Set([SID_DEV, SID_LIDER]);
+
+  it('o PC empurrou há pouco e nenhuma sessão daqui é o Líder: a marca da pasta sozinha não faz Líder', () => {
+    const picture = mergePicture(null, { at, sessoes: { [SID_DEV]: DEV_SESSION } }, () => true);
+    expect(pickLocalLeader(live, picture, meta, at + 30_000)).toBeNull();
+  });
+
+  it('retrato velho (PC fora) ou nenhum: vale a marca da pasta', () => {
+    const picture = mergePicture(null, { at, sessoes: { [SID_DEV]: DEV_SESSION } }, () => true);
+    expect(pickLocalLeader(live, picture, meta, at + PICTURE_FRESH_MS + 1)).toEqual({ sid: SID_LIDER });
+    expect(pickLocalLeader(live, null, meta, at)).toEqual({ sid: SID_LIDER });
+  });
+
+  it('retrato recente com o Líder: ele; o Líder que ficou só de um retrato antigo (o PC não o mostra mais) não conta', () => {
+    const old = mergePicture(null, { at, sessoes: { [SID_DEV]: DEV_SESSION, [SID_LIDER]: LIDER_SESSION } }, () => true);
+    expect(pickLocalLeader(live, old, meta, at + 1000)).toEqual({ sid: SID_LIDER });
+    // 5 min later the PC pushes again, without the Líder (it went back to the PC): his old entry is kept by the merge.
+    const later = mergePicture(old, { at: at + 5 * MIN, sessoes: { [SID_DEV]: DEV_SESSION } }, () => true);
+    expect(later.sessoes[SID_LIDER]).toBeDefined();
+    expect(pickLocalLeader(live, later, meta, at + 5 * MIN + 1000)).toBeNull();
+  });
+});
+
+describe('tmux ls que falha não fecha as sessões', () => {
+  it('falha ou timeout: o último conjunto vivo; servidor do tmux fora: nenhuma', async () => {
+    const answers: Array<{ code: number; stdout: string; stderr: string }> = [
+      { code: 0, stdout: `donel-${SID_DEV}\ndonel-${SID_LIDER}\noutra\n`, stderr: '' },
+      { code: 1, stdout: '', stderr: '' }, // timeout (killed) or any failure
+      { code: 1, stdout: '', stderr: 'server exited unexpectedly' },
+      { code: 1, stdout: '', stderr: 'no server running on /tmp/tmux-1000/donel' },
+    ];
+    const ls = createTmuxLocalSessions(async () => answers.shift()!);
+    expect([...(await ls())]).toEqual([SID_DEV, SID_LIDER]);
+    expect([...(await ls())]).toEqual([SID_DEV, SID_LIDER]);
+    expect([...(await ls())]).toEqual([SID_DEV, SID_LIDER]);
+    expect([...(await ls())]).toEqual([]);
+  });
+
+  it('o prompt atrasado de um recado que já voltou ao relay não o marca entregue (iria duas vezes)', async () => {
+    const w = vps();
+    await w.chat.round();
+    w.live.delete(SID_LIDER);
+    await w.recados.tick();
+    w.clock.now += MIN;
+    await w.recados.tick();
+    expect(w.recados.stateOf(chatKey(ROW_ID))?.estado).toBe('devolvido');
+    // As if it had been typed once before going back (a typing not confirmed in time).
+    const file = join(w.dir, 'recados.json');
+    const doc = JSON.parse(readFileSync(file, 'utf8')) as { items: Array<Record<string, unknown>> };
+    doc.items = doc.items.map((item) => ({ ...item, tentativas: 1 }));
+    writeFileSync(file, JSON.stringify(doc));
+    const texto = String(doc.items[0]!.texto);
+    await w.recados.hook('ocupada', { 'x-donel-tmux': `donel-${SID_LIDER}` }, JSON.stringify({ session_id: SID_LIDER, prompt: texto }));
+    expect(w.recados.stateOf(chatKey(ROW_ID))?.estado).toBe('devolvido');
+  });
+});
+
+describe('o entregador local do #488 (decisão do dono a uma sessão daqui)', () => {
+  const decision = (key: string) => ({ projectPath: PROJECT, placeId: DEV, text: '◆ O dono devolveu t-1: falta o caso vazio', leaderText: '◆ O dono devolveu t-1 (Dev)', key });
+
+  it('a sessão morre antes do fim de turno: o item volta ao relay com a mesma chave, uma vez', async () => {
+    const w = vps();
+    const deliver = deliverLocalFirst(w.recados.deliverLocal, w.relay, 0);
+    expect(await deliver(decision('decisao:1'))).toEqual({ placeId: DEV });
+    w.live.delete(SID_DEV);
+    await w.recados.tick();
+    w.clock.now += MIN;
+    await w.recados.tick();
+    await w.recados.tick();
+    expect(w.relay.pending().map((item) => item.key)).toEqual(['decisao:1']);
+    expect(w.recados.stateOf('decisao:1')?.estado).toBe('devolvido');
+    // A retry of the same decision now joins the relay, never the local queue again.
+    expect(await deliver(decision('decisao:1'))).toBeNull();
+    expect(w.relay.pending()).toHaveLength(1);
+  });
+
+  it('a mesma chave junta mesmo depois de 2 min (sem a chave, seriam dois recados)', async () => {
+    const w = vps();
+    const deliver = deliverLocalFirst(w.recados.deliverLocal, w.relay, 0);
+    expect(await deliver(decision('decisao:2'))).toEqual({ placeId: DEV });
+    w.clock.now += 5 * MIN;
+    expect(await deliver(decision('decisao:2'))).toEqual({ placeId: DEV });
+    const stop = await w.endTurn(SID_DEV);
+    expect(stop.reason!.split('falta o caso vazio')).toHaveLength(2);
+    w.clock.now += 5 * MIN;
+    expect(await deliver(decision('decisao:2'))).toEqual({ placeId: DEV });
+    expect((await w.endTurn(SID_DEV)).decision).toBeUndefined();
+  });
+
+  it('chave já pendente no relay fica lá: nada na fila local', async () => {
+    const w = vps();
+    await w.relay.send(decision('decisao:3'), 0);
+    const deliver = deliverLocalFirst(w.recados.deliverLocal, w.relay, 0);
+    expect(await deliver(decision('decisao:3'))).toBeNull();
+    expect(w.relay.pending().map((item) => item.key)).toEqual(['decisao:3']);
+    expect(w.recados.stateOf('decisao:3')).toBeUndefined();
+    expect((await w.endTurn(SID_DEV)).decision).toBeUndefined();
+  });
+
+  it('fila.json ilegível não impede a entrega local (decisão e chat do celular)', async () => {
+    const w = vps();
+    mkdirSync(join(w.dir, 'fila.json')); // there, but unreadable: the relay throws on every read
+    expect(() => w.relay.pending()).toThrow();
+    const deliver = deliverLocalFirst(w.recados.deliverLocal, w.relay, 0);
+    expect(await deliver(decision('decisao:4'))).toEqual({ placeId: DEV });
+    await w.chat.round();
+    const stop = await w.endTurn(SID_LIDER);
+    expect(stop.reason).toContain('[celular #9c4a90af]');
+    await w.chat.round();
+    expect(w.row.resultado).toBe(DELIVERED_NOTE);
   });
 });
