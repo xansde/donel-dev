@@ -152,6 +152,10 @@ function sourceOf(change: GitChange): { subject: string; bodyFrom: string } | nu
   return oldest === undefined ? null : { subject: lines(oldest)[0].trim(), bodyFrom: oldest };
 }
 
+function capitalize(text: string): string {
+  return text.charAt(0).toLocaleUpperCase('pt-BR') + text.slice(1);
+}
+
 function clean(text: string): string {
   return text.replace(TASK_ID, '').replace(PR_REF, '').trim().replace(LEADING_TASK_ID, '');
 }
@@ -183,8 +187,8 @@ export function changesToNotes(changes: readonly GitChange[]): Record<string, Pa
     if (!source || !match) continue;
     const stripped = clean(match[3]);
     if (stripped === '') continue;
-    const title = stripped.charAt(0).toLocaleUpperCase('pt-BR') + stripped.slice(1);
-    const text = clean(firstParagraph(lines(source.bodyFrom).slice(1))) || title;
+    const title = capitalize(stripped);
+    const text = capitalize(clean(firstParagraph(lines(source.bodyFrom).slice(1)))) || title;
     notes[`./git/${change.stamp}-${change.hash.slice(0, 8)}.json`] = { title, text };
   }
   return notes;
