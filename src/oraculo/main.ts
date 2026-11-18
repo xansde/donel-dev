@@ -24,7 +24,7 @@
 // only, with the tasks on the personal VPS (`<dir>/portao.token`, satelite.ts).
 
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { homedir, networkInterfaces } from 'node:os';
+import { homedir, hostname, networkInterfaces, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { createSystemConfigIoDeps } from '../main/config-store';
 import { createLedgerService, ledgerProofsDir, nodeLedgerProofFs } from '../main/ledger-store';
@@ -55,6 +55,7 @@ import { withPlaceMemory, type PlaceInfo, type PlaceInfoOf } from '../shared/led
 import { SERVICE_PLACE_PREFIX, SERVICE_ROLE } from '../shared/ledger/contract';
 import { createDecisoesConsumer, createDecisoesQueue, DECISOES_CONFIG_FILE, NOTAS_PAGINAS_FILE, readImportList, readUnsignedPolicy } from './decisoes';
 import { createTarefasPedidasConsumer, createTarefasPedidasQueue, readQuadroTarefas } from './tarefas-pedidas';
+import { createChatCelularConsumer, createChatCelularQueue } from './chat-celular';
 
 export const TOKEN_HASH_FILE = 'pc.token.sha256';
 /** t-89279f84 — `{url, serviceKeyFile}`: present, the Supabase is the ledger's source (ledger.json is not read). */
@@ -393,6 +394,8 @@ async function main(): Promise<void> {
       notice: (message) => relay.send(message, 0),
     }),
     ...(process.env.DONEL_LIVRO_ARQUIVO ? { livro: createLivroStore({ filePath: process.env.DONEL_LIVRO_ARQUIVO }) } : {}),
+    // t-cddc62fc — the reconciliador's notices reach the Líder único by the relay, out of the owner's phone chat.
+    avisarLider: (texto, chave) => relay.send({ projectPath: '', placeId: '', text: texto, leaderText: texto, key: `reconciliador:${chave}` }, 0),
   });
   server = await startOracleServer({ host, port, caller: (authorization) => callerOf(authorization, tokenHash(), services(), gates()), handler });
   writeFileSync(join(dir, 'url'), `${server.url}\n`, { mode: 0o600 });
@@ -489,6 +492,21 @@ async function main(): Promise<void> {
     log: (line) => console.log(line),
   });
   tarefasPedidas.start();
+  // t-cddc62fc — the owner's messages to the Líder único in the phone app (`celular.lider_mensagens`), same config and
+  // round, delivered by the relay so a PC without the desktop router (before the alfa 26.1118.428) gets them too.
+  // The answer goes by stdin (`-` + heredoc): no '~' for the remote shell to expand, no owner text in its argv.
+  const replyScript = process.env.DONEL_CHAT_RESPONDER || join(homedir(), 'bin', 'rotinas', 'chat-lider', 'chat_lider.py');
+  const chatCelular = createChatCelularConsumer({
+    queue: () => {
+      const config = readBoardConfig(join(dir, DECISOES_CONFIG_FILE));
+      return config ? createChatCelularQueue(config) : null;
+    },
+    relay,
+    waitMs: RELAY_WAIT_MS,
+    replyHint: (shortId) => `Para responder no celular: ssh ${userInfo().username}@${hostname()} python3 ${replyScript} responder ${shortId} - <<'FIM'\n<sua resposta>\nFIM`,
+    log: (line) => console.log(line),
+  });
+  chatCelular.start();
   console.log(`[oraculo] no ar em ${server.url} (${Object.keys(first.doc.tasks).length} tarefas${first.readOnly ? ', só leitura' : ''}, fonte: ${store ? 'Supabase' : 'ledger.json'})`);
   const stop = (): void => {
     probe.stop();
@@ -496,6 +514,7 @@ async function main(): Promise<void> {
     vigia.stop();
     decisoes.stop();
     tarefasPedidas.stop();
+    chatCelular.stop();
     mirror?.dispose();
     void Promise.all([server?.close(), celular?.dispose(), gate.close()]).then(() => process.exit(0));
   };

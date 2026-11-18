@@ -9,7 +9,8 @@ import { extname, join } from 'node:path';
 import { MAX_PROOF_FILE_BYTES, PROOF_FILE_TYPES, isProofFileName, maxProofBytes, type LedgerActor, type LedgerOp } from '../shared/ledger/contract';
 import { checkLedgerImport, ledgerCount, ledgerProofFiles, sameLedger } from '../shared/ledger/remote-import';
 import { ledgerProofsDir, type LedgerService } from '../main/ledger-store';
-import { SERVICE_PATH, serviceActor, serviceOpRefusal, type ServiceOp } from './servicos';
+import { checkNotice, NOTICE_OP, SERVICE_PATH, serviceActor, serviceOpRefusal, type ServiceOp } from './servicos';
+import type { Relay } from './relay';
 import { LIVRO_PATH, parseRascunho, type LivroStore } from './livro';
 import { GATE_PATH_PREFIX, type GateRoutes } from './portoes';
 
@@ -117,6 +118,8 @@ export interface OracleApiDeps {
   readonly gates?: () => ReadonlyMap<string, string>;
   /** t-e195b35c — what a gate's credential may call (src/oraculo/portoes.ts); absent = nothing. */
   readonly gateRoutes?: GateRoutes;
+  /** t-cddc62fc — queues the reconciliador's notice for the Líder único (the relay, no wait); absent = refused. */
+  readonly avisarLider?: (texto: string, chave: string) => ReturnType<Relay['send']>;
 }
 
 /** What a service may append to the journal: the same as its op route (create, take, deliver), by the same rule. */
@@ -189,6 +192,17 @@ export function createOracleApiHandler(deps: OracleApiDeps): OracleApiHandler {
       return json(400, { error: 'corpo não é JSON' });
     }
     const op = isRecord(parsed) ? parsed.op : undefined;
+    if (isRecord(op) && op.op === NOTICE_OP) {
+      const notice = checkNotice(op, name);
+      if (!notice.ok) return json(notice.status, { error: notice.error });
+      if (!deps.avisarLider) return json(404, { error: 'rota' });
+      try {
+        const to = await deps.avisarLider(notice.texto, notice.chave);
+        return json(200, { ok: true, para: to });
+      } catch {
+        return json(500, { error: 'o aviso não entrou na fila do PC' });
+      }
+    }
     const why = serviceOpRefusal(op, name);
     if (why) return json(400, { error: why });
     try {
