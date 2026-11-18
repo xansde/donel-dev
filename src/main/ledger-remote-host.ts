@@ -17,6 +17,9 @@ import type { CelularRemote } from './celular/service';
 import type { OwnerMessage } from './ledger-card-writer';
 import { openKitScriptLines, type OpenKit } from './open-kit';
 
+/** How long the handshake waits for the kit de abertura before going without it (t-1a3f7150). */
+const OPEN_KIT_MAX_MS = 8_000;
+
 export const REMOTE_CONFIG_FILE = 'oraculo-remoto.json';
 /**
  * The night's version (Líder único, 08/11): on the first open the app takes the ledger to the VPS by itself. This
@@ -181,7 +184,13 @@ export function createRemoteOracleHost(deps: RemoteOracleHostDeps): RemoteOracle
     const token = randomBytes(32).toString('hex');
     const hash = createHash('sha256').update(token).digest('hex');
     const vigia = deps.vigia ? { placeId: place.id, label: place.label, ...deps.vigia() } : undefined;
-    const kit = deps.openKit ? await deps.openKit({ id: place.id, label: place.label }).catch(() => null) : null;
+    // The kit never slows the link much: past OPEN_KIT_MAX_MS (git of many boards), this handshake goes without it.
+    const kit = deps.openKit
+      ? await Promise.race([
+          deps.openKit({ id: place.id, label: place.label }).catch(() => null),
+          new Promise<null>((resolve) => setTimeout(() => resolve(null), OPEN_KIT_MAX_MS).unref?.()),
+        ])
+      : null;
     const result = await deps.runScript(place.sshTarget, handshakeScript(hash, vigia, kit), 20_000);
     if (result.stdout.includes('sem-daemon')) return `o Oráculo não está instalado em ${place.label} (scripts/oraculo-vps.sh instalar)`;
     vigiaPlace = result.stdout.split(/\r?\n/).some((line) => line.trim() === DAEMON_VIGIA_ON) ? place.id : null;

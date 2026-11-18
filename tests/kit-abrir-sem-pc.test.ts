@@ -121,4 +121,18 @@ describe('kit de abertura (abrir.json)', () => {
     expect(statSync(join(d, OPEN_KIT_FILE)).mode & 0o777).toBe(0o600);
     expect(JSON.parse(readFileSync(join(d, OPEN_KIT_FILE), 'utf8'))).toEqual(kit);
   });
+
+  it('uma falha ao gravar o kit na VPS não derruba a ligação: o endereço do Oráculo sai mesmo assim', () => {
+    if (process.platform === 'win32') return;
+    const script = handshakeScript('a'.repeat(64), undefined, buildOpenKit(input()));
+    const home = mkdtempSync(join(tmpdir(), 'kit-abrir-'));
+    dirs.push(home);
+    const d = join(home, '.donel', 'oraculo');
+    mkdirSync(d, { recursive: true });
+    writeFileSync(join(d, 'url'), 'http://100.64.0.9:47816\n');
+    mkdirSync(join(d, `${OPEN_KIT_FILE}.tmp`)); // the temp name is taken by a folder: the write fails
+    const out = spawnSync('bash', ['-s'], { input: script, encoding: 'utf8', env: { ...process.env, HOME: home } });
+    expect(out.status).toBe(0);
+    expect(parseHandshakeUrl(out.stdout)).toBe('http://100.64.0.9:47816');
+  });
 });

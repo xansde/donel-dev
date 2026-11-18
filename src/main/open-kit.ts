@@ -142,9 +142,10 @@ export function buildOpenKit(input: OpenKitInput): OpenKit {
  */
 export function openKitScriptLines(kit: OpenKit): string[] {
   const tmp = `"$d/${OPEN_KIT_FILE}.tmp"`;
+  // A subshell under `||`: the handshake runs with `set -e`, and a kit that cannot be written (a folder on the temp
+  // name, a full disk) must not drop the link (a failed redirect inside a `{ }` group still ends a `set -e` bash).
+  // The old kit stays; the temp file is removed.
   return [
-    `printf '%s' '${Buffer.from(JSON.stringify(kit), 'utf8').toString('base64')}' | base64 -d > ${tmp}`,
-    `chmod 600 ${tmp}`,
-    `mv -f ${tmp} "$d/${OPEN_KIT_FILE}"`,
+    `( printf '%s' '${Buffer.from(JSON.stringify(kit), 'utf8').toString('base64')}' | base64 -d > ${tmp} && chmod 600 ${tmp} && mv -f ${tmp} "$d/${OPEN_KIT_FILE}" ) 2>/dev/null || rm -f ${tmp} 2>/dev/null || true`,
   ];
 }
