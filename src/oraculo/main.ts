@@ -34,9 +34,57 @@ import { ORACLE_PORT, startOracleServer, type OracleServer } from './server';
 import { createDaemonVigia } from './vigia';
 import { boardName } from '../shared/vigia/board';
 import { createBoardClient, readBoardConfig, type BoardStore } from './board-client';
+import { createSupabaseLedgerStore, readSupabaseLedger, type SupabaseLedgerDeps, type SupabaseLedgerStore } from './ledger-supabase';
+import { createLedgerMirror, type LedgerMirror } from '../main/ledger-mirror/mirror';
+import { createSupabaseSink } from '../main/ledger-mirror/supabase-sink';
+import { createProofReader } from '../main/ledger-mirror/cartas';
+import { withPlaceMemory, type PlaceInfo, type PlaceInfoOf } from '../shared/ledger/mirror';
 import { createDecisoesConsumer, createDecisoesQueue, DECISOES_CONFIG_FILE, NOTAS_PAGINAS_FILE, readImportList } from './decisoes';
 
 export const TOKEN_HASH_FILE = 'pc.token.sha256';
+/** t-89279f84 — `{url, serviceKeyFile}`: present, the Supabase is the ledger's source (ledger.json is not read). */
+export const LEDGER_SUPABASE_FILE = 'ledger-supabase.json';
+
+function supabaseLedgerDeps(dir: string): SupabaseLedgerDeps | null {
+  const config = readBoardConfig(join(dir, LEDGER_SUPABASE_FILE));
+  if (!config) return null;
+  return {
+    url: config.url,
+    key: () => {
+      try {
+        return readFileSync(config.serviceKeyFile, 'utf8').trim() || null;
+      } catch {
+        return null;
+      }
+    },
+    log: (line) => console.log(line),
+  };
+}
+
+/**
+ * `oraculo.mjs --semear-supabase`: copies ledger.json into the Supabase (empty tables only, unless `--forcar`) and
+ * reads it back: same ids, same JSON. Run once, with the daemon stopped, before writing ledger-supabase.json's switch.
+ */
+async function seedSupabase(dir: string, ledgerFile: string): Promise<number> {
+  const deps = supabaseLedgerDeps(dir);
+  if (!deps) {
+    console.error(`[semear] sem ${LEDGER_SUPABASE_FILE} válido`);
+    return 2;
+  }
+  const local = createLedgerService({ filePath: ledgerFile, io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs }).load().doc;
+  const remote = await readSupabaseLedger(deps);
+  if (Object.keys(remote.tasks).length > 0 && !process.argv.includes('--forcar')) {
+    console.error(`[semear] o Supabase já tem ${Object.keys(remote.tasks).length} tarefas; nada foi gravado (use --forcar para gravar por cima)`);
+    return 1;
+  }
+  const store = createSupabaseLedgerStore(deps, remote);
+  if (!(await store.write(local))) return 1;
+  const back = await readSupabaseLedger(deps);
+  const ids = Object.keys(local.tasks);
+  const diff = ids.filter((id) => JSON.stringify(back.tasks[id]) !== JSON.stringify(local.tasks[id]));
+  console.log(JSON.stringify({ ledgerJson: ids.length, supabase: Object.keys(back.tasks).length, diferentes: diff.length, schemaVersion: back.schemaVersion, startedAt: back.startedAt }));
+  return diff.length === 0 && Object.keys(back.tasks).length === ids.length ? 0 : 1;
+}
 
 /** The hash the PC left; `null` = none yet (every call is refused). Read at each call: the PC rewrites it at boot. */
 export function readTokenHash(dir: string): string | null {
@@ -46,6 +94,19 @@ export function readTokenHash(dir: string): string | null {
   } catch {
     return null;
   }
+}
+
+/** The way back: `oraculo.mjs --exportar-supabase <arquivo>` writes the Supabase's ledger as a ledger.json (new file only). */
+async function exportSupabase(dir: string, target: string | undefined): Promise<number> {
+  const deps = supabaseLedgerDeps(dir);
+  if (!deps || !target) {
+    console.error(`[exportar] uso: --exportar-supabase <arquivo novo>, com ${LEDGER_SUPABASE_FILE} válido`);
+    return 2;
+  }
+  const remote = await readSupabaseLedger(deps);
+  writeFileSync(target, JSON.stringify({ schemaVersion: remote.schemaVersion, startedAt: remote.startedAt, tasks: remote.tasks }, null, 2), { mode: 0o600, flag: 'wx' });
+  console.log(JSON.stringify({ arquivo: target, tarefas: Object.keys(remote.tasks).length }));
+  return 0;
 }
 
 async function main(): Promise<void> {
@@ -61,6 +122,18 @@ async function main(): Promise<void> {
   }
   const port = Number(process.env.DONEL_ORACULO_PORT) || ORACLE_PORT;
   const ledgerFile = join(dir, 'ledger.json');
+  if (process.argv.includes('--semear-supabase')) process.exit(await seedSupabase(dir, ledgerFile));
+  if (process.argv.includes('--exportar-supabase')) process.exit(await exportSupabase(dir, process.argv[process.argv.indexOf('--exportar-supabase') + 1]));
+  // t-89279f84 — the Supabase as the source: read once here; unreachable = no daemon (systemd tries again), never an
+  // empty ledger answering.
+  const sbDeps = supabaseLedgerDeps(dir);
+  let store: SupabaseLedgerStore | undefined;
+  if (sbDeps) {
+    const initial = await readSupabaseLedger(sbDeps);
+    if (!initial.exists) throw new Error(`o Supabase do ledger está vazio; rode oraculo.mjs --semear-supabase antes de ligar ${LEDGER_SUPABASE_FILE}`);
+    store = createSupabaseLedgerStore(sbDeps, initial);
+  }
+  let mirror: LedgerMirror | null = null;
   const tokenHash = (): string | null => readTokenHash(dir);
   const services = (): ReadonlyMap<string, string> => readServiceHashes(dir);
   const io = createSystemConfigIoDeps();
@@ -74,8 +147,10 @@ async function main(): Promise<void> {
     filePath: ledgerFile,
     io,
     proofFs: nodeLedgerProofFs,
+    ...(store ? { store } : {}),
     onChange: (snapshot) => {
       server?.notify('ledger');
+      mirror?.changed(snapshot.doc);
       celular?.ledgerChanged(snapshot.doc);
     },
   });
@@ -118,9 +193,43 @@ async function main(): Promise<void> {
   };
   // Fails here, not on the first call, when the file is there but unreadable (it would be written over).
   const first = raw.load();
+  if (sbDeps) {
+    // The readable projection (`tarefas`) and the phone's cards, as the espelho bridge did from the file: the same
+    // mirror, fed by this daemon's own changes. Names: the board picture the PC leaves, over the bridge's memory.
+    const namesFile = join(homedir(), '.donel', 'espelho', 'nomes.json');
+    const names = new Map<string, PlaceInfo>();
+    try {
+      for (const [id, info] of Object.entries(JSON.parse(readFileSync(namesFile, 'utf8')) as Record<string, PlaceInfo>)) names.set(id, info);
+    } catch {
+      // no memory yet
+    }
+    const liveOf = (): PlaceInfoOf => {
+      const live = new Map<string, PlaceInfo>();
+      for (const session of Object.values(picture?.sessoes ?? {})) {
+        for (const place of session.listar as Array<{ id?: unknown; papel?: unknown; nome?: unknown }>) {
+          if (typeof place?.id !== 'string') continue;
+          const info: PlaceInfo = { ...(typeof place.papel === 'string' ? { roleId: place.papel } : {}), ...(typeof place.nome === 'string' ? { name: place.nome } : {}) };
+          if (info.roleId || info.name) live.set(place.id, info);
+        }
+      }
+      return (_project, placeId) => live.get(placeId);
+    };
+    const saveNames = (): void => {
+      try {
+        writeFileSync(`${namesFile}.tmp`, JSON.stringify(Object.fromEntries(names), null, 2));
+        renameSync(`${namesFile}.tmp`, namesFile);
+      } catch {
+        // learnt again at the next push
+      }
+    };
+    const sink = createSupabaseSink({ url: sbDeps.url, key: sbDeps.key, readProof: createProofReader(ledgerProofsDir(ledgerFile)), log: (line) => console.log(`[espelho] ${line}`) });
+    mirror = createLedgerMirror({ sink: () => sink, places: withPlaceMemory(liveOf, names, saveNames), ownerName: () => process.env.ESPELHO_DONO || 'Alexandre', delayMs: 2_000, log: (line) => console.log(`[espelho] ${line}`) });
+    mirror.changed(first.doc);
+  }
   const handler = createOracleApiHandler({
     ledger,
     ledgerFile,
+    ...(store ? { importRefused: 'A fonte do ledger é o Supabase; a cópia do PC não substitui mais o Oráculo da VPS. Nada foi trocado.' } : {}),
     tokenHash,
     services,
     returned: guard,
@@ -197,10 +306,11 @@ async function main(): Promise<void> {
     log: (line) => console.log(line),
   });
   decisoes.start();
-  console.log(`[oraculo] no ar em ${server.url} (${Object.keys(first.doc.tasks).length} tarefas${first.readOnly ? ', só leitura' : ''})`);
+  console.log(`[oraculo] no ar em ${server.url} (${Object.keys(first.doc.tasks).length} tarefas${first.readOnly ? ', só leitura' : ''}, fonte: ${store ? 'Supabase' : 'ledger.json'})`);
   const stop = (): void => {
     vigia.stop();
     decisoes.stop();
+    mirror?.dispose();
     void Promise.all([server?.close(), celular?.dispose(), gate.close()]).then(() => process.exit(0));
   };
   process.on('SIGTERM', stop);
