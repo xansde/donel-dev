@@ -75,6 +75,10 @@ function setup(options: { picture?: BoardPicture; withLedger?: boolean } = {}) {
   const screens = new Map<string, string>();
   const typed: { sid: string; text: string }[] = [];
   const enters: string[] = [];
+  const cleared: string[] = [];
+  /** The last turn in each session's transcript (absent = no transcript found). */
+  const turns = new Map<string, { ended: boolean; at: number }>();
+  const inTranscript = new Map<string, string[]>();
   const tmux: RecadosTmux = {
     screen: async (sid) => ({ inMode: false, text: screens.get(sid) ?? screen('') }),
     type: async (sid, text) => {
@@ -83,6 +87,11 @@ function setup(options: { picture?: BoardPicture; withLedger?: boolean } = {}) {
     },
     enter: async (sid) => {
       enters.push(sid);
+      return true;
+    },
+    clear: async (sid) => {
+      cleared.push(sid);
+      screens.set(sid, screen(''));
       return true;
     },
   };
@@ -97,6 +106,9 @@ function setup(options: { picture?: BoardPicture; withLedger?: boolean } = {}) {
       localSessions: async () => new Set([SID_DEV, SID_REV]),
       tmux,
       relay: async (message) => relayed.push(message),
+      transcriptOf: async (sid) => `/transcripts/${sid}.jsonl`,
+      lastTurn: async (path) => turns.get(path.replace(/^.*\/|\.jsonl$/g, '')) ?? null,
+      transcriptHas: async (path, label) => (inTranscript.get(path.replace(/^.*\/|\.jsonl$/g, '')) ?? []).some((line) => line.includes(label)),
       now: () => clock,
       log: () => undefined,
     });
@@ -108,7 +120,11 @@ function setup(options: { picture?: BoardPicture; withLedger?: boolean } = {}) {
     screens,
     typed,
     enters,
+    cleared,
+    turns,
+    inTranscript,
     relayed,
+    clock: () => clock,
     make,
     advance: (ms: number) => {
       clock += ms;
@@ -232,7 +248,7 @@ describe('Recados em fila', () => {
     const g = setup();
     const recados = g.make();
     await deliveredTask(g.ledger!);
-    // Never heard from the Revisor: unknown state, nothing typed.
+    // Never heard from the Revisor and nothing in its transcript says the turn ended: nothing typed.
     await recados.enviar(SID_DEV, g.picture.sessoes[SID_DEV]!, { tool: 'sessao_enviar', para: REV, texto: 'primeiro' });
     await recados.tick();
     expect(g.typed).toEqual([]);
@@ -271,6 +287,83 @@ describe('Recados em fila', () => {
     expect(g.typed).toHaveLength(1);
     const stop = JSON.parse((await recados.hook('fim-de-turno', tmuxHeader(SID_REV), hookBody(SID_REV))).body) as { reason?: string };
     expect(stop.reason).toContain(`Recado ${sent.id}`);
+  });
+});
+
+describe('Recados em fila: sessão nunca ouvida (daemon reiniciado, hook instalado depois)', () => {
+  it('parada pela tela e pelo transcript: digita; ocupada (turno aberto, esc to interrupt, transcript mexendo): não', async () => {
+    const g = setup();
+    await deliveredTask(g.ledger!);
+    // The Dev, stopped before the daemon came up: no hook ever told this daemon about it.
+    const recados = g.make();
+    const sent = JSON.parse(textOf(await recados.enviar(SID_REV, g.picture.sessoes[SID_REV]!, { tool: 'sessao_enviar', para: DEV, texto: 'aprovado' }))) as { id: string; entregue: string };
+    expect(sent.entregue).toBe('na-fila');
+    // A turn still open in the transcript: never typed.
+    g.turns.set(SID_DEV, { ended: false, at: g.clock() - 60_000 });
+    await recados.tick();
+    // Ended, but the transcript moved a moment ago: not yet.
+    g.turns.set(SID_DEV, { ended: true, at: g.clock() - 1_000 });
+    await recados.tick();
+    // Ended and quiet, but the CLI says it is working.
+    g.turns.set(SID_DEV, { ended: true, at: g.clock() - 60_000 });
+    g.screens.set(SID_DEV, `${screen('')}\n  ⏵⏵ bypass permissions on · esc to interrupt`);
+    await recados.tick();
+    expect(g.typed).toEqual([]);
+    // Stopped: typed on the free field, and the transcript confirms it (no hook at all).
+    g.screens.set(SID_DEV, screen(''));
+    await recados.tick();
+    expect(g.typed).toEqual([{ sid: SID_DEV, text: expect.stringContaining(`Recado ${sent.id}`) }]);
+    g.inTranscript.set(SID_DEV, [g.typed[0]!.text]);
+    g.advance(21_000);
+    await recados.tick();
+    const item = (JSON.parse(readFileSync(g.file, 'utf8')) as { items: { id: string; estado: string; via?: string }[] }).items.find((i) => i.id === sent.id);
+    expect(item).toMatchObject({ estado: 'entregue', via: 'transcript' });
+    // Confirmed by the transcript with the hook silent: the next one still goes once the session is stopped again.
+    const next = JSON.parse(textOf(await recados.enviar(SID_REV, g.picture.sessoes[SID_REV]!, { tool: 'sessao_enviar', para: DEV, texto: 'outro' }))) as { id: string };
+    g.turns.set(SID_DEV, { ended: true, at: g.clock() - 60_000 });
+    await recados.tick();
+    expect(g.typed).toHaveLength(2);
+    expect(g.typed[1]!.text).toContain(`Recado ${next.id}`);
+  });
+
+  it('digitado e não confirmado: tira o texto do campo, não redigita na hora e o fim de turno entrega', async () => {
+    const g = setup();
+    const recados = g.make();
+    await deliveredTask(g.ledger!);
+    g.turns.set(SID_REV, { ended: true, at: g.clock() - 60_000 });
+    const sent = JSON.parse(textOf(await recados.enviar(SID_DEV, g.picture.sessoes[SID_DEV]!, { tool: 'sessao_enviar', para: REV, texto: 'preso' }))) as { id: string };
+    await recados.tick();
+    expect(g.typed).toHaveLength(1);
+    // The Enter did not go: the text sits in the field (a long one shows as a paste).
+    g.screens.set(SID_REV, screen('[Pasted text #1]'));
+    g.advance(21_000);
+    await recados.tick();
+    expect(g.cleared).toEqual([SID_REV]);
+    await recados.tick();
+    expect(g.typed).toHaveLength(1);
+    const stop = JSON.parse((await recados.hook('fim-de-turno', tmuxHeader(SID_REV), hookBody(SID_REV))).body) as { reason?: string };
+    expect(stop.reason).toContain(`Recado ${sent.id}`);
+    // Somebody's own draft in the field is never cleared.
+    await recados.hook('fim-de-turno', tmuxHeader(SID_REV), hookBody(SID_REV, { stop_hook_active: true }));
+    await recados.enviar(SID_DEV, g.picture.sessoes[SID_DEV]!, { tool: 'sessao_enviar', para: REV, texto: 'mais um' });
+    await recados.tick();
+    expect(g.typed).toHaveLength(2);
+    g.screens.set(SID_REV, screen('rascunho do dono'));
+    g.advance(21_000);
+    await recados.tick();
+    expect(g.cleared).toEqual([SID_REV]);
+  });
+
+  it('o texto digitado sai sem caracteres de controle (um \\r manda pela metade)', async () => {
+    const g = setup();
+    const recados = g.make();
+    await deliveredTask(g.ledger!);
+    g.turns.set(SID_REV, { ended: true, at: g.clock() - 60_000 });
+    await recados.enviar(SID_DEV, g.picture.sessoes[SID_DEV]!, { tool: 'sessao_enviar', para: REV, texto: 'a\rb\tc\x1b[2Jd\x7fe\n\nf' });
+    await recados.tick();
+    expect(g.typed).toHaveLength(1);
+    expect(g.typed[0]!.text).not.toMatch(/[\x00-\x1f\x7f-\x9f]/);
+    expect(g.typed[0]!.text).toMatch(/a b c \[2Jd e f$/);
   });
 });
 
@@ -320,6 +413,10 @@ describe('antesDaTarefa: tarefa de lugar fechado passa ao sucessor', () => {
     const mine = session(NEW, 'dev', 'Dev', listar, board);
     const recados = g.make();
     const caller: LedgerCaller = { projectPath: PROJECT, placeId: NEW, roleId: 'dev', boardPlaceIds: Object.keys(board.cards), board };
+    // A call about no task (listar, criar, novidades) takes nothing: only the task it is about follows.
+    await recados.antesDaTarefa(caller, mine, { tool: 'tarefa_listar' });
+    await recados.antesDaTarefa(caller, mine, { tool: 'tarefa_novidades' });
+    expect(g.ledger!.load().doc.tasks[id]!.ownerPlaceId).toBe(DEV);
     await recados.antesDaTarefa(caller, mine, { tool: 'tarefa_andamento', id, estado: 'trabalhando' });
     const task = g.ledger!.load().doc.tasks[id]!;
     expect(task.ownerPlaceId).toBe(NEW);

@@ -6,9 +6,12 @@
 //   the answer `{"decision":"block","reason":…}` hands it everything that waits for it, marked delivered at once;
 // - to a stopped session (its last Stop found nothing): typed by tmux, ONLY on an empty input field (the port of
 //   `campo_livre` of ~/bin/rotinas/despertador_sessoes.py), and confirmed by the next UserPromptSubmit hook (`ocupada`)
-//   carrying its label, or by the label in the transcript. Unconfirmed in 20 s it goes back to the queue and is never
-//   typed again until the screen is free again (a new end of turn delivers it); at most two typings per item. A session
-//   never heard from is never typed into.
+//   carrying its label, or by the label in the transcript. Unconfirmed in 20 s it goes back to the queue, what it left in
+//   the field is cleared (Ctrl+U, only when the field shows it), and the session is not typed into again for 2 min (a
+//   new end of turn delivers it); at most two typings per item. A session no hook spoke of since the daemon came up
+//   (a restart, a session opened before the hook was installed) is stopped when the screen and the transcript say so:
+//   the last turn of the transcript ended and has been quiet for 10 s, the field is empty and the CLI does not say
+//   "esc to interrupt". The same check revives a session the hooks left "ocupada" for over a minute (a lost Stop).
 //
 // Nothing vanishes (the queue is on disk before the answer), nothing arrives twice (one state per item; the same
 // message inside 2 min joins the first). The notices the PC gave after a `tarefa_*` (delivery for acceptance, travada,
@@ -18,7 +21,8 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promises as fsp } from 'node:fs';
-import { dirname } from 'node:path';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 import type { BrowserToolOutcome } from '../shared/browser/mcp';
 import { hasArrowLink } from '../shared/mindscape/agent-tools';
 import { listedPlaces, resolveAddress } from '../shared/mindscape/address';
@@ -62,6 +66,14 @@ export interface RecadosTmux {
   type(sid: string, text: string): Promise<boolean>;
   /** One `Enter` alone (a long text typed can swallow the first one). */
   enter(sid: string): Promise<boolean>;
+  /** `C-u`: clears the input field (a typed text whose Enter never went in). */
+  clear(sid: string): Promise<boolean>;
+}
+
+/** The last turn of a transcript: `ended` = its last main entry is the assistant's end of turn; `at` = file mtime. */
+export interface TranscriptTurn {
+  readonly ended: boolean;
+  readonly at: number;
 }
 
 export interface GateRecadosDeps {
@@ -78,6 +90,10 @@ export interface GateRecadosDeps {
   readonly relay?: (message: OwnerMessage) => Promise<unknown>;
   /** Whether the transcript file has `label` (the confirmation of a typed item). Default: reads its end. */
   readonly transcriptHas?: (path: string, label: string) => Promise<boolean>;
+  /** The transcript of a session no hook spoke of yet. Default: `~/.claude/projects/<pasta>/<sid>.jsonl`, the newest. */
+  readonly transcriptOf?: (sid: string) => Promise<string | undefined>;
+  /** The last turn of a transcript (`null` = unreadable). Default: reads its end. */
+  readonly lastTurn?: (path: string) => Promise<TranscriptTurn | null>;
   readonly now?: () => number;
   readonly log?: (line: string) => void;
 }
@@ -94,6 +110,14 @@ const CONFIRM_MS = 20_000;
 const ENTER_AGAIN_MS = 5_000;
 const MAX_ENTERS = 2;
 const MAX_TYPINGS = 2;
+/** After an unconfirmed typing, the screen is not trusted for this long (an end of turn still delivers). */
+const HOLD_MS = 2 * 60_000;
+/** A transcript that moved this recently is a turn that may still be going. */
+const QUIET_MS = 10_000;
+/** An "ocupada" this old is checked on the screen and the transcript (its Stop may have been lost). */
+const STALE_BUSY_MS = 60_000;
+const BUSY_ON_SCREEN = /esc to interrupt/i;
+const PASTE_PLACEHOLDER = /\[Pasted text #\d+[^\]]*\]/g;
 const JOIN_MS = 2 * 60_000;
 const DAY = 24 * 60 * 60 * 1000;
 const DELIVERED_DAYS = 7;
@@ -190,16 +214,34 @@ function withoutSuggestion(screen: string): string {
     .join('\n');
 }
 
-/** The Claude Code input field: the "❯" line between the two last "────" rules. Free only when empty. */
-export function fieldIsFree(screen: string): { readonly free: boolean; readonly reason: string } {
+/** What is typed in the Claude Code input field (the "❯" line between the two last "────" rules); `null` = no field. */
+function fieldText(screen: string): string | null {
   const lines = withoutSuggestion(screen).replace(/\n+$/, '').split('\n');
   const rules = lines.map((line, index) => (line.trim().startsWith('─'.repeat(10)) ? index : -1)).filter((index) => index >= 0);
-  if (rules.length < 2) return { free: false, reason: 'campo não reconhecido na tela' };
-  const between = lines.slice(rules[rules.length - 2]! + 1, rules[rules.length - 1]).map((line) => line.replace(/ /g, ' ').trim());
-  if (!between.length || !between[0]!.startsWith('❯')) return { free: false, reason: 'campo não reconhecido na tela' };
-  const rest = [between[0]!.slice(1).trim(), ...between.slice(1)];
-  if (rest.some((line) => line.length > 0)) return { free: false, reason: 'campo com texto (rascunho de alguém)' };
+  if (rules.length < 2) return null;
+  const between = lines.slice(rules[rules.length - 2]! + 1, rules[rules.length - 1]).map((line) => line.replace(/\u00a0/g, ' ').trim());
+  if (!between.length || !between[0]!.startsWith('❯')) return null;
+  return [between[0]!.slice(1).trim(), ...between.slice(1)].filter((line) => line.length > 0).join(' ');
+}
+
+/** The Claude Code input field: free only when empty. */
+export function fieldIsFree(screen: string): { readonly free: boolean; readonly reason: string } {
+  const text = fieldText(screen);
+  if (text === null) return { free: false, reason: 'campo não reconhecido na tela' };
+  if (text) return { free: false, reason: 'campo com texto (rascunho de alguém)' };
   return { free: true, reason: '' };
+}
+
+/** The field holds only what was typed for `tags` (a long text shows as "[Pasted text #N]"): clearing it erases no one's draft. */
+function fieldHoldsOnly(screen: string, tags: readonly string[]): boolean {
+  const text = fieldText(screen);
+  if (!text) return false;
+  return tags.some((tag) => text.includes(tag)) || text.replace(PASTE_PLACEHOLDER, '').trim() === '';
+}
+
+/** What tmux types: one line, no control characters (a lone \r would send it in half, a \t completes, ESC starts a sequence). */
+export function typeable(text: string): string {
+  return text.replace(/\s*[\u0000-\u001f\u007f-\u009f]+\s*/g, ' ').trim();
 }
 
 // ---- the real tmux and transcript --------------------------------------------------------------------------------
@@ -232,6 +274,9 @@ export const systemRecadosTmux: RecadosTmux = {
   async enter(sid) {
     return (await runTmux(['send-keys', '-t', `${TMUX_PREFIX}${sid}`, 'Enter'])).code === 0;
   },
+  async clear(sid) {
+    return (await runTmux(['send-keys', '-t', `${TMUX_PREFIX}${sid}`, 'C-u'])).code === 0;
+  },
 };
 
 export async function tmuxLocalSessions(): Promise<ReadonlySet<string>> {
@@ -263,6 +308,52 @@ async function transcriptTailHas(path: string, label: string): Promise<boolean> 
   }
 }
 
+/** The newest `<sid>.jsonl` under `~/.claude/projects/*` (the CLI names the transcript after the session id). */
+export async function findTranscript(sid: string): Promise<string | undefined> {
+  const root = join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects');
+  let best: { path: string; at: number } | undefined;
+  try {
+    for (const folder of await fsp.readdir(root)) {
+      const path = join(root, folder, `${sid}.jsonl`);
+      try {
+        const { mtimeMs } = await fsp.stat(path);
+        if (!best || mtimeMs > best.at) best = { path, at: mtimeMs };
+      } catch {
+        // not in this folder
+      }
+    }
+  } catch {
+    return undefined;
+  }
+  return best?.path;
+}
+
+/** The last user/assistant entry of the main conversation, in the last 400 KB (port of `ultima_entrada` of the despertador). */
+export async function transcriptLastTurn(path: string): Promise<TranscriptTurn | null> {
+  try {
+    const handle = await fsp.open(path, 'r');
+    try {
+      const { size, mtimeMs } = await handle.stat();
+      const length = Math.min(size, 400 * 1024);
+      const buffer = Buffer.alloc(length);
+      await handle.read(buffer, 0, length, size - length);
+      const lines = buffer.toString('utf8').split('\n');
+      for (let index = lines.length - 1; index >= 0; index -= 1) {
+        const entry = parseObject(lines[index]!);
+        if ((entry.type !== 'user' && entry.type !== 'assistant') || entry.isSidechain === true) continue;
+        const message = isRecord(entry.message) ? entry.message : {};
+        const ended = entry.type === 'assistant' && (message.stop_reason === 'end_turn' || message.stop_reason === 'stop_sequence');
+        return { ended, at: mtimeMs };
+      }
+      return { ended: false, at: mtimeMs };
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
 // ---- the queue ---------------------------------------------------------------------------------------------------
 
 type SessionMood = 'parada' | 'ocupada' | 'digitando';
@@ -287,10 +378,34 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
   const tmux = deps.tmux ?? systemRecadosTmux;
   const localSessions = deps.localSessions ?? tmuxLocalSessions;
   const transcriptHas = deps.transcriptHas ?? transcriptTailHas;
-  /** What the hooks told of each session (memory only: after a restart, nothing is typed until its next turn end). */
-  const moods = new Map<string, SessionMood>();
+  const transcriptOf = deps.transcriptOf ?? findTranscript;
+  const lastTurn = deps.lastTurn ?? transcriptLastTurn;
+  /** What the hooks told of each session (memory only: a session they never spoke of is read on its screen and transcript). */
+  const moods = new Map<string, { readonly mood: SessionMood; readonly at: number }>();
+  const moodOf = (sid: string): SessionMood | undefined => moods.get(sid)?.mood;
+  /** Sessions not typed into until then (an unconfirmed typing), unless a hook says the turn ended. */
+  const holds = new Map<string, number>();
+  const setMood = (sid: string, mood: SessionMood): void => {
+    moods.set(sid, { mood, at: now() });
+    holds.delete(sid);
+  };
   const transcripts = new Map<string, string>();
   const enters = new Map<string, number>();
+
+  async function transcriptPath(sid: string): Promise<string | undefined> {
+    const known = transcripts.get(sid);
+    if (known) return known;
+    const found = await transcriptOf(sid);
+    if (found) transcripts.set(sid, found);
+    return found;
+  }
+
+  /** A session no hook spoke of (or whose "ocupada" went stale): stopped when its transcript's last turn ended and is quiet. */
+  async function transcriptSaysStopped(sid: string): Promise<boolean> {
+    const path = await transcriptPath(sid);
+    const turn = path ? await lastTurn(path) : null;
+    return turn !== null && turn.ended && now() - turn.at >= QUIET_MS;
+  }
   let timer: ReturnType<typeof setInterval> | null = null;
   let ticking = false;
 
@@ -315,6 +430,7 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
   function write(items: readonly RecadoItem[]): void {
     const at = now();
     const kept = items.filter((item) => (item.entregueEm !== undefined ? at - item.entregueEm < DELIVERED_DAYS * DAY : at - item.criado < PENDING_DAYS * DAY));
+    for (const item of items) if (item.estado !== 'entregue' && !kept.includes(item)) log(`recado ${item.id} para ${item.para.lugar} (${item.para.sid}) nunca entregue em ${PENDING_DAYS} dias: sai da fila.`);
     const tmp = `${file}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
     try {
       if (!io.existsSync(dirname(file))) io.mkdirSync(dirname(file));
@@ -452,9 +568,13 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
             (candidate) => (seen ? { ...candidate, estado: 'entregue', via: 'transcript', entregueEm: now() } : { ...candidate, estado: 'fila' }),
           );
           enters.delete(item.id);
-          // Never typed again until a new end of turn says the screen is free (it delivers it then).
-          if (!seen && moods.get(sid) === 'digitando') moods.delete(sid);
-          else if (seen && moods.get(sid) === 'digitando') moods.set(sid, 'ocupada');
+          if (moodOf(sid) === 'digitando') moods.delete(sid);
+          if (!seen) {
+            // Its Enter never went in: what it left in the field goes, and the screen is not trusted for a while.
+            holds.set(sid, now() + HOLD_MS);
+            const screen = await tmux.screen(sid);
+            if (screen && !screen.inMode && fieldHoldsOnly(screen.text, [tagOf(item.id)])) await tmux.clear(sid);
+          }
         } else if (since >= ENTER_AGAIN_MS && (enters.get(item.id) ?? 0) < MAX_ENTERS) {
           const screen = await tmux.screen(sid);
           if (screen && !screen.inMode && fieldIsFree(screen.text).reason.startsWith('campo com texto')) {
@@ -464,10 +584,14 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
         }
       }
       // 2. Stopped sessions with something queued: typed only on a free field.
-      const queued = read().filter((item) => item.estado === 'fila' && item.tentativas < MAX_TYPINGS && moods.get(item.para.sid) === 'parada');
+      const queued = read().filter((item) => item.estado === 'fila' && item.tentativas < MAX_TYPINGS);
       for (const sid of new Set(queued.map((item) => item.para.sid))) {
+        const mood = moods.get(sid);
+        if (mood?.mood === 'digitando' || (mood?.mood === 'ocupada' && now() - mood.at < STALE_BUSY_MS)) continue;
+        if (mood?.mood !== 'parada' && (holds.get(sid) ?? 0) > now()) continue;
         const screen = await tmux.screen(sid);
-        if (!screen || screen.inMode || !fieldIsFree(screen.text).free || moods.get(sid) !== 'parada') continue;
+        if (!screen || screen.inMode || BUSY_ON_SCREEN.test(screen.text) || !fieldIsFree(screen.text).free) continue;
+        if (mood?.mood !== 'parada' && !(await transcriptSaysStopped(sid))) continue;
         const ids = new Set(queued.filter((item) => item.para.sid === sid).map((item) => item.id));
         // Marked BEFORE typing: a turn end in between does not deliver them a second time.
         const typed = update(
@@ -475,8 +599,8 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
           (item) => ({ ...item, estado: 'digitado', tentativas: item.tentativas + 1, digitadoEm: now() }),
         );
         if (!typed.length) continue;
-        moods.set(sid, 'digitando');
-        const ok = await tmux.type(sid, typed.map((item) => item.texto.replace(/\s*\n\s*/g, ' ')).join('   '));
+        moods.set(sid, { mood: 'digitando', at: now() });
+        const ok = await tmux.type(sid, typed.map((item) => typeable(item.texto)).join('   '));
         if (!ok) {
           const back = new Set(typed.map((item) => item.id));
           update((item) => back.has(item.id) && item.estado === 'digitado', (item) => ({ ...item, estado: 'fila', tentativas: item.tentativas - 1 }));
@@ -524,9 +648,11 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       const places = listedPlaces(mine.listar);
       const closed = places.filter((place) => place.estado === 'fechada' && successorOf(mine.board, places, place.id) === caller.placeId);
       if (!closed.length) return;
+      // Only the task the call is about follows (§6): a listar, criar or novidades takes nothing.
       const ids = taskIdsOf(call);
+      if (!ids?.length) return;
       for (const place of closed) {
-        const passed = await followRenewal(service, { projectPath: caller.projectPath, placeId: place.id, to: caller.placeId, ...(ids ? { ids } : {}) });
+        const passed = await followRenewal(service, { projectPath: caller.projectPath, placeId: place.id, to: caller.placeId, ids });
         if (passed.length) log(`renovação: ${passed.join(', ')} de ${place.id} para ${caller.placeId}`);
       }
     },
@@ -543,7 +669,7 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       if (typeof payload.transcript_path === 'string' && payload.transcript_path) transcripts.set(sid, payload.transcript_path);
 
       if (evento === 'ocupada') {
-        moods.set(sid, 'ocupada');
+        setMood(sid, 'ocupada');
         const prompt = typeof payload.prompt === 'string' ? payload.prompt : '';
         // The typed item came in (or one that went back to the queue after all entered late): delivered, never again.
         if (prompt.includes('◆ Recado '))
@@ -559,10 +685,10 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
         (item) => ({ ...item, estado: 'entregue', via: 'fim-de-turno', entregueEm: now() }),
       );
       if (!delivered.length) {
-        if (moods.get(sid) !== 'digitando') moods.set(sid, 'parada');
+        if (moodOf(sid) !== 'digitando') setMood(sid, 'parada');
         return answerHook({});
       }
-      moods.set(sid, 'ocupada');
+      setMood(sid, 'ocupada');
       const reason = [...delivered.sort((a, b) => a.criado - b.criado).map((item) => item.texto), ANSWER_LINE].join('\n\n');
       return answerHook({ decision: 'block', reason });
     },
