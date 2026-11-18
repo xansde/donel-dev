@@ -16,6 +16,12 @@
 // per-page notes of each marked row go to `<dir>/notas-paginas.jsonl`, never into a decision's text. The same file
 // turns on the queue of tasks the owner asks for in the phone (t-2eedda0d, tarefas-pedidas.ts) once its
 // `quadroTarefas` names the board they land on.
+//
+// Canal do Donel fora do PC (t-e195b35c): the gate answers with the recados queue (`<dir>/recados.json`, recados.ts)
+// and the probe (sonda.ts) pictures the sessions the PC has not; other machines' gates record here through
+// `/v1/portao/*` (`<dir>/portoes/<name>.sha256`, portoes.ts). With `DONEL_PORTAO_SATELITE=<the personal VPS's API url>`
+// this bundle runs as such a gate (the Homologações, scripts/portao-satelite.sh): the gate, the probe and the recados
+// only, with the tasks on the personal VPS (`<dir>/portao.token`, satelite.ts).
 
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, networkInterfaces } from 'node:os';
@@ -32,7 +38,11 @@ import { callerOf, createOracleApiHandler } from './api';
 import { readServiceHashes } from './servicos';
 import { createLivroStore } from './livro';
 import { createReturnGuard } from './devolvido';
-import { createGateHandler, GATE_PORT, mergePicture, startGateServer, tunnelForward, type BoardPicture } from './portao';
+import { createGateHandler, GATE_PORT, mergePicture, startGateServer, tunnelForward, type BoardPicture, type PictureSession } from './portao';
+import { createGateRecados, tmuxLocalSessions } from './recados';
+import { createGateToolRoutes, readGateHashes } from './portoes';
+import { createProbe } from './sonda';
+import { createSatelliteLedger, createSatelliteNotice } from './satelite';
 import { ORACLE_PORT, startOracleServer, type OracleServer } from './server';
 import { createDaemonVigia } from './vigia';
 import { boardName } from '../shared/vigia/board';
@@ -101,6 +111,84 @@ export function readTokenHash(dir: string): string | null {
   }
 }
 
+/**
+ * The last picture of the board (kept across a restart, `<dir>/retrato.json`): what the PC pushes, over it what the
+ * probe asks of the sessions the PC has not pictured. A session whose folder is gone (closed) leaves it.
+ */
+function createPictureStore(dir: string): { get(): BoardPicture | null; set(next: BoardPicture): void; setSession(sid: string, session: PictureSession): void } {
+  const pictureFile = join(dir, 'retrato.json');
+  const sessionsDir = join(homedir(), '.donel', 's');
+  let picture: BoardPicture | null = null;
+  try {
+    picture = JSON.parse(readFileSync(pictureFile, 'utf8')) as BoardPicture;
+  } catch {
+    picture = null;
+  }
+  const exists = (folder: string): boolean => /^[A-Za-z0-9-]{1,64}$/.test(folder) && existsSync(join(sessionsDir, folder));
+  const save = (next: BoardPicture): void => {
+    picture = next;
+    writeFileSync(`${pictureFile}.tmp`, JSON.stringify(picture), { mode: 0o600 });
+    renameSync(`${pictureFile}.tmp`, pictureFile);
+  };
+  return {
+    get: () => picture,
+    set: (next) => save(mergePicture(picture, next, exists)),
+    // The probe's session carries its own `at`; the picture's (the PC's last push) does not move.
+    setSession: (sid, session) => save(mergePicture(picture, { at: picture?.at ?? Date.now(), sessoes: { [sid]: session } }, exists)),
+  };
+}
+
+/** The gate token of this machine (the satellite), written by scripts/portao-satelite.sh; `null` = none. */
+function readGateToken(dir: string): string | null {
+  try {
+    const token = readFileSync(join(dir, 'portao.token'), 'utf8').trim();
+    return token || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The satellite (`DONEL_PORTAO_SATELITE`): only the MCP gate of this machine's sessions, the probe that pictures them
+ * and the recados between them. No ledger, phone, mirror, vigia nor events here: the tasks go to the personal VPS's
+ * Oráculo; a message for a place off this machine goes on to the PC through the session's tunnel.
+ */
+async function runSatellite(dir: string, url: string): Promise<void> {
+  const io = createSystemConfigIoDeps();
+  const pictures = createPictureStore(dir);
+  const remote = { url, token: () => readGateToken(dir) };
+  const sessionsDir = join(homedir(), '.donel', 's');
+  const recados = createGateRecados({ file: join(dir, 'recados.json'), io, ledger: () => null, picture: pictures.get, relay: createSatelliteNotice(remote) });
+  const gatePort = Number(process.env.DONEL_ORACULO_PORTAO_PORT) || GATE_PORT;
+  const gate = await startGateServer({
+    port: gatePort,
+    handler: createGateHandler({
+      sessionsDir,
+      ledger: () => {
+        throw new Error('o satélite não tem registro');
+      },
+      runLedger: createSatelliteLedger(remote),
+      picture: pictures.get,
+      forward: tunnelForward,
+      serverVersion: 'oraculo-satelite',
+      recados,
+    }),
+  });
+  writeFileSync(join(dir, 'portao'), `${gate.port}\n`, { mode: 0o600 });
+  recados.start();
+  const probe = createProbe({ sessionsDir, liveSessions: tmuxLocalSessions, picture: pictures.get, setSession: pictures.setSession });
+  probe.start();
+  if (!readGateToken(dir)) console.error(`[oraculo] satélite: sem ${join(dir, 'portao.token')}; as tarefas desta máquina são recusadas até ele existir.`);
+  console.log(`[oraculo] satélite no ar: portão 127.0.0.1:${gate.port}, registro em ${url}`);
+  const stop = (): void => {
+    probe.stop();
+    recados.stop();
+    void gate.close().then(() => process.exit(0));
+  };
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
+}
+
 /** The way back: `oraculo.mjs --exportar-supabase <arquivo>` writes the Supabase's ledger as a ledger.json (new file only). */
 async function exportSupabase(dir: string, target: string | undefined): Promise<number> {
   const deps = supabaseLedgerDeps(dir);
@@ -154,6 +242,8 @@ async function cancelOffline(dir: string, ids: string | undefined, reason: strin
 async function main(): Promise<void> {
   const dir = process.env.DONEL_ORACULO_DIR || join(homedir(), '.donel', 'oraculo');
   mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const satellite = process.env.DONEL_PORTAO_SATELITE?.trim();
+  if (satellite) return runSatellite(dir, satellite);
   // The first slice left the token itself on disk; only its hash stays now.
   if (existsSync(join(dir, 'pc.token'))) unlinkSync(join(dir, 'pc.token'));
   const host = process.env.DONEL_ORACULO_HOST || pickTailscaleAddress(networkInterfaces());
@@ -179,6 +269,7 @@ async function main(): Promise<void> {
   let mirror: LedgerMirror | null = null;
   const tokenHash = (): string | null => readTokenHash(dir);
   const services = (): ReadonlyMap<string, string> => readServiceHashes(dir);
+  const gates = (): ReadonlyMap<string, string> => readGateHashes(dir);
   const io = createSystemConfigIoDeps();
   let server: OracleServer | null = null;
   // What only the PC delivers (its board knows who is open): waits in `fila.json` until the PC acks.
@@ -221,19 +312,11 @@ async function main(): Promise<void> {
       (await relay.send({ projectPath: '', placeId: '', text, leaderText: text, ...(pedidoId ? { key: `pedido:${pedidoId}` } : {}) }, RELAY_WAIT_MS)) === 'lider',
   });
   // Fatia 4: the last picture of the board the PC left (kept across a restart), for the MCP gate of the VPS's sessions.
-  const pictureFile = join(dir, 'retrato.json');
-  let picture: BoardPicture | null = null;
-  try {
-    picture = JSON.parse(readFileSync(pictureFile, 'utf8')) as BoardPicture;
-  } catch {
-    picture = null;
-  }
-  const setPicture = (next: BoardPicture): void => {
-    const sessionsDir = join(homedir(), '.donel', 's');
-    picture = mergePicture(picture, next, (folder) => /^[A-Za-z0-9-]{1,64}$/.test(folder) && existsSync(join(sessionsDir, folder)));
-    writeFileSync(`${pictureFile}.tmp`, JSON.stringify(picture), { mode: 0o600 });
-    renameSync(`${pictureFile}.tmp`, pictureFile);
-  };
+  const pictures = createPictureStore(dir);
+  const setPicture = pictures.set;
+  const sessionsDir = join(homedir(), '.donel', 's');
+  // t-e195b35c — the recados of this machine's sessions; a notice for a place off it goes to the PC's relay.
+  const recados = createGateRecados({ file: join(dir, 'recados.json'), io, ledger: () => ledger, picture: pictures.get, relay: (message) => relay.send(message, RELAY_WAIT_MS) });
   // Fails here, not on the first call, when the file is there but unreadable (it would be written over).
   const first = raw.load();
   if (sbDeps) {
@@ -248,7 +331,7 @@ async function main(): Promise<void> {
     }
     const liveOf = (): PlaceInfoOf => {
       const live = new Map<string, PlaceInfo>();
-      for (const session of Object.values(picture?.sessoes ?? {})) {
+      for (const session of Object.values(pictures.get()?.sessoes ?? {})) {
         for (const place of session.listar as Array<{ id?: unknown; papel?: unknown; nome?: unknown }>) {
           if (typeof place?.id !== 'string') continue;
           const info: PlaceInfo = { ...(typeof place.papel === 'string' ? { roleId: place.papel } : {}), ...(typeof place.nome === 'string' ? { name: place.nome } : {}) };
@@ -285,9 +368,16 @@ async function main(): Promise<void> {
       }
     },
     extra: createOracleAdminRoutes({ celular, relay, setPicture }),
+    gates,
+    gateRoutes: createGateToolRoutes({
+      ledger: () => ledger,
+      recados,
+      linkPedido: (pedidoId, tarefa) => void celular?.linkPedido(pedidoId, tarefa),
+      notice: (message) => relay.send(message, 0),
+    }),
     ...(process.env.DONEL_LIVRO_ARQUIVO ? { livro: createLivroStore({ filePath: process.env.DONEL_LIVRO_ARQUIVO }) } : {}),
   });
-  server = await startOracleServer({ host, port, caller: (authorization) => callerOf(authorization, tokenHash(), services()), handler });
+  server = await startOracleServer({ host, port, caller: (authorization) => callerOf(authorization, tokenHash(), services(), gates()), handler });
   writeFileSync(join(dir, 'url'), `${server.url}\n`, { mode: 0o600 });
   // The task board: read at each call, so writing the config turns it on without a restart.
   const boardConfigFile = process.env.DONEL_BOARD_CONFIG || join(homedir(), '.donel', 'board', 'supabase.json');
@@ -311,28 +401,32 @@ async function main(): Promise<void> {
   const gate = await startGateServer({
     port: gatePort,
     handler: createGateHandler({
-      sessionsDir: join(homedir(), '.donel', 's'),
+      sessionsDir,
       ledger: () => ledger,
-      picture: () => picture,
+      picture: pictures.get,
+      recados,
       forward: tunnelForward,
       serverVersion: 'oraculo-vps',
       cards,
       // The phone's server lives here: a task a VPS session creates from an owner's request shows on his phone.
       linkPedido: (pedidoId, tarefa) => void celular?.linkPedido(pedidoId, tarefa),
-      // Until the recados queue is wired here, the notices after a task (a delivery, a "travada") go to the PC's
-      // relay, which today's app delivers when it answers: a frozen PC holds the notice, never the session.
-      relayNotice: (message) => void relay.send(message, 0).catch((error: unknown) => console.error('[oraculo] portão: aviso não entrou na fila:', error)),
+      // The notices after a task (a delivery, a "travada", a verdict) go by the recados: queued for a session of this
+      // machine, else to the PC's relay, which today's app delivers when it answers.
     }),
   });
   // The setup of a remote session reads this to point its MCP at the gate.
   writeFileSync(join(dir, 'portao'), `${gate.port}\n`, { mode: 0o600 });
+  recados.start();
+  // The sessions the PC has not pictured (its push, every 30 s, comes first: a fresh picture is not asked again).
+  const probe = createProbe({ sessionsDir, liveSessions: tmuxLocalSessions, picture: pictures.get, setSession: pictures.setSession });
+  probe.start();
   // t-ffbf8e7d — the vigia of this place's locks, with the PC off too (the PC hands its setup at each handshake).
   const vigia = createDaemonVigia({
     dir,
     ledger: () => ledger,
     log: (line) => console.log(line),
     boardOfSession: (sid) => {
-      const pasta = picture?.sessoes[sid]?.quemSou?.pasta;
+      const pasta = pictures.get()?.sessoes[sid]?.quemSou?.pasta;
       return typeof pasta === 'string' && pasta ? boardName(pasta) : undefined;
     },
   });
@@ -380,6 +474,8 @@ async function main(): Promise<void> {
   tarefasPedidas.start();
   console.log(`[oraculo] no ar em ${server.url} (${Object.keys(first.doc.tasks).length} tarefas${first.readOnly ? ', só leitura' : ''}, fonte: ${store ? 'Supabase' : 'ledger.json'})`);
   const stop = (): void => {
+    probe.stop();
+    recados.stop();
     vigia.stop();
     decisoes.stop();
     tarefasPedidas.stop();

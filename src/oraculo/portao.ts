@@ -65,6 +65,8 @@ export interface PictureSession {
   readonly listar: readonly unknown[];
   /** The board as saved (who opened whom), for the reach rules of the ledger. */
   readonly board?: MindscapeBoard;
+  /** When this session was pictured by the probe (sonda.ts); absent = the PC's push, as old as the picture's `at`. */
+  readonly at?: number;
 }
 
 /** What the PC pushes (`POST /v1/retrato`): every VPS session it has open. */
@@ -103,6 +105,12 @@ export interface GateResponse {
  */
 export type GateForward = (port: number, request: GateRequest, signal?: AbortSignal) => Promise<GateResponse | 'desligado'>;
 
+/** What a `tarefa_*` answered by the gate came with: the session's picture and its raw arguments. */
+export interface GateLedgerContext {
+  readonly mine: PictureSession;
+  readonly args: Readonly<Record<string, unknown>>;
+}
+
 export interface GateDeps {
   /** `~/.donel/s`. */
   readonly sessionsDir: string;
@@ -122,8 +130,11 @@ export interface GateDeps {
    * (`fila.json`), which today's app delivers to that place, or to the Líder único, when it answers. Absent = logged.
    */
   readonly relayNotice?: (message: OwnerMessage) => void;
-  /** Runs a `tarefa_*` as `caller`; default: `runLedgerTool` on this daemon's ledger. */
-  readonly runLedger?: (caller: LedgerCaller, call: LedgerToolCall) => Promise<LedgerToolAnswer>;
+  /**
+   * Runs a `tarefa_*` as `caller`; default: `runLedgerTool` on this daemon's ledger. `context`: the session's picture
+   * and the call's arguments as the session sent them (the satellite passes them on to the ledger's machine).
+   */
+  readonly runLedger?: (caller: LedgerCaller, call: LedgerToolCall, context: GateLedgerContext) => Promise<LedgerToolAnswer>;
   readonly timeouts?: { readonly localAnswerMs?: number };
   readonly log?: (line: string) => void;
 }
@@ -296,6 +307,12 @@ function answersWithoutPc(message: Record<string, unknown>, mine: PictureSession
   return call.name === 'sessao_quem_sou' || (call.name === 'sessao_listar' && call.args.quadro === undefined);
 }
 
+/** Why a session's `tarefa_*` is refused before it runs (the Líder único's board choice, a place as "quem pediu"). */
+export function ledgerCallRefusal(call: LedgerToolCall): string | null {
+  if ((call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' || call.tool === 'tarefa_novidades') && call.quadro) return 'Só o Líder único escolhe o quadro. Esta sessão usa sempre o próprio quadro (chame sem "quadro").';
+  return call.tool === 'tarefa_criar' && call.quemPediu ? askedByRefusal(call.quemPediu) : null;
+}
+
 const hhmm = (at: number): string => new Date(at).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'America/Sao_Paulo' });
 
 /** How the PC is for a call answered here: off (nothing listens), silent (it did not answer in time), or on. */
@@ -313,7 +330,7 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     const picture = deps.picture();
     const mine = picture?.sessoes[sid] ?? null;
     const label = pc === 'sem-resposta' ? `não respondeu em ${Math.round(localAnswerMs / 1000)} s` : pc;
-    const pcNow = picture ? `${label}; quadro de ${hhmm(picture.at)}` : label;
+    const pcNow = picture ? `${label}; quadro de ${hhmm(mine?.at ?? picture.at)}` : label;
     let passOn = false;
 
     const board = async (call: BoardToolCall): Promise<BrowserToolOutcome> => {
@@ -333,8 +350,7 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
       if (!mine) return { kind: 'error', text: NO_PICTURE };
       const caller = callerFromPicture(mine);
       if (typeof caller === 'string') return { kind: 'error', text: caller };
-      if ((call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' || call.tool === 'tarefa_novidades') && call.quadro) return { kind: 'error', text: 'Só o Líder único escolhe o quadro. Esta sessão usa sempre o próprio quadro (chame sem "quadro").' };
-      const refused = call.tool === 'tarefa_criar' && call.quemPediu ? askedByRefusal(call.quemPediu) : null;
+      const refused = ledgerCallRefusal(call);
       if (refused) return { kind: 'error', text: refused };
       if (deps.recados) {
         try {
@@ -344,7 +360,8 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
         }
       }
       // No `remote`: the proof files named by a VPS session are here, on this machine.
-      const result = await runLedger(caller, call);
+      const raw = toolCallOf(singleMessage(body));
+      const result = await runLedger(caller, call, { mine, args: raw?.name === call.tool ? raw.args : {} });
       if (!result.ok) return { kind: 'error', text: result.text };
       // As the PC does (executeLedgerTool): the owner's phone shows "virou tarefa" with its name.
       if (call.tool === 'tarefa_criar' && call.pedidoDoDono && deps.linkPedido) {
