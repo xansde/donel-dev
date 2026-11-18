@@ -28,6 +28,9 @@
 // - Who takes the work of a place that is gone (06/11, t-e753b554): the first live place above it by the
 //   hierarchy arrows, the one that opened it first; none → the live Líder of its board (`boardLeaders`, dono 09/11);
 //   none → the Líder único.
+// - Who follows a place that closed (18/11, t-e195b35c, item 13): its successor (`successorOf`) is the ONE live place
+//   of the same role opened by the same place (a renewal that opened a new place instead of a new conversation). Its
+//   tasks follow it before anything goes up to `whoHears`.
 
 import { FAXINEIRO_ROLE_ID, LEADER_ROLE_ID } from '../roles';
 import { LEADER_OF_ALL } from './leader';
@@ -299,4 +302,47 @@ export function canFaxineiroClose(doc: MindscapeDoc, from: ReachEnd, to: ReachEn
   if (facts.needsOwner) return { ok: false, reason: 'ela espera o dono (permissão, pergunta, plano, limite ou erro).' };
   if (!facts.openedBySession) return { ok: false, reason: 'o dono abriu esta aba à mão; ela é dele.' };
   return { ok: true };
+}
+
+/** A place as `sessao_listar` gives it: the VPS gate has only this list and the saved board. */
+export interface ListedPlace {
+  readonly id: string;
+  readonly papel?: string;
+  readonly estado?: string;
+  readonly abertaPor?: string;
+}
+
+/** `estado` of `sessao_listar` of a place that is gone: closed, or never started. */
+const GONE_PLACE_STATES: ReadonlySet<string> = new Set(['fechada', 'nao-comecou']);
+
+/** A listed place whose session is there (any `estado` but closed or never started). */
+export function isLiveListedPlace(place: ListedPlace | undefined): boolean {
+  return place?.estado !== undefined && !GONE_PLACE_STATES.has(place.estado);
+}
+
+/** The role of a place: the board's card first, then the list. */
+export function listedRoleOf(board: MindscapeBoard | undefined, places: readonly ListedPlace[], placeId: string): string | undefined {
+  const card = board?.cards[placeId];
+  return (card?.kind === 'session' ? card.roleId : undefined) ?? places.find((place) => place.id === placeId)?.papel;
+}
+
+/** Who opened a place: the opening arrows of the board, then `abertaPor` of the list (the Líder único has no card). */
+function listedOpenersOf(board: MindscapeBoard | undefined, places: readonly ListedPlace[], placeId: string): string[] {
+  const listed = places.find((place) => place.id === placeId)?.abertaPor;
+  return [...openersOf(board, placeId), ...(listed ? [listed] : [])];
+}
+
+/**
+ * The successor of `placeId` (item 13): the live place of the same role opened by the same place, other than itself;
+ * exactly one, else `undefined` (two candidates is a guess). The board keeps no opening time, so "opened after" is
+ * read as "live while this one is not".
+ */
+export function successorOf(board: MindscapeBoard | undefined, places: readonly ListedPlace[], placeId: string): string | undefined {
+  const role = listedRoleOf(board, places, placeId);
+  const openers = listedOpenersOf(board, places, placeId);
+  if (!role || openers.length === 0) return undefined;
+  const found = places.filter(
+    (place) => place.id !== placeId && isLiveListedPlace(place) && listedRoleOf(board, places, place.id) === role && listedOpenersOf(board, places, place.id).some((id) => openers.includes(id)),
+  );
+  return found.length === 1 ? found[0]!.id : undefined;
 }
