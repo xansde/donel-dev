@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, Notification, protocol, safeStorage, screen, shell, webContents } from 'electron';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { execFile, execFileSync, spawn } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { appendFile, stat as statFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -4113,7 +4113,7 @@ async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, cal
     if (call.tool !== 'tarefa_listar') return { caller: { ...base, projectPath: '', boardPlaceIds: [] }, call };
     return { caller: await withEveryBoard(boardBridge, ptyId, { ...base, projectPath: '', boardPlaceIds: [] }, { ...call, todos: true }), call: { ...call, todos: true } };
   }
-  const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar', quadro });
+  const list = await ledgerBoardAnswer(boardBridge, ptyId, { tool: 'sessao_listar', quadro }, call.tool === 'tarefa_criar' || call.tool === 'tarefa_transferir');
   if (list.kind !== 'text') {
     // t-5839d76b — a task on a folder that is no board (the vigia's old cards): the Líder único still cancels it.
     const offBoard = list.kind === 'error' && !savedBoard(quadro) && call.tool !== 'tarefa_criar' && call.tool !== 'tarefa_listar' && call.tool !== 'tarefa_novidades' ? leaderCallerOffBoard(base, quadro, call.tool) : null;
@@ -4139,17 +4139,53 @@ async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, cal
 /** The board and place of a session, for the record of its agent's bot post (set once the board bridge is up). */
 let slackPlaceOf: ((ptyId: string) => Promise<{ projectPath: string; placeId: string } | null>) | null = null;
 
+/** t-e195b35c — how long the renderer's answer about a session (who it is, its board) serves the next `tarefa_*`. */
+const LEDGER_CALLER_TTL_MS = 30_000;
+const ledgerCallerAnswers = new Map<string, { readonly at: number; readonly board: number; readonly answer: BrowserToolOutcome }>();
+
+/** When the saved board last changed (`0` = unknown): an answer read before it no longer serves. */
+function savedBoardStamp(): number {
+  try {
+    return statSync(mindscapeFilePath(process.env, app.getPath('userData'))).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * t-e195b35c — the board answers that resolve the caller, kept per session for `LEDGER_CALLER_TTL_MS` or until the
+ * board is saved again. Each `tarefa_*` asked the window twice (each in the window's queue with the terminals and the
+ * board, up to 15 s): a burst of 107 `tarefa_frente` on 18/11 was 214 trips, and the freeze. `fresh` asks anyway.
+ */
+async function ledgerBoardAnswer(boardBridge: BoardBridge, ptyId: string, call: BoardToolCall, fresh = false): Promise<BrowserToolOutcome> {
+  const key = `${ptyId}\n${JSON.stringify(call)}`;
+  const now = Date.now();
+  const board = savedBoardStamp();
+  const kept = fresh ? undefined : ledgerCallerAnswers.get(key);
+  if (kept && now - kept.at < LEDGER_CALLER_TTL_MS && kept.board === board) return kept.answer;
+  const answer = await boardBridge.execute(ptyId, call);
+  for (const [old, entry] of ledgerCallerAnswers) if (now - entry.at >= LEDGER_CALLER_TTL_MS) ledgerCallerAnswers.delete(old);
+  if (answer.kind === 'text') ledgerCallerAnswers.set(key, { at: now, board, answer });
+  else ledgerCallerAnswers.delete(key);
+  return answer;
+}
+
 /** The caller of a `tarefa_*` tool, from the board the renderer owns (the same answers the session would get). */
 async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<{ caller: LedgerCaller; call: LedgerToolCall } | string> {
-  const self = await boardBridge.execute(ptyId, { tool: 'sessao_quem_sou' });
+  const self = await ledgerBoardAnswer(boardBridge, ptyId, { tool: 'sessao_quem_sou' });
   if (self.kind !== 'text') return self.kind === 'error' ? self.text : 'Não consegui saber quem é esta sessão.';
   const who = JSON.parse(self.text) as { lugar?: unknown; papel?: unknown; pasta?: unknown; liderUnico?: unknown };
   if (who.liderUnico === true) return leaderLedgerCallerOf(boardBridge, ptyId, call);
   if (call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' || call.tool === 'tarefa_novidades') {
     if (call.quadro) return 'Só o Líder único escolhe o quadro. Esta sessão usa sempre o próprio quadro (chame sem "quadro").';
   }
-  if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string') return 'Seu lugar ainda não está no quadro; espere o primeiro turno terminar.';
-  const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar' });
+  if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string') {
+    // Not on the board yet: the next call asks again (the first turn may end in a moment).
+    ledgerCallerAnswers.delete(`${ptyId}\n${JSON.stringify({ tool: 'sessao_quem_sou' })}`);
+    return 'Seu lugar ainda não está no quadro; espere o primeiro turno terminar.';
+  }
+  // A new task or a transfer names who does it: the places as they are now (a session opened a moment ago).
+  const list = await ledgerBoardAnswer(boardBridge, ptyId, { tool: 'sessao_listar' }, call.tool === 'tarefa_criar' || call.tool === 'tarefa_transferir');
   const places = list.kind === 'text' ? (JSON.parse(list.text) as { id?: unknown }[]) : [];
   const board = savedBoard(who.pasta);
   const caller: LedgerCaller = {

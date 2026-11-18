@@ -77,26 +77,36 @@ export function writeHooksSettingsFile(userDataDir: string, port: number, writeF
 const HOOK_SETTINGS_DIR_NAME = 'hook-settings';
 const STALE_HOOK_SETTINGS_MS = 24 * 60 * 60 * 1000;
 
+/** t-e195b35c — how long a session hook may hold the CLI (seconds). */
+export const SESSION_HOOK_TIMEOUT_S = 2;
+/** t-e195b35c — how long the permission hook waits for an answer in the chat before the terminal asks (seconds). */
+export const PERMISSION_HOOK_TIMEOUT_S = 30;
+
 /**
  * Events delivered as `http` hooks, with their `timeout` in seconds. `PermissionRequest` goes in even with the chat
  * off: the settings of a live session are fixed at spawn, and Modo YOLO must reach it. With nobody to answer, the
  * bridge says `{}` at once and the terminal asks as usual. `PermissionDenied` counts the auto mode classifier's blocks
  * (`autoApprovalVerdict`).
+ *
+ * t-e195b35c — the deadlines are short: the CLI waits on each hook before it goes on, and the app that answers may be
+ * busy (18/11, 08h13–08h45: a busy PC app held every session of the VPS 10 s per tool call). A hook that does not
+ * answer in time is skipped and the session goes on. The permission one waits 30 s for the chat, then the terminal
+ * asks as usual (it was a day: a session froze until the app came back).
  */
 export const BRIDGE_HTTP_EVENTS: ReadonlyArray<{ readonly event: string; readonly timeout: number }> = [
-  { event: 'PermissionRequest', timeout: 86400 },
-  { event: 'PermissionDenied', timeout: 10 },
-  { event: 'PreToolUse', timeout: 10 },
-  { event: 'PostToolUse', timeout: 10 },
+  { event: 'PermissionRequest', timeout: PERMISSION_HOOK_TIMEOUT_S },
+  { event: 'PermissionDenied', timeout: SESSION_HOOK_TIMEOUT_S },
+  { event: 'PreToolUse', timeout: SESSION_HOOK_TIMEOUT_S },
+  { event: 'PostToolUse', timeout: SESSION_HOOK_TIMEOUT_S },
   // t-45e87762 — a call that ended in error gives no `PostToolUse`; the semaphore counts running calls by both.
-  { event: 'PostToolUseFailure', timeout: 10 },
-  { event: 'UserPromptSubmit', timeout: 10 },
-  { event: 'Stop', timeout: 10 },
-  { event: 'StopFailure', timeout: 10 },
-  { event: 'Notification', timeout: 10 },
-  { event: 'SubagentStart', timeout: 10 },
-  { event: 'SubagentStop', timeout: 10 },
-  { event: 'SessionEnd', timeout: 2 },
+  { event: 'PostToolUseFailure', timeout: SESSION_HOOK_TIMEOUT_S },
+  { event: 'UserPromptSubmit', timeout: SESSION_HOOK_TIMEOUT_S },
+  { event: 'Stop', timeout: SESSION_HOOK_TIMEOUT_S },
+  { event: 'StopFailure', timeout: SESSION_HOOK_TIMEOUT_S },
+  { event: 'Notification', timeout: SESSION_HOOK_TIMEOUT_S },
+  { event: 'SubagentStart', timeout: SESSION_HOOK_TIMEOUT_S },
+  { event: 'SubagentStop', timeout: SESSION_HOOK_TIMEOUT_S },
+  { event: 'SessionEnd', timeout: SESSION_HOOK_TIMEOUT_S },
 ];
 
 export interface SessionHooksSettingsInput {
