@@ -30,6 +30,7 @@ import { listedPlaces, resolveAddress } from '../shared/mindscape/address';
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { BOARD_LEADER, canReach, isBoardOrchestrator, isLiveListedPlace, MY_OPENER, successorOf, whoHears, type ListedPlace } from '../shared/mindscape/reach';
 import type { MindscapeBoard } from '../shared/mindscape/model';
+import type { LedgerTask } from '../shared/ledger/contract';
 import type { LedgerToolCall } from '../shared/ledger/tools';
 import { deliverersOf, reviewersOutsideChain, reviewLink, reviewRequestNotice, verdictNotice, verdictTargets } from '../shared/ledger/revisao';
 import { followRenewal, urgentLedgerNotice, type LedgerCaller, type LedgerService } from '../main/ledger-store';
@@ -81,8 +82,15 @@ export interface GateRecadosDeps {
   /** `<dir>/recados.json`. */
   readonly file: string;
   readonly io: ConfigIoDeps;
-  /** The ledger of this daemon; `null` on a satellite (no review link, no renewal, no task notices). */
+  /** The ledger of this daemon; `null` on a satellite (the renewal runs on the ledger's machine). */
   readonly ledger: () => LedgerService | null;
+  /** The task a `tarefa_*` left, for the notices after it. Default: this daemon's ledger (the satellite: what the ledger's machine answered with). */
+  readonly taskOf?: (id: string) => LedgerTask | undefined;
+  /**
+   * The review link (item 5) of a `sessao_enviar` with no arrow. Default: this daemon's ledger (the satellite: asked of
+   * the ledger's machine; `null` = it did not answer, and the message goes on to the PC, which decides).
+   */
+  readonly reviewLinked?: (mine: PictureSession, from: string, to: string) => Promise<boolean | null>;
   readonly picture: () => BoardPicture | null;
   /** The sessions alive in this machine's tmux (folder sids). Default: `tmux -L donel ls`. */
   readonly localSessions?: () => Promise<ReadonlySet<string>>;
@@ -493,12 +501,21 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     }
   }
 
-  /** May `from` send to `to` with no word address: an arrow of its own, the Líder of the board's reach, or the review link. */
-  function linked(projectPath: string, board: MindscapeBoard, places: readonly ListedPlace[], from: string, to: string): boolean {
+  /** May `from` send to `to` on the board alone: an arrow of its own, or the Líder of the board's reach. */
+  function drawnLink(projectPath: string, board: MindscapeBoard, from: string, to: string): boolean {
     if (hasArrowLink(board, from, to)) return true;
-    if (isBoardOrchestrator(board, from) && canReach({ schemaVersion: 8, boards: { [projectPath]: board } }, { projectPath, placeId: from }, { projectPath, placeId: to }).ok) return true;
+    return isBoardOrchestrator(board, from) && canReach({ schemaVersion: 8, boards: { [projectPath]: board } }, { projectPath, placeId: from }, { projectPath, placeId: to }).ok;
+  }
+
+  /** The review link (item 5): a delivery waiting for a verdict between the two. `null` = unknown here. */
+  async function reviewLinked(mine: PictureSession, places: readonly ListedPlace[], from: string, to: string): Promise<boolean | null> {
+    if (deps.reviewLinked) return deps.reviewLinked(mine, from, to);
     const doc = ledgerDoc();
-    return doc !== null && reviewLink(doc, board, places, from, to);
+    return doc !== null && reviewLink(doc, mine.board, places, from, to);
+  }
+
+  function taskOf(id: string): LedgerTask | undefined {
+    return deps.taskOf ? deps.taskOf(id) : ledgerDoc()?.tasks[id];
   }
 
   function hookSid(headers: Readonly<Record<string, string>>, payload: Record<string, unknown>): string | undefined {
@@ -538,7 +555,7 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     const board = mine.board;
     const places = listedPlaces(mine.listar);
     const isLive = (id: string): boolean => isLiveListedPlace(places.find((place) => place.id === id));
-    const task = ledgerDoc()?.tasks[taskId];
+    const task = taskOf(taskId);
     const signature = `${nameOf(mine.quemSou)} (${caller.placeId})`;
     const notes = new Map<string, string>();
     const urgent = urgentLedgerNotice(call, answerText);
@@ -652,11 +669,17 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       const word = call.para.trim().toLowerCase();
       // A renewed place's old id: the link the caller had to it holds for its successor.
       const renewedFrom = 'renovadoDe' in target ? target.renovadoDe : undefined;
-      if (word !== BOARD_LEADER && word !== MY_OPENER && !linked(projectPath, board, places, me, target.placeId) && !(renewedFrom && linked(projectPath, board, places, me, renewedFrom)))
-        return {
-          kind: 'error',
-          text: `Sem ligação: não há seta do seu lugar (${me}) para "${target.placeId}". Peça ao dono, ou use sessao_abrir. Para o Líder do quadro, "para": "${BOARD_LEADER}"; para quem abriu você, "para": "${MY_OPENER}".`,
-        };
+      if (word !== BOARD_LEADER && word !== MY_OPENER && !drawnLink(projectPath, board, me, target.placeId) && !(renewedFrom && drawnLink(projectPath, board, me, renewedFrom))) {
+        const review = [await reviewLinked(mine, places, me, target.placeId), renewedFrom ? await reviewLinked(mine, places, me, renewedFrom) : false];
+        if (!review.includes(true)) {
+          // The ledger's machine did not answer: the PC, which also knows the review link, decides.
+          if (review.includes(null)) return 'repassar';
+          return {
+            kind: 'error',
+            text: `Sem ligação: não há seta do seu lugar (${me}) para "${target.placeId}". Peça ao dono, ou use sessao_abrir. Para o Líder do quadro, "para": "${BOARD_LEADER}"; para quem abriu você, "para": "${MY_OPENER}".`,
+          };
+        }
+      }
       const targetSid = sidOfPlace(projectPath, target.placeId, await localSessions());
       if (!targetSid) return 'repassar';
       const item = enqueue({ lugar: me, nome: nameOf(who), sid }, { lugar: target.placeId, sid: targetSid }, `${call.tarefa ? `[${call.tarefa}] ` : ''}${call.texto}`);

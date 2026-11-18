@@ -4,9 +4,11 @@
 // `meta.json`, as its CLI would call. The board is rebuilt from `quadro_ler` (places and links) and the openers of
 // `sessao_listar` (`abertaPor`, the opening arrows: the hierarchy the ledger's reach rules read).
 //
-// Gentle with the PC: a session is asked only when its picture is over a minute old and its last probe too; one session
-// at a time with a pause between them; the first failure ends the round (a PC off or busy is not asked again at once).
-// A failed probe keeps the last picture. No token is ever logged.
+// Gentle with the PC (each call waits in the line of its window, the one that stalled on 18/11): a session is asked
+// only when its picture is over 2 min old and its last probe too; at most 6 sessions a minute for the whole machine,
+// those with no picture first, then the oldest; one at a time with a pause between them; the first failure ends the
+// round, and a PC that took over 3 s for one session is left alone for 2 min. A failed probe keeps the last picture.
+// No token is ever logged.
 
 import { readFileSync } from 'node:fs';
 import { request as httpRequest } from 'node:http';
@@ -14,7 +16,12 @@ import { join } from 'node:path';
 import type { MindscapeBoard, MindscapeCard, MindscapeLink } from '../shared/mindscape/model';
 import type { BoardPicture, PictureSession } from './portao';
 
-const STALE_MS = 60_000;
+const STALE_MS = 2 * 60_000;
+/** Sessions probed per minute, at most (3 calls each): 18 calls a minute to the PC however many sessions run here. */
+const PER_MINUTE = 6;
+/** One session's three calls took this long: the PC is busy, and the probe waits `PAUSE_MS`. */
+const SLOW_MS = 3_000;
+const PAUSE_MS = 2 * 60_000;
 const TIMEOUT_MS = 5_000;
 const GAP_MS = 500;
 const ROUND_MS = 15_000;
@@ -27,9 +34,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const num = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
 
 /**
- * The board of a session from what it reads: the places and links of `quadro_ler`, and an opening arrow (`opened`)
- * from each `abertaPor` of `sessao_listar` to its place. A link a session drew stays a session's link: it lets a
- * message through, never puts anyone above. `undefined` = not a board's reading.
+ * The board of a session from what it reads: the places and links of `quadro_ler`, and the arrow from each `abertaPor`
+ * of `sessao_listar` to its place marked as the opening one (`opened`). Only an arrow the board still has: the app says
+ * who opened a tab even after the owner deleted that arrow, and a deleted arrow puts no one above. Any other link a
+ * session drew stays a session's link: it lets a message through, never puts anyone above. `undefined` = not a board's
+ * reading.
  */
 export function boardFromProbe(quemSou: Record<string, unknown>, listar: readonly unknown[], quadro: unknown): MindscapeBoard | undefined {
   if (!isRecord(quadro) || !Array.isArray(quadro.lugares) || !Array.isArray(quadro.ligacoes) || typeof quemSou.pasta !== 'string') return undefined;
@@ -58,9 +67,7 @@ export function boardFromProbe(quemSou: Record<string, unknown>, listar: readonl
     // Only between two places of this board (the Líder único has no card).
     if (cards[from]?.kind !== 'session' || cards[to]?.kind !== 'session') continue;
     const index = links.findIndex((link) => link.from === from && link.to === to && link.arrow);
-    const opened: MindscapeLink = { id: index >= 0 ? links[index]!.id : `aberta:${from}>${to}`, from, to, arrow: true, by: 'session', opened: true };
-    if (index >= 0) links[index] = opened;
-    else links.push(opened);
+    if (index >= 0) links[index] = { id: links[index]!.id, from, to, arrow: true, by: 'session', opened: true };
   }
   return {
     projectPath: quemSou.pasta,
@@ -145,6 +152,8 @@ export interface ProbeDeps {
   readonly call?: ProbeCall;
   readonly now?: () => number;
   readonly staleMs?: number;
+  /** Sessions probed per minute, at most (default 6). */
+  readonly perMinute?: number;
   readonly timeoutMs?: number;
   /** The pause between two sessions of a round. */
   readonly gapMs?: number;
@@ -165,7 +174,11 @@ export function createProbe(deps: ProbeDeps): Probe {
   const timeoutMs = deps.timeoutMs ?? TIMEOUT_MS;
   const gapMs = deps.gapMs ?? GAP_MS;
   const log = deps.log ?? ((line: string) => console.log(line));
+  const perMinute = deps.perMinute ?? PER_MINUTE;
   const lastProbe = new Map<string, number>();
+  /** When each probe of the last minute started (the budget). */
+  let recent: number[] = [];
+  let pausedUntil = 0;
   let running = false;
   let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -182,29 +195,42 @@ export function createProbe(deps: ProbeDeps): Probe {
   }
 
   async function round(): Promise<void> {
-    if (running) return;
+    if (running || now() < pausedUntil) return;
     running = true;
     try {
-      const live = [...(await deps.liveSessions())].filter((sid) => SID_PATTERN.test(sid)).sort();
-      let first = true;
-      for (const sid of live) {
-        const picture = deps.picture();
+      const picture = deps.picture();
+      const at = now();
+      const ageOf = (sid: string): number => {
         const mine = picture?.sessoes[sid];
-        const at = now();
-        if (mine && picture && at - (mine.at ?? picture.at) < staleMs) continue;
-        if (at - (lastProbe.get(sid) ?? Number.NEGATIVE_INFINITY) < staleMs) continue;
+        return mine && picture ? at - (mine.at ?? picture.at) : Number.POSITIVE_INFINITY;
+      };
+      // No picture first, then the oldest.
+      const due = [...(await deps.liveSessions())]
+        .filter((sid) => SID_PATTERN.test(sid) && ageOf(sid) >= staleMs && at - (lastProbe.get(sid) ?? Number.NEGATIVE_INFINITY) >= staleMs)
+        .sort((a, b) => ageOf(b) - ageOf(a) || a.localeCompare(b));
+      let first = true;
+      for (const sid of due) {
+        recent = recent.filter((start) => now() - start < 60_000);
+        if (recent.length >= perMinute) break;
         const meta = readMeta(deps.sessionsDir, sid);
         if (!meta) continue;
         if (!first && gapMs > 0) await new Promise((resolve) => setTimeout(resolve, gapMs));
         first = false;
-        lastProbe.set(sid, now());
+        const started = now();
+        lastProbe.set(sid, started);
+        recent.push(started);
         const session = await probe(meta.port, meta.token);
+        if (session) deps.setSession(sid, session);
+        if (now() - started >= SLOW_MS) {
+          pausedUntil = now() + PAUSE_MS;
+          log(`[oraculo] sonda: o PC levou ${Math.round((now() - started) / 1000)} s para a sessão ${sid}; a sonda espera ${PAUSE_MS / 60_000} min.`);
+          break;
+        }
         if (!session) {
           // The PC is off or busy: the rest waits for the next round.
           log(`[oraculo] sonda: a sessão ${sid} não respondeu pelo túnel; fica o retrato anterior.`);
           break;
         }
-        deps.setSession(sid, session);
       }
     } catch (error) {
       log(`[oraculo] sonda: ${error instanceof Error ? error.message : String(error)}`);

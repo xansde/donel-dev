@@ -9,8 +9,11 @@
 #       do stdin, nunca da linha de comando. Sem --bundle, builda do checkout onde este script está (com node_modules).
 #   scripts/portao-satelite.sh atualizar [--bundle <oraculo.mjs>]   troca o bundle (guarda o anterior) e reinicia
 #   scripts/portao-satelite.sh so-sessoes   só o lado das sessões (a VPS pessoal, cujo daemon já é o portão)
-#   scripts/portao-satelite.sh voltar       desfaz: para a unidade, tira o portão, os hooks, a linha do PATH e o claude
-#                                           embrulhado; as sessões voltam ao túnel ao reiniciar (renovar)
+#   scripts/portao-satelite.sh voltar [--restaurar <pasta da cópia>]
+#       desfaz: para a unidade, tira o portão, os hooks, a linha do PATH e o claude embrulhado; as sessões voltam ao
+#       túnel ao reiniciar (renovar). Sem --restaurar, tira só o que o instalador pôs (o que mudou depois fica). Com
+#       --restaurar ~/.donel/portao-backup/<hora>, devolve também o settings.json e o proxy-saida.env daquela cópia
+#       (a do instalar), por cima do que houver; antes, guarda os atuais numa cópia nova.
 #   scripts/portao-satelite.sh status
 #
 # O lado das sessões: ~/.donel/bin/claude (scripts/vps/claude-wrapper.sh) à frente no PATH pela linha que entra em
@@ -224,8 +227,10 @@ cmd="${1:-}"
 URL=""
 BUNDLE=""
 TOKEN_FILE=""
+RESTORE=""
 while [ $# -gt 0 ]; do
   case "$1" in
+    --restaurar) RESTORE="${2:-}"; shift 2 ;;
     --url) URL="${2:-}"; shift 2 ;;
     --bundle) BUNDLE="${2:-}"; shift 2 ;;
     --token-arquivo) TOKEN_FILE="${2:-}"; shift 2 ;;
@@ -261,6 +266,13 @@ case "$cmd" in
     sessions_side
     ;;
   voltar)
+    if [ -n "$RESTORE" ]; then
+      RESTORE="$(cd "$RESTORE" 2>/dev/null && pwd)" || die "--restaurar: pasta não encontrada."
+      case "$RESTORE" in "$BACKUPS"/*) ;; *) die "--restaurar: use uma pasta de $BACKUPS." ;; esac
+      for name in "$(basename "$SETTINGS")" "$(basename "$ENV_FILE")"; do
+        [ -f "$RESTORE/$name" ] || [ -f "$RESTORE/$name.ausente" ] || die "--restaurar: $RESTORE não tem $name (nem a marca $name.ausente)."
+      done
+    fi
     if [ -f "$UNIT_FILE" ]; then
       need_root
       systemctl disable --now "$UNIT" >/dev/null 2>&1 || true
@@ -277,6 +289,20 @@ case "$cmd" in
     fi
     if [ -f "$BIN/claude" ] && grep -qF "$WRAPPER_MARK" "$BIN/claude"; then rm -f "$BIN/claude"; fi
     rm -f "$BIN/recados-hook.sh"
+    if [ -n "$RESTORE" ]; then
+      for file in "$SETTINGS" "$ENV_FILE"; do
+        name="$(basename "$file")"
+        if [ -f "$RESTORE/$name" ]; then
+          mkdir -p "$(dirname "$file")"
+          cp -p "$RESTORE/$name" "$file.restaurar.tmp"
+          mv "$file.restaurar.tmp" "$file"
+          echo "restaurado de $RESTORE: $file"
+        else
+          rm -f "$file"
+          echo "restaurado de $RESTORE: $file não existia antes; retirado"
+        fi
+      done
+    fi
     echo "Pronto. As sessões vivas seguem como abriram; ao reiniciar (renovar) voltam ao túnel. Cópias em $BACKUPS."
     ;;
   status)
@@ -292,7 +318,7 @@ case "$cmd" in
     if [ -r "$DIR/portao" ]; then echo "portão: 127.0.0.1:$(tr -dc 0-9 <"$DIR/portao")"; else echo "portão: sem arquivo $DIR/portao"; fi
     ;;
   *)
-    sed -n '2,21p' "$0"
+    sed -n '2,24p' "$0"
     exit 1
     ;;
 esac

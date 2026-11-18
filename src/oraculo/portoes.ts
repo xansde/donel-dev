@@ -9,13 +9,18 @@
 //   session is from its picture (`callerFromPicture`; the Líder único is refused), the call parsed again from its raw
 //   arguments (never trusted as it came), the renewal step of the recados (`antesDaTarefa`), then `runLedgerTool`.
 //   A proof file of the session is on the satellite: it comes in `arquivos` (path → base64), and no path is ever read
-//   on this machine. Answers `{ok, text, image?}`.
+//   on this machine. Answers `{ok, text, image?, tarefa?}`: `tarefa` is the task the call left, for the satellite's
+//   notices after it (item 5: the delivery to the Revisores of outside the chain, the verdict to the Dev).
+// - `ligacao` `{sessao, para}`: may this session send to `para` with no arrow, by the review link of item 5 (a delivery
+//   of this board waiting for a verdict, between who delivered it and a live Revisor of outside the chain)? `{ligado}`.
 // - `aviso` `{aviso: OwnerMessage}`: a notice the satellite's recados could not deliver there (the target runs on
 //   another machine, or it is the Líder único) goes to this daemon's relay, which the PC delivers when it answers.
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { maxProofBytes, PROOF_FILE_TYPES } from '../shared/ledger/contract';
+import { reviewLink } from '../shared/ledger/revisao';
+import { listedPlaces } from '../shared/mindscape/address';
 import { isLedgerToolName, parseLedgerToolCall } from '../shared/ledger/tools';
 import { runLedgerTool, type LedgerService, type RemoteProofFetch } from '../main/ledger-store';
 import type { OwnerMessage } from '../main/ledger-card-writer';
@@ -27,6 +32,7 @@ export const GATES_DIR = 'portoes';
 export const GATE_PATH_PREFIX = '/v1/portao/';
 export const GATE_TOOL_PATH = '/v1/portao/ferramenta';
 export const GATE_NOTICE_PATH = '/v1/portao/aviso';
+export const GATE_LINK_PATH = '/v1/portao/ligacao';
 /** The tool route's body may carry the delivery's proof files (base64): up to this. */
 export const MAX_GATE_BODY_BYTES = 64 * 1024 * 1024;
 const GATE_NAME = /^[a-z0-9][a-z0-9-]{0,39}$/;
@@ -139,11 +145,29 @@ export function createGateToolRoutes(deps: GateToolRoutesDeps): GateRoutes {
         log(`[oraculo] portão ${name}: ligar o pedido ${call.pedidoDoDono} à tarefa falhou: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
-    return json(200, { ok: result.ok, text: result.text, ...(result.image ? { image: result.image } : {}) });
+    return json(200, { ok: result.ok, text: result.text, ...(result.image ? { image: result.image } : {}), ...(result.ok ? taskAfter(result.text) : {}) });
+  }
+
+  /** The task a call answered with an `id` left, as the ledger has it now. */
+  function taskAfter(answerText: string): { tarefa?: unknown } {
+    try {
+      const answer = JSON.parse(answerText) as { id?: unknown };
+      const task = typeof answer.id === 'string' ? deps.ledger().load().doc.tasks[answer.id] : undefined;
+      return task ? { tarefa: task } : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function link(body: Record<string, unknown>): OracleResponse {
+    const sessao = pictureOf(body.sessao);
+    const from = sessao?.quemSou.lugar;
+    if (!sessao || typeof from !== 'string' || typeof body.para !== 'string') return json(400, { error: 'sessao ou para inválido' });
+    return json(200, { ligado: reviewLink(deps.ledger().load().doc, sessao.board, listedPlaces(sessao.listar), from, body.para) });
   }
 
   return async (name, request, path) => {
-    if (request.method !== 'POST' || (path !== GATE_TOOL_PATH && path !== GATE_NOTICE_PATH)) return null;
+    if (request.method !== 'POST' || (path !== GATE_TOOL_PATH && path !== GATE_NOTICE_PATH && path !== GATE_LINK_PATH)) return null;
     let body: unknown;
     try {
       body = JSON.parse(request.body);
@@ -151,6 +175,14 @@ export function createGateToolRoutes(deps: GateToolRoutesDeps): GateRoutes {
       return json(400, { error: 'corpo não é JSON' });
     }
     if (!isRecord(body)) return json(400, { error: 'corpo não é um objeto' });
+    if (path === GATE_LINK_PATH) {
+      try {
+        return link(body);
+      } catch (error) {
+        log(`[oraculo] portão ${name}: erro na ligação: ${error instanceof Error ? error.message : String(error)}`);
+        return json(500, { error: 'erro no Oráculo' });
+      }
+    }
     if (path === GATE_TOOL_PATH) {
       try {
         return await tool(name, body);

@@ -42,7 +42,7 @@ import { createGateHandler, GATE_PORT, mergePicture, startGateServer, tunnelForw
 import { createGateRecados, tmuxLocalSessions } from './recados';
 import { createGateToolRoutes, readGateHashes } from './portoes';
 import { createProbe } from './sonda';
-import { createSatelliteLedger, createSatelliteNotice } from './satelite';
+import { createSatelliteLedger, createSatelliteNotice, createSatelliteReviewLink, createSatelliteTaskMemory } from './satelite';
 import { ORACLE_PORT, startOracleServer, type OracleServer } from './server';
 import { createDaemonVigia } from './vigia';
 import { boardName } from '../shared/vigia/board';
@@ -158,7 +158,18 @@ async function runSatellite(dir: string, url: string): Promise<void> {
   const pictures = createPictureStore(dir);
   const remote = { url, token: () => readGateToken(dir) };
   const sessionsDir = join(homedir(), '.donel', 's');
-  const recados = createGateRecados({ file: join(dir, 'recados.json'), io, ledger: () => null, picture: pictures.get, relay: createSatelliteNotice(remote) });
+  // Item 5 with the ledger on the personal VPS: the task each call left (its answer brings it) for the notices after it,
+  // and the review link of a message with no arrow asked there.
+  const tasks = createSatelliteTaskMemory();
+  const recados = createGateRecados({
+    file: join(dir, 'recados.json'),
+    io,
+    ledger: () => null,
+    taskOf: tasks.taskOf,
+    reviewLinked: createSatelliteReviewLink(remote),
+    picture: pictures.get,
+    relay: createSatelliteNotice(remote),
+  });
   const gatePort = Number(process.env.DONEL_ORACULO_PORTAO_PORT) || GATE_PORT;
   const gate = await startGateServer({
     port: gatePort,
@@ -167,7 +178,7 @@ async function runSatellite(dir: string, url: string): Promise<void> {
       ledger: () => {
         throw new Error('o satélite não tem registro');
       },
-      runLedger: createSatelliteLedger(remote),
+      runLedger: createSatelliteLedger({ ...remote, onTask: tasks.remember }),
       picture: pictures.get,
       forward: tunnelForward,
       serverVersion: 'oraculo-satelite',
