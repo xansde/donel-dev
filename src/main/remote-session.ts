@@ -15,7 +15,8 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createWriteStream, mkdirSync, type WriteStream } from 'node:fs';
-import { basename, join, relative, sep, isAbsolute } from 'node:path';
+import * as nodePath from 'node:path';
+import { join } from 'node:path';
 import { isBypassLaunch } from '../shared/launchPermission';
 import type { RemoteAliveSession } from '../shared';
 import type { SessionWhereLives } from '../shared/sessions';
@@ -126,6 +127,9 @@ function assertSessionId(sid: string): void {
  * the root (`C:\Users\x\seazone\Donel Dev` with root `C:\Users\x\seazone` → `seazone/Donel Dev`).
  */
 export function remoteDirFor(localCwd: string, projectRoots: readonly string[]): string {
+  // A Windows folder is read as one on any OS (the kit de abertura is built and tested off Windows too); on Windows
+  // `node:path` already is `win32`, so nothing changes there.
+  const { basename, relative, sep, isAbsolute } = /^[A-Za-z]:[\\/]|^\\\\/.test(localCwd) ? nodePath.win32 : nodePath;
   const normalized = (path: string): string => path.replace(/[\\/]+$/, '');
   const cwd = normalized(localCwd);
   const root = projectRoots

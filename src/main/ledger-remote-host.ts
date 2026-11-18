@@ -15,6 +15,7 @@ import type { LedgerDeliveredTo } from '../shared/ledger/contract';
 import type { CelularPairResult, CelularState } from '../shared/celular';
 import type { CelularRemote } from './celular/service';
 import type { OwnerMessage } from './ledger-card-writer';
+import { openKitScriptLines, type OpenKit } from './open-kit';
 
 export const REMOTE_CONFIG_FILE = 'oraculo-remoto.json';
 /**
@@ -53,6 +54,11 @@ export interface RemoteOracleHostDeps {
   readonly celularWanted?: () => boolean;
   /** Where the vigia's cards go and the vault adapter, handed to the daemon at each handshake (t-ffbf8e7d). */
   readonly vigia?: () => Omit<DaemonVigiaSetup, 'placeId' | 'label'>;
+  /**
+   * Kit de abertura (t-1a3f7150): what the daemon needs to open a session while the PC is off, left at each handshake
+   * (`abrir.json`, 600). No secret in it (`open-kit.ts`). A failure here never fails the handshake: the old kit stays.
+   */
+  readonly openKit?: (place: { readonly id: string; readonly label: string }) => Promise<OpenKit>;
 }
 
 export interface RemoteOracleHost {
@@ -91,9 +97,10 @@ export const DAEMON_VIGIA_ON = 'vigia-ativo';
 
 /**
  * The script that leaves the token's hash on the place and answers where the daemon listens. With `vigia`, it also
- * leaves the vigia's setup (`vigia.json`, base64 so no quoting can break it) and says whether the daemon watches.
+ * leaves the vigia's setup (`vigia.json`, base64 so no quoting can break it) and says whether the daemon watches. With
+ * `kit`, it also leaves the kit de abertura (`abrir.json`, 600).
  */
-export function handshakeScript(tokenHash: string, vigia?: DaemonVigiaSetup): string {
+export function handshakeScript(tokenHash: string, vigia?: DaemonVigiaSetup, kit?: OpenKit | null): string {
   if (!/^[0-9a-f]{64}$/.test(tokenHash)) throw new Error('hash inválido');
   const vigiaLines = vigia
     ? [
@@ -111,6 +118,7 @@ export function handshakeScript(tokenHash: string, vigia?: DaemonVigiaSetup): st
     `printf '%s\\n' '${tokenHash}' > "$d/pc.token.sha256.tmp"`,
     'mv "$d/pc.token.sha256.tmp" "$d/pc.token.sha256"',
     ...vigiaLines,
+    ...(kit ? openKitScriptLines(kit) : []),
     'test -f "$d/url" || { echo "sem-daemon"; exit 3; }',
     'cat "$d/url"',
     '',
@@ -173,7 +181,8 @@ export function createRemoteOracleHost(deps: RemoteOracleHostDeps): RemoteOracle
     const token = randomBytes(32).toString('hex');
     const hash = createHash('sha256').update(token).digest('hex');
     const vigia = deps.vigia ? { placeId: place.id, label: place.label, ...deps.vigia() } : undefined;
-    const result = await deps.runScript(place.sshTarget, handshakeScript(hash, vigia), 20_000);
+    const kit = deps.openKit ? await deps.openKit({ id: place.id, label: place.label }).catch(() => null) : null;
+    const result = await deps.runScript(place.sshTarget, handshakeScript(hash, vigia, kit), 20_000);
     if (result.stdout.includes('sem-daemon')) return `o Oráculo não está instalado em ${place.label} (scripts/oraculo-vps.sh instalar)`;
     vigiaPlace = result.stdout.split(/\r?\n/).some((line) => line.trim() === DAEMON_VIGIA_ON) ? place.id : null;
     const url = result.code === 0 ? parseHandshakeUrl(result.stdout) : null;
