@@ -50,6 +50,11 @@ export interface CelularLiderChatDeps {
   rpc(fn: string, args: Record<string, unknown>): Promise<unknown>;
   /** Gives the text to the Líder único (opens one when none is open). */
   deliver(text: string): Promise<LiderSendResult>;
+  /**
+   * Etapa 2 (t-c3fbe852) — whether this desktop takes the phone's queue now: only while the Líder único runs on this
+   * computer. With him on the VPS the Oráculo there is the only one to take it. Absent = always.
+   */
+  mayTake?: () => boolean;
   newId?: () => string;
   now?: () => number;
   /** One line per event. Never the key, never the owner's text. */
@@ -226,6 +231,7 @@ export function createCelularLiderChat(deps: CelularLiderChatDeps): CelularLider
           log(`${before - waiting.length} mensagem(ns) do celular sem leitura do Líder em 24 h saíram da espera`);
           persist();
         }
+        if (deps.mayTake && !deps.mayTake()) return;
         let rows: TakenRow[];
         try {
           rows = takenRows(await deps.rpc('celular_lider_tomar', { p_limite: TAKE_LIMIT }));

@@ -38,8 +38,10 @@ import type { ConfigIoDeps } from '../main/config-store';
 import type { OwnerMessage } from '../main/ledger-card-writer';
 import type { BoardPicture, PictureSession } from './portao';
 import type { GateHookResponse, GateRecados, SendCall } from './gate-recados';
+import type { LocalLeader } from './lider-local';
 
-export type RecadoState = 'fila' | 'digitado' | 'entregue';
+/** `devolvido` = its target left this machine before reading it: it went to the PC's relay with the same key (t-c3fbe852). */
+export type RecadoState = 'fila' | 'digitado' | 'entregue' | 'devolvido';
 export type RecadoVia = 'fim-de-turno' | 'tela' | 'transcript';
 
 export interface RecadoItem {
@@ -58,6 +60,11 @@ export interface RecadoItem {
   /** How many times it was typed on the screen. */
   readonly tentativas: number;
   readonly digitadoEm?: number;
+  /**
+   * t-c3fbe852 — the same message as the PC's relay takes it (with its key): an item whose target leaves this machine
+   * before reading it (the Líder único closed, or went back to the PC) goes there with it, once. Absent = it stays here.
+   */
+  readonly volta?: OwnerMessage;
 }
 
 /** The tmux of the sessions (`tmux -L donel`, session `donel-<sid>`); injected in the vitest. */
@@ -97,6 +104,8 @@ export interface GateRecadosDeps {
   readonly tmux?: RecadosTmux;
   /** A notice to a place out of this machine (or to the Líder único): the PC's relay. Absent = only logged. */
   readonly relay?: (message: OwnerMessage) => Promise<unknown>;
+  /** t-c3fbe852 — the Líder único alive in this machine's tmux (`lider-local.ts`); absent = never here. */
+  readonly leader?: () => Promise<LocalLeader | null>;
   /** Whether the transcript file has `label` (the confirmation of a typed item). Default: reads its end. */
   readonly transcriptHas?: (path: string, label: string) => Promise<boolean>;
   /** The transcript of a session no hook spoke of yet. Default: `~/.claude/projects/<pasta>/<sid>.jsonl`, the newest. */
@@ -111,9 +120,15 @@ export interface GateRecadosHandle extends GateRecados {
   /**
    * t-4c60b815 — the owner's word on a card or his decision (the card writer), when the session that owns the task runs
    * here: queued in `recados.json` (the same key joins, even after delivered) and answered as delivered to it. `null` =
-   * it does not run here (or it is the Líder único): the caller sends it to the PC's relay.
+   * it does not run here (or it is the Líder único): the caller sends it to the PC's relay. t-c3fbe852: `placeId` '' (or
+   * `lider`) = the Líder único alive here; `localText` = what he reads here when it differs from the relay's words (the
+   * relay's go with the item, should it go back there).
    */
-  deliverLocal(message: OwnerMessage): Promise<LedgerDeliveredTo>;
+  deliverLocal(message: OwnerMessage, localText?: string): Promise<LedgerDeliveredTo>;
+  /** t-c3fbe852 — the item a `key` made (its state and its session), while it is kept; `undefined` = none here. */
+  stateOf(key: string): { readonly estado: RecadoState; readonly sid: string } | undefined;
+  /** The transcript of a session of this machine (what its hooks named, else found by its id). */
+  transcriptOf(sid: string): Promise<string | undefined>;
   /** One round of the typing loop (the vitest calls it; `start` runs it every 2 s). */
   tick(): Promise<void>;
   start(): void;
@@ -134,6 +149,8 @@ const STALE_BUSY_MS = 60_000;
 const BUSY_ON_SCREEN = /esc to interrupt/i;
 const PASTE_PLACEHOLDER = /\[Pasted text #\d+[^\]]*\]/g;
 const JOIN_MS = 2 * 60_000;
+/** A target missing from tmux this long (not one hiccup of `tmux ls`) has left: what waits for it goes back (t-c3fbe852). */
+const GONE_MS = 30_000;
 const DAY = 24 * 60 * 60 * 1000;
 const DELIVERED_DAYS = 7;
 const PENDING_DAYS = 14;
@@ -167,7 +184,7 @@ function parseItem(value: unknown): RecadoItem | null {
   const para = value.para;
   if (!isRecord(de) || typeof de.lugar !== 'string' || typeof de.nome !== 'string') return null;
   if (!isRecord(para) || typeof para.lugar !== 'string' || typeof para.sid !== 'string') return null;
-  const estado = value.estado === 'entregue' || value.estado === 'digitado' ? value.estado : 'fila';
+  const estado = value.estado === 'entregue' || value.estado === 'digitado' || value.estado === 'devolvido' ? value.estado : 'fila';
   const via = value.via === 'fim-de-turno' || value.via === 'tela' || value.via === 'transcript' ? value.via : undefined;
   return {
     id: value.id,
@@ -181,7 +198,20 @@ function parseItem(value: unknown): RecadoItem | null {
     ...(typeof value.entregueEm === 'number' ? { entregueEm: value.entregueEm } : {}),
     tentativas: typeof value.tentativas === 'number' ? value.tentativas : 0,
     ...(typeof value.digitadoEm === 'number' ? { digitadoEm: value.digitadoEm } : {}),
+    ...(parseMessage(value.volta) ? { volta: parseMessage(value.volta)! } : {}),
   };
+}
+
+function parseMessage(value: unknown): OwnerMessage | null {
+  if (!isRecord(value)) return null;
+  const { projectPath, placeId, text, leaderText, key } = value;
+  if (typeof projectPath !== 'string' || typeof placeId !== 'string' || typeof text !== 'string' || typeof leaderText !== 'string' || typeof key !== 'string') return null;
+  return { projectPath, placeId, text, leaderText, key };
+}
+
+/** The `chave` of an item made with `key` (what makes the message one), the same for every caller. */
+function keyedChave(key: string): string {
+  return createHash('sha256').update(JSON.stringify(['chave', key])).digest('hex').slice(0, 32);
 }
 
 /** The unique words that open an item and confirm it on the screen: "Recado r-…". */
@@ -487,19 +517,27 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
    * Queues `words` for `para` (or joins the same message of the last 2 min). With `key` (what makes the message one: a
    * decision event, the phone's request id) the same key joins for as long as the item is kept, delivered or not.
    */
-  function enqueue(de: RecadoItem['de'], para: RecadoItem['para'], words: string, key?: string): RecadoItem {
+  function enqueue(de: RecadoItem['de'], para: RecadoItem['para'], words: string, key?: string, volta?: OwnerMessage): RecadoItem {
     const at = now();
-    const chave = createHash('sha256')
-      .update(JSON.stringify(key ? ['chave', key] : [de.lugar, para.lugar, words]))
-      .digest('hex')
-      .slice(0, 32);
+    const chave = key ? keyedChave(key) : createHash('sha256').update(JSON.stringify([de.lugar, para.lugar, words])).digest('hex').slice(0, 32);
     const items = read();
     const same = items.find((item) => item.chave === chave && (key !== undefined || (item.para.sid === para.sid && at - item.criado < JOIN_MS)));
     if (same) return same;
     const id = `r-${randomBytes(4).toString('hex')}`;
-    const item: RecadoItem = { id, chave, de, para, texto: `${labelOf(id, de)} ${words}`, criado: at, estado: 'fila', tentativas: 0 };
+    const item: RecadoItem = { id, chave, de, para, texto: `${labelOf(id, de)} ${words}`, criado: at, estado: 'fila', tentativas: 0, ...(volta?.key ? { volta } : {}) };
     write([...items, item]);
     return item;
+  }
+
+  /**
+   * t-c3fbe852 — `message` for the Líder único alive here: queued for its tmux with the message's key (and kept to go
+   * back to the relay if it leaves). `null` = no Líder here, or this key already went back to the relay (it stays there).
+   */
+  async function toLocalLeader(de: RecadoItem['de'], words: string, message: OwnerMessage): Promise<RecadoItem | null> {
+    const leader = await deps.leader?.();
+    if (!leader || !message.key) return null;
+    const item = enqueue(de, { lugar: LEADER_OF_ALL, sid: leader.sid }, words, message.key, message);
+    return item.estado === 'devolvido' ? null : item;
   }
 
   /** The folder sid of the live session of `placeId` on the board of `projectPath`, on this machine. */
@@ -550,17 +588,20 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       enqueue({ lugar: '', nome: 'Oráculo' }, { lugar: placeId, sid }, words);
       return;
     }
-    if (!deps.relay) {
-      log(`aviso para ${placeId} (${board}) fora desta máquina e sem relay: ${words.slice(0, 80)}`);
-      return;
-    }
-    await deps.relay({
+    const message: OwnerMessage = {
       projectPath,
       placeId: placeId === LEADER_OF_ALL ? '' : placeId,
       text: `◆ Oráculo: ${words}`,
       leaderText: `◆ Oráculo, quadro ${board}${placeId === LEADER_OF_ALL ? '' : ` (para ${placeId}, que não está aberta)`}: ${words}`,
       key,
-    });
+    };
+    // t-c3fbe852 — the Líder único alive here hears it from its own queue, with the PC off too.
+    if (placeId === LEADER_OF_ALL && (await toLocalLeader({ lugar: '', nome: 'Oráculo' }, `quadro ${board}: ${words}`, message))) return;
+    if (!deps.relay) {
+      log(`aviso para ${placeId} (${board}) fora desta máquina e sem relay: ${words.slice(0, 80)}`);
+      return;
+    }
+    await deps.relay(message);
   }
 
   async function taskNotices(mine: PictureSession, caller: LedgerCaller, call: LedgerToolCall, answerText: string): Promise<void> {
@@ -597,20 +638,25 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
    * A message for a place off this machine (or the Líder único) with the PC off: the PC's relay, which today's app
    * delivers when it comes back. The same message inside `JOIN_MS` has the same key: the relay joins it.
    */
-  async function relayed(projectPath: string, me: string, name: string, placeId: string, words: string): Promise<BrowserToolOutcome> {
-    if (!deps.relay) return { kind: 'error', text: NO_RELAY };
+  function relayMessage(projectPath: string, me: string, name: string, placeId: string, words: string): OwnerMessage {
     const board = lastSegment(projectPath);
     const toLeader = placeId === LEADER_OF_ALL;
     const chave = createHash('sha256').update(JSON.stringify([projectPath, me, placeId, words, Math.floor(now() / JOIN_MS)])).digest('hex').slice(0, 32);
     const signature = `${name} (${me})`;
+    return {
+      projectPath,
+      placeId: toLeader ? '' : placeId,
+      text: `◆ Recado de ${signature}, guardado com o PC fora: ${words}`,
+      leaderText: `◆ Recado, quadro ${board}${toLeader ? '' : ` (para ${placeId}, que não está aberta)`}, de ${signature}: ${words}`,
+      key: `recado:${chave}`,
+    };
+  }
+
+  async function relayed(projectPath: string, me: string, name: string, placeId: string, words: string): Promise<BrowserToolOutcome> {
+    if (!deps.relay) return { kind: 'error', text: NO_RELAY };
+    const toLeader = placeId === LEADER_OF_ALL;
     try {
-      await deps.relay({
-        projectPath,
-        placeId: toLeader ? '' : placeId,
-        text: `◆ Recado de ${signature}, guardado com o PC fora: ${words}`,
-        leaderText: `◆ Recado, quadro ${board}${toLeader ? '' : ` (para ${placeId}, que não está aberta)`}, de ${signature}: ${words}`,
-        key: `recado:${chave}`,
-      });
+      await deps.relay(relayMessage(projectPath, me, name, placeId, words));
     } catch (error) {
       log(`recado de ${me} para ${placeId} não entrou no relay: ${error instanceof Error ? error.message : String(error)}`);
       return { kind: 'error', text: NO_RELAY };
@@ -618,10 +664,61 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     return { kind: 'text', text: JSON.stringify({ entregue: 'pelo-relay', para: toLeader ? 'lider' : placeId, como: RELAY_HOW }) };
   }
 
+  /** When each target with a waiting item was first missing from tmux (memory only). */
+  const missing = new Map<string, number>();
+
+  /**
+   * t-c3fbe852 — a waiting item whose target left this machine (missing from tmux for `GONE_MS`): the Líder único
+   * renewed here gets it in its new tmux; otherwise an item that carries its message goes to the PC's relay with the
+   * same key (sent before it is marked: a crash in between sends it again, and the key joins it there), never twice.
+   */
+  async function sendBack(): Promise<void> {
+    const waiting = read().filter((item) => item.estado === 'fila' && (item.volta || item.para.lugar === LEADER_OF_ALL));
+    if (!waiting.length) {
+      missing.clear();
+      return;
+    }
+    const live = await localSessions();
+    const at = now();
+    for (const sid of [...missing.keys()]) if (live.has(sid) || !waiting.some((item) => item.para.sid === sid)) missing.delete(sid);
+    const gone = new Set<string>();
+    for (const item of waiting) {
+      if (live.has(item.para.sid)) continue;
+      const since = missing.get(item.para.sid) ?? at;
+      missing.set(item.para.sid, since);
+      if (at - since >= GONE_MS) gone.add(item.para.sid);
+    }
+    if (!gone.size) return;
+    const leader = (await deps.leader?.()) ?? null;
+    for (const item of waiting.filter((candidate) => gone.has(candidate.para.sid))) {
+      if (item.para.lugar === LEADER_OF_ALL && leader && leader.sid !== item.para.sid) {
+        update(
+          (candidate) => candidate.id === item.id && candidate.estado === 'fila',
+          (candidate) => ({ ...candidate, para: { ...candidate.para, sid: leader.sid } }),
+        );
+        log(`recado ${item.id} segue o Líder único para a sessão ${leader.sid}.`);
+        continue;
+      }
+      if (!item.volta || !deps.relay) continue;
+      try {
+        await deps.relay(item.volta);
+      } catch (error) {
+        log(`recado ${item.id} não voltou ao relay: ${error instanceof Error ? error.message : String(error)}`);
+        continue;
+      }
+      update(
+        (candidate) => candidate.id === item.id && candidate.estado === 'fila',
+        (candidate) => ({ ...candidate, estado: 'devolvido', entregueEm: now() }),
+      );
+      log(`recado ${item.id} para ${item.para.lugar}: a sessão ${item.para.sid} saiu desta máquina; foi ao relay do PC.`);
+    }
+  }
+
   async function tick(): Promise<void> {
     if (ticking) return;
     ticking = true;
     try {
+      await sendBack();
       const at = now();
       // 1. Typed items: confirmed by the transcript, another Enter on a stuck field, or back to the queue.
       for (const item of read().filter((candidate) => candidate.estado === 'digitado')) {
@@ -695,14 +792,26 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
   }
 
   return {
-    async deliverLocal(message) {
-      if (!message.placeId || message.placeId === LEADER_OF_ALL) return null;
+    async deliverLocal(message, localText) {
+      // The label already opens with ◆; the message's own one would be a second.
+      if (!message.placeId || message.placeId === LEADER_OF_ALL) {
+        // t-c3fbe852 — the Líder único alive here: its queue, with what it would read from the PC.
+        const item = await toLocalLeader({ lugar: '', nome: 'Oráculo' }, (localText ?? message.leaderText).replace(/^◆\s*/, ''), message);
+        return item ? 'lider' : null;
+      }
       const sid = sidOfPlace(message.projectPath, message.placeId, await localSessions());
       if (!sid) return null;
-      // The label already opens with ◆; the message's own one would be a second.
-      enqueue({ lugar: '', nome: 'Oráculo' }, { lugar: message.placeId, sid }, message.text.replace(/^◆\s*/, ''), message.key);
-      return { placeId: message.placeId };
+      const item = enqueue({ lugar: '', nome: 'Oráculo' }, { lugar: message.placeId, sid }, message.text.replace(/^◆\s*/, ''), message.key, message);
+      return item.estado === 'devolvido' ? null : { placeId: message.placeId };
     },
+
+    stateOf(key) {
+      const chave = keyedChave(key);
+      const item = read().find((candidate) => candidate.chave === chave);
+      return item ? { estado: item.estado, sid: item.para.sid } : undefined;
+    },
+
+    transcriptOf: transcriptPath,
 
     async enviar(sid, mine, call: SendCall, pc = 'ligado'): Promise<BrowserToolOutcome | 'repassar'> {
       // With the PC on, what the picture cannot send goes to it: the picture may be minutes old (the probe's), and a
@@ -718,7 +827,13 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       const target = resolveAddress(board, places, me, call.para);
       if ('erro' in target) return pcOn ? 'repassar' : { kind: 'error', text: target.erro };
       const words = `${call.tarefa ? `[${call.tarefa}] ` : ''}${call.texto}`;
-      if ('liderUnico' in target) return pcOn ? 'repassar' : relayed(projectPath, me, nameOf(who), LEADER_OF_ALL, words);
+      if ('liderUnico' in target) {
+        // t-c3fbe852 — the Líder único alive here hears it from its own queue, PC on or off (no paste through the PC).
+        const back = relayMessage(projectPath, me, nameOf(who), LEADER_OF_ALL, words);
+        const item = await toLocalLeader({ lugar: me, nome: nameOf(who), sid }, words, back);
+        if (item) return { kind: 'text', text: JSON.stringify({ entregue: item.estado === 'entregue' ? 'entregue' : 'na-fila', id: item.id, para: LEADER_OF_ALL, como: HOW }) };
+        return pcOn ? 'repassar' : relayed(projectPath, me, nameOf(who), LEADER_OF_ALL, words);
+      }
       const word = call.para.trim().toLowerCase();
       // A renewed place's old id: the link the caller had to it holds for its successor.
       const renewedFrom = 'renovadoDe' in target ? target.renovadoDe : undefined;

@@ -29,6 +29,10 @@
 //   is answered here when the PC is silent for `LOCAL_ANSWER_MS`. Any other tool waits for the PC as before; a 502
 //   stays a 502.
 // - `POST /recados/<evento>`: the VPS's user-level hooks, loopback only, no MCP token.
+// - Etapa 2 (t-c3fbe852): the Líder único's `tarefa_*` still go to the PC (it sees every board, the PC's too); with the
+//   PC off (nothing listens on the tunnel) they are answered here as the Líder único (`lider`), on the boards the
+//   picture has (`leaderCallerFromPicture`, the same rules as the PC's `leaderLedgerCallerOf`). With the PC silent only
+//   the reads (`tarefa_listar`, `tarefa_ver`) are answered here: a write may still run there.
 
 import { timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -40,11 +44,12 @@ import type { BoardToolCall } from '../shared/mindscape/agent-tools';
 import type { MindscapeBoard } from '../shared/mindscape/model';
 import type { LedgerToolCall } from '../shared/ledger/tools';
 import { askedByRefusal, isLedgerToolName, LEDGER_TOOLS } from '../shared/ledger/tools';
-import { runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService, type LedgerToolAnswer } from '../main/ledger-store';
+import { leaderCallerOffBoard, runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService, type LedgerToolAnswer } from '../main/ledger-store';
 import type { OwnerMessage } from '../main/ledger-card-writer';
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { CARD_TOOLS, isCardToolName, type CardToolCall } from '../shared/board/tools';
-import { hearingPlaceIds, isBoardOrchestrator, whoHears } from '../shared/mindscape/reach';
+import { canReach, demandOwnerRefusal, hearingPlaceIds, isBoardOrchestrator, LEADER_OF_ALL_FROM, whoHears } from '../shared/mindscape/reach';
+import { LEADER_ROLE_ID } from '../shared/roles';
 import type { BoardStore } from './board-client';
 import { runCardTool } from './board-tools';
 import type { GateRecados } from './gate-recados';
@@ -255,6 +260,68 @@ export function callerFromPicture(mine: PictureSession): LedgerCaller | string {
   };
 }
 
+/** The boards the picture has (each from its freshest session): folder → its places and its saved board. */
+function picturedBoards(picture: BoardPicture | null): Map<string, { readonly listar: readonly unknown[]; readonly board?: MindscapeBoard }> {
+  const fresh = new Map<string, { at: number; listar: readonly unknown[]; board?: MindscapeBoard }>();
+  for (const session of Object.values(picture?.sessoes ?? {})) {
+    const pasta = session.quemSou.pasta;
+    if (session.quemSou.liderUnico === true || typeof pasta !== 'string' || !pasta) continue;
+    const at = session.at ?? picture?.at ?? 0;
+    const known = fresh.get(pasta);
+    if (!known || at > known.at || (!known.board && session.board)) fresh.set(pasta, { at, listar: session.listar, ...(session.board ? { board: session.board } : {}) });
+  }
+  return new Map([...fresh].map(([pasta, { listar, board }]) => [pasta, { listar, ...(board ? { board } : {}) }]));
+}
+
+/**
+ * t-c3fbe852 — the Líder único as the ledger's caller with the PC off, from the picture: the board named by `quadro`
+ * (by name or folder; for a tool that acts on a task id, the task's board), the places he reaches on it, and every
+ * pictured board for a list of all. The PC's own rules (`leaderLedgerCallerOf`): a new task names its board and a
+ * place he reaches, and goes to the board's live Líder. A string = why not.
+ */
+export function leaderCallerFromPicture(
+  picture: BoardPicture | null,
+  call: LedgerToolCall,
+  taskBoard: (id: string) => string | undefined,
+): { readonly caller: LedgerCaller; readonly call: LedgerToolCall } | string {
+  const boards = picturedBoards(picture);
+  const quadro =
+    call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' || call.tool === 'tarefa_novidades'
+      ? call.quadro
+      : call.tool === 'tarefa_transferir' || call.tool === 'tarefa_cancelar' || call.tool === 'tarefa_frente'
+        ? taskBoard(call.id)
+        : undefined;
+  const sessionOf = (projectPath: string, placeId: string): string | undefined => {
+    const card = boards.get(projectPath)?.board?.cards[placeId];
+    return card?.kind === 'session' ? card.sessionId : undefined;
+  };
+  const base = { placeId: LEADER_OF_ALL, roleId: LEADER_ROLE_ID, sessionOf };
+  const everyBoard = new Map([...boards].map(([pasta, { listar }]) => [pasta, placeStatesOf(listar)]));
+  if (!quadro) {
+    if (call.tool === 'tarefa_criar') return 'Você é o Líder único e não tem quadro: diga qual em "quadro" (nome ou pasta).';
+    if (call.tool !== 'tarefa_listar') return { caller: { ...base, projectPath: '', boardPlaceIds: [] }, call };
+    return { caller: { ...base, projectPath: '', boardPlaceIds: [], placeStates: everyBoard }, call: { ...call, todos: true } };
+  }
+  const found = [...boards].find(([pasta]) => pasta === quadro || lastSegment(pasta) === quadro);
+  if (!found) {
+    const offBoard = call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' || call.tool === 'tarefa_novidades' ? null : leaderCallerOffBoard(base, quadro, call.tool);
+    if (offBoard) return { caller: offBoard, call };
+    const names = [...boards.keys()].map(lastSegment).join(', ') || 'nenhum';
+    return `Com o PC desligado, conheço só os quadros do último retrato (${names}); "${quadro}" não está entre eles. Tente quando o PC ligar.`;
+  }
+  const [pasta, { listar, board }] = found;
+  const states = placeStatesOf(listar);
+  const doc = { schemaVersion: 8, boards: board ? { [pasta]: board } : {} } as const;
+  const reached = [...states.keys()].filter((id) => !board || canReach(doc, LEADER_OF_ALL_FROM, { projectPath: pasta, placeId: id }).ok);
+  if (call.tool === 'tarefa_criar') {
+    if (!call.dono || !reached.includes(call.dono)) return `O Líder único não faz a tarefa: diga em "dono" um lugar que você alcança neste quadro (${reached.join(', ') || 'nenhum'}).`;
+    const refusal = demandOwnerRefusal(board, hearingPlaceIds(states), call.dono);
+    if (refusal) return refusal;
+  }
+  const placeStates = call.tool === 'tarefa_listar' && call.todos ? new Map([...everyBoard, [pasta, states]]) : new Map([[pasta, states]]);
+  return { caller: { ...base, projectPath: pasta, boardPlaceIds: reached, placeStates, ...(board ? { board } : {}) }, call };
+}
+
 /** This session's `tarefa_*` are answered by this gate: it has a picture that says its place (not the Líder único). */
 function tasksAnsweredHere(mine: PictureSession | null): mine is PictureSession {
   return mine !== null && typeof callerFromPicture(mine) !== 'string';
@@ -306,6 +373,8 @@ function answersWithoutPc(message: Record<string, unknown>, mine: PictureSession
   if (method === 'initialize' || method === 'ping' || method === 'tools/list' || (typeof method === 'string' && method.startsWith('notifications/'))) return true;
   const call = toolCallOf(message);
   if (!call || !mine) return false;
+  // t-c3fbe852 — the Líder único's reads of the ledger (a write may still run on the PC: those wait for it).
+  if (mine.quemSou.liderUnico === true && (call.name === 'tarefa_listar' || call.name === 'tarefa_ver')) return true;
   return call.name === 'sessao_quem_sou' || (call.name === 'sessao_listar' && call.args.quadro === undefined);
 }
 
@@ -351,6 +420,7 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
 
     const ledger = async (call: LedgerToolCall): Promise<BrowserToolOutcome> => {
       if (!mine) return { kind: 'error', text: NO_PICTURE };
+      if (mine.quemSou.liderUnico === true && pc !== 'ligado') return leaderLedger(mine, call);
       const caller = callerFromPicture(mine);
       if (typeof caller === 'string') return { kind: 'error', text: caller };
       const refused = ledgerCallRefusal(call);
@@ -387,6 +457,35 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
         }
       } catch (error) {
         failed(error);
+      }
+      return result.image ? { kind: 'image', base64: result.image.base64, mimeType: result.image.mimeType, text: result.text } : { kind: 'text', text: result.text };
+    };
+
+    /** t-c3fbe852 — the Líder único's `tarefa_*` with the PC off, on the boards the picture has. */
+    const leaderLedger = async (mine: PictureSession, asked: LedgerToolCall): Promise<BrowserToolOutcome> => {
+      const resolved = leaderCallerFromPicture(picture, asked, (id) => {
+        try {
+          return deps.ledger().load().doc.tasks[id]?.projectPath;
+        } catch {
+          return undefined;
+        }
+      });
+      if (typeof resolved === 'string') return { kind: 'error', text: resolved };
+      const { caller, call } = resolved;
+      if (call.tool === 'tarefa_criar' && call.quemPediu) {
+        const refused = askedByRefusal(call.quemPediu);
+        if (refused) return { kind: 'error', text: refused };
+      }
+      const raw = toolCallOf(singleMessage(body));
+      const result = await runLedger(caller, call, { mine, args: raw?.name === call.tool ? raw.args : {} });
+      if (!result.ok) return { kind: 'error', text: result.text };
+      if (call.tool === 'tarefa_criar' && call.pedidoDoDono && deps.linkPedido) {
+        try {
+          const created = JSON.parse(result.text) as { id?: unknown };
+          if (typeof created.id === 'string') deps.linkPedido(call.pedidoDoDono, { id: created.id, titulo: call.titulo ?? call.pedido.slice(0, 80) });
+        } catch (error) {
+          log(`[oraculo] portão: ligar o pedido ${call.pedidoDoDono} à tarefa falhou: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
       return result.image ? { kind: 'image', base64: result.image.base64, mimeType: result.image.mimeType, text: result.text } : { kind: 'text', text: result.text };
     };

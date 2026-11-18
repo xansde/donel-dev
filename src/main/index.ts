@@ -4481,6 +4481,11 @@ function registerCelularLiderChat(): void {
   const chat = createCelularLiderChat({
     rpc: createSupabaseRpc(access),
     deliver: (text) => (liderService ? liderService.deliver(text) : Promise.resolve({ ok: false, reason: 'A janela do Donel ainda não abriu.' })),
+    // t-c3fbe852 — only with the Líder único open on this computer: on a remote place, the Oráculo there takes the queue.
+    mayTake: () => {
+      const ptyId = liderService?.report().ptyId ?? null;
+      return ptyId !== null && remoteSessions?.has(ptyId) !== true;
+    },
     log,
     load: () => parseCelularChatState(configIoDeps.readFileText(statePath())),
     save: (state) => {
