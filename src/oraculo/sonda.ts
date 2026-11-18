@@ -131,11 +131,11 @@ export const tunnelProbeCall: ProbeCall = (port, token, tool, timeoutMs) =>
     outgoing.end(body);
   });
 
-function readMeta(sessionsDir: string, sid: string): { readonly port: number; readonly token: string } | null {
+function readMeta(sessionsDir: string, sid: string): { readonly port: number; readonly token: string; readonly withoutPc: boolean } | null {
   try {
     const raw = JSON.parse(readFileSync(join(sessionsDir, sid, 'meta.json'), 'utf8')) as unknown;
     if (!isRecord(raw) || typeof raw.mcpToken !== 'string' || !raw.mcpToken || typeof raw.mcpPort !== 'number') return null;
-    return { port: raw.mcpPort, token: raw.mcpToken };
+    return { port: raw.mcpPort, token: raw.mcpToken, withoutPc: raw.abertaSemPc === true };
   } catch {
     return null;
   }
@@ -214,6 +214,9 @@ export function createProbe(deps: ProbeDeps): Probe {
         if (recent.length >= perMinute) break;
         const meta = readMeta(deps.sessionsDir, sid);
         if (!meta) continue;
+        // t-1a3f7150 — opened here with the PC off: no tunnel of its own until the PC adopts it (a probe would fail and
+        // end the round). It answers from its synthetic picture until a PC push carries it.
+        if (meta.withoutPc && picture?.sessoes[sid]?.pcAt === undefined) continue;
         if (!first && gapMs > 0) await new Promise((resolve) => setTimeout(resolve, gapMs));
         first = false;
         const started = now();

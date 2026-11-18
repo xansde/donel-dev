@@ -41,6 +41,8 @@ export interface RemoteLaunchInput {
   readonly worktree: string | null;
   readonly repoUrl: string | null;
   readonly branch: string | null;
+  /** t-1a3f7150 — the Oráculo daemon opened it with the PC off: its meta says so, and the first message is a file. */
+  readonly openedWithoutPc?: boolean;
 }
 
 export interface RemoteLaunchPlan {
@@ -117,6 +119,7 @@ export function planRemoteLaunch(input: RemoteLaunchInput): RemoteLaunchPlan {
     // Líder único na VPS — the tab that comes back after a restart is the Líder again (`remoteAliveFromMeta`).
     ...(roleId ? { roleId } : {}),
     ...(facts.leaderOfAll === true ? { leaderOfAll: true } : {}),
+    ...(input.openedWithoutPc === true ? { abertaSemPc: true } : {}),
   };
   if (input.mcp) {
     const endpoint = { name: MCP_SERVER_NAME, url: browserMcpUrl(input.mcp.port), bearerToken: input.mcp.token };
@@ -147,6 +150,7 @@ export function planRemoteLaunch(input: RemoteLaunchInput): RemoteLaunchPlan {
         claudeArgs: finalArgs,
         meta,
         ...(folder !== sid ? { attachOnly: true } : {}),
+        ...(input.openedWithoutPc === true ? { firstPromptFile: true } : {}),
       }),
   };
 }
