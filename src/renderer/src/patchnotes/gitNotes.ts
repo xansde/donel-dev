@@ -31,6 +31,7 @@ export const GIT_LOG_FORMAT = `${RECORD}%h${FIELD}%cd${FIELD}%B`;
 const SUBJECT = /^(feat|fix)(\([^)]*\))?!?:\s*(.+)$/;
 const TASK_ID = /\s*\(t-[0-9a-z]+\)/gi;
 const TRAILER = /^[A-Za-z][A-Za-z-]*:\s/;
+const LIST_ITEM = /^[-*]\s/;
 const STAMP = /^\d{4}-\d{2}-\d{2}-\d{4}$/;
 const HASH = /^[0-9a-f]+$/;
 
@@ -48,14 +49,16 @@ function firstParagraph(lines: readonly string[]): string {
   while (start < lines.length && lines[start].trim() === '') start++;
   const paragraph: string[] = [];
   for (let i = start; i < lines.length && lines[i].trim() !== ''; i++) paragraph.push(lines[i].trim());
-  if (paragraph.length === 0 || paragraph.every((line) => TRAILER.test(line))) return '';
+  // Trailer (`Co-Authored-By:`) ou lista de arquivos não é texto para o dono.
+  if (paragraph.length === 0 || paragraph.every((line) => TRAILER.test(line)) || LIST_ITEM.test(paragraph[0])) return '';
   return paragraph.join(' ');
 }
 
 /**
  * Só `feat:` e `fix:` (com ou sem escopo) viram novidade; o resto (chore, test,
  * docs, refactor, ci, merge) fica de fora. Título sem prefixo, escopo e `(t-…)`;
- * texto é o 1º parágrafo do corpo, ou o título quando não há corpo.
+ * texto é o 1º parágrafo do corpo, ou o título quando não há corpo (ou
+ * quando o 1º parágrafo é uma lista).
  * A chave segue o padrão dos arquivos (`AAAA-MM-DD-HHMM-slug.json`) para a
  * janela ordenar tudo junto.
  */

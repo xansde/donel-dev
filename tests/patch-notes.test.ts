@@ -50,6 +50,7 @@ describe('novidades geradas do git log', () => {
   const log = [
     ['a1b2c3d', '2026-11-18-0412', 'feat(main): mostra o placar no celular (t-2eedda0d)\n\nO placar agora aparece na tela inicial,\nsem abrir o quadro.\n\nDetalhe técnico.\n\nCo-Authored-By: Claude <noreply@anthropic.com>'],
     ['b2c3d4e', '2026-11-18-0930', 'fix: trava que volta avisa de novo\n\nCo-Authored-By: Claude <noreply@anthropic.com>'],
+    ['0a1b2c3', '2026-11-17-2300', 'fix(main): sentinela não grava segredo\n\n- main.ts: mascara a flag\n- log.ts: um registro por execução'],
     ['c3d4e5f', '2026-11-18-1000', 'chore: atualiza dependências'],
     ['d4e5f6a', '2026-11-18-1001', 'test: cobre o placar'],
     ['e5f6a7b', '2026-11-18-1002', 'docs: explica o placar'],
@@ -68,6 +69,7 @@ describe('novidades geradas do git log', () => {
         text: 'O placar agora aparece na tela inicial, sem abrir o quadro.',
       },
       './git/2026-11-18-0930-b2c3d4e.json': { title: 'Trava que volta avisa de novo', text: 'Trava que volta avisa de novo' },
+      './git/2026-11-17-2300-0a1b2c3.json': { title: 'Sentinela não grava segredo', text: 'Sentinela não grava segredo' },
     });
   });
 
@@ -78,6 +80,7 @@ describe('novidades geradas do git log', () => {
     });
     expect(notes.map((day) => [day.date, day.items.map((item) => item.title)])).toEqual([
       ['2026-11-18', ['Trava que volta avisa de novo', 'Arquivo', 'Mostra o placar no celular']],
+      ['2026-11-17', ['Sentinela não grava segredo']],
     ]);
   });
 
