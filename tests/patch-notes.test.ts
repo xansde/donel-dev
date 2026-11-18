@@ -84,21 +84,25 @@ describe('novidades geradas do git log', () => {
     run('config', 'commit.gpgsign', 'false');
     commit('README.md', 'chore: início');
     pr(1, 'feat: placar na tela inicial (t-2eedda0d) (#1)', [
-      ['src/a.ts', 'feat(main): placar\n\nO placar aparece na tela inicial,\nsem abrir o quadro.\n\nCo-Authored-By: Claude <noreply@anthropic.com>'],
-      ['src/a.ts', 'fix: ressalvas do revisor\n\nTexto interno da revisão.'],
-      ['src/a.ts', 'fix: ressalvas do revisor'],
+      ['src/renderer/a.ts', 'feat(main): placar\n\nO placar aparece na tela inicial,\nsem abrir o quadro.\n\nCo-Authored-By: Claude <noreply@anthropic.com>'],
+      ['src/renderer/a.ts', 'fix: ressalvas do revisor\n\nTexto interno da revisão.'],
+      ['src/renderer/a.ts', 'fix: ressalvas do revisor'],
     ]);
-    pr(2, 'fix: trava que volta avisa de novo', [['src/b.ts', 'fix: trava\n\nt-2eedda0d, Nota: o aviso volta quando a trava volta.']]);
+    pr(2, 'fix: trava que volta avisa de novo', [['src/renderer/b.ts', 'fix: trava\n\nnota: o aviso volta quando a trava volta.']]);
     pr(3, 'feat: novidade já escrita à mão', [
-      ['src/c.ts', 'feat: c'],
+      ['src/renderer/c.ts', 'feat: c'],
       ['src/renderer/src/patchnotes/notes/2026-11-18-0700-c.json', 'fix: novidade'],
     ]);
-    pr(4, 'fix: cron do servidor', [['scripts/cron.mjs', 'fix: cron']]);
-    pr(5, 'chore: dependências', [['src/d.ts', 'feat: d']]);
-    pr(6, 'feat: recurso desfeito', [['src/e.ts', 'feat: e']]);
+    pr(4, 'fix: cron do servidor', [
+      ['scripts/cron.mjs', 'fix: cron'],
+      ['src/oraculo/daemon.ts', 'fix: daemon'],
+    ]);
+    pr(5, 'chore: dependências', [['src/renderer/d.ts', 'feat: d']]);
+    pr(6, 'feat: recurso desfeito', [['src/renderer/e.ts', 'feat: e']]);
     const reverted = run('rev-parse', 'HEAD').trim();
     run('revert', '--no-edit', '-m', '1', reverted);
-    commit('src/f.ts', 'fix: corrigido direto na branch\n\n- f.ts: lista não é texto');
+    commit('src/renderer/f.ts', 'fix: corrigido direto na branch\n\n- f.ts: lista não é texto');
+    pr(7, 'feat: ledger mais rápido (#7)', [['src/main/g.ts', 'feat: ledger\n\nt-89279f84 (item 4): grava com --semear-supabase no ledgerStore.']]);
     return dir;
   }
 
@@ -107,14 +111,15 @@ describe('novidades geradas do git log', () => {
     try {
       const notes = changesToNotes(readGitChanges(dir, '2026-11-18T00:00:00Z'));
       expect(Object.entries(notes).map(([key, item]) => [key.replace(/-[0-9a-f]{8}\.json$/, ''), item])).toEqual([
-        ['./git/2026-11-18-0746', { title: 'Corrigido direto na branch', text: 'Corrigido direto na branch' }],
+        ['./git/2026-11-18-0753', { title: 'Ledger mais rápido', text: 'Ledger mais rápido' }],
+        ['./git/2026-11-18-0748', { title: 'Corrigido direto na branch', text: 'Corrigido direto na branch' }],
         ['./git/2026-11-18-0720', { title: 'Trava que volta avisa de novo', text: 'Nota: o aviso volta quando a trava volta.' }],
         ['./git/2026-11-18-0715', { title: 'Placar na tela inicial', text: 'O placar aparece na tela inicial, sem abrir o quadro.' }],
       ]);
 
       const days = buildPatchNotes({ './notes/2026-11-18-0716-arquivo.json': { title: 'Arquivo', text: 'a' }, ...notes });
       expect(days.map((day) => [day.date, day.items.map((item) => item.title)])).toEqual([
-        ['2026-11-18', ['Corrigido direto na branch', 'Trava que volta avisa de novo', 'Arquivo', 'Placar na tela inicial']],
+        ['2026-11-18', ['Ledger mais rápido', 'Corrigido direto na branch', 'Trava que volta avisa de novo', 'Arquivo', 'Placar na tela inicial']],
       ]);
     } finally {
       rmSync(dir, { recursive: true, force: true });

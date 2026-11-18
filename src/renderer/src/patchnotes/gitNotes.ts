@@ -22,6 +22,12 @@ export const GIT_NOTES_SINCE = '2026-11-17T21:20:00-03:00';
 export const NOTES_DIR = 'src/renderer/src/patchnotes/notes/';
 
 /**
+ * O que vai no app instalado. `src/oraculo/` e `src/board-cron/` rodam no
+ * servidor e `src/shared/` sozinho é contrato: PR só neles não é novidade do app.
+ */
+const APP_DIRS = ['src/main/', 'src/preload/', 'src/renderer/'];
+
+/**
  * Hora local do dono: a janela agrupa por dia e o dia vira à meia-noite dele.
  * Convertida no JS, não por `TZ` do git: o git do Windows (build do PC) não
  * entende nome de fuso IANA e cairia em UTC.
@@ -70,9 +76,10 @@ export const GIT_LOG_FORMAT = `${RECORD}%H${FIELD}%P${FIELD}%cI${FIELD}%B${FIELD
 
 const SUBJECT = /^(feat|fix)(\([^)]*\))?!?:\s*(.+)$/;
 const TASK_ID = /\s*\(t-[0-9a-z]+\)/gi;
-// Id de tarefa solto no começo do texto ("t-89279f84, item 4: …").
-const LEADING_TASK_ID = /^t-[0-9a-f]{8}\b[,:;]?\s*/i;
-const PR_REF = /\s*\((?:#|PR\s*#?)\d+\)/gi;
+// Corpo com id de tarefa, flag, caminho, arquivo, crase ou identificador de
+// código é texto para quem programa: a novidade fica só com o título.
+const JARGON =
+  /`|(^|\s)--?[a-z]|\bt-[0-9a-f]{6,}\b|\b[a-z]+[A-Z]\w*|\b\w+_\w+\b|\w\/\w|\.(ts|tsx|js|mjs|cjs|json|sql|md|py|sh|ps1|css|yml|yaml)\b/;const PR_REF = /\s*\((?:#|PR\s*#?)\d+\)/gi;
 const GITHUB_MERGE = /^Merge pull request #\d+ from \S+/;
 const REVERTS = /This reverts commit ([0-9a-f]{7,40})/g;
 // Só trailers conhecidos: "Nota: a tela muda" é texto para o dono, não trailer.
@@ -107,12 +114,12 @@ export function parseFirstParentLog(raw: string): GitChange[] {
 }
 
 /**
- * O passo chega ao app (mexe em `src/`) e não trouxe a novidade escrita à mão
+ * O passo chega ao app (mexe em main, preload ou renderer) e não trouxe a novidade escrita à mão
  * (nenhum JSON novo em `./notes/`, senão ela sairia duas vezes).
  */
 export function reachesAppWithoutNote(files: readonly ChangedFile[]): boolean {
   return (
-    files.some((file) => file.path.startsWith('src/')) &&
+    files.some((file) => APP_DIRS.some((dir) => file.path.startsWith(dir))) &&
     !files.some((file) => file.status === 'A' && file.path.startsWith(NOTES_DIR))
   );
 }
@@ -157,7 +164,7 @@ function capitalize(text: string): string {
 }
 
 function clean(text: string): string {
-  return text.replace(TASK_ID, '').replace(PR_REF, '').trim().replace(LEADING_TASK_ID, '');
+  return text.replace(TASK_ID, '').replace(PR_REF, '').trim();
 }
 
 /** Hashes desfeitos por um `Revert` (`This reverts commit <hash>`) em qualquer mensagem. */
@@ -171,7 +178,8 @@ export function revertedHashes(changes: readonly GitChange[]): string[] {
  * branch) que chega ao app; o resto (chore, test, docs, refactor, ci, revert,
  * só scripts/servidor, PR com JSON próprio, PR desfeito depois) fica de fora.
  * Título sem prefixo, escopo, `(t-…)` e `(#N)`; texto é o 1º parágrafo do corpo
- * do commit `feat`/`fix` mais antigo do PR, ou o título quando não há texto.
+ * do commit `feat`/`fix` mais antigo do PR, ou o título quando não há texto ou
+ * quando ele é técnico (`JARGON`); a janela não repete o título como texto.
  * A hora é a do merge (quando entrou na branch), para cair num dia que o dono
  * ainda não viu. A chave segue o padrão dos arquivos
  * (`AAAA-MM-DD-HHMM-slug.json`) para a janela ordenar tudo junto.
@@ -188,7 +196,8 @@ export function changesToNotes(changes: readonly GitChange[]): Record<string, Pa
     const stripped = clean(match[3]);
     if (stripped === '') continue;
     const title = capitalize(stripped);
-    const text = capitalize(clean(firstParagraph(lines(source.bodyFrom).slice(1)))) || title;
+    const body = firstParagraph(lines(source.bodyFrom).slice(1));
+    const text = (body !== '' && !JARGON.test(body) && capitalize(clean(body))) || title;
     notes[`./git/${change.stamp}-${change.hash.slice(0, 8)}.json`] = { title, text };
   }
   return notes;

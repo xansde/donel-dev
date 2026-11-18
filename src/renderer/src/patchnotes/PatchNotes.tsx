@@ -70,7 +70,7 @@ export function PatchNotes(): React.JSX.Element {
                   {day.items.map((item, index) => (
                     <li key={`${day.date}-${index}`} className={styles.item}>
                       <span className={styles.itemTitle}>{item.title}</span>
-                      <span className={styles.itemText}>{item.text}</span>
+                      {item.text !== item.title ? <span className={styles.itemText}>{item.text}</span> : null}
                     </li>
                   ))}
                 </ul>
