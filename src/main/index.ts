@@ -23,6 +23,7 @@ import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { createRemoteOracleHost } from './ledger-remote-host';
+import { buildOpenKit, type OpenKit } from './open-kit';
 import { planRemoteLaunch } from './remote-launch-plan';
 import { createSwitchableLedger, type SwitchableLedger } from './ledger-remote';
 import { LEDGER_REMOTE_CHANNELS, type LedgerRemoteResult, type LedgerRemoteState } from '../shared/ledger/remote';
@@ -3798,6 +3799,7 @@ function registerLedgerIpcHandlers(): void {
     onChange,
     deliver: () => deliverOwnerMessageViaBoard,
     vigia: () => ({ projectPath: vigiaBoard(), cofre: appConfig.vigia.cofre }),
+    openKit: (place) => openKitFor(place),
     celularWanted: () => {
       const text = configIoDeps.readFileText(join(app.getPath('userData'), 'celular.json'));
       try {
@@ -3931,6 +3933,37 @@ function registerLedgerIpcHandlers(): void {
  */
 /** Who opened whom and the arrows of a board (low risk and the Revisor's chain), as the renderer saved it. */
 /** t-5839d76b — the board of the vigia's cards (`vigiaBoardOf`); `null` = none: the vigia warns on the PC only. */
+/** `origin` and the current branch of a folder of this PC, without blocking the main process; `null` = unknown. */
+function localGitInfoAsync(cwd: string): Promise<{ repoUrl: string | null; branch: string | null }> {
+  const read = (args: string[]): Promise<string | null> =>
+    new Promise((resolve) => {
+      execFile('git', ['-C', cwd, ...args], { encoding: 'utf8', timeout: 5_000, windowsHide: true }, (error, stdout) => {
+        const out = error ? '' : String(stdout).trim();
+        resolve(out.length > 0 ? out : null);
+      });
+    });
+  return Promise.all([read(['remote', 'get-url', 'origin']), read(['branch', '--show-current'])]).then(([repoUrl, branch]) => ({ repoUrl, branch }));
+}
+
+/**
+ * Kit de abertura (t-1a3f7150, docs/adr/0009) — the roles, the folders of every Mindscape board and `team.openCap`, for
+ * the Oráculo daemon to open a session while this PC is off. No secret goes in it (`open-kit.ts`).
+ */
+async function openKitFor(place: { readonly id: string; readonly label: string }): Promise<OpenKit> {
+  let folders: string[] = [];
+  try {
+    folders = Object.keys(createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load().boards);
+  } catch {
+    // no board readable: the kit still carries the roles and the cap
+  }
+  // A few git processes at a time: the handshake runs again on every reconnect, and a board may name a missing folder.
+  const boards: { localCwd: string; git: { repoUrl: string | null; branch: string | null } }[] = [];
+  for (let i = 0; i < folders.length; i += 4) {
+    boards.push(...(await Promise.all(folders.slice(i, i + 4).map(async (localCwd) => ({ localCwd, git: await localGitInfoAsync(localCwd) })))));
+  }
+  return buildOpenKit({ config: appConfig, roles: rolesStore?.list() ?? [], boards, place, now: new Date() });
+}
+
 function vigiaBoard(): string | null {
   try {
     return vigiaBoardOf(createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load().boards, appConfig.vigia.quadro);
