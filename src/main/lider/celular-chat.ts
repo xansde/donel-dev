@@ -8,8 +8,8 @@
 //
 // Which turn answers which message: the text given to the Líder carries a marker (`[celular #<8 of the id>]`). At the
 // end of each turn of the Líder, the tail of his transcript says whether the marker was read (a prompt of his, or a
-// message the CLI put into a running turn) and whether he wrote after it. Only then the message is answered, with
-// the last thing he said. What is waiting survives a restart of the app (`save`).
+// message the CLI put into a running turn) and what he wrote after it, until the next message he read: that is the
+// answer that goes back. What is waiting survives a restart of the app (`save`).
 
 import { randomUUID } from 'node:crypto';
 import type { LiderSendResult } from '../../shared/lider/ipc';
@@ -60,8 +60,11 @@ export interface CelularLiderChatDeps {
 export interface CelularLiderChat {
   /** Retries the answers that did not go, then takes and delivers the owner's new messages. Never overlaps itself. */
   poll(): Promise<void>;
-  /** A turn of the Líder ended: `text` is his last answer, `transcriptTail` the end of his transcript (`null` = not read). */
-  turnEnded(text: string | null, transcriptTail: string | null): Promise<void>;
+  /**
+   * A turn of the Líder ended: `transcriptTail` is the end of his transcript (`null` = not read). `false` = messages wait
+   * and none was answered by this tail (a mirror still behind may be read again).
+   */
+  turnEnded(transcriptTail: string | null): Promise<boolean>;
 }
 
 interface TakenRow {
@@ -90,13 +93,25 @@ function textOf(content: unknown): string {
     .join('\n');
 }
 
+/** A line the Líder READ as a new message: a prompt of the main thread with text (not a tool result, not a tag). */
+function readText(entry: Record<string, unknown>): string | null {
+  if (entry.type === 'attachment') {
+    const attachment = entry.attachment as { type?: unknown; prompt?: unknown } | undefined;
+    return attachment?.type === 'queued_command' ? textOf(attachment.prompt) : null;
+  }
+  if (entry.type !== 'user' || entry.isMeta === true) return null;
+  const text = textOf((entry.message as { content?: unknown } | undefined)?.content).trim();
+  // Tool results carry no text block; `<task-notification>`, `<command-name>` and the like are not the owner's.
+  return text && !text.startsWith('<') ? text : null;
+}
+
 /**
- * The markers of `ids` the Líder read AND wrote after, in the tail of his transcript: a user line of the main thread
- * (typed or sent by the app) or a message the CLI put into a running turn (`queued_command`), followed by a text of
- * his. Lines cut at the start of the tail or not JSON are skipped.
+ * For each of `ids` whose marker the Líder read in the tail of his transcript (a prompt of his, or a message the CLI
+ * put into a running turn), what he wrote AFTER reading it and before the next message he read: his answer to it.
+ * Only the ids he already answered come back. Lines cut at the start of the tail, not JSON, or of a subagent are skipped.
  */
-export function answeredIds(transcriptTail: string, ids: readonly string[]): string[] {
-  const events: Array<{ kind: 'read'; text: string } | { kind: 'wrote' }> = [];
+export function answersIn(transcriptTail: string, ids: readonly string[]): Map<string, string> {
+  const events: Array<{ kind: 'read'; text: string } | { kind: 'wrote'; text: string }> = [];
   for (const line of transcriptTail.split('\n')) {
     if (!line.trim()) continue;
     let entry: Record<string, unknown>;
@@ -106,23 +121,43 @@ export function answeredIds(transcriptTail: string, ids: readonly string[]): str
       continue;
     }
     if (typeof entry !== 'object' || entry === null || entry.isSidechain === true) continue;
-    if (entry.type === 'user') {
-      events.push({ kind: 'read', text: textOf((entry.message as { content?: unknown } | undefined)?.content) });
-    } else if (entry.type === 'attachment') {
-      const attachment = entry.attachment as { type?: unknown; prompt?: unknown } | undefined;
-      if (attachment?.type === 'queued_command') events.push({ kind: 'read', text: textOf(attachment.prompt) });
-    } else if (entry.type === 'assistant' && textOf((entry.message as { content?: unknown } | undefined)?.content).trim()) {
-      events.push({ kind: 'wrote' });
+    const read = readText(entry);
+    if (read !== null) {
+      events.push({ kind: 'read', text: read });
+      continue;
+    }
+    if (entry.type === 'assistant') {
+      const text = textOf((entry.message as { content?: unknown } | undefined)?.content).trim();
+      if (text) events.push({ kind: 'wrote', text });
     }
   }
-  return ids.filter((id) => {
+  const answers = new Map<string, string>();
+  const phoneMarkers = ids.map(phoneMarker);
+  for (const id of ids) {
     const marker = phoneMarker(id);
     let readAt = -1;
     events.forEach((event, index) => {
       if (event.kind === 'read' && event.text.includes(marker)) readAt = index;
     });
-    return readAt >= 0 && events.slice(readAt + 1).some((event) => event.kind === 'wrote');
-  });
+    if (readAt < 0) continue;
+    let answer: string | null = null;
+    for (const event of events.slice(readAt + 1)) {
+      // Another phone message read right after (nothing written between them) is answered together.
+      if (event.kind === 'read') {
+        if (answer === null && phoneMarkers.some((other) => event.text.includes(other))) continue;
+        break;
+      }
+      answer = event.text;
+    }
+    if (answer !== null) answers.set(id, answer);
+  }
+  return answers;
+}
+
+/** The ids of `ids` already answered in the tail (see `answersIn`). */
+export function answeredIds(transcriptTail: string, ids: readonly string[]): string[] {
+  const answers = answersIn(transcriptTail, ids);
+  return ids.filter((id) => answers.has(id));
 }
 
 export function createCelularLiderChat(deps: CelularLiderChatDeps): CelularLiderChat {
@@ -199,20 +234,26 @@ export function createCelularLiderChat(deps: CelularLiderChatDeps): CelularLider
       }
     },
 
-    async turnEnded(text, transcriptTail) {
-      if (waiting.length === 0 || transcriptTail === null) return;
-      if (text === null || text.trim() === '') return;
-      const answered = answeredIds(
+    async turnEnded(transcriptTail) {
+      if (waiting.length === 0) return true;
+      if (transcriptTail === null) return false;
+      const answers = answersIn(
         transcriptTail,
         waiting.map((entry) => entry.id),
       );
-      if (answered.length === 0) return;
-      waiting = waiting.filter((entry) => !answered.includes(entry.id));
-      const newest = answered[answered.length - 1]!;
-      outbox.push({ p_id: newId(), p_em_resposta_a: newest, p_texto: clip(text) });
-      for (const id of answered.slice(0, -1).reverse()) outbox.push({ p_id: newId(), p_em_resposta_a: id, p_texto: JOINED_REPLY });
+      if (answers.size === 0) return false;
+      const answered = waiting.map((entry) => entry.id).filter((id) => answers.has(id));
+      waiting = waiting.filter((entry) => !answers.has(entry.id));
+      // Read together (nothing written between them): the whole answer on the newest, the others point to it.
+      for (let index = 0; index < answered.length; index += 1) {
+        const id = answered[index]!;
+        const text = answers.get(id)!;
+        const sameAsNext = answered.slice(index + 1).some((other) => answers.get(other) === text);
+        outbox.push({ p_id: newId(), p_em_resposta_a: id, p_texto: sameAsNext ? JOINED_REPLY : clip(text) });
+      }
       persist();
       await flush();
+      return true;
     },
   };
 }

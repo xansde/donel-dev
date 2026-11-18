@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { answeredIds, createCelularLiderChat, parseCelularChatState, phoneMarker, type CelularChatState, type CelularLiderChatDeps } from '../src/main/lider/celular-chat';
+import { answeredIds, answersIn, createCelularLiderChat, parseCelularChatState, phoneMarker, type CelularChatState, type CelularLiderChatDeps } from '../src/main/lider/celular-chat';
 
 // Chat do Líder pelo celular (plano 18/11, item 11) — the desktop takes the owner's messages from the phone's queue in
 // Supabase, gives them to the Líder único and sends his answer back. What would break without the owner noticing: a
@@ -59,11 +59,11 @@ describe('chat do Líder pelo celular', () => {
     expect(calls.map((call) => call.fn)).toEqual(['celular_lider_tomar', 'celular_lider_entregue']);
     expect(calls[1]!.args).toEqual({ p_id: A, p_resultado: 'entregue ao Líder no desktop' });
 
-    await chat.turnEnded('Três Devs trabalhando.', tail(user(`${phoneMarker(A)} Como está o time?`), tool(), said('Três Devs trabalhando.')));
+    await chat.turnEnded(tail(user(`${phoneMarker(A)} Como está o time?`), tool(), said('Três Devs trabalhando.')));
     expect(replies()).toEqual([{ p_id: 'reply-1', p_em_resposta_a: A, p_texto: 'Três Devs trabalhando.' }]);
 
     // The next turn of the Líder (the same message still in the tail, but already answered) does not answer again.
-    await chat.turnEnded('ok', tail(user(`${phoneMarker(A)} Como está o time?`), said('Três Devs trabalhando.'), user('outra coisa'), said('ok')));
+    await chat.turnEnded(tail(user(`${phoneMarker(A)} Como está o time?`), said('Três Devs trabalhando.'), user('outra coisa'), said('ok')));
     expect(replies()).toHaveLength(1);
   });
 
@@ -71,11 +71,11 @@ describe('chat do Líder pelo celular', () => {
     // The reviewer's case: the Líder is in a turn opened by a message of the team when the phone's message arrives.
     const { chat, replies } = setup([{ id: A, texto: 'oi' }]);
     await chat.poll();
-    await chat.turnEnded('respondi ao Dev', tail(user('[t-1] recado do Dev'), said('respondi ao Dev')));
+    await chat.turnEnded(tail(user('[t-1] recado do Dev'), said('respondi ao Dev')));
     // A turn with no prompt of its own (a background task ended) does not answer the phone either.
-    await chat.turnEnded('tarefa em segundo plano terminou', tail(user('[t-1] recado do Dev'), said('respondi ao Dev'), said('tarefa em segundo plano terminou')));
+    await chat.turnEnded(tail(user('[t-1] recado do Dev'), said('respondi ao Dev'), said('tarefa em segundo plano terminou')));
     expect(replies()).toEqual([]);
-    await chat.turnEnded('oi, dono', tail(said('respondi ao Dev'), user(`${phoneMarker(A)} oi`), said('oi, dono')));
+    await chat.turnEnded(tail(said('respondi ao Dev'), user(`${phoneMarker(A)} oi`), said('oi, dono')));
     expect(replies()).toEqual([{ p_id: 'reply-1', p_em_resposta_a: A, p_texto: 'oi, dono' }]);
   });
 
@@ -83,9 +83,9 @@ describe('chat do Líder pelo celular', () => {
     const { chat, replies } = setup([{ id: A, texto: 'oi' }]);
     await chat.poll();
     // Read mid-turn but nothing written after it yet: wait.
-    await chat.turnEnded('fim do Dev', tail(user('[t-1] recado'), said('vou ver'), queued(`${phoneMarker(A)} oi`)));
+    await chat.turnEnded(tail(user('[t-1] recado'), said('vou ver'), queued(`${phoneMarker(A)} oi`)));
     expect(replies()).toEqual([]);
-    await chat.turnEnded('oi, dono; e o Dev já foi', tail(user('[t-1] recado'), queued(`${phoneMarker(A)} oi`), said('oi, dono; e o Dev já foi')));
+    await chat.turnEnded(tail(user('[t-1] recado'), queued(`${phoneMarker(A)} oi`), said('oi, dono; e o Dev já foi')));
     expect(replies().map((reply) => reply.p_em_resposta_a)).toEqual([A]);
   });
 
@@ -101,10 +101,10 @@ describe('chat do Líder pelo celular', () => {
       { id: B, texto: 'segunda' },
     ]);
     await chat.poll();
-    await chat.turnEnded('as duas feitas', tail(user(`${phoneMarker(A)} primeira`), queued(`${phoneMarker(B)} segunda`), said('as duas feitas')));
+    await chat.turnEnded(tail(user(`${phoneMarker(A)} primeira`), queued(`${phoneMarker(B)} segunda`), said('as duas feitas')));
     expect(replies()).toEqual([
-      { p_id: 'reply-1', p_em_resposta_a: B, p_texto: 'as duas feitas' },
-      { p_id: 'reply-2', p_em_resposta_a: A, p_texto: '↳ respondi junto com a mensagem seguinte.' },
+      { p_id: 'reply-1', p_em_resposta_a: A, p_texto: '↳ respondi junto com a mensagem seguinte.' },
+      { p_id: 'reply-2', p_em_resposta_a: B, p_texto: 'as duas feitas' },
     ]);
   });
 
@@ -136,7 +136,7 @@ describe('chat do Líder pelo celular', () => {
       },
     });
     const second = createCelularLiderChat(deps());
-    await second.turnEnded('oi, dono', tail(user(`${phoneMarker(A)} oi`), said('oi, dono')));
+    await second.turnEnded(tail(user(`${phoneMarker(A)} oi`), said('oi, dono')));
     expect(saved!.outbox.map((reply) => reply.p_id)).toEqual(['reply-x']);
     // Restart again before the retry: the answer that failed goes on the next poll, same id.
     const third = createCelularLiderChat(deps());
@@ -144,6 +144,18 @@ describe('chat do Líder pelo celular', () => {
     expect(calls.filter((call) => call.fn === 'celular_lider_responder').map((call) => call.args.p_id)).toEqual(['reply-x', 'reply-x']);
     expect(saved!.outbox).toEqual([]);
     expect(saved!.waiting).toEqual([]);
+  });
+
+  it('turno que leu a mensagem e acabou sem texto: o turno seguinte, de outro assunto, não responde com a fala dele', () => {
+    // The reviewer's case (round 2): the marker and the answer are old lines in the tail; the new turn is about another thing.
+    expect(answersIn(tail(user(`${phoneMarker(A)} oi`), said('x'), user('outro'), said('y')), [A])).toEqual(new Map([[A, 'x']]));
+    expect(answeredIds(tail(user(`${phoneMarker(A)} oi`), tool(), user('outro'), said('y')), [A])).toEqual([]);
+  });
+
+  it('resultado de ferramenta e aviso entre a leitura e a resposta não cortam a resposta', () => {
+    const toolResult = JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } });
+    const notice = JSON.stringify({ type: 'user', message: { role: 'user', content: '<task-notification>feito</task-notification>' } });
+    expect(answersIn(tail(user(`${phoneMarker(A)} oi`), tool(), toolResult, notice, said('oi, dono')), [A])).toEqual(new Map([[A, 'oi, dono']]));
   });
 
   it('linha cortada no começo da cauda e conversa de subagente não contam', () => {

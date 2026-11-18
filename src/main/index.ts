@@ -4436,18 +4436,23 @@ function registerCelularLiderChat(): void {
       configIoDeps.renameFile(tmp, statePath());
     },
   });
-  semaphoreManager.onTurnEnded((ptyId, lastAssistantMessage, hookTranscriptPath) => {
+  semaphoreManager.onTurnEnded((ptyId, _lastAssistantMessage, hookTranscriptPath) => {
     if (liderService === null || liderService.report().ptyId !== ptyId) return;
     void (async () => {
       const sessionId = activeSessionByPty.get(ptyId);
-      const transcriptPath = hookTranscriptPath ?? (sessionId ? spawnedTranscriptPaths.get(sessionId) : undefined);
-      let tail: string | null = null;
-      if (transcriptPath) {
+      // A Líder on a remote place (the default, `leader.where: 'auto'`): the hook names the path on the VPS; the tail is
+      // read from the local mirror of that transcript, which the pump fills a moment after the Stop.
+      const remote = remoteSessions?.has(ptyId) === true;
+      const transcriptPath = remote ? (sessionId ? spawnedTranscriptPaths.get(sessionId) : undefined) : (hookTranscriptPath ?? (sessionId ? spawnedTranscriptPaths.get(sessionId) : undefined));
+      if (!transcriptPath) return;
+      const readTail = async (): Promise<string | null> => {
         const size = await statFile(transcriptPath).then((info) => info.size).catch(() => null);
-        tail = size === null ? null : await readFileTail(transcriptPath, size, CELULAR_CHAT_TAIL_BYTES);
+        return size === null ? null : readFileTail(transcriptPath, size, CELULAR_CHAT_TAIL_BYTES);
+      };
+      for (const waitMs of remote ? [3_000, 10_000, 30_000] : [0]) {
+        if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+        if (await chat.turnEnded(await readTail())) break;
       }
-      const text = lastAssistantMessage ?? (transcriptPath ? await readTranscriptLastAssistantText(transcriptPath) : null);
-      await chat.turnEnded(text, tail);
     })().catch(() => undefined);
   });
   const timer = setInterval(() => {
