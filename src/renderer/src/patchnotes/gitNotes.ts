@@ -1,17 +1,31 @@
-// Novidades geradas no build a partir do git log (18/11): todo commit `feat:` ou
-// `fix:` vira uma novidade, sem o PR criar arquivo. Roda só no build (plugin do
-// Vite, ver `gitPatchNotes`); o renderer recebe o resultado pronto pelo módulo
-// virtual `virtual:donel-git-notes`. Os JSON de `./notes/` continuam valendo.
+// Novidades geradas no build a partir do git log (18/11): cada PR `feat:` ou
+// `fix:` mesclado na branch vira uma novidade, sem o PR criar arquivo. Roda só
+// no build (plugin do Vite, ver `gitPatchNotes`); o renderer recebe o resultado
+// pronto pelo módulo virtual `virtual:donel-git-notes`. Os JSON de `./notes/`
+// continuam valendo.
+//
+// Uma novidade por PR, não por commit: cada rodada de revisão ganha um `fix:`
+// e a janela encheria de texto interno. O que conta é a linha de 1º pai da
+// branch (o merge do PR, ou o commit feito direto nela).
 
 import { execFileSync } from 'node:child_process';
 import type { Plugin } from 'vite';
 import type { PatchNoteItem } from './notes';
 
 /**
- * Commits a partir daqui viram novidade: logo depois do último JSON em
+ * Mudanças a partir daqui viram novidade: logo depois do último JSON em
  * `./notes/` (2026-11-17-2119), para nada aparecer duas vezes nem sumir.
  */
 export const GIT_NOTES_SINCE = '2026-11-17T21:20:00-03:00';
+
+/** Pasta dos JSON: PR que acrescenta um arquivo nela já tem a novidade escrita. */
+export const NOTES_DIR = 'src/renderer/src/patchnotes/notes/';
+
+/**
+ * O que vai no app instalado. `src/oraculo/` e `src/board-cron/` rodam no
+ * servidor e `src/shared/` sozinho é contrato: PR só neles não é novidade do app.
+ */
+const APP_DIRS = ['src/main/', 'src/preload/', 'src/renderer/'];
 
 /**
  * Hora local do dono: a janela agrupa por dia e o dia vira à meia-noite dele.
@@ -36,86 +50,205 @@ export function localStamp(iso: string): string | null {
   return `${part.year}-${part.month}-${part.day}-${part.hour}${part.minute}`;
 }
 
-export interface GitCommit {
+export interface ChangedFile {
+  /** Letra do `--name-status` (`A`, `M`, `D`…). */
+  readonly status: string;
+  readonly path: string;
+}
+
+/** Um passo da linha de 1º pai: o merge de um PR ou um commit feito direto na branch. */
+export interface GitChange {
   readonly hash: string;
-  /** `AAAA-MM-DD-HHMM`, já na hora local. */
+  readonly parents: readonly string[];
+  /** `AAAA-MM-DD-HHMM`, já na hora local: a hora em que entrou na branch. */
   readonly stamp: string;
   /** Mensagem inteira (`%B`): título, linha em branco, corpo. */
   readonly message: string;
+  /** Diferença contra o 1º pai: o que o PR trouxe. */
+  readonly files: readonly ChangedFile[];
+  /** Mensagens dos commits do PR (sem merges), o mais antigo primeiro; vazio num commit direto. */
+  readonly commits: readonly string[];
 }
 
 const RECORD = '\x1e';
 const FIELD = '\x1f';
-export const GIT_LOG_FORMAT = `${RECORD}%h${FIELD}%cI${FIELD}%B`;
+export const GIT_LOG_FORMAT = `${RECORD}%H${FIELD}%P${FIELD}%cI${FIELD}%B${FIELD}`;
 
 const SUBJECT = /^(feat|fix)(\([^)]*\))?!?:\s*(.+)$/;
 const TASK_ID = /\s*\(t-[0-9a-z]+\)/gi;
-const TRAILER = /^[A-Za-z][A-Za-z-]*:\s/;
+// Corpo com id de tarefa, flag, caminho, arquivo, crase ou identificador de
+// código é texto para quem programa: a novidade fica só com o título.
+const JARGON =
+  /`|(^|\s)--?[a-z]|\bt-[0-9a-f]{6,}\b|\b[a-z]+[A-Z]\w*|\b\w+_\w+\b|\w\/\w|\.(ts|tsx|js|mjs|cjs|json|sql|md|py|sh|ps1|css|yml|yaml)\b/;
+const PR_REF = /\s*\((?:#|PR\s*#?)\d+\)/gi;
+const GITHUB_MERGE = /^Merge pull request #\d+ from \S+/;
+const REVERTS = /This reverts commit ([0-9a-f]{7,40})/g;
+// Só trailers conhecidos: "Nota: a tela muda" é texto para o dono, não trailer.
+const TRAILER = /^(Co-Authored-By|Signed-off-by|Reviewed-by|Acked-by|Tested-by|Reported-by|Helped-by):\s/i;
 const LIST_ITEM = /^[-*]\s/;
 const STAMP = /^\d{4}-\d{2}-\d{2}-\d{4}$/;
-const HASH = /^[0-9a-f]+$/;
+const HASH = /^[0-9a-f]{7,40}$/;
+const NAME_STATUS = /^([A-Z])\d*\t(.+)$/;
 
-/** Saída de `git log --format=GIT_LOG_FORMAT` em commits. Registro torto ou data inválida é ignorado. */
-export function parseGitLog(raw: string): GitCommit[] {
-  return raw
-    .split(RECORD)
-    .map((record) => record.split(FIELD))
-    .filter((fields) => fields.length === 3 && HASH.test(fields[0].trim()))
-    .map(([hash, date, message]) => ({ hash: hash.trim(), stamp: localStamp(date.trim()), message: message.trim() }))
-    .filter((commit): commit is GitCommit => commit.stamp !== null && STAMP.test(commit.stamp));
+/**
+ * Saída de `git log --first-parent -m --name-status --format=GIT_LOG_FORMAT` em
+ * passos da branch (ainda sem `commits`). Registro torto ou data inválida é ignorado.
+ */
+export function parseFirstParentLog(raw: string): GitChange[] {
+  const changes: GitChange[] = [];
+  for (const record of raw.split(RECORD)) {
+    const fields = record.split(FIELD);
+    if (fields.length !== 5) continue;
+    const [hash, parents, date, message, nameStatus] = fields.map((field) => field.trim());
+    const stamp = localStamp(date);
+    if (!HASH.test(hash) || stamp === null || !STAMP.test(stamp)) continue;
+    // `-m` repete o registro de um merge por pai em git antigo; vale o 1º (contra o 1º pai).
+    if (changes.some((change) => change.hash === hash)) continue;
+    const files = nameStatus
+      .split(/\r?\n/)
+      .map((line) => NAME_STATUS.exec(line))
+      .filter((match): match is RegExpExecArray => match !== null)
+      .map((match) => ({ status: match[1], path: match[2] }));
+    changes.push({ hash, parents: parents.split(/\s+/).filter(Boolean), stamp, message, files, commits: [] });
+  }
+  return changes;
 }
 
-function firstParagraph(lines: readonly string[]): string {
+/**
+ * O passo chega ao app (mexe em main, preload ou renderer) e não trouxe a novidade escrita à mão
+ * (nenhum JSON novo em `./notes/`, senão ela sairia duas vezes).
+ */
+export function reachesAppWithoutNote(files: readonly ChangedFile[]): boolean {
+  return (
+    files.some((file) => APP_DIRS.some((dir) => file.path.startsWith(dir))) &&
+    !files.some((file) => file.status === 'A' && file.path.startsWith(NOTES_DIR))
+  );
+}
+
+function lines(message: string): string[] {
+  return message.split(/\r?\n/);
+}
+
+function firstParagraph(body: readonly string[]): string {
   let start = 0;
-  while (start < lines.length && lines[start].trim() === '') start++;
+  while (start < body.length && body[start].trim() === '') start++;
   const paragraph: string[] = [];
-  for (let i = start; i < lines.length && lines[i].trim() !== ''; i++) paragraph.push(lines[i].trim());
+  for (let i = start; i < body.length && body[i].trim() !== ''; i++) paragraph.push(body[i].trim());
   // Trailer (`Co-Authored-By:`) ou lista de arquivos não é texto para o dono.
   if (paragraph.length === 0 || paragraph.every((line) => TRAILER.test(line)) || LIST_ITEM.test(paragraph[0])) return '';
   return paragraph.join(' ');
 }
 
+function isFeatOrFix(message: string): boolean {
+  return SUBJECT.test(lines(message)[0].trim());
+}
+
 /**
- * Só `feat:` e `fix:` (com ou sem escopo) viram novidade; o resto (chore, test,
- * docs, refactor, ci, merge) fica de fora. Título sem prefixo, escopo e `(t-…)`;
- * texto é o 1º parágrafo do corpo, ou o título quando não há corpo (ou
- * quando o 1º parágrafo é uma lista).
- * A chave segue o padrão dos arquivos (`AAAA-MM-DD-HHMM-slug.json`) para a
- * janela ordenar tudo junto.
+ * Título (`feat:`/`fix:`) e mensagem de onde sai o texto:
+ * - merge do GitHub: o título do PR (3ª linha) e o commit `feat`/`fix` mais antigo do PR;
+ * - outro merge (`Merge branch …` empurrado à mão): nenhum, porque o intervalo
+ *   dele pode trazer commits de PRs que já viraram novidade;
+ * - commit direto: ele mesmo.
  */
-export function commitsToNotes(commits: readonly GitCommit[]): Record<string, PatchNoteItem> {
+function sourceOf(change: GitChange): { subject: string; bodyFrom: string } | null {
+  const [first = '', ...rest] = lines(change.message);
+  if (change.parents.length < 2) return { subject: first.trim(), bodyFrom: change.message };
+  const oldest = change.commits.find(isFeatOrFix);
+  if (GITHUB_MERGE.test(first.trim())) {
+    const prTitle = rest.find((line) => line.trim() !== '')?.trim() ?? '';
+    return { subject: prTitle, bodyFrom: oldest ?? '' };
+  }
+  return null;
+}
+
+function capitalize(text: string): string {
+  return text.charAt(0).toLocaleUpperCase('pt-BR') + text.slice(1);
+}
+
+function clean(text: string): string {
+  return text.replace(TASK_ID, '').replace(PR_REF, '').trim();
+}
+
+/** Hashes desfeitos por um `Revert` (`This reverts commit <hash>`) em qualquer mensagem. */
+export function revertedHashes(changes: readonly GitChange[]): string[] {
+  const messages = changes.flatMap((change) => [change.message, ...change.commits]);
+  return messages.flatMap((message) => [...message.matchAll(REVERTS)].map((match) => match[1]));
+}
+
+/**
+ * Uma novidade por PR `feat:`/`fix:` (ou commit `feat:`/`fix:` feito direto na
+ * branch) que chega ao app; o resto (chore, test, docs, refactor, ci, revert,
+ * só scripts/servidor, PR com JSON próprio, PR desfeito depois) fica de fora.
+ * Título sem prefixo, escopo, `(t-…)` e `(#N)`; texto é o 1º parágrafo do corpo
+ * do commit `feat`/`fix` mais antigo do PR, ou o título quando não há texto ou
+ * quando ele é técnico (`JARGON`); a janela não repete o título como texto.
+ * A hora é a do merge (quando entrou na branch), para cair num dia que o dono
+ * ainda não viu. A chave segue o padrão dos arquivos
+ * (`AAAA-MM-DD-HHMM-slug.json`) para a janela ordenar tudo junto.
+ */
+export function changesToNotes(changes: readonly GitChange[]): Record<string, PatchNoteItem> {
+  const reverted = revertedHashes(changes);
   const notes: Record<string, PatchNoteItem> = {};
-  for (const commit of commits) {
-    const [subject = '', ...body] = commit.message.split(/\r?\n/);
-    const match = SUBJECT.exec(subject.trim());
-    if (!match) continue;
-    const stripped = match[3].replace(TASK_ID, '').trim();
+  for (const change of changes) {
+    if (!reachesAppWithoutNote(change.files)) continue;
+    if (reverted.some((hash) => change.hash.startsWith(hash))) continue;
+    const source = sourceOf(change);
+    const match = source && SUBJECT.exec(source.subject);
+    if (!source || !match) continue;
+    const stripped = clean(match[3]);
     if (stripped === '') continue;
-    const title = stripped.charAt(0).toLocaleUpperCase('pt-BR') + stripped.slice(1);
-    const text = firstParagraph(body).replace(TASK_ID, '').trim() || title;
-    notes[`./git/${commit.stamp}-${commit.hash.toLowerCase()}.json`] = { title, text };
+    const title = capitalize(stripped);
+    const body = firstParagraph(lines(source.bodyFrom).slice(1));
+    const text = (body !== '' && !JARGON.test(body) && capitalize(clean(body))) || title;
+    notes[`./git/${change.stamp}-${change.hash.slice(0, 8)}.json`] = { title, text };
   }
   return notes;
 }
 
+function git(cwd: string, args: readonly string[]): string {
+  return execFileSync('git', args, {
+    cwd,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+    timeout: 15_000,
+    maxBuffer: 32 * 1024 * 1024,
+  });
+}
+
 /**
- * Lê o git log de `cwd` desde `GIT_NOTES_SINCE`. Sem git, sem repositório ou
- * com erro devolve `[]`: o build segue só com os JSON.
+ * Lê a linha de 1º pai de `HEAD` em `cwd` desde `since`, com o que cada passo
+ * mudou e, nos merges que chegam ao app, os commits do PR. Sem git, sem
+ * repositório ou com erro devolve `[]`: o build segue só com os JSON.
  */
-export function readGitCommits(cwd: string, since: string = GIT_NOTES_SINCE): GitCommit[] {
+export function readGitChanges(cwd: string, since: string = GIT_NOTES_SINCE): GitChange[] {
   try {
-    const raw = execFileSync(
-      'git',
-      ['log', '--no-merges', `--since=${since}`, `--format=${GIT_LOG_FORMAT}`, 'HEAD'],
-      {
-        cwd,
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-        timeout: 15_000,
-        maxBuffer: 32 * 1024 * 1024,
-      },
+    const changes = parseFirstParentLog(
+      git(cwd, [
+        'log',
+        '--first-parent',
+        '-m',
+        '--name-status',
+        '--no-renames',
+        `--since=${since}`,
+        `--format=${GIT_LOG_FORMAT}`,
+        'HEAD',
+      ]),
     );
-    return parseGitLog(raw);
+    return changes.map((change) => {
+      if (change.parents.length < 2 || !reachesAppWithoutNote(change.files)) return change;
+      const raw = git(cwd, [
+        'log',
+        '--reverse',
+        '--no-merges',
+        `--format=${RECORD}%B`,
+        `${change.parents[0]}..${change.hash}`,
+      ]);
+      const commits = raw
+        .split(RECORD)
+        .map((message) => message.trim())
+        .filter(Boolean);
+      return { ...change, commits };
+    });
   } catch {
     return [];
   }
@@ -135,7 +268,7 @@ export function gitPatchNotes(): Plugin {
     resolveId: (id) => (id === GIT_NOTES_MODULE ? RESOLVED_GIT_NOTES_MODULE : null),
     load(id) {
       if (id !== RESOLVED_GIT_NOTES_MODULE) return null;
-      return `export default ${JSON.stringify(commitsToNotes(readGitCommits(root)))};`;
+      return `export default ${JSON.stringify(changesToNotes(readGitChanges(root)))};`;
     },
   };
 }
