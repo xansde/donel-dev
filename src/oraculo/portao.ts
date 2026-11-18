@@ -268,7 +268,7 @@ export function callerFromPicture(mine: PictureSession): LedgerCaller | string {
 }
 
 /** The boards the picture has (each from its freshest session): folder → its places and its saved board. */
-function picturedBoards(picture: BoardPicture | null): Map<string, { readonly listar: readonly unknown[]; readonly board?: MindscapeBoard }> {
+export function picturedBoards(picture: BoardPicture | null): Map<string, { readonly listar: readonly unknown[]; readonly board?: MindscapeBoard }> {
   const fresh = new Map<string, { at: number; listar: readonly unknown[]; board?: MindscapeBoard }>();
   for (const session of Object.values(picture?.sessoes ?? {})) {
     const pasta = session.quemSou.pasta;

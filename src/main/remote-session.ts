@@ -100,6 +100,12 @@ export interface RemoteSetupInput {
    * it is gone, the setup answers `gone` and prepares nothing in its folder.
    */
   readonly attachOnly?: boolean;
+  /**
+   * t-1a3f7150 — the first message goes to the CLI as its positional prompt, read from `$S/pedido`, which the
+   * `claude.sh` removes before the `exec`: it never sits in `meta.launchArgs` (a resume reuses those) nor in a second
+   * run of the script. Only the Oráculo daemon's opening with the PC off sets it.
+   */
+  readonly firstPromptFile?: boolean;
 }
 
 export type RemoteSetupResult =
@@ -196,7 +202,9 @@ export function buildRemoteSetupScript(input: RemoteSetupInput): string {
     // Proxy de saída (scripts/proxy-saida): written by its VPS installer; only sessions started after the install pick it up.
     'if [ -r "$HOME/.donel/proxy-saida.env" ]; then . "$HOME/.donel/proxy-saida.env"; fi',
     ...bypassEnvLines(input.claudeArgs),
-    `exec claude ${input.claudeArgs.map(renderArg).join(' ')}`,
+    // `--` before the prompt: `--mcp-config` and `--allowedTools` take many values and would swallow it.
+    ...(input.firstPromptFile ? ['set --', 'if [ -f "$S/pedido" ]; then set -- -- "$(cat "$S/pedido")"; rm -f "$S/pedido"; fi'] : []),
+    `exec claude ${input.claudeArgs.map(renderArg).join(' ')}${input.firstPromptFile ? ' "$@"' : ''}`,
     '',
   ].join('\n');
   const runScript = [
