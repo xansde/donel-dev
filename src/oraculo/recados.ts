@@ -8,7 +8,8 @@
 //   `campo_livre` of ~/bin/rotinas/despertador_sessoes.py), and confirmed by the next UserPromptSubmit hook (`ocupada`)
 //   carrying its label, or by the label in the transcript. Unconfirmed in 20 s it goes back to the queue, what it left in
 //   the field is cleared (Ctrl+U, only when the field shows it), and the session is not typed into again for 2 min (a
-//   new end of turn delivers it); at most two typings per item. A session no hook spoke of since the daemon came up
+//   new end of turn delivers it); at most two typings per item. Another Enter (a long text can swallow the first) goes
+//   only on a field that still shows the item, and a typing tmux refused counts as one (no retry every tick). A session no hook spoke of since the daemon came up
 //   (a restart, a session opened before the hook was installed) is stopped when the screen and the transcript say so:
 //   the last turn of the transcript ended and has been quiet for 10 s, the field is empty and the CLI does not say
 //   "esc to interrupt". The same check revives a session the hooks left "ocupada" for over a minute (a lost Stop).
@@ -366,8 +367,12 @@ function nameOf(who: Record<string, unknown>): string {
   return 'sessão';
 }
 
-function taskIdsOf(call: LedgerToolCall): string[] | undefined {
-  if (call.tool === 'tarefa_lote') return call.itens.map((item) => item.id);
+/** The calls that work a task (taking it on, reporting on it, delivering it): only these make it follow a renewal. */
+const RENEWAL_TOOLS: ReadonlySet<LedgerToolCall['tool']> = new Set(['tarefa_assumir', 'tarefa_andamento', 'tarefa_entregar']);
+
+/** The task a call works on; `undefined` for a read (tarefa_ver), a list or anything else (it takes nothing). */
+function workedTaskIds(call: LedgerToolCall): string[] | undefined {
+  if (!RENEWAL_TOOLS.has(call.tool)) return undefined;
   return 'id' in call && typeof call.id === 'string' && call.id ? [call.id] : undefined;
 }
 
@@ -405,6 +410,11 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     const path = await transcriptPath(sid);
     const turn = path ? await lastTurn(path) : null;
     return turn !== null && turn.ended && now() - turn.at >= QUIET_MS;
+  }
+  /** A typed item's label in its session's transcript (the known one, else found by the sid): it came in. */
+  async function typedInTranscript(sid: string, id: string): Promise<boolean> {
+    const path = await transcriptPath(sid);
+    return path ? transcriptHas(path, tagOf(id)) : false;
   }
   let timer: ReturnType<typeof setInterval> | null = null;
   let ticking = false;
@@ -561,23 +571,34 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
         const sid = item.para.sid;
         const since = at - (item.digitadoEm ?? at);
         if (since >= CONFIRM_MS) {
-          const path = transcripts.get(sid);
-          const seen = path ? await transcriptHas(path, tagOf(item.id)) : false;
-          update(
+          const seen = await typedInTranscript(sid, item.id);
+          const changed = update(
             (candidate) => candidate.id === item.id && candidate.estado === 'digitado',
             (candidate) => (seen ? { ...candidate, estado: 'entregue', via: 'transcript', entregueEm: now() } : { ...candidate, estado: 'fila' }),
           );
           enters.delete(item.id);
           if (moodOf(sid) === 'digitando') moods.delete(sid);
-          if (!seen) {
-            // Its Enter never went in: what it left in the field goes, and the screen is not trusted for a while.
+          // Only when it really went back to the queue (a hook may have confirmed it meanwhile, and the field is then
+          // someone else's): its Enter never went in, what it left in the field goes, and the screen waits a while.
+          if (!seen && changed.length) {
             holds.set(sid, now() + HOLD_MS);
             const screen = await tmux.screen(sid);
             if (screen && !screen.inMode && fieldHoldsOnly(screen.text, [tagOf(item.id)])) await tmux.clear(sid);
           }
         } else if (since >= ENTER_AGAIN_MS && (enters.get(item.id) ?? 0) < MAX_ENTERS) {
+          // It came in already (a session with no hook to say so): confirmed, and the field is no longer ours.
+          if (await typedInTranscript(sid, item.id)) {
+            update(
+              (candidate) => candidate.id === item.id && candidate.estado === 'digitado',
+              (candidate) => ({ ...candidate, estado: 'entregue', via: 'transcript', entregueEm: now() }),
+            );
+            enters.delete(item.id);
+            if (moodOf(sid) === 'digitando') moods.delete(sid);
+            continue;
+          }
+          // Another Enter only on a field that still shows this recado: never on someone's draft.
           const screen = await tmux.screen(sid);
-          if (screen && !screen.inMode && fieldIsFree(screen.text).reason.startsWith('campo com texto')) {
+          if (screen && !screen.inMode && fieldHoldsOnly(screen.text, [tagOf(item.id)])) {
             enters.set(item.id, (enters.get(item.id) ?? 0) + 1);
             await tmux.enter(sid);
           }
@@ -602,10 +623,11 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
         moods.set(sid, { mood: 'digitando', at: now() });
         const ok = await tmux.type(sid, typed.map((item) => typeable(item.texto)).join('   '));
         if (!ok) {
-          const back = new Set(typed.map((item) => item.id));
-          update((item) => back.has(item.id) && item.estado === 'digitado', (item) => ({ ...item, estado: 'fila', tentativas: item.tentativas - 1 }));
-          moods.delete(sid);
-          log(`tmux recusou digitar na sessão ${sid}; fica para o fim do turno.`);
+          // The text may be in the field already (only the Enter failed): the items stay typed, counted, so a later
+          // Enter is confirmed by the prompt hook, the field is cleared if unconfirmed in 20 s, and the screen waits
+          // 2 min (never a retry every tick).
+          holds.set(sid, now() + HOLD_MS);
+          log(`tmux recusou digitar na sessão ${sid}; confere em 20 s e fica para o fim do turno.`);
         }
       }
     } catch (error) {
@@ -628,7 +650,9 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       if ('erro' in target) return { kind: 'error', text: target.erro };
       if ('liderUnico' in target) return 'repassar';
       const word = call.para.trim().toLowerCase();
-      if (word !== BOARD_LEADER && word !== MY_OPENER && !linked(projectPath, board, places, me, target.placeId))
+      // A renewed place's old id: the link the caller had to it holds for its successor.
+      const renewedFrom = 'renovadoDe' in target ? target.renovadoDe : undefined;
+      if (word !== BOARD_LEADER && word !== MY_OPENER && !linked(projectPath, board, places, me, target.placeId) && !(renewedFrom && linked(projectPath, board, places, me, renewedFrom)))
         return {
           kind: 'error',
           text: `Sem ligação: não há seta do seu lugar (${me}) para "${target.placeId}". Peça ao dono, ou use sessao_abrir. Para o Líder do quadro, "para": "${BOARD_LEADER}"; para quem abriu você, "para": "${MY_OPENER}".`,
@@ -638,7 +662,13 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       const item = enqueue({ lugar: me, nome: nameOf(who), sid }, { lugar: target.placeId, sid: targetSid }, `${call.tarefa ? `[${call.tarefa}] ` : ''}${call.texto}`);
       return {
         kind: 'text',
-        text: JSON.stringify({ entregue: item.estado === 'entregue' ? 'entregue' : 'na-fila', id: item.id, para: target.placeId, como: HOW }),
+        text: JSON.stringify({
+          entregue: item.estado === 'entregue' ? 'entregue' : 'na-fila',
+          id: item.id,
+          para: target.placeId,
+          ...(renewedFrom ? { renovado: `${renewedFrom} fechou; foi para o lugar que o sucede (${target.placeId}). Use esse id daqui em diante.` } : {}),
+          como: HOW,
+        }),
       };
     },
 
@@ -648,8 +678,9 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       const places = listedPlaces(mine.listar);
       const closed = places.filter((place) => place.estado === 'fechada' && successorOf(mine.board, places, place.id) === caller.placeId);
       if (!closed.length) return;
-      // Only the task the call is about follows (§6): a listar, criar or novidades takes nothing.
-      const ids = taskIdsOf(call);
+      // Only the task the call works on follows (§6): a read (tarefa_ver), listar, criar or novidades takes nothing, so
+      // a sibling of the same role that only looks at it never takes it.
+      const ids = workedTaskIds(call);
       if (!ids?.length) return;
       for (const place of closed) {
         const passed = await followRenewal(service, { projectPath: caller.projectPath, placeId: place.id, to: caller.placeId, ids });

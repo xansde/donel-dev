@@ -3,9 +3,11 @@
 // What breaks without the owner noticing: a message that vanishes or arrives twice, a "para" by role that picks the
 // wrong place, a Revisor in the Dev's own chain getting a direct line, and a task stuck on a place that closed when
 // its successor (same role, same opener) is the one calling.
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, nodeLedgerProofFs, runLedgerTool, type LedgerCaller } from '../src/main/ledger-store';
@@ -79,11 +81,15 @@ function setup(options: { picture?: BoardPicture; withLedger?: boolean } = {}) {
   /** The last turn in each session's transcript (absent = no transcript found). */
   const turns = new Map<string, { ended: boolean; at: number }>();
   const inTranscript = new Map<string, string[]>();
+  /** The next `type` answers this once (a tmux that refused, or took the text and not the Enter). */
+  const typeAnswers: boolean[] = [];
+  /** Runs while the transcript is read (a hook arriving in the middle of a tick). */
+  const duringTranscriptRead: { fn?: () => Promise<void> } = {};
   const tmux: RecadosTmux = {
     screen: async (sid) => ({ inMode: false, text: screens.get(sid) ?? screen('') }),
     type: async (sid, text) => {
       typed.push({ sid, text });
-      return true;
+      return typeAnswers.shift() ?? true;
     },
     enter: async (sid) => {
       enters.push(sid);
@@ -108,7 +114,12 @@ function setup(options: { picture?: BoardPicture; withLedger?: boolean } = {}) {
       relay: async (message) => relayed.push(message),
       transcriptOf: async (sid) => `/transcripts/${sid}.jsonl`,
       lastTurn: async (path) => turns.get(path.replace(/^.*\/|\.jsonl$/g, '')) ?? null,
-      transcriptHas: async (path, label) => (inTranscript.get(path.replace(/^.*\/|\.jsonl$/g, '')) ?? []).some((line) => line.includes(label)),
+      transcriptHas: async (path, label) => {
+        const fn = duringTranscriptRead.fn;
+        duringTranscriptRead.fn = undefined;
+        if (fn) await fn();
+        return (inTranscript.get(path.replace(/^.*\/|\.jsonl$/g, '')) ?? []).some((line) => line.includes(label));
+      },
       now: () => clock,
       log: () => undefined,
     });
@@ -123,6 +134,8 @@ function setup(options: { picture?: BoardPicture; withLedger?: boolean } = {}) {
     cleared,
     turns,
     inTranscript,
+    typeAnswers,
+    duringTranscriptRead,
     relayed,
     clock: () => clock,
     make,
@@ -146,6 +159,15 @@ describe('resolveAddress: o "para" de um recado', () => {
     const gone = LISTAR.map((p) => (p.id === DEV ? { ...p, estado: 'fechada' } : p));
     expect(resolveAddress(BOARD, gone, REV, 'dev')).toMatchObject({ erro: expect.any(String) });
     expect(resolveAddress(BOARD, LISTAR, REV, 'dalton')).toMatchObject({ erro: expect.any(String) });
+  });
+
+  it('id antigo de um lugar fechado vai ao sucessor (o único vivo do mesmo papel e do mesmo pai); dois candidatos = o id dado', () => {
+    const NEW = 'place:dev-novo';
+    const renewed = boardOf([...Object.values(BOARD.cards), place(NEW, 'dev', 'session')], [...BOARD.links, { id: 'l3', from: LIDER, to: NEW, arrow: true, by: 'session', opened: true }]);
+    const listar = [...LISTAR.map((p) => (p.id === DEV ? { ...p, estado: 'fechada' } : p)), { id: NEW, papel: 'dev', estado: 'trabalhando', abertaPor: LIDER }];
+    expect(resolveAddress(renewed, listar, REV, DEV)).toEqual({ placeId: NEW, renovadoDe: DEV });
+    expect(resolveAddress(renewed, [...listar, { id: 'place:dev-3', papel: 'dev', estado: 'parada', abertaPor: LIDER }], REV, DEV)).toEqual({ placeId: DEV });
+    expect(resolveAddress(BOARD, LISTAR, REV, DEV)).toEqual({ placeId: DEV }); // alive: itself
   });
 
   it('id de lugar, "lider-quadro", "quem-me-abriu" e "lider"', () => {
@@ -367,6 +389,100 @@ describe('Recados em fila: sessão nunca ouvida (daemon reiniciado, hook instala
   });
 });
 
+const itemOf = (file: string, id: string) => (JSON.parse(readFileSync(file, 'utf8')) as { items: { id: string; estado: string; via?: string; tentativas: number }[] }).items.find((i) => i.id === id);
+
+describe('Recados em fila: o campo de quem está digitando é dele', () => {
+  it('Enter de novo só com o próprio recado no campo; o transcript confirma e para os Enters', async () => {
+    const g = setup();
+    const recados = g.make();
+    await deliveredTask(g.ledger!);
+    g.turns.set(SID_REV, { ended: true, at: g.clock() - 60_000 });
+    const sent = JSON.parse(textOf(await recados.enviar(SID_DEV, g.picture.sessoes[SID_DEV]!, { tool: 'sessao_enviar', para: REV, texto: 'revisa' }))) as { id: string };
+    await recados.tick();
+    expect(g.typed).toHaveLength(1);
+    g.advance(6_000);
+    g.screens.set(SID_REV, screen('rascunho do dono'));
+    await recados.tick();
+    expect(g.enters).toEqual([]); // someone's draft: never sent
+    g.screens.set(SID_REV, screen(g.typed[0]!.text));
+    await recados.tick();
+    expect(g.enters).toEqual([SID_REV]); // its own text stuck in the field
+    g.inTranscript.set(SID_REV, [g.typed[0]!.text]);
+    g.screens.set(SID_REV, screen('[Pasted text #2]')); // the owner's paste, after the recado went in
+    g.advance(2_000);
+    await recados.tick();
+    expect(g.enters).toEqual([SID_REV]);
+    expect(itemOf(g.file, sent.id)).toMatchObject({ estado: 'entregue', via: 'transcript' });
+  });
+
+  it('confirmado pelo hook no meio da conferência: o campo (agora do dono) não é apagado', async () => {
+    const g = setup();
+    const recados = g.make();
+    await deliveredTask(g.ledger!);
+    g.turns.set(SID_REV, { ended: true, at: g.clock() - 60_000 });
+    const sent = JSON.parse(textOf(await recados.enviar(SID_DEV, g.picture.sessoes[SID_DEV]!, { tool: 'sessao_enviar', para: REV, texto: 'revisa' }))) as { id: string };
+    await recados.tick();
+    g.advance(21_000);
+    g.screens.set(SID_REV, screen('[Pasted text #3]'));
+    g.duringTranscriptRead.fn = async () => {
+      await recados.hook('ocupada', tmuxHeader(SID_REV), hookBody(SID_REV, { prompt: g.typed[0]!.text }));
+    };
+    await recados.tick();
+    expect(g.cleared).toEqual([]);
+    expect(itemOf(g.file, sent.id)).toMatchObject({ estado: 'entregue', via: 'tela' });
+  });
+
+  it('tmux falhou ao digitar: não tenta a cada 2 s, e um Enter depois é confirmado sem duplicar no fim de turno', async () => {
+    const g = setup();
+    const recados = g.make();
+    await deliveredTask(g.ledger!);
+    g.turns.set(SID_REV, { ended: true, at: g.clock() - 60_000 });
+    const sent = JSON.parse(textOf(await recados.enviar(SID_DEV, g.picture.sessoes[SID_DEV]!, { tool: 'sessao_enviar', para: REV, texto: 'sem enter' }))) as { id: string };
+    g.typeAnswers.push(false); // the text went in, the Enter did not
+    await recados.tick();
+    expect(itemOf(g.file, sent.id)).toMatchObject({ estado: 'digitado', tentativas: 1 });
+    for (let i = 0; i < 30; i += 1) {
+      g.advance(2_000);
+      await recados.tick();
+    }
+    expect(g.typed).toHaveLength(1); // a minute of ticks, one typing
+    // Somebody presses Enter on what was left: the prompt carries its label, so it counts as delivered.
+    await recados.hook('ocupada', tmuxHeader(SID_REV), hookBody(SID_REV, { prompt: g.typed[0]!.text }));
+    expect(itemOf(g.file, sent.id)).toMatchObject({ estado: 'entregue', via: 'tela' });
+    expect(JSON.parse((await recados.hook('fim-de-turno', tmuxHeader(SID_REV), hookBody(SID_REV))).body)).toEqual({});
+  });
+});
+
+describe.skipIf(process.platform === 'win32')('recados-hook.sh: só a CLI do próprio painel pede os recados', () => {
+  it('a sessão leva os recados dela; um claude -p rodado de dentro dela (mesmo tmux) não leva nada', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'recados-hook-'));
+    dirs.push(dir);
+    const bin = join(dir, 'bin');
+    mkdirSync(bin);
+    const called = join(dir, 'curl-chamado');
+    const tool = (name: string, body: string): void => {
+      writeFileSync(join(bin, name), body);
+      chmodSync(join(bin, name), 0o755);
+    };
+    // The pane's process is the outer "claude"; a nested one is a claude run by it, with the same tmux.
+    tool('tmux', `#!/bin/sh\ncase "$*" in *pane_pid*) echo "$FAKE_PANE_PID" ;; *) echo donel-${SID_DEV} ;; esac\n`);
+    tool('curl', `#!/bin/sh\ncat > '${called}'\necho '{"decision":"block","reason":"recado"}'\n`);
+    tool('claude', '#!/bin/bash\n[ -n "${FAKE_PANE_PID:-}" ] || export FAKE_PANE_PID=$$\nif [ "${1:-}" = dentro ]; then "$0"; exit $?; fi\nprintf \'{}\' | bash "$HOOK" fim-de-turno\nexit $?\n');
+    const { FAKE_PANE_PID: _drop, ...base } = process.env;
+    const env = { ...base, PATH: `${bin}:${process.env.PATH ?? ''}`, TMUX: '/tmp/fake-tmux,1,0', HOOK: fileURLToPath(new URL('../scripts/vps/recados-hook.sh', import.meta.url)) };
+
+    const own = spawnSync(join(bin, 'claude'), [], { env, encoding: 'utf8', timeout: 20_000 });
+    expect(own.stdout).toContain('"decision":"block"');
+    expect(existsSync(called)).toBe(true);
+    rmSync(called);
+
+    const nested = spawnSync(join(bin, 'claude'), ['dentro'], { env, encoding: 'utf8', timeout: 20_000 });
+    expect(nested.status).toBe(0);
+    expect(nested.stdout).toBe('');
+    expect(existsSync(called)).toBe(false);
+  });
+});
+
 describe('depoisDaTarefa: avisos da entrega e do veredito', () => {
   it('entrega avisa o Revisor de fora (fila) e quem está acima (relay); a devolução chega ao Dev com o motivo', async () => {
     const g = setup();
@@ -416,6 +532,8 @@ describe('antesDaTarefa: tarefa de lugar fechado passa ao sucessor', () => {
     // A call about no task (listar, criar, novidades) takes nothing: only the task it is about follows.
     await recados.antesDaTarefa(caller, mine, { tool: 'tarefa_listar' });
     await recados.antesDaTarefa(caller, mine, { tool: 'tarefa_novidades' });
+    // Only looking at it takes nothing either: a sibling of the same role reading it never becomes its owner.
+    await recados.antesDaTarefa(caller, mine, { tool: 'tarefa_ver', id });
     expect(g.ledger!.load().doc.tasks[id]!.ownerPlaceId).toBe(DEV);
     await recados.antesDaTarefa(caller, mine, { tool: 'tarefa_andamento', id, estado: 'trabalhando' });
     const task = g.ledger!.load().doc.tasks[id]!;

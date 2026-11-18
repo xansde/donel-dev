@@ -1,7 +1,8 @@
 // Canal do Donel fora do PC (t-e195b35c, item 13) — whom the "para" of a `sessao_enviar` means, from the saved board
 // and the list of places (what the VPS gate has). Pure. The reach rules stay in reach.ts; this only names the target:
 //
-// - a place id of the board;
+// - a place id of the board; a closed one whose successor (`successorOf`: same role, same opener, the only live one)
+//   is known means that successor, said in `renovadoDe` (the old ids of renewed places, item 13);
 // - "lider-quadro" (`BOARD_LEADER`): the Líder of the caller's board (`boardLeaders`), a live one first;
 // - "quem-me-abriu" (`MY_OPENER`): the place that opened the caller (`openersOf`, then `abertaPor` of the list);
 // - "lider" (`LEADER_OF_ALL`): the Líder único, which has no place;
@@ -10,9 +11,9 @@
 
 import { LEADER_OF_ALL } from './leader';
 import type { MindscapeBoard } from './model';
-import { BOARD_LEADER, boardLeaders, isBoardLeader, isLiveListedPlace, listedRoleOf, MY_OPENER, openersOf, type ListedPlace } from './reach';
+import { BOARD_LEADER, boardLeaders, isBoardLeader, isLiveListedPlace, listedRoleOf, MY_OPENER, openersOf, successorOf, type ListedPlace } from './reach';
 
-export type AddressResult = { readonly placeId: string } | { readonly liderUnico: true } | { readonly erro: string };
+export type AddressResult = { readonly placeId: string; readonly renovadoDe?: string } | { readonly liderUnico: true } | { readonly erro: string };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -52,7 +53,11 @@ export function resolveAddress(board: MindscapeBoard | undefined, places: readon
     return { placeId: opener };
   }
   const isPlace = board?.cards[raw]?.kind === 'session' || places.some((place) => place.id === raw);
-  if (isPlace) return raw === fromPlaceId ? { erro: 'Não mandei: este é o seu próprio lugar.' } : { placeId: raw };
+  if (isPlace) {
+    if (raw === fromPlaceId) return { erro: 'Não mandei: este é o seu próprio lugar.' };
+    const successor = places.find((place) => place.id === raw)?.estado === 'fechada' ? successorOf(board, places, raw) : undefined;
+    return successor && successor !== fromPlaceId ? { placeId: successor, renovadoDe: raw } : { placeId: raw };
+  }
 
   // A role id: the one live place with it (never the caller itself).
   const ids = new Set([...places.map((place) => place.id), ...Object.keys(board?.cards ?? {})]);

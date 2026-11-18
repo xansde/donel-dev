@@ -13,8 +13,8 @@
 #     "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "~/.donel/bin/recados-hook.sh ocupada", "timeout": 3 }] }]
 #   }
 #
-# Outside a Donel session (tmux session "donel-<sid>"), with the gate down or answering an error, it prints nothing and
-# exits 0: the CLI goes on as if there were no hook. Port: DONEL_PORTAO_PORT (default 47817, the gate's).
+# Outside a Donel session (tmux session "donel-<sid>"), from a CLI run inside one (a `claude -p` of its Bash), with the
+# gate down or answering an error, it prints nothing and exits 0: the CLI goes on as if there were no hook. Port: DONEL_PORTAO_PORT (default 47817, the gate's).
 
 evento="${1:-}"
 case "$evento" in
@@ -30,6 +30,35 @@ case "$nome" in
   donel-*) ;;
   *) cat >/dev/null 2>&1; exit 0 ;;
 esac
+
+# Only the CLI of the pane itself. A `claude -p` the session runs from its Bash inherits TMUX and TMUX_PANE, so its
+# hooks would name the same tmux session and take (and run) the recados that wait for it, or mark it stopped while it
+# works. From this hook up to the pane's process there must be ONE Claude CLI: two = a CLI inside the session's CLI.
+e_cli() {
+  local comm args
+  comm="$(ps -o comm= -p "$1" 2>/dev/null)" || return 1
+  [ "${comm##*/}" = "claude" ] && return 0
+  args="$(ps -o args= -p "$1" 2>/dev/null)" || return 1
+  local -a argv
+  read -r -a argv <<<"$args"
+  [ "${argv[0]##*/}" = "claude" ] || [ "${argv[1]##*/}" = "claude" ] || case "${argv[1]:-}" in */claude-code/cli.js | */claude-code/cli.mjs) true ;; *) false ;; esac
+}
+painel="$(tmux display-message -p '#{pane_pid}' 2>/dev/null || true)"
+case "$painel" in
+  '' | *[!0-9]*) cat >/dev/null 2>&1; exit 0 ;;
+esac
+clis=0
+pid="$PPID"
+for _ in $(seq 1 40); do
+  case "$pid" in '' | *[!0-9]* | 0 | 1) cat >/dev/null 2>&1; exit 0 ;; esac
+  if e_cli "$pid"; then clis=$((clis + 1)); fi
+  [ "$pid" = "$painel" ] && break
+  pid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')"
+done
+if [ "$pid" != "$painel" ] || [ "$clis" -gt 1 ]; then
+  cat >/dev/null 2>&1
+  exit 0
+fi
 
 saida="$(curl -s -f --max-time 2 --data-binary @- \
   -H 'Content-Type: application/json' \
