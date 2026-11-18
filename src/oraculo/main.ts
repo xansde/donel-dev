@@ -40,6 +40,7 @@ import { createLedgerMirror, type LedgerMirror } from '../main/ledger-mirror/mir
 import { createSupabaseSink } from '../main/ledger-mirror/supabase-sink';
 import { createProofReader } from '../main/ledger-mirror/cartas';
 import { withPlaceMemory, type PlaceInfo, type PlaceInfoOf } from '../shared/ledger/mirror';
+import { SERVICE_PLACE_PREFIX, SERVICE_ROLE } from '../shared/ledger/contract';
 import { createDecisoesConsumer, createDecisoesQueue, DECISOES_CONFIG_FILE, NOTAS_PAGINAS_FILE, readImportList } from './decisoes';
 import { createTarefasPedidasConsumer, createTarefasPedidasQueue, readQuadroTarefas } from './tarefas-pedidas';
 
@@ -111,6 +112,43 @@ async function exportSupabase(dir: string, target: string | undefined): Promise<
   return 0;
 }
 
+/**
+ * t-5839d76b — data fix with the daemon STOPPED: `--cancelar-offline t-a,t-b --motivo "..."` cancels a service's own
+ * cards (owner `servico:*`) in the Supabase, signed by that service, as the service itself would. Only service cards:
+ * any other task goes through the Oráculo. Refuses while the daemon answers (it keeps the ledger in memory).
+ */
+async function cancelOffline(dir: string, ids: string | undefined, reason: string | undefined): Promise<number> {
+  const deps = supabaseLedgerDeps(dir);
+  if (!deps || !ids || !reason?.trim()) {
+    console.error(`[cancelar] uso: --cancelar-offline <ids,separados> --motivo "<texto>", com ${LEDGER_SUPABASE_FILE} válido`);
+    return 2;
+  }
+  try {
+    const url = readFileSync(join(dir, 'url'), 'utf8').trim();
+    await fetch(`${url}/v1/ledger`, { signal: AbortSignal.timeout(1500) });
+    console.error('[cancelar] o daemon está no ar: pare-o antes (systemctl --user stop donel-oraculo)');
+    return 1;
+  } catch {
+    // not answering: safe to write
+  }
+  const remote = await readSupabaseLedger(deps);
+  const store = createSupabaseLedgerStore(deps, remote);
+  const service = createLedgerService({ filePath: join(dir, 'ledger.json'), io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs, store });
+  let failed = 0;
+  for (const id of ids.split(',').map((item) => item.trim()).filter(Boolean)) {
+    const task = service.load().doc.tasks[id];
+    if (!task || !task.ownerPlaceId.startsWith(SERVICE_PLACE_PREFIX)) {
+      console.log(JSON.stringify({ id, ok: false, motivo: task ? `não é carta de serviço (${task.ownerPlaceId})` : 'não existe' }));
+      failed += 1;
+      continue;
+    }
+    const result = await service.apply({ kind: 'lugar', placeId: task.ownerPlaceId, roleId: SERVICE_ROLE }, { op: 'cancelar', id, reason: reason.trim() });
+    console.log(JSON.stringify({ id, ok: result.ok, antes: task.state, ...(result.ok ? { depois: result.task.state } : { motivo: result.reason }) }));
+    if (!result.ok) failed += 1;
+  }
+  return failed === 0 ? 0 : 1;
+}
+
 async function main(): Promise<void> {
   const dir = process.env.DONEL_ORACULO_DIR || join(homedir(), '.donel', 'oraculo');
   mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -125,6 +163,7 @@ async function main(): Promise<void> {
   const port = Number(process.env.DONEL_ORACULO_PORT) || ORACLE_PORT;
   const ledgerFile = join(dir, 'ledger.json');
   if (process.argv.includes('--semear-supabase')) process.exit(await seedSupabase(dir, ledgerFile));
+  if (process.argv.includes('--cancelar-offline')) process.exit(await cancelOffline(dir, process.argv[process.argv.indexOf('--cancelar-offline') + 1], process.argv[process.argv.indexOf('--motivo') + 1]));
   if (process.argv.includes('--exportar-supabase')) process.exit(await exportSupabase(dir, process.argv[process.argv.indexOf('--exportar-supabase') + 1]));
   // t-89279f84 — the Supabase as the source: read once here; unreachable = no daemon (systemd tries again), never an
   // empty ledger answering.
