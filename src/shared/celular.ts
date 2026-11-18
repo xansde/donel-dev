@@ -163,7 +163,7 @@ export interface EntregaCelular {
   readonly origem: 'esperando-voce' | 'amostra-revisor';
   readonly naipe: Naipe;
   readonly titulo: string;
-  /** A frase literal de quem pediu. */
+  /** O pedido como veio de quem pediu. */
   readonly pedido: string;
   /** O critério de pronto. */
   readonly criterio: string;

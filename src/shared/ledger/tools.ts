@@ -117,14 +117,14 @@ export const LEDGER_TOOLS = [
     name: 'tarefa_criar',
     title: 'Criar tarefa no Oráculo Harrow',
     description:
-      'Registra uma tarefa entre lugares do quadro: um título humano, a frase literal de quem pediu, o critério de pronto, o prazo, o lugar dono do trabalho e o risco. Nasce "aberta". Vale o risco que você declara, também numa tarefa sua: registre o que você mesmo resolve, sem medo de cair no dono. Risco baixo entregue com prova fecha por um Revisor vivo de fora da cadeia de quem entregou ou, sem Revisor, sozinho com a prova, marcado no registro; risco alto espera o dono. ' +
-      'Quando sobe ao dono (risco alto): difícil de desfazer (main, repo público, apagar, credencial, conta, dinheiro); toca outra pessoa ou algo de fora de forma que comprometa; gasta o que é do dono (limite de conta, VPS, a hora dele); muda a forma do que ele vê e há 2 jeitos bons (sobe com protótipo, nunca com descrição); contradiz o que ele disse ou sai do pedido. ' +
-      'Não sobe: só uma opção defensável (decida e registre o porquê); escolha técnica reversível dentro do pedido; resposta já escrita em CLAUDE.md, ADR, memória ou decisão anterior; bug corrigido com teste; risco baixo que o Revisor aceita. Teste: sem uma pergunta numa frase, 2 opções reais e uma recomendação, a decisão não está pronta para subir.',
+      'Registra uma tarefa entre lugares do quadro: um título humano, o pedido como veio, o critério de pronto, o prazo, o lugar dono do trabalho e o risco. Nasce "aberta". Vale o risco que você declara, também numa tarefa sua: registre o que você mesmo resolve, sem medo de cair no dono. Risco baixo entregue com prova fecha por um Revisor vivo de fora da cadeia de quem entregou ou, sem Revisor, sozinho com a prova, marcado no registro; risco alto só nas travas do global, com carta pela skill carta-ao-dono. ' +
+      'Risco alto é só o que cabe ao dono: pagamento ou dinheiro, credencial nova, apagar dado dele, main, produção ou repo público; a entrega leva o paraODono, a carta que o dono lê. ' +
+      'Todo o resto é risco baixo e você decide sozinho, registrando o porquê: escolha técnica reversível, forma de tela (se ambígua, com um protótipo que vai junto da entrega, sem esperar ninguém), o que já está em CLAUDE.md, ADR ou memória, bug corrigido com teste.',
     inputSchema: {
       type: 'object',
       properties: {
         titulo: { type: 'string', description: `Nome humano da tarefa, até ${MAX_TITLE_CHARS} caracteres, sem código. Ex.: "Fase 2 da VPS: senhas e logins".` },
-        pedido: { type: 'string', description: 'A frase LITERAL de quem pediu, sem resumir.' },
+        pedido: { type: 'string', description: 'O pedido como veio de quem pediu.' },
         criterio: { type: 'string', description: 'Pronto quando… (o que a prova tem de mostrar).' },
         prazo: { type: 'string', description: 'Data AAAA-MM-DD.' },
         dono: { type: 'string', description: 'Id do lugar que faz o trabalho (sessao_listar); padrão: o seu. Líder, Curador e Pesquisa dizem sempre o lugar que faz o trabalho, nunca o próprio.' },

@@ -1,10 +1,13 @@
 // Novidades da versão — o que o dono vê na primeira abertura depois de atualizar.
 //
-// Cada novidade mora no próprio arquivo, em `./notes/AAAA-MM-DD-HHMM-slug.json`
-// (`{ "title": "...", "text": "..." }`), para dois PRs nunca mexerem na mesma
-// linha. Este módulo só monta a lista: um dia por data, o mais novo primeiro, e,
-// dentro do dia, o `HHMM` maior primeiro. Como acrescentar: CLAUDE.md, seção
+// Desde 18/11 as novidades saem do git log no build (`gitNotes.ts`: cada commit
+// `feat:`/`fix:` vira uma). As anteriores moram cada uma num arquivo,
+// `./notes/AAAA-MM-DD-HHMM-slug.json` (`{ "title": "...", "text": "..." }`), e
+// continuam valendo. Este módulo só monta a lista: um dia por data, o mais novo
+// primeiro, e, dentro do dia, o `HHMM` maior primeiro. Regra: CLAUDE.md, seção
 // "Alfa diário e novidades da versão".
+
+import gitNotes from 'virtual:donel-git-notes';
 
 export interface PatchNoteItem {
   readonly title: string;
@@ -49,6 +52,7 @@ export function buildPatchNotes(files: Readonly<Record<string, unknown>>): reado
   return days;
 }
 
-export const PATCH_NOTES: readonly PatchNoteDay[] = buildPatchNotes(
-  import.meta.glob('./notes/*.json', { eager: true, import: 'default' }),
-);
+export const PATCH_NOTES: readonly PatchNoteDay[] = buildPatchNotes({
+  ...import.meta.glob('./notes/*.json', { eager: true, import: 'default' }),
+  ...gitNotes,
+});
