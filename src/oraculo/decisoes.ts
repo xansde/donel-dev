@@ -121,8 +121,13 @@ function parseRow(value: unknown): DecisaoRow | null {
   };
 }
 
-/** The queue over PostgREST's RPCs (no profile header: the functions live in `public`). */
-export function createDecisoesQueue(config: BoardConfig, doFetch: Fetch = fetch): DecisoesQueue {
+/** The service_role's calls over PostgREST (the queue's RPCs, the mirror's PATCH); shared with tarefas-pedidas.ts. */
+export interface ServiceRequest {
+  request(path: string, method: 'POST' | 'PATCH', args: object, what: string): Promise<string>;
+  rpc(fn: string, args: object): Promise<unknown>;
+}
+
+export function createServiceRequest(config: BoardConfig, doFetch: Fetch = fetch): ServiceRequest {
   // Read at each call; an unreadable file says so without its path (someone might paste the key in the path field).
   const key = (): string => {
     try {
@@ -172,6 +177,12 @@ export function createDecisoesQueue(config: BoardConfig, doFetch: Fetch = fetch)
     }
   }
 
+  return { request, rpc };
+}
+
+/** The queue over PostgREST's RPCs (no profile header: the functions live in `public`). */
+export function createDecisoesQueue(config: BoardConfig, doFetch: Fetch = fetch): DecisoesQueue {
+  const { request, rpc } = createServiceRequest(config, doFetch);
   return {
     async tomar(limit) {
       const rows = await rpc('celular_decisoes_tomar', { p_limite: limit });
@@ -397,8 +408,11 @@ export function entregaMudou(row: DecisaoRow, task: LedgerTask): boolean {
  * texts are the ledger's own constants, so a rewording there cannot turn a disk failure into a lost decision.
  */
 function passing(outcome: DecisaoOutcome & { ok: false }): boolean {
-  if (outcome.reason !== 'recusada') return false;
-  const { message } = outcome;
+  return outcome.reason === 'recusada' && passingLedgerReason(outcome.message);
+}
+
+/** The ledger's own refusal that says it was not there to answer (also for tarefas-pedidas.ts). */
+export function passingLedgerReason(message: string): boolean {
   return (
     message === RETURNED_REASON ||
     message === LEDGER_NOT_OPEN ||
