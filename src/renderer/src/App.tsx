@@ -9,6 +9,7 @@ import {
   StateDot,
   StatusBar,
   TerminalTab,
+  TextInput,
   Toast,
   Toggle,
 } from '@donel-dev/design-system';
@@ -147,6 +148,8 @@ import { LeaderBrowserPanel } from './browser/LeaderBrowserPanel';
 import type { BrowserDirectorySession } from '../../shared/browser/directory';
 import { OracleCenter } from './OracleCenter';
 import { DEFAULT_LAYOUT_PREFS, showsOracle, toggleCenterView, type LayoutPrefs } from '../../shared/layoutPrefs';
+import { DEFAULT_ROUTER_PREFS, type RouterView } from '../../shared/routerPrefs';
+import { RouterConnections } from './RouterConnections';
 import type { PlaceNameOf } from '../../shared/ledger/labels';
 import type { TerminalPaneHandle } from './TerminalPane';
 
@@ -555,7 +558,14 @@ export function App(): React.JSX.Element {
   // Mindscape V1 — the mode selector has three values. Hill climbing took the place of the Modo Dev (05/11):
   // only the left bar's look stayed; the right bar and the old flow left.
   const [appMode, setAppMode] = useState<'geral' | 'hill' | 'mindscape'>('geral');
-  const hillOn = appMode === 'hill';
+  // Desktop roteador (plano 18/11, item 11) — with `router.enabled`, only the Chat do Líder and the Conexões show; the
+  // Oráculo, the Mindscape, Hill climbing, the sidebar, the Launcher and the other tabs are hidden, never unmounted
+  // (their PTYs live on). Off = the app as it was. Before the config arrives, the default (on).
+  const routerOn = appConfig ? appConfig.router.enabled : DEFAULT_ROUTER_PREFS.enabled;
+  const [routerView, setRouterView] = useState<RouterView>('lider');
+  const [routerDraft, setRouterDraft] = useState('');
+  const [routerSendError, setRouterSendError] = useState<string | null>(null);
+  const hillOn = appMode === 'hill' && !routerOn;
   const hillClimb = useHillClimb();
   const mindscape = useMindscapeDoc();
   /** Where the live Líder único moves to (the orchestrator's project or `leader.home`), with the boards read now. */
@@ -2565,6 +2575,24 @@ export function App(): React.JSX.Element {
     return liveLeaderOfAllTab(tabs, open, liderTabRef.current);
   };
   const liderTab = findLiderTab();
+  // Desktop roteador — the Líder is the only tab in front: whatever brought another one (a notification, a shortcut)
+  // gives the front back to it. The other tabs stay mounted, out of sight.
+  const routerLiderTabId = routerOn ? (liderTab?.id ?? null) : null;
+  useEffect(() => {
+    if (routerLiderTabId && activeTabId !== routerLiderTabId) setActiveTabId(routerLiderTabId);
+  }, [routerLiderTabId, activeTabId]);
+  /** Desktop roteador with no Líder open: the first message opens it (the same path as the Jobu's bubble). */
+  const sendRouterDraft = (): void => {
+    const text = routerDraft.trim();
+    if (!text) return;
+    const result = liderDeliverRef.current(text);
+    if (result.ok) {
+      setRouterDraft('');
+      setRouterSendError(null);
+    } else {
+      setRouterSendError(result.reason);
+    }
+  };
   const liderRoleAvailable = roles.some((role) => role.id === LIDER_ROLE_ID);
   const lastLiderReportRef = useRef<string | null>(null);
   useEffect(() => {
@@ -3359,8 +3387,9 @@ export function App(): React.JSX.Element {
   // Oráculo no centro — the switch exists in "Uso geral" with the new layout; the Oráculo shows when chosen. The
   // Líder único leaves the tab bar (the owner talks to it through the Jobu): "Conversa do Líder" brings it, and while
   // it is the tab in front it stays in the bar.
-  const oracleLayoutOn = layoutPrefs.oracleCenter && appMode === 'geral';
+  const oracleLayoutOn = layoutPrefs.oracleCenter && appMode === 'geral' && !routerOn;
   const oracleShown = oracleLayoutOn && showsOracle(layoutPrefs);
+  const routerConnectionsShown = routerOn && routerView === 'conexoes';
   /** The center shows `view`. Going to the terminals with no tab in front brings one (the Líder if it is the only one). */
   const setCenterView = (view: LayoutPrefs['centerView']): void => {
     if (view === 'terminals' && !tabs.some((tab) => tab.id === activeTabId && isTabListed(tab))) {
@@ -3510,7 +3539,7 @@ export function App(): React.JSX.Element {
             abaixo): é a única forma de trocar/criar projeto quando o Modo
             Dev está ligado (mockup linha 1295: "criar projeto é ação do
             nível app, não do projeto aberto"). */}
-        <ProjectSwitcher
+        {routerOn ? null : <ProjectSwitcher
           projects={projects}
           activeProjectPath={selectedProjectPath}
           projectRoots={appConfig?.projectRoots ?? []}
@@ -3519,7 +3548,7 @@ export function App(): React.JSX.Element {
           loadingProjects={loadingProjects}
           onToggleFavorite={handleToggleFavorite}
           onShowPreviousSessions={handleShowPreviousSessions}
-        />
+        />}
         {/* Item 1 (rodada de forma fix/009-board-real-e-modal) — titlebar v3
             (mockup linhas 39-51): esquerda = marca + pill de projeto (acima);
             CENTRO = SegmentedControl "Uso geral | Dev" entre dois espaçadores
@@ -3530,6 +3559,20 @@ export function App(): React.JSX.Element {
             desmontada — mesmo princípio do T007 "todas as abas ficam
             montadas", garante que nenhum PTY é recriado na troca). */}
         <div className={styles.titlebarSpacer} />
+        {routerOn ? (
+          // Desktop roteador — the two screens left: the conversation with the Líder and the connections.
+          <div className={styles.devModeToggle} data-testid="router-view-switch">
+            <SegmentedControl
+              ariaLabel="Tela"
+              value={routerView}
+              onChange={(next) => setRouterView(next === 'conexoes' ? 'conexoes' : 'lider')}
+              options={[
+                { value: 'lider', label: 'Chat do Líder' },
+                { value: 'conexoes', label: 'Conexões' },
+              ]}
+            />
+          </div>
+        ) : (
         <div className={styles.devModeToggle} data-testid="devmode-toggle">
           <SegmentedControl
             ariaLabel="Modo"
@@ -3542,6 +3585,7 @@ export function App(): React.JSX.Element {
             ]}
           />
         </div>
+        )}
         <div className={styles.titlebarSpacer} />
         {/* T1221 (011-contas-e-provedores, etapa 2) — `AccountsPanel`
             SUBSTITUI o `ProfileSwitcher` (dropdown de perfis): é agora o
@@ -3555,9 +3599,9 @@ export function App(): React.JSX.Element {
             segredo write-only). Nasce inerte (registry vazio, C14/D6) — o
             trigger sempre aparece, mesmo sem entrada nenhuma (é como um
             provider passa a existir). */}
-        <ProviderForm onChanged={refreshProviders} />
+        {routerOn ? null : <ProviderForm onChanged={refreshProviders} />}
         {/* T015 — UI de Preferências (FR-007, feedback E2E rodada 3/4). */}
-        <button
+        {routerOn ? null : <button
           type="button"
           className={styles.preferencesButton}
           onClick={() => setSidebarCollapsed((prev) => !prev)}
@@ -3569,7 +3613,7 @@ export function App(): React.JSX.Element {
           ) : (
             <PanelLeftClose size={16} strokeWidth={1.5} aria-hidden="true" />
           )}
-        </button>
+        </button>}
         <button
           type="button"
           className={styles.preferencesButton}
@@ -3580,7 +3624,7 @@ export function App(): React.JSX.Element {
           <Settings size={16} strokeWidth={1.5} aria-hidden="true" />
         </button>
         {/* "＋ Nova sessão" vale em todos os modos: o Escalador de uma missão é uma sessão comum. */}
-        <SplitButton
+        {routerOn ? null : <SplitButton
           label="＋ Nova sessão"
           // FIX (teste manual 27/07) — o corpo do botão passa a ABRIR o
           // Launcher (escolher modelo/esforço/projeto) em vez do quick-launch
@@ -3595,16 +3639,16 @@ export function App(): React.JSX.Element {
             // que era um shell livre (sem sessão claude nenhuma).
             { label: 'Terminal (shell livre)', onSelect: handleNewFreeTerminal },
           ]}
-        />
+        />}
       </header>
 
       <div
         className={[
           styles.body,
           hillOn ? styles.bodyDevMode : '',
-          sidebarCollapsed ? styles.bodySidebarCollapsed : '',
+          sidebarCollapsed || routerOn ? styles.bodySidebarCollapsed : '',
           // Clássico sem Launcher: coluna direita (320px, Launcher) zerada.
-          !launcherOpen ? styles.bodyRightCollapsed : '',
+          !launcherOpen || routerOn ? styles.bodyRightCollapsed : '',
         ]
           .filter(Boolean)
           .join(' ')}
@@ -3612,7 +3656,7 @@ export function App(): React.JSX.Element {
         {/* Spec 010 — a esteira nova entra POR CIMA, sem desmontar nada: o
             mapa atual segue vivo por baixo (`[P-5]` — ele só sai no fim do
             vertical, quando o novo provar a espinha). */}
-        {appMode === 'mindscape' ? (
+        {appMode === 'mindscape' && !routerOn ? (
           <MindscapeScreen
             doc={mindscape.doc}
             sessions={mindscapeSessions}
@@ -3639,7 +3683,7 @@ export function App(): React.JSX.Element {
           />
         ) : null}
 
-        {chairRoleId !== null
+        {chairRoleId !== null && !routerOn
           ? (() => {
               // Cadeiras, fatia 2 — the chair screen (B1, read-only) over the middle, like the Mindscape.
               const projectPath = tabs.find((tab) => tab.id === activeTabId)?.cwd;
@@ -3674,7 +3718,7 @@ export function App(): React.JSX.Element {
             `hillOn`, mais um caso que reorganiza o miolo por cima da
             tela de hoje. */}
         <div
-          className={hillOn || sidebarCollapsed || previousSessionsProject !== null ? styles.zoneHidden : styles.zone}
+          className={hillOn || sidebarCollapsed || routerOn || previousSessionsProject !== null ? styles.zoneHidden : styles.zone}
           data-testid="today-sidebar"
         >
         <ProjectSidebar
@@ -3698,7 +3742,7 @@ export function App(): React.JSX.Element {
             formulário). O inventário de paridade registra a decisão (M-21). */}
 
         <main className={styles.center}>
-          <div className={styles.tabBar}>
+          <div className={routerOn ? styles.terminalHidden : styles.tabBar}>
             {oracleLayoutOn ? (
               <div className={styles.centerSwitch} data-testid="center-view-switch" title="Oráculo ou Terminais. Atalho Ctrl+Shift+O.">
                 <SegmentedControl
@@ -3786,7 +3830,8 @@ export function App(): React.JSX.Element {
               o header. Uso geral mantém a condição antiga (nome+path só com
               aba aberta, lote 8). */}
           {oracleShown ? <OracleCenter placeName={oraclePlaceName} placeStatesOf={ledgerPlaceStatesOf} /> : null}
-          {!oracleShown && listedTabIds.size > 0 ? (
+          {routerConnectionsShown ? <RouterConnections view={accountsView} onProvidersChanged={refreshProviders} /> : null}
+          {!oracleShown && !routerConnectionsShown && (routerOn ? routerLiderTabId !== null : listedTabIds.size > 0) ? (
             <div className={styles.sessionHeader} data-testid="session-header">
               {/* Spec 010 / B6 — o breadcrumb passou a ser o dos nós novos:
                   discovery › plano › item. Ele vem pronto de `buildMapView`;
@@ -3846,12 +3891,12 @@ export function App(): React.JSX.Element {
             </div>
           ) : null}
           {/* B36 — sessão renovada em voo: the discreet strip of the active session (close, due, in progress). */}
-          {!oracleShown && activeTab && sessionRenewal.banners[activeTab.id] ? (
+          {!oracleShown && !routerConnectionsShown && activeTab && sessionRenewal.banners[activeTab.id] ? (
             <div className={styles.renewalStrip} data-testid="renewal-strip">
               <RenewalStrip banner={sessionRenewal.banners[activeTab.id]!} onSnooze={() => sessionRenewal.snooze(activeTab.id)} />
             </div>
           ) : null}
-          {!oracleShown && activeTab && renewalDeliveryNotices[activeTab.id] ? (
+          {!oracleShown && !routerConnectionsShown && activeTab && renewalDeliveryNotices[activeTab.id] ? (
             <div className={styles.renewalStrip} data-testid="renewal-delivery-strip">
               <RenewalDeliveryStrip
                 text={renewalDeliveryNotices[activeTab.id]!}
@@ -3867,7 +3912,7 @@ export function App(): React.JSX.Element {
             </div>
           ) : null}
           {/* Oráculo no centro — the terminals stay mounted (the PTYs live on), only out of sight. */}
-          <div className={oracleShown ? styles.terminalHidden : styles.terminal}>
+          <div className={oracleShown || routerConnectionsShown ? styles.terminalHidden : styles.terminal}>
             {/* FIX (decisão A, 2026-07-23) — mesmo empty state pros dois
                 caminhos que levam a "zero abas": boot do app (INITIAL_TABS
                 vazio, ver comentário lá) e fechar a última aba restante
@@ -3881,7 +3926,32 @@ export function App(): React.JSX.Element {
                 esteira ("⌁ Preparar" na trilha do mapa), nunca de um atalho
                 ad-hoc — o botão nunca aparece lá (screenshot app-01/03
                 mostrava o contrário). */}
-            {listedTabIds.size === 0 && !hillOn ? (
+            {routerOn && routerLiderTabId === null ? (
+              <div className={styles.emptyState} data-testid="router-empty-state">
+                <p className={styles.emptyStateTitle}>O Líder não está aberto</p>
+                <p className={styles.emptyStateHint}>Escreva a ele: a primeira mensagem abre o Líder e chega a ele.</p>
+                <form
+                  className={styles.routerDraft}
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    sendRouterDraft();
+                  }}
+                >
+                  <TextInput
+                    className={styles.routerDraftInput}
+                    value={routerDraft}
+                    onChange={(event) => setRouterDraft(event.target.value)}
+                    placeholder="Mensagem ao Líder"
+                    aria-label="Mensagem ao Líder"
+                  />
+                  <Button variant="primary" type="submit" disabled={!routerDraft.trim()}>
+                    Enviar
+                  </Button>
+                </form>
+                {routerSendError ? <p className={styles.routerDraftError}>{routerSendError}</p> : null}
+              </div>
+            ) : null}
+            {listedTabIds.size === 0 && !hillOn && !routerOn ? (
               <div className={styles.emptyState} data-testid="empty-state">
                 <p className={styles.emptyStateTitle}>Nenhuma sessão aberta</p>
                 <p className={styles.emptyStateHint}>Escolha um projeto na barra lateral ou</p>
@@ -3902,7 +3972,7 @@ export function App(): React.JSX.Element {
               const chatTab = hasChatView(tab, chatEnabled);
               const view = effectiveTabView(tab, chatEnabled);
               return (
-              <div key={tab.id} className={tab.id === activeTabId ? styles.terminalPane : styles.terminalPaneHidden}>
+              <div key={tab.id} className={tab.id === activeTabId && (!routerOn || tab.id === routerLiderTabId) ? styles.terminalPane : styles.terminalPaneHidden}>
                 {chatTab ? (
                   <div className={view === 'chat' ? styles.terminalPane : styles.terminalPaneHidden} data-testid="chat-layer">
                     <ChatView
@@ -4018,7 +4088,7 @@ export function App(): React.JSX.Element {
             Recolher a lateral desmonta a barra, como desmontava o mapa. */}
         {hillOn && !sidebarCollapsed ? <HillClimbBar snapshot={hillClimb.snapshot} onGesture={hillClimb.gesture} /> : null}
 
-        {launcherOpen ? (
+        {launcherOpen && !routerOn ? (
           <aside className={styles.rightPanel} aria-label="Lançar sessão">
             {/* Teste manual 27/07 — fechar o painel precisa de um gesto
                 VISÍVEL (Esc continua valendo; lançar também fecha). */}
@@ -4139,7 +4209,7 @@ export function App(): React.JSX.Element {
           tela não é mais um `Modal` portalizado: precisa do wrapper
           posicionado no grid do `.shell` (`.previousSessionsScreen`, mesma
           linha de `.body`) só quando aberta. */}
-      {previousSessionsProject !== null ? (
+      {previousSessionsProject !== null && !routerOn ? (
         <div className={styles.previousSessionsScreen}>
           <PreviousSessions
             open={previousSessionsProject !== null}
@@ -4241,6 +4311,11 @@ export function App(): React.JSX.Element {
         oracleCenter={layoutPrefs.oracleCenter}
         // Turning it on shows the Oráculo (not a "Terminais" left from before): that is what the switch promises.
         onChangeOracleCenter={(oracleCenter) => changeLayoutPrefs(oracleCenter ? { oracleCenter, centerView: 'oracle' } : { oracleCenter })}
+        routerEnabled={routerOn}
+        onChangeRouterEnabled={(enabled) => {
+          setAppConfig((prev) => (prev ? { ...prev, router: { ...prev.router, enabled } } : prev));
+          void window.donel.config.setRouterPrefs({ enabled }).then(setAppConfig).catch(() => undefined);
+        }}
       />
 
     </div>

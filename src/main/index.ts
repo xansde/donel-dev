@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, Notification, protocol, safeStorage, scree
 import { randomBytes, randomUUID } from 'node:crypto';
 import { execFile, execFileSync, spawn } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { appendFile } from 'node:fs/promises';
+import { appendFile, stat as statFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { readUserDefaultPermissionMode, readUserStatusLine } from './cli-user-settings';
@@ -308,6 +308,7 @@ import type { AccountMod } from './accounts/account-mod';
 import { IsolatedLoginManager, type IsolatedLoginFsDeps } from './accounts/isolated-login';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
 import { sanitizeLayoutPrefs, type LayoutPrefs } from '../shared/layoutPrefs';
+import { sanitizeRouterPrefs, type RouterPrefs } from '../shared/routerPrefs';
 import { sameFolder, type LeaderPrefs } from '../shared/leaderPrefs';
 import { adoptRefreshedActivePair, applyAccountSwitch, createSystemClaudeStateIoDeps, readCurrentCredentialPair } from './accounts/claude-state';
 import { accountFingerprintFromClaudeJsonText } from './accounts/credentials-file';
@@ -350,6 +351,7 @@ import { consumeKillRequested, markKillRequested } from './pty-kill-intent';
 import { guardNavigation } from './navigation-guard';
 import { registerPetIpcHandlers } from './pet/pet-ipc';
 import { createLiderService, type LiderService } from './lider/lider-service';
+import { createCelularLiderChat, createSupabaseRpc, parseCelularChatState, type SupabaseAccess } from './lider/celular-chat';
 import { createPetService, type PetService } from './pet/pet-service';
 import { createPetWindow } from './pet/pet-window';
 import { readPetSeams } from './pet/pet-seams';
@@ -392,7 +394,7 @@ import { resolveClaudeCorrelation } from './session-correlation';
 import { carryLargestTranscript, carryTranscriptLocally, largestTranscript } from './lider/carry-transcript';
 import { fetchTranscriptFromRemote, sendTranscriptToRemote } from './lider/transfer';
 import { LIDER_CHANNELS, isValidLiderCarryPayload, type LiderCarryPayload, type LiderSendResult } from '../shared/lider/ipc';
-import { defaultClaudeHome, indexProjectSessions, resolveProjectSessionsDir } from './session-indexer';
+import { defaultClaudeHome, indexProjectSessions, readFileTail, resolveProjectSessionsDir } from './session-indexer';
 import { seedProject } from './session-seed';
 import { SessionSemaphoreManager } from './session-semaphore-manager';
 import { readTranscriptLastAssistantText, TranscriptWatcherRegistry } from './transcript-watcher';
@@ -2779,6 +2781,14 @@ function registerConfigIpcHandlers(): void {
     return toAppConfigDto(appConfig);
   });
 
+  /** Desktop roteador — atualização parcial; o renderer aplica na hora e isto só lembra. */
+  ipcMain.handle(CONFIG_CHANNELS.setRouterPrefs, (_event, prefs: Partial<RouterPrefs>): AppConfigDto => {
+    const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
+    appConfig = { ...appConfig, router: sanitizeRouterPrefs({ ...appConfig.router, ...patch }, appConfig.router) };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
   /** Onde o Líder roda — só lembra; o renderer muda o Líder de lugar na próxima mensagem pelo Jobu. */
   ipcMain.handle(CONFIG_CHANNELS.setLeaderPrefs, (_event, prefs: Partial<LeaderPrefs>): AppConfigDto => {
     const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
@@ -4390,6 +4400,69 @@ function registerGestureDiary(): void {
   });
 }
 
+/**
+ * Chat do Líder pelo celular (plano 18/11, item 11) — every 5 s, the owner's messages from the phone go to the Líder
+ * único and his answer goes back (`lider/celular-chat.ts`). Only while the Oráculo's mirror to Supabase is on, and
+ * only once the main window reported (the Líder's tab is there). One line per event in the mirror's log.
+ */
+const CELULAR_CHAT_POLL_MS = 5_000;
+/** The tail of the Líder's transcript read at the end of a turn: enough to hold the turn that read a phone message. */
+const CELULAR_CHAT_TAIL_BYTES = 512 * 1024;
+function registerCelularLiderChat(): void {
+  const log = (line: string): void => ledgerMirrorService?.log(`chat do celular: ${line}`);
+  const statePath = (): string => join(app.getPath('userData'), 'celular-chat.json');
+  // Test seam (like `DONEL_CLAUDE_EXECUTABLE_FIXTURE`): a JSON file `{ "url", "keyFile" }` gives the chat its own
+  // Supabase, without turning the mirror on (which would push this app's ledger and cards). Absent outside tests.
+  const fixture = ((): SupabaseAccess | null => {
+    const path = process.env.DONEL_CELULAR_CHAT_FIXTURE;
+    if (!path) return null;
+    try {
+      const { url, keyFile } = JSON.parse(configIoDeps.readFileText(path) ?? '') as { url?: unknown; keyFile?: unknown };
+      if (typeof url !== 'string' || typeof keyFile !== 'string') return null;
+      return { url, key: () => configIoDeps.readFileText(keyFile)?.trim() || null };
+    } catch {
+      return null;
+    }
+  })();
+  const access = (): SupabaseAccess | null => fixture ?? ledgerMirrorService?.supabaseAccess() ?? null;
+  const chat = createCelularLiderChat({
+    rpc: createSupabaseRpc(access),
+    deliver: (text) => (liderService ? liderService.deliver(text) : Promise.resolve({ ok: false, reason: 'A janela do Donel ainda não abriu.' })),
+    log,
+    load: () => parseCelularChatState(configIoDeps.readFileText(statePath())),
+    save: (state) => {
+      const tmp = `${statePath()}.tmp`;
+      configIoDeps.writeFileText(tmp, JSON.stringify(state));
+      configIoDeps.renameFile(tmp, statePath());
+    },
+  });
+  semaphoreManager.onTurnEnded((ptyId, lastAssistantMessage, hookTranscriptPath) => {
+    if (liderService === null || liderService.report().ptyId !== ptyId) return;
+    void (async () => {
+      const sessionId = activeSessionByPty.get(ptyId);
+      // A Líder on a remote place (the default, `leader.where: 'auto'`): the hook names the path on the VPS; the tail is
+      // read from the local mirror of that transcript, which the pump fills a moment after the Stop.
+      const remote = remoteSessions?.has(ptyId) === true;
+      const transcriptPath = remote ? (sessionId ? spawnedTranscriptPaths.get(sessionId) : undefined) : (hookTranscriptPath ?? (sessionId ? spawnedTranscriptPaths.get(sessionId) : undefined));
+      if (!transcriptPath) return;
+      const readTail = async (): Promise<string | null> => {
+        const size = await statFile(transcriptPath).then((info) => info.size).catch(() => null);
+        return size === null ? null : readFileTail(transcriptPath, size, CELULAR_CHAT_TAIL_BYTES);
+      };
+      for (const waitMs of remote ? [3_000, 10_000, 30_000] : [0]) {
+        if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+        // Remote: the mirror counts only once it holds the answer the Stop carried (no text in the middle of the turn).
+        if (await chat.turnEnded(await readTail(), remote ? lastAssistantMessage : null)) break;
+      }
+    })().catch(() => undefined);
+  });
+  const timer = setInterval(() => {
+    if (liderService === null || access() === null) return;
+    void chat.poll().catch(() => undefined);
+  }, CELULAR_CHAT_POLL_MS);
+  timer.unref?.();
+}
+
 function registerMindscapeTurnEnded(): void {
   semaphoreManager.onTurnEnded((ptyId, lastAssistantMessage, hookTranscriptPath) => {
     const sessionId = activeSessionByPty.get(ptyId);
@@ -5038,6 +5111,7 @@ void app.whenReady().then(async () => {
   registerHillClimbIpcHandlers(); // Hill climbing (no lugar do Modo Dev)
   registerRolesIpcHandlers(); // Papéis de sessão (item 12a)
   registerMindscapeTurnEnded(); // Mindscape, fatia 03
+  registerCelularLiderChat(); // Chat do Líder pelo celular (18/11)
   registerSessionRenewalIpcHandlers(); // Sessão renovada em voo (B36)
   registerGestureDiary(); // Diário de gestos (B35)
   registerProjectBindingIpcHandlers(); // CA-23 (009-modo-dev-v3, lote 3)
