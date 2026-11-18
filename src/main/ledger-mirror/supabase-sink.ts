@@ -5,7 +5,7 @@
 // `push` resolves once the tasks went; the cards' list and the proof uploads run behind it (one at a time, the newest
 // list wins) and try again on their own bounded backoff, so a slow upload never holds the tasks nor "Enviar agora".
 
-import type { CartaRow } from '../../shared/ledger/mirror';
+import { LATE_COLUMNS, missingLateColumn, withoutLateColumns, type CartaRow } from '../../shared/ledger/mirror';
 import { nodeTimers, type MirrorSink, type MirrorTimers } from './mirror';
 import { PROVA_RPC, pushCartas, type PreparedProof, type ProofReader, type UploadFailure } from './cartas';
 
@@ -19,25 +19,6 @@ const BATCH = 200;
 const CARDS_RETRY_MS = 60_000;
 const MAX_CARDS_RETRY_MS = 15 * 60_000;
 const MAX_CARDS_RETRIES = 6;
-/**
- * t-ba2bb4f9 — columns added to `tarefas` after it was made (docs/oraculo-espelho/tarefas-dod.sql). A table that has
- * not got them yet answers 400 PGRST204 to the whole batch; the rows then go without them (and a log line says to run
- * the SQL), so a missing column never stops the mirror. The next push tries them again.
- */
-export const LATE_COLUMNS = ['criterio', 'ultimo_andamento', 'ultimo_andamento_em'] as const;
-
-/** PostgREST's "Could not find the 'criterio' column of 'tarefas' in the schema cache", for a late column. */
-function missingLateColumn(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : '';
-  return message.includes('PGRST204') && LATE_COLUMNS.some((column) => message.includes(`'${column}'`));
-}
-
-function withoutLateColumns(row: Record<string, unknown>): Record<string, unknown> {
-  const rest = { ...row };
-  for (const column of LATE_COLUMNS) delete rest[column];
-  return rest;
-}
-
 export interface SupabaseSinkDeps {
   /** `https://<ref>.supabase.co`. */
   readonly url: string;

@@ -99,6 +99,26 @@ export const MAX_ROW_PROOF_CHARS = 2000;
 export const MAX_ROW_SUMMARY_CHARS = 300;
 /** The last progress record in one cell: a line, as long as the record's own summary. */
 export const MAX_ROW_PROGRESS_CHARS = 280;
+/**
+ * t-ba2bb4f9 — columns added to `tarefas` after it was made (docs/oraculo-espelho/tarefas-dod.sql). A table that has
+ * not got them yet answers 400 PGRST204 to the whole batch; the rows then go without them (and a log line says to run
+ * the SQL), so a missing column never stops the mirror. The next push tries them again. Shared by the PC's sink
+ * (`supabase-sink.ts`) and the daemon's upsert of a task made on the phone (`oraculo/tarefas-pedidas.ts`).
+ */
+export const LATE_COLUMNS = ['criterio', 'ultimo_andamento', 'ultimo_andamento_em'] as const;
+
+/** PostgREST's "Could not find the 'criterio' column of 'tarefas' in the schema cache", for a late column. */
+export function missingLateColumn(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : '';
+  return message.includes('PGRST204') && LATE_COLUMNS.some((column) => message.includes(`'${column}'`));
+}
+
+export function withoutLateColumns(row: Record<string, unknown>): Record<string, unknown> {
+  const rest = { ...row };
+  for (const column of LATE_COLUMNS) delete rest[column];
+  return rest;
+}
+
 /** How the owner is named when the main does not say. */
 export const DEFAULT_OWNER_NAME = 'Dono';
 
