@@ -11,9 +11,11 @@
 // ~/.donel/board/supabase.json; missing = no `card_*` tools).
 // `<dir>/decisoes.json` (t-52bf8b45, same shape as the board's config): the phone app's decision queue in Supabase,
 // applied to the ledger here; missing = the queue is off. Its optional `importar` (t-8762b0ac) lists the unsigned rows
-// the Líder vouched for (`readImportList` in decisoes.ts). The owner's per-page notes of each marked row go to
-// `<dir>/notas-paginas.jsonl`, never into a decision's text. The same file turns on the queue of tasks the owner asks
-// for in the phone (t-2eedda0d, tarefas-pedidas.ts); its optional `quadroTarefas` names the board they land on.
+// the Líder vouched for (`readImportList` in decisoes.ts); its optional `"semAssinatura": "aceitar"` (the owner's order,
+// 17/11, t-2eedda0d) applies every unsigned row, with a note in the ledger (`readUnsignedPolicy`). The owner's
+// per-page notes of each marked row go to `<dir>/notas-paginas.jsonl`, never into a decision's text. The same file
+// turns on the queue of tasks the owner asks for in the phone (t-2eedda0d, tarefas-pedidas.ts); its optional
+// `quadroTarefas` names the board they land on.
 
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, networkInterfaces } from 'node:os';
@@ -41,7 +43,7 @@ import { createSupabaseSink } from '../main/ledger-mirror/supabase-sink';
 import { createProofReader } from '../main/ledger-mirror/cartas';
 import { withPlaceMemory, type PlaceInfo, type PlaceInfoOf } from '../shared/ledger/mirror';
 import { SERVICE_PLACE_PREFIX, SERVICE_ROLE } from '../shared/ledger/contract';
-import { createDecisoesConsumer, createDecisoesQueue, DECISOES_CONFIG_FILE, NOTAS_PAGINAS_FILE, readImportList } from './decisoes';
+import { createDecisoesConsumer, createDecisoesQueue, DECISOES_CONFIG_FILE, NOTAS_PAGINAS_FILE, readImportList, readUnsignedPolicy } from './decisoes';
 import { createTarefasPedidasConsumer, createTarefasPedidasQueue, readQuadroTarefas } from './tarefas-pedidas';
 
 export const TOKEN_HASH_FILE = 'pc.token.sha256';
@@ -330,11 +332,13 @@ async function main(): Promise<void> {
       return config ? createDecisoesQueue(config) : null;
     },
     port: decisoesPort,
-    // Only a row signed by a phone paired here is the owner's (the APK's queue password is not).
+    // A signed row counts only when a phone paired here signed it (the APK's queue password is not enough).
     verifier: () => (celular ? (message, signature) => celular?.verifyDecisionSignature(message, signature) ?? null : null),
     phoneOn: () => celular?.state().enabled ?? false,
     // t-8762b0ac — the rows the Líder vouched for (`importar`), applied without a signature, read at each round too.
     importar: () => readImportList(join(dir, DECISOES_CONFIG_FILE)),
+    // t-2eedda0d — the owner's order (17/11): `"semAssinatura": "aceitar"` lets the unsigned rows through, read at each round.
+    semAssinatura: () => readUnsignedPolicy(join(dir, DECISOES_CONFIG_FILE)),
     // t-8762b0ac (17/11) — the owner's per-page notes are design feedback: kept here, beside the decision, never in a message.
     // The mode only applies on creation (the bridge may create the file first), hence the chmod.
     guardarNotas: (entry) => {

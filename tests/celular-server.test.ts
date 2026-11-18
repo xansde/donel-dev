@@ -26,6 +26,8 @@ import {
   OPTION_REQUIRED,
   STALE_DECISION,
   UNSIGNED_DECISION,
+  UNSIGNED_NOTE,
+  readUnsignedPolicy,
   PHONE_OFF,
   type DecisaoRow,
   type DecisaoVerifier,
@@ -859,6 +861,83 @@ describe('servidor do celular', () => {
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toContain('HTTP 500');
     expect((error as Error).message).not.toContain('chave-de-teste-123');
+  });
+
+  it('com "semAssinatura": "aceitar" a linha sem assinatura vai direto, com a nota; sem a opção, ou com assinatura ruim, segue recusada', async () => {
+    const { auth, ledger, first, second, decisions } = await setup();
+    const badSig = await deliveredTask(ledger, 'assinatura ruim');
+    const withoutOption = await deliveredTask(ledger, 'sem a opção');
+    const dir = mkdtempSync(join(tmpdir(), 'decisoes-'));
+    const file = join(dir, 'decisoes.json');
+    const config = (extra: object): void => writeFileSync(file, JSON.stringify({ url: 'https://exemplo.supabase.co', serviceKeyFile: join(dir, 'k'), ...extra }));
+    const t0 = Date.now();
+    const rows: (DecisaoRow & { resultado?: string })[] = [];
+    const add = (n: number, tarefa: string, lado: DecisaoRow['lado'], rest: Partial<DecisaoRow> = {}): void => {
+      rows.push({
+        pedido: `00000000-0000-4000-8000-0000000000${String(n).padStart(2, '0')}`,
+        tarefa,
+        lado,
+        opcao: null,
+        comentario: null,
+        paginas: null,
+        criada_em: new Date(t0 + n * 1000).toISOString(),
+        entrega_vista: seenOf(ledger, tarefa),
+        assinatura: null,
+        ...rest,
+      });
+    };
+    const result = (n: number): string | undefined => rows[n - 1]!.resultado;
+    const queue: DecisoesQueue = {
+      tomar: async () => rows.filter((entry) => !entry.resultado),
+      atualizarTarefa: async () => undefined,
+      marcar: async (pedido, resultado) => {
+        const target = rows.find((entry) => entry.pedido === pedido)!;
+        if (target.resultado) return false;
+        target.resultado = resultado;
+        return true;
+      },
+    };
+    let verifier: DecisaoVerifier | null = verifierOf(auth);
+    const consumer = createDecisoesConsumer({
+      queue: () => queue,
+      port: createLedgerMobilePort(() => ledger),
+      verifier: () => verifier,
+      phoneOn: () => auth.enabled,
+      semAssinatura: () => readUnsignedPolicy(file),
+      ledger: () => ledger,
+      returned: () => false,
+    });
+
+    // Without the option (absent, or any other value): today's refusal.
+    for (const [n, extra] of [[1, {}], [2, { semAssinatura: 'sim' }]] as const) {
+      config(extra);
+      add(n, withoutOption, 'sim', { opcao: 'Aceitar' });
+      await consumer.round();
+      expect(result(n)).toBe(`recusada: ${UNSIGNED_DECISION}`);
+    }
+    expect(decisions(withoutOption)).toHaveLength(0);
+
+    // With it: the phone's core is not up and the phone is off in Preferences; the unsigned rows apply, with the note.
+    config({ semAssinatura: 'aceitar' });
+    verifier = null;
+    add(3, first, 'sim', { opcao: 'Aceitar', comentario: 'Pode seguir' });
+    add(4, second, 'nao', { opcao: 'Refazer', comentario: 'Falta o print' });
+    await consumer.round();
+    expect(result(3)).toBe('aplicada: aceita (sem assinatura)');
+    expect(result(4)).toBe('aplicada: rejeitada (sem assinatura)');
+    expect(decisions(first)).toEqual([expect.objectContaining({ kind: 'aceita', by: { kind: 'dono' }, option: 'Aceitar', text: `Pode seguir\n${UNSIGNED_NOTE}` })]);
+    expect(decisions(second)).toEqual([expect.objectContaining({ kind: 'rejeitada', by: { kind: 'dono' }, option: 'Refazer', text: `Refazer: Falta o print\n${UNSIGNED_NOTE}` })]);
+
+    // With it, a signature that no paired phone made is still refused (the phone on and paired, the core up).
+    auth.setEnabled(true);
+    auth.pair(auth.createPairingCode().code, 'Android');
+    verifier = verifierOf(auth);
+    const stranger = keyOf('nunca-pareado-com-este-oraculo');
+    add(5, badSig, 'sim', { opcao: 'Aceitar' });
+    rows[4] = { ...rows[4]!, assinatura: signWith(stranger, rows[4]!) };
+    await consumer.round();
+    expect(result(5)).toBe(`recusada: ${UNSIGNED_DECISION}`);
+    expect(decisions(badSig)).toHaveLength(0);
   });
 
   it('o protótipo sai com a CSP sandbox allow-scripts, por bilhete de uso único que vence; donel-prova só serve nome de dentro das provas', async () => {
