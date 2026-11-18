@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ConfigIoDeps } from '../src/main/config-store';
 import { createLedgerMobilePort } from '../src/main/celular/ledger-port';
@@ -5,7 +8,7 @@ import { createLedgerService, LEDGER_WRITE_FAILED, type LedgerProofFs } from '..
 import { createdViaOf, lastDelivery, requestedByOf, type LedgerActor } from '../src/shared/ledger/contract';
 import type { TarefaRow } from '../src/shared/ledger/mirror';
 import { createDecisoesConsumer, type DecisaoRow, type DecisoesQueue } from '../src/oraculo/decisoes';
-import { createTarefasPedidasConsumer, DEFAULT_CRITERIO, type TarefaPedidaRow, type TarefasPedidasQueue } from '../src/oraculo/tarefas-pedidas';
+import { createTarefasPedidasConsumer, createTarefasPedidasQueue, DEFAULT_CRITERIO, type TarefaPedidaRow, type TarefasPedidasQueue } from '../src/oraculo/tarefas-pedidas';
 
 // Tarefas do celular (t-2eedda0d) — o que quebraria sem o dono ver: o pedido dele sumir, virar duas tarefas, ou a
 // decisão dele numa entrega de risco baixo ser recusada.
@@ -239,5 +242,30 @@ describe('decisão do dono numa entrega de risco baixo', () => {
     const tasks = ledger.load().doc.tasks;
     expect(tasks[accepted]!.events.at(-1)).toMatchObject({ kind: 'aceita', by: { kind: 'dono' } });
     expect(tasks[rejected]!.events.at(-1)).toMatchObject({ kind: 'rejeitada', by: { kind: 'dono' }, text: 'Falta o print' });
+  });
+  it('o espelho da tarefa feita no celular vai sem as colunas de DoD numa tabela que ainda não as tem', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'pedidas-'));
+    try {
+      const serviceKeyFile = join(dir, 'chave');
+      writeFileSync(serviceKeyFile, 'k');
+      const bodies: Array<Record<string, unknown>> = [];
+      const oldTable = (async (_url: string, init: RequestInit) => {
+        const body = (JSON.parse(String(init.body)) as Array<Record<string, unknown>>)[0]!;
+        bodies.push(body);
+        return 'criterio' in body
+          ? new Response(JSON.stringify({ code: 'PGRST204', message: "Could not find the 'criterio' column of 'tarefas' in the schema cache" }), { status: 400 })
+          : new Response(null, { status: 201 });
+      }) as unknown as typeof fetch;
+      const mirrored = { id: 't-1', pedido: 'Põe o botão verde', criterio: 'Pronto quando o dono aceitar.', ultimo_andamento: null, ultimo_andamento_em: null } as unknown as TarefaRow;
+      await createTarefasPedidasQueue({ url: 'https://abcdefgh.supabase.co', serviceKeyFile }, oldTable).espelhar(mirrored);
+      expect(bodies).toHaveLength(2);
+      expect(bodies[1]).not.toHaveProperty('criterio');
+      expect(bodies[1]).toMatchObject({ id: 't-1', pedido: 'Põe o botão verde' });
+      // Any other refusal still fails.
+      const refused = (async () => new Response('{"code":"PGRST204","message":"Could not find the \'outra\' column"}', { status: 400 })) as unknown as typeof fetch;
+      await expect(createTarefasPedidasQueue({ url: 'https://abcdefgh.supabase.co', serviceKeyFile }, refused).espelhar(mirrored)).rejects.toThrow('400');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -23,7 +23,7 @@
 import { readFileSync } from 'node:fs';
 import type { LedgerService } from '../main/ledger-store';
 import { ASKED_BY_OWNER, isDueDate, isRequestId, MAX_FRENTE_CHARS, MAX_TITLE_CHARS, type LedgerTask } from '../shared/ledger/contract';
-import { tarefaRow, type TarefaRow } from '../shared/ledger/mirror';
+import { missingLateColumn, tarefaRow, withoutLateColumns, type TarefaRow } from '../shared/ledger/mirror';
 import { parseLedgerToolCall } from '../shared/ledger/tools';
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import type { BoardConfig } from './board-client';
@@ -92,7 +92,15 @@ export function createTarefasPedidasQueue(config: BoardConfig, doFetch: typeof f
     },
     async espelhar(row) {
       // The same upsert as the PC's mirror (supabase-sink.ts): the table is in `public`, the key is `id`.
-      await request('tarefas?on_conflict=id', 'POST', [{ ...row, atualizado_em: new Date().toISOString() }], 'o espelho de tarefas', 'resolution=merge-duplicates,return=minimal');
+      const body: Record<string, unknown> = { ...row, atualizado_em: new Date().toISOString() };
+      const send = (value: Record<string, unknown>): Promise<string> => request('tarefas?on_conflict=id', 'POST', [value], 'o espelho de tarefas', 'resolution=merge-duplicates,return=minimal');
+      try {
+        await send(body);
+      } catch (error) {
+        // A table made before the DoD columns (docs/oraculo-espelho/tarefas-dod.sql): the row goes without them.
+        if (!missingLateColumn(error)) throw error;
+        await send(withoutLateColumns(body));
+      }
     },
   };
 }
