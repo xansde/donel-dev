@@ -33,6 +33,8 @@
 //   PC off (nothing listens on the tunnel) they are answered here as the Líder único (`lider`), on the boards the
 //   picture has (`leaderCallerFromPicture`, the same rules as the PC's `leaderLedgerCallerOf`). With the PC silent only
 //   the reads (`tarefa_listar`, `tarefa_ver`) are answered here: a write may still run there.
+// - t-1a3f7150 (docs/adr/0009): a `sessao_abrir` that reached nothing (the tunnel refused: the PC is off) opens the
+//   session on this machine (`GateAbrir`, abrir-local.ts). Never with the PC silent or on: it may be running there.
 
 import { timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -53,6 +55,7 @@ import { LEADER_ROLE_ID } from '../shared/roles';
 import type { BoardStore } from './board-client';
 import { runCardTool } from './board-tools';
 import type { GateRecados } from './gate-recados';
+import type { GateAbrir } from './gate-abrir';
 
 export const GATE_PORT = 47817;
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -137,6 +140,8 @@ export interface GateDeps {
   readonly now?: () => number;
   /** The recados queue (`sessao_enviar` here, the notices after a task, the hooks' route); absent = none. */
   readonly recados?: GateRecados;
+  /** t-1a3f7150 — `sessao_abrir` with the PC off (nothing listens on the tunnel) opens here; absent = the PC is off. */
+  readonly abrir?: GateAbrir;
   /** Pedir pelo Oráculo: the task born of an owner's request (`pedidoDoDono`) shows on his phone as "virou tarefa". */
   readonly linkPedido?: (pedidoId: string, tarefa: { readonly id: string; readonly titulo: string }) => void;
   /**
@@ -413,6 +418,7 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
 
     const board = async (call: BoardToolCall): Promise<BrowserToolOutcome> => {
       if (!mine) return { kind: 'error', text: NO_PICTURE };
+      if (call.tool === 'sessao_abrir' && pc === 'desligado' && deps.abrir) return deps.abrir.abrir(sid, mine, call);
       if (call.tool === 'sessao_enviar' && useRecados && deps.recados) {
         // With the PC off the recados never pass it on: the picture answers, a target off this machine goes to the relay.
         const sent = await deps.recados.enviar(sid, mine, call, pc === 'desligado' ? 'desligado' : 'ligado');

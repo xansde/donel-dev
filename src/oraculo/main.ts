@@ -24,8 +24,10 @@
 // only, with the tasks on the personal VPS (`<dir>/portao.token`, satelite.ts).
 
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { open as openFile } from 'node:fs/promises';
-import { homedir, hostname, networkInterfaces, userInfo } from 'node:os';
+import { createServer as createNetServer } from 'node:net';
+import { cpus, freemem, homedir, hostname, loadavg, networkInterfaces, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { createSystemConfigIoDeps } from '../main/config-store';
 import { createLedgerService, ledgerProofsDir, nodeLedgerProofFs } from '../main/ledger-store';
@@ -42,6 +44,7 @@ import { createReturnGuard } from './devolvido';
 import { createGateHandler, GATE_PORT, mergePicture, startGateServer, tunnelForward, type BoardPicture, type PictureSession } from './portao';
 import { createGateRecados, findTranscript, tmuxLocalSessions } from './recados';
 import { createLocalLeaderFinder, currentConversation } from './lider-local';
+import { clearAdoptedMarks, createOpenLocal, roomRefusal, sweepUnfinishedOpenings, type ScriptRun } from './abrir-local';
 import { createGateToolRoutes, readGateHashes } from './portoes';
 import { createProbe } from './sonda';
 import { createSatelliteLedger, createSatelliteNotice, createSatelliteReviewLink, createSatelliteTaskMemory } from './satelite';
@@ -153,10 +156,48 @@ function jsonStore(file: string): { load(): ChatCelularReplies | null; save(stat
 }
 
 /**
+ * t-1a3f7150 — a bash script (on stdin) as this user, with its login PATH (the daemon runs under systemd): the setup of
+ * a session opened with the PC off, its tmux, the inventory of plugins and skills.
+ */
+function runLocalScript(script: string): Promise<ScriptRun> {
+  return new Promise((resolve) => {
+    const child = spawn('bash', ['-l', '-s'], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => child.kill('SIGKILL'), 180_000);
+    child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString('utf8')));
+    child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString('utf8')));
+    child.once('error', (error) => {
+      clearTimeout(timer);
+      resolve({ code: null, stdout, stderr: error.message });
+    });
+    child.once('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code, stdout, stderr });
+    });
+    child.stdin.end(script);
+  });
+}
+
+/** Nothing listens on this loopback port of this machine. */
+function loopbackPortFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = createNetServer();
+    server.once('error', () => resolve(false));
+    server.listen(port, '127.0.0.1', () => server.close(() => resolve(true)));
+  });
+}
+
+/**
  * The last picture of the board (kept across a restart, `<dir>/retrato.json`): what the PC pushes, over it what the
  * probe asks of the sessions the PC has not pictured. A session whose folder is gone (closed) leaves it.
  */
-function createPictureStore(dir: string): { get(): BoardPicture | null; set(next: BoardPicture): void; setSession(sid: string, session: PictureSession): void } {
+function createPictureStore(dir: string): {
+  get(): BoardPicture | null;
+  set(next: BoardPicture): void;
+  setSession(sid: string, session: PictureSession): void;
+  forget(sid: string): void;
+} {
   const pictureFile = join(dir, 'retrato.json');
   const sessionsDir = join(homedir(), '.donel', 's');
   let picture: BoardPicture | null = null;
@@ -176,6 +217,12 @@ function createPictureStore(dir: string): { get(): BoardPicture | null; set(next
     set: (next) => save(mergePicture(picture, next, exists)),
     // The probe's session carries its own `at`; the picture's (the PC's last push) does not move.
     setSession: (sid, session) => save(mergePicture(picture, { at: picture?.at ?? Date.now(), sessoes: { [sid]: session } }, exists)),
+    // t-1a3f7150 — the synthetic picture of an opening that failed.
+    forget: (sid) => {
+      if (!picture?.sessoes[sid]) return;
+      const { [sid]: _gone, ...sessoes } = picture.sessoes;
+      save({ ...picture, sessoes });
+    },
   };
 }
 
@@ -351,7 +398,16 @@ async function main(): Promise<void> {
   const ledger = guard.ledger;
   // Fatia 4: the last picture of the board the PC left (kept across a restart), for the MCP gate of the VPS's sessions.
   const pictures = createPictureStore(dir);
-  const setPicture = pictures.set;
+  const sessionsDirForMarks = join(homedir(), '.donel', 's');
+  // t-1a3f7150 — a PC push that carries a session opened here with the PC off under `session:<sid>` adopted it.
+  const setPicture = (next: BoardPicture): void => {
+    pictures.set(next);
+    try {
+      for (const sid of clearAdoptedMarks(sessionsDirForMarks, next)) console.log(`[oraculo] abrir: o PC adotou a sessão ${sid}, aberta com ele desligado.`);
+    } catch (error) {
+      console.log(`[oraculo] abrir: marca abertaSemPc: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
   const sessionsDir = join(homedir(), '.donel', 's');
   // t-c3fbe852 — the Líder único alive in this machine's tmux (the app's mark in its session folder, or the picture).
   const localLeader = createLocalLeaderFinder({ sessionsDir, liveSessions: tmuxLocalSessions, picture: pictures.get });
@@ -470,6 +526,8 @@ async function main(): Promise<void> {
     if (boardStore?.key !== key) boardStore = { key, store: createBoardClient(config) };
     return boardStore.store;
   };
+  // t-1a3f7150 — an opening cut midway (the daemon died while it made the folder) leaves no half session for the PC.
+  for (const sid of sweepUnfinishedOpenings(sessionsDir, await tmuxLocalSessions())) console.log(`[oraculo] abrir: apaguei a pasta ${sid}, aberta pela metade.`);
   const gatePort = Number(process.env.DONEL_ORACULO_PORTAO_PORT) || GATE_PORT;
   const gate = await startGateServer({
     port: gatePort,
@@ -481,6 +539,21 @@ async function main(): Promise<void> {
       forward: tunnelForward,
       serverVersion: 'oraculo-vps',
       cards,
+      // t-1a3f7150 (docs/adr/0009) — the Líder único's `sessao_abrir` with the PC off opens the session in this tmux.
+      abrir: createOpenLocal({
+        sessionsDir,
+        oraculoDir: dir,
+        picture: pictures.get,
+        setSession: pictures.setSession,
+        forgetSession: pictures.forget,
+        leader: localLeader,
+        liveSessions: tmuxLocalSessions,
+        deliver: toLeader,
+        run: runLocalScript,
+        room: () => roomRefusal({ freeBytes: freemem(), loadPerCpu: loadavg()[0]! / Math.max(1, cpus().length) }),
+        portFree: loopbackPortFree,
+        names: [hostname()],
+      }),
       // The phone's server lives here: a task a VPS session creates from an owner's request shows on his phone.
       linkPedido: (pedidoId, tarefa) => void celular?.linkPedido(pedidoId, tarefa),
       // The notices after a task (a delivery, a "travada", a verdict) go by the recados: queued for a session of this

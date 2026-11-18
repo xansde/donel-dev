@@ -1,4 +1,4 @@
-// t-1a3f7150 (abrir sessão com o PC desligado), fatia 3 — com o PC desligado, o Líder único vivo no tmux da VPS
+// t-1a3f7150 (abrir sessão com o PC desligado), fatias 3 e 4 — com o PC desligado, o Líder único vivo no tmux da VPS
 // chama `sessao_abrir` e o portão do Oráculo abre a sessão ali mesmo (docs/adr/0009). O que quebraria sem o dono ver:
 // duas sessões para um pedido só, a sessão nascendo fora do bypass ou sem o pedido, um Líder aberto sem o PC, um pedido
 // passando por cima do Líder do quadro, uma pasta pela metade que o PC acharia na volta, e o portão abrindo aqui uma
@@ -10,14 +10,18 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { createSystemConfigIoDeps } from '../src/main/config-store';
 import type { OwnerMessage } from '../src/main/ledger-card-writer';
+import { createLedgerService, nodeLedgerProofFs } from '../src/main/ledger-store';
 import { OPEN_KIT_FILE, type OpenKit } from '../src/main/open-kit';
 import { appMcpAllowArgs, buildClaudeArgs } from '../src/shared/commandBuilder';
 import { worktreeNameFor } from '../src/shared/sessionWorktree';
 import type { MindscapeBoard, MindscapeCard } from '../src/shared/mindscape/model';
-import { CREATING_MARK, createOpenLocal, NO_KIT, NOT_THE_LEADER, sweepUnfinishedOpenings, type ScriptRun } from '../src/oraculo/abrir-local';
-import { mergePicture, type BoardPicture } from '../src/oraculo/portao';
+import { clearAdoptedMarks, CREATING_MARK, createOpenLocal, NO_KIT, NOT_THE_LEADER, sweepUnfinishedOpenings, type ScriptRun } from '../src/oraculo/abrir-local';
+import { createGateHandler, mergePicture, type BoardPicture, type GateForward, type GateResponse } from '../src/oraculo/portao';
+import { createProbe } from '../src/oraculo/sonda';
 
+const io = createSystemConfigIoDeps();
 const dirs: string[] = [];
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -271,5 +275,84 @@ describe('abrir sessão com o PC desligado (abrir-local)', () => {
     expect(existsSync(join(m.sessionsDir, half))).toBe(false);
     expect(existsSync(join(m.sessionsDir, alive))).toBe(true);
     expect(existsSync(join(m.sessionsDir, SID_DEV))).toBe(true);
+  });
+});
+
+describe('portão e sonda com a sessão aberta sem o PC', () => {
+  const rpc = (name: string, args: Record<string, unknown>) => JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } });
+  const textOf = (res: GateResponse): { text: string; isError: boolean } => {
+    const parsed = JSON.parse(res.body) as { result: { content: Array<{ text: string }>; isError?: boolean } };
+    return { text: parsed.result.content[0]!.text, isError: parsed.result.isError === true };
+  };
+
+  function gate(m: ReturnType<typeof machine>, forward: GateForward) {
+    const ledger = createLedgerService({ filePath: join(m.home, 'ledger.json'), io, proofFs: nodeLedgerProofFs, now: () => T0 });
+    return createGateHandler({ sessionsDir: m.sessionsDir, ledger: () => ledger, picture: m.picture, forward, serverVersion: 'teste', abrir: m.abrir, log: () => undefined });
+  }
+  const askOpen = (handle: ReturnType<typeof gate>) =>
+    handle({ method: 'POST', path: `/s/${SID_LIDER}/mcp`, authorization: `Bearer ${TOKEN}`, headers: {}, body: rpc('sessao_abrir', { papel: 'dev', pedido: PEDIDO, quadro: 'atlas' }) });
+
+  it('só abre aqui com o túnel recusado (PC desligado); com o PC ligado ou tendo pego a chamada (502), nunca', async () => {
+    const pcAnswer: GateResponse = { status: 200, headers: {}, body: JSON.stringify({ jsonrpc: '2.0', id: 1, result: { content: [{ type: 'text', text: '{"lugar":"place:x"}' }] } }) };
+    const on = machine();
+    await askOpen(gate(on, async () => pcAnswer));
+    expect(on.folders()).toEqual([]);
+    const tookIt = machine();
+    await askOpen(gate(tookIt, async () => ({ status: 502, headers: {}, body: '' })));
+    expect(tookIt.folders()).toEqual([]);
+
+    const off = machine();
+    const res = await askOpen(gate(off, async () => 'desligado'));
+    expect(textOf(res).isError).toBe(false);
+    expect(JSON.parse(textOf(res).text)).toMatchObject({ lugar: `session:${NEW_SID}` });
+    expect(off.folders()).toEqual([NEW_SID]);
+  });
+
+  it('o Dev aberto sem o PC tem tarefa_criar e tarefa_andamento respondidas aqui, sem passar pelo túnel', async () => {
+    const m = machine();
+    let forwarded = 0;
+    const handle = gate(m, async () => {
+      forwarded += 1;
+      return 'desligado';
+    });
+    await askOpen(handle);
+    forwarded = 0;
+    const devToken = metaOf(m, NEW_SID).mcpToken as string;
+    const asDev = (name: string, args: Record<string, unknown>) => handle({ method: 'POST', path: `/s/${NEW_SID}/mcp`, authorization: `Bearer ${devToken}`, headers: {}, body: rpc(name, args) });
+    const created = textOf(await asDev('tarefa_criar', { pedido: 'corrigir o login', criterio: 'teste verde', prazo: '2026-11-19', risco: 'baixo' }));
+    expect(created.isError).toBe(false);
+    const id = (JSON.parse(created.text) as { id: string }).id;
+    const progress = textOf(await asDev('tarefa_andamento', { id, estado: 'trabalhando', proximo: 'abrir o PR' }));
+    expect(progress.isError).toBe(false);
+    expect(forwarded).toBe(0);
+  });
+
+  it('a sonda pula a sessão aberta sem o PC até um retrato do PC trazê-la; esse retrato tira a marca', async () => {
+    const m = machine();
+    await m.ask({});
+    const asked: number[] = [];
+    const probe = createProbe({
+      sessionsDir: m.sessionsDir,
+      liveSessions: async () => new Set([NEW_SID]),
+      picture: m.picture,
+      setSession: () => undefined,
+      call: async (port) => {
+        asked.push(port);
+        return null;
+      },
+      staleMs: 0,
+      gapMs: 0,
+      now: () => T0 + 10 * 60_000,
+      log: () => undefined,
+    });
+    await probe.round();
+    expect(asked).toEqual([]);
+
+    const pushed: BoardPicture = { at: T0 + 60_000, sessoes: { [NEW_SID]: { quemSou: { lugar: `session:${NEW_SID}`, pasta: PROJECT, papel: 'dev' }, listar: [] } } };
+    m.setPicture(pushed);
+    expect(clearAdoptedMarks(m.sessionsDir, pushed)).toEqual([NEW_SID]);
+    expect(metaOf(m, NEW_SID).abertaSemPc).toBeUndefined();
+    await probe.round();
+    expect(asked).toHaveLength(1);
   });
 });
