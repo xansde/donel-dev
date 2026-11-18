@@ -130,6 +130,10 @@ describe('carta de serviço no Oráculo da VPS', () => {
     expect((await as(REC, { ...passa, to: 'place:outro' })).status).toBe(400);
     expect((await as(REC, { ...passa, ownerGone: undefined })).status).toBe(400);
     expect((await as(REC, { op: 'cancelar', id, reason: 'x' })).status).toBe(400);
+    expect((await as(REC, { ...passa, risk: 'alto' })).status).toBe(400);
+    // Nem pelo contrato: o ramo do reconciliador não aceita mudar o risco.
+    const pelaPorta = await ledger.apply({ kind: 'lugar', placeId: 'servico:reconciliador', roleId: 'servico' }, { op: 'transferir', id, to: 'lider', ownerGone: true, reason: 'x', risk: 'alto' });
+    expect(pelaPorta.ok).toBe(false);
     expect(JSON.parse(readFileSync(file, 'utf8')).tasks[id].ownerPlaceId).toBe('place:fechado');
     expect(JSON.parse((await as(REC, passa)).body as string)).toMatchObject({ ok: true, estado: 'aberta' });
     expect(JSON.parse(readFileSync(file, 'utf8')).tasks[id].ownerPlaceId).toBe('lider');

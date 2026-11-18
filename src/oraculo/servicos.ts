@@ -57,6 +57,7 @@ export function serviceOpRefusal(op: unknown, name?: string): string | null {
   if (kind === 'transferir' && name === RECONCILER_SERVICE) {
     const { to, ownerGone, reason } = op as { to?: unknown; ownerGone?: unknown; reason?: unknown };
     if (to !== 'lider' || ownerGone !== true) return 'o reconciliador só passa ao Líder único ("lider") a tarefa de um lugar fechado (ownerGone)';
+    if ((op as { risk?: unknown }).risk !== undefined) return 'o reconciliador não muda o risco: quem decide é o Líder';
     return typeof reason === 'string' && reason.trim() ? null : 'motivo obrigatório';
   }
   if (!SERVICE_OPS.has(kind)) return 'serviço só cria, assume e entrega tarefas';
