@@ -34,6 +34,10 @@ export interface LiderServiceDeps {
 }
 
 export interface LiderService {
+  /** Gives `text` to the Líder único through the main window (the same path as the bubble's `lider:send`). */
+  deliver(text: string): Promise<LiderSendResult>;
+  /** The Líder as the main window last reported it. */
+  report(): LiderReport;
   dispose(): void;
 }
 
@@ -42,6 +46,22 @@ const DELIVER_TIMEOUT_MS = 10_000;
 export function createLiderService(deps: LiderServiceDeps): LiderService {
   let report: LiderReport = EMPTY_LIDER_REPORT;
   const waiting = new Map<string, (result: LiderSendResult) => void>();
+
+  const deliver = (text: string): Promise<LiderSendResult> => {
+    const main = deps.getMainWindow();
+    if (main === null || main.isDestroyed()) return Promise.resolve({ ok: false, reason: 'A janela do Donel está fechada.' });
+    const id = randomUUID();
+    return new Promise<LiderSendResult>((resolve) => {
+      const timer = setTimeout(() => {
+        if (waiting.delete(id)) resolve({ ok: false, reason: 'O Donel não respondeu.' });
+      }, DELIVER_TIMEOUT_MS);
+      waiting.set(id, (result) => {
+        clearTimeout(timer);
+        resolve(result);
+      });
+      main.webContents.send(LIDER_CHANNELS.deliver, { id, text });
+    });
+  };
 
   const stateOf = (): LiderState => report;
   const pushState = (): void => {
@@ -81,19 +101,7 @@ export function createLiderService(deps: LiderServiceDeps): LiderService {
   ipcMain.handle(LIDER_CHANNELS.send, (event, payload: unknown): Promise<LiderSendResult> => {
     if (!fromPetWindow(event)) return Promise.resolve({ ok: false, reason: 'Janela desconhecida.' });
     if (!isValidLiderSendPayload(payload)) return Promise.resolve({ ok: false, reason: 'Mensagem vazia ou longa demais.' });
-    const main = deps.getMainWindow();
-    if (main === null || main.isDestroyed()) return Promise.resolve({ ok: false, reason: 'A janela do Donel está fechada.' });
-    const id = randomUUID();
-    return new Promise<LiderSendResult>((resolve) => {
-      const timer = setTimeout(() => {
-        if (waiting.delete(id)) resolve({ ok: false, reason: 'O Donel não respondeu.' });
-      }, DELIVER_TIMEOUT_MS);
-      waiting.set(id, (result) => {
-        clearTimeout(timer);
-        resolve(result);
-      });
-      main.webContents.send(LIDER_CHANNELS.deliver, { id, text: payload.text });
-    });
+    return deliver(payload.text);
   });
 
   ipcMain.on(LIDER_CHANNELS.showTab, (event) => {
@@ -107,6 +115,8 @@ export function createLiderService(deps: LiderServiceDeps): LiderService {
   });
 
   return {
+    deliver,
+    report: () => report,
     dispose() {
       for (const channel of [LIDER_CHANNELS.report, LIDER_CHANNELS.delivered, LIDER_CHANNELS.showTab]) ipcMain.removeAllListeners(channel);
       ipcMain.removeHandler(LIDER_CHANNELS.getState);

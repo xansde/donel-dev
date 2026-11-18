@@ -296,6 +296,22 @@
   margin-bottom: var(--space-1);
 }
 
+/* Desktop roteador with no Líder open — the first message opens it. */
+.routerDraft {
+  display: flex;
+  gap: var(--space-1);
+  width: min(520px, 90%);
+}
+
+.routerDraftInput {
+  flex: 1;
+}
+
+.routerDraftError {
+  color: var(--zone-over);
+  margin: 0;
+}
+
 /* Item 2 (rodada de forma fix/009-board-real-e-modal, CA-15) — o vazio
    NEUTRO do Modo Dev sem sessão: só a moldura do `.terminal` (fundo +
    hairline), sem o CTA "Nova sessão" do modo clássico. */

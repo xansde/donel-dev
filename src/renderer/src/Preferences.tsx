@@ -83,6 +83,9 @@ export interface PreferencesProps {
   /** Oráculo no centro (`layout.oracleCenter`); off = the old layout. Applies at once. */
   oracleCenter: boolean;
   onChangeOracleCenter: (oracleCenter: boolean) => void;
+  /** Desktop roteador (`router.enabled`); off = the full app of before. Applies at once. */
+  routerEnabled: boolean;
+  onChangeRouterEnabled: (enabled: boolean) => void;
   /** Sessões remotas — places for the "Onde roda" default; `[]` hides the setting. */
   remotes?: readonly PreferencesRemotePlace[];
   /** `launcherDefaults.where`: `undefined` = last choice / first place with an account, `'local'` = this computer. */
@@ -349,6 +352,21 @@ export function Preferences(props: PreferencesProps): React.JSX.Element | null {
           },
         ]
       : []),
+    {
+      id: 'router',
+      category: 'avisos',
+      title: 'Desktop só como roteador',
+      keywords: 'roteador router desktop chat líder lider conexões conexoes vps proxy contas saúde app completo antigo mindscape oráculo telas',
+      hint: 'A janela mostra só o chat do Líder e as Conexões (VPS, proxy, contas e saúde); o trabalho acontece no celular. Nada é apagado: as outras telas só ficam escondidas.',
+      body: (
+        <Toggle
+          checked={props.routerEnabled}
+          onChange={props.onChangeRouterEnabled}
+          label="Só o chat do Líder e as Conexões"
+          description="Desligado, volta o app completo: Oráculo, Mindscape, abas e barra lateral."
+        />
+      ),
+    },
     {
       id: 'oracle-center',
       category: 'avisos',

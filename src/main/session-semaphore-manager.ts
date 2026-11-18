@@ -63,7 +63,7 @@ export type StopFailureListener = (ptyId: string, error: string | null) => void;
 /** Mindscape, fatia 03 — see `SessionSemaphoreManager.onTurnEnded`. */
 export type TurnEndedListener = (ptyId: string, lastAssistantMessage: string | null, transcriptPath: string | null) => void;
 /** Diário de gestos — see `SessionSemaphoreManager.onPromptSubmitted`. */
-export type PromptSubmittedListener = (ptyId: string, promptLength: number) => void;
+export type PromptSubmittedListener = (ptyId: string, promptLength: number, prompt: string) => void;
 
 export interface SessionSemaphoreManagerOptions {
   /** Intervalo do tick da heurística de fallback (spike: "a cada ~500ms"). */
@@ -394,8 +394,8 @@ export class SessionSemaphoreManager {
     this.ptyState.set(ptyId, next);
     this.emit(ptyId);
     if (hookEventName === 'UserPromptSubmit') {
-      const length = typeof payload.prompt === 'string' ? payload.prompt.length : 0;
-      for (const listener of this.promptSubmittedListeners) listener(ptyId, length);
+      const prompt = typeof payload.prompt === 'string' ? payload.prompt : '';
+      for (const listener of this.promptSubmittedListeners) listener(ptyId, prompt.length, prompt);
     }
     if (hookEventName === 'Stop' || hookEventName === 'StopFailure') {
       const raw = payload.last_assistant_message;

@@ -7,6 +7,7 @@ import type { AppConfigDto, AppUpdatePrefs, AutoModePrefs, BrowserUploadPrefs, C
 import { AGENT_BOT_SERVERS, isAgentBotServerName } from '../shared/ledger/slack-guard';
 import { DEFAULT_LAYOUT_PREFS, sanitizeLayoutPrefs, type LayoutPrefs } from '../shared/layoutPrefs';
 import { DEFAULT_LEADER_PREFS, LEADER_HOME_FOLDER, sanitizeLeaderPrefs, type LeaderPrefs } from '../shared/leaderPrefs';
+import { DEFAULT_ROUTER_PREFS, sanitizeRouterPrefs, type RouterPrefs } from '../shared/routerPrefs';
 // T014 (015-jobu-pet) — limits of the pet size: the same rule the window uses (placement.ts).
 import { PET_SIZE_DEFAULT, clampSize } from '../shared/pet/placement';
 import { withUploadFolder, withUploadGrant, type UploadGrant } from '../shared/browser/upload';
@@ -170,6 +171,8 @@ export interface AppConfig {
   readonly layout: LayoutPrefs;
   /** Onde o Líder roda — a TOP-LEVEL key (like `pet`, R20): a channel without it keeps it in `unknownFields`. In the DTO. */
   readonly leader: LeaderPrefs;
+  /** Desktop roteador (18/11) — a TOP-LEVEL key (like `pet`, R20): a channel without it keeps it in `unknownFields`. In the DTO. */
+  readonly router: RouterPrefs;
   /** B33 — the installers folder of the in-app update. A TOP-LEVEL key (like `pet`, R20). Not in the DTO. */
   readonly appUpdate: AppUpdatePrefs;
   /** Navegador integrado — the authorized upload folders. A TOP-LEVEL key (like `pet`, R20). Not in the DTO. */
@@ -233,6 +236,7 @@ export function defaultAppConfig(projectRoots: readonly string[]): AppConfig {
     yolo: defaultYoloPrefs(),
     layout: DEFAULT_LAYOUT_PREFS,
     leader: DEFAULT_LEADER_PREFS,
+    router: DEFAULT_ROUTER_PREFS,
     appUpdate: { installersDir: null, forceAfterMinutes: null },
     browserUploads: { folders: [] },
     browserUploadGrants: { grants: [] },
@@ -431,6 +435,7 @@ export function toAppConfigDto(config: AppConfig, isDirectory: (path: string) =>
     yolo: config.yolo,
     layout: config.layout,
     leader: config.leader,
+    router: config.router,
     leaderHomes: config.projectRoots.map((root) => join(root, LEADER_HOME_FOLDER)).filter((path) => isDirectory(path)),
   };
 }
@@ -861,6 +866,7 @@ export function sanitizeAppConfig(parsed: unknown, defaults: AppConfig): AppConf
     yolo: sanitizeYoloPrefs(candidate.yolo),
     layout: sanitizeLayoutPrefs(candidate.layout, defaults.layout),
     leader: sanitizeLeaderPrefs(candidate.leader, defaults.leader),
+    router: sanitizeRouterPrefs(candidate.router, defaults.router),
     appUpdate: sanitizeAppUpdatePrefs(candidate.appUpdate),
     browserUploads: sanitizeBrowserUploadPrefs(candidate.browserUploads),
     browserUploadGrants: sanitizeBrowserUploadGrants(candidate.browserUploadGrants),

@@ -308,6 +308,7 @@ import type { AccountMod } from './accounts/account-mod';
 import { IsolatedLoginManager, type IsolatedLoginFsDeps } from './accounts/isolated-login';
 import { sanitizeAccountsConfig } from './accounts/accounts-config';
 import { sanitizeLayoutPrefs, type LayoutPrefs } from '../shared/layoutPrefs';
+import { sanitizeRouterPrefs, type RouterPrefs } from '../shared/routerPrefs';
 import { sameFolder, type LeaderPrefs } from '../shared/leaderPrefs';
 import { adoptRefreshedActivePair, applyAccountSwitch, createSystemClaudeStateIoDeps, readCurrentCredentialPair } from './accounts/claude-state';
 import { accountFingerprintFromClaudeJsonText } from './accounts/credentials-file';
@@ -350,6 +351,7 @@ import { consumeKillRequested, markKillRequested } from './pty-kill-intent';
 import { guardNavigation } from './navigation-guard';
 import { registerPetIpcHandlers } from './pet/pet-ipc';
 import { createLiderService, type LiderService } from './lider/lider-service';
+import { createCelularLiderChat, createSupabaseRpc } from './lider/celular-chat';
 import { createPetService, type PetService } from './pet/pet-service';
 import { createPetWindow } from './pet/pet-window';
 import { readPetSeams } from './pet/pet-seams';
@@ -2779,6 +2781,14 @@ function registerConfigIpcHandlers(): void {
     return toAppConfigDto(appConfig);
   });
 
+  /** Desktop roteador — atualização parcial; o renderer aplica na hora e isto só lembra. */
+  ipcMain.handle(CONFIG_CHANNELS.setRouterPrefs, (_event, prefs: Partial<RouterPrefs>): AppConfigDto => {
+    const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
+    appConfig = { ...appConfig, router: sanitizeRouterPrefs({ ...appConfig.router, ...patch }, appConfig.router) };
+    persistAppConfig();
+    return toAppConfigDto(appConfig);
+  });
+
   /** Onde o Líder roda — só lembra; o renderer muda o Líder de lugar na próxima mensagem pelo Jobu. */
   ipcMain.handle(CONFIG_CHANNELS.setLeaderPrefs, (_event, prefs: Partial<LeaderPrefs>): AppConfigDto => {
     const patch = typeof prefs === 'object' && prefs !== null ? prefs : {};
@@ -4390,6 +4400,42 @@ function registerGestureDiary(): void {
   });
 }
 
+/**
+ * Chat do Líder pelo celular (plano 18/11, item 11) — every 5 s, the owner's messages from the phone go to the Líder
+ * único and his answer goes back (`lider/celular-chat.ts`). Only while the Oráculo's mirror to Supabase is on, and
+ * only once the main window reported (the Líder's tab is there). One line per event in the mirror's log.
+ */
+const CELULAR_CHAT_POLL_MS = 5_000;
+function registerCelularLiderChat(): void {
+  const log = (line: string): void => ledgerMirrorService?.log(`chat do celular: ${line}`);
+  const chat = createCelularLiderChat({
+    rpc: createSupabaseRpc(() => ledgerMirrorService?.supabaseAccess() ?? null),
+    deliver: (text) => (liderService ? liderService.deliver(text) : Promise.resolve({ ok: false, reason: 'A janela do Donel ainda não abriu.' })),
+    log,
+  });
+  const liderPty = (ptyId: string): boolean => liderService !== null && liderService.report().ptyId === ptyId;
+  semaphoreManager.onPromptSubmitted((ptyId, _length, prompt) => {
+    if (liderPty(ptyId)) chat.promptSubmitted(prompt);
+  });
+  semaphoreManager.onTurnEnded((ptyId, lastAssistantMessage, hookTranscriptPath) => {
+    if (!liderPty(ptyId)) return;
+    void (async () => {
+      let text = lastAssistantMessage;
+      if (text === null) {
+        const sessionId = activeSessionByPty.get(ptyId);
+        const transcriptPath = hookTranscriptPath ?? (sessionId ? spawnedTranscriptPaths.get(sessionId) : undefined);
+        text = transcriptPath ? await readTranscriptLastAssistantText(transcriptPath) : null;
+      }
+      await chat.turnEnded(text);
+    })().catch(() => undefined);
+  });
+  const timer = setInterval(() => {
+    if (liderService === null || ledgerMirrorService?.supabaseAccess() == null) return;
+    void chat.poll().catch(() => undefined);
+  }, CELULAR_CHAT_POLL_MS);
+  timer.unref?.();
+}
+
 function registerMindscapeTurnEnded(): void {
   semaphoreManager.onTurnEnded((ptyId, lastAssistantMessage, hookTranscriptPath) => {
     const sessionId = activeSessionByPty.get(ptyId);
@@ -5038,6 +5084,7 @@ void app.whenReady().then(async () => {
   registerHillClimbIpcHandlers(); // Hill climbing (no lugar do Modo Dev)
   registerRolesIpcHandlers(); // Papéis de sessão (item 12a)
   registerMindscapeTurnEnded(); // Mindscape, fatia 03
+  registerCelularLiderChat(); // Chat do Líder pelo celular (18/11)
   registerSessionRenewalIpcHandlers(); // Sessão renovada em voo (B36)
   registerGestureDiary(); // Diário de gestos (B35)
   registerProjectBindingIpcHandlers(); // CA-23 (009-modo-dev-v3, lote 3)
