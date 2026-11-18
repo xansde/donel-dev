@@ -454,6 +454,8 @@ export function createRemoteOracleHost(deps: RemoteOracleHostDeps): RemoteOracle
     dispose() {
       disposed = true;
       clearInterval(drainTimer);
+      // t-e195b35c: the mirror is written late; the app is closing, so what is pending goes to disk now.
+      remote?.flush();
       stopRemote();
     },
     celular: () => (remote ? celularRemote : null),
