@@ -12,7 +12,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { constants as fsConstants, promises as fs } from 'node:fs';
 import { dirname, extname, isAbsolute, join } from 'node:path';
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
-import { isBelow, isOpenedBy } from '../shared/mindscape/reach';
+import { isBelow, isOpenedBy, type ListedPlace } from '../shared/mindscape/reach';
 import type { MindscapeBoard } from '../shared/mindscape/model';
 import type { ConfigIoDeps } from './config-store';
 import {
@@ -64,7 +64,8 @@ import type { LedgerToolCall, ProofInput } from '../shared/ledger/tools';
 import { NOT_STARTED_GRACE_MS, orphanReasonIn, ownerGoneIn } from '../shared/ledger/inbox';
 import { byPanelThenPriority, inBoardQueue, panelPlaces, priorityWrites } from '../shared/ledger/prioridade';
 import { liveSessionOf } from '../shared/ledger/mirror';
-import { reviewersOutsideChain } from '../shared/ledger/revisao';
+import { deliverersOf, reviewersOutsideChain, reviewRequestNotice, verdictNotice, verdictTargets } from '../shared/ledger/revisao';
+import { resolveAddress } from '../shared/mindscape/address';
 import { AGENT_BOT_SERVERS, detectAgentBotSend, detectSlackSend, fileNameOf, slackGuard, slackMessageLink, slackSendOutcome, type AgentBotSend } from '../shared/ledger/slack-guard';
 
 /** Smoke/test override: isolates the ledger from the real one. */
@@ -422,7 +423,9 @@ export async function passOnTasks(service: LedgerService, requests: readonly Led
       if (task.projectPath !== request.projectPath || task.ownerPlaceId !== request.placeId || task.slack) continue;
       if (isClosed(task) || (task.state !== 'aberta' && task.state !== 'em-execucao' && task.state !== 'rejeitada')) continue;
       if (!ownerGone(caller, task, now)) continue;
-      const result = await service.apply({ kind: 'lugar', placeId: request.placeId }, { op: 'transferir', id: task.id, to: request.to, reason: passOnReason(request.placeId, request.gone) });
+      // 18/11 (item 13): to the successor of a renewal, the record says so (`RENEWAL_REASON`), as on the VPS gate.
+      const reason = request.renewal === true ? RENEWAL_REASON : passOnReason(request.placeId, request.gone);
+      const result = await service.apply({ kind: 'lugar', placeId: request.placeId }, { op: 'transferir', id: task.id, to: request.to, reason });
       if (result.ok) tasks.push({ id: task.id, ...(task.title ? { title: task.title } : {}) });
     }
     if (tasks.length) passed.push({ projectPath: request.projectPath, placeId: request.placeId, to: request.to, tasks });
@@ -529,6 +532,49 @@ export function urgentLedgerNotice(call: LedgerToolCall, answerText: string): st
     return `${what} (tarefa ${answer.id})${call.precisa ? `: ${call.precisa}` : ''}.`;
   }
   return null;
+}
+
+/** The places of the caller's board as `sessao_listar` gives them (id, role, state), for `resolveAddress`. */
+function callerPlaces(caller: LedgerCaller): ListedPlace[] {
+  const states = caller.placeStates?.get(caller.projectPath);
+  return caller.boardPlaceIds.map((id) => {
+    const card = caller.board?.cards[id];
+    const estado = states?.get(id);
+    return { id, ...(card?.kind === 'session' && card.roleId ? { papel: card.roleId } : {}), ...(estado ? { estado } : {}) };
+  });
+}
+
+/** One notice to one place of the caller's board, already signed (`aviso_imediato` with `para`). */
+export interface ReviewLedgerNotice {
+  readonly placeId: string;
+  readonly taskId: string;
+  readonly text: string;
+}
+
+/**
+ * 18/11 (t-e195b35c, item 5) — who hears a review step at once, besides `urgentLedgerNotice`: a delivery for acceptance
+ * reaches each live Revisor of outside the chain of who delivered it (`liveReviewersOutside`); a verdict
+ * (`tarefa_aceitar` / `tarefa_rejeitar`) reaches the owner of the task and who did the work (`verdictTargets`). The same
+ * words as the VPS gate (revisao.ts). A repeated call (`repetida`) tells nobody again. `signature` is who delivered.
+ */
+export function reviewLedgerNotices(caller: LedgerCaller, call: LedgerToolCall, answerText: string, doc: LedgerDoc, signature: string): ReviewLedgerNotice[] {
+  let answer: Record<string, unknown>;
+  try {
+    answer = JSON.parse(answerText) as Record<string, unknown>;
+  } catch {
+    return [];
+  }
+  if (typeof answer.id !== 'string' || answer.repetida === true) return [];
+  const task = doc.tasks[answer.id];
+  if (!task || task.projectPath !== caller.projectPath) return [];
+  const notice = (placeId: string, text: string): ReviewLedgerNotice => ({ placeId, taskId: task.id, text });
+  if (call.tool === 'tarefa_entregar' && answer.entregue === true && task.state === 'entregue')
+    return (liveReviewersOutside(caller, deliverersOf(task)) ?? []).map((reviewer) => notice(reviewer, reviewRequestNotice(signature, task)));
+  const accepted = call.tool === 'tarefa_aceitar' && answer.aceita === true;
+  if (accepted || (call.tool === 'tarefa_rejeitar' && answer.rejeitada === true))
+    // verdictNotice says "o Revisor <who>": the place alone, so the role is not said twice.
+    return verdictTargets(task, caller.placeId).map((target) => notice(target, verdictNotice(`(${caller.placeId})`, accepted, task, call.tool === 'tarefa_rejeitar' ? call.motivo : undefined)));
+  return [];
 }
 
 /** t-e5575f78 — the task a ledger answer is about (`id`), for the notice that follows it; undefined = none. */
@@ -925,7 +971,13 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
       if (!task) return { ok: false, text: `Não existe tarefa "${call.id}" (veja tarefa_listar).` };
       if (task.projectPath !== caller.projectPath) return { ok: false, text: 'A tarefa é de outro quadro; só se mexe em tarefa do próprio quadro.' };
       if (call.tool === 'tarefa_cancelar') return answer(await applyKeyed(keyed({ op: 'cancelar', id: task.id, reason: call.motivo })), 'cancelada');
-      const to = call.para === 'seu' ? caller.placeId : call.para;
+      let to = call.para === 'seu' ? caller.placeId : call.para;
+      // 18/11 (t-e195b35c, item 13): a role ("dev", or a board's own role) names the one live place with it (address.ts).
+      if (to !== LEADER_OF_ALL && !caller.boardPlaceIds.includes(to)) {
+        const address = resolveAddress(caller.board, callerPlaces(caller), caller.placeId, to);
+        if ('placeId' in address && caller.boardPlaceIds.includes(address.placeId)) to = address.placeId;
+        else if ('erro' in address && !address.erro.includes('não é um lugar do quadro')) return { ok: false, text: address.erro };
+      }
       // The Líder único has no place, but owns tasks too (t-52b31719): "lider" is a destination of every board.
       if (to !== LEADER_OF_ALL && !caller.boardPlaceIds.includes(to)) return { ok: false, text: `"${to}" não é um lugar deste quadro que você alcança (veja sessao_listar), nem "lider" (o Líder único).` };
       const gone = ownerGone(caller, task, service.now());
