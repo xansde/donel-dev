@@ -62,8 +62,10 @@ export type BoardToolCall =
    * Internal, never an MCP tool (08/11): a notice that cannot wait for the Líder's read of the ledger (a delivery for
    * acceptance, "travada", "precisa-do-dono"), from the calling session to the Líder of its board (`texto` without who).
    * `tarefa`: the task it is about (the notice opens with its "[t-xxxx] título: objetivo", t-e5575f78).
+   * `para` (18/11, t-e195b35c, item 5): a place of the caller's board that hears it instead, with `texto` already signed
+   * (the Revisores of outside the chain hear a delivery; the owner of the task and who did it hear a verdict).
    */
-  | { readonly tool: 'aviso_imediato'; readonly texto: string; readonly tarefa?: string };
+  | { readonly tool: 'aviso_imediato'; readonly texto: string; readonly tarefa?: string; readonly para?: string };
 
 /**
  * Dono, 09/11: a session writes to the Líder único only with a finished task or a lock the Líder of its board does not
