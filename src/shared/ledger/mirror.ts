@@ -349,12 +349,13 @@ export function tarefaRow(doc: LedgerDoc, task: LedgerTask, places: PlaceInfoOf 
     : null;
   const reason = decision ? (eventNote(decision) ?? null) : null;
   const state = viewState(task);
-  // The last `tarefa_andamento` (andamento.ts: a `comentada` with its own mark), the app's end-of-turn record included.
+  // The last `tarefa_andamento` (andamento.ts: a `comentada` with its own mark). The app's own end-of-turn record is
+  // not one: it comes after every turn and would hide the "travada" the session wrote.
   let progressAt: number | undefined;
   let progressTextLine: string | null = null;
   for (let i = task.events.length - 1; i >= 0 && progressAt === undefined; i -= 1) {
     const progress = progressOf(task.events[i]!);
-    if (progress) {
+    if (progress && progress.estado !== 'turno-encerrado') {
       progressAt = task.events[i]!.at;
       progressTextLine = progressLineOf(progress);
     }

@@ -4,7 +4,7 @@ import { createLedgerMirror, type MirrorSink, type MirrorTimers } from '../src/m
 import { createSupabaseSink } from '../src/main/ledger-mirror/supabase-sink';
 import { MAX_CARD_IMAGE_BYTES, MAX_PROOF_UPLOAD_FAILURES, PROOF_GIVE_UP_MS, createProofReader, type ProofReader, type ProofReaderFs } from '../src/main/ledger-mirror/cartas';
 import { MAX_ROW_PROGRESS_CHARS, cartaRows, maskSecrets, tarefaRow, tarefaRows, withPlaceMemory, type MaskNote, type PlaceInfo, type PlaceInfoOf, type TarefaRow } from '../src/shared/ledger/mirror';
-import { progressText } from '../src/shared/ledger/andamento';
+import { progressText, turnEndProgress } from '../src/shared/ledger/andamento';
 import { LEADER_OF_ALL } from '../src/shared/mindscape/leader';
 import { LEDGER_SCHEMA_VERSION, applyLedgerOp, emptyLedgerDoc, type LedgerDoc, type LedgerTask } from '../src/shared/ledger/contract';
 
@@ -716,8 +716,9 @@ describe('espelho do Oráculo', () => {
         { kind: 'criada', at: T0, by: { kind: 'dono' } },
         record(T0 + 1000, progressText({ estado: 'trabalhando', proximo: 'abrir o PR' })),
         record(T0 + 2000, progressText({ estado: 'travada', precisa: `a chave ${secret}`, prova: 'p'.repeat(200), proximo: 'n'.repeat(200) })),
-        // The owner's words on the card are not a progress record.
+        // The owner's words on the card are not a progress record, nor is the app's own end of turn.
         { kind: 'comentada', at: T0 + 3000, by: { kind: 'dono' }, text: 'e aí?' },
+        record(T0 + 4000, progressText(turnEndProgress('fim do turno'))),
       ],
     });
     const masked: MaskNote[] = [];
