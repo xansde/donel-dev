@@ -178,7 +178,7 @@ export function createOracleApiHandler(deps: OracleApiDeps): OracleApiHandler {
       return json(400, { error: 'corpo não é JSON' });
     }
     const op = isRecord(parsed) ? parsed.op : undefined;
-    const why = serviceOpRefusal(op);
+    const why = serviceOpRefusal(op, name);
     if (why) return json(400, { error: why });
     try {
       const result = await ledger.apply(serviceActor(name), op as ServiceOp);
