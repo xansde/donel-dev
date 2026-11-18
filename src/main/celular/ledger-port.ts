@@ -59,7 +59,7 @@ export type { PlaceNameOf };
 export interface MobileLedgerPort {
   /** O que espera o dono: entregas de risco alto + a amostra do dia dos aceites do Revisor (D2). */
   pendentes(): EntregaCelular[];
-  /** Grava a decisão do dono no ledger. Recusa (sem gravar) o que não está mais esperando o dono. */
+  /** Grava a decisão do dono no ledger. Recusa (sem gravar) o que não está mais esperando o dono nem entregue. */
   decidir(input: DecisaoInput): Promise<DecisaoOutcome>;
   /** Print ou vídeo (o arquivo) ou a saída de comando inteira, mascarada (bytes de texto). */
   prova(itemId: string, provaId: string): ProvaFonte | null;
@@ -188,8 +188,10 @@ export function createLedgerMobilePort(getService: () => LedgerService | null, p
       // Reenvio de um pedido que já entrou (a rede caiu, o app reiniciou): a mesma resposta, sem gravar de novo.
       const previous = decisionOfRequest(task, input.pedidoId);
       if (previous) return { ok: true, estado: previous.kind === 'rejeitada' ? 'rejeitada' : 'aceita' };
-      // Pelo celular só se decide o que está na fila do dono (o mesmo que a faixa do Mindscape mostra).
-      if (!waitsForOwner(current, task)) return { ok: false, reason: 'recusada', message: 'Esta entrega já não espera você.' };
+      // Pelo celular se decide o que está na fila do dono (o mesmo que a faixa do Mindscape mostra) e, desde 18/11
+      // (t-2eedda0d), qualquer entrega: o dono é a autoridade máxima e aceita ou rejeita também a de risco baixo que
+      // ainda espera o Revisor. As regras do ledger (quem entregou não decide, opções da carta) seguem valendo.
+      if (!waitsForOwner(current, task) && task.state !== 'entregue') return { ok: false, reason: 'recusada', message: 'Esta entrega já não espera você.' };
       const option = input.opcao ? { option: input.opcao } : {};
       const texto = input.texto?.trim() ?? '';
       // 07/11 — "Decidir assim": his own option; the ledger says how it closes (the phone's `decisao` does not).
