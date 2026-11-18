@@ -52,8 +52,10 @@ function setup() {
   return { ledger, advance };
 }
 
+type QueueRow = TarefaPedidaRow & { resultado?: string; tarefa?: string | null };
+
 /** The Supabase queue in memory: `tomar` hands what is not marked yet. */
-function memoryQueue(rows: (TarefaPedidaRow & { resultado?: string; tarefa?: string | null })[]) {
+function memoryQueue(rows: QueueRow[]) {
   let failMark = false;
   const queue: TarefasPedidasQueue = {
     tomar: async () => rows.filter((row) => row.resultado === undefined),
@@ -86,7 +88,7 @@ const row = (n: number, rest: Partial<TarefaPedidaRow> = {}): TarefaPedidaRow =>
 describe('tarefas pedidas no celular', () => {
   it('a linha válida vira uma tarefa e é marcada com o id; relida, não cria a segunda', async () => {
     const { ledger, advance } = setup();
-    const rows = [row(1)];
+    const rows: QueueRow[] = [row(1)];
     const { queue, failNextMark } = memoryQueue(rows);
     const consumer = createTarefasPedidasConsumer({ queue: () => queue, ledger: () => ledger, returned: () => false, quadro: () => 'C:/proj/atlas' });
 
@@ -124,7 +126,7 @@ describe('tarefas pedidas no celular', () => {
 
   it('a linha inválida é marcada com o motivo e não chega ao ledger', async () => {
     const { ledger } = setup();
-    const rows = [row(1, { titulo: 'oi' }), row(2, { prazo: '18/11/2026' }), row(3, { texto: '   ' })];
+    const rows: QueueRow[] = [row(1, { titulo: 'oi' }), row(2, { prazo: '18/11/2026' }), row(3, { texto: '   ' })];
     const { queue } = memoryQueue(rows);
     const consumer = createTarefasPedidasConsumer({ queue: () => queue, ledger: () => ledger, returned: () => false });
     await consumer.round();
@@ -137,7 +139,7 @@ describe('tarefas pedidas no celular', () => {
 
   it('a falha do ledger não marca: a linha volta e cria uma vez só', async () => {
     const { ledger } = setup();
-    const rows = [row(1, { criterio: 'Pronto quando o botão pausar a VPS.', prazo: '2026-11-20' })];
+    const rows: QueueRow[] = [row(1, { criterio: 'Pronto quando o botão pausar a VPS.', prazo: '2026-11-20' })];
     const { queue } = memoryQueue(rows);
     let failWrite = true;
     const flaky = {
