@@ -12,6 +12,7 @@
 // Also here: the move of the PC's ledger to the VPS (`moveLedgerToRemote`) and the way back (`bringLedgerBack`).
 
 import { createHash, randomBytes } from 'node:crypto';
+import { writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { emptyLedgerDoc, isHttpUrl, isRequestId, parseLedgerDoc, REPEAT_WRITE_WINDOW_MS, repeatedWrite, sameActor, type LedgerActor, type LedgerDoc, type LedgerEventKind, type LedgerOp, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
 import type { LedgerApplyResult, LedgerSnapshot } from '../shared/ledger/channels';
@@ -121,8 +122,85 @@ function writeAtomic(io: ConfigIoDeps, file: string, text: string): boolean {
   }
 }
 
+function remoteMirrorText(doc: LedgerDoc, marker: RemoteMarker): string {
+  return JSON.stringify({ ...doc, schemaVersion: REMOTE_MIRROR_VERSION, oraculoRemoto: marker }, null, 2);
+}
+
 export function writeRemoteMirror(io: ConfigIoDeps, ledgerFile: string, doc: LedgerDoc, marker: RemoteMarker): boolean {
-  return writeAtomic(io, ledgerFile, JSON.stringify({ ...doc, schemaVersion: REMOTE_MIRROR_VERSION, oraculoRemoto: marker }, null, 2));
+  return writeAtomic(io, ledgerFile, remoteMirrorText(doc, marker));
+}
+
+/** t-e195b35c — how often the remote ledger tells the windows it changed (ms): the last snapshot of a burst wins. */
+export const LEDGER_CHANGE_EVERY_MS = 1500;
+/** t-e195b35c — how long the mirror on disk may lag the view (ms); closing the app writes what is pending. */
+export const MIRROR_DELAY_MS = 5000;
+
+/**
+ * A cheap mark of what the windows see: read-only, tasks, events and the newest event. The ledger only grows (tasks
+ * are never removed, events only appended), so two snapshots with the same mark show the same thing.
+ */
+export function ledgerChangeMark(snapshot: LedgerSnapshot): string {
+  let events = 0;
+  let newest = 0;
+  const tasks = Object.values(snapshot.doc.tasks);
+  for (const task of tasks) {
+    events += task.events.length;
+    const last = task.events[task.events.length - 1];
+    if (last && last.at > newest) newest = last.at;
+  }
+  return `${snapshot.readOnly ? 1 : 0}:${tasks.length}:${events}:${newest}`;
+}
+
+export interface LedgerChangeThrottle {
+  push(snapshot: LedgerSnapshot): void;
+  /** Drops what is pending (the service was left). */
+  cancel(): void;
+}
+
+/**
+ * t-e195b35c — at most one change every `everyMs`, the last one wins, and none when the mark did not move. Each change
+ * goes to the windows as the whole ledger (10 MB on 18/11): a burst of writes on the VPS sent it 2–3 times per write and
+ * the window's queue grew until every board call passed its 15 s (the freeze of 08h13–08h45). `everyMs` 0 = at once.
+ */
+export function throttleLedgerChanges(emit: (snapshot: LedgerSnapshot) => void, everyMs: number, now: () => number = Date.now): LedgerChangeThrottle {
+  let lastMark: string | null = null;
+  let lastAt = Number.NEGATIVE_INFINITY;
+  let pending: LedgerSnapshot | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const send = (snapshot: LedgerSnapshot): void => {
+    const mark = ledgerChangeMark(snapshot);
+    if (mark === lastMark) return;
+    lastMark = mark;
+    lastAt = now();
+    emit(snapshot);
+  };
+  const fire = (): void => {
+    timer = null;
+    const next = pending;
+    pending = null;
+    if (next) send(next);
+  };
+  return {
+    push(snapshot) {
+      if (everyMs <= 0) {
+        send(snapshot);
+        return;
+      }
+      pending = snapshot;
+      if (timer) return;
+      const wait = lastAt + everyMs - now();
+      if (wait <= 0) fire();
+      else {
+        timer = setTimeout(fire, wait);
+        timer.unref?.();
+      }
+    },
+    cancel() {
+      if (timer) clearTimeout(timer);
+      timer = null;
+      pending = null;
+    },
+  };
 }
 
 async function readJson(response: OracleResponseLike): Promise<unknown> {
@@ -185,6 +263,10 @@ export interface RemoteLedgerDeps {
   readonly marker: RemoteMarker;
   readonly now?: () => number;
   readonly onChange?: (snapshot: LedgerSnapshot) => void;
+  /** t-e195b35c — default `LEDGER_CHANGE_EVERY_MS`; 0 = every change at once. */
+  readonly changeEveryMs?: number;
+  /** t-e195b35c — default `MIRROR_DELAY_MS`. */
+  readonly mirrorDelayMs?: number;
 }
 
 export interface RemoteLedgerService extends LedgerService {
@@ -199,6 +281,8 @@ export interface RemoteLedgerService extends LedgerService {
    * mirror would land over the PC's own `ledger.json` the way back just wrote.
    */
   retire(): void;
+  /** Writes the pending mirror now (the app is closing); before `retire`, which drops it. */
+  flush(): void;
 }
 
 export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerService {
@@ -225,6 +309,49 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
   /** Tasks a light answer brought before the first read of the daemon (the mirror is not merged, these are). */
   const early = new Set<string>();
   let retired = false;
+  const changes = throttleLedgerChanges((snapshot) => deps.onChange?.(snapshot), deps.changeEveryMs ?? LEDGER_CHANGE_EVERY_MS, now);
+  /** t-e195b35c — the hash of the last `GET /v1/ledger` body accepted: the same body again changes nothing. */
+  let lastRead: string | null = null;
+  // t-e195b35c — the mirror on disk, late and off the main thread: the newest doc waits for the timer; `landed` is the
+  // number of the last one renamed into place, so an older write that ends after a newer one never lands over it.
+  const mirrorDelayMs = deps.mirrorDelayMs ?? MIRROR_DELAY_MS;
+  let mirrorPending: { readonly doc: LedgerDoc; readonly seq: number } | null = null;
+  let mirrorTimer: ReturnType<typeof setTimeout> | null = null;
+  let mirrorSeq = 0;
+  let mirrorLanded = 0;
+
+  async function writeMirrorLater(): Promise<void> {
+    mirrorTimer = null;
+    const next = mirrorPending;
+    mirrorPending = null;
+    if (!next || retired || next.seq <= mirrorLanded) return;
+    const tmp = `${ledgerFile}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    try {
+      await writeFile(tmp, remoteMirrorText(next.doc, deps.marker), 'utf8');
+    } catch {
+      io.unlinkFile(tmp);
+      return;
+    }
+    // Checked and renamed in one step on this thread: the way back writes the PC's own ledger and retires this service
+    // with no turn in between, so a late write never lands over it.
+    if (retired || next.seq <= mirrorLanded) {
+      io.unlinkFile(tmp);
+      return;
+    }
+    try {
+      io.renameFile(tmp, ledgerFile);
+      mirrorLanded = next.seq;
+    } catch {
+      io.unlinkFile(tmp);
+    }
+  }
+
+  function scheduleMirror(doc: LedgerDoc): void {
+    mirrorPending = { doc, seq: ++mirrorSeq };
+    if (mirrorTimer) return;
+    mirrorTimer = setTimeout(() => void writeMirrorLater(), mirrorDelayMs);
+    mirrorTimer.unref?.();
+  }
 
   // Before the daemon answers: the mirror on disk, read-only.
   const mirror = io.readFileText(ledgerFile);
@@ -243,7 +370,7 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
     if (retired || online === next) return;
     online = next;
     const snapshot = view();
-    if (snapshot) deps.onChange?.(snapshot);
+    if (snapshot) changes.push(snapshot);
   }
 
   /**
@@ -265,14 +392,15 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
     return tasks ? { ...next, tasks } : next;
   }
 
-  function accept(snapshot: LedgerSnapshot): void {
+  function accept(snapshot: LedgerSnapshot, readHash: string | null = null): void {
     if (retired) return;
     cache = { doc: merged(snapshot.doc), readOnly: snapshot.readOnly };
     fromDaemon = true;
     early.clear();
     online = true;
-    writeRemoteMirror(io, ledgerFile, cache.doc, deps.marker);
-    deps.onChange?.({ doc: cache.doc, readOnly: cache.readOnly });
+    lastRead = readHash;
+    scheduleMirror(cache.doc);
+    changes.push({ doc: cache.doc, readOnly: cache.readOnly });
     void service.syncProofs();
   }
 
@@ -283,17 +411,41 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
     const there = cache.doc.tasks[task.id];
     if (!there || there.events.length < task.events.length) cache = { doc: { ...cache.doc, tasks: { ...cache.doc.tasks, [task.id]: task } }, readOnly: cache.readOnly };
     online = true;
-    deps.onChange?.({ doc: cache.doc, readOnly: cache.readOnly });
+    // The mirror follows the view (once it came from the daemon): a read with the same body as the last one is
+    // skipped and would not bring this task.
+    if (fromDaemon) scheduleMirror(cache.doc);
+    changes.push({ doc: cache.doc, readOnly: cache.readOnly });
   }
 
   async function readLedger(): Promise<boolean> {
     const response = await call('GET', '/v1/ledger');
-    const snapshot = response && response.status === 200 ? snapshotOf(await readJson(response)) : null;
+    let text: string | null = null;
+    if (response && response.status === 200) {
+      try {
+        text = await response.text();
+      } catch {
+        text = null;
+      }
+    }
+    // t-e195b35c: the same body as the last read (an event for a write the view already has): no parse, no mirror.
+    const readHash = text === null ? null : createHash('sha1').update(text).digest('hex');
+    if (readHash !== null && readHash === lastRead && cache && fromDaemon && !retired) {
+      setOnline(true);
+      return true;
+    }
+    let snapshot: LedgerSnapshot | null = null;
+    if (text !== null) {
+      try {
+        snapshot = snapshotOf(JSON.parse(text) as unknown);
+      } catch {
+        snapshot = null;
+      }
+    }
     if (!snapshot) {
       setOnline(false);
       return false;
     }
-    accept(snapshot);
+    accept(snapshot, readHash);
     return true;
   }
 
@@ -405,8 +557,9 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
       const light = !snapshot && body.snapshot === undefined ? taskOf(body.task) : null;
       if (light) {
         daemonKnowsKeys = true;
+        // t-e195b35c: no re-read here. The answer brought the task, and the daemon's `ledger` event for this write
+        // already makes one: the extra read was a second copy of the whole ledger per write.
         patch(light);
-        void service.refresh();
         return { ok: true, task: light, ...repeated };
       }
       if (!snapshot || !task) {
@@ -504,6 +657,18 @@ export function createRemoteLedgerService(deps: RemoteLedgerDeps): RemoteLedgerS
     connected: () => online,
     retire() {
       retired = true;
+      changes.cancel();
+      if (mirrorTimer) clearTimeout(mirrorTimer);
+      mirrorTimer = null;
+      mirrorPending = null;
+    },
+    flush() {
+      if (retired) return;
+      if (mirrorTimer) clearTimeout(mirrorTimer);
+      mirrorTimer = null;
+      const next = mirrorPending;
+      mirrorPending = null;
+      if (next && next.seq > mirrorLanded && writeRemoteMirror(io, ledgerFile, next.doc, deps.marker)) mirrorLanded = next.seq;
     },
     syncProofs() {
       if (syncing) return syncing;
