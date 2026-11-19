@@ -5,10 +5,10 @@
 // long waits came from the machine-wide queue (`~/.donel/verify.lock`), not from the suite. So this one:
 //   - does not take `verify.lock` (the limitador hook still guards the machine);
 //   - typechecks everything (cheap, and it catches what a related-only run misses);
-//   - runs only the tests that reach what changed through imports (walked here: `vitest related` chokes on the
-//     `?raw` import of the phone's page), the tests that name a changed file's path (the ones that read the source)
-//     and the changed test files; a change to the test setup (package.json, vitest/ts config, lockfile) runs the
-//     whole suite;
+//   - runs only the tests that reach changed code modules through imports (walked here: `vitest related` chokes on the
+//     `?raw` import of the phone's page), the tests that name a changed module's path (the ones that read the
+//     source) and the changed test files; the whole suite (~30 s) when the test setup changed or a changed or
+//     deleted file cannot be traced by import (script, fixture, data JSON, CSS);
 //   - builds (the smoke: the build caught the broken CSS of 05/11) only when the change touches what is built.
 // It prints the time of each step and the total, and says so loudly above 120 s (it does not fail on time: a loaded
 // machine is not a broken change).
@@ -93,11 +93,16 @@ run('tipos', 'npx', ['tsc', '--noEmit', '-p', 'tsconfig.json']);
 if (changed.some((file) => WHOLE_SUITE.test(file))) {
   run('testes (suíte inteira: mudou a configuração dos testes)', 'npx', ['vitest', 'run']);
 } else {
-  // Any changed file that is not a test: code reaches tests through imports; a script or fixture through its path.
-  const sources = changed.filter((file) => !isTest(file) && existsSync(file));
+  // Code modules reach tests through imports. Anything else a test may read by path (script, fixture, data JSON) or a
+  // deleted file cannot be traced safely (tests build paths piece by piece): the whole suite runs (~30 s).
+  const isModule = (file) => /^(src|tests|scripts)\/.*\.(ts|tsx|mts|mjs|js)$/.test(file);
+  const isDoc = (file) => /\.md$/.test(file) || /^(docs|specs|design|\.claude|\.scratch)\//.test(file);
+  const untraceable = changed.filter((file) => !isTest(file) && !isDoc(file) && (!isModule(file) || !existsSync(file)));
+  const sources = changed.filter((file) => !isTest(file) && isModule(file) && existsSync(file));
   const tests = changed.filter((file) => isTest(file) && existsSync(file));
   const selected = [...new Set([...testsReaching(sources), ...tests])];
-  if (selected.length === 0) console.log('\n[verify:rapido] testes: nenhum teste chega ao que mudou');
+  if (untraceable.length) run(`testes (suíte inteira: ${untraceable.slice(0, 3).join(', ')}${untraceable.length > 3 ? '…' : ''} não se rastreia por import)`, 'npx', ['vitest', 'run']);
+  else if (selected.length === 0) console.log('\n[verify:rapido] testes: nenhum teste chega ao que mudou');
   else run(`testes do que mudou (${selected.length} arquivo(s))`, 'npx', ['vitest', 'run', ...selected]);
 }
 
