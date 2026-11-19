@@ -30,13 +30,14 @@
 // audio already answered. His answer is kept against the correction and shown on the phone as an answer to the audio.
 
 import { createHash } from 'node:crypto';
-import { appendFileSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { DecisaoRow, DecisoesQueue, Lado } from './decisoes';
 import type { TarefaPedidaRow, TarefasPedidasQueue } from './tarefas-pedidas';
 import { CHAT_MAX_TEXT, type ChatCelularQueue, type ChatCelularRow } from './chat-celular';
 import { phoneMarker } from '../main/lider/celular-chat';
 import { CHAT_ARQUIVO_DIR, nomeLimpo, tamanhoTexto } from './chat-arquivo';
+import { audioHeader } from './chat-audio-longo';
 
 export const CELULAR_LOCAL_FILE = 'celular-local.json';
 const RESERVE_MS = 10 * 60_000;
@@ -55,15 +56,21 @@ export const CHAT_AUDIO_PARTE_MS = 60_000;
 /** 2 h on the VPS (contract v1.6): the part that passes it is refused. */
 export const CHAT_AUDIO_MAX_PARTES = 120;
 export const CHAT_AUDIO_MAX_MS = CHAT_AUDIO_MAX_PARTES * CHAT_AUDIO_PARTE_MS;
-/** A text longer than this goes to the Líder as its beginning, its end and the path of the whole `.txt`. */
-export const CHAT_AUDIO_MAX_LIDER = 40_000;
-const CORTE_PONTA = 15_000;
+/**
+ * The Líder único on this VPS reads his queue typed by `tmux send-keys -l`, which refuses a command past ~16.3 KB
+ * ("command too long"). A transcription whose message passes this many UTF-8 bytes goes as its beginning, its end and
+ * the path of the whole `.txt` (contract v1.6 said ~40 thousand characters; the tmux ceiling is what holds).
+ */
+export const CHAT_AUDIO_MAX_LIDER_BYTES = 12_000;
+/** The beginning and the end of a cut transcription, in UTF-8 bytes each. */
+const CORTE_PONTA_BYTES = 4_500;
 export const SEM_PARTE_0 = 'sem-parte-0';
 
 export type Insert = { readonly ok: true; readonly nova: boolean } | { readonly ok: false; readonly erro: 'conflito' };
 export type ParteInsert = { readonly ok: true; readonly nova: boolean; readonly recebidas: number } | { readonly ok: false; readonly erro: 'conflito' | 'fechado' };
 export type FimAudio =
-  | { readonly ok: true; readonly nova: boolean; readonly estado: ChatAudio['estado'] }
+  /** `linha`: the line the `fim` closed (a continuation's own id when the VPS had closed the recording before). */
+  | { readonly ok: true; readonly nova: boolean; readonly estado: ChatAudio['estado']; readonly linha: string }
   | { readonly ok: false; readonly erro: 'conflito' | 'nao-encontrada' }
   | { readonly ok: false; readonly erro: 'faltam-partes'; readonly faltam: number[] };
 /** A run of parts received in a row, and where its bytes are in the joined file. */
@@ -127,6 +134,15 @@ export interface ChatAudio {
   trechos?: AudioTrecho[];
   /** Contract v1.6: "feitos/total" while the pieces are transcribed. */
   pedacos?: string;
+  /**
+   * Parts that came after the VPS closed the recording as interrupted (the phone without network for more than 30 min
+   * while the owner kept talking) go to a continuation line: `continua` is the recording's first line, `continuacao`
+   * the next line of the chain. Nothing that reached the VPS is refused for coming late.
+   */
+  continua?: string;
+  continuacao?: string;
+  /** The joined file opens with part 0's header (a continuation): the worker reads it from the first run. */
+  cabecalho?: true;
   motivo?: string;
   /** The owner corrected the transcription (contract v1.3). */
   corrigida?: true;
@@ -209,7 +225,7 @@ export interface AudioPendente {
   readonly duracao_ms: number;
   readonly criada_em: string;
   /** Contract v1.6: sent in parts (the worker transcribes it in pieces). */
-  readonly partes?: { readonly total: number; readonly interrompido: boolean; readonly trechos: readonly AudioTrecho[] };
+  readonly partes?: { readonly total: number; readonly interrompido: boolean; readonly trechos: readonly AudioTrecho[]; readonly cabecalho?: boolean };
 }
 
 export interface CelularLocalStore {
@@ -300,6 +316,27 @@ export function duracaoTexto(ms: number): string {
   const seconds = Math.max(0, Math.round(ms / 1000));
   if (seconds >= 3600) return `${Math.floor(seconds / 3600)}:${String(Math.floor((seconds % 3600) / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+}
+
+/** The id of the `k`-th continuation line of the recording `id`: a uuid v4, the same every time. */
+export function continuacaoId(id: string, k: number): string {
+  const hex = createHash('sha256').update(`${id}:continuacao:${k}`).digest('hex');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-${((parseInt(hex[16]!, 16) & 0x3) | 0x8).toString(16)}${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
+}
+
+/** Pure: the beginning (or the end) of `text` that fits in `maxBytes` of UTF-8, never half a character. */
+export function fitBytes(text: string, maxBytes: number, side: 'inicio' | 'fim'): string {
+  if (Buffer.byteLength(text) <= maxBytes) return text;
+  const chars = Array.from(text);
+  const out: string[] = [];
+  let bytes = 0;
+  for (let i = 0; i < chars.length; i += 1) {
+    const char = chars[side === 'inicio' ? i : chars.length - 1 - i]!;
+    bytes += Buffer.byteLength(char);
+    if (bytes > maxBytes) break;
+    out.push(char);
+  }
+  return side === 'inicio' ? out.join('') : out.reverse().join('');
 }
 
 /** Where the whole transcription of a long audio is kept (beside the audio). */
@@ -459,20 +496,22 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
   };
 
   /** What the Líder reads: a voice line says it came as audio, and how long; a failed one, where the audio is. */
+  /** A continuation line says which recording it continues. */
+  const continuacaoTexto = (row: ChatLocal): string =>
+    row.audio?.continua ? `(continuação do áudio #${row.audio.continua.slice(0, 8)}: o resto da gravação, que chegou depois de a VPS fechá-la) ` : '';
   const leaderText = (row: ChatLocal): string => {
     if (!row.audio) return row.texto;
     const length = duracaoTexto(row.audio.duracao_ms);
     if (row.audio.estado === 'transcrito') {
-      // Contract v1.6: past ~40 thousand characters, the beginning, the end and where the whole text is.
-      if (row.texto.length > CHAT_AUDIO_MAX_LIDER) {
-        const head = row.texto.slice(0, CORTE_PONTA).replace(/[\uD800-\uDBFF]$/, '');
-        const tail = row.texto.slice(-CORTE_PONTA).replace(/^[\uDC00-\uDFFF]/, '');
-        return `🎙 Áudio de ${length} (transcrição longa, ${row.texto.length} caracteres; o texto inteiro está na VPS em ${transcricaoFile(audioDir, row.id)}, leia lá o meio). Começo: ${head} […] Fim: ${tail}`;
-      }
-      return `🎙 Áudio de ${length} (transcrição): ${row.texto}`;
+      const whole = `${continuacaoTexto(row)}🎙 Áudio de ${length} (transcrição): ${row.texto}`;
+      // Past the tmux ceiling (with the queue's frame around it), the beginning, the end and where the whole text is.
+      if (Buffer.byteLength(whole) + 200 <= CHAT_AUDIO_MAX_LIDER_BYTES) return whole;
+      const head = fitBytes(row.texto, CORTE_PONTA_BYTES, 'inicio');
+      const tail = fitBytes(row.texto, CORTE_PONTA_BYTES, 'fim');
+      return `${continuacaoTexto(row)}🎙 Áudio de ${length} (transcrição longa, ${row.texto.length} caracteres; o texto inteiro está na VPS em ${transcricaoFile(audioDir, row.id)}, leia lá o meio). Começo: ${head} […] Fim: ${tail}`;
     }
     const motivo = row.audio.motivo === SEM_PARTE_0 ? 'o começo da gravação não chegou à VPS' : (row.audio.motivo ?? 'sem motivo');
-    return `🎙 Áudio de ${length}${row.audio.interrompido ? ' (gravação interrompida)' : ''} que não consegui transcrever (${motivo}). Está guardado na VPS em ${audioFile(row.id, row.audio.mime)}.`;
+    return `${continuacaoTexto(row)}🎙 Áudio de ${length}${row.audio.interrompido ? ' (gravação interrompida)' : ''} que não consegui transcrever (${motivo}). Está guardado na VPS em ${audioFile(row.id, row.audio.mime)}.`;
   };
   /** Contract v1.4: the whole message the Líder reads, with the phone's marker (his answer goes back by it). */
   const arquivoText = (row: ChatLocal, arquivo: ChatArquivo): string => {
@@ -500,6 +539,37 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
   const ownerRow = (next: LocalFile, id: string): ChatLocal | CorrecaoLocal | undefined =>
     next.chat.find((candidate) => candidate.id === id && candidate.autor === 'dono') ?? next.correcoes?.find((candidate) => candidate.id === id);
 
+  /** A recording in parts and its continuation lines, in order (`first` is the recording's own line). */
+  const chainOf = (file: LocalFile, first: ChatLocal): ChatLocal[] => {
+    const chain = [first];
+    let next = first.audio?.continuacao;
+    while (next) {
+      const wanted = next;
+      const row = file.chat.find((candidate) => candidate.id === wanted && candidate.audio?.partes);
+      if (!row || chain.includes(row)) break;
+      chain.push(row);
+      next = row.audio!.continuacao;
+    }
+    return chain;
+  };
+  /** Part 0's header, read from the start of the recording's joined file (`null` = it never had part 0, or it is gone). */
+  const headerOf = (first: ChatLocal): Uint8Array | null => {
+    const run = first.audio?.trechos?.[0];
+    if (!first.audio || !run || run.n0 !== 0) return null;
+    try {
+      const fd = openSync(audioFile(first.id, first.audio.mime), 'r');
+      try {
+        const buffer = Buffer.alloc(Math.min(run.fim - run.inicio, 256 * 1024));
+        const read = readSync(fd, buffer, 0, buffer.length, run.inicio);
+        const header = audioHeader(buffer.subarray(0, read), first.audio.mime);
+        return header ? Buffer.from(header) : null;
+      } finally {
+        closeSync(fd);
+      }
+    } catch {
+      return null;
+    }
+  };
   const chat: ChatCelularQueue = {
     async tomar(limit) {
       const taken: ChatCelularRow[] = [];
@@ -622,75 +692,107 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
       if (isCorrecao(id)) return { ok: false, erro: 'conflito' };
       const sha256 = createHash('sha256').update(bytes).digest('hex');
       const existing = data.chat.find((row) => row.id === id);
+      // The line the part goes to: the recording's own, or the open continuation of a recording the VPS closed.
+      let target = id;
+      let continua: { readonly origem: string; readonly anterior: string } | null = null;
       if (existing) {
         const audio = existing.autor === 'dono' ? existing.audio : undefined;
         if (!audio?.partes || audio.mime !== mime) return { ok: false, erro: 'conflito' };
-        const known = audio.partes[String(n)];
-        if (known) return known === sha256 ? { ok: true, nova: false, recebidas: Object.keys(audio.partes).length } : { ok: false, erro: 'conflito' };
-        if (audio.estado !== 'subindo') return { ok: false, erro: 'fechado' };
+        const chain = chainOf(data, existing);
+        const recebidas = chain.reduce((sum, row) => sum + Object.keys(row.audio!.partes!).length, 0);
+        for (const row of chain) {
+          const known = row.audio!.partes![String(n)];
+          if (known) return known === sha256 ? { ok: true, nova: false, recebidas } : { ok: false, erro: 'conflito' };
+        }
+        const last = chain[chain.length - 1]!;
+        if (last.audio!.estado === 'subindo') target = last.id;
+        // Closed as interrupted (by the VPS after 30 min, or by the phone): what still comes is the recording's rest.
+        else if (last.audio!.interrompido) {
+          target = continuacaoId(chain[0]!.id, chain.length);
+          continua = { origem: chain[0]!.id, anterior: last.id };
+        } else return { ok: false, erro: 'fechado' };
       }
       // The bytes first: a row never counts a part that is not on disk.
-      const file = parteFile(id, n);
-      mkdirSync(partesDir(id), { recursive: true, mode: 0o700 });
+      const file = parteFile(target, n);
+      mkdirSync(partesDir(target), { recursive: true, mode: 0o700 });
       const tmp = `${file}.tmp-${process.pid}`;
       writeFileSync(tmp, bytes, { mode: 0o600 });
       renameSync(tmp, file);
       let recebidas = 0;
       commit((next) => {
-        let row = next.chat.find((candidate) => candidate.id === id);
+        let row = next.chat.find((candidate) => candidate.id === target);
         if (!row) {
-          row = { id, autor: 'dono', texto: '', em_resposta_a: null, criada_em: iso(), audio: { estado: 'subindo', duracao_ms: 0, mime, sha256: '', partes: {} } };
+          row = { id: target, autor: 'dono', texto: '', em_resposta_a: null, criada_em: iso(), audio: { estado: 'subindo', duracao_ms: 0, mime, sha256: '', partes: {}, ...(continua ? { continua: continua.origem } : {}) } };
           next.chat.push(row);
+          if (continua) {
+            const anterior = next.chat.find((candidate) => candidate.id === continua!.anterior);
+            if (anterior?.audio) anterior.audio.continuacao = target;
+          }
         }
         const audio = row.audio!;
         audio.partes![String(n)] = sha256;
         audio.ultima_parte_em = now();
-        recebidas = Object.keys(audio.partes!).length;
-        audio.duracao_ms = recebidas * CHAT_AUDIO_PARTE_MS;
+        audio.duracao_ms = Object.keys(audio.partes!).length * CHAT_AUDIO_PARTE_MS;
+        const first = audio.continua ? next.chat.find((candidate) => candidate.id === audio.continua) : row;
+        recebidas = first ? chainOf(next, first).reduce((sum, r) => sum + Object.keys(r.audio!.partes ?? {}).length, 0) : Object.keys(audio.partes!).length;
       });
       return { ok: true, nova: true, recebidas };
     },
     fecharAudioPartes(id, fim) {
-      const existing = data.chat.find((row) => row.id === id);
-      if (!existing) return fim.interrompido ? { ok: false, erro: 'nao-encontrada' } : { ok: false, erro: 'faltam-partes', faltam: Array.from({ length: fim.partes }, (_, n) => n) };
-      const audio = existing.autor === 'dono' ? existing.audio : undefined;
-      if (!audio?.partes) return { ok: false, erro: 'conflito' };
-      if (audio.estado !== 'subindo') return { ok: true, nova: false, estado: audio.estado };
-      const have = Object.keys(audio.partes).map(Number).sort((a, b) => a - b);
+      const found = data.chat.find((row) => row.id === id);
+      if (!found) return fim.interrompido ? { ok: false, erro: 'nao-encontrada' } : { ok: false, erro: 'faltam-partes', faltam: Array.from({ length: fim.partes }, (_, n) => n) };
+      if (found.autor !== 'dono' || !found.audio?.partes) return { ok: false, erro: 'conflito' };
+      const origem = found.audio.continua ? (data.chat.find((row) => row.id === found.audio!.continua) ?? found) : found;
+      const chain = chainOf(data, origem);
+      // The `fim` closes the chain's open line (a continuation, when the VPS closed the recording before it).
+      const existing = chain[chain.length - 1]!;
+      const audio = existing.audio!;
+      if (audio.estado !== 'subindo') return { ok: true, nova: false, estado: audio.estado, linha: existing.id };
+      id = existing.id;
+      const have = Object.keys(audio.partes!).map(Number).sort((a, b) => a - b);
+      const earlier = new Set(chain.slice(0, -1).flatMap((row) => Object.keys(row.audio!.partes!).map(Number)));
       // Parts past the `fim`'s count are not dropped: what reached the VPS is the owner's.
-      const total = Math.max(fim.partes, (have[have.length - 1] ?? -1) + 1);
+      const total = Math.max(fim.partes, (have[have.length - 1] ?? -1) + 1, ...[...earlier].map((n) => n + 1));
       const got = new Set(have);
-      const faltam = Array.from({ length: total }, (_, n) => n).filter((n) => !got.has(n));
+      // A continuation answers for its own stretch: from its first part on, what no line of the chain has.
+      const from = audio.continua ? (have[0] ?? 0) : 0;
+      const faltam = Array.from({ length: total - from }, (_, i) => from + i).filter((n) => !got.has(n) && !earlier.has(n));
       if (faltam.length && !fim.interrompido) return { ok: false, erro: 'faltam-partes', faltam };
+      // A continuation's first part is not part 0: the recording's header (from part 0, in the first line's joined
+      // file) goes before its bytes so ffmpeg reads it.
+      const header = audio.continua ? headerOf(origem) : null;
       // Joined in order, the runs remembered (a hole between two is a gap the transcription marks).
       const trechos: AudioTrecho[] = [];
       const file = audioFile(id, audio.mime);
       const tmp = `${file}.tmp-${process.pid}`;
       const hash = createHash('sha256');
-      writeFileSync(tmp, new Uint8Array(0), { mode: 0o600 });
-      let offset = 0;
+      writeFileSync(tmp, header ?? new Uint8Array(0), { mode: 0o600 });
+      if (header) hash.update(header);
+      let offset = header?.length ?? 0;
       for (const n of have) {
         const bytes = readFileSync(parteFile(id, n));
         appendFileSync(tmp, bytes);
         hash.update(bytes);
         const last = trechos[trechos.length - 1];
         if (last && last.n1 === n - 1) trechos[trechos.length - 1] = { ...last, n1: n, fim: offset + bytes.length };
-        else trechos.push({ n0: n, n1: n, inicio: offset, fim: offset + bytes.length });
+        else trechos.push({ n0: n, n1: n, inicio: trechos.length === 0 ? 0 : offset, fim: offset + bytes.length });
         offset += bytes.length;
       }
       renameSync(tmp, file);
       const sha256 = hash.digest('hex');
-      const semInicio = !got.has(0);
+      const semInicio = audio.continua ? !header : !got.has(0);
       commit((next) => {
         const row = next.chat.find((candidate) => candidate.id === id)!;
         const a = row.audio!;
         a.estado = semInicio ? 'falhou' : 'transcrevendo';
         if (semInicio) a.motivo = SEM_PARTE_0;
+        if (header) a.cabecalho = true;
         a.sha256 = sha256;
         a.total = total;
         a.interrompido = fim.interrompido;
         a.trechos = trechos;
-        a.duracao_ms = fim.duracao_ms > 0 ? fim.duracao_ms : have.length * CHAT_AUDIO_PARTE_MS;
+        const before = (have[0] ?? 0) * CHAT_AUDIO_PARTE_MS;
+        a.duracao_ms = fim.duracao_ms > before ? fim.duracao_ms - (a.continua ? before : 0) : have.length * CHAT_AUDIO_PARTE_MS;
       });
       // The parts are in the joined file now (kept 7 days, as every audio).
       try {
@@ -698,7 +800,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
       } catch {
         // the 7-day sweep takes it
       }
-      return { ok: true, nova: true, estado: semInicio ? 'falhou' : 'transcrevendo' };
+      return { ok: true, nova: true, estado: semInicio ? 'falhou' : 'transcrevendo', linha: id };
     },
     audiosAbertos() {
       return data.chat
@@ -728,7 +830,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
             mime: a.mime,
             duracao_ms: a.duracao_ms,
             criada_em: row.criada_em,
-            ...(a.partes ? { partes: { total: a.total ?? 0, interrompido: a.interrompido === true, trechos: a.trechos ?? [] } } : {}),
+            ...(a.partes ? { partes: { total: a.total ?? 0, interrompido: a.interrompido === true, trechos: a.trechos ?? [], ...(a.cabecalho ? { cabecalho: true } : {}) } } : {}),
           };
         });
     },

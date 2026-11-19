@@ -12,7 +12,7 @@
 // Only the owner's audio and words go through here: the log has sizes and times, never the text.
 
 import { execFile } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { TranscribeError } from '../main/celular/transcrever';
@@ -146,13 +146,19 @@ export interface AudioMidia {
   cortar(wav: string, inicio: number, fim: number, saida: string): Promise<void>;
 }
 
+/** Exit codes: the limiter's "no slot" (EX_TEMPFAIL) and `timeout`'s. */
+const SEM_VAGA = 75;
+const TIMEOUT = 124;
+
 const FFMPEG = '/usr/bin/ffmpeg';
 const FFMPEG_TIMEOUT_MS = 10 * 60_000;
 
 function run(cmd: string, args: readonly string[], timeoutMs: number): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve) => {
     execFile(cmd, args, { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
-      const code = error ? (typeof (error as { code?: unknown }).code === 'number' ? ((error as { code: number }).code) : 1) : 0;
+      // Killed by our own timeout: the same as `timeout`'s 124 (a piece out of time), never a connection error.
+      const killed = error && ((error as { killed?: unknown }).killed === true || typeof (error as { signal?: unknown }).signal === 'string');
+      const code = !error ? 0 : killed ? TIMEOUT : typeof (error as { code?: unknown }).code === 'number' ? (error as { code: number }).code : 1;
       resolve({ code, stdout: String(stdout ?? ''), stderr: String(stderr ?? '') });
     });
   });
@@ -166,7 +172,7 @@ export function ffmpegMidia(ffmpeg = process.env.DONEL_FFMPEG || FFMPEG): AudioM
       const r = await ff(['-loglevel', 'error', '-y', '-i', entrada, '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', '-f', 'wav', wav]);
       if (r.code !== 0 || !existsSync(wav)) throw new Error(`o ffmpeg não leu o áudio (${r.code})`);
       // 16 kHz, mono, 16 bits, 44 bytes of header.
-      const size = readFileSync(wav).length;
+      const size = statSync(wav).size;
       return Math.max(0, (size - 44) / 32_000);
     },
     async silencios(wav, duracao) {
@@ -183,9 +189,6 @@ export function ffmpegMidia(ffmpeg = process.env.DONEL_FFMPEG || FFMPEG): AudioM
 /** Transcribes one piece's file; `''` = no speech in it. Throws `TranscribeError`. */
 export type TranscribePedaco = (file: string, meta: { readonly type: string; readonly quem: string }) => Promise<string>;
 
-/** Exit codes: the limiter's "no slot" (EX_TEMPFAIL) and `timeout`'s. */
-const SEM_VAGA = 75;
-const TIMEOUT = 124;
 
 /**
  * Each piece through the limiter (`limitador.py pesado`): it waits for a slot and for the build-pesado.lock queue (one
@@ -201,7 +204,9 @@ export function limitedTranscriber(options: { readonly url: string; readonly lim
     const curl = ['curl', '-sS', '--max-time', '900', '--fail-with-body', '-o', out, '-F', `file=@${file};type=${meta.type}`, '-F', 'response_format=json', '-F', 'language=pt', `${options.url.replace(/\/$/, '')}/inference`];
     const limited = existsSync(limitador);
     const r = limited
-      ? await run('python3', ['-I', limitador, 'pesado', '--quem', meta.quem, '--mem', '512M', '--max-min', '20', '--espera-min', '45', '--', ...curl], 70 * 60_000)
+      ? // Waits at most 15 min for each of its three gates (slot, build-pesado.lock, slot again) and runs 20: 65 min, under
+        // this 70. No slot by then = exit 75, and the worker tries the piece again later, free for the other audios.
+        await run('python3', ['-I', limitador, 'pesado', '--quem', meta.quem, '--mem', '512M', '--max-min', '20', '--espera-min', '15', '--', ...curl], 70 * 60_000)
       : await run(curl[0]!, curl.slice(1), 16 * 60_000);
     if (r.code === SEM_VAGA) throw new TranscribeError('tempo', 'a VPS ficou sem vaga para transcrever');
     if (r.code === TIMEOUT || r.code === 28) throw new TranscribeError('tempo', 'um pedaço demorou demais');

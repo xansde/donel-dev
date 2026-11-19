@@ -8,6 +8,7 @@ import { createLedgerService, nodeLedgerProofFs } from '../src/main/ledger-store
 import { createCelularLocalStore } from '../src/oraculo/celular-local';
 import { createCelularV2Handler, signedMessage } from '../src/oraculo/celular-v2';
 import { createChatAudioWorker } from '../src/oraculo/chat-audio';
+import { TranscribeError } from '../src/main/celular/transcrever';
 import { emendar, planPedacos, type AudioMidia } from '../src/oraculo/chat-audio-longo';
 
 // t-b03fdec8 — o áudio sem limite de duração (contrato v1.6): partes de 60 s, `fim`, fechamento sozinho em 30 min e a
@@ -220,8 +221,8 @@ describe('áudio em partes (/api/v2/chat/audio/parte e /fim)', () => {
         expect(emCurso).toBe(1);
         andamento.push(parse(await w.call('GET', '/api/v2/chat')).mensagens[0].audio.pedacos);
         emCurso -= 1;
-        // ~4000 caracteres por pedaço: o texto inteiro passa do corte de 3500 da fila.
-        return `${readFileSync(file, 'utf8')} ${'blá '.repeat(1000)}`;
+        // ~2000 caracteres por pedaço: o texto inteiro passa do corte de 3500 da fila e cabe no teto do tmux.
+        return `${readFileSync(file, 'utf8')} ${'blá '.repeat(500)}`;
       },
       midia: fakeMidia([[289, 291], [589, 591]]),
       kick: () => {},
@@ -236,6 +237,104 @@ describe('áudio em partes (/api/v2/chat/audio/parte e /fim)', () => {
     const ordem = [...row!.texto.matchAll(/fala(\d+)/g)].map((m) => Number(m[1]));
     expect(ordem).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
     expect(row!.texto.endsWith('»')).toBe(true);
+    worker.stop();
+  });
+});
+
+describe('áudio longo: o que o Líder recebe e o que não se perde', () => {
+  it('transcrição enorme vai ao Líder com começo, fim e o caminho do .txt, abaixo do teto do tmux (~16 KB) em bytes', async () => {
+    const w = world();
+    const id = UUID(1);
+    for (let n = 0; n < 3; n += 1) await w.call('POST', '/api/v2/chat/audio/parte', parte(id, n));
+    await w.call('POST', '/api/v2/chat/audio/fim', fim(id, 3));
+    const worker = createChatAudioWorker({
+      store: w.store,
+      transcribe: async () => '',
+      // ~25 min de fala com acento: passa de 16 KB, longe dos 40 mil caracteres de antes.
+      transcribePedaco: async (file) => `${readFileSync(file, 'utf8')} ${'ação é coração '.repeat(2500)}`,
+      midia: fakeMidia(),
+      kick: () => {},
+      log: () => {},
+    });
+    worker.enqueue(id);
+    await worker.idle();
+    const [row] = await w.store.chat.tomar(10);
+    expect(Buffer.byteLength(row!.texto)).toBeLessThanOrEqual(12_000);
+    expect(row!.texto).toContain('fala0');
+    expect(row!.texto).toContain(join(w.dir, 'chat-audio', `${id}.txt`));
+    expect(row!.texto.endsWith('coração»')).toBe(true);
+    expect(readFileSync(join(w.dir, 'chat-audio', `${id}.txt`), 'utf8').length).toBeGreaterThan(30_000);
+    worker.stop();
+  });
+
+  it('pedaço sem vaga no limitador (ou fora do tempo) é tentado de novo mais tarde, sem marca e sem refazer o que já saiu', async () => {
+    const w = world();
+    const id = UUID(1);
+    for (let n = 0; n < 12; n += 1) await w.call('POST', '/api/v2/chat/audio/parte', parte(id, n));
+    await w.call('POST', '/api/v2/chat/audio/fim', fim(id, 12));
+    const chamadas: string[] = [];
+    let recusar = 1;
+    const worker = createChatAudioWorker({
+      store: w.store,
+      transcribe: async () => '',
+      transcribePedaco: async (file) => {
+        const texto = readFileSync(file, 'utf8');
+        chamadas.push(texto.split(' ')[0]!);
+        if (texto.startsWith('fala5') && recusar-- > 0) throw new TranscribeError('tempo', 'a VPS ficou sem vaga para transcrever');
+        return texto;
+      },
+      midia: fakeMidia([[289, 291], [589, 591]]),
+      kick: () => {},
+      log: () => {},
+      adiarMs: 5,
+    });
+    worker.enqueue(id);
+    await worker.idle();
+    expect(w.store.audioEstado(id)).toBe('transcrevendo');
+    expect(await w.store.chat.tomar(10)).toHaveLength(0);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await worker.idle();
+    const [row] = await w.store.chat.tomar(10);
+    expect(row!.texto).not.toContain('não transcrito');
+    expect([...row!.texto.matchAll(/fala(\d+)/g)].map((m) => Number(m[1]))).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    // O pedaço que já tinha saído não volta ao transcritor.
+    expect(chamadas).toEqual(['fala0', 'fala5', 'fala5', 'fala10']);
+    worker.stop();
+  });
+
+  it('partes que chegam depois do fechamento de 30 min viram a continuação do áudio, e nada do que foi gravado se perde', async () => {
+    const w = world();
+    const id = UUID(1);
+    await w.call('POST', '/api/v2/chat/audio/parte', parte(id, 0));
+    await w.call('POST', '/api/v2/chat/audio/parte', parte(id, 1));
+    const worker = createChatAudioWorker({
+      store: w.store,
+      transcribe: async () => '',
+      transcribePedaco: async (file) => readFileSync(file, 'utf8'),
+      midia: fakeMidia(),
+      kick: () => {},
+      log: () => {},
+      now: w.now,
+    });
+    w.advance(31 * 60_000);
+    worker.fecharParados();
+    await worker.idle();
+    // O 4G voltou: as partes guardadas no aparelho chegam depois do fechamento.
+    expect(parse(await w.call('POST', '/api/v2/chat/audio/parte', parte(id, 2)))).toMatchObject({ ok: true, nova: true });
+    expect(parse(await w.call('POST', '/api/v2/chat/audio/parte', parte(id, 2))).nova).toBe(false);
+    const faltando = await w.call('POST', '/api/v2/chat/audio/fim', fim(id, 5));
+    expect(parse(faltando)).toEqual({ erro: 'faltam-partes', faltam: [3, 4] });
+    await w.call('POST', '/api/v2/chat/audio/parte', parte(id, 4));
+    await w.call('POST', '/api/v2/chat/audio/parte', parte(id, 3));
+    expect(parse(await w.call('POST', '/api/v2/chat/audio/fim', fim(id, 5)))).toMatchObject({ ok: true, nova: true, estado: 'transcrevendo' });
+    expect(parse(await w.call('POST', '/api/v2/chat/audio/fim', fim(id, 5))).nova).toBe(false);
+    for (const queued of w.queued) worker.enqueue(queued);
+    await worker.idle();
+    const textos = (await w.store.chat.tomar(10)).map((row) => row.texto);
+    expect(textos).toHaveLength(2);
+    expect(textos[0]).toBe('🎙 Áudio de 2:00 (transcrição): (gravação interrompida) fala0 fala1');
+    expect(textos[1]).toContain('continuação do áudio #00000001');
+    expect(textos[1]).toContain('fala2 fala3 fala4');
     worker.stop();
   });
 });

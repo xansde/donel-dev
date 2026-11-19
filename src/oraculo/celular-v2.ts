@@ -322,7 +322,7 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
       return erro(409, 'conflito', 'Este id não é de um áudio em partes.');
     }
     if (closed.nova) {
-      if (closed.estado === 'transcrevendo') deps.audio?.(id);
+      if (closed.estado === 'transcrevendo') deps.audio?.(closed.linha);
       else deps.kick?.('chat');
     }
     return json(200, { ok: true, nova: closed.nova, estado: closed.estado });
