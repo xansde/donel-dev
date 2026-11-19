@@ -749,7 +749,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
       }
       const audio = found.audio;
       if (audio.estado !== 'subindo') return { ok: true, nova: false, estado: audio.estado };
-      const have = Object.keys(audio.partes).map(Number).sort((a, b) => a - b);
+      const have = Object.keys(audio.partes ?? {}).map(Number).sort((a, b) => a - b);
       const got = new Set(have);
       // Parts past the `fim`'s count are not dropped: what reached the VPS is the owner's.
       const total = Math.max(fim.partes, (have[have.length - 1] ?? -1) + 1);
