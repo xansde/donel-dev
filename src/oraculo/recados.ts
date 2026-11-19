@@ -907,6 +907,8 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       await watchBoxes().catch((error: unknown) => log(`vigia das caixas: ${error instanceof Error ? error.message : String(error)}`));
       const at = now();
       // 1. Typed items: confirmed by the transcript, another Enter on a stuck field, or back to the queue.
+      /** Sessions whose field held this tick's typing and was cleared (the items typed together share the field). */
+      const clearedNow = new Set<string>();
       for (const item of read().filter((candidate) => candidate.estado === 'digitado')) {
         const sid = item.para.sid;
         const since = at - (item.digitadoEm ?? at);
@@ -924,8 +926,9 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
           // field, the Enter's fate unknown, or the typings spent) the screen waits a while and the turn end delivers.
           if (!seen && changed.length) {
             const screen = await tmux.screen(sid);
-            const held = Boolean(screen && !screen.inMode && fieldHoldsOnly(screen.text, [tagOf(item.id)]));
-            const cleared = held && (await tmux.clear(sid));
+            const held = clearedNow.has(sid) || Boolean(screen && !screen.inMode && fieldHoldsOnly(screen.text, [tagOf(item.id)]));
+            const cleared = clearedNow.has(sid) || (held && (await tmux.clear(sid)));
+            if (cleared) clearedNow.add(sid);
             if (!cleared || item.tentativas >= MAX_TYPINGS) holds.set(sid, now() + HOLD_MS);
             if (held && item.tentativas >= MAX_TYPINGS) {
               log(`recado ${item.id} ficou na caixa da sessão ${sid} depois de ${item.tentativas} digitações: caixa limpa, volta à fila.`);
