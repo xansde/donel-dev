@@ -197,12 +197,16 @@ export function createProbe(deps: ProbeDeps): Probe {
   async function probe(port: number, token: string): Promise<PictureSession | null> {
     const quemSou = await call(port, token, 'sessao_quem_sou', timeoutMs);
     if (!isRecord(quemSou)) return null;
+    // 19/11 — the Líder único has no board: the PC answers his `sessao_listar` and `quadro_ler` with a notice to name
+    // one. That is an answer (no list, no board); only silence (`null`) is a failure. Any other session must list.
+    const leaderOfAll = quemSou.liderUnico === true;
     const listar = await call(port, token, 'sessao_listar', timeoutMs);
-    if (!Array.isArray(listar)) return null;
+    if (leaderOfAll ? listar === null : !Array.isArray(listar)) return null;
     const quadro = await call(port, token, 'quadro_ler', timeoutMs);
-    if (!isRecord(quadro)) return null;
-    const board = boardFromProbe(quemSou, listar, quadro);
-    return { quemSou, listar, ...(board ? { board } : {}), at: now() };
+    if (leaderOfAll ? quadro === null : !isRecord(quadro)) return null;
+    const listed = Array.isArray(listar) ? listar : [];
+    const board = leaderOfAll ? undefined : boardFromProbe(quemSou, listed, quadro);
+    return { quemSou, listar: listed, ...(board ? { board } : {}), at: now() };
   }
 
   async function round(): Promise<void> {

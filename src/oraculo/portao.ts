@@ -715,7 +715,10 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     if (cards && call && isCardToolName(call.name)) return (await local(sid, request.body, cards, 'ligado', false, picture)).response;
     // O Oráculo sem o PC: a session the PC does not know is answered here, whatever it calls; with the PC away, what can
     // be answered here is (any other tool still tries the PC, as before). The tunnel is never waited on for these.
-    if (mine?.local === true || (call && ANSWERED_WITHOUT_PC.has(call.name) && deps.pcAway?.() === true)) {
+    // 19/11 — the Líder único pictured here only because the probe failed him: with the PC not away, a tool only the PC
+    // does (ver_tela, fechar...) still tries his tunnel; a refused tunnel falls back here below. Not for other sessions.
+    const leaderTriesPc = mine?.local === true && mine.quemSou.liderUnico === true && call !== null && !ANSWERED_WITHOUT_PC.has(call.name) && deps.pcAway?.() !== true;
+    if ((mine?.local === true && !leaderTriesPc) || (call && ANSWERED_WITHOUT_PC.has(call.name) && deps.pcAway?.() === true)) {
       if (request.method !== 'POST') return { status: 405, headers: { Allow: 'POST' }, body: '' };
       return (await local(sid, request.body, cards, 'desligado', true, picture)).response;
     }
