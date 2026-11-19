@@ -52,7 +52,9 @@ export function postJson(url: string, token: string, body: string, timeoutMs: nu
     };
     let outgoing: ReturnType<typeof httpRequest>;
     try {
-      outgoing = httpRequest(url, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'Content-Length': String(Buffer.byteLength(body)) } }, (res) => {
+      // An empty token = no credential (the entregador's loopback `/local/*` takes none).
+      const headers = { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json', 'Content-Length': String(Buffer.byteLength(body)) };
+      outgoing = httpRequest(url, { method: 'POST', headers }, (res) => {
         const chunks: Buffer[] = [];
         res.on('data', (chunk: Buffer) => chunks.push(chunk));
         res.on('end', () => finish({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString('utf8') }));
