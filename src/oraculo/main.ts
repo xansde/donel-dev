@@ -23,7 +23,7 @@
 // this bundle runs as such a gate (the Homologações, scripts/portao-satelite.sh): the gate, the probe and the recados
 // only, with the tasks on the personal VPS (`<dir>/portao.token`, satelite.ts).
 
-import { chmodSync, existsSync, mkdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir, networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { createSystemConfigIoDeps } from '../main/config-store';
