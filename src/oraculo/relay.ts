@@ -7,12 +7,18 @@
 // unreadable `fila.json` is set aside, never written over. Nothing arrives twice: a retry of the same request (the
 // message's `key`: the decision event, the phone's request id) joins the pending item, and one already delivered
 // answers where it went. Two messages of the same words but different events are two messages (revisão do #299).
+//
+// Recado vencido (r-3ac3e0e4, vencimento.ts): an item older than `STALE_MS` still waiting is never handed out. It is
+// marked `vencidoEm` (kept, terminal: a retry of its key does not revive it), logged, and a recado a session sent leaves
+// a notice to it in this same queue, in the same write (one per item, `vencido:<key>`); the owner's words never go
+// stale, they go marked "(atrasada: …)". Swept when the queue is opened (the daemon's boot) and at every `pending()`.
 
 import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 import type { LedgerDeliveredTo } from '../shared/ledger/contract';
 import type { DeliverOwnerMessage, OwnerMessage } from '../main/ledger-card-writer';
 import type { ConfigIoDeps } from '../main/config-store';
+import { ageText, expiryNotice, isOwnerMessage, isStale, markLate, relaySenderOf } from './vencimento';
 
 export interface RelayItem {
   readonly id: string;
@@ -22,6 +28,8 @@ export interface RelayItem {
   /** Set by the ack. */
   readonly deliveredTo?: Exclude<LedgerDeliveredTo, null>;
   readonly deliveredAt?: number;
+  /** Recado vencido: when it went stale undelivered (terminal; never handed out again). */
+  readonly vencidoEm?: number;
 }
 
 export interface Relay {
@@ -30,6 +38,7 @@ export interface Relay {
    * the queue (the PC is off or did not answer in time); it still goes when the PC comes back.
    */
   send(message: OwnerMessage, waitMs: number): Promise<Exclude<LedgerDeliveredTo, null> | 'pendente'>;
+  /** What still waits to go (stale items swept first: never handed out). */
   pending(): RelayItem[];
   /** The item of `key`, pending or delivered (kept 7 days); `undefined` = the relay never had it. */
   byKey(key: string): RelayItem | undefined;
@@ -58,12 +67,20 @@ function parseItem(value: unknown): RelayItem | null {
     at: value.at,
     message: { projectPath, placeId, text, leaderText },
     ...(deliveredTo ? { deliveredTo, ...(typeof value.deliveredAt === 'number' ? { deliveredAt: value.deliveredAt } : {}) } : {}),
+    ...(typeof value.vencidoEm === 'number' ? { vencidoEm: value.vencidoEm } : {}),
   };
 }
 
-export function createRelay(deps: { readonly filePath: string; readonly io: ConfigIoDeps; readonly now?: () => number; readonly notify?: () => void }): Relay {
+export function createRelay(deps: {
+  readonly filePath: string;
+  readonly io: ConfigIoDeps;
+  readonly now?: () => number;
+  readonly notify?: () => void;
+  readonly log?: (line: string) => void;
+}): Relay {
   const { filePath, io } = deps;
   const now = deps.now ?? Date.now;
+  const log = deps.log ?? ((line: string) => console.error(`[oraculo] ${line}`));
   const waiters = new Map<string, Set<(to: Exclude<LedgerDeliveredTo, null>) => void>>();
 
   function read(): RelayItem[] {
@@ -86,7 +103,10 @@ export function createRelay(deps: { readonly filePath: string; readonly io: Conf
 
   function write(items: readonly RelayItem[]): void {
     const cutoff = now();
-    const kept = items.filter((item) => (item.deliveredAt !== undefined ? cutoff - item.deliveredAt < DELIVERED_DAYS * DAY : cutoff - item.at < PENDING_DAYS * DAY));
+    const kept = items.filter((item) => {
+      const closed = item.deliveredAt ?? item.vencidoEm;
+      return closed !== undefined ? cutoff - closed < DELIVERED_DAYS * DAY : cutoff - item.at < PENDING_DAYS * DAY;
+    });
     const tmp = `${filePath}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
     try {
       if (!io.existsSync(dirname(filePath))) io.mkdirSync(dirname(filePath));
@@ -98,12 +118,57 @@ export function createRelay(deps: { readonly filePath: string; readonly io: Conf
     }
   }
 
+  const name = filePath.split(/[\\/]/).pop() ?? filePath;
+
+  /**
+   * Recado vencido: the stale items still waiting turn `vencidoEm` (a sender's recado leaves its notice here, in the
+   * same write), the owner's are marked late; returns what still waits. Sync: nothing interleaves.
+   */
+  function sweep(): RelayItem[] {
+    const items = read();
+    const at = now();
+    let changed = false;
+    const notices: RelayItem[] = [];
+    const next = items.map((item) => {
+      if (item.deliveredTo || item.vencidoEm !== undefined || !isStale(item.at, at)) return item;
+      const { message } = item;
+      if (isOwnerMessage(item.key, message.text)) {
+        const text = markLate(message.text, item.at);
+        const leaderText = markLate(message.leaderText, item.at);
+        if (text === message.text && leaderText === message.leaderText) return item;
+        changed = true;
+        return { ...item, message: { ...message, text, leaderText } };
+      }
+      changed = true;
+      const to = message.placeId || 'o Líder único';
+      log(`${name}: ${item.id} venceu sem entrega (${ageText(item.at, at)}, para ${to}).`);
+      const notice = expiryNotice({ key: item.key, projectPath: message.projectPath, from: relaySenderOf(item.key), to, createdAt: item.at, text: message.text });
+      if (notice && !items.some((other) => other.key === notice.key) && !notices.some((other) => other.key === notice.key))
+        notices.push({ id: randomUUID(), key: notice.key!, message: notice, at });
+      return { ...item, vencidoEm: at };
+    });
+    if (!changed) return next;
+    const all = [...next, ...notices];
+    write(all);
+    if (notices.length) deps.notify?.();
+    return all;
+  }
+
+  // The queue as it was left (a restart, hours later): stale items never go out.
+  try {
+    sweep();
+  } catch (error) {
+    log(`${name}: não deu para conferir os vencidos ao abrir: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
   return {
     async send(message, waitMs) {
       const key = message.key ?? `unico:${randomUUID()}`;
       const items = read();
       const same = message.key ? items.find((item) => item.key === key) : undefined;
       if (same?.deliveredTo) return same.deliveredTo;
+      // A retry of a stale one does not revive it.
+      if (same?.vencidoEm !== undefined) return 'pendente';
       let item = same;
       if (!item) {
         item = { id: randomUUID(), key, message, at: now() };
@@ -126,7 +191,7 @@ export function createRelay(deps: { readonly filePath: string; readonly io: Conf
       });
     },
     pending() {
-      return read().filter((item) => !item.deliveredTo);
+      return sweep().filter((item) => !item.deliveredTo && item.vencidoEm === undefined);
     },
     byKey(key) {
       return read().find((item) => item.key === key);
