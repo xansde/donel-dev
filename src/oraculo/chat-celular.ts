@@ -43,7 +43,8 @@ const ROUND_MS = 15_000;
 const TAKE_LIMIT = 10;
 const PARKED_LIMIT = 50;
 /** The owner's words given whole up to this; the SQL keeps up to 4000. */
-const MAX_TEXT = 3500;
+export const CHAT_MAX_TEXT = 3500;
+const MAX_TEXT = CHAT_MAX_TEXT;
 /** `celular.lider_mensagens.texto` holds up to 4000 characters. */
 const MAX_REPLY = 4000;
 /** A row delivered here and never answered in this long leaves the wait (the transcript lost it). */

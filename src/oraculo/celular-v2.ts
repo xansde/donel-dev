@@ -15,7 +15,7 @@ import type { LedgerDoc } from '../shared/ledger/contract';
 import { cartaRows, tarefaRows, type CartaProvaRef, type PlaceInfoOf, type TarefaRow } from '../shared/ledger/mirror';
 import { prepareProof, type ProofReader } from '../main/ledger-mirror/cartas';
 import type { MobileRequest, MobileResponse } from '../main/celular/server';
-import { CHAT_AUDIO_MIMES, type CelularLocalStore } from './celular-local';
+import { CHAT_AUDIO_MAX_MS, CHAT_AUDIO_MAX_PARTES, CHAT_AUDIO_MIMES, CHAT_AUDIO_PARTE_MIMES, type CelularLocalStore } from './celular-local';
 import { MAX_ARQUIVO_BODY, MAX_ARQUIVO_BYTES } from './chat-arquivo';
 import type { GlossarioResumo, GlossarioStore } from './glossario';
 import { CREDENCIAL_PATH, type CredencialHandler } from './credencial';
@@ -33,6 +33,10 @@ const MAX_AUDIO_MS = 5 * 60_000;
 // No repeated group: V8 recursed on `(?:x{4})*` and overflowed the stack above ~4.4 MB of base64 (PR #500 review).
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 const isBase64 = (value: string): boolean => value.length % 4 === 0 && BASE64.test(value);
+/** t-b03fdec8 — a voice message of any length, in parts of 60 s (contract v1.6): each part's body has the same 6 MB. */
+export const CHAT_AUDIO_PARTE_PATH = 'chat/audio/parte';
+export const CHAT_AUDIO_FIM_PATH = 'chat/audio/fim';
+const CONTINUA_INVALIDO = 'O áudio anterior não existe, não foi fechado pela VPS ou tem outro formato; ou este áudio já continua outro.';
 /** t-a1ad1ca2 — the owner's file (`POST chat/arquivo`, contract v1.4): the only route with ~20 MB of body. */
 export const CHAT_ARQUIVO_PATH = 'chat/arquivo';
 const MAX_NOME = 255;
@@ -290,6 +294,61 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     return json(200, { ok: true, nova: added.nova, estado });
   }
 
+  /** Contract v1.6: one part of a recording, on disk before the answer; the same `(id, n)` again is the same part. */
+  function chatAudioParte(body: Record<string, unknown>): MobileResponse {
+    const { id, n, mime, audio_b64: b64, continua } = body;
+    if (typeof id !== 'string' || !UUID.test(id)) return erro(400, 'corpo', 'id: uuid v4 em minúsculas');
+    if (continua !== undefined && (typeof continua !== 'string' || !UUID.test(continua))) return erro(400, 'corpo', 'continua: uuid v4 em minúsculas');
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) return erro(400, 'corpo', 'n: inteiro a partir de 0');
+    if (mime === 'audio/mp4') return erro(415, 'formato-sem-partes', 'O mp4 não se emenda: mande inteiro (até 5 min) ou grave em webm.');
+    if (typeof mime !== 'string' || !CHAT_AUDIO_PARTE_MIMES.includes(mime)) return erro(415, 'formato');
+    if (n >= CHAT_AUDIO_MAX_PARTES) return erro(413, 'longo-demais', 'O áudio passou de 2 h.');
+    if (typeof b64 !== 'string' || !isBase64(b64)) return erro(400, 'corpo', 'audio_b64: base64 padrão, sem quebras');
+    const added = deps.store.addChatAudioParte(id, n, mime, Buffer.from(b64, 'base64'), continua);
+    if (!added.ok) {
+      // Contract v1.8: closed by the VPS after 30 min; the phone sends what it lacks as a new audio with `continua`.
+      if (added.erro === 'fechado-auto') return json(409, { erro: 'fechado-auto', recebidas: added.recebidas });
+      if (added.erro === 'ja-continuado') return json(409, { erro: 'ja-continuado', id: added.id });
+      if (added.erro === 'continua-invalido') return erro(409, 'continua-invalido', CONTINUA_INVALIDO);
+      return erro(409, 'conflito', added.erro === 'fechado' ? 'Este áudio já foi fechado.' : 'Esta parte já existe com outro conteúdo.');
+    }
+    return json(200, { ok: true, nova: added.nova, recebidas: added.recebidas });
+  }
+
+  /** Contract v1.6: the end of a recording in parts; from here on it is the v1.2 audio. */
+  function chatAudioFim(body: Record<string, unknown>): MobileResponse {
+    const { id, partes, duracao_ms: duracao, interrompido, cancelado, continua } = body;
+    if (typeof id !== 'string' || !UUID.test(id)) return erro(400, 'corpo', 'id: uuid v4 em minúsculas');
+    if (cancelado !== undefined && typeof cancelado !== 'boolean') return erro(400, 'corpo', 'cancelado: true ou false');
+    if (cancelado === true) {
+      // Contract v1.7: the owner threw it away. No faltam-partes (nothing to join); the parts leave the disk now.
+      if (typeof partes !== 'number' || !Number.isInteger(partes) || partes < 0) return erro(400, 'corpo', 'partes: inteiro a partir de 0');
+      const cancel = deps.store.cancelarAudio(id);
+      if (!cancel.ok) return cancel.erro === 'ja-enviado' ? erro(409, 'ja-enviado', 'Este áudio já foi enviado ao Líder.') : erro(409, 'conflito', 'Este id não é de um áudio em partes.');
+      if (cancel.nova) deps.log?.(`áudio ${id} cancelado pelo dono, ${cancel.apagadas} partes apagadas`);
+      return json(200, { ok: true, nova: cancel.nova, estado: 'cancelado' });
+    }
+    if (typeof partes !== 'number' || !Number.isInteger(partes) || partes < 1) return erro(400, 'corpo', 'partes: inteiro a partir de 1');
+    if (typeof duracao !== 'number' || !Number.isInteger(duracao) || duracao < 0) return erro(400, 'corpo', 'duracao_ms');
+    if (typeof interrompido !== 'boolean') return erro(400, 'corpo', 'interrompido: true ou false');
+    if (continua !== undefined && (typeof continua !== 'string' || !UUID.test(continua))) return erro(400, 'corpo', 'continua: uuid v4 em minúsculas');
+    if (partes > CHAT_AUDIO_MAX_PARTES || duracao > CHAT_AUDIO_MAX_MS) return erro(413, 'longo-demais', 'O áudio passou de 2 h.');
+    const closed = deps.store.fecharAudioPartes(id, { partes, duracao_ms: duracao, interrompido, ...(continua !== undefined ? { continua } : {}) });
+    if (!closed.ok) {
+      if (closed.erro === 'faltam-partes') return json(409, { erro: 'faltam-partes', faltam: closed.faltam });
+      if (closed.erro === 'nao-encontrada') return erro(404, 'nao-encontrada');
+      if (closed.erro === 'continua-invalido') return erro(409, 'continua-invalido', CONTINUA_INVALIDO);
+      if (closed.erro === 'fechado-auto') return json(409, { erro: 'fechado-auto', recebidas: closed.recebidas });
+      if (closed.erro === 'ja-continuado') return json(409, { erro: 'ja-continuado', id: closed.id });
+      return erro(409, 'conflito', 'Este id não é de um áudio em partes, ou foi cancelado.');
+    }
+    if (closed.nova) {
+      if (closed.estado === 'transcrevendo') deps.audio?.(id);
+      else deps.kick?.('chat');
+    }
+    return json(200, { ok: true, nova: closed.nova, estado: closed.estado, ...(closed.fechado ? { fechado: closed.fechado } : {}) });
+  }
+
   /** Contract v1.4: the file is on disk before the row, and the answer goes out at once. */
   function chatArquivo(body: Record<string, unknown>): MobileResponse {
     const { id, nome, mime, tamanho, arquivo_b64: b64, legenda } = body;
@@ -363,7 +422,7 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     const path = url.pathname.slice(V2_PREFIX.length);
     const method = request.method.toUpperCase();
     const isPost = method === 'POST';
-    const isAudio = isPost && path === CHAT_AUDIO_PATH;
+    const isAudio = isPost && (path === CHAT_AUDIO_PATH || path === CHAT_AUDIO_PARTE_PATH);
     const isArquivo = isPost && path === CHAT_ARQUIVO_PATH;
     // t-c441e144 — the password's body never reaches parseBody nor any log here: it goes raw to its own module.
     if (isPost && path === CREDENCIAL_PATH) {
@@ -385,7 +444,8 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     if (isPost && path === 'tarefas-pedidas') return pedir(body!);
     if (method === 'GET' && path === 'tarefas-pedidas') return json(200, { pedidas: deps.store.pedidasView(100) });
     if (isPost && path === 'chat') return chatEnviar(body!);
-    if (isAudio) return chatAudio(body!);
+    if (isAudio) return path === CHAT_AUDIO_PARTE_PATH ? chatAudioParte(body!) : chatAudio(body!);
+    if (isPost && path === CHAT_AUDIO_FIM_PATH) return chatAudioFim(body!);
     if (isArquivo) return chatArquivo(body!);
     if (isPost && path === CHAT_CORRECAO_PATH) return chatCorrecao(body!);
     if (method === 'GET' && path === 'chat') {

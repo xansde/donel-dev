@@ -1,5 +1,5 @@
 // Passo 9 (t-5358d400), PR 3 — the phone's door (47815) when the entregador runs apart. The chat with the Líder único
-// (`/api/v2/chat`, `chat/audio`, `chat/arquivo`, `chat/correcao`, `ping`) is answered by the entregador itself, so the owner's words reach
+// (`/api/v2/chat`, `chat/audio` (and its `parte`/`fim`), `chat/arquivo`, `chat/correcao`, `ping`) is answered by the entregador itself, so the owner's words reach
 // the Líder and his answer comes back with the registro (donel-oraculo) down. Every other route (cards, decisions,
 // tasks he asks for, the PWA, pairing, push) goes byte for byte to the registro's phone server, which listens on 47818
 // then: same method, path, headers and body, so the device's signature still checks out there. The app keeps its origin.
@@ -21,7 +21,7 @@ export const registroPhonePort = (env: Readonly<Record<string, string | undefine
  * The routes the entregador answers; the rest of the phone's server is the registro's. t-c441e144: the credential box
  * too, because it announces in the chat (one writer of the conversation): its body is never proxied, only read here.
  */
-const CHAT_ROUTES: ReadonlySet<string> = new Set(['/api/v2/chat', '/api/v2/chat/audio', '/api/v2/chat/arquivo', '/api/v2/chat/correcao', '/api/v2/ping', '/api/v2/credencial']);
+const CHAT_ROUTES: ReadonlySet<string> = new Set(['/api/v2/chat', '/api/v2/chat/audio', '/api/v2/chat/audio/parte', '/api/v2/chat/audio/fim', '/api/v2/chat/arquivo', '/api/v2/chat/correcao', '/api/v2/ping', '/api/v2/credencial']);
 export const isChatRoute = (url: string): boolean => CHAT_ROUTES.has(url.split('?')[0] ?? '');
 
 /**

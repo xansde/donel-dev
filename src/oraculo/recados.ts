@@ -191,6 +191,11 @@ const ENTER_AGAIN_MS = 5_000;
 const MAX_ENTERS = 2;
 /** Typings of one item on the screen, counting the ones after a field that held it (cleared and typed again). */
 const MAX_TYPINGS = 3;
+/**
+ * One typing's UTF-8 bytes at most: `tmux send-keys -l` refuses a command past ~16.3 KB ("command too long", tmux 3.4),
+ * and each refusal spends a typing of every item joined in it. Items past this wait for the next typing.
+ */
+const MAX_TYPING_BYTES = 15_000;
 /** The box watcher looks at every session's field this often (two tmux calls each). */
 const WATCH_MS = 30_000;
 /** A field with the same text unsent for this long is a stuck box. */
@@ -1256,6 +1261,7 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
         if (mood?.mood !== 'parada' && !(await transcriptSaysStopped(sid))) continue;
         // The conversation decides: an item typed before whose label is in the transcript came in, never typed again.
         const ids = new Set<string>();
+        let bytes = 0;
         for (const item of queued.filter((candidate) => candidate.para.sid === sid)) {
           if (item.tentativas > 0 && (await typedInTranscript(sid, item.id))) {
             update(
@@ -1264,6 +1270,11 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
             );
             continue;
           }
+          // Joined, they stay under tmux's ceiling; the first goes alone whatever its size. What does not fit stops the
+          // join: it and everything after it wait for the next typing, so the queue's order never changes (#527).
+          const size = Buffer.byteLength(typeable(item.texto)) + 3;
+          if (ids.size && bytes + size > MAX_TYPING_BYTES) break;
+          bytes += size;
           ids.add(item.id);
         }
         if (!ids.size) continue;
