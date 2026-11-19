@@ -340,11 +340,12 @@ export function createRemotePictures(deps: {
       if (GATE_NAME.test(name)) hear(name);
       const queue = queueOf(name);
       for (const id of entregues) {
-        const item = queue.pending().find((candidate) => candidate.id === id);
+        // By id, not among the pending: one handed out near the limit waits for this ack outside them.
+        const item = queue.byId(id);
         if (item) queue.ack(id, item.message.placeId ? { placeId: item.message.placeId } : 'lider');
       }
       return queue
-        .pending()
+        .handOut()
         .slice(0, INBOX_BATCH)
         .map((item) => ({ id: item.id, message: { ...item.message, key: item.key } }));
     },

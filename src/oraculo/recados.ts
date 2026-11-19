@@ -36,6 +36,19 @@
 //     empties or changes is a new one). A "◆" text whose Enter did not take is told the same way.
 // - A stuck box that is the Líder único's own is only logged: a warning queued for him would wait in (or be typed into)
 //   that same box, fail too and warn again, without end.
+//
+// Recado vencido (r-3ac3e0e4, vencimento.ts): an item waiting longer than `STALE_MS` is never delivered (not at the end
+// of a turn, not typed, not sent back to the relay). Each tick turns it `vencido` (terminal, kept, logged) after telling
+// whoever sent it ("seu recado para X venceu sem entrega"), in that session's own queue when it lives here, else the
+// other machine's or the relay; a sender no longer open has the Líder único told. The notice carries the key
+// `vencido:<item>`, so a restart joins it instead of telling twice, and it never makes a notice of its own. An Oráculo
+// notice has nobody to tell: only the log. The owner's words never go stale: they go marked "(atrasada: …)". On disk a
+// `vencido` item is written `devolvido` with `vencidoEm` (a daemon of before this rule reads it as terminal too, never
+// as 'fila'). The age crosses hops (revisão do #524): an item made from a message with `sentAt` (it came from the relay,
+// a satellite's inbox, the registro) counts from it, one that arrives already stale is born `vencido` with no notice,
+// and an item that goes back to the relay takes its `criado` along. A repeat of a key that went stale here is not
+// delivered (`deliverLocal` answers `null`) and leaves the key stale in the relay too, so the caller's way to the relay
+// joins it there instead of starting it again.
 
 import { createHash, randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -58,9 +71,13 @@ import type { OwnerMessage } from '../main/ledger-card-writer';
 import { picturedBoards, type BoardPicture, type PictureSession } from './portao';
 import type { CloseCall, GateHookResponse, GateRecados, ScreenCall, SendCall } from './gate-recados';
 import type { LocalLeader } from './lider-local';
+import { ageText, expiryNotice, isOwnerMessage, isStale, markLate, relaySenderOf, sentAtOf } from './vencimento';
 
-/** `devolvido` = its target left this machine before reading it: it went to the PC's relay with the same key (t-c3fbe852). */
-export type RecadoState = 'fila' | 'digitado' | 'entregue' | 'devolvido';
+/**
+ * `devolvido` = its target left this machine before reading it: it went to the PC's relay with the same key (t-c3fbe852).
+ * `vencido` = it waited longer than `STALE_MS` and was never delivered (terminal; written `devolvido` + `vencidoEm`).
+ */
+export type RecadoState = 'fila' | 'digitado' | 'entregue' | 'devolvido' | 'vencido';
 export type RecadoVia = 'fim-de-turno' | 'tela' | 'transcript';
 
 export interface RecadoItem {
@@ -79,6 +96,8 @@ export interface RecadoItem {
   /** How many times it was typed on the screen. */
   readonly tentativas: number;
   readonly digitadoEm?: number;
+  /** Recado vencido: when it went stale undelivered. */
+  readonly vencidoEm?: number;
   /**
    * t-c3fbe852 — the same message as the PC's relay takes it (with its key): an item whose target leaves this machine
    * before reading it (the Líder único closed, or went back to the PC) goes there with it, once. Absent = it stays here.
@@ -220,7 +239,13 @@ function parseItem(value: unknown): RecadoItem | null {
   const para = value.para;
   if (!isRecord(de) || typeof de.lugar !== 'string' || typeof de.nome !== 'string') return null;
   if (!isRecord(para) || typeof para.lugar !== 'string' || typeof para.sid !== 'string') return null;
-  const estado = value.estado === 'entregue' || value.estado === 'digitado' || value.estado === 'devolvido' ? value.estado : 'fila';
+  const vencidoEm = typeof value.vencidoEm === 'number' ? value.vencidoEm : undefined;
+  const estado: RecadoState =
+    value.estado === 'vencido' || (value.estado === 'devolvido' && vencidoEm !== undefined)
+      ? 'vencido'
+      : value.estado === 'entregue' || value.estado === 'digitado' || value.estado === 'devolvido'
+        ? value.estado
+        : 'fila';
   const via = value.via === 'fim-de-turno' || value.via === 'tela' || value.via === 'transcript' ? value.via : undefined;
   return {
     id: value.id,
@@ -234,6 +259,7 @@ function parseItem(value: unknown): RecadoItem | null {
     ...(typeof value.entregueEm === 'number' ? { entregueEm: value.entregueEm } : {}),
     tentativas: typeof value.tentativas === 'number' ? value.tentativas : 0,
     ...(typeof value.digitadoEm === 'number' ? { digitadoEm: value.digitadoEm } : {}),
+    ...(estado === 'vencido' ? { vencidoEm: vencidoEm ?? (typeof value.entregueEm === 'number' ? value.entregueEm : value.criado) } : {}),
     ...(parseMessage(value.volta) ? { volta: parseMessage(value.volta)! } : {}),
   };
 }
@@ -256,6 +282,37 @@ const tagOf = (id: string): string => `Recado ${id}`;
 function labelOf(id: string, de: RecadoItem['de']): string {
   return `◆ ${tagOf(id)} ${de.lugar ? `de ${de.nome} (${de.lugar})` : `do ${de.nome}`}:`;
 }
+
+/** The words of an item, without its label. */
+function wordsOf(item: RecadoItem): string {
+  const label = labelOf(item.id, item.de);
+  return item.texto.startsWith(label) ? item.texto.slice(label.length).trim() : item.texto;
+}
+
+/** The owner's own words (never stale): by the message's key, or, for the Oráculo's items, by how they open. */
+function isOwnerItem(item: RecadoItem): boolean {
+  return isOwnerMessage(item.volta?.key, item.volta?.text ?? (item.de.lugar ? '' : wordsOf(item)));
+}
+
+/** Waiting longer than `STALE_MS` and not the owner's: never delivered. */
+function staleRecado(item: RecadoItem, at: number): boolean {
+  return item.estado === 'fila' && isStale(item.criado, at) && !isOwnerItem(item);
+}
+
+/** A stale owner's item, marked "(atrasada: enviada …)" (its copy for the relay too); once. */
+function lateOwnerItem(item: RecadoItem, at: number): RecadoItem {
+  if (item.estado !== 'fila' || !isStale(item.criado, at) || !isOwnerItem(item)) return item;
+  const texto = markLate(item.texto, item.criado);
+  if (texto === item.texto) return item;
+  return {
+    ...item,
+    texto,
+    ...(item.volta ? { volta: { ...item.volta, text: markLate(item.volta.text, item.criado), leaderText: markLate(item.volta.leaderText, item.criado) } } : {}),
+  };
+}
+
+/** On disk a `vencido` item is `devolvido` + `vencidoEm`: a daemon of before the rule reads it as terminal, never 'fila'. */
+const toDisk = (item: RecadoItem): RecadoItem => (item.estado === 'vencido' ? { ...item, estado: 'devolvido' } : item);
 
 // ---- the input field on the screen (port of ler_campo/sem_sugestao of despertador_sessoes.py) -------------------
 
@@ -589,12 +646,15 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
 
   function write(items: readonly RecadoItem[]): void {
     const at = now();
-    const kept = items.filter((item) => (item.entregueEm !== undefined ? at - item.entregueEm < DELIVERED_DAYS * DAY : at - item.criado < PENDING_DAYS * DAY));
-    for (const item of items) if (item.estado !== 'entregue' && !kept.includes(item)) log(`recado ${item.id} para ${item.para.lugar} (${item.para.sid}) nunca entregue em ${PENDING_DAYS} dias: sai da fila.`);
+    const kept = items.filter((item) => {
+      const closed = item.entregueEm ?? item.vencidoEm;
+      return closed !== undefined ? at - closed < DELIVERED_DAYS * DAY : at - item.criado < PENDING_DAYS * DAY;
+    });
+    for (const item of items) if ((item.estado === 'fila' || item.estado === 'digitado') && !kept.includes(item)) log(`recado ${item.id} para ${item.para.lugar} (${item.para.sid}) nunca entregue em ${PENDING_DAYS} dias: sai da fila.`);
     const tmp = `${file}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
     try {
       if (!io.existsSync(dirname(file))) io.mkdirSync(dirname(file));
-      io.writeFileText(tmp, JSON.stringify({ items: kept }, null, 2));
+      io.writeFileText(tmp, JSON.stringify({ items: kept.map(toDisk) }, null, 2));
       io.renameFile(tmp, file);
     } catch (error) {
       io.unlinkFile(tmp);
@@ -627,9 +687,26 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     const same = items.find((item) => item.chave === chave && (key !== undefined || (item.para.sid === para.sid && at - item.criado < JOIN_MS)));
     if (same) return same;
     const id = `r-${randomBytes(4).toString('hex')}`;
-    const item: RecadoItem = { id, chave, de, para, texto: `${labelOf(id, de)} ${words}`, criado: at, estado: 'fila', tentativas: 0, ...(volta?.key ? { volta } : {}) };
+    // Counted from when it was first queued (a message that crossed a hop says it), not from its arrival here.
+    const criado = volta ? sentAtOf(volta, at) : at;
+    const fresh: RecadoItem = { id, chave, de, para, texto: `${labelOf(id, de)} ${words}`, criado, estado: 'fila', tentativas: 0, ...(volta?.key ? { volta } : {}) };
+    // Already stale on arrival (it aged in the queue before this one, which tells its sender): kept, never delivered.
+    const item: RecadoItem = staleRecado(fresh, at) ? { ...fresh, estado: 'vencido', vencidoEm: at } : fresh;
+    if (item.estado === 'vencido') log(`recado ${id} para ${para.lugar} (${para.sid}) chegou vencido (${ageText(criado, at)}): não é entregue.`);
     write([...items, item]);
     return item;
+  }
+
+  /**
+   * An item a message joined that will not be delivered here: gone back to the relay, or stale. A stale one with a key
+   * leaves that key stale in the relay (its `criado` as `sentAt`: it arrives stale there, with no notice), so the
+   * caller's way to the relay after this `null` joins it instead of starting it again.
+   */
+  async function notHere(item: RecadoItem): Promise<boolean> {
+    if (item.estado === 'devolvido') return true;
+    if (item.estado !== 'vencido') return false;
+    if (item.volta?.key && deps.relay) await deps.relay({ ...item.volta, sentAt: item.criado }).catch((error: unknown) => log(`recado ${item.id} vencido não ficou marcado no relay: ${error instanceof Error ? error.message : String(error)}`));
+    return true;
   }
 
   /**
@@ -640,7 +717,7 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     const leader = await deps.leader?.();
     if (!leader || !message.key) return null;
     const item = enqueue(de, { lugar: LEADER_OF_ALL, sid: leader.sid }, words, message.key, message);
-    return item.estado === 'devolvido' ? null : item;
+    return (await notHere(item)) ? null : item;
   }
 
   /** The folder sids of the live sessions of `placeId` on the board of `projectPath`, on this machine. */
@@ -759,7 +836,8 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       placeId: toLeader ? '' : placeId,
       text: remote ? `◆ Recado de ${signature}: ${words}` : `◆ Recado de ${signature}, guardado com o PC fora: ${words}`,
       leaderText: `◆ Recado, quadro ${board}${toLeader ? '' : ` (para ${placeId}, que não está aberta)`}, de ${signature}: ${words}`,
-      key: `recado:${chave}`,
+      // The sender's place in the key: a recado that goes stale in the relay tells it (vencimento.ts).
+      key: `recado:${me}:${chave}`,
     };
   }
 
@@ -875,7 +953,7 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
    * same key (sent before it is marked: a crash in between sends it again, and the key joins it there), never twice.
    */
   async function sendBack(): Promise<void> {
-    const waiting = read().filter((item) => item.estado === 'fila' && (item.volta || item.para.lugar === LEADER_OF_ALL));
+    const waiting = read().filter((item) => item.estado === 'fila' && !staleRecado(item, now()) && (item.volta || item.para.lugar === LEADER_OF_ALL));
     if (!waiting.length) {
       missing.clear();
       return;
@@ -903,7 +981,8 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       }
       if (!item.volta || !deps.relay) continue;
       try {
-        await deps.relay(item.volta);
+        // With when it was first queued: its age goes on counting in the relay (revisão do #524).
+        await deps.relay({ ...item.volta, sentAt: item.criado });
       } catch (error) {
         log(`recado ${item.id} não voltou ao relay: ${error instanceof Error ? error.message : String(error)}`);
         continue;
@@ -936,6 +1015,82 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       else log(`aviso ao Líder único sem relay: ${words.slice(0, 160)}`);
     } catch (error) {
       log(`aviso ao Líder único falhou: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /** The board of a session of the picture (its folder), for the notices. */
+  const pastaOf = (sid: string | undefined): string | undefined => {
+    const pasta = sid ? deps.picture()?.sessoes[sid]?.quemSou.pasta : undefined;
+    return typeof pasta === 'string' && pasta ? pasta : undefined;
+  };
+
+  /** The words the Líder único reads in his own queue (the label already says "do Oráculo"). */
+  const oracleWords = (text: string): string => text.replace(/^◆\s*Oráculo[^:]*:\s*/, '');
+
+  /**
+   * Recado vencido — tells whoever sent `item` that it went stale undelivered. The sender alive here: its own queue;
+   * open on another machine (the picture's list): that machine's queue, else the relay; no longer open, or unknown: the
+   * Líder único. The notice's key (`vencido:…`) joins a repeat everywhere, so telling again after a crash is safe.
+   */
+  async function tellSender(item: RecadoItem): Promise<void> {
+    const from = item.de.lugar || (item.volta?.key ? relaySenderOf(item.volta.key) : undefined);
+    const projectPath = item.volta?.projectPath || pastaOf(item.para.sid) || pastaOf(item.de.sid) || '';
+    const notice = expiryNotice({
+      key: item.volta?.key ?? item.id,
+      projectPath,
+      from,
+      to: item.para.lugar === LEADER_OF_ALL ? 'o Líder único' : item.para.lugar,
+      createdAt: item.criado,
+      text: wordsOf(item),
+    });
+    if (!notice) return;
+    const oracle = { lugar: '', nome: 'Oráculo' };
+    const toLeaderNotice = async (): Promise<void> => {
+      const message: OwnerMessage = { ...notice, placeId: '', text: notice.leaderText };
+      if (await toLocalLeader(oracle, oracleWords(notice.leaderText), message)) return;
+      if (deps.relay) await deps.relay(message);
+      else log(`aviso de recado vencido ao Líder único sem relay: ${notice.leaderText.slice(0, 160)}`);
+    };
+    if (!notice.placeId) return toLeaderNotice();
+    const live = await localSessions();
+    const sid = item.de.sid && live.has(item.de.sid) ? item.de.sid : projectPath ? sidOfPlace(projectPath, notice.placeId, live) : undefined;
+    if (sid) {
+      enqueue(oracle, { lugar: notice.placeId, sid }, oracleWords(notice.text), notice.key, notice);
+      return;
+    }
+    const listar = projectPath ? picturedBoards(deps.picture()).get(projectPath)?.listar : undefined;
+    const open = listar !== undefined && isLiveListedPlace(listedPlaces(listar).find((place) => place.id === notice.placeId));
+    if (!open) return toLeaderNotice();
+    if (await toRemote(notice)) return;
+    if (deps.relay) await deps.relay(notice);
+    else log(`aviso de recado vencido para ${notice.placeId} fora desta máquina e sem relay.`);
+  }
+
+  /** Items whose notice failed (memory only): said once in the log, tried again each tick, never delivered meanwhile. */
+  const untold = new Set<string>();
+
+  /**
+   * Recado vencido — each tick (the first one after a boot too): the owner's stale items are marked late; any other
+   * stale item tells its sender, then turns `vencido`. Notice first: a crash in between tells again, and the key joins.
+   */
+  async function expire(): Promise<void> {
+    const at = now();
+    const items = read();
+    if (items.some((item) => lateOwnerItem(item, at) !== item)) update((item) => lateOwnerItem(item, at) !== item, (item) => lateOwnerItem(item, at));
+    for (const item of items.filter((candidate) => staleRecado(candidate, at))) {
+      try {
+        await tellSender(item);
+      } catch (error) {
+        if (!untold.has(item.id)) log(`recado ${item.id} venceu, mas o aviso a quem mandou falhou: ${error instanceof Error ? error.message : String(error)}`);
+        untold.add(item.id);
+        continue;
+      }
+      untold.delete(item.id);
+      const changed = update(
+        (candidate) => candidate.id === item.id && candidate.estado === 'fila',
+        (candidate) => ({ ...candidate, estado: 'vencido', vencidoEm: now() }),
+      );
+      if (changed.length) log(`recado ${item.id} venceu sem entrega (${ageText(item.criado, at)}, para ${item.para.lugar} (${item.para.sid})).`);
     }
   }
 
@@ -999,6 +1154,8 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     if (ticking) return;
     ticking = true;
     try {
+      // Its own failure never stops the delivery below (which skips a stale item anyway).
+      await expire().catch((error: unknown) => log(`recados vencidos: ${error instanceof Error ? error.message : String(error)}`));
       await sendBack();
       // Its own failure never stops the delivery below.
       await watchBoxes().catch((error: unknown) => log(`vigia das caixas: ${error instanceof Error ? error.message : String(error)}`));
@@ -1056,7 +1213,7 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
         }
       }
       // 2. Stopped sessions with something queued: typed only on a free field.
-      const queued = read().filter((item) => item.estado === 'fila' && item.tentativas < MAX_TYPINGS);
+      const queued = read().filter((item) => item.estado === 'fila' && item.tentativas < MAX_TYPINGS && !staleRecado(item, at));
       for (const sid of new Set(queued.map((item) => item.para.sid))) {
         const mood = moods.get(sid);
         if (mood?.mood === 'digitando' || (mood?.mood === 'ocupada' && now() - mood.at < STALE_BUSY_MS)) continue;
@@ -1111,7 +1268,7 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       const sid = sidOfPlace(message.projectPath, message.placeId, await localSessions());
       if (!sid) return null;
       const item = enqueue({ lugar: '', nome: 'Oráculo' }, { lugar: message.placeId, sid }, message.text.replace(/^◆\s*/, ''), message.key, message);
-      return item.estado === 'devolvido' ? null : { placeId: message.placeId };
+      return (await notHere(item)) ? null : { placeId: message.placeId };
     },
 
     stateOf(key) {
@@ -1243,9 +1400,10 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
         return answerHook({});
       }
 
+      // A stale item is never delivered (the next tick turns it vencido and tells its sender); the owner's go marked late.
       const delivered = update(
-        (item) => item.para.sid === sid && item.estado === 'fila',
-        (item) => ({ ...item, estado: 'entregue', via: 'fim-de-turno', entregueEm: now() }),
+        (item) => item.para.sid === sid && item.estado === 'fila' && !staleRecado(item, now()),
+        (item) => ({ ...lateOwnerItem(item, now()), estado: 'entregue', via: 'fim-de-turno', entregueEm: now() }),
       );
       if (!delivered.length) {
         if (moodOf(sid) !== 'digitando') setMood(sid, 'parada');
