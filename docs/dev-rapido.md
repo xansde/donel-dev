@@ -50,14 +50,12 @@ A cópia de antes de cada skill está em `~/seazone/_scratch/dev-rapido/skills-a
 - **CI obrigatório dos repos da empresa**: spotsys e api-spotsys têm `ci-do-zero` (~11 min) e `Alfred` obrigatórios,
   e auto-merge desligado; a cadeira acompanha com `gh pr checks --watch` e mescla na hora, mas não corta esse tempo.
 
-## Depende do dono (proposta, não aplicada)
+## Depende do dono
 
-1. **Produção de app da empresa atrás de flag.** O `~/.claude/CLAUDE.md` diz "main e prod só com pedido literal".
-   Já há duas exceções por repo, na mesma forma (frase do dono gravada em memória): teamzone (16/11) e release do
-   spotometro (16/11, só para pedido dele). Linha proposta para o global, se o dono quiser:
-   "Na cadeira Dev rápido, promover para produção com a flag desligada, sem migration, em app com flag funcionando
-   (spotsys, api-spotsys) está autorizado pelo pedido de 19/11; main e repo público do Donel Dev seguem só com pedido
-   literal." Até lá, nesses repos a cadeira para no PR `staging → main` pronto.
+1. **Produção de app da empresa atrás de flag — decidido.** O dono aceitou em 19/11 («Pode, atrás da flag»): no
+   spotsys e na api-spotsys a cadeira põe no ar, sem pedido literal a cada vez, a mudança que entra com a flag
+   desligada, liga em seguida e desliga ao primeiro problema. Migration e dado seguem com backup e volta; `main` e
+   repo público do Donel Dev e o Seazone Studio ficam fora. A linha está no `~/.claude/CLAUDE.md` (Git e produção).
 2. **Baseline Seazone** (`seazone-baseline.md`, instalado pelo plugin `dev`): "a suíte passa antes de abrir o PR",
    test-first em tudo e "brainstorm → spec → plano" em etapas. O global já vence o baseline; a cadeira escreve o seu
    jeito (teste do que importa, plano no corpo do PR). Mudar o baseline é do plugin da empresa.
