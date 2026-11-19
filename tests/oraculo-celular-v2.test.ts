@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, nodeLedgerProofFs } from '../src/main/ledger-store';
+import { createMobileHandler } from '../src/main/celular/server';
 import { createCelularLocalStore } from '../src/oraculo/celular-local';
 import { createCelularV2Handler, signedMessage } from '../src/oraculo/celular-v2';
 import { createTarefasPedidasConsumer } from '../src/oraculo/tarefas-pedidas';
@@ -151,6 +152,13 @@ describe('celular pela tailnet (/api/v2)', () => {
     expect(await w.store.decisoes.marcar(UUID(5), 'aplicada')).toBe(true);
     expect(await w.store.decisoes.marcar(UUID(5), 'de novo')).toBe(false);
     expect(w.store.pendingDecision(created.task.id)).toBeNull();
+  });
+
+  it('desligado (sem "fila":"local"), o /api/v2 não existe: 404, nunca o 401 de despareado da PWA', async () => {
+    const off = createMobileHandler({ auth: { verify: () => null } as never, ledger: () => ({}) as never, assets: {}, provasRoot: null, v2: () => null });
+    const response = await off({ method: 'GET', url: '/api/v2/ping', body: '' });
+    expect(response.status).toBe(404);
+    expect(parse(response).erro).toBe('nao-encontrada');
   });
 
   it('a árvore vem do arquivo local; sem ele, vazia', async () => {

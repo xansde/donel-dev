@@ -227,8 +227,12 @@ export function createMobileHandler(deps: MobileHandlerDeps): MobileHandler {
     const path = parsed.pathname;
     const method = request.method.toUpperCase();
 
-    const v2 = path.startsWith('/api/v2/') ? deps.v2?.() : null;
-    if (v2) return v2(request);
+    // Saída iii: switched off (no `"fila": "local"`), the v2 routes do not exist (404): the app goes back to the
+    // Supabase. Never the PWA's 401, which the app would read as "unpaired".
+    if (path.startsWith('/api/v2/')) {
+      const v2 = deps.v2?.();
+      return v2 ? v2(request) : json(404, { erro: 'nao-encontrada' });
+    }
 
     if (!path.startsWith('/api/')) {
       const asset = method === 'GET' ? deps.assets[path === '/' ? '/index.html' : path] : undefined;

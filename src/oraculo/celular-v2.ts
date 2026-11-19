@@ -88,7 +88,11 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     let got = prepared.get(ref.file);
     if (!got) {
       got = await prepareProof(ref, deps.readProof);
-      prepared.set(ref.file, { ...got, bytes: undefined });
+      // A file not there yet is looked for again next time (as the espelho did); the cache stays small.
+      if (!got.sem_arquivo) {
+        if (prepared.size >= 500) prepared.clear();
+        prepared.set(ref.file, { ...got, bytes: undefined });
+      }
     }
     return { ordem: ref.ordem, tipo: got.undecodable ? 'arquivo' : ref.tipo, media_type: ref.media_type, rotulo: ref.rotulo, sha256: got.sha256, tamanho: got.tamanho, sem_arquivo: got.sem_arquivo, pronta: !got.sem_arquivo };
   }
@@ -154,9 +158,9 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     if (!doc) return erro(503, 'sem-ledger');
     const days = Number(query.get('desde_dias'));
     const since = Number.isFinite(days) && days > 0 ? now() - days * DAY_MS : null;
-    const closed = new Set(['aceita', 'rejeitada', 'cancelada', 'substituída']);
+    const open = new Set(['aberta', 'em execução', 'entregue', 'esperando envio']);
     const out = rowsOf(doc)
-      .filter((row) => since === null || !closed.has(row.estado) || Date.parse(row.decidida_em ?? row.entregue_em ?? row.criada_em) >= since)
+      .filter((row) => since === null || open.has(row.estado) || Date.parse(row.decidida_em ?? row.entregue_em ?? row.criada_em) >= since)
       .map((row) => ({
         id: row.id,
         quadro: row.quadro,

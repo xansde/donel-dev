@@ -146,7 +146,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
       const excess = data.chat.length - MAX_CHAT;
       let dropped = 0;
       data.chat = data.chat.filter((row) => {
-        if (dropped >= excess || (row.autor === 'dono' && !row.entregue_em && !row.resultado)) return true;
+        if (dropped >= excess || (row.autor === 'dono' && !row.entregue_em)) return true;
         dropped += 1;
         return false;
       });
@@ -161,11 +161,14 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
   }
 
   /** Changes are applied to a copy and kept only once written: a failed write leaves memory as the disk has it. */
-  function commit(change: (next: LocalFile) => void): void {
+  function commit(change: (next: LocalFile) => boolean | void): void {
     const before = data;
     data = JSON.parse(JSON.stringify(data)) as LocalFile;
     try {
-      change(data);
+      if (change(data) === false) {
+        data = before;
+        return;
+      }
       save();
     } catch (error) {
       data = before;
@@ -187,6 +190,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
           const { reservada_ate: _r, aplicada_em: _a, resultado: _s, ...plain } = row;
           taken.push(plain);
         }
+        return taken.length > 0;
       });
       return taken;
     },
@@ -194,7 +198,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
       let marked = false;
       commit((next) => {
         const row = next.decisoes.find((candidate) => candidate.pedido === pedido);
-        if (!row || row.aplicada_em) return;
+        if (!row || row.aplicada_em) return false;
         row.aplicada_em = iso();
         row.resultado = resultado.slice(0, MAX_RESULTADO);
         delete row.reservada_ate;
@@ -216,6 +220,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
           row.reservada_ate = now() + RESERVE_MS;
           taken.push({ pedido: row.pedido, titulo: row.titulo, texto: row.texto, criterio: row.criterio, prazo: row.prazo, frente: row.frente, criada_em: row.criada_em });
         }
+        return taken.length > 0;
       });
       return taken;
     },
@@ -223,7 +228,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
       let marked = false;
       commit((next) => {
         const row = next.pedidas.find((candidate) => candidate.pedido === pedido);
-        if (!row || row.aplicada_em) return;
+        if (!row || row.aplicada_em) return false;
         row.aplicada_em = iso();
         row.resultado = resultado.slice(0, MAX_RESULTADO);
         row.tarefa = tarefa;
@@ -247,6 +252,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
           row.reservada_ate = now() + RESERVE_MS;
           taken.push(asChatRow(row));
         }
+        return taken.length > 0;
       });
       return taken;
     },
@@ -254,7 +260,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
       let marked = false;
       commit((next) => {
         const row = next.chat.find((candidate) => candidate.id === id && candidate.autor === 'dono');
-        if (!row || row.entregue_em) return;
+        if (!row || row.entregue_em) return false;
         row.entregue_em = iso();
         row.resultado = resultado.slice(0, MAX_RESULTADO);
         delete row.reservada_ate;
@@ -266,7 +272,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
       let parked = false;
       commit((next) => {
         const row = next.chat.find((candidate) => candidate.id === id && candidate.autor === 'dono');
-        if (!row || row.entregue_em || row.resultado) return;
+        if (!row || row.entregue_em || row.resultado) return false;
         row.resultado = resultado.slice(0, MAX_RESULTADO);
         delete row.reservada_ate;
         parked = true;
@@ -278,7 +284,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
     },
     async responder(id, emRespostaA, texto) {
       commit((next) => {
-        if (next.chat.some((row) => row.id === id)) return;
+        if (next.chat.some((row) => row.id === id)) return false;
         next.chat.push({ id, autor: 'lider', texto, em_resposta_a: emRespostaA, criada_em: iso() });
       });
     },
