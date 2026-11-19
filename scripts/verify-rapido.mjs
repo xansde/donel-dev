@@ -31,7 +31,10 @@ function run(label, command, args) {
   const t0 = Date.now();
   const shown = `${command} ${args.join(' ')}`;
   console.log(`\n[verify:rapido] ${label}: ${shown.length > 160 ? `${shown.slice(0, 160)}…` : shown}`);
-  const result = spawnSync(command, args, { stdio: 'inherit', shell: process.platform === 'win32' });
+  // Windows needs the shell for `npx.cmd`/`npm.cmd`; quote what has a space so a file name stays one argument.
+  const windows = process.platform === 'win32';
+  const argv = windows ? args.map((arg) => (/[\s"]/.test(arg) ? `"${arg.replace(/"/g, '\\"')}"` : arg)) : args;
+  const result = spawnSync(command, argv, { stdio: 'inherit', shell: windows });
   console.log(`[verify:rapido] ${label}: ${((Date.now() - t0) / 1000).toFixed(1)} s`);
   if (result.status !== 0) {
     console.log(`[verify:rapido] FALHOU em ${label} (${((Date.now() - started) / 1000).toFixed(1)} s)`);
@@ -79,7 +82,8 @@ function testsReaching(sources) {
   const reached = new Set(sources);
   const queue = [...sources];
   while (queue.length) for (const importer of importers.get(queue.shift()) ?? []) if (!reached.has(importer)) (reached.add(importer), queue.push(importer));
-  const named = (text) => sources.some((source) => text.includes(source) || text.includes(source.replace(/\.[^.]+$/, '')));
+  // A code module by its path with or without extension; anything else (script, fixture, doc) by its full path.
+  const named = (text) => sources.some((source) => text.includes(source) || (isCode(source) && text.includes(source.replace(/\.[^.]+$/, ''))));
   return files.filter((file) => isTest(file) && (reached.has(file) || named(texts.get(file) ?? '')));
 }
 
@@ -89,7 +93,8 @@ run('tipos', 'npx', ['tsc', '--noEmit', '-p', 'tsconfig.json']);
 if (changed.some((file) => WHOLE_SUITE.test(file))) {
   run('testes (suíte inteira: mudou a configuração dos testes)', 'npx', ['vitest', 'run']);
 } else {
-  const sources = changed.filter((file) => isCode(file) && !isTest(file) && existsSync(file));
+  // Any changed file that is not a test: code reaches tests through imports; a script or fixture through its path.
+  const sources = changed.filter((file) => !isTest(file) && existsSync(file));
   const tests = changed.filter((file) => isTest(file) && existsSync(file));
   const selected = [...new Set([...testsReaching(sources), ...tests])];
   if (selected.length === 0) console.log('\n[verify:rapido] testes: nenhum teste chega ao que mudou');
