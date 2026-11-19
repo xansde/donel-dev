@@ -1590,7 +1590,8 @@ export class AgentBridge {
         if (!scope.leader && !self) return fail('Seu lugar ainda não está no quadro; espere o primeiro turno terminar.');
         // Back up to the Líder único (t-52b31719): only from a session it opened or one below it (reach.ts).
         if (!scope.leader && self && call.para.trim().toLowerCase() === LEADER_OF_ALL) {
-          const reach = canReachLeader(this.ports.doc(), { projectPath, placeId: self.id }, (id) => this.openedByLeader(projectPath, id));
+          // Also when its chain is gone and the Líder único is who hears it (t-d461e003).
+          const reach = canReachLeader(this.ports.doc(), { projectPath, placeId: self.id }, (id) => this.openedByLeader(projectPath, id), (id) => this.hears(projectPath, id));
           if (!reach.ok) return fail(`Sem ligação com o Líder único: ${reach.reason}`);
           if (!call.motivo) return fail(LEADER_MESSAGE_REFUSAL);
           // A chair the Líder único opened hands it back the finished task even over a live Líder of the board.

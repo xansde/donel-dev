@@ -17,6 +17,13 @@
 // by `openedBy`: from a place of that board, with its opening arrow (the hierarchy the reach rules read); from the Líder
 // único, at the top of the board. The new places (and those `sessao_abrir` opened here with the PC off) enter the board
 // of every session of that board, so the arrows hold both ways. Nothing here is written to `retrato.json`.
+//
+// t-d461e003 (19/11, 15h04) — a session the app renewed (its context full: a new sid, the same place) keeps its place.
+// The PC's picture knows the place by the old sid, and the new folder is one it never pictured (the PC left right
+// after): it became `session:<sid>`, and with it "Só o lugar dono" on its tasks. Before `session:<sid>`, the place is
+// the one the app wrote in the folder's meta (`placeId`, `^place:`), else the one place of its board in the picture
+// with the same tab name, role and opener, not closed, and not the place of another live session (one candidate only;
+// two folders after the same place get none).
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -46,12 +53,19 @@ export interface LocalFolder {
   readonly roleId?: string;
   readonly openedBy?: string;
   readonly createdAt?: string;
+  /** t-d461e003 — the board place the app launched it for (`placeId` of the meta, only a `place:` id). */
+  readonly placeId?: string;
 }
+
+/** A board place id the app gives (`place:<uuid>`); never a `session:` one, which names a sid. */
+const PLACE_ID = /^place:[A-Za-z0-9-]{1,64}$/;
 
 /** What the picture made here says besides the folders: this machine's label and the roles' names (the PC's kit). */
 export interface LocalPictureExtras {
   readonly roda?: string;
   readonly roleName?: (roleId: string) => string | undefined;
+  /** The sids alive here (tmux and a readable meta): a stored session not among them no longer holds its place. Absent = all. */
+  readonly alive?: (sid: string) => boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -69,7 +83,8 @@ export function readLocalFolders(sessionsDir: string, live: ReadonlySet<string>)
       const raw = JSON.parse(readFileSync(join(sessionsDir, sid, 'meta.json'), 'utf8')) as unknown;
       if (!isRecord(raw)) continue;
       const text = (key: string): Record<string, string> => (typeof raw[key] === 'string' && raw[key] ? { [key]: raw[key] as string } : {});
-      out.push({ sid, ...(raw.leaderOfAll === true ? { leaderOfAll: true } : {}), ...text('localCwd'), ...text('projectName'), ...text('name'), ...text('roleId'), ...text('openedBy'), ...text('createdAt') });
+      const placeId = typeof raw.placeId === 'string' && PLACE_ID.test(raw.placeId) ? { placeId: raw.placeId } : {};
+      out.push({ sid, ...(raw.leaderOfAll === true ? { leaderOfAll: true } : {}), ...text('localCwd'), ...text('projectName'), ...text('name'), ...text('roleId'), ...text('openedBy'), ...text('createdAt'), ...placeId });
     } catch {
       // no meta (closed, or not made yet): not a session here
     }
@@ -111,7 +126,10 @@ function boardWith(board: MindscapeBoard, places: readonly NewPlace[]): Mindscap
   const links: MindscapeLink[] = [...board.links];
   // Every card first, then the arrows: an opener made here may come after the place it opened (revisão do #501).
   for (const place of places) {
-    if (!cards[place.lugar]) cards[place.lugar] = { kind: 'session', id: place.lugar, sessionId: place.sid, previous: [], ...(place.papel ? { roleId: place.papel } : {}), by: 'session', x: 0, y: 0 };
+    const card = cards[place.lugar];
+    if (!card) cards[place.lugar] = { kind: 'session', id: place.lugar, sessionId: place.sid, previous: [], ...(place.papel ? { roleId: place.papel } : {}), by: 'session', x: 0, y: 0 };
+    // A renewed place (t-d461e003): its card now carries the new conversation, the old one goes to `previous`.
+    else if (card.kind === 'session' && card.sessionId !== place.sid) cards[place.lugar] = { ...card, sessionId: place.sid, previous: card.sessionId ? [...card.previous, card.sessionId] : card.previous };
   }
   for (const place of places) {
     const opener = place.abertaPor;
@@ -135,7 +153,14 @@ function listarWith(listar: readonly unknown[], places: readonly NewPlace[], sel
       ...(place.abertaPor ? { abertaPor: place.abertaPor } : {}),
       ...(place.lugar === self ? { voce: true } : {}),
     }));
-  const kept = self ? listar.map((place) => (isRecord(place) && place.voce === true ? (({ voce: _voce, podeMandar: _podeMandar, ...rest }) => rest)(place) : place)) : [...listar];
+  const kept = self
+    ? listar.map((place) => {
+        if (!isRecord(place)) return place;
+        const rest = place.voce === true ? (({ voce: _voce, podeMandar: _podeMandar, ...others }) => others)(place) : place;
+        // A renewed place already listed (t-d461e003) is the caller itself.
+        return place.id === self ? { ...rest, voce: true } : rest;
+      })
+    : [...listar];
   return [...kept, ...added];
 }
 
@@ -155,12 +180,13 @@ export function withLocalSessions(stored: BoardPicture | null, folders: readonly
     const abertaPor = isRecord(self) && typeof self.abertaPor === 'string' ? self.abertaPor : undefined;
     newPlaces.push({ sid, pasta: who.pasta, lugar: who.lugar, ...(typeof who.papel === 'string' ? { papel: who.papel } : {}), ...(typeof who.nome === 'string' ? { nome: who.nome } : {}), ...(abertaPor ? { abertaPor } : {}) });
   }
+  const inherited = inheritedPlaces(stored, missing, extras.alive);
   for (const folder of missing) {
     if (folder.leaderOfAll || !folder.localCwd) continue;
     newPlaces.push({
       sid: folder.sid,
       pasta: folder.localCwd,
-      lugar: `session:${folder.sid}`,
+      lugar: folder.placeId ?? inherited.get(folder.sid) ?? `session:${folder.sid}`,
       ...(folder.roleId ? { papel: folder.roleId } : {}),
       ...(folder.name ? { nome: folder.name } : {}),
       ...(folder.openedBy ? { abertaPor: folder.openedBy } : {}),
@@ -227,6 +253,46 @@ export function withLocalSessions(stored: BoardPicture | null, folders: readonly
   return { at: stored?.at ?? 0, sessoes };
 }
 
+/**
+ * t-d461e003 — the place each renewed folder of `folders` keeps (sid → place id), from the boards of `stored`: the one
+ * listed place of its board with the folder's tab name, role and opener, not closed, held by no other live session of
+ * the picture, and claimed by no other folder. A folder that names its place (`placeId`) takes it and claims it.
+ */
+function inheritedPlaces(stored: BoardPicture | null, folders: readonly LocalFolder[], alive: ((sid: string) => boolean) | undefined): Map<string, string> {
+  const boards = picturedBoards(stored);
+  const held = new Set<string>();
+  for (const [sid, session] of Object.entries(stored?.sessoes ?? {})) {
+    if (typeof session.quemSou.lugar === 'string' && (alive?.(sid) ?? true)) held.add(`${String(session.quemSou.pasta)}\n${session.quemSou.lugar}`);
+  }
+  const claims = new Map<string, string[]>();
+  const claim = (key: string, sid: string): void => {
+    claims.set(key, [...(claims.get(key) ?? []), sid]);
+  };
+  for (const folder of folders) {
+    if (folder.leaderOfAll || !folder.localCwd) continue;
+    if (folder.placeId) {
+      claim(`${folder.localCwd}\n${folder.placeId}`, '');
+      continue;
+    }
+    if (!folder.name || !folder.roleId) continue;
+    const matches = (boards.get(folder.localCwd)?.listar ?? []).filter(
+      (place): place is Record<string, unknown> & { id: string } =>
+        isRecord(place) &&
+        typeof place.id === 'string' &&
+        PLACE_ID.test(place.id) &&
+        place.nome === folder.name &&
+        place.papel === folder.roleId &&
+        (typeof place.abertaPor === 'string' ? place.abertaPor : undefined) === folder.openedBy &&
+        place.estado !== 'fechada' &&
+        !held.has(`${folder.localCwd}\n${place.id}`),
+    );
+    if (matches.length === 1) claim(`${folder.localCwd}\n${matches[0]!.id}`, folder.sid);
+  }
+  const out = new Map<string, string>();
+  for (const [key, sids] of claims) if (sids.length === 1 && sids[0]) out.set(sids[0], key.slice(key.indexOf('\n') + 1));
+  return out;
+}
+
 /** Which of `folders` get a picture made here (see the header): all with the PC away, else the old ones and `forced`. */
 export function foldersToPicture(stored: BoardPicture | null, folders: readonly LocalFolder[], now: number, forced?: string): LocalFolder[] {
   if (pcAway(stored, now)) return [...folders];
@@ -276,7 +342,8 @@ export function createLocalPicture(deps: {
     const chosen = foldersToPicture(stored, list, at, forced).filter((folder) => !stored?.sessoes[folder.sid]);
     const picked = chosen.map((folder) => folder.sid).join(',');
     if (built && built.stored === stored && built.list === list && built.picked === picked) return built.picture;
-    const picture = withLocalSessions(stored, chosen, at, deps.extras?.() ?? {});
+    const alive = new Set(list.map((folder) => folder.sid));
+    const picture = withLocalSessions(stored, chosen, at, { ...(deps.extras?.() ?? {}), alive: (sid) => alive.has(sid) });
     built = { stored, list, picked, picture };
     return picture;
   };

@@ -75,6 +75,11 @@ export interface RemoteSessionMeta {
    * board place `session:<sid>` when it finds it. Absent on every session the PC opened.
    */
   readonly abertaSemPc?: boolean;
+  /**
+   * t-d461e003 — the board place the tab was launched for (a renewal keeps it): with the PC off, the Oráculo of the
+   * place reads it so the renewed session (a new sid) stays that place. Absent = not known at launch.
+   */
+  readonly placeId?: string;
   readonly createdAt: string;
 }
 

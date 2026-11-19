@@ -46,6 +46,9 @@
 //   call is answered here as with the PC off: the `tarefa_*` (the Líder único's too), `sessao_quem_sou`,
 //   `sessao_listar`, `sessao_enviar` by the arrows, `sessao_abrir` by abrir-local; the other tools say the PC is off.
 //   A tunnel that refused (`desligado`) answers from the picture with this session made here (`pictureWithoutPc`).
+// - t-d461e003: with the PC off, the Líder único's `sessao_ver_tela` and `sessao_fechar` of a place running in this
+//   machine's tmux are answered here (`GateRecados.verTela`/`fechar`); the close only when the PC is off for sure
+//   (`pcAway`, or its tunnel refused), never for a Líder the PC merely has not pictured.
 
 import { timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -498,7 +501,7 @@ export function relayedTaskNotice(mine: PictureSession, caller: LedgerCaller, ca
 }
 
 /** O Oráculo sem o PC — the tools answered here with the PC away (the ledger's and the session tools of the arrows). */
-const ANSWERED_WITHOUT_PC: ReadonlySet<string> = new Set([...LEDGER_TOOLS.map((tool) => tool.name), 'sessao_quem_sou', 'sessao_listar', 'sessao_enviar', 'sessao_abrir']);
+const ANSWERED_WITHOUT_PC: ReadonlySet<string> = new Set([...LEDGER_TOOLS.map((tool) => tool.name), 'sessao_quem_sou', 'sessao_listar', 'sessao_enviar', 'sessao_abrir', 'sessao_ver_tela', 'sessao_fechar']);
 
 /** A call that may be answered here when the PC is silent: it only reads, or it is the handshake. */
 function answersWithoutPc(message: Record<string, unknown>, mine: PictureSession | null): boolean {
@@ -527,7 +530,10 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
   const runLedger = deps.runLedger ?? ((caller: LedgerCaller, call: LedgerToolCall) => runLedgerTool(deps.ledger(), caller, call));
   const localAnswerMs = deps.timeouts?.localAnswerMs ?? LOCAL_ANSWER_MS;
 
-  /** Answers the call here. `passOn`: the recados queue said the target is not on this machine (`useRecados`). */
+  /**
+   * Answers the call here. `passOn`: the recados queue said the target is not on this machine (`useRecados`).
+   * `pcOff`: the PC is off for sure (away, or its tunnel refused), not only a session it has not pictured.
+   */
   async function local(
     sid: string,
     body: string,
@@ -535,6 +541,7 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     pc: PcState,
     useRecados = false,
     picture: BoardPicture | null = deps.picture(),
+    pcOff = false,
   ): Promise<{ readonly response: GateResponse; readonly passOn: boolean }> {
     const parsed = parseMcpBody(body);
     if (!parsed.ok) return { response: { status: 400, headers: JSON_HEADERS, body: JSON.stringify(parsed.response) }, passOn: false };
@@ -554,6 +561,12 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
         return { kind: 'error', text: PC_OFF };
       }
       if (call.tool === 'sessao_quem_sou') return { kind: 'text', text: JSON.stringify({ ...mine.quemSou, pc: pcNow }, null, 1) };
+      // t-d461e003 — the Líder único sees and closes the sessions of this machine's tmux with the PC off.
+      if (call.tool === 'sessao_ver_tela' && mine.quemSou.liderUnico === true && pc === 'desligado' && deps.recados?.verTela) return deps.recados.verTela(sid, call);
+      if (call.tool === 'sessao_fechar' && mine.quemSou.liderUnico === true && pc === 'desligado' && deps.recados?.fechar) {
+        if (!pcOff) return { kind: 'error', text: 'Não fechei: o PC respondeu há pouco e o app dele pode ter essa aba aberta. Feche por lá, ou de novo quando o PC estiver fora há mais de 5 min.' };
+        return deps.recados.fechar(sid, call);
+      }
       // The Líder único has no board of his own: he names it, and the picture has its places.
       if (call.tool === 'sessao_listar' && mine.quemSou.liderUnico === true && pc !== 'ligado') return leaderList(picture, call.quadro);
       if (call.tool === 'sessao_listar' && !call.quadro) return { kind: 'text', text: JSON.stringify(mine.listar, null, 1) };
@@ -717,7 +730,7 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     // be answered here is (any other tool still tries the PC, as before). The tunnel is never waited on for these.
     if (mine?.local === true || (call && ANSWERED_WITHOUT_PC.has(call.name) && deps.pcAway?.() === true)) {
       if (request.method !== 'POST') return { status: 405, headers: { Allow: 'POST' }, body: '' };
-      return (await local(sid, request.body, cards, 'desligado', true, picture)).response;
+      return (await local(sid, request.body, cards, 'desligado', true, picture, deps.pcAway?.() === true)).response;
     }
     // The ledger is this daemon's: with the session's picture its tasks never wait on the PC (the Líder único's, and a
     // picture that does not say the place, still go to the PC, which knows them). The notices the PC gave after a task
@@ -750,7 +763,7 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     if (request.method !== 'POST') return { status: 405, headers: { Allow: 'POST' }, body: '' };
     // Nothing reached the PC: a `sessao_enviar` the recados passed on is theirs again, now with the PC off. A session the
     // PC has no picture of is made here (nothing of the PC serves it).
-    return (await local(sid, request.body, cards, 'desligado', true, mine ? picture : (deps.pictureWithoutPc?.(sid) ?? picture))).response;
+    return (await local(sid, request.body, cards, 'desligado', true, mine ? picture : (deps.pictureWithoutPc?.(sid) ?? picture), true)).response;
   };
 }
 
