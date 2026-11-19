@@ -35,6 +35,12 @@
 //   the reads (`tarefa_listar`, `tarefa_ver`) are answered here: a write may still run there.
 // - t-1a3f7150 (docs/adr/0009): a `sessao_abrir` that reached nothing (the tunnel refused: the PC is off) opens the
 //   session on this machine (`GateAbrir`, abrir-local.ts). Never with the PC silent or on: it may be running there.
+// - O Oráculo sem o PC (19/11, o dono: "O Oráculo é o básico"): with the PC away (`pcAway`, no push nor probe answer
+//   for over 5 min), or for a session the PC does not know (its picture made here, `local`, retrato-local.ts), nothing
+//   goes to the tunnel: an ssh tunnel whose PC is gone connects and never answers, and every write hung 10 min. The
+//   call is answered here as with the PC off: the `tarefa_*` (the Líder único's too), `sessao_quem_sou`,
+//   `sessao_listar`, `sessao_enviar` by the arrows, `sessao_abrir` by abrir-local; the other tools say the PC is off.
+//   A tunnel that refused (`desligado`) answers from the picture with this session made here (`pictureWithoutPc`).
 
 import { timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -82,6 +88,11 @@ export interface PictureSession {
    * stopped sending keeps its old entry, and this tells it apart from one the PC still shows.
    */
   readonly pcAt?: number;
+  /**
+   * O Oráculo sem o PC (19/11) — made on this VPS, not by the PC (retrato-local.ts, or a `sessao_abrir` here with the
+   * PC off): the PC does not know this session, so its calls are answered here and never wait on its tunnel.
+   */
+  readonly local?: boolean;
 }
 
 /** What the PC pushes (`POST /v1/retrato`): every VPS session it has open. */
@@ -149,6 +160,10 @@ export interface GateDeps {
   readonly recados?: GateRecados;
   /** t-1a3f7150 — `sessao_abrir` with the PC off (nothing listens on the tunnel) opens here; absent = the PC is off. */
   readonly abrir?: GateAbrir;
+  /** O Oráculo sem o PC — the PC has not answered for long (retrato-local.ts `pcAway`): nothing goes to the tunnels. */
+  readonly pcAway?: () => boolean;
+  /** The picture with session `sid` made here when the PC's has none (its tunnel refused); absent = `picture()`. */
+  readonly pictureWithoutPc?: (sid: string) => BoardPicture | null;
   /** Pedir pelo Oráculo: the task born of an owner's request (`pedidoDoDono`) shows on his phone as "virou tarefa". */
   readonly linkPedido?: (pedidoId: string, tarefa: { readonly id: string; readonly titulo: string }) => void;
   /**
@@ -341,6 +356,29 @@ export function leaderCallerFromPicture(
   return { caller: { ...base, projectPath: pasta, boardPlaceIds: reached, placeStates, ...(board ? { board } : {}) }, call };
 }
 
+/** The board `quadro` names (its folder or its last segment) among the boards the picture has. */
+function pictureBoard(picture: BoardPicture | null, quadro: string): [string, { readonly listar: readonly unknown[]; readonly board?: MindscapeBoard }] | undefined {
+  return [...picturedBoards(picture)].find(([pasta]) => pasta === quadro || lastSegment(pasta) === quadro);
+}
+
+/** The places without the caller's own marks (`voce`, `podeMandar`: they were another session's). */
+function placesAsListed(listar: readonly unknown[]): unknown[] {
+  return listar.map((place) => {
+    if (!isRecord(place)) return place;
+    const { voce: _voce, podeMandar: _podeMandar, ...rest } = place;
+    return rest;
+  });
+}
+
+/** O Oráculo sem o PC — the Líder único's `sessao_listar`: the places of the board he names, from the picture. */
+function leaderList(picture: BoardPicture | null, quadro: string | undefined): BrowserToolOutcome {
+  const names = [...picturedBoards(picture).keys()].map(lastSegment).join(', ') || 'nenhum';
+  if (!quadro) return { kind: 'error', text: `Você é o Líder único: diga o quadro em "quadro" (com o PC fora, conheço: ${names}).` };
+  const found = pictureBoard(picture, quadro);
+  if (!found) return { kind: 'error', text: `Com o PC fora, conheço só os quadros do último retrato (${names}); "${quadro}" não está entre eles.` };
+  return { kind: 'text', text: JSON.stringify(placesAsListed(found[1].listar), null, 1) };
+}
+
 /** This session's `tarefa_*` are answered by this gate: it has a picture that says its place (not the Líder único). */
 function tasksAnsweredHere(mine: PictureSession | null): mine is PictureSession {
   return mine !== null && typeof callerFromPicture(mine) !== 'string';
@@ -386,6 +424,9 @@ export function relayedTaskNotice(mine: PictureSession, caller: LedgerCaller, ca
   };
 }
 
+/** O Oráculo sem o PC — the tools answered here with the PC away (the ledger's and the session tools of the arrows). */
+const ANSWERED_WITHOUT_PC: ReadonlySet<string> = new Set([...LEDGER_TOOLS.map((tool) => tool.name), 'sessao_quem_sou', 'sessao_listar', 'sessao_enviar', 'sessao_abrir']);
+
 /** A call that may be answered here when the PC is silent: it only reads, or it is the handshake. */
 function answersWithoutPc(message: Record<string, unknown>, mine: PictureSession | null): boolean {
   const method = message.method;
@@ -414,10 +455,16 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
   const localAnswerMs = deps.timeouts?.localAnswerMs ?? LOCAL_ANSWER_MS;
 
   /** Answers the call here. `passOn`: the recados queue said the target is not on this machine (`useRecados`). */
-  async function local(sid: string, body: string, cards: BoardStore | null, pc: PcState, useRecados = false): Promise<{ readonly response: GateResponse; readonly passOn: boolean }> {
+  async function local(
+    sid: string,
+    body: string,
+    cards: BoardStore | null,
+    pc: PcState,
+    useRecados = false,
+    picture: BoardPicture | null = deps.picture(),
+  ): Promise<{ readonly response: GateResponse; readonly passOn: boolean }> {
     const parsed = parseMcpBody(body);
     if (!parsed.ok) return { response: { status: 400, headers: JSON_HEADERS, body: JSON.stringify(parsed.response) }, passOn: false };
-    const picture = deps.picture();
     const mine = picture?.sessoes[sid] ?? null;
     const label = pc === 'sem-resposta' ? `não respondeu em ${Math.round(localAnswerMs / 1000)} s` : pc;
     const pcNow = picture ? `${label}; quadro de ${hhmm(mine?.at ?? picture.at)}` : label;
@@ -434,6 +481,8 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
         return { kind: 'error', text: PC_OFF };
       }
       if (call.tool === 'sessao_quem_sou') return { kind: 'text', text: JSON.stringify({ ...mine.quemSou, pc: pcNow }, null, 1) };
+      // The Líder único has no board of his own: he names it, and the picture has its places.
+      if (call.tool === 'sessao_listar' && mine.quemSou.liderUnico === true && pc !== 'ligado') return leaderList(picture, call.quadro);
       if (call.tool === 'sessao_listar' && !call.quadro) return { kind: 'text', text: JSON.stringify(mine.listar, null, 1) };
       return { kind: 'error', text: PC_OFF };
     };
@@ -590,9 +639,16 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     const cards = deps.cards?.() ?? null;
     const message = request.method === 'POST' ? singleMessage(request.body) : null;
     const call = toolCallOf(message);
-    const mine = deps.picture()?.sessoes[sid] ?? null;
+    const picture = deps.picture();
+    const mine = picture?.sessoes[sid] ?? null;
     // The board answers here even with the PC on: it is not the PC's.
-    if (cards && call && isCardToolName(call.name)) return (await local(sid, request.body, cards, 'ligado')).response;
+    if (cards && call && isCardToolName(call.name)) return (await local(sid, request.body, cards, 'ligado', false, picture)).response;
+    // O Oráculo sem o PC: a session the PC does not know is answered here, whatever it calls; with the PC away, what can
+    // be answered here is (any other tool still tries the PC, as before). The tunnel is never waited on for these.
+    if (mine?.local === true || (call && ANSWERED_WITHOUT_PC.has(call.name) && deps.pcAway?.() === true)) {
+      if (request.method !== 'POST') return { status: 405, headers: { Allow: 'POST' }, body: '' };
+      return (await local(sid, request.body, cards, 'desligado', true, picture)).response;
+    }
     // The ledger is this daemon's: with the session's picture its tasks never wait on the PC (the Líder único's, and a
     // picture that does not say the place, still go to the PC, which knows them). The notices the PC gave after a task
     // go to the recados queue or, without it, to the PC's relay (revisão do #483).
@@ -622,8 +678,9 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     }
     if (forwarded !== 'desligado') return withGateTools(request.body, forwarded, cards !== null, tasksAnsweredHere(mine));
     if (request.method !== 'POST') return { status: 405, headers: { Allow: 'POST' }, body: '' };
-    // Nothing reached the PC: a `sessao_enviar` the recados passed on is theirs again, now with the PC off.
-    return (await local(sid, request.body, cards, 'desligado', true)).response;
+    // Nothing reached the PC: a `sessao_enviar` the recados passed on is theirs again, now with the PC off. A session the
+    // PC has no picture of is made here (nothing of the PC serves it).
+    return (await local(sid, request.body, cards, 'desligado', true, mine ? picture : (deps.pictureWithoutPc?.(sid) ?? picture))).response;
   };
 }
 
