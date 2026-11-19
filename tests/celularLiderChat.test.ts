@@ -159,6 +159,13 @@ describe('chat do Líder pelo celular', () => {
     expect(answersIn(tail(user(`${phoneMarker(A)} oi`), said('oi, dono'), said('   ')), [A]).get(A)).toBe('oi, dono');
   });
 
+  it('fala final que é só "-": não vai ao celular nem troca a resposta boa de antes', () => {
+    // t-d461e003: "-" é o marcador do stdin do script, nunca mensagem; na dúvida, não manda.
+    expect(answersIn(tail(user(`${phoneMarker(A)} oi`), said('-')), [A])).toEqual(new Map());
+    expect(answersIn(tail(user(`${phoneMarker(A)} oi`), said(' - '), tool(), user('outro')), [A])).toEqual(new Map());
+    expect(answersIn(tail(user(`${phoneMarker(A)} oi`), said('oi, dono'), said('-')), [A]).get(A)).toBe('oi, dono');
+  });
+
   it('resultado de ferramenta e aviso entre a leitura e a resposta não cortam a resposta', () => {
     const toolResult = JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } });
     const notice = JSON.stringify({ type: 'user', message: { role: 'user', content: '<task-notification>feito</task-notification>' } });
