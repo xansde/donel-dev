@@ -503,6 +503,9 @@ export function relayedTaskNotice(mine: PictureSession, caller: LedgerCaller, ca
 /** O Oráculo sem o PC — the tools answered here with the PC away (the ledger's and the session tools of the arrows). */
 const ANSWERED_WITHOUT_PC: ReadonlySet<string> = new Set([...LEDGER_TOOLS.map((tool) => tool.name), 'sessao_quem_sou', 'sessao_listar', 'sessao_enviar', 'sessao_abrir', 'sessao_ver_tela', 'sessao_fechar']);
 
+/** Answered here only with the PC off (this machine's tmux): with the PC not away, the Líder único tries his tunnel first. */
+const PC_FIRST_WHEN_UP: ReadonlySet<string> = new Set(['sessao_ver_tela', 'sessao_fechar']);
+
 /** A call that may be answered here when the PC is silent: it only reads, or it is the handshake. */
 function answersWithoutPc(message: Record<string, unknown>, mine: PictureSession | null): boolean {
   const method = message.method;
@@ -730,7 +733,7 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     // be answered here is (any other tool still tries the PC, as before). The tunnel is never waited on for these.
     // 19/11 — the Líder único pictured here only because the probe failed him: with the PC not away, a tool only the PC
     // does (ver_tela, fechar...) still tries his tunnel; a refused tunnel falls back here below. Not for other sessions.
-    const leaderTriesPc = mine?.local === true && mine.quemSou.liderUnico === true && call !== null && !ANSWERED_WITHOUT_PC.has(call.name) && deps.pcAway?.() !== true;
+    const leaderTriesPc = mine?.local === true && mine.quemSou.liderUnico === true && call !== null && (!ANSWERED_WITHOUT_PC.has(call.name) || PC_FIRST_WHEN_UP.has(call.name)) && deps.pcAway?.() !== true;
     if ((mine?.local === true && !leaderTriesPc) || (call && ANSWERED_WITHOUT_PC.has(call.name) && deps.pcAway?.() === true)) {
       if (request.method !== 'POST') return { status: 405, headers: { Allow: 'POST' }, body: '' };
       return (await local(sid, request.body, cards, 'desligado', true, picture, deps.pcAway?.() === true)).response;

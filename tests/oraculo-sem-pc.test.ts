@@ -316,17 +316,23 @@ describe('com o PC ligado, o retrato do PC manda', () => {
     // What is answered here stays here (his tunnel may connect and never answer, the case of 07h34).
     expect((await w.tool(SID_LIDER, 'sessao_quem_sou')).error).toBe(false);
     expect(w.forwarded).toHaveLength(2);
-    // The tunnel refused: answered here, as before.
+    expect(w.killed).toEqual([]);
+    // The tunnel refused: answered here, by this machine's tmux (t-d461e003).
     w.setForward(async () => 'desligado');
+    w.screens.set(SID_DEV, 'fiz o teste vermelho\n> ');
     const off = await w.tool(SID_LIDER, 'sessao_ver_tela', { quadro: 'atlas', quem: DEV });
-    expect(off.error).toBe(true);
-    expect(off.text).toMatch(/PC está desligado/);
+    expect(off.error, off.text).toBe(false);
+    expect(off.text).toContain('fiz o teste vermelho');
   });
 
-  it('o Líder único com o PC fora: ver_tela não toca o túnel', async () => {
+  it('o Líder único com o PC fora: ver_tela e fechar pelo tmux daqui, sem tocar o túnel', async () => {
     const w = vps();
-    const off = await w.tool(SID_LIDER, 'sessao_ver_tela', { quadro: 'atlas', quem: DEV });
-    expect(off.error).toBe(true);
+    w.screens.set(SID_DEV, 'fiz o teste vermelho\n> ');
+    const seen = await w.tool(SID_LIDER, 'sessao_ver_tela', { quadro: 'atlas', quem: DEV });
+    expect(seen.error, seen.text).toBe(false);
+    expect(seen.text).toContain('fiz o teste vermelho');
+    expect(await w.tool(SID_LIDER, 'sessao_fechar', { quadro: 'atlas', quem: DEV })).toEqual({ error: false, text: 'Fechada.' });
+    expect(w.killed).toEqual([SID_DEV]);
     expect(w.forwarded).toEqual([]);
   });
 
