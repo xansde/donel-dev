@@ -265,6 +265,23 @@ export function statusLineRateLimitPercents(
   return fiveHour === null && sevenDay === null ? null : { fiveHour, sevenDay };
 }
 
+/**
+ * OpenRig 4fed110 — when the usage limit of the session lifts, as the CLI itself says: the `resets_at` of a window
+ * (5h or 7d) at 100%. Both full → the later one (the session waits for both). Epoch ms; `null` when no full window has
+ * a reset still ahead (no reading, nothing at 100%, a reset already past): unknown, never a guessed hour.
+ */
+export function statusLineUsageLimitResetAt(snapshot: StatusLineSnapshot | null | undefined, nowMs: number): number | null {
+  const rl = snapshot?.rateLimits;
+  if (!rl) return null;
+  let latest: number | null = null;
+  for (const w of [rl.fiveHour, rl.sevenDay]) {
+    if (w === null || w.usedPercentage < 100 || w.resetsAt === null) continue;
+    const at = w.resetsAt * 1000;
+    if (at > nowMs && (latest === null || at > latest)) latest = at;
+  }
+  return latest;
+}
+
 export interface SessionMeterInput {
   /** Id do modelo visto no transcript (`message.model`), se houver. */
   readonly transcriptModelId: string | null | undefined;

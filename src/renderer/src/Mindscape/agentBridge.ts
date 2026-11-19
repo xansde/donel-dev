@@ -42,7 +42,7 @@ import { reviewLink } from '../../../shared/ledger/revisao';
 import { FAXINEIRO_OPENER, PC_MACHINE_ID, type FaxineiroLogEntry, type OpeningRoom, type SessionView } from '../../../shared/faxineiro/triggers';
 import type { FaxineiroWakeOrder } from '../../../shared/faxineiro/ipc';
 import type { LedgerPassedOn, LedgerPassOnRequest, LedgerTurnRecord, LedgerTurnRecorded } from '../../../shared/ledger/channels';
-import { failureReasonText } from '../../../shared/attention/rule';
+import { failureReasonText, usageLimitText } from '../../../shared/attention/rule';
 import type { TurnNotices } from '../../../shared/teamPrefs';
 import { routePlace, type RouteMachine, type RoutingRules } from '../../../shared/placeRouter';
 import { addLink, addPlace, noteCardId, placeCardId, placeHasStarted, placeOfSession, type MindscapeBoard, type MindscapeDoc, type SessionPlaceCard } from '../../../shared/mindscape/model';
@@ -275,6 +275,11 @@ export interface AgentBridgePorts {
   recordTurn?(record: LedgerTurnRecord): Promise<LedgerTurnRecorded> | void;
   /** The `StopFailure` code of the last turn of that tab (`rate_limit`…), if it failed; read, never computed here. */
   turnFailureOf?(tabId: string): string | undefined;
+  /**
+   * OpenRig 4fed110 — when the usage limit of that tab lifts (epoch ms), from the `resets_at` its status line already
+   * brings (a window at 100%); `undefined` = not known. Read, never computed here.
+   */
+  usageLimitResetAt?(tabId: string): number | undefined;
   /**
    * t-e5575f78 — the ledger as the main has it, for the "[t-xxxx] título: objetivo" a notice about a session opens with.
    * Absent, or `null` (unreadable): the notice goes as it came.
@@ -1148,20 +1153,21 @@ export class AgentBridge {
     if (this.chatMode()) return;
     const state = this.ports.stateOf(tabId);
     const failure = state !== undefined && state !== 'working' ? this.ports.turnFailureOf?.(tabId) : undefined;
-    const stuck = failure ? `está travada: ${failureReasonText(failure)} (o turno parou e não segue sozinho)` : undefined;
-    const situation = state === 'permission' ? 'precisa do dono: há uma permissão aberta na tela dela' : stuck;
     // On the PC no watchdog wakes it after the reset: there it is still a lock the Líder único may have to hear.
     const remote = this.ports.tabs().find((candidate) => candidate.id === tabId)?.remoteId !== undefined;
     const transient = remote && state !== 'permission' && failure !== undefined && TRANSIENT_TURN_FAILURES.has(failure);
+    // The same situation is told once (the key has no hour): an hour that the status line brings later tells nothing again.
+    const told = state === 'permission' ? 'permission' : failure ? `failure:${failure}` : undefined;
+    const situation = state === 'permission' ? 'precisa do dono: há uma permissão aberta na tela dela' : failure ? this.stuckText(tabId, failure, remote) : undefined;
     const key = `tab:${tabId}`;
-    if (!situation) {
+    if (!situation || !told) {
       this.toldUrgent.delete(tabId);
       if (!this.pendingUrgent.get(key)?.sending) this.pendingUrgent.delete(key); // it cleared before anyone heard
       this.flushUrgent();
       return;
     }
-    if (this.toldUrgent.get(tabId) !== situation) {
-      this.toldUrgent.set(tabId, situation);
+    if (this.toldUrgent.get(tabId) !== told) {
+      this.toldUrgent.set(tabId, told);
       const tab = this.ports.tabs().find((candidate) => candidate.id === tabId);
       const place = tab ? this.placeOfTab(tab) : undefined;
       if (tab?.cwd && place) {
@@ -1174,6 +1180,17 @@ export class AgentBridge {
       return;
     }
     this.flushUrgent();
+  }
+
+  /**
+   * "está travada: …" of a failed turn. OpenRig 4fed110 — the usage limit says until when, if the status line knows it,
+   * and on a remote place that the despertador wakes it after that; no hour = the text of before.
+   */
+  private stuckText(tabId: string, failure: string, remote: boolean): string {
+    if (failure !== 'rate_limit') return `está travada: ${failureReasonText(failure)} (o turno parou e não segue sozinho)`;
+    const reason = usageLimitText(this.ports.usageLimitResetAt?.(tabId), new Date());
+    const hasHour = reason !== failureReasonText(failure);
+    return `está travada: ${reason} (${hasHour && remote ? 'o turno parou; o despertador a acorda depois disso' : 'o turno parou e não segue sozinho'})`;
   }
 
   /** Something of the session of `tabId` that cannot wait: it stays here until a Líder's CLI took it. */

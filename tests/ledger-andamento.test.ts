@@ -1,7 +1,7 @@
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { AgentBridge, type AgentBridgePorts, type BridgeTab, type DeliveryOutcome } from '../src/renderer/src/Mindscape/agentBridge';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, nodeLedgerProofFs, recordTurnEnd, resetNewsCursors, runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService } from '../src/main/ledger-store';
@@ -68,6 +68,8 @@ interface Team {
   readonly file: string;
   readonly states: Record<string, SemaphoreState>;
   readonly failures: Record<string, string | undefined>;
+  /** Epoch ms the usage limit of the tab lifts, as its status line says (`usageLimitResetAt`). */
+  readonly resets: Record<string, number | undefined>;
   readonly records: Promise<unknown>[];
   /** Tabs whose process left. */
   readonly closed: Set<string>;
@@ -116,12 +118,13 @@ async function team(options: { readonly liderDoUnico?: boolean; readonly segundo
   const sent: { tabId: string; text: string }[] = [];
   const states: Record<string, SemaphoreState> = {};
   const failures: Record<string, string | undefined> = {};
+  const resets: Record<string, number | undefined> = {};
   const records: Promise<unknown>[] = [];
   const closed = new Set<string>();
   const linkLost = new Set<string>();
   const mute = new Set<string>();
   const outcomes: DeliveryOutcome[] = [];
-  const state: Team = { bridge: undefined as unknown as AgentBridge, sent, service, file, states, failures, records, closed, linkLost, mute, outcomes, mode: 'ledger', edit: (change) => (doc = change(doc)) && undefined };
+  const state: Team = { bridge: undefined as unknown as AgentBridge, sent, service, file, states, failures, resets, records, closed, linkLost, mute, outcomes, mode: 'ledger', edit: (change) => (doc = change(doc)) && undefined };
   const ports: AgentBridgePorts = {
     loaded: true,
     doc: () => doc,
@@ -153,6 +156,7 @@ async function team(options: { readonly liderDoUnico?: boolean; readonly segundo
       return written;
     },
     turnFailureOf: (tabId) => failures[tabId],
+    usageLimitResetAt: (tabId) => resets[tabId],
     ...(options.comLedger ? { ledgerDoc: async () => service.load().doc } : {}),
   };
   const bridge = new AgentBridge(ports);
@@ -270,6 +274,31 @@ describe('andamento no ledger, não no chat do Líder', () => {
     t.bridge.flushUrgent();
     await settle(t);
     expect(t.sent.slice(2)).toEqual([{ tabId: 'tab-lider', text: expect.stringMatching(/^◆ Dev Dev 1 \(place:dev1\) está travada: limite de uso/) }]);
+  });
+
+  it('limite de uso com a hora de volta: o aviso diz até quando, e a hora que chega depois não repete o aviso', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(2026, 10, 8, 12, 0));
+    onTestFinished(() => void vi.useRealTimers());
+    const t = await team();
+    const at = new Date(2026, 10, 8, 14, 30).getTime();
+    // Dev 1 is on a remote place: the despertador wakes it after the reset.
+    t.states['tab-dev1'] = 'waiting';
+    t.failures['tab-dev1'] = 'rate_limit';
+    t.resets['tab-dev1'] = at;
+    t.bridge.attention('tab-dev1');
+    // Dev 2 is on the PC and its hour is unknown at first; it arrives later (the status line), and nothing is told again.
+    t.states['tab-dev2'] = 'waiting';
+    t.failures['tab-dev2'] = 'rate_limit';
+    t.bridge.attention('tab-dev2');
+    t.resets['tab-dev2'] = at;
+    t.bridge.attention('tab-dev2');
+    await settle(t);
+    expect(t.sent).toEqual([
+      { tabId: 'tab-lider', text: expect.stringMatching(/^◆ Dev Dev 1 \(place:dev1\) está travada: limite de uso até 14:30 \(o turno parou; o despertador a acorda depois disso\)/) },
+      { tabId: 'tab-lider', text: expect.stringMatching(/^◆ Dev Dev 2 \(place:dev2\) está travada: limite de uso \(o turno parou e não segue sozinho\)/) },
+    ]);
+    expect(progressRecords(t).filter((each) => each.owner === 'place:dev2')).toHaveLength(1);
   });
 
   it('limite de uso de uma cadeira no PC, com o Líder do quadro fechado: chega ao Líder único (no PC nenhum despertador a acorda)', async () => {
