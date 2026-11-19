@@ -45,6 +45,15 @@ const WHO_FIELDS = ['nome', 'projeto', 'pasta', 'lugar', 'papel', 'papelNome', '
 const INBOX_BATCH = 50;
 /** A machine whose satellite (one call every 10 s) has not called for this long no longer routes messages. */
 export const STALE_MS = 2 * 60_000;
+/**
+ * t-d461e003 (19/11, 14h48): a picture with no session, when the one kept has sessions, does not replace it at once: a
+ * satellite under load whose `tmux ls` failed sent one and the Homologação left the Líder único's reach. It replaces the
+ * kept one only once empties came `EMPTY_PICTURE_REPEATS` times in a row over at least `EMPTY_PICTURE_HOLD_MS` (the
+ * satellite sends an empty that was not kept again every round, 10 s); any picture with sessions ends the run. The
+ * satellite itself sends no picture when its tmux failed (satelite.ts): this is the registro's own defense.
+ */
+export const EMPTY_PICTURE_REPEATS = 3;
+export const EMPTY_PICTURE_HOLD_MS = 60_000;
 
 export interface RemoteBoard {
   readonly listar: readonly unknown[];
@@ -208,7 +217,10 @@ export interface RemotePictureView {
 }
 
 export interface RemotePictures extends RemotePictureView {
-  /** Keeps `picture` as machine `name`'s, unless the one kept is as new or newer. `true` = kept. */
+  /**
+   * Keeps `picture` as machine `name`'s, unless the one kept is as new or newer, or it is an empty one held (see
+   * `EMPTY_PICTURE_REPEATS`). `true` = kept.
+   */
   accept(name: string, picture: RemotePicture): boolean;
   /** A message for a place of another machine: queued there (`null` = it runs on no other machine). */
   queue(message: OwnerMessage): Promise<string | null>;
@@ -231,6 +243,8 @@ export function createRemotePictures(deps: {
   const pictures = new Map<string, RemotePicture>();
   /** When each machine's satellite last called here (picture or queue). */
   const heard = new Map<string, number>();
+  /** The run of empty pictures held per machine: when the first came (this clock) and how many. */
+  const empties = new Map<string, { readonly since: number; readonly count: number }>();
   const hear = (name: string): void => {
     const at = now();
     heard.set(name, at);
@@ -281,6 +295,17 @@ export function createRemotePictures(deps: {
       hear(name);
       const kept = pictures.get(name);
       if (kept && kept.at >= picture.at) return false;
+      if (Object.keys(picture.sessoes).length === 0 && kept && Object.keys(kept.sessoes).length > 0) {
+        const at = now();
+        const run = empties.get(name);
+        const next = { since: run?.since ?? at, count: (run?.count ?? 0) + 1 };
+        if (next.count < EMPTY_PICTURE_REPEATS || at - next.since < EMPTY_PICTURE_HOLD_MS) {
+          empties.set(name, next);
+          log(`${name} mandou um retrato sem sessões (${next.count}º seguido): o último com sessões fica até o vazio se repetir.`);
+          return false;
+        }
+      }
+      empties.delete(name);
       mkdirSync(picturesDir, { recursive: true, mode: 0o700 });
       const file = join(picturesDir, `${name}.json`);
       writeFileSync(`${file}.tmp`, JSON.stringify(picture), { mode: 0o600 });

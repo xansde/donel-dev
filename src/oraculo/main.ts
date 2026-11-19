@@ -37,7 +37,7 @@ import { createProbe } from './sonda';
 import { createSatelliteLedger, createSatelliteNotice, createSatelliteReviewLink, createSatelliteSync, createSatelliteTaskMemory } from './satelite';
 import { createOpenLocal, readOpenKit, roomRefusal, sweepUnfinishedOpenings } from './abrir-local';
 import { createSatelliteOpenings, readRemoteKit } from './abrir-satelite';
-import { createLocalPicture, tmuxLiveNow } from './retrato-local';
+import { createLocalPicture, readTmuxLive, tmuxLiveNow } from './retrato-local';
 import { ORACLE_PORT } from './server';
 import { canonicalJson, createSupabaseLedgerStore, readSupabaseLedger } from './ledger-supabase';
 import { exportSqliteLedger, LEDGER_SQLITE_FILE, seedSqliteLedger } from './ledger-sqlite';
@@ -136,7 +136,8 @@ async function runSatellite(dir: string, url: string): Promise<void> {
   const sync = createSatelliteSync({
     ...remote,
     picture: localPicture.get,
-    live: tmuxLiveNow,
+    // A tmux that failed sends no picture (`null`), never an empty one (t-d461e003).
+    live: () => readTmuxLive(),
     deliver: async (message) => {
       if (await recados.deliverLocal(message)) return true;
       await notices.send(message);

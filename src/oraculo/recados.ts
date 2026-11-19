@@ -327,7 +327,7 @@ export function typeable(text: string): string {
 
 // ---- the real tmux and transcript --------------------------------------------------------------------------------
 
-interface TmuxRun {
+export interface TmuxRun {
   readonly code: number;
   readonly stdout: string;
   readonly stderr: string;
@@ -370,25 +370,30 @@ export const systemRecadosTmux: RecadosTmux = {
 const TMUX_NO_SERVER = /no server running|error connecting to/i;
 
 /**
- * The sessions alive in this machine's tmux. A `tmux ls` that fails (a timeout, a busy server) is not "every session
- * closed": it answers the last set it knew, so nothing goes back to the relay on a hiccup (t-c3fbe852). Only tmux saying
- * its server is not running empties it.
+ * What one `tmux ls -F '#{session_name}'` says of the Donel sessions alive (the names after `donel-`). A `tmux ls` that
+ * fails (a timeout, a busy server) is not "every session closed": `null` = it did not say, and the caller keeps the last
+ * set it knew (t-c3fbe852) or, on the satellite, sends no picture that round (t-d461e003). Only tmux saying its server
+ * is not running is "none". The one rule for every reader of this machine's tmux (recados, retrato-local, satélite).
+ */
+export function parseTmuxLs(listed: TmuxRun): Set<string> | null {
+  if (listed.code !== 0) return TMUX_NO_SERVER.test(listed.stderr) ? new Set() : null;
+  return new Set(
+    listed.stdout
+      .split('\n')
+      .map((name) => name.trim())
+      .filter((name) => name.startsWith(TMUX_PREFIX))
+      .map((name) => name.slice(TMUX_PREFIX.length)),
+  );
+}
+
+/**
+ * The sessions alive in this machine's tmux. A `tmux ls` that fails answers the last set it knew, so nothing goes back
+ * to the relay on a hiccup (`parseTmuxLs`).
  */
 export function createTmuxLocalSessions(run: (args: readonly string[]) => Promise<TmuxRun> = runTmux): () => Promise<ReadonlySet<string>> {
   let last: ReadonlySet<string> = new Set();
   return async () => {
-    const listed = await run(['ls', '-F', '#{session_name}']);
-    if (listed.code !== 0) {
-      if (TMUX_NO_SERVER.test(listed.stderr)) last = new Set();
-      return new Set(last);
-    }
-    last = new Set(
-      listed.stdout
-        .split('\n')
-        .map((name) => name.trim())
-        .filter((name) => name.startsWith(TMUX_PREFIX))
-        .map((name) => name.slice(TMUX_PREFIX.length)),
-    );
+    last = parseTmuxLs(await run(['ls', '-F', '#{session_name}'])) ?? last;
     return new Set(last);
   };
 }

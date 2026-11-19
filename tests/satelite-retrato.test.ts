@@ -19,8 +19,8 @@ import { createGateHandler, type BoardPicture } from '../src/oraculo/portao';
 import { createGateToolRoutes, GATE_PICTURE_PATH, readGateHashes } from '../src/oraculo/portoes';
 import { createGateRecados, type RecadosTmux } from '../src/oraculo/recados';
 import { createRelay } from '../src/oraculo/relay';
-import { createLocalPicture } from '../src/oraculo/retrato-local';
-import { createRemotePictures } from '../src/oraculo/retrato-satelite';
+import { createLocalPicture, createTmuxLiveNow, readTmuxLive } from '../src/oraculo/retrato-local';
+import { createRemotePictures, EMPTY_PICTURE_HOLD_MS, EMPTY_PICTURE_REPEATS } from '../src/oraculo/retrato-satelite';
 import { createSatelliteNotice, createSatelliteSync, type SatellitePost } from '../src/oraculo/satelite';
 
 const io = createSystemConfigIoDeps();
@@ -160,11 +160,15 @@ function machines() {
   const slive = new Set<string>();
   folder(ssessions, slive, SID_DALTON, { localCwd: HOMOLOG, name: 'Dalton', roleId: 'dalton', createdAt: '2026-11-19T07:00:00Z' });
   const sstored: BoardPicture = { at: seen, sessoes: { [SID_DALTON]: { quemSou: { nome: 'Dalton', projeto: 'Homologação', pasta: HOMOLOG, lugar: DALTON, papel: 'dalton', roda: 'Homologações' }, listar: HOMOLOG_LISTAR, board: HOMOLOG_BOARD, at: seen } } };
+  const stmux = { fails: false };
   const slocal = createLocalPicture({ stored: () => sstored, sessionsDir: ssessions, liveNow: () => slive, now: () => clock.now, ttlMs: 0 });
   /** The satellite's POST, straight into the personal VPS's API; `cut.ack` loses the next "entregue" on the way. */
   const cut = { ack: false };
+  /** The paths the satellite posted to, in order. */
+  const posted: string[] = [];
   const post = async (url: string, token: string, body: string): Promise<SatellitePost> => {
     const path = new URL(url).pathname;
+    posted.push(path);
     if (cut.ack && body.includes('"entregues":["')) {
       cut.ack = false;
       return 'caiu';
@@ -191,7 +195,8 @@ function machines() {
   const makeSync = () => createSatelliteSync({
     ...remote,
     picture: slocal.get,
-    live: () => slive,
+    // `tmux.fails`: `tmux -L donel ls` failed or timed out (the Homologações under load, 19/11 14h48).
+    live: () => (stmux.fails ? null : slive),
     deliver: async (message) => {
       if (await srecados.deliverLocal(message)) return true;
       await notices.send(message);
@@ -204,7 +209,7 @@ function machines() {
   const endTurn = async (sid: string): Promise<{ decision?: string; reason?: string }> =>
     JSON.parse((await srecados.hook('fim-de-turno', { 'x-donel-tmux': `donel-${sid}` }, JSON.stringify({ session_id: sid }))).body) as { decision?: string; reason?: string };
 
-  return { clock, dir, stored, local, remotes, picture, ledger, pcRelay, api, tool, forwarded, sync, makeSync, endTurn, cut, slive, post };
+  return { clock, dir, stored, local, remotes, picture, ledger, pcRelay, api, tool, forwarded, sync, makeSync, endTurn, cut, slive, post, posted, stmux };
 }
 
 const idOf = (text: string): string => (JSON.parse(text) as { id: string }).id;
@@ -291,10 +296,13 @@ describe('o retrato de outra máquina no Oráculo da VPS pessoal', () => {
     expect(combined.sessoes[SID_LIDER]).toBeDefined();
     expect(combined.sessoes[SID_DALTON], 'a sessão da Homologações segue').toMatchObject({ quemSou: expect.objectContaining({ lugar: DALTON }), maquina: 'homologacoes' });
 
-    // The Homologações with no session now: only its own leave; the personal VPS's and the other machine's stay.
+    // The Homologações with no session now (for over a minute: a lone empty picture is held, see below): only its own
+    // leave; the personal VPS's and the other machine's stay.
     m.slive.clear();
-    m.clock.now += 1_000;
-    await m.sync.round();
+    for (let i = 0; i < 8; i += 1) {
+      m.clock.now += 10_000;
+      await m.sync.round();
+    }
     const after = m.picture()!;
     expect(after.sessoes[SID_DALTON]).toBeUndefined();
     expect(after.sessoes[SID_DEV]).toEqual(before.sessoes[SID_DEV]);
@@ -356,5 +364,103 @@ describe('o retrato de outra máquina vence quando o satélite some', () => {
     const sent = await m.tool(SID_LIDER, 'sessao_enviar', { quadro: 'Homologação', para: DALTON, texto: 'segue', tarefa: 't-d461e003' });
     expect(JSON.parse(sent.text)).toMatchObject({ entregue: 'na-fila', maquina: 'homologacoes' });
     expect(m.pcRelay.pending()).toEqual([]);
+  });
+});
+
+// t-d461e003 (19/11, 14h48): a Homologações sob carga, o `tmux -L donel ls` do satélite falhou ou passou dos 2 s, e o
+// satélite mandou um retrato sem sessões, que trocou o último bom (16 sessões): o Dalton sumiu do alcance do Líder único.
+describe('um retrato vazio do satélite não apaga o último bom', () => {
+  const retrato = (at: number, sessoes: Record<string, { quemSou: Record<string, unknown> }>) => ({
+    at,
+    quadros: { [HOMOLOG]: { listar: HOMOLOG_LISTAR, board: HOMOLOG_BOARD } },
+    sessoes,
+  });
+  const dalton = (lugar = DALTON) => ({ [SID_DALTON]: { quemSou: { pasta: HOMOLOG, lugar } } });
+
+  it('tmux que falha no satélite não envia retrato; os recados seguem e a Homologação continua no alcance', async () => {
+    const m = machines();
+    await m.sync.round();
+    expect(m.posted).toContain(GATE_PICTURE_PATH);
+
+    m.stmux.fails = true;
+    m.slive.clear(); // what a failed read looked like before: no session
+    m.posted.length = 0;
+    for (let i = 0; i < 12; i += 1) {
+      m.clock.now += 10_000;
+      await m.sync.round();
+    }
+    expect(m.posted, 'nenhum retrato sai com o tmux falhando').not.toContain(GATE_PICTURE_PATH);
+    expect(m.posted.length, 'a busca de recados segue').toBeGreaterThan(0);
+    expect(m.picture()!.sessoes[SID_DALTON]).toMatchObject({ maquina: 'homologacoes' });
+    expect(await m.remotes.queue({ projectPath: HOMOLOG, placeId: DALTON, text: 'x', leaderText: 'x', key: 'aviso:tmux' })).toBe('homologacoes');
+  });
+
+  it('um vazio isolado não apaga o guardado; vazio repetido por 3 envios ao longo de 1 min apaga', () => {
+    const m = machines();
+    const start = m.clock.now;
+    expect(m.remotes.accept('homologacoes', retrato(start, dalton()) as never)).toBe(true);
+
+    // Two empties, then a third before a minute: all held.
+    for (let i = 1; i <= 3; i += 1) {
+      m.clock.now = start + i * 10_000;
+      expect(m.remotes.accept('homologacoes', retrato(m.clock.now, {}) as never), `vazio ${i}`).toBe(false);
+      expect(m.picture()!.sessoes[SID_DALTON]).toMatchObject({ maquina: 'homologacoes' });
+    }
+    // Still empty a minute after the first one: it replaces the kept one.
+    m.clock.now = start + 10_000 + EMPTY_PICTURE_HOLD_MS;
+    expect(m.remotes.accept('homologacoes', retrato(m.clock.now, {}) as never)).toBe(true);
+    expect(m.picture()!.sessoes[SID_DALTON]).toBeUndefined();
+    // Restarted, the registro reads the empty one from disk.
+    expect(createRemotePictures({ dir: m.dir, io, now: () => m.clock.now }).combine(m.local.get())!.sessoes[SID_DALTON]).toBeUndefined();
+  });
+
+  it('um vazio que se repete por mais de 1 min, mas em menos de 3 envios, também espera', () => {
+    const m = machines();
+    const start = m.clock.now;
+    m.remotes.accept('homologacoes', retrato(start, dalton()) as never);
+    m.clock.now = start + 1_000;
+    expect(m.remotes.accept('homologacoes', retrato(m.clock.now, {}) as never)).toBe(false);
+    m.clock.now = start + 5 * MIN;
+    expect(m.remotes.accept('homologacoes', retrato(m.clock.now, {}) as never), 'só 2 envios').toBe(false);
+    expect(m.picture()!.sessoes[SID_DALTON]).toMatchObject({ maquina: 'homologacoes' });
+    expect(EMPTY_PICTURE_REPEATS).toBe(3);
+  });
+
+  it('o retrato bom depois de um vazio entra normal, e a contagem do vazio recomeça', () => {
+    const m = machines();
+    const start = m.clock.now;
+    m.remotes.accept('homologacoes', retrato(start, dalton()) as never);
+    m.clock.now = start + 10_000;
+    expect(m.remotes.accept('homologacoes', retrato(m.clock.now, {}) as never)).toBe(false);
+    m.clock.now = start + 20_000;
+    expect(m.remotes.accept('homologacoes', retrato(m.clock.now, dalton('place:hdev')) as never)).toBe(true);
+    expect(m.picture()!.sessoes[SID_DALTON]!.quemSou.lugar).toBe('place:hdev');
+
+    // Empties again: counted from the first of this new run, not the old one.
+    for (let i = 1; i <= 3; i += 1) {
+      m.clock.now = start + 20_000 + i * 15_000;
+      expect(m.remotes.accept('homologacoes', retrato(m.clock.now, {}) as never), `vazio ${i}`).toBe(false);
+    }
+    m.clock.now = start + 20_000 + 15_000 + EMPTY_PICTURE_HOLD_MS;
+    expect(m.remotes.accept('homologacoes', retrato(m.clock.now, {}) as never)).toBe(true);
+  });
+});
+
+describe('o tmux ls do retrato segue a regra do "tmux ls que falha mantém o conjunto"', () => {
+  it('falha ou timeout: nulo para o satélite e o último conjunto para o retrato; servidor fora: nenhuma', () => {
+    const answers: Array<{ code: number; stdout: string; stderr: string }> = [
+      { code: 0, stdout: `donel-${SID_DALTON}\noutra\n`, stderr: '' },
+      { code: 1, stdout: '', stderr: '' }, // timeout (killed) or a busy server
+      { code: 1, stdout: '', stderr: 'no server running on /tmp/tmux-1000/donel' },
+    ];
+    const run = () => answers.shift()!;
+    expect([...readTmuxLive(() => ({ code: 0, stdout: `donel-${SID_DALTON}\n`, stderr: '' }))!]).toEqual([SID_DALTON]);
+    expect(readTmuxLive(() => ({ code: 1, stdout: '', stderr: '' }))).toBeNull();
+    expect([...readTmuxLive(() => ({ code: 1, stdout: '', stderr: 'error connecting to /tmp/tmux-1000/donel' }))!]).toEqual([]);
+
+    const live = createTmuxLiveNow(() => readTmuxLive(run));
+    expect([...live()]).toEqual([SID_DALTON]);
+    expect([...live()], 'falhou: o último conjunto').toEqual([SID_DALTON]);
+    expect([...live()], 'sem servidor: nenhuma').toEqual([]);
   });
 });
