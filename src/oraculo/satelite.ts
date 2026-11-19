@@ -280,8 +280,12 @@ export interface SatelliteSync {
 export function createSatelliteSync(
   deps: SatelliteDeps & {
     readonly picture: () => BoardPicture | null;
-    /** This machine's live tmux sessions (folder sids): only they go in the picture. */
-    readonly live: () => ReadonlySet<string>;
+    /**
+     * This machine's live tmux sessions (folder sids): only they go in the picture. `null` = tmux failed or took too
+     * long (`readTmuxLive`): no picture goes that round, the messages and openings still do (t-d461e003, 19/11 14h48: a
+     * failed `tmux ls` under load sent a picture with no session, which wiped the kept one on the personal VPS).
+     */
+    readonly live: () => ReadonlySet<string> | null;
     readonly deliver: (message: OwnerMessage) => Promise<boolean>;
     /** t-d461e003 — the openings the registro holds for this machine (abrir-satelite.ts), after the recados. */
     readonly openings?: { round(): Promise<void> };
@@ -300,13 +304,24 @@ export function createSatelliteSync(
   let timer: ReturnType<typeof setInterval> | null = null;
 
   async function sendPicture(token: string): Promise<void> {
-    const { at: _at, ...rest } = compactPicture(deps.picture(), 0, deps.live());
+    const live = deps.live();
+    if (!live) {
+      log('retrato fica para a próxima volta: o tmux desta máquina não respondeu.');
+      return;
+    }
+    const { at: _at, ...rest } = compactPicture(deps.picture(), 0, live);
     const body = JSON.stringify(rest);
     const at = now();
     if (sent && sent.body === body && at - sent.at < PICTURE_AGAIN_MS) return;
     const result = await post(`${base}${GATE_PICTURE_PATH}`, token, `{"retrato":{"at":${at},${body.slice(1)}}`, PICTURE_TIMEOUT_MS);
-    if (typeof result === 'object' && result.status === 200) sent = { body, at };
-    else log(`retrato não foi: o Oráculo da VPS pessoal ${typeof result === 'object' ? `respondeu HTTP ${result.status}` : 'não respondeu'}.`);
+    if (typeof result !== 'object' || result.status !== 200) {
+      log(`retrato não foi: o Oráculo da VPS pessoal ${typeof result === 'object' ? `respondeu HTTP ${result.status}` : 'não respondeu'}.`);
+      return;
+    }
+    // Not kept there (an empty picture the registro holds until it repeats, EMPTY_PICTURE_REPEATS): forget what was
+    // sent, so the next picture goes even if it equals the last good one, and a good one ends the registro's run of
+    // empties (else three lone empties in 5 min wiped the kept one).
+    sent = /"guardado"\s*:\s*false/.test(result.body) ? null : { body, at };
   }
 
   /** Says what was taken and reads what waits; `null` = no answer (what was taken is said again next time). */

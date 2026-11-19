@@ -26,6 +26,7 @@ import type { MindscapeBoard, MindscapeLink } from '../shared/mindscape/model';
 import { LEADER_ROLE_ID } from '../shared/roles';
 import { PICTURE_FRESH_MS } from './lider-local';
 import { picturedBoards, type BoardPicture, type PictureSession } from './portao';
+import { parseTmuxLs, type TmuxRun } from './recados';
 
 const SID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
 /** No push nor probe answer for this long: the PC is away. */
@@ -286,24 +287,42 @@ export function createLocalPicture(deps: {
   };
 }
 
-const TMUX_PREFIX = 'donel-';
+/**
+ * One synchronous `tmux -L donel ls` (the picture is read synchronously by the gate and the recados): this machine's
+ * live Donel sessions, or `null` when tmux failed or took over 2 s (a machine under load), by the same rule as the
+ * recados' (`parseTmuxLs`: only "no server running" is none). A read takes a few ms.
+ */
+export function readTmuxLive(run: () => TmuxRun = runTmuxLsSync): ReadonlySet<string> | null {
+  const live = parseTmuxLs(run());
+  return live && new Set([...live].filter((sid) => SID_PATTERN.test(sid)));
+}
 
 /**
- * This machine's live Donel sessions (`tmux -L donel ls`), read synchronously (the picture is read synchronously by
- * the gate and the recados); no tmux server = none. A read takes a few ms and is kept `ttlMs` (5 s).
+ * `tmux -L donel ls`, at most 2 s. No tmux binary (`ENOENT`) is "no server" (no session, as before t-d461e003); a timeout
+ * or any other failure is a failure (`parseTmuxLs` → `null`).
  */
-export function tmuxLiveNow(): ReadonlySet<string> {
+export function runTmuxLsSync(exec: () => string = execTmuxLs): TmuxRun {
   try {
-    const out = execFileSync('tmux', ['-L', 'donel', 'ls', '-F', '#{session_name}'], { encoding: 'utf8', timeout: 2_000, stdio: ['ignore', 'pipe', 'ignore'] });
-    return new Set(
-      out
-        .split('\n')
-        .map((line) => line.trim())
-        .filter((name) => name.startsWith(TMUX_PREFIX))
-        .map((name) => name.slice(TMUX_PREFIX.length))
-        .filter((sid) => SID_PATTERN.test(sid)),
-    );
-  } catch {
-    return new Set();
+    return { code: 0, stdout: exec(), stderr: '' };
+  } catch (error) {
+    if ((error as { code?: unknown }).code === 'ENOENT') return { code: 1, stdout: '', stderr: 'no server running: tmux not installed' };
+    const stderr = (error as { stderr?: unknown }).stderr;
+    return { code: 1, stdout: '', stderr: typeof stderr === 'string' ? stderr : Buffer.isBuffer(stderr) ? stderr.toString('utf8') : '' };
   }
 }
+
+function execTmuxLs(): string {
+  return execFileSync('tmux', ['-L', 'donel', 'ls', '-F', '#{session_name}'], { encoding: 'utf8', timeout: 2_000, stdio: ['ignore', 'pipe', 'pipe'] });
+}
+
+/** The live sessions for the picture: a tmux that failed keeps the last set it knew ("tmux ls que falha mantém o conjunto"). */
+export function createTmuxLiveNow(read: () => ReadonlySet<string> | null = readTmuxLive): () => ReadonlySet<string> {
+  let last: ReadonlySet<string> = new Set();
+  return () => {
+    last = read() ?? last;
+    return last;
+  };
+}
+
+/** This machine's live Donel sessions, kept `ttlMs` (5 s) by the picture; one memory for every caller of the process. */
+export const tmuxLiveNow = createTmuxLiveNow();
