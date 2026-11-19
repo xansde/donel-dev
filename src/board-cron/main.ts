@@ -25,7 +25,7 @@ import { appendFileSync, existsSync, rmdirSync, mkdirSync, openSync, readFileSyn
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createBoardClient, readBoardConfig, type CardRow, type LaneRow } from '../oraculo/board-client';
-import { afterBusyField, fieldIsFree, fieldTextOf, LABEL, linkKind, planJustify, planVigia, responseSince, withShadowNotice, type CronAction, type CronCard, type SessionState, type ShadowNotice } from '../shared/board/cron';
+import { afterBusyField, fieldHoldsOnlyNotice, fieldIsFree, fieldTextOf, LABEL, linkKind, planJustify, planVigia, responseSince, withShadowNotice, type CronAction, type CronCard, type SessionState, type ShadowNotice } from '../shared/board/cron';
 import { renderBoardPage } from '../shared/board/page';
 
 const HOME = homedir();
@@ -293,10 +293,11 @@ function typeInto(uuid: string, text: string): 'enviado' | 'nao-confirmado' {
   }
   if (landed()) return 'enviado';
   // Caixa pendurada (19/11): what this cron typed never stays in the field, or every later wake (and the Oráculo's
-  // recados) finds it busy for good. Cleared only when the field holds nothing but this notice (its label, or the paste
-  // placeholder of a long one: the field was empty when it typed, under the typing lock); someone's draft stays.
+  // recados) finds it busy for good. Cleared only when the field holds nothing but this notice (its text, or the one
+  // paste placeholder of a long one: the field was empty when it typed, under the typing lock); someone's draft, or
+  // what the owner wrote or pasted after it, stays.
   const left = fieldTextOf(tmux(['capture-pane', '-e', '-p', '-t', target]).out);
-  if (left && (left.includes(LABEL_ASCII) || left.replace(/\[Pasted text #\d+[^\]]*\]/g, '').trim() === '')) tmux(['send-keys', '-t', target, 'C-u']);
+  if (left && fieldHoldsOnlyNotice(left, safe)) tmux(['send-keys', '-t', target, 'C-u']);
   return 'nao-confirmado';
 }
 

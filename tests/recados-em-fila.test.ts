@@ -528,6 +528,54 @@ describe('Recados em fila: caixa pendurada', () => {
     expect(caixaWarnings(g.relayed)).toEqual([]);
   });
 
+  it('recado ao próprio Líder único que não entra na caixa dele: nenhum aviso novo na mesma caixa travada, nada em laço', async () => {
+    const g = setup();
+    const SID_LIDER = '77777777-2222-4333-8444-555555555555';
+    const recados = createGateRecados({
+      file: g.file,
+      io,
+      ledger: () => g.ledger,
+      picture: () => g.picture,
+      localSessions: async () => new Set([SID_DEV, SID_REV, SID_LIDER]),
+      leader: async () => ({ sid: SID_LIDER }),
+      tmux: {
+        screen: async (sid) => ({ inMode: false, text: g.screens.get(sid) ?? screen('') }),
+        // The Líder's box takes the text and never the Enter.
+        type: async (sid, text) => {
+          g.typed.push({ sid, text });
+          g.screens.set(sid, screen(text));
+          return true;
+        },
+        enter: async (sid) => {
+          g.enters.push(sid);
+          return true;
+        },
+        clear: async (sid) => {
+          g.cleared.push(sid);
+          g.screens.set(sid, screen(''));
+          return true;
+        },
+      },
+      relay: async (message) => g.relayed.push(message),
+      transcriptOf: async (sid) => `/transcripts/${sid}.jsonl`,
+      lastTurn: async () => ({ ended: true, at: g.clock() - 60_000 }),
+      transcriptHas: async () => false,
+      now: g.clock,
+      log: () => undefined,
+    });
+    const sent = JSON.parse(textOf(await recados.enviar(SID_DEV, g.picture.sessoes[SID_DEV]!, { tool: 'sessao_enviar', para: 'lider', texto: 'olha o PR 12' }))) as { id: string };
+    expect(sent.id).toMatch(/^r-/);
+    for (let i = 0; i < 1800; i += 1) {
+      await recados.tick();
+      g.advance(2_000);
+    }
+    const { items } = JSON.parse(readFileSync(g.file, 'utf8')) as { items: { id: string; para: { sid: string } }[] };
+    expect(items.filter((item) => item.para.sid === SID_LIDER).map((item) => item.id)).toEqual([sent.id]);
+    expect(caixaWarnings(g.relayed)).toEqual([]);
+    expect(g.typed.filter((t) => t.sid === SID_LIDER)).toHaveLength(3);
+    expect(g.cleared.filter((sid) => sid === SID_LIDER)).toHaveLength(3);
+  });
+
   it('volta à fila sem saber do Enter e a conversa mostra que entrou: entregue, nunca redigitado nem reentregue', async () => {
     const g = setup();
     const recados = g.make();

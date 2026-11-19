@@ -34,6 +34,8 @@
 //   * never cleared nor sent otherwise: it may be the owner typing. The Líder único hears "caixa com texto não enviado
 //     há mais de 5 min" (the session, the place, how long and its first 80 characters), once per stuck box (a box that
 //     empties or changes is a new one). A "◆" text whose Enter did not take is told the same way.
+// - A stuck box that is the Líder único's own is only logged: a warning queued for him would wait in (or be typed into)
+//   that same box, fail too and warn again, without end.
 
 import { createHash, randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -829,12 +831,19 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
 
   /**
    * A warning to the Líder único, by the daemon's way (`toLeader`): his own queue when he lives here, else the relay
-   * (the PC's, or the personal VPS's from a satellite). The key joins a repeat there.
+   * (the PC's, or the personal VPS's from a satellite). The key joins a repeat there. `about` = the session whose box is
+   * stuck: when it is the Líder's own, nothing new is queued for him, only logged — a warning typed into the same box
+   * that does not take the Enter would be stuck in turn and warn again, without end (21 recados an hour, 19/11).
    */
-  async function warnLeader(key: string, words: string): Promise<void> {
+  async function warnLeader(key: string, words: string, about: string): Promise<void> {
     const text = `◆ Oráculo: ${words}`;
     const message: OwnerMessage = { projectPath: '', placeId: '', text, leaderText: text, key: `caixa:${key}` };
     try {
+      const leader = (await deps.leader?.()) ?? null;
+      if (leader?.sid === about) {
+        log(`aviso ao Líder único sobre a própria caixa dele, só no log: ${words.slice(0, 160)}`);
+        return;
+      }
       if (await toLocalLeader({ lugar: '', nome: 'Oráculo' }, words, message)) return;
       if (deps.relay) await deps.relay(message);
       else log(`aviso ao Líder único sem relay: ${words.slice(0, 160)}`);
@@ -894,6 +903,7 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       await warnLeader(
         `${sid}:${known.since}`,
         `caixa com texto não enviado há mais de 5 min na sessão ${sid}${lugar ? ` (lugar ${lugar}${quadro ? `, quadro ${quadro}` : ''})` : ''}, há ${minutes} min: «${text.slice(0, PREVIEW_CHARS)}».${why} O que espera por ela na fila só entra quando a caixa esvaziar.`,
+        sid,
       );
     }
   }
@@ -935,6 +945,7 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
               await warnLeader(
                 `entrega:${item.id}`,
                 `o recado ${item.id} para ${item.para.lugar} (sessão ${sid}) ficou na caixa depois de ${item.tentativas} digitações com Enter; limpei a caixa e ele volta à fila (entra no fim do turno dela). Confira a sessão.`,
+                sid,
               );
             }
           }

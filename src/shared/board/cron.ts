@@ -226,6 +226,20 @@ export function fieldTextOf(screen: string): string | null {
   return [middle[0]!.slice(1).trim(), ...middle.slice(1)].filter(Boolean).join(' ');
 }
 
+/**
+ * Caixa pendurada (19/11): does the field `left` hold nothing but the `notice` this cron typed (whose Enter did not
+ * take)? Yes when it is that text (the screen may wrap or cut it: compared without spaces, as a prefix of it), or the one
+ * paste placeholder a long notice turns into. Anything else (the owner wrote after it, pasted another text) is not ours
+ * and stays.
+ */
+export function fieldHoldsOnlyNotice(left: string, notice: string): boolean {
+  const bare = (text: string): string => text.replace(/\s+/g, '');
+  const shown = bare(left);
+  if (!shown) return false;
+  if (/^\[Pastedtext#\d+[^\]]*\]$/.test(shown)) return true;
+  return shown.startsWith(bare(LABEL)) && bare(notice).startsWith(shown);
+}
+
 export function fieldIsFree(screen: string): { readonly free: boolean; readonly why: string } {
   const text = fieldTextOf(screen);
   if (text === null) return { free: false, why: 'campo não reconhecido na tela' };
