@@ -6,7 +6,6 @@
 // `retrato-pc.json`, and what it delivered through the local recados goes to the PC's relay.
 
 import { appendFileSync, chmodSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
-import { open as openFile } from 'node:fs/promises';
 import { hostname, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { createSystemConfigIoDeps } from '../main/config-store';
@@ -28,7 +27,7 @@ import { readServiceHashes } from './servicos';
 import { createLivroStore } from './livro';
 import { createReturnGuard } from './devolvido';
 import { GATE_PORT, type BoardPicture } from './portao';
-import { createGateToolRoutes, isLocalGate, readGateHashes } from './portoes';
+import { createGateToolRoutes, isLocalGate, readGateHashes, type GateRoutes } from './portoes';
 import { renewBeforeTask } from './recados';
 import { createRemotePictures } from './retrato-satelite';
 import { ORACLE_PORT, startOracleServer, type OracleServer } from './server';
@@ -38,7 +37,7 @@ import { createSupabaseLedgerStore, readSupabaseLedger, type SupabaseLedgerDeps 
 import { LEDGER_SQLITE_FILE, ledgerSourceOf, openSqliteLedgerStore } from './ledger-sqlite';
 import { createDecisoesConsumer, createDecisoesQueue, DECISOES_CONFIG_FILE, NOTAS_PAGINAS_FILE, readImportList, readUnsignedPolicy } from './decisoes';
 import { createTarefasPedidasConsumer, createTarefasPedidasQueue, readQuadroTarefas } from './tarefas-pedidas';
-import { createChatCelularConsumer, createChatCelularQueue, parseChatReplies, type ChatCelularReplies } from './chat-celular';
+import { createChatCelularConsumer, createChatCelularQueue } from './chat-celular';
 import { CELULAR_LOCAL_FILE, createCelularLocalStore } from './celular-local';
 import { createCelularV2Handler } from './celular-v2';
 import { CHAT_AUDIO_TIMEOUT_MS, createChatAudioWorker, DAEMON_WHISPER_URL } from './chat-audio';
@@ -47,6 +46,9 @@ import { startChatArquivoSweep } from './chat-arquivo';
 import { chatResponder } from './chat-responder';
 import { boardOfSession, createEntregador, createLocalDeliverClient, gatePortOf, type Entregador, type EntregadorPlace } from './entregador';
 import { RETRATO_PC_FILE } from './modo';
+import { CHAT_REPLIES_FILE, CHAT_TAIL_BYTES, readTail, repliesStore } from './chat-entregador';
+import { GATE_PHONE_PAIR_PATH, isChatRoute, registroPhonePort } from './celular-frente';
+import { MOBILE_PORT } from '../main/celular/server';
 
 export const TOKEN_HASH_FILE = 'pc.token.sha256';
 /** t-89279f84 — `{url, serviceKeyFile}`: present, the Supabase is the ledger's source (ledger.json is not read). */
@@ -76,48 +78,6 @@ export function readTokenHash(dir: string): string | null {
   } catch {
     return null;
   }
-}
-
-/**
- * The end of the Líder's transcript read for his answers to the phone: enough to hold the turn that read one. A turn
- * that reads a phone message and answers it after long tool calls passes 600 KB (19/11: the #dcd0176a was read 628 KB
- * before his answer). Read only while a message waits for him.
- */
-const CHAT_TAIL_BYTES = 2 * 1024 * 1024;
-
-/** The last `bytes` of a file; `null` = unreadable. */
-async function readTail(path: string, bytes: number): Promise<string | null> {
-  try {
-    const handle = await openFile(path, 'r');
-    try {
-      const { size } = await handle.stat();
-      const length = Math.min(size, bytes);
-      const buffer = Buffer.alloc(length);
-      await handle.read(buffer, 0, length, size - length);
-      return buffer.toString('utf8');
-    } finally {
-      await handle.close();
-    }
-  } catch {
-    return null;
-  }
-}
-
-/** The phone chat's wait for answers on disk (temp → rename, 600); an unreadable file starts empty. */
-function jsonStore(file: string): { load(): ChatCelularReplies | null; save(state: ChatCelularReplies): void } {
-  return {
-    load: () => {
-      try {
-        return parseChatReplies(readFileSync(file, 'utf8'));
-      } catch {
-        return null;
-      }
-    },
-    save: (state) => {
-      writeFileSync(`${file}.tmp`, JSON.stringify(state), { mode: 0o600 });
-      renameSync(`${file}.tmp`, file);
-    },
-  };
 }
 
 /** The entregador's `retrato.json`, read (never written) when it runs apart: re-read when the file changed. */
@@ -193,8 +153,19 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
   // A file that is there but unreadable never takes the whole daemon down: the phone's queue stays off (404) and the
   // file is kept as it is (revisão do #495).
   let celularLocal: ReturnType<typeof createCelularLocalStore> | null = null;
-  // Saída iii — a new phone app's key (the token never leaves the daemon) and the Líder's answer from chat_lider.py,
-  // asked through the entregador's gate (`/local/*`).
+  const answer = (status: number, value: unknown) => ({ status, headers: { 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(value) });
+  /** Saída iii — a new phone app's key (the token never leaves the daemon); its origin is the port the phone reaches. */
+  const pairPhone = (input: Record<string, unknown>) => {
+    const nome = typeof input.nome === 'string' && input.nome.trim() ? input.nome.trim().slice(0, 60) : 'Donel (Android)';
+    const url = celular?.state().url;
+    const added = celular?.addDevice(nome) ?? null;
+    if (!added || !url) return answer(503, { erro: 'o servidor do celular não está no ar' });
+    console.log(`[celular-v2] aparelho novo pareado pela VPS: ${nome} (${added.deviceId})`);
+    const origem = url.replace(/\/+$/, '');
+    return answer(200, { versao: 1, origem: place.entregador === 'junto' ? origem : origem.replace(/:\d+$/, `:${MOBILE_PORT}`), chave: added.chave });
+  };
+  // Saída iii — the new phone app's key and the Líder's answer from chat_lider.py, asked through the entregador's gate
+  // (`/local/*`) when it runs in this process.
   const localRoutes: NonNullable<Parameters<typeof createEntregador>[1]>['local'] = async (method, path, body) => {
     if (method !== 'POST') return null;
     let input: Record<string, unknown> = {};
@@ -204,15 +175,7 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
     } catch {
       // an empty body is an empty object
     }
-    const answer = (status: number, value: unknown) => ({ status, headers: { 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(value) });
-    if (path === '/local/celular/novo-aparelho') {
-      const nome = typeof input.nome === 'string' && input.nome.trim() ? input.nome.trim().slice(0, 60) : 'Donel (Android)';
-      const url = celular?.state().url;
-      const added = celular?.addDevice(nome) ?? null;
-      if (!added || !url) return answer(503, { erro: 'o servidor do celular não está no ar' });
-      console.log(`[celular-v2] aparelho novo pareado pela VPS: ${nome} (${added.deviceId})`);
-      return answer(200, { versao: 1, origem: url.replace(/\/+$/, ''), chave: added.chave });
-    }
+    if (path === '/local/celular/novo-aparelho') return pairPhone(input);
     if (path === '/local/celular/chat-responder') {
       if (!celularLocal) return answer(503, { erro: 'a fila do celular está desligada' });
       const replied = chatResponder(celularLocal, input);
@@ -316,8 +279,10 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
     })();
   };
   // t-268ed62a — the owner's voice messages, transcribed here by the resident transcriber (loopback only), one at a time.
+  // Apart (passo 9, PR 3), the chat, its transcriber and its consumer run in the entregador (chat-local.json).
+  const chatHere = place.entregador === 'junto';
   let audioWorker: ReturnType<typeof createChatAudioWorker> | null = null;
-  if (celularLocal) {
+  if (celularLocal && chatHere) {
     try {
       audioWorker = createChatAudioWorker({
         store: celularLocal,
@@ -349,11 +314,16 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
     kick,
     audio: (id) => audioWorker?.enqueue(id),
     // t-753e8199 — the owner's corrections teach the transcriber (DONEL_GLOSSARIO, else ~/.donel/transcricao/glossario.json).
-    glossario: createGlossarioStore(glossarioFile(), (line) => console.log(line)),
+    // Apart, the correction route is the entregador's, and so is the glossary (one writer).
+    ...(chatHere ? { glossario: createGlossarioStore(glossarioFile(), (line) => console.log(line)) } : {}),
     log: (line) => console.log(line),
   });
+  /** Apart, the chat routes are the entregador's: here they do not exist (a second writer of the conversation). */
+  const v2Here = v2 && !chatHere ? (request: Parameters<typeof v2>[0]) => (isChatRoute(request.url) ? Promise.resolve({ status: 404, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }, body: JSON.stringify({ erro: 'nao-encontrada' }) }) : v2(request)) : v2;
   celular = createCelularCore({
-    v2: () => (filaLocal() && v2 ? v2 : null),
+    v2: () => (filaLocal() && v2Here ? v2Here : null),
+    // Apart, this server listens on DONEL_CELULAR_PORT (47818) behind the entregador's 47815, which the phone reaches.
+    ...(chatHere ? {} : { port: registroPhonePort(), publicPort: MOBILE_PORT }),
     userDataDir: dir,
     io,
     ledger: () => ledger,
@@ -371,6 +341,22 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
     mirror = createLedgerMirror({ sink: () => sink, places: placesOf, ownerName: () => process.env.ESPELHO_DONO || 'Alexandre', delayMs: 2_000, log: (line) => console.log(`[espelho] ${line}`) });
     mirror.changed(first.doc);
   }
+  /** Apart (PR 3), the entregador asks the phone app's pairing here, with the gate credential marked local only. */
+  const phonePairRoute = (routes: GateRoutes): GateRoutes =>
+    entregador
+      ? routes
+      : async (name, request, path) => {
+          if (path !== GATE_PHONE_PAIR_PATH) return routes(name, request, path);
+          if (request.method !== 'POST' || !isLocalGate(dir, name)) return answer(403, { erro: 'só o portão local pareia o celular' });
+          let input: Record<string, unknown> = {};
+          try {
+            const parsed = JSON.parse(request.body) as unknown;
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) input = parsed as Record<string, unknown>;
+          } catch {
+            // an empty body is an empty object
+          }
+          return pairPhone(input);
+        };
   const handler = createOracleApiHandler({
     ledger,
     ledgerFile,
@@ -388,7 +374,7 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
     },
     extra: createOracleAdminRoutes({ celular, relay, setPicture }),
     gates,
-    gateRoutes: createGateToolRoutes({
+    gateRoutes: phonePairRoute(createGateToolRoutes({
       ledger: () => ledger,
       // Apart (passo 9, PR 2), the renewal before a task runs here, beside the ledger: the entregador's recados have none.
       recados: entregador?.recados ?? { antesDaTarefa: (caller, mine, call) => renewBeforeTask(ledger, caller, mine, call, (line) => console.error(`[oraculo] recados: ${line}`)) },
@@ -397,7 +383,7 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
       ...(remotes ? { pictures: remotes } : {}),
       // Apart, the Líder único of this machine reaches the ledger through the entregador's gate (never a satellite's).
       ...(entregador ? {} : { leader: { isLocal: (name: string) => isLocalGate(dir, name), picture: () => (remotes ? remotes.combine(picture()) : picture()) } }),
-    }),
+    })),
     ...(process.env.DONEL_LIVRO_ARQUIVO ? { livro: createLivroStore({ filePath: process.env.DONEL_LIVRO_ARQUIVO }) } : {}),
     // t-cddc62fc — the reconciliador's notices reach the Líder único by the relay, out of the owner's phone chat.
     // t-c3fbe852: his own queue when he lives here.
@@ -465,7 +451,9 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
   // The answer goes by stdin (`-` + heredoc): no '~' for the remote shell to expand, no owner text in its argv.
   const replyScript = process.env.DONEL_CHAT_RESPONDER || join(home, 'bin', 'rotinas', 'chat-lider', 'chat_lider.py');
   const recados = entregador?.recados;
-  const chatCelular = createChatCelularConsumer({
+  const chatCelular = !chatHere
+    ? null
+    : createChatCelularConsumer({
     queue: () => {
       if (filaLocal() && celularLocal) return celularLocal.chat;
       const config = readBoardConfig(join(dir, DECISOES_CONFIG_FILE));
@@ -487,16 +475,16 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
           },
         }
       : {}),
-    store: jsonStore(join(dir, 'chat-celular-respostas.json')),
+    store: repliesStore(join(dir, CHAT_REPLIES_FILE)),
     replyHint: (shortId) => `Para responder no celular: ssh ${userInfo().username}@${hostname()} python3 ${replyScript} responder ${shortId} - <<'FIM'\n<sua resposta>\nFIM`,
     log: (line) => console.log(line),
   });
-  chatCelular.start();
-  consumers = { decisoes: () => decisoes.round(), pedidas: () => tarefasPedidas.round(), chat: () => chatCelular.round() };
+  chatCelular?.start();
+  consumers = { decisoes: () => decisoes.round(), pedidas: () => tarefasPedidas.round(), chat: () => chatCelular?.round() ?? Promise.resolve() };
   // After the consumers: an audio a restart left half-way is transcribed again and kicks the chat round.
   audioWorker?.start();
   // t-a1ad1ca2 — the owner's files from the phone chat are kept 30 days.
-  const stopArquivoSweep = celularLocal ? startChatArquivoSweep(celularLocal.arquivoDir, (line) => console.log(line)) : null;
+  const stopArquivoSweep = celularLocal && chatHere ? startChatArquivoSweep(celularLocal.arquivoDir, (line) => console.log(line)) : null;
   console.log(
     `[oraculo] no ar em ${server.url} (${Object.keys(first.doc.tasks).length} tarefas${first.readOnly ? ', só leitura' : ''}, fonte: ${source === 'sqlite' ? 'SQLite' : store ? 'Supabase' : 'ledger.json'}${entregador ? '' : ', entregador à parte'})`,
   );
@@ -513,7 +501,7 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
       vigia.stop();
       decisoes.stop();
       tarefasPedidas.stop();
-      chatCelular.stop();
+      chatCelular?.stop();
       audioWorker?.stop();
       stopArquivoSweep?.();
       mirror?.dispose();

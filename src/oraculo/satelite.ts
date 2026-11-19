@@ -23,12 +23,12 @@ import { request as httpRequest } from 'node:http';
 import { checkLocalProofFile, nodeLedgerProofFs, type LedgerCaller, type LedgerToolAnswer } from '../main/ledger-store';
 import type { OwnerMessage } from '../main/ledger-card-writer';
 import type { ConfigIoDeps } from '../main/config-store';
-import type { LedgerTask } from '../shared/ledger/contract';
+import type { LedgerDeliveredTo, LedgerTask } from '../shared/ledger/contract';
 import type { LedgerToolCall } from '../shared/ledger/tools';
 import type { BoardPicture, GateLedgerContext, PictureSession } from './portao';
 import { GATE_INBOX_PATH, GATE_LINK_PATH, GATE_NOTICE_PATH, GATE_PICTURE_PATH, GATE_TOOL_PATH } from './portoes';
 import { compactPicture } from './retrato-satelite';
-import { createRelay } from './relay';
+import { createRelay, type Relay } from './relay';
 
 export const SATELLITE_TIMEOUT_MS = 15_000;
 /** The proof files of one delivery, together (base64 grows it by a third; the route takes 64 MB). */
@@ -189,7 +189,9 @@ export function createSatelliteReviewLink(deps: SatelliteDeps): (mine: PictureSe
 
 export interface SatelliteNotices {
   /** Queues the notice on disk (a repeat of the same key joins it) and tries to send what waits; never throws for the network. */
-  send(message: OwnerMessage): Promise<unknown>;
+  send(message: OwnerMessage): Promise<Exclude<LedgerDeliveredTo, null> | 'pendente'>;
+  /** What waits on disk, and the item of a key (sent = acked `'lider'` or to its place): the phone chat reads them. */
+  readonly outbox: Pick<Relay, 'pending' | 'byKey'>;
   /** One round: what waits goes to the personal VPS's relay, oldest first; the first failure ends the round. */
   flush(): Promise<void>;
   start(): void;
@@ -242,6 +244,7 @@ export function createSatelliteNotice(deps: SatelliteDeps & { readonly file: str
       return sent;
     },
     flush,
+    outbox,
     start() {
       if (timer) return;
       timer = setInterval(() => void flush(), NOTICE_RETRY_MS);

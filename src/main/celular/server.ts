@@ -315,19 +315,9 @@ export function fromTailnet(remoteAddress: string | undefined, headers: Readonly
   return typeof forwarded === 'string' && isTailscaleAddress(forwarded.split(',')[0]) && typeof login === 'string' && login !== '';
 }
 
-/**
- * Sobe o servidor em `host:port` e, na mesma porta, em 127.0.0.1 para o `tailscale serve` (o endereço https).
- * Lança se `host` não for um endereço Tailscale.
- */
-export function startMobileServer(options: {
-  readonly host: string;
-  readonly port: number;
-  readonly handler: MobileHandler;
-}): Promise<MobileServer> {
-  const { host, port, handler } = options;
-  if (!isTailscaleAddress(host)) return Promise.reject(new Error(`recusado: ${host} não é um endereço da Tailscale`));
-
-  const onRequest = (req: IncomingMessage, res: ServerResponse): void => {
+/** The socket around a handler: only the tailnet, the body read within its route's ceiling, the answer written. */
+export function mobileRequestListener(handler: MobileHandler): (req: IncomingMessage, res: ServerResponse) => void {
+  return (req, res) => {
     if (!fromTailnet(req.socket.remoteAddress, req.headers)) {
       res.writeHead(403).end();
       req.socket.destroy();
@@ -400,6 +390,22 @@ export function startMobileServer(options: {
       });
     });
   };
+}
+
+/**
+ * Sobe o servidor em `host:port` e, na mesma porta, em 127.0.0.1 para o `tailscale serve` (o endereço https).
+ * Lança se `host` não for um endereço Tailscale. `listener` (passo 9, o entregador do Oráculo): o socket inteiro, no
+ * lugar do de `handler`.
+ */
+export function startMobileServer(options: {
+  readonly host: string;
+  readonly port: number;
+  readonly handler?: MobileHandler;
+  readonly listener?: (req: IncomingMessage, res: ServerResponse) => void;
+}): Promise<MobileServer> {
+  const { host, port } = options;
+  if (!isTailscaleAddress(host)) return Promise.reject(new Error(`recusado: ${host} não é um endereço da Tailscale`));
+  const onRequest = options.listener ?? mobileRequestListener(options.handler!);
 
   const listen = (address: string): Promise<Server> =>
     new Promise((resolveListen, reject) => {
