@@ -16,6 +16,12 @@
 //
 // t-a1ad1ca2 — an owner's file (contract v1.4): the bytes land in `<dir>/chat-arquivos/<id>-<clean name>` before the
 // row; the row is one delivery to the Líder that says what the file is and where it is kept.
+//
+// t-753e8199 — the owner corrects an audio's transcription (contract v1.3): the line's text becomes his, and the
+// correction is a row of its own in `correcoes` (never a line of the conversation), one delivery to the Líder under its
+// OWN id and marker. The marker is what brings the Líder's answer back to the phone (answersIn reads the last time a
+// marker was read): under the audio's marker, the correction would take the audio's answer, or lose its own to an
+// audio already answered. His answer is kept against the correction and shown on the phone as an answer to the audio.
 
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -37,6 +43,10 @@ export const CHAT_AUDIO_DIR = 'chat-audio';
 export const CHAT_AUDIO_MIMES: Readonly<Record<string, string>> = { 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mp4': 'mp4', 'audio/aac': 'aac', 'audio/wav': 'wav' };
 
 export type Insert = { readonly ok: true; readonly nova: boolean } | { readonly ok: false; readonly erro: 'conflito' };
+/** `antes`: the line's text the correction replaced (what the glossary learns from), only when `nova`. */
+export type Correcao =
+  | { readonly ok: true; readonly nova: boolean; readonly antes?: string }
+  | { readonly ok: false; readonly erro: 'conflito' | 'nao-e-audio' | 'nao-encontrada' };
 
 interface Reservable {
   reservada_ate?: number;
@@ -75,6 +85,8 @@ export interface ChatAudio {
   readonly mime: string;
   readonly sha256: string;
   motivo?: string;
+  /** The owner corrected the transcription (contract v1.3). */
+  corrigida?: true;
 }
 
 export interface ChatArquivo {
@@ -102,11 +114,24 @@ export interface ChatLocal extends Reservable {
   arquivo?: ChatArquivo;
 }
 
+/** The owner's correction of an audio's transcription: one delivery to the Líder, under its own id. */
+export interface CorrecaoLocal extends Reservable {
+  readonly id: string;
+  /** The audio line it corrects. */
+  readonly audio: string;
+  readonly texto: string;
+  readonly criada_em: string;
+  entregue_em?: string;
+  resultado?: string;
+}
+
 interface LocalFile {
   versao: 1;
   decisoes: DecisaoLocal[];
   pedidas: PedidaLocal[];
   chat: ChatLocal[];
+  /** Absent in a file from before the corrections. */
+  correcoes?: CorrecaoLocal[];
 }
 
 /** One line of the conversation as `celular.lider_conversa` showed it. */
@@ -119,7 +144,7 @@ export interface ConversaLinha {
   readonly estado: 'na-fila' | 'com-o-lider' | 'respondida' | 'recusada' | null;
   readonly entregue_em: string | null;
   /** Only on a line that came as audio. */
-  readonly audio?: { readonly estado: ChatAudio['estado']; readonly duracao_ms: number; readonly motivo: string | null };
+  readonly audio?: { readonly estado: ChatAudio['estado']; readonly duracao_ms: number; readonly motivo: string | null; readonly corrigida?: true };
   /** Only on a line that came as a file. */
   readonly arquivo?: { readonly nome: string; readonly mime: string; readonly tamanho: number };
 }
@@ -162,6 +187,12 @@ export interface CelularLocalStore {
   addChatArquivo(id: string, arquivo: { readonly nome: string; readonly mime: string; readonly legenda: string }, bytes: Uint8Array): Insert;
   /** `<dir>/chat-arquivos`, beside the queue's file. */
   readonly arquivoDir: string;
+  /**
+   * The owner corrects the transcription of `audio` (only a transcribed voice line of his): its text becomes `texto`
+   * and the correction waits as one delivery to the Líder. The same id with the same text is the same correction
+   * (`nova: false`); with another text, or the id of a line: conflict. Two corrections of a line: the last one holds.
+   */
+  corrigirAudio(id: string, audio: string, texto: string): Correcao;
   /** The decision on `tarefa` still waiting to be applied (the card's "na fila"), newest first. */
   pendingDecision(tarefa: string): { readonly lado: Lado; readonly opcao: string | null; readonly criada_em: string } | null;
   /** The owner's requests, newest first (`celular.tarefas_pedidas_v`). */
@@ -216,7 +247,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
     }
     // A file that is there but unreadable stops the daemon: writing over it would lose the owner's rows.
     const raw = JSON.parse(text) as unknown;
-    if (!isRecord(raw) || raw.versao !== 1 || !Array.isArray(raw.decisoes) || !Array.isArray(raw.pedidas) || !Array.isArray(raw.chat)) {
+    if (!isRecord(raw) || raw.versao !== 1 || !Array.isArray(raw.decisoes) || !Array.isArray(raw.pedidas) || !Array.isArray(raw.chat) || (raw.correcoes !== undefined && !Array.isArray(raw.correcoes))) {
       throw new Error(`${filePath} não é a fila local do celular`);
     }
     return raw as unknown as LocalFile;
@@ -231,6 +262,14 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
     };
     data.decisoes = keep(data.decisoes);
     data.pedidas = keep(data.pedidas);
+    if (data.correcoes) {
+      // Never one still waiting for the Líder.
+      const closed = data.correcoes.filter((row) => row.entregue_em);
+      if (closed.length > MAX_CLOSED) {
+        const drop = new Set(closed.slice(0, closed.length - MAX_CLOSED));
+        data.correcoes = data.correcoes.filter((row) => !drop.has(row));
+      }
+    }
     if (data.chat.length > MAX_CHAT) {
       // Never an owner's line still waiting for the Líder.
       const excess = data.chat.length - MAX_CHAT;
@@ -356,6 +395,17 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
     row.arquivo ? { id: row.id, texto: arquivoText(row, row.arquivo), criada_em: row.criada_em, inteiro: true } : { id: row.id, texto: leaderText(row), criada_em: row.criada_em };
   /** A voice line goes to the Líder only once it is words (or a failure): one delivery, never two. */
   const waitingAudio = (row: ChatLocal): boolean => row.audio?.estado === 'transcrevendo';
+  /** Contract v1.3: under the correction's own marker (see the head of this file). */
+  const correcaoRow = (row: CorrecaoLocal): ChatCelularRow => ({
+    id: row.id,
+    texto: `✏️ O dono corrigiu a transcrição do áudio ${phoneMarker(row.id)}: ${row.texto}`,
+    criada_em: row.criada_em,
+    inteiro: true,
+  });
+  const isCorrecao = (id: string): boolean => (data.correcoes ?? []).some((row) => row.id === id);
+  /** The owner's row the queue knows by `id`: a line of his, or a correction. */
+  const ownerRow = (next: LocalFile, id: string): ChatLocal | CorrecaoLocal | undefined =>
+    next.chat.find((candidate) => candidate.id === id && candidate.autor === 'dono') ?? next.correcoes?.find((candidate) => candidate.id === id);
 
   const chat: ChatCelularQueue = {
     async tomar(limit) {
@@ -367,6 +417,12 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
           row.reservada_ate = now() + RESERVE_MS;
           taken.push(asChatRow(row));
         }
+        for (const row of next.correcoes ?? []) {
+          if (taken.length >= limit) break;
+          if (row.entregue_em || row.resultado || !free(row)) continue;
+          row.reservada_ate = now() + RESERVE_MS;
+          taken.push(correcaoRow(row));
+        }
         return taken.length > 0;
       });
       return taken;
@@ -374,7 +430,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
     async entregue(id, resultado) {
       let marked = false;
       commit((next) => {
-        const row = next.chat.find((candidate) => candidate.id === id && candidate.autor === 'dono');
+        const row = ownerRow(next, id);
         if (!row || row.entregue_em) return false;
         row.entregue_em = iso();
         row.resultado = resultado.slice(0, MAX_RESULTADO);
@@ -386,7 +442,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
     async estacionar(id, resultado) {
       let parked = false;
       commit((next) => {
-        const row = next.chat.find((candidate) => candidate.id === id && candidate.autor === 'dono');
+        const row = ownerRow(next, id);
         if (!row || row.entregue_em || row.resultado) return false;
         row.resultado = resultado.slice(0, MAX_RESULTADO);
         delete row.reservada_ate;
@@ -395,10 +451,13 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
       return parked;
     },
     async estacionadas(resultado, limit) {
-      return data.chat
-        .filter((row) => row.autor === 'dono' && !row.entregue_em && !waitingAudio(row) && row.resultado === resultado.slice(0, MAX_RESULTADO))
-        .slice(0, limit)
-        .map(asChatRow);
+      const parked = resultado.slice(0, MAX_RESULTADO);
+      return [
+        ...data.chat.filter((row) => row.autor === 'dono' && !row.entregue_em && !waitingAudio(row) && row.resultado === parked).map(asChatRow),
+        ...(data.correcoes ?? []).filter((row) => !row.entregue_em && row.resultado === parked).map(correcaoRow),
+      ]
+        .sort((a, b) => a.criada_em.localeCompare(b.criada_em))
+        .slice(0, limit);
     },
     async responder(id, emRespostaA, texto) {
       commit((next) => {
@@ -442,6 +501,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
       return { ok: true, nova: true };
     },
     addChat(id, texto) {
+      if (isCorrecao(id)) return { ok: false, erro: 'conflito' };
       const existing = data.chat.find((row) => row.id === id);
       if (existing) return existing.autor === 'dono' && !existing.audio && !existing.arquivo && existing.texto === texto ? { ok: true, nova: false } : { ok: false, erro: 'conflito' };
       commit((next) => {
@@ -450,6 +510,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
       return { ok: true, nova: true };
     },
     addChatAudio(id, audio, bytes) {
+      if (isCorrecao(id)) return { ok: false, erro: 'conflito' };
       const sha256 = createHash('sha256').update(bytes).digest('hex');
       const existing = data.chat.find((row) => row.id === id);
       if (existing) return existing.autor === 'dono' && existing.audio?.sha256 === sha256 ? { ok: true, nova: false } : { ok: false, erro: 'conflito' };
@@ -491,6 +552,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
     audioFile,
     audioDir,
     addChatArquivo(id, arquivo, bytes) {
+      if (isCorrecao(id)) return { ok: false, erro: 'conflito' };
       const sha256 = createHash('sha256').update(bytes).digest('hex');
       const existing = data.chat.find((row) => row.id === id);
       if (existing) return existing.autor === 'dono' && existing.arquivo?.sha256 === sha256 ? { ok: true, nova: false } : { ok: false, erro: 'conflito' };
@@ -514,6 +576,22 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
       return { ok: true, nova: true };
     },
     arquivoDir,
+    corrigirAudio(id, audio, texto) {
+      const existing = data.correcoes?.find((row) => row.id === id);
+      if (existing) return existing.audio === audio && existing.texto === texto ? { ok: true, nova: false } : { ok: false, erro: 'conflito' };
+      if (data.chat.some((row) => row.id === id)) return { ok: false, erro: 'conflito' };
+      const line = data.chat.find((row) => row.id === audio);
+      if (!line) return { ok: false, erro: 'nao-encontrada' };
+      if (line.autor !== 'dono' || line.audio?.estado !== 'transcrito') return { ok: false, erro: 'nao-e-audio' };
+      const antes = line.texto;
+      commit((next) => {
+        const row = next.chat.find((candidate) => candidate.id === audio)!;
+        row.texto = texto;
+        row.audio!.corrigida = true;
+        (next.correcoes ??= []).push({ id, audio, texto, criada_em: iso() });
+      });
+      return { ok: true, nova: true, antes };
+    },
     pendingDecision(tarefa) {
       const rows = data.decisoes.filter((row) => row.tarefa === tarefa && !row.aplicada_em);
       const last = rows[rows.length - 1];
@@ -527,15 +605,17 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
     },
     conversa(limit) {
       const answered = answeredIds();
+      // The Líder's answer to a correction shows on the phone as an answer to the audio it corrected.
+      const audioOf = new Map((data.correcoes ?? []).map((row) => [row.id, row.audio]));
       return data.chat.slice(-limit).map((row) => ({
         id: row.id,
         autor: row.autor,
         texto: row.texto,
-        em_resposta_a: row.em_resposta_a,
+        em_resposta_a: row.em_resposta_a === null ? null : (audioOf.get(row.em_resposta_a) ?? row.em_resposta_a),
         criada_em: row.criada_em,
         estado: estadoDe(row, answered),
         entregue_em: row.entregue_em ?? null,
-        ...(row.audio ? { audio: { estado: row.audio.estado, duracao_ms: row.audio.duracao_ms, motivo: row.audio.motivo ?? null } } : {}),
+        ...(row.audio ? { audio: { estado: row.audio.estado, duracao_ms: row.audio.duracao_ms, motivo: row.audio.motivo ?? null, ...(row.audio.corrigida ? { corrigida: true as const } : {}) } } : {}),
         ...(row.arquivo ? { arquivo: { nome: row.arquivo.nome, mime: row.arquivo.mime, tamanho: row.arquivo.tamanho } } : {}),
       }));
     },

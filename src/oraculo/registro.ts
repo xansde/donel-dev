@@ -41,6 +41,7 @@ import { createChatCelularConsumer, createChatCelularQueue, parseChatReplies, ty
 import { CELULAR_LOCAL_FILE, createCelularLocalStore } from './celular-local';
 import { createCelularV2Handler } from './celular-v2';
 import { CHAT_AUDIO_TIMEOUT_MS, createChatAudioWorker, DAEMON_WHISPER_URL } from './chat-audio';
+import { createGlossarioStore, glossarioFile } from './glossario';
 import { startChatArquivoSweep } from './chat-arquivo';
 import { chatResponder } from './chat-responder';
 import { boardOfSession, createEntregador, type Entregador, type EntregadorPlace } from './entregador';
@@ -341,6 +342,9 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
     arvoreFile: join(home, '.donel', 'estado-derivado', 'arvore.json'),
     kick,
     audio: (id) => audioWorker?.enqueue(id),
+    // t-753e8199 — the owner's corrections teach the transcriber (DONEL_GLOSSARIO, else ~/.donel/transcricao/glossario.json).
+    glossario: createGlossarioStore(glossarioFile(), (line) => console.log(line)),
+    log: (line) => console.log(line),
   });
   celular = createCelularCore({
     v2: () => (filaLocal() && v2 ? v2 : null),
