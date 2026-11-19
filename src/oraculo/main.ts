@@ -23,7 +23,7 @@
 // this bundle runs as such a gate (the Homologações, scripts/portao-satelite.sh): the gate, the probe and the recados
 // only, with the tasks on the personal VPS (`<dir>/portao.token`, satelite.ts).
 
-import { randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { open as openFile } from 'node:fs/promises';
@@ -439,8 +439,16 @@ async function main(): Promise<void> {
   const decisoesPort = createLedgerMobilePort(() => ledger, undefined, () => cardWriter);
   // Saída iii (18/11) — the phone app's queues on this machine (`"fila": "local"` in decisoes.json, read at each
   // round): decisions, the tasks he asks for and his chat with the Líder wait here, not in the Supabase.
-  const celularLocal = createCelularLocalStore(join(dir, CELULAR_LOCAL_FILE));
+  // A file that is there but unreadable never takes the whole daemon down: the phone's queue stays off (404) and the
+  // file is kept as it is (revisão do #495).
+  let celularLocal: ReturnType<typeof createCelularLocalStore> | null = null;
+  try {
+    celularLocal = createCelularLocalStore(join(dir, CELULAR_LOCAL_FILE));
+  } catch (error) {
+    console.log(`[celular-v2] ${CELULAR_LOCAL_FILE} ilegível; a fila do celular fica desligada: ${error instanceof Error ? error.message : String(error)}`);
+  }
   const filaLocal = (): boolean => {
+    if (!celularLocal) return false;
     try {
       return (JSON.parse(readFileSync(join(dir, DECISOES_CONFIG_FILE), 'utf8')) as { fila?: unknown }).fila === 'local';
     } catch {
@@ -494,7 +502,7 @@ async function main(): Promise<void> {
       state.running = false;
     })();
   };
-  const v2 = createCelularV2Handler({
+  const v2 = celularLocal && createCelularV2Handler({
     verify: (message, signature) => {
       const device = celular?.verifyDecisionSignature(message, signature);
       return device ? { name: device.deviceName } : null;
@@ -514,7 +522,7 @@ async function main(): Promise<void> {
     kick,
   });
   celular = createCelularCore({
-    v2: () => (filaLocal() ? v2 : null),
+    v2: () => (filaLocal() && v2 ? v2 : null),
     userDataDir: dir,
     io,
     ledger: () => ledger,
@@ -631,9 +639,13 @@ async function main(): Promise<void> {
           const curto = typeof input.em_resposta_a === 'string' ? input.em_resposta_a.trim().toLowerCase() : '';
           const texto = typeof input.texto === 'string' ? input.texto.trim() : '';
           if (curto.length < 8 || !texto || texto.length > 8000) return answer(400, { erro: 'em_resposta_a (8+ caracteres) e texto' });
+          if (!celularLocal) return answer(503, { erro: 'a fila do celular está desligada' });
           const alvo = celularLocal.conversa(2000).filter((line) => line.autor === 'dono' && line.id.startsWith(curto));
           if (alvo.length !== 1) return answer(404, { erro: alvo.length ? 'id ambíguo' : 'mensagem não encontrada' });
-          const id = typeof input.id === 'string' && /^[0-9a-f-]{36}$/.test(input.id) ? input.id : randomUUID();
+          // No id from the script: one made of the line and the text, so a retry after a timeout is the same answer.
+          const h = createHash('sha256').update(`${alvo[0]!.id}\n${texto}`, 'utf8').digest('hex');
+          const derived = `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
+          const id = typeof input.id === 'string' && /^[0-9a-f-]{36}$/.test(input.id) ? input.id : derived;
           await celularLocal.chat.responder(id, alvo[0]!.id, texto);
           return answer(200, { ok: true, id, em_resposta_a: alvo[0]!.id });
         }
@@ -665,7 +677,7 @@ async function main(): Promise<void> {
   // t-52bf8b45 — the config is read at each round: writing `decisoes.json` turns the queue on without a restart.
   const decisoes = createDecisoesConsumer({
     queue: () => {
-      if (filaLocal()) return celularLocal.decisoes;
+      if (filaLocal() && celularLocal) return celularLocal.decisoes;
       const config = readBoardConfig(join(dir, DECISOES_CONFIG_FILE));
       return config ? createDecisoesQueue(config) : null;
     },
@@ -692,7 +704,7 @@ async function main(): Promise<void> {
   // t-2eedda0d — the tasks the owner asks for in the phone app (`celular.tarefas_pedidas`), same config and round.
   const tarefasPedidas = createTarefasPedidasConsumer({
     queue: () => {
-      if (filaLocal()) return celularLocal.pedidas;
+      if (filaLocal() && celularLocal) return celularLocal.pedidas;
       const config = readBoardConfig(join(dir, DECISOES_CONFIG_FILE));
       return config ? createTarefasPedidasQueue(config) : null;
     },
@@ -713,7 +725,7 @@ async function main(): Promise<void> {
   const replyScript = process.env.DONEL_CHAT_RESPONDER || join(homedir(), 'bin', 'rotinas', 'chat-lider', 'chat_lider.py');
   const chatCelular = createChatCelularConsumer({
     queue: () => {
-      if (filaLocal()) return celularLocal.chat;
+      if (filaLocal() && celularLocal) return celularLocal.chat;
       const config = readBoardConfig(join(dir, DECISOES_CONFIG_FILE));
       return config ? createChatCelularQueue(config) : null;
     },
