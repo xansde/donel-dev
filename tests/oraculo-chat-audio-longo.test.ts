@@ -706,6 +706,50 @@ describe('v1.8: depois do fechamento automático, o resto vai como áudio novo c
     expect(await w.store.chat.tomar(10)).toEqual([]);
     wk.stop();
   });
+
+  it('cadeia id1 -> id2 -> id3 com o id1 adiado: nada da cadeia sai; quando o id1 fica pronto, saem id1, id2 e id3 em ordem, uma vez cada', async () => {
+    const w = world();
+    const id = UUID(1);
+    const id2 = UUID(2);
+    const id3 = UUID(3);
+    let bloqueado = true;
+    const wk = createChatAudioWorker({
+      store: w.store,
+      transcribe: async () => '',
+      transcribePedaco: async (file) => {
+        const texto = readFileSync(file, 'utf8');
+        if (texto.startsWith('fala0') && bloqueado) throw new TranscribeError('tempo', 'a VPS ficou sem vaga para transcrever');
+        return texto;
+      },
+      midia: fakeMidia(),
+      kick: () => {},
+      log: () => {},
+      now: w.now,
+      adiarMs: 600_000,
+    });
+    await fechadoPeloAutomatico(w, wk, id, [0]);
+    expect(w.store.audioEstado(id)).toBe('transcrevendo');
+    // O id2 continua o id1 e o automático o fecha: fica transcrito, mas o id1 ainda espera vaga.
+    await w.call('POST', '/api/v2/chat/audio/parte', parte(id2, 0, parteBytes(2), 'audio/webm', id));
+    w.advance(31 * 60_000);
+    wk.fecharParados();
+    await wk.idle();
+    expect(w.store.audioEstado(id2)).toBe('transcrito');
+    // O id3 continua o id2 e chega inteiro.
+    await w.call('POST', '/api/v2/chat/audio/parte', parte(id3, 0, parteBytes(4), 'audio/webm', id2));
+    await w.call('POST', '/api/v2/chat/audio/fim', fim(id3, 1, false, 60_000, id2));
+    wk.enqueue(id3);
+    await wk.idle();
+    expect(w.store.audioEstado(id3)).toBe('transcrito');
+    expect(w.store.audioEstado(id)).toBe('transcrevendo');
+    expect(await w.store.chat.tomar(10)).toEqual([]);
+    bloqueado = false;
+    wk.enqueue(id);
+    await wk.idle();
+    expect((await w.store.chat.tomar(10)).map((row) => row.id)).toEqual([id, id2, id3]);
+    expect(await w.store.chat.tomar(10)).toEqual([]);
+    wk.stop();
+  });
 });
 
 describe('pedaços e emenda', () => {

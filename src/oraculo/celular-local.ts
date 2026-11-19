@@ -92,6 +92,8 @@ export interface AudioTrecho {
   readonly inicio: number;
   readonly fim: number;
 }
+/** How far up a continuation chain `tomar` looks (a guard against a cycle; a real chain is a handful of links). */
+const CHAT_AUDIO_MAX_CADEIA = 64;
 /** The id of a cancelled recording is kept this long (contract v1.7): a late part never brings it back. */
 export const CHAT_AUDIO_LAPIDE_MS = 7 * 86_400_000;
 /** `antes`: the line's text the correction replaced (what the glossary learns from), only when `nova`. */
@@ -612,19 +614,36 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
     if (outro) return { erro: 'ja-continuado', id: outro.id };
     return anterior;
   };
+  /**
+   * A continuation never reaches the Líder before the audio it continues, nor before any link above it
+   * (id1 -> id2 -> id3): every link must be delivered already, or taken earlier in this same batch (#527 review,
+   * round 4). A link that is gone (cancelled, swept), failed, or set aside with a result never holds the chain.
+   * Visited ids and a depth cap keep a cycle from looping.
+   */
+  const chainDelivered = (next: LocalFile, row: ChatLocal, takenIds: ReadonlySet<string>): boolean => {
+    const seen = new Set<string>([row.id]);
+    let continua = row.audio?.continua;
+    while (continua !== undefined && !seen.has(continua) && seen.size <= CHAT_AUDIO_MAX_CADEIA) {
+      seen.add(continua);
+      const link = next.chat.find((candidate) => candidate.id === continua && candidate.autor === 'dono');
+      if (!link) return true;
+      const resolved = Boolean(link.entregue_em || link.resultado) || takenIds.has(link.id) || link.audio?.estado === 'falhou';
+      if (!resolved) return false;
+      continua = link.audio?.continua;
+    }
+    return true;
+  };
   const chat: ChatCelularQueue = {
     async tomar(limit) {
       const taken: ChatCelularRow[] = [];
+      const takenIds = new Set<string>();
       commit((next) => {
         for (const row of next.chat) {
           if (taken.length >= limit) break;
           if (row.autor !== 'dono' || row.entregue_em || row.resultado || waitingAudio(row) || !free(row)) continue;
-          // A continuation never reaches the Líder before the audio it continues: it waits while that one is still
-          // uploading or being transcribed (#527 review, round 3).
-          const continua = row.audio?.continua;
-          const anterior = continua === undefined ? undefined : next.chat.find((candidate) => candidate.id === continua && candidate.autor === 'dono');
-          if (anterior && waitingAudio(anterior)) continue;
+          if (!chainDelivered(next, row, takenIds)) continue;
           row.reservada_ate = now() + RESERVE_MS;
+          takenIds.add(row.id);
           taken.push(asChatRow(row));
         }
         for (const row of next.correcoes ?? []) {

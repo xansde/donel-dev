@@ -433,6 +433,21 @@ describe('Recados em fila: sessão nunca ouvida (daemon reiniciado, hook instala
     expect(g.typed[0]!.text).not.toContain('segundo');
   });
 
+  it('o teto de bytes nunca muda a ordem: o que não coube espera, e os seguintes esperam com ele', async () => {
+    const g = setup();
+    const recados = g.make();
+    await deliveredTask(g.ledger!);
+    g.turns.set(SID_REV, { ended: true, at: g.clock() - 60_000 });
+    await recados.enviar(SID_DEV, g.picture.sessoes[SID_DEV]!, { tool: 'sessao_enviar', para: REV, texto: `primeiro ${'ç'.repeat(2000)}` });
+    await recados.enviar(SID_DEV, g.picture.sessoes[SID_DEV]!, { tool: 'sessao_enviar', para: REV, texto: `segundo ${'ç'.repeat(5500)}` });
+    await recados.enviar(SID_DEV, g.picture.sessoes[SID_DEV]!, { tool: 'sessao_enviar', para: REV, texto: 'terceiro curto' });
+    await recados.tick();
+    expect(g.typed).toHaveLength(1);
+    expect(g.typed[0]!.text).toContain('primeiro');
+    // O terceiro nunca vem antes do segundo.
+    expect(g.typed[0]!.text).not.toContain('terceiro');
+  });
+
   it('o texto digitado sai sem caracteres de controle (um \\r manda pela metade)', async () => {
     const g = setup();
     const recados = g.make();

@@ -1270,9 +1270,10 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
             );
             continue;
           }
-          // Joined, they stay under tmux's ceiling; the first goes alone whatever its size.
+          // Joined, they stay under tmux's ceiling; the first goes alone whatever its size. What does not fit stops the
+          // join: it and everything after it wait for the next typing, so the queue's order never changes (#527).
           const size = Buffer.byteLength(typeable(item.texto)) + 3;
-          if (ids.size && bytes + size > MAX_TYPING_BYTES) continue;
+          if (ids.size && bytes + size > MAX_TYPING_BYTES) break;
           bytes += size;
           ids.add(item.id);
         }
