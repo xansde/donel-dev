@@ -481,6 +481,25 @@ function workedTaskIds(call: LedgerToolCall): string[] | undefined {
   return 'id' in call && typeof call.id === 'string' && call.id ? [call.id] : undefined;
 }
 
+/**
+ * Item 13 — before a `tarefa_*` of `caller` (its picture `mine`): the task the call works on, when it was a closed
+ * place's whose successor is the caller, follows it. Passo 9: the registro runs it too, for a gate whose recados are on
+ * another process (the entregador apart, a satellite), so the renewal is always beside the ledger.
+ */
+export async function renewBeforeTask(service: LedgerService, caller: LedgerCaller, mine: PictureSession, call: LedgerToolCall, log: (line: string) => void): Promise<void> {
+  const places = listedPlaces(mine.listar);
+  const closed = places.filter((place) => place.estado === 'fechada' && successorOf(mine.board, places, place.id) === caller.placeId);
+  if (!closed.length) return;
+  // Only the task the call works on follows (§6): a read (tarefa_ver), listar, criar or novidades takes nothing, so
+  // a sibling of the same role that only looks at it never takes it.
+  const ids = workedTaskIds(call);
+  if (!ids?.length) return;
+  for (const place of closed) {
+    const passed = await followRenewal(service, { projectPath: caller.projectPath, placeId: place.id, to: caller.placeId, ids });
+    if (passed.length) log(`renovação: ${passed.join(', ')} de ${place.id} para ${caller.placeId}`);
+  }
+}
+
 export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
   const { file, io } = deps;
   const now = deps.now ?? Date.now;
@@ -1089,18 +1108,7 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
 
     async antesDaTarefa(caller, mine, call) {
       const service = deps.ledger();
-      if (!service) return;
-      const places = listedPlaces(mine.listar);
-      const closed = places.filter((place) => place.estado === 'fechada' && successorOf(mine.board, places, place.id) === caller.placeId);
-      if (!closed.length) return;
-      // Only the task the call works on follows (§6): a read (tarefa_ver), listar, criar or novidades takes nothing, so
-      // a sibling of the same role that only looks at it never takes it.
-      const ids = workedTaskIds(call);
-      if (!ids?.length) return;
-      for (const place of closed) {
-        const passed = await followRenewal(service, { projectPath: caller.projectPath, placeId: place.id, to: caller.placeId, ids });
-        if (passed.length) log(`renovação: ${passed.join(', ')} de ${place.id} para ${caller.placeId}`);
-      }
+      if (service) await renewBeforeTask(service, caller, mine, call, log);
     },
 
     depoisDaTarefa(_sid, mine, caller, call, answerText) {

@@ -12,7 +12,8 @@ import { cpus, freemem, hostname, loadavg } from 'node:os';
 import { join } from 'node:path';
 import { createSystemConfigIoDeps } from '../main/config-store';
 import type { LedgerService } from '../main/ledger-store';
-import type { OwnerMessage } from '../main/ledger-card-writer';
+import type { DeliverOwnerMessage, OwnerMessage } from '../main/ledger-card-writer';
+import type { LedgerDeliveredTo } from '../shared/ledger/contract';
 import { boardName } from '../shared/vigia/board';
 import { clearAdoptedMarks, createOpenLocal, readOpenKit, roomRefusal, sweepUnfinishedOpenings, type ScriptRun } from './abrir-local';
 import { createBoardClient, readBoardConfig, type BoardStore } from './board-client';
@@ -23,7 +24,8 @@ import { createGateRecados, findTranscript, tmuxLocalSessions, type GateRecadosH
 import { deliverLocalFirst, type Relay } from './relay';
 import { createLocalPicture, tmuxLiveNow } from './retrato-local';
 import { createRemotePictures, type RemotePictures } from './retrato-satelite';
-import { createSatelliteLedger, createSatelliteNotice, createSatelliteReviewLink, createSatelliteTaskMemory } from './satelite';
+import { noticeOf } from './portoes';
+import { createSatelliteLedger, createSatelliteNotice, createSatelliteReviewLink, createSatelliteTaskMemory, postJson, type SatellitePost } from './satelite';
 import { createProbe } from './sonda';
 
 export interface PictureStore {
@@ -140,6 +142,72 @@ function loopbackPortFree(port: number): Promise<boolean> {
   });
 }
 
+/**
+ * Passo 9 (PR 2) — the registro's deliveries to this machine's recados when the entregador runs apart (the card writer,
+ * the notices to the Líder único, the phone's requests): `POST 127.0.0.1:<gate>/local/recados/entregar` `{aviso}` →
+ * `{entregue}`, what `deliverLocal` answered (`null` = not here: the registro sends it to the PC's relay).
+ */
+export const LOCAL_DELIVER_PATH = '/local/recados/entregar';
+const LOCAL_DELIVER_TIMEOUT_MS = 5_000;
+
+function deliveredOf(value: unknown): LedgerDeliveredTo {
+  if (value === 'lider') return 'lider';
+  const placeId = (value as { placeId?: unknown } | null)?.placeId;
+  return typeof placeId === 'string' ? { placeId } : null;
+}
+
+/** The entregador's side: the message into its recados (the same key joins the item it made, delivered or not). */
+function localDeliverRoute(recados: Pick<GateRecadosHandle, 'deliverLocal'>): NonNullable<GateDeps['local']> {
+  const answer = (status: number, value: unknown) => ({ status, headers: { 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(value) });
+  return async (method, path, body) => {
+    if (method !== 'POST' || path !== LOCAL_DELIVER_PATH) return null;
+    let message: OwnerMessage | null = null;
+    try {
+      message = noticeOf((JSON.parse(body) as { aviso?: unknown } | null)?.aviso);
+    } catch {
+      message = null;
+    }
+    if (!message) return answer(400, { erro: 'aviso inválido' });
+    return answer(200, { entregue: await recados.deliverLocal(message) });
+  };
+}
+
+/**
+ * The registro's side: `deliverLocal` through the entregador's gate (`port`: where it listens now). Nothing listening,
+ * or any other answer = `null`, and `deliverLocalFirst` takes it to the PC's relay with the same key, which a later
+ * repeat finds there (never delivered here as well). A cut after it went out is sent once more, the same message.
+ */
+export function createLocalDeliverClient(deps: {
+  readonly port: () => number;
+  readonly timeoutMs?: number;
+  readonly post?: (url: string, token: string, body: string, timeoutMs: number) => Promise<SatellitePost>;
+}): DeliverOwnerMessage {
+  const post = deps.post ?? postJson;
+  const timeoutMs = deps.timeoutMs ?? LOCAL_DELIVER_TIMEOUT_MS;
+  return async (message) => {
+    const url = `http://127.0.0.1:${deps.port()}${LOCAL_DELIVER_PATH}`;
+    const body = JSON.stringify({ aviso: message });
+    let sent = await post(url, '', body, timeoutMs);
+    if (sent === 'caiu') sent = await post(url, '', body, timeoutMs);
+    if (typeof sent !== 'object' || sent.status !== 200) return null;
+    try {
+      return deliveredOf((JSON.parse(sent.body) as { entregue?: unknown }).entregue);
+    } catch {
+      return null;
+    }
+  };
+}
+
+/** Where the entregador's gate listens (`<dir>/portao`, written at its start); `fallback` until it wrote one. */
+export function gatePortOf(dir: string, fallback: number): number {
+  try {
+    const port = Number(readFileSync(join(dir, 'portao'), 'utf8').trim());
+    return Number.isInteger(port) && port > 0 && port < 65_536 ? port : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export interface EntregadorPlace {
   /** DONEL_ORACULO_DIR. */
   readonly dir: string;
@@ -234,6 +302,7 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
       relay: (message) => junto.relay.send(message, 0),
       leader: localLeader,
       transcriptOf,
+      localSessions: liveSessions,
     });
   } else {
     let url: string;
@@ -257,6 +326,7 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
       relay: notices.send,
       leader: localLeader,
       transcriptOf,
+      localSessions: liveSessions,
     });
   }
   /** What goes to the Líder único: his own queue when he lives here, else the PC's relay (no wait). */
@@ -331,7 +401,8 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
             names: [hostname()],
           }),
           // Saída iii — a new phone app's key (the token never leaves the daemon) and the Líder's answer from chat_lider.py.
-          ...(junto ? { local: junto.local } : {}),
+          // Apart (passo 9, PR 2): the registro's deliveries to these recados.
+          local: junto ? junto.local : localDeliverRoute(recados),
           // The phone's server lives with the registro: a task a VPS session creates from an owner's request shows on his phone.
           ...(junto ? { linkPedido: junto.linkPedido } : {}),
           // The notices after a task (a delivery, a "travada", a verdict) go by the recados: queued for a session of this

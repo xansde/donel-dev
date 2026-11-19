@@ -27,8 +27,9 @@ import { callerOf, createOracleApiHandler } from './api';
 import { readServiceHashes } from './servicos';
 import { createLivroStore } from './livro';
 import { createReturnGuard } from './devolvido';
-import type { BoardPicture } from './portao';
-import { createGateToolRoutes, readGateHashes } from './portoes';
+import { GATE_PORT, type BoardPicture } from './portao';
+import { createGateToolRoutes, isLocalGate, readGateHashes } from './portoes';
+import { renewBeforeTask } from './recados';
 import { createRemotePictures } from './retrato-satelite';
 import { ORACLE_PORT, startOracleServer, type OracleServer } from './server';
 import { createDaemonVigia } from './vigia';
@@ -43,7 +44,7 @@ import { createCelularV2Handler } from './celular-v2';
 import { CHAT_AUDIO_TIMEOUT_MS, createChatAudioWorker, DAEMON_WHISPER_URL } from './chat-audio';
 import { startChatArquivoSweep } from './chat-arquivo';
 import { chatResponder } from './chat-responder';
-import { boardOfSession, createEntregador, type Entregador, type EntregadorPlace } from './entregador';
+import { boardOfSession, createEntregador, createLocalDeliverClient, gatePortOf, type Entregador, type EntregadorPlace } from './entregador';
 import { RETRATO_PC_FILE } from './modo';
 
 export const TOKEN_HASH_FILE = 'pc.token.sha256';
@@ -235,8 +236,13 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
   // t-d461e003 — the other machines' pictures and queues: the entregador's when it runs here; apart, only the registro
   // opens `portoes-retrato/` and `portoes-recados/` (its routes keep the pictures and hand the queues; nothing queues).
   const remotes = entregador ? entregador.remotes : createRemotePictures({ dir, io });
-  /** The local recados when the entregador runs here; apart, nothing is queued here and the relay takes it. */
-  const deliverLocal: DeliverOwnerMessage = entregador ? entregador.recados.deliverLocal : async () => null;
+  /**
+   * The local recados when the entregador runs here; apart (passo 9, PR 2), through its gate on the loopback: with it
+   * down, `deliverLocalFirst` takes the message to the PC's relay with the same key (never twice when it comes back).
+   */
+  const deliverLocal: DeliverOwnerMessage = entregador
+    ? entregador.recados.deliverLocal
+    : createLocalDeliverClient({ port: () => gatePortOf(dir, place.gatePort ?? (Number(process.env.DONEL_ORACULO_PORTAO_PORT) || GATE_PORT)) });
   // t-4c60b815 — the owner's word or decision reaches a session of this machine through its recados, with the PC off;
   // only a place off this machine waits in the PC's relay. t-c3fbe852: the Líder único too, when he lives here.
   const cardWriter: CardWriter = createCardWriter({
@@ -380,11 +386,13 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
     gates,
     gateRoutes: createGateToolRoutes({
       ledger: () => ledger,
-      // Apart, the renewal before a task (`antesDaTarefa`) stays with the entregador's recados.
-      recados: entregador?.recados ?? null,
+      // Apart (passo 9, PR 2), the renewal before a task runs here, beside the ledger: the entregador's recados have none.
+      recados: entregador?.recados ?? { antesDaTarefa: (caller, mine, call) => renewBeforeTask(ledger, caller, mine, call, (line) => console.error(`[oraculo] recados: ${line}`)) },
       linkPedido: (pedidoId, tarefa) => void celular?.linkPedido(pedidoId, tarefa),
       notice: toLeader,
       ...(remotes ? { pictures: remotes } : {}),
+      // Apart, the Líder único of this machine reaches the ledger through the entregador's gate (never a satellite's).
+      ...(entregador ? {} : { leader: { isLocal: (name: string) => isLocalGate(dir, name), picture: () => (remotes ? remotes.combine(picture()) : picture()) } }),
     }),
     ...(process.env.DONEL_LIVRO_ARQUIVO ? { livro: createLivroStore({ filePath: process.env.DONEL_LIVRO_ARQUIVO }) } : {}),
     // t-cddc62fc — the reconciliador's notices reach the Líder único by the relay, out of the owner's phone chat.

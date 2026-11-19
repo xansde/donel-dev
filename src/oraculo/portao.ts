@@ -361,6 +361,39 @@ export function leaderCallerFromPicture(
   return { caller: { ...base, projectPath: pasta, boardPlaceIds: reached, placeStates, ...(board ? { board } : {}) }, call };
 }
 
+/**
+ * The Líder único's `tarefa_*` from the picture: his caller and call (`leaderCallerFromPicture`), and what the steps
+ * around it see, the task's board (its places and arrows), as a session of that board does: the Líder's own picture has
+ * none, and his caller has no board for a step on a task id (the PC's rule). `taskBoard` may throw (= not known).
+ * A string = why not. Passo 9: the registro runs the same for the entregador of its machine (portoes.ts).
+ */
+export function leaderTaskContext(
+  picture: BoardPicture | null,
+  mine: PictureSession,
+  asked: LedgerToolCall,
+  taskBoard: (id: string) => string | undefined,
+): { readonly caller: LedgerCaller; readonly call: LedgerToolCall; readonly onBoard: PictureSession; readonly aroundCaller: LedgerCaller } | string {
+  const boardOf = (id: string): string | undefined => {
+    try {
+      return taskBoard(id);
+    } catch {
+      return undefined;
+    }
+  };
+  const resolved = leaderCallerFromPicture(picture, asked, boardOf);
+  if (typeof resolved === 'string') return resolved;
+  const { caller, call } = resolved;
+  if (call.tool === 'tarefa_criar' && call.quemPediu) {
+    const refused = askedByRefusal(call.quemPediu);
+    if (refused) return refused;
+  }
+  const pasta = caller.projectPath || ('id' in call && typeof call.id === 'string' ? boardOf(call.id) : undefined);
+  const pictured = pasta ? picturedBoards(picture).get(pasta) : undefined;
+  const onBoard: PictureSession = { quemSou: mine.quemSou, listar: pictured?.listar ?? [], ...(pictured?.board ? { board: pictured.board } : {}) };
+  const aroundCaller: LedgerCaller = pasta ? { ...caller, projectPath: pasta, ...(pictured?.board ? { board: pictured.board } : {}) } : caller;
+  return { caller, call, onBoard, aroundCaller };
+}
+
 /** The board `quadro` names (its folder or its last segment) among the boards the picture has. */
 function pictureBoard(picture: BoardPicture | null, quadro: string): [string, { readonly listar: readonly unknown[]; readonly board?: MindscapeBoard }] | undefined {
   return [...picturedBoards(picture)].find(([pasta]) => pasta === quadro || lastSegment(pasta) === quadro);
@@ -545,26 +578,9 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
 
     /** t-c3fbe852 — the Líder único's `tarefa_*` with the PC off, on the boards the picture has. */
     const leaderLedger = async (mine: PictureSession, asked: LedgerToolCall): Promise<BrowserToolOutcome> => {
-      const taskBoard = (id: string): string | undefined => {
-        try {
-          return deps.ledger().load().doc.tasks[id]?.projectPath;
-        } catch {
-          return undefined;
-        }
-      };
-      const resolved = leaderCallerFromPicture(picture, asked, taskBoard);
+      const resolved = leaderTaskContext(picture, mine, asked, (id) => deps.ledger().load().doc.tasks[id]?.projectPath);
       if (typeof resolved === 'string') return { kind: 'error', text: resolved };
-      const { caller, call } = resolved;
-      if (call.tool === 'tarefa_criar' && call.quemPediu) {
-        const refused = askedByRefusal(call.quemPediu);
-        if (refused) return { kind: 'error', text: refused };
-      }
-      // The steps around it see the task's board (its places and arrows), as a session of that board does: the Líder's
-      // own picture has none, and his caller has no board for a step on a task id (the PC's rule).
-      const pasta = caller.projectPath || ('id' in call && typeof call.id === 'string' ? taskBoard(call.id) : undefined);
-      const pictured = pasta ? picturedBoards(picture).get(pasta) : undefined;
-      const onBoard: PictureSession = { quemSou: mine.quemSou, listar: pictured?.listar ?? [], ...(pictured?.board ? { board: pictured.board } : {}) };
-      const aroundCaller: LedgerCaller = pasta ? { ...caller, projectPath: pasta, ...(pictured?.board ? { board: pictured.board } : {}) } : caller;
+      const { caller, call, onBoard, aroundCaller } = resolved;
       await beforeTask(onBoard, aroundCaller, call);
       const raw = toolCallOf(singleMessage(body));
       const result = await runLedger(caller, call, { mine, args: raw?.name === call.tool ? raw.args : {} });
@@ -820,7 +836,8 @@ export function startGateServer(options: { readonly port: number; readonly handl
     server.listen(options.port, '127.0.0.1', () => {
       server.off('error', reject);
       resolve({
-        port: options.port,
+        // The port it listens on (port 0 = one the system picked): `<dir>/portao` tells it to who delivers here.
+        port: (server.address() as { port: number }).port,
         close: () =>
           new Promise<void>((done) => {
             server.closeAllConnections?.();

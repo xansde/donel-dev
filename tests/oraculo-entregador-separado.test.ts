@@ -12,6 +12,9 @@ import { createSystemConfigIoDeps } from '../src/main/config-store';
 import { createLedgerService, nodeLedgerProofFs } from '../src/main/ledger-store';
 import type { OracleApiHandler } from '../src/oraculo/api';
 import { runEntregador } from '../src/oraculo/entregador';
+import { parseLedgerToolCall } from '../src/shared/ledger/tools';
+import type { PictureSession } from '../src/oraculo/portao';
+import { createSatelliteLedger, type SatellitePost } from '../src/oraculo/satelite';
 import { openSqliteLedgerStore, seedSqliteLedger } from '../src/oraculo/ledger-sqlite';
 import { ENTREGADOR_SEPARADO_FILE, oracleMode, RETRATO_PC_FILE } from '../src/oraculo/modo';
 import { runRegistro } from '../src/oraculo/registro';
@@ -71,7 +74,12 @@ async function registro(dir: string, home: string, entregador: 'junto' | 'separa
     const answer = await handler!({ method: 'POST', url: path, authorization: `Bearer ${token}`, body: JSON.stringify(body) });
     return { status: answer.status, body: JSON.parse(String(answer.body)) as Record<string, unknown> };
   };
-  return { daemon, call };
+  /** A satellite-shaped POST (`postJson`) straight into the handler: the entregador's way to the registro. */
+  const post = async (url: string, token: string, body: string): Promise<SatellitePost> => {
+    const answer = await handler!({ method: 'POST', url: new URL(url).pathname, authorization: `Bearer ${token}`, body });
+    return { status: answer.status, body: String(answer.body) };
+  };
+  return { daemon, call, post };
 }
 
 const push = { at: 1_000, sessoes: { [SID]: { quemSou: { nome: 'Dev · atlas', pasta: '/p', lugar: 'place:dev', papel: 'dev' }, listar: [] } } };
@@ -148,5 +156,83 @@ describe('donel-oraculo dividido em registro e entregador', () => {
     expect(existsSync(join(dir, RETRATO_PC_FILE))).toBe(false);
     expect(existsSync(join(dir, 'portao'))).toBe(true);
     expect(tasksIn(dir)).toBe(1);
+  });
+});
+
+// Passo 9, PR 2: com a marca, o portão do entregador grava pelo registro (como o satélite), o Líder único só pela
+// credencial marcada como local, e o que o registro entregava na fila local de recados vai pelo 127.0.0.1 do entregador.
+describe('entregador à parte: portão local por HTTP e entrega de volta', () => {
+  const LOCAL_TOKEN = 'portao-vps-pessoal-de-teste';
+  const LIDER: PictureSession = { quemSou: { nome: 'Líder', papel: 'lider', liderUnico: true, lugar: null }, listar: [] };
+  const DEV: PictureSession = { quemSou: { nome: 'Dev · atlas', pasta: '/p', lugar: 'place:dev', papel: 'dev' }, listar: [{ id: 'place:dev', papel: 'dev', estado: 'trabalhando' }] };
+  const pedido = { titulo: 'Separado', pedido: 'gravar pelo registro', criterio: 'a tarefa existe', prazo: '2026-11-20', risco: 'baixo' };
+  /** The board picture the entregador keeps (`retrato.json`): the Dev of `/p` alive in session `SID`. */
+  const RETRATO_DEV = JSON.stringify({ at: 1_000, sessoes: { [SID]: { ...DEV, at: 1_000 } } });
+
+  async function separado() {
+    const { dir, home } = await place({ separado: true });
+    writeFileSync(join(dir, 'portoes', 'vps-pessoal.sha256'), createHash('sha256').update(LOCAL_TOKEN).digest('hex'));
+    writeFileSync(join(dir, 'portoes', 'vps-pessoal.local'), '');
+    writeFileSync(join(dir, 'retrato.json'), RETRATO_DEV);
+    return { dir, home };
+  }
+
+  it('o Líder único grava só pelo portão local; o da Homologação continua recusando', async () => {
+    const { dir, home } = await separado();
+    const { daemon, call } = await registro(dir, home, 'separado');
+    const lider = { sessao: LIDER, call: { name: 'tarefa_criar', arguments: { ...pedido, quadro: 'p', dono: 'place:dev' } } };
+    expect((await call('/v1/portao/ferramenta', lider, GATE_TOKEN)).body).toMatchObject({ ok: false });
+    expect(tasksIn(dir)).toBe(0);
+    const local = await call('/v1/portao/ferramenta', lider, LOCAL_TOKEN);
+    expect(local.body).toMatchObject({ ok: true, tarefa: { ownerPlaceId: 'place:dev', projectPath: '/p' } });
+    await daemon.stop();
+    expect(tasksIn(dir)).toBe(1);
+  });
+
+  it('a mesma tarefa_criar repetida depois de um corte grava uma vez', async () => {
+    const { dir, home } = await separado();
+    const { daemon, post } = await registro(dir, home, 'separado');
+    // The registro writes, and the answer is lost twice (the cut): the session hears it may have been written.
+    let cut = true;
+    const run = createSatelliteLedger({
+      url: 'http://100.64.0.1:47816',
+      token: () => LOCAL_TOKEN,
+      post: async (url, token, body) => {
+        const answer = await post(url, token, body);
+        return cut ? 'caiu' : answer;
+      },
+    });
+    const parsed = parseLedgerToolCall('tarefa_criar', pedido);
+    if (!parsed.ok) throw new Error(parsed.reason);
+    const caller = { projectPath: '/p', placeId: 'place:dev', boardPlaceIds: ['place:dev'] };
+    expect((await run(caller, parsed.call, { mine: DEV, args: pedido })).ok).toBe(false);
+    cut = false;
+    const again = await run(caller, parsed.call, { mine: DEV, args: pedido });
+    expect(again.ok).toBe(true);
+    await daemon.stop();
+    expect(tasksIn(dir)).toBe(1);
+  });
+
+  it('com o entregador fora, o recado vai ao relay com a mesma chave e não chega duas vezes quando ele volta', async () => {
+    const { dir, home } = await separado();
+    const { daemon, call } = await registro(dir, home, 'separado');
+    const aviso = (key: string) => ({ aviso: { projectPath: '/p', placeId: 'place:dev', text: `◆ ${key}`, leaderText: `◆ ${key}`, key } });
+    // The entregador is down: nothing listens where it said its gate was.
+    writeFileSync(join(dir, 'portao'), '9\n');
+    expect((await call('/v1/portao/aviso', aviso('decisao:1'), GATE_TOKEN)).body).toEqual({ ok: true });
+    const live = { liveSessions: async () => new Set([SID]), liveNow: () => new Set([SID]) };
+    const entregador = await runEntregador({ dir, home, gatePort: 0, ...live });
+    try {
+      expect((await call('/v1/portao/aviso', aviso('decisao:1'), GATE_TOKEN)).body).toEqual({ ok: true });
+      expect((await call('/v1/portao/aviso', aviso('decisao:2'), GATE_TOKEN)).body).toEqual({ ok: true });
+    } finally {
+      await entregador.stop();
+      await daemon.stop();
+    }
+    const relayed = (JSON.parse(readFileSync(join(dir, 'fila.json'), 'utf8')) as { items: Array<{ key: string }> }).items.map((item) => item.key);
+    expect(relayed).toEqual(['decisao:1']);
+    const queued = (JSON.parse(readFileSync(join(dir, 'recados.json'), 'utf8')) as { items: Array<{ texto: string }> }).items.map((item) => item.texto);
+    expect(queued).toHaveLength(1);
+    expect(queued[0]).toContain('decisao:2');
   });
 });

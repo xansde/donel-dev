@@ -20,17 +20,17 @@
 // - `recados` `{entregues?: [id]}` (t-d461e003): the satellite took those; answers what still waits for that machine
 //   (`{recados: [{id, message}]}`): the messages for its sessions (the Líder único's to the Dalton, with the PC off).
 
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { maxProofBytes, PROOF_FILE_TYPES } from '../shared/ledger/contract';
 import { reviewLink } from '../shared/ledger/revisao';
 import { listedPlaces } from '../shared/mindscape/address';
-import { isLedgerToolName, parseLedgerToolCall } from '../shared/ledger/tools';
-import { runLedgerTool, type LedgerService, type RemoteProofFetch } from '../main/ledger-store';
+import { isLedgerToolName, parseLedgerToolCall, type LedgerToolCall } from '../shared/ledger/tools';
+import { runLedgerTool, type LedgerCaller, type LedgerService, type RemoteProofFetch } from '../main/ledger-store';
 import type { OwnerMessage } from '../main/ledger-card-writer';
 import type { OracleRequest, OracleResponse } from './api';
 import type { GateRecados } from './gate-recados';
-import { callerFromPicture, ledgerCallRefusal, type PictureSession } from './portao';
+import { callerFromPicture, leaderTaskContext, ledgerCallRefusal, type BoardPicture, type PictureSession } from './portao';
 import { parseRemotePicture, type RemotePictures } from './retrato-satelite';
 
 export const GATES_DIR = 'portoes';
@@ -76,6 +76,15 @@ export function readGateHashes(dir: string): ReadonlyMap<string, string> {
   return hashes;
 }
 
+/**
+ * Passo 9 (t-5358d400) — the gate of this machine's own entregador (its unit apart from the registro): the mark
+ * `<dir>/portoes/<name>.local` beside its hash (read at each call; deleting it takes the Líder único off that gate).
+ * Only that gate may carry the Líder único, who lives on this machine; a satellite's never does.
+ */
+export function isLocalGate(dir: string, name: string): boolean {
+  return GATE_NAME.test(name) && existsSync(join(dir, GATES_DIR, `${name}.local`));
+}
+
 /** A session's picture as the satellite sent it: the shape `callerFromPicture` reads, or `null`. */
 function pictureOf(value: unknown): PictureSession | null {
   if (!isRecord(value) || !isRecord(value.quemSou) || !Array.isArray(value.listar)) return null;
@@ -97,8 +106,8 @@ function proofFetchOf(files: Record<string, unknown>): RemoteProofFetch {
   };
 }
 
-/** An `OwnerMessage` as the satellite sent it, or `null`. */
-function noticeOf(value: unknown): OwnerMessage | null {
+/** An `OwnerMessage` as the satellite (or the registro, to the entregador) sent it, or `null`. */
+export function noticeOf(value: unknown): OwnerMessage | null {
   if (!isRecord(value)) return null;
   const { projectPath, placeId, text, leaderText, key } = value;
   if (typeof projectPath !== 'string' || typeof placeId !== 'string' || typeof text !== 'string' || typeof leaderText !== 'string') return null;
@@ -118,6 +127,11 @@ export interface GateToolRoutesDeps {
   readonly notice?: (message: OwnerMessage) => Promise<unknown>;
   /** t-d461e003 — the other machines' pictures and queues (retrato-satelite.ts). Absent = `retrato`/`recados` answer 404. */
   readonly pictures?: Pick<RemotePictures, 'accept' | 'inbox'>;
+  /**
+   * Passo 9 — the Líder único's `tarefa_*` from the entregador of this machine (`isLocal`, never a satellite's gate), on
+   * the boards of this registro's own picture. Absent = the Líder único is refused, as on every gate before the split.
+   */
+  readonly leader?: { readonly isLocal: (name: string) => boolean; readonly picture: () => BoardPicture | null };
   readonly log?: (line: string) => void;
 }
 
@@ -135,14 +149,24 @@ export function createGateToolRoutes(deps: GateToolRoutesDeps): GateRoutes {
     if (typeof body.chave === 'string' && args.chave === undefined) args.chave = body.chave;
     const parsed = parseLedgerToolCall(raw.name, args);
     if (!parsed.ok) return json(200, { ok: false, text: parsed.reason });
+    if (sessao.quemSou.liderUnico === true && deps.leader?.isLocal(name)) {
+      const resolved = leaderTaskContext(deps.leader.picture(), sessao, parsed.call, (id) => deps.ledger().load().doc.tasks[id]?.projectPath);
+      if (typeof resolved === 'string') return json(200, { ok: false, text: resolved });
+      return run(name, body, resolved.caller, resolved.call, resolved.onBoard, resolved.aroundCaller);
+    }
     const call = parsed.call;
     const caller = callerFromPicture(sessao);
     if (typeof caller === 'string') return json(200, { ok: false, text: caller });
     const refused = ledgerCallRefusal(call);
     if (refused) return json(200, { ok: false, text: refused });
+    return run(name, body, caller, call, sessao, caller);
+  }
+
+  /** The renewal step (`around`: who and which board it sees), the call on the ledger, the owner's request linked. */
+  async function run(name: string, body: Record<string, unknown>, caller: LedgerCaller, call: LedgerToolCall, aroundMine: PictureSession, around: LedgerCaller): Promise<OracleResponse> {
     if (deps.recados) {
       try {
-        await deps.recados.antesDaTarefa(caller, sessao, call);
+        await deps.recados.antesDaTarefa(around, aroundMine, call);
       } catch (error) {
         log(`[oraculo] portão ${name}: antes de ${call.tool} falhou: ${error instanceof Error ? error.message : String(error)}`);
       }
