@@ -339,6 +339,169 @@ describe('áudio longo: o que o Líder recebe e o que não se perde', () => {
   });
 });
 
+describe('rodada 3: continuação só depois do fechamento automático, e o cancelar (v1.7)', () => {
+  const worker = (w: ReturnType<typeof world>, extra: Partial<Parameters<typeof createChatAudioWorker>[0]> = {}) =>
+    createChatAudioWorker({
+      store: w.store,
+      transcribe: async () => '',
+      transcribePedaco: async (file) => readFileSync(file, 'utf8'),
+      midia: fakeMidia(),
+      kick: () => {},
+      log: () => {},
+      now: w.now,
+      ...extra,
+    });
+
+  it('na continuação o fim cobra também a parte entre a original e a continuação (nada some em silêncio)', async () => {
+    const w = world();
+    const id = UUID(1);
+    const wk = worker(w);
+    await w.call('POST', '/api/v2/chat/audio/parte', parte(id, 0));
+    await w.call('POST', '/api/v2/chat/audio/parte', parte(id, 1));
+    w.advance(31 * 60_000);
+    wk.fecharParados();
+    await wk.idle();
+    await w.call('POST', '/api/v2/chat/audio/parte', parte(id, 3));
+    await w.call('POST', '/api/v2/chat/audio/parte', parte(id, 4));
+    const faltando = await w.call('POST', '/api/v2/chat/audio/fim', fim(id, 5));
+    expect(faltando.status).toBe(409);
+    expect(parse(faltando)).toEqual({ erro: 'faltam-partes', faltam: [2] });
+    expect(parse(await w.call('POST', '/api/v2/chat/audio/parte', parte(id, 2))).ok).toBe(true);
+    expect(parse(await w.call('POST', '/api/v2/chat/audio/fim', fim(id, 5)))).toMatchObject({ ok: true, nova: true, estado: 'transcrevendo' });
+    for (const queued of w.queued) wk.enqueue(queued);
+    await wk.idle();
+    const textos = (await w.store.chat.tomar(10)).map((row) => row.texto);
+    expect(textos).toHaveLength(2);
+    expect(textos[1]).toContain('fala2 fala3 fala4');
+    expect(textos[1]).not.toContain('faltou');
+    wk.stop();
+  });
+
+  it('parte atrasada que cai num buraco da original diz a que minuto pertence, sem marca de buraco falsa', async () => {
+    const w = world();
+    const id = UUID(1);
+    const wk = worker(w);
+    for (const n of [0, 1, 3]) await w.call('POST', '/api/v2/chat/audio/parte', parte(id, n));
+    w.advance(31 * 60_000);
+    wk.fecharParados();
+    await wk.idle();
+    await w.call('POST', '/api/v2/chat/audio/parte', parte(id, 2));
+    await w.call('POST', '/api/v2/chat/audio/parte', parte(id, 4));
+    expect(parse(await w.call('POST', '/api/v2/chat/audio/fim', fim(id, 5))).estado).toBe('transcrevendo');
+    for (const queued of w.queued) wk.enqueue(queued);
+    await wk.idle();
+    const textos = (await w.store.chat.tomar(10)).map((row) => row.texto);
+    expect(textos).toHaveLength(2);
+    expect(textos[1]).toContain('(trecho que faltou entre ~2 e ~3 min do áudio #00000001) fala2');
+    expect(textos[1]).toContain('fala4');
+    expect(textos[1]).not.toContain('faltou o trecho de');
+    wk.stop();
+  });
+
+  it('depois de um fim mandado pelo aparelho (interrompido) parte nova dá 409 e nada chega ao Líder depois', async () => {
+    const w = world();
+    const id = UUID(1);
+    const wk = worker(w);
+    await w.call('POST', '/api/v2/chat/audio/parte', parte(id, 0));
+    await w.call('POST', '/api/v2/chat/audio/parte', parte(id, 1));
+    expect(parse(await w.call('POST', '/api/v2/chat/audio/fim', fim(id, 2, true))).estado).toBe('transcrevendo');
+    expect((await w.call('POST', '/api/v2/chat/audio/parte', parte(id, 2))).status).toBe(409);
+    for (const queued of w.queued) wk.enqueue(queued);
+    await wk.idle();
+    w.advance(31 * 60_000);
+    wk.fecharParados();
+    await wk.idle();
+    expect((await w.store.chat.tomar(10)).map((row) => row.texto)).toEqual(['🎙 Áudio de 2:00 (transcrição): (gravação interrompida) fala0 fala1']);
+    expect(parse(await w.call('GET', '/api/v2/chat')).mensagens).toHaveLength(1);
+    wk.stop();
+  });
+
+  it('cancelado: apaga as partes na hora, some da conversa, é idempotente, deixa lápide e nunca chega ao Líder', async () => {
+    const w = world();
+    const id = UUID(1);
+    const logs: string[] = [];
+    const wk = worker(w);
+    const h = createCelularV2Handler({
+      verify: (message, signature) => (createHmac('sha256', KEY).update(message, 'utf8').digest('hex') === signature ? { name: 'Donel (Android)' } : null),
+      doc: () => ({}) as any,
+      store: w.store,
+      readProof: async () => ({ kind: 'sumiu' }),
+      arvoreFile: join(w.dir, 'arvore.json'),
+      log: (line) => logs.push(line),
+      now: w.now,
+    });
+    const call = (url: string, body: string) => {
+      const ts = String(w.now());
+      const sig = createHmac('sha256', KEY).update(signedMessage('POST', url, ts, body), 'utf8').digest('hex');
+      return h({ method: 'POST', url, body, authorization: `Donel-HMAC ${ts}.${sig}` });
+    };
+    const cancelar = (alvo: string, partes: number) => JSON.stringify({ id: alvo, partes, duracao_ms: partes * 60_000, interrompido: true, cancelado: true });
+    await w.call('POST', '/api/v2/chat/audio/parte', parte(id, 0));
+    await w.call('POST', '/api/v2/chat/audio/parte', parte(id, 1));
+    expect(parse(await call('/api/v2/chat/audio/fim', cancelar(id, 3)))).toEqual({ ok: true, nova: true, estado: 'cancelado' });
+    expect(existsSync(join(w.dir, 'chat-audio', id))).toBe(false);
+    expect(existsSync(join(w.dir, 'chat-audio', `${id}.webm`))).toBe(false);
+    expect(parse(await w.call('GET', '/api/v2/chat')).mensagens).toEqual([]);
+    expect(logs).toEqual([`áudio ${id} cancelado pelo dono, 2 partes apagadas`]);
+    expect(parse(await call('/api/v2/chat/audio/fim', cancelar(id, 3)))).toEqual({ ok: true, nova: false, estado: 'cancelado' });
+    // Parte atrasada da fila do aparelho, ou um fim, não ressuscitam o áudio.
+    const atrasada = await w.call('POST', '/api/v2/chat/audio/parte', parte(id, 2));
+    expect(atrasada.status).toBe(409);
+    expect(parse(atrasada).erro).toBe('conflito');
+    expect((await w.call('POST', '/api/v2/chat/audio/fim', fim(id, 3, true))).status).toBe(409);
+    w.advance(31 * 60_000);
+    wk.fecharParados();
+    await wk.idle();
+    expect(await w.store.chat.tomar(10)).toHaveLength(0);
+    expect(parse(await w.call('GET', '/api/v2/chat')).mensagens).toEqual([]);
+    // Id sem parte nenhuma: o mesmo 200.
+    expect(parse(await call('/api/v2/chat/audio/fim', cancelar(UUID(2), 0)))).toEqual({ ok: true, nova: true, estado: 'cancelado' });
+    expect((await w.call('POST', '/api/v2/chat/audio/parte', parte(UUID(2), 0))).status).toBe(409);
+    // Depois de um fim normal: 409 ja-enviado e nada apagado.
+    const outro = UUID(3);
+    await w.call('POST', '/api/v2/chat/audio/parte', parte(outro, 0));
+    await w.call('POST', '/api/v2/chat/audio/fim', fim(outro, 1));
+    const tarde = await call('/api/v2/chat/audio/fim', cancelar(outro, 1));
+    expect(tarde.status).toBe(409);
+    expect(parse(tarde).erro).toBe('ja-enviado');
+    expect(existsSync(join(w.dir, 'chat-audio', `${outro}.webm`))).toBe(true);
+    expect(w.store.audioEstado(outro)).toBe('transcrevendo');
+    wk.stop();
+  });
+
+  it('adiamento conta por pedaço (até 6 cada) e não refaz o wav dos trechos a cada volta', async () => {
+    const w = world();
+    const id = UUID(1);
+    for (let n = 0; n < 12; n += 1) await w.call('POST', '/api/v2/chat/audio/parte', parte(id, n));
+    await w.call('POST', '/api/v2/chat/audio/fim', fim(id, 12));
+    const base = fakeMidia([[289, 291], [589, 591]]);
+    let wavs = 0;
+    const recusas = new Map<string, number>();
+    const wk = worker(w, {
+      midia: { ...base, paraWav: async (entrada, wav) => ((wavs += 1), base.paraWav(entrada, wav)) },
+      // Cada um dos 3 pedaços fica sem vaga 3 vezes: 9 adiamentos no áudio, nenhum pedaço passa de 6.
+      transcribePedaco: async (file) => {
+        const texto = readFileSync(file, 'utf8');
+        const vezes = recusas.get(texto) ?? 0;
+        recusas.set(texto, vezes + 1);
+        if (vezes < 3) throw new TranscribeError('tempo', 'a VPS ficou sem vaga para transcrever');
+        return texto;
+      },
+      adiarMs: 2,
+    });
+    wk.enqueue(id);
+    for (let i = 0; i < 60 && w.store.audioEstado(id) === 'transcrevendo'; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      await wk.idle();
+    }
+    const [row] = await w.store.chat.tomar(10);
+    expect(row!.texto).not.toContain('não transcrito');
+    expect([...row!.texto.matchAll(/fala(\d+)/g)].map((m) => Number(m[1]))).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    expect(wavs).toBe(1);
+    wk.stop();
+  });
+});
+
 describe('pedaços e emenda', () => {
   it('corta no silêncio mais perto de 5 min entre 4 e 6; sem silêncio, corte seco em 5 min com 2 s de sobreposição', () => {
     expect(planPedacos(200, [])).toEqual([{ inicio: 0, fim: 200, sobrepoe: false }]);

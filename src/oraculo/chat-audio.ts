@@ -31,7 +31,8 @@ export const CHAT_AUDIO_SEM_FIM_MS = 30 * 60_000;
 const CLOSE_EVERY_MS = 60_000;
 /**
  * A piece the limiter had no slot for (or that ran out of time) is tried again this much later, the audio left
- * `transcrevendo` and the worker free for the others; after this many tries it is marked as not transcribed.
+ * `transcrevendo` and the worker free for the others; after this many tries OF THAT PIECE it is marked as not
+ * transcribed (each piece has its own count, cleared when it comes out).
  */
 const ADIAR_MS = 10 * 60_000;
 const MAX_ADIAMENTOS = 6;
@@ -39,6 +40,8 @@ const MAX_ADIAMENTOS = 6;
 export const MARCA_INTERROMPIDA = '(gravação interrompida)';
 export const marcaBuraco = (ms: number): string => `(gravação interrompida; faltou o trecho de ${minutosTexto(ms)})`;
 const marcaFalha = (ms: number, motivo: string): string => `(trecho de ${minutosTexto(ms)} não transcrito: ${motivo})`;
+/** A late part that fills a hole of the recording's first line: which minutes it belongs to (never a gap mark). */
+const marcaEntre = (de: number, ate: number, origem: string): string => `(trecho que faltou entre ~${de} e ~${ate} min do áudio #${origem.slice(0, 8)})`;
 
 /** The owner reads this in the app, beside the audio; the Líder reads it in the notice. */
 const MOTIVOS: Record<TranscribeError['kind'], string> = {
@@ -88,10 +91,30 @@ export function createChatAudioWorker(deps: {
   let midia: AudioMidia | null = deps.midia ?? null;
   let transcribePedaco: TranscribePedaco | null = deps.transcribePedaco ?? null;
   const adiarMs = deps.adiarMs ?? ADIAR_MS;
-  /** The pieces a postponed audio already has (in memory: a restart transcribes them again), by audio and piece. */
-  const pedacosFeitos = new Map<string, Map<string, { texto: string } | { motivo: string }>>();
-  const adiamentos = new Map<string, number>();
+  /**
+   * A postponed audio's work (in memory: a restart does it again): its decoded runs and their pieces, kept on disk in
+   * `work` until the audio ends, the pieces already transcribed, and each piece's postponements.
+   */
+  interface LongState {
+    readonly work: string;
+    readonly runs: Array<{ wav: string; pedacos: Pedaco[] } | { erro: string; ms: number }>;
+    readonly feitos: Map<string, { texto: string } | { motivo: string }>;
+    readonly adiamentos: Map<string, number>;
+  }
+  const longStates = new Map<string, LongState>();
+  /** What the postponement's log line says (which piece, which try). */
+  const adiadoInfo = new Map<string, string>();
   const adiarTimers = new Set<NodeJS.Timeout>();
+  const dropLong = (id: string): void => {
+    const state = longStates.get(id);
+    longStates.delete(id);
+    if (!state) return;
+    try {
+      rmSync(state.work, { recursive: true, force: true });
+    } catch {
+      // the 7-day sweep takes it
+    }
+  };
 
   async function transcribeWithRetries(bytes: Uint8Array, fileName: string, type: string): Promise<{ texto: string } | { motivo: string }> {
     for (let attempt = 0; ; attempt += 1) {
@@ -134,94 +157,110 @@ export function createChatAudioWorker(deps: {
    */
   async function transcribeLong(job: AudioPendente & { partes: NonNullable<AudioPendente['partes']> }, bytes: Uint8Array): Promise<{ texto: string } | { motivo: string } | 'adiado' | null> {
     midia ??= ffmpegMidia();
-    const { trechos, total, interrompido } = job.partes;
-    const work = mkdtempSync(join(deps.store.audioDir, `.trabalho-${job.id.slice(0, 8)}-`));
-    try {
-      // Part 0's header: at the start of the first run (a continuation's joined file opens with it too).
-      const header = trechos[0] && (trechos[0].n0 === 0 || job.partes.cabecalho) ? audioHeader(bytes.subarray(trechos[0].inicio, trechos[0].fim), job.mime) : null;
+    const media = midia;
+    const { trechos, total, interrompido, continua } = job.partes;
+    let state = longStates.get(job.id);
+    if (!state) {
+      const work = mkdtempSync(join(deps.store.audioDir, `.trabalho-${job.id.slice(0, 8)}-`));
+      // Part 0's header: at the start of the first run (a continuation's joined file opens with it, its length known).
+      const cabecalho = job.partes.cabecalho;
+      const header = cabecalho ? bytes.subarray(0, cabecalho) : trechos[0]?.n0 === 0 ? audioHeader(bytes.subarray(trechos[0].inicio, trechos[0].fim), job.mime) : null;
       const ext = CHAT_AUDIO_MIMES[job.mime] ?? 'bin';
-      // Every run decoded and planned first: the phone sees "feitos/total" from the start.
-      const runs: Array<{ wav: string; pedacos: Pedaco[] } | { erro: string; ms: number }> = [];
+      // Every run decoded and planned once (never again on a postponement): the phone sees "feitos/total" from the start.
+      const runs: LongState['runs'] = [];
       for (const [index, trecho] of trechos.entries()) {
+        if (stopped) {
+          rmSync(work, { recursive: true, force: true });
+          return null;
+        }
         const body = bytes.subarray(trecho.inicio, trecho.fim);
         const input = join(work, `trecho-${index}.${ext}`);
         writeFileSync(input, index === 0 || !header ? body : header, { mode: 0o600 });
         if (index > 0 && header) appendFileSync(input, body);
         const wav = join(work, `trecho-${index}.wav`);
         try {
-          const duracao = await midia.paraWav(input, wav);
-          runs.push({ wav, pedacos: planPedacos(duracao, await midia.silencios(wav, duracao)) });
+          const duracao = await media.paraWav(input, wav);
+          runs.push({ wav, pedacos: planPedacos(duracao, await media.silencios(wav, duracao)) });
         } catch {
           runs.push({ erro: 'o ffmpeg não leu este trecho', ms: (trecho.n1 - trecho.n0 + 1) * CHAT_AUDIO_PARTE_MS });
         }
-      }
-      const feitosDoAudio = pedacosFeitos.get(job.id) ?? new Map<string, { texto: string } | { motivo: string }>();
-      pedacosFeitos.set(job.id, feitosDoAudio);
-      const totalPedacos = runs.reduce((sum, run) => sum + ('pedacos' in run ? run.pedacos.length : 0), 0);
-      let feitos = 0;
-      deps.store.andamentoAudio(job.id, `0/${totalPedacos}`);
-      const partes: string[] = [];
-      let falhas: string | null = null;
-      let falou = false;
-      for (const [index, run] of runs.entries()) {
-        if (index > 0) partes.push(marcaBuraco((trechos[index]!.n0 - trechos[index - 1]!.n1 - 1) * CHAT_AUDIO_PARTE_MS));
-        if ('erro' in run) {
-          partes.push(marcaFalha(run.ms, run.erro));
-          falhas ??= run.erro;
-          continue;
+        try {
+          unlinkSync(input);
+        } catch {
+          // gone with the work dir
         }
-        let texto = '';
-        let anteriorOk = false;
-        for (const [n, pedaco] of run.pedacos.entries()) {
-          if (stopped) return null;
-          const file = join(work, `trecho-${index}-pedaco-${n}.ogg`);
-          const key = `${index}:${pedaco.inicio.toFixed(3)}:${pedaco.fim.toFixed(3)}`;
-          let result = feitosDoAudio.get(key);
-          if (!result) {
-            let got: { texto: string } | { motivo: string; adiar?: true };
-            try {
-              await midia.cortar(run.wav, pedaco.inicio, pedaco.fim, file);
-              got = await pedacoWithRetries(file, `chat-audio:${job.id.slice(0, 8)}`);
-            } catch {
-              got = { motivo: 'o ffmpeg não cortou o pedaço' };
-            }
-            if (stopped) return null;
-            if ('adiar' in got) {
-              const tries = (adiamentos.get(job.id) ?? 0) + 1;
-              if (tries <= MAX_ADIAMENTOS) {
-                adiamentos.set(job.id, tries);
-                return 'adiado';
-              }
-            }
-            result = 'texto' in got ? got : { motivo: got.motivo };
-            feitosDoAudio.set(key, result);
-          }
-          feitos += 1;
-          deps.store.andamentoAudio(job.id, `${feitos}/${totalPedacos}`);
-          if ('texto' in result) {
-            if (result.texto) falou = true;
-            texto = emendar(texto, result.texto, pedaco.sobrepoe && anteriorOk);
-            anteriorOk = result.texto !== '';
-          } else {
-            falhas ??= result.motivo;
-            texto = emendar(texto, marcaFalha((pedaco.fim - pedaco.inicio) * 1000, result.motivo), false);
-            anteriorOk = false;
-          }
-        }
-        if (texto) partes.push(texto);
       }
-      const last = trechos[trechos.length - 1];
-      if (last && total > last.n1 + 1) partes.push(marcaBuraco((total - last.n1 - 1) * CHAT_AUDIO_PARTE_MS));
-      if (!falou) return { motivo: falhas ?? SEM_FALA };
-      const texto = `${interrompido ? `${MARCA_INTERROMPIDA} ` : ''}${partes.join(' ')}`;
-      return { texto };
-    } finally {
-      try {
-        rmSync(work, { recursive: true, force: true });
-      } catch {
-        // the 7-day sweep takes it
-      }
+      state = { work, runs, feitos: new Map(), adiamentos: new Map() };
+      longStates.set(job.id, state);
     }
+    const { work, runs, feitos: feitosDoAudio, adiamentos } = state;
+    const totalPedacos = runs.reduce((sum, run) => sum + ('pedacos' in run ? run.pedacos.length : 0), 0);
+    let feitos = 0;
+    deps.store.andamentoAudio(job.id, `${feitosDoAudio.size}/${totalPedacos}`);
+    const partes: string[] = [];
+    let falhas: string | null = null;
+    let falou = false;
+    let depoisDeEntre = false;
+    for (const [index, run] of runs.entries()) {
+      const trecho = trechos[index]!;
+      const gap = trecho.faltou ?? (index > 0 ? trecho.n0 - trechos[index - 1]!.n1 - 1 : 0);
+      if (gap > 0) partes.push(marcaBuraco(gap * CHAT_AUDIO_PARTE_MS));
+      if (trecho.entre) partes.push(marcaEntre(trecho.n0, trecho.n1 + 1, continua ?? job.id));
+      else if (depoisDeEntre) partes.push(`(o resto da gravação, a partir de ~${trecho.n0} min)`);
+      depoisDeEntre = trecho.entre === true;
+      if ('erro' in run) {
+        partes.push(marcaFalha(run.ms, run.erro));
+        falhas ??= run.erro;
+        continue;
+      }
+      let texto = '';
+      let anteriorOk = false;
+      for (const [n, pedaco] of run.pedacos.entries()) {
+        if (stopped) return null;
+        const file = join(work, `trecho-${index}-pedaco-${n}.ogg`);
+        const key = `${index}:${pedaco.inicio.toFixed(3)}:${pedaco.fim.toFixed(3)}`;
+        let result = feitosDoAudio.get(key);
+        if (!result) {
+          let got: { texto: string } | { motivo: string; adiar?: true };
+          try {
+            await media.cortar(run.wav, pedaco.inicio, pedaco.fim, file);
+            got = await pedacoWithRetries(file, `chat-audio:${job.id.slice(0, 8)}`);
+          } catch {
+            got = { motivo: 'o ffmpeg não cortou o pedaço' };
+          }
+          if (stopped) return null;
+          if ('adiar' in got) {
+            const tries = (adiamentos.get(key) ?? 0) + 1;
+            if (tries <= MAX_ADIAMENTOS) {
+              adiamentos.set(key, tries);
+              adiadoInfo.set(job.id, `pedaço ${feitosDoAudio.size + 1}/${totalPedacos}, ${tries}/${MAX_ADIAMENTOS}`);
+              return 'adiado';
+            }
+          }
+          adiamentos.delete(key);
+          result = 'texto' in got ? got : { motivo: got.motivo };
+          feitosDoAudio.set(key, result);
+        }
+        feitos += 1;
+        deps.store.andamentoAudio(job.id, `${feitos}/${totalPedacos}`);
+        if ('texto' in result) {
+          if (result.texto) falou = true;
+          texto = emendar(texto, result.texto, pedaco.sobrepoe && anteriorOk);
+          anteriorOk = result.texto !== '';
+        } else {
+          falhas ??= result.motivo;
+          texto = emendar(texto, marcaFalha((pedaco.fim - pedaco.inicio) * 1000, result.motivo), false);
+          anteriorOk = false;
+        }
+      }
+      if (texto) partes.push(texto);
+    }
+    const last = trechos[trechos.length - 1];
+    const faltouFim = job.partes.faltou_fim ?? (last ? total - last.n1 - 1 : 0);
+    if (faltouFim > 0) partes.push(marcaBuraco(faltouFim * CHAT_AUDIO_PARTE_MS));
+    if (!falou) return { motivo: falhas ?? SEM_FALA };
+    const texto = `${interrompido ? `${MARCA_INTERROMPIDA} ` : ''}${partes.join(' ')}`;
+    return { texto };
   }
 
   async function run(id: string): Promise<void> {
@@ -263,7 +302,7 @@ export function createChatAudioWorker(deps: {
     }
     if (result === null || stopped) return;
     if (result === 'adiado') {
-      deps.log(`[chat-audio] ${job.id.slice(0, 8)} sem vaga para um pedaço: tento de novo em ${Math.round(adiarMs / 60_000)} min (${adiamentos.get(job.id)}/${MAX_ADIAMENTOS})`);
+      deps.log(`[chat-audio] ${job.id.slice(0, 8)} sem vaga para um pedaço: tento de novo em ${Math.round(adiarMs / 60_000)} min (${adiadoInfo.get(job.id) ?? ''})`);
       const timer = setTimeout(() => {
         adiarTimers.delete(timer);
         enqueue(job.id);
@@ -272,8 +311,8 @@ export function createChatAudioWorker(deps: {
       adiarTimers.add(timer);
       return;
     }
-    pedacosFeitos.delete(job.id);
-    adiamentos.delete(job.id);
+    dropLong(job.id);
+    adiadoInfo.delete(job.id);
     if ('texto' in result) {
       // The whole text beside the audio, before the Líder hears of it (past ~40 thousand characters he reads it there).
       try {
@@ -293,7 +332,7 @@ export function createChatAudioWorker(deps: {
     for (const aberto of deps.store.audiosAbertos()) {
       if (now() - aberto.ultima_parte_em < CHAT_AUDIO_SEM_FIM_MS) continue;
       try {
-        const closed = deps.store.fecharAudioPartes(aberto.id, { partes: 1, duracao_ms: 0, interrompido: true });
+        const closed = deps.store.fecharAudioPartes(aberto.id, { partes: 1, duracao_ms: 0, interrompido: true, automatico: true });
         if (!closed.ok || !closed.nova) continue;
         deps.log(`[chat-audio] ${aberto.id.slice(0, 8)} sem fim há 30 min: fechado como interrompido com ${aberto.partes} parte(s) (${closed.estado})`);
         if (closed.estado === 'transcrevendo') enqueue(closed.linha);
@@ -328,6 +367,8 @@ export function createChatAudioWorker(deps: {
       if (closeTimer) clearInterval(closeTimer);
       for (const timer of adiarTimers) clearTimeout(timer);
       adiarTimers.clear();
+      for (const id of [...longStates.keys()]) dropLong(id);
+      adiadoInfo.clear();
       sweepTimer = null;
       closeTimer = null;
     },

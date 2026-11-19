@@ -309,8 +309,17 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
 
   /** Contract v1.6: the end of a recording in parts; from here on it is the v1.2 audio. */
   function chatAudioFim(body: Record<string, unknown>): MobileResponse {
-    const { id, partes, duracao_ms: duracao, interrompido } = body;
+    const { id, partes, duracao_ms: duracao, interrompido, cancelado } = body;
     if (typeof id !== 'string' || !UUID.test(id)) return erro(400, 'corpo', 'id: uuid v4 em minúsculas');
+    if (cancelado !== undefined && typeof cancelado !== 'boolean') return erro(400, 'corpo', 'cancelado: true ou false');
+    if (cancelado === true) {
+      // Contract v1.7: the owner threw it away. No faltam-partes (nothing to join); the parts leave the disk now.
+      if (typeof partes !== 'number' || !Number.isInteger(partes) || partes < 0) return erro(400, 'corpo', 'partes: inteiro a partir de 0');
+      const cancel = deps.store.cancelarAudio(id);
+      if (!cancel.ok) return cancel.erro === 'ja-enviado' ? erro(409, 'ja-enviado', 'Este áudio já foi enviado ao Líder.') : erro(409, 'conflito', 'Este id não é de um áudio em partes.');
+      if (cancel.nova) deps.log?.(`áudio ${id} cancelado pelo dono, ${cancel.apagadas} partes apagadas`);
+      return json(200, { ok: true, nova: cancel.nova, estado: 'cancelado' });
+    }
     if (typeof partes !== 'number' || !Number.isInteger(partes) || partes < 1) return erro(400, 'corpo', 'partes: inteiro a partir de 1');
     if (typeof duracao !== 'number' || !Number.isInteger(duracao) || duracao < 0) return erro(400, 'corpo', 'duracao_ms');
     if (typeof interrompido !== 'boolean') return erro(400, 'corpo', 'interrompido: true ou false');
@@ -319,7 +328,7 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     if (!closed.ok) {
       if (closed.erro === 'faltam-partes') return json(409, { erro: 'faltam-partes', faltam: closed.faltam });
       if (closed.erro === 'nao-encontrada') return erro(404, 'nao-encontrada');
-      return erro(409, 'conflito', 'Este id não é de um áudio em partes.');
+      return erro(409, 'conflito', 'Este id não é de um áudio em partes, ou foi cancelado.');
     }
     if (closed.nova) {
       if (closed.estado === 'transcrevendo') deps.audio?.(closed.linha);
