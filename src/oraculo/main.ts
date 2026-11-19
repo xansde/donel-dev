@@ -316,8 +316,17 @@ async function seedSqlite(dir: string, ledgerFile: string): Promise<number> {
     console.error('[semear-sqlite] o daemon está no ar: pare-o antes (systemctl --user stop donel-oraculo)');
     return 1;
   }
-  const doc = createLedgerService({ filePath: ledgerFile, io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs }).load().doc;
-  const result = seedSqliteLedger(join(dir, LEDGER_SQLITE_FILE), doc);
+  if (!existsSync(ledgerFile)) {
+    console.error(`[semear-sqlite] não há ${ledgerFile}: nada a semear`);
+    return 1;
+  }
+  const loaded = createLedgerService({ filePath: ledgerFile, io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs }).load();
+  if (loaded.readOnly) {
+    console.error('[semear-sqlite] o ledger.json é de uma versão mais nova que este daemon: nada foi semeado');
+    return 1;
+  }
+  const doc = loaded.doc;
+  const result = await seedSqliteLedger(join(dir, LEDGER_SQLITE_FILE), doc);
   console.log(JSON.stringify({ ledgerJson: Object.keys(doc.tasks).length, ...result }));
   if (result.diferentes !== 0 || result.tarefas !== Object.keys(doc.tasks).length) return 1;
   const aside = `${ledgerFile}.antes-sqlite-${new Date().toISOString().replace(/[:.]/g, '-')}`;

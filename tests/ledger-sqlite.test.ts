@@ -70,20 +70,26 @@ describe('ledger em SQLite', () => {
     for (let i = 0; i < 30; i++) expect((await file.apply({ kind: 'dono' }, criar(i))).ok).toBe(true);
     const doc = file.load().doc;
     const db = join(dir, 'ledger.sqlite');
-    const seeded = seedSqliteLedger(db, doc);
+    const seeded = await seedSqliteLedger(db, doc);
     expect(seeded).toMatchObject({ tarefas: 30, diferentes: 0 });
-    expect(() => seedSqliteLedger(db, doc)).toThrow();
+    await expect(seedSqliteLedger(db, doc)).rejects.toThrow();
     const out = join(dir, 'volta.json');
     expect(exportSqliteLedger(db, out).tarefas).toBe(30);
     const back = createLedgerService({ filePath: out, io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs }).load().doc;
     expect(back).toEqual(doc);
   });
 
-  it('a fonte: SQLite quando o banco existe; o banco sumido com a marca de semeado para o daemon, nunca sobe vazio', () => {
+  it('a fonte: SQLite só semeado e com a marca; banco sem marca ou marca sem banco param o daemon, nunca sobe vazio', async () => {
     const dir = tmp();
     expect(ledgerSourceOf(dir)).toBe('arquivo');
     const db = join(dir, 'ledger.sqlite');
-    seedSqliteLedger(db, { schemaVersion: 4, startedAt: 1, tasks: {} } as never);
+    // Um banco largado (exportar antes de semear, semeadura cortada) sem a marca não vira a fonte.
+    expect(() => exportSqliteLedger(db, join(dir, 'x.json'))).toThrow();
+    expect(existsSync(db)).toBe(false);
+    writeFileSync(db, '');
+    expect(() => ledgerSourceOf(dir)).toThrow(/marca/);
+    rmSync(db);
+    await seedSqliteLedger(db, { schemaVersion: 4, startedAt: 1, tasks: {} } as never);
     expect(ledgerSourceOf(dir)).toBe('sqlite');
     rmSync(db);
     expect(existsSync(join(dir, 'ledger.fonte'))).toBe(true);

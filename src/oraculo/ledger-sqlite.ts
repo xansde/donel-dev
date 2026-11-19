@@ -8,7 +8,7 @@
 // schema_version, started_at)`. Once seeded, `<dir>/ledger.fonte` says `sqlite`: a database gone missing stops the
 // daemon instead of letting it start an empty ledger. Way back: `--exportar-sqlite <arquivo>` writes a ledger.json.
 
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { DatabaseSync as DatabaseSyncType } from 'node:sqlite';
 import type { LedgerDoc } from '../shared/ledger/contract';
@@ -108,23 +108,33 @@ export function openSqliteLedgerStore(file: string, log: (line: string) => void 
  * `oraculo.mjs --semear-sqlite`: a NEW `ledger.sqlite` from the ledger.json (never over an existing one), read back
  * and compared task by task, then the mark `ledger.fonte`. Run with the daemon stopped.
  */
-export function seedSqliteLedger(file: string, doc: LedgerDoc): { tarefas: number; diferentes: number } {
+export async function seedSqliteLedger(file: string, doc: LedgerDoc): Promise<{ tarefas: number; diferentes: number }> {
   if (existsSync(file)) throw new Error(`${file} já existe: nada foi gravado`);
-  const store = openSqliteLedgerStore(file);
-  const write = store.write(doc);
+  // Built beside, renamed into place only once it checks, the mark last: a seed cut midway leaves no database the
+  // daemon would take (revisão do #496).
+  const building = `${file}.semeando`;
+  for (const leftover of [building, `${building}-wal`, `${building}-shm`]) rmSync(leftover, { force: true });
+  const store = openSqliteLedgerStore(building);
+  const wrote = await store.write(doc);
   store.close();
-  void write;
-  const check = new DatabaseSync(file);
+  const check = new DatabaseSync(building);
   const back = readAll(check);
   check.close();
   const ids = Object.keys(doc.tasks);
   const diferentes = ids.filter((id) => canonicalJson(back.tasks[id]) !== canonicalJson(doc.tasks[id])).length + Math.abs(Object.keys(back.tasks).length - ids.length);
-  if (diferentes === 0) writeFileSync(join(dirname(file), LEDGER_SOURCE_MARK), 'sqlite\n', { mode: 0o600 });
-  return { tarefas: Object.keys(back.tasks).length, diferentes };
+  if (!wrote || diferentes !== 0) {
+    for (const leftover of [building, `${building}-wal`, `${building}-shm`]) rmSync(leftover, { force: true });
+    return { tarefas: Object.keys(back.tasks).length, diferentes: diferentes || 1 };
+  }
+  renameSync(building, file);
+  writeFileSync(join(dirname(file), LEDGER_SOURCE_MARK), 'sqlite\n', { mode: 0o600 });
+  return { tarefas: Object.keys(back.tasks).length, diferentes: 0 };
 }
 
 /** The way back: the SQLite's ledger as a ledger.json (a new file only). */
 export function exportSqliteLedger(file: string, target: string): { tarefas: number } {
+  // Never opens (and so never creates) a database that is not there.
+  if (!existsSync(file)) throw new Error(`${file} não existe: nada a exportar`);
   const db = new DatabaseSync(file);
   const doc = readAll(db);
   db.close();
@@ -141,7 +151,9 @@ export function ledgerSourceOf(dir: string): 'sqlite' | 'supabase' | 'arquivo' {
       return false;
     }
   })();
-  if (existsSync(join(dir, LEDGER_SQLITE_FILE))) return 'sqlite';
+  const present = existsSync(join(dir, LEDGER_SQLITE_FILE));
+  if (present && seeded) return 'sqlite';
+  if (present) throw new Error(`${join(dir, LEDGER_SQLITE_FILE)} existe sem a marca ${LEDGER_SOURCE_MARK}: a semeadura não terminou. Apague o banco e semeie de novo (--semear-sqlite).`);
   if (seeded) throw new Error(`${join(dir, LEDGER_SQLITE_FILE)} sumiu, mas o ledger foi semeado nele (${LEDGER_SOURCE_MARK}): o daemon não sobe vazio. Volte o banco ou apague a marca de propósito.`);
   if (existsSync(join(dir, 'ledger-supabase.json'))) return 'supabase';
   return 'arquivo';
