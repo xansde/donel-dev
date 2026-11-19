@@ -107,6 +107,8 @@ export interface GateRequest {
   readonly authorization?: string;
   /** The MCP headers to pass on (lowercase). */
   readonly headers: Readonly<Record<string, string>>;
+  /** The request's Host header (never passed on): `/local/*` answers only `127.0.0.1:<port>` (no DNS rebinding). */
+  readonly host?: string;
   readonly body: string;
 }
 
@@ -131,6 +133,11 @@ export interface GateLedgerContext {
 export interface GateDeps {
   /** `~/.donel/s`. */
   readonly sessionsDir: string;
+  /**
+   * Saída iii (18/11) — `/local/*` on this loopback server, no MCP token (like the hooks): what a script of this user
+   * on this machine asks the daemon (a new phone's key, the Líder's answer to the phone). `null` = not one of them.
+   */
+  readonly local?: (method: string, path: string, body: string) => Promise<GateResponse | null>;
   readonly ledger: () => LedgerService;
   readonly picture: () => BoardPicture | null;
   readonly forward: GateForward;
@@ -566,6 +573,14 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
       if (!deps.recados || request.method !== 'POST') return { status: 404, headers: {}, body: '' };
       return deps.recados.hook(hook[1]!, request.headers, request.body);
     }
+    if (request.path.startsWith('/local/') && deps.local) {
+      // A page in a browser of this machine could reach the loopback: only a script's JSON POST to 127.0.0.1 passes
+      // (a cross-site form cannot send application/json; a rebound name never says 127.0.0.1).
+      const localHost = /^(127\.0\.0\.1|localhost):\d+$/.test(request.host ?? '');
+      const isJson = (request.headers['content-type'] ?? '').toLowerCase().startsWith('application/json');
+      if (!localHost || !isJson) return { status: 403, headers: {}, body: '' };
+      return (await deps.local(request.method, request.path, request.body)) ?? { status: 404, headers: {}, body: '' };
+    }
     const match = /^\/s\/([^/]+)\/mcp$/.exec(request.path);
     if (!match || !SID_PATTERN.test(match[1]!)) return { status: 404, headers: {}, body: '' };
     const sid = match[1]!;
@@ -726,6 +741,7 @@ export function startGateServer(options: { readonly port: number; readonly handl
           path: (req.url ?? '/').split('?')[0] ?? '/',
           authorization: req.headers.authorization,
           headers,
+          ...(typeof req.headers.host === 'string' ? { host: req.headers.host } : {}),
           body: Buffer.concat(chunks).toString('utf8'),
         });
         res.writeHead(answer.status, answer.headers).end(answer.body);
