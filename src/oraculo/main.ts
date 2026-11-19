@@ -23,6 +23,7 @@
 // this bundle runs as such a gate (the Homologações, scripts/portao-satelite.sh): the gate, the probe and the recados
 // only, with the tasks on the personal VPS (`<dir>/portao.token`, satelite.ts).
 
+import { createHash } from 'node:crypto';
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { open as openFile } from 'node:fs/promises';
@@ -63,6 +64,8 @@ import { SERVICE_PLACE_PREFIX, SERVICE_ROLE } from '../shared/ledger/contract';
 import { createDecisoesConsumer, createDecisoesQueue, DECISOES_CONFIG_FILE, NOTAS_PAGINAS_FILE, readImportList, readUnsignedPolicy } from './decisoes';
 import { createTarefasPedidasConsumer, createTarefasPedidasQueue, readQuadroTarefas } from './tarefas-pedidas';
 import { createChatCelularConsumer, createChatCelularQueue, parseChatReplies, type ChatCelularReplies } from './chat-celular';
+import { CELULAR_LOCAL_FILE, createCelularLocalStore } from './celular-local';
+import { createCelularV2Handler } from './celular-v2';
 
 export const TOKEN_HASH_FILE = 'pc.token.sha256';
 /** t-89279f84 — `{url, serviceKeyFile}`: present, the Supabase is the ledger's source (ledger.json is not read). */
@@ -487,7 +490,92 @@ async function main(): Promise<void> {
   // t-52bf8b45 — the phone app's queue decides through the same port as the PWA (dedup by pedido, owner queue check),
   // over the guarded ledger, never `raw`.
   const decisoesPort = createLedgerMobilePort(() => ledger, undefined, () => cardWriter);
+  // Saída iii (18/11) — the phone app's queues on this machine (`"fila": "local"` in decisoes.json, read at each
+  // round): decisions, the tasks he asks for and his chat with the Líder wait here, not in the Supabase.
+  // A file that is there but unreadable never takes the whole daemon down: the phone's queue stays off (404) and the
+  // file is kept as it is (revisão do #495).
+  let celularLocal: ReturnType<typeof createCelularLocalStore> | null = null;
+  try {
+    celularLocal = createCelularLocalStore(join(dir, CELULAR_LOCAL_FILE));
+  } catch (error) {
+    console.log(`[celular-v2] ${CELULAR_LOCAL_FILE} ilegível; a fila do celular fica desligada: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const filaLocal = (): boolean => {
+    if (!celularLocal) return false;
+    try {
+      return (JSON.parse(readFileSync(join(dir, DECISOES_CONFIG_FILE), 'utf8')) as { fila?: unknown }).fila === 'local';
+    } catch {
+      return false;
+    }
+  };
+  // The place names the rows show (the board picture the PC leaves, over the memory the espelho kept).
+  const namesFile = join(homedir(), '.donel', 'espelho', 'nomes.json');
+  const names = new Map<string, PlaceInfo>();
+  try {
+    for (const [id, info] of Object.entries(JSON.parse(readFileSync(namesFile, 'utf8')) as Record<string, PlaceInfo>)) names.set(id, info);
+  } catch {
+    // no memory yet
+  }
+  const liveOf = (): PlaceInfoOf => {
+    const live = new Map<string, PlaceInfo>();
+    for (const session of Object.values(pictures.get()?.sessoes ?? {})) {
+      for (const place of session.listar as Array<{ id?: unknown; papel?: unknown; nome?: unknown }>) {
+        if (typeof place?.id !== 'string') continue;
+        const info: PlaceInfo = { ...(typeof place.papel === 'string' ? { roleId: place.papel } : {}), ...(typeof place.nome === 'string' ? { name: place.nome } : {}) };
+        if (info.roleId || info.name) live.set(place.id, info);
+      }
+    }
+    return (_project, placeId) => live.get(placeId);
+  };
+  const saveNames = (): void => {
+    try {
+      writeFileSync(`${namesFile}.tmp`, JSON.stringify(Object.fromEntries(names), null, 2));
+      renameSync(`${namesFile}.tmp`, namesFile);
+    } catch {
+      // learnt again at the next push
+    }
+  };
+  const placesOf = withPlaceMemory(liveOf, names, saveNames);
+  /** A write from the phone runs its consumer now, one round at a time per queue (a round already running reruns once). */
+  const rounds: Partial<Record<'decisoes' | 'pedidas' | 'chat', { running: boolean; again: boolean }>> = {};
+  let consumers: { decisoes: () => Promise<void>; pedidas: () => Promise<void>; chat: () => Promise<void> } | null = null;
+  const kick = (fila: 'decisoes' | 'pedidas' | 'chat'): void => {
+    const state = (rounds[fila] ??= { running: false, again: false });
+    if (!consumers) return;
+    if (state.running) {
+      state.again = true;
+      return;
+    }
+    state.running = true;
+    void (async () => {
+      do {
+        state.again = false;
+        await consumers![fila]().catch((error: unknown) => console.log(`[celular-v2] rodada ${fila} falhou: ${error instanceof Error ? error.message : String(error)}`));
+      } while (state.again);
+      state.running = false;
+    })();
+  };
+  const v2 = celularLocal && createCelularV2Handler({
+    verify: (message, signature) => {
+      const device = celular?.verifyDecisionSignature(message, signature);
+      return device ? { name: device.deviceName } : null;
+    },
+    doc: () => {
+      try {
+        return ledger.load().doc;
+      } catch {
+        return null;
+      }
+    },
+    store: celularLocal,
+    places: placesOf,
+    ownerName: () => process.env.ESPELHO_DONO || 'Alexandre',
+    readProof: createProofReader(ledgerProofsDir(ledgerFile)),
+    arvoreFile: join(homedir(), '.donel', 'estado-derivado', 'arvore.json'),
+    kick,
+  });
   celular = createCelularCore({
+    v2: () => (filaLocal() && v2 ? v2 : null),
     userDataDir: dir,
     io,
     ledger: () => ledger,
@@ -501,34 +589,8 @@ async function main(): Promise<void> {
   if (sbDeps) {
     // The readable projection (`tarefas`) and the phone's cards, as the espelho bridge did from the file: the same
     // mirror, fed by this daemon's own changes. Names: the board picture the PC leaves, over the bridge's memory.
-    const namesFile = join(homedir(), '.donel', 'espelho', 'nomes.json');
-    const names = new Map<string, PlaceInfo>();
-    try {
-      for (const [id, info] of Object.entries(JSON.parse(readFileSync(namesFile, 'utf8')) as Record<string, PlaceInfo>)) names.set(id, info);
-    } catch {
-      // no memory yet
-    }
-    const liveOf = (): PlaceInfoOf => {
-      const live = new Map<string, PlaceInfo>();
-      for (const session of Object.values(pictures.get()?.sessoes ?? {})) {
-        for (const place of session.listar as Array<{ id?: unknown; papel?: unknown; nome?: unknown }>) {
-          if (typeof place?.id !== 'string') continue;
-          const info: PlaceInfo = { ...(typeof place.papel === 'string' ? { roleId: place.papel } : {}), ...(typeof place.nome === 'string' ? { name: place.nome } : {}) };
-          if (info.roleId || info.name) live.set(place.id, info);
-        }
-      }
-      return (_project, placeId) => live.get(placeId);
-    };
-    const saveNames = (): void => {
-      try {
-        writeFileSync(`${namesFile}.tmp`, JSON.stringify(Object.fromEntries(names), null, 2));
-        renameSync(`${namesFile}.tmp`, namesFile);
-      } catch {
-        // learnt again at the next push
-      }
-    };
     const sink = createSupabaseSink({ url: sbDeps.url, key: sbDeps.key, readProof: createProofReader(ledgerProofsDir(ledgerFile)), log: (line) => console.log(`[espelho] ${line}`) });
-    mirror = createLedgerMirror({ sink: () => sink, places: withPlaceMemory(liveOf, names, saveNames), ownerName: () => process.env.ESPELHO_DONO || 'Alexandre', delayMs: 2_000, log: (line) => console.log(`[espelho] ${line}`) });
+    mirror = createLedgerMirror({ sink: () => sink, places: placesOf, ownerName: () => process.env.ESPELHO_DONO || 'Alexandre', delayMs: 2_000, log: (line) => console.log(`[espelho] ${line}`) });
     mirror.changed(first.doc);
   }
   const handler = createOracleApiHandler({
@@ -607,6 +669,41 @@ async function main(): Promise<void> {
         portFree: loopbackPortFree,
         names: [hostname()],
       }),
+      // Saída iii — a new phone app's key (the token never leaves the daemon) and the Líder's answer from chat_lider.py.
+      local: async (method, path, body) => {
+        if (method !== 'POST') return null;
+        let input: Record<string, unknown> = {};
+        try {
+          const parsed = JSON.parse(body) as unknown;
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) input = parsed as Record<string, unknown>;
+        } catch {
+          // an empty body is an empty object
+        }
+        const answer = (status: number, value: unknown) => ({ status, headers: { 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(value) });
+        if (path === '/local/celular/novo-aparelho') {
+          const nome = typeof input.nome === 'string' && input.nome.trim() ? input.nome.trim().slice(0, 60) : 'Donel (Android)';
+          const url = celular?.state().url;
+          const added = celular?.addDevice(nome) ?? null;
+          if (!added || !url) return answer(503, { erro: 'o servidor do celular não está no ar' });
+          console.log(`[celular-v2] aparelho novo pareado pela VPS: ${nome} (${added.deviceId})`);
+          return answer(200, { versao: 1, origem: url.replace(/\/+$/, ''), chave: added.chave });
+        }
+        if (path === '/local/celular/chat-responder') {
+          const curto = typeof input.em_resposta_a === 'string' ? input.em_resposta_a.trim().toLowerCase() : '';
+          const texto = typeof input.texto === 'string' ? input.texto.trim() : '';
+          if (curto.length < 8 || !texto || texto.length > 8000) return answer(400, { erro: 'em_resposta_a (8+ caracteres) e texto' });
+          if (!celularLocal) return answer(503, { erro: 'a fila do celular está desligada' });
+          const alvo = celularLocal.conversa(2000).filter((line) => line.autor === 'dono' && line.id.startsWith(curto));
+          if (alvo.length !== 1) return answer(404, { erro: alvo.length ? 'id ambíguo' : 'mensagem não encontrada' });
+          // No id from the script: one made of the line and the text, so a retry after a timeout is the same answer.
+          const h = createHash('sha256').update(`${alvo[0]!.id}\n${texto}`, 'utf8').digest('hex');
+          const derived = `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
+          const id = typeof input.id === 'string' && /^[0-9a-f-]{36}$/.test(input.id) ? input.id : derived;
+          await celularLocal.chat.responder(id, alvo[0]!.id, texto);
+          return answer(200, { ok: true, id, em_resposta_a: alvo[0]!.id });
+        }
+        return null;
+      },
       // The phone's server lives here: a task a VPS session creates from an owner's request shows on his phone.
       linkPedido: (pedidoId, tarefa) => void celular?.linkPedido(pedidoId, tarefa),
       // The notices after a task (a delivery, a "travada", a verdict) go by the recados: queued for a session of this
@@ -633,6 +730,7 @@ async function main(): Promise<void> {
   // t-52bf8b45 — the config is read at each round: writing `decisoes.json` turns the queue on without a restart.
   const decisoes = createDecisoesConsumer({
     queue: () => {
+      if (filaLocal() && celularLocal) return celularLocal.decisoes;
       const config = readBoardConfig(join(dir, DECISOES_CONFIG_FILE));
       return config ? createDecisoesQueue(config) : null;
     },
@@ -659,6 +757,7 @@ async function main(): Promise<void> {
   // t-2eedda0d — the tasks the owner asks for in the phone app (`celular.tarefas_pedidas`), same config and round.
   const tarefasPedidas = createTarefasPedidasConsumer({
     queue: () => {
+      if (filaLocal() && celularLocal) return celularLocal.pedidas;
       const config = readBoardConfig(join(dir, DECISOES_CONFIG_FILE));
       return config ? createTarefasPedidasQueue(config) : null;
     },
@@ -679,6 +778,7 @@ async function main(): Promise<void> {
   const replyScript = process.env.DONEL_CHAT_RESPONDER || join(homedir(), 'bin', 'rotinas', 'chat-lider', 'chat_lider.py');
   const chatCelular = createChatCelularConsumer({
     queue: () => {
+      if (filaLocal() && celularLocal) return celularLocal.chat;
       const config = readBoardConfig(join(dir, DECISOES_CONFIG_FILE));
       return config ? createChatCelularQueue(config) : null;
     },
@@ -698,6 +798,7 @@ async function main(): Promise<void> {
     log: (line) => console.log(line),
   });
   chatCelular.start();
+  consumers = { decisoes: () => decisoes.round(), pedidas: () => tarefasPedidas.round(), chat: () => chatCelular.round() };
   console.log(`[oraculo] no ar em ${server.url} (${Object.keys(first.doc.tasks).length} tarefas${first.readOnly ? ', só leitura' : ''}, fonte: ${source === 'sqlite' ? 'SQLite' : store ? 'Supabase' : 'ledger.json'})`);
   const stop = (): void => {
     probe.stop();
