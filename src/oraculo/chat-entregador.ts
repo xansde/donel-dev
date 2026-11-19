@@ -21,6 +21,7 @@ import { createCelularV2Handler } from './celular-v2';
 import { isChatRoute } from './celular-frente';
 import { readBoardConfig } from './board-client';
 import { DECISOES_CONFIG_FILE } from './decisoes';
+import type { GlossarioStore } from './glossario';
 import type { GateRecadosHandle } from './recados';
 import type { Relay } from './relay';
 import { whisperServerTranscriber } from '../main/celular/transcrever';
@@ -86,6 +87,8 @@ interface QueueFile {
   decisoes: unknown[];
   pedidas: unknown[];
   chat: Array<{ id: string }>;
+  /** The owner's transcription corrections waiting for the Líder (#512): the chat's queue, so they move with it. */
+  correcoes?: Array<{ id: string }>;
 }
 
 function readQueueFile(file: string): QueueFile | null {
@@ -97,7 +100,7 @@ function readQueueFile(file: string): QueueFile | null {
     throw error;
   }
   const raw = JSON.parse(text) as QueueFile;
-  if (raw?.versao !== 1 || !Array.isArray(raw.decisoes) || !Array.isArray(raw.pedidas) || !Array.isArray(raw.chat)) throw new Error(`${file} não é a fila local do celular`);
+  if (raw?.versao !== 1 || !Array.isArray(raw.decisoes) || !Array.isArray(raw.pedidas) || !Array.isArray(raw.chat) || (raw.correcoes !== undefined && !Array.isArray(raw.correcoes))) throw new Error(`${file} não é a fila local do celular`);
   return raw;
 }
 
@@ -126,8 +129,8 @@ export function separarChat(dir: string, now: number = Date.now()): { readonly m
   const celularFile = join(dir, CELULAR_LOCAL_FILE);
   const celular = readQueueFile(celularFile);
   const guardado = celular ? keepAside(celularFile, `antes-separar-${stamp(now)}`) : null;
-  writeQueueFile(chatFile, { versao: 1, decisoes: [], pedidas: [], chat: celular?.chat ?? [] });
-  if (celular) writeQueueFile(celularFile, { ...celular, chat: [] });
+  writeQueueFile(chatFile, { versao: 1, decisoes: [], pedidas: [], chat: celular?.chat ?? [], correcoes: celular?.correcoes ?? [] });
+  if (celular) writeQueueFile(celularFile, { ...celular, chat: [], correcoes: [] });
   return { mensagens: celular?.chat.length ?? 0, guardado };
 }
 
@@ -142,9 +145,18 @@ export function juntarChat(dir: string, now: number = Date.now()): { readonly me
   const celularFile = join(dir, CELULAR_LOCAL_FILE);
   const celular = readQueueFile(celularFile);
   const guardado = celular ? keepAside(celularFile, `antes-juntar-${stamp(now)}`) : null;
-  const moved = new Map(chat.chat.map((row) => [row.id, row]));
-  const kept = (celular?.chat ?? []).filter((row) => !moved.has(row.id));
-  writeQueueFile(celularFile, { versao: 1, decisoes: celular?.decisoes ?? [], pedidas: celular?.pedidas ?? [], chat: [...kept, ...chat.chat] });
+  const merged = <T extends { id: string }>(old: readonly T[] | undefined, moved: readonly T[] | undefined): T[] => {
+    const ids = new Set((moved ?? []).map((row) => row.id));
+    return [...(old ?? []).filter((row) => !ids.has(row.id)), ...(moved ?? [])];
+  };
+  writeQueueFile(celularFile, {
+    ...celular,
+    versao: 1,
+    decisoes: celular?.decisoes ?? [],
+    pedidas: celular?.pedidas ?? [],
+    chat: merged(celular?.chat, chat.chat),
+    correcoes: merged(celular?.correcoes, chat.correcoes),
+  });
   renameSync(chatFile, `${chatFile}.juntado-${stamp(now)}`);
   return { mensagens: chat.chat.length, guardado };
 }
@@ -170,6 +182,8 @@ export function createEntregadorChat(deps: {
   readonly relay: Pick<Relay, 'send' | 'pending' | 'byKey'>;
   /** The paired phone that signed (the registro's `celular.json`, read only). */
   readonly verify: (message: string, signatureHex: string) => { readonly name: string } | null;
+  /** What the transcriber learns from the owner's corrections: apart, written by the entregador alone. */
+  readonly glossario: GlossarioStore;
   readonly log?: (line: string) => void;
 }): EntregadorChat {
   const { dir } = deps;
@@ -179,7 +193,8 @@ export function createEntregadorChat(deps: {
   try {
     store = createCelularLocalStore(chatFile);
     // Separated without --separar-chat: the rows still in celular-local.json would wait for nobody.
-    if (!existsSync(chatFile) && (readQueueFile(join(dir, CELULAR_LOCAL_FILE))?.chat.length ?? 0) > 0) {
+    const left = readQueueFile(join(dir, CELULAR_LOCAL_FILE));
+    if (!existsSync(chatFile) && (left?.chat.length ?? 0) + (left?.correcoes?.length ?? 0) > 0) {
       log(`[chat-celular] o chat ainda está em ${CELULAR_LOCAL_FILE}: rode oraculo.mjs --separar-chat com os dois parados. O chat fica desligado aqui.`);
       store = null;
     }
@@ -212,6 +227,8 @@ export function createEntregadorChat(deps: {
         arvoreFile: join(deps.home, '.donel', 'estado-derivado', 'arvore.json'),
         kick,
         audio: (id) => audioWorker?.enqueue(id),
+        glossario: deps.glossario,
+        log,
       })
     : null;
   const replyScript = process.env.DONEL_CHAT_RESPONDER || join(deps.home, 'bin', 'rotinas', 'chat-lider', 'chat_lider.py');

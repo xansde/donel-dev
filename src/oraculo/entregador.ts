@@ -28,6 +28,7 @@ import { noticeOf } from './portoes';
 import { createSatelliteLedger, createSatelliteNotice, createSatelliteReviewLink, createSatelliteTaskMemory, postJson, type SatellitePost } from './satelite';
 import { createProbe } from './sonda';
 import { createEntregadorChat, type EntregadorChat } from './chat-entregador';
+import { createGlossarioStore, glossarioFile } from './glossario';
 import { createPhoneFront, createPhoneSignatures, GATE_PHONE_PAIR_PATH, registroPhonePort } from './celular-frente';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
@@ -382,6 +383,7 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
         recados,
         relay: { send: (message) => apart!.notices.send(message), pending: apart.notices.outbox.pending, byKey: apart.notices.outbox.byKey },
         verify: createPhoneSignatures(join(dir, 'celular.json'), io).verify,
+        glossario: createGlossarioStore(glossarioFile(), (line) => console.log(line)),
       })
     : null;
   /** What goes to the Líder único: his own queue when he lives here, else the PC's relay (no wait). */

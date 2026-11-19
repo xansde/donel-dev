@@ -25,6 +25,7 @@ import { CELULAR_LOCAL_FILE, createCelularLocalStore } from '../src/oraculo/celu
 import { createCelularV2Handler, signedMessage } from '../src/oraculo/celular-v2';
 import { createPhoneFront, createPhoneSignatures } from '../src/oraculo/celular-frente';
 import { CHAT_LOCAL_FILE, createEntregadorChat, juntarChat, separarChat } from '../src/oraculo/chat-entregador';
+import { createGlossarioStore } from '../src/oraculo/glossario';
 
 const io = createSystemConfigIoDeps();
 const dirs: string[] = [];
@@ -275,6 +276,7 @@ describe('entregador à parte: o chat do celular', () => {
       recados: { deliverLocal: async () => null, stateOf: () => undefined, transcriptOf: async () => undefined },
       relay: { send: async () => 'pendente', pending: () => [], byKey: () => undefined },
       verify: createPhoneSignatures(join(dir, 'celular.json'), io).verify,
+      glossario: createGlossarioStore(join(dir, 'glossario.json'), () => undefined),
     });
   }
 
@@ -330,6 +332,44 @@ describe('entregador à parte: o chat do celular', () => {
     expect(after.addChat(X, 'oi')).toEqual({ ok: true, nova: false });
     expect(after.addChat(Y, 'tudo bem?')).toEqual({ ok: true, nova: false });
     expect(after.pedidasView(10).map((row) => row.pedido)).toEqual([PEDIDO]);
+  });
+
+  it('a correção de transcrição que espera o Líder vai e volta com o chat, uma vez', async () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'decisoes.json'), JSON.stringify({ fila: 'local' }));
+    const { sign } = pairedPhone(dir);
+    const C1 = 'eeeeeeee-1111-4222-8333-444444444444';
+    const C2 = 'ffffffff-1111-4222-8333-444444444444';
+    // A transcribed voice line of the owner, and his correction still waiting for the Líder.
+    writeFileSync(
+      join(dir, CELULAR_LOCAL_FILE),
+      JSON.stringify({
+        versao: 1,
+        decisoes: [],
+        pedidas: [],
+        chat: [{ id: X, autor: 'dono', texto: 'ola', em_resposta_a: null, criada_em: '2026-11-19T10:00:00.000Z', entregue_em: '2026-11-19T10:00:05.000Z', resultado: 'lider', audio: { estado: 'transcrito', duracao_ms: 900, mime: 'audio/webm', sha256: 'x' } }],
+      }),
+    );
+    expect(createCelularLocalStore(join(dir, CELULAR_LOCAL_FILE)).corrigirAudio(C1, X, 'olá')).toMatchObject({ ok: true, nova: true });
+
+    separarChat(dir);
+    const chat = entregadorChat(dir);
+    const corrigir = (id: string, texto: string) => {
+      const body = JSON.stringify({ id, audio: X, texto });
+      return chat.handler({ method: 'POST', url: '/api/v2/chat/correcao', authorization: sign('POST', '/api/v2/chat/correcao', body), body });
+    };
+    // The phone retries C1 after the switch: the same correction. A new one is answered here and the glossary learns.
+    expect(JSON.parse(String((await corrigir(C1, 'olá')).body))).toMatchObject({ ok: true, nova: false });
+    expect(JSON.parse(String((await corrigir(C2, 'olá, Líder')).body))).toMatchObject({ ok: true, nova: true, correcoes: 1 });
+    // No consumer of the registro's file finds a correction (no second delivery).
+    expect(await createCelularLocalStore(join(dir, CELULAR_LOCAL_FILE)).chat.tomar(10)).toEqual([]);
+    const correcoes = (file: string): Array<{ id: string }> => (JSON.parse(readFileSync(join(dir, file), 'utf8')) as { correcoes?: Array<{ id: string }> }).correcoes ?? [];
+    const separadas = correcoes(CHAT_LOCAL_FILE);
+    expect(separadas.map((row) => row.id)).toEqual([C1, C2]);
+
+    // Back together: each correction once, as the entregador left it (delivered or waiting).
+    juntarChat(dir);
+    expect(correcoes(CELULAR_LOCAL_FILE)).toEqual(separadas);
   });
 
   it('decidir pelo repasse chega com corpo e assinatura iguais, e o chat fica no entregador', async () => {

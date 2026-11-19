@@ -314,7 +314,8 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
     kick,
     audio: (id) => audioWorker?.enqueue(id),
     // t-753e8199 — the owner's corrections teach the transcriber (DONEL_GLOSSARIO, else ~/.donel/transcricao/glossario.json).
-    glossario: createGlossarioStore(glossarioFile(), (line) => console.log(line)),
+    // Apart, the correction route is the entregador's, and so is the glossary (one writer).
+    ...(chatHere ? { glossario: createGlossarioStore(glossarioFile(), (line) => console.log(line)) } : {}),
     log: (line) => console.log(line),
   });
   /** Apart, the chat routes are the entregador's: here they do not exist (a second writer of the conversation). */
