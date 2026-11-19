@@ -108,8 +108,11 @@ interface NewPlace {
 function boardWith(board: MindscapeBoard, places: readonly NewPlace[]): MindscapeBoard {
   const cards = { ...board.cards };
   const links: MindscapeLink[] = [...board.links];
+  // Every card first, then the arrows: an opener made here may come after the place it opened (revisão do #501).
   for (const place of places) {
     if (!cards[place.lugar]) cards[place.lugar] = { kind: 'session', id: place.lugar, sessionId: place.sid, previous: [], ...(place.papel ? { roleId: place.papel } : {}), by: 'session', x: 0, y: 0 };
+  }
+  for (const place of places) {
     const opener = place.abertaPor;
     if (!opener || opener === LEADER_OF_ALL || opener === place.lugar || cards[opener]?.kind !== 'session') continue;
     if (links.some((link) => link.from === opener && link.to === place.lugar && link.arrow)) continue;

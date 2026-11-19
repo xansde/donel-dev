@@ -146,6 +146,19 @@ describe('o Líder único no tmux da VPS, com o PC fora', () => {
     expect(w.forwarded, 'nada ficou pendurado no túnel do PC').toEqual([]);
   });
 
+  it('recado do Líder único a um lugar sem dizer o quadro (os 9 presos do carteiro de 19/11): o quadro é o do lugar', async () => {
+    const w = vps();
+    const sent = await w.tool(SID_LIDER, 'sessao_enviar', { para: DEV, texto: 'pegue a tarefa nova', tarefa: 't-a670a96d' });
+    expect(sent.error, sent.text).toBe(false);
+    expect(JSON.parse(sent.text)).toMatchObject({ entregue: 'na-fila', para: DEV });
+    expect((await w.endTurn(SID_DEV)).reason).toContain('pegue a tarefa nova');
+    // A place no board of the picture has: the boards it knows.
+    const unknown = await w.tool(SID_LIDER, 'sessao_enviar', { para: 'place:nenhum', texto: 'oi' });
+    expect(unknown.error).toBe(true);
+    expect(unknown.text).toContain('atlas');
+    expect(w.forwarded).toEqual([]);
+  });
+
   it('recado a quem o Líder único não alcança é recusado com o motivo; quadro desconhecido diz os que conhece', async () => {
     const w = vps();
     const BOSS = 'place:boss';
@@ -228,6 +241,17 @@ describe('sessão aberta na VPS depois que o PC sumiu', () => {
     expect(toDev.error, toDev.text).toBe(false);
     expect((await w.endTurn(SID_DEV)).reason).toContain('aprovado');
     expect(w.forwarded).toEqual([]);
+  });
+
+  it('duas sessões que o PC nunca viu, uma aberta pela outra: a seta de abertura entra em qualquer ordem (revisão do #501)', () => {
+    const now = Date.parse('2026-11-19T12:00:00Z');
+    const stored: BoardPicture = { at: now - 10 * MIN, sessoes: { [SID_DEV]: { quemSou: { pasta: PROJECT, lugar: DEV, papel: 'dev' }, listar: LISTAR, board: BOARD } } };
+    const opener = { sid: SID_NOVO, localCwd: PROJECT, roleId: 'dev', openedBy: 'lider' };
+    const opened = { sid: SID_REV, localCwd: PROJECT, roleId: 'revisor', openedBy: NOVO };
+    for (const folders of [[opener, opened], [opened, opener]]) {
+      const links = withLocalSessions(stored, folders, now)!.sessoes[SID_DEV]!.board!.links;
+      expect(links).toEqual(expect.arrayContaining([expect.objectContaining({ from: NOVO, to: REV, arrow: true, opened: true })]));
+    }
   });
 
   it('pasta de sessão fechada (sem tmux) não vira lugar', () => {
