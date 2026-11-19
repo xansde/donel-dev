@@ -30,7 +30,7 @@ import { LEADER_ROLE_ID } from '../shared/roles';
 import { NO_KIT, openingKey, REPEAT_MS, type OpeningOrder } from './abrir-local';
 import type { OpenCall } from './gate-abrir';
 import { GATE_OPEN_PATH, GATE_OPENINGS_PATH } from './portoes';
-import type { RemotePictures } from './retrato-satelite';
+import type { RemotePictures, RemotePictureView } from './retrato-satelite';
 import { postJson, type SatelliteDeps, type SatellitePost } from './satelite';
 
 const OPENINGS_DIR = 'portoes-abrir';
@@ -226,12 +226,15 @@ export function openingsBodyOf(value: Record<string, unknown>): { readonly respo
 
 /**
  * The entregador apart: the Líder único's opening on another machine's board asked of the registro (its local gate's
- * token). `null` = the registro knows no other machine with that board (or is older than this route).
+ * token), which alone writes `portoes-abrir/`. With `view` (the entregador's reader of the registro's pictures,
+ * retrato-satelite.ts), asked only for a board a fresh picture has: any other is this machine's refusal, with no call.
+ * `null` = the registro knows no other machine with that board (or is older than this route).
  */
-export function createRemoteOpenClient(deps: SatelliteDeps): (call: OpenCall) => Promise<BrowserToolOutcome | null> {
+export function createRemoteOpenClient(deps: SatelliteDeps & { readonly view?: Pick<RemotePictureView, 'boardMachine'> }): (call: OpenCall) => Promise<BrowserToolOutcome | null> {
   const post = deps.post ?? postJson;
   const url = `${deps.url.replace(/\/+$/, '')}${GATE_OPEN_PATH}`;
   return async (call) => {
+    if (deps.view && (!call.quadro || !deps.view.boardMachine(call.quadro))) return null;
     const token = deps.token();
     if (!token) return null;
     const { tool: _tool, ...rest } = call;

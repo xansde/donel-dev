@@ -523,8 +523,9 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
             portFree: loopbackPortFree,
             names: [hostname()],
             // t-d461e003 — a board of another machine (its satellite pictures it): the opening goes there. Apart, the
-            // registro keeps those queues, asked with this machine's local gate token.
-            remote: openings ? async (call) => openings.request(call) : createRemoteOpenClient({ url: apart!.url, token: () => readGateToken(dir) }),
+            // registro alone keeps those queues (`portoes-abrir/`), asked with this machine's local gate token for a
+            // board the reader of its pictures sees.
+            remote: openings ? async (call) => openings.request(call) : createRemoteOpenClient({ url: apart!.url, token: () => readGateToken(dir), view: remoteView }),
           }),
           // Saída iii — a new phone app's key (the token never leaves the daemon) and the Líder's answer from chat_lider.py.
           // Apart (passo 9, PR 2): the registro's deliveries to these recados.

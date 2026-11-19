@@ -23,7 +23,7 @@ import { createRemoteOpenClient, createRemoteOpenings, createSatelliteOpenings, 
 import { createOracleApiHandler, type OracleRequest } from '../src/oraculo/api';
 import { mergePicture, type BoardPicture } from '../src/oraculo/portao';
 import { createGateToolRoutes, GATE_OPEN_PATH, isLocalGate, readGateHashes } from '../src/oraculo/portoes';
-import { compactPicture, createRemotePictures } from '../src/oraculo/retrato-satelite';
+import { compactPicture, createRemotePictures, createRemotePicturesReader } from '../src/oraculo/retrato-satelite';
 import type { SatellitePost } from '../src/oraculo/satelite';
 
 const io = createSystemConfigIoDeps();
@@ -171,7 +171,8 @@ function machines(options: Options = {}) {
   writeFileSync(join(dir, 'portoes', 'homologacoes.sha256'), `${hash(SAT_GATE)}\n`);
   writeFileSync(join(dir, 'portoes', 'vps-pessoal.sha256'), `${hash(LOCAL_GATE)}\n`);
   writeFileSync(join(dir, 'portoes', 'vps-pessoal.local'), '');
-  const remotes = createRemotePictures({ dir, io, now: () => clock.now });
+  // The registro apart (two units): it alone writes `portoes-*`, and says when it heard each satellite (`shareHeard`).
+  const remotes = createRemotePictures({ dir, io, now: () => clock.now, shareHeard: true });
   // The satellite's picture of its sessions reached the personal VPS (retrato-satelite.ts).
   remotes.accept('homologacoes', compactPicture(spicture, seen, slive));
   const openings = createRemoteOpenings({ dir, pictures: remotes, kit: () => readOpenKit(dir), now: () => clock.now });
@@ -186,7 +187,9 @@ function machines(options: Options = {}) {
   });
   /** A POST straight into the API; `cut.answers` drops the next call that says answers before it reaches the registro. */
   const cut = { answers: false };
+  const calls: string[] = [];
   const post = async (url: string, token: string, body: string): Promise<SatellitePost> => {
+    calls.push(new URL(url).pathname);
     if (cut.answers && body.includes('"respostas":[{')) {
       cut.answers = false;
       return 'caiu';
@@ -218,13 +221,14 @@ function machines(options: Options = {}) {
     portFree: async () => true,
     now: () => clock.now,
     log: () => undefined,
-    remote: createRemoteOpenClient({ url: 'http://127.0.0.1:47816', token: () => LOCAL_GATE, post }),
+    // The entregador apart: it reads the registro's pictures (never writes `portoes-*`) and asks the registro to queue.
+    remote: createRemoteOpenClient({ url: 'http://127.0.0.1:47816', token: () => LOCAL_GATE, post, view: createRemotePicturesReader({ dir, now: () => clock.now }) }),
   });
   const ask = (args: Record<string, unknown> = {}, sid = SID_LIDER) =>
     vpsOpen.abrir(sid, vpicture.sessoes[sid]!, { tool: 'sessao_abrir', papel: 'revisor', pedido: PEDIDO, quadro: 'Homologação', onde: 'Homologações', ...args } as never);
   const satFolders = (): string[] => readdirSync(sat.sessionsDir).filter((sid) => sid !== SID_HDEV && sid !== SID_LIDER_H);
   const metaOf = (sid: string): Record<string, unknown> => JSON.parse(readFileSync(join(sat.sessionsDir, sid, 'meta.json'), 'utf8')) as Record<string, unknown>;
-  return { clock, dir, sat, vps, project, satOpen, satRound, ask, cut, post, satFolders, metaOf, slive, delivered, picture: () => spicture };
+  return { clock, dir, sat, vps, project, satOpen, satRound, ask, cut, post, calls, satFolders, metaOf, slive, delivered, picture: () => spicture };
 }
 
 const parsed = (outcome: { kind: string; text?: string }): Record<string, unknown> => JSON.parse(outcome.text ?? '') as Record<string, unknown>;
@@ -311,6 +315,12 @@ describe('com o PC desligado, abrir sessão no quadro de outra máquina pelo sat
     // The satellite's token on the opening route of the personal VPS: refused (only that machine's own gate asks).
     const bySatellite = await m.post(`http://vps-pessoal:47816${GATE_OPEN_PATH}`, SAT_GATE, JSON.stringify({ call: { quadro: 'Homologação', papel: 'revisor', pedido: 'furando' } }));
     expect(typeof bySatellite === 'object' ? bySatellite.status : bySatellite).toBe(403);
+    // A board no fresh picture has: the entregador refuses here, without asking the registro.
+    m.calls.length = 0;
+    const unknown = await m.ask({ quadro: 'Inexistente', onde: undefined });
+    expect(unknown.kind).toBe('error');
+    expect(unknown.text).toContain('"Inexistente" não está entre eles');
+    expect(m.calls).not.toContain(GATE_OPEN_PATH);
     await m.satRound().round();
     expect(m.satFolders()).toEqual([]);
     expect(m.sat.tmuxStarts()).toBe(0);
