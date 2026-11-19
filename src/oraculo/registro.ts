@@ -198,8 +198,9 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
         renameSync(`${file}.tmp`, file);
       };
   // t-d461e003 — the other machines' pictures and queues: the entregador's when it runs here; apart, only the registro
-  // opens `portoes-retrato/` and `portoes-recados/` (its routes keep the pictures and hand the queues; nothing queues).
-  const remotes = entregador ? entregador.remotes : createRemotePictures({ dir, io });
+  // opens `portoes-retrato/` and `portoes-recados/` (its routes keep the pictures and hand the queues): the entregador
+  // reads the pictures and when each satellite was heard (`portoes-ouvido/`), and queues by the `fila` route.
+  const remotes = entregador ? entregador.remotes : createRemotePictures({ dir, io, shareHeard: true });
   /**
    * The local recados when the entregador runs here; apart (passo 9, PR 2), through its gate on the loopback: with it
    * down, `deliverLocalFirst` takes the message to the PC's relay with the same key (never twice when it comes back).
@@ -383,6 +384,8 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
       ...(remotes ? { pictures: remotes } : {}),
       // Apart, the Líder único of this machine reaches the ledger through the entregador's gate (never a satellite's).
       ...(entregador ? {} : { leader: { isLocal: (name: string) => isLocalGate(dir, name), picture: () => (remotes ? remotes.combine(picture()) : picture()) } }),
+      // Passo 9 — apart, a message of the entregador's sessions for a place of another machine is queued here.
+      ...(entregador || !remotes ? {} : { remoteQueue: { isLocal: (name: string) => isLocalGate(dir, name), queue: remotes.queue } }),
     })),
     ...(process.env.DONEL_LIVRO_ARQUIVO ? { livro: createLivroStore({ filePath: process.env.DONEL_LIVRO_ARQUIVO }) } : {}),
     // t-cddc62fc — the reconciliador's notices reach the Líder único by the relay, out of the owner's phone chat.

@@ -19,6 +19,9 @@
 //   older one than the one kept is ignored (`{ok, guardado}`).
 // - `recados` `{entregues?: [id]}` (t-d461e003): the satellite took those; answers what still waits for that machine
 //   (`{recados: [{id, message}]}`): the messages for its sessions (the Líder único's to the Dalton, with the PC off).
+// - `fila` `{aviso: OwnerMessage}` (passo 9, only this machine's own entregador, `isLocalGate`): a message of its
+//   sessions for a place of another machine goes into that machine's queue here (the registro alone writes them);
+//   `{maquina}`, or `{maquina: null}` when no fresh picture has that place (the entregador then takes its old way).
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -40,9 +43,10 @@ export const GATE_NOTICE_PATH = '/v1/portao/aviso';
 export const GATE_LINK_PATH = '/v1/portao/ligacao';
 export const GATE_PICTURE_PATH = '/v1/portao/retrato';
 export const GATE_INBOX_PATH = '/v1/portao/recados';
+export const GATE_QUEUE_PATH = '/v1/portao/fila';
 /** A machine's picture (each board once, with its arrows): up to this. */
 export const MAX_GATE_PICTURE_BYTES = 16 * 1024 * 1024;
-const GATE_PATHS: ReadonlySet<string> = new Set([GATE_TOOL_PATH, GATE_NOTICE_PATH, GATE_LINK_PATH, GATE_PICTURE_PATH, GATE_INBOX_PATH]);
+const GATE_PATHS: ReadonlySet<string> = new Set([GATE_TOOL_PATH, GATE_NOTICE_PATH, GATE_LINK_PATH, GATE_PICTURE_PATH, GATE_INBOX_PATH, GATE_QUEUE_PATH]);
 /** The tool route's body may carry the delivery's proof files (base64): up to this. */
 export const MAX_GATE_BODY_BYTES = 64 * 1024 * 1024;
 const GATE_NAME = /^[a-z0-9][a-z0-9-]{0,39}$/;
@@ -132,6 +136,11 @@ export interface GateToolRoutesDeps {
    * the boards of this registro's own picture. Absent = the Líder único is refused, as on every gate before the split.
    */
   readonly leader?: { readonly isLocal: (name: string) => boolean; readonly picture: () => BoardPicture | null };
+  /**
+   * Passo 9 — the entregador apart queues here a message for a place of another machine (`fila`), only from the gate
+   * marked local. Absent = the route answers 404 (no entregador apart: it queues itself).
+   */
+  readonly remoteQueue?: { readonly isLocal: (name: string) => boolean; readonly queue: (message: OwnerMessage) => Promise<string | null> };
   readonly log?: (line: string) => void;
 }
 
@@ -237,6 +246,13 @@ export function createGateToolRoutes(deps: GateToolRoutesDeps): GateRoutes {
       const taken = body.entregues;
       if (taken !== undefined && (!Array.isArray(taken) || taken.length > 500 || !taken.every((id) => typeof id === 'string'))) return json(400, { error: 'entregues inválido' });
       return json(200, { recados: deps.pictures.inbox(name, (taken as string[] | undefined) ?? []) });
+    }
+    if (path === GATE_QUEUE_PATH) {
+      if (!deps.remoteQueue) return null;
+      if (!deps.remoteQueue.isLocal(name)) return json(403, { error: 'só o portão local põe recado na fila de outra máquina' });
+      const message = noticeOf(body.aviso);
+      if (!message || !message.key) return json(400, { error: 'aviso inválido' });
+      return json(200, { maquina: await deps.remoteQueue.queue(message) });
     }
     if (!deps.notice) return null;
     const message = noticeOf(body.aviso);
