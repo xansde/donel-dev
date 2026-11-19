@@ -71,13 +71,18 @@ export const SEM_PARTE_0 = 'sem-parte-0';
 export type Insert = { readonly ok: true; readonly nova: boolean } | { readonly ok: false; readonly erro: 'conflito' };
 export type ParteInsert =
   | { readonly ok: true; readonly nova: boolean; readonly recebidas: number }
-  | { readonly ok: false; readonly erro: 'conflito' | 'fechado' }
+  | { readonly ok: false; readonly erro: 'conflito' | 'fechado' | 'continua-invalido' }
   /** Contract v1.8: the VPS closed it after 30 min; the phone sends what it lacks as a new audio (`recebidas`: the parts it has). */
-  | { readonly ok: false; readonly erro: 'fechado-auto'; readonly recebidas: number[] };
+  | { readonly ok: false; readonly erro: 'fechado-auto'; readonly recebidas: number[] }
+  /** Contract v1.8 (#527 review): the earlier audio already has its continuation, `id`. */
+  | { readonly ok: false; readonly erro: 'ja-continuado'; readonly id: string };
 export type FimAudio =
-  | { readonly ok: true; readonly nova: boolean; readonly estado: ChatAudio['estado'] }
+  /** `fechado: 'auto'`: the VPS had closed it after 30 min, and the `fim` asks for no part it lacks (contract v1.8). */
+  | { readonly ok: true; readonly nova: boolean; readonly estado: ChatAudio['estado']; readonly fechado?: 'auto' }
   | { readonly ok: false; readonly erro: 'conflito' | 'nao-encontrada' | 'continua-invalido' }
-  | { readonly ok: false; readonly erro: 'faltam-partes'; readonly faltam: number[] };
+  | { readonly ok: false; readonly erro: 'faltam-partes'; readonly faltam: number[] }
+  | { readonly ok: false; readonly erro: 'fechado-auto'; readonly recebidas: number[] }
+  | { readonly ok: false; readonly erro: 'ja-continuado'; readonly id: string };
 /** Contract v1.7: the owner threw the recording away (`apagadas`: the parts deleted from disk). */
 export type CancelAudio = { readonly ok: true; readonly nova: boolean; readonly apagadas: number } | { readonly ok: false; readonly erro: 'conflito' | 'ja-enviado' };
 /** A run of parts received in a row, and where its bytes are in the joined file. */
@@ -148,6 +153,8 @@ export interface ChatAudio {
    * closed after 30 min, sent by the phone as a new audio. The Líder reads it as the same speech.
    */
   continua?: string;
+  /** A continuation of an audio that failed without part 0 that does not carry all of that audio's parts (#527 review). */
+  anterior_incompleto?: true;
   /** Closed by the VPS after 30 min without a part: no part enters it any more (`fechado-auto`), and only it is continued. */
   automatico?: true;
   /** The joined file opens with the earlier audio's part 0 header, this many bytes: the worker puts it before every run. */
@@ -260,14 +267,16 @@ export interface CelularLocalStore {
   /**
    * Contract v1.6: part `n` of the voice message `id`, on disk (600, temp → rename) before the row. The same `(id, n)`
    * with the same bytes is `nova: false`; other bytes, another mime, or the id of a line that is not an audio in parts:
-   * conflict; a new part after the `fim`: `fechado` (`fechado-auto` when the VPS closed it, contract v1.8).
+   * conflict; a new part after the `fim`: `fechado` (`fechado-auto` when the VPS closed it, contract v1.8). `continua`
+   * (optional, #527 review): the earlier audio this one goes on, kept on the line from the first part that brings it.
    */
-  addChatAudioParte(id: string, n: number, mime: string, bytes: Uint8Array): ParteInsert;
+  addChatAudioParte(id: string, n: number, mime: string, bytes: Uint8Array, continua?: string): ParteInsert;
   /**
    * Contract v1.6: the end of a recording in parts. Without every part `0..partes-1` and not `interrompido`:
    * `faltam-partes`. Else the parts that came are joined in order into `<id>.<ext>` and the line waits as
    * `transcrevendo` (or `falhou` without part 0). The same `fim` again: `nova: false`. `continua` (contract v1.8): the
-   * audio the VPS closed after 30 min that this one goes on; without its own header, part 0 takes that audio's.
+   * audio the VPS closed after 30 min that this one goes on; without its own header, part 0 takes that audio's. After
+   * the VPS's own close: `fechado: 'auto'`, or `fechado-auto` when the `fim` counts parts past what it closed with.
    */
   fecharAudioPartes(id: string, fim: { readonly partes: number; readonly duracao_ms: number; readonly interrompido: boolean; readonly automatico?: boolean; readonly continua?: string }): FimAudio;
   /**
@@ -520,7 +529,8 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
     const anterior = row.audio?.continua;
     if (!anterior) return '';
     const inicio = data.chat.find((candidate) => candidate.id === anterior)?.criada_em;
-    return `(continuação do áudio #${anterior.slice(0, 8)}${inicio ? ` de ${HORA_SAO_PAULO.format(new Date(inicio))}` : ''}) `;
+    const incompleto = row.audio?.anterior_incompleto ? '; trechos daquele áudio ficaram sem transcrição: o começo dele não chegou à VPS e este não os traz' : '';
+    return `(continuação do áudio #${anterior.slice(0, 8)}${inicio ? ` de ${HORA_SAO_PAULO.format(new Date(inicio))}` : ''}${incompleto}) `;
   };
   const leaderText = (row: ChatLocal): string => {
     if (!row.audio) return row.texto;
@@ -580,6 +590,17 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
     } catch {
       return null;
     }
+  };
+  /**
+   * Contract v1.8 (and the #527 review): the audio `id` may continue. Only an audio the VPS closed after 30 min, in the
+   * same format, and only once: a second id on the same earlier audio would be the same speech twice.
+   */
+  const anteriorDe = (id: string, continua: string, mime: string): ChatLocal | { readonly erro: 'continua-invalido' } | { readonly erro: 'ja-continuado'; readonly id: string } => {
+    const anterior = data.chat.find((row) => row.id === continua && row.id !== id && row.autor === 'dono');
+    if (!anterior?.audio?.partes || !anterior.audio.automatico || anterior.audio.mime !== mime) return { erro: 'continua-invalido' };
+    const outro = data.chat.find((row) => row.id !== id && row.autor === 'dono' && row.audio?.continua === continua);
+    if (outro) return { erro: 'ja-continuado', id: outro.id };
+    return anterior;
   };
   const chat: ChatCelularQueue = {
     async tomar(limit) {
@@ -699,13 +720,15 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
       });
       return { ok: true, nova: true };
     },
-    addChatAudioParte(id, n, mime, bytes) {
+    addChatAudioParte(id, n, mime, bytes, continua) {
       if (isCorrecao(id) || temLapide(id)) return { ok: false, erro: 'conflito' };
       const sha256 = createHash('sha256').update(bytes).digest('hex');
       const existing = data.chat.find((row) => row.id === id);
       if (existing) {
         const audio = existing.autor === 'dono' ? existing.audio : undefined;
         if (!audio?.partes || audio.mime !== mime) return { ok: false, erro: 'conflito' };
+        // One earlier audio per recording: a part never moves it to another one (#527 review).
+        if (continua !== undefined && audio.continua !== undefined && audio.continua !== continua) return { ok: false, erro: 'continua-invalido' };
         const known = audio.partes[String(n)];
         if (known) return known === sha256 ? { ok: true, nova: false, recebidas: Object.keys(audio.partes).length } : { ok: false, erro: 'conflito' };
         // Closed: a new part never opens another line. After the VPS's own close (30 min), the phone sends what it lacks
@@ -714,6 +737,12 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
           if (!audio.automatico) return { ok: false, erro: 'fechado' };
           return { ok: false, erro: 'fechado-auto', recebidas: Object.keys(audio.partes).map(Number).sort((x, y) => x - y) };
         }
+      }
+      // Contract v1.8 (#527 review): `continua` on a part, so a continuation the VPS closes before its `fim` still takes
+      // the earlier audio's header and reads as a continuation.
+      if (continua !== undefined && existing?.audio?.continua !== continua) {
+        const anterior = anteriorDe(id, continua, mime);
+        if ('erro' in anterior) return anterior.erro === 'ja-continuado' ? { ok: false, erro: 'ja-continuado', id: anterior.id } : { ok: false, erro: 'continua-invalido' };
       }
       // The bytes first: a row never counts a part that is not on disk.
       const file = parteFile(id, n);
@@ -729,6 +758,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
           next.chat.push(row);
         }
         const audio = row.audio!;
+        if (continua !== undefined) audio.continua = continua;
         audio.partes![String(n)] = sha256;
         audio.ultima_parte_em = now();
         audio.duracao_ms = Object.keys(audio.partes!).length * CHAT_AUDIO_PARTE_MS;
@@ -741,14 +771,27 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
       const found = data.chat.find((row) => row.id === id);
       if (!found) return fim.interrompido ? { ok: false, erro: 'nao-encontrada' } : { ok: false, erro: 'faltam-partes', faltam: Array.from({ length: fim.partes }, (_, n) => n) };
       if (found.autor !== 'dono' || !found.audio?.partes) return { ok: false, erro: 'conflito' };
-      // Contract v1.8: only an audio the VPS closed after 30 min is continued.
-      let anterior: ChatLocal | null = null;
-      if (fim.continua !== undefined) {
-        anterior = data.chat.find((row) => row.id === fim.continua && row.id !== id && row.autor === 'dono') ?? null;
-        if (!anterior?.audio?.partes || !anterior.audio.automatico) return { ok: false, erro: 'continua-invalido' };
-      }
       const audio = found.audio;
-      if (audio.estado !== 'subindo') return { ok: true, nova: false, estado: audio.estado };
+      // One earlier audio per recording: the `fim` never moves it to another one (#527 review).
+      if (fim.continua !== undefined && audio.continua !== undefined && audio.continua !== fim.continua) return { ok: false, erro: 'continua-invalido' };
+      if (audio.estado !== 'subindo') {
+        if (fim.continua !== undefined && audio.continua !== fim.continua) return { ok: false, erro: 'continua-invalido' };
+        if (!audio.automatico) return { ok: true, nova: false, estado: audio.estado };
+        // Contract v1.8: the `fim` of an audio the VPS closed after 30 min. Asking for no part past what the VPS closed
+        // with (the holes in it are marked in the text): it is done. Past it: the phone sends the rest as a new audio.
+        const recebidas = Object.keys(audio.partes).map(Number).sort((a, b) => a - b);
+        const fechouCom = audio.total ?? (recebidas[recebidas.length - 1] ?? -1) + 1;
+        if (fim.partes > fechouCom) return { ok: false, erro: 'fechado-auto', recebidas };
+        return { ok: true, nova: false, estado: audio.estado, fechado: 'auto' };
+      }
+      // Contract v1.8: only an audio the VPS closed after 30 min is continued (the `fim`'s `continua`, or the parts').
+      let anterior: ChatLocal | null = null;
+      const continua = fim.continua ?? audio.continua;
+      if (continua !== undefined) {
+        const achado = fim.continua !== undefined && audio.continua !== fim.continua ? anteriorDe(id, continua, audio.mime) : (data.chat.find((row) => row.id === continua && row.autor === 'dono') ?? null);
+        if (achado && 'erro' in achado) return achado.erro === 'ja-continuado' ? { ok: false, erro: 'ja-continuado', id: achado.id } : { ok: false, erro: 'continua-invalido' };
+        anterior = achado;
+      }
       const have = Object.keys(audio.partes ?? {}).map(Number).sort((a, b) => a - b);
       const got = new Set(have);
       // Parts past the `fim`'s count are not dropped: what reached the VPS is the owner's.
@@ -779,14 +822,19 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
       }
       renameSync(tmp, file);
       const sha256 = hash.digest('hex');
-      const semInicio = anterior ? !header && !proprio : !got.has(0);
+      const semInicio = continua !== undefined ? !header && !proprio : !got.has(0);
+      // The earlier audio failed without its part 0 and this one does not carry every part it had (the same bytes):
+      // the Líder is told that stretches of it were never transcribed (#527 review).
+      const meus = new Set(Object.values(audio.partes));
+      const incompleto = anterior?.audio?.estado === 'falhou' && anterior.audio.motivo === SEM_PARTE_0 && Object.values(anterior.audio.partes ?? {}).some((sha) => !meus.has(sha));
       commit((next) => {
         const row = next.chat.find((candidate) => candidate.id === id)!;
         const a = row.audio!;
         a.estado = semInicio ? 'falhou' : 'transcrevendo';
         if (semInicio) a.motivo = SEM_PARTE_0;
         if (header) a.cabecalho = header.length;
-        if (anterior) a.continua = anterior.id;
+        if (continua !== undefined) a.continua = continua;
+        if (incompleto) a.anterior_incompleto = true;
         a.sha256 = sha256;
         a.total = total;
         a.interrompido = fim.interrompido;

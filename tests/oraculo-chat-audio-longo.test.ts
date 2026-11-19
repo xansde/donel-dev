@@ -68,7 +68,8 @@ function world() {
 }
 
 const parse = (response: { body: unknown }): any => JSON.parse(String(response.body));
-const parte = (id: string, n: number, bytes: Buffer = parteBytes(n), mime = 'audio/webm'): string => JSON.stringify({ id, n, mime, audio_b64: bytes.toString('base64') });
+const parte = (id: string, n: number, bytes: Buffer = parteBytes(n), mime = 'audio/webm', continua?: string): string =>
+  JSON.stringify({ id, n, mime, audio_b64: bytes.toString('base64'), ...(continua ? { continua } : {}) });
 const fim = (id: string, partes: number, interrompido = false, duracao_ms = partes * 60_000, continua?: string): string =>
   JSON.stringify({ id, partes, duracao_ms, interrompido, ...(continua ? { continua } : {}) });
 
@@ -520,6 +521,124 @@ describe('v1.8: depois do fechamento automático, o resto vai como áudio novo c
     expect(avisos[0]!.startsWith('(continuação do áudio #00000005 de ')).toBe(true);
     expect(avisos[0]).toContain('o começo da gravação não chegou à VPS');
     wk.stop();
+  });
+
+  // Revisão do #527: as sondas do revisor.
+  it('fim do id original depois do automático: sem parte que a VPS não tem, 200 fechado auto; com, 409 fechado-auto; cancelado, ja-enviado', async () => {
+    const w = world();
+    const id = UUID(1);
+    const wk = worker(w);
+    await fechadoPeloAutomatico(w, wk, id);
+    const mais = await w.call('POST', '/api/v2/chat/audio/fim', fim(id, 5));
+    expect(mais.status).toBe(409);
+    expect(parse(mais)).toEqual({ erro: 'fechado-auto', recebidas: [0, 1] });
+    const mesmo = await w.call('POST', '/api/v2/chat/audio/fim', fim(id, 2));
+    expect(mesmo.status).toBe(200);
+    expect(parse(mesmo)).toEqual({ ok: true, nova: false, estado: 'transcrito', fechado: 'auto' });
+    expect(parse(await w.call('POST', '/api/v2/chat/audio/fim', fim(id, 1, true)))).toEqual({ ok: true, nova: false, estado: 'transcrito', fechado: 'auto' });
+    expect(parse(await w.call('POST', '/api/v2/chat/audio/fim', cancelar(id, 2))).erro).toBe('ja-enviado');
+    // Fim depois do fim do aparelho segue como antes: 200 sem a marca.
+    const peloAparelho = UUID(2);
+    await w.call('POST', '/api/v2/chat/audio/parte', parte(peloAparelho, 0));
+    await w.call('POST', '/api/v2/chat/audio/fim', fim(peloAparelho, 1));
+    expect(parse(await w.call('POST', '/api/v2/chat/audio/fim', fim(peloAparelho, 1)))).toEqual({ ok: true, nova: false, estado: 'transcrevendo' });
+    expect((await w.store.chat.tomar(10)).filter((row) => row.id === id)).toHaveLength(1);
+    wk.stop();
+  });
+
+  it('continua na parte: o id2 fechado pelo automático antes do fim usa o cabeçalho do anterior e sai como continuação; divergente dá 409', async () => {
+    const w = world();
+    const id = UUID(1);
+    const id2 = UUID(2);
+    const wk = worker(w);
+    // Outro anterior fechado pelo automático: o id2 não troca de anterior no meio.
+    const outro = UUID(5);
+    await fechadoPeloAutomatico(w, wk, id);
+    await fechadoPeloAutomatico(w, wk, outro);
+    for (const [novo, original] of [2, 3].entries()) {
+      expect(parse(await w.call('POST', '/api/v2/chat/audio/parte', parte(id2, novo, parteBytes(original), 'audio/webm', id)))).toMatchObject({ ok: true, nova: true });
+    }
+    const divergente = await w.call('POST', '/api/v2/chat/audio/parte', parte(id2, 2, parteBytes(4), 'audio/webm', outro));
+    expect(divergente.status).toBe(409);
+    expect(parse(divergente).erro).toBe('continua-invalido');
+    const fimDivergente = await w.call('POST', '/api/v2/chat/audio/fim', fim(id2, 2, false, 120_000, outro));
+    expect(fimDivergente.status).toBe(409);
+    expect(parse(fimDivergente).erro).toBe('continua-invalido');
+    // O aparelho some de novo: 31 min sem parte e a VPS fecha o id2 sozinha.
+    w.advance(31 * 60_000);
+    wk.fecharParados();
+    await wk.idle();
+    const textos = (await w.store.chat.tomar(10)).filter((row) => row.id === id2).map((row) => row.texto);
+    expect(textos).toEqual(['(continuação do áudio #00000001 de 07:00) 🎙 Áudio de 2:00 (transcrição): (gravação interrompida) fala2 fala3']);
+    // O fim do id2 que chega depois segue a regra do fechamento automático.
+    expect(parse(await w.call('POST', '/api/v2/chat/audio/fim', fim(id2, 2, false, 120_000, id)))).toEqual({ ok: true, nova: false, estado: 'transcrito', fechado: 'auto' });
+    expect(parse(await w.call('POST', '/api/v2/chat/audio/fim', fim(id2, 3, false, 180_000, id)))).toEqual({ erro: 'fechado-auto', recebidas: [0, 1] });
+    wk.stop();
+  });
+
+  it('uma continuação por anterior: outro id com o mesmo continua dá 409 ja-continuado; o mesmo id2 segue idempotente', async () => {
+    const w = world();
+    const id = UUID(1);
+    const id2 = UUID(2);
+    const id3 = UUID(3);
+    const wk = worker(w);
+    await fechadoPeloAutomatico(w, wk, id);
+    await w.call('POST', '/api/v2/chat/audio/parte', parte(id2, 0, parteBytes(2)));
+    expect(parse(await w.call('POST', '/api/v2/chat/audio/fim', fim(id2, 1, false, 60_000, id)))).toEqual({ ok: true, nova: true, estado: 'transcrevendo' });
+    expect(parse(await w.call('POST', '/api/v2/chat/audio/fim', fim(id2, 1, false, 60_000, id)))).toEqual({ ok: true, nova: false, estado: 'transcrevendo' });
+    // O app perdeu o 200 e tentou com outro id: na parte e no fim.
+    const naParte = await w.call('POST', '/api/v2/chat/audio/parte', parte(id3, 0, parteBytes(2), 'audio/webm', id));
+    expect(naParte.status).toBe(409);
+    expect(parse(naParte)).toEqual({ erro: 'ja-continuado', id: id2 });
+    await w.call('POST', '/api/v2/chat/audio/parte', parte(id3, 0, parteBytes(2)));
+    const noFim = await w.call('POST', '/api/v2/chat/audio/fim', fim(id3, 1, false, 60_000, id));
+    expect(noFim.status).toBe(409);
+    expect(parse(noFim)).toEqual({ erro: 'ja-continuado', id: id2 });
+    for (const queued of w.queued) wk.enqueue(queued);
+    await wk.idle();
+    const textos = (await w.store.chat.tomar(10)).map((row) => row.texto);
+    expect(textos.filter((texto) => texto.includes('fala2'))).toHaveLength(1);
+    wk.stop();
+  });
+
+  it('continua exige o mesmo formato do anterior', async () => {
+    const w = world();
+    const id = UUID(1);
+    const wk = worker(w);
+    await fechadoPeloAutomatico(w, wk, id);
+    const naParte = await w.call('POST', '/api/v2/chat/audio/parte', parte(UUID(2), 0, Buffer.from('OggS;P2;'), 'audio/ogg', id));
+    expect(naParte.status).toBe(409);
+    expect(parse(naParte).erro).toBe('continua-invalido');
+    await w.call('POST', '/api/v2/chat/audio/parte', parte(UUID(3), 0, Buffer.from('OggS;P2;'), 'audio/ogg'));
+    const noFim = await w.call('POST', '/api/v2/chat/audio/fim', fim(UUID(3), 1, false, 60_000, id));
+    expect(noFim.status).toBe(409);
+    expect(parse(noFim).erro).toBe('continua-invalido');
+    expect(w.store.audioEstado(UUID(3))).toBe('subindo');
+    wk.stop();
+  });
+
+  it('anterior que falhou sem a parte 0: o id2 que não cobre as partes dele avisa no texto; o que cobre, não', async () => {
+    for (const [reenvio, avisa] of [
+      [[0, 2], true],
+      [[0, 1, 2], false],
+    ] as const) {
+      const w = world();
+      const id = UUID(1);
+      const id2 = UUID(2);
+      const wk = worker(w);
+      await fechadoPeloAutomatico(w, wk, id, [1]);
+      expect(w.store.audioEstado(id)).toBe('falhou');
+      await w.store.chat.tomar(10);
+      for (const [novo, original] of reenvio.entries()) await w.call('POST', '/api/v2/chat/audio/parte', parte(id2, novo, parteBytes(original), 'audio/webm', id));
+      expect(parse(await w.call('POST', '/api/v2/chat/audio/fim', fim(id2, reenvio.length, false, reenvio.length * 60_000, id))).ok).toBe(true);
+      for (const queued of w.queued) wk.enqueue(queued);
+      await wk.idle();
+      const [texto] = (await w.store.chat.tomar(10)).map((row) => row.texto);
+      expect(texto).toContain(reenvio.map((n) => `fala${n}`).join(' '));
+      if (avisa) expect(texto).toContain('ficaram sem transcrição');
+      else expect(texto).not.toContain('sem transcrição');
+      wk.stop();
+    }
   });
 });
 

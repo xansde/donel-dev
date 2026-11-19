@@ -36,6 +36,7 @@ const isBase64 = (value: string): boolean => value.length % 4 === 0 && BASE64.te
 /** t-b03fdec8 — a voice message of any length, in parts of 60 s (contract v1.6): each part's body has the same 6 MB. */
 export const CHAT_AUDIO_PARTE_PATH = 'chat/audio/parte';
 export const CHAT_AUDIO_FIM_PATH = 'chat/audio/fim';
+const CONTINUA_INVALIDO = 'O áudio anterior não existe, não foi fechado pela VPS ou tem outro formato; ou este áudio já continua outro.';
 /** t-a1ad1ca2 — the owner's file (`POST chat/arquivo`, contract v1.4): the only route with ~20 MB of body. */
 export const CHAT_ARQUIVO_PATH = 'chat/arquivo';
 const MAX_NOME = 255;
@@ -295,17 +296,20 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
 
   /** Contract v1.6: one part of a recording, on disk before the answer; the same `(id, n)` again is the same part. */
   function chatAudioParte(body: Record<string, unknown>): MobileResponse {
-    const { id, n, mime, audio_b64: b64 } = body;
+    const { id, n, mime, audio_b64: b64, continua } = body;
     if (typeof id !== 'string' || !UUID.test(id)) return erro(400, 'corpo', 'id: uuid v4 em minúsculas');
+    if (continua !== undefined && (typeof continua !== 'string' || !UUID.test(continua))) return erro(400, 'corpo', 'continua: uuid v4 em minúsculas');
     if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) return erro(400, 'corpo', 'n: inteiro a partir de 0');
     if (mime === 'audio/mp4') return erro(415, 'formato-sem-partes', 'O mp4 não se emenda: mande inteiro (até 5 min) ou grave em webm.');
     if (typeof mime !== 'string' || !CHAT_AUDIO_PARTE_MIMES.includes(mime)) return erro(415, 'formato');
     if (n >= CHAT_AUDIO_MAX_PARTES) return erro(413, 'longo-demais', 'O áudio passou de 2 h.');
     if (typeof b64 !== 'string' || !isBase64(b64)) return erro(400, 'corpo', 'audio_b64: base64 padrão, sem quebras');
-    const added = deps.store.addChatAudioParte(id, n, mime, Buffer.from(b64, 'base64'));
+    const added = deps.store.addChatAudioParte(id, n, mime, Buffer.from(b64, 'base64'), continua);
     if (!added.ok) {
       // Contract v1.8: closed by the VPS after 30 min; the phone sends what it lacks as a new audio with `continua`.
       if (added.erro === 'fechado-auto') return json(409, { erro: 'fechado-auto', recebidas: added.recebidas });
+      if (added.erro === 'ja-continuado') return json(409, { erro: 'ja-continuado', id: added.id });
+      if (added.erro === 'continua-invalido') return erro(409, 'continua-invalido', CONTINUA_INVALIDO);
       return erro(409, 'conflito', added.erro === 'fechado' ? 'Este áudio já foi fechado.' : 'Esta parte já existe com outro conteúdo.');
     }
     return json(200, { ok: true, nova: added.nova, recebidas: added.recebidas });
@@ -333,14 +337,16 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     if (!closed.ok) {
       if (closed.erro === 'faltam-partes') return json(409, { erro: 'faltam-partes', faltam: closed.faltam });
       if (closed.erro === 'nao-encontrada') return erro(404, 'nao-encontrada');
-      if (closed.erro === 'continua-invalido') return erro(409, 'continua-invalido', 'O áudio anterior não existe ou não foi fechado pela VPS.');
+      if (closed.erro === 'continua-invalido') return erro(409, 'continua-invalido', CONTINUA_INVALIDO);
+      if (closed.erro === 'fechado-auto') return json(409, { erro: 'fechado-auto', recebidas: closed.recebidas });
+      if (closed.erro === 'ja-continuado') return json(409, { erro: 'ja-continuado', id: closed.id });
       return erro(409, 'conflito', 'Este id não é de um áudio em partes, ou foi cancelado.');
     }
     if (closed.nova) {
       if (closed.estado === 'transcrevendo') deps.audio?.(id);
       else deps.kick?.('chat');
     }
-    return json(200, { ok: true, nova: closed.nova, estado: closed.estado });
+    return json(200, { ok: true, nova: closed.nova, estado: closed.estado, ...(closed.fechado ? { fechado: closed.fechado } : {}) });
   }
 
   /** Contract v1.4: the file is on disk before the row, and the answer goes out at once. */
