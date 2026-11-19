@@ -215,14 +215,34 @@ export function withoutSuggestion(screen: string): string {
     .join('\n');
 }
 
-export function fieldIsFree(screen: string): { readonly free: boolean; readonly why: string } {
+/** What is typed in the Claude Code input field (between the two last rules); `null` = no field on the screen. */
+export function fieldTextOf(screen: string): string | null {
   const lines = withoutSuggestion(screen).replace(/\n+$/, '').split('\n');
   const rulers = lines.flatMap((line, i) => (line.trim().startsWith('─'.repeat(10)) ? [i] : []));
-  if (rulers.length < 2) return { free: false, why: 'campo não reconhecido na tela' };
+  if (rulers.length < 2) return null;
   const [a, b] = [rulers[rulers.length - 2]!, rulers[rulers.length - 1]!];
-  const middle = lines.slice(a + 1, b).map((line) => line.replace(/ /g, ' ').trim());
-  if (!middle.length || !middle[0]!.startsWith('❯')) return { free: false, why: 'campo não reconhecido na tela' };
-  const rest = [middle[0]!.slice(1).trim(), ...middle.slice(1)];
-  if (rest.some(Boolean)) return { free: false, why: 'campo com texto (rascunho de alguém)' };
+  const middle = lines.slice(a + 1, b).map((line) => line.replace(/\u00a0/g, ' ').trim());
+  if (!middle.length || !middle[0]!.startsWith('❯')) return null;
+  return [middle[0]!.slice(1).trim(), ...middle.slice(1)].filter(Boolean).join(' ');
+}
+
+/**
+ * Caixa pendurada (19/11): does the field `left` hold nothing but the `notice` this cron typed (whose Enter did not
+ * take)? Yes when it is that text (the screen may wrap or cut it: compared without spaces, as a prefix of it), or the one
+ * paste placeholder a long notice turns into. Anything else (the owner wrote after it, pasted another text) is not ours
+ * and stays.
+ */
+export function fieldHoldsOnlyNotice(left: string, notice: string): boolean {
+  const bare = (text: string): string => text.replace(/\s+/g, '');
+  const shown = bare(left);
+  if (!shown) return false;
+  if (/^\[Pastedtext#\d+[^\]]*\]$/.test(shown)) return true;
+  return shown.startsWith(bare(LABEL)) && bare(notice).startsWith(shown);
+}
+
+export function fieldIsFree(screen: string): { readonly free: boolean; readonly why: string } {
+  const text = fieldTextOf(screen);
+  if (text === null) return { free: false, why: 'campo não reconhecido na tela' };
+  if (text) return { free: false, why: 'campo com texto (rascunho de alguém)' };
   return { free: true, why: '' };
 }
