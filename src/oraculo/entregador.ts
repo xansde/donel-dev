@@ -23,8 +23,8 @@ import { createGateHandler, GATE_PORT, mergePicture, startGateServer, tunnelForw
 import { createGateRecados, findTranscript, tmuxLocalSessions, type GateRecadosHandle } from './recados';
 import { deliverLocalFirst, type Relay } from './relay';
 import { createLocalPicture, tmuxLiveNow } from './retrato-local';
-import { createRemotePictures, type RemotePictures } from './retrato-satelite';
-import { noticeOf } from './portoes';
+import { createRemotePictures, createRemotePicturesReader, type RemotePictureView, type RemotePictures } from './retrato-satelite';
+import { GATE_QUEUE_PATH, noticeOf } from './portoes';
 import { createSatelliteLedger, createSatelliteNotice, createSatelliteReviewLink, createSatelliteTaskMemory, postJson, type SatellitePost } from './satelite';
 import { createProbe } from './sonda';
 import { createEntregadorChat, type EntregadorChat } from './chat-entregador';
@@ -221,6 +221,40 @@ export function createLocalDeliverClient(deps: {
   };
 }
 
+/**
+ * Passo 9 (t-5358d400) — apart, a message of this machine's sessions for a place of another machine: into that
+ * machine's queue at the registro (`POST /v1/portao/fila`, this machine's gate credential marked local), which alone
+ * writes `portoes-recados/`. Asked only when a fresh picture here has the place; the same key joins there (a cut after
+ * it went out is sent once more, the same message). The registro down, or no answer = `null`: the old way (the notices
+ * on disk to the PC's relay, or the refusal).
+ */
+export function createRemoteQueueClient(deps: {
+  readonly url: string;
+  readonly token: () => string | null;
+  readonly view: Pick<RemotePictureView, 'machineOf'>;
+  readonly timeoutMs?: number;
+  readonly post?: (url: string, token: string, body: string, timeoutMs: number) => Promise<SatellitePost>;
+}): (message: OwnerMessage) => Promise<string | null> {
+  const post = deps.post ?? postJson;
+  const timeoutMs = deps.timeoutMs ?? LOCAL_DELIVER_TIMEOUT_MS;
+  const url = `${deps.url.replace(/\/+$/, '')}${GATE_QUEUE_PATH}`;
+  return async (message) => {
+    if (!message.placeId || !message.key || !deps.view.machineOf(message.projectPath, message.placeId)) return null;
+    const token = deps.token();
+    if (!token) return null;
+    const body = JSON.stringify({ aviso: message });
+    let sent = await post(url, token, body, timeoutMs);
+    if (sent === 'caiu') sent = await post(url, token, body, timeoutMs);
+    if (typeof sent !== 'object' || sent.status !== 200) return null;
+    try {
+      const maquina = (JSON.parse(sent.body) as { maquina?: unknown }).maquina;
+      return typeof maquina === 'string' && maquina ? maquina : null;
+    } catch {
+      return null;
+    }
+  };
+}
+
 /** Where the entregador's gate listens (`<dir>/portao`, written at its start); `fallback` until it wrote one. */
 export function gatePortOf(dir: string, fallback: number): number {
   try {
@@ -310,11 +344,13 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
   });
   // t-d461e003 — the other machines' pictures (their satellites send them, retrato-satelite.ts): what the gate and the
   // recados read is this VPS's picture with their sessions added (never over this VPS's own). A message for one of
-  // them waits in that machine's queue here, which its satellite takes. Only with the registro in this process: apart,
-  // the registro's routes write those files and the entregador leaves them alone (one writer; PR 2 brings them over).
+  // them waits in that machine's queue here, which its satellite takes. With the registro in this process, these are
+  // its own; apart (passo 9), the registro alone writes those files: the entregador reads the pictures and when each
+  // satellite was heard, and queues by the registro's `fila` route.
   const remotes = junto ? createRemotePictures({ dir, io }) : null;
-  const picture = (): BoardPicture | null => (remotes ? remotes.combine(localPicture.get()) : localPicture.get());
-  const pictureWithoutPc = (sid: string): BoardPicture | null => (remotes ? remotes.combine(localPicture.withoutPc(sid)) : localPicture.withoutPc(sid));
+  const remoteView: RemotePictureView = remotes ?? createRemotePicturesReader({ dir });
+  const picture = (): BoardPicture | null => remoteView.combine(localPicture.get());
+  const pictureWithoutPc = (sid: string): BoardPicture | null => remoteView.combine(localPicture.withoutPc(sid));
   // t-c3fbe852 — the Líder único alive in this machine's tmux (the app's mark in its session folder, or the picture).
   const localLeader = createLocalLeaderFinder({ sessionsDir, liveSessions, picture: localPicture.get });
   // A session resumed from another conversation (the Líder that came over with `-r`) writes that one's transcript.
@@ -368,6 +404,7 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
       taskOf: tasks.taskOf,
       reviewLinked: createSatelliteReviewLink(remote),
       picture,
+      remote: createRemoteQueueClient({ ...remote, view: remoteView }),
       relay: notices.send,
       leader: localLeader,
       transcriptOf,

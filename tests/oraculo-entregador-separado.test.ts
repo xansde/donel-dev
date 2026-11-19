@@ -162,6 +162,8 @@ describe('donel-oraculo dividido em registro e entregador', () => {
     await daemon.stop();
     expect(JSON.parse(readFileSync(join(dir, 'retrato.json'), 'utf8'))).toMatchObject({ at: 1_000, sessoes: { [SID]: { pcAt: 1_000 } } });
     expect(existsSync(join(dir, RETRATO_PC_FILE))).toBe(false);
+    // Only the registro apart says when it heard a satellite (for the entregador): together, nothing new on disk.
+    expect(existsSync(join(dir, 'portoes-ouvido'))).toBe(false);
     expect(existsSync(join(dir, 'portao'))).toBe(true);
     expect(tasksIn(dir)).toBe(1);
   });
@@ -407,6 +409,155 @@ describe('entregador à parte: o chat do celular', () => {
     } finally {
       await front.close();
       await upstream.close();
+    }
+  });
+});
+
+// Regressão do passo 9 (19/11, 13h50): com a marca, o Líder único da VPS pessoal (no portão do entregador) deixou de
+// alcançar o quadro Homologação ("conheço só os quadros do último retrato"), porque o retrato da Homologações só chegava
+// ao registro. O entregador lê o que o registro guarda (portoes-retrato/ e quando ouviu cada satélite, portoes-ouvido/)
+// e o recado a um lugar de lá entra na fila daquela máquina pelo registro, que é o único que a escreve.
+describe('entregador à parte: o Líder único alcança o quadro Homologação pelo retrato do satélite', () => {
+  const LOCAL_TOKEN = 'portao-vps-pessoal-de-teste';
+  const LIDER_SID = '77777777-2222-4333-8444-555555555555';
+  const LIDER_MCP = 'm'.repeat(43);
+  const HOMOLOG = 'C:\\Users\\dono\\seazone\\Homologação';
+  const DALTON = 'place:65431ae3';
+  const HDEV = 'place:hdev';
+  const SID_DALTON = '65431ae3-2222-4333-8444-555555555555';
+  const sessionCard = (id: string, roleId: string) => ({ kind: 'session' as const, id, roleId, previous: [], x: 0, y: 0 });
+  const BOARD = {
+    projectPath: HOMOLOG,
+    pan: { x: 0, y: 0 },
+    zoom: 1,
+    cards: { [DALTON]: sessionCard(DALTON, 'dalton'), [HDEV]: sessionCard(HDEV, 'dev') },
+    links: [{ id: 'l1', from: DALTON, to: HDEV, arrow: true }],
+    drawings: [],
+  };
+  const retratoHomologacao = (at: number) => ({
+    at,
+    quadros: { [HOMOLOG]: { listar: [{ id: DALTON, papel: 'dalton', estado: 'trabalhando' }, { id: HDEV, papel: 'dev', estado: 'trabalhando' }], board: BOARD } },
+    sessoes: { [SID_DALTON]: { quemSou: { nome: 'Dalton', pasta: HOMOLOG, lugar: DALTON, papel: 'dalton' }, at } },
+  });
+
+  /** The registro behind a real loopback HTTP server (the entregador reaches it by `<dir>/url`, as in production). */
+  async function registroHttp(dir: string, home: string) {
+    let handler: OracleApiHandler | null = null;
+    const server = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      req.on('end', () => {
+        void handler!({ method: req.method ?? 'GET', url: req.url ?? '/', authorization: req.headers.authorization, body: Buffer.concat(chunks).toString('utf8') }).then((answer) => res.writeHead(answer.status, answer.headers).end(answer.body));
+      });
+    });
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+    const url = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    const daemon = await runRegistro({
+      dir,
+      home,
+      host: '100.64.0.1',
+      gatePort: 0,
+      entregador: 'separado',
+      ...noTmux,
+      listen: async (options) => {
+        handler = options.handler;
+        return { url, notify: () => undefined, close: () => new Promise<void>((done) => server.close(() => done())) };
+      },
+    });
+    const call = async (path: string, body: unknown, token: string) => {
+      const answer = await handler!({ method: 'POST', url: path, authorization: `Bearer ${token}`, body: JSON.stringify(body) });
+      return { status: answer.status, body: JSON.parse(String(answer.body)) as Record<string, unknown> };
+    };
+    return { daemon, call };
+  }
+
+  /** The personal VPS with the mark, the PC off, the Líder único alive in tmux and the entregador's local gate. */
+  async function vps() {
+    const { dir, home } = await place({ separado: true });
+    writeFileSync(join(dir, 'portoes', 'vps-pessoal.sha256'), createHash('sha256').update(LOCAL_TOKEN).digest('hex'));
+    writeFileSync(join(dir, 'portoes', 'vps-pessoal.local'), '');
+    writeFileSync(join(dir, 'portao.token'), `${LOCAL_TOKEN}\n`);
+    const folder = join(home, '.donel', 's', LIDER_SID);
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, 'meta.json'), JSON.stringify({ sid: LIDER_SID, mcpToken: LIDER_MCP, mcpPort: 25001, localCwd: '/root/_orquestradora', name: 'Líder', roleId: 'lider', leaderOfAll: true, createdAt: '2026-11-19T10:34:44Z' }));
+    const { daemon, call } = await registroHttp(dir, home);
+    const live = { liveSessions: async () => new Set([LIDER_SID]), liveNow: () => new Set([LIDER_SID]) };
+    const entregador = await runEntregador({ dir, home, gatePort: 0, ...live });
+    const gatePort = Number(readFileSync(join(dir, 'portao'), 'utf8').trim());
+    const tool = (name: string, args: Record<string, unknown>) =>
+      new Promise<{ error: boolean; text: string }>((resolve, reject) => {
+        const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } });
+        const out = httpRequest({ host: '127.0.0.1', port: gatePort, method: 'POST', path: `/s/${LIDER_SID}/mcp`, headers: { authorization: `Bearer ${LIDER_MCP}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' } }, (answer) => {
+          let text = '';
+          answer.on('data', (chunk: Buffer) => (text += chunk.toString('utf8')));
+          answer.on('end', () => {
+            const result = (JSON.parse(text) as { result: { content: { text: string }[]; isError?: boolean } }).result;
+            resolve({ error: result.isError === true, text: result.content[0]!.text });
+          });
+        });
+        out.once('error', reject);
+        out.end(body);
+      });
+    const stop = async () => {
+      await entregador.stop();
+      await daemon.stop();
+    };
+    /** What waits for the Homologações at the registro (its satellite's `recados` call). */
+    const homologacoesQueue = async () => ((await call('/v1/portao/recados', {}, GATE_TOKEN)).body.recados as Array<{ message: { text: string; placeId: string } }>) ?? [];
+    return { dir, call, tool, stop, homologacoesQueue };
+  }
+
+  it('lista o quadro Homologação e o recado ao Dalton entra uma vez só na fila da Homologações', async () => {
+    const m = await vps();
+    try {
+      expect((await m.call('/v1/portao/retrato', { retrato: retratoHomologacao(Date.now()) }, GATE_TOKEN)).body).toMatchObject({ guardado: true });
+      const listed = await m.tool('sessao_listar', { quadro: 'Homologação' });
+      expect(listed.error, listed.text).toBe(false);
+      expect(JSON.parse(listed.text)).toEqual(expect.arrayContaining([expect.objectContaining({ id: DALTON })]));
+
+      const enviar = { quadro: 'Homologação', para: DALTON, texto: 'conta GitHub pronta', tarefa: 't-5358d400' };
+      const sent = await m.tool('sessao_enviar', enviar);
+      expect(sent.error, sent.text).toBe(false);
+      expect(JSON.parse(sent.text)).toMatchObject({ entregue: 'na-fila', para: DALTON, maquina: 'homologacoes' });
+      // The model tries again (a lost answer): the same key joins the first, never a second item.
+      expect(JSON.parse((await m.tool('sessao_enviar', enviar)).text)).toMatchObject({ maquina: 'homologacoes' });
+      const queued = await m.homologacoesQueue();
+      expect(queued.map((item) => item.message.placeId)).toEqual([DALTON]);
+      expect(queued[0]!.message.text).toContain('conta GitHub pronta');
+      // Nothing went to the PC's relay.
+      expect(existsSync(join(m.dir, 'fila.json'))).toBe(false);
+    } finally {
+      await m.stop();
+    }
+  });
+
+  it('cria e lê tarefa no quadro Homologação pelo portão do entregador', async () => {
+    const m = await vps();
+    try {
+      await m.call('/v1/portao/retrato', { retrato: retratoHomologacao(Date.now()) }, GATE_TOKEN);
+      const created = await m.tool('tarefa_criar', { quadro: 'Homologação', dono: DALTON, titulo: 'Conta GitHub', pedido: 'cadastre a conta', criterio: 'x', prazo: '2026-11-30', risco: 'baixo' });
+      expect(created.error, created.text).toBe(false);
+      const id = (JSON.parse(created.text) as { id: string }).id;
+      const seen = await m.tool('tarefa_ver', { id });
+      expect(seen.error, seen.text).toBe(false);
+      expect(seen.text).toContain('Conta GitHub');
+    } finally {
+      await m.stop();
+    }
+    expect(tasksIn(m.dir)).toBe(1);
+  });
+
+  it('com o satélite calado há mais de 2 min, o recado não vai para a fila da Homologações', async () => {
+    const m = await vps();
+    try {
+      await m.call('/v1/portao/retrato', { retrato: retratoHomologacao(Date.now()) }, GATE_TOKEN);
+      // The registro last heard it 3 min ago (what it wrote; nothing called since).
+      writeFileSync(join(m.dir, 'portoes-ouvido', 'homologacoes'), `${Date.now() - 3 * 60_000}\n`);
+      const sent = await m.tool('sessao_enviar', { quadro: 'Homologação', para: DALTON, texto: 'segue', tarefa: 't-5358d400' });
+      expect(JSON.parse(sent.text)).not.toMatchObject({ entregue: 'na-fila' });
+      expect(await m.homologacoesQueue()).toEqual([]);
+    } finally {
+      await m.stop();
     }
   });
 });
