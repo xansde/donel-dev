@@ -23,7 +23,6 @@
 // this bundle runs as such a gate (the Homologações, scripts/portao-satelite.sh): the gate, the probe and the recados
 // only, with the tasks on the personal VPS (`<dir>/portao.token`, satelite.ts).
 
-import { createHash } from 'node:crypto';
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { open as openFile } from 'node:fs/promises';
@@ -66,6 +65,7 @@ import { createTarefasPedidasConsumer, createTarefasPedidasQueue, readQuadroTare
 import { createChatCelularConsumer, createChatCelularQueue, parseChatReplies, type ChatCelularReplies } from './chat-celular';
 import { CELULAR_LOCAL_FILE, createCelularLocalStore } from './celular-local';
 import { createCelularV2Handler } from './celular-v2';
+import { chatResponder } from './chat-responder';
 
 export const TOKEN_HASH_FILE = 'pc.token.sha256';
 /** t-89279f84 — `{url, serviceKeyFile}`: present, the Supabase is the ledger's source (ledger.json is not read). */
@@ -689,18 +689,9 @@ async function main(): Promise<void> {
           return answer(200, { versao: 1, origem: url.replace(/\/+$/, ''), chave: added.chave });
         }
         if (path === '/local/celular/chat-responder') {
-          const curto = typeof input.em_resposta_a === 'string' ? input.em_resposta_a.trim().toLowerCase() : '';
-          const texto = typeof input.texto === 'string' ? input.texto.trim() : '';
-          if (curto.length < 8 || !texto || texto.length > 8000) return answer(400, { erro: 'em_resposta_a (8+ caracteres) e texto' });
           if (!celularLocal) return answer(503, { erro: 'a fila do celular está desligada' });
-          const alvo = celularLocal.conversa(2000).filter((line) => line.autor === 'dono' && line.id.startsWith(curto));
-          if (alvo.length !== 1) return answer(404, { erro: alvo.length ? 'id ambíguo' : 'mensagem não encontrada' });
-          // No id from the script: one made of the line and the text, so a retry after a timeout is the same answer.
-          const h = createHash('sha256').update(`${alvo[0]!.id}\n${texto}`, 'utf8').digest('hex');
-          const derived = `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-8${h.slice(17, 20)}-${h.slice(20, 32)}`;
-          const id = typeof input.id === 'string' && /^[0-9a-f-]{36}$/.test(input.id) ? input.id : derived;
-          await celularLocal.chat.responder(id, alvo[0]!.id, texto);
-          return answer(200, { ok: true, id, em_resposta_a: alvo[0]!.id });
+          const replied = chatResponder(celularLocal, input);
+          return answer(replied.status, replied.body);
         }
         return null;
       },
