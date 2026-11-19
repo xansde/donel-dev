@@ -43,6 +43,8 @@ export const AUDIO_PATH = '/api/pedidos/audio';
 /** t-268ed62a — o áudio do chat do app (base64 em JSON, assinado como texto): o único caminho v2 com até 6 MB. */
 export const CHAT_AUDIO_V2_PATH = '/api/v2/chat/audio';
 export const MAX_CHAT_AUDIO_BYTES = 6 * 1024 * 1024;
+/** t-b03fdec8 — a part of a long voice message (contract v1.6): the same 6 MB as the whole short one. */
+export const CHAT_AUDIO_PARTE_V2_PATH = '/api/v2/chat/audio/parte';
 /** t-a1ad1ca2 — o arquivo do chat (até 15 MB, base64 em JSON): só este caminho v2 recebe ~20 MB (o mesmo teto de `MAX_ARQUIVO_BODY`, src/oraculo/chat-arquivo.ts). */
 export const CHAT_ARQUIVO_V2_PATH = '/api/v2/chat/arquivo';
 export const MAX_CHAT_ARQUIVO_BYTES = Math.ceil((15 * 1024 * 1024) / 3) * 4 + 64 * 1024;
@@ -333,7 +335,7 @@ export function mobileRequestListener(handler: MobileHandler): (req: IncomingMes
     let size = 0;
     const routePath = (req.url ?? '').split('?')[0];
     const isAudio = req.method === 'POST' && routePath === AUDIO_PATH;
-    const isChatAudio = req.method === 'POST' && routePath === CHAT_AUDIO_V2_PATH;
+    const isChatAudio = req.method === 'POST' && (routePath === CHAT_AUDIO_V2_PATH || routePath === CHAT_AUDIO_PARTE_V2_PATH);
     const isChatArquivo = req.method === 'POST' && routePath === CHAT_ARQUIVO_V2_PATH;
     const isCredencial = req.method === 'POST' && routePath === CREDENCIAL_V2_PATH;
     const maxBytes = isAudio ? MAX_AUDIO_BYTES : isChatAudio ? MAX_CHAT_AUDIO_BYTES : isChatArquivo ? MAX_CHAT_ARQUIVO_BYTES : isCredencial ? MAX_CREDENCIAL_BYTES : MAX_BODY_BYTES;

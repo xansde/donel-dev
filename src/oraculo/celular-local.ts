@@ -17,6 +17,12 @@
 // t-a1ad1ca2 — an owner's file (contract v1.4): the bytes land in `<dir>/chat-arquivos/<id>-<clean name>` before the
 // row; the row is one delivery to the Líder that says what the file is and where it is kept.
 //
+// t-b03fdec8 — a voice message of any length (contract v1.6, contrato-audio-longo.md): the phone uploads it in parts of
+// 60 s while the owner speaks, each one on disk (`<dir>/chat-audio/<id>/<n>.part`) before its "ok". The row shows up as
+// `subindo` at the first part and is never taken to the Líder until the `fim` (or 30 min without a part, closed by the
+// daemon as interrupted) joins the parts in order into `<id>.<ext>`. Then it is the same `transcrevendo` line as above.
+// What reached the VPS is never dropped: a hole in the middle is kept as a gap the transcription marks.
+//
 // t-753e8199 — the owner corrects an audio's transcription (contract v1.3): the line's text becomes his, and the
 // correction is a row of its own in `correcoes` (never a line of the conversation), one delivery to the Líder under its
 // OWN id and marker. The marker is what brings the Líder's answer back to the phone (answersIn reads the last time a
@@ -24,11 +30,11 @@
 // audio already answered. His answer is kept against the correction and shown on the phone as an answer to the audio.
 
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { DecisaoRow, DecisoesQueue, Lado } from './decisoes';
 import type { TarefaPedidaRow, TarefasPedidasQueue } from './tarefas-pedidas';
-import type { ChatCelularQueue, ChatCelularRow } from './chat-celular';
+import { CHAT_MAX_TEXT, type ChatCelularQueue, type ChatCelularRow } from './chat-celular';
 import { phoneMarker } from '../main/lider/celular-chat';
 import { CHAT_ARQUIVO_DIR, nomeLimpo, tamanhoTexto } from './chat-arquivo';
 
@@ -42,7 +48,31 @@ export const CHAT_AUDIO_DIR = 'chat-audio';
 /** The formats the phone records (contract v1.2), and the file's extension. */
 export const CHAT_AUDIO_MIMES: Readonly<Record<string, string>> = { 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mp4': 'mp4', 'audio/aac': 'aac', 'audio/wav': 'wav' };
 
+/** Contract v1.6: only a container that joins by concatenation goes in parts (mp4 keeps its index at the end). */
+export const CHAT_AUDIO_PARTE_MIMES: readonly string[] = ['audio/webm', 'audio/ogg'];
+/** Each part is 60 s of the same recording (the phone's `timeslice`). */
+export const CHAT_AUDIO_PARTE_MS = 60_000;
+/** 2 h on the VPS (contract v1.6): the part that passes it is refused. */
+export const CHAT_AUDIO_MAX_PARTES = 120;
+export const CHAT_AUDIO_MAX_MS = CHAT_AUDIO_MAX_PARTES * CHAT_AUDIO_PARTE_MS;
+/** A text longer than this goes to the Líder as its beginning, its end and the path of the whole `.txt`. */
+export const CHAT_AUDIO_MAX_LIDER = 40_000;
+const CORTE_PONTA = 15_000;
+export const SEM_PARTE_0 = 'sem-parte-0';
+
 export type Insert = { readonly ok: true; readonly nova: boolean } | { readonly ok: false; readonly erro: 'conflito' };
+export type ParteInsert = { readonly ok: true; readonly nova: boolean; readonly recebidas: number } | { readonly ok: false; readonly erro: 'conflito' | 'fechado' };
+export type FimAudio =
+  | { readonly ok: true; readonly nova: boolean; readonly estado: ChatAudio['estado'] }
+  | { readonly ok: false; readonly erro: 'conflito' | 'nao-encontrada' }
+  | { readonly ok: false; readonly erro: 'faltam-partes'; readonly faltam: number[] };
+/** A run of parts received in a row, and where its bytes are in the joined file. */
+export interface AudioTrecho {
+  readonly n0: number;
+  readonly n1: number;
+  readonly inicio: number;
+  readonly fim: number;
+}
 /** `antes`: the line's text the correction replaced (what the glossary learns from), only when `nova`. */
 export type Correcao =
   | { readonly ok: true; readonly nova: boolean; readonly antes?: string }
@@ -80,10 +110,23 @@ export interface PedidaLocal extends Reservable {
 }
 
 export interface ChatAudio {
-  estado: 'transcrevendo' | 'transcrito' | 'falhou';
-  readonly duracao_ms: number;
+  /** `subindo`: parts still coming (contract v1.6), never taken to the Líder. */
+  estado: 'subindo' | 'transcrevendo' | 'transcrito' | 'falhou';
+  duracao_ms: number;
   readonly mime: string;
-  readonly sha256: string;
+  /** The whole file's; `""` while the parts come. */
+  sha256: string;
+  /** Contract v1.6 only: each part's sha256 by its number (the idempotence of `(id, n)`). */
+  partes?: Record<string, string>;
+  /** Contract v1.6: when the last part came (the 30 min without `fim`). */
+  ultima_parte_em?: number;
+  /** Contract v1.6: the number of parts the recording had (the `fim`'s, or what the VPS had when it closed it). */
+  total?: number;
+  interrompido?: boolean;
+  /** Contract v1.6: the runs of parts in the joined file (more than one = a hole). */
+  trechos?: AudioTrecho[];
+  /** Contract v1.6: "feitos/total" while the pieces are transcribed. */
+  pedacos?: string;
   motivo?: string;
   /** The owner corrected the transcription (contract v1.3). */
   corrigida?: true;
@@ -144,7 +187,16 @@ export interface ConversaLinha {
   readonly estado: 'na-fila' | 'com-o-lider' | 'respondida' | 'recusada' | null;
   readonly entregue_em: string | null;
   /** Only on a line that came as audio. */
-  readonly audio?: { readonly estado: ChatAudio['estado']; readonly duracao_ms: number; readonly motivo: string | null; readonly corrigida?: true };
+  readonly audio?: {
+    readonly estado: ChatAudio['estado'];
+    readonly duracao_ms: number;
+    readonly motivo: string | null;
+    readonly corrigida?: true;
+    /** Contract v1.6 (only on an audio sent in parts): the parts the VPS has, whether it was cut, the pieces done. */
+    readonly partes?: number;
+    readonly interrompido?: boolean;
+    readonly pedacos?: string;
+  };
   /** Only on a line that came as a file. */
   readonly arquivo?: { readonly nome: string; readonly mime: string; readonly tamanho: number };
 }
@@ -156,6 +208,8 @@ export interface AudioPendente {
   readonly mime: string;
   readonly duracao_ms: number;
   readonly criada_em: string;
+  /** Contract v1.6: sent in parts (the worker transcribes it in pieces). */
+  readonly partes?: { readonly total: number; readonly interrompido: boolean; readonly trechos: readonly AudioTrecho[] };
 }
 
 export interface CelularLocalStore {
@@ -170,6 +224,24 @@ export interface CelularLocalStore {
    * the same bytes is the same row (`nova: false`, nothing written); other bytes, or a typed line's id: conflict.
    */
   addChatAudio(id: string, audio: { readonly mime: string; readonly duracao_ms: number }, bytes: Uint8Array): Insert;
+  /**
+   * Contract v1.6: part `n` of the voice message `id`, on disk (600, temp → rename) before the row. The same `(id, n)`
+   * with the same bytes is `nova: false`; other bytes, another mime, or the id of a line that is not an audio in parts:
+   * conflict; a new part after the `fim`: `fechado`.
+   */
+  addChatAudioParte(id: string, n: number, mime: string, bytes: Uint8Array): ParteInsert;
+  /**
+   * Contract v1.6: the end of a recording in parts. Without every part `0..partes-1` and not `interrompido`:
+   * `faltam-partes`. Else the parts that came are joined in order into `<id>.<ext>` and the line waits as
+   * `transcrevendo` (or `falhou` without part 0). The same `fim` again: `nova: false`.
+   */
+  fecharAudioPartes(id: string, fim: { readonly partes: number; readonly duracao_ms: number; readonly interrompido: boolean }): FimAudio;
+  /** The audios in parts still open (`subindo`), with when their last part came. */
+  audiosAbertos(): Array<{ readonly id: string; readonly ultima_parte_em: number; readonly partes: number }>;
+  /** Where the parts of `id` wait for the `fim`. */
+  partesDir(id: string): string;
+  /** The transcription's progress of a long audio ("feitos/total"); only while it is `transcrevendo`. */
+  andamentoAudio(id: string, pedacos: string): void;
   /** The state of a voice line (`null` = no such line, or a typed one). */
   audioEstado(id: string): ChatAudio['estado'] | null;
   /** The voice lines still waiting for their transcription, oldest first. */
@@ -226,14 +298,20 @@ const oneLine = (value: string): string => value.replace(/[\u0000-\u001f\u007f]+
 /** `0:27`, `4:05`. */
 export function duracaoTexto(ms: number): string {
   const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds >= 3600) return `${Math.floor(seconds / 3600)}:${String(Math.floor((seconds % 3600) / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }
+
+/** Where the whole transcription of a long audio is kept (beside the audio). */
+export const transcricaoFile = (audioDir: string, id: string): string => join(audioDir, `${id}.txt`);
 
 export function createCelularLocalStore(filePath: string, now: () => number = Date.now): CelularLocalStore {
   let data = load();
   const audioDir = join(dirname(filePath), CHAT_AUDIO_DIR);
   const audioFile = (id: string, mime: string): string => join(audioDir, `${id}.${CHAT_AUDIO_MIMES[mime] ?? 'bin'}`);
   const arquivoDir = join(dirname(filePath), CHAT_ARQUIVO_DIR);
+  const partesDir = (id: string): string => join(audioDir, id);
+  const parteFile = (id: string, n: number): string => join(partesDir(id), `${n}.part`);
   /** The audio and files of the chat rows the last prune dropped: deleted once the file without them is written. */
   let prunedAudio: string[] = [];
 
@@ -278,6 +356,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
         if (dropped >= excess || (row.autor === 'dono' && !row.entregue_em)) return true;
         dropped += 1;
         if (row.audio) prunedAudio.push(audioFile(row.id, row.audio.mime));
+        if (row.audio?.partes) prunedAudio.push(transcricaoFile(audioDir, row.id));
         if (row.arquivo) prunedAudio.push(join(arquivoDir, row.arquivo.guardado));
         return false;
       });
@@ -383,18 +462,32 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
   const leaderText = (row: ChatLocal): string => {
     if (!row.audio) return row.texto;
     const length = duracaoTexto(row.audio.duracao_ms);
-    if (row.audio.estado === 'transcrito') return `🎙 Áudio de ${length} (transcrição): ${row.texto}`;
-    return `🎙 Áudio de ${length} que não consegui transcrever (${row.audio.motivo ?? 'sem motivo'}). Está guardado na VPS em ${audioFile(row.id, row.audio.mime)}.`;
+    if (row.audio.estado === 'transcrito') {
+      // Contract v1.6: past ~40 thousand characters, the beginning, the end and where the whole text is.
+      if (row.texto.length > CHAT_AUDIO_MAX_LIDER) {
+        const head = row.texto.slice(0, CORTE_PONTA).replace(/[\uD800-\uDBFF]$/, '');
+        const tail = row.texto.slice(-CORTE_PONTA).replace(/^[\uDC00-\uDFFF]/, '');
+        return `🎙 Áudio de ${length} (transcrição longa, ${row.texto.length} caracteres; o texto inteiro está na VPS em ${transcricaoFile(audioDir, row.id)}, leia lá o meio). Começo: ${head} […] Fim: ${tail}`;
+      }
+      return `🎙 Áudio de ${length} (transcrição): ${row.texto}`;
+    }
+    const motivo = row.audio.motivo === SEM_PARTE_0 ? 'o começo da gravação não chegou à VPS' : (row.audio.motivo ?? 'sem motivo');
+    return `🎙 Áudio de ${length}${row.audio.interrompido ? ' (gravação interrompida)' : ''} que não consegui transcrever (${motivo}). Está guardado na VPS em ${audioFile(row.id, row.audio.mime)}.`;
   };
   /** Contract v1.4: the whole message the Líder reads, with the phone's marker (his answer goes back by it). */
   const arquivoText = (row: ChatLocal, arquivo: ChatArquivo): string => {
     const legenda = row.texto.trim();
     return `📎 O dono mandou um arquivo pelo celular ${phoneMarker(row.id)}: ${oneLine(arquivo.nome)} (${tamanhoTexto(arquivo.tamanho)}, ${oneLine(arquivo.mime)}), em ${join(arquivoDir, arquivo.guardado)}.${legenda ? ` ${legenda}` : ''}`;
   };
-  const asChatRow = (row: ChatLocal): ChatCelularRow =>
-    row.arquivo ? { id: row.id, texto: arquivoText(row, row.arquivo), criada_em: row.criada_em, inteiro: true } : { id: row.id, texto: leaderText(row), criada_em: row.criada_em };
+  const asChatRow = (row: ChatLocal): ChatCelularRow => {
+    if (row.arquivo) return { id: row.id, texto: arquivoText(row, row.arquivo), criada_em: row.criada_em, inteiro: true };
+    const texto = leaderText(row);
+    // A long transcription goes whole (contract v1.6), in the same form the queue gives a short line, never cut at 3500.
+    if (row.audio && texto.length > CHAT_MAX_TEXT) return { id: row.id, texto: `◆ Do dono, pelo chat do celular ${phoneMarker(row.id)}: «${texto}»`, criada_em: row.criada_em, inteiro: true };
+    return { id: row.id, texto, criada_em: row.criada_em };
+  };
   /** A voice line goes to the Líder only once it is words (or a failure): one delivery, never two. */
-  const waitingAudio = (row: ChatLocal): boolean => row.audio?.estado === 'transcrevendo';
+  const waitingAudio = (row: ChatLocal): boolean => row.audio?.estado === 'transcrevendo' || row.audio?.estado === 'subindo';
   /** Contract v1.3: under the correction's own marker (see the head of this file). */
   const correcaoRow = (row: CorrecaoLocal): ChatCelularRow => ({
     id: row.id,
@@ -513,7 +606,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
       if (isCorrecao(id)) return { ok: false, erro: 'conflito' };
       const sha256 = createHash('sha256').update(bytes).digest('hex');
       const existing = data.chat.find((row) => row.id === id);
-      if (existing) return existing.autor === 'dono' && existing.audio?.sha256 === sha256 ? { ok: true, nova: false } : { ok: false, erro: 'conflito' };
+      if (existing) return existing.autor === 'dono' && !existing.audio?.partes && existing.audio?.sha256 === sha256 ? { ok: true, nova: false } : { ok: false, erro: 'conflito' };
       // The bytes first: a row never points to an audio that is not on disk.
       const file = audioFile(id, audio.mime);
       mkdirSync(audioDir, { recursive: true, mode: 0o700 });
@@ -525,19 +618,126 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
       });
       return { ok: true, nova: true };
     },
+    addChatAudioParte(id, n, mime, bytes) {
+      if (isCorrecao(id)) return { ok: false, erro: 'conflito' };
+      const sha256 = createHash('sha256').update(bytes).digest('hex');
+      const existing = data.chat.find((row) => row.id === id);
+      if (existing) {
+        const audio = existing.autor === 'dono' ? existing.audio : undefined;
+        if (!audio?.partes || audio.mime !== mime) return { ok: false, erro: 'conflito' };
+        const known = audio.partes[String(n)];
+        if (known) return known === sha256 ? { ok: true, nova: false, recebidas: Object.keys(audio.partes).length } : { ok: false, erro: 'conflito' };
+        if (audio.estado !== 'subindo') return { ok: false, erro: 'fechado' };
+      }
+      // The bytes first: a row never counts a part that is not on disk.
+      const file = parteFile(id, n);
+      mkdirSync(partesDir(id), { recursive: true, mode: 0o700 });
+      const tmp = `${file}.tmp-${process.pid}`;
+      writeFileSync(tmp, bytes, { mode: 0o600 });
+      renameSync(tmp, file);
+      let recebidas = 0;
+      commit((next) => {
+        let row = next.chat.find((candidate) => candidate.id === id);
+        if (!row) {
+          row = { id, autor: 'dono', texto: '', em_resposta_a: null, criada_em: iso(), audio: { estado: 'subindo', duracao_ms: 0, mime, sha256: '', partes: {} } };
+          next.chat.push(row);
+        }
+        const audio = row.audio!;
+        audio.partes![String(n)] = sha256;
+        audio.ultima_parte_em = now();
+        recebidas = Object.keys(audio.partes!).length;
+        audio.duracao_ms = recebidas * CHAT_AUDIO_PARTE_MS;
+      });
+      return { ok: true, nova: true, recebidas };
+    },
+    fecharAudioPartes(id, fim) {
+      const existing = data.chat.find((row) => row.id === id);
+      if (!existing) return fim.interrompido ? { ok: false, erro: 'nao-encontrada' } : { ok: false, erro: 'faltam-partes', faltam: Array.from({ length: fim.partes }, (_, n) => n) };
+      const audio = existing.autor === 'dono' ? existing.audio : undefined;
+      if (!audio?.partes) return { ok: false, erro: 'conflito' };
+      if (audio.estado !== 'subindo') return { ok: true, nova: false, estado: audio.estado };
+      const have = Object.keys(audio.partes).map(Number).sort((a, b) => a - b);
+      // Parts past the `fim`'s count are not dropped: what reached the VPS is the owner's.
+      const total = Math.max(fim.partes, (have[have.length - 1] ?? -1) + 1);
+      const got = new Set(have);
+      const faltam = Array.from({ length: total }, (_, n) => n).filter((n) => !got.has(n));
+      if (faltam.length && !fim.interrompido) return { ok: false, erro: 'faltam-partes', faltam };
+      // Joined in order, the runs remembered (a hole between two is a gap the transcription marks).
+      const trechos: AudioTrecho[] = [];
+      const file = audioFile(id, audio.mime);
+      const tmp = `${file}.tmp-${process.pid}`;
+      const hash = createHash('sha256');
+      writeFileSync(tmp, new Uint8Array(0), { mode: 0o600 });
+      let offset = 0;
+      for (const n of have) {
+        const bytes = readFileSync(parteFile(id, n));
+        appendFileSync(tmp, bytes);
+        hash.update(bytes);
+        const last = trechos[trechos.length - 1];
+        if (last && last.n1 === n - 1) trechos[trechos.length - 1] = { ...last, n1: n, fim: offset + bytes.length };
+        else trechos.push({ n0: n, n1: n, inicio: offset, fim: offset + bytes.length });
+        offset += bytes.length;
+      }
+      renameSync(tmp, file);
+      const sha256 = hash.digest('hex');
+      const semInicio = !got.has(0);
+      commit((next) => {
+        const row = next.chat.find((candidate) => candidate.id === id)!;
+        const a = row.audio!;
+        a.estado = semInicio ? 'falhou' : 'transcrevendo';
+        if (semInicio) a.motivo = SEM_PARTE_0;
+        a.sha256 = sha256;
+        a.total = total;
+        a.interrompido = fim.interrompido;
+        a.trechos = trechos;
+        a.duracao_ms = fim.duracao_ms > 0 ? fim.duracao_ms : have.length * CHAT_AUDIO_PARTE_MS;
+      });
+      // The parts are in the joined file now (kept 7 days, as every audio).
+      try {
+        rmSync(partesDir(id), { recursive: true, force: true });
+      } catch {
+        // the 7-day sweep takes it
+      }
+      return { ok: true, nova: true, estado: semInicio ? 'falhou' : 'transcrevendo' };
+    },
+    audiosAbertos() {
+      return data.chat
+        .filter((row) => row.autor === 'dono' && row.audio?.estado === 'subindo')
+        .map((row) => ({ id: row.id, ultima_parte_em: row.audio!.ultima_parte_em ?? Date.parse(row.criada_em), partes: Object.keys(row.audio!.partes ?? {}).length }));
+    },
+    partesDir,
+    andamentoAudio(id, pedacos) {
+      commit((next) => {
+        const row = next.chat.find((candidate) => candidate.id === id && candidate.autor === 'dono');
+        if (row?.audio?.estado !== 'transcrevendo' || row.audio.pedacos === pedacos) return false;
+        row.audio.pedacos = pedacos;
+      });
+    },
     audioEstado(id) {
       return data.chat.find((row) => row.id === id)?.audio?.estado ?? null;
     },
     audiosPendentes() {
       return data.chat
         .filter((row) => row.autor === 'dono' && waitingAudio(row))
-        .map((row) => ({ id: row.id, file: audioFile(row.id, row.audio!.mime), mime: row.audio!.mime, duracao_ms: row.audio!.duracao_ms, criada_em: row.criada_em }));
+        .filter((row) => row.audio!.estado === 'transcrevendo')
+        .map((row) => {
+          const a = row.audio!;
+          return {
+            id: row.id,
+            file: audioFile(row.id, a.mime),
+            mime: a.mime,
+            duracao_ms: a.duracao_ms,
+            criada_em: row.criada_em,
+            ...(a.partes ? { partes: { total: a.total ?? 0, interrompido: a.interrompido === true, trechos: a.trechos ?? [] } } : {}),
+          };
+        });
     },
     concluirAudio(id, result) {
       let done = false;
       commit((next) => {
         const row = next.chat.find((candidate) => candidate.id === id && candidate.autor === 'dono');
         if (!row?.audio || row.audio.estado !== 'transcrevendo') return false;
+        delete row.audio.pedacos;
         if ('texto' in result) {
           row.audio.estado = 'transcrito';
           row.texto = result.texto;
@@ -615,7 +815,18 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
         criada_em: row.criada_em,
         estado: estadoDe(row, answered),
         entregue_em: row.entregue_em ?? null,
-        ...(row.audio ? { audio: { estado: row.audio.estado, duracao_ms: row.audio.duracao_ms, motivo: row.audio.motivo ?? null, ...(row.audio.corrigida ? { corrigida: true as const } : {}) } } : {}),
+        ...(row.audio
+          ? {
+              audio: {
+                estado: row.audio.estado,
+                duracao_ms: row.audio.duracao_ms,
+                motivo: row.audio.motivo ?? null,
+                ...(row.audio.corrigida ? { corrigida: true as const } : {}),
+                ...(row.audio.partes ? { partes: Object.keys(row.audio.partes).length, interrompido: row.audio.interrompido === true } : {}),
+                ...(row.audio.pedacos ? { pedacos: row.audio.pedacos } : {}),
+              },
+            }
+          : {}),
         ...(row.arquivo ? { arquivo: { nome: row.arquivo.nome, mime: row.arquivo.mime, tamanho: row.arquivo.tamanho } } : {}),
       }));
     },
