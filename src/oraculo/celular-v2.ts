@@ -15,7 +15,7 @@ import type { LedgerDoc } from '../shared/ledger/contract';
 import { cartaRows, tarefaRows, type CartaProvaRef, type PlaceInfoOf, type TarefaRow } from '../shared/ledger/mirror';
 import { prepareProof, type ProofReader } from '../main/ledger-mirror/cartas';
 import type { MobileRequest, MobileResponse } from '../main/celular/server';
-import type { CelularLocalStore } from './celular-local';
+import { CHAT_AUDIO_MIMES, type CelularLocalStore } from './celular-local';
 
 export const V2_PREFIX = '/api/v2/';
 export const SIGNATURE_SCHEME = 'donel-req-v1';
@@ -23,6 +23,11 @@ export const CLOCK_WINDOW_MS = 5 * 60_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const DAY_MS = 86_400_000;
 const MAX_BODY = 64 * 1024;
+/** t-268ed62a — only the voice message (`POST chat/audio`, base64 in JSON) gets this much (contract v1.2). */
+export const CHAT_AUDIO_PATH = 'chat/audio';
+export const MAX_AUDIO_BODY = 6 * 1024 * 1024;
+const MAX_AUDIO_MS = 5 * 60_000;
+const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
 const HEADERS = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } as const;
 const json = (status: number, value: unknown): MobileResponse => ({ status, headers: { ...HEADERS, 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(value) });
@@ -40,6 +45,8 @@ export interface CelularV2Deps {
   readonly arvoreFile: string;
   /** Runs the consumers now (a write should not wait a 15 s round). */
   readonly kick?: (fila: 'decisoes' | 'pedidas' | 'chat') => void;
+  /** A new voice message for the daemon's transcriber (chat-audio.ts). */
+  readonly audio?: (id: string) => void;
   readonly now?: () => number;
 }
 
@@ -47,8 +54,8 @@ export function signedMessage(method: string, pathWithQuery: string, ts: string,
   return `${SIGNATURE_SCHEME}\n${method.toUpperCase()}\n${pathWithQuery}\n${ts}\n${createHash('sha256').update(body, 'utf8').digest('hex')}`;
 }
 
-function parseBody(body: string): Record<string, unknown> | null {
-  if (body.length > MAX_BODY) return null;
+function parseBody(body: string, max = MAX_BODY): Record<string, unknown> | null {
+  if (body.length > max) return null;
   try {
     const value = JSON.parse(body) as unknown;
     return typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
@@ -247,6 +254,21 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     return json(200, { ok: true, nova: added.nova, estado: deps.store.chatEstado(id) });
   }
 
+  /** Contract v1.2: the answer goes out as soon as the audio is on disk, never after the transcription. */
+  function chatAudio(body: Record<string, unknown>): MobileResponse {
+    const { id, mime, duracao_ms: duracao, audio_b64: b64 } = body;
+    if (typeof id !== 'string' || !UUID.test(id)) return erro(400, 'corpo', 'id: uuid v4 em minúsculas');
+    if (typeof mime !== 'string' || !Object.hasOwn(CHAT_AUDIO_MIMES, mime)) return erro(415, 'formato');
+    if (typeof duracao !== 'number' || !Number.isInteger(duracao) || duracao < 1) return erro(400, 'corpo', 'duracao_ms');
+    if (duracao > MAX_AUDIO_MS) return erro(413, 'grande-demais');
+    if (typeof b64 !== 'string' || !b64 || !BASE64.test(b64)) return erro(400, 'corpo', 'audio_b64: base64 padrão, sem quebras');
+    const added = deps.store.addChatAudio(id, { mime, duracao_ms: duracao }, Buffer.from(b64, 'base64'));
+    if (!added.ok) return erro(409, 'conflito', 'Esta mensagem já existe com outro conteúdo.');
+    const estado = deps.store.audioEstado(id) === 'transcrevendo' ? 'transcrevendo' : deps.store.chatEstado(id);
+    if (added.nova) deps.audio?.(id);
+    return json(200, { ok: true, nova: added.nova, estado });
+  }
+
   function arvore(): MobileResponse {
     try {
       const raw = JSON.parse(readFileSync(deps.arvoreFile, 'utf8')) as unknown;
@@ -269,8 +291,10 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     const path = url.pathname.slice(V2_PREFIX.length);
     const method = request.method.toUpperCase();
     const isPost = method === 'POST';
-    const body = isPost ? parseBody(request.body ?? '') : null;
-    if (isPost && !body) return erro(400, 'invalido', 'corpo JSON');
+    const isAudio = isPost && path === CHAT_AUDIO_PATH;
+    if (isAudio && (request.body ?? '').length > MAX_AUDIO_BODY) return erro(413, 'grande-demais');
+    const body = isPost ? parseBody(request.body ?? '', isAudio ? MAX_AUDIO_BODY : MAX_BODY) : null;
+    if (isPost && !body) return isAudio ? erro(400, 'corpo') : erro(400, 'invalido', 'corpo JSON');
     if (method === 'GET' && path === 'ping') return json(200, { ok: true, agora: new Date(now()).toISOString(), versao: 'v2' });
     if (method === 'GET' && path === 'cartas') return cartas();
     if (method === 'GET' && path === 'prova') return prova(url.searchParams);
@@ -279,6 +303,7 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     if (isPost && path === 'tarefas-pedidas') return pedir(body!);
     if (method === 'GET' && path === 'tarefas-pedidas') return json(200, { pedidas: deps.store.pedidasView(100) });
     if (isPost && path === 'chat') return chatEnviar(body!);
+    if (isAudio) return chatAudio(body!);
     if (method === 'GET' && path === 'chat') {
       const limit = Math.min(400, Math.max(1, Number(url.searchParams.get('limite')) || 200));
       return json(200, { mensagens: deps.store.conversa(limit) });

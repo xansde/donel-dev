@@ -65,6 +65,8 @@ import { createTarefasPedidasConsumer, createTarefasPedidasQueue, readQuadroTare
 import { createChatCelularConsumer, createChatCelularQueue, parseChatReplies, type ChatCelularReplies } from './chat-celular';
 import { CELULAR_LOCAL_FILE, createCelularLocalStore } from './celular-local';
 import { createCelularV2Handler } from './celular-v2';
+import { CHAT_AUDIO_TIMEOUT_MS, createChatAudioWorker, DAEMON_WHISPER_URL } from './chat-audio';
+import { whisperServerTranscriber } from '../main/celular/transcrever';
 import { chatResponder } from './chat-responder';
 
 export const TOKEN_HASH_FILE = 'pc.token.sha256';
@@ -555,6 +557,20 @@ async function main(): Promise<void> {
       state.running = false;
     })();
   };
+  // t-268ed62a — the owner's voice messages, transcribed here by the resident transcriber (loopback only), one at a time.
+  let audioWorker: ReturnType<typeof createChatAudioWorker> | null = null;
+  if (celularLocal) {
+    try {
+      audioWorker = createChatAudioWorker({
+        store: celularLocal,
+        transcribe: whisperServerTranscriber({ url: process.env.DONEL_WHISPER_URL || DAEMON_WHISPER_URL, timeoutMs: CHAT_AUDIO_TIMEOUT_MS }),
+        kick: (fila) => kick(fila),
+        log: (line) => console.log(line),
+      });
+    } catch (error) {
+      console.log(`[chat-audio] transcritor desligado: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   const v2 = celularLocal && createCelularV2Handler({
     verify: (message, signature) => {
       const device = celular?.verifyDecisionSignature(message, signature);
@@ -573,6 +589,7 @@ async function main(): Promise<void> {
     readProof: createProofReader(ledgerProofsDir(ledgerFile)),
     arvoreFile: join(homedir(), '.donel', 'estado-derivado', 'arvore.json'),
     kick,
+    audio: (id) => audioWorker?.enqueue(id),
   });
   celular = createCelularCore({
     v2: () => (filaLocal() && v2 ? v2 : null),
@@ -790,6 +807,8 @@ async function main(): Promise<void> {
   });
   chatCelular.start();
   consumers = { decisoes: () => decisoes.round(), pedidas: () => tarefasPedidas.round(), chat: () => chatCelular.round() };
+  // After the consumers: an audio a restart left half-way is transcribed again and kicks the chat round.
+  audioWorker?.start();
   console.log(`[oraculo] no ar em ${server.url} (${Object.keys(first.doc.tasks).length} tarefas${first.readOnly ? ', só leitura' : ''}, fonte: ${source === 'sqlite' ? 'SQLite' : store ? 'Supabase' : 'ledger.json'})`);
   const stop = (): void => {
     // The SQLite is closed first: its WAL goes into the file (a copy of ledger.sqlite alone is then the whole ledger).
@@ -804,6 +823,7 @@ async function main(): Promise<void> {
     decisoes.stop();
     tarefasPedidas.stop();
     chatCelular.stop();
+    audioWorker?.stop();
     mirror?.dispose();
     void Promise.all([server?.close(), celular?.dispose(), gate.close()]).then(() => process.exit(0));
   };
