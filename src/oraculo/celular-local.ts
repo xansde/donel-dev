@@ -96,6 +96,8 @@ export interface CelularLocalStore {
   conversa(limit: number): ConversaLinha[];
   /** The state of one of the owner's lines. */
   chatEstado(id: string): ConversaLinha['estado'];
+  /** A line of the Líder: an answer, or a loose one (`emRespostaA` null). The same id twice is one line. */
+  liderDiz(id: string, emRespostaA: string | null, texto: string): void;
 }
 
 const EMPTY = (): LocalFile => ({ versao: 1, decisoes: [], pedidas: [], chat: [] });
@@ -350,6 +352,12 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
         estado: estadoDe(row, answered),
         entregue_em: row.entregue_em ?? null,
       }));
+    },
+    liderDiz(id, emRespostaA, texto) {
+      commit((next) => {
+        if (next.chat.some((row) => row.id === id)) return false;
+        next.chat.push({ id, autor: 'lider', texto, em_resposta_a: emRespostaA, criada_em: iso() });
+      });
     },
     chatEstado(id) {
       const row = data.chat.find((candidate) => candidate.id === id);
