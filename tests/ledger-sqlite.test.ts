@@ -97,8 +97,13 @@ describe('ledger em SQLite', () => {
     other.close();
     expect((await a.ledger.apply({ kind: 'dono' }, criar(2))).ok).toBe(false);
     expect(Object.keys(a.ledger.load().doc.tasks)).toHaveLength(1);
+    // Sem o ROLLBACK a transação ficaria aberta e toda op seguinte seria recusada: o daemon travaria.
+    const fix = new DatabaseSync(join(dir, 'ledger.sqlite'));
+    fix.exec('DROP TRIGGER barra;');
+    fix.close();
+    expect((await a.ledger.apply({ kind: 'dono' }, criar(3))).ok).toBe(true);
     a.store.close();
-    expect(Object.keys(service(dir).ledger.load().doc.tasks)).toHaveLength(1);
+    expect(Object.keys(service(dir).ledger.load().doc.tasks)).toHaveLength(2);
   });
 
   it('a fonte: SQLite só semeado e com a marca; banco sem marca ou marca sem banco param o daemon, nunca sobe vazio', async () => {
