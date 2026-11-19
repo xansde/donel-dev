@@ -140,6 +140,36 @@ esteira (`default-risco-esteira`, que pediria 2 revisores no sensível), como
 o contrato de Concluir prevê para repos com política própria. Se o repo um
 dia ganhar um segundo mantenedor, revisar esta seção antes de concluir card
 sensível.
+Desde 08/10 (o Claude mescla na `staging`) e 18/11 (skill `merge-direto`), o
+revisor antes do merge é um subagente cético de fora; a validação do dono
+acontece no alfa, **depois** do merge. Ninguém espera o dono para mesclar na
+`staging`.
+
+## Cadeira Dev rápido (pedido do dono, 19/11, t-7c942870)
+
+"Precisa de staging mesmo? Se a gente tem PostHog que consegue usar Feature
+Flag [...] 2 minutos de teste pra todo seu código já é mais do que o
+suficiente. [...] a gente tem as regras do coletor. [...] só isso é o nosso
+limitante." O papel de fábrica `dev-rapido` (`src/shared/roles.ts`) e a skill
+`dev-rapido` levam a mudança do pedido à produção sem esperar ninguém:
+
+- **Flag no lugar de staging.** Recurso novo nasce desligado: PostHog quando o
+  app tiver; no Donel Dev e no Oráculo, flag local (`~/.donel/flags/<nome>`,
+  existe = ligada, lida na hora). Sobe desligado, confere, liga; a volta é
+  desligar. Aqui a `staging` (alfa) segue sendo a branch de integração e o
+  canal que o dono usa; `main` e o repo público continuam só com ele.
+- **Verify de até 2 min**: `npm run verify:rapido` (tipos, testes ligados ao
+  diff, build como smoke; imprime o tempo), direto, **sem** a fila do
+  `verify.lock` e sem `limitador.py pesado`. Medido em 19/11: o verify inteiro
+  leva ~1 min numa VPS parada; o que demorava era a fila e a espera de revisão.
+  O verify completo fica para o build do alfa e para quando o cético pedir.
+- **Revisão** pelo subagente cético da `merge-direto` e merge pela própria
+  sessão; o papel não passa pelo Revisor de cadeira.
+- **Fica**: a regra do coletor (worktree, merge e clone principal em dia no
+  mesmo dia), migração de banco e mudança de dado com backup e volta (flag não
+  desfaz schema), o que é do dono (credencial nova, pagamento, apagar dado
+  dele, `main`, repo público) e a trava de segredos.
+- Inventário do que mudou e do que ficou: [`docs/dev-rapido.md`](docs/dev-rapido.md).
 
 ## Regras do projeto
 
@@ -201,7 +231,7 @@ sensível.
   e o código do app não os lê nem grava (`docs/design/navegador-interno.md`).
 - **Testes enxutos (decisão do dono, 03/11 — substitui o "TDD com escopo" e
   as camadas de teste de 08/10)**: "o mais próximo de zero, focando no que
-  realmente é importante". A suíte tem ~17 arquivos vitest e **um** smoke.
+  realmente é importante". A suíte tem ~160 arquivos vitest (19/11) e **um** smoke.
   Teste só entra para guardar o que quebraria **sem o dono perceber usando o
   app**: credencial (`src/main/accounts/`), argv de lançamento, dado
   persistido que um canal pode apagar (config, `mindscape.json`, registro de
@@ -212,6 +242,7 @@ sensível.
   - Verificação padrão: `npm run verify` (typecheck + `npm test` + `electron-vite
     build`). O build entrou em 05/11: um merge deixou uma chave aberta no CSS,
     typecheck e testes passaram e o instalador quebrou.
+  - Verificação da cadeira Dev rápido: `npm run verify:rapido` (seção acima).
   - **Conflito com `staging` é do Dev, nunca do Revisor**: o Dev mescla a base,
     resolve e roda `npm run verify` de novo; PR com conflito volta ao Dev, e o
     Revisor só aprova e mergeia PR limpo.
