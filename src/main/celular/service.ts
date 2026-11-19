@@ -53,6 +53,12 @@ export interface CelularCoreDeps {
   readonly whisperUrl?: string | null;
   /** Saída iii (18/11): the phone app's routes under `/api/v2/` (the daemon only). */
   readonly v2?: () => ((request: MobileRequest) => Promise<MobileResponse>) | null;
+  /**
+   * Passo 9 (the Oráculo's entregador apart): where this server listens, and the port the phone reaches (the
+   * entregador's, which hands this one everything but the chat). Absent = DONEL_CELULAR_PORT or 47815, both.
+   */
+  readonly port?: number;
+  readonly publicPort?: number;
 }
 
 export interface CelularCore extends CelularService {
@@ -157,7 +163,8 @@ export function createCelularCore(deps: CelularCoreDeps): CelularCore {
     // ledger ilegível na abertura: fica sem ponto de partida (sem isso, a primeira mudança avisaria a caixa inteira)
   }
   // Outra porta só para uma instância de teste ao lado do app aberto (as duas não dividem a 47815).
-  const port = Number(process.env.DONEL_CELULAR_PORT) || MOBILE_PORT;
+  const port = deps.port ?? (Number(process.env.DONEL_CELULAR_PORT) || MOBILE_PORT);
+  const publicPort = deps.publicPort ?? port;
   let server: MobileServer | null = null;
   let status: CelularState['status'] = 'off';
   let error: string | null = null;
@@ -215,7 +222,7 @@ export function createCelularCore(deps: CelularCoreDeps): CelularCore {
     if (!server) return { ok: false, reason: status === 'no-tailscale' ? 'Ligue a Tailscale para parear.' : (error ?? 'Ligue o app do celular primeiro.') };
     const { code, expiresAt } = auth.createPairingCode();
     // Com `tailscale serve` no ar, o celular pareia no endereço https: só nele há avisos (service worker).
-    const base = (await readServeHttpsUrl(port)) ?? server.url;
+    const base = (await readServeHttpsUrl(publicPort)) ?? server.url.replace(/:\d+$/, `:${publicPort}`);
     const url = `${base}/#parear=${code}`;
     return { ok: true, pairing: { url, qrSvg: qrSvg(url), expiresAt: new Date(expiresAt).toISOString() } };
   }

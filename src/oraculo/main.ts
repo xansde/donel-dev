@@ -41,7 +41,10 @@ import { ORACLE_PORT } from './server';
 import { canonicalJson, createSupabaseLedgerStore, readSupabaseLedger } from './ledger-supabase';
 import { exportSqliteLedger, LEDGER_SQLITE_FILE, seedSqliteLedger } from './ledger-sqlite';
 import { SERVICE_PLACE_PREFIX, SERVICE_ROLE } from '../shared/ledger/contract';
-import { createPictureStore, readGateToken, runEntregador } from './entregador';
+import { createPictureStore, gatePortOf, readGateToken, runEntregador } from './entregador';
+import { juntarChat, separarChat } from './chat-entregador';
+import { MOBILE_PORT, startMobileServer } from '../main/celular/server';
+import { connect } from 'node:net';
 import { oracleMode } from './modo';
 import { LEDGER_SUPABASE_FILE, runRegistro, supabaseLedgerDeps } from './registro';
 
@@ -195,6 +198,43 @@ async function seedSqlite(dir: string, ledgerFile: string): Promise<number> {
   return 0;
 }
 
+/** Something answers on this loopback port (the entregador's gate). */
+function loopbackAnswers(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = connect({ host: '127.0.0.1', port });
+    socket.setTimeout(1500);
+    socket.once('connect', () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once('timeout', () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.once('error', () => resolve(false));
+  });
+}
+
+/**
+ * Passo 9, PR 3 — `oraculo.mjs --separar-chat | --juntar-chat`: the owner's chat rows go to `chat-local.json` (the
+ * entregador's) or back to `celular-local.json`, with the registro and the entregador both stopped (each keeps its file
+ * in memory and would write over it).
+ */
+async function moveChat(dir: string, way: 'separar' | 'juntar'): Promise<number> {
+  const gatePort = gatePortOf(dir, Number(process.env.DONEL_ORACULO_PORTAO_PORT) || GATE_PORT);
+  if ((await daemonAnswers(dir)) || (await loopbackAnswers(gatePort))) {
+    console.error(`[${way}-chat] o donel-oraculo ou o donel-entregador está no ar: pare os dois antes`);
+    return 1;
+  }
+  try {
+    console.log(JSON.stringify(way === 'separar' ? separarChat(dir) : juntarChat(dir)));
+    return 0;
+  } catch (error) {
+    console.error(`[${way}-chat] ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
+}
+
 /** The way back: `oraculo.mjs --exportar-supabase <arquivo>` writes the Supabase's ledger as a ledger.json (new file only). */
 async function exportSupabase(dir: string, target: string | undefined): Promise<number> {
   const deps = supabaseLedgerDeps(dir);
@@ -250,9 +290,18 @@ async function main(): Promise<void> {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   // Passo 9 (t-5358d400) — the satellite, the registro with the entregador (no mark, as before the split), the registro
   // alone or the entregador alone (`entregador.separado` + DONEL_ORACULO_MODO=entregador): modo.ts.
+  // Passo 9, PR 3 — the chat's rows between celular-local.json and chat-local.json, with both daemons stopped.
+  if (process.argv.includes('--separar-chat') || process.argv.includes('--juntar-chat')) process.exit(await moveChat(dir, process.argv.includes('--separar-chat') ? 'separar' : 'juntar'));
   const mode = oracleMode(process.env, dir);
   if (mode === 'satelite') return runSatellite(dir, process.env.DONEL_PORTAO_SATELITE!.trim());
-  if (mode === 'entregador') return onSignal(await runEntregador({ dir, home: homedir() }));
+  if (mode === 'entregador') {
+    // The phone's door (47815) on this machine's Tailscale address; without one yet, the gate still comes up.
+    const phoneHost = process.env.DONEL_ORACULO_HOST || pickTailscaleAddress(networkInterfaces());
+    if (!phoneHost) console.error('[oraculo] entregador: sem endereço da Tailscale; o chat do celular fica fora até o próximo reinício.');
+    return onSignal(
+      await runEntregador({ dir, home: homedir(), ...(phoneHost ? { phone: { host: phoneHost, port: MOBILE_PORT, listen: (options) => startMobileServer(options) } } : {}) }),
+    );
+  }
   // The first slice left the token itself on disk; only its hash stays now.
   if (existsSync(join(dir, 'pc.token'))) unlinkSync(join(dir, 'pc.token'));
   const host = process.env.DONEL_ORACULO_HOST || pickTailscaleAddress(networkInterfaces());

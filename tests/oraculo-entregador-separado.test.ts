@@ -3,7 +3,8 @@
 // hoje. Com ela, cada um é um processo e cada arquivo tem um escritor só: o registro nunca grava recados.json nem
 // retrato.json (dois escritores = recado duplicado ou perdido), e o entregador nunca abre o ledger.sqlite (um segundo
 // escritor do registro).
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
+import { createServer, request as httpRequest } from 'node:http';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,6 +19,12 @@ import { createSatelliteLedger, type SatellitePost } from '../src/oraculo/sateli
 import { openSqliteLedgerStore, seedSqliteLedger } from '../src/oraculo/ledger-sqlite';
 import { ENTREGADOR_SEPARADO_FILE, oracleMode, RETRATO_PC_FILE } from '../src/oraculo/modo';
 import { runRegistro } from '../src/oraculo/registro';
+import { createCelularAuth } from '../src/main/celular/auth';
+import { createMobileHandler, mobileRequestListener } from '../src/main/celular/server';
+import { CELULAR_LOCAL_FILE, createCelularLocalStore } from '../src/oraculo/celular-local';
+import { createCelularV2Handler, signedMessage } from '../src/oraculo/celular-v2';
+import { createPhoneFront, createPhoneSignatures } from '../src/oraculo/celular-frente';
+import { CHAT_LOCAL_FILE, createEntregadorChat, juntarChat, separarChat } from '../src/oraculo/chat-entregador';
 
 const io = createSystemConfigIoDeps();
 const dirs: string[] = [];
@@ -234,5 +241,132 @@ describe('entregador à parte: portão local por HTTP e entrega de volta', () =>
     const queued = (JSON.parse(readFileSync(join(dir, 'recados.json'), 'utf8')) as { items: Array<{ texto: string }> }).items.map((item) => item.texto);
     expect(queued).toHaveLength(1);
     expect(queued[0]).toContain('decisao:2');
+  });
+});
+
+// Passo 9, PR 3: com a marca, o chat do celular mora no entregador (chat-local.json) e a porta 47815 dele repassa o resto
+// ao servidor do celular do registro. Nenhuma mensagem do dono some ou dobra na virada, e o que vai pelo repasse chega
+// com a assinatura do aparelho conferindo do outro lado.
+describe('entregador à parte: o chat do celular', () => {
+  const X = 'aaaaaaaa-1111-4222-8333-444444444444';
+  const Y = 'bbbbbbbb-1111-4222-8333-444444444444';
+  const PEDIDO = 'cccccccc-1111-4222-8333-444444444444';
+  const DECISAO = 'dddddddd-1111-4222-8333-444444444444';
+  const TAILNET = { 'x-forwarded-for': '100.64.0.9', 'tailscale-user-login': 'dono@exemplo' };
+
+  /** A paired phone in the registro's celular.json, and its signature (`Donel-HMAC`, contract v1). */
+  function pairedPhone(dir: string) {
+    const auth = createCelularAuth({ filePath: join(dir, 'celular.json'), io });
+    auth.setEnabled(true);
+    const paired = auth.pair(auth.createPairingCode().code, 'Edge');
+    if (!paired) throw new Error('não pareou');
+    const key = createHash('sha256').update(paired.token, 'utf8').digest();
+    const sign = (method: string, url: string, body: string): string => {
+      const ts = String(Date.now());
+      return `Donel-HMAC ${ts}.${createHmac('sha256', key).update(signedMessage(method, url, ts, body), 'utf8').digest('hex')}`;
+    };
+    return { auth, sign };
+  }
+
+  function entregadorChat(dir: string) {
+    return createEntregadorChat({
+      dir,
+      home: dir,
+      recados: { deliverLocal: async () => null, stateOf: () => undefined, transcriptOf: async () => undefined },
+      relay: { send: async () => 'pendente', pending: () => [], byKey: () => undefined },
+      verify: createPhoneSignatures(join(dir, 'celular.json'), io).verify,
+    });
+  }
+
+  async function listen(listener: Parameters<typeof createServer>[1]): Promise<{ port: number; close(): Promise<void> }> {
+    const server = createServer(listener);
+    await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
+    return { port: (server.address() as { port: number }).port, close: () => new Promise((done) => server.close(() => done())) };
+  }
+
+  function send(port: number, method: string, path: string, body: string, authorization: string): Promise<{ status: number; body: Record<string, unknown> }> {
+    return new Promise((resolve, reject) => {
+      const out = httpRequest({ host: '127.0.0.1', port, method, path, headers: { ...TAILNET, authorization, 'content-type': 'application/json' } }, (answer) => {
+        let text = '';
+        answer.on('data', (chunk: Buffer) => (text += chunk.toString('utf8')));
+        answer.on('end', () => resolve({ status: answer.statusCode ?? 0, body: JSON.parse(text) as Record<string, unknown> }));
+      });
+      out.once('error', reject);
+      out.end(body);
+    });
+  }
+
+  it('o mesmo id de mensagem antes e depois da separação não some nem dobra', async () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'decisoes.json'), JSON.stringify({ fila: 'local' }));
+    const { sign } = pairedPhone(dir);
+    const before = createCelularLocalStore(join(dir, CELULAR_LOCAL_FILE));
+    expect(before.addChat(X, 'oi')).toEqual({ ok: true, nova: true });
+    before.addPedida({ pedido: PEDIDO, titulo: 'Um pedido', texto: 'faça', criterio: null, prazo: null, frente: null });
+    const celularJson = readFileSync(join(dir, 'celular.json'));
+
+    expect(separarChat(dir)).toMatchObject({ mensagens: 1 });
+    expect(() => separarChat(dir)).toThrow(CHAT_LOCAL_FILE);
+    const chat = entregadorChat(dir);
+    const post = (id: string, texto: string) => {
+      const body = JSON.stringify({ id, texto });
+      return chat.handler({ method: 'POST', url: '/api/v2/chat', authorization: sign('POST', '/api/v2/chat', body), body });
+    };
+    // The phone's queue retried X after the switch: the same line, never a second one.
+    expect(JSON.parse(String((await post(X, 'oi')).body))).toMatchObject({ ok: true, nova: false });
+    expect(JSON.parse(String((await post(Y, 'tudo bem?')).body))).toMatchObject({ ok: true, nova: true });
+    const conversa = await chat.handler({ method: 'GET', url: '/api/v2/chat', authorization: sign('GET', '/api/v2/chat', ''), body: '' });
+    expect((JSON.parse(String(conversa.body)) as { mensagens: Array<{ id: string }> }).mensagens.map((line) => line.id)).toEqual([X, Y]);
+    // The registro's file keeps the tasks he asked for and no chat (no second consumer of X); celular.json untouched.
+    const registroSide = createCelularLocalStore(join(dir, CELULAR_LOCAL_FILE));
+    expect(registroSide.conversa(10)).toEqual([]);
+    expect(registroSide.pedidasView(10).map((row) => row.pedido)).toEqual([PEDIDO]);
+    expect(readFileSync(join(dir, 'celular.json')).equals(celularJson)).toBe(true);
+
+    expect(juntarChat(dir)).toMatchObject({ mensagens: 2 });
+    expect(existsSync(join(dir, CHAT_LOCAL_FILE))).toBe(false);
+    const after = createCelularLocalStore(join(dir, CELULAR_LOCAL_FILE));
+    expect(after.conversa(10).map((line) => line.id)).toEqual([X, Y]);
+    expect(after.addChat(X, 'oi')).toEqual({ ok: true, nova: false });
+    expect(after.addChat(Y, 'tudo bem?')).toEqual({ ok: true, nova: false });
+    expect(after.pedidasView(10).map((row) => row.pedido)).toEqual([PEDIDO]);
+  });
+
+  it('decidir pelo repasse chega com corpo e assinatura iguais, e o chat fica no entregador', async () => {
+    const dir = tmp();
+    writeFileSync(join(dir, 'decisoes.json'), JSON.stringify({ fila: 'local' }));
+    const { auth, sign } = pairedPhone(dir);
+    separarChat(dir);
+    // The registro's phone server (47818 in production): its own v2 over celular-local.json, checking the signature.
+    const registroStore = createCelularLocalStore(join(dir, CELULAR_LOCAL_FILE));
+    const v2 = createCelularV2Handler({
+      verify: (message, signature) => {
+        const device = auth.verifySignature(message, signature);
+        return device ? { name: device.name } : null;
+      },
+      doc: () => null,
+      store: registroStore,
+      readProof: async () => ({ kind: 'sumiu' }),
+      arvoreFile: join(dir, 'arvore.json'),
+    });
+    const upstream = await listen(mobileRequestListener(createMobileHandler({ auth, v2: () => v2, ledger: () => ({}) as never, assets: {}, provasRoot: null })));
+    const chat = entregadorChat(dir);
+    const front = await listen(createPhoneFront({ chat: chat.handler, upstream: () => ({ host: '127.0.0.1', port: upstream.port }), log: () => undefined }));
+    try {
+      const decisao = JSON.stringify({ pedido: DECISAO, tarefa: 't-1', lado: 'sim', opcao: null, comentario: null, assinatura: null });
+      expect(await send(front.port, 'POST', '/api/v2/decidir', decisao, sign('POST', '/api/v2/decidir', decisao))).toEqual({ status: 200, body: { ok: true, nova: true } });
+      expect(registroStore.pendingDecision('t-1')).toMatchObject({ lado: 'sim' });
+      // A signature for another body does not pass the registro.
+      const outra = decisao.replace('"sim"', '"nao"');
+      expect((await send(front.port, 'POST', '/api/v2/decidir', outra, sign('POST', '/api/v2/decidir', decisao))).status).toBe(401);
+      // The chat is answered by the entregador: its line is in chat-local.json, never in the registro's file.
+      const linha = JSON.stringify({ id: X, texto: 'oi' });
+      expect((await send(front.port, 'POST', '/api/v2/chat', linha, sign('POST', '/api/v2/chat', linha))).body).toMatchObject({ ok: true, nova: true });
+      expect(createCelularLocalStore(join(dir, CHAT_LOCAL_FILE)).conversa(10).map((line) => line.id)).toEqual([X]);
+      expect(createCelularLocalStore(join(dir, CELULAR_LOCAL_FILE)).conversa(10)).toEqual([]);
+    } finally {
+      await front.close();
+      await upstream.close();
+    }
   });
 });

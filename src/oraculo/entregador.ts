@@ -27,6 +27,9 @@ import { createRemotePictures, type RemotePictures } from './retrato-satelite';
 import { noticeOf } from './portoes';
 import { createSatelliteLedger, createSatelliteNotice, createSatelliteReviewLink, createSatelliteTaskMemory, postJson, type SatellitePost } from './satelite';
 import { createProbe } from './sonda';
+import { createEntregadorChat, type EntregadorChat } from './chat-entregador';
+import { createPhoneFront, createPhoneSignatures, GATE_PHONE_PAIR_PATH, registroPhonePort } from './celular-frente';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 
 export interface PictureStore {
   get(): BoardPicture | null;
@@ -173,6 +176,25 @@ function localDeliverRoute(recados: Pick<GateRecadosHandle, 'deliverLocal'>): No
 }
 
 /**
+ * Apart, the gate's `/local/*`: the registro's deliveries, the Líder's answer to the phone (chat_lider.py) and a new
+ * phone app's pairing (asked of the registro, which keeps celular.json).
+ */
+function apartLocalRoutes(
+  deliver: NonNullable<GateDeps['local']>,
+  chat: Pick<EntregadorChat, 'responder'>,
+  pair: (body: string) => Promise<SatellitePost>,
+): NonNullable<GateDeps['local']> {
+  return async (method, path, body) => {
+    if (method === 'POST' && path === '/local/celular/novo-aparelho') {
+      const sent = await pair(body);
+      if (typeof sent !== 'object') return { status: 503, headers: { 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify({ erro: 'o Oráculo da VPS não respondeu' }) };
+      return { status: sent.status, headers: { 'Content-Type': 'application/json; charset=utf-8' }, body: sent.body };
+    }
+    return (await chat.responder(method, path, body)) ?? deliver(method, path, body);
+  };
+}
+
+/**
  * The registro's side: `deliverLocal` through the entregador's gate (`port`: where it listens now). Nothing listening,
  * or any other answer = `null`, and `deliverLocalFirst` takes it to the PC's relay with the same key, which a later
  * repeat finds there (never delivered here as well). A cut after it went out is sent once more, the same message.
@@ -218,6 +240,15 @@ export interface EntregadorPlace {
   /** This machine's live tmux sessions (default `tmux -L donel ls`), async and synchronous. */
   readonly liveSessions?: () => Promise<ReadonlySet<string>>;
   readonly liveNow?: () => ReadonlySet<string>;
+  /**
+   * Passo 9, PR 3 — apart, the phone's door (47815): `host` is this machine's Tailscale address, `listen` puts the
+   * socket around it (the phone's server's, by default). Absent = no door (the tests of the gate alone).
+   */
+  readonly phone?: {
+    readonly host: string;
+    readonly port: number;
+    readonly listen: (options: { readonly host: string; readonly port: number; readonly listener: (req: IncomingMessage, res: ServerResponse) => void }) => Promise<{ close(): Promise<void> }>;
+  };
 }
 
 /** What the registro lends the entregador when both run in one process (no mark). */
@@ -230,6 +261,8 @@ export interface EntregadorJunto {
 
 export interface Entregador {
   readonly recados: GateRecadosHandle;
+  /** Apart (PR 3): the owner's chat with the Líder único, answered here. Together = `null` (the registro runs it). */
+  readonly chat: EntregadorChat | null;
   /**
    * t-d461e003 — the other machines' pictures and queues (`portoes-retrato/`, `portoes-recados/`) when the registro runs
    * here: its `/v1/portao/retrato|recados` routes use this same one. Apart = `null`: the registro alone writes them.
@@ -288,7 +321,12 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
 
   // Apart: the tasks on the registro's API (the url it writes at each start), a notice for another machine on disk
   // until the registro takes it, the task each call left remembered for the notices after it.
-  let apart: { readonly notices: ReturnType<typeof createSatelliteNotice>; readonly runLedger: NonNullable<GateDeps['runLedger']>; readonly url: string } | null = null;
+  let apart: {
+    readonly notices: ReturnType<typeof createSatelliteNotice>;
+    readonly runLedger: NonNullable<GateDeps['runLedger']>;
+    readonly url: string;
+    readonly pair: (body: string) => Promise<SatellitePost>;
+  } | null = null;
   let recados: GateRecadosHandle;
   if (junto) {
     // t-e195b35c — the recados of this machine's sessions; a notice or message for a place off it goes to the PC's relay
@@ -315,7 +353,13 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
     const remote = { url, token: () => readGateToken(dir) };
     const tasks = createSatelliteTaskMemory();
     const notices = createSatelliteNotice({ ...remote, file: join(dir, 'avisos-pendentes.json'), io });
-    apart = { notices, runLedger: createSatelliteLedger({ ...remote, onTask: tasks.remember }), url };
+    apart = {
+      notices,
+      runLedger: createSatelliteLedger({ ...remote, onTask: tasks.remember }),
+      url,
+      // The phone app's pairing writes celular.json: the registro's, through the gate credential marked local.
+      pair: (body) => postJson(`${url.replace(/\/+$/, '')}${GATE_PHONE_PAIR_PATH}`, readGateToken(dir) ?? '', body, LOCAL_DELIVER_TIMEOUT_MS),
+    };
     recados = createGateRecados({
       file: join(dir, 'recados.json'),
       io,
@@ -329,6 +373,17 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
       localSessions: liveSessions,
     });
   }
+  // Passo 9, PR 3 — apart, the chat lives here: a message for a Líder único not on this machine goes to the registro's
+  // relay through the notices on disk (the same key joins; acked once the registro took it).
+  const chat: EntregadorChat | null = apart
+    ? createEntregadorChat({
+        dir,
+        home: place.home,
+        recados,
+        relay: { send: (message) => apart!.notices.send(message), pending: apart.notices.outbox.pending, byKey: apart.notices.outbox.byKey },
+        verify: createPhoneSignatures(join(dir, 'celular.json'), io).verify,
+      })
+    : null;
   /** What goes to the Líder único: his own queue when he lives here, else the PC's relay (no wait). */
   const toLeader = junto
     ? deliverLocalFirst(recados.deliverLocal, junto.relay, 0)
@@ -355,8 +410,29 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
 
   let gate: { readonly port: number; close(): Promise<void> } | null = null;
   let probe: ReturnType<typeof createProbe> | null = null;
+  let door: { close(): Promise<void> } | null = null;
+  let doorTimer: ReturnType<typeof setTimeout> | null = null;
+  let stopped = false;
+  /** The phone's door; a failure (the Tailscale not up, the port taken) is tried again each minute. */
+  const openDoor = async (): Promise<void> => {
+    const phone = place.phone;
+    if (!phone || !chat || stopped) return;
+    try {
+      door = await phone.listen({
+        host: phone.host,
+        port: phone.port,
+        listener: createPhoneFront({ chat: chat.handler, upstream: () => ({ host: phone.host, port: registroPhonePort() }) }),
+      });
+      console.log(`[oraculo] entregador: celular em ${phone.host}:${phone.port} (o resto vai ao registro na ${registroPhonePort()})`);
+    } catch (error) {
+      console.error(`[oraculo] entregador: a porta do celular ${phone.port} não subiu, tento de novo em 1 min: ${error instanceof Error ? error.message : String(error)}`);
+      doorTimer = setTimeout(() => void openDoor(), 60_000);
+      doorTimer.unref?.();
+    }
+  };
   return {
     recados,
+    chat,
     remotes,
     pictures,
     localPicture,
@@ -402,7 +478,7 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
           }),
           // Saída iii — a new phone app's key (the token never leaves the daemon) and the Líder's answer from chat_lider.py.
           // Apart (passo 9, PR 2): the registro's deliveries to these recados.
-          local: junto ? junto.local : localDeliverRoute(recados),
+          local: junto ? junto.local : apartLocalRoutes(localDeliverRoute(recados), chat!, apart!.pair),
           // The phone's server lives with the registro: a task a VPS session creates from an owner's request shows on his phone.
           ...(junto ? { linkPedido: junto.linkPedido } : {}),
           // The notices after a task (a delivery, a "travada", a verdict) go by the recados: queued for a session of this
@@ -416,12 +492,17 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
       // The sessions the PC has not pictured (its push, every 30 s, comes first: a fresh picture is not asked again).
       probe = createProbe({ sessionsDir, liveSessions, picture: pictures.get, setSession: pictures.setSession });
       probe.start();
+      chat?.start();
+      await openDoor();
     },
     stop() {
+      stopped = true;
+      if (doorTimer) clearTimeout(doorTimer);
       probe?.stop();
       recados.stop();
       apart?.notices.stop();
-      return gate ? gate.close() : Promise.resolve();
+      chat?.stop();
+      return Promise.all([gate?.close(), door?.close()]).then(() => undefined);
     },
   };
 }
