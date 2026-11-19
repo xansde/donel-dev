@@ -7,6 +7,8 @@ import type { LedgerCaller } from '../main/ledger-store';
 import type { PictureSession } from './portao';
 
 export type SendCall = Extract<BoardToolCall, { tool: 'sessao_enviar' }>;
+export type ScreenCall = Extract<BoardToolCall, { tool: 'sessao_ver_tela' }>;
+export type CloseCall = Extract<BoardToolCall, { tool: 'sessao_fechar' }>;
 
 export interface GateHookResponse {
   readonly status: number;
@@ -22,6 +24,17 @@ export interface GateRecados {
    * passes on: the picture answers, and a target off this machine goes to the PC's relay.
    */
   enviar(sid: string, mine: PictureSession, call: SendCall, pc?: 'ligado' | 'desligado'): Promise<BrowserToolOutcome | 'repassar'>;
+  /**
+   * t-d461e003 — the Líder único's `sessao_ver_tela` with the PC off: the screen of a place he reaches that runs in this
+   * machine's tmux (only reads). `sid` = the Líder's own session.
+   */
+  verTela?(sid: string, call: ScreenCall): Promise<BrowserToolOutcome>;
+  /**
+   * t-d461e003 — the Líder único's `sessao_fechar` with the PC off for sure (the gate checks it): ends the tmux of a
+   * place he reaches that runs here, never mid-turn nor with a dialog on its screen. The folder stays: the PC's app
+   * clears it when it comes back and finds the tmux gone.
+   */
+  fechar?(sid: string, call: CloseCall): Promise<BrowserToolOutcome>;
   /** Before a tarefa_* answered here (item 13: a task of a closed place follows its successor). */
   antesDaTarefa(caller: LedgerCaller, mine: PictureSession, call: LedgerToolCall): Promise<void>;
   /** After a tarefa_* answered here: the notices the PC used to give (delivery, travada/precisa-do-dono, verdict). */

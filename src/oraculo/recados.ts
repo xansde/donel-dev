@@ -59,7 +59,8 @@ import type { BrowserToolOutcome } from '../shared/browser/mcp';
 import { hasArrowLink } from '../shared/mindscape/agent-tools';
 import { listedPlaces, resolveAddress } from '../shared/mindscape/address';
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
-import { BOARD_LEADER, canReach, isBoardOrchestrator, isLiveListedPlace, LEADER_OF_ALL_FROM, MY_OPENER, successorOf, whoHears, type ListedPlace } from '../shared/mindscape/reach';
+import { BOARD_LEADER, canReach, canReachLeader, isBoardOrchestrator, isLiveListedPlace, LEADER_OF_ALL_FROM, MY_OPENER, successorOf, whoHears, type ListedPlace } from '../shared/mindscape/reach';
+import { blockingScreen, isWorking } from '../shared/chat/screen';
 import type { MindscapeBoard } from '../shared/mindscape/model';
 import type { LedgerDeliveredTo, LedgerTask } from '../shared/ledger/contract';
 import type { LedgerToolCall } from '../shared/ledger/tools';
@@ -68,7 +69,7 @@ import { followRenewal, urgentLedgerNotice, type LedgerCaller, type LedgerServic
 import type { ConfigIoDeps } from '../main/config-store';
 import type { OwnerMessage } from '../main/ledger-card-writer';
 import { picturedBoards, type BoardPicture, type PictureSession } from './portao';
-import type { GateHookResponse, GateRecados, SendCall } from './gate-recados';
+import type { CloseCall, GateHookResponse, GateRecados, ScreenCall, SendCall } from './gate-recados';
 import type { LocalLeader } from './lider-local';
 import { ageText, expiryNotice, isOwnerMessage, isStale, markLate, relaySenderOf, sentAtOf } from './vencimento';
 
@@ -114,6 +115,8 @@ export interface RecadosTmux {
   enter(sid: string): Promise<boolean>;
   /** `C-u`: clears the input field (a typed text whose Enter never went in). */
   clear(sid: string): Promise<boolean>;
+  /** t-d461e003 — `kill-session`: ends the session's tmux (the Líder único's `sessao_fechar` with the PC off). Absent = never. */
+  kill?(sid: string): Promise<boolean>;
 }
 
 /** The last turn of a transcript: `ended` = its last main entry is the assistant's end of turn; `at` = file mtime. */
@@ -421,7 +424,25 @@ export const systemRecadosTmux: RecadosTmux = {
   async clear(sid) {
     return (await runTmux(['send-keys', '-t', `${TMUX_PREFIX}${sid}`, 'C-u'])).code === 0;
   },
+  async kill(sid) {
+    return (await runTmux(['kill-session', '-t', `${TMUX_PREFIX}${sid}`])).code === 0;
+  },
 };
+
+/** The screen as text: no colors nor other escapes, no trailing blank lines (what `sessao_ver_tela` shows). */
+function plainScreen(text: string): string {
+  return text
+    .replace(/\x1b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    .replace(/\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g, '')
+    .replace(/\x1b./g, '')
+    .replace(/\s+$/, '');
+}
+
+/** A turn that did not end (an Esc, a lost Stop) and wrote nothing for this long, with a quiet screen, is not running. */
+const IDLE_TURN_MS = 5 * 60_000;
+
+/** How many lines of the screen `sessao_ver_tela` shows (its end: the input box and what came just before it). */
+const SCREEN_LINES = 60;
 
 /** What tmux says when its server is not running at all (the socket is gone or refused): truly no session. */
 const TMUX_NO_SERVER = /no server running|error connecting to/i;
@@ -699,10 +720,15 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     return (await notHere(item)) ? null : item;
   }
 
+  /** The folder sids of the live sessions of `placeId` on the board of `projectPath`, on this machine. */
+  function sidsOfPlace(projectPath: string, placeId: string, live: ReadonlySet<string>): string[] {
+    const sessions = Object.entries(deps.picture()?.sessoes ?? {});
+    return sessions.filter(([sid, session]) => live.has(sid) && session.quemSou.lugar === placeId && session.quemSou.pasta === projectPath).map(([sid]) => sid);
+  }
+
   /** The folder sid of the live session of `placeId` on the board of `projectPath`, on this machine. */
   function sidOfPlace(projectPath: string, placeId: string, live: ReadonlySet<string>): string | undefined {
-    const sessions = Object.entries(deps.picture()?.sessoes ?? {});
-    return sessions.find(([sid, session]) => live.has(sid) && session.quemSou.lugar === placeId && session.quemSou.pasta === projectPath)?.[0];
+    return sidsOfPlace(projectPath, placeId, live)[0];
   }
 
   function ledgerDoc() {
@@ -848,23 +874,32 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
    * Líder the PC does not know: with the PC on, the PC sends his messages. Without "quadro", a place id names its board
    * (the ids are unique): the messages the carteiro kept on 19/11 name only the place.
    */
-  async function fromLeader(sid: string, call: SendCall): Promise<BrowserToolOutcome> {
-    const refuse = (text: string): BrowserToolOutcome => ({ kind: 'error', text });
+  /**
+   * The place the Líder único names (`para`, on the board `quadro` or, without it, the board that has that place) and
+   * reaches by the PC's rule, on the boards the picture has; a string = why not.
+   */
+  function leaderTarget(para: string, quadro: string | undefined): { readonly projectPath: string; readonly placeId: string; readonly listar: readonly unknown[]; readonly renovadoDe?: string } | string {
     const boards = picturedBoards(deps.picture());
     const names = [...boards.keys()].map(lastSegment).join(', ') || 'nenhum';
-    const para = call.para.trim();
-    const quadro = call.quadro;
+    const id = para.trim();
     const found = quadro
       ? [...boards].find(([pasta]) => pasta === quadro || lastSegment(pasta) === quadro)
-      : [...boards].find(([, { listar, board }]) => board?.cards[para]?.kind === 'session' || listedPlaces(listar).some((place) => place.id === para));
-    if (!quadro && !found) return refuse(`Você é o Líder único: "${para}" não é lugar de nenhum quadro que conheço com o PC fora (${names}); diga o quadro em "quadro".`);
-    if (!found) return refuse(`Com o PC fora, conheço só os quadros do último retrato (${names}); "${quadro}" não está entre eles.`);
+      : [...boards].find(([, { listar, board }]) => board?.cards[id]?.kind === 'session' || listedPlaces(listar).some((place) => place.id === id));
+    if (!quadro && !found) return `Você é o Líder único: "${id}" não é lugar de nenhum quadro que conheço com o PC fora (${names}); diga o quadro em "quadro".`;
+    if (!found) return `Com o PC fora, conheço só os quadros do último retrato (${names}); "${quadro}" não está entre eles.`;
     const [projectPath, { listar, board }] = found;
-    const target = resolveAddress(board, listedPlaces(listar), LEADER_OF_ALL, call.para);
-    if ('erro' in target) return refuse(target.erro);
-    if ('liderUnico' in target) return { kind: 'error', text: 'Não mandei: "lider" é você mesmo.' };
+    const target = resolveAddress(board, listedPlaces(listar), LEADER_OF_ALL, para);
+    if ('erro' in target) return target.erro;
+    if ('liderUnico' in target) return 'Não mandei: "lider" é você mesmo.';
     const reach = board ? canReach({ schemaVersion: 8, boards: { [projectPath]: board } }, LEADER_OF_ALL_FROM, { projectPath, placeId: target.placeId }) : { ok: false as const, reason: 'o retrato não tem as setas deste quadro.' };
-    if (!reach.ok) return refuse(`Sem ligação: o Líder único não alcança "${target.placeId}" no quadro ${lastSegment(projectPath)}: ${reach.reason}`);
+    if (!reach.ok) return `Sem ligação: o Líder único não alcança "${target.placeId}" no quadro ${lastSegment(projectPath)}: ${reach.reason}`;
+    return { projectPath, placeId: target.placeId, listar, ...('renovadoDe' in target && target.renovadoDe ? { renovadoDe: target.renovadoDe } : {}) };
+  }
+
+  async function fromLeader(sid: string, call: SendCall): Promise<BrowserToolOutcome> {
+    const target = leaderTarget(call.para, call.quadro);
+    if (typeof target === 'string') return { kind: 'error', text: target };
+    const { projectPath } = target;
     const words = `${call.tarefa ? `[${call.tarefa}] ` : ''}${call.texto}`;
     const targetSid = sidOfPlace(projectPath, target.placeId, await localSessions());
     if (!targetSid) return relayed(projectPath, LEADER_OF_ALL, 'Líder', target.placeId, words);
@@ -875,10 +910,38 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
         entregue: item.estado === 'entregue' ? 'entregue' : 'na-fila',
         id: item.id,
         para: target.placeId,
-        ...('renovadoDe' in target && target.renovadoDe ? { renovado: `${target.renovadoDe} fechou; foi para o lugar que o sucede (${target.placeId}).` } : {}),
+        ...(target.renovadoDe ? { renovado: `${target.renovadoDe} fechou; foi para o lugar que o sucede (${target.placeId}).` } : {}),
         como: HOW,
       }),
     };
+  }
+
+  /**
+   * t-d461e003 — the place the Líder único names, running in this machine's tmux: its board place and its sid, or why
+   * not (with the PC off nothing else shows or closes a session; a place of another machine waits for the PC). As on
+   * the PC (`findPlace`): only the exact id of a place of the board, never a role, "lider-quadro", "quem-me-abriu" nor
+   * the successor of a closed place (closing would end a live sibling); two live sessions with the place = refused.
+   */
+  async function leaderLocalTarget(call: ScreenCall | CloseCall, verb: string): Promise<{ readonly placeId: string; readonly sid: string; readonly estado?: string } | string> {
+    const boards = picturedBoards(deps.picture());
+    const names = [...boards.keys()].map(lastSegment).join(', ') || 'nenhum';
+    const id = call.quem.trim();
+    const isPlaceOf = (board: MindscapeBoard | undefined, listar: readonly unknown[]): boolean => board?.cards[id]?.kind === 'session' || listedPlaces(listar).some((place) => place.id === id);
+    const found = call.quadro
+      ? [...boards].find(([pasta]) => pasta === call.quadro || lastSegment(pasta) === call.quadro)
+      : [...boards].find(([, { listar, board }]) => isPlaceOf(board, listar));
+    if (!call.quadro && !found) return `"${id}" não é lugar de nenhum quadro que conheço com o PC fora (${names}); use o id do lugar (veja sessao_listar) e diga o quadro em "quadro".`;
+    if (!found) return `Com o PC fora, conheço só os quadros do último retrato (${names}); "${call.quadro}" não está entre eles.`;
+    const [projectPath, { listar, board }] = found;
+    if (!isPlaceOf(board, listar)) return `"${id}" não é um lugar do quadro ${lastSegment(projectPath)}: use o id do lugar (veja sessao_listar).`;
+    const estado = listedPlaces(listar).find((place) => place.id === id)?.estado;
+    if (estado === 'fechada') return `"${id}" está fechada; se outro lugar a sucedeu, use o id dele (veja sessao_listar).`;
+    const reach = board ? canReach({ schemaVersion: 8, boards: { [projectPath]: board } }, LEADER_OF_ALL_FROM, { projectPath, placeId: id }) : { ok: false as const, reason: 'o retrato não tem as setas deste quadro.' };
+    if (!reach.ok) return `Sem ligação: o Líder único não alcança "${id}" no quadro ${lastSegment(projectPath)}: ${reach.reason}`;
+    const sids = sidsOfPlace(projectPath, id, await localSessions());
+    if (!sids.length) return `"${id}" não roda nesta máquina: com o PC fora, ${verb} só sessões do tmux daqui.`;
+    if (sids.length > 1) return `"${id}" tem ${sids.length} sessões vivas nesta máquina (${sids.join(', ')}); não sei qual é a do lugar. Espere o PC voltar.`;
+    return { placeId: id, sid: sids[0]!, ...(estado ? { estado } : {}) };
   }
 
   /** When each target with a waiting item was first missing from tmux (memory only). */
@@ -1233,6 +1296,11 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       if ('erro' in target) return pcOn ? 'repassar' : { kind: 'error', text: target.erro };
       const words = `${call.tarefa ? `[${call.tarefa}] ` : ''}${call.texto}`;
       if ('liderUnico' in target) {
+        // The PC's rule (t-d461e003): opened by the Líder único, below one he opened, or nobody alive above to hear it.
+        const opened = (id: string): boolean => places.find((place) => place.id === id)?.abertaPor === LEADER_OF_ALL;
+        const isLive = (id: string): boolean => isLiveListedPlace(places.find((place) => place.id === id));
+        const reach = canReachLeader({ schemaVersion: 8, boards: { [projectPath]: board } }, { projectPath, placeId: me }, opened, isLive);
+        if (!reach.ok) return pcOn ? 'repassar' : { kind: 'error', text: `Sem ligação com o Líder único: ${reach.reason}` };
         // t-c3fbe852 — the Líder único alive here hears it from its own queue, PC on or off (no paste through the PC).
         const back = relayMessage(projectPath, me, nameOf(who), LEADER_OF_ALL, words);
         const item = await toLocalLeader({ lugar: me, nome: nameOf(who), sid }, words, back);
@@ -1266,6 +1334,41 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
           como: HOW,
         }),
       };
+    },
+
+    async verTela(_sid, call) {
+      const target = await leaderLocalTarget(call, 'vejo');
+      if (typeof target === 'string') return { kind: 'error', text: target };
+      const screen = await tmux.screen(target.sid);
+      if (!screen) return { kind: 'error', text: `O tmux de "${target.placeId}" não respondeu; tente de novo em instantes.` };
+      const lines = plainScreen(screen.text).split('\n');
+      return {
+        kind: 'text',
+        text: JSON.stringify({ id: target.placeId, ...(target.estado ? { estado: target.estado } : {}), tela: lines.slice(-SCREEN_LINES).join('\n'), fonte: 'tmux desta VPS (o PC está fora)' }, null, 1),
+      };
+    },
+
+    async fechar(_sid, call) {
+      const no = (why: string): BrowserToolOutcome => ({ kind: 'error', text: `Não fechei: ${why}` });
+      const target = await leaderLocalTarget(call, 'fecho');
+      if (typeof target === 'string') return no(target);
+      if (!tmux.kill) return no('este Oráculo não sabe fechar sessões.');
+      const screen = await tmux.screen(target.sid);
+      if (!screen) return no(`o tmux de "${target.placeId}" não respondeu.`);
+      // Never cut a turn nor a dialog: the app on the PC waits for the pause; here the caller asks for it.
+      const lines = plainScreen(screen.text).split('\n');
+      const dialog = blockingScreen(lines);
+      if (dialog) return no(`a tela de "${target.placeId}" espera uma resposta (${dialog.title}); responda com sessao_permissao quando o PC voltar, ou espere.`);
+      const turn = await (async () => {
+        const path = await transcriptPath(target.sid);
+        return path ? lastTurn(path) : null;
+      })();
+      const mood = moodOf(target.sid);
+      if (BUSY_ON_SCREEN.test(screen.text) || isWorking(lines) || mood === 'ocupada' || mood === 'digitando' || (turn !== null && !turn.ended && mood !== 'parada' && now() - turn.at < IDLE_TURN_MS))
+        return no(`"${target.placeId}" está no meio de um turno. Peça que pause (sessao_enviar) e feche quando ela parar.`);
+      if (!(await tmux.kill(target.sid))) return no(`o tmux recusou fechar "${target.placeId}".`);
+      log(`sessao_fechar do Líder único com o PC fora: ${target.placeId} (tmux donel-${target.sid}) fechada; a pasta fica para o app do PC limpar quando voltar.`);
+      return { kind: 'text', text: 'Fechada.' };
     },
 
     async antesDaTarefa(caller, mine, call) {

@@ -331,14 +331,19 @@ describe('chat do celular com o Líder único vivo nesta VPS', () => {
 describe('recados e avisos que caem no Líder único vivo nesta VPS', () => {
   it('"para":"lider" vai à fila local (PC ligado ou não); sem Líder local, com o PC ligado, segue ao PC', async () => {
     const w = vps();
-    const sent = await w.recados.enviar(SID_DEV, DEV_SESSION, { tool: 'sessao_enviar', para: 'lider', texto: 'terminei o PR' }, 'ligado');
+    // A Dev the Líder único opened: it reaches him by the PC's rule (t-d461e003).
+    const opened: PictureSession = { ...DEV_SESSION, listar: [{ ...LISTAR[0]!, abertaPor: 'lider' }] };
+    const sent = await w.recados.enviar(SID_DEV, opened, { tool: 'sessao_enviar', para: 'lider', texto: 'terminei o PR' }, 'ligado');
     expect(sent).not.toBe('repassar');
     expect(JSON.parse((sent as { text: string }).text)).toMatchObject({ entregue: 'na-fila', para: 'lider' });
     expect((await w.endTurn(SID_LIDER)).reason).toContain('terminei o PR');
     expect(w.relay.pending()).toHaveLength(0);
 
     const away = vps({ leaderAlive: false });
-    expect(await away.recados.enviar(SID_DEV, DEV_SESSION, { tool: 'sessao_enviar', para: 'lider', texto: 'terminei o PR' }, 'ligado')).toBe('repassar');
+    expect(await away.recados.enviar(SID_DEV, opened, { tool: 'sessao_enviar', para: 'lider', texto: 'terminei o PR' }, 'ligado')).toBe('repassar');
+    // One the owner opened by hand, with no one above: with the PC off it is refused here as the PC would.
+    const refused = await w.recados.enviar(SID_DEV, DEV_SESSION, { tool: 'sessao_enviar', para: 'lider', texto: 'oi' }, 'desligado');
+    expect(refused).toMatchObject({ kind: 'error', text: expect.stringContaining('Sem ligação com o Líder único') });
   });
 
   it('"travada" de quem não tem ninguém acima chega ao Líder único pela fila local, uma vez', async () => {

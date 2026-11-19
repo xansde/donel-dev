@@ -62,7 +62,20 @@ function vps(options: { pcSeenAgoMs?: number } = {}) {
   folder(SID_DEV, { localCwd: PROJECT, projectName: 'atlas', name: 'Dev · atlas', roleId: 'dev', createdAt: '2026-11-19T08:00:00Z' });
   folder(SID_LIDER, { localCwd: 'C:\\Users\\dono\\_orquestradora', name: 'Líder', roleId: 'lider', leaderOfAll: true, createdAt: '2026-11-19T10:34:44Z' });
   const local = createLocalPicture({ stored: () => stored.picture, sessionsDir: sessions, liveNow: () => live, now: () => clock.now, ttlMs: 0 });
-  const tmux: RecadosTmux = { screen: async () => ({ inMode: false, text: 'esc to interrupt' }), type: async () => true, enter: async () => true, clear: async () => true };
+  /** What each session's screen shows (default: mid-turn, so nothing is typed into it); `killed` = the tmux ended. */
+  const screens = new Map<string, string>();
+  const killed: string[] = [];
+  const tmux: RecadosTmux = {
+    screen: async (sid) => ({ inMode: false, text: screens.get(sid) ?? 'esc to interrupt' }),
+    type: async () => true,
+    enter: async () => true,
+    clear: async () => true,
+    kill: async (sid) => {
+      killed.push(sid);
+      live.delete(sid);
+      return true;
+    },
+  };
   const ledger = createLedgerService({ filePath: join(dir, 'ledger.json'), io, proofFs: nodeLedgerProofFs, now: () => clock.now });
   const relay = createRelay({ filePath: join(dir, 'fila.json'), io, now: () => clock.now });
   const recados = createGateRecados({
@@ -116,6 +129,8 @@ function vps(options: { pcSeenAgoMs?: number } = {}) {
     endTurn,
     forwarded,
     opened,
+    screens,
+    killed,
     setForward: (forward: GateForward) => {
       handle = gateWith(forward);
     },
@@ -301,17 +316,23 @@ describe('com o PC ligado, o retrato do PC manda', () => {
     // What is answered here stays here (his tunnel may connect and never answer, the case of 07h34).
     expect((await w.tool(SID_LIDER, 'sessao_quem_sou')).error).toBe(false);
     expect(w.forwarded).toHaveLength(2);
-    // The tunnel refused: answered here, as before.
+    expect(w.killed).toEqual([]);
+    // The tunnel refused: answered here, by this machine's tmux (t-d461e003).
     w.setForward(async () => 'desligado');
+    w.screens.set(SID_DEV, 'fiz o teste vermelho\n> ');
     const off = await w.tool(SID_LIDER, 'sessao_ver_tela', { quadro: 'atlas', quem: DEV });
-    expect(off.error).toBe(true);
-    expect(off.text).toMatch(/PC está desligado/);
+    expect(off.error, off.text).toBe(false);
+    expect(off.text).toContain('fiz o teste vermelho');
   });
 
-  it('o Líder único com o PC fora: ver_tela não toca o túnel', async () => {
+  it('o Líder único com o PC fora: ver_tela e fechar pelo tmux daqui, sem tocar o túnel', async () => {
     const w = vps();
-    const off = await w.tool(SID_LIDER, 'sessao_ver_tela', { quadro: 'atlas', quem: DEV });
-    expect(off.error).toBe(true);
+    w.screens.set(SID_DEV, 'fiz o teste vermelho\n> ');
+    const seen = await w.tool(SID_LIDER, 'sessao_ver_tela', { quadro: 'atlas', quem: DEV });
+    expect(seen.error, seen.text).toBe(false);
+    expect(seen.text).toContain('fiz o teste vermelho');
+    expect(await w.tool(SID_LIDER, 'sessao_fechar', { quadro: 'atlas', quem: DEV })).toEqual({ error: false, text: 'Fechada.' });
+    expect(w.killed).toEqual([SID_DEV]);
     expect(w.forwarded).toEqual([]);
   });
 
@@ -337,5 +358,220 @@ describe('com o PC ligado, o retrato do PC manda', () => {
     // A session sessao_abrir opened here with the PC off is not the PC answering.
     const opened = syntheticPicture({ sid: SID_NOVO, name: 'Dev', role: { id: 'dev', name: 'Dev' }, pasta: PROJECT, projectName: 'atlas', roda: 'vps', base: undefined, at: now });
     expect(pcSeenAt({ at: now - 10 * MIN, sessoes: { [SID_NOVO]: opened } })).toBe(now - 10 * MIN);
+  });
+});
+
+// t-d461e003 (19/11, ~15h04): o app do PC fechou logo depois de renovar uma sessão da VPS (limite de contexto: sid
+// novo, mesmo lugar). O retrato guardado conhecia o lugar pelo sid antigo; a pasta nova virou `session:<sid>`, e daí
+// "Só o lugar dono" nas tarefas, recado ao Líder único sem a regra do PC, e o Líder sem ver a tela nem fechar.
+describe('sessão renovada na VPS com o PC fora (t-d461e003)', () => {
+  /**
+   * The PC's last picture names the Dev's place (with its tab name), opened by a Líder of the board that has closed
+   * since (the case of 19/11: place:8be0d000, opened by place:bb9bfae3); its sid then renews, and the old tmux is gone.
+   */
+  const LQ = 'place:lq';
+  function renewed(meta: Record<string, unknown> = {}) {
+    const w = vps();
+    const dev = w.stored.picture!.sessoes[SID_DEV]!;
+    const board: MindscapeBoard = { ...BOARD, cards: { ...BOARD.cards, [LQ]: card(LQ, 'lider') }, links: [{ id: 'a', from: LQ, to: DEV, arrow: true, by: 'session', opened: true }] };
+    const listar = [
+      { id: DEV, papel: 'dev', nome: 'Dev · atlas', estado: 'trabalhando', abertaPor: LQ, voce: true },
+      { id: LQ, papel: 'lider', estado: 'fechada' },
+    ];
+    w.stored.picture = { ...w.stored.picture!, sessoes: { [SID_DEV]: { ...dev, listar, board } } };
+    w.live.delete(SID_DEV);
+    w.folder(SID_NOVO, { localCwd: PROJECT, projectName: 'atlas', name: 'Dev · atlas', roleId: 'dev', openedBy: LQ, createdAt: '2026-11-19T11:59:30Z', ...meta });
+    return w;
+  }
+
+  it('segue o mesmo place:, assume e reporta a tarefa do lugar e fala com o Líder único', async () => {
+    const w = renewed({ placeId: DEV });
+    const who = JSON.parse((await w.tool(SID_NOVO, 'sessao_quem_sou')).text) as Record<string, unknown>;
+    expect(who).toMatchObject({ lugar: DEV, pasta: PROJECT });
+
+    const created = await w.tool(SID_LIDER, 'tarefa_criar', { quadro: 'atlas', dono: DEV, titulo: 'x', pedido: 'x', criterio: 'x', prazo: '2026-11-30', risco: 'baixo' });
+    expect(created.error, created.text).toBe(false);
+    const id = idOf(created.text);
+    expect(await w.tool(SID_NOVO, 'tarefa_assumir', { id })).toMatchObject({ error: false });
+    const step = await w.tool(SID_NOVO, 'tarefa_andamento', { id, estado: 'trabalhando', proximo: 'teste' });
+    expect(step.error, step.text).toBe(false);
+
+    // Who opened it closed and the board has no live Líder: the Líder único is who hears it, so it may speak to him.
+    const up = await w.tool(SID_NOVO, 'sessao_enviar', { para: 'lider', texto: 'entreguei', motivo: 'tarefa-completa' });
+    expect(up.error, up.text).toBe(false);
+    expect((await w.endTurn(SID_LIDER)).reason).toContain('entreguei');
+    expect(w.forwarded).toEqual([]);
+  });
+
+  // Corte do Líder único (19/11): o lugar só vem do placeId gravado e conferido no quadro; nunca por nome, papel ou
+  // quem abriu. "Matar a sessão errada é pior do que perder o lugar."
+  it('placeId válido (no quadro, aberto, sem dona viva): o place:', () => {
+    const named = renewed({ placeId: DEV, name: 'outro nome' });
+    expect(named.local.get()!.sessoes[SID_NOVO]!.quemSou.lugar).toBe(DEV);
+  });
+
+  it('sem placeId: session:, mesmo com um único lugar de mesmo nome, papel e quem abriu', () => {
+    const w = renewed();
+    expect(w.local.get()!.sessoes[SID_NOVO]!.quemSou.lugar).toBe(NOVO);
+  });
+
+  it('placeId fora do quadro: session:', () => {
+    const w = renewed({ placeId: 'place:nada' });
+    expect(w.local.get()!.sessoes[SID_NOVO]!.quemSou.lugar).toBe(NOVO);
+  });
+
+  it('placeId de lugar fechado: session:', () => {
+    const w = renewed({ placeId: LQ });
+    expect(w.local.get()!.sessoes[SID_NOVO]!.quemSou.lugar).toBe(NOVO);
+  });
+
+  it('placeId ocupado por outra sessão viva: session:', () => {
+    const w = renewed({ placeId: DEV });
+    w.live.add(SID_DEV);
+    expect(w.local.get()!.sessoes[SID_NOVO]!.quemSou.lugar).toBe(NOVO);
+  });
+
+  it('com quem a abriu vivo, o recado ao Líder único é recusado (como no PC)', async () => {
+    const w = renewed({ placeId: DEV });
+    const dev = w.stored.picture!.sessoes[SID_DEV]!;
+    const listar = dev.listar.map((entry) => ((entry as { id: string }).id === LQ ? { id: LQ, papel: 'lider', estado: 'trabalhando' } : entry));
+    w.stored.picture = { ...w.stored.picture!, sessoes: { [SID_DEV]: { ...dev, listar } } };
+    const up = await w.tool(SID_NOVO, 'sessao_enviar', { para: 'lider', texto: 'oi', motivo: 'bloqueio' });
+    expect(up.error).toBe(true);
+    expect(up.text).toContain('Sem ligação com o Líder único');
+  });
+
+  it('o Líder único vê a tela e fecha uma sessão da VPS; nunca no meio de um turno', async () => {
+    const w = vps();
+    w.screens.set(SID_DEV, '\x1b[1mfiz o teste vermelho\x1b[0m\n> ');
+    const seen = await w.tool(SID_LIDER, 'sessao_ver_tela', { quem: DEV, quadro: 'atlas' });
+    expect(seen.error, seen.text).toBe(false);
+    expect(seen.text).toContain('fiz o teste vermelho');
+    expect(seen.text).not.toContain('\x1b');
+
+    w.screens.set(SID_DEV, 'esc to interrupt');
+    const busy = await w.tool(SID_LIDER, 'sessao_fechar', { quem: DEV, quadro: 'atlas' });
+    expect(busy.error).toBe(true);
+    expect(busy.text).not.toContain('PC está desligado');
+    expect(w.killed).toEqual([]);
+
+    w.screens.set(SID_DEV, '> ');
+    expect(await w.tool(SID_LIDER, 'sessao_fechar', { quem: DEV, quadro: 'atlas' })).toEqual({ error: false, text: 'Fechada.' });
+    expect(w.killed).toEqual([SID_DEV]);
+    expect(w.forwarded).toEqual([]);
+  });
+});
+
+// Revisão do PR #523: o fechar e o ver_tela locais do Líder único acham o alvo só pelo id exato do lugar, como o PC
+// (findPlace); nunca pelo sucessor de um lugar fechado, por papel, "lider-quadro" ou "quem-me-abriu".
+describe('fechar e ver_tela locais do Líder único: só o id do lugar (revisão do #523)', () => {
+  const LQ = 'place:lq';
+  const OLD = 'place:old';
+  /** A Dev alive here and its closed sibling (same role, opened by the same Líder of the board): the sucessor case. */
+  function withClosedSibling() {
+    const w = vps();
+    const dev = w.stored.picture!.sessoes[SID_DEV]!;
+    const board: MindscapeBoard = {
+      ...BOARD,
+      cards: { ...BOARD.cards, [LQ]: card(LQ, 'lider'), [OLD]: card(OLD, 'dev') },
+      links: [
+        { id: 'a', from: LQ, to: DEV, arrow: true, by: 'session', opened: true },
+        { id: 'b', from: LQ, to: OLD, arrow: true, by: 'session', opened: true },
+      ],
+    };
+    const listar = [
+      { id: DEV, papel: 'dev', nome: 'Dev · atlas', estado: 'trabalhando', abertaPor: LQ, voce: true },
+      { id: LQ, papel: 'lider', estado: 'trabalhando' },
+      { id: OLD, papel: 'dev', nome: 'Dev velho', estado: 'fechada', abertaPor: LQ },
+    ];
+    w.stored.picture = { ...w.stored.picture!, sessoes: { [SID_DEV]: { ...dev, listar, board } } };
+    w.screens.set(SID_DEV, '> ');
+    return w;
+  }
+
+  it('lugar fechado com irmã viva: recusa e não mata ninguém', async () => {
+    const w = withClosedSibling();
+    const closed = await w.tool(SID_LIDER, 'sessao_fechar', { quadro: 'atlas', quem: OLD });
+    expect(closed.error, closed.text).toBe(true);
+    expect(closed.text).toContain('fechada');
+    expect(w.killed).toEqual([]);
+    const seen = await w.tool(SID_LIDER, 'sessao_ver_tela', { quadro: 'atlas', quem: OLD });
+    expect(seen.error, seen.text).toBe(true);
+  });
+
+  it('nome de papel, "lider-quadro", "quem-me-abriu" ou id fora do quadro: recusa', async () => {
+    const w = withClosedSibling();
+    for (const quem of ['dev', 'lider-quadro', 'quem-me-abriu', 'place:nada']) {
+      const closed = await w.tool(SID_LIDER, 'sessao_fechar', { quadro: 'atlas', quem });
+      expect(closed.error, `${quem}: ${closed.text}`).toBe(true);
+      const seen = await w.tool(SID_LIDER, 'sessao_ver_tela', { quadro: 'atlas', quem });
+      expect(seen.error, `${quem}: ${seen.text}`).toBe(true);
+    }
+    expect(w.killed).toEqual([]);
+    // The exact id still closes it.
+    expect(await w.tool(SID_LIDER, 'sessao_fechar', { quadro: 'atlas', quem: DEV })).toEqual({ error: false, text: 'Fechada.' });
+    expect(w.killed).toEqual([SID_DEV]);
+  });
+
+  it('duas sessões vivas com o mesmo lugar: o fechar recusa em vez de escolher às cegas', async () => {
+    const w = vps();
+    const dev = w.stored.picture!.sessoes[SID_DEV]!;
+    w.stored.picture = { ...w.stored.picture!, sessoes: { [SID_DEV]: dev, [SID_NOVO]: { ...dev, at: dev.at } } };
+    w.live.add(SID_NOVO);
+    w.screens.set(SID_DEV, '> ');
+    w.screens.set(SID_NOVO, '> ');
+    const closed = await w.tool(SID_LIDER, 'sessao_fechar', { quadro: 'atlas', quem: DEV });
+    expect(closed.error, closed.text).toBe(true);
+    expect(w.killed).toEqual([]);
+  });
+
+  it('o placeId da pasta respeita quem já tem o lugar; dois com o mesmo placeId não ficam ambos com ele', () => {
+    const w = vps();
+    // The old tmux of DEV is alive (SID_DEV, pictured by the PC); the renewed folder names the same place.
+    w.folder(SID_NOVO, { localCwd: PROJECT, projectName: 'atlas', name: 'Dev · atlas', roleId: 'dev', placeId: DEV, createdAt: '2026-11-19T11:59:30Z' });
+    expect(w.local.get()!.sessoes[SID_NOVO]!.quemSou.lugar).toBe(NOVO);
+
+    const twins = vps();
+    twins.live.delete(SID_DEV);
+    twins.folder(SID_NOVO, { localCwd: PROJECT, name: 'Dev · atlas', roleId: 'dev', placeId: DEV, createdAt: '2026-11-19T11:59:30Z' });
+    twins.folder(SID_REV, { localCwd: PROJECT, name: 'Dev · atlas', roleId: 'dev', placeId: DEV, createdAt: '2026-11-19T11:59:40Z' });
+    const sessoes = twins.local.get()!.sessoes;
+    expect([sessoes[SID_NOVO]!.quemSou.lugar, sessoes[SID_REV]!.quemSou.lugar].filter((lugar) => lugar === DEV).length).toBeLessThan(2);
+  });
+
+  // 3ª revisão do #523: o lugar ocupado saía da lista antes da contagem, e uma irmã de mesmo nome, papel e quem abriu,
+  // rodando fora desta VPS, virava acerto único — a renovada ganhava o place: dela e o fechar da irmã a matava.
+  const SIB = 'place:sib';
+  function withSibling() {
+    const w = vps();
+    const dev = w.stored.picture!.sessoes[SID_DEV]!;
+    const board: MindscapeBoard = { ...BOARD, cards: { ...BOARD.cards, [SIB]: card(SIB, 'dev') } };
+    const listar = [
+      { id: DEV, papel: 'dev', nome: 'Dev · atlas', estado: 'trabalhando' },
+      { id: SIB, papel: 'dev', nome: 'Dev · atlas', estado: 'trabalhando' },
+    ];
+    w.stored.picture = { ...w.stored.picture!, sessoes: { [SID_DEV]: { ...dev, listar, board } } };
+    return w;
+  }
+
+  it('placeId ocupado e irmã de mesmo nome: session:, e fechar a irmã não mata a renovada', async () => {
+    const w = withSibling();
+    w.folder(SID_NOVO, { localCwd: PROJECT, name: 'Dev · atlas', roleId: 'dev', placeId: DEV, createdAt: '2026-11-19T11:59:30Z' });
+    expect(w.local.get()!.sessoes[SID_NOVO]!.quemSou.lugar).toBe(NOVO);
+    w.screens.set(SID_NOVO, '> ');
+    const closed = await w.tool(SID_LIDER, 'sessao_fechar', { quadro: 'atlas', quem: SIB });
+    expect(closed.text).not.toBe('Fechada.');
+    expect(w.killed).toEqual([]);
+  });
+
+  it('sem placeId, com irmã de mesmo nome e papel: session:, viva ou não a dona do outro lugar', () => {
+    const alive = withSibling();
+    alive.folder(SID_NOVO, { localCwd: PROJECT, name: 'Dev · atlas', roleId: 'dev', createdAt: '2026-11-19T11:59:30Z' });
+    expect(alive.local.get()!.sessoes[SID_NOVO]!.quemSou.lugar).toBe(NOVO);
+
+    const gone = withSibling();
+    gone.live.delete(SID_DEV);
+    gone.folder(SID_NOVO, { localCwd: PROJECT, name: 'Dev · atlas', roleId: 'dev', createdAt: '2026-11-19T11:59:30Z' });
+    expect(gone.local.get()!.sessoes[SID_NOVO]!.quemSou.lugar).toBe(NOVO);
   });
 });

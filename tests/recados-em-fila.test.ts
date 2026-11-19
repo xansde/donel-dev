@@ -529,7 +529,9 @@ describe('Recados em fila: caixa pendurada', () => {
   });
 
   it('recado ao próprio Líder único que não entra na caixa dele: nenhum aviso novo na mesma caixa travada, nada em laço', async () => {
-    const g = setup();
+    // A Dev the Líder único opened: it reaches him by the PC's rule (t-d461e003).
+    const listar = LISTAR.map((entry) => (entry.id === DEV ? { ...entry, abertaPor: 'lider' } : entry));
+    const g = setup({ picture: { at: Date.UTC(2026, 10, 18, 12), sessoes: { [SID_DEV]: session(DEV, 'dev', 'Dev', listar), [SID_REV]: session(REV, 'revisor', 'Revisor', listar) } } });
     const SID_LIDER = '77777777-2222-4333-8444-555555555555';
     const recados = createGateRecados({
       file: g.file,

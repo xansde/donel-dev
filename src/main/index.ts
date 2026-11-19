@@ -2036,6 +2036,7 @@ async function spawnRemoteClaudeSession(
     projectName: options.projectName ?? localCwd,
     name: options.tabName ?? options.projectName ?? localCwd,
     ...(options.openedBy ? { openedBy: options.openedBy } : {}),
+    ...(options.placeId ? { placeId: options.placeId } : {}),
     createdAt: new Date().toISOString(),
     homeRelativeDir: remoteDirFor(localCwd, appConfig.projectRoots),
     // A renewal goes back to the worktree of the session it replaces, also when its args do not name one (t-62f0fa0b).
