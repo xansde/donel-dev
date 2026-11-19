@@ -21,7 +21,9 @@
 // and the probe (sonda.ts) pictures the sessions the PC has not; other machines' gates record here through
 // `/v1/portao/*` (`<dir>/portoes/<name>.sha256`, portoes.ts). With `DONEL_PORTAO_SATELITE=<the personal VPS's API url>`
 // this bundle runs as such a gate (the Homologações, scripts/portao-satelite.sh): the gate, the probe and the recados
-// only, with the tasks on the personal VPS (`<dir>/portao.token`, satelite.ts).
+// only, with the tasks on the personal VPS (`<dir>/portao.token`, satelite.ts). t-d461e003: the satellite sends here
+// its own picture of its sessions and takes the messages waiting for them (`<dir>/portoes-retrato/`,
+// `<dir>/portoes-recados/`, retrato-satelite.ts), so the Líder único reaches its boards with the PC off.
 
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
@@ -48,7 +50,8 @@ import { clearAdoptedMarks, createOpenLocal, readOpenKit, roomRefusal, sweepUnfi
 import { createLocalPicture, tmuxLiveNow } from './retrato-local';
 import { createGateToolRoutes, readGateHashes } from './portoes';
 import { createProbe } from './sonda';
-import { createSatelliteLedger, createSatelliteNotice, createSatelliteReviewLink, createSatelliteTaskMemory } from './satelite';
+import { createSatelliteLedger, createSatelliteNotice, createSatelliteReviewLink, createSatelliteSync, createSatelliteTaskMemory } from './satelite';
+import { createRemotePictures } from './retrato-satelite';
 import { ORACLE_PORT, startOracleServer, type OracleServer } from './server';
 import { createDaemonVigia } from './vigia';
 import { boardName } from '../shared/vigia/board';
@@ -260,14 +263,37 @@ async function runSatellite(dir: string, url: string): Promise<void> {
   const tasks = createSatelliteTaskMemory();
   // A notice for another machine waits on disk until the personal VPS takes it (revisão do #486).
   const notices = createSatelliteNotice({ ...remote, file: join(dir, 'avisos-pendentes.json'), io });
+  // t-d461e003 — this machine's own picture (retrato-local.ts, as on the personal VPS): the PC's last one with the live
+  // sessions of this tmux it does not carry. The gate and the recados read it, and it goes to the personal VPS.
+  const localPicture = createLocalPicture({
+    stored: pictures.get,
+    sessionsDir,
+    liveNow: tmuxLiveNow,
+    extras: () => {
+      const kit = readOpenKit(dir);
+      return kit ? { roda: kit.place.label, roleName: (id: string) => kit.roles.find((role) => role.id === id)?.name } : {};
+    },
+  });
   const recados = createGateRecados({
     file: join(dir, 'recados.json'),
     io,
     ledger: () => null,
     taskOf: tasks.taskOf,
     reviewLinked: createSatelliteReviewLink(remote),
-    picture: pictures.get,
+    picture: localPicture.get,
     relay: notices.send,
+  });
+  // t-d461e003 — the picture to the personal VPS, and the messages waiting there for this machine's sessions (the Líder
+  // único's, with the PC off): into these recados; one whose session is not here goes back as a notice (the PC's relay).
+  const sync = createSatelliteSync({
+    ...remote,
+    picture: localPicture.get,
+    live: tmuxLiveNow,
+    deliver: async (message) => {
+      if (await recados.deliverLocal(message)) return true;
+      await notices.send(message);
+      return true;
+    },
   });
   const gatePort = Number(process.env.DONEL_ORACULO_PORTAO_PORT) || GATE_PORT;
   const gate = await startGateServer({
@@ -278,7 +304,9 @@ async function runSatellite(dir: string, url: string): Promise<void> {
         throw new Error('o satélite não tem registro');
       },
       runLedger: createSatelliteLedger({ ...remote, onTask: tasks.remember }),
-      picture: pictures.get,
+      picture: localPicture.get,
+      pcAway: localPicture.away,
+      pictureWithoutPc: localPicture.withoutPc,
       forward: tunnelForward,
       serverVersion: 'oraculo-satelite',
       recados,
@@ -287,6 +315,7 @@ async function runSatellite(dir: string, url: string): Promise<void> {
   writeFileSync(join(dir, 'portao'), `${gate.port}\n`, { mode: 0o600 });
   recados.start();
   notices.start();
+  sync.start();
   const probe = createProbe({ sessionsDir, liveSessions: tmuxLocalSessions, picture: pictures.get, setSession: pictures.setSession });
   probe.start();
   if (!readGateToken(dir)) console.error(`[oraculo] satélite: sem ${join(dir, 'portao.token')}; as tarefas desta máquina são recusadas até ele existir.`);
@@ -295,6 +324,7 @@ async function runSatellite(dir: string, url: string): Promise<void> {
     probe.stop();
     recados.stop();
     notices.stop();
+    sync.stop();
     void gate.close().then(() => process.exit(0));
   };
   process.on('SIGTERM', stop);
@@ -479,6 +509,11 @@ async function main(): Promise<void> {
       return kit ? { roda: kit.place.label, roleName: (id: string) => kit.roles.find((role) => role.id === id)?.name } : {};
     },
   });
+  // t-d461e003 — the other machines' pictures (their satellites send them, retrato-satelite.ts): what the gate and the
+  // recados read is this VPS's picture with their sessions added (never over this VPS's own). A message for one of
+  // them waits in that machine's queue here, which its satellite takes.
+  const remotes = createRemotePictures({ dir, io });
+  const picture = (): BoardPicture | null => remotes.combine(localPicture.get());
   // t-c3fbe852 — the Líder único alive in this machine's tmux (the app's mark in its session folder, or the picture).
   const localLeader = createLocalLeaderFinder({ sessionsDir, liveSessions: tmuxLocalSessions, picture: localPicture.get });
   // t-e195b35c — the recados of this machine's sessions; a notice or message for a place off it goes to the PC's relay
@@ -487,7 +522,8 @@ async function main(): Promise<void> {
     file: join(dir, 'recados.json'),
     io,
     ledger: () => ledger,
-    picture: localPicture.get,
+    picture,
+    remote: remotes.queue,
     relay: (message) => relay.send(message, 0),
     leader: localLeader,
     // A session resumed from another conversation (the Líder that came over with `-r`) writes that one's transcript.
@@ -644,6 +680,7 @@ async function main(): Promise<void> {
       recados,
       linkPedido: (pedidoId, tarefa) => void celular?.linkPedido(pedidoId, tarefa),
       notice: toLeader,
+      pictures: remotes,
     }),
     ...(process.env.DONEL_LIVRO_ARQUIVO ? { livro: createLivroStore({ filePath: process.env.DONEL_LIVRO_ARQUIVO }) } : {}),
     // t-cddc62fc — the reconciliador's notices reach the Líder único by the relay, out of the owner's phone chat.
@@ -678,9 +715,9 @@ async function main(): Promise<void> {
     handler: createGateHandler({
       sessionsDir,
       ledger: () => ledger,
-      picture: localPicture.get,
+      picture,
       pcAway: localPicture.away,
-      pictureWithoutPc: localPicture.withoutPc,
+      pictureWithoutPc: (sid) => remotes.combine(localPicture.withoutPc(sid)),
       recados,
       forward: tunnelForward,
       serverVersion: 'oraculo-vps',

@@ -13,6 +13,10 @@
 // the task it left (`tarefa`), kept here a while (`createSatelliteTaskMemory`) for the recados' notices after it (the
 // delivery to the Revisores, the verdict to the Dev); the review link of a `sessao_enviar` with no arrow is asked of it
 // (`POST /v1/portao/ligacao`, `createSatelliteReviewLink`).
+//
+// t-d461e003 (item 4, 19/11): with the PC away the personal VPS knew this machine's boards only from the PC's last
+// picture. `createSatelliteSync` sends it this machine's own picture (retrato-local's, compact: retrato-satelite.ts) and
+// takes the messages waiting there for this machine's sessions (the Líder único's to the Dalton), into its recados.
 
 import { promises as fsp } from 'node:fs';
 import { request as httpRequest } from 'node:http';
@@ -21,8 +25,9 @@ import type { OwnerMessage } from '../main/ledger-card-writer';
 import type { ConfigIoDeps } from '../main/config-store';
 import type { LedgerTask } from '../shared/ledger/contract';
 import type { LedgerToolCall } from '../shared/ledger/tools';
-import type { GateLedgerContext, PictureSession } from './portao';
-import { GATE_LINK_PATH, GATE_NOTICE_PATH, GATE_TOOL_PATH } from './portoes';
+import type { BoardPicture, GateLedgerContext, PictureSession } from './portao';
+import { GATE_INBOX_PATH, GATE_LINK_PATH, GATE_NOTICE_PATH, GATE_PICTURE_PATH, GATE_TOOL_PATH } from './portoes';
+import { compactPicture } from './retrato-satelite';
 import { createRelay } from './relay';
 
 export const SATELLITE_TIMEOUT_MS = 15_000;
@@ -238,6 +243,114 @@ export function createSatelliteNotice(deps: SatelliteDeps & { readonly file: str
     start() {
       if (timer) return;
       timer = setInterval(() => void flush(), NOTICE_RETRY_MS);
+      timer.unref?.();
+    },
+    stop() {
+      if (timer) clearInterval(timer);
+      timer = null;
+    },
+  };
+}
+
+const SYNC_MS = 10_000;
+/** The same picture is sent again after this (the personal VPS may have restarted from an older file). */
+const PICTURE_AGAIN_MS = 5 * 60_000;
+/** A picture with every board's arrows takes longer to go up. */
+const PICTURE_TIMEOUT_MS = 60_000;
+
+export interface SatelliteSync {
+  /** One round: the picture when it changed (or every 5 min), then the messages waiting for this machine. */
+  round(): Promise<void>;
+  start(): void;
+  stop(): void;
+}
+
+/**
+ * t-d461e003 — this machine's picture to the personal VPS's Oráculo, and the messages waiting there for its sessions:
+ * each one goes to `deliver` (this machine's recados, keyed by the message's key: the same one handed twice joins the
+ * first) and is said taken in the next call. An item `deliver` refuses (`false`, or it threw) stays there for the next
+ * round. Never throws for the network.
+ */
+export function createSatelliteSync(
+  deps: SatelliteDeps & {
+    readonly picture: () => BoardPicture | null;
+    /** This machine's live tmux sessions (folder sids): only they go in the picture. */
+    readonly live: () => ReadonlySet<string>;
+    readonly deliver: (message: OwnerMessage) => Promise<boolean>;
+    readonly now?: () => number;
+    readonly intervalMs?: number;
+    readonly log?: (line: string) => void;
+  },
+): SatelliteSync {
+  const post = deps.post ?? postJson;
+  const now = deps.now ?? Date.now;
+  const base = deps.url.replace(/\/+$/, '');
+  const log = deps.log ?? ((line: string) => console.error(`[oraculo] satélite: ${line}`));
+  let sent: { body: string; at: number } | null = null;
+  let taken: string[] = [];
+  let running: Promise<void> | null = null;
+  let timer: ReturnType<typeof setInterval> | null = null;
+
+  async function sendPicture(token: string): Promise<void> {
+    const { at: _at, ...rest } = compactPicture(deps.picture(), 0, deps.live());
+    const body = JSON.stringify(rest);
+    const at = now();
+    if (sent && sent.body === body && at - sent.at < PICTURE_AGAIN_MS) return;
+    const result = await post(`${base}${GATE_PICTURE_PATH}`, token, `{"retrato":{"at":${at},${body.slice(1)}}`, PICTURE_TIMEOUT_MS);
+    if (typeof result === 'object' && result.status === 200) sent = { body, at };
+    else log(`retrato não foi: o Oráculo da VPS pessoal ${typeof result === 'object' ? `respondeu HTTP ${result.status}` : 'não respondeu'}.`);
+  }
+
+  /** Says what was taken and reads what waits; `null` = no answer (what was taken is said again next time). */
+  async function exchange(token: string): Promise<Array<{ id: string; message: OwnerMessage }> | null> {
+    const saying = taken;
+    const result = await post(`${base}${GATE_INBOX_PATH}`, token, JSON.stringify({ entregues: saying }), deps.timeoutMs ?? SATELLITE_TIMEOUT_MS);
+    if (typeof result !== 'object' || result.status !== 200) return null;
+    taken = taken.filter((id) => !saying.includes(id));
+    try {
+      const parsed = JSON.parse(result.body) as { recados?: unknown };
+      if (!Array.isArray(parsed.recados)) return [];
+      return parsed.recados.filter((item): item is { id: string; message: OwnerMessage } => {
+        const message = (item as { message?: Record<string, unknown> } | null)?.message;
+        return typeof (item as { id?: unknown })?.id === 'string' && !!message && typeof message.projectPath === 'string' && typeof message.placeId === 'string' && typeof message.text === 'string' && typeof message.leaderText === 'string';
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  async function once(): Promise<void> {
+    const token = deps.token();
+    if (!token) return;
+    await sendPicture(token);
+    const waiting = await exchange(token);
+    if (!waiting?.length) return;
+    for (const item of waiting) {
+      if (taken.includes(item.id)) continue;
+      try {
+        if (await deps.deliver(item.message)) taken.push(item.id);
+      } catch (error) {
+        log(`recado ${item.id} para ${item.message.placeId} fica para a próxima volta: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    if (taken.length) await exchange(token);
+  }
+
+  const round = (): Promise<void> => {
+    running ??= once()
+      .catch((error: unknown) => log(`volta do retrato e dos recados: ${error instanceof Error ? error.message : String(error)}`))
+      .finally(() => {
+        running = null;
+      });
+    return running;
+  };
+
+  return {
+    round,
+    start() {
+      if (timer) return;
+      void round();
+      timer = setInterval(() => void round(), deps.intervalMs ?? SYNC_MS);
       timer.unref?.();
     },
     stop() {

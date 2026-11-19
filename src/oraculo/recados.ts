@@ -104,6 +104,12 @@ export interface GateRecadosDeps {
   readonly tmux?: RecadosTmux;
   /** A notice to a place out of this machine (or to the Líder único): the PC's relay. Absent = only logged. */
   readonly relay?: (message: OwnerMessage) => Promise<unknown>;
+  /**
+   * t-d461e003 — a message for a place that runs on another machine whose satellite sends its picture here
+   * (retrato-satelite.ts): queued for that machine, whose satellite takes it to its own recados. The machine's name, or
+   * `null` (no other machine runs it: the PC's relay). Absent = none.
+   */
+  readonly remote?: (message: OwnerMessage) => Promise<string | null>;
   /** t-c3fbe852 — the Líder único alive in this machine's tmux (`lider-local.ts`); absent = never here. */
   readonly leader?: () => Promise<LocalLeader | null>;
   /** Whether the transcript file has `label` (the confirmation of a typed item). Default: reads its end. */
@@ -163,6 +169,7 @@ const HOW = 'entra no fim do turno dela, ou na hora se ela estiver parada; a ent
 const ANSWER_LINE = 'Responda a quem mandou pelo sessao_enviar se precisar.';
 const RELAY_HOW = 'o PC está fora e esse lugar não roda nesta máquina: o recado espera no Oráculo e o app entrega quando o PC voltar';
 const NO_RELAY = 'O PC está fora e esse lugar não roda nesta máquina; o recado não saiu. Tente quando o PC ligar.';
+const REMOTE_HOW = 'esse lugar roda em outra máquina: o recado espera na fila dela, o portão de lá o busca em segundos e ele entra no fim do turno da sessão, ou na hora se ela estiver parada';
 const NOT_PICTURED = 'Sem retrato do quadro desta sessão (lugar e setas): com o PC fora, o recado não sai daqui. Tente quando o PC ligar.';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -622,6 +629,8 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     };
     // t-c3fbe852 — the Líder único alive here hears it from its own queue, with the PC off too.
     if (placeId === LEADER_OF_ALL && (await toLocalLeader({ lugar: '', nome: 'Oráculo' }, `quadro ${board}: ${words}`, message))) return;
+    // t-d461e003 — a place of another machine whose satellite sends its picture: that machine's queue.
+    if (placeId !== LEADER_OF_ALL && (await toRemote(message))) return;
     if (!deps.relay) {
       log(`aviso para ${placeId} (${board}) fora desta máquina e sem relay: ${words.slice(0, 80)}`);
       return;
@@ -664,7 +673,7 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
    * A message for a place off this machine (or the Líder único) with the PC off: the PC's relay, which today's app
    * delivers when it comes back. The same message inside `JOIN_MS` has the same key: the relay joins it.
    */
-  function relayMessage(projectPath: string, me: string, name: string, placeId: string, words: string): OwnerMessage {
+  function relayMessage(projectPath: string, me: string, name: string, placeId: string, words: string, remote = false): OwnerMessage {
     const board = lastSegment(projectPath);
     const toLeader = placeId === LEADER_OF_ALL;
     const chave = createHash('sha256').update(JSON.stringify([projectPath, me, placeId, words, Math.floor(now() / JOIN_MS)])).digest('hex').slice(0, 32);
@@ -672,15 +681,29 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     return {
       projectPath,
       placeId: toLeader ? '' : placeId,
-      text: `◆ Recado de ${signature}, guardado com o PC fora: ${words}`,
+      text: remote ? `◆ Recado de ${signature}: ${words}` : `◆ Recado de ${signature}, guardado com o PC fora: ${words}`,
       leaderText: `◆ Recado, quadro ${board}${toLeader ? '' : ` (para ${placeId}, que não está aberta)`}, de ${signature}: ${words}`,
       key: `recado:${chave}`,
     };
   }
 
+  /** `message` to another machine's queue; its name, or `null` (none runs it, or the queue failed: logged). */
+  async function toRemote(message: OwnerMessage): Promise<string | null> {
+    if (!deps.remote || !message.placeId) return null;
+    try {
+      return await deps.remote(message);
+    } catch (error) {
+      log(`recado para ${message.placeId} não entrou na fila da outra máquina: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  }
+
   async function relayed(projectPath: string, me: string, name: string, placeId: string, words: string): Promise<BrowserToolOutcome> {
-    if (!deps.relay) return { kind: 'error', text: NO_RELAY };
     const toLeader = placeId === LEADER_OF_ALL;
+    // t-d461e003 — a place of another machine whose satellite sends its picture (the Dalton, on the Homologações).
+    const machine = toLeader ? null : await toRemote(relayMessage(projectPath, me, name, placeId, words, true));
+    if (machine) return { kind: 'text', text: JSON.stringify({ entregue: 'na-fila', para: placeId, maquina: machine, como: REMOTE_HOW }) };
+    if (!deps.relay) return { kind: 'error', text: NO_RELAY };
     try {
       await deps.relay(relayMessage(projectPath, me, name, placeId, words));
     } catch (error) {

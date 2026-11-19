@@ -93,6 +93,11 @@ export interface PictureSession {
    * PC off): the PC does not know this session, so its calls are answered here and never wait on its tunnel.
    */
   readonly local?: boolean;
+  /**
+   * t-d461e003 — a session of another machine (its gate's name), from the picture its satellite sent
+   * (retrato-satelite.ts): it lives there, so a message to it waits in that machine's queue, never in this tmux.
+   */
+  readonly maquina?: string;
 }
 
 /** What the PC pushes (`POST /v1/retrato`): every VPS session it has open. */
