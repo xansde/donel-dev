@@ -17,6 +17,7 @@
 // t-d461e003 (item 4, 19/11): with the PC away the personal VPS knew this machine's boards only from the PC's last
 // picture. `createSatelliteSync` sends it this machine's own picture (retrato-local's, compact: retrato-satelite.ts) and
 // takes the messages waiting there for this machine's sessions (the Líder único's to the Dalton), into its recados.
+// And, at the end of each round, the Líder único's openings on this machine's boards (abrir-satelite.ts).
 
 import { promises as fsp } from 'node:fs';
 import { request as httpRequest } from 'node:http';
@@ -282,6 +283,8 @@ export function createSatelliteSync(
     /** This machine's live tmux sessions (folder sids): only they go in the picture. */
     readonly live: () => ReadonlySet<string>;
     readonly deliver: (message: OwnerMessage) => Promise<boolean>;
+    /** t-d461e003 — the openings the registro holds for this machine (abrir-satelite.ts), after the recados. */
+    readonly openings?: { round(): Promise<void> };
     readonly now?: () => number;
     readonly intervalMs?: number;
     readonly log?: (line: string) => void;
@@ -324,10 +327,7 @@ export function createSatelliteSync(
     }
   }
 
-  async function once(): Promise<void> {
-    const token = deps.token();
-    if (!token) return;
-    await sendPicture(token);
+  async function messages(token: string): Promise<void> {
     const waiting = await exchange(token);
     if (!waiting?.length) return;
     for (const item of waiting) {
@@ -339,6 +339,14 @@ export function createSatelliteSync(
       }
     }
     if (taken.length) await exchange(token);
+  }
+
+  async function once(): Promise<void> {
+    const token = deps.token();
+    if (!token) return;
+    await sendPicture(token);
+    await messages(token);
+    await deps.openings?.round();
   }
 
   const round = (): Promise<void> => {

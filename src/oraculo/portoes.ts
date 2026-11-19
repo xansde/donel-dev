@@ -19,6 +19,10 @@
 //   older one than the one kept is ignored (`{ok, guardado}`).
 // - `recados` `{entregues?: [id]}` (t-d461e003): the satellite took those; answers what still waits for that machine
 //   (`{recados: [{id, message}]}`): the messages for its sessions (the Líder único's to the Dalton, with the PC off).
+// - `abrir` `{call}` (t-d461e003, only this machine's own gate): the Líder único's `sessao_abrir` on a board another
+//   machine pictures, queued for it (`{ok, text}`; `{conhecido: false}` = no machine has that board).
+// - `aberturas` `{respostas?, kit?}` (t-d461e003): the satellite's answers to the openings it made; what still waits for
+//   it, and the kit of roles when its hash changed (`{aberturas, kit?}`, abrir-satelite.ts).
 // - `fila` `{aviso: OwnerMessage}` (passo 9, only this machine's own entregador, `isLocalGate`): a message of its
 //   sessions for a place of another machine goes into that machine's queue here (the registro alone writes them);
 //   `{maquina}`, or `{maquina: null}` when no fresh picture has that place (the entregador then takes its old way).
@@ -35,6 +39,7 @@ import type { OracleRequest, OracleResponse } from './api';
 import type { GateRecados } from './gate-recados';
 import { callerFromPicture, leaderTaskContext, ledgerCallRefusal, type BoardPicture, type PictureSession } from './portao';
 import { parseRemotePicture, type RemotePictures } from './retrato-satelite';
+import { openCallOf, openingsBodyOf, type RemoteOpenings } from './abrir-satelite';
 
 export const GATES_DIR = 'portoes';
 export const GATE_PATH_PREFIX = '/v1/portao/';
@@ -43,10 +48,14 @@ export const GATE_NOTICE_PATH = '/v1/portao/aviso';
 export const GATE_LINK_PATH = '/v1/portao/ligacao';
 export const GATE_PICTURE_PATH = '/v1/portao/retrato';
 export const GATE_INBOX_PATH = '/v1/portao/recados';
+/** t-d461e003 — the Líder único's opening on another machine's board (only the local gate: the entregador apart). */
+export const GATE_OPEN_PATH = '/v1/portao/abrir';
+/** t-d461e003 — a satellite's openings: its answers in, the orders waiting for it out (abrir-satelite.ts). */
+export const GATE_OPENINGS_PATH = '/v1/portao/aberturas';
 export const GATE_QUEUE_PATH = '/v1/portao/fila';
 /** A machine's picture (each board once, with its arrows): up to this. */
 export const MAX_GATE_PICTURE_BYTES = 16 * 1024 * 1024;
-const GATE_PATHS: ReadonlySet<string> = new Set([GATE_TOOL_PATH, GATE_NOTICE_PATH, GATE_LINK_PATH, GATE_PICTURE_PATH, GATE_INBOX_PATH, GATE_QUEUE_PATH]);
+const GATE_PATHS: ReadonlySet<string> = new Set([GATE_TOOL_PATH, GATE_NOTICE_PATH, GATE_LINK_PATH, GATE_PICTURE_PATH, GATE_INBOX_PATH, GATE_OPEN_PATH, GATE_OPENINGS_PATH, GATE_QUEUE_PATH]);
 /** The tool route's body may carry the delivery's proof files (base64): up to this. */
 export const MAX_GATE_BODY_BYTES = 64 * 1024 * 1024;
 const GATE_NAME = /^[a-z0-9][a-z0-9-]{0,39}$/;
@@ -136,6 +145,11 @@ export interface GateToolRoutesDeps {
    * the boards of this registro's own picture. Absent = the Líder único is refused, as on every gate before the split.
    */
   readonly leader?: { readonly isLocal: (name: string) => boolean; readonly picture: () => BoardPicture | null };
+  /**
+   * t-d461e003 — the openings on other machines' boards (abrir-satelite.ts): `abrir` only from this machine's own gate
+   * (`isLocal`, the entregador apart), `aberturas` from a satellite. Absent = both answer 404.
+   */
+  readonly openings?: { readonly queue: RemoteOpenings; readonly isLocal: (name: string) => boolean };
   /**
    * Passo 9 — the entregador apart queues here a message for a place of another machine (`fila`), only from the gate
    * marked local. Absent = the route answers 404 (no entregador apart: it queues itself).
@@ -235,6 +249,19 @@ export function createGateToolRoutes(deps: GateToolRoutesDeps): GateRoutes {
         log(`[oraculo] portão ${name}: erro na ferramenta: ${error instanceof Error ? error.message : String(error)}`);
         return json(500, { error: 'erro no Oráculo' });
       }
+    }
+    if (path === GATE_OPEN_PATH || path === GATE_OPENINGS_PATH) {
+      if (!deps.openings) return null;
+      if (path === GATE_OPEN_PATH) {
+        if (!deps.openings.isLocal(name)) return json(403, { error: 'só o portão desta máquina pede abertura' });
+        const call = openCallOf(body.call);
+        if (!call) return json(400, { error: 'call inválido' });
+        const outcome = deps.openings.queue.request(call);
+        return json(200, outcome ? { ok: outcome.kind !== 'error', text: outcome.text ?? '' } : { conhecido: false });
+      }
+      const input = openingsBodyOf(body);
+      if (!input) return json(400, { error: 'respostas inválidas' });
+      return json(200, deps.openings.queue.exchange(name, input.respostas, input.kitHash));
     }
     if (path === GATE_PICTURE_PATH || path === GATE_INBOX_PATH) {
       if (!deps.pictures) return null;

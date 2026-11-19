@@ -169,12 +169,42 @@ function machineIn(pictures: PicturesByName, heardAt: (name: string) => number |
   return undefined;
 }
 
+/** t-d461e003 — a board of another machine: that machine's gate name, the board's key and how it is named (`roda`). */
+export interface BoardMachine {
+  readonly name: string;
+  readonly pasta: string;
+  readonly label: string;
+}
+
+/** How the sessions of machine `name` name it (`roda`); its gate name when none says. Pure. */
+function labelIn(pictures: PicturesByName, name: string): string {
+  const sessions = Object.values(pictures.get(name)?.sessoes ?? {});
+  return sessions.map((session) => session.quemSou.roda).find((value): value is string => typeof value === 'string' && value.trim() !== '') ?? name;
+}
+
+/** The machine heard within `STALE_MS` of `at` whose picture has the board `quadro` (folder or last name). Pure. */
+function boardMachineIn(pictures: PicturesByName, heardAt: (name: string) => number | undefined, at: number, quadro: string): BoardMachine | undefined {
+  for (const [name, picture] of pictures) {
+    if (at - (heardAt(name) ?? -Infinity) > STALE_MS) continue;
+    const pasta = Object.keys(picture.quadros).find((key) => key === quadro || lastSegment(key) === quadro);
+    if (pasta) return { name, pasta, label: labelIn(pictures, name) };
+  }
+  return undefined;
+}
+
 /** What reads the other machines' pictures: the registro's store, or the entregador's reader of its files. */
 export interface RemotePictureView {
   /** This VPS's picture with the other machines' sessions it does not have (see the header). Pure of `local`. */
   combine(local: BoardPicture | null): BoardPicture | null;
   /** The machine whose fresh picture (see `STALE_MS`) has `placeId` on the board `projectPath`; `undefined` = none. */
   machineOf(projectPath: string, placeId: string): string | undefined;
+  /**
+   * t-d461e003 — the machine whose fresh picture has the board `quadro` (its folder, or the folder's last name): its gate
+   * name, the board's key and how its sessions name that machine (`roda`). `undefined` = none.
+   */
+  boardMachine(quadro: string): BoardMachine | undefined;
+  /** How the sessions of machine `name` name it (`roda`); its gate name when none says. */
+  labelOf(name: string): string;
 }
 
 export interface RemotePictures extends RemotePictureView {
@@ -269,6 +299,10 @@ export function createRemotePictures(deps: {
 
     machineOf,
 
+    boardMachine: (quadro) => boardMachineIn(pictures, (name) => heard.get(name), now(), quadro),
+
+    labelOf: (name) => labelIn(pictures, name),
+
     async queue(message) {
       if (!message.placeId) return null;
       const name = machineOf(message.projectPath, message.placeId);
@@ -295,7 +329,7 @@ export function createRemotePictures(deps: {
 /**
  * Passo 9 (t-5358d400) — the entregador apart: the other machines' pictures as the registro keeps them, read only
  * (`portoes-retrato/*.json`, parsed again when a file's mtime moves) with when the registro last heard each satellite
- * (`portoes-ouvido/<name>`): the same `combine` and `machineOf` as the registro's. A machine the registro never said it
+ * (`portoes-ouvido/<name>`): the same `combine`, `machineOf` and `boardMachine` as the registro's. A machine the registro never said it
  * heard does not route (its picture still shows, as the registro's own does after its satellite went quiet).
  */
 export function createRemotePicturesReader(deps: { readonly dir: string; readonly now?: () => number }): RemotePictureView {
@@ -365,5 +399,9 @@ export function createRemotePicturesReader(deps: { readonly dir: string; readonl
       return out;
     },
     machineOf: (projectPath, placeId) => machineIn(read().pictures, heardAt, now(), projectPath, placeId),
+    // t-d461e003 — the opening on another machine's board: the entregador asks the registro only for a board a fresh
+    // picture here has (the registro keeps the queues, `portoes-abrir/`).
+    boardMachine: (quadro) => boardMachineIn(read().pictures, heardAt, now(), quadro),
+    labelOf: (name) => labelIn(read().pictures, name),
   };
 }

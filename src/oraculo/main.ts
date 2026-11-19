@@ -26,7 +26,7 @@
 // `<dir>/portoes-recados/`, retrato-satelite.ts), so the Líder único reaches its boards with the PC off.
 
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { homedir, networkInterfaces } from 'node:os';
+import { cpus, freemem, homedir, hostname, loadavg, networkInterfaces } from 'node:os';
 import { join } from 'node:path';
 import { createSystemConfigIoDeps } from '../main/config-store';
 import { createLedgerService, nodeLedgerProofFs } from '../main/ledger-store';
@@ -35,13 +35,14 @@ import { createGateHandler, GATE_PORT, startGateServer, tunnelForward } from './
 import { createGateRecados, tmuxLocalSessions } from './recados';
 import { createProbe } from './sonda';
 import { createSatelliteLedger, createSatelliteNotice, createSatelliteReviewLink, createSatelliteSync, createSatelliteTaskMemory } from './satelite';
-import { readOpenKit } from './abrir-local';
+import { createOpenLocal, readOpenKit, roomRefusal, sweepUnfinishedOpenings } from './abrir-local';
+import { createSatelliteOpenings, readRemoteKit } from './abrir-satelite';
 import { createLocalPicture, tmuxLiveNow } from './retrato-local';
 import { ORACLE_PORT } from './server';
 import { canonicalJson, createSupabaseLedgerStore, readSupabaseLedger } from './ledger-supabase';
 import { exportSqliteLedger, LEDGER_SQLITE_FILE, seedSqliteLedger } from './ledger-sqlite';
 import { SERVICE_PLACE_PREFIX, SERVICE_ROLE } from '../shared/ledger/contract';
-import { createPictureStore, gatePortOf, readGateToken, runEntregador } from './entregador';
+import { createPictureStore, gatePortOf, loopbackPortFree, readGateToken, runEntregador, runLocalScript } from './entregador';
 import { juntarChat, separarChat } from './chat-entregador';
 import { MOBILE_PORT, startMobileServer } from '../main/celular/server';
 import { connect } from 'node:net';
@@ -96,7 +97,8 @@ async function runSatellite(dir: string, url: string): Promise<void> {
     sessionsDir,
     liveNow: tmuxLiveNow,
     extras: () => {
-      const kit = readOpenKit(dir);
+      // The registro's copy of the kit (t-d461e003): this machine's label and the roles' names.
+      const kit = readOpenKit(dir) ?? readRemoteKit(dir)?.kit ?? null;
       return kit ? { roda: kit.place.label, roleName: (id: string) => kit.roles.find((role) => role.id === id)?.name } : {};
     },
   });
@@ -111,6 +113,26 @@ async function runSatellite(dir: string, url: string): Promise<void> {
   });
   // t-d461e003 — the picture to the personal VPS, and the messages waiting there for this machine's sessions (the Líder
   // único's, with the PC off): into these recados; one whose session is not here goes back as a notice (the PC's relay).
+  // t-d461e003 — sessions opened here with the PC off: by the Líder único on the personal VPS (his orders come with the
+  // sync, `openFor`), or by a board Líder alive here on his own board (#511, by the gate). The kit of roles is the
+  // registro's copy (no PC writes one here); the board's folder comes from this machine's own sessions of that board.
+  const openLocal = createOpenLocal({
+    sessionsDir,
+    oraculoDir: dir,
+    picture: localPicture.get,
+    setSession: pictures.setSession,
+    forgetSession: pictures.forget,
+    // The Líder único never lives on a satellite.
+    leader: async () => null,
+    liveSessions: tmuxLocalSessions,
+    deliver: async (message) => (await recados.deliverLocal(message).catch(() => null)) ?? (await notices.send(message), null),
+    run: runLocalScript,
+    room: () => roomRefusal({ freeBytes: freemem(), loadPerCpu: loadavg()[0]! / Math.max(1, cpus().length) }),
+    portFree: loopbackPortFree,
+    names: [hostname()],
+    kit: () => readRemoteKit(dir)?.kit ?? null,
+    folderFromSessions: homedir(),
+  });
   const sync = createSatelliteSync({
     ...remote,
     picture: localPicture.get,
@@ -120,7 +142,9 @@ async function runSatellite(dir: string, url: string): Promise<void> {
       await notices.send(message);
       return true;
     },
+    openings: createSatelliteOpenings({ ...remote, dir, open: openLocal.openFor }),
   });
+  for (const sid of sweepUnfinishedOpenings(sessionsDir, await tmuxLocalSessions())) console.log(`[oraculo] abrir: apaguei a pasta ${sid}, aberta pela metade.`);
   const gatePort = Number(process.env.DONEL_ORACULO_PORTAO_PORT) || GATE_PORT;
   const gate = await startGateServer({
     port: gatePort,
@@ -136,6 +160,7 @@ async function runSatellite(dir: string, url: string): Promise<void> {
       forward: tunnelForward,
       serverVersion: 'oraculo-satelite',
       recados,
+      abrir: openLocal,
     }),
   });
   writeFileSync(join(dir, 'portao'), `${gate.port}\n`, { mode: 0o600 });

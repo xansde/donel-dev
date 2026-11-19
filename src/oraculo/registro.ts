@@ -30,6 +30,8 @@ import { GATE_PORT, type BoardPicture } from './portao';
 import { createGateToolRoutes, isLocalGate, readGateHashes, type GateRoutes } from './portoes';
 import { renewBeforeTask } from './recados';
 import { createRemotePictures } from './retrato-satelite';
+import { createRemoteOpenings } from './abrir-satelite';
+import { readOpenKit } from './abrir-local';
 import { ORACLE_PORT, startOracleServer, type OracleServer } from './server';
 import { createDaemonVigia } from './vigia';
 import { readBoardConfig } from './board-client';
@@ -199,9 +201,12 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
         renameSync(`${file}.tmp`, file);
       };
   // t-d461e003 — the other machines' pictures and queues: the entregador's when it runs here; apart, only the registro
-  // opens `portoes-retrato/` and `portoes-recados/` (its routes keep the pictures and hand the queues): the entregador
-  // reads the pictures and when each satellite was heard (`portoes-ouvido/`), and queues by the `fila` route.
+  // opens `portoes-retrato/`, `portoes-recados/` and `portoes-abrir/` (its routes keep the pictures and hand the queues):
+  // the entregador reads the pictures and when each satellite was heard (`portoes-ouvido/`), queues a message by the
+  // `fila` route and an opening by the `abrir` route.
   const remotes = entregador ? entregador.remotes : createRemotePictures({ dir, io, shareHeard: true });
+  // t-d461e003 — the Líder único's openings on other machines' boards: one queue per machine, beside their pictures.
+  const openings = entregador ? entregador.openings : remotes ? createRemoteOpenings({ dir, pictures: remotes, kit: () => readOpenKit(dir) }) : null;
   /**
    * The local recados when the entregador runs here; apart (passo 9, PR 2), through its gate on the loopback: with it
    * down, `deliverLocalFirst` takes the message to the PC's relay with the same key (never twice when it comes back).
@@ -386,6 +391,7 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
       linkPedido: (pedidoId, tarefa) => void celular?.linkPedido(pedidoId, tarefa),
       notice: toLeader,
       ...(remotes ? { pictures: remotes } : {}),
+      ...(openings ? { openings: { queue: openings, isLocal: (name: string) => isLocalGate(dir, name) } } : {}),
       // Apart, the Líder único of this machine reaches the ledger through the entregador's gate (never a satellite's).
       ...(entregador ? {} : { leader: { isLocal: (name: string) => isLocalGate(dir, name), picture: () => (remotes ? remotes.combine(picture()) : picture()) } }),
       // Passo 9 — apart, a message of the entregador's sessions for a place of another machine is queued here.
