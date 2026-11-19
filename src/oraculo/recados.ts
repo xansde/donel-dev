@@ -694,15 +694,20 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
    * O Oráculo sem o PC (19/11) — a `sessao_enviar` of the Líder único (he has no place): to a place of the board he
    * names, on the boards the picture has, by the PC's rule (the top of the board and whoever is below it by the owner's
    * or the opening arrows). Queued here when the place runs here, else the PC's relay. Only with the PC off or for a
-   * Líder the PC does not know: with the PC on, the PC sends his messages.
+   * Líder the PC does not know: with the PC on, the PC sends his messages. Without "quadro", a place id names its board
+   * (the ids are unique): the messages the carteiro kept on 19/11 name only the place.
    */
   async function fromLeader(sid: string, call: SendCall): Promise<BrowserToolOutcome> {
     const refuse = (text: string): BrowserToolOutcome => ({ kind: 'error', text });
     const boards = picturedBoards(deps.picture());
     const names = [...boards.keys()].map(lastSegment).join(', ') || 'nenhum';
-    if (!call.quadro) return refuse(`Você é o Líder único: diga o quadro em "quadro" (com o PC fora, conheço: ${names}).`);
-    const found = [...boards].find(([pasta]) => pasta === call.quadro || lastSegment(pasta) === call.quadro);
-    if (!found) return refuse(`Com o PC fora, conheço só os quadros do último retrato (${names}); "${call.quadro}" não está entre eles.`);
+    const para = call.para.trim();
+    const quadro = call.quadro;
+    const found = quadro
+      ? [...boards].find(([pasta]) => pasta === quadro || lastSegment(pasta) === quadro)
+      : [...boards].find(([, { listar, board }]) => board?.cards[para]?.kind === 'session' || listedPlaces(listar).some((place) => place.id === para));
+    if (!quadro && !found) return refuse(`Você é o Líder único: "${para}" não é lugar de nenhum quadro que conheço com o PC fora (${names}); diga o quadro em "quadro".`);
+    if (!found) return refuse(`Com o PC fora, conheço só os quadros do último retrato (${names}); "${quadro}" não está entre eles.`);
     const [projectPath, { listar, board }] = found;
     const target = resolveAddress(board, listedPlaces(listar), LEADER_OF_ALL, call.para);
     if ('erro' in target) return refuse(target.erro);
