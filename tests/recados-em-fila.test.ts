@@ -378,7 +378,7 @@ describe('Recados em fila: sessão nunca ouvida (daemon reiniciado, hook instala
     expect(g.typed[1]!.text).toContain(`Recado ${next.id}`);
   });
 
-  it('digitado e não confirmado: tira o texto do campo, não redigita na hora e o fim de turno entrega', async () => {
+  it('a caixa segura o texto a cada digitação: limpa e redigita; esgotadas as tentativas, caixa limpa, volta à fila, o Líder ouve uma vez e o fim de turno entrega uma vez', async () => {
     const g = setup();
     const recados = g.make();
     await deliveredTask(g.ledger!);
@@ -386,24 +386,37 @@ describe('Recados em fila: sessão nunca ouvida (daemon reiniciado, hook instala
     const sent = JSON.parse(textOf(await recados.enviar(SID_DEV, g.picture.sessoes[SID_DEV]!, { tool: 'sessao_enviar', para: REV, texto: 'preso' }))) as { id: string };
     await recados.tick();
     expect(g.typed).toHaveLength(1);
-    // The Enter did not go: the text sits in the field (a long one shows as a paste).
-    g.screens.set(SID_REV, screen('[Pasted text #1]'));
-    g.advance(21_000);
-    await recados.tick();
-    expect(g.cleared).toEqual([SID_REV]);
-    await recados.tick();
-    expect(g.typed).toHaveLength(1);
+    for (let typing = 1; typing <= 3; typing += 1) {
+      // The Enter did not go: the text sits in the field (a long one shows as a paste).
+      g.screens.set(SID_REV, screen('[Pasted text #1]'));
+      g.advance(21_000);
+      await recados.tick();
+      expect(g.cleared).toHaveLength(typing);
+      expect(g.typed).toHaveLength(Math.min(typing + 1, 3));
+    }
+    expect(new Set(g.typed.map((t) => t.text)).size).toBe(1); // always the same text
+    expect(itemOf(g.file, sent.id)).toMatchObject({ estado: 'fila', tentativas: 3 });
+    const warned = (g.relayed as { key: string; text: string }[]).filter((m) => m.key.startsWith('caixa:'));
+    expect(warned).toHaveLength(1);
+    expect(warned[0]!.text).toContain(sent.id);
+    for (let i = 0; i < 10; i += 1) {
+      g.advance(30_000);
+      await recados.tick();
+    }
+    expect(g.typed).toHaveLength(3); // spent: not typed again
+    expect((g.relayed as { key: string }[]).filter((m) => m.key.startsWith('caixa:'))).toHaveLength(1);
     const stop = JSON.parse((await recados.hook('fim-de-turno', tmuxHeader(SID_REV), hookBody(SID_REV))).body) as { reason?: string };
-    expect(stop.reason).toContain(`Recado ${sent.id}`);
+    expect(stop.reason!.split(`Recado ${sent.id}`)).toHaveLength(2);
     // Somebody's own draft in the field is never cleared.
     await recados.hook('fim-de-turno', tmuxHeader(SID_REV), hookBody(SID_REV, { stop_hook_active: true }));
+    g.screens.set(SID_REV, screen(''));
     await recados.enviar(SID_DEV, g.picture.sessoes[SID_DEV]!, { tool: 'sessao_enviar', para: REV, texto: 'mais um' });
     await recados.tick();
-    expect(g.typed).toHaveLength(2);
+    expect(g.typed).toHaveLength(4);
     g.screens.set(SID_REV, screen('rascunho do dono'));
     g.advance(21_000);
     await recados.tick();
-    expect(g.cleared).toEqual([SID_REV]);
+    expect(g.cleared).toHaveLength(3);
   });
 
   it('o texto digitado sai sem caracteres de controle (um \\r manda pela metade)', async () => {
@@ -480,6 +493,175 @@ describe('Recados em fila: o campo de quem está digitando é dele', () => {
     await recados.hook('ocupada', tmuxHeader(SID_REV), hookBody(SID_REV, { prompt: g.typed[0]!.text }));
     expect(itemOf(g.file, sent.id)).toMatchObject({ estado: 'entregue', via: 'tela' });
     expect(JSON.parse((await recados.hook('fim-de-turno', tmuxHeader(SID_REV), hookBody(SID_REV))).body)).toEqual({});
+  });
+});
+
+// Caixa pendurada (19/11): the Dalton's queue stood ~20 h behind two notices typed and never sent.
+describe('Recados em fila: caixa pendurada', () => {
+  const caixaWarnings = (relayed: unknown[]) => (relayed as { key: string; text: string }[]).filter((m) => m.key.startsWith('caixa:'));
+
+  it('a caixa segura o texto depois do Enter: o entregador limpa, digita de novo o mesmo texto e a fila anda, sem sair em dobro', async () => {
+    const g = setup();
+    const recados = g.make();
+    await deliveredTask(g.ledger!);
+    g.turns.set(SID_REV, { ended: true, at: g.clock() - 60_000 });
+    const sent = JSON.parse(textOf(await recados.enviar(SID_DEV, g.picture.sessoes[SID_DEV]!, { tool: 'sessao_enviar', para: REV, texto: 'revisa o PR 12' }))) as { id: string };
+    await recados.tick();
+    expect(g.typed).toHaveLength(1);
+    g.screens.set(SID_REV, screen(g.typed[0]!.text)); // the Enter did not go in
+    g.advance(6_000);
+    await recados.tick();
+    expect(g.enters).toEqual([SID_REV]); // another Enter first
+    g.advance(15_000);
+    await recados.tick();
+    expect(g.cleared).toEqual([SID_REV]);
+    expect(g.typed).toHaveLength(2);
+    expect(g.typed[1]!.text).toBe(g.typed[0]!.text);
+    // This time it went in.
+    g.screens.set(SID_REV, screen(''));
+    g.inTranscript.set(SID_REV, [g.typed[1]!.text]);
+    g.advance(6_000);
+    await recados.tick();
+    expect(itemOf(g.file, sent.id)).toMatchObject({ estado: 'entregue', via: 'transcript' });
+    expect(JSON.parse((await recados.hook('fim-de-turno', tmuxHeader(SID_REV), hookBody(SID_REV))).body)).toEqual({});
+    expect(g.typed).toHaveLength(2);
+    expect(caixaWarnings(g.relayed)).toEqual([]);
+  });
+
+  it('recado ao próprio Líder único que não entra na caixa dele: nenhum aviso novo na mesma caixa travada, nada em laço', async () => {
+    const g = setup();
+    const SID_LIDER = '77777777-2222-4333-8444-555555555555';
+    const recados = createGateRecados({
+      file: g.file,
+      io,
+      ledger: () => g.ledger,
+      picture: () => g.picture,
+      localSessions: async () => new Set([SID_DEV, SID_REV, SID_LIDER]),
+      leader: async () => ({ sid: SID_LIDER }),
+      tmux: {
+        screen: async (sid) => ({ inMode: false, text: g.screens.get(sid) ?? screen('') }),
+        // The Líder's box takes the text and never the Enter.
+        type: async (sid, text) => {
+          g.typed.push({ sid, text });
+          g.screens.set(sid, screen(text));
+          return true;
+        },
+        enter: async (sid) => {
+          g.enters.push(sid);
+          return true;
+        },
+        clear: async (sid) => {
+          g.cleared.push(sid);
+          g.screens.set(sid, screen(''));
+          return true;
+        },
+      },
+      relay: async (message) => g.relayed.push(message),
+      transcriptOf: async (sid) => `/transcripts/${sid}.jsonl`,
+      lastTurn: async () => ({ ended: true, at: g.clock() - 60_000 }),
+      transcriptHas: async () => false,
+      now: g.clock,
+      log: () => undefined,
+    });
+    const sent = JSON.parse(textOf(await recados.enviar(SID_DEV, g.picture.sessoes[SID_DEV]!, { tool: 'sessao_enviar', para: 'lider', texto: 'olha o PR 12' }))) as { id: string };
+    expect(sent.id).toMatch(/^r-/);
+    for (let i = 0; i < 1800; i += 1) {
+      await recados.tick();
+      g.advance(2_000);
+    }
+    const { items } = JSON.parse(readFileSync(g.file, 'utf8')) as { items: { id: string; para: { sid: string } }[] };
+    expect(items.filter((item) => item.para.sid === SID_LIDER).map((item) => item.id)).toEqual([sent.id]);
+    expect(caixaWarnings(g.relayed)).toEqual([]);
+    expect(g.typed.filter((t) => t.sid === SID_LIDER)).toHaveLength(3);
+    expect(g.cleared.filter((sid) => sid === SID_LIDER)).toHaveLength(3);
+  });
+
+  it('volta à fila sem saber do Enter e a conversa mostra que entrou: entregue, nunca redigitado nem reentregue', async () => {
+    const g = setup();
+    const recados = g.make();
+    await deliveredTask(g.ledger!);
+    g.turns.set(SID_REV, { ended: true, at: g.clock() - 60_000 });
+    const sent = JSON.parse(textOf(await recados.enviar(SID_DEV, g.picture.sessoes[SID_DEV]!, { tool: 'sessao_enviar', para: REV, texto: 'chegou tarde' }))) as { id: string };
+    await recados.tick();
+    g.advance(21_000);
+    await recados.tick(); // empty field, nothing in the transcript yet: back to the queue, the screen waits
+    expect(itemOf(g.file, sent.id)).toMatchObject({ estado: 'fila', tentativas: 1 });
+    g.inTranscript.set(SID_REV, [g.typed[0]!.text]); // the transcript caught up
+    g.advance(3 * 60_000);
+    await recados.tick();
+    expect(g.typed).toHaveLength(1);
+    expect(itemOf(g.file, sent.id)).toMatchObject({ estado: 'entregue', via: 'transcript' });
+    expect(JSON.parse((await recados.hook('fim-de-turno', tmuxHeader(SID_REV), hookBody(SID_REV))).body)).toEqual({});
+  });
+
+  it('aviso "◆ …" pendurado há mais de 5 min numa sessão ociosa: vai com um Enter e a fila atrás dele anda', async () => {
+    const g = setup();
+    const recados = g.make();
+    await deliveredTask(g.ledger!);
+    g.turns.set(SID_DEV, { ended: true, at: g.clock() - 60_000 });
+    g.screens.set(SID_DEV, screen('◆ De Homologador (place:3aef85f7): [t-4ad46dea] acabei o turno #sem-esteira'));
+    const sent = JSON.parse(textOf(await recados.enviar(SID_REV, g.picture.sessoes[SID_REV]!, { tool: 'sessao_enviar', para: DEV, texto: 'aprovado' }))) as { id: string };
+    for (let i = 0; i < 9; i += 1) {
+      await recados.tick();
+      g.advance(30_000);
+    }
+    // 4,5 min: nothing touched, nothing typed over it.
+    expect(g.enters).toEqual([]);
+    expect(g.typed).toEqual([]);
+    await recados.tick();
+    g.advance(30_000);
+    await recados.tick();
+    expect(g.enters).toEqual([SID_DEV]);
+    expect(g.cleared).toEqual([]);
+    // The CLI took it: the field is free and the queue moves.
+    g.screens.set(SID_DEV, screen(''));
+    g.advance(30_000);
+    await recados.tick();
+    expect(g.typed).toEqual([{ sid: SID_DEV, text: expect.stringContaining(`Recado ${sent.id}`) }]);
+    expect(g.enters).toEqual([SID_DEV]); // one Enter per box
+    expect(caixaWarnings(g.relayed)).toEqual([]);
+  });
+
+  it('aviso "◆ …" numa sessão em turno não leva Enter; o Líder ouve uma vez', async () => {
+    const g = setup();
+    const recados = g.make();
+    g.screens.set(SID_DEV, `${screen('◆ De Dev (place:x): [t-1] fim de turno')}\n  esc to interrupt`);
+    for (let i = 0; i < 20; i += 1) {
+      await recados.tick();
+      g.advance(30_000);
+    }
+    expect(g.enters).toEqual([]);
+    expect(caixaWarnings(g.relayed)).toHaveLength(1);
+  });
+
+  it('texto sem a forma "◆" (o dono digitando): nada é apagado nem enviado, e a vigia avisa o Líder uma vez, com sessão, lugar, tempo e 80 caracteres', async () => {
+    const g = setup();
+    const recados = g.make();
+    await deliveredTask(g.ledger!);
+    g.turns.set(SID_DEV, { ended: true, at: g.clock() - 60_000 });
+    const draft = `vou pedir pro revisor olhar o PR 12 com calma porque ${'x'.repeat(100)}`;
+    g.screens.set(SID_DEV, screen(draft));
+    const sent = JSON.parse(textOf(await recados.enviar(SID_REV, g.picture.sessoes[SID_REV]!, { tool: 'sessao_enviar', para: DEV, texto: 'aprovado' }))) as { id: string };
+    for (let i = 0; i < 25; i += 1) {
+      await recados.tick();
+      g.advance(30_000);
+    }
+    expect(g.typed).toEqual([]);
+    expect(g.enters).toEqual([]);
+    expect(g.cleared).toEqual([]);
+    const warned = caixaWarnings(g.relayed);
+    expect(warned).toHaveLength(1);
+    expect(warned[0]!.text).toContain('caixa com texto não enviado há mais de 5 min');
+    expect(warned[0]!.text).toContain(SID_DEV);
+    expect(warned[0]!.text).toContain(DEV);
+    expect(warned[0]!.text).toMatch(/há \d+ min/);
+    expect(warned[0]!.text).toContain(`«${draft.slice(0, 80)}»`);
+    expect(warned[0]!.text).not.toContain(draft.slice(0, 81));
+    expect(itemOf(g.file, sent.id)).toMatchObject({ estado: 'fila', tentativas: 0 });
+    // The owner sends his text: the field is free and the queue moves.
+    g.screens.set(SID_DEV, screen(''));
+    await recados.tick();
+    expect(g.typed).toEqual([{ sid: SID_DEV, text: expect.stringContaining(`Recado ${sent.id}`) }]);
   });
 });
 

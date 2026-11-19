@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { afterBusyField, BUSY_MAX, CHARGE_EVERY_MS, CHARGE_MAX, fieldIsFree, linkKind, planJustify, planVigia, responseSince, VIGIA_MAX_PER_DAY, withShadowNotice, type CronCard } from '../src/shared/board/cron';
+import { afterBusyField, BUSY_MAX, CHARGE_EVERY_MS, CHARGE_MAX, fieldHoldsOnlyNotice, fieldIsFree, linkKind, planJustify, planVigia, responseSince, VIGIA_MAX_PER_DAY, withShadowNotice, type CronCard } from '../src/shared/board/cron';
 import { STALL_MS } from '../src/shared/board/rules';
 import { renderBoardPage } from '../src/shared/board/page';
 
@@ -120,6 +120,18 @@ describe('campo de entrada da sessão', () => {
     expect(fieldIsFree(`${ruler}\n❯ \x1b[2mtry "fix the bug"\x1b[0m\n${ruler}`).free).toBe(true);
     expect(fieldIsFree(`${ruler}\n❯ estou escrevendo\n${ruler}`)).toEqual({ free: false, why: 'campo com texto (rascunho de alguém)' });
     expect(fieldIsFree('Do you want to proceed?\n1. Yes').free).toBe(false);
+  });
+
+  it('o aviso que não entrou só é limpo quando a caixa tem só ele; o que o dono acrescentou ou colou fica', () => {
+    const notice = '[quadro de tarefas · VPS] card parado há 3 dias: justifique no card';
+    expect(fieldHoldsOnlyNotice(notice, notice)).toBe(true);
+    expect(fieldHoldsOnlyNotice('[quadro de tarefas · VPS] card parado há 3 dias: justi fique no card', notice)).toBe(true); // wrapped
+    expect(fieldHoldsOnlyNotice('[Pasted text #1 +4 lines]', notice)).toBe(true); // a long notice shown as a paste
+    expect(fieldHoldsOnlyNotice(`${notice} e mais o que o dono escreveu`, notice)).toBe(false);
+    expect(fieldHoldsOnlyNotice('[Pasted text #1 +4 lines][Pasted text #2]', notice)).toBe(false); // the owner pasted too
+    expect(fieldHoldsOnlyNotice('[Pasted text #1] oi', notice)).toBe(false);
+    expect(fieldHoldsOnlyNotice('rascunho do dono', notice)).toBe(false);
+    expect(fieldHoldsOnlyNotice('', notice)).toBe(false);
   });
 });
 
