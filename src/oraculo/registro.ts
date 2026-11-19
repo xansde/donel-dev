@@ -74,8 +74,12 @@ export function readTokenHash(dir: string): string | null {
   }
 }
 
-/** The end of the Líder's transcript read for his answers to the phone: enough to hold the turn that read one. */
-const CHAT_TAIL_BYTES = 512 * 1024;
+/**
+ * The end of the Líder's transcript read for his answers to the phone: enough to hold the turn that read one. A turn
+ * that reads a phone message and answers it after long tool calls passes 600 KB (19/11: the #dcd0176a was read 628 KB
+ * before his answer). Read only while a message waits for him.
+ */
+const CHAT_TAIL_BYTES = 2 * 1024 * 1024;
 
 /** The last `bytes` of a file; `null` = unreadable. */
 async function readTail(path: string, bytes: number): Promise<string | null> {

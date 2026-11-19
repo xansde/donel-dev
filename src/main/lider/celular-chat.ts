@@ -121,25 +121,45 @@ function textOf(content: unknown): string {
     .join('\n');
 }
 
-/** A line the Líder READ as a new message: a prompt of the main thread with text (not a tool result, not a tag). */
+/** How the CLI records what a Stop hook gave back to the model (the end-of-turn delivery of the recados queue). */
+const STOP_FEEDBACK = 'Stop hook feedback:';
+
+/**
+ * A line the Líder READ as a new message: a prompt of the main thread with text (not a tool result, not a tag), a
+ * message the CLI put into a running turn, or what a Stop hook gave him at the end of a turn (a meta prompt starting
+ * with `Stop hook feedback:`; its `hook_blocking_error` attachment repeats the same text and is not counted again).
+ * No other meta line counts.
+ */
 function readText(entry: Record<string, unknown>): string | null {
+  let content: string;
   if (entry.type === 'attachment') {
     const attachment = entry.attachment as { type?: unknown; prompt?: unknown } | undefined;
-    return attachment?.type === 'queued_command' ? unwrapPastedContent(textOf(attachment.prompt)) : null;
+    if (attachment?.type !== 'queued_command') return null;
+    content = textOf(attachment.prompt);
+  } else if (entry.type === 'user') {
+    content = textOf((entry.message as { content?: unknown } | undefined)?.content);
+    if (entry.isMeta === true) {
+      const trimmed = content.trimStart();
+      return trimmed.startsWith(STOP_FEEDBACK) ? trimmed.slice(STOP_FEEDBACK.length).trim() || null : null;
+    }
+  } else {
+    return null;
   }
-  if (entry.type !== 'user' || entry.isMeta === true) return null;
   // A long or multi-line message goes by bracketed paste, and the CLI records it as `<pasted_content id=…>…`.
-  const text = unwrapPastedContent(textOf((entry.message as { content?: unknown } | undefined)?.content)).trim();
-  // Tool results carry no text block; `<task-notification>`, `<command-name>` and the like are not the owner's.
+  const text = unwrapPastedContent(content).trim();
+  // Tool results carry no text block; `<task-notification>` (also queued into a running turn), `<command-name>` and the
+  // like are not a message: a background task ending in the middle of his answer does not cut it.
   return text && !text.startsWith('<') ? text : null;
 }
 
 /**
- * For each of `ids` whose marker the Líder read in the tail of his transcript (a prompt of his, or a message the CLI
- * put into a running turn), what he wrote AFTER reading it and before the next message he read: his answer to it.
- * Only the ids he already answered come back. Lines cut at the start of the tail, not JSON, or of a subagent are skipped.
+ * For each of `ids` whose marker the Líder read in the tail of his transcript (a prompt of his, a message the CLI
+ * put into a running turn, or an end-of-turn delivery by the Stop hook), what he wrote AFTER reading it and before the
+ * next message he read: his answer to it. Only the ids he already answered come back. Lines cut at the start of the
+ * tail, not JSON, or of a subagent are skipped. `closedOnly`: only the answers a later message he read already closed
+ * (the turn may still be going, but what he wrote before reading something new is whole).
  */
-export function answersIn(transcriptTail: string, ids: readonly string[]): Map<string, string> {
+export function answersIn(transcriptTail: string, ids: readonly string[], options: { readonly closedOnly?: boolean } = {}): Map<string, string> {
   const events: Array<{ kind: 'read'; text: string } | { kind: 'wrote'; text: string }> = [];
   for (const line of transcriptTail.split('\n')) {
     if (!line.trim()) continue;
@@ -170,15 +190,17 @@ export function answersIn(transcriptTail: string, ids: readonly string[]): Map<s
     });
     if (readAt < 0) continue;
     let answer: string | null = null;
+    let closed = false;
     for (const event of events.slice(readAt + 1)) {
       // Another phone message read right after (nothing written between them) is answered together.
       if (event.kind === 'read') {
         if (answer === null && phoneMarkers.some((other) => event.text.includes(other))) continue;
+        closed = true;
         break;
       }
       answer = event.text;
     }
-    if (answer !== null) answers.set(id, answer);
+    if (answer !== null && (closed || !options.closedOnly)) answers.set(id, answer);
   }
   return answers;
 }

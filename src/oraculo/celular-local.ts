@@ -369,6 +369,9 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
         next.chat.push({ id, autor: 'lider', texto, em_resposta_a: emRespostaA, criada_em: iso() });
       });
     },
+    respondida(id) {
+      return data.chat.some((row) => row.autor === 'lider' && row.em_resposta_a === id);
+    },
   };
 
   function estadoDe(row: ChatLocal, answered: ReadonlySet<string>): ConversaLinha['estado'] {
