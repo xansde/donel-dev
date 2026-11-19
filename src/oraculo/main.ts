@@ -801,6 +801,12 @@ async function main(): Promise<void> {
   consumers = { decisoes: () => decisoes.round(), pedidas: () => tarefasPedidas.round(), chat: () => chatCelular.round() };
   console.log(`[oraculo] no ar em ${server.url} (${Object.keys(first.doc.tasks).length} tarefas${first.readOnly ? ', só leitura' : ''}, fonte: ${source === 'sqlite' ? 'SQLite' : store ? 'Supabase' : 'ledger.json'})`);
   const stop = (): void => {
+    // The SQLite is closed first: its WAL goes into the file (a copy of ledger.sqlite alone is then the whole ledger).
+    try {
+      (store as { close?: () => void } | undefined)?.close?.();
+    } catch {
+      // exiting anyway
+    }
     probe.stop();
     recados.stop();
     vigia.stop();

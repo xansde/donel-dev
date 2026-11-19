@@ -121,6 +121,9 @@ export function openSqliteLedgerStore(file: string, log: (line: string) => void 
  */
 export async function seedSqliteLedger(file: string, doc: LedgerDoc): Promise<{ tarefas: number; diferentes: number }> {
   if (existsSync(file)) throw new Error(`${file} já existe: nada foi gravado`);
+  // A WAL left by an older database (a daemon stopped without closing it) would be replayed over the new file on its
+  // first open: the seed would check fine and the daemon would open another ledger (revisão do #496).
+  for (const side of [`${file}-wal`, `${file}-shm`]) if (existsSync(side)) throw new Error(`${side} existe (de um banco anterior): nada foi gravado. Ponha-o de lado junto do banco a que pertence.`);
   // Built beside, renamed into place only once it checks, the mark last: a seed cut midway leaves no database the
   // daemon would take (revisão do #496).
   const building = `${file}.semeando`;
@@ -147,7 +150,8 @@ export async function seedSqliteLedger(file: string, doc: LedgerDoc): Promise<{ 
 export function exportSqliteLedger(file: string, target: string): { tarefas: number } {
   // Never opens (and so never creates) a database that is not there.
   if (!existsSync(file)) throw new Error(`${file} não existe: nada a exportar`);
-  const db = new DatabaseSync(file);
+  // Read-only (Node 22.12+; the type here is older): the export never writes the database it reads.
+  const db = new DatabaseSync(file, { readOnly: true } as never);
   const doc = readAll(db);
   db.close();
   writeFileSync(target, JSON.stringify({ schemaVersion: doc.schemaVersion, startedAt: doc.startedAt, tasks: doc.tasks }, null, 2), { mode: 0o600, flag: 'wx' });
@@ -166,7 +170,7 @@ export function ledgerSourceOf(dir: string): 'sqlite' | 'supabase' | 'arquivo' {
   const present = existsSync(join(dir, LEDGER_SQLITE_FILE));
   if (present && seeded) return 'sqlite';
   if (present) throw new Error(`${join(dir, LEDGER_SQLITE_FILE)} existe sem a marca ${LEDGER_SOURCE_MARK}: a semeadura não terminou. Apague o banco e semeie de novo (--semear-sqlite).`);
-  if (seeded) throw new Error(`${join(dir, LEDGER_SQLITE_FILE)} sumiu, mas o ledger foi semeado nele (${LEDGER_SOURCE_MARK}): o daemon não sobe vazio. Volte o banco ou apague a marca de propósito.`);
+  if (seeded) throw new Error(`${join(dir, LEDGER_SQLITE_FILE)} sumiu, mas o ledger foi semeado nele (${LEDGER_SOURCE_MARK}): o daemon não sobe vazio. Volte o banco com o -wal e o -shm dele, ou volte ao ledger.json com --exportar-sqlite de uma cópia.`);
   if (existsSync(join(dir, 'ledger-supabase.json'))) return 'supabase';
   return 'arquivo';
 }

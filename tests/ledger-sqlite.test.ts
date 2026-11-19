@@ -79,6 +79,28 @@ describe('ledger em SQLite', () => {
     expect(back).toEqual(doc);
   });
 
+  it('semear ao lado do -wal de um banco anterior é recusado: o WAL velho nunca se mistura ao banco novo', async () => {
+    const dir = tmp();
+    const db = join(dir, 'ledger.sqlite');
+    writeFileSync(`${db}-wal`, 'restos');
+    await expect(seedSqliteLedger(db, { schemaVersion: 4, startedAt: 1, tasks: {} } as never)).rejects.toThrow(/-wal/);
+    expect(existsSync(db)).toBe(false);
+  });
+
+  it('a escrita que falha dentro da transação volta inteira (ROLLBACK) e a op é recusada', async () => {
+    const dir = tmp();
+    const a = service(dir);
+    expect((await a.ledger.apply({ kind: 'dono' }, criar(1))).ok).toBe(true);
+    const { DatabaseSync } = process.getBuiltinModule('node:sqlite') as typeof import('node:sqlite');
+    const other = new DatabaseSync(join(dir, 'ledger.sqlite'));
+    other.exec("CREATE TRIGGER barra BEFORE INSERT ON tarefas WHEN (SELECT count(*) FROM tarefas) >= 1 BEGIN SELECT RAISE(ABORT, 'disco cheio'); END;");
+    other.close();
+    expect((await a.ledger.apply({ kind: 'dono' }, criar(2))).ok).toBe(false);
+    expect(Object.keys(a.ledger.load().doc.tasks)).toHaveLength(1);
+    a.store.close();
+    expect(Object.keys(service(dir).ledger.load().doc.tasks)).toHaveLength(1);
+  });
+
   it('a fonte: SQLite só semeado e com a marca; banco sem marca ou marca sem banco param o daemon, nunca sobe vazio', async () => {
     const dir = tmp();
     expect(ledgerSourceOf(dir)).toBe('arquivo');
