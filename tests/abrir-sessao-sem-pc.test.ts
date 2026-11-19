@@ -31,6 +31,7 @@ const PROJECT = '/home/dono/seazone/atlas';
 const SID_LIDER = '77777777-2222-4333-8444-555555555555';
 const SID_DEV = '11111111-2222-4333-8444-555555555555';
 const NEW_SID = 'aaaaaaaa-2222-4333-8444-555555555555';
+const SID_LIDER_QUADRO = '99999999-2222-4333-8444-555555555555';
 const DEV = 'place:dev';
 const LIDER_DO_QUADRO = 'place:lider-atlas';
 const TOKEN = 'token-do-lider';
@@ -77,6 +78,8 @@ function kitOf(openCap: number | null): OpenKit {
 
 interface MachineOptions {
   readonly leaderOnBoard?: boolean;
+  /** The board Líder's session in the picture (its `quemSou.lugar` is his place): with its tmux alive here, or not. */
+  readonly boardLeaderTmux?: 'alive' | 'gone';
   readonly openCap?: number | null;
   readonly kit?: boolean;
   readonly tmuxFails?: boolean;
@@ -114,9 +117,10 @@ function machine(options: MachineOptions = {}) {
     sessoes: {
       [SID_LIDER]: { quemSou: { nome: 'Líder', papel: 'lider', liderUnico: true, lugar: null }, listar: [] },
       [SID_DEV]: { quemSou: { nome: 'Dev · atlas', pasta: PROJECT, lugar: DEV, papel: 'dev' }, listar, board },
+      ...(options.boardLeaderTmux ? { [SID_LIDER_QUADRO]: { quemSou: { nome: 'Líder · atlas', pasta: PROJECT, lugar: LIDER_DO_QUADRO, papel: 'lider' }, listar, board } } : {}),
     },
   };
-  const live = new Set([SID_LIDER, SID_DEV]);
+  const live = new Set([SID_LIDER, SID_DEV, ...(options.boardLeaderTmux === 'alive' ? [SID_LIDER_QUADRO] : [])]);
   const delivered: OwnerMessage[] = [];
   /** What was on disk when the synthetic picture was kept. */
   const atPicture: Array<{ meta: boolean; tmux: boolean }> = [];
@@ -228,8 +232,8 @@ describe('abrir sessão com o PC desligado (abrir-local)', () => {
     expect(m.folders()).toEqual([]);
   });
 
-  it('quadro com Líder vivo: não abre e entrega o pedido ao Líder do quadro pela fila', async () => {
-    const m = machine({ leaderOnBoard: true });
+  it('quadro com Líder vivo no tmux daqui: não abre e entrega o pedido ao Líder do quadro pela fila', async () => {
+    const m = machine({ leaderOnBoard: true, boardLeaderTmux: 'alive' });
     const out = await m.ask({});
     expect(out.kind).toBe('text');
     expect((out as { text: string }).text).toContain('Entregue ao Líder do quadro atlas');
@@ -237,6 +241,17 @@ describe('abrir sessão com o PC desligado (abrir-local)', () => {
     expect(m.delivered[0]).toMatchObject({ projectPath: PROJECT, placeId: LIDER_DO_QUADRO });
     expect(m.delivered[0]!.text).toContain(PEDIDO);
     expect(m.folders()).toEqual([]);
+  });
+
+  it('Líder do quadro "parada" no retrato congelado, mas fora do tmux daqui (fechou ou mora no PC): abre direto e não entrega nada', async () => {
+    for (const boardLeaderTmux of ['gone', undefined] as const) {
+      const m = machine({ leaderOnBoard: true, boardLeaderTmux });
+      const out = await m.ask({});
+      expect(out.kind).toBe('text');
+      expect(JSON.parse((out as { text: string }).text)).toMatchObject({ lugar: `session:${NEW_SID}`, papel: 'dev' });
+      expect(m.delivered).toEqual([]);
+      expect(m.folders()).toEqual([NEW_SID]);
+    }
   });
 
   it('no limite do kit recusa dizendo o limite e quantas estão abertas', async () => {

@@ -342,10 +342,16 @@ export function createOpenLocal(deps: OpenLocalDeps): GateAbrir {
     const repeat = opened[key];
     if (repeat && existsSync(join(deps.sessionsDir, repeat.sid))) return { kind: 'text', text: repeat.answer };
 
-    // A board with a live Líder: the request goes to him (he hands it out), never a session past him.
+    // A board with a live Líder: the request goes to him (he hands it out), never a session past him. With the PC off
+    // (the only case this runs) the picture is frozen: a board Líder that closed after it still reads "parada". So he
+    // counts as live only with his session (the one whose `quemSou.lugar` is his place) alive in this machine's tmux;
+    // one with no session in the picture, or out of the tmux, lives on the PC that is off or closed (t-d461e003).
     const states = placeStatesOf(base.listar);
     const hearing = hearingPlaceIds(states);
-    const boardLeader = boardLeaders(base.board).find((id) => hearing.has(id));
+    const tmuxNow = await deps.liveSessions();
+    const sessions = Object.entries(deps.picture()?.sessoes ?? {});
+    const aliveHere = (placeId: string): boolean => sessions.some(([folder, session]) => session.quemSou.lugar === placeId && tmuxNow.has(folder));
+    const boardLeader = boardLeaders(base.board).find((id) => hearing.has(id) && aliveHere(id));
     if (boardLeader) {
       const words = `pedido do Líder único (papel ${role.id}, "${name}"), com o PC desligado: ${call.pedido}`;
       const to = await deps.deliver({
