@@ -8,7 +8,7 @@
 //   `campo_livre` of ~/bin/rotinas/despertador_sessoes.py), and confirmed by the next UserPromptSubmit hook (`ocupada`)
 //   carrying its label, or by the label in the transcript. Unconfirmed in 20 s it goes back to the queue, what it left in
 //   the field is cleared (Ctrl+U, only when the field shows it), and the session is not typed into again for 2 min (a
-//   new end of turn delivers it); at most two typings per item. Another Enter (a long text can swallow the first) goes
+//   new end of turn delivers it); at most `MAX_TYPINGS` typings per item. Another Enter (a long text can swallow the first) goes
 //   only on a field that still shows the item, and a typing tmux refused counts as one (no retry every tick). A session no hook spoke of since the daemon came up
 //   (a restart, a session opened before the hook was installed) is stopped when the screen and the transcript say so:
 //   the last turn of the transcript ended and has been quiet for 10 s, the field is empty and the CLI does not say
@@ -18,6 +18,22 @@
 // message inside 2 min joins the first). The notices the PC gave after a `tarefa_*` (delivery for acceptance, travada,
 // precisa-do-dono) and the new ones (to the Revisores out of the chain, the verdict to the Dev) go the same way; a
 // target out of this machine goes to the PC's relay (`fila.json`).
+//
+// Caixa pendurada (19/11: the Dalton's queue stood ~20 h behind two notices typed and never sent):
+//
+// - Our own typing never stays in the field. A typed item whose text still sits in the field 20 s later (Enters given)
+//   is cleared (only the field, Ctrl+U, and only when it holds nothing but this typing) and typed again, the same text,
+//   up to `MAX_TYPINGS` in all. Before each new typing the transcript decides: a label already there came in and is
+//   never typed again. With the typings spent the field is left empty, the item goes back to the queue (the end of the
+//   turn delivers it) and the Líder único hears of it once.
+// - A field held by text that is not ours (the box watcher, every `WATCH_MS`, over every session of this machine's
+//   tmux): the same text unchanged for `STUCK_MS` (5 min) is
+//   * sent with one Enter when it has the form of a Donel notice or recado (opens with "◆ ") and the session is idle
+//     (no "esc to interrupt", and its last turn ended and is quiet, or its hook said it stopped): it was typed by the
+//     app or by this entregador and only its Enter was lost, and the queue behind it can then move;
+//   * never cleared nor sent otherwise: it may be the owner typing. The Líder único hears "caixa com texto não enviado
+//     há mais de 5 min" (the session, the place, how long and its first 80 characters), once per stuck box (a box that
+//     empties or changes is a new one). A "◆" text whose Enter did not take is told the same way.
 
 import { createHash, randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -145,7 +161,15 @@ const TICK_MS = 2_000;
 const CONFIRM_MS = 20_000;
 const ENTER_AGAIN_MS = 5_000;
 const MAX_ENTERS = 2;
-const MAX_TYPINGS = 2;
+/** Typings of one item on the screen, counting the ones after a field that held it (cleared and typed again). */
+const MAX_TYPINGS = 3;
+/** The box watcher looks at every session's field this often (two tmux calls each). */
+const WATCH_MS = 30_000;
+/** A field with the same text unsent for this long is a stuck box. */
+const STUCK_MS = 5 * 60_000;
+/** The form of a Donel notice or recado typed into a session (the app's "◆ De …", this queue's "◆ Recado …"). */
+const DONEL_FORM = /^◆\s/;
+const PREVIEW_CHARS = 80;
 /** After an unconfirmed typing, the screen is not trusted for this long (an end of turn still delivers). */
 const HOLD_MS = 2 * 60_000;
 /** A transcript that moved this recently is a turn that may still be going. */
@@ -803,11 +827,84 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     }
   }
 
+  /**
+   * A warning to the Líder único, by the daemon's way (`toLeader`): his own queue when he lives here, else the relay
+   * (the PC's, or the personal VPS's from a satellite). The key joins a repeat there.
+   */
+  async function warnLeader(key: string, words: string): Promise<void> {
+    const text = `◆ Oráculo: ${words}`;
+    const message: OwnerMessage = { projectPath: '', placeId: '', text, leaderText: text, key: `caixa:${key}` };
+    try {
+      if (await toLocalLeader({ lugar: '', nome: 'Oráculo' }, words, message)) return;
+      if (deps.relay) await deps.relay(message);
+      else log(`aviso ao Líder único sem relay: ${words.slice(0, 160)}`);
+    } catch (error) {
+      log(`aviso ao Líder único falhou: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /** The text each session's field has held unchanged since `since` (memory only); one warning and one Enter per box. */
+  const boxes = new Map<string, { readonly text: string; readonly since: number; entered: boolean; warned: boolean }>();
+  let lastWatch = Number.NEGATIVE_INFINITY;
+
+  /**
+   * The box watcher (caixa pendurada, 19/11): every session of this machine's tmux whose field holds the same unsent
+   * text for `STUCK_MS`. The rule (see the head of this file): a "◆ …" text in an idle session gets one Enter (only its
+   * Enter was lost, and the queue behind it moves); any other text is the owner's, never cleared nor sent, and the Líder
+   * único hears of it once per box. The fields the entregador is typing into are its own (it clears them in 20 s).
+   */
+  async function watchBoxes(): Promise<void> {
+    const at = now();
+    if (at - lastWatch < WATCH_MS) return;
+    lastWatch = at;
+    const live = await localSessions();
+    for (const sid of [...boxes.keys()]) if (!live.has(sid)) boxes.delete(sid);
+    const typing = new Set(read().filter((item) => item.estado === 'digitado').map((item) => item.para.sid));
+    for (const sid of live) {
+      if (!SID_PATTERN.test(sid)) continue;
+      const screen = await tmux.screen(sid);
+      // Not readable now (tmux silent, copy mode): the box stays as it was known.
+      if (!screen || screen.inMode) continue;
+      const text = fieldText(screen.text);
+      if (!text) {
+        boxes.delete(sid);
+        continue;
+      }
+      const known = boxes.get(sid);
+      if (!known || known.text !== text) {
+        boxes.set(sid, { text, since: at, entered: false, warned: false });
+        continue;
+      }
+      if (typing.has(sid) || at - known.since < STUCK_MS) continue;
+      const donel = DONEL_FORM.test(text);
+      if (donel && !known.entered && !BUSY_ON_SCREEN.test(screen.text) && (moodOf(sid) === 'parada' || (moodOf(sid) !== 'ocupada' && (await transcriptSaysStopped(sid))))) {
+        known.entered = true;
+        const sent = await tmux.enter(sid);
+        log(`caixa da sessão ${sid}: aviso do Donel parado há ${Math.round((at - known.since) / 60_000)} min${sent ? ' enviado com Enter' : '; o tmux recusou o Enter'}.`);
+        if (sent) continue;
+      }
+      if (known.warned) continue;
+      known.warned = true;
+      const who = deps.picture()?.sessoes[sid]?.quemSou ?? {};
+      const lugar = typeof who.lugar === 'string' ? who.lugar : undefined;
+      const quadro = typeof who.pasta === 'string' ? lastSegment(who.pasta) : undefined;
+      const minutes = Math.max(1, Math.floor((at - known.since) / 60_000));
+      const why = donel ? (known.entered ? ' Era um aviso do Donel e o Enter não entrou.' : ' É um aviso do Donel, mas a sessão está num turno.') : ' Não tem a forma de aviso do Donel: pode ser o dono digitando, não mexi.';
+      log(`caixa da sessão ${sid} com texto não enviado há ${minutes} min: avisando o Líder único.`);
+      await warnLeader(
+        `${sid}:${known.since}`,
+        `caixa com texto não enviado há mais de 5 min na sessão ${sid}${lugar ? ` (lugar ${lugar}${quadro ? `, quadro ${quadro}` : ''})` : ''}, há ${minutes} min: «${text.slice(0, PREVIEW_CHARS)}».${why} O que espera por ela na fila só entra quando a caixa esvaziar.`,
+      );
+    }
+  }
+
   async function tick(): Promise<void> {
     if (ticking) return;
     ticking = true;
     try {
       await sendBack();
+      // Its own failure never stops the delivery below.
+      await watchBoxes().catch((error: unknown) => log(`vigia das caixas: ${error instanceof Error ? error.message : String(error)}`));
       const at = now();
       // 1. Typed items: confirmed by the transcript, another Enter on a stuck field, or back to the queue.
       for (const item of read().filter((candidate) => candidate.estado === 'digitado')) {
@@ -822,11 +919,21 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
           enters.delete(item.id);
           if (moodOf(sid) === 'digitando') moods.delete(sid);
           // Only when it really went back to the queue (a hook may have confirmed it meanwhile, and the field is then
-          // someone else's): its Enter never went in, what it left in the field goes, and the screen waits a while.
+          // someone else's): its Enter never went in and what it left in the field goes. A field that held it is typed
+          // again right away (the text sat there: it did not come in), until the typings are spent; otherwise (an empty
+          // field, the Enter's fate unknown, or the typings spent) the screen waits a while and the turn end delivers.
           if (!seen && changed.length) {
-            holds.set(sid, now() + HOLD_MS);
             const screen = await tmux.screen(sid);
-            if (screen && !screen.inMode && fieldHoldsOnly(screen.text, [tagOf(item.id)])) await tmux.clear(sid);
+            const held = Boolean(screen && !screen.inMode && fieldHoldsOnly(screen.text, [tagOf(item.id)]));
+            const cleared = held && (await tmux.clear(sid));
+            if (!cleared || item.tentativas >= MAX_TYPINGS) holds.set(sid, now() + HOLD_MS);
+            if (held && item.tentativas >= MAX_TYPINGS) {
+              log(`recado ${item.id} ficou na caixa da sessão ${sid} depois de ${item.tentativas} digitações: caixa limpa, volta à fila.`);
+              await warnLeader(
+                `entrega:${item.id}`,
+                `o recado ${item.id} para ${item.para.lugar} (sessão ${sid}) ficou na caixa depois de ${item.tentativas} digitações com Enter; limpei a caixa e ele volta à fila (entra no fim do turno dela). Confira a sessão.`,
+              );
+            }
           }
         } else if (since >= ENTER_AGAIN_MS && (enters.get(item.id) ?? 0) < MAX_ENTERS) {
           // It came in already (a session with no hook to say so): confirmed, and the field is no longer ours.
@@ -856,7 +963,19 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
         const screen = await tmux.screen(sid);
         if (!screen || screen.inMode || BUSY_ON_SCREEN.test(screen.text) || !fieldIsFree(screen.text).free) continue;
         if (mood?.mood !== 'parada' && !(await transcriptSaysStopped(sid))) continue;
-        const ids = new Set(queued.filter((item) => item.para.sid === sid).map((item) => item.id));
+        // The conversation decides: an item typed before whose label is in the transcript came in, never typed again.
+        const ids = new Set<string>();
+        for (const item of queued.filter((candidate) => candidate.para.sid === sid)) {
+          if (item.tentativas > 0 && (await typedInTranscript(sid, item.id))) {
+            update(
+              (candidate) => candidate.id === item.id && candidate.estado === 'fila',
+              (candidate) => ({ ...candidate, estado: 'entregue', via: 'transcript', entregueEm: now() }),
+            );
+            continue;
+          }
+          ids.add(item.id);
+        }
+        if (!ids.size) continue;
         // Marked BEFORE typing: a turn end in between does not deliver them a second time.
         const typed = update(
           (item) => ids.has(item.id) && item.estado === 'fila',
