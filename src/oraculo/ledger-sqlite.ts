@@ -169,7 +169,7 @@ export function ledgerSourceOf(dir: string): 'sqlite' | 'supabase' | 'arquivo' {
   })();
   const present = existsSync(join(dir, LEDGER_SQLITE_FILE));
   if (present && seeded) return 'sqlite';
-  if (present) throw new Error(`${join(dir, LEDGER_SQLITE_FILE)} existe sem a marca ${LEDGER_SOURCE_MARK}: a semeadura não terminou, ou a marca se perdeu. NÃO apague o banco: ponha-o de lado com o -wal e o -shm dele; se houver ledger.json, semeie de novo (--semear-sqlite); se não houver (ele vira ledger.json.antes-sqlite-* na semeadura), o banco é a única cópia: volte a marca (echo sqlite > ${LEDGER_SOURCE_MARK}) ou exporte-o (--exportar-sqlite).`);
+  if (present) throw new Error(`${join(dir, LEDGER_SQLITE_FILE)} existe sem a marca ${LEDGER_SOURCE_MARK}: a semeadura não terminou, ou a marca se perdeu. NUNCA apague este banco: ele pode ser a única cópia. Volte pelo backup: pare o daemon, copie o último antigos/ledger-antes-sqlite-*.json desta pasta (ou o ledger.json.antes-sqlite-*) como ledger.json, mova ledger.sqlite, ledger.sqlite-wal e ledger.sqlite-shm para antigos/ e suba; o daemon volta ao ledger.json.`);
   if (seeded) throw new Error(`${join(dir, LEDGER_SQLITE_FILE)} sumiu, mas o ledger foi semeado nele (${LEDGER_SOURCE_MARK}): o daemon não sobe vazio. Volte o banco com o -wal e o -shm dele, ou volte ao ledger.json com --exportar-sqlite de uma cópia.`);
   if (existsSync(join(dir, 'ledger-supabase.json'))) return 'supabase';
   return 'arquivo';
