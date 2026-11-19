@@ -119,7 +119,7 @@ describe('Oráculo na VPS — o PC em modo remoto', { timeout: 30_000 }, () => {
     const remote = vps();
     await moveLedgerToRemote({ http: remote.http, ledgerFile: pc.file, io, proofFs: nodeLedgerProofFs, marker });
     const changes: boolean[] = [];
-    const service = createRemoteLedgerService({ http: () => remote.http, ledgerFile: pc.file, io, proofFs: nodeLedgerProofFs, marker, onChange: (s) => changes.push(s.readOnly) });
+    const service = createRemoteLedgerService({ http: () => remote.http, ledgerFile: pc.file, io, proofFs: nodeLedgerProofFs, marker, onChange: (s) => changes.push(s.readOnly), changeEveryMs: 0 });
     expect(service.load().readOnly, 'antes da primeira resposta: o espelho, só para ler').toBe(true);
     expect(await service.refresh()).toBe(true);
     expect(service.load().readOnly).toBe(false);
@@ -129,6 +129,7 @@ describe('Oráculo na VPS — o PC em modo remoto', { timeout: 30_000 }, () => {
     expect(service.load().doc.tasks[pc.id]!.state, 'a resposta leve põe a tarefa na visão na hora').toBe('aceita');
     expect(JSON.parse(readFileSync(remote.file, 'utf8')).tasks[pc.id].state).toBe('aceita');
     await service.refresh(); // the mirror comes with the re-read (the light answer carries only the task)
+    service.flush(); // t-e195b35c: the mirror is written late; closing the app writes it now
     expect(JSON.parse(readFileSync(pc.file, 'utf8')).tasks[pc.id].state).toBe('aceita');
     expect(JSON.parse(readFileSync(pc.file, 'utf8')).schemaVersion).toBe(REMOTE_MIRROR_VERSION);
 
@@ -347,6 +348,7 @@ describe('Oráculo na VPS — o PC em modo remoto', { timeout: 30_000 }, () => {
     (hold as unknown as () => void)();
     await late;
     expect(service.load().doc.tasks[created.task.id]).toMatchObject({ request: 'nova' });
+    service.flush();
     expect(JSON.parse(readFileSync(pc.file, 'utf8')).tasks[created.task.id]).toBeDefined();
   });
 

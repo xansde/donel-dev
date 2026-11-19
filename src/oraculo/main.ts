@@ -16,9 +16,18 @@
 // per-page notes of each marked row go to `<dir>/notas-paginas.jsonl`, never into a decision's text. The same file
 // turns on the queue of tasks the owner asks for in the phone (t-2eedda0d, tarefas-pedidas.ts) once its
 // `quadroTarefas` names the board they land on.
+//
+// Canal do Donel fora do PC (t-e195b35c): the gate answers with the recados queue (`<dir>/recados.json`, recados.ts)
+// and the probe (sonda.ts) pictures the sessions the PC has not; other machines' gates record here through
+// `/v1/portao/*` (`<dir>/portoes/<name>.sha256`, portoes.ts). With `DONEL_PORTAO_SATELITE=<the personal VPS's API url>`
+// this bundle runs as such a gate (the Homologações, scripts/portao-satelite.sh): the gate, the probe and the recados
+// only, with the tasks on the personal VPS (`<dir>/portao.token`, satelite.ts).
 
 import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { homedir, networkInterfaces } from 'node:os';
+import { spawn } from 'node:child_process';
+import { open as openFile } from 'node:fs/promises';
+import { createServer as createNetServer } from 'node:net';
+import { cpus, freemem, homedir, hostname, loadavg, networkInterfaces, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { createSystemConfigIoDeps } from '../main/config-store';
 import { createLedgerService, ledgerProofsDir, nodeLedgerProofFs } from '../main/ledger-store';
@@ -26,18 +35,26 @@ import { createCardWriter, type CardWriter } from '../main/ledger-card-writer';
 import { createCelularCore } from '../main/celular/service';
 import { createLedgerMobilePort } from '../main/celular/ledger-port';
 import { createOracleAdminRoutes } from './admin';
-import { createRelay } from './relay';
+import { createRelay, deliverLocalFirst } from './relay';
 import { pickTailscaleAddress } from '../main/celular/tailscale';
 import { callerOf, createOracleApiHandler } from './api';
 import { readServiceHashes } from './servicos';
 import { createLivroStore } from './livro';
 import { createReturnGuard } from './devolvido';
-import { createGateHandler, GATE_PORT, mergePicture, startGateServer, tunnelForward, type BoardPicture } from './portao';
+import { createGateHandler, GATE_PORT, mergePicture, startGateServer, tunnelForward, type BoardPicture, type PictureSession } from './portao';
+import { createGateRecados, findTranscript, tmuxLocalSessions } from './recados';
+import { createLocalLeaderFinder, currentConversation } from './lider-local';
+import { clearAdoptedMarks, createOpenLocal, roomRefusal, sweepUnfinishedOpenings, type ScriptRun } from './abrir-local';
+import { createGateToolRoutes, readGateHashes } from './portoes';
+import { createProbe } from './sonda';
+import { createSatelliteLedger, createSatelliteNotice, createSatelliteReviewLink, createSatelliteTaskMemory } from './satelite';
 import { ORACLE_PORT, startOracleServer, type OracleServer } from './server';
 import { createDaemonVigia } from './vigia';
 import { boardName } from '../shared/vigia/board';
 import { createBoardClient, readBoardConfig, type BoardStore } from './board-client';
-import { canonicalJson, createSupabaseLedgerStore, readSupabaseLedger, type SupabaseLedgerDeps, type SupabaseLedgerStore } from './ledger-supabase';
+import { canonicalJson, createSupabaseLedgerStore, readSupabaseLedger, type SupabaseLedgerDeps } from './ledger-supabase';
+import { exportSqliteLedger, LEDGER_SQLITE_FILE, ledgerSourceOf, openSqliteLedgerStore, seedSqliteLedger } from './ledger-sqlite';
+import type { LedgerStore } from '../main/ledger-store';
 import { createLedgerMirror, type LedgerMirror } from '../main/ledger-mirror/mirror';
 import { createSupabaseSink } from '../main/ledger-mirror/supabase-sink';
 import { createProofReader } from '../main/ledger-mirror/cartas';
@@ -45,6 +62,10 @@ import { withPlaceMemory, type PlaceInfo, type PlaceInfoOf } from '../shared/led
 import { SERVICE_PLACE_PREFIX, SERVICE_ROLE } from '../shared/ledger/contract';
 import { createDecisoesConsumer, createDecisoesQueue, DECISOES_CONFIG_FILE, NOTAS_PAGINAS_FILE, readImportList, readUnsignedPolicy } from './decisoes';
 import { createTarefasPedidasConsumer, createTarefasPedidasQueue, readQuadroTarefas } from './tarefas-pedidas';
+import { createChatCelularConsumer, createChatCelularQueue, parseChatReplies, type ChatCelularReplies } from './chat-celular';
+import { CELULAR_LOCAL_FILE, createCelularLocalStore } from './celular-local';
+import { createCelularV2Handler } from './celular-v2';
+import { chatResponder } from './chat-responder';
 
 export const TOKEN_HASH_FILE = 'pc.token.sha256';
 /** t-89279f84 — `{url, serviceKeyFile}`: present, the Supabase is the ledger's source (ledger.json is not read). */
@@ -101,6 +122,223 @@ export function readTokenHash(dir: string): string | null {
   }
 }
 
+/** The end of the Líder's transcript read for his answers to the phone: enough to hold the turn that read one. */
+const CHAT_TAIL_BYTES = 512 * 1024;
+
+/** The last `bytes` of a file; `null` = unreadable. */
+async function readTail(path: string, bytes: number): Promise<string | null> {
+  try {
+    const handle = await openFile(path, 'r');
+    try {
+      const { size } = await handle.stat();
+      const length = Math.min(size, bytes);
+      const buffer = Buffer.alloc(length);
+      await handle.read(buffer, 0, length, size - length);
+      return buffer.toString('utf8');
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+/** The phone chat's wait for answers on disk (temp → rename, 600); an unreadable file starts empty. */
+function jsonStore(file: string): { load(): ChatCelularReplies | null; save(state: ChatCelularReplies): void } {
+  return {
+    load: () => {
+      try {
+        return parseChatReplies(readFileSync(file, 'utf8'));
+      } catch {
+        return null;
+      }
+    },
+    save: (state) => {
+      writeFileSync(`${file}.tmp`, JSON.stringify(state), { mode: 0o600 });
+      renameSync(`${file}.tmp`, file);
+    },
+  };
+}
+
+/**
+ * t-1a3f7150 — a bash script (on stdin) as this user, with its login PATH (the daemon runs under systemd): the setup of
+ * a session opened with the PC off, its tmux, the inventory of plugins and skills.
+ */
+function runLocalScript(script: string): Promise<ScriptRun> {
+  return new Promise((resolve) => {
+    const child = spawn('bash', ['-l', '-s'], { stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => child.kill('SIGKILL'), 180_000);
+    child.stdout.on('data', (chunk: Buffer) => (stdout += chunk.toString('utf8')));
+    child.stderr.on('data', (chunk: Buffer) => (stderr += chunk.toString('utf8')));
+    child.once('error', (error) => {
+      clearTimeout(timer);
+      resolve({ code: null, stdout, stderr: error.message });
+    });
+    child.once('close', (code) => {
+      clearTimeout(timer);
+      resolve({ code, stdout, stderr });
+    });
+    child.stdin.end(script);
+  });
+}
+
+/** Nothing listens on this loopback port of this machine. */
+function loopbackPortFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const server = createNetServer();
+    server.once('error', () => resolve(false));
+    server.listen(port, '127.0.0.1', () => server.close(() => resolve(true)));
+  });
+}
+
+/**
+ * The last picture of the board (kept across a restart, `<dir>/retrato.json`): what the PC pushes, over it what the
+ * probe asks of the sessions the PC has not pictured. A session whose folder is gone (closed) leaves it.
+ */
+function createPictureStore(dir: string): {
+  get(): BoardPicture | null;
+  set(next: BoardPicture): void;
+  setSession(sid: string, session: PictureSession): void;
+  forget(sid: string): void;
+} {
+  const pictureFile = join(dir, 'retrato.json');
+  const sessionsDir = join(homedir(), '.donel', 's');
+  let picture: BoardPicture | null = null;
+  try {
+    picture = JSON.parse(readFileSync(pictureFile, 'utf8')) as BoardPicture;
+  } catch {
+    picture = null;
+  }
+  const exists = (folder: string): boolean => /^[A-Za-z0-9-]{1,64}$/.test(folder) && existsSync(join(sessionsDir, folder));
+  const save = (next: BoardPicture): void => {
+    picture = next;
+    writeFileSync(`${pictureFile}.tmp`, JSON.stringify(picture), { mode: 0o600 });
+    renameSync(`${pictureFile}.tmp`, pictureFile);
+  };
+  return {
+    get: () => picture,
+    set: (next) => save(mergePicture(picture, next, exists)),
+    // The probe's session carries its own `at`; the picture's (the PC's last push) does not move.
+    setSession: (sid, session) => save(mergePicture(picture, { at: picture?.at ?? Date.now(), sessoes: { [sid]: session } }, exists)),
+    // t-1a3f7150 — the synthetic picture of an opening that failed.
+    forget: (sid) => {
+      if (!picture?.sessoes[sid]) return;
+      const { [sid]: _gone, ...sessoes } = picture.sessoes;
+      save({ ...picture, sessoes });
+    },
+  };
+}
+
+/** The gate token of this machine (the satellite), written by scripts/portao-satelite.sh; `null` = none. */
+function readGateToken(dir: string): string | null {
+  try {
+    const token = readFileSync(join(dir, 'portao.token'), 'utf8').trim();
+    return token || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The satellite (`DONEL_PORTAO_SATELITE`): only the MCP gate of this machine's sessions, the probe that pictures them
+ * and the recados between them. No ledger, phone, mirror, vigia nor events here: the tasks go to the personal VPS's
+ * Oráculo; a message for a place off this machine goes on to the PC through the session's tunnel, and with the PC off
+ * to the personal VPS's relay (as the notices do), waiting on disk here while that machine does not answer.
+ */
+async function runSatellite(dir: string, url: string): Promise<void> {
+  const io = createSystemConfigIoDeps();
+  const pictures = createPictureStore(dir);
+  const remote = { url, token: () => readGateToken(dir) };
+  const sessionsDir = join(homedir(), '.donel', 's');
+  // Item 5 with the ledger on the personal VPS: the task each call left (its answer brings it) for the notices after it,
+  // and the review link of a message with no arrow asked there.
+  const tasks = createSatelliteTaskMemory();
+  // A notice for another machine waits on disk until the personal VPS takes it (revisão do #486).
+  const notices = createSatelliteNotice({ ...remote, file: join(dir, 'avisos-pendentes.json'), io });
+  const recados = createGateRecados({
+    file: join(dir, 'recados.json'),
+    io,
+    ledger: () => null,
+    taskOf: tasks.taskOf,
+    reviewLinked: createSatelliteReviewLink(remote),
+    picture: pictures.get,
+    relay: notices.send,
+  });
+  const gatePort = Number(process.env.DONEL_ORACULO_PORTAO_PORT) || GATE_PORT;
+  const gate = await startGateServer({
+    port: gatePort,
+    handler: createGateHandler({
+      sessionsDir,
+      ledger: () => {
+        throw new Error('o satélite não tem registro');
+      },
+      runLedger: createSatelliteLedger({ ...remote, onTask: tasks.remember }),
+      picture: pictures.get,
+      forward: tunnelForward,
+      serverVersion: 'oraculo-satelite',
+      recados,
+    }),
+  });
+  writeFileSync(join(dir, 'portao'), `${gate.port}\n`, { mode: 0o600 });
+  recados.start();
+  notices.start();
+  const probe = createProbe({ sessionsDir, liveSessions: tmuxLocalSessions, picture: pictures.get, setSession: pictures.setSession });
+  probe.start();
+  if (!readGateToken(dir)) console.error(`[oraculo] satélite: sem ${join(dir, 'portao.token')}; as tarefas desta máquina são recusadas até ele existir.`);
+  console.log(`[oraculo] satélite no ar: portão 127.0.0.1:${gate.port}, registro em ${url}`);
+  const stop = (): void => {
+    probe.stop();
+    recados.stop();
+    notices.stop();
+    void gate.close().then(() => process.exit(0));
+  };
+  process.on('SIGTERM', stop);
+  process.on('SIGINT', stop);
+}
+
+/** The daemon must be stopped for an offline write: it keeps the ledger in memory and would write over it. */
+async function daemonAnswers(dir: string): Promise<boolean> {
+  try {
+    const url = readFileSync(join(dir, 'url'), 'utf8').trim();
+    await fetch(`${url}/v1/ledger`, { signal: AbortSignal.timeout(1500) });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `oraculo.mjs --semear-sqlite` (dono, 18/11: "Vamos trazer para um sqlite local mesmo"): a new `ledger.sqlite` from the
+ * ledger.json, read back and compared; then the ledger.json is set aside (`ledger.json.antes-sqlite-<hora>`, read-only)
+ * so nothing reads a stale copy. With the daemon stopped.
+ */
+async function seedSqlite(dir: string, ledgerFile: string): Promise<number> {
+  if (await daemonAnswers(dir)) {
+    console.error('[semear-sqlite] o daemon está no ar: pare-o antes (systemctl --user stop donel-oraculo)');
+    return 1;
+  }
+  if (!existsSync(ledgerFile)) {
+    console.error(`[semear-sqlite] não há ${ledgerFile}: nada a semear`);
+    return 1;
+  }
+  const loaded = createLedgerService({ filePath: ledgerFile, io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs }).load();
+  if (loaded.readOnly) {
+    console.error('[semear-sqlite] o ledger.json é de uma versão mais nova que este daemon: nada foi semeado');
+    return 1;
+  }
+  const doc = loaded.doc;
+  const result = await seedSqliteLedger(join(dir, LEDGER_SQLITE_FILE), doc);
+  console.log(JSON.stringify({ ledgerJson: Object.keys(doc.tasks).length, ...result }));
+  if (result.diferentes !== 0 || result.tarefas !== Object.keys(doc.tasks).length) return 1;
+  const aside = `${ledgerFile}.antes-sqlite-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+  renameSync(ledgerFile, aside);
+  chmodSync(aside, 0o400);
+  console.log(JSON.stringify({ ledgerJsonGuardado: aside }));
+  return 0;
+}
+
 /** The way back: `oraculo.mjs --exportar-supabase <arquivo>` writes the Supabase's ledger as a ledger.json (new file only). */
 async function exportSupabase(dir: string, target: string | undefined): Promise<number> {
   const deps = supabaseLedgerDeps(dir);
@@ -154,6 +392,8 @@ async function cancelOffline(dir: string, ids: string | undefined, reason: strin
 async function main(): Promise<void> {
   const dir = process.env.DONEL_ORACULO_DIR || join(homedir(), '.donel', 'oraculo');
   mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const satellite = process.env.DONEL_PORTAO_SATELITE?.trim();
+  if (satellite) return runSatellite(dir, satellite);
   // The first slice left the token itself on disk; only its hash stays now.
   if (existsSync(join(dir, 'pc.token'))) unlinkSync(join(dir, 'pc.token'));
   const host = process.env.DONEL_ORACULO_HOST || pickTailscaleAddress(networkInterfaces());
@@ -167,10 +407,20 @@ async function main(): Promise<void> {
   if (process.argv.includes('--semear-supabase')) process.exit(await seedSupabase(dir, ledgerFile));
   if (process.argv.includes('--cancelar-offline')) process.exit(await cancelOffline(dir, process.argv[process.argv.indexOf('--cancelar-offline') + 1], process.argv[process.argv.indexOf('--motivo') + 1]));
   if (process.argv.includes('--exportar-supabase')) process.exit(await exportSupabase(dir, process.argv[process.argv.indexOf('--exportar-supabase') + 1]));
+  if (process.argv.includes('--semear-sqlite')) process.exit(await seedSqlite(dir, ledgerFile));
+  if (process.argv.includes('--exportar-sqlite')) {
+    const target = process.argv[process.argv.indexOf('--exportar-sqlite') + 1];
+    if (!target) process.exit(2);
+    console.log(JSON.stringify(exportSqliteLedger(join(dir, LEDGER_SQLITE_FILE), target)));
+    process.exit(0);
+  }
   // t-89279f84 — the Supabase as the source: read once here; unreachable = no daemon (systemd tries again), never an
   // empty ledger answering.
-  const sbDeps = supabaseLedgerDeps(dir);
-  let store: SupabaseLedgerStore | undefined;
+  // 18/11 — the SQLite of this machine when it was seeded (`ledger.sqlite`); a seeded database gone missing stops here.
+  const source = ledgerSourceOf(dir);
+  const sbDeps = source === 'supabase' ? supabaseLedgerDeps(dir) : null;
+  let store: LedgerStore | undefined;
+  if (source === 'sqlite') store = openSqliteLedgerStore(join(dir, LEDGER_SQLITE_FILE), (line) => console.log(line), { requireSeeded: true });
   if (sbDeps) {
     const initial = await readSupabaseLedger(sbDeps);
     if (!initial.exists) throw new Error(`o Supabase do ledger está vazio; rode oraculo.mjs --semear-supabase antes de ligar ${LEDGER_SUPABASE_FILE}`);
@@ -179,6 +429,7 @@ async function main(): Promise<void> {
   let mirror: LedgerMirror | null = null;
   const tokenHash = (): string | null => readTokenHash(dir);
   const services = (): ReadonlyMap<string, string> => readServiceHashes(dir);
+  const gates = (): ReadonlyMap<string, string> => readGateHashes(dir);
   const io = createSystemConfigIoDeps();
   let server: OracleServer | null = null;
   // What only the PC delivers (its board knows who is open): waits in `fila.json` until the PC acks.
@@ -201,78 +452,151 @@ async function main(): Promise<void> {
   // the ledger was returned to the PC, nothing writes here.
   const guard = createReturnGuard(raw, dir);
   const ledger = guard.ledger;
+  // Fatia 4: the last picture of the board the PC left (kept across a restart), for the MCP gate of the VPS's sessions.
+  const pictures = createPictureStore(dir);
+  const sessionsDirForMarks = join(homedir(), '.donel', 's');
+  // t-1a3f7150 — a PC push that carries a session opened here with the PC off under `session:<sid>` adopted it.
+  const setPicture = (next: BoardPicture): void => {
+    pictures.set(next);
+    try {
+      for (const sid of clearAdoptedMarks(sessionsDirForMarks, next)) console.log(`[oraculo] abrir: o PC adotou a sessão ${sid}, aberta com ele desligado.`);
+    } catch (error) {
+      console.log(`[oraculo] abrir: marca abertaSemPc: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
+  const sessionsDir = join(homedir(), '.donel', 's');
+  // t-c3fbe852 — the Líder único alive in this machine's tmux (the app's mark in its session folder, or the picture).
+  const localLeader = createLocalLeaderFinder({ sessionsDir, liveSessions: tmuxLocalSessions, picture: pictures.get });
+  // t-e195b35c — the recados of this machine's sessions; a notice or message for a place off it goes to the PC's relay
+  // (queued on disk, no wait: nothing reads where it went, and a sessao_enviar with the PC off answers at once).
+  const recados = createGateRecados({
+    file: join(dir, 'recados.json'),
+    io,
+    ledger: () => ledger,
+    picture: pictures.get,
+    relay: (message) => relay.send(message, 0),
+    leader: localLeader,
+    // A session resumed from another conversation (the Líder that came over with `-r`) writes that one's transcript.
+    transcriptOf: async (sid) => (await findTranscript(currentConversation(sessionsDir, sid) ?? sid)) ?? findTranscript(sid),
+  });
+  // t-4c60b815 — the owner's word or decision reaches a session of this machine through its recados, with the PC off;
+  // only a place off this machine waits in the PC's relay. t-c3fbe852: the Líder único too, when he lives here.
   const cardWriter: CardWriter = createCardWriter({
     service: () => ledger,
-    deliver: async (message) => {
-      const to = await relay.send(message, RELAY_WAIT_MS);
-      return to === 'pendente' ? null : to;
-    },
+    deliver: deliverLocalFirst(recados.deliverLocal, relay, RELAY_WAIT_MS),
   });
+  /** What goes to the Líder único: his own queue when he lives here, else the PC's relay (no wait). */
+  const toLeader = deliverLocalFirst(recados.deliverLocal, relay, 0);
   // t-52bf8b45 — the phone app's queue decides through the same port as the PWA (dedup by pedido, owner queue check),
   // over the guarded ledger, never `raw`.
   const decisoesPort = createLedgerMobilePort(() => ledger, undefined, () => cardWriter);
+  // Saída iii (18/11) — the phone app's queues on this machine (`"fila": "local"` in decisoes.json, read at each
+  // round): decisions, the tasks he asks for and his chat with the Líder wait here, not in the Supabase.
+  // A file that is there but unreadable never takes the whole daemon down: the phone's queue stays off (404) and the
+  // file is kept as it is (revisão do #495).
+  let celularLocal: ReturnType<typeof createCelularLocalStore> | null = null;
+  try {
+    celularLocal = createCelularLocalStore(join(dir, CELULAR_LOCAL_FILE));
+  } catch (error) {
+    console.log(`[celular-v2] ${CELULAR_LOCAL_FILE} ilegível; a fila do celular fica desligada: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const filaLocal = (): boolean => {
+    if (!celularLocal) return false;
+    try {
+      return (JSON.parse(readFileSync(join(dir, DECISOES_CONFIG_FILE), 'utf8')) as { fila?: unknown }).fila === 'local';
+    } catch {
+      return false;
+    }
+  };
+  // The place names the rows show (the board picture the PC leaves, over the memory the espelho kept).
+  const namesFile = join(homedir(), '.donel', 'espelho', 'nomes.json');
+  const names = new Map<string, PlaceInfo>();
+  try {
+    for (const [id, info] of Object.entries(JSON.parse(readFileSync(namesFile, 'utf8')) as Record<string, PlaceInfo>)) names.set(id, info);
+  } catch {
+    // no memory yet
+  }
+  const liveOf = (): PlaceInfoOf => {
+    const live = new Map<string, PlaceInfo>();
+    for (const session of Object.values(pictures.get()?.sessoes ?? {})) {
+      for (const place of session.listar as Array<{ id?: unknown; papel?: unknown; nome?: unknown }>) {
+        if (typeof place?.id !== 'string') continue;
+        const info: PlaceInfo = { ...(typeof place.papel === 'string' ? { roleId: place.papel } : {}), ...(typeof place.nome === 'string' ? { name: place.nome } : {}) };
+        if (info.roleId || info.name) live.set(place.id, info);
+      }
+    }
+    return (_project, placeId) => live.get(placeId);
+  };
+  const saveNames = (): void => {
+    try {
+      writeFileSync(`${namesFile}.tmp`, JSON.stringify(Object.fromEntries(names), null, 2));
+      renameSync(`${namesFile}.tmp`, namesFile);
+    } catch {
+      // learnt again at the next push
+    }
+  };
+  const placesOf = withPlaceMemory(liveOf, names, saveNames);
+  /** A write from the phone runs its consumer now, one round at a time per queue (a round already running reruns once). */
+  const rounds: Partial<Record<'decisoes' | 'pedidas' | 'chat', { running: boolean; again: boolean }>> = {};
+  let consumers: { decisoes: () => Promise<void>; pedidas: () => Promise<void>; chat: () => Promise<void> } | null = null;
+  const kick = (fila: 'decisoes' | 'pedidas' | 'chat'): void => {
+    const state = (rounds[fila] ??= { running: false, again: false });
+    if (!consumers) return;
+    if (state.running) {
+      state.again = true;
+      return;
+    }
+    state.running = true;
+    void (async () => {
+      do {
+        state.again = false;
+        await consumers![fila]().catch((error: unknown) => console.log(`[celular-v2] rodada ${fila} falhou: ${error instanceof Error ? error.message : String(error)}`));
+      } while (state.again);
+      state.running = false;
+    })();
+  };
+  const v2 = celularLocal && createCelularV2Handler({
+    verify: (message, signature) => {
+      const device = celular?.verifyDecisionSignature(message, signature);
+      return device ? { name: device.deviceName } : null;
+    },
+    doc: () => {
+      try {
+        return ledger.load().doc;
+      } catch {
+        return null;
+      }
+    },
+    store: celularLocal,
+    places: placesOf,
+    ownerName: () => process.env.ESPELHO_DONO || 'Alexandre',
+    readProof: createProofReader(ledgerProofsDir(ledgerFile)),
+    arvoreFile: join(homedir(), '.donel', 'estado-derivado', 'arvore.json'),
+    kick,
+  });
   celular = createCelularCore({
+    v2: () => (filaLocal() && v2 ? v2 : null),
     userDataDir: dir,
     io,
     ledger: () => ledger,
     provasRoot: ledgerProofsDir(ledgerFile),
     cardWriter: () => cardWriter,
     deliverToLeader: () => async (text, pedidoId) =>
-      (await relay.send({ projectPath: '', placeId: '', text, leaderText: text, ...(pedidoId ? { key: `pedido:${pedidoId}` } : {}) }, RELAY_WAIT_MS)) === 'lider',
+      (await deliverLocalFirst(recados.deliverLocal, relay, RELAY_WAIT_MS)({ projectPath: '', placeId: '', text, leaderText: text, ...(pedidoId ? { key: `pedido:${pedidoId}` } : {}) })) === 'lider',
   });
-  // Fatia 4: the last picture of the board the PC left (kept across a restart), for the MCP gate of the VPS's sessions.
-  const pictureFile = join(dir, 'retrato.json');
-  let picture: BoardPicture | null = null;
-  try {
-    picture = JSON.parse(readFileSync(pictureFile, 'utf8')) as BoardPicture;
-  } catch {
-    picture = null;
-  }
-  const setPicture = (next: BoardPicture): void => {
-    const sessionsDir = join(homedir(), '.donel', 's');
-    picture = mergePicture(picture, next, (folder) => /^[A-Za-z0-9-]{1,64}$/.test(folder) && existsSync(join(sessionsDir, folder)));
-    writeFileSync(`${pictureFile}.tmp`, JSON.stringify(picture), { mode: 0o600 });
-    renameSync(`${pictureFile}.tmp`, pictureFile);
-  };
   // Fails here, not on the first call, when the file is there but unreadable (it would be written over).
   const first = raw.load();
   if (sbDeps) {
     // The readable projection (`tarefas`) and the phone's cards, as the espelho bridge did from the file: the same
     // mirror, fed by this daemon's own changes. Names: the board picture the PC leaves, over the bridge's memory.
-    const namesFile = join(homedir(), '.donel', 'espelho', 'nomes.json');
-    const names = new Map<string, PlaceInfo>();
-    try {
-      for (const [id, info] of Object.entries(JSON.parse(readFileSync(namesFile, 'utf8')) as Record<string, PlaceInfo>)) names.set(id, info);
-    } catch {
-      // no memory yet
-    }
-    const liveOf = (): PlaceInfoOf => {
-      const live = new Map<string, PlaceInfo>();
-      for (const session of Object.values(picture?.sessoes ?? {})) {
-        for (const place of session.listar as Array<{ id?: unknown; papel?: unknown; nome?: unknown }>) {
-          if (typeof place?.id !== 'string') continue;
-          const info: PlaceInfo = { ...(typeof place.papel === 'string' ? { roleId: place.papel } : {}), ...(typeof place.nome === 'string' ? { name: place.nome } : {}) };
-          if (info.roleId || info.name) live.set(place.id, info);
-        }
-      }
-      return (_project, placeId) => live.get(placeId);
-    };
-    const saveNames = (): void => {
-      try {
-        writeFileSync(`${namesFile}.tmp`, JSON.stringify(Object.fromEntries(names), null, 2));
-        renameSync(`${namesFile}.tmp`, namesFile);
-      } catch {
-        // learnt again at the next push
-      }
-    };
     const sink = createSupabaseSink({ url: sbDeps.url, key: sbDeps.key, readProof: createProofReader(ledgerProofsDir(ledgerFile)), log: (line) => console.log(`[espelho] ${line}`) });
-    mirror = createLedgerMirror({ sink: () => sink, places: withPlaceMemory(liveOf, names, saveNames), ownerName: () => process.env.ESPELHO_DONO || 'Alexandre', delayMs: 2_000, log: (line) => console.log(`[espelho] ${line}`) });
+    mirror = createLedgerMirror({ sink: () => sink, places: placesOf, ownerName: () => process.env.ESPELHO_DONO || 'Alexandre', delayMs: 2_000, log: (line) => console.log(`[espelho] ${line}`) });
     mirror.changed(first.doc);
   }
   const handler = createOracleApiHandler({
     ledger,
     ledgerFile,
-    ...(store ? { importRefused: 'A fonte do ledger é o Supabase; a cópia do PC não substitui mais o Oráculo da VPS. Nada foi trocado.' } : {}),
+    ...(store ? { importRefused: `A fonte do ledger é o ${source === 'sqlite' ? 'SQLite da VPS' : 'Supabase'}; a cópia do PC não substitui mais o Oráculo da VPS. Nada foi trocado.` } : {}),
     tokenHash,
     services,
     returned: guard,
@@ -285,9 +609,19 @@ async function main(): Promise<void> {
       }
     },
     extra: createOracleAdminRoutes({ celular, relay, setPicture }),
+    gates,
+    gateRoutes: createGateToolRoutes({
+      ledger: () => ledger,
+      recados,
+      linkPedido: (pedidoId, tarefa) => void celular?.linkPedido(pedidoId, tarefa),
+      notice: toLeader,
+    }),
     ...(process.env.DONEL_LIVRO_ARQUIVO ? { livro: createLivroStore({ filePath: process.env.DONEL_LIVRO_ARQUIVO }) } : {}),
+    // t-cddc62fc — the reconciliador's notices reach the Líder único by the relay, out of the owner's phone chat.
+    // t-c3fbe852: his own queue when he lives here.
+    avisarLider: async (texto, chave) => (await toLeader({ projectPath: '', placeId: '', text: texto, leaderText: texto, key: `reconciliador:${chave}` })) ?? 'pendente',
   });
-  server = await startOracleServer({ host, port, caller: (authorization) => callerOf(authorization, tokenHash(), services()), handler });
+  server = await startOracleServer({ host, port, caller: (authorization) => callerOf(authorization, tokenHash(), services(), gates()), handler });
   writeFileSync(join(dir, 'url'), `${server.url}\n`, { mode: 0o600 });
   // The task board: read at each call, so writing the config turns it on without a restart.
   const boardConfigFile = process.env.DONEL_BOARD_CONFIG || join(homedir(), '.donel', 'board', 'supabase.json');
@@ -307,20 +641,79 @@ async function main(): Promise<void> {
     if (boardStore?.key !== key) boardStore = { key, store: createBoardClient(config) };
     return boardStore.store;
   };
+  // t-1a3f7150 — an opening cut midway (the daemon died while it made the folder) leaves no half session for the PC.
+  for (const sid of sweepUnfinishedOpenings(sessionsDir, await tmuxLocalSessions())) console.log(`[oraculo] abrir: apaguei a pasta ${sid}, aberta pela metade.`);
   const gatePort = Number(process.env.DONEL_ORACULO_PORTAO_PORT) || GATE_PORT;
   const gate = await startGateServer({
     port: gatePort,
-    handler: createGateHandler({ sessionsDir: join(homedir(), '.donel', 's'), ledger: () => ledger, picture: () => picture, forward: tunnelForward, serverVersion: 'oraculo-vps', cards }),
+    handler: createGateHandler({
+      sessionsDir,
+      ledger: () => ledger,
+      picture: pictures.get,
+      recados,
+      forward: tunnelForward,
+      serverVersion: 'oraculo-vps',
+      cards,
+      // t-1a3f7150 (docs/adr/0009) — the Líder único's `sessao_abrir` with the PC off opens the session in this tmux.
+      abrir: createOpenLocal({
+        sessionsDir,
+        oraculoDir: dir,
+        picture: pictures.get,
+        setSession: pictures.setSession,
+        forgetSession: pictures.forget,
+        leader: localLeader,
+        liveSessions: tmuxLocalSessions,
+        deliver: toLeader,
+        run: runLocalScript,
+        room: () => roomRefusal({ freeBytes: freemem(), loadPerCpu: loadavg()[0]! / Math.max(1, cpus().length) }),
+        portFree: loopbackPortFree,
+        names: [hostname()],
+      }),
+      // Saída iii — a new phone app's key (the token never leaves the daemon) and the Líder's answer from chat_lider.py.
+      local: async (method, path, body) => {
+        if (method !== 'POST') return null;
+        let input: Record<string, unknown> = {};
+        try {
+          const parsed = JSON.parse(body) as unknown;
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) input = parsed as Record<string, unknown>;
+        } catch {
+          // an empty body is an empty object
+        }
+        const answer = (status: number, value: unknown) => ({ status, headers: { 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(value) });
+        if (path === '/local/celular/novo-aparelho') {
+          const nome = typeof input.nome === 'string' && input.nome.trim() ? input.nome.trim().slice(0, 60) : 'Donel (Android)';
+          const url = celular?.state().url;
+          const added = celular?.addDevice(nome) ?? null;
+          if (!added || !url) return answer(503, { erro: 'o servidor do celular não está no ar' });
+          console.log(`[celular-v2] aparelho novo pareado pela VPS: ${nome} (${added.deviceId})`);
+          return answer(200, { versao: 1, origem: url.replace(/\/+$/, ''), chave: added.chave });
+        }
+        if (path === '/local/celular/chat-responder') {
+          if (!celularLocal) return answer(503, { erro: 'a fila do celular está desligada' });
+          const replied = chatResponder(celularLocal, input);
+          return answer(replied.status, replied.body);
+        }
+        return null;
+      },
+      // The phone's server lives here: a task a VPS session creates from an owner's request shows on his phone.
+      linkPedido: (pedidoId, tarefa) => void celular?.linkPedido(pedidoId, tarefa),
+      // The notices after a task (a delivery, a "travada", a verdict) go by the recados: queued for a session of this
+      // machine, else to the PC's relay, which today's app delivers when it answers.
+    }),
   });
   // The setup of a remote session reads this to point its MCP at the gate.
   writeFileSync(join(dir, 'portao'), `${gate.port}\n`, { mode: 0o600 });
+  recados.start();
+  // The sessions the PC has not pictured (its push, every 30 s, comes first: a fresh picture is not asked again).
+  const probe = createProbe({ sessionsDir, liveSessions: tmuxLocalSessions, picture: pictures.get, setSession: pictures.setSession });
+  probe.start();
   // t-ffbf8e7d — the vigia of this place's locks, with the PC off too (the PC hands its setup at each handshake).
   const vigia = createDaemonVigia({
     dir,
     ledger: () => ledger,
     log: (line) => console.log(line),
     boardOfSession: (sid) => {
-      const pasta = picture?.sessoes[sid]?.quemSou?.pasta;
+      const pasta = pictures.get()?.sessoes[sid]?.quemSou?.pasta;
       return typeof pasta === 'string' && pasta ? boardName(pasta) : undefined;
     },
   });
@@ -328,6 +721,7 @@ async function main(): Promise<void> {
   // t-52bf8b45 — the config is read at each round: writing `decisoes.json` turns the queue on without a restart.
   const decisoes = createDecisoesConsumer({
     queue: () => {
+      if (filaLocal() && celularLocal) return celularLocal.decisoes;
       const config = readBoardConfig(join(dir, DECISOES_CONFIG_FILE));
       return config ? createDecisoesQueue(config) : null;
     },
@@ -354,6 +748,7 @@ async function main(): Promise<void> {
   // t-2eedda0d — the tasks the owner asks for in the phone app (`celular.tarefas_pedidas`), same config and round.
   const tarefasPedidas = createTarefasPedidasConsumer({
     queue: () => {
+      if (filaLocal() && celularLocal) return celularLocal.pedidas;
       const config = readBoardConfig(join(dir, DECISOES_CONFIG_FILE));
       return config ? createTarefasPedidasQueue(config) : null;
     },
@@ -363,14 +758,52 @@ async function main(): Promise<void> {
     ownerName: () => process.env.ESPELHO_DONO || 'Alexandre',
     ledger: () => ledger,
     returned: guard.returned,
+    // t-c3fbe852 — the Líder único hears of the task the owner asked for (his queue here, else the PC's relay).
+    avisarLider: toLeader,
     log: (line) => console.log(line),
   });
   tarefasPedidas.start();
-  console.log(`[oraculo] no ar em ${server.url} (${Object.keys(first.doc.tasks).length} tarefas${first.readOnly ? ', só leitura' : ''}, fonte: ${store ? 'Supabase' : 'ledger.json'})`);
+  // t-cddc62fc — the owner's messages to the Líder único in the phone app (`celular.lider_mensagens`), same config and
+  // round, delivered by the relay so a PC without the desktop router (before the alfa 26.1118.428) gets them too.
+  // The answer goes by stdin (`-` + heredoc): no '~' for the remote shell to expand, no owner text in its argv.
+  const replyScript = process.env.DONEL_CHAT_RESPONDER || join(homedir(), 'bin', 'rotinas', 'chat-lider', 'chat_lider.py');
+  const chatCelular = createChatCelularConsumer({
+    queue: () => {
+      if (filaLocal() && celularLocal) return celularLocal.chat;
+      const config = readBoardConfig(join(dir, DECISOES_CONFIG_FILE));
+      return config ? createChatCelularQueue(config) : null;
+    },
+    relay,
+    waitMs: RELAY_WAIT_MS,
+    // t-c3fbe852 — with the Líder único alive here: his own queue, and his answer read from his transcript here.
+    local: {
+      deliver: recados.deliverLocal,
+      state: recados.stateOf,
+      tail: async (sid) => {
+        const path = await recados.transcriptOf(sid);
+        return path ? readTail(path, CHAT_TAIL_BYTES) : null;
+      },
+    },
+    store: jsonStore(join(dir, 'chat-celular-respostas.json')),
+    replyHint: (shortId) => `Para responder no celular: ssh ${userInfo().username}@${hostname()} python3 ${replyScript} responder ${shortId} - <<'FIM'\n<sua resposta>\nFIM`,
+    log: (line) => console.log(line),
+  });
+  chatCelular.start();
+  consumers = { decisoes: () => decisoes.round(), pedidas: () => tarefasPedidas.round(), chat: () => chatCelular.round() };
+  console.log(`[oraculo] no ar em ${server.url} (${Object.keys(first.doc.tasks).length} tarefas${first.readOnly ? ', só leitura' : ''}, fonte: ${source === 'sqlite' ? 'SQLite' : store ? 'Supabase' : 'ledger.json'})`);
   const stop = (): void => {
+    // The SQLite is closed first: its WAL goes into the file (a copy of ledger.sqlite alone is then the whole ledger).
+    try {
+      (store as { close?: () => void } | undefined)?.close?.();
+    } catch {
+      // exiting anyway
+    }
+    probe.stop();
+    recados.stop();
     vigia.stop();
     decisoes.stop();
     tarefasPedidas.stop();
+    chatCelular.stop();
     mirror?.dispose();
     void Promise.all([server?.close(), celular?.dispose(), gate.close()]).then(() => process.exit(0));
   };

@@ -67,6 +67,8 @@ export interface MobileHandlerDeps {
   };
   /** Pedir pelo Oráculo (pedido solto ao Líder único). Ausente = sem o botão Pedir. */
   readonly pedidos?: MobilePedidosPort;
+  /** Saída iii (18/11): the phone app's own routes under `/api/v2/`, signed with its device key (src/oraculo/celular-v2.ts). */
+  readonly v2?: () => ((request: MobileRequest) => Promise<MobileResponse>) | null;
 }
 
 /** Bilhete do protótipo: uso único, preso a um item e uma prova, vence em 60 s. */
@@ -224,6 +226,13 @@ export function createMobileHandler(deps: MobileHandlerDeps): MobileHandler {
     }
     const path = parsed.pathname;
     const method = request.method.toUpperCase();
+
+    // Saída iii: switched off (no `"fila": "local"`), the v2 routes do not exist (404): the app goes back to the
+    // Supabase. Never the PWA's 401, which the app would read as "unpaired".
+    if (path.startsWith('/api/v2/')) {
+      const v2 = deps.v2?.();
+      return v2 ? v2(request) : json(404, { erro: 'nao-encontrada' });
+    }
 
     if (!path.startsWith('/api/')) {
       const asset = method === 'GET' ? deps.assets[path === '/' ? '/index.html' : path] : undefined;

@@ -71,4 +71,23 @@ export function serviceOpRefusal(op: unknown, name?: string): string | null {
   return null;
 }
 
+/**
+ * t-cddc62fc — the reconciliador's notice to the Líder único (`{ op: 'avisar-lider', texto, chave }`), by the relay
+ * and never into the owner's phone chat (it used to write there as the owner). Only the reconciliador; no ledger.
+ */
+export const NOTICE_OP = 'avisar-lider';
+const NOTICE_TEXT_MAX = 3500;
+const NOTICE_KEY_MAX = 200;
+
+export type NoticeCheck = { readonly ok: true; readonly texto: string; readonly chave: string } | { readonly ok: false; readonly status: 400 | 403; readonly error: string };
+
+/** The notice's own check: who may send it, and its text and key (counted in characters). */
+export function checkNotice(op: Record<string, unknown>, name: string): NoticeCheck {
+  if (name !== RECONCILER_SERVICE) return { ok: false, status: 403, error: 'só o reconciliador avisa o Líder único' };
+  const { texto, chave } = op;
+  if (typeof texto !== 'string' || !texto.trim() || [...texto].length > NOTICE_TEXT_MAX) return { ok: false, status: 400, error: `texto de 1 a ${NOTICE_TEXT_MAX} caracteres` };
+  if (typeof chave !== 'string' || !chave.trim() || [...chave].length > NOTICE_KEY_MAX) return { ok: false, status: 400, error: `chave de 1 a ${NOTICE_KEY_MAX} caracteres` };
+  return { ok: true, texto, chave };
+}
+
 export type ServiceOp = Extract<LedgerOp, { op: 'criar' | 'assumir' | 'entregar' | 'transferir' }>;

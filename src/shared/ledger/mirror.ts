@@ -41,6 +41,8 @@ import { CLOSING_LABELS, closingOf, withoutMarks } from './closing';
 import { deliveryNote } from './labels';
 import { LEADER_OF_ALL } from '../mindscape/leader';
 import { maskSecrets } from './secret-scan';
+import { progressLine, progressOf } from './andamento';
+import { progressLineOf } from './novidades';
 
 /**
  * One row of the table `tarefas` (docs/oraculo-espelho/supabase.sql), in the order a person reads it. Dates are
@@ -58,6 +60,8 @@ export interface TarefaRow {
   readonly quem_pediu: string;
   /** The literal sentence of who asked. */
   readonly pedido: string;
+  /** t-ba2bb4f9 (dono, 18/11: "tem coluna de DoD lá?") — the task's `doneWhen`, the "Pronto quando", masked. */
+  readonly criterio: string;
   /** The place that owns the task, by its name ("Dev · Mindscape de cadeiras"). */
   readonly quem_faz_agora: string;
   readonly quem_criou: string;
@@ -74,6 +78,9 @@ export interface TarefaRow {
   readonly decidida_em: string | null;
   /** The whole text proof (masked, cut), and how many files stayed in the app. */
   readonly prova_texto: string | null;
+  /** t-ba2bb4f9 — the last `tarefa_andamento` record in one line ("estado; precisa: …; próximo: …"), masked and cut. */
+  readonly ultimo_andamento: string | null;
+  readonly ultimo_andamento_em: string | null;
   readonly id: string;
 }
 
@@ -90,6 +97,28 @@ const STATE_LABELS: Readonly<Record<LedgerViewState, string>> = {
 export const MAX_ROW_PROOF_CHARS = 2000;
 /** The last delivery in one cell: a sentence or two. */
 export const MAX_ROW_SUMMARY_CHARS = 300;
+/** The last progress record in one cell: a line, as long as the record's own summary. */
+export const MAX_ROW_PROGRESS_CHARS = 280;
+/**
+ * t-ba2bb4f9 — columns added to `tarefas` after it was made (docs/oraculo-espelho/tarefas-dod.sql). A table that has
+ * not got them yet answers 400 PGRST204 to the whole batch; the rows then go without them (and a log line says to run
+ * the SQL), so a missing column never stops the mirror. The next push tries them again. Shared by the PC's sink
+ * (`supabase-sink.ts`) and the daemon's upsert of a task made on the phone (`oraculo/tarefas-pedidas.ts`).
+ */
+export const LATE_COLUMNS = ['criterio', 'ultimo_andamento', 'ultimo_andamento_em'] as const;
+
+/** PostgREST's "Could not find the 'criterio' column of 'tarefas' in the schema cache", for a late column. */
+export function missingLateColumn(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : '';
+  return message.includes('PGRST204') && LATE_COLUMNS.some((column) => message.includes(`'${column}'`));
+}
+
+export function withoutLateColumns(row: Record<string, unknown>): Record<string, unknown> {
+  const rest = { ...row };
+  for (const column of LATE_COLUMNS) delete rest[column];
+  return rest;
+}
+
 /** How the owner is named when the main does not say. */
 export const DEFAULT_OWNER_NAME = 'Dono';
 
@@ -340,6 +369,17 @@ export function tarefaRow(doc: LedgerDoc, task: LedgerTask, places: PlaceInfoOf 
     : null;
   const reason = decision ? (eventNote(decision) ?? null) : null;
   const state = viewState(task);
+  // The last `tarefa_andamento` (andamento.ts: a `comentada` with its own mark). The app's own end-of-turn record is
+  // not one: it comes after every turn and would hide the "travada" the session wrote.
+  let progressAt: number | undefined;
+  let progressTextLine: string | null = null;
+  for (let i = task.events.length - 1; i >= 0 && progressAt === undefined; i -= 1) {
+    const progress = progressOf(task.events[i]!);
+    if (progress && progress.estado !== 'turno-encerrado') {
+      progressAt = task.events[i]!.at;
+      progressTextLine = progressLineOf(progress);
+    }
+  }
   return {
     quadro: boardName(project),
     titulo: mask('titulo', task.title ?? task.request.split('\n')[0]!.slice(0, 60)),
@@ -348,6 +388,8 @@ export function tarefaRow(doc: LedgerDoc, task: LedgerTask, places: PlaceInfoOf 
     esperando_dono: waitsForOwner(doc, task),
     quem_pediu: mask('quem_pediu', whoAsked(task, places, ownerName)),
     pedido: mask('pedido', withoutMarks(task.request)),
+    // Masked before the cut, so a cut never leaves half of a secret the scan no longer recognizes.
+    criterio: clipCell(mask('criterio', task.doneWhen), MAX_ROW_PROOF_CHARS),
     quem_faz_agora: placeLabel(project, task.ownerPlaceId, ownerRoleFromSteps(task), places),
     quem_criou: actorName(created?.by, project, places, ownerName),
     risco: task.risk,
@@ -360,6 +402,8 @@ export function tarefaRow(doc: LedgerDoc, task: LedgerTask, places: PlaceInfoOf 
     entregue_em: iso(delivery?.at),
     decidida_em: iso(decision?.at),
     prova_texto: proofText ? mask('prova_texto', clipCell(proofText, MAX_ROW_PROOF_CHARS)) : null,
+    ultimo_andamento: progressTextLine === null ? null : progressLine(mask('ultimo_andamento', progressTextLine), MAX_ROW_PROGRESS_CHARS),
+    ultimo_andamento_em: iso(progressAt),
     id: task.id,
   };
 }

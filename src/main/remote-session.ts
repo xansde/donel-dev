@@ -15,7 +15,8 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { createWriteStream, mkdirSync, type WriteStream } from 'node:fs';
-import { basename, join, relative, sep, isAbsolute } from 'node:path';
+import * as nodePath from 'node:path';
+import { join } from 'node:path';
 import { isBypassLaunch } from '../shared/launchPermission';
 import type { RemoteAliveSession } from '../shared';
 import type { SessionWhereLives } from '../shared/sessions';
@@ -63,6 +64,11 @@ export interface RemoteSessionMeta {
   /** Líder único na VPS — the role and the Jobu's mark, so the tab that comes back after a restart is the Líder again. */
   readonly roleId?: string;
   readonly leaderOfAll?: boolean;
+  /**
+   * t-1a3f7150 — the place opened this session while the PC was off (its daemon wrote this meta); the PC gives it its
+   * board place `session:<sid>` when it finds it. Absent on every session the PC opened.
+   */
+  readonly abertaSemPc?: boolean;
   readonly createdAt: string;
 }
 
@@ -94,6 +100,12 @@ export interface RemoteSetupInput {
    * it is gone, the setup answers `gone` and prepares nothing in its folder.
    */
   readonly attachOnly?: boolean;
+  /**
+   * t-1a3f7150 — the first message goes to the CLI as its positional prompt, read from `$S/pedido`, which the
+   * `claude.sh` removes before the `exec`: it never sits in `meta.launchArgs` (a resume reuses those) nor in a second
+   * run of the script. Only the Oráculo daemon's opening with the PC off sets it.
+   */
+  readonly firstPromptFile?: boolean;
 }
 
 export type RemoteSetupResult =
@@ -126,6 +138,9 @@ function assertSessionId(sid: string): void {
  * the root (`C:\Users\x\seazone\Donel Dev` with root `C:\Users\x\seazone` → `seazone/Donel Dev`).
  */
 export function remoteDirFor(localCwd: string, projectRoots: readonly string[]): string {
+  // A Windows folder is read as one on any OS (the kit de abertura is built and tested off Windows too); on Windows
+  // `node:path` already is `win32`, so nothing changes there.
+  const { basename, relative, sep, isAbsolute } = /^[A-Za-z]:[\\/]|^\\\\/.test(localCwd) ? nodePath.win32 : nodePath;
   const normalized = (path: string): string => path.replace(/[\\/]+$/, '');
   const cwd = normalized(localCwd);
   const root = projectRoots
@@ -187,7 +202,9 @@ export function buildRemoteSetupScript(input: RemoteSetupInput): string {
     // Proxy de saída (scripts/proxy-saida): written by its VPS installer; only sessions started after the install pick it up.
     'if [ -r "$HOME/.donel/proxy-saida.env" ]; then . "$HOME/.donel/proxy-saida.env"; fi',
     ...bypassEnvLines(input.claudeArgs),
-    `exec claude ${input.claudeArgs.map(renderArg).join(' ')}`,
+    // `--` before the prompt: `--mcp-config` and `--allowedTools` take many values and would swallow it.
+    ...(input.firstPromptFile ? ['set --', 'if [ -f "$S/pedido" ]; then set -- -- "$(cat "$S/pedido")"; rm -f "$S/pedido"; fi'] : []),
+    `exec claude ${input.claudeArgs.map(renderArg).join(' ')}${input.firstPromptFile ? ' "$@"' : ''}`,
     '',
   ].join('\n');
   const runScript = [
@@ -367,6 +384,7 @@ export function remoteAliveFromMeta(remoteId: string, meta: RemoteSessionMeta): 
     ...(typeof meta.openedBy === 'string' && meta.openedBy !== '' ? { openedBy: meta.openedBy } : {}),
     ...(typeof meta.roleId === 'string' && meta.roleId !== '' ? { roleId: meta.roleId } : {}),
     ...(leaderOfAll ? { leaderOfAll: true } : {}),
+    ...(meta.abertaSemPc === true ? { openedWithoutPc: true } : {}),
   };
 }
 

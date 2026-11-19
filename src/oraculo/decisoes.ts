@@ -716,7 +716,7 @@ export function createDecisoesConsumer(deps: DecisoesConsumerDeps): DecisoesCons
 
   function schedule(ms: number): void {
     timer = setTimeout(() => {
-      void round()
+      void serialRound()
         .catch((error) => deps.log?.(`[decisoes] rodada falhou: ${error instanceof Error ? error.message : String(error)}`))
         .finally(() => {
           if (running) schedule(ROUND_MS);
@@ -725,8 +725,17 @@ export function createDecisoesConsumer(deps: DecisoesConsumerDeps): DecisoesCons
     timer.unref?.();
   }
 
+  // One round at a time: the timer's and a write's kick (saída iii) never apply two rows of the same card out of
+  // order; a round asked while one runs runs right after it.
+  let chain: Promise<void> = Promise.resolve();
+  function serialRound(): Promise<void> {
+    const next = chain.then(() => round());
+    chain = next.catch(() => undefined);
+    return next;
+  }
+
   return {
-    round,
+    round: serialRound,
     start() {
       if (running) return;
       running = true;

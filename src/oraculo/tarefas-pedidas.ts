@@ -19,11 +19,15 @@
 // dono no celular" (`via`). After it is made, its row in the mirror (`public.tarefas`) is upserted from here, so the
 // phone's list shows it with the PC off; the PC's mirror rewrites the row (with place names) when it is back. When the
 // daemon runs its own mirror (the ledger's source in the Supabase, t-89279f84), that mirror writes the row instead.
+//
+// Etapa 2 (t-c3fbe852): once the row is marked, the Líder único hears of the new task (`avisarLider`: his own queue when
+// he lives on this machine, else the PC's relay), keyed by the request, so a row read again never tells him twice.
 
 import { readFileSync } from 'node:fs';
 import type { LedgerService } from '../main/ledger-store';
+import type { OwnerMessage } from '../main/ledger-card-writer';
 import { ASKED_BY_OWNER, isDueDate, isRequestId, MAX_FRENTE_CHARS, MAX_TITLE_CHARS, type LedgerTask } from '../shared/ledger/contract';
-import { tarefaRow, type TarefaRow } from '../shared/ledger/mirror';
+import { missingLateColumn, tarefaRow, withoutLateColumns, type TarefaRow } from '../shared/ledger/mirror';
 import { parseLedgerToolCall } from '../shared/ledger/tools';
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import type { BoardConfig } from './board-client';
@@ -92,7 +96,15 @@ export function createTarefasPedidasQueue(config: BoardConfig, doFetch: typeof f
     },
     async espelhar(row) {
       // The same upsert as the PC's mirror (supabase-sink.ts): the table is in `public`, the key is `id`.
-      await request('tarefas?on_conflict=id', 'POST', [{ ...row, atualizado_em: new Date().toISOString() }], 'o espelho de tarefas', 'resolution=merge-duplicates,return=minimal');
+      const body: Record<string, unknown> = { ...row, atualizado_em: new Date().toISOString() };
+      const send = (value: Record<string, unknown>): Promise<string> => request('tarefas?on_conflict=id', 'POST', [value], 'o espelho de tarefas', 'resolution=merge-duplicates,return=minimal');
+      try {
+        await send(body);
+      } catch (error) {
+        // A table made before the DoD columns (docs/oraculo-espelho/tarefas-dod.sql): the row goes without them.
+        if (!missingLateColumn(error)) throw error;
+        await send(withoutLateColumns(body));
+      }
     },
   };
 }
@@ -170,7 +182,17 @@ export interface TarefasPedidasConsumerDeps {
   readonly hasMirror?: boolean;
   /** How the mirror names the owner (the daemon's mirror uses the same); absent = the mirror's default. */
   readonly ownerName?: () => string;
+  /** Tells the Líder único of a task born of the phone (`deliverLocalFirst`); absent = nobody is told. */
+  readonly avisarLider?: (message: OwnerMessage) => Promise<unknown>;
   readonly log?: (line: string) => void;
+}
+
+/** The notice to the Líder único of the task the owner asked for on the phone (one per request). */
+export function pedidoNotice(task: LedgerTask, pedido: string): OwnerMessage {
+  const board = task.projectPath.split(/[\\/]/).filter(Boolean).pop() ?? task.projectPath;
+  const title = task.title ?? task.request.slice(0, 80);
+  const text = `◆ O dono pediu pelo celular uma tarefa nova: ${task.id} «${title}», no quadro ${board}${task.ownerPlaceId === LEADER_OF_ALL ? ', com você de dono. Passe a quem vai fazer (tarefa_transferir) ou responda a ele' : ''}.`;
+  return { projectPath: task.projectPath, placeId: '', text, leaderText: text, key: `pedido-tarefa:${pedido}` };
 }
 
 export interface TarefasPedidasConsumer {
@@ -238,6 +260,18 @@ export function createTarefasPedidasConsumer(deps: TarefasPedidasConsumerDeps): 
       }
       log(`${row.pedido} ${outcome.mark}${outcome.tarefa ? ` ${outcome.tarefa} (criada pelo dono no celular)` : ''}${marked ? '' : ' (a linha já estava marcada)'}`);
       if (outcome.tarefa && !deps.hasMirror) await mirror(queue, outcome.tarefa);
+      if (outcome.tarefa && marked) await tellLeader(outcome.tarefa, row.pedido);
+    }
+  }
+
+  /** The Líder único hears of the new task; a failure is a log line (the task is made either way). */
+  async function tellLeader(id: string, pedido: string): Promise<void> {
+    if (!deps.avisarLider) return;
+    try {
+      const task = deps.ledger().load().doc.tasks[id];
+      if (task) await deps.avisarLider(pedidoNotice(task, pedido));
+    } catch (error) {
+      log(`${id}: o aviso ao Líder único não saiu: ${errorText(error)}`);
     }
   }
 
@@ -296,7 +330,7 @@ export function createTarefasPedidasConsumer(deps: TarefasPedidasConsumerDeps): 
 
   function schedule(ms: number): void {
     timer = setTimeout(() => {
-      void round()
+      void serialRound()
         .catch((error) => log(`rodada falhou: ${errorText(error)}`))
         .finally(() => {
           if (running) schedule(ROUND_MS);
@@ -305,8 +339,17 @@ export function createTarefasPedidasConsumer(deps: TarefasPedidasConsumerDeps): 
     timer.unref?.();
   }
 
+  // One round at a time: the timer's and a write's kick (saída iii) never apply two rows of the same card out of
+  // order; a round asked while one runs runs right after it.
+  let chain: Promise<void> = Promise.resolve();
+  function serialRound(): Promise<void> {
+    const next = chain.then(() => round());
+    chain = next.catch(() => undefined);
+    return next;
+  }
+
   return {
-    round,
+    round: serialRound,
     start() {
       if (running) return;
       running = true;

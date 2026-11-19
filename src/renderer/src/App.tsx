@@ -64,7 +64,7 @@ import { sortProjects } from '../../shared';
 // T710 (007/CA-11 2º momento) — o sinal de "a retomada falhou" é o exit code do
 // PTY (medido em specs/008-fechar-pendencias/medicao-t710.md), não texto de CLI.
 import { resumedSessionIdFromArgs, shouldForgetOnResumeFailure } from '../../shared/resumeFailure';
-import { remoteSessionAlreadyOpen } from '../../shared/remoteBoot';
+import { remoteSessionAlreadyOpen, remoteSessionsToOpen, remoteTabSessionIds } from '../../shared/remoteBoot';
 import { computeSessionAccountLabel } from '../../shared/sessionAccountLabel';
 // T709 (007) — pior estado do grupo (CA-6), mesma precedência de sortSessions.
 import { sortSessions, worstState } from '../../shared/sessionOrdering';
@@ -98,7 +98,7 @@ import { useMindscapeDoc } from './Mindscape/useMindscapeDoc';
 import { AgentBridge, type AgentBridgePorts, type DeliveryOutcome, type ReturnExpectation } from './Mindscape/agentBridge';
 import type { FaxineiroLogEntry } from '../../shared/faxineiro/triggers';
 import { SpawnAskPanel, type SpawnAsk } from './Mindscape/SpawnAskPanel';
-import { appendConversation, findSessionBoard, placeHolding, placeSessionCards, roleOfSession, setBoardView, setPlaceConversation, writeSessionNote, type MindscapeDoc } from '../../shared/mindscape/model';
+import { adoptSessionOpenedWithoutPc, appendConversation, findSessionBoard, placeHolding, placeSessionCards, roleOfSession, setBoardView, setPlaceConversation, writeSessionNote, type MindscapeDoc } from '../../shared/mindscape/model';
 import type { SessionRole } from '../../shared/roles';
 // Sessão renovada em voo (B36) — limit crossed at the end of a turn → handoff → new session in the same tab.
 import { DEFAULT_SESSION_RENEWAL_PREFS, RENEWAL_HANDOFF_WAIT_MS, renewalEligible, renewalHandoffDeliveryNotice, renewalLaunchArgs, type SessionRenewalPrefs } from '../../shared/sessionRenewal';
@@ -350,6 +350,15 @@ const LIDER_MOVE_WAIT_MS = 240_000;
 
 /** t-fe46929a — waits before asking again a remote place that did not answer at boot (about 18 min in all). */
 const REMOTE_BOOT_RETRY_MS = [10_000, 30_000, 60_000, 120_000, 300_000, 600_000];
+/**
+ * t-1a3f7150 — after the boot, the remote places are asked again every 5 min and when a tab there relinks, so a session
+ * a place opened while the PC was off (or asleep) comes back as a tab. One ssh per place per round, never in a burst:
+ * a relink waits a little for its siblings (a place that drops relinks all its tabs together) and a place asked less
+ * than a minute ago is not asked again.
+ */
+const REMOTE_AGAIN_EVERY_MS = 300_000;
+const REMOTE_AGAIN_RELINK_WAIT_MS = 15_000;
+const REMOTE_AGAIN_MIN_GAP_MS = 60_000;
 
 export function App(): React.JSX.Element {
   const [projects, setProjects] = useState<ProjectInfo[]>([]);
@@ -2228,10 +2237,24 @@ export function App(): React.JSX.Element {
   // REMOTE_BOOT_RETRY_MS, only that place: before, it read as "nothing alive there" and all its places stayed
   // "fechada" until resumed one by one. A session that already has a tab is never added twice.
   const remoteBootTakenRef = useRef(false);
+  // t-1a3f7150 — every live-session id that had a tab in this run (also closed ones: their tmux may outlive the tab
+  // for a few seconds) plus the ones brought back: a later round never opens them again.
+  const remoteKnownSidsRef = useRef(new Set<string>());
+  useEffect(() => {
+    for (const tab of tabs) if (tab.remoteId) for (const id of remoteTabSessionIds(tab)) remoteKnownSidsRef.current.add(id);
+  }, [tabs]);
+  const chatPtyIdsRef = useRef(chatPtyIds);
+  chatPtyIdsRef.current = chatPtyIds;
+  // t-1a3f7150 — sessions the place opened while the PC was off, waiting for the board to be loaded to get their place.
+  const [boardAdoptions, setBoardAdoptions] = useState<readonly RemoteAliveSession[]>([]);
   useEffect(() => {
     if (!appConfig || remoteBootTakenRef.current || !window.donel.pty.remoteAlive) return;
     remoteBootTakenRef.current = true;
+    let inFlight = 0;
+    let askedAllAt = Date.now();
+    const askedAt = new Map<string, number>();
     const ask = (placeIds: readonly string[] | undefined, attempt: number): void => {
+      inFlight += 1;
       void window.donel.pty
         .remoteAlive(placeIds)
         .then((answer) => {
@@ -2242,12 +2265,50 @@ export function App(): React.JSX.Element {
         .catch(() => {
           const delay = REMOTE_BOOT_RETRY_MS[attempt];
           if (delay !== undefined) window.setTimeout(() => ask(placeIds, attempt + 1), delay);
+        })
+        .finally(() => {
+          inFlight -= 1;
         });
     };
-    const broughtBack = new Set<string>();
+    // t-1a3f7150 — a later round: no focus taken, no retries of its own (the next round is the retry).
+    const askAgain = (placeIds: readonly string[] | undefined): void => {
+      if (inFlight > 0) return;
+      const now = Date.now();
+      if (placeIds === undefined) askedAllAt = now;
+      else for (const id of placeIds) askedAt.set(id, now);
+      inFlight += 1;
+      void window.donel.pty
+        .remoteAlive(placeIds)
+        .then((answer) => addAlive(answer.sessions, false))
+        .catch(() => undefined)
+        .finally(() => {
+          inFlight -= 1;
+        });
+    };
+    window.setInterval(() => askAgain(undefined), REMOTE_AGAIN_EVERY_MS);
+    const relinked = new Set<string>();
+    let relinkTimer: number | undefined;
+    window.donel.pty.onLink?.((ptyId, linked) => {
+      if (!linked) return;
+      const remoteId = tabsRef.current.find((tab) => chatPtyIdsRef.current[tab.id] === ptyId)?.remoteId;
+      if (!remoteId) return;
+      relinked.add(remoteId);
+      if (relinkTimer !== undefined) return;
+      relinkTimer = window.setTimeout(() => {
+        relinkTimer = undefined;
+        const now = Date.now();
+        const due = [...relinked].filter((id) => now - Math.max(askedAllAt, askedAt.get(id) ?? 0) >= REMOTE_AGAIN_MIN_GAP_MS);
+        relinked.clear();
+        if (due.length > 0) askAgain(due);
+      }, REMOTE_AGAIN_RELINK_WAIT_MS);
+    });
+    const broughtBack = remoteKnownSidsRef.current;
     const addAlive = (alive: readonly RemoteAliveSession[], takeFocus: boolean): void => {
-      for (const entry of alive) {
-        if (remoteSessionAlreadyOpen(entry.sessionId, tabsRef.current, broughtBack)) continue;
+      const fresh = remoteSessionsToOpen(alive, tabsRef.current, broughtBack);
+      // Opened while the PC was off: its board place `session:<sid>` comes before the tab's placement (below).
+      const adopted = fresh.filter((entry) => entry.openedWithoutPc && entry.projectName && !entry.leaderOfAll);
+      if (adopted.length > 0) setBoardAdoptions((prev) => [...prev, ...adopted]);
+      for (const entry of fresh) {
         broughtBack.add(entry.sessionId);
         const id = addTab(
           {
@@ -2452,6 +2513,13 @@ export function App(): React.JSX.Element {
       setRenewalDeliveryNotices((prev) => ({ ...prev, [tabId]: notice }));
     });
   };
+  // t-1a3f7150 — a session the place opened while the PC was off gets its place `session:<sid>` (made by a session)
+  // on the live document, before the placement below; it only adds, never over what the owner arranged.
+  useEffect(() => {
+    if (!mindscapeLoaded || boardAdoptions.length === 0) return;
+    applyMindscapeSession((doc) => boardAdoptions.reduce((acc, entry) => adoptSessionOpenedWithoutPc(acc, entry.cwd, entry.sessionId, entry.roleId), doc));
+    setBoardAdoptions([]);
+  }, [mindscapeLoaded, applyMindscapeSession, boardAdoptions]);
   // Desenho, fatia 02 — what the sessions do goes through `applySession`: it
   // never enters the history (an undo does not take a session post-it away).
   useEffect(() => {

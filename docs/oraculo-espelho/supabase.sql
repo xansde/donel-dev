@@ -36,6 +36,11 @@ alter table public.tarefas enable row level security;
 -- at its end; run this BEFORE the app that sends `frente`, or every upsert fails (unknown column).
 alter table public.tarefas add column if not exists frente text;
 
+-- 18/11 (t-ba2bb4f9) — o DoD (`criterio`) e o último andamento (`ultimo_andamento`, `ultimo_andamento_em`). Rodar
+-- docs/oraculo-espelho/tarefas-dod.sql (comentários e a volta estão lá) ANTES do espelho que as manda; a linha abaixo
+-- é a mesma, para quem monta a tabela do zero por este arquivo.
+alter table public.tarefas add column if not exists criterio text, add column if not exists ultimo_andamento text, add column if not exists ultimo_andamento_em timestamptz;
+
 comment on column public.tarefas.quem_pediu is 'A pessoa de quem veio o pedido: o dono, alguém do Slack, a fonte de um sinal. "não registrado" quando ninguém disse.';
 comment on column public.tarefas.quem_faz_agora is 'O lugar dono da tarefa, pelo nome (papel · nome da sessão).';
 comment on column public.tarefas.quem_criou is 'Quem registrou a tarefa no Oráculo (o dono ou um lugar, pelo nome).';

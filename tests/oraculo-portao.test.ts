@@ -130,6 +130,7 @@ describe('Portão MCP das sessões da VPS', () => {
 
   // Revisão do #302: only "nobody listens on the tunnel" is the PC off. A call that reached the PC and then lost the
   // tunnel must never run again here (a task or a delivery would come out twice).
+  // t-e195b35c: the tarefa_* never go to the PC now; a tool only the PC runs is the one that may have run there.
   it('túnel que recebe o pedido e cai: 502, e a ferramenta não roda de novo na VPS', async () => {
     let received = '';
     const sockets: Socket[] = [];
@@ -137,17 +138,16 @@ describe('Portão MCP das sessões da VPS', () => {
       sockets.push(socket);
       socket.on('data', (chunk) => {
         received += chunk.toString('utf8');
-        if (received.includes('tarefa_criar')) socket.destroy();
+        if (received.includes('sessao_abrir')) socket.destroy();
       });
     });
     await new Promise<void>((resolve) => tunnel.listen(0, '127.0.0.1', resolve));
     const port = (tunnel.address() as AddressInfo).port;
     try {
       const g = setup((_port, request) => tunnelForward(port, request));
-      const answer = await g.rpc('tools/call', { name: 'tarefa_criar', arguments: { pedido: 'uma vez só', criterio: 'x', prazo: '2026-11-10', risco: 'baixo' } });
-      expect(received).toContain('tarefa_criar');
+      const answer = await g.rpc('tools/call', { name: 'sessao_abrir', arguments: { papel: 'dev', pedido: 'uma vez só' } });
+      expect(received).toContain('sessao_abrir');
       expect(answer.status).toBe(502);
-      expect(Object.keys(g.ledger.load().doc.tasks)).toHaveLength(0);
     } finally {
       for (const socket of sockets) socket.destroy();
       await new Promise((resolve) => tunnel.close(resolve));

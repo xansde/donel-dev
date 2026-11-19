@@ -5,7 +5,7 @@
 // `push` resolves once the tasks went; the cards' list and the proof uploads run behind it (one at a time, the newest
 // list wins) and try again on their own bounded backoff, so a slow upload never holds the tasks nor "Enviar agora".
 
-import type { CartaRow } from '../../shared/ledger/mirror';
+import { LATE_COLUMNS, missingLateColumn, withoutLateColumns, type CartaRow } from '../../shared/ledger/mirror';
 import { nodeTimers, type MirrorSink, type MirrorTimers } from './mirror';
 import { PROVA_RPC, pushCartas, type PreparedProof, type ProofReader, type UploadFailure } from './cartas';
 
@@ -19,7 +19,6 @@ const BATCH = 200;
 const CARDS_RETRY_MS = 60_000;
 const MAX_CARDS_RETRY_MS = 15 * 60_000;
 const MAX_CARDS_RETRIES = 6;
-
 export interface SupabaseSinkDeps {
   /** `https://<ref>.supabase.co`. */
   readonly url: string;
@@ -161,9 +160,22 @@ export function createSupabaseSink(deps: SupabaseSinkDeps): SupabaseSink {
     async push(rows, cartas) {
       const key = deps.key();
       if (!key) throw new Error('a chave do Supabase não está no cofre');
+      let lateMissing = false;
       for (let start = 0; start < rows.length; start += BATCH) {
-        const batch = rows.slice(start, start + BATCH);
-        await post(endpoint, key, batch.map((row) => ({ ...row, atualizado_em: new Date().toISOString() })), TIMEOUT_MS, 'resolution=merge-duplicates,return=minimal');
+        const batch = rows.slice(start, start + BATCH).map((row) => ({ ...row, atualizado_em: new Date().toISOString() }));
+        const send = (body: readonly Record<string, unknown>[]): Promise<Response> => post(endpoint, key, body, TIMEOUT_MS, 'resolution=merge-duplicates,return=minimal');
+        if (lateMissing) {
+          await send(batch.map(withoutLateColumns));
+          continue;
+        }
+        try {
+          await send(batch);
+        } catch (error) {
+          if (!missingLateColumn(error)) throw error;
+          lateMissing = true;
+          log(`tarefas sem as colunas ${LATE_COLUMNS.join(', ')}: vão sem elas até rodar docs/oraculo-espelho/tarefas-dod.sql`);
+          await send(batch.map(withoutLateColumns));
+        }
       }
       if (!cartas || disposed) return;
       // After the tasks (the phone's view joins the cards to them), and not awaited: the cards run behind, and a

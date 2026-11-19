@@ -1,14 +1,13 @@
 import { app, BrowserWindow, ipcMain, Notification, protocol, safeStorage, screen, shell, webContents } from 'electron';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { execFile, execFileSync, spawn } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { appendFile, stat as statFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { readUserDefaultPermissionMode, readUserStatusLine } from './cli-user-settings';
 import { createStatusLineStore } from './statusline-store';
 import { STATUS_LINE_CHANNELS, type StatusLineChangedPayload, type StatusLineSnapshot } from '../shared/statusLine';
-import { appMcpAllowArgs } from '../shared/commandBuilder';
 import { isBypassLaunch, planLaunchPermission, type SpawnFacts } from '../shared/launchPermission';
 import { demandOwnerRefusal, hearingPlaceIds, spawnFactsOf } from '../shared/mindscape/reach';
 import { planRoleLaunch } from '../shared/roleLaunch';
@@ -24,9 +23,11 @@ import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { createMindscapeImages, mindscapeImagesDir } from './mindscape-images';
 import { MINDSCAPE_CHANNELS } from '../shared/mindscape/channels';
 import { createRemoteOracleHost } from './ledger-remote-host';
+import { buildOpenKit, type OpenKit } from './open-kit';
+import { planRemoteLaunch } from './remote-launch-plan';
 import { createSwitchableLedger, type SwitchableLedger } from './ledger-remote';
 import { LEDGER_REMOTE_CHANNELS, type LedgerRemoteResult, type LedgerRemoteState } from '../shared/ledger/remote';
-import { answerTaskId, createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderCallerOffBoard, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, prioritizeAsks, recordTurnEnd, runLedgerBatch, runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService } from './ledger-store';
+import { answerTaskId, createLedgerService, createSlackLetterGuard, ledgerFilePath, ledgerProofsDir, leaderCallerOffBoard, leaderTransferNotice, nodeLedgerProofFs, passOnTasks, prioritizeAsks, recordTurnEnd, reviewLedgerNotices, runLedgerBatch, runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService, type ReviewLedgerNotice } from './ledger-store';
 import { LEDGER_CHANNELS, type LedgerApplyResult, type LedgerComment, type LedgerCommentResult, type LedgerOwnerDecision, type LedgerPassedOn, type LedgerPassOnRequest, type LedgerPrioritized, type LedgerSnapshot, type LedgerTurnRecord, type LedgerTurnRecorded } from '../shared/ledger/channels';
 import { isClosed, isHttpUrl, isProofFileName, isRequestId, lastDelivery, MAX_COMMENT_CHARS, MAX_PRIORITY, OWN_OPTION, type LedgerDeliveredTo, type LedgerDoc, type LedgerProof, type LedgerTask } from '../shared/ledger/contract';
 import { askedByRefusal, type LedgerToolCall } from '../shared/ledger/tools';
@@ -202,16 +203,12 @@ import {
 } from './taskdex-board-client';
 import { createJsonRpcCallTool, createSystemHttpPostJson } from './taskdex-mcp-transport';
 import {
-  buildSessionHooksSettings,
-  buildSlackMarkFile,
   cleanupStaleHookSettings,
-  keyFilePermissions,
   planStatusLineBridge,
   removeSessionHooksSettings,
   sessionHookSettingsDir,
   statusLineBridgeMode,
   writeHooksSettingsFile,
-  tokenHeaderFileContent,
   writeSessionHooksSettings,
   writeSessionScopeOnlySettings,
 } from './hooks-settings';
@@ -228,14 +225,12 @@ import {
 import { createHookBridge, type BridgeEvent, type HookBridge } from './hook-bridge';
 import {
   buildAttachSshArgs,
-  buildRemoteSetupScript,
   discoverRemoteSessions,
   sshRemoteCommand,
   remoteAliveFromMeta,
   findRemoteTranscript,
   parseRemoteSetupOutput,
   pickRemotePort,
-  REMOTE_SESSIONS_DIR,
   remoteDirFor,
   decideWhereLives,
   RemoteSessionRegistry,
@@ -245,8 +240,6 @@ import {
   runRemoteScript,
   runSetupWithRetry,
   SSH_OPTIONS,
-  type RemoteFile,
-  type RemoteSessionMeta,
 } from './remote-session';
 import { RemoteLinkSupervisor } from './remote-link';
 import { RESUME_OTHER_IDS_MAX } from '../shared/sessions';
@@ -351,7 +344,7 @@ import { consumeKillRequested, markKillRequested } from './pty-kill-intent';
 import { guardNavigation } from './navigation-guard';
 import { registerPetIpcHandlers } from './pet/pet-ipc';
 import { createLiderService, type LiderService } from './lider/lider-service';
-import { createCelularLiderChat, createSupabaseRpc, parseCelularChatState, type SupabaseAccess } from './lider/celular-chat';
+import { createCelularLiderChat, createSupabaseRpc, desktopTakesPhoneQueue, parseCelularChatState, type SupabaseAccess } from './lider/celular-chat';
 import { createPetService, type PetService } from './pet/pet-service';
 import { createPetWindow } from './pet/pet-window';
 import { readPetSeams } from './pet/pet-seams';
@@ -405,7 +398,7 @@ import { isTabColorToken, setTabColor, setTabOrder } from '../shared/tabAppearan
 import { WORKSPACE_CHANNELS } from '../shared/workspace';
 import { createSystemWorkspaceToolsDeps, createWorkspaceTools } from './workspace-tools';
 import { createSessionWorktreeService } from './session-worktree-service';
-import { isSafeWorktreeName, remoteSpawnWorktree, worktreeNameFromArgs } from '../shared/sessionWorktree';
+import { remoteSpawnWorktree, worktreeNameFromArgs } from '../shared/sessionWorktree';
 import { projectOfFolders, tabFolders, withProjectYolo } from '../shared/projectYolo';
 import { isProcessAlive } from './process-alive';
 import { createPullRequestStatusService, createSystemPullRequestStatusDeps, openPullRequestUrl } from './pull-request-status';
@@ -1996,30 +1989,17 @@ async function spawnRemoteClaudeSession(
   const ptyId = randomUUID();
 
   // Fresh tokens and ports; a live remote session answers with the ones its CLI already holds.
-  const fresh: RemoteSessionMeta = {
-    sid: correlationId,
-    hookToken: randomBytes(16).toString('hex'),
-    hookPort: pickRemotePort(),
-    mcpToken: null,
-    mcpPort: pickRemotePort(),
-    localCwd,
-    projectName: options.projectName ?? localCwd,
-    name: options.tabName ?? options.projectName ?? localCwd,
-    launchArgs: options.args ?? [],
-    ...(options.openedBy ? { openedBy: options.openedBy } : {}),
-    createdAt: new Date().toISOString(),
-  };
-  const files: RemoteFile[] = [];
-  const claudeArgs: string[] = [...launcherArgs, ...extraArgs];
+  const hookToken = randomBytes(16).toString('hex');
+  const hookPort = pickRemotePort();
+  const mcpPort = pickRemotePort();
 
   const spawnFacts = spawnFactsFor(options, launcherArgs);
   const roleId = spawnFacts.roleId;
   const rolePromptPath = roleId ? (rolesStore?.promptFileFor(roleId, { leaderOfAll: options.leaderOfAll === true }) ?? null) : null;
-  let remoteRolePath: string | null = null;
+  let rolePromptText: string | null = null;
   if (rolePromptPath) {
     try {
-      files.push({ name: 'role.md', content: readFileSync(rolePromptPath, 'utf8') });
-      remoteRolePath = '@S/role.md';
+      rolePromptText = readFileSync(rolePromptPath, 'utf8');
     } catch {
       // the session opens without the role, as a local one would — and the tab is told (papel não entregue)
     }
@@ -2033,70 +2013,42 @@ async function spawnRemoteClaudeSession(
     remoteInventory = parseRemoteInventoryOutput(listed.stdout) ?? EMPTY_INVENTORY;
   }
   const roleScope = roleScopeSettingsFor(roleId, () => remoteInventory);
-  // Papel não entregue — the remote settings.json always carries the scope when there is one.
-  const rolePlan = planRoleLaunch('claude-code', { roleId, promptPath: remoteRolePath, scope, scopeDelivered: roleScope !== null });
-  claudeArgs.push(...rolePlan.args);
 
   const hooksOn = hookBridge !== null && hookBridge.port !== null;
-  // The session folder holds its keys (`meta.json`, `hook-header`, `mcp.json`, `settings.json`): its tools may not read it.
-  const remoteKeyDirs = [`~/${REMOTE_SESSIONS_DIR}`];
-  if (hooksOn) {
-    // The token goes in a file of its own (600, like every file of the session folder): a hook command never carries it.
-    const tokenHeaderPath = `$HOME/${REMOTE_SESSIONS_DIR}/${correlationId}/hook-header`;
-    files.push({ name: 'hook-header', content: tokenHeaderFileContent(fresh.hookToken) });
-    // Letters never lock (owner, 09/11): no offline Slack guard runs as a hook. The file is still written because the
-    // Theo West MCP reads its "carta-com-arquivo" mark to offer the file upload.
-    files.push({ name: 'slack-guard.sh', content: buildSlackMarkFile() });
-    const settings = buildSessionHooksSettings({
-      port: fresh.hookPort,
-      token: fresh.hookToken,
-      tokenHeaderPath,
-      curlPath: 'curl',
-      statusLine: planStatusLineBridge({ mode: statusLineBridgeModeSetting, userStatusLine: null, chatEnabled: appConfig.chat.enabled }),
-      roleScope,
-      keyDirs: remoteKeyDirs,
-      // t-205b44c8 — which conversation this tmux carries now (a `/clear` moves it on); a resume reads it there.
-      conversationMarkPath: `$HOME/${REMOTE_SESSIONS_DIR}/${correlationId}/current`,
-    });
-    files.push({ name: 'settings.json', content: `${JSON.stringify(settings, null, 2)}\n` });
-  } else {
-    // `meta.json` (and `mcp.json`) hold keys even without hooks: the deny rules go in any case.
-    files.push({ name: 'settings.json', content: `${JSON.stringify({ ...(roleScope ?? {}), ...keyFilePermissions(remoteKeyDirs) }, null, 2)}\n` });
-  }
-  claudeArgs.push('--settings', '@S/settings.json');
-  const mcp = fresh.mcpPort !== null ? (browserService?.prepareRemoteSession(ptyId, fresh.mcpPort) ?? null) : null;
-  const meta: RemoteSessionMeta = {
-    ...fresh,
-    mcpToken: mcp?.token ?? null,
-    mcpPort: mcp ? fresh.mcpPort : null,
-    // Líder único na VPS — the tab that comes back after a restart is the Líder again (`remoteAliveFromMeta`).
-    ...(roleId ? { roleId } : {}),
-    ...(options.leaderOfAll === true ? { leaderOfAll: true } : {}),
-  };
-  if (mcp) {
-    files.push({ name: 'mcp.json', content: mcp.configFileContent });
-    claudeArgs.push(...appMcpAllowArgs(), '--mcp-config', '@S/mcp.json');
-  }
-  // Super bypass (t-66cb0ce4, t-2a9060dd): every session on a remote place is born in it, new, opened or renewed. The
-  // env goes in the claude.sh (`bypassEnvLines`), read from these args.
-  const finalClaudeArgs = planLaunchPermission(claudeArgs, { ...spawnFacts, remote: true }, undefined).args;
-
+  const mcp = browserService?.prepareRemoteSession(ptyId, mcpPort) ?? null;
   const git = localGitInfo(localCwd);
-  // A renewal goes back to the worktree of the session it replaces, also when its args do not name one (t-62f0fa0b).
-  const worktree = remoteSpawnWorktree(options.args, options.renewalId ? sessionRenewal?.get(options.renewalId)?.remote?.dir : null);
+  // t-1a3f7150 — the files and the argv are a pure plan (remote-launch-plan.ts), shared with the daemon on the place.
+  const plan = planRemoteLaunch({
+    sid: correlationId,
+    launcherArgs,
+    extraArgs,
+    launchArgs: options.args ?? [],
+    facts: spawnFacts,
+    role: { promptText: rolePromptText, scope, scopeSettings: roleScope },
+    hooks: {
+      on: hooksOn,
+      port: hookPort,
+      token: hookToken,
+      statusLine: hooksOn ? planStatusLineBridge({ mode: statusLineBridgeModeSetting, userStatusLine: null, chatEnabled: appConfig.chat.enabled }) : null,
+    },
+    mcp: mcp ? { port: mcpPort, token: mcp.token } : null,
+    localCwd,
+    projectName: options.projectName ?? localCwd,
+    name: options.tabName ?? options.projectName ?? localCwd,
+    ...(options.openedBy ? { openedBy: options.openedBy } : {}),
+    createdAt: new Date().toISOString(),
+    homeRelativeDir: remoteDirFor(localCwd, appConfig.projectRoots),
+    // A renewal goes back to the worktree of the session it replaces, also when its args do not name one (t-62f0fa0b).
+    worktree: remoteSpawnWorktree(options.args, options.renewalId ? sessionRenewal?.get(options.renewalId)?.remote?.dir : null),
+    repoUrl: git.repoUrl,
+    branch: git.branch,
+  });
+  const meta = plan.meta;
+  const finalClaudeArgs = plan.claudeArgs;
+
   const setUp = async (folder: string) => {
     await remoteSessions.waitEnded(folder);
-    const script = buildRemoteSetupScript({
-      sid: folder,
-      homeRelativeDir: remoteDirFor(localCwd, appConfig.projectRoots),
-      ...(worktree !== null && isSafeWorktreeName(worktree) ? { worktree } : {}),
-      repoUrl: git.repoUrl,
-      branch: git.branch,
-      files,
-      claudeArgs: finalClaudeArgs,
-      meta,
-      ...(folder !== correlationId ? { attachOnly: true } : {}),
-    });
+    const script = plan.setupScript(folder);
     // t-205b44c8 (a) — a launch that names its conversation (a reattach after a restart, a resume) tries the setup again
     // when only the ssh transport failed (the place's sshd busy at boot: 255 'kex_exchange_identification: Connection
     // reset'), inside this same pty.create: the same tab, never a second one. A brand-new session fails at once: it
@@ -2190,7 +2142,7 @@ async function spawnRemoteClaudeSession(
     ptyId,
     claudeSessionId: correlationId,
     ...(accountId && accountLabel ? { account: { id: accountId, label: accountLabel } } : {}),
-    ...(roleId && rolePlan.missing.length > 0 ? { roleNotDelivered: { roleId, missing: rolePlan.missing } } : {}),
+    ...(roleId && plan.roleMissing.length > 0 ? { roleNotDelivered: { roleId, missing: plan.roleMissing } } : {}),
   };
 }
 
@@ -3847,6 +3799,7 @@ function registerLedgerIpcHandlers(): void {
     onChange,
     deliver: () => deliverOwnerMessageViaBoard,
     vigia: () => ({ projectPath: vigiaBoard(), cofre: appConfig.vigia.cofre }),
+    openKit: (place) => openKitFor(place),
     celularWanted: () => {
       const text = configIoDeps.readFileText(join(app.getPath('userData'), 'celular.json'));
       try {
@@ -3914,7 +3867,7 @@ function registerLedgerIpcHandlers(): void {
       (item): item is LedgerPassOnRequest =>
         typeof item === 'object' && item !== null &&
         typeof item.projectPath === 'string' && typeof item.placeId === 'string' && typeof item.to === 'string' &&
-        (item.gone === 'fechada' || item.gone === 'nao-comecou'),
+        (item.gone === 'fechada' || item.gone === 'nao-comecou') && (item.renewal === undefined || item.renewal === true),
     );
     return passOnTasks(service, requests);
   });
@@ -3980,6 +3933,37 @@ function registerLedgerIpcHandlers(): void {
  */
 /** Who opened whom and the arrows of a board (low risk and the Revisor's chain), as the renderer saved it. */
 /** t-5839d76b — the board of the vigia's cards (`vigiaBoardOf`); `null` = none: the vigia warns on the PC only. */
+/** `origin` and the current branch of a folder of this PC, without blocking the main process; `null` = unknown. */
+function localGitInfoAsync(cwd: string): Promise<{ repoUrl: string | null; branch: string | null }> {
+  const read = (args: string[]): Promise<string | null> =>
+    new Promise((resolve) => {
+      execFile('git', ['-C', cwd, ...args], { encoding: 'utf8', timeout: 5_000, windowsHide: true }, (error, stdout) => {
+        const out = error ? '' : String(stdout).trim();
+        resolve(out.length > 0 ? out : null);
+      });
+    });
+  return Promise.all([read(['remote', 'get-url', 'origin']), read(['branch', '--show-current'])]).then(([repoUrl, branch]) => ({ repoUrl, branch }));
+}
+
+/**
+ * Kit de abertura (t-1a3f7150, docs/adr/0009) — the roles, the folders of every Mindscape board and `team.openCap`, for
+ * the Oráculo daemon to open a session while this PC is off. No secret goes in it (`open-kit.ts`).
+ */
+async function openKitFor(place: { readonly id: string; readonly label: string }): Promise<OpenKit> {
+  let folders: string[] = [];
+  try {
+    folders = Object.keys(createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load().boards);
+  } catch {
+    // no board readable: the kit still carries the roles and the cap
+  }
+  // A few git processes at a time: the handshake runs again on every reconnect, and a board may name a missing folder.
+  const boards: { localCwd: string; git: { repoUrl: string | null; branch: string | null } }[] = [];
+  for (let i = 0; i < folders.length; i += 4) {
+    boards.push(...(await Promise.all(folders.slice(i, i + 4).map(async (localCwd) => ({ localCwd, git: await localGitInfoAsync(localCwd) })))));
+  }
+  return buildOpenKit({ config: appConfig, roles: rolesStore?.list() ?? [], boards, place, now: new Date() });
+}
+
 function vigiaBoard(): string | null {
   try {
     return vigiaBoardOf(createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load().boards, appConfig.vigia.quadro);
@@ -4113,7 +4097,7 @@ async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, cal
     if (call.tool !== 'tarefa_listar') return { caller: { ...base, projectPath: '', boardPlaceIds: [] }, call };
     return { caller: await withEveryBoard(boardBridge, ptyId, { ...base, projectPath: '', boardPlaceIds: [] }, { ...call, todos: true }), call: { ...call, todos: true } };
   }
-  const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar', quadro });
+  const list = await ledgerBoardAnswer(boardBridge, ptyId, { tool: 'sessao_listar', quadro }, call.tool === 'tarefa_criar' || call.tool === 'tarefa_transferir');
   if (list.kind !== 'text') {
     // t-5839d76b — a task on a folder that is no board (the vigia's old cards): the Líder único still cancels it.
     const offBoard = list.kind === 'error' && !savedBoard(quadro) && call.tool !== 'tarefa_criar' && call.tool !== 'tarefa_listar' && call.tool !== 'tarefa_novidades' ? leaderCallerOffBoard(base, quadro, call.tool) : null;
@@ -4139,17 +4123,53 @@ async function leaderLedgerCallerOf(boardBridge: BoardBridge, ptyId: string, cal
 /** The board and place of a session, for the record of its agent's bot post (set once the board bridge is up). */
 let slackPlaceOf: ((ptyId: string) => Promise<{ projectPath: string; placeId: string } | null>) | null = null;
 
+/** t-e195b35c — how long the renderer's answer about a session (who it is, its board) serves the next `tarefa_*`. */
+const LEDGER_CALLER_TTL_MS = 30_000;
+const ledgerCallerAnswers = new Map<string, { readonly at: number; readonly board: number; readonly answer: BrowserToolOutcome }>();
+
+/** When the saved board last changed (`0` = unknown): an answer read before it no longer serves. */
+function savedBoardStamp(): number {
+  try {
+    return statSync(mindscapeFilePath(process.env, app.getPath('userData'))).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * t-e195b35c — the board answers that resolve the caller, kept per session for `LEDGER_CALLER_TTL_MS` or until the
+ * board is saved again. Each `tarefa_*` asked the window twice (each in the window's queue with the terminals and the
+ * board, up to 15 s): a burst of 107 `tarefa_frente` on 18/11 was 214 trips, and the freeze. `fresh` asks anyway.
+ */
+async function ledgerBoardAnswer(boardBridge: BoardBridge, ptyId: string, call: BoardToolCall, fresh = false): Promise<BrowserToolOutcome> {
+  const key = `${ptyId}\n${JSON.stringify(call)}`;
+  const now = Date.now();
+  const board = savedBoardStamp();
+  const kept = fresh ? undefined : ledgerCallerAnswers.get(key);
+  if (kept && now - kept.at < LEDGER_CALLER_TTL_MS && kept.board === board) return kept.answer;
+  const answer = await boardBridge.execute(ptyId, call);
+  for (const [old, entry] of ledgerCallerAnswers) if (now - entry.at >= LEDGER_CALLER_TTL_MS) ledgerCallerAnswers.delete(old);
+  if (answer.kind === 'text') ledgerCallerAnswers.set(key, { at: now, board, answer });
+  else ledgerCallerAnswers.delete(key);
+  return answer;
+}
+
 /** The caller of a `tarefa_*` tool, from the board the renderer owns (the same answers the session would get). */
 async function ledgerCallerOf(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<{ caller: LedgerCaller; call: LedgerToolCall } | string> {
-  const self = await boardBridge.execute(ptyId, { tool: 'sessao_quem_sou' });
+  const self = await ledgerBoardAnswer(boardBridge, ptyId, { tool: 'sessao_quem_sou' });
   if (self.kind !== 'text') return self.kind === 'error' ? self.text : 'Não consegui saber quem é esta sessão.';
   const who = JSON.parse(self.text) as { lugar?: unknown; papel?: unknown; pasta?: unknown; liderUnico?: unknown };
   if (who.liderUnico === true) return leaderLedgerCallerOf(boardBridge, ptyId, call);
   if (call.tool === 'tarefa_criar' || call.tool === 'tarefa_listar' || call.tool === 'tarefa_novidades') {
     if (call.quadro) return 'Só o Líder único escolhe o quadro. Esta sessão usa sempre o próprio quadro (chame sem "quadro").';
   }
-  if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string') return 'Seu lugar ainda não está no quadro; espere o primeiro turno terminar.';
-  const list = await boardBridge.execute(ptyId, { tool: 'sessao_listar' });
+  if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string') {
+    // Not on the board yet: the next call asks again (the first turn may end in a moment).
+    ledgerCallerAnswers.delete(`${ptyId}\n${JSON.stringify({ tool: 'sessao_quem_sou' })}`);
+    return 'Seu lugar ainda não está no quadro; espere o primeiro turno terminar.';
+  }
+  // A new task or a transfer names who does it: the places as they are now (a session opened a moment ago).
+  const list = await ledgerBoardAnswer(boardBridge, ptyId, { tool: 'sessao_listar' }, call.tool === 'tarefa_criar' || call.tool === 'tarefa_transferir');
   const places = list.kind === 'text' ? (JSON.parse(list.text) as { id?: unknown }[]) : [];
   const board = savedBoard(who.pasta);
   const caller: LedgerCaller = {
@@ -4178,6 +4198,20 @@ function withTaskHeaderOf(call: BoardToolCall): BoardToolCall {
     // the ledger is unreadable: the text goes as it came
   }
   return withTaskHeaderOnCall(call, doc);
+}
+
+/** The review notices of a ledger answer (`reviewLedgerNotices`), signed with the caller's role name and place. */
+function reviewNoticesOf(caller: LedgerCaller, call: LedgerToolCall, answerText: string): ReviewLedgerNotice[] {
+  if (call.tool !== 'tarefa_entregar' && call.tool !== 'tarefa_aceitar' && call.tool !== 'tarefa_rejeitar') return [];
+  let doc: LedgerDoc;
+  try {
+    if (!ledgerService) return [];
+    doc = ledgerService.load().doc;
+  } catch {
+    return [];
+  }
+  const role = caller.roleId ? (rolesStore?.get(caller.roleId)?.name ?? caller.roleId) : 'sessão';
+  return reviewLedgerNotices(caller, call, answerText, doc, `${role} (${caller.placeId})`);
 }
 
 async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: LedgerToolCall): Promise<BrowserToolOutcome> {
@@ -4209,6 +4243,9 @@ async function executeLedgerTool(boardBridge: BoardBridge, ptyId: string, call: 
       const tarefa = answerTaskId(result.text);
       void boardBridge.execute(ptyId, { tool: 'aviso_imediato', texto: urgent, ...(tarefa ? { tarefa } : {}) }).catch(() => null);
     }
+    // 18/11 (t-e195b35c, item 5): a delivery also reaches the Revisores of outside the chain, and a verdict the owner of
+    // the task and who did it, each at its own place (no arrow needed).
+    for (const notice of reviewNoticesOf(resolved.caller, call, result.text)) void boardBridge.execute(ptyId, { tool: 'aviso_imediato', texto: notice.text, tarefa: notice.taskId, para: notice.placeId }).catch(() => null);
   }
   // A task passed to the Líder único by hand: it hears it, as when a place that closes passes one (t-2c18d666). With
   // the notices in the ledger (08/11), the transfer is read there (tarefa_novidades), not in its chat.
@@ -4428,6 +4465,15 @@ function registerCelularLiderChat(): void {
   const chat = createCelularLiderChat({
     rpc: createSupabaseRpc(access),
     deliver: (text) => (liderService ? liderService.deliver(text) : Promise.resolve({ ok: false, reason: 'A janela do Donel ainda não abriu.' })),
+    // t-c3fbe852 — not while the Líder único lives on the Oráculo's machine: the daemon there takes the queue. No Líder
+    // open, here or on another machine: this desktop takes it (and opens one), as before.
+    mayTake: () =>
+      desktopTakesPhoneQueue({
+        leaderPtyId: liderService?.report().ptyId ?? null,
+        sshTargetOf: (ptyId) => remoteSessions?.sshTargetOf(ptyId),
+        oracle: remoteOracleHost?.state() ?? null,
+        remotes: appConfig.accounts.remotes,
+      }),
     log,
     load: () => parseCelularChatState(configIoDeps.readFileText(statePath())),
     save: (state) => {

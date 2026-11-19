@@ -451,11 +451,11 @@ describe('andamento no ledger, não no chat do Líder', () => {
     const t = await team();
     const other = await runLedgerTool(t.service, caller('place:dev2', 'dev'), call('tarefa_andamento', { estado: 'trabalhando', id: Object.values(parseLedgerDoc(JSON.parse(readFileSync(t.file, 'utf8'))).tasks).find((task) => task.ownerPlaceId === 'place:dev1')!.id }));
     expect(other.ok).toBe(false);
-    await runLedgerTool(t.service, caller('place:dev1', 'dev'), call('tarefa_andamento', { estado: 'precisa-do-dono', precisa: 'decidir ⟦a cor⟧' }));
+    await runLedgerTool(t.service, caller('place:dev1', 'dev'), call('tarefa_andamento', { estado: 'precisa-do-dono', motivo: 'dado-do-dono', precisa: 'decidir ⟦a cor⟧' }));
     const raw = JSON.parse(readFileSync(t.file, 'utf8')) as unknown;
     const rewritten = JSON.parse(JSON.stringify(v4.parseLedgerDoc(raw))) as unknown; // what the Alfa 0.4.0 writes back
     const events = Object.values(parseLedgerDoc(rewritten).tasks).flatMap((task) => task.events);
-    expect(events.map(progressOf).filter(Boolean)).toEqual([{ estado: 'precisa-do-dono', precisa: 'decidir a cor' }]);
+    expect(events.map(progressOf).filter(Boolean)).toEqual([{ estado: 'precisa-do-dono', precisa: '[dado-do-dono] decidir a cor' }]);
   });
 
   it('modo antigo (Preferências): o "◆ … terminou" volta ao chat e nada vai ao ledger', async () => {

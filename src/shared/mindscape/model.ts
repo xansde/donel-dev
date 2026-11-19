@@ -421,6 +421,20 @@ export function addPlace(doc: MindscapeDoc, projectPath: string, input: PlaceInp
 }
 
 /**
+ * t-1a3f7150 — a session the place (VPS) opened while the PC was off: its place on the board is `session:<sid>`, made
+ * by a session, as when the PC opens one for `sessao_abrir`. Applied on the renderer's live document before the tab's
+ * placement, and only adds: a board that already holds the conversation (a card from an older channel, or a place
+ * that moved on past it) stays the same document, so the owner's positions, post-its and links are never touched.
+ */
+export function adoptSessionOpenedWithoutPc(doc: MindscapeDoc, projectPath: string, sessionId: string, roleId?: string): MindscapeDoc {
+  const board = doc.boards[projectPath];
+  if (!sessionId || (board && placeHolding(board, sessionId))) return doc;
+  const id = sessionCardId(sessionId);
+  const placed = addPlace(doc, projectPath, { id, ...(roleId ? { roleId } : {}), by: 'session' });
+  return setPlaceConversation(placed, projectPath, id, sessionId);
+}
+
+/**
  * Role of a place — only while it has not started (item 12: the role is fixed per place; another
  * role is another session, and the work is delegated). Started, missing or same role → same document.
  */
