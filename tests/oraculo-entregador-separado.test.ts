@@ -151,6 +151,35 @@ describe('donel-oraculo dividido em registro e entregador', () => {
     expect(JSON.parse(readFileSync(join(dir, 'retrato.json'), 'utf8'))).toMatchObject({ at: 1_000, sessoes: { [SID]: { pcAt: 1_000 } } });
   });
 
+  it('separado: os hooks das sessões (/s/<sid>/h/*) são atendidos no portão do entregador, não no registro', async () => {
+    const { dir, home } = await place({ separado: true });
+    writeFileSync(join(dir, 'url'), 'http://127.0.0.1:9\n');
+    const hookToken = 'h'.repeat(32);
+    // The PC's app is closed: nothing listens on the tunnel of the session's hooks (port 9).
+    writeFileSync(join(home, '.donel', 's', SID, 'meta.json'), JSON.stringify({ sid: SID, hookToken, hookPort: 9, mcpToken: 'm'.repeat(43), mcpPort: 9 }));
+    const { daemon } = await registro(dir, home, 'separado');
+    expect(existsSync(join(dir, 'portao'))).toBe(false);
+    const entregador = await runEntregador({ dir, home, gatePort: 0, ...noTmux });
+    try {
+      const gatePort = Number(readFileSync(join(dir, 'portao'), 'utf8').trim());
+      const post = (token: string) =>
+        new Promise<{ status: number; body: string }>((resolve, reject) => {
+          const out = httpRequest({ host: '127.0.0.1', port: gatePort, method: 'POST', path: `/s/${SID}/h/Stop`, headers: { 'content-type': 'application/json', 'x-donel-token': token } }, (answer) => {
+            let text = '';
+            answer.on('data', (chunk: Buffer) => (text += chunk.toString('utf8')));
+            answer.on('end', () => resolve({ status: answer.statusCode ?? 0, body: text }));
+          });
+          out.once('error', reject);
+          out.end('{"hook_event_name":"Stop"}');
+        });
+      expect(await post(hookToken)).toEqual({ status: 200, body: '{}' });
+      expect((await post('x'.repeat(32))).status).toBe(401);
+    } finally {
+      await entregador.stop();
+      await daemon.stop();
+    }
+  });
+
   it('sem a marca: um processo só, e o retrato do PC vai direto para o retrato.json, como hoje', async () => {
     const { dir, home } = await place({ separado: false });
     const { daemon, call } = await registro(dir, home, 'junto');

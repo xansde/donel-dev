@@ -44,6 +44,12 @@ const MARK_ONBOARDED_PY = [
 ].join('\n');
 
 export const SSH_OPTIONS = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=4'];
+/**
+ * t-d461e003 — the sed (inside double quotes, `$P` the gate's port, `$SID` the session) that points the app's hook URLs
+ * of a session's `settings.json` (`http://127.0.0.1:<hookPort>/h/<Evento>`) to the gate (`/s/<sid>/h/<Evento>`).
+ * Idempotent: a URL already on the gate has `/s/` after the port. `scripts/vps/hooks-pelo-portao.sh` runs the same text.
+ */
+export const HOOKS_TO_GATE_SED = 's#http://127.0.0.1:[0-9]*/h/#http://127.0.0.1:$P/s/$SID/h/#g';
 const SETUP_TIMEOUT_MS = 180_000; // a clone can take a while
 const SESSION_ID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
 
@@ -257,6 +263,10 @@ export function buildRemoteSetupScript(input: RemoteSetupInput): string {
     // Oráculo na VPS (fatia 4): with the daemon's MCP gate there, the session calls it instead of its tunnel; the gate
     // passes the call on while the PC is on and answers who the session is and the tasks when it is off.
     'if [ -f "$S/mcp.json" ] && [ -r "$HOME/.donel/oraculo/portao" ]; then P="$(tr -dc 0-9 < "$HOME/.donel/oraculo/portao")"; if [ -n "$P" ]; then sed -i "s#http://127.0.0.1:[0-9]*/mcp#http://127.0.0.1:$P/s/$SID/mcp#" "$S/mcp.json"; fi; fi',
+    // t-d461e003 — the app's hooks too: with the PC's app closed nothing listens on the hooks' tunnel, and every turn
+    // showed "Stop hook error: connect ECONNREFUSED". The gate passes them on while the PC is on and answers `{}` when
+    // it is off. Only the app's `/h/` URLs move; the recados hook (`/recados/`) and every other hook stay.
+    `if [ -f "$S/settings.json" ] && [ -r "$HOME/.donel/oraculo/portao" ]; then P="$(tr -dc 0-9 < "$HOME/.donel/oraculo/portao")"; if [ -n "$P" ]; then sed -i "${HOOKS_TO_GATE_SED}" "$S/settings.json"; fi; fi`,
     // The CLI on a fresh machine opens on onboarding (theme + login method) and asks to trust the folder,
     // even with the account already written there by the accounts engine. Mark both as done, atomically.
     `command -v python3 >/dev/null 2>&1 && python3 -c ${shQuote(MARK_ONBOARDED_PY)} "$(cat "$S/dir")" >/dev/null 2>&1 || true`,

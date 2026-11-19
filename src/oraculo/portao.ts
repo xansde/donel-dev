@@ -29,6 +29,11 @@
 //   is answered here when the PC is silent for `LOCAL_ANSWER_MS`. Any other tool waits for the PC as before; a 502
 //   stays a 502.
 // - `POST /recados/<evento>`: the VPS's user-level hooks, loopback only, no MCP token.
+// - `POST /s/<sid>/h/<Evento>` (t-d461e003): the app's hooks of a session (its `settings.json`, pointed here by the
+//   setup). With the session's hook token (`X-Donel-Token`, `hookToken` of its meta), passed on as it came to the PC's
+//   hook bridge on the session's tunnel (`hookPort`); with the PC off (the tunnel refused, or `pcAway`) answered `{}`
+//   (the StatusLine empty), which no hook reads as "block": the CLI goes on with no "hook error". A tunnel that took the
+//   call and then broke is a 502, as for the MCP.
 // - Etapa 2 (t-c3fbe852): the Líder único's `tarefa_*` still go to the PC (it sees every board, the PC's too); with the
 //   PC off (nothing listens on the tunnel) they are answered here as the Líder único (`lider`), on the boards the
 //   picture has (`leaderCallerFromPicture`, the same rules as the PC's `leaderLedgerCallerOf`). With the PC silent only
@@ -72,6 +77,16 @@ export const CONNECT_MS = 2_000;
 /** How long a call that can be answered here without harm waits for the PC before it is. */
 export const LOCAL_ANSWER_MS = 3_000;
 const HOOK_PATH = /^\/recados\/([a-z-]{1,40})$/;
+/** The app's hooks of a session; the event is checked apart (`HOOK_EVENT`), like the sid. */
+const SESSION_HOOK_PATH = /^\/s\/([^/]+)\/h\/([^/]*)$/;
+/** The hook bridge's own rule for an event name (`/h/([A-Za-z]+)`, hook-bridge.ts), bounded. */
+const HOOK_EVENT = /^[A-Za-z]{1,40}$/;
+/** A hook's payload (a big tool answer in `PostToolUse`) may be far over the MCP limit; the bridge takes 32 MiB. */
+const MAX_HOOK_BODY_BYTES = 32 * 1024 * 1024;
+/** The statusline route: its answer is what the CLI prints, so with the PC off it is empty (hook-bridge.ts). */
+const STATUS_LINE_EVENT = 'StatusLine';
+/** No hook of the app holds the CLI longer than 30 s (`PERMISSION_HOOK_TIMEOUT_S`): a silent tunnel is let go after this. */
+const HOOK_FORWARD_TIMEOUT_MS = 60_000;
 
 /** One VPS session as the PC last saw it on its board. */
 export interface PictureSession {
@@ -140,6 +155,9 @@ export interface GateResponse {
  */
 export type GateForward = (port: number, request: GateRequest, signal?: AbortSignal) => Promise<GateResponse | 'desligado'>;
 
+/** Passes a hook to the PC's hook bridge on the session's tunnel (`127.0.0.1:<hookPort>/h/<event>`); `'desligado'` as above. */
+export type GateHookForward = (port: number, event: string, token: string, body: string) => Promise<GateResponse | 'desligado'>;
+
 /** What a `tarefa_*` answered by the gate came with: the session's picture and its raw arguments. */
 export interface GateLedgerContext {
   readonly mine: PictureSession;
@@ -157,6 +175,8 @@ export interface GateDeps {
   readonly ledger: () => LedgerService;
   readonly picture: () => BoardPicture | null;
   readonly forward: GateForward;
+  /** The app's hooks of a session to the PC (t-d461e003); default: the real tunnel (`tunnelHookForward`). */
+  readonly hookForward?: GateHookForward;
   readonly serverVersion: string;
   /** The task board's client; absent or null = no `card_*` tools (the board is off). */
   readonly cards?: () => BoardStore | null;
@@ -209,6 +229,21 @@ function readMeta(sessionsDir: string, sid: string): { mcpToken: string; mcpPort
   } catch {
     return null;
   }
+}
+
+function readHookMeta(sessionsDir: string, sid: string): { hookToken: string; hookPort: number } | null {
+  try {
+    const raw = JSON.parse(readFileSync(join(sessionsDir, sid, 'meta.json'), 'utf8')) as unknown;
+    if (!isRecord(raw) || typeof raw.hookToken !== 'string' || !raw.hookToken || typeof raw.hookPort !== 'number') return null;
+    return { hookToken: raw.hookToken, hookPort: raw.hookPort };
+  } catch {
+    return null;
+  }
+}
+
+/** What the gate answers for a hook with the PC off: nothing to do, nothing blocked (the StatusLine prints nothing). */
+function hookWithoutPc(event: string): GateResponse {
+  return event === STATUS_LINE_EVENT ? { status: 200, headers: {}, body: '' } : { status: 200, headers: JSON_HEADERS, body: '{}' };
 }
 
 function placeStatesOf(places: readonly unknown[]): Map<string, string> {
@@ -643,6 +678,20 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
       if (!deps.recados || request.method !== 'POST') return { status: 404, headers: {}, body: '' };
       return deps.recados.hook(hook[1]!, request.headers, request.body);
     }
+    const sessionHook = SESSION_HOOK_PATH.exec(request.path);
+    if (sessionHook) {
+      const [, hookSid, event] = sessionHook;
+      if (!SID_PATTERN.test(hookSid!) || !HOOK_EVENT.test(event!)) return { status: 404, headers: {}, body: '' };
+      if (request.method !== 'POST') return { status: 405, headers: { Allow: 'POST' }, body: '' };
+      const hookMeta = readHookMeta(deps.sessionsDir, hookSid!);
+      const token = request.headers['x-donel-token'] ?? '';
+      if (!hookMeta || !token || !sameToken(token, hookMeta.hookToken)) return { status: 401, headers: {}, body: '' };
+      // The PC gone for long: its ssh tunnel may still take the connection and never answer (the CLI would show a hook
+      // error on its own deadline). Nothing goes there.
+      if (deps.pcAway?.() === true) return hookWithoutPc(event!);
+      const passed = await (deps.hookForward ?? tunnelHookForward)(hookMeta.hookPort, event!, hookMeta.hookToken, request.body).catch((): GateResponse => BAD_GATEWAY);
+      return passed === 'desligado' ? hookWithoutPc(event!) : passed;
+    }
     if (request.path.startsWith('/local/') && deps.local) {
       // A page in a browser of this machine could reach the loopback: only a script's JSON POST to 127.0.0.1 passes
       // (a cross-site form cannot send application/json; a rebound name never says 127.0.0.1).
@@ -714,17 +763,25 @@ export interface TunnelForwardOptions {
   readonly connect?: (port: number) => Socket;
 }
 
+/** One call through a session's tunnel on this machine: where it goes and what it carries. */
+interface TunnelCall {
+  readonly path: string;
+  readonly method: string;
+  readonly headers: Readonly<Record<string, string>>;
+  readonly body: string;
+}
+
 /**
- * The real forward: the session's reverse tunnel on this machine (`127.0.0.1:<mcpPort>/mcp`), as its CLI would call.
+ * A call through a session's reverse tunnel on this machine (`127.0.0.1:<port><path>`), as its CLI would make it.
  * Only "the connection never completed" (refused, unreachable, or not within `connectMs`: nothing was sent) is the PC
  * off. Any failure after it connected (a reset after the call went out, a timeout, a pipe broken mid-answer) is a
  * 502: the call may have run on the PC, and running it again here would make a task or a delivery twice (revisão do #302).
  */
-export function createTunnelForward(options: TunnelForwardOptions = {}): GateForward {
+function createTunnelCall(options: TunnelForwardOptions): (port: number, call: TunnelCall, signal?: AbortSignal) => Promise<GateResponse | 'desligado'> {
   const connectMs = options.connectMs ?? CONNECT_MS;
   const timeoutMs = options.timeoutMs ?? FORWARD_TIMEOUT_MS;
   const open = options.connect ?? ((port: number) => netConnect({ host: '127.0.0.1', port }));
-  return (port, request, signal) =>
+  return (port, call, signal) =>
     new Promise((resolve) => {
       let settled = false;
       const socket = open(port);
@@ -757,11 +814,9 @@ export function createTunnelForward(options: TunnelForwardOptions = {}): GateFor
         // the PC off: the call may have run there.
         socket.setTimeout(timeoutMs, () => socket.destroy(new Error('timeout')));
         socket.once('error', () => finish(BAD_GATEWAY));
-        const headers: Record<string, string> = { Host: `127.0.0.1:${port}` };
-        for (const [name, value] of Object.entries(request.headers)) if (!name.startsWith('x-donel-')) headers[name] = value;
-        if (request.authorization) headers.Authorization = request.authorization;
-        if (request.body) headers['Content-Length'] = String(Buffer.byteLength(request.body));
-        const outgoing = httpRequest({ host: '127.0.0.1', port, path: '/mcp', method: request.method, headers, createConnection: () => socket }, (res) => {
+        const headers: Record<string, string> = { Host: `127.0.0.1:${port}`, ...call.headers };
+        if (call.body) headers['Content-Length'] = String(Buffer.byteLength(call.body));
+        const outgoing = httpRequest({ host: '127.0.0.1', port, path: call.path, method: call.method, headers, createConnection: () => socket }, (res) => {
           const chunks: Buffer[] = [];
           res.on('data', (chunk: Buffer) => chunks.push(chunk));
           res.on('end', () => {
@@ -775,12 +830,33 @@ export function createTunnelForward(options: TunnelForwardOptions = {}): GateFor
           res.on('error', () => finish(BAD_GATEWAY));
         });
         outgoing.on('error', () => finish(BAD_GATEWAY));
-        outgoing.end(request.body);
+        outgoing.end(call.body);
       });
     });
 }
 
+/** The real forward: the session's MCP tunnel (`127.0.0.1:<mcpPort>/mcp`), as its CLI would call (`createTunnelCall`). */
+export function createTunnelForward(options: TunnelForwardOptions = {}): GateForward {
+  const call = createTunnelCall(options);
+  return (port, request, signal) => {
+    const headers: Record<string, string> = {};
+    for (const [name, value] of Object.entries(request.headers)) if (!name.startsWith('x-donel-')) headers[name] = value;
+    if (request.authorization) headers.Authorization = request.authorization;
+    return call(port, { path: '/mcp', method: request.method, headers, body: request.body }, signal);
+  };
+}
+
+/**
+ * t-d461e003 — the real hook forward: the PC's hook bridge on the session's tunnel (`127.0.0.1:<hookPort>/h/<event>`),
+ * with the session's token in the header the bridge checks, as the CLI sends it. The token never goes to a log.
+ */
+export function createTunnelHookForward(options: TunnelForwardOptions = {}): GateHookForward {
+  const call = createTunnelCall({ timeoutMs: HOOK_FORWARD_TIMEOUT_MS, ...options });
+  return (port, event, token, body) => call(port, { path: `/h/${event}`, method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Donel-Token': token }, body });
+}
+
 export const tunnelForward: GateForward = createTunnelForward();
+export const tunnelHookForward: GateHookForward = createTunnelHookForward();
 
 const PASS_HEADERS = ['content-type', 'accept', 'mcp-protocol-version', 'mcp-session-id', 'last-event-id'];
 
@@ -794,9 +870,10 @@ export function startGateServer(options: { readonly port: number; readonly handl
     const chunks: Buffer[] = [];
     let size = 0;
     let tooBig = false;
+    const limit = SESSION_HOOK_PATH.test((req.url ?? '/').split('?')[0] ?? '/') ? MAX_HOOK_BODY_BYTES : MAX_BODY_BYTES;
     req.on('data', (chunk: Buffer) => {
       size += chunk.length;
-      if (size > MAX_BODY_BYTES) {
+      if (size > limit) {
         tooBig = true;
         res.writeHead(413).end();
         req.destroy();
