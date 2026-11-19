@@ -24,6 +24,8 @@ class FakeCli {
   asPlaceholder = false;
   /** Text that lands in the box right before the next paste (a leftover redrawn late, after a reattach). */
   intrude: string | null = null;
+  /** A CLI still booting: no input box on screen yet (19/11, a renewed session on a loaded place). */
+  booting = false;
   /** What the box shows (the box itself is what an Enter submits). */
   private shown = '';
   private pasteSeq = 0;
@@ -87,6 +89,7 @@ class FakeCli {
   }
 
   lines(): LineInput[] {
+    if (this.booting) return ['', ' ▐▛███▜▌   Claude Code', ''];
     return ['● resposta anterior', RULE, this.shown === '' ? '❯' : `❯ ${this.shown}`, RULE, this.working ? WORKING_FOOTER : IDLE_FOOTER];
   }
 }
@@ -456,3 +459,66 @@ describe('mensagem de outra sessão sem sinal de aceite (07/11)', () => {
   });
 });
 
+
+// 19/11 — Homologações (carga 7-8 em 4 núcleos): a sessão renovada em voo ficou com "[Donel Dev · sessão renovada em
+// voo] …" na caixa, sem Enter, e a fila dela presa atrás. A primeira mensagem do CLI novo tinha os prazos de um CLI
+// de pé há horas (a aba já tinha mandado outras): 30 s para ficar pronto, 3 Enters de novo e 15 s de aceite.
+describe('primeira mensagem da sessão renovada em voo (19/11)', () => {
+  const RENEWAL = '[Donel Dev · sessão renovada em voo] Esta sessão continua a 1e74e200, encerrada pelo app ao chegar no limite de contexto.';
+
+  /** The tab already sent before; then its process is replaced by the renewal's (a CLI booting). */
+  function renewed(bootMs: number) {
+    const ctx = setup(false);
+    const { clock, cli, driver } = ctx;
+    clock.advanceTo(1_000);
+    driver.enqueue({ text: 'mensagem de antes da renovação' });
+    clock.advanceTo(30_000);
+    expect(cli.submitted).toEqual(['mensagem de antes da renovação']);
+    cli.booting = true;
+    driver.processStarted();
+    clock.after(bootMs, () => {
+      cli.booting = false;
+      driver.onScreen();
+    });
+    return ctx;
+  }
+
+  it('CLI lento para subir: espera o prompt e só então cola, e os Enters que ele engole são reenviados; entra uma vez', () => {
+    const { clock, cli, driver } = renewed(90_000);
+    cli.dropEnters = 6;
+    const id = driver.enqueue({ text: RENEWAL, unattended: true } as SendRequest);
+    clock.advanceTo(60_000);
+    expect(cli.box).toBe(''); // nothing typed while the CLI was not up
+    clock.advanceTo(400_000);
+    expect(cli.submitted.filter((text) => text === RENEWAL)).toHaveLength(1);
+    expect(cli.box).toBe('');
+    expect(driver.getItems().find((item) => item.id === id)?.state ?? 'accepted').not.toBe('failed');
+  });
+
+  it('a mensagem fica na caixa depois do Enter: recebe só novos Enters, nunca é colada de novo', () => {
+    const { clock, cli, driver } = renewed(5_000);
+    cli.dropEnters = 8;
+    const writes: string[] = [];
+    const write = cli.write.bind(cli);
+    cli.write = (data: string) => {
+      writes.push(data);
+      return write(data);
+    };
+    driver.enqueue({ text: RENEWAL, unattended: true } as SendRequest);
+    clock.advanceTo(400_000);
+    expect(writes.filter((data) => data.includes('sessão renovada em voo'))).toHaveLength(1);
+    expect(writes.filter((data) => data === '\r').length).toBeGreaterThan(8);
+    expect(cli.submitted.filter((text) => text === RENEWAL)).toHaveLength(1);
+  });
+
+  it('caixa com texto do dono: a mensagem da renovação não cola por cima nem aperta Enter nela', () => {
+    const { clock, cli, driver, ownerKey } = renewed(5_000);
+    clock.advanceTo(40_000);
+    for (const ch of 'rascunho do dono') ownerKey(ch);
+    clock.advanceTo(50_000);
+    driver.enqueue({ text: RENEWAL, unattended: true } as SendRequest);
+    clock.advanceTo(400_000);
+    expect(cli.box).toBe('rascunho do dono');
+    expect(cli.submitted).toEqual(['mensagem de antes da renovação']);
+  });
+});

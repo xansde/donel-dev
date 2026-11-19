@@ -28,9 +28,11 @@
 //   turn delivers it) and the Líder único hears of it once.
 // - A field held by text that is not ours (the box watcher, every `WATCH_MS`, over every session of this machine's
 //   tmux): the same text unchanged for `STUCK_MS` (5 min) is
-//   * sent with one Enter when it has the form of a Donel notice or recado (opens with "◆ ") and the session is idle
-//     (no "esc to interrupt", and its last turn ended and is quiet, or its hook said it stopped): it was typed by the
-//     app or by this entregador and only its Enter was lost, and the queue behind it can then move;
+//   * sent with one Enter when it has the form of a Donel notice or recado (opens with "◆ ", or "[Donel Dev · " as the
+//     app's own messages do, like the first message of a renewed session) and the session is idle
+//     (no "esc to interrupt", and its last turn ended and is quiet, its hook said it stopped, or it never had a turn):
+//     it was typed by the app or by this entregador and only its Enter was lost, and the queue behind it can then move.
+//     Up to `MAX_BOX_ENTERS` Enters, each after a longer wait, one log line each; never the text again;
 //   * never cleared nor sent otherwise: it may be the owner typing. The Líder único hears "caixa com texto não enviado
 //     há mais de 5 min" (the session, the place, how long and its first 80 characters), once per stuck box (a box that
 //     empties or changes is a new one). A "◆" text whose Enter did not take is told the same way.
@@ -123,6 +125,8 @@ export interface RecadosTmux {
 export interface TranscriptTurn {
   readonly ended: boolean;
   readonly at: number;
+  /** No message in it yet: the conversation never had a turn (a session just opened or renewed). */
+  readonly empty?: boolean;
 }
 
 export interface GateRecadosDeps {
@@ -191,8 +195,17 @@ const MAX_TYPINGS = 3;
 const WATCH_MS = 30_000;
 /** A field with the same text unsent for this long is a stuck box. */
 const STUCK_MS = 5 * 60_000;
-/** The form of a Donel notice or recado typed into a session (the app's "◆ De …", this queue's "◆ Recado …"). */
-const DONEL_FORM = /^◆\s/;
+/**
+ * Enters the watcher gives one stuck Donel text, the n-th `WATCH_MS * 2^(n-1)` after the one before (19/11: a CLI that
+ * just booted on a loaded place can lose an Enter more than once). Only the Enter: the text is never typed again.
+ */
+const MAX_BOX_ENTERS = 3;
+/**
+ * The form of a Donel notice or recado typed into a session (the app's "◆ De …", this queue's "◆ Recado …"), or of a
+ * message the app types by itself into a session (19/11: "[Donel Dev · sessão renovada em voo] …", the first message of
+ * a renewed session, sat 5 min+ in a loaded place's box with its Enter lost, and the queue behind it with it).
+ */
+const DONEL_FORM = /^(?:◆\s|\[Donel Dev · )/;
 const PREVIEW_CHARS = 80;
 /** After an unconfirmed typing, the screen is not trusted for this long (an end of turn still delivers). */
 const HOLD_MS = 2 * 60_000;
@@ -534,7 +547,7 @@ export async function transcriptLastTurn(path: string): Promise<TranscriptTurn |
         const ended = entry.type === 'assistant' && (message.stop_reason === 'end_turn' || message.stop_reason === 'stop_sequence');
         return { ended, at: mtimeMs };
       }
-      return { ended: false, at: mtimeMs };
+      return { ended: false, at: mtimeMs, empty: true };
     } finally {
       await handle.close();
     }
@@ -622,6 +635,13 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
   async function typedInTranscript(sid: string, id: string): Promise<boolean> {
     const path = await transcriptPath(sid);
     return path ? transcriptHas(path, tagOf(id)) : false;
+  }
+  /** A session that never had a turn (no transcript yet, or one without a message): nothing of it is running. */
+  async function transcriptSaysFresh(sid: string): Promise<boolean> {
+    const path = await transcriptPath(sid);
+    if (!path) return true;
+    const turn = await lastTurn(path);
+    return turn === null || turn.empty === true;
   }
   let timer: ReturnType<typeof setInterval> | null = null;
   let ticking = false;
@@ -1095,7 +1115,7 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
   }
 
   /** The text each session's field has held unchanged since `since` (memory only); one warning and one Enter per box. */
-  const boxes = new Map<string, { readonly text: string; readonly since: number; entered: boolean; warned: boolean }>();
+  const boxes = new Map<string, { readonly text: string; readonly since: number; enters: number; nextEnterAt: number; warned: boolean }>();
   let lastWatch = Number.NEGATIVE_INFINITY;
 
   /**
@@ -1123,24 +1143,37 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       }
       const known = boxes.get(sid);
       if (!known || known.text !== text) {
-        boxes.set(sid, { text, since: at, entered: false, warned: false });
+        boxes.set(sid, { text, since: at, enters: 0, nextEnterAt: 0, warned: false });
         continue;
       }
       if (typing.has(sid) || at - known.since < STUCK_MS) continue;
       const donel = DONEL_FORM.test(text);
-      if (donel && !known.entered && !BUSY_ON_SCREEN.test(screen.text) && (moodOf(sid) === 'parada' || (moodOf(sid) !== 'ocupada' && (await transcriptSaysStopped(sid))))) {
-        known.entered = true;
-        const sent = await tmux.enter(sid);
-        log(`caixa da sessão ${sid}: aviso do Donel parado há ${Math.round((at - known.since) / 60_000)} min${sent ? ' enviado com Enter' : '; o tmux recusou o Enter'}.`);
-        if (sent) continue;
+      // Idle: nothing running on screen, and its hook said it stopped, or its last turn ended and is quiet, or it never
+      // had a turn (19/11: a renewed session's first message, before which the transcript holds nothing).
+      const idle = async (): Promise<boolean> =>
+        !BUSY_ON_SCREEN.test(screen.text) &&
+        (moodOf(sid) === 'parada' || (moodOf(sid) !== 'ocupada' && ((await transcriptSaysStopped(sid)) || (await transcriptSaysFresh(sid)))));
+      if (donel && known.enters < MAX_BOX_ENTERS) {
+        if (at < known.nextEnterAt) continue;
+        if (await idle()) {
+          known.enters += 1;
+          known.nextEnterAt = at + WATCH_MS * 2 ** (known.enters - 1);
+          const sent = await tmux.enter(sid);
+          log(
+            `caixa da sessão ${sid}: aviso do Donel parado há ${Math.round((at - known.since) / 60_000)} min${sent ? ` enviado com Enter (${known.enters}ª de ${MAX_BOX_ENTERS})` : '; o tmux recusou o Enter'}.`,
+          );
+          if (sent) continue;
+        }
       }
+      // The last Enter had its wait too: only then the Líder hears that it did not take.
+      if (donel && known.enters >= MAX_BOX_ENTERS && at < known.nextEnterAt) continue;
       if (known.warned) continue;
       known.warned = true;
       const who = deps.picture()?.sessoes[sid]?.quemSou ?? {};
       const lugar = typeof who.lugar === 'string' ? who.lugar : undefined;
       const quadro = typeof who.pasta === 'string' ? lastSegment(who.pasta) : undefined;
       const minutes = Math.max(1, Math.floor((at - known.since) / 60_000));
-      const why = donel ? (known.entered ? ' Era um aviso do Donel e o Enter não entrou.' : ' É um aviso do Donel, mas a sessão está num turno.') : ' Não tem a forma de aviso do Donel: pode ser o dono digitando, não mexi.';
+      const why = donel ? (known.enters > 0 ? ' Era um aviso do Donel e o Enter não entrou.' : ' É um aviso do Donel, mas a sessão está num turno.') : ' Não tem a forma de aviso do Donel: pode ser o dono digitando, não mexi.';
       log(`caixa da sessão ${sid} com texto não enviado há ${minutes} min: avisando o Líder único.`);
       await warnLeader(
         `${sid}:${known.since}`,

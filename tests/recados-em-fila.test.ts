@@ -624,6 +624,35 @@ describe('Recados em fila: caixa pendurada', () => {
     expect(caixaWarnings(g.relayed)).toEqual([]);
   });
 
+  it('primeira mensagem de sessão renovada ("[Donel Dev · …]") parada numa sessão que nunca teve turno: Enters com recuo, nunca redigitada; o Líder ouve só depois do último (19/11)', async () => {
+    const g = setup();
+    const recados = g.make();
+    // No turn in its transcript: the renewal's first message is what would start it.
+    g.screens.set(SID_DEV, screen('[Donel Dev · sessão renovada em voo] Esta sessão continua a 1e74e200, encerrada pelo app'));
+    const tickTo = async (ticks: number): Promise<void> => {
+      for (let i = 0; i < ticks; i += 1) {
+        await recados.tick();
+        g.advance(30_000);
+      }
+    };
+    await tickTo(10); // 0 .. 4,5 min
+    expect(g.enters).toEqual([]);
+    await tickTo(1); // 5 min: the first Enter
+    expect(g.enters).toEqual([SID_DEV]);
+    await tickTo(1); // 30 s later, still there: one more
+    expect(g.enters).toEqual([SID_DEV, SID_DEV]);
+    await tickTo(1); // the next one waits 1 min
+    expect(g.enters).toHaveLength(2);
+    await tickTo(1);
+    expect(g.enters).toHaveLength(3);
+    expect(caixaWarnings(g.relayed)).toEqual([]);
+    await tickTo(10);
+    expect(g.enters).toHaveLength(3);
+    expect(g.typed).toEqual([]);
+    expect(g.cleared).toEqual([]);
+    expect(caixaWarnings(g.relayed)).toHaveLength(1);
+  });
+
   it('aviso "◆ …" numa sessão em turno não leva Enter; o Líder ouve uma vez', async () => {
     const g = setup();
     const recados = g.make();

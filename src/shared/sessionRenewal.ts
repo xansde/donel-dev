@@ -371,8 +371,11 @@ function launchedWithOptIn(args: readonly string[]): boolean {
 // The first message of the new session (the handoff to read)
 // ---------------------------------------------------------------------------
 
-/** How long the renderer waits for the new session to take its first message before it tells the owner. */
-export const RENEWAL_HANDOFF_WAIT_MS = 120_000;
+/**
+ * How long the renderer waits for the new session to take its first message before it tells the owner. It covers the
+ * send's own tries (19/11): up to 4 min for a remote CLI to come up, the paste, and its Enters a booting CLI swallows.
+ */
+export const RENEWAL_HANDOFF_WAIT_MS = 7 * 60_000;
 
 /** How the first message of the new session ended (same shape as the send driver's outcome). */
 export type RenewalHandoffDelivery =

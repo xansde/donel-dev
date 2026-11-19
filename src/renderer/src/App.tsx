@@ -2507,7 +2507,8 @@ export function App(): React.JSX.Element {
       delete next[tabId];
       return next;
     });
-    void sendToTabAndWait(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text: firstPrompt }, RENEWAL_HANDOFF_WAIT_MS).then((outcome) => {
+    // Nobody watches the new session's box: its Enter is insisted on like a notice's (19/11, a loaded place swallowed it).
+    void sendToTabAndWait(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text: firstPrompt, unattended: true }, RENEWAL_HANDOFF_WAIT_MS).then((outcome) => {
       const notice = renewalHandoffDeliveryNotice(outcome, handoffPath);
       if (notice === null || !tabsRef.current.some((candidate) => candidate.id === tabId)) return;
       setRenewalDeliveryNotices((prev) => ({ ...prev, [tabId]: notice }));
