@@ -125,6 +125,13 @@ export interface RemotePictures {
   combine(local: BoardPicture | null): BoardPicture | null;
   /** The machine whose fresh picture (see `STALE_MS`) has `placeId` on the board `projectPath`; `undefined` = none. */
   machineOf(projectPath: string, placeId: string): string | undefined;
+  /**
+   * t-d461e003 — the machine whose fresh picture has the board `quadro` (its folder, or the folder's last name): its gate
+   * name, the board's key and how its sessions name that machine (`roda`). `undefined` = none.
+   */
+  boardMachine(quadro: string): { readonly name: string; readonly pasta: string; readonly label: string } | undefined;
+  /** How the sessions of machine `name` name it (`roda`); its gate name when none says. */
+  labelOf(name: string): string;
   /** A message for a place of another machine: queued there (`null` = it runs on no other machine). */
   queue(message: OwnerMessage): Promise<string | null>;
   /** The satellite of `name` took `entregues`; what still waits for it. */
@@ -174,6 +181,11 @@ export function createRemotePictures(deps: { readonly dir: string; readonly io: 
       for (const session of Object.values(picture.sessoes)) if (session.quemSou.pasta === projectPath && session.quemSou.lugar === placeId) return name;
     }
     return undefined;
+  }
+
+  function labelOf(name: string): string {
+    const sessions = Object.values(pictures.get(name)?.sessoes ?? {});
+    return sessions.map((session) => session.quemSou.roda).find((value): value is string => typeof value === 'string' && value.trim() !== '') ?? name;
   }
 
   return {
@@ -228,6 +240,18 @@ export function createRemotePictures(deps: { readonly dir: string; readonly io: 
     },
 
     machineOf,
+
+    boardMachine(quadro) {
+      const at = now();
+      for (const [name, picture] of pictures) {
+        if (at - (heard.get(name) ?? -Infinity) > STALE_MS) continue;
+        const pasta = Object.keys(picture.quadros).find((key) => key === quadro || lastSegment(key) === quadro);
+        if (pasta) return { name, pasta, label: labelOf(name) };
+      }
+      return undefined;
+    },
+
+    labelOf,
 
     async queue(message) {
       if (!message.placeId) return null;

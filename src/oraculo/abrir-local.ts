@@ -14,6 +14,12 @@
 // his place) opens too, only on his own board (`quadro` may be left out), with the same rules; the new session is
 // `openedBy` his place, so his opening arrow holds in the picture made here (retrato-local.ts).
 //
+// t-d461e003 (19/11, the satellite): a board this machine's picture does not have, but another machine's satellite
+// pictures (the Homologação, on the Homologações), goes there (`remote`, abrir-satelite.ts): only the Líder único's. The
+// satellite runs this same module: the Líder único's order comes through `openFor` (the registro checked who asked), a
+// board Líder alive there opens on his own board by its gate (the rule above), the kit is the registro's copy, and the
+// board's folder comes from that machine's own sessions of the board (`folderFromSessions`), never from the kit.
+//
 // Order: the folder with its `criando` mark → the synthetic picture (so the Líder's `tarefa_criar` for the new place
 // passes the reach rules) → the first message and the setup (files and meta) → the tmux, last; the mark leaves at the
 // end. A failure removes the folder. A repeat of the same call (board, role, request, name) within 10 min answers the
@@ -23,7 +29,7 @@
 
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, relative } from 'node:path';
 import type { OwnerMessage } from '../main/ledger-card-writer';
 import { OPEN_KIT_FILE, OPEN_KIT_VERSION, type OpenKit, type OpenKitRole } from '../main/open-kit';
 import { planRemoteLaunch } from '../main/remote-launch-plan';
@@ -87,6 +93,18 @@ export interface OpenLocalDeps {
   readonly portFree: (port: number) => Promise<boolean>;
   /** Other names of this machine `onde` may use (its hostname). */
   readonly names?: readonly string[];
+  /** The kit of roles and boards; default: the one the PC left in `oraculoDir` (the satellite's comes from the registro). */
+  readonly kit?: () => OpenKit | null;
+  /**
+   * t-d461e003 — set (this machine's `$HOME`) = the board's folder comes from this machine's own sessions of that board
+   * (`boardFolderFrom`), never from the kit's `homeRelativeDir`, which the PC made for the personal VPS. The satellite.
+   */
+  readonly folderFromSessions?: string;
+  /**
+   * t-d461e003 — the Líder único's `sessao_abrir` for a board this machine's picture does not have: to the machine whose
+   * satellite pictures it (abrir-satelite.ts). `null` = no other machine has it (the refusal of today).
+   */
+  readonly remote?: (call: OpenCall) => Promise<BrowserToolOutcome | null>;
   readonly now?: () => number;
   readonly newId?: () => string;
   readonly random?: () => number;
@@ -117,6 +135,17 @@ interface FolderFacts {
   readonly localCwd?: string;
   readonly ports: readonly number[];
   readonly worktree: string | null;
+  /** The session's working folder (`dir`, written by its setup: the physical path, maybe a worktree). */
+  readonly dir?: string;
+}
+
+function readDirFile(sessionsDir: string, sid: string): string | undefined {
+  try {
+    const dir = readFileSync(join(sessionsDir, sid, 'dir'), 'utf8').trim();
+    return dir.startsWith('/') && !dir.includes('\n') ? dir : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function readFolders(sessionsDir: string): FolderFacts[] {
@@ -140,12 +169,49 @@ function readFolders(sessionsDir: string): FolderFacts[] {
         ...(typeof raw.localCwd === 'string' ? { localCwd: raw.localCwd } : {}),
         ports,
         worktree: worktreeNameFromArgs(args),
+        ...(() => {
+          const dir = readDirFile(sessionsDir, sid);
+          return dir ? { dir } : {};
+        })(),
       });
     } catch {
       // no meta yet (being made) or unreadable: not counted
     }
   }
   return out;
+}
+
+/** The project folder of a session's working folder: the part before its worktree (`/.claude/worktrees/<name>`). */
+export function projectRootOf(dir: string): string {
+  const at = dir.indexOf('/.claude/worktrees/');
+  const root = at > 0 ? dir.slice(0, at) : dir;
+  return root.length > 1 ? root.replace(/\/+$/, '') : root;
+}
+
+/**
+ * t-d461e003 — pure: the board's folder on this machine from its own sessions of that board (`localCwd` = the board,
+ * their `dir`), relative to `home` (`../` when it lives out of it: the setup does `cd "$HOME"/<it>`). The live ones
+ * first; among them, the folder most of them use. A string = why none.
+ */
+export function boardFolderFrom(
+  folders: readonly { readonly sid: string; readonly localCwd?: string; readonly dir?: string }[],
+  live: ReadonlySet<string>,
+  home: string,
+  pasta: string,
+  boardName: string,
+  machine: string,
+): { readonly homeRelativeDir: string } | string {
+  const ofBoard = folders.filter((folder) => folder.localCwd === pasta && folder.dir);
+  const pool = ofBoard.some((folder) => live.has(folder.sid)) ? ofBoard.filter((folder) => live.has(folder.sid)) : ofBoard;
+  const counts = new Map<string, number>();
+  for (const folder of pool) {
+    const root = projectRootOf(folder.dir!);
+    counts.set(root, (counts.get(root) ?? 0) + 1);
+  }
+  let best: string | null = null;
+  for (const [root, count] of counts) if (best === null || count > counts.get(best)!) best = root;
+  if (best === null) return `nenhuma sessão desta máquina (${machine}) mostra a pasta do quadro ${boardName}, e sem ela não sei onde abrir aqui. Abra a primeira sessão desse quadro nesta máquina pelo PC.`;
+  return { homeRelativeDir: relative(home, best) || '.' };
 }
 
 /** Pure — why this machine has no room for one more session; `null` = room. */
@@ -297,12 +363,27 @@ export function clearAdoptedMarks(sessionsDir: string, pushed: BoardPicture): st
 
 const fail = (text: string): BrowserToolOutcome => ({ kind: 'error', text });
 
-export function createOpenLocal(deps: OpenLocalDeps): GateAbrir {
+/** t-d461e003 — an opening another machine's registro hands this one (abrir-satelite.ts): the board by its key. */
+export interface OpeningOrder {
+  readonly pasta: string;
+  readonly papel: string;
+  readonly pedido: string;
+  readonly nome?: string;
+  readonly tarefa?: string;
+}
+
+export interface OpenLocal extends GateAbrir {
+  /** The Líder único's opening, checked on the machine that took it (the satellite's `aberturas`). */
+  openFor(order: OpeningOrder): Promise<BrowserToolOutcome>;
+}
+
+export function createOpenLocal(deps: OpenLocalDeps): OpenLocal {
   const now = deps.now ?? Date.now;
   const newId = deps.newId ?? randomUUID;
   const random = deps.random ?? Math.random;
   const log = deps.log ?? ((line: string) => console.log(line));
   const openedFile = join(deps.oraculoDir, OPENED_FILE);
+  const kitOf = deps.kit ?? (() => readOpenKit(deps.oraculoDir));
   // One opening at a time: the repeat check and the making of the folder never interleave.
   let line: Promise<unknown> = Promise.resolve();
 
@@ -341,30 +422,68 @@ export function createOpenLocal(deps: OpenLocalDeps): GateAbrir {
     return { lugar: who.lugar, pasta: who.pasta };
   }
 
+  /** The role of the kit for `papel`, or why not (never a Líder without the PC). */
+  function roleOf(kit: OpenKit, papel: string): OpenKitRole | string {
+    if (papel === LEADER_ROLE_ID) return 'Não abri: com o PC desligado não abro um Líder (o Líder do quadro o dono põe pelo PC). Abra com outro papel.';
+    const role = kit.roles.find((candidate) => candidate.id === papel);
+    return role ?? `Papel "${papel}" não está no kit que o PC deixou (${kit.roles.map((candidate) => candidate.id).join(', ') || 'nenhum'}).`;
+  }
+
   async function open(sid: string, call: OpenCall): Promise<BrowserToolOutcome> {
     const leader = await deps.leader();
     const boardLeaderOf = leader?.sid === sid ? null : await boardLeaderCaller(sid);
     if (leader?.sid !== sid && !boardLeaderOf) return fail(NOT_THE_LEADER);
     const opener = boardLeaderOf?.lugar ?? LEADER_OF_ALL;
-    const kit = readOpenKit(deps.oraculoDir);
+    const kit = kitOf();
     if (!kit) return fail(NO_KIT);
-    if (call.papel === LEADER_ROLE_ID) return fail('Não abri: com o PC desligado não abro um Líder (o Líder do quadro o dono põe pelo PC). Abra com outro papel.');
-    const role = kit.roles.find((candidate) => candidate.id === call.papel);
-    if (!role) return fail(`Papel "${call.papel}" não está no kit que o PC deixou (${kit.roles.map((candidate) => candidate.id).join(', ') || 'nenhum'}).`);
+    const role = roleOf(kit, call.papel);
+    if (typeof role === 'string') return fail(role);
     const label = kit.place.label;
+    if (boardLeaderOf && call.quadro && call.quadro !== boardLeaderOf.pasta && call.quadro !== lastSegment(boardLeaderOf.pasta)) return fail(ONLY_OWN_BOARD(lastSegment(boardLeaderOf.pasta)));
+    const quadro = boardLeaderOf?.pasta ?? call.quadro;
+    const boards = picturedBoards(deps.picture());
+    const found = quadro ? [...boards].find(([pasta]) => pasta === quadro || lastSegment(pasta) === quadro) : undefined;
+    // t-d461e003 — a board this machine does not picture, but another machine's satellite does: the Líder único's
+    // opening goes there (abrir-satelite.ts), which checks `onde` against that machine.
+    if (quadro && !found && !boardLeaderOf && deps.remote) {
+      const forwarded = await deps.remote({ ...call, quadro });
+      if (forwarded) return forwarded;
+    }
     const where = call.onde?.trim().toLowerCase();
     const mine = [label, kit.place.id, ...(deps.names ?? [])].map((name) => name.toLowerCase());
     if (where && where !== 'aqui' && where !== 'auto' && !mine.includes(where)) return fail(`Com o PC desligado só abro nesta máquina (${label}): use "aqui", "auto" ou "${label}".`);
-    if (boardLeaderOf && call.quadro && call.quadro !== boardLeaderOf.pasta && call.quadro !== lastSegment(boardLeaderOf.pasta)) return fail(ONLY_OWN_BOARD(lastSegment(boardLeaderOf.pasta)));
-    const quadro = boardLeaderOf?.pasta ?? call.quadro;
     if (!quadro) return fail('Com o PC desligado, diga o quadro em "quadro" (nome ou pasta).');
-    const boards = picturedBoards(deps.picture());
-    const found = [...boards].find(([pasta]) => pasta === quadro || lastSegment(pasta) === quadro);
     if (!found) {
       const names = [...boards.keys()].map(lastSegment).join(', ') || 'nenhum';
       return fail(`Com o PC desligado, conheço só os quadros do último retrato (${names}); "${quadro}" não está entre eles. Tente quando o PC ligar.`);
     }
-    const [pasta, base] = found;
+    return openOn(kit, role, found, opener, call, !boardLeaderOf);
+  }
+
+  /**
+   * t-d461e003 — an opening the Líder único asked on the personal VPS for a board of this machine (the satellite took
+   * it from the registro, which checked who asked): the same rules from the board on, opened by the Líder único.
+   */
+  async function openFor(order: OpeningOrder): Promise<BrowserToolOutcome> {
+    const kit = kitOf();
+    if (!kit) return fail(NO_KIT);
+    const role = roleOf(kit, order.papel);
+    if (typeof role === 'string') return fail(role);
+    const found = [...picturedBoards(deps.picture())].find(([pasta]) => pasta === order.pasta);
+    if (!found) return fail(`Não abri: o quadro ${lastSegment(order.pasta)} não está mais no retrato de ${kit.place.label}.`);
+    return openOn(kit, role, found, LEADER_OF_ALL, order, true);
+  }
+
+  async function openOn(
+    kit: OpenKit,
+    role: OpenKitRole,
+    [pasta, base]: [string, { readonly listar: readonly unknown[]; readonly board?: MindscapeBoard }],
+    opener: string,
+    call: { readonly pedido: string; readonly nome?: string; readonly tarefa?: string },
+    /** The Líder único's request (a live board Líder gets it instead); `false` = that Líder himself opens. */
+    toBoardLeader: boolean,
+  ): Promise<BrowserToolOutcome> {
+    const label = kit.place.label;
     const kitBoard = kit.boards.find((board) => board.localCwd === pasta);
     if (!kitBoard) return fail(`O kit que o PC deixou não traz a pasta do quadro ${lastSegment(pasta)}. Tente quando o PC ligar.`);
     const name = call.nome ?? role.name;
@@ -384,7 +503,7 @@ export function createOpenLocal(deps: OpenLocalDeps): GateAbrir {
     const tmuxNow = await deps.liveSessions();
     const sessions = Object.entries(deps.picture()?.sessoes ?? {});
     const aliveHere = (placeId: string): boolean => sessions.some(([folder, session]) => session.quemSou.lugar === placeId && tmuxNow.has(folder));
-    const boardLeader = boardLeaderOf ? undefined : boardLeaders(base.board).find((id) => hearing.has(id) && aliveHere(id));
+    const boardLeader = toBoardLeader ? boardLeaders(base.board).find((id) => hearing.has(id) && aliveHere(id)) : undefined;
     if (boardLeader) {
       const words = `pedido do Líder único (papel ${role.id}, "${name}"), com o PC desligado: ${call.pedido}`;
       const to = await deps.deliver({
@@ -406,6 +525,9 @@ export function createOpenLocal(deps: OpenLocalDeps): GateAbrir {
       const openNow = folders.filter((folder) => folder.openedBy === opener && folder.localCwd === pasta && live.has(folder.sid)).length;
       if (openNow >= kit.openCap) return fail(`Não abri: limite ${kit.openCap}, abertas ${openNow} neste quadro; feche uma e tente de novo.`);
     }
+
+    const folderOf = deps.folderFromSessions !== undefined ? boardFolderFrom(folders, live, deps.folderFromSessions, pasta, kitBoard.name, label) : { homeRelativeDir: kitBoard.homeRelativeDir };
+    if (typeof folderOf === 'string') return fail(`Não abri: ${folderOf}`);
 
     const newSid = newId();
     if (!SID_PATTERN.test(newSid)) return fail('Id de sessão inválido.');
@@ -430,7 +552,7 @@ export function createOpenLocal(deps: OpenLocalDeps): GateAbrir {
       name,
       openedBy: opener,
       createdAt: new Date(at).toISOString(),
-      homeRelativeDir: kitBoard.homeRelativeDir,
+      homeRelativeDir: folderOf.homeRelativeDir,
       worktree,
       repoUrl: kitBoard.repoUrl,
       branch: kitBoard.branch,
@@ -467,7 +589,7 @@ export function createOpenLocal(deps: OpenLocalDeps): GateAbrir {
       nome: name,
       papel: role.id,
       roda: label,
-      porque: 'O PC está desligado: abri direto nesta máquina, com o seu pedido. O lugar aparece no quadro quando o PC ligar.',
+      porque: `O PC está desligado: abri direto em ${label}, com o seu pedido. O lugar aparece no quadro quando o PC ligar.`,
       ...(call.tarefa ? { aviso: `A tarefa ${call.tarefa} não foi ligada ao lugar novo: passe-a com tarefa_transferir para "${lugar}".` } : {}),
     });
     try {
@@ -479,11 +601,13 @@ export function createOpenLocal(deps: OpenLocalDeps): GateAbrir {
     return { kind: 'text', text };
   }
 
+  const inLine = (work: () => Promise<BrowserToolOutcome>): Promise<BrowserToolOutcome> => {
+    const turn = line.then(work);
+    line = turn.catch(() => undefined);
+    return turn;
+  };
   return {
-    abrir(sid, _mine, call) {
-      const turn = line.then(() => open(sid, call));
-      line = turn.catch(() => undefined);
-      return turn;
-    },
+    abrir: (sid, _mine, call) => inLine(() => open(sid, call)),
+    openFor: (order) => inLine(() => openFor(order)),
   };
 }

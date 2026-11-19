@@ -24,6 +24,7 @@ import { createGateRecados, findTranscript, tmuxLocalSessions, type GateRecadosH
 import { deliverLocalFirst, type Relay } from './relay';
 import { createLocalPicture, tmuxLiveNow } from './retrato-local';
 import { createRemotePictures, type RemotePictures } from './retrato-satelite';
+import { createRemoteOpenClient, createRemoteOpenings, type RemoteOpenings } from './abrir-satelite';
 import { noticeOf } from './portoes';
 import { createSatelliteLedger, createSatelliteNotice, createSatelliteReviewLink, createSatelliteTaskMemory, postJson, type SatellitePost } from './satelite';
 import { createProbe } from './sonda';
@@ -117,7 +118,7 @@ export function readGateToken(dir: string): string | null {
  * t-1a3f7150 — a bash script (on stdin) as this user, with its login PATH (the daemon runs under systemd): the setup of
  * a session opened with the PC off, its tmux, the inventory of plugins and skills.
  */
-function runLocalScript(script: string): Promise<ScriptRun> {
+export function runLocalScript(script: string): Promise<ScriptRun> {
   return new Promise((resolve) => {
     const child = spawn('bash', ['-l', '-s'], { stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = '';
@@ -138,7 +139,7 @@ function runLocalScript(script: string): Promise<ScriptRun> {
 }
 
 /** Nothing listens on this loopback port of this machine. */
-function loopbackPortFree(port: number): Promise<boolean> {
+export function loopbackPortFree(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const server = createNetServer();
     server.once('error', () => resolve(false));
@@ -269,6 +270,8 @@ export interface Entregador {
    * here: its `/v1/portao/retrato|recados` routes use this same one. Apart = `null`: the registro alone writes them.
    */
   readonly remotes: RemotePictures | null;
+  /** t-d461e003 — the openings on other machines' boards, with `remotes` (the registro in this process); else `null`. */
+  readonly openings: RemoteOpenings | null;
   readonly pictures: PictureStore;
   /** The picture the gate, the recados and the Líder read (the stored one, with this tmux's live sessions). */
   readonly localPicture: { get(): BoardPicture | null };
@@ -313,6 +316,8 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
   // them waits in that machine's queue here, which its satellite takes. Only with the registro in this process: apart,
   // the registro's routes write those files and the entregador leaves them alone (one writer; PR 2 brings them over).
   const remotes = junto ? createRemotePictures({ dir, io }) : null;
+  // t-d461e003 — the Líder único's openings on those machines' boards wait in their queues here (abrir-satelite.ts).
+  const openings = remotes ? createRemoteOpenings({ dir, pictures: remotes, kit: () => readOpenKit(dir) }) : null;
   const picture = (): BoardPicture | null => (remotes ? remotes.combine(localPicture.get()) : localPicture.get());
   const pictureWithoutPc = (sid: string): BoardPicture | null => (remotes ? remotes.combine(localPicture.withoutPc(sid)) : localPicture.withoutPc(sid));
   // t-c3fbe852 — the Líder único alive in this machine's tmux (the app's mark in its session folder, or the picture).
@@ -436,6 +441,7 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
     recados,
     chat,
     remotes,
+    openings,
     pictures,
     localPicture,
     setPicture: (next) => {
@@ -477,6 +483,9 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
             room: () => roomRefusal({ freeBytes: freemem(), loadPerCpu: loadavg()[0]! / Math.max(1, cpus().length) }),
             portFree: loopbackPortFree,
             names: [hostname()],
+            // t-d461e003 — a board of another machine (its satellite pictures it): the opening goes there. Apart, the
+            // registro keeps those queues, asked with this machine's local gate token.
+            remote: openings ? async (call) => openings.request(call) : createRemoteOpenClient({ url: apart!.url, token: () => readGateToken(dir) }),
           }),
           // Saída iii — a new phone app's key (the token never leaves the daemon) and the Líder's answer from chat_lider.py.
           // Apart (passo 9, PR 2): the registro's deliveries to these recados.
