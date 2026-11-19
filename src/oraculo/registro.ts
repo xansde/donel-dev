@@ -40,6 +40,7 @@ import { createTarefasPedidasConsumer, createTarefasPedidasQueue, readQuadroTare
 import { createChatCelularConsumer, createChatCelularQueue } from './chat-celular';
 import { CELULAR_LOCAL_FILE, createCelularLocalStore } from './celular-local';
 import { createCelularV2Handler } from './celular-v2';
+import { createCredencialHandler } from './credencial';
 import { CHAT_AUDIO_TIMEOUT_MS, createChatAudioWorker, DAEMON_WHISPER_URL } from './chat-audio';
 import { createGlossarioStore, glossarioFile } from './glossario';
 import { startChatArquivoSweep } from './chat-arquivo';
@@ -317,6 +318,9 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
     // t-753e8199 — the owner's corrections teach the transcriber (DONEL_GLOSSARIO, else ~/.donel/transcricao/glossario.json).
     // Apart, the correction route is the entregador's, and so is the glossary (one writer).
     ...(chatHere ? { glossario: createGlossarioStore(glossarioFile(), (line) => console.log(line)) } : {}),
+    // t-c441e144 (docs/adr/0010) — the credential box announces in the chat: here only when the chat is (apart, the
+    // entregador's 47815 answers it and this server never sees the body).
+    ...(chatHere ? { credencial: createCredencialHandler({ dir, log: (line) => console.log(line) }) } : {}),
     log: (line) => console.log(line),
   });
   /** Apart, the chat routes are the entregador's: here they do not exist (a second writer of the conversation). */

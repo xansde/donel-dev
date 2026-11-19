@@ -18,6 +18,7 @@ import { createChatCelularConsumer, createChatCelularQueue, parseChatReplies, ty
 import { chatResponder } from './chat-responder';
 import { CELULAR_LOCAL_FILE, createCelularLocalStore, type CelularLocalStore } from './celular-local';
 import { createCelularV2Handler } from './celular-v2';
+import { createCredencialHandler, type CredencialHandler } from './credencial';
 import { isChatRoute } from './celular-frente';
 import { readBoardConfig } from './board-client';
 import { DECISOES_CONFIG_FILE } from './decisoes';
@@ -184,6 +185,8 @@ export function createEntregadorChat(deps: {
   readonly verify: (message: string, signatureHex: string) => { readonly name: string } | null;
   /** What the transcriber learns from the owner's corrections: apart, written by the entregador alone. */
   readonly glossario: GlossarioStore;
+  /** t-c441e144 — the credential box (default: the vault by ssh, src/oraculo/credencial/). */
+  readonly credencial?: CredencialHandler;
   readonly log?: (line: string) => void;
 }): EntregadorChat {
   const { dir } = deps;
@@ -228,6 +231,7 @@ export function createEntregadorChat(deps: {
         kick,
         audio: (id) => audioWorker?.enqueue(id),
         glossario: deps.glossario,
+        credencial: deps.credencial ?? createCredencialHandler({ dir, log }),
         log,
       })
     : null;

@@ -182,6 +182,20 @@ sensível.
   do node/ssh, num arquivo 600 que o `apiKeyHelper` lê. Nunca volta à tela, a
   log ou a erro. Desenho no [ADR 0008](docs/adr/0008-proxy-da-vez.md). Fora
   de `accounts/` e `proxies/`, segue proibido.
+  **Credencial pelo celular — emenda do dono (19/11, carta t-6b5092f6,
+  "Autorizar com os limites"; pedido: "Precisamos de uma caixa de colocar
+  credenciais aqui sem passar direto pro chat")**: `src/oraculo/credencial/` é
+  o único código do Oráculo que toca a senha que o celular manda
+  (`POST /api/v2/credencial`). A rota só confere a assinatura e passa o corpo
+  cru ao módulo (nunca o `parseBody` genérico, nunca log; 16 KB no socket). A
+  senha vai ao cofre da Homologações só pelo stdin do `ssh`, em modo **só
+  criar** (nome exato já existente = `409 ja-existe`, cofre intocado); nunca em
+  argv, log, journal, fila, ledger, arquivo, erro ou resposta. Guarda-se 24 h só
+  `id → {item_id, hash_curto, hash salgado}`; o aviso ao Líder e à conversa diz
+  só nome e `item_id`. Cofre fora = 503, sem fila nem retentativa. O teste de
+  vazamento (`tests/oraculo-credencial.test.ts`) é gate. Desenho no
+  [ADR 0010](docs/adr/0010-credencial-pelo-celular.md). Fora de `accounts/`,
+  `proxies/` e `credencial/`, segue proibido.
   **Navegador interno não é exceção** (30/10): login no painel é o dono
   digitando; o Chromium guarda os cookies da partição `persist:donel-browser`
   e o código do app não os lê nem grava (`docs/design/navegador-interno.md`).
