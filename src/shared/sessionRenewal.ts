@@ -372,10 +372,21 @@ function launchedWithOptIn(args: readonly string[]): boolean {
 // ---------------------------------------------------------------------------
 
 /**
- * How long the renderer waits for the new session to take its first message before it tells the owner. It covers the
- * send's own tries (19/11): up to 4 min for a remote CLI to come up, the paste, and its Enters a booting CLI swallows.
+ * How long the renderer waits for the new session to take its first message before it tells the owner. It covers a
+ * slow boot (19/11): up to 4 min for a remote CLI to come up, then the paste and about 2 min of Enters. A send that
+ * runs out of Enters answers "não foi" before that, and its text stays in the box (`renewalHandoffSend`).
  */
 export const RENEWAL_HANDOFF_WAIT_MS = 7 * 60_000;
+
+/**
+ * How the first message of the renewed session is sent (19/11). Nobody watches that box, so its Enter is insisted on
+ * like a notice from another session (`unattended`). But it must never vanish: out of tries its text stays in the box
+ * (`keepText`), where the box watcher of the place submits it ("[Donel Dev · …]" unchanged for 5 min) and the tab shows
+ * the notice. A notice that cleared it would leave the new session idle without the handoff, and nothing on screen.
+ */
+export function renewalHandoffSend(text: string): { readonly text: string; readonly unattended: true; readonly keepText: true } {
+  return { text, unattended: true, keepText: true };
+}
 
 /** How the first message of the new session ended (same shape as the send driver's outcome). */
 export type RenewalHandoffDelivery =

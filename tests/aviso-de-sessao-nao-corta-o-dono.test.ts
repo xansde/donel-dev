@@ -3,6 +3,7 @@ import { SendDriver, type SendRequest } from '../src/renderer/src/chat/sendDrive
 import type { LineInput } from '../src/shared/screenLine';
 import { AgentBridge, type AgentBridgePorts, type BridgeTab } from '../src/renderer/src/Mindscape/agentBridge';
 import { addPlace, emptyMindscapeDoc } from '../src/shared/mindscape/model';
+import { renewalHandoffSend } from '../src/shared/sessionRenewal';
 
 // 06/11 — "◆ … terminou" chegando enquanto o dono digita no terminal do Líder: o Enter do aviso levou junto o que
 // ele digitava, cortado ("trava não fi"), e a mensagem dele esperava atrás de todos os avisos. Aqui o terminal é
@@ -486,7 +487,7 @@ describe('primeira mensagem da sessão renovada em voo (19/11)', () => {
   it('CLI lento para subir: espera o prompt e só então cola, e os Enters que ele engole são reenviados; entra uma vez', () => {
     const { clock, cli, driver } = renewed(90_000);
     cli.dropEnters = 6;
-    const id = driver.enqueue({ text: RENEWAL, unattended: true } as SendRequest);
+    const id = driver.enqueue(renewalHandoffSend(RENEWAL));
     clock.advanceTo(60_000);
     expect(cli.box).toBe(''); // nothing typed while the CLI was not up
     clock.advanceTo(400_000);
@@ -495,20 +496,22 @@ describe('primeira mensagem da sessão renovada em voo (19/11)', () => {
     expect(driver.getItems().find((item) => item.id === id)?.state ?? 'accepted').not.toBe('failed');
   });
 
-  it('a mensagem fica na caixa depois do Enter: recebe só novos Enters, nunca é colada de novo', () => {
+  it('a mensagem fica na caixa depois do Enter: recebe só novos Enters, além dos de uma mensagem do dono, nunca é colada de novo', () => {
     const { clock, cli, driver } = renewed(5_000);
-    cli.dropEnters = 8;
+    // More than the 1 + 14 Enters of a first message of the owner: only the Enters an unattended send insists on reach it.
+    cli.dropEnters = 18;
     const writes: string[] = [];
     const write = cli.write.bind(cli);
     cli.write = (data: string) => {
       writes.push(data);
       return write(data);
     };
-    driver.enqueue({ text: RENEWAL, unattended: true } as SendRequest);
+    driver.enqueue(renewalHandoffSend(RENEWAL));
     clock.advanceTo(400_000);
     expect(writes.filter((data) => data.includes('sessão renovada em voo'))).toHaveLength(1);
-    expect(writes.filter((data) => data === '\r').length).toBeGreaterThan(8);
+    expect(writes.filter((data) => data === '\r').length).toBeGreaterThan(18);
     expect(cli.submitted.filter((text) => text === RENEWAL)).toHaveLength(1);
+    expect(cli.box).toBe('');
   });
 
   it('caixa com texto do dono: a mensagem da renovação não cola por cima nem aperta Enter nela', () => {
@@ -516,9 +519,28 @@ describe('primeira mensagem da sessão renovada em voo (19/11)', () => {
     clock.advanceTo(40_000);
     for (const ch of 'rascunho do dono') ownerKey(ch);
     clock.advanceTo(50_000);
-    driver.enqueue({ text: RENEWAL, unattended: true } as SendRequest);
+    driver.enqueue(renewalHandoffSend(RENEWAL));
     clock.advanceTo(400_000);
     expect(cli.box).toBe('rascunho do dono');
     expect(cli.submitted).toEqual(['mensagem de antes da renovação']);
+  });
+
+  // Revisão do PR #526: como aviso não assistido, a mensagem desistia ~2 min depois com Esc Esc e a caixa ficava vazia;
+  // a sessão nova parava sem a passagem de bastão e a vigia de caixa do satélite (5 min de texto parado) nada via.
+  it('o CLI nunca aceita o Enter: o envio desiste, mas a mensagem fica na caixa (nunca some) e foi colada uma vez', () => {
+    const { clock, cli, driver } = renewed(5_000);
+    cli.dropEnters = 1000;
+    const writes: string[] = [];
+    const write = cli.write.bind(cli);
+    cli.write = (data: string) => {
+      writes.push(data);
+      return write(data);
+    };
+    const id = driver.enqueue(renewalHandoffSend(RENEWAL));
+    clock.advanceTo(900_000);
+    expect(driver.getItems().find((item) => item.id === id)?.state).toBe('failed');
+    expect(cli.box).toBe(RENEWAL);
+    expect(writes).not.toContain('\x1b\x1b');
+    expect(writes.filter((data) => data.includes('sessão renovada em voo'))).toHaveLength(1);
   });
 });

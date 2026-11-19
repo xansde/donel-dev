@@ -101,7 +101,7 @@ import { SpawnAskPanel, type SpawnAsk } from './Mindscape/SpawnAskPanel';
 import { adoptSessionOpenedWithoutPc, appendConversation, findSessionBoard, placeHolding, placeSessionCards, roleOfSession, setBoardView, setPlaceConversation, writeSessionNote, type MindscapeDoc } from '../../shared/mindscape/model';
 import type { SessionRole } from '../../shared/roles';
 // Sessão renovada em voo (B36) — limit crossed at the end of a turn → handoff → new session in the same tab.
-import { DEFAULT_SESSION_RENEWAL_PREFS, RENEWAL_HANDOFF_WAIT_MS, renewalEligible, renewalHandoffDeliveryNotice, renewalLaunchArgs, type SessionRenewalPrefs } from '../../shared/sessionRenewal';
+import { DEFAULT_SESSION_RENEWAL_PREFS, RENEWAL_HANDOFF_WAIT_MS, renewalEligible, renewalHandoffDeliveryNotice, renewalHandoffSend, renewalLaunchArgs, type SessionRenewalPrefs } from '../../shared/sessionRenewal';
 import { useSessionRenewal, type RenewalTabInput } from './sessionRenewal/useSessionRenewal';
 import { RenewalDeliveryStrip, RenewalStrip } from './sessionRenewal/RenewalStrip';
 import type { BoardView } from '../../shared/mindscape/view';
@@ -2507,8 +2507,8 @@ export function App(): React.JSX.Element {
       delete next[tabId];
       return next;
     });
-    // Nobody watches the new session's box: its Enter is insisted on like a notice's (19/11, a loaded place swallowed it).
-    void sendToTabAndWait(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, { text: firstPrompt, unattended: true }, RENEWAL_HANDOFF_WAIT_MS).then((outcome) => {
+    // Nobody watches the new session's box: its Enter is insisted on, and its text never cleared (19/11, a loaded place).
+    void sendToTabAndWait(tabId, { terminal: () => terminalRefs.current[tabId] ?? null }, renewalHandoffSend(firstPrompt), RENEWAL_HANDOFF_WAIT_MS).then((outcome) => {
       const notice = renewalHandoffDeliveryNotice(outcome, handoffPath);
       if (notice === null || !tabsRef.current.some((candidate) => candidate.id === tabId)) return;
       setRenewalDeliveryNotices((prev) => ({ ...prev, [tabId]: notice }));

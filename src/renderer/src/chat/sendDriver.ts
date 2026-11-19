@@ -77,6 +77,8 @@ export interface SendRequest {
    * keys are held around its Enter. It still goes first, like any `owner` send, and never merges with a notice.
    */
   readonly unattended?: boolean;
+  /** With `unattended`: out of tries, its text stays in the box, never cleared (see `SendInput.keepText`). */
+  readonly keepText?: boolean;
 }
 
 export type SendFrom = 'owner' | 'session';
@@ -560,6 +562,7 @@ export class SendDriver {
         opensScreen: next.request.opensScreen,
         customCommands: next.request.customCommands,
         unattended: unattendedItem(next),
+        keepText: next.request.keepText === true,
       };
       this.sentCount += 1;
       const created = createSend(input, this.ports.now());

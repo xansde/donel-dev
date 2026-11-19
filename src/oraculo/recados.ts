@@ -640,8 +640,8 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
   async function transcriptSaysFresh(sid: string): Promise<boolean> {
     const path = await transcriptPath(sid);
     if (!path) return true;
-    const turn = await lastTurn(path);
-    return turn === null || turn.empty === true;
+    // A transcript that could not be read says nothing: only one read with no message in it is a fresh session.
+    return (await lastTurn(path))?.empty === true;
   }
   let timer: ReturnType<typeof setInterval> | null = null;
   let ticking = false;

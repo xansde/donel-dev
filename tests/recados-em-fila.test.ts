@@ -17,7 +17,7 @@ import { resolveAddress } from '../src/shared/mindscape/address';
 import { successorOf } from '../src/shared/mindscape/reach';
 import { reviewLink } from '../src/shared/ledger/revisao';
 import type { BoardPicture, PictureSession } from '../src/oraculo/portao';
-import { createGateRecados, fieldIsFree, type RecadosTmux } from '../src/oraculo/recados';
+import { createGateRecados, fieldIsFree, transcriptLastTurn, type RecadosTmux } from '../src/oraculo/recados';
 import { createRelay, deliverLocalFirst } from '../src/oraculo/relay';
 import { createCardWriter } from '../src/main/ledger-card-writer';
 
@@ -81,7 +81,7 @@ function setup(options: { picture?: BoardPicture; withLedger?: boolean } = {}) {
   const enters: string[] = [];
   const cleared: string[] = [];
   /** The last turn in each session's transcript (absent = no transcript found). */
-  const turns = new Map<string, { ended: boolean; at: number }>();
+  const turns = new Map<string, { ended: boolean; at: number; empty?: boolean }>();
   const inTranscript = new Map<string, string[]>();
   /** The next `type` answers this once (a tmux that refused, or took the text and not the Enter). */
   const typeAnswers: boolean[] = [];
@@ -627,7 +627,8 @@ describe('Recados em fila: caixa pendurada', () => {
   it('primeira mensagem de sessão renovada ("[Donel Dev · …]") parada numa sessão que nunca teve turno: Enters com recuo, nunca redigitada; o Líder ouve só depois do último (19/11)', async () => {
     const g = setup();
     const recados = g.make();
-    // No turn in its transcript: the renewal's first message is what would start it.
+    // No turn in its transcript (only the SessionStart hooks): the renewal's first message is what would start it.
+    g.turns.set(SID_DEV, { ended: false, at: g.clock() - 60_000, empty: true });
     g.screens.set(SID_DEV, screen('[Donel Dev · sessão renovada em voo] Esta sessão continua a 1e74e200, encerrada pelo app'));
     const tickTo = async (ticks: number): Promise<void> => {
       for (let i = 0; i < ticks; i += 1) {
@@ -831,5 +832,36 @@ describe('Decisão do dono pelo celular com o PC desligado', () => {
     expect(relay.pending()).toEqual([expect.objectContaining({ message: expect.objectContaining({ placeId: LIDER }) })]);
     expect(await writer.tellDecision({ ...away.task, ownerPlaceId: LIDER })).toBeNull();
     expect(relay.pending(), 'a repetição junta na fila').toHaveLength(1);
+  });
+});
+
+// 19/11 — o transcript da sessão renovada b3774d0e na Homologações, enquanto a primeira mensagem estava parada na caixa:
+// só as linhas do CLI e dos hooks do SessionStart, nenhuma mensagem user ou assistant.
+describe('transcriptLastTurn: sessão renovada que ainda não teve turno', () => {
+  const lines = [
+    { type: 'last-prompt', leafUuid: 'l1', sessionId: 's' },
+    { type: 'custom-title', customTitle: 'Dev · atlas (sucessor)', sessionId: 's' },
+    { type: 'agent-name', agentName: 'Dev · atlas (sucessor)', sessionId: 's' },
+    { type: 'mode', mode: 'normal', sessionId: 's' },
+    { type: 'permission-mode', permissionMode: 'bypassPermissions', sessionId: 's' },
+    { parentUuid: null, isSidechain: false, attachment: { type: 'hook_success', hookName: 'SessionStart:startup', hookEvent: 'SessionStart', stdout: '{}' }, type: 'attachment', uuid: 'a1', timestamp: '2026-11-19T21:00:09.000Z' },
+    { parentUuid: 'a1', isSidechain: false, attachment: { type: 'hook_additional_context', content: ['papel'] }, type: 'attachment', uuid: 'a2', timestamp: '2026-11-19T21:00:10.000Z' },
+  ];
+
+  it('sem mensagem: vazio, não terminado', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'recados-transcript-'));
+    dirs.push(dir);
+    const path = join(dir, 'b3774d0e.jsonl');
+    writeFileSync(path, `${lines.map((line) => JSON.stringify(line)).join('\n')}\n`);
+    expect(await transcriptLastTurn(path)).toMatchObject({ ended: false, empty: true });
+  });
+
+  it('com a primeira mensagem dentro: não é mais vazio', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'recados-transcript-'));
+    dirs.push(dir);
+    const path = join(dir, 'b3774d0e.jsonl');
+    const user = { parentUuid: 'a2', isSidechain: false, type: 'user', message: { role: 'user', content: '[Donel Dev · sessão renovada em voo] …' } };
+    writeFileSync(path, `${[...lines, user].map((line) => JSON.stringify(line)).join('\n')}\n`);
+    expect((await transcriptLastTurn(path))?.empty).not.toBe(true);
   });
 });
