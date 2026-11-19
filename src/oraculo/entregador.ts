@@ -22,6 +22,7 @@ import { createGateHandler, GATE_PORT, mergePicture, startGateServer, tunnelForw
 import { createGateRecados, findTranscript, tmuxLocalSessions, type GateRecadosHandle } from './recados';
 import { deliverLocalFirst, type Relay } from './relay';
 import { createLocalPicture, tmuxLiveNow } from './retrato-local';
+import { createRemotePictures, type RemotePictures } from './retrato-satelite';
 import { createSatelliteLedger, createSatelliteNotice, createSatelliteReviewLink, createSatelliteTaskMemory } from './satelite';
 import { createProbe } from './sonda';
 
@@ -161,6 +162,11 @@ export interface EntregadorJunto {
 
 export interface Entregador {
   readonly recados: GateRecadosHandle;
+  /**
+   * t-d461e003 — the other machines' pictures and queues (`portoes-retrato/`, `portoes-recados/`) when the registro runs
+   * here: its `/v1/portao/retrato|recados` routes use this same one. Apart = `null`: the registro alone writes them.
+   */
+  readonly remotes: RemotePictures | null;
   readonly pictures: PictureStore;
   /** The picture the gate, the recados and the Líder read (the stored one, with this tmux's live sessions). */
   readonly localPicture: { get(): BoardPicture | null };
@@ -200,6 +206,13 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
       return kit ? { roda: kit.place.label, roleName: (id: string) => kit.roles.find((role) => role.id === id)?.name } : {};
     },
   });
+  // t-d461e003 — the other machines' pictures (their satellites send them, retrato-satelite.ts): what the gate and the
+  // recados read is this VPS's picture with their sessions added (never over this VPS's own). A message for one of
+  // them waits in that machine's queue here, which its satellite takes. Only with the registro in this process: apart,
+  // the registro's routes write those files and the entregador leaves them alone (one writer; PR 2 brings them over).
+  const remotes = junto ? createRemotePictures({ dir, io }) : null;
+  const picture = (): BoardPicture | null => (remotes ? remotes.combine(localPicture.get()) : localPicture.get());
+  const pictureWithoutPc = (sid: string): BoardPicture | null => (remotes ? remotes.combine(localPicture.withoutPc(sid)) : localPicture.withoutPc(sid));
   // t-c3fbe852 — the Líder único alive in this machine's tmux (the app's mark in its session folder, or the picture).
   const localLeader = createLocalLeaderFinder({ sessionsDir, liveSessions, picture: localPicture.get });
   // A session resumed from another conversation (the Líder that came over with `-r`) writes that one's transcript.
@@ -216,7 +229,8 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
       file: join(dir, 'recados.json'),
       io,
       ledger: junto.ledger,
-      picture: localPicture.get,
+      picture,
+      remote: remotes!.queue,
       relay: (message) => junto.relay.send(message, 0),
       leader: localLeader,
       transcriptOf,
@@ -239,7 +253,7 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
       ledger: () => null,
       taskOf: tasks.taskOf,
       reviewLinked: createSatelliteReviewLink(remote),
-      picture: localPicture.get,
+      picture,
       relay: notices.send,
       leader: localLeader,
       transcriptOf,
@@ -273,6 +287,7 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
   let probe: ReturnType<typeof createProbe> | null = null;
   return {
     recados,
+    remotes,
     pictures,
     localPicture,
     setPicture: (next) => {
@@ -293,9 +308,9 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
                 throw new Error('o entregador não tem registro');
               },
           ...(apart ? { runLedger: apart.runLedger } : {}),
-          picture: localPicture.get,
+          picture,
           pcAway: localPicture.away,
-          pictureWithoutPc: localPicture.withoutPc,
+          pictureWithoutPc,
           recados,
           forward: tunnelForward,
           serverVersion: 'oraculo-vps',

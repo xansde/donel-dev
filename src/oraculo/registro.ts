@@ -29,6 +29,7 @@ import { createLivroStore } from './livro';
 import { createReturnGuard } from './devolvido';
 import type { BoardPicture } from './portao';
 import { createGateToolRoutes, readGateHashes } from './portoes';
+import { createRemotePictures } from './retrato-satelite';
 import { ORACLE_PORT, startOracleServer, type OracleServer } from './server';
 import { createDaemonVigia } from './vigia';
 import { readBoardConfig } from './board-client';
@@ -230,6 +231,9 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
         writeFileSync(`${file}.tmp`, JSON.stringify(next), { mode: 0o600 });
         renameSync(`${file}.tmp`, file);
       };
+  // t-d461e003 — the other machines' pictures and queues: the entregador's when it runs here; apart, only the registro
+  // opens `portoes-retrato/` and `portoes-recados/` (its routes keep the pictures and hand the queues; nothing queues).
+  const remotes = entregador ? entregador.remotes : createRemotePictures({ dir, io });
   /** The local recados when the entregador runs here; apart, nothing is queued here and the relay takes it. */
   const deliverLocal: DeliverOwnerMessage = entregador ? entregador.recados.deliverLocal : async () => null;
   // t-4c60b815 — the owner's word or decision reaches a session of this machine through its recados, with the PC off;
@@ -379,6 +383,7 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
       recados: entregador?.recados ?? null,
       linkPedido: (pedidoId, tarefa) => void celular?.linkPedido(pedidoId, tarefa),
       notice: toLeader,
+      ...(remotes ? { pictures: remotes } : {}),
     }),
     ...(process.env.DONEL_LIVRO_ARQUIVO ? { livro: createLivroStore({ filePath: process.env.DONEL_LIVRO_ARQUIVO }) } : {}),
     // t-cddc62fc — the reconciliador's notices reach the Líder único by the relay, out of the owner's phone chat.

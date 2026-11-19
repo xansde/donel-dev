@@ -31,6 +31,10 @@ const TOKEN = 'pc-token-de-teste';
 const SID = '11111111-2222-4333-8444-555555555555';
 const RECADOS = '{"versao":1,"itens":[{"id":"r1","texto":"oi"}]}';
 const RETRATO = '{"at":5,"sessoes":{}}';
+const GATE_TOKEN = 'portao-homologacoes-de-teste';
+/** The Homologações's picture as its satellite sends it (t-d461e003). */
+const RETRATO_HOMOLOGACAO = { at: 2_000, quadros: { '/h': { listar: [] } }, sessoes: { '99999999-2222-4333-8444-555555555555': { quemSou: { pasta: '/h', lugar: 'place:dalton' } } } };
+const FILA_HOMOLOGACAO = '{"versao":1,"itens":[]}';
 const noTmux = { liveSessions: async () => new Set<string>(), liveNow: () => new Set<string>() };
 
 /** An Oráculo dir with a seeded SQLite ledger, the PC's token hash, and a home with the session folder `SID`. */
@@ -42,6 +46,8 @@ async function place(options: { separado: boolean }) {
   await seedSqliteLedger(join(dir, 'ledger.sqlite'), empty);
   writeFileSync(join(dir, 'pc.token.sha256'), createHash('sha256').update(TOKEN).digest('hex'));
   if (options.separado) writeFileSync(join(dir, ENTREGADOR_SEPARADO_FILE), '');
+  mkdirSync(join(dir, 'portoes'));
+  writeFileSync(join(dir, 'portoes', 'homologacoes.sha256'), createHash('sha256').update(GATE_TOKEN).digest('hex'));
   return { dir, home };
 }
 
@@ -61,8 +67,8 @@ async function registro(dir: string, home: string, entregador: 'junto' | 'separa
       return { url: 'http://100.64.0.1:47816', notify: () => undefined, close: async () => undefined };
     },
   });
-  const call = async (path: string, body: unknown) => {
-    const answer = await handler!({ method: 'POST', url: path, authorization: `Bearer ${TOKEN}`, body: JSON.stringify(body) });
+  const call = async (path: string, body: unknown, token = TOKEN) => {
+    const answer = await handler!({ method: 'POST', url: path, authorization: `Bearer ${token}`, body: JSON.stringify(body) });
     return { status: answer.status, body: JSON.parse(String(answer.body)) as Record<string, unknown> };
   };
   return { daemon, call };
@@ -99,7 +105,10 @@ describe('donel-oraculo dividido em registro e entregador', () => {
     const { daemon, call } = await registro(dir, home, 'separado');
     expect((await call('/v1/retrato', push)).status).toBe(200);
     expect((await call('/v1/apply', { actor: { kind: 'dono' }, op: criar, leve: true })).body.ok).toBe(true);
+    // t-d461e003 — apart, the registro alone keeps the other machines' pictures (one writer of portoes-retrato/).
+    expect((await call('/v1/portao/retrato', { retrato: RETRATO_HOMOLOGACAO }, GATE_TOKEN)).body).toMatchObject({ guardado: true });
     await daemon.stop();
+    expect(existsSync(join(dir, 'portoes-retrato', 'homologacoes.json'))).toBe(true);
     expect(readFileSync(join(dir, 'recados.json'), 'utf8')).toBe(RECADOS);
     expect(readFileSync(join(dir, 'retrato.json'), 'utf8')).toBe(RETRATO);
     expect(JSON.parse(readFileSync(join(dir, RETRATO_PC_FILE), 'utf8'))).toMatchObject({ at: 1_000, sessoes: { [SID]: {} } });
@@ -111,9 +120,14 @@ describe('donel-oraculo dividido em registro e entregador', () => {
     const { dir, home } = await place({ separado: true });
     writeFileSync(join(dir, 'url'), 'http://127.0.0.1:9\n');
     writeFileSync(join(dir, RETRATO_PC_FILE), JSON.stringify(push));
+    mkdirSync(join(dir, 'portoes-recados'));
+    writeFileSync(join(dir, 'portoes-recados', 'homologacoes.json'), FILA_HOMOLOGACAO);
     const before = readFileSync(join(dir, 'ledger.sqlite'));
     const daemon = await runEntregador({ dir, home, gatePort: 0, ...noTmux });
     await daemon.stop();
+    // The other machines' queues are the registro's (its `/v1/portao/recados` acks them): never written here.
+    expect(readFileSync(join(dir, 'portoes-recados', 'homologacoes.json'), 'utf8')).toBe(FILA_HOMOLOGACAO);
+    expect(existsSync(join(dir, 'portoes-retrato'))).toBe(false);
     expect(readFileSync(join(dir, 'ledger.sqlite')).equals(before)).toBe(true);
     expect(existsSync(join(dir, 'ledger.sqlite-wal'))).toBe(false);
     expect(existsSync(join(dir, 'ledger.sqlite-shm'))).toBe(false);
@@ -126,6 +140,9 @@ describe('donel-oraculo dividido em registro e entregador', () => {
     const { daemon, call } = await registro(dir, home, 'junto');
     expect((await call('/v1/retrato', push)).status).toBe(200);
     expect((await call('/v1/apply', { actor: { kind: 'dono' }, op: criar, leve: true })).body.ok).toBe(true);
+    // t-d461e003 — the Homologações's picture and queue still reach this process (the Líder único with the PC off).
+    expect((await call('/v1/portao/retrato', { retrato: RETRATO_HOMOLOGACAO }, GATE_TOKEN)).body).toMatchObject({ guardado: true });
+    expect((await call('/v1/portao/recados', {}, GATE_TOKEN)).body).toEqual({ recados: [] });
     await daemon.stop();
     expect(JSON.parse(readFileSync(join(dir, 'retrato.json'), 'utf8'))).toMatchObject({ at: 1_000, sessoes: { [SID]: { pcAt: 1_000 } } });
     expect(existsSync(join(dir, RETRATO_PC_FILE))).toBe(false);
