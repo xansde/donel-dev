@@ -15,6 +15,10 @@
 //   of this board waiting for a verdict, between who delivered it and a live Revisor of outside the chain)? `{ligado}`.
 // - `aviso` `{aviso: OwnerMessage}`: a notice the satellite's recados could not deliver there (the target runs on
 //   another machine, or it is the Líder único) goes to this daemon's relay, which the PC delivers when it answers.
+// - `retrato` `{retrato}` (t-d461e003): the picture of that machine's sessions, made there (retrato-satelite.ts); an
+//   older one than the one kept is ignored (`{ok, guardado}`).
+// - `recados` `{entregues?: [id]}` (t-d461e003): the satellite took those; answers what still waits for that machine
+//   (`{recados: [{id, message}]}`): the messages for its sessions (the Líder único's to the Dalton, with the PC off).
 
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -27,12 +31,18 @@ import type { OwnerMessage } from '../main/ledger-card-writer';
 import type { OracleRequest, OracleResponse } from './api';
 import type { GateRecados } from './gate-recados';
 import { callerFromPicture, ledgerCallRefusal, type PictureSession } from './portao';
+import { parseRemotePicture, type RemotePictures } from './retrato-satelite';
 
 export const GATES_DIR = 'portoes';
 export const GATE_PATH_PREFIX = '/v1/portao/';
 export const GATE_TOOL_PATH = '/v1/portao/ferramenta';
 export const GATE_NOTICE_PATH = '/v1/portao/aviso';
 export const GATE_LINK_PATH = '/v1/portao/ligacao';
+export const GATE_PICTURE_PATH = '/v1/portao/retrato';
+export const GATE_INBOX_PATH = '/v1/portao/recados';
+/** A machine's picture (each board once, with its arrows): up to this. */
+export const MAX_GATE_PICTURE_BYTES = 16 * 1024 * 1024;
+const GATE_PATHS: ReadonlySet<string> = new Set([GATE_TOOL_PATH, GATE_NOTICE_PATH, GATE_LINK_PATH, GATE_PICTURE_PATH, GATE_INBOX_PATH]);
 /** The tool route's body may carry the delivery's proof files (base64): up to this. */
 export const MAX_GATE_BODY_BYTES = 64 * 1024 * 1024;
 const GATE_NAME = /^[a-z0-9][a-z0-9-]{0,39}$/;
@@ -106,6 +116,8 @@ export interface GateToolRoutesDeps {
   readonly linkPedido?: (pedidoId: string, tarefa: { readonly id: string; readonly titulo: string }) => void;
   /** A notice for the PC to deliver (this daemon's relay). Absent = the `aviso` route answers 404. */
   readonly notice?: (message: OwnerMessage) => Promise<unknown>;
+  /** t-d461e003 — the other machines' pictures and queues (retrato-satelite.ts). Absent = `retrato`/`recados` answer 404. */
+  readonly pictures?: Pick<RemotePictures, 'accept' | 'inbox'>;
   readonly log?: (line: string) => void;
 }
 
@@ -167,7 +179,7 @@ export function createGateToolRoutes(deps: GateToolRoutesDeps): GateRoutes {
   }
 
   return async (name, request, path) => {
-    if (request.method !== 'POST' || (path !== GATE_TOOL_PATH && path !== GATE_NOTICE_PATH && path !== GATE_LINK_PATH)) return null;
+    if (request.method !== 'POST' || !GATE_PATHS.has(path)) return null;
     let body: unknown;
     try {
       body = JSON.parse(request.body);
@@ -190,6 +202,17 @@ export function createGateToolRoutes(deps: GateToolRoutesDeps): GateRoutes {
         log(`[oraculo] portão ${name}: erro na ferramenta: ${error instanceof Error ? error.message : String(error)}`);
         return json(500, { error: 'erro no Oráculo' });
       }
+    }
+    if (path === GATE_PICTURE_PATH || path === GATE_INBOX_PATH) {
+      if (!deps.pictures) return null;
+      if (path === GATE_PICTURE_PATH) {
+        const picture = parseRemotePicture(body.retrato);
+        if (!picture) return json(400, { error: 'retrato inválido' });
+        return json(200, { ok: true, guardado: deps.pictures.accept(name, picture) });
+      }
+      const taken = body.entregues;
+      if (taken !== undefined && (!Array.isArray(taken) || taken.length > 500 || !taken.every((id) => typeof id === 'string'))) return json(400, { error: 'entregues inválido' });
+      return json(200, { recados: deps.pictures.inbox(name, (taken as string[] | undefined) ?? []) });
     }
     if (!deps.notice) return null;
     const message = noticeOf(body.aviso);
