@@ -67,6 +67,8 @@ export interface MobileHandlerDeps {
   };
   /** Pedir pelo Oráculo (pedido solto ao Líder único). Ausente = sem o botão Pedir. */
   readonly pedidos?: MobilePedidosPort;
+  /** Saída iii (18/11): the phone app's own routes under `/api/v2/`, signed with its device key (src/oraculo/celular-v2.ts). */
+  readonly v2?: () => ((request: MobileRequest) => Promise<MobileResponse>) | null;
 }
 
 /** Bilhete do protótipo: uso único, preso a um item e uma prova, vence em 60 s. */
@@ -224,6 +226,9 @@ export function createMobileHandler(deps: MobileHandlerDeps): MobileHandler {
     }
     const path = parsed.pathname;
     const method = request.method.toUpperCase();
+
+    const v2 = path.startsWith('/api/v2/') ? deps.v2?.() : null;
+    if (v2) return v2(request);
 
     if (!path.startsWith('/api/')) {
       const asset = method === 'GET' ? deps.assets[path === '/' ? '/index.html' : path] : undefined;

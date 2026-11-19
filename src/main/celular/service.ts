@@ -21,7 +21,8 @@ import type { CardWriter } from '../ledger-card-writer';
 import type { LedgerService } from '../ledger-store';
 import { createLedgerMobilePort, type MobileLedgerPort, type PlaceNameOf } from './ledger-port';
 import { qrSvg } from './qr';
-import { createMobileHandler, MOBILE_PORT, startMobileServer, type MobileServer } from './server';
+import { createMobileHandler, MOBILE_PORT, startMobileServer, type MobileRequest, type MobileResponse, type MobileServer } from './server';
+import { createHash } from 'node:crypto';
 import { pickTailscaleAddress } from './tailscale';
 import { createMobilePedidosPort, createPedidoRouter, createPedidosStore, type MobilePedidosPort, type PedidoTarefa } from './pedidos';
 import { createTranscriptionJobs, DEFAULT_WHISPER_URL, whisperServerTranscriber } from './transcrever';
@@ -50,6 +51,8 @@ export interface CelularCoreDeps {
   readonly suspended?: () => boolean;
   /** Pedido por áudio: o whisper do PC (ausente = sem transcrição, o celular manda texto). */
   readonly whisperUrl?: string | null;
+  /** Saída iii (18/11): the phone app's routes under `/api/v2/` (the daemon only). */
+  readonly v2?: () => ((request: MobileRequest) => Promise<MobileResponse>) | null;
 }
 
 export interface CelularCore extends CelularService {
@@ -61,6 +64,11 @@ export interface CelularCore extends CelularService {
   revoke(deviceId: string): CelularState;
   /** t-52bf8b45 — the paired phone that signed a decision of the app's queue (only its name), or `null`. */
   verifyDecisionSignature(message: string, signatureHex: string): { readonly deviceName: string } | null;
+  /**
+   * Saída iii (18/11) — pairs a phone app without the PC: a new device whose token never leaves this call; the caller
+   * gets only the device key (`sha256(token)`, hex), the one the app keeps and signs with. `null` = not paired.
+   */
+  addDevice(name: string): { readonly deviceId: string; readonly chave: string } | null;
 }
 
 /** What the PC's Preferences call when the Oráculo lives on the VPS: the daemon's phone, through its API. */
@@ -120,6 +128,7 @@ export function createCelularCore(deps: CelularCoreDeps): CelularCore {
   const pedidos: MobilePedidosPort = createMobilePedidosPort({ store: pedidosStore, router, audio: audioJobs, taskState });
   const handler = createMobileHandler({
     auth,
+    ...(deps.v2 ? { v2: deps.v2 } : {}),
     ledger: () => ledger,
     assets: PWA_ASSETS,
     provasRoot: deps.provasRoot,
@@ -263,6 +272,12 @@ export function createCelularCore(deps: CelularCoreDeps): CelularCore {
     verifyDecisionSignature(message, signatureHex) {
       const device = auth.verifySignature(message, signatureHex);
       return device ? { deviceName: device.name } : null;
+    },
+    addDevice(name) {
+      const { code } = auth.createPairingCode();
+      const paired = auth.pair(code, name);
+      if (!paired) return null;
+      return { deviceId: paired.deviceId, chave: createHash('sha256').update(paired.token, 'utf8').digest('hex') };
     },
     ledgerChanged(doc) {
       lastDoc = doc;

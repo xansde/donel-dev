@@ -131,6 +131,11 @@ export interface GateLedgerContext {
 export interface GateDeps {
   /** `~/.donel/s`. */
   readonly sessionsDir: string;
+  /**
+   * Saída iii (18/11) — `/local/*` on this loopback server, no MCP token (like the hooks): what a script of this user
+   * on this machine asks the daemon (a new phone's key, the Líder's answer to the phone). `null` = not one of them.
+   */
+  readonly local?: (method: string, path: string, body: string) => Promise<GateResponse | null>;
   readonly ledger: () => LedgerService;
   readonly picture: () => BoardPicture | null;
   readonly forward: GateForward;
@@ -566,6 +571,7 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
       if (!deps.recados || request.method !== 'POST') return { status: 404, headers: {}, body: '' };
       return deps.recados.hook(hook[1]!, request.headers, request.body);
     }
+    if (request.path.startsWith('/local/') && deps.local) return (await deps.local(request.method, request.path, request.body)) ?? { status: 404, headers: {}, body: '' };
     const match = /^\/s\/([^/]+)\/mcp$/.exec(request.path);
     if (!match || !SID_PATTERN.test(match[1]!)) return { status: 404, headers: {}, body: '' };
     const sid = match[1]!;
