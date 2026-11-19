@@ -37,7 +37,7 @@ import { runLedgerTool, type LedgerCaller, type LedgerService, type RemoteProofF
 import type { OwnerMessage } from '../main/ledger-card-writer';
 import type { OracleRequest, OracleResponse } from './api';
 import type { GateRecados } from './gate-recados';
-import { callerFromPicture, leaderTaskContext, ledgerCallRefusal, type BoardPicture, type PictureSession } from './portao';
+import { callerFromPicture, leaderTaskContext, ledgerCallRefusal, withLiveOwner, type BoardPicture, type LiveOwnerSource, type PictureSession } from './portao';
 import { parseRemotePicture, type RemotePictures } from './retrato-satelite';
 import { openCallOf, openingsBodyOf, type RemoteOpenings } from './abrir-satelite';
 
@@ -157,6 +157,8 @@ export interface GateToolRoutesDeps {
    * marked local. Absent = the route answers 404 (no entregador apart: it queues itself).
    */
   readonly remoteQueue?: { readonly isLocal: (name: string) => boolean; readonly queue: (message: OwnerMessage) => Promise<string | null> };
+  /** t-d461e003 — an owner session alive in this machine's tmux or another's fresh picture is never orphan (`withLiveOwner`). */
+  readonly liveOwner?: LiveOwnerSource;
   readonly log?: (line: string) => void;
 }
 
@@ -177,11 +179,12 @@ export function createGateToolRoutes(deps: GateToolRoutesDeps): GateRoutes {
     if (sessao.quemSou.liderUnico === true && deps.leader?.isLocal(name)) {
       const resolved = leaderTaskContext(deps.leader.picture(), sessao, parsed.call, (id) => deps.ledger().load().doc.tasks[id]?.projectPath);
       if (typeof resolved === 'string') return json(200, { ok: false, text: resolved });
-      return run(name, body, resolved.caller, resolved.call, resolved.onBoard, resolved.aroundCaller);
+      return run(name, body, withLiveOwner(resolved.caller, deps.liveOwner), resolved.call, resolved.onBoard, resolved.aroundCaller);
     }
     const call = parsed.call;
-    const caller = callerFromPicture(sessao);
-    if (typeof caller === 'string') return json(200, { ok: false, text: caller });
+    const pictured = callerFromPicture(sessao);
+    if (typeof pictured === 'string') return json(200, { ok: false, text: pictured });
+    const caller = withLiveOwner(pictured, deps.liveOwner);
     const refused = ledgerCallRefusal(call);
     if (refused) return json(200, { ok: false, text: refused });
     return run(name, body, caller, call, sessao, caller);

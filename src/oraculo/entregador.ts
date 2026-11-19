@@ -22,7 +22,7 @@ import { RETRATO_PC_FILE } from './modo';
 import { createGateHandler, GATE_PORT, mergePicture, startGateServer, tunnelForward, type BoardPicture, type GateDeps, type PictureSession } from './portao';
 import { createGateRecados, findTranscript, tmuxLocalSessions, type GateRecadosHandle } from './recados';
 import { deliverLocalFirst, type Relay } from './relay';
-import { createLocalPicture, tmuxLiveNow } from './retrato-local';
+import { createLocalPicture, tmuxLiveKnown, tmuxLiveNow } from './retrato-local';
 import { createRemotePictures, createRemotePicturesReader, type RemotePictureView, type RemotePictures } from './retrato-satelite';
 import { createRemoteOpenClient, createRemoteOpenings, type RemoteOpenings } from './abrir-satelite';
 import { GATE_QUEUE_PATH, noticeOf } from './portoes';
@@ -500,7 +500,8 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
             : () => {
                 throw new Error('o entregador não tem registro');
               },
-          ...(apart ? { runLedger: apart.runLedger } : {}),
+          // Apart, the registro's gate route says it (t-d461e003): the caller never leaves this process.
+          ...(apart ? { runLedger: apart.runLedger } : { liveOwner: { tmux: place.liveNow ?? tmuxLiveKnown, machineOf: (projectPath: string, placeId: string) => remoteView.machineOf(projectPath, placeId) } }),
           picture,
           pcAway: localPicture.away,
           pictureWithoutPc,

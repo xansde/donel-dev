@@ -370,14 +370,29 @@ function execTmuxLs(): string {
   return execFileSync('tmux', ['-L', 'donel', 'ls', '-F', '#{session_name}'], { encoding: 'utf8', timeout: 2_000, stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
-/** The live sessions for the picture: a tmux that failed keeps the last set it knew ("tmux ls que falha mantém o conjunto"). */
-export function createTmuxLiveNow(read: () => ReadonlySet<string> | null = readTmuxLive): () => ReadonlySet<string> {
-  let last: ReadonlySet<string> = new Set();
+/**
+ * The live sessions as last read: a tmux that failed keeps the last set it knew ("tmux ls que falha mantém o conjunto");
+ * `null` until one read worked (nothing known yet: the ledger's orphans decide nothing on it, t-d461e003).
+ */
+export function createTmuxLiveKnown(read: () => ReadonlySet<string> | null = readTmuxLive): () => ReadonlySet<string> | null {
+  let last: ReadonlySet<string> | null = null;
   return () => {
     last = read() ?? last;
     return last;
   };
 }
 
-/** This machine's live Donel sessions, kept `ttlMs` (5 s) by the picture; one memory for every caller of the process. */
-export const tmuxLiveNow = createTmuxLiveNow();
+/** The live sessions for the picture: `createTmuxLiveKnown`, with none before the first read that worked. */
+export function createTmuxLiveNow(read: () => ReadonlySet<string> | null = readTmuxLive): () => ReadonlySet<string> {
+  return fromKnown(createTmuxLiveKnown(read));
+}
+
+function fromKnown(known: () => ReadonlySet<string> | null): () => ReadonlySet<string> {
+  return () => known() ?? new Set();
+}
+
+/** This machine's live Donel sessions as last read; one memory for every caller of the process. */
+export const tmuxLiveKnown = createTmuxLiveKnown();
+
+/** This machine's live Donel sessions, kept `ttlMs` (5 s) by the picture; the same memory as `tmuxLiveKnown`. */
+export const tmuxLiveNow = fromKnown(tmuxLiveKnown);
