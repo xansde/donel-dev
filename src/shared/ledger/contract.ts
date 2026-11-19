@@ -588,6 +588,8 @@ export type LedgerOp =
       readonly doneBy?: string;
       /** 09/11 — low risk, no live Revisor out of the deliverer's chain: the delivery closes itself (`CLOSED_ALONE`). */
       readonly closeAlone?: true;
+      /** t-b559eaec — why it closed alone: the skeptical reviewer's approved verdict in the proof (local flag on). */
+      readonly closeAloneBy?: 'cetico';
       /** 18/11 — the call's key (`repeatedWrite`). */
       readonly requestId?: string;
     }
@@ -968,7 +970,8 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
         ...(op.forOwner ? { forOwner: op.forOwner } : {}),
       });
       if (!op.closeAlone) return done(delivered);
-      return done(step(delivered, 'aceita', { kind: 'aceita', at: ctx.now, by: actor, text: withMark(CLOSED_ALONE, 'nenhum Revisor vivo de fora da cadeia de quem entregou; fechou com a prova.') }));
+      const why = op.closeAloneBy === 'cetico' ? 'veredito aprovado do revisor cético na prova; não espera outro Revisor.' : 'nenhum Revisor vivo de fora da cadeia de quem entregou; fechou com a prova.';
+      return done(step(delivered, 'aceita', { kind: 'aceita', at: ctx.now, by: actor, text: withMark(CLOSED_ALONE, why) }));
 
     case 'aceitar': {
       // The owner confirming an accept the Revisor made (D2 sample) is recorded, not a second accept.

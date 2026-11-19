@@ -18,11 +18,17 @@ afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-function service(): ReturnType<typeof createLedgerService> {
+function service(flags: readonly string[] = []): ReturnType<typeof createLedgerService> {
   const dir = mkdtempSync(join(tmpdir(), 'ledger-risco-'));
   dirs.push(dir);
   let clock = Date.UTC(2026, 10, 8, 12);
-  return createLedgerService({ filePath: join(dir, 'ledger.json'), io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs, now: () => (clock += 60_000) });
+  return createLedgerService({
+    filePath: join(dir, 'ledger.json'),
+    io: createSystemConfigIoDeps(),
+    proofFs: nodeLedgerProofFs,
+    now: () => (clock += 60_000),
+    flagOn: (name) => flags.includes(name),
+  });
 }
 
 function call(name: string, args: unknown): LedgerToolCall {
@@ -200,5 +206,50 @@ describe('risco declarado: o que a sessão fez e provou fecha sem carta', () => 
     await runLedgerTool(ledger, at('place:lider', 'lider'), call('tarefa_transferir', { id, para: 'place:revisor', motivo: 'outro olha' }));
     expect(ledger.load().doc.tasks[id]!.risk).toBe('alto');
     expect(ownerQueue(ledger.load().doc, null).map((t) => t.id)).toEqual([id]);
+  });
+});
+
+// t-b559eaec (cadeira Dev rápido, dono 19/11: "só isso é o nosso limitante") — the skeptical reviewer subagent already
+// read the diff before the merge; with its approved verdict in the proof, the low delivery does not wait for a second
+// Revisor. Behind the local flag `cetico-fecha-entrega`: off = as before.
+describe('entrega com o veredito aprovado do cético', () => {
+  const states = new Map([['C:/p', new Map([['place:lider', 'trabalhando'], ['place:dev', 'trabalhando'], ['place:revisor', 'trabalhando'], ['place:rev-do-dev', 'trabalhando']])]]);
+  const dev: LedgerCaller = { ...at('place:dev', 'dev'), placeStates: states };
+  const verdict = (veredito: string, gravidade = 'ressalva') =>
+    `PR mesclado. Veredito do cético: {"veredito":"${veredito}","headOid":"407bae5fed2a8b14c07bb7110610083f66d08b93","conferePedido":"sim","printConfere":"sem-tela","achados":[{"gravidade":"${gravidade}"}],"resumo":"ok"}`;
+
+  let madeCount = 0;
+  async function deliver(ledger: ReturnType<typeof service>, texto: string, extra: Record<string, unknown> = {}): Promise<{ id: string; text: string }> {
+    const made = call('tarefa_criar', { pedido: `entrega ${(madeCount += 1)}`, criterio: 'y', prazo: '2026-11-09', dono: 'place:dev', risco: 'baixo' });
+    const id = created((await runLedgerTool(ledger, dev, made)).text).id;
+    await runLedgerTool(ledger, dev, call('tarefa_assumir', { id }));
+    const answer = await runLedgerTool(ledger, dev, call('tarefa_entregar', { id, provas: [{ tipo: 'texto', texto }], ...extra }));
+    expect(answer.ok, answer.text).toBe(true);
+    return { id, text: answer.text };
+  }
+
+  it('with the flag on, closes alone even with a live Revisor out of the chain, and says why', async () => {
+    const ledger = service(['cetico-fecha-entrega']);
+    const { id, text } = await deliver(ledger, verdict('aprovado'));
+    const closed = ledger.load().doc.tasks[id]!;
+    expect(closed.state).toBe('aceita');
+    expect(closed.events.at(-1)!.text).toContain('cético');
+    expect(text).toContain('cético');
+  });
+
+  it('with the flag off, the same delivery waits for the live Revisor, as before', async () => {
+    const ledger = service();
+    const { id } = await deliver(ledger, verdict('aprovado'));
+    expect(ledger.load().doc.tasks[id]!.state).toBe('entregue');
+  });
+
+  it('a returned verdict, a blocking finding or a delivery done by another place never closes alone', async () => {
+    const ledger = service(['cetico-fecha-entrega']);
+    for (const texto of [verdict('devolvido'), verdict('aprovado', 'bloqueia'), 'npm run verify: 0 falhas']) {
+      const { id } = await deliver(ledger, texto);
+      expect(ledger.load().doc.tasks[id]!.state, texto).toBe('entregue');
+    }
+    const { id } = await deliver(ledger, verdict('aprovado'), { feitoPor: 'place:lider' });
+    expect(ledger.load().doc.tasks[id]!.state).toBe('entregue');
   });
 });
