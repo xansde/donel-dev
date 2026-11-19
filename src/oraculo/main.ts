@@ -420,7 +420,7 @@ async function main(): Promise<void> {
   const source = ledgerSourceOf(dir);
   const sbDeps = source === 'supabase' ? supabaseLedgerDeps(dir) : null;
   let store: LedgerStore | undefined;
-  if (source === 'sqlite') store = openSqliteLedgerStore(join(dir, LEDGER_SQLITE_FILE), (line) => console.log(line));
+  if (source === 'sqlite') store = openSqliteLedgerStore(join(dir, LEDGER_SQLITE_FILE), (line) => console.log(line), { requireSeeded: true });
   if (sbDeps) {
     const initial = await readSupabaseLedger(sbDeps);
     if (!initial.exists) throw new Error(`o Supabase do ledger está vazio; rode oraculo.mjs --semear-supabase antes de ligar ${LEDGER_SUPABASE_FILE}`);

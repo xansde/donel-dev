@@ -8,7 +8,7 @@
 // schema_version, started_at)`. Once seeded, `<dir>/ledger.fonte` says `sqlite`: a database gone missing stops the
 // daemon instead of letting it start an empty ledger. Way back: `--exportar-sqlite <arquivo>` writes a ledger.json.
 
-import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { DatabaseSync as DatabaseSyncType } from 'node:sqlite';
 import type { LedgerDoc } from '../shared/ledger/contract';
@@ -47,9 +47,20 @@ function readAll(db: DatabaseSync): RawDoc & { exists: boolean } {
   return { exists: head !== undefined, schemaVersion: head?.schema_version ?? null, startedAt: head?.started_at ?? null, tasks };
 }
 
-export function openSqliteLedgerStore(file: string, log: (line: string) => void = () => undefined): SqliteLedgerStore {
+export function openSqliteLedgerStore(file: string, log: (line: string) => void = () => undefined, options: { readonly requireSeeded?: boolean } = {}): SqliteLedgerStore {
   const db = open(file);
   const initial = readAll(db);
+  // The daemon's source: every seed writes the header row; a database without it (an empty file, a wrong copy) never
+  // becomes an empty ledger that answers (revisão do #496, as the Supabase's `initial.exists`).
+  if (options.requireSeeded && !initial.exists) {
+    db.close();
+    throw new Error(`${file} não tem o cabeçalho do ledger (meta): não é um banco semeado. O daemon não sobe vazio.`);
+  }
+  try {
+    chmodSync(file, 0o600);
+  } catch {
+    // a read-only place: the folder (0700) still covers it
+  }
   const persisted = new Map<string, string>(Object.entries(initial.tasks).map(([id, task]) => [id, canonicalJson(task)]));
   let current: RawDoc | null = initial.exists || persisted.size > 0 ? { schemaVersion: initial.schemaVersion, startedAt: initial.startedAt, tasks: { ...initial.tasks } } : null;
   let head = initial.exists ? JSON.stringify([initial.schemaVersion, initial.startedAt]) : null;
@@ -121,7 +132,8 @@ export async function seedSqliteLedger(file: string, doc: LedgerDoc): Promise<{ 
   const back = readAll(check);
   check.close();
   const ids = Object.keys(doc.tasks);
-  const diferentes = ids.filter((id) => canonicalJson(back.tasks[id]) !== canonicalJson(doc.tasks[id])).length + Math.abs(Object.keys(back.tasks).length - ids.length);
+  const header = back.schemaVersion === doc.schemaVersion && (back.startedAt ?? null) === (doc.startedAt ?? null) ? 0 : 1;
+  const diferentes = header + ids.filter((id) => canonicalJson(back.tasks[id]) !== canonicalJson(doc.tasks[id])).length + Math.abs(Object.keys(back.tasks).length - ids.length);
   if (!wrote || diferentes !== 0) {
     for (const leftover of [building, `${building}-wal`, `${building}-shm`]) rmSync(leftover, { force: true });
     return { tarefas: Object.keys(back.tasks).length, diferentes: diferentes || 1 };

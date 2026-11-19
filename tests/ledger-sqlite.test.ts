@@ -96,5 +96,9 @@ describe('ledger em SQLite', () => {
     expect(() => ledgerSourceOf(dir)).toThrow(/ledger.sqlite/);
     writeFileSync(join(dir, 'ledger-supabase.json'), '{}');
     expect(() => ledgerSourceOf(dir)).toThrow(/ledger.sqlite/);
+    // A marca presente e um banco vazio (arquivo de 0 byte, cópia errada): o daemon não abre um registro vazio.
+    writeFileSync(db, '');
+    expect(ledgerSourceOf(dir)).toBe('sqlite');
+    expect(() => openSqliteLedgerStore(db, undefined, { requireSeeded: true })).toThrow(/cabeçalho/);
   });
 });
