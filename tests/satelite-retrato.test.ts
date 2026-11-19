@@ -19,7 +19,7 @@ import { createGateHandler, type BoardPicture } from '../src/oraculo/portao';
 import { createGateToolRoutes, GATE_PICTURE_PATH, readGateHashes } from '../src/oraculo/portoes';
 import { createGateRecados, type RecadosTmux } from '../src/oraculo/recados';
 import { createRelay } from '../src/oraculo/relay';
-import { createLocalPicture, createTmuxLiveNow, readTmuxLive } from '../src/oraculo/retrato-local';
+import { createLocalPicture, createTmuxLiveNow, readTmuxLive, runTmuxLsSync } from '../src/oraculo/retrato-local';
 import { createRemotePictures, EMPTY_PICTURE_HOLD_MS, EMPTY_PICTURE_REPEATS } from '../src/oraculo/retrato-satelite';
 import { createSatelliteNotice, createSatelliteSync, type SatellitePost } from '../src/oraculo/satelite';
 
@@ -426,6 +426,24 @@ describe('um retrato vazio do satélite não apaga o último bom', () => {
     expect(EMPTY_PICTURE_REPEATS).toBe(3);
   });
 
+  it('vazios isolados, cada um seguido de um retrato bom, nunca apagam o guardado (o bom igual ao enviado sai de novo)', async () => {
+    const m = machines();
+    await m.sync.round();
+    for (let i = 1; i <= 3; i += 1) {
+      m.slive.clear();
+      m.clock.now += 30_000;
+      await m.sync.round();
+      expect(m.picture()!.sessoes[SID_DALTON], `Dalton segue depois do vazio ${i}`).toBeDefined();
+      m.slive.add(SID_DALTON);
+      m.clock.now += 10_000;
+      await m.sync.round();
+    }
+    m.slive.clear();
+    m.clock.now += 30_000;
+    await m.sync.round();
+    expect(m.picture()!.sessoes[SID_DALTON], 'um vazio depois de 3 bons ainda é o 1º').toBeDefined();
+  });
+
   it('o retrato bom depois de um vazio entra normal, e a contagem do vazio recomeça', () => {
     const m = machines();
     const start = m.clock.now;
@@ -462,5 +480,16 @@ describe('o tmux ls do retrato segue a regra do "tmux ls que falha mantém o con
     expect([...live()]).toEqual([SID_DALTON]);
     expect([...live()], 'falhou: o último conjunto').toEqual([SID_DALTON]);
     expect([...live()], 'sem servidor: nenhuma').toEqual([]);
+  });
+
+  it('sem o binário tmux (ENOENT) é sem sessões; timeout e outra falha são nulo', () => {
+    const thrown = (props: Record<string, unknown>) => () => {
+      throw Object.assign(new Error('x'), props);
+    };
+    expect([...readTmuxLive(() => runTmuxLsSync(thrown({ code: 'ENOENT', errno: -2, syscall: 'spawnSync tmux' })))!]).toEqual([]);
+    expect(readTmuxLive(() => runTmuxLsSync(thrown({ code: 'ETIMEDOUT', signal: 'SIGTERM', stderr: '' })))).toBeNull();
+    expect(readTmuxLive(() => runTmuxLsSync(thrown({ status: 1, stderr: 'server busy' })))).toBeNull();
+    expect([...readTmuxLive(() => runTmuxLsSync(thrown({ status: 1, stderr: Buffer.from('no server running on /tmp/tmux-1000/donel') })))!]).toEqual([]);
+    expect([...readTmuxLive(() => runTmuxLsSync(() => `donel-${SID_DALTON}\n`))!]).toEqual([SID_DALTON]);
   });
 });

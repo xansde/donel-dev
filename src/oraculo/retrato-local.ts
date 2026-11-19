@@ -297,14 +297,22 @@ export function readTmuxLive(run: () => TmuxRun = runTmuxLsSync): ReadonlySet<st
   return live && new Set([...live].filter((sid) => SID_PATTERN.test(sid)));
 }
 
-function runTmuxLsSync(): TmuxRun {
+/**
+ * `tmux -L donel ls`, at most 2 s. No tmux binary (`ENOENT`) is "no server" (no session, as before t-d461e003); a timeout
+ * or any other failure is a failure (`parseTmuxLs` → `null`).
+ */
+export function runTmuxLsSync(exec: () => string = execTmuxLs): TmuxRun {
   try {
-    const stdout = execFileSync('tmux', ['-L', 'donel', 'ls', '-F', '#{session_name}'], { encoding: 'utf8', timeout: 2_000, stdio: ['ignore', 'pipe', 'pipe'] });
-    return { code: 0, stdout, stderr: '' };
+    return { code: 0, stdout: exec(), stderr: '' };
   } catch (error) {
+    if ((error as { code?: unknown }).code === 'ENOENT') return { code: 1, stdout: '', stderr: 'no server running: tmux not installed' };
     const stderr = (error as { stderr?: unknown }).stderr;
     return { code: 1, stdout: '', stderr: typeof stderr === 'string' ? stderr : Buffer.isBuffer(stderr) ? stderr.toString('utf8') : '' };
   }
+}
+
+function execTmuxLs(): string {
+  return execFileSync('tmux', ['-L', 'donel', 'ls', '-F', '#{session_name}'], { encoding: 'utf8', timeout: 2_000, stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 /** The live sessions for the picture: a tmux that failed keeps the last set it knew ("tmux ls que falha mantém o conjunto"). */

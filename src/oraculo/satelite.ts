@@ -318,9 +318,10 @@ export function createSatelliteSync(
       log(`retrato não foi: o Oráculo da VPS pessoal ${typeof result === 'object' ? `respondeu HTTP ${result.status}` : 'não respondeu'}.`);
       return;
     }
-    // Not kept there (an empty picture the registro holds until it repeats, EMPTY_PICTURE_REPEATS): it goes again next
-    // round, not only in 5 min.
-    if (!/"guardado"\s*:\s*false/.test(result.body)) sent = { body, at };
+    // Not kept there (an empty picture the registro holds until it repeats, EMPTY_PICTURE_REPEATS): forget what was
+    // sent, so the next picture goes even if it equals the last good one, and a good one ends the registro's run of
+    // empties (else three lone empties in 5 min wiped the kept one).
+    sent = /"guardado"\s*:\s*false/.test(result.body) ? null : { body, at };
   }
 
   /** Says what was taken and reads what waits; `null` = no answer (what was taken is said again next time). */
