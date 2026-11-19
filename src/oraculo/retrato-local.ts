@@ -254,10 +254,11 @@ export function withLocalSessions(stored: BoardPicture | null, folders: readonly
 }
 
 /**
- * t-d461e003 — the place each renewed folder of `folders` keeps (sid → place id), from the boards of `stored`: the one
- * listed place of its board with the folder's tab name, role and opener, not closed, held by no other live session of
- * the picture, and claimed by no other folder. A folder that names its place (`placeId`) claims it when no other live
- * session holds it; two folders claiming the same place get neither (`session:`), never both.
+ * t-d461e003 — the place each renewed folder of `folders` keeps (sid → place id), from the boards of `stored`. A folder
+ * that names its place (`placeId`) claims only that one, and only when no other live session of the picture holds it.
+ * Without `placeId`: the listed place of its board with the folder's tab name, role and opener, not closed, when it is
+ * the only such place (held ones counted) and no other live session holds it. Two folders claiming the same place get
+ * neither. In any doubt the folder stays `session:<sid>`: losing the inheritance is fine, a wrong place never is.
  */
 function inheritedPlaces(stored: BoardPicture | null, folders: readonly LocalFolder[], alive: ((sid: string) => boolean) | undefined): Map<string, string> {
   const boards = picturedBoards(stored);
@@ -271,13 +272,15 @@ function inheritedPlaces(stored: BoardPicture | null, folders: readonly LocalFol
   };
   for (const folder of folders) {
     if (folder.leaderOfAll || !folder.localCwd) continue;
-    // The place the app wrote in its meta, unless another live session of the picture holds it (a renewal whose old
-    // tmux still runs): then the usual rule, which never gives a held place.
-    if (folder.placeId && !held.has(`${folder.localCwd}\n${folder.placeId}`)) {
-      claim(`${folder.localCwd}\n${folder.placeId}`, folder.sid);
+    // The place the app wrote in its meta, and only that one: held by another live session of the picture (a renewal
+    // whose old tmux still runs), the folder stays `session:` — never the name rule, which could give a sibling's place.
+    if (folder.placeId) {
+      if (!held.has(`${folder.localCwd}\n${folder.placeId}`)) claim(`${folder.localCwd}\n${folder.placeId}`, folder.sid);
       continue;
     }
     if (!folder.name || !folder.roleId) continue;
+    // Counted before the held ones are taken out: more than one candidate in all (a live sibling of the same name, role
+    // and opener included) is ambiguous, and the folder stays `session:`.
     const matches = (boards.get(folder.localCwd)?.listar ?? []).filter(
       (place): place is Record<string, unknown> & { id: string } =>
         isRecord(place) &&
@@ -286,10 +289,9 @@ function inheritedPlaces(stored: BoardPicture | null, folders: readonly LocalFol
         place.nome === folder.name &&
         place.papel === folder.roleId &&
         (typeof place.abertaPor === 'string' ? place.abertaPor : undefined) === folder.openedBy &&
-        place.estado !== 'fechada' &&
-        !held.has(`${folder.localCwd}\n${place.id}`),
+        place.estado !== 'fechada',
     );
-    if (matches.length === 1) claim(`${folder.localCwd}\n${matches[0]!.id}`, folder.sid);
+    if (matches.length === 1 && !held.has(`${folder.localCwd}\n${matches[0]!.id}`)) claim(`${folder.localCwd}\n${matches[0]!.id}`, folder.sid);
   }
   const out = new Map<string, string>();
   for (const [key, sids] of claims) if (sids.length === 1 && sids[0]) out.set(sids[0], key.slice(key.indexOf('\n') + 1));

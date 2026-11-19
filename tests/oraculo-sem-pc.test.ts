@@ -523,4 +523,40 @@ describe('fechar e ver_tela locais do Líder único: só o id do lugar (revisão
     const sessoes = twins.local.get()!.sessoes;
     expect([sessoes[SID_NOVO]!.quemSou.lugar, sessoes[SID_REV]!.quemSou.lugar].filter((lugar) => lugar === DEV).length).toBeLessThan(2);
   });
+
+  // 3ª revisão do #523: o lugar ocupado saía da lista antes da contagem, e uma irmã de mesmo nome, papel e quem abriu,
+  // rodando fora desta VPS, virava acerto único — a renovada ganhava o place: dela e o fechar da irmã a matava.
+  const SIB = 'place:sib';
+  function withSibling() {
+    const w = vps();
+    const dev = w.stored.picture!.sessoes[SID_DEV]!;
+    const board: MindscapeBoard = { ...BOARD, cards: { ...BOARD.cards, [SIB]: card(SIB, 'dev') } };
+    const listar = [
+      { id: DEV, papel: 'dev', nome: 'Dev · atlas', estado: 'trabalhando' },
+      { id: SIB, papel: 'dev', nome: 'Dev · atlas', estado: 'trabalhando' },
+    ];
+    w.stored.picture = { ...w.stored.picture!, sessoes: { [SID_DEV]: { ...dev, listar, board } } };
+    return w;
+  }
+
+  it('placeId ocupado e irmã de mesmo nome: session:, e fechar a irmã não mata a renovada', async () => {
+    const w = withSibling();
+    w.folder(SID_NOVO, { localCwd: PROJECT, name: 'Dev · atlas', roleId: 'dev', placeId: DEV, createdAt: '2026-11-19T11:59:30Z' });
+    expect(w.local.get()!.sessoes[SID_NOVO]!.quemSou.lugar).toBe(NOVO);
+    w.screens.set(SID_NOVO, '> ');
+    const closed = await w.tool(SID_LIDER, 'sessao_fechar', { quadro: 'atlas', quem: SIB });
+    expect(closed.text).not.toBe('Fechada.');
+    expect(w.killed).toEqual([]);
+  });
+
+  it('sem placeId, com irmã de mesmo nome, papel e quem abriu: session:, viva ou não a dona do outro lugar', () => {
+    const alive = withSibling();
+    alive.folder(SID_NOVO, { localCwd: PROJECT, name: 'Dev · atlas', roleId: 'dev', createdAt: '2026-11-19T11:59:30Z' });
+    expect(alive.local.get()!.sessoes[SID_NOVO]!.quemSou.lugar).toBe(NOVO);
+
+    const gone = withSibling();
+    gone.live.delete(SID_DEV);
+    gone.folder(SID_NOVO, { localCwd: PROJECT, name: 'Dev · atlas', roleId: 'dev', createdAt: '2026-11-19T11:59:30Z' });
+    expect(gone.local.get()!.sessoes[SID_NOVO]!.quemSou.lugar).toBe(NOVO);
+  });
 });
