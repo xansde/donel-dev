@@ -59,7 +59,7 @@ import { useWorkspaceInfo } from './useWorkspaceInfo';
 // ambos pelo modelo REAL da sessão (transcript), não só pelo do launch.
 import { resolveSessionModel } from '../../shared/sessionModel';
 // Ponte da statusline — leitura oficial do CLI por aba (rodapé e cota da sessão).
-import { resolveSessionMeter, statusLineForSession, statusLineRateLimitPercents, type StatusLineSnapshot } from '../../shared/statusLine';
+import { resolveSessionMeter, statusLineForSession, statusLineRateLimitPercents, statusLineUsageLimitResetAt, type StatusLineSnapshot } from '../../shared/statusLine';
 import { sortProjects } from '../../shared';
 // T710 (007/CA-11 2º momento) — o sinal de "a retomada falhou" é o exit code do
 // PTY (medido em specs/008-fechar-pendencias/medicao-t710.md), não texto de CLI.
@@ -3023,6 +3023,12 @@ export function App(): React.JSX.Element {
     turnNotices: () => appConfig?.team.turnNotices ?? 'ledger',
     recordTurn: (record) => window.donel.ledger.turnEnded(record).catch((): LedgerTurnRecorded => 'falhou'),
     turnFailureOf: (tabId) => semaphoreStates[tabId]?.turnFailure,
+    // OpenRig 4fed110 — the hour the usage limit lifts, from the tab's own status line (a window at 100%).
+    usageLimitResetAt: (tabId) => {
+      const tab = tabsRef.current.find((candidate) => candidate.id === tabId);
+      const ptyId = tab && tabExits[tabId] === undefined ? (chatPtyIds[tabId] ?? null) : null;
+      return statusLineUsageLimitResetAt(statusLineForSession(ptyId ? statusLines[ptyId] : null, tab?.claudeSessionId), Date.now()) ?? undefined;
+    },
     // t-e5575f78 — a notice about a session opens with the "[t-xxxx] título: objetivo" of its task, read from here.
     ledgerDoc: () =>
       ledgerDocRef.current

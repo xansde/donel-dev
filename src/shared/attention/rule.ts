@@ -118,6 +118,19 @@ export function failureReasonText(error: unknown): string {
   return typeof error === 'string' && Object.hasOwn(FAILURE_REASONS, error) ? FAILURE_REASONS[error] : 'erro da API';
 }
 
+/**
+ * OpenRig 4fed110 — the usage limit with the hour it lifts ("limite de uso até 14:30"; another day also says which,
+ * "até 10/11 09:00"), in the local time of whoever reads it. No hour, or one already past: "limite de uso", as before.
+ */
+export function usageLimitText(resetAtMs: number | null | undefined, now: Date): string {
+  if (typeof resetAtMs !== 'number' || !Number.isFinite(resetAtMs) || resetAtMs <= now.getTime()) return FAILURE_REASONS.rate_limit;
+  const at = new Date(resetAtMs);
+  const two = (n: number): string => String(n).padStart(2, '0');
+  const hour = `${two(at.getHours())}:${two(at.getMinutes())}`;
+  const sameDay = at.getFullYear() === now.getFullYear() && at.getMonth() === now.getMonth() && at.getDate() === now.getDate();
+  return `${FAILURE_REASONS.rate_limit} até ${sameDay ? '' : `${two(at.getDate())}/${two(at.getMonth() + 1)} `}${hour}`;
+}
+
 /** The taskbar button flashes when news arrives with the Donel not in front, unless the owner turned the notices off. */
 export function shouldFlash(input: { readonly preference: NotificationPreference; readonly windowInFront: boolean; readonly notices: number }): boolean {
   return input.notices > 0 && !input.windowInFront && input.preference !== 'none';
