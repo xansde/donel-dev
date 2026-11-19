@@ -1,8 +1,36 @@
 # OpenRig — registro de absorção
 
-Último commit absorvido: 6254affd9479ff7ef5eaec4c276404fecaf1bc39
+Último commit absorvido: eca040204b4fa6bf97a22ff917970e6ca1650331
 
 Referência de design do Mindscape (github.com/mvschwarz/openrig). Procedimento na skill `absorver-openrig`. Cada rodada lista o que virou PR, o que ficou adiado, o que espera o dono e o que foi descartado.
+
+## 2026-11-19 — 6254aff..eca0402
+
+38 commits do OpenRig; versões novas: v0.7.19.
+
+### Vale → PR
+
+- **Sessão parada no limite de uso diz até quando, no aviso ao Líder e no ledger** (plano: item 04, cartão rico e estado em três eixos, motivo do "precisa de você"; e item 07, sessão que não morre, o Líder sabe que passa sozinho). Origem: OpenRig `4fed110`. PR: https://github.com/xansde/donel-dev/pull/499. Teste primeiro: em `tests/ledger-andamento.test.ts` ("limite de uso com a hora de volta…"); antes da mudança falhou, porque o aviso ao Líder saía "está travada: limite de uso (o turno parou e não segue sozinho)", sem a hora. O teste também confere que, quando a hora chega depois pela status line, o aviso não sai de novo nem fica um segundo registro no ledger (mensagem que não pode duplicar, coberta pela regra de testes enxutos). Verify verde na 2ª rodada pela fila (148 arquivos, 1843 testes, 2 pulados, build ok); na 1ª falharam 2 testes de `tests/espelho-um-ssh-por-maquina.test.ts`, alheios à mudança, e o arquivo isolado passou (6/6). O limitador só rodou com `XDG_RUNTIME_DIR=/run/user/1000` e `DBUS_SESSION_BUS_ADDRESS` no ambiente.
+
+### Vale → adiado
+
+Nenhum (teto de 3 PRs não foi atingido).
+
+### Vale → pendente para o dono
+
+Nenhum novo. Seguem abertas as perguntas das seções anteriores (fila durável do item 13, desde 10/11; resposta do "esperando você" em nome do dono, desde 08/11; pausa até o reset do limite de uso, desde 12/11).
+
+### Descartado
+
+- Perda do servidor tmux: entrega suspensa, registrada uma vez, retomada na volta (`818d3ab`): Mecânica de tmux e daemon (sonda do servidor, trava da fila do OpenRig). O lado que vale ("tmux ilegível não é sessão morta") já está no PR #478, aberto, e a fila durável (item 13) ainda não foi pedida.
+- Guarda de rascunho reconhece colagem longa de linha única (`35feed7`): O Donel já tem. `sendMachine.ts` (linhas 532 e 623) e `screen.ts:129` aceitam "[Pasted text #N]" sem contagem de linhas, e `oraculo/recados.ts` e `board-cron/main.ts` também tratam o rótulo.
+- Estado do seat: shell puro lido como "precisa de atenção" e vínculo de conta por runtime (`3afae08`, `b7d71d8`): Saída do CLI rig. Processo encerrado já vira "fechada" em `sessionAxes.ts` (state done/error), e o despertador e a ronda cuidam do claude morto. O vínculo de conta por runtime mexeria em `src/main/accounts/`, o que é proibido.
+- Pool de seats: planejador de despacho, bloco pool no nó, MemoryMax por seat (`ecf81f9`, `e687c06`, `83e03fe`, `bbb35e6`, `4a9540a`): Daemon/SQLite com migração, cgroup só-Linux e topologia de modelo em YAML. O fan-out dinâmico do Donel (itens 14 e 15) depende de refinamento da esteira no quadro e não pega nada deste código.
+- Escopo, progresso e projetos: estado atual com carimbo de hora e aliases (`ced977f`, `a46f869`, `64001b9`, `5fa1f07`, `e6ef7a8`, `2f637b7`): O Donel já tem igual: o `tarefa_andamento` do Oráculo é carimbado com hora e a nota `handoffs/ESTADO-<lugar>.md` guarda o estado atual. Aliases de projeto, workflow ligado a pod e CRLF do plan lock são do CLI e do daemon do OpenRig.
+- Evento de mudança de configuração de fronteira e guarda de vazamento (`eca0402`, `9273fc7`): Fluxo de eventos do daemon e script de CI do próprio OpenRig, sem ideia nova para o quadro.
+- Desempenho e observação do daemon (`da69791`, `d539b13`, `2dc2831`, `d7e11e7`, `b3055d7`): Refactor interno de daemon (polls, probes, Aho-Corasick, registro do Codex), sem ideia nova.
+- CLI e TUI: largura de terminal, URLs, rsync IPv6, blocos de notas (`2dbafa4`, `47e643b`, `965a42d`, `89b9f0b`, `a862e00`, `c87b0fa`, `2cbdab7`): CLI e TUI do rig. A TUI está fora de escopo (dono, 03/11) e o Donel não tem CLI equivalente.
+- Testes, CI, docs e roadmap (`197cb19`, `b4613b7`, `693e238`, `c39b5f3`, `6854acd`, `02c5a7b`, `5879bcd`, `0b68986`): Testes, CI, docs e roadmap do próprio OpenRig, sem ideia nova.
 
 ## 2026-11-18 — 2a94dc3..6254aff
 
