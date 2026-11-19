@@ -303,13 +303,17 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     if (n >= CHAT_AUDIO_MAX_PARTES) return erro(413, 'longo-demais', 'O áudio passou de 2 h.');
     if (typeof b64 !== 'string' || !isBase64(b64)) return erro(400, 'corpo', 'audio_b64: base64 padrão, sem quebras');
     const added = deps.store.addChatAudioParte(id, n, mime, Buffer.from(b64, 'base64'));
-    if (!added.ok) return erro(409, 'conflito', added.erro === 'fechado' ? 'Este áudio já foi fechado.' : 'Esta parte já existe com outro conteúdo.');
+    if (!added.ok) {
+      // Contract v1.8: closed by the VPS after 30 min; the phone sends what it lacks as a new audio with `continua`.
+      if (added.erro === 'fechado-auto') return json(409, { erro: 'fechado-auto', recebidas: added.recebidas });
+      return erro(409, 'conflito', added.erro === 'fechado' ? 'Este áudio já foi fechado.' : 'Esta parte já existe com outro conteúdo.');
+    }
     return json(200, { ok: true, nova: added.nova, recebidas: added.recebidas });
   }
 
   /** Contract v1.6: the end of a recording in parts; from here on it is the v1.2 audio. */
   function chatAudioFim(body: Record<string, unknown>): MobileResponse {
-    const { id, partes, duracao_ms: duracao, interrompido, cancelado } = body;
+    const { id, partes, duracao_ms: duracao, interrompido, cancelado, continua } = body;
     if (typeof id !== 'string' || !UUID.test(id)) return erro(400, 'corpo', 'id: uuid v4 em minúsculas');
     if (cancelado !== undefined && typeof cancelado !== 'boolean') return erro(400, 'corpo', 'cancelado: true ou false');
     if (cancelado === true) {
@@ -323,15 +327,17 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     if (typeof partes !== 'number' || !Number.isInteger(partes) || partes < 1) return erro(400, 'corpo', 'partes: inteiro a partir de 1');
     if (typeof duracao !== 'number' || !Number.isInteger(duracao) || duracao < 0) return erro(400, 'corpo', 'duracao_ms');
     if (typeof interrompido !== 'boolean') return erro(400, 'corpo', 'interrompido: true ou false');
+    if (continua !== undefined && (typeof continua !== 'string' || !UUID.test(continua))) return erro(400, 'corpo', 'continua: uuid v4 em minúsculas');
     if (partes > CHAT_AUDIO_MAX_PARTES || duracao > CHAT_AUDIO_MAX_MS) return erro(413, 'longo-demais', 'O áudio passou de 2 h.');
-    const closed = deps.store.fecharAudioPartes(id, { partes, duracao_ms: duracao, interrompido });
+    const closed = deps.store.fecharAudioPartes(id, { partes, duracao_ms: duracao, interrompido, ...(continua !== undefined ? { continua } : {}) });
     if (!closed.ok) {
       if (closed.erro === 'faltam-partes') return json(409, { erro: 'faltam-partes', faltam: closed.faltam });
       if (closed.erro === 'nao-encontrada') return erro(404, 'nao-encontrada');
+      if (closed.erro === 'continua-invalido') return erro(409, 'continua-invalido', 'O áudio anterior não existe ou não foi fechado pela VPS.');
       return erro(409, 'conflito', 'Este id não é de um áudio em partes, ou foi cancelado.');
     }
     if (closed.nova) {
-      if (closed.estado === 'transcrevendo') deps.audio?.(closed.linha);
+      if (closed.estado === 'transcrevendo') deps.audio?.(id);
       else deps.kick?.('chat');
     }
     return json(200, { ok: true, nova: closed.nova, estado: closed.estado });

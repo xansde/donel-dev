@@ -136,6 +136,13 @@ export function audioHeader(bytes: Uint8Array, mime: string): Uint8Array | null 
   return null;
 }
 
+/** Whether a part opens with the container's header (webm: the EBML magic; ogg: a first page, BOS). */
+export function abreComCabecalho(bytes: Uint8Array, mime: string): boolean {
+  if (mime === 'audio/webm') return bytes.length >= 4 && bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3;
+  if (mime === 'audio/ogg') return bytes.length >= 6 && String.fromCharCode(...bytes.subarray(0, 4)) === 'OggS' && (bytes[5]! & 0x02) !== 0;
+  return false;
+}
+
 /** What the long path needs from ffmpeg: injectable (the tests do not run it). */
 export interface AudioMidia {
   /** Any audio ffmpeg reads → wav 16 kHz mono; resolves with its length in seconds. */

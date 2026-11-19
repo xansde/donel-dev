@@ -40,8 +40,6 @@ const MAX_ADIAMENTOS = 6;
 export const MARCA_INTERROMPIDA = '(gravação interrompida)';
 export const marcaBuraco = (ms: number): string => `(gravação interrompida; faltou o trecho de ${minutosTexto(ms)})`;
 const marcaFalha = (ms: number, motivo: string): string => `(trecho de ${minutosTexto(ms)} não transcrito: ${motivo})`;
-/** A late part that fills a hole of the recording's first line: which minutes it belongs to (never a gap mark). */
-const marcaEntre = (de: number, ate: number, origem: string): string => `(trecho que faltou entre ~${de} e ~${ate} min do áudio #${origem.slice(0, 8)})`;
 
 /** The owner reads this in the app, beside the audio; the Líder reads it in the notice. */
 const MOTIVOS: Record<TranscribeError['kind'], string> = {
@@ -158,11 +156,11 @@ export function createChatAudioWorker(deps: {
   async function transcribeLong(job: AudioPendente & { partes: NonNullable<AudioPendente['partes']> }, bytes: Uint8Array): Promise<{ texto: string } | { motivo: string } | 'adiado' | null> {
     midia ??= ffmpegMidia();
     const media = midia;
-    const { trechos, total, interrompido, continua } = job.partes;
+    const { trechos, total, interrompido } = job.partes;
     let state = longStates.get(job.id);
     if (!state) {
       const work = mkdtempSync(join(deps.store.audioDir, `.trabalho-${job.id.slice(0, 8)}-`));
-      // Part 0's header: at the start of the first run (a continuation's joined file opens with it, its length known).
+      // Part 0's header: at the start of the first run (a v1.8 continuation's joined file opens with the earlier audio's, its length known).
       const cabecalho = job.partes.cabecalho;
       const header = cabecalho ? bytes.subarray(0, cabecalho) : trechos[0]?.n0 === 0 ? audioHeader(bytes.subarray(trechos[0].inicio, trechos[0].fim), job.mime) : null;
       const ext = CHAT_AUDIO_MIMES[job.mime] ?? 'bin';
@@ -200,14 +198,10 @@ export function createChatAudioWorker(deps: {
     const partes: string[] = [];
     let falhas: string | null = null;
     let falou = false;
-    let depoisDeEntre = false;
     for (const [index, run] of runs.entries()) {
       const trecho = trechos[index]!;
-      const gap = trecho.faltou ?? (index > 0 ? trecho.n0 - trechos[index - 1]!.n1 - 1 : 0);
+      const gap = index > 0 ? trecho.n0 - trechos[index - 1]!.n1 - 1 : trecho.n0;
       if (gap > 0) partes.push(marcaBuraco(gap * CHAT_AUDIO_PARTE_MS));
-      if (trecho.entre) partes.push(marcaEntre(trecho.n0, trecho.n1 + 1, continua ?? job.id));
-      else if (depoisDeEntre) partes.push(`(o resto da gravação, a partir de ~${trecho.n0} min)`);
-      depoisDeEntre = trecho.entre === true;
       if ('erro' in run) {
         partes.push(marcaFalha(run.ms, run.erro));
         falhas ??= run.erro;
@@ -256,7 +250,7 @@ export function createChatAudioWorker(deps: {
       if (texto) partes.push(texto);
     }
     const last = trechos[trechos.length - 1];
-    const faltouFim = job.partes.faltou_fim ?? (last ? total - last.n1 - 1 : 0);
+    const faltouFim = last ? total - last.n1 - 1 : 0;
     if (faltouFim > 0) partes.push(marcaBuraco(faltouFim * CHAT_AUDIO_PARTE_MS));
     if (!falou) return { motivo: falhas ?? SEM_FALA };
     const texto = `${interrompido ? `${MARCA_INTERROMPIDA} ` : ''}${partes.join(' ')}`;
@@ -335,7 +329,7 @@ export function createChatAudioWorker(deps: {
         const closed = deps.store.fecharAudioPartes(aberto.id, { partes: 1, duracao_ms: 0, interrompido: true, automatico: true });
         if (!closed.ok || !closed.nova) continue;
         deps.log(`[chat-audio] ${aberto.id.slice(0, 8)} sem fim há 30 min: fechado como interrompido com ${aberto.partes} parte(s) (${closed.estado})`);
-        if (closed.estado === 'transcrevendo') enqueue(closed.linha);
+        if (closed.estado === 'transcrevendo') enqueue(aberto.id);
         else deps.kick('chat');
       } catch (error) {
         deps.log(`[chat-audio] ${aberto.id.slice(0, 8)} não fechei: ${error instanceof Error ? error.message : String(error)}`);
