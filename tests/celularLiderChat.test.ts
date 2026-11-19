@@ -152,6 +152,13 @@ describe('chat do Líder pelo celular', () => {
     expect(answeredIds(tail(user(`${phoneMarker(A)} oi`), tool(), user('outro'), said('y')), [A])).toEqual([]);
   });
 
+  it('turno que leu a mensagem e só escreveu espaço: nada volta ao celular', () => {
+    // t-d461e003: resposta vazia nunca vai ao dono; sem texto final, espera o próximo turno ou não manda nada.
+    expect(answersIn(tail(user(`${phoneMarker(A)} oi`), said('  \n '), tool(), user('outro'), said('y')), [A])).toEqual(new Map());
+    expect(answersIn(tail(user(`${phoneMarker(A)} oi`), said(' '), tool()), [A])).toEqual(new Map());
+    expect(answersIn(tail(user(`${phoneMarker(A)} oi`), said('oi, dono'), said('   ')), [A]).get(A)).toBe('oi, dono');
+  });
+
   it('resultado de ferramenta e aviso entre a leitura e a resposta não cortam a resposta', () => {
     const toolResult = JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }] } });
     const notice = JSON.stringify({ type: 'user', message: { role: 'user', content: '<task-notification>feito</task-notification>' } });
