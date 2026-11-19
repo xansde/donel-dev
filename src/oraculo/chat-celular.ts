@@ -61,6 +61,8 @@ export interface ChatCelularRow {
   readonly id: string;
   readonly texto: string;
   readonly criada_em: string;
+  /** `texto` is already the whole line for the Líder, with the phone's marker (a file, contract v1.4). */
+  readonly inteiro?: boolean;
 }
 
 export interface ChatCelularQueue {
@@ -123,6 +125,7 @@ export function chatText(row: ChatCelularRow, replyHint?: (shortId: string) => s
   const words = row.texto.trim();
   const fitted = words.length <= MAX_TEXT ? words : `${words.slice(0, MAX_TEXT - 1).replace(/[\uD800-\uDBFF]$/, '')}…`;
   const hint = replyHint?.(row.id.slice(0, 8));
+  if (row.inteiro) return `${words}${hint ? `\n${hint}` : ''}`;
   return `◆ Do dono, pelo chat do celular ${phoneMarker(row.id)}: «${fitted}»${hint ? `\n${hint}` : ''}`;
 }
 

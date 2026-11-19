@@ -70,6 +70,7 @@ import { createChatCelularConsumer, createChatCelularQueue, parseChatReplies, ty
 import { CELULAR_LOCAL_FILE, createCelularLocalStore } from './celular-local';
 import { createCelularV2Handler } from './celular-v2';
 import { CHAT_AUDIO_TIMEOUT_MS, createChatAudioWorker, DAEMON_WHISPER_URL } from './chat-audio';
+import { startChatArquivoSweep } from './chat-arquivo';
 import { whisperServerTranscriber } from '../main/celular/transcrever';
 import { chatResponder } from './chat-responder';
 
@@ -864,6 +865,8 @@ async function main(): Promise<void> {
   consumers = { decisoes: () => decisoes.round(), pedidas: () => tarefasPedidas.round(), chat: () => chatCelular.round() };
   // After the consumers: an audio a restart left half-way is transcribed again and kicks the chat round.
   audioWorker?.start();
+  // t-a1ad1ca2 — the owner's files from the phone chat are kept 30 days.
+  const stopArquivoSweep = celularLocal ? startChatArquivoSweep(celularLocal.arquivoDir, (line) => console.log(line)) : null;
   console.log(`[oraculo] no ar em ${server.url} (${Object.keys(first.doc.tasks).length} tarefas${first.readOnly ? ', só leitura' : ''}, fonte: ${source === 'sqlite' ? 'SQLite' : store ? 'Supabase' : 'ledger.json'})`);
   const stop = (): void => {
     // The SQLite is closed first: its WAL goes into the file (a copy of ledger.sqlite alone is then the whole ledger).
@@ -879,6 +882,7 @@ async function main(): Promise<void> {
     tarefasPedidas.stop();
     chatCelular.stop();
     audioWorker?.stop();
+    stopArquivoSweep?.();
     mirror?.dispose();
     void Promise.all([server?.close(), celular?.dispose(), gate.close()]).then(() => process.exit(0));
   };
