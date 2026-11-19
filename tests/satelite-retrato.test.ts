@@ -323,3 +323,38 @@ describe('o retrato de outra máquina no Oráculo da VPS pessoal', () => {
     expect(await m.post(`http://vps-pessoal:47816${GATE_PICTURE_PATH}`, PC, JSON.stringify({ retrato: { at: 3_000, quadros: {}, sessoes: {} } }))).toMatchObject({ status: 403 });
   });
 });
+
+// Revisão do #505, ressalva 1: o retrato guardado de outra máquina nunca vencia. Com o satélite parado, o recado e o
+// aviso a um lugar de lá iam para a fila dela, que ninguém lê até ele voltar (até 14 dias), mesmo com o PC ligado.
+describe('o retrato de outra máquina vence quando o satélite some', () => {
+  const notice = { projectPath: HOMOLOG, placeId: DALTON, text: '◆ Oráculo: tarefa nova', leaderText: '◆ Oráculo, quadro Homologação: tarefa nova', key: 'aviso:teste' };
+
+  it('fresco, o aviso a um lugar de lá vai à fila dela; vencido, volta ao relay do PC', async () => {
+    const m = machines();
+    await m.sync.round();
+    expect(await m.remotes.queue(notice)).toBe('homologacoes');
+
+    // The satellite stops: no picture, no inbox call for over 2 min.
+    m.clock.now += 2 * MIN + 1_000;
+    expect(await m.remotes.queue({ ...notice, key: 'aviso:teste-2' })).toBeNull();
+    const sent = await m.tool(SID_LIDER, 'sessao_enviar', { quadro: 'Homologação', para: DALTON, texto: 'conta GitHub pronta', tarefa: 't-d461e003' });
+    expect(sent.error, sent.text).toBe(false);
+    expect(JSON.parse(sent.text)).not.toMatchObject({ entregue: 'na-fila' });
+    expect(m.pcRelay.pending().map((item) => item.message.placeId)).toEqual([DALTON]);
+    // What was already in its queue stays there: the satellite takes it when it comes back.
+    expect(m.remotes.inbox('homologacoes', []).map((item) => item.message.key)).toEqual(['aviso:teste']);
+  });
+
+  it('o satélite que segue chamando a cada 10 s mantém o retrato fresco, mesmo sem retrato novo', async () => {
+    const m = machines();
+    await m.sync.round();
+    for (let i = 0; i < 18; i += 1) {
+      m.clock.now += 10_000;
+      await m.sync.round();
+    }
+    expect(await m.remotes.queue(notice)).toBe('homologacoes');
+    const sent = await m.tool(SID_LIDER, 'sessao_enviar', { quadro: 'Homologação', para: DALTON, texto: 'segue', tarefa: 't-d461e003' });
+    expect(JSON.parse(sent.text)).toMatchObject({ entregue: 'na-fila', maquina: 'homologacoes' });
+    expect(m.pcRelay.pending()).toEqual([]);
+  });
+});
