@@ -19,8 +19,13 @@
 // queue: the picture itself goes up only when it changes, or every 5 min). Past that the satellite is taken as gone and
 // the message takes the way it took before t-d461e003 (the PC's relay, or the refusal with the PC off); what already
 // waits in its queue stays there for when it comes back. A picture read from disk at boot counts as heard then.
+//
+// Passo 9 (t-5358d400), the entregador apart: it runs in another process and never writes these files. The registro
+// (`shareHeard`) also writes when it last heard each satellite (`<dir>/portoes-ouvido/<name>`, the instant in ms), and
+// reads it back at boot instead of "heard now"; the entregador reads the pictures and those instants
+// (`createRemotePicturesReader`) and combines and routes by the same rules, so both processes agree on who is heard.
 
-import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ConfigIoDeps } from '../main/config-store';
 import type { OwnerMessage } from '../main/ledger-card-writer';
@@ -30,6 +35,8 @@ import { createRelay, type Relay } from './relay';
 
 const PICTURES_DIR = 'portoes-retrato';
 const QUEUES_DIR = 'portoes-recados';
+/** Passo 9 — when the registro last heard each satellite, for the entregador apart (see the header). */
+export const HEARD_DIR = 'portoes-ouvido';
 const GATE_NAME = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const SID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
 /** What of a session's `sessao_quem_sou` goes to the other machine: who it is on its board, nothing else. */
@@ -118,9 +125,75 @@ export function parseRemotePicture(value: unknown): RemotePicture | null {
   return { at: value.at, quadros, sessoes };
 }
 
-export interface RemotePictures {
-  /** Keeps `picture` as machine `name`'s, unless the one kept is as new or newer. `true` = kept. */
-  accept(name: string, picture: RemotePicture): boolean;
+/** The machines' pictures by name, as kept here or read from `portoes-retrato/`. */
+type PicturesByName = ReadonlyMap<string, RemotePicture>;
+
+/** `local` with the other machines' sessions it does not have (see the header). Pure. */
+function combinePictures(local: BoardPicture | null, pictures: PicturesByName): BoardPicture | null {
+  const own = local?.sessoes ?? {};
+  const ownBoards = picturedBoards(local);
+  const sessoes: Record<string, PictureSession> = { ...own };
+  const added = new Map<string, string>();
+  for (const [name, picture] of pictures) {
+    for (const [sid, session] of Object.entries(picture.sessoes)) {
+      const pasta = session.quemSou.pasta as string;
+      const quadro = picture.quadros[pasta];
+      // Never over a session or a board of this VPS (the PC's picture rules), nor over another machine's.
+      if (sessoes[sid] || !quadro || ownBoards.has(pasta)) continue;
+      sessoes[sid] = { quemSou: session.quemSou, listar: quadro.listar, ...(quadro.board ? { board: quadro.board } : {}), at: session.at ?? picture.at, maquina: name };
+      added.set(pasta, name);
+    }
+  }
+  if (!added.size) return local;
+  // The Líder único's `sessao_quem_sou` names the boards he can reach: the other machines' too. The picture made
+  // here lists their names; the PC's, an object per board.
+  for (const [sid, session] of Object.entries(sessoes)) {
+    const quadros = session.quemSou.quadros;
+    if (session.quemSou.liderUnico !== true || !Array.isArray(quadros)) continue;
+    const names = quadros.every((item) => typeof item === 'string');
+    const known = new Set(quadros.map((item) => (isRecord(item) ? item.pasta : item)));
+    const more = [...added]
+      .filter(([pasta]) => !known.has(pasta) && !known.has(lastSegment(pasta)))
+      .map(([pasta, machine]) => (names ? lastSegment(pasta) : { nome: lastSegment(pasta), pasta, maquina: machine }));
+    if (more.length) sessoes[sid] = { ...session, quemSou: { ...session.quemSou, quadros: [...quadros, ...more] } };
+  }
+  return { at: local?.at ?? 0, sessoes };
+}
+
+/** The machine heard within `STALE_MS` of `at` whose picture has `placeId` on `projectPath`. Pure. */
+function machineIn(pictures: PicturesByName, heardAt: (name: string) => number | undefined, at: number, projectPath: string, placeId: string): string | undefined {
+  for (const [name, picture] of pictures) {
+    if (at - (heardAt(name) ?? -Infinity) > STALE_MS) continue;
+    for (const session of Object.values(picture.sessoes)) if (session.quemSou.pasta === projectPath && session.quemSou.lugar === placeId) return name;
+  }
+  return undefined;
+}
+
+/** t-d461e003 — a board of another machine: that machine's gate name, the board's key and how it is named (`roda`). */
+export interface BoardMachine {
+  readonly name: string;
+  readonly pasta: string;
+  readonly label: string;
+}
+
+/** How the sessions of machine `name` name it (`roda`); its gate name when none says. Pure. */
+function labelIn(pictures: PicturesByName, name: string): string {
+  const sessions = Object.values(pictures.get(name)?.sessoes ?? {});
+  return sessions.map((session) => session.quemSou.roda).find((value): value is string => typeof value === 'string' && value.trim() !== '') ?? name;
+}
+
+/** The machine heard within `STALE_MS` of `at` whose picture has the board `quadro` (folder or last name). Pure. */
+function boardMachineIn(pictures: PicturesByName, heardAt: (name: string) => number | undefined, at: number, quadro: string): BoardMachine | undefined {
+  for (const [name, picture] of pictures) {
+    if (at - (heardAt(name) ?? -Infinity) > STALE_MS) continue;
+    const pasta = Object.keys(picture.quadros).find((key) => key === quadro || lastSegment(key) === quadro);
+    if (pasta) return { name, pasta, label: labelIn(pictures, name) };
+  }
+  return undefined;
+}
+
+/** What reads the other machines' pictures: the registro's store, or the entregador's reader of its files. */
+export interface RemotePictureView {
   /** This VPS's picture with the other machines' sessions it does not have (see the header). Pure of `local`. */
   combine(local: BoardPicture | null): BoardPicture | null;
   /** The machine whose fresh picture (see `STALE_MS`) has `placeId` on the board `projectPath`; `undefined` = none. */
@@ -129,22 +202,48 @@ export interface RemotePictures {
    * t-d461e003 — the machine whose fresh picture has the board `quadro` (its folder, or the folder's last name): its gate
    * name, the board's key and how its sessions name that machine (`roda`). `undefined` = none.
    */
-  boardMachine(quadro: string): { readonly name: string; readonly pasta: string; readonly label: string } | undefined;
+  boardMachine(quadro: string): BoardMachine | undefined;
   /** How the sessions of machine `name` name it (`roda`); its gate name when none says. */
   labelOf(name: string): string;
+}
+
+export interface RemotePictures extends RemotePictureView {
+  /** Keeps `picture` as machine `name`'s, unless the one kept is as new or newer. `true` = kept. */
+  accept(name: string, picture: RemotePicture): boolean;
   /** A message for a place of another machine: queued there (`null` = it runs on no other machine). */
   queue(message: OwnerMessage): Promise<string | null>;
   /** The satellite of `name` took `entregues`; what still waits for it. */
   inbox(name: string, entregues: readonly string[]): RemoteRecado[];
 }
 
-export function createRemotePictures(deps: { readonly dir: string; readonly io: ConfigIoDeps; readonly now?: () => number; readonly log?: (line: string) => void }): RemotePictures {
+export function createRemotePictures(deps: {
+  readonly dir: string;
+  readonly io: ConfigIoDeps;
+  readonly now?: () => number;
+  readonly log?: (line: string) => void;
+  /** Passo 9 — the entregador runs apart and reads these files: when each satellite was heard goes to `portoes-ouvido/`. */
+  readonly shareHeard?: boolean;
+}): RemotePictures {
   const log = deps.log ?? ((line: string) => console.log(`[oraculo] retrato do portão: ${line}`));
   const now = deps.now ?? Date.now;
   const picturesDir = join(deps.dir, PICTURES_DIR);
+  const heardDir = join(deps.dir, HEARD_DIR);
   const pictures = new Map<string, RemotePicture>();
   /** When each machine's satellite last called here (picture or queue). */
   const heard = new Map<string, number>();
+  const hear = (name: string): void => {
+    const at = now();
+    heard.set(name, at);
+    if (!deps.shareHeard) return;
+    try {
+      mkdirSync(heardDir, { recursive: true, mode: 0o700 });
+      const file = join(heardDir, name);
+      writeFileSync(`${file}.tmp`, `${at}\n`, { mode: 0o600 });
+      renameSync(`${file}.tmp`, file);
+    } catch (error) {
+      log(`não gravei quando ouvi ${name}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
   try {
     for (const file of readdirSync(picturesDir)) {
       const name = file.endsWith('.json') ? file.slice(0, -'.json'.length) : '';
@@ -153,7 +252,7 @@ export function createRemotePictures(deps: { readonly dir: string; readonly io: 
         const parsed = parseRemotePicture(JSON.parse(readFileSync(join(picturesDir, file), 'utf8')));
         if (parsed) {
           pictures.set(name, parsed);
-          heard.set(name, now());
+          hear(name);
         }
       } catch {
         log(`${file} ilegível: fica de lado até o próximo retrato dessa máquina.`);
@@ -174,24 +273,12 @@ export function createRemotePictures(deps: { readonly dir: string; readonly io: 
   let version = 0;
   let memo: { local: BoardPicture | null; version: number; out: BoardPicture | null } | null = null;
 
-  function machineOf(projectPath: string, placeId: string): string | undefined {
-    const at = now();
-    for (const [name, picture] of pictures) {
-      if (at - (heard.get(name) ?? -Infinity) > STALE_MS) continue;
-      for (const session of Object.values(picture.sessoes)) if (session.quemSou.pasta === projectPath && session.quemSou.lugar === placeId) return name;
-    }
-    return undefined;
-  }
-
-  function labelOf(name: string): string {
-    const sessions = Object.values(pictures.get(name)?.sessoes ?? {});
-    return sessions.map((session) => session.quemSou.roda).find((value): value is string => typeof value === 'string' && value.trim() !== '') ?? name;
-  }
+  const machineOf = (projectPath: string, placeId: string): string | undefined => machineIn(pictures, (name) => heard.get(name), now(), projectPath, placeId);
 
   return {
     accept(name, picture) {
       if (!GATE_NAME.test(name)) return false;
-      heard.set(name, now());
+      hear(name);
       const kept = pictures.get(name);
       if (kept && kept.at >= picture.at) return false;
       mkdirSync(picturesDir, { recursive: true, mode: 0o700 });
@@ -205,53 +292,16 @@ export function createRemotePictures(deps: { readonly dir: string; readonly io: 
 
     combine(local) {
       if (memo && memo.local === local && memo.version === version) return memo.out;
-      const own = local?.sessoes ?? {};
-      const ownBoards = picturedBoards(local);
-      const sessoes: Record<string, PictureSession> = { ...own };
-      const added = new Map<string, string>();
-      for (const [name, picture] of pictures) {
-        for (const [sid, session] of Object.entries(picture.sessoes)) {
-          const pasta = session.quemSou.pasta as string;
-          const quadro = picture.quadros[pasta];
-          // Never over a session or a board of this VPS (the PC's picture rules), nor over another machine's.
-          if (sessoes[sid] || !quadro || ownBoards.has(pasta)) continue;
-          sessoes[sid] = { quemSou: session.quemSou, listar: quadro.listar, ...(quadro.board ? { board: quadro.board } : {}), at: session.at ?? picture.at, maquina: name };
-          added.set(pasta, name);
-        }
-      }
-      let out: BoardPicture | null = local;
-      if (added.size) {
-        // The Líder único's `sessao_quem_sou` names the boards he can reach: the other machines' too. The picture made
-        // here lists their names; the PC's, an object per board.
-        for (const [sid, session] of Object.entries(sessoes)) {
-          const quadros = session.quemSou.quadros;
-          if (session.quemSou.liderUnico !== true || !Array.isArray(quadros)) continue;
-          const names = quadros.every((item) => typeof item === 'string');
-          const known = new Set(quadros.map((item) => (isRecord(item) ? item.pasta : item)));
-          const more = [...added]
-            .filter(([pasta]) => !known.has(pasta) && !known.has(lastSegment(pasta)))
-            .map(([pasta, machine]) => (names ? lastSegment(pasta) : { nome: lastSegment(pasta), pasta, maquina: machine }));
-          if (more.length) sessoes[sid] = { ...session, quemSou: { ...session.quemSou, quadros: [...quadros, ...more] } };
-        }
-        out = { at: local?.at ?? 0, sessoes };
-      }
+      const out = combinePictures(local, pictures);
       memo = { local, version, out };
       return out;
     },
 
     machineOf,
 
-    boardMachine(quadro) {
-      const at = now();
-      for (const [name, picture] of pictures) {
-        if (at - (heard.get(name) ?? -Infinity) > STALE_MS) continue;
-        const pasta = Object.keys(picture.quadros).find((key) => key === quadro || lastSegment(key) === quadro);
-        if (pasta) return { name, pasta, label: labelOf(name) };
-      }
-      return undefined;
-    },
+    boardMachine: (quadro) => boardMachineIn(pictures, (name) => heard.get(name), now(), quadro),
 
-    labelOf,
+    labelOf: (name) => labelIn(pictures, name),
 
     async queue(message) {
       if (!message.placeId) return null;
@@ -262,7 +312,7 @@ export function createRemotePictures(deps: { readonly dir: string; readonly io: 
     },
 
     inbox(name, entregues) {
-      if (GATE_NAME.test(name)) heard.set(name, now());
+      if (GATE_NAME.test(name)) hear(name);
       const queue = queueOf(name);
       for (const id of entregues) {
         const item = queue.pending().find((candidate) => candidate.id === id);
@@ -273,5 +323,85 @@ export function createRemotePictures(deps: { readonly dir: string; readonly io: 
         .slice(0, INBOX_BATCH)
         .map((item) => ({ id: item.id, message: { ...item.message, key: item.key } }));
     },
+  };
+}
+
+/**
+ * Passo 9 (t-5358d400) — the entregador apart: the other machines' pictures as the registro keeps them, read only
+ * (`portoes-retrato/*.json`, parsed again when a file's mtime moves) with when the registro last heard each satellite
+ * (`portoes-ouvido/<name>`): the same `combine`, `machineOf` and `boardMachine` as the registro's. A machine the registro never said it
+ * heard does not route (its picture still shows, as the registro's own does after its satellite went quiet).
+ */
+export function createRemotePicturesReader(deps: { readonly dir: string; readonly now?: () => number }): RemotePictureView {
+  const now = deps.now ?? Date.now;
+  const picturesDir = join(deps.dir, PICTURES_DIR);
+  const heardDir = join(deps.dir, HEARD_DIR);
+  const parsed = new Map<string, { readonly mtime: number; readonly picture: RemotePicture | null }>();
+  let current: { readonly key: string; readonly pictures: PicturesByName } = { key: '', pictures: new Map() };
+  let memo: { local: BoardPicture | null; key: string; out: BoardPicture | null } | null = null;
+
+  const read = (): typeof current => {
+    let files: string[];
+    try {
+      files = readdirSync(picturesDir);
+    } catch {
+      files = [];
+    }
+    const pictures = new Map<string, RemotePicture>();
+    const marks: string[] = [];
+    const seen = new Set<string>();
+    for (const file of files.sort()) {
+      const name = file.endsWith('.json') ? file.slice(0, -'.json'.length) : '';
+      if (!GATE_NAME.test(name)) continue;
+      let mtime: number;
+      try {
+        mtime = statSync(join(picturesDir, file)).mtimeMs;
+      } catch {
+        continue;
+      }
+      seen.add(name);
+      let entry = parsed.get(name);
+      if (entry?.mtime !== mtime) {
+        let picture: RemotePicture | null = null;
+        try {
+          picture = parseRemotePicture(JSON.parse(readFileSync(join(picturesDir, file), 'utf8')));
+        } catch {
+          // being written, or not a picture: kept aside until its next write
+        }
+        entry = { mtime, picture };
+        parsed.set(name, entry);
+      }
+      if (!entry.picture) continue;
+      pictures.set(name, entry.picture);
+      marks.push(`${name}:${mtime}`);
+    }
+    for (const name of parsed.keys()) if (!seen.has(name)) parsed.delete(name);
+    const key = marks.join('|');
+    if (key !== current.key) current = { key, pictures };
+    return current;
+  };
+
+  const heardAt = (name: string): number | undefined => {
+    try {
+      const at = Number(readFileSync(join(heardDir, name), 'utf8').trim());
+      return Number.isFinite(at) && at > 0 ? at : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
+  return {
+    combine(local) {
+      const { key, pictures } = read();
+      if (memo && memo.local === local && memo.key === key) return memo.out;
+      const out = combinePictures(local, pictures);
+      memo = { local, key, out };
+      return out;
+    },
+    machineOf: (projectPath, placeId) => machineIn(read().pictures, heardAt, now(), projectPath, placeId),
+    // t-d461e003 — the opening on another machine's board: the entregador asks the registro only for a board a fresh
+    // picture here has (the registro keeps the queues, `portoes-abrir/`).
+    boardMachine: (quadro) => boardMachineIn(read().pictures, heardAt, now(), quadro),
+    labelOf: (name) => labelIn(read().pictures, name),
   };
 }

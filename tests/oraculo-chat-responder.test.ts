@@ -60,4 +60,16 @@ describe('chat-responder (o Líder responde pelo script, sem Supabase)', () => {
     expect(chatResponder(s, { em_resposta_a: 'aaaaaaaa', texto: '' }).status).toBe(400);
     expect(s.conversa(50).filter((l) => l.autor === 'lider')).toHaveLength(0);
   });
+
+  it('texto vazio, só espaço ou só "-" (o puxar que não lia o stdin) é recusado sem gravar', () => {
+    // t-d461e003: em 19/11 o `chat_lider.py puxar - <<FIM` gravou 11 vezes a linha "-" e o dono viu mensagem vazia.
+    const s = store();
+    for (const texto of ['', '   ', '\n\t', '-', ' - ', '\n-\n']) {
+      expect(chatResponder(s, { texto }).status).toBe(400);
+      expect(chatResponder(s, { em_resposta_a: 'ultima', texto }).status).toBe(400);
+    }
+    expect(chatResponder(s, { texto: 123 }).status).toBe(400);
+    expect(s.conversa(50).filter((l) => l.autor === 'lider')).toHaveLength(0);
+    expect(chatResponder(s, { texto: '- item de lista' }).status).toBe(200);
+  });
 });

@@ -7,6 +7,7 @@
 // after a timeout is the same line, never a second one.
 
 import { createHash } from 'node:crypto';
+import { isBlankReply } from '../shared/lider/blankReply';
 import type { CelularLocalStore } from './celular-local';
 
 export interface ChatResponderAnswer {
@@ -23,7 +24,8 @@ function derivedId(seed: string): string {
 
 export function chatResponder(store: CelularLocalStore, input: Record<string, unknown>): ChatResponderAnswer {
   const texto = typeof input.texto === 'string' ? input.texto.trim() : '';
-  if (!texto || texto.length > 8000) return { status: 400, body: { erro: 'texto com 1 a 8000 caracteres' } };
+  // Empty or a lone "-" (the script's stdin placeholder) is never a message to the owner (t-d461e003).
+  if (isBlankReply(texto) || texto.length > 8000) return { status: 400, body: { erro: 'texto com 1 a 8000 caracteres (nem vazio, nem só "-")' } };
   const asked = input.em_resposta_a;
   let alvo: string | null = null;
   if (asked !== null && asked !== undefined) {

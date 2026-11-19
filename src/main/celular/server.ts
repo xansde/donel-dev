@@ -46,6 +46,12 @@ export const MAX_CHAT_AUDIO_BYTES = 6 * 1024 * 1024;
 /** t-a1ad1ca2 — o arquivo do chat (até 15 MB, base64 em JSON): só este caminho v2 recebe ~20 MB (o mesmo teto de `MAX_ARQUIVO_BODY`, src/oraculo/chat-arquivo.ts). */
 export const CHAT_ARQUIVO_V2_PATH = '/api/v2/chat/arquivo';
 export const MAX_CHAT_ARQUIVO_BYTES = Math.ceil((15 * 1024 * 1024) / 3) * 4 + 64 * 1024;
+/**
+ * t-c441e144 (docs/adr/0010) — the phone's credential box: a password in JSON, at most 16 KB, and the 413 says why. The
+ * body is handed on as it came (src/oraculo/credencial/); nothing in this socket logs a body.
+ */
+export const CREDENCIAL_V2_PATH = '/api/v2/credencial';
+export const MAX_CREDENCIAL_BYTES = 16 * 1024;
 const TOO_BIG_BODY = JSON.stringify({ erro: 'grande-demais' });
 
 export type MobileBody = string | Uint8Array | { readonly filePath: string };
@@ -329,13 +335,14 @@ export function mobileRequestListener(handler: MobileHandler): (req: IncomingMes
     const isAudio = req.method === 'POST' && routePath === AUDIO_PATH;
     const isChatAudio = req.method === 'POST' && routePath === CHAT_AUDIO_V2_PATH;
     const isChatArquivo = req.method === 'POST' && routePath === CHAT_ARQUIVO_V2_PATH;
-    const maxBytes = isAudio ? MAX_AUDIO_BYTES : isChatAudio ? MAX_CHAT_AUDIO_BYTES : isChatArquivo ? MAX_CHAT_ARQUIVO_BYTES : MAX_BODY_BYTES;
+    const isCredencial = req.method === 'POST' && routePath === CREDENCIAL_V2_PATH;
+    const maxBytes = isAudio ? MAX_AUDIO_BYTES : isChatAudio ? MAX_CHAT_AUDIO_BYTES : isChatArquivo ? MAX_CHAT_ARQUIVO_BYTES : isCredencial ? MAX_CREDENCIAL_BYTES : MAX_BODY_BYTES;
     let tooBig = false;
-    /** The chat's audio and file hear why (413, contracts v1.2 and v1.4), without the rest read into memory; the others are cut. */
+    /** The chat's audio and file and the credential hear why (413, contracts v1.2, v1.4, v1.5), without the rest read into memory; the others are cut. */
     const refuse = (): void => {
       tooBig = true;
       chunks.length = 0;
-      if (!isChatAudio && !isChatArquivo) {
+      if (!isChatAudio && !isChatArquivo && !isCredencial) {
         req.destroy();
         return;
       }

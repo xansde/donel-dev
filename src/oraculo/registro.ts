@@ -42,6 +42,7 @@ import { createTarefasPedidasConsumer, createTarefasPedidasQueue, readQuadroTare
 import { createChatCelularConsumer, createChatCelularQueue } from './chat-celular';
 import { CELULAR_LOCAL_FILE, createCelularLocalStore } from './celular-local';
 import { createCelularV2Handler } from './celular-v2';
+import { createCredencialHandler } from './credencial';
 import { CHAT_AUDIO_TIMEOUT_MS, createChatAudioWorker, DAEMON_WHISPER_URL } from './chat-audio';
 import { createGlossarioStore, glossarioFile } from './glossario';
 import { startChatArquivoSweep } from './chat-arquivo';
@@ -200,8 +201,10 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
         renameSync(`${file}.tmp`, file);
       };
   // t-d461e003 — the other machines' pictures and queues: the entregador's when it runs here; apart, only the registro
-  // opens `portoes-retrato/` and `portoes-recados/` (its routes keep the pictures and hand the queues; nothing queues).
-  const remotes = entregador ? entregador.remotes : createRemotePictures({ dir, io });
+  // opens `portoes-retrato/`, `portoes-recados/` and `portoes-abrir/` (its routes keep the pictures and hand the queues):
+  // the entregador reads the pictures and when each satellite was heard (`portoes-ouvido/`), queues a message by the
+  // `fila` route and an opening by the `abrir` route.
+  const remotes = entregador ? entregador.remotes : createRemotePictures({ dir, io, shareHeard: true });
   // t-d461e003 — the Líder único's openings on other machines' boards: one queue per machine, beside their pictures.
   const openings = entregador ? entregador.openings : remotes ? createRemoteOpenings({ dir, pictures: remotes, kit: () => readOpenKit(dir) }) : null;
   /**
@@ -320,6 +323,9 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
     // t-753e8199 — the owner's corrections teach the transcriber (DONEL_GLOSSARIO, else ~/.donel/transcricao/glossario.json).
     // Apart, the correction route is the entregador's, and so is the glossary (one writer).
     ...(chatHere ? { glossario: createGlossarioStore(glossarioFile(), (line) => console.log(line)) } : {}),
+    // t-c441e144 (docs/adr/0010) — the credential box announces in the chat: here only when the chat is (apart, the
+    // entregador's 47815 answers it and this server never sees the body).
+    ...(chatHere ? { credencial: createCredencialHandler({ dir, log: (line) => console.log(line) }) } : {}),
     log: (line) => console.log(line),
   });
   /** Apart, the chat routes are the entregador's: here they do not exist (a second writer of the conversation). */
@@ -388,6 +394,8 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
       ...(openings ? { openings: { queue: openings, isLocal: (name: string) => isLocalGate(dir, name) } } : {}),
       // Apart, the Líder único of this machine reaches the ledger through the entregador's gate (never a satellite's).
       ...(entregador ? {} : { leader: { isLocal: (name: string) => isLocalGate(dir, name), picture: () => (remotes ? remotes.combine(picture()) : picture()) } }),
+      // Passo 9 — apart, a message of the entregador's sessions for a place of another machine is queued here.
+      ...(entregador || !remotes ? {} : { remoteQueue: { isLocal: (name: string) => isLocalGate(dir, name), queue: remotes.queue } }),
     })),
     ...(process.env.DONEL_LIVRO_ARQUIVO ? { livro: createLivroStore({ filePath: process.env.DONEL_LIVRO_ARQUIVO }) } : {}),
     // t-cddc62fc — the reconciliador's notices reach the Líder único by the relay, out of the owner's phone chat.
