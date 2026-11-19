@@ -219,7 +219,8 @@ export function createSatelliteNotice(deps: SatelliteDeps & { readonly file: str
   async function round(): Promise<void> {
     const token = deps.token();
     if (!token) return;
-    for (const item of outbox.pending()) {
+    // Each with when it was first queued (`sentAt`, from `handOut`): its age goes on counting there.
+    for (const item of outbox.handOut()) {
       const result = await post(url, token, JSON.stringify({ aviso: { ...item.message, key: item.key } }), timeoutMs);
       if (typeof result !== 'object' || result.status !== 200) {
         log(`aviso ${item.id} espera: o Oráculo da VPS pessoal ${typeof result === 'object' ? `respondeu HTTP ${result.status}` : 'não respondeu'}.`);

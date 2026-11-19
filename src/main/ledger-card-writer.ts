@@ -27,6 +27,11 @@ export interface OwnerMessage {
    * joins a retry of the same key and never two messages of the same text but different events. Absent = unique.
    */
   readonly key?: string;
+  /**
+   * Recado vencido (r-3ac3e0e4): when the message was first queued (ms), carried from one queue to the next so its age
+   * does not start again at each hop. Absent = now.
+   */
+  readonly sentAt?: number;
 }
 
 export type DeliverOwnerMessage = (message: OwnerMessage) => Promise<LedgerDeliveredTo>;
