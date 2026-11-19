@@ -18,6 +18,7 @@ import type { MobileRequest, MobileResponse } from '../main/celular/server';
 import { CHAT_AUDIO_MIMES, type CelularLocalStore } from './celular-local';
 import { MAX_ARQUIVO_BODY, MAX_ARQUIVO_BYTES } from './chat-arquivo';
 import type { GlossarioResumo, GlossarioStore } from './glossario';
+import { CREDENCIAL_PATH, type CredencialHandler } from './credencial';
 
 export const V2_PREFIX = '/api/v2/';
 export const SIGNATURE_SCHEME = 'donel-req-v1';
@@ -61,6 +62,11 @@ export interface CelularV2Deps {
   readonly audio?: (id: string) => void;
   /** What the transcriber learns from the owner's corrections (glossario.ts); absent = nothing learnt. */
   readonly glossario?: GlossarioStore;
+  /**
+   * t-c441e144 (docs/adr/0010) — the credential box (`POST credencial`): the RAW body goes to src/oraculo/credencial/,
+   * the only code that touches the password. Absent = 404. Wired only where the chat lives (it announces there).
+   */
+  readonly credencial?: CredencialHandler;
   readonly log?: (line: string) => void;
   readonly now?: () => number;
 }
@@ -359,6 +365,14 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     const isPost = method === 'POST';
     const isAudio = isPost && path === CHAT_AUDIO_PATH;
     const isArquivo = isPost && path === CHAT_ARQUIVO_PATH;
+    // t-c441e144 — the password's body never reaches parseBody nor any log here: it goes raw to its own module.
+    if (isPost && path === CREDENCIAL_PATH) {
+      if (!deps.credencial) return erro(404, 'nao-encontrada');
+      return deps.credencial(request.body ?? '', (chatId, linha) => {
+        const added = deps.store.addChat(chatId, linha);
+        if (added.ok && added.nova) deps.kick?.('chat');
+      });
+    }
     const maxBody = isAudio ? MAX_AUDIO_BODY : isArquivo ? MAX_ARQUIVO_BODY : MAX_BODY;
     if ((isAudio || isArquivo) && (request.body ?? '').length > maxBody) return erro(413, 'grande-demais');
     const body = isPost ? parseBody(request.body ?? '', maxBody) : null;
