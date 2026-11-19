@@ -7,7 +7,12 @@
 // Rules (the board Líder's decisions, 18/11): only the Líder único local opens; any role but `lider`; the board is
 // named and must be in the picture and in the PC's kit (`abrir.json`, open-kit.ts); a board with a live Líder gets
 // the request instead (its Líder hands it out); the kit's `openCap` is counted on this machine's folders opened by the
-// Líder; no room (memory, load), no opening.
+// same opener on that board; no room (memory, load), no opening.
+//
+// t-d461e003 (19/11): the request the Líder único hands to a board Líder alive here would stop there, since that Líder
+// got `NOT_THE_LEADER`. So a board Líder alive in this machine's tmux (`boardLeaders` of his board in the picture names
+// his place) opens too, only on his own board (`quadro` may be left out), with the same rules; the new session is
+// `openedBy` his place, so his opening arrow holds in the picture made here (retrato-local.ts).
 //
 // Order: the folder with its `criando` mark → the synthetic picture (so the Líder's `tarefa_criar` for the new place
 // passes the reach rules) → the first message and the setup (files and meta) → the tmux, last; the mark leaves at the
@@ -48,6 +53,7 @@ const PORT_MIN = 20000;
 const PORT_SPAN = 20000;
 
 export const NOT_THE_LEADER = 'Com o PC desligado, só o Líder único desta máquina abre sessão por aqui. Tente quando o PC ligar.';
+const ONLY_OWN_BOARD = (own: string): string => `Com o PC desligado, o Líder do quadro abre só no próprio quadro (${own}). Para outro quadro, peça ao Líder único.`;
 export const NO_KIT =
   'O PC ainda não deixou o kit de abertura (abrir.json, gravado quando o app do PC conecta a esta máquina): sem ele não sei os papéis nem as pastas dos quadros. Tente quando o PC ligar.';
 
@@ -204,8 +210,9 @@ function placeStatesOf(places: readonly unknown[]): Map<string, string> {
 
 /**
  * Pure — the picture the new session answers from until the PC pictures it: who it is (its place `session:<sid>`, as
- * the PC will name it), and the board of the freshest picture with the new place in it (no arrow: the Líder único
- * reaches the top of a board).
+ * the PC will name it), and the board of the freshest picture with the new place in it. Opened by the Líder único
+ * (`openedBy` absent or `lider`): no arrow, he reaches the top of a board. Opened by a place of that board (its Líder):
+ * his opening arrow to the new place, as retrato-local.ts draws it.
  */
 export function syntheticPicture(input: {
   readonly sid: string;
@@ -216,17 +223,25 @@ export function syntheticPicture(input: {
   readonly roda: string;
   readonly base: { readonly listar: readonly unknown[]; readonly board?: MindscapeBoard } | undefined;
   readonly at: number;
+  /** The opener's place; absent = the Líder único. */
+  readonly openedBy?: string;
 }): PictureSession {
   const lugar = `session:${input.sid}`;
+  const opener = input.openedBy ?? LEADER_OF_ALL;
   const others = (input.base?.listar ?? []).map((place) => {
     if (!isRecord(place)) return place;
     const { voce: _voce, podeMandar: _podeMandar, ...rest } = place;
     return rest;
   });
-  const listar = [...others, { id: lugar, papel: input.role.id, papelNome: input.role.name, nome: input.name, estado: 'trabalhando', voce: true, abertaPor: LEADER_OF_ALL }];
+  const listar = [...others, { id: lugar, papel: input.role.id, papelNome: input.role.name, nome: input.name, estado: 'trabalhando', voce: true, abertaPor: opener }];
   const base = input.base?.board;
+  const arrow = base && opener !== LEADER_OF_ALL && base.cards[opener]?.kind === 'session';
   const board: MindscapeBoard | undefined = base
-    ? { ...base, cards: { ...base.cards, [lugar]: { kind: 'session', id: lugar, sessionId: input.sid, previous: [], roleId: input.role.id, by: 'session', x: 0, y: 0 } } }
+    ? {
+        ...base,
+        cards: { ...base.cards, [lugar]: { kind: 'session', id: lugar, sessionId: input.sid, previous: [], roleId: input.role.id, by: 'session', x: 0, y: 0 } },
+        ...(arrow ? { links: [...base.links, { id: `aberta:${opener}>${lugar}`, from: opener, to: lugar, arrow: true, by: 'session', opened: true }] } : {}),
+      }
     : undefined;
   return {
     quemSou: { nome: input.name, projeto: input.projectName, pasta: input.pasta, lugar, papel: input.role.id, papelNome: input.role.name, orquestrador: false, roda: input.roda },
@@ -313,9 +328,24 @@ export function createOpenLocal(deps: OpenLocalDeps): GateAbrir {
     }
   }
 
+  /**
+   * t-d461e003 — `sid` is a board Líder alive in this machine's tmux: its session in the picture names a place that
+   * `boardLeaders` of its own board names. Its place and board; `null` = not one.
+   */
+  async function boardLeaderCaller(sid: string): Promise<{ readonly lugar: string; readonly pasta: string } | null> {
+    const picture = deps.picture();
+    const who = picture?.sessoes[sid]?.quemSou;
+    if (!who || who.liderUnico === true || typeof who.lugar !== 'string' || typeof who.pasta !== 'string' || !who.lugar || !who.pasta) return null;
+    if (!boardLeaders(picturedBoards(picture).get(who.pasta)?.board).includes(who.lugar)) return null;
+    if (!(await deps.liveSessions()).has(sid)) return null;
+    return { lugar: who.lugar, pasta: who.pasta };
+  }
+
   async function open(sid: string, call: OpenCall): Promise<BrowserToolOutcome> {
     const leader = await deps.leader();
-    if (!leader || leader.sid !== sid) return fail(NOT_THE_LEADER);
+    const boardLeaderOf = leader?.sid === sid ? null : await boardLeaderCaller(sid);
+    if (leader?.sid !== sid && !boardLeaderOf) return fail(NOT_THE_LEADER);
+    const opener = boardLeaderOf?.lugar ?? LEADER_OF_ALL;
     const kit = readOpenKit(deps.oraculoDir);
     if (!kit) return fail(NO_KIT);
     if (call.papel === LEADER_ROLE_ID) return fail('Não abri: com o PC desligado não abro um Líder (o Líder do quadro o dono põe pelo PC). Abra com outro papel.');
@@ -325,12 +355,14 @@ export function createOpenLocal(deps: OpenLocalDeps): GateAbrir {
     const where = call.onde?.trim().toLowerCase();
     const mine = [label, kit.place.id, ...(deps.names ?? [])].map((name) => name.toLowerCase());
     if (where && where !== 'aqui' && where !== 'auto' && !mine.includes(where)) return fail(`Com o PC desligado só abro nesta máquina (${label}): use "aqui", "auto" ou "${label}".`);
-    if (!call.quadro) return fail('Com o PC desligado, diga o quadro em "quadro" (nome ou pasta).');
+    if (boardLeaderOf && call.quadro && call.quadro !== boardLeaderOf.pasta && call.quadro !== lastSegment(boardLeaderOf.pasta)) return fail(ONLY_OWN_BOARD(lastSegment(boardLeaderOf.pasta)));
+    const quadro = boardLeaderOf?.pasta ?? call.quadro;
+    if (!quadro) return fail('Com o PC desligado, diga o quadro em "quadro" (nome ou pasta).');
     const boards = picturedBoards(deps.picture());
-    const found = [...boards].find(([pasta]) => pasta === call.quadro || lastSegment(pasta) === call.quadro);
+    const found = [...boards].find(([pasta]) => pasta === quadro || lastSegment(pasta) === quadro);
     if (!found) {
       const names = [...boards.keys()].map(lastSegment).join(', ') || 'nenhum';
-      return fail(`Com o PC desligado, conheço só os quadros do último retrato (${names}); "${call.quadro}" não está entre eles. Tente quando o PC ligar.`);
+      return fail(`Com o PC desligado, conheço só os quadros do último retrato (${names}); "${quadro}" não está entre eles. Tente quando o PC ligar.`);
     }
     const [pasta, base] = found;
     const kitBoard = kit.boards.find((board) => board.localCwd === pasta);
@@ -342,7 +374,8 @@ export function createOpenLocal(deps: OpenLocalDeps): GateAbrir {
     const repeat = opened[key];
     if (repeat && existsSync(join(deps.sessionsDir, repeat.sid))) return { kind: 'text', text: repeat.answer };
 
-    // A board with a live Líder: the request goes to him (he hands it out), never a session past him. With the PC off
+    // A board with a live Líder: the request goes to him (he hands it out), never a session past him; he himself opens
+    // (boardLeaderOf, t-d461e003). With the PC off
     // (the only case this runs) the picture is frozen: a board Líder that closed after it still reads "parada". So he
     // counts as live only with his session (the one whose `quemSou.lugar` is his place) alive in this machine's tmux;
     // one with no session in the picture, or out of the tmux, lives on the PC that is off or closed (t-d461e003).
@@ -351,7 +384,7 @@ export function createOpenLocal(deps: OpenLocalDeps): GateAbrir {
     const tmuxNow = await deps.liveSessions();
     const sessions = Object.entries(deps.picture()?.sessoes ?? {});
     const aliveHere = (placeId: string): boolean => sessions.some(([folder, session]) => session.quemSou.lugar === placeId && tmuxNow.has(folder));
-    const boardLeader = boardLeaders(base.board).find((id) => hearing.has(id) && aliveHere(id));
+    const boardLeader = boardLeaderOf ? undefined : boardLeaders(base.board).find((id) => hearing.has(id) && aliveHere(id));
     if (boardLeader) {
       const words = `pedido do Líder único (papel ${role.id}, "${name}"), com o PC desligado: ${call.pedido}`;
       const to = await deps.deliver({
@@ -370,7 +403,7 @@ export function createOpenLocal(deps: OpenLocalDeps): GateAbrir {
     const folders = readFolders(deps.sessionsDir);
     const live = await deps.liveSessions();
     if (kit.openCap !== null) {
-      const openNow = folders.filter((folder) => folder.openedBy === LEADER_OF_ALL && folder.localCwd === pasta && live.has(folder.sid)).length;
+      const openNow = folders.filter((folder) => folder.openedBy === opener && folder.localCwd === pasta && live.has(folder.sid)).length;
       if (openNow >= kit.openCap) return fail(`Não abri: limite ${kit.openCap}, abertas ${openNow} neste quadro; feche uma e tente de novo.`);
     }
 
@@ -395,7 +428,7 @@ export function createOpenLocal(deps: OpenLocalDeps): GateAbrir {
       localCwd: pasta,
       projectName: kitBoard.name,
       name,
-      openedBy: LEADER_OF_ALL,
+      openedBy: opener,
       createdAt: new Date(at).toISOString(),
       homeRelativeDir: kitBoard.homeRelativeDir,
       worktree,
@@ -415,7 +448,7 @@ export function createOpenLocal(deps: OpenLocalDeps): GateAbrir {
       mkdirSync(folder, { recursive: true, mode: 0o700 });
       writeFileSync(join(folder, CREATING_MARK), `${new Date(at).toISOString()}\n`, { mode: 0o600 });
       // The picture first (the folder must exist for it to stay): the Líder can give the new place a task at once.
-      deps.setSession(newSid, syntheticPicture({ sid: newSid, name, role, pasta, projectName: kitBoard.name, roda: label, base, at }));
+      deps.setSession(newSid, syntheticPicture({ sid: newSid, name, role, pasta, projectName: kitBoard.name, roda: label, base, at, openedBy: opener }));
       writeFileSync(join(folder, 'pedido'), call.pedido, { mode: 0o600 });
     } catch (error) {
       return undo(`não consegui preparar a pasta da sessão (${error instanceof Error ? error.message : String(error)}).`);

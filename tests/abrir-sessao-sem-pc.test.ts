@@ -95,7 +95,7 @@ function machine(options: MachineOptions = {}) {
   writeFileSync(join(bin, 'tmux'), `#!/usr/bin/env bash\necho "$*" >> "$HOME/tmux.log"\n${options.tmuxFails ? 'case "$*" in *new-session*) exit 1;; esac\n' : ''}exit 0\n`, { mode: 0o755 });
   const sessionsDir = join(home, '.donel', 's');
   const oraculoDir = join(home, '.donel', 'oraculo');
-  for (const sid of [SID_LIDER, SID_DEV]) mkdirSync(join(sessionsDir, sid), { recursive: true });
+  for (const sid of [SID_LIDER, SID_DEV, ...(options.boardLeaderTmux ? [SID_LIDER_QUADRO] : [])]) mkdirSync(join(sessionsDir, sid), { recursive: true });
   mkdirSync(oraculoDir, { recursive: true });
   writeFileSync(join(sessionsDir, SID_LIDER, 'meta.json'), JSON.stringify({ sid: SID_LIDER, mcpToken: TOKEN, mcpPort: 25711, hookPort: 25712, leaderOfAll: true }));
   if (options.kit !== false) writeFileSync(join(oraculoDir, OPEN_KIT_FILE), JSON.stringify(kitOf(options.openCap === undefined ? 2 : options.openCap)));
@@ -158,7 +158,7 @@ function machine(options: MachineOptions = {}) {
     log: () => undefined,
   });
   const ask = (args: Record<string, unknown>) => abrir.abrir(SID_LIDER, picture!.sessoes[SID_LIDER]!, { tool: 'sessao_abrir', papel: 'dev', pedido: PEDIDO, quadro: 'atlas', ...args } as never);
-  const folders = (): string[] => readdirSync(sessionsDir).filter((sid) => sid !== SID_LIDER && sid !== SID_DEV);
+  const folders = (): string[] => readdirSync(sessionsDir).filter((sid) => sid !== SID_LIDER && sid !== SID_DEV && sid !== SID_LIDER_QUADRO);
   const tmuxStarts = (): number => (existsSync(join(home, 'tmux.log')) ? readFileSync(join(home, 'tmux.log'), 'utf8').split('\n').filter((l) => l.includes('new-session')).length : 0);
   return { home, env, sessionsDir, oraculoDir, abrir, ask, delivered, atPicture, live, folders, tmuxStarts, picture: () => picture, setPicture: (next: BoardPicture) => (picture = mergePicture(picture, next, exists)) };
 }
@@ -276,6 +276,55 @@ describe('abrir sessão com o PC desligado (abrir-local)', () => {
   it('sem o kit do PC: erro claro', async () => {
     const m = machine({ kit: false });
     expect(await m.ask({})).toEqual({ kind: 'error', text: NO_KIT });
+  });
+
+  // t-d461e003 (19/11): o Líder único desviou o pedido ao Líder do quadro vivo aqui (#502), e o Líder do quadro recebia
+  // NOT_THE_LEADER ao abrir: ninguém abria sessão no quadro com o PC desligado.
+  const askAs = (m: ReturnType<typeof machine>, sid: string, args: Record<string, unknown>) =>
+    m.abrir.abrir(sid, m.picture()!.sessoes[sid]!, { tool: 'sessao_abrir', papel: 'dev', pedido: PEDIDO, ...args } as never);
+
+  it('o Líder do quadro com tmux vivo aqui abre no próprio quadro (sem dizer o quadro), com a seta de abertura saindo dele', async () => {
+    const m = machine({ leaderOnBoard: true, boardLeaderTmux: 'alive', openCap: 1 });
+    const out = await askAs(m, SID_LIDER_QUADRO, { nome: 'Revisor login' });
+    expect(out.kind).toBe('text');
+    expect(JSON.parse((out as { text: string }).text)).toMatchObject({ quadro: 'atlas', lugar: `session:${NEW_SID}`, papel: 'dev' });
+    expect(m.delivered).toEqual([]);
+    expect(m.folders()).toEqual([NEW_SID]);
+    expect(m.tmuxStarts()).toBe(1);
+    expect(metaOf(m, NEW_SID)).toMatchObject({ openedBy: LIDER_DO_QUADRO, localCwd: PROJECT, abertaSemPc: true });
+
+    const opened = m.picture()!.sessoes[NEW_SID]!;
+    expect(opened.listar).toContainEqual(expect.objectContaining({ id: `session:${NEW_SID}`, abertaPor: LIDER_DO_QUADRO }));
+    expect(opened.board?.links).toContainEqual(expect.objectContaining({ from: LIDER_DO_QUADRO, to: `session:${NEW_SID}`, arrow: true, opened: true }));
+
+    // O limite do kit conta as abertas por ele neste quadro: a segunda (outro nome) passa do limite 1.
+    const second = await askAs(m, SID_LIDER_QUADRO, { nome: 'Outro', quadro: 'atlas' });
+    expect(second).toEqual({ kind: 'error', text: 'Não abri: limite 1, abertas 1 neste quadro; feche uma e tente de novo.' });
+  });
+
+  it('o Líder do quadro pedindo outro quadro é recusado', async () => {
+    const m = machine({ leaderOnBoard: true, boardLeaderTmux: 'alive' });
+    const OTHER = '/home/dono/seazone/beacon';
+    const kit = kitOf(2);
+    writeFileSync(join(m.oraculoDir, OPEN_KIT_FILE), JSON.stringify({ ...kit, boards: [...kit.boards, { localCwd: OTHER, name: 'beacon', homeRelativeDir: 'seazone/beacon', repoUrl: null, branch: null }] }));
+    m.setPicture({
+      at: T0 - 60_000,
+      sessoes: { 'ffffffff-2222-4333-8444-555555555555': { quemSou: { pasta: OTHER, lugar: 'place:dev-beacon', papel: 'dev' }, listar: [{ id: 'place:dev-beacon', papel: 'dev', estado: 'trabalhando' }], board: { projectPath: OTHER, pan: { x: 0, y: 0 }, zoom: 1, cards: { 'place:dev-beacon': card('place:dev-beacon', 'dev') }, links: [], drawings: [] } } },
+    });
+    const out = await askAs(m, SID_LIDER_QUADRO, { quadro: 'beacon' });
+    expect(out.kind).toBe('error');
+    expect((out as { text: string }).text).toContain('só no próprio quadro');
+    expect(m.folders()).toEqual([]);
+    expect(m.delivered).toEqual([]);
+  });
+
+  it('um Dev comum do quadro, ou o Líder do quadro fora do tmux daqui, recebe NOT_THE_LEADER', async () => {
+    const m = machine({ leaderOnBoard: true, boardLeaderTmux: 'alive' });
+    expect(await askAs(m, SID_DEV, {})).toEqual({ kind: 'error', text: NOT_THE_LEADER });
+    expect(await askAs(m, SID_DEV, { quadro: 'atlas' })).toEqual({ kind: 'error', text: NOT_THE_LEADER });
+    const gone = machine({ leaderOnBoard: true, boardLeaderTmux: 'gone' });
+    expect(await askAs(gone, SID_LIDER_QUADRO, {})).toEqual({ kind: 'error', text: NOT_THE_LEADER });
+    expect([...m.folders(), ...gone.folders()]).toEqual([]);
   });
 
   it('no boot, pasta ainda "criando" e sem tmux sai; com tmux vivo ou já pronta fica', () => {
