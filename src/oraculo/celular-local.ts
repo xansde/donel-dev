@@ -13,6 +13,9 @@
 // row, and the row waits as `transcrevendo` (never taken to the Líder) until the daemon's transcriber (chat-audio.ts)
 // turns it into `transcrito` or `falhou`. Then it is one delivery like any line: the words, or the notice with where
 // the audio is kept. Never both.
+//
+// t-a1ad1ca2 — an owner's file (contract v1.4): the bytes land in `<dir>/chat-arquivos/<id>-<clean name>` before the
+// row; the row is one delivery to the Líder that says what the file is and where it is kept.
 
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -20,6 +23,8 @@ import { dirname, join } from 'node:path';
 import type { DecisaoRow, DecisoesQueue, Lado } from './decisoes';
 import type { TarefaPedidaRow, TarefasPedidasQueue } from './tarefas-pedidas';
 import type { ChatCelularQueue, ChatCelularRow } from './chat-celular';
+import { phoneMarker } from '../main/lider/celular-chat';
+import { CHAT_ARQUIVO_DIR, nomeLimpo, tamanhoTexto } from './chat-arquivo';
 
 export const CELULAR_LOCAL_FILE = 'celular-local.json';
 const RESERVE_MS = 10 * 60_000;
@@ -72,6 +77,16 @@ export interface ChatAudio {
   motivo?: string;
 }
 
+export interface ChatArquivo {
+  /** The name the phone sent (shown); the file is kept under `guardado`. */
+  readonly nome: string;
+  readonly mime: string;
+  readonly tamanho: number;
+  readonly sha256: string;
+  /** `<id>-<clean name>`, inside `chat-arquivos/`. */
+  readonly guardado: string;
+}
+
 export interface ChatLocal extends Reservable {
   readonly id: string;
   readonly autor: 'dono' | 'lider';
@@ -83,6 +98,8 @@ export interface ChatLocal extends Reservable {
   resultado?: string;
   /** Absent on a typed line (and on every line of a file from before the audio). */
   audio?: ChatAudio;
+  /** Only on a line that came as a file; `texto` is its caption (`""` without one). */
+  arquivo?: ChatArquivo;
 }
 
 interface LocalFile {
@@ -103,6 +120,8 @@ export interface ConversaLinha {
   readonly entregue_em: string | null;
   /** Only on a line that came as audio. */
   readonly audio?: { readonly estado: ChatAudio['estado']; readonly duracao_ms: number; readonly motivo: string | null };
+  /** Only on a line that came as a file. */
+  readonly arquivo?: { readonly nome: string; readonly mime: string; readonly tamanho: number };
 }
 
 /** A voice message still waiting for its transcription. */
@@ -136,6 +155,13 @@ export interface CelularLocalStore {
   audioFile(id: string, mime: string): string;
   /** `<dir>/chat-audio`, beside the queue's file. */
   readonly audioDir: string;
+  /**
+   * A file: the bytes go to disk (600, temp → rename) under a clean name and then the row. The same id with the same
+   * bytes is the same row (`nova: false`, nothing written); other bytes, or another line's id: conflict.
+   */
+  addChatArquivo(id: string, arquivo: { readonly nome: string; readonly mime: string; readonly legenda: string }, bytes: Uint8Array): Insert;
+  /** `<dir>/chat-arquivos`, beside the queue's file. */
+  readonly arquivoDir: string;
   /** The decision on `tarefa` still waiting to be applied (the card's "na fila"), newest first. */
   pendingDecision(tarefa: string): { readonly lado: Lado; readonly opcao: string | null; readonly criada_em: string } | null;
   /** The owner's requests, newest first (`celular.tarefas_pedidas_v`). */
@@ -163,6 +189,9 @@ function sameContent(a: object, b: object, keys: readonly string[]): boolean {
 const DECISAO_KEYS = ['tarefa', 'lado', 'opcao', 'comentario', 'paginas', 'entrega_vista', 'assinatura'] as const;
 const PEDIDA_KEYS = ['titulo', 'texto', 'criterio', 'prazo', 'frente'] as const;
 
+/** A name or type from the phone inside the Líder's line: no line break nor control character. */
+const oneLine = (value: string): string => value.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim();
+
 /** `0:27`, `4:05`. */
 export function duracaoTexto(ms: number): string {
   const seconds = Math.max(0, Math.round(ms / 1000));
@@ -173,7 +202,8 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
   let data = load();
   const audioDir = join(dirname(filePath), CHAT_AUDIO_DIR);
   const audioFile = (id: string, mime: string): string => join(audioDir, `${id}.${CHAT_AUDIO_MIMES[mime] ?? 'bin'}`);
-  /** The audio of the chat rows the last prune dropped: deleted once the file without them is written. */
+  const arquivoDir = join(dirname(filePath), CHAT_ARQUIVO_DIR);
+  /** The audio and files of the chat rows the last prune dropped: deleted once the file without them is written. */
   let prunedAudio: string[] = [];
 
   function load(): LocalFile {
@@ -209,6 +239,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
         if (dropped >= excess || (row.autor === 'dono' && !row.entregue_em)) return true;
         dropped += 1;
         if (row.audio) prunedAudio.push(audioFile(row.id, row.audio.mime));
+        if (row.arquivo) prunedAudio.push(join(arquivoDir, row.arquivo.guardado));
         return false;
       });
     }
@@ -223,7 +254,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
       try {
         unlinkSync(file);
       } catch {
-        // already gone (the 7-day sweep)
+        // already gone (the 7- or 30-day sweep)
       }
     }
   }
@@ -316,7 +347,13 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
     if (row.audio.estado === 'transcrito') return `🎙 Áudio de ${length} (transcrição): ${row.texto}`;
     return `🎙 Áudio de ${length} que não consegui transcrever (${row.audio.motivo ?? 'sem motivo'}). Está guardado na VPS em ${audioFile(row.id, row.audio.mime)}.`;
   };
-  const asChatRow = (row: ChatLocal): ChatCelularRow => ({ id: row.id, texto: leaderText(row), criada_em: row.criada_em });
+  /** Contract v1.4: the whole message the Líder reads, with the phone's marker (his answer goes back by it). */
+  const arquivoText = (row: ChatLocal, arquivo: ChatArquivo): string => {
+    const legenda = row.texto.trim();
+    return `📎 O dono mandou um arquivo pelo celular ${phoneMarker(row.id)}: ${oneLine(arquivo.nome)} (${tamanhoTexto(arquivo.tamanho)}, ${oneLine(arquivo.mime)}), em ${join(arquivoDir, arquivo.guardado)}.${legenda ? ` ${legenda}` : ''}`;
+  };
+  const asChatRow = (row: ChatLocal): ChatCelularRow =>
+    row.arquivo ? { id: row.id, texto: arquivoText(row, row.arquivo), criada_em: row.criada_em, inteiro: true } : { id: row.id, texto: leaderText(row), criada_em: row.criada_em };
   /** A voice line goes to the Líder only once it is words (or a failure): one delivery, never two. */
   const waitingAudio = (row: ChatLocal): boolean => row.audio?.estado === 'transcrevendo';
 
@@ -406,7 +443,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
     },
     addChat(id, texto) {
       const existing = data.chat.find((row) => row.id === id);
-      if (existing) return existing.autor === 'dono' && !existing.audio && existing.texto === texto ? { ok: true, nova: false } : { ok: false, erro: 'conflito' };
+      if (existing) return existing.autor === 'dono' && !existing.audio && !existing.arquivo && existing.texto === texto ? { ok: true, nova: false } : { ok: false, erro: 'conflito' };
       commit((next) => {
         next.chat.push({ id, autor: 'dono', texto, em_resposta_a: null, criada_em: iso() });
       });
@@ -453,6 +490,30 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
     },
     audioFile,
     audioDir,
+    addChatArquivo(id, arquivo, bytes) {
+      const sha256 = createHash('sha256').update(bytes).digest('hex');
+      const existing = data.chat.find((row) => row.id === id);
+      if (existing) return existing.autor === 'dono' && existing.arquivo?.sha256 === sha256 ? { ok: true, nova: false } : { ok: false, erro: 'conflito' };
+      // The bytes first: a row never points to a file that is not on disk. The name is ours, never a path from the phone.
+      const guardado = `${id}-${nomeLimpo(arquivo.nome)}`;
+      const file = join(arquivoDir, guardado);
+      mkdirSync(arquivoDir, { recursive: true, mode: 0o700 });
+      const tmp = `${file}.tmp-${process.pid}`;
+      writeFileSync(tmp, bytes, { mode: 0o600 });
+      renameSync(tmp, file);
+      commit((next) => {
+        next.chat.push({
+          id,
+          autor: 'dono',
+          texto: arquivo.legenda,
+          em_resposta_a: null,
+          criada_em: iso(),
+          arquivo: { nome: arquivo.nome, mime: arquivo.mime, tamanho: bytes.length, sha256, guardado },
+        });
+      });
+      return { ok: true, nova: true };
+    },
+    arquivoDir,
     pendingDecision(tarefa) {
       const rows = data.decisoes.filter((row) => row.tarefa === tarefa && !row.aplicada_em);
       const last = rows[rows.length - 1];
@@ -475,6 +536,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
         estado: estadoDe(row, answered),
         entregue_em: row.entregue_em ?? null,
         ...(row.audio ? { audio: { estado: row.audio.estado, duracao_ms: row.audio.duracao_ms, motivo: row.audio.motivo ?? null } } : {}),
+        ...(row.arquivo ? { arquivo: { nome: row.arquivo.nome, mime: row.arquivo.mime, tamanho: row.arquivo.tamanho } } : {}),
       }));
     },
     liderDiz(id, emRespostaA, texto) {

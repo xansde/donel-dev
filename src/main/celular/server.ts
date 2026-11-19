@@ -43,6 +43,9 @@ export const AUDIO_PATH = '/api/pedidos/audio';
 /** t-268ed62a — o áudio do chat do app (base64 em JSON, assinado como texto): o único caminho v2 com até 6 MB. */
 export const CHAT_AUDIO_V2_PATH = '/api/v2/chat/audio';
 export const MAX_CHAT_AUDIO_BYTES = 6 * 1024 * 1024;
+/** t-a1ad1ca2 — o arquivo do chat (até 15 MB, base64 em JSON): só este caminho v2 recebe ~20 MB (o mesmo teto de `MAX_ARQUIVO_BODY`, src/oraculo/chat-arquivo.ts). */
+export const CHAT_ARQUIVO_V2_PATH = '/api/v2/chat/arquivo';
+export const MAX_CHAT_ARQUIVO_BYTES = Math.ceil((15 * 1024 * 1024) / 3) * 4 + 64 * 1024;
 const TOO_BIG_BODY = JSON.stringify({ erro: 'grande-demais' });
 
 export type MobileBody = string | Uint8Array | { readonly filePath: string };
@@ -335,13 +338,14 @@ export function startMobileServer(options: {
     const routePath = (req.url ?? '').split('?')[0];
     const isAudio = req.method === 'POST' && routePath === AUDIO_PATH;
     const isChatAudio = req.method === 'POST' && routePath === CHAT_AUDIO_V2_PATH;
-    const maxBytes = isAudio ? MAX_AUDIO_BYTES : isChatAudio ? MAX_CHAT_AUDIO_BYTES : MAX_BODY_BYTES;
+    const isChatArquivo = req.method === 'POST' && routePath === CHAT_ARQUIVO_V2_PATH;
+    const maxBytes = isAudio ? MAX_AUDIO_BYTES : isChatAudio ? MAX_CHAT_AUDIO_BYTES : isChatArquivo ? MAX_CHAT_ARQUIVO_BYTES : MAX_BODY_BYTES;
     let tooBig = false;
-    /** The chat's audio hears why (413, contract v1.2), without the rest read into memory; the others are cut. */
+    /** The chat's audio and file hear why (413, contracts v1.2 and v1.4), without the rest read into memory; the others are cut. */
     const refuse = (): void => {
       tooBig = true;
       chunks.length = 0;
-      if (!isChatAudio) {
+      if (!isChatAudio && !isChatArquivo) {
         req.destroy();
         return;
       }
