@@ -15,6 +15,7 @@ import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { isBelow, isOpenedBy, type ListedPlace } from '../shared/mindscape/reach';
 import type { MindscapeBoard } from '../shared/mindscape/model';
 import type { ConfigIoDeps } from './config-store';
+import { localFlagOn, SKEPTIC_CLOSES_FLAG } from './local-flags';
 import {
   applyLedgerOp,
   emptyLedgerDoc,
@@ -135,6 +136,8 @@ export interface LedgerServiceDeps {
   readonly newId?: () => string;
   /** After every successful write (the renderer's strip). */
   readonly onChange?: (snapshot: LedgerSnapshot) => void;
+  /** Local feature flags (`local-flags.ts`); default: the files in `~/.donel/flags/` of this machine. */
+  readonly flagOn?: (name: string) => boolean;
 }
 
 export interface LedgerService {
@@ -157,6 +160,8 @@ export interface LedgerService {
   proofSeen(placeId: string, taskId: string, deliveredAt: number): boolean;
   /** The service's clock (the vitest moves it). */
   now(): number;
+  /** Whether a local feature flag is on (t-b559eaec); absent = every flag off. */
+  flagOn?(name: string): boolean;
 }
 
 /** The biggest print `tarefa_ver` sends inline (the path goes in any case). */
@@ -318,6 +323,7 @@ export function createLedgerService(deps: LedgerServiceDeps): LedgerService {
       return seen.has(seenKey(placeId, taskId, deliveredAt));
     },
     now,
+    flagOn: deps.flagOn ?? ((name) => localFlagOn(name)),
   };
 }
 
@@ -651,10 +657,26 @@ export function liveReviewersOutside(caller: LedgerCaller, from: readonly string
 }
 
 /**
- * The live Revisores out of the chain of whoever delivers `call` (and of who did the work), when the delivery is low
- * risk on the caller's board with no card for the owner; `null` = it does not apply or the board is unknown.
+ * t-b559eaec (cadeira Dev rápido) — a proof carries the skeptical reviewer's approved verdict (skill merge-direto: the
+ * JSON it writes): `"veredito":"aprovado"`, a head hash and no blocking finding.
  */
-function closeAloneCheck(service: LedgerService, caller: LedgerCaller, call: Extract<LedgerToolCall, { tool: 'tarefa_entregar' }>): string[] | null {
+export function skepticApproved(provas: readonly ProofInput[]): boolean {
+  return provas.some(
+    (proof) =>
+      proof.tipo === 'texto' &&
+      /"veredito"\s*:\s*"aprovado"/.test(proof.texto) &&
+      /"headOid"\s*:\s*"[0-9a-f]{7,40}"/.test(proof.texto) &&
+      !/"gravidade"\s*:\s*"bloqueia"/.test(proof.texto),
+  );
+}
+
+/**
+ * The live Revisores out of the chain of whoever delivers `call` (and of who did the work), when the delivery is low
+ * risk on the caller's board with no card for the owner; `null` = it does not apply or the board is unknown. With the
+ * local flag `cetico-fecha-entrega` on and the skeptical reviewer's approved verdict in the proof, nobody else decides
+ * (`skeptic`): that reviewer already read the diff before the merge.
+ */
+function closeAloneCheck(service: LedgerService, caller: LedgerCaller, call: Extract<LedgerToolCall, { tool: 'tarefa_entregar' }>): { readonly reviewers: string[]; readonly skeptic?: true } | null {
   // Done by another place (`feitoPor`): its chain is not the deliverer's, so a Revisor decides (revisão do #383).
   if (call.paraODono || (call.feitoPor && call.feitoPor !== caller.placeId)) return null;
   let task: LedgerTask | undefined;
@@ -664,7 +686,9 @@ function closeAloneCheck(service: LedgerService, caller: LedgerCaller, call: Ext
     return null;
   }
   if (!task || task.risk !== 'baixo' || task.slack || task.projectPath !== caller.projectPath || task.state !== 'em-execucao') return null;
-  return liveReviewersOutside(caller, [caller.placeId, ...(call.feitoPor ? [call.feitoPor] : [])]);
+  if (call.feitoPor === undefined && skepticApproved(call.provas) && service.flagOn?.(SKEPTIC_CLOSES_FLAG)) return { reviewers: [], skeptic: true };
+  const reviewers = liveReviewersOutside(caller, [caller.placeId, ...(call.feitoPor ? [call.feitoPor] : [])]);
+  return reviewers === null ? null : { reviewers };
 }
 
 /** Why the place `caller` may not decide this delivery, beyond the contract's rules; `null` = may. */
@@ -1068,7 +1092,8 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         proofs.push(proof);
       }
       // 09/11 — low risk without a card for the owner: a live Revisor out of the chain decides; with none, it closes alone.
-      const reviewers = closeAloneCheck(service, caller, call);
+      const check = closeAloneCheck(service, caller, call);
+      const reviewers = check?.reviewers ?? null;
       const closeAlone = reviewers !== null && reviewers.length === 0;
       const result = await service.apply(actor, {
         op: 'entregar',
@@ -1078,6 +1103,7 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         ...(call.paraODono ? { forOwner: call.paraODono } : {}),
         ...(call.feitoPor ? { doneBy: call.feitoPor } : {}),
         ...(closeAlone ? { closeAlone: true as const } : {}),
+        ...(closeAlone && check?.skeptic ? { closeAloneBy: 'cetico' as const } : {}),
         requestId,
       });
       if (!result.ok || result.repeated) {
@@ -1085,7 +1111,9 @@ export async function runLedgerTool(service: LedgerService, caller: LedgerCaller
         return answer(result, 'entregue');
       }
       const next = closedAlone(result.task)
-        ? 'Fechada sozinha com a prova: não há Revisor vivo de fora da sua cadeia no quadro. Fica no registro; o dono pode reabrir.'
+        ? check?.skeptic
+          ? 'Fechada sozinha com o veredito aprovado do revisor cético na prova: não espera outro Revisor (cadeira Dev rápido). Fica no registro; o dono pode reabrir.'
+          : 'Fechada sozinha com a prova: não há Revisor vivo de fora da sua cadeia no quadro. Fica no registro; o dono pode reabrir.'
         : reviewers?.length
           ? `Um Revisor de fora da sua cadeia decide (${reviewers.join(', ')}); não vai ao dono.`
           : undefined;

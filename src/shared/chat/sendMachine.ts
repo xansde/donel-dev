@@ -91,6 +91,11 @@ export interface SendInput {
    * it by hand. The machine insists on the Enter longer and never leaves its own text sitting there (08/11).
    */
   readonly unattended?: boolean;
+  /**
+   * 19/11 (unattended only) — out of tries, leave our own text in the box instead of clearing it: a message that must
+   * not vanish (the first message of a session renewed in flight), whose stuck box another watcher submits later.
+   */
+  readonly keepText?: boolean;
 }
 
 export type SendStep = 'gate' | 'image' | 'text' | 'menu-esc' | 'enter-gap' | 'await-ack' | 'lookup' | 'verify' | 'done';
@@ -106,6 +111,8 @@ export interface SendMachineState {
   readonly firstPaste: boolean;
   readonly opensScreen: boolean;
   readonly unattended: boolean;
+  /** Out of tries, our text stays in the box (no Esc Esc). */
+  readonly keepText: boolean;
   /** Enters written after the acceptance deadline, while our text still sat in the box (unattended only). */
   readonly lateEnters: number;
   readonly createdAt: number;
@@ -291,6 +298,7 @@ export function createSend(input: SendInput, now: number): StepResult {
     firstPaste: input.firstPaste ?? false,
     opensScreen: input.opensScreen ?? false,
     unattended: input.unattended ?? false,
+    keepText: input.keepText ?? false,
     lateEnters: 0,
     createdAt: now,
     phase: 'waiting-cli',
@@ -997,7 +1005,8 @@ function evaluateConfirming(s: Draft, now: number, fx: SendEffect[]): void {
       }
       if (s.unattended && lines !== null && textSeen(s, lines)) {
         // Our text still sits in the box: only the Enter again, while there are tries left (mid-turn the turn may still
-        // be holding the CLI: it does not use them up). Out of tries, idle: clear our own text, then "não foi".
+        // be holding the CLI: it does not use them up). Out of tries, idle: clear our own text, then "não foi" (a
+        // `keepText` send leaves it there: it must not vanish, and the box watcher submits it later).
         const working = isWorking(lines);
         if (working || s.lateEnters < MAX_LATE_ENTERS) {
           fx.push({ type: 'write', data: '\r' });
@@ -1006,7 +1015,7 @@ function evaluateConfirming(s: Draft, now: number, fx: SendEffect[]): void {
           s.attempts += 1;
           return;
         }
-        fx.push({ type: 'write', data: '\x1b\x1b' });
+        if (!s.keepText) fx.push({ type: 'write', data: '\x1b\x1b' });
       }
       fail(s, 'não foi');
       return;

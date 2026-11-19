@@ -71,6 +71,14 @@ export interface SendRequest {
    * sent it again, and the destination got it twice.
    */
   readonly dedupe?: boolean;
+  /**
+   * 19/11 — nobody pressed send and nobody watches the box, though it is not a notice from another session (the first
+   * message of a session renewed in flight): the machine insists on the Enter like an unattended send, and the owner's
+   * keys are held around its Enter. It still goes first, like any `owner` send, and never merges with a notice.
+   */
+  readonly unattended?: boolean;
+  /** With `unattended`: out of tries, its text stays in the box, never cleared (see `SendInput.keepText`). */
+  readonly keepText?: boolean;
 }
 
 export type SendFrom = 'owner' | 'session';
@@ -155,6 +163,9 @@ const DEDUPE_MS = 10 * 60_000;
 const TERMINAL_REPORT =
   /^(?:\x1b\[(?:I|O|[?>][\d;]*c|\d+;\d+R|<[\d;]+[Mm]|M[\s\S]{3})|\x1bP>\|[^\x1b]*\x1b\\|\x1b\]1[01];rgb:[\da-fA-F/]+(?:\x07|\x1b\\))+$/; // several answers may come in one chunk
 export const isOwnerTyping = (data: string): boolean => data !== '' && !TERMINAL_REPORT.test(data);
+
+/** Nobody watches the box of this send: a notice from another session, or a send marked `unattended`. */
+const unattendedItem = (item: Item): boolean => item.from === 'session' || item.request.unattended === true;
 
 /** Session messages that can go in as one paste (plain text, no image, no command). */
 const mergeable = (item: Item): boolean =>
@@ -306,6 +317,16 @@ export class SendDriver {
     this.pump();
     this.publish();
     return id;
+  }
+
+  /**
+   * 19/11 — the tab's CLI process was replaced (a renewal in flight, a respawn): its next send is the first of a CLI
+   * that is booting, with the first send's budgets (the long wait for the CLI, the Enters a CLI coming up swallows).
+   * Before, a renewed session's "read the handoff" got the budgets of a CLI long up, gave up at 15 s on a loaded
+   * place and left the message sitting in the box, never submitted.
+   */
+  processStarted(): void {
+    this.sentCount = 0;
   }
 
   /** The send that carries `id`: itself, or the notice it was merged into while waiting for the owner. */
@@ -540,7 +561,8 @@ export class SendDriver {
         firstPaste: this.sentCount === 0,
         opensScreen: next.request.opensScreen,
         customCommands: next.request.customCommands,
-        unattended: next.from === 'session',
+        unattended: unattendedItem(next),
+        keepText: next.request.keepText === true,
       };
       this.sentCount += 1;
       const created = createSend(input, this.ports.now());
@@ -582,7 +604,7 @@ export class SendDriver {
     for (const effect of effects) {
       switch (effect.type) {
         case 'write':
-          if (effect.data === '\r' && item.from === 'session') {
+          if (effect.data === '\r' && unattendedItem(item)) {
             // An Enter written again (the first one looked lost) once a key of the owner reached the box would submit
             // HIS text with it. Keys still held never reached it: then the Enter is safe, and wanted. (The screen cannot
             // clear him: his keys may still be on their way through ssh.)
@@ -592,9 +614,9 @@ export class SendDriver {
           }
           // The same for the Esc Esc an unattended send writes to clear its own text when it gives up (08/11): a key of
           // the owner sent after its Enter may be in that box too, and must not be erased with it.
-          if (effect.data === '\x1b\x1b' && item.from === 'session' && item.enterWrittenAt !== null && this.ownerWrittenAt !== null && this.ownerWrittenAt >= item.enterWrittenAt)
+          if (effect.data === '\x1b\x1b' && unattendedItem(item) && item.enterWrittenAt !== null && this.ownerWrittenAt !== null && this.ownerWrittenAt >= item.enterWrittenAt)
             break;
-          if (effect.data === '\x1b\x1b' && item.from === 'session') this.keepCleared();
+          if (effect.data === '\x1b\x1b' && unattendedItem(item)) this.keepCleared();
           this.ports.write(effect.data);
           if (effect.data === '\r' && item.request.opensScreen === true) this.ports.opensScreen?.();
           break;
@@ -702,7 +724,7 @@ export class SendDriver {
    */
   private sessionWriting(now: number): boolean {
     if (this.heldSince !== null && now - this.heldSince >= OWNER_HOLD_MAX_MS) return false;
-    const item = this.items.find((i) => i.from === 'session' && isActive(i));
+    const item = this.items.find((i) => unattendedItem(i) && isActive(i));
     const m = item?.machine;
     if (item === undefined || m == null) return false;
     if (m.phase === 'typing') return true;
