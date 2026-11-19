@@ -24,7 +24,7 @@ por varredor que abriu cada arquivo na linha para derrubar o achado, e um críti
 | Onde | Antes | Agora |
 | --- | --- | --- |
 | `src/shared/roles.ts` | só Dev (pede revisão ao Revisor) | papel de fábrica `dev-rapido`: flag no lugar de staging, verify de 2 min, cético, merge próprio, produção com a flag desligada e ligada em seguida, coletor e migração mantidos |
-| `src/shared/roles.ts`, Líder e Líder único | "o Dev pede revisão ao Revisor" | e "a Dev rápido não passa pelo Revisor; não a mande esperar revisão nem aceite" |
+| `src/shared/roles.ts`, Líder e Líder único | "o Dev pede revisão ao Revisor" | e "a Dev rápido não passa pelo Revisor; entrega com o veredito do cético na prova, que fecha a tarefa onde o Oráculo tem a flag `cetico-fecha-entrega` ligada" |
 | `package.json`, `scripts/verify-rapido.mjs` | só `npm run verify` (tudo, sob `verify.lock`) | `npm run verify:rapido`: tipos, testes ligados ao diff (suíte inteira se mudou config de teste), build só se mudou o que é empacotado; sem fila; imprime o tempo de cada passo |
 | `CLAUDE.md` | política de review dizia "o próprio dono, após validação manual"; "~17 arquivos vitest" | revisor = subagente cético antes do merge, dono valida no alfa depois; seção da cadeira; ~160 arquivos |
 | skill `dev-rapido` (nova) | — | o passo a passo com horários T0…T8, onde mora a flag de cada app e o que fica |

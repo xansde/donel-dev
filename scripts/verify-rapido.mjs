@@ -43,7 +43,7 @@ function run(label, command, args) {
 }
 
 const mergeBase = git(['merge-base', base, 'HEAD'])[0];
-const changed = [...new Set([...git(['diff', '--name-only', mergeBase]), ...git(['ls-files', '--others', '--exclude-standard'])])];
+const changed = [...new Set([...git(['diff', '--name-only', '--no-renames', mergeBase]), ...git(['ls-files', '--others', '--exclude-standard'])])];
 console.log(`[verify:rapido] base ${base} (${mergeBase.slice(0, 8)}); ${changed.length} arquivo(s) mudado(s)`);
 
 const WHOLE_SUITE = /^(package(-lock)?\.json|vitest\.config\.|tsconfig[^/]*\.json|patches\/)/;
@@ -93,11 +93,11 @@ run('tipos', 'npx', ['tsc', '--noEmit', '-p', 'tsconfig.json']);
 if (changed.some((file) => WHOLE_SUITE.test(file))) {
   run('testes (suíte inteira: mudou a configuração dos testes)', 'npx', ['vitest', 'run']);
 } else {
-  // Code modules reach tests through imports. Anything else a test may read by path (script, fixture, data JSON) or a
-  // deleted file cannot be traced safely (tests build paths piece by piece): the whole suite runs (~30 s).
+  // Only code modules reach tests through imports. Any other changed, renamed or deleted file (script, fixture, data
+  // JSON, CSS, a schema or a doc that a test reads by a path built piece by piece) cannot be traced safely: the whole
+  // suite runs (~30 s). Selecting is an optimization; it never skips a test that could read the file.
   const isModule = (file) => /^(src|tests|scripts)\/.*\.(ts|tsx|mts|mjs|js)$/.test(file);
-  const isDoc = (file) => /\.md$/.test(file) || /^(docs|specs|design|\.claude|\.scratch)\//.test(file);
-  const untraceable = changed.filter((file) => !isTest(file) && !isDoc(file) && (!isModule(file) || !existsSync(file)));
+  const untraceable = changed.filter((file) => !isTest(file) && (!isModule(file) || !existsSync(file)));
   const sources = changed.filter((file) => !isTest(file) && isModule(file) && existsSync(file));
   const tests = changed.filter((file) => isTest(file) && existsSync(file));
   const selected = [...new Set([...testsReaching(sources), ...tests])];
