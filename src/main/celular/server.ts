@@ -40,6 +40,10 @@ export interface MobileRequest {
 
 /** O único caminho que recebe corpo binário (e maior que 64 KB). */
 export const AUDIO_PATH = '/api/pedidos/audio';
+/** t-268ed62a — o áudio do chat do app (base64 em JSON, assinado como texto): o único caminho v2 com até 6 MB. */
+export const CHAT_AUDIO_V2_PATH = '/api/v2/chat/audio';
+export const MAX_CHAT_AUDIO_BYTES = 6 * 1024 * 1024;
+const TOO_BIG_BODY = JSON.stringify({ erro: 'grande-demais' });
 
 export type MobileBody = string | Uint8Array | { readonly filePath: string };
 
@@ -328,14 +332,32 @@ export function startMobileServer(options: {
     }
     const chunks: Buffer[] = [];
     let size = 0;
-    const isAudio = req.method === 'POST' && (req.url ?? '').split('?')[0] === AUDIO_PATH;
-    const maxBytes = isAudio ? MAX_AUDIO_BYTES : MAX_BODY_BYTES;
+    const routePath = (req.url ?? '').split('?')[0];
+    const isAudio = req.method === 'POST' && routePath === AUDIO_PATH;
+    const isChatAudio = req.method === 'POST' && routePath === CHAT_AUDIO_V2_PATH;
+    const maxBytes = isAudio ? MAX_AUDIO_BYTES : isChatAudio ? MAX_CHAT_AUDIO_BYTES : MAX_BODY_BYTES;
     let tooBig = false;
+    /** The chat's audio hears why (413, contract v1.2), without the rest read into memory; the others are cut. */
+    const refuse = (): void => {
+      tooBig = true;
+      chunks.length = 0;
+      if (!isChatAudio) {
+        req.destroy();
+        return;
+      }
+      req.pause();
+      res.writeHead(413, { ...BASE_HEADERS, 'Content-Type': 'application/json; charset=utf-8', Connection: 'close' });
+      res.end(TOO_BIG_BODY, () => req.destroy());
+    };
+    if (Number(req.headers['content-length']) > maxBytes) {
+      refuse();
+      return;
+    }
     req.on('data', (chunk: Buffer) => {
+      if (tooBig) return;
       size += chunk.length;
       if (size > maxBytes) {
-        tooBig = true;
-        req.destroy();
+        refuse();
         return;
       }
       chunks.push(chunk);
