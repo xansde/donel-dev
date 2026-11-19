@@ -233,6 +233,8 @@ export function syntheticPicture(input: {
     listar,
     ...(board ? { board } : {}),
     at: input.at,
+    // Made here, not the PC's answer: it never says the PC is on (retrato-local.ts `pcSeenAt`).
+    local: true,
   };
 }
 

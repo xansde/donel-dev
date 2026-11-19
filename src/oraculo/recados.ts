@@ -28,7 +28,7 @@ import type { BrowserToolOutcome } from '../shared/browser/mcp';
 import { hasArrowLink } from '../shared/mindscape/agent-tools';
 import { listedPlaces, resolveAddress } from '../shared/mindscape/address';
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
-import { BOARD_LEADER, canReach, isBoardOrchestrator, isLiveListedPlace, MY_OPENER, successorOf, whoHears, type ListedPlace } from '../shared/mindscape/reach';
+import { BOARD_LEADER, canReach, isBoardOrchestrator, isLiveListedPlace, LEADER_OF_ALL_FROM, MY_OPENER, successorOf, whoHears, type ListedPlace } from '../shared/mindscape/reach';
 import type { MindscapeBoard } from '../shared/mindscape/model';
 import type { LedgerDeliveredTo, LedgerTask } from '../shared/ledger/contract';
 import type { LedgerToolCall } from '../shared/ledger/tools';
@@ -36,7 +36,7 @@ import { deliverersOf, reviewersOutsideChain, reviewLink, reviewRequestNotice, v
 import { followRenewal, urgentLedgerNotice, type LedgerCaller, type LedgerService } from '../main/ledger-store';
 import type { ConfigIoDeps } from '../main/config-store';
 import type { OwnerMessage } from '../main/ledger-card-writer';
-import type { BoardPicture, PictureSession } from './portao';
+import { picturedBoards, type BoardPicture, type PictureSession } from './portao';
 import type { GateHookResponse, GateRecados, SendCall } from './gate-recados';
 import type { LocalLeader } from './lider-local';
 
@@ -690,6 +690,41 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     return { kind: 'text', text: JSON.stringify({ entregue: 'pelo-relay', para: toLeader ? 'lider' : placeId, como: RELAY_HOW }) };
   }
 
+  /**
+   * O Oráculo sem o PC (19/11) — a `sessao_enviar` of the Líder único (he has no place): to a place of the board he
+   * names, on the boards the picture has, by the PC's rule (the top of the board and whoever is below it by the owner's
+   * or the opening arrows). Queued here when the place runs here, else the PC's relay. Only with the PC off or for a
+   * Líder the PC does not know: with the PC on, the PC sends his messages.
+   */
+  async function fromLeader(sid: string, call: SendCall): Promise<BrowserToolOutcome> {
+    const refuse = (text: string): BrowserToolOutcome => ({ kind: 'error', text });
+    const boards = picturedBoards(deps.picture());
+    const names = [...boards.keys()].map(lastSegment).join(', ') || 'nenhum';
+    if (!call.quadro) return refuse(`Você é o Líder único: diga o quadro em "quadro" (com o PC fora, conheço: ${names}).`);
+    const found = [...boards].find(([pasta]) => pasta === call.quadro || lastSegment(pasta) === call.quadro);
+    if (!found) return refuse(`Com o PC fora, conheço só os quadros do último retrato (${names}); "${call.quadro}" não está entre eles.`);
+    const [projectPath, { listar, board }] = found;
+    const target = resolveAddress(board, listedPlaces(listar), LEADER_OF_ALL, call.para);
+    if ('erro' in target) return refuse(target.erro);
+    if ('liderUnico' in target) return { kind: 'error', text: 'Não mandei: "lider" é você mesmo.' };
+    const reach = board ? canReach({ schemaVersion: 8, boards: { [projectPath]: board } }, LEADER_OF_ALL_FROM, { projectPath, placeId: target.placeId }) : { ok: false as const, reason: 'o retrato não tem as setas deste quadro.' };
+    if (!reach.ok) return refuse(`Sem ligação: o Líder único não alcança "${target.placeId}" no quadro ${lastSegment(projectPath)}: ${reach.reason}`);
+    const words = `${call.tarefa ? `[${call.tarefa}] ` : ''}${call.texto}`;
+    const targetSid = sidOfPlace(projectPath, target.placeId, await localSessions());
+    if (!targetSid) return relayed(projectPath, LEADER_OF_ALL, 'Líder', target.placeId, words);
+    const item = enqueue({ lugar: LEADER_OF_ALL, nome: 'Líder', sid }, { lugar: target.placeId, sid: targetSid }, words);
+    return {
+      kind: 'text',
+      text: JSON.stringify({
+        entregue: item.estado === 'entregue' ? 'entregue' : 'na-fila',
+        id: item.id,
+        para: target.placeId,
+        ...('renovadoDe' in target && target.renovadoDe ? { renovado: `${target.renovadoDe} fechou; foi para o lugar que o sucede (${target.placeId}).` } : {}),
+        como: HOW,
+      }),
+    };
+  }
+
   /** When each target with a waiting item was first missing from tmux (memory only). */
   const missing = new Map<string, number>();
 
@@ -844,6 +879,8 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       // place opened or an arrow drawn after it is the PC's to know (revisão do #486). With the PC off it is all there is.
       const pcOn = pc === 'ligado';
       const who = mine.quemSou;
+      // The Líder único the PC knows, with the PC on: the PC sends it, as before.
+      if (who.liderUnico === true) return pcOn ? 'repassar' : fromLeader(sid, call);
       const board = mine.board;
       // Who the caller is, or its board, unknown here: the PC decides.
       if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string' || !board) return pcOn ? 'repassar' : { kind: 'error', text: NOT_PICTURED };

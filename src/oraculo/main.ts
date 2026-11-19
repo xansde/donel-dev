@@ -44,7 +44,8 @@ import { createReturnGuard } from './devolvido';
 import { createGateHandler, GATE_PORT, mergePicture, startGateServer, tunnelForward, type BoardPicture, type PictureSession } from './portao';
 import { createGateRecados, findTranscript, tmuxLocalSessions } from './recados';
 import { createLocalLeaderFinder, currentConversation } from './lider-local';
-import { clearAdoptedMarks, createOpenLocal, roomRefusal, sweepUnfinishedOpenings, type ScriptRun } from './abrir-local';
+import { clearAdoptedMarks, createOpenLocal, readOpenKit, roomRefusal, sweepUnfinishedOpenings, type ScriptRun } from './abrir-local';
+import { createLocalPicture, tmuxLiveNow } from './retrato-local';
 import { createGateToolRoutes, readGateHashes } from './portoes';
 import { createProbe } from './sonda';
 import { createSatelliteLedger, createSatelliteNotice, createSatelliteReviewLink, createSatelliteTaskMemory } from './satelite';
@@ -467,15 +468,26 @@ async function main(): Promise<void> {
     }
   };
   const sessionsDir = join(homedir(), '.donel', 's');
+  // O Oráculo sem o PC (19/11) — what the gate, the recados and the Líder read: the PC's last picture, with the live
+  // sessions of this tmux it does not carry made here (all of them with the PC away). The probe keeps the stored one.
+  const localPicture = createLocalPicture({
+    stored: pictures.get,
+    sessionsDir,
+    liveNow: tmuxLiveNow,
+    extras: () => {
+      const kit = readOpenKit(dir);
+      return kit ? { roda: kit.place.label, roleName: (id: string) => kit.roles.find((role) => role.id === id)?.name } : {};
+    },
+  });
   // t-c3fbe852 — the Líder único alive in this machine's tmux (the app's mark in its session folder, or the picture).
-  const localLeader = createLocalLeaderFinder({ sessionsDir, liveSessions: tmuxLocalSessions, picture: pictures.get });
+  const localLeader = createLocalLeaderFinder({ sessionsDir, liveSessions: tmuxLocalSessions, picture: localPicture.get });
   // t-e195b35c — the recados of this machine's sessions; a notice or message for a place off it goes to the PC's relay
   // (queued on disk, no wait: nothing reads where it went, and a sessao_enviar with the PC off answers at once).
   const recados = createGateRecados({
     file: join(dir, 'recados.json'),
     io,
     ledger: () => ledger,
-    picture: pictures.get,
+    picture: localPicture.get,
     relay: (message) => relay.send(message, 0),
     leader: localLeader,
     // A session resumed from another conversation (the Líder that came over with `-r`) writes that one's transcript.
@@ -666,7 +678,9 @@ async function main(): Promise<void> {
     handler: createGateHandler({
       sessionsDir,
       ledger: () => ledger,
-      picture: pictures.get,
+      picture: localPicture.get,
+      pcAway: localPicture.away,
+      pictureWithoutPc: localPicture.withoutPc,
       recados,
       forward: tunnelForward,
       serverVersion: 'oraculo-vps',
@@ -675,7 +689,7 @@ async function main(): Promise<void> {
       abrir: createOpenLocal({
         sessionsDir,
         oraculoDir: dir,
-        picture: pictures.get,
+        picture: localPicture.get,
         setSession: pictures.setSession,
         forgetSession: pictures.forget,
         leader: localLeader,
@@ -730,7 +744,7 @@ async function main(): Promise<void> {
     ledger: () => ledger,
     log: (line) => console.log(line),
     boardOfSession: (sid) => {
-      const pasta = pictures.get()?.sessoes[sid]?.quemSou?.pasta;
+      const pasta = localPicture.get()?.sessoes[sid]?.quemSou?.pasta;
       return typeof pasta === 'string' && pasta ? boardName(pasta) : undefined;
     },
   });
