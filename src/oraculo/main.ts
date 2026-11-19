@@ -52,7 +52,9 @@ import { ORACLE_PORT, startOracleServer, type OracleServer } from './server';
 import { createDaemonVigia } from './vigia';
 import { boardName } from '../shared/vigia/board';
 import { createBoardClient, readBoardConfig, type BoardStore } from './board-client';
-import { canonicalJson, createSupabaseLedgerStore, readSupabaseLedger, type SupabaseLedgerDeps, type SupabaseLedgerStore } from './ledger-supabase';
+import { canonicalJson, createSupabaseLedgerStore, readSupabaseLedger, type SupabaseLedgerDeps } from './ledger-supabase';
+import { exportSqliteLedger, LEDGER_SQLITE_FILE, ledgerSourceOf, openSqliteLedgerStore, seedSqliteLedger } from './ledger-sqlite';
+import type { LedgerStore } from '../main/ledger-store';
 import { createLedgerMirror, type LedgerMirror } from '../main/ledger-mirror/mirror';
 import { createSupabaseSink } from '../main/ledger-mirror/supabase-sink';
 import { createProofReader } from '../main/ledger-mirror/cartas';
@@ -293,6 +295,38 @@ async function runSatellite(dir: string, url: string): Promise<void> {
   process.on('SIGINT', stop);
 }
 
+/** The daemon must be stopped for an offline write: it keeps the ledger in memory and would write over it. */
+async function daemonAnswers(dir: string): Promise<boolean> {
+  try {
+    const url = readFileSync(join(dir, 'url'), 'utf8').trim();
+    await fetch(`${url}/v1/ledger`, { signal: AbortSignal.timeout(1500) });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * `oraculo.mjs --semear-sqlite` (dono, 18/11: "Vamos trazer para um sqlite local mesmo"): a new `ledger.sqlite` from the
+ * ledger.json, read back and compared; then the ledger.json is set aside (`ledger.json.antes-sqlite-<hora>`, read-only)
+ * so nothing reads a stale copy. With the daemon stopped.
+ */
+async function seedSqlite(dir: string, ledgerFile: string): Promise<number> {
+  if (await daemonAnswers(dir)) {
+    console.error('[semear-sqlite] o daemon está no ar: pare-o antes (systemctl --user stop donel-oraculo)');
+    return 1;
+  }
+  const doc = createLedgerService({ filePath: ledgerFile, io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs }).load().doc;
+  const result = seedSqliteLedger(join(dir, LEDGER_SQLITE_FILE), doc);
+  console.log(JSON.stringify({ ledgerJson: Object.keys(doc.tasks).length, ...result }));
+  if (result.diferentes !== 0 || result.tarefas !== Object.keys(doc.tasks).length) return 1;
+  const aside = `${ledgerFile}.antes-sqlite-${new Date().toISOString().replace(/[:.]/g, '-')}`;
+  renameSync(ledgerFile, aside);
+  chmodSync(aside, 0o400);
+  console.log(JSON.stringify({ ledgerJsonGuardado: aside }));
+  return 0;
+}
+
 /** The way back: `oraculo.mjs --exportar-supabase <arquivo>` writes the Supabase's ledger as a ledger.json (new file only). */
 async function exportSupabase(dir: string, target: string | undefined): Promise<number> {
   const deps = supabaseLedgerDeps(dir);
@@ -361,10 +395,20 @@ async function main(): Promise<void> {
   if (process.argv.includes('--semear-supabase')) process.exit(await seedSupabase(dir, ledgerFile));
   if (process.argv.includes('--cancelar-offline')) process.exit(await cancelOffline(dir, process.argv[process.argv.indexOf('--cancelar-offline') + 1], process.argv[process.argv.indexOf('--motivo') + 1]));
   if (process.argv.includes('--exportar-supabase')) process.exit(await exportSupabase(dir, process.argv[process.argv.indexOf('--exportar-supabase') + 1]));
+  if (process.argv.includes('--semear-sqlite')) process.exit(await seedSqlite(dir, ledgerFile));
+  if (process.argv.includes('--exportar-sqlite')) {
+    const target = process.argv[process.argv.indexOf('--exportar-sqlite') + 1];
+    if (!target) process.exit(2);
+    console.log(JSON.stringify(exportSqliteLedger(join(dir, LEDGER_SQLITE_FILE), target)));
+    process.exit(0);
+  }
   // t-89279f84 — the Supabase as the source: read once here; unreachable = no daemon (systemd tries again), never an
   // empty ledger answering.
-  const sbDeps = supabaseLedgerDeps(dir);
-  let store: SupabaseLedgerStore | undefined;
+  // 18/11 — the SQLite of this machine when it was seeded (`ledger.sqlite`); a seeded database gone missing stops here.
+  const source = ledgerSourceOf(dir);
+  const sbDeps = source === 'supabase' ? supabaseLedgerDeps(dir) : null;
+  let store: LedgerStore | undefined;
+  if (source === 'sqlite') store = openSqliteLedgerStore(join(dir, LEDGER_SQLITE_FILE), (line) => console.log(line));
   if (sbDeps) {
     const initial = await readSupabaseLedger(sbDeps);
     if (!initial.exists) throw new Error(`o Supabase do ledger está vazio; rode oraculo.mjs --semear-supabase antes de ligar ${LEDGER_SUPABASE_FILE}`);
@@ -481,7 +525,7 @@ async function main(): Promise<void> {
   const handler = createOracleApiHandler({
     ledger,
     ledgerFile,
-    ...(store ? { importRefused: 'A fonte do ledger é o Supabase; a cópia do PC não substitui mais o Oráculo da VPS. Nada foi trocado.' } : {}),
+    ...(store ? { importRefused: `A fonte do ledger é o ${source === 'sqlite' ? 'SQLite da VPS' : 'Supabase'}; a cópia do PC não substitui mais o Oráculo da VPS. Nada foi trocado.` } : {}),
     tokenHash,
     services,
     returned: guard,
@@ -645,7 +689,7 @@ async function main(): Promise<void> {
     log: (line) => console.log(line),
   });
   chatCelular.start();
-  console.log(`[oraculo] no ar em ${server.url} (${Object.keys(first.doc.tasks).length} tarefas${first.readOnly ? ', só leitura' : ''}, fonte: ${store ? 'Supabase' : 'ledger.json'})`);
+  console.log(`[oraculo] no ar em ${server.url} (${Object.keys(first.doc.tasks).length} tarefas${first.readOnly ? ', só leitura' : ''}, fonte: ${source === 'sqlite' ? 'SQLite' : store ? 'Supabase' : 'ledger.json'})`);
   const stop = (): void => {
     probe.stop();
     recados.stop();
