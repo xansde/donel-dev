@@ -14,6 +14,11 @@
 // (`<dir>/portoes-recados/<name>.json`, the relay's format: on disk before the answer, the same key joins). The satellite
 // takes it at each round (`POST /v1/portao/recados`, `inbox`), queues it in its own recados and says so in the next
 // call (`entregues`): an ack lost on the way hands the same item again, and its key joins it there (never twice).
+//
+// A machine's picture only routes a message while its satellite is heard (`STALE_MS` since its last call, picture or
+// queue: the picture itself goes up only when it changes, or every 5 min). Past that the satellite is taken as gone and
+// the message takes the way it took before t-d461e003 (the PC's relay, or the refusal with the PC off); what already
+// waits in its queue stays there for when it comes back. A picture read from disk at boot counts as heard then.
 
 import { mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -31,6 +36,8 @@ const SID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
 const WHO_FIELDS = ['nome', 'projeto', 'pasta', 'lugar', 'papel', 'papelNome', 'orquestrador', 'roda'] as const;
 /** The most items one `inbox` answer hands over (the rest go in the next rounds). */
 const INBOX_BATCH = 50;
+/** A machine whose satellite (one call every 10 s) has not called for this long no longer routes messages. */
+export const STALE_MS = 2 * 60_000;
 
 export interface RemoteBoard {
   readonly listar: readonly unknown[];
@@ -116,7 +123,7 @@ export interface RemotePictures {
   accept(name: string, picture: RemotePicture): boolean;
   /** This VPS's picture with the other machines' sessions it does not have (see the header). Pure of `local`. */
   combine(local: BoardPicture | null): BoardPicture | null;
-  /** The machine whose picture has `placeId` on the board `projectPath`; `undefined` = none. */
+  /** The machine whose fresh picture (see `STALE_MS`) has `placeId` on the board `projectPath`; `undefined` = none. */
   machineOf(projectPath: string, placeId: string): string | undefined;
   /** A message for a place of another machine: queued there (`null` = it runs on no other machine). */
   queue(message: OwnerMessage): Promise<string | null>;
@@ -126,15 +133,21 @@ export interface RemotePictures {
 
 export function createRemotePictures(deps: { readonly dir: string; readonly io: ConfigIoDeps; readonly now?: () => number; readonly log?: (line: string) => void }): RemotePictures {
   const log = deps.log ?? ((line: string) => console.log(`[oraculo] retrato do portão: ${line}`));
+  const now = deps.now ?? Date.now;
   const picturesDir = join(deps.dir, PICTURES_DIR);
   const pictures = new Map<string, RemotePicture>();
+  /** When each machine's satellite last called here (picture or queue). */
+  const heard = new Map<string, number>();
   try {
     for (const file of readdirSync(picturesDir)) {
       const name = file.endsWith('.json') ? file.slice(0, -'.json'.length) : '';
       if (!GATE_NAME.test(name)) continue;
       try {
         const parsed = parseRemotePicture(JSON.parse(readFileSync(join(picturesDir, file), 'utf8')));
-        if (parsed) pictures.set(name, parsed);
+        if (parsed) {
+          pictures.set(name, parsed);
+          heard.set(name, now());
+        }
       } catch {
         log(`${file} ilegível: fica de lado até o próximo retrato dessa máquina.`);
       }
@@ -155,7 +168,9 @@ export function createRemotePictures(deps: { readonly dir: string; readonly io: 
   let memo: { local: BoardPicture | null; version: number; out: BoardPicture | null } | null = null;
 
   function machineOf(projectPath: string, placeId: string): string | undefined {
+    const at = now();
     for (const [name, picture] of pictures) {
+      if (at - (heard.get(name) ?? -Infinity) > STALE_MS) continue;
       for (const session of Object.values(picture.sessoes)) if (session.quemSou.pasta === projectPath && session.quemSou.lugar === placeId) return name;
     }
     return undefined;
@@ -164,6 +179,7 @@ export function createRemotePictures(deps: { readonly dir: string; readonly io: 
   return {
     accept(name, picture) {
       if (!GATE_NAME.test(name)) return false;
+      heard.set(name, now());
       const kept = pictures.get(name);
       if (kept && kept.at >= picture.at) return false;
       mkdirSync(picturesDir, { recursive: true, mode: 0o700 });
@@ -222,6 +238,7 @@ export function createRemotePictures(deps: { readonly dir: string; readonly io: 
     },
 
     inbox(name, entregues) {
+      if (GATE_NAME.test(name)) heard.set(name, now());
       const queue = queueOf(name);
       for (const id of entregues) {
         const item = queue.pending().find((candidate) => candidate.id === id);

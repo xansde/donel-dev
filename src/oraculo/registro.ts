@@ -42,6 +42,7 @@ import { createChatCelularConsumer, createChatCelularQueue, parseChatReplies, ty
 import { CELULAR_LOCAL_FILE, createCelularLocalStore } from './celular-local';
 import { createCelularV2Handler } from './celular-v2';
 import { CHAT_AUDIO_TIMEOUT_MS, createChatAudioWorker, DAEMON_WHISPER_URL } from './chat-audio';
+import { startChatArquivoSweep } from './chat-arquivo';
 import { chatResponder } from './chat-responder';
 import { boardOfSession, createEntregador, createLocalDeliverClient, gatePortOf, type Entregador, type EntregadorPlace } from './entregador';
 import { RETRATO_PC_FILE } from './modo';
@@ -490,6 +491,8 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
   consumers = { decisoes: () => decisoes.round(), pedidas: () => tarefasPedidas.round(), chat: () => chatCelular.round() };
   // After the consumers: an audio a restart left half-way is transcribed again and kicks the chat round.
   audioWorker?.start();
+  // t-a1ad1ca2 — the owner's files from the phone chat are kept 30 days.
+  const stopArquivoSweep = celularLocal ? startChatArquivoSweep(celularLocal.arquivoDir, (line) => console.log(line)) : null;
   console.log(
     `[oraculo] no ar em ${server.url} (${Object.keys(first.doc.tasks).length} tarefas${first.readOnly ? ', só leitura' : ''}, fonte: ${source === 'sqlite' ? 'SQLite' : store ? 'Supabase' : 'ledger.json'}${entregador ? '' : ', entregador à parte'})`,
   );
@@ -508,6 +511,7 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
       tarefasPedidas.stop();
       chatCelular.stop();
       audioWorker?.stop();
+      stopArquivoSweep?.();
       mirror?.dispose();
       return Promise.all([server?.close(), celular?.dispose(), entregadorClosed]).then(() => undefined);
     },
