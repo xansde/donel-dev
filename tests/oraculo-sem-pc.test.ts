@@ -385,7 +385,7 @@ describe('sessão renovada na VPS com o PC fora (t-d461e003)', () => {
   }
 
   it('segue o mesmo place:, assume e reporta a tarefa do lugar e fala com o Líder único', async () => {
-    const w = renewed();
+    const w = renewed({ placeId: DEV });
     const who = JSON.parse((await w.tool(SID_NOVO, 'sessao_quem_sou')).text) as Record<string, unknown>;
     expect(who).toMatchObject({ lugar: DEV, pasta: PROJECT });
 
@@ -403,21 +403,36 @@ describe('sessão renovada na VPS com o PC fora (t-d461e003)', () => {
     expect(w.forwarded).toEqual([]);
   });
 
-  it('o lugar que o app gravou na pasta (placeId) vale; dois candidatos ou um lugar com outra sessão viva: session:', () => {
+  // Corte do Líder único (19/11): o lugar só vem do placeId gravado e conferido no quadro; nunca por nome, papel ou
+  // quem abriu. "Matar a sessão errada é pior do que perder o lugar."
+  it('placeId válido (no quadro, aberto, sem dona viva): o place:', () => {
     const named = renewed({ placeId: DEV, name: 'outro nome' });
     expect(named.local.get()!.sessoes[SID_NOVO]!.quemSou.lugar).toBe(DEV);
+  });
 
-    const twins = renewed();
-    twins.folder(SID_REV, { localCwd: PROJECT, name: 'Dev · atlas', roleId: 'dev', openedBy: LQ, createdAt: '2026-11-19T11:59:40Z' });
-    expect(twins.local.get()!.sessoes[SID_NOVO]!.quemSou.lugar).toBe(NOVO);
+  it('sem placeId: session:, mesmo com um único lugar de mesmo nome, papel e quem abriu', () => {
+    const w = renewed();
+    expect(w.local.get()!.sessoes[SID_NOVO]!.quemSou.lugar).toBe(NOVO);
+  });
 
-    const taken = renewed();
-    taken.live.add(SID_DEV);
-    expect(taken.local.get()!.sessoes[SID_NOVO]!.quemSou.lugar).toBe(NOVO);
+  it('placeId fora do quadro: session:', () => {
+    const w = renewed({ placeId: 'place:nada' });
+    expect(w.local.get()!.sessoes[SID_NOVO]!.quemSou.lugar).toBe(NOVO);
+  });
+
+  it('placeId de lugar fechado: session:', () => {
+    const w = renewed({ placeId: LQ });
+    expect(w.local.get()!.sessoes[SID_NOVO]!.quemSou.lugar).toBe(NOVO);
+  });
+
+  it('placeId ocupado por outra sessão viva: session:', () => {
+    const w = renewed({ placeId: DEV });
+    w.live.add(SID_DEV);
+    expect(w.local.get()!.sessoes[SID_NOVO]!.quemSou.lugar).toBe(NOVO);
   });
 
   it('com quem a abriu vivo, o recado ao Líder único é recusado (como no PC)', async () => {
-    const w = renewed();
+    const w = renewed({ placeId: DEV });
     const dev = w.stored.picture!.sessoes[SID_DEV]!;
     const listar = dev.listar.map((entry) => ((entry as { id: string }).id === LQ ? { id: LQ, papel: 'lider', estado: 'trabalhando' } : entry));
     w.stored.picture = { ...w.stored.picture!, sessoes: { [SID_DEV]: { ...dev, listar } } };
@@ -549,7 +564,7 @@ describe('fechar e ver_tela locais do Líder único: só o id do lugar (revisão
     expect(w.killed).toEqual([]);
   });
 
-  it('sem placeId, com irmã de mesmo nome, papel e quem abriu: session:, viva ou não a dona do outro lugar', () => {
+  it('sem placeId, com irmã de mesmo nome e papel: session:, viva ou não a dona do outro lugar', () => {
     const alive = withSibling();
     alive.folder(SID_NOVO, { localCwd: PROJECT, name: 'Dev · atlas', roleId: 'dev', createdAt: '2026-11-19T11:59:30Z' });
     expect(alive.local.get()!.sessoes[SID_NOVO]!.quemSou.lugar).toBe(NOVO);

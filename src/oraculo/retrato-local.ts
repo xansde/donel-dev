@@ -21,9 +21,9 @@
 // t-d461e003 (19/11, 15h04) — a session the app renewed (its context full: a new sid, the same place) keeps its place.
 // The PC's picture knows the place by the old sid, and the new folder is one it never pictured (the PC left right
 // after): it became `session:<sid>`, and with it "Só o lugar dono" on its tasks. Before `session:<sid>`, the place is
-// the one the app wrote in the folder's meta (`placeId`, `^place:`) when no other live session holds it, else the one place of its board in the picture
-// with the same tab name, role and opener, not closed, and not the place of another live session (one candidate only;
-// two folders after the same place get none).
+// the one the app wrote in the folder's meta (`placeId`, `^place:`), and only when that place is on the pictured board
+// of the folder, is not closed and no other live session holds it. Never by tab name, role or opener (corte do Líder
+// único, 19/11: "matar a sessão errada é pior do que perder o lugar"); a renewal without `placeId` stays `session:<sid>`.
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -254,11 +254,10 @@ export function withLocalSessions(stored: BoardPicture | null, folders: readonly
 }
 
 /**
- * t-d461e003 — the place each renewed folder of `folders` keeps (sid → place id), from the boards of `stored`. A folder
- * that names its place (`placeId`) claims only that one, and only when no other live session of the picture holds it.
- * Without `placeId`: the listed place of its board with the folder's tab name, role and opener, not closed, when it is
- * the only such place (held ones counted) and no other live session holds it. Two folders claiming the same place get
- * neither. In any doubt the folder stays `session:<sid>`: losing the inheritance is fine, a wrong place never is.
+ * t-d461e003 — the place each renewed folder of `folders` keeps (sid → place id), from the boards of `stored`. Only a
+ * folder that names its place (`placeId`) gets one, and only that one: when it is on the pictured board of the folder
+ * (a card or a listed place), is not closed and no other live session of the picture holds it. Two folders claiming the
+ * same place get neither. In any doubt the folder stays `session:<sid>`: losing the place is fine, a wrong one never is.
  */
 function inheritedPlaces(stored: BoardPicture | null, folders: readonly LocalFolder[], alive: ((sid: string) => boolean) | undefined): Map<string, string> {
   const boards = picturedBoards(stored);
@@ -267,31 +266,15 @@ function inheritedPlaces(stored: BoardPicture | null, folders: readonly LocalFol
     if (typeof session.quemSou.lugar === 'string' && (alive?.(sid) ?? true)) held.add(`${String(session.quemSou.pasta)}\n${session.quemSou.lugar}`);
   }
   const claims = new Map<string, string[]>();
-  const claim = (key: string, sid: string): void => {
-    claims.set(key, [...(claims.get(key) ?? []), sid]);
-  };
   for (const folder of folders) {
-    if (folder.leaderOfAll || !folder.localCwd) continue;
-    // The place the app wrote in its meta, and only that one: held by another live session of the picture (a renewal
-    // whose old tmux still runs), the folder stays `session:` — never the name rule, which could give a sibling's place.
-    if (folder.placeId) {
-      if (!held.has(`${folder.localCwd}\n${folder.placeId}`)) claim(`${folder.localCwd}\n${folder.placeId}`, folder.sid);
-      continue;
-    }
-    if (!folder.name || !folder.roleId) continue;
-    // Counted before the held ones are taken out: more than one candidate in all (a live sibling of the same name, role
-    // and opener included) is ambiguous, and the folder stays `session:`.
-    const matches = (boards.get(folder.localCwd)?.listar ?? []).filter(
-      (place): place is Record<string, unknown> & { id: string } =>
-        isRecord(place) &&
-        typeof place.id === 'string' &&
-        PLACE_ID.test(place.id) &&
-        place.nome === folder.name &&
-        place.papel === folder.roleId &&
-        (typeof place.abertaPor === 'string' ? place.abertaPor : undefined) === folder.openedBy &&
-        place.estado !== 'fechada',
-    );
-    if (matches.length === 1 && !held.has(`${folder.localCwd}\n${matches[0]!.id}`)) claim(`${folder.localCwd}\n${matches[0]!.id}`, folder.sid);
+    if (folder.leaderOfAll || !folder.localCwd || !folder.placeId) continue;
+    const pictured = boards.get(folder.localCwd);
+    const listed = (pictured?.listar ?? []).find((place): place is Record<string, unknown> => isRecord(place) && place.id === folder.placeId);
+    const onBoard = Boolean(listed) || pictured?.board?.cards[folder.placeId]?.kind === 'session';
+    if (!onBoard || listed?.estado === 'fechada') continue;
+    const key = `${folder.localCwd}\n${folder.placeId}`;
+    if (held.has(key)) continue;
+    claims.set(key, [...(claims.get(key) ?? []), folder.sid]);
   }
   const out = new Map<string, string>();
   for (const [key, sids] of claims) if (sids.length === 1 && sids[0]) out.set(sids[0], key.slice(key.indexOf('\n') + 1));
