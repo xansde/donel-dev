@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -97,8 +97,36 @@ describe('ledger em SQLite', () => {
     other.close();
     expect((await a.ledger.apply({ kind: 'dono' }, criar(2))).ok).toBe(false);
     expect(Object.keys(a.ledger.load().doc.tasks)).toHaveLength(1);
+    // Sem o ROLLBACK a transação ficaria aberta e toda op seguinte seria recusada: o daemon travaria.
+    const fix = new DatabaseSync(join(dir, 'ledger.sqlite'));
+    fix.exec('DROP TRIGGER barra;');
+    fix.close();
+    expect((await a.ledger.apply({ kind: 'dono' }, criar(3))).ok).toBe(true);
     a.store.close();
-    expect(Object.keys(service(dir).ledger.load().doc.tasks)).toHaveLength(1);
+    expect(Object.keys(service(dir).ledger.load().doc.tasks)).toHaveLength(2);
+  });
+
+  it('a marca perdida depois da semeadura: seguir a volta da mensagem não perde nada e o daemon nunca sobe vazio', async () => {
+    const dir = tmp();
+    const file = createLedgerService({ filePath: join(dir, 'ledger.json'), io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs });
+    for (let i = 0; i < 3; i++) expect((await file.apply({ kind: 'dono' }, criar(i))).ok).toBe(true);
+    const db = join(dir, 'ledger.sqlite');
+    await seedSqliteLedger(db, file.load().doc);
+    renameSync(join(dir, 'ledger.json'), join(dir, 'ledger.json.antes-sqlite-x'));
+    const a = service(dir);
+    expect((await a.ledger.apply({ kind: 'dono' }, criar(9))).ok).toBe(true);
+    a.store.close();
+    rmSync(join(dir, 'ledger.fonte'));
+    expect(() => ledgerSourceOf(dir)).toThrow(/NUNCA apague/);
+    // A volta da mensagem: exportar com o banco no lugar, depois pôr o banco de lado.
+    exportSqliteLedger(db, join(dir, 'ledger.json'));
+    renameSync(db, join(dir, 'lado.sqlite'));
+    expect(ledgerSourceOf(dir)).toBe('arquivo');
+    const back = createLedgerService({ filePath: join(dir, 'ledger.json'), io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs });
+    expect(Object.keys(back.load().doc.tasks)).toHaveLength(4);
+    // Sem ledger.json e sem banco, depois de uma semeadura: o daemon não sobe vazio.
+    rmSync(join(dir, 'ledger.json'));
+    expect(() => ledgerSourceOf(dir)).toThrow(/não sobe vazio/);
   });
 
   it('a fonte: SQLite só semeado e com a marca; banco sem marca ou marca sem banco param o daemon, nunca sobe vazio', async () => {

@@ -8,7 +8,7 @@
 // schema_version, started_at)`. Once seeded, `<dir>/ledger.fonte` says `sqlite`: a database gone missing stops the
 // daemon instead of letting it start an empty ledger. Way back: `--exportar-sqlite <arquivo>` writes a ledger.json.
 
-import { chmodSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { DatabaseSync as DatabaseSyncType } from 'node:sqlite';
 import type { LedgerDoc } from '../shared/ledger/contract';
@@ -169,8 +169,14 @@ export function ledgerSourceOf(dir: string): 'sqlite' | 'supabase' | 'arquivo' {
   })();
   const present = existsSync(join(dir, LEDGER_SQLITE_FILE));
   if (present && seeded) return 'sqlite';
-  if (present) throw new Error(`${join(dir, LEDGER_SQLITE_FILE)} existe sem a marca ${LEDGER_SOURCE_MARK}: a semeadura não terminou. Apague o banco e semeie de novo (--semear-sqlite).`);
-  if (seeded) throw new Error(`${join(dir, LEDGER_SQLITE_FILE)} sumiu, mas o ledger foi semeado nele (${LEDGER_SOURCE_MARK}): o daemon não sobe vazio. Volte o banco com o -wal e o -shm dele, ou volte ao ledger.json com --exportar-sqlite de uma cópia.`);
+  // Never apagar: the database may be the only copy (the seed sets the ledger.json aside). The way back keeps every op:
+  // the database exported where the daemon reads, then set aside (revisão do #496/#498).
+  const back = `Volte ao ledger.json sem perder nada: pare o daemon; com o banco NO LUGAR, rode node <bin>/oraculo.mjs --exportar-sqlite ${join(dir, 'ledger.json')}; mova ledger.sqlite, ledger.sqlite-wal, ledger.sqlite-shm e ${LEDGER_SOURCE_MARK} para ${join(dir, 'antigos')}/; suba. NUNCA apague o banco.`;
+  if (present) throw new Error(`${join(dir, LEDGER_SQLITE_FILE)} existe sem a marca ${LEDGER_SOURCE_MARK}: a semeadura não terminou ou a marca se perdeu. ${back}`);
+  if (seeded) throw new Error(`${join(dir, LEDGER_SQLITE_FILE)} sumiu, mas o ledger foi semeado nele (${LEDGER_SOURCE_MARK}): o daemon não sobe vazio. Volte o banco (com o -wal e o -shm dele) de onde ele foi posto; não suba sem ele.`);
   if (existsSync(join(dir, 'ledger-supabase.json'))) return 'supabase';
+  if (!existsSync(join(dir, 'ledger.json')) && readdirSync(dir).some((name) => name.startsWith('ledger.json.antes-sqlite-'))) {
+    throw new Error(`Não há ${join(dir, 'ledger.json')} nem ${LEDGER_SQLITE_FILE}, mas o ledger foi semeado num SQLite (ledger.json.antes-sqlite-*): o daemon não sobe vazio. Volte o banco ou ponha um ledger.json exportado dele.`);
+  }
   return 'arquivo';
 }
