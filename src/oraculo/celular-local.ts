@@ -307,19 +307,25 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
     addDecisao(input) {
       const existing = data.decisoes.find((row) => row.pedido === input.pedido);
       if (existing) return sameContent(existing, input, DECISAO_KEYS) ? { ok: true, nova: false } : { ok: false, erro: 'conflito' };
-      commit((next) => next.decisoes.push({ ...input, criada_em: iso() }));
+      commit((next) => {
+        next.decisoes.push({ ...input, criada_em: iso() });
+      });
       return { ok: true, nova: true };
     },
     addPedida(input) {
       const existing = data.pedidas.find((row) => row.pedido === input.pedido);
       if (existing) return sameContent(existing, input, PEDIDA_KEYS) ? { ok: true, nova: false } : { ok: false, erro: 'conflito' };
-      commit((next) => next.pedidas.push({ ...input, criada_em: iso() }));
+      commit((next) => {
+        next.pedidas.push({ ...input, criada_em: iso() });
+      });
       return { ok: true, nova: true };
     },
     addChat(id, texto) {
       const existing = data.chat.find((row) => row.id === id);
       if (existing) return existing.autor === 'dono' && existing.texto === texto ? { ok: true, nova: false } : { ok: false, erro: 'conflito' };
-      commit((next) => next.chat.push({ id, autor: 'dono', texto, em_resposta_a: null, criada_em: iso() }));
+      commit((next) => {
+        next.chat.push({ id, autor: 'dono', texto, em_resposta_a: null, criada_em: iso() });
+      });
       return { ok: true, nova: true };
     },
     pendingDecision(tarefa) {
