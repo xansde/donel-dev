@@ -204,6 +204,8 @@ export interface GateDeps {
    * and the call's arguments as the session sent them (the satellite passes them on to the ledger's machine).
    */
   readonly runLedger?: (caller: LedgerCaller, call: LedgerToolCall, context: GateLedgerContext) => Promise<LedgerToolAnswer>;
+  /** t-d461e003 — where an owner place's session may live off the board's list (`withLiveOwner`); absent = the list alone. */
+  readonly liveOwner?: LiveOwnerSource;
   readonly timeouts?: { readonly localAnswerMs?: number };
   readonly log?: (line: string) => void;
 }
@@ -336,6 +338,37 @@ export function callerFromPicture(mine: PictureSession): LedgerCaller | string {
     },
   };
 }
+
+/** t-d461e003 — where an owner session may live that the board's list (the PC's) does not see. */
+export interface LiveOwnerSource {
+  /** This machine's live Donel sessions (sids) as last read; `null` = never read (a `tmux ls` that failed). */
+  readonly tmux: () => ReadonlySet<string> | null;
+  /** The other machine whose fresh picture has `placeId` on `projectPath` (retrato-satelite.ts); absent = none. */
+  readonly machineOf?: (projectPath: string, placeId: string) => string | undefined;
+}
+
+/**
+ * t-d461e003 (19/11) — `caller` with the Oráculo's word on an owner place its list calls gone (`OwnerLive`): its session
+ * (`session:<sid>`, or the board card's of a `place:`) lives in this machine's tmux, or another machine's fresh picture
+ * has the place. The reconciliador handed the Líder único three times the task of session:5c1a55e7, alive in the VPS's
+ * tmux: the PC's picture lists it "fechada" (it was resumed on the VPS). The tmux is read only when the list says gone.
+ */
+export function withLiveOwner(caller: LedgerCaller, source: LiveOwnerSource | undefined): LedgerCaller {
+  if (!source) return caller;
+  let live: ReadonlySet<string> | null | undefined;
+  return {
+    ...caller,
+    ownerLive: (projectPath, placeId) => {
+      if (source.machineOf?.(projectPath, placeId) !== undefined) return true;
+      if (live === undefined) live = source.tmux();
+      if (live === null) return null;
+      const sid = placeId.startsWith(SESSION_PLACE_PREFIX) ? placeId.slice(SESSION_PLACE_PREFIX.length) : caller.sessionOf?.(projectPath, placeId);
+      return sid !== undefined && live.has(sid);
+    },
+  };
+}
+
+const SESSION_PLACE_PREFIX = 'session:';
 
 /** The boards the picture has (each from its freshest session): folder → its places and its saved board. */
 export function picturedBoards(picture: BoardPicture | null): Map<string, { readonly listar: readonly unknown[]; readonly board?: MindscapeBoard }> {
@@ -605,8 +638,9 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     const ledger = async (call: LedgerToolCall): Promise<BrowserToolOutcome> => {
       if (!mine) return { kind: 'error', text: NO_PICTURE };
       if (mine.quemSou.liderUnico === true && pc !== 'ligado') return leaderLedger(mine, call);
-      const caller = callerFromPicture(mine);
-      if (typeof caller === 'string') return { kind: 'error', text: caller };
+      const pictured = callerFromPicture(mine);
+      if (typeof pictured === 'string') return { kind: 'error', text: pictured };
+      const caller = withLiveOwner(pictured, deps.liveOwner);
       const refused = ledgerCallRefusal(call);
       if (refused) return { kind: 'error', text: refused };
       await beforeTask(mine, caller, call);
@@ -631,7 +665,8 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     const leaderLedger = async (mine: PictureSession, asked: LedgerToolCall): Promise<BrowserToolOutcome> => {
       const resolved = leaderTaskContext(picture, mine, asked, (id) => deps.ledger().load().doc.tasks[id]?.projectPath);
       if (typeof resolved === 'string') return { kind: 'error', text: resolved };
-      const { caller, call, onBoard, aroundCaller } = resolved;
+      const { call, onBoard, aroundCaller } = resolved;
+      const caller = withLiveOwner(resolved.caller, deps.liveOwner);
       await beforeTask(onBoard, aroundCaller, call);
       const raw = toolCallOf(singleMessage(body));
       const result = await runLedger(caller, call, { mine, args: raw?.name === call.tool ? raw.args : {} });

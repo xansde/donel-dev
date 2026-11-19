@@ -61,7 +61,7 @@ import type { LedgerApplyResult, LedgerPassedOn, LedgerPrioritized, LedgerPassOn
 import { isMotivoDoDono, isUrgentProgress, MOTIVOS_DO_DONO, progressLine, PROGRESS_FIELD_CHARS, turnEndProgress, type LedgerProgress } from '../shared/ledger/andamento';
 import { agoText, ledgerNews, progressTaskOf, turnAlreadyRecorded } from '../shared/ledger/novidades';
 import type { LedgerToolCall, ProofInput } from '../shared/ledger/tools';
-import { NOT_STARTED_GRACE_MS, orphanReasonIn, ownerGoneIn } from '../shared/ledger/inbox';
+import { NOT_STARTED_GRACE_MS, orphanReasonIn, ownerGoneIn, type OwnerLive } from '../shared/ledger/inbox';
 import { byPanelThenPriority, inBoardQueue, panelPlaces, priorityWrites } from '../shared/ledger/prioridade';
 import { liveSessionOf } from '../shared/ledger/mirror';
 import { deliverersOf, reviewersOutsideChain, reviewRequestNotice, verdictNotice, verdictTargets } from '../shared/ledger/revisao';
@@ -362,6 +362,11 @@ export interface LedgerCaller {
    * the ledger: a /clear or a renewal changes the conversation, the place stays. Missing = unknown, nothing is said.
    */
   readonly sessionOf?: (projectPath: string, placeId: string) => string | undefined;
+  /**
+   * t-d461e003 — the Oráculo's word on an owner place the list calls gone: its session lives in this machine's tmux or
+   * in another machine's fresh picture (`OwnerLive`). Absent = the list decides alone (the PC's app).
+   */
+  readonly ownerLive?: OwnerLive;
 }
 
 /**
@@ -376,7 +381,7 @@ export function leaderCallerOffBoard(base: Pick<LedgerCaller, 'placeId' | 'roleI
 
 /** Why a task is orphan (not closed, its owner place gone); `null` = alive, closed or unknown. The rule is shared with the box. */
 export function orphanReason(caller: LedgerCaller, task: LedgerTask, now: number): string | null {
-  return orphanReasonIn(caller.placeStates, task, now);
+  return orphanReasonIn(caller.placeStates, task, now, caller.ownerLive);
 }
 
 /** The owner place of `task` could not be checked: its board did not answer. Closed and delivered tasks do not depend on it. */
@@ -390,7 +395,7 @@ export { NOT_STARTED_GRACE_MS };
 
 /** Why the owner place of `task` can no longer do the work (closed, out of the board, never started); `null` = alive or unknown. */
 export function ownerGone(caller: LedgerCaller, task: LedgerTask, now: number): string | null {
-  return ownerGoneIn(caller.placeStates, task, now);
+  return ownerGoneIn(caller.placeStates, task, now, caller.ownerLive);
 }
 
 /** The words of the record of a passage: "passada sozinha: o lugar X fechou". */
