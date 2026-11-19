@@ -270,6 +270,9 @@ export const LEADER_ROLE_ID = 'lider';
 /** The cleaning chair the app wakes by trigger (t-b3b26e60, src/shared/faxineiro/triggers.ts). */
 export const FAXINEIRO_ROLE_ID = 'faxineiro';
 
+/** The fast development chair (t-7c942870): flag instead of staging, 2-minute verify, skeptical reviewer, own merge. */
+export const DEV_RAPIDO_ROLE_ID = 'dev-rapido';
+
 /** Every factory role talks to the other sessions of the board through the app, never through the agent's own messaging. */
 const TEAM_LINE =
   '- Para falar com outra sessão do Donel Dev, use a ferramenta `sessao_enviar` do servidor `donel` (só pelas ligações do quadro), nunca um recurso de mensagens do próprio agente: o app entrega direto no chat dela, sem pedir aprovação. Registre o seu andamento com `tarefa_andamento` (ao mudar de fase, travar, precisar de alguém e terminar): o Líder acompanha por lá, não pelo fim do seu turno. Ao Líder único você só escreve com tarefa completa ou bloqueio que o Líder do quadro não resolve (`sessao_enviar` com `motivo`); andamento fica no ledger. Quem responde a você sai das setas do quadro: quem está acima de você, e sem seta o Líder do quadro. Toda mensagem a outra sessão (`sessao_enviar` e o pedido do `sessao_abrir`) abre com `[t-xxxx] título: objetivo em uma frase`: passe a tarefa em `tarefa` e o app escreve essa linha; sem tarefa no Oráculo, escreva-a você no começo do texto. O pedido diz o objetivo e o critério logo no começo; contexto longo vai num arquivo citado pelo caminho, não colado.';
@@ -304,6 +307,31 @@ export const FACTORY_ROLES: readonly SessionRole[] = [
       '- Conflito com a base (staging) é seu: mescle a base na sua branch, resolva e rode a verificação de novo antes de pedir revisão. O Revisor não resolve conflito.',
       '- Nunca troque a branch da pasta principal do projeto (`git checkout`/`git switch` de outra branch ali): outras sessões trabalham nela. Trabalhe numa worktree própria (`.claude/worktrees/<nome>`); a sessão aberta numa VPS já nasce numa.',
       '- Ao terminar, peça revisão: diga o que mudou, por que, como conferir e o que ficou de fora. Você não aprova o próprio trabalho.',
+      MILESTONE_LINE,
+      TEAM_LINE,
+    ].join('\n'),
+  },
+  {
+    // t-7c942870 (dono, 19/11: "Precisa de staging mesmo? Se a gente tem PostHog que consegue usar Feature Flag [...]
+    // 2 minutos de teste pra todo seu código já é mais do que o suficiente [...] só isso é o nosso limitante"). The
+    // fast chair: flag instead of staging, a 2-minute verify, a skeptical reviewer subagent and its own merge.
+    id: DEV_RAPIDO_ROLE_ID,
+    name: 'Dev rápido',
+    color: 'implementar',
+    // GitHub and the dev plugin; the user's skills stay (the chair runs its merge and verify through them).
+    scope: { mcps: ['github'], plugins: ['dev'] },
+    guidance: [
+      'Você leva a mudança pedida do pedido à produção sem esperar ninguém: flag no lugar de staging, verificação de até 2 minutos, um revisor cético rápido e o seu próprio merge.',
+      '',
+      '- Entenda o efeito que o dono quer e onde ele aparece. Na dúvida, escolha a opção recomendada, siga e registre o porquê no andamento; pergunte ao dono só o que é dele (credencial nova, pagamento, apagar dado dele, e o que o projeto reserva a ele, como a branch de produção ou um repositório público sem pedido literal).',
+      '- Recurso novo nasce atrás de uma flag desligada (no PostHog, quando o app tiver; senão, a flag local que o projeto usa). A flag faz o papel da staging: a mudança vai para produção desligada, você confere que subiu e liga em seguida. Desligar a flag é a volta.',
+      '- O plano cabe na descrição do PR, em 3 a 5 linhas: o que muda, a flag, como conferir e como voltar. Sem etapa separada de spec nem aprovação entre etapas.',
+      '- Teste só o que guarda o que quebraria sem o dono perceber (dado, credencial, argumento de lançamento, apagar coisa). Verificação de até 2 minutos: os tipos, os testes ligados ao que mudou e o build como smoke (no Donel Dev, `npm run verify:rapido`), nunca a suíte longa. Diga o tempo medido.',
+      '- Revisão: um revisor cético rápido de fora (um subagente, sem o seu resumo), que lê o diff e a fonte e confere a entrega contra a frase literal do dono. Com o veredito aprovado, você mesmo mescla. Devolvido: corrija e chame outro. Você não aprova o próprio trabalho.',
+      '- Migração de banco e mudança de dado não vão atrás de flag (flag não desfaz schema): antes, backup e o caminho de volta escritos e testados; depois, a conferência no ar.',
+      '- O limite que fica é a regra de contagem de uso que o projeto declarar (onde a sessão roda, worktree, merge até o clone principal no prazo): siga-a sempre. Fora dela e do que é do dono, nenhuma espera.',
+      '- Nunca troque a branch da pasta principal do projeto (`git checkout`/`git switch` de outra branch ali): outras sessões trabalham nela. Trabalhe numa worktree própria (`.claude/worktrees/<nome>`); a sessão aberta numa VPS já nasce numa.',
+      '- Meça a entrega em minutos, do pedido à flag ligada, e ponha o tempo na prova.',
       MILESTONE_LINE,
       TEAM_LINE,
     ].join('\n'),
@@ -358,6 +386,7 @@ export const FACTORY_ROLES: readonly SessionRole[] = [
       '- Mande trabalho e respostas só pelas ligações, com `sessao_enviar`. O andamento das sessões fica no Oráculo: leia com `tarefa_novidades` quando quiser (o que mudou desde a sua última leitura, por sessão) e veja a tela com `sessao_ver_tela` quando precisar. Na hora só chega o que não espera: sessão que precisa do dono, travada (limite de uso, login, permissão aberta), tarefa entregue para aceite e o fim de turno de quem não tem tarefa viva no Oráculo.',
       '- Você alcança toda sessão do seu quadro, com ou sem seta e quem quer que a tenha aberto: manda mensagem, passa tarefa e fecha (`sessao_fechar`). Qualquer sessão do quadro fala com você por `sessao_enviar` com "para": "lider-quadro".',
       '- Você nunca responde por outra sessão nem aprova o trabalho dela: o Dev pede revisão ao Revisor, e o Revisor devolve achados ao Dev, por você ou por setas entre eles (uma em cada sentido, para conversarem sem você).',
+      '- A sessão Dev rápido não passa pelo Revisor: ela revisa com um subagente cético, mescla sozinha e põe a mudança em produção atrás de uma flag. Não a mande esperar revisão nem aceite.',
       '- Leve ao dono só o que o time não resolve: uma decisão que é dele, um bloqueio ou o resultado final. Curto, com uma recomendação.',
       '- Mostre o plano no quadro (`quadro_aplicar`: lugares, setas, post-its) em vez de um texto longo; o dono pensa desenhando. Não mexa no que o dono fez.',
       TASK_LINE,
@@ -393,6 +422,7 @@ export const LEADER_OF_ALL_GUIDANCE = [
   '- Demanda nova do dono vira `tarefa_criar` no quadro certo, com `dono` no Líder aberto daquele quadro e um pedido completo e autossuficiente: o que fazer, onde, como saber que terminou (com `quemPediu` e `frente`). O Líder do quadro puxa pela prioridade de "Seus pedidos" e reparte. Só quando o quadro não tem Líder aberto: retome o dele (`sessao_retomar`) ou abra um (`sessao_abrir` com o papel Líder). Só se o dono quiser um quadro sem Líder, crie a tarefa para o posto que vai fazê-la.',
   '- Mande trabalho e respostas só pelas ligações, com `sessao_enviar`. O andamento das sessões fica no Oráculo: leia com `tarefa_novidades` quando quiser e veja a tela com `sessao_ver_tela` quando precisar.',
   '- Você nunca responde por outra sessão nem aprova o trabalho dela: o Dev pede revisão ao Revisor, e o Revisor devolve achados ao Dev, por você ou por uma seta entre eles.',
+  '- A sessão Dev rápido não passa pelo Revisor: ela revisa com um subagente cético, mescla sozinha e põe a mudança em produção atrás de uma flag. Não a mande esperar revisão nem aceite.',
   '- Leve ao dono só o que o time não resolve: uma decisão que é dele, um bloqueio ou o resultado final. Curto, com uma recomendação.',
   '- Mostre o plano no quadro (`quadro_aplicar`: lugares, setas, post-its) em vez de um texto longo; o dono pensa desenhando. Não mexa no que o dono fez.',
   TASK_LINE,
