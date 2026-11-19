@@ -573,13 +573,23 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
   const ownerRow = (next: LocalFile, id: string): ChatLocal | CorrecaoLocal | undefined =>
     next.chat.find((candidate) => candidate.id === id && candidate.autor === 'dono') ?? next.correcoes?.find((candidate) => candidate.id === id);
 
-  /** Part 0's header, read from the start of the recording's joined file (`null` = it never had part 0, or it is gone). */
+  /**
+   * Part 0's header, read from the start of the recording's joined file (`null` = it never had part 0, or it is gone).
+   * A continuation that borrowed its earlier audio's header keeps it in its first `cabecalho` bytes: a chain
+   * (id1 -> id2 -> id3) takes that one, never bytes of the speech (#527 review, round 3).
+   */
   const headerOf = (first: ChatLocal): Uint8Array | null => {
     const run = first.audio?.trechos?.[0];
-    if (!first.audio || !run || run.n0 !== 0) return null;
+    const emprestado = first.audio?.cabecalho ?? 0;
+    if (!first.audio || !run || (run.n0 !== 0 && emprestado <= 0)) return null;
     try {
       const fd = openSync(audioFile(first.id, first.audio.mime), 'r');
       try {
+        if (emprestado > 0) {
+          const buffer = Buffer.alloc(emprestado);
+          const read = readSync(fd, buffer, 0, emprestado, 0);
+          return read === emprestado && abreComCabecalho(buffer, first.audio.mime) ? buffer : null;
+        }
         const buffer = Buffer.alloc(Math.min(run.fim - run.inicio, 256 * 1024));
         const read = readSync(fd, buffer, 0, buffer.length, run.inicio);
         const header = audioHeader(buffer.subarray(0, read), first.audio.mime);
@@ -609,6 +619,11 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
         for (const row of next.chat) {
           if (taken.length >= limit) break;
           if (row.autor !== 'dono' || row.entregue_em || row.resultado || waitingAudio(row) || !free(row)) continue;
+          // A continuation never reaches the Líder before the audio it continues: it waits while that one is still
+          // uploading or being transcribed (#527 review, round 3).
+          const continua = row.audio?.continua;
+          const anterior = continua === undefined ? undefined : next.chat.find((candidate) => candidate.id === continua && candidate.autor === 'dono');
+          if (anterior && waitingAudio(anterior)) continue;
           row.reservada_ate = now() + RESERVE_MS;
           taken.push(asChatRow(row));
         }

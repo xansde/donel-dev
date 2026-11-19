@@ -640,6 +640,72 @@ describe('v1.8: depois do fechamento automático, o resto vai como áudio novo c
       wk.stop();
     }
   });
+
+  // Rodada 3 da revisão do #527: as sondas S4/S8 (cadeia) e S8 (ordem).
+  it('cadeia id1 -> id2 -> id3: o id3 usa o cabeçalho que o id2 pegou emprestado e sai como continuação, com ou sem a parte 0 do id2', async () => {
+    for (const partesId2 of [[0, 1], [1]]) {
+      const w = world();
+      const id = UUID(1);
+      const id2 = UUID(2);
+      const id3 = UUID(3);
+      const wk = worker(w);
+      await fechadoPeloAutomatico(w, wk, id, partesId2.length === 2 ? [0, 1] : [0]);
+      // O id2 sobe sem cabeçalho, com continua=id1, e o automático o fecha antes do fim.
+      for (const [i, n] of partesId2.entries()) await w.call('POST', '/api/v2/chat/audio/parte', parte(id2, n, parteBytes(2 + i), 'audio/webm', id));
+      w.advance(31 * 60_000);
+      wk.fecharParados();
+      await wk.idle();
+      expect(w.store.audioEstado(id2)).toBe('transcrito');
+      // O resto vai como id3, continua=id2, sem cabeçalho na parte 0.
+      expect(parse(await w.call('POST', '/api/v2/chat/audio/parte', parte(id3, 0, parteBytes(4), 'audio/webm', id2)))).toMatchObject({ ok: true, nova: true });
+      expect(parse(await w.call('POST', '/api/v2/chat/audio/fim', fim(id3, 1, false, 60_000, id2)))).toEqual({ ok: true, nova: true, estado: 'transcrevendo' });
+      for (const queued of w.queued) wk.enqueue(queued);
+      await wk.idle();
+      const textos = (await w.store.chat.tomar(10)).filter((row) => row.id === id3).map((row) => row.texto);
+      // 10:31 UTC é 07:31 em São Paulo: a hora em que o id2 começou.
+      expect(textos).toEqual(['(continuação do áudio #00000002 de 07:31) 🎙 Áudio de 1:00 (transcrição): fala4']);
+      wk.stop();
+    }
+  });
+
+  it('a continuação nunca chega ao Líder antes do anterior: espera enquanto ele transcreve; nenhum dos dois se perde nem duplica', async () => {
+    const w = world();
+    const id = UUID(1);
+    const id2 = UUID(2);
+    let recusar = 1;
+    const wk = createChatAudioWorker({
+      store: w.store,
+      transcribe: async () => '',
+      transcribePedaco: async (file) => {
+        const texto = readFileSync(file, 'utf8');
+        if (texto.startsWith('fala0') && recusar-- > 0) throw new TranscribeError('tempo', 'a VPS ficou sem vaga para transcrever');
+        return texto;
+      },
+      midia: fakeMidia(),
+      kick: () => {},
+      log: () => {},
+      now: w.now,
+      adiarMs: 50,
+    });
+    await fechadoPeloAutomatico(w, wk, id);
+    expect(w.store.audioEstado(id)).toBe('transcrevendo');
+    await w.call('POST', '/api/v2/chat/audio/parte', parte(id2, 0, parteBytes(2), 'audio/webm', id));
+    await w.call('POST', '/api/v2/chat/audio/fim', fim(id2, 1, false, 60_000, id));
+    wk.enqueue(id2);
+    await wk.idle();
+    expect(w.store.audioEstado(id2)).toBe('transcrito');
+    // O id1 ainda transcreve: a continuação espera.
+    expect(await w.store.chat.tomar(10)).toEqual([]);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    await wk.idle();
+    const textos = (await w.store.chat.tomar(10)).map((row) => row.texto);
+    expect(textos).toEqual([
+      '🎙 Áudio de 2:00 (transcrição): (gravação interrompida) fala0 fala1',
+      '(continuação do áudio #00000001 de 07:00) 🎙 Áudio de 1:00 (transcrição): fala2',
+    ]);
+    expect(await w.store.chat.tomar(10)).toEqual([]);
+    wk.stop();
+  });
 });
 
 describe('pedaços e emenda', () => {
