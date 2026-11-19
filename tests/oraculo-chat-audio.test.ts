@@ -89,6 +89,18 @@ describe('áudio do chat do celular (/api/v2/chat/audio)', () => {
     expect((await w.call('POST', '/api/v2/chat/audio', audioBody(UUID(3), BYTES, { mime: 'audio/flac' }))).status).toBe(415);
     expect((await w.call('POST', '/api/v2/chat/audio', audioBody(UUID(3), BYTES, { duracao_ms: 300_001 }))).status).toBe(413);
     expect((await w.call('POST', '/api/v2/chat/audio', audioBody(UUID(3), BYTES, { audio_b64: 'não é base64' }))).status).toBe(400);
+    expect((await w.call('POST', '/api/v2/chat/audio', audioBody(UUID(3), BYTES, { audio_b64: 'QUJD=' }))).status).toBe(400);
+  });
+
+  it('o áudio longo, perto do teto de 6 MB do corpo, entra (a conferência do base64 não estoura a pilha)', async () => {
+    const w = world();
+    const grande = Buffer.alloc(4_400_000, 7);
+    const body = audioBody(UUID(1), grande, { duracao_ms: 299_000 });
+    expect(body.length).toBeGreaterThan(5_800_000);
+    expect(body.length).toBeLessThan(6 * 1024 * 1024);
+    const resposta = await w.call('POST', '/api/v2/chat/audio', body);
+    expect(resposta.status).toBe(200);
+    expect(readFileSync(join(w.dir, 'chat-audio', `${UUID(1)}.ogg`)).equals(grande)).toBe(true);
   });
 
   it('a linha transcrevendo não vai ao Líder; transcrita vai uma vez; falhada vai uma vez, com o aviso e o caminho', async () => {

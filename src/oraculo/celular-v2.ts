@@ -27,7 +27,9 @@ const MAX_BODY = 64 * 1024;
 export const CHAT_AUDIO_PATH = 'chat/audio';
 export const MAX_AUDIO_BODY = 6 * 1024 * 1024;
 const MAX_AUDIO_MS = 5 * 60_000;
-const BASE64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+// No repeated group: V8 recursed on `(?:x{4})*` and overflowed the stack above ~4.4 MB of base64 (PR #500 review).
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+const isBase64 = (value: string): boolean => value.length % 4 === 0 && BASE64.test(value);
 
 const HEADERS = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } as const;
 const json = (status: number, value: unknown): MobileResponse => ({ status, headers: { ...HEADERS, 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(value) });
@@ -261,7 +263,7 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     if (typeof mime !== 'string' || !Object.hasOwn(CHAT_AUDIO_MIMES, mime)) return erro(415, 'formato');
     if (typeof duracao !== 'number' || !Number.isInteger(duracao) || duracao < 1) return erro(400, 'corpo', 'duracao_ms');
     if (duracao > MAX_AUDIO_MS) return erro(413, 'grande-demais');
-    if (typeof b64 !== 'string' || !b64 || !BASE64.test(b64)) return erro(400, 'corpo', 'audio_b64: base64 padrão, sem quebras');
+    if (typeof b64 !== 'string' || !isBase64(b64)) return erro(400, 'corpo', 'audio_b64: base64 padrão, sem quebras');
     const added = deps.store.addChatAudio(id, { mime, duracao_ms: duracao }, Buffer.from(b64, 'base64'));
     if (!added.ok) return erro(409, 'conflito', 'Esta mensagem já existe com outro conteúdo.');
     const estado = deps.store.audioEstado(id) === 'transcrevendo' ? 'transcrevendo' : deps.store.chatEstado(id);
