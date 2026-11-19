@@ -14,6 +14,7 @@
 import { randomUUID } from 'node:crypto';
 import { unwrapPastedContent } from '../../shared/chat/promptMatch';
 import type { LiderSendResult } from '../../shared/lider/ipc';
+import { isBlankReply } from '../../shared/lider/blankReply';
 
 /** The text the Líder reads before the owner's message; it is also how the transcript is matched to the message. */
 export function phoneMarker(id: string): string {
@@ -177,7 +178,8 @@ export function answersIn(transcriptTail: string, ids: readonly string[], option
     }
     if (entry.type === 'assistant') {
       const text = textOf((entry.message as { content?: unknown } | undefined)?.content).trim();
-      if (text) events.push({ kind: 'wrote', text });
+      // Empty or a lone "-" never goes to the phone, nor replaces a good answer written before it (t-d461e003).
+      if (!isBlankReply(text)) events.push({ kind: 'wrote', text });
     }
   }
   const answers = new Map<string, string>();
