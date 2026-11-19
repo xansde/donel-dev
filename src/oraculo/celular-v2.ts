@@ -17,6 +17,7 @@ import { prepareProof, type ProofReader } from '../main/ledger-mirror/cartas';
 import type { MobileRequest, MobileResponse } from '../main/celular/server';
 import { CHAT_AUDIO_MIMES, type CelularLocalStore } from './celular-local';
 import { MAX_ARQUIVO_BODY, MAX_ARQUIVO_BYTES } from './chat-arquivo';
+import type { GlossarioResumo, GlossarioStore } from './glossario';
 
 export const V2_PREFIX = '/api/v2/';
 export const SIGNATURE_SCHEME = 'donel-req-v1';
@@ -36,6 +37,9 @@ export const CHAT_ARQUIVO_PATH = 'chat/arquivo';
 const MAX_NOME = 255;
 const MAX_MIME = 255;
 const MAX_LEGENDA = 4000;
+/** t-753e8199 — the owner corrects an audio's transcription (contract v1.3). */
+export const CHAT_CORRECAO_PATH = 'chat/correcao';
+const MAX_CORRECAO = 4000;
 
 const HEADERS = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } as const;
 const json = (status: number, value: unknown): MobileResponse => ({ status, headers: { ...HEADERS, 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(value) });
@@ -55,6 +59,9 @@ export interface CelularV2Deps {
   readonly kick?: (fila: 'decisoes' | 'pedidas' | 'chat') => void;
   /** A new voice message for the daemon's transcriber (chat-audio.ts). */
   readonly audio?: (id: string) => void;
+  /** What the transcriber learns from the owner's corrections (glossario.ts); absent = nothing learnt. */
+  readonly glossario?: GlossarioStore;
+  readonly log?: (line: string) => void;
   readonly now?: () => number;
 }
 
@@ -295,6 +302,39 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     return json(200, { ok: true, nova: added.nova, estado: deps.store.chatEstado(id) });
   }
 
+  const glossarioResumo = (): GlossarioResumo => {
+    try {
+      return deps.glossario?.resumo() ?? { correcoes: 0, trocas: 0 };
+    } catch {
+      return { correcoes: 0, trocas: 0 };
+    }
+  };
+
+  /** Contract v1.3: the line becomes the owner's text; the correction is one delivery to the Líder; the glossary learns. */
+  function chatCorrecao(body: Record<string, unknown>): MobileResponse {
+    const { id, audio, texto } = body;
+    if (typeof id !== 'string' || !UUID.test(id)) return erro(400, 'invalido', 'id: uuid v4 em minúsculas');
+    if (typeof audio !== 'string' || !UUID.test(audio)) return erro(400, 'invalido', 'audio: uuid v4 em minúsculas');
+    if (typeof texto !== 'string' || !texto.trim() || texto.length > MAX_CORRECAO) return erro(400, 'invalido', `texto com 1 a ${MAX_CORRECAO} caracteres`);
+    const result = deps.store.corrigirAudio(id, audio, texto.trim());
+    if (!result.ok) {
+      if (result.erro === 'nao-encontrada') return erro(404, 'nao-encontrada');
+      if (result.erro === 'nao-e-audio') return erro(409, 'nao-e-audio', 'Só a transcrição de um áudio do dono se corrige.');
+      return erro(409, 'conflito', 'Esta correção já existe com outro texto.');
+    }
+    let correcoes: number | null = null;
+    if (result.nova) {
+      // The correction is kept and goes to the Líder even if the glossary cannot be written now.
+      try {
+        if (deps.glossario) correcoes = deps.glossario.aprender(result.antes ?? '', texto.trim()).correcoes;
+      } catch (error) {
+        deps.log?.(`[glossario] correção ${id.slice(0, 8)} não aprendida: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      deps.kick?.('chat');
+    }
+    return json(200, { ok: true, nova: result.nova, correcoes: correcoes ?? glossarioResumo().correcoes });
+  }
+
   function arvore(): MobileResponse {
     try {
       const raw = JSON.parse(readFileSync(deps.arvoreFile, 'utf8')) as unknown;
@@ -333,9 +373,10 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     if (isPost && path === 'chat') return chatEnviar(body!);
     if (isAudio) return chatAudio(body!);
     if (isArquivo) return chatArquivo(body!);
+    if (isPost && path === CHAT_CORRECAO_PATH) return chatCorrecao(body!);
     if (method === 'GET' && path === 'chat') {
       const limit = Math.min(400, Math.max(1, Number(url.searchParams.get('limite')) || 200));
-      return json(200, { mensagens: deps.store.conversa(limit) });
+      return json(200, { mensagens: deps.store.conversa(limit), glossario: glossarioResumo() });
     }
     if (method === 'GET' && path === 'arvore') return arvore();
     return erro(404, 'nao-encontrada');
