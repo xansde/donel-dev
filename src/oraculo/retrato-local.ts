@@ -21,7 +21,7 @@
 // t-d461e003 (19/11, 15h04) — a session the app renewed (its context full: a new sid, the same place) keeps its place.
 // The PC's picture knows the place by the old sid, and the new folder is one it never pictured (the PC left right
 // after): it became `session:<sid>`, and with it "Só o lugar dono" on its tasks. Before `session:<sid>`, the place is
-// the one the app wrote in the folder's meta (`placeId`, `^place:`), else the one place of its board in the picture
+// the one the app wrote in the folder's meta (`placeId`, `^place:`) when no other live session holds it, else the one place of its board in the picture
 // with the same tab name, role and opener, not closed, and not the place of another live session (one candidate only;
 // two folders after the same place get none).
 
@@ -186,7 +186,7 @@ export function withLocalSessions(stored: BoardPicture | null, folders: readonly
     newPlaces.push({
       sid: folder.sid,
       pasta: folder.localCwd,
-      lugar: folder.placeId ?? inherited.get(folder.sid) ?? `session:${folder.sid}`,
+      lugar: inherited.get(folder.sid) ?? `session:${folder.sid}`,
       ...(folder.roleId ? { papel: folder.roleId } : {}),
       ...(folder.name ? { nome: folder.name } : {}),
       ...(folder.openedBy ? { abertaPor: folder.openedBy } : {}),
@@ -256,7 +256,8 @@ export function withLocalSessions(stored: BoardPicture | null, folders: readonly
 /**
  * t-d461e003 — the place each renewed folder of `folders` keeps (sid → place id), from the boards of `stored`: the one
  * listed place of its board with the folder's tab name, role and opener, not closed, held by no other live session of
- * the picture, and claimed by no other folder. A folder that names its place (`placeId`) takes it and claims it.
+ * the picture, and claimed by no other folder. A folder that names its place (`placeId`) claims it when no other live
+ * session holds it; two folders claiming the same place get neither (`session:`), never both.
  */
 function inheritedPlaces(stored: BoardPicture | null, folders: readonly LocalFolder[], alive: ((sid: string) => boolean) | undefined): Map<string, string> {
   const boards = picturedBoards(stored);
@@ -270,8 +271,10 @@ function inheritedPlaces(stored: BoardPicture | null, folders: readonly LocalFol
   };
   for (const folder of folders) {
     if (folder.leaderOfAll || !folder.localCwd) continue;
-    if (folder.placeId) {
-      claim(`${folder.localCwd}\n${folder.placeId}`, '');
+    // The place the app wrote in its meta, unless another live session of the picture holds it (a renewal whose old
+    // tmux still runs): then the usual rule, which never gives a held place.
+    if (folder.placeId && !held.has(`${folder.localCwd}\n${folder.placeId}`)) {
+      claim(`${folder.localCwd}\n${folder.placeId}`, folder.sid);
       continue;
     }
     if (!folder.name || !folder.roleId) continue;

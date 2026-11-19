@@ -446,3 +446,81 @@ describe('sessão renovada na VPS com o PC fora (t-d461e003)', () => {
     expect(w.forwarded).toEqual([]);
   });
 });
+
+// Revisão do PR #523: o fechar e o ver_tela locais do Líder único acham o alvo só pelo id exato do lugar, como o PC
+// (findPlace); nunca pelo sucessor de um lugar fechado, por papel, "lider-quadro" ou "quem-me-abriu".
+describe('fechar e ver_tela locais do Líder único: só o id do lugar (revisão do #523)', () => {
+  const LQ = 'place:lq';
+  const OLD = 'place:old';
+  /** A Dev alive here and its closed sibling (same role, opened by the same Líder of the board): the sucessor case. */
+  function withClosedSibling() {
+    const w = vps();
+    const dev = w.stored.picture!.sessoes[SID_DEV]!;
+    const board: MindscapeBoard = {
+      ...BOARD,
+      cards: { ...BOARD.cards, [LQ]: card(LQ, 'lider'), [OLD]: card(OLD, 'dev') },
+      links: [
+        { id: 'a', from: LQ, to: DEV, arrow: true, by: 'session', opened: true },
+        { id: 'b', from: LQ, to: OLD, arrow: true, by: 'session', opened: true },
+      ],
+    };
+    const listar = [
+      { id: DEV, papel: 'dev', nome: 'Dev · atlas', estado: 'trabalhando', abertaPor: LQ, voce: true },
+      { id: LQ, papel: 'lider', estado: 'trabalhando' },
+      { id: OLD, papel: 'dev', nome: 'Dev velho', estado: 'fechada', abertaPor: LQ },
+    ];
+    w.stored.picture = { ...w.stored.picture!, sessoes: { [SID_DEV]: { ...dev, listar, board } } };
+    w.screens.set(SID_DEV, '> ');
+    return w;
+  }
+
+  it('lugar fechado com irmã viva: recusa e não mata ninguém', async () => {
+    const w = withClosedSibling();
+    const closed = await w.tool(SID_LIDER, 'sessao_fechar', { quadro: 'atlas', quem: OLD });
+    expect(closed.error, closed.text).toBe(true);
+    expect(closed.text).toContain('fechada');
+    expect(w.killed).toEqual([]);
+    const seen = await w.tool(SID_LIDER, 'sessao_ver_tela', { quadro: 'atlas', quem: OLD });
+    expect(seen.error, seen.text).toBe(true);
+  });
+
+  it('nome de papel, "lider-quadro", "quem-me-abriu" ou id fora do quadro: recusa', async () => {
+    const w = withClosedSibling();
+    for (const quem of ['dev', 'lider-quadro', 'quem-me-abriu', 'place:nada']) {
+      const closed = await w.tool(SID_LIDER, 'sessao_fechar', { quadro: 'atlas', quem });
+      expect(closed.error, `${quem}: ${closed.text}`).toBe(true);
+      const seen = await w.tool(SID_LIDER, 'sessao_ver_tela', { quadro: 'atlas', quem });
+      expect(seen.error, `${quem}: ${seen.text}`).toBe(true);
+    }
+    expect(w.killed).toEqual([]);
+    // The exact id still closes it.
+    expect(await w.tool(SID_LIDER, 'sessao_fechar', { quadro: 'atlas', quem: DEV })).toEqual({ error: false, text: 'Fechada.' });
+    expect(w.killed).toEqual([SID_DEV]);
+  });
+
+  it('duas sessões vivas com o mesmo lugar: o fechar recusa em vez de escolher às cegas', async () => {
+    const w = vps();
+    const dev = w.stored.picture!.sessoes[SID_DEV]!;
+    w.stored.picture = { ...w.stored.picture!, sessoes: { [SID_DEV]: dev, [SID_NOVO]: { ...dev, at: dev.at } } };
+    w.live.add(SID_NOVO);
+    w.screens.set(SID_DEV, '> ');
+    w.screens.set(SID_NOVO, '> ');
+    const closed = await w.tool(SID_LIDER, 'sessao_fechar', { quadro: 'atlas', quem: DEV });
+    expect(closed.error, closed.text).toBe(true);
+    expect(w.killed).toEqual([]);
+  });
+
+  it('o placeId da pasta respeita quem já tem o lugar; dois com o mesmo placeId não ficam ambos com ele', () => {
+    const w = vps();
+    // The old tmux of DEV is alive (SID_DEV, pictured by the PC); the renewed folder names the same place.
+    w.folder(SID_NOVO, { localCwd: PROJECT, projectName: 'atlas', name: 'Dev · atlas', roleId: 'dev', placeId: DEV, createdAt: '2026-11-19T11:59:30Z' });
+    expect(w.local.get()!.sessoes[SID_NOVO]!.quemSou.lugar).toBe(NOVO);
+
+    const twins = vps();
+    twins.live.delete(SID_DEV);
+    twins.folder(SID_NOVO, { localCwd: PROJECT, name: 'Dev · atlas', roleId: 'dev', placeId: DEV, createdAt: '2026-11-19T11:59:30Z' });
+    twins.folder(SID_REV, { localCwd: PROJECT, name: 'Dev · atlas', roleId: 'dev', placeId: DEV, createdAt: '2026-11-19T11:59:40Z' });
+    const sessoes = twins.local.get()!.sessoes;
+    expect([sessoes[SID_NOVO]!.quemSou.lugar, sessoes[SID_REV]!.quemSou.lugar].filter((lugar) => lugar === DEV).length).toBeLessThan(2);
+  });
+});

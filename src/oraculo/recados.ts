@@ -643,10 +643,15 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     return item.estado === 'devolvido' ? null : item;
   }
 
+  /** The folder sids of the live sessions of `placeId` on the board of `projectPath`, on this machine. */
+  function sidsOfPlace(projectPath: string, placeId: string, live: ReadonlySet<string>): string[] {
+    const sessions = Object.entries(deps.picture()?.sessoes ?? {});
+    return sessions.filter(([sid, session]) => live.has(sid) && session.quemSou.lugar === placeId && session.quemSou.pasta === projectPath).map(([sid]) => sid);
+  }
+
   /** The folder sid of the live session of `placeId` on the board of `projectPath`, on this machine. */
   function sidOfPlace(projectPath: string, placeId: string, live: ReadonlySet<string>): string | undefined {
-    const sessions = Object.entries(deps.picture()?.sessoes ?? {});
-    return sessions.find(([sid, session]) => live.has(sid) && session.quemSou.lugar === placeId && session.quemSou.pasta === projectPath)?.[0];
+    return sidsOfPlace(projectPath, placeId, live)[0];
   }
 
   function ledgerDoc() {
@@ -835,15 +840,30 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
 
   /**
    * t-d461e003 — the place the Líder único names, running in this machine's tmux: its board place and its sid, or why
-   * not (with the PC off nothing else shows or closes a session; a place of another machine waits for the PC).
+   * not (with the PC off nothing else shows or closes a session; a place of another machine waits for the PC). As on
+   * the PC (`findPlace`): only the exact id of a place of the board, never a role, "lider-quadro", "quem-me-abriu" nor
+   * the successor of a closed place (closing would end a live sibling); two live sessions with the place = refused.
    */
   async function leaderLocalTarget(call: ScreenCall | CloseCall, verb: string): Promise<{ readonly placeId: string; readonly sid: string; readonly estado?: string } | string> {
-    const target = leaderTarget(call.quem, call.quadro);
-    if (typeof target === 'string') return target;
-    const sid = sidOfPlace(target.projectPath, target.placeId, await localSessions());
-    if (!sid) return `"${target.placeId}" não roda nesta máquina: com o PC fora, ${verb} só sessões do tmux daqui.`;
-    const estado = listedPlaces(target.listar).find((place) => place.id === target.placeId)?.estado;
-    return { placeId: target.placeId, sid, ...(estado ? { estado } : {}) };
+    const boards = picturedBoards(deps.picture());
+    const names = [...boards.keys()].map(lastSegment).join(', ') || 'nenhum';
+    const id = call.quem.trim();
+    const isPlaceOf = (board: MindscapeBoard | undefined, listar: readonly unknown[]): boolean => board?.cards[id]?.kind === 'session' || listedPlaces(listar).some((place) => place.id === id);
+    const found = call.quadro
+      ? [...boards].find(([pasta]) => pasta === call.quadro || lastSegment(pasta) === call.quadro)
+      : [...boards].find(([, { listar, board }]) => isPlaceOf(board, listar));
+    if (!call.quadro && !found) return `"${id}" não é lugar de nenhum quadro que conheço com o PC fora (${names}); use o id do lugar (veja sessao_listar) e diga o quadro em "quadro".`;
+    if (!found) return `Com o PC fora, conheço só os quadros do último retrato (${names}); "${call.quadro}" não está entre eles.`;
+    const [projectPath, { listar, board }] = found;
+    if (!isPlaceOf(board, listar)) return `"${id}" não é um lugar do quadro ${lastSegment(projectPath)}: use o id do lugar (veja sessao_listar).`;
+    const estado = listedPlaces(listar).find((place) => place.id === id)?.estado;
+    if (estado === 'fechada') return `"${id}" está fechada; se outro lugar a sucedeu, use o id dele (veja sessao_listar).`;
+    const reach = board ? canReach({ schemaVersion: 8, boards: { [projectPath]: board } }, LEADER_OF_ALL_FROM, { projectPath, placeId: id }) : { ok: false as const, reason: 'o retrato não tem as setas deste quadro.' };
+    if (!reach.ok) return `Sem ligação: o Líder único não alcança "${id}" no quadro ${lastSegment(projectPath)}: ${reach.reason}`;
+    const sids = sidsOfPlace(projectPath, id, await localSessions());
+    if (!sids.length) return `"${id}" não roda nesta máquina: com o PC fora, ${verb} só sessões do tmux daqui.`;
+    if (sids.length > 1) return `"${id}" tem ${sids.length} sessões vivas nesta máquina (${sids.join(', ')}); não sei qual é a do lugar. Espere o PC voltar.`;
+    return { placeId: id, sid: sids[0]!, ...(estado ? { estado } : {}) };
   }
 
   /** When each target with a waiting item was first missing from tmux (memory only). */
