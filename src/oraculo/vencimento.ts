@@ -14,13 +14,32 @@
 //   Oráculo's, so it never makes another one (no loop), and its key (`vencido:<item>`) joins a repeat (one per item,
 //   across restarts too).
 //
-// The age is counted in each queue (an item that crosses a hop, satellite → personal VPS → PC, starts again there).
+// The age crosses the hops (revisão do #524): a message that leaves one queue for the next (a recado whose session left,
+// back to the relay; a satellite's notice to the personal VPS; another machine's queue to its satellite) carries
+// `sentAt`, when it was first queued, and the next queue counts from it. One that arrives already stale is recorded
+// stale there with no notice (the hop that let it age told, or it is a repeat of a key that went stale before).
+//
+// The measured case of 19/11 (24 notices of 3 to 4 h handed out at once) is under this limit: 6 h cuts an order of the
+// day before, not a morning's notices that reach the Líder in the afternoon. Lowering `STALE_MS` is the knob for that.
 
 import type { OwnerMessage } from '../main/ledger-card-writer';
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 
 /** How long an undelivered message stays worth delivering. */
 export const STALE_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * A message handed out near the limit (a GET of the PC, a satellite's inbox) and acknowledged a little after it is not
+ * stale: for this long after its last hand-out, and never beyond `STALE_MS` + this, it waits for the ack (not handed
+ * out again, not told as stale).
+ */
+export const ACK_GRACE_MS = 10 * 60 * 1000;
+
+/** `sentAt` when it is a real time not in the future, else `now` (the age a queue counts from). */
+export function sentAtOf(message: { readonly sentAt?: unknown }, now: number): number {
+  const at = message.sentAt;
+  return typeof at === 'number' && Number.isFinite(at) && at > 0 ? Math.min(at, now) : now;
+}
 
 /** The key of an expiry notice (`vencido:<the expired item's key or id>`): it never makes another one. */
 export const EXPIRY_KEY_PREFIX = 'vencido:';

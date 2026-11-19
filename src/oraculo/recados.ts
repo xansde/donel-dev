@@ -44,7 +44,11 @@
 // `vencido:<item>`, so a restart joins it instead of telling twice, and it never makes a notice of its own. An Oráculo
 // notice has nobody to tell: only the log. The owner's words never go stale: they go marked "(atrasada: …)". On disk a
 // `vencido` item is written `devolvido` with `vencidoEm` (a daemon of before this rule reads it as terminal too, never
-// as 'fila').
+// as 'fila'). The age crosses hops (revisão do #524): an item made from a message with `sentAt` (it came from the relay,
+// a satellite's inbox, the registro) counts from it, one that arrives already stale is born `vencido` with no notice,
+// and an item that goes back to the relay takes its `criado` along. A repeat of a key that went stale here is not
+// delivered (`deliverLocal` answers `null`) and leaves the key stale in the relay too, so the caller's way to the relay
+// joins it there instead of starting it again.
 
 import { createHash, randomBytes } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -66,7 +70,7 @@ import type { OwnerMessage } from '../main/ledger-card-writer';
 import { picturedBoards, type BoardPicture, type PictureSession } from './portao';
 import type { GateHookResponse, GateRecados, SendCall } from './gate-recados';
 import type { LocalLeader } from './lider-local';
-import { ageText, expiryNotice, isOwnerMessage, isStale, markLate, relaySenderOf } from './vencimento';
+import { ageText, expiryNotice, isOwnerMessage, isStale, markLate, relaySenderOf, sentAtOf } from './vencimento';
 
 /**
  * `devolvido` = its target left this machine before reading it: it went to the PC's relay with the same key (t-c3fbe852).
@@ -662,9 +666,26 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     const same = items.find((item) => item.chave === chave && (key !== undefined || (item.para.sid === para.sid && at - item.criado < JOIN_MS)));
     if (same) return same;
     const id = `r-${randomBytes(4).toString('hex')}`;
-    const item: RecadoItem = { id, chave, de, para, texto: `${labelOf(id, de)} ${words}`, criado: at, estado: 'fila', tentativas: 0, ...(volta?.key ? { volta } : {}) };
+    // Counted from when it was first queued (a message that crossed a hop says it), not from its arrival here.
+    const criado = volta ? sentAtOf(volta, at) : at;
+    const fresh: RecadoItem = { id, chave, de, para, texto: `${labelOf(id, de)} ${words}`, criado, estado: 'fila', tentativas: 0, ...(volta?.key ? { volta } : {}) };
+    // Already stale on arrival (it aged in the queue before this one, which tells its sender): kept, never delivered.
+    const item: RecadoItem = staleRecado(fresh, at) ? { ...fresh, estado: 'vencido', vencidoEm: at } : fresh;
+    if (item.estado === 'vencido') log(`recado ${id} para ${para.lugar} (${para.sid}) chegou vencido (${ageText(criado, at)}): não é entregue.`);
     write([...items, item]);
     return item;
+  }
+
+  /**
+   * An item a message joined that will not be delivered here: gone back to the relay, or stale. A stale one with a key
+   * leaves that key stale in the relay (its `criado` as `sentAt`: it arrives stale there, with no notice), so the
+   * caller's way to the relay after this `null` joins it instead of starting it again.
+   */
+  async function notHere(item: RecadoItem): Promise<boolean> {
+    if (item.estado === 'devolvido') return true;
+    if (item.estado !== 'vencido') return false;
+    if (item.volta?.key && deps.relay) await deps.relay({ ...item.volta, sentAt: item.criado }).catch((error: unknown) => log(`recado ${item.id} vencido não ficou marcado no relay: ${error instanceof Error ? error.message : String(error)}`));
+    return true;
   }
 
   /**
@@ -675,7 +696,7 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
     const leader = await deps.leader?.();
     if (!leader || !message.key) return null;
     const item = enqueue(de, { lugar: LEADER_OF_ALL, sid: leader.sid }, words, message.key, message);
-    return item.estado === 'devolvido' ? null : item;
+    return (await notHere(item)) ? null : item;
   }
 
   /** The folder sid of the live session of `placeId` on the board of `projectPath`, on this machine. */
@@ -897,7 +918,8 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       }
       if (!item.volta || !deps.relay) continue;
       try {
-        await deps.relay(item.volta);
+        // With when it was first queued: its age goes on counting in the relay (revisão do #524).
+        await deps.relay({ ...item.volta, sentAt: item.criado });
       } catch (error) {
         log(`recado ${item.id} não voltou ao relay: ${error instanceof Error ? error.message : String(error)}`);
         continue;
@@ -1183,7 +1205,7 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       const sid = sidOfPlace(message.projectPath, message.placeId, await localSessions());
       if (!sid) return null;
       const item = enqueue({ lugar: '', nome: 'Oráculo' }, { lugar: message.placeId, sid }, message.text.replace(/^◆\s*/, ''), message.key, message);
-      return item.estado === 'devolvido' ? null : { placeId: message.placeId };
+      return (await notHere(item)) ? null : { placeId: message.placeId };
     },
 
     stateOf(key) {

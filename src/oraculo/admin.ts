@@ -63,7 +63,7 @@ export function createOracleAdminRoutes(deps: { readonly celular: CelularCore; r
       deps.setPicture({ at: body.at, sessoes });
       return json(200, { ok: true, sessoes: Object.keys(sessoes).length });
     }
-    if (method === 'GET' && path === '/v1/fila') return json(200, { itens: relay.pending().map((item) => ({ id: item.id, message: item.message })) });
+    if (method === 'GET' && path === '/v1/fila') return json(200, { itens: relay.handOut().map((item) => ({ id: item.id, message: item.message })) });
     if (method === 'POST' && path === '/v1/fila/ack') {
       const body = bodyOf(request);
       if (typeof body.id !== 'string') return json(400, { error: 'id' });

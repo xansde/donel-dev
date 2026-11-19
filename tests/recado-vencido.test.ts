@@ -11,7 +11,9 @@ import type { MindscapeBoard, MindscapeCard } from '../src/shared/mindscape/mode
 import type { BoardPicture, PictureSession } from '../src/oraculo/portao';
 import { createGateRecados, type RecadosTmux } from '../src/oraculo/recados';
 import { createRelay } from '../src/oraculo/relay';
-import { STALE_MS } from '../src/oraculo/vencimento';
+import { createSatelliteNotice } from '../src/oraculo/satelite';
+import { noticeOf } from '../src/oraculo/portoes';
+import { ACK_GRACE_MS, STALE_MS } from '../src/oraculo/vencimento';
 
 const io = createSystemConfigIoDeps();
 const dirs: string[] = [];
@@ -182,6 +184,73 @@ describe('Recado vencido nos recados da máquina', () => {
   });
 });
 
+describe('Recado vencido entre filas (a idade não zera no salto)', () => {
+  it('um aviso que volta ao relay leva quando foi enfileirado, e o relay o corta no limite contado dali', async () => {
+    const g = setup();
+    const recados = g.make();
+    const message: OwnerMessage = { projectPath: PROJECT, placeId: REV, text: '◆ Oráculo: a tarefa foi entregue', leaderText: '◆ Oráculo: entregue', key: 'aviso:tarefa_entregar:t-1:place:rev:1' };
+    expect(await recados.deliverLocal(message)).toEqual({ placeId: REV });
+    g.advance(STALE_MS - 10 * 60_000);
+    g.live.delete(SID_REV);
+    await recados.tick();
+    g.advance(60_000);
+    await recados.tick();
+    expect(g.relayed).toHaveLength(1);
+    expect(g.relayed[0]).toMatchObject({ key: message.key, sentAt: START });
+    // In the relay, the age goes on from START: 20 min later it is past the limit and never goes out.
+    const dir = mkdtempSync(join(tmpdir(), 'vencido-salto-'));
+    dirs.push(dir);
+    const clock = { now: START + STALE_MS - 9 * 60_000 };
+    const relay = createRelay({ filePath: join(dir, 'fila.json'), io, now: () => clock.now, log: () => undefined });
+    await relay.send(g.relayed[0]!, 0);
+    expect(relay.handOut().map((item) => item.message.sentAt)).toEqual([START]);
+    clock.now += 20 * 60_000;
+    expect(relay.handOut()).toEqual([]);
+    expect(relay.byKey(message.key!)?.vencidoEm).toBe(clock.now);
+  });
+
+  it('a mensagem que chega já vencida (de outra fila) não é entregue nem gera aviso', async () => {
+    const g = setup();
+    const recados = g.make();
+    const old: OwnerMessage = { projectPath: PROJECT, placeId: REV, text: '◆ Recado de Dev (place:dev): termine o passo', leaderText: '◆ x', key: `recado:${DEV}:${'b'.repeat(32)}`, sentAt: START - STALE_MS - 60_000 };
+    expect(await recados.deliverLocal(old)).toBeNull();
+    await recados.tick();
+    expect(await g.endOfTurn(recados, SID_REV)).toBe('');
+    expect(await g.endOfTurn(recados, SID_DEV)).toBe('');
+  });
+
+  it('repetir a chave de um aviso que venceu aqui não o revive nem o dá como entregue', async () => {
+    const g = setup();
+    const recados = g.make();
+    const message: OwnerMessage = { projectPath: PROJECT, placeId: REV, text: '◆ Oráculo: caixa parada', leaderText: '◆ Oráculo: caixa parada', key: 'aviso:X' };
+    expect(await recados.deliverLocal(message)).toEqual({ placeId: REV });
+    g.advance(LATER);
+    await recados.tick();
+    expect(await recados.deliverLocal(message)).toBeNull();
+    // The key is left stale in the relay (sent with when it was first queued), so the caller's way there joins it.
+    expect(g.relayed).toEqual([expect.objectContaining({ key: 'aviso:X', sentAt: START })]);
+    expect(await g.endOfTurn(recados, SID_REV)).toBe('');
+  });
+
+  it('o satélite manda ao Oráculo da VPS quando o aviso foi enfileirado, e o portão o recebe', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vencido-satelite-'));
+    dirs.push(dir);
+    const posted: string[] = [];
+    const notices = createSatelliteNotice({
+      url: 'http://vps:47816',
+      token: () => 'tok',
+      file: join(dir, 'avisos-pendentes.json'),
+      io,
+      log: () => undefined,
+      post: async (_url, _token, body) => (posted.push(body), { status: 200, body: '{}' }),
+    });
+    const sentAt = Date.now() - 60 * 60_000;
+    await notices.send({ projectPath: PROJECT, placeId: '', text: '◆ Oráculo: x', leaderText: '◆ Oráculo: x', key: 'caixa:1', sentAt });
+    const aviso = (JSON.parse(posted[0]!) as { aviso: unknown }).aviso;
+    expect(noticeOf(aviso)?.sentAt).toBe(sentAt);
+  });
+});
+
 describe('Recado vencido no relay (fila.json, avisos-pendentes.json, filas das outras máquinas)', () => {
   const at = Date.UTC(2026, 10, 19, 13, 59); // 19/11 10:59 in São Paulo
   const base = { projectPath: PROJECT, leaderText: '◆ para o Líder' };
@@ -225,5 +294,43 @@ describe('Recado vencido no relay (fila.json, avisos-pendentes.json, filas das o
     expect(third.filter((item) => item.key.startsWith('vencido:'))).toHaveLength(0); // the notice went stale too, with no notice of its own
     const all = (JSON.parse(readFileSync(file, 'utf8')) as { items: { key: string }[] }).items;
     expect(all.filter((item) => item.key.startsWith('vencido:'))).toHaveLength(1);
+  });
+  it('entregue perto do limite e confirmado depois dele não vence nem avisa ninguém; sem confirmação, vence após a folga', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vencido-ack-'));
+    dirs.push(dir);
+    const file = join(dir, 'fila.json');
+    const clock = { now: at };
+    const relay = relayAt(file, clock);
+    await relay.send({ ...base, placeId: REV, text: '◆ Recado de Dev (place:dev): a', key: `recado:${DEV}:${'c'.repeat(32)}` }, 0);
+    await relay.send({ ...base, placeId: REV, text: '◆ Recado de Dev (place:dev): b', key: `recado:${DEV}:${'d'.repeat(32)}` }, 0);
+    clock.now += STALE_MS - 60_000;
+    const [first, second] = relay.handOut();
+    clock.now += 2 * 60_000;
+    expect(relay.handOut(), 'não sai de novo enquanto espera a confirmação').toEqual([]);
+    expect(relay.pending()).toHaveLength(2);
+    expect(relay.ack(first!.id, { placeId: REV })).toBe(true);
+    expect(relay.byId(first!.id)).toMatchObject({ deliveredTo: { placeId: REV } });
+    expect(relay.byId(first!.id)?.vencidoEm).toBeUndefined();
+    clock.now += ACK_GRACE_MS;
+    expect(relay.pending().map((item) => item.key)).toEqual([`vencido:recado:${DEV}:${'d'.repeat(32)}`]);
+    expect(relay.byId(second!.id)?.vencidoEm).toBe(clock.now);
+    expect(relay.ack(second!.id, { placeId: REV }), 'confirmação tardia de um vencido não o dá como entregue').toBe(false);
+    const all = (JSON.parse(readFileSync(file, 'utf8')) as { items: { key: string }[] }).items;
+    expect(all.filter((item) => item.key.startsWith('vencido:')).map((item) => item.key)).toEqual([`vencido:recado:${DEV}:${'d'.repeat(32)}`]);
+  });
+
+  it('no disco o vencido parece entregue a um daemon de antes da regra (rollback não o ressuscita)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'vencido-disco-'));
+    dirs.push(dir);
+    const file = join(dir, 'fila.json');
+    const clock = { now: at };
+    await relayAt(file, clock).send({ ...base, placeId: '', text: '◆ Oráculo: caixa parada', key: 'caixa:s9' }, 0);
+    clock.now += LATER;
+    expect(relayAt(file, clock).pending()).toEqual([]);
+    const saved = (JSON.parse(readFileSync(file, 'utf8')) as { items: { key: string; deliveredTo?: unknown; deliveredAt?: number; vencidoEm?: number }[] }).items.find((item) => item.key === 'caixa:s9');
+    expect(saved).toMatchObject({ deliveredTo: { placeId: '' }, deliveredAt: clock.now, vencidoEm: clock.now });
+    // And this daemon still reads it as stale, never as delivered.
+    expect(relayAt(file, clock).byKey('caixa:s9')).toMatchObject({ vencidoEm: clock.now });
+    expect(relayAt(file, clock).byKey('caixa:s9')?.deliveredTo).toBeUndefined();
   });
 });

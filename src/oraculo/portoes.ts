@@ -126,7 +126,9 @@ export function noticeOf(value: unknown): OwnerMessage | null {
   if (typeof projectPath !== 'string' || typeof placeId !== 'string' || typeof text !== 'string' || typeof leaderText !== 'string') return null;
   if (key !== undefined && typeof key !== 'string') return null;
   if (text.length > 20_000 || leaderText.length > 20_000) return null;
-  return { projectPath, placeId, text, leaderText, ...(typeof key === 'string' ? { key } : {}) };
+  // Recado vencido: when it was first queued, so its age goes on counting in the next queue.
+  const sentAt = typeof value.sentAt === 'number' && Number.isFinite(value.sentAt) && value.sentAt > 0 ? value.sentAt : undefined;
+  return { projectPath, placeId, text, leaderText, ...(typeof key === 'string' ? { key } : {}), ...(sentAt !== undefined ? { sentAt } : {}) };
 }
 
 export interface GateToolRoutesDeps {

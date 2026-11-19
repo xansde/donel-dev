@@ -12,13 +12,19 @@
 // marked `vencidoEm` (kept, terminal: a retry of its key does not revive it), logged, and a recado a session sent leaves
 // a notice to it in this same queue, in the same write (one per item, `vencido:<key>`); the owner's words never go
 // stale, they go marked "(atrasada: …)". Swept when the queue is opened (the daemon's boot) and at every `pending()`.
+// The age crosses hops: an item's `at` is the message's `sentAt` when it came with one, and what it hands out carries it
+// (`handOut`), so a notice that waited 5 h in a Líder's queue here does not start again at zero (revisão do #524). One
+// that arrives already stale is recorded stale with no notice (the queue that let it age tells). An item handed out
+// near the limit waits `ACK_GRACE_MS` for its ack before it can go stale, and is not handed out again meanwhile. On
+// disk a stale item also carries `deliveredTo: {placeId: ''}` + `deliveredAt`, so a daemon of before this rule (a
+// rollback, an old satellite) reads it as delivered, never as pending.
 
 import { randomUUID } from 'node:crypto';
 import { dirname } from 'node:path';
 import type { LedgerDeliveredTo } from '../shared/ledger/contract';
 import type { DeliverOwnerMessage, OwnerMessage } from '../main/ledger-card-writer';
 import type { ConfigIoDeps } from '../main/config-store';
-import { ageText, expiryNotice, isOwnerMessage, isStale, markLate, relaySenderOf } from './vencimento';
+import { ACK_GRACE_MS, ageText, expiryNotice, isOwnerMessage, isStale, markLate, relaySenderOf, sentAtOf } from './vencimento';
 
 export interface RelayItem {
   readonly id: string;
@@ -40,6 +46,13 @@ export interface Relay {
   send(message: OwnerMessage, waitMs: number): Promise<Exclude<LedgerDeliveredTo, null> | 'pendente'>;
   /** What still waits to go (stale items swept first: never handed out). */
   pending(): RelayItem[];
+  /**
+   * What goes out now to whoever delivers it (the PC's GET, a satellite's inbox, the notices' round): `pending()` but
+   * an item handed out near the limit and still unacked (it waits for its ack); each message carries `sentAt`.
+   */
+  handOut(): RelayItem[];
+  /** The item of `id`, whatever its state; `undefined` = not kept. */
+  byId(id: string): RelayItem | undefined;
   /** The item of `key`, pending or delivered (kept 7 days); `undefined` = the relay never had it. */
   byKey(key: string): RelayItem | undefined;
   /** The PC delivered `id`; `null` (nobody open) keeps it queued. `true` = this ack took it out. */
@@ -66,10 +79,18 @@ function parseItem(value: unknown): RelayItem | null {
     key: value.key,
     at: value.at,
     message: { projectPath, placeId, text, leaderText },
-    ...(deliveredTo ? { deliveredTo, ...(typeof value.deliveredAt === 'number' ? { deliveredAt: value.deliveredAt } : {}) } : {}),
-    ...(typeof value.vencidoEm === 'number' ? { vencidoEm: value.vencidoEm } : {}),
+    // A stale item's `deliveredTo` on disk is only for a daemon of before the rule: here it was never delivered.
+    ...(typeof value.vencidoEm === 'number'
+      ? { vencidoEm: value.vencidoEm }
+      : deliveredTo
+        ? { deliveredTo, ...(typeof value.deliveredAt === 'number' ? { deliveredAt: value.deliveredAt } : {}) }
+        : {}),
   };
 }
+
+/** On disk a stale item reads as delivered to nobody to a daemon of before the rule (it never hands it out again). */
+const toDisk = (item: RelayItem): RelayItem =>
+  item.vencidoEm !== undefined ? { ...item, deliveredTo: { placeId: '' }, deliveredAt: item.vencidoEm } : item;
 
 export function createRelay(deps: {
   readonly filePath: string;
@@ -110,7 +131,7 @@ export function createRelay(deps: {
     const tmp = `${filePath}.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`;
     try {
       if (!io.existsSync(dirname(filePath))) io.mkdirSync(dirname(filePath));
-      io.writeFileText(tmp, JSON.stringify({ items: kept }, null, 2));
+      io.writeFileText(tmp, JSON.stringify({ items: kept.map(toDisk) }, null, 2));
       io.renameFile(tmp, filePath);
     } catch (error) {
       io.unlinkFile(tmp);
@@ -119,6 +140,12 @@ export function createRelay(deps: {
   }
 
   const name = filePath.split(/[\\/]/).pop() ?? filePath;
+  /** When each item was last handed out (memory only): one near the limit waits `ACK_GRACE_MS` for its ack. */
+  const handedOut = new Map<string, number>();
+  const awaitingAck = (item: RelayItem, at: number): boolean => {
+    const out = handedOut.get(item.id);
+    return out !== undefined && at - out < ACK_GRACE_MS;
+  };
 
   /**
    * Recado vencido: the stale items still waiting turn `vencidoEm` (a sender's recado leaves its notice here, in the
@@ -130,7 +157,7 @@ export function createRelay(deps: {
     let changed = false;
     const notices: RelayItem[] = [];
     const next = items.map((item) => {
-      if (item.deliveredTo || item.vencidoEm !== undefined || !isStale(item.at, at)) return item;
+      if (item.deliveredTo || item.vencidoEm !== undefined || !isStale(item.at, at) || awaitingAck(item, at)) return item;
       const { message } = item;
       if (isOwnerMessage(item.key, message.text)) {
         const text = markLate(message.text, item.at);
@@ -171,7 +198,14 @@ export function createRelay(deps: {
       if (same?.vencidoEm !== undefined) return 'pendente';
       let item = same;
       if (!item) {
-        item = { id: randomUUID(), key, message, at: now() };
+        const at = now();
+        item = { id: randomUUID(), key, message, at: sentAtOf(message, at) };
+        // Already stale on arrival (it aged in the queue before this one, which tells its sender): kept, never out.
+        if (isStale(item.at, at) && !isOwnerMessage(key, message.text)) {
+          write([...items, { ...item, vencidoEm: at }]);
+          log(`${name}: ${item.id} chegou vencido (${ageText(item.at, at)}, para ${message.placeId || 'o Líder único'}): não sai.`);
+          return 'pendente';
+        }
         write([...items, item]);
       }
       deps.notify?.();
@@ -193,14 +227,26 @@ export function createRelay(deps: {
     pending() {
       return sweep().filter((item) => !item.deliveredTo && item.vencidoEm === undefined);
     },
+    handOut() {
+      const at = now();
+      const out = sweep().filter((item) => !item.deliveredTo && item.vencidoEm === undefined && !(isStale(item.at, at) && awaitingAck(item, at)));
+      for (const id of [...handedOut.keys()]) if (at - handedOut.get(id)! >= ACK_GRACE_MS) handedOut.delete(id);
+      for (const item of out) handedOut.set(item.id, at);
+      return out.map((item) => ({ ...item, message: { ...item.message, sentAt: item.at } }));
+    },
     byKey(key) {
       return read().find((item) => item.key === key);
+    },
+    byId(id) {
+      return read().find((item) => item.id === id);
     },
     ack(id, deliveredTo) {
       if (deliveredTo === null) return false;
       const items = read();
       const index = items.findIndex((item) => item.id === id);
-      if (index < 0 || items[index]!.deliveredTo) return false;
+      // A stale one was already told as not delivered (its ack came after the grace): left as it is.
+      if (index < 0 || items[index]!.deliveredTo || items[index]!.vencidoEm !== undefined) return false;
+      handedOut.delete(id);
       items[index] = { ...items[index]!, deliveredTo, deliveredAt: now() };
       write(items);
       for (const resolve of waiters.get(id) ?? []) resolve(deliveredTo);
