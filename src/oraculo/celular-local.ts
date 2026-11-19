@@ -779,7 +779,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
         if (!audio.automatico) return { ok: true, nova: false, estado: audio.estado };
         // Contract v1.8: the `fim` of an audio the VPS closed after 30 min. Asking for no part past what the VPS closed
         // with (the holes in it are marked in the text): it is done. Past it: the phone sends the rest as a new audio.
-        const recebidas = Object.keys(audio.partes).map(Number).sort((a, b) => a - b);
+        const recebidas = Object.keys(audio.partes ?? {}).map(Number).sort((a, b) => a - b);
         const fechouCom = audio.total ?? (recebidas[recebidas.length - 1] ?? -1) + 1;
         if (fim.partes > fechouCom) return { ok: false, erro: 'fechado-auto', recebidas };
         return { ok: true, nova: false, estado: audio.estado, fechado: 'auto' };
@@ -825,7 +825,7 @@ export function createCelularLocalStore(filePath: string, now: () => number = Da
       const semInicio = continua !== undefined ? !header && !proprio : !got.has(0);
       // The earlier audio failed without its part 0 and this one does not carry every part it had (the same bytes):
       // the Líder is told that stretches of it were never transcribed (#527 review).
-      const meus = new Set(Object.values(audio.partes));
+      const meus = new Set(Object.values(audio.partes ?? {}));
       const incompleto = anterior?.audio?.estado === 'falhou' && anterior.audio.motivo === SEM_PARTE_0 && Object.values(anterior.audio.partes ?? {}).some((sha) => !meus.has(sha));
       commit((next) => {
         const row = next.chat.find((candidate) => candidate.id === id)!;
