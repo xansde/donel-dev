@@ -286,6 +286,35 @@ describe('com o PC ligado, o retrato do PC manda', () => {
     expect(w.forwarded).toEqual([]);
   });
 
+  it('o Líder único com retrato feito aqui e o PC não fora: ver_tela e fechar vão ao túnel; túnel recusado cai aqui', async () => {
+    // 19/11 15h: the app reopened, the Líder's tunnel answers, but the probe never pictured him and his local picture
+    // answered "O PC está desligado" to everything only the PC does.
+    const w = vps({ pcSeenAgoMs: 30_000 });
+    expect(w.local.get()!.sessoes[SID_LIDER]).toMatchObject({ local: true, quemSou: { liderUnico: true } });
+    w.setForward(async (_port, request) => {
+      w.forwarded.push(request.body);
+      return { status: 200, headers: { 'content-type': 'application/json' }, body: '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"do PC"}]}}' };
+    });
+    expect(await w.tool(SID_LIDER, 'sessao_ver_tela', { quadro: 'atlas', quem: DEV })).toEqual({ error: false, text: 'do PC' });
+    expect(await w.tool(SID_LIDER, 'sessao_fechar', { quadro: 'atlas', quem: DEV })).toEqual({ error: false, text: 'do PC' });
+    expect(w.forwarded).toHaveLength(2);
+    // What is answered here stays here (his tunnel may connect and never answer, the case of 07h34).
+    expect((await w.tool(SID_LIDER, 'sessao_quem_sou')).error).toBe(false);
+    expect(w.forwarded).toHaveLength(2);
+    // The tunnel refused: answered here, as before.
+    w.setForward(async () => 'desligado');
+    const off = await w.tool(SID_LIDER, 'sessao_ver_tela', { quadro: 'atlas', quem: DEV });
+    expect(off.error).toBe(true);
+    expect(off.text).toMatch(/PC está desligado/);
+  });
+
+  it('o Líder único com o PC fora: ver_tela não toca o túnel', async () => {
+    const w = vps();
+    const off = await w.tool(SID_LIDER, 'sessao_ver_tela', { quadro: 'atlas', quem: DEV });
+    expect(off.error).toBe(true);
+    expect(w.forwarded).toEqual([]);
+  });
+
   it('o PC ligado mas o túnel da sessão recém-aberta recusa: ela se identifica pelo que a VPS tem', async () => {
     const w = vps({ pcSeenAgoMs: 30_000 });
     w.folder(SID_NOVO, { localCwd: PROJECT, roleId: 'dev', openedBy: 'lider', createdAt: new Date(w.clock.now - MIN).toISOString() });
