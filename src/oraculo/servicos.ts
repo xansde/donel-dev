@@ -106,6 +106,48 @@ export function checkNotice(op: Record<string, unknown>, name: string): NoticeCh
   return { ok: true, texto, chave };
 }
 
+/**
+ * t-3b258224 — the reconciliador opens the board's elastic Revisor itself at its 2nd request with no Revisor alive on the
+ * board (the Líder único's standing order r-0b7e4683): `{ op: 'abrir-revisor', quadro, pedido, chave, tarefa? }`. The
+ * Oráculo opens it as the Líder único through the openLocal of the entregador (abrir-local.ts), always with the role
+ * `revisor` and the name "Revisor", on the board's own machine; one Revisor per board at a time. No ledger.
+ */
+export const OPEN_REVIEWER_OP = 'abrir-revisor';
+const OPEN_REVIEWER_KEYS: ReadonlySet<string> = new Set(['op', 'quadro', 'pedido', 'chave', 'tarefa']);
+const OPEN_REVIEWER_BOARD_MAX = 200;
+const OPEN_REVIEWER_REQUEST_MAX = 6000;
+
+/** What the reconciliador asks: the board (name or folder), the Revisor's first message, its key and maybe its task. */
+export interface OpenReviewerOrder {
+  readonly quadro: string;
+  readonly pedido: string;
+  readonly chave: string;
+  readonly tarefa?: string;
+}
+
+/** The answer of an opening: opened, one already there (alive or waiting for a slot), no room, or refused. */
+export interface OpenReviewerOutcome {
+  readonly resultado: 'aberta' | 'ja-tem' | 'sem-vaga' | 'recusada';
+  readonly lugar?: string;
+  readonly texto: string;
+}
+
+export type OpenReviewerCheck = ({ readonly ok: true } & OpenReviewerOrder) | { readonly ok: false; readonly status: 400 | 403; readonly error: string };
+
+/** The opening's own check: only the reconciliador, and only these fields (never the role, the machine or the name). */
+export function checkOpenReviewer(op: Record<string, unknown>, name: string): OpenReviewerCheck {
+  if (name !== RECONCILER_SERVICE) return { ok: false, status: 403, error: 'só o reconciliador abre o Revisor do quadro' };
+  const strange = Object.keys(op).find((key) => !OPEN_REVIEWER_KEYS.has(key));
+  if (strange) return { ok: false, status: 400, error: `o reconciliador não manda "${strange}": o papel é revisor, a máquina é a do quadro e o nome é Revisor` };
+  const { quadro, pedido, chave, tarefa } = op;
+  const sized = (value: unknown, max: number): value is string => typeof value === 'string' && value.trim() !== '' && [...value].length <= max;
+  if (!sized(quadro, OPEN_REVIEWER_BOARD_MAX)) return { ok: false, status: 400, error: `quadro de 1 a ${OPEN_REVIEWER_BOARD_MAX} caracteres` };
+  if (!sized(pedido, OPEN_REVIEWER_REQUEST_MAX)) return { ok: false, status: 400, error: `pedido de 1 a ${OPEN_REVIEWER_REQUEST_MAX} caracteres` };
+  if (!sized(chave, NOTICE_KEY_MAX)) return { ok: false, status: 400, error: `chave de 1 a ${NOTICE_KEY_MAX} caracteres` };
+  if (tarefa !== undefined && (typeof tarefa !== 'string' || !TASK_ID.test(tarefa))) return { ok: false, status: 400, error: '"tarefa" é t-xxxxxxxx' };
+  return { ok: true, quadro, pedido, chave, ...(typeof tarefa === 'string' ? { tarefa } : {}) };
+}
+
 export type ServiceOp = Extract<LedgerOp, { op: 'criar' | 'assumir' | 'entregar' | 'transferir' | 'andamento' }>;
 
 /**

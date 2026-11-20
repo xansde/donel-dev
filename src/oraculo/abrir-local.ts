@@ -31,6 +31,13 @@
 // from the named fields of its meta (never its keys) and its `dir`; its meta gets `renovaDe` (the limitador reads it)
 // and the first message is "read the handoff". It never touches the old session: renovar-local.ts ends it after.
 //
+// t-3b258224 (20/11) — the reconciliador's opening of a board's elastic Revisor (`openReviewer`, called by the registro's
+// service route `abrir-revisor`, never by a tool): as the Líder único, always the role `revisor` and the name "Revisor",
+// and only when the board has no Revisor alive, waiting for a slot (its tmux up, still in the limitador's wait) or being
+// made (`reviewerOnBoard`). In the same line as every opening, so two calls close together open one. A board of another
+// machine: its fresh picture says whether a Revisor is there (`remoteReviewer`), else the order goes there as the Líder
+// único's. A Revisor alive on the PC itself is not seen here (accepted: rare, and the PC's own board shows it).
+//
 // The session folder holds keys: nothing read from a meta here is ever shown or logged.
 
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
@@ -50,6 +57,7 @@ import { CARD_PROGRESS_SENTENCE, LEADER_ROLE_ID, LEGACY_PROGRESS_SENTENCE } from
 import { renewalLaunchArgs } from '../shared/sessionRenewal';
 import { remoteSpawnWorktree, worktreeNameFor, worktreeNameFromArgs } from '../shared/sessionWorktree';
 import type { GateAbrir, OpenCall } from './gate-abrir';
+import type { OpenReviewerOrder, OpenReviewerOutcome } from './servicos';
 import type { LocalLeader } from './lider-local';
 import { picturedBoards, type BoardPicture, type PictureSession } from './portao';
 
@@ -109,6 +117,8 @@ export interface OpenLocalDeps {
    * satellite pictures it (abrir-satelite.ts). `null` = no other machine has it (the refusal of today).
    */
   readonly remote?: (call: OpenCall) => Promise<BrowserToolOutcome | null>;
+  /** t-3b258224 — the place of a Revisor alive on board `quadro` of another machine's fresh picture; `null` = none. */
+  readonly remoteReviewer?: (quadro: string) => string | null;
   /** This machine's `$HOME` (default `os.homedir()`): a successor's project folder is its old `dir` relative to it. */
   readonly home?: string;
   readonly now?: () => number;
@@ -155,6 +165,11 @@ interface FolderFacts {
   readonly worktree: string | null;
   /** The session's working folder (`dir`, written by its setup: the physical path, maybe a worktree). */
   readonly dir?: string;
+  readonly roleId?: string;
+  /** Its board place (`place:<uuid>` or `session:<sid>`), when its meta names one. */
+  readonly placeId?: string;
+  /** Still being made (the `criando` mark). */
+  readonly creating?: boolean;
 }
 
 function readDirFile(sessionsDir: string, sid: string): string | undefined {
@@ -185,6 +200,9 @@ function readFolders(sessionsDir: string): FolderFacts[] {
         sid,
         ...(typeof raw.openedBy === 'string' ? { openedBy: raw.openedBy } : {}),
         ...(typeof raw.localCwd === 'string' ? { localCwd: raw.localCwd } : {}),
+        ...(typeof raw.roleId === 'string' ? { roleId: raw.roleId } : {}),
+        ...(typeof raw.placeId === 'string' && PLACE_ID.test(raw.placeId) ? { placeId: raw.placeId } : {}),
+        ...(existsSync(join(sessionsDir, sid, CREATING_MARK)) ? { creating: true } : {}),
         ports,
         worktree: worktreeNameFromArgs(args),
         ...(() => {
@@ -230,6 +248,23 @@ export function boardFolderFrom(
   for (const [root, count] of counts) if (best === null || count > counts.get(best)!) best = root;
   if (best === null) return `nenhuma sessão desta máquina (${machine}) mostra a pasta do quadro ${boardName}, e sem ela não sei onde abrir aqui. Abra a primeira sessão desse quadro nesta máquina pelo PC.`;
   return { homeRelativeDir: relative(home, best) || '.' };
+}
+
+/** The role of the elastic Revisor the reconciliador opens (t-3b258224). */
+export const REVIEWER_ROLE_ID = 'revisor';
+const REVIEWER_NAME = 'Revisor';
+
+/**
+ * t-3b258224 — pure: the place of a Revisor of board `pasta` on this machine, alive in its tmux (working, or still in
+ * the limitador's wait for a slot: the tmux is up either way) or still being made (`criando`); `null` = none.
+ */
+export function reviewerOnBoard(
+  folders: readonly { readonly sid: string; readonly roleId?: string; readonly localCwd?: string; readonly placeId?: string; readonly creating?: boolean }[],
+  live: ReadonlySet<string>,
+  pasta: string,
+): string | null {
+  const found = folders.find((folder) => folder.roleId === REVIEWER_ROLE_ID && folder.localCwd === pasta && (live.has(folder.sid) || folder.creating === true));
+  return found ? (found.placeId ?? `session:${found.sid}`) : null;
 }
 
 /** Pure — why this machine has no room for one more session; `null` = room. */
@@ -464,6 +499,8 @@ export interface OpenLocal extends GateAbrir {
   openFor(order: OpeningOrder): Promise<BrowserToolOutcome>;
   /** t-49dee38d — the successor of a session past the context limit (renovar-local.ts); never ends the old one. */
   openSuccessor(call: SuccessorCall): Promise<SuccessorOutcome>;
+  /** t-3b258224 — the reconciliador's Revisor for a board (the registro's service route); one per board at a time. */
+  openReviewer(order: Omit<OpenReviewerOrder, 'chave'>): Promise<OpenReviewerOutcome>;
 }
 
 export function createOpenLocal(deps: OpenLocalDeps): OpenLocal {
@@ -755,6 +792,45 @@ export function createOpenLocal(deps: OpenLocalDeps): OpenLocal {
     return { kind: 'aberta', sid: newSid };
   }
 
+  /**
+   * t-3b258224 — the board's elastic Revisor, opened as the Líder único: 'ja-tem' when one is alive, waiting or being
+   * made on the board; 'sem-vaga' with no room; 'aberta' with its place (a board of another machine: the order went
+   * there, the place shows in its picture); 'recusada' with why.
+   */
+  async function openReviewer(order: Omit<OpenReviewerOrder, 'chave'>): Promise<OpenReviewerOutcome> {
+    const refused = (texto: string): OpenReviewerOutcome => ({ resultado: 'recusada', texto });
+    const kit = kitOf();
+    if (!kit) return refused(NO_KIT);
+    const role = roleOf(kit, REVIEWER_ROLE_ID);
+    if (typeof role === 'string') return refused(role);
+    const boards = picturedBoards(deps.picture());
+    const found = [...boards].find(([pasta]) => pasta === order.quadro || lastSegment(pasta) === order.quadro);
+    const call = { pedido: order.pedido, nome: REVIEWER_NAME, ...(order.tarefa ? { tarefa: order.tarefa } : {}) };
+    if (!found) {
+      const there = deps.remoteReviewer?.(order.quadro) ?? null;
+      if (there) return { resultado: 'ja-tem', lugar: there, texto: `O quadro ${order.quadro} já tem o Revisor ${there}, vivo ou esperando vaga.` };
+      const forwarded = deps.remote ? await deps.remote({ tool: 'sessao_abrir', papel: REVIEWER_ROLE_ID, quadro: order.quadro, onde: 'auto', ...call }) : null;
+      if (!forwarded) return refused(`O quadro ${order.quadro} não está no retrato desta máquina nem no de outra.`);
+      return forwarded.kind === 'error' ? refused(forwarded.text ?? '') : { resultado: 'aberta', texto: forwarded.text ?? '' };
+    }
+    const [pasta] = found;
+    const there = reviewerOnBoard(readFolders(deps.sessionsDir), await deps.liveSessions(), pasta);
+    if (there) return { resultado: 'ja-tem', lugar: there, texto: `O quadro ${lastSegment(pasta)} já tem o Revisor ${there}, vivo ou esperando vaga.` };
+    const noRoom = deps.room();
+    if (noRoom) return { resultado: 'sem-vaga', texto: `Esta máquina está sem vaga agora (${noRoom}).` };
+    const outcome = await openOn(kit, role, found, LEADER_OF_ALL, call);
+    if (outcome.kind === 'error') return refused(outcome.text ?? '');
+    let lugar: string | undefined;
+    try {
+      const said = JSON.parse(outcome.text ?? '') as { lugar?: unknown };
+      if (typeof said.lugar === 'string') lugar = said.lugar;
+    } catch {
+      // the place stays unsaid
+    }
+    log(`[oraculo] abrir: Revisor ${lugar ?? ''} aberto no quadro ${lastSegment(pasta)} pelo reconciliador (ordem permanente do Líder único, r-0b7e4683).`);
+    return { resultado: 'aberta', ...(lugar ? { lugar } : {}), texto: outcome.text ?? '' };
+  }
+
   const inLine = <T>(work: () => Promise<T>): Promise<T> => {
     const turn = line.then(work);
     line = turn.catch(() => undefined);
@@ -764,5 +840,6 @@ export function createOpenLocal(deps: OpenLocalDeps): OpenLocal {
     abrir: (sid, _mine, call) => inLine(() => open(sid, call)),
     openFor: (order) => inLine(() => openFor(order)),
     openSuccessor: (call) => inLine(() => openSuccessor(call)),
+    openReviewer: (order) => inLine(() => openReviewer(order)),
   };
 }

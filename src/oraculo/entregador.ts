@@ -16,7 +16,7 @@ import type { LedgerService } from '../main/ledger-store';
 import type { DeliverOwnerMessage, OwnerMessage } from '../main/ledger-card-writer';
 import type { LedgerDeliveredTo } from '../shared/ledger/contract';
 import { boardName } from '../shared/vigia/board';
-import { clearAdoptedMarks, createOpenLocal, readOpenKit, roomRefusal, sweepUnfinishedOpenings, type ScriptRun } from './abrir-local';
+import { clearAdoptedMarks, createOpenLocal, readOpenKit, REVIEWER_ROLE_ID, roomRefusal, sweepUnfinishedOpenings, type OpenLocal, type ScriptRun } from './abrir-local';
 import type { BoardStore } from './board-client';
 import { BOARD_SQLITE_CONFIG, chooseBoard, openBoard } from './board-sqlite';
 import { markCardTools } from './com-cartoes';
@@ -34,6 +34,7 @@ import { GATE_QUEUE_PATH, noticeOf } from './portoes';
 import { createSatelliteCardRenewal, createSatelliteLedger, createSatelliteNotice, createSatelliteReviewLink, createSatelliteTaskMemory, postJson, type SatellitePost } from './satelite';
 import { createProbe } from './sonda';
 import { createEntregadorChat, type EntregadorChat } from './chat-entregador';
+import { checkOpenReviewer, OPEN_REVIEWER_OP, RECONCILER_SERVICE, type OpenReviewerOrder, type OpenReviewerOutcome } from './servicos';
 import { createGlossarioStore, glossarioFile } from './glossario';
 import { createPhoneFront, createPhoneSignatures, GATE_PHONE_PAIR_PATH, registroPhonePort } from './celular-frente';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -183,6 +184,57 @@ function localDeliverRoute(recados: Pick<GateRecadosHandle, 'deliverLocal'>): No
 }
 
 /**
+ * t-3b258224 — apart, the reconciliador's Revisor asked of this machine's openLocal by the registro (which checked the
+ * service's token): `POST 127.0.0.1:<gate>/local/abrir-revisor` `{quadro, pedido, chave, tarefa?}` → the opening's
+ * outcome. The body is checked again with the service route's own rule (only these fields; the role is never in it).
+ */
+export const LOCAL_OPEN_REVIEWER_PATH = '/local/abrir-revisor';
+/** The setup (worktree) and the tmux take seconds; the opening line may hold one before it. */
+const LOCAL_OPEN_REVIEWER_TIMEOUT_MS = 50_000;
+
+function localOpenReviewerRoute(openReviewer: OpenLocal['openReviewer']): NonNullable<GateDeps['local']> {
+  const answer = (status: number, value: unknown) => ({ status, headers: { 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(value) });
+  return async (method, path, body) => {
+    if (method !== 'POST' || path !== LOCAL_OPEN_REVIEWER_PATH) return null;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body);
+    } catch {
+      return answer(400, { erro: 'corpo não é JSON' });
+    }
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return answer(400, { erro: 'corpo inválido' });
+    const order = checkOpenReviewer({ ...(parsed as Record<string, unknown>), op: OPEN_REVIEWER_OP }, RECONCILER_SERVICE);
+    if (!order.ok) return answer(order.status, { erro: order.error });
+    return answer(200, await openReviewer({ quadro: order.quadro, pedido: order.pedido, ...(order.tarefa ? { tarefa: order.tarefa } : {}) }));
+  };
+}
+
+/** The registro's side of `LOCAL_OPEN_REVIEWER_PATH`: no answer = 'recusada' (the reconciliador tries again later). */
+export function createLocalOpenReviewerClient(deps: {
+  readonly port: () => number;
+  readonly timeoutMs?: number;
+  readonly post?: (url: string, token: string, body: string, timeoutMs: number) => Promise<SatellitePost>;
+}): (order: OpenReviewerOrder) => Promise<OpenReviewerOutcome> {
+  const post = deps.post ?? postJson;
+  const timeoutMs = deps.timeoutMs ?? LOCAL_OPEN_REVIEWER_TIMEOUT_MS;
+  const RESULTS: ReadonlySet<string> = new Set(['aberta', 'ja-tem', 'sem-vaga', 'recusada']);
+  return async (order) => {
+    // Never sent twice: a cut after it went out may have opened it, and the next call answers 'ja-tem'.
+    const sent = await post(`http://127.0.0.1:${deps.port()}${LOCAL_OPEN_REVIEWER_PATH}`, '', JSON.stringify(order), timeoutMs);
+    if (typeof sent !== 'object') return { resultado: 'recusada', texto: 'o entregador do Oráculo não respondeu à abertura' };
+    try {
+      const said = JSON.parse(sent.body) as { resultado?: unknown; lugar?: unknown; texto?: unknown; erro?: unknown };
+      if (sent.status === 200 && typeof said.resultado === 'string' && RESULTS.has(said.resultado)) {
+        return { resultado: said.resultado as OpenReviewerOutcome['resultado'], ...(typeof said.lugar === 'string' ? { lugar: said.lugar } : {}), texto: typeof said.texto === 'string' ? said.texto : '' };
+      }
+      return { resultado: 'recusada', texto: `o entregador recusou (HTTP ${sent.status}${typeof said.erro === 'string' ? `: ${said.erro}` : ''})` };
+    } catch {
+      return { resultado: 'recusada', texto: `o entregador recusou (HTTP ${sent.status})` };
+    }
+  };
+}
+
+/**
  * Apart, the gate's `/local/*`: the registro's deliveries, the Líder's answer to the phone (chat_lider.py) and a new
  * phone app's pairing (asked of the registro, which keeps celular.json).
  */
@@ -190,8 +242,10 @@ function apartLocalRoutes(
   deliver: NonNullable<GateDeps['local']>,
   chat: Pick<EntregadorChat, 'responder'>,
   pair: (body: string) => Promise<SatellitePost>,
+  openReviewer: NonNullable<GateDeps['local']>,
 ): NonNullable<GateDeps['local']> {
   return async (method, path, body) => {
+    if (path === LOCAL_OPEN_REVIEWER_PATH) return openReviewer(method, path, body);
     if (method === 'POST' && path === '/local/celular/novo-aparelho') {
       const sent = await pair(body);
       if (typeof sent !== 'object') return { status: 503, headers: { 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify({ erro: 'o Oráculo da VPS não respondeu' }) };
@@ -316,6 +370,8 @@ export interface Entregador {
   readonly localPicture: { get(): BoardPicture | null };
   /** The PC's push (`POST /v1/retrato`) when the registro runs here. */
   setPicture(next: BoardPicture): void;
+  /** t-3b258224 — the reconciliador's Revisor for a board (the registro's service route, in this process). */
+  openReviewer: OpenLocal['openReviewer'];
   /** Sweeps half openings, starts the gate and writes `<dir>/portao`, then the recados and the probe. */
   start(): Promise<void>;
   /** Stops the loops at once; resolves when the gate is closed. */
@@ -500,6 +556,13 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
     // registro alone keeps those queues (`portoes-abrir/`), asked with this machine's local gate token for a
     // board the reader of its pictures sees.
     remote: openings ? async (call) => openings.request(call) : createRemoteOpenClient({ url: apart!.url, token: () => readGateToken(dir), view: remoteView }),
+    // t-3b258224 — a Revisor alive on a board of another machine, by its fresh picture (only live sessions travel).
+    remoteReviewer: (quadro) => {
+      const machine = remoteView.boardMachine(quadro);
+      if (!machine) return null;
+      const session = Object.values(remoteView.combine(null)?.sessoes ?? {}).find((one) => one.maquina === machine.name && one.quemSou.pasta === machine.pasta && one.quemSou.papel === REVIEWER_ROLE_ID);
+      return typeof session?.quemSou.lugar === 'string' ? session.quemSou.lugar : null;
+    },
   });
   // t-49dee38d — a session past the context limit renewed here with the PC away (renovar-local.ts): off until
   // `<dir>/renovar-local.json` says `"enabled": true` and lists the session in `"somente"` (empty = nobody). Only this
@@ -561,6 +624,7 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
       pictures.set(next);
       adopted(next);
     },
+    openReviewer: (order) => openLocal.openReviewer(order),
     async start() {
       // t-1a3f7150 — an opening cut midway (the daemon died while it made the folder) leaves no half session for the PC.
       for (const sid of sweepUnfinishedOpenings(sessionsDir, await liveSessions())) console.log(`[oraculo] abrir: apaguei a pasta ${sid}, aberta pela metade.`);
@@ -590,7 +654,7 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
           abrir: openLocal,
           // Saída iii — a new phone app's key (the token never leaves the daemon) and the Líder's answer from chat_lider.py.
           // Apart (passo 9, PR 2): the registro's deliveries to these recados.
-          local: junto ? junto.local : apartLocalRoutes(localDeliverRoute(recados), chat!, apart!.pair),
+          local: junto ? junto.local : apartLocalRoutes(localDeliverRoute(recados), chat!, apart!.pair, localOpenReviewerRoute(openLocal.openReviewer)),
           // The phone's server lives with the registro: a task a VPS session creates from an owner's request shows on his phone.
           ...(junto ? { linkPedido: junto.linkPedido } : {}),
           // The notices after a task (a delivery, a "travada", a verdict) go by the recados: queued for a session of this
