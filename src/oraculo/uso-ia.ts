@@ -250,6 +250,25 @@ function panelReading(raw: unknown): Leitura | null {
 }
 
 /** Every reading on disk, the newest per (week, machine). */
+// Each machine file is ~300 KB and the rotina writes two a day: parsing all of them on every GET would block the
+// Oráculo's event loop (the phone chat included) longer each week. A file is parsed once per (mtime, size) and only
+// the small reading is kept.
+const parsed = new Map<string, { mtimeMs: number; size: number; leitura: Leitura | null }>();
+function cachedReading(file: string, parse: (raw: unknown) => Leitura | null): Leitura | null {
+  let st: { mtimeMs: number; size: number };
+  try {
+    st = statSync(file);
+  } catch {
+    parsed.delete(file);
+    return null;
+  }
+  const hit = parsed.get(file);
+  if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.leitura;
+  const leitura = parse(readJson(file));
+  parsed.set(file, { mtimeMs: st.mtimeMs, size: st.size, leitura });
+  return leitura;
+}
+
 export function lerLeituras(dir: string): Leitura[] {
   const best = new Map<string, Leitura>();
   const keep = (l: Leitura | null): void => {
@@ -262,12 +281,12 @@ export function lerLeituras(dir: string): Leitura[] {
     if (!DATE_DIR.test(day)) continue;
     for (const file of listDir(join(dir, day))) {
       const m = MACHINE_FILE.exec(file);
-      if (m) keep(machineReading(readJson(join(dir, day, file)), m[1]!));
+      if (m) keep(cachedReading(join(dir, day, file), (raw) => machineReading(raw, m[1]!)));
     }
   }
   for (const file of listDir(join(dir, 'painel'))) {
     if (!/^\d{4}-W\d{2}-.*\.json$/.test(file)) continue;
-    keep(panelReading(readJson(join(dir, 'painel', file))));
+    keep(cachedReading(join(dir, 'painel', file), panelReading));
   }
   return [...best.values()];
 }
