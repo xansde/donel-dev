@@ -15,9 +15,10 @@
 //   2. Only at the end of a turn: the last main entry of the transcript is the assistant's end of turn with no tool
 //      call pending, the transcript quiet for 60 s, and the screen with no turn running, no background work waited
 //      on and an empty input field — read again right before the request is typed.
-//   3. The old session dies only after the NEW one ANSWERED (its transcript has a real assistant end of turn after its
-//      first message, seen and then seen alive again; an API error the CLI writes itself — `isApiErrorMessage`, model
-//      `<synthetic>` — is no answer). A new one SILENT for 5 min (no real assistant entry after its first message) is
+//   3. The old session dies only after the NEW one ANSWERED (the last assistant entry after its first message is a real
+//      end of turn with text and no tool call, seen and then seen alive again; an API error the CLI writes itself —
+//      `isApiErrorMessage`, model `<synthetic>` — is no answer and undoes one before it, like the empty thinking a
+//      dropped connection leaves). A new one SILENT for 5 min (no real assistant entry after its first message) is
 //      closed: it never worked. A new one with any assistant activity is never closed: it gets up to 30 min to end its
 //      turn; without that, both stay alive ("duas vivas no lugar", lasting) and the Líder is told. The old one dies
 //      only while it is still stopped (screen idle, no new transcript entry since the handoff was ready). Back at work:
@@ -205,13 +206,17 @@ function isSyntheticEntry(entry: Record<string, unknown>, message: Record<string
 }
 
 /**
- * Pure — where a successor is after its first message (a user entry with text): `respondeu` = a real assistant end of
- * turn with no tool call pending; `trabalhando` = real assistant entries, turn not ended; `calada` = none at all. The
- * CLI's own error entries (`isApiErrorMessage`, model `<synthetic>`) count as nothing.
+ * Pure — where a successor is after its first message (a user entry with text). Decided by the LAST main assistant
+ * entry after it: `respondeu` = a real one (not the CLI's own) with end of turn, no tool call pending and a non-empty
+ * text block; `trabalhando` = real assistant entries, but the last is not such an answer; `calada` = none at all. The
+ * CLI's own error entries (`isApiErrorMessage`, model `<synthetic>`) never answer and undo an answer before them: when
+ * the connection drops mid-answer the CLI writes a real entry with only an empty thinking and end of turn, then the
+ * synthetic "Connection lost" (seen in this VPS's transcripts, 19/11).
  */
 export function successorProgress(tail: string): 'respondeu' | 'trabalhando' | 'calada' {
   let asked = false;
   let active = false;
+  let answered = false;
   for (const line of tail.split('\n')) {
     let entry: unknown;
     try {
@@ -226,15 +231,22 @@ export function successorProgress(tail: string): 'respondeu' | 'trabalhando' | '
       asked = typeof content === 'string' ? content.trim() !== '' : Array.isArray(content) && content.some((part) => isRecord(part) && part.type === 'text');
       continue;
     }
-    if (!asked || entry.type !== 'assistant' || isSyntheticEntry(entry, message)) continue;
+    if (!asked || entry.type !== 'assistant') continue;
+    if (isSyntheticEntry(entry, message)) {
+      answered = false;
+      continue;
+    }
     active = true;
-    const toolPending = Array.isArray(content) && content.some((part) => isRecord(part) && part.type === 'tool_use');
-    if ((message.stop_reason === 'end_turn' || message.stop_reason === 'stop_sequence') && !toolPending) return 'respondeu';
+    const parts = Array.isArray(content) ? content : [];
+    const toolPending = parts.some((part) => isRecord(part) && part.type === 'tool_use');
+    const hasText = parts.some((part) => isRecord(part) && part.type === 'text' && typeof part.text === 'string' && part.text.trim() !== '');
+    answered = (message.stop_reason === 'end_turn' || message.stop_reason === 'stop_sequence') && !toolPending && hasText;
   }
+  if (answered) return 'respondeu';
   return active ? 'trabalhando' : 'calada';
 }
 
-/** Pure — the successor ANSWERED its first message (a real end of turn; an API error is no answer). */
+/** Pure — the successor ANSWERED its first message (its last real entry ends the turn with text; no API error after). */
 export function answeredFirstMessage(tail: string): boolean {
   return successorProgress(tail) === 'respondeu';
 }
