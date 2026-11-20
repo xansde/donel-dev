@@ -212,11 +212,11 @@ export function canReach(doc: MindscapeDoc, from: ReachFrom, to: ReachEnd): Reac
 /**
  * May the session at `from` reach the Líder único: it was opened by the Líder único, or is below one that was (by
  * hierarchy arrows), or (t-d461e003, with `isLive`) its chain is gone: it has someone above by the arrows, none of them
- * is alive and its board has no live Líder, so the Líder único is who hears it (`whoHears`; its tasks went to him), or
- * (t-3f32edb1) it is at the top of its board (`isTop`: no hierarchy arrow points to it, e.g. the owner opened it by
- * hand): the Líder único is right above every top, so the way back matches `leaderOfAllReaches`. The reason the
- * callers ask for (finished task or lock) still applies. `openedByLeader` says which places of the board the Líder
- * único opened (the board does not keep it: the tabs and the bridge do).
+ * is alive and its board has no live Líder, so the Líder único is who hears it (`whoHears`; its tasks went to him). The
+ * same `whoHears` holds for a place at the top of its board (t-3f32edb1, the Dalton: the owner put it there, nobody
+ * above): it reaches the Líder único only when its board has no live Líder of the board, never over one (dono, 09/11 and
+ * 12/11). The reason the callers ask for (finished task or lock) still applies, on the PC and on the VPS. `openedByLeader`
+ * says which places of the board the Líder único opened (the board does not keep it: the tabs and the bridge do).
  */
 export function canReachLeader(doc: MindscapeDoc, from: ReachEnd, openedByLeader: (placeId: string) => boolean, isLive?: (placeId: string) => boolean): ReachVerdict {
   const board = doc.boards[from.projectPath];
@@ -224,9 +224,8 @@ export function canReachLeader(doc: MindscapeDoc, from: ReachEnd, openedByLeader
   if (openedByLeader(from.placeId)) return { ok: true };
   const above = Object.keys(board.cards).some((id) => board.cards[id]?.kind === 'session' && openedByLeader(id) && isBelow(board, id, from.placeId));
   if (above) return { ok: true };
-  if (isTop(board, from.placeId)) return { ok: true };
   if (isLive && whoHears(board, from.placeId, isLive) === LEADER_OF_ALL) return { ok: true };
-  return { ok: false, reason: 'você não está no topo do quadro, não foi aberta pelo Líder único nem está abaixo, pelas setas, de uma sessão que ele abriu. Fale com quem está acima de você no quadro.' };
+  return { ok: false, reason: 'você não foi aberta pelo Líder único nem está abaixo, pelas setas, de uma sessão que ele abriu, e há quem ouça você no quadro (alguém vivo acima pelas setas ou o Líder do quadro). Fale com essa sessão.' };
 }
 
 /**

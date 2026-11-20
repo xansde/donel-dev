@@ -58,7 +58,7 @@ import { promises as fsp } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { BrowserToolOutcome } from '../shared/browser/mcp';
-import { hasArrowLink } from '../shared/mindscape/agent-tools';
+import { hasArrowLink, LEADER_MESSAGE_REFUSAL } from '../shared/mindscape/agent-tools';
 import { listedPlaces, resolveAddress } from '../shared/mindscape/address';
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import { BOARD_LEADER, canReach, canReachLeader, isBoardOrchestrator, isLiveListedPlace, LEADER_OF_ALL_FROM, MY_OPENER, successorOf, whoHears, type ListedPlace } from '../shared/mindscape/reach';
@@ -1931,11 +1931,14 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       if ('erro' in target) return pcOn ? 'repassar' : { kind: 'error', text: target.erro };
       const words = `${call.tarefa ? `[${call.tarefa}] ` : ''}${call.texto}`;
       if ('liderUnico' in target) {
-        // The PC's rule (t-d461e003): opened by the Líder único, below one he opened, or nobody alive above to hear it.
+        // The PC's rule (t-d461e003, t-3f32edb1): opened by the Líder único, below one he opened, or nobody alive above
+        // it nor a live Líder of its board to hear it (a top place, like the Dalton, included).
         const opened = (id: string): boolean => places.find((place) => place.id === id)?.abertaPor === LEADER_OF_ALL;
         const isLive = (id: string): boolean => isLiveListedPlace(places.find((place) => place.id === id));
         const reach = canReachLeader({ schemaVersion: 8, boards: { [projectPath]: board } }, { projectPath, placeId: me }, opened, isLive);
         if (!reach.ok) return pcOn ? 'repassar' : { kind: 'error', text: `Sem ligação com o Líder único: ${reach.reason}` };
+        // Dono, 09/11 — the same as the PC: only a finished task or a lock goes to the Líder único (t-3f32edb1, revisão do #567).
+        if (!call.motivo) return { kind: 'error', text: LEADER_MESSAGE_REFUSAL };
         // t-c3fbe852 — the Líder único alive here hears it from its own queue, PC on or off (no paste through the PC).
         const back = relayMessage(projectPath, me, nameOf(who), LEADER_OF_ALL, words);
         const item = await toLocalLeader({ lugar: me, nome: nameOf(who), sid }, words, back);

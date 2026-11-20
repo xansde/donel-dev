@@ -333,17 +333,14 @@ describe('recados e avisos que caem no Líder único vivo nesta VPS', () => {
     const w = vps();
     // A Dev the Líder único opened: it reaches him by the PC's rule (t-d461e003).
     const opened: PictureSession = { ...DEV_SESSION, listar: [{ ...LISTAR[0]!, abertaPor: 'lider' }] };
-    const sent = await w.recados.enviar(SID_DEV, opened, { tool: 'sessao_enviar', para: 'lider', texto: 'terminei o PR' }, 'ligado');
+    const sent = await w.recados.enviar(SID_DEV, opened, { tool: 'sessao_enviar', para: 'lider', texto: 'terminei o PR', motivo: 'tarefa-completa' }, 'ligado');
     expect(sent).not.toBe('repassar');
     expect(JSON.parse((sent as { text: string }).text)).toMatchObject({ entregue: 'na-fila', para: 'lider' });
     expect((await w.endTurn(SID_LIDER)).reason).toContain('terminei o PR');
     expect(w.relay.pending()).toHaveLength(0);
 
     const away = vps({ leaderAlive: false });
-    expect(await away.recados.enviar(SID_DEV, opened, { tool: 'sessao_enviar', para: 'lider', texto: 'terminei o PR' }, 'ligado')).toBe('repassar');
-    // t-3f32edb1: one the owner opened by hand at the top of its board (the Dalton) reaches him with the PC off too.
-    const top = await w.recados.enviar(SID_DEV, DEV_SESSION, { tool: 'sessao_enviar', para: 'lider', texto: 'oi' }, 'desligado');
-    expect(top).not.toMatchObject({ kind: 'error' });
+    expect(await away.recados.enviar(SID_DEV, opened, { tool: 'sessao_enviar', para: 'lider', texto: 'terminei o PR', motivo: 'tarefa-completa' }, 'ligado')).toBe('repassar');
     // Below a live place the Líder único did not open: refused here as the PC would.
     const CHEFE = 'place:chefe';
     const below: PictureSession = {
@@ -351,8 +348,46 @@ describe('recados e avisos que caem no Líder único vivo nesta VPS', () => {
       listar: [...LISTAR, { id: CHEFE, papel: 'dev', estado: 'trabalhando' }],
       board: { ...BOARD, cards: { ...BOARD.cards, [CHEFE]: card(CHEFE, 'dev') }, links: [{ id: 'l1', from: CHEFE, to: DEV, arrow: true }] },
     };
-    const refused = await w.recados.enviar(SID_DEV, below, { tool: 'sessao_enviar', para: 'lider', texto: 'oi' }, 'desligado');
+    const refused = await w.recados.enviar(SID_DEV, below, { tool: 'sessao_enviar', para: 'lider', texto: 'oi', motivo: 'bloqueio' }, 'desligado');
     expect(refused).toMatchObject({ kind: 'error', text: expect.stringContaining('Sem ligação com o Líder único') });
+  });
+
+  it('o topo do quadro (o Dalton) chega ao Líder único com o PC fora, só com motivo e sem Líder do quadro vivo (t-3f32edb1)', async () => {
+    // The owner put the Dalton at the top of its board by hand: nobody above, no Líder of the board.
+    const DALTON = 'place:dalton';
+    const dalton = (extra: { cards?: MindscapeBoard['cards']; listar?: PictureSession['listar'] } = {}): PictureSession => ({
+      quemSou: { nome: 'Dalton · atlas', pasta: PROJECT, lugar: DALTON, papel: 'dalton', papelNome: 'Dalton' },
+      listar: [{ id: DALTON, papel: 'dalton', estado: 'parada' }, ...(extra.listar ?? [])],
+      board: { ...BOARD, cards: { [DALTON]: card(DALTON, 'dalton'), ...(extra.cards ?? {}) }, links: [] },
+    });
+    const call = { tool: 'sessao_enviar', para: 'lider', texto: 'o Stop hook não liga', motivo: 'bloqueio' } as const;
+
+    // The Líder único alive on this VPS: straight to its queue.
+    const w = vps();
+    const here = await w.recados.enviar(SID_DEV, dalton(), call, 'desligado');
+    expect(JSON.parse((here as { text: string }).text)).toMatchObject({ para: 'lider' });
+    expect((await w.endTurn(SID_LIDER)).reason).toContain('o Stop hook não liga');
+
+    // The satellite (the Líder único lives on the other VPS), PC off: it goes on by the relay, never refused.
+    const away = vps({ leaderAlive: false });
+    const relayed = await away.recados.enviar(SID_DEV, dalton(), call, 'desligado');
+    expect(relayed).not.toBe('repassar');
+    expect(relayed).not.toMatchObject({ kind: 'error' });
+
+    // No reason: refused, PC on or off (dono, 09/11).
+    for (const pc of ['ligado', 'desligado'] as const) {
+      const bare = await w.recados.enviar(SID_DEV, dalton(), { tool: 'sessao_enviar', para: 'lider', texto: 'oi' }, pc);
+      expect(bare).toMatchObject({ kind: 'error', text: expect.stringContaining('"motivo"') });
+    }
+
+    // A live Líder of the board the owner put there: the top does not go over it (dono, 09/11 and 12/11).
+    const LQ = 'place:lq';
+    const withLeader = dalton({ cards: { [LQ]: card(LQ, 'lider') }, listar: [{ id: LQ, papel: 'lider', estado: 'trabalhando' }] });
+    const over = await w.recados.enviar(SID_DEV, withLeader, call, 'desligado');
+    expect(over).toMatchObject({ kind: 'error', text: expect.stringContaining('Sem ligação com o Líder único') });
+    // That Líder closed: the Líder único hears the top again.
+    const closed = dalton({ cards: { [LQ]: card(LQ, 'lider') }, listar: [{ id: LQ, papel: 'lider', estado: 'fechada' }] });
+    expect(await w.recados.enviar(SID_DEV, closed, call, 'desligado')).not.toMatchObject({ kind: 'error' });
   });
 
   it('"travada" de quem não tem ninguém acima chega ao Líder único pela fila local, uma vez', async () => {
