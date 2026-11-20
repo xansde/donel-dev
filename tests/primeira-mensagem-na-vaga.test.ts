@@ -200,16 +200,23 @@ describe('Sessão que espera vaga no limitador: o pedido de abertura entra quand
     expect(g.items().filter((item) => item.para.sid === SID).map((item) => item.estado)).toEqual(['entregue']);
   });
 
-  it('o PC colou o pedido com a linha da tarefa na frente (sessao_abrir com tarefa) e a etiqueta: o portão não entrega de novo', async () => {
+  const TASK = { id: 't-1234abcd', titulo: 'Revisar PR 12', criterio: 'PR mesclado.' };
+  const REVIEW = 'Revise o PR 12.\n\n1. rode o verify\n2. mescle';
+  /** How the CLI 2.1.319 records a long paste of the app (seen in real transcripts): wrapped, the tag inside. */
+  const wrapped = (text: string): string => `\n\n<pasted_content id="ab12">\n${text}\n</pasted_content id="ab12">\n`;
+
+  it.each([
+    ['colado cru', (pedido: string) => `${withTaskHeader(pedido, TASK)} #sem-esteira`],
+    ['embrulhado em <pasted_content>, como o CLI grava', (pedido: string) => wrapped(`${withTaskHeader(pedido, TASK)} #sem-esteira`)],
+  ])('o PC colou o pedido com a linha da tarefa na frente e a etiqueta (%s): o portão não entrega de novo', async (_, pasted) => {
     const g = setup();
-    const pedido = 'Revise o PR 12.\n\n1. rode o verify\n2. mescle';
-    g.remember(pedido);
+    g.remember(REVIEW);
     g.screens.set(SID, boxScreen(''));
     g.refuseNext();
     await g.run(8 * 60_000);
     expect(g.typed).toHaveLength(1);
     // The PC's main put "[t-…] título: objetivo" and a blank line in front; its renderer, the tag at the end.
-    g.pcPastes(`${withTaskHeader(pedido, { id: 't-1234abcd', titulo: 'Revisar PR 12', criterio: 'PR mesclado.' })} #sem-esteira`);
+    g.pcPastes(pasted(REVIEW));
     await g.run(60_000);
     g.turnEnds();
     await g.run(20 * 60_000);
@@ -217,15 +224,17 @@ describe('Sessão que espera vaga no limitador: o pedido de abertura entra quand
     expect(g.items().filter((item) => item.para.sid === SID).map((item) => item.estado)).toEqual(['entregue']);
   });
 
-  it('a 1ª mensagem é outro pedido que só tem a mesma linha da tarefa: não conta como colado, o guardado ainda entra', async () => {
+  it.each([
+    ['outro pedido com a mesma linha da tarefa', wrapped(`${withTaskHeader('Feche a worktree do PR 12.', TASK)} #sem-esteira`)],
+    ['o pedido citado depois de outro texto', `[t-9999aaaa] Outra tarefa: outra coisa\n\nNão faça isto agora: ${REVIEW} #sem-esteira`],
+  ])('a 1ª mensagem é %s: não conta como colado, o guardado ainda entra', async (_, first) => {
     const g = setup();
-    const pedido = 'Revise o PR 12.\n\n1. rode o verify\n2. mescle';
-    g.remember(pedido);
+    g.remember(REVIEW);
     g.screens.set(SID, boxScreen(''));
     g.refuseNext();
     await g.run(8 * 60_000);
     expect(g.typed).toHaveLength(1);
-    g.pcPastes(`${withTaskHeader('Feche a worktree do PR 12.', { id: 't-1234abcd', titulo: 'Revisar PR 12', criterio: 'PR mesclado.' })} #sem-esteira`);
+    g.pcPastes(first);
     await g.run(60_000);
     g.turnEnds();
     await g.run(20 * 60_000);

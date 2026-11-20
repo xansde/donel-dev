@@ -295,16 +295,9 @@ function parseItem(value: unknown): RecadoItem | null {
     ...(estado === 'vencido' ? { vencidoEm: vencidoEm ?? (typeof value.entregueEm === 'number' ? value.entregueEm : value.criado) } : {}),
     ...(parseMessage(value.volta) ? { volta: parseMessage(value.volta)! } : {}),
     ...(isRecord(value.primeira) && typeof value.primeira.hash === 'string' && typeof value.primeira.hashPlano === 'string'
-      ? { primeira: keyOf(value.primeira, value.primeira.hash, value.primeira.hashPlano) }
+      ? { primeira: { hash: value.primeira.hash, hashPlano: value.primeira.hashPlano } }
       : {}),
   };
-}
-
-function keyOf(value: Record<string, unknown>, hash: string, hashPlano: string): RequestKey {
-  const size = (field: unknown): number | undefined => (typeof field === 'number' && Number.isInteger(field) && field > 0 ? field : undefined);
-  const tamanho = size(value.tamanho);
-  const tamanhoPlano = size(value.tamanhoPlano);
-  return { hash, hashPlano, ...(tamanho ? { tamanho } : {}), ...(tamanhoPlano ? { tamanhoPlano } : {}) };
 }
 
 function parseMessage(value: unknown): OwnerMessage | null {
@@ -879,7 +872,7 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       criado: at,
       estado: 'fila',
       tentativas: 0,
-      primeira: { hash: entry.hash, hashPlano: entry.hashPlano, ...(entry.tamanho ? { tamanho: entry.tamanho } : {}), ...(entry.tamanhoPlano ? { tamanhoPlano: entry.tamanhoPlano } : {}) },
+      primeira: { hash: entry.hash, hashPlano: entry.hashPlano },
     };
     write([item, ...items]);
     return item;

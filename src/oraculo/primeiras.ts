@@ -16,21 +16,18 @@ import { createHash } from 'node:crypto';
 import { chmodSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { NO_PIPELINE_TAG } from '../shared/chat/noPipeline';
+import { unwrapPastedContent } from '../shared/chat/promptMatch';
 import { withoutTaskHeader } from '../shared/mindscape/task-header';
 
 export const FIRST_MESSAGES_FILE = 'primeiras.json';
 
 /**
  * t-f66595b2 (condição do Líder) — how a request is known without keeping its words: the sha256 of it normalized
- * (`normalizedRequest`) and of it with its line breaks collapsed into spaces (what tmux types, `typeable`), each with
- * its length, so a first message that ends with the request (something written in front of it) is found too.
+ * (`normalizedRequest`) and of it with its line breaks collapsed into spaces (what tmux types, `typeable`).
  */
 export interface RequestKey {
   readonly hash: string;
   readonly hashPlano: string;
-  /** Length of the normalized request; absent = only the whole message is compared. */
-  readonly tamanho?: number;
-  readonly tamanhoPlano?: number;
 }
 
 export interface FirstMessage extends RequestKey {
@@ -46,38 +43,29 @@ const TAG_AT_END = new RegExp(`\\s*${NO_PIPELINE_TAG}\\s*$`, 'i');
 /**
  * Both sides of the comparison go through this: what the PC pastes is not the request as the gate saw it. Its main
  * puts the task line in front ("[t-…] título: objetivo" and a blank line, `withTaskHeader`, when `sessao_abrir` names
- * the task) and its renderer the "#sem-esteira" tag at the end (noPipeline.ts): neither is part of the request.
+ * the task) and its renderer the "#sem-esteira" tag at the end (noPipeline.ts): neither is part of the request. The
+ * CLI records a long paste wrapped in `<pasted_content id=…>…</pasted_content id=…>` (2.1.319): that wrapper goes
+ * first, the same way the chat unwraps it (promptMatch.ts).
  */
 export function normalizedRequest(text: string): string {
-  return withoutTaskHeader(text.trim().replace(TAG_AT_END, '').trim()).trim();
+  return withoutTaskHeader(unwrapPastedContent(text).trim().replace(TAG_AT_END, '').trim()).trim();
 }
 
 const flatOf = (text: string): string => text.replace(/\s*[\u0000-\u001f\u007f-\u009f]+\s*/g, ' ').trim();
 
 /** The key of a request: normalized, and with its line breaks collapsed (the PC pastes them; tmux types without). */
-export function requestHashes(text: string): Required<RequestKey> {
+export function requestHashes(text: string): RequestKey {
   const plain = normalizedRequest(text);
-  const flat = flatOf(plain);
-  return { hash: sha256(plain), hashPlano: sha256(flat), tamanho: plain.length, tamanhoPlano: flat.length };
-}
-
-/** `seen` ends with the text of `hash` (`size` long), and that text starts it or follows a space or a line break. */
-function endsWithKept(seen: string, hash: string, size: number | undefined): boolean {
-  if (!size || size > seen.length) return false;
-  const start = seen.length - size;
-  if (start > 0 && !/\s/.test(seen[start - 1]!)) return false;
-  return sha256(seen.slice(start)) === hash;
+  return { hash: sha256(plain), hashPlano: sha256(flatOf(plain)) };
 }
 
 /**
  * `text` (a session's first message) is the request of `kept`: the same once both are normalized, with or without
- * line breaks, or ending with it (anything else written in front).
+ * line breaks. Anything else around it (another text in front) makes it another request.
  */
 export function isSameRequest(kept: RequestKey, text: string): boolean {
   const plain = normalizedRequest(text);
-  const flat = flatOf(plain);
-  if (sha256(plain) === kept.hash || sha256(flat) === kept.hashPlano) return true;
-  return endsWithKept(plain, kept.hash, kept.tamanho) || endsWithKept(flat, kept.hashPlano, kept.tamanhoPlano);
+  return sha256(plain) === kept.hash || sha256(flatOf(plain)) === kept.hashPlano;
 }
 
 /** An entry no session of this machine claimed in this long is for another machine, or a place that never opened. */
