@@ -110,6 +110,10 @@ const SECRET_LINES: ReadonlyArray<readonly [string, string]> = [
   ['cmd.exe /c gpg --batch --passphrase Hunter2! -d x.gpg', 'Hunter2!'],
   ['tool --passcode 123456', '123456'],
   ['tool --credentials Pa55g', 'Pa55g'],
+  // review of t-c1b710c2: JSON in escaped quotes, as a Windows command line carries it
+  ['node -e "post({\\"password\\":\\"Hunter2Hunter\\"})"', 'Hunter2Hunter'],
+  ['node -e "post({\\"token\\": \\"Tk9x2Lm\\"})"', 'Tk9x2Lm'],
+  ['node -e "fetch(u, {headers: {\\"X-API-Key\\":\\"k3yV4lue\\"}})"', 'k3yV4lue'],
 ];
 
 // Command lines of the killer itself: the sentinel exists to say who ended the main, so the mask must not erase it.

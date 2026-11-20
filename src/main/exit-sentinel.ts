@@ -67,10 +67,11 @@ export const COMMAND_LINE_MASKS: ReadonlyArray<{ readonly source: string; readon
   // curl -u user:password, -u "user:password", -uuser:password, --user=user:password
   { source: `((?:^|\\s)(?:-u|--user)(?:=|\\s*)["']?[^\\s:"']+:)[^\\s"']+`, to: '$1***' },
   // PGPASSWORD=x, set TOKEN=x, $env:TOKEN='x', --password=x, -Password:x, X-API-Key: x, "password":"x", {password:'x'},
-  // Authorization: token x. The match starts at the secret word: what comes before it in the name stays as it is, and
-  // a run of name characters before it made the .NET engine backtrack for seconds on a 2 KB line.
+  // \"password\":\"x\" (JSON in escaped quotes, as a Windows command line carries it), Authorization: token x. The
+  // match starts at the secret word: what comes before it in the name stays as it is, and a run of name characters
+  // before it made the .NET engine backtrack for seconds on a 2 KB line.
   {
-    source: `(${SECRET_WORD}[\\w.-]*["']?\\s*[=:]\\s*)((?:(?:bearer|basic|token)\\s+)?(?:${QUOTED}|[^\\s&|;"']+))`,
+    source: `(${SECRET_WORD}[\\w.-]*(?:\\\\"|["'])?\\s*[=:]\\s*)((?:(?:bearer|basic|token)\\s+)?(?:${QUOTED}|[^\\s&|;"']+))`,
     to: '$1***',
   },
   // --password x, --db-password "x y", --client-secret x, --token x, --pw x, --passphrase x; not the switch -PassThru
