@@ -82,7 +82,7 @@ export const CARD_TOOLS = [
   {
     name: 'card_move',
     title: 'Mover cartão',
-    description: `O andamento é o cartão mudando de coluna, com uma nota curta. Colunas: ${STAGE_HELP}. Fazendo é de quem move (o cartão fica com você). Travado exige "justificativa" (motivo, link e prazo). "Esperando você" é só do Líder do quadro e só por: main_prod (main/produção de repo do dono), new_credential, money, laya. Feito exige "resumo".`,
+    description: `O andamento é o cartão mudando de coluna, com uma nota curta. Colunas: ${STAGE_HELP}. Fazendo é de quem move (o cartão fica com você). Travado exige "justificativa" (motivo, link e prazo). "Esperando você" é só do Líder do quadro e só por: main_prod (main/produção de repo do dono), new_credential, money, laya. Feito exige "resumo". Travado ou precisa-do-dono: registre também tarefa_andamento, que é o que avisa na hora quem está acima de você.`,
     inputSchema: {
       type: 'object',
       properties: {

@@ -55,7 +55,7 @@ import { readFileSync } from 'node:fs';
 import { createServer, request as httpRequest, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { connect as netConnect, type Socket } from 'node:net';
 import { join } from 'node:path';
-import { handleMcpPayload, parseMcpBody, type BrowserToolOutcome } from '../shared/browser/mcp';
+import { CARD_INSTRUCTIONS, handleMcpPayload, parseMcpBody, type BrowserToolOutcome } from '../shared/browser/mcp';
 import type { BoardToolCall } from '../shared/mindscape/agent-tools';
 import type { MindscapeBoard } from '../shared/mindscape/model';
 import type { LedgerToolCall } from '../shared/ledger/tools';
@@ -323,8 +323,25 @@ function mapToolList(answer: GateResponse, map: (tools: unknown[]) => unknown[])
  * reason to a call that goes to an app that drops them (revisão do #483).
  */
 export function withGateTools(requestBody: string, answer: GateResponse, withCards: boolean, tasksHere = true, leaderOfAll = false): GateResponse {
-  if (answer.status !== 200 || singleMessage(requestBody)?.method !== 'tools/list') return answer;
+  if (answer.status !== 200) return answer;
+  const method = singleMessage(requestBody)?.method;
+  if (method === 'initialize') return withCards ? (withCardInstructions(answer) ?? answer) : answer;
+  if (method !== 'tools/list') return answer;
   return mapToolList(answer, (tools) => servedTools(tools, withCards, tasksHere, leaderOfAll)) ?? answer;
+}
+
+/**
+ * t-8406f473 — the PC's `initialize` with the task board's paragraph appended: the app on the PC does not serve the
+ * `card_*`, so its text (an old app's too) does not have it. Once only; `null` = not an initialize answer.
+ */
+function withCardInstructions(answer: GateResponse): GateResponse | null {
+  const parsed = singleMessage(answer.body);
+  const result = parsed && isRecord(parsed.result) ? parsed.result : null;
+  if (!parsed || !result) return null;
+  const own = typeof result.instructions === 'string' ? result.instructions : '';
+  if (own.includes(CARD_INSTRUCTIONS.trim())) return answer;
+  const instructions = own && !/\s$/.test(own) ? `${own} ${CARD_INSTRUCTIONS}` : `${own}${CARD_INSTRUCTIONS}`;
+  return { ...answer, body: JSON.stringify({ ...parsed, result: { ...result, instructions } }) };
 }
 
 function servedTools(tools: readonly unknown[], withCards: boolean, tasksHere: boolean, leaderOfAll: boolean): unknown[] {

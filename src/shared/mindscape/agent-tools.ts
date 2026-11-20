@@ -74,7 +74,7 @@ export type BoardToolCall =
 export const LEADER_MESSAGE_REASONS = ['tarefa-completa', 'bloqueio'] as const;
 export type LeaderMessageReason = (typeof LEADER_MESSAGE_REASONS)[number];
 export const LEADER_MESSAGE_REFUSAL =
-  'Não mandei: ao Líder único só vai tarefa completa ou bloqueio que o Líder do quadro não resolve (diga em "motivo": "tarefa-completa" ou "bloqueio"). Andamento fica no ledger: registre com tarefa_andamento.';
+  'Não mandei: ao Líder único só vai tarefa completa ou bloqueio que o Líder do quadro não resolve (diga em "motivo": "tarefa-completa" ou "bloqueio"). Andamento fica no registro: no cartão (card_move) se a sua lista tem card_*, senão com tarefa_andamento.';
 
 /** t-1293c818 (3) — how the Líder answers a permission open on another session's screen (`sessao_permissao`). */
 export const PERMISSION_REPLIES = ['permitir', 'recusar'] as const;
@@ -245,7 +245,7 @@ export const BOARD_TOOLS = [
         motivo: {
           type: 'string',
           enum: LEADER_MESSAGE_REASONS,
-          description: 'Só para o Líder único ("lider", ou "quem-me-abriu" quando foi ele quem abriu você), e obrigatório: "tarefa-completa" ou "bloqueio" que o Líder do quadro não resolve. Andamento não vai a ele: fica no ledger (tarefa_andamento).',
+          description: 'Só para o Líder único ("lider", ou "quem-me-abriu" quando foi ele quem abriu você), e obrigatório: "tarefa-completa" ou "bloqueio" que o Líder do quadro não resolve. Andamento não vai a ele: fica no cartão (card_move) se a sua lista tem card_*, senão no ledger (tarefa_andamento).',
         },
       },
       required: ['para', 'texto'],

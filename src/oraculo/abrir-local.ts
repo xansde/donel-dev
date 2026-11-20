@@ -46,7 +46,7 @@ import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import type { MindscapeBoard } from '../shared/mindscape/model';
 import { boardLeaders } from '../shared/mindscape/reach';
 import { buildRemoteInventoryScript, buildRoleScopeSettings, EMPTY_INVENTORY, parseRemoteInventoryOutput, type RoleScopeSettings } from '../shared/role-scope';
-import { LEADER_ROLE_ID } from '../shared/roles';
+import { CARD_PROGRESS_SENTENCE, LEADER_ROLE_ID, LEGACY_PROGRESS_SENTENCE } from '../shared/roles';
 import { renewalLaunchArgs } from '../shared/sessionRenewal';
 import { remoteSpawnWorktree, worktreeNameFor, worktreeNameFromArgs } from '../shared/sessionWorktree';
 import type { GateAbrir, OpenCall } from './gate-abrir';
@@ -124,6 +124,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 const lastSegment = (path: string): string => path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 
 /** The kit the PC left; `null` = none, unreadable or of another version. */
+/**
+ * t-8406f473 (Líder único, 20/11) — the role text of the kit is the PC's, written before the task board's text existed,
+ * and the sessions opened or renewed here read it with the PC away. Swaps the old progress sentence for the conditional
+ * one; without the old one, appends it as its own line; with the new one already there, the text is unchanged. Pure and
+ * idempotent: applying it twice never serves the guidance twice.
+ */
+export function withCardGuidance(promptText: string | null): string | null {
+  if (!promptText || promptText.includes(CARD_PROGRESS_SENTENCE)) return promptText;
+  if (promptText.includes(LEGACY_PROGRESS_SENTENCE)) return promptText.replace(LEGACY_PROGRESS_SENTENCE, CARD_PROGRESS_SENTENCE);
+  return `${promptText.replace(/\s+$/, '')}\n- ${CARD_PROGRESS_SENTENCE}`;
+}
+
 export function readOpenKit(oraculoDir: string): OpenKit | null {
   try {
     const raw = JSON.parse(readFileSync(join(oraculoDir, OPEN_KIT_FILE), 'utf8')) as unknown;
@@ -597,7 +609,7 @@ export function createOpenLocal(deps: OpenLocalDeps): OpenLocal {
       extraArgs: ['--session-id', newSid],
       launchArgs: [...launcherArgs, '--worktree', worktree],
       facts: { roleId: role.id },
-      role: { promptText: role.promptText, scope: role.scope, scopeSettings },
+      role: { promptText: withCardGuidance(role.promptText), scope: role.scope, scopeSettings },
       // The hooks go to the PC's bridge through the tunnel it opens when it adopts the session; until then they fail fast.
       hooks: { on: true, port: hookPort, token: randomBytes(16).toString('hex'), statusLine: null },
       mcp: { port: mcpPort, token: randomBytes(32).toString('hex') },
@@ -685,8 +697,8 @@ export function createOpenLocal(deps: OpenLocalDeps): OpenLocal {
     const worktree = remoteSpawnWorktree(facts.launchArgs, facts.dir ?? null);
     const placeId = facts.placeId ?? (call.placeId && PLACE_ID.test(call.placeId) ? call.placeId : undefined);
     const role = kitRole
-      ? { promptText: kitRole.promptText, scope: kitRole.scope, scopeSettings: await scopeSettingsOf(kitRole) }
-      : { promptText: facts.roleId ? readOldRoleText(deps.sessionsDir, call.de) : null, scope: undefined, scopeSettings: null };
+      ? { promptText: withCardGuidance(kitRole.promptText), scope: kitRole.scope, scopeSettings: await scopeSettingsOf(kitRole) }
+      : { promptText: facts.roleId ? withCardGuidance(readOldRoleText(deps.sessionsDir, call.de)) : null, scope: undefined, scopeSettings: null };
 
     const at = now();
     const newSid = newId();
