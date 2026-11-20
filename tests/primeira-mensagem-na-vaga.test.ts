@@ -2,7 +2,7 @@
 // lost its opening request: the app on the PC types it only within 240 s of opening the tab, and nobody types it when
 // the CLI finally comes up. What breaks without the owner noticing: a session alive for hours on an empty box, holding
 // a slot and doing nothing, and a recado to it that never goes in (it has no transcript yet) until it goes stale.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -36,6 +36,12 @@ function setup() {
   const live = new Set([SID]);
   const screens = new Map<string, string>([[SID, WAITING]]);
   const typed: { sid: string; text: string }[] = [];
+  /** tmux refuses the next typings (it said no: the text may or may not be in the field). */
+  let refusals = 0;
+  /** The first user message of each session's transcript (what the PC pasted, or the first typing it took). */
+  const firstUser = new Map<string, string>();
+  /** No transcript is ever found (the CLI wrote it where the daemon does not look). */
+  let lostTranscript = false;
   /** No entry = no transcript yet (the CLI never started a conversation). */
   const turns = new Map<string, { ended: boolean; at: number; empty?: boolean }>();
   const inTranscript = new Map<string, string[]>();
@@ -43,6 +49,10 @@ function setup() {
     screen: async (sid) => ({ inMode: false, text: screens.get(sid) ?? WAITING }),
     type: async (sid, text) => {
       typed.push({ sid, text });
+      if (refusals > 0) {
+        refusals -= 1;
+        return false;
+      }
       return true;
     },
     enter: async () => true,
@@ -58,9 +68,10 @@ function setup() {
     localSessions: async () => new Set(live),
     tmux,
     relay: async () => undefined,
-    transcriptOf: async (sid) => (turns.has(sid) ? `/transcripts/${sid}.jsonl` : undefined),
+    transcriptOf: async (sid) => (turns.has(sid) && !lostTranscript ? `/transcripts/${sid}.jsonl` : undefined),
     lastTurn: async (path) => turns.get(path.replace(/^.*\/|\.jsonl$/g, '')) ?? null,
     transcriptHas: async (path, label) => (inTranscript.get(path.replace(/^.*\/|\.jsonl$/g, '')) ?? []).some((line) => line.includes(label)),
+    firstUserText: async (path) => firstUser.get(path.replace(/^.*\/|\.jsonl$/g, '')) ?? null,
     firstMessages: firstFile,
     placeOf: (sid) => (sid === SID ? PLACE : undefined),
     now: () => clock,
@@ -70,7 +81,20 @@ function setup() {
   const cliTakes = (): void => {
     turns.set(SID, { ended: false, at: clock, empty: false });
     inTranscript.set(SID, typed.map((entry) => entry.text));
+    if (!firstUser.has(SID) && typed[0]) firstUser.set(SID, typed[0].text);
     screens.set(SID, `${boxScreen('')}\n  esc to interrupt`);
+  };
+  /** The app on the PC pasted `text` (with its line breaks and its tag): the CLI's first message, and a turn runs. */
+  const pcPastes = (text: string): void => {
+    turns.set(SID, { ended: false, at: clock, empty: false });
+    firstUser.set(SID, text);
+    inTranscript.set(SID, [...(inTranscript.get(SID) ?? []), text]);
+    screens.set(SID, `${boxScreen('')}\n  esc to interrupt`);
+  };
+  /** The turn ended: an idle box (the transcript, when found, says so). */
+  const turnEnds = (): void => {
+    turns.set(SID, { ended: true, at: clock, empty: false });
+    screens.set(SID, boxScreen(''));
   };
   const run = async (ms: number, step = 2_000): Promise<void> => {
     for (let spent = 0; spent < ms; spent += step) {
@@ -83,7 +107,28 @@ function setup() {
     return existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as { items: { id: string; estado: string; texto: string; para: { sid: string } }[] }).items : [];
   };
   const remember = (pedido = PEDIDO, em = clock): void => writeFileSync(firstFile, JSON.stringify({ items: [{ placeId: PLACE, pedido, em }] }));
-  return { dir, firstFile, recados, screens, typed, turns, inTranscript, cliTakes, run, items, remember, clock: () => clock };
+  return {
+    dir,
+    firstFile,
+    recados,
+    screens,
+    typed,
+    turns,
+    inTranscript,
+    cliTakes,
+    pcPastes,
+    turnEnds,
+    run,
+    items,
+    remember,
+    clock: () => clock,
+    refuseNext: (count = 1) => {
+      refusals = count;
+    },
+    loseTranscript: () => {
+      lostTranscript = true;
+    },
+  };
 }
 
 describe('Sessão que espera vaga no limitador: o pedido de abertura entra quando a caixa aparece', () => {
@@ -93,9 +138,9 @@ describe('Sessão que espera vaga no limitador: o pedido de abertura entra quand
     // 10 min in the limitador: no field on the screen, nothing typed.
     await g.run(10 * 60_000);
     expect(g.typed).toEqual([]);
-    // The slot came: the CLI is up with an empty box. Not typed right away (it may still be loading).
+    // The slot came: the CLI is up with an empty box. Not typed while the app may still paste it (240 s from the box).
     g.screens.set(SID, boxScreen(''));
-    await g.run(60_000);
+    await g.run(4 * 60_000);
     expect(g.typed).toEqual([]);
     await g.run(90_000);
     expect(g.typed).toHaveLength(1);
@@ -129,12 +174,58 @@ describe('Sessão que espera vaga no limitador: o pedido de abertura entra quand
     g.screens.set(SID, ['Do you trust the files in this folder?', '', '❯ 1. Yes, proceed', '  2. No, exit', '', 'Enter to confirm · Esc to cancel'].join('\n'));
     await g.run(5 * 60_000);
     expect(g.typed).toEqual([]);
-    g.screens.set(SID, `${boxScreen('')}\n  esc to interrupt`);
-    await g.run(5 * 60_000);
-    expect(g.typed).toEqual([]);
     g.screens.set(SID, boxScreen(''));
-    await g.run(3 * 60_000);
+    await g.run(4 * 60_000);
+    expect(g.typed).toEqual([]);
+    await g.run(2 * 60_000);
     expect(g.typed).toHaveLength(1);
+  });
+
+  it('o PC colou o pedido (a 1ª mensagem do transcript é ele, com quebras e a etiqueta): o portão não entrega de novo', async () => {
+    const g = setup();
+    const pedido = `${PEDIDO}\n\n1. rode o verify\n2. mescle`;
+    g.remember(pedido);
+    g.screens.set(SID, boxScreen(''));
+    // The gate's typing went to a tmux that said no: the item waits in the queue.
+    g.refuseNext();
+    await g.run(8 * 60_000);
+    expect(g.typed).toHaveLength(1);
+    // Meanwhile the app on the PC pasted the request (its line breaks kept, its tag at the end), and the turn ended.
+    g.pcPastes(`  ${pedido}  #sem-esteira`);
+    await g.run(60_000);
+    g.turnEnds();
+    await g.run(20 * 60_000);
+    expect(g.typed).toHaveLength(1);
+    expect(g.items().filter((item) => item.para.sid === SID).map((item) => item.estado)).toEqual(['entregue']);
+  });
+
+  it('abertura que o app pôs na fila (lançada horas depois da resposta): o portão espera a janela do app a partir da caixa', async () => {
+    const g = setup();
+    // The PC answered 3 h ago ("fila": no slot on its side); the tab was launched just now.
+    g.remember(PEDIDO, g.clock() - 3 * 60 * 60_000);
+    g.screens.set(SID, boxScreen(''));
+    // The app pastes it 200 s after the box showed up (within its 240 s).
+    await g.run(200_000);
+    expect(g.typed).toEqual([]);
+    g.pcPastes(`${PEDIDO} #sem-esteira`);
+    await g.run(60_000);
+    g.turnEnds();
+    await g.run(20 * 60_000);
+    expect(g.typed).toEqual([]);
+    expect(JSON.parse(readFileSync(g.firstFile, 'utf8')).items).toEqual([]);
+  });
+
+  it('sem transcript achado e um turno na tela (o PC pode ter colado): nunca digita às cegas', async () => {
+    const g = setup();
+    g.loseTranscript();
+    g.remember(PEDIDO, g.clock() - 3 * 60 * 60_000);
+    g.screens.set(SID, boxScreen(''));
+    await g.run(150_000);
+    g.pcPastes(PEDIDO);
+    await g.run(60_000);
+    g.turnEnds();
+    await g.run(30 * 60_000);
+    expect(g.typed).toEqual([]);
   });
 
   it('pedido maior que o teto do tmux: digita o começo e aponta o arquivo com o pedido inteiro', async () => {
@@ -142,7 +233,8 @@ describe('Sessão que espera vaga no limitador: o pedido de abertura entra quand
     const long = `${PEDIDO}\n${'linha do pedido com acentuação. '.repeat(900)}`;
     g.remember(long);
     g.screens.set(SID, boxScreen(''));
-    await g.run(10 * 60_000);
+    // Typed 5 min after the box showed up; the CLI takes it right away.
+    await g.run(5 * 60_000 + 10_000);
     expect(g.typed).toHaveLength(1);
     const text = g.typed[0]!.text;
     expect(Buffer.byteLength(text)).toBeLessThan(15_000);
@@ -150,6 +242,13 @@ describe('Sessão que espera vaga no limitador: o pedido de abertura entra quand
     const path = /em (\S+\.md)/.exec(text)?.[1];
     expect(path).toBeDefined();
     expect(readFileSync(path!, 'utf8')).toBe(long);
+    expect(statSync(join(g.dir, 'primeiras')).mode & 0o777).toBe(0o700);
+    expect(statSync(path!).mode & 0o777).toBe(0o600);
+    // Delivered (confirmed by the transcript): the file goes.
+    g.cliTakes();
+    await g.run(2 * 60_000);
+    expect(g.items().filter((item) => item.para.sid === SID).map((item) => item.estado)).toEqual(['entregue']);
+    expect(existsSync(path!)).toBe(false);
   });
 });
 
