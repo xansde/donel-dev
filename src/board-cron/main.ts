@@ -3,8 +3,10 @@
 //
 //   node board-cron.mjs ronda   every 15 min: lanes follow their Líder, justification cron, vigia, lanes alive, page
 //   node board-cron.mjs lider   every minute: the PC's requests for a lane's Líder (board.leader_requests)
-//   node board-cron.mjs semear [--seco] [--ledger <arquivo>] [--host <host>] [--pc-raiz <C:\...\seazone>]
-//                               once, by hand: projects and one card per live task of the Oráculo (semente.ts), with
+//   node board-cron.mjs semear [--seco] [--ledger <arquivo>] [--host <host>] [--host-de <projeto>=<host>]...
+//                              [--pc-raiz <C:\...\seazone>]
+//                               once, by hand: projects (a new one's host from --host-de, repeatable, else --host; an
+//                               existing one keeps its own) and one card per live task of the Oráculo (semente.ts), with
 //                               the session of its place from the Oráculo's pictures; the Oráculo's ledger read-only;
 //                               --seco prints the plan and only reads (the board too, to count the sessions it would fill)
 //   node board-cron.mjs raia <projeto> <lugar> [<sessão>]
@@ -33,7 +35,9 @@
 // the conversation the tmux carries now (`current` in the session's folder, lider-local.ts: a resume or `/clear` moves
 // it), else `<sid>.jsonl`. A notice for a lane's Líder goes to the lane's Líder alive here, else to the Líder único
 // alive here (the daemon's own pick, lider-local.ts). Each round first moves every lane to the session alive here that
-// holds its Líder's place now (followLanes), and a session gets at most one notice per round, with all its cards.
+// holds its Líder's place now (followLanes), wakes each card's place in the session alive here that holds it now
+// (followCardSession: a renewed session's cards follow its successor), and a session gets at most one notice per round,
+// with all its cards.
 
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, rmdirSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, closeSync, renameSync, statSync, writeFileSync, fstatSync } from 'node:fs';
@@ -41,8 +45,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { BoardCronStore, BoardStore, CardRow, LaneRow } from '../oraculo/board-client';
 import { BOARD_SQLITE_CONFIG, chooseBoard, createBoardSqlite, openBoard } from '../oraculo/board-sqlite';
-import { countSessionFills, planSeed, readDeskStates, readLedgerReadOnly, readPictures, runSeed, sessionResolver, type DeskState } from './semente';
-import { afterBusyField, fieldHoldsOnlyNotice, fieldIsFree, fieldTextOf, followLaneLeaders, groupNotices, LABEL, linkKind, othersOnGithub, othersOnSlack, pickLeader, planJustify, planVigia, responseSince, withShadowNotice, type CronAction, type CronCard, type GithubReading, type SessionState, type ShadowNotice } from '../shared/board/cron';
+import { exitAfterFlush } from './exit';
+import { countSessionFills, parseHostOf, planSeed, readDeskStates, readLedgerReadOnly, readPictures, runSeed, sessionResolver, type DeskState, type SessionOf } from './semente';
+import { afterBusyField, fieldHoldsOnlyNotice, fieldIsFree, fieldTextOf, followCardSession, followLaneLeaders, groupNotices, LABEL, linkKind, othersOnGithub, othersOnSlack, pickLeader, planJustify, planVigia, responseSince, withShadowNotice, type CronAction, type CronCard, type GithubReading, type SessionState, type ShadowNotice } from '../shared/board/cron';
 import { currentConversation, pickLocalLeader, readLeaderMeta } from '../oraculo/lider-local';
 import type { BoardPicture } from '../oraculo/portao';
 import { renderBoardPage } from '../shared/board/page';
@@ -442,6 +447,12 @@ interface RoundLeaders {
   leaderOfAll(): string | null;
 }
 
+/** A place → the session alive in this machine's tmux that holds it now (the seed's resolver); null when tmux did not answer. */
+function placeResolverHere(): SessionOf | null {
+  const live = liveSessions();
+  return live ? sessionResolver(readPictures(ORACULO_DIR), (sid) => live.has(sid)) : null;
+}
+
 /**
  * The lanes' Líder follows its place (devolução do Revisor, 20/11): the place's session alive in this machine's tmux,
  * by the seed's own resolver (`sessionResolver`) over the pictures, with the liveness test; the lane `lider`, the
@@ -449,10 +460,8 @@ interface RoundLeaders {
  * tmux, so it never resolves: the notice goes only to a session this cron can type into, and the lane of a Líder on
  * another machine keeps what it has (the reserve). Nothing resolves = the lane keeps its session, as before.
  */
-async function followLanes(client: Client, lanes: readonly LaneRow[], leaderOfAll: () => string | null): Promise<LaneRow[]> {
-  const live = liveSessions();
-  if (!live) return [...lanes];
-  const sessionOf = sessionResolver(readPictures(ORACULO_DIR), (sid) => live.has(sid));
+async function followLanes(client: Client, lanes: readonly LaneRow[], leaderOfAll: () => string | null, sessionOf = placeResolverHere()): Promise<LaneRow[]> {
+  if (!sessionOf) return [...lanes];
   const out = [...lanes];
   for (const follow of followLaneLeaders(lanes, sessionOf, leaderOfAll)) {
     try {
@@ -607,12 +616,16 @@ async function ronda(client: Client, config: CronConfig): Promise<void> {
   const desk = deskStates(rows);
   let leaderOfAll: string | null | undefined;
   const leaderOfAllOnce = (): string | null => (leaderOfAll === undefined ? (leaderOfAll = leaderOfAllHere(now)) : leaderOfAll);
-  const lanes = await followLanes(client, storedLanes, leaderOfAllOnce);
+  const sessionOf = placeResolverHere();
+  const lanes = await followLanes(client, storedLanes, leaderOfAllOnce, sessionOf);
   const leaders: RoundLeaders = { lanes, leaderOfAll: leaderOfAllOnce };
   let woke = 0;
   const notices: Notice[] = [];
   for (const row of rows) {
-    const card = cronCard(row, row.oraculo_id ? desk.get(row.oraculo_id) : undefined);
+    // the card follows its place as the lanes do: a renewed session hands it to the one that holds the place now
+    const stored = cronCard(row, row.oraculo_id ? desk.get(row.oraculo_id) : undefined);
+    const card = sessionOf ? followCardSession(stored, sessionOf) : stored;
+    if (card.sessionId !== stored.sessionId) log(`cartão ${card.id}: sessão ${card.sessionId}, a que segura o lugar ${card.placeId} aqui agora (o cartão diz ${stored.sessionId ?? 'nenhuma'})`);
     try {
       if (card.justification) {
         const session = sessionState(card.sessionId);
@@ -690,13 +703,25 @@ const argOf = (flag: string): string | undefined => {
   return at > 0 ? process.argv[at + 1] : undefined;
 };
 
+/** Every value after `--flag` (a repeatable flag). */
+const argsOf = (flag: string): string[] => process.argv.flatMap((arg, at) => (arg === flag && at > 0 && process.argv[at + 1] !== undefined ? [process.argv[at + 1]!] : []));
+
 /** `semear`: needs the SQLite board (the Supabase one is seeded by its own SQL, never from here). */
 async function semear(boardFile: string | null): Promise<number> {
   const ledgerFile = argOf('--ledger') ?? join(process.env.DONEL_ORACULO_DIR || join(HOME, '.donel', 'oraculo'), 'ledger.sqlite');
   const pcRoot = argOf('--pc-raiz');
+  let hostOf: Record<string, string>;
+  try {
+    hostOf = parseHostOf(argsOf('--host-de'));
+  } catch (error) {
+    console.error(`[semear] ${error instanceof Error ? error.message : String(error)}`);
+    return 2;
+  }
   const pictures = readPictures(ORACULO_DIR);
-  const plan = planSeed(readLedgerReadOnly(ledgerFile), { host: argOf('--host') ?? readCronConfig().host, vpsHome: HOME, ...(pcRoot ? { pcRoot } : {}), sessionOf: sessionResolver(pictures) });
+  const plan = planSeed(readLedgerReadOnly(ledgerFile), { host: argOf('--host') ?? readCronConfig().host, hostOf, vpsHome: HOME, ...(pcRoot ? { pcRoot } : {}), sessionOf: sessionResolver(pictures) });
   const byStage = plan.cards.reduce<Record<string, number>>((acc, card) => ({ ...acc, [card.stage]: (acc[card.stage] ?? 0) + 1 }), {});
+  // a --host-de for a project the plan does not have is not used: say so (a typo would seed with the default host)
+  for (const id of plan.unknownHostOf) console.error(`[semear] aviso: --host-de ${id}=${hostOf[id]} ignorado, o projeto "${id}" não está no plano (projetos: ${plan.projects.map((p) => p.id).join(', ') || 'nenhum'})`);
   if (process.argv.includes('--seco')) {
     for (const project of plan.projects) console.log(`projeto ${project.id} (${project.name}, ${project.host}): ${project.aliases.join(' | ')}`);
     for (const card of plan.cards) console.log(`cartão ${card.taskId} → ${card.projectId} ${card.stage}${card.place ? ` ${card.place}` : ''}${card.session ? ` sessão ${card.session}` : ''}${card.front ? ` [${card.front}]` : ''}: ${card.title} — ${card.note}`);
@@ -798,10 +823,13 @@ async function main(): Promise<number> {
   return 0;
 }
 
-main().then(
-  (code) => process.exit(code),
-  (error) => {
-    log(`erro: ${error instanceof Error ? error.message : String(error)}`);
-    process.exit(1);
-  },
-);
+// The code holds even if a stream never calls back (the process then ends on its own with it).
+const leave = (code: number): Promise<void> => {
+  process.exitCode = code;
+  return exitAfterFlush(code);
+};
+
+main().then(leave, (error) => {
+  log(`erro: ${error instanceof Error ? error.message : String(error)}`);
+  return leave(1);
+});
