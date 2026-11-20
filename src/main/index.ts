@@ -3471,6 +3471,7 @@ function registerHealthIpcHandlers(): void {
     statePath: join(app.getPath('userData'), 'vigia-travas.json'),
     // t-ffbf8e7d — with the Oráculo on a VPS whose daemon watches, that place's vault and sessions are the daemon's.
     delegated: () => remoteOracleHost?.vigiaDelegada() ?? null,
+    avisarLider: async (message) => deliverOwnerMessageViaBoard?.(message) ?? null,
     log: (line) => console.log(line),
   });
   vigiaService.start();
@@ -5203,7 +5204,10 @@ void app.whenReady().then(async () => {
     cardWriter: () => cardWriter,
     deliverToLeader: () => deliverPedidoToLeader,
     // t-0eb91241 — one transcriber, on the VPS: the Pedir by voice this PC serves goes there by ssh, not to OpenWhispr.
-    transcribe: sshVpsTranscriber({ remotes: () => appConfig.accounts.remotes, command: sshRemoteCommand, timeoutMs: VPS_TRANSCRIBE_TIMEOUT_MS }),
+    // A transcriber set by hand on this PC (DONEL_WHISPER_URL) still wins (ressalva do #562).
+    ...(process.env.DONEL_WHISPER_URL
+      ? {}
+      : { transcribe: sshVpsTranscriber({ remotes: () => appConfig.accounts.remotes, command: sshRemoteCommand, timeoutMs: VPS_TRANSCRIBE_TIMEOUT_MS }) }),
     // Oráculo na VPS: the phone talks to the daemon there; this PC's server stays down.
     remote: () => remoteOracleHost?.celular() ?? null,
   }); // Ledger no celular (PWA só na Tailscale)

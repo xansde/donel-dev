@@ -11,10 +11,13 @@ import { TranscribeError, type Transcribe } from './transcrever';
 export const VPS_HEALTH_COMMAND = 'curl -sS --max-time 5 http://127.0.0.1:8179/saude';
 /**
  * The transcription, fixed: the audio comes on stdin (never in the command), and the last line is the HTTP status.
- * 600 s: the transcriber may hold the audio while the VPS is loaded (`VPS_TRANSCRIBE_TIMEOUT_MS`).
+ * curl gives up at 570 s, before the PC's 600 (`VPS_TRANSCRIBE_TIMEOUT_MS`), so a slow transcription comes back as
+ * "tempo" (curl's exit 28), not as a connection that fell; it tells the transcriber the PC waits 600 s.
  */
 export const VPS_TRANSCRIBE_COMMAND =
-  "curl -sS --max-time 600 -w '\\n%{http_code}' -F 'file=@-;filename=pedido.wav;type=audio/wav' -F response_format=json -F language=pt http://127.0.0.1:8179/inference";
+  "curl -sS --max-time 570 -H 'X-Donel-Paciencia-S: 600' -w '\\n%{http_code}' -F 'file=@-;filename=pedido.wav;type=audio/wav' -F response_format=json -F language=pt http://127.0.0.1:8179/inference";
+/** curl's "operation timed out". */
+const CURL_TIMEOUT = 28;
 
 const DOWN = 'O transcritor da VPS não respondeu. O áudio ficou guardado; tente de novo em um minuto ou escreva o pedido.';
 const HEALTH_TIMEOUT_MS = 15_000;
@@ -58,10 +61,16 @@ export function sshVpsTranscriber(deps: {
   readonly timeoutMs: number;
 }): Transcribe {
   let found: string | null = null;
+  let foundAmong = '';
 
   async function place(): Promise<string> {
-    if (found) return found;
-    for (const remote of deps.remotes()) {
+    const remotes = deps.remotes();
+    // A change in the list of places (one added, one removed) looks for the transcriber again.
+    const among = remotes.map((remote) => remote.sshTarget).join('\n');
+    if (found && among === foundAmong) return found;
+    found = null;
+    foundAmong = among;
+    for (const remote of remotes) {
       const health = await run(deps.command(remote.sshTarget)(VPS_HEALTH_COMMAND), null, HEALTH_TIMEOUT_MS);
       if (health.code === 0 && /"ok"\s*:\s*true/.test(health.stdout)) return (found = remote.sshTarget);
     }
@@ -71,7 +80,7 @@ export function sshVpsTranscriber(deps: {
   return async (audio) => {
     const target = await place();
     const result = await run(deps.command(target)(VPS_TRANSCRIBE_COMMAND), audio, deps.timeoutMs);
-    if (result.timedOut) throw new TranscribeError('tempo', 'A transcrição demorou demais. O áudio ficou guardado; escreva o pedido.');
+    if (result.timedOut || result.code === CURL_TIMEOUT) throw new TranscribeError('tempo', 'A transcrição demorou demais. O áudio ficou guardado; escreva o pedido.');
     if (result.failed || result.code !== 0) {
       // ssh or curl did not get through: look for the transcriber again on the next audio.
       found = null;

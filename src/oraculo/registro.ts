@@ -437,6 +437,7 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
     ledger: () => ledger,
     log: (line) => console.log(line),
     boardOfSession: (sid) => boardOfSession(vigiaPicture(), sid),
+    avisarLider: toLeader,
   });
   vigia.start();
   // t-52bf8b45 — the config is read at each round: writing `decisoes.json` turns the queue on without a restart.

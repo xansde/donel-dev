@@ -2,8 +2,11 @@ import { createServer, type Server } from 'node:http';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createTranscriptionJobs, VPS_TRANSCRIBE_TIMEOUT_MS, whisperServerTranscriber } from '../src/main/celular/transcrever';
+import { createTranscriptionJobs, TranscribeError, VPS_TRANSCRIBE_TIMEOUT_MS, whisperServerTranscriber } from '../src/main/celular/transcrever';
 import { daemonWhisper } from '../src/oraculo/chat-audio';
+import { limitedTranscriber, pedacoCurlArgs } from '../src/oraculo/chat-audio-longo';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 
 // t-0eb91241 — um transcritor só, na VPS: o Pedir por voz que o daemon do Oráculo atende (o celular fala com a VPS, o
 // PC fica fora) manda o áudio ao transcritor residente da VPS (127.0.0.1:8179), não ao OpenWhispr do PC (:8178), que
@@ -134,5 +137,37 @@ describe('o daemon liga o Pedir ao transcritor da VPS', () => {
     const page = readFileSync(join(__dirname, '../src/main/celular/pwa/pedir.js'), 'utf8');
     const tries = Number(/var TENTATIVAS_TRANSCRICAO = (\d+);/.exec(page)?.[1]);
     expect(tries * 2_000).toBeGreaterThan(VPS_TRANSCRIBE_TIMEOUT_MS);
+  });
+});
+
+describe('o pedaço longo do chat diz quanto espera (ressalva do bizops#159)', () => {
+  it('o curl do pedaço manda a paciência de 900 s ao transcritor, que não o descarta aos 570', () => {
+    const args = pedacoCurlArgs('http://127.0.0.1:8179', '/tmp/p.ogg', 'audio/ogg', '/tmp/p.ogg.json');
+    expect(args).toContain('--max-time');
+    expect(args[args.indexOf('--max-time') + 1]).toBe('900');
+    expect(args).toContain('X-Donel-Paciencia-S: 900');
+  });
+});
+
+describe('o pedaço longo que recebe 504 é adiado, não perdido (devolução do #564)', () => {
+  it('o 504 de "esperou demais na fila" vira "tempo" (o worker adia o pedaço e tenta depois)', async () => {
+    const vps = await fakeTranscriber({ status: 504, body: { error: 'o áudio esperou demais na fila; o cliente já desistiu' } });
+    const dir = mkdtempSync(join(tmpdir(), 'pedaco-'));
+    const file = join(dir, 'p.ogg');
+    writeFileSync(file, Buffer.from('OggS fake'));
+    const transcribe = limitedTranscriber({ url: vps.url, limitador: join(dir, 'sem-limitador.py'), tmpOut: (path) => `${path}.json` });
+    const failure = await transcribe(file, { type: 'audio/ogg', quem: 'teste' }).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(TranscribeError);
+    expect((failure as TranscribeError).kind).toBe('tempo');
+  });
+
+  it('outro erro do transcritor (400) segue como recusa', async () => {
+    const vps = await fakeTranscriber({ status: 400, body: { error: 'falta o arquivo' } });
+    const dir = mkdtempSync(join(tmpdir(), 'pedaco-'));
+    const file = join(dir, 'p.ogg');
+    writeFileSync(file, Buffer.from('OggS fake'));
+    const transcribe = limitedTranscriber({ url: vps.url, limitador: join(dir, 'sem-limitador.py'), tmpOut: (path) => `${path}.json` });
+    const failure = await transcribe(file, { type: 'audio/ogg', quem: 'teste' }).catch((error: unknown) => error);
+    expect((failure as TranscribeError).kind).toBe('recusou');
   });
 });
