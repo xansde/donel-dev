@@ -9,7 +9,20 @@ import { extname, join } from 'node:path';
 import { MAX_PROOF_FILE_BYTES, PROOF_FILE_TYPES, isProofFileName, maxProofBytes, type LedgerActor, type LedgerOp } from '../shared/ledger/contract';
 import { checkLedgerImport, ledgerCount, ledgerProofFiles, sameLedger } from '../shared/ledger/remote-import';
 import { ledgerProofsDir, type LedgerService } from '../main/ledger-store';
-import { checkNotice, limiterTaskOf, NOTICE_OP, SERVICE_PATH, serviceActor, serviceOpRefusal, type LimiterProgressOp, type ServiceOp } from './servicos';
+import {
+  checkNotice,
+  checkOpenReviewer,
+  limiterTaskOf,
+  NOTICE_OP,
+  OPEN_REVIEWER_OP,
+  SERVICE_PATH,
+  serviceActor,
+  serviceOpRefusal,
+  type LimiterProgressOp,
+  type OpenReviewerOrder,
+  type OpenReviewerOutcome,
+  type ServiceOp,
+} from './servicos';
 import type { Relay } from './relay';
 import { LIVRO_PATH, parseRascunho, type LivroStore } from './livro';
 import { GATE_PATH_PREFIX, type GateRoutes } from './portoes';
@@ -120,6 +133,12 @@ export interface OracleApiDeps {
   readonly gateRoutes?: GateRoutes;
   /** t-cddc62fc — queues the reconciliador's notice for the Líder único (the relay, no wait); absent = refused. */
   readonly avisarLider?: (texto: string, chave: string) => ReturnType<Relay['send']>;
+  /**
+   * t-3b258224 — the reconciliador's opening of the board's elastic Revisor: the entregador's openLocal (in this
+   * process, or through its gate on the loopback); absent = refused (404).
+   */
+  readonly abrirRevisor?: (order: OpenReviewerOrder) => Promise<OpenReviewerOutcome>;
+  readonly log?: (line: string) => void;
 }
 
 /** What a service may append to the journal: the same as its op route (create, take, deliver), by the same rule. */
@@ -201,6 +220,21 @@ export function createOracleApiHandler(deps: OracleApiDeps): OracleApiHandler {
         return json(200, { ok: true, para: to });
       } catch {
         return json(500, { error: 'o aviso não entrou na fila do PC' });
+      }
+    }
+    if (isRecord(op) && op.op === OPEN_REVIEWER_OP) {
+      const order = checkOpenReviewer(op, name);
+      if (!order.ok) return json(order.status, { error: order.error });
+      if (!deps.abrirRevisor) return json(404, { error: 'rota' });
+      const { ok: _ok, ...ask } = order;
+      try {
+        const outcome = await deps.abrirRevisor(ask);
+        (deps.log ?? ((line: string) => console.log(line)))(
+          `[oraculo] abrir-revisor pelo reconciliador (ordem permanente do Líder único, r-0b7e4683) no quadro ${ask.quadro}: ${outcome.resultado}${outcome.lugar ? ` ${outcome.lugar}` : ''}`,
+        );
+        return json(200, { ok: true, ...outcome });
+      } catch {
+        return json(502, { error: 'o entregador não respondeu à abertura' });
       }
     }
     const why = serviceOpRefusal(op, name);

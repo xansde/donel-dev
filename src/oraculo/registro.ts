@@ -48,7 +48,7 @@ import { createChatAudioWorker, daemonWhisper } from './chat-audio';
 import { createGlossarioStore, glossarioFile } from './glossario';
 import { startChatArquivoSweep } from './chat-arquivo';
 import { chatResponder } from './chat-responder';
-import { boardOfSession, createEntregador, createLocalDeliverClient, gatePortOf, type Entregador, type EntregadorPlace } from './entregador';
+import { boardOfSession, createEntregador, createLocalDeliverClient, createLocalOpenReviewerClient, gatePortOf, type Entregador, type EntregadorPlace } from './entregador';
 import { RETRATO_PC_FILE } from './modo';
 import { CHAT_REPLIES_FILE, CHAT_TAIL_BYTES, readTail, repliesStore } from './chat-entregador';
 import { GATE_PHONE_PAIR_PATH, isChatRoute, registroPhonePort } from './celular-frente';
@@ -418,6 +418,11 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
     // t-cddc62fc — the reconciliador's notices reach the Líder único by the relay, out of the owner's phone chat.
     // t-c3fbe852: his own queue when he lives here.
     avisarLider: async (texto, chave) => (await toLeader({ projectPath: '', placeId: '', text: texto, leaderText: texto, key: `reconciliador:${chave}` })) ?? 'pendente',
+    // t-3b258224 — the reconciliador's Revisor for a board: the openLocal of the entregador, in this process or through
+    // its gate on the loopback (`/local/abrir-revisor`).
+    abrirRevisor: entregador
+      ? (order) => entregador.openReviewer({ quadro: order.quadro, pedido: order.pedido, ...(order.tarefa ? { tarefa: order.tarefa } : {}) })
+      : createLocalOpenReviewerClient({ port: () => gatePortOf(dir, place.gatePort ?? (Number(process.env.DONEL_ORACULO_PORTAO_PORT) || GATE_PORT)) }),
   });
   server = await (place.listen ?? startOracleServer)({ host, port, caller: (authorization) => callerOf(authorization, tokenHash(), services(), gates()), handler });
   writeFileSync(join(dir, 'url'), `${server.url}\n`, { mode: 0o600 });
