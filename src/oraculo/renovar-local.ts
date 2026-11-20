@@ -412,6 +412,8 @@ interface GiveUpOptions {
 }
 
 const oneLine = (text: string): string => text.replace(/\s+/g, ' ').trim();
+/** "1 recado ou mensagem que chegou" / "N recados ou mensagens que chegaram" (the journal line of a forward). */
+const arrivedText = (count: number): string => (count === 1 ? '1 recado ou mensagem que chegou' : `${count} recados ou mensagens que chegaram`);
 
 export function createLocalRenewal(deps: LocalRenewalDeps): LocalRenewal {
   const now = deps.now ?? Date.now;
@@ -784,7 +786,7 @@ export function createLocalRenewal(deps: LocalRenewalDeps): LocalRenewal {
       });
       return;
     }
-    say(`reencaminhou a ${new8} ${forwarded.reencaminhados} recado(s) ou mensagem(ns) que chegaram a ${sid8} depois da passagem; ${forwarded.passados} da fila passaram a ela.`);
+    say(`reencaminhou a ${new8} ${arrivedText(forwarded.reencaminhados)} a ${sid8} depois da passagem; ${forwarded.passados} da fila passaram a ela.`);
     const killed = await deps.kill(sid);
     if (!killed) {
       mark(sid, 'nao-fechou', { sucessora: opened.sid });
@@ -800,8 +802,10 @@ export function createLocalRenewal(deps: LocalRenewalDeps): LocalRenewal {
     if (!after.ok) {
       say(`depois de fechar ${sid8}, o 2º reencaminhamento a ${new8} falhou (${oneLine(after.motivo).slice(0, 160)}).`);
       tellLeader(sid, `fechei ${sid8} e ${new8} segue no lugar dela, mas a conferência final do que chegou a ${sid8} depois da passagem falhou (${oneLine(after.motivo).slice(0, 160)}); confira os recados dela.`);
-    } else if (after.reencaminhados || after.passados) {
-      say(`reencaminhou a ${new8} mais ${after.reencaminhados} que chegaram a ${sid8} antes do fechamento; ${after.passados} da fila passaram a ela.`);
+    } else if (after.reencaminhados) {
+      say(`reencaminhou a ${new8} mais ${arrivedText(after.reencaminhados)} a ${sid8} antes do fechamento; ${after.passados} da fila passaram a ela.`);
+    } else if (after.passados) {
+      say(`depois de fechar ${sid8}, ${after.passados} da fila passaram a ${new8}.`);
     }
   }
 
