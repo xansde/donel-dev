@@ -735,14 +735,17 @@ export function createLocalRenewal(deps: LocalRenewalDeps): LocalRenewal {
     }
     say(`reencaminhou a ${new8} ${forwarded.reencaminhados} recado(s) ou mensagem(ns) que chegaram a ${sid8} depois da passagem; ${forwarded.passados} da fila passaram a ela.`);
     const killed = await deps.kill(sid);
-    mark(sid, killed ? 'fechou' : 'nao-fechou', { sucessora: opened.sid });
-    say(killed ? `fechou o tmux de ${sid8} (a pasta fica); ${new8} segue no lugar dela.` : `nao-fechou: o tmux recusou encerrar ${sid8}; ${new8} já está viva no lugar dela.`);
     if (!killed) {
+      mark(sid, 'nao-fechou', { sucessora: opened.sid });
+      say(`nao-fechou: o tmux recusou encerrar ${sid8}; ${new8} já está viva no lugar dela.`);
       tellLeader(sid, `duas vivas no lugar: o tmux recusou encerrar ${sid8}, e ${new8} já respondeu no lugar dela; o Líder decide.`);
       return;
     }
-    // Once more after the kill: a recado typed into the old one between the forward and the kill (never twice).
+    say(`fechou o tmux de ${sid8} (a pasta fica); ${new8} segue no lugar dela.`);
+    // Once more after the kill: a recado typed into the old one between the forward and the kill (never twice). The mark
+    // stays 'respondeu' (in flight) until it ran, so a restart here makes recover() tell the Líder.
     const after = await forwardTo(forwardCall);
+    mark(sid, 'fechou', { sucessora: opened.sid });
     if (!after.ok) {
       say(`depois de fechar ${sid8}, o 2º reencaminhamento a ${new8} falhou (${oneLine(after.motivo).slice(0, 160)}).`);
       tellLeader(sid, `fechei ${sid8} e ${new8} segue no lugar dela, mas a conferência final do que chegou a ${sid8} depois da passagem falhou (${oneLine(after.motivo).slice(0, 160)}); confira os recados dela.`);

@@ -199,8 +199,11 @@ export interface GateRecadosDeps {
   readonly placeOf?: (sid: string) => string | undefined;
   /** The text of a transcript's first user message (`null` = none, or unreadable). Default: reads its start. */
   readonly firstUserText?: (path: string) => Promise<string | null>;
-  /** t-49dee38d (T1) — the end of a transcript (`null` = unreadable). Default: its last 512 KB. */
-  readonly readTranscript?: (path: string) => Promise<string | null>;
+  /**
+   * t-49dee38d (T1) — the end of a transcript reaching back before `since` (`null` = unreadable, or it could not reach
+   * that far). Default: `readTranscriptSince`.
+   */
+  readonly readTranscript?: (path: string, since: number) => Promise<string | null>;
   readonly now?: () => number;
   readonly log?: (line: string) => void;
 }
@@ -682,6 +685,49 @@ export async function readTranscriptTail(path: string): Promise<string | null> {
   }
 }
 
+/** The most `readTranscriptSince` reads before giving up (a conversation that long after a request is not read blind). */
+const SINCE_READ_MAX_BYTES = 32 * 1024 * 1024;
+
+/** The first record of `text` with a time says it is before `since` (whole lines only: the first, maybe cut, is skipped). */
+function reachesBefore(text: string, since: number): boolean {
+  for (const line of text.split('\n')) {
+    const entry = parseObject(line);
+    if (typeof entry.timestamp !== 'string') continue;
+    const at = Date.parse(entry.timestamp);
+    if (Number.isFinite(at)) return at < since;
+  }
+  return false;
+}
+
+/**
+ * t-49dee38d (T1) — the end of a transcript that reaches back before `since` (ms): its last 512 KB, and more while the
+ * first record read is not before `since`, up to the whole file. `null` = unreadable, or past 32 MB without reaching it.
+ */
+export async function readTranscriptSince(path: string, since: number): Promise<string | null> {
+  try {
+    const handle = await fsp.open(path, 'r');
+    try {
+      const { size } = await handle.stat();
+      let length = Math.min(size, 512 * 1024);
+      for (;;) {
+        const buffer = Buffer.alloc(length);
+        await handle.read(buffer, 0, length, size - length);
+        const text = buffer.toString('utf8');
+        if (length >= size) return text;
+        // The first line may be cut: only whole ones say how far back the window goes.
+        const whole = text.slice(text.indexOf('\n') + 1);
+        if (reachesBefore(whole, since)) return whole;
+        if (length >= SINCE_READ_MAX_BYTES) return null;
+        length = Math.min(size, length * 4, SINCE_READ_MAX_BYTES);
+      }
+    } finally {
+      await handle.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
 /** A message someone put into a session's conversation (the owner typing, the app or this queue), after a moment. */
 export interface TypedMessage {
   /** Its entry's uuid, else its time and words (what makes it one). */
@@ -697,32 +743,59 @@ export interface TypedMessage {
 const RECADO_ID = /\bRecado (r-[0-9a-f]{8})\b/g;
 const STOP_FEEDBACK = /^Stop hook feedback:\s*/;
 
+const textOfParts = (content: unknown): string =>
+  typeof content === 'string'
+    ? content
+    : Array.isArray(content)
+      ? content.map((part) => (isRecord(part) && part.type === 'text' && typeof part.text === 'string' ? part.text : '')).join('\n')
+      : '';
+
 /**
  * Pure — t-49dee38d (T1): the user messages of a transcript's main conversation written at or after `since` (ms): the
  * owner's typing, the app's "◆ De …", this queue's "◆ Recado r-…" typed or given at a turn end (the CLI's "Stop hook
- * feedback"). Never a tool's answer, a task notification, a command or other text the CLI adds itself, an interruption,
- * nor one holding `exclude`.
+ * feedback"). Typed while a turn runs, the CLI keeps it as a `queued_command` attachment (rodada 2), sometimes also as a
+ * user entry later: it counts once. Never a tool's answer, a task notification, a command or other text the CLI adds
+ * itself, an interruption, nor one holding `exclude`.
  */
 export function typedMessagesSince(tail: string, since: number, exclude?: string): TypedMessage[] {
   const found: TypedMessage[] = [];
+  /** The texts of queued commands not yet matched by a later user entry of the same words. */
+  const queued = new Map<string, number>();
   for (const line of tail.split('\n')) {
     const entry = parseObject(line);
-    if (entry.type !== 'user' || entry.isSidechain === true || typeof entry.timestamp !== 'string') continue;
+    if (entry.isSidechain === true || typeof entry.timestamp !== 'string') continue;
+    const attachment = entry.type === 'attachment' && isRecord(entry.attachment) && entry.attachment.type === 'queued_command' ? entry.attachment : undefined;
+    if (entry.type !== 'user' && !attachment) continue;
     const at = Date.parse(entry.timestamp);
     if (!Number.isFinite(at) || at < since) continue;
-    const message = isRecord(entry.message) ? entry.message : {};
-    const content = message.content;
-    if (Array.isArray(content) && content.some((part) => isRecord(part) && part.type === 'tool_result')) continue;
-    const raw = typeof content === 'string' ? content : Array.isArray(content) ? content.map((part) => (isRecord(part) && part.type === 'text' && typeof part.text === 'string' ? part.text : '')).join('\n') : '';
-    let text = raw.replace(/<\/?pasted_content[^>]*>/g, '').trim();
-    if (entry.isMeta === true) {
-      // Of the CLI's own texts only a turn end's feedback: that is how this queue hands a recado at a turn end.
-      if (!STOP_FEEDBACK.test(text)) continue;
-      text = text.replace(STOP_FEEDBACK, '').trim();
+    let text: string;
+    let origin: unknown;
+    if (attachment) {
+      text = textOfParts(attachment.prompt).replace(/<\/?pasted_content[^>]*>/g, '').trim();
+      origin = isRecord(attachment.origin) ? attachment.origin.kind : undefined;
+    } else {
+      const message = isRecord(entry.message) ? entry.message : {};
+      const content = message.content;
+      if (Array.isArray(content) && content.some((part) => isRecord(part) && part.type === 'tool_result')) continue;
+      text = textOfParts(content).replace(/<\/?pasted_content[^>]*>/g, '').trim();
+      if (entry.isMeta === true) {
+        // Of the CLI's own texts only a turn end's feedback: that is how this queue hands a recado at a turn end.
+        if (!STOP_FEEDBACK.test(text)) continue;
+        text = text.replace(STOP_FEEDBACK, '').trim();
+      }
+      origin = isRecord(entry.origin) ? entry.origin.kind : undefined;
     }
-    const origin = isRecord(entry.origin) ? entry.origin.kind : undefined;
     if (!text || (origin !== undefined && origin !== 'human') || /^<(?:task-notification|command-|local-command|system-reminder)/.test(text) || text.startsWith('[Request interrupted')) continue;
     if (exclude && text.includes(exclude)) continue;
+    if (attachment) queued.set(text, (queued.get(text) ?? 0) + 1);
+    else {
+      // The same words queued before: the CLI wrote them twice, they came in once.
+      const pending = queued.get(text) ?? 0;
+      if (pending > 0) {
+        queued.set(text, pending - 1);
+        continue;
+      }
+    }
     const ids = [...text.matchAll(RECADO_ID)].map((match) => match[1]!);
     const key = typeof entry.uuid === 'string' && entry.uuid ? entry.uuid : createHash('sha256').update(JSON.stringify([entry.timestamp, text])).digest('hex').slice(0, 32);
     found.push({ key, at, text, ids: [...new Set(ids)], donel: ids.length > 0 || DONEL_FORM.test(text) || text.startsWith('◆') });
@@ -780,7 +853,7 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
   const transcriptOf = deps.transcriptOf ?? findTranscript;
   const lastTurn = deps.lastTurn ?? transcriptLastTurn;
   const firstUserText = deps.firstUserText ?? transcriptFirstUserText;
-  const readTranscript = deps.readTranscript ?? readTranscriptTail;
+  const readTranscript = deps.readTranscript ?? readTranscriptSince;
   /** What the hooks told of each session (memory only: a session they never spoke of is read on its screen and transcript). */
   const moods = new Map<string, { readonly mood: SessionMood; readonly at: number }>();
   const moodOf = (sid: string): SessionMood | undefined => moods.get(sid)?.mood;
@@ -1699,16 +1772,17 @@ export function createGateRecados(deps: GateRecadosDeps): GateRecadosHandle {
       // What the old one's conversation shows since the request: read first, so nothing is forwarded blind.
       const path = await transcriptPath(de);
       if (!path) return { ok: false, motivo: `não achei a conversa de ${de.slice(0, 8)}` };
-      const tail = await readTranscript(path);
-      if (tail === null) return { ok: false, motivo: `não li a conversa de ${de.slice(0, 8)}` };
+      const tail = await readTranscript(path, desde);
+      if (tail === null) return { ok: false, motivo: `não li a conversa de ${de.slice(0, 8)} desde o pedido de passagem` };
       const typedInOld = typedMessagesSince(tail, desde, call.excluir);
       const items = read();
       const outgoing: { readonly at: number; readonly words: string; readonly key: string; readonly source?: string }[] = [];
       for (const item of items) {
         if (item.para.sid !== de || item.reencaminhado) continue;
-        // Delivered to it since the request, or typed into it (whether it came in or not, it goes once, from here).
+        // Delivered to it since the request, or typed into it since then (whether it came in or not, it goes once, from here).
         const delivered = item.estado === 'entregue' && (item.entregueEm ?? 0) >= desde;
-        if (!delivered && item.estado !== 'digitado') continue;
+        const typed = item.estado === 'digitado' && (item.digitadoEm ?? 0) >= desde;
+        if (!delivered && !typed) continue;
         const at = item.entregueEm ?? item.digitadoEm ?? item.criado;
         outgoing.push({ at, words: forwardWords(de, false, item.texto, at), key: `reencaminhado:${item.id}`, source: item.id });
       }
