@@ -38,6 +38,11 @@ type DatabaseSync = DatabaseSyncType;
 const NO_PROJECT = 'sem-projeto';
 const LEADER_ALIVE_MS = 30 * 60 * 1000;
 const PAGE_DONE_MS = 3 * 24 * 60 * 60 * 1000;
+
+/** How far back a card in Feito is still read to follow its task (a task devolvida after the card closed reopens it). */
+export const CARDS_WITH_TASK_DONE_MS = 7 * 24 * 60 * 60 * 1000;
+/** The cards of Oráculo tasks: not done, or done after `?` (ISO). Read by the store and by `sincronizar --seco`. */
+export const CARDS_WITH_TASK_SQL = "SELECT * FROM cards WHERE oraculo_id IS NOT NULL AND (stage <> 'done' OR updated_at > ?) ORDER BY created_at, rowid LIMIT 5000";
 const PROJECT_ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 export interface ProjectInput {
@@ -92,6 +97,7 @@ export interface BoardSqliteStore extends BoardStore, BoardCronStore {
   /** Admin (`board-cron raia`): the lane of a project, or null. */
   laneOf(projectId: string): Promise<LaneRow | null>;
   cardByOraculoId(taskId: string): Promise<CardRow | null>;
+  cardsWithTask(): Promise<readonly CardRow[]>;
   /**
    * Admin (the seed): the session that does a card the import left without one. Only while the card has none and its
    * place is still `placeId`; no version, no move (it is who to wake, not a step of the card). False = nothing changed.
@@ -600,6 +606,14 @@ export function createBoardSqlite(file: string, options: { readonly now?: () => 
           )
           .all(iso(now() - LEADER_ALIVE_MS))
           .map((row) => plain<LaneRow>(row)),
+      ),
+
+    cardsWithTask: () =>
+      read(() =>
+        db
+          .prepare(CARDS_WITH_TASK_SQL)
+          .all(iso(now() - CARDS_WITH_TASK_DONE_MS))
+          .map((row) => plain<CardRow>(row)),
       ),
 
     laneOf: (projectId) =>

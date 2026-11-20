@@ -9,6 +9,10 @@
 //                               existing one keeps its own) and one card per live task of the Oráculo (semente.ts), with
 //                               the session of its place from the Oráculo's pictures; the Oráculo's ledger read-only;
 //                               --seco prints the plan and only reads (the board too, to count the sessions it would fill)
+//   node board-cron.mjs sincronizar [--seco] [--ledger <arquivo>]
+//                               once, by hand (r-a01b8ca6): every card of an Oráculo task follows it (segue-oraculo.ts:
+//                               the task's owner as the place, Feito when accepted or cancelled), as each ronda does
+//                               before the vigia; prints every change; --seco only reads (the board and the ledger)
 //   node board-cron.mjs raia <projeto> <lugar> [<sessão>]
 //                               by hand: the lane's Líder (touch_lane with force), for a Líder with no card_* tools;
 //                               no <sessão> = the session alive here that holds the place now (as the round does)
@@ -49,9 +53,10 @@ import type { BoardCronStore, BoardStore, CardRow, LaneRow } from '../oraculo/bo
 import { BOARD_SQLITE_CONFIG, chooseBoard, createBoardSqlite, openBoard } from '../oraculo/board-sqlite';
 import { exitAfterFlush } from './exit';
 import { hasCardToolsMark, markCardTools } from '../oraculo/com-cartoes';
-import { countSessionFills, parseHostOf, planSeed, readDeskStates, readLedgerReadOnly, readPictures, runSeed, sessionResolver, type DeskState, type SessionOf } from './semente';
+import { countSessionFills, parseHostOf, planSeed, readDeskStates, readLedgerReadOnly, readPictures, readTasksReadOnly, runSeed, sessionResolver, type DeskState, type SessionOf } from './semente';
 import { afterBusyField, fieldHoldsOnlyNotice, fieldIsFree, fieldTextOf, followCardSession, followLaneLeaders, groupNotices, LABEL, linkKind, othersOnGithub, othersOnSlack, pickLeader, planJustify, planVigia, responseSince, withShadowNotice, type CronAction, type CronCard, type GithubReading, type SessionState, type ShadowNotice } from '../shared/board/cron';
 import { currentConversation, pickLocalLeader, readLeaderMeta } from '../oraculo/lider-local';
+import { applyOracleSync, describeStep, planOracleSync, readCardsWithTaskReadOnly } from './segue-oraculo';
 import type { BoardPicture } from '../oraculo/portao';
 import { renderBoardPage } from '../shared/board/page';
 
@@ -770,14 +775,31 @@ function deskStates(rows: readonly CardRow[]): Map<string, DeskState> {
   }
 }
 
+/**
+ * r-a01b8ca6 — the cards of Oráculo tasks follow them (owner, Feito when closed), before the vigia reads the board. The
+ * ledger read-only; unreadable = nothing moved this round (logged). A board with no `cardsWithTask` (Supabase): off.
+ */
+async function followOracle(client: Client, sessionOf: SessionOf | null): Promise<void> {
+  if (!client.cardsWithTask) return;
+  try {
+    const rows = await client.cardsWithTask();
+    const tasks = readTasksReadOnly(LEDGER_FILE, rows.flatMap((row) => (row.oraculo_id ? [row.oraculo_id] : [])));
+    const steps = planOracleSync(rows, tasks, sessionOf ?? undefined);
+    if (steps.length) await applyOracleSync(client, steps, log);
+  } catch (error) {
+    log(`segue o Oráculo: não rodou (${error instanceof Error ? error.message : String(error)})`);
+  }
+}
+
 async function ronda(client: Client, config: CronConfig): Promise<void> {
   const now = Date.now();
   const state = readState();
+  const sessionOf = placeResolverHere();
+  await followOracle(client, sessionOf);
   const [rows, storedLanes] = await Promise.all([client.parkedOrDoing(config.host), client.lanes(config.host)]);
   const desk = deskStates(rows);
   let leaderOfAll: string | null | undefined;
   const leaderOfAllOnce = (): string | null => (leaderOfAll === undefined ? (leaderOfAll = leaderOfAllHere(now)) : leaderOfAll);
-  const sessionOf = placeResolverHere();
   const lanes = await followLanes(client, storedLanes, leaderOfAllOnce, sessionOf);
   const leaders: RoundLeaders = { lanes, leaderOfAll: leaderOfAllOnce };
   let woke = 0;
@@ -923,6 +945,51 @@ async function semear(boardFile: string | null): Promise<number> {
   return 0;
 }
 
+/**
+ * `sincronizar [--seco] [--ledger <arquivo>]` (r-a01b8ca6): the ronda's follow of the Oráculo, once, printing every
+ * change. --seco opens the board and the ledger read-only and writes nothing.
+ */
+async function sincronizar(boardFile: string | null): Promise<number> {
+  if (!boardFile || !existsSync(boardFile)) {
+    console.error(`[sincronizar] sem ${join(DIR, BOARD_SQLITE_CONFIG)} válido apontando para um quadro que existe: só o quadro em SQLite segue o Oráculo.`);
+    return 1;
+  }
+  const ledgerFile = argOf('--ledger') ?? LEDGER_FILE;
+  if (!existsSync(ledgerFile)) {
+    console.error(`[sincronizar] ${ledgerFile} não existe`);
+    return 1;
+  }
+  const seco = process.argv.includes('--seco');
+  const sessionOf = placeResolverHere();
+  const store = seco ? null : createBoardSqlite(boardFile);
+  try {
+    const rows = store ? await store.cardsWithTask() : readCardsWithTaskReadOnly(boardFile);
+    const tasks = readTasksReadOnly(ledgerFile, rows.flatMap((row) => (row.oraculo_id ? [row.oraculo_id] : [])));
+    const steps = planOracleSync(rows, tasks, sessionOf ?? undefined);
+    const missing = rows.filter((row) => row.oraculo_id && !tasks.has(row.oraculo_id)).length;
+    const byTo = steps.reduce<Record<string, number>>((acc, step) => ({ ...acc, [step.to]: (acc[step.to] ?? 0) + 1 }), {});
+    if (seco) for (const step of steps) console.log(`mudaria: ${describeStep(step)}`);
+    const result = store ? await applyOracleSync(store, steps, (line) => console.log(line)) : null;
+    console.log(
+      JSON.stringify({
+        seco,
+        ledger: ledgerFile,
+        quadro: boardFile,
+        cartoesComTarefa: rows.length,
+        semTarefaNoOraculo: missing,
+        mudancas: steps.length,
+        porColunaDestino: byTo,
+        lugarMuda: steps.filter((step) => step.fromPlace !== step.place).length,
+        sessoesAqui: sessionOf ? 'tmux lido' : '(tmux não respondeu: nenhuma sessão)',
+        ...(result ? { aplicadas: result.applied, falharam: result.failed } : {}),
+      }),
+    );
+    return result && result.failed > 0 ? 1 : 0;
+  } finally {
+    store?.close();
+  }
+}
+
 const PLACE = /^(?:place|session):[A-Za-z0-9-]{1,64}$/;
 
 /**
@@ -961,8 +1028,8 @@ async function raia(boardFile: string | null): Promise<number> {
 
 async function main(): Promise<number> {
   const mode = process.argv[2];
-  if (mode !== 'ronda' && mode !== 'lider' && mode !== 'semear' && mode !== 'raia') {
-    console.error('uso: board-cron.mjs ronda|lider|semear [--seco]|raia <projeto> <lugar> [<sessão>]');
+  if (mode !== 'ronda' && mode !== 'lider' && mode !== 'semear' && mode !== 'raia' && mode !== 'sincronizar') {
+    console.error('uso: board-cron.mjs ronda|lider|semear [--seco]|sincronizar [--seco]|raia <projeto> <lugar> [<sessão>]');
     return 2;
   }
   const choice = chooseBoard({ sqliteConfig: process.env.DONEL_BOARD_SQLITE_CONFIG || join(DIR, BOARD_SQLITE_CONFIG), supabaseConfig: process.env.DONEL_BOARD_CONFIG || join(DIR, 'supabase.json') });
@@ -972,6 +1039,7 @@ async function main(): Promise<number> {
   }
   if (mode === 'semear') return semear(choice.kind === 'sqlite' ? choice.file : null);
   if (mode === 'raia') return raia(choice.kind === 'sqlite' ? choice.file : null);
+  if (mode === 'sincronizar') return sincronizar(choice.kind === 'sqlite' ? choice.file : null);
   if (choice.kind === 'off') return 0; // the board is off: nothing touched
   mkdirSync(DIR, { recursive: true });
   const client = openBoard(choice);
