@@ -11,8 +11,10 @@
 
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import type { LedgerDoc } from '../shared/ledger/contract';
-import { cartaRows, tarefaRows, type CartaProvaRef, type PlaceInfoOf, type TarefaRow } from '../shared/ledger/mirror';
+import { isClosed, lastDelivery, type LedgerDoc, type LedgerTask } from '../shared/ledger/contract';
+import { deliveryNote } from '../shared/ledger/labels';
+import { actorName, cartaRow, cartaRows, maskSecrets, tarefaRows, type CartaProvaRef, type PlaceInfoOf, type TarefaRow } from '../shared/ledger/mirror';
+import { localFlagOn } from '../main/local-flags';
 import { prepareProof, type ProofReader } from '../main/ledger-mirror/cartas';
 import type { MobileRequest, MobileResponse } from '../main/celular/server';
 import { CHAT_AUDIO_MAX_MS, CHAT_AUDIO_MAX_PARTES, CHAT_AUDIO_MIMES, CHAT_AUDIO_PARTE_MIMES, type CelularLocalStore } from './celular-local';
@@ -20,6 +22,7 @@ import { MAX_ARQUIVO_BODY, MAX_ARQUIVO_BYTES } from './chat-arquivo';
 import type { GlossarioResumo, GlossarioStore } from './glossario';
 import { CREDENCIAL_PATH, type CredencialHandler } from './credencial';
 import { projetoDoQuadro, visaoGeral, type QuadroLeitura } from './quadro-v2';
+import { montarUsoIa, USO_IA_PATH, type UsoIaPaths } from './uso-ia';
 
 export const V2_PREFIX = '/api/v2/';
 export const SIGNATURE_SCHEME = 'donel-req-v1';
@@ -46,6 +49,19 @@ const MAX_LEGENDA = 4000;
 /** t-753e8199 — the owner corrects an audio's transcription (contract v1.3). */
 export const CHAT_CORRECAO_PATH = 'chat/correcao';
 const MAX_CORRECAO = 4000;
+/**
+ * t-c62538a7 — the result of each of the owner's requests (`GET resultados`, contract v1.7), and `GET prova` finding the
+ * file of any task, not only of the ones waiting for him. Behind a local flag read at each request: off = 404 and the
+ * old `prova`.
+ */
+export const RESULTADOS_FLAG = 'celular-resultados';
+const RESULTADOS_DIAS = 30;
+const MAX_RESULTADOS = 400;
+const MAX_RESULTADO_NOTA = 2000;
+const MAX_RESULTADO_LINKS = 10;
+/** Who asked, as `quadro::e_do_dono` in the app reads it. */
+const OWNER_ASKED = /^\s*(alexandre|dono)\b/i;
+const NOT_A_RESULT = new Set(['cancelada', 'substituída']);
 
 const HEADERS = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } as const;
 const json = (status: number, value: unknown): MobileResponse => ({ status, headers: { ...HEADERS, 'Content-Type': 'application/json; charset=utf-8' }, body: JSON.stringify(value) });
@@ -74,8 +90,15 @@ export interface CelularV2Deps {
   readonly credencial?: CredencialHandler;
   /** t-f091595a — the task board, read only (quadro-v2.ts); absent = `quadro-desligado`. */
   readonly quadro?: () => Promise<QuadroLeitura>;
+  /**
+   * t-1c683858 — the "Uso de IA" screen (`GET uso-ia`, src/oraculo/uso-ia.ts): where it reads and keeps its state, and
+   * the local flag `celular-uso-ia`, read at every request. Absent or off = 404 `desligada`.
+   */
+  readonly usoIa?: UsoIaPaths & { readonly flagOn: () => boolean };
   readonly log?: (line: string) => void;
   readonly now?: () => number;
+  /** Local feature flags (`local-flags.ts`); default: the files in `~/.donel/flags/` of this machine, read each time. */
+  readonly flagOn?: (name: string) => boolean;
 }
 
 export function signedMessage(method: string, pathWithQuery: string, ts: string, body: string): string {
@@ -98,6 +121,7 @@ const iso = (ms: number | null | undefined): string | null => (typeof ms === 'nu
 
 export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileRequest) => Promise<MobileResponse> {
   const now = deps.now ?? Date.now;
+  const flagOn = deps.flagOn ?? ((name: string) => localFlagOn(name));
   /** A proof's prepared form, by file: the hash of a print is read once, not at every list. */
   const prepared = new Map<string, Awaited<ReturnType<typeof prepareProof>>>();
 
@@ -175,7 +199,8 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     const doc = deps.doc();
     const tarefa = query.get('tarefa') ?? '';
     const ordem = Number(query.get('ordem'));
-    const card = doc ? cartaRows(doc).rows.find((row) => row.id === tarefa) : undefined;
+    const task = doc && Object.hasOwn(doc.tasks, tarefa) ? doc.tasks[tarefa] : undefined;
+    const card = !doc ? undefined : flagOn(RESULTADOS_FLAG) ? (task ? cartaRow(task, []) : undefined) : cartaRows(doc).rows.find((row) => row.id === tarefa);
     const ref = card?.provas.find((candidate) => candidate.ordem === ordem);
     if (!ref) {
       // A text proof is not a file: it goes as the task's text proof, masked.
@@ -186,6 +211,84 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     const got = await prepareProof(ref, deps.readProof);
     if (!got.bytes || got.sem_arquivo) return erro(404, 'nao-encontrada');
     return { status: 200, headers: { ...HEADERS, 'Content-Type': ref.media_type, 'X-Sha256': got.sha256 ?? '', 'Content-Security-Policy': "sandbox; default-src 'none'" }, body: new Uint8Array(got.bytes) };
+  }
+
+  const lastAt = (task: LedgerTask): number => (task.events.length ? task.events[task.events.length - 1]!.at : task.createdAt);
+
+  const masked = (value: string, max: number): string => {
+    const text = maskSecrets(value).text;
+    return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+  };
+
+  /** A link's short label: host and a short path (the app may ignore it). */
+  function linkLabel(url: string): string {
+    try {
+      const parsed = new URL(url);
+      const path = parsed.pathname === '/' ? '' : parsed.pathname;
+      return `${parsed.host}${path.length > 40 ? `${path.slice(0, 39)}…` : path}`;
+    } catch {
+      return url.length > 60 ? `${url.slice(0, 59)}…` : url;
+    }
+  }
+
+  async function entregaOf(task: LedgerTask, row: TarefaRow, places: PlaceInfoOf | undefined): Promise<Record<string, unknown> | null> {
+    const delivery = lastDelivery(task);
+    if (!delivery) return null;
+    const proofs = delivery.proofs ?? [];
+    const nameOf = (projectPath: string, placeId: string): string | undefined => places?.(projectPath, placeId)?.name;
+    const firstText = proofs.find((proof) => proof.kind === 'texto');
+    const note = delivery.forOwner?.summary ?? deliveryNote(delivery, task.projectPath, nameOf) ?? (firstText?.kind === 'texto' ? firstText.text : undefined);
+    const links = proofs
+      .flatMap((proof) => (proof.kind === 'link' ? [maskSecrets(proof.url).text] : []))
+      .slice(0, MAX_RESULTADO_LINKS)
+      .map((url) => ({ url, rotulo: linkLabel(url) }));
+    return {
+      nota: note === undefined ? null : masked(note.trim(), MAX_RESULTADO_NOTA),
+      links,
+      prova_texto: row.prova_texto,
+      provas: await Promise.all(cartaRow(task, []).provas.map(provaMeta)),
+    };
+  }
+
+  async function resultados(): Promise<MobileResponse> {
+    const doc = deps.doc();
+    if (!doc) return erro(503, 'sem-ledger');
+    const places = deps.places?.();
+    const ownerName = deps.ownerName?.() ?? 'Alexandre';
+    const since = now() - RESULTADOS_DIAS * DAY_MS;
+    const picked = tarefaRows(doc, places, { ownerName })
+      .rows.filter((row) => (OWNER_ASKED.test(row.quem_pediu) || row.quem_pediu.trim() === ownerName.trim()) && !NOT_A_RESULT.has(row.estado))
+      .map((row) => ({ row, task: doc.tasks[row.id]! }))
+      .filter(({ row, task }) => row.esperando_dono || !isClosed(task) || lastAt(task) >= since)
+      .sort((a, b) => lastAt(b.task) - lastAt(a.task) || a.row.id.localeCompare(b.row.id))
+      .slice(0, MAX_RESULTADOS);
+    const out: Array<Record<string, unknown>> = [];
+    for (const { row, task } of picked) {
+      const delivery = lastDelivery(task);
+      out.push({
+        id: row.id,
+        quadro: row.quadro,
+        frente: row.frente,
+        titulo: row.titulo,
+        estado: row.estado,
+        esperando_dono: row.esperando_dono,
+        quem_pediu: row.quem_pediu,
+        pedido: masked(row.pedido, MAX_RESULTADO_NOTA),
+        criterio: row.criterio ? masked(row.criterio, 1000) : null,
+        quem_faz_agora: row.quem_faz_agora,
+        quem_entregou: delivery ? actorName(delivery.by, task.projectPath, places, ownerName) : null,
+        criada_em: row.criada_em,
+        entregue_em: row.entregue_em,
+        decidida_em: row.decidida_em,
+        atualizado_em: iso(lastAt(task)),
+        decisao: row.decisao,
+        motivo: row.motivo === null ? null : masked(row.motivo, 1000),
+        ultimo_andamento: row.ultimo_andamento,
+        ultimo_andamento_em: row.ultimo_andamento_em,
+        entrega: await entregaOf(task, row, places),
+      });
+    }
+    return json(200, { gerado_em: new Date(now()).toISOString(), desde_dias: RESULTADOS_DIAS, resultados: out });
   }
 
   function tarefas(query: URLSearchParams): MobileResponse {
@@ -427,6 +530,16 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     return json(200, { nos: [], rodada: null });
   }
 
+  function usoIa(): MobileResponse {
+    if (!deps.usoIa?.flagOn()) return erro(404, 'desligada');
+    try {
+      return json(200, montarUsoIa(deps.usoIa, now(), deps.log));
+    } catch (error) {
+      deps.log?.(`[uso-ia] leitura falhou: ${error instanceof Error ? error.message : String(error)}`);
+      return erro(500, 'falhou', 'Não deu para ler o uso de IA agora.');
+    }
+  }
+
   return async (request) => {
     let url: URL;
     try {
@@ -457,6 +570,7 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     if (method === 'GET' && path === 'cartas') return cartas();
     if (method === 'GET' && path === 'prova') return prova(url.searchParams);
     if (method === 'GET' && path === 'tarefas') return tarefas(url.searchParams);
+    if (method === 'GET' && path === 'resultados' && flagOn(RESULTADOS_FLAG)) return resultados();
     if (isPost && path === 'decidir') return decidir(body!);
     if (isPost && path === 'tarefas-pedidas') return pedir(body!);
     if (method === 'GET' && path === 'tarefas-pedidas') return json(200, { pedidas: deps.store.pedidasView(100) });
@@ -472,6 +586,7 @@ export function createCelularV2Handler(deps: CelularV2Deps): (request: MobileReq
     if (method === 'GET' && path === 'arvore') return arvore();
     if (method === 'GET' && path === 'quadro') return quadro(null);
     if (method === 'GET' && path === 'quadro/projeto') return quadro(url.searchParams.get('id') ?? '');
+    if (method === 'GET' && path === USO_IA_PATH) return usoIa();
     return erro(404, 'nao-encontrada');
   };
 }

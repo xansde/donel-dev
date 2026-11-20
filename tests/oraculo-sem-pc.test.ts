@@ -660,6 +660,37 @@ describe('sessão renovada na VPS com o PC fora (t-d461e003)', () => {
     expect((await w.endTurn(SID_NOVO)).reason).toContain('depois do fim');
   });
 
+  // Ensaio 2 de 20/11 (06:17, 73ae7389 → 3b265823): a velha aberta sem PC fica no retrato guardado (abrir-local) com o
+  // lugar session:<A>, e a sucessora herda esse lugar. Quem o PC retratou (o Dev de place:8be0d000) via no sessao_listar
+  // o session:<A> duas vezes: uma pela velha guardada, outra pela sucessora.
+  it('sessão aberta sem PC renovada: o sessao_listar de outra sessão do quadro mostra o lugar uma vez, com a sucessora', async () => {
+    const w = vps();
+    const A = '88888888-2222-4333-8444-555555555555';
+    const PLACE_A = `session:${A}`;
+    w.folder(A, { localCwd: PROJECT, projectName: 'atlas', name: 'Ensaio · atlas', roleId: 'dev', openedBy: 'lider', placeId: PLACE_A, createdAt: '2026-11-19T11:00:00Z' });
+    const openedHere = syntheticPicture({ sid: A, name: 'Ensaio · atlas', role: { id: 'dev', name: 'Dev' }, pasta: PROJECT, projectName: 'atlas', roda: 'vps', base: { listar: LISTAR, board: BOARD }, at: w.clock.now - 30 * MIN, openedBy: 'lider' });
+    w.stored.picture = { ...w.stored.picture!, sessoes: { ...w.stored.picture!.sessoes, [A]: { ...openedHere, local: true } } };
+    const once = async (step: string): Promise<void> => {
+      for (const viewer of [SID_DEV, SID_NOVO]) {
+        const listed = JSON.parse((await w.tool(viewer, 'sessao_listar')).text) as { id?: string }[];
+        expect(listed.filter((place) => place.id === PLACE_A), `${step}, visto de ${viewer.slice(0, 8)}`).toHaveLength(1);
+      }
+      const card = w.local.get()!.sessoes[SID_DEV]!.board!.cards[PLACE_A];
+      expect(card?.kind === 'session' ? card.sessionId : undefined, step).toBe(SID_NOVO);
+    };
+
+    markOf(w, A, 'pronta');
+    w.folder(SID_NOVO, successorMeta(A, { placeId: PLACE_A, openedBy: 'lider', name: 'Ensaio · atlas' }));
+    markOf(w, A, 'abriu', { sucessora: SID_NOVO });
+    expect(lugarOf(w, SID_NOVO)).toBe(PLACE_A);
+    await once('velha viva, passagem pronta');
+
+    markOf(w, A, 'fechou', { sucessora: SID_NOVO });
+    w.live.delete(A);
+    expect(lugarOf(w, SID_NOVO)).toBe(PLACE_A);
+    await once('velha fechada');
+  });
+
   // Revisão da r3 do #540: com a velha JÁ fechada, o PC volta e adota a sucessora como session:<nova>
   // (adoptSessionOpenedWithoutPc). Ela segue dona do lugar herdado; o lugar nunca fica sem dono.
   const looseOf = (sid: string): PictureSession => ({ quemSou: { nome: 'Dev · atlas', pasta: PROJECT, lugar: `session:${sid}`, papel: 'dev' }, listar: [...LISTAR, { id: `session:${sid}`, papel: 'dev', estado: 'trabalhando' }], board: BOARD, at: 0 });

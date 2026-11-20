@@ -3451,6 +3451,7 @@ function registerHealthIpcHandlers(): void {
     // t-5839d76b — a board that exists (`vigia.quadro`, else the one picked), never the projects' folder.
     projectPath: vigiaBoard,
     boardOfSession: boardNameOfSession,
+    placeOfSession: boardPlaceOfSession,
     cofre: () => appConfig.vigia.cofre,
     notify: (title, body) => {
       if (!systemNotificationsSupported()) return;
@@ -3982,6 +3983,19 @@ function boardNameOfSession(sid: string): string | undefined {
     }
   } catch {
     // unreadable: the card names the sessions only
+  }
+  return undefined;
+}
+
+/** t-0358187b — the board and the place of a session, so the vigia's record names the work that stopped with it. */
+function boardPlaceOfSession(sid: string): { projectPath: string; placeId: string } | undefined {
+  try {
+    const boards = createMindscapeStore(mindscapeFilePath(process.env, app.getPath('userData')), configIoDeps).load().boards;
+    for (const [projectPath, board] of Object.entries(boards)) {
+      for (const [placeId, card] of Object.entries(board.cards)) if (card.kind === 'session' && card.sessionId === sid) return { projectPath, placeId };
+    }
+  } catch {
+    // unreadable: the record names the sessions only
   }
   return undefined;
 }

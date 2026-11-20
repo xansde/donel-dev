@@ -54,6 +54,8 @@ import { RETRATO_PC_FILE } from './modo';
 import { CHAT_REPLIES_FILE, CHAT_TAIL_BYTES, readTail, repliesStore } from './chat-entregador';
 import { GATE_PHONE_PAIR_PATH, isChatRoute, registroPhonePort } from './celular-frente';
 import { MOBILE_PORT } from '../main/celular/server';
+import { localFlagOn } from '../main/local-flags';
+import { USO_IA_FLAG } from './uso-ia';
 
 export const TOKEN_HASH_FILE = 'pc.token.sha256';
 /** t-89279f84 — `{url, serviceKeyFile}`: present, the Supabase is the ledger's source (ledger.json is not read). */
@@ -320,6 +322,12 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
     ownerName: () => process.env.ESPELHO_DONO || 'Alexandre',
     readProof: createProofReader(ledgerProofsDir(ledgerFile)),
     arvoreFile: join(home, '.donel', 'estado-derivado', 'arvore.json'),
+    // t-1c683858 — the phone's "Uso de IA": the faixa-preta-dia readings, the frozen weeks and feats, behind a flag.
+    usoIa: {
+      dir: process.env.DONEL_USO_IA_DIR || join(home, '.donel', 'faixa-preta-dia'),
+      estado: process.env.DONEL_USO_IA_ESTADO || join(home, '.donel', 'uso-ia'),
+      flagOn: () => localFlagOn(USO_IA_FLAG, home),
+    },
     kick,
     audio: (id) => audioWorker?.enqueue(id),
     // t-753e8199 — the owner's corrections teach the transcriber (DONEL_GLOSSARIO, else ~/.donel/transcricao/glossario.json).
