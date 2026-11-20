@@ -6,7 +6,8 @@
 // asked and front. Found by that ref, or by `oraculo_id` (a card the Líder made by hand for the task):
 // - in Entrada, A fazer or Travado (or Fazendo of another place: the task changed hands), it goes to Fazendo with the
 //   caller's place, moved by `servico:assumir` as the Líder (the triage is his), then gets the caller's session;
-// - in Fazendo of the caller's place, it only gets the session, when it has none;
+// - in Fazendo of the caller's place, it only gets the caller's session: filled when it has none, swapped when it holds
+//   an older conversation of the same place (renewed, reopened, /clear), so the vigia wakes the live one;
 // - in Feito or Esperando você, it is left alone;
 // - none: born in A fazer with the caller's place and moved to Fazendo by the caller itself, with its session.
 // A folder of no project (sem-projeto) gets no card. The caller never waits on this: the gate runs it after answering.
@@ -42,8 +43,9 @@ async function liveCardOf(store: BoardStore, taskId: string): Promise<CardRow | 
 }
 
 async function withSession(store: BoardStore, card: CardRow, caller: TaskCardCaller): Promise<CardRow> {
-  if (!caller.sessionId || card.session_id || card.place_id !== caller.placeId || !store.fillSession) return card;
-  return (await store.fillSession(card.id, caller.placeId, caller.sessionId)) ? { ...card, session_id: caller.sessionId } : card;
+  if (!caller.sessionId || card.session_id === caller.sessionId || card.place_id !== caller.placeId || !store.fillSession) return card;
+  const swapped = await store.fillSession(card.id, caller.placeId, caller.sessionId, card.session_id ?? undefined);
+  return swapped ? { ...card, session_id: caller.sessionId } : card;
 }
 
 /** Opens (or ties) the card of `task` for `caller`, who has just assumed it. Throws what the board throws. */

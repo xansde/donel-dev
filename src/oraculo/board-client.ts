@@ -125,9 +125,10 @@ export interface BoardStore {
   cardByOraculoId?(taskId: string): Promise<CardRow | null>;
   /**
    * The session that does a card left without one: only while the card has none and its place is still `placeId`; no
-   * version, no move. False = nothing changed. Absent = this board cannot (the Supabase one).
+   * version, no move. False = nothing changed. Absent = this board cannot (the Supabase one). `replacing`: swaps that
+   * session instead (a renewed place), only while the card still has it.
    */
-  fillSession?(cardId: string, placeId: string, sessionId: string): Promise<boolean>;
+  fillSession?(cardId: string, placeId: string, sessionId: string, replacing?: string): Promise<boolean>;
 }
 
 export interface BoardConfig {

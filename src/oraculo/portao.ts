@@ -59,6 +59,7 @@ import { handleMcpPayload, parseMcpBody, type BrowserToolOutcome } from '../shar
 import type { BoardToolCall } from '../shared/mindscape/agent-tools';
 import type { MindscapeBoard } from '../shared/mindscape/model';
 import type { LedgerToolCall } from '../shared/ledger/tools';
+import type { LedgerTask } from '../shared/ledger/contract';
 import { askedByRefusal, isLedgerToolName, LEDGER_TOOLS } from '../shared/ledger/tools';
 import { leaderCallerOffBoard, runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService, type LedgerToolAnswer } from '../main/ledger-store';
 import type { OwnerMessage } from '../main/ledger-card-writer';
@@ -69,6 +70,7 @@ import { LEADER_ROLE_ID } from '../shared/roles';
 import type { BoardStore } from './board-client';
 import { runCardTool, type CardCaller } from './board-tools';
 import { openTaskCard } from './cartao-da-tarefa';
+import { currentConversation } from './lider-local';
 import type { GateRecados } from './gate-recados';
 import type { GateAbrir } from './gate-abrir';
 import { openedPlaceOf } from './primeiras';
@@ -211,6 +213,11 @@ export interface GateDeps {
    * and the call's arguments as the session sent them (the satellite passes them on to the ledger's machine).
    */
   readonly runLedger?: (caller: LedgerCaller, call: LedgerToolCall, context: GateLedgerContext) => Promise<LedgerToolAnswer>;
+  /**
+   * t-8406f473 — the task a `runLedger` call just left, when the ledger lives in another process (the entregador apart:
+   * the registro's route answers with it, createSatelliteTaskMemory). Absent = read from `ledger()`.
+   */
+  readonly taskOf?: (id: string) => LedgerTask | undefined;
   /** t-d461e003 — where an owner place's session may live off the board's list (`withLiveOwner`); absent = the list alone. */
   readonly liveOwner?: LiveOwnerSource;
   readonly timeouts?: { readonly localAnswerMs?: number };
@@ -669,7 +676,8 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
     const afterAssume = (store: BoardStore, caller: LedgerCaller, taskId: string): void => {
       const failed = (error: unknown): void => log(`[oraculo] portão: cartão da tarefa ${taskId} não abriu: ${error instanceof Error ? error.message : String(error)}`);
       try {
-        const task = deps.ledger().load().doc.tasks[taskId];
+        // The entregador apart has no ledger here: the task the registro's answer carried (taskOf), else this one's.
+        const task = deps.taskOf?.(taskId) ?? deps.ledger().load().doc.tasks[taskId];
         if (!task) return;
         const place = mine?.board?.cards[caller.placeId];
         const sessionId = place?.kind === 'session' && place.sessionId ? place.sessionId : undefined;
@@ -784,7 +792,8 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
         const projectId = await store.projectOf(pasta);
         const lane = projectId === 'sem-projeto' ? null : ((await store.laneOf?.(projectId)) ?? null);
         const places = listar.map((place) => (isRecord(place) ? place.id : null)).filter((id): id is string => typeof id === 'string');
-        return { placeId: LEADER_OF_ALL, projectPath: pasta, projectId, sessionId: sid, isLeader: lane?.leader_place === LEADER_OF_ALL, boardPlaces: new Set(places) };
+        // Resumed with `-r`, his live conversation is the folder's `current`, not the folder's sid.
+        return { placeId: LEADER_OF_ALL, projectPath: pasta, projectId, sessionId: currentConversation(deps.sessionsDir, sid) ?? sid, isLeader: lane?.leader_place === LEADER_OF_ALL, boardPlaces: new Set(places) };
       } catch (error) {
         return error instanceof Error ? error.message : String(error);
       }

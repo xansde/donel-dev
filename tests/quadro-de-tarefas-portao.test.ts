@@ -30,7 +30,7 @@ function fakeStore() {
     justification_link: null, justification_due: null, owner_reason: null, done_summary: null, version: 2,
   };
   const moves: MoveCardArgs[] = [];
-  const touches: { place: string; force: boolean | undefined }[] = [];
+  const touches: { place: string; session?: string | undefined; force: boolean | undefined }[] = [];
   const creates: (string | undefined)[] = [];
   const store: BoardStore = {
     projectOf: async (path) => (projectFolderOf(path) === PROJECT ? 'atlas' : 'sem-projeto'),
@@ -45,8 +45,8 @@ function fakeStore() {
       moves.push(args);
       return { ...card, stage: args.p_to, version: card.version + 1, place_id: args.p_actor };
     },
-    touchLane: async (_project, place, _session, force) => {
-      touches.push({ place, force });
+    touchLane: async (_project, place, session, force) => {
+      touches.push({ place, session, force });
     },
   };
   return { store, moves, touches, creates };
@@ -157,7 +157,7 @@ describe('card_* no portão do daemon', () => {
 });
 
 /** The Líder único on a VPS picture that has the boards atlas (lane of 'lider') and bizops (lane of its own Líder). */
-function leaderOfAllSetup(lanes: Record<string, string>) {
+function leaderOfAllSetup(lanes: Record<string, string>, resumedAs?: string) {
   const fake = fakeStore();
   const store: BoardStore = {
     ...fake.store,
@@ -169,6 +169,8 @@ function leaderOfAllSetup(lanes: Record<string, string>) {
   const sessions = join(dir, 's');
   mkdirSync(join(sessions, SID), { recursive: true });
   writeFileSync(join(sessions, SID, 'meta.json'), JSON.stringify({ sid: SID, mcpToken: TOKEN, mcpPort: 25710 }));
+  // A Líder resumed with `-r` lives in another conversation: the app writes it in the folder's `current`.
+  if (resumedAs) writeFileSync(join(sessions, SID, 'current'), `${resumedAs}\n`);
   const ledger = createLedgerService({ filePath: join(dir, 'ledger.json'), io, proofFs: nodeLedgerProofFs });
   const picture = {
     at: NOW,
@@ -198,6 +200,16 @@ describe('card_* do Líder único (t-8406f473)', () => {
     expect(moved.result.isError).toBeUndefined();
     expect(g.moves).toEqual([expect.objectContaining({ p_actor: 'lider', p_as_leader: true, p_place_id: DEV, p_session_id: SID })]);
     expect(g.touches.every((touch) => touch.place === 'lider' && touch.force === true)).toBe(true);
+  });
+
+  it('retomado com -r, a conversa dele é a viva (current), não a da pasta: no cartão e na raia', async () => {
+    const VIVA = 'abababab-cdcd-4efe-8a0a-121212121212';
+    const g = leaderOfAllSetup({ atlas: 'lider' }, VIVA);
+    const moved = await g.rpc('tools/call', { name: 'card_move', arguments: { quadro: 'atlas', id: 'c-000000000001', para: 'doing', lugar: DEV } });
+    expect(moved.result.isError).toBeUndefined();
+    expect(g.moves).toEqual([expect.objectContaining({ p_actor: 'lider', p_session_id: VIVA })]);
+    expect(g.touches.length).toBeGreaterThan(0);
+    expect(g.touches.every((touch) => touch.session === VIVA)).toBe(true);
   });
 
   it('sem quadro é recusado; no quadro de outro Líder (bizops) ele não tria', async () => {

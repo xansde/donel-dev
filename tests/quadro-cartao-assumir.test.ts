@@ -6,9 +6,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createHash } from 'node:crypto';
 import { createSystemConfigIoDeps } from '../src/main/config-store';
-import { createLedgerService, nodeLedgerProofFs, runLedgerTool } from '../src/main/ledger-store';
-import { createGateHandler } from '../src/oraculo/portao';
+import { createLedgerService, nodeLedgerProofFs, runLedgerTool, type LedgerService } from '../src/main/ledger-store';
+import { createGateHandler, type GateDeps } from '../src/oraculo/portao';
+import { createOracleApiHandler } from '../src/oraculo/api';
+import { createGateToolRoutes, readGateHashes } from '../src/oraculo/portoes';
+import { createSatelliteLedger, createSatelliteTaskMemory, type SatellitePost } from '../src/oraculo/satelite';
 import { BoardError, type BoardStore } from '../src/oraculo/board-client';
 import { createBoardSqlite, type BoardSqliteStore } from '../src/oraculo/board-sqlite';
 import type { MindscapeBoard } from '../src/shared/mindscape/model';
@@ -34,13 +38,39 @@ const BOARD: MindscapeBoard = {
   drawings: [],
 };
 
-function setup(cards: () => BoardStore | null) {
+/**
+ * The entregador apart (runEntregador with no `junto`, production's mode): this process has no ledger; the tasks go to
+ * the registro's gate route (createSatelliteLedger), which answers with the task the call left (`taskOf`).
+ */
+function apart(ledger: LedgerService): Pick<GateDeps, 'ledger' | 'runLedger' | 'taskOf'> {
+  const dir = mkdtempSync(join(tmpdir(), 'cartao-assumir-registro-'));
+  dirs.push(dir);
+  const gateToken = 'g'.repeat(64);
+  mkdirSync(join(dir, 'portoes'));
+  writeFileSync(join(dir, 'portoes', 'entregador.sha256'), `${createHash('sha256').update(gateToken).digest('hex')}\n`);
+  const api = createOracleApiHandler({ ledger, ledgerFile: join(dir, 'ledger.json'), tokenHash: () => 'x', gates: () => readGateHashes(dir), gateRoutes: createGateToolRoutes({ ledger: () => ledger }) });
+  const post = async (url: string, token: string, body: string): Promise<SatellitePost> => {
+    const answer = await api({ method: 'POST', url: new URL(url).pathname, body, authorization: `Bearer ${token}` });
+    return { status: answer.status, body: answer.body as string };
+  };
+  const tasks = createSatelliteTaskMemory();
+  return {
+    ledger: () => {
+      throw new Error('o entregador não tem registro');
+    },
+    runLedger: createSatelliteLedger({ url: 'http://registro:47816', token: () => gateToken, post, onTask: tasks.remember }),
+    taskOf: tasks.taskOf,
+  };
+}
+
+function setup(cards: () => BoardStore | null, mode: 'junto' | 'apart' = 'junto') {
   const dir = mkdtempSync(join(tmpdir(), 'cartao-assumir-'));
   dirs.push(dir);
   const sessions = join(dir, 's');
   mkdirSync(join(sessions, SID), { recursive: true });
   writeFileSync(join(sessions, SID, 'meta.json'), JSON.stringify({ sid: SID, mcpToken: TOKEN, mcpPort: 25710 }));
   const ledger = createLedgerService({ filePath: join(dir, 'ledger.json'), io, proofFs: nodeLedgerProofFs });
+  const separate = mode === 'apart' ? apart(ledger) : null;
   const picture = {
     at: Date.UTC(2026, 10, 20, 11),
     sessoes: {
@@ -58,13 +88,14 @@ function setup(cards: () => BoardStore | null) {
   const logs: string[] = [];
   const handle = createGateHandler({
     sessionsDir: sessions,
-    ledger: () => ledger,
+    ledger: separate ? separate.ledger : () => ledger,
+    ...(separate?.taskOf ? { taskOf: separate.taskOf } : {}),
     picture: () => picture,
     forward: async () => 'desligado',
     serverVersion: 'teste',
     cards,
-    runLedger: async (caller, call) => {
-      const answer = await runLedgerTool(ledger, caller, call);
+    runLedger: async (caller, call, context) => {
+      const answer = separate ? await separate.runLedger!(caller, call, context) : await runLedgerTool(ledger, caller, call);
       ledgerAnswers.push(answer.text);
       return answer;
     },
@@ -108,6 +139,41 @@ describe('tarefa_assumir abre o cartão da tarefa', () => {
 
     expect((await g.tool('tarefa_assumir', { id })).error).toBe(false);
     await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(await store.listCards('atlas', { includeDone: true })).toHaveLength(1);
+  });
+
+  it('no entregador separado (sem registro no processo) o cartão nasce igual, com a tarefa que a rota do registro devolveu', async () => {
+    const store = await board();
+    const g = setup(() => store, 'apart');
+    const id = await g.newTask();
+    expect((await g.tool('tarefa_assumir', { id })).error).toBe(false);
+    await vi.waitFor(async () => expect((await store.cardByClientRef(`oraculo:${id}`))?.stage).toBe('doing'));
+    expect(await store.cardByClientRef(`oraculo:${id}`)).toMatchObject({ place_id: ME, session_id: CONVERSA, oraculo_id: id, title: 'Cartão no assumir' });
+    expect(g.logs.filter((line) => line.includes('não abriu'))).toEqual([]);
+  });
+
+  it('o cartão já em Fazendo do lugar, com a conversa antiga (lugar renovado), passa para a conversa de agora', async () => {
+    const store = await board();
+    const g = setup(() => store);
+    const id = await g.newTask();
+    const old = await store.createCard({
+      p_project_id: 'atlas',
+      p_title: 'antigo',
+      p_owner_request: 'abre o cartão sozinho',
+      p_requested_by: 'dono',
+      p_actor: 'servico:semente',
+      p_client_ref: `oraculo:${id}`,
+      p_stage: 'todo',
+      p_place_id: ME,
+      p_oraculo_id: id,
+      p_as_leader: true,
+    });
+    const ANTIGA = '00000000-aaaa-4bbb-8ccc-000000000000';
+    await store.moveCard({ p_card_id: old.id, p_to: 'doing', p_actor: ME, p_expected_version: old.version, p_session_id: ANTIGA });
+    expect((await store.getCard(old.id))?.session_id).toBe(ANTIGA);
+    expect((await g.tool('tarefa_assumir', { id })).error).toBe(false);
+    await vi.waitFor(async () => expect((await store.getCard(old.id))?.session_id).toBe(CONVERSA));
+    expect(await store.getCard(old.id)).toMatchObject({ stage: 'doing', place_id: ME });
     expect(await store.listCards('atlas', { includeDone: true })).toHaveLength(1);
   });
 
