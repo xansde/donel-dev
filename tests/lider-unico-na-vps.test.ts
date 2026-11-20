@@ -341,8 +341,17 @@ describe('recados e avisos que caem no Líder único vivo nesta VPS', () => {
 
     const away = vps({ leaderAlive: false });
     expect(await away.recados.enviar(SID_DEV, opened, { tool: 'sessao_enviar', para: 'lider', texto: 'terminei o PR' }, 'ligado')).toBe('repassar');
-    // One the owner opened by hand, with no one above: with the PC off it is refused here as the PC would.
-    const refused = await w.recados.enviar(SID_DEV, DEV_SESSION, { tool: 'sessao_enviar', para: 'lider', texto: 'oi' }, 'desligado');
+    // t-3f32edb1: one the owner opened by hand at the top of its board (the Dalton) reaches him with the PC off too.
+    const top = await w.recados.enviar(SID_DEV, DEV_SESSION, { tool: 'sessao_enviar', para: 'lider', texto: 'oi' }, 'desligado');
+    expect(top).not.toMatchObject({ kind: 'error' });
+    // Below a live place the Líder único did not open: refused here as the PC would.
+    const CHEFE = 'place:chefe';
+    const below: PictureSession = {
+      ...DEV_SESSION,
+      listar: [...LISTAR, { id: CHEFE, papel: 'dev', estado: 'trabalhando' }],
+      board: { ...BOARD, cards: { ...BOARD.cards, [CHEFE]: card(CHEFE, 'dev') }, links: [{ id: 'l1', from: CHEFE, to: DEV, arrow: true }] },
+    };
+    const refused = await w.recados.enviar(SID_DEV, below, { tool: 'sessao_enviar', para: 'lider', texto: 'oi' }, 'desligado');
     expect(refused).toMatchObject({ kind: 'error', text: expect.stringContaining('Sem ligação com o Líder único') });
   });
 

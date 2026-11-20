@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AgentBridge, PASS_ON_GRACE_MS, type AgentBridgePorts, type BridgeTab } from '../src/renderer/src/Mindscape/agentBridge';
 import type { LedgerPassOnRequest } from '../src/shared/ledger/channels';
 import { addLink, addPlace, emptyMindscapeDoc, setPlaceConversation, type MindscapeDoc } from '../src/shared/mindscape/model';
+import { canReachLeader } from '../src/shared/mindscape/reach';
 import { FACTORY_ROLES, leaderOfAllPromptText, LEADER_ROLE_ID, rolePromptText } from '../src/shared/roles';
 
 // Líder único (ADR 0007) — a message from the Líder to another board, and the "terminou" of that board back to the
@@ -169,9 +170,23 @@ describe('Líder único recebe e lugar fechado passa adiante', () => {
     const viaOpener = await bridge.handle('theo', { tool: 'sessao_enviar', para: 'quem-me-abriu', texto: 'li o código' });
     expect(viaOpener).toMatchObject({ ok: false, text: expect.stringContaining('tarefa_andamento') });
     expect(sent).toHaveLength(2);
-    const refused = await bridge.handle('outro', { tool: 'sessao_enviar', para: 'lider', texto: 'oi', motivo: 'bloqueio' });
-    expect(refused).toMatchObject({ ok: false, text: expect.stringContaining('Sem ligação com o Líder único') });
-    expect(sent).toHaveLength(2);
+    // t-3f32edb1: the Outro is at the top of its board (the owner drew it, nobody above): the Líder único is right above
+    // it, so it reaches him too, still only with a reason.
+    expect(await bridge.handle('outro', { tool: 'sessao_enviar', para: 'lider', texto: 'travei', motivo: 'bloqueio' })).toMatchObject({ ok: true });
+    expect(sent).toHaveLength(3);
+  });
+
+  it('the top of a board reaches the Líder único; one below a live place he did not open is refused (t-3f32edb1)', () => {
+    const TOP = 'place:top';
+    const BELOW = 'place:below';
+    let doc = addPlace(emptyMindscapeDoc(), ATLAS, { id: TOP, roleId: 'dalton' });
+    doc = addPlace(doc, ATLAS, { id: BELOW, roleId: 'dev' });
+    doc = addLink(doc, ATLAS, { id: 'l1', from: TOP, to: BELOW, arrow: true });
+    const notOpened = (): boolean => false;
+    const live = (): boolean => true;
+    expect(canReachLeader(doc, { projectPath: ATLAS, placeId: TOP }, notOpened, live)).toEqual({ ok: true });
+    expect(canReachLeader(doc, { projectPath: ATLAS, placeId: TOP }, notOpened)).toEqual({ ok: true });
+    expect(canReachLeader(doc, { projectPath: ATLAS, placeId: BELOW }, notOpened, live)).toMatchObject({ ok: false });
   });
 
   it('a closed place passes its tasks to the first live one above, else to the Líder único, and whoever gets them hears it', async () => {
