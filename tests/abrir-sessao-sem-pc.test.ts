@@ -175,6 +175,8 @@ describe('abrir sessão com o PC desligado (abrir-local)', () => {
 
     const meta = metaOf(m, NEW_SID);
     expect(meta).toMatchObject({ sid: NEW_SID, abertaSemPc: true, openedBy: 'lider', roleId: 'dev', localCwd: PROJECT, projectName: 'atlas' });
+    // t-49dee38d — its own place in the meta, so a renewal here keeps it (and the identity stays `session:<sid>`).
+    expect(meta.placeId).toBe(`session:${NEW_SID}`);
     expect(JSON.stringify(meta)).not.toContain('Corrija');
     expect(meta.launchArgs).toEqual([...KIT_ROLE_ARGS, '-n', 'Dev login', '--worktree', worktreeNameFor('Dev login', new Date(T0))]);
     expect(existsSync(join(m.sessionsDir, NEW_SID, CREATING_MARK))).toBe(false);

@@ -12,7 +12,9 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { OPEN_KIT_FILE, type OpenKit } from '../src/main/open-kit';
 import { buildClaudeArgs } from '../src/shared/commandBuilder';
-import { createOpenLocal, type ScriptRun } from '../src/oraculo/abrir-local';
+import type { OwnerMessage } from '../src/main/ledger-card-writer';
+import { createOpenLocal, syntheticPicture, type ScriptRun } from '../src/oraculo/abrir-local';
+import { readLocalFolders, withLocalSessions } from '../src/oraculo/retrato-local';
 import { createLocalRenewal, readLocalRenewalConfig, RENEW_CONFIG_FILE, RENEW_MARK, type LocalRenewalDeps, type SuccessorOutcome } from '../src/oraculo/renovar-local';
 
 const dirs: string[] = [];
@@ -54,6 +56,8 @@ interface FakeOptions {
   readonly placeOf?: string;
   /** The successor's transcript (default: it answered its first message); `null` = none yet. */
   readonly newTail?: string | null;
+  /** Why this machine has no room (default: room). */
+  readonly room?: () => string | null;
 }
 
 const ANSWERED = `${JSON.stringify({ type: 'user', message: { role: 'user', content: 'Leia primeiro a passagem' } })}\n${assistant(40_000, 'end_turn', [{ type: 'text', text: 'Li a passagem; prioridade: X.' }])}\n`;
@@ -99,7 +103,10 @@ function fake(options: FakeOptions = {}) {
     successorLeavesAfter: Number.POSITIVE_INFINITY,
     onType: null as null | (() => void),
     onOpen: null as null | (() => void),
+    /** Sids whose `tmux kill-session` is refused. */
+    killRefuse: new Set<string>(),
   };
+  const toLeader: OwnerMessage[] = [];
   const deps: LocalRenewalDeps = {
     sessionsDir,
     handoffsDir,
@@ -136,6 +143,7 @@ function fake(options: FakeOptions = {}) {
     },
     kill: async (sid) => {
       events.push(`matou:${sid.slice(0, 4)}`);
+      if (state.killRefuse.has(sid)) return false;
       live.delete(sid);
       return true;
     },
@@ -148,6 +156,11 @@ function fake(options: FakeOptions = {}) {
       return outcome;
     },
     ...(options.placeOf ? { placeOf: () => options.placeOf } : {}),
+    ...(options.room ? { room: options.room } : {}),
+    toLeader: async (message) => {
+      toLeader.push(message);
+      return null;
+    },
     now: () => clock,
     sleep: async (ms) => {
       clock += ms;
@@ -163,6 +176,7 @@ function fake(options: FakeOptions = {}) {
     lines,
     live,
     state,
+    toLeader,
     advance: (ms: number) => {
       clock += ms;
     },
@@ -514,6 +528,185 @@ describe('renovar-local: reinício do entregador no meio', () => {
   });
 });
 
+// ---- rodada 3: as sondas da rodada 2 (erro sintético, sucessora em turno, laço, 2ª sucessora, avisos) ----------------
+
+const FIRST_USER = `${JSON.stringify({ type: 'user', message: { role: 'user', content: 'Leia primeiro a passagem' } })}\n`;
+const apiError = (text: string): string =>
+  `${JSON.stringify({ type: 'assistant', isApiErrorMessage: true, message: { role: 'assistant', model: '<synthetic>', stop_reason: 'stop_sequence', content: [{ type: 'text', text }] } })}\n`;
+const WORKING_NEW = `${FIRST_USER}${assistant(40_000, 'tool_use', [{ type: 'tool_use', id: 'r', name: 'Read', input: {} }])}\n${JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'r', content: 'ok' }] } })}\n${assistant(41_000, 'tool_use', [{ type: 'tool_use', id: 'b', name: 'Bash', input: { command: 'npm run verify' } }])}\n`;
+const pedidos = (vps: ReturnType<typeof fake>): number => vps.events.filter((event) => event === o4).length;
+const aberturas = (vps: ReturnType<typeof fake>): number => vps.events.filter((event) => event === `abriu:${OLD.slice(0, 4)}`).length;
+
+describe('renovar-local: erro de API não é resposta (S1)', () => {
+  it.each([
+    ['503 auth_unavailable', apiError('API Error: 503 auth_unavailable')],
+    ['Request timed out', apiError('Request timed out')],
+  ])('a entrada sintética (%s) não conta como resposta e a velha não morre', async (_label, error) => {
+    const vps = fake({ newTail: `${FIRST_USER}${error}` });
+    await vps.renewal.tick();
+    expect(vps.events).not.toContain(KILL_OLD);
+  });
+
+  it('model <synthetic> sem a marca isApiErrorMessage também não conta', async () => {
+    const synthetic = `${JSON.stringify({ type: 'assistant', message: { role: 'assistant', model: '<synthetic>', stop_reason: 'stop_sequence', content: [{ type: 'text', text: 'No response requested.' }] } })}\n`;
+    const vps = fake({ newTail: `${FIRST_USER}${synthetic}` });
+    await vps.renewal.tick();
+    expect(vps.events).not.toContain(KILL_OLD);
+  });
+});
+
+describe('renovar-local: sucessora em pleno 1º turno nunca é fechada (S2)', () => {
+  it('com tool_use em curso aos 5 min: não fecha nenhuma das duas', async () => {
+    const vps = fake({ newTail: WORKING_NEW });
+    await vps.renewal.tick();
+    expect(vps.events).not.toContain(KILL_NEW);
+    expect(vps.events).not.toContain(KILL_OLD);
+  });
+
+  it('o end_turn real chega aos 12 min: só então fecha a velha', async () => {
+    const vps = fake();
+    let openedAt = 0;
+    vps.state.onOpen = () => {
+      openedAt = vps.clock();
+    };
+    vps.state.newTailFn = () => (vps.clock() - openedAt < 12 * MIN ? WORKING_NEW : `${WORKING_NEW}${assistant(42_000, 'end_turn')}\n`);
+    await vps.renewal.tick();
+    expect(vps.events).not.toContain(KILL_NEW);
+    expect(vps.events).toContain(KILL_OLD);
+    expect(vps.clock() - openedAt).toBeGreaterThanOrEqual(12 * MIN);
+  });
+
+  it('sem end_turn em 30 min: deixa as duas vivas, marca permanente e avisa o Líder', async () => {
+    const vps = fake({ newTail: WORKING_NEW });
+    await vps.renewal.tick();
+    expect(vps.events).not.toContain(KILL_NEW);
+    expect(vps.events).not.toContain(KILL_OLD);
+    expect(vps.markOf()).toMatchObject({ passo: 'desistiu', permanente: true });
+    expect(String(vps.markOf().motivo)).toContain('duas vivas no lugar');
+    expect(vps.toLeader.some((message) => message.leaderText.includes('duas vivas no lugar'))).toBe(true);
+    vps.advance(120 * MIN);
+    await vps.renewal.tick();
+    expect(pedidos(vps)).toBe(1);
+  });
+
+  it('calada de verdade (só a 1ª mensagem, ou só erro de API) por 5 min: fecha a nova', async () => {
+    const vps = fake({ newTail: `${FIRST_USER}${apiError('API Error: 503')}` });
+    await vps.renewal.tick();
+    expect(vps.events).toContain(KILL_NEW);
+    expect(vps.events).not.toContain(KILL_OLD);
+  });
+});
+
+describe('renovar-local: teto de tentativas, sem laço (S3/S4/S5)', () => {
+  it('S3: a nova calada em cada tentativa: no máximo 2 pedidos e 2 sucessoras, e o Líder é avisado', async () => {
+    const vps = fake({ newTail: null });
+    for (let cycle = 0; cycle < 4; cycle += 1) {
+      await vps.renewal.tick();
+      vps.advance(31 * MIN);
+    }
+    expect(pedidos(vps)).toBe(2);
+    expect(aberturas(vps)).toBe(2);
+    expect(vps.markOf()).toMatchObject({ permanente: true });
+    expect(vps.toLeader).toHaveLength(1);
+  });
+
+  it('S4: a abertura recusada por falta de vaga, 6 ciclos: no máximo 2 pedidos', async () => {
+    const vps = fake({ openOutcome: { kind: 'erro', text: 'sem vaga nesta máquina' } });
+    for (let cycle = 0; cycle < 6; cycle += 1) {
+      await vps.renewal.tick();
+      vps.advance(31 * MIN);
+    }
+    expect(pedidos(vps)).toBe(2);
+  });
+
+  it('S5: a passagem que nunca vem, 6 ciclos: no máximo 2 pedidos', async () => {
+    const vps = fake({ handoff: null });
+    for (let cycle = 0; cycle < 6; cycle += 1) {
+      await vps.renewal.tick();
+      vps.advance(31 * MIN);
+    }
+    expect(pedidos(vps)).toBe(2);
+  });
+
+  it('sem vaga antes do pedido: nem pede, não conta tentativa, e renova quando a vaga volta', async () => {
+    let noRoom: string | null = 'memória livre 300 MB';
+    const vps = fake({ room: () => noRoom });
+    for (let cycle = 0; cycle < 5; cycle += 1) {
+      await vps.renewal.tick();
+      vps.advance(31 * MIN);
+    }
+    expect(vps.events).toEqual([]);
+    noRoom = null;
+    await vps.renewal.tick();
+    expect(vps.events).toEqual([o4, `abriu:${OLD.slice(0, 4)}`, KILL_OLD]);
+  });
+});
+
+describe('renovar-local: nunca uma 2ª sucessora com outra viva no lugar', () => {
+  it('S7: o tmux recusa fechar a nova calada: não abre outra depois, e o Líder é avisado', async () => {
+    const vps = fake({ newTail: null });
+    vps.state.killRefuse.add(NEW);
+    await vps.renewal.tick();
+    vps.advance(31 * MIN);
+    await vps.renewal.tick();
+    vps.advance(31 * MIN);
+    await vps.renewal.tick();
+    expect(aberturas(vps)).toBe(1);
+    expect(pedidos(vps)).toBe(1);
+    expect(vps.toLeader.some((message) => message.leaderText.includes('duas vivas no lugar'))).toBe(true);
+  });
+
+  it('outra sessão viva com o mesmo lugar no meta: nem pede a passagem', async () => {
+    const vps = fake({ placeId: 'place:dev-1', config: { somente: ['place:dev-1'] } });
+    const OTHER = 'bbbbbbbb-2222-4333-8444-555555555555';
+    mkdirSync(join(vps.sessionsDir, OTHER), { recursive: true });
+    writeFileSync(join(vps.sessionsDir, OTHER, 'meta.json'), JSON.stringify({ sid: OTHER, localCwd: PROJECT, roleId: 'dev', placeId: 'place:dev-1', renovaDe: OLD }));
+    vps.live.add(OTHER);
+    await vps.renewal.tick();
+    expect(vps.events).toEqual([]);
+  });
+
+  it('a sucessora de uma desistência (a "extra" da marca) ainda viva: nem pede a passagem', async () => {
+    const vps = fake();
+    writeFileSync(join(vps.sessionsDir, OLD, RENEW_MARK), `${JSON.stringify({ passo: 'desistiu', motivo: 'x', ate: new Date(T0 - MIN).toISOString(), tentativas: 1, sucessora: NEW })}\n`);
+    vps.live.add(NEW);
+    await vps.renewal.tick();
+    expect(vps.events).toEqual([]);
+  });
+});
+
+describe('renovar-local: o Líder único nunca, nem liberado pela configuração', () => {
+  it('papel lider-unico com papeis e liberarLideres: não renova', async () => {
+    const vps = fake({ roleId: 'lider-unico', config: { papeis: ['lider-unico'], liberarLideres: true } });
+    await vps.renewal.tick();
+    expect(vps.events).toEqual([]);
+  });
+});
+
+describe('renovar-local: avisos ao Líder', () => {
+  it('em voo achado ao subir: avisa o Líder numa linha, sem segredo do meta', async () => {
+    const vps = fake();
+    const meta = JSON.parse(readFileSync(join(vps.sessionsDir, OLD, 'meta.json'), 'utf8')) as Record<string, unknown>;
+    writeFileSync(join(vps.sessionsDir, OLD, 'meta.json'), JSON.stringify({ ...meta, mcpToken: 'segredo-mcp', hookToken: 'segredo-hook' }));
+    writeFileSync(join(vps.sessionsDir, OLD, RENEW_MARK), `${JSON.stringify({ passo: 'abriu', em: new Date(T0).toISOString(), sucessora: NEW })}\n`);
+    await vps.renewal.recover();
+    expect(vps.toLeader).toHaveLength(1);
+    const [message] = vps.toLeader;
+    expect(message!.leaderText).toContain('em voo');
+    expect(message!.leaderText).not.toContain('\n');
+    expect(JSON.stringify(message)).not.toMatch(/segredo/);
+  });
+
+  it('desistência permanente (trabalho vivo duas vezes) avisa o Líder', async () => {
+    const vps = fake({ handoff: `---\ndonel-passagem: 1\ntrabalho-vivo: agente rodando\n---\n` });
+    await vps.renewal.tick();
+    expect(vps.toLeader).toHaveLength(0);
+    vps.advance(31 * MIN);
+    await vps.renewal.tick();
+    expect(vps.toLeader).toHaveLength(1);
+  });
+});
+
 // ---- a sucessora (abrir-local.ts) -----------------------------------------------------------------------------------
 
 const KIT_ROLE_ARGS = buildClaudeArgs({ model: 'opus', effort: 'high', permissionMode: 'acceptEdits' });
@@ -625,5 +818,37 @@ describe('renovar-local: a sucessora herda o lugar', () => {
     const outcome = await vps.openLocal.openSuccessor({ de: OLD, firstPrompt: 'x' });
     expect(outcome.kind).toBe('erro');
     expect(existsSync(join(vps.sessionsDir, NEW))).toBe(false);
+  });
+});
+
+// ---- rodada 3: a sessão aberta sem o PC grava o próprio lugar, e a sucessora dela fica nele -------------------------
+
+describe('renovar-local: sessão aberta pela VPS renova no mesmo lugar', () => {
+  it('a sucessora de uma sessão com lugar session: herda esse lugar no meta', async () => {
+    const vps = machine({ ...OLD_META, placeId: `session:${OLD}` });
+    expect(await vps.openLocal.openSuccessor({ de: OLD, firstPrompt: 'x' })).toEqual({ kind: 'aberta', sid: NEW });
+    expect((JSON.parse(readFileSync(join(vps.sessionsDir, NEW, 'meta.json'), 'utf8')) as { placeId?: string }).placeId).toBe(`session:${OLD}`);
+  });
+
+  it('o retrato daqui dá à sucessora o lugar session: da velha (que fechou); com a velha viva, não', () => {
+    const at = T0;
+    const board = { projectPath: PROJECT, pan: { x: 0, y: 0 }, zoom: 1, cards: {}, links: [], drawings: [] };
+    const opened = syntheticPicture({ sid: OLD, name: 'Dev', role: { id: 'dev', name: 'Dev' }, pasta: PROJECT, projectName: 'atlas', roda: 'vps', base: { listar: [], board }, at });
+    const stored = { at: at - 60 * MIN, sessoes: { [OLD]: opened } };
+    // Read from the folder, as the daemon does (a `session:` place passes the check of the folder's fields).
+    const folders = mkdtempSync(join(tmpdir(), 'renovar-retrato-'));
+    dirs.push(folders);
+    mkdirSync(join(folders, NEW));
+    const fields = { sid: NEW, localCwd: PROJECT, projectName: 'atlas', name: 'Dev', roleId: 'dev', placeId: `session:${OLD}`, createdAt: new Date(at).toISOString() };
+    writeFileSync(join(folders, NEW, 'meta.json'), JSON.stringify(fields));
+    const [successor] = readLocalFolders(folders, new Set([NEW]));
+    expect(successor?.placeId).toBe(`session:${OLD}`);
+    const closed = withLocalSessions(stored, [successor!], at, { alive: (sid) => sid !== OLD });
+    expect(closed!.sessoes[NEW]!.quemSou.lugar).toBe(`session:${OLD}`);
+    const both = withLocalSessions(stored, [successor!], at, { alive: () => true });
+    expect(both!.sessoes[NEW]!.quemSou.lugar).toBe(`session:${NEW}`);
+    // The opened one itself (its folder names its own place) keeps its identity even without the stored picture.
+    const self = withLocalSessions(null, [{ ...successor!, sid: OLD, placeId: `session:${OLD}` }], at);
+    expect(self!.sessoes[OLD]!.quemSou.lugar).toBe(`session:${OLD}`);
   });
 });
