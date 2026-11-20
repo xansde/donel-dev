@@ -212,21 +212,18 @@ export function probableCause(input: {
   return cause('desconhecida', pm ? 'a máquina não guarda leitura de carga do período (sem o sar instalado); não reiniciou.' : 'a máquina não respondeu à leitura depois de voltar.');
 }
 
-/** What the team did and will do about a lock that passed, each with its owner. */
+/**
+ * What the team did and will do about a lock that passed, each with its owner. Only what really happens: the vigia's
+ * own steps. Nobody else is given work by a lock that passed by itself (revisão do #555): the owner decides, on the
+ * repeat card, whether someone investigates.
+ */
 export function teamActions(kind: TravaKind, cause: Cause, firstSeen: number, endedAt: number): string[] {
-  const done = `Feito: o vigia viu ${kind === 'vps-fora' ? 'a queda' : 'a trava'} às ${hourBr(firstSeen)}, a volta às ${hourBr(endedAt)} e mediu a causa (dono: vigia de travas).`;
-  const next: Readonly<Record<CauseKind, string>> = {
-    reinicio: 'Próximo: o Líder do quadro reabre as sessões que o reinício fechou e retoma o trabalho delas (dono: Líder do quadro).',
-    memoria: 'Próximo: o Líder do quadro confere quais sessões o sistema matou, reabre as que faltam e alivia a máquina (dono: Líder do quadro).',
-    carga: 'Próximo: o Líder do quadro confere o que puxou a carga, segura o trabalho pesado e retoma o que parou (dono: Líder do quadro).',
-    'rede-pc': 'Próximo: nada a fazer nas máquinas; o vigia segue lendo a cada 5 min (dono: vigia de travas).',
-    rede: 'Próximo: nada a fazer na máquina; o vigia segue lendo a cada 5 min (dono: vigia de travas).',
-    login: 'Próximo: o Líder do quadro confere se o acesso voltou sem pedir verificação (dono: Líder do quadro).',
-    cofre: 'Próximo: o Líder do quadro confere se o cofre segue aberto (dono: Líder do quadro).',
-    sessoes: 'Próximo: o Líder do quadro confere se as sessões retomaram o trabalho (dono: Líder do quadro).',
-    desconhecida: 'Próximo: o Líder do quadro confere o que parou e retoma o trabalho (dono: Líder do quadro).',
-  };
-  return [done, next[cause.kind], `Se a mesma trava voltar ${REPEAT_TIMES} vezes em 24 h, chega uma carta para o dono decidir (dono: vigia de travas).`];
+  void cause;
+  return [
+    `Feito: o vigia viu ${kind === 'vps-fora' ? 'a queda' : 'a trava'} às ${hourBr(firstSeen)}, a volta às ${hourBr(endedAt)} e mediu a causa na máquina (dono: vigia de travas).`,
+    'Feito: ninguém foi acionado, porque a trava passou sozinha; o trabalho que parou segue com quem já o tinha (dono: vigia de travas).',
+    `Próximo: o vigia segue lendo a máquina a cada 5 min; se a mesma trava voltar ${REPEAT_TIMES} vezes em 24 h, manda uma carta para você decidir se alguém investiga (dono: vigia de travas).`,
+  ];
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -239,9 +236,11 @@ export interface Affected {
   readonly tasks: ReadonlyArray<{ readonly id: string; readonly title: string }>;
   /** When the sessions were read (ms); `null` = never read. */
   readonly readAt: number | null;
+  /** The sessions could be tied to their work in the Oráculo; `false` = the work was not read (not "none"). */
+  readonly tasksRead: boolean;
 }
 
-export const NO_AFFECTED: Affected = { sessions: [], tasks: [], readAt: null };
+export const NO_AFFECTED: Affected = { sessions: [], tasks: [], readAt: null, tasksRead: false };
 
 function list(items: readonly string[], max = 8): string {
   const shown = items.slice(0, max).join(', ');
@@ -254,7 +253,9 @@ function affectedLines(affected: Affected): string[] {
     affected.sessions.length === 0
       ? '- Sessões: o vigia não tinha leitura das sessões dessa máquina antes da trava.'
       : `- Sessões na máquina (${affected.sessions.length}${when}): ${list(affected.sessions)}.`,
-    affected.tasks.length === 0
+    !affected.tasksRead
+      ? '- Trabalho em andamento delas no Oráculo: não lido (o vigia não conseguiu ligar as sessões às tarefas).'
+      : affected.tasks.length === 0
       ? '- Trabalho em andamento delas no Oráculo: nenhum.'
       : `- Trabalho em andamento delas no Oráculo (${affected.tasks.length}): ${list(affected.tasks.map((task) => `«${task.title}» (${task.id})`))}.`,
   ];

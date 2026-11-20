@@ -70,15 +70,24 @@ describe('corpo: o que parou, a causa medida e o que o time faz', () => {
       firstSeen: QUEDA_VPS,
       endedAt: VOLTA_VPS,
       cause,
-      affected: { sessions: ['Dev · celular', 'Líder'], tasks: [{ id: 't-1234abcd', title: 'Botões com tamanho fixo' }], readAt: QUEDA_VPS - 5 * MIN },
+      affected: { sessions: ['Dev · celular', 'Líder'], tasks: [{ id: 't-1234abcd', title: 'Botões com tamanho fixo' }], readAt: QUEDA_VPS - 5 * MIN, tasksRead: true },
     });
     expect(record.title).toBe('VPS pessoal fora do ar 17/11 07:30–08:08 (38 min)');
     expect(record.body).toContain('Sessões na máquina (2, lidas às 07:25): Dev · celular, Líder.');
     expect(record.body).toContain('«Botões com tamanho fixo» (t-1234abcd)');
     expect(record.body).toContain('Causa provável: carga extrema na máquina');
-    expect(record.body).toContain('(dono: Líder do quadro)');
+    // Only what really happens: the vigia's own steps; nobody is promised work by a lock that passed (revisão do #555).
+    expect(record.body).toContain('ninguém foi acionado');
     expect(record.body).toContain('(dono: vigia de travas)');
+    expect(record.body).not.toContain('Líder do quadro');
     expect(record.body).not.toContain('Já viu');
+  });
+
+  it('sem ler as sessões, o registro diz que o trabalho não foi lido (nunca "nenhum")', () => {
+    const cause = probableCause({ kind: 'vps-fora', detail: 'x', start: QUEDA_VPS, end: VOLTA_VPS, pm: null, downTogether: [] });
+    const record = passedRecord({ label: 'VPS pessoal', kind: 'vps-fora', firstSeen: QUEDA_VPS, endedAt: VOLTA_VPS, cause, affected: { sessions: [], tasks: [], readAt: null, tasksRead: false } });
+    expect(record.body).toContain('Trabalho em andamento delas no Oráculo: não lido');
+    expect(record.body).not.toContain('Oráculo: nenhum');
   });
 
   it('o script da causa só lê, e lê a janela por horário absoluto (não depende do fuso da máquina)', () => {
@@ -267,6 +276,24 @@ describe('serviço: o que o dono escolhe e o que se perde no caminho', () => {
     await t.fall(QUEDA_VPS + 60 * MIN, QUEDA_VPS + 75 * MIN);
     const titles = Object.values((await t.ledger.load()).doc.tasks).filter((task) => closedAlone(task)).map((task) => task.title);
     expect(titles).toEqual(['VPS pessoal fora do ar 17/11 07:30–07:50 (20 min)', 'VPS pessoal fora do ar 17/11 08:30–08:45 (15 min)']);
+  });
+});
+
+describe('fila: a carta de repetição com o Oráculo fora', () => {
+  it('a 3ª queda passa com o Oráculo fora: a carta de repetição sai quando ele volta', async () => {
+    const t = setup();
+    await t.fall(QUEDA_VPS, QUEDA_VPS + 20 * MIN);
+    await t.fall(QUEDA_VPS + 3 * 60 * MIN, QUEDA_VPS + 3 * 60 * MIN + 15 * MIN);
+    t.state.oraculoUp = false;
+    await t.fall(QUEDA_VPS + 6 * 60 * MIN, QUEDA_VPS + 6 * 60 * MIN + 30 * MIN);
+    await t.at(t.state.clock + 5 * MIN);
+    t.state.oraculoUp = true;
+    await t.at(t.state.clock + 5 * MIN);
+    const inbox = ownerInbox((await t.ledger.load()).doc, null, t.state.clock);
+    expect(inbox.map((item) => item.task.title)).toEqual(['VPS pessoal caiu 3 vezes em 24 h']);
+    expect(Object.values((await t.ledger.load()).doc.tasks).filter((task) => closedAlone(task))).toHaveLength(3);
+    await t.at(t.state.clock + 5 * MIN);
+    expect(ownerInbox((await t.ledger.load()).doc, null, t.state.clock)).toHaveLength(1);
   });
 });
 

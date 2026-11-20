@@ -320,15 +320,21 @@ export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
     const seen = known[placeId];
     if (!seen) return NO_AFFECTED;
     const places = new Set<string>();
+    let mapped = 0;
     for (const session of seen.sessions) {
       const place = deps.placeOfSession?.(session.sid);
-      if (place) places.add(`${place.projectPath}\u0000${place.placeId}`);
+      if (place) {
+        mapped += 1;
+        places.add(`${place.projectPath}\u0000${place.placeId}`);
+      }
     }
     const running = (tasks ?? []).filter((task) => task.state === 'em-execucao' && places.has(`${task.projectPath}\u0000${task.ownerPlaceId}`));
     return {
       sessions: seen.sessions.map((session) => session.name || session.sid),
       tasks: running.map((task) => ({ id: task.id, title: task.title ?? task.request.split('\n')[0]!.slice(0, 60) })),
       readAt: seen.at,
+      // Read only when every session was tied to its place and the Oráculo answered (no session read = nothing to tie).
+      tasksRead: tasks !== null && deps.placeOfSession !== undefined && seen.sessions.length > 0 && mapped === seen.sessions.length,
     };
   }
 
@@ -465,20 +471,24 @@ export function createVigiaService(deps: VigiaServiceDeps): VigiaService {
             continue;
           }
           const body = record.late ? `${record.body}\n\n${LATE_LINE}` : record.body;
-          const doneWhen = `${RECORD_DONE_WHEN} (registro da trava ${record.key}, vista em ${record.firstSeen})`;
+          const doneWhen = `${RECORD_DONE_WHEN} (registro da trava ${record.key}, vista em ${clockBr(record.firstSeen)})`;
           const id = await deliverTask({ what: `o registro (${record.trava.kind})`, projectPath, at, title: record.title, doneWhen, risk: 'baixo', body, note: record.note, closeAlone: true, unique: true });
           if (id === null) pending.push({ ...record, late: true });
         }
 
         // The same lock 3 times in 24 h on the same place: one card with a real question.
         const repeats: Record<string, RepeatCard> = Object.fromEntries(Object.entries(stored.repeats ?? {}).filter(([, card]) => !card.done || card.at >= at - REPEAT_WINDOW_MS));
-        for (const lock of plan.passed) {
-          const passages = history.filter((passage) => passage.key === lock.key).sort((x, y) => x.firstSeen - y.firstSeen);
+        // From the 24 h history, not only this round's passages: a card the Oráculo did not take is tried every round.
+        const travaOf = new Map<string, Trava>([...records.map((record) => [record.key, record.trava] as const), ...plan.passed.map((lock) => [lock.key, lock.trava] as const)]);
+        for (const key of new Set(history.map((passage) => passage.key))) {
+          const passages = history.filter((passage) => passage.key === key).sort((x, y) => x.firstSeen - y.firstSeen);
+          const first = passages[0]!;
+          const lock = { key, trava: travaOf.get(key) ?? { key, kind: first.kind, placeId: first.placeId, label: labelOf(first.placeId), detail: '' } };
           const already = repeats[lock.key];
           if (passages.length < REPEAT_TIMES || (already && already.at >= at - REPEAT_WINDOW_MS) || projectPath === null) continue;
           const last = passages[passages.length - 1]!;
           const card = repeatCard({ label: lock.trava.label, kind: lock.trava.kind, passages });
-          const doneWhen = `${REPEAT_DONE_WHEN} (repetição da trava ${lock.key}, até ${last.endedAt})`;
+          const doneWhen = `${REPEAT_DONE_WHEN} (repetição da trava ${lock.key}, até ${clockBr(last.endedAt)})`;
           const id = await deliverTask({ what: `a carta de repetição (${lock.trava.kind})`, projectPath, at, title: card.title, doneWhen, risk: 'alto', body: card.body, forOwner: card.forOwner, unique: true });
           if (id !== null) repeats[lock.key] = { cartaId: id, at, done: false, label: lock.trava.label, kind: lock.trava.kind };
         }
