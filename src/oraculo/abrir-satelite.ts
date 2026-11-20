@@ -32,6 +32,7 @@ import type { OpenCall } from './gate-abrir';
 import { GATE_OPEN_PATH, GATE_OPENINGS_PATH } from './portoes';
 import type { RemotePictures, RemotePictureView } from './retrato-satelite';
 import { postJson, type SatelliteDeps, type SatellitePost } from './satelite';
+import { MAX_SCREEN_ORDERS, MAX_SCREEN_TEXT, screenOrdersOf, type ScreenAnswer, type ScreenOrder } from './tela-satelite';
 
 const OPENINGS_DIR = 'portoes-abrir';
 /** The satellite's copy of the registro's kit (`{hash, kit}`). */
@@ -269,6 +270,11 @@ export function createSatelliteOpenings(
   deps: SatelliteDeps & {
     readonly dir: string;
     readonly open: (order: OpeningOrder) => Promise<BrowserToolOutcome>;
+    /**
+     * t-69eefa2c — the screen of a place of this machine the registro asked for (recados.ts `screenOf`), said in the
+     * same round (tela-satelite.ts). Absent = screen orders are left to run out there.
+     */
+    readonly screen?: (pasta: string, lugar: string) => Promise<{ readonly ok: boolean; readonly text: string }>;
     readonly log?: (line: string) => void;
   },
 ): { round(): Promise<void> } {
@@ -279,19 +285,36 @@ export function createSatelliteOpenings(
   const unsaid = new Map<string, RemoteOpenAnswer>();
   /** Orders already opened here, until the registro stops handing them. */
   const done = new Set<string>();
+  /** t-69eefa2c — screens captured and not yet said (memory only; never logged). */
+  const unsaidScreens = new Map<string, ScreenAnswer>();
+  /** Screen orders already captured, until the registro stops handing them. */
+  const doneScreens = new Set<string>();
+  /** The screen orders the last exchange handed. */
+  let screenOrders: ScreenOrder[] = [];
 
   async function exchange(token: string): Promise<RemoteOpening[] | null> {
     const saying = [...unsaid.values()];
-    const result = await post(url, token, JSON.stringify({ respostas: saying, kit: readRemoteKit(deps.dir)?.hash ?? null }), deps.timeoutMs ?? 15_000);
+    // Never past what the registro takes (else it refuses the whole exchange, the openings' answers with it).
+    const sayingScreens = [...unsaidScreens.values()].slice(0, MAX_SCREEN_ORDERS);
+    screenOrders = [];
+    const result = await post(
+      url,
+      token,
+      JSON.stringify({ respostas: saying, kit: readRemoteKit(deps.dir)?.hash ?? null, ...(sayingScreens.length ? { telas: sayingScreens } : {}) }),
+      deps.timeoutMs ?? 15_000,
+    );
     // 404: a registro older than this route; nothing to do.
     if (typeof result !== 'object' || result.status !== 200) return null;
     for (const said of saying) unsaid.delete(said.id);
-    let parsed: { aberturas?: unknown; kit?: unknown };
+    for (const said of sayingScreens) unsaidScreens.delete(said.id);
+    let parsed: { aberturas?: unknown; kit?: unknown; telas?: unknown };
     try {
       parsed = JSON.parse(result.body) as typeof parsed;
     } catch {
       return [];
     }
+    screenOrders = screenOrdersOf(parsed.telas);
+    for (const id of [...doneScreens]) if (!screenOrders.some((order) => order.id === id)) doneScreens.delete(id);
     if (isRecord(parsed.kit) && typeof parsed.kit.hash === 'string' && parseKit(parsed.kit.kit)) {
       const file = join(deps.dir, REMOTE_KIT_FILE);
       writeFileSync(`${file}.tmp`, JSON.stringify({ hash: parsed.kit.hash, kit: parsed.kit.kit }), { mode: 0o600 });
@@ -307,7 +330,26 @@ export function createSatelliteOpenings(
       const token = deps.token();
       if (!token) return;
       const orders = await exchange(token);
-      if (!orders?.length) return;
+      // t-69eefa2c — the screens first: the Líder único's call waits for them, an opening does not.
+      if (deps.screen) {
+        for (const order of screenOrders) {
+          if (doneScreens.has(order.id) || unsaidScreens.has(order.id)) continue;
+          let answer: { readonly ok: boolean; readonly text: string };
+          try {
+            answer = await deps.screen(order.pasta, order.lugar);
+          } catch (error) {
+            answer = { ok: false, text: `A tela de "${order.lugar}" não saiu: ${error instanceof Error ? error.message : String(error)}` };
+          }
+          if (answer.text.length > MAX_SCREEN_TEXT) answer = { ok: false, text: `A tela de "${order.lugar}" passou do tamanho que o registro aceita.` };
+          unsaidScreens.set(order.id, { id: order.id, ok: answer.ok, text: answer.text });
+          doneScreens.add(order.id);
+        }
+      }
+      if (!orders?.length) {
+        // A registro that did not answer (`null`) is asked again in the next round, not now.
+        if (orders && unsaidScreens.size) await exchange(token);
+        return;
+      }
       for (const order of orders) {
         if (done.has(order.id) || unsaid.has(order.id)) continue;
         let outcome: BrowserToolOutcome;
@@ -320,7 +362,7 @@ export function createSatelliteOpenings(
         unsaid.set(order.id, { id: order.id, ok: outcome.kind !== 'error', text: outcome.text ?? '' });
         done.add(order.id);
       }
-      if (unsaid.size) await exchange(token);
+      if (unsaid.size || unsaidScreens.size) await exchange(token);
     },
   };
 }

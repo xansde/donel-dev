@@ -21,8 +21,11 @@
 //   (`{recados: [{id, message}]}`): the messages for its sessions (the Líder único's to the Dalton, with the PC off).
 // - `abrir` `{call}` (t-d461e003, only this machine's own gate): the Líder único's `sessao_abrir` on a board another
 //   machine pictures, queued for it (`{ok, text}`; `{conhecido: false}` = no machine has that board).
-// - `aberturas` `{respostas?, kit?}` (t-d461e003): the satellite's answers to the openings it made; what still waits for
-//   it, and the kit of roles when its hash changed (`{aberturas, kit?}`, abrir-satelite.ts).
+// - `aberturas` `{respostas?, kit?, telas?}` (t-d461e003): the satellite's answers to the openings it made; what still
+//   waits for it, and the kit of roles when its hash changed (`{aberturas, kit?, telas}`, abrir-satelite.ts). t-69eefa2c:
+//   `telas` in = the screens it captured for the orders asked of it; `telas` out = the screen orders waiting for it.
+// - `tela` `{pasta, lugar}` (t-69eefa2c, only this machine's own gate): the Líder único's `sessao_ver_tela` of a place
+//   of another machine, asked of its satellite (tela-satelite.ts); `{ok, text}`, or `{conhecido: false}`.
 // - `renovar` `{sessao, tarefa}` (t-8406f473): the renewal before a card move of the entregador apart (its board is
 //   there, the ledger here): the task of a closed place whose successor is the session follows it. `{ok}`.
 // - `fila` `{aviso: OwnerMessage}` (passo 9, only this machine's own entregador, `isLocalGate`): a message of its
@@ -42,6 +45,7 @@ import type { GateRecados } from './gate-recados';
 import { callerFromPicture, leaderTaskContext, ledgerCallRefusal, withLiveOwner, type BoardPicture, type LiveOwnerSource, type PictureSession } from './portao';
 import { parseRemotePicture, type RemotePictures } from './retrato-satelite';
 import { openCallOf, openingsBodyOf, type RemoteOpenings } from './abrir-satelite';
+import { screenAnswersOf, type RemoteScreens } from './tela-satelite';
 
 export const GATES_DIR = 'portoes';
 export const GATE_PATH_PREFIX = '/v1/portao/';
@@ -57,9 +61,11 @@ export const GATE_OPENINGS_PATH = '/v1/portao/aberturas';
 export const GATE_QUEUE_PATH = '/v1/portao/fila';
 /** t-8406f473 — the renewal before a card move of the entregador apart (its board is there, the ledger here). */
 export const GATE_RENEW_PATH = '/v1/portao/renovar';
+/** t-69eefa2c — the Líder único's look at a screen of another machine (only the local gate: the entregador apart). */
+export const GATE_SCREEN_PATH = '/v1/portao/tela';
 /** A machine's picture (each board once, with its arrows): up to this. */
 export const MAX_GATE_PICTURE_BYTES = 16 * 1024 * 1024;
-const GATE_PATHS: ReadonlySet<string> = new Set([GATE_TOOL_PATH, GATE_NOTICE_PATH, GATE_LINK_PATH, GATE_PICTURE_PATH, GATE_INBOX_PATH, GATE_OPEN_PATH, GATE_OPENINGS_PATH, GATE_QUEUE_PATH, GATE_RENEW_PATH]);
+const GATE_PATHS: ReadonlySet<string> = new Set([GATE_TOOL_PATH, GATE_NOTICE_PATH, GATE_LINK_PATH, GATE_PICTURE_PATH, GATE_INBOX_PATH, GATE_OPEN_PATH, GATE_OPENINGS_PATH, GATE_QUEUE_PATH, GATE_RENEW_PATH, GATE_SCREEN_PATH]);
 /** The tool route's body may carry the delivery's proof files (base64): up to this. */
 export const MAX_GATE_BODY_BYTES = 64 * 1024 * 1024;
 const GATE_NAME = /^[a-z0-9][a-z0-9-]{0,39}$/;
@@ -156,6 +162,11 @@ export interface GateToolRoutesDeps {
    * (`isLocal`, the entregador apart), `aberturas` from a satellite. Absent = both answer 404.
    */
   readonly openings?: { readonly queue: RemoteOpenings; readonly isLocal: (name: string) => boolean };
+  /**
+   * t-69eefa2c — the screens of other machines' sessions (tela-satelite.ts): `tela` only from this machine's own gate,
+   * their orders and answers in the `aberturas` exchange. Absent = `tela` answers 404 and `aberturas` carries none.
+   */
+  readonly screens?: { readonly queue: RemoteScreens; readonly isLocal: (name: string) => boolean };
   /**
    * Passo 9 — the entregador apart queues here a message for a place of another machine (`fila`), only from the gate
    * marked local. Absent = the route answers 404 (no entregador apart: it queues itself).
@@ -283,7 +294,16 @@ export function createGateToolRoutes(deps: GateToolRoutesDeps): GateRoutes {
       }
       const input = openingsBodyOf(body);
       if (!input) return json(400, { error: 'respostas inválidas' });
-      return json(200, deps.openings.queue.exchange(name, input.respostas, input.kitHash));
+      const telas = screenAnswersOf(body.telas);
+      if (!telas) return json(400, { error: 'telas inválidas' });
+      return json(200, { ...deps.openings.queue.exchange(name, input.respostas, input.kitHash), ...(deps.screens ? { telas: deps.screens.queue.exchange(name, telas) } : {}) });
+    }
+    if (path === GATE_SCREEN_PATH) {
+      if (!deps.screens) return null;
+      if (!deps.screens.isLocal(name)) return json(403, { error: 'só o portão desta máquina pede a tela de outra' });
+      if (typeof body.pasta !== 'string' || !body.pasta || typeof body.lugar !== 'string' || !body.lugar) return json(400, { error: 'pasta ou lugar inválido' });
+      const answer = await deps.screens.queue.ask(body.pasta, body.lugar);
+      return json(200, answer ? { ok: answer.ok, text: answer.text } : { conhecido: false });
     }
     if (path === GATE_PICTURE_PATH || path === GATE_INBOX_PATH) {
       if (!deps.pictures) return null;

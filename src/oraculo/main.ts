@@ -146,7 +146,8 @@ async function runSatellite(dir: string, url: string): Promise<void> {
       await notices.send(message);
       return true;
     },
-    openings: createSatelliteOpenings({ ...remote, dir, open: openLocal.openFor }),
+    // t-69eefa2c — the Líder único's look at a screen of this machine, asked in the same exchange.
+    openings: createSatelliteOpenings({ ...remote, dir, open: openLocal.openFor, screen: recados.screenOf }),
   });
   for (const sid of sweepUnfinishedOpenings(sessionsDir, await tmuxLocalSessions())) console.log(`[oraculo] abrir: apaguei a pasta ${sid}, aberta pela metade.`);
   const gatePort = Number(process.env.DONEL_ORACULO_PORTAO_PORT) || GATE_PORT;

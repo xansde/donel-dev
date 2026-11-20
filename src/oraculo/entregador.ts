@@ -30,6 +30,7 @@ import { deliverLocalFirst, type Relay } from './relay';
 import { createLocalPicture, tmuxLiveKnown, tmuxLiveNow } from './retrato-local';
 import { createRemotePictures, createRemotePicturesReader, type RemotePictureView, type RemotePictures } from './retrato-satelite';
 import { createRemoteOpenClient, createRemoteOpenings, type RemoteOpenings } from './abrir-satelite';
+import { createRemoteScreenClient, createRemoteScreens, type RemoteScreens } from './tela-satelite';
 import { GATE_QUEUE_PATH, noticeOf } from './portoes';
 import { createSatelliteCardRenewal, createSatelliteLedger, createSatelliteNotice, createSatelliteReviewLink, createSatelliteTaskMemory, postJson, type SatellitePost } from './satelite';
 import { createProbe } from './sonda';
@@ -369,6 +370,8 @@ export interface Entregador {
   readonly remotes: RemotePictures | null;
   /** t-d461e003 — the openings on other machines' boards, with `remotes` (the registro in this process); else `null`. */
   readonly openings: RemoteOpenings | null;
+  /** t-69eefa2c — the screens asked of other machines' satellites, with `remotes`; else `null` (the registro's). */
+  readonly screens: RemoteScreens | null;
   readonly pictures: PictureStore;
   /** The picture the gate, the recados and the Líder read (the stored one, with this tmux's live sessions). */
   readonly localPicture: { get(): BoardPicture | null };
@@ -421,6 +424,8 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
   // abrir-satelite.ts): kept here only with the registro in this process; apart, the registro alone writes them and
   // the entregador asks it by the `abrir` route, only for a board a fresh picture of `remoteView` has.
   const openings = remotes ? createRemoteOpenings({ dir, pictures: remotes, kit: () => readOpenKit(dir) }) : null;
+  // t-69eefa2c — the Líder único's look at a screen of those machines: an order their satellite takes in its exchange.
+  const screens = remotes ? createRemoteScreens({ pictures: remotes }) : null;
   const picture = (): BoardPicture | null => remoteView.combine(localPicture.get());
   const pictureWithoutPc = (sid: string): BoardPicture | null => remoteView.combine(localPicture.withoutPc(sid));
   // t-c3fbe852 — the Líder único alive in this machine's tmux (the app's mark in its session folder, or the picture).
@@ -447,6 +452,10 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
       ledger: junto.ledger,
       picture,
       remote: remotes!.queue,
+      remoteScreen: async (pasta, lugar) => {
+        const answer = await screens!.ask(pasta, lugar);
+        return answer ? { kind: answer.ok ? 'text' : 'error', text: answer.text } : null;
+      },
       relay: (message) => junto.relay.send(message, 0),
       leader: localLeader,
       transcriptOf,
@@ -482,6 +491,7 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
       renewCard: createSatelliteCardRenewal(remote),
       picture,
       remote: createRemoteQueueClient({ ...remote, view: remoteView }),
+      remoteScreen: createRemoteScreenClient({ ...remote, view: remoteView }),
       relay: notices.send,
       leader: localLeader,
       transcriptOf,
@@ -622,6 +632,7 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
     chat,
     remotes,
     openings,
+    screens,
     pictures,
     localPicture,
     setPicture: (next) => {
