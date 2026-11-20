@@ -163,21 +163,80 @@ export interface VigiaEntry {
   readonly cartaId: string | null;
   /** The card could not be made (the Oráculo's place was down): the PC warned natively, once. */
   readonly notified: boolean;
-  /** The lock passed before its card could be made; the card still goes, saying when it began and ended. */
+  /**
+   * Only in a state written before t-0358187b: the lock passed before its card could be made. It is read as a lock
+   * that passed then (its record still goes), never kept as live.
+   */
   readonly endedAt: number | null;
+  /** The PC handed this lock over to the Oráculo's daemon (t-ffbf8e7d): its passage is the daemon's to record. */
+  readonly handedOver?: true;
   readonly trava: Trava;
+}
+
+/** A lock that passed (it was confirmed: seen in two rounds, or it had a card or a warning on the PC). */
+export interface PassedLock {
+  readonly key: string;
+  readonly trava: Trava;
+  readonly firstSeen: number;
+  readonly endedAt: number;
+}
+
+/** What the vigia knew of a place's sessions at its last good reading (for "what stopped"). */
+export interface KnownSessions {
+  readonly at: number;
+  readonly sessions: ReadonlyArray<{ readonly sid: string; readonly name: string }>;
+}
+
+/** A record of a lock that passed, waiting for the Oráculo (it goes with the times the vigia saw, however late). */
+export interface PendingRecord {
+  readonly key: string;
+  readonly trava: Trava;
+  readonly firstSeen: number;
+  readonly endedAt: number;
+  /** The words of the record, made when the lock passed (the cause is measured then, not when the Oráculo answers). */
+  readonly title: string;
+  readonly note: string;
+  readonly body: string;
+  /** A round already tried to send it and the Oráculo did not answer. */
+  readonly late: boolean;
+}
+
+/** A lock that passed, kept 24 h to tell when the same lock keeps coming back. */
+export interface Passage {
+  readonly key: string;
+  readonly placeId: string;
+  readonly kind: TravaKind;
+  readonly firstSeen: number;
+  readonly endedAt: number;
+  readonly cause: string | null;
+}
+
+/** The repeat card of a lock (the owner's real question) and whether its answer was acted on. */
+export interface RepeatCard {
+  readonly cartaId: string;
+  readonly at: number;
+  readonly done: boolean;
 }
 
 export interface VigiaState {
   readonly open: Readonly<Record<string, VigiaEntry>>;
+  readonly records?: readonly PendingRecord[];
+  readonly history?: readonly Passage[];
+  readonly sessions?: Readonly<Record<string, KnownSessions>>;
+  readonly repeats?: Readonly<Record<string, RepeatCard>>;
+}
+
+/** A confirmed lock: seen in two rounds in a row, or it already had a card or a warning on the PC. */
+function confirmed(entry: VigiaEntry): boolean {
+  return entry.rounds >= ROUNDS_TO_WARN || entry.cartaId !== null || entry.notified || entry.endedAt !== null;
 }
 
 /**
  * Pure — one round:
  * - `toOpen`: a lock seen in two rounds with no card yet (its card says since when);
- * - `toClose`: the card of a lock that passed (cancelled);
- * - `toRecord`: a lock that passed while its card could not be made — the owner was only warned on the PC, so a card
- *   still goes when the Oráculo answers, with when it began and ended.
+ * - `toClose`: the card of a lock that passed (cancelled: a lock that passed asks nothing);
+ * - `passed`: every confirmed lock that passed, for its record (a one-round blip is no lock, and a lock handed over to
+ *   the daemon is the daemon's to record).
  */
 export function planRound(
   state: VigiaState,
@@ -187,14 +246,16 @@ export function planRound(
   state: VigiaState;
   toOpen: Array<{ trava: Trava; firstSeen: number }>;
   toClose: Array<{ key: string; cartaId: string }>;
-  toRecord: Array<{ key: string; trava: Trava; firstSeen: number; endedAt: number }>;
+  passed: PassedLock[];
 } {
   const open: Record<string, VigiaEntry> = {};
   const toOpen: Array<{ trava: Trava; firstSeen: number }> = [];
+  const passed: PassedLock[] = [];
   for (const trava of travas) {
-    // A lock that passed with no card (kept only for its record) and came back is a new lock: new warning, new card.
+    // A lock that passed in an older state (kept only for its record) and came back is a new lock: new warning, card.
     const kept = state.open[trava.key];
     const before = kept && kept.endedAt === null ? kept : undefined;
+    if (kept && kept.endedAt !== null) passed.push({ key: trava.key, trava: kept.trava, firstSeen: kept.firstSeen, endedAt: kept.endedAt });
     const entry: VigiaEntry = {
       firstSeen: before?.firstSeen ?? now,
       rounds: (before?.rounds ?? 0) + 1,
@@ -207,42 +268,76 @@ export function planRound(
     if (entry.cartaId === null && entry.rounds >= ROUNDS_TO_WARN) toOpen.push({ trava, firstSeen: entry.firstSeen });
   }
   const toClose: Array<{ key: string; cartaId: string }> = [];
-  const toRecord: Array<{ key: string; trava: Trava; firstSeen: number; endedAt: number }> = [];
   for (const [key, entry] of Object.entries(state.open)) {
     if (key in open) continue;
-    if (entry.cartaId !== null) {
-      toClose.push({ key, cartaId: entry.cartaId });
-    } else if (entry.notified) {
-      const endedAt = entry.endedAt ?? now;
-      open[key] = { ...entry, endedAt };
-      toRecord.push({ key, trava: entry.trava, firstSeen: entry.firstSeen, endedAt });
-    }
+    if (entry.cartaId !== null && entry.endedAt === null) toClose.push({ key, cartaId: entry.cartaId });
+    if (confirmed(entry) && !entry.handedOver) passed.push({ key, trava: entry.trava, firstSeen: entry.firstSeen, endedAt: entry.endedAt ?? now });
   }
-  return { state: { open }, toOpen, toClose, toRecord };
+  return { state: { ...state, open }, toOpen, toClose, passed };
 }
 
 const TRAVA_KINDS: readonly TravaKind[] = ['vps-fora', 'vps-login', 'cofre', 'sessoes'];
 
+function parseTrava(key: string, raw: unknown): Trava | null {
+  const trava = raw as Partial<Trava> | undefined;
+  if (!trava || typeof trava.placeId !== 'string' || typeof trava.label !== 'string' || typeof trava.detail !== 'string') return null;
+  if (!(TRAVA_KINDS as readonly unknown[]).includes(trava.kind)) return null;
+  return { key, kind: trava.kind as TravaKind, placeId: trava.placeId, label: trava.label, detail: trava.detail };
+}
+
+const isNum = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+const isStr = (value: unknown): value is string => typeof value === 'string';
+
 /** Pure — the state read from disk; anything unreadable is dropped (the worst case is one card more). */
 export function parseVigiaState(raw: unknown): VigiaState {
   const open: Record<string, VigiaEntry> = {};
-  const entries = (raw as { open?: unknown } | null)?.open;
+  const root = (raw ?? {}) as { open?: unknown; records?: unknown; history?: unknown; sessions?: unknown; repeats?: unknown };
+  const entries = root.open;
   if (entries && typeof entries === 'object') {
     for (const [key, value] of Object.entries(entries as Record<string, unknown>)) {
       const entry = value as Partial<Record<keyof VigiaEntry, unknown>>;
-      const trava = entry?.trava as Partial<Trava> | undefined;
       if (typeof entry?.firstSeen !== 'number' || typeof entry.rounds !== 'number') continue;
-      if (!trava || typeof trava.placeId !== 'string' || typeof trava.label !== 'string' || typeof trava.detail !== 'string') continue;
-      if (!(TRAVA_KINDS as readonly unknown[]).includes(trava.kind)) continue;
+      const trava = parseTrava(key, entry.trava);
+      if (!trava) continue;
       open[key] = {
         firstSeen: entry.firstSeen,
         rounds: entry.rounds,
         cartaId: typeof entry.cartaId === 'string' ? entry.cartaId : null,
         notified: entry.notified === true,
         endedAt: typeof entry.endedAt === 'number' ? entry.endedAt : null,
-        trava: { key, kind: trava.kind as TravaKind, placeId: trava.placeId, label: trava.label, detail: trava.detail },
+        ...(entry.handedOver === true ? { handedOver: true as const } : {}),
+        trava,
       };
     }
   }
-  return { open };
+  const records: PendingRecord[] = [];
+  for (const value of Array.isArray(root.records) ? root.records : []) {
+    const record = value as Partial<Record<keyof PendingRecord, unknown>>;
+    const trava = isStr(record?.key) ? parseTrava(record.key, record.trava) : null;
+    if (!trava || !isNum(record.firstSeen) || !isNum(record.endedAt) || !isStr(record.title) || !isStr(record.note) || !isStr(record.body)) continue;
+    records.push({ key: trava.key, trava, firstSeen: record.firstSeen, endedAt: record.endedAt, title: record.title, note: record.note, body: record.body, late: record.late === true });
+  }
+  const history: Passage[] = [];
+  for (const value of Array.isArray(root.history) ? root.history : []) {
+    const passage = value as Partial<Record<keyof Passage, unknown>>;
+    if (!isStr(passage?.key) || !isStr(passage.placeId) || !(TRAVA_KINDS as readonly unknown[]).includes(passage.kind) || !isNum(passage.firstSeen) || !isNum(passage.endedAt)) continue;
+    history.push({ key: passage.key, placeId: passage.placeId, kind: passage.kind as TravaKind, firstSeen: passage.firstSeen, endedAt: passage.endedAt, cause: isStr(passage.cause) ? passage.cause : null });
+  }
+  const sessions: Record<string, KnownSessions> = {};
+  if (root.sessions && typeof root.sessions === 'object') {
+    for (const [placeId, value] of Object.entries(root.sessions as Record<string, unknown>)) {
+      const known = value as { at?: unknown; sessions?: unknown };
+      if (!isNum(known?.at) || !Array.isArray(known.sessions)) continue;
+      const list = known.sessions.filter((s): s is { sid: string; name: string } => isStr((s as { sid?: unknown })?.sid) && isStr((s as { name?: unknown })?.name));
+      sessions[placeId] = { at: known.at, sessions: list.map((s) => ({ sid: s.sid, name: s.name })) };
+    }
+  }
+  const repeats: Record<string, RepeatCard> = {};
+  if (root.repeats && typeof root.repeats === 'object') {
+    for (const [key, value] of Object.entries(root.repeats as Record<string, unknown>)) {
+      const card = value as { cartaId?: unknown; at?: unknown; done?: unknown };
+      if (isStr(card?.cartaId) && isNum(card.at)) repeats[key] = { cartaId: card.cartaId, at: card.at, done: card.done === true };
+    }
+  }
+  return { open, records, history, sessions, repeats };
 }

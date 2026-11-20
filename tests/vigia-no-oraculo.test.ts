@@ -11,7 +11,7 @@ import { handshakeScript, parseHandshakeUrl } from '../src/main/ledger-remote-ho
 import { createLedgerService, nodeLedgerProofFs } from '../src/main/ledger-store';
 import { createVigiaService } from '../src/main/vigia/vigia-service';
 import { ownerInbox } from '../src/shared/ledger/inbox';
-import type { LedgerOp } from '../src/shared/ledger/contract';
+import { closedAlone, type LedgerOp } from '../src/shared/ledger/contract';
 import { createDaemonVigia, VIGIA_CONFIG_FILE, VIGIA_ON_FILE } from '../src/oraculo/vigia';
 
 const dirs: string[] = [];
@@ -163,7 +163,8 @@ describe('a delegação muda com a trava viva', () => {
         world.clock += 5 * MIN;
       }
     };
-    const cards = () => Object.values(ledger.load().doc.tasks).map((task) => ({ id: task.id, state: task.state }));
+    // The decision cards (t-0358187b: a lock that passed leaves a record that closes alone; it is no card).
+    const cards = () => Object.values(ledger.load().doc.tasks).filter((task) => !closedAlone(task)).map((task) => ({ id: task.id, state: task.state }));
     const live = () => cards().filter((card) => card.state === 'entregue').map((card) => card.id);
     const reject = (id: string) => ledger.apply({ kind: 'dono' }, { op: 'rejeitar', id, reason: 'já sei, deixa' });
     return { world, rounds, cards, live, reject };

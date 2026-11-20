@@ -554,6 +554,12 @@ export function isServicePlace(placeId: string): boolean {
  */
 export const LIMITER_SERVICE = 'limitador';
 
+/**
+ * t-0358187b — the vigia de travas (src/main/vigia/vigia-service.ts, src/oraculo/vigia.ts). Its record of a lock that
+ * passed by itself closes alone (low risk, no card): the owner sees it in the record and is never asked about it.
+ */
+export const VIGIA_SERVICE = 'vigia';
+
 // ---------------------------------------------------------------------------------------------------------------
 // Operations — the ONE place the rules live. Pure: the caller gives the clock and the new id.
 
@@ -971,8 +977,11 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
         const why = forOwnerRefusal(op.forOwner, op.proofs);
         if (why) return fail(`"paraODono" recusado: ${why}`);
       }
-      if (op.closeAlone && (task.risk !== 'baixo' || op.forOwner || task.slack || actor.kind !== 'lugar' || isServicePlace(actor.placeId) || (doneBy && doneBy !== actor.placeId)))
-        return fail('Só fecha sozinha a entrega de risco baixo, sem carta ao dono, feita e entregue pelo mesmo lugar do quadro (serviço nunca).');
+      // t-0358187b — the one service that closes its own delivery: the vigia's record of a lock that passed by itself
+      // (dono, 17/11: a lock that passed asks nothing; it is a record). Still low risk, no card, its own work.
+      const vigiaRecord = actor.kind === 'lugar' && actor.placeId === `${SERVICE_PLACE_PREFIX}${VIGIA_SERVICE}` && task.ownerPlaceId === actor.placeId;
+      if (op.closeAlone && (task.risk !== 'baixo' || op.forOwner || task.slack || actor.kind !== 'lugar' || (isServicePlace(actor.placeId) && !vigiaRecord) || (doneBy && doneBy !== actor.placeId)))
+        return fail('Só fecha sozinha a entrega de risco baixo, sem carta ao dono, feita e entregue pelo mesmo lugar do quadro (serviço nunca, fora o registro do vigia de travas).');
       const delivered = step(task, 'entregue', {
         kind: 'entregue',
         at: ctx.now,
@@ -983,7 +992,7 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
         ...(op.forOwner ? { forOwner: op.forOwner } : {}),
       });
       if (!op.closeAlone) return done(delivered);
-      const why = op.closeAloneBy === 'cetico' ? 'veredito aprovado do revisor cético na prova; não espera outro Revisor.' : 'nenhum Revisor vivo de fora da cadeia de quem entregou; fechou com a prova.';
+      const why = vigiaRecord ? 'registro do vigia de travas: a trava passou sozinha e não pede decisão.' : op.closeAloneBy === 'cetico' ? 'veredito aprovado do revisor cético na prova; não espera outro Revisor.' : 'nenhum Revisor vivo de fora da cadeia de quem entregou; fechou com a prova.';
       return done(step(delivered, 'aceita', { kind: 'aceita', at: ctx.now, by: actor, text: withMark(CLOSED_ALONE, why) }));
 
     case 'aceitar': {
