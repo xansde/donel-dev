@@ -25,7 +25,7 @@ import { progressOf, type LedgerProgress } from '../shared/ledger/andamento';
 import { awaitsSend, frenteOf, isClosed, requestedByOf, type LedgerTask } from '../shared/ledger/contract';
 import { projectFolderOf } from '../oraculo/board-client';
 import type { BoardSqliteStore, ProjectInput } from '../oraculo/board-sqlite';
-import type { BoardPicture } from '../oraculo/portao';
+import type { BoardPicture, PictureSession } from '../oraculo/portao';
 import type { MindscapeBoard } from '../shared/mindscape/model';
 
 const { DatabaseSync } = process.getBuiltinModule('node:sqlite') as typeof import('node:sqlite');
@@ -79,6 +79,8 @@ export interface SeedPlan {
   readonly cards: readonly CardSeed[];
   /** Tasks left out: closed, or an accepted Slack letter that only waits for its send. */
   readonly skipped: number;
+  /** `hostOf` projects that are not in the plan (a typo, or a project with no live task): reported, never used. */
+  readonly unknownHostOf: readonly string[];
 }
 
 export interface SeedOptions {
@@ -103,9 +105,12 @@ const SESSION_PLACE = 'session:';
 /**
  * The session of a place, from the pictures this machine has (`retrato.json`, the satellites'): the newest of the live
  * holder of the place (a picture entry whose `quemSou.lugar` is the place on that project's board, not handed over to a
- * successor) and the conversation of the place's card on the pictured boards, each dated by its picture (the session's
- * `at`, else the picture's); a tie goes to the holder. With no holder, `session:<uuid>`'s own uuid comes before the
- * board's card.
+ * successor) and the conversation of the place's card on the pictured boards, each dated by `entryTime`; a tie goes
+ * to the board's card. With no holder, `session:<uuid>`'s own uuid comes before the board's card.
+ *
+ * The tie (decisão do cético, 20/11): "newest" is when the entry was pictured, not how old the session is. A stale
+ * holder resumed and probed again gets `at` = now, and its own entry pictures the board at that same time; the board
+ * is what the owner sees, so where both are equally fresh the card says who is in the place.
  *
  * Newest, not first (sobras do Revisor, 20/11): a holder that closed without renewing (the Líder reopened, or `/clear`)
  * stays in the picture with its old `at`, and resumed in tmux it would win again over the session the fresher board
@@ -128,7 +133,7 @@ export function sessionResolver(pictures: readonly BoardPicture[], here?: (sid: 
     for (const [sid, session] of Object.entries(picture.sessoes ?? {})) {
       const { lugar, pasta } = session.quemSou ?? {};
       if (typeof lugar !== 'string' || typeof pasta !== 'string' || session.renovadaPara || !counts(sid)) continue;
-      keep(holders, `${projectSlug(projectFolderOf(pasta))}|${lugar}`, sid, session.at ?? picture.at ?? 0);
+      keep(holders, `${projectSlug(projectFolderOf(pasta))}|${lugar}`, sid, entryTime(session, picture));
     }
     for (const [pasta, { board, at }] of datedBoards(picture)) {
       const project = projectSlug(projectFolderOf(pasta));
@@ -141,10 +146,19 @@ export function sessionResolver(pictures: readonly BoardPicture[], here?: (sid: 
     const key = `${projectId}|${placeId}`;
     const held = holders.get(key);
     const carded = cards.get(key);
-    if (held && (!carded || held.at >= carded.at)) return held.sid;
+    if (held && (!carded || held.at > carded.at)) return held.sid;
     if (!held && placeId.startsWith(SESSION_PLACE) && counts(placeId.slice(SESSION_PLACE.length))) return placeId.slice(SESSION_PLACE.length);
     return carded?.sid;
   };
+}
+
+/**
+ * When a picture entry was last seen: the probe's `at`, else the last PC push that carried it (`pcAt`, stamped by
+ * `mergePicture`), else the picture's own `at` — as `pickLocalLeader` reads it. The picture's `at` alone would date
+ * an entry the PC stopped sending an hour ago as if it were pushed now.
+ */
+function entryTime(session: PictureSession, picture: BoardPicture): number {
+  return session.at ?? session.pcAt ?? picture.at ?? 0;
 }
 
 interface Dated {
@@ -158,7 +172,7 @@ function datedBoards(picture: BoardPicture): Map<string, { readonly board?: Mind
   for (const session of Object.values(picture.sessoes ?? {})) {
     const pasta = session.quemSou?.pasta;
     if (session.quemSou?.liderUnico === true || typeof pasta !== 'string' || !pasta) continue;
-    const at = session.at ?? picture.at ?? 0;
+    const at = entryTime(session, picture);
     const known = fresh.get(pasta);
     if (!known || at > known.at || (!known.board && session.board)) fresh.set(pasta, { at, ...(session.board ? { board: session.board } : {}) });
   }
@@ -334,6 +348,7 @@ export function planSeed(ledger: SeedLedger, options: SeedOptions): SeedPlan {
     projects: [...projects].sort(([a], [b]) => a.localeCompare(b)).map(([id, project]) => ({ id, name: project.name, host: options.hostOf?.[id] ?? options.host, aliases: [...project.aliases] })),
     cards,
     skipped: Object.keys(ledger.tasks).length - live.length,
+    unknownHostOf: Object.keys(options.hostOf ?? {}).filter((id) => !projects.has(id)).sort(),
   };
 }
 

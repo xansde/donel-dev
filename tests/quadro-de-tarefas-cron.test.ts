@@ -153,6 +153,28 @@ describe('raia segue o Líder e um aviso por sessão (devolução de 20/11)', ()
     const older = { at: NOW - 2 * 3600_000, sessoes: { 'dddddddd-1111-4222-8333-444444444444': { quemSou: { lugar: 'place:dev', pasta: '/home/u/seazone/BizOps' }, listar: [], board: { cards: { 'place:lider': leaderCard(OLDER) } } } } } as unknown as BoardPicture;
     const onlyBoards = { at: NOW, sessoes: { 'cccccccc-1111-4222-8333-444444444444': picture.sessoes['cccccccc-1111-4222-8333-444444444444']! } } as BoardPicture;
     expect(sessionResolver([older, onlyBoards], (sid) => alive.has(sid))('bizops', 'place:lider')).toBe(LIVE);
+    // a tie (the stale holder resumed and probed now, its own entry pictures the board): the board's card wins
+    const resumed = { at: NOW, sessoes: { [STALE]: { quemSou: { lugar: 'place:lider', pasta: bizops }, listar: [], at: NOW, board: { cards: { 'place:lider': leaderCard(LIVE) } } } } } as unknown as BoardPicture;
+    expect(sessionResolver([resumed], (sid) => alive.has(sid))('bizops', 'place:lider')).toBe(LIVE);
+  });
+
+  it('com o PC ligado, cada sessão empurrada vale pela hora do último retrato que a trouxe (pcAt), não pela do retrato', () => {
+    const bizops = 'C:\\Users\\dono\\seazone\\BizOps';
+    const STALE = '757511b0-6326-414c-8ed5-5417c83c36b4';
+    const LIVE = '0af17ef9-93a7-4e25-9d2e-19537600c285';
+    const leaderCard = { kind: 'session', id: 'place:lider', sessionId: LIVE, previous: [], x: 0, y: 0, roleId: 'lider' };
+    // the PC stopped sending the stale holder an hour ago; the merge kept its entry (pcAt old, no probe `at`)
+    const pushed = {
+      at: NOW,
+      sessoes: {
+        [STALE]: { quemSou: { lugar: 'place:lider', pasta: bizops }, listar: [], pcAt: NOW - 3600_000 },
+        'cccccccc-1111-4222-8333-444444444444': { quemSou: { lugar: 'place:dev', pasta: bizops }, listar: [], pcAt: NOW, board: { cards: { 'place:lider': leaderCard } } },
+      },
+    } as unknown as BoardPicture;
+    expect(sessionResolver([pushed], () => true)('bizops', 'place:lider')).toBe(LIVE);
+    // both entries hold the place: the one the PC sent now wins, whatever order they were inserted
+    const both = { ...pushed, sessoes: { ...pushed.sessoes, [LIVE]: { quemSou: { lugar: 'place:lider', pasta: bizops }, listar: [], pcAt: NOW } } } as unknown as BoardPicture;
+    expect(sessionResolver([both], () => true)('bizops', 'place:lider')).toBe(LIVE);
   });
 
   it('o cartão segue a sessão viva que segura o lugar dele agora (a renovada passa à sucessora)', () => {

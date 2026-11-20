@@ -720,6 +720,8 @@ async function semear(boardFile: string | null): Promise<number> {
   const pictures = readPictures(ORACULO_DIR);
   const plan = planSeed(readLedgerReadOnly(ledgerFile), { host: argOf('--host') ?? readCronConfig().host, hostOf, vpsHome: HOME, ...(pcRoot ? { pcRoot } : {}), sessionOf: sessionResolver(pictures) });
   const byStage = plan.cards.reduce<Record<string, number>>((acc, card) => ({ ...acc, [card.stage]: (acc[card.stage] ?? 0) + 1 }), {});
+  // a --host-de for a project the plan does not have is not used: say so (a typo would seed with the default host)
+  for (const id of plan.unknownHostOf) console.error(`[semear] aviso: --host-de ${id}=${hostOf[id]} ignorado, o projeto "${id}" não está no plano (projetos: ${plan.projects.map((p) => p.id).join(', ') || 'nenhum'})`);
   if (process.argv.includes('--seco')) {
     for (const project of plan.projects) console.log(`projeto ${project.id} (${project.name}, ${project.host}): ${project.aliases.join(' | ')}`);
     for (const card of plan.cards) console.log(`cartão ${card.taskId} → ${card.projectId} ${card.stage}${card.place ? ` ${card.place}` : ''}${card.session ? ` sessão ${card.session}` : ''}${card.front ? ` [${card.front}]` : ''}: ${card.title} — ${card.note}`);

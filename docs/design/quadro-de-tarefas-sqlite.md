@@ -141,8 +141,11 @@ Líder place:e8e2842d-… da raia está fechada)".
 O que o Revisor e a prova da reentrega deixaram, resolvido antes de o vigia agir de verdade:
 
 - **Lugar → sessão pela mais nova.** O resolvedor (`sessionResolver`) compara quem segura o lugar no retrato e o card
-  do lugar no quadro retratado pela hora de cada retrato (o `at` da sessão, senão o do retrato) e fica com o mais novo;
-  empate fica com quem segura o lugar. O detentor antigo que fechou sem `renovadaPara` (ex.: o 757511b0 do Líder do
+  do lugar no quadro retratado pela hora de cada entrada (o `at` da sonda, senão o `pcAt` do último envio do PC que a
+  trouxe, senão o `at` do retrato, como o `pickLocalLeader`) e fica com o mais novo. Com o PC ligado, a entrada que o
+  PC parou de mandar há uma hora não vale como de agora. **Empate fica com o card do quadro** (decisão de 20/11): "mais
+  nova" é a hora da sondagem, não a idade da sessão; o detentor antigo retomado e sondado agora ganha `at` igual ao do
+  quadro da própria entrada, e o quadro é o que o dono vê. O detentor antigo que fechou sem `renovadaPara` (ex.: o 757511b0 do Líder do
   BizOps) não volta a vencer se for retomado no tmux, e entre dois quadros retratados do mesmo projeto vale o mais
   novo, não o primeiro lido. Sem quem segure o lugar, `session:<uuid>` continua antes do card.
 - **O cartão segue a sessão do lugar.** A `ronda` resolve o lugar de cada cartão em Fazendo/Travado para a sessão viva
@@ -152,7 +155,8 @@ O que o Revisor e a prova da reentrega deixaram, resolvido antes de o vigia agir
   está fechada, como antes.
 - **Host por projeto na semente.** `--host-de <projeto>=<host>` (repetível) dá o host do projeto no primeiro cadastro
   (ex.: `--host-de homologacao=homologacoes`); o resto leva `--host`. Projeto que já existe guarda o host dele
-  (`upsertProject` só junta aliases). Formato errado = sai com 2 sem semear nada.
+  (`upsertProject` só junta aliases). Formato errado = sai com 2 sem semear nada. Projeto que não está no plano
+  (erro de digitação, ou projeto sem tarefa viva) não é usado e sai um aviso no stderr com os projetos do plano.
 - **Saída inteira em pipe.** O `board-cron` sai só depois de stdout e stderr esvaziarem (`exitAfterFlush`):
   `semear --seco | tee` e o log do crontab não perdem o fim.
 - **Bot não é resposta.** No GitHub, conta com login terminado em `[bot]` ou `type: "Bot"` (CI, preview, dependabot,

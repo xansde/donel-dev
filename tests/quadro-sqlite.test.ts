@@ -160,6 +160,9 @@ describe('semente a partir do Oráculo', () => {
     const ledger = { tasks: { 't-1': task('t-1', '/home/u/seazone/Homologacao'), 't-2': task('t-2', '/home/u/seazone/atlas') } } as never;
     const plan = planSeed(ledger, { host: 'vps-pessoal', vpsHome: '/home/u', hostOf: { homologacao: 'homologacoes' } });
     expect(Object.fromEntries(plan.projects.map((p) => [p.id, p.host]))).toEqual({ atlas: 'vps-pessoal', homologacao: 'homologacoes' });
+    expect(plan.unknownHostOf).toEqual([]);
+    // a --host-de whose project is not in the plan (a typo) is reported, never dropped in silence
+    expect(planSeed(ledger, { host: 'vps-pessoal', vpsHome: '/home/u', hostOf: { homologacoes: 'homologacoes', atlas: 'pc' } }).unknownHostOf).toEqual(['homologacoes']);
     const store = board();
     await store.upsertProject({ id: 'atlas', name: 'atlas', host: 'pc', aliases: [] });
     await runSeed(store, plan);
