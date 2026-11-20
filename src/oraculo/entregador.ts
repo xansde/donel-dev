@@ -473,7 +473,6 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
     forgetSession: pictures.forget,
     leader: localLeader,
     liveSessions,
-    deliver: toLeader,
     run: runLocalScript,
     room,
     portFree: loopbackPortFree,
