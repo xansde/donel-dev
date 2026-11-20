@@ -20,8 +20,9 @@ export const registroPhonePort = (env: Readonly<Record<string, string | undefine
 /**
  * The routes the entregador answers; the rest of the phone's server is the registro's. t-c441e144: the credential box
  * too, because it announces in the chat (one writer of the conversation): its body is never proxied, only read here.
+ * t-b07b50ff: the phone's warnings (`avisos`, a long-poll over the chat that lives here).
  */
-const CHAT_ROUTES: ReadonlySet<string> = new Set(['/api/v2/chat', '/api/v2/chat/audio', '/api/v2/chat/audio/parte', '/api/v2/chat/audio/fim', '/api/v2/chat/arquivo', '/api/v2/chat/correcao', '/api/v2/ping', '/api/v2/credencial']);
+const CHAT_ROUTES: ReadonlySet<string> = new Set(['/api/v2/chat', '/api/v2/chat/audio', '/api/v2/chat/audio/parte', '/api/v2/chat/audio/fim', '/api/v2/chat/arquivo', '/api/v2/chat/correcao', '/api/v2/ping', '/api/v2/credencial', '/api/v2/avisos']);
 export const isChatRoute = (url: string): boolean => CHAT_ROUTES.has(url.split('?')[0] ?? '');
 
 /**

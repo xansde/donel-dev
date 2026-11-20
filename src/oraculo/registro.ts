@@ -43,6 +43,7 @@ import { createTarefasPedidasConsumer, createTarefasPedidasQueue, readQuadroTare
 import { createChatCelularConsumer, createChatCelularQueue } from './chat-celular';
 import { CELULAR_LOCAL_FILE, createCelularLocalStore } from './celular-local';
 import { createCelularV2Handler } from './celular-v2';
+import { AVISOS_CARTAS_FILE, createAvisosCartasWriter, entradasDeCartas } from './avisos-cartas';
 import { createQuadroLeitor, quadroPathsOf } from './quadro-v2';
 import { createCredencialHandler } from './credencial';
 import { createChatAudioWorker, daemonWhisper } from './chat-audio';
@@ -342,8 +343,18 @@ export async function runRegistro(place: RegistroPlace): Promise<{ readonly url:
   });
   /** Apart, the chat routes are the entregador's: here they do not exist (a second writer of the conversation). */
   const v2Here = v2 && !chatHere ? (request: Parameters<typeof v2>[0]) => (isChatRoute(request.url) ? Promise.resolve({ status: 404, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }, body: JSON.stringify({ erro: 'nao-encontrada' }) }) : v2(request)) : v2;
+  // t-b07b50ff — the letters that start waiting go to avisos-cartas.json, read by the entregador for the phone's warnings.
+  const avisosCartas = createAvisosCartasWriter(join(dir, AVISOS_CARTAS_FILE));
+  const writeAvisosCartas = (fresh: Parameters<typeof entradasDeCartas>[0]): void => {
+    try {
+      avisosCartas.add(entradasDeCartas(fresh));
+    } catch (error) {
+      console.log(`[avisos] ${AVISOS_CARTAS_FILE} não foi gravado: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  };
   celular = createCelularCore({
     v2: () => (filaLocal() && v2Here ? v2Here : null),
+    onFresh: (fresh) => writeAvisosCartas(fresh),
     // Apart, this server listens on DONEL_CELULAR_PORT (47818) behind the entregador's 47815, which the phone reaches.
     ...(chatHere ? {} : { port: registroPhonePort(), publicPort: MOBILE_PORT }),
     userDataDir: dir,

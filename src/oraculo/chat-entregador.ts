@@ -18,6 +18,9 @@ import { createChatCelularConsumer, createChatCelularQueue, parseChatReplies, ty
 import { chatResponder } from './chat-responder';
 import { CELULAR_LOCAL_FILE, createCelularLocalStore, type CelularLocalStore } from './celular-local';
 import { createCelularV2Handler } from './celular-v2';
+import { createAvisos, createAvisosTeste, type Avisos } from './avisos';
+import { AVISOS_CARTAS_FILE, createAvisosCartasReader } from './avisos-cartas';
+import { localFlagOn } from '../main/local-flags';
 import { createCredencialHandler, type CredencialHandler } from './credencial';
 import { isChatRoute } from './celular-frente';
 import { readBoardConfig } from './board-client';
@@ -29,6 +32,9 @@ import { whisperServerTranscriber } from '../main/celular/transcrever';
 
 /** The chat's rows with the entregador apart. */
 export const CHAT_LOCAL_FILE = 'chat-local.json';
+/** t-b07b50ff — the gate's test warning (loopback only): a `teste` warning in memory, never a line of the chat. */
+export const AVISO_TESTE_PATH = '/local/celular/aviso-teste';
+
 /** The consumer's wait for the Líder's answers (one consumer runs at a time: the registro's, or the entregador's). */
 export const CHAT_REPLIES_FILE = 'chat-celular-respostas.json';
 
@@ -221,6 +227,16 @@ export function createEntregadorChat(deps: {
       log(`[chat-audio] transcritor desligado: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
+  // t-b07b50ff — the phone's warnings: the Líder's lines here, the letters the registro wrote, the gate's tests.
+  const avisosTeste = createAvisosTeste();
+  const avisos: Avisos | null = store
+    ? createAvisos({
+        conversa: () => store!.conversa(2000),
+        cartas: createAvisosCartasReader(join(dir, AVISOS_CARTAS_FILE)).entradas,
+        teste: avisosTeste.entradas,
+        log: (line) => log(`[avisos] ${line}`),
+      })
+    : null;
   const v2 = store
     ? createCelularV2Handler({
         verify: deps.verify,
@@ -232,6 +248,8 @@ export function createEntregadorChat(deps: {
         audio: (id) => audioWorker?.enqueue(id),
         glossario: deps.glossario,
         credencial: deps.credencial ?? createCredencialHandler({ dir, log }),
+        ...(avisos ? { avisos } : {}),
+        flagOn: (name) => localFlagOn(name, deps.home),
         log,
       })
     : null;
@@ -260,6 +278,11 @@ export function createEntregadorChat(deps: {
   return {
     handler: (request) => (isChatRoute(request.url) && local() && v2 ? v2(request) : notFound()),
     responder: async (method, path, body) => {
+      if (method === 'POST' && path === AVISO_TESTE_PATH) {
+        if (!avisos) return answer(503, { erro: 'a fila do celular está desligada' });
+        const entry = avisosTeste.add();
+        return answer(200, { ok: true, id: `teste:${entry.seq}`, texto: entry.texto });
+      }
       if (method !== 'POST' || path !== '/local/celular/chat-responder') return null;
       if (!store) return answer(503, { erro: 'a fila do celular está desligada' });
       let input: Record<string, unknown> = {};
@@ -278,6 +301,7 @@ export function createEntregadorChat(deps: {
       if (store) stopSweep = startChatArquivoSweep(store.arquivoDir, log);
     },
     stop() {
+      avisos?.close();
       consumer?.stop();
       audioWorker?.stop();
       stopSweep?.();
