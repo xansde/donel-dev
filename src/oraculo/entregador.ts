@@ -506,6 +506,8 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
     // No room = the handoff is not even asked; and the Líder hears two alive in a place, a lasting give-up, in flight.
     room,
     toLeader,
+    // T1 — before the old one is closed, what reached it after the handoff goes to the successor by these recados.
+    forward: (call) => recados.forwardAfterHandoff(call),
   });
 
   let gate: { readonly port: number; close(): Promise<void> } | null = null;
