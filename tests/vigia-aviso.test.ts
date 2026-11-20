@@ -109,7 +109,7 @@ function report(placeId: string, label: string, at: number, sessions: Array<{ si
 function setup() {
   const dir = mkdtempSync(join(tmpdir(), 'vigia-aviso-'));
   dirs.push(dir);
-  const state = { clock: QUEDA_VPS - 10 * MIN, reached: true, oraculoUp: true };
+  const state = { clock: QUEDA_VPS - 10 * MIN, reached: true, oraculoUp: true, loseNext: null as LedgerOp['op'] | null };
   const ledger = createLedgerService({ filePath: join(dir, 'ledger.json'), io: createSystemConfigIoDeps(), proofFs: nodeLedgerProofFs, now: () => state.clock });
   const notes: string[] = [];
   const ops: LedgerOp[] = [];
@@ -124,6 +124,11 @@ function setup() {
       if (!state.oraculoUp) return { ok: false, reason: 'O Oráculo não respondeu.' };
       ops.push(op);
       const result = await ledger.apply(actor, op);
+      if (state.loseNext === op.op) {
+        // Written, but the answer was lost on the way back (the remote ledger says "pode ter sido gravada").
+        state.loseNext = null;
+        return { ok: false, reason: 'a operação pode ter sido gravada' };
+      }
       return result.ok ? { ok: true, task: { id: result.task.id } } : { ok: false, reason: result.reason };
     },
     tasks: () => Object.values(ledger.load().doc.tasks),
@@ -161,6 +166,10 @@ describe('serviço: a trava que passou é registro; a viva e a repetida pedem de
     const live = ownerInbox((await t.ledger.load()).doc, null, t.state.clock);
     expect(live).toHaveLength(1);
     expect(live[0]!.task.title).toBe('VPS pessoal fora do ar desde 17/11 07:30');
+    const question = live[0]!.task.events.at(-1)!.forOwner!;
+    expect(question.question).toBe('VPS pessoal fora do ar desde 17/11 07:30 (horário de Brasília). Chamo o Líder único para destravar?');
+    expect(question.summary).toContain('Uma sessão está parada nela, com uma tarefa em andamento.');
+    expect(JSON.stringify(live[0]!.task.events[0])).toContain('Travas das máquinas');
 
     for (let when = QUEDA_VPS + 10 * MIN; when < VOLTA_VPS; when += 5 * MIN) await t.at(when);
     t.state.reached = true;
@@ -218,6 +227,46 @@ describe('serviço: a trava que passou é registro; a viva e a repetida pedem de
     expect(investigation[0]!.request).toContain(card.id);
     await t.at(t.state.clock + 5 * MIN);
     expect(Object.values((await t.ledger.load()).doc.tasks).filter((task) => task.ownerPlaceId === 'lider')).toHaveLength(1);
+  });
+});
+
+describe('serviço: o que o dono escolhe e o que se perde no caminho', () => {
+  it('na carta viva, "Chamar o Líder único" abre uma tarefa ao Líder único, uma só', async () => {
+    const t = setup();
+    t.state.reached = false;
+    await t.at(QUEDA_VPS);
+    await t.at(QUEDA_VPS + 5 * MIN);
+    const card = ownerInbox((await t.ledger.load()).doc, null, t.state.clock)[0]!.task;
+    expect((await t.ledger.apply({ kind: 'dono' }, { op: 'aceitar', id: card.id, option: 'Chamar o Líder único' })).ok).toBe(true);
+    await t.at(QUEDA_VPS + 10 * MIN);
+    await t.at(QUEDA_VPS + 15 * MIN);
+    const leader = Object.values((await t.ledger.load()).doc.tasks).filter((task) => task.ownerPlaceId === 'lider');
+    expect(leader.map((task) => task.title)).toEqual(['Destravar: VPS pessoal fora do ar']);
+    expect(leader[0]!.request).toContain('17/11 07:30');
+  });
+
+  it('a resposta do Oráculo se perde na entrega do registro: na rodada seguinte não sai um segundo registro', async () => {
+    const t = setup();
+    t.state.reached = false;
+    await t.at(QUEDA_VPS);
+    await t.at(QUEDA_VPS + 5 * MIN);
+    t.state.reached = true;
+    t.state.loseNext = 'entregar';
+    await t.at(QUEDA_VPS + 10 * MIN);
+    await t.at(QUEDA_VPS + 15 * MIN);
+    await t.at(QUEDA_VPS + 20 * MIN);
+    const records = Object.values((await t.ledger.load()).doc.tasks).filter((task) => task.ownerPlaceId === 'servico:vigia' && task.risk === 'baixo');
+    expect(records).toHaveLength(1);
+    expect(closedAlone(records[0]!)).toBe(true);
+    expect(JSON.parse(readFileSync(t.statePath, 'utf8')).records).toEqual([]);
+  });
+
+  it('dois registros da mesma máquina no mesmo dia não se confundem', async () => {
+    const t = setup();
+    await t.fall(QUEDA_VPS, QUEDA_VPS + 20 * MIN);
+    await t.fall(QUEDA_VPS + 60 * MIN, QUEDA_VPS + 75 * MIN);
+    const titles = Object.values((await t.ledger.load()).doc.tasks).filter((task) => closedAlone(task)).map((task) => task.title);
+    expect(titles).toEqual(['VPS pessoal fora do ar 17/11 07:30–07:50 (20 min)', 'VPS pessoal fora do ar 17/11 08:30–08:45 (15 min)']);
   });
 });
 

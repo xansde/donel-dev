@@ -312,10 +312,10 @@ export function passedRecord(input: {
 }
 
 const WHAT_TO_DO: Readonly<Record<TravaKind, string>> = {
-  'vps-fora': 'Confira se a máquina está ligada e na rede; o vigia lê de novo a cada 5 min.',
-  'vps-login': 'Faça no PC a verificação pedida no acesso (por exemplo, a do Tailscale).',
-  cofre: 'Destranque o cofre à mão; o app não guarda nem envia a senha.',
-  sessoes: 'Abra as sessões no quadro e veja o motivo de cada uma.',
+  'vps-fora': 'O vigia lê de novo a cada 5 min; se a máquina não voltar, alguém precisa conferir se ela está ligada e na rede.',
+  'vps-login': 'O acesso pede a verificação do Tailscale; ela se faz no PC.',
+  cofre: 'O cofre precisa ser destrancado à mão; o app não guarda nem envia a senha.',
+  sessoes: 'Cada sessão tem o motivo dela no quadro.',
 };
 
 /** A lock that is still there: the owner may be the one who unlocks it. */
@@ -326,16 +326,16 @@ export function liveCard(input: { readonly label: string; readonly kind: TravaKi
 } {
   const { label, kind, firstSeen, affected } = input;
   const title = liveTitle(label, kind, firstSeen);
-  const stopped = affected.sessions.length === 0 ? '' : ` ${affected.sessions.length === 1 ? 'Uma sessão está parada' : `${affected.sessions.length} sessões estão paradas`} nela${affected.tasks.length ? `, com ${affected.tasks.length === 1 ? 'uma tarefa' : `${affected.tasks.length} tarefas`} em andamento` : ''}.`;
+  const stopped = affected.sessions.length === 0 ? '' : `${affected.sessions.length === 1 ? 'Uma sessão está parada' : `${affected.sessions.length} sessões estão paradas`} nela${affected.tasks.length ? `, com ${affected.tasks.length === 1 ? 'uma tarefa' : `${affected.tasks.length} tarefas`} em andamento` : ''}.`;
   return {
     title,
     forOwner: {
       title,
-      question: `${label} ${KIND_STATE[kind]} desde ${clockBr(firstSeen)} (horário de Brasília). Já resolveu?`.slice(0, 160),
-      summary: `${WHAT_TO_DO[kind]}${stopped}`.slice(0, 280),
+      question: `${label} ${KIND_STATE[kind]} desde ${clockBr(firstSeen)} (horário de Brasília). Chamo o Líder único para destravar?`.slice(0, 160),
+      summary: `${stopped.trim() || 'O vigia não tinha leitura das sessões dessa máquina.'} ${WHAT_TO_DO[kind]}`.slice(0, 280),
       options: [
-        { label: 'Já resolvi', effect: 'A carta fecha; se a trava voltar, chega outra.', closes: 'aceita', recommended: true },
-        { label: 'Deixar assim', effect: 'A carta fecha sem mudar nada; quando a trava passar, o registro diz quanto durou e por quê.', closes: 'rejeitada' },
+        { label: 'Chamar o Líder único', effect: 'O vigia abre agora uma tarefa ao Líder único para destravar a máquina e retomar o que parou.', closes: 'aceita', recommended: true },
+        { label: 'Esperar passar', effect: 'Ninguém age agora; quando a trava passar, a carta some e fica o registro com a duração e a causa.', closes: 'rejeitada' },
       ],
       why: 'Uma trava assim congela o trabalho das sessões até alguém agir.',
       risk: 'Enquanto a trava dura, as sessões dessa máquina ficam paradas ou esperando.',
@@ -375,6 +375,15 @@ export function repeatCard(input: {
       '',
       'Cada vez tem o seu registro no Oráculo, com o que parou, a leitura da causa e o que o time fez.',
     ].join('\n'),
+  };
+}
+
+/** The task the owner asked for on a live card: the Líder único unlocks the place now. */
+export function unlockTask(label: string, kind: TravaKind, cardId: string, since: number): { readonly title: string; readonly request: string; readonly doneWhen: string } {
+  return {
+    title: fit([`Destravar: ${label} ${KIND_STATE[kind]}`, `Destravar ${label}`]),
+    request: `O dono pediu na carta ${cardId} do vigia de travas: ${label} ${KIND_STATE[kind]} desde ${clockBr(since)} (horário de Brasília). Chamar o Líder único para destravar.`,
+    doneWhen: 'A máquina voltou a responder e o trabalho parado foi retomado, com prova; ou o que só o dono resolve foi passado a ele.',
   };
 }
 

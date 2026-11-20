@@ -170,6 +170,8 @@ export interface VigiaEntry {
   readonly endedAt: number | null;
   /** The PC handed this lock over to the Oráculo's daemon (t-ffbf8e7d): its passage is the daemon's to record. */
   readonly handedOver?: true;
+  /** The owner asked, on the live card, for the Líder único to unlock it, and the task went (once per lock). */
+  readonly acted?: true;
   readonly trava: Trava;
 }
 
@@ -216,6 +218,9 @@ export interface RepeatCard {
   readonly cartaId: string;
   readonly at: number;
   readonly done: boolean;
+  /** The place's name and the lock's kind, kept for the investigation (the 24 h history may be gone by then). */
+  readonly label: string;
+  readonly kind: TravaKind;
 }
 
 export interface VigiaState {
@@ -262,6 +267,7 @@ export function planRound(
       cartaId: before?.cartaId ?? null,
       notified: before?.notified ?? false,
       endedAt: null,
+      ...(before?.acted ? { acted: true as const } : {}),
       trava,
     };
     open[trava.key] = entry;
@@ -306,6 +312,7 @@ export function parseVigiaState(raw: unknown): VigiaState {
         notified: entry.notified === true,
         endedAt: typeof entry.endedAt === 'number' ? entry.endedAt : null,
         ...(entry.handedOver === true ? { handedOver: true as const } : {}),
+        ...(entry.acted === true ? { acted: true as const } : {}),
         trava,
       };
     }
@@ -335,8 +342,10 @@ export function parseVigiaState(raw: unknown): VigiaState {
   const repeats: Record<string, RepeatCard> = {};
   if (root.repeats && typeof root.repeats === 'object') {
     for (const [key, value] of Object.entries(root.repeats as Record<string, unknown>)) {
-      const card = value as { cartaId?: unknown; at?: unknown; done?: unknown };
-      if (isStr(card?.cartaId) && isNum(card.at)) repeats[key] = { cartaId: card.cartaId, at: card.at, done: card.done === true };
+      const card = value as { cartaId?: unknown; at?: unknown; done?: unknown; label?: unknown; kind?: unknown };
+      if (!isStr(card?.cartaId) || !isNum(card.at)) continue;
+      const kind = (TRAVA_KINDS as readonly unknown[]).includes(card.kind) ? (card.kind as TravaKind) : 'vps-fora';
+      repeats[key] = { cartaId: card.cartaId, at: card.at, done: card.done === true, label: isStr(card.label) ? card.label : key, kind };
     }
   }
   return { open, records, history, sessions, repeats };
