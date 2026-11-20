@@ -21,6 +21,11 @@ export interface CardCaller {
   readonly isLeader: boolean;
   /** The places of the caller's board (the picture): the only ones the Líder may give a card to. */
   readonly boardPlaces: ReadonlySet<string>;
+  /**
+   * t-8406f473 — the project already resolved (the Líder único's, from the board he named); absent = from the folder.
+   * His `isLeader` is the lane's (`leader_place = 'lider'`), so the lane is taken again only where it already is his.
+   */
+  readonly projectId?: string;
 }
 
 /** A retry after a timeout must not make a second card (same or previous bucket: 10 to 20 min); later, a new card. */
@@ -123,7 +128,7 @@ async function moveChecked(
 
 export async function runCardTool(store: BoardStore, caller: CardCaller, call: CardToolCall, now: number): Promise<CardOutcome> {
   try {
-    const projectId = await store.projectOf(caller.projectPath);
+    const projectId = caller.projectId ?? (await store.projectOf(caller.projectPath));
     // A folder of no project: it may drop a card in sem-projeto, never read or move what is there (other repos' cards).
     if (projectId === 'sem-projeto' && call.tool !== 'card_create') return fail(NO_PROJECT);
     // The Líder the picture shows takes the lane at once (its conversation is what the vigia resumes).

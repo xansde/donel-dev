@@ -59,15 +59,18 @@ import { handleMcpPayload, parseMcpBody, type BrowserToolOutcome } from '../shar
 import type { BoardToolCall } from '../shared/mindscape/agent-tools';
 import type { MindscapeBoard } from '../shared/mindscape/model';
 import type { LedgerToolCall } from '../shared/ledger/tools';
+import type { LedgerTask } from '../shared/ledger/contract';
 import { askedByRefusal, isLedgerToolName, LEDGER_TOOLS } from '../shared/ledger/tools';
 import { leaderCallerOffBoard, runLedgerTool, urgentLedgerNotice, type LedgerCaller, type LedgerService, type LedgerToolAnswer } from '../main/ledger-store';
 import type { OwnerMessage } from '../main/ledger-card-writer';
 import { LEADER_OF_ALL } from '../shared/mindscape/leader';
-import { CARD_TOOLS, isCardToolName, type CardToolCall } from '../shared/board/tools';
+import { CARD_TOOLS, isCardToolName, LEADER_OF_ALL_CARD_TOOLS, type CardToolCall } from '../shared/board/tools';
 import { canReach, demandOwnerRefusal, hearingPlaceIds, isBoardOrchestrator, LEADER_OF_ALL_FROM, whoHears } from '../shared/mindscape/reach';
 import { LEADER_ROLE_ID } from '../shared/roles';
 import type { BoardStore } from './board-client';
-import { runCardTool } from './board-tools';
+import { runCardTool, type CardCaller } from './board-tools';
+import { openTaskCard } from './cartao-da-tarefa';
+import { currentConversation } from './lider-local';
 import type { GateRecados } from './gate-recados';
 import type { GateAbrir } from './gate-abrir';
 import { openedPlaceOf } from './primeiras';
@@ -210,6 +213,11 @@ export interface GateDeps {
    * and the call's arguments as the session sent them (the satellite passes them on to the ledger's machine).
    */
   readonly runLedger?: (caller: LedgerCaller, call: LedgerToolCall, context: GateLedgerContext) => Promise<LedgerToolAnswer>;
+  /**
+   * t-8406f473 — the task a `runLedger` call just left, when the ledger lives in another process (the entregador apart:
+   * the registro's route answers with it, createSatelliteTaskMemory). Absent = read from `ledger()`.
+   */
+  readonly taskOf?: (id: string) => LedgerTask | undefined;
   /** t-d461e003 — where an owner place's session may live off the board's list (`withLiveOwner`); absent = the list alone. */
   readonly liveOwner?: LiveOwnerSource;
   readonly timeouts?: { readonly localAnswerMs?: number };
@@ -314,16 +322,27 @@ function mapToolList(answer: GateResponse, map: (tools: unknown[]) => unknown[])
  * with the fields an older app does not know. Otherwise they stay the PC's: the schema never promises the key or the
  * reason to a call that goes to an app that drops them (revisão do #483).
  */
-export function withGateTools(requestBody: string, answer: GateResponse, withCards: boolean, tasksHere = true): GateResponse {
+export function withGateTools(requestBody: string, answer: GateResponse, withCards: boolean, tasksHere = true, leaderOfAll = false): GateResponse {
   if (answer.status !== 200 || singleMessage(requestBody)?.method !== 'tools/list') return answer;
-  return mapToolList(answer, (tools) => servedTools(tools, withCards, tasksHere)) ?? answer;
+  return mapToolList(answer, (tools) => servedTools(tools, withCards, tasksHere, leaderOfAll)) ?? answer;
 }
 
-function servedTools(tools: readonly unknown[], withCards: boolean, tasksHere: boolean): unknown[] {
+function servedTools(tools: readonly unknown[], withCards: boolean, tasksHere: boolean, leaderOfAll: boolean): unknown[] {
   const ledgerTools = new Map<string, unknown>(LEDGER_TOOLS.map((tool) => [tool.name, tool]));
   const served: unknown[] = tasksHere ? tools.map((tool: unknown) => (isRecord(tool) && typeof tool.name === 'string' && ledgerTools.has(tool.name) ? ledgerTools.get(tool.name) : tool)) : [...tools];
   const names = new Set(served.map((tool) => (isRecord(tool) ? tool.name : null)));
-  return withCards ? [...served, ...CARD_TOOLS.filter((tool) => !names.has(tool.name))] : served;
+  return withCards ? [...served, ...cardToolsFor(leaderOfAll).filter((tool) => !names.has(tool.name))] : served;
+}
+
+/** t-8406f473 — the `card_*` definitions a session is served: the Líder único's carry `quadro`, nobody else's do. */
+function cardToolsFor(leaderOfAll: boolean): readonly { readonly name: string }[] {
+  return leaderOfAll ? LEADER_OF_ALL_CARD_TOOLS : CARD_TOOLS;
+}
+
+/** A tool list answered here, with the Líder único's `card_*` (with `quadro`) in place of everyone else's. */
+function withLeaderCardTools(tools: unknown[]): unknown[] {
+  const leaderTools = new Map<string, unknown>(LEADER_OF_ALL_CARD_TOOLS.map((tool) => [tool.name, tool]));
+  return tools.map((tool) => (isRecord(tool) && typeof tool.name === 'string' && leaderTools.has(tool.name) ? leaderTools.get(tool.name) : tool));
 }
 
 /**
@@ -650,6 +669,27 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
       }
     };
 
+    /**
+     * t-8406f473 — an assumir answered ok opens the task's card in Fazendo, tied to this session (cartao-da-tarefa.ts).
+     * It never holds the answer nor changes it (scripts parse it): it runs after, and a failure is a log line.
+     */
+    const afterAssume = (store: BoardStore, caller: LedgerCaller, taskId: string): void => {
+      const failed = (error: unknown): void => log(`[oraculo] portão: cartão da tarefa ${taskId} não abriu: ${error instanceof Error ? error.message : String(error)}`);
+      try {
+        // The entregador apart has no ledger here: the task the registro's answer carried (taskOf), else this one's.
+        const task = deps.taskOf?.(taskId) ?? deps.ledger().load().doc.tasks[taskId];
+        if (!task) return;
+        const place = mine?.board?.cards[caller.placeId];
+        const sessionId = place?.kind === 'session' && place.sessionId ? place.sessionId : undefined;
+        void openTaskCard(store, task, { placeId: caller.placeId, projectPath: caller.projectPath, ...(sessionId ? { sessionId } : {}) }).then(
+          (outcome) => log(`[oraculo] portão: cartão da tarefa ${taskId}: ${outcome.kind}${'card' in outcome ? ` ${outcome.card.id}` : ''}`),
+          failed,
+        );
+      } catch (error) {
+        failed(error);
+      }
+    };
+
     /** The renewal step before a task step (a failure is a log line). */
     const beforeTask = async (mine: PictureSession, caller: LedgerCaller, call: LedgerToolCall): Promise<void> => {
       if (!deps.recados) return;
@@ -675,6 +715,7 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
       const raw = toolCallOf(singleMessage(body));
       const result = await runLedger(caller, call, { mine, args: raw?.name === call.tool ? raw.args : {} });
       if (!result.ok) return { kind: 'error', text: result.text };
+      if (call.tool === 'tarefa_assumir' && cards) afterAssume(cards, caller, call.id);
       // As the PC does (executeLedgerTool): the owner's phone shows "virou tarefa" with its name.
       if (call.tool === 'tarefa_criar' && call.pedidoDoDono && deps.linkPedido) {
         try {
@@ -715,22 +756,47 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
       const notYet = 'Sem retrato do quadro desta sessão ainda: o app manda um a cada meio minuto. Tente de novo em um minuto.';
       if (!mine || !cards) return { kind: 'error', text: notYet };
       const who = mine.quemSou;
-      if (who.liderUnico === true) return { kind: 'error', text: 'O Líder único não tem raia no quadro de tarefas: quem move os cartões é o Líder de cada quadro.' };
-      if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string') return { kind: 'error', text: notYet };
-      const place = mine.board?.cards[who.lugar];
-      const outcome = await runCardTool(
-        cards,
-        {
+      let caller: CardCaller;
+      if (who.liderUnico === true) {
+        const chosen = await leaderCardCaller(cards, call.quadro);
+        if (typeof chosen === 'string') return { kind: 'error', text: chosen };
+        caller = chosen;
+      } else {
+        if (call.quadro) return { kind: 'error', text: 'Só o Líder único escolhe o quadro. Esta sessão usa sempre o próprio quadro (chame sem "quadro").' };
+        if (typeof who.lugar !== 'string' || typeof who.pasta !== 'string') return { kind: 'error', text: notYet };
+        const place = mine.board?.cards[who.lugar];
+        caller = {
           placeId: who.lugar,
           projectPath: who.pasta,
           ...(place?.kind === 'session' && place.sessionId ? { sessionId: place.sessionId } : {}),
           isLeader: mine.board ? isBoardOrchestrator(mine.board, who.lugar) : who.orquestrador === true,
           boardPlaces: new Set(mine.board ? Object.keys(mine.board.cards) : []),
-        },
-        call,
-        (deps.now ?? Date.now)(),
-      );
+        };
+      }
+      const outcome = await runCardTool(cards, caller, call, (deps.now ?? Date.now)());
       return outcome.ok ? { kind: 'text', text: outcome.text } : { kind: 'error', text: outcome.text };
+    };
+
+    /**
+     * t-8406f473 (r-f4c27f39, decisão 1b) — the Líder único on the board he names: as `lider`, his own conversation, the
+     * places the picture has there, and the Líder of the lane only where the lane's Líder is `lider` (donel-dev and
+     * teamzone); elsewhere (bizops, its own Líder) he is one more place. A string = why not.
+     */
+    const leaderCardCaller = async (store: BoardStore, quadro: string | undefined): Promise<CardCaller | string> => {
+      const names = [...picturedBoards(picture).keys()].map(lastSegment).join(', ') || 'nenhum';
+      if (!quadro) return `Você é o Líder único e não tem quadro: diga qual em "quadro" (conheço: ${names}).`;
+      const found = pictureBoard(picture, quadro);
+      if (!found) return `Conheço só os quadros do retrato (${names}); "${quadro}" não está entre eles.`;
+      const [pasta, { listar }] = found;
+      try {
+        const projectId = await store.projectOf(pasta);
+        const lane = projectId === 'sem-projeto' ? null : ((await store.laneOf?.(projectId)) ?? null);
+        const places = listar.map((place) => (isRecord(place) ? place.id : null)).filter((id): id is string => typeof id === 'string');
+        // Resumed with `-r`, his live conversation is the folder's `current`, not the folder's sid.
+        return { placeId: LEADER_OF_ALL, projectPath: pasta, projectId, sessionId: currentConversation(deps.sessionsDir, sid) ?? sid, isLeader: lane?.leader_place === LEADER_OF_ALL, boardPlaces: new Set(places) };
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
     };
 
     const answer = await handleMcpPayload(parsed.payload, {
@@ -744,8 +810,19 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
       serverVersion: deps.serverVersion,
     });
     const response: GateResponse = answer === null ? { status: 202, headers: {}, body: '' } : { status: 200, headers: JSON_HEADERS, body: JSON.stringify(answer) };
-    // The list a session keeps for good: no key nor reason promised while its tasks would go to the PC.
-    if (!tasksAnsweredHere(mine) && singleMessage(body)?.method === 'tools/list') return { response: mapToolList(response, (tools) => tools.map(withoutGateFields)) ?? response, passOn };
+    // The list a session keeps for good: no key nor reason promised while its tasks would go to the PC; the Líder
+    // único's `card_*` with his `quadro`.
+    if (singleMessage(body)?.method === 'tools/list') {
+      const leaderOfAll = cards !== null && mine?.quemSou.liderUnico === true;
+      const tasksHere = tasksAnsweredHere(mine);
+      if (!tasksHere || leaderOfAll) {
+        const mapped = mapToolList(response, (tools) => {
+          const own = tasksHere ? tools : tools.map(withoutGateFields);
+          return leaderOfAll ? withLeaderCardTools(own) : own;
+        });
+        return { response: mapped ?? response, passOn };
+      }
+    }
     return { response, passOn };
   }
 
@@ -838,7 +915,7 @@ export function createGateHandler(deps: GateDeps): (request: GateRequest) => Pro
           }
         }
       }
-      return withGateTools(request.body, forwarded, cards !== null, tasksAnsweredHere(mine));
+      return withGateTools(request.body, forwarded, cards !== null, tasksAnsweredHere(mine), mine?.quemSou.liderUnico === true);
     }
     if (request.method !== 'POST') return { status: 405, headers: { Allow: 'POST' }, body: '' };
     // Nothing reached the PC: a `sessao_enviar` the recados passed on is theirs again, now with the PC off. A session the

@@ -372,6 +372,7 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
   let apart: {
     readonly notices: ReturnType<typeof createSatelliteNotice>;
     readonly runLedger: NonNullable<GateDeps['runLedger']>;
+    readonly taskOf: NonNullable<GateDeps['taskOf']>;
     readonly url: string;
     readonly pair: (body: string) => Promise<SatellitePost>;
   } | null = null;
@@ -406,6 +407,7 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
     apart = {
       notices,
       runLedger: createSatelliteLedger({ ...remote, onTask: tasks.remember }),
+      taskOf: tasks.taskOf,
       url,
       // The phone app's pairing writes celular.json: the registro's, through the gate credential marked local.
       pair: (body) => postJson(`${url.replace(/\/+$/, '')}${GATE_PHONE_PAIR_PATH}`, readGateToken(dir) ?? '', body, LOCAL_DELIVER_TIMEOUT_MS),
@@ -571,7 +573,7 @@ export function createEntregador(place: EntregadorPlace, junto: EntregadorJunto 
                 throw new Error('o entregador não tem registro');
               },
           // Apart, the registro's gate route says it (t-d461e003): the caller never leaves this process.
-          ...(apart ? { runLedger: apart.runLedger } : { liveOwner: { tmux: place.liveNow ?? tmuxLiveKnown, machineOf: (projectPath: string, placeId: string) => remoteView.machineOf(projectPath, placeId) } }),
+          ...(apart ? { runLedger: apart.runLedger, taskOf: apart.taskOf } : { liveOwner: { tmux: place.liveNow ?? tmuxLiveKnown, machineOf: (projectPath: string, placeId: string) => remoteView.machineOf(projectPath, placeId) } }),
           picture,
           pcAway: localPicture.away,
           pictureWithoutPc,

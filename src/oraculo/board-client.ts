@@ -119,6 +119,16 @@ export interface BoardStore {
   moveCard(args: MoveCardArgs): Promise<CardRow>;
   /** `force`: the Líder the picture shows takes the lane at once (only the daemon passes it). */
   touchLane(projectId: string, leaderPlace: string, leaderSession: string | undefined, force?: boolean): Promise<void>;
+  /** t-8406f473 — the lane of a project, or null: whether its Líder is the Líder único (`lider`). */
+  laneOf?(projectId: string): Promise<LaneRow | null>;
+  /** t-8406f473 — the newest card not done that carries this Oráculo task (`oraculo_id`), or null. */
+  cardByOraculoId?(taskId: string): Promise<CardRow | null>;
+  /**
+   * The session that does a card left without one: only while the card has none and its place is still `placeId`; no
+   * version, no move. False = nothing changed. Absent = this board cannot (the Supabase one). `replacing`: swaps that
+   * session instead (a renewed place), only while the card still has it.
+   */
+  fillSession?(cardId: string, placeId: string, sessionId: string, replacing?: string): Promise<boolean>;
 }
 
 export interface BoardConfig {
@@ -224,6 +234,14 @@ export function createBoardClient(config: BoardConfig, doFetch: Fetch = fetch): 
     },
     async cardByClientRef(ref) {
       const rows = await call<CardRow[]>('GET', `cards?client_ref=eq.${q(ref)}&limit=1`);
+      return rows[0] ?? null;
+    },
+    async laneOf(projectId) {
+      const rows = await call<LaneRow[]>('GET', `lanes?select=project_id,leader_place,leader_session,leader_seen_at&project_id=eq.${q(projectId)}&limit=1`);
+      return rows[0] ?? null;
+    },
+    async cardByOraculoId(taskId) {
+      const rows = await call<CardRow[]>('GET', `cards?oraculo_id=eq.${q(taskId)}&stage=neq.done&order=created_at.desc&limit=1`);
       return rows[0] ?? null;
     },
     createCard: (args) => rpc<CardRow>('create_card', args),
