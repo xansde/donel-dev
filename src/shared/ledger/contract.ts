@@ -547,6 +547,13 @@ export function isServicePlace(placeId: string): boolean {
   return placeId.startsWith(SERVICE_PLACE_PREFIX);
 }
 
+/**
+ * t-e1e992ab — the VPS's limiter (src/oraculo/servicos.ts) records a real refusal as a progress line of the task of the
+ * session that waits: the one service that writes on a task it does not own, and only "esperando" (a "travada" would
+ * reach the Líder at once, which is what the line replaces).
+ */
+export const LIMITER_SERVICE = 'limitador';
+
 // ---------------------------------------------------------------------------------------------------------------
 // Operations — the ONE place the rules live. Pure: the caller gives the clock and the new id.
 
@@ -1002,7 +1009,9 @@ export function applyLedgerOp(doc: LedgerDoc, actor: LedgerActor, op: LedgerOp, 
     }
 
     case 'andamento': {
-      if (!isOwnerPlace) return fail(`Só o lugar dono (${task.ownerPlaceId}) registra o andamento desta tarefa.`);
+      const limiter = !isOwnerPlace && actor.kind === 'lugar' && actor.placeId === `${SERVICE_PLACE_PREFIX}${LIMITER_SERVICE}`;
+      if (!isOwnerPlace && !limiter) return fail(`Só o lugar dono (${task.ownerPlaceId}) registra o andamento desta tarefa.`);
+      if (limiter && op.progress.estado !== 'esperando') return fail('O limitador só registra "esperando": a recusa dele é espera, nunca trava.');
       if (isClosed(task) || task.slack) return fail('A tarefa já fechou: o andamento vai numa tarefa viva.');
       const why = progressRefusal(op.progress);
       if (why) return fail(why);
