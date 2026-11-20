@@ -7,6 +7,11 @@
 // faixa-preta-dia routine) and `<dir>/painel/<semana>-*.json` (the TeamZone panel = machine `todas`). State, written
 // here: `<estado>/fechadas.json` (the belt of a closed week, frozen the first time its final reading is seen, never
 // rewritten) and `<estado>/feitos.json` (each level reached, append only). A bad file is skipped; a failed write never fails the read.
+//
+// Known gap (20/11): no routine writes `painel/` yet; the faixa-preta-dia routine only reads it. A closed week freezes
+// only once a panel reading taken after its end lands there (today by hand, through the Donel browser), so until a
+// weekly routine (Friday after 17:00) writes it, every later week stays null and the proficiency stops at the last
+// frozen week. A partial reading of a closed week is answered with `parcial: true` and never counts.
 
 import { mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
