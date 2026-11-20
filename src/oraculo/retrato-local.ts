@@ -208,16 +208,21 @@ export function withLocalSessions(stored: BoardPicture | null, folders: readonly
   const known = stored?.sessoes ?? {};
   const missing = folders.filter((folder) => SID_PATTERN.test(folder.sid) && !known[folder.sid]);
   const newPlaces: NewPlace[] = [];
+  const everyFolder = [...missing, ...(extras.liveFolders ?? []).filter((folder) => !missing.some((one) => one.sid === folder.sid))];
+  const { places: inherited, renewed } = inheritedPlaces(stored, everyFolder, extras);
+  /** Place → the session that owns it here now (a successor that inherited it). */
+  const ownerOf = new Map([...inherited].map(([sid, place]) => [place, sid] as const));
   // Opened here with the PC off (abrir-local): already in the stored picture, not yet on the others' boards.
   for (const [sid, session] of Object.entries(known)) {
     const who = session.quemSou;
     if (session.local !== true || typeof who.lugar !== 'string' || typeof who.pasta !== 'string') continue;
+    // Its place passed to a successor (ensaio 2 de 20/11): the successor lists it, once; never the old one beside it.
+    const owner = ownerOf.get(who.lugar);
+    if (owner !== undefined && owner !== sid) continue;
     const self = session.listar.find((place) => isRecord(place) && place.id === who.lugar);
     const abertaPor = isRecord(self) && typeof self.abertaPor === 'string' ? self.abertaPor : undefined;
     newPlaces.push({ sid, pasta: who.pasta, lugar: who.lugar, ...(typeof who.papel === 'string' ? { papel: who.papel } : {}), ...(typeof who.nome === 'string' ? { nome: who.nome } : {}), ...(abertaPor ? { abertaPor } : {}) });
   }
-  const everyFolder = [...missing, ...(extras.liveFolders ?? []).filter((folder) => !missing.some((one) => one.sid === folder.sid))];
-  const { places: inherited, renewed } = inheritedPlaces(stored, everyFolder, extras);
   for (const folder of missing) {
     if (folder.leaderOfAll || !folder.localCwd) continue;
     newPlaces.push({
