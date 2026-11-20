@@ -22,9 +22,14 @@
 // The PC's picture knows the place by the old sid, and the new folder is one it never pictured (the PC left right
 // after): it became `session:<sid>`, and with it "Só o lugar dono" on its tasks. Before `session:<sid>`, the place is
 // the one written in the folder's meta (`placeId`: the app's `place:`, or the `session:` an opening here named, t-49dee38d), and only when that place is on the pictured board
-// of the folder, is not closed and no other live session holds it (but the one it renewed, `renovaDe`: both answer for
-// the place during the switch). Never by tab name, role or opener (corte do Líder
+// of the folder, is not closed and no other live session holds it. Never by tab name, role or opener (corte do Líder
 // único, 19/11: "matar a sessão errada é pior do que perder o lugar"); a renewal without `placeId` stays `session:<sid>`.
+//
+// t-49dee38d (20/11; condição do Líder único r-ded62192: "um dono só") — the place passes to the successor the renewal
+// opened (`renovaDe` = the holder, the same role) once the holder's renewal mark says its handoff was ready
+// (`markHandedOver`), and while the successor lives; again down a chain (A → B → C, all here with the PC away). The one
+// it passed from loses the place (`session:<sid>`) and is marked `renovadaPara`: the gate refuses its ledger writes, and
+// recados to the place go to the successor. The successor gone (a give-up closed it), the holder has the place again.
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -33,8 +38,9 @@ import { LEADER_OF_ALL } from '../shared/mindscape/leader';
 import type { MindscapeBoard, MindscapeLink } from '../shared/mindscape/model';
 import { LEADER_ROLE_ID } from '../shared/roles';
 import { PICTURE_FRESH_MS } from './lider-local';
-import { picturedBoards, type BoardPicture, type PictureSession } from './portao';
+import { picturedBoards, renewedText, type BoardPicture, type PictureSession } from './portao';
 import { parseTmuxLs, type TmuxRun } from './recados';
+import { markHandedOver, RENEW_MARK } from './renovar-local';
 
 const SID_PATTERN = /^[A-Za-z0-9-]{1,64}$/;
 /** No push nor probe answer for this long: the PC is away. */
@@ -58,6 +64,8 @@ export interface LocalFolder {
   readonly placeId?: string;
   /** t-49dee38d — the sid this folder renewed (`renovaDe` of the meta, written by abrir-local `openSuccessor`). */
   readonly renovaDe?: string;
+  /** t-49dee38d — its renewal mark says it handed its place over (`markHandedOver`). */
+  readonly handedOver?: boolean;
 }
 
 /**
@@ -73,6 +81,8 @@ export interface LocalPictureExtras {
   readonly roleName?: (roleId: string) => string | undefined;
   /** The sids alive here (tmux and a readable meta): a stored session not among them no longer holds its place. Absent = all. */
   readonly alive?: (sid: string) => boolean;
+  /** t-49dee38d — the live sids whose renewal mark says they handed their place over (`LocalFolder.handedOver`). Absent = none. */
+  readonly handedOver?: (sid: string) => boolean;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -92,12 +102,22 @@ export function readLocalFolders(sessionsDir: string, live: ReadonlySet<string>)
       const text = (key: string): Record<string, string> => (typeof raw[key] === 'string' && raw[key] ? { [key]: raw[key] as string } : {});
       const placeId = typeof raw.placeId === 'string' && PLACE_ID.test(raw.placeId) ? { placeId: raw.placeId } : {};
       const renovaDe = typeof raw.renovaDe === 'string' && SID_PATTERN.test(raw.renovaDe) && raw.renovaDe !== sid ? { renovaDe: raw.renovaDe } : {};
-      out.push({ sid, ...(raw.leaderOfAll === true ? { leaderOfAll: true } : {}), ...text('localCwd'), ...text('projectName'), ...text('name'), ...text('roleId'), ...text('openedBy'), ...text('createdAt'), ...placeId, ...renovaDe });
+      const handedOver = readHandedOver(sessionsDir, sid) ? { handedOver: true } : {};
+      out.push({ sid, ...(raw.leaderOfAll === true ? { leaderOfAll: true } : {}), ...text('localCwd'), ...text('projectName'), ...text('name'), ...text('roleId'), ...text('openedBy'), ...text('createdAt'), ...placeId, ...renovaDe, ...handedOver });
     } catch {
       // no meta (closed, or not made yet): not a session here
     }
   }
   return out;
+}
+
+/** The renewal mark of `sid` (only its step fields are looked at) says it handed its place over. */
+function readHandedOver(sessionsDir: string, sid: string): boolean {
+  try {
+    return markHandedOver(JSON.parse(readFileSync(join(sessionsDir, sid, RENEW_MARK), 'utf8')) as unknown);
+  } catch {
+    return false;
+  }
 }
 
 /** When the PC last answered: its push, or a probe it answered through a session's tunnel (never a picture made here). */
@@ -188,13 +208,13 @@ export function withLocalSessions(stored: BoardPicture | null, folders: readonly
     const abertaPor = isRecord(self) && typeof self.abertaPor === 'string' ? self.abertaPor : undefined;
     newPlaces.push({ sid, pasta: who.pasta, lugar: who.lugar, ...(typeof who.papel === 'string' ? { papel: who.papel } : {}), ...(typeof who.nome === 'string' ? { nome: who.nome } : {}), ...(abertaPor ? { abertaPor } : {}) });
   }
-  const inherited = inheritedPlaces(stored, missing, extras.alive);
+  const { places: inherited, renewed } = inheritedPlaces(stored, missing, extras);
   for (const folder of missing) {
     if (folder.leaderOfAll || !folder.localCwd) continue;
     newPlaces.push({
       sid: folder.sid,
       pasta: folder.localCwd,
-      lugar: inherited.get(folder.sid) ?? `session:${folder.sid}`,
+      lugar: inherited.get(folder.sid) ?? renewedLugar(folder.sid, renewed),
       ...(folder.roleId ? { papel: folder.roleId } : {}),
       ...(folder.name ? { nome: folder.name } : {}),
       ...(folder.openedBy ? { abertaPor: folder.openedBy } : {}),
@@ -207,6 +227,19 @@ export function withLocalSessions(stored: BoardPicture | null, folders: readonly
   const sessoes: Record<string, PictureSession> = {};
   for (const [sid, session] of Object.entries(known)) {
     const extra = placesOf(session.quemSou.pasta).filter((place) => place.sid !== sid);
+    const handedTo = renewed.get(sid);
+    if (handedTo && session.quemSou.liderUnico !== true) {
+      // It handed its place over: no place of its own now, only the word of who answers for it.
+      const lugar = renewedLugar(sid, renewed);
+      sessoes[sid] = {
+        ...session,
+        quemSou: { ...session.quemSou, lugar, renovada: renewedText(handedTo.sid) },
+        listar: listarWith(session.listar, extra, lugar ?? undefined),
+        ...(session.board ? { board: boardWith(session.board, extra) } : {}),
+        renovadaPara: handedTo.sid,
+      };
+      continue;
+    }
     if (!extra.length || session.quemSou.liderUnico === true) {
       sessoes[sid] = session;
       continue;
@@ -241,6 +274,7 @@ export function withLocalSessions(stored: BoardPicture | null, folders: readonly
     if (!mine) continue;
     const base = boards.get(mine.pasta);
     const onBoard = placesOf(mine.pasta);
+    const handedTo = renewed.get(folder.sid);
     sessoes[folder.sid] = {
       quemSou: {
         nome: folder.name ?? roleName(folder.roleId) ?? 'sessão',
@@ -251,14 +285,25 @@ export function withLocalSessions(stored: BoardPicture | null, folders: readonly
         orquestrador: false,
         ...roda,
         retrato: 'feito nesta VPS (o PC está fora): o lugar aparece no quadro quando o PC ligar',
+        ...(handedTo ? { renovada: renewedText(handedTo.sid) } : {}),
       },
       listar: listarWith(base?.listar ?? [], onBoard, mine.lugar),
       ...(base?.board ? { board: boardWith(base.board, onBoard) } : {}),
       at: now,
       local: true,
+      ...(handedTo ? { renovadaPara: handedTo.sid } : {}),
     };
   }
   return { at: stored?.at ?? 0, sessoes };
+}
+
+/**
+ * The place of a session that handed its own over: `session:<sid>`, the name of a live conversation with no place; none
+ * when that is the very place it handed over (a place an opening here named after it), so two never hold it.
+ */
+function renewedLugar(sid: string, renewed: ReadonlyMap<string, { readonly place: string }>): string {
+  const own = `session:${sid}`;
+  return renewed.get(sid)?.place === own ? `renovada:${sid}` : own;
 }
 
 /**
@@ -267,22 +312,30 @@ export function withLocalSessions(stored: BoardPicture | null, folders: readonly
  * (a card or a listed place), is not closed and no other live session of the picture holds it. Two folders claiming the
  * same place get neither. In any doubt the folder stays `session:<sid>`: losing the place is fine, a wrong one never is.
  *
- * t-49dee38d (20/11, 1ª renovação real sem PC) — the successor `openSuccessor` opened lives for ~2 min beside the old
- * one, which the renewal closes only after the successor's first turn; that first turn reports on the place's task, and
- * the old one, alive, held the place ("Só o lugar dono registra"). So a place held by exactly one live session is still
- * given to the folder whose `renovaDe` is that session's sid: both answer for the place during the switch, and the old
- * one keeps its own in the stored picture. Held by more than one, or `renovaDe` naming another sid: no inheritance.
+ * t-49dee38d (20/11; condição do Líder único r-ded62192: "um dono só") — the successor `openSuccessor` opened lives
+ * beside the old one until its first turn, and that first turn reports on the place's task. One owner per place: the
+ * single live holder (a session of the picture, else the single folder claiming it that renewed no other claimant),
+ * then down the chain while the owner's renewal mark says it handed over (`handedOver`) and exactly one live folder
+ * claiming the place renewed it (`renovaDe`) with the SAME role. The chain's last one owns the place; each before it is
+ * `renewed` (sid → the owner and the place): it keeps no place, and its ledger writes are refused. Held by more than one
+ * session of the picture, or claimed by two folders that renewed nobody here: nobody inherits.
  */
-function inheritedPlaces(stored: BoardPicture | null, folders: readonly LocalFolder[], alive: ((sid: string) => boolean) | undefined): Map<string, string> {
+function inheritedPlaces(
+  stored: BoardPicture | null,
+  folders: readonly LocalFolder[],
+  extras: LocalPictureExtras,
+): { places: Map<string, string>; renewed: Map<string, { readonly sid: string; readonly place: string }> } {
   const boards = picturedBoards(stored);
-  /** Board folder + place → the live sessions of the picture holding it. */
-  const held = new Map<string, string[]>();
+  const handedOver = (sid: string): boolean => folders.some((folder) => folder.sid === sid && folder.handedOver === true) || extras.handedOver?.(sid) === true;
+  /** Board folder + place → the live sessions of the picture holding it, with their role. */
+  const held = new Map<string, { readonly sid: string; readonly role?: string }[]>();
   for (const [sid, session] of Object.entries(stored?.sessoes ?? {})) {
-    if (typeof session.quemSou.lugar !== 'string' || !(alive?.(sid) ?? true)) continue;
+    if (typeof session.quemSou.lugar !== 'string' || !(extras.alive?.(sid) ?? true)) continue;
     const key = `${String(session.quemSou.pasta)}\n${session.quemSou.lugar}`;
-    held.set(key, [...(held.get(key) ?? []), sid]);
+    const role = typeof session.quemSou.papel === 'string' ? { role: session.quemSou.papel } : {};
+    held.set(key, [...(held.get(key) ?? []), { sid, ...role }]);
   }
-  const claims = new Map<string, string[]>();
+  const claims = new Map<string, LocalFolder[]>();
   for (const folder of folders) {
     if (folder.leaderOfAll || !folder.localCwd || !folder.placeId) continue;
     const pictured = boards.get(folder.localCwd);
@@ -290,13 +343,30 @@ function inheritedPlaces(stored: BoardPicture | null, folders: readonly LocalFol
     const onBoard = Boolean(listed) || pictured?.board?.cards[folder.placeId]?.kind === 'session';
     if (!onBoard || listed?.estado === 'fechada') continue;
     const key = `${folder.localCwd}\n${folder.placeId}`;
-    const holders = held.get(key);
-    if (holders && !(holders.length === 1 && holders[0] === folder.renovaDe)) continue;
-    claims.set(key, [...(claims.get(key) ?? []), folder.sid]);
+    claims.set(key, [...(claims.get(key) ?? []), folder]);
   }
-  const out = new Map<string, string>();
-  for (const [key, sids] of claims) if (sids.length === 1 && sids[0]) out.set(sids[0], key.slice(key.indexOf('\n') + 1));
-  return out;
+  const places = new Map<string, string>();
+  const renewed = new Map<string, { readonly sid: string; readonly place: string }>();
+  for (const [key, claimants] of claims) {
+    const place = key.slice(key.indexOf('\n') + 1);
+    const holders = held.get(key) ?? [];
+    const claimed = new Set(claimants.map((folder) => folder.sid));
+    const roots = claimants.filter((folder) => !(folder.renovaDe && claimed.has(folder.renovaDe)));
+    const first = holders.length ? (holders.length === 1 ? holders[0] : undefined) : roots.length === 1 ? { sid: roots[0]!.sid, ...(roots[0]!.roleId ? { role: roots[0]!.roleId } : {}) } : undefined;
+    if (!first) continue;
+    const chain = [first.sid];
+    let owner = first;
+    while (owner.role !== undefined && handedOver(owner.sid)) {
+      const from = owner;
+      const next = claimants.filter((folder) => folder.renovaDe === from.sid && folder.roleId === from.role);
+      if (next.length !== 1 || chain.includes(next[0]!.sid)) break;
+      owner = { sid: next[0]!.sid, role: from.role };
+      chain.push(owner.sid);
+    }
+    if (claimed.has(owner.sid)) places.set(owner.sid, place);
+    for (const sid of chain.slice(0, -1)) renewed.set(sid, { sid: owner.sid, place });
+  }
+  return { places, renewed };
 }
 
 /** Which of `folders` get a picture made here (see the header): all with the PC away, else the old ones and `forced`. */
@@ -349,7 +419,8 @@ export function createLocalPicture(deps: {
     const picked = chosen.map((folder) => folder.sid).join(',');
     if (built && built.stored === stored && built.list === list && built.picked === picked) return built.picture;
     const alive = new Set(list.map((folder) => folder.sid));
-    const picture = withLocalSessions(stored, chosen, at, { ...(deps.extras?.() ?? {}), alive: (sid) => alive.has(sid) });
+    const handed = new Set(list.filter((folder) => folder.handedOver === true).map((folder) => folder.sid));
+    const picture = withLocalSessions(stored, chosen, at, { ...(deps.extras?.() ?? {}), alive: (sid) => alive.has(sid), handedOver: (sid) => handed.has(sid) });
     built = { stored, list, picked, picture };
     return picture;
   };

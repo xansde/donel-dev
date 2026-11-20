@@ -112,6 +112,19 @@ const PLACE_PATTERN = /^(?:place|session):[A-Za-z0-9-]{1,64}$/;
 const ROLE_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 /** The steps of a renewal under way: a mark left on one of them was cut midway. */
 const IN_FLIGHT_STEPS: ReadonlySet<string> = new Set(['detectou', 'pediu', 'pronta', 'abriu', 'respondeu']);
+/** The steps from the handoff ready on: the successor it opened (if alive) answers for the place, not this session. */
+const HANDED_OVER_STEPS: ReadonlySet<string> = new Set(['pronta', 'abriu', 'respondeu', 'nao-fechou', 'fechou']);
+
+/**
+ * Pure — t-49dee38d (condição do Líder único r-ded62192: "um dono só") — the mark (`RENEW_MARK`, parsed) says this
+ * session handed its place over: its handoff was ready, or a give-up after its successor opened (`sucessora` in the
+ * mark: "duas vivas no lugar" keeps the successor the owner until the Líder decides). A deferral (`adiada`) never.
+ * Whether the successor is alive, and of the same role, is the picture's to check (retrato-local).
+ */
+export function markHandedOver(mark: unknown): boolean {
+  if (!isRecord(mark) || mark.adiada === true || typeof mark.passo !== 'string') return false;
+  return HANDED_OVER_STEPS.has(mark.passo) || (mark.passo === 'desistiu' && typeof mark.sucessora === 'string');
+}
 
 function stringList(value: unknown, pattern: RegExp): string[] {
   if (!Array.isArray(value)) return [];
