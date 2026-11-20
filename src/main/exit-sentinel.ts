@@ -49,7 +49,9 @@ const QUOTED = `\\\\"[^"]*\\\\"|"[^"]*"|'[^']*'`;
  */
 const P_PARAMS = '(?:ath|assthru|roperty|arameter|rocess|rocessname|riority|ort|refix|attern|rotocol|rint|ublish|assword|asswd|ass|wd|w)';
 /** The characters of a token; a run of 24 or more of them is masked unless it is part of a path. */
-const TOKEN_CHAR = 'A-Za-z0-9_+/=-';
+const TOKEN_CHAR = 'a-z0-9_+/=-';
+/** The extensions that end the path of a script or a program; a token before any other one (`.txt`) is masked. */
+const SCRIPT_EXTENSION = '(?:ps1|[mc]?js|py|exe|cmd|bat)';
 
 export const COMMAND_LINE_MASKS: ReadonlyArray<{ readonly source: string; readonly to: string }> = [
   // ConvertTo-SecureString 'x' -AsPlainText, ConvertTo-SecureString -AsPlainText -Force -String 'x'
@@ -71,20 +73,23 @@ export const COMMAND_LINE_MASKS: ReadonlyArray<{ readonly source: string; readon
     source: `(${SECRET_WORD}[\\w.-]*["']?\\s*[=:]\\s*)((?:(?:bearer|basic|token)\\s+)?(?:${QUOTED}|[^\\s&|;"']+))`,
     to: '$1***',
   },
-  // --password x, --db-password "x y", --client-secret x, --token x, --pw x; not -PassThru (the word ends the flag
-  // or a part of it)
-  { source: `((?:^|\\s)--?[\\w-]*${SECRET_WORD}(?![A-Za-z0-9])[\\w-]*\\s+)(${QUOTED}|\\S+)`, to: '$1***' },
+  // --password x, --db-password "x y", --client-secret x, --token x, --pw x, --passphrase x; not the switch -PassThru
+  // (naming it alone: any other flag with a secret word in it still loses its value, as before)
+  { source: `((?:^|\\s)--?[\\w-]*${SECRET_WORD}(?!thru(?![a-z0-9]))[\\w-]*\\s+)(${QUOTED}|\\S+)`, to: '$1***' },
   // -pSenha, -p Senha (mysql, sshpass); not node -p "<code>", nor -Path, -PassThru and the other -P… of PowerShell
   { source: `(?<!node(?:\\.exe)?"?)((?:^|\\s)-p(?!${P_PARAMS}\\b)\\s*)(${QUOTED}|[^\\s-]\\S*)`, to: '$1***' },
   // /p:Senha, /password:Senha (Windows tools)
   { source: '((?:^|\\s)/(?:p|pw|pwd|pass|password)[:=])("[^"]*"|\\S+)', to: '$1***' },
   // AWS access key ids, 20 characters
   { source: '\\b(?:AKIA|ASIA)[A-Z0-9]{16}\\b', to: '***' },
-  // any long run of token-like characters (keys, tokens, base64), whole; not a piece of a path: after a drive (`C:`),
-  // `\`, `@` (a scoped package), `~` or `./`, or before a `\` (not `\"`) or a file extension
+  // any long run of token-like characters (keys, tokens, base64), whole; not a piece of a path, and only the shapes of
+  // a path are spared, so a token after `://`, `:`, `~`, `@` or before `.txt` is still masked: after a drive and a
+  // slash (`C:/`, not `https://` nor `X:<token>`), after `\`, `./` or `~/`, or before a `\` (not `\"`) or the
+  // extension of a script or a program. Kept short: the script carrying it must fit a Windows command line.
   {
     source:
-      `(?<![:@~\\\\${TOKEN_CHAR}])(?!(?<=\\.)/)[${TOKEN_CHAR}]{24,}(?![${TOKEN_CHAR}]|\\\\(?!")|\\.[A-Za-z0-9]{1,4}\\b)`,
+      `(?<![\\\\${TOKEN_CHAR}])(?!(?<=[.~]|(?<![a-z0-9_])[a-z]:)/)` +
+      `[${TOKEN_CHAR}]{24,}(?![${TOKEN_CHAR}]|\\\\(?!")|\\.${SCRIPT_EXTENSION}\\b)`,
     to: '***',
   },
 ];

@@ -42,6 +42,7 @@ function innerScript(recordPath: string): string {
 // Fake, built in pieces so no scanner reads it as a real token.
 const FAKE_GH_TOKEN = 'ghp_' + 'A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8';
 const CURL = 'cu' + 'rl';
+const FAKE_B64 = 'Zm9vYmFy' + 'YmF6cXV4' + 'cXV1eDEy' + 'MzQ1Njc4OTA';
 
 // Command lines of other programs on the PC, with the secret each one carries (review of #461).
 const SECRET_LINES: ReadonlyArray<readonly [string, string]> = [
@@ -98,6 +99,17 @@ const SECRET_LINES: ReadonlyArray<readonly [string, string]> = [
   // (5) a long token with no name before it: only the rule for any long run of token characters catches it
   ['cmd.exe /c deploy Zm9vYmFyYmF6cXV4cXV1eDEyMzQ1Njc4OTA', 'Zm9vYmFyYmF6cXV4cXV1eDEyMzQ1Njc4OTA'],
   ['cmd.exe /c deploy q8Zt3Kp/0aX9vB2+wR7yL4nM6sE1dF5gH', 'q8Zt3Kp/0aX9vB2+wR7yL4nM6sE1dF5gH'],
+  // review of #549: what spares a path must not spare a token in the same place
+  [`cmd.exe /c git clone https://${FAKE_GH_TOKEN}@github.com/x/y`, FAKE_GH_TOKEN],
+  [`cmd.exe /c redis-cli -u redis://:${FAKE_B64}@host`, FAKE_B64],
+  [`cmd.exe /c deploy X:${FAKE_B64}`, FAKE_B64],
+  [`cmd.exe /c deploy x-access:${FAKE_B64}`, FAKE_B64],
+  [`cmd.exe /c deploy ${FAKE_B64}.txt`, FAKE_B64],
+  [`cmd.exe /c deploy ~${FAKE_B64}`, FAKE_B64],
+  [`cmd.exe /c deploy @${FAKE_B64}`, FAKE_B64],
+  ['cmd.exe /c gpg --batch --passphrase Hunter2! -d x.gpg', 'Hunter2!'],
+  ['tool --passcode 123456', '123456'],
+  ['tool --credentials Pa55g', 'Pa55g'],
 ];
 
 // Command lines of the killer itself: the sentinel exists to say who ended the main, so the mask must not erase it.
@@ -111,6 +123,8 @@ const KILLER_LINES: readonly string[] = [
   'node.exe C:\\Users\\alexandrelentz\\AppData\\Roaming\\npm\\node_modules\\@anthropic-ai\\claude-code\\cli.js',
   'taskkill.exe /F /T /PID 6700',
   'powershell.exe -Command "Get-ChildItem -Path C:/Users/alexandrelentz/AppData/Roaming/donel-dev"',
+  'node.exe ~/seazone/_scratch/sondas/very-long-script-name/kill.mjs',
+  'node.exe ./node_modules/electron-builder-squirrel-windows/out/x',
 ];
 
 describe('exit sentinel', () => {
@@ -171,6 +185,8 @@ describe('exit sentinel', () => {
       'Connect-X -Password *** *** -AsPlainText -Force)',
     );
     expect(maskForDisk("'Senha123' | ConvertTo-SecureString -AsPlainText -Force")).toBe('*** | ConvertTo-SecureString -AsPlainText -Force');
+    // a token in a URL loses only itself, as before the paths were spared
+    expect(maskForDisk(`git clone https://${FAKE_GH_TOKEN}@github.com/x/y`)).toBe('git clone https:***@github.com/x/y');
   });
 
   it('hands over the record of a run once, and only a well formed one', () => {
