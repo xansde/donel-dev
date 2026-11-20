@@ -1,12 +1,12 @@
 import { createHash, createHmac } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createCelularLocalStore } from '../src/oraculo/celular-local';
 import { createCelularV2Handler, signedMessage } from '../src/oraculo/celular-v2';
 import { localFlagOn } from '../src/main/local-flags';
-import { CRITERIOS, cortesDaPreta, montarUsoIa, proficiencia, semanaDe, semanaInicioMs, USO_IA_FLAG } from '../src/oraculo/uso-ia';
+import { CRITERIOS, cortesDaPreta, lerLeituras, montarUsoIa, proficiencia, semanaDe, semanaInicioMs, USO_IA_FLAG } from '../src/oraculo/uso-ia';
 
 // t-1c683858 — a tela "Uso de IA" do celular. O que quebraria sem o dono perceber: cortes diferentes dos do painel
 // (faixa errada com cara de certa), uma conquista gravada que some, uma semana fechada reclassificada por régua nova,
@@ -51,6 +51,16 @@ describe('uso de IA no celular', () => {
     expect(semanaInicioMs('2026-W47')).toBe(Date.parse('2026-11-13T17:00:00-03:00'));
     expect(semanaDe(Date.parse('2026-11-13T16:59:00-03:00'))).toBe('2026-W46');
     expect(semanaDe(Date.parse('2026-11-13T17:00:00-03:00'))).toBe('2026-W47');
+  });
+
+  it('arquivo regravado da máquina é lido de novo, nunca a leitura guardada da versão velha', () => {
+    const root = tmp();
+    machine(root, '2026-11-20', 'vps-alexandrelentz', '2026-W47', '2026-11-20T13:35:00-03:00', 6, all(10));
+    expect(lerLeituras(root)[0]!.valores.sessoes_iniciadas).toBe(10);
+    machine(root, '2026-11-20', 'vps-alexandrelentz', '2026-W47', '2026-11-20T14:35:00-03:00', 6, all(20));
+    const f = join(root, '2026-11-20', 'maquina-vps-alexandrelentz.json');
+    utimesSync(f, new Date(), new Date(Date.now() + 5_000));
+    expect(lerLeituras(root)[0]!.valores.sessoes_iniciadas).toBe(20);
   });
 
   it('semana sem leitura não conta nem quebra a sequência', () => {
