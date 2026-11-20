@@ -39,7 +39,9 @@ Desenho completo na tarefa t-1a3f7150 (`_scratch/abrir-sem-pc/desenho.md`, 18/11
 - Uma mudança no argv ou nos arquivos de uma sessão remota vale para o PC e para a VPS de uma vez; o teste
   `tests/plano-lancamento-remoto.test.ts` guarda esse argv.
 - Com o PC fora não há `askOwner`: no limite de abertas o portão recusa e diz quantas estão abertas.
-- Num quadro com Líder vivo o portão não abre: entrega o pedido ao Líder do quadro.
+- Com o PC fora, o pedido do Líder único abre a sessão direto no quadro pedido, também num quadro com Líder vivo
+  (t-83b81fd2, 20/11): o Líder do quadro nem sempre consegue abrir sem o PC, e o repasse deixava o pedido sem sessão.
+  O Líder do quadro segue abrindo só no próprio quadro.
 - Um `/clear` na sessão aberta sem o PC muda a conversa da pasta; o cartão criado na volta nasce com o `sid` da pasta.
   É o mesmo risco que existe com o PC ligado.
 - Quem trabalhar na etapa 3 ou 4 (agentd, t-9accc989) parte daqui: não cria um segundo caminho de "abrir sem o app".
