@@ -36,6 +36,8 @@ export interface RemoteLaunchInput {
   readonly openedBy?: string;
   /** t-d461e003 — the board place of the tab (kept in `meta.json`: a renewal stays that place with the PC off). */
   readonly placeId?: string;
+  /** t-49dee38d — the sid of the session this one renews (the Oráculo renewed it with the PC away); kept in `meta.json`. */
+  readonly renovaDe?: string;
   readonly createdAt: string;
   /** Project folder relative to `$HOME` on the place. */
   readonly homeRelativeDir: string;
@@ -118,6 +120,7 @@ export function planRemoteLaunch(input: RemoteLaunchInput): RemoteLaunchPlan {
     launchArgs: input.launchArgs,
     ...(input.openedBy ? { openedBy: input.openedBy } : {}),
     ...(input.placeId ? { placeId: input.placeId } : {}),
+    ...(input.renovaDe ? { renovaDe: input.renovaDe } : {}),
     createdAt: input.createdAt,
     // Líder único na VPS — the tab that comes back after a restart is the Líder again (`remoteAliveFromMeta`).
     ...(roleId ? { roleId } : {}),
